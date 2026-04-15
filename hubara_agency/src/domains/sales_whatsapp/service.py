@@ -12,6 +12,17 @@ from src.domains.sales_whatsapp import integrations as whatsapp_client
 
 SALES_QUEUE = "queue-sales-agent"
 
+def _load_shared_brain() -> list[str]:
+    """Carga los md del Cerebro Compartido dinámicamente."""
+    brain_dir = Path(__file__).parent / "shared_brain"
+    files = ["identity.md", "knowledge.md", "instructions.md"]
+    context = []
+    for f in files:
+        filepath = brain_dir / f
+        if filepath.exists():
+            context.append(filepath.read_text(encoding="utf-8"))
+    return context
+
 async def process_incoming_message(body: dict):
     """
     Coordina la interacción entre los recursos de la red social (WhatsApp), 
@@ -72,7 +83,10 @@ async def _signal_temporal_and_poll(session_id: str, message: str) -> str | None
             task_queue=SALES_QUEUE,
         )
 
-    await handle.signal(AgentSessionWorkflow.send_message, message) # type: ignore[attr-defined]
+    await handle.signal(
+        AgentSessionWorkflow.send_message, # type: ignore[attr-defined]
+        args=[message, None, _load_shared_brain()]
+    )
 
     while True:
         is_proc = await handle.query(AgentSessionWorkflow.is_processing) # type: ignore[attr-defined]
