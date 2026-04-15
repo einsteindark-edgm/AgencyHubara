@@ -1,10 +1,13 @@
 import httpx
 from src.core.config import WHATSAPP_ACCESS_TOKEN, WHATSAPP_API_URL
+import structlog
+
+logger = structlog.get_logger()
 
 async def send_message(phone_number_id: str, to: str, text: str) -> None:
     """Envía un mensaje de texto plano a un usuario a través del API Oficial de WhatsApp Cloud."""
     if not WHATSAPP_ACCESS_TOKEN:
-        print(f"⚠️ Fake Send -> [To: {to}]: {text}")
+        logger.warning("Fake Send", to=to, text=text)
         return
 
     url = WHATSAPP_API_URL.format(phone_number_id=phone_number_id)
@@ -23,6 +26,6 @@ async def send_message(phone_number_id: str, to: str, text: str) -> None:
     async with httpx.AsyncClient() as client:
         response = await client.post(url, headers=headers, json=data)
         if response.status_code == 200:
-            print(f"📤 WhatsApp Reply OK a {to}")
+            logger.info("WhatsApp Reply OK", to=to)
         else:
-            print(f"❌ Failed to reply: {response.text}")
+            logger.error("Failed to reply", response_text=response.text)

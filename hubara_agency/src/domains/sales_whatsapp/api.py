@@ -1,6 +1,9 @@
 from fastapi import APIRouter, Request, HTTPException, BackgroundTasks
 from src.core.config import WHATSAPP_VERIFY_TOKEN
 from src.domains.sales_whatsapp import service as whatsapp_service
+import structlog
+
+logger = structlog.get_logger()
 
 router = APIRouter()
 
@@ -12,7 +15,7 @@ async def verify_webhook(request: Request):
     challenge = request.query_params.get("hub.challenge")
 
     if mode == "subscribe" and token == WHATSAPP_VERIFY_TOKEN:
-        print("WEBHOOK_VERIFIED")
+        logger.info("WhatsApp Webhook Verified")
         return int(challenge)
     raise HTTPException(status_code=403, detail="Forbidden")
 

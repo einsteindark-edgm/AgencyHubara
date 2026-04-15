@@ -1,5 +1,8 @@
 import httpx
 import asyncio
+import structlog
+
+logger = structlog.get_logger()
 
 async def test():
     # Este es el formato EXACTO de JSON que los servidores de Meta envían a tu webhook.
@@ -26,13 +29,13 @@ async def test():
     }
 
     async with httpx.AsyncClient() as client:
-        print("🚀 [TEST] Disparando Webhook hacia el Servidor (Uvicorn)...")
+        logger.info("TEST: Disparando Webhook hacia el Servidor (Uvicorn)...")
         try:
             response = await client.post("http://localhost:8000/api/webhook", json=body)
-            print(f"✅ Respuesta del API (Inmediata): {response.status_code}")
-            print("⏳ Ahora, mira la terminal del Worker de Ventas. Debería procesar con Temporal e imprimir los logs.")
+            logger.info("Respuesta del API (Inmediata)", status_code=response.status_code)
+            logger.info("Ahora, mira la terminal del Worker de Ventas. Debería procesar con Temporal e imprimir los logs.")
         except httpx.ConnectError:
-            print("❌ Error: No puedo conectar. ¿Está prendido el servidor Uvicorn? (uv run uvicorn src.main:app)")
+            logger.error("Error: No puedo conectar. ¿Está prendido el servidor Uvicorn? (uv run uvicorn src.main:app)")
 
 if __name__ == "__main__":
     asyncio.run(test())

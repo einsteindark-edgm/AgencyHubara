@@ -1,7 +1,9 @@
 import asyncio
 from pathlib import Path
 from temporalio.service import RPCError
+import structlog
 
+logger = structlog.get_logger()
 from src.core.temporal_client import get_temporal_client
 from src.core.registries import build_default_llm_config, build_workspace_config, get_base_tools_registry, get_base_tools_json
 from exoclaw_temporal.session_based.workflows.agent_session import AgentSessionWorkflow
@@ -29,7 +31,7 @@ async def process_incoming_message(body: dict):
                 message_text = message_obj["text"]["body"]
                 session_id = f"wa_{from_number}"
                 
-                print(f"📥 WhatsApp: {message_text} de {from_number}")
+                logger.info("WhatsApp Message Received", message_text=message_text, from_number=from_number)
                 
                 # Delegamos a temporal y esperamos el result asíncronamente
                 response_text = await _signal_temporal_and_poll(session_id, message_text)
@@ -39,7 +41,7 @@ async def process_incoming_message(body: dict):
                     await whatsapp_client.send_message(phone_number_id, from_number, response_text)
                 
     except (KeyError, IndexError) as e:
-        print(f"Error parseando el payload de Meta: {e}")
+        logger.error("Error parseando el payload de Meta", error=str(e))
 
 
 async def _signal_temporal_and_poll(session_id: str, message: str) -> str | None:
@@ -51,7 +53,7 @@ async def _signal_temporal_and_poll(session_id: str, message: str) -> str | None
         handle = client.get_workflow_handle(workflow_id)
         await handle.describe()  
     except RPCError:
-        print(f"🌟 Creando AgentSessionWorkflow para {workflow_id}")
+        logger.info("Creando AgentSessionWorkflow", workflow_id=workflow_id)
         llm = build_default_llm_config()
         ws = build_workspace_config(session_id)
         registry = get_base_tools_registry(Path(ws.path))

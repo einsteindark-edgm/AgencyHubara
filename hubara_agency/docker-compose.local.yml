@@ -64,7 +64,8 @@ services:
       context: ../
       dockerfile: Dockerfile
     container_name: local-hubara-api
-    command: ["python", "hubara_agency/run_api.py"]
+    working_dir: /app/hubara_agency
+    command: ["python", "run_api.py"]
     ports:
       - "8000:8000"
     environment:
@@ -80,7 +81,8 @@ services:
       context: ../
       dockerfile: Dockerfile
     container_name: local-hubara-worker
-    command: ["python", "-m", "hubara_agency.src.domains.sales_whatsapp.worker"]
+    working_dir: /app/hubara_agency
+    command: ["python", "-m", "src.domains.sales_whatsapp.worker"]
     environment:
       - TEMPORAL_URL=temporal:7233
       - API_BASE_LLMLITE=http://litellm:4000

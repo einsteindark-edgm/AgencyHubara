@@ -6,6 +6,9 @@ from src.core.config import (
     TEMPORAL_TLS_CERT_PATH,
     TEMPORAL_TLS_KEY_PATH
 )
+import structlog
+
+logger = structlog.get_logger()
 
 async def get_temporal_client() -> Client:
     """
@@ -22,9 +25,9 @@ async def get_temporal_client() -> Client:
                 key = f.read()
                 
             tls_config = TLSConfig(client_cert=cert, client_private_key=key)
-            print(f"🔒 Conectando a Temporal Cloud ({TEMPORAL_NAMESPACE}) via mTLS...")
+            logger.info("Connecting to Temporal Cloud via mTLS", namespace=TEMPORAL_NAMESPACE)
         else:
-            print(f"⚠️ Certificados TLS definidos pero no encontrados físicos. Cayendo a Insecure...")
+            logger.warning("TLS certificates defined but not found. Falling back to insecure connection.")
 
     return await Client.connect(
         TEMPORAL_URL,
