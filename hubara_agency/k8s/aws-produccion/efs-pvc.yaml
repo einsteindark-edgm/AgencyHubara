@@ -1,0 +1,14 @@
+# Para Amazon EKS con EFS CSI Driver instalado
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: hubara-vault-efs
+  namespace: default
+spec:
+  volumeName: hubara-vault-efs-pv
+  accessModes:
+    - ReadWriteMany
+  storageClassName: efs-sc  # <--- AWS requere esta clase preconfigurada
+  resources:
+    requests:
+      storage: 10Gi

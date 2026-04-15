@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: litellm-proxy
+  namespace: default
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: litellm-proxy
+  template:
+    metadata:
+      labels:
+        app: litellm-proxy
+    spec:
+      containers:
+        - name: litellm
+          image: ghcr.io/berriai/litellm:main-latest
+          imagePullPolicy: Always
+          command: ["--config", "/app/config.yaml", "--port", "4000", "--debug"]
+          ports:
+            - containerPort: 4000
+          env:
+            # Los inyectamos vía Secretos (No poner raw text en Producción)
+            - name: DEEPSEEK_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: llm-api-keys
+                  key: deepseek
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: llm-api-keys
+                  key: gemini
+          volumeMounts:
+            - name: config-volume
+              mountPath: "/app/config.yaml"
+              subPath: "config.yaml"
+              readOnly: true
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+      volumes:
+        - name: config-volume
+          configMap:
+            name: litellm-config

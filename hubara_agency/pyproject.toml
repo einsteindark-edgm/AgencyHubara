@@ -1,0 +1,15 @@
+[project]
+name = "hubara-agency"
+version = "0.1.0"
+description = "Hubara Agency - AI Agent Deployments"
+requires-python = ">=3.11"
+dependencies = [
+    "exoclaw-temporal",
+    "fastapi>=0.110.0",
+    "uvicorn>=0.30.0",
+    "httpx>=0.27.0",
+    "python-dotenv>=1.0.0"
+]
+
+[tool.uv.sources]
+exoclaw-temporal = { workspace = true }

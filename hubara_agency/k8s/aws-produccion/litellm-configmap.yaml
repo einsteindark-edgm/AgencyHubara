@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: litellm-config
+  namespace: default
+data:
+  config.yaml: |
+    model_list:
+      - model_name: sales-agent
+        litellm_params:
+          model: deepseek/deepseek-v3.2-exp
+          api_key: "os.environ/DEEPSEEK_API_KEY"
+          override_raw_request_params:
+          api_key: "os.environ/DEEPSEEK_API_KEY"
+        
+      - model_name: gemini-backup
+        litellm_params:
+          model: gemini/gemini-3.1-flash-lite-preview
+          api_key: "os.environ/GEMINI_API_KEY"
+          override_raw_request_params:
+          api_key: "os.environ/GEMINI_API_KEY"
+
+    router_settings:
+      routing_strategy: simple-shuffle
+      num_retries: 1
+      fallbacks: [{"sales-agent": ["gemini-backup"]}]
+      drop_params: True

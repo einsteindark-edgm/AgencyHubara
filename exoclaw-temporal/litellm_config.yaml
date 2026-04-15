@@ -1,0 +1,23 @@
+model_list:
+  - model_name: sales-agent
+    litellm_params:
+      model: deepseek/deepseek-v3.2-exp
+      api_key: "os.environ/DEEPSEEK_API_KEY"
+      override_raw_request_params:
+      api_key: "os.environ/DEEPSEEK_API_KEY"
+    
+  - model_name: gemini-backup
+    litellm_params:
+      model: gemini/gemini-3.1-flash-lite-preview
+      api_key: "os.environ/GEMINI_API_KEY"
+      override_raw_request_params:
+      api_key: "os.environ/GEMINI_API_KEY"
+
+router_settings:
+  # 'simple-shuffle' es la estrategia estándar. 
+  # Como cada model_name tiene solo un proveedor, siempre elegirá ese.
+  routing_strategy: simple-shuffle
+  num_retries: 1
+  # El failover se activa aquí: si falla 'sales-agent', salta a 'gemini-backup'
+  fallbacks: [{"sales-agent": ["gemini-backup"]}]
+  drop_params: True

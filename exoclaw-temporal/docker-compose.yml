@@ -1,0 +1,55 @@
+services:
+  db:
+    image: postgres:14
+    container_name: temporal-db
+    environment:
+      - POSTGRES_USER=temporal
+      - POSTGRES_PASSWORD=temporal
+      - POSTGRES_DB=temporal
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporal -d temporal"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  temporal:
+    image: temporalio/auto-setup:1.24.2
+    container_name: temporal
+    ports:
+      - "7233:7233"
+    environment:
+      - DB=postgres12           # Mantenemos este, es el estándar
+      - DB_ADDR=db              # <--- AÑADIR ESTO (Muchas versiones lo prefieren)
+      - DB_PORT=5432            # <--- AÑADIR ESTO EXPLICITAMENTE
+      - POSTGRES_SEEDS=db
+      - POSTGRES_USER=temporal
+      - POSTGRES_PWD=temporal   # Importante: PWD, no PASSWORD
+      - POSTGRES_DB=temporal
+      - SKIP_DB_CREATE=false
+    depends_on:
+      db:
+        condition: service_healthy    # No arranca hasta que Postgres esté REALMENTE listo
+
+  temporal-ui:
+    image: temporalio/ui:latest
+    container_name: temporal-ui
+    ports:
+      - "8233:8233"
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+    depends_on:
+      - temporal
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: litellm
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./litellm_config.yaml:/app/config.yaml
+    command: [ "--config", "/app/config.yaml", "--port", "4000", "--debug" ]
+    environment:
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
