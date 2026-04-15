@@ -71,6 +71,10 @@ services:
     environment:
       - TEMPORAL_URL=temporal:7233
       - API_BASE_LLMLITE=http://litellm:4000
+      - WORKSPACE_VAULT_DIR=/app/hubara_vault
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+    volumes:
+      - hubara-vault-local:/app/hubara_vault
     depends_on:
       - temporal
       - litellm
