@@ -44,12 +44,15 @@ async def process_incoming_message(body: dict):
                 
                 logger.info("WhatsApp Message Received", message_text=message_text, from_number=from_number)
                 
-                # Delegamos a temporal y esperamos el result asíncronamente
                 response_text = await _signal_temporal_and_poll(session_id, message_text)
                 
-                # Llamada agnóstica al Infra Cliente
+                # Llamada agnóstica al Infra Cliente (Fragmentación de párrafos en múltiples mensajes)
                 if response_text:
-                    await whatsapp_client.send_message(phone_number_id, from_number, response_text)
+                    # Separamos el texto en párrafos para enviar burbujas separadas a Meta
+                    chunks = [chunk.strip() for chunk in response_text.split("\n\n") if chunk.strip()]
+                    for chunk in chunks:
+                        await whatsapp_client.send_message(phone_number_id, from_number, chunk)
+                        await asyncio.sleep(1.5)  # Breve latencia natural entre burbujas
                 
     except (KeyError, IndexError) as e:
         logger.error("Error parseando el payload de Meta", error=str(e))
