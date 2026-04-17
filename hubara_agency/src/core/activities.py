@@ -27,6 +27,8 @@ async def execute_tool(input: ExecuteToolInput) -> str:
     
     # Cargamos el registro híbrido (Base Exoclaw + Clientes Agencia)
     registry = get_base_tools_registry(Path(input.workspace.path))
+    from src.domains.sales_whatsapp.tools.routing import TransferToSalesAgentTool
+    registry.register(TransferToSalesAgentTool(workspace=str(input.workspace.path)))
     
     ctx = ToolContext(
         session_key=input.session_id,
@@ -60,6 +62,18 @@ async def claim_conversation_routing(workspace_path: str, new_route: str) -> Non
         data = json.loads(metadata_file.read_text(encoding="utf-8"))
     
     data["active_route"] = new_route
+    
+    if "status_history" not in data:
+        data["status_history"] = []
+        
+    import time
+    data["status_history"].append({
+        "tag": data.get("tag", "NO_ETIQUETADO"),
+        "motivo": data.get("motivo", f"Transferencia de ruta a {new_route}"),
+        "active_route": new_route,
+        "timestamp": time.time()
+    })
+    
     metadata_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 @activity.defn(name="send_whatsapp_message_activity")

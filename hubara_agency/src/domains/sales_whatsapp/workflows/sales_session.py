@@ -110,12 +110,13 @@ class HubaraSalesSessionWorkflow:
                             args=[input.session_id, output.final_content],
                             start_to_close_timeout=workflow.timedelta(seconds=20),
                         )
+                    
+                    if getattr(self, '_force_shutdown', False):
+                        workflow.logger.info(f"Auto-diagnóstico concluido. Apagando sesión {input.session_id} por abandono de usuario o transferencia.")
+                        return
+                        
                 finally:
                     self._processing = False
-                    
-            if getattr(self, '_force_shutdown', False):
-                workflow.logger.info(f"Auto-diagnóstico concluido. Apagando sesión {input.session_id} por abandono de usuario.")
-                return
 
             # continue_as_new to keep history bounded
             if turn_count >= _CONTINUE_AS_NEW_AFTER_TURNS and not self._pending:

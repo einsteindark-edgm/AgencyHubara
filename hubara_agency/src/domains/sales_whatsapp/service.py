@@ -88,8 +88,11 @@ async def _signal_temporal_and_poll(session_id: str, message: str, phone_number_
         
         try:
             handle = client.get_workflow_handle(workflow_id)
-            await handle.describe()
-        except RPCError:
+            desc = await handle.describe()
+            from temporalio.client import WorkflowExecutionStatus
+            if desc.status != WorkflowExecutionStatus.RUNNING:
+                raise RuntimeError("Remarketing workflow is no longer running")
+        except Exception:
             # Si se murió el workflow de remarketing, hacemos downgrade a ventas
             logger.warning("Remarketing workflow not found or finished, falling back to Sales")
             active_route = "ventas"
@@ -102,8 +105,11 @@ async def _signal_temporal_and_poll(session_id: str, message: str, phone_number_
         
         try:
             handle = client.get_workflow_handle(workflow_id)
-            await handle.describe()  
-        except RPCError:
+            desc = await handle.describe()  
+            from temporalio.client import WorkflowExecutionStatus
+            if desc.status != WorkflowExecutionStatus.RUNNING:
+                raise RuntimeError("Workflow is no longer running")
+        except Exception:
             logger.info("Creando HubaraSalesSessionWorkflow", workflow_id=workflow_id)
             llm = build_default_llm_config()
             ws = build_workspace_config(session_id)

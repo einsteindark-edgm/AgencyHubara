@@ -117,6 +117,20 @@ services:
       - temporal
       - litellm
 
+  # 7. Frontend
+  hubara-frontend:
+    build:
+      context: ../frontend_dashboard
+      dockerfile: Dockerfile
+    container_name: local-hubara-frontend
+    ports:
+      - "5173:5173"
+    volumes:
+      - ../frontend_dashboard:/app
+      - /app/node_modules # prevent overwriting container node_modules
+    depends_on:
+      - hubara-api
+
 # Simulador del EFS de Amazon
 volumes:
   hubara-vault-local:

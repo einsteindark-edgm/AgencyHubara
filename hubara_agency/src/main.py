@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from src.domains.sales_whatsapp import api as whatsapp_api
 from src.domains.dashboard import api as dashboard_api
 
@@ -6,6 +7,14 @@ app = FastAPI(
     title="Agency API",
     description="Entrada centralizada para todos los webhooks y canales asíncronos interactuando con Temporal Workers.",
     version="1.0.0"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Registramos los adaptadores de Canales basados en Dominio.

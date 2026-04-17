@@ -26,6 +26,5 @@
 - Para la opción de pago convencional usamos plataforma web e incluye todos los métodos bancarios del país.
 
 ## POLÍTICAS ADICIONALES
-- Descuento de Bienvenida: Tenemos un 5% automático para primeras compras a través de la web.
 - Descuento Testimonio: Otorgamos un cupón del 10% para la próxima compra a clientes recurrentes que manden foto/video contando su experiencia por nuestro chat.
 - Garantías: 48 horas de cobertura desde la fecha de recepción para envíos rotos o defectuosos, siempre y cuando la vela nunca se haya encendido (debe conservar su empaque y tamaño de mecha).

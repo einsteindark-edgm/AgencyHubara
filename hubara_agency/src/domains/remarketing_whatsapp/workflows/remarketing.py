@@ -16,6 +16,8 @@ from exoclaw_temporal.config import (
     SessionInput,
     TurnOutput,
 )
+import json
+import time
 
 with workflow.unsafe.imports_passed_through():
     from typing import Any
@@ -24,6 +26,7 @@ with workflow.unsafe.imports_passed_through():
     from src.core.activities import execute_tool, claim_conversation_routing, send_whatsapp_message_activity, read_workspace_memory_activity
     from src.core.registries import build_default_llm_config, build_workspace_config, get_base_tools_json, get_base_tools_registry
     from src.domains.sales_whatsapp import integrations as whatsapp_client
+    from src.domains.sales_whatsapp.tools.routing import TransferToSalesAgentTool
 
 
 _CONTINUE_AS_NEW_AFTER_TURNS = 50
@@ -98,7 +101,29 @@ class RemarketingSessionWorkflow:
         llm = build_default_llm_config()
         ws = build_workspace_config(session_id)
         registry = get_base_tools_registry(Path(ws.path))
+        registry.register(TransferToSalesAgentTool(workspace=str(ws.path)))
         
+        # Leemos la metadata actual
+        metadata_file = Path(ws.path) / "metadata.json"
+        
+        # Reclamamos el enrutamiento INMEDIATAMENTE hacia "remarketing"
+        await workflow.execute_activity(
+            claim_conversation_routing,
+            args=[ws.path, "remarketing"],
+            start_to_close_timeout=workflow.timedelta(seconds=15),
+        )
+
+        try:
+            # Check if user woke up during our delay
+            metadata_content = await workflow.execute_activity(
+                read_workspace_memory_activity, # Reusing activity to read a file or we can just read history
+                args=[session_id],
+                start_to_close_timeout=workflow.timedelta(seconds=15),
+            )
+            # Actually, to check history properly without new activity, we can just fetch the sessions file
+        except Exception as e:
+            workflow.logger.warn(f"No se pudo leer memoria o metadata: {e}")
+            
         # 1. Construir el Input estándar
         input_data = SessionInput(
             session_id=session_id,
@@ -110,13 +135,6 @@ class RemarketingSessionWorkflow:
             turn_count=0
         )
 
-        # 2. Tomar el control del Router (PVC) invocando la Actividad
-        await workflow.execute_activity(
-            claim_conversation_routing,
-            args=[input_data.workspace.path, "remarketing"],
-            start_to_close_timeout=workflow.timedelta(seconds=15),
-        )
-
         # 2.5 Leer el memory.md del PVC generado por el Agente de Ventas
         memory_context = await workflow.execute_activity(
             read_workspace_memory_activity,
@@ -125,25 +143,30 @@ class RemarketingSessionWorkflow:
         )
 
         # 3. Inyectar el trigger proactivo inicial con el contexto de memoria si existe
-        system_trigger_msg = f"[SISTEMA INTERNO]: El cliente abortó o pausó la venta hace 48 horas. MOTIVO REGISTRADO: '{motivo}'.{memory_context} Tu tarea es generar inmediatamente un saludo de contacto proactivo ofreciéndole envío gratis como beneficio para revivir la venta. REDACTA EL MENSAJE COMO SI LE ESTUVIERAS HABLANDO DIRECTAMENTE A ÉL POR WHATSAPP."
+        system_trigger_msg = f"[SISTEMA INTERNO]: El cliente abortó o pausó la venta hace un tiempo. MOTIVO REGISTRADO DE CIERRE: '{motivo}'. MEMORIA DE EVENTOS PASADOS:{memory_context} Tu tarea es generar inmediatamente un saludo de contacto proactivo ofreciéndole envío gratis como beneficio para revivir la venta. REDACTA EL MENSAJE COMO SI LE ESTUVIERAS HABLANDO DIRECTAMENTE A ÉL POR WHATSAPP."
         
         self._pending.append(PendingMessage(
             message=system_trigger_msg, 
             plugin_context=_load_remarketing_brain()
         ))
 
-        turn_count = input_data.turn_count
-
-        # 4. El Loop infinito idéntico a AgentSessionWorkflow
+        # Loop stateful del Remarketing
+        turn_count = 0
         while True:
-            # Wait for a message or idle timeout
             try:
+                # Esperar mensajes (hasta el timeout de idle)
                 await workflow.wait_condition(
                     lambda: len(self._pending) > 0,
                     timeout=_IDLE_TIMEOUT,
                 )
             except asyncio.TimeoutError:
-                workflow.logger.info("Remarketing session idle timeout, exiting")
+                workflow.logger.info(f"Cliente no respondió al Remarketing en {session_id}. Apagando agente.")
+                # Rutear devuelta a ventas por seguridad y salir
+                await workflow.execute_activity(
+                    claim_conversation_routing,
+                    args=[ws.path, "ventas"],
+                    start_to_close_timeout=workflow.timedelta(seconds=15),
+                )
                 return
 
             while self._pending:
@@ -155,25 +178,24 @@ class RemarketingSessionWorkflow:
                     self._last_response = output.final_content
                     turn_count += 1
                     
-                    # Intercepción proactiva: Si esto es la primera iteración, enviamos el primer saludo al cliente físicamente por WS.
-                    # También si el Webhook nos contesta, ya lo enviamos. Actually, await send_whatsapp.
-                    if output.final_content:
-                        # Extraemos el numero de `wa_12345`
-                        from_number = session_id.replace("wa_", "")
-                        # Llamar a la Actividad segura en lugar de usar comandos HTTP imperativos o logger print
+                    if output.final_content and not getattr(self, '_force_shutdown', False):
                         await workflow.execute_activity(
                             send_whatsapp_message_activity,
                             args=[session_id, output.final_content],
                             start_to_close_timeout=workflow.timedelta(seconds=20),
                         )
+                        workflow.logger.info(f"Remarketing respondió para sesión {session_id}.")
+                        
+                    # Si el agente usó en esta vuelta la tool de transferir a ventas, apagamos esto.
+                    if "transfer_to_sales_agent" in output.tools_used:
+                        workflow.logger.info(f"Remarketing ha transferido la sesión de vuelta a Ventas. Fin de Remarketing Workflow.")
+                        self._force_shutdown = True
+                        
+                    if getattr(self, '_force_shutdown', False):
+                        return
                         
                 finally:
                     self._processing = False
-
-                # continue_as_new to keep history bounded
-                if turn_count >= _CONTINUE_AS_NEW_AFTER_TURNS and not self._pending:
-                    # En remarketing raras veces pasará esto, pero para completitud
-                    return
 
     async def _run_turn(self, input: SessionInput, msg: PendingMessage) -> TurnOutput:
         messages: list[dict[str, Any]] = await workflow.execute_activity(
