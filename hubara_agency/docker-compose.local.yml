@@ -98,6 +98,25 @@ services:
       - temporal
       - litellm
 
+  # 6. Entorno de Negocio: Worker de Remarketing Autónomo
+  hubara-worker-remarketing:
+    build:
+      context: ../
+      dockerfile: Dockerfile
+    container_name: local-hubara-worker-remarketing
+    working_dir: /app/hubara_agency
+    command: ["python", "-m", "src.domains.remarketing_whatsapp.worker"]
+    environment:
+      - TEMPORAL_URL=temporal:7233
+      - API_BASE_LLMLITE=http://litellm:4000
+      - WORKSPACE_VAULT_DIR=/app/hubara_vault
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+    volumes:
+      - hubara-vault-local:/app/hubara_vault
+    depends_on:
+      - temporal
+      - litellm
+
 # Simulador del EFS de Amazon
 volumes:
   hubara-vault-local:

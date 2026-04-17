@@ -1,50 +1,45 @@
 import asyncio
 from loguru import logger
-from temporalio.client import Client
 from temporalio.worker import Worker
 
-from src.domains.sales_whatsapp.workflows.sales_session import HubaraSalesSessionWorkflow
+from src.domains.remarketing_whatsapp.workflows.remarketing import RemarketingSessionWorkflow
 from exoclaw_temporal.activities.conversation import build_prompt, record_turn
 from exoclaw_temporal.activities.llm import llm_chat
-from src.core.activities import execute_tool, send_whatsapp_message_activity  # Sobreescritura asíncrona de herramientas centralizada
+from src.core.activities import execute_tool, claim_conversation_routing, send_whatsapp_message_activity, read_workspace_memory_activity
 from src.core.temporal_client import get_temporal_client
-
-from src.domains.sales_whatsapp.service import SALES_QUEUE
 
 import sys
 import logging
 
 class InterceptHandler(logging.Handler):
     def emit(self, record):
-        # Get corresponding Loguru level if it exists.
         try:
             level = logger.level(record.levelname).name
         except ValueError:
             level = record.levelno
-
-        # Find caller from where originated the logged message.
         frame, depth = sys._getframe(6), 6
         while frame and frame.f_code.co_filename == logging.__file__:
             frame = frame.f_back
             depth += 1
-
         logger.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
 
 logging.basicConfig(handlers=[InterceptHandler()], level=logging.INFO, force=True)
 
+REMARKETING_QUEUE = "queue-remarketing-agent"
+
 async def run_worker():
-    """Worker Exclusivo para el Dominio de Ventas de WhatsApp."""
-    logger.info("Conectando Especialista (Ventas) al clúster Temporal mTLS...")
+    """Worker Exclusivo para el Dominio de Remarketing."""
+    logger.info("Conectando Especialista (Remarketing) al clúster Temporal mTLS...")
     client = await get_temporal_client()
     
     worker = Worker(
         client,
-        task_queue=SALES_QUEUE,
-        workflows=[HubaraSalesSessionWorkflow],
-        activities=[build_prompt, llm_chat, execute_tool, record_turn, send_whatsapp_message_activity],
+        task_queue=REMARKETING_QUEUE,
+        workflows=[RemarketingSessionWorkflow],
+        activities=[build_prompt, llm_chat, execute_tool, record_turn, claim_conversation_routing, send_whatsapp_message_activity, read_workspace_memory_activity],
     )
     
-    logger.info("😎 Sales Agent En Vivo. Escuchando la cola exclusiva: '{}'", SALES_QUEUE)
+    logger.info("🎯 Remarketing Agent En Vivo. Escuchando la cola exclusiva: '{}'", REMARKETING_QUEUE)
     await worker.run()
 
 if __name__ == "__main__":

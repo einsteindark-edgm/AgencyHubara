@@ -7,6 +7,7 @@ from src.core.config import API_BASE_LLMLITE ,DEFAULT_LLM_MODEL, DEEPSEEK_API_KE
 
 # Importaremos tools nativas o custom más adelante
 from exoclaw_tools_workspace.filesystem import ReadFileTool, WriteFileTool
+from src.domains.sales_whatsapp.tools.tags import ManageConversationTagTool
 
 def build_default_llm_config() -> LLMConfig:
     """Configuración inyectable base para el motor LLM."""
@@ -30,6 +31,7 @@ def get_base_tools_registry(workspace_path: Path) -> ToolRegistry:
     registry = ToolRegistry()
     registry.register(WriteFileTool(workspace=workspace_path))
     registry.register(ReadFileTool(workspace=workspace_path))
+    registry.register(ManageConversationTagTool(workspace=str(workspace_path)))
     # Para el proyecto serio, puedes registrar herramientas CRM aquí.
     return registry
 

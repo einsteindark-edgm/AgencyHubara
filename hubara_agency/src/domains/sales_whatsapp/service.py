@@ -6,10 +6,12 @@ import structlog
 logger = structlog.get_logger()
 from src.core.temporal_client import get_temporal_client
 from src.core.registries import build_default_llm_config, build_workspace_config, get_base_tools_registry, get_base_tools_json
-from exoclaw_temporal.session_based.workflows.agent_session import AgentSessionWorkflow
+from src.domains.sales_whatsapp.workflows.sales_session import HubaraSalesSessionWorkflow
 from exoclaw_temporal.config import SessionInput
 from src.domains.sales_whatsapp import integrations as whatsapp_client
-
+import json
+from src.core.config import WORKSPACE_VAULT_DIR
+from src.domains.remarketing_whatsapp.workflows.remarketing import RemarketingSessionWorkflow, _load_remarketing_brain
 SALES_QUEUE = "queue-sales-agent"
 
 def _load_shared_brain() -> list[str]:
@@ -44,57 +46,80 @@ async def process_incoming_message(body: dict):
                 
                 logger.info("WhatsApp Message Received", message_text=message_text, from_number=from_number)
                 
-                response_text = await _signal_temporal_and_poll(session_id, message_text)
-                
-                # Llamada agnóstica al Infra Cliente (Fragmentación de párrafos en múltiples mensajes)
-                if response_text:
-                    # Separamos el texto en párrafos para enviar burbujas separadas a Meta
-                    chunks = [chunk.strip() for chunk in response_text.split("\n\n") if chunk.strip()]
-                    for chunk in chunks:
-                        await whatsapp_client.send_message(phone_number_id, from_number, chunk)
-                        await asyncio.sleep(1.5)  # Breve latencia natural entre burbujas
+                # Signal the Temporal workflow. It will handle the response asynchronously.
+                await _signal_temporal_and_poll(session_id, message_text, phone_number_id)
                 
     except (KeyError, IndexError) as e:
         logger.error("Error parseando el payload de Meta", error=str(e))
 
 
-async def _signal_temporal_and_poll(session_id: str, message: str) -> str | None:
-    client = await get_temporal_client()
-    workflow_id = f"session-{session_id}"
-    handle = None
+async def _signal_temporal_and_poll(session_id: str, message: str, phone_number_id: str | None = None) -> str | None:
+    metadata_file = WORKSPACE_VAULT_DIR / session_id / "metadata.json"
+    metadata_file.parent.mkdir(parents=True, exist_ok=True)
+    active_route = "ventas"
+    data = {}
     
-    try:
-        handle = client.get_workflow_handle(workflow_id)
-        await handle.describe()  
-    except RPCError:
-        logger.info("Creando AgentSessionWorkflow", workflow_id=workflow_id)
-        llm = build_default_llm_config()
-        ws = build_workspace_config(session_id)
-        registry = get_base_tools_registry(Path(ws.path))
+    if metadata_file.exists():
+        try:
+            data = json.loads(metadata_file.read_text(encoding="utf-8"))
+            active_route = data.get("active_route", "ventas")
+        except json.JSONDecodeError:
+            pass
+            
+    if phone_number_id:
+        data["phone_number_id"] = phone_number_id
+        metadata_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    client = await get_temporal_client()
+    
+    # Intentamos la ruta de remarketing si está activa
+    if active_route == "remarketing":
+        workflow_id = f"remarketing-{session_id}"
+        logger.info("Routing webhook to Remarketing Agent", workflow_id=workflow_id)
+        workflow_class = RemarketingSessionWorkflow
+        plugin_context = _load_remarketing_brain()
         
-        handle = await client.start_workflow(
-            AgentSessionWorkflow.run,
-            SessionInput(
-                session_id=session_id,
-                channel="whatsapp",
-                chat_id=session_id,
-                llm=llm,
-                workspace=ws,
-                tool_definitions_json=get_base_tools_json(registry)
-            ),
-            id=workflow_id,
-            task_queue=SALES_QUEUE,
-        )
+        try:
+            handle = client.get_workflow_handle(workflow_id)
+            await handle.describe()
+        except RPCError:
+            # Si se murió el workflow de remarketing, hacemos downgrade a ventas
+            logger.warning("Remarketing workflow not found or finished, falling back to Sales")
+            active_route = "ventas"
+            
+    if active_route != "remarketing":
+        workflow_id = f"session-{session_id}"
+        logger.info("Routing webhook to Sales Agent", workflow_id=workflow_id)
+        workflow_class = HubaraSalesSessionWorkflow
+        plugin_context = _load_shared_brain()
+        
+        try:
+            handle = client.get_workflow_handle(workflow_id)
+            await handle.describe()  
+        except RPCError:
+            logger.info("Creando HubaraSalesSessionWorkflow", workflow_id=workflow_id)
+            llm = build_default_llm_config()
+            ws = build_workspace_config(session_id)
+            registry = get_base_tools_registry(Path(ws.path))
+            
+            handle = await client.start_workflow(
+                HubaraSalesSessionWorkflow.run,
+                SessionInput(
+                    session_id=session_id,
+                    channel="whatsapp",
+                    chat_id=session_id,
+                    llm=llm,
+                    workspace=ws,
+                    tool_definitions_json=get_base_tools_json(registry)
+                ),
+                id=workflow_id,
+                task_queue=SALES_QUEUE,
+            )
 
     await handle.signal(
-        AgentSessionWorkflow.send_message, # type: ignore[attr-defined]
-        args=[message, None, _load_shared_brain()]
+        workflow_class.send_message, # type: ignore[attr-defined]
+        args=[message, None, plugin_context]
     )
-
-    while True:
-        is_proc = await handle.query(AgentSessionWorkflow.is_processing) # type: ignore[attr-defined]
-        if not is_proc:
-            break
-        await asyncio.sleep(0.5)
-
-    return await handle.query(AgentSessionWorkflow.get_last_response) # type: ignore[attr-defined]
+    
+    # We return immediately. The actual WhatsApp send occurs asynchronously from within the workflow loop.
+    return None
