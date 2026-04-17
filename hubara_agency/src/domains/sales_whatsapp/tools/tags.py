@@ -44,6 +44,18 @@ class ManageConversationTagTool(Tool):
         
         data["tag"] = _tag
         data["motivo"] = _motivo
+        
+        if "status_history" not in data:
+            data["status_history"] = []
+            
+        import time
+        data["status_history"].append({
+            "tag": _tag,
+            "motivo": _motivo,
+            "active_route": data.get("active_route", "ventas"),
+            "timestamp": time.time()
+        })
+        
         metadata_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
         
         session_id = ctx.session_key if ctx else kwargs.get("session_id", "wa_unknown")

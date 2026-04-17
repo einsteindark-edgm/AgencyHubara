@@ -55,9 +55,16 @@ async def process_incoming_message(body: dict):
 
 async def _signal_temporal_and_poll(session_id: str, message: str, phone_number_id: str | None = None) -> str | None:
     metadata_file = WORKSPACE_VAULT_DIR / session_id / "metadata.json"
+    history_file = WORKSPACE_VAULT_DIR / session_id / "sessions" / f"{session_id}.jsonl"
+    history_file.parent.mkdir(parents=True, exist_ok=True)
     metadata_file.parent.mkdir(parents=True, exist_ok=True)
     active_route = "ventas"
     data = {}
+    
+    # 1. Asegurar el log de entrada del cliente antes de ir a memoria viva (Temporal)
+    with history_file.open("a", encoding="utf-8") as f:
+        user_event = {"role": "user", "content": message}
+        f.write(json.dumps(user_event, ensure_ascii=False) + "\n")
     
     if metadata_file.exists():
         try:

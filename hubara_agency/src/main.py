@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from src.domains.sales_whatsapp import api as whatsapp_api
+from src.domains.dashboard import api as dashboard_api
 
 app = FastAPI(
     title="Agency API",
@@ -9,6 +10,7 @@ app = FastAPI(
 
 # Registramos los adaptadores de Canales basados en Dominio.
 app.include_router(whatsapp_api.router, prefix="/api", tags=["WhatsApp_Sales_Domain"])
+app.include_router(dashboard_api.router, prefix="/api/dashboard", tags=["Dashboard"])
 
 @app.get("/")
 def health_check():
