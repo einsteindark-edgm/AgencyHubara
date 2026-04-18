@@ -380,3 +380,50 @@
   border-radius: 50%;
   border: 1px solid var(--accent-color);
 }
+
+/* Modal */
+.memory-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.memory-modal-content {
+  background: #141923; /* Same as center col roughly */
+  border: 1px solid var(--panel-border);
+  box-shadow: 0 16px 48px rgba(0,0,0,0.6);
+  border-radius: 16px;
+  width: 90%;
+  max-width: 800px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  color: var(--text-primary);
+}
+
+.memory-modal-header {
+  padding: 1.5rem;
+  border-bottom: 1px solid var(--panel-border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.memory-modal-header h2 {
+  font-size: 1.25rem;
+  margin: 0;
+}
+
+.memory-modal-body {
+  padding: 1.5rem;
+  overflow-y: auto;
+  font-size: 0.95rem;
+}

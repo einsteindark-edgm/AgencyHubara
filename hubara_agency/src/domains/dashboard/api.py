@@ -133,11 +133,17 @@ async def get_session_history(session_id: str):
         except json.JSONDecodeError:
             pass
 
+    memory_content = None
+    memory_file = session_path / "memory" / "MEMORY.md"
+    if memory_file.exists():
+        memory_content = memory_file.read_text(encoding="utf-8")
+
     return {
         "session_id": session_id,
         "phone_number": session_id.replace("wa_", ""),
         "tag": tag,
         "motivo": motivo,
+        "memory_content": memory_content,
         "active_agent_route": active_route,
         "phone_number_id": phone_number_id,
         "status_history": status_history,

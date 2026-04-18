@@ -101,7 +101,6 @@ class RemarketingSessionWorkflow:
         llm = build_default_llm_config()
         ws = build_workspace_config(session_id)
         registry = get_base_tools_registry(Path(ws.path))
-        registry.register(TransferToSalesAgentTool(workspace=str(ws.path)))
         
         # Leemos la metadata actual
         metadata_file = Path(ws.path) / "metadata.json"
@@ -151,7 +150,7 @@ class RemarketingSessionWorkflow:
         ))
 
         # Loop stateful del Remarketing
-        turn_count = 0
+        messages_processed = 0
         while True:
             try:
                 # Esperar mensajes (hasta el timeout de idle)
@@ -171,25 +170,41 @@ class RemarketingSessionWorkflow:
 
             while self._pending:
                 msg = self._pending.pop(0)
+                messages_processed += 1
                 self._processing = True
 
                 try:
                     output = await self._run_turn(input_data, msg)
                     self._last_response = output.final_content
-                    turn_count += 1
-                    
-                    if output.final_content and not getattr(self, '_force_shutdown', False):
-                        await workflow.execute_activity(
-                            send_whatsapp_message_activity,
-                            args=[session_id, output.final_content],
-                            start_to_close_timeout=workflow.timedelta(seconds=20),
-                        )
-                        workflow.logger.info(f"Remarketing respondió para sesión {session_id}.")
-                        
                     # Si el agente usó en esta vuelta la tool de transferir a ventas, apagamos esto.
                     if "transfer_to_sales_agent" in output.tools_used:
                         workflow.logger.info(f"Remarketing ha transferido la sesión de vuelta a Ventas. Fin de Remarketing Workflow.")
                         self._force_shutdown = True
+                    elif messages_processed > 1 and not getattr(self, '_force_shutdown', False):
+                        # Salvavidas DETERMINISTA: Si ya procesamos la réplica del usuario y el LLM alucinó y no usó la tool, lo forzamos.
+                        workflow.logger.info("Remarketing ignoró la transición. Forzando paso a Ventas de forma determinista.")
+                        await workflow.execute_activity(
+                            execute_tool,
+                            ExecuteToolInput(
+                                name="transfer_to_sales_agent",
+                                params={"resumen": "Usuario respondió: " + str(msg.message)[:60]},
+                                session_id=session_id,
+                                channel="whatsapp",
+                                chat_id=session_id,
+                                workspace=ws,
+                            ),
+                            start_to_close_timeout=workflow.timedelta(minutes=1)
+                        )
+                        self._force_shutdown = True
+                        
+                    if output.final_content and not getattr(self, '_force_shutdown', False):
+                        await workflow.execute_activity(
+                            send_whatsapp_message_activity,
+                            args=[session_id, output.final_content],
+                            start_to_close_timeout=workflow.timedelta(seconds=90),
+                            retry_policy=RetryPolicy(maximum_attempts=2)
+                        )
+                        workflow.logger.info(f"Remarketing respondió para sesión {session_id}.")
                         
                     if getattr(self, '_force_shutdown', False):
                         return

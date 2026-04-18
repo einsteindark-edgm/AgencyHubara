@@ -8,6 +8,7 @@ interface Props {
 
 export function RightColMetadata({ session }: Props) {
   const [details, setDetails] = useState<any>(null);
+  const [isMemoryModalOpen, setIsMemoryModalOpen] = useState(false);
 
   // We need to fetch the session specific details to get status_history etc.
   useEffect(() => {
@@ -32,40 +33,28 @@ export function RightColMetadata({ session }: Props) {
 
   const statusHistory = [...(details?.status_history || [])].reverse();
 
-  const combinedHistory = useMemo(() => {
-     let events: any[] = [];
+   const combinedHistory = useMemo(() => {
+      let events: any[] = [];
 
-     const msgs = details?.messages || [];
-     msgs.forEach((m: any) => {
-        if (["system_event", "agent_tool_call", "tool_execution_result"].includes(m.ui_type)) {
-           // Provide a fallback timestamp if missing to avoid NaN sorting
-           let ts = m.timestamp ? new Date(m.timestamp).getTime() : Date.now();
-           let title = "";
-           let desc = "";
+      const msgs = details?.messages || [];
+      msgs.forEach((m: any) => {
+         if (m.ui_type === "tool_execution_result") {
+            let ts = m.timestamp ? new Date(m.timestamp).getTime() : Date.now();
+            let title = `Tool Result: ${m.name || "System"}`;
+            let desc = m.content || "";
 
-           if (m.ui_type === "system_event") {
-              title = "System Event";
-              desc = m.content || "";
-           } else if (m.ui_type === "agent_tool_call") {
-              const calls = m.tool_calls?.map((tc: any) => tc.function.name).join(", ");
-              title = `Intent: ${calls}`;
-           } else if (m.ui_type === "tool_execution_result") {
-              title = `Tool Result: ${m.name || "System"}`;
-              desc = m.content || "";
-           }
+            events.push({
+               type: m.ui_type,
+               timestamp: ts,
+               title,
+               desc
+            });
+         }
+      });
 
-           events.push({
-              type: m.ui_type,
-              timestamp: ts,
-              title,
-              desc
-           });
-        }
-     });
-
-     events.sort((a, b) => b.timestamp - a.timestamp);
-     return events;
-  }, [details]);
+      events.sort((a, b) => b.timestamp - a.timestamp);
+      return events;
+   }, [details]);
 
   if (!session) {
     return (
@@ -77,6 +66,7 @@ export function RightColMetadata({ session }: Props) {
 
   const currentTag = details?.tag || session.tag;
   const currentMotivo = details?.motivo || session.motivo;
+  const currentMemory = details?.memory_content;
   const currentRoute = details?.active_agent_route || session.active_agent_route;
   const currentPhoneId = details?.phone_number_id || session.phone_number_id;
 
@@ -144,11 +134,32 @@ export function RightColMetadata({ session }: Props) {
 
       <div className="meta-section" style={{ borderBottom: "none" }}>
         <h3>AI Memory Summary</h3>
-        <div className="meta-card">
-           <p style={{ fontSize: "0.9rem", lineHeight: "1.5", color: "var(--text-primary)" }}>
-             {currentMotivo || "Waiting for conversational events to generate a memory summary..."}
-           </p>
+        <div style={{ marginTop: "1rem" }}>
+           <button 
+             className="pill-btn" 
+             style={{ width: "100%", padding: "0.75rem", borderRadius: "8px", background: "var(--agent-bubble)", color: "var(--accent-color)" }}
+             onClick={() => setIsMemoryModalOpen(true)}
+           >
+             Visualizar resumen de conversación
+           </button>
         </div>
+        
+        {/* Modal */}
+        {isMemoryModalOpen && (
+          <div className="memory-modal-overlay" onClick={() => setIsMemoryModalOpen(false)}>
+            <div className="memory-modal-content" onClick={e => e.stopPropagation()}>
+               <div className="memory-modal-header">
+                 <h2>Memory Summary</h2>
+                 <button onClick={() => setIsMemoryModalOpen(false)} style={{ background: "transparent", border: "none", color: "#fff", cursor: "pointer", fontSize: "1.5rem", padding: "0 0.5rem" }}>&times;</button>
+               </div>
+               <div className="memory-modal-body">
+                 <p style={{ whiteSpace: "pre-wrap", lineHeight: "1.6", color: "var(--text-primary)" }}>
+                   {currentMemory || currentMotivo || "No hay resumen de memoria disponible todavía."}
+                 </p>
+               </div>
+            </div>
+          </div>
+        )}
         
         {combinedHistory.length > 0 && (
           <div style={{ marginTop: "1.5rem" }}>

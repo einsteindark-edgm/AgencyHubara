@@ -108,7 +108,8 @@ class HubaraSalesSessionWorkflow:
                         await workflow.execute_activity(
                             send_whatsapp_message_activity,
                             args=[input.session_id, output.final_content],
-                            start_to_close_timeout=workflow.timedelta(seconds=20),
+                            start_to_close_timeout=workflow.timedelta(seconds=90),
+                            retry_policy=RetryPolicy(maximum_attempts=2)
                         )
                     
                     if getattr(self, '_force_shutdown', False):
