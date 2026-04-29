@@ -1,68 +1,37 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 
-from exoclaw_temporal.config import (
-    BuildPromptInput,
-    ExecuteToolInput,
-    LLMChatInput,
-    RecordTurnInput,
-    SessionInput,
-    TurnOutput,
-)
-import json
-import time
+from exoclaw_temporal.config import SessionInput
 
 with workflow.unsafe.imports_passed_through():
-    from typing import Any
-    from exoclaw_temporal.activities.conversation import build_prompt, record_turn
-    from exoclaw_temporal.activities.llm import llm_chat
-    from src.core.activities import execute_tool, claim_conversation_routing, send_whatsapp_message_activity, read_workspace_memory_activity
+    from src.core.activities import claim_conversation_routing, read_workspace_memory_activity
+    from src.core.infrastructure.whatsapp.activities import send_whatsapp_message_activity
+    from src.core.infrastructure.temporal.dispatcher_activities import (
+        start_or_signal_sales_workflow_activity,
+    )
+    from src.core.workflow_helpers import PendingMessage, run_agent_turn
+    from src.core.contracts import TransferDecision
+    from src.domains.remarketing_whatsapp.activities import build_remarketing_trigger_activity
+    from src.domains.remarketing_whatsapp.contracts import RemarketingSessionInput
     from src.core.registries import build_default_llm_config, build_workspace_config, get_base_tools_json, get_base_tools_registry
-    from src.domains.sales_whatsapp import integrations as whatsapp_client
-    from src.domains.sales_whatsapp.tools.routing import TransferToSalesAgentTool
+    from src.core.constants import ROUTE_REMARKETING, ROUTE_VENTAS
 
-
-_CONTINUE_AS_NEW_AFTER_TURNS = 50
 _IDLE_TIMEOUT = timedelta(hours=24)
 
-_LLM_OPTIONS = {
-    "start_to_close_timeout": timedelta(minutes=5),
-    "retry_policy": RetryPolicy(maximum_attempts=3, initial_interval=timedelta(seconds=2)),
-}
-_TOOL_OPTIONS = {
-    "start_to_close_timeout": timedelta(minutes=10),
-    "heartbeat_timeout": timedelta(seconds=30),
-    "retry_policy": RetryPolicy(maximum_attempts=2, initial_interval=timedelta(seconds=1)),
-}
-_CONV_OPTIONS = {
-    "start_to_close_timeout": timedelta(minutes=2),
-    "retry_policy": RetryPolicy(maximum_attempts=5, initial_interval=timedelta(seconds=1)),
-}
 
-@dataclass
-class PendingMessage:
-    message: str
-    media: list[str] | None = None
-    plugin_context: list[str] | None = None
+REMARKETING_BRAIN_DIR = Path(__file__).parent.parent / "shared_brain"
 
 
 def _load_remarketing_brain() -> list[str]:
-    """Carga los md del Cerebro de Remarketing."""
-    brain_dir = Path(__file__).parent.parent / "shared_brain"
-    files = ["identity.md", "knowledge.md", "instructions.md"]
-    context = []
-    for f in files:
-        filepath = brain_dir / f
-        if filepath.exists():
-            context.append(filepath.read_text(encoding="utf-8"))
-    return context
+    # Wrapper sobre `load_brain` mantenido para preservar la shape de history.
+    from src.core.brains import load_brain
+    return load_brain(REMARKETING_BRAIN_DIR)
 
 
 @workflow.defn(name="RemarketingWorkflow")
@@ -73,6 +42,7 @@ class RemarketingSessionWorkflow:
         self._pending: list[PendingMessage] = []
         self._last_response: str | None = None
         self._processing = False
+        self._force_shutdown: bool = False
 
     @workflow.signal
     async def send_message(
@@ -95,35 +65,30 @@ class RemarketingSessionWorkflow:
         return self._processing
 
     @workflow.run
-    async def run(self, session_id: str, motivo: str) -> None:
+    async def run(self, input: RemarketingSessionInput) -> None:
+        session_id = input.session_id
+        motivo = input.motivo
         workflow.logger.info(f"Activando Sesión Conversacional de Remarketing para session: {session_id}")
 
         llm = build_default_llm_config()
         ws = build_workspace_config(session_id)
         registry = get_base_tools_registry(Path(ws.path))
-        
-        # Leemos la metadata actual
-        metadata_file = Path(ws.path) / "metadata.json"
-        
-        # Reclamamos el enrutamiento INMEDIATAMENTE hacia "remarketing"
+
         await workflow.execute_activity(
             claim_conversation_routing,
-            args=[ws.path, "remarketing"],
-            start_to_close_timeout=workflow.timedelta(seconds=15),
+            args=[ws.path, ROUTE_REMARKETING],
+            start_to_close_timeout=timedelta(seconds=15),
         )
 
         try:
-            # Check if user woke up during our delay
             metadata_content = await workflow.execute_activity(
-                read_workspace_memory_activity, # Reusing activity to read a file or we can just read history
+                read_workspace_memory_activity,
                 args=[session_id],
-                start_to_close_timeout=workflow.timedelta(seconds=15),
+                start_to_close_timeout=timedelta(seconds=15),
             )
-            # Actually, to check history properly without new activity, we can just fetch the sessions file
-        except Exception as e:
+        except RuntimeError as e:
             workflow.logger.warn(f"No se pudo leer memoria o metadata: {e}")
-            
-        # 1. Construir el Input estándar
+
         input_data = SessionInput(
             session_id=session_id,
             channel="whatsapp",
@@ -131,40 +96,39 @@ class RemarketingSessionWorkflow:
             llm=llm,
             workspace=ws,
             tool_definitions_json=get_base_tools_json(registry),
-            turn_count=0
         )
 
-        # 2.5 Leer el memory.md del PVC generado por el Agente de Ventas
         memory_context = await workflow.execute_activity(
             read_workspace_memory_activity,
             args=[session_id],
-            start_to_close_timeout=workflow.timedelta(seconds=15),
+            start_to_close_timeout=timedelta(seconds=15),
         )
 
-        # 3. Inyectar el trigger proactivo inicial con el contexto de memoria si existe
-        system_trigger_msg = f"[SISTEMA INTERNO]: El cliente abortó o pausó la venta hace un tiempo. MOTIVO REGISTRADO DE CIERRE: '{motivo}'. MEMORIA DE EVENTOS PASADOS:{memory_context} Tu tarea es generar inmediatamente un saludo de contacto proactivo ofreciéndole envío gratis como beneficio para revivir la venta. REDACTA EL MENSAJE COMO SI LE ESTUVIERAS HABLANDO DIRECTAMENTE A ÉL POR WHATSAPP."
-        
+        system_trigger_msg = await workflow.execute_activity(
+            build_remarketing_trigger_activity,
+            args=[motivo, memory_context],
+            start_to_close_timeout=timedelta(seconds=10),
+            retry_policy=RetryPolicy(maximum_attempts=2),
+        )
+
         self._pending.append(PendingMessage(
-            message=system_trigger_msg, 
+            message=system_trigger_msg,
             plugin_context=_load_remarketing_brain()
         ))
 
-        # Loop stateful del Remarketing
         messages_processed = 0
         while True:
             try:
-                # Esperar mensajes (hasta el timeout de idle)
                 await workflow.wait_condition(
                     lambda: len(self._pending) > 0,
                     timeout=_IDLE_TIMEOUT,
                 )
             except asyncio.TimeoutError:
                 workflow.logger.info(f"Cliente no respondió al Remarketing en {session_id}. Apagando agente.")
-                # Rutear devuelta a ventas por seguridad y salir
                 await workflow.execute_activity(
                     claim_conversation_routing,
-                    args=[ws.path, "ventas"],
-                    start_to_close_timeout=workflow.timedelta(seconds=15),
+                    args=[ws.path, ROUTE_VENTAS],
+                    start_to_close_timeout=timedelta(seconds=15),
                 )
                 return
 
@@ -174,120 +138,52 @@ class RemarketingSessionWorkflow:
                 self._processing = True
 
                 try:
-                    output = await self._run_turn(input_data, msg)
-                    self._last_response = output.final_content
-                    # Si el agente usó en esta vuelta la tool de transferir a ventas, apagamos esto.
-                    if "transfer_to_sales_agent" in output.tools_used:
+                    result = await run_agent_turn(
+                        input_data,
+                        msg,
+                        fallback_plugin_context=_load_remarketing_brain(),
+                    )
+                    self._last_response = result.final_content
+
+                    # ADR-001: si la tool emitio una decision de transferir a Sales, ejecutarla
+                    # via activity dispatcher (durable, retriable).
+                    if result.transfer_decision is not None:
                         workflow.logger.info(f"Remarketing ha transferido la sesión de vuelta a Ventas. Fin de Remarketing Workflow.")
-                        self._force_shutdown = True
-                    elif messages_processed > 1 and not getattr(self, '_force_shutdown', False):
-                        # Salvavidas DETERMINISTA: Si ya procesamos la réplica del usuario y el LLM alucinó y no usó la tool, lo forzamos.
-                        workflow.logger.info("Remarketing ignoró la transición. Forzando paso a Ventas de forma determinista.")
                         await workflow.execute_activity(
-                            execute_tool,
-                            ExecuteToolInput(
-                                name="transfer_to_sales_agent",
-                                params={"resumen": "Usuario respondió: " + str(msg.message)[:60]},
-                                session_id=session_id,
-                                channel="whatsapp",
-                                chat_id=session_id,
-                                workspace=ws,
-                            ),
-                            start_to_close_timeout=workflow.timedelta(minutes=1)
+                            start_or_signal_sales_workflow_activity,
+                            result.transfer_decision,
+                            start_to_close_timeout=timedelta(seconds=30),
+                            retry_policy=RetryPolicy(maximum_attempts=3),
                         )
                         self._force_shutdown = True
-                        
-                    if output.final_content and not getattr(self, '_force_shutdown', False):
+                    elif messages_processed > 1 and not self._force_shutdown:
+                        # Salvavidas DETERMINISTA: si el usuario respondio y el LLM no
+                        # uso la tool de transferir, lo forzamos con una decision sintetica.
+                        workflow.logger.info("Remarketing ignoró la transición. Forzando paso a Ventas de forma determinista.")
+                        forced_decision = TransferDecision(
+                            session_id=session_id,
+                            target_route=ROUTE_VENTAS,
+                            summary="Usuario respondió: " + str(msg.message)[:60],
+                        )
+                        await workflow.execute_activity(
+                            start_or_signal_sales_workflow_activity,
+                            forced_decision,
+                            start_to_close_timeout=timedelta(seconds=30),
+                            retry_policy=RetryPolicy(maximum_attempts=3),
+                        )
+                        self._force_shutdown = True
+
+                    if result.final_content and not self._force_shutdown:
                         await workflow.execute_activity(
                             send_whatsapp_message_activity,
-                            args=[session_id, output.final_content],
-                            start_to_close_timeout=workflow.timedelta(seconds=90),
+                            args=[session_id, result.final_content],
+                            start_to_close_timeout=timedelta(seconds=90),
                             retry_policy=RetryPolicy(maximum_attempts=2)
                         )
                         workflow.logger.info(f"Remarketing respondió para sesión {session_id}.")
-                        
-                    if getattr(self, '_force_shutdown', False):
+
+                    if self._force_shutdown:
                         return
-                        
+
                 finally:
                     self._processing = False
-
-    async def _run_turn(self, input: SessionInput, msg: PendingMessage) -> TurnOutput:
-        messages: list[dict[str, Any]] = await workflow.execute_activity(
-            build_prompt,
-            BuildPromptInput(
-                session_id=input.session_id,
-                message=msg.message,
-                channel=input.channel,
-                chat_id=input.chat_id,
-                llm=input.llm,
-                workspace=input.workspace,
-                media=msg.media,
-                plugin_context=msg.plugin_context if msg.plugin_context else _load_remarketing_brain(),
-            ),
-            **_CONV_OPTIONS,  # type: ignore[arg-type]
-        )
-        initial_len = len(messages)
-
-        iteration = 0
-        final_content: str | None = None
-        tools_used: list[str] = []
-
-        while iteration < input.llm.max_iterations:
-            iteration += 1
-
-            response = await workflow.execute_activity(
-                llm_chat,
-                LLMChatInput(
-                    messages=messages,
-                    llm=input.llm,
-                    tool_definitions_json=input.tool_definitions_json,
-                ),
-                **_LLM_OPTIONS,  # type: ignore[arg-type]
-            )
-
-            if response.has_tool_calls:
-                messages = [*messages, response.to_assistant_message()]
-                for tc in response.tool_calls:
-                    tools_used.append(tc.name)
-                    result = await workflow.execute_activity(
-                        execute_tool,
-                        ExecuteToolInput(
-                            name=tc.name,
-                            params=tc.arguments,
-                            session_id=input.session_id,
-                            channel=input.channel,
-                            chat_id=input.chat_id,
-                            workspace=input.workspace,
-                        ),
-                        **_TOOL_OPTIONS,  # type: ignore[arg-type]
-                    )
-                    messages = [
-                        *messages,
-                        {"role": "tool", "tool_call_id": tc.id, "name": tc.name, "content": result},
-                    ]
-            else:
-                final_content = response.content
-                msg_dict: dict[str, Any] = {"role": "assistant", "content": final_content}
-                if response.reasoning_content is not None:
-                    msg_dict["reasoning_content"] = response.reasoning_content
-                if response.thinking_blocks:
-                    msg_dict["thinking_blocks"] = response.thinking_blocks
-                messages = [*messages, msg_dict]
-                break
-
-        if final_content is None:
-            final_content = f"Reached max iterations ({input.llm.max_iterations})."
-
-        await workflow.execute_activity(
-            record_turn,
-            RecordTurnInput(
-                session_id=input.session_id,
-                new_messages=messages[initial_len:],
-                llm=input.llm,
-                workspace=input.workspace,
-            ),
-            **_CONV_OPTIONS,  # type: ignore[arg-type]
-        )
-
-        return TurnOutput(final_content=final_content, tools_used=tools_used)
