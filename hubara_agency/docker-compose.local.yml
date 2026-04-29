@@ -34,6 +34,12 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "tctl --address temporal:7233 cluster health || temporal operator cluster health --address temporal:7233 || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
 
   temporal-ui:
     image: temporalio/ui:latest
@@ -57,6 +63,12 @@ services:
     environment:
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
 
   # 4. Entorno de Negocio: Puerta Web
   hubara-api:
@@ -76,8 +88,10 @@ services:
     volumes:
       - hubara-vault-local:/app/hubara_vault
     depends_on:
-      - temporal
-      - litellm
+      temporal:
+        condition: service_healthy
+      litellm:
+        condition: service_healthy
 
   # 5. Entorno de Negocio: Worker Especialista
   hubara-worker:
@@ -95,8 +109,10 @@ services:
     volumes:
       - hubara-vault-local:/app/hubara_vault
     depends_on:
-      - temporal
-      - litellm
+      temporal:
+        condition: service_healthy
+      litellm:
+        condition: service_healthy
 
   # 6. Entorno de Negocio: Worker de Remarketing Autónomo
   hubara-worker-remarketing:
@@ -114,8 +130,10 @@ services:
     volumes:
       - hubara-vault-local:/app/hubara_vault
     depends_on:
-      - temporal
-      - litellm
+      temporal:
+        condition: service_healthy
+      litellm:
+        condition: service_healthy
 
   # 7. Frontend
   hubara-frontend:

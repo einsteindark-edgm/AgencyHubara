@@ -2,22 +2,22 @@
 
 Guarda esta guía sagrada. Aquí tienes el paso a paso corporativo para controlar tu infraestructura completa (Docker, Base de Datos, UV Workspace y Workers).
 
-## Fase 1: Control de la Infraestructura en la Nube (Docker)
+## Fase 1: Control de la Infraestructura Local Dockerizada
 
-El `docker-compose.yml` sigue existiendo adentro de la carpeta reservada del framework original (`exoclaw-temporal`). Desde la raíz principal de tu proyecto (`/AgencyAgentic`), controlas Docker así:
+El compose principal del stack local vive en `hubara_agency/docker-compose.local.yml`. Levanta toda la stack: Postgres, Temporal, Temporal UI, LiteLLM, API, ambos workers (Sales + Remarketing) y el frontend. El compose de `exoclaw-temporal/docker-compose.yml` es un subset (solo infra) usado para sesiones puramente de framework.
 
 ### Para TUMBAR y Limpiar Todo
-Si quieres destruir el clúster por completo ("Apagarlo y borrar la base de datos de Temporal" para matar Workflows fantasmas antiguos):
+Si quieres destruir el clúster por completo ("Apagarlo y borrar la base de datos de Temporal" para matar Workflows fantasmas antiguos y forzar drain de history shape):
 ```bash
-docker compose -f exoclaw-temporal/docker-compose.yml down -v
+docker compose -f hubara_agency/docker-compose.local.yml down -v
 ```
-*(El `-v` es la magia que destruye el volumen de Postgres para que nazca limpio).*
+*(El `-v` es la magia que destruye el volumen de Postgres para que nazca limpio. Tambien limpia el volumen `hubara-vault-local`.)*
 
-### Para LEVANTAR Todo (Temporal + UI + LiteLLM)
+### Para LEVANTAR Todo
 ```bash
-docker compose -f exoclaw-temporal/docker-compose.yml up -d
+docker compose -f hubara_agency/docker-compose.local.yml up -d
 ```
-> **Tip:** Accede a la interfaz visual de Temporal en http://localhost:8233 para ver a tu Agente operando en vivo.
+> **Tip:** Accede a la interfaz visual de Temporal en http://localhost:8233 para ver a tu Agente operando en vivo. La API queda en :8000, el frontend en :5173, LiteLLM en :4000.
 
 ---
 

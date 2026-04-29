@@ -85,13 +85,14 @@ async def test_start_or_signal_sales_signals_running_workflow(monkeypatch: pytes
     assert fake_client.start_calls == []
     # Pero si se mando signal con el resumen
     assert len(fake_client.handle.signaled_with) == 1
-    args, _ = fake_client.handle.signaled_with[0]
-    # El segundo args es la lista de args del signal: [message, media, plugin_context]
-    signal_args = args[1]["args"] if "args" in args[1] else args[1].get("args", [])
-    # Como pasamos `args=[...]` la libreria envia el kwarg `args`. Validemos forma generica.
-    # Aceptamos ambas formas: (handle.send_message, args=[...]) o positional.
-    assert any("Remarketing acaba de recuperar al cliente" in str(a) for a in args[1].values()) or \
-           any("Remarketing acaba de recuperar al cliente" in str(a) for a in args)
+    pos_args, kw_args = fake_client.handle.signaled_with[0]
+    # `pos_args` contiene al menos el handler del signal (`HubaraSalesSessionWorkflow.send_message`).
+    # El payload del mensaje viaja como kwarg `args=[message, media, plugin_context]`
+    # (forma actual de la activity) o, en fallback, como positional adicional.
+    signal_payload = kw_args.get("args") or list(pos_args[1:])
+    flat = " ".join(str(item) for item in signal_payload)
+    assert "Remarketing acaba de recuperar al cliente" in flat
+    assert "quiere ver el catalogo" in flat
 
 
 async def test_schedule_remarketing_uses_start_delay(monkeypatch: pytest.MonkeyPatch) -> None:

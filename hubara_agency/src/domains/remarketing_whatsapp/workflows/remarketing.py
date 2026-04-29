@@ -2,36 +2,29 @@ from __future__ import annotations
 
 import asyncio
 from datetime import timedelta
-from pathlib import Path
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 
-from exoclaw_temporal.config import SessionInput
-
 with workflow.unsafe.imports_passed_through():
+    from exoclaw_temporal.config import SessionInput
     from src.core.activities import claim_conversation_routing, read_workspace_memory_activity
     from src.core.infrastructure.whatsapp.activities import send_whatsapp_message_activity
     from src.core.infrastructure.temporal.dispatcher_activities import (
         start_or_signal_sales_workflow_activity,
     )
+    from src.core.infrastructure.temporal.retry_policies import _LLM_OPTIONS
     from src.core.workflow_helpers import PendingMessage, run_agent_turn
     from src.core.contracts import TransferDecision
-    from src.domains.remarketing_whatsapp.activities import build_remarketing_trigger_activity
+    from src.domains.remarketing_whatsapp.activities import (
+        bootstrap_remarketing_session_activity,
+        build_remarketing_trigger_activity,
+        load_remarketing_brain_activity,
+    )
     from src.domains.remarketing_whatsapp.contracts import RemarketingSessionInput
-    from src.core.registries import build_default_llm_config, build_workspace_config, get_base_tools_json, get_base_tools_registry
     from src.core.constants import ROUTE_REMARKETING, ROUTE_VENTAS
 
 _IDLE_TIMEOUT = timedelta(hours=24)
-
-
-REMARKETING_BRAIN_DIR = Path(__file__).parent.parent / "shared_brain"
-
-
-def _load_remarketing_brain() -> list[str]:
-    # Wrapper sobre `load_brain` mantenido para preservar la shape de history.
-    from src.core.brains import load_brain
-    return load_brain(REMARKETING_BRAIN_DIR)
 
 
 @workflow.defn(name="RemarketingWorkflow")
@@ -43,6 +36,7 @@ class RemarketingSessionWorkflow:
         self._last_response: str | None = None
         self._processing = False
         self._force_shutdown: bool = False
+        self._brain_cache: list[str] | None = None
 
     @workflow.signal
     async def send_message(
@@ -64,38 +58,35 @@ class RemarketingSessionWorkflow:
     def is_processing(self) -> bool:
         return self._processing
 
+    async def _ensure_brain(self) -> list[str]:
+        if self._brain_cache is None:
+            self._brain_cache = await workflow.execute_activity(
+                load_remarketing_brain_activity,
+                start_to_close_timeout=timedelta(seconds=10),
+                retry_policy=RetryPolicy(maximum_attempts=3),
+            )
+        return self._brain_cache
+
     @workflow.run
     async def run(self, input: RemarketingSessionInput) -> None:
         session_id = input.session_id
         motivo = input.motivo
         workflow.logger.info(f"Activando Sesión Conversacional de Remarketing para session: {session_id}")
 
-        llm = build_default_llm_config()
-        ws = build_workspace_config(session_id)
-        registry = get_base_tools_registry(Path(ws.path))
+        # Bootstrap: construye SessionInput fuera del workflow (R-DET).
+        # Reemplaza el `build_workspace_config` + `get_base_tools_registry` que
+        # antes vivian dentro del @workflow.run.
+        input_data: SessionInput = await workflow.execute_activity(
+            bootstrap_remarketing_session_activity,
+            args=[session_id, motivo],
+            **_LLM_OPTIONS,
+        )
+        ws_path = input_data.workspace.path
 
         await workflow.execute_activity(
             claim_conversation_routing,
-            args=[ws.path, ROUTE_REMARKETING],
+            args=[ws_path, ROUTE_REMARKETING],
             start_to_close_timeout=timedelta(seconds=15),
-        )
-
-        try:
-            metadata_content = await workflow.execute_activity(
-                read_workspace_memory_activity,
-                args=[session_id],
-                start_to_close_timeout=timedelta(seconds=15),
-            )
-        except RuntimeError as e:
-            workflow.logger.warn(f"No se pudo leer memoria o metadata: {e}")
-
-        input_data = SessionInput(
-            session_id=session_id,
-            channel="whatsapp",
-            chat_id=session_id,
-            llm=llm,
-            workspace=ws,
-            tool_definitions_json=get_base_tools_json(registry),
         )
 
         memory_context = await workflow.execute_activity(
@@ -113,7 +104,7 @@ class RemarketingSessionWorkflow:
 
         self._pending.append(PendingMessage(
             message=system_trigger_msg,
-            plugin_context=_load_remarketing_brain()
+            plugin_context=await self._ensure_brain(),
         ))
 
         messages_processed = 0
@@ -127,7 +118,7 @@ class RemarketingSessionWorkflow:
                 workflow.logger.info(f"Cliente no respondió al Remarketing en {session_id}. Apagando agente.")
                 await workflow.execute_activity(
                     claim_conversation_routing,
-                    args=[ws.path, ROUTE_VENTAS],
+                    args=[ws_path, ROUTE_VENTAS],
                     start_to_close_timeout=timedelta(seconds=15),
                 )
                 return
@@ -141,14 +132,14 @@ class RemarketingSessionWorkflow:
                     result = await run_agent_turn(
                         input_data,
                         msg,
-                        fallback_plugin_context=_load_remarketing_brain(),
+                        fallback_plugin_context=await self._ensure_brain(),
                     )
                     self._last_response = result.final_content
 
                     # ADR-001: si la tool emitio una decision de transferir a Sales, ejecutarla
                     # via activity dispatcher (durable, retriable).
                     if result.transfer_decision is not None:
-                        workflow.logger.info(f"Remarketing ha transferido la sesión de vuelta a Ventas. Fin de Remarketing Workflow.")
+                        workflow.logger.info("Remarketing ha transferido la sesión de vuelta a Ventas. Fin de Remarketing Workflow.")
                         await workflow.execute_activity(
                             start_or_signal_sales_workflow_activity,
                             result.transfer_decision,

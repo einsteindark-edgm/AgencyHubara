@@ -1,12 +1,25 @@
-from fastapi import APIRouter, Request, HTTPException, BackgroundTasks
-from src.core.config import WHATSAPP_VERIFY_TOKEN
-from src.domains.sales_whatsapp import service as whatsapp_service
-from src.domains.sales_whatsapp.parsers import parse_whatsapp_inbound
+"""Driving adapter HTTP del dominio Sales (FastAPI router).
+
+Recibe el webhook de WhatsApp Cloud, parsea el body (parser puro), y delega al
+`IngestInboundMessage` use case via el composition root. Cero filesystem aqui.
+
+NOTA F9: el archivo se mantiene en `src/domains/sales_whatsapp/api.py` para
+preservar el import path que usa `src/main.py`. Mover a
+`interfaces/http/api.py` queda como follow-up explicito (PR aparte).
+"""
+from __future__ import annotations
+
 import structlog
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+
+from src.core.config import WHATSAPP_VERIFY_TOKEN
+from src.domains.sales_whatsapp.composition import build_ingest_use_case
+from src.domains.sales_whatsapp.parsers import parse_whatsapp_inbound
 
 logger = structlog.get_logger()
 
 router = APIRouter()
+
 
 @router.get("/webhook")
 async def verify_webhook(request: Request):
@@ -36,5 +49,6 @@ async def handle_whatsapp_webhook(request: Request, background_tasks: Background
         # Status update or other non-message event: ack 200 without dispatch.
         return {"status": "ok"}
 
-    background_tasks.add_task(whatsapp_service.process_incoming_message, parsed)
+    use_case = build_ingest_use_case()
+    background_tasks.add_task(use_case.execute, parsed)
     return {"status": "ok"}

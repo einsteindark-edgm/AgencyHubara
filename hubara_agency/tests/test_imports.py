@@ -35,7 +35,12 @@ def test_parsers_importable() -> None:
     assert hasattr(mod, "WhatsAppMessage")
 
 
-def test_legacy_integrations_shim_redirects_to_infrastructure() -> None:
-    legacy = importlib.import_module("src.domains.sales_whatsapp.integrations")
-    new = importlib.import_module("src.core.infrastructure.whatsapp.client")
-    assert legacy.send_message is new.send_message
+def test_whatsapp_client_canonical_location_importable() -> None:
+    """Tras F6.4 el shim `sales_whatsapp.integrations` fue eliminado. La unica
+    ubicacion canonica del cliente HTTP de WhatsApp es
+    `src.core.infrastructure.whatsapp.client`. Este test bloquea regresiones
+    accidentales de path o de simbolo exportado.
+    """
+    mod = importlib.import_module("src.core.infrastructure.whatsapp.client")
+    assert hasattr(mod, "send_message")
+    assert callable(mod.send_message)

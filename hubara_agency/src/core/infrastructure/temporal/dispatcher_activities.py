@@ -11,23 +11,14 @@ Temporal aplica retry y replay sobre la activity, no sobre la tool.
 from __future__ import annotations
 
 from datetime import timedelta
-from pathlib import Path
 
 from temporalio import activity
 from temporalio.client import WorkflowExecutionStatus
 from temporalio.exceptions import WorkflowAlreadyStartedError
 from temporalio.service import RPCError
 
-from exoclaw_temporal.config import SessionInput
-
 from src.core.constants import SALES_QUEUE, REMARKETING_QUEUE
 from src.core.contracts import ScheduleRemarketingDecision, TransferDecision
-from src.core.registries import (
-    build_default_llm_config,
-    build_workspace_config,
-    get_base_tools_json,
-    get_base_tools_registry,
-)
 from src.core.temporal_client import get_temporal_client
 
 
@@ -39,6 +30,7 @@ async def start_or_signal_sales_workflow_activity(decision: TransferDecision) ->
     """
     # Imports locales para evitar ciclos: el workflow importa este modulo a traves
     # de `imports_passed_through`, y workflows no deben importarse mutuamente.
+    from src.domains.sales_whatsapp.contracts import SalesSessionInput
     from src.domains.sales_whatsapp.workflows.sales_session import HubaraSalesSessionWorkflow
 
     session_id = decision.session_id
@@ -54,21 +46,12 @@ async def start_or_signal_sales_workflow_activity(decision: TransferDecision) ->
         if desc.status != WorkflowExecutionStatus.RUNNING:
             raise RuntimeError("Sales workflow not running")
     except (RPCError, RuntimeError):
-        llm = build_default_llm_config()
-        ws = build_workspace_config(session_id)
-        registry = get_base_tools_registry(Path(ws.path))
-
+        # F7: el dispatcher ya no construye SessionInput. El workflow lo arma
+        # via `bootstrap_sales_session_activity` como primera activity.
         try:
             handle = await client.start_workflow(
                 HubaraSalesSessionWorkflow.run,
-                SessionInput(
-                    session_id=session_id,
-                    channel="whatsapp",
-                    chat_id=session_id,
-                    llm=llm,
-                    workspace=ws,
-                    tool_definitions_json=get_base_tools_json(registry),
-                ),
+                SalesSessionInput(session_id=session_id),
                 id=workflow_id,
                 task_queue=SALES_QUEUE,
             )

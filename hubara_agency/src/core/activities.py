@@ -16,6 +16,7 @@ from exoclaw.agent.tools.protocol import ToolContext
 from exoclaw_temporal.config import ExecuteToolInput
 
 from src.core.registries import get_base_tools_registry
+from src.core.tool_extensions import apply_tool_extensions
 from src.core.infrastructure.temporal.heartbeat import with_heartbeat
 from src.core.config import WORKSPACE_VAULT_DIR
 
@@ -24,9 +25,12 @@ from src.core.config import WORKSPACE_VAULT_DIR
 async def execute_tool(input: ExecuteToolInput) -> str:
     """Implementación agnóstica de ejecución de herramientas con control de pulsos (Heartbeat) de Temporal."""
 
-    registry = get_base_tools_registry(Path(input.workspace.path))
-    from src.domains.sales_whatsapp.tools.routing import TransferToSalesAgentTool
-    registry.register(TransferToSalesAgentTool(workspace=str(input.workspace.path)))
+    workspace_path = Path(input.workspace.path)
+    registry = get_base_tools_registry(workspace_path)
+    # NEW-5 cerrado: el registry de tools por dominio se inyecta via
+    # `register_tool_extension(...)` en el `worker.py` de cada dominio.
+    # `execute_tool` ya NO importa `src.domains.*` por path concreto.
+    apply_tool_extensions(registry, workspace_path)
 
     ctx = ToolContext(
         session_key=input.session_id,

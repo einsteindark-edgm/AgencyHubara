@@ -1,0 +1,1 @@
+- [Agent coordination](agent_coordination/README.md) — shared awareness layer for the agentic OS (active work, activity log, ADRs)

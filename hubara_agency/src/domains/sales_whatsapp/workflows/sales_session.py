@@ -13,8 +13,13 @@ with workflow.unsafe.imports_passed_through():
         schedule_remarketing_workflow_activity,
         start_or_signal_sales_workflow_activity,
     )
+    from src.core.infrastructure.temporal.retry_policies import _LLM_OPTIONS
     from src.core.workflow_helpers import PendingMessage, run_agent_turn
-    from src.domains.sales_whatsapp.activities import decide_ghosting_action
+    from src.domains.sales_whatsapp.activities import (
+        bootstrap_sales_session_activity,
+        decide_ghosting_action,
+    )
+    from src.domains.sales_whatsapp.contracts import SalesSessionInput
 
 _CONTINUE_AS_NEW_AFTER_TURNS = 50
 
@@ -51,7 +56,16 @@ class HubaraSalesSessionWorkflow:
         return self._processing
 
     @workflow.run
-    async def run(self, input: SessionInput) -> None:
+    async def run(self, input: SalesSessionInput) -> None:
+        # Bootstrap: construye SessionInput fuera del workflow (R-DET).
+        # Reemplaza el `build_workspace_config` + `get_base_tools_registry`
+        # que antes ejecutaba el caller (service.py / dispatcher_activities)
+        # antes de `start_workflow`. Patron simetrico al de Remarketing (F6.1).
+        session: SessionInput = await workflow.execute_activity(
+            bootstrap_sales_session_activity,
+            args=[input.session_id],
+            **_LLM_OPTIONS,
+        )
         turn_count = input.turn_count
 
         while True:
@@ -61,7 +75,7 @@ class HubaraSalesSessionWorkflow:
                     timeout=_IDLE_TIMEOUT,
                 )
             except asyncio.TimeoutError:
-                workflow.logger.info(f"Ghosting detectado para sesión {input.session_id}. Inyectando trigger de auto-etiquetado.")
+                workflow.logger.info(f"Ghosting detectado para sesión {session.session_id}. Inyectando trigger de auto-etiquetado.")
                 ghost_trigger = await workflow.execute_activity(
                     decide_ghosting_action,
                     start_to_close_timeout=timedelta(seconds=10),
@@ -76,7 +90,7 @@ class HubaraSalesSessionWorkflow:
                 self._processing = True
 
                 try:
-                    result = await run_agent_turn(input, msg)
+                    result = await run_agent_turn(session, msg)
                     self._last_response = result.final_content
                     turn_count += 1
 
@@ -100,13 +114,13 @@ class HubaraSalesSessionWorkflow:
                         # Evitamos enviar respuestas vacías o alucinar respuestas internas durante auto-cierres
                         await workflow.execute_activity(
                             send_whatsapp_message_activity,
-                            args=[input.session_id, result.final_content],
+                            args=[session.session_id, result.final_content],
                             start_to_close_timeout=timedelta(seconds=90),
                             retry_policy=RetryPolicy(maximum_attempts=2)
                         )
 
                     if self._force_shutdown:
-                        workflow.logger.info(f"Auto-diagnóstico concluido. Apagando sesión {input.session_id} por abandono de usuario o transferencia.")
+                        workflow.logger.info(f"Auto-diagnóstico concluido. Apagando sesión {session.session_id} por abandono de usuario o transferencia.")
                         return
 
                 finally:
@@ -116,13 +130,8 @@ class HubaraSalesSessionWorkflow:
             if turn_count >= _CONTINUE_AS_NEW_AFTER_TURNS and not self._pending:
                 workflow.logger.info("Reached {} turns, continuing as new", _CONTINUE_AS_NEW_AFTER_TURNS)
                 workflow.continue_as_new(
-                    SessionInput(
-                        session_id=input.session_id,
-                        channel=input.channel,
-                        chat_id=input.chat_id,
-                        llm=input.llm,
-                        workspace=input.workspace,
-                        tool_definitions_json=input.tool_definitions_json,
+                    SalesSessionInput(
+                        session_id=session.session_id,
                         turn_count=turn_count,
                     )
                 )
