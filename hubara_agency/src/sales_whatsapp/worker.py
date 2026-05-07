@@ -3,32 +3,39 @@ import asyncio
 from loguru import logger
 from temporalio.worker import Worker
 
-from src.core.activities import execute_tool
-from src.core.constants import SALES_QUEUE
-from src.core.infrastructure.temporal.dispatcher_activities import (
+from src.platform.temporal.activities import execute_tool
+from src.platform.constants import SALES_QUEUE
+from src.platform.temporal.dispatcher import (
     schedule_remarketing_workflow_activity,
     start_or_signal_sales_workflow_activity,
 )
-from src.core.infrastructure.whatsapp.activities import send_whatsapp_message_activity
-from src.core.logging import setup_logging
-from src.core.temporal_client import get_temporal_client
-from src.core.tool_extensions import register_tool_extension
-from src.domains.sales_whatsapp.activities import (
+from src.platform.whatsapp.activities import send_whatsapp_message_activity
+from src.platform.logging import setup_logging
+from src.platform.temporal.client import get_temporal_client
+from src.platform.tool_extensions import register_tool_extension
+from src.sales_whatsapp.activities import (
     bootstrap_sales_session_activity,
     decide_ghosting_action,
 )
-from src.domains.sales_whatsapp.tools.routing import TransferToSalesAgentTool
-from src.domains.sales_whatsapp.workflows.sales_session import HubaraSalesSessionWorkflow
+from src.sales_whatsapp.tools.routing import TransferToSalesAgentTool
+from src.sales_whatsapp.tools.tags import ManageConversationTagTool
+from src.sales_whatsapp.workflows.sales_session import HubaraSalesSessionWorkflow
 from exoclaw_temporal.activities.conversation import build_prompt, record_turn
 from exoclaw_temporal.activities.llm import llm_chat
 
 setup_logging()
 
-# NEW-5 cerrado: el composition root del worker de Sales registra la
-# tool de transfer. `execute_tool` la consume via `apply_tool_extensions`.
+# NEW-5 cerrado: el composition root del worker de Sales registra las tools
+# especificas del dominio. `execute_tool` las consume via
+# `apply_tool_extensions`. PR-C movio `ManageConversationTagTool` aqui desde
+# `core/registries.py` (DIP fix: core no debe conocer tools de dominios).
 register_tool_extension(
     "sales.transfer_to_sales_agent",
     lambda workspace: TransferToSalesAgentTool(workspace=str(workspace)),
+)
+register_tool_extension(
+    "sales.manage_conversation_tag",
+    lambda workspace: ManageConversationTagTool(workspace=str(workspace)),
 )
 
 

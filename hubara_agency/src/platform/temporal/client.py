@@ -1,6 +1,6 @@
 import os
 from temporalio.client import Client, TLSConfig
-from src.core.config import (
+from src.platform.config import (
     TEMPORAL_URL, 
     TEMPORAL_NAMESPACE,
     TEMPORAL_TLS_CERT_PATH,

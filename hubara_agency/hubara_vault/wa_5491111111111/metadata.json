@@ -1,0 +1,13 @@
+{
+  "active_route": "ventas",
+  "tag": "RETOMA_VENTA",
+  "motivo": "quiere precio nuevo",
+  "status_history": [
+    {
+      "tag": "RETOMA_VENTA",
+      "motivo": "quiere precio nuevo",
+      "active_route": "ventas",
+      "timestamp": 1778189329.197175
+    }
+  ]
+}

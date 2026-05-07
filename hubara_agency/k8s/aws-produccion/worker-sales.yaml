@@ -18,7 +18,7 @@ spec:
           image: hubara-agency-prod:latest
           imagePullPolicy: Always
           # Ejecutamos explícitamente el módulo del dominio de ventas
-          command: ["python", "-m", "hubara_agency.src.domains.sales_whatsapp.worker"]
+          command: ["python", "-m", "hubara_agency.src.sales_whatsapp.worker"]
           env:
             - name: API_BASE_LLMLITE
               value: "http://litellm-proxy.default.svc.cluster.local:4000"

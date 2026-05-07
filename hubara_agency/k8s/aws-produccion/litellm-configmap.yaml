@@ -8,7 +8,7 @@ data:
     model_list:
       - model_name: sales-agent
         litellm_params:
-          model: deepseek/deepseek-v3.2-exp
+          model: deepseek/deepseek-v4-flash
           api_key: "os.environ/DEEPSEEK_API_KEY"
           override_raw_request_params:
           api_key: "os.environ/DEEPSEEK_API_KEY"

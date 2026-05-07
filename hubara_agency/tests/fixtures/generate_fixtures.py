@@ -44,22 +44,31 @@ from exoclaw_temporal.config import (  # noqa: E402
     SessionInput,
     WorkspaceConfig,
 )
-from src.domains.sales_whatsapp.workflows.sales_session import (  # noqa: E402
+from src.sales_whatsapp.workflows.sales_session import (  # noqa: E402
     HubaraSalesSessionWorkflow,
 )
-from src.domains.sales_whatsapp.contracts import (  # noqa: E402
+from src.sales_whatsapp.contracts import (  # noqa: E402
     SalesSessionInput,
 )
-from src.domains.remarketing_whatsapp.workflows.remarketing import (  # noqa: E402
+from src.remarketing_whatsapp.workflows.remarketing import (  # noqa: E402
     RemarketingSessionWorkflow,
 )
-from src.domains.remarketing_whatsapp.contracts import (  # noqa: E402
+from src.remarketing_whatsapp.contracts import (  # noqa: E402
     RemarketingSessionInput,
 )
 
 FIXTURES_DIR = Path(__file__).parent
-SALES_FIXTURE = FIXTURES_DIR / "history_sales_session_v1.json"
-REMARKETING_FIXTURE = FIXTURES_DIR / "history_remarketing_session_v1.json"
+# v2: PR-A del refactor DEHA workspace cambia la signature de
+# `bootstrap_sales_session_activity(session_id: str)` ->
+# `bootstrap_sales_session_activity(input: SalesSessionInput)` para hacer la
+# activity extensible (futuros campos del DTO no rompen el shape).
+SALES_FIXTURE = FIXTURES_DIR / "history_sales_session_v2.json"
+# v3: PR-B del refactor DEHA workspace de remarketing elimina la activity
+# `load_remarketing_brain_activity` del workflow body. La identidad / tono /
+# catalogo del agente entran al system prompt via `ContextBuilder` desde
+# `workspace/*.md` durante `build_prompt`. Como cambio la sequence de
+# activities en la history, se bumpea fixture v2 -> v3 (history shape changed).
+REMARKETING_FIXTURE = FIXTURES_DIR / "history_remarketing_session_v3.json"
 
 
 # ---------------------------------------------------------------------------
@@ -139,13 +148,19 @@ async def mock_build_remarketing_trigger_activity(motivo: str, memory_context: s
 
 @activity.defn(name="bootstrap_remarketing_session_activity")
 async def mock_bootstrap_remarketing_session_activity(
-    session_id: str, motivo: str
+    input: RemarketingSessionInput,
 ) -> SessionInput:
-    """Mock determinista: retorna SessionInput sin tocar filesystem."""
+    """Mock determinista del bootstrap de Remarketing (PR-A workspace refactor).
+
+    Recibe el `RemarketingSessionInput` completo (en lugar de
+    `(session_id: str, motivo: str)`) para alinear con la signature productiva
+    post-PR-A. PR-B sera el switchover en el cuerpo de la activity (consumir
+    `input.runtime_workspace_path`).
+    """
     return SessionInput(
-        session_id=session_id,
+        session_id=input.session_id,
         channel="whatsapp",
-        chat_id=session_id,
+        chat_id=input.session_id,
         llm=LLMConfig(
             model="fixture-model",
             api_key="fixture-key",
@@ -154,19 +169,23 @@ async def mock_bootstrap_remarketing_session_activity(
             max_tokens=512,
             max_iterations=2,
         ),
-        workspace=WorkspaceConfig(path="/tmp/fixture-workspace"),
+        workspace=WorkspaceConfig(path="/tmp/fixture-workspace-remarketing"),
         tool_definitions_json="[]",
         turn_count=0,
     )
 
 
 @activity.defn(name="bootstrap_sales_session_activity")
-async def mock_bootstrap_sales_session_activity(session_id: str) -> SessionInput:
-    """Mock determinista del bootstrap de Sales (F7). Sin filesystem."""
+async def mock_bootstrap_sales_session_activity(input: SalesSessionInput) -> SessionInput:
+    """Mock determinista del bootstrap de Sales (PR-A workspace refactor).
+
+    Recibe el `SalesSessionInput` completo (en lugar de `session_id: str`) para
+    alinear con la signature productiva post-PR-A.
+    """
     return SessionInput(
-        session_id=session_id,
+        session_id=input.session_id,
         channel="whatsapp",
-        chat_id=session_id,
+        chat_id=input.session_id,
         llm=LLMConfig(
             model="fixture-model",
             api_key="fixture-key",
@@ -179,11 +198,6 @@ async def mock_bootstrap_sales_session_activity(session_id: str) -> SessionInput
         tool_definitions_json="[]",
         turn_count=0,
     )
-
-
-@activity.defn(name="load_remarketing_brain_activity")
-async def mock_load_remarketing_brain_activity() -> list[str]:
-    return ["fixture-identity", "fixture-knowledge", "fixture-instructions"]
 
 
 SALES_ACTIVITIES = [
@@ -209,7 +223,8 @@ REMARKETING_ACTIVITIES = [
     mock_read_workspace_memory_activity,
     mock_build_remarketing_trigger_activity,
     mock_bootstrap_remarketing_session_activity,
-    mock_load_remarketing_brain_activity,
+    # PR-B: `mock_load_remarketing_brain_activity` ya no se necesita — el
+    # workflow no invoca la activity (la identidad vive en `workspace/*.md`).
     mock_start_or_signal_sales_workflow,
     mock_schedule_remarketing_workflow,
 ]
@@ -269,16 +284,23 @@ async def generate_remarketing_fixture(env: WorkflowEnvironment) -> None:
     """Remarketing happy-path:
       1) El workflow se autoboostrappea (bootstrap_remarketing_session_activity).
       2) Llama claim_conversation_routing, read_workspace_memory_activity,
-         build_remarketing_trigger_activity, load_remarketing_brain_activity.
+         build_remarketing_trigger_activity. PR-B: ya NO llama
+         `load_remarketing_brain_activity` — la identidad / tono / catalogo
+         viven en `workspace/*.md` y los lee `ContextBuilder` en `build_prompt`.
       3) Procesa el system trigger (1 turno LLM mockeado, sin tool calls).
       4) Espera idle (24h) -> claim_conversation_routing(VENTAS) -> return.
     """
     task_queue = f"fixture-remarketing-{uuid.uuid4()}"
     workflow_id = f"fixture-remarketing-wf-{uuid.uuid4()}"
 
+    # PR-B: `runtime_workspace_path` debe estar presente. La produccion failfast
+    # con RuntimeError si falta. El mock de `bootstrap_remarketing_session_activity`
+    # no la consume (devuelve un SessionInput fijo), pero el DTO viaja con un
+    # valor real para shape simetrico con la produccion.
     rem_input = RemarketingSessionInput(
         session_id="wa_fixture_remarketing",
         motivo="fixture-motivo",
+        runtime_workspace_path="/tmp/fixture-workspace-remarketing",
     )
 
     async with Worker(

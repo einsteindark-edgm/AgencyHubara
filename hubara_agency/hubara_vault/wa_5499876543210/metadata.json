@@ -1,0 +1,18 @@
+{
+  "tag": "INTERESADO",
+  "motivo": "dud\u00f3 del precio",
+  "status_history": [
+    {
+      "tag": "INTERESADO",
+      "motivo": "dud\u00f3 del precio",
+      "active_route": "ventas",
+      "timestamp": 1778189329.178058
+    },
+    {
+      "tag": "INTERESADO",
+      "motivo": "dud\u00f3 del precio",
+      "active_route": "ventas",
+      "timestamp": 1778189498.760545
+    }
+  ]
+}

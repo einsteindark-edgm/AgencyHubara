@@ -11,10 +11,10 @@ import os
 
 from temporalio import activity
 
-from src.core.config import WORKSPACE_VAULT_DIR
-from src.core.constants import WHATSAPP_SESSION_PREFIX
-from src.core.infrastructure.temporal.heartbeat import with_heartbeat
-from src.core.infrastructure.whatsapp import client as whatsapp_client
+from src.platform.config import WORKSPACE_VAULT_DIR
+from src.platform.constants import WHATSAPP_SESSION_PREFIX
+from src.platform.temporal.heartbeat import with_heartbeat
+from src.platform.whatsapp import client as whatsapp_client
 
 
 @activity.defn(name="send_whatsapp_message_activity")

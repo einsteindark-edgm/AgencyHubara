@@ -19,35 +19,43 @@ from typing import Any
 import pytest
 from temporalio.testing import ActivityEnvironment
 
-from src.core.contracts import ScheduleRemarketingDecision, TransferDecision
+from src.platform.contracts import ScheduleRemarketingDecision, TransferDecision
 
 
 def test_dispatcher_module_exports_two_activities() -> None:
-    import src.core.infrastructure.temporal.dispatcher_activities as mod
+    import src.platform.temporal.dispatcher as mod
     # Ambas funciones existen y son corutinas
     assert inspect.iscoroutinefunction(mod.start_or_signal_sales_workflow_activity)
     assert inspect.iscoroutinefunction(mod.schedule_remarketing_workflow_activity)
 
 
 class _FakeHandle:
-    def __init__(self) -> None:
+    def __init__(self, describe_status: str = "RUNNING", describe_raises: bool = False) -> None:
         self.signaled_with: list[tuple[Any, ...]] = []
-        self.described_status = None
+        self.terminated_with_reason: str | None = None
+        self._describe_status = describe_status
+        self._describe_raises = describe_raises
 
     async def describe(self) -> Any:
+        if self._describe_raises:
+            from temporalio.service import RPCError, RPCStatusCode
+            raise RPCError("workflow not found", RPCStatusCode.NOT_FOUND, b"")
         from temporalio.client import WorkflowExecutionStatus
         class _D:
-            status = WorkflowExecutionStatus.RUNNING
+            status = WorkflowExecutionStatus.RUNNING if self._describe_status == "RUNNING" else WorkflowExecutionStatus.COMPLETED
         return _D()
 
     async def signal(self, *args: Any, **kwargs: Any) -> None:
         self.signaled_with.append((args, kwargs))
 
+    async def terminate(self, reason: str = "") -> None:
+        self.terminated_with_reason = reason
+
 
 class _FakeClient:
-    def __init__(self) -> None:
+    def __init__(self, handle: _FakeHandle | None = None) -> None:
         self.start_calls: list[dict] = []
-        self.handle = _FakeHandle()
+        self.handle = handle if handle is not None else _FakeHandle()
 
     def get_workflow_handle(self, wf_id: str) -> _FakeHandle:
         self.handle.workflow_id = wf_id
@@ -65,10 +73,10 @@ async def test_start_or_signal_sales_signals_running_workflow(monkeypatch: pytes
         return fake_client
 
     monkeypatch.setattr(
-        "src.core.infrastructure.temporal.dispatcher_activities.get_temporal_client",
+        "src.platform.temporal.dispatcher.get_temporal_client",
         fake_get_client,
     )
-    from src.core.infrastructure.temporal.dispatcher_activities import (
+    from src.platform.temporal.dispatcher import (
         start_or_signal_sales_workflow_activity,
     )
 
@@ -96,16 +104,18 @@ async def test_start_or_signal_sales_signals_running_workflow(monkeypatch: pytes
 
 
 async def test_schedule_remarketing_uses_start_delay(monkeypatch: pytest.MonkeyPatch) -> None:
-    fake_client = _FakeClient()
+    # Caso "no zombie": describe() lanza RPCError (workflow no existe), el
+    # dispatcher arranca el remarketing limpio.
+    fake_client = _FakeClient(handle=_FakeHandle(describe_raises=True))
 
     async def fake_get_client() -> _FakeClient:
         return fake_client
 
     monkeypatch.setattr(
-        "src.core.infrastructure.temporal.dispatcher_activities.get_temporal_client",
+        "src.platform.temporal.dispatcher.get_temporal_client",
         fake_get_client,
     )
-    from src.core.infrastructure.temporal.dispatcher_activities import (
+    from src.platform.temporal.dispatcher import (
         schedule_remarketing_workflow_activity,
     )
 

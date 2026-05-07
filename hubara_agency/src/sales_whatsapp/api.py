@@ -12,9 +12,9 @@ from __future__ import annotations
 import structlog
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
-from src.core.config import WHATSAPP_VERIFY_TOKEN
-from src.domains.sales_whatsapp.composition import build_ingest_use_case
-from src.domains.sales_whatsapp.parsers import parse_whatsapp_inbound
+from src.platform.config import WHATSAPP_VERIFY_TOKEN
+from src.sales_whatsapp.composition import build_ingest_use_case
+from src.sales_whatsapp.parsers import parse_whatsapp_inbound
 
 logger = structlog.get_logger()
 

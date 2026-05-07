@@ -8,7 +8,7 @@ from __future__ import annotations
 import httpx
 import structlog
 
-from src.core.config import WHATSAPP_ACCESS_TOKEN, WHATSAPP_API_URL
+from src.platform.config import WHATSAPP_ACCESS_TOKEN, WHATSAPP_API_URL
 
 logger = structlog.get_logger()
 

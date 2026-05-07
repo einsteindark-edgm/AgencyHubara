@@ -1,7 +1,7 @@
 """Mecanismo de extension de tools por dominio (cierra NEW-5).
 
 Antes (`src/core/activities.py:execute_tool`):
-    from src.domains.sales_whatsapp.tools.routing import TransferToSalesAgentTool
+    from src.sales_whatsapp.tools.routing import TransferToSalesAgentTool
     registry.register(TransferToSalesAgentTool(workspace=...))
 Eso era una inversion DIP: `core` importaba `domain` por path concreto.
 

@@ -8,21 +8,20 @@ from temporalio.common import RetryPolicy
 
 with workflow.unsafe.imports_passed_through():
     from exoclaw_temporal.config import SessionInput
-    from src.core.activities import claim_conversation_routing, read_workspace_memory_activity
-    from src.core.infrastructure.whatsapp.activities import send_whatsapp_message_activity
-    from src.core.infrastructure.temporal.dispatcher_activities import (
+    from src.platform.temporal.activities import claim_conversation_routing, read_workspace_memory_activity
+    from src.platform.whatsapp.activities import send_whatsapp_message_activity
+    from src.platform.temporal.dispatcher import (
         start_or_signal_sales_workflow_activity,
     )
-    from src.core.infrastructure.temporal.retry_policies import _LLM_OPTIONS
-    from src.core.workflow_helpers import PendingMessage, run_agent_turn
-    from src.core.contracts import TransferDecision
-    from src.domains.remarketing_whatsapp.activities import (
+    from src.platform.temporal.retry_policies import _LLM_OPTIONS
+    from src.platform.workflow_helpers import PendingMessage, run_agent_turn
+    from src.platform.contracts import TransferDecision
+    from src.remarketing_whatsapp.activities import (
         bootstrap_remarketing_session_activity,
         build_remarketing_trigger_activity,
-        load_remarketing_brain_activity,
     )
-    from src.domains.remarketing_whatsapp.contracts import RemarketingSessionInput
-    from src.core.constants import ROUTE_REMARKETING, ROUTE_VENTAS
+    from src.remarketing_whatsapp.contracts import RemarketingSessionInput
+    from src.platform.constants import ROUTE_REMARKETING, ROUTE_VENTAS
 
 _IDLE_TIMEOUT = timedelta(hours=24)
 
@@ -36,7 +35,6 @@ class RemarketingSessionWorkflow:
         self._last_response: str | None = None
         self._processing = False
         self._force_shutdown: bool = False
-        self._brain_cache: list[str] | None = None
 
     @workflow.signal
     async def send_message(
@@ -58,15 +56,6 @@ class RemarketingSessionWorkflow:
     def is_processing(self) -> bool:
         return self._processing
 
-    async def _ensure_brain(self) -> list[str]:
-        if self._brain_cache is None:
-            self._brain_cache = await workflow.execute_activity(
-                load_remarketing_brain_activity,
-                start_to_close_timeout=timedelta(seconds=10),
-                retry_policy=RetryPolicy(maximum_attempts=3),
-            )
-        return self._brain_cache
-
     @workflow.run
     async def run(self, input: RemarketingSessionInput) -> None:
         session_id = input.session_id
@@ -76,16 +65,20 @@ class RemarketingSessionWorkflow:
         # Bootstrap: construye SessionInput fuera del workflow (R-DET).
         # Reemplaza el `build_workspace_config` + `get_base_tools_registry` que
         # antes vivian dentro del @workflow.run.
+        # PR-A workspace refactor: la activity ahora toma el
+        # `RemarketingSessionInput` completo en vez de `(session_id, motivo)`,
+        # para llevar `runtime_workspace_path` a traves del boundary (R-JSON).
+        # PR-B consumira ese campo en el body de la activity.
         input_data: SessionInput = await workflow.execute_activity(
             bootstrap_remarketing_session_activity,
-            args=[session_id, motivo],
+            input,
             **_LLM_OPTIONS,
         )
         ws_path = input_data.workspace.path
 
         await workflow.execute_activity(
             claim_conversation_routing,
-            args=[ws_path, ROUTE_REMARKETING],
+            args=[session_id, ROUTE_REMARKETING],
             start_to_close_timeout=timedelta(seconds=15),
         )
 
@@ -102,9 +95,16 @@ class RemarketingSessionWorkflow:
             retry_policy=RetryPolicy(maximum_attempts=2),
         )
 
+        # PR-B: identidad / tono / catalogo viven en el workspace canonico
+        # (`workspace/{IDENTITY,SOUL,USER,TOOLS,AGENTS}.md` y
+        # `workspace/skills/hubara_catalog/SKILL.md`), leidos por
+        # `ContextBuilder.build_system_prompt` en `build_prompt`. Ya no se
+        # forwardea `shared_brain/*.md` por `plugin_context` — el campo
+        # sobrevive en `PendingMessage` para datos volatiles del turno
+        # (A-MEM, snippets), no identidad. Ver `core/workflow_helpers.py:PendingMessage`.
         self._pending.append(PendingMessage(
             message=system_trigger_msg,
-            plugin_context=await self._ensure_brain(),
+            plugin_context=None,
         ))
 
         messages_processed = 0
@@ -118,7 +118,7 @@ class RemarketingSessionWorkflow:
                 workflow.logger.info(f"Cliente no respondió al Remarketing en {session_id}. Apagando agente.")
                 await workflow.execute_activity(
                     claim_conversation_routing,
-                    args=[ws_path, ROUTE_VENTAS],
+                    args=[session_id, ROUTE_VENTAS],
                     start_to_close_timeout=timedelta(seconds=15),
                 )
                 return
@@ -129,10 +129,15 @@ class RemarketingSessionWorkflow:
                 self._processing = True
 
                 try:
+                    # PR-B: `fallback_plugin_context=None`. La identidad /
+                    # tono / catalogo del agente entra al system prompt via
+                    # `ContextBuilder` desde `workspace/*.md` durante
+                    # `build_prompt`, no por este parametro. El path Sales
+                    # ya pasaba `None`; Remarketing se alinea aqui.
                     result = await run_agent_turn(
                         input_data,
                         msg,
-                        fallback_plugin_context=await self._ensure_brain(),
+                        fallback_plugin_context=None,
                     )
                     self._last_response = result.final_content
 

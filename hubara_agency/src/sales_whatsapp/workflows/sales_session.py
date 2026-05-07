@@ -8,18 +8,18 @@ from temporalio.common import RetryPolicy
 
 with workflow.unsafe.imports_passed_through():
     from exoclaw_temporal.config import SessionInput
-    from src.core.infrastructure.whatsapp.activities import send_whatsapp_message_activity
-    from src.core.infrastructure.temporal.dispatcher_activities import (
+    from src.platform.whatsapp.activities import send_whatsapp_message_activity
+    from src.platform.temporal.dispatcher import (
         schedule_remarketing_workflow_activity,
         start_or_signal_sales_workflow_activity,
     )
-    from src.core.infrastructure.temporal.retry_policies import _LLM_OPTIONS
-    from src.core.workflow_helpers import PendingMessage, run_agent_turn
-    from src.domains.sales_whatsapp.activities import (
+    from src.platform.temporal.retry_policies import _LLM_OPTIONS
+    from src.platform.workflow_helpers import PendingMessage, run_agent_turn
+    from src.sales_whatsapp.activities import (
         bootstrap_sales_session_activity,
         decide_ghosting_action,
     )
-    from src.domains.sales_whatsapp.contracts import SalesSessionInput
+    from src.sales_whatsapp.contracts import SalesSessionInput
 
 _CONTINUE_AS_NEW_AFTER_TURNS = 50
 
@@ -61,9 +61,12 @@ class HubaraSalesSessionWorkflow:
         # Reemplaza el `build_workspace_config` + `get_base_tools_registry`
         # que antes ejecutaba el caller (service.py / dispatcher_activities)
         # antes de `start_workflow`. Patron simetrico al de Remarketing (F6.1).
+        # PR-A: pasamos el SalesSessionInput completo. El campo
+        # `runtime_workspace_path` viaja para PR-B sin romper la signature de
+        # la activity en futuras iteraciones.
         session: SessionInput = await workflow.execute_activity(
             bootstrap_sales_session_activity,
-            args=[input.session_id],
+            input,
             **_LLM_OPTIONS,
         )
         turn_count = input.turn_count

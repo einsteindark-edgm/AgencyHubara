@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from src.domains.sales_whatsapp import api as whatsapp_api
-from src.domains.dashboard import api as dashboard_api
+from src.sales_whatsapp import api as whatsapp_api
+from src.dashboard import api as dashboard_api
 
 app = FastAPI(
     title="Agency API",

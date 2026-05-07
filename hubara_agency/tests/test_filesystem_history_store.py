@@ -9,9 +9,7 @@ from __future__ import annotations
 
 import json
 
-from src.domains.sales_whatsapp.infrastructure.storage import (
-    FilesystemMessageHistoryStore,
-)
+from src.sales_whatsapp.state import FilesystemMessageHistoryStore
 
 
 def test_append_creates_jsonl_with_correct_shape(tmp_path):

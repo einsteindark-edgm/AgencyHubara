@@ -3,7 +3,7 @@ from fastapi.responses import StreamingResponse
 import asyncio
 import json
 import os
-from src.core.config import WORKSPACE_VAULT_DIR
+from src.platform.config import WORKSPACE_VAULT_DIR
 
 router = APIRouter()
 

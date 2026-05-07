@@ -2,14 +2,14 @@
   "events": [
     {
       "eventId": "1",
-      "eventTime": "2026-04-29T15:03:18.799Z",
+      "eventTime": "2026-05-07T00:19:46.015Z",
       "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
       "workflowExecutionStartedEventAttributes": {
         "workflowType": {
           "name": "HubaraSalesSessionWorkflow"
         },
         "taskQueue": {
-          "name": "fixture-sales-e5ad6f26-4ba4-4342-bf52-314e0c4f019c"
+          "name": "fixture-sales-ebcf3fc5-9555-48f2-aaf7-8b87e3204dad"
         },
         "input": {
           "payloads": [
@@ -17,16 +17,16 @@
               "metadata": {
                 "encoding": "anNvbi9wbGFpbg=="
               },
-              "data": "eyJzZXNzaW9uX2lkIjoid2FfZml4dHVyZV9zYWxlcyIsInR1cm5fY291bnQiOjB9"
+              "data": "eyJydW50aW1lX3dvcmtzcGFjZV9wYXRoIjpudWxsLCJzZXNzaW9uX2lkIjoid2FfZml4dHVyZV9zYWxlcyIsInR1cm5fY291bnQiOjB9"
             }
           ]
         },
         "workflowExecutionTimeout": "315360000s",
         "workflowRunTimeout": "315360000s",
         "workflowTaskTimeout": "10s",
-        "originalExecutionRunId": "6ed2ba73-99f3-4ac3-905c-04e9b2e09c15",
-        "identity": "81477@192.168.0.8",
-        "firstExecutionRunId": "6ed2ba73-99f3-4ac3-905c-04e9b2e09c15",
+        "originalExecutionRunId": "a3c5e9ea-15dd-49d5-bbbc-2d4a46000829",
+        "identity": "88122@192.168.0.10",
+        "firstExecutionRunId": "a3c5e9ea-15dd-49d5-bbbc-2d4a46000829",
         "attempt": 1,
         "firstWorkflowTaskBackoff": "0s",
         "priority": {}
@@ -34,11 +34,11 @@
     },
     {
       "eventId": "2",
-      "eventTime": "2026-04-29T15:03:18.799Z",
+      "eventTime": "2026-05-07T00:19:46.015Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
       "workflowTaskScheduledEventAttributes": {
         "taskQueue": {
-          "name": "fixture-sales-e5ad6f26-4ba4-4342-bf52-314e0c4f019c"
+          "name": "fixture-sales-ebcf3fc5-9555-48f2-aaf7-8b87e3204dad"
         },
         "startToCloseTimeout": "10s",
         "attempt": 1
@@ -46,21 +46,21 @@
     },
     {
       "eventId": "3",
-      "eventTime": "2026-04-29T15:03:18.803Z",
+      "eventTime": "2026-05-07T00:19:46.019Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
       "workflowTaskStartedEventAttributes": {
         "scheduledEventId": "2",
-        "identity": "81477@192.168.0.8"
+        "identity": "88122@192.168.0.10"
       }
     },
     {
       "eventId": "4",
-      "eventTime": "2026-04-29T15:03:19.138Z",
+      "eventTime": "2026-05-07T00:19:46.064Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
       "workflowTaskCompletedEventAttributes": {
         "scheduledEventId": "2",
-        "identity": "81477@192.168.0.8",
-        "binaryChecksum": "0c12022e84549e4d1897e5e40a1e7ebf",
+        "identity": "88122@192.168.0.10",
+        "binaryChecksum": "832f879b770978630c42236c3da4ea4a",
         "sdkMetadata": {
           "coreUsedFlags": [
             1,
@@ -75,7 +75,7 @@
     },
     {
       "eventId": "5",
-      "eventTime": "2026-04-29T15:03:19.138Z",
+      "eventTime": "2026-05-07T00:19:46.064Z",
       "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
       "activityTaskScheduledEventAttributes": {
         "activityId": "1",
@@ -83,7 +83,7 @@
           "name": "bootstrap_sales_session_activity"
         },
         "taskQueue": {
-          "name": "fixture-sales-e5ad6f26-4ba4-4342-bf52-314e0c4f019c",
+          "name": "fixture-sales-ebcf3fc5-9555-48f2-aaf7-8b87e3204dad",
           "kind": "TASK_QUEUE_KIND_NORMAL"
         },
         "header": {},
@@ -93,7 +93,7 @@
               "metadata": {
                 "encoding": "anNvbi9wbGFpbg=="
               },
-              "data": "IndhX2ZpeHR1cmVfc2FsZXMi"
+              "data": "eyJydW50aW1lX3dvcmtzcGFjZV9wYXRoIjpudWxsLCJzZXNzaW9uX2lkIjoid2FfZml4dHVyZV9zYWxlcyIsInR1cm5fY291bnQiOjB9"
             }
           ]
         },
@@ -113,7 +113,7 @@
     },
     {
       "eventId": "6",
-      "eventTime": "2026-04-29T15:03:19.138Z",
+      "eventTime": "2026-05-07T00:19:46.064Z",
       "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED",
       "workflowExecutionSignaledEventAttributes": {
         "signalName": "send_message",
@@ -137,16 +137,16 @@
             }
           ]
         },
-        "identity": "81477@192.168.0.8"
+        "identity": "88122@192.168.0.10"
       }
     },
     {
       "eventId": "7",
-      "eventTime": "2026-04-29T15:03:19.138Z",
+      "eventTime": "2026-05-07T00:19:46.064Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
       "workflowTaskScheduledEventAttributes": {
         "taskQueue": {
-          "name": "fixture-sales-e5ad6f26-4ba4-4342-bf52-314e0c4f019c"
+          "name": "fixture-sales-ebcf3fc5-9555-48f2-aaf7-8b87e3204dad"
         },
         "startToCloseTimeout": "10s",
         "attempt": 2
@@ -154,38 +154,38 @@
     },
     {
       "eventId": "8",
-      "eventTime": "2026-04-29T15:03:19.138Z",
+      "eventTime": "2026-05-07T00:19:46.064Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
       "workflowTaskStartedEventAttributes": {
         "scheduledEventId": "7",
-        "identity": "81477@192.168.0.8"
+        "identity": "88122@192.168.0.10"
       }
     },
     {
       "eventId": "9",
-      "eventTime": "2026-04-29T15:03:19.232Z",
+      "eventTime": "2026-05-07T00:19:46.069Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
       "workflowTaskCompletedEventAttributes": {
         "scheduledEventId": "7",
-        "identity": "81477@192.168.0.8",
-        "binaryChecksum": "0c12022e84549e4d1897e5e40a1e7ebf",
+        "identity": "88122@192.168.0.10",
+        "binaryChecksum": "832f879b770978630c42236c3da4ea4a",
         "sdkMetadata": {},
         "meteringMetadata": {}
       }
     },
     {
       "eventId": "10",
-      "eventTime": "2026-04-29T15:03:19.138Z",
+      "eventTime": "2026-05-07T00:19:46.064Z",
       "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
       "activityTaskStartedEventAttributes": {
         "scheduledEventId": "5",
-        "identity": "81477@192.168.0.8",
+        "identity": "88122@192.168.0.10",
         "attempt": 1
       }
     },
     {
       "eventId": "11",
-      "eventTime": "2026-04-29T15:03:19.232Z",
+      "eventTime": "2026-05-07T00:19:46.069Z",
       "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
       "activityTaskCompletedEventAttributes": {
         "result": {
@@ -200,16 +200,16 @@
         },
         "scheduledEventId": "5",
         "startedEventId": "9",
-        "identity": "81477@192.168.0.8"
+        "identity": "88122@192.168.0.10"
       }
     },
     {
       "eventId": "12",
-      "eventTime": "2026-04-29T15:03:19.232Z",
+      "eventTime": "2026-05-07T00:19:46.069Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
       "workflowTaskScheduledEventAttributes": {
         "taskQueue": {
-          "name": "fixture-sales-e5ad6f26-4ba4-4342-bf52-314e0c4f019c"
+          "name": "fixture-sales-ebcf3fc5-9555-48f2-aaf7-8b87e3204dad"
         },
         "startToCloseTimeout": "10s",
         "attempt": 1
@@ -217,28 +217,28 @@
     },
     {
       "eventId": "13",
-      "eventTime": "2026-04-29T15:03:19.232Z",
+      "eventTime": "2026-05-07T00:19:46.069Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
       "workflowTaskStartedEventAttributes": {
         "scheduledEventId": "12",
-        "identity": "81477@192.168.0.8"
+        "identity": "88122@192.168.0.10"
       }
     },
     {
       "eventId": "14",
-      "eventTime": "2026-04-29T15:03:19.259Z",
+      "eventTime": "2026-05-07T00:19:46.076Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
       "workflowTaskCompletedEventAttributes": {
         "scheduledEventId": "12",
-        "identity": "81477@192.168.0.8",
-        "binaryChecksum": "0c12022e84549e4d1897e5e40a1e7ebf",
+        "identity": "88122@192.168.0.10",
+        "binaryChecksum": "832f879b770978630c42236c3da4ea4a",
         "sdkMetadata": {},
         "meteringMetadata": {}
       }
     },
     {
       "eventId": "15",
-      "eventTime": "2026-04-29T15:03:19.259Z",
+      "eventTime": "2026-05-07T00:19:46.076Z",
       "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
       "activityTaskScheduledEventAttributes": {
         "activityId": "2",
@@ -246,7 +246,7 @@
           "name": "build_prompt"
         },
         "taskQueue": {
-          "name": "fixture-sales-e5ad6f26-4ba4-4342-bf52-314e0c4f019c",
+          "name": "fixture-sales-ebcf3fc5-9555-48f2-aaf7-8b87e3204dad",
           "kind": "TASK_QUEUE_KIND_NORMAL"
         },
         "header": {},
@@ -276,17 +276,17 @@
     },
     {
       "eventId": "16",
-      "eventTime": "2026-04-29T15:03:19.259Z",
+      "eventTime": "2026-05-07T00:19:46.076Z",
       "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
       "activityTaskStartedEventAttributes": {
         "scheduledEventId": "15",
-        "identity": "81477@192.168.0.8",
+        "identity": "88122@192.168.0.10",
         "attempt": 1
       }
     },
     {
       "eventId": "17",
-      "eventTime": "2026-04-29T15:03:19.263Z",
+      "eventTime": "2026-05-07T00:19:46.078Z",
       "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
       "activityTaskCompletedEventAttributes": {
         "result": {
@@ -301,16 +301,16 @@
         },
         "scheduledEventId": "15",
         "startedEventId": "16",
-        "identity": "81477@192.168.0.8"
+        "identity": "88122@192.168.0.10"
       }
     },
     {
       "eventId": "18",
-      "eventTime": "2026-04-29T15:03:19.263Z",
+      "eventTime": "2026-05-07T00:19:46.078Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
       "workflowTaskScheduledEventAttributes": {
         "taskQueue": {
-          "name": "fixture-sales-e5ad6f26-4ba4-4342-bf52-314e0c4f019c"
+          "name": "fixture-sales-ebcf3fc5-9555-48f2-aaf7-8b87e3204dad"
         },
         "startToCloseTimeout": "10s",
         "attempt": 1
@@ -318,28 +318,28 @@
     },
     {
       "eventId": "19",
-      "eventTime": "2026-04-29T15:03:19.263Z",
+      "eventTime": "2026-05-07T00:19:46.078Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
       "workflowTaskStartedEventAttributes": {
         "scheduledEventId": "18",
-        "identity": "81477@192.168.0.8"
+        "identity": "88122@192.168.0.10"
       }
     },
     {
       "eventId": "20",
-      "eventTime": "2026-04-29T15:03:19.306Z",
+      "eventTime": "2026-05-07T00:19:46.081Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
       "workflowTaskCompletedEventAttributes": {
         "scheduledEventId": "18",
-        "identity": "81477@192.168.0.8",
-        "binaryChecksum": "0c12022e84549e4d1897e5e40a1e7ebf",
+        "identity": "88122@192.168.0.10",
+        "binaryChecksum": "832f879b770978630c42236c3da4ea4a",
         "sdkMetadata": {},
         "meteringMetadata": {}
       }
     },
     {
       "eventId": "21",
-      "eventTime": "2026-04-29T15:03:19.306Z",
+      "eventTime": "2026-05-07T00:19:46.081Z",
       "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
       "activityTaskScheduledEventAttributes": {
         "activityId": "3",
@@ -347,7 +347,7 @@
           "name": "llm_chat"
         },
         "taskQueue": {
-          "name": "fixture-sales-e5ad6f26-4ba4-4342-bf52-314e0c4f019c",
+          "name": "fixture-sales-ebcf3fc5-9555-48f2-aaf7-8b87e3204dad",
           "kind": "TASK_QUEUE_KIND_NORMAL"
         },
         "header": {},
@@ -377,17 +377,17 @@
     },
     {
       "eventId": "22",
-      "eventTime": "2026-04-29T15:03:19.306Z",
+      "eventTime": "2026-05-07T00:19:46.081Z",
       "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
       "activityTaskStartedEventAttributes": {
         "scheduledEventId": "21",
-        "identity": "81477@192.168.0.8",
+        "identity": "88122@192.168.0.10",
         "attempt": 1
       }
     },
     {
       "eventId": "23",
-      "eventTime": "2026-04-29T15:03:19.313Z",
+      "eventTime": "2026-05-07T00:19:46.084Z",
       "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
       "activityTaskCompletedEventAttributes": {
         "result": {
@@ -402,16 +402,16 @@
         },
         "scheduledEventId": "21",
         "startedEventId": "22",
-        "identity": "81477@192.168.0.8"
+        "identity": "88122@192.168.0.10"
       }
     },
     {
       "eventId": "24",
-      "eventTime": "2026-04-29T15:03:19.313Z",
+      "eventTime": "2026-05-07T00:19:46.084Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
       "workflowTaskScheduledEventAttributes": {
         "taskQueue": {
-          "name": "fixture-sales-e5ad6f26-4ba4-4342-bf52-314e0c4f019c"
+          "name": "fixture-sales-ebcf3fc5-9555-48f2-aaf7-8b87e3204dad"
         },
         "startToCloseTimeout": "10s",
         "attempt": 1
@@ -419,28 +419,28 @@
     },
     {
       "eventId": "25",
-      "eventTime": "2026-04-29T15:03:19.314Z",
+      "eventTime": "2026-05-07T00:19:46.084Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
       "workflowTaskStartedEventAttributes": {
         "scheduledEventId": "24",
-        "identity": "81477@192.168.0.8"
+        "identity": "88122@192.168.0.10"
       }
     },
     {
       "eventId": "26",
-      "eventTime": "2026-04-29T15:03:19.333Z",
+      "eventTime": "2026-05-07T00:19:46.087Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
       "workflowTaskCompletedEventAttributes": {
         "scheduledEventId": "24",
-        "identity": "81477@192.168.0.8",
-        "binaryChecksum": "0c12022e84549e4d1897e5e40a1e7ebf",
+        "identity": "88122@192.168.0.10",
+        "binaryChecksum": "832f879b770978630c42236c3da4ea4a",
         "sdkMetadata": {},
         "meteringMetadata": {}
       }
     },
     {
       "eventId": "27",
-      "eventTime": "2026-04-29T15:03:19.333Z",
+      "eventTime": "2026-05-07T00:19:46.087Z",
       "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
       "activityTaskScheduledEventAttributes": {
         "activityId": "4",
@@ -448,7 +448,7 @@
           "name": "record_turn"
         },
         "taskQueue": {
-          "name": "fixture-sales-e5ad6f26-4ba4-4342-bf52-314e0c4f019c",
+          "name": "fixture-sales-ebcf3fc5-9555-48f2-aaf7-8b87e3204dad",
           "kind": "TASK_QUEUE_KIND_NORMAL"
         },
         "header": {},
@@ -478,17 +478,17 @@
     },
     {
       "eventId": "28",
-      "eventTime": "2026-04-29T15:03:19.333Z",
+      "eventTime": "2026-05-07T00:19:46.087Z",
       "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
       "activityTaskStartedEventAttributes": {
         "scheduledEventId": "27",
-        "identity": "81477@192.168.0.8",
+        "identity": "88122@192.168.0.10",
         "attempt": 1
       }
     },
     {
       "eventId": "29",
-      "eventTime": "2026-04-29T15:03:19.339Z",
+      "eventTime": "2026-05-07T00:19:46.089Z",
       "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
       "activityTaskCompletedEventAttributes": {
         "result": {
@@ -502,16 +502,16 @@
         },
         "scheduledEventId": "27",
         "startedEventId": "28",
-        "identity": "81477@192.168.0.8"
+        "identity": "88122@192.168.0.10"
       }
     },
     {
       "eventId": "30",
-      "eventTime": "2026-04-29T15:03:19.339Z",
+      "eventTime": "2026-05-07T00:19:46.089Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
       "workflowTaskScheduledEventAttributes": {
         "taskQueue": {
-          "name": "fixture-sales-e5ad6f26-4ba4-4342-bf52-314e0c4f019c"
+          "name": "fixture-sales-ebcf3fc5-9555-48f2-aaf7-8b87e3204dad"
         },
         "startToCloseTimeout": "10s",
         "attempt": 1
@@ -519,28 +519,28 @@
     },
     {
       "eventId": "31",
-      "eventTime": "2026-04-29T15:03:19.340Z",
+      "eventTime": "2026-05-07T00:19:46.089Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
       "workflowTaskStartedEventAttributes": {
         "scheduledEventId": "30",
-        "identity": "81477@192.168.0.8"
+        "identity": "88122@192.168.0.10"
       }
     },
     {
       "eventId": "32",
-      "eventTime": "2026-04-29T15:03:19.353Z",
+      "eventTime": "2026-05-07T00:19:46.092Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
       "workflowTaskCompletedEventAttributes": {
         "scheduledEventId": "30",
-        "identity": "81477@192.168.0.8",
-        "binaryChecksum": "0c12022e84549e4d1897e5e40a1e7ebf",
+        "identity": "88122@192.168.0.10",
+        "binaryChecksum": "832f879b770978630c42236c3da4ea4a",
         "sdkMetadata": {},
         "meteringMetadata": {}
       }
     },
     {
       "eventId": "33",
-      "eventTime": "2026-04-29T15:03:19.353Z",
+      "eventTime": "2026-05-07T00:19:46.092Z",
       "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
       "activityTaskScheduledEventAttributes": {
         "activityId": "5",
@@ -548,7 +548,7 @@
           "name": "send_whatsapp_message_activity"
         },
         "taskQueue": {
-          "name": "fixture-sales-e5ad6f26-4ba4-4342-bf52-314e0c4f019c",
+          "name": "fixture-sales-ebcf3fc5-9555-48f2-aaf7-8b87e3204dad",
           "kind": "TASK_QUEUE_KIND_NORMAL"
         },
         "header": {},
@@ -584,17 +584,17 @@
     },
     {
       "eventId": "34",
-      "eventTime": "2026-04-29T15:03:19.353Z",
+      "eventTime": "2026-05-07T00:19:46.092Z",
       "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
       "activityTaskStartedEventAttributes": {
         "scheduledEventId": "33",
-        "identity": "81477@192.168.0.8",
+        "identity": "88122@192.168.0.10",
         "attempt": 1
       }
     },
     {
       "eventId": "35",
-      "eventTime": "2026-04-29T15:03:19.357Z",
+      "eventTime": "2026-05-07T00:19:46.094Z",
       "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
       "activityTaskCompletedEventAttributes": {
         "result": {
@@ -608,16 +608,16 @@
         },
         "scheduledEventId": "33",
         "startedEventId": "34",
-        "identity": "81477@192.168.0.8"
+        "identity": "88122@192.168.0.10"
       }
     },
     {
       "eventId": "36",
-      "eventTime": "2026-04-29T15:03:19.357Z",
+      "eventTime": "2026-05-07T00:19:46.094Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
       "workflowTaskScheduledEventAttributes": {
         "taskQueue": {
-          "name": "fixture-sales-e5ad6f26-4ba4-4342-bf52-314e0c4f019c"
+          "name": "fixture-sales-ebcf3fc5-9555-48f2-aaf7-8b87e3204dad"
         },
         "startToCloseTimeout": "10s",
         "attempt": 1
@@ -625,28 +625,28 @@
     },
     {
       "eventId": "37",
-      "eventTime": "2026-04-29T15:03:19.357Z",
+      "eventTime": "2026-05-07T00:19:46.094Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
       "workflowTaskStartedEventAttributes": {
         "scheduledEventId": "36",
-        "identity": "81477@192.168.0.8"
+        "identity": "88122@192.168.0.10"
       }
     },
     {
       "eventId": "38",
-      "eventTime": "2026-04-29T15:03:19.365Z",
+      "eventTime": "2026-05-07T00:19:46.096Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
       "workflowTaskCompletedEventAttributes": {
         "scheduledEventId": "36",
-        "identity": "81477@192.168.0.8",
-        "binaryChecksum": "0c12022e84549e4d1897e5e40a1e7ebf",
+        "identity": "88122@192.168.0.10",
+        "binaryChecksum": "832f879b770978630c42236c3da4ea4a",
         "sdkMetadata": {},
         "meteringMetadata": {}
       }
     },
     {
       "eventId": "39",
-      "eventTime": "2026-04-29T15:03:19.365Z",
+      "eventTime": "2026-05-07T00:19:46.096Z",
       "eventType": "EVENT_TYPE_TIMER_STARTED",
       "timerStartedEventAttributes": {
         "timerId": "2",
@@ -656,7 +656,7 @@
     },
     {
       "eventId": "40",
-      "eventTime": "2026-04-29T15:04:19.365Z",
+      "eventTime": "2026-05-07T00:20:46.097Z",
       "eventType": "EVENT_TYPE_TIMER_FIRED",
       "timerFiredEventAttributes": {
         "timerId": "2",
@@ -665,11 +665,11 @@
     },
     {
       "eventId": "41",
-      "eventTime": "2026-04-29T15:04:19.365Z",
+      "eventTime": "2026-05-07T00:20:46.097Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
       "workflowTaskScheduledEventAttributes": {
         "taskQueue": {
-          "name": "fixture-sales-e5ad6f26-4ba4-4342-bf52-314e0c4f019c"
+          "name": "fixture-sales-ebcf3fc5-9555-48f2-aaf7-8b87e3204dad"
         },
         "startToCloseTimeout": "10s",
         "attempt": 1
@@ -677,28 +677,28 @@
     },
     {
       "eventId": "42",
-      "eventTime": "2026-04-29T15:04:19.365Z",
+      "eventTime": "2026-05-07T00:20:46.097Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
       "workflowTaskStartedEventAttributes": {
         "scheduledEventId": "41",
-        "identity": "81477@192.168.0.8"
+        "identity": "88122@192.168.0.10"
       }
     },
     {
       "eventId": "43",
-      "eventTime": "2026-04-29T15:04:19.372Z",
+      "eventTime": "2026-05-07T00:20:46.099Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
       "workflowTaskCompletedEventAttributes": {
         "scheduledEventId": "41",
-        "identity": "81477@192.168.0.8",
-        "binaryChecksum": "0c12022e84549e4d1897e5e40a1e7ebf",
+        "identity": "88122@192.168.0.10",
+        "binaryChecksum": "832f879b770978630c42236c3da4ea4a",
         "sdkMetadata": {},
         "meteringMetadata": {}
       }
     },
     {
       "eventId": "44",
-      "eventTime": "2026-04-29T15:04:19.372Z",
+      "eventTime": "2026-05-07T00:20:46.099Z",
       "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
       "activityTaskScheduledEventAttributes": {
         "activityId": "6",
@@ -706,7 +706,7 @@
           "name": "decide_ghosting_action"
         },
         "taskQueue": {
-          "name": "fixture-sales-e5ad6f26-4ba4-4342-bf52-314e0c4f019c",
+          "name": "fixture-sales-ebcf3fc5-9555-48f2-aaf7-8b87e3204dad",
           "kind": "TASK_QUEUE_KIND_NORMAL"
         },
         "header": {},
@@ -727,17 +727,17 @@
     },
     {
       "eventId": "45",
-      "eventTime": "2026-04-29T15:04:19.373Z",
+      "eventTime": "2026-05-07T00:20:46.099Z",
       "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
       "activityTaskStartedEventAttributes": {
         "scheduledEventId": "44",
-        "identity": "81477@192.168.0.8",
+        "identity": "88122@192.168.0.10",
         "attempt": 1
       }
     },
     {
       "eventId": "46",
-      "eventTime": "2026-04-29T15:04:19.377Z",
+      "eventTime": "2026-05-07T00:20:46.100Z",
       "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
       "activityTaskCompletedEventAttributes": {
         "result": {
@@ -752,16 +752,16 @@
         },
         "scheduledEventId": "44",
         "startedEventId": "45",
-        "identity": "81477@192.168.0.8"
+        "identity": "88122@192.168.0.10"
       }
     },
     {
       "eventId": "47",
-      "eventTime": "2026-04-29T15:04:19.377Z",
+      "eventTime": "2026-05-07T00:20:46.100Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
       "workflowTaskScheduledEventAttributes": {
         "taskQueue": {
-          "name": "fixture-sales-e5ad6f26-4ba4-4342-bf52-314e0c4f019c"
+          "name": "fixture-sales-ebcf3fc5-9555-48f2-aaf7-8b87e3204dad"
         },
         "startToCloseTimeout": "10s",
         "attempt": 1
@@ -769,28 +769,28 @@
     },
     {
       "eventId": "48",
-      "eventTime": "2026-04-29T15:04:19.377Z",
+      "eventTime": "2026-05-07T00:20:46.100Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
       "workflowTaskStartedEventAttributes": {
         "scheduledEventId": "47",
-        "identity": "81477@192.168.0.8"
+        "identity": "88122@192.168.0.10"
       }
     },
     {
       "eventId": "49",
-      "eventTime": "2026-04-29T15:04:19.396Z",
+      "eventTime": "2026-05-07T00:20:46.103Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
       "workflowTaskCompletedEventAttributes": {
         "scheduledEventId": "47",
-        "identity": "81477@192.168.0.8",
-        "binaryChecksum": "0c12022e84549e4d1897e5e40a1e7ebf",
+        "identity": "88122@192.168.0.10",
+        "binaryChecksum": "832f879b770978630c42236c3da4ea4a",
         "sdkMetadata": {},
         "meteringMetadata": {}
       }
     },
     {
       "eventId": "50",
-      "eventTime": "2026-04-29T15:04:19.396Z",
+      "eventTime": "2026-05-07T00:20:46.103Z",
       "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
       "activityTaskScheduledEventAttributes": {
         "activityId": "7",
@@ -798,7 +798,7 @@
           "name": "build_prompt"
         },
         "taskQueue": {
-          "name": "fixture-sales-e5ad6f26-4ba4-4342-bf52-314e0c4f019c",
+          "name": "fixture-sales-ebcf3fc5-9555-48f2-aaf7-8b87e3204dad",
           "kind": "TASK_QUEUE_KIND_NORMAL"
         },
         "header": {},
@@ -828,17 +828,17 @@
     },
     {
       "eventId": "51",
-      "eventTime": "2026-04-29T15:04:19.397Z",
+      "eventTime": "2026-05-07T00:20:46.103Z",
       "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
       "activityTaskStartedEventAttributes": {
         "scheduledEventId": "50",
-        "identity": "81477@192.168.0.8",
+        "identity": "88122@192.168.0.10",
         "attempt": 1
       }
     },
     {
       "eventId": "52",
-      "eventTime": "2026-04-29T15:04:19.410Z",
+      "eventTime": "2026-05-07T00:20:46.104Z",
       "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
       "activityTaskCompletedEventAttributes": {
         "result": {
@@ -853,16 +853,16 @@
         },
         "scheduledEventId": "50",
         "startedEventId": "51",
-        "identity": "81477@192.168.0.8"
+        "identity": "88122@192.168.0.10"
       }
     },
     {
       "eventId": "53",
-      "eventTime": "2026-04-29T15:04:19.410Z",
+      "eventTime": "2026-05-07T00:20:46.104Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
       "workflowTaskScheduledEventAttributes": {
         "taskQueue": {
-          "name": "fixture-sales-e5ad6f26-4ba4-4342-bf52-314e0c4f019c"
+          "name": "fixture-sales-ebcf3fc5-9555-48f2-aaf7-8b87e3204dad"
         },
         "startToCloseTimeout": "10s",
         "attempt": 1
@@ -870,28 +870,28 @@
     },
     {
       "eventId": "54",
-      "eventTime": "2026-04-29T15:04:19.410Z",
+      "eventTime": "2026-05-07T00:20:46.105Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
       "workflowTaskStartedEventAttributes": {
         "scheduledEventId": "53",
-        "identity": "81477@192.168.0.8"
+        "identity": "88122@192.168.0.10"
       }
     },
     {
       "eventId": "55",
-      "eventTime": "2026-04-29T15:04:19.430Z",
+      "eventTime": "2026-05-07T00:20:46.107Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
       "workflowTaskCompletedEventAttributes": {
         "scheduledEventId": "53",
-        "identity": "81477@192.168.0.8",
-        "binaryChecksum": "0c12022e84549e4d1897e5e40a1e7ebf",
+        "identity": "88122@192.168.0.10",
+        "binaryChecksum": "832f879b770978630c42236c3da4ea4a",
         "sdkMetadata": {},
         "meteringMetadata": {}
       }
     },
     {
       "eventId": "56",
-      "eventTime": "2026-04-29T15:04:19.430Z",
+      "eventTime": "2026-05-07T00:20:46.107Z",
       "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
       "activityTaskScheduledEventAttributes": {
         "activityId": "8",
@@ -899,7 +899,7 @@
           "name": "llm_chat"
         },
         "taskQueue": {
-          "name": "fixture-sales-e5ad6f26-4ba4-4342-bf52-314e0c4f019c",
+          "name": "fixture-sales-ebcf3fc5-9555-48f2-aaf7-8b87e3204dad",
           "kind": "TASK_QUEUE_KIND_NORMAL"
         },
         "header": {},
@@ -929,17 +929,17 @@
     },
     {
       "eventId": "57",
-      "eventTime": "2026-04-29T15:04:19.430Z",
+      "eventTime": "2026-05-07T00:20:46.107Z",
       "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
       "activityTaskStartedEventAttributes": {
         "scheduledEventId": "56",
-        "identity": "81477@192.168.0.8",
+        "identity": "88122@192.168.0.10",
         "attempt": 1
       }
     },
     {
       "eventId": "58",
-      "eventTime": "2026-04-29T15:04:19.463Z",
+      "eventTime": "2026-05-07T00:20:46.109Z",
       "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
       "activityTaskCompletedEventAttributes": {
         "result": {
@@ -954,16 +954,16 @@
         },
         "scheduledEventId": "56",
         "startedEventId": "57",
-        "identity": "81477@192.168.0.8"
+        "identity": "88122@192.168.0.10"
       }
     },
     {
       "eventId": "59",
-      "eventTime": "2026-04-29T15:04:19.463Z",
+      "eventTime": "2026-05-07T00:20:46.109Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
       "workflowTaskScheduledEventAttributes": {
         "taskQueue": {
-          "name": "fixture-sales-e5ad6f26-4ba4-4342-bf52-314e0c4f019c"
+          "name": "fixture-sales-ebcf3fc5-9555-48f2-aaf7-8b87e3204dad"
         },
         "startToCloseTimeout": "10s",
         "attempt": 1
@@ -971,28 +971,28 @@
     },
     {
       "eventId": "60",
-      "eventTime": "2026-04-29T15:04:19.463Z",
+      "eventTime": "2026-05-07T00:20:46.109Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
       "workflowTaskStartedEventAttributes": {
         "scheduledEventId": "59",
-        "identity": "81477@192.168.0.8"
+        "identity": "88122@192.168.0.10"
       }
     },
     {
       "eventId": "61",
-      "eventTime": "2026-04-29T15:04:19.480Z",
+      "eventTime": "2026-05-07T00:20:46.113Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
       "workflowTaskCompletedEventAttributes": {
         "scheduledEventId": "59",
-        "identity": "81477@192.168.0.8",
-        "binaryChecksum": "0c12022e84549e4d1897e5e40a1e7ebf",
+        "identity": "88122@192.168.0.10",
+        "binaryChecksum": "832f879b770978630c42236c3da4ea4a",
         "sdkMetadata": {},
         "meteringMetadata": {}
       }
     },
     {
       "eventId": "62",
-      "eventTime": "2026-04-29T15:04:19.480Z",
+      "eventTime": "2026-05-07T00:20:46.113Z",
       "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
       "activityTaskScheduledEventAttributes": {
         "activityId": "9",
@@ -1000,7 +1000,7 @@
           "name": "record_turn"
         },
         "taskQueue": {
-          "name": "fixture-sales-e5ad6f26-4ba4-4342-bf52-314e0c4f019c",
+          "name": "fixture-sales-ebcf3fc5-9555-48f2-aaf7-8b87e3204dad",
           "kind": "TASK_QUEUE_KIND_NORMAL"
         },
         "header": {},
@@ -1030,17 +1030,17 @@
     },
     {
       "eventId": "63",
-      "eventTime": "2026-04-29T15:04:19.480Z",
+      "eventTime": "2026-05-07T00:20:46.113Z",
       "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
       "activityTaskStartedEventAttributes": {
         "scheduledEventId": "62",
-        "identity": "81477@192.168.0.8",
+        "identity": "88122@192.168.0.10",
         "attempt": 1
       }
     },
     {
       "eventId": "64",
-      "eventTime": "2026-04-29T15:04:19.485Z",
+      "eventTime": "2026-05-07T00:20:46.114Z",
       "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
       "activityTaskCompletedEventAttributes": {
         "result": {
@@ -1054,16 +1054,16 @@
         },
         "scheduledEventId": "62",
         "startedEventId": "63",
-        "identity": "81477@192.168.0.8"
+        "identity": "88122@192.168.0.10"
       }
     },
     {
       "eventId": "65",
-      "eventTime": "2026-04-29T15:04:19.485Z",
+      "eventTime": "2026-05-07T00:20:46.114Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
       "workflowTaskScheduledEventAttributes": {
         "taskQueue": {
-          "name": "fixture-sales-e5ad6f26-4ba4-4342-bf52-314e0c4f019c"
+          "name": "fixture-sales-ebcf3fc5-9555-48f2-aaf7-8b87e3204dad"
         },
         "startToCloseTimeout": "10s",
         "attempt": 1
@@ -1071,28 +1071,28 @@
     },
     {
       "eventId": "66",
-      "eventTime": "2026-04-29T15:04:19.485Z",
+      "eventTime": "2026-05-07T00:20:46.114Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
       "workflowTaskStartedEventAttributes": {
         "scheduledEventId": "65",
-        "identity": "81477@192.168.0.8"
+        "identity": "88122@192.168.0.10"
       }
     },
     {
       "eventId": "67",
-      "eventTime": "2026-04-29T15:04:19.496Z",
+      "eventTime": "2026-05-07T00:20:46.118Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
       "workflowTaskCompletedEventAttributes": {
         "scheduledEventId": "65",
-        "identity": "81477@192.168.0.8",
-        "binaryChecksum": "0c12022e84549e4d1897e5e40a1e7ebf",
+        "identity": "88122@192.168.0.10",
+        "binaryChecksum": "832f879b770978630c42236c3da4ea4a",
         "sdkMetadata": {},
         "meteringMetadata": {}
       }
     },
     {
       "eventId": "68",
-      "eventTime": "2026-04-29T15:04:19.496Z",
+      "eventTime": "2026-05-07T00:20:46.118Z",
       "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED",
       "workflowExecutionCompletedEventAttributes": {
         "result": {

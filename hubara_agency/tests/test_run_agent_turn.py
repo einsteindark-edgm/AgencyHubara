@@ -11,12 +11,12 @@ from __future__ import annotations
 import json
 from dataclasses import asdict
 
-from src.core.workflow_helpers import (
+from src.platform.workflow_helpers import (
     PendingMessage,
     TurnResult,
     _try_parse_decision_payload,
 )
-from src.core.contracts import ScheduleRemarketingDecision, TransferDecision
+from src.platform.contracts import ScheduleRemarketingDecision, TransferDecision
 
 
 def test_parse_decision_with_transfer() -> None:

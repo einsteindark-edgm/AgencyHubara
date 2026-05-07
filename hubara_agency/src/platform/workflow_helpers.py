@@ -29,9 +29,9 @@ with workflow.unsafe.imports_passed_through():
         SessionInput,
     )
 
-    from src.core.activities import execute_tool
-    from src.core.contracts import ScheduleRemarketingDecision, TransferDecision
-    from src.core.infrastructure.temporal.retry_policies import (
+    from src.platform.temporal.activities import execute_tool
+    from src.platform.contracts import ScheduleRemarketingDecision, TransferDecision
+    from src.platform.temporal.retry_policies import (
         _CONV_OPTIONS,
         _LLM_OPTIONS,
         _TOOL_OPTIONS,
@@ -43,6 +43,22 @@ class PendingMessage:
     """DTO compartido para el queue de mensajes pendientes en cada workflow.
 
     Replicado del shape de `PendingMessage` que vivia inline en cada workflow.
+
+    `plugin_context` (PR-D, opcion a): hueco para **datos volatiles del turno**
+    — A-MEM contextual, snippets retrieved, motivo de la inyeccion sintetica.
+    **NO es para identidad ni catalogo**: esos viven en el workspace canonico
+    del agente (`workspace/{IDENTITY,SOUL,USER,TOOLS,AGENTS}.md` y
+    `workspace/skills/<name>/SKILL.md`) y los lee `ContextBuilder` dentro de
+    `build_prompt`. El path Sales pasa siempre `None`. El path Remarketing
+    aun usa este campo para forwardear el legacy `shared_brain/*.md` hasta
+    que su workspace migre a la layout DEHA. Cuando esa migracion aterrice,
+    `plugin_context` puede quedarse vacio para Remarketing tambien — o
+    repurposearse para A-MEM.
+
+    El campo sobrevive en la signature del signal (`send_message`) por
+    compatibilidad de replay (R-JSON, fixture v2 en sales / v1 en remarketing).
+    Cambiar la signature del signal implica fixture bump (v3) y posiblemente
+    drain operativo (ADR-009).
     """
     message: str
     media: list[str] | None = None
@@ -88,8 +104,18 @@ async def run_agent_turn(
 ) -> TurnResult:
     """Ejecuta un turno completo de LLM con tool-loop. Es invocado desde `@workflow.run`.
 
-    `fallback_plugin_context` se usa cuando el `msg.plugin_context` es None
-    (caso del workflow de Remarketing despues del trigger inicial).
+    `msg.plugin_context` y `fallback_plugin_context` cargan **datos volatiles
+    del turno** (PR-D, opcion a): A-MEM, snippets retrieved, motivos. La
+    identidad / catalogo del agente ya NO viaja por aqui — se lee desde
+    `workspace/*.md` en `build_prompt` via `ContextBuilder`. PR-D global
+    cleanup (ADR-2026-05-06-10): tanto Sales como Remarketing pasan siempre
+    `None` a estos parametros (la migracion DEHA workspace de Remarketing
+    elimino el `_brain_cache` y `load_remarketing_brain_activity`). El campo
+    sobrevive en la signature como hueco para futuros datos volatiles.
+
+    `fallback_plugin_context` se mantiene como parametro opcional por
+    compatibilidad de signature (replay-safe). En el futuro podria
+    repurposearse para A-MEM (long-term memory contextual del turno).
     """
     plugin_context = msg.plugin_context if msg.plugin_context else fallback_plugin_context
 

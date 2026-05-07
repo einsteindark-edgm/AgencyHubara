@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 
-from src.domains.sales_whatsapp.infrastructure.storage import FilesystemMetadataStore
+from src.sales_whatsapp.state import FilesystemMetadataStore
 
 
 def test_read_returns_empty_dict_when_missing(tmp_path):

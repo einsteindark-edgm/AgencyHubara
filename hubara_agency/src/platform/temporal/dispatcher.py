@@ -17,9 +17,9 @@ from temporalio.client import WorkflowExecutionStatus
 from temporalio.exceptions import WorkflowAlreadyStartedError
 from temporalio.service import RPCError
 
-from src.core.constants import SALES_QUEUE, REMARKETING_QUEUE
-from src.core.contracts import ScheduleRemarketingDecision, TransferDecision
-from src.core.temporal_client import get_temporal_client
+from src.platform.constants import SALES_QUEUE, REMARKETING_QUEUE
+from src.platform.contracts import ScheduleRemarketingDecision, TransferDecision
+from src.platform.temporal.client import get_temporal_client
 
 
 @activity.defn(name="start_or_signal_sales_workflow")
@@ -30,8 +30,9 @@ async def start_or_signal_sales_workflow_activity(decision: TransferDecision) ->
     """
     # Imports locales para evitar ciclos: el workflow importa este modulo a traves
     # de `imports_passed_through`, y workflows no deben importarse mutuamente.
-    from src.domains.sales_whatsapp.contracts import SalesSessionInput
-    from src.domains.sales_whatsapp.workflows.sales_session import HubaraSalesSessionWorkflow
+    from src.sales_whatsapp.config.env import get_workspace_path
+    from src.sales_whatsapp.contracts import SalesSessionInput
+    from src.sales_whatsapp.workflows.sales_session import HubaraSalesSessionWorkflow
 
     session_id = decision.session_id
     summary = decision.summary or "El cliente volvió a interactuar"
@@ -48,10 +49,15 @@ async def start_or_signal_sales_workflow_activity(decision: TransferDecision) ->
     except (RPCError, RuntimeError):
         # F7: el dispatcher ya no construye SessionInput. El workflow lo arma
         # via `bootstrap_sales_session_activity` como primera activity.
+        # PR-A: resolvemos el runtime workspace path del agente Sales para que
+        # cruce el boundary. PR-B lo consume.
         try:
             handle = await client.start_workflow(
                 HubaraSalesSessionWorkflow.run,
-                SalesSessionInput(session_id=session_id),
+                SalesSessionInput(
+                    session_id=session_id,
+                    runtime_workspace_path=str(get_workspace_path()),
+                ),
                 id=workflow_id,
                 task_queue=SALES_QUEUE,
             )
@@ -75,18 +81,45 @@ async def schedule_remarketing_workflow_activity(decision: ScheduleRemarketingDe
     Reemplaza la logica que vivia dentro de `ManageConversationTagTool.execute`
     cuando el tag era INTERESADO.
     """
-    from src.domains.remarketing_whatsapp.contracts import RemarketingSessionInput
+    # PR-A remarketing: alias el getter para evitar colision con el de Sales si
+    # algun futuro caller lo importa en el mismo modulo.
+    from src.remarketing_whatsapp.config.env import (
+        get_workspace_path as get_remarketing_workspace_path,
+    )
+    from src.remarketing_whatsapp.contracts import RemarketingSessionInput
 
     client = await get_temporal_client()
     delay = timedelta(seconds=decision.delay_seconds)
+    workflow_id = f"remarketing-{decision.session_id}"
 
+    # POST-MORTEM zombie remarketing-wa_573125671604: si quedo un workflow
+    # Remarketing previo en estado RUNNING (porque su signal handover nunca
+    # llego — Bug 1 de los paths divergentes de metadata.json), el `start_workflow`
+    # nuevo lanza WorkflowAlreadyStartedError. El comportamiento anterior
+    # (`except: pass`) silenciaba el error y NO arrancaba el remarketing nuevo,
+    # dejando al cliente sin reactivacion.
+    #
+    # Fix: chequear si hay zombie y terminarlo antes de arrancar el nuevo.
+    # Dado que el siguiente start_workflow es una decision deliberada del
+    # negocio (Sales acaba de etiquetar INTERESADO), siempre queremos reemplazar
+    # la sesion previa de Remarketing con una nueva.
     try:
-        await client.start_workflow(
-            "RemarketingWorkflow",
-            RemarketingSessionInput(session_id=decision.session_id, motivo=decision.motivo),
-            id=f"remarketing-{decision.session_id}",
-            task_queue=REMARKETING_QUEUE,
-            start_delay=delay,
-        )
-    except WorkflowAlreadyStartedError:
+        existing = client.get_workflow_handle(workflow_id)
+        desc = await existing.describe()
+        if desc.status == WorkflowExecutionStatus.RUNNING:
+            await existing.terminate(reason="Reemplazado por nuevo schedule_remarketing")
+    except RPCError:
+        # No existe — ok, arranca limpio.
         pass
+
+    await client.start_workflow(
+        "RemarketingWorkflow",
+        RemarketingSessionInput(
+            session_id=decision.session_id,
+            motivo=decision.motivo,
+            runtime_workspace_path=str(get_remarketing_workspace_path()),
+        ),
+        id=workflow_id,
+        task_queue=REMARKETING_QUEUE,
+        start_delay=delay,
+    )

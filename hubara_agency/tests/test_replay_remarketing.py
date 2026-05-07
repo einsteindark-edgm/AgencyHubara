@@ -23,11 +23,11 @@ from pathlib import Path
 from temporalio.client import WorkflowHistory
 from temporalio.worker import Replayer
 
-from src.domains.remarketing_whatsapp.workflows.remarketing import (
+from src.remarketing_whatsapp.workflows.remarketing import (
     RemarketingSessionWorkflow,
 )
 
-FIXTURE = Path(__file__).parent / "fixtures" / "history_remarketing_session_v1.json"
+FIXTURE = Path(__file__).parent / "fixtures" / "history_remarketing_session_v3.json"
 
 
 async def test_remarketing_session_replay_does_not_diverge() -> None:

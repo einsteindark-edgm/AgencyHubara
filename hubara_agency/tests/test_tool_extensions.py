@@ -1,54 +1,12 @@
-"""Tests de F8: contratos `typing.Protocol` para los puertos de infraestructura.
+"""Test del mecanismo `register_tool_extension` / `apply_tool_extensions`.
 
-Verifica que los adapters default cumplan los Protocols con
-`@runtime_checkable`. Si en el futuro alguien agrega un metodo al Port pero
-olvida implementarlo en el adapter, `isinstance(impl, Port)` devolvera False
-y este test fallara.
-
-Tambien chequea, como sanity check del cierre de NEW-5, que el mecanismo de
-extension de tools funcione sin importar `src.domains.*` desde `core`.
+Confirma que la factory recibe el workspace_path correcto cuando se
+aplica una extension registrada — esto sostiene el patrón OCP sin que
+`platform/` conozca tools de dominios específicos.
 """
 from __future__ import annotations
 
 from pathlib import Path
-
-from src.core.infrastructure.adapters import (
-    DefaultBrainLoader,
-    DefaultToolRegistry,
-    DefaultWhatsAppGateway,
-)
-from src.core.ports import BrainLoaderPort, ToolRegistryPort, WhatsAppGatewayPort
-
-
-def test_default_brain_loader_satisfies_port() -> None:
-    impl = DefaultBrainLoader()
-    assert isinstance(impl, BrainLoaderPort)
-
-
-def test_default_whatsapp_gateway_satisfies_port() -> None:
-    impl = DefaultWhatsAppGateway()
-    assert isinstance(impl, WhatsAppGatewayPort)
-
-
-def test_default_tool_registry_satisfies_port() -> None:
-    impl = DefaultToolRegistry()
-    assert isinstance(impl, ToolRegistryPort)
-
-
-def test_brain_loader_returns_empty_list_for_missing_dir(tmp_path: Path) -> None:
-    """El adapter debe degradar grácil: dir vacío => list vacía."""
-    impl = DefaultBrainLoader()
-    out = impl.load(tmp_path)
-    assert out == []
-
-
-def test_brain_loader_reads_existing_files(tmp_path: Path) -> None:
-    (tmp_path / "identity.md").write_text("hello identity", encoding="utf-8")
-    (tmp_path / "knowledge.md").write_text("hello knowledge", encoding="utf-8")
-    impl = DefaultBrainLoader()
-    out = impl.load(tmp_path)
-    assert "hello identity" in out
-    assert "hello knowledge" in out
 
 
 def test_tool_extensions_apply_after_register(tmp_path: Path) -> None:
@@ -58,7 +16,7 @@ def test_tool_extensions_apply_after_register(tmp_path: Path) -> None:
     dominio. Confirma que `apply_tool_extensions` invoca la factory con el
     workspace_path correcto.
     """
-    from src.core.tool_extensions import (
+    from src.platform.tool_extensions import (
         apply_tool_extensions,
         clear_tool_extensions,
         register_tool_extension,

@@ -1,69 +1,119 @@
+"""Tool: ManageConversationTagTool.
+
+DEHA-compliant tool that satisfies the exoclaw `Tool` Protocol via the
+`ToolBase` mixin. Implements `execute_with_context(ctx, **params)` so that the
+`ToolRegistry.execute` dispatch (`exoclaw.agent.tools.registry:102-105`) injects
+the `ToolContext` automatically.
+
+The tag taxonomy (`INTERESADO`, `RECHAZO`, `COMPRA_EXITOSA`) is enforced by the
+JSON schema `enum` constraint, not by post-hoc `if not isinstance(...)` defaults.
+That means an invalid tag returns `Error: Invalid parameters ...` to the LLM
+(via `ToolBase.validate_params`) — the legacy silent fallback to `INTERESADO`
+is gone. Same for `motivo`: required, non-empty.
+
+ADR-001: the tool is inert w.r.t. Temporal. It writes the tag to `metadata.json`
+and returns a JSON envelope (`schedule_remarketing` + `message`); the workflow
+parses the envelope and issues the dispatcher activity. No `temporal_client`,
+no `start_workflow`, no workflow imports.
+"""
+
+from __future__ import annotations
+
 import json
 import time
 from pathlib import Path
-from pydantic import Field
-from exoclaw.agent.tools import Tool, ToolContext
+from typing import Any
 
-from src.core.constants import ROUTE_VENTAS
+from exoclaw.agent.tools import ToolBase, ToolContext
+
+from src.platform.config import WORKSPACE_VAULT_DIR
+from src.platform.constants import ROUTE_VENTAS
 
 
-class ManageConversationTagTool(Tool):
-    """Herramienta obligatoria para registrar la etiqueta comercial final de una conversación y el motivo de esa etiqueta."""
+_TAG_ENUM: list[str] = ["INTERESADO", "RECHAZO", "COMPRA_EXITOSA"]
+
+
+class ManageConversationTagTool(ToolBase):
+    """Register the final commercial tag for a conversation, plus the reason.
+
+    Used at end-of-sale or when the user loses interest. If the tag is
+    `INTERESADO`, the response envelope carries a `schedule_remarketing` decision
+    that the workflow turns into a dispatcher-activity invocation.
+    """
 
     name = "manage_conversation_tag"
-    description = "Úsala al final de la venta, o si el usuario pierde el interés. Registra la etiqueta final ('INTERESADO', 'RECHAZO', 'COMPRA_EXITOSA') y un resumen del motivo."
+    description = (
+        "Úsala al final de la venta, o si el usuario pierde el interés. "
+        "Registra la etiqueta final ('INTERESADO', 'RECHAZO', 'COMPRA_EXITOSA') "
+        "y un resumen breve del motivo."
+    )
+    parameters: dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "tag": {
+                "type": "string",
+                "enum": _TAG_ENUM,
+                "description": (
+                    "Etiqueta final. Una de: INTERESADO (cliente sigue dudando o "
+                    "se enfrió, programa remarketing), RECHAZO (no compra, cierre "
+                    "definitivo), COMPRA_EXITOSA (cierre con venta concretada)."
+                ),
+            },
+            "motivo": {
+                "type": "string",
+                "description": (
+                    "Resumen breve, de máximo 2 líneas, de por qué se aplicó "
+                    "esta etiqueta dado el contexto del chat."
+                ),
+                "minLength": 1,
+            },
+        },
+        "required": ["tag", "motivo"],
+    }
 
-    tag: str = Field(..., description="La etiqueta a aplicar (ej. 'INTERESADO', 'RECHAZO', 'COMPRA_EXITOSA').")
-    motivo: str = Field(..., description="Resumen breve, de máximo 2 líneas, de por qué se puso esta etiqueta dado el contexto del char.")
+    def __init__(self, workspace: str | Path, vault_dir: str | Path | None = None):
+        # POST-MORTEM workflow remarketing-wa_573125671604: el `workspace` que
+        # llega aqui es el RUNTIME WORKSPACE CANONICO del agente, compartido
+        # entre TODAS las sesiones — escribir `metadata.json` ahi pisa el
+        # estado entre clientes distintos y NO es lo que `LoadOrStartSalesSession`
+        # lee al rutear el siguiente webhook. El parametro queda por
+        # compatibilidad pero NO se usa para metadata.
+        # `vault_dir` (DI-friendly para tests): default = `WORKSPACE_VAULT_DIR`.
+        self._workspace = Path(workspace)
+        self._vault_dir = Path(vault_dir) if vault_dir is not None else WORKSPACE_VAULT_DIR
 
-    workspace: str = Field("", description="Internal: Do not provide", exclude=True)
-
-    def __init__(self, workspace: str, **kwargs):
-        super().__init__(**kwargs)
-        self.workspace = workspace
-
-    async def execute(self, ctx: ToolContext = None, tag: str = None, motivo: str = None, **kwargs) -> str:
-        _tag = tag if isinstance(tag, str) else kwargs.get('tag')
-        if not isinstance(_tag, str):
-            _tag = 'INTERESADO'
-
-        _motivo = motivo if isinstance(motivo, str) else kwargs.get('motivo')
-        if not isinstance(_motivo, str):
-            _motivo = 'Cierre automatico por inactividad'
-
-        vault = Path(self.workspace)
-        metadata_file = vault / "metadata.json"
-
-        data = {}
+    async def execute_with_context(self, ctx: ToolContext, tag: str, motivo: str) -> str:
+        # Path per-sesion (NO el workspace canonico del agente).
+        metadata_file = self._vault_dir / ctx.session_key / "metadata.json"
+        metadata_file.parent.mkdir(parents=True, exist_ok=True)
+        data: dict[str, Any] = {}
         if metadata_file.exists():
             data = json.loads(metadata_file.read_text(encoding="utf-8"))
 
-        data["tag"] = _tag
-        data["motivo"] = _motivo
+        data["tag"] = tag
+        data["motivo"] = motivo
 
-        if "status_history" not in data:
-            data["status_history"] = []
-
-        data["status_history"].append({
-            "tag": _tag,
-            "motivo": _motivo,
-            "active_route": data.get("active_route", ROUTE_VENTAS),
-            "timestamp": time.time()
-        })
+        history = data.setdefault("status_history", [])
+        history.append(
+            {
+                "tag": tag,
+                "motivo": motivo,
+                "active_route": data.get("active_route", ROUTE_VENTAS),
+                "timestamp": time.time(),
+            }
+        )
 
         metadata_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
-        session_id = ctx.session_key if ctx else kwargs.get("session_id", "wa_unknown")
-
         # ADR-001: la tool no abre temporal_client. Si el tag indica seguimiento,
         # devuelve una decision serializada para que el workflow programe el remarketing.
-        response: dict = {
-            "message": f"Éxito. Interacción etiquetada como '{_tag}'.",
+        response: dict[str, Any] = {
+            "message": f"Éxito. Interacción etiquetada como '{tag}'.",
         }
-        if str(_tag).upper() == "INTERESADO":
+        if tag == "INTERESADO":
             response["schedule_remarketing"] = {
-                "session_id": session_id,
-                "motivo": _motivo,
+                "session_id": ctx.session_key,
+                "motivo": motivo,
                 "delay_seconds": 60,
             }
             response["message"] += " Se programó un ciclo de remarketing automáticamente."

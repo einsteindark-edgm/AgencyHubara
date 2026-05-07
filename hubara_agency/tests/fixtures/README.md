@@ -10,14 +10,19 @@ history (R-DET / ADR-005).
 
 | Fixture | Workflow | Origen |
 |---|---|---|
-| `history_sales_session_v1.json` | `HubaraSalesSessionWorkflow` | `generate_fixtures.py` |
+| `history_sales_session_v2.json` | `HubaraSalesSessionWorkflow` | `generate_fixtures.py` |
 | `history_remarketing_session_v1.json` | `RemarketingSessionWorkflow` | `generate_fixtures.py` |
 
 **Post-F7**: la fixture de Sales refleja el patron bootstrap-activity. Su
 primer `activityTaskScheduledEvent` es `bootstrap_sales_session_activity`
 (simetrico a `bootstrap_remarketing_session_activity` en la fixture de
-Remarketing). El input del workflow es `SalesSessionInput(session_id, turn_count=0)`,
-no el `SessionInput` completo.
+Remarketing). El input del workflow es `SalesSessionInput(session_id, turn_count=0,
+runtime_workspace_path=None)`, no el `SessionInput` completo.
+
+**v2 (PR-A workspace refactor)**: la signature de `bootstrap_sales_session_activity`
+cambia de `(session_id: str)` a `(input: SalesSessionInput)` para hacerla extensible
+sin romper el shape de la activity en el futuro. La fixture v1 quedo obsoleta y se
+elimina al regenerar.
 
 ## Convencion de naming
 

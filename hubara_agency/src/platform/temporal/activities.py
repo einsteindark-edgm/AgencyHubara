@@ -15,10 +15,10 @@ from temporalio import activity
 from exoclaw.agent.tools.protocol import ToolContext
 from exoclaw_temporal.config import ExecuteToolInput
 
-from src.core.registries import get_base_tools_registry
-from src.core.tool_extensions import apply_tool_extensions
-from src.core.infrastructure.temporal.heartbeat import with_heartbeat
-from src.core.config import WORKSPACE_VAULT_DIR
+from src.platform.registries import get_base_tools_registry
+from src.platform.tool_extensions import apply_tool_extensions
+from src.platform.temporal.heartbeat import with_heartbeat
+from src.platform.config import WORKSPACE_VAULT_DIR
 
 @activity.defn(name="execute_tool")
 @with_heartbeat(every=10)
@@ -38,16 +38,35 @@ async def execute_tool(input: ExecuteToolInput) -> str:
         chat_id=input.chat_id,
     )
 
+    # PR-C: la tool ahora implementa `execute_with_context(ctx, **params)`, asi
+    # que `ToolRegistry.execute` (exoclaw/agent/tools/registry.py:102-105) inyecta
+    # `ctx` por su cuenta. Ya no contaminamos `input.params` con un objeto no
+    # JSON-serializable.
     if input.params is None:
         input.params = {}
-    input.params["ctx"] = ctx
     return await registry.execute(input.name, input.params, ctx)
 
 @activity.defn(name="claim_conversation_routing")
-async def claim_conversation_routing(workspace_path: str, new_route: str) -> None:
-    vault = Path(workspace_path)
-    metadata_file = vault / "metadata.json"
-    data = {}
+async def claim_conversation_routing(session_id: str, new_route: str) -> None:
+    """Marca el `active_route` de la sesion en el vault PER-SESION.
+
+    POST-MORTEM workflow remarketing-wa_573125671604: la firma anterior
+    `claim_conversation_routing(workspace_path, new_route)` recibia el RUNTIME
+    WORKSPACE CANONICO del agente (e.g. `/app/.../sales_whatsapp/workspace/`)
+    y escribia `metadata.json` ahi. Pero `LoadOrStartSalesSession` (el use
+    case que el webhook ejecuta para rutear el siguiente mensaje) lee de
+    `WORKSPACE_VAULT_DIR / session_id / metadata.json`. Resultado: el
+    `active_route` se escribia en un archivo distinto al que el webhook
+    leia, asi que el routing siempre defaultaba a `ventas` y los workflows
+    de Remarketing quedaban zombies (nunca recibian signal del cliente).
+
+    Fix: la activity ahora recibe `session_id` y deriva el path del vault
+    via `WORKSPACE_VAULT_DIR + session_id + metadata.json`. Los callers
+    (RemarketingSessionWorkflow) deben pasar `session_id`, no `ws_path`.
+    """
+    metadata_file = WORKSPACE_VAULT_DIR / session_id / "metadata.json"
+    metadata_file.parent.mkdir(parents=True, exist_ok=True)
+    data: dict = {}
     if metadata_file.exists():
         data = json.loads(metadata_file.read_text(encoding="utf-8"))
 

@@ -74,8 +74,8 @@ boot. Estos comandos deben retornar exit 0:
 
 ```bash
 uv run python -c "import src.main"
-uv run python -c "import src.domains.sales_whatsapp.worker"
-uv run python -c "import src.domains.remarketing_whatsapp.worker"
+uv run python -c "import src.sales_whatsapp.worker"
+uv run python -c "import src.remarketing_whatsapp.worker"
 ```
 
 > Tras el cierre de B-1 el entrypoint canonico de cada worker es la corutina
@@ -86,8 +86,8 @@ uv run python -c "import src.domains.remarketing_whatsapp.worker"
 Para arrancar los workers de verdad (no solo importarlos):
 
 ```bash
-uv run python -m src.domains.sales_whatsapp.worker
-uv run python -m src.domains.remarketing_whatsapp.worker
+uv run python -m src.sales_whatsapp.worker
+uv run python -m src.remarketing_whatsapp.worker
 ```
 
 Estos requieren un cluster Temporal accesible en `TEMPORAL_URL` y NO se corren

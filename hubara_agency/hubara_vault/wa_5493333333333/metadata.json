@@ -1,0 +1,12 @@
+{
+  "tag": "RECHAZO",
+  "motivo": "no le interesa",
+  "status_history": [
+    {
+      "tag": "RECHAZO",
+      "motivo": "no le interesa",
+      "active_route": "ventas",
+      "timestamp": 1778189329.2733288
+    }
+  ]
+}

@@ -8,21 +8,25 @@ Cubre los 4 caminos del legado:
 4. `active_route=remarketing` con handle muerto -> fallback a Sales (start o reuse).
 
 Tambien valida que `phone_number_id` se persiste en metadata cuando llega.
+
+PR-D global cleanup (ADR-2026-05-06-10): el `FakeBrainLoader` fue eliminado.
+Tras la migracion DEHA workspace de Remarketing, `LoadOrStartSalesSession`
+no carga `shared_brain/*.md` para ninguna ruta — `plugin_context` es siempre
+`None`. Las assertions sobre `args[2]` esperan `None` en ambas rutas (Sales
+y Remarketing).
 """
 from __future__ import annotations
-
-from pathlib import Path
 
 import pytest
 from temporalio.client import WorkflowExecutionStatus
 
-from src.core.constants import ROUTE_REMARKETING, ROUTE_VENTAS, SALES_QUEUE
-from src.domains.sales_whatsapp.application.use_cases.load_or_start_sales_session import (
+from src.platform.constants import ROUTE_REMARKETING, ROUTE_VENTAS, SALES_QUEUE
+from src.sales_whatsapp.contracts import SalesSessionInput
+from src.sales_whatsapp.use_cases.load_or_start_sales_session import (
     LoadOrStartSalesSession,
 )
-from src.domains.sales_whatsapp.contracts import SalesSessionInput
-from src.domains.sales_whatsapp.workflows.sales_session import HubaraSalesSessionWorkflow
-from src.domains.remarketing_whatsapp.workflows.remarketing import (
+from src.sales_whatsapp.workflows.sales_session import HubaraSalesSessionWorkflow
+from src.remarketing_whatsapp.workflows.remarketing import (
     RemarketingSessionWorkflow,
 )
 
@@ -41,20 +45,6 @@ class FakeMetadataStore:
     def write(self, session_id: str, data: dict) -> None:
         self.writes.append((session_id, dict(data)))
         self.data = dict(data)
-
-
-class FakeBrainLoader:
-    def __init__(self, payload: list[str]) -> None:
-        self._payload = payload
-        self.calls: list[Path] = []
-
-    def load(
-        self,
-        brain_dir: Path,
-        files: tuple[str, ...] = ("identity.md", "knowledge.md", "instructions.md"),
-    ) -> list[str]:
-        self.calls.append(brain_dir)
-        return list(self._payload)
 
 
 class _Desc:
@@ -123,24 +113,22 @@ class FakeClient:
 def _make_use_case(
     metadata_store: FakeMetadataStore,
     client: FakeClient,
-    sales_brain: list[str] | None = None,
-    remarketing_brain: list[str] | None = None,
-) -> tuple[LoadOrStartSalesSession, FakeBrainLoader, FakeBrainLoader]:
-    sales_loader = FakeBrainLoader(sales_brain or ["sales-brain"])
-    rem_loader = FakeBrainLoader(remarketing_brain or ["rem-brain"])
+) -> LoadOrStartSalesSession:
+    """PR-D global cleanup (ADR-2026-05-06-10): el use case ya no recibe
+    `sales_brain_loader`, `sales_brain_dir`, `remarketing_brain_loader`, ni
+    `remarketing_brain_dir`.
 
+    Tras la migracion DEHA workspace, ambas rutas (Sales y Remarketing) leen
+    identidad/tono/catalogo desde su workspace canonico via `ContextBuilder`.
+    El use case solo cablea client + metadata store.
+    """
     async def factory():
         return client  # type: ignore[return-value]
 
-    use_case = LoadOrStartSalesSession(
+    return LoadOrStartSalesSession(
         client_factory=factory,  # type: ignore[arg-type]
         metadata_store=metadata_store,  # type: ignore[arg-type]
-        sales_brain_loader=sales_loader,  # type: ignore[arg-type]
-        remarketing_brain_loader=rem_loader,  # type: ignore[arg-type]
-        sales_brain_dir=Path("/tmp/sales-brain"),
-        remarketing_brain_dir=Path("/tmp/rem-brain"),
     )
-    return use_case, sales_loader, rem_loader
 
 
 # --- Tests -----------------------------------------------------------------
@@ -150,7 +138,7 @@ def _make_use_case(
 async def test_starts_new_sales_workflow_when_no_metadata():
     metadata = FakeMetadataStore(initial={})
     client = FakeClient()
-    use_case, sales_loader, rem_loader = _make_use_case(metadata, client)
+    use_case = _make_use_case(metadata, client)
 
     await use_case.execute(
         session_id="wa_42", message="hola", phone_number_id="PID"
@@ -165,15 +153,13 @@ async def test_starts_new_sales_workflow_when_no_metadata():
     assert call["task_queue"] == SALES_QUEUE
     assert isinstance(call["payload"], SalesSessionInput)
     assert call["payload"].session_id == "wa_42"
-    # 3. Signal con el mensaje + el sales brain context.
+    # 3. Signal con el mensaje. PR-B: plugin_context = None para Sales — la
+    #    identidad/tono/catalogo ahora viajan via workspace files, no via signal.
     started = client.started_handles["session-wa_42"]
     assert len(started.signals) == 1
     fn, args = started.signals[0]
     assert fn is HubaraSalesSessionWorkflow.send_message
-    assert args == ["hola", None, ["sales-brain"]]
-    # 4. Solo el sales brain loader fue invocado.
-    assert sales_loader.calls == [Path("/tmp/sales-brain")]
-    assert rem_loader.calls == []
+    assert args == ["hola", None, None]
 
 
 @pytest.mark.asyncio
@@ -181,7 +167,7 @@ async def test_reuses_running_sales_handle_without_starting_again():
     metadata = FakeMetadataStore(initial={"active_route": ROUTE_VENTAS})
     existing = FakeHandle(status=WorkflowExecutionStatus.RUNNING)
     client = FakeClient(existing_handles={"session-wa_7": existing})
-    use_case, _, _ = _make_use_case(metadata, client)
+    use_case = _make_use_case(metadata, client)
 
     await use_case.execute(session_id="wa_7", message="hi", phone_number_id=None)
 
@@ -189,11 +175,11 @@ async def test_reuses_running_sales_handle_without_starting_again():
     assert metadata.writes == []
     # No se arranco workflow nuevo.
     assert client.start_calls == []
-    # El handle existente recibe el signal.
+    # El handle existente recibe el signal. PR-B: plugin_context = None.
     assert len(existing.signals) == 1
     fn, args = existing.signals[0]
     assert fn is HubaraSalesSessionWorkflow.send_message
-    assert args == ["hi", None, ["sales-brain"]]
+    assert args == ["hi", None, None]
 
 
 @pytest.mark.asyncio
@@ -201,20 +187,20 @@ async def test_routes_to_remarketing_when_active_and_running():
     metadata = FakeMetadataStore(initial={"active_route": ROUTE_REMARKETING})
     rem_handle = FakeHandle(status=WorkflowExecutionStatus.RUNNING)
     client = FakeClient(existing_handles={"remarketing-wa_9": rem_handle})
-    use_case, sales_loader, rem_loader = _make_use_case(metadata, client)
+    use_case = _make_use_case(metadata, client)
 
     await use_case.execute(session_id="wa_9", message="vuelvo", phone_number_id=None)
 
     # No se arranca Sales workflow.
     assert client.start_calls == []
-    # El handle de remarketing recibe el signal con el remarketing brain.
+    # El handle de remarketing recibe el signal. PR-D global cleanup
+    # (ADR-2026-05-06-10): plugin_context = None tambien para Remarketing —
+    # la identidad/tono/catalogo viajan via `workspace/*.md` leidos por
+    # `ContextBuilder` durante `build_prompt`.
     assert len(rem_handle.signals) == 1
     fn, args = rem_handle.signals[0]
     assert fn is RemarketingSessionWorkflow.send_message
-    assert args == ["vuelvo", None, ["rem-brain"]]
-    # Solo el remarketing brain loader fue invocado.
-    assert rem_loader.calls == [Path("/tmp/rem-brain")]
-    assert sales_loader.calls == []
+    assert args == ["vuelvo", None, None]
 
 
 @pytest.mark.asyncio
@@ -223,22 +209,21 @@ async def test_falls_back_to_sales_when_remarketing_handle_dead():
     metadata = FakeMetadataStore(initial={"active_route": ROUTE_REMARKETING})
     dead_remarketing = FakeHandle(status=WorkflowExecutionStatus.COMPLETED)
     client = FakeClient(existing_handles={"remarketing-wa_3": dead_remarketing})
-    use_case, sales_loader, rem_loader = _make_use_case(metadata, client)
+    use_case = _make_use_case(metadata, client)
 
     await use_case.execute(session_id="wa_3", message="hi again", phone_number_id=None)
 
-    # Remarketing brain se cargo (intento) y luego fallback.
-    assert rem_loader.calls == [Path("/tmp/rem-brain")]
     # Se arranca Sales workflow nuevo.
     assert len(client.start_calls) == 1
     assert client.start_calls[0]["id"] == "session-wa_3"
-    # El nuevo Sales handle recibe el signal con el sales brain.
+    # El nuevo Sales handle recibe el signal. PR-B: plugin_context = None.
     started = client.started_handles["session-wa_3"]
     assert len(started.signals) == 1
     fn, args = started.signals[0]
     assert fn is HubaraSalesSessionWorkflow.send_message
-    assert args[2] == ["sales-brain"]
-    # Sales brain loader tambien se invoco (el fallback recarga).
-    assert sales_loader.calls == [Path("/tmp/sales-brain")]
+    assert args[2] is None
+    # PR-D global cleanup (ADR-2026-05-06-10): el `remarketing_brain_loader`
+    # ya no existe en el use case; el path Remarketing tambien se alimenta del
+    # workspace canonico via `bootstrap_remarketing_session_activity`.
     # NO se signaleo al remarketing handle muerto.
     assert dead_remarketing.signals == []

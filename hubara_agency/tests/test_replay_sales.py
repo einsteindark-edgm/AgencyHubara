@@ -20,9 +20,9 @@ from pathlib import Path
 from temporalio.client import WorkflowHistory
 from temporalio.worker import Replayer
 
-from src.domains.sales_whatsapp.workflows.sales_session import HubaraSalesSessionWorkflow
+from src.sales_whatsapp.workflows.sales_session import HubaraSalesSessionWorkflow
 
-FIXTURE = Path(__file__).parent / "fixtures" / "history_sales_session_v1.json"
+FIXTURE = Path(__file__).parent / "fixtures" / "history_sales_session_v2.json"
 
 
 async def test_sales_session_replay_does_not_diverge() -> None:

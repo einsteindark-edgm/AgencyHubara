@@ -1,0 +1,12 @@
+{
+  "tag": "INTERESADO",
+  "motivo": "cliente dudo del precio",
+  "status_history": [
+    {
+      "tag": "INTERESADO",
+      "motivo": "cliente dudo del precio",
+      "active_route": "ventas",
+      "timestamp": 1778189329.269675
+    }
+  ]
+}

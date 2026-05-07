@@ -9,8 +9,8 @@ from __future__ import annotations
 from dataclasses import asdict
 import inspect
 
-from src.domains.remarketing_whatsapp.contracts import RemarketingSessionInput
-from src.domains.remarketing_whatsapp.workflows.remarketing import (
+from src.remarketing_whatsapp.contracts import RemarketingSessionInput
+from src.remarketing_whatsapp.workflows.remarketing import (
     RemarketingSessionWorkflow,
 )
 
@@ -18,7 +18,24 @@ from src.domains.remarketing_whatsapp.workflows.remarketing import (
 def test_remarketing_input_is_json_friendly_dataclass() -> None:
     dto = RemarketingSessionInput(session_id="wa_5491111111111", motivo="cliente dudó del precio")
     payload = asdict(dto)
-    assert payload == {"session_id": "wa_5491111111111", "motivo": "cliente dudó del precio"}
+    # PR-A: `runtime_workspace_path` se agrega al DTO con default `None` para
+    # cumplir R-JSON sin romper fixtures viejas (ver ADR-2026-05-06-08).
+    assert payload == {
+        "session_id": "wa_5491111111111",
+        "motivo": "cliente dudó del precio",
+        "runtime_workspace_path": None,
+    }
+
+
+def test_remarketing_input_accepts_runtime_workspace_path() -> None:
+    dto = RemarketingSessionInput(
+        session_id="wa_5491111111111",
+        motivo="cliente dudó del precio",
+        runtime_workspace_path="/tmp/ws-remarketing",
+    )
+    assert dto.runtime_workspace_path == "/tmp/ws-remarketing"
+    payload = asdict(dto)
+    assert payload["runtime_workspace_path"] == "/tmp/ws-remarketing"
 
 
 def test_remarketing_workflow_run_accepts_dto() -> None:
