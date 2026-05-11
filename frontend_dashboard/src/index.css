@@ -1,25 +1,58 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+@import "tailwindcss";
 
+/**
+ * Design tokens expuestos a Tailwind v4 vía `@theme`. Cada `--color-*` se
+ * convierte automáticamente en utilidad (`bg-accent`, `text-fg`, `border-panel`).
+ *
+ * Convenciones de naming (NO usar `text-primary` etc — colisiona con utilidades):
+ *   - color de fondo / superficie: `--color-bg`, `--color-panel`
+ *   - texto: `--color-fg`, `--color-fg-muted`
+ *   - acento: `--color-accent`
+ *   - dominio chat: `--color-agent-*`, `--color-user-*`, `--color-tag-*`
+ */
+@theme {
+  --color-bg: #0b0f19;
+  --color-fg: #e2e8f0;
+  --color-fg-muted: #94a3b8;
+
+  --color-panel: rgba(26, 32, 44, 0.45);
+  --color-panel-border: rgba(255, 255, 255, 0.08);
+
+  --color-accent: #3b82f6;
+  --color-accent-glow: rgba(59, 130, 246, 0.3);
+
+  --color-agent-bubble: rgba(59, 130, 246, 0.15);
+  --color-agent-border: rgba(59, 130, 246, 0.4);
+  --color-user-bubble: rgba(45, 55, 72, 0.6);
+  --color-user-border: rgba(45, 55, 72, 0.8);
+
+  --color-tag-bg: rgba(255, 255, 255, 0.1);
+  --color-tag-border: rgba(255, 255, 255, 0.2);
+
+  --font-sans: "Inter", sans-serif;
+}
+
+/**
+ * Variables CSS legacy: las features que aún usan `Dashboard.legacy.css` las
+ * leen vía `var(--text-secondary)` etc. Se irán quitando feature por feature
+ * a medida que cada uno migre a Tailwind.
+ */
 :root {
-  /* Core Colors */
-  --bg-color: #0b0f19;
-  --panel-bg: rgba(26, 32, 44, 0.45);
-  --panel-border: rgba(255, 255, 255, 0.08);
-  --text-primary: #e2e8f0;
-  --text-secondary: #94a3b8;
-  --accent-color: #3b82f6; /* Modern Blue */
-  --accent-glow: rgba(59, 130, 246, 0.3);
-  
-  --agent-bubble: rgba(59, 130, 246, 0.15);
-  --agent-border: rgba(59, 130, 246, 0.4);
-  --user-bubble: rgba(45, 55, 72, 0.6);
-  --user-border: rgba(45, 55, 72, 0.8);
-  
-  --tag-bg: rgba(255, 255, 255, 0.1);
-  --tag-border: rgba(255, 255, 255, 0.2);
-
-  /* Typography */
-  --font-main: 'Inter', sans-serif;
+  --bg-color: var(--color-bg);
+  --panel-bg: var(--color-panel);
+  --panel-border: var(--color-panel-border);
+  --text-primary: var(--color-fg);
+  --text-secondary: var(--color-fg-muted);
+  --accent-color: var(--color-accent);
+  --accent-glow: var(--color-accent-glow);
+  --agent-bubble: var(--color-agent-bubble);
+  --agent-border: var(--color-agent-border);
+  --user-bubble: var(--color-user-bubble);
+  --user-border: var(--color-user-border);
+  --tag-bg: var(--color-tag-bg);
+  --tag-border: var(--color-tag-border);
+  --font-main: var(--font-sans);
 }
 
 * {
@@ -30,25 +63,16 @@
 
 body {
   margin: 0;
-  background-color: var(--bg-color);
-  background-image: 
+  background-color: var(--color-bg);
+  background-image:
     radial-gradient(circle at 15% 50%, rgba(59, 130, 246, 0.04), transparent 25%),
     radial-gradient(circle at 85% 30%, rgba(139, 92, 246, 0.04), transparent 25%);
-  color: var(--text-primary);
-  font-family: var(--font-main);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
   height: 100vh;
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-}
-
-/* Glassmorphism Utilities */
-.glass-panel {
-  background: var(--panel-bg);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid var(--panel-border);
-  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
 }
 
 /* Base Scrollbar Styling */
@@ -57,17 +81,17 @@ body {
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: transparent; 
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1); 
+  background: rgba(255, 255, 255, 0.1);
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.2); 
+  background: rgba(255, 255, 255, 0.2);
 }
 
-/* Typography Utility */
+/* Typography reset shared across the app */
 h1, h2, h3, h4 {
   font-weight: 600;
   letter-spacing: -0.02em;

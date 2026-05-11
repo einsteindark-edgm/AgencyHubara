@@ -17,6 +17,11 @@ from src.sales_whatsapp.activities import (
     bootstrap_sales_session_activity,
     decide_ghosting_action,
 )
+from src.platform.catalog.composition import get_catalog_client
+from src.sales_whatsapp.tools.catalog import (
+    GetProductByHandleTool,
+    SearchProductsTool,
+)
 from src.sales_whatsapp.tools.routing import TransferToSalesAgentTool
 from src.sales_whatsapp.tools.tags import ManageConversationTagTool
 from src.sales_whatsapp.workflows.sales_session import HubaraSalesSessionWorkflow
@@ -36,6 +41,20 @@ register_tool_extension(
 register_tool_extension(
     "sales.manage_conversation_tag",
     lambda workspace: ManageConversationTagTool(workspace=str(workspace)),
+)
+
+# HU-04: tools de catalogo. Leen del snapshot mantenido por catalog_sync (HU-03)
+# via CatalogPort. El cliente es singleton via lru_cache(1) — capturado por
+# closure en la lambda de la factory.
+_catalog = get_catalog_client()
+
+register_tool_extension(
+    "sales.search_products",
+    lambda workspace: SearchProductsTool(workspace=str(workspace), catalog=_catalog),
+)
+register_tool_extension(
+    "sales.get_product_by_handle",
+    lambda workspace: GetProductByHandleTool(workspace=str(workspace), catalog=_catalog),
 )
 
 

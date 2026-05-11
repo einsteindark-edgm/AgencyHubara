@@ -18,8 +18,10 @@ Cubre:
 - AGENTS.md presente (operativa, escalacion, ghosting).
 - TOOLS.md presente (taxonomia de tags + reglas de cierre).
 - USER.md presente (tenant defaults — Hubara, COP, envios nacionales).
-- skill `hubara_catalog` con `metadata.exoclaw.always = true` se inyecta cada
-  turno (catalogo de productos visible sin tener que llamar `load_skill`).
+- skill `hubara_catalog` **deprecada blanda** (HU-05 PR-5 — `always: false`):
+  el catalogo dinamico vive en las tools `search_products` y
+  `get_product_by_handle` (HU-04). La skill sigue cargable manualmente como
+  fallback si las tools fallan, pero NO se inyecta cada turno.
 """
 from __future__ import annotations
 
@@ -95,22 +97,29 @@ def test_user_profile_in_system_prompt() -> None:
     assert "COP" in prompt
 
 
-def test_catalog_skill_loads_always() -> None:
-    """Cruz de Vida (primera vela del catalogo) y precio aparecen en cada turno.
+def test_catalog_skill_no_longer_auto_loaded() -> None:
+    """HU-05 PR-5: skill `hubara_catalog` esta deprecada (`always: false`).
 
-    `skills/hubara_catalog/SKILL.md` esta marcada `metadata.exoclaw.always = true`
-    (ADR-2026-05-06-02), asi que `SkillsLoader.get_always_skills()` la incluye
-    automaticamente sin pasar por `load_skill`.
+    El catalogo dinamico vive ahora en las tools `search_products` y
+    `get_product_by_handle` (HU-04). La skill sobrevive como fallback
+    cargable manualmente con `load_skill` por si las tools fallan, pero
+    NO se inyecta cada turno (sustituye la regresion de
+    `test_catalog_skill_loads_always`).
     """
     prompt = _build_prompt()
-    # La primera vela del catalogo y su precio en COP.
-    assert "Cruz de Vida" in prompt
-    assert "$17,000" in prompt or "17,000" in prompt
+    # La primera vela del catalogo hardcoded NO debe aparecer cada turno.
+    assert "Cruz de Vida" not in prompt, (
+        "skill hubara_catalog deberia estar deprecada (always:false) — "
+        "el catalogo dinamico vive en las tools de HU-04"
+    )
 
 
-def test_catalog_policies_in_system_prompt() -> None:
-    """Politicas de envio/pago del catalogo aparecen sin `load_skill`."""
+def test_catalog_tools_documented_in_tools_md() -> None:
+    """HU-04: TOOLS.md menciona las tools dinamicas de catalogo.
+
+    Reemplaza la regresion sobre la skill hardcoded — la fuente de verdad
+    del catalogo es ahora la tool, no el markdown.
+    """
     prompt = _build_prompt()
-    # Pago contra entrega solo > $45,000 COP.
-    assert "Contra Entrega" in prompt or "contra entrega" in prompt.lower()
-    assert "$45,000" in prompt or "45,000" in prompt
+    assert "search_products" in prompt
+    assert "get_product_by_handle" in prompt

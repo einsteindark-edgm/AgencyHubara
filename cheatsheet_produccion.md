@@ -59,3 +59,49 @@ Terminal 3: Tu cliente infiltrado simulando ser un celular real escribiendo desd
 ```bash
 uv run python -m src.tests.simulate_whatsapp
 ```
+
+---
+
+## Fase 4: Catálogo / catalog_sync
+
+El agente `catalog_sync` sincroniza el catálogo desde Medusa cada 5 min y deja un snapshot atómico en filesystem que el agente Sales lee en microsegundos (sin llamadas a la red por turno de chat).
+
+### Activar la Schedule (1 vez por entorno)
+```bash
+uv run python scripts/create_catalog_sync_schedule.py --env <staging|prod>
+```
+Idempotente — si la Schedule ya existe, actualiza el spec.
+
+### Arrancar el worker localmente
+```bash
+MEDUSA_BASE_URL=$MEDUSA_BASE_URL \
+MEDUSA_ADMIN_TOKEN=$MEDUSA_ADMIN_TOKEN \
+CATALOG_SNAPSHOT_DIR=/tmp/hubara_catalog \
+uv run python -m src.catalog_sync.worker
+```
+
+### Forzar un sync ahora (debugging)
+```bash
+temporal schedule trigger --schedule-id catalog-sync-default
+```
+
+### Ver últimos syncs
+```bash
+temporal workflow list --query 'WorkflowType="CatalogSyncWorkflow"' --limit 20
+```
+
+### Inspeccionar el snapshot vivo (K8s)
+```bash
+kubectl logs -n default deploy/hubara-worker-catalog-sync --tail=200 -f
+kubectl exec -n default deploy/hubara-worker-catalog-sync -- ls -la /var/lib/hubara/catalog
+kubectl exec -n default deploy/hubara-worker-catalog-sync -- cat /var/lib/hubara/catalog/manifest.json
+```
+
+### Rollback rápido
+```bash
+# Detener el sync agent (Sales sigue leyendo el último snapshot bueno):
+kubectl scale deploy hubara-worker-catalog-sync --replicas=0
+
+# Revertir las tools de catálogo en Sales (HU-04):
+kubectl set image deploy/hubara-worker-sales worker=hubara-agency-prod:<sha-anterior>
+```

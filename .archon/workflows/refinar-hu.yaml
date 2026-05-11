@@ -1,0 +1,122 @@
+name: refinar-hu
+description: |
+  Refina técnicamente una historia de usuario hasta que el humano la apruebe,
+  y persiste el refinamiento en .exoclaw/refinements/ para que planificar-hu
+  lo pueda leer en el siguiente worktree.
+
+  **Use when**: tenés una HU para refinar técnicamente. El input puede ser:
+    - Ruta a un archivo .md con la HU detallada
+    - Texto plano describiendo la HU
+
+  **Produces (efímero, en $ARTIFACTS_DIR)**:
+    - hu-original.md (snapshot del input normalizado)
+    - hu-refinada.md (output del skill, aprobado por el humano)
+
+  **Persiste en el worktree (.exoclaw/refinements/)**:
+    - <HU-id>-original.md
+    - <HU-id>-tech.md
+
+  **Cross-workflow sync**:
+    Este workflow NO commitea ni pushea. Para que planificar-hu pueda
+    encontrar el refinamiento desde un worktree nuevo, el operador debe:
+      git add .exoclaw/refinements/<id>-*.md
+      git commit -m "<id>: refinamiento técnico aprobado"
+      git push   # o merge a main según convención del equipo
+    Hasta que el commit esté visible en el branch base de Archon
+    (típicamente main), el siguiente workflow no verá estos archivos.
+
+provider: claude
+model: sonnet
+interactive: true
+
+nodes:
+  - id: preparar-input
+    prompt: |
+      El usuario invocó este workflow con: $USER_MESSAGE
+
+      Detectá qué tipo de input es y normalizalo:
+
+      1. Si parece una ruta a un archivo (termina en .md, .txt, o existe
+         en el filesystem), leélo y copiá su contenido completo a
+         $ARTIFACTS_DIR/hu-original.md
+
+      2. Si es texto plano describiendo una HU, escribilo tal cual a
+         $ARTIFACTS_DIR/hu-original.md
+
+      3. Si la ruta no existe o el contenido está vacío, fallá con un
+         error claro indicando qué intentaste leer.
+
+      Confirmá al final qué hiciste y reportá el tamaño del archivo final.
+    allowed_tools: [Read, Write, Bash]
+
+  - id: refinar
+    depends_on: [preparar-input]
+    loop:
+      interactive: true
+      max_iterations: 10
+      until: HU_APROBADA
+      capture_response: true
+      skills:
+        - exoclaw-tech-refiner-archon
+      gate_message: |
+        He refinado la HU. Revisá $ARTIFACTS_DIR/hu-refinada.md y respondé:
+        - "aprobada" o "ok" si está lista
+        - Cualquier otro comentario para que itere con tu feedback
+      prompt: |
+        HU original (visión de producto): $ARTIFACTS_DIR/hu-original.md
+
+        Feedback del humano en esta iteración: $LOOP_USER_INPUT
+
+        Aplicá tu protocolo de refinamiento técnico (skill
+        exoclaw-tech-refiner-archon).
+
+        Si existe $ARTIFACTS_DIR/hu-refinada.md de una iteración previa,
+        leélo e incorporá el feedback de forma incremental — no rehagas
+        todo, solo modificá las secciones afectadas. Acordate de
+        incrementar el contador `Iteration` del header.
+
+        Escribí la versión refinada en $ARTIFACTS_DIR/hu-refinada.md.
+
+        Si el humano aprobó (dijo "aprobada", "ok", "go", "listo", etc.):
+        <promise>HU_APROBADA</promise>
+
+  - id: persistir-refinamiento
+    depends_on: [refinar]
+    prompt: |
+      El refinamiento fue aprobado. Persistilo en el repo bajo
+      .exoclaw/refinements/.
+
+      Paso 1 — Extraé el HU id de $ARTIFACTS_DIR/hu-refinada.md:
+        - Buscá la línea que matchea `^HU id:` (formato del skill).
+        - Si el valor es `(no id provided)` o está vacío, generá uno con:
+            HU-YYYYMMDD-<slug-del-titulo>
+          donde:
+            - YYYYMMDD = fecha actual UTC
+            - slug = lowercase ASCII del título (línea
+              `^Tech refinement —` del archivo), separado por hyphens,
+              max 40 chars, sin acentos.
+        - Reportá el id elegido.
+
+      Paso 2 — Creá .exoclaw/refinements/ si no existe:
+        mkdir -p .exoclaw/refinements
+
+      Paso 3 — Copiá los dos archivos del run:
+        cp $ARTIFACTS_DIR/hu-original.md .exoclaw/refinements/<id>-original.md
+        cp $ARTIFACTS_DIR/hu-refinada.md .exoclaw/refinements/<id>-tech.md
+
+      Paso 4 — Reportá al operador:
+        - HU id elegido: <id>
+        - Archivos persistidos (rutas relativas al repo)
+        - Comando sugerido para activarlos en main:
+
+            git add .exoclaw/refinements/<id>-*.md
+            git commit -m "<id>: refinamiento técnico aprobado"
+            git push   # o merge según convención
+
+        - Comando para arrancar el siguiente workflow:
+
+            archon run planificar-hu "<id>"
+
+      IMPORTANTE: NO hagas commit ni push vos mismo. La decisión de
+      mergear el refinamiento a main es del operador.
+    allowed_tools: [Read, Write, Bash]

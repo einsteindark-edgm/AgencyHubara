@@ -1093,8 +1093,11 @@ dependencies = [
     { name = "exoclaw-temporal" },
     { name = "fastapi" },
     { name = "httpx" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
     { name = "python-dotenv" },
     { name = "structlog" },
+    { name = "tenacity" },
     { name = "uvicorn" },
 ]
 
@@ -1102,6 +1105,7 @@ dependencies = [
 dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
+    { name = "respx" },
 ]
 
 [package.metadata]
@@ -1109,8 +1113,11 @@ requires-dist = [
     { name = "exoclaw-temporal", editable = "exoclaw-temporal" },
     { name = "fastapi", specifier = ">=0.110.0" },
     { name = "httpx", specifier = ">=0.27.0" },
+    { name = "pydantic", specifier = ">=2.6,<3" },
+    { name = "pydantic-settings", specifier = ">=2,<3" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "structlog", specifier = ">=24.0.0" },
+    { name = "tenacity", specifier = ">=8.2,<10" },
     { name = "uvicorn", specifier = ">=0.30.0" },
 ]
 
@@ -1118,6 +1125,7 @@ requires-dist = [
 dev = [
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-asyncio", specifier = ">=0.23" },
+    { name = "respx", specifier = ">=0.21" },
 ]
 
 [[package]]
@@ -2430,6 +2438,18 @@ wheels = [
 ]
 
 [[package]]
+name = "respx"
+version = "0.23.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/43/98/4e55c9c486404ec12373708d015ebce157966965a5ebe7f28ff2c784d41b/respx-0.23.1.tar.gz", hash = "sha256:242dcc6ce6b5b9bf621f5870c82a63997e8e82bc7c947f9ffe272b8f3dd5a780", size = 29243, upload-time = "2026-04-08T14:37:16.008Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1d/4a/221da6ca167db45693d8d26c7dc79ccfc978a440251bf6721c9aaf251ac0/respx-0.23.1-py2.py3-none-any.whl", hash = "sha256:b18004b029935384bccfa6d7d9d74b4ec9af73a081cc28600fffc0447f4b8c1a", size = 25557, upload-time = "2026-04-08T14:37:14.613Z" },
+]
+
+[[package]]
 name = "rich"
 version = "14.3.4"
 source = { registry = "https://pypi.org/simple" }
@@ -2707,6 +2727,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/d2/31/d474bab8535552add6ed289911bf1ffae5d7071823ece1069842190fcaed/temporalio-1.25.0-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:141f37aaafd7d090ba5c8776e4e9bc60df1fbc64b9f50c8f00e905a436588ddc", size = 13555435, upload-time = "2026-04-08T18:53:41.36Z" },
     { url = "https://files.pythonhosted.org/packages/2a/c8/e7dc053d6107bf2a037a3c9fe7b86639a25dcb888bde0e1ca366901ee47f/temporalio-1.25.0-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:ff7ca5bb80264976477d4dc7a839b3d22af8577ae92306526a061481db49bf92", size = 14052050, upload-time = "2026-04-08T18:53:46.44Z" },
     { url = "https://files.pythonhosted.org/packages/08/70/9340ed3a578321cbc153041d34834bb1ec3f1f3e3d9cded47cd1b7c3e403/temporalio-1.25.0-cp310-abi3-win_amd64.whl", hash = "sha256:9411534279a2e64847231b6059c214bff4d57cfd1532bd09f333d0b1603daa7f", size = 14299684, upload-time = "2026-04-08T18:53:52.482Z" },
+]
+
+[[package]]
+name = "tenacity"
+version = "9.1.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/47/c6/ee486fd809e357697ee8a44d3d69222b344920433d3b6666ccd9b374630c/tenacity-9.1.4.tar.gz", hash = "sha256:adb31d4c263f2bd041081ab33b498309a57c77f9acf2db65aadf0898179cf93a", size = 49413, upload-time = "2026-02-07T10:45:33.841Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d7/c1/eb8f9debc45d3b7918a32ab756658a0904732f75e555402972246b0b8e71/tenacity-9.1.4-py3-none-any.whl", hash = "sha256:6095a360c919085f28c6527de529e76a06ad89b23659fa881ae0649b867a9d55", size = 28926, upload-time = "2026-02-07T10:45:32.24Z" },
 ]
 
 [[package]]

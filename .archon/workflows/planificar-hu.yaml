@@ -1,0 +1,157 @@
+name: planificar-hu
+description: |
+  Descompone un refinamiento técnico aprobado en un DAG de tareas atómicas
+  end-to-end (feature vertical slices), listas para que implementar-tarea
+  ejecute una por una.
+
+  **Use when**: ya corriste refinar-hu y .exoclaw/refinements/<id>-tech.md
+  está visible en main (o el branch base de Archon). El input puede ser:
+    - HU id (ej: "HU-2026-05-11-auto-tagging-conversaciones")
+    - Ruta a un archivo de refinamiento (.exoclaw/refinements/<id>-tech.md)
+
+  **Produces (efímero, en $ARTIFACTS_DIR)**:
+    - hu-refinada.md (copia del refinamiento)
+    - hu-original.md (copia de la HU original, fallback context)
+    - plan-manifest.yaml (DAG con tasks[] + depends_on)
+    - tareas/F<NN>-<slug>.md (uno por feature atómica)
+
+  **Persiste en el worktree (.exoclaw/plans/<HU-id>/)**:
+    - plan-manifest.yaml
+    - tareas/F<NN>-<slug>.md (uno por tarea)
+
+  **Cross-workflow sync**:
+    Este workflow NO commitea ni pushea. Para que implementar-tarea encuentre
+    el plan desde un worktree nuevo, el operador debe comitear + mergear
+    .exoclaw/plans/<id>/ a main (o el branch base) antes de invocar
+    implementar-tarea.
+
+provider: claude
+model: sonnet
+interactive: true
+
+nodes:
+  - id: cargar-refinamiento
+    prompt: |
+      El usuario invocó este workflow con: $USER_MESSAGE
+
+      Localizá el refinamiento técnico aprobado y prepará el $ARTIFACTS_DIR:
+
+      1. Si $USER_MESSAGE parece una ruta a un archivo (contiene "/" o
+         termina en ".md"), leélo directamente. Validá que sea un archivo
+         de refinamiento (debe contener la línea `^HU id:` y secciones §1-§14).
+
+      2. Si parece un HU id (ej: "HU-2026-05-11-foo"), buscá
+         .exoclaw/refinements/<id>-tech.md.
+
+      3. Si no encontrás el archivo:
+         - Listá los archivos en .exoclaw/refinements/ (si existe).
+         - Fallá con un error claro indicando qué intentaste y qué ids
+           hay disponibles.
+
+      Una vez localizado:
+        a. cp <ruta-refinamiento> $ARTIFACTS_DIR/hu-refinada.md
+        b. Si existe .exoclaw/refinements/<id>-original.md, copialo a
+           $ARTIFACTS_DIR/hu-original.md (el planner puede usarlo como
+           fallback cuando le falte contexto).
+        c. Extraé el HU id del archivo (línea `^HU id:`) y reportalo.
+        d. Reportá el tamaño del refinamiento cargado.
+
+      Guardá mentalmente el HU id — lo vas a necesitar en persistir-plan.
+    allowed_tools: [Read, Write, Bash]
+
+  - id: planificar
+    depends_on: [cargar-refinamiento]
+    loop:
+      interactive: true
+      max_iterations: 8
+      until: PLAN_APROBADO
+      capture_response: true
+      skills:
+        - exoclaw-task-planner-archon
+      gate_message: |
+        Descompuse el refinamiento en tareas atómicas. Revisá:
+          - $ARTIFACTS_DIR/plan-manifest.yaml (el DAG con depends_on)
+          - $ARTIFACTS_DIR/tareas/F<NN>-*.md (una por feature)
+
+        Respondé:
+          - "aprobado" / "ok" / "go" si el plan está listo
+          - Cualquier otro comentario para iterar:
+              * split: "partí F03 en dos tareas"
+              * merge: "uní F02 y F04 — son la misma feature"
+              * scope: "F05 debe incluir también el caso X"
+              * add: "falta una tarea para la migración Y"
+              * remove: "F07 está fuera de scope"
+              * deps: "F06 también depende de F02"
+      prompt: |
+        Refinamiento técnico aprobado: $ARTIFACTS_DIR/hu-refinada.md
+        HU original (fallback): $ARTIFACTS_DIR/hu-original.md (si existe)
+
+        Feedback del humano en esta iteración: $LOOP_USER_INPUT
+
+        Aplicá tu protocolo de descomposición (skill
+        exoclaw-task-planner-archon).
+
+        Si $ARTIFACTS_DIR/plan-manifest.yaml ya existe de una iteración
+        previa, leélo + leé todos los archivos en $ARTIFACTS_DIR/tareas/
+        e incorporá el feedback de forma INCREMENTAL — modificá solo las
+        tareas afectadas, no regeneres todo el plan. Incrementá el campo
+        `iteration` del manifest header.
+
+        Validá antes de devolver:
+          - DAG sin ciclos
+          - Cobertura completa de criterios de aceptación (§1 del
+            refinamiento). Suma de delivers_acceptance de cada tarea
+            debe cubrir todos los AC sin huérfanos.
+          - Max ~3 deps directas por tarea
+          - Granularidad: 50-300 LOC por tarea (feature atómica e2e)
+          - Cada tarea cruza todas las capas DEHA que toca (contracts +
+            state/tools/activities/workflows + workspace + worker + tests)
+
+        Si el humano aprobó:
+        <promise>PLAN_APROBADO</promise>
+
+  - id: persistir-plan
+    depends_on: [planificar]
+    prompt: |
+      El plan fue aprobado. Persistilo en .exoclaw/plans/<HU-id>/.
+
+      Paso 1 — Extraé el HU id de $ARTIFACTS_DIR/plan-manifest.yaml
+        (campo `hu_id:` del header).
+
+      Paso 2 — Creá la estructura de directorios:
+        mkdir -p .exoclaw/plans/<id>/tareas
+
+      Paso 3 — Copiá los artifacts:
+        cp $ARTIFACTS_DIR/plan-manifest.yaml .exoclaw/plans/<id>/plan-manifest.yaml
+        cp $ARTIFACTS_DIR/tareas/F*.md       .exoclaw/plans/<id>/tareas/
+
+      Paso 4 — Calculá un topological order válido del DAG:
+        - Leé el campo `tasks[]` del manifest.
+        - Para cada tarea, leé su `depends_on`.
+        - Aplicá Kahn's algorithm para producir una secuencia donde cada
+          tarea aparece DESPUÉS de todas sus deps.
+        - Si hay tareas independientes (sin deps comunes), agrupalas en
+          "olas" (wave 1 = roots, wave 2 = tareas con deps en wave 1, etc.).
+
+      Paso 5 — Reportá al operador:
+        - HU id: <id>
+        - Total de tareas: N
+        - Topological order sugerido (formato "Wave 1: F01, F03 | Wave 2: F02, F04 | ...")
+        - Comando para activar el plan en main:
+
+            git add .exoclaw/plans/<id>/
+            git commit -m "<id>: plan de tareas aprobado (N features)"
+            git push   # o merge según convención
+
+        - Comandos para implementar las tareas (1 por tarea):
+
+            archon run implementar-tarea "<id> F01"
+            archon run implementar-tarea "<id> F02"
+            ...
+
+        - IMPORTANTE: las tareas con depends_on requieren que las
+          upstream YA estén mergeadas al branch base antes de lanzarse.
+          Respetá el topological order.
+
+      NO hagas commit ni push vos mismo.
+    allowed_tools: [Read, Write, Bash]

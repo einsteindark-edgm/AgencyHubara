@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hubara-worker-catalog-sync
+  namespace: default
+spec:
+  # CRITICAL: single writer. NO escalar (race en os.replace).
+  replicas: 1
+  strategy:
+    # Recreate evita dos pods escribiendo durante rollout.
+    type: Recreate
+  selector:
+    matchLabels:
+      app: hubara-worker-catalog-sync
+  template:
+    metadata:
+      labels:
+        app: hubara-worker-catalog-sync
+    spec:
+      containers:
+        - name: worker
+          image: hubara-agency-prod:latest
+          imagePullPolicy: Always
+          command: ["python", "-m", "hubara_agency.src.catalog_sync.worker"]
+          env:
+            - name: TEMPORAL_URL
+              value: "temporal-frontend.temporal.svc.cluster.local:7233"
+            - name: TEMPORAL_NAMESPACE
+              value: "default"
+            - name: TEMPORAL_TLS_CERT_PATH
+              value: "/etc/temporal-certs/temporal.pem"
+            - name: TEMPORAL_TLS_KEY_PATH
+              value: "/etc/temporal-certs/temporal.key"
+            - name: CATALOG_SNAPSHOT_DIR
+              value: "/var/lib/hubara/catalog"
+            - name: MEDUSA_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: hubara-medusa-secret
+                  key: MEDUSA_BASE_URL
+            - name: MEDUSA_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hubara-medusa-secret
+                  key: MEDUSA_ADMIN_TOKEN
+          volumeMounts:
+            - name: hubara-vault
+              # Reusa el PVC EFS compartido. subPath aisla del vault de sesiones.
+              mountPath: /var/lib/hubara/catalog
+              subPath: catalog
+            - name: temporal-certs
+              mountPath: "/etc/temporal-certs"
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: hubara-vault
+          persistentVolumeClaim:
+            claimName: hubara-vault-efs
+        - name: temporal-certs
+          secret:
+            secretName: temporal-cloud-certs

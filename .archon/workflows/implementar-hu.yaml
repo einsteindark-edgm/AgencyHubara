@@ -1,0 +1,294 @@
+name: implementar-hu
+description: |
+  Orquestador del pipeline DEHA con paralelismo total. Coordina la ejecución
+  de los batches de implementar-tarea según el DAG del manifest, invoca al
+  merger después de cada batch para consolidar wiring_intents en los spinal
+  files, y guía al operador en los commits + merges intermedios.
+
+  **Use when**: ya corriste planificar-hu, .exoclaw/plans/<id>/ está visible
+  en main (o el branch base), y querés ejecutar TODO el pipeline de
+  implementación, no una tarea sola.
+
+  El input es el HU id (ej: "HU-2026-05-11-auto-tagging-conversaciones").
+
+  **Modelo operacional**:
+  Este workflow asume que el operador (vos) lanza las N tareas paralelas
+  de cada batch MANUALMENTE en terminales separadas (es el modelo más
+  reliable, no depende de features de nesting de Archon). El workflow:
+    1. Identifica el próximo batch a ejecutar
+    2. Imprime los N comandos `archon run implementar-tarea` para lanzar
+    3. Espera a que respondas "ready" cuando los N terminaron
+    4. Stagea los results, invoca al merger skill, muestra el merge-report
+    5. Te da los comandos git para mergear el batch consolidado
+    6. Avanza al siguiente batch
+
+  **Worktrees**:
+    - El orquestador corre en su propio worktree.
+    - Cada implementar-tarea que vos lances crea SU PROPIO worktree
+      (independiente). Esto es lo que permite paralelismo real.
+    - El merger corre DENTRO del worktree del orquestador (no en uno
+      separado), porque tiene que aplicar los wiring_intents a los spinal
+      files de este worktree (que es la "merge worktree" del modelo).
+
+  **Pre-condición crítica antes de arrancar cada batch**:
+  Las tareas upstream (depends_on) deben estar mergeadas al branch base
+  ANTES de que vos lances las tareas del batch siguiente. El workflow
+  valida esto leyendo los result.yaml en .exoclaw/results/<id>/ y haciendo
+  grep en el worktree por los archivos que esas upstream deberían haber
+  introducido.
+
+provider: claude
+model: sonnet
+interactive: true
+
+nodes:
+  - id: cargar-plan
+    prompt: |
+      El usuario invocó este orquestador con: $USER_MESSAGE
+
+      Paso 1 — Resolver el HU id:
+        - Si $USER_MESSAGE es un id (matcheo "HU-..."), usalo directo.
+        - Si parece ruta, extraé el id del path (.exoclaw/plans/<id>/...).
+        - Si no encontrás el id, fallá listando los planes disponibles
+          en .exoclaw/plans/.
+
+      Paso 2 — Cargar el manifest:
+        cat .exoclaw/plans/<hu_id>/plan-manifest.yaml
+        Validá que tenga la sección `parallel_batches:` (si no, el plan fue
+        generado con una versión vieja del planner — pedí al operador que
+        re-corra planificar-hu).
+
+      Paso 3 — Reportar estado actual del pipeline:
+        Para cada batch en parallel_batches:
+          - Listar sus task_ids
+          - Para cada task_id, chequear si .exoclaw/results/<hu_id>/<task_id>-result.yaml
+            existe Y tiene status: passed
+          - Marcar el batch como:
+              ✅ completo (todas passed)
+              🔄 en curso (algunas passed, otras no)
+              ⏳ pendiente (ninguna passed)
+
+      Paso 4 — Identificar el próximo batch a ejecutar:
+        El primer batch con estado != completo. Reportarlo.
+
+      Si TODOS los batches están ✅ completos:
+        Reportá "Pipeline ya completo. No hay tareas pendientes."
+        <promise>PIPELINE_OK</promise>
+    allowed_tools: [Read, Bash]
+
+  - id: ejecutar-pipeline
+    depends_on: [cargar-plan]
+    loop:
+      interactive: true
+      max_iterations: 50
+      until: PIPELINE_OK
+      capture_response: true
+      skills:
+        - exoclaw-merger-archon
+      gate_message: |
+        Estado del pipeline al final de esta iteración:
+          - Batch corriente: <ver output del nodo>
+          - Acción esperada del operador: <ver output del nodo>
+
+        Comandos disponibles:
+          - "ready"   → ya lancé las N tareas y todas terminaron con passed; invocá al merger
+          - "next"    → ya mergeé el batch a main, avanzá al siguiente
+          - "rerun"   → re-ejecutar el batch actual (alguna tarea quedó failed/blocked)
+          - "skip F<NN>" → la tarea X la implementé a mano; marcala como passed y seguí
+          - "all done"   → termino acá (algunas tareas pendientes pero quiero parar)
+          - "blocked: <razón>" → frená el pipeline y diagnostiquemos
+      prompt: |
+        Feedback del operador en esta iteración: $LOOP_USER_INPUT
+
+        Releé .exoclaw/plans/<hu_id>/plan-manifest.yaml.
+        Releé el estado de .exoclaw/results/<hu_id>/ (qué tareas tienen
+        result.yaml con status: passed).
+
+        Si TODAS las tareas están passed:
+        <promise>PIPELINE_OK</promise>
+
+        Si el operador dijo "all done":
+        <promise>PIPELINE_OK</promise>
+
+        Caso contrario, decidí en qué fase del batch actual estás:
+
+        ─────────────────────────────────────────────────────────────────
+        FASE A — Identificación del próximo batch y emisión de comandos
+        ─────────────────────────────────────────────────────────────────
+        Si NO hay un batch "en curso" (todos los batches están completos
+        o pendientes, ninguno tiene status mixto):
+
+          Paso A.1 — Identificá el primer batch pendiente en parallel_batches[].
+
+          Paso A.2 — Validá depends_on:
+            Para cada F<NN> en el batch, leé su depends_on del manifest.
+            Para cada F<X> en depends_on, verificá:
+              a. Existe .exoclaw/results/<hu_id>/F<X>-result.yaml con passed
+              b. Al menos un archivo en su files_created está presente
+                 en el worktree actual (es decir, fue mergeado a main)
+            Si alguna upstream falta o no está mergeada → frená y avisá:
+
+              ❌ No puedo arrancar batch B<k>.
+                 Falta upstream: F<X> (status: <X> | files_created no presentes en main).
+              Acción: comiteá + mergeá F<X> a main, después volvé acá y
+                      respondé "next" o re-corré este workflow.
+
+          Paso A.3 — Mostrá al operador el plan del batch:
+
+            ╔════════════════════════════════════════════════════════════╗
+            ║ 🚀 Batch B<k> listo para arrancar                          ║
+            ║                                                            ║
+            ║ Tareas en paralelo (N):                                    ║
+            ║   F<NN1> — <título 1> (<spinal files>)                     ║
+            ║   F<NN2> — <título 2> (<spinal files>)                     ║
+            ║   ...                                                      ║
+            ║                                                            ║
+            ║ ⚠️  Warnings del planner para este batch:                  ║
+            ║   <lista del campo warnings del batch en el manifest>      ║
+            ╚════════════════════════════════════════════════════════════╝
+
+            📋 Acción del operador — abrí N terminales y corré (UNA por terminal):
+
+              archon run implementar-tarea "<hu_id> F<NN1>"
+              archon run implementar-tarea "<hu_id> F<NN2>"
+              archon run implementar-tarea "<hu_id> F<NN3>"
+              ...
+
+            ⏳ Esperá a que TODAS terminen con status: passed (cada una
+               imprime un resumen al final y escribe
+               .exoclaw/results/<hu_id>/F<NN>-result.yaml).
+
+            Si alguna queda blocked / failed, NO sigas — primero resolvelo
+            (re-ejecutá la tarea con feedback, o ajustá el plan via
+            planificar-hu si requires_planner_update).
+
+            ✅ Cuando las N estén passed, comiteá los results parciales:
+              git add .exoclaw/results/<hu_id>/F*-result.yaml
+              git add <files_created de cada tarea>     # si el operador no los mergeó task-by-task
+              git commit -m "<hu_id> B<k>: <N> tareas paralelas (pre-merger)"
+              (NO pushees aún — falta el merger consolidando spinal files)
+
+            🔄 Volvé a este loop y respondé "ready" para invocar al merger.
+
+          Salí esperando el "ready" del operador.
+
+        ─────────────────────────────────────────────────────────────────
+        FASE B — Consolidación via merger (operador dijo "ready")
+        ─────────────────────────────────────────────────────────────────
+        Si $LOOP_USER_INPUT contiene "ready":
+
+          Paso B.1 — Identificá el batch en curso (el último que mostraste
+          como "listo para arrancar"). Llamémoslo B<k> con tareas
+          [F<NN1>, F<NN2>, ...].
+
+          Paso B.2 — Verificá que TODAS tengan result.yaml con passed:
+            for task in F<NN1> F<NN2> ...; do
+              cat .exoclaw/results/<hu_id>/${task}-result.yaml | grep "^status:"
+            done
+            Si alguna no es passed → frená, mostrale al operador cuál
+            falló y qué dice el blocked_reason.
+
+          Paso B.3 — Stage los results para el merger:
+            mkdir -p $ARTIFACTS_DIR/batch-results
+            rm -f $ARTIFACTS_DIR/batch-results/*.yaml
+            for task in F<NN1> F<NN2> ...; do
+              cp .exoclaw/results/<hu_id>/${task}-result.yaml \
+                 $ARTIFACTS_DIR/batch-results/${task}-result.yaml
+            done
+
+          Paso B.4 — Validá pre-condición del merger:
+            El worktree actual debe estar en estado "main + batches
+            previos mergeados" — es decir, los spinal files deben tener
+            SU CONTENIDO DE MAIN, no la concatenación de los N parciales
+            del batch actual.
+            Si en el commit pre-merger del paso anterior incluiste
+            modificaciones a spinal files, REVERTILAS antes de llamar al
+            merger:
+              git checkout HEAD~N -- <spinal-files>   # N = profundidad antes del commit pre-merger
+            (En la práctica: pediste al operador que comitee SOLO files_created
+            de las tareas, no los spinal files. Confirmá que es así.)
+
+          Paso B.5 — Invocá el skill exoclaw-merger-archon:
+            (usando la tool Skill con args = "B<k> [F<NN1>, F<NN2>, ...]")
+            El merger:
+              - Lee batch-results/*.yaml
+              - Aplica wiring_intents en orden determinístico a los spinal files
+              - Valida sintaxis
+              - Emite $ARTIFACTS_DIR/merge-report.yaml
+
+          Paso B.6 — Mostrá al operador el merge-report:
+            cat $ARTIFACTS_DIR/merge-report.yaml
+            Y ejecutá git diff de los spinal files modificados, para que
+            el operador vea exactamente qué cambió.
+
+          Paso B.7 — Indicale los comandos para finalizar el batch:
+
+            ✅ Batch B<k> consolidado.
+            Comandos sugeridos:
+              git add <spinal-files modificados por el merger>
+              git commit -m "<hu_id> B<k>: merger consolidó <N> wiring_intents"
+              git push   # o merge a main según convención
+
+            Cuando hayas mergeado, respondé "next" para avanzar al
+            siguiente batch.
+
+        ─────────────────────────────────────────────────────────────────
+        FASE C — Avance al siguiente batch (operador dijo "next")
+        ─────────────────────────────────────────────────────────────────
+        Si $LOOP_USER_INPUT contiene "next":
+          Volvé al estado inicial del loop. La próxima iteración va a
+          identificar automáticamente el siguiente batch pendiente y
+          entrar en FASE A.
+
+        ─────────────────────────────────────────────────────────────────
+        FASE D — Re-ejecución (operador dijo "rerun")
+        ─────────────────────────────────────────────────────────────────
+        Si $LOOP_USER_INPUT contiene "rerun":
+          Identificá el batch en curso. Mostrá nuevamente los comandos
+          de FASE A para que el operador relance las tareas. El operador
+          puede haber resuelto el blocker manualmente y querer reintentar.
+
+        ─────────────────────────────────────────────────────────────────
+        FASE E — Skip manual (operador dijo "skip F<NN>")
+        ─────────────────────────────────────────────────────────────────
+        Si $LOOP_USER_INPUT contiene "skip F<NN>":
+          El operador implementó esa tarea a mano. Pedile que confirme:
+            - Existe .exoclaw/results/<hu_id>/F<NN>-result.yaml con status: passed?
+            - Los files_created están en el worktree y comiteados?
+          Si sí, tratá la tarea como completada y seguí (sin invocar al
+          merger para esa tarea — sus wiring_intents quedaron sin aplicar,
+          lo cual asume que el operador hizo el wiring a mano).
+
+  - id: cerrar-pipeline
+    depends_on: [ejecutar-pipeline]
+    prompt: |
+      Pipeline de implementación completado.
+
+      Resumen final:
+        - HU id: <hu_id>
+        - Total tareas planificadas: N (del manifest)
+        - Total tareas implementadas (passed): M
+        - Total tareas skipped manualmente: S
+        - Total batches procesados: K
+        - Files created total: <count de unión de files_created de todos los results>
+        - Spinal files modificados: <lista>
+
+      Sugerencias finales para el operador:
+
+        1. Correr la suite completa una última vez:
+           uv run pytest tests/ -q
+
+        2. Si todo verde, crear un PR consolidado de toda la HU (opcional,
+           según convención del equipo):
+           gh pr create --title "<hu_id>: <título de la HU>" --body "..."
+
+        3. Cleanup de worktrees temporales de Archon:
+           ls ~/.archon/worktrees/ | grep -E "implementar-tarea.*<hu_id>"
+           # remover los que ya no necesites según convención de Archon
+
+        4. Archivar los artifacts del run en .exoclaw/results/<hu_id>/ —
+           ya quedan persistidos en el repo como traza de qué se hizo.
+
+      Imprimí también una tabla final con cada tarea, su batch, su estado
+      y los archivos que modificó (leyendo .exoclaw/results/<hu_id>/F*-result.yaml).
+    allowed_tools: [Read, Bash]

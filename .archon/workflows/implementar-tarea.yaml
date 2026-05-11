@@ -1,0 +1,224 @@
+name: implementar-tarea
+description: |
+  Implementa UNA tarea atómica del DAG producido por planificar-hu, end-to-end:
+  escribe código, corre tests, chequea las R-rules de DEHA, reporta status.
+
+  Este es el único workflow del pipeline que ESCRIBE CÓDIGO. Las tareas con
+  depends_on requieren que las upstream estén YA mergeadas al branch base
+  antes de lanzar este workflow — el nodo de carga valida eso y aborta si
+  falta algo.
+
+  **Use when**: ya corriste planificar-hu, .exoclaw/plans/<id>/ está visible
+  en main, y querés implementar UNA tarea específica. El input puede ser:
+    - Ruta a un task file: .exoclaw/plans/<id>/tareas/F<NN>-<slug>.md
+    - Tupla "HU-id F<NN>": "HU-2026-05-11-auto-tagging F02"
+
+  **Produces (efímero, en $ARTIFACTS_DIR)**:
+    - task.md (copia del archivo de tarea)
+    - plan-manifest.yaml (copia del manifest para que el skill lea depends_on)
+    - hu-refinada.md (fallback context)
+    - task-result.yaml (status + comandos corridos + R-rules + DoD)
+
+  **Produce en el worktree**:
+    - Código de producción en src/<agent>/, workspace/, tests/
+    - .exoclaw/results/<HU-id>/F<NN>-result.yaml (snapshot del resultado)
+
+  **Worktree y depends_on**:
+    Cada corrida de este workflow ocurre en un worktree fresh (Archon lo
+    crea desde main). Para tareas con depends_on, las tareas upstream
+    deben haber sido implementadas + commiteadas + mergeadas a main
+    PREVIAMENTE. El nodo de carga hace un grep de validación; si falta
+    código de una dep, aborta con un mensaje claro.
+
+  **Cross-workflow sync al terminar**:
+    Si status: passed → el operador debe comitear el worktree y mergear
+    a main antes de lanzar la próxima tarea con depends_on de esta.
+    Si status: failed / blocked → leer task-result.yaml e iterar
+    (otra corrida con feedback) o ir a planificar-hu si requires_planner_update.
+
+provider: claude
+model: sonnet  # podés subir a opus si la tarea es compleja (>300 LOC, workflow nuevo, etc.)
+interactive: true
+
+nodes:
+  - id: cargar-tarea
+    prompt: |
+      El usuario invocó este workflow con: $USER_MESSAGE
+
+      Identificá la tarea y prepará $ARTIFACTS_DIR para el skill:
+
+      Paso 1 — Resolver la ruta de la tarea:
+
+        a. Si $USER_MESSAGE contiene "tareas/F" o termina en ".md",
+           tratalo como ruta directa.
+
+        b. Si parece "<HU-id> F<NN>" (ej: "HU-2026-05-11-foo F02"),
+           buscá .exoclaw/plans/<HU-id>/tareas/F<NN>-*.md (con glob,
+           porque el slug puede variar).
+
+        c. Si no encontrás el archivo:
+           - Listá las tareas disponibles en .exoclaw/plans/<HU-id>/tareas/
+             (si existe).
+           - Fallá con un error claro listando qué intentaste.
+
+        Extraé el HU id del path (.exoclaw/plans/<HU-id>/...) o del
+        manifest (campo hu_id).
+
+      Paso 2 — Copiar los inputs al $ARTIFACTS_DIR canónico que espera el skill:
+
+        cp <ruta-task> $ARTIFACTS_DIR/task.md
+        cp .exoclaw/plans/<HU-id>/plan-manifest.yaml $ARTIFACTS_DIR/plan-manifest.yaml
+        cp .exoclaw/refinements/<HU-id>-tech.md $ARTIFACTS_DIR/hu-refinada.md
+            (si existe; es fallback opcional)
+
+      Paso 3 — Validar depends_on ANTES de llamar al skill:
+
+        a. Leé el manifest y extraé el `depends_on` de esta tarea (lista de F-ids).
+        b. Para cada F-id en depends_on:
+           - Leé .exoclaw/results/<HU-id>/<F-id>-result.yaml si existe.
+             Si NO existe → la upstream nunca terminó. Aborta.
+           - Si existe, leé el campo `files_created` y `files_modified`.
+           - Para AL MENOS UN archivo de `files_created`, verificá que
+             existe en el worktree actual. Si no existe → la upstream
+             no fue mergeada al base branch. Aborta.
+        c. Si alguna validación falla, NO invoques al skill. En su lugar,
+           imprimí:
+
+              ❌ depends_on no satisfecho.
+              Tarea: F<NN> requiere [F<X>, F<Y>] aplicadas.
+              Faltante: <archivos no encontrados>.
+              Acción del operador:
+                1. Mergear el branch de F<X> a main.
+                2. Re-lanzar este workflow una vez visible.
+
+           Y fallá el nodo con exit no-cero.
+
+      Paso 4 — Reportar antes de pasar al implementador:
+        - HU id, Task id (F<NN>), título
+        - depends_on (validados ✓)
+        - Files affected según §3 del task.md
+        - Comandos de verificación según §10 (preview)
+    allowed_tools: [Read, Write, Bash, Grep, Glob]
+
+  - id: implementar
+    depends_on: [cargar-tarea]
+    loop:
+      interactive: true
+      max_iterations: 5
+      until: TAREA_OK
+      capture_response: true
+      skills:
+        - exoclaw-implementer-archon
+      gate_message: |
+        Implementé la tarea. Revisá:
+          - $ARTIFACTS_DIR/task-result.yaml (status + comandos + R-rules + DoD)
+          - Cambios de código en el worktree (corré `git diff` y `git status`)
+
+        Status posibles:
+          - passed: todo verde, listo para comitear y mergear
+          - passed_with_warnings: funciona pero quedó algún DoD sin tildar
+          - failed: algún comando de §10 rojo tras 3 reintentos
+          - blocked: depends_on_missing | missing_dependency |
+                    requires_planner_update | regression | command_timeout
+
+        Respondé:
+          - "ok" / "merge" / "listo" si status: passed y el código pinta bien
+          - Cualquier otro comentario para iterar (fix, refactor, agregar test)
+          - "blocked" si querés frenar acá y volver a planificar
+      prompt: |
+        Tarea a implementar: $ARTIFACTS_DIR/task.md
+        Manifest completo (para resolver depends_on): $ARTIFACTS_DIR/plan-manifest.yaml
+        Refinamiento (fallback context): $ARTIFACTS_DIR/hu-refinada.md (si existe)
+
+        Feedback del humano en esta iteración: $LOOP_USER_INPUT
+
+        Aplicá tu protocolo de implementación (skill exoclaw-implementer-archon).
+
+        Reglas hard:
+          - Mantenete dentro del §3 (Files affected) de task.md. NO edites
+            archivos fuera del scope, ni "para mejorar de paso".
+          - NO hagas commit / push / branch / rebase / tag. Archon maneja git.
+          - Reportá en $ARTIFACTS_DIR/task-result.yaml con uno de los 4
+            status (passed | passed_with_warnings | failed | blocked).
+          - Si $LOOP_USER_INPUT pide algo que requiere cambiar task.md
+            (scope expansion, otra capa, etc.), marcá
+            status: blocked, blocked_reason: requires_planner_update.
+            El planner es dueño de la definición de tareas, no vos.
+          - Las R-rules (R-DET / R-JSON / R-STATELESS / R-HEARTBEAT / R-DIP)
+            se verifican MIENTRAS escribís, no después. Una violación es
+            bug — fixeala antes de reportar passed.
+
+        Si la tarea quedó en status: passed (todos los §10 verdes, DoD
+        completo, R-rules verificadas, sin regresiones) o el humano
+        aprobó explícitamente con "ok"/"merge"/"listo":
+        <promise>TAREA_OK</promise>
+
+  - id: persistir-resultado
+    depends_on: [implementar]
+    prompt: |
+      Persistí el resultado de la tarea y orientá al operador sobre el
+      próximo paso.
+
+      Paso 1 — Leé $ARTIFACTS_DIR/task-result.yaml y extraé:
+        - hu_id
+        - task_id (F<NN>)
+        - status
+        - files_created, files_modified
+        - blockers (si hay)
+
+      Paso 2 — Persistí el resultado:
+        mkdir -p .exoclaw/results/<hu_id>
+        cp $ARTIFACTS_DIR/task-result.yaml .exoclaw/results/<hu_id>/<task_id>-result.yaml
+
+      Paso 3 — Reportá un resumen accionable:
+
+        ╔════════════════════════════════════════════════════════════════╗
+        ║ Tarea F<NN> — <título>                                         ║
+        ║ Status: <status>                                               ║
+        ║ Files created: <N>   Files modified: <M>                       ║
+        ╚════════════════════════════════════════════════════════════════╝
+
+        Según el status, sugerí:
+
+        Si status == passed:
+          ✅ Listo para mergear.
+          Comandos sugeridos para el operador:
+            git status                          # revisar cambios
+            git add <files-created> <files-modified> .exoclaw/results/...
+            git commit -m "<hu_id> <task_id>: <título>"
+            git push   # o merge a main según convención
+
+          Próxima tarea según topological order del manifest:
+          (leé .exoclaw/plans/<hu_id>/plan-manifest.yaml y sugerí la
+           siguiente tarea pendiente cuyas depends_on ya estén satisfechas
+           — es decir, sus result.yaml existen en .exoclaw/results/<hu_id>/
+           con status: passed).
+          Comando:
+            archon run implementar-tarea "<hu_id> F<NN+1>"
+
+        Si status == passed_with_warnings:
+          ⚠️ Funciona pero quedaron DoD items sin tildar.
+          Listá los items false y sugerí: re-iterar este workflow con
+          feedback específico, o aceptarlo como deuda técnica.
+
+        Si status == failed:
+          ❌ Tests rojos tras 3 reintentos.
+          Sugerí: re-iterar este workflow ("archon run implementar-tarea
+          <hu_id> <task_id>") con feedback puntual sobre el comando que falla.
+
+        Si status == blocked:
+          🛑 Bloqueado: <blocked_reason>.
+
+          Según el reason:
+            depends_on_missing → operador mergea upstream y re-lanza
+            missing_dependency → operador agrega lib a pyproject.toml
+                                 y re-lanza (o vuelve a planificar)
+            requires_planner_update → re-correr planificar-hu con
+                                      el feedback que motivó el bloqueo
+            regression          → revisar tests fallidos en otra parte
+                                  del repo; puede ser bug del refactor
+            command_timeout     → diagnosticar manualmente, partir la
+                                  tarea en planificar-hu si es muy grande
+
+      NO hagas commit ni push vos mismo. Solo sugerí los comandos.
+    allowed_tools: [Read, Write, Bash]

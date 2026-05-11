@@ -32,9 +32,19 @@ spec:
               value: "/etc/temporal-certs/temporal.key"
             - name: WORKSPACE_VAULT_DIR
               value: "/app/hubara_vault" # Este será el punto fijo anclado al PVC
+            # HU-05: catalog snapshot (mantenido por catalog_sync worker).
+            - name: CATALOG_SNAPSHOT_DIR
+              value: "/var/lib/hubara/catalog"
+            - name: CATALOG_MAX_AGE_MINUTES
+              value: "30"
           volumeMounts:
             - name: hubara-vault
               mountPath: /app/hubara_vault
+            # HU-05: lee el mismo PVC en otra subPath (read-only por defensa en profundidad).
+            - name: hubara-vault
+              mountPath: /var/lib/hubara/catalog
+              subPath: catalog
+              readOnly: true
             - name: temporal-certs
               mountPath: "/etc/temporal-certs"
               readOnly: true

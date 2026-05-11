@@ -1,6 +1,6 @@
 ---
 description: Catálogo de velas Hubara, precios COP, envíos, políticas, métodos de pago, garantía.
-metadata: {"exoclaw": {"always": true}}
+metadata: {"exoclaw": {"always": false}}
 ---
 
 # Conocimiento Central de la Empresa
