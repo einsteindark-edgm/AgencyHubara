@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { type ChatMessage, isVisibleChatMessage } from "@/entities/message";
+import { type ChatMessage, isVisibleChatMessage, getMessageSender } from "@/entities/message";
 import { ChatBubble } from "./ChatBubble";
 
 interface Props {
@@ -22,7 +22,7 @@ export function ChatMessageList({ messages }: Props) {
   return (
     <div className="chat-messages" ref={scrollRef}>
       {visible.map((msg, idx) => (
-        <ChatBubble key={idx} message={msg} />
+        <ChatBubble key={idx} message={msg} sender={getMessageSender(msg)} />
       ))}
     </div>
   );
