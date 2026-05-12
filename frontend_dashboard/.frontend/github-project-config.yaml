@@ -37,16 +37,16 @@ status_field_id: PVTSSF_lAHOC1uris4BXfi4zhSsBCM
 #   - Planned (PURPLE)  → FASE 2 done
 #   - Blocked (RED)     → cualquier error del pipeline
 status_options:
-  "Idea refined": 3e1150f1
-  Refining: f70edf20
-  Refined: dd640195
-  Planning: f70edf20
-  Planned: 4f823c82
-  Implementing: cdb96ad4
-  "Done — PR ready": 287c3240
-  "Blocked: refinement needs review": 2bbdde9e
-  "Blocked: plan needs review": 2bbdde9e
-  "Blocked: needs review": 2bbdde9e
+  "Idea refined": 530dbb08
+  Refining: 0cdacd66
+  Refined: c7f52dc3
+  Planning: 0cdacd66
+  Planned: 982d7d43
+  Implementing: 2122c715
+  "Done — PR ready": 64739d15
+  "Blocked: refinement needs review": 90cbcc7b
+  "Blocked: plan needs review": 90cbcc7b
+  "Blocked: needs review": 90cbcc7b
 
 # Sub-items (opcional, deshabilitado por ahora)
 sub_items:
