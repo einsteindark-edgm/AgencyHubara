@@ -23,7 +23,7 @@ nodes:
   - id: cargar-refinamiento
     bash: |
       set -e
-      RAW=$ARGUMENTS
+      RAW="$ARGUMENTS"
 
       # Resolver ruta del refinement
       if [[ "$RAW" == *.md ]] || [[ "$RAW" == */* ]]; then

@@ -61,22 +61,34 @@ nodes:
 
   - id: normalize-input
     bash: |
-      set -e
-      RAW=$ARGUMENTS
+      RAW="$ARGUMENTS"
+
+      # Guard: input vacío o whitespace-only → output FAIL para que cancel-bad-input dispare
+      TRIMMED=$(echo "$RAW" | tr -d '[:space:]')
+      if [ -z "$TRIMMED" ]; then
+        echo "FAIL_EMPTY_INPUT"
+        exit 0
+      fi
+
       if [ -f "$RAW" ]; then
         cp "$RAW" $ARTIFACTS_DIR/idea-original.md
       else
         echo "$RAW" > $ARTIFACTS_DIR/idea-original.md
       fi
       SIZE=$(wc -c < $ARTIFACTS_DIR/idea-original.md)
-      [ "$SIZE" -gt 10 ] || {
-        echo "FATAL: idea demasiado corta ($SIZE bytes). Pasame más contexto." >&2
-        exit 1
-      }
-      echo "Idea cargada ($SIZE bytes)"
+      if [ "$SIZE" -lt 20 ]; then
+        echo "FAIL_TOO_SHORT_${SIZE}"
+        exit 0
+      fi
+      echo "OK"
     depends_on: [check-prereqs]
     when: "$check-prereqs.output == 'OK'"
     timeout: 30000
+
+  - id: cancel-bad-input
+    cancel: "Input inválido: $normalize-input.output. Pasame una idea no vacía (mínimo 20 chars): archon workflow run idea-a-hu-frontend 'mi idea de feature'"
+    when: "$normalize-input.output != 'OK'"
+    depends_on: [normalize-input]
 
   # ════════════════════════════════════════════════════════════════════
   # FASE 2 — Refinar la idea a HU (loop interactivo)
@@ -266,7 +278,10 @@ nodes:
         --field-id "$FID" --single-select-option-id "$OID" 2>&1 | head -3 || true
       echo "set Idea refined ok"
     depends_on: [crear-issue]
-    trigger_rule: all_done  # fail-soft: si Project rompe, seguimos
+    # Sin trigger_rule: all_done. Si crear-issue falla/skipea, este nodo
+    # NO debe correr (no tiene issue para agregar). El fail-soft del
+    # Project sync vive ADENTRO del bash (con `|| true`), no a nivel
+    # nodo. Default all_success → si crear-issue falla, este skipea.
     timeout: 60000
 
   - id: print-issue-info
@@ -288,7 +303,11 @@ nodes:
       ╚════════════════════════════════════════════════════════════════╝
       EOF
     depends_on: [crear-issue, agregar-a-project]
-    trigger_rule: all_done
+    # none_failed_min_one_success: requiere que crear-issue haya succeeded
+    # (no skipped/failed); agregar-a-project puede haber fallado/skipeado
+    # internamente (fail-soft) y igual imprimimos. Si crear-issue falló,
+    # NO imprimimos resumen (no hay nada que reportar).
+    trigger_rule: none_failed_min_one_success
     timeout: 5000
 
   # ════════════════════════════════════════════════════════════════════
@@ -316,6 +335,20 @@ nodes:
   - id: lanzar-pipeline
     bash: |
       ISSUE_URL=$create-issue.output
+
+      # DEFENSA: validar que crear-issue produjo una URL real antes de lanzar
+      # el pipeline. Si crear-issue fue skipped/failed upstream (a pesar de
+      # las dependencias), $ISSUE_URL puede ser vacío o tener "'<empty>'".
+      # NO queremos lanzar hu-frontend-pipeline con argumento vacío.
+      if [ -z "$ISSUE_URL" ] || [ "$ISSUE_URL" = "''" ]; then
+        echo "FAIL_NO_ISSUE_URL crear-issue no produjo URL"
+        exit 1
+      fi
+      if ! echo "$ISSUE_URL" | grep -qE '^https://github\.com/.+/issues/[0-9]+'; then
+        echo "FAIL_INVALID_URL: ${ISSUE_URL}"
+        exit 1
+      fi
+
       LOG_FILE="$HOME/.archon/logs/pipeline-$(date +%s).log"
       mkdir -p "$HOME/.archon/logs"
 

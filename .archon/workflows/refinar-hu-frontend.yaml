@@ -29,7 +29,7 @@ nodes:
       }
       cp frontend_dashboard/.frontend/project-context.md $ARTIFACTS_DIR/project-context.md
 
-      RAW=$ARGUMENTS
+      RAW="$ARGUMENTS"
 
       # Detectar tipo de input
       if [[ "$RAW" =~ ^https://github\.com/.+/issues/[0-9]+$ ]]; then

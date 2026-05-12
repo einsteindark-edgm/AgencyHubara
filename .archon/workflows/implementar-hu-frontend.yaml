@@ -33,7 +33,7 @@ nodes:
   - id: cargar-plan
     bash: |
       set -e
-      RAW=$ARGUMENTS
+      RAW="$ARGUMENTS"
 
       # Resolver HU id
       if [[ "$RAW" =~ ^HU- ]]; then
@@ -217,7 +217,7 @@ nodes:
     depends_on: [ejecutar-pipeline]
     bash: |
       # Resolver HU_ID del manifest del nodo cargar-plan (re-extraer)
-      RAW=$ARGUMENTS
+      RAW="$ARGUMENTS"
       if [[ "$RAW" =~ ^HU- ]]; then HU_ID="$RAW"; else HU_ID=$(echo "$RAW" | grep -oE 'plans/[^/]+' | sed 's|^plans/||'); fi
 
       RESULTS_DIR="frontend_dashboard/.frontend/results/${HU_ID}"

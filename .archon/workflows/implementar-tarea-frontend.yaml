@@ -21,7 +21,7 @@ nodes:
   - id: cargar-tarea
     bash: |
       set -e
-      RAW=$ARGUMENTS
+      RAW="$ARGUMENTS"
 
       # Resolver task file
       TASK_FILE=""

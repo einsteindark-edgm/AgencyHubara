@@ -112,7 +112,16 @@ nodes:
   - id: resolve-input
     bash: |
       set -e
-      RAW=$ARGUMENTS
+      RAW="$ARGUMENTS"
+
+      # Guard: input vacío o whitespace-only → emitir error explícito.
+      # Sin este check, el flujo cae al branch "plain_text" con TITLE/BODY vacíos
+      # y el pipeline genera un HU_ID "HU-...-no-title" que después rompe.
+      TRIMMED=$(echo "$RAW" | tr -d '[:space:]')
+      if [ -z "$TRIMMED" ]; then
+        jq -n '{"type":"error","error":"empty_input"}'
+        exit 0
+      fi
 
       if [[ "$RAW" =~ ^https://github\.com/.+/issues/[0-9]+$ ]]; then
         TYPE="issue_url"

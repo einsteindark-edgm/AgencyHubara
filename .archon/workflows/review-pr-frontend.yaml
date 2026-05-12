@@ -34,7 +34,7 @@ nodes:
   - id: fetch-pr
     bash: |
       set -e
-      RAW=$ARGUMENTS
+      RAW="$ARGUMENTS"
 
       PR_NUM=$(echo "$RAW" | grep -oE '[0-9]+' | head -1)
       if [ -z "$PR_NUM" ]; then
