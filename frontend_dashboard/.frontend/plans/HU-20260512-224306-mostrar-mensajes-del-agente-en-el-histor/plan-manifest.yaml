@@ -1,0 +1,77 @@
+version: 1
+hu_id: HU-20260512-224306-mostrar-mensajes-del-agente-en-el-histor
+hu_title: Mostrar mensajes del agente en el historial del chat
+target_frontend: frontend_dashboard
+refinement_source: $ARTIFACTS_DIR/hu-refinada.md
+generated_by: frontend-task-planner-archon
+generated_at: 2026-05-12
+iteration: 1
+
+totals:
+  task_count: 1
+  foundation_count: 1
+  dag_max_depth: 1
+  estimated_loc_total: 123
+  acceptance_coverage: ['AC-1', 'AC-2', 'AC-3', 'AC-4', 'AC-5']
+
+tasks:
+  - id: F01
+    title: Entity sender abstraction + ChatBubble sender prop + skeleton loading
+    slug: agent-sender-and-skeleton
+    file: tareas/F01-agent-sender-and-skeleton.md
+    depends_on: []
+    blocks: []
+    delivers_acceptance: ['AC-1', 'AC-2', 'AC-3', 'AC-4', 'AC-5']
+    affects_layers: ['entities', 'features', 'tests']
+    affects_new_files:
+      - frontend_dashboard/src/features/session-chat/ui/ChatMessageListSkeleton.tsx
+      - frontend_dashboard/src/features/session-chat/ui/ChatBubble.test.tsx
+      - frontend_dashboard/src/features/session-chat/ui/ChatMessageListSkeleton.test.tsx
+    affects_spinal_files:
+      - frontend_dashboard/src/entities/message/model.ts
+      - frontend_dashboard/src/entities/message/index.ts
+    estimated_loc: 123
+    risk: low
+
+parallel_batches:
+  - batch_id: B1
+    tasks: ['F01']
+    warnings: []
+
+notes: |
+  Iteration 1 — initial decomposition.
+
+  Single-task plan: total estimated LOC (~123) is well within the 50-300 band.
+  Entity changes (model.ts, filters.ts, index.ts) are consumed exclusively by
+  session-chat in this HU; bundling them into the feature task follows the
+  FSD "entity-with-single-consumer" rule (refinement §3, §4, §5).
+
+  No page changes: Dashboard.tsx is NOT in affects_spinal_files nor
+  affects_new_files. The spinal page glob would apply only if a feature mount
+  were added; this HU adds none (refinement §2, §10).
+
+  No Tailwind token changes: index.css is NOT touched. animate-pulse is a
+  built-in Tailwind v4 utility (refinement §8).
+
+  Non-spinal "modify" files in this task (no merger contention since single task):
+    - frontend_dashboard/src/entities/message/filters.ts (not in spinal-files.yaml)
+    - frontend_dashboard/src/entities/message/filters.test.ts (test files are not spinal)
+    - frontend_dashboard/src/features/session-chat/ui/ChatBubble.tsx
+    - frontend_dashboard/src/features/session-chat/ui/ChatMessageList.tsx
+    - frontend_dashboard/src/features/session-chat/ui/SessionChat.tsx
+
+  Spinal files modified (declared via glob):
+    - frontend_dashboard/src/entities/message/model.ts  → entities/*/model.ts
+    - frontend_dashboard/src/entities/message/index.ts  → entities/*/index.ts
+  Since there is only one task, no wiring_intents consolidation is needed for
+  these files; the implementer writes them directly.
+
+  Architecture-protected files: none modified — Dashboard.tsx, dependency-cruiser,
+  tsconfig.arch.json, and architecture helpers are all untouched.
+
+  Open risks carried from refinement §12:
+    1. getMessageSender is non-exhaustive: any new ui_type passing isVisibleChatMessage
+       maps to "agent". Acceptable for now; document with a comment.
+    2. agent_message with content: null renders as an empty bubble. Follow-up HU.
+    3. ChatMessageListSkeleton depends on Dashboard.legacy.css classes (.bubble,
+       .bubble-user, .bubble-agent). Risk tied to the CSS migration story, not this HU.
