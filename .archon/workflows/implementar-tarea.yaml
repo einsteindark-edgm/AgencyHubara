@@ -219,7 +219,7 @@ nodes:
            — es decir, sus result.yaml existen en hubara_agency/.exoclaw/results/<hu_id>/
            con status: passed).
           Comando:
-            archon run implementar-tarea "<hu_id> F<NN+1>"
+            archon workflow run implementar-tarea "<hu_id> F<NN+1>"
 
         Si status == passed_with_warnings:
           ⚠️ Funciona pero quedaron DoD items sin tildar.
@@ -228,7 +228,7 @@ nodes:
 
         Si status == failed:
           ❌ Tests rojos tras 3 reintentos.
-          Sugerí: re-iterar este workflow ("archon run implementar-tarea
+          Sugerí: re-iterar este workflow ("archon workflow run implementar-tarea
           <hu_id> <task_id>") con feedback puntual sobre el comando que falla.
 
         Si status == blocked:

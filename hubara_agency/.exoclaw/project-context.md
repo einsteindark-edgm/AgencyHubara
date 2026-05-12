@@ -81,7 +81,7 @@ DO NOT write `from hubara_agency.src.<agent>...` — that would not resolve.
 
 ## Command conventions (CWD-sensitive)
 
-The operator invokes `archon run <workflow>` from REPO ROOT. The workflow's
+The operator invokes `archon workflow run <workflow>` from REPO ROOT. The workflow's
 CWD inside the worktree is also REPO ROOT. But `uv` / `pytest` / `ruff` /
 `mypy` need to run with CWD = `hubara_agency/` because:
   - `uv` resolves the project at the CWD (workspace members need explicit cd).

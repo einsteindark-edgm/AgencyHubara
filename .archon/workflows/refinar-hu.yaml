@@ -122,7 +122,7 @@ nodes:
 
         - Comando para arrancar el siguiente workflow:
 
-            archon run planificar-hu "<id>"
+            archon workflow run planificar-hu "<id>"
 
       IMPORTANTE: NO hagas commit ni push vos mismo. La decisión de
       mergear el refinamiento a main es del operador.

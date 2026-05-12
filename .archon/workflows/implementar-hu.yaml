@@ -16,7 +16,7 @@ description: |
   de cada batch MANUALMENTE en terminales separadas (es el modelo más
   reliable, no depende de features de nesting de Archon). El workflow:
     1. Identifica el próximo batch a ejecutar
-    2. Imprime los N comandos `archon run implementar-tarea` para lanzar
+    2. Imprime los N comandos `archon workflow run implementar-tarea` para lanzar
     3. Espera a que respondas "ready" cuando los N terminaron
     4. Stagea los results, invoca al merger skill, muestra el merge-report
     5. Te da los comandos git para mergear el batch consolidado
@@ -149,9 +149,9 @@ nodes:
 
             📋 Acción del operador — abrí N terminales y corré (UNA por terminal):
 
-              archon run implementar-tarea "<hu_id> F<NN1>"
-              archon run implementar-tarea "<hu_id> F<NN2>"
-              archon run implementar-tarea "<hu_id> F<NN3>"
+              archon workflow run implementar-tarea "<hu_id> F<NN1>"
+              archon workflow run implementar-tarea "<hu_id> F<NN2>"
+              archon workflow run implementar-tarea "<hu_id> F<NN3>"
               ...
 
             ⏳ Esperá a que TODAS terminen con status: passed (cada una

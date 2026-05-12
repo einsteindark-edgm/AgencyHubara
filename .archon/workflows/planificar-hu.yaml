@@ -150,8 +150,8 @@ nodes:
 
         - Comandos para implementar las tareas (1 por tarea):
 
-            archon run implementar-tarea "<id> F01"
-            archon run implementar-tarea "<id> F02"
+            archon workflow run implementar-tarea "<id> F01"
+            archon workflow run implementar-tarea "<id> F02"
             ...
 
         - IMPORTANTE: las tareas con depends_on requieren que las
