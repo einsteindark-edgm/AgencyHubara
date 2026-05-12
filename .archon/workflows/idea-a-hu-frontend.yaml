@@ -226,10 +226,28 @@ nodes:
       # gh imprime SOLO la URL al stdout cuando no-interactive
       # --label frontend-hu: el auto-add workflow del Project levanta esta label
       # y agrega el issue al board automáticamente (built-in workflow).
-      ISSUE_URL=$(gh issue create \
+      #
+      # CRÍTICO: capturamos stdout + stderr + exit code separadamente.
+      # `set -e` NO aborta en `var=$(failing_cmd)` — necesitamos check explícito.
+      gh issue create \
         --title "$TITLE" \
         --body-file $ARTIFACTS_DIR/hu-draft.md \
-        --label "frontend-hu")
+        --label "frontend-hu" \
+        > "$ARTIFACTS_DIR/.gh-create.log" 2>&1
+      GH_RC=$?
+      if [ $GH_RC -ne 0 ]; then
+        echo "FATAL: gh issue create falló (RC=$GH_RC):" >&2
+        tail -10 "$ARTIFACTS_DIR/.gh-create.log" >&2
+        exit 1
+      fi
+
+      # Validar que el output parece una URL de Issue de GitHub
+      ISSUE_URL=$(cat "$ARTIFACTS_DIR/.gh-create.log" | grep -oE 'https://github\.com/[^ ]+/issues/[0-9]+' | head -1)
+      if [ -z "$ISSUE_URL" ]; then
+        echo "FATAL: gh issue create no produjo URL parseable. Output:" >&2
+        cat "$ARTIFACTS_DIR/.gh-create.log" >&2
+        exit 1
+      fi
 
       # IMPORTANTE: persistir a archivo. $create-issue.output se PIERDE cuando
       # Archon reanuda el workflow tras una approval gate (bug conocido —
@@ -248,7 +266,7 @@ nodes:
     bash: |
       CFG="frontend_dashboard/.frontend/github-project-config.yaml"
       if [ ! -f "$CFG" ]; then
-        echo "skipped no_config — para activar, crear frontend_dashboard/.frontend/github-project-config.yaml"
+        echo "skipped no_config"
         exit 0
       fi
 
@@ -258,38 +276,79 @@ nodes:
       else
         ISSUE_URL=$create-issue.output
       fi
+      if [ -z "$ISSUE_URL" ]; then
+        echo "WARN no issue URL — agregar-a-project no puede hacer nada"
+        exit 0
+      fi
+
       PN=$(grep '^project_number:' "$CFG" | awk '{print $2}')
       PO=$(grep '^project_owner:' "$CFG" | awk '{print $2}')
       PID=$(grep '^project_id:' "$CFG" | awk '{print $2}')
       FID=$(grep '^status_field_id:' "$CFG" | awk '{print $2}')
 
-      # Agregar el issue al project
-      gh project item-add "$PN" --owner "$PO" --url "$ISSUE_URL" 2>&1 | head -3 || {
-        echo "warn item-add falló — ¿gh tiene scope 'project'? gh auth refresh -s project"
-        exit 0
-      }
-
-      # Buscar el item id del recién agregado
-      ITEM_ID=$(gh project item-list "$PN" --owner "$PO" --format json --limit 100 2>/dev/null \
-        | jq -r --arg u "$ISSUE_URL" '.items[] | select(.content.url == $u) | .id' | head -1)
-      [ -z "$ITEM_ID" ] && { echo "warn item not found after add"; exit 0; }
-
-      # Set status = "Idea refined"
-      OID=$(awk -F: '/^status_options:/{f=1; next} f && /^  "?Idea refined"?:/ {gsub(/^ +| +$/, "", $2); print $2; exit}' "$CFG")
-      if [ -z "$OID" ]; then
-        echo "warn 'Idea refined' option not in config — agregalo a status_options:"
-        exit 0
+      # ── Step 1: item-add ──
+      # Capturamos stdout + exit code separadamente (sin pipe a head, que rompe $?).
+      # El item puede YA estar en el project si el built-in auto-add lo levantó por
+      # la label frontend-hu — eso NO es un error.
+      gh project item-add "$PN" --owner "$PO" --url "$ISSUE_URL" > "$ARTIFACTS_DIR/.add.log" 2>&1
+      ADD_RC=$?
+      if [ $ADD_RC -ne 0 ]; then
+        # Si el error es "already exists" / similar, seguimos. Otro error: warn.
+        if grep -qiE "already|exists|duplicate" "$ARTIFACTS_DIR/.add.log"; then
+          echo "item ya estaba en project (probablemente auto-add)"
+        else
+          echo "WARN item-add error (RC=$ADD_RC):"
+          tail -3 "$ARTIFACTS_DIR/.add.log"
+        fi
+      else
+        echo "item-add OK"
       fi
 
+      # ── Step 2: encontrar el item id ──
+      # Reintentamos 3x con backoff porque hay race con auto-add (el item puede
+      # aparecer tras 1-2s).
+      ITEM_ID=""
+      for attempt in 1 2 3; do
+        ITEM_ID=$(gh project item-list "$PN" --owner "$PO" --format json --limit 200 2>/dev/null \
+          | jq -r --arg u "$ISSUE_URL" '.items[] | select(.content.url == $u) | .id' | head -1)
+        if [ -n "$ITEM_ID" ]; then
+          break
+        fi
+        sleep $((attempt * 2))
+      done
+      if [ -z "$ITEM_ID" ]; then
+        echo "WARN item no encontrado en project tras 3 intentos. URL: $ISSUE_URL"
+        exit 0
+      fi
+      echo "item_id=$ITEM_ID"
+
+      # ── Step 3: obtener option ID de "Idea refined" del config ──
+      OID=$(awk -F: '/^status_options:/{f=1; next} f && /^  "?Idea refined"?:/ {gsub(/^ +| +$/, "", $2); print $2; exit}' "$CFG")
+      if [ -z "$OID" ]; then
+        echo "WARN 'Idea refined' option no está en config — agregalo a status_options:"
+        exit 0
+      fi
+      echo "option_id=$OID"
+
+      # ── Step 4: item-edit con verificación REAL del exit code ──
       gh project item-edit --id "$ITEM_ID" --project-id "$PID" \
-        --field-id "$FID" --single-select-option-id "$OID" 2>&1 | head -3 || true
-      echo "set Idea refined ok"
+        --field-id "$FID" --single-select-option-id "$OID" \
+        > "$ARTIFACTS_DIR/.edit.log" 2>&1
+      EDIT_RC=$?
+      if [ $EDIT_RC -ne 0 ]; then
+        echo "FAIL item-edit (RC=$EDIT_RC):"
+        tail -5 "$ARTIFACTS_DIR/.edit.log"
+        echo ""
+        echo "Posibles causas:"
+        echo "  - El option_id $OID no existe en el project (renamed/recreated)"
+        echo "  - El gh token no tiene scope 'project' (gh auth refresh -s project)"
+        echo "  - El field_id $FID no es el Status del project"
+        exit 0   # fail-soft: el card está en el project pero sin status
+      fi
+
+      echo "✅ status 'Idea refined' set en item $ITEM_ID"
     depends_on: [crear-issue]
-    # Sin trigger_rule: all_done. Si crear-issue falla/skipea, este nodo
-    # NO debe correr (no tiene issue para agregar). El fail-soft del
-    # Project sync vive ADENTRO del bash (con `|| true`), no a nivel
-    # nodo. Default all_success → si crear-issue falla, este skipea.
-    timeout: 60000
+    timeout: 90000
 
   - id: print-issue-info
     bash: |
