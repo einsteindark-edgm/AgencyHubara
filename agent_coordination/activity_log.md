@@ -1,5 +1,7 @@
 # Activity Log
 
+2026-05-11 — refined 06 send-product-images → hubara_agency/.exoclaw/refinements/06-send-product-images-tech.md
+
 ## 2026-05-06 — deha-architect — remarketing_whatsapp PR-E lean collapse complete
 
 **Outcome**: PR-E aplana el layout de remarketing_whatsapp para que coincida con sales_whatsapp post-PR-E (ADR-2026-05-06-07). `domain/policies/prompts.py` se movio a `prompts.py` top-level; `activities.py` (file) se convirtio en `activities/` (package) con `bootstrap_session.py` y `__init__.py` que re-exporta los dos simbolos publicos (`bootstrap_remarketing_session_activity`, `build_remarketing_trigger_activity`). Los archivos viejos quedan neuterizados con docstring deprecado hasta que el usuario corra `git rm`. Cero cambios productivos en behavior; R-DET / R-JSON / R-STATELESS / R-HEARTBEAT / R-DIP intactos. Predicted tests: 87 passed (identico a post-PR-D).
