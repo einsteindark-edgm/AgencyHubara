@@ -226,11 +226,17 @@ nodes:
       # gh imprime SOLO la URL al stdout cuando no-interactive
       # --label frontend-hu: el auto-add workflow del Project levanta esta label
       # y agrega el issue al board automáticamente (built-in workflow).
-      # Nuestro nodo `agregar-a-project` aún corre para asegurar status inicial.
-      gh issue create \
+      ISSUE_URL=$(gh issue create \
         --title "$TITLE" \
         --body-file $ARTIFACTS_DIR/hu-draft.md \
-        --label "frontend-hu"
+        --label "frontend-hu")
+
+      # IMPORTANTE: persistir a archivo. $create-issue.output se PIERDE cuando
+      # Archon reanuda el workflow tras una approval gate (bug conocido —
+      # prior_success skipea el nodo pero no preserva stdout). Downstream
+      # debe leer de $ARTIFACTS_DIR/.issue-url, no de la substitución.
+      echo "$ISSUE_URL" > $ARTIFACTS_DIR/.issue-url
+      echo "$ISSUE_URL"
     depends_on: [save-draft]
     retry:
       max_attempts: 2
@@ -246,7 +252,12 @@ nodes:
         exit 0
       fi
 
-      ISSUE_URL=$create-issue.output
+      # Leer URL del archivo persistido (sobrevive resumes); fallback a substitución
+      if [ -f "$ARTIFACTS_DIR/.issue-url" ]; then
+        ISSUE_URL=$(cat "$ARTIFACTS_DIR/.issue-url")
+      else
+        ISSUE_URL=$create-issue.output
+      fi
       PN=$(grep '^project_number:' "$CFG" | awk '{print $2}')
       PO=$(grep '^project_owner:' "$CFG" | awk '{print $2}')
       PID=$(grep '^project_id:' "$CFG" | awk '{print $2}')
@@ -282,7 +293,12 @@ nodes:
 
   - id: print-issue-info
     bash: |
-      ISSUE_URL=$create-issue.output
+      # Leer URL del archivo persistido (resume-safe)
+      if [ -f "$ARTIFACTS_DIR/.issue-url" ]; then
+        ISSUE_URL=$(cat "$ARTIFACTS_DIR/.issue-url")
+      else
+        ISSUE_URL=$create-issue.output
+      fi
       PROJECT_STATUS=$agregar-a-project.output
       cat <<EOF
 
@@ -340,14 +356,20 @@ nodes:
 
   - id: lanzar-pipeline
     bash: |
-      ISSUE_URL=$create-issue.output
+      # CRÍTICO: leer URL del archivo persistido. La substitución
+      # $create-issue.output se PIERDE cuando Archon reanuda tras la
+      # approval gate de gate-lanzar-pipeline (crear-issue se marca
+      # prior_success, su stdout queda vacío en la nueva sesión).
+      if [ -f "$ARTIFACTS_DIR/.issue-url" ]; then
+        ISSUE_URL=$(cat "$ARTIFACTS_DIR/.issue-url")
+      else
+        # Fallback: fresh run sin approval intermedia
+        ISSUE_URL=$create-issue.output
+      fi
 
-      # DEFENSA: validar que crear-issue produjo una URL real antes de lanzar
-      # el pipeline. Si crear-issue fue skipped/failed upstream (a pesar de
-      # las dependencias), $ISSUE_URL puede ser vacío o tener "'<empty>'".
-      # NO queremos lanzar hu-frontend-pipeline con argumento vacío.
-      if [ -z "$ISSUE_URL" ] || [ "$ISSUE_URL" = "''" ]; then
-        echo "FAIL_NO_ISSUE_URL crear-issue no produjo URL"
+      # Validar
+      if [ -z "$ISSUE_URL" ]; then
+        echo "FAIL_NO_ISSUE_URL crear-issue no produjo URL (ni archivo ni substitución)"
         exit 1
       fi
       if ! echo "$ISSUE_URL" | grep -qE '^https://github\.com/.+/issues/[0-9]+'; then
@@ -369,7 +391,12 @@ nodes:
 
   - id: print-final-summary
     bash: |
-      ISSUE_URL=$create-issue.output
+      # Leer del archivo persistido (sobrevive resumes)
+      if [ -f "$ARTIFACTS_DIR/.issue-url" ]; then
+        ISSUE_URL=$(cat "$ARTIFACTS_DIR/.issue-url")
+      else
+        ISSUE_URL=$create-issue.output
+      fi
       PIPELINE=$lanzar-pipeline.output
       cat <<EOF
 
