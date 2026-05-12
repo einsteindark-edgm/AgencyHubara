@@ -5,11 +5,17 @@ description: |
   bien formada con título, narrativa Como/Quiero/Para, acceptance criteria
   en formato Given/When/Then, y out of scope explícito.
 
-  Al aprobar:
-    1. Publica la HU como Issue en GitHub.
-    2. Agrega el issue al Project board configurado.
-    3. Setea status "Idea refined" en el card.
-    4. (Opcional, approval gate) Dispara `hu-frontend-pipeline` en background.
+  Flujo simplificado (UNA sola approval explícita):
+    1. AI refina tu idea en una HU completa (una pasada, sin iteración)
+    2. Auto-publica el issue + card en Project (sin gate)
+    3. ÚNICA approval: ¿lanzar `hu-frontend-pipeline` ahora? (~$0.50, 15-30 min)
+       - Sí → arranca en background, pipeline actualiza el card en cada fase
+       - No → terminás con el issue listo, lanzás pipeline a mano cuando quieras
+
+  Si el draft AI te queda mal, podés:
+    - Rechazar el approval del pipeline
+    - Editar el issue manualmente en GitHub antes de lanzar
+    - Borrar el issue y re-correr idea-a-hu-frontend con una idea más detallada
 
   **Use when**:
     - Tenés una idea de feature pero no la armaste como HU formal.
@@ -91,77 +97,76 @@ nodes:
     depends_on: [normalize-input]
 
   # ════════════════════════════════════════════════════════════════════
-  # FASE 2 — Refinar la idea a HU (loop interactivo)
+  # FASE 2 — Refinar la idea a HU (UNA pasada del AI, sin loop)
   # ════════════════════════════════════════════════════════════════════
+  # Diseño: el AI genera la HU en una sola pasada y el workflow procede
+  # auto a publicar. Si el draft te queda mal, podés:
+  # (a) rechazar el approval de "lanzar pipeline" (gate-lanzar-pipeline)
+  # (b) editar el issue manualmente en GitHub antes de lanzar el pipeline
+  # (c) borrar el issue y re-correr idea-a-hu-frontend con una idea más detallada
+  # El único checkpoint humano es gate-lanzar-pipeline, mucho más adelante.
 
   - id: refinar-hu-producto
     depends_on: [normalize-input]
-    idle_timeout: 1200000  # 20 min idle (humano puede tardar entre iteraciones)
-    loop:
-      interactive: true
-      max_iterations: 6
-      until: HU_LISTA
-      gate_message: |
-        Te dejé el draft de la HU en $ARTIFACTS_DIR/hu-draft.md
-        Revisalo y respondé:
-          - "ok" / "go" / "listo" / "aprobada" → continúo al gate de publicación
-          - cualquier otro texto → itero con tu feedback
-          - "cancelar" / "salir" → terminamos sin publicar (el draft se guarda igual)
-      prompt: |
-        Sos un product owner experimentado del dashboard de AgencyHubara
-        (frontend FSD: Vite + React 19 + TanStack Query + Zod + Tailwind v4).
+    when: "$normalize-input.output == 'OK'"
+    idle_timeout: 600000  # 10 min para que el AI genere el draft
+    allowed_tools: [Read, Write]
+    prompt: |
+      Sos un product owner experimentado del dashboard de AgencyHubara
+      (frontend FSD: Vite + React 19 + TanStack Query + Zod + Tailwind v4).
 
-        Tu input es una IDEA DE NEGOCIO. Tu output es una HU bien formada.
+      Tu input es una IDEA DE NEGOCIO. Tu output es UNA HU bien formada,
+      en una sola pasada (sin iteración con el operador).
 
-        ## Paso 1 — Cargar contexto
-        Leé con Read tool:
-          - $ARTIFACTS_DIR/idea-original.md (la idea original del operador)
-          - $ARTIFACTS_DIR/hu-draft.md (si existe — iteración previa)
+      ## Paso 1 — Cargar contexto
 
-        Feedback del operador en esta iteración: $LOOP_USER_INPUT
+      Leé con Read tool:
+        - $ARTIFACTS_DIR/idea-original.md (la idea original del operador)
 
-        Si el operador dijo "cancelar" / "salir" / "abortar": NO modifiques el
-        draft, simplemente emití <promise>HU_LISTA</promise> con un comentario
-        explicando que se canceló — el gate de aprobación posterior lo detectará.
+      ## Paso 2 — Producir la HU
 
-        ## Paso 2 — Producir / iterar la HU
+      Escribí $ARTIFACTS_DIR/hu-draft.md con esta estructura EXACTA (lo
+      consume validate-hu y el resto del pipeline downstream):
 
-        Escribí (o re-escribí incremental) $ARTIFACTS_DIR/hu-draft.md con esta
-        estructura EXACTA (lo importa el siguiente workflow):
+        # <Título corto y accionable, ≤80 chars, sin punto final>
 
-          # <Título corto y accionable, ≤80 chars, sin punto final>
+        Como **<rol del usuario del dashboard, ej. "operador del dashboard">**,
+        quiero **<acción concreta>**,
+        para **<beneficio claro de negocio>**.
 
-          Como **<rol del usuario del dashboard, ej. "operador del dashboard">**,
-          quiero **<acción concreta>**,
-          para **<beneficio claro de negocio>**.
+        ## Acceptance criteria
 
-          ## Acceptance criteria
+        - **Given** <contexto inicial>, **when** <acción del usuario>, **then** <resultado observable y testable>.
+        - **Given** ..., **when** ..., **then** ...
+        - (3 a 5 bullets en total, cada uno verificable)
 
-          - **Given** <contexto inicial>, **when** <acción del usuario>, **then** <resultado observable y testable>.
-          - **Given** ..., **when** ..., **then** ...
-          - (3 a 5 bullets en total, cada uno verificable)
+        ## Out of scope
 
-          ## Out of scope
+        - <qué NO hace este feature, lista explícita>
+        - <más cosas que el operador podría asumir pero no entran>
 
-          - <qué NO hace este feature, lista explícita>
-          - <más cosas que el operador podría asumir pero no entran>
+        ## Notas técnicas (opcional)
 
-          ## Notas técnicas (opcional)
+        - <preferencias inferidas de la idea, p.ej. "reusar el componente Pill ya existente">
+        - <constraints conocidos>
 
-          - <preferencias del operador, p.ej. "reusar el componente Pill ya existente">
-          - <constraints conocidos>
+      ## Paso 3 — Reglas de calidad (verificá antes de salir)
 
-        ## Paso 3 — Reglas de calidad
+      Asegurate de que el draft cumple:
+        - Título accionable (verbo + objeto), no descriptivo
+        - Narrativa Como/Quiero/Para con los 3 elementos
+        - Cada AC empieza con "Given" y tiene When + Then
+        - Out of scope lista al menos 2 cosas que el feature NO hace
+        - Documento > 200 bytes
+        - Inferí lo que falte de la idea original — NO le preguntes al humano,
+          NO uses placeholders tipo "<TBD>" o "<a definir>"
 
-        Antes de emitir HU_LISTA chequeá:
-          - El título es accionable (verbo + objeto), no descriptivo
-          - La narrativa Como/Quiero/Para tiene los 3 elementos
-          - Cada AC empieza con "Given" y tiene When + Then
-          - El Out of scope lista al menos 2 cosas que el feature NO hace
-          - El documento tiene >200 bytes
+      Si la idea es ambigua, hacé tu mejor inferencia razonable. El humano
+      revisará el draft completo recién cuando el pipeline le ponga el issue
+      en GitHub — y ahí puede rechazar el approval de "lanzar pipeline" o
+      editar el issue directamente.
 
-        Si el operador aprobó (dijo "ok"/"go"/"listo"/"aprobada"):
-        <promise>HU_LISTA</promise>
+      Terminás cuando hayas escrito el archivo (no necesitás emitir promise).
 
   # ════════════════════════════════════════════════════════════════════
   # FASE 3 — Validar estructura del HU draft
@@ -203,22 +208,13 @@ nodes:
     depends_on: [validate-hu]
 
   # ════════════════════════════════════════════════════════════════════
-  # FASE 5 — Gate de publicación (approval node)
+  # FASE 5 — Publicar Issue + agregar al Project (auto, sin gate)
   # ════════════════════════════════════════════════════════════════════
-
-  - id: aprobar-publicacion
-    depends_on: [save-draft]
-    approval:
-      message: |
-        ✅ Draft listo. Persistido en: $save-draft.output
-
-        ¿Publico esta HU como Issue en GitHub?
-          - Aprobar → gh issue create + agregar al Project board + status "Idea refined"
-          - Rechazar → terminar acá (el draft queda guardado para revisión manual)
-
-  # ════════════════════════════════════════════════════════════════════
-  # FASE 6 — Crear Issue + agregar al Project
-  # ════════════════════════════════════════════════════════════════════
+  # Decisión de diseño: el "ok" del loop refinar-hu-producto YA implica
+  # "el draft está aprobado para publicar". Sería redundante pedir otra
+  # aprobación inmediatamente. La única approval explícita queda
+  # `gate-lanzar-pipeline` (mucho más adelante, antes de gastar ~$0.50
+  # y 15+ min en el pipeline completo).
 
   - id: crear-issue
     bash: |
@@ -235,7 +231,7 @@ nodes:
         --title "$TITLE" \
         --body-file $ARTIFACTS_DIR/hu-draft.md \
         --label "frontend-hu"
-    depends_on: [aprobar-publicacion]
+    depends_on: [save-draft]
     retry:
       max_attempts: 2
       delay_ms: 5000
@@ -311,26 +307,36 @@ nodes:
     timeout: 5000
 
   # ════════════════════════════════════════════════════════════════════
-  # FASE 7 — Gate opcional: lanzar pipeline ahora?
+  # FASE 6 — Gate ÚNICO: lanzar pipeline completo?
   # ════════════════════════════════════════════════════════════════════
+  # Este es el único approval explícito del workflow. Acá decidís si:
+  # (a) gastás ~$0.50 + 15-30 min en pipeline auto E2E (refinar técnico
+  #     FSD → planificar tareas → implementar secuencial → PR + review), o
+  # (b) terminás acá con el issue creado y lanzás el pipeline más tarde.
 
   - id: gate-lanzar-pipeline
     depends_on: [print-issue-info]
     approval:
       message: |
-        ¿Lanzo `hu-frontend-pipeline` ahora con el issue recién creado?
+        ✅ Issue publicado: $create-issue.output
+        ✅ Card en el Project: "Idea refined"
 
-        APROBAR → arranca en background. Va a:
-          - refinar técnicamente (FSD)
-          - planificar tareas
-          - implementar secuencial
-          - validar (npm test + tsc + build)
-          - abrir PR
-          - disparar review automático
-          - actualizar el card en Projects en cada fase
+        ─────────────────────────────────────────────────────────────────
+        ¿Lanzo `hu-frontend-pipeline` AHORA con este issue?
+        ─────────────────────────────────────────────────────────────────
 
-        RECHAZAR → terminamos acá. Lanzá pipeline cuando quieras:
-          archon workflow run hu-frontend-pipeline "<la URL del issue>"
+        APROBAR → arranca en background (~$0.50, 15-30 min). Va a:
+          1. refinar técnicamente (FSD: 4 import rules + 14 anti-patterns)
+          2. planificar el DAG de tareas atómicas
+          3. implementar tareas secuencialmente (npm test entre cada una)
+          4. validar (npm test + tsc -b + npm run build) en el branch
+          5. abrir PR contra main
+          6. disparar review automático (5 agentes especializados)
+          7. actualizar el card del Project en cada fase
+
+        RECHAZAR → terminamos acá. El issue + card quedan listos. Lanzás
+          el pipeline cuando quieras desde otra terminal:
+            archon workflow run hu-frontend-pipeline "$create-issue.output"
 
   - id: lanzar-pipeline
     bash: |
