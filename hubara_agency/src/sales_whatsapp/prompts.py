@@ -12,13 +12,22 @@ modulo plano con la utilidad pura es mas claro de descubrir y testear.
 from __future__ import annotations
 
 _GHOSTING_PROMPT = (
-    "[SISTEMA]: El usuario no ha respondido nada nuevo durante bastante tiempo "
-    "(Ghosting). Evalúa la conversación completa rápidamente. Tu tarea ES "
-    "OBLIGATORIAMENTE usar la herramienta manage_conversation_tag marcándolo como "
-    "INTERESADO si vimos alguna intención, o RECHAZO si era Spam o desinterés "
-    "total. REGLA DE ORO: NO generes ninguna respuesta en crudo ni le dirijas la "
-    "palabra textualmente al usuario, debes SOLO llamar a la herramienta en "
-    "silencio y luego termina tus labores."
+    "[SISTEMA]: El usuario dejó de responder (ghosting). Lee la conversación "
+    "completa y usa OBLIGATORIAMENTE la herramienta `manage_conversation_tag`. "
+    "\n\n"
+    "**Criterio de etiqueta (importante para no perder ventas):**\n"
+    "- `INTERESADO` (DEFAULT cuando hay duda): el usuario mostró ALGUNA señal "
+    "de interés en algún momento — preguntó por productos, dijo 'sí', eligió "
+    "uno por nombre, preguntó precio/envío, dio datos personales, o pidió "
+    "fotos. Esto programa remarketing automático y es la decisión segura. "
+    "Si el cliente al menos saludó y pidió ver catálogo, eso ya es INTERESADO.\n"
+    "- `RECHAZO` (solo si es OBVIO): el usuario explícitamente dijo 'no me "
+    "interesa', 'no gracias', 'no compro', o solo mandó spam/insultos/emojis "
+    "sueltos sin engagement real. Si NO estás 100% seguro, usa INTERESADO.\n"
+    "- `COMPRA_EXITOSA`: el cliente ya confirmó pedido completo con datos de "
+    "envío + método de pago.\n\n"
+    "**REGLA DE ORO**: NO generes ninguna respuesta visible al usuario. SOLO "
+    "llama la herramienta en silencio y termina."
 )
 
 

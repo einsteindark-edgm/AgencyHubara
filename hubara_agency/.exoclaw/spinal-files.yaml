@@ -1,0 +1,74 @@
+# Spinal files declaration — hubara_agency (multi-agent uv workspace)
+#
+# Spinal files are paths that MULTIPLE atomic features will modify. They are
+# the "skeleton" of the codebase (registries, factories, catalogs, shared DTOs).
+# Conflict-prone when N features are implemented in parallel.
+#
+# Read by: planner, implementer, merger skills (staged via $ARTIFACTS_DIR).
+#
+# IMPORTANT — path convention for THIS repo:
+#   - Operator's CWD when running `archon run` = repo root (AgencyHubara/)
+#   - Agent code lives at hubara_agency/src/<agent>/
+#   - All paths in this file are relative to the REPO ROOT.
+#   - Python imports inside the agent code use `from src.<agent>...` because
+#     the agent's pyproject.toml at hubara_agency/ makes hubara_agency/ the
+#     PYTHONPATH base. Don't confuse "filesystem path" (with hubara_agency/
+#     prefix) and "import path" (without).
+#
+# Glob support: paths with `*` match every existing agent (sales_whatsapp,
+# remarketing_whatsapp, catalog_sync). New agents are picked up automatically.
+
+version: 1
+
+spinal_files:
+  # Worker registration — every new tool/activity/workflow adds itself here
+  - path: hubara_agency/src/*/worker.py
+    kind: python_workflow_list
+    anchors:
+      workflows: "workflows=["
+      activities: "activities=["
+      tool_extensions: "register_tool_extension("
+
+  # Composition factories — every new tool/use case/state adapter adds a factory
+  - path: hubara_agency/src/*/composition.py
+    kind: python_factory_module
+
+  # Composition factories at platform-domain level (e.g. catalog, medusa)
+  - path: hubara_agency/src/platform/*/composition.py
+    kind: python_factory_module
+
+  # Boundary DTOs per agent
+  - path: hubara_agency/src/*/contracts.py
+    kind: python_dataclass_module
+
+  # Cross-agent boundary DTOs
+  - path: hubara_agency/src/platform/contracts.py
+    kind: python_dataclass_module
+
+  # Per-agent workspace TOOLS.md (catalog of LLM-facing tools)
+  - path: hubara_agency/src/*/workspace/TOOLS.md
+    kind: markdown_section_append
+    anchors:
+      tools_section: "^## Tools"
+
+  # Per-agent workspace identity/persona files
+  - path: hubara_agency/src/*/workspace/IDENTITY.md
+    kind: markdown_section_append
+
+  - path: hubara_agency/src/*/workspace/SOUL.md
+    kind: markdown_section_append
+
+  - path: hubara_agency/src/*/workspace/AGENTS.md
+    kind: markdown_section_append
+
+  - path: hubara_agency/src/*/workspace/USER.md
+    kind: markdown_section_append
+
+  # Per-agent workflow-emitted prompts
+  - path: hubara_agency/src/*/prompts.py
+    kind: python_factory_module
+
+# Behavior for files NOT listed here:
+#   - "new" action → no conflict, parallel-safe
+#   - "modify" action but not declared spinal → planner refuses to put two such
+#     tasks in the same batch. Either declare here or accept reduced parallelism.

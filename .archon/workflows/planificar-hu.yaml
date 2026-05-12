@@ -4,10 +4,10 @@ description: |
   end-to-end (feature vertical slices), listas para que implementar-tarea
   ejecute una por una.
 
-  **Use when**: ya corriste refinar-hu y .exoclaw/refinements/<id>-tech.md
+  **Use when**: ya corriste refinar-hu y hubara_agency/.exoclaw/refinements/<id>-tech.md
   está visible en main (o el branch base de Archon). El input puede ser:
     - HU id (ej: "HU-2026-05-11-auto-tagging-conversaciones")
-    - Ruta a un archivo de refinamiento (.exoclaw/refinements/<id>-tech.md)
+    - Ruta a un archivo de refinamiento (hubara_agency/.exoclaw/refinements/<id>-tech.md)
 
   **Produces (efímero, en $ARTIFACTS_DIR)**:
     - hu-refinada.md (copia del refinamiento)
@@ -15,14 +15,14 @@ description: |
     - plan-manifest.yaml (DAG con tasks[] + depends_on)
     - tareas/F<NN>-<slug>.md (uno por feature atómica)
 
-  **Persiste en el worktree (.exoclaw/plans/<HU-id>/)**:
+  **Persiste en el worktree (hubara_agency/.exoclaw/plans/<HU-id>/)**:
     - plan-manifest.yaml
     - tareas/F<NN>-<slug>.md (uno por tarea)
 
   **Cross-workflow sync**:
     Este workflow NO commitea ni pushea. Para que implementar-tarea encuentre
     el plan desde un worktree nuevo, el operador debe comitear + mergear
-    .exoclaw/plans/<id>/ a main (o el branch base) antes de invocar
+    hubara_agency/.exoclaw/plans/<id>/ a main (o el branch base) antes de invocar
     implementar-tarea.
 
 provider: claude
@@ -41,20 +41,25 @@ nodes:
          de refinamiento (debe contener la línea `^HU id:` y secciones §1-§14).
 
       2. Si parece un HU id (ej: "HU-2026-05-11-foo"), buscá
-         .exoclaw/refinements/<id>-tech.md.
+         hubara_agency/.exoclaw/refinements/<id>-tech.md.
 
       3. Si no encontrás el archivo:
-         - Listá los archivos en .exoclaw/refinements/ (si existe).
+         - Listá los archivos en hubara_agency/.exoclaw/refinements/ (si existe).
          - Fallá con un error claro indicando qué intentaste y qué ids
            hay disponibles.
 
       Una vez localizado:
         a. cp <ruta-refinamiento> $ARTIFACTS_DIR/hu-refinada.md
-        b. Si existe .exoclaw/refinements/<id>-original.md, copialo a
+        b. Si existe hubara_agency/.exoclaw/refinements/<id>-original.md, copialo a
            $ARTIFACTS_DIR/hu-original.md (el planner puede usarlo como
            fallback cuando le falte contexto).
-        c. Extraé el HU id del archivo (línea `^HU id:`) y reportalo.
-        d. Reportá el tamaño del refinamiento cargado.
+        c. Stageá la convención de spinal files + project context para el planner:
+             cp hubara_agency/.exoclaw/spinal-files.yaml $ARTIFACTS_DIR/spinal-files.yaml
+             cp hubara_agency/.exoclaw/project-context.md $ARTIFACTS_DIR/project-context.md
+           Si NO existe alguno de los dos, frená y avisá al operador:
+           el planner los necesita. Sugerí restaurar desde main.
+        d. Extraé el HU id del archivo (línea `^HU id:`) y reportalo.
+        e. Reportá el tamaño del refinamiento cargado.
 
       Guardá mentalmente el HU id — lo vas a necesitar en persistir-plan.
     allowed_tools: [Read, Write, Bash]
@@ -113,17 +118,17 @@ nodes:
   - id: persistir-plan
     depends_on: [planificar]
     prompt: |
-      El plan fue aprobado. Persistilo en .exoclaw/plans/<HU-id>/.
+      El plan fue aprobado. Persistilo en hubara_agency/.exoclaw/plans/<HU-id>/.
 
       Paso 1 — Extraé el HU id de $ARTIFACTS_DIR/plan-manifest.yaml
         (campo `hu_id:` del header).
 
       Paso 2 — Creá la estructura de directorios:
-        mkdir -p .exoclaw/plans/<id>/tareas
+        mkdir -p hubara_agency/.exoclaw/plans/<id>/tareas
 
       Paso 3 — Copiá los artifacts:
-        cp $ARTIFACTS_DIR/plan-manifest.yaml .exoclaw/plans/<id>/plan-manifest.yaml
-        cp $ARTIFACTS_DIR/tareas/F*.md       .exoclaw/plans/<id>/tareas/
+        cp $ARTIFACTS_DIR/plan-manifest.yaml hubara_agency/.exoclaw/plans/<id>/plan-manifest.yaml
+        cp $ARTIFACTS_DIR/tareas/F*.md       hubara_agency/.exoclaw/plans/<id>/tareas/
 
       Paso 4 — Calculá un topological order válido del DAG:
         - Leé el campo `tasks[]` del manifest.
@@ -139,7 +144,7 @@ nodes:
         - Topological order sugerido (formato "Wave 1: F01, F03 | Wave 2: F02, F04 | ...")
         - Comando para activar el plan en main:
 
-            git add .exoclaw/plans/<id>/
+            git add hubara_agency/.exoclaw/plans/<id>/
             git commit -m "<id>: plan de tareas aprobado (N features)"
             git push   # o merge según convención
 

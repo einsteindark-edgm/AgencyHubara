@@ -8,9 +8,9 @@ description: |
   antes de lanzar este workflow — el nodo de carga valida eso y aborta si
   falta algo.
 
-  **Use when**: ya corriste planificar-hu, .exoclaw/plans/<id>/ está visible
+  **Use when**: ya corriste planificar-hu, hubara_agency/.exoclaw/plans/<id>/ está visible
   en main, y querés implementar UNA tarea específica. El input puede ser:
-    - Ruta a un task file: .exoclaw/plans/<id>/tareas/F<NN>-<slug>.md
+    - Ruta a un task file: hubara_agency/.exoclaw/plans/<id>/tareas/F<NN>-<slug>.md
     - Tupla "HU-id F<NN>": "HU-2026-05-11-auto-tagging F02"
 
   **Produces (efímero, en $ARTIFACTS_DIR)**:
@@ -21,7 +21,7 @@ description: |
 
   **Produce en el worktree**:
     - Código de producción en src/<agent>/, workspace/, tests/
-    - .exoclaw/results/<HU-id>/F<NN>-result.yaml (snapshot del resultado)
+    - hubara_agency/.exoclaw/results/<HU-id>/F<NN>-result.yaml (snapshot del resultado)
 
   **Worktree y depends_on**:
     Cada corrida de este workflow ocurre en un worktree fresh (Archon lo
@@ -53,29 +53,36 @@ nodes:
            tratalo como ruta directa.
 
         b. Si parece "<HU-id> F<NN>" (ej: "HU-2026-05-11-foo F02"),
-           buscá .exoclaw/plans/<HU-id>/tareas/F<NN>-*.md (con glob,
+           buscá hubara_agency/.exoclaw/plans/<HU-id>/tareas/F<NN>-*.md (con glob,
            porque el slug puede variar).
 
         c. Si no encontrás el archivo:
-           - Listá las tareas disponibles en .exoclaw/plans/<HU-id>/tareas/
+           - Listá las tareas disponibles en hubara_agency/.exoclaw/plans/<HU-id>/tareas/
              (si existe).
            - Fallá con un error claro listando qué intentaste.
 
-        Extraé el HU id del path (.exoclaw/plans/<HU-id>/...) o del
+        Extraé el HU id del path (hubara_agency/.exoclaw/plans/<HU-id>/...) o del
         manifest (campo hu_id).
 
       Paso 2 — Copiar los inputs al $ARTIFACTS_DIR canónico que espera el skill:
 
         cp <ruta-task> $ARTIFACTS_DIR/task.md
-        cp .exoclaw/plans/<HU-id>/plan-manifest.yaml $ARTIFACTS_DIR/plan-manifest.yaml
-        cp .exoclaw/refinements/<HU-id>-tech.md $ARTIFACTS_DIR/hu-refinada.md
+        cp hubara_agency/.exoclaw/plans/<HU-id>/plan-manifest.yaml $ARTIFACTS_DIR/plan-manifest.yaml
+        cp hubara_agency/.exoclaw/refinements/<HU-id>-tech.md $ARTIFACTS_DIR/hu-refinada.md
             (si existe; es fallback opcional)
+        cp hubara_agency/.exoclaw/spinal-files.yaml $ARTIFACTS_DIR/spinal-files.yaml
+            (el implementer la necesita para saber qué archivos son spinal
+             y cuáles requieren wiring_intents en task-result.yaml)
+        cp hubara_agency/.exoclaw/project-context.md $ARTIFACTS_DIR/project-context.md
+            (LEY el implementer DEBE leer este archivo PRIMERO: contiene
+             el path layout, las convenciones de CWD para uv/pytest/ruff,
+             y los paths exactos de tests por agente)
 
       Paso 3 — Validar depends_on ANTES de llamar al skill:
 
         a. Leé el manifest y extraé el `depends_on` de esta tarea (lista de F-ids).
         b. Para cada F-id en depends_on:
-           - Leé .exoclaw/results/<HU-id>/<F-id>-result.yaml si existe.
+           - Leé hubara_agency/.exoclaw/results/<HU-id>/<F-id>-result.yaml si existe.
              Si NO existe → la upstream nunca terminó. Aborta.
            - Si existe, leé el campo `files_created` y `files_modified`.
            - Para AL MENOS UN archivo de `files_created`, verificá que
@@ -167,8 +174,8 @@ nodes:
         - blockers (si hay)
 
       Paso 2 — Persistí el resultado:
-        mkdir -p .exoclaw/results/<hu_id>
-        cp $ARTIFACTS_DIR/task-result.yaml .exoclaw/results/<hu_id>/<task_id>-result.yaml
+        mkdir -p hubara_agency/.exoclaw/results/<hu_id>
+        cp $ARTIFACTS_DIR/task-result.yaml hubara_agency/.exoclaw/results/<hu_id>/<task_id>-result.yaml
 
       Paso 3 — Reportá un resumen accionable:
 
@@ -181,17 +188,35 @@ nodes:
         Según el status, sugerí:
 
         Si status == passed:
-          ✅ Listo para mergear.
-          Comandos sugeridos para el operador:
-            git status                          # revisar cambios
-            git add <files-created> <files-modified> .exoclaw/results/...
+          ✅ Listo. Los comandos git dependen del modo de uso:
+
+          MODO STANDALONE (esta tarea fue lanzada sola, sin implementar-hu como
+          orquestador): commiteá TODO, incluyendo los spinal files locales.
+            git status                                  # revisar
+            git add <files_created> <files_modified> hubara_agency/.exoclaw/results/<hu_id>/<task_id>-result.yaml
             git commit -m "<hu_id> <task_id>: <título>"
             git push   # o merge a main según convención
 
+          MODO ORQUESTADO (esta tarea es parte de un batch lanzado por
+          implementar-hu): commiteá SOLO los new files + el result.yaml.
+          Los spinal files que editaste localmente son THROWAWAY — el
+          merger los va a reconstruir desde main usando los wiring_intents
+          declarados en tu task-result.yaml.
+            git status                                  # revisar
+            git add <files_created> hubara_agency/.exoclaw/results/<hu_id>/<task_id>-result.yaml
+            # IMPORTANTE: NO hagas `git add` sobre <spinal files>
+            git commit -m "<hu_id> <task_id>: feature code (sin wiring)"
+            git push   # o merge a main según convención
+            # El wiring lo hará el merger cuando completes el batch en implementar-hu.
+
+          (Para distinguir new vs spinal files, leé los campos `files_created`
+           y `wiring_intents` de hubara_agency/.exoclaw/results/<hu_id>/<task_id>-result.yaml.
+           Los keys de wiring_intents son los spinal files; el resto son new.)
+
           Próxima tarea según topological order del manifest:
-          (leé .exoclaw/plans/<hu_id>/plan-manifest.yaml y sugerí la
+          (leé hubara_agency/.exoclaw/plans/<hu_id>/plan-manifest.yaml y sugerí la
            siguiente tarea pendiente cuyas depends_on ya estén satisfechas
-           — es decir, sus result.yaml existen en .exoclaw/results/<hu_id>/
+           — es decir, sus result.yaml existen en hubara_agency/.exoclaw/results/<hu_id>/
            con status: passed).
           Comando:
             archon run implementar-tarea "<hu_id> F<NN+1>"

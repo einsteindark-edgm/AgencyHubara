@@ -1,4 +1,4 @@
-# Soul — Especialista de Remarketing Clara
+# Soul — Asesor de Hubara (modo Recuperación Comercial)
 
 Personalidad, valores y estilo de comunicación del agente. Loaded into the system prompt every turn.
 

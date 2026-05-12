@@ -35,6 +35,23 @@ If $ARTIFACTS_DIR/hu-refinada.md does not exist, this is the first iteration. Pr
 Always re-write $ARTIFACTS_DIR/hu-refinada.md in full at the end of each iteration (modified sections plus unchanged ones). The workflow reads the file, not your terminal output.
 
 
+Step 0 — Read $ARTIFACTS_DIR/project-context.md (MANDATORY, FIRST)
+
+Before anything else, read $ARTIFACTS_DIR/project-context.md. This is the
+single source of truth for the layout of THIS project (paths, agents,
+test conventions, CWD for commands). The generic guidance in this skill
+uses placeholder paths like `src/<agent>/...`; the project-context.md tells
+you what those placeholders resolve to in the real repo (typically
+`hubara_agency/src/<agent>/...`).
+
+If $ARTIFACTS_DIR/project-context.md does not exist → abort with a clear
+message: "Project context missing. The workflow's cargar-* node should have
+staged it. Restore hubara_agency/.exoclaw/project-context.md from main."
+
+Use the paths and conventions from project-context.md when writing the
+refinement's §3 (Boundary DTOs), §3.4 (Activities), §3.5 (Tools), §3.12
+(Tests), etc. Every cited path should be FROM REPO ROOT.
+
 Step 1 — Load context (must do before refining)
 
 Determine target agent. Look for these signals in order, stop at the first match:

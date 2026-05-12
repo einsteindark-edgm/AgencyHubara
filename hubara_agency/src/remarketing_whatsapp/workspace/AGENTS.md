@@ -1,4 +1,4 @@
-# Agent rules — Especialista de Remarketing Clara
+# Agent rules — Asesor de Hubara (modo Recuperación Comercial)
 
 Reglas operativas turn-by-turn. Cargado en el system prompt cada turno.
 

@@ -53,6 +53,26 @@ If this is the first iteration (no prior task-created files in the worktree), pr
 Always re-write task-result.yaml at the end of each iteration.
 
 
+Step 0 — Read $ARTIFACTS_DIR/project-context.md (MANDATORY, FIRST)
+
+Before anything else, read $ARTIFACTS_DIR/project-context.md. This file
+declares the concrete layout of THIS repo. Critical for the implementer:
+
+  - Paths: every reference to `src/<agent>/...` in your task file maps to
+    `hubara_agency/src/<agent>/...` from the repo root. Edits go there.
+  - CWD: every command from §10 (uv, pytest, ruff, mypy) MUST be run from
+    `hubara_agency/`. If a §10 command does NOT start with `cd hubara_agency &&`
+    (or pass `--directory hubara_agency`), PREPEND `cd hubara_agency && `
+    before executing. The planner should have included the cd already, but
+    be defensive.
+  - Tests: tool tests live at `hubara_agency/tests/<agent>/tools/test_<name>.py`,
+    not at `hubara_agency/tests/test_<name>.py`. Follow this when creating
+    test files.
+
+If project-context.md is missing → abort, the workflow's cargar-tarea
+didn't stage it. Do NOT proceed without this context — your paths will be
+wrong and tests will fail.
+
 Step 1 — Load context (must do before implementing)
 
 Read task.md fully. Specifically internalize:
@@ -162,7 +182,7 @@ To enable the exoclaw-merger-archon skill to consolidate parallel work without c
 
 When to declare a wiring_intent:
 
-For every file you edit that is listed in this task's `affects_spinal_files` (per the manifest entry, which the planner derived from .exoclaw/spinal-files.yaml) → declare a wiring_intent.
+For every file you edit that is listed in this task's `affects_spinal_files` (per the manifest entry, which the planner derived from $ARTIFACTS_DIR/spinal-files.yaml — the workflow's `cargar-tarea` node staged the convention there from <agent_root>/.exoclaw/spinal-files.yaml) → declare a wiring_intent.
 
 For files in `affects_new_files` → NO wiring_intent (new files don't conflict; each agent creates its own path).
 

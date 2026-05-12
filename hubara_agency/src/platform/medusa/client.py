@@ -145,7 +145,8 @@ class HttpMedusaClient:
         if handle:
             params["handle"] = handle
         if status:
-            params["status"] = status
+            # Medusa v2 espera array notation: ?status[]=published
+            params["status[]"] = [status] if isinstance(status, str) else status
         if category_id:
             params["category_id"] = category_id
         if collection_id:

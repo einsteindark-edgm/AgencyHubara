@@ -5,7 +5,7 @@ description: |
   merger después de cada batch para consolidar wiring_intents en los spinal
   files, y guía al operador en los commits + merges intermedios.
 
-  **Use when**: ya corriste planificar-hu, .exoclaw/plans/<id>/ está visible
+  **Use when**: ya corriste planificar-hu, hubara_agency/.exoclaw/plans/<id>/ está visible
   en main (o el branch base), y querés ejecutar TODO el pipeline de
   implementación, no una tarea sola.
 
@@ -33,7 +33,7 @@ description: |
   **Pre-condición crítica antes de arrancar cada batch**:
   Las tareas upstream (depends_on) deben estar mergeadas al branch base
   ANTES de que vos lances las tareas del batch siguiente. El workflow
-  valida esto leyendo los result.yaml en .exoclaw/results/<id>/ y haciendo
+  valida esto leyendo los result.yaml en hubara_agency/.exoclaw/results/<id>/ y haciendo
   grep en el worktree por los archivos que esas upstream deberían haber
   introducido.
 
@@ -48,12 +48,12 @@ nodes:
 
       Paso 1 — Resolver el HU id:
         - Si $USER_MESSAGE es un id (matcheo "HU-..."), usalo directo.
-        - Si parece ruta, extraé el id del path (.exoclaw/plans/<id>/...).
+        - Si parece ruta, extraé el id del path (hubara_agency/.exoclaw/plans/<id>/...).
         - Si no encontrás el id, fallá listando los planes disponibles
-          en .exoclaw/plans/.
+          en hubara_agency/.exoclaw/plans/.
 
       Paso 2 — Cargar el manifest:
-        cat .exoclaw/plans/<hu_id>/plan-manifest.yaml
+        cat hubara_agency/.exoclaw/plans/<hu_id>/plan-manifest.yaml
         Validá que tenga la sección `parallel_batches:` (si no, el plan fue
         generado con una versión vieja del planner — pedí al operador que
         re-corra planificar-hu).
@@ -61,7 +61,7 @@ nodes:
       Paso 3 — Reportar estado actual del pipeline:
         Para cada batch en parallel_batches:
           - Listar sus task_ids
-          - Para cada task_id, chequear si .exoclaw/results/<hu_id>/<task_id>-result.yaml
+          - Para cada task_id, chequear si hubara_agency/.exoclaw/results/<hu_id>/<task_id>-result.yaml
             existe Y tiene status: passed
           - Marcar el batch como:
               ✅ completo (todas passed)
@@ -100,8 +100,8 @@ nodes:
       prompt: |
         Feedback del operador en esta iteración: $LOOP_USER_INPUT
 
-        Releé .exoclaw/plans/<hu_id>/plan-manifest.yaml.
-        Releé el estado de .exoclaw/results/<hu_id>/ (qué tareas tienen
+        Releé hubara_agency/.exoclaw/plans/<hu_id>/plan-manifest.yaml.
+        Releé el estado de hubara_agency/.exoclaw/results/<hu_id>/ (qué tareas tienen
         result.yaml con status: passed).
 
         Si TODAS las tareas están passed:
@@ -123,7 +123,7 @@ nodes:
           Paso A.2 — Validá depends_on:
             Para cada F<NN> en el batch, leé su depends_on del manifest.
             Para cada F<X> en depends_on, verificá:
-              a. Existe .exoclaw/results/<hu_id>/F<X>-result.yaml con passed
+              a. Existe hubara_agency/.exoclaw/results/<hu_id>/F<X>-result.yaml con passed
               b. Al menos un archivo en su files_created está presente
                  en el worktree actual (es decir, fue mergeado a main)
             Si alguna upstream falta o no está mergeada → frená y avisá:
@@ -156,14 +156,14 @@ nodes:
 
             ⏳ Esperá a que TODAS terminen con status: passed (cada una
                imprime un resumen al final y escribe
-               .exoclaw/results/<hu_id>/F<NN>-result.yaml).
+               hubara_agency/.exoclaw/results/<hu_id>/F<NN>-result.yaml).
 
             Si alguna queda blocked / failed, NO sigas — primero resolvelo
             (re-ejecutá la tarea con feedback, o ajustá el plan via
             planificar-hu si requires_planner_update).
 
             ✅ Cuando las N estén passed, comiteá los results parciales:
-              git add .exoclaw/results/<hu_id>/F*-result.yaml
+              git add hubara_agency/.exoclaw/results/<hu_id>/F*-result.yaml
               git add <files_created de cada tarea>     # si el operador no los mergeó task-by-task
               git commit -m "<hu_id> B<k>: <N> tareas paralelas (pre-merger)"
               (NO pushees aún — falta el merger consolidando spinal files)
@@ -177,44 +177,76 @@ nodes:
         ─────────────────────────────────────────────────────────────────
         Si $LOOP_USER_INPUT contiene "ready":
 
+          Paso B.0 — REFRESCAR EL WORKTREE. El operador acaba de commitear
+          + mergear los new files + result.yaml de las N tareas paralelas
+          a main. El worktree del orquestador (creado al inicio del run)
+          no los ve automáticamente.
+
+            git fetch origin
+            git merge --ff-only origin/<base-branch>
+
+          Si esto falla con conflicto, frená y pedile al operador que
+          investigue manualmente. Probablemente alguien commiteó algo
+          en este worktree o hay cambios sin commitear.
+
           Paso B.1 — Identificá el batch en curso (el último que mostraste
           como "listo para arrancar"). Llamémoslo B<k> con tareas
           [F<NN1>, F<NN2>, ...].
 
           Paso B.2 — Verificá que TODAS tengan result.yaml con passed:
             for task in F<NN1> F<NN2> ...; do
-              cat .exoclaw/results/<hu_id>/${task}-result.yaml | grep "^status:"
+              cat hubara_agency/.exoclaw/results/<hu_id>/${task}-result.yaml | grep "^status:"
             done
             Si alguna no es passed → frená, mostrale al operador cuál
             falló y qué dice el blocked_reason.
 
-          Paso B.3 — Stage los results para el merger:
+          Paso B.3 — Stage los results + la convención de spinal files para el merger:
             mkdir -p $ARTIFACTS_DIR/batch-results
             rm -f $ARTIFACTS_DIR/batch-results/*.yaml
             for task in F<NN1> F<NN2> ...; do
-              cp .exoclaw/results/<hu_id>/${task}-result.yaml \
+              cp hubara_agency/.exoclaw/results/<hu_id>/${task}-result.yaml \
                  $ARTIFACTS_DIR/batch-results/${task}-result.yaml
             done
+            cp hubara_agency/.exoclaw/spinal-files.yaml $ARTIFACTS_DIR/spinal-files.yaml
+            cp hubara_agency/.exoclaw/project-context.md $ARTIFACTS_DIR/project-context.md
 
           Paso B.4 — Validá pre-condición del merger:
-            El worktree actual debe estar en estado "main + batches
-            previos mergeados" — es decir, los spinal files deben tener
-            SU CONTENIDO DE MAIN, no la concatenación de los N parciales
-            del batch actual.
-            Si en el commit pre-merger del paso anterior incluiste
-            modificaciones a spinal files, REVERTILAS antes de llamar al
-            merger:
-              git checkout HEAD~N -- <spinal-files>   # N = profundidad antes del commit pre-merger
-            (En la práctica: pediste al operador que comitee SOLO files_created
-            de las tareas, no los spinal files. Confirmá que es así.)
+            El worktree actual debe estar en estado "main + new files de
+            las N tareas paralelas del batch + result.yaml de cada una".
+            Los spinal files deben tener su CONTENIDO DE MAIN (sin las
+            ediciones throwaway de cada worktree paralelo).
 
-          Paso B.5 — Invocá el skill exoclaw-merger-archon:
-            (usando la tool Skill con args = "B<k> [F<NN1>, F<NN2>, ...]")
-            El merger:
-              - Lee batch-results/*.yaml
-              - Aplica wiring_intents en orden determinístico a los spinal files
-              - Valida sintaxis
-              - Emite $ARTIFACTS_DIR/merge-report.yaml
+            Validación concreta — para cada spinal file declarado en
+            hubara_agency/.exoclaw/spinal-files.yaml:
+              git diff origin/<base-branch> -- <spinal-file>
+              # Esto debería devolver VACÍO (sin cambios vs base).
+              # Si devuelve cambios, alguien commiteó spinal files de las
+              # tareas paralelas por error.
+
+            Si la validación falla, frená y pedile al operador:
+              "Detecté cambios en <spinal-file> vs base. En modo orquestado
+              los spinal files de cada worktree paralelo son throwaway —
+              no deberían commitearse. Revertí con:
+                git checkout origin/<base-branch> -- <spinal-files>
+              y volvé a este loop con 'ready' otra vez."
+
+          Paso B.5 — Ejecutá el protocolo del skill exoclaw-merger-archon
+          DIRECTAMENTE (sus instrucciones ya están cargadas en tu contexto
+          via el campo `skills:` de este loop). NO uses una tool externa
+          para invocarlo — vos sos quien lo ejecuta.
+
+          Tratá $USER_MESSAGE virtual = "B<k> [F<NN1>, F<NN2>, ...]" y seguí
+          los Step 1-3 del protocolo del merger:
+            - Step 1: leé $ARTIFACTS_DIR/spinal-files.yaml + los N task-result.yaml
+                      de $ARTIFACTS_DIR/batch-results/. Validá.
+            - Step 2: para cada spinal_path, agregá imports y aplicá los
+                      wiring_intents en orden determinístico (F-id asc).
+                      Modificá los archivos espinales en el worktree
+                      (hubara_agency/src/<agent>/worker.py, composition.py,
+                      contracts.py, workspace/TOOLS.md, etc.).
+                      Validá sintaxis (ast.parse para .py, etc.).
+            - Step 3: escribí $ARTIFACTS_DIR/merge-report.yaml con el
+                      resumen estructurado.
 
           Paso B.6 — Mostrá al operador el merge-report:
             cat $ARTIFACTS_DIR/merge-report.yaml
@@ -236,9 +268,21 @@ nodes:
         FASE C — Avance al siguiente batch (operador dijo "next")
         ─────────────────────────────────────────────────────────────────
         Si $LOOP_USER_INPUT contiene "next":
-          Volvé al estado inicial del loop. La próxima iteración va a
-          identificar automáticamente el siguiente batch pendiente y
-          entrar en FASE A.
+          REFRESCAR EL WORKTREE PRIMERO. El operador acaba de mergear el
+          batch consolidado a main. El worktree del orquestador NO lo ve
+          automáticamente. Corré:
+
+            git fetch origin
+            git merge --ff-only origin/<base-branch>   # típicamente origin/main
+
+          Si git merge falla (no fast-forward), eso significa que hay
+          cambios locales no committeados en el worktree del orquestador.
+          Investigá antes de continuar: probablemente el merger emitió
+          cambios que no se commitearon.
+
+          Después del fetch + merge, volvé al estado inicial del loop. La
+          próxima iteración va a identificar automáticamente el siguiente
+          batch pendiente y entrar en FASE A.
 
         ─────────────────────────────────────────────────────────────────
         FASE D — Re-ejecución (operador dijo "rerun")
@@ -253,7 +297,7 @@ nodes:
         ─────────────────────────────────────────────────────────────────
         Si $LOOP_USER_INPUT contiene "skip F<NN>":
           El operador implementó esa tarea a mano. Pedile que confirme:
-            - Existe .exoclaw/results/<hu_id>/F<NN>-result.yaml con status: passed?
+            - Existe hubara_agency/.exoclaw/results/<hu_id>/F<NN>-result.yaml con status: passed?
             - Los files_created están en el worktree y comiteados?
           Si sí, tratá la tarea como completada y seguí (sin invocar al
           merger para esa tarea — sus wiring_intents quedaron sin aplicar,
@@ -286,9 +330,9 @@ nodes:
            ls ~/.archon/worktrees/ | grep -E "implementar-tarea.*<hu_id>"
            # remover los que ya no necesites según convención de Archon
 
-        4. Archivar los artifacts del run en .exoclaw/results/<hu_id>/ —
+        4. Archivar los artifacts del run en hubara_agency/.exoclaw/results/<hu_id>/ —
            ya quedan persistidos en el repo como traza de qué se hizo.
 
       Imprimí también una tabla final con cada tarea, su batch, su estado
-      y los archivos que modificó (leyendo .exoclaw/results/<hu_id>/F*-result.yaml).
+      y los archivos que modificó (leyendo hubara_agency/.exoclaw/results/<hu_id>/F*-result.yaml).
     allowed_tools: [Read, Bash]

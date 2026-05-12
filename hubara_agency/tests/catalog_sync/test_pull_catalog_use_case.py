@@ -76,6 +76,61 @@ async def test_pull_empty_catalog():
 
 
 @pytest.mark.asyncio
+async def test_products_with_collection_are_filtered_out():
+    """Regla de negocio Hubara: solo se exponen al agente productos sin collection."""
+    svc = _FakeService(
+        [
+            # Sin collection — DEBE aparecer
+            {
+                "id": "p1",
+                "title": "Vela Lavanda",
+                "handle": "vela-lavanda",
+                "status": "published",
+                "created_at": "2026-01-01T00:00:00Z",
+                "updated_at": "2026-01-01T00:00:00Z",
+                "variants": [],
+                "images": [],
+            },
+            # CON collection — debe filtrarse (data sucia: producto de prueba)
+            {
+                "id": "p2",
+                "title": "Vela Test",
+                "handle": "vela-test",
+                "status": "published",
+                "created_at": "2026-01-01T00:00:00Z",
+                "updated_at": "2026-01-01T00:00:00Z",
+                "collection": {
+                    "id": "pcol_test",
+                    "title": "Test Collection",
+                    "handle": "test",
+                },
+                "variants": [],
+                "images": [],
+            },
+            # Sin collection — DEBE aparecer
+            {
+                "id": "p3",
+                "title": "Vela Coco",
+                "handle": "vela-coco",
+                "status": "published",
+                "created_at": "2026-01-01T00:00:00Z",
+                "updated_at": "2026-01-01T00:00:00Z",
+                "variants": [],
+                "images": [],
+            },
+        ]
+    )
+    use_case = PullCatalogUseCase(medusa_service=svc)
+    result = await use_case.execute(CatalogSyncInput())
+
+    assert result.count == 2
+    payload = json.loads(result.products_json)
+    handles = {p["handle"] for p in payload}
+    assert handles == {"vela-lavanda", "vela-coco"}
+    assert "vela-test" not in handles
+
+
+@pytest.mark.asyncio
 async def test_tags_and_categories_flattened():
     svc = _FakeService(
         [

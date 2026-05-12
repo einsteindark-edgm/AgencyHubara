@@ -115,6 +115,9 @@ services:
       - WHATSAPP_PHONE_NUMBER_ID=${WHATSAPP_PHONE_NUMBER_ID}
       - WHATSAPP_ACCESS_TOKEN=${WHATSAPP_ACCESS_TOKEN}
       - WHATSAPP_VERIFY_TOKEN=${WHATSAPP_VERIFY_TOKEN}
+      # HU-04: Sales lee el snapshot del catalogo escrito por catalog-sync.
+      - CATALOG_SNAPSHOT_DIR=/app/hubara_vault/catalog
+      - CATALOG_MAX_AGE_MINUTES=30
     volumes:
       - hubara-vault-local:/app/hubara_vault
     depends_on:
@@ -123,7 +126,31 @@ services:
       litellm:
         condition: service_healthy
 
-  # 6. Entorno de Negocio: Worker de Remarketing Autónomo
+  # 6. Entorno de Negocio: Worker de Sincronizacion del Catalogo (HU-03)
+  # Descarga el catalogo de Medusa cada N minutos (Schedule de Temporal),
+  # escribe snapshot atomico en /app/hubara_vault/catalog/. Sales lo lee con
+  # cache mtime-aware sin restart cuando cambia.
+  hubara-worker-catalog-sync:
+    build:
+      context: ../
+      dockerfile: Dockerfile
+    container_name: local-hubara-worker-catalog-sync
+    working_dir: /app/hubara_agency
+    command: ["python", "-m", "src.catalog_sync.worker"]
+    environment:
+      - TEMPORAL_URL=temporal:7233
+      - WORKSPACE_VAULT_DIR=/app/hubara_vault
+      - CATALOG_SNAPSHOT_DIR=/app/hubara_vault/catalog
+      - CATALOG_MAX_AGE_MINUTES=30
+      - MEDUSA_BASE_URL=${MEDUSA_BASE_URL}
+      - MEDUSA_ADMIN_TOKEN=${MEDUSA_ADMIN_TOKEN}
+    volumes:
+      - hubara-vault-local:/app/hubara_vault
+    depends_on:
+      temporal:
+        condition: service_healthy
+
+  # 7. Entorno de Negocio: Worker de Remarketing Autónomo
   hubara-worker-remarketing:
     build:
       context: ../
@@ -147,14 +174,15 @@ services:
       litellm:
         condition: service_healthy
 
-  # 7. Frontend
+  # 8. Frontend
   hubara-frontend:
     build:
       context: ../frontend_dashboard
       dockerfile: Dockerfile
     container_name: local-hubara-frontend
     ports:
-      - "5173:5173"
+      # Host port 5174 → container 5173. Archon usa el 5173 del host.
+      - "5174:5173"
     volumes:
       - ../frontend_dashboard:/app
       - /app/node_modules # prevent overwriting container node_modules

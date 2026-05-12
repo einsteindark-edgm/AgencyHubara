@@ -18,17 +18,25 @@ Invocation contract (Archon workflow)
 You operate inside an Archon workflow execution context with these guarantees:
 
 - $ARTIFACTS_DIR/batch-results/F<NN>-result.yaml contains the task-result.yaml from every implementer in the batch. The orchestrator staged them there before invoking you.
-- The current worktree is the "merge worktree" — pristine, branched fresh from main. Spinal files are at their main-state. NO implementer's diffs applied.
-- .exoclaw/spinal-files.yaml is at main-state in this worktree. Trust it.
+- $ARTIFACTS_DIR/spinal-files.yaml is a copy of the agent's <agent_root>/.exoclaw/spinal-files.yaml. The orchestrator staged it there. Read FROM HERE, not from the agent root directly (avoids hardcoding the agent path in the skill).
+- The current worktree is the "merge worktree" — pristine, branched fresh from main. Spinal files at their main-state in the worktree (paths like `hubara_agency/src/<agent>/worker.py` relative to repo root). NO implementer's diffs applied.
 - $USER_MESSAGE tells you the batch_id and task_ids, e.g. "B2 [F02, F04, F05]".
 - Your outputs:
   - Modified spinal files in the worktree
   - $ARTIFACTS_DIR/merge-report.yaml summarizing what you applied
 
+Step 0 — Read $ARTIFACTS_DIR/project-context.md (MANDATORY, FIRST)
+
+Before parsing task results, read $ARTIFACTS_DIR/project-context.md. It
+tells you the exact filesystem paths to spinal files in THIS repo (e.g.
+`hubara_agency/src/sales_whatsapp/worker.py`, not `src/<agent>/worker.py`).
+
+If missing → abort. The orchestrator's FASE B did not stage it correctly.
+
 Step 1 — Load and validate
 
 1. Parse $USER_MESSAGE to extract batch_id and the expected task_ids list.
-2. Read .exoclaw/spinal-files.yaml. For each entry, note `path` (may glob) and `kind`.
+2. Read $ARTIFACTS_DIR/spinal-files.yaml. For each entry, note `path` (may glob) and `kind`.
 3. Read every $ARTIFACTS_DIR/batch-results/F<NN>-result.yaml in the expected list.
    - If any expected file is missing → abort with status: failed; reason: "expected F<NN>-result.yaml missing from batch-results/".
    - If any task-result has status != passed AND != passed_with_warnings → abort with status: failed; reason: "task F<NN> reported status <X>; cannot merge a non-green batch".
@@ -38,8 +46,8 @@ Step 1 — Load and validate
      }
    Sort each list by (F-id ascending, then intent index within the task's result).
 5. Validate every spinal_path:
-   - Matches an entry in .exoclaw/spinal-files.yaml (kind is known).
-   - If a path is referenced but NOT in spinal-files.yaml → abort with status: failed; reason: "F<NN> declared intent for <path> not listed in .exoclaw/spinal-files.yaml; planner mis-classified the task".
+   - Matches an entry in $ARTIFACTS_DIR/spinal-files.yaml (kind is known). Use glob expansion (e.g. `hubara_agency/src/*/worker.py` matches `hubara_agency/src/sales_whatsapp/worker.py`).
+   - If a path is referenced but NOT in spinal-files.yaml → abort with status: failed; reason: "F<NN> declared intent for <path> not listed in spinal-files.yaml; planner mis-classified the task".
 
 Step 2 — Apply intents per spinal file
 

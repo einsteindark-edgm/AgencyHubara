@@ -26,11 +26,21 @@ class PullCatalogUseCase:
 
     async def execute(self, input: CatalogSyncInput) -> PullCatalogResult:
         products: list[CatalogProductDTO] = []
+        skipped_with_collection = 0
         # status=published filtra borradores. iter_products pagina transparente.
         async for raw in self._medusa.client.iter_products(
             page_size=100, status="published",
         ):
             mp = MedusaProduct.model_validate(raw)
+            # Regla de negocio Hubara: solo se exponen al agente productos
+            # SIN collection asignada. Las collections en Medusa se usan para
+            # agrupar productos de prueba / promociones / variantes que NO
+            # deben aparecer en el catalogo conversacional. Este filtro
+            # tambien limpia los duplicados sucios (cruz-de-vida vs cruz-vida)
+            # si alguno tiene collection.
+            if mp.collection is not None:
+                skipped_with_collection += 1
+                continue
             products.append(_to_dto(mp))
 
         payload = json.dumps([asdict(p) for p in products])

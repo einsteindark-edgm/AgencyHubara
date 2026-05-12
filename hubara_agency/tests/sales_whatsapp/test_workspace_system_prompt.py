@@ -23,3 +23,19 @@ def test_closed_list_rule_present():
     text = (_WORKSPACE / "TOOLS.md").read_text(encoding="utf-8").lower()
     assert "closed-list" in text or "anti-alucinación" in text
     assert "no inventes" in text or "nunca inventes" in text
+
+
+def test_aroma_color_closed_list_rule_present():
+    """Post-fix #H (bug b2fb9379): regla estricta contra alucinacion de
+    aromas/colores/variantes que no aparezcan en `tags` del envelope.
+
+    El LLM dijo "Disponible en lavanda, sándalo, café, coco cremoso, frutos
+    rojos y vainilla" — pero "vainilla" no estaba en tags. Esta regla obliga
+    al LLM a citar SOLO valores literales del envelope, no su memoria.
+    """
+    text = (_WORKSPACE / "TOOLS.md").read_text(encoding="utf-8").lower()
+    assert "aromas" in text and "colores" in text
+    assert "tags" in text
+    # Mencion explicita de vainilla/canela como ejemplo de lo que NO se
+    # debe hacer (es el bug que detectamos).
+    assert "vainilla" in text or "completar la lista" in text

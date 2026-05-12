@@ -62,30 +62,36 @@ uv run python -m src.tests.simulate_whatsapp
 
 ---
 
-## Fase 4: Catálogo / catalog_sync
+## Fase 4: Catálogo / catalog_sync (on-demand)
 
-El agente `catalog_sync` sincroniza el catálogo desde Medusa cada 5 min y deja un snapshot atómico en filesystem que el agente Sales lee en microsegundos (sin llamadas a la red por turno de chat).
+El agente `catalog_sync` mantiene un snapshot del catálogo de Medusa en filesystem que el agente Sales lee en microsegundos vía las tools `search_products` y `get_product_by_handle`. **NO corre en Schedule periódico** — el workflow se dispara on-demand desde:
 
-### Activar la Schedule (1 vez por entorno)
+  - Operaciones manuales (debugging / smoke).
+  - El futuro `product_sync_agent` (cuando exista): cada vez que mute productos en Medusa, dispara este workflow al final de su pipeline para mantener el snapshot fresco.
+
+Ver `src/catalog_sync/workflows/sync.py` y `scripts/trigger_catalog_sync.py` para el snippet canónico de cómo el `product_sync_agent` debe disparar el workflow.
+
+### Disparar un sync ahora (manual / debug)
 ```bash
-uv run python scripts/create_catalog_sync_schedule.py --env <staging|prod>
+uv run python scripts/trigger_catalog_sync.py
 ```
-Idempotente — si la Schedule ya existe, actualiza el spec.
+Espera al resultado y muestra `version` + bytes escritos.
 
-### Arrancar el worker localmente
+Para fire-and-forget (sin esperar):
+```bash
+uv run python scripts/trigger_catalog_sync.py --no-wait
+```
+
+### Arrancar el worker localmente (background, espera disparos)
 ```bash
 MEDUSA_BASE_URL=$MEDUSA_BASE_URL \
 MEDUSA_ADMIN_TOKEN=$MEDUSA_ADMIN_TOKEN \
 CATALOG_SNAPSHOT_DIR=/tmp/hubara_catalog \
 uv run python -m src.catalog_sync.worker
 ```
+El worker queda escuchando `queue-catalog-sync`; cualquier `start_workflow(CatalogSyncWorkflow.run, ...)` lo recoge.
 
-### Forzar un sync ahora (debugging)
-```bash
-temporal schedule trigger --schedule-id catalog-sync-default
-```
-
-### Ver últimos syncs
+### Ver últimos syncs ejecutados
 ```bash
 temporal workflow list --query 'WorkflowType="CatalogSyncWorkflow"' --limit 20
 ```
@@ -95,6 +101,12 @@ temporal workflow list --query 'WorkflowType="CatalogSyncWorkflow"' --limit 20
 kubectl logs -n default deploy/hubara-worker-catalog-sync --tail=200 -f
 kubectl exec -n default deploy/hubara-worker-catalog-sync -- ls -la /var/lib/hubara/catalog
 kubectl exec -n default deploy/hubara-worker-catalog-sync -- cat /var/lib/hubara/catalog/manifest.json
+```
+
+### Borrar Schedule periódico (si existe de una versión anterior)
+En v1 NO debe haber Schedule. Si quedó una del rollout inicial, borrarla:
+```bash
+temporal schedule delete --schedule-id catalog-sync-default
 ```
 
 ### Rollback rápido

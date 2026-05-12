@@ -52,14 +52,26 @@ class LocalSnapshotCatalogClient:
     # ---------- public ----------
 
     async def search(self, q: str, *, limit: int = 10) -> SearchResult:
+        """Substring search case-insensitive sobre titulo, handle, tags,
+        categorias y description del producto.
+
+        Resuelve los falsos negativos del search literal v1 (ej: cliente
+        pregunta 'velas' pero ningun titulo contiene 'velas', solo
+        'description' o 'tags'). Empty query (`q=""`) devuelve todo el
+        catalogo hasta `limit` — patron deliberado para que el LLM pueda
+        responder "que tienen?" con una sola tool call.
+        """
         self._ensure_loaded()
         assert self._cached_products is not None  # ensured by _ensure_loaded
         q_lower = q.lower().strip()
-        matches = [
-            p
-            for p in self._cached_products
-            if q_lower in p.title.lower() or q_lower in p.handle.lower()
-        ]
+
+        if not q_lower:
+            # Empty query → todo el catalogo (sin filtro). Util para
+            # "que tienen?" / "muestrame todo".
+            matches = list(self._cached_products)
+        else:
+            matches = [p for p in self._cached_products if _matches(p, q_lower)]
+
         truncated = len(matches) > limit
         return SearchResult(
             query=q,
@@ -148,6 +160,34 @@ class LocalSnapshotCatalogClient:
             fetched = fetched.replace(tzinfo=timezone.utc)
         now = datetime.now(timezone.utc)
         return (now - fetched) > timedelta(minutes=self._max_age)
+
+
+# ---------- search matcher ----------
+
+
+def _matches(p: CatalogProductDTO, q_lower: str) -> bool:
+    """True si `q_lower` aparece como substring en cualquier campo searchable.
+
+    Campos buscados (todos lowercased):
+      - title (ej: "Corona de Redención")
+      - handle (ej: "corona")
+      - tags (ej: ["Aroma: Lavanda", "Color: Morado"])
+      - categories (ej: ["velas", "religiosas"])
+      - description (ej: "velitas para quemar en semana santa")
+    """
+    if q_lower in p.title.lower():
+        return True
+    if q_lower in p.handle.lower():
+        return True
+    for t in p.tags:
+        if q_lower in t.lower():
+            return True
+    for c in p.categories:
+        if q_lower in c.lower():
+            return True
+    if p.description and q_lower in p.description.lower():
+        return True
+    return False
 
 
 # ---------- raw → DTO ----------

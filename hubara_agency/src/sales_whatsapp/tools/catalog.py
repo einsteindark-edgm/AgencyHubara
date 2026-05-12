@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from exoclaw.agent.tools import ToolBase, ToolContext
+from loguru import logger
 
 from src.platform.catalog import (
     CatalogPort,
@@ -30,10 +31,12 @@ class SearchProductsTool(ToolBase):
 
     name = "search_products"
     description = (
-        "Busca productos del catálogo de Hubara por nombre o handle. "
-        "Retorna hasta `limit` productos con su precio, handle, imagen y tags. "
-        "Usa esta tool cuando el cliente pregunte por productos sin escoger uno "
-        "específico, o cuando quieras ofrecer recomendaciones."
+        "Busca productos del catálogo de Hubara. El search es case-insensitive "
+        "y matchea en title, handle, tags, categorías y description del "
+        "producto. Pasa `q=\"\"` (string vacío) para LISTAR TODO el catálogo "
+        "(útil cuando el cliente pregunta '¿qué tienen?'). Pasa `q=\"<tema>\"` "
+        "para filtrar (ej: 'lavanda', 'religiosa', 'cera de palma'). Retorna "
+        "hasta `limit` productos con precio, handle, imagen y tags."
     )
     parameters: dict[str, Any] = {
         "type": "object",
@@ -41,19 +44,20 @@ class SearchProductsTool(ToolBase):
             "q": {
                 "type": "string",
                 "description": (
-                    "Texto de búsqueda (substring case-insensitive en "
-                    "title y handle)."
+                    "Texto de búsqueda. Substring case-insensitive contra "
+                    "title, handle, tags, categorías y description. "
+                    "Pasa string vacío (\"\") para LISTAR TODO el catálogo."
                 ),
-                "minLength": 1,
                 "maxLength": 100,
             },
             "limit": {
                 "type": "integer",
                 "description": (
-                    "Máximo de productos a retornar (default 10, máximo 20)."
+                    "Máximo de productos a retornar (default 10, máximo 30 "
+                    "para listar todo el catálogo)."
                 ),
                 "minimum": 1,
-                "maximum": 20,
+                "maximum": 30,
                 "default": 10,
             },
         },
@@ -69,9 +73,16 @@ class SearchProductsTool(ToolBase):
     async def execute_with_context(
         self, ctx: ToolContext, q: str, limit: int = 10
     ) -> str:
+        logger.info(
+            "🔍 [TOOL search_products] session={} q={!r} limit={}",
+            ctx.session_key, q, limit,
+        )
         try:
             result: SearchResult = await self._catalog.search(q=q, limit=limit)
         except CatalogUnavailableError as e:
+            logger.error(
+                "🔍 [TOOL search_products] catalog_unavailable: {}", e
+            )
             return json.dumps(
                 {
                     "error": "catalog_unavailable",
@@ -84,6 +95,12 @@ class SearchProductsTool(ToolBase):
                 ensure_ascii=False,
             )
 
+        logger.info(
+            "🔍 [TOOL search_products] → count={} truncated={} stale={} "
+            "handles={}",
+            result.count, result.truncated, result.stale,
+            [p.handle for p in result.results],
+        )
         return json.dumps(
             {
                 "query": result.query,
@@ -132,9 +149,18 @@ class GetProductByHandleTool(ToolBase):
     async def execute_with_context(
         self, ctx: ToolContext, handle: str
     ) -> str:
+        logger.info(
+            "📦 [TOOL get_product_by_handle] session={} handle={!r}",
+            ctx.session_key, handle,
+        )
         try:
             product = await self._catalog.get_by_handle(handle)
         except ProductNotFoundError:
+            logger.warning(
+                "📦 [TOOL get_product_by_handle] NOT FOUND handle={!r} "
+                "— LLM debe usar search_products primero",
+                handle,
+            )
             return json.dumps(
                 {
                     "found": False,
@@ -147,6 +173,9 @@ class GetProductByHandleTool(ToolBase):
                 ensure_ascii=False,
             )
         except CatalogUnavailableError as e:
+            logger.error(
+                "📦 [TOOL get_product_by_handle] catalog_unavailable: {}", e
+            )
             return json.dumps(
                 {
                     "error": "catalog_unavailable",
@@ -159,6 +188,10 @@ class GetProductByHandleTool(ToolBase):
                 ensure_ascii=False,
             )
 
+        logger.info(
+            "📦 [TOOL get_product_by_handle] → FOUND handle={!r} title={!r}",
+            product.handle, product.title,
+        )
         return json.dumps(
             {
                 "found": True,

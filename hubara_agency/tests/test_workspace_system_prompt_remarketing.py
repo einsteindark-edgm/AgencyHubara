@@ -12,14 +12,17 @@ instancia `DefaultConversation.create` porque su firma exige un
 `ContextBuilder`, asi que lo instanciamos directo con el workspace.
 
 Cubre:
-- IDENTITY.md presente — Clara, Hubara, "minimamente invasiva".
+- IDENTITY.md presente — Asesor de Hubara (modo Recuperación), continuación
+  natural de Sales, sin nombre propio nuevo, sin "48 horas" hardcoded
+  (bug 8a34b54a Fix #L1+#L2).
 - SOUL.md presente — BREVEDAD EXTREMA + doble salto de linea.
 - USER.md presente — tenant defaults (Hubara, COP, Bogota).
 - TOOLS.md presente — `transfer_to_sales_agent` documentada.
 - AGENTS.md presente — mision proactiva (levantar, transferir).
-- skill `hubara_catalog` (`always: true`) inyectada cada turno (catalogo +
-  Cruz de Vida + $17,000).
-- Politicas de pago contra entrega (POLICIES en `hubara_catalog`).
+- skill `hubara_catalog` deprecada (`always: false`), ya NO inyecta catalogo
+  hardcoded cada turno — el catalogo dinamico lo maneja Sales tras
+  transferencia.
+- Politicas de pago contra entrega siguen accesibles via skill cargable.
 - Regla de "envio gratis solo si dijo caro" (AGENTS.md § Prohibicion de
   descuentos).
 """
@@ -56,13 +59,49 @@ def test_workspace_directory_exists() -> None:
 
 
 def test_identity_in_system_prompt() -> None:
-    """IDENTITY.md cruza al system prompt — Clara, Hubara, minimamente invasiva."""
+    """IDENTITY.md cruza al system prompt — Asesor de Hubara (Recuperación).
+
+    Post-fix #L2 (bug 8a34b54a): ya NO se llama "Clara" — es el MISMO Asesor
+    de Hubara que Sales para continuidad de marca. El cliente no debe ver
+    una persona nueva.
+    """
     prompt = _build_prompt()
-    # Tokens unicos de IDENTITY.md: el nombre del agente y la marca.
-    assert "Clara" in prompt
     assert "Hubara" in prompt
+    assert "Asesor" in prompt
     # Personalidad de remarketing — distintiva vs Sales.
     assert "Mínimamente invasiva" in prompt or "mínimamente invasiva" in prompt.lower()
+    # Continuidad explicita: no debe presentarse como persona nueva.
+    assert "MISMO Asesor" in prompt or "mismo Asesor" in prompt or "continuación natural" in prompt.lower()
+
+
+def test_identity_does_not_hardcode_temporal_window() -> None:
+    """Post-fix #L1 (bug 8a34b54a): el IDENTITY ya NO predetermina "hace 48
+    horas mostraron intención" hardcoded.
+
+    Esa frase causaba que el LLM dijera "hace unos días" aunque solo hubieran
+    pasado 60 segundos. Ahora el delta de tiempo se declara explicitamente
+    como desconocido y se prohibe especular en el mensaje al cliente.
+
+    Nota: el prompt SI puede mencionar "48 horas" como EJEMPLO de frase
+    prohibida ("PROHIBIDO usar 'hace 48 horas'"). Lo que NO debe aparecer
+    es la frase original "hace 48 horas mostraron intención".
+    """
+    prompt = _build_prompt()
+    # Frase exacta del IDENTITY viejo (predeterminaba el periodo).
+    assert "hace 48 horas mostraron" not in prompt
+    # Y el NUEVO IDENTITY DEBE declarar el tiempo como desconocido.
+    assert "no lo conoces con certeza" in prompt.lower() or "tiempo transcurrido" in prompt.lower()
+
+
+def test_identity_forbids_invented_names() -> None:
+    """Post-fix #L2: el IDENTITY prohibe explicitamente presentarse como
+    persona nueva (ej. "Clara"). El cliente no la conoce y eso causa
+    extrañeza en el gancho.
+    """
+    prompt = _build_prompt()
+    # Frase canonica de la prohibicion en IDENTITY.md
+    assert "nombre" in prompt.lower()
+    assert "no te presentes" in prompt.lower() or "NO te presentes" in prompt
 
 
 def test_soul_in_system_prompt() -> None:
@@ -98,26 +137,19 @@ def test_agents_md_in_system_prompt() -> None:
     assert "transfer" in prompt.lower()
 
 
-def test_catalog_skill_loaded_always() -> None:
-    """`hubara_catalog` skill (`always: true`) inyecta catalogo cada turno.
+def test_catalog_skill_no_longer_auto_loaded_in_remarketing() -> None:
+    """Post-rollout: `hubara_catalog` skill ya NO se inyecta cada turno.
 
-    `metadata.exoclaw.always = true` en el frontmatter de
-    `skills/hubara_catalog/SKILL.md` (linea 3, single-line JSON inline).
-    `SkillsLoader.get_always_skills()` la incluye automaticamente sin
-    `load_skill`.
+    Antes (`always: true`) el catalogo hardcoded aparecia en cada gancho.
+    Ahora (`always: false`) el catalogo dinamico lo maneja Sales tras
+    transferencia — Remarketing no necesita ver productos ni precios
+    para abrir conversacion.
     """
     prompt = _build_prompt()
-    # Primera vela del catalogo y precio en COP.
-    assert "Cruz de Vida" in prompt
-    assert "$17,000" in prompt or "17,000" in prompt
-
-
-def test_pago_contra_entrega_in_system_prompt() -> None:
-    """Politica `Pago Contra Entrega` cruza al system prompt via la skill."""
-    prompt = _build_prompt()
-    # Tokens especificos de POLICIES en hubara_catalog/SKILL.md.
-    assert "Contra Entrega" in prompt or "contra entrega" in prompt.lower()
-    assert "$45,000" in prompt or "45,000" in prompt
+    # Cruz de Vida ya NO debe aparecer auto-inyectada cada turno.
+    assert "Cruz de Vida" not in prompt
+    # Tampoco precios viejos hardcoded.
+    assert "$17,000" not in prompt
 
 
 def test_envio_gratis_rule_in_system_prompt() -> None:

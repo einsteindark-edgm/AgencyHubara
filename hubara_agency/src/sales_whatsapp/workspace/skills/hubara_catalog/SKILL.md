@@ -1,36 +1,37 @@
 ---
-description: Catálogo de velas Hubara, precios COP, envíos, políticas, métodos de pago, garantía.
+description: Identidad de marca Hubara + políticas estables de envío/pago/garantía. NO contiene catálogo de productos (eso vive en las tools search_products / get_product_by_handle).
 metadata: {"exoclaw": {"always": false}}
 ---
 
 # Conocimiento Central de la Empresa
 
+> ⚠️ **Esta skill NO contiene el catálogo de productos.** Para precios, nombres, descripciones e imágenes de productos usa **siempre** la tool `search_products` (búsqueda) o `get_product_by_handle` (detalle exacto). NO inventes precios ni nombres desde tu memoria — el catálogo es dinámico y se actualiza cada 5 minutos desde Medusa.
+
 ## IDENTIDAD DE MARCA
-- Ingredientes puros: Cera de palma 100% origen vegetal. Libres de parafinas y toxinas.
-- Proceso: Elaboradas y vertidas a mano en Colombia. Pequeñas variaciones de color/texturas son marcas de autenticidad y origen natural, no defectos.
-- Sinestesia: Cada vela cuenta con 3 capas de fragancia (Notas de Salida, Notas de Corazón y Notas de Fondo) que se despliegan orgánicamente en el entorno.
 
-## CATÁLOGO DE PRODUCTOS (Vigente en COP)
-- Cruz de Vida: $17,000
-- Sacrificio de Amor: $19,000
-- Luz de Belén: $20,000
-- Luz Serena: $23,000
-- Plegaria de Luz: $29,000
-- Velón Cisne: $34,000
-- Encanto Silvestre: $35,000
-- Sagrado Rostro: $36,000
-- Velón de Cristo: $39,000
-- Velón Gorrión: $40,000
-- Velón de Ángel: $44,000
-- Ángel: $48,000
+- **Ingredientes puros**: cera de palma 100% origen vegetal. Libres de parafinas y toxinas.
+- **Proceso**: elaboradas y vertidas a mano en Colombia. Pequeñas variaciones de color/texturas son marcas de autenticidad y origen natural, **no defectos**.
+- **Sinestesia**: cada vela cuenta con 3 capas de fragancia (Notas de Salida, Notas de Corazón y Notas de Fondo) que se despliegan orgánicamente en el entorno.
 
-## ENVÍOS Y PAGOS
-- Envíos a Bogotá: $12.000 a $15.000 aprox. Toma 1 a 2 días hábiles en entregarse.
-- Envíos Nacionales: Toma 2 a 3 días hábiles.
-- Pago Contra Entrega: ¡Solo habilitado para compras totales mayores a $45,000 COP!
-- Para la opción de pago convencional usamos plataforma web e incluye todos los métodos bancarios del país.
+## ENVÍOS Y PAGOS (políticas estables)
+
+- **Envíos a Bogotá**: $12.000 a $15.000 aprox. 1 a 2 días hábiles.
+- **Envíos Nacionales**: 2 a 3 días hábiles.
+- **Pago Contra Entrega**: solo habilitado para compras totales **mayores a $45.000 COP**.
+- **Pago convencional**: vía plataforma web, incluye todos los métodos bancarios del país.
 
 ## POLÍTICAS ADICIONALES
-- Descuento de Bienvenida: Tenemos un 5% automático para primeras compras a través de la web.
-- Descuento Testimonio: Otorgamos un cupón del 10% para la próxima compra a clientes recurrentes que manden foto/video contando su experiencia por nuestro chat.
-- Garantías: 48 horas de cobertura desde la fecha de recepción para envíos rotos o defectuosos, siempre y cuando la vela nunca se haya encendido (debe conservar su empaque y tamaño de mecha).
+
+- **Descuento de Bienvenida**: 5% automático para primeras compras a través de la web.
+- **Descuento Testimonio**: cupón del 10% para la próxima compra a clientes recurrentes que manden foto/video contando su experiencia por nuestro chat.
+- **Garantía**: 48 horas de cobertura desde la fecha de recepción para envíos rotos o defectuosos, siempre y cuando la vela nunca se haya encendido (debe conservar su empaque y tamaño de mecha).
+
+## Cómo conseguir productos / precios
+
+| Necesitas | Tool a usar |
+|---|---|
+| Listar productos por nombre/aroma | `search_products(q="lavanda")` |
+| Confirmar precio exacto de un producto que el cliente eligió | `get_product_by_handle(handle="<handle visto en search>")` |
+| Sugerir 3 opciones al cliente | `search_products(q="vela", limit=3)` |
+
+**Regla absoluta**: cualquier `handle`, `title` o `price` que menciones al cliente debe venir del último `tool_result`. Si la tool retorna `count: 0`, dile honestamente "no manejamos ese producto" — NO inventes uno que se parezca.

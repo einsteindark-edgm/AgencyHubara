@@ -50,18 +50,33 @@ If $ARTIFACTS_DIR/plan-manifest.yaml does not exist, this is the first iteration
 Always re-write the manifest in full and every modified task file at the end of each iteration. Unmodified task files stay on disk untouched. The workflow reads the manifest first, then each task file by path.
 
 
+Step 0 — Read $ARTIFACTS_DIR/project-context.md (MANDATORY, FIRST)
+
+Before anything else, read $ARTIFACTS_DIR/project-context.md. This single
+file tells you the real layout of THIS repo: agent paths, test paths, the
+CWD that uv/pytest/ruff need, and naming conventions. Every placeholder
+like `src/<agent>/...` in this skill should be replaced with the concrete
+path from project-context.md (typically `hubara_agency/src/<agent>/...`).
+
+If it's missing → abort, the workflow's cargar-refinamiento didn't stage it.
+
+Use this context when filling §3 of every task file (Files affected) and
+§10 (Verification commands). §10 MUST include `cd hubara_agency &&` prefix
+on every uv/pytest/ruff/mypy command — verify against project-context.md
+"Command conventions" section.
+
 Step 1 — Load context (must do before decomposing)
 
 Validate the refinement. Read $ARTIFACTS_DIR/hu-refinada.md. Confirm it has the 14 sections the refiner produces. If the refiner exited early with "no DEHA refinement applies", produce a single-line manifest with task_count: 0 and a notes field explaining why, then stop.
 Determine target agent and layout (use the same heuristic as the refiner — repo, agent path, multi-agent vs single-agent). The decomposition does not change file roots; it inherits whatever paths the refinement cited. Re-check src/<agent>/, src/platform/, workspace/ exist where the refinement says they do.
 Read the files the refinement cites (path:line references in §3-§10). You need them to write canonical snippets in task files that match the existing codebase style.
 Anti-pattern check. If the refinement flagged a layout anti-pattern in §13 (Risks), do NOT bundle the layout fix into any task. Add a separate "infrastructure" task or flag it in the manifest's notes.
-Read .exoclaw/spinal-files.yaml. This file declares which paths are "spinal" — files multiple atomic features will modify (typically worker.py, composition.py, contracts.py, workspace/TOOLS.md). The planner uses it to:
+Read $ARTIFACTS_DIR/spinal-files.yaml (the workflow's `cargar-*` node copies it there from the agent's <agent_root>/.exoclaw/spinal-files.yaml). This file declares which paths are "spinal" — files multiple atomic features will modify (typically worker.py, composition.py, contracts.py, workspace/TOOLS.md). The planner uses it to:
   - Tag each task's §3 entries as `affects_new_files` (creates a new file, no conflict possible) vs `affects_spinal_files` (modifies a shared file, needs merger consolidation).
   - Inform the implementer which files require `wiring_intents` declarations in task-result.yaml.
   - Inform the merger which files to consolidate via wiring_intents (vs git's default merge).
-If .exoclaw/spinal-files.yaml is MISSING, default to CONSERVATIVE: every "modify" action in any task's §3 is treated as spinal. Add a warning to the manifest's `notes` and suggest creating the convention file.
-If a §3 file is marked `modify` but does NOT match any entry in spinal-files.yaml, the planner refuses to put that task in a parallel batch with any other task that also modifies the same file. Flag in notes: "Task <id> modifies <file> not declared as spinal — either declare it spinal or accept reduced parallelism."
+If $ARTIFACTS_DIR/spinal-files.yaml is MISSING, default to CONSERVATIVE: every "modify" action in any task's §3 is treated as spinal. Add a warning to the manifest's `notes` and suggest creating the convention file at <agent_root>/.exoclaw/spinal-files.yaml.
+If a §3 file is marked `modify` but does NOT match any entry in spinal-files.yaml (taking into account glob patterns like `hubara_agency/src/*/worker.py`), the planner refuses to put that task in a parallel batch with any other task that also modifies the same file. Flag in notes: "Task <id> modifies <file> not declared as spinal — either declare it spinal or accept reduced parallelism."
 
 Step 2 — Internalize the decomposition rules
 What is an "atomic feature" (the unit you produce)
@@ -256,15 +271,21 @@ Refinement sections that informed this task: §3.X, §3.Y, §3.Z.
 
 ## 3. Files affected
 
+All paths are RELATIVE TO REPO ROOT. The agent code lives at
+`hubara_agency/src/<agent>/`. Tests live at `hubara_agency/tests/<agent>/...`
+(mirror of source structure). Workspace files at
+`hubara_agency/src/<agent>/workspace/`. Commands that run tests/lint must
+have CWD = `hubara_agency/` (see §10).
+
 | Path | Action | Role | LOC budget |
 |------|--------|------|-----------|
-| src/<agent>/contracts.py | modify | DTOs | +12 |
-| src/<agent>/tools/<concept>.py | new | Tool | ~80 |
-| workspace/TOOLS.md | modify | workspace | +4 |
-| src/<agent>/worker.py | modify | worker registration | +2 |
-| src/<agent>/composition.py | modify | factory | +6 |
-| tests/test_<tool>.py | new | tests | ~60 |
-| tests/test_workspace.py | modify | workspace assertion | +3 |
+| hubara_agency/src/<agent>/contracts.py | modify | DTOs | +12 |
+| hubara_agency/src/<agent>/tools/<concept>.py | new | Tool | ~80 |
+| hubara_agency/src/<agent>/workspace/TOOLS.md | modify | workspace | +4 |
+| hubara_agency/src/<agent>/worker.py | modify | worker registration | +2 |
+| hubara_agency/src/<agent>/composition.py | modify | factory | +6 |
+| hubara_agency/tests/<agent>/tools/test_<tool>.py | new | tests | ~60 |
+| hubara_agency/tests/<agent>/workspace/test_<tool>_workspace.py | modify | workspace assertion | +3 |
 
 ## 4. Boundary DTOs (R-JSON)
 
@@ -378,13 +399,21 @@ Test name list (the implementer skill will write the bodies):
 
 ## 10. Verification commands
 
-Exact commands the implementer skill will run. All must exit 0 to mark the task done.
+Exact commands the implementer skill will run from REPO ROOT as CWD. The
+prefix `cd hubara_agency &&` (or `--directory hubara_agency`) is MANDATORY
+because:
+  - uv resolves the project at the CWD; running from repo root in the uv
+    workspace requires explicit targeting.
+  - Python imports in the agent are `from src.<agent>...`, which resolve
+    when CWD = `hubara_agency/` (where `src/` is a top-level dir).
+
+All must exit 0 to mark the task done.
 
 ```bash
-uv run pytest tests/test_<tool>.py -xvs
-uv run pytest tests/test_workspace.py::test_tools_md_includes_<tool>_bullet -xvs
-uv run ruff check src/<agent>/tools/<concept>.py src/<agent>/contracts.py
-uv run mypy src/<agent>/tools/<concept>.py
+cd hubara_agency && uv run pytest tests/<agent>/tools/test_<tool>.py -xvs
+cd hubara_agency && uv run pytest tests/<agent>/workspace/test_<tool>_workspace.py -xvs
+cd hubara_agency && uv run ruff check src/<agent>/tools/<concept>.py src/<agent>/contracts.py
+cd hubara_agency && uv run mypy src/<agent>/tools/<concept>.py
 ```
 
 ## 11. Definition of Done

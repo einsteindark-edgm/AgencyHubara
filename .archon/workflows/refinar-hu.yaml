@@ -1,7 +1,7 @@
 name: refinar-hu
 description: |
   Refina técnicamente una historia de usuario hasta que el humano la apruebe,
-  y persiste el refinamiento en .exoclaw/refinements/ para que planificar-hu
+  y persiste el refinamiento en hubara_agency/.exoclaw/refinements/ para que planificar-hu
   lo pueda leer en el siguiente worktree.
 
   **Use when**: tenés una HU para refinar técnicamente. El input puede ser:
@@ -12,14 +12,14 @@ description: |
     - hu-original.md (snapshot del input normalizado)
     - hu-refinada.md (output del skill, aprobado por el humano)
 
-  **Persiste en el worktree (.exoclaw/refinements/)**:
+  **Persiste en el worktree (hubara_agency/.exoclaw/refinements/)**:
     - <HU-id>-original.md
     - <HU-id>-tech.md
 
   **Cross-workflow sync**:
     Este workflow NO commitea ni pushea. Para que planificar-hu pueda
     encontrar el refinamiento desde un worktree nuevo, el operador debe:
-      git add .exoclaw/refinements/<id>-*.md
+      git add hubara_agency/.exoclaw/refinements/<id>-*.md
       git commit -m "<id>: refinamiento técnico aprobado"
       git push   # o merge a main según convención del equipo
     Hasta que el commit esté visible en el branch base de Archon
@@ -35,6 +35,13 @@ nodes:
       El usuario invocó este workflow con: $USER_MESSAGE
 
       Detectá qué tipo de input es y normalizalo:
+
+      Paso 0 — Stageá el project context (siempre):
+        cp hubara_agency/.exoclaw/project-context.md $ARTIFACTS_DIR/project-context.md
+        (este archivo le dice al refiner exactamente cómo está estructurado
+         el repo — agentes disponibles, layout, paths, comandos. ES OBLIGATORIO.
+         Si no existe, fallá con un mensaje claro: "Falta
+         hubara_agency/.exoclaw/project-context.md — restaurar desde main.")
 
       1. Si parece una ruta a un archivo (termina en .md, .txt, o existe
          en el filesystem), leélo y copiá su contenido completo a
@@ -84,7 +91,7 @@ nodes:
     depends_on: [refinar]
     prompt: |
       El refinamiento fue aprobado. Persistilo en el repo bajo
-      .exoclaw/refinements/.
+      hubara_agency/.exoclaw/refinements/.
 
       Paso 1 — Extraé el HU id de $ARTIFACTS_DIR/hu-refinada.md:
         - Buscá la línea que matchea `^HU id:` (formato del skill).
@@ -97,19 +104,19 @@ nodes:
               max 40 chars, sin acentos.
         - Reportá el id elegido.
 
-      Paso 2 — Creá .exoclaw/refinements/ si no existe:
-        mkdir -p .exoclaw/refinements
+      Paso 2 — Creá hubara_agency/.exoclaw/refinements/ si no existe:
+        mkdir -p hubara_agency/.exoclaw/refinements
 
       Paso 3 — Copiá los dos archivos del run:
-        cp $ARTIFACTS_DIR/hu-original.md .exoclaw/refinements/<id>-original.md
-        cp $ARTIFACTS_DIR/hu-refinada.md .exoclaw/refinements/<id>-tech.md
+        cp $ARTIFACTS_DIR/hu-original.md hubara_agency/.exoclaw/refinements/<id>-original.md
+        cp $ARTIFACTS_DIR/hu-refinada.md hubara_agency/.exoclaw/refinements/<id>-tech.md
 
       Paso 4 — Reportá al operador:
         - HU id elegido: <id>
         - Archivos persistidos (rutas relativas al repo)
         - Comando sugerido para activarlos en main:
 
-            git add .exoclaw/refinements/<id>-*.md
+            git add hubara_agency/.exoclaw/refinements/<id>-*.md
             git commit -m "<id>: refinamiento técnico aprobado"
             git push   # o merge según convención
 
