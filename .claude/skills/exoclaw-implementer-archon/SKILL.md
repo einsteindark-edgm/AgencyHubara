@@ -152,7 +152,32 @@ After all §10 commands, run a regression check:
 uv run pytest tests/ --tb=no -q
 If any test outside §9 fails, this task introduced a regression. Mark status: blocked with reason: regression, name the failing tests.
 
-After regression check, walk the R-rules check (§12):
+After the regression check, run the ARCHITECTURE GATE (mandatory):
+
+cd hubara_agency && uv run pytest tests/architecture/ -m architecture --tb=short
+
+The architecture suite encodes the 5 DEHA hard rules (R-DET / R-JSON / R-STATELESS / R-HEARTBEAT / R-DIP) and the layout invariants (forbidden top-level packages, agent isolation, naming, spinal coherence). It is the gate that decides whether a task can ship to main.
+
+Rules for the architecture gate:
+
+- A failure here is NEVER a regression in your sense — it is a structural violation of DEHA. Treat it as a bug in YOUR feature code, not in the test.
+- You MUST NOT edit `tests/architecture/*.py`, `.importlinter`, `tests/architecture/conftest.py`, `R_JSON_FROZEN_EXEMPTIONS`, `R_HEARTBEAT_EXEMPTIONS`, or `ignore_imports` to make a failure go away. These files are OUT OF SCOPE of every feature task.
+- If an architecture test fails, the correct response is one of:
+    1. Fix YOUR code so it complies (the common case — e.g. add `@with_heartbeat`, switch a `@dataclass` to `@dataclass(frozen=True)`, move an import inside a `with workflow.unsafe.imports_passed_through():` block).
+    2. If you genuinely believe the rule should be relaxed for this feature → STOP. Mark status: blocked with reason: requires_planner_update and a notes entry: "feature requires architecture-rule change in <test_file>:<test_name>; needs ADR + separate PR before this task can land". Do not edit the test, do not add to the allow-list. The operator initiates the ADR + architecture-change PR; the feature task is re-run after that lands.
+- If the architecture suite fails and the file under test is NOT in your §3 list, you may be detecting pre-existing debt that surfaced because of your change (e.g. an existing dataclass that should have been frozen=True is now imported in a path that triggers the check). Treat it identically: status: blocked, reason: requires_planner_update.
+
+Record the architecture gate result in task-result.yaml under `architecture_gate`. Schema:
+
+architecture_gate:
+  cmd: "cd hubara_agency && uv run pytest tests/architecture/ -m architecture --tb=short"
+  exit_code: 0
+  duration_s: 3.4
+  failing_tests: []   # nodeids if any
+
+A passing architecture gate is REQUIRED for status: passed. Status: passed with a failed architecture gate is a lie to the orchestrator — never report it.
+
+After the architecture gate, walk the R-rules check (§12):
 
 For every rule the task says "applies", inspect the code you wrote and confirm compliance. Be specific: cite the file:line where the rule is honored.
 If you find a violation, fix it (it's a bug). Re-run §10 commands affected by the fix.
@@ -327,6 +352,14 @@ regression_check:
   cmd: "uv run pytest tests/ --tb=no -q"
   exit_code: 0
   failing_tests: []   # populate with full nodeids if any
+architecture_gate:
+  cmd: "cd hubara_agency && uv run pytest tests/architecture/ -m architecture --tb=short"
+  exit_code: 0
+  duration_s: 3.4
+  failing_tests: []   # populate with full nodeids if any
+  # If non-empty, status MUST NOT be `passed`. Mark `blocked` with
+  # `requires_planner_update` and explain in notes which architectural rule
+  # the feature appears to challenge.
 r_rules:
   R-DET: { applies: false, verified: true, note: "no workflow code touched" }
   R-JSON: { applies: true, verified: true, note: "<DtoName> at src/<agent>/contracts.py:42 is frozen @dataclass with only str/int/bool fields" }
@@ -338,6 +371,8 @@ dod_checklist:
   - { item: "All canonical snippets instantiated with full implementations", done: true, note: "" }
   - { item: "All §10 commands exit 0", done: true, note: "" }
   - { item: "No regression in full suite", done: true, note: "" }
+  - { item: "Architecture gate (pytest -m architecture) exit 0", done: true, note: "" }
+  - { item: "No edits under tests/architecture/ or .importlinter or *_EXEMPTIONS lists", done: true, note: "" }
   - { item: "Workspace deltas in §6 present on disk", done: true, note: "" }
   - { item: "Worker registration in §8 present on disk", done: true, note: "" }
   - { item: "R-rules check confirmed", done: true, note: "" }
@@ -359,6 +394,7 @@ Stay inside §3. Do not touch files outside the task's §3 list, even to "improv
 Match the repo dialect. Read sibling files; match imports, types, docstring style, error envelopes. Canonical snippets are shape, not house style.
 Tests are real. Write bodies that exercise the path. tmp_path for state. Fakes for adapters (never MagicMock). ActivityEnvironment / WorkflowEnvironment.start_time_skipping() for Temporal-aware code.
 R-rules are mandatory, not aspirational. A passed task that violates an R-rule is a bug; fix before reporting.
+Architecture tests are sacrosanct. Files under `hubara_agency/tests/architecture/`, `hubara_agency/.importlinter`, the `R_JSON_FROZEN_EXEMPTIONS` / `R_HEARTBEAT_EXEMPTIONS` dicts in `tests/architecture/conftest.py`, and any `ignore_imports` entry in `.importlinter` are OUT OF SCOPE of every feature task — never. If editing them would make a failing gate pass, the correct action is `status: blocked` with `reason: requires_planner_update`. Editing them silently to ship a feature is a cardinal sin: it ships bad architecture to main and breaks the trust contract between this skill and the operator. Architecture-rule changes require an ADR and a separate human-reviewed PR, initiated by the operator — NOT by the implementer.
 No comments unless the WHY is non-obvious. No docstrings beyond what sibling files have.
 No new dependencies. If the snippet imports something not in pyproject.toml, mark blocked with reason: missing_dependency.
 No git. Do not commit, push, branch, rebase, stash, tag, cherry-pick. Archon owns git state.

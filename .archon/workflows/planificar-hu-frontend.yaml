@@ -6,77 +6,77 @@ description: |
   ejecute una por una.
 
   **Use when**: ya corriste refinar-hu-frontend y
-  frontend_dashboard/.frontend/refinements/<id>-tech.md está visible en main
-  (o el branch base de Archon). El input puede ser:
-    - HU id (ej: "HU-2026-05-11-bulk-tag-sessions")
+  frontend_dashboard/.frontend/refinements/<id>-tech.md está visible en main.
+  El input puede ser:
+    - HU id (ej: "HU-20260511-1430-foo")
     - Ruta a un archivo de refinamiento (frontend_dashboard/.frontend/refinements/<id>-tech.md)
 
   Si querés un pipeline automatizado end-to-end SIN gates humanos, usá
   `hu-frontend-pipeline` en su lugar.
-
-  **Produces (efímero, en $ARTIFACTS_DIR)**:
-    - hu-refinada.md (copia del refinamiento)
-    - hu-original.md (copia de la HU original, fallback context)
-    - plan-manifest.yaml (DAG con tasks[] + depends_on + parallel_batches)
-    - tareas/F<NN>-<slug>.md (uno por feature atómica)
-
-  **Persiste en el worktree (frontend_dashboard/.frontend/plans/<HU-id>/)**:
-    - plan-manifest.yaml
-    - tareas/F<NN>-<slug>.md (uno por tarea)
-
-  **Cross-workflow sync**:
-    Este workflow NO commitea ni pushea. Para que implementar-tarea-frontend
-    encuentre el plan desde un worktree nuevo, el operador debe comitear +
-    mergear frontend_dashboard/.frontend/plans/<id>/ a main (o el branch base)
-    antes de invocar implementar-tarea-frontend.
 
 provider: claude
 model: sonnet
 interactive: true
 
 nodes:
+  # Determinista: localizar refinement, copiarlo + dependencias al $ARTIFACTS_DIR
   - id: cargar-refinamiento
-    prompt: |
-      El usuario invocó este workflow con: $USER_MESSAGE
+    bash: |
+      set -e
+      RAW=$ARGUMENTS
 
-      Localizá el refinamiento técnico aprobado y prepará el $ARTIFACTS_DIR:
+      # Resolver ruta del refinement
+      if [[ "$RAW" == *.md ]] || [[ "$RAW" == */* ]]; then
+        REF_PATH="$RAW"
+      else
+        # Tratarlo como HU id
+        REF_PATH="frontend_dashboard/.frontend/refinements/${RAW}-tech.md"
+      fi
 
-      1. Si $USER_MESSAGE parece una ruta a un archivo (contiene "/" o
-         termina en ".md"), leélo directamente. Validá que sea un archivo
-         de refinamiento de frontend (debe contener la línea `^HU id:` y
-         las secciones §1-§14 que el skill frontend-tech-refiner-archon emite).
+      if [ ! -f "$REF_PATH" ]; then
+        echo "FATAL: no encuentro refinement: $REF_PATH" >&2
+        echo "" >&2
+        echo "Refinements disponibles en frontend_dashboard/.frontend/refinements/:" >&2
+        ls frontend_dashboard/.frontend/refinements/*.md 2>/dev/null || echo "  (directorio vacío)" >&2
+        exit 1
+      fi
 
-      2. Si parece un HU id (ej: "HU-2026-05-11-foo"), buscá
-         frontend_dashboard/.frontend/refinements/<id>-tech.md.
+      # Validar shape (mínimo: línea HU id)
+      grep -q '^HU id:' "$REF_PATH" || {
+        echo "FATAL: $REF_PATH no parece un refinement válido (falta HU id)" >&2
+        exit 1
+      }
 
-      3. Si no encontrás el archivo:
-         - Listá los archivos en frontend_dashboard/.frontend/refinements/ (si existe).
-         - Fallá con un error claro indicando qué intentaste y qué ids
-           hay disponibles.
+      # Extraer HU_ID
+      HU_ID=$(grep -m1 '^HU id:' "$REF_PATH" | sed 's/^HU id: *//' | tr -d ' ')
 
-      Una vez localizado:
-        a. cp <ruta-refinamiento> $ARTIFACTS_DIR/hu-refinada.md
-        b. Si existe frontend_dashboard/.frontend/refinements/<id>-original.md, copialo a
-           $ARTIFACTS_DIR/hu-original.md (el planner puede usarlo como
-           fallback cuando le falte contexto).
-        c. Stageá la convención de spinal files + project context para el planner:
-             cp frontend_dashboard/.frontend/spinal-files.yaml $ARTIFACTS_DIR/spinal-files.yaml
-             cp frontend_dashboard/.frontend/project-context.md $ARTIFACTS_DIR/project-context.md
-           Si NO existe alguno de los dos, frená y avisá al operador:
-           el planner los necesita. Sugerí restaurar desde main.
-        d. Extraé el HU id del archivo (línea `^HU id:`) y reportalo.
-        e. Reportá el tamaño del refinamiento cargado.
+      # Stagear todos los inputs que el planner skill necesita
+      cp "$REF_PATH" $ARTIFACTS_DIR/hu-refinada.md
+      [ -f "frontend_dashboard/.frontend/refinements/${HU_ID}-original.md" ] && \
+        cp "frontend_dashboard/.frontend/refinements/${HU_ID}-original.md" \
+           $ARTIFACTS_DIR/hu-original.md
 
-      Guardá mentalmente el HU id — lo vas a necesitar en persistir-plan.
-    allowed_tools: [Read, Write, Bash]
+      # spinal-files.yaml y project-context.md son obligatorios
+      for f in spinal-files.yaml project-context.md; do
+        test -f "frontend_dashboard/.frontend/$f" || {
+          echo "FATAL: falta frontend_dashboard/.frontend/$f" >&2
+          exit 1
+        }
+        cp "frontend_dashboard/.frontend/$f" "$ARTIFACTS_DIR/$f"
+      done
 
+      SIZE=$(wc -c < $ARTIFACTS_DIR/hu-refinada.md)
+      echo "HU id: ${HU_ID} | refinement: ${SIZE} bytes cargado"
+    timeout: 30000
+
+  # AI iterativo: planificar con feedback humano
   - id: planificar
     depends_on: [cargar-refinamiento]
+    idle_timeout: 600000
     loop:
       interactive: true
       max_iterations: 8
       until: PLAN_APROBADO
-      capture_response: true
       skills:
         - frontend-task-planner-archon
       gate_message: |
@@ -96,6 +96,8 @@ nodes:
       prompt: |
         Refinamiento técnico aprobado: $ARTIFACTS_DIR/hu-refinada.md
         HU original (fallback): $ARTIFACTS_DIR/hu-original.md (si existe)
+        Project context (LEER PRIMERO): $ARTIFACTS_DIR/project-context.md
+        Spinal files convention: $ARTIFACTS_DIR/spinal-files.yaml
 
         Feedback del humano en esta iteración: $LOOP_USER_INPUT
 
@@ -110,57 +112,66 @@ nodes:
 
         Validá antes de devolver:
           - DAG sin ciclos
-          - Cobertura completa de criterios de aceptación (§1 del
-            refinamiento). Suma de delivers_acceptance de cada tarea
-            debe cubrir todos los AC sin huérfanos.
+          - Cobertura completa de criterios de aceptación (§1 del refinamiento)
           - Max ~3 deps directas por tarea
-          - Granularidad: 50-300 LOC por tarea (feature atómica e2e)
-          - Cada tarea cruza todas las capas FSD que toca (entity files +
-            feature files + page mount + tests; opcional: tokens Tailwind)
+          - Granularidad: 50-300 LOC por tarea
+          - Cada tarea cruza todas las capas FSD que toca
           - Cada tarea declara correctamente affects_new_files vs
-            affects_spinal_files según .frontend/spinal-files.yaml
+            affects_spinal_files según spinal-files.yaml
 
         Si el humano aprobó:
         <promise>PLAN_APROBADO</promise>
 
+  # Determinista: persistir plan + reportar comandos git
   - id: persistir-plan
     depends_on: [planificar]
-    prompt: |
-      El plan fue aprobado. Persistilo en frontend_dashboard/.frontend/plans/<HU-id>/.
+    bash: |
+      set -e
 
-      Paso 1 — Extraé el HU id de $ARTIFACTS_DIR/plan-manifest.yaml
-        (campo `hu_id:` del header).
+      # Extraer HU id del manifest
+      HU_ID=$(grep -m1 '^hu_id:' $ARTIFACTS_DIR/plan-manifest.yaml | awk '{print $2}')
+      [ -n "$HU_ID" ] || { echo "FATAL: no encuentro hu_id en plan-manifest.yaml" >&2; exit 1; }
 
-      Paso 2 — Creá la estructura de directorios:
-        mkdir -p frontend_dashboard/.frontend/plans/<id>/tareas
+      mkdir -p "frontend_dashboard/.frontend/plans/${HU_ID}/tareas"
+      cp $ARTIFACTS_DIR/plan-manifest.yaml \
+         "frontend_dashboard/.frontend/plans/${HU_ID}/plan-manifest.yaml"
+      cp $ARTIFACTS_DIR/tareas/F*.md \
+         "frontend_dashboard/.frontend/plans/${HU_ID}/tareas/"
 
-      Paso 3 — Copiá los artifacts:
-        cp $ARTIFACTS_DIR/plan-manifest.yaml frontend_dashboard/.frontend/plans/<id>/plan-manifest.yaml
-        cp $ARTIFACTS_DIR/tareas/F*.md       frontend_dashboard/.frontend/plans/<id>/tareas/
+      N=$(ls "frontend_dashboard/.frontend/plans/${HU_ID}/tareas/" | wc -l | tr -d ' ')
 
-      Paso 4 — Reportá al operador:
-        - HU id: <id>
-        - Total de tareas: N
-        - parallel_batches del manifest (formato "B1: F01, F03 | B2: F02, F04 | ...")
-        - Comando para activar el plan en main:
+      # Reportar batches del manifest
+      BATCHES=$(awk '/^parallel_batches:/{found=1; next} found && /^  - batch_id:/{batch=$3} found && /^    tasks:/{getline; print batch ": " $0}' $ARTIFACTS_DIR/plan-manifest.yaml | head -20)
 
-            git add frontend_dashboard/.frontend/plans/<id>/
-            git commit -m "<id>: plan de tareas (frontend) aprobado (N features)"
-            git push   # o merge según convención
+      cat <<EOF
+      ╔════════════════════════════════════════════════════════════════╗
+      ║ ✅ Plan persistido                                              ║
+      ║                                                                ║
+      ║ HU id:        ${HU_ID}
+      ║ # tareas:     ${N}
+      ║ Files:        frontend_dashboard/.frontend/plans/${HU_ID}/
+      ╚════════════════════════════════════════════════════════════════╝
 
-        - Comandos para implementar las tareas:
+      Parallel batches:
+      ${BATCHES}
 
-            # Opción A — orquestador interactivo (batches paralelos en terminales):
-            archon workflow run implementar-hu-frontend "<id>"
+      📋 Comando para activar en main:
 
-            # Opción B — tarea por tarea (modo standalone):
-            archon workflow run implementar-tarea-frontend "<id> F01"
-            archon workflow run implementar-tarea-frontend "<id> F02"
-            ...
+        git add frontend_dashboard/.frontend/plans/${HU_ID}/
+        git commit -m "${HU_ID}: plan de tareas (frontend) aprobado (${N} features)"
+        git push   # o merge según convención
 
-        - IMPORTANTE: las tareas con depends_on requieren que las
-          upstream YA estén mergeadas al branch base antes de lanzarse.
-          Respetá el topological order de parallel_batches.
+      ▶ Siguiente paso — elegí una opción:
 
-      NO hagas commit ni push vos mismo.
-    allowed_tools: [Read, Write, Bash]
+        # Opción A: orquestador interactivo (batches paralelos, terminales manuales)
+        archon workflow run implementar-hu-frontend "${HU_ID}"
+
+        # Opción B: tarea por tarea (modo standalone)
+        archon workflow run implementar-tarea-frontend "${HU_ID} F01"
+        archon workflow run implementar-tarea-frontend "${HU_ID} F02"
+        # ...
+
+        # Opción C: pipeline auto end-to-end (sin gates)
+        archon workflow run hu-frontend-pipeline "${HU_ID}"
+      EOF
+    timeout: 30000

@@ -440,6 +440,43 @@ cd hubara_agency && uv run mypy src/<agent>/tools/<concept>.py
 - <Risk specific to this task, e.g. "this DTO has 8 fields — verify before implementing"></...>.
 - <If iteration n>1> Iteration <n> changed: <what changed in this task vs previous version, and why>.
 
+Architecture-protected files (HARD STOP)
+
+The following paths are protected: they encode the DEHA architectural contract
+and are NOT touchable by any feature task in the DAG. The planner MUST reject
+every refinement that includes them in §3:
+
+  - hubara_agency/tests/architecture/**
+  - hubara_agency/.importlinter
+  - hubara_agency/tests/architecture/conftest.py (and the *_EXEMPTIONS dicts inside it)
+
+Pre-flight check (run BEFORE Step 3 — DAG construction):
+
+  1. Scan §3 of every refinement section for paths matching the protected set.
+  2. Scan §11 (Hard rules check) for proposed exemptions / allow-list additions.
+  3. If any match → REFUSE to decompose. Emit an empty plan-manifest.yaml with:
+       task_count: 0
+       blocked_reason: requires_architecture_change
+       notes: |
+         The refinement proposes changes to architecture-protected files
+         (<list paths>). These cannot be planned as feature tasks because
+         they encode the DEHA contract and modifying them silently would
+         ship bad architecture to main.
+         Required next steps for the operator:
+           1. Author an ADR documenting the proposed architectural change
+              (which rule, why, scope, migration plan).
+           2. Open a SEPARATE architecture-change PR that updates the
+              protected files. Apply the `architecture-change` label so CI
+              accepts it. Get human review.
+           3. After the architecture-change PR lands, re-run the refiner +
+              planner on this HU.
+     Stop. Do NOT create any task files.
+
+The same rule applies on iteration: if `$LOOP_USER_INPUT` (human feedback) asks
+the planner to add a task that edits a protected file, refuse with the same
+manifest payload. The protected set exists precisely to make this friction
+visible — bypassing it is a bug, not a feature.
+
 Style rules
 
 Always classify every §3 file. For each file in a task's §3 table:

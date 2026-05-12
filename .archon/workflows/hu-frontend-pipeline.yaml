@@ -1,547 +1,890 @@
 name: hu-frontend-pipeline
 description: |
   Super-pipeline AUTOMATIZADO end-to-end para una HU de FRONTEND (FSD).
-  Encadena refinar → planificar → implementar (con paralelismo total)
-  SIN gates humanos entre fases. Trabaja en un branch `hu/<HU-id>` aislado
-  y al final crea un PR contra main para que el operador haga squash-merge.
+  Encadena refinar → planificar → implementar (UNA tarea a la vez, secuencial)
+  sin gates humanos. Trabaja en un branch `hu/<HU-id>` aislado y al final
+  crea un PR contra main para que el operador haga squash-merge.
 
   Opcionalmente, si existe frontend_dashboard/.frontend/github-project-config.yaml,
-  actualiza el estado del GitHub Project card en cada fase.
+  actualiza el estado del GitHub Project card en cada fase (fail-soft).
 
-  **Use when**: querés implementar una HU de frontend con la mínima
-  intervención humana posible. El operador da un comando y va a buscar café.
-  Si algo falla, el pipeline para y deja un card en estado "Blocked" con el
-  motivo — el operador retoma con los workflows interactivos
-  (refinar-hu-frontend, implementar-tarea-frontend, etc.).
+  **Diseño de nodos** (siguiendo Archon best practices):
+    - Trabajo determinista (cp, mkdir, git, npm, gh, parseo de YAML) → `bash:` o `script:`.
+    - AI iterativo (refinar, planificar, implementar) → `loop:` con `skills:`.
+    - Git operations en implementar → `loop.until_bash` (NO el AI), determinista.
+    - Skip de fases ya completas → `when:` sobre output de bash de detección.
+    - Fail-fast en errores de validación → `cancel:` con mensaje claro.
+    - Updates al Project que no deben matar el pipeline → `trigger_rule: all_done`.
+
+  **Modelo operacional — SECUENCIAL, no paralelo**:
+    Todas las tareas corren en el worktree del pipeline, una a la vez,
+    viendo los edits de las anteriores. Sin subprocesos. Sin merger.
 
   **Input** ($USER_MESSAGE):
     - URL de un GitHub Issue: `https://github.com/<owner>/<repo>/issues/<N>`
-      (recomendado — el body del issue es la HU).
-    - Ruta a un .md con la HU.
-    - Texto plano de la HU.
-
-  **Comportamiento clave**:
-    1. Crea / checkea un branch `hu/<HU-id>` al inicio. Todos los commits
-       del pipeline van a este branch — NO a main.
-    2. Refina → commit a hu/<id> → planifica → commit a hu/<id> →
-       implementa todos los batches → commit a hu/<id> después de cada
-       batch consolidado → al final, crea PR de hu/<id> → main.
-    3. Si una fase falla, el pipeline para. El branch hu/<id> queda con
-       el progreso hecho hasta ese punto. El operador puede:
-         - Retomar manualmente con el workflow interactivo correspondiente.
-         - Mover el card del Project a "Needs review".
-         - Cerrar el PR (si ya se creó) y reabrirlo después.
-
-  **Worktrees**:
-    - El pipeline corre en su propio worktree (creado por Archon al lanzar).
-    - Para el fan-out paralelo de tareas, lanza N invocaciones de
-      `implementar-tarea-frontend-auto` en BACKGROUND vía `archon workflow run ... &`
-      seguido de `wait`. Cada subprocess crea su propio worktree —
-      paralelismo real, no nesting.
-    - El merger corre DENTRO del worktree del pipeline (es la "merge worktree").
-
-  **Pre-requisitos**:
-    - `gh` autenticado (para leer Issue + crear PR + opcionalmente
-      actualizar Project).
-    - `frontend_dashboard/.frontend/spinal-files.yaml` y `project-context.md`
-      commiteados en main.
-    - Los 4 skills frontend-*-archon instalados en `.claude/skills/`.
+    - Ruta a un .md local con la HU
+    - Texto plano de la HU
+    - HU id existente (ej: "HU-20260511-1430-foo") para RETOMAR.
 
 provider: claude
-model: sonnet   # para refinar / planificar; subí a opus si el agente trabaja mejor
-interactive: false   # CLAVE: pipeline corre sin gates humanos
+model: sonnet
+interactive: false
+
+worktree:
+  enabled: true
 
 nodes:
   # ════════════════════════════════════════════════════════════════════
-  # FASE 0 — Bootstrap del pipeline
+  # FASE 0 — Pre-requisitos + resolución de input + branch + telemetría
   # ════════════════════════════════════════════════════════════════════
 
-  - id: bootstrap
-    prompt: |
-      Bootstrap del super-pipeline frontend.
+  - id: check-prereqs
+    bash: |
+      set -e
+      echo "=== Pre-requisitos ===" >&2
 
-      Paso 0.1 — Stageá el project context (siempre, para todas las skills):
-        cp frontend_dashboard/.frontend/project-context.md $ARTIFACTS_DIR/project-context.md
-        cp frontend_dashboard/.frontend/spinal-files.yaml  $ARTIFACTS_DIR/spinal-files.yaml
-        Si alguno no existe, fallá con exit no-cero:
-          "Falta <archivo>. Restaurar desde main antes de correr el pipeline."
+      # gh autenticado
+      gh auth status >&2 2>&1 || { echo "FAIL_GH_AUTH"; exit 0; }
 
-      Paso 0.2 — Cargar config del GitHub Project (si existe):
-        Si frontend_dashboard/.frontend/github-project-config.yaml existe:
-          cp <ruta> $ARTIFACTS_DIR/github-project-config.yaml
-          Marcá PROJECT_ENABLED=true.
-        Si no existe:
-          Marcá PROJECT_ENABLED=false. El pipeline corre igual pero NO
-          actualiza ningún card de Project.
+      # Herramientas en PATH (en orden: la falla más visible primero)
+      command -v node >/dev/null || { echo "FAIL_NO_NODE"; exit 0; }
+      command -v npm  >/dev/null || { echo "FAIL_NO_NPM";  exit 0; }
+      command -v bun  >/dev/null || { echo "FAIL_NO_BUN";  exit 0; }
+      command -v jq   >/dev/null || { echo "FAIL_NO_JQ";   exit 0; }
+      command -v git  >/dev/null || { echo "FAIL_NO_GIT";  exit 0; }
 
-      Paso 0.3 — Resolver el input ($USER_MESSAGE):
-        a. URL de Issue (`https://github.com/.+/issues/\d+`):
-           - Extraé owner, repo, issue_number.
-           - `gh issue view <url> --json title,body,number,url --jq '...'`
-             para obtener title y body.
-           - Escribí title + "\n\n" + body en $ARTIFACTS_DIR/hu-original.md
-           - Guardá ISSUE_URL y ISSUE_NUMBER.
-        b. Ruta a un .md o texto plano: tratalo como `refinar-hu-frontend`.
-           - Si es ruta: cp <path> $ARTIFACTS_DIR/hu-original.md
-           - Si es texto: escribilo a $ARTIFACTS_DIR/hu-original.md
-           - ISSUE_URL queda vacío (no hay issue asociado).
+      # Convenciones del frontend committeadas en main
+      for f in \
+        frontend_dashboard/.frontend/spinal-files.yaml \
+        frontend_dashboard/.frontend/project-context.md; do
+        test -f "$f" || { echo "FAIL_MISSING_CONVENTION_${f##*/}"; exit 0; }
+      done
 
-      Paso 0.4 — Generar HU id (si todavía no lo tenemos):
-        Mirá si la HU ya tiene un id en el body (línea `^HU id:` o
-        `^# HU-...`). Si no, generá uno:
-          HU-YYYYMMDD-<slug>
-          donde slug = primeros 6-8 palabras del título, kebab-case,
-          lowercase ASCII, sin acentos, max 40 chars.
-        Guardá HU_ID.
+      # 4 skills frontend
+      for s in tech-refiner task-planner implementer merger; do
+        test -f ".claude/skills/frontend-${s}-archon/SKILL.md" || {
+          echo "FAIL_MISSING_SKILL_${s}"; exit 0;
+        }
+      done
 
-      Paso 0.5 — Crear/cambiar a branch hu/<HU_ID>:
-        cd <worktree-root>   # ya estás acá
-        git fetch origin
-        # Si el branch ya existe (re-corrida del pipeline para la misma HU):
-        if git show-ref --verify --quiet refs/heads/hu/<HU_ID>; then
-          git checkout hu/<HU_ID>
-          git merge --ff-only origin/main || true  # incorporar progreso de main
-        else
-          git checkout -b hu/<HU_ID> origin/main
+      # package-lock.json para `npm ci`
+      test -f frontend_dashboard/package-lock.json || {
+        echo "FAIL_NO_LOCKFILE — frontend_dashboard/package-lock.json requerido para npm ci"
+        exit 0
+      }
+
+      # node_modules — instalar VIA npm ci si falta (NO modifica el lockfile)
+      if [ ! -d "frontend_dashboard/node_modules" ]; then
+        echo "node_modules ausente — corriendo npm ci (puede tardar 30s)" >&2
+        (cd frontend_dashboard && npm ci --no-audit --no-fund) >&2 || {
+          echo "FAIL_NPM_CI"; exit 0;
+        }
+      fi
+
+      # Verificar que el remote origin existe y es alcanzable
+      git ls-remote origin HEAD >/dev/null 2>&1 || {
+        echo "FAIL_NO_ORIGIN_OR_NETWORK"; exit 0;
+      }
+
+      echo "OK"
+    timeout: 180000
+
+  - id: cancel-bad-prereqs
+    cancel: "Pre-requisitos no cumplidos: $check-prereqs.output. Diagnóstico: gh auth login (FAIL_GH_AUTH), brew install jq bun (FAIL_NO_*), commit .frontend/* a main (FAIL_MISSING_*), npm install para regenerar lockfile (FAIL_NO_LOCKFILE), revisar conectividad/credenciales push (FAIL_NO_ORIGIN_OR_NETWORK)."
+    when: "$check-prereqs.output != 'OK'"
+    depends_on: [check-prereqs]
+
+  - id: stage-shared-files
+    bash: |
+      set -e
+      cp frontend_dashboard/.frontend/project-context.md $ARTIFACTS_DIR/project-context.md
+      cp frontend_dashboard/.frontend/spinal-files.yaml  $ARTIFACTS_DIR/spinal-files.yaml
+      if [ -f frontend_dashboard/.frontend/github-project-config.yaml ]; then
+        cp frontend_dashboard/.frontend/github-project-config.yaml \
+           $ARTIFACTS_DIR/github-project-config.yaml
+        echo "PROJECT_ENABLED"
+      else
+        echo "PROJECT_DISABLED"
+      fi
+    depends_on: [check-prereqs]
+    when: "$check-prereqs.output == 'OK'"
+
+  - id: resolve-input
+    bash: |
+      set -e
+      RAW=$ARGUMENTS
+
+      if [[ "$RAW" =~ ^https://github\.com/.+/issues/[0-9]+$ ]]; then
+        TYPE="issue_url"
+        if ! gh issue view "$RAW" --json title,body,number,state > $ARTIFACTS_DIR/issue.json 2>/dev/null; then
+          jq -n '{"type":"error","error":"cannot_fetch_issue"}'
+          exit 0
         fi
-        Reportá la rama actual.
+        STATE=$(jq -r '.state' $ARTIFACTS_DIR/issue.json)
+        if [ "$STATE" != "OPEN" ]; then
+          jq -n --arg state "$STATE" '{"type":"error","error":"issue_not_open","state":$state}'
+          exit 0
+        fi
+        TITLE=$(jq -r '.title' $ARTIFACTS_DIR/issue.json)
+        BODY=$(jq -r '.body' $ARTIFACTS_DIR/issue.json)
+        ISSUE_URL="$RAW"
+      elif [[ "$RAW" =~ ^HU-[0-9]{8}-[0-9]{4,6}-.+ ]]; then
+        # Aceptá tanto HHMM (legacy, 4 dígitos) como HHMMSS (nuevo, 6 dígitos)
+        TYPE="hu_id_resume"
+        ISSUE_URL=""
+        TITLE="RESUME: $RAW"
+        BODY=""
+        HU_ID_OVERRIDE="$RAW"
+      elif [[ -f "$RAW" ]]; then
+        TYPE="local_file"
+        TITLE=$(grep -m1 '^# ' "$RAW" | sed 's/^# //' | head -c 200)
+        TITLE="${TITLE:-$(head -c 100 "$RAW")}"
+        BODY=$(cat "$RAW")
+        ISSUE_URL=""
+      else
+        TYPE="plain_text"
+        TITLE=$(echo "$RAW" | head -c 120)
+        BODY="$RAW"
+        ISSUE_URL=""
+      fi
 
-      Paso 0.6 — Setup de telemetría:
-        Creá $ARTIFACTS_DIR/pipeline-state.yaml con:
-          hu_id: <HU_ID>
-          issue_url: <ISSUE_URL o "">
-          branch: hu/<HU_ID>
-          project_enabled: <true|false>
-          started_at: <ISO 8601>
-          current_phase: bootstrap
-          phases_completed: []
+      jq -n \
+        --arg type "$TYPE" \
+        --arg title "$TITLE" \
+        --arg body "$BODY" \
+        --arg issue_url "$ISSUE_URL" \
+        --arg hu_id_override "${HU_ID_OVERRIDE:-}" \
+        '{type:$type, title:$title, body:$body, issue_url:$issue_url, hu_id_override:$hu_id_override}'
+    depends_on: [stage-shared-files]
 
-      Paso 0.7 — Si PROJECT_ENABLED, mover el card a "Refining":
-        Llamá al sub-helper de update de Project (ver Anexo A al final):
-          set_project_status "Refining"
-        Si falla el update del Project, NO falles el pipeline — solo
-        reportá warning. El Project es opcional.
+  - id: cancel-bad-input
+    cancel: "No pude resolver el input: $resolve-input.output. Si es un Issue, validá que esté abierto: gh issue view <url>."
+    when: "$resolve-input.output.type == 'error'"
+    depends_on: [resolve-input]
 
-      Reportá: HU_ID, branch, modo (con issue / con archivo / con texto), project_enabled.
-    allowed_tools: [Read, Write, Bash]
+  - id: gen-hu-id
+    script: |
+      const input = $resolve-input.output;
+
+      let huId;
+      if (input.type === 'hu_id_resume' && input.hu_id_override) {
+        huId = input.hu_id_override;
+      } else {
+        // Slug del título, kebab-case, ASCII, max 40 chars.
+        // No depende de iconv (que varía macOS vs Linux); usa Normalize + filtro.
+        const slug = (input.title || 'untitled')
+          .normalize('NFKD')
+          .replace(/\p{Diacritic}/gu, '')
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-+|-+$/g, '')
+          .slice(0, 40)
+          .replace(/-$/, '');
+
+        const now = new Date();
+        const iso = now.toISOString();
+        const datePart = iso.slice(0, 10).replace(/-/g, '');  // YYYYMMDD
+        // HHMMSS para evitar colisiones si dos pipelines arrancan en el mismo minuto
+        const timePart = iso.slice(11, 19).replace(/:/g, ''); // HHMMSS
+
+        huId = 'HU-' + datePart + '-' + timePart + '-' + (slug || 'no-title');
+      }
+
+      const out = {
+        hu_id: huId,
+        branch: 'hu/' + huId,
+        title: input.title,
+        body: input.body,
+        issue_url: input.issue_url,
+        type: input.type,
+        refinement_path: 'frontend_dashboard/.frontend/refinements/' + huId + '-tech.md',
+        original_path:   'frontend_dashboard/.frontend/refinements/' + huId + '-original.md',
+        plan_dir:        'frontend_dashboard/.frontend/plans/' + huId,
+        results_dir:     'frontend_dashboard/.frontend/results/' + huId,
+      };
+      console.log(JSON.stringify(out));
+    runtime: bun
+    depends_on: [resolve-input]
+
+  - id: setup-branch
+    bash: |
+      set -e
+      HU_ID=$(echo $gen-hu-id.output | jq -r '.hu_id')
+      BRANCH=$(echo $gen-hu-id.output | jq -r '.branch')
+      TYPE=$(echo $gen-hu-id.output | jq -r '.type')
+      ORIGINAL_PATH=$(echo $gen-hu-id.output | jq -r '.original_path')
+
+      git fetch origin --prune
+
+      # Lock anti-concurrencia: si origin/hu/<id> tiene un commit en los
+      # últimos 5 min, asumimos que otro pipeline está corriendo.
+      if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+        LAST_COMMIT_TS=$(git log -1 --format=%ct "origin/$BRANCH" 2>/dev/null || echo 0)
+        NOW=$(date -u +%s)
+        AGE=$((NOW - LAST_COMMIT_TS))
+        if [ "$AGE" -lt 300 ]; then
+          echo "WARN: origin/$BRANCH tuvo un commit hace ${AGE}s. Otro pipeline puede estar activo." >&2
+          echo "Continuando igual — si hay race, el push fallará al final." >&2
+        fi
+
+        # Crear branch local desde origin (worktree es fresh)
+        git checkout -b "$BRANCH" "origin/$BRANCH" || {
+          # Si ya existe localmente (raro en Archon worktree), fast-forward
+          git checkout "$BRANCH"
+          git pull --ff-only origin "$BRANCH"
+        }
+        echo "RESUMED"
+      else
+        git checkout -b "$BRANCH" "origin/main"
+        git push -u origin "$BRANCH"
+        echo "FRESH"
+      fi
+
+      # Limpiar HU id existente en BODY antes de prepend (defensivo)
+      BODY_CLEAN=$(echo $gen-hu-id.output | jq -r '.body' | grep -v '^HU id:' || true)
+      TITLE=$(echo $gen-hu-id.output | jq -r '.title')
+
+      if [ "$TYPE" = "hu_id_resume" ] && [ -f "$ORIGINAL_PATH" ]; then
+        cp "$ORIGINAL_PATH" $ARTIFACTS_DIR/hu-original.md
+      else
+        {
+          echo "HU id: $HU_ID"
+          echo
+          echo "# $TITLE"
+          echo
+          echo "$BODY_CLEAN"
+        } > $ARTIFACTS_DIR/hu-original.md
+      fi
+    depends_on: [gen-hu-id]
+
+  - id: detect-resume-state
+    bash: |
+      HU_ID=$(echo $gen-hu-id.output | jq -r '.hu_id')
+      REFINEMENT="frontend_dashboard/.frontend/refinements/${HU_ID}-tech.md"
+      MANIFEST="frontend_dashboard/.frontend/plans/${HU_ID}/plan-manifest.yaml"
+
+      already_refined=false
+      already_planned=false
+      [ -f "$REFINEMENT" ] && already_refined=true
+      [ -f "$MANIFEST" ] && already_planned=true
+
+      jq -n \
+        --arg ar "$already_refined" \
+        --arg ap "$already_planned" \
+        '{already_refined: $ar, already_planned: $ap}'
+    depends_on: [setup-branch]
+
+  - id: project-set-refining
+    bash: |
+      CFG="$ARTIFACTS_DIR/github-project-config.yaml"
+      [ -f "$CFG" ] || { echo "skipped"; exit 0; }
+      ISSUE_URL=$(echo $gen-hu-id.output | jq -r '.issue_url')
+      [ -z "$ISSUE_URL" ] || [ "$ISSUE_URL" = "null" ] && { echo "skipped"; exit 0; }
+      PN=$(grep '^project_number:' "$CFG" | awk '{print $2}')
+      PO=$(grep '^project_owner:' "$CFG" | awk '{print $2}')
+      PID=$(grep '^project_id:' "$CFG" | awk '{print $2}')
+      FID=$(grep '^status_field_id:' "$CFG" | awk '{print $2}')
+      OID=$(awk '/^status_options:/{f=1; next} f && /^  Refining:/{print $2; exit}' "$CFG")
+      [ -z "$OID" ] && { echo "warn no Refining option"; exit 0; }
+      II=$(gh project item-list "$PN" --owner "$PO" --format json 2>/dev/null \
+        | jq -r --arg u "$ISSUE_URL" '.items[] | select(.content.url == $u) | .id' | head -1)
+      [ -z "$II" ] && { echo "warn item not in project"; exit 0; }
+      gh project item-edit --id "$II" --project-id "$PID" \
+        --field-id "$FID" --single-select-option-id "$OID" 2>&1 | head -3 || true
+      echo "set Refining ok"
+    depends_on: [setup-branch]
+    trigger_rule: all_done
 
   # ════════════════════════════════════════════════════════════════════
-  # FASE 1 — Refinar (auto, sin gates)
+  # FASE 1 — Refinar
   # ════════════════════════════════════════════════════════════════════
+
+  - id: load-refinement-if-resume
+    bash: |
+      HU_ID=$(echo $gen-hu-id.output | jq -r '.hu_id')
+      cp "frontend_dashboard/.frontend/refinements/${HU_ID}-tech.md" \
+         "$ARTIFACTS_DIR/hu-refinada.md"
+      echo "loaded"
+    when: "$detect-resume-state.output.already_refined == 'true'"
+    depends_on: [detect-resume-state]
 
   - id: refinar-auto
-    depends_on: [bootstrap]
-    skills:
-      - frontend-tech-refiner-archon
-    prompt: |
-      FASE 1: Refinamiento técnico AUTOMATIZADO.
+    when: "$detect-resume-state.output.already_refined == 'false'"
+    depends_on: [detect-resume-state]
+    idle_timeout: 300000
+    loop:
+      max_iterations: 2
+      until: REFINED
+      fresh_context: true
+      skills:
+        - frontend-tech-refiner-archon
+      prompt: |
+        Aplicá el protocolo del skill frontend-tech-refiner-archon.
 
-      Aplicá el protocolo del skill frontend-tech-refiner-archon UNA vez,
-      con $LOOP_USER_INPUT = "" (sin feedback humano — es la primera y
-      única pasada).
+        Inputs:
+          - $ARTIFACTS_DIR/hu-original.md  (la HU)
+          - $ARTIFACTS_DIR/project-context.md  (LEER PRIMERO)
 
-      Input: $ARTIFACTS_DIR/hu-original.md
-      Output: $ARTIFACTS_DIR/hu-refinada.md
+        Output esperado:
+          - $ARTIFACTS_DIR/hu-refinada.md  (refinement completo)
 
-      Después de refinar, ejecutá la VALIDACIÓN AUTOMÁTICA (porque no hay
-      humano que revise):
+        $LOOP_USER_INPUT puede contener feedback de la 1ª iteración si la
+        validación posterior detectó problemas; aplicalo de forma incremental.
 
-        Check 1 — Estructura: el archivo debe tener las 14 secciones del
-                  template (§1 Scope ... §14 Implementation order).
-        Check 2 — Acceptance criteria: §1 debe tener al menos 2 bullets en
-                  formato Given/When/Then (o 2 puntos accionables).
-        Check 3 — Entities + Features: al menos una de las dos secciones
-                  (§3 o §4) debe declarar archivos a crear/modificar.
-        Check 4 — FSD rules: §11 (Hard rules check) debe estar completo
-                  para los rules que apliquen.
-        Check 5 — Open questions: §12 puede tener questions abiertas. Si
-                  hay >3 questions abiertas, el refinamiento es ambiguo
-                  → marcá BLOCKED.
+        Cuando termines: <promise>REFINED</promise>
 
-      Si TODOS los checks pasan:
-        Persistí el refinamiento:
-          mkdir -p frontend_dashboard/.frontend/refinements
-          cp $ARTIFACTS_DIR/hu-original.md \
-             frontend_dashboard/.frontend/refinements/<HU_ID>-original.md
-          cp $ARTIFACTS_DIR/hu-refinada.md \
-             frontend_dashboard/.frontend/refinements/<HU_ID>-tech.md
+  - id: validate-refinement
+    bash: |
+      F=$ARTIFACTS_DIR/hu-refinada.md
+      test -f "$F" || { echo "FAIL_NOT_EXISTS"; exit 0; }
+      [ $(wc -c < "$F") -gt 500 ] || { echo "FAIL_TOO_SHORT"; exit 0; }
+      grep -q '^HU id:' "$F" || { echo "FAIL_NO_HU_ID"; exit 0; }
 
-        Commit a hu/<HU_ID>:
-          git add frontend_dashboard/.frontend/refinements/<HU_ID>-*.md
-          git commit -m "<HU_ID>: refinamiento técnico (frontend, auto)"
+      sections=0
+      for sec in Scope Acceptance Entities Features Tests Risks; do
+        grep -qi "$sec" "$F" && sections=$((sections+1))
+      done
+      [ $sections -ge 3 ] || { echo "FAIL_FEW_SECTIONS"; exit 0; }
 
-        Actualizá pipeline-state.yaml:
-          current_phase: planning
-          phases_completed: [bootstrap, refining]
+      # POSIX-safe: [[:space:]] en vez de \s
+      ac_count=$(grep -cE '^[[:space:]-]*(AC-?[0-9]|Given|When|Then|- )' "$F" || true)
+      [ $ac_count -ge 2 ] || { echo "FAIL_FEW_AC"; exit 0; }
 
-        Si PROJECT_ENABLED, set_project_status "Refined".
+      echo "PASS"
+    depends_on: [refinar-auto, load-refinement-if-resume]
+    trigger_rule: all_done
 
-        Continuá.
+  - id: cancel-bad-refinement
+    cancel: "Refinement validation FAILED ($validate-refinement.output) — branch $gen-hu-id.output.branch. Retomar interactivo: archon workflow run refinar-hu-frontend $gen-hu-id.output.hu_id ; mergeá el resultado a main y re-lanzá el pipeline."
+    when: "$validate-refinement.output != 'PASS'"
+    depends_on: [validate-refinement]
 
-      Si algún check falla:
-        Escribí $ARTIFACTS_DIR/pipeline-error.yaml:
-          phase: refining
-          reason: validation_failed
-          checks_failed: [<nombres>]
-          remediation: |
-            El refinamiento auto falló validación. El operador debe:
-              archon workflow run refinar-hu-frontend "<HU_ID>"
-            (versión interactiva) para iterar con feedback humano.
-        Si PROJECT_ENABLED, set_project_status "Blocked: refinement needs review".
-        Fallá el nodo con exit no-cero — el pipeline para acá.
-    allowed_tools: [Read, Write, Edit, Bash]
+  - id: commit-refinement
+    bash: |
+      set -e
+      HU_ID=$(echo $gen-hu-id.output | jq -r '.hu_id')
+      BRANCH=$(echo $gen-hu-id.output | jq -r '.branch')
+
+      mkdir -p frontend_dashboard/.frontend/refinements
+      cp $ARTIFACTS_DIR/hu-original.md \
+         "frontend_dashboard/.frontend/refinements/${HU_ID}-original.md"
+      cp $ARTIFACTS_DIR/hu-refinada.md \
+         "frontend_dashboard/.frontend/refinements/${HU_ID}-tech.md"
+
+      git add "frontend_dashboard/.frontend/refinements/${HU_ID}-"*.md
+      if ! git diff --staged --quiet; then
+        git commit -m "${HU_ID}: refinamiento técnico (frontend, auto)"
+        git push origin "$BRANCH"
+        echo "committed"
+      else
+        echo "no_changes"
+      fi
+    when: "$validate-refinement.output == 'PASS'"
+    depends_on: [validate-refinement]
+
+  - id: project-set-refined
+    bash: |
+      CFG="$ARTIFACTS_DIR/github-project-config.yaml"
+      [ -f "$CFG" ] || { echo "skipped"; exit 0; }
+      ISSUE_URL=$(echo $gen-hu-id.output | jq -r '.issue_url')
+      [ -z "$ISSUE_URL" ] || [ "$ISSUE_URL" = "null" ] && { echo "skipped"; exit 0; }
+      PN=$(grep '^project_number:' "$CFG" | awk '{print $2}')
+      PO=$(grep '^project_owner:' "$CFG" | awk '{print $2}')
+      PID=$(grep '^project_id:' "$CFG" | awk '{print $2}')
+      FID=$(grep '^status_field_id:' "$CFG" | awk '{print $2}')
+      OID=$(awk '/^status_options:/{f=1; next} f && /^  Refined:/{print $2; exit}' "$CFG")
+      [ -z "$OID" ] && exit 0
+      II=$(gh project item-list "$PN" --owner "$PO" --format json 2>/dev/null \
+        | jq -r --arg u "$ISSUE_URL" '.items[] | select(.content.url == $u) | .id' | head -1)
+      [ -z "$II" ] && exit 0
+      gh project item-edit --id "$II" --project-id "$PID" \
+        --field-id "$FID" --single-select-option-id "$OID" 2>&1 | head -3 || true
+      echo "set Refined ok"
+    depends_on: [commit-refinement]
+    trigger_rule: all_done
 
   # ════════════════════════════════════════════════════════════════════
-  # FASE 2 — Planificar (auto, sin gates)
+  # FASE 2 — Planificar
   # ════════════════════════════════════════════════════════════════════
+
+  - id: load-plan-if-resume
+    bash: |
+      HU_ID=$(echo $gen-hu-id.output | jq -r '.hu_id')
+      PLAN_DIR="frontend_dashboard/.frontend/plans/${HU_ID}"
+      cp "$PLAN_DIR/plan-manifest.yaml" "$ARTIFACTS_DIR/plan-manifest.yaml"
+      mkdir -p $ARTIFACTS_DIR/tareas
+      cp "$PLAN_DIR/tareas/F"*.md $ARTIFACTS_DIR/tareas/
+      echo "loaded"
+    when: "$detect-resume-state.output.already_planned == 'true'"
+    depends_on: [commit-refinement, load-refinement-if-resume]
+    trigger_rule: none_failed_min_one_success
 
   - id: planificar-auto
-    depends_on: [refinar-auto]
-    skills:
-      - frontend-task-planner-archon
-    prompt: |
-      FASE 2: Descomposición en tareas AUTOMATIZADA.
+    when: "$detect-resume-state.output.already_planned == 'false'"
+    depends_on: [commit-refinement, load-refinement-if-resume]
+    trigger_rule: none_failed_min_one_success
+    idle_timeout: 300000
+    loop:
+      max_iterations: 2
+      until: PLANNED
+      fresh_context: true
+      skills:
+        - frontend-task-planner-archon
+      prompt: |
+        Aplicá el protocolo del skill frontend-task-planner-archon.
 
-      Aplicá el protocolo del skill frontend-task-planner-archon UNA vez,
-      con $LOOP_USER_INPUT = "" (sin feedback humano).
+        Inputs:
+          - $ARTIFACTS_DIR/hu-refinada.md   (refinement, output de FASE 1)
+          - $ARTIFACTS_DIR/hu-original.md   (fallback)
+          - $ARTIFACTS_DIR/spinal-files.yaml
+          - $ARTIFACTS_DIR/project-context.md  (LEER PRIMERO)
 
-      Input:
-        $ARTIFACTS_DIR/hu-refinada.md (output de FASE 1)
-        $ARTIFACTS_DIR/hu-original.md (fallback context)
-        $ARTIFACTS_DIR/spinal-files.yaml
-      Output:
-        $ARTIFACTS_DIR/plan-manifest.yaml
-        $ARTIFACTS_DIR/tareas/F<NN>-<slug>.md (uno por tarea)
+        Output esperado:
+          - $ARTIFACTS_DIR/plan-manifest.yaml
+          - $ARTIFACTS_DIR/tareas/F<NN>-<slug>.md
 
-      Después de planificar, ejecutá VALIDACIÓN AUTOMÁTICA:
+        $LOOP_USER_INPUT vacío en iter 1; feedback de validación en iter 2.
 
-        Check 1 — Estructura: plan-manifest.yaml debe tener
-                  `tasks:`, `parallel_batches:`, `totals:`.
-        Check 2 — Cobertura: la unión de delivers_acceptance de todas las
-                  tareas debe cubrir todos los AC del §1 del refinamiento
-                  (sin huérfanos).
-        Check 3 — DAG sin ciclos: validá con un toposort simple.
-        Check 4 — Granularidad: ninguna tarea con estimated_loc > 300
-                  ni < 30. Si hay alguna, marcá como WARNING (no bloqueante).
-        Check 5 — Batches no vacíos: cada batch tiene ≥1 tarea.
-        Check 6 — task_count ≤ 15 (umbral conservador para el pipeline
-                  auto; si hay más, mejor que el operador revise).
-        Check 7 — Para cada tarea, su archivo F<NN>-*.md existe en
-                  $ARTIFACTS_DIR/tareas/.
+        Cuando termines: <promise>PLANNED</promise>
 
-      Si TODOS los checks (fatal) pasan:
-        Persistí el plan:
-          mkdir -p frontend_dashboard/.frontend/plans/<HU_ID>/tareas
-          cp $ARTIFACTS_DIR/plan-manifest.yaml \
-             frontend_dashboard/.frontend/plans/<HU_ID>/plan-manifest.yaml
-          cp $ARTIFACTS_DIR/tareas/F*.md \
-             frontend_dashboard/.frontend/plans/<HU_ID>/tareas/
+  - id: validate-plan
+    bash: |
+      M=$ARTIFACTS_DIR/plan-manifest.yaml
+      test -f "$M" || { echo "FAIL_NO_MANIFEST"; exit 0; }
+      [ $(wc -c < "$M") -gt 300 ] || { echo "FAIL_TOO_SHORT"; exit 0; }
+      grep -q '^tasks:' "$M" || { echo "FAIL_NO_TASKS_SECTION"; exit 0; }
+      grep -q '^parallel_batches:' "$M" || { echo "FAIL_NO_BATCHES"; exit 0; }
 
-        Commit a hu/<HU_ID>:
-          git add frontend_dashboard/.frontend/plans/<HU_ID>/
-          git commit -m "<HU_ID>: plan de tareas (frontend, auto, N features)"
+      # grep -c siempre imprime un número (0 si no matchea). NO usar `|| echo 0`
+      # porque grep -c con 0 matches imprime "0" Y exit 1 → captura sería "0\n0".
+      task_count=$(grep -cE '^  - id: F[0-9]+' "$M" 2>/dev/null)
+      task_count=${task_count:-0}
+      [ "$task_count" -ge 1 ] || { echo "FAIL_NO_TASKS"; exit 0; }
+      [ "$task_count" -le 12 ] || { echo "FAIL_TOO_MANY_TASKS_$task_count"; exit 0; }
 
-        Actualizá pipeline-state.yaml:
-          current_phase: implementing
-          phases_completed: [bootstrap, refining, planning]
-          task_count: <N>
-          batch_count: <K>
+      for tid in $(grep -oE '^  - id: F[0-9]+' "$M" | awk '{print $3}'); do
+        ls "$ARTIFACTS_DIR/tareas/${tid}-"*.md >/dev/null 2>&1 || { echo "FAIL_MISSING_TASK_FILE_$tid"; exit 0; }
+      done
 
-        Si PROJECT_ENABLED:
-          set_project_status "Planned"
+      echo "PASS"
+    depends_on: [planificar-auto, load-plan-if-resume]
+    trigger_rule: all_done
 
-          Opcional — crear sub-items en el Project (uno por tarea):
-          Para cada tarea en el manifest:
-            gh project item-create <project-id> \
-              --owner <owner> \
-              --title "<HU_ID> F<NN>: <título de la tarea>" \
-              --body "Parent issue: <ISSUE_URL>; depends_on: <list>; batch: B<k>"
-          (estos sub-items quedan como drafts; el pipeline los actualiza
-           a "Implementing" / "Done" según avanza).
+  - id: cancel-bad-plan
+    cancel: "Plan validation FAILED ($validate-plan.output) — branch $gen-hu-id.output.branch. Retomar interactivo: archon workflow run planificar-hu-frontend $gen-hu-id.output.hu_id ; mergeá y re-lanzá el pipeline."
+    when: "$validate-plan.output != 'PASS'"
+    depends_on: [validate-plan]
 
-      Si algún check fatal falla:
-        Escribí $ARTIFACTS_DIR/pipeline-error.yaml con
-          phase: planning
-          reason: validation_failed
-          checks_failed: [<nombres>]
-          remediation: archon workflow run planificar-hu-frontend "<HU_ID>"
-        Si PROJECT_ENABLED, set_project_status "Blocked: plan needs review".
-        Fallá el nodo.
-    allowed_tools: [Read, Write, Edit, Bash]
+  - id: commit-plan
+    bash: |
+      set -e
+      HU_ID=$(echo $gen-hu-id.output | jq -r '.hu_id')
+      BRANCH=$(echo $gen-hu-id.output | jq -r '.branch')
 
-  # ════════════════════════════════════════════════════════════════════
-  # FASE 3 — Implementar todos los batches (auto, paralelo)
-  # ════════════════════════════════════════════════════════════════════
+      mkdir -p "frontend_dashboard/.frontend/plans/${HU_ID}/tareas"
+      cp $ARTIFACTS_DIR/plan-manifest.yaml \
+         "frontend_dashboard/.frontend/plans/${HU_ID}/plan-manifest.yaml"
+      cp $ARTIFACTS_DIR/tareas/F*.md \
+         "frontend_dashboard/.frontend/plans/${HU_ID}/tareas/"
 
-  - id: implementar-batches
-    depends_on: [planificar-auto]
-    skills:
-      - frontend-merger-archon
-    prompt: |
-      FASE 3: Implementación paralela AUTOMATIZADA.
+      N=$(ls "frontend_dashboard/.frontend/plans/${HU_ID}/tareas/" | wc -l | tr -d ' ')
 
-      Leé frontend_dashboard/.frontend/plans/<HU_ID>/plan-manifest.yaml.
-      Iterá sobre cada batch en `parallel_batches[]` EN ORDEN.
+      git add "frontend_dashboard/.frontend/plans/${HU_ID}/"
+      if ! git diff --staged --quiet; then
+        git commit -m "${HU_ID}: plan de tareas (frontend, auto, ${N} tareas)"
+        git push origin "$BRANCH"
+        echo "committed_${N}"
+      else
+        echo "no_changes"
+      fi
+    when: "$validate-plan.output == 'PASS'"
+    depends_on: [validate-plan]
 
-      Si PROJECT_ENABLED, set_project_status "Implementing".
-
-      ──────────────────────────────────────────────────────────────────
-      Para cada batch B<k> con tareas [F<NN1>, F<NN2>, ..., F<NNm>]:
-      ──────────────────────────────────────────────────────────────────
-
-      Paso 3.1 — Pre-flight: validar depends_on satisfechos
-        Para cada F<NNi> del batch:
-          Para cada F<X> en su depends_on:
-            - Verificá que existe
-              frontend_dashboard/.frontend/results/<HU_ID>/F<X>-result.yaml
-              con status: passed.
-            - Verificá que al menos un files_created de F<X> existe en el
-              worktree.
-        Si falta algo, NO debería pasar (estamos en orden topológico de
-        batches; si pasa, hay un bug del planner — abortar).
-
-      Paso 3.2 — Sub-items del Project a "Implementing" (si PROJECT_ENABLED):
-        Para cada F<NNi> del batch:
-          gh project item-edit <sub-item-id> --field-id <status-field> \
-            --single-select-option-id <implementing-option-id>
-
-      Paso 3.3 — Fan-out paralelo:
-        Lanzá M invocaciones de implementar-tarea-frontend-auto en
-        BACKGROUND, capturando sus PIDs y stdout/stderr:
-
-          mkdir -p $ARTIFACTS_DIR/batch-logs
-          for task_id in F<NN1> F<NN2> ... F<NNm>; do
-            (
-              archon workflow run implementar-tarea-frontend-auto \
-                "<HU_ID> ${task_id}" \
-                > $ARTIFACTS_DIR/batch-logs/B<k>-${task_id}.log 2>&1
-            ) &
-            echo "$! ${task_id}" >> $ARTIFACTS_DIR/batch-logs/B<k>-pids.txt
-          done
-
-          # Esperá a TODOS los hijos:
-          wait
-
-          Cada subprocess corre en SU PROPIO worktree (Archon worktree
-          isolation lo garantiza). Los new files se escriben en ese
-          worktree, y al final el subprocess persiste el result.yaml en
-          frontend_dashboard/.frontend/results/<HU_ID>/ (pero en SU
-          worktree, no en el nuestro).
-
-      Paso 3.4 — Recolectar resultados:
-        Después del `wait`, leé el último mensaje "AUTO_RESULT" de cada
-        log y construí el inventario:
-          for log in $ARTIFACTS_DIR/batch-logs/B<k>-F*.log; do
-            grep "^AUTO_RESULT" $log | tail -1
-          done > $ARTIFACTS_DIR/batch-logs/B<k>-summary.txt
-
-        Verificá que TODAS las M tareas tengan status=passed.
-
-      Paso 3.5 — Si alguna falló o quedó blocked:
-        Identificá las tareas con status != passed.
-        Para cada una:
-          - Leé su log completo en $ARTIFACTS_DIR/batch-logs/B<k>-${task}.log
-          - Imprimí un resumen del blocker (de las últimas 30 líneas).
-        Escribí $ARTIFACTS_DIR/pipeline-error.yaml:
-          phase: implementing
-          batch: B<k>
-          failed_tasks: [{id: F<NN>, status: <X>, blocker: <reason>}]
-          remediation: |
-            El pipeline está bloqueado en batch B<k>. El operador puede:
-              1. Re-iterar la tarea problemática:
-                 archon workflow run implementar-tarea-frontend "<HU_ID> F<NN>"
-                 (versión interactiva, con feedback)
-              2. Si requires_planner_update: re-planificar.
-                 archon workflow run planificar-hu-frontend "<HU_ID>"
-              3. Una vez resuelto, mergear la tarea a hu/<HU_ID> y
-                 re-correr el pipeline desde donde quedó:
-                 archon workflow run hu-frontend-pipeline "<HU_ID>"
-        Si PROJECT_ENABLED, set_project_status "Blocked: B<k> needs review".
-        Fallá el nodo.
-
-      Paso 3.6 — TODAS las tareas del batch están en passed:
-        Cada subprocess ya commiteó SU files_created + result.yaml en SU
-        worktree y se las mergeó a... esperá, NO. Los subprocess NO hacen
-        git push. Necesitamos traer su trabajo a NUESTRO worktree
-        (hu/<HU_ID>).
-
-        Para cada F<NN> del batch, los archivos creados están en
-        SU worktree (~/.archon/worktrees/implementar-tarea-frontend-auto.<run-id>/...).
-        Pero como `implementar-tarea-frontend-auto` NO commitea ni
-        mergea, el camino más simple es:
-
-        a. Cada subprocess persiste su result.yaml a
-           frontend_dashboard/.frontend/results/<HU_ID>/F<NN>-result.yaml
-           DENTRO de su worktree. Necesitamos esos archivos en el
-           nuestro.
-
-        b. Estrategia: leemos los logs (que ya capturaron el AUTO_RESULT),
-           y a partir de los logs sabemos los paths de cada result.yaml
-           en cada worktree. Los copiamos directamente del filesystem
-           de cada worktree a nuestro worktree.
-
-           Para cada F<NN>:
-             # Encontrar el worktree del subprocess (Archon naming convention):
-             SUBPROCESS_WT=$(ls -dt ~/.archon/worktrees/implementar-tarea-frontend-auto.* | head -1)
-             # OJO: si lanzaste M en paralelo, este `head -1` puede colisionar.
-             # Mejor: en Paso 3.3, capturá $ARCHON_WORKTREE_PATH de cada subprocess
-             # (Archon imprime esto al arrancar el workflow). Guardalo en
-             # $ARTIFACTS_DIR/batch-logs/B<k>-${task_id}-worktree.path.
-
-             RESULT_FILE=$SUBPROCESS_WT/frontend_dashboard/.frontend/results/<HU_ID>/F<NN>-result.yaml
-             mkdir -p frontend_dashboard/.frontend/results/<HU_ID>
-             cp $RESULT_FILE frontend_dashboard/.frontend/results/<HU_ID>/F<NN>-result.yaml
-
-             # También traer los files_created al worktree del pipeline:
-             # Leer files_created del result.yaml y `cp` cada uno desde
-             # el SUBPROCESS_WT al worktree del pipeline (preservando paths).
-             # NO traer files_modified (esos son spinal — los reconstruye el merger).
-
-        c. Commit en hu/<HU_ID>:
-           git add frontend_dashboard/.frontend/results/<HU_ID>/F*-result.yaml
-           git add <archivos new traídos>
-           # NO `git add` sobre spinal files (pages/, app/providers/index.tsx,
-           # index.css, barrels existentes) — esos los hace el merger.
-           git commit -m "<HU_ID> B<k>: <N> tareas paralelas (pre-merger)"
-
-      Paso 3.7 — Invocar al merger:
-        Stage para el merger:
-          mkdir -p $ARTIFACTS_DIR/batch-results
-          rm -f $ARTIFACTS_DIR/batch-results/*.yaml
-          cp frontend_dashboard/.frontend/results/<HU_ID>/F<NN1>-result.yaml \
-             frontend_dashboard/.frontend/results/<HU_ID>/F<NN2>-result.yaml \
-             ... \
-             $ARTIFACTS_DIR/batch-results/
-          (spinal-files.yaml y project-context.md ya están en $ARTIFACTS_DIR/
-           desde el bootstrap.)
-
-        Validá pre-condición del merger:
-          Para cada spinal file declarado en spinal-files.yaml:
-            git diff origin/main -- <spinal-file>
-          Debería estar vacío. Si no, hay un bug — revertí con
-            git checkout origin/main -- <spinal-files>
-          y continuá.
-
-        Ejecutá el protocolo del skill frontend-merger-archon
-        DIRECTAMENTE (Step 1-3 del skill, con $USER_MESSAGE virtual
-        = "B<k> [F<NN1>, F<NN2>, ..., F<NNm>]"). El skill ya está
-        en tu contexto via `skills:`.
-
-        El merger escribe $ARTIFACTS_DIR/merge-report.yaml y modifica
-        los spinal files en este worktree.
-
-      Paso 3.8 — Validar y commitear el merge:
-        Leé $ARTIFACTS_DIR/merge-report.yaml.
-        Si status: ok:
-          git add <spinal-files modificados>
-          git commit -m "<HU_ID> B<k>: merger consolidó <N> wiring_intents"
-
-          # Test rápido — ¿el build todavía funciona?
-          cd frontend_dashboard && npx tsc -b && cd ..
-          # Si tsc falla, hay un bug de merge. Escribir pipeline-error.yaml.
-
-          Si PROJECT_ENABLED:
-            Para cada F<NN> del batch:
-              gh project item-edit <sub-item-id-F<NN>> --field-id <status> \
-                --single-select-option-id <done-option-id>
-
-        Si status: partial o failed:
-          Escribí pipeline-error.yaml con phase: merging, batch: B<k>,
-          merge_report: <copia del report>.
-          Si PROJECT_ENABLED, set_project_status "Blocked: B<k> merge failed".
-          Fallá el nodo.
-
-      Paso 3.9 — Avanzar al siguiente batch (loop).
-
-      ──────────────────────────────────────────────────────────────────
-
-      Cuando TODOS los batches están completos (todos los F<NN> con
-      status: passed Y todos los merges con status: ok):
-
-        Actualizá pipeline-state.yaml:
-          current_phase: pr_creation
-          phases_completed: [bootstrap, refining, planning, implementing]
-
-        Continuá al siguiente nodo (crear-pr).
-    allowed_tools: [Read, Write, Edit, Bash]
+  - id: project-set-planned
+    bash: |
+      CFG="$ARTIFACTS_DIR/github-project-config.yaml"
+      [ -f "$CFG" ] || { echo "skipped"; exit 0; }
+      ISSUE_URL=$(echo $gen-hu-id.output | jq -r '.issue_url')
+      [ -z "$ISSUE_URL" ] || [ "$ISSUE_URL" = "null" ] && { echo "skipped"; exit 0; }
+      PN=$(grep '^project_number:' "$CFG" | awk '{print $2}')
+      PO=$(grep '^project_owner:' "$CFG" | awk '{print $2}')
+      PID=$(grep '^project_id:' "$CFG" | awk '{print $2}')
+      FID=$(grep '^status_field_id:' "$CFG" | awk '{print $2}')
+      OID=$(awk '/^status_options:/{f=1; next} f && /^  Planned:/{print $2; exit}' "$CFG")
+      [ -z "$OID" ] && exit 0
+      II=$(gh project item-list "$PN" --owner "$PO" --format json 2>/dev/null \
+        | jq -r --arg u "$ISSUE_URL" '.items[] | select(.content.url == $u) | .id' | head -1)
+      [ -z "$II" ] && exit 0
+      gh project item-edit --id "$II" --project-id "$PID" \
+        --field-id "$FID" --single-select-option-id "$OID" 2>&1 | head -3 || true
+      echo "set Planned ok"
+    depends_on: [commit-plan]
+    trigger_rule: all_done
 
   # ════════════════════════════════════════════════════════════════════
-  # FASE 4 — Crear PR y cerrar
+  # FASE 3 — Implementar tareas
+  # ════════════════════════════════════════════════════════════════════
+  # El AI solo escribe código. Las git operations entre iteraciones las
+  # hace `until_bash` (determinista). Cuando until_bash detecta que todas
+  # las tareas están done, exit 0 → loop termina.
+
+  - id: project-set-implementing
+    bash: |
+      CFG="$ARTIFACTS_DIR/github-project-config.yaml"
+      [ -f "$CFG" ] || { echo "skipped"; exit 0; }
+      ISSUE_URL=$(echo $gen-hu-id.output | jq -r '.issue_url')
+      [ -z "$ISSUE_URL" ] || [ "$ISSUE_URL" = "null" ] && { echo "skipped"; exit 0; }
+      PN=$(grep '^project_number:' "$CFG" | awk '{print $2}')
+      PO=$(grep '^project_owner:' "$CFG" | awk '{print $2}')
+      PID=$(grep '^project_id:' "$CFG" | awk '{print $2}')
+      FID=$(grep '^status_field_id:' "$CFG" | awk '{print $2}')
+      OID=$(awk '/^status_options:/{f=1; next} f && /^  Implementing:/{print $2; exit}' "$CFG")
+      [ -z "$OID" ] && exit 0
+      II=$(gh project item-list "$PN" --owner "$PO" --format json 2>/dev/null \
+        | jq -r --arg u "$ISSUE_URL" '.items[] | select(.content.url == $u) | .id' | head -1)
+      [ -z "$II" ] && exit 0
+      gh project item-edit --id "$II" --project-id "$PID" \
+        --field-id "$FID" --single-select-option-id "$OID" 2>&1 | head -3 || true
+      echo "set Implementing ok"
+    depends_on: [commit-plan]
+    trigger_rule: all_done
+
+  - id: implementar-secuencial
+    depends_on: [commit-plan]
+    idle_timeout: 1800000
+    loop:
+      max_iterations: 30
+      until: NEVER_AI_SIGNAL  # nunca usamos signal del AI; until_bash decide cuándo parar
+      fresh_context: true
+      skills:
+        - frontend-implementer-archon
+      # until_bash corre DESPUÉS de cada iteración AI. Si retorna 0, loop termina.
+      # Acá hacemos todas las git operations (NO el AI).
+      until_bash: |
+        set +e
+
+        # CRITICAL: obtener HU_ID del gen-hu-id node, NO de `ls plans/` (que puede
+        # tener múltiples HUs ya mergeados a main). $gen-hu-id.output es auto-shell-quoted.
+        HU_ID=$(echo $gen-hu-id.output | jq -r '.hu_id')
+        if [ -z "$HU_ID" ] || [ "$HU_ID" = "null" ]; then
+          echo "ERROR: no se pudo extraer HU_ID de gen-hu-id.output" >&2
+          exit 0
+        fi
+        BRANCH="hu/${HU_ID}"
+        RESULTS_DIR="frontend_dashboard/.frontend/results/${HU_ID}"
+        mkdir -p "$RESULTS_DIR"
+
+        # Helper: extraer campo de YAML stripping comillas (yaml puede tener `status: "passed"` o `status: passed`)
+        yaml_get() {
+          grep -m1 "^${2}:" "$1" 2>/dev/null | awk -F: '{print $2}' | sed 's/^ *//; s/ *$//; s/^["'\'']//; s/["'\'']$//'
+        }
+
+        # ¿El AI escribió task-result.yaml en esta iteración?
+        if [ -f "$ARTIFACTS_DIR/task-result.yaml" ]; then
+          STATUS=$(yaml_get "$ARTIFACTS_DIR/task-result.yaml" status)
+          TASK_ID=$(yaml_get "$ARTIFACTS_DIR/task-result.yaml" task_id)
+
+          if [ -z "$TASK_ID" ]; then
+            echo "ERROR: task-result.yaml sin task_id" >&2
+            rm -f "$ARTIFACTS_DIR/task-result.yaml"
+            exit 1
+          fi
+
+          cp "$ARTIFACTS_DIR/task-result.yaml" "${RESULTS_DIR}/${TASK_ID}-result.yaml"
+
+          git add frontend_dashboard/src 2>/dev/null || true
+          git add "$RESULTS_DIR/${TASK_ID}-result.yaml" 2>/dev/null || true
+          git add frontend_dashboard/.frontend/refinements/ 2>/dev/null || true
+
+          git reset HEAD frontend_dashboard/node_modules 2>/dev/null || true
+          git reset HEAD frontend_dashboard/dist 2>/dev/null || true
+          git reset HEAD frontend_dashboard/.vite 2>/dev/null || true
+          git reset HEAD frontend_dashboard/coverage 2>/dev/null || true
+          git reset HEAD frontend_dashboard/package-lock.json 2>/dev/null || true
+
+          if ! git diff --staged --quiet; then
+            git commit -m "${HU_ID} ${TASK_ID}: status=${STATUS} (auto)"
+            # Push con retry: si origin avanzó (concurrency), pull --rebase y reintentar
+            git push origin "$BRANCH" > /tmp/push-$$.log 2>&1
+            PUSH_RC=$?
+            tail -5 /tmp/push-$$.log >&2 || true
+            if [ "$PUSH_RC" -ne 0 ]; then
+              echo "push falló, intentando pull --rebase + retry" >&2
+              git pull --rebase origin "$BRANCH" 2>&1 | tail -5 >&2 || true
+              git push origin "$BRANCH" 2>&1 | tail -5 >&2 || \
+                echo "WARN: push falló dos veces — commit local, no en origin" >&2
+            fi
+            rm -f /tmp/push-$$.log
+          fi
+
+          # Si la tarea falló, escribir pipeline-error.yaml y EXIT 0 (parar loop)
+          if [ "$STATUS" != "passed" ]; then
+            BR=$(yaml_get "$ARTIFACTS_DIR/task-result.yaml" blocked_reason)
+            cat > "$ARTIFACTS_DIR/pipeline-error.yaml" <<EOF
+        phase: implementing
+        failed_task: ${TASK_ID}
+        failed_status: ${STATUS}
+        blocked_reason: ${BR:-unknown}
+        branch: ${BRANCH}
+        remediation: |
+          Tarea ${TASK_ID} falló en modo auto.
+          Operador:
+            1. archon workflow run implementar-tarea-frontend "${HU_ID} ${TASK_ID}"
+            2. Mergear progreso a hu/${HU_ID}
+            3. archon workflow run hu-frontend-pipeline "${HU_ID}"  (retoma)
+        EOF
+            echo "TASK ${TASK_ID} FAILED (${STATUS}). Pipeline para." >&2
+            exit 0
+          fi
+
+          # Limpiar para próxima iteración
+          rm -f "$ARTIFACTS_DIR/task-result.yaml"
+          rm -f "$ARTIFACTS_DIR/task.md"  # evita stale task entre iteraciones
+        fi
+
+        # Check: ¿todas las tareas done?
+        MANIFEST="frontend_dashboard/.frontend/plans/${HU_ID}/plan-manifest.yaml"
+        # grep -c siempre imprime un número; no necesita `|| echo 0` (que pega "0\n0")
+        TOTAL=$(grep -cE '^  - id: F[0-9]+' "$MANIFEST" 2>/dev/null)
+        TOTAL=${TOTAL:-0}
+        PASSED=$(find "$RESULTS_DIR" -name 'F*-result.yaml' -exec grep -l '^status: passed' {} + 2>/dev/null | wc -l | tr -d ' ')
+        PASSED=${PASSED:-0}
+        echo "Progreso: ${PASSED}/${TOTAL}" >&2
+
+        if [ "$PASSED" -ge "$TOTAL" ] && [ "$TOTAL" -gt 0 ]; then
+          echo "ALL TASKS DONE" >&2
+          exit 0
+        fi
+
+        exit 1   # loop continúa
+      prompt: |
+        SOLO escribís código. Las git operations las hace `until_bash` después
+        de tu iteración.
+
+        Setup (cada iteración):
+          HU_ID=$(ls frontend_dashboard/.frontend/plans/ | head -1)
+          MANIFEST="frontend_dashboard/.frontend/plans/${HU_ID}/plan-manifest.yaml"
+          RESULTS_DIR="frontend_dashboard/.frontend/results/${HU_ID}"
+
+        Paso A — Encontrar la próxima tarea pendiente:
+          Iterá parallel_batches[] del manifest en orden. Dentro de cada
+          batch, iterá tasks[] en orden de F-id ascendente. La primera
+          tarea cuyo result.yaml NO existe en $RESULTS_DIR (o no tiene
+          status:passed) es la próxima.
+
+          Si NO hay tarea pendiente, no hagas nada (no escribas task-result.yaml).
+          until_bash detectará que TOTAL == PASSED y terminará el loop.
+
+        Paso B — Implementar la tarea:
+          1. Cargar inputs a $ARTIFACTS_DIR:
+             cp "$MANIFEST" "$ARTIFACTS_DIR/plan-manifest.yaml"
+             cp "frontend_dashboard/.frontend/plans/${HU_ID}/tareas/${TASK_ID}-"*.md "$ARTIFACTS_DIR/task.md"
+             cp "frontend_dashboard/.frontend/refinements/${HU_ID}-tech.md" "$ARTIFACTS_DIR/hu-refinada.md"
+          2. Aplicar protocolo del skill frontend-implementer-archon:
+             - escribir código + tests en el worktree (frontend_dashboard/src/...)
+             - correr los §10 verification commands (cd frontend_dashboard && npm test ...)
+             - escribir $ARTIFACTS_DIR/task-result.yaml con status
+
+        Paso C — NO hagas commit / push / git add.
+          until_bash se encarga después de esta iteración.
+
+        Paso D — Si tu tarea falló (status != passed), igual escribí
+          task-result.yaml con el status. until_bash detecta y para el loop.
+
+        No emitas <promise> — el loop termina por `until_bash exit 0`.
+
+  # ════════════════════════════════════════════════════════════════════
+  # FASE 4 — Validación final + PR
   # ════════════════════════════════════════════════════════════════════
 
-  - id: crear-pr
-    depends_on: [implementar-batches]
-    prompt: |
-      FASE 4: Crear PR de hu/<HU_ID> → main y cerrar el pipeline.
+  - id: check-pipeline-error
+    bash: |
+      if [ -f $ARTIFACTS_DIR/pipeline-error.yaml ]; then
+        echo "=== pipeline-error.yaml ===" >&2
+        cat $ARTIFACTS_DIR/pipeline-error.yaml >&2
+        echo "HAS_ERROR"
+      else
+        echo "OK"
+      fi
+    depends_on: [implementar-secuencial]
+    trigger_rule: all_done
 
-      Paso 4.1 — Push el branch:
-        git push -u origin hu/<HU_ID>
+  - id: cancel-on-implement-error
+    cancel: "Pipeline INCOMPLETO en FASE 3. Branch $gen-hu-id.output.branch pusheado con progreso. Ver $ARTIFACTS_DIR/pipeline-error.yaml (logueado al stderr). Retomar: archon workflow run implementar-tarea-frontend (interactivo), mergear, re-lanzar pipeline."
+    when: "$check-pipeline-error.output == 'HAS_ERROR'"
+    depends_on: [check-pipeline-error]
 
-      Paso 4.2 — Construir el body del PR:
-        - Resumen: título y descripción de la HU original (de
-          frontend_dashboard/.frontend/refinements/<HU_ID>-original.md).
-        - Tabla de tareas con su F<NN>, batch, files_created count.
-          (Leer cada frontend_dashboard/.frontend/results/<HU_ID>/F*-result.yaml.)
-        - Lista de spinal files modificados por los mergers.
-        - Tests corridos: el último `npm test` resumen (si lo tenés en logs).
-        - Si hay ISSUE_URL, agregar "Closes <ISSUE_URL>" para que GitHub
-          auto-cierre el issue al merger el PR.
+  - id: final-validation
+    bash: |
+      # CRITICAL: pipefail — sin esto, exit code es de `tail` (siempre 0)
+      # y un test rojo pasa como PASS silenciosamente.
+      set -o pipefail
+      cd frontend_dashboard
+      echo "=== npm test ===" >&2
+      npm test 2>&1 | tail -30 >&2 || { echo "FAIL_NPM_TEST"; exit 0; }
+      echo "=== npx tsc -b ===" >&2
+      npx tsc -b 2>&1 | tail -30 >&2 || { echo "FAIL_TSC"; exit 0; }
+      echo "=== npm run build ===" >&2
+      npm run build 2>&1 | tail -30 >&2 || { echo "FAIL_BUILD"; exit 0; }
+      echo "PASS"
+    timeout: 600000
+    when: "$check-pipeline-error.output == 'OK'"
+    depends_on: [check-pipeline-error]
 
-      Paso 4.3 — Crear el PR:
-        gh pr create \
-          --base main \
-          --head hu/<HU_ID> \
-          --title "<HU_ID>: <título corto desde refinements/<HU_ID>-tech.md>" \
-          --body "$(cat $ARTIFACTS_DIR/pr-body.md)"
+  - id: cancel-on-final-validation-fail
+    cancel: "Validación final pre-PR FALLÓ ($final-validation.output). Branch $gen-hu-id.output.branch tiene una regresión que ningún test §10 individual capturó. Investigar a mano: cd frontend_dashboard && npm test"
+    when: "$final-validation.output != 'PASS'"
+    depends_on: [final-validation]
 
-        Capturá la URL del PR.
+  - id: build-pr-body
+    script: |
+      import { readFileSync, readdirSync, existsSync } from 'fs';
+      import { writeFile } from 'fs/promises';
+      import { join } from 'path';
 
-      Paso 4.4 — Si PROJECT_ENABLED, actualizar card:
-        Mover el card padre a "Done — PR ready":
-          set_project_status "Done — PR ready"
-        Agregar comentario al issue (si ISSUE_URL):
-          gh issue comment <ISSUE_URL> --body "PR open: <PR_URL>"
+      const huInfo = $gen-hu-id.output;
+      const huId = huInfo.hu_id;
+      const artifactsDir = "$ARTIFACTS_DIR";
 
-      Paso 4.5 — Imprimí un resumen final (el operador esto SÍ lo lee):
+      const refinementOriginal = 'frontend_dashboard/.frontend/refinements/' + huId + '-original.md';
+      const resultsDir = 'frontend_dashboard/.frontend/results/' + huId;
 
-        ╔════════════════════════════════════════════════════════════════╗
-        ║ 🎉 Pipeline completo — HU <HU_ID>                              ║
-        ║                                                                ║
-        ║ Branch:      hu/<HU_ID>                                        ║
-        ║ Tareas:      M de M completas                                  ║
-        ║ Batches:     K consolidados                                    ║
-        ║ Spinal files: <count>                                          ║
-        ║                                                                ║
-        ║ PR:          <PR_URL>                                          ║
-        ║                                                                ║
-        ║ Próximo paso del operador:                                     ║
-        ║   1. Revisar el diff del PR                                    ║
-        ║   2. Squash-merge si todo OK                                   ║
-        ║   3. El issue se cierra automáticamente (Closes …)             ║
-        ╚════════════════════════════════════════════════════════════════╝
-    allowed_tools: [Read, Write, Bash]
+      let summary = '';
+      if (existsSync(refinementOriginal)) {
+        const raw = readFileSync(refinementOriginal, 'utf-8');
+        summary = raw.split('\n').slice(0, 20).join('\n');
+      }
 
-# ════════════════════════════════════════════════════════════════════
-# Anexo A — sub-helper set_project_status
-# ════════════════════════════════════════════════════════════════════
-# Las skills/nodes invocan este patrón inline para mover el card padre.
-# Requiere que el config tenga: project_id, status_field_id, status_options[<name>].
-#
-# Bash idiomático:
-#
-#   PROJECT_ID=$(yq '.project_id' $ARTIFACTS_DIR/github-project-config.yaml)
-#   FIELD_ID=$(yq '.status_field_id' $ARTIFACTS_DIR/github-project-config.yaml)
-#   OPTION_ID=$(yq ".status_options.${STATUS_NAME}" $ARTIFACTS_DIR/github-project-config.yaml)
-#
-#   gh project item-edit \
-#     --id <parent-card-id> \
-#     --project-id $PROJECT_ID \
-#     --field-id $FIELD_ID \
-#     --single-select-option-id $OPTION_ID
-#
-# El parent-card-id se obtiene en el bootstrap:
-#   - Si el input fue un Issue URL, buscar el item del Project que linkea ese issue
-#     con `gh project item-list ... --jq '.items[] | select(.content.url == "<ISSUE_URL>")'`.
-#   - Si no hay issue, crear un draft item al inicio del bootstrap.
-#
-# Si cualquier paso de Project falla, NO falles el pipeline — solo loggeá warning.
+      let tasksTable = '';
+      if (existsSync(resultsDir)) {
+        const files = readdirSync(resultsDir).filter(f => f.endsWith('-result.yaml')).sort();
+        for (const f of files) {
+          const taskId = f.replace('-result.yaml', '');
+          const content = readFileSync(join(resultsDir, f), 'utf-8');
+          const statusMatch = content.match(/^status: *(\w+)/m);
+          const status = statusMatch ? statusMatch[1] : 'unknown';
+          const filesCount = (content.match(/^  - src\//gm) || []).length;
+          tasksTable += '- [' + status + '] ' + taskId + ' (' + filesCount + ' files)\n';
+        }
+      }
+
+      const issueUrl = huInfo.issue_url;
+      const closesLine = (issueUrl && issueUrl !== 'null' && issueUrl !== '')
+        ? ('\n\nCloses ' + issueUrl + '\n')
+        : '';
+
+      const body =
+        '## Summary\n\n' +
+        summary + '\n\n' +
+        '## Tasks implemented\n\n' +
+        tasksTable + '\n' +
+        '## Test plan\n\n' +
+        '- [ ] Revisar el diff archivo por archivo\n' +
+        '- [ ] cd frontend_dashboard && npm test\n' +
+        '- [ ] cd frontend_dashboard && npm run build\n' +
+        '- [ ] Smoke test: cd frontend_dashboard && npm run dev y validar UX manualmente\n' +
+        closesLine + '\n' +
+        '🤖 Generado por hu-frontend-pipeline\n';
+
+      await writeFile(artifactsDir + '/pr-body.md', body);
+      console.log('written ' + body.length + ' bytes');
+    runtime: bun
+    when: "$final-validation.output == 'PASS'"
+    depends_on: [final-validation]
+
+  - id: create-pr
+    bash: |
+      set -e
+      HU_ID=$(echo $gen-hu-id.output | jq -r '.hu_id')
+      BRANCH=$(echo $gen-hu-id.output | jq -r '.branch')
+      TITLE=$(echo $gen-hu-id.output | jq -r '.title' | head -c 70)
+
+      # Push final asegurado (idempotente)
+      git push origin "$BRANCH" 2>&1 | tail -5
+
+      # CRÍTICO: --body-file en vez de --body "$(cat ...)" — pr-body.md
+      # tiene backticks que bash interpretaría como command substitution.
+      PR_URL=$(gh pr create \
+        --base main \
+        --head "$BRANCH" \
+        --title "${HU_ID}: ${TITLE}" \
+        --body-file "$ARTIFACTS_DIR/pr-body.md")
+
+      echo "$PR_URL"
+    when: "$final-validation.output == 'PASS'"
+    depends_on: [build-pr-body]
+    retry:
+      max_attempts: 2
+      delay_ms: 5000
+      on_error: transient
+
+  - id: project-set-done
+    bash: |
+      CFG="$ARTIFACTS_DIR/github-project-config.yaml"
+      [ -f "$CFG" ] || { echo "skipped"; exit 0; }
+      ISSUE_URL=$(echo $gen-hu-id.output | jq -r '.issue_url')
+      [ -z "$ISSUE_URL" ] || [ "$ISSUE_URL" = "null" ] && { echo "skipped"; exit 0; }
+      PN=$(grep '^project_number:' "$CFG" | awk '{print $2}')
+      PO=$(grep '^project_owner:' "$CFG" | awk '{print $2}')
+      PID=$(grep '^project_id:' "$CFG" | awk '{print $2}')
+      FID=$(grep '^status_field_id:' "$CFG" | awk '{print $2}')
+      OID=$(awk -F: '/^status_options:/{f=1; next} f && /Done.*PR ready/ {gsub(/^ +| +$/, "", $2); print $2; exit}' "$CFG")
+      [ -z "$OID" ] && exit 0
+      II=$(gh project item-list "$PN" --owner "$PO" --format json 2>/dev/null \
+        | jq -r --arg u "$ISSUE_URL" '.items[] | select(.content.url == $u) | .id' | head -1)
+      [ -z "$II" ] && exit 0
+      gh project item-edit --id "$II" --project-id "$PID" \
+        --field-id "$FID" --single-select-option-id "$OID" 2>&1 | head -3 || true
+      echo "set Done ok"
+    depends_on: [create-pr]
+    trigger_rule: all_done
+
+  - id: trigger-review
+    bash: |
+      # Disparar el review automático en background. Best-effort:
+      # si el nesting falla, el operador ve el comando en el summary.
+      PR_URL=$create-pr.output
+      LOG_FILE="$HOME/.archon/logs/review-trigger-$(date +%s).log"
+      mkdir -p "$HOME/.archon/logs"
+
+      # CRITICAL: unset CLAUDECODE para evitar la advertencia de nested-claude-code
+      # y el riesgo de "workflows hang silently". archon detecta esa env var del
+      # parent y warns; con env -u CLAUDECODE el subprocess no la hereda.
+      # ARCHON_SUPPRESS_NESTED_CLAUDE_WARNING=1 silencia el warning igualmente
+      # por si CLAUDECODE se setea desde otro lado.
+      (env -u CLAUDECODE ARCHON_SUPPRESS_NESTED_CLAUDE_WARNING=1 \
+         nohup archon workflow run review-pr-frontend "$PR_URL" > "$LOG_FILE" 2>&1 & disown) 2>/dev/null \
+        && echo "review_triggered_log=$LOG_FILE" \
+        || echo "review_trigger_failed_run_manually"
+    depends_on: [create-pr]
+    timeout: 10000
+
+  - id: print-summary
+    bash: |
+      HU_ID=$(echo $gen-hu-id.output | jq -r '.hu_id')
+      PR_URL=$create-pr.output
+      RESULTS_DIR="frontend_dashboard/.frontend/results/${HU_ID}"
+      TASKS_DONE=$(find "$RESULTS_DIR" -name 'F*-result.yaml' 2>/dev/null | wc -l | tr -d ' ')
+      REVIEW_STATUS=$trigger-review.output
+
+      cat <<EOF
+      ╔════════════════════════════════════════════════════════════════╗
+      ║ 🎉 Pipeline completo — HU ${HU_ID}                              ║
+      ║                                                                ║
+      ║ Branch:      hu/${HU_ID}
+      ║ Tareas:      ${TASKS_DONE} implementadas
+      ║ PR:          ${PR_URL}
+      ║                                                                ║
+      ║ Auto-review: ${REVIEW_STATUS}
+      ║                                                                ║
+      ║ Próximos pasos:                                                ║
+      ║   1. Esperá ~3-5 min al comment del review-bot en el PR        ║
+      ║   2. Si dice "verdict: APPROVE" → squash-merge                 ║
+      ║   3. Si "REQUEST_CHANGES" → revisá findings + decidí           ║
+      ║   4. El issue se cierra automáticamente (Closes …)             ║
+      ║                                                                ║
+      ║ Review NO arrancó? Lanzalo a mano:                             ║
+      ║   archon workflow run review-pr-frontend "${PR_URL}"
+      ╚════════════════════════════════════════════════════════════════╝
+      EOF
+    depends_on: [trigger-review]

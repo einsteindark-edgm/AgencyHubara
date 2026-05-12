@@ -1,0 +1,123 @@
+"""Fixtures y helpers comunes a la suite de tests de arquitectura DEHA.
+
+Los tests bajo `tests/architecture/` validan las 5 reglas duras (R-DET, R-JSON,
+R-STATELESS, R-HEARTBEAT, R-DIP) y los anti-patterns del layout multi-agente
+del repo. Bloquean merge a main via `pytest -m architecture`.
+
+Convenciones:
+  * Todos los tests llevan `pytestmark = pytest.mark.architecture` (definido por
+    el fixture autouse `architecture_marker` aquí abajo).
+  * Las allow-lists vivien centralizadas en este archivo, no diseminadas por
+    test. Cualquier excepción se documenta con el motivo.
+  * `SRC_ROOT` es la raíz de `src/` resuelta dinámicamente para que los tests
+    funcionen igual desde cwd=hubara_agency/ o cwd=repo-root.
+"""
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+
+import pytest
+
+
+SRC_ROOT: Path = Path(__file__).resolve().parents[2] / "src"
+
+# ----------------------------------------------------------------------------
+# Allow-lists — qué excluimos del scope arquitectónico y por qué.
+# ----------------------------------------------------------------------------
+
+# El dashboard es FastAPI puro, no un agente DEHA. Las reglas R-* no aplican.
+DASHBOARD_EXCLUDE = {"dashboard"}
+
+# Agentes DEHA: los tres con la forma canónica (workflows/, activities/, etc.)
+DEHA_AGENTS = ("sales_whatsapp", "remarketing_whatsapp", "catalog_sync")
+
+# Packages cross-agent (no son agentes pero participan en las reglas R-DIP).
+PLATFORM_PACKAGES = ("platform",)
+
+# Sub-paths de cada agente con el rol "workflow" (objeto del R-DET check).
+AGENT_WORKFLOWS_GLOB = "src/*/workflows/*.py"
+
+# Sub-paths con el rol "activity".
+AGENT_ACTIVITIES_GLOB = "src/*/activities/*.py"
+
+# Sub-paths con el rol "tool".
+AGENT_TOOLS_GLOB = "src/*/tools/*.py"
+
+# Paths "contracts.py" — DTOs de boundary.
+CONTRACTS_GLOBS = (
+    "src/*/contracts.py",
+    "src/platform/contracts.py",
+)
+
+# Excepciones documentadas a R-JSON (clases que no son @dataclass(frozen=True)).
+# Cada entrada incluye motivo + owner. Reducir esta lista es trabajo de refactor.
+R_JSON_FROZEN_EXEMPTIONS: dict[str, str] = {
+    # path:class_name -> motivo
+    "src/platform/contracts.py:TransferDecision": (
+        "Pre-existente. Migrar a frozen=True junto con el refactor de "
+        "SessionInput DTOs a platform (ADR pendiente)."
+    ),
+    "src/platform/contracts.py:ScheduleRemarketingDecision": (
+        "Pre-existente. Misma migración que TransferDecision."
+    ),
+    "src/remarketing_whatsapp/contracts.py:RemarketingSessionInput": (
+        "Pre-existente. Sales ya está frozen=True; Remarketing pendiente."
+    ),
+}
+
+# Activities long-running que NO requieren @with_heartbeat por su naturaleza.
+# Heurística positiva (greppea httpx/litellm/medusa); los falsos positivos van aquí.
+R_HEARTBEAT_EXEMPTIONS: set[str] = {
+    # path:function_name — current allow-list. Vacía hasta que la heurística lo pida.
+}
+
+# Modulos top-level prohibidos bajo src/ (DEHA layout — agentes son siblings).
+FORBIDDEN_TOP_LEVEL_PACKAGES: tuple[str, ...] = (
+    "core",
+    "shared",
+    "common",
+    "domains",
+)
+
+# Paths protegidos vs main (Capa 3 — meta-test).
+# Cualquier PR que los modifique sin la env var ARCH_CHANGE_APPROVED=1 falla.
+# Relativos a la raíz del repo (no a hubara_agency/).
+ARCHITECTURE_PROTECTED_PREFIXES: tuple[str, ...] = (
+    "hubara_agency/tests/architecture/",
+    "hubara_agency/.importlinter",
+)
+
+
+# ----------------------------------------------------------------------------
+# Marker injection: todo test bajo tests/architecture/ recibe `@pytest.mark.architecture`
+# automáticamente, así `pytest -m architecture` los filtra sin que cada archivo
+# tenga que declarar `pytestmark`.
+# ----------------------------------------------------------------------------
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    arch_dir = str(Path(__file__).parent)
+    for item in items:
+        if str(item.fspath).startswith(arch_dir):
+            item.add_marker(pytest.mark.architecture)
+
+
+# ----------------------------------------------------------------------------
+# AST helpers — usados por varios módulos de test.
+# ----------------------------------------------------------------------------
+
+def parse_file(path: Path) -> ast.Module:
+    """Devuelve el AST de un .py. Falla rápido si el módulo no parsea."""
+    return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+
+
+def iter_agent_files(glob_pattern: str) -> list[Path]:
+    """Lista archivos del repo que matchean `glob_pattern` (relativo a hubara_agency/)."""
+    hub_root = SRC_ROOT.parent  # hubara_agency/
+    return sorted(p for p in hub_root.glob(glob_pattern) if p.is_file())
+
+
+def relative_to_hubara(path: Path) -> str:
+    """Devuelve el path string relativo a hubara_agency/, slash-style."""
+    hub_root = SRC_ROOT.parent
+    return path.relative_to(hub_root).as_posix()

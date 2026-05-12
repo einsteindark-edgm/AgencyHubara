@@ -13,66 +13,55 @@ description: |
   Si querés un pipeline automatizado end-to-end SIN gates humanos, usá
   `hu-frontend-pipeline` en su lugar.
 
-  **Produces (efímero, en $ARTIFACTS_DIR)**:
-    - hu-original.md (snapshot del input normalizado)
-    - hu-refinada.md (output del skill, aprobado por el humano)
-
-  **Persiste en el worktree (frontend_dashboard/.frontend/refinements/)**:
-    - <HU-id>-original.md
-    - <HU-id>-tech.md
-
-  **Cross-workflow sync**:
-    Este workflow NO commitea ni pushea. Para que planificar-hu-frontend pueda
-    encontrar el refinamiento desde un worktree nuevo, el operador debe:
-      git add frontend_dashboard/.frontend/refinements/<id>-*.md
-      git commit -m "<id>: refinamiento técnico (frontend) aprobado"
-      git push   # o merge a main según convención del equipo
-    Hasta que el commit esté visible en el branch base de Archon
-    (típicamente main), el siguiente workflow no verá estos archivos.
-
 provider: claude
 model: sonnet
-interactive: true
+interactive: true   # tiene loop interactive: true — requerido para web UI
 
 nodes:
+  # Determinista: stagear archivos + resolver input al hu-original.md
   - id: preparar-input
-    prompt: |
-      El usuario invocó este workflow con: $USER_MESSAGE
+    bash: |
+      set -e
+      # Stage del project context (los skills lo leen primero)
+      test -f frontend_dashboard/.frontend/project-context.md || {
+        echo "FATAL: falta frontend_dashboard/.frontend/project-context.md — restaurar desde main" >&2
+        exit 1
+      }
+      cp frontend_dashboard/.frontend/project-context.md $ARTIFACTS_DIR/project-context.md
 
-      Detectá qué tipo de input es y normalizalo:
+      RAW=$ARGUMENTS
 
-      Paso 0 — Stageá el project context (siempre):
-        cp frontend_dashboard/.frontend/project-context.md $ARTIFACTS_DIR/project-context.md
-        (este archivo le dice al refiner exactamente cómo está estructurado
-         el frontend — layout FSD, paths, comandos npm. ES OBLIGATORIO.
-         Si no existe, fallá con un mensaje claro: "Falta
-         frontend_dashboard/.frontend/project-context.md — restaurar desde main.")
+      # Detectar tipo de input
+      if [[ "$RAW" =~ ^https://github\.com/.+/issues/[0-9]+$ ]]; then
+        # URL de Issue
+        gh issue view "$RAW" --json title,body --jq '.title + "\n\n" + .body' \
+          > $ARTIFACTS_DIR/hu-original.md
+      elif [[ -f "$RAW" ]]; then
+        cp "$RAW" $ARTIFACTS_DIR/hu-original.md
+      elif [[ -n "$RAW" ]]; then
+        echo "$RAW" > $ARTIFACTS_DIR/hu-original.md
+      else
+        echo "FATAL: input vacío" >&2
+        exit 1
+      fi
 
-      1. Si $USER_MESSAGE matchea `https://github.com/.+/issues/\d+`, traélo:
-           gh issue view <url> --json title,body --jq '.title + "\n\n" + .body' \
-             > $ARTIFACTS_DIR/hu-original.md
-         (requiere `gh` autenticado contra el owner del repo).
+      SIZE=$(wc -c < $ARTIFACTS_DIR/hu-original.md)
+      [ "$SIZE" -gt 50 ] || {
+        echo "FATAL: hu-original.md tiene solo $SIZE bytes — input demasiado corto" >&2
+        exit 1
+      }
 
-      2. Si parece una ruta a un archivo (termina en .md, .txt, o existe
-         en el filesystem), leélo y copiá su contenido completo a
-         $ARTIFACTS_DIR/hu-original.md
+      echo "input preparado ($SIZE bytes)"
+    timeout: 30000
 
-      3. Si es texto plano describiendo una HU, escribilo tal cual a
-         $ARTIFACTS_DIR/hu-original.md
-
-      4. Si la ruta/URL no existe o el contenido está vacío, fallá con un
-         error claro indicando qué intentaste leer.
-
-      Confirmá al final qué hiciste y reportá el tamaño del archivo final.
-    allowed_tools: [Read, Write, Bash]
-
+  # AI iterativo: refinar con feedback humano hasta aprobación
   - id: refinar
     depends_on: [preparar-input]
+    idle_timeout: 600000   # 10 min idle por iteración (el humano puede tardar)
     loop:
       interactive: true
       max_iterations: 10
       until: HU_APROBADA
-      capture_response: true
       skills:
         - frontend-tech-refiner-archon
       gate_message: |
@@ -81,6 +70,7 @@ nodes:
         - Cualquier otro comentario para que itere con tu feedback
       prompt: |
         HU original (visión de producto): $ARTIFACTS_DIR/hu-original.md
+        Project context (LEER PRIMERO): $ARTIFACTS_DIR/project-context.md
 
         Feedback del humano en esta iteración: $LOOP_USER_INPUT
 
@@ -97,43 +87,50 @@ nodes:
         Si el humano aprobó (dijo "aprobada", "ok", "go", "listo", etc.):
         <promise>HU_APROBADA</promise>
 
+  # Determinista: extraer HU id + persistir + reportar comandos git al operador
   - id: persistir-refinamiento
     depends_on: [refinar]
-    prompt: |
-      El refinamiento fue aprobado. Persistilo en el repo bajo
-      frontend_dashboard/.frontend/refinements/.
+    bash: |
+      set -e
 
-      Paso 1 — Extraé el HU id de $ARTIFACTS_DIR/hu-refinada.md:
-        - Buscá la línea que matchea `^HU id:` (formato del skill).
-        - Si el valor es `(no id provided)` o está vacío, generá uno con:
-            HU-YYYYMMDD-<slug-del-titulo>
-          donde:
-            - YYYYMMDD = fecha actual UTC
-            - slug = lowercase ASCII del título (línea
-              `^Tech refinement (frontend) —` del archivo), separado por hyphens,
-              max 40 chars, sin acentos.
-        - Reportá el id elegido.
+      # Extraer HU id del refinement
+      HU_ID=$(grep -m1 '^HU id:' $ARTIFACTS_DIR/hu-refinada.md | sed 's/^HU id: *//' | tr -d ' ')
 
-      Paso 2 — Creá frontend_dashboard/.frontend/refinements/ si no existe:
-        mkdir -p frontend_dashboard/.frontend/refinements
+      if [ -z "$HU_ID" ] || [ "$HU_ID" = "(noidprovided)" ]; then
+        # Generar uno con timestamp
+        TITLE=$(grep -m1 -oE '^Tech refinement.*— .*' $ARTIFACTS_DIR/hu-refinada.md \
+          | sed -E 's/^.*— //' | head -c 80)
+        SLUG=$(echo "$TITLE" \
+          | iconv -f utf-8 -t ascii//TRANSLIT 2>/dev/null \
+          | tr '[:upper:]' '[:lower:]' \
+          | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g' \
+          | cut -c1-40 \
+          | sed 's/-$//')
+        HU_ID="HU-$(date -u +%Y%m%d-%H%M)-${SLUG:-untitled}"
+      fi
 
-      Paso 3 — Copiá los dos archivos del run:
-        cp $ARTIFACTS_DIR/hu-original.md frontend_dashboard/.frontend/refinements/<id>-original.md
-        cp $ARTIFACTS_DIR/hu-refinada.md frontend_dashboard/.frontend/refinements/<id>-tech.md
+      mkdir -p frontend_dashboard/.frontend/refinements
+      cp $ARTIFACTS_DIR/hu-original.md \
+         "frontend_dashboard/.frontend/refinements/${HU_ID}-original.md"
+      cp $ARTIFACTS_DIR/hu-refinada.md \
+         "frontend_dashboard/.frontend/refinements/${HU_ID}-tech.md"
 
-      Paso 4 — Reportá al operador:
-        - HU id elegido: <id>
-        - Archivos persistidos (rutas relativas al repo)
-        - Comando sugerido para activarlos en main:
+      cat <<EOF
+      ╔════════════════════════════════════════════════════════════════╗
+      ║ ✅ Refinamiento persistido                                      ║
+      ║                                                                ║
+      ║ HU id:    ${HU_ID}
+      ║ Files:    frontend_dashboard/.frontend/refinements/${HU_ID}-{original,tech}.md
+      ╚════════════════════════════════════════════════════════════════╝
 
-            git add frontend_dashboard/.frontend/refinements/<id>-*.md
-            git commit -m "<id>: refinamiento técnico (frontend) aprobado"
-            git push   # o merge según convención
+      📋 Comando para activar en main:
 
-        - Comando para arrancar el siguiente workflow:
+        git add frontend_dashboard/.frontend/refinements/${HU_ID}-*.md
+        git commit -m "${HU_ID}: refinamiento técnico (frontend) aprobado"
+        git push   # o merge según convención
 
-            archon workflow run planificar-hu-frontend "<id>"
+      ▶ Siguiente workflow:
 
-      IMPORTANTE: NO hagas commit ni push vos mismo. La decisión de
-      mergear el refinamiento a main es del operador.
-    allowed_tools: [Read, Write, Bash]
+        archon workflow run planificar-hu-frontend "${HU_ID}"
+      EOF
+    timeout: 30000

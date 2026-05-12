@@ -1,0 +1,89 @@
+; import-linter contracts — DEHA architectural rules (R-DIP, isolation, anti-patterns).
+;
+; Run from hubara_agency/:  uv run lint-imports
+; Also invoked from tests/architecture/test_r_dip.py as part of `pytest -m architecture`.
+;
+; Rule index ↔ contract:
+;   R-DIP #7  → forbidden: tools should not import temporal client/worker
+;   R-DIP #8  → forbidden: parsers must stay pure (no I/O libs)
+;   R-DIP #9  → independence: platform must not depend on any agent
+;   R-DIP #10 → independence: agents must not import each other (cross-agent via platform/)
+;
+; Notes:
+;   - `dashboard/` is intentionally NOT covered here (it's FastAPI, not DEHA).
+;   - Each contract is independent; a single violation does not silence the others.
+
+[importlinter]
+root_packages =
+    src
+include_external_packages = True
+
+; --- R-DIP #9 — platform/ owns no agent dependency ----------------------------
+[importlinter:contract:platform-no-agents]
+name = R-DIP: src.platform must not import any agent package
+type = forbidden
+source_modules =
+    src.platform
+forbidden_modules =
+    src.sales_whatsapp
+    src.remarketing_whatsapp
+    src.catalog_sync
+; Agent code is composed on top of platform; reversing the arrow couples them.
+;
+; Known debt — documented exceptions (do NOT add more without ADR):
+;   - dispatcher.py uses LOCAL imports inside @activity.defn bodies to avoid
+;     cycles when dispatching to a sibling agent. Long-term fix: move
+;     SalesSessionInput / RemarketingSessionInput to src/platform/contracts.py
+;     and dispatch by workflow name + DTO without importing agent modules.
+ignore_imports =
+    src.platform.temporal.dispatcher -> src.sales_whatsapp.config.env
+    src.platform.temporal.dispatcher -> src.sales_whatsapp.contracts
+unmatched_ignore_imports_alerting = warn
+; Some local-import edges only appear when the activity body is executed.
+; "warn" prevents CI failure when an exception goes unused, but still surfaces it.
+
+; --- R-DIP #10 — agent siblings stay isolated ---------------------------------
+[importlinter:contract:agents-independent]
+name = R-DIP: agent packages must be independent of each other
+type = independence
+modules =
+    src.sales_whatsapp
+    src.remarketing_whatsapp
+    src.catalog_sync
+; Cross-agent flow goes through src.platform.* (dispatcher, contracts, channels).
+; If you need shared code, lift it to src.platform/ — never import a sibling agent.
+;
+; Same known debt as `platform-no-agents`: the dispatcher creates a transitive
+; sales <-> remarketing edge until the SessionInput DTOs move to platform/.
+ignore_imports =
+    src.platform.temporal.dispatcher -> src.sales_whatsapp.config.env
+    src.platform.temporal.dispatcher -> src.sales_whatsapp.contracts
+unmatched_ignore_imports_alerting = warn
+
+; --- R-DIP #7 — tools/ are pure ----------------------------------------------
+[importlinter:contract:tools-no-temporal]
+name = R-DIP: tools/*.py must not import temporalio (no client, worker, or activity.defn)
+type = forbidden
+source_modules =
+    src.sales_whatsapp.tools
+forbidden_modules =
+    temporalio
+; Tools return decisions (DTOs). The workflow turns them into activities. ADR-001.
+; Stricter than the original rule (forbids the whole package) because import-linter
+; can't restrict to sub-modules of external packages — but tools have no legitimate
+; reason to import temporalio in any form. Only sales_whatsapp owns tools today.
+; Tools return decisions (DTOs). The workflow turns them into activities. ADR-001.
+
+; --- R-DIP #8 — parsers stay pure --------------------------------------------
+[importlinter:contract:parsers-pure]
+name = R-DIP: parsers.py must not perform I/O (httpx, requests, temporalio, litellm)
+type = forbidden
+source_modules =
+    src.sales_whatsapp.parsers
+forbidden_modules =
+    httpx
+    requests
+    litellm
+    temporalio
+; parsers.py is pure: input string → dataclass. No network, no temporal coupling.
+; If parsers/ ever becomes a package, switch source_modules accordingly.
