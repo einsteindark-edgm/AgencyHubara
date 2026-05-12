@@ -155,7 +155,32 @@ npx tsc -b (full type check).
 npm run build (catches issues that escape tests — e.g. unused imports in production-mode TS).
 If any of these fail OR any test outside §9 fails, this task introduced a regression. Mark status: blocked with reason: regression, name the failing tests.
 
-After regression check, walk the FSD rules check (§12):
+After the regression check, run the ARCHITECTURE GATE (mandatory):
+
+cd frontend_dashboard && npm run test:arch
+
+The architecture suite encodes the FSD invariants (the 4 import rules + the 14 anti-patterns from `frontend-feature-sliced`) plus structural checks (Zod at boundary, Tailwind token naming, barrel-only public API, env centralization, no hardcoded URLs, JSX-extension hygiene). It is the gate that decides whether a task can ship to main.
+
+Rules for the architecture gate:
+
+- A failure here is NEVER a regression in your sense — it is a structural violation of FSD. Treat it as a bug in YOUR feature code, not in the test.
+- You MUST NOT edit any file under `frontend_dashboard/src/test/architecture/`, `frontend_dashboard/.dependency-cruiser.cjs`, the `*_ALLOWLIST` / `CSS_FILE_ALLOWLIST` / `ARCHITECTURE_PROTECTED_PREFIXES` exports in `helpers.ts`, or `tsconfig.arch.json` to make a failure go away. These files are OUT OF SCOPE of every feature task.
+- If an architecture test fails, the correct response is one of:
+    1. Fix YOUR code so it complies (the common case — e.g. lift a helper to `shared/`, add `schema.parse(raw)` after an `apiClient.get`, rename a Tailwind token, replace a deep import with a barrel import, rename a `.ts` containing JSX to `.tsx`).
+    2. If you genuinely believe the rule should be relaxed for this feature → STOP. Mark status: blocked with reason: requires_planner_update and a notes entry: "feature requires architecture-rule change in <test_file>:<test_name>; needs ADR + separate PR before this task can land". Do not edit the test, do not extend the allow-list. The operator initiates the ADR + architecture-change PR; the feature task is re-run after that lands.
+- If the architecture suite fails and the file under test is NOT in your §3 list, you may be detecting pre-existing debt that surfaced because of your change (e.g. a sibling slice already without a barrel suddenly becomes visible because your new import triggers the check). Treat it identically: status: blocked, reason: requires_planner_update.
+
+Record the architecture gate result in task-result.yaml under `architecture_gate`. Schema:
+
+architecture_gate:
+  cmd: "cd frontend_dashboard && npm run test:arch"
+  exit_code: 0
+  duration_s: 5.6
+  failing_tests: []   # test ids if any (e.g. "test_zod_at_boundary > every apiClient call ...")
+
+A passing architecture gate is REQUIRED for status: passed. Status: passed with a failed architecture gate is a lie to the orchestrator — never report it.
+
+After the architecture gate, walk the FSD rules check (§12):
 
 For every rule the task says "applies", inspect the code you wrote and confirm compliance. Be specific: cite the file:line where the rule is honored.
 Run the compliance greps from §10:
@@ -345,6 +370,14 @@ regression_check:
   build_cmd: "npm run build"
   build_exit_code: 0
   failing_tests: []
+architecture_gate:
+  cmd: "cd frontend_dashboard && npm run test:arch"
+  exit_code: 0
+  duration_s: 5.6
+  failing_tests: []   # populate with full test ids if any
+  # If non-empty, status MUST NOT be `passed`. Mark `blocked` with
+  # `requires_planner_update` and explain in notes which FSD rule the feature
+  # appears to challenge.
 fsd_rules:
   import_rules: { applies: true, verified: true, note: "features/<x> imports only from @/entities/<x> and @/shared/*" }
   barrel_only_public_api: { applies: true, verified: true, note: "all consumers use @/features/<x> barrel; deep import grep is clean" }
@@ -360,6 +393,8 @@ dod_checklist:
   - { item: "All canonical snippets instantiated with full implementations", done: true, note: "" }
   - { item: "All §10 commands exit 0", done: true, note: "" }
   - { item: "No regression in full suite", done: true, note: "" }
+  - { item: "Architecture gate (npm run test:arch) exit 0", done: true, note: "" }
+  - { item: "No edits under src/test/architecture/, .dependency-cruiser.cjs, or *_ALLOWLIST exports", done: true, note: "" }
   - { item: "Page mount in §6 present on disk", done: true, note: "" }
   - { item: "Tailwind tokens in §7 present in index.css", done: true, note: "" }
   - { item: "FSD rules check confirmed", done: true, note: "" }
@@ -381,6 +416,7 @@ Stay inside §3. Do not touch files outside the task's §3 list, even to "improv
 Match the repo dialect. Read sibling files; match imports, JSDoc style (existing files have a Spanish-language `/** ... */` block at the top explaining design intent), prop signatures, error-rendering conventions. Canonical snippets are shape, not house style.
 Tests are real. Write bodies that exercise the path. renderHook + act for hooks. QueryClientProvider wrapper with retry: false for entity hooks. RTL render for components. Mock fetch with vi.stubGlobal + cleanup. Never use a single global QueryClient across tests — cache leakage.
 FSD rules are mandatory, not aspirational. A passed task that violates an FSD rule is a bug; fix before reporting.
+Architecture tests are sacrosanct. Files under `frontend_dashboard/src/test/architecture/`, `frontend_dashboard/.dependency-cruiser.cjs`, `frontend_dashboard/tsconfig.arch.json`, and any `*_ALLOWLIST` / `CSS_FILE_ALLOWLIST` / `ARCHITECTURE_PROTECTED_PREFIXES` export in `helpers.ts` are OUT OF SCOPE of every feature task — never. If editing them would make a failing gate pass, the correct action is `status: blocked` with `reason: requires_planner_update`. Editing them silently to ship a feature is a cardinal sin: it ships bad architecture to main and breaks the trust contract between this skill and the operator. Architecture-rule changes require an ADR and a separate human-reviewed PR, initiated by the operator — NOT by the implementer.
 No comments unless the WHY is non-obvious. The existing codebase uses Spanish JSDoc tops; emulate that for non-trivial modules. Skip for trivial ones.
 No new dependencies. If the snippet imports something not in package.json, mark blocked with reason: missing_dependency.
 No git. Do not commit, push, branch, rebase, stash, tag, cherry-pick. Archon owns git state.

@@ -10,7 +10,9 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:ui": "vitest --ui"
+    "test:ui": "vitest --ui",
+    "test:arch": "vitest run src/test/architecture",
+    "arch:cruise": "depcruise --config .dependency-cruiser.cjs src"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.2.4",
@@ -34,9 +36,11 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
     "@vitest/ui": "^4.1.5",
+    "dependency-cruiser": "^17.4.0",
     "eslint": "^9.39.4",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.2",
+    "glob": "^13.0.6",
     "globals": "^17.4.0",
     "jsdom": "^29.1.1",
     "typescript": "~6.0.2",
