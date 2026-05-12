@@ -364,7 +364,13 @@ nodes:
     trigger_rule: all_done
 
   - id: cancel-bad-refinement
-    cancel: "Refinement validation FAILED ($validate-refinement.output) — branch $gen-hu-id.output.branch. Retomar interactivo: archon workflow run refinar-hu-frontend $gen-hu-id.output.hu_id ; mergeá el resultado a main y re-lanzá el pipeline."
+    cancel: |
+      Refinement validation FAILED ($validate-refinement.output) en branch $gen-hu-id.output.branch.
+      Opciones para retomar:
+        (a) Edití el Issue original con más detalle/contexto + borralo y lanzá idea-a-hu-frontend de nuevo.
+        (b) Escribí el refinement a mano en frontend_dashboard/.frontend/refinements/$gen-hu-id.output.hu_id-tech.md,
+            commit + push a la branch hu/<HU_ID>, re-lanzá: archon workflow run hu-frontend-pipeline "$gen-hu-id.output.hu_id"
+            (el bootstrap detecta el refinement persistido y salta FASE 1).
     when: "$validate-refinement.output != 'PASS'"
     depends_on: [validate-refinement]
 
@@ -480,7 +486,13 @@ nodes:
     trigger_rule: all_done
 
   - id: cancel-bad-plan
-    cancel: "Plan validation FAILED ($validate-plan.output) — branch $gen-hu-id.output.branch. Retomar interactivo: archon workflow run planificar-hu-frontend $gen-hu-id.output.hu_id ; mergeá y re-lanzá el pipeline."
+    cancel: |
+      Plan validation FAILED ($validate-plan.output) en branch $gen-hu-id.output.branch.
+      Opciones para retomar:
+        (a) Edití el refinement (frontend_dashboard/.frontend/refinements/$gen-hu-id.output.hu_id-tech.md)
+            con menos tareas o más claridad, commit + push, re-lanzá: archon workflow run hu-frontend-pipeline "$gen-hu-id.output.hu_id"
+        (b) Escribí el plan-manifest.yaml + tareas a mano en frontend_dashboard/.frontend/plans/$gen-hu-id.output.hu_id/,
+            commit + push, re-lanzá pipeline (bootstrap salta FASE 1 + 2 si los archivos están).
     when: "$validate-plan.output != 'PASS'"
     depends_on: [validate-plan]
 
@@ -626,29 +638,176 @@ nodes:
             rm -f /tmp/push-$$.log
           fi
 
-          # Si la tarea falló, escribir pipeline-error.yaml y EXIT 0 (parar loop)
+          # ═══ MANEJO DE FALLOS ═══
+          # Si la tarea falló, decidir: ¿retry transient o permanent failure?
           if [ "$STATUS" != "passed" ]; then
             BR=$(yaml_get "$ARTIFACTS_DIR/task-result.yaml" blocked_reason)
+            ISSUE_URL=$(echo $gen-hu-id.output | jq -r '.issue_url')
+
+            # ¿Es transient? Solo retry-eable si timeout o regression (potencialmente flaky)
+            IS_TRANSIENT=false
+            case "$BR" in
+              command_timeout|regression) IS_TRANSIENT=true ;;
+            esac
+
+            RETRY_FILE="$ARTIFACTS_DIR/retries-${TASK_ID}.count"
+            RETRIES=$(cat "$RETRY_FILE" 2>/dev/null || echo 0)
+            MAX_RETRIES=1
+
+            if [ "$IS_TRANSIENT" = "true" ] && [ "$RETRIES" -lt "$MAX_RETRIES" ]; then
+              # ════ AUTO-RETRY ════
+              NEW_RETRIES=$((RETRIES + 1))
+              echo "$NEW_RETRIES" > "$RETRY_FILE"
+
+              # Remover result.yaml persistido para que AI lo vea como pending
+              rm -f "${RESULTS_DIR}/${TASK_ID}-result.yaml"
+              # Revertir cambios uncommitted al worktree (el commit fallido ya está en branch)
+              git checkout HEAD -- frontend_dashboard/src 2>/dev/null || true
+
+              # Comment en el Issue avisando el retry
+              if [ -n "$ISSUE_URL" ] && [ "$ISSUE_URL" != "null" ]; then
+                cat > "$ARTIFACTS_DIR/retry-comment.md" <<COMMENT
+        ⚠️ **Auto-retry ${NEW_RETRIES}/${MAX_RETRIES} en tarea \`${TASK_ID}\`**
+
+        - Status detectado: \`${STATUS}\`
+        - Razón: \`${BR:-unknown}\` (clasificada como transient)
+        - Acción: re-implementando la tarea con fresh-context. El pipeline sigue.
+        COMMENT
+                gh issue comment "$ISSUE_URL" --body-file "$ARTIFACTS_DIR/retry-comment.md" 2>&1 | tail -3 >&2 || true
+              fi
+
+              # Marca para que el bloque de éxito sepa que es retry-success
+              touch "$ARTIFACTS_DIR/retries-${TASK_ID}.success-comment.pending"
+
+              echo "TASK ${TASK_ID} ${STATUS}/${BR}: AUTO-RETRY ${NEW_RETRIES}/${MAX_RETRIES}" >&2
+              rm -f "$ARTIFACTS_DIR/task-result.yaml" "$ARTIFACTS_DIR/task.md"
+              exit 1   # loop continua, AI re-implementa esta tarea
+            fi
+
+            # ════ PERMANENT FAILURE ════
+            # (no transient, o retries agotados)
+
             cat > "$ARTIFACTS_DIR/pipeline-error.yaml" <<EOF
         phase: implementing
         failed_task: ${TASK_ID}
         failed_status: ${STATUS}
         blocked_reason: ${BR:-unknown}
+        retries_attempted: ${RETRIES}/${MAX_RETRIES}
         branch: ${BRANCH}
         remediation: |
-          Tarea ${TASK_ID} falló en modo auto.
-          Operador:
-            1. archon workflow run implementar-tarea-frontend "${HU_ID} ${TASK_ID}"
-            2. Mergear progreso a hu/${HU_ID}
-            3. archon workflow run hu-frontend-pipeline "${HU_ID}"  (retoma)
+          Ver el comment en el Issue ${ISSUE_URL} con los comandos exactos para retomar.
         EOF
-            echo "TASK ${TASK_ID} FAILED (${STATUS}). Pipeline para." >&2
+
+            # Comment detallado en el Issue con los comandos exactos
+            if [ -n "$ISSUE_URL" ] && [ "$ISSUE_URL" != "null" ]; then
+              cat > "$ARTIFACTS_DIR/failure-comment.md" <<COMMENT
+        ❌ **Pipeline frenado en tarea \`${TASK_ID}\`**
+
+        | Campo | Valor |
+        |---|---|
+        | Status | \`${STATUS}\` |
+        | Razón | \`${BR:-unknown}\` |
+        | Auto-retries usados | \`${RETRIES}/${MAX_RETRIES}\` |
+        | Branch | \`${BRANCH}\` |
+        | HU id | \`${HU_ID}\` |
+
+        ---
+
+        ## Cómo retomar
+
+        ### Opción A — Debug a mano + smart-resume del pipeline
+
+        \`\`\`bash
+        # Desde tu repo local:
+        git fetch origin
+        git checkout ${BRANCH}
+
+        # Diagnostico:
+        cd frontend_dashboard
+        npm test       # ver qué test falla
+        npx tsc -b     # ver errores de tipo
+        # ... fixeá el código en frontend_dashboard/src/... ...
+
+        # Cuando esté verde:
+        cd ..
+        git add frontend_dashboard/src
+        git commit -m "fix(${TASK_ID}): <descripción del fix>"
+        git push origin ${BRANCH}
+
+        # Re-lanzá pipeline desde una terminal NORMAL (no Claude Code):
+        cd /Users/edgm/Documents/Projects/AgencyHubara
+        archon workflow run hu-frontend-pipeline "${HU_ID}"
+        \`\`\`
+
+        El pipeline retomará automáticamente desde la próxima tarea pendiente
+        (smart-resume vía \`detect-resume-state\`).
+
+        ### Opción B — Re-planificar la HU (si está mal planteada)
+
+        \`\`\`bash
+        # Editar el refinement o el plan a mano:
+        \$EDITOR frontend_dashboard/.frontend/refinements/${HU_ID}-tech.md
+        \$EDITOR frontend_dashboard/.frontend/plans/${HU_ID}/plan-manifest.yaml
+
+        git add frontend_dashboard/.frontend/
+        git commit -m "fix(${HU_ID}): replan"
+        git push origin ${BRANCH}
+
+        archon workflow run hu-frontend-pipeline "${HU_ID}"
+        \`\`\`
+
+        ### Opción C — Abandonar esta HU
+
+        Cerrá el issue. El branch \`${BRANCH}\` queda en origin como referencia
+        del intento (podés borrar luego con \`git push origin --delete ${BRANCH}\`).
+
+        ---
+        🤖 Status del card movido a \`Blocked\` en el Project board.
+        COMMENT
+              gh issue comment "$ISSUE_URL" --body-file "$ARTIFACTS_DIR/failure-comment.md" 2>&1 | tail -3 >&2 || true
+            fi
+
+            # Setear Project status a "Blocked"
+            CFG="$ARTIFACTS_DIR/github-project-config.yaml"
+            if [ -f "$CFG" ] && [ -n "$ISSUE_URL" ] && [ "$ISSUE_URL" != "null" ]; then
+              PN=$(grep '^project_number:' "$CFG" | awk '{print $2}')
+              PO=$(grep '^project_owner:' "$CFG" | awk '{print $2}')
+              PID=$(grep '^project_id:' "$CFG" | awk '{print $2}')
+              FID=$(grep '^status_field_id:' "$CFG" | awk '{print $2}')
+              OID=$(awk '/^status_options:/{f=1; next} f && /^  Blocked:/{print $2; exit}' "$CFG")
+              if [ -n "$OID" ]; then
+                II=$(gh project item-list "$PN" --owner "$PO" --format json --limit 100 2>/dev/null \
+                  | jq -r --arg u "$ISSUE_URL" '.items[] | select(.content.url == $u) | .id' | head -1)
+                if [ -n "$II" ]; then
+                  gh project item-edit --id "$II" --project-id "$PID" \
+                    --field-id "$FID" --single-select-option-id "$OID" 2>&1 | head -3 >&2 || true
+                fi
+              fi
+            fi
+
+            echo "TASK ${TASK_ID} PERMANENT FAILURE (${STATUS}/${BR}). Pipeline para." >&2
             exit 0
           fi
 
-          # Limpiar para próxima iteración
+          # ════ ÉXITO: limpiar retry counter si había + cleanup ════
+          rm -f "$ARTIFACTS_DIR/retries-${TASK_ID}.count" 2>/dev/null || true
+
+          # Si esta tarea había fallado antes y ahora pasó (auto-retry exitoso), avisar
+          if [ -f "$ARTIFACTS_DIR/retries-${TASK_ID}.success-comment.flag" ]; then
+            # ya posteamos el comment de éxito; nada que hacer
+            :
+          elif [ -f "$ARTIFACTS_DIR/retries-${TASK_ID}.success-comment.pending" ]; then
+            ISSUE_URL=$(echo $gen-hu-id.output | jq -r '.issue_url')
+            if [ -n "$ISSUE_URL" ] && [ "$ISSUE_URL" != "null" ]; then
+              gh issue comment "$ISSUE_URL" --body "✅ Auto-retry exitoso en tarea \`${TASK_ID}\`. Pipeline continúa." 2>&1 | tail -3 >&2 || true
+              touch "$ARTIFACTS_DIR/retries-${TASK_ID}.success-comment.flag"
+            fi
+            rm -f "$ARTIFACTS_DIR/retries-${TASK_ID}.success-comment.pending"
+          fi
+
+          # Limpiar artifacts para próxima iteración
           rm -f "$ARTIFACTS_DIR/task-result.yaml"
-          rm -f "$ARTIFACTS_DIR/task.md"  # evita stale task entre iteraciones
+          rm -f "$ARTIFACTS_DIR/task.md"
         fi
 
         # Check: ¿todas las tareas done?
@@ -719,7 +878,12 @@ nodes:
     trigger_rule: all_done
 
   - id: cancel-on-implement-error
-    cancel: "Pipeline INCOMPLETO en FASE 3. Branch $gen-hu-id.output.branch pusheado con progreso. Ver $ARTIFACTS_DIR/pipeline-error.yaml (logueado al stderr). Retomar: archon workflow run implementar-tarea-frontend (interactivo), mergear, re-lanzar pipeline."
+    cancel: |
+      Pipeline INCOMPLETO en FASE 3. Branch $gen-hu-id.output.branch pusheado con todo el progreso hasta la tarea fallida.
+      Ver $ARTIFACTS_DIR/pipeline-error.yaml (logueado al stderr de check-pipeline-error) para detalles y remediation.
+      En general: editá el código del branch para arreglar la tarea fallida, commit + push, re-lanzá:
+        archon workflow run hu-frontend-pipeline "$gen-hu-id.output.hu_id"
+      (smart-resume continúa desde la próxima tarea pendiente).
     when: "$check-pipeline-error.output == 'HAS_ERROR'"
     depends_on: [check-pipeline-error]
 

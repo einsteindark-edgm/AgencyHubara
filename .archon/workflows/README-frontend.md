@@ -17,24 +17,29 @@ una variante automatizada extra (`hu-frontend-pipeline`).
 
 | Skill | Rol | Escribe código? |
 |-------|-----|-----------------|
-| `frontend-tech-refiner-archon` | refinamiento técnico de la HU | no |
-| `frontend-task-planner-archon` | descomposición en DAG de tareas + parallel_batches | no |
-| `frontend-implementer-archon` | implementa UNA tarea (1 worktree por tarea) | **sí** |
-| `frontend-merger-archon` | consolida wiring_intents de N tareas paralelas en spinal files | **sí** (sólo spinal files) |
+| `frontend-tech-refiner-archon` | refinamiento técnico de la HU (usado por hu-frontend-pipeline FASE 1) | no |
+| `frontend-task-planner-archon` | descomposición en DAG de tareas (usado en FASE 2) | no |
+| `frontend-implementer-archon` | implementa UNA tarea en cada iteración del loop secuencial (FASE 3) | **sí** |
+| `frontend-feature-sliced` (user-level) | constitución arquitectural FSD, usado por review-pr-frontend (agente fsd-compliance) | no |
 
 ### Workflows (`.archon/workflows/`)
 
-**7 workflows totales** — 1 entrada interactiva (idea → issue) + 4 fases interactivas (back-up) + super-pipeline auto + code review automático:
+**3 workflows totales** — un flujo lineal end-to-end auto, con UN solo approval explícito:
 
 | Workflow | Comando | Rol | Auto |
 |----------|---------|-----|------|
-| `idea-a-hu-frontend` | `archon workflow run idea-a-hu-frontend "<idea>"` | **ENTRADA**: idea → HU refinada → Issue en GitHub → Project board (status "Idea refined") → opcional: dispara pipeline | parcial (2 approval gates) |
-| `refinar-hu-frontend` | `archon workflow run refinar-hu-frontend "<input>"` | HU → refinamiento técnico (FSD) | no (loop interactivo) |
-| `planificar-hu-frontend` | `archon workflow run planificar-hu-frontend "<HU-id>"` | refinamiento → DAG de tareas | no |
-| `implementar-tarea-frontend` | `archon workflow run implementar-tarea-frontend "<HU-id> F<NN>"` | una tarea → código | no |
-| `implementar-hu-frontend` | `archon workflow run implementar-hu-frontend "<HU-id>"` | orquestador: terminales paralelas + merger | no (manual fan-out) |
-| `hu-frontend-pipeline` | `archon workflow run hu-frontend-pipeline "<issue-url-or-HU-id>"` | super-pipeline E2E (secuencial) + GitHub PR + dispara review auto | **sí** |
-| `review-pr-frontend` | `archon workflow run review-pr-frontend "<PR_URL>"` | 5 agentes de code review especializados + auto-fix CRITICAL/HIGH + PR comment | **sí** (auto-disparado desde `hu-frontend-pipeline`) |
+| `idea-a-hu-frontend` | `archon workflow run idea-a-hu-frontend "<idea>"` | **ENTRADA**: idea → HU refinada (1 pasada AI) → Issue en GitHub → Project board "Idea refined" → ÚNICA approval: ¿lanzar pipeline? | parcial (1 approval gate) |
+| `hu-frontend-pipeline` | `archon workflow run hu-frontend-pipeline "<issue-url-or-HU-id>"` | super-pipeline E2E (secuencial): refinamiento técnico FSD → DAG de tareas → implementar c/u → npm test/build → PR → dispara review | **sí** |
+| `review-pr-frontend` | `archon workflow run review-pr-frontend "<PR_URL>"` | 5 agentes de code review especializados (FSD compliance, Zod boundary, React practices, test coverage, security) + auto-fix CRITICAL/HIGH + PR comment | **sí** (auto-disparado desde `hu-frontend-pipeline`) |
+
+### Recovery cuando algo falla en hu-frontend-pipeline
+
+El pipeline usa smart-resume vía `when:` sobre `detect-resume-state`. Si una fase falla, el cancel: te indica cómo retomar:
+- **FASE 1 falla** (refinement): editar manualmente `frontend_dashboard/.frontend/refinements/<HU_ID>-tech.md` + commit + re-lanzar pipeline
+- **FASE 2 falla** (plan): editar manualmente el manifest + tareas + commit + re-lanzar
+- **FASE 3 falla** (implementación de tarea): editar el código del branch directamente, commit + push + re-lanzar pipeline (smart-resume sigue con la próxima tarea)
+
+NO hay workflows interactivos separados — el flow es lineal y la recovery es manual sobre los archivos del branch.
 
 **Chain end-to-end completo (camino feliz)**:
 
@@ -308,15 +313,11 @@ ls .claude/skills/ | grep frontend-.*-archon
 #   → frontend-implementer-archon             ✓ obligatorio
 #   → frontend-merger-archon                  ✓ obligatorio (solo modo interactivo)
 
-# 3. 7 workflows frontend en .archon/workflows/, committeados en main:
+# 3. 3 workflows frontend en .archon/workflows/, committeados en main:
 ls .archon/workflows/ | grep frontend
-#   → idea-a-hu-frontend.yaml                 ✓ obligatorio (entrada — idea → issue)
-#   → refinar-hu-frontend.yaml                ✓ obligatorio
-#   → planificar-hu-frontend.yaml             ✓ obligatorio
-#   → implementar-tarea-frontend.yaml         ✓ obligatorio
-#   → implementar-hu-frontend.yaml            ✓ obligatorio (modo interactivo)
-#   → hu-frontend-pipeline.yaml               ✓ obligatorio (modo auto)
-#   → review-pr-frontend.yaml                 ✓ obligatorio (code review post-PR)
+#   → idea-a-hu-frontend.yaml                 ✓ entrada (idea → issue + ÚNICA approval)
+#   → hu-frontend-pipeline.yaml               ✓ pipeline E2E auto
+#   → review-pr-frontend.yaml                 ✓ code review post-PR
 
 # 4. Pre-requisitos de runtime (el pipeline los valida en check-prereqs):
 gh auth status              # gh autenticado (lee Issue + crea PR + comenta)

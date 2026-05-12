@@ -44,6 +44,8 @@ status_options:
   Planned: 982d7d43
   Implementing: 2122c715
   "Done — PR ready": 64739d15
+  Blocked: 90cbcc7b
+  # Aliases mantenidos por compatibilidad / documentación — todos apuntan al mismo option_id
   "Blocked: refinement needs review": 90cbcc7b
   "Blocked: plan needs review": 90cbcc7b
   "Blocked: needs review": 90cbcc7b
