@@ -24,26 +24,40 @@ una variante automatizada extra (`hu-frontend-pipeline`).
 
 ### Workflows (`.archon/workflows/`)
 
-**6 workflows totales** — 4 interactivos + super-pipeline auto + code review automático:
+**7 workflows totales** — 1 entrada interactiva (idea → issue) + 4 fases interactivas (back-up) + super-pipeline auto + code review automático:
 
 | Workflow | Comando | Rol | Auto |
 |----------|---------|-----|------|
-| `refinar-hu-frontend` | `archon workflow run refinar-hu-frontend "<input>"` | HU → refinamiento técnico | no (loop interactivo) |
+| `idea-a-hu-frontend` | `archon workflow run idea-a-hu-frontend "<idea>"` | **ENTRADA**: idea → HU refinada → Issue en GitHub → Project board (status "Idea refined") → opcional: dispara pipeline | parcial (2 approval gates) |
+| `refinar-hu-frontend` | `archon workflow run refinar-hu-frontend "<input>"` | HU → refinamiento técnico (FSD) | no (loop interactivo) |
 | `planificar-hu-frontend` | `archon workflow run planificar-hu-frontend "<HU-id>"` | refinamiento → DAG de tareas | no |
 | `implementar-tarea-frontend` | `archon workflow run implementar-tarea-frontend "<HU-id> F<NN>"` | una tarea → código | no |
 | `implementar-hu-frontend` | `archon workflow run implementar-hu-frontend "<HU-id>"` | orquestador: terminales paralelas + merger | no (manual fan-out) |
-| `hu-frontend-pipeline` | `archon workflow run hu-frontend-pipeline "<issue-url-or-input>"` | super-pipeline E2E (secuencial) + GitHub PR + dispara review auto | **sí** |
-| `review-pr-frontend` | `archon workflow run review-pr-frontend "<PR_URL>"` | 5 agentes de code review especializados + auto-fix CRITICAL/HIGH + PR comment | **sí** (también se dispara solo desde `hu-frontend-pipeline`) |
+| `hu-frontend-pipeline` | `archon workflow run hu-frontend-pipeline "<issue-url-or-HU-id>"` | super-pipeline E2E (secuencial) + GitHub PR + dispara review auto | **sí** |
+| `review-pr-frontend` | `archon workflow run review-pr-frontend "<PR_URL>"` | 5 agentes de code review especializados + auto-fix CRITICAL/HIGH + PR comment | **sí** (auto-disparado desde `hu-frontend-pipeline`) |
 
-**Chain auto end-to-end**:
+**Chain end-to-end completo (camino feliz)**:
 
 ```
-hu-frontend-pipeline (Issue URL)
-    ├─ refinar-auto
-    ├─ planificar-auto
-    ├─ implementar-secuencial (loop con until_bash determinista)
+idea-a-hu-frontend (idea cruda → vos)
+    ├─ normalize-input
+    ├─ refinar-hu-producto (loop interactivo, vos iterás hasta "ok")
+    ├─ validate-hu
+    ├─ save-draft (frontend_dashboard/.frontend/drafts/idea-<ts>.md)
+    ├─ [APPROVAL GATE #1] aprobar-publicacion
+    ├─ crear-issue (gh issue create)
+    ├─ agregar-a-project (gh project item-add + status "Idea refined")
+    └─ [APPROVAL GATE #2] gate-lanzar-pipeline
+            ↓ (aprobás)
+            lanzar-pipeline (background)
+                ↓
+hu-frontend-pipeline (Issue URL)  ─────────────── card → "Refining"
+    ├─ refinar-auto             ─────────────── card → "Refined"
+    ├─ planificar-auto          ─────────────── card → "Planned"
+    ├─ implementar-secuencial   ─────────────── card → "Implementing"
+    │  (loop con until_bash determinista)
     ├─ final-validation (npm test + tsc + build)
-    ├─ create-pr (--body-file, sin riesgo de backticks)
+    ├─ create-pr (--body-file)  ─────────────── card → "Done — PR ready"
     └─ trigger-review (lanza review-pr-frontend en background)
                           │
                           └─→ review-pr-frontend (PR URL)
@@ -294,8 +308,9 @@ ls .claude/skills/ | grep frontend-.*-archon
 #   → frontend-implementer-archon             ✓ obligatorio
 #   → frontend-merger-archon                  ✓ obligatorio (solo modo interactivo)
 
-# 3. 6 workflows frontend en .archon/workflows/, committeados en main:
+# 3. 7 workflows frontend en .archon/workflows/, committeados en main:
 ls .archon/workflows/ | grep frontend
+#   → idea-a-hu-frontend.yaml                 ✓ obligatorio (entrada — idea → issue)
 #   → refinar-hu-frontend.yaml                ✓ obligatorio
 #   → planificar-hu-frontend.yaml             ✓ obligatorio
 #   → implementar-tarea-frontend.yaml         ✓ obligatorio

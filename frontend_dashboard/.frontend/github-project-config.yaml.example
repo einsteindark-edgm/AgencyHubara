@@ -32,18 +32,37 @@ project_id: PVT_kwDOxxxx          # GraphQL node ID del project
 status_field_id: PVTSSF_xxxx
 
 # Mapping nombre-de-fase → option_id del campo Status
-# Los nombres a la izquierda son los que usa el pipeline; los IDs a la derecha
-# vienen de `gh project field-list` (option.id para cada estado).
+#
+# FORMATO CRÍTICO para que los parsers awk del pipeline funcionen:
+#   - Keys sin espacios ni colons → SIN comillas (Refining, Refined, etc.)
+#   - Keys con espacios o colons → CON comillas dobles ("Idea refined", "Blocked: ...")
+#   - NO usar comentarios inline en las líneas de option (los parsers no los strippean)
+#
+# Para AGREGAR options a un Status field existente (preservando lo que ya hay):
+#   gh api graphql -f query='mutation {
+#     updateProjectV2Field(input: {
+#       fieldId: "<status_field_id>"
+#       singleSelectOptions: [
+#         {name: "Todo", color: GRAY, description: ""},
+#         {name: "Refining", color: BLUE, description: "Pipeline FASE 1"},
+#         ... (incluir TODAS las options — la mutation sobrescribe)
+#       ]
+#     }) { projectV2Field { ... on ProjectV2SingleSelectField { options { id name } } } }
+#   }'
+#
+# Para OBTENER los IDs:
+#   gh project field-list <N> --owner <O> --format json
 status_options:
-  Refining: abc111                          # el pipeline lo setea en FASE 0.7
-  Refined: abc222                           # FASE 1 completa
-  Planning: abc333                          # (intermedio durante FASE 2; opcional)
-  Planned: abc444                           # FASE 2 completa
-  Implementing: abc555                      # FASE 3 arranca
-  "Done — PR ready": abc666                 # FASE 4 abre PR
-  "Blocked: refinement needs review": abc777  # error en FASE 1
-  "Blocked: plan needs review": abc888        # error en FASE 2
-  "Blocked: needs review": abc999             # error genérico en FASE 3/4
+  "Idea refined": abc000
+  Refining: abc111
+  Refined: abc222
+  Planning: abc333
+  Planned: abc444
+  Implementing: abc555
+  "Done — PR ready": abc666
+  "Blocked: refinement needs review": abc777
+  "Blocked: plan needs review": abc888
+  "Blocked: needs review": abc999
 
 # Sub-items (opcional)
 # Si está habilitado, el pipeline crea un draft item por tarea F<NN> al

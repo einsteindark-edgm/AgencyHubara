@@ -1,0 +1,353 @@
+name: idea-a-hu-frontend
+description: |
+  Entry-point del flujo frontend: toma una idea de negocio en texto libre o
+  un .md corto y la refina INTERACTIVAMENTE en una HU (historia de usuario)
+  bien formada con título, narrativa Como/Quiero/Para, acceptance criteria
+  en formato Given/When/Then, y out of scope explícito.
+
+  Al aprobar:
+    1. Publica la HU como Issue en GitHub.
+    2. Agrega el issue al Project board configurado.
+    3. Setea status "Idea refined" en el card.
+    4. (Opcional, approval gate) Dispara `hu-frontend-pipeline` en background.
+
+  **Use when**:
+    - Tenés una idea de feature pero no la armaste como HU formal.
+    - Querés que el card en el Project board arranque desde "Idea refined"
+      y vaya pasando por Refining → Refined → Planning → ... → Done.
+
+  **Input** ($USER_MESSAGE):
+    - Texto libre: "quiero filtrar sesiones por tag para encontrar conversas rápido"
+    - Ruta a un .md con notas más extensas
+
+  **Pre-requisitos**:
+    - `gh` autenticado con permisos de issue create.
+    - (Opcional) `frontend_dashboard/.frontend/github-project-config.yaml` para Project sync.
+
+  **Output**:
+    - Issue creado en GitHub (URL impresa)
+    - Card en el Project (status: "Idea refined") si Project está configurado
+    - Draft local persistido en `frontend_dashboard/.frontend/drafts/` (para auditoría)
+    - Si aprobaste el gate: `hu-frontend-pipeline` corriendo en background
+
+provider: claude
+model: sonnet
+interactive: true  # tiene loop interactivo + 2 approval gates
+
+worktree:
+  enabled: false   # solo lee/escribe drafts, no muta código; sin worktree extra
+
+nodes:
+  # ════════════════════════════════════════════════════════════════════
+  # FASE 0 — Pre-requisitos básicos
+  # ════════════════════════════════════════════════════════════════════
+
+  - id: check-prereqs
+    bash: |
+      set -e
+      gh auth status >&2 2>&1 || { echo "FAIL_GH_AUTH"; exit 0; }
+      command -v jq  >/dev/null || { echo "FAIL_NO_JQ"; exit 0; }
+      echo "OK"
+    timeout: 30000
+
+  - id: cancel-bad-prereqs
+    cancel: "Pre-requisitos faltantes: $check-prereqs.output. (gh auth login / brew install jq)"
+    when: "$check-prereqs.output != 'OK'"
+    depends_on: [check-prereqs]
+
+  # ════════════════════════════════════════════════════════════════════
+  # FASE 1 — Normalizar input (idea cruda → idea-original.md)
+  # ════════════════════════════════════════════════════════════════════
+
+  - id: normalize-input
+    bash: |
+      set -e
+      RAW=$ARGUMENTS
+      if [ -f "$RAW" ]; then
+        cp "$RAW" $ARTIFACTS_DIR/idea-original.md
+      else
+        echo "$RAW" > $ARTIFACTS_DIR/idea-original.md
+      fi
+      SIZE=$(wc -c < $ARTIFACTS_DIR/idea-original.md)
+      [ "$SIZE" -gt 10 ] || {
+        echo "FATAL: idea demasiado corta ($SIZE bytes). Pasame más contexto." >&2
+        exit 1
+      }
+      echo "Idea cargada ($SIZE bytes)"
+    depends_on: [check-prereqs]
+    when: "$check-prereqs.output == 'OK'"
+    timeout: 30000
+
+  # ════════════════════════════════════════════════════════════════════
+  # FASE 2 — Refinar la idea a HU (loop interactivo)
+  # ════════════════════════════════════════════════════════════════════
+
+  - id: refinar-hu-producto
+    depends_on: [normalize-input]
+    idle_timeout: 1200000  # 20 min idle (humano puede tardar entre iteraciones)
+    loop:
+      interactive: true
+      max_iterations: 6
+      until: HU_LISTA
+      gate_message: |
+        Te dejé el draft de la HU en $ARTIFACTS_DIR/hu-draft.md
+        Revisalo y respondé:
+          - "ok" / "go" / "listo" / "aprobada" → continúo al gate de publicación
+          - cualquier otro texto → itero con tu feedback
+          - "cancelar" / "salir" → terminamos sin publicar (el draft se guarda igual)
+      prompt: |
+        Sos un product owner experimentado del dashboard de AgencyHubara
+        (frontend FSD: Vite + React 19 + TanStack Query + Zod + Tailwind v4).
+
+        Tu input es una IDEA DE NEGOCIO. Tu output es una HU bien formada.
+
+        ## Paso 1 — Cargar contexto
+        Leé con Read tool:
+          - $ARTIFACTS_DIR/idea-original.md (la idea original del operador)
+          - $ARTIFACTS_DIR/hu-draft.md (si existe — iteración previa)
+
+        Feedback del operador en esta iteración: $LOOP_USER_INPUT
+
+        Si el operador dijo "cancelar" / "salir" / "abortar": NO modifiques el
+        draft, simplemente emití <promise>HU_LISTA</promise> con un comentario
+        explicando que se canceló — el gate de aprobación posterior lo detectará.
+
+        ## Paso 2 — Producir / iterar la HU
+
+        Escribí (o re-escribí incremental) $ARTIFACTS_DIR/hu-draft.md con esta
+        estructura EXACTA (lo importa el siguiente workflow):
+
+          # <Título corto y accionable, ≤80 chars, sin punto final>
+
+          Como **<rol del usuario del dashboard, ej. "operador del dashboard">**,
+          quiero **<acción concreta>**,
+          para **<beneficio claro de negocio>**.
+
+          ## Acceptance criteria
+
+          - **Given** <contexto inicial>, **when** <acción del usuario>, **then** <resultado observable y testable>.
+          - **Given** ..., **when** ..., **then** ...
+          - (3 a 5 bullets en total, cada uno verificable)
+
+          ## Out of scope
+
+          - <qué NO hace este feature, lista explícita>
+          - <más cosas que el operador podría asumir pero no entran>
+
+          ## Notas técnicas (opcional)
+
+          - <preferencias del operador, p.ej. "reusar el componente Pill ya existente">
+          - <constraints conocidos>
+
+        ## Paso 3 — Reglas de calidad
+
+        Antes de emitir HU_LISTA chequeá:
+          - El título es accionable (verbo + objeto), no descriptivo
+          - La narrativa Como/Quiero/Para tiene los 3 elementos
+          - Cada AC empieza con "Given" y tiene When + Then
+          - El Out of scope lista al menos 2 cosas que el feature NO hace
+          - El documento tiene >200 bytes
+
+        Si el operador aprobó (dijo "ok"/"go"/"listo"/"aprobada"):
+        <promise>HU_LISTA</promise>
+
+  # ════════════════════════════════════════════════════════════════════
+  # FASE 3 — Validar estructura del HU draft
+  # ════════════════════════════════════════════════════════════════════
+
+  - id: validate-hu
+    bash: |
+      F=$ARTIFACTS_DIR/hu-draft.md
+      test -f "$F" || { echo "FAIL_NOT_EXISTS"; exit 0; }
+      [ $(wc -c < "$F") -gt 200 ] || { echo "FAIL_TOO_SHORT"; exit 0; }
+      grep -qE '^#\s+\S' "$F" || { echo "FAIL_NO_TITLE"; exit 0; }
+      grep -qiE 'como\s+' "$F" || { echo "FAIL_NO_NARRATIVE"; exit 0; }
+      # AC: bullets Given/When/Then
+      ac_count=$(grep -cE '^[[:space:]-]*\*?\*?Given' "$F" 2>/dev/null)
+      ac_count=${ac_count:-0}
+      [ $ac_count -ge 2 ] || { echo "FAIL_FEW_AC_$ac_count"; exit 0; }
+      grep -qiE '^##.*scope' "$F" || { echo "FAIL_NO_SCOPE_SECTION"; exit 0; }
+      echo "PASS"
+    depends_on: [refinar-hu-producto]
+    timeout: 10000
+
+  - id: cancel-bad-hu
+    cancel: "HU draft validation FAILED: $validate-hu.output. Re-lanzá: archon workflow run idea-a-hu-frontend '<tu idea>'"
+    when: "$validate-hu.output != 'PASS'"
+    depends_on: [validate-hu]
+
+  # ════════════════════════════════════════════════════════════════════
+  # FASE 4 — Persistir el draft (siempre, antes de cualquier publicación)
+  # ════════════════════════════════════════════════════════════════════
+
+  - id: save-draft
+    bash: |
+      set -e
+      mkdir -p frontend_dashboard/.frontend/drafts
+      DRAFT_PATH="frontend_dashboard/.frontend/drafts/idea-$(date -u +%Y%m%d-%H%M%S).md"
+      cp $ARTIFACTS_DIR/hu-draft.md "$DRAFT_PATH"
+      echo "$DRAFT_PATH"
+    when: "$validate-hu.output == 'PASS'"
+    depends_on: [validate-hu]
+
+  # ════════════════════════════════════════════════════════════════════
+  # FASE 5 — Gate de publicación (approval node)
+  # ════════════════════════════════════════════════════════════════════
+
+  - id: aprobar-publicacion
+    depends_on: [save-draft]
+    approval:
+      message: |
+        ✅ Draft listo. Persistido en: $save-draft.output
+
+        ¿Publico esta HU como Issue en GitHub?
+          - Aprobar → gh issue create + agregar al Project board + status "Idea refined"
+          - Rechazar → terminar acá (el draft queda guardado para revisión manual)
+
+  # ════════════════════════════════════════════════════════════════════
+  # FASE 6 — Crear Issue + agregar al Project
+  # ════════════════════════════════════════════════════════════════════
+
+  - id: crear-issue
+    bash: |
+      set -e
+      # Extraer título: primera línea con "# " (sin el "# ")
+      TITLE=$(grep -m1 '^# ' $ARTIFACTS_DIR/hu-draft.md | sed 's/^# //' | head -c 120)
+      test -n "$TITLE" || { echo "FATAL: no extrajo título" >&2; exit 1; }
+
+      # gh imprime SOLO la URL al stdout cuando no-interactive
+      # --label frontend-hu: el auto-add workflow del Project levanta esta label
+      # y agrega el issue al board automáticamente (built-in workflow).
+      # Nuestro nodo `agregar-a-project` aún corre para asegurar status inicial.
+      gh issue create \
+        --title "$TITLE" \
+        --body-file $ARTIFACTS_DIR/hu-draft.md \
+        --label "frontend-hu"
+    depends_on: [aprobar-publicacion]
+    retry:
+      max_attempts: 2
+      delay_ms: 5000
+      on_error: transient
+    timeout: 60000
+
+  - id: agregar-a-project
+    bash: |
+      CFG="frontend_dashboard/.frontend/github-project-config.yaml"
+      if [ ! -f "$CFG" ]; then
+        echo "skipped no_config — para activar, crear frontend_dashboard/.frontend/github-project-config.yaml"
+        exit 0
+      fi
+
+      ISSUE_URL=$create-issue.output
+      PN=$(grep '^project_number:' "$CFG" | awk '{print $2}')
+      PO=$(grep '^project_owner:' "$CFG" | awk '{print $2}')
+      PID=$(grep '^project_id:' "$CFG" | awk '{print $2}')
+      FID=$(grep '^status_field_id:' "$CFG" | awk '{print $2}')
+
+      # Agregar el issue al project
+      gh project item-add "$PN" --owner "$PO" --url "$ISSUE_URL" 2>&1 | head -3 || {
+        echo "warn item-add falló — ¿gh tiene scope 'project'? gh auth refresh -s project"
+        exit 0
+      }
+
+      # Buscar el item id del recién agregado
+      ITEM_ID=$(gh project item-list "$PN" --owner "$PO" --format json --limit 100 2>/dev/null \
+        | jq -r --arg u "$ISSUE_URL" '.items[] | select(.content.url == $u) | .id' | head -1)
+      [ -z "$ITEM_ID" ] && { echo "warn item not found after add"; exit 0; }
+
+      # Set status = "Idea refined"
+      OID=$(awk -F: '/^status_options:/{f=1; next} f && /^  "?Idea refined"?:/ {gsub(/^ +| +$/, "", $2); print $2; exit}' "$CFG")
+      if [ -z "$OID" ]; then
+        echo "warn 'Idea refined' option not in config — agregalo a status_options:"
+        exit 0
+      fi
+
+      gh project item-edit --id "$ITEM_ID" --project-id "$PID" \
+        --field-id "$FID" --single-select-option-id "$OID" 2>&1 | head -3 || true
+      echo "set Idea refined ok"
+    depends_on: [crear-issue]
+    trigger_rule: all_done  # fail-soft: si Project rompe, seguimos
+    timeout: 60000
+
+  - id: print-issue-info
+    bash: |
+      ISSUE_URL=$create-issue.output
+      PROJECT_STATUS=$agregar-a-project.output
+      cat <<EOF
+
+      ╔════════════════════════════════════════════════════════════════╗
+      ║ ✅ Issue creado                                                 ║
+      ║                                                                ║
+      ║ URL:        ${ISSUE_URL}
+      ║ Project:    ${PROJECT_STATUS}
+      ║                                                                ║
+      ║ El card aparece en el Project board con status "Idea refined". ║
+      ║ Cuando arranque hu-frontend-pipeline va a pasar por:           ║
+      ║   Refining → Refined → Planning → Planned → Implementing →     ║
+      ║   Done — PR ready                                              ║
+      ╚════════════════════════════════════════════════════════════════╝
+      EOF
+    depends_on: [crear-issue, agregar-a-project]
+    trigger_rule: all_done
+    timeout: 5000
+
+  # ════════════════════════════════════════════════════════════════════
+  # FASE 7 — Gate opcional: lanzar pipeline ahora?
+  # ════════════════════════════════════════════════════════════════════
+
+  - id: gate-lanzar-pipeline
+    depends_on: [print-issue-info]
+    approval:
+      message: |
+        ¿Lanzo `hu-frontend-pipeline` ahora con el issue recién creado?
+
+        APROBAR → arranca en background. Va a:
+          - refinar técnicamente (FSD)
+          - planificar tareas
+          - implementar secuencial
+          - validar (npm test + tsc + build)
+          - abrir PR
+          - disparar review automático
+          - actualizar el card en Projects en cada fase
+
+        RECHAZAR → terminamos acá. Lanzá pipeline cuando quieras:
+          archon workflow run hu-frontend-pipeline "<la URL del issue>"
+
+  - id: lanzar-pipeline
+    bash: |
+      ISSUE_URL=$create-issue.output
+      LOG_FILE="$HOME/.archon/logs/pipeline-$(date +%s).log"
+      mkdir -p "$HOME/.archon/logs"
+
+      # env -u CLAUDECODE evita "may hang silently" del nested archon-in-claude-code
+      (env -u CLAUDECODE ARCHON_SUPPRESS_NESTED_CLAUDE_WARNING=1 \
+         nohup archon workflow run hu-frontend-pipeline "$ISSUE_URL" \
+         > "$LOG_FILE" 2>&1 & disown) 2>/dev/null \
+        && echo "pipeline_triggered_log=$LOG_FILE" \
+        || echo "pipeline_trigger_failed_run_manually"
+    depends_on: [gate-lanzar-pipeline]
+    timeout: 10000
+
+  - id: print-final-summary
+    bash: |
+      ISSUE_URL=$create-issue.output
+      PIPELINE=$lanzar-pipeline.output
+      cat <<EOF
+
+      ╔════════════════════════════════════════════════════════════════╗
+      ║ 🎉 Workflow completo                                            ║
+      ║                                                                ║
+      ║ Issue:     ${ISSUE_URL}
+      ║ Pipeline:  ${PIPELINE}
+      ║                                                                ║
+      ║ Próximos pasos:                                                ║
+      ║   1. Mirá el Project board — el card está en "Idea refined"    ║
+      ║   2. Si el pipeline arrancó, va a ir actualizando el status    ║
+      ║      automáticamente (revisá en ~3-5 min)                      ║
+      ║   3. Cuando termine, vas a ver un PR + un comment del review   ║
+      ║   4. Si "pipeline_trigger_failed_run_manually": lanzalo a mano:║
+      ║      archon workflow run hu-frontend-pipeline "${ISSUE_URL}"
+      ╚════════════════════════════════════════════════════════════════╝
+      EOF
+    depends_on: [lanzar-pipeline]
+    timeout: 5000
