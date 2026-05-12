@@ -1,0 +1,139 @@
+name: refinar-hu-frontend
+description: |
+  Refina técnicamente una historia de usuario de FRONTEND (FSD: Vite + React 19 +
+  TanStack Query + Zod + Tailwind v4) hasta que el humano la apruebe, y persiste
+  el refinamiento en frontend_dashboard/.frontend/refinements/ para que
+  planificar-hu-frontend lo pueda leer en el siguiente worktree.
+
+  **Use when**: tenés una HU de frontend para refinar técnicamente. El input puede ser:
+    - Ruta a un archivo .md con la HU detallada
+    - Texto plano describiendo la HU
+    - URL de un GitHub Issue (formato `https://github.com/owner/repo/issues/N`)
+
+  Si querés un pipeline automatizado end-to-end SIN gates humanos, usá
+  `hu-frontend-pipeline` en su lugar.
+
+  **Produces (efímero, en $ARTIFACTS_DIR)**:
+    - hu-original.md (snapshot del input normalizado)
+    - hu-refinada.md (output del skill, aprobado por el humano)
+
+  **Persiste en el worktree (frontend_dashboard/.frontend/refinements/)**:
+    - <HU-id>-original.md
+    - <HU-id>-tech.md
+
+  **Cross-workflow sync**:
+    Este workflow NO commitea ni pushea. Para que planificar-hu-frontend pueda
+    encontrar el refinamiento desde un worktree nuevo, el operador debe:
+      git add frontend_dashboard/.frontend/refinements/<id>-*.md
+      git commit -m "<id>: refinamiento técnico (frontend) aprobado"
+      git push   # o merge a main según convención del equipo
+    Hasta que el commit esté visible en el branch base de Archon
+    (típicamente main), el siguiente workflow no verá estos archivos.
+
+provider: claude
+model: sonnet
+interactive: true
+
+nodes:
+  - id: preparar-input
+    prompt: |
+      El usuario invocó este workflow con: $USER_MESSAGE
+
+      Detectá qué tipo de input es y normalizalo:
+
+      Paso 0 — Stageá el project context (siempre):
+        cp frontend_dashboard/.frontend/project-context.md $ARTIFACTS_DIR/project-context.md
+        (este archivo le dice al refiner exactamente cómo está estructurado
+         el frontend — layout FSD, paths, comandos npm. ES OBLIGATORIO.
+         Si no existe, fallá con un mensaje claro: "Falta
+         frontend_dashboard/.frontend/project-context.md — restaurar desde main.")
+
+      1. Si $USER_MESSAGE matchea `https://github.com/.+/issues/\d+`, traélo:
+           gh issue view <url> --json title,body --jq '.title + "\n\n" + .body' \
+             > $ARTIFACTS_DIR/hu-original.md
+         (requiere `gh` autenticado contra el owner del repo).
+
+      2. Si parece una ruta a un archivo (termina en .md, .txt, o existe
+         en el filesystem), leélo y copiá su contenido completo a
+         $ARTIFACTS_DIR/hu-original.md
+
+      3. Si es texto plano describiendo una HU, escribilo tal cual a
+         $ARTIFACTS_DIR/hu-original.md
+
+      4. Si la ruta/URL no existe o el contenido está vacío, fallá con un
+         error claro indicando qué intentaste leer.
+
+      Confirmá al final qué hiciste y reportá el tamaño del archivo final.
+    allowed_tools: [Read, Write, Bash]
+
+  - id: refinar
+    depends_on: [preparar-input]
+    loop:
+      interactive: true
+      max_iterations: 10
+      until: HU_APROBADA
+      capture_response: true
+      skills:
+        - frontend-tech-refiner-archon
+      gate_message: |
+        He refinado la HU. Revisá $ARTIFACTS_DIR/hu-refinada.md y respondé:
+        - "aprobada" o "ok" si está lista
+        - Cualquier otro comentario para que itere con tu feedback
+      prompt: |
+        HU original (visión de producto): $ARTIFACTS_DIR/hu-original.md
+
+        Feedback del humano en esta iteración: $LOOP_USER_INPUT
+
+        Aplicá tu protocolo de refinamiento técnico (skill
+        frontend-tech-refiner-archon).
+
+        Si existe $ARTIFACTS_DIR/hu-refinada.md de una iteración previa,
+        leélo e incorporá el feedback de forma incremental — no rehagas
+        todo, solo modificá las secciones afectadas. Acordate de
+        incrementar el contador `Iteration` del header.
+
+        Escribí la versión refinada en $ARTIFACTS_DIR/hu-refinada.md.
+
+        Si el humano aprobó (dijo "aprobada", "ok", "go", "listo", etc.):
+        <promise>HU_APROBADA</promise>
+
+  - id: persistir-refinamiento
+    depends_on: [refinar]
+    prompt: |
+      El refinamiento fue aprobado. Persistilo en el repo bajo
+      frontend_dashboard/.frontend/refinements/.
+
+      Paso 1 — Extraé el HU id de $ARTIFACTS_DIR/hu-refinada.md:
+        - Buscá la línea que matchea `^HU id:` (formato del skill).
+        - Si el valor es `(no id provided)` o está vacío, generá uno con:
+            HU-YYYYMMDD-<slug-del-titulo>
+          donde:
+            - YYYYMMDD = fecha actual UTC
+            - slug = lowercase ASCII del título (línea
+              `^Tech refinement (frontend) —` del archivo), separado por hyphens,
+              max 40 chars, sin acentos.
+        - Reportá el id elegido.
+
+      Paso 2 — Creá frontend_dashboard/.frontend/refinements/ si no existe:
+        mkdir -p frontend_dashboard/.frontend/refinements
+
+      Paso 3 — Copiá los dos archivos del run:
+        cp $ARTIFACTS_DIR/hu-original.md frontend_dashboard/.frontend/refinements/<id>-original.md
+        cp $ARTIFACTS_DIR/hu-refinada.md frontend_dashboard/.frontend/refinements/<id>-tech.md
+
+      Paso 4 — Reportá al operador:
+        - HU id elegido: <id>
+        - Archivos persistidos (rutas relativas al repo)
+        - Comando sugerido para activarlos en main:
+
+            git add frontend_dashboard/.frontend/refinements/<id>-*.md
+            git commit -m "<id>: refinamiento técnico (frontend) aprobado"
+            git push   # o merge según convención
+
+        - Comando para arrancar el siguiente workflow:
+
+            archon workflow run planificar-hu-frontend "<id>"
+
+      IMPORTANTE: NO hagas commit ni push vos mismo. La decisión de
+      mergear el refinamiento a main es del operador.
+    allowed_tools: [Read, Write, Bash]

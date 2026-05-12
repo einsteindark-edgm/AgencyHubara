@@ -1,0 +1,87 @@
+# Spinal files declaration — frontend_dashboard (Vite + React 19 + FSD)
+#
+# Spinal files are paths that MULTIPLE atomic features will modify. They are
+# the "skeleton" of the frontend (composition root, providers, design tokens,
+# barrel re-exports). Conflict-prone when N features are implemented in parallel.
+#
+# Read by: planner, implementer, merger skills (staged via $ARTIFACTS_DIR).
+#
+# IMPORTANT — path convention for THIS repo:
+#   - Operator's CWD when running `archon run` = repo root (AgencyHubara/)
+#   - Frontend code lives at frontend_dashboard/src/
+#   - All paths in this file are relative to the REPO ROOT.
+#   - TS imports inside the frontend use `@/` alias which resolves to
+#     `frontend_dashboard/src/` (see vite.config.ts + tsconfig.app.json).
+#     Don't confuse "filesystem path" (with frontend_dashboard/ prefix) and
+#     "import path" (with @/ alias).
+#
+# Glob support: paths with `*` match every existing frontend if multi-frontend
+# is added later (e.g. frontend_admin/). New frontends are picked up automatically.
+
+version: 1
+
+spinal_files:
+  # Page composition root — every new feature mounts itself into a page here
+  - path: frontend_dashboard/src/pages/*.tsx
+    kind: page_jsx_composition
+    anchors:
+      # The merger uses container anchors from each intent's `container_anchor`
+      # field; no global anchor needed at the spinal-file level.
+
+  # App-level providers composition — every new global provider wraps here
+  - path: frontend_dashboard/src/app/providers/index.tsx
+    kind: app_provider_composition
+
+  # Tailwind design tokens — every new --color-* / --font-* token lives here
+  - path: frontend_dashboard/src/index.css
+    kind: css_theme_block
+    anchors:
+      theme_block: "^@theme {"
+
+  # Entity barrels — when 2+ tasks add hooks/types to an existing entity, the
+  # barrel becomes spinal. New entities (whole folder is new) are NOT spinal —
+  # the implementer creates the barrel from scratch and it goes in affects_new_files.
+  - path: frontend_dashboard/src/entities/*/index.ts
+    kind: ts_barrel
+
+  # Feature barrels — same logic as entity barrels.
+  - path: frontend_dashboard/src/features/*/index.ts
+    kind: ts_barrel
+
+  # Shared barrels — shared/api, shared/config, shared/lib, shared/ui
+  # 2+ tasks adding shared primitives will both append exports here.
+  - path: frontend_dashboard/src/shared/*/index.ts
+    kind: ts_barrel
+
+  # Entity api modules — when 2+ tasks add hooks to the same existing entity
+  - path: frontend_dashboard/src/entities/*/api.ts
+    kind: ts_factory_module
+
+  # Entity contracts modules — when 2+ tasks add Zod schemas to the same entity
+  - path: frontend_dashboard/src/entities/*/contracts.ts
+    kind: ts_dataclass_module
+
+  # Entity model modules — when 2+ tasks add TS types to the same entity
+  - path: frontend_dashboard/src/entities/*/model.ts
+    kind: ts_dataclass_module
+
+  # Entity keys modules — when 2+ tasks add query key variants to the same entity
+  - path: frontend_dashboard/src/entities/*/keys.ts
+    kind: ts_factory_module
+
+# Behavior for files NOT listed here:
+#   - "new" action → no conflict, parallel-safe (creates a fresh path)
+#   - "modify" action but not declared spinal → planner refuses to put two such
+#     tasks in the same batch. Either declare here or accept reduced parallelism.
+#
+# Files explicitly NOT spinal (each owned by a single task):
+#   - frontend_dashboard/src/entities/<NEW>/<anything> — new entity, single task owns the whole folder
+#   - frontend_dashboard/src/features/<NEW>/<anything> — new feature, single task owns the whole folder
+#   - frontend_dashboard/src/shared/ui/<NEW>.tsx — new shared primitive, single task creates the file
+#   - frontend_dashboard/src/shared/lib/<NEW>.ts — same
+#   - test files (*.test.ts, *.test.tsx) — each task owns its own tests
+#
+# Files NEVER spinal (operator-owned):
+#   - frontend_dashboard/src/main.tsx — entry point, rarely changes
+#   - frontend_dashboard/vite.config.ts, tsconfig*.json, vitest.config.ts — config
+#   - frontend_dashboard/package.json — dependencies (planner refuses to bundle deps changes)

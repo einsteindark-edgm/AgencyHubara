@@ -1,0 +1,66 @@
+# GitHub Project config para hu-frontend-pipeline
+#
+# Si este archivo existe en frontend_dashboard/.frontend/github-project-config.yaml
+# (sin el sufijo .example), el pipeline actualiza el estado del card padre + los
+# sub-items en cada fase. Si NO existe, el pipeline corre igual pero sin
+# actualizar ningún Project.
+#
+# Cómo conseguir los IDs (corré una vez como setup):
+#
+#   # 1. Listar tus projects para obtener el number:
+#   gh project list --owner <owner>
+#   # Output: NUMBER  TITLE  STATE  ID
+#   #         5       Frontend HUs  open  PVT_kwDOxxxx
+#
+#   # 2. Listar los fields del project:
+#   gh project field-list <NUMBER> --owner <owner> --format json
+#   # Output: { "fields": [{"id": "PVTSSF_xxxx", "name": "Status",
+#   #          "options": [{"id": "abc", "name": "Refining"}, ...]}, ...] }
+#
+#   # 3. Construí este archivo con los IDs del paso 2.
+#
+# Probado con `gh` >= 2.40 (Project v2 GA).
+
+version: 1
+
+# Información del Project
+project_owner: <github-username-or-org>
+project_number: 5
+project_id: PVT_kwDOxxxx          # GraphQL node ID del project
+
+# Field "Status" — el campo single-select que mueve el card entre columnas
+status_field_id: PVTSSF_xxxx
+
+# Mapping nombre-de-fase → option_id del campo Status
+# Los nombres a la izquierda son los que usa el pipeline; los IDs a la derecha
+# vienen de `gh project field-list` (option.id para cada estado).
+status_options:
+  Refining: abc111                          # el pipeline lo setea en FASE 0.7
+  Refined: abc222                           # FASE 1 completa
+  Planning: abc333                          # (intermedio durante FASE 2; opcional)
+  Planned: abc444                           # FASE 2 completa
+  Implementing: abc555                      # FASE 3 arranca
+  "Done — PR ready": abc666                 # FASE 4 abre PR
+  "Blocked: refinement needs review": abc777  # error en FASE 1
+  "Blocked: plan needs review": abc888        # error en FASE 2
+  "Blocked: needs review": abc999             # error genérico en FASE 3/4
+
+# Sub-items (opcional)
+# Si está habilitado, el pipeline crea un draft item por tarea F<NN> al
+# terminar FASE 2 (planificar). Cada sub-item tiene su propio Status que el
+# pipeline actualiza independientemente del card padre.
+sub_items:
+  enabled: true
+  # Los sub-items reusan el mismo status_field_id, pero solo usan estos estados:
+  sub_status_options:
+    Pending: abc100         # creado al planificar
+    Implementing: abc555    # cuando el pipeline lanza la tarea
+    Passed: abc110          # cuando la tarea termina passed
+    Merged: abc120          # cuando el merger consolidó su batch
+    Blocked: abc130
+
+# Opciones avanzadas
+# pause_on_blocked: si true, después de set_project_status "Blocked: ..."
+# el pipeline NO se cierra silenciosamente; en su lugar imprime un banner
+# bien visible apuntando al card del Project. (Default: true)
+pause_on_blocked: true

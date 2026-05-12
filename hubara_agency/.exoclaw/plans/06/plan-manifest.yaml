@@ -1,0 +1,122 @@
+version: 1
+hu_id: "06"
+hu_title: "Send product images during sales conversation"
+target_agent: sales_whatsapp
+refinement_source: $ARTIFACTS_DIR/hu-refinada.md
+generated_by: exoclaw-task-planner-archon
+generated_at: "2026-05-11"
+iteration: 3
+totals:
+  task_count: 4
+  foundation_count: 1
+  dag_max_depth: 3
+  estimated_loc_total: 530
+  acceptance_coverage: ['AC-1', 'AC-2', 'AC-3', 'AC-4', 'AC-5', 'AC-6', 'AC-7']
+
+tasks:
+  - id: F01
+    title: "Platform DTOs, TurnResult extension, and retry preset"
+    slug: platform-dtos-workflow-helpers
+    file: tareas/F01-platform-dtos-workflow-helpers.md
+    depends_on: []
+    blocks: ['F02', 'F03']
+    delivers_acceptance: ['AC-1', 'AC-2', 'AC-4']
+    affects_layers: ['contracts', 'workflow_helpers', 'retry_policies', 'tests']
+    affects_new_files:
+      - hubara_agency/tests/test_imports.py
+    affects_spinal_files:
+      - hubara_agency/src/platform/contracts.py
+    estimated_loc: 60
+    risk: low
+
+  - id: F02
+    title: "WhatsApp send_image client method and images activity"
+    slug: whatsapp-image-send-activity
+    file: tareas/F02-whatsapp-image-send-activity.md
+    depends_on: ['F01']
+    blocks: ['F04']
+    delivers_acceptance: ['AC-3', 'AC-4']
+    affects_layers: ['whatsapp_client', 'activities', 'tests']
+    affects_new_files:
+      - hubara_agency/tests/platform/whatsapp/test_send_images_activity.py
+    affects_spinal_files: []
+    estimated_loc: 120
+    risk: medium
+    risk_reason: "tests/platform/whatsapp/ directory may not exist yet; activity heartbeat needs ActivityEnvironment verification"
+
+  - id: F03
+    title: "SendProductImagesTool, worker tool extension, workspace TOOLS.md + SOUL.md"
+    slug: send-product-images-tool
+    file: tareas/F03-send-product-images-tool.md
+    depends_on: ['F01']
+    blocks: ['F04']
+    delivers_acceptance: ['AC-2', 'AC-5', 'AC-6']
+    affects_layers: ['tools', 'worker', 'workspace', 'tests']
+    affects_new_files:
+      - hubara_agency/src/sales_whatsapp/tools/images.py
+      - hubara_agency/tests/sales_whatsapp/tools/test_send_product_images_envelope.py
+      - hubara_agency/tests/sales_whatsapp/tools/test_send_product_images_protocol.py
+      - hubara_agency/tests/sales_whatsapp/tools/test_send_product_images_unavailable.py
+    affects_spinal_files:
+      - hubara_agency/src/sales_whatsapp/worker.py
+      - hubara_agency/src/sales_whatsapp/workspace/TOOLS.md
+      - hubara_agency/src/sales_whatsapp/workspace/SOUL.md
+    estimated_loc: 225
+    risk: low
+
+  - id: F04
+    title: "Workflow send_images_decision branch, worker activity registration, and replay fixture"
+    slug: workflow-branch-and-replay
+    file: tareas/F04-workflow-branch-and-replay.md
+    depends_on: ['F01', 'F02', 'F03']
+    blocks: []
+    delivers_acceptance: ['AC-1', 'AC-4', 'AC-7']
+    affects_layers: ['workflows', 'worker', 'tests', 'fixtures']
+    affects_new_files:
+      - hubara_agency/tests/sales_whatsapp/workflows/test_sales_session_images_branch.py
+      - hubara_agency/tests/fixtures/history_sales_session_v3.json
+    affects_spinal_files:
+      - hubara_agency/src/sales_whatsapp/worker.py
+    estimated_loc: 125
+    risk: medium
+    risk_reason: "Replay fixture must capture the send_images_decision branch path; requires a real session run or careful manual crafting via generate_fixtures.py"
+
+parallel_batches:
+  - batch_id: B1
+    tasks: ['F01']
+    warnings: []
+  - batch_id: B2
+    tasks: ['F02', 'F03']
+    warnings: []
+  - batch_id: B3
+    tasks: ['F04']
+    warnings: []
+
+notes: |
+  Iteration 3 — approved without changes. No tasks modified.
+
+  DAG validation:
+  - No cycles. Chain: F01 → {F02, F03} → F04. Max depth = 3.
+  - All ACs covered: AC-1 (F01+F04 together), AC-2 (F03), AC-3 (F02), AC-4 (F02+F04),
+    AC-5 (F03), AC-6 (F03), AC-7 (F04).
+  - F04 has exactly 3 direct deps (at the allowed maximum).
+
+  Non-spinal "modify" files — each touched by exactly one task, so no parallel batch
+  conflict arises:
+    - hubara_agency/src/platform/workflow_helpers.py       (F01 only)
+    - hubara_agency/src/platform/temporal/retry_policies.py (F01 only)
+    - hubara_agency/src/platform/whatsapp/client.py        (F02 only)
+    - hubara_agency/src/platform/whatsapp/activities.py    (F02 only)
+    - hubara_agency/src/sales_whatsapp/workflows/sales_session.py (F04 only)
+    - hubara_agency/tests/sales_whatsapp/workspace/test_workspace_system_prompt.py (F03 only)
+    - hubara_agency/tests/test_replay_sales.py             (F04 only)
+  None of these require merger consolidation; standard git merge is safe.
+
+  Deferred from refinement §13:
+    - URLs vs binary upload (§13 risk 1): follow-up HU if Medusa CDN URLs are signed/short-lived.
+    - Cross-agent reusability (§13 risk 5): activity placed in platform/whatsapp/activities.py
+      intentionally so Remarketing can reuse it later; no changes needed here.
+    - frozen=True on SendProductImagesDecision: refinement says frozen=True but existing
+      TransferDecision / ScheduleRemarketingDecision are NOT frozen. Implementer should
+      decide based on how the DTO is used (DTOs that cross execute_activity can be either).
+      Recommended: keep consistent with existing convention (NOT frozen) and note in F01.
