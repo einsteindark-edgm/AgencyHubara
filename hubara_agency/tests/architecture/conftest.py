@@ -84,8 +84,15 @@ FORBIDDEN_TOP_LEVEL_PACKAGES: tuple[str, ...] = (
 # Cualquier PR que los modifique sin la env var ARCH_CHANGE_APPROVED=1 falla.
 # Relativos a la raíz del repo (no a hubara_agency/).
 ARCHITECTURE_PROTECTED_PREFIXES: tuple[str, ...] = (
+    # Tests + import-linter contract — la arquitectura DEHA misma.
     "hubara_agency/tests/architecture/",
     "hubara_agency/.importlinter",
+    # Workflows de Archon y skills que orquestan el pipeline. Si un AI
+    # implementer pudiera editar el pipeline YAML o el SKILL.md mismo, podría
+    # deshabilitar el gate determinista o borrar las reglas §11. Protegerlos
+    # cierra ese hueco — Capa 3 cubre ahora también el "framework" que evalúa.
+    ".archon/workflows/",
+    ".claude/skills/exoclaw-",
 )
 
 

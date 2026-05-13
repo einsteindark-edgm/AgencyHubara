@@ -1,6 +1,6 @@
-name: hu-frontend-pipeline
+name: hu-exoclaw-pipeline
 description: |
-  Super-pipeline AUTOMATIZADO end-to-end para una HU de FRONTEND (FSD).
+  Super-pipeline AUTOMATIZADO end-to-end para una HU de EXOCLAW (DEHA).
   Encadena refinar → planificar → implementar (UNA tarea a la vez, secuencial)
   sin gates humanos. Trabaja en un branch `hu/<HU-id>` aislado y al final
   crea un PR contra main para que el operador haga squash-merge.
@@ -9,7 +9,7 @@ description: |
   actualiza el estado del GitHub Project card en cada fase (fail-soft).
 
   **Diseño de nodos** (siguiendo Archon best practices):
-    - Trabajo determinista (cp, mkdir, git, npm, gh, parseo de YAML) → `bash:` o `script:`.
+    - Trabajo determinista (cp, mkdir, git, uv, gh, parseo de YAML) → `bash:` o `script:`.
     - AI iterativo (refinar, planificar, implementar) → `loop:` con `skills:`.
     - Git operations en implementar → `loop.until_bash` (NO el AI), determinista.
     - Skip de fases ya completas → `when:` sobre output de bash de detección.
@@ -47,38 +47,41 @@ nodes:
       gh auth status >&2 2>&1 || { echo "FAIL_GH_AUTH"; exit 0; }
 
       # Herramientas en PATH (en orden: la falla más visible primero)
-      command -v node >/dev/null || { echo "FAIL_NO_NODE"; exit 0; }
-      command -v npm  >/dev/null || { echo "FAIL_NO_NPM";  exit 0; }
-      command -v bun  >/dev/null || { echo "FAIL_NO_BUN";  exit 0; }
-      command -v jq   >/dev/null || { echo "FAIL_NO_JQ";   exit 0; }
-      command -v git  >/dev/null || { echo "FAIL_NO_GIT";  exit 0; }
+      command -v uv     >/dev/null || { echo "FAIL_NO_UV";     exit 0; }
+      command -v python >/dev/null || { echo "FAIL_NO_PYTHON"; exit 0; }
+      command -v bun    >/dev/null || { echo "FAIL_NO_BUN";    exit 0; }
+      command -v jq     >/dev/null || { echo "FAIL_NO_JQ";     exit 0; }
+      command -v git    >/dev/null || { echo "FAIL_NO_GIT";    exit 0; }
 
-      # Convenciones del frontend committeadas en main
+      # Convenciones de exoclaw committeadas en main
       for f in \
-        frontend_dashboard/.frontend/spinal-files.yaml \
-        frontend_dashboard/.frontend/project-context.md; do
+        hubara_agency/.exoclaw/spinal-files.yaml \
+        hubara_agency/.exoclaw/project-context.md; do
         test -f "$f" || { echo "FAIL_MISSING_CONVENTION_${f##*/}"; exit 0; }
       done
 
-      # 3 skills frontend usados por el pipeline (eliminado merger en el cleanup
-      # de Oct 2026 — el pipeline secuencial no necesita merger de wiring_intents)
+      # 3 skills exoclaw usados por el pipeline (sin merger — el pipeline
+      # secuencial no necesita merger de wiring_intents, idéntico al frontend)
       for s in tech-refiner task-planner implementer; do
-        test -f ".claude/skills/frontend-${s}-archon/SKILL.md" || {
+        test -f ".claude/skills/exoclaw-${s}-archon/SKILL.md" || {
           echo "FAIL_MISSING_SKILL_${s}"; exit 0;
         }
       done
 
-      # package-lock.json para `npm ci`
-      test -f frontend_dashboard/package-lock.json || {
-        echo "FAIL_NO_LOCKFILE — frontend_dashboard/package-lock.json requerido para npm ci"
+      # uv.lock para `uv sync --frozen` (lockfile del workspace en root)
+      test -f uv.lock || {
+        echo "FAIL_NO_LOCKFILE — uv.lock requerido en root del workspace"
         exit 0
       }
 
-      # node_modules — instalar VIA npm ci si falta (NO modifica el lockfile)
-      if [ ! -d "frontend_dashboard/node_modules" ]; then
-        echo "node_modules ausente — corriendo npm ci (puede tardar 30s)" >&2
-        (cd frontend_dashboard && npm ci --no-audit --no-fund) >&2 || {
-          echo "FAIL_NPM_CI"; exit 0;
+      # .venv — sync VIA `uv sync` si falta (instala desde el lockfile).
+      # El workspace uv vive en la raíz (AgencyHubara/pyproject.toml declara
+      # members = ["exoclaw-temporal", "hubara_agency"]). Por eso .venv vive
+      # en root, no dentro de hubara_agency/.
+      if [ ! -d ".venv" ]; then
+        echo ".venv ausente — corriendo uv sync (puede tardar 30-60s)" >&2
+        uv sync >&2 || {
+          echo "FAIL_UV_SYNC"; exit 0;
         }
       fi
 
@@ -108,11 +111,11 @@ nodes:
       Diagnóstico:
         FAIL_GH_AUTH               → gh auth login
         FAIL_GH_NO_PROJECT_SCOPE   → gh auth refresh -s project
-        FAIL_NO_NODE/NPM/BUN/JQ/GIT → brew install <tool>
+        FAIL_NO_UV/PYTHON/BUN/JQ/GIT → instalar la herramienta (brew/curl install uv)
         FAIL_MISSING_*             → commit el archivo a main, no está en origin
-        FAIL_MISSING_SKILL_*       → commit .claude/skills/frontend-*-archon a main
-        FAIL_NO_LOCKFILE           → cd frontend_dashboard && npm install para crear lockfile
-        FAIL_NPM_CI                → revisar el error de npm en stderr
+        FAIL_MISSING_SKILL_*       → commit .claude/skills/exoclaw-*-archon a main
+        FAIL_NO_LOCKFILE           → ejecutar `uv lock` desde la raíz del workspace
+        FAIL_UV_SYNC               → revisar el error de uv en stderr (versión de Python, deps en pyproject)
         FAIL_NO_ORIGIN_OR_NETWORK  → revisar conectividad/credenciales git push
     when: "$check-prereqs.output != 'OK'"
     depends_on: [check-prereqs]
@@ -120,8 +123,8 @@ nodes:
   - id: stage-shared-files
     bash: |
       set -e
-      cp frontend_dashboard/.frontend/project-context.md $ARTIFACTS_DIR/project-context.md
-      cp frontend_dashboard/.frontend/spinal-files.yaml  $ARTIFACTS_DIR/spinal-files.yaml
+      cp hubara_agency/.exoclaw/project-context.md $ARTIFACTS_DIR/project-context.md
+      cp hubara_agency/.exoclaw/spinal-files.yaml  $ARTIFACTS_DIR/spinal-files.yaml
       if [ -f .archon/github-project-config.yaml ]; then
         cp .archon/github-project-config.yaml \
            $ARTIFACTS_DIR/github-project-config.yaml
@@ -229,10 +232,10 @@ nodes:
         body: input.body,
         issue_url: input.issue_url,
         type: input.type,
-        refinement_path: 'frontend_dashboard/.frontend/refinements/' + huId + '-tech.md',
-        original_path:   'frontend_dashboard/.frontend/refinements/' + huId + '-original.md',
-        plan_dir:        'frontend_dashboard/.frontend/plans/' + huId,
-        results_dir:     'frontend_dashboard/.frontend/results/' + huId,
+        refinement_path: 'hubara_agency/.exoclaw/refinements/' + huId + '-tech.md',
+        original_path:   'hubara_agency/.exoclaw/refinements/' + huId + '-original.md',
+        plan_dir:        'hubara_agency/.exoclaw/plans/' + huId,
+        results_dir:     'hubara_agency/.exoclaw/results/' + huId,
       };
       console.log(JSON.stringify(out));
     runtime: bun
@@ -292,8 +295,8 @@ nodes:
   - id: detect-resume-state
     bash: |
       HU_ID=$(echo $gen-hu-id.output | jq -r '.hu_id')
-      REFINEMENT="frontend_dashboard/.frontend/refinements/${HU_ID}-tech.md"
-      MANIFEST="frontend_dashboard/.frontend/plans/${HU_ID}/plan-manifest.yaml"
+      REFINEMENT="hubara_agency/.exoclaw/refinements/${HU_ID}-tech.md"
+      MANIFEST="hubara_agency/.exoclaw/plans/${HU_ID}/plan-manifest.yaml"
 
       already_refined=false
       already_planned=false
@@ -341,7 +344,7 @@ nodes:
   - id: load-refinement-if-resume
     bash: |
       HU_ID=$(echo $gen-hu-id.output | jq -r '.hu_id')
-      cp "frontend_dashboard/.frontend/refinements/${HU_ID}-tech.md" \
+      cp "hubara_agency/.exoclaw/refinements/${HU_ID}-tech.md" \
          "$ARTIFACTS_DIR/hu-refinada.md"
       echo "loaded"
     when: "$detect-resume-state.output.already_refined == 'true'"
@@ -356,9 +359,9 @@ nodes:
       until: REFINED
       fresh_context: true
       skills:
-        - frontend-tech-refiner-archon
+        - exoclaw-tech-refiner-archon
       prompt: |
-        Aplicá el protocolo del skill frontend-tech-refiner-archon.
+        Aplicá el protocolo del skill exoclaw-tech-refiner-archon.
 
         Inputs:
           - $ARTIFACTS_DIR/hu-original.md  (la HU)
@@ -379,17 +382,12 @@ nodes:
       [ $(wc -c < "$F") -gt 500 ] || { echo "FAIL_TOO_SHORT"; exit 0; }
       grep -q '^HU id:' "$F" || { echo "FAIL_NO_HU_ID"; exit 0; }
 
-      # Step 1.5 del refiner: si detectó que la HU necesita cambios backend,
-      # corta acá. NO seguimos al planner ni al implementer — gastaríamos AI
-      # generando tareas frontend inútiles. El operador refina la HU backend
-      # primero (en hubara_agency) y después re-lanza esta HU frontend.
-      if grep -qiE '^requires_backend_change:[[:space:]]*true' "$F"; then
-        echo "BLOCKED_BACKEND"
-        exit 0
-      fi
-
       sections=0
-      for sec in Scope Acceptance Entities Features Tests Risks; do
+      # Secciones canónicas que emite exoclaw-tech-refiner-archon (§1-§14).
+      # "Acceptance" NO va — el refiner técnico incluye los AC (Given/When/Then)
+      # dentro de §1 Scope, no en una sección separada. Los AC se chequean abajo
+      # con el conteo `ac_count`.
+      for sec in Scope Workflow Activities Tools Tests Risks; do
         grep -qi "$sec" "$F" && sections=$((sections+1))
       done
       [ $sections -ge 3 ] || { echo "FAIL_FEW_SECTIONS"; exit 0; }
@@ -402,35 +400,15 @@ nodes:
     depends_on: [refinar-auto, load-refinement-if-resume]
     trigger_rule: all_done
 
-  - id: cancel-blocked-backend
-    cancel: |
-      HU bloqueada: requires_backend_change=true (detectado en Step 1.5 del refiner).
-
-      El refinement detectó que el frontend NO puede satisfacer esta HU sin un
-      cambio backend previo. Esto es comportamiento ESPERADO — el refiner
-      reconoció el caso antes de gastar tiempo planificando/implementando
-      tareas frontend que no funcionarían.
-
-      Próximos pasos:
-        1. Leé $ARTIFACTS_DIR/hu-refinada.md (también committeado al branch hu/$gen-hu-id.output.hu_id):
-           - sección "Why no frontend refinement applies": diagnóstico
-           - sección "Backend HU to refine in parallel": qué HU backend abrir
-        2. Abrí esa HU backend (en hubara_agency, no acá) y llevala a verde.
-        3. Re-lanzá esta HU frontend: archon workflow run hu-frontend-pipeline "$gen-hu-id.output.hu_id"
-           El smart-resume detecta el refinement persistido y vuelve a correr
-           el refiner (que va a verificar si el backend YA emite los datos).
-    when: "$validate-refinement.output == 'BLOCKED_BACKEND'"
-    depends_on: [validate-refinement]
-
   - id: cancel-bad-refinement
     cancel: |
       Refinement validation FAILED ($validate-refinement.output) en branch $gen-hu-id.output.branch.
       Opciones para retomar:
-        (a) Edití el Issue original con más detalle/contexto + borralo y lanzá idea-a-hu-frontend de nuevo.
-        (b) Escribí el refinement a mano en frontend_dashboard/.frontend/refinements/$gen-hu-id.output.hu_id-tech.md,
-            commit + push a la branch hu/<HU_ID>, re-lanzá: archon workflow run hu-frontend-pipeline "$gen-hu-id.output.hu_id"
+        (a) Edití el Issue original con más detalle/contexto + borralo y lanzá el flow desde cero.
+        (b) Escribí el refinement a mano en hubara_agency/.exoclaw/refinements/$gen-hu-id.output.hu_id-tech.md,
+            commit + push a la branch hu/<HU_ID>, re-lanzá: archon workflow run hu-exoclaw-pipeline "$gen-hu-id.output.hu_id"
             (el bootstrap detecta el refinement persistido y salta FASE 1).
-    when: "$validate-refinement.output != 'PASS' && $validate-refinement.output != 'BLOCKED_BACKEND'"
+    when: "$validate-refinement.output != 'PASS'"
     depends_on: [validate-refinement]
 
   - id: commit-refinement
@@ -439,15 +417,15 @@ nodes:
       HU_ID=$(echo $gen-hu-id.output | jq -r '.hu_id')
       BRANCH=$(echo $gen-hu-id.output | jq -r '.branch')
 
-      mkdir -p frontend_dashboard/.frontend/refinements
+      mkdir -p hubara_agency/.exoclaw/refinements
       cp $ARTIFACTS_DIR/hu-original.md \
-         "frontend_dashboard/.frontend/refinements/${HU_ID}-original.md"
+         "hubara_agency/.exoclaw/refinements/${HU_ID}-original.md"
       cp $ARTIFACTS_DIR/hu-refinada.md \
-         "frontend_dashboard/.frontend/refinements/${HU_ID}-tech.md"
+         "hubara_agency/.exoclaw/refinements/${HU_ID}-tech.md"
 
-      git add "frontend_dashboard/.frontend/refinements/${HU_ID}-"*.md
+      git add "hubara_agency/.exoclaw/refinements/${HU_ID}-"*.md
       if ! git diff --staged --quiet; then
-        git commit -m "${HU_ID}: refinamiento técnico (frontend, auto)"
+        git commit -m "${HU_ID}: refinamiento técnico (exoclaw, auto)"
         git push origin "$BRANCH"
         echo "committed"
       else
@@ -491,7 +469,7 @@ nodes:
   - id: load-plan-if-resume
     bash: |
       HU_ID=$(echo $gen-hu-id.output | jq -r '.hu_id')
-      PLAN_DIR="frontend_dashboard/.frontend/plans/${HU_ID}"
+      PLAN_DIR="hubara_agency/.exoclaw/plans/${HU_ID}"
       cp "$PLAN_DIR/plan-manifest.yaml" "$ARTIFACTS_DIR/plan-manifest.yaml"
       mkdir -p $ARTIFACTS_DIR/tareas
       cp "$PLAN_DIR/tareas/F"*.md $ARTIFACTS_DIR/tareas/
@@ -510,9 +488,9 @@ nodes:
       until: PLANNED
       fresh_context: true
       skills:
-        - frontend-task-planner-archon
+        - exoclaw-task-planner-archon
       prompt: |
-        Aplicá el protocolo del skill frontend-task-planner-archon.
+        Aplicá el protocolo del skill exoclaw-task-planner-archon.
 
         Inputs:
           - $ARTIFACTS_DIR/hu-refinada.md   (refinement, output de FASE 1)
@@ -555,9 +533,9 @@ nodes:
     cancel: |
       Plan validation FAILED ($validate-plan.output) en branch $gen-hu-id.output.branch.
       Opciones para retomar:
-        (a) Edití el refinement (frontend_dashboard/.frontend/refinements/$gen-hu-id.output.hu_id-tech.md)
-            con menos tareas o más claridad, commit + push, re-lanzá: archon workflow run hu-frontend-pipeline "$gen-hu-id.output.hu_id"
-        (b) Escribí el plan-manifest.yaml + tareas a mano en frontend_dashboard/.frontend/plans/$gen-hu-id.output.hu_id/,
+        (a) Edití el refinement (hubara_agency/.exoclaw/refinements/$gen-hu-id.output.hu_id-tech.md)
+            con menos tareas o más claridad, commit + push, re-lanzá: archon workflow run hu-exoclaw-pipeline "$gen-hu-id.output.hu_id"
+        (b) Escribí el plan-manifest.yaml + tareas a mano en hubara_agency/.exoclaw/plans/$gen-hu-id.output.hu_id/,
             commit + push, re-lanzá pipeline (bootstrap salta FASE 1 + 2 si los archivos están).
     when: "$validate-plan.output != 'PASS'"
     depends_on: [validate-plan]
@@ -568,17 +546,17 @@ nodes:
       HU_ID=$(echo $gen-hu-id.output | jq -r '.hu_id')
       BRANCH=$(echo $gen-hu-id.output | jq -r '.branch')
 
-      mkdir -p "frontend_dashboard/.frontend/plans/${HU_ID}/tareas"
+      mkdir -p "hubara_agency/.exoclaw/plans/${HU_ID}/tareas"
       cp $ARTIFACTS_DIR/plan-manifest.yaml \
-         "frontend_dashboard/.frontend/plans/${HU_ID}/plan-manifest.yaml"
+         "hubara_agency/.exoclaw/plans/${HU_ID}/plan-manifest.yaml"
       cp $ARTIFACTS_DIR/tareas/F*.md \
-         "frontend_dashboard/.frontend/plans/${HU_ID}/tareas/"
+         "hubara_agency/.exoclaw/plans/${HU_ID}/tareas/"
 
-      N=$(ls "frontend_dashboard/.frontend/plans/${HU_ID}/tareas/" | wc -l | tr -d ' ')
+      N=$(ls "hubara_agency/.exoclaw/plans/${HU_ID}/tareas/" | wc -l | tr -d ' ')
 
-      git add "frontend_dashboard/.frontend/plans/${HU_ID}/"
+      git add "hubara_agency/.exoclaw/plans/${HU_ID}/"
       if ! git diff --staged --quiet; then
-        git commit -m "${HU_ID}: plan de tareas (frontend, auto, ${N} tareas)"
+        git commit -m "${HU_ID}: plan de tareas (exoclaw, auto, ${N} tareas)"
         git push origin "$BRANCH"
         echo "committed_${N}"
       else
@@ -658,7 +636,7 @@ nodes:
       until: NEVER_AI_SIGNAL  # nunca usamos signal del AI; until_bash decide cuándo parar
       fresh_context: true
       skills:
-        - frontend-implementer-archon
+        - exoclaw-implementer-archon
       # until_bash corre DESPUÉS de cada iteración AI. Si retorna 0, loop termina.
       # Acá hacemos todas las git operations (NO el AI).
       until_bash: |
@@ -672,7 +650,7 @@ nodes:
           exit 0
         fi
         BRANCH="hu/${HU_ID}"
-        RESULTS_DIR="frontend_dashboard/.frontend/results/${HU_ID}"
+        RESULTS_DIR="hubara_agency/.exoclaw/results/${HU_ID}"
         mkdir -p "$RESULTS_DIR"
 
         # Helper: extraer campo de YAML stripping comillas (yaml puede tener `status: "passed"` o `status: passed`)
@@ -711,13 +689,19 @@ nodes:
             } > "$GATE_LOG"
             GATE_OK=1
 
-            for cmd in "npm test" "npm run test:arch" "npx tsc -b" "npm run build"; do
+            # Suite Python DEHA: tests funcionales, suite de arquitectura
+            # (-m architecture cubre R-DET/R-JSON/R-STATELESS/R-HEARTBEAT/R-DIP),
+            # y lint. No hay "build" en Python; pytest -q ya valida import-graph.
+            for cmd in \
+              "uv run pytest tests/ --tb=no -q" \
+              "uv run pytest tests/architecture/ -m architecture --tb=short" \
+              "uv run ruff check src/"; do
               echo "" >> "$GATE_LOG"
-              echo "=== \$ cd frontend_dashboard && $cmd ===" >> "$GATE_LOG"
+              echo "=== \$ cd hubara_agency && $cmd ===" >> "$GATE_LOG"
               # Subshell aísla el cd: si el comando falla, el cwd del until_bash
-              # queda intacto. Si frontend_dashboard no existe, el cd falla y
+              # queda intacto. Si hubara_agency no existe, el cd falla y
               # eval no corre — RC=1, GATE_OK=0, se loguea como FAILED.
-              ( cd frontend_dashboard && eval "$cmd" ) >> "$GATE_LOG" 2>&1
+              ( cd hubara_agency && eval "$cmd" ) >> "$GATE_LOG" 2>&1
               RC=$?
               echo "exit_code=$RC" >> "$GATE_LOG"
               if [ $RC -ne 0 ]; then
@@ -774,19 +758,22 @@ nodes:
           # branch limpio. El result.yaml (con blocked_reason: deterministic_*)
           # SÍ queda commiteado como evidencia para el operador.
           if [ "${SHOULD_COMMIT_BROKEN_CODE:-1}" = "0" ]; then
-            git checkout HEAD -- frontend_dashboard/src 2>/dev/null || true
+            git checkout HEAD -- hubara_agency/src 2>/dev/null || true
             echo "  [GATE] src/ revertido — branch limpio del intento broken" >&2
           fi
 
-          git add frontend_dashboard/src 2>/dev/null || true
+          git add hubara_agency/src 2>/dev/null || true
           git add "$RESULTS_DIR/${TASK_ID}-result.yaml" 2>/dev/null || true
-          git add frontend_dashboard/.frontend/refinements/ 2>/dev/null || true
+          git add hubara_agency/.exoclaw/refinements/ 2>/dev/null || true
 
-          git reset HEAD frontend_dashboard/node_modules 2>/dev/null || true
-          git reset HEAD frontend_dashboard/dist 2>/dev/null || true
-          git reset HEAD frontend_dashboard/.vite 2>/dev/null || true
-          git reset HEAD frontend_dashboard/coverage 2>/dev/null || true
-          git reset HEAD frontend_dashboard/package-lock.json 2>/dev/null || true
+          # Cleanup artefactos Python que nunca deben ir al branch
+          git reset HEAD .venv 2>/dev/null || true
+          git reset HEAD hubara_agency/__pycache__ 2>/dev/null || true
+          git reset HEAD hubara_agency/.pytest_cache 2>/dev/null || true
+          git reset HEAD hubara_agency/.ruff_cache 2>/dev/null || true
+          git reset HEAD hubara_agency/.import_linter_cache 2>/dev/null || true
+          git reset HEAD hubara_agency/htmlcov 2>/dev/null || true
+          git reset HEAD uv.lock 2>/dev/null || true
 
           if ! git diff --staged --quiet; then
             git commit -m "${HU_ID} ${TASK_ID}: status=${STATUS} (auto)"
@@ -827,7 +814,7 @@ nodes:
               # Remover result.yaml persistido para que AI lo vea como pending
               rm -f "${RESULTS_DIR}/${TASK_ID}-result.yaml"
               # Revertir cambios uncommitted al worktree (el commit fallido ya está en branch)
-              git checkout HEAD -- frontend_dashboard/src 2>/dev/null || true
+              git checkout HEAD -- hubara_agency/src 2>/dev/null || true
 
               # Comment en el Issue avisando el retry
               if [ -n "$ISSUE_URL" ] && [ "$ISSUE_URL" != "null" ]; then
@@ -897,24 +884,24 @@ nodes:
         git checkout ${BRANCH}
 
         # Diagnostico (mismos comandos que corre el gate determinista):
-        cd frontend_dashboard
-        npm test                 # ver qué test falla
-        npm run test:arch        # gate FSD/arquitectura (§11 del SKILL)
-        npx tsc -b               # errores de tipo en modo composite
-        npm run build            # build de producción
-        # ... fixeá el código en frontend_dashboard/src/... ...
-        # PROHIBIDO editar src/test/architecture/, .dependency-cruiser.cjs,
-        # tsconfig.arch.json — esos archivos son out-of-scope (§11).
+        cd hubara_agency
+        uv run pytest tests/ --tb=no -q                              # ver qué test funcional falla
+        uv run pytest tests/architecture/ -m architecture --tb=short # gate DEHA/arquitectura (§11 del SKILL)
+        uv run ruff check src/                                        # lint
+        # ... fixeá el código en hubara_agency/src/... ...
+        # PROHIBIDO editar tests/architecture/, .importlinter,
+        # R_JSON_FROZEN_EXEMPTIONS, R_HEARTBEAT_EXEMPTIONS, o ignore_imports
+        # — esos archivos son out-of-scope (§11).
 
         # Cuando esté verde:
         cd ..
-        git add frontend_dashboard/src
+        git add hubara_agency/src
         git commit -m "fix(${TASK_ID}): <descripción del fix>"
         git push origin ${BRANCH}
 
         # Re-lanzá pipeline desde una terminal NORMAL (no Claude Code):
         cd /Users/edgm/Documents/Projects/AgencyHubara
-        archon workflow run hu-frontend-pipeline "${HU_ID}"
+        archon workflow run hu-exoclaw-pipeline "${HU_ID}"
         \`\`\`
 
         El pipeline retomará automáticamente desde la próxima tarea pendiente
@@ -924,14 +911,14 @@ nodes:
 
         \`\`\`bash
         # Editar el refinement o el plan a mano:
-        \$EDITOR frontend_dashboard/.frontend/refinements/${HU_ID}-tech.md
-        \$EDITOR frontend_dashboard/.frontend/plans/${HU_ID}/plan-manifest.yaml
+        \$EDITOR hubara_agency/.exoclaw/refinements/${HU_ID}-tech.md
+        \$EDITOR hubara_agency/.exoclaw/plans/${HU_ID}/plan-manifest.yaml
 
-        git add frontend_dashboard/.frontend/
+        git add hubara_agency/.exoclaw/
         git commit -m "fix(${HU_ID}): replan"
         git push origin ${BRANCH}
 
-        archon workflow run hu-frontend-pipeline "${HU_ID}"
+        archon workflow run hu-exoclaw-pipeline "${HU_ID}"
         \`\`\`
 
         ### Opción C — Abandonar esta HU
@@ -1014,7 +1001,7 @@ nodes:
         fi
 
         # Check: ¿todas las tareas done?
-        MANIFEST="frontend_dashboard/.frontend/plans/${HU_ID}/plan-manifest.yaml"
+        MANIFEST="hubara_agency/.exoclaw/plans/${HU_ID}/plan-manifest.yaml"
         # grep -c siempre imprime un número; no necesita `|| echo 0` (que pega "0\n0")
         TOTAL=$(grep -cE '^  - id: F[0-9]+' "$MANIFEST" 2>/dev/null)
         TOTAL=${TOTAL:-0}
@@ -1033,22 +1020,23 @@ nodes:
         de tu iteración.
 
         Setup (cada iteración):
-          HU_ID=$(ls frontend_dashboard/.frontend/plans/ | head -1)
-          MANIFEST="frontend_dashboard/.frontend/plans/${HU_ID}/plan-manifest.yaml"
-          RESULTS_DIR="frontend_dashboard/.frontend/results/${HU_ID}"
+          HU_ID=$(ls hubara_agency/.exoclaw/plans/ | head -1)
+          MANIFEST="hubara_agency/.exoclaw/plans/${HU_ID}/plan-manifest.yaml"
+          RESULTS_DIR="hubara_agency/.exoclaw/results/${HU_ID}"
 
         Paso A0 — Leer feedback del gate determinista (PRIMERO, antes de Paso A):
           Si existe $ARTIFACTS_DIR/test-failures.md, leelo COMPLETO. Es el output
-          crudo de `npm test`, `npm run test:arch`, `npx tsc -b` y `npm run build`
-          corridos por until_bash después de tu iteración anterior. Tu
-          task-result.yaml dijo `passed` pero el gate falló: estás iterando
-          la MISMA tarea para arreglar lo que rompiste. Diagnosticá los errores
-          y aplicá fixes a los archivos del feature en frontend_dashboard/src/.
+          crudo de `uv run pytest tests/`, `uv run pytest tests/architecture/ -m architecture`
+          y `uv run ruff check src/` corridos por until_bash después de tu iteración
+          anterior. Tu task-result.yaml dijo `passed` pero el gate falló: estás
+          iterando la MISMA tarea para arreglar lo que rompiste. Diagnosticá los
+          errores y aplicá fixes a los archivos del feature en hubara_agency/src/.
 
           PROHIBIDO para arreglar:
-            - frontend_dashboard/src/test/architecture/*
-            - frontend_dashboard/.dependency-cruiser.cjs
-            - frontend_dashboard/tsconfig.arch.json
+            - hubara_agency/tests/architecture/*
+            - hubara_agency/.importlinter
+            - R_JSON_FROZEN_EXEMPTIONS / R_HEARTBEAT_EXEMPTIONS dicts en conftest
+            - cualquier `ignore_imports` en .importlinter
           (§11 del SKILL: la suite de arquitectura es ley, no se relaja.)
 
           Después de aplicar tus fixes, seguí con Paso B (vas a re-escribir
@@ -1067,12 +1055,13 @@ nodes:
         Paso B — Implementar la tarea:
           1. Cargar inputs a $ARTIFACTS_DIR:
              cp "$MANIFEST" "$ARTIFACTS_DIR/plan-manifest.yaml"
-             cp "frontend_dashboard/.frontend/plans/${HU_ID}/tareas/${TASK_ID}-"*.md "$ARTIFACTS_DIR/task.md"
-             cp "frontend_dashboard/.frontend/refinements/${HU_ID}-tech.md" "$ARTIFACTS_DIR/hu-refinada.md"
-          2. Aplicar protocolo del skill frontend-implementer-archon:
-             - escribir código + tests en el worktree (frontend_dashboard/src/...)
-             - correr los §10 verification commands (cd frontend_dashboard && npm test ...)
-             - escribir $ARTIFACTS_DIR/task-result.yaml con status
+             cp "hubara_agency/.exoclaw/plans/${HU_ID}/tareas/${TASK_ID}-"*.md "$ARTIFACTS_DIR/task.md"
+             cp "hubara_agency/.exoclaw/refinements/${HU_ID}-tech.md" "$ARTIFACTS_DIR/hu-refinada.md"
+          2. Aplicar protocolo del skill exoclaw-implementer-archon:
+             - escribir código + tests en el worktree (hubara_agency/src/...)
+             - correr los §10 verification commands (cd hubara_agency && uv run pytest ...)
+             - correr §11 architecture gate: cd hubara_agency && uv run pytest tests/architecture/ -m architecture --tb=short
+             - escribir $ARTIFACTS_DIR/task-result.yaml con status + architecture_gate
 
         Paso C — NO hagas commit / push / git add.
           until_bash se encarga después de esta iteración.
@@ -1103,7 +1092,7 @@ nodes:
       Pipeline INCOMPLETO en FASE 3. Branch $gen-hu-id.output.branch pusheado con todo el progreso hasta la tarea fallida.
       Ver $ARTIFACTS_DIR/pipeline-error.yaml (logueado al stderr de check-pipeline-error) para detalles y remediation.
       En general: editá el código del branch para arreglar la tarea fallida, commit + push, re-lanzá:
-        archon workflow run hu-frontend-pipeline "$gen-hu-id.output.hu_id"
+        archon workflow run hu-exoclaw-pipeline "$gen-hu-id.output.hu_id"
       (smart-resume continúa desde la próxima tarea pendiente).
     when: "$check-pipeline-error.output == 'HAS_ERROR'"
     depends_on: [check-pipeline-error]
@@ -1113,20 +1102,20 @@ nodes:
       # CRITICAL: pipefail — sin esto, exit code es de `tail` (siempre 0)
       # y un test rojo pasa como PASS silenciosamente.
       set -o pipefail
-      cd frontend_dashboard
-      echo "=== npm test ===" >&2
-      npm test 2>&1 | tail -30 >&2 || { echo "FAIL_NPM_TEST"; exit 0; }
-      echo "=== npx tsc -b ===" >&2
-      npx tsc -b 2>&1 | tail -30 >&2 || { echo "FAIL_TSC"; exit 0; }
-      echo "=== npm run build ===" >&2
-      npm run build 2>&1 | tail -30 >&2 || { echo "FAIL_BUILD"; exit 0; }
+      cd hubara_agency
+      echo "=== uv run pytest tests/ --tb=no -q ===" >&2
+      uv run pytest tests/ --tb=no -q 2>&1 | tail -30 >&2 || { echo "FAIL_PYTEST"; exit 0; }
+      echo "=== uv run pytest tests/architecture/ -m architecture --tb=short ===" >&2
+      uv run pytest tests/architecture/ -m architecture --tb=short 2>&1 | tail -30 >&2 || { echo "FAIL_ARCH"; exit 0; }
+      echo "=== uv run ruff check src/ ===" >&2
+      uv run ruff check src/ 2>&1 | tail -30 >&2 || { echo "FAIL_RUFF"; exit 0; }
       echo "PASS"
     timeout: 600000
     when: "$check-pipeline-error.output == 'OK'"
     depends_on: [check-pipeline-error]
 
   - id: cancel-on-final-validation-fail
-    cancel: "Validación final pre-PR FALLÓ ($final-validation.output). Branch $gen-hu-id.output.branch tiene una regresión que ningún test §10 individual capturó. Investigar a mano: cd frontend_dashboard && npm test"
+    cancel: "Validación final pre-PR FALLÓ ($final-validation.output). Branch $gen-hu-id.output.branch tiene una regresión que ningún test §10 individual capturó. Investigar a mano: cd hubara_agency && uv run pytest tests/"
     when: "$final-validation.output != 'PASS'"
     depends_on: [final-validation]
 
@@ -1140,8 +1129,8 @@ nodes:
       const huId = huInfo.hu_id;
       const artifactsDir = "$ARTIFACTS_DIR";
 
-      const refinementOriginal = 'frontend_dashboard/.frontend/refinements/' + huId + '-original.md';
-      const resultsDir = 'frontend_dashboard/.frontend/results/' + huId;
+      const refinementOriginal = 'hubara_agency/.exoclaw/refinements/' + huId + '-original.md';
+      const resultsDir = 'hubara_agency/.exoclaw/results/' + huId;
 
       let summary = '';
       if (existsSync(refinementOriginal)) {
@@ -1174,11 +1163,11 @@ nodes:
         tasksTable + '\n' +
         '## Test plan\n\n' +
         '- [ ] Revisar el diff archivo por archivo\n' +
-        '- [ ] cd frontend_dashboard && npm test\n' +
-        '- [ ] cd frontend_dashboard && npm run build\n' +
-        '- [ ] Smoke test: cd frontend_dashboard && npm run dev y validar UX manualmente\n' +
+        '- [ ] cd hubara_agency && uv run pytest tests/\n' +
+        '- [ ] cd hubara_agency && uv run pytest tests/architecture/ -m architecture\n' +
+        '- [ ] cd hubara_agency && uv run ruff check src/\n' +
         closesLine + '\n' +
-        '🤖 Generado por hu-frontend-pipeline\n';
+        '🤖 Generado por hu-exoclaw-pipeline\n';
 
       await writeFile(artifactsDir + '/pr-body.md', body);
       console.log('written ' + body.length + ' bytes');
@@ -1242,11 +1231,18 @@ nodes:
 
   - id: trigger-review
     bash: |
-      # Disparar el review automático en background. Best-effort:
+      # Disparar el review automático en background. Condicional: si NO existe
+      # el workflow `review-pr-exoclaw`, skip silenciosamente. Best-effort:
       # si el nesting falla, el operador ve el comando en el summary.
       PR_URL=$create-pr.output
       LOG_FILE="$HOME/.archon/logs/review-trigger-$(date +%s).log"
       mkdir -p "$HOME/.archon/logs"
+
+      # Check si el review workflow existe (todavía no creado; condicional)
+      if [ ! -f ".archon/workflows/review-pr-exoclaw.yaml" ]; then
+        echo "review_skipped_no_workflow=lanzá manualmente cuando exista review-pr-exoclaw"
+        exit 0
+      fi
 
       # CRITICAL: unset CLAUDECODE para evitar la advertencia de nested-claude-code
       # y el riesgo de "workflows hang silently". archon detecta esa env var del
@@ -1254,7 +1250,7 @@ nodes:
       # ARCHON_SUPPRESS_NESTED_CLAUDE_WARNING=1 silencia el warning igualmente
       # por si CLAUDECODE se setea desde otro lado.
       (env -u CLAUDECODE ARCHON_SUPPRESS_NESTED_CLAUDE_WARNING=1 \
-         nohup archon workflow run review-pr-frontend "$PR_URL" > "$LOG_FILE" 2>&1 & disown) 2>/dev/null \
+         nohup archon workflow run review-pr-exoclaw "$PR_URL" > "$LOG_FILE" 2>&1 & disown) 2>/dev/null \
         && echo "review_triggered_log=$LOG_FILE" \
         || echo "review_trigger_failed_run_manually"
     depends_on: [create-pr]
@@ -1264,7 +1260,7 @@ nodes:
     bash: |
       HU_ID=$(echo $gen-hu-id.output | jq -r '.hu_id')
       PR_URL=$create-pr.output
-      RESULTS_DIR="frontend_dashboard/.frontend/results/${HU_ID}"
+      RESULTS_DIR="hubara_agency/.exoclaw/results/${HU_ID}"
       TASKS_DONE=$(find "$RESULTS_DIR" -name 'F*-result.yaml' 2>/dev/null | wc -l | tr -d ' ')
       REVIEW_STATUS=$trigger-review.output
 
@@ -1285,7 +1281,7 @@ nodes:
       ║   4. El issue se cierra automáticamente (Closes …)             ║
       ║                                                                ║
       ║ Review NO arrancó? Lanzalo a mano:                             ║
-      ║   archon workflow run review-pr-frontend "${PR_URL}"
+      ║   archon workflow run review-pr-exoclaw "${PR_URL}"
       ╚════════════════════════════════════════════════════════════════╝
       EOF
     depends_on: [trigger-review]

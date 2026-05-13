@@ -1,9 +1,17 @@
-# GitHub Project config para hu-frontend-pipeline
+# GitHub Project config — COMPARTIDO entre todos los pipelines de Archon
 #
-# Si este archivo existe en frontend_dashboard/.frontend/github-project-config.yaml
-# (sin el sufijo .example), el pipeline actualiza el estado del card padre + los
-# sub-items en cada fase. Si NO existe, el pipeline corre igual pero sin
-# actualizar ningún Project.
+# Para activar: copia este archivo a `.archon/github-project-config.yaml`
+# (mismo directorio, sin el sufijo `.example`) y editá los IDs siguiendo las
+# instrucciones de abajo.
+#
+# Lo leen todos los pipelines de Archon (hu-frontend-pipeline,
+# hu-exoclaw-pipeline, idea-a-hu-frontend, idea-a-hu-exoclaw, y cualquier
+# pipeline futuro). El Project board es ÚNICO para todo el repo —
+# cualquier HU (frontend, exoclaw, lo que sea) transiciona por los mismos
+# status options.
+#
+# Si el archivo `.archon/github-project-config.yaml` NO existe, todos los
+# pipelines corren igual pero sin actualizar ningún Project (fail-soft).
 #
 # Cómo conseguir los IDs (corré una vez como setup):
 #

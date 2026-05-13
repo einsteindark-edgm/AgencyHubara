@@ -1,8 +1,19 @@
-# GitHub Project config — REAL para AgencyHubara
+# GitHub Project config — REAL para AgencyHubara (COMPARTIDO entre dominios)
 #
-# Este archivo lo leen `hu-frontend-pipeline` (vía nodos `project-set-*`) y
-# `idea-a-hu-frontend` (nodo `agregar-a-project`). Si no existe, los workflows
-# skipean los updates de Project (fail-soft).
+# Project ÚNICO del repo. Cualquier HU (frontend, exoclaw, futuros pipelines)
+# cae en este mismo board y transiciona por los mismos status options. La
+# configuración es agnóstica al dominio — vive en .archon/ porque es config
+# del orquestador, no del proyecto frontend ni del proyecto exoclaw.
+#
+# Lectores:
+#   - hu-frontend-pipeline.yaml    (nodos `project-set-*`)
+#   - idea-a-hu-frontend.yaml      (nodo `agregar-a-project`)
+#   - hu-exoclaw-pipeline.yaml     (nodos `project-set-*`)
+#   - idea-a-hu-exoclaw.yaml       (nodo `agregar-a-project`)
+#   - cualquier pipeline futuro de Archon que quiera Project sync.
+#
+# Si el archivo no existe, todos los workflows skipean los updates de Project
+# (fail-soft). Es opcional, pero altamente recomendado para visibilidad.
 #
 # Generado por gh CLI + GraphQL el 2026-05-12. Para regenerarlo:
 #   rtk proxy gh project view 1 --owner einsteindark-edgm --format json

@@ -168,8 +168,8 @@ con fan-out manual de terminales.
 #   - Asegurate de que los 4 skills frontend-*-archon estén en .claude/skills/
 #     en MAIN.
 #   - Asegurate de que los 5 workflows frontend estén en .archon/workflows/ en MAIN.
-#   - (Opcional) Configurá .frontend/github-project-config.yaml — ver
-#     `.frontend/github-project-config.yaml.example`.
+#   - (Opcional) Configurá .archon/github-project-config.yaml — ver
+#     `.archon/github-project-config.yaml.example`.
 
 # Por cada HU:
 archon workflow run hu-frontend-pipeline "https://github.com/<owner>/<repo>/issues/42"
@@ -236,7 +236,7 @@ archon workflow run hu-frontend-pipeline "https://github.com/<owner>/<repo>/issu
 | Modo auto-pipeline | ❌ no existe (solo interactivo) | ✅ `hu-frontend-pipeline` (secuencial) |
 | Paralelismo en modo auto | n/a | ❌ secuencial (1 tarea a la vez en el worktree del pipeline) |
 | Paralelismo en modo interactivo | ✅ N terminales manuales + merger | ✅ idéntico (N terminales + merger) |
-| GitHub Projects sync | ❌ | ✅ opcional (vía `.frontend/github-project-config.yaml`, fail-soft) |
+| GitHub Projects sync | ❌ | ✅ opcional (vía `.archon/github-project-config.yaml`, fail-soft) |
 | Branch strategy | trabajo en main directo (commits manuales) | branch `hu/<HU_ID>` aislado, PR al final |
 | Smart resume | n/a | ✅ pipeline re-lanzado detecta fases completas y retoma |
 
@@ -329,17 +329,20 @@ command -v jq               # jq (para parseo JSON en bash)
 # Si falta jq:  brew install jq
 
 # 5. (Opcional) GitHub Project config para el modo auto:
-cp frontend_dashboard/.frontend/github-project-config.yaml.example \
-   frontend_dashboard/.frontend/github-project-config.yaml
+#    Es COMPARTIDO entre todos los pipelines (frontend + exoclaw + futuros).
+#    Vive en .archon/, no en frontend_dashboard/, porque es config del
+#    orquestador agnóstica al dominio.
+cp .archon/github-project-config.yaml.example \
+   .archon/github-project-config.yaml
 # Edita los IDs siguiendo las instrucciones inline del archivo.
 
 # 6. Commit todo lo nuevo a main:
 git add .claude/skills/frontend-*-archon \
         .archon/workflows/*frontend*.yaml \
         .archon/workflows/README-frontend.md \
+        .archon/github-project-config.yaml.example \
         frontend_dashboard/.frontend/spinal-files.yaml \
-        frontend_dashboard/.frontend/project-context.md \
-        frontend_dashboard/.frontend/github-project-config.yaml.example
+        frontend_dashboard/.frontend/project-context.md
 git commit -m "frontend pipeline: skills + workflows + conventions"
 git push origin main
 

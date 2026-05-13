@@ -84,8 +84,15 @@ export const CSS_FILE_ALLOWLIST: ReadonlySet<string> = new Set([
 
 /** Architecture-protected paths (Capa 3 — meta-gate). Relative to REPO_ROOT. */
 export const ARCHITECTURE_PROTECTED_PREFIXES: readonly string[] = [
+  // Tests + dependency-cruiser contract — la arquitectura FSD misma.
   "frontend_dashboard/src/test/architecture/",
   "frontend_dashboard/.dependency-cruiser.cjs",
+  // Workflows de Archon y skills que orquestan el pipeline. Si un AI
+  // implementer pudiera editar el pipeline YAML o el SKILL.md mismo, podría
+  // deshabilitar el gate determinista o borrar las reglas §11. Protegerlos
+  // cierra ese hueco — Capa 3 cubre ahora también el "framework" que evalúa.
+  ".archon/workflows/",
+  ".claude/skills/frontend-",
 ];
 
 // ----------------------------------------------------------------------------

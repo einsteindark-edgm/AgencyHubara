@@ -1,6 +1,6 @@
-name: idea-a-hu-frontend
+name: idea-a-hu-exoclaw
 description: |
-  Entry-point del flujo frontend: toma una idea de negocio en texto libre o
+  Entry-point del flujo exoclaw: toma una idea de negocio en texto libre o
   un .md corto y la refina INTERACTIVAMENTE en una HU (historia de usuario)
   bien formada con título, narrativa Como/Quiero/Para, acceptance criteria
   en formato Given/When/Then, y out of scope explícito.
@@ -8,22 +8,23 @@ description: |
   Flujo simplificado (UNA sola approval explícita):
     1. AI refina tu idea en una HU completa (una pasada, sin iteración)
     2. Auto-publica el issue + card en Project (sin gate)
-    3. ÚNICA approval: ¿lanzar `hu-frontend-pipeline` ahora? (~$0.50, 15-30 min)
+    3. ÚNICA approval: ¿lanzar `hu-exoclaw-pipeline` ahora? (~$0.50, 15-30 min)
        - Sí → arranca en background, pipeline actualiza el card en cada fase
        - No → terminás con el issue listo, lanzás pipeline a mano cuando quieras
 
   Si el draft AI te queda mal, podés:
     - Rechazar el approval del pipeline
     - Editar el issue manualmente en GitHub antes de lanzar
-    - Borrar el issue y re-correr idea-a-hu-frontend con una idea más detallada
+    - Borrar el issue y re-correr idea-a-hu-exoclaw con una idea más detallada
 
   **Use when**:
-    - Tenés una idea de feature pero no la armaste como HU formal.
+    - Tenés una idea de feature para un agente (sales_whatsapp, remarketing_whatsapp,
+      catalog_sync) o para el dashboard backend pero no la armaste como HU formal.
     - Querés que el card en el Project board arranque desde "Idea refined"
       y vaya pasando por Refining → Refined → Planning → ... → Done.
 
   **Input** ($USER_MESSAGE):
-    - Texto libre: "quiero filtrar sesiones por tag para encontrar conversas rápido"
+    - Texto libre: "quiero que el agente de sales detecte imágenes de productos y las describa"
     - Ruta a un .md con notas más extensas
 
   **Pre-requisitos**:
@@ -33,8 +34,8 @@ description: |
   **Output**:
     - Issue creado en GitHub (URL impresa)
     - Card en el Project (status: "Idea refined") si Project está configurado
-    - Draft local persistido en `frontend_dashboard/.frontend/drafts/` (para auditoría)
-    - Si aprobaste el gate: `hu-frontend-pipeline` corriendo en background
+    - Draft local persistido en `hubara_agency/.exoclaw/drafts/` (para auditoría)
+    - Si aprobaste el gate: `hu-exoclaw-pipeline` corriendo en background
 
 provider: claude
 model: sonnet
@@ -112,7 +113,7 @@ nodes:
     timeout: 30000
 
   - id: cancel-bad-input
-    cancel: "Input inválido: $normalize-input.output. Pasame una idea no vacía (mínimo 20 chars): archon workflow run idea-a-hu-frontend 'mi idea de feature'"
+    cancel: "Input inválido: $normalize-input.output. Pasame una idea no vacía (mínimo 20 chars): archon workflow run idea-a-hu-exoclaw 'mi idea de feature'"
     when: "$normalize-input.output != 'OK'"
     depends_on: [normalize-input]
 
@@ -123,7 +124,7 @@ nodes:
   # auto a publicar. Si el draft te queda mal, podés:
   # (a) rechazar el approval de "lanzar pipeline" (gate-lanzar-pipeline)
   # (b) editar el issue manualmente en GitHub antes de lanzar el pipeline
-  # (c) borrar el issue y re-correr idea-a-hu-frontend con una idea más detallada
+  # (c) borrar el issue y re-correr idea-a-hu-exoclaw con una idea más detallada
   # El único checkpoint humano es gate-lanzar-pipeline, mucho más adelante.
 
   - id: refinar-hu-producto
@@ -132,8 +133,13 @@ nodes:
     idle_timeout: 600000  # 10 min para que el AI genere el draft
     allowed_tools: [Read, Write]
     prompt: |
-      Sos un product owner experimentado del dashboard de AgencyHubara
-      (frontend FSD: Vite + React 19 + TanStack Query + Zod + Tailwind v4).
+      Sos un product owner experimentado de AgencyHubara, con foco en los
+      agentes Python construidos sobre exoclaw-temporal (DEHA: Durable
+      Execution + Honest Agent). Los proyectos relevantes son:
+        - sales_whatsapp        — agente de ventas vía WhatsApp Business
+        - remarketing_whatsapp  — agente de remarketing
+        - catalog_sync          — sincronización de catálogos
+        - dashboard (backend)   — FastAPI endpoints que orquestan a los agentes
 
       Tu input es una IDEA DE NEGOCIO. Tu output es UNA HU bien formada,
       en una sola pasada (sin iteración con el operador).
@@ -150,13 +156,13 @@ nodes:
 
         # <Título corto y accionable, ≤80 chars, sin punto final>
 
-        Como **<rol del usuario del dashboard, ej. "operador del dashboard">**,
+        Como **<rol del stakeholder, ej. "operador del backoffice", "cliente WhatsApp", "product owner del agente sales">**,
         quiero **<acción concreta>**,
         para **<beneficio claro de negocio>**.
 
         ## Acceptance criteria
 
-        - **Given** <contexto inicial>, **when** <acción del usuario>, **then** <resultado observable y testable>.
+        - **Given** <contexto inicial>, **when** <acción del usuario o evento>, **then** <resultado observable y testable>.
         - **Given** ..., **when** ..., **then** ...
         - (3 a 5 bullets en total, cada uno verificable)
 
@@ -167,8 +173,9 @@ nodes:
 
         ## Notas técnicas (opcional)
 
-        - <preferencias inferidas de la idea, p.ej. "reusar el componente Pill ya existente">
-        - <constraints conocidos>
+        - **Agente afectado**: <sales_whatsapp | remarketing_whatsapp | catalog_sync | dashboard | platform>
+        - <preferencias inferidas de la idea, p.ej. "reusar el tool fetch_user del platform">
+        - <constraints conocidos, p.ej. "no debe romper R-DET — usar workflow.now() en vez de datetime.now()">
 
       ## Paso 3 — Reglas de calidad (verificá antes de salir)
 
@@ -177,6 +184,7 @@ nodes:
         - Narrativa Como/Quiero/Para con los 3 elementos
         - Cada AC empieza con "Given" y tiene When + Then
         - Out of scope lista al menos 2 cosas que el feature NO hace
+        - Notas técnicas, si las hay, mencionan al menos qué agente está afectado
         - Documento > 200 bytes
         - Inferí lo que falte de la idea original — NO le preguntes al humano,
           NO uses placeholders tipo "<TBD>" o "<a definir>"
@@ -209,7 +217,7 @@ nodes:
     timeout: 10000
 
   - id: cancel-bad-hu
-    cancel: "HU draft validation FAILED: $validate-hu.output. Re-lanzá: archon workflow run idea-a-hu-frontend '<tu idea>'"
+    cancel: "HU draft validation FAILED: $validate-hu.output. Re-lanzá: archon workflow run idea-a-hu-exoclaw '<tu idea>'"
     when: "$validate-hu.output != 'PASS'"
     depends_on: [validate-hu]
 
@@ -220,8 +228,8 @@ nodes:
   - id: save-draft
     bash: |
       set -e
-      mkdir -p frontend_dashboard/.frontend/drafts
-      DRAFT_PATH="frontend_dashboard/.frontend/drafts/idea-$(date -u +%Y%m%d-%H%M%S).md"
+      mkdir -p hubara_agency/.exoclaw/drafts
+      DRAFT_PATH="hubara_agency/.exoclaw/drafts/idea-$(date -u +%Y%m%d-%H%M%S).md"
       cp $ARTIFACTS_DIR/hu-draft.md "$DRAFT_PATH"
       echo "$DRAFT_PATH"
     when: "$validate-hu.output == 'PASS'"
@@ -244,15 +252,17 @@ nodes:
       test -n "$TITLE" || { echo "FATAL: no extrajo título" >&2; exit 1; }
 
       # gh imprime SOLO la URL al stdout cuando no-interactive
-      # --label frontend-hu: el auto-add workflow del Project levanta esta label
-      # y agrega el issue al board automáticamente (built-in workflow).
+      # NOTA: NO usamos `--label` porque el Project board es agnóstico al
+      # dominio — un solo board para frontend/exoclaw/futuros pipelines.
+      # El nodo `agregar-a-project` de abajo agrega el issue al board
+      # explícitamente vía `gh project item-add`, sin depender del built-in
+      # auto-add workflow del Project (que filtra por label).
       #
       # CRÍTICO: capturamos stdout + stderr + exit code separadamente.
       # `set -e` NO aborta en `var=$(failing_cmd)` — necesitamos check explícito.
       gh issue create \
         --title "$TITLE" \
         --body-file $ARTIFACTS_DIR/hu-draft.md \
-        --label "frontend-hu" \
         > "$ARTIFACTS_DIR/.gh-create.log" 2>&1
       GH_RC=$?
       if [ $GH_RC -ne 0 ]; then
@@ -308,8 +318,9 @@ nodes:
 
       # ── Step 1: item-add ──
       # Capturamos stdout + exit code separadamente (sin pipe a head, que rompe $?).
-      # El item puede YA estar en el project si el built-in auto-add lo levantó por
-      # la label frontend-hu — eso NO es un error.
+      # No usamos label en idea-a-hu-exoclaw (board agnóstico al dominio), pero
+      # el built-in auto-add del Project podría levantar el issue por otra regla
+      # configurada (ej. `is:issue is:open`). En ese caso ya estará — eso NO es error.
       gh project item-add "$PN" --owner "$PO" --url "$ISSUE_URL" > "$ARTIFACTS_DIR/.add.log" 2>&1
       ADD_RC=$?
       if [ $ADD_RC -ne 0 ]; then
@@ -319,7 +330,7 @@ nodes:
         if grep -qiE "missing required scopes|read:project|gh auth refresh" "$ARTIFACTS_DIR/.add.log"; then
           echo "FAIL_GH_SCOPE: el token gh perdió el scope 'project'."
           echo "  → corré: gh auth refresh -s project"
-          echo "  → después re-lanzá idea-a-hu-frontend"
+          echo "  → después re-lanzá idea-a-hu-exoclaw"
           tail -3 "$ARTIFACTS_DIR/.add.log"
           exit 1   # FATAL: no tiene sentido seguir, el pipeline downstream también va a fallar
         fi
@@ -398,7 +409,7 @@ nodes:
       ║ Project:    ${PROJECT_STATUS}
       ║                                                                ║
       ║ El card aparece en el Project board con status "Idea refined". ║
-      ║ Cuando arranque hu-frontend-pipeline va a pasar por:           ║
+      ║ Cuando arranque hu-exoclaw-pipeline va a pasar por:            ║
       ║   Refining → Refined → Planning → Planned → Implementing →     ║
       ║   Done — PR ready                                              ║
       ╚════════════════════════════════════════════════════════════════╝
@@ -416,7 +427,7 @@ nodes:
   # ════════════════════════════════════════════════════════════════════
   # Este es el único approval explícito del workflow. Acá decidís si:
   # (a) gastás ~$0.50 + 15-30 min en pipeline auto E2E (refinar técnico
-  #     FSD → planificar tareas → implementar secuencial → PR + review), o
+  #     DEHA → planificar tareas → implementar secuencial → PR + review), o
   # (b) terminás acá con el issue creado y lanzás el pipeline más tarde.
 
   - id: gate-lanzar-pipeline
@@ -427,21 +438,24 @@ nodes:
         ✅ Card en el Project: "Idea refined"
 
         ─────────────────────────────────────────────────────────────────
-        ¿Lanzo `hu-frontend-pipeline` AHORA con este issue?
+        ¿Lanzo `hu-exoclaw-pipeline` AHORA con este issue?
         ─────────────────────────────────────────────────────────────────
 
         APROBAR → arranca en background (~$0.50, 15-30 min). Va a:
-          1. refinar técnicamente (FSD: 4 import rules + 14 anti-patterns)
-          2. planificar el DAG de tareas atómicas
-          3. implementar tareas secuencialmente (npm test entre cada una)
-          4. validar (npm test + tsc -b + npm run build) en el branch
+          1. refinar técnicamente (DEHA: 5 hard rules R-DET / R-JSON /
+             R-STATELESS / R-HEARTBEAT / R-DIP + anti-patterns)
+          2. planificar el DAG de tareas atómicas (DTOs + activities + tools)
+          3. implementar tareas secuencialmente (uv run pytest entre cada una)
+          4. validar (uv run pytest + tests/architecture/ + ruff check src/) en el branch
           5. abrir PR contra main
-          6. disparar review automático (5 agentes especializados)
+          6. disparar review automático (5 agentes especializados:
+             deha-compliance / pydantic-boundary / temporal-practices /
+             test-coverage / security)
           7. actualizar el card del Project en cada fase
 
         RECHAZAR → terminamos acá. El issue + card quedan listos. Lanzás
           el pipeline cuando quieras desde otra terminal:
-            archon workflow run hu-frontend-pipeline "$create-issue.output"
+            archon workflow run hu-exoclaw-pipeline "$create-issue.output"
 
   - id: lanzar-pipeline
     bash: |
@@ -471,7 +485,7 @@ nodes:
 
       # env -u CLAUDECODE evita "may hang silently" del nested archon-in-claude-code
       (env -u CLAUDECODE ARCHON_SUPPRESS_NESTED_CLAUDE_WARNING=1 \
-         nohup archon workflow run hu-frontend-pipeline "$ISSUE_URL" \
+         nohup archon workflow run hu-exoclaw-pipeline "$ISSUE_URL" \
          > "$LOG_FILE" 2>&1 & disown) 2>/dev/null \
         && echo "pipeline_triggered_log=$LOG_FILE" \
         || echo "pipeline_trigger_failed_run_manually"
@@ -501,7 +515,7 @@ nodes:
       ║      automáticamente (revisá en ~3-5 min)                      ║
       ║   3. Cuando termine, vas a ver un PR + un comment del review   ║
       ║   4. Si "pipeline_trigger_failed_run_manually": lanzalo a mano:║
-      ║      archon workflow run hu-frontend-pipeline "${ISSUE_URL}"
+      ║      archon workflow run hu-exoclaw-pipeline "${ISSUE_URL}"
       ╚════════════════════════════════════════════════════════════════╝
       EOF
     depends_on: [lanzar-pipeline]
