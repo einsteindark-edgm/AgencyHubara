@@ -1,0 +1,52 @@
+task_id: F01
+hu_id: HU-20260512-224306-mostrar-mensajes-del-agente-en-el-histor
+status: passed
+timestamp: 2026-05-12
+
+verification_results:
+  - command: "npx tsc -b"
+    exit_code: 2
+    note: "2 pre-existing TS errors in entities/session/api.ts (phone_number_id, memory_content optional mismatch). Not introduced by this task. Confirmed via git stash before/after."
+  - command: "npm test -- entities/message"
+    exit_code: 0
+    tests_passed: 7
+  - command: "npm test -- features/session-chat"
+    exit_code: 0
+    tests_passed: 5
+  - command: "npm run build"
+    exit_code: 0
+  - command: "npm test && npm run lint"
+    exit_code: 1
+    note: "All 35 tests passed. Lint error in session-metadata/ui/useCombinedHistory.ts:34 (Date.now() purity) is pre-existing, not introduced by this task."
+
+fsd_compliance:
+  no_rogue_fetch: true
+  no_deep_feature_imports: true
+  no_cross_feature_imports: true
+  note: "Pre-existing cross-feature import in session-metadata/ui/MemorySummarySection.tsx (unrelated to this task)."
+
+definition_of_done:
+  MessageSender_type_exported: true
+  getMessageSender_exported: true
+  index_barrel_updated: true
+  filters_test_3_new_assertions: true
+  ChatBubble_sender_prop: true
+  ChatBubble_test_3_rtl_tests: true
+  ChatMessageList_passes_sender: true
+  ChatMessageListSkeleton_created: true
+  SessionChat_uses_skeleton: true
+  session_chat_index_unchanged: true
+  Dashboard_unchanged: true
+  index_css_unchanged: true
+
+files_written:
+  - frontend_dashboard/src/entities/message/model.ts
+  - frontend_dashboard/src/entities/message/filters.ts
+  - frontend_dashboard/src/entities/message/index.ts
+  - frontend_dashboard/src/entities/message/filters.test.ts
+  - frontend_dashboard/src/features/session-chat/ui/ChatBubble.tsx
+  - frontend_dashboard/src/features/session-chat/ui/ChatBubble.test.tsx
+  - frontend_dashboard/src/features/session-chat/ui/ChatMessageList.tsx
+  - frontend_dashboard/src/features/session-chat/ui/ChatMessageListSkeleton.tsx
+  - frontend_dashboard/src/features/session-chat/ui/ChatMessageListSkeleton.test.tsx
+  - frontend_dashboard/src/features/session-chat/ui/SessionChat.tsx

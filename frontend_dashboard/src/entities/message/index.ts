@@ -1,4 +1,4 @@
-export type { ChatMessage, MessageUiType } from "./model";
+export type { ChatMessage, MessageUiType, MessageSender } from "./model";
 export { chatMessageSchema, messageUiTypeSchema } from "./contracts";
 export type { ChatMessageDto } from "./contracts";
 export {
@@ -6,4 +6,5 @@ export {
   isGhostTrigger,
   isAgentEcho,
   isVisibleChatMessage,
+  getMessageSender,
 } from "./filters";

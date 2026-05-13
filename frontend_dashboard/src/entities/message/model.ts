@@ -10,6 +10,8 @@ export type MessageUiType =
   | "tool_execution_result"
   | "agent_tool_call";
 
+export type MessageSender = "user" | "agent";
+
 export interface ChatMessage {
   ui_type: MessageUiType;
   role: string;
