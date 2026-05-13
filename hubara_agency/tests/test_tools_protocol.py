@@ -21,7 +21,7 @@ from exoclaw.agent.tools import ToolContext
 from exoclaw.agent.tools.protocol import ToolBase
 from exoclaw.agent.tools.registry import ToolRegistry
 
-from src.sales_whatsapp.tools.routing import TransferToSalesAgentTool
+from src.platform.tools.routing import TransferToSalesAgentTool
 from src.sales_whatsapp.tools.tags import ManageConversationTagTool
 
 
@@ -76,7 +76,7 @@ def test_tag_tool_implements_protocol(tmp_path: Path) -> None:
 def test_tools_have_no_pydantic_field() -> None:
     """Regression: en pre-PR-C las tools mezclaban `pydantic.Field(...)` con
     `class TransferToSalesAgentTool(Tool):`, lo cual rompia el protocolo."""
-    import src.sales_whatsapp.tools.routing as routing_mod
+    import src.platform.tools.routing as routing_mod
     import src.sales_whatsapp.tools.tags as tags_mod
 
     for mod in (routing_mod, tags_mod):

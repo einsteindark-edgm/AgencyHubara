@@ -18,7 +18,7 @@ from pathlib import Path
 
 from exoclaw.agent.tools import ToolContext
 
-from src.sales_whatsapp.tools.routing import TransferToSalesAgentTool
+from src.platform.tools.routing import TransferToSalesAgentTool
 from src.sales_whatsapp.tools.tags import ManageConversationTagTool
 
 
@@ -64,7 +64,7 @@ def test_routing_tool_module_does_not_import_temporal_client() -> None:
     assert ".signal(" not in code
 
     # Y el modulo entero tampoco importa temporal_client (R-DIP).
-    import src.sales_whatsapp.tools.routing as routing_mod
+    import src.platform.tools.routing as routing_mod
     mod_code = _strip_python_comments(inspect.getsource(routing_mod))
     assert "get_temporal_client" not in mod_code
     assert "from src.platform.temporal.client" not in mod_code

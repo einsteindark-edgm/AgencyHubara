@@ -16,6 +16,14 @@ Inputs are validated by `ToolBase.validate_params` against the JSON schema below
 (no Pydantic). The schema enforces `resumen: string, minLength=1`, so silent
 defaults like the legacy `or 'El cliente volvió a interactuar'` are gone:
 invalid params surface to the LLM as `Error: Invalid parameters ...`.
+
+LOCATION RATIONALE:
+This tool used to live in src/sales_whatsapp/tools/ but is consumed by the
+remarketing_whatsapp agent (it transfers FROM remarketing back TO sales).
+Living inside sales/ created a cross-agent import (remarketing → sales) which
+violates R-DIP #10 (agents-independent). Moved to src/platform/tools/ so that
+both sales and remarketing import it via the platform without coupling to
+each other.
 """
 
 from __future__ import annotations

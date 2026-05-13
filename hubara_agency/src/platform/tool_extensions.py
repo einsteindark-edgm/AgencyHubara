@@ -1,14 +1,14 @@
 """Mecanismo de extension de tools por dominio (cierra NEW-5).
 
 Antes (`src/core/activities.py:execute_tool`):
-    from src.sales_whatsapp.tools.routing import TransferToSalesAgentTool
+    from src.platform.tools.routing import TransferToSalesAgentTool
     registry.register(TransferToSalesAgentTool(workspace=...))
 Eso era una inversion DIP: `core` importaba `domain` por path concreto.
 
 Ahora cada dominio registra su factory en el boot del Worker (composition
 root legitimo, conoce ambos lados):
     register_tool_extension(
-        "sales.transfer", lambda ws: TransferToSalesAgentTool(workspace=str(ws))
+        "transfer.to_sales", lambda ws: TransferToSalesAgentTool(workspace=str(ws))
     )
 
 Y el adapter `DefaultToolRegistry` (o `execute_tool` directo) llama

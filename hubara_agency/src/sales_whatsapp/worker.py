@@ -25,7 +25,7 @@ from src.sales_whatsapp.tools.catalog import (
     GetProductByHandleTool,
     SearchProductsTool,
 )
-from src.sales_whatsapp.tools.routing import TransferToSalesAgentTool
+from src.platform.tools.routing import TransferToSalesAgentTool
 from src.sales_whatsapp.tools.tags import ManageConversationTagTool
 from src.sales_whatsapp.workflows.sales_session import HubaraSalesSessionWorkflow
 from exoclaw_temporal.activities.conversation import build_prompt, record_turn

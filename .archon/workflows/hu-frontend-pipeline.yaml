@@ -1033,7 +1033,11 @@ nodes:
         de tu iteración.
 
         Setup (cada iteración):
-          HU_ID=$(ls frontend_dashboard/.frontend/plans/ | head -1)
+          # CRITICAL: obtenemos HU_ID del nodo `gen-hu-id` (auto-substituido por
+          # Archon en este prompt). NO usar `ls plans/ | head -1`: el dir puede
+          # tener múltiples HUs ya mergeados a main y el `head -1` agarra el
+          # alfabéticamente primero — casi nunca el actual del pipeline.
+          HU_ID=$(echo '$gen-hu-id.output' | jq -r '.hu_id')
           MANIFEST="frontend_dashboard/.frontend/plans/${HU_ID}/plan-manifest.yaml"
           RESULTS_DIR="frontend_dashboard/.frontend/results/${HU_ID}"
 

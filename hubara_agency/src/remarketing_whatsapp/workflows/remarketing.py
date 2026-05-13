@@ -77,7 +77,6 @@ class RemarketingSessionWorkflow:
             input,
             **_LLM_OPTIONS,
         )
-        ws_path = input_data.workspace.path
 
         await workflow.execute_activity(
             claim_conversation_routing,

@@ -33,11 +33,15 @@ forbidden_modules =
 ; Known debt — documented exceptions (do NOT add more without ADR):
 ;   - dispatcher.py uses LOCAL imports inside @activity.defn bodies to avoid
 ;     cycles when dispatching to a sibling agent. Long-term fix: move
-;     SalesSessionInput / RemarketingSessionInput to src/platform/contracts.py
-;     and dispatch by workflow name + DTO without importing agent modules.
+;     SalesSessionInput / RemarketingSessionInput / workflow registry to
+;     src/platform/* and dispatch by workflow name + DTO without importing
+;     agent modules.
 ignore_imports =
     src.platform.temporal.dispatcher -> src.sales_whatsapp.config.env
     src.platform.temporal.dispatcher -> src.sales_whatsapp.contracts
+    src.platform.temporal.dispatcher -> src.sales_whatsapp.workflows.sales_session
+    src.platform.temporal.dispatcher -> src.remarketing_whatsapp.config.env
+    src.platform.temporal.dispatcher -> src.remarketing_whatsapp.contracts
 unmatched_ignore_imports_alerting = warn
 ; Some local-import edges only appear when the activity body is executed.
 ; "warn" prevents CI failure when an exception goes unused, but still surfaces it.
@@ -53,11 +57,26 @@ modules =
 ; Cross-agent flow goes through src.platform.* (dispatcher, contracts, channels).
 ; If you need shared code, lift it to src.platform/ — never import a sibling agent.
 ;
-; Same known debt as `platform-no-agents`: the dispatcher creates a transitive
-; sales <-> remarketing edge until the SessionInput DTOs move to platform/.
+; Known debt — documented exceptions (do NOT add more without ADR):
+;
+;   1. The dispatcher activity (src.platform.temporal.dispatcher) uses LOCAL
+;      imports inside @activity.defn bodies to avoid module-level cycles when
+;      routing to a sibling agent. Long-term fix: move SessionInput DTOs +
+;      workspace-path lookups to src.platform.contracts / src.platform.config,
+;      dispatch by workflow name string + DTO without importing agent modules.
+;
+;   2. sales.use_cases.load_or_start_sales_session imports
+;      RemarketingSessionWorkflow as a TYPE for `workflow_class: type` so it
+;      can call `start_workflow(<class>, ...)`. Long-term fix: same as #1 —
+;      when workflow registry lives in platform/, the use-case branches on a
+;      string key and the cross-agent import disappears.
 ignore_imports =
     src.platform.temporal.dispatcher -> src.sales_whatsapp.config.env
     src.platform.temporal.dispatcher -> src.sales_whatsapp.contracts
+    src.platform.temporal.dispatcher -> src.sales_whatsapp.workflows.sales_session
+    src.platform.temporal.dispatcher -> src.remarketing_whatsapp.config.env
+    src.platform.temporal.dispatcher -> src.remarketing_whatsapp.contracts
+    src.sales_whatsapp.use_cases.load_or_start_sales_session -> src.remarketing_whatsapp.workflows.remarketing
 unmatched_ignore_imports_alerting = warn
 
 ; --- R-DIP #7 — tools/ are pure ----------------------------------------------

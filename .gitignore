@@ -7,3 +7,9 @@ dist/
 *.egg-info/
 .env
 mise.local.toml
+
+# import-linter cache — STALE cache can hide cross-module violations.
+# The architecture test_r_dip removes this before invoking lint-imports.
+.import_linter_cache/
+.ruff_cache/
+htmlcov/

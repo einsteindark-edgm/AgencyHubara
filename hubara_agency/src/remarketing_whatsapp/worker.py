@@ -23,7 +23,7 @@ from src.remarketing_whatsapp.activities import (
 )
 from src.platform.session_history.activities import persist_assistant_message_activity
 from src.remarketing_whatsapp.workflows.remarketing import RemarketingSessionWorkflow
-from src.sales_whatsapp.tools.routing import TransferToSalesAgentTool
+from src.platform.tools.routing import TransferToSalesAgentTool
 from exoclaw_temporal.activities.conversation import build_prompt, record_turn
 from exoclaw_temporal.activities.llm import llm_chat
 
