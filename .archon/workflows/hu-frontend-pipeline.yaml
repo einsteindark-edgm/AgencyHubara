@@ -87,11 +87,33 @@ nodes:
         echo "FAIL_NO_ORIGIN_OR_NETWORK"; exit 0;
       }
 
+      # CRÍTICO: si Project sync está activo, validar scope 'project' del token gh.
+      # Sin él, gh project item-add/edit/list fallan con
+      # "missing required scopes [read:project]" y los nodos project-set-*
+      # fallan SILENCIOSAMENTE.
+      if [ -f frontend_dashboard/.frontend/github-project-config.yaml ]; then
+        if ! gh auth status 2>&1 | grep -qE "Token scopes:.*\\bproject\\b"; then
+          echo "FAIL_GH_NO_PROJECT_SCOPE"
+          exit 0
+        fi
+      fi
+
       echo "OK"
     timeout: 180000
 
   - id: cancel-bad-prereqs
-    cancel: "Pre-requisitos no cumplidos: $check-prereqs.output. Diagnóstico: gh auth login (FAIL_GH_AUTH), brew install jq bun (FAIL_NO_*), commit .frontend/* a main (FAIL_MISSING_*), npm install para regenerar lockfile (FAIL_NO_LOCKFILE), revisar conectividad/credenciales push (FAIL_NO_ORIGIN_OR_NETWORK)."
+    cancel: |
+      Pre-requisitos no cumplidos: $check-prereqs.output
+
+      Diagnóstico:
+        FAIL_GH_AUTH               → gh auth login
+        FAIL_GH_NO_PROJECT_SCOPE   → gh auth refresh -s project
+        FAIL_NO_NODE/NPM/BUN/JQ/GIT → brew install <tool>
+        FAIL_MISSING_*             → commit el archivo a main, no está en origin
+        FAIL_MISSING_SKILL_*       → commit .claude/skills/frontend-*-archon a main
+        FAIL_NO_LOCKFILE           → cd frontend_dashboard && npm install para crear lockfile
+        FAIL_NPM_CI                → revisar el error de npm en stderr
+        FAIL_NO_ORIGIN_OR_NETWORK  → revisar conectividad/credenciales git push
     when: "$check-prereqs.output != 'OK'"
     depends_on: [check-prereqs]
 
@@ -640,7 +662,92 @@ nodes:
             exit 1
           fi
 
+          # ════════════════════════════════════════════════════════════════
+          # GATE DETERMINISTA
+          # Si el AI reportó status: passed, RE-corremos los tests acá. El
+          # AI puede mentir (olvidarse de §11, silenciar fallos); este gate
+          # es la verdad. Si falla, el AI re-implementa la misma tarea con
+          # $ARTIFACTS_DIR/test-failures.md como feedback. Si después de
+          # MAX_DET_RETRIES sigue fallando, se trata como permanent failure.
+          # ════════════════════════════════════════════════════════════════
+          if [ "$STATUS" = "passed" ]; then
+            echo "=== Gate determinista (${TASK_ID}) ===" >&2
+            GATE_LOG="$ARTIFACTS_DIR/test-failures.md"
+            : > "$GATE_LOG"
+            {
+              echo "# Gate determinista — ${TASK_ID}"
+              echo "# Corrido por until_bash después de que el AI reportó status: passed."
+              echo "# Si el AI mintió, este archivo lo prueba. Arreglá los errores debajo."
+              echo ""
+            } > "$GATE_LOG"
+            GATE_OK=1
+
+            for cmd in "npm test" "npm run test:arch" "npx tsc -b" "npm run build"; do
+              echo "" >> "$GATE_LOG"
+              echo "=== \$ cd frontend_dashboard && $cmd ===" >> "$GATE_LOG"
+              # Subshell aísla el cd: si el comando falla, el cwd del until_bash
+              # queda intacto. Si frontend_dashboard no existe, el cd falla y
+              # eval no corre — RC=1, GATE_OK=0, se loguea como FAILED.
+              ( cd frontend_dashboard && eval "$cmd" ) >> "$GATE_LOG" 2>&1
+              RC=$?
+              echo "exit_code=$RC" >> "$GATE_LOG"
+              if [ $RC -ne 0 ]; then
+                GATE_OK=0
+                echo "  [GATE] $cmd FAILED (exit $RC)" >&2
+              else
+                echo "  [GATE] $cmd OK" >&2
+              fi
+            done
+
+            if [ $GATE_OK -eq 0 ]; then
+              DET_RETRY_FILE="$ARTIFACTS_DIR/det-retries-${TASK_ID}.count"
+              DET_RETRIES=$(cat "$DET_RETRY_FILE" 2>/dev/null || echo 0)
+              MAX_DET_RETRIES=2
+
+              if [ "$DET_RETRIES" -lt "$MAX_DET_RETRIES" ]; then
+                # ════ Re-implementar misma tarea con feedback ════
+                NEW_DET=$((DET_RETRIES + 1))
+                echo "$NEW_DET" > "$DET_RETRY_FILE"
+                echo "  [GATE] det-retry ${NEW_DET}/${MAX_DET_RETRIES} — AI re-implementa" >&2
+
+                # Borrar marcadores de éxito; la tarea vuelve a "pending" para el AI.
+                # NO revertimos src/: el AI ve su código broken + test-failures.md
+                #   y aplica fix incremental (más rápido que empezar de cero).
+                # NO commiteamos: el branch queda limpio del intento broken.
+                rm -f "$ARTIFACTS_DIR/task-result.yaml"
+                rm -f "$ARTIFACTS_DIR/task.md"
+                # results dir NO se toca (no escribimos nada, tarea sigue pending).
+
+                exit 1   # loop continúa, próxima iter del AI ve test-failures.md
+              fi
+
+              # ════ Retries agotados → permanent failure ════
+              echo "  [GATE] retries agotados (${DET_RETRIES}/${MAX_DET_RETRIES}). Permanent failure." >&2
+              # Sobrescribir el yaml para que el bloque downstream lo trate como blocked
+              sed -i.bak 's/^status: *passed/status: blocked/' "$ARTIFACTS_DIR/task-result.yaml"
+              rm -f "$ARTIFACTS_DIR/task-result.yaml.bak"
+              grep -q '^blocked_reason:' "$ARTIFACTS_DIR/task-result.yaml" || \
+                echo "blocked_reason: deterministic_validation_failed" >> "$ARTIFACTS_DIR/task-result.yaml"
+              # Re-leer STATUS para que el resto del flujo lo trate como blocked
+              STATUS="blocked"
+              SHOULD_COMMIT_BROKEN_CODE=0   # ver bloque commit abajo
+            else
+              # ════ Gate OK — limpiar contador, seguir al commit ════
+              rm -f "$ARTIFACTS_DIR/det-retries-${TASK_ID}.count"
+              echo "  [GATE] todos los comandos OK — proceeding al commit" >&2
+            fi
+          fi
+
           cp "$ARTIFACTS_DIR/task-result.yaml" "${RESULTS_DIR}/${TASK_ID}-result.yaml"
+
+          # Si el gate determinista agotó retries, el código en src/ está broken.
+          # NO lo commiteamos al branch — revertimos src/ a HEAD para dejar el
+          # branch limpio. El result.yaml (con blocked_reason: deterministic_*)
+          # SÍ queda commiteado como evidencia para el operador.
+          if [ "${SHOULD_COMMIT_BROKEN_CODE:-1}" = "0" ]; then
+            git checkout HEAD -- frontend_dashboard/src 2>/dev/null || true
+            echo "  [GATE] src/ revertido — branch limpio del intento broken" >&2
+          fi
 
           git add frontend_dashboard/src 2>/dev/null || true
           git add "$RESULTS_DIR/${TASK_ID}-result.yaml" 2>/dev/null || true
@@ -716,12 +823,21 @@ nodes:
             # ════ PERMANENT FAILURE ════
             # (no transient, o retries agotados)
 
+            # Display de los intentos: si la falla fue del gate determinista,
+            # mostramos los DET_RETRIES; si no, los transient retries.
+            if [ "$BR" = "deterministic_validation_failed" ]; then
+              DET_USED=$(cat "$ARTIFACTS_DIR/det-retries-${TASK_ID}.count" 2>/dev/null || echo "?")
+              ATTEMPTS_DISPLAY="${DET_USED}/2 (gate determinista)"
+            else
+              ATTEMPTS_DISPLAY="${RETRIES}/${MAX_RETRIES} (transient)"
+            fi
+
             cat > "$ARTIFACTS_DIR/pipeline-error.yaml" <<EOF
         phase: implementing
         failed_task: ${TASK_ID}
         failed_status: ${STATUS}
         blocked_reason: ${BR:-unknown}
-        retries_attempted: ${RETRIES}/${MAX_RETRIES}
+        retries_attempted: ${ATTEMPTS_DISPLAY}
         branch: ${BRANCH}
         remediation: |
           Ver el comment en el Issue ${ISSUE_URL} con los comandos exactos para retomar.
@@ -736,7 +852,7 @@ nodes:
         |---|---|
         | Status | \`${STATUS}\` |
         | Razón | \`${BR:-unknown}\` |
-        | Auto-retries usados | \`${RETRIES}/${MAX_RETRIES}\` |
+        | Intentos usados | \`${ATTEMPTS_DISPLAY}\` |
         | Branch | \`${BRANCH}\` |
         | HU id | \`${HU_ID}\` |
 
@@ -751,11 +867,15 @@ nodes:
         git fetch origin
         git checkout ${BRANCH}
 
-        # Diagnostico:
+        # Diagnostico (mismos comandos que corre el gate determinista):
         cd frontend_dashboard
-        npm test       # ver qué test falla
-        npx tsc -b     # ver errores de tipo
+        npm test                 # ver qué test falla
+        npm run test:arch        # gate FSD/arquitectura (§11 del SKILL)
+        npx tsc -b               # errores de tipo en modo composite
+        npm run build            # build de producción
         # ... fixeá el código en frontend_dashboard/src/... ...
+        # PROHIBIDO editar src/test/architecture/, .dependency-cruiser.cjs,
+        # tsconfig.arch.json — esos archivos son out-of-scope (§11).
 
         # Cuando esté verde:
         cd ..
@@ -793,6 +913,26 @@ nodes:
         ---
         🤖 Status del card movido a \`Blocked\` en el Project board.
         COMMENT
+
+              # Si la falla fue por gate determinista, anexar el tail crudo de
+              # los errores para que el operador no tenga que clonear el branch
+              # solo para ver qué rompió.
+              if [ "$BR" = "deterministic_validation_failed" ] && [ -f "$ARTIFACTS_DIR/test-failures.md" ]; then
+                {
+                  echo ""
+                  echo "---"
+                  echo ""
+                  echo "## Últimas 60 líneas del gate determinista"
+                  echo ""
+                  echo '```'
+                  tail -60 "$ARTIFACTS_DIR/test-failures.md"
+                  echo '```'
+                  echo ""
+                  echo "El archivo completo está en el worktree de Archon:"
+                  echo "\`\$ARTIFACTS_DIR/test-failures.md\` del run que falló."
+                } >> "$ARTIFACTS_DIR/failure-comment.md"
+              fi
+
               gh issue comment "$ISSUE_URL" --body-file "$ARTIFACTS_DIR/failure-comment.md" 2>&1 | tail -3 >&2 || true
             fi
 
@@ -867,6 +1007,24 @@ nodes:
           HU_ID=$(ls frontend_dashboard/.frontend/plans/ | head -1)
           MANIFEST="frontend_dashboard/.frontend/plans/${HU_ID}/plan-manifest.yaml"
           RESULTS_DIR="frontend_dashboard/.frontend/results/${HU_ID}"
+
+        Paso A0 — Leer feedback del gate determinista (PRIMERO, antes de Paso A):
+          Si existe $ARTIFACTS_DIR/test-failures.md, leelo COMPLETO. Es el output
+          crudo de `npm test`, `npm run test:arch`, `npx tsc -b` y `npm run build`
+          corridos por until_bash después de tu iteración anterior. Tu
+          task-result.yaml dijo `passed` pero el gate falló: estás iterando
+          la MISMA tarea para arreglar lo que rompiste. Diagnosticá los errores
+          y aplicá fixes a los archivos del feature en frontend_dashboard/src/.
+
+          PROHIBIDO para arreglar:
+            - frontend_dashboard/src/test/architecture/*
+            - frontend_dashboard/.dependency-cruiser.cjs
+            - frontend_dashboard/tsconfig.arch.json
+          (§11 del SKILL: la suite de arquitectura es ley, no se relaja.)
+
+          Después de aplicar tus fixes, seguí con Paso B (vas a re-escribir
+          task-result.yaml con status: passed). until_bash va a re-correr el
+          gate; si ahora pasa, commiteamos. Si no, otra iteración.
 
         Paso A — Encontrar la próxima tarea pendiente:
           Iterá parallel_batches[] del manifest en orden. Dentro de cada

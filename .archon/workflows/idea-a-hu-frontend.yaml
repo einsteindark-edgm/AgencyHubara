@@ -53,11 +53,31 @@ nodes:
       set -e
       gh auth status >&2 2>&1 || { echo "FAIL_GH_AUTH"; exit 0; }
       command -v jq  >/dev/null || { echo "FAIL_NO_JQ"; exit 0; }
+
+      # CRÍTICO: validar que el token gh tiene scope 'project' (Projects v2 API).
+      # Sin esto, gh project item-add/edit/list fallan con
+      # "missing required scopes [read:project]" y los nodos project-set-*
+      # fallan SILENCIOSAMENTE (exit 0 con WARN al stdout).
+      # Si el config opcional de Project no existe, no chequeamos scope.
+      if [ -f frontend_dashboard/.frontend/github-project-config.yaml ]; then
+        if ! gh auth status 2>&1 | grep -qE "Token scopes:.*\\bproject\\b"; then
+          echo "FAIL_GH_NO_PROJECT_SCOPE"
+          exit 0
+        fi
+      fi
+
       echo "OK"
     timeout: 30000
 
   - id: cancel-bad-prereqs
-    cancel: "Pre-requisitos faltantes: $check-prereqs.output. (gh auth login / brew install jq)"
+    cancel: |
+      Pre-requisitos faltantes: $check-prereqs.output
+
+      Diagnóstico:
+        FAIL_GH_AUTH            → gh auth login
+        FAIL_NO_JQ              → brew install jq
+        FAIL_GH_NO_PROJECT_SCOPE → gh auth refresh -s project
+                                   (necesario para gh project item-add/edit/list)
     when: "$check-prereqs.output != 'OK'"
     depends_on: [check-prereqs]
 
@@ -293,6 +313,16 @@ nodes:
       gh project item-add "$PN" --owner "$PO" --url "$ISSUE_URL" > "$ARTIFACTS_DIR/.add.log" 2>&1
       ADD_RC=$?
       if [ $ADD_RC -ne 0 ]; then
+        # CRÍTICO: detectar scope error específicamente. Si el token gh perdió
+        # el scope 'project', TODOS los project-set-* del pipeline van a fallar
+        # también. Mejor que el operador lo sepa AHORA y haga gh auth refresh.
+        if grep -qiE "missing required scopes|read:project|gh auth refresh" "$ARTIFACTS_DIR/.add.log"; then
+          echo "FAIL_GH_SCOPE: el token gh perdió el scope 'project'."
+          echo "  → corré: gh auth refresh -s project"
+          echo "  → después re-lanzá idea-a-hu-frontend"
+          tail -3 "$ARTIFACTS_DIR/.add.log"
+          exit 1   # FATAL: no tiene sentido seguir, el pipeline downstream también va a fallar
+        fi
         # Si el error es "already exists" / similar, seguimos. Otro error: warn.
         if grep -qiE "already|exists|duplicate" "$ARTIFACTS_DIR/.add.log"; then
           echo "item ya estaba en project (probablemente auto-add)"
