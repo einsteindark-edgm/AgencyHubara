@@ -21,6 +21,7 @@ from src.remarketing_whatsapp.activities import (
     bootstrap_remarketing_session_activity,
     build_remarketing_trigger_activity,
 )
+from src.platform.session_history.activities import persist_assistant_message_activity
 from src.remarketing_whatsapp.workflows.remarketing import RemarketingSessionWorkflow
 from src.sales_whatsapp.tools.routing import TransferToSalesAgentTool
 from exoclaw_temporal.activities.conversation import build_prompt, record_turn
@@ -53,6 +54,7 @@ async def main() -> None:
             record_turn,
             claim_conversation_routing,
             send_whatsapp_message_activity,
+            persist_assistant_message_activity,
             read_workspace_memory_activity,
             build_remarketing_trigger_activity,
             bootstrap_remarketing_session_activity,

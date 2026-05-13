@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 
-from src.sales_whatsapp.state import FilesystemMessageHistoryStore
+from src.platform.session_history import FilesystemMessageHistoryStore
 
 
 def test_append_creates_jsonl_with_correct_shape(tmp_path):
@@ -55,3 +55,64 @@ def test_append_isolates_per_session(tmp_path):
     log_b = tmp_path / "wa_b" / "sessions" / "wa_b.jsonl"
     assert json.loads(log_a.read_text(encoding="utf-8").strip())["content"] == "a1"
     assert json.loads(log_b.read_text(encoding="utf-8").strip())["content"] == "b1"
+
+
+def test_append_assistant_event_writes_role_and_content(tmp_path):
+    store = FilesystemMessageHistoryStore(tmp_path)
+    store.append_assistant_event("wa_1", "hola, soy el agente")
+
+    log = tmp_path / "wa_1" / "sessions" / "wa_1.jsonl"
+    assert log.exists()
+    line = log.read_text(encoding="utf-8").strip()
+    parsed = json.loads(line)
+    assert parsed["role"] == "assistant"
+    assert parsed["content"] == "hola, soy el agente"
+    # timestamp ISO con TZ (...+00:00 o Z); shape de string parseable
+    assert isinstance(parsed["timestamp"], str)
+    assert "T" in parsed["timestamp"]
+    # tool_calls no esta presente cuando no se pasa
+    assert "tool_calls" not in parsed
+
+
+def test_append_assistant_event_includes_tool_calls_when_provided(tmp_path):
+    store = FilesystemMessageHistoryStore(tmp_path)
+    tool_calls = [{"id": "tc_1", "type": "function", "function": {"name": "tag_session"}}]
+    store.append_assistant_event("wa_1", "", tool_calls=tool_calls)
+
+    log = tmp_path / "wa_1" / "sessions" / "wa_1.jsonl"
+    parsed = json.loads(log.read_text(encoding="utf-8").strip())
+    assert parsed["role"] == "assistant"
+    assert parsed["tool_calls"] == tool_calls
+
+
+def test_append_assistant_event_omits_empty_tool_calls(tmp_path):
+    store = FilesystemMessageHistoryStore(tmp_path)
+    store.append_assistant_event("wa_1", "hola", tool_calls=[])
+
+    log = tmp_path / "wa_1" / "sessions" / "wa_1.jsonl"
+    parsed = json.loads(log.read_text(encoding="utf-8").strip())
+    assert "tool_calls" not in parsed
+
+
+def test_append_mixed_user_and_assistant_events_preserves_order(tmp_path):
+    store = FilesystemMessageHistoryStore(tmp_path)
+    store.append_user_event("wa_1", "hola")
+    store.append_assistant_event("wa_1", "hola! en qué te ayudo?")
+    store.append_user_event("wa_1", "quiero info de un producto")
+    store.append_assistant_event("wa_1", "claro, cuál?")
+
+    log = tmp_path / "wa_1" / "sessions" / "wa_1.jsonl"
+    lines = log.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 4
+    roles = [json.loads(ln)["role"] for ln in lines]
+    assert roles == ["user", "assistant", "user", "assistant"]
+
+
+def test_append_assistant_preserves_non_ascii(tmp_path):
+    store = FilesystemMessageHistoryStore(tmp_path)
+    store.append_assistant_event("wa_1", "ñandú está acá 🦘")
+
+    log = tmp_path / "wa_1" / "sessions" / "wa_1.jsonl"
+    raw = log.read_text(encoding="utf-8").strip()
+    assert "ñandú" in raw  # ensure_ascii=False
+    assert "🦘" in raw

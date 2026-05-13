@@ -20,6 +20,9 @@ with workflow.unsafe.imports_passed_through():
         bootstrap_remarketing_session_activity,
         build_remarketing_trigger_activity,
     )
+    from src.platform.session_history.activities import (
+        persist_assistant_message_activity,
+    )
     from src.remarketing_whatsapp.contracts import RemarketingSessionInput
     from src.platform.constants import ROUTE_REMARKETING, ROUTE_VENTAS
 
@@ -176,6 +179,18 @@ class RemarketingSessionWorkflow:
                             start_to_close_timeout=timedelta(seconds=90),
                             retry_policy=RetryPolicy(maximum_attempts=2)
                         )
+                        # Persistir DESPUES del send (mismo razonamiento que en
+                        # sales_session.py). workflow.patched() preserva
+                        # determinismo para histories pre-deploy. Remarketing
+                        # tiene idle de 24h, asi que el patch debe permanecer
+                        # al menos ese tiempo antes de `deprecate_patch`.
+                        if workflow.patched("persist-assistant-message-v1"):
+                            await workflow.execute_activity(
+                                persist_assistant_message_activity,
+                                args=[session_id, result.final_content],
+                                start_to_close_timeout=timedelta(seconds=10),
+                                retry_policy=RetryPolicy(maximum_attempts=2),
+                            )
                         workflow.logger.info(f"Remarketing respondió para sesión {session_id}.")
 
                     if self._force_shutdown:

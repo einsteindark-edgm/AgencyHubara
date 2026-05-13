@@ -34,10 +34,8 @@ from exoclaw_temporal.config import WorkspaceConfig
 from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.temporal.client import get_temporal_client
 from src.sales_whatsapp.config.env import get_workspace_path
-from src.sales_whatsapp.state import (
-    FilesystemMessageHistoryStore,
-    FilesystemMetadataStore,
-)
+from src.platform.session_history import FilesystemMessageHistoryStore
+from src.sales_whatsapp.state import FilesystemMetadataStore
 from src.sales_whatsapp.use_cases.ingest_inbound_message import (
     IngestInboundMessage,
 )

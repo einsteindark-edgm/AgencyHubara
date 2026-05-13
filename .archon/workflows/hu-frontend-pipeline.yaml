@@ -379,6 +379,15 @@ nodes:
       [ $(wc -c < "$F") -gt 500 ] || { echo "FAIL_TOO_SHORT"; exit 0; }
       grep -q '^HU id:' "$F" || { echo "FAIL_NO_HU_ID"; exit 0; }
 
+      # Step 1.5 del refiner: si detectó que la HU necesita cambios backend,
+      # corta acá. NO seguimos al planner ni al implementer — gastaríamos AI
+      # generando tareas frontend inútiles. El operador refina la HU backend
+      # primero (en hubara_agency) y después re-lanza esta HU frontend.
+      if grep -qiE '^requires_backend_change:[[:space:]]*true' "$F"; then
+        echo "BLOCKED_BACKEND"
+        exit 0
+      fi
+
       sections=0
       for sec in Scope Acceptance Entities Features Tests Risks; do
         grep -qi "$sec" "$F" && sections=$((sections+1))
@@ -393,6 +402,26 @@ nodes:
     depends_on: [refinar-auto, load-refinement-if-resume]
     trigger_rule: all_done
 
+  - id: cancel-blocked-backend
+    cancel: |
+      HU bloqueada: requires_backend_change=true (detectado en Step 1.5 del refiner).
+
+      El refinement detectó que el frontend NO puede satisfacer esta HU sin un
+      cambio backend previo. Esto es comportamiento ESPERADO — el refiner
+      reconoció el caso antes de gastar tiempo planificando/implementando
+      tareas frontend que no funcionarían.
+
+      Próximos pasos:
+        1. Leé $ARTIFACTS_DIR/hu-refinada.md (también committeado al branch hu/$gen-hu-id.output.hu_id):
+           - sección "Why no frontend refinement applies": diagnóstico
+           - sección "Backend HU to refine in parallel": qué HU backend abrir
+        2. Abrí esa HU backend (en hubara_agency, no acá) y llevala a verde.
+        3. Re-lanzá esta HU frontend: archon workflow run hu-frontend-pipeline "$gen-hu-id.output.hu_id"
+           El smart-resume detecta el refinement persistido y vuelve a correr
+           el refiner (que va a verificar si el backend YA emite los datos).
+    when: "$validate-refinement.output == 'BLOCKED_BACKEND'"
+    depends_on: [validate-refinement]
+
   - id: cancel-bad-refinement
     cancel: |
       Refinement validation FAILED ($validate-refinement.output) en branch $gen-hu-id.output.branch.
@@ -401,7 +430,7 @@ nodes:
         (b) Escribí el refinement a mano en frontend_dashboard/.frontend/refinements/$gen-hu-id.output.hu_id-tech.md,
             commit + push a la branch hu/<HU_ID>, re-lanzá: archon workflow run hu-frontend-pipeline "$gen-hu-id.output.hu_id"
             (el bootstrap detecta el refinement persistido y salta FASE 1).
-    when: "$validate-refinement.output != 'PASS'"
+    when: "$validate-refinement.output != 'PASS' && $validate-refinement.output != 'BLOCKED_BACKEND'"
     depends_on: [validate-refinement]
 
   - id: commit-refinement

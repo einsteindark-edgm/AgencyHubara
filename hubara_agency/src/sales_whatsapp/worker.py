@@ -13,6 +13,9 @@ from src.platform.whatsapp.activities import send_whatsapp_message_activity
 from src.platform.logging import setup_logging
 from src.platform.temporal.client import get_temporal_client
 from src.platform.tool_extensions import register_tool_extension
+from src.platform.session_history.activities import (
+    persist_assistant_message_activity,
+)
 from src.sales_whatsapp.activities import (
     bootstrap_sales_session_activity,
     decide_ghosting_action,
@@ -73,6 +76,7 @@ async def main() -> None:
             execute_tool,
             record_turn,
             send_whatsapp_message_activity,
+            persist_assistant_message_activity,
             decide_ghosting_action,
             bootstrap_sales_session_activity,
             start_or_signal_sales_workflow_activity,

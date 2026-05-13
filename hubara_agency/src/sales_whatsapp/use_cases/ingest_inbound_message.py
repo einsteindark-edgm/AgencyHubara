@@ -23,7 +23,7 @@ import structlog
 
 from src.platform.constants import WHATSAPP_SESSION_PREFIX
 from src.sales_whatsapp.parsers import WhatsAppMessage
-from src.sales_whatsapp.state import FilesystemMessageHistoryStore
+from src.platform.session_history import FilesystemMessageHistoryStore
 from src.sales_whatsapp.use_cases.load_or_start_sales_session import (
     LoadOrStartSalesSession,
 )

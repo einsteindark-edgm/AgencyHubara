@@ -1,9 +1,13 @@
 """Temporal activities del dominio sales_whatsapp.
 
 PR-E: ``activities.py`` (file) se convirtio en ``activities/`` (folder) para
-permitir que cada activity viva en su propio modulo cuando crezcan. Hoy hay
-solo una (``bootstrap_session``); los re-exports preservan el import path
-publico ``from src.sales_whatsapp.activities import ...``.
+permitir que cada activity viva en su propio modulo cuando crezcan. Los
+re-exports preservan el import path publico
+``from src.sales_whatsapp.activities import ...``.
+
+Notese que ``persist_assistant_message_activity`` NO vive aca: por R-DIP #10
+(agentes independientes), las activities cross-domain viven en
+``src.platform.session_history.activities``.
 """
 from __future__ import annotations
 

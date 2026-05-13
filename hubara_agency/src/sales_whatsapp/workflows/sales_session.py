@@ -15,6 +15,9 @@ with workflow.unsafe.imports_passed_through():
     )
     from src.platform.temporal.retry_policies import _LLM_OPTIONS
     from src.platform.workflow_helpers import PendingMessage, run_agent_turn
+    from src.platform.session_history.activities import (
+        persist_assistant_message_activity,
+    )
     from src.sales_whatsapp.activities import (
         bootstrap_sales_session_activity,
         decide_ghosting_action,
@@ -121,6 +124,25 @@ class HubaraSalesSessionWorkflow:
                             start_to_close_timeout=timedelta(seconds=90),
                             retry_policy=RetryPolicy(maximum_attempts=2)
                         )
+                        # Persistir la respuesta al JSONL DESPUES del send: si el
+                        # send falla y retry, no contaminamos el log con mensajes
+                        # que el cliente nunca vio. El dashboard lee este JSONL
+                        # para mostrar el lado del agente en el panel central.
+                        #
+                        # workflow.patched(): los workflows ya en vuelo (history
+                        # generado antes de este deploy) NO tienen la activity
+                        # en su history; el patched gate evita NondeterminismError
+                        # al replay-arlos. Workflows nuevos siempre ven True.
+                        # Cuando el idle timeout (1min en Sales) garantiza que no
+                        # quedan in-flight pre-patch, eliminar el if + el patch_id
+                        # con `workflow.deprecate_patch()` en el deploy siguiente.
+                        if workflow.patched("persist-assistant-message-v1"):
+                            await workflow.execute_activity(
+                                persist_assistant_message_activity,
+                                args=[session.session_id, result.final_content],
+                                start_to_close_timeout=timedelta(seconds=10),
+                                retry_policy=RetryPolicy(maximum_attempts=2),
+                            )
 
                     if self._force_shutdown:
                         workflow.logger.info(f"Auto-diagnóstico concluido. Apagando sesión {session.session_id} por abandono de usuario o transferencia.")

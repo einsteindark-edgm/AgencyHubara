@@ -67,11 +67,32 @@ Multiple frontends present (e.g. frontend_dashboard/, frontend_admin/ siblings, 
 One frontend. Standard FSD layout under that frontend's src/.
 
 
-Backend contract dependencies. If the HU implies a new HTTP endpoint or a new field on an existing one, check the backend repo (typically a sibling at hubara_agency/src/<area>/api.py for Python, or routes/ / handlers/ otherwise). If the endpoint doesn't exist yet or has a different shape, list it as a backend dependency in section 6 — the refinement does NOT plan backend work, but flags the dependency so the user can refine the backend HU in parallel.
+Backend contract dependencies. If the HU implies a new HTTP endpoint, a new field on an existing one, OR consumption of data that the backend should emit but might not be emitting yet, check the backend repo (typically a sibling at hubara_agency/src/<area>/api.py for Python, or routes/ / handlers/ otherwise). For HUs that say "show / display / render / list X", the contract check is NOT enough — the data may be schema-compatible but the backend code path may never actually emit X. Step 1.5 below makes the behavior check mandatory for visualization HUs.
 
 Anti-pattern check. If you see src/components/ at root, src/utils/ at root, src/lib/ at root, src/helpers/ at root, or a feature that imports from another feature (features/a importing from features/b), flag it in section 12 (Risks). Do not bundle the layout fix into the current HU.
 
 If a file does not exist, note it; do not invent it.
+
+Step 1.5 — Backend behavior verification (mandatory for visualization HUs)
+TRIGGER: this step is MANDATORY when the HU title or acceptance criteria contain any visualization verb in any language ("show / display / render / list / view / see" — "ver / mostrar / visualizar / listar / desplegar"). For non-visualization HUs (e.g. "add filter", "improve loading state"), skip this step.
+
+WHY: a contract check (Zod schema matches, endpoint exists) does NOT prove that the backend ACTUALLY EMITS the data the HU asks the operator to see. Case study: HU-20260512-224306 ("mostrar mensajes del agente") merged a PR that refactored the frontend correctly, but the operator still saw no agent messages — because the backend's FilesystemMessageHistoryStore had only `append_user_event` and never persisted assistant turns. The schema accepted `agent_message`, the endpoint existed, the frontend filter allowed them through — yet the data never arrived. Frontend tests were green, the feature was useless. Lesson: behavior, not contract.
+
+HOW:
+
+For each piece of data the HU expects to render (X), find the producer in the backend:
+
+If docker-compose is running locally (`docker ps` shows a healthy `*-api` container): curl the relevant endpoint(s) against the live data and inspect the response. Example: `curl -sS http://localhost:8000/api/dashboard/sessions/<sample-session> | jq '.messages[] | .ui_type' | sort -u`. Confirm X actually appears in real responses, not just in the schema.
+If docker is NOT running: read the backend code paths. For each X, search the backend for the code that writes/emits it (e.g. `grep -rn "append_assistant_event\|role.*assistant" hubara_agency/src/`). Trace from "where the HU expects X" all the way back to "the function that produces X". If no function produces X, X is NOT emitted, regardless of what the schema permits.
+
+
+Record the verification in section 3.6 under a new sub-bullet "Behavior verification (Step 1.5)":
+
+`Confirmed emitted` — cite the producer (e.g. `hubara_agency/src/<area>/<file>.py:<line>`) and the curl evidence (`curl ... → contains X`).
+`Schema-compatible but NOT emitted` — explain what's missing in the backend. This makes the HU `requires_backend_change`.
+
+
+If section 3.6 has any "Schema-compatible but NOT emitted" entries, the HU is BLOCKED on the backend. In that case, do NOT produce a full FSD refinement. Follow the "HU genuinely doesn't need frontend work" branch in Step 4 instead: write a short explanation in $ARTIFACTS_DIR/hu-refinada.md naming exactly which backend change is missing, propose a backend HU title to refine in parallel, and set `requires_backend_change: true` in the header. The header field is what the workflow's `validate-refinement` node reads to halt the pipeline before the planner generates useless frontend tasks.
 
 Step 2 — Internalize the rules (apply them when refining)
 The 4 FSD import rules (cite by name when relevant)
@@ -261,7 +282,13 @@ Doesn't exist — flag as backend dependency. List the endpoint spec the backend
 
 Whether SSE is involved (/stream endpoint) — same triage.
 
-If section 3.6 has any "doesn't exist" or "needs new field" entries, the implementation plan must include a "wait for backend" step and the smoke test must wait for the backend to ship.
+Behavior verification (REQUIRED for visualization HUs; result of Step 1.5):
+
+`Confirmed emitted` — list the producer file and the evidence (curl output or grep hit).
+`Schema-compatible but NOT emitted` — list what's missing. If ANY data X is in this state, set `requires_backend_change: true` in the header and stop the refinement (see Step 4 short-form).
+
+
+If section 3.6 has any "doesn't exist", "needs new field", or "Schema-compatible but NOT emitted" entries, the implementation plan must include a "wait for backend" step and the smoke test must wait for the backend to ship. If the entry is "Schema-compatible but NOT emitted", do NOT produce a full FSD refinement — write the short-form output and stop.
 3.7 Cross-feature state
 What state is shared across 2+ features? For each:
 
@@ -337,7 +364,15 @@ Do not version the filename. Do not write to .frontend/refinements/.
 After writing, print a 5-line summary to the user: # pages affected, # entities new/extended, # features new/extended, # backend dependencies, # open questions.
 Do not print "Next step" instructions. The Archon workflow handles the downstream chain.
 
-If the HU genuinely doesn't need frontend work (e.g. "fix backend bug", "update README"), do not produce a full refinement. Write a short explanation to $ARTIFACTS_DIR/hu-refinada.md stating why no FSD refinement applies, list what kind of change the HU actually requires, and stop.
+If the HU genuinely doesn't need frontend work (one of):
+- "fix backend bug", "update README", admin task → no FSD refinement applies.
+- Step 1.5 detected `Schema-compatible but NOT emitted` for any required data — frontend cannot satisfy the HU until the backend changes.
+
+In any of those cases, do NOT produce a full refinement. Write a SHORT-FORM document to $ARTIFACTS_DIR/hu-refinada.md that contains:
+- The same header as the full template (HU id, title, date, iteration, **`requires_backend_change: true`** when applicable).
+- A single section "Why no frontend refinement applies": one paragraph explaining the root cause. For Step 1.5 failures, cite the producer that is missing (e.g. "`hubara_agency/src/sales_whatsapp/state.py:FilesystemMessageHistoryStore` has `append_user_event` but no `append_assistant_event` — assistant turns are never persisted, so the dashboard never receives them no matter what the frontend renders").
+- A section "Backend HU to refine in parallel": title + 3-5 bullet acceptance criteria for the backend change. Be concrete: name the files, the new method/endpoint, the expected shape on the wire.
+- Stop. Do not write any FSD sections (no entities, no features, no plan, no tests). The workflow's `validate-refinement` node reads the `requires_backend_change` flag and cancels the pipeline so no planner/implementer time is wasted on tasks that cannot pass acceptance.
 
 Output template
 Write the document below to $ARTIFACTS_DIR/hu-refinada.md with all placeholders filled. The template begins after this line and ends at the next horizontal rule.
@@ -350,6 +385,7 @@ Layout status: FSD in place | legacy (recommend migration) | greenfield
 Refiner: frontend-tech-refiner-archon
 Date: <YYYY-MM-DD>
 Iteration: <n> (set to 1 if first pass; increment on each follow-up)
+requires_backend_change: <true|false>   # set true ONLY when Step 1.5 detected "Schema-compatible but NOT emitted" or HU is backend-only; the workflow reads this and halts the pipeline
 
 1. Scope
 Summary: <one line>
