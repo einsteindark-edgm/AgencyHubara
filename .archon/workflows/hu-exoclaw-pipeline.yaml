@@ -95,7 +95,17 @@ nodes:
       # "missing required scopes [read:project]" y los nodos project-set-*
       # fallan SILENCIOSAMENTE.
       if [ -f .archon/github-project-config.yaml ]; then
-        if ! gh auth status 2>&1 | grep -qE "Token scopes:.*\\bproject\\b"; then
+        # GitHub Projects v2 requiere AMBOS scopes: 'project' (write) y
+        # 'read:project' (read). Sin 'read:project', `gh project item-add`
+        # falla con "missing required scopes [read:project]". Bug descubierto
+        # 2026-05-13: la regex `\bproject\b` matcheaba 'project' aunque
+        # faltara 'read:project' → check pasaba falso-positivo.
+        SCOPES_LINE=$(gh auth status 2>&1 | grep "Token scopes" || true)
+        if ! echo "$SCOPES_LINE" | grep -qE "'project'"; then
+          echo "FAIL_GH_NO_PROJECT_SCOPE"
+          exit 0
+        fi
+        if ! echo "$SCOPES_LINE" | grep -qE "'read:project'"; then
           echo "FAIL_GH_NO_PROJECT_SCOPE"
           exit 0
         fi
@@ -110,7 +120,7 @@ nodes:
 
       Diagnóstico:
         FAIL_GH_AUTH               → gh auth login
-        FAIL_GH_NO_PROJECT_SCOPE   → gh auth refresh -s project
+        FAIL_GH_NO_PROJECT_SCOPE   → gh auth refresh -s project,read:project
         FAIL_NO_UV/PYTHON/BUN/JQ/GIT → instalar la herramienta (brew/curl install uv)
         FAIL_MISSING_*             → commit el archivo a main, no está en origin
         FAIL_MISSING_SKILL_*       → commit .claude/skills/exoclaw-*-archon a main

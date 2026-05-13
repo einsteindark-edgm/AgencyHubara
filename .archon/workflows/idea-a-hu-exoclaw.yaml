@@ -61,7 +61,17 @@ nodes:
       # fallan SILENCIOSAMENTE (exit 0 con WARN al stdout).
       # Si el config opcional de Project no existe, no chequeamos scope.
       if [ -f .archon/github-project-config.yaml ]; then
-        if ! gh auth status 2>&1 | grep -qE "Token scopes:.*\\bproject\\b"; then
+        # GitHub Projects v2 requiere AMBOS scopes: 'project' (write) y
+        # 'read:project' (read). Sin 'read:project', `gh project item-add`
+        # falla con "missing required scopes [read:project]". Bug descubierto
+        # 2026-05-13: la regex `\bproject\b` matcheaba 'project' aunque
+        # faltara 'read:project' → check pasaba falso-positivo.
+        SCOPES_LINE=$(gh auth status 2>&1 | grep "Token scopes" || true)
+        if ! echo "$SCOPES_LINE" | grep -qE "'project'"; then
+          echo "FAIL_GH_NO_PROJECT_SCOPE"
+          exit 0
+        fi
+        if ! echo "$SCOPES_LINE" | grep -qE "'read:project'"; then
           echo "FAIL_GH_NO_PROJECT_SCOPE"
           exit 0
         fi
@@ -77,7 +87,7 @@ nodes:
       Diagnóstico:
         FAIL_GH_AUTH            → gh auth login
         FAIL_NO_JQ              → brew install jq
-        FAIL_GH_NO_PROJECT_SCOPE → gh auth refresh -s project
+        FAIL_GH_NO_PROJECT_SCOPE → gh auth refresh -s project,read:project
                                    (necesario para gh project item-add/edit/list)
     when: "$check-prereqs.output != 'OK'"
     depends_on: [check-prereqs]
@@ -324,15 +334,20 @@ nodes:
       gh project item-add "$PN" --owner "$PO" --url "$ISSUE_URL" > "$ARTIFACTS_DIR/.add.log" 2>&1
       ADD_RC=$?
       if [ $ADD_RC -ne 0 ]; then
-        # CRÍTICO: detectar scope error específicamente. Si el token gh perdió
-        # el scope 'project', TODOS los project-set-* del pipeline van a fallar
-        # también. Mejor que el operador lo sepa AHORA y haga gh auth refresh.
+        # CRÍTICO: detectar scope error específicamente. Project sync es
+        # PARTE INTEGRAL del flujo — sin él perdemos visibilidad del estado
+        # de las tasks en el board. Si llegamos acá sin scope, algo se
+        # escapó del check-prereqs (token cambió entre nodos, race rara) —
+        # tumbamos el workflow para que el operador arregle ANTES de crear
+        # más issues huérfanos.
         if grep -qiE "missing required scopes|read:project|gh auth refresh" "$ARTIFACTS_DIR/.add.log"; then
-          echo "FAIL_GH_SCOPE: el token gh perdió el scope 'project'."
-          echo "  → corré: gh auth refresh -s project"
-          echo "  → después re-lanzá idea-a-hu-exoclaw"
+          echo "FAIL_GH_SCOPE: el token gh no tiene 'project' + 'read:project'."
+          echo "  → corré: gh auth refresh -s project,read:project"
+          echo "  → después agregá el Issue al board manualmente:"
+          echo "    gh project item-add <PROJECT_NUM> --owner <OWNER> --url $ISSUE_URL"
+          echo "  → o re-lanzá hu-exoclaw-pipeline directamente con la URL del Issue (ya existe)"
           tail -3 "$ARTIFACTS_DIR/.add.log"
-          exit 1   # FATAL: no tiene sentido seguir, el pipeline downstream también va a fallar
+          exit 1   # FATAL: Project sync es esencial para visibilidad de tasks
         fi
         # Si el error es "already exists" / similar, seguimos. Otro error: warn.
         if grep -qiE "already|exists|duplicate" "$ARTIFACTS_DIR/.add.log"; then
@@ -382,7 +397,7 @@ nodes:
         echo ""
         echo "Posibles causas:"
         echo "  - El option_id $OID no existe en el project (renamed/recreated)"
-        echo "  - El gh token no tiene scope 'project' (gh auth refresh -s project)"
+        echo "  - El gh token no tiene scope 'project' (gh auth refresh -s project,read:project)"
         echo "  - El field_id $FID no es el Status del project"
         exit 0   # fail-soft: el card está en el project pero sin status
       fi
