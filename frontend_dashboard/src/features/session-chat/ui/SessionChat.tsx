@@ -9,6 +9,7 @@
 import { useSession } from "@/entities/session";
 import { ChatHeader } from "./ChatHeader";
 import { ChatMessageList } from "./ChatMessageList";
+import { ChatMessageListSkeleton } from "./ChatMessageListSkeleton";
 import { ChatInput } from "./ChatInput";
 
 interface Props {
@@ -35,11 +36,7 @@ export function SessionChat({ sessionId }: Props) {
   }
 
   if (isLoading && !details) {
-    return (
-      <div style={{ padding: "2rem", color: "var(--text-secondary)" }}>
-        Loading session...
-      </div>
-    );
+    return <ChatMessageListSkeleton />;
   }
 
   return (

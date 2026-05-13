@@ -4,6 +4,7 @@ import {
   isGhostTrigger,
   isTechnicalEvent,
   isVisibleChatMessage,
+  getMessageSender,
 } from "./filters";
 import type { ChatMessage } from "./model";
 
@@ -57,5 +58,19 @@ describe("message filters", () => {
     expect(
       isVisibleChatMessage(msg({ content: "[SISTEMA]: trigger" })),
     ).toBe(false);
+  });
+
+  it("getMessageSender returns \"user\" for user_message", () => {
+    expect(getMessageSender(msg({ ui_type: "user_message" }))).toBe("user");
+  });
+
+  it("getMessageSender returns \"agent\" for agent_message", () => {
+    expect(getMessageSender(msg({ ui_type: "agent_message" }))).toBe("agent");
+  });
+
+  it("getMessageSender returns \"agent\" for unknown ui_type passing filter", () => {
+    // system_event would be filtered by isVisibleChatMessage upstream, but
+    // getMessageSender itself must still return "agent" for any non-user_message.
+    expect(getMessageSender(msg({ ui_type: "system_event" }))).toBe("agent");
   });
 });

@@ -1,7 +1,8 @@
-import type { ChatMessage } from "@/entities/message";
+import type { ChatMessage, MessageSender } from "@/entities/message";
 
 interface Props {
   message: ChatMessage;
+  sender: MessageSender;
 }
 
 /**
@@ -20,8 +21,8 @@ function renderAgentMarkup(content: string | null): string {
     .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
 }
 
-export function ChatBubble({ message }: Props) {
-  const isUser = message.ui_type === "user_message";
+export function ChatBubble({ message, sender }: Props) {
+  const isUser = sender === "user";
   const html = renderAgentMarkup(
     typeof message.content === "string"
       ? message.content

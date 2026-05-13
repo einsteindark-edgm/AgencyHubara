@@ -11,7 +11,7 @@
  *     (`ha sido etiquetada`, `remarketing automático`) — ruido para el cliente.
  */
 
-import type { ChatMessage } from "./model";
+import type { ChatMessage, MessageSender } from "./model";
 
 const TECHNICAL_UI_TYPES = new Set<ChatMessage["ui_type"]>([
   "system_event",
@@ -48,4 +48,11 @@ export function isVisibleChatMessage(msg: ChatMessage): boolean {
   if (isGhostTrigger(msg)) return false;
   if (isAgentEcho(msg)) return false;
   return true;
+}
+
+/** Derives the visual sender from ui_type.
+ * Assumes isVisibleChatMessage was applied upstream. Any non-user_message
+ * that passes the filter is treated as agent (exhaustive for current ui_types). */
+export function getMessageSender(msg: ChatMessage): MessageSender {
+  return msg.ui_type === "user_message" ? "user" : "agent";
 }
