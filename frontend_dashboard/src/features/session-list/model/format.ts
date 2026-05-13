@@ -1,11 +1,7 @@
 /**
- * Helpers de formato locales al feature. Si otro feature los necesita,
- * promover a `shared/lib`.
+ * Re-export. La función original vivía acá; ahora que la consume también
+ * `entities/chat` (adapter del backend → diseño macOS), se promovió a
+ * `shared/lib`. Este shim mantiene los imports del feature legado.
  */
 
-/** Unix epoch (segundos) → "HH:MM" en locale del usuario. */
-export function formatHourMinute(unixSeconds: number): string {
-  if (!unixSeconds) return "";
-  const d = new Date(unixSeconds * 1000);
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
+export { formatHourMinute } from "@/shared/lib";

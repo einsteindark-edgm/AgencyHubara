@@ -77,9 +77,6 @@ export const FORBIDDEN_TOP_LEVEL_FOLDERS: readonly string[] = [
  */
 export const CSS_FILE_ALLOWLIST: ReadonlySet<string> = new Set([
   "src/index.css",
-  // Pre-existing migration debt: legacy panel styles still referenced by
-  // pages/Dashboard.tsx. Replace with Tailwind utilities + delete the file.
-  "src/pages/Dashboard.legacy.css",
 ]);
 
 /** Architecture-protected paths (Capa 3 — meta-gate). Relative to REPO_ROOT. */

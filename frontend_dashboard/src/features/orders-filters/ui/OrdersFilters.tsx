@@ -1,0 +1,124 @@
+/**
+ * Sidebar de Órdenes: vistas (Todas/Hoy/Retrasadas/Mañana/Semana/En camino) +
+ * Tipo de pago (Pago confirmado / Contra entrega) + Canales + Etiquetas.
+ *
+ * Recibe el estado de filtros por prop. Owner del estado: la página, vía
+ * `useOrderFilters` reusado por ambas features (filters + board).
+ */
+
+import { Icon, MacButton } from "@/shared/ui";
+import type { Order } from "@/entities/order";
+import type { PayTypeFilter, ViewFilter } from "../model/useOrderFilters";
+
+const CHANNELS = ["WhatsApp", "Instagram", "Web", "Tienda", "Mercado Libre"];
+
+interface Props {
+  view: ViewFilter;
+  setView: (v: ViewFilter) => void;
+  payType: PayTypeFilter;
+  setPayType: (p: PayTypeFilter) => void;
+  orders: Order[];
+}
+
+export function OrdersFilters({ view, setView, payType, setPayType, orders }: Props) {
+  const views: {
+    key: ViewFilter; label: string; count: number;
+    icon: React.ReactNode; accent?: boolean; color?: string;
+  }[] = [
+    { key: "all",      label: "Todas",       count: orders.length,                                        icon: <Icon.box /> },
+    { key: "today",    label: "Para hoy",    count: orders.filter((o) => o.dueIso === "2026-05-12").length, icon: <Icon.clock />, accent: true },
+    { key: "overdue",  label: "Retrasadas",  count: orders.filter((o) => o.overdue).length,                icon: <Icon.alert />, color: "#ff7269" },
+    { key: "tomorrow", label: "Mañana",      count: orders.filter((o) => o.dueIso === "2026-05-13").length, icon: <Icon.cal /> },
+    { key: "week",     label: "Esta semana", count: 14,                                                    icon: <Icon.cal /> },
+    { key: "ship",     label: "En camino",   count: orders.filter((o) => o.status === "shipping").length,  icon: <Icon.truck /> },
+  ];
+
+  const payTypes: {
+    key: PayTypeFilter; label: string; count: number; dot: string;
+  }[] = [
+    { key: "all",       label: "Todos los tipos", count: orders.length,                                        dot: "rgba(255,255,255,0.25)" },
+    { key: "confirmed", label: "Pago confirmado",  count: orders.filter((o) => o.payType === "confirmed").length, dot: "#5be07b" },
+    { key: "cod",       label: "Contra entrega",   count: orders.filter((o) => o.payType === "cod").length,       dot: "#ffb44a" },
+  ];
+
+  return (
+    <aside className="sidebar">
+      <div className="sb-head">
+        <h2>Órdenes</h2>
+        <MacButton primary sm><Icon.plus /> Nueva</MacButton>
+      </div>
+
+      <div className="sb-search">
+        <Icon.search />
+        <input placeholder="Buscar # orden o cliente…" />
+      </div>
+
+      <div className="sb-section">
+        <div className="sb-section-h"><span>Vistas</span></div>
+        {views.map((v) => (
+          <div
+            key={v.key}
+            className={"of-row" + (view === v.key ? " sel" : "")}
+            onClick={() => setView(v.key)}
+          >
+            <span className="ofi" style={v.color ? { color: v.color } : undefined}>
+              {v.icon}
+            </span>
+            <span className="ofl">{v.label}</span>
+            <span className={"ofn" + (v.accent ? " accent" : "")}>{v.count}</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="sb-section">
+        <div className="sb-section-h"><span>Tipo de pago</span></div>
+        {payTypes.map((p) => (
+          <div
+            key={p.key}
+            className={"of-row st-row" + (payType === p.key ? " sel" : "")}
+            onClick={() => setPayType(p.key)}
+          >
+            <span className="st-dot" style={{ background: p.dot }} />
+            <span className="ofl">{p.label}</span>
+            <span className="ofn">{p.count}</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="sb-section">
+        <div className="sb-section-h"><span>Canal</span></div>
+        {CHANNELS.map((c) => (
+          <div key={c} className="of-row st-row">
+            <span className="st-dot" style={{ background: "rgba(255,255,255,0.25)" }} />
+            <span className="ofl">{c}</span>
+            <span className="ofn">
+              {orders.filter((o) => o.channel === c).length || "—"}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      <div className="sb-section">
+        <div className="sb-section-h"><span>Etiquetas</span></div>
+        <div
+          style={{ display: "flex", flexWrap: "wrap", gap: 5, padding: "4px 12px 8px" }}
+        >
+          {["VIP", "Repetido", "B2B", "Mayorista", "Frágil", "Express", "Recurrente"].map(
+            (t) => (
+              <span key={t} className="tg-chip">
+                {t}
+              </span>
+            ),
+          )}
+        </div>
+      </div>
+
+      <div className="sb-foot">
+        <span>{orders.length} órdenes · $ 2.1 M</span>
+        <button className="ico-btn" title="Exportar">
+          <Icon.download />
+        </button>
+      </div>
+    </aside>
+  );
+}
