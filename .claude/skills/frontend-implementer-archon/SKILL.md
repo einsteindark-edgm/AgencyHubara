@@ -180,7 +180,41 @@ architecture_gate:
 
 A passing architecture gate is REQUIRED for status: passed. Status: passed with a failed architecture gate is a lie to the orchestrator — never report it.
 
-After the architecture gate, walk the FSD rules check (§12):
+After the architecture gate, run the PLAYWRIGHT E2E EVIDENCE step (mandatory for every task that touches UI):
+
+You MUST produce at least one `e2e/<feature>/<slice>.spec.ts` that exercises the feature in a real browser and asserts the observable outcome. The pipeline gate runs `npx playwright test` against a fresh FastAPI backend (started on :8000 by the gate) and a fresh Vite dev server (auto-started by `playwright.config.ts`). The captured output is embedded in the PR comment as evidence the feature works end-to-end.
+
+How to author a spec (see `e2e/example.spec.ts` as the canonical template):
+
+```ts
+import { expect, test } from "@playwright/test";
+
+test.describe("<feature>", () => {
+  test("<user-observable outcome>", async ({ page }) => {
+    await page.goto("/<route the feature is on>");
+    await page.getByRole("button", { name: "..." }).click();
+    await expect(page.getByText("<expected visible content>")).toBeVisible();
+  });
+});
+```
+
+Rules for the Playwright spec:
+
+- Backend strategy: ALWAYS assume FastAPI on `http://localhost:8000` is reachable. The pipeline starts it before invoking playwright. Your frontend's `VITE_API_URL` is already pointing there in `.env.development`. If your feature needs a specific backend state (a session existing, etc.), make a fixture HTTP call BEFORE the user-interaction asserts.
+- Test name: `test("<observable outcome>", ...)` — phrase as the user-visible thing you proved. Not `test("renders correctly")`.
+- File location: `frontend_dashboard/e2e/<feature-slug>/<slice>.spec.ts`. One file per slice is fine; group by feature directory.
+- DO NOT mock fetch by default (the operator chose real-backend strategy). Only use MSW inside a spec if you specifically need to test failure injection (then the spec must be tagged with a comment explaining why).
+- Use Playwright's auto-waiting selectors: `getByRole`, `getByText`, `getByLabel`. Avoid `page.waitForTimeout(...)` — that's flaky.
+- Screenshots on failure are automatic (configured in `playwright.config.ts`). You don't need to call `page.screenshot()` unless you want a positive-case screenshot in the evidence.
+- If the task is a PURE INTERNAL REFACTOR with no UI surface change, document the skip in task-result.yaml under `notes`. The DoD checklist will accept a documented skip but never a silent skip.
+
+After writing the spec, run it locally (with FastAPI running on :8000):
+
+  cd frontend_dashboard && npx playwright test e2e/<feature>/<slice>.spec.ts --reporter=line
+
+If it fails, fix the feature code or the spec. Flaky specs (intermittent failures without code changes) are a bug in the spec — add explicit waits via `expect(...).toBeVisible({ timeout: ... })` or fix the test setup. Playwright failures are NEVER a reason to mark `status: passed`.
+
+After the playwright spec, walk the FSD rules check (§12):
 
 For every rule the task says "applies", inspect the code you wrote and confirm compliance. Be specific: cite the file:line where the rule is honored.
 Run the compliance greps from §10:

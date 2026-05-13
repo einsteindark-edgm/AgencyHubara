@@ -689,13 +689,17 @@ nodes:
             } > "$GATE_LOG"
             GATE_OK=1
 
-            # Suite Python DEHA: tests funcionales, suite de arquitectura
+            # Suite Python DEHA: unit tests, suite de arquitectura
             # (-m architecture cubre R-DET/R-JSON/R-STATELESS/R-HEARTBEAT/R-DIP),
-            # y lint. No hay "build" en Python; pytest -q ya valida import-graph.
+            # lint, y functional tests (evidencia E2E del feature). No hay
+            # "build" en Python; pytest -q ya valida import-graph.
+            # Los functional tests se capturan a un archivo separado para
+            # adjuntar al PR comment como evidencia.
             for cmd in \
-              "uv run pytest tests/ --tb=no -q" \
+              "uv run pytest tests/ --ignore=tests/functional --tb=no -q" \
               "uv run pytest tests/architecture/ -m architecture --tb=short" \
-              "uv run ruff check src/"; do
+              "uv run ruff check src/" \
+              "uv run pytest tests/functional/ -m functional --tb=long -v"; do
               echo "" >> "$GATE_LOG"
               echo "=== \$ cd hubara_agency && $cmd ===" >> "$GATE_LOG"
               # Subshell aísla el cd: si el comando falla, el cwd del until_bash
@@ -711,6 +715,25 @@ nodes:
                 echo "  [GATE] $cmd OK" >&2
               fi
             done
+
+            # ════════════════════════════════════════════════════════════════
+            # FUNCTIONAL EVIDENCE EXTRACTION
+            # Pull the section of the gate log that corresponds to the
+            # functional pytest run. This file is later picked up by
+            # `build-pr-body` and embedded in the PR comment as evidence
+            # that the feature works end-to-end (or shows EXACTLY where it
+            # broke if the gate failed).
+            # Per-task append: we want the LATEST task's evidence in the PR,
+            # so we overwrite atomically — the last passing task wins.
+            # ════════════════════════════════════════════════════════════════
+            # Regex laxa: matchea cualquier header del gate que mencione
+            # pytest tests/functional/ — sobrevive cambios menores al texto
+            # exacto del comando (e.g. agregar flags, cambiar el cd target).
+            awk '
+              /=== \$.*pytest tests\/functional/ { capture=1; print; next }
+              capture && /^exit_code=/ { print; capture=0; exit }
+              capture { print }
+            ' "$GATE_LOG" > "$ARTIFACTS_DIR/functional-evidence-${TASK_ID}.log" 2>/dev/null || true
 
             if [ $GATE_OK -eq 0 ]; then
               DET_RETRY_FILE="$ARTIFACTS_DIR/det-retries-${TASK_ID}.count"
@@ -1107,10 +1130,12 @@ nodes:
       # y un test rojo pasa como PASS silenciosamente.
       set -o pipefail
       cd hubara_agency
-      echo "=== uv run pytest tests/ --tb=no -q ===" >&2
-      uv run pytest tests/ --tb=no -q 2>&1 | tail -30 >&2 || { echo "FAIL_PYTEST"; exit 0; }
+      echo "=== uv run pytest tests/ --ignore=tests/functional --tb=no -q ===" >&2
+      uv run pytest tests/ --ignore=tests/functional --tb=no -q 2>&1 | tail -30 >&2 || { echo "FAIL_PYTEST"; exit 0; }
       echo "=== uv run pytest tests/architecture/ -m architecture --tb=short ===" >&2
       uv run pytest tests/architecture/ -m architecture --tb=short 2>&1 | tail -30 >&2 || { echo "FAIL_ARCH"; exit 0; }
+      echo "=== uv run pytest tests/functional/ -m functional --tb=short -q ===" >&2
+      uv run pytest tests/functional/ -m functional --tb=short -q 2>&1 | tail -30 >&2 || { echo "FAIL_FUNCTIONAL"; exit 0; }
       echo "=== uv run ruff check src/ ===" >&2
       uv run ruff check src/ 2>&1 | tail -30 >&2 || { echo "FAIL_RUFF"; exit 0; }
       echo "PASS"
@@ -1155,20 +1180,48 @@ nodes:
         }
       }
 
+      // Functional test evidence — concatenate the per-task functional logs
+      // captured by `until_bash` (one per task). Each log is the actual
+      // pytest -v output from the gate's last successful run of that task.
+      // This is the "proof it works" section reviewers see in the PR.
+      let functionalEvidence = '';
+      if (existsSync(artifactsDir)) {
+        const logs = readdirSync(artifactsDir)
+          .filter(f => f.startsWith('functional-evidence-') && f.endsWith('.log'))
+          .sort();
+        for (const logName of logs) {
+          const taskId = logName.replace('functional-evidence-', '').replace('.log', '');
+          const raw = readFileSync(join(artifactsDir, logName), 'utf-8').trim();
+          if (raw.length > 0) {
+            functionalEvidence +=
+              '### ' + taskId + '\n\n```\n' + raw + '\n```\n\n';
+          }
+        }
+      }
+
       const issueUrl = huInfo.issue_url;
       const closesLine = (issueUrl && issueUrl !== 'null' && issueUrl !== '')
         ? ('\n\nCloses ' + issueUrl + '\n')
         : '';
+
+      const evidenceSection = functionalEvidence
+        ? '## ✅ Functional test evidence\n\n' +
+          'Each task implemented one or more `tests/functional/` cases. The pytest -v output below was captured during the deterministic gate of the pipeline and reflects the LAST passing run of each task.\n\n' +
+          functionalEvidence
+        : '## ⚠ Functional test evidence\n\n' +
+          'No `functional-evidence-*.log` artifacts were captured. Either this HU did not produce `tests/functional/` cases (unusual — most features should), or the gate failed before reaching the functional step. Inspect `$ARTIFACTS_DIR/test-failures.md` of the failing run.\n\n';
 
       const body =
         '## Summary\n\n' +
         summary + '\n\n' +
         '## Tasks implemented\n\n' +
         tasksTable + '\n' +
+        evidenceSection +
         '## Test plan\n\n' +
         '- [ ] Revisar el diff archivo por archivo\n' +
         '- [ ] cd hubara_agency && uv run pytest tests/\n' +
         '- [ ] cd hubara_agency && uv run pytest tests/architecture/ -m architecture\n' +
+        '- [ ] cd hubara_agency && uv run pytest tests/functional/ -m functional -v\n' +
         '- [ ] cd hubara_agency && uv run ruff check src/\n' +
         closesLine + '\n' +
         '🤖 Generado por hu-exoclaw-pipeline\n';

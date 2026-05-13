@@ -98,6 +98,24 @@
       "motivo": "quiere retomar la compra",
       "active_route": "ventas",
       "timestamp": 1778692135.286131
+    },
+    {
+      "tag": "RETOMA_VENTA",
+      "motivo": "quiere retomar la compra",
+      "active_route": "ventas",
+      "timestamp": 1778706113.5477161
+    },
+    {
+      "tag": "RETOMA_VENTA",
+      "motivo": "quiere retomar la compra",
+      "active_route": "ventas",
+      "timestamp": 1778706248.777175
+    },
+    {
+      "tag": "RETOMA_VENTA",
+      "motivo": "quiere retomar la compra",
+      "active_route": "ventas",
+      "timestamp": 1778706809.702637
     }
   ]
 }

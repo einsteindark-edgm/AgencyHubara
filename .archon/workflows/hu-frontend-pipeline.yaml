@@ -52,6 +52,12 @@ nodes:
       command -v bun  >/dev/null || { echo "FAIL_NO_BUN";  exit 0; }
       command -v jq   >/dev/null || { echo "FAIL_NO_JQ";   exit 0; }
       command -v git  >/dev/null || { echo "FAIL_NO_GIT";  exit 0; }
+      command -v curl >/dev/null || { echo "FAIL_NO_CURL"; exit 0; }
+      # uv + python necesarios para levantar el FastAPI en background durante
+      # el gate Playwright (E2E real-backend). Falta de uv NO se cubre como
+      # "FAIL_NO_UV" porque el frontend pipeline puede funcionar sin él si
+      # no hay tests E2E que necesiten backend — el gate lo detecta entonces.
+      command -v uv >/dev/null || { echo "FAIL_NO_UV"; exit 0; }
 
       # Convenciones del frontend committeadas en main
       for f in \
@@ -108,7 +114,7 @@ nodes:
       Diagnóstico:
         FAIL_GH_AUTH               → gh auth login
         FAIL_GH_NO_PROJECT_SCOPE   → gh auth refresh -s project
-        FAIL_NO_NODE/NPM/BUN/JQ/GIT → brew install <tool>
+        FAIL_NO_NODE/NPM/BUN/JQ/GIT/CURL/UV → brew install <tool> (uv: curl -LsSf https://astral.sh/uv/install.sh | sh)
         FAIL_MISSING_*             → commit el archivo a main, no está en origin
         FAIL_MISSING_SKILL_*       → commit .claude/skills/frontend-*-archon a main
         FAIL_NO_LOCKFILE           → cd frontend_dashboard && npm install para crear lockfile
@@ -728,6 +734,103 @@ nodes:
               fi
             done
 
+            # ════════════════════════════════════════════════════════════════
+            # PLAYWRIGHT E2E (functional evidence)
+            # Backend dependency: FastAPI in background. We pick a RANDOM free
+            # port so concurrent pipelines don't collide on :8000. The chosen
+            # port is exported as UVICORN_PORT (read by run_api.py) and as
+            # VITE_API_URL (read by Vite during npm run dev, which Playwright
+            # auto-starts via its webServer config). Cleanup uses kill +
+            # `pkill -f run_api.py` belt-and-suspenders to avoid orphan
+            # workers when reload=True spawns sub-processes.
+            # `trap` guarantees cleanup even on subprocess crash.
+            # ════════════════════════════════════════════════════════════════
+            if [ $GATE_OK -eq 1 ]; then
+              echo "" >> "$GATE_LOG"
+              echo "=== \$ Playwright E2E (with FastAPI backend) ===" >> "$GATE_LOG"
+
+              EVIDENCE_LOG="$ARTIFACTS_DIR/playwright-evidence-${TASK_ID}.log"
+              UVICORN_LOG="$ARTIFACTS_DIR/.uvicorn-${TASK_ID}.log"
+
+              # Pick a free port atomically. Bind to 0 → OS assigns; close;
+              # return the number. Tiny TOCTOU window (another proc could
+              # grab it between close and uvicorn open) but in practice fine.
+              UVICORN_PORT=$(python3 -c "import socket; s=socket.socket(); s.bind(('127.0.0.1',0)); print(s.getsockname()[1]); s.close()" 2>/dev/null)
+              if [ -z "$UVICORN_PORT" ]; then
+                # Fallback to fixed 8000 if python3 missing (shouldn't happen — prereqs).
+                UVICORN_PORT=8000
+              fi
+              echo "  [GATE] FastAPI port = $UVICORN_PORT" >&2
+
+              # Start FastAPI in background on the chosen port.
+              ( cd hubara_agency && UVICORN_PORT=$UVICORN_PORT uv run python run_api.py > "$UVICORN_LOG" 2>&1 ) &
+              UVICORN_PID=$!
+              # Trap cleanup — kills uvicorn no matter how this block exits.
+              # Includes `pkill -f run_api.py` because uvicorn with reload=True
+              # spawns watcher + worker subprocesses that `kill $PID` may miss.
+              trap "kill $UVICORN_PID 2>/dev/null; pkill -f 'run_api.py' 2>/dev/null; true" EXIT
+
+              # Wait for liveness probe on / (defined in src/main.py).
+              UVICORN_READY=0
+              for i in $(seq 1 30); do
+                HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$UVICORN_PORT/" 2>/dev/null || echo "000")
+                if [ "$HTTP_CODE" = "200" ]; then
+                  UVICORN_READY=1
+                  echo "  [GATE] FastAPI ready in ${i}s on port $UVICORN_PORT" >&2
+                  break
+                fi
+                sleep 1
+              done
+
+              if [ $UVICORN_READY -eq 0 ]; then
+                echo "  [GATE] Playwright SKIPPED — FastAPI did not start (see $UVICORN_LOG)" >&2
+                echo "FastAPI never became reachable on :$UVICORN_PORT within 30s — playwright NOT run." >> "$GATE_LOG"
+                echo "Last lines of uvicorn log:" >> "$GATE_LOG"
+                tail -20 "$UVICORN_LOG" >> "$GATE_LOG" 2>/dev/null || true
+                GATE_OK=0
+              else
+                # Run playwright. Pass the dynamic backend URL via env so the
+                # Vite dev server picks it up (VITE_API_URL has higher priority
+                # than .env.development at runtime) and so tests can read it
+                # via `process.env.API_URL` for direct API assertions.
+                #
+                # `pipefail` inside the subshell so `tee` doesn't mask the
+                # real exit code of playwright.
+                ( cd frontend_dashboard && \
+                  set -o pipefail && \
+                  VITE_API_URL="http://127.0.0.1:$UVICORN_PORT" \
+                  API_URL="http://127.0.0.1:$UVICORN_PORT" \
+                  npx playwright test --reporter=line 2>&1 | tee -a "$GATE_LOG"
+                ) > /dev/null
+                PW_RC=$?
+                echo "exit_code=$PW_RC" >> "$GATE_LOG"
+                if [ "$PW_RC" -ne 0 ]; then
+                  GATE_OK=0
+                  echo "  [GATE] Playwright FAILED (exit $PW_RC)" >&2
+                else
+                  echo "  [GATE] Playwright OK" >&2
+                fi
+
+                # Extract just the playwright section into the per-task
+                # evidence file picked up by `build-pr-body`. Regex laxa
+                # (no hardcoded comando exacto) — sobrevive cambios menores
+                # al texto del header del gate.
+                awk '
+                  /=== \$ *Playwright E2E/ { capture=1; print; next }
+                  capture && /^exit_code=/ { print; capture=0; exit }
+                  capture { print }
+                ' "$GATE_LOG" > "$EVIDENCE_LOG" 2>/dev/null || true
+              fi
+
+              # Manual cleanup (the trap is a backup).
+              kill $UVICORN_PID 2>/dev/null || true
+              # belt-and-suspenders: uvicorn reload spawns watcher + workers
+              # that may survive a `kill $PID` on the parent.
+              pkill -f "run_api.py" 2>/dev/null || true
+              wait $UVICORN_PID 2>/dev/null || true
+              trap - EXIT
+            fi
+
             if [ $GATE_OK -eq 0 ]; then
               DET_RETRY_FILE="$ARTIFACTS_DIR/det-retries-${TASK_ID}.count"
               DET_RETRIES=$(cat "$DET_RETRY_FILE" 2>/dev/null || echo 0)
@@ -1166,19 +1269,48 @@ nodes:
         }
       }
 
+      // Playwright E2E evidence — concatenate per-task evidence logs
+      // captured by `until_bash`. Each log is the actual playwright -v output
+      // from the gate's last successful run of that task. Reviewers see
+      // browser-test proof that the feature works inline in the PR.
+      let playwrightEvidence = '';
+      if (existsSync(artifactsDir)) {
+        const logs = readdirSync(artifactsDir)
+          .filter(f => f.startsWith('playwright-evidence-') && f.endsWith('.log'))
+          .sort();
+        for (const logName of logs) {
+          const taskId = logName.replace('playwright-evidence-', '').replace('.log', '');
+          const raw = readFileSync(join(artifactsDir, logName), 'utf-8').trim();
+          if (raw.length > 0) {
+            playwrightEvidence +=
+              '### ' + taskId + '\n\n```\n' + raw + '\n```\n\n';
+          }
+        }
+      }
+
       const issueUrl = huInfo.issue_url;
       const closesLine = (issueUrl && issueUrl !== 'null' && issueUrl !== '')
         ? ('\n\nCloses ' + issueUrl + '\n')
         : '';
+
+      const evidenceSection = playwrightEvidence
+        ? '## ✅ Playwright E2E evidence\n\n' +
+          'Each task added at least one `e2e/<feature>/*.spec.ts`. The captured Playwright output below ran against a fresh FastAPI backend (started/stopped per task) and a fresh Vite dev server. This is browser-level proof that the feature works end-to-end.\n\n' +
+          playwrightEvidence
+        : '## ⚠ Playwright E2E evidence\n\n' +
+          'No `playwright-evidence-*.log` artifacts were captured. Either this HU did not produce `e2e/` specs (unusual — most features should), or the gate failed before reaching the playwright step. Inspect `$ARTIFACTS_DIR/test-failures.md` of the failing run.\n\n';
 
       const body =
         '## Summary\n\n' +
         summary + '\n\n' +
         '## Tasks implemented\n\n' +
         tasksTable + '\n' +
+        evidenceSection +
         '## Test plan\n\n' +
         '- [ ] Revisar el diff archivo por archivo\n' +
         '- [ ] cd frontend_dashboard && npm test\n' +
+        '- [ ] cd frontend_dashboard && npm run test:arch\n' +
+        '- [ ] cd frontend_dashboard && npx playwright test (con backend en :8000)\n' +
         '- [ ] cd frontend_dashboard && npm run build\n' +
         '- [ ] Smoke test: cd frontend_dashboard && npm run dev y validar UX manualmente\n' +
         closesLine + '\n' +

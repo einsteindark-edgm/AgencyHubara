@@ -32,4 +32,5 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = [
     "architecture: tests de arquitectura DEHA — bloquean merge a main",
+    "functional: tests funcionales end-to-end — evidencia del feature, adjunta al PR comment",
 ]

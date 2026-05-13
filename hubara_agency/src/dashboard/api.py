@@ -7,6 +7,12 @@ from src.platform.config import WORKSPACE_VAULT_DIR
 
 router = APIRouter()
 
+# Note: the liveness probe for the whole FastAPI app is `GET /` (defined in
+# src/main.py:24). The frontend pipeline polls that endpoint before invoking
+# Playwright. We intentionally do NOT add a duplicate `/api/dashboard/health`
+# here — two probes mean two truths to keep in sync.
+
+
 async def dashboard_event_generator():
     """Generador asíncrono para enviar eventos con retraso de 2.5s"""
     while True:

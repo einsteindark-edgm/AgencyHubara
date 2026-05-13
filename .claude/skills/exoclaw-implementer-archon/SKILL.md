@@ -177,7 +177,31 @@ architecture_gate:
 
 A passing architecture gate is REQUIRED for status: passed. Status: passed with a failed architecture gate is a lie to the orchestrator — never report it.
 
-After the architecture gate, walk the R-rules check (§12):
+After the architecture gate, run the FUNCTIONAL EVIDENCE step (mandatory for every task except pure-internal refactors):
+
+You MUST produce at least one test under `hubara_agency/tests/functional/` that exercises the feature this task implements end-to-end and asserts the observable outcome. The pipeline gate runs `uv run pytest tests/functional/ -m functional -v` and embeds the output in the PR comment as evidence that the feature actually works. Pick the smallest of the four patterns that proves the feature:
+
+  - Tool feature (new `*Tool` class): instantiate the tool with a tmp_path workspace, call `await tool.execute_with_context(ctx, **params)`, assert on the JSON envelope. See `tests/functional/test_transfer_to_sales_tool.py` as the canonical example.
+  - FastAPI endpoint feature: use the `api_client` fixture from `tests/functional/conftest.py` (httpx ASGI transport — no real port), call `await api_client.post("/endpoint", json={...})`, assert on status + body.
+  - Workflow feature: use the `workflow_env` fixture (TimeSkippingWorkflowEnvironment) + a `Worker` registering your workflow and mocked activities (use the `mock_llm` fixture for LLM calls), `await env.client.start_workflow(...)`, assert on `await handle.result()`.
+  - Agent E2E ("user → LLM → tool → reply"): same as workflow, but make `mock_llm` return a tool-call envelope so the real tool path executes; assert on the agent's final message.
+
+Rules for the functional test:
+
+- LLM strategy: ALWAYS use the `mock_llm` fixture by default. The fixture skips with a clear message if `LIVE_LLM=1` is set. Never pin to a live-LLM call in a checked-in functional test — that creates a flaky test and burns API credits on every AI retry.
+- Test name: `test_<short_outcome>` (one assertion focus per test). Avoid `test_all_features` style.
+- Output verbosity: write tests that print useful info on failure (descriptive assert messages). The captured pytest -v output is the evidence a human reviewer sees in the PR — make it readable.
+- File location: `hubara_agency/tests/functional/test_<feature_slug>.py`. ONE file per feature task is fine; multiple files OK if the feature naturally splits.
+- The test MUST be marked `functional` — the conftest auto-applies the marker for every file under `tests/functional/`, so just placing the file there is enough.
+- If the task is a PURE INTERNAL REFACTOR with no observable behavior change (rare — most "refactors" still change a signature or a contract), document that in task-result.yaml under `notes`. The DoD item below will accept a documented skip but never a silent skip.
+
+After writing the functional test, run it locally:
+
+  uv run pytest tests/functional/test_<feature_slug>.py -m functional -v
+
+If it fails, fix the code or the test (not the test ergonomics — make sure the assertion is meaningful). Functional test failures are NEVER a reason to mark `status: passed`; they're either a bug in the feature or a bug in the test, both of which block.
+
+After the functional test, walk the R-rules check (§12):
 
 For every rule the task says "applies", inspect the code you wrote and confirm compliance. Be specific: cite the file:line where the rule is honored.
 If you find a violation, fix it (it's a bug). Re-run §10 commands affected by the fix.

@@ -102,10 +102,11 @@ nodes:
         run_type_zod_boundary: {type: string, enum: ["true", "false"]}
         run_react_practices:   {type: string, enum: ["true", "false"]}
         run_test_coverage:     {type: string, enum: ["true", "false"]}
+        run_test_quality:      {type: string, enum: ["true", "false"]}
         run_security:          {type: string, enum: ["true", "false"]}
         complexity:            {type: string, enum: ["trivial", "small", "medium", "large"]}
         reasoning:             {type: string}
-      required: [run_fsd_compliance, run_type_zod_boundary, run_react_practices, run_test_coverage, run_security, complexity, reasoning]
+      required: [run_fsd_compliance, run_type_zod_boundary, run_react_practices, run_test_coverage, run_test_quality, run_security, complexity, reasoning]
     prompt: |
       Sos un classifier de PRs frontend. Tu tarea: leer el contexto del PR y
       decidir qué agentes de review correr.
@@ -137,6 +138,14 @@ nodes:
       - **test_coverage**: Corre si el diff agrega/modifica código en entities o features.
         Verifica que cada feature/entity nuevo tenga al menos 1 test. SKIP si el diff es
         solo CSS/markdown/config.
+
+      - **test_quality**: Corre SIEMPRE que el diff agregue o modifique
+        archivos bajo `frontend_dashboard/e2e/` o `*.test.ts(x)`. Es el agente que
+        audita la calidad de los tests escritos por el implementer — detecta
+        aserciones triviales (`expect(true).toBe(true)`, asserts vacíos),
+        tests sin verificaciones reales, specs Playwright sin navegación o sin
+        `expect(...).toBeVisible()` después de una acción del usuario. Critical
+        para evitar "tests-tontos-que-pasan".
 
       - **security**: Corre si el diff toca: dangerouslySetInnerHTML, env vars,
         endpoints nuevos, manejo de tokens/secrets, formularios sin validación. SKIP si
@@ -338,12 +347,111 @@ nodes:
       ## Paso 3 — Escribir findings
       Escribí a $ARTIFACTS_DIR/findings-security.md.
 
+  - id: test-quality
+    when: "$classify.output.run_test_quality == 'true'"
+    depends_on: [classify, checkout-branch]
+    context: fresh
+    allowed_tools: [Read, Bash, Grep, Glob, Write]
+    idle_timeout: 600000
+    prompt: |
+      Sos un reviewer especializado en CALIDAD de los tests (Vitest unit tests
+      y Playwright E2E specs) escritos por el implementer. Tu mandato es
+      detectar "tests tontos" que pasan trivialmente pero no prueban el feature.
+
+      ## Mandato
+      El pipeline le pide al implementer que escriba al menos 1 spec por task
+      bajo `frontend_dashboard/e2e/<feature>/` (Playwright) + tests unit
+      `*.test.tsx` adyacentes al código. Sin un revisor humano que mire los
+      tests, es trivial escribir aserciones que pasan siempre y dar la
+      ilusión de cobertura. Tu trabajo es atrapar esos patrones ANTES de que
+      lleguen a main.
+
+      ## Paso 1 — Cargar contexto
+      Leé con Read:
+        - $ARTIFACTS_DIR/pr.json
+        - $ARTIFACTS_DIR/changed-files.txt
+        - $ARTIFACTS_DIR/diff.patch
+
+      Y los archivos nuevos / modificados bajo `frontend_dashboard/e2e/` o
+      `*.test.ts(x)` (extraídos del diff). Leelos COMPLETOS.
+
+      ## Paso 2 — Anti-patterns que detectás (cada uno es CRITICAL o HIGH)
+
+      ### CRITICAL: aserción tautológica
+      Patrones:
+        - `expect(true).toBe(true)`, `expect(1).toBe(1)`, `expect(true).toBeTruthy()`
+        - `expect(<x>).toEqual(<x>)` (comparada consigo misma)
+        - `expect(<literal>).toBe(<mismo literal>)`
+      Estos tests siempre pasan. No prueban nada.
+
+      ### CRITICAL: Playwright spec sin interacción ni assert
+      Patrón: `await page.goto("/")` SIN ningún `await expect(...)` después.
+      Solo visitar una URL no prueba que el feature funciona.
+
+      ### CRITICAL: test sin asserts
+      Un test que llama código pero no tiene `expect(...)`, `assert(...)`,
+      `vi.assert*`, ni `.toHaveBeenCalledWith(...)`. Solo "ejecutar sin error"
+      no es prueba.
+
+      ### HIGH: Playwright que muta state sin verificar el resultado
+      Patrón: `await page.click("button")` SIN `await expect(...).toBeVisible()`
+      después que verifique que el click produjo el resultado esperado.
+
+      ### HIGH: feature bajo test completamente mockeado
+      Si el test mockea el módulo que se supone que está siendo probado
+      (ej. en `useUploadWizard.test.ts`, mockear `useUploadWizard` y asertar
+      sobre el mock), el test verifica que el mock funciona, no que el feature
+      funciona. Mockear DEPENDENCIAS está bien; mockear el feature bajo test no.
+
+      ### HIGH: assert sobre el mock, no sobre el output observable
+      Patrón: `expect(mockFn).toHaveBeenCalled()` SIN aserción adicional sobre
+      el DOM, sobre el state visible, o sobre el resultado retornado.
+
+      ### MEDIUM: spec Playwright que usa solo `page.locator(...)` sin Role/Text
+      Selectores frágiles como `.locator(".btn-primary").first()` son
+      vulnerables a refactors CSS. Preferir `page.getByRole("button", { name: ... })`
+      o `page.getByText(...)`. NO es bloqueador pero degrada mantenibilidad.
+
+      ### MEDIUM: ausencia de `process.env.API_URL` en specs que tocan backend
+      Si el spec hace `request.get("http://localhost:8000/...")` hardcoded,
+      no respeta el puerto random del pipeline → falla en concurrencia.
+      Debe usar `process.env.API_URL ?? "http://localhost:8000"`.
+
+      ### LOW: nombres genéricos que sugieren falta de foco
+      `test("works")`, `test("renders")`, `test("smoke test")` — si los tests
+      tienen estos nombres, probablemente no estén asertando el comportamiento
+      del feature en particular.
+
+      ## Paso 3 — Greps útiles
+
+      grep -nE "expect\(true\)\.toBe\(true\)|expect\(1\)\.toBe\(1\)" frontend_dashboard/e2e/ frontend_dashboard/src/
+      grep -rnE "await page\.goto\(" frontend_dashboard/e2e/ | head -20
+      # Para cada spec, leelo y verificá que después del goto haya al menos un `expect(...)`.
+      grep -nE "http://localhost:8000" frontend_dashboard/e2e/
+
+      Para "tests sin asserts" leé el archivo de manera estructurada: cada
+      `test(..., async () => {...})` debe tener al menos un `expect(`.
+
+      ## Paso 4 — Escribir findings
+
+      Escribí a $ARTIFACTS_DIR/findings-test-quality.md con el mismo formato
+      que findings-fsd.md, agrupando por archivo.
+
+      Verdict guidance:
+        - 1+ CRITICAL → REQUEST_CHANGES
+        - HIGH only → REQUEST_CHANGES con discreción del operador
+        - MEDIUM only → NEEDS_DISCUSSION
+        - LOW only → APPROVE con sugerencias
+
+      Si no encontrás violaciones, escribí APPROVE pero NO seas indulgente —
+      los tests tontos son comunes y costosos en main.
+
   # ════════════════════════════════════════════════════════════════════
   # FASE 4 — Synthesize
   # ════════════════════════════════════════════════════════════════════
 
   - id: synthesize
-    depends_on: [fsd-compliance, type-zod-boundary, react-practices, test-coverage, security]
+    depends_on: [fsd-compliance, type-zod-boundary, react-practices, test-coverage, test-quality, security]
     trigger_rule: none_failed_min_one_success
     context: fresh
     allowed_tools: [Read, Write, Bash, Grep, Glob]
@@ -357,6 +465,7 @@ nodes:
         - $ARTIFACTS_DIR/findings-zod.md
         - $ARTIFACTS_DIR/findings-react.md
         - $ARTIFACTS_DIR/findings-tests.md
+        - $ARTIFACTS_DIR/findings-test-quality.md
         - $ARTIFACTS_DIR/findings-security.md
 
       Si un archivo no existe, saltalo (el agente no corrió por el classifier).
