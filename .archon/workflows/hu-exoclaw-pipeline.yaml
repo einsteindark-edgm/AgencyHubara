@@ -389,7 +389,10 @@ nodes:
       F=$ARTIFACTS_DIR/hu-refinada.md
       test -f "$F" || { echo "FAIL_NOT_EXISTS"; exit 0; }
       [ $(wc -c < "$F") -gt 500 ] || { echo "FAIL_TOO_SHORT"; exit 0; }
-      grep -q '^HU id:' "$F" || { echo "FAIL_NO_HU_ID"; exit 0; }
+      # Acepta ambos: `HU id: XX` (plain) y `**HU id:** XX` (markdown bold,
+      # que es el formato preferido por el AI). Bug 2026-05-13: la regex
+      # estricta `^HU id:` rechazaba refinements correctos solo por el bold.
+      grep -qE '^(\*\*)?HU id:' "$F" || { echo "FAIL_NO_HU_ID"; exit 0; }
 
       sections=0
       # Secciones canónicas que emite exoclaw-tech-refiner-archon (§1-§14).
