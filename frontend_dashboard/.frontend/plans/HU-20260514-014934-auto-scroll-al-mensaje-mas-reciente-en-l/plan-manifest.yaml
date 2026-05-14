@@ -1,0 +1,60 @@
+version: 1
+hu_id: HU-20260514-014934-auto-scroll-al-mensaje-mas-reciente-en-l
+hu_title: Auto-scroll al mensaje más reciente en la vista de conversación
+target_frontend: frontend_dashboard
+refinement_source: $ARTIFACTS_DIR/hu-refinada.md
+generated_by: frontend-task-planner-archon
+generated_at: 2026-05-13
+iteration: 1
+
+totals:
+  task_count: 1
+  foundation_count: 1
+  dag_max_depth: 1
+  estimated_loc_total: 265
+  acceptance_coverage: ['AC-1', 'AC-2', 'AC-3', 'AC-4', 'AC-5']
+
+tasks:
+  - id: F01
+    title: Auto-scroll y badge "Nuevo mensaje" en ChatsConversation
+    slug: auto-scroll-chats-conversation
+    file: tareas/F01-auto-scroll-chats-conversation.md
+    depends_on: []
+    blocks: []
+    delivers_acceptance: ['AC-1', 'AC-2', 'AC-3', 'AC-4', 'AC-5']
+    affects_layers: ['features', 'tests']
+    affects_new_files:
+      - frontend_dashboard/src/features/chats-conversation/model/useAutoScroll.ts
+      - frontend_dashboard/src/features/chats-conversation/ui/ChatsMessageList.tsx
+      - frontend_dashboard/src/features/chats-conversation/ui/ChatsConversation.tsx
+      - frontend_dashboard/src/features/chats-conversation/model/useAutoScroll.test.ts
+      - frontend_dashboard/src/features/chats-conversation/ui/ChatsMessageList.test.tsx
+    affects_spinal_files: []
+    estimated_loc: 265
+    risk: low
+
+parallel_batches:
+  - batch_id: B1
+    tasks: ['F01']
+    warnings: []
+
+notes: |
+  Iteration 1 — decomposición inicial.
+
+  Single-task plan: todas las modificaciones son internas a features/chats-conversation/.
+  Sin entidad nueva, sin shared primitive, sin page mount, sin app-layer wiring,
+  sin tokens Tailwind nuevos. DAG trivial (1 nodo, profundidad 1).
+
+  Clasificación ChatsConversation.tsx: acción "modify" sobre un fichero NO declarado
+  en spinal-files.yaml (no es barrel, no es página, no es providers/index.tsx, no es
+  index.css). Se lista en affects_new_files porque no genera contención multi-tarea
+  (plan de 1 sola tarea). El implementer edita el fichero directamente; sin
+  wiring_intent necesario.
+
+  features/chats-conversation/index.ts (barrel — sí declarado spinal como
+  frontend_dashboard/src/features/*/index.ts): NO se modifica porque ChatsMessageList
+  es subcomponente interno de la feature (refinement §10, §4 §11.2). Correcto.
+
+  Risk abierto (de refinement §12.1): Element.prototype.scrollIntoView no está
+  implementado en jsdom. src/test/setup.ts verificado: no incluye este mock.
+  El task file especifica el mock en beforeEach de cada test afectado.

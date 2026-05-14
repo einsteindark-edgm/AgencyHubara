@@ -1,0 +1,33 @@
+task_id: F01
+slug: auto-scroll-chats-conversation
+hu_id: HU-20260514-014934-auto-scroll-al-mensaje-mas-reciente-en-l
+status: passed
+implemented_at: 2026-05-13
+
+files_created:
+  - frontend_dashboard/src/features/chats-conversation/model/useAutoScroll.ts
+  - frontend_dashboard/src/features/chats-conversation/ui/ChatsMessageList.tsx
+  - frontend_dashboard/src/features/chats-conversation/model/useAutoScroll.test.ts
+  - frontend_dashboard/src/features/chats-conversation/ui/ChatsMessageList.test.tsx
+
+files_modified:
+  - frontend_dashboard/src/features/chats-conversation/ui/ChatsConversation.tsx
+
+verification:
+  tsc: passed
+  tests_hook: "5/5 passed"
+  tests_component: "4/4 passed"
+  tests_full_suite: "44/44 passed (16 test files)"
+  build: passed
+  fsd_fetch_isolation: clean
+  fsd_deep_imports: clean
+  fsd_cross_feature: "pre-existing violation in session-metadata (unrelated); chats-conversation clean"
+
+acceptance_delivered:
+  - AC-1: auto-scroll smooth when isAtBottom on new message
+  - AC-2: badge shown when scrolled up and new message arrives
+  - AC-3: clicking badge scrolls to bottom and hides badge
+  - AC-4: instantaneous scroll on mount via behavior auto
+  - AC-5: badge disappears when operator scrolls back to bottom
+
+wiring_intents: []
