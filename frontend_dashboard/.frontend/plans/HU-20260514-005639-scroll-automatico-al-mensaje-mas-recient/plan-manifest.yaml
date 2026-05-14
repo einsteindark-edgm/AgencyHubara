@@ -1,0 +1,55 @@
+version: 1
+hu_id: HU-20260514-005639-scroll-automatico-al-mensaje-mas-recient
+hu_title: Scroll automático al mensaje más reciente en vista de conversación
+target_frontend: frontend_dashboard
+refinement_source: $ARTIFACTS_DIR/hu-refinada.md
+generated_by: frontend-task-planner-archon
+generated_at: 2026-05-13
+iteration: 1
+totals:
+  task_count: 1
+  foundation_count: 1
+  dag_max_depth: 1
+  estimated_loc_total: 160
+  acceptance_coverage: ['AC-1', 'AC-2', 'AC-3', 'AC-4', 'AC-5']
+tasks:
+  - id: F01
+    title: Smart auto-scroll hook for ChatsConversation
+    slug: auto-scroll-chats-conversation
+    file: tareas/F01-auto-scroll-chats-conversation.md
+    depends_on: []
+    blocks: []
+    delivers_acceptance: ['AC-1', 'AC-2', 'AC-3', 'AC-4', 'AC-5']
+    affects_layers: ['features', 'tests']
+    affects_new_files:
+      - frontend_dashboard/src/features/chats-conversation/model/useAutoScroll.ts
+      - frontend_dashboard/src/features/chats-conversation/model/useAutoScroll.test.ts
+    affects_spinal_files: []
+    estimated_loc: 160
+    risk: low
+    # Note: ChatsConversation.tsx is modified (not new) but is NOT declared spinal.
+    # It is sole-owned by this task so there is no batching conflict.
+
+parallel_batches:
+  - batch_id: B1
+    tasks: ['F01']
+    warnings: []
+
+notes: |
+  Iteration 1 — initial decomposition.
+
+  Single-feature HU: all production changes are fully contained within
+  features/chats-conversation/. No entity changes, no page changes, no shared
+  primitives, no Tailwind tokens, no app-layer wiring.
+
+  ChatsConversation.tsx is a "modify" action. It does NOT match any spinal glob
+  in spinal-files.yaml (which covers features/*/index.ts barrels, not
+  features/*/ui/*.tsx). Since F01 is the only task, no batching conflict arises.
+  The file is listed in the task's §3 table and in the task's wiring_intents
+  (as a direct edit, not a spinal merge intent).
+
+  No backend dependency (requires_backend_change: false in refinement).
+  No open architectural decisions remaining — refinement §12 documents known
+  edge cases (effect ordering, JSDOM mocking) as implementation notes, not blockers.
+</content>
+</invoke>
