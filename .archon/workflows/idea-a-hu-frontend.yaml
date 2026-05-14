@@ -60,19 +60,20 @@ nodes:
       # fallan SILENCIOSAMENTE (exit 0 con WARN al stdout).
       # Si el config opcional de Project no existe, no chequeamos scope.
       if [ -f .archon/github-project-config.yaml ]; then
-        # GitHub Projects v2 requiere AMBOS scopes: 'project' (write) y
-        # 'read:project' (read). Sin 'read:project', `gh project item-add`
-        # falla con "missing required scopes [read:project]". Bug descubierto
-        # 2026-05-13: la regex `\bproject\b` matcheaba 'project' aunque
-        # faltara 'read:project' → check pasaba falso-positivo.
-        SCOPES_LINE=$(gh auth status 2>&1 | grep "Token scopes" || true)
-        if ! echo "$SCOPES_LINE" | grep -qE "'project'"; then
-          echo "FAIL_GH_NO_PROJECT_SCOPE"
-          exit 0
-        fi
-        if ! echo "$SCOPES_LINE" | grep -qE "'read:project'"; then
-          echo "FAIL_GH_NO_PROJECT_SCOPE"
-          exit 0
+        # GitHub Projects v2 requiere AMBOS scopes 'project' + 'read:project'.
+        # Bug 2026-05-13 v2: `gh auth status` puede mostrar scopes CACHEADOS
+        # que no reflejan el permiso real después de `gh auth refresh -s ...`
+        # (falso-negativo). String matching no es confiable.
+        # Solución: SMOKE TEST funcional contra el API real — listar 1 item.
+        # Si pasa, el permiso está concedido independientemente del texto de
+        # `gh auth status`. Si falla, FAIL claro.
+        PN=$(grep '^project_number:' .archon/github-project-config.yaml | awk '{print $2}')
+        PO=$(grep '^project_owner:' .archon/github-project-config.yaml | awk '{print $2}')
+        if [ -n "$PN" ] && [ -n "$PO" ]; then
+          if ! gh project item-list "$PN" --owner "$PO" --format json --limit 1 > /dev/null 2>&1; then
+            echo "FAIL_GH_NO_PROJECT_SCOPE"
+            exit 0
+          fi
         fi
       fi
 
