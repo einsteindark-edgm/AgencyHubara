@@ -605,6 +605,25 @@ nodes:
     when: "$validate-plan.output == 'PASS'"
     depends_on: [validate-plan]
 
+  # Pre-warm el venv de hubara_agency. El gate determinista del loop levanta
+  # FastAPI con `uv run` y espera 180s a que esté listo, pero en un worktree
+  # fresco `uv` tarda más bajando deps (tiktoken, grimp, lxml, psycopg-binary).
+  # Hacerlo UNA vez acá fuera del loop garantiza que el primer gate corra contra
+  # un venv ya construido. Best-effort: si falla, seguimos — el gate igual
+  # tiene su propio fallback de readiness.
+  - id: prewarm-uv-venv
+    bash: |
+      if [ ! -d hubara_agency ]; then
+        echo "skipped (no hubara_agency dir)"
+        exit 0
+      fi
+      cd hubara_agency
+      uv sync 2>&1 | tail -20 || echo "uv sync warnings — gate will retry"
+      echo "ok"
+    timeout: 600000
+    depends_on: [commit-plan]
+    trigger_rule: all_done
+
   - id: project-set-planned
     bash: |
       CFG="$ARTIFACTS_DIR/github-project-config.yaml"
@@ -669,7 +688,7 @@ nodes:
     trigger_rule: all_done
 
   - id: implementar-secuencial
-    depends_on: [commit-plan]
+    depends_on: [commit-plan, prewarm-uv-venv]
     idle_timeout: 1800000
     loop:
       max_iterations: 30
@@ -692,6 +711,25 @@ nodes:
         BRANCH="hu/${HU_ID}"
         RESULTS_DIR="frontend_dashboard/.frontend/results/${HU_ID}"
         mkdir -p "$RESULTS_DIR"
+
+        # Limpieza defensiva: el AI puede violar el contrato del skill y escribir
+        # ${TASK_ID}-result.yaml DIRECTO en RESULTS_DIR antes de que el gate
+        # confirme. Si no hay un commit `${HU_ID} ${TASK_ID}: status=` en el
+        # branch, el archivo es stale → la "verdad" es git, no el filesystem.
+        # Sin esto, una iteración futura del AI ve el result stale, cree que la
+        # tarea está done, no escribe task-result.yaml, y el loop sale OK con la
+        # implementación sin commit (bug visto en HU-20260514-005639).
+        if [ -d "$RESULTS_DIR" ]; then
+          for stale_f in "$RESULTS_DIR"/F*-result.yaml; do
+            [ -e "$stale_f" ] || continue
+            stale_name=$(basename "$stale_f")
+            STALE_TID="${stale_name%-result.yaml}"
+            if ! git log --oneline -200 2>/dev/null | grep -Fq "${HU_ID} ${STALE_TID}: status="; then
+              echo "  [until_bash] removiendo stale ${STALE_TID}-result.yaml (sin commit en branch)" >&2
+              rm -f "$stale_f"
+            fi
+          done
+        fi
 
         # Helper: extraer campo de YAML stripping comillas (yaml puede tener `status: "passed"` o `status: passed`)
         yaml_get() {
@@ -783,8 +821,12 @@ nodes:
               trap "kill $UVICORN_PID 2>/dev/null; pkill -f 'run_api.py' 2>/dev/null; true" EXIT
 
               # Wait for liveness probe on / (defined in src/main.py).
+              # 180s para tolerar cold-starts donde `uv` está bajando deps (tiktoken,
+              # grimp, lxml, psycopg-binary). El nodo prewarm-uv-venv previo hace
+              # el sync UNA vez por pipeline, pero si esa primera vez falla este
+              # bucle es la red de seguridad.
               UVICORN_READY=0
-              for i in $(seq 1 30); do
+              for i in $(seq 1 180); do
                 HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$UVICORN_PORT/" 2>/dev/null || echo "000")
                 if [ "$HTTP_CODE" = "200" ]; then
                   UVICORN_READY=1
@@ -796,7 +838,7 @@ nodes:
 
               if [ $UVICORN_READY -eq 0 ]; then
                 echo "  [GATE] Playwright SKIPPED — FastAPI did not start (see $UVICORN_LOG)" >&2
-                echo "FastAPI never became reachable on :$UVICORN_PORT within 30s — playwright NOT run." >> "$GATE_LOG"
+                echo "FastAPI never became reachable on :$UVICORN_PORT within 180s — playwright NOT run." >> "$GATE_LOG"
                 echo "Last lines of uvicorn log:" >> "$GATE_LOG"
                 tail -20 "$UVICORN_LOG" >> "$GATE_LOG" 2>/dev/null || true
                 GATE_OK=0
@@ -1341,6 +1383,20 @@ nodes:
       BRANCH=$(echo $gen-hu-id.output | jq -r '.branch')
       TITLE=$(echo $gen-hu-id.output | jq -r '.title' | head -c 70)
 
+      # Hard fail si quedan cambios sin commit en el worktree. Si llegamos
+      # acá con archivos modificados/untracked en src/ o configs es porque
+      # implementar-secuencial salió mal (bug visto en HU-20260514-005639:
+      # gate fallaba, det-retries se agotaban, y el PR salía sin la
+      # implementación). Mejor frenar acá con error claro que abrir un PR
+      # vacío que parece exitoso.
+      UNCOMMITTED=$(git status --porcelain | grep -vE '^\?\? frontend_dashboard/.frontend/(drafts|results)/' || true)
+      if [ -n "$UNCOMMITTED" ]; then
+        echo "ABORT: worktree tiene cambios sin commit — el PR quedaría vacío." >&2
+        echo "$UNCOMMITTED" >&2
+        echo "Investigá los resultados de implementar-secuencial / final-validation." >&2
+        exit 1
+      fi
+
       # Push final asegurado (idempotente)
       git push origin "$BRANCH" 2>&1 | tail -5
 
@@ -1396,13 +1452,22 @@ nodes:
       LOG_FILE="$HOME/.archon/logs/review-trigger-$(date +%s).log"
       mkdir -p "$HOME/.archon/logs"
 
+      # Quitar symlink stale del workspace de archon — si quedó apuntando a
+      # otra ruta de una corrida previa, `archon workflow run` aborta con
+      # "Source symlink ... already points to ... expected ...". El symlink
+      # se recrea al arrancar el run; borrarlo acá es seguro.
+      STALE_SYMLINK="$HOME/.archon/workspaces/einsteindark-edgm/AgencyHubara/source"
+      [ -L "$STALE_SYMLINK" ] && rm -f "$STALE_SYMLINK"
+
       # CRITICAL: unset CLAUDECODE para evitar la advertencia de nested-claude-code
       # y el riesgo de "workflows hang silently". archon detecta esa env var del
       # parent y warns; con env -u CLAUDECODE el subprocess no la hereda.
       # ARCHON_SUPPRESS_NESTED_CLAUDE_WARNING=1 silencia el warning igualmente
       # por si CLAUDECODE se setea desde otro lado.
+      # --no-worktree: el review solo lee el PR diff vía gh, no necesita
+      # aislamiento de worktree y así evitamos colisiones de symlink.
       (env -u CLAUDECODE ARCHON_SUPPRESS_NESTED_CLAUDE_WARNING=1 \
-         nohup archon workflow run review-pr-frontend "$PR_URL" > "$LOG_FILE" 2>&1 & disown) 2>/dev/null \
+         nohup archon workflow run --no-worktree review-pr-frontend "$PR_URL" > "$LOG_FILE" 2>&1 & disown) 2>/dev/null \
         && echo "review_triggered_log=$LOG_FILE" \
         || echo "review_trigger_failed_run_manually"
     depends_on: [create-pr]
