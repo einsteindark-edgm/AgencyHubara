@@ -107,8 +107,13 @@ function adaptSession(s: ChatSession): ChatInboxItem {
 
 function adaptMessage(m: ChatMessage): ChatMessageItem {
   const sender = getMessageSender(m);
+  // sender: "user"|"agent"|"human"
+  //   user   → bubble inbound (cliente)
+  //   agent  → bubble outbound del bot
+  //   human  → bubble outbound del humano operador (badge distinto)
+  const isOutbound = sender !== "user";
   return {
-    kind: sender === "user" ? "in" : "out",
+    kind: isOutbound ? "out" : "in",
     text: m.content ?? "",
     time:
       typeof m.timestamp === "number"
@@ -119,7 +124,8 @@ function adaptMessage(m: ChatMessage): ChatMessageItem {
               minute: "2-digit",
             })
           : "",
-    status: sender === "agent" ? "read" : undefined,
+    status: isOutbound ? "read" : undefined,
+    author: isOutbound ? (sender === "human" ? "human" : "bot") : undefined,
   };
 }
 

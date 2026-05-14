@@ -499,6 +499,22 @@ h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.02em; margin: 0; }
   font-size: 10px; color: var(--fg-faint); margin-top: 3px;
   display: flex; align-items: center; gap: 4px; font-variant-numeric: tabular-nums;
 }
+/* Bubble humano: outbound, mismo lado que el bot, pero con tinte naranja y
+   un badge "Humano" arriba para que el operador distinga al toque qué dijo
+   el bot vs qué dijo él mismo. */
+.b-human {
+  background: linear-gradient(180deg, #ff7e4d, #d65f30) !important;
+  box-shadow: 0 0.5px 0 rgba(255,255,255,0.18) inset, 0 1px 2px rgba(214,95,48,0.45);
+}
+.b-human-tag {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: rgba(255,255,255,0.95);
+  margin-bottom: 4px; opacity: 0.92;
+}
+.b-human-tag svg { width: 10px; height: 10px; }
+
 .b-out { align-self: flex-end; background: var(--bubble-in); color: #fff; border-bottom-right-radius: 5px; }
 .b-out .meta { color: rgba(255,255,255,0.75); justify-content: flex-end; }
 .b-in  { align-self: flex-start; background: var(--bubble-out); color: var(--fg); border-bottom-left-radius: 5px; }
@@ -586,6 +602,64 @@ h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.02em; margin: 0; }
   appearance: none; border: 0; background: rgba(255,255,255,0.06);
   color: var(--fg-soft); font-size: 11px; padding: 4px 9px;
   border-radius: 5px; cursor: default;
+}
+
+/* Error banners y modal de "Devolver al bot" */
+.bs-err,
+.composer-err {
+  margin-top: 6px;
+  font-size: 11px;
+  color: #ff7269;
+  background: rgba(217,59,50,0.08);
+  border: 0.5px solid rgba(217,59,50,0.35);
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+.return-picker-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.45);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 100;
+}
+.return-picker {
+  width: 420px; max-width: calc(100vw - 32px);
+  background: var(--panel, #1c1c1e);
+  border: 0.5px solid rgba(255,255,255,0.12);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex; flex-direction: column; gap: 10px;
+  color: var(--fg);
+  box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+}
+.rp-header {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 14px;
+}
+.rp-sub {
+  font-size: 12px; color: var(--fg-muted); margin: 0;
+}
+.rp-opt {
+  display: flex; gap: 8px; padding: 8px;
+  border: 0.5px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  align-items: flex-start;
+}
+.rp-opt input { margin-top: 2px; }
+.rp-motivo {
+  width: 100%;
+  background: rgba(255,255,255,0.04);
+  border: 0.5px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  padding: 8px;
+  color: var(--fg);
+  font-size: 12px;
+  font-family: inherit;
+  resize: vertical;
+}
+.rp-actions {
+  display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px;
 }
 
 /* Notes view */

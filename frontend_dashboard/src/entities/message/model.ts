@@ -6,17 +6,21 @@
 export type MessageUiType =
   | "user_message"
   | "agent_message"
+  | "human_message"
   | "system_event"
   | "tool_execution_result"
   | "agent_tool_call";
 
-export type MessageSender = "user" | "agent";
+/** "human" = operador humano via dashboard handoff (no es el bot ni el cliente). */
+export type MessageSender = "user" | "agent" | "human";
 
 export interface ChatMessage {
   ui_type: MessageUiType;
   role: string;
   content: string | null;
   tool_calls?: unknown[];
+  /** Marker exclusivo de mensajes humanos. */
+  sender?: "human";
   /** ms epoch o ISO; el backend hoy no garantiza presencia */
   timestamp?: string | number;
   /** Para tool_execution_result */

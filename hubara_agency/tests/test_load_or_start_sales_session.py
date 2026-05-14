@@ -20,7 +20,12 @@ from __future__ import annotations
 import pytest
 from temporalio.client import WorkflowExecutionStatus
 
-from src.platform.constants import ROUTE_REMARKETING, ROUTE_VENTAS, SALES_QUEUE
+from src.platform.constants import (
+    ROUTE_HUMANO,
+    ROUTE_REMARKETING,
+    ROUTE_VENTAS,
+    SALES_QUEUE,
+)
 from src.sales_whatsapp.contracts import SalesSessionInput
 from src.sales_whatsapp.use_cases.load_or_start_sales_session import (
     LoadOrStartSalesSession,
@@ -201,6 +206,52 @@ async def test_routes_to_remarketing_when_active_and_running():
     fn, args = rem_handle.signals[0]
     assert fn is RemarketingSessionWorkflow.send_message
     assert args == ["vuelvo", None, None]
+
+
+@pytest.mark.asyncio
+async def test_skips_dispatch_when_route_is_humano():
+    """active_route=humano: el use case NO debe arrancar workflow ni signalear.
+
+    El mensaje del cliente ya quedo en el JSONL (lo escribe
+    `IngestInboundMessage.execute` antes de invocarnos). El humano lo lee
+    desde el dashboard. Disparar al workflow reactivaria al LLM y pisaria
+    la conversacion del humano — el bug que queremos evitar.
+    """
+    metadata = FakeMetadataStore(initial={"active_route": ROUTE_HUMANO})
+    client = FakeClient()
+    use_case = _make_use_case(metadata, client)
+
+    await use_case.execute(
+        session_id="wa_human_1", message="hola otra vez", phone_number_id=None
+    )
+
+    # No se arranca workflow ni se signalea ninguno.
+    assert client.start_calls == []
+    # phone_number_id era None, asi que no hubo writes.
+    assert metadata.writes == []
+
+
+@pytest.mark.asyncio
+async def test_humano_route_still_persists_phone_number_id():
+    """Aunque omitimos el dispatch, el `phone_number_id` nuevo se persiste
+    para que el humano lo vea en el dashboard."""
+    metadata = FakeMetadataStore(initial={"active_route": ROUTE_HUMANO})
+    client = FakeClient()
+    use_case = _make_use_case(metadata, client)
+
+    await use_case.execute(
+        session_id="wa_human_2",
+        message="otra vez yo",
+        phone_number_id="PID_HUMAN",
+    )
+
+    # phone_number_id se persistio.
+    assert len(metadata.writes) == 1
+    _, written = metadata.writes[0]
+    assert written["phone_number_id"] == "PID_HUMAN"
+    assert written["active_route"] == ROUTE_HUMANO
+    # Pero nada de workflows.
+    assert client.start_calls == []
 
 
 @pytest.mark.asyncio

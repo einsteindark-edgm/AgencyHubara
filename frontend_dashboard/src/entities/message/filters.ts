@@ -51,8 +51,14 @@ export function isVisibleChatMessage(msg: ChatMessage): boolean {
 }
 
 /** Derives the visual sender from ui_type.
- * Assumes isVisibleChatMessage was applied upstream. Any non-user_message
- * that passes the filter is treated as agent (exhaustive for current ui_types). */
+ * Assumes isVisibleChatMessage was applied upstream.
+ *
+ * - "user_message"  → "user" (cliente)
+ * - "human_message" → "human" (operador humano via dashboard handoff)
+ * - cualquier otro  → "agent" (bot)
+ */
 export function getMessageSender(msg: ChatMessage): MessageSender {
-  return msg.ui_type === "user_message" ? "user" : "agent";
+  if (msg.ui_type === "user_message") return "user";
+  if (msg.ui_type === "human_message") return "human";
+  return "agent";
 }

@@ -116,3 +116,54 @@ def test_append_assistant_preserves_non_ascii(tmp_path):
     raw = log.read_text(encoding="utf-8").strip()
     assert "ñandú" in raw  # ensure_ascii=False
     assert "🦘" in raw
+
+
+def test_append_human_event_writes_assistant_role_with_sender_marker(tmp_path):
+    """append_human_event escribe role=assistant + sender=human + timestamp.
+
+    Esto es la pieza clave del handoff: para el LLM (al retomar el chat) los
+    mensajes humanos lucen como assistant natural; para el dashboard, el
+    campo `sender=human` permite proyectarlos a un `ui_type` distinto y
+    pintarlos diferenciados.
+    """
+    store = FilesystemMessageHistoryStore(tmp_path)
+    store.append_human_event("wa_1", "Hola, te ayudo personalmente con tu pedido")
+
+    log = tmp_path / "wa_1" / "sessions" / "wa_1.jsonl"
+    parsed = json.loads(log.read_text(encoding="utf-8").strip())
+    assert parsed["role"] == "assistant"
+    assert parsed["sender"] == "human"
+    assert parsed["content"] == "Hola, te ayudo personalmente con tu pedido"
+    assert isinstance(parsed["timestamp"], str)
+    assert "T" in parsed["timestamp"]
+
+
+def test_append_human_event_preserves_non_ascii(tmp_path):
+    store = FilesystemMessageHistoryStore(tmp_path)
+    store.append_human_event("wa_1", "Voy a verificar el envío 🤍")
+
+    log = tmp_path / "wa_1" / "sessions" / "wa_1.jsonl"
+    raw = log.read_text(encoding="utf-8").strip()
+    assert "envío" in raw
+    assert "🤍" in raw
+
+
+def test_append_human_event_interleaves_with_user_and_assistant_events(tmp_path):
+    """Verifica que human_events conviven con user/assistant en el JSONL."""
+    store = FilesystemMessageHistoryStore(tmp_path)
+    store.append_user_event("wa_1", "hola")
+    store.append_assistant_event("wa_1", "respuesta del bot")
+    store.append_user_event("wa_1", "necesito hablar con alguien")
+    store.append_human_event("wa_1", "Hola, soy del equipo 🤍")
+    store.append_user_event("wa_1", "gracias")
+
+    log = tmp_path / "wa_1" / "sessions" / "wa_1.jsonl"
+    lines = log.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 5
+    events = [json.loads(ln) for ln in lines]
+    # 4to evento es del humano y conserva el marker
+    assert events[3]["role"] == "assistant"
+    assert events[3]["sender"] == "human"
+    # 2do evento es del bot, sin marker sender
+    assert events[1]["role"] == "assistant"
+    assert "sender" not in events[1]

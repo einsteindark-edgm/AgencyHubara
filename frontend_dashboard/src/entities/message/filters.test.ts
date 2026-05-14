@@ -73,4 +73,21 @@ describe("message filters", () => {
     // getMessageSender itself must still return "agent" for any non-user_message.
     expect(getMessageSender(msg({ ui_type: "system_event" }))).toBe("agent");
   });
+
+  it("getMessageSender returns \"human\" for human_message", () => {
+    expect(getMessageSender(msg({ ui_type: "human_message" }))).toBe("human");
+  });
+
+  it("human_message passes isVisibleChatMessage", () => {
+    expect(
+      isVisibleChatMessage(
+        msg({
+          ui_type: "human_message",
+          role: "assistant",
+          sender: "human",
+          content: "Hola, soy del equipo",
+        }),
+      ),
+    ).toBe(true);
+  });
 });

@@ -1,22 +1,26 @@
 """Adapter filesystem del log append-only de mensajes por sesion.
 
-Persiste dos shapes de evento en ``<vault_dir>/<session_id>/sessions/<session_id>.jsonl``:
+Persiste tres shapes de evento en ``<vault_dir>/<session_id>/sessions/<session_id>.jsonl``:
 
   * ``append_user_event(session_id, content)`` →
     ``{"role": "user", "content": ...}``
   * ``append_assistant_event(session_id, content, tool_calls=None)`` →
     ``{"role": "assistant", "content": ..., "timestamp": "<ISO>"}``
     (``tool_calls`` se incluye solo si no es None ni vacio)
+  * ``append_human_event(session_id, content)`` →
+    ``{"role": "assistant", "sender": "human", "content": ..., "timestamp": "<ISO>"}``
+    (mensaje del humano operador via dashboard handoff; rol assistant para que
+    el LLM lo vea como historial natural al retomar el chat; campo ``sender``
+    extra para que el dashboard pinte la burbuja distinto y para trazabilidad).
 
-Ambos serializan con ``ensure_ascii=False`` para preservar caracteres
-no-ASCII (mismo shape que el legado en ``service.py``).
+Todos serializan con ``ensure_ascii=False`` para preservar caracteres no-ASCII.
 
 El clasificador del dashboard (``api.py::get_session_detail``) deriva el
-campo ``ui_type`` a partir de ``role`` y ``tool_calls`` — no es necesario
-persistirlo aca.
+campo ``ui_type`` a partir de ``role``, ``sender`` y ``tool_calls`` — no es
+necesario persistirlo aca.
 
 Vive en ``src.platform.session_history`` porque tanto ``sales_whatsapp`` como
-``remarketing_whatsapp`` lo necesitan (R-DIP #10).
+``remarketing_whatsapp`` (y el dashboard handoff) lo necesitan (R-DIP #10).
 """
 from __future__ import annotations
 
@@ -58,3 +62,24 @@ class FilesystemMessageHistoryStore:
         if tool_calls:
             event["tool_calls"] = tool_calls
         self._append(session_id, event)
+
+    def append_human_event(self, session_id: str, content: str) -> None:
+        """Mensaje del humano operador via dashboard handoff.
+
+        Rol ``assistant`` (no rol nuevo): cuando el bot retome el chat,
+        ``build_prompt`` lo verá como parte del historial assistant natural,
+        sin que la API de Anthropic se rompa por un rol desconocido. El campo
+        extra ``sender: "human"`` queda persistido para que (1) el clasificador
+        del dashboard lo proyecte como ``ui_type: human_message`` y pinte una
+        burbuja distinta, y (2) quede traza histórica de qué fue agente vs
+        humano cuando un analista revise el JSONL.
+        """
+        self._append(
+            session_id,
+            {
+                "role": "assistant",
+                "sender": "human",
+                "content": content,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            },
+        )

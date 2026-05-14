@@ -5,9 +5,12 @@ import { useAutoScroll } from "../model/useAutoScroll";
 
 interface Props {
   messages: ChatMessageItem[];
+  /** Necesario para que el composer cablee mutaciones del handoff. Si es null,
+   *  el composer no se monta. */
+  chatId: string | null;
 }
 
-export function ChatsMessageList({ messages }: Props) {
+export function ChatsMessageList({ messages, chatId }: Props) {
   const { containerRef, sentinelRef, showNewBadge, handleScroll, scrollToBottom } =
     useAutoScroll(messages.length);
 
@@ -40,7 +43,7 @@ export function ChatsMessageList({ messages }: Props) {
           ↓ Nuevo mensaje
         </button>
       )}
-      <ChatsComposer />
+      <ChatsComposer chatId={chatId} />
     </div>
   );
 }

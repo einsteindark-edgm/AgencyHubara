@@ -102,14 +102,19 @@ async def get_session_history(session_id: str):
             try:
                 msg_obj = json.loads(line)
                 
-                # Clasificador de eventos para facilitar el frontend
+                # Clasificador de eventos para facilitar el frontend.
+                # `sender=="human"` (mensajes del operador humano via dashboard
+                # handoff) se proyecta como `human_message` para que el bubble
+                # se renderice distinto y se diferencie del agente.
                 role = msg_obj.get("role")
                 if role == "user":
                     msg_obj["ui_type"] = "user_message"
                 elif role == "tool":
                     msg_obj["ui_type"] = "tool_execution_result"
                 elif role == "assistant":
-                    if msg_obj.get("tool_calls"):
+                    if msg_obj.get("sender") == "human":
+                        msg_obj["ui_type"] = "human_message"
+                    elif msg_obj.get("tool_calls"):
                         msg_obj["ui_type"] = "agent_tool_call"
                     else:
                         msg_obj["ui_type"] = "agent_message"

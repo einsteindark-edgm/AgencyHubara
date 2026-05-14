@@ -11,7 +11,10 @@ import { describe, expect, it } from "vitest";
 import { FRONTEND_ROOT } from "./helpers";
 
 describe("FSD layering — dependency-cruiser contracts", () => {
-  it("layers + barrels + cross-layer-relative rules pass", () => {
+  // depcruise corre como subprocess (npx → arranque slow). Timeout default
+  // de 5s es muy ajustado a medida que crece el grafo (152+ módulos a 2026-05).
+  // 30s da margen sin esconder cuelgues reales.
+  it("layers + barrels + cross-layer-relative rules pass", { timeout: 30_000 }, () => {
     let stdout = "";
     let stderr = "";
     let exitCode = 0;

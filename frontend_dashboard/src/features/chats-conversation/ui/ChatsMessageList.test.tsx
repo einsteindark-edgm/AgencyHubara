@@ -15,6 +15,12 @@ vi.mock("../model/useAutoScroll", () => ({
   })),
 }));
 
+// El composer real depende de TanStack Query + entities/handoff y rompe estos
+// tests que sólo verifican el list + badge. Lo mockeamos a un stub minimal.
+vi.mock("./ChatsComposer", () => ({
+  ChatsComposer: () => <div data-testid="composer-mock" />,
+}));
+
 import { useAutoScroll } from "../model/useAutoScroll";
 
 const mockUseAutoScroll = vi.mocked(useAutoScroll);
@@ -40,7 +46,7 @@ const msg = (overrides: Partial<ChatMessageItem> = {}): ChatMessageItem => ({
 
 describe("ChatsMessageList", () => {
   it("renders without crash when messages is empty", () => {
-    const { container } = render(<ChatsMessageList messages={[]} />);
+    const { container } = render(<ChatsMessageList messages={[]} chatId={null} />);
     expect(container).toBeTruthy();
   });
 
@@ -49,7 +55,7 @@ describe("ChatsMessageList", () => {
       msg({ text: "Mensaje 1" }),
       msg({ kind: "out", text: "Mensaje 2" }),
     ];
-    render(<ChatsMessageList messages={messages} />);
+    render(<ChatsMessageList messages={messages} chatId={null} />);
     expect(screen.getByText("Mensaje 1")).toBeInTheDocument();
     expect(screen.getByText("Mensaje 2")).toBeInTheDocument();
     expect(screen.queryByText("↓ Nuevo mensaje")).not.toBeInTheDocument();
@@ -63,7 +69,7 @@ describe("ChatsMessageList", () => {
       handleScroll: vi.fn(),
       scrollToBottom: scrollToBottomMock,
     });
-    render(<ChatsMessageList messages={[msg()]} />);
+    render(<ChatsMessageList messages={[msg()]} chatId={null} />);
     expect(screen.getByText("↓ Nuevo mensaje")).toBeInTheDocument();
   });
 
@@ -75,7 +81,7 @@ describe("ChatsMessageList", () => {
       handleScroll: vi.fn(),
       scrollToBottom: scrollToBottomMock,
     });
-    render(<ChatsMessageList messages={[msg()]} />);
+    render(<ChatsMessageList messages={[msg()]} chatId={null} />);
     fireEvent.click(screen.getByText("↓ Nuevo mensaje"));
     expect(scrollToBottomMock).toHaveBeenCalledOnce();
   });

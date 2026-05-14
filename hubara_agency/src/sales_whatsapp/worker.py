@@ -21,10 +21,14 @@ from src.sales_whatsapp.activities import (
     decide_ghosting_action,
 )
 from src.platform.catalog.composition import get_catalog_client
+from src.platform.catalog.medusa_checkout import MedusaCheckoutVerification
+from src.platform.medusa.composition import get_medusa_product_service
 from src.sales_whatsapp.tools.catalog import (
     GetProductByHandleTool,
     SearchProductsTool,
 )
+from src.sales_whatsapp.tools.checkout import VerifyOrderForCheckoutTool
+from src.platform.tools.escalation import EscalateToHumanTool
 from src.platform.tools.routing import TransferToSalesAgentTool
 from src.sales_whatsapp.tools.tags import ManageConversationTagTool
 from src.sales_whatsapp.workflows.sales_session import HubaraSalesSessionWorkflow
@@ -58,6 +62,33 @@ register_tool_extension(
 register_tool_extension(
     "sales.get_product_by_handle",
     lambda workspace: GetProductByHandleTool(workspace=str(workspace), catalog=_catalog),
+)
+
+# Escalation a humano: tool inerte, escribe metadata.json[tag=HUMANO,
+# active_route=humano] y devuelve un envelope con `escalation_decision`. El
+# workflow lo lee, manda el mensaje de despedida del LLM y cierra. Subsecuentes
+# webhooks NO arrancan workflow (`LoadOrStartSalesSession` corta cuando
+# active_route==humano). Frontend ya soporta `tag=HUMANO`
+# (`frontend_dashboard/src/entities/chat/model.ts:10`).
+register_tool_extension(
+    "sales.escalate_to_human",
+    lambda workspace: EscalateToHumanTool(workspace=str(workspace)),
+)
+
+# Verificacion LIVE de precio/stock al checkout: el snapshot es la verdad
+# durante la conversacion, pero al cobrar hay que confirmar contra Medusa
+# por si hubo cambios reales. El verifier captura `_catalog` (snapshot) y
+# `MedusaProductService` (live) por closure — singletons via lru_cache(1).
+_checkout_verifier = MedusaCheckoutVerification(
+    medusa=get_medusa_product_service(),
+    snapshot=_catalog,
+)
+register_tool_extension(
+    "sales.verify_order_for_checkout",
+    lambda workspace: VerifyOrderForCheckoutTool(
+        workspace=str(workspace),
+        verifier=_checkout_verifier,
+    ),
 )
 
 

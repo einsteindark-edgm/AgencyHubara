@@ -9,9 +9,10 @@ Este modulo vive en ``src.platform.session_history`` y no en
 porque la R-DIP #10 del proyecto exige que los agentes sean independientes
 entre si — los stores compartidos suben a ``platform/``.
 
-``FilesystemMetadataStore`` sigue en ``src.sales_whatsapp.state`` porque su
-contrato semantico (tag, motivo, active_route, status_history) es del dominio
-de Sales y no se comparte con Remarketing.
+``FilesystemMetadataStore`` ahora vive en ``src.platform.state`` por la misma
+regla R-DIP: dashboard handoff (intervene + return-to-bot) lo necesita para
+flippear `active_route=humano`, asi que dejo de ser un store agent-specific.
+Un shim en ``src.sales_whatsapp.state`` mantiene el import legacy funcionando.
 """
 from __future__ import annotations
 

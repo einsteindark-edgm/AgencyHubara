@@ -46,7 +46,12 @@ from temporalio.service import RPCError
 
 from exoclaw_temporal.config import WorkspaceConfig
 
-from src.platform.constants import ROUTE_REMARKETING, ROUTE_VENTAS, SALES_QUEUE
+from src.platform.constants import (
+    ROUTE_HUMANO,
+    ROUTE_REMARKETING,
+    ROUTE_VENTAS,
+    SALES_QUEUE,
+)
 from src.remarketing_whatsapp.workflows.remarketing import (
     RemarketingSessionWorkflow,
 )
@@ -114,6 +119,18 @@ class LoadOrStartSalesSession:
         if phone_number_id:
             data["phone_number_id"] = phone_number_id
             self._metadata_store.write(session_id, data)
+
+        # 1.5. Ruta humano: cliente esta en el inbox humano (escalation previa).
+        # El mensaje del cliente ya quedo persistido en el JSONL (lo hace
+        # `IngestInboundMessage.execute` antes de invocarnos), asi que el humano
+        # lo lee desde el dashboard. NO arrancamos workflow ni signaleamos —
+        # eso reactivaria al LLM y pisaria la conversacion del humano.
+        if active_route == ROUTE_HUMANO:
+            logger.info(
+                "Session in HUMANO route — message logged only, no LLM dispatch",
+                session_id=session_id,
+            )
+            return
 
         # 2. Conectar al cluster.
         client = await self._client_factory()

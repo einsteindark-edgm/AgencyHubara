@@ -30,7 +30,11 @@ with workflow.unsafe.imports_passed_through():
     )
 
     from src.platform.temporal.activities import execute_tool
-    from src.platform.contracts import ScheduleRemarketingDecision, TransferDecision
+    from src.platform.contracts import (
+        EscalationDecision,
+        ScheduleRemarketingDecision,
+        TransferDecision,
+    )
     from src.platform.temporal.retry_policies import (
         _CONV_OPTIONS,
         _LLM_OPTIONS,
@@ -71,12 +75,14 @@ class TurnResult:
 
     Ademas del `final_content` y los `tools_used`, expone las decisiones que las
     tools dispararon (a interpretar por el workflow para llamar la activity
-    dispatcher correspondiente).
+    dispatcher correspondiente, o terminar el workflow en el caso de
+    escalation).
     """
     final_content: str
     tools_used: list[str] = field(default_factory=list)
     transfer_decision: TransferDecision | None = None
     schedule_remarketing: ScheduleRemarketingDecision | None = None
+    escalation_decision: EscalationDecision | None = None
 
 
 def _try_parse_decision_payload(raw: str) -> dict[str, Any] | None:
@@ -140,6 +146,7 @@ async def run_agent_turn(
     tools_used: list[str] = []
     transfer_decision: TransferDecision | None = None
     schedule_remarketing: ScheduleRemarketingDecision | None = None
+    escalation_decision: EscalationDecision | None = None
 
     while iteration < session.llm.max_iterations:
         iteration += 1
@@ -188,6 +195,13 @@ async def run_agent_turn(
                             motivo=str(sr.get("motivo", "")),
                             delay_seconds=int(sr.get("delay_seconds", 60)),
                         )
+                    if "escalation_decision" in payload and isinstance(payload["escalation_decision"], dict):
+                        ed = payload["escalation_decision"]
+                        escalation_decision = EscalationDecision(
+                            session_id=str(ed.get("session_id", session.session_id)),
+                            reason_category=str(ed.get("reason_category", "OTHER")),
+                            summary=str(ed.get("summary", "")),
+                        )
 
                 messages = [
                     *messages,
@@ -222,4 +236,5 @@ async def run_agent_turn(
         tools_used=tools_used,
         transfer_decision=transfer_decision,
         schedule_remarketing=schedule_remarketing,
+        escalation_decision=escalation_decision,
     )

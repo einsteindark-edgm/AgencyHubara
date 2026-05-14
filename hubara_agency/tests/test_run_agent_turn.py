@@ -16,7 +16,11 @@ from src.platform.workflow_helpers import (
     TurnResult,
     _try_parse_decision_payload,
 )
-from src.platform.contracts import ScheduleRemarketingDecision, TransferDecision
+from src.platform.contracts import (
+    EscalationDecision,
+    ScheduleRemarketingDecision,
+    TransferDecision,
+)
 
 
 def test_parse_decision_with_transfer() -> None:
@@ -47,6 +51,20 @@ def test_parse_decision_with_schedule_remarketing() -> None:
     assert parsed["schedule_remarketing"]["delay_seconds"] == 60
 
 
+def test_parse_decision_with_escalation_decision() -> None:
+    raw = json.dumps({
+        "escalation_decision": {
+            "session_id": "wa_E",
+            "reason_category": "BULK_ORDER",
+            "summary": "cliente pide 50 velas",
+        },
+        "message": "ok",
+    })
+    parsed = _try_parse_decision_payload(raw)
+    assert parsed is not None
+    assert parsed["escalation_decision"]["reason_category"] == "BULK_ORDER"
+
+
 def test_parse_decision_returns_none_on_plain_text() -> None:
     assert _try_parse_decision_payload("not a json") is None
 
@@ -66,6 +84,24 @@ def test_turn_result_default_serializable() -> None:
     payload = asdict(tr)
     assert payload["final_content"] == "hi"
     assert payload["tools_used"] == ["foo"]
+    assert payload["transfer_decision"] is None
+    assert payload["schedule_remarketing"] is None
+    assert payload["escalation_decision"] is None
+
+
+def test_turn_result_with_escalation_serializable() -> None:
+    tr = TurnResult(
+        final_content="te conecto con un colega 🤍",
+        tools_used=["escalate_to_human"],
+        escalation_decision=EscalationDecision(
+            session_id="wa_F",
+            reason_category="CORPORATE_EVENT",
+            summary="50 velas para una boda en Bogota",
+        ),
+    )
+    payload = asdict(tr)
+    assert payload["escalation_decision"]["session_id"] == "wa_F"
+    assert payload["escalation_decision"]["reason_category"] == "CORPORATE_EVENT"
     assert payload["transfer_decision"] is None
     assert payload["schedule_remarketing"] is None
 

@@ -144,6 +144,36 @@ class HubaraSalesSessionWorkflow:
                                 retry_policy=RetryPolicy(maximum_attempts=2),
                             )
 
+                    # Escalation a humano: la tool ya escribio metadata
+                    # (active_route=humano, tag=HUMANO). Mandado ya el mensaje
+                    # de despedida del LLM (en el bloque de send_whatsapp de
+                    # arriba), cerramos el workflow. NO programamos remarketing —
+                    # escalation y remarketing son mutuamente excluyentes: un
+                    # humano va a tomar el caso. Subsecuentes mensajes del
+                    # cliente NO arrancan un workflow nuevo porque
+                    # `LoadOrStartSalesSession` chequea `active_route==humano`
+                    # y omite el dispatch.
+                    #
+                    # workflow.patched(): histories pre-deploy no tienen este
+                    # branch en su shape; el gate evita NondeterminismError al
+                    # replay-arlos. Tras el primer drain (ver
+                    # `docs/refactor/PHASE6.md::Drain operativo`), eliminar el
+                    # if + `workflow.deprecate_patch("sales-escalation-v1")`.
+                    if (
+                        result.escalation_decision is not None
+                        and workflow.patched("sales-escalation-v1")
+                    ):
+                        # stdlib logging usa `%s`, NO `{}` — el msg pasa por
+                        # `record.getMessage()` que hace `msg % args`. F-string
+                        # formatea antes y evita el conflicto (mismo patron que
+                        # las otras lineas de este file en lineas 84 y 174).
+                        workflow.logger.info(
+                            f"Sesion {session.session_id} escalada a humano "
+                            f"(reason={result.escalation_decision.reason_category}). "
+                            "Cerrando workflow."
+                        )
+                        self._force_shutdown = True
+
                     if self._force_shutdown:
                         workflow.logger.info(f"Auto-diagnóstico concluido. Apagando sesión {session.session_id} por abandono de usuario o transferencia.")
                         return
@@ -153,7 +183,12 @@ class HubaraSalesSessionWorkflow:
 
             # continue_as_new to keep history bounded
             if turn_count >= _CONTINUE_AS_NEW_AFTER_TURNS and not self._pending:
-                workflow.logger.info("Reached {} turns, continuing as new", _CONTINUE_AS_NEW_AFTER_TURNS)
+                # F-string: stdlib logging usa `%s`, no `{}`; el formato previo
+                # `"Reached {} turns", N` lanzaba TypeError al disparar (bug
+                # latente que solo se activaba al pasar 50 turnos).
+                workflow.logger.info(
+                    f"Reached {_CONTINUE_AS_NEW_AFTER_TURNS} turns, continuing as new"
+                )
                 workflow.continue_as_new(
                     SalesSessionInput(
                         session_id=session.session_id,

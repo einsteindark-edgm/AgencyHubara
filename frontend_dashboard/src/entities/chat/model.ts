@@ -29,12 +29,18 @@ export interface ChatInboxItem {
 
 export type MessageKind = "in" | "out" | "day" | "system" | "tag" | "audio";
 
+/** Identifica de quién sale un bubble outbound (out): bot o humano operador.
+ *  Sólo aplica cuando `kind === "out"`; para inbound queda undefined. */
+export type OutboundAuthor = "bot" | "human";
+
 export interface ChatMessageItem {
   kind: MessageKind;
   text?: string;
   time?: string;
   status?: "sent" | "read";
   dur?: string;
+  /** Sólo definido cuando kind="out". Indica si lo escribió el bot o el humano operador. */
+  author?: OutboundAuthor;
 }
 
 export interface MemoryItem {

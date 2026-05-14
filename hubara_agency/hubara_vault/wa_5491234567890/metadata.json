@@ -116,6 +116,48 @@
       "motivo": "quiere retomar la compra",
       "active_route": "ventas",
       "timestamp": 1778706809.702637
+    },
+    {
+      "tag": "RETOMA_VENTA",
+      "motivo": "quiere retomar la compra",
+      "active_route": "ventas",
+      "timestamp": 1778732337.537719
+    },
+    {
+      "tag": "RETOMA_VENTA",
+      "motivo": "quiere retomar la compra",
+      "active_route": "ventas",
+      "timestamp": 1778732408.150666
+    },
+    {
+      "tag": "RETOMA_VENTA",
+      "motivo": "quiere retomar la compra",
+      "active_route": "ventas",
+      "timestamp": 1778778593.5714371
+    },
+    {
+      "tag": "RETOMA_VENTA",
+      "motivo": "quiere retomar la compra",
+      "active_route": "ventas",
+      "timestamp": 1778779230.4826722
+    },
+    {
+      "tag": "RETOMA_VENTA",
+      "motivo": "quiere retomar la compra",
+      "active_route": "ventas",
+      "timestamp": 1778779673.631905
+    },
+    {
+      "tag": "RETOMA_VENTA",
+      "motivo": "quiere retomar la compra",
+      "active_route": "ventas",
+      "timestamp": 1778780290.95153
+    },
+    {
+      "tag": "RETOMA_VENTA",
+      "motivo": "quiere retomar la compra",
+      "active_route": "ventas",
+      "timestamp": 1778800711.38582
     }
   ]
 }

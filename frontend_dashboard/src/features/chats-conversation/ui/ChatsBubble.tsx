@@ -42,8 +42,19 @@ export function ChatsBubble({ message: m }: Props) {
       </div>
     );
   }
+  const isHuman = m.kind === "out" && m.author === "human";
+  const bubbleClass =
+    "bubble " +
+    (m.kind === "out" ? "b-out" : "b-in") +
+    (isHuman ? " b-human" : "");
   return (
-    <div className={"bubble " + (m.kind === "out" ? "b-out" : "b-in")}>
+    <div className={bubbleClass}>
+      {isHuman && (
+        <div className="b-human-tag">
+          <Icon.user />
+          <span>Humano</span>
+        </div>
+      )}
       {m.text}
       <div className="meta">
         {m.time}

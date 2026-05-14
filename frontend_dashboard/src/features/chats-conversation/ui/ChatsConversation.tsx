@@ -71,7 +71,7 @@ export function ChatsConversation({ chatId }: Props) {
       {subTab === "Notas" && <ChatsNotes chatId={chatId} />}
       {subTab === "Archivos" && <ChatsFiles chatId={chatId} />}
       {subTab === "Chat" && (
-        <ChatsMessageList messages={messages} key={chatId ?? ""} />
+        <ChatsMessageList messages={messages} chatId={chatId} key={chatId ?? ""} />
       )}
     </main>
   );

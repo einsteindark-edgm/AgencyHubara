@@ -9,6 +9,7 @@ import { z } from "zod";
 export const messageUiTypeSchema = z.enum([
   "user_message",
   "agent_message",
+  "human_message",
   "system_event",
   "tool_execution_result",
   "agent_tool_call",
@@ -19,6 +20,9 @@ export const chatMessageSchema = z.object({
   role: z.string(),
   content: z.string().nullable(),
   tool_calls: z.array(z.unknown()).optional(),
+  /** Mensajes del operador humano via dashboard handoff. Backend lo escribe
+   *  como "human"; otros mensajes no llevan este campo. */
+  sender: z.literal("human").optional(),
   timestamp: z.union([z.string(), z.number()]).optional(),
   name: z.string().optional(),
 });
