@@ -6,10 +6,9 @@
 import { useState } from "react";
 import { useChatInbox, useChatMessages } from "@/entities/chat";
 import { Avatar, Icon } from "@/shared/ui";
-import { ChatsBubble } from "./ChatsBubble";
-import { ChatsComposer } from "./ChatsComposer";
 import { ChatsNotes } from "./ChatsNotes";
 import { ChatsFiles } from "./ChatsFiles";
+import { ChatsMessageList } from "./ChatsMessageList";
 
 type SubTab = "Chat" | "Notas" | "Archivos";
 
@@ -72,14 +71,7 @@ export function ChatsConversation({ chatId }: Props) {
       {subTab === "Notas" && <ChatsNotes chatId={chatId} />}
       {subTab === "Archivos" && <ChatsFiles chatId={chatId} />}
       {subTab === "Chat" && (
-        <>
-          <div className="msgs">
-            {messages.map((m, i) => (
-              <ChatsBubble key={i} message={m} />
-            ))}
-          </div>
-          <ChatsComposer />
-        </>
+        <ChatsMessageList messages={messages} key={chatId ?? ""} />
       )}
     </main>
   );
