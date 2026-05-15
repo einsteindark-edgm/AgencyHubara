@@ -106,29 +106,11 @@ function TagsTab({ chatId }: { chatId: string | null }) {
             <span className="lbl">Origen</span>
             <span className="val link">Meta Ads · velas</span>
           </div>
-          <div className="form-row">
-            <span className="lbl">Mensajes</span>
-            <span className="val">17 · 11 in / 6 out</span>
-          </div>
-          <div className="form-row">
-            <span className="lbl">Sentimiento</span>
-            <span className="val" style={{ color: "var(--green)" }}>
-              Positivo · 0.62
-            </span>
-          </div>
         </div>
         <div className="quick-row" style={{ marginTop: 10 }}>
           <button className="insp-button">
-            <Icon.tag />
-            Cambiar tag
-          </button>
-          <button className="insp-button">
             <Icon.user />
             Reasignar
-          </button>
-          <button className="insp-button danger">
-            <Icon.archive />
-            Cerrar
           </button>
         </div>
       </Panel>
