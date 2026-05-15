@@ -13,7 +13,10 @@ from src.platform.temporal.dispatcher import (
     schedule_remarketing_workflow_activity,
     start_or_signal_sales_workflow_activity,
 )
-from src.platform.whatsapp.activities import send_whatsapp_message_activity
+from src.platform.whatsapp.activities import (
+    send_typing_indicator_activity,
+    send_whatsapp_message_activity,
+)
 from src.platform.logging import setup_logging
 from src.platform.temporal.client import get_temporal_client
 from src.platform.tool_extensions import register_tool_extension
@@ -54,6 +57,7 @@ async def main() -> None:
             record_turn,
             claim_conversation_routing,
             send_whatsapp_message_activity,
+            send_typing_indicator_activity,
             persist_assistant_message_activity,
             read_workspace_memory_activity,
             build_remarketing_trigger_activity,

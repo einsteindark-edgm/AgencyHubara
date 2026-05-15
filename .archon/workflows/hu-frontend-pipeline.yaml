@@ -93,6 +93,37 @@ nodes:
         echo "FAIL_NO_ORIGIN_OR_NETWORK"; exit 0;
       }
 
+      # CRÍTICO: Archon copia `.archon/` desde el repo principal al worktree
+      # por defecto (`defaultCopyFiles` en isolation/providers/worktree.ts).
+      # Si tu main local tiene cambios sin commit en `.archon/`, `.claude/skills/frontend-`,
+      # o cualquier archivo arquitectura-protegido, ese cambio entra al worktree
+      # como "modificación del branch" y el meta-gate de arquitectura
+      # (src/test/architecture/test_meta.arch.test.ts) lo agarra recién en
+      # `final-validation`, cancelando el pipeline después de que ya consumió
+      # planner + implementer. Detectarlo acá ahorra ~10 min y deja el error
+      # bien atribuido al main sucio en lugar de a la HU.
+      git fetch origin main >/dev/null 2>&1 || true
+      DIRTY_PROTECTED=$(git diff --name-only origin/main -- \
+        '.archon/' \
+        '.claude/skills/' \
+        'frontend_dashboard/src/test/architecture/' \
+        'frontend_dashboard/.dependency-cruiser.cjs' 2>/dev/null \
+        | grep -E '^(\.archon/|\.claude/skills/frontend-|frontend_dashboard/src/test/architecture/|frontend_dashboard/\.dependency-cruiser\.cjs)' \
+        | head -20)
+      UNTRACKED_PROTECTED=$(git ls-files --others --exclude-standard -- \
+        '.archon/' '.claude/skills/' 2>/dev/null \
+        | grep -E '^(\.archon/|\.claude/skills/frontend-)' \
+        | head -20)
+      if [ -n "$DIRTY_PROTECTED" ] || [ -n "$UNTRACKED_PROTECTED" ]; then
+        {
+          echo "Archivos arquitectura-protegidos modificados/untracked vs origin/main:"
+          [ -n "$DIRTY_PROTECTED" ] && echo "$DIRTY_PROTECTED" | sed 's/^/  M  /'
+          [ -n "$UNTRACKED_PROTECTED" ] && echo "$UNTRACKED_PROTECTED" | sed 's/^/  ?? /'
+        } >&2
+        echo "FAIL_DIRTY_PROTECTED_FILES"
+        exit 0
+      fi
+
       # CRÍTICO: si Project sync está activo, validar scope 'project' del token gh.
       # Sin él, gh project item-add/edit/list fallan con
       # "missing required scopes [read:project]" y los nodos project-set-*
@@ -129,6 +160,17 @@ nodes:
         FAIL_NO_LOCKFILE           → cd frontend_dashboard && npm install para crear lockfile
         FAIL_NPM_CI                → revisar el error de npm en stderr
         FAIL_NO_ORIGIN_OR_NETWORK  → revisar conectividad/credenciales git push
+        FAIL_DIRTY_PROTECTED_FILES → tu main local tiene cambios sin commit en
+                                     `.archon/`, `.claude/skills/frontend-*`,
+                                     `frontend_dashboard/src/test/architecture/`
+                                     o `.dependency-cruiser.cjs`. Archon copia
+                                     `.archon/` al worktree, así que esos cambios
+                                     llegan al pipeline como modificaciones del
+                                     branch y el meta-gate falla al final.
+                                     Solución: `git add .archon/... && git commit
+                                     && git push` antes de relanzar, o revertir
+                                     con `git checkout -- <archivo>` si no los
+                                     querés. Ver stderr para la lista exacta.
     when: "$check-prereqs.output != 'OK'"
     depends_on: [check-prereqs]
 

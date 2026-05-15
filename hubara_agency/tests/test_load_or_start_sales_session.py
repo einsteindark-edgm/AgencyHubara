@@ -58,10 +58,17 @@ class _Desc:
 
 
 class FakeHandle:
-    def __init__(self, status, raise_describe: Exception | None = None) -> None:
+    def __init__(
+        self,
+        status,
+        raise_describe: Exception | None = None,
+        raise_terminate: Exception | None = None,
+    ) -> None:
         self._status = status
         self._raise_describe = raise_describe
+        self._raise_terminate = raise_terminate
         self.signals: list[tuple[object, list]] = []
+        self.terminate_reasons: list[str] = []
         self.id = None
 
     async def describe(self) -> _Desc:
@@ -71,6 +78,11 @@ class FakeHandle:
 
     async def signal(self, fn, *, args) -> None:
         self.signals.append((fn, args))
+
+    async def terminate(self, reason: str = "") -> None:
+        if self._raise_terminate is not None:
+            raise self._raise_terminate
+        self.terminate_reasons.append(reason)
 
 
 class FakeClient:
@@ -278,3 +290,46 @@ async def test_falls_back_to_sales_when_remarketing_handle_dead():
     # workspace canonico via `bootstrap_remarketing_session_activity`.
     # NO se signaleo al remarketing handle muerto.
     assert dead_remarketing.signals == []
+
+
+@pytest.mark.asyncio
+async def test_fallback_terminates_dead_remarketing_handle():
+    """Fix 4 (H2): cuando hacemos fallback a Sales porque Remarketing no esta
+    RUNNING, terminamos el handle zombie para que no se ejecute despues."""
+    metadata = FakeMetadataStore(initial={"active_route": ROUTE_REMARKETING})
+    dead_remarketing = FakeHandle(status=WorkflowExecutionStatus.COMPLETED)
+    client = FakeClient(existing_handles={"remarketing-wa_zombie": dead_remarketing})
+    use_case = _make_use_case(metadata, client)
+
+    await use_case.execute(
+        session_id="wa_zombie", message="estoy aca", phone_number_id=None
+    )
+
+    # 1. Se llamo terminate() en el handle zombie con un reason significativo
+    assert len(dead_remarketing.terminate_reasons) == 1
+    assert "Sales fallback" in dead_remarketing.terminate_reasons[0]
+    # 2. Sales se arranca igual que antes
+    assert len(client.start_calls) == 1
+    assert client.start_calls[0]["id"] == "session-wa_zombie"
+
+
+@pytest.mark.asyncio
+async def test_fallback_terminate_failure_is_swallowed():
+    """Fix 4: si terminate() del zombie falla (race, ya completed, etc), no
+    rompemos el flujo — seguimos con el fallback a Sales."""
+    metadata = FakeMetadataStore(initial={"active_route": ROUTE_REMARKETING})
+    # Handle que reporta COMPLETED y ademas lanza al terminate (doble race)
+    dead = FakeHandle(
+        status=WorkflowExecutionStatus.COMPLETED,
+        raise_terminate=RuntimeError("workflow already completed"),
+    )
+    client = FakeClient(existing_handles={"remarketing-wa_4": dead})
+    use_case = _make_use_case(metadata, client)
+
+    # No debe raisear
+    await use_case.execute(
+        session_id="wa_4", message="seguimos", phone_number_id=None
+    )
+
+    # Sales arranca aunque el terminate haya fallado
+    assert len(client.start_calls) == 1

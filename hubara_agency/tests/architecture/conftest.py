@@ -69,7 +69,11 @@ R_JSON_FROZEN_EXEMPTIONS: dict[str, str] = {
 # Activities long-running que NO requieren @with_heartbeat por su naturaleza.
 # Heurística positiva (greppea httpx/litellm/medusa); los falsos positivos van aquí.
 R_HEARTBEAT_EXEMPTIONS: set[str] = {
-    # path:function_name — current allow-list. Vacía hasta que la heurística lo pida.
+    # path:function_name — current allow-list.
+    # Best-effort, llamada HTTP corta (timeout 4s) sin retry. Un heartbeat
+    # agregaria overhead innecesario; si la API falla el LLM ya esta procesando
+    # y el indicator seria stale.
+    "src/platform/whatsapp/activities.py:send_typing_indicator_activity",
 }
 
 # Modulos top-level prohibidos bajo src/ (DEHA layout — agentes son siblings).

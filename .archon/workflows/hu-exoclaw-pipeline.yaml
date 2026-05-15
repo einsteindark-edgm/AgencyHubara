@@ -90,6 +90,36 @@ nodes:
         echo "FAIL_NO_ORIGIN_OR_NETWORK"; exit 0;
       }
 
+      # CRÍTICO: Archon copia `.archon/` desde el repo principal al worktree
+      # por defecto (`defaultCopyFiles` en isolation/providers/worktree.ts).
+      # Si tu main local tiene cambios sin commit en archivos arquitectura-protegidos
+      # (ver ARCHITECTURE_PROTECTED_PREFIXES en hubara_agency/tests/architecture/conftest.py),
+      # ese cambio entra al worktree como "modificación del branch" y el meta-gate
+      # (`tests/architecture/test_meta.py`) lo agarra recién en `final-validation`,
+      # cancelando el pipeline después de planner + implementer. Detectarlo acá
+      # ahorra ~10 min y deja el error bien atribuido al main sucio.
+      git fetch origin main >/dev/null 2>&1 || true
+      DIRTY_PROTECTED=$(git diff --name-only origin/main -- \
+        '.archon/' \
+        '.claude/skills/' \
+        'hubara_agency/tests/architecture/' \
+        'hubara_agency/.importlinter' 2>/dev/null \
+        | grep -E '^(\.archon/|\.claude/skills/exoclaw-|hubara_agency/tests/architecture/|hubara_agency/\.importlinter)' \
+        | head -20)
+      UNTRACKED_PROTECTED=$(git ls-files --others --exclude-standard -- \
+        '.archon/' '.claude/skills/' 2>/dev/null \
+        | grep -E '^(\.archon/|\.claude/skills/exoclaw-)' \
+        | head -20)
+      if [ -n "$DIRTY_PROTECTED" ] || [ -n "$UNTRACKED_PROTECTED" ]; then
+        {
+          echo "Archivos arquitectura-protegidos modificados/untracked vs origin/main:"
+          [ -n "$DIRTY_PROTECTED" ] && echo "$DIRTY_PROTECTED" | sed 's/^/  M  /'
+          [ -n "$UNTRACKED_PROTECTED" ] && echo "$UNTRACKED_PROTECTED" | sed 's/^/  ?? /'
+        } >&2
+        echo "FAIL_DIRTY_PROTECTED_FILES"
+        exit 0
+      fi
+
       # CRÍTICO: si Project sync está activo, validar scope 'project' del token gh.
       # Sin él, gh project item-add/edit/list fallan con
       # "missing required scopes [read:project]" y los nodos project-set-*
@@ -126,6 +156,17 @@ nodes:
         FAIL_NO_LOCKFILE           → ejecutar `uv lock` desde la raíz del workspace
         FAIL_UV_SYNC               → revisar el error de uv en stderr (versión de Python, deps en pyproject)
         FAIL_NO_ORIGIN_OR_NETWORK  → revisar conectividad/credenciales git push
+        FAIL_DIRTY_PROTECTED_FILES → tu main local tiene cambios sin commit en
+                                     `.archon/`, `.claude/skills/exoclaw-*`,
+                                     `hubara_agency/tests/architecture/` o
+                                     `hubara_agency/.importlinter`. Archon copia
+                                     `.archon/` al worktree, así que esos cambios
+                                     llegan al pipeline como modificaciones del
+                                     branch y el meta-gate falla al final.
+                                     Solución: `git add . && git commit && git push`
+                                     antes de relanzar, o revertir con
+                                     `git checkout -- <archivo>` si no los querés.
+                                     Ver stderr para la lista exacta.
     when: "$check-prereqs.output != 'OK'"
     depends_on: [check-prereqs]
 
@@ -577,6 +618,26 @@ nodes:
     when: "$validate-plan.output == 'PASS'"
     depends_on: [validate-plan]
 
+  # Pre-warm el venv de hubara_agency. El gate determinista del loop ejecuta
+  # `uv run pytest ...` que en un worktree fresco rebuilds el .venv desde cero
+  # (tiktoken, grimp, lxml, psycopg-binary) — el primer gate run de cada task
+  # bloquearía 60-180s solo esperando deps. Hacerlo UNA vez acá fuera del loop
+  # garantiza que las iteraciones del implementer corran contra venv ya
+  # construido. Best-effort: si falla, seguimos — el gate igual va a re-intentar.
+  # (Fix replicado del frontend pipeline — bug commit 0bafc4d.)
+  - id: prewarm-uv-venv
+    bash: |
+      if [ ! -d hubara_agency ]; then
+        echo "skipped (no hubara_agency dir)"
+        exit 0
+      fi
+      cd hubara_agency
+      uv sync 2>&1 | tail -20 || echo "uv sync warnings — gate will retry"
+      echo "ok"
+    timeout: 600000
+    depends_on: [commit-plan]
+    trigger_rule: all_done
+
   - id: project-set-planned
     bash: |
       CFG="$ARTIFACTS_DIR/github-project-config.yaml"
@@ -641,7 +702,7 @@ nodes:
     trigger_rule: all_done
 
   - id: implementar-secuencial
-    depends_on: [commit-plan]
+    depends_on: [commit-plan, prewarm-uv-venv]
     idle_timeout: 1800000
     loop:
       max_iterations: 30
@@ -664,6 +725,25 @@ nodes:
         BRANCH="hu/${HU_ID}"
         RESULTS_DIR="hubara_agency/.exoclaw/results/${HU_ID}"
         mkdir -p "$RESULTS_DIR"
+
+        # Limpieza defensiva: el AI puede violar el contrato del skill y escribir
+        # ${TASK_ID}-result.yaml DIRECTO en RESULTS_DIR antes de que el gate
+        # confirme. Si no hay un commit `${HU_ID} ${TASK_ID}: status=` en el
+        # branch, el archivo es stale → la "verdad" es git, no el filesystem.
+        # Sin esto, una iteración futura del AI ve el result stale, cree que la
+        # tarea está done, no escribe task-result.yaml, y el loop sale OK con la
+        # implementación sin commit. Fix replicado del frontend pipeline (0bafc4d).
+        if [ -d "$RESULTS_DIR" ]; then
+          for stale_f in "$RESULTS_DIR"/F*-result.yaml; do
+            [ -e "$stale_f" ] || continue
+            stale_name=$(basename "$stale_f")
+            STALE_TID="${stale_name%-result.yaml}"
+            if ! git log --oneline -200 2>/dev/null | grep -Fq "${HU_ID} ${STALE_TID}: status="; then
+              echo "  [until_bash] removiendo stale ${STALE_TID}-result.yaml (sin commit en branch)" >&2
+              rm -f "$stale_f"
+            fi
+          done
+        fi
 
         # Helper: extraer campo de YAML stripping comillas (yaml puede tener `status: "passed"` o `status: passed`)
         yaml_get() {
@@ -1251,6 +1331,22 @@ nodes:
       BRANCH=$(echo $gen-hu-id.output | jq -r '.branch')
       TITLE=$(echo $gen-hu-id.output | jq -r '.title' | head -c 70)
 
+      # Hard fail si quedan cambios sin commit en el worktree. Si llegamos
+      # acá con archivos modificados/untracked es porque implementar-secuencial
+      # salió mal (gate fallaba, det-retries se agotaban, loop terminaba sin
+      # commit, y el PR salía sin la implementación). Mejor frenar acá con
+      # error claro que abrir un PR vacío que parece exitoso.
+      # Ignoramos artefactos del pipeline (drafts, results, plans, refinements)
+      # que son side effects esperados.
+      # Fix replicado del frontend pipeline (0bafc4d).
+      UNCOMMITTED=$(git status --porcelain | grep -vE '^\?\? hubara_agency/\.exoclaw/(drafts|results|plans|refinements)/' || true)
+      if [ -n "$UNCOMMITTED" ]; then
+        echo "ABORT: worktree tiene cambios sin commit — el PR quedaría vacío." >&2
+        echo "$UNCOMMITTED" >&2
+        echo "Investigá los resultados de implementar-secuencial / final-validation." >&2
+        exit 1
+      fi
+
       # Push final asegurado (idempotente)
       git push origin "$BRANCH" 2>&1 | tail -5
 
@@ -1307,19 +1403,29 @@ nodes:
       LOG_FILE="$HOME/.archon/logs/review-trigger-$(date +%s).log"
       mkdir -p "$HOME/.archon/logs"
 
-      # Check si el review workflow existe (todavía no creado; condicional)
+      # Check si el review workflow existe (condicional, no se asume presente)
       if [ ! -f ".archon/workflows/review-pr-exoclaw.yaml" ]; then
         echo "review_skipped_no_workflow=lanzá manualmente cuando exista review-pr-exoclaw"
         exit 0
       fi
+
+      # Quitar symlink stale del workspace de archon — si quedó apuntando a
+      # otra ruta de una corrida previa, `archon workflow run` aborta con
+      # "Source symlink ... already points to ... expected ...". El symlink
+      # se recrea al arrancar el run; borrarlo acá es seguro.
+      # Fix replicado del frontend pipeline (0bafc4d).
+      STALE_SYMLINK="$HOME/.archon/workspaces/einsteindark-edgm/AgencyHubara/source"
+      [ -L "$STALE_SYMLINK" ] && rm -f "$STALE_SYMLINK"
 
       # CRITICAL: unset CLAUDECODE para evitar la advertencia de nested-claude-code
       # y el riesgo de "workflows hang silently". archon detecta esa env var del
       # parent y warns; con env -u CLAUDECODE el subprocess no la hereda.
       # ARCHON_SUPPRESS_NESTED_CLAUDE_WARNING=1 silencia el warning igualmente
       # por si CLAUDECODE se setea desde otro lado.
+      # --no-worktree: el review solo lee el PR diff vía gh, no necesita
+      # aislamiento de worktree y así evitamos colisiones de symlink.
       (env -u CLAUDECODE ARCHON_SUPPRESS_NESTED_CLAUDE_WARNING=1 \
-         nohup archon workflow run review-pr-exoclaw "$PR_URL" > "$LOG_FILE" 2>&1 & disown) 2>/dev/null \
+         nohup archon workflow run --no-worktree review-pr-exoclaw "$PR_URL" > "$LOG_FILE" 2>&1 & disown) 2>/dev/null \
         && echo "review_triggered_log=$LOG_FILE" \
         || echo "review_trigger_failed_run_manually"
     depends_on: [create-pr]

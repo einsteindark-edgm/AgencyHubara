@@ -76,5 +76,6 @@ def build_ingest_use_case() -> IngestInboundMessage:
     _INGEST_USE_CASE = IngestInboundMessage(
         history_store=history_store,
         load_session=load_session,
+        metadata_store=metadata_store,
     )
     return _INGEST_USE_CASE

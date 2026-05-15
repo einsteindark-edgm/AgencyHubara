@@ -17,16 +17,24 @@ from temporalio.client import WorkflowExecutionStatus
 from temporalio.exceptions import WorkflowAlreadyStartedError
 from temporalio.service import RPCError
 
+from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.constants import SALES_QUEUE, REMARKETING_QUEUE
 from src.platform.contracts import ScheduleRemarketingDecision, TransferDecision
+from src.platform.state import FilesystemMetadataStore
 from src.platform.temporal.client import get_temporal_client
 
 
 @activity.defn(name="start_or_signal_sales_workflow")
 async def start_or_signal_sales_workflow_activity(decision: TransferDecision) -> None:
-    """Arranca el HubaraSalesSessionWorkflow si no corre, le manda signal con el resumen.
+    """Transfiere control a Sales: escribe handoff en metadata + asegura Sales corriendo.
 
-    Reemplaza la logica que vivia dentro de `TransferToSalesAgentTool.execute`.
+    Reemplaza al `send_message` sintetico `[SISTEMA INTERNO]: ...` que viajaba
+    como signal y se procesaba como turno de usuario aparte (causa root del
+    bug double-reply, run b9639be1). Ahora el contexto del handoff vive en
+    `metadata.pending_handoff_summary` y el workflow Sales lo lee via
+    `read_and_clear_pending_handoff_activity` — primero al iniciar (cold) y
+    luego al inicio de cada iteracion del loop (warm). El coalesce lo mueve
+    a `plugin_context` para que NO ensucie el rol "user" de la conversacion.
     """
     # Imports locales para evitar ciclos: el workflow importa este modulo a traves
     # de `imports_passed_through`, y workflows no deben importarse mutuamente.
@@ -37,41 +45,45 @@ async def start_or_signal_sales_workflow_activity(decision: TransferDecision) ->
     session_id = decision.session_id
     summary = decision.summary or "El cliente volvió a interactuar"
 
+    # 1. Persistir contexto de handoff en metadata. Atomic via tmpfile rename
+    #    en FilesystemMetadataStore (POSIX-atomic). El workflow Sales lo
+    #    consumira en el proximo turno (cold via bootstrap, warm via refresh
+    #    per-iteration).
+    metadata_store = FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
+    data = metadata_store.read(session_id)
+    data["pending_handoff_summary"] = summary
+    metadata_store.write(session_id, data)
+
+    # 2. Asegurar Sales workflow RUNNING. No signaleamos nada — el handoff
+    #    viaja por metadata, no por signal. Si Sales ya corre, no hace falta
+    #    hacer nada mas: su loop principal lee metadata en cada iteracion. Si
+    #    no corre, arrancamos uno nuevo (idempotente vs WorkflowAlreadyStartedError).
     client = await get_temporal_client()
     workflow_id = f"session-{session_id}"
 
-    handle = None
     try:
         handle = client.get_workflow_handle(workflow_id)
         desc = await handle.describe()
-        if desc.status != WorkflowExecutionStatus.RUNNING:
-            raise RuntimeError("Sales workflow not running")
+        if desc.status == WorkflowExecutionStatus.RUNNING:
+            return  # ya corre, bootstrap no se reejecuta pero el refresh
+                    # per-iteration vera el handoff
     except (RPCError, RuntimeError):
-        # F7: el dispatcher ya no construye SessionInput. El workflow lo arma
-        # via `bootstrap_sales_session_activity` como primera activity.
-        # PR-A: resolvemos el runtime workspace path del agente Sales para que
-        # cruce el boundary. PR-B lo consume.
-        try:
-            handle = await client.start_workflow(
-                HubaraSalesSessionWorkflow.run,
-                SalesSessionInput(
-                    session_id=session_id,
-                    runtime_workspace_path=str(get_workspace_path()),
-                ),
-                id=workflow_id,
-                task_queue=SALES_QUEUE,
-            )
-        except WorkflowAlreadyStartedError:
-            handle = client.get_workflow_handle(workflow_id)
+        pass
 
-    await handle.signal(
-        HubaraSalesSessionWorkflow.send_message,
-        args=[
-            f"[SISTEMA INTERNO]: Remarketing acaba de recuperar al cliente. El usuario dijo: '{summary}'. TU TURNO. SALUDA AL CLIENTE Y RETOMA LA VENTA COMO SI NADA HUBIERA PASADO.",
-            None,
-            None,  # plugin_context: el workflow carga su propio brain
-        ],
-    )
+    try:
+        await client.start_workflow(
+            HubaraSalesSessionWorkflow.run,
+            SalesSessionInput(
+                session_id=session_id,
+                runtime_workspace_path=str(get_workspace_path()),
+            ),
+            id=workflow_id,
+            task_queue=SALES_QUEUE,
+        )
+    except WorkflowAlreadyStartedError:
+        # Race entre el describe y el start_workflow — alguien mas lo arranco.
+        # Esta bien: ese workflow tambien leera el handoff de metadata.
+        pass
 
 
 async def start_remarketing_for_session(

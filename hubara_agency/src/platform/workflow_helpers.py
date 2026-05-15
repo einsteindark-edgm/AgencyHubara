@@ -63,10 +63,18 @@ class PendingMessage:
     compatibilidad de replay (R-JSON, fixture v2 en sales / v1 en remarketing).
     Cambiar la signature del signal implica fixture bump (v3) y posiblemente
     drain operativo (ADR-009).
+
+    `is_handoff` (debounce/coalesce v1): marca un mensaje sintetico que NO
+    debe entrar al rol "user" de la conversacion — en su lugar se mueve a
+    `plugin_context` durante el coalesce. Lo usa el flujo Remarketing→Sales:
+    el bootstrap (o el refresh per-iteration) lee `pending_handoff_summary`
+    de metadata.json y seedea `_pending` con un marker. Default False
+    mantiene replay-safety (mensajes pre-deploy deserializan al default).
     """
     message: str
     media: list[str] | None = None
     plugin_context: list[str] | None = None
+    is_handoff: bool = False
 
 
 @dataclass
@@ -101,6 +109,57 @@ def _try_parse_decision_payload(raw: str) -> dict[str, Any] | None:
     if not isinstance(parsed, dict):
         return None
     return parsed
+
+
+def coalesce_pending(pending: list[PendingMessage]) -> PendingMessage:
+    """Combina N mensajes pendientes en un solo `PendingMessage` para un turno.
+
+    Reglas:
+      * Mensajes con `is_handoff=True` NO entran al rol "user" — su contenido se
+        mueve a `plugin_context` como `[HANDOFF_REMARKETING]: ...`. Asi no
+        contaminan la conversacion JSONL ni el system prompt con prompts
+        sinteticos como `[SISTEMA INTERNO]: ...`.
+      * Mensajes reales del cliente se concatenan con `"\n"` (preservando orden
+        de llegada). Asi una rafaga "Hola si" + "Me recuerdas cuanto vale X?"
+        se procesa como un solo turno con ambos mensajes en contexto.
+      * Si NO hay mensajes reales pero si handoff, se usa el ultimo handoff como
+        mensaje principal — caso: el cliente engaga Remarketing con "Hola", el
+        dispatcher seedea handoff, pero ningun mensaje real llega antes del
+        debounce (Sales saluda proactivamente).
+      * `plugin_context` existente de cualquier msg se preserva (concatena).
+      * `media` se concatena (raro tener media en handoff; preservar de user).
+
+    El `PendingMessage` resultante tiene `is_handoff=False` (ya consumido).
+    """
+    user_msgs = [p for p in pending if not p.is_handoff]
+    handoff_msgs = [p for p in pending if p.is_handoff]
+
+    plugin_ctx: list[str] = []
+    for h in handoff_msgs:
+        if h.message:
+            plugin_ctx.append(f"[HANDOFF_REMARKETING]: {h.message}")
+    for p in pending:
+        if p.plugin_context:
+            plugin_ctx.extend(p.plugin_context)
+
+    media_combined: list[str] = []
+    for p in pending:
+        if p.media:
+            media_combined.extend(p.media)
+
+    if user_msgs:
+        combined = "\n".join(p.message for p in user_msgs if p.message)
+    elif handoff_msgs:
+        combined = handoff_msgs[-1].message
+    else:
+        combined = ""
+
+    return PendingMessage(
+        message=combined,
+        media=media_combined or None,
+        plugin_context=plugin_ctx or None,
+        is_handoff=False,
+    )
 
 
 async def run_agent_turn(

@@ -166,6 +166,12 @@ Rules for the architecture gate:
     1. Fix YOUR code so it complies (the common case — e.g. add `@with_heartbeat`, switch a `@dataclass` to `@dataclass(frozen=True)`, move an import inside a `with workflow.unsafe.imports_passed_through():` block).
     2. If you genuinely believe the rule should be relaxed for this feature → STOP. Mark status: blocked with reason: requires_planner_update and a notes entry: "feature requires architecture-rule change in <test_file>:<test_name>; needs ADR + separate PR before this task can land". Do not edit the test, do not add to the allow-list. The operator initiates the ADR + architecture-change PR; the feature task is re-run after that lands.
 - If the architecture suite fails and the file under test is NOT in your §3 list, you may be detecting pre-existing debt that surfaced because of your change (e.g. an existing dataclass that should have been frozen=True is now imported in a path that triggers the check). Treat it identically: status: blocked, reason: requires_planner_update.
+- **META-GATE FAILURES ARE NEVER `status: passed`.** The meta-gate (`hubara_agency/tests/architecture/test_meta.py`) flags any modification to architecture-protected files (`.archon/workflows/`, `.claude/skills/exoclaw-*`, `hubara_agency/tests/architecture/`, `hubara_agency/.importlinter`) on the current branch vs `origin/main`. If it fires:
+    - It does NOT matter whether you wrote the modification or whether it was "preexisting on the branch" (Archon's worktree creation copies `.archon/` from main's working tree, so dirty config files leak in — that is the operator's main being dirty, not yours to fix).
+    - It does NOT matter whether all OTHER tests pass.
+    - Write `status: blocked`, `blocked_reason: requires_planner_update`, name the offending files in `notes`, and STOP.
+    - **DO NOT set `ARCH_CHANGE_APPROVED=1`** in any command you run, neither to "check the rest of the test suite" nor to "see if the rest passes". That env var is a gate bypass reserved for the operator on an explicit architecture-change PR with an ADR. If you set it in your own bash, you are lying to the gate. Run the architecture suite without bypass; if meta-gate fails, block.
+    - **DO NOT report `status: passed` reasoning that the protected file change "is preexisting" or "not yours".** You are not the arbiter of that. The operator decides whether the protected change is intentional; until they do, the task is blocked.
 
 Record the architecture gate result in task-result.yaml under `architecture_gate`. Schema:
 

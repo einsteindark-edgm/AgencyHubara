@@ -57,3 +57,43 @@ async def send_message_to_session(session_id: str, message: str) -> None:
 @with_heartbeat(every=10)
 async def send_whatsapp_message_activity(session_id: str, message: str) -> None:
     await send_message_to_session(session_id, message)
+
+
+async def _read_metadata_for_typing(session_id: str) -> tuple[str | None, str | None]:
+    """Devuelve `(phone_number_id, last_inbound_message_id)` desde metadata.
+
+    Fallback de phone_number_id: env var. message_id NO tiene fallback — sin
+    referencia a un mensaje del cliente la API de WhatsApp rechaza la request.
+    """
+    phone_number_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
+    message_id: str | None = None
+    try:
+        metadata_file = WORKSPACE_VAULT_DIR / session_id / "metadata.json"
+        if metadata_file.exists():
+            data = json.loads(metadata_file.read_text(encoding="utf-8"))
+            phone_number_id = data.get("phone_number_id", phone_number_id)
+            message_id = data.get("last_inbound_message_id")
+    except (OSError, json.JSONDecodeError):
+        pass
+    return phone_number_id, message_id
+
+
+@activity.defn(name="send_typing_indicator_activity")
+async def send_typing_indicator_activity(session_id: str) -> None:
+    """Dispara el "escribiendo..." outbound al cliente.
+
+    Lee `last_inbound_message_id` desde `metadata.json` (escrito por
+    `IngestInboundMessage` al recibir cada webhook). Si no hay message_id
+    — caso turno proactivo / handoff / ghost trigger — la activity noopea
+    silenciosamente: la API de WhatsApp requiere referenciar un mensaje del
+    cliente, y un typing indicator sin contexto fresco no aporta UX.
+
+    Best-effort: errores HTTP los absorbe `client.send_typing_indicator`.
+    Sin heartbeat porque es una request corta (timeout 4s) y el retry seria
+    contraproducente: si fallo, el LLM ya esta procesando y el typing
+    seria stale.
+    """
+    phone_number_id, message_id = await _read_metadata_for_typing(session_id)
+    if not phone_number_id or not message_id:
+        return
+    await whatsapp_client.send_typing_indicator(phone_number_id, message_id)

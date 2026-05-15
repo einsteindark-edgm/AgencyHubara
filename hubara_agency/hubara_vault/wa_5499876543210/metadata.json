@@ -157,6 +157,18 @@
       "motivo": "dud\u00f3 del precio",
       "active_route": "ventas",
       "timestamp": 1778800711.390678
+    },
+    {
+      "tag": "INTERESADO",
+      "motivo": "dud\u00f3 del precio",
+      "active_route": "ventas",
+      "timestamp": 1778803759.408881
+    },
+    {
+      "tag": "INTERESADO",
+      "motivo": "dud\u00f3 del precio",
+      "active_route": "ventas",
+      "timestamp": 1778808088.9653811
     }
   ]
 }

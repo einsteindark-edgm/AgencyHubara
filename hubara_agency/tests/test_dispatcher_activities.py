@@ -66,7 +66,14 @@ class _FakeClient:
         return self.handle
 
 
-async def test_start_or_signal_sales_signals_running_workflow(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_start_or_signal_sales_writes_handoff_to_metadata_no_signal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Fix 3: el dispatcher YA NO signala con `[SISTEMA INTERNO]: ...`.
+
+    En su lugar escribe `pending_handoff_summary` en metadata.json y el
+    workflow Sales lo lee via `read_and_clear_pending_handoff_activity`.
+    """
     fake_client = _FakeClient()
 
     async def fake_get_client() -> _FakeClient:
@@ -76,6 +83,12 @@ async def test_start_or_signal_sales_signals_running_workflow(monkeypatch: pytes
         "src.platform.temporal.dispatcher.get_temporal_client",
         fake_get_client,
     )
+    # Redirigir WORKSPACE_VAULT_DIR del modulo a un tmp para no pisar nada real
+    monkeypatch.setattr(
+        "src.platform.temporal.dispatcher.WORKSPACE_VAULT_DIR",
+        tmp_path,
+    )
+
     from src.platform.temporal.dispatcher import (
         start_or_signal_sales_workflow_activity,
     )
@@ -89,18 +102,16 @@ async def test_start_or_signal_sales_signals_running_workflow(monkeypatch: pytes
     env = ActivityEnvironment()
     await env.run(start_or_signal_sales_workflow_activity, decision)
 
-    # No se llamo start_workflow porque describe() devolvio RUNNING
+    # 1. No se llama start_workflow porque describe() devolvio RUNNING
     assert fake_client.start_calls == []
-    # Pero si se mando signal con el resumen
-    assert len(fake_client.handle.signaled_with) == 1
-    pos_args, kw_args = fake_client.handle.signaled_with[0]
-    # `pos_args` contiene al menos el handler del signal (`HubaraSalesSessionWorkflow.send_message`).
-    # El payload del mensaje viaja como kwarg `args=[message, media, plugin_context]`
-    # (forma actual de la activity) o, en fallback, como positional adicional.
-    signal_payload = kw_args.get("args") or list(pos_args[1:])
-    flat = " ".join(str(item) for item in signal_payload)
-    assert "Remarketing acaba de recuperar al cliente" in flat
-    assert "quiere ver el catalogo" in flat
+    # 2. NO se manda signal — el flujo legacy `[SISTEMA INTERNO]: ...` se elimino
+    assert fake_client.handle.signaled_with == []
+    # 3. Pero SI se escribio el handoff en metadata
+    import json
+    metadata_file = tmp_path / "wa_5491111111111" / "metadata.json"
+    assert metadata_file.exists()
+    data = json.loads(metadata_file.read_text())
+    assert data["pending_handoff_summary"] == "quiere ver el catalogo"
 
 
 async def test_schedule_remarketing_uses_start_delay(monkeypatch: pytest.MonkeyPatch) -> None:

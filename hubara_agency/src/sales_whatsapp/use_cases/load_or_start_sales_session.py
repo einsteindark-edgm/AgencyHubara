@@ -158,6 +158,31 @@ class LoadOrStartSalesSession:
                 if desc.status != WorkflowExecutionStatus.RUNNING:
                     raise RuntimeError("Remarketing workflow is no longer running")
             except (RPCError, RuntimeError):
+                # Fix 4 (H2): si el handle de Remarketing existe pero no esta
+                # RUNNING (terminado, fallado, o jamas se arranco), lo
+                # terminamos defensivamente antes de hacer fallback. Esto
+                # previene la colision donde:
+                #   1. Sales etiqueta INTERESADO → programa Remarketing
+                #      con `start_delay`.
+                #   2. Cliente responde antes que expire el delay.
+                #   3. Webhook ve `active_route=remarketing` pero Remarketing
+                #      "todavia no esta RUNNING" → fallback a Sales (este
+                #      branch). Sin terminate, Remarketing se dispara despues
+                #      y manda un saludo zombie.
+                # El terminate es best-effort; si el handle no existe o esta
+                # en estado terminal, los excepts de abajo lo absorben.
+                try:
+                    zombie = client.get_workflow_handle(workflow_id)
+                    await zombie.terminate(
+                        reason="Cliente re-engaged via Sales fallback, cancelando remarketing programado"
+                    )
+                    logger.info(
+                        "Terminated stale Remarketing handle on Sales fallback",
+                        workflow_id=workflow_id,
+                    )
+                except Exception:
+                    # No existe / ya terminado / race. No es error; seguimos.
+                    pass
                 logger.warning(
                     "Remarketing workflow not found or finished, falling back to Sales"
                 )

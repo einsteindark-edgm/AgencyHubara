@@ -9,7 +9,10 @@ from src.platform.temporal.dispatcher import (
     schedule_remarketing_workflow_activity,
     start_or_signal_sales_workflow_activity,
 )
-from src.platform.whatsapp.activities import send_whatsapp_message_activity
+from src.platform.whatsapp.activities import (
+    send_typing_indicator_activity,
+    send_whatsapp_message_activity,
+)
 from src.platform.logging import setup_logging
 from src.platform.temporal.client import get_temporal_client
 from src.platform.tool_extensions import register_tool_extension
@@ -19,6 +22,7 @@ from src.platform.session_history.activities import (
 from src.sales_whatsapp.activities import (
     bootstrap_sales_session_activity,
     decide_ghosting_action,
+    read_and_clear_pending_handoff_activity,
 )
 from src.platform.catalog.composition import get_catalog_client
 from src.platform.catalog.medusa_checkout import MedusaCheckoutVerification
@@ -107,9 +111,11 @@ async def main() -> None:
             execute_tool,
             record_turn,
             send_whatsapp_message_activity,
+            send_typing_indicator_activity,
             persist_assistant_message_activity,
             decide_ghosting_action,
             bootstrap_sales_session_activity,
+            read_and_clear_pending_handoff_activity,
             start_or_signal_sales_workflow_activity,
             schedule_remarketing_workflow_activity,
         ],

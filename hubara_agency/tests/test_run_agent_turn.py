@@ -76,7 +76,12 @@ def test_parse_decision_returns_none_on_non_dict_json() -> None:
 def test_pending_message_is_dataclass_serializable() -> None:
     pm = PendingMessage(message="hola", media=None, plugin_context=["ctx"])
     payload = asdict(pm)
-    assert payload == {"message": "hola", "media": None, "plugin_context": ["ctx"]}
+    assert payload == {
+        "message": "hola",
+        "media": None,
+        "plugin_context": ["ctx"],
+        "is_handoff": False,
+    }
 
 
 def test_turn_result_default_serializable() -> None:

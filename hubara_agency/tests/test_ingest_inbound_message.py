@@ -45,6 +45,21 @@ class FakeLoadOrStart:
         self.calls.append(_Call(session_id, message, phone_number_id))
 
 
+class FakeMetadataStore:
+    """Fake in-memory para `last_inbound_message_id` (Fix 5 typing indicator)."""
+
+    def __init__(self) -> None:
+        self.store: dict[str, dict] = {}
+        self.writes: list[tuple[str, dict]] = []
+
+    def read(self, session_id: str) -> dict:
+        return dict(self.store.get(session_id, {}))
+
+    def write(self, session_id: str, data: dict) -> None:
+        self.store[session_id] = dict(data)
+        self.writes.append((session_id, dict(data)))
+
+
 def _make_text_message(
     *, from_number: str = "5491111111111", text: str | None = "hola", phone_id: str = "PID"
 ) -> WhatsAppMessage:
@@ -76,7 +91,11 @@ def _make_media_message() -> WhatsAppMessage:
 async def test_ignores_message_without_text():
     history = FakeHistoryStore()
     loader = FakeLoadOrStart()
-    use_case = IngestInboundMessage(history_store=history, load_session=loader)  # type: ignore[arg-type]
+    use_case = IngestInboundMessage(
+        history_store=history,  # type: ignore[arg-type]
+        load_session=loader,  # type: ignore[arg-type]
+        metadata_store=FakeMetadataStore(),  # type: ignore[arg-type]
+    )
 
     await use_case.execute(_make_media_message())
 
@@ -88,7 +107,11 @@ async def test_ignores_message_without_text():
 async def test_persists_user_event_and_delegates_to_load_session():
     history = FakeHistoryStore()
     loader = FakeLoadOrStart()
-    use_case = IngestInboundMessage(history_store=history, load_session=loader)  # type: ignore[arg-type]
+    use_case = IngestInboundMessage(
+        history_store=history,  # type: ignore[arg-type]
+        load_session=loader,  # type: ignore[arg-type]
+        metadata_store=FakeMetadataStore(),  # type: ignore[arg-type]
+    )
 
     await use_case.execute(_make_text_message(text="hola mundo"))
 
@@ -117,8 +140,54 @@ async def test_history_is_appended_before_routing():
     use_case = IngestInboundMessage(
         history_store=TrackingHistory(),  # type: ignore[arg-type]
         load_session=TrackingLoader(),  # type: ignore[arg-type]
+        metadata_store=FakeMetadataStore(),  # type: ignore[arg-type]
     )
 
     await use_case.execute(_make_text_message())
 
     assert order == ["history", "load_session"]
+
+
+@pytest.mark.asyncio
+async def test_persists_inbound_message_id_for_typing_indicator():
+    """Fix 5: message_id se escribe a metadata para que el typing indicator
+    pueda referenciarlo al inicio de cada turno."""
+    history = FakeHistoryStore()
+    loader = FakeLoadOrStart()
+    metadata = FakeMetadataStore()
+    use_case = IngestInboundMessage(
+        history_store=history,  # type: ignore[arg-type]
+        load_session=loader,  # type: ignore[arg-type]
+        metadata_store=metadata,  # type: ignore[arg-type]
+    )
+
+    await use_case.execute(_make_text_message(text="hola"))
+
+    assert metadata.store["wa_5491111111111"]["last_inbound_message_id"] == "wamid.X"
+
+
+@pytest.mark.asyncio
+async def test_metadata_write_failure_does_not_break_flow():
+    """El write de metadata es best-effort: si falla, el flujo igual signaleael workflow."""
+    history = FakeHistoryStore()
+    loader = FakeLoadOrStart()
+
+    class BrokenMetadata:
+        def read(self, session_id):
+            raise OSError("disk full")
+
+        def write(self, session_id, data):
+            raise OSError("disk full")
+
+    use_case = IngestInboundMessage(
+        history_store=history,  # type: ignore[arg-type]
+        load_session=loader,  # type: ignore[arg-type]
+        metadata_store=BrokenMetadata(),  # type: ignore[arg-type]
+    )
+
+    # No debe raisear
+    await use_case.execute(_make_text_message(text="hola"))
+
+    # El flujo principal (history + signal) sigue funcionando
+    assert history.events == [("wa_5491111111111", "hola")]
+    assert len(loader.calls) == 1

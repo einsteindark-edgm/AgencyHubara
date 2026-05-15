@@ -14,9 +14,11 @@ from __future__ import annotations
 from src.sales_whatsapp.activities.bootstrap_session import (
     bootstrap_sales_session_activity,
     decide_ghosting_action,
+    read_and_clear_pending_handoff_activity,
 )
 
 __all__ = [
     "bootstrap_sales_session_activity",
     "decide_ghosting_action",
+    "read_and_clear_pending_handoff_activity",
 ]

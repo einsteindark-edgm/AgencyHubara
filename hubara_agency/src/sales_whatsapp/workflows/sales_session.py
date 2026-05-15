@@ -14,19 +14,32 @@ with workflow.unsafe.imports_passed_through():
         start_or_signal_sales_workflow_activity,
     )
     from src.platform.temporal.retry_policies import _LLM_OPTIONS
-    from src.platform.workflow_helpers import PendingMessage, run_agent_turn
+    from src.platform.workflow_helpers import (
+        PendingMessage,
+        coalesce_pending,
+        run_agent_turn,
+    )
     from src.platform.session_history.activities import (
         persist_assistant_message_activity,
     )
+    from src.platform.whatsapp.activities import send_typing_indicator_activity
     from src.sales_whatsapp.activities import (
         bootstrap_sales_session_activity,
         decide_ghosting_action,
+        read_and_clear_pending_handoff_activity,
     )
     from src.sales_whatsapp.contracts import SalesSessionInput
 
 _CONTINUE_AS_NEW_AFTER_TURNS = 50
 
 _IDLE_TIMEOUT = timedelta(minutes=1)
+
+# Trailing debounce: tras el primer signal, esperamos hasta `_DEBOUNCE_SILENCE`
+# de silencio antes de procesar. Cada signal nuevo resetea el timer. Si el
+# cliente nunca para de escribir, el cap `_DEBOUNCE_MAX_WAIT` fuerza el
+# procesamiento. Replay-safe: `workflow.wait_condition` + timeouts deterministicos.
+_DEBOUNCE_SILENCE = timedelta(seconds=1.5)
+_DEBOUNCE_MAX_WAIT = timedelta(seconds=12)
 
 
 @workflow.defn(name="HubaraSalesSessionWorkflow")
@@ -74,6 +87,24 @@ class HubaraSalesSessionWorkflow:
         )
         turn_count = input.turn_count
 
+        # Handoff Remarketing→Sales (Fix 3, gated): el dispatcher escribio
+        # `pending_handoff_summary` en metadata.json al transferir. Lo leemos +
+        # clearamos atomicamente y seedeamos `_pending` con un marker
+        # `is_handoff=True`. El coalesce lo va a mover a plugin_context cuando
+        # construya el prompt (no contamina el rol "user" de la conversacion
+        # como hacia el legacy `[SISTEMA INTERNO]` signal).
+        if workflow.patched("handoff-via-metadata-v1"):
+            initial_handoff = await workflow.execute_activity(
+                read_and_clear_pending_handoff_activity,
+                session.session_id,
+                start_to_close_timeout=timedelta(seconds=10),
+                retry_policy=RetryPolicy(maximum_attempts=2),
+            )
+            if initial_handoff:
+                self._pending.append(
+                    PendingMessage(message=initial_handoff, is_handoff=True)
+                )
+
         while True:
             try:
                 await workflow.wait_condition(
@@ -91,11 +122,74 @@ class HubaraSalesSessionWorkflow:
                 self._pending.append(PendingMessage(message=ghost_trigger))
                 self._force_shutdown = True
 
-            while self._pending:
-                msg = self._pending.pop(0)
+            # Handoff refresh per-iteration (Fix 3, gated): si Sales ya estaba
+            # corriendo cuando el dispatcher escribio handoff, el bootstrap NO
+            # se reejecuta. Leemos metadata aca para captar handoffs que
+            # llegaron mientras el workflow procesaba un turno previo.
+            if workflow.patched("handoff-refresh-per-iteration-v1"):
+                handoff_refresh = await workflow.execute_activity(
+                    read_and_clear_pending_handoff_activity,
+                    session.session_id,
+                    start_to_close_timeout=timedelta(seconds=10),
+                    retry_policy=RetryPolicy(maximum_attempts=2),
+                )
+                if handoff_refresh:
+                    self._pending.append(
+                        PendingMessage(message=handoff_refresh, is_handoff=True)
+                    )
+
+            # Trailing debounce con reset (Fix 1, gated): tras el primer
+            # signal, esperamos hasta `_DEBOUNCE_SILENCE` de silencio. Cada
+            # signal nuevo resetea el timer. Cap absoluto `_DEBOUNCE_MAX_WAIT`
+            # protege contra clientes que tipean sin parar. Workflows
+            # pre-deploy caen al path legacy (un mensaje por turno) por
+            # `workflow.patched()` — replay-safe.
+            if workflow.patched("trailing-debounce-coalesce-v1"):
+                debounce_start = workflow.now()
+                while True:
+                    snapshot_len = len(self._pending)
+                    elapsed = workflow.now() - debounce_start
+                    cap_remaining = _DEBOUNCE_MAX_WAIT - elapsed
+                    if cap_remaining <= timedelta(0):
+                        break
+                    timeout = min(_DEBOUNCE_SILENCE, cap_remaining)
+                    try:
+                        await workflow.wait_condition(
+                            lambda: len(self._pending) > snapshot_len,
+                            timeout=timeout,
+                        )
+                        # llego algo nuevo → siguiente iter con snapshot fresco
+                        # = reset implicito del timer
+                    except asyncio.TimeoutError:
+                        break  # silencio achieved
+
+                batch = list(self._pending)
+                self._pending.clear()
+                msgs_to_process: list[PendingMessage] = [coalesce_pending(batch)]
+            else:
+                # Legacy: un mensaje a la vez. Solo para workflows pre-deploy.
+                msgs_to_process = []
+                while self._pending:
+                    msgs_to_process.append(self._pending.pop(0))
+
+            for msg in msgs_to_process:
                 self._processing = True
 
                 try:
+                    # Typing indicator outbound (Fix 5, gated): mostrar
+                    # "escribiendo..." al cliente. Best-effort, no bloquea
+                    # el turno si la API de WhatsApp falla.
+                    if workflow.patched("typing-indicator-v1"):
+                        try:
+                            await workflow.execute_activity(
+                                send_typing_indicator_activity,
+                                session.session_id,
+                                start_to_close_timeout=timedelta(seconds=5),
+                                retry_policy=RetryPolicy(maximum_attempts=1),
+                            )
+                        except Exception:
+                            pass
+
                     result = await run_agent_turn(session, msg)
                     self._last_response = result.final_content
                     turn_count += 1
@@ -175,8 +269,22 @@ class HubaraSalesSessionWorkflow:
                         self._force_shutdown = True
 
                     if self._force_shutdown:
-                        workflow.logger.info(f"Auto-diagnóstico concluido. Apagando sesión {session.session_id} por abandono de usuario o transferencia.")
-                        return
+                        # Cancel-shutdown si llegaron mensajes nuevos durante
+                        # el procesamiento (Fix 3 / H3, gated). Antes se
+                        # retornaba directo y signals entre `_force_shutdown=True`
+                        # y `return` se perdian.
+                        if (
+                            self._pending
+                            and workflow.patched("cancel-shutdown-on-new-pending-v1")
+                        ):
+                            workflow.logger.info(
+                                f"Cancel-shutdown: llegaron {len(self._pending)} "
+                                f"mensaje(s) nuevos durante el turno. Continuando."
+                            )
+                            self._force_shutdown = False
+                        else:
+                            workflow.logger.info(f"Auto-diagnóstico concluido. Apagando sesión {session.session_id} por abandono de usuario o transferencia.")
+                            return
 
                 finally:
                     self._processing = False

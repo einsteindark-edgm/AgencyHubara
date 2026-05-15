@@ -14,7 +14,11 @@ with workflow.unsafe.imports_passed_through():
         start_or_signal_sales_workflow_activity,
     )
     from src.platform.temporal.retry_policies import _LLM_OPTIONS
-    from src.platform.workflow_helpers import PendingMessage, run_agent_turn
+    from src.platform.workflow_helpers import (
+        PendingMessage,
+        coalesce_pending,
+        run_agent_turn,
+    )
     from src.platform.contracts import TransferDecision
     from src.remarketing_whatsapp.activities import (
         bootstrap_remarketing_session_activity,
@@ -23,10 +27,17 @@ with workflow.unsafe.imports_passed_through():
     from src.platform.session_history.activities import (
         persist_assistant_message_activity,
     )
+    from src.platform.whatsapp.activities import send_typing_indicator_activity
     from src.remarketing_whatsapp.contracts import RemarketingSessionInput
     from src.platform.constants import ROUTE_REMARKETING, ROUTE_VENTAS
 
 _IDLE_TIMEOUT = timedelta(hours=24)
+
+# Trailing debounce: ver doc en sales_session.py. Mismos valores en ambos
+# workflows para consistencia de UX. Replay-safe (workflow.wait_condition +
+# timeouts deterministicos).
+_DEBOUNCE_SILENCE = timedelta(seconds=1.5)
+_DEBOUNCE_MAX_WAIT = timedelta(seconds=12)
 
 
 @workflow.defn(name="RemarketingWorkflow")
@@ -125,12 +136,51 @@ class RemarketingSessionWorkflow:
                 )
                 return
 
-            while self._pending:
-                msg = self._pending.pop(0)
+            # Trailing debounce con reset (Fix 1, gated): identico a Sales.
+            # Cada signal nuevo resetea el timer; cap absoluto 12s.
+            if workflow.patched("trailing-debounce-coalesce-v1"):
+                debounce_start = workflow.now()
+                while True:
+                    snapshot_len = len(self._pending)
+                    elapsed = workflow.now() - debounce_start
+                    cap_remaining = _DEBOUNCE_MAX_WAIT - elapsed
+                    if cap_remaining <= timedelta(0):
+                        break
+                    timeout = min(_DEBOUNCE_SILENCE, cap_remaining)
+                    try:
+                        await workflow.wait_condition(
+                            lambda: len(self._pending) > snapshot_len,
+                            timeout=timeout,
+                        )
+                    except asyncio.TimeoutError:
+                        break
+
+                batch = list(self._pending)
+                self._pending.clear()
+                msgs_to_process: list[PendingMessage] = [coalesce_pending(batch)]
+            else:
+                msgs_to_process = []
+                while self._pending:
+                    msgs_to_process.append(self._pending.pop(0))
+
+            for msg in msgs_to_process:
                 messages_processed += 1
                 self._processing = True
 
                 try:
+                    # Typing indicator outbound (Fix 5, gated): mostrar
+                    # "escribiendo..." al cliente. Best-effort.
+                    if workflow.patched("typing-indicator-v1"):
+                        try:
+                            await workflow.execute_activity(
+                                send_typing_indicator_activity,
+                                session_id,
+                                start_to_close_timeout=timedelta(seconds=5),
+                                retry_policy=RetryPolicy(maximum_attempts=1),
+                            )
+                        except Exception:
+                            pass
+
                     # PR-B: `fallback_plugin_context=None`. La identidad /
                     # tono / catalogo del agente entra al system prompt via
                     # `ContextBuilder` desde `workspace/*.md` durante
@@ -193,7 +243,20 @@ class RemarketingSessionWorkflow:
                         workflow.logger.info(f"Remarketing respondió para sesión {session_id}.")
 
                     if self._force_shutdown:
-                        return
+                        # Cancel-shutdown si llegaron mensajes nuevos durante
+                        # el procesamiento (Fix 3 / H3, gated). Simetrico al
+                        # de Sales.
+                        if (
+                            self._pending
+                            and workflow.patched("cancel-shutdown-on-new-pending-v1")
+                        ):
+                            workflow.logger.info(
+                                f"Cancel-shutdown remarketing: llegaron "
+                                f"{len(self._pending)} mensaje(s) nuevos. Continuando."
+                            )
+                            self._force_shutdown = False
+                        else:
+                            return
 
                 finally:
                     self._processing = False

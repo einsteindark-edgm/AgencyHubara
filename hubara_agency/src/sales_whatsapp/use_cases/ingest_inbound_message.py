@@ -22,6 +22,7 @@ from __future__ import annotations
 import structlog
 
 from src.platform.constants import WHATSAPP_SESSION_PREFIX
+from src.platform.state import FilesystemMetadataStore
 from src.sales_whatsapp.parsers import WhatsAppMessage
 from src.platform.session_history import FilesystemMessageHistoryStore
 from src.sales_whatsapp.use_cases.load_or_start_sales_session import (
@@ -38,9 +39,11 @@ class IngestInboundMessage:
         self,
         history_store: FilesystemMessageHistoryStore,
         load_session: LoadOrStartSalesSession,
+        metadata_store: FilesystemMetadataStore,
     ) -> None:
         self._history_store = history_store
         self._load_session = load_session
+        self._metadata_store = metadata_store
 
     async def execute(self, parsed: WhatsAppMessage) -> None:
         if parsed.text is None:
@@ -60,7 +63,21 @@ class IngestInboundMessage:
         # 1. Asegurar el log de entrada del cliente antes de ir a memoria viva (Temporal).
         self._history_store.append_user_event(session_id, parsed.text)
 
-        # 2. Resolver ruta + signal al workflow correspondiente.
+        # 2. Persistir el message_id en metadata para que el typing indicator
+        #    outbound pueda referenciarlo. Fix 5: la API de WhatsApp requiere
+        #    un message_id del cliente para mostrar "escribiendo..." y aprovecha
+        #    para marcar el mensaje como leido (doble UX win).
+        #    Si el parser no extrajo message_id (caso raro), seguimos sin
+        #    typing — el workflow funciona, solo no muestra el indicador.
+        if parsed.message_id:
+            try:
+                data = self._metadata_store.read(session_id)
+                data["last_inbound_message_id"] = parsed.message_id
+                self._metadata_store.write(session_id, data)
+            except Exception:  # noqa: BLE001 - best-effort; no rompe el flujo
+                logger.info("metadata write for typing indicator failed (ignored)")
+
+        # 3. Resolver ruta + signal al workflow correspondiente.
         await self._load_session.execute(
             session_id=session_id,
             message=parsed.text,

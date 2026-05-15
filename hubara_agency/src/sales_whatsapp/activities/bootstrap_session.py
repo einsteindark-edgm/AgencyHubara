@@ -18,11 +18,13 @@ from temporalio import activity
 
 from exoclaw_temporal.config import SessionInput, WorkspaceConfig
 
+from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.registries import (
     build_default_llm_config,
     get_base_tools_json,
     get_base_tools_registry,
 )
+from src.platform.state import FilesystemMetadataStore
 from src.platform.tool_extensions import apply_tool_extensions
 from src.sales_whatsapp.contracts import SalesSessionInput
 from src.sales_whatsapp.prompts import build_ghosting_prompt
@@ -114,3 +116,34 @@ async def bootstrap_sales_session_activity(input: SalesSessionInput) -> SessionI
         workspace=ws,
         tool_definitions_json=get_base_tools_json(registry),
     )
+
+
+@activity.defn(name="read_and_clear_pending_handoff")
+async def read_and_clear_pending_handoff_activity(session_id: str) -> str | None:
+    """Lee y limpia atomicamente `metadata.pending_handoff_summary`.
+
+    Es el canal por el que el dispatcher Remarketing→Sales pasa el contexto
+    del handoff al workflow Sales sin contaminar la conversacion JSONL con un
+    mensaje sintetico `[SISTEMA INTERNO]: ...` (Fix 3 del PR de
+    debounce/coalesce).
+
+    Returns:
+        El summary del handoff si estaba presente, o None si no hay handoff
+        pendiente. La activity limpia el field del metadata atomicamente (read,
+        pop, write) — la siguiente llamada devolvera None hasta que el
+        dispatcher escriba otro handoff.
+
+    Replay-safety: side-effect deterministico fuera del workflow (es activity).
+    El workflow lo invoca via `workflow.execute_activity`; en replay Temporal
+    re-aplica el resultado guardado en history sin re-ejecutar la activity.
+    """
+    store = FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
+    data = store.read(session_id)
+    summary = data.pop("pending_handoff_summary", None)
+    if summary is not None:
+        store.write(session_id, data)
+        activity.logger.info(
+            "read_and_clear_pending_handoff: handoff consumido session=%s",
+            session_id,
+        )
+    return summary if summary else None
