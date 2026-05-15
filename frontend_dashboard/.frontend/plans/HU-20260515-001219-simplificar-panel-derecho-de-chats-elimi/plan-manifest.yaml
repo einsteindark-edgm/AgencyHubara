@@ -1,0 +1,54 @@
+version: 1
+hu_id: HU-20260515-001219-simplificar-panel-derecho-de-chats-elimi
+hu_title: Simplificar panel derecho de chats eliminando campos y acciones no usados
+target_frontend: frontend_dashboard
+refinement_source: $ARTIFACTS_DIR/hu-refinada.md
+generated_by: frontend-task-planner-archon
+generated_at: 2026-05-14
+iteration: 1
+totals:
+  task_count: 1
+  foundation_count: 1
+  dag_max_depth: 1
+  estimated_loc_total: 70
+  acceptance_coverage: ['AC-1', 'AC-2', 'AC-3', 'AC-4', 'AC-5']
+tasks:
+  - id: F01
+    title: Simplificar UI de ChatsInspector — eliminar 4 bloques JSX y crear test RTL
+    slug: simplificar-ui-chats-inspector
+    file: tareas/F01-simplificar-ui-chats-inspector.md
+    depends_on: []
+    blocks: []
+    delivers_acceptance: ['AC-1', 'AC-2', 'AC-3', 'AC-4', 'AC-5']
+    affects_layers: ['features', 'tests']
+    affects_new_files:
+      - frontend_dashboard/src/features/chats-inspector/ui/ChatsInspector.test.tsx
+    affects_spinal_files: []
+    estimated_loc: 70
+    risk: low
+parallel_batches:
+  - batch_id: B1
+    tasks: ['F01']
+    warnings: []
+notes: |
+  Iteration 1 — descomposición inicial.
+
+  HU puramente presentacional: cero cambios en entidades, providers, tokens CSS ni Dashboard.tsx.
+  Una sola tarea cubre los 5 AC porque todas las eliminaciones son en el mismo archivo
+  (ChatsInspector.tsx) y son atómicas entre sí.
+
+  ChatsInspector.tsx (frontend_dashboard/src/features/chats-inspector/ui/ChatsInspector.tsx)
+  tiene acción "modify" sobre un archivo NO declarado en spinal-files.yaml. Con un único task
+  no hay riesgo de colisión paralela. Si una HU futura modifica este archivo en paralelo con
+  otra tarea, se deberá mover ese task a un lote posterior o declarar el archivo como spinal.
+  Por ahora no se declara spinal porque es un subcomponente interno de feature, no un punto
+  de composición compartido.
+
+  Nota de tamaño: la producción de código es negativa (eliminaciones) — aprox. -20 LOC.
+  Los 70 LOC estimados corresponden al test file nuevo. La HU cae bajo el floor de 50 LOC de
+  producción por diseño (es una HU de limpieza); el floor es orientativo para decisiones de
+  splitting, no aplica cuando no hay tarea padre a fusionar.
+
+  Backend dependency: ninguna.
+  Open questions del planner: ver §13 del task F01 para el riesgo de renderizado en tests
+  con mocks de hooks de API.
