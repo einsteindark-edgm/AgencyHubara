@@ -1,0 +1,58 @@
+version: 1
+hu_id: HU-20260515-021114-eliminar-controles-de-edicion-del-panel
+hu_title: Eliminar controles de edición del panel de detalle de agente en Chats
+target_frontend: frontend_dashboard
+refinement_source: $ARTIFACTS_DIR/hu-refinada.md
+generated_by: frontend-task-planner-archon
+generated_at: 2026-05-14
+iteration: 1
+
+totals:
+  task_count: 1
+  foundation_count: 1
+  dag_max_depth: 1
+  estimated_loc_total: 70
+  acceptance_coverage: ['AC-1', 'AC-2', 'AC-3', 'AC-4']
+
+tasks:
+  - id: F01
+    title: Eliminar controles de edición en AgentTab de ChatsInspector
+    slug: eliminar-controles-agente-tab
+    file: tareas/F01-eliminar-controles-agente-tab.md
+    depends_on: []
+    blocks: []
+    delivers_acceptance: ['AC-1', 'AC-2', 'AC-3', 'AC-4']
+    affects_layers: ['features', 'tests']
+    affects_new_files: []
+    affects_spinal_files: []
+    estimated_loc: 70
+    risk: low
+
+parallel_batches:
+  - batch_id: B1
+    tasks: ['F01']
+    warnings: []
+
+notes: |
+  Iteration 1 — descomposición inicial.
+
+  Tarea única: la HU es puramente sustractiva (eliminar JSX y añadir assertions
+  de ausencia). No hay nuevas entidades, features, páginas, tokens ni providers.
+
+  Archivos modificados (ninguno es spinal):
+    - frontend_dashboard/src/features/chats-inspector/ui/ChatsInspector.tsx
+      (modify, no-spinal — su glob features/*/index.ts no coincide con ui/ChatsInspector.tsx)
+    - frontend_dashboard/src/features/chats-inspector/ui/ChatsInspector.test.tsx
+      (modify, no-spinal — test files son explícitamente no-spinal por convención)
+
+  Con una sola tarea no existe contención de merge. No se requieren wiring_intents
+  ya que ningún archivo es spinal.
+
+  Nota técnica: tras eliminar los botones Prompt/Flujo/Probar/Clonar, los iconos
+  Icon.workflow e Icon.bolt quedan sin uso. No emiten error TS porque se acceden
+  como propiedades del namespace Icon (no son destructured imports). Verificar
+  con npm run lint post-edición (ver §13 de F01).
+
+  Backend dependency: none.
+  Deferred items: datos hardcodeados en AgentTab (remarketing, claude-haiku-4-5,
+  WhatsApp API) son deuda técnica preexistente — fuera de scope (refinamiento §12).

@@ -1,0 +1,96 @@
+version: 1
+task_id: F01
+task_file: /Users/edgm/.archon/workspaces/einsteindark-edgm/AgencyHubara/artifacts/runs/c1ea7949c6df54b7d4dbe1c76ebafe28/task.md
+hu_id: HU-20260515-021114-eliminar-controles-de-edicion-del-panel
+target_frontend: frontend_dashboard
+implementer: frontend-implementer-archon
+date: 2026-05-14
+iteration: 1
+status: passed
+files_created: []
+files_modified:
+  - src/features/chats-inspector/ui/ChatsInspector.tsx
+  - src/features/chats-inspector/ui/ChatsInspector.test.tsx
+wiring_intents: {}
+commands:
+  - cmd: "npm test -- chats-inspector"
+    exit_code: 0
+    duration_s: 2.66
+    attempts: 1
+  - cmd: "npx tsc -b"
+    exit_code: 2
+    duration_s: 8.1
+    attempts: 1
+    note: "2 errores preexistentes en src/entities/session/api.ts (L27, L32) — Property 'phone_number_id'/'memory_content' optional mismatch. No están en §3 de esta tarea; git diff confirma que solo se modificaron ChatsInspector.tsx y ChatsInspector.test.tsx."
+  - cmd: "npm run build"
+    exit_code: 0
+    duration_s: 4.11
+    attempts: 1
+  - cmd: "npm run lint"
+    exit_code: 1
+    duration_s: 6.2
+    attempts: 1
+    note: "5 errores en archivos preexistentes fuera de §3: useCombinedHistory.ts (setState-in-effect, Date.now impure), Icon.tsx (react-refresh). No relacionados con ChatsInspector."
+  - cmd: "npm test"
+    exit_code: 0
+    duration_s: 15.72
+    attempts: 1
+regression_check:
+  full_test_cmd: "npm test"
+  full_test_exit_code: 0
+  type_check_cmd: "npx tsc -b"
+  type_check_exit_code: 2
+  build_cmd: "npm run build"
+  build_exit_code: 0
+  failing_tests: []
+  notes: "tsc -b falla con 2 errores preexistentes en entities/session/api.ts; no introducidos por esta tarea (git diff limpio sobre ese archivo)."
+architecture_gate:
+  cmd: "npm run test:arch"
+  exit_code: 0
+  duration_s: 7.87
+  failing_tests: []
+fsd_rules:
+  import_rules: { applies: false, verified: true, note: "No se añaden imports nuevos; solo se eliminan bloques JSX." }
+  barrel_only_public_api: { applies: false, verified: true, note: "No se crea ninguna feature/entity nueva." }
+  zod_at_boundary: { applies: false, verified: true, note: "AgentTab usa datos hardcodeados; no hay fetch nuevo." }
+  tanstack_query_for_server_data: { applies: false, verified: true, note: "Sin server state nuevo." }
+  no_cross_feature_imports: { applies: true, verified: true, note: "ChatsInspector no importa de ninguna otra feature; sin cambio." }
+  no_deep_imports: { applies: true, verified: true, note: "grep no deep imports retornó vacío." }
+  no_fetch_in_components: { applies: false, verified: true, note: "Sin fetch nuevo." }
+  tailwind_token_naming: { applies: false, verified: true, note: "Sin tokens nuevos." }
+  jsx_uses_tsx_ext: { applies: true, verified: true, note: "Archivos editados tienen extensión .tsx." }
+dod_checklist:
+  - { item: "ChatsInspector.tsx modificado: 3 bloques eliminados de AgentTab()", done: true, note: "form-row Temperatura, form-row Tokens y div.btn-grid removidos." }
+  - { item: "AgentTab() sin contenedores vacíos ni style residuales", done: true, note: "Panel contiene avatar/nombre/status + Plataforma + Modelo, nada más." }
+  - { item: "ChatsInspector.test.tsx modificado: import userEvent + 6 nuevos it", done: true, note: "import añadido; 6 tests async con userEvent.setup() añadidos." }
+  - { item: "npm test -- chats-inspector → 11 tests passed", done: true, note: "11/11 passed (5 previos + 6 nuevos)." }
+  - { item: "npx tsc -b → exit 0", done: false, note: "Exit 2 por errores preexistentes en entities/session/api.ts — fuera de §3. Build prod (npm run build) sí pasa (exit 0)." }
+  - { item: "npm run build → exit 0", done: true, note: "Build prod exitoso." }
+  - { item: "npm run lint → exit 0 o solo warnings", done: false, note: "5 errores en archivos preexistentes (useCombinedHistory.ts, Icon.tsx) — fuera de §3. No relacionados con esta tarea." }
+  - { item: "npm test → suite completa sin regresiones", done: true, note: "70/70 tests passed." }
+  - { item: "FSD compliance greps retornan vacío", done: true, note: "No rogue fetch, no deep imports." }
+  - { item: "Dashboard.tsx no modificado", done: true, note: "git diff confirma solo ChatsInspector.tsx y ChatsInspector.test.tsx." }
+  - { item: "features/chats-inspector/index.ts no modificado", done: true, note: "Sin cambios en barrel." }
+blockers: []
+notes: |
+  Iteración 1 — implementación inicial.
+
+  Delta aplicado:
+    - ChatsInspector.tsx: eliminados 3 bloques de AgentTab() en líneas 187-212:
+      form-row Temperatura, form-row Tokens, div.btn-grid (Prompt/Flujo/Probar/Clonar).
+      AgentTab() queda con avatar+nombre+status, Plataforma y Modelo.
+    - ChatsInspector.test.tsx: añadido import userEvent + 6 tests async usando
+      userEvent.setup() / user.click(screen.getByTitle('Agente actual')).
+
+  Deuda preexistente detectada (fuera de scope):
+    - entities/session/api.ts: 2 errores TS (Property 'phone_number_id'/'memory_content'
+      optional mismatch). Preexistentes en main, no introducidos por esta tarea.
+    - useCombinedHistory.ts: react-hooks/set-state-in-effect + purity errors.
+    - Icon.tsx: react-refresh/only-export-components.
+    Todos son errores de lint/tsc preexistentes; build prod pasa limpio.
+
+  Icon.workflow e Icon.bolt: tras la eliminación del btn-grid, ya no se acceden
+  como propiedades del namespace Icon. TypeScript no emite error (Icon sigue importado
+  y usado para Icon.user, Icon.edit, etc.). Lint tampoco los detectó.
+
+  Architecture gate: 13/13 passing. Meta-gate limpio.
