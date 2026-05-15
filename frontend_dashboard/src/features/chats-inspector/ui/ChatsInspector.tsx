@@ -184,32 +184,6 @@ function AgentTab() {
         <span className="lbl">Modelo</span>
         <span className="val mono">claude-haiku-4-5</span>
       </div>
-      <div className="form-row">
-        <span className="lbl">Temperatura</span>
-        <span className="val">0.4</span>
-      </div>
-      <div className="form-row">
-        <span className="lbl">Tokens</span>
-        <span className="val">12,840 / 200k</span>
-      </div>
-      <div className="btn-grid" style={{ marginTop: 10 }}>
-        <button className="insp-button">
-          <Icon.edit />
-          Prompt
-        </button>
-        <button className="insp-button">
-          <Icon.workflow />
-          Flujo
-        </button>
-        <button className="insp-button">
-          <Icon.bolt />
-          Probar
-        </button>
-        <button className="insp-button">
-          <Icon.copy />
-          Clonar
-        </button>
-      </div>
     </Panel>
   );
 }
