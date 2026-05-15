@@ -67,7 +67,11 @@ on every uv/pytest/ruff/mypy command — verify against project-context.md
 
 Step 1 — Load context (must do before decomposing)
 
-Validate the refinement. Read $ARTIFACTS_DIR/hu-refinada.md. Confirm it has the 14 sections the refiner produces. If the refiner exited early with "no DEHA refinement applies", produce a single-line manifest with task_count: 0 and a notes field explaining why, then stop.
+Validate the refinement. Read $ARTIFACTS_DIR/hu-refinada.md. Confirm it has the 14 numbered sections the refiner produces. Validation order (each branch is exclusive; stop at the first match):
+  1. Short-form / no-applies — if the document explicitly says "no DEHA refinement applies" or describes the HU as not requiring exoclaw-temporal work, produce a single-line manifest with `task_count: 0` and a notes field explaining why, then stop. Short-form refinements legitimately omit §0/§15; do NOT block on them.
+  2. Anchor contract present — if §0 Code anchors AND §15 Assumptions made are both present, propagate them per the rules below.
+  3. Legacy refinement — if §0 OR §15 are missing (refinement predates the anchor contract; this happens when a refinement loaded from `.exoclaw/refinements/` was written before this skill was upgraded), continue WITHOUT anchor/assumption propagation. Add `legacy_refinement: true` to the manifest's notes plus a one-line explanation. Do NOT block — the implementer will work from the refinement's §3 file list as before.
+Read §0 Code anchors and §15 Assumptions made from the refinement (when branch 2 applies). These are the discovered file pointers (§0) and the explicit unresolved decisions (§15) the refiner left behind. The planner does NOT re-explore the repo — it propagates these anchors into each task file so the implementer receives real-code pointers without doing its own discovery. Assumptions get scoped to the tasks they affect (an A<n> entry touching only one task lands only in that task's §13).
 Determine target agent and layout (use the same heuristic as the refiner — repo, agent path, multi-agent vs single-agent). The decomposition does not change file roots; it inherits whatever paths the refinement cited. Re-check src/<agent>/, src/platform/, workspace/ exist where the refinement says they do.
 Read the files the refinement cites (path:line references in §3-§10). You need them to write canonical snippets in task files that match the existing codebase style.
 Anti-pattern check. If the refinement flagged a layout anti-pattern in §13 (Risks), do NOT bundle the layout fix into any task. Add a separate "infrastructure" task or flag it in the manifest's notes.
@@ -262,6 +266,18 @@ Delivers acceptance criterion(s) (verbatim from refinement §1):
 - AC-<id>: <text>
 
 Refinement sections that informed this task: §3.X, §3.Y, §3.Z.
+
+Code anchors from refinement §0 (only entries relevant to this task — read these files before editing):
+
+- Pattern to follow: <pattern name> at <path>:<line> — <rationale>
+- File to extend: <path> — <role>
+- File to create: <path> — <role>
+
+Assumptions from refinement §15 that affect this task (verbatim — do NOT silently override):
+
+- A<n>: <assumption> | default: <chosen> | reversibility: <low|medium|high>
+
+(Or: "No assumptions from §15 affect this task.")
 
 ## 2. Dependencies
 
@@ -498,3 +514,5 @@ Never produce a DAG with cycles. Detect and fix during decomposition.
 Never write to paths other than $ARTIFACTS_DIR/plan-manifest.yaml and $ARTIFACTS_DIR/tareas/F<NN>-<slug>.md. Persistence to the repo (.exoclaw/plans/<HU-id>/) is the workflow's responsibility, not yours.
 Never name a task `F00-setup` or `F99-cleanup` — every task delivers an acceptance criterion or is foundation infrastructure with a clear name.
 If the refinement says "no DEHA refinement applies", emit an empty manifest (task_count: 0) with a notes field explaining the situation, and stop.
+Always propagate §0 Code anchors into each task file's §1 Context. Only the anchors relevant to that specific task — do NOT dump §0 verbatim into every task. If §0 references a file that no task ends up touching, that's a refinement smell; flag it in `notes`.
+Always propagate §15 Assumptions into the §1 Context of every task they affect. An assumption may affect more than one task (copy it into each). The implementer reads its task's §13 and §1 Assumptions — these are the choices it must NOT silently revisit.

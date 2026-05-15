@@ -91,6 +91,21 @@ Anti-pattern check. If you see src/core/, src/shared/, src/common/, or src/domai
 
 If a file does not exist, note it; do not invent it.
 
+Exploration budget (mandatory)
+- Max 20 file reads during context loading.
+- Max 15 grep/find/glob invocations.
+- Drive exploration by HU keywords (proper nouns, agent names, workflow modes, named tools / activities that appear in the HU text). Do NOT freely browse the repo.
+- Stop the moment every HU keyword maps to a concrete file (or to "no prior art").
+- Every file you Read MUST end up cited in §0 Code anchors. If after reading it turned out unrelated, list it under "Files explored but unrelated" so the budget stays auditable. Hidden reads are forbidden — they undermine the planner's trust in §0.
+
+§0 Code anchors output (mandatory — emitted before §1 Scope)
+At the end of context loading, the refinement document MUST contain a §0 section with these sub-lists:
+  - Existing patterns reused / generalized — pattern name + `path:line` + one-line rationale (why this is the model to extend rather than reinvent). This is where you cite the previous tool / activity / workflow whose pattern this HU should follow.
+  - Files this HU will touch (modify) — path + role.
+  - Files this HU will create — path + role.
+  - Coverage check — which HU keywords mapped to which file (or "no prior art"); files explored but unrelated; search budget used (N reads / 20, N greps / 15).
+The §0 anchors are the contract with the planner. The planner copies the relevant anchors into each task file's §1 Context so the implementer reads real code, not a derived description of it. Anchors are pointers, not obligations — the implementer may diverge if justified, but never by accident.
+
 Step 2 — Internalize the rules (apply them when refining)
 The 5 DEHA hard rules (cite by name when relevant)
 
@@ -294,6 +309,28 @@ Refiner: exoclaw-tech-refiner-archon
 Date: <YYYY-MM-DD>
 Iteration: <n> (set to 1 if first pass; increment on each follow-up)
 
+0. Code anchors
+Existing patterns reused / generalized:
+
+- <pattern name> at <path>:<line> — <one-line rationale: why this is the model to extend, not reinvent>
+- ...
+
+Files this HU will touch (modify):
+
+- <path> — <role>
+- ...
+
+Files this HU will create:
+
+- <path> — <role>
+- ...
+
+Coverage check:
+
+- HU keywords mapped: <keyword → file or "no prior art">
+- Files explored but unrelated: <list or "none">
+- Search budget used: <N> file reads / 20, <N> greps / 15
+
 1. Scope
 Summary: <one line>
 Acceptance criteria:
@@ -375,6 +412,17 @@ Defer to claude-api: <reason or "none">.
 
 (Each step keeps tests green; no Big Bang.)
 
+15. Assumptions made
+Decisions taken that are NOT explicit in the HU AND NOT derivable from the §0 code anchors. Each assumption is a candidate point of misalignment with the operator's intent — making them visible is the whole point of this section.
+
+| # | Assumption | Source of uncertainty | Default chosen | Reversibility |
+|---|-----------|----------------------|----------------|---------------|
+| A1 | <one-line decision> | HU silent on X; no precedent in code for Y | <chosen default> | low \| medium \| high |
+
+intent_complete: <true | false>
+
+Set `intent_complete: false` when ANY assumption has low reversibility (i.e. costly to revert) AND no clear default emerged from §0 anchors. This is a soft signal — the operator scans it before merging the refinement; the workflow does NOT halt on it. If you made no assumptions, write: "No assumptions — every decision is derivable from HU or §0 code anchors." and set `intent_complete: true`.
+
 Style rules
 
 Be specific. Cite file paths with line numbers when referencing existing code.
@@ -389,5 +437,8 @@ Never propose duplicating cross-agent infrastructure into a new agent. Extend pl
 Never propose Pydantic at the workflow boundary. Plain dataclasses only.
 Never propose persona content in code. It goes in workspace/.
 Never write to paths other than $ARTIFACTS_DIR/hu-refinada.md from this skill. Persistence to the repo (.exoclaw/refinements/<HU-id>-tech.md) is the workflow's responsibility, not yours.
+Always emit §0 Code anchors before §1 Scope. The planner depends on it to route file pointers into task files.
+Always emit §15 Assumptions made (even if empty — write "No assumptions" and set `intent_complete: true`). It is the auditable trail of decisions you took that the HU did not explicitly authorize.
+Never exceed the exploration budget (20 file reads / 15 greps). The cap is enforced by self-discipline; the operator audits §0 Coverage check for compliance.
 Never propose changes to `tests/architecture/`, `.importlinter`, `R_JSON_FROZEN_EXEMPTIONS`, `R_HEARTBEAT_EXEMPTIONS`, or `ignore_imports` as part of a feature refinement. Those files encode the DEHA architectural contract and are out-of-scope of every HU. If the HU genuinely cannot be implemented without relaxing an architectural rule, flag it in §13 (Risks / open questions) as: "This HU appears to require an architecture-rule change in <test_file>:<test_name>. Recommend the operator create an ADR and a separate architecture-change PR BEFORE implementing this HU." Never bundle the rule change inside the refinement's §3 (file list) — the planner would route it to a feature implementer and it would ship without human review.
 If the HU genuinely doesn't need exoclaw-temporal (e.g. "fix a typo in README"), say so explicitly and exit without writing a full refinement.
