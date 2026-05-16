@@ -106,7 +106,7 @@ services:
       dockerfile: Dockerfile
     container_name: local-hubara-worker
     working_dir: /app/hubara_agency
-    command: ["python", "-m", "src.sales_whatsapp.worker"]
+    command: ["python", "-m", "src.plugins.chats.workers.sales"]
     environment:
       - TEMPORAL_URL=temporal:7233
       - API_BASE_LLMLITE=http://litellm:4000
@@ -157,7 +157,7 @@ services:
       dockerfile: Dockerfile
     container_name: local-hubara-worker-remarketing
     working_dir: /app/hubara_agency
-    command: ["python", "-m", "src.remarketing_whatsapp.worker"]
+    command: ["python", "-m", "src.plugins.chats.workers.remarketing"]
     environment:
       - TEMPORAL_URL=temporal:7233
       - API_BASE_LLMLITE=http://litellm:4000

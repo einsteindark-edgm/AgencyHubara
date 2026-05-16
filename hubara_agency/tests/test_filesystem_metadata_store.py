@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 
-from src.sales_whatsapp.state import FilesystemMetadataStore
+from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
 
 
 def test_read_returns_empty_dict_when_missing(tmp_path):

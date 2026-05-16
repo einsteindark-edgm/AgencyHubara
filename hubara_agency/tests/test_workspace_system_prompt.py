@@ -1,7 +1,7 @@
 """PR-B regression test — system prompt diff = 0 vs PR-A.
 
 Verifica que el system prompt construido desde el workspace canonico de Sales
-(`hubara_agency/src/sales_whatsapp/workspace/`) contiene el mismo
+(`hubara_agency/src/plugins/chats/agent/sales/workspace/`) contiene el mismo
 contenido de identidad / tono / catalogo que el sistema viejo (shared_brain/*.md
 inyectado via `plugin_context`).
 
@@ -32,7 +32,10 @@ from exoclaw_conversation.context import ContextBuilder
 WORKSPACE = (
     Path(__file__).resolve().parents[1]
     / "src"
-    / "sales_whatsapp"
+    / "plugins"
+    / "chats"
+    / "agent"
+    / "sales"
     / "workspace"
 )
 

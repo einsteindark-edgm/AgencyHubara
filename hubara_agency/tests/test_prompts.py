@@ -1,8 +1,8 @@
 """Tests unitarios de los policies de prompts (puros, sin Temporal)."""
 from __future__ import annotations
 
-from src.remarketing_whatsapp.prompts import build_remarketing_trigger
-from src.sales_whatsapp.prompts import build_ghosting_prompt
+from src.plugins.chats.agent.remarketing.prompts import build_remarketing_trigger
+from src.plugins.chats.agent.sales.prompts import build_ghosting_prompt
 
 
 def test_ghosting_prompt_mentions_required_tool() -> None:

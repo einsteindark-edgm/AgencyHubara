@@ -18,7 +18,7 @@ from temporalio.testing import ActivityEnvironment
 def vault(tmp_path, monkeypatch):
     """Redirige `WORKSPACE_VAULT_DIR` en bootstrap_session.py a un tmp."""
     monkeypatch.setattr(
-        "src.sales_whatsapp.activities.bootstrap_session.WORKSPACE_VAULT_DIR",
+        "src.plugins.chats.agent.sales.activities.bootstrap_session.WORKSPACE_VAULT_DIR",
         tmp_path,
     )
     return tmp_path
@@ -34,7 +34,7 @@ async def test_reads_and_clears_handoff_summary(vault) -> None:
         "phone_number_id": "PID",
     }))
 
-    from src.sales_whatsapp.activities import (
+    from src.plugins.chats.agent.sales.activities import (
         read_and_clear_pending_handoff_activity,
     )
     env = ActivityEnvironment()
@@ -54,7 +54,7 @@ async def test_returns_none_when_no_handoff_pending(vault) -> None:
     metadata_path.parent.mkdir(parents=True)
     metadata_path.write_text(json.dumps({"phone_number_id": "PID"}))
 
-    from src.sales_whatsapp.activities import (
+    from src.plugins.chats.agent.sales.activities import (
         read_and_clear_pending_handoff_activity,
     )
     env = ActivityEnvironment()
@@ -65,7 +65,7 @@ async def test_returns_none_when_no_handoff_pending(vault) -> None:
 
 async def test_returns_none_when_metadata_missing(vault) -> None:
     """Sesion nueva sin metadata.json — read-only graceful."""
-    from src.sales_whatsapp.activities import (
+    from src.plugins.chats.agent.sales.activities import (
         read_and_clear_pending_handoff_activity,
     )
     env = ActivityEnvironment()
@@ -82,7 +82,7 @@ async def test_consume_is_one_shot(vault) -> None:
     metadata_path.parent.mkdir(parents=True)
     metadata_path.write_text(json.dumps({"pending_handoff_summary": "ctx"}))
 
-    from src.sales_whatsapp.activities import (
+    from src.plugins.chats.agent.sales.activities import (
         read_and_clear_pending_handoff_activity,
     )
     env = ActivityEnvironment()

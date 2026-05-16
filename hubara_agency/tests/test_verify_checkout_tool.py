@@ -18,7 +18,7 @@ from src.platform.catalog.checkout_port import (
     CheckoutVerification,
     VerifiedItem,
 )
-from src.sales_whatsapp.tools.checkout import VerifyOrderForCheckoutTool
+from src.plugins.chats.agent.sales.tools.checkout import VerifyOrderForCheckoutTool
 
 
 def _ctx(session: str) -> ToolContext:

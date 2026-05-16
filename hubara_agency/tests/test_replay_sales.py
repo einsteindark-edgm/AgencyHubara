@@ -20,7 +20,7 @@ from pathlib import Path
 from temporalio.client import WorkflowHistory
 from temporalio.worker import Replayer
 
-from src.sales_whatsapp.workflows.sales_session import HubaraSalesSessionWorkflow
+from src.plugins.chats.agent.sales.workflows.sales_session import HubaraSalesSessionWorkflow
 
 FIXTURE = Path(__file__).parent / "fixtures" / "history_sales_session_v2.json"
 

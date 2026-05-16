@@ -34,8 +34,8 @@ from exoclaw_temporal.config import (
 )
 
 from src.platform.constants import SALES_QUEUE
-from src.sales_whatsapp.contracts import SalesSessionInput
-from src.sales_whatsapp.workflows.sales_session import HubaraSalesSessionWorkflow
+from src.plugins.chats.agent.sales.contracts import SalesSessionInput
+from src.plugins.chats.agent.sales.workflows.sales_session import HubaraSalesSessionWorkflow
 
 
 # --- Fake activities con contadores ----------------------------------------

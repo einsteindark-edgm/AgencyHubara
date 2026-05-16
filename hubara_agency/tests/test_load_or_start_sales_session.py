@@ -26,12 +26,12 @@ from src.platform.constants import (
     ROUTE_VENTAS,
     SALES_QUEUE,
 )
-from src.sales_whatsapp.contracts import SalesSessionInput
-from src.sales_whatsapp.use_cases.load_or_start_sales_session import (
+from src.plugins.chats.agent.sales.contracts import SalesSessionInput
+from src.plugins.chats.agent.sales.use_cases.load_or_start_sales_session import (
     LoadOrStartSalesSession,
 )
-from src.sales_whatsapp.workflows.sales_session import HubaraSalesSessionWorkflow
-from src.remarketing_whatsapp.workflows.remarketing import (
+from src.plugins.chats.agent.sales.workflows.sales_session import HubaraSalesSessionWorkflow
+from src.plugins.chats.agent.remarketing.workflows.remarketing import (
     RemarketingSessionWorkflow,
 )
 

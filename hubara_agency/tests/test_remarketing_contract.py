@@ -9,8 +9,8 @@ from __future__ import annotations
 from dataclasses import asdict
 import inspect
 
-from src.remarketing_whatsapp.contracts import RemarketingSessionInput
-from src.remarketing_whatsapp.workflows.remarketing import (
+from src.plugins.chats.agent.remarketing.contracts import RemarketingSessionInput
+from src.plugins.chats.agent.remarketing.workflows.remarketing import (
     RemarketingSessionWorkflow,
 )
 

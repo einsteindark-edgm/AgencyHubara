@@ -14,7 +14,7 @@ from src.platform.catalog.dtos import (
     CatalogVariantDTO,
     SearchResult,
 )
-from src.sales_whatsapp.tools.catalog import SearchProductsTool
+from src.plugins.chats.agent.sales.tools.catalog import SearchProductsTool
 
 
 class _FakeCatalog:

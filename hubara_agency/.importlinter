@@ -9,9 +9,17 @@
 ;   R-DIP #9  → independence: platform must not depend on any agent
 ;   R-DIP #10 → independence: agents must not import each other (cross-agent via platform/)
 ;
+; PR2 — refactor a plugins/. Las antiguas raíces `src.sales_whatsapp`,
+; `src.remarketing_whatsapp` y `src.dashboard` desaparecieron. Hoy:
+;   - sales agente   → `src.plugins.chats.agent.sales`
+;   - remarketing    → `src.plugins.chats.agent.remarketing`
+;   - dashboard HTTP → `src.plugins.chats.api.{dashboard,handoff,dashboard_composition}`
+;   - catalog_sync   → `src.catalog_sync` (sin migrar todavía; PR5)
+;
 ; Notes:
-;   - `dashboard/` is intentionally NOT covered here (it's FastAPI, not DEHA).
-;   - Each contract is independent; a single violation does not silence the others.
+;   - `plugins/<id>/api/` (FastAPI HTTP edge) está intencionalmente FUERA del scope
+;     R-DIP — los routers son adapters, no DEHA.
+;   - Cada contracto es independiente; una violación no silencia las demás.
 
 [importlinter]
 root_packages =
@@ -25,8 +33,8 @@ type = forbidden
 source_modules =
     src.platform
 forbidden_modules =
-    src.sales_whatsapp
-    src.remarketing_whatsapp
+    src.plugins.chats.agent.sales
+    src.plugins.chats.agent.remarketing
     src.catalog_sync
 ; Agent code is composed on top of platform; reversing the arrow couples them.
 ;
@@ -37,11 +45,11 @@ forbidden_modules =
 ;     src/platform/* and dispatch by workflow name + DTO without importing
 ;     agent modules.
 ignore_imports =
-    src.platform.temporal.dispatcher -> src.sales_whatsapp.config.env
-    src.platform.temporal.dispatcher -> src.sales_whatsapp.contracts
-    src.platform.temporal.dispatcher -> src.sales_whatsapp.workflows.sales_session
-    src.platform.temporal.dispatcher -> src.remarketing_whatsapp.config.env
-    src.platform.temporal.dispatcher -> src.remarketing_whatsapp.contracts
+    src.platform.temporal.dispatcher -> src.plugins.chats.agent.sales.config.env
+    src.platform.temporal.dispatcher -> src.plugins.chats.agent.sales.contracts
+    src.platform.temporal.dispatcher -> src.plugins.chats.agent.sales.workflows.sales_session
+    src.platform.temporal.dispatcher -> src.plugins.chats.agent.remarketing.config.env
+    src.platform.temporal.dispatcher -> src.plugins.chats.agent.remarketing.contracts
 unmatched_ignore_imports_alerting = warn
 ; Some local-import edges only appear when the activity body is executed.
 ; "warn" prevents CI failure when an exception goes unused, but still surfaces it.
@@ -51,8 +59,8 @@ unmatched_ignore_imports_alerting = warn
 name = R-DIP: agent packages must be independent of each other
 type = independence
 modules =
-    src.sales_whatsapp
-    src.remarketing_whatsapp
+    src.plugins.chats.agent.sales
+    src.plugins.chats.agent.remarketing
     src.catalog_sync
 ; Cross-agent flow goes through src.platform.* (dispatcher, contracts, channels).
 ; If you need shared code, lift it to src.platform/ — never import a sibling agent.
@@ -71,12 +79,12 @@ modules =
 ;      when workflow registry lives in platform/, the use-case branches on a
 ;      string key and the cross-agent import disappears.
 ignore_imports =
-    src.platform.temporal.dispatcher -> src.sales_whatsapp.config.env
-    src.platform.temporal.dispatcher -> src.sales_whatsapp.contracts
-    src.platform.temporal.dispatcher -> src.sales_whatsapp.workflows.sales_session
-    src.platform.temporal.dispatcher -> src.remarketing_whatsapp.config.env
-    src.platform.temporal.dispatcher -> src.remarketing_whatsapp.contracts
-    src.sales_whatsapp.use_cases.load_or_start_sales_session -> src.remarketing_whatsapp.workflows.remarketing
+    src.platform.temporal.dispatcher -> src.plugins.chats.agent.sales.config.env
+    src.platform.temporal.dispatcher -> src.plugins.chats.agent.sales.contracts
+    src.platform.temporal.dispatcher -> src.plugins.chats.agent.sales.workflows.sales_session
+    src.platform.temporal.dispatcher -> src.plugins.chats.agent.remarketing.config.env
+    src.platform.temporal.dispatcher -> src.plugins.chats.agent.remarketing.contracts
+    src.plugins.chats.agent.sales.use_cases.load_or_start_sales_session -> src.plugins.chats.agent.remarketing.workflows.remarketing
 unmatched_ignore_imports_alerting = warn
 
 ; --- R-DIP #7 — tools/ are pure ----------------------------------------------
@@ -84,21 +92,20 @@ unmatched_ignore_imports_alerting = warn
 name = R-DIP: tools/*.py must not import temporalio (no client, worker, or activity.defn)
 type = forbidden
 source_modules =
-    src.sales_whatsapp.tools
+    src.plugins.chats.agent.sales.tools
 forbidden_modules =
     temporalio
 ; Tools return decisions (DTOs). The workflow turns them into activities. ADR-001.
 ; Stricter than the original rule (forbids the whole package) because import-linter
 ; can't restrict to sub-modules of external packages — but tools have no legitimate
-; reason to import temporalio in any form. Only sales_whatsapp owns tools today.
-; Tools return decisions (DTOs). The workflow turns them into activities. ADR-001.
+; reason to import temporalio in any form. Only sales (chats plugin) owns tools today.
 
 ; --- R-DIP #8 — parsers stay pure --------------------------------------------
 [importlinter:contract:parsers-pure]
 name = R-DIP: parsers.py must not perform I/O (httpx, requests, temporalio, litellm)
 type = forbidden
 source_modules =
-    src.sales_whatsapp.parsers
+    src.plugins.chats.agent.sales.parsers
 forbidden_modules =
     httpx
     requests

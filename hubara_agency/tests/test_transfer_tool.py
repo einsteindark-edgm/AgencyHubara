@@ -19,7 +19,7 @@ from pathlib import Path
 from exoclaw.agent.tools import ToolContext
 
 from src.platform.tools.routing import TransferToSalesAgentTool
-from src.sales_whatsapp.tools.tags import ManageConversationTagTool
+from src.plugins.chats.agent.sales.tools.tags import ManageConversationTagTool
 
 
 def _strip_python_comments(src: str) -> str:
@@ -71,7 +71,7 @@ def test_routing_tool_module_does_not_import_temporal_client() -> None:
 
 
 def test_tags_tool_module_does_not_import_temporal_client() -> None:
-    import src.sales_whatsapp.tools.tags as tags_mod
+    import src.plugins.chats.agent.sales.tools.tags as tags_mod
     mod_code = _strip_python_comments(inspect.getsource(tags_mod))
     assert "get_temporal_client" not in mod_code
     assert "from src.platform.temporal.client" not in mod_code

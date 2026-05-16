@@ -8,29 +8,29 @@ import importlib
 
 
 def test_workers_importable() -> None:
-    importlib.import_module("src.sales_whatsapp.worker")
-    importlib.import_module("src.remarketing_whatsapp.worker")
+    importlib.import_module("src.plugins.chats.workers.sales")
+    importlib.import_module("src.plugins.chats.workers.remarketing")
 
 
 def test_activities_importable() -> None:
     importlib.import_module("src.platform.temporal.activities")
     importlib.import_module("src.platform.whatsapp.activities")
-    importlib.import_module("src.sales_whatsapp.activities")
-    importlib.import_module("src.remarketing_whatsapp.activities")
+    importlib.import_module("src.plugins.chats.agent.sales.activities")
+    importlib.import_module("src.plugins.chats.agent.remarketing.activities")
 
 
 def test_workflows_importable() -> None:
-    importlib.import_module("src.sales_whatsapp.workflows.sales_session")
-    importlib.import_module("src.remarketing_whatsapp.workflows.remarketing")
+    importlib.import_module("src.plugins.chats.agent.sales.workflows.sales_session")
+    importlib.import_module("src.plugins.chats.agent.remarketing.workflows.remarketing")
 
 
 def test_contracts_importable() -> None:
-    mod = importlib.import_module("src.remarketing_whatsapp.contracts")
+    mod = importlib.import_module("src.plugins.chats.agent.remarketing.contracts")
     assert hasattr(mod, "RemarketingSessionInput")
 
 
 def test_parsers_importable() -> None:
-    mod = importlib.import_module("src.sales_whatsapp.parsers")
+    mod = importlib.import_module("src.plugins.chats.agent.sales.parsers")
     assert hasattr(mod, "parse_whatsapp_inbound")
     assert hasattr(mod, "WhatsAppMessage")
 

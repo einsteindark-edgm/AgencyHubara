@@ -11,10 +11,10 @@ from dataclasses import dataclass
 
 import pytest
 
-from src.sales_whatsapp.use_cases.ingest_inbound_message import (
+from src.plugins.chats.agent.sales.use_cases.ingest_inbound_message import (
     IngestInboundMessage,
 )
-from src.sales_whatsapp.parsers import WhatsAppMessage
+from src.plugins.chats.agent.sales.parsers import WhatsAppMessage
 
 
 # --- Fakes -----------------------------------------------------------------

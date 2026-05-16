@@ -81,6 +81,47 @@ module.exports = {
     },
 
     // ------------------------------------------------------------------------
+    // PR2 — plugin-internal isolation. Features dentro de un mismo plugin
+    // pueden compartir entre sí (relajación del FSD strict). Pero NO se permite:
+    //   - Cross-plugin: @plugins/chats → @plugins/orders
+    //   - Plugin → src/{pages,app,features}: el plugin debe ser autónomo
+    //   - Features sueltas → @plugins/<id>: solo el shell (pages) consume plugins
+    // ------------------------------------------------------------------------
+    {
+      name: "plugins-no-cross-plugin",
+      severity: "error",
+      comment:
+        "src/plugins/<a>/* must not import from src/plugins/<b>/*. " +
+        "Cross-plugin coupling rompe la regla R3 (cada plugin es autónomo).",
+      from: { path: "^src/plugins/([^/]+)/" },
+      to: {
+        path: "^src/plugins/(?!\\1)([^/]+)/",
+      },
+    },
+    {
+      name: "plugins-no-pages-app",
+      severity: "error",
+      comment:
+        "src/plugins/<id>/* must not import from src/pages or src/app. " +
+        "Los plugins son consumidos por el shell (pages), no al revés.",
+      from: { path: "^src/plugins/" },
+      to: {
+        path: "^src/(pages|app)/",
+      },
+    },
+    {
+      name: "features-no-plugins",
+      severity: "error",
+      comment:
+        "src/features/* must not import from src/plugins/*. " +
+        "Solo el shell (src/pages, src/app) puede consumir plugins.",
+      from: { path: "^src/features/" },
+      to: {
+        path: "^src/plugins/",
+      },
+    },
+
+    // ------------------------------------------------------------------------
     // #4 — pages/ cannot import app/ or other pages.
     // ------------------------------------------------------------------------
     {

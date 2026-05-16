@@ -8,7 +8,7 @@ from pathlib import Path
 
 _SKILL = (
     Path(__file__).resolve().parents[3]
-    / "src/sales_whatsapp/workspace/skills/hubara_catalog/SKILL.md"
+    / "src/plugins/chats/agent/sales/workspace/skills/hubara_catalog/SKILL.md"
 )
 
 

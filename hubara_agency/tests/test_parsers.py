@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.sales_whatsapp.parsers import WhatsAppMessage, parse_whatsapp_inbound
+from src.plugins.chats.agent.sales.parsers import WhatsAppMessage, parse_whatsapp_inbound
 
 
 def _envelope(value: dict) -> dict:

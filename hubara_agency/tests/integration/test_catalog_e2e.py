@@ -15,7 +15,7 @@ from exoclaw.agent.tools import ToolContext
 from src.catalog_sync.contracts import WriteSnapshotInput
 from src.catalog_sync.use_cases.write_snapshot import WriteSnapshotUseCase
 from src.platform.catalog.local_snapshot import LocalSnapshotCatalogClient
-from src.sales_whatsapp.tools.catalog import (
+from src.plugins.chats.agent.sales.tools.catalog import (
     GetProductByHandleTool,
     SearchProductsTool,
 )

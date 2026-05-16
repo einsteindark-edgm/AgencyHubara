@@ -23,7 +23,7 @@ from pathlib import Path
 from temporalio.client import WorkflowHistory
 from temporalio.worker import Replayer
 
-from src.remarketing_whatsapp.workflows.remarketing import (
+from src.plugins.chats.agent.remarketing.workflows.remarketing import (
     RemarketingSessionWorkflow,
 )
 

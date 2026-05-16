@@ -38,9 +38,9 @@ async def start_or_signal_sales_workflow_activity(decision: TransferDecision) ->
     """
     # Imports locales para evitar ciclos: el workflow importa este modulo a traves
     # de `imports_passed_through`, y workflows no deben importarse mutuamente.
-    from src.sales_whatsapp.config.env import get_workspace_path
-    from src.sales_whatsapp.contracts import SalesSessionInput
-    from src.sales_whatsapp.workflows.sales_session import HubaraSalesSessionWorkflow
+    from src.plugins.chats.agent.sales.config.env import get_workspace_path
+    from src.plugins.chats.agent.sales.contracts import SalesSessionInput
+    from src.plugins.chats.agent.sales.workflows.sales_session import HubaraSalesSessionWorkflow
 
     session_id = decision.session_id
     summary = decision.summary or "El cliente volvió a interactuar"
@@ -109,10 +109,10 @@ async def start_remarketing_for_session(
     con `start_or_signal_sales_workflow_activity` — si ya hay uno corriendo, lo
     aceptamos como buen estado y seguimos.
     """
-    from src.remarketing_whatsapp.config.env import (
+    from src.plugins.chats.agent.remarketing.config.env import (
         get_workspace_path as get_remarketing_workspace_path,
     )
-    from src.remarketing_whatsapp.contracts import RemarketingSessionInput
+    from src.plugins.chats.agent.remarketing.contracts import RemarketingSessionInput
     import structlog
 
     log = structlog.get_logger()

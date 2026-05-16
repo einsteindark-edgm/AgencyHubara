@@ -191,6 +191,12 @@ export const PLUGINS: PluginEntry[] = [];
     );
   }
 
+  // El `Page` del registry es deliberadamente laxo en tipos (`ComponentType<any>`)
+  // porque cada plugin define su propia firma de props (chats recibe
+  // selectedChatId/setSelectedChatId, orders recibe selectedOrderId, etc.). El
+  // shell que renderiza `<entry.Page {...props} />` conoce las props específicas
+  // del plugin que está mostrando. PR3 puede introducir un mecanismo más
+  // estricto (slots tipados, generics) cuando hayan más plugins.
   const importBlock = `import { lazy, type ComponentType, type LazyExoticComponent } from "react";\n`;
   const fullType = `
 export type PluginEntry = {
@@ -199,7 +205,8 @@ export type PluginEntry = {
   sidebar: SidebarEntry[];
   sections: SectionEntry[];
   dashboardWidgets: DashboardWidget[];
-  Page: LazyExoticComponent<ComponentType<Record<string, unknown>>>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  Page: LazyExoticComponent<ComponentType<any>>;
 };
 
 export const PLUGINS: PluginEntry[] = [

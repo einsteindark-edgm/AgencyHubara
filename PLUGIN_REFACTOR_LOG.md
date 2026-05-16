@@ -15,8 +15,8 @@
 | PR | Fecha inicio | Status | Notas |
 |---|---|---|---|
 | PR0 (auditoría) | 2026-05-15 | ✅ done | Documento `PLUGIN_REFACTOR_PLAN.md` creado tras auditar el código real. |
-| PR1 (plumbing) | 2026-05-15 | ✅ done | Plumbing completo. `npm run plugins:sync` genera registry, todas las verificaciones verdes. Listo para commit. |
-| PR2 (migrar chats) | — | ⏸ pending | Bloqueado por commit de PR1. |
+| PR1 (plumbing) | 2026-05-15 | ✅ done | Plumbing completo. `npm run plugins:sync` genera registry, todas las verificaciones verdes. Commit: `4d4d2b2`. |
+| PR2 (migrar chats) | 2026-05-15 | ✅ done | 33 archivos Python + 7 features TS movidos a `plugins/chats/`. Backend + frontend verdes. |
 | PR3 (loaders) | — | ⏸ pending | Bloqueado por PR2. |
 | PR4 (agents-admin) | — | ⏸ pending | Bloqueado por PR3. |
 | PR5 (catalog) | — | ⏸ pending | Bloqueado por PR3. |
@@ -223,6 +223,168 @@ anterior (pre-compact). Si se commitea PR1, agregar también ese archivo.
 
 ✅ **done** — todas las verificaciones automatizadas verdes. Pendiente solo
 smoke test manual de `npm run dev` (no bloqueante).
+
+---
+
+## 2026-05-15 — PR2 (migrar chats) — Claude — ✅ done
+
+### Plan referenciado
+PLUGIN_REFACTOR_PLAN.md §3 — PR2.
+
+### Cambios efectivos
+
+**Backend** (33 archivos Python movidos via `git mv` + 4 dirs `__init__.py`):
+
+```
+src/sales_whatsapp/        → src/plugins/chats/agent/sales/    (excepto api/worker)
+src/sales_whatsapp/api.py  → src/plugins/chats/api/sales.py
+src/sales_whatsapp/worker.py → src/plugins/chats/workers/sales.py
+src/sales_whatsapp/workspace/ → src/plugins/chats/agent/sales/workspace/  (datos del agente: IDENTITY.md, SOUL.md, MEMORY.md, etc.)
+
+src/remarketing_whatsapp/        → src/plugins/chats/agent/remarketing/
+src/remarketing_whatsapp/worker.py → src/plugins/chats/workers/remarketing.py
+src/remarketing_whatsapp/workspace/ → src/plugins/chats/agent/remarketing/workspace/
+
+src/dashboard/api.py         → src/plugins/chats/api/dashboard.py
+src/dashboard/handoff.py     → src/plugins/chats/api/handoff.py
+src/dashboard/composition.py → src/plugins/chats/api/dashboard_composition.py
+src/dashboard/__init__.py    → DELETED (era solo un comentario)
+```
+
+**Backend nuevos archivos**:
+- `src/plugins/chats/__init__.py` (docstring del plugin)
+- `src/plugins/chats/api/__init__.py`
+- `src/plugins/chats/agent/__init__.py`
+- `src/plugins/chats/workers/__init__.py`
+
+**Backend imports reescritos** (~50 sitios via sed, 2 pasadas):
+- `from src.sales_whatsapp.X` → `from src.plugins.chats.agent.sales.X`
+- `from src.remarketing_whatsapp.X` → `from src.plugins.chats.agent.remarketing.X`
+- `from src.dashboard.{api,handoff,composition}` → `from src.plugins.chats.api.{dashboard,handoff,dashboard_composition}`
+- Más arreglos manuales en `main.py` (sintaxis `from X import Y`), `test_handoff_endpoints.py` (string `import src.dashboard.composition as comp`), `test_imports.py` (paths de workers que no seguían el patrón general).
+
+**Backend configs actualizadas**:
+- `hubara_agency/src/main.py`: imports apuntan a nuevas ubicaciones (no introduce loader; PR3 lo hará).
+- `hubara_agency/.importlinter`: contracts R-DIP renombrados (`src.sales_whatsapp` → `src.plugins.chats.agent.sales` etc.).
+- `hubara_agency/docker-compose.local.yml`: workers commands actualizados.
+- `hubara_agency/k8s/aws-produccion/worker-sales.yaml`: command actualizado.
+- `hubara_agency/tests/architecture/conftest.py`: nuevo helper `agent_paths(agent)` que abstrae los paths físicos por agent id (chats.sales / chats.remarketing / catalog_sync).
+- `hubara_agency/tests/architecture/test_spinal.py`: usa `agent_paths()` en lugar de `SRC_ROOT / agent`.
+- `hubara_agency/tests/test_workspace_system_prompt*.py`: WORKSPACE paths actualizados.
+- `hubara_agency/tests/sales_whatsapp/{test_workspace_system_prompt,workspace/test_skill_frontmatter}.py`: paths actualizados.
+- `hubara_agency/src/platform/{session_history,tools}/__init__.py`: docstrings refrescados con paths nuevos.
+- `hubara_agency/tests/README.md`: comandos `python -m src.<dominio>.worker` → `python -m src.plugins.chats.workers.<sub>`.
+
+**Frontend** (7 features movidas via `git mv`):
+
+```
+src/features/chats-conversation/  → src/plugins/chats/frontend/features/
+src/features/chats-inbox/         → src/plugins/chats/frontend/features/
+src/features/chats-inspector/     → src/plugins/chats/frontend/features/
+src/features/memory-modal/        → src/plugins/chats/frontend/features/
+src/features/session-chat/        → src/plugins/chats/frontend/features/
+src/features/session-list/        → src/plugins/chats/frontend/features/
+src/features/session-metadata/    → src/plugins/chats/frontend/features/
+```
+
+**Frontend nuevos archivos**:
+- `src/plugins/chats/plugin.yaml` (manifest completo: frontend.contributes + api.legacy_routers + agent.workers).
+- `src/plugins/chats/frontend/ChatsSection.tsx` (extracción de la `ChatsSection` antes inline en Dashboard.tsx).
+- `src/plugins/chats/frontend/index.ts` (barrel: `default` = ChatsSection + named re-exports).
+
+**Frontend imports reescritos**:
+- `@/features/{chats-*,session-*,memory-modal}` → `@plugins/chats/frontend/features/...`
+- `pages/Dashboard.tsx`: importa `ChatsSection` de `@plugins/chats/frontend` (barrel) en lugar de la implementación inline.
+
+**Frontend configs**:
+- `.dependency-cruiser.cjs`: 3 nuevas reglas (cross-plugin prohibido, plugins no pueden importar pages/app, features no pueden importar plugins).
+- `scripts/plugins-sync.ts`: `Page` type ahora es `LazyExoticComponent<ComponentType<any>>` (laxo) porque cada plugin define su firma de props propia.
+
+### Desviaciones del plan
+
+1. **Workspace dirs (datos del agente)**: el plan original no mencionaba que `src/sales_whatsapp/workspace/` (con IDENTITY.md, SOUL.md, MEMORY.md, skills/, etc.) tenía que moverse junto con el código. Lo hice porque `config/env.py` resuelve el path con `Path(__file__).parents[1] / "workspace"`. Documentado.
+2. **`tests/sales_whatsapp/` no se movió**: por scope (PR2 es ya grande). El path interno apunta al nuevo `src/plugins/chats/...` pero la carpeta de tests sigue como `tests/sales_whatsapp/`. Mover esta carpeta queda como mejora futura (no bloqueante).
+3. **`agent_paths()` helper**: el plan no lo especificaba. Lo introduje en `tests/architecture/conftest.py` para abstraer la diferencia entre el layout legacy (catalog_sync top-level) y el nuevo (chats sub-divides en sales+remarketing). Permite que test_spinal.py funcione con ambos layouts mientras hay migración progresiva.
+4. **Tipo `Page` del registry**: el primer render con `ChatsSection` falló typecheck porque `Record<string, unknown>` no satisface `ChatsSectionProps`. Cambié a `ComponentType<any>` (laxo) — cada plugin tiene su firma de props propia, el shell sabe qué pasar. PR3 puede formalizar con generics si vale la pena.
+
+### Verificaciones corridas
+
+```bash
+# Backend smoke
+$ cd hubara_agency && uv run python -c "from src.main import app; print(app.title)"
+Agency API
+
+$ uv run python -c "import src.plugins.chats.workers.sales; import src.plugins.chats.workers.remarketing"
+(no error)
+
+# Backend full suite
+$ uv run pytest --tb=short
+264 passed, 1 skipped in 13.55s
+
+# Backend architecture
+$ uv run pytest -m architecture
+18 passed, 1 skipped in 5.07s
+
+# Frontend
+$ cd frontend_dashboard && npm run plugins:sync
+[plugins-sync] generated src/app/plugin-registry.generated.ts with 1 plugin(s): chats
+
+$ npx tsc -b
+TypeScript compilation completed
+
+$ npm run arch:cruise
+✔ no dependency violations found (156 modules, 334 dependencies cruised)
+
+$ npm run test:arch
+8 archivos, 12 tests pass, 1 skipped
+
+$ npm test
+19 archivos, 69 tests pass, 1 skipped
+```
+
+### Definition of Done (del plan §3 PR2)
+
+- [x] Todo el código relacionado con Chats vive bajo `plugins/chats/` (backend + frontend).
+- [x] Las carpetas viejas (`src/sales_whatsapp/`, `src/remarketing_whatsapp/`, `src/dashboard/`, `src/features/chats-*`, etc.) están borradas.
+- [x] El chat funciona idéntico a antes (smoke por imports y tests; smoke runtime con `docker compose up` queda al operador).
+- [x] `import-linter` verde con paths nuevos.
+- [x] `dependency-cruiser` verde + 3 reglas nuevas para plugin isolation.
+- [x] `pytest -m architecture`: 18 passed.
+- [x] `pytest`: 264 passed.
+- [x] `npm test:arch`: 12 passed.
+- [x] `npm test`: 69 passed.
+- [x] `npm run plugins:sync`: registry tiene 1 entry (chats).
+- [x] `npx tsc -b`: compila sin errores.
+- [x] PR3 (loaders) **NO** introducido en este PR — `main.py` y `workers` siguen con imports estáticos a las nuevas ubicaciones.
+
+### Bloqueadores encontrados
+
+Ninguno crítico. Solo correcciones esperadas:
+- BSD sed no soporta `\b` (resolución: usar variantes con `$` y espacio explícito).
+- 2 errores TS post-move (lazy load + named export missing) — fixes triviales documentados arriba.
+- 22 tests fallaron tras el primer move por workspace paths hardcoded — fix in-place sin scope adicional.
+
+### Stats
+
+```
+141 archivos cambiados
+~50 imports reescritos via sed (Python)
+~10 imports reescritos via sed (TypeScript)
+33 archivos Python movidos
+7 features TS movidas (subdirs incluidos)
+4 archivos __init__.py nuevos (estructura plugin)
+3 archivos nuevos frontend (plugin.yaml + ChatsSection.tsx + index.ts)
+3 nuevas reglas dependency-cruiser
+1 helper nuevo (agent_paths) en tests arquitectura
+```
+
+### Próximo paso recomendado
+
+PR3 (loaders): reescribir `main.py` para auto-discovery via manifest, crear `run_workers.py` meta-launcher, refactorizar `Dashboard.tsx` para consumir `PLUGINS` registry. Ver §3 PR3 del plan. Estimado 2 días.
+
+### Status final
+
+✅ **done** — backend + frontend verdes. Listo para commit + PR3.
 
 ---
 

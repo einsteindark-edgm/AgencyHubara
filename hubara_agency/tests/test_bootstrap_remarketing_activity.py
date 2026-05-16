@@ -24,7 +24,7 @@ from temporalio.testing import ActivityEnvironment
 
 from exoclaw_temporal.config import SessionInput
 
-from src.remarketing_whatsapp.contracts import RemarketingSessionInput
+from src.plugins.chats.agent.remarketing.contracts import RemarketingSessionInput
 
 
 def _build_workspace(path: Path) -> Path:
@@ -42,7 +42,7 @@ def runtime_workspace(tmp_path: Path) -> Path:
 
 
 async def test_bootstrap_returns_json_safe_session_input(runtime_workspace: Path) -> None:
-    from src.remarketing_whatsapp.activities import (
+    from src.plugins.chats.agent.remarketing.activities import (
         bootstrap_remarketing_session_activity,
     )
 
@@ -80,7 +80,7 @@ async def test_bootstrap_failfast_when_workspace_path_missing() -> None:
     activity revienta antes de llegar a `build_prompt` y producir un system
     prompt vacio. Este es un liveness probe — no debe ser silencioso.
     """
-    from src.remarketing_whatsapp.activities import (
+    from src.plugins.chats.agent.remarketing.activities import (
         bootstrap_remarketing_session_activity,
     )
 
@@ -99,7 +99,7 @@ async def test_bootstrap_failfast_when_workspace_path_missing() -> None:
 async def test_bootstrap_is_idempotent(runtime_workspace: Path) -> None:
     """Dos ejecuciones consecutivas con el mismo input devuelven el mismo
     `workspace.path` (no hay efectos colaterales que cambien entre calls)."""
-    from src.remarketing_whatsapp.activities import (
+    from src.plugins.chats.agent.remarketing.activities import (
         bootstrap_remarketing_session_activity,
     )
 
@@ -124,7 +124,7 @@ async def test_bootstrap_uses_runtime_workspace_path_not_per_session_vault(
     canonico del agente (passed as `runtime_workspace_path`), NO el per-session
     vault que devolvia `build_workspace_config(session_id)` pre-PR-B.
     """
-    from src.remarketing_whatsapp.activities import (
+    from src.plugins.chats.agent.remarketing.activities import (
         bootstrap_remarketing_session_activity,
     )
 

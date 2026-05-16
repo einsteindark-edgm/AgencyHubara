@@ -8,7 +8,7 @@ import pytest
 from exoclaw.agent.tools import ToolContext
 
 from src.platform.catalog.errors import ProductNotFoundError
-from src.sales_whatsapp.tools.catalog import GetProductByHandleTool
+from src.plugins.chats.agent.sales.tools.catalog import GetProductByHandleTool
 
 
 class _NotFoundCatalog:

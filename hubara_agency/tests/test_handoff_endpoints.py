@@ -36,12 +36,12 @@ def client_and_vault(tmp_path, monkeypatch):
     """
     monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "test_phone")
     with (
-        patch("src.dashboard.api.WORKSPACE_VAULT_DIR", tmp_path),
-        patch("src.dashboard.composition.WORKSPACE_VAULT_DIR", tmp_path),
+        patch("src.plugins.chats.api.dashboard.WORKSPACE_VAULT_DIR", tmp_path),
+        patch("src.plugins.chats.api.dashboard_composition.WORKSPACE_VAULT_DIR", tmp_path),
         patch("src.platform.session_history.store.FilesystemMessageHistoryStore.__init__", lambda self, vault_dir: setattr(self, "_vault_dir", tmp_path)),
     ):
         # Forzar reset del singleton del composition (en caso de tests previos).
-        import src.dashboard.composition as comp
+        import src.plugins.chats.api.dashboard_composition as comp
         comp._METADATA_STORE = None
         comp._HISTORY_STORE = None
         from src.main import app
@@ -71,11 +71,11 @@ def test_intervene_sets_humano_route_and_terminates_running_workflows(
     terminate_mock = AsyncMock(return_value=["session-wa_1"])
     with (
         patch(
-            "src.dashboard.handoff.get_temporal_client",
+            "src.plugins.chats.api.handoff.get_temporal_client",
             new=AsyncMock(return_value=object()),
         ),
         patch(
-            "src.dashboard.handoff.terminate_session_workflows",
+            "src.plugins.chats.api.handoff.terminate_session_workflows",
             new=terminate_mock,
         ),
     ):
@@ -112,11 +112,11 @@ def test_intervene_uses_default_motivo_when_omitted(client_and_vault):
 
     with (
         patch(
-            "src.dashboard.handoff.get_temporal_client",
+            "src.plugins.chats.api.handoff.get_temporal_client",
             new=AsyncMock(return_value=object()),
         ),
         patch(
-            "src.dashboard.handoff.terminate_session_workflows",
+            "src.plugins.chats.api.handoff.terminate_session_workflows",
             new=AsyncMock(return_value=[]),
         ),
     ):
@@ -142,7 +142,7 @@ def test_intervene_still_succeeds_if_temporal_unreachable(client_and_vault):
 
     # get_temporal_client lanza ConnectionRefusedError simulando Temporal caído.
     boom = AsyncMock(side_effect=ConnectionRefusedError("cluster down"))
-    with patch("src.dashboard.handoff.get_temporal_client", new=boom):
+    with patch("src.plugins.chats.api.handoff.get_temporal_client", new=boom):
         res = client.post(
             "/api/dashboard/sessions/wa_unreachable/intervene",
             json={"motivo": "tomé control"},
@@ -167,7 +167,7 @@ def test_send_message_persists_and_returns_when_route_humano(client_and_vault):
     _write_metadata(vault, "wa_3", {"active_route": "humano", "tag": "HUMANO"})
 
     send_mock = AsyncMock()
-    with patch("src.dashboard.handoff.send_message_to_session", new=send_mock):
+    with patch("src.plugins.chats.api.handoff.send_message_to_session", new=send_mock):
         res = client.post(
             "/api/dashboard/sessions/wa_3/messages",
             json={"text": "Hola, soy del equipo Hubara 🤍"},
@@ -197,7 +197,7 @@ def test_send_message_rejects_when_route_is_not_humano(client_and_vault):
     client, vault = client_and_vault
     _write_metadata(vault, "wa_4", {"active_route": "ventas"})
 
-    with patch("src.dashboard.handoff.send_message_to_session", new=AsyncMock()):
+    with patch("src.plugins.chats.api.handoff.send_message_to_session", new=AsyncMock()):
         res = client.post(
             "/api/dashboard/sessions/wa_4/messages",
             json={"text": "no debería poder"},
@@ -229,11 +229,11 @@ def test_return_to_bot_ventas_only_marks_metadata(client_and_vault):
     start_remarketing = AsyncMock()
     with (
         patch(
-            "src.dashboard.handoff.start_remarketing_for_session",
+            "src.plugins.chats.api.handoff.start_remarketing_for_session",
             new=start_remarketing,
         ),
         patch(
-            "src.dashboard.handoff.get_temporal_client",
+            "src.plugins.chats.api.handoff.get_temporal_client",
             new=AsyncMock(return_value=object()),
         ),
     ):
@@ -262,11 +262,11 @@ def test_return_to_bot_remarketing_starts_workflow_with_motivo(client_and_vault)
     start_remarketing = AsyncMock()
     with (
         patch(
-            "src.dashboard.handoff.start_remarketing_for_session",
+            "src.plugins.chats.api.handoff.start_remarketing_for_session",
             new=start_remarketing,
         ),
         patch(
-            "src.dashboard.handoff.get_temporal_client",
+            "src.plugins.chats.api.handoff.get_temporal_client",
             new=AsyncMock(return_value="fake_client"),
         ),
     ):

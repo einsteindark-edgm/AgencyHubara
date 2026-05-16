@@ -1,0 +1,53 @@
+id: chats
+version: 0.1.0
+display_name: Chats
+description: Conversaciones WhatsApp con agente Temporal (sales + remarketing) + dashboard SSE + handoff humano.
+
+depends_on: []
+
+# ── Frontend ───────────────────────────────────────────────────────────
+# El barrel `./frontend/index.ts` exporta `Page` (la `ChatsSection` que el
+# shell renderiza cuando section==="chat") + el sidebar/section contributions.
+frontend:
+  entry: ./frontend
+  contributes:
+    sections:
+      - { key: chat, label: Chats, order: 1 }
+    sidebar:
+      - { route: /chats, label: Chats, icon: chat }
+
+# ── API REST ────────────────────────────────────────────────────────────
+# PR2 mantiene los 3 routers viejos como módulos separados (`legacy_routers`).
+# `main.py` los importa explícitamente. PR3 introducirá el loader que los lee
+# de aquí y los registra automáticamente.
+api:
+  python_module: src.plugins.chats.api
+  prefix: /api/chats
+  tags: [Chats]
+  legacy_routers:
+    - { module: src.plugins.chats.api.sales,     prefix: /api,           tags: [WhatsApp_Sales_Domain] }
+    - { module: src.plugins.chats.api.dashboard, prefix: /api/dashboard, tags: [Dashboard] }
+    - { module: src.plugins.chats.api.handoff,   prefix: /api/dashboard, tags: [Dashboard_Handoff] }
+
+# ── Agente Temporal ────────────────────────────────────────────────────
+# Dos workers en task queues exclusivas: SALES_QUEUE y REMARKETING_QUEUE.
+# PR3 introducirá el meta-launcher que los arrancará en paralelo via
+# asyncio.gather() para dev local. En producción siguen como containers
+# independientes (ver hubara_agency/k8s/aws-produccion/worker-sales.yaml).
+agent:
+  python_module: src.plugins.chats.agent
+  workers:
+    - { name: sales,       module: src.plugins.chats.workers.sales }
+    - { name: remarketing, module: src.plugins.chats.workers.remarketing }
+
+# ── Wiring intents ─────────────────────────────────────────────────────
+wiring_intents:
+  filesystem_volumes:
+    - hubara-vault                   # JSONL message store + workspaces canónicos
+  env_vars_required:
+    - DEEPSEEK_API_KEY
+    - WHATSAPP_PHONE_NUMBER_ID
+    - WHATSAPP_ACCESS_TOKEN
+    - WHATSAPP_VERIFY_TOKEN
+    - TEMPORAL_URL
+    - WORKSPACE_VAULT_DIR

@@ -5,7 +5,7 @@ from pathlib import Path
 
 _WORKSPACE = (
     Path(__file__).resolve().parents[2]
-    / "src/sales_whatsapp/workspace"
+    / "src/plugins/chats/agent/sales/workspace"
 )
 
 

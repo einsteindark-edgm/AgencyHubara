@@ -1,8 +1,13 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from src.sales_whatsapp import api as whatsapp_api
-from src.dashboard import api as dashboard_api
-from src.dashboard import handoff as dashboard_handoff
+
+# PR2: imports apuntan a la nueva ubicación bajo `src.plugins.chats.*`. PR3
+# reemplazará estos imports estáticos por auto-discovery sobre los manifests
+# en `frontend_dashboard/src/plugins/<id>/plugin.yaml`. Ver
+# PLUGIN_REFACTOR_PLAN.md §3 PR2 / PR3.
+from src.plugins.chats.api import sales as chats_sales_api
+from src.plugins.chats.api import dashboard as chats_dashboard_api
+from src.plugins.chats.api import handoff as chats_dashboard_handoff
 
 app = FastAPI(
     title="Agency API",
@@ -19,11 +24,14 @@ app.add_middleware(
 )
 
 # Registramos los adaptadores de Canales basados en Dominio.
-app.include_router(whatsapp_api.router, prefix="/api", tags=["WhatsApp_Sales_Domain"])
-app.include_router(dashboard_api.router, prefix="/api/dashboard", tags=["Dashboard"])
+# PR2: prefijos y tags se preservan idénticos a antes para compat 1:1 con
+# clientes (frontend, Meta webhooks). PR3 los moverá al `legacy_routers`
+# bloque del manifest.
+app.include_router(chats_sales_api.router, prefix="/api", tags=["WhatsApp_Sales_Domain"])
+app.include_router(chats_dashboard_api.router, prefix="/api/dashboard", tags=["Dashboard"])
 # Handoff humano: intervenir / mandar mensaje / devolver al bot. Mismo prefix
 # `/api/dashboard` para que el frontend tenga un solo namespace.
-app.include_router(dashboard_handoff.router, prefix="/api/dashboard", tags=["Dashboard_Handoff"])
+app.include_router(chats_dashboard_handoff.router, prefix="/api/dashboard", tags=["Dashboard_Handoff"])
 
 @app.get("/")
 def health_check():

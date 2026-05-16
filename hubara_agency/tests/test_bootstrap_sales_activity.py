@@ -24,7 +24,7 @@ from temporalio.testing import ActivityEnvironment
 
 from exoclaw_temporal.config import SessionInput
 
-from src.sales_whatsapp.contracts import SalesSessionInput
+from src.plugins.chats.agent.sales.contracts import SalesSessionInput
 
 
 def _build_workspace(path: Path) -> Path:
@@ -42,7 +42,7 @@ def runtime_workspace(tmp_path: Path) -> Path:
 
 
 async def test_bootstrap_returns_json_safe_session_input(runtime_workspace: Path) -> None:
-    from src.sales_whatsapp.activities import bootstrap_sales_session_activity
+    from src.plugins.chats.agent.sales.activities import bootstrap_sales_session_activity
 
     env = ActivityEnvironment()
     result: SessionInput = await env.run(
@@ -77,7 +77,7 @@ async def test_bootstrap_failfast_when_workspace_path_missing() -> None:
     activity revienta antes de llegar a `build_prompt` y producir un system
     prompt vacio. Este es un liveness probe — no debe ser silencioso.
     """
-    from src.sales_whatsapp.activities import bootstrap_sales_session_activity
+    from src.plugins.chats.agent.sales.activities import bootstrap_sales_session_activity
 
     env = ActivityEnvironment()
     with pytest.raises(RuntimeError, match="runtime_workspace_path"):
@@ -93,7 +93,7 @@ async def test_bootstrap_failfast_when_workspace_path_missing() -> None:
 async def test_bootstrap_is_idempotent(runtime_workspace: Path) -> None:
     """Dos ejecuciones consecutivas con el mismo input devuelven el mismo
     `workspace.path` (no hay efectos colaterales que cambien entre calls)."""
-    from src.sales_whatsapp.activities import bootstrap_sales_session_activity
+    from src.plugins.chats.agent.sales.activities import bootstrap_sales_session_activity
 
     env = ActivityEnvironment()
     payload = SalesSessionInput(

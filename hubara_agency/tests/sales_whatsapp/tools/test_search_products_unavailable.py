@@ -8,7 +8,7 @@ import pytest
 from exoclaw.agent.tools import ToolContext
 
 from src.platform.catalog.errors import CatalogUnavailableError
-from src.sales_whatsapp.tools.catalog import SearchProductsTool
+from src.plugins.chats.agent.sales.tools.catalog import SearchProductsTool
 
 
 class _BrokenCatalog:

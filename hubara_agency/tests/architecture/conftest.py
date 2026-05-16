@@ -26,27 +26,71 @@ SRC_ROOT: Path = Path(__file__).resolve().parents[2] / "src"
 # Allow-lists — qué excluimos del scope arquitectónico y por qué.
 # ----------------------------------------------------------------------------
 
-# El dashboard es FastAPI puro, no un agente DEHA. Las reglas R-* no aplican.
-DASHBOARD_EXCLUDE = {"dashboard"}
+# El api/ del plugin chats es FastAPI puro (HTTP edge), no DEHA. Las reglas R-* no aplican.
+# PR2: ex `src.dashboard` → `src.plugins.chats.api.*`. Mantenemos la exclusión semántica.
+DASHBOARD_EXCLUDE = {"plugins.chats.api"}
 
-# Agentes DEHA: los tres con la forma canónica (workflows/, activities/, etc.)
-DEHA_AGENTS = ("sales_whatsapp", "remarketing_whatsapp", "catalog_sync")
+# Agentes DEHA: cada entrada es un id lógico. Los paths se resuelven con
+# `agent_paths()` para soportar el layout post-PR2 (chats sub-divides en sales
+# + remarketing dentro del plugin; catalog_sync sigue top-level hasta PR5).
+DEHA_AGENTS = ("chats.sales", "chats.remarketing", "catalog_sync")
+
+
+def agent_paths(agent: str) -> dict[str, Path]:
+    """Mapping de agent id a sus paths físicos.
+
+    Pre-PR2: cada agente vivía en `src/<name>/` (`worker.py`, `workflows/`,
+    `activities/`, `tools/` colgados directo).
+    Post-PR2: `chats` plugin contiene dos sub-agentes (sales + remarketing)
+    en `src/plugins/chats/`. `catalog_sync` sigue en su ubicación top-level
+    hasta PR5.
+    """
+    if agent == "chats.sales":
+        return {
+            "worker": SRC_ROOT / "plugins" / "chats" / "workers" / "sales.py",
+            "root": SRC_ROOT / "plugins" / "chats" / "agent" / "sales",
+        }
+    if agent == "chats.remarketing":
+        return {
+            "worker": SRC_ROOT / "plugins" / "chats" / "workers" / "remarketing.py",
+            "root": SRC_ROOT / "plugins" / "chats" / "agent" / "remarketing",
+        }
+    if agent == "catalog_sync":
+        return {
+            "worker": SRC_ROOT / "catalog_sync" / "worker.py",
+            "root": SRC_ROOT / "catalog_sync",
+        }
+    raise ValueError(f"unknown agent id: {agent}")
+
 
 # Packages cross-agent (no son agentes pero participan en las reglas R-DIP).
 PLATFORM_PACKAGES = ("platform",)
 
-# Sub-paths de cada agente con el rol "workflow" (objeto del R-DET check).
-AGENT_WORKFLOWS_GLOB = "src/*/workflows/*.py"
+# Sub-paths con cada rol — usados por los tests R-DET / R-JSON / R-HEARTBEAT.
+# Cubren tanto el layout legacy (catalog_sync) como el de plugins (chats).
+# Como `Path.glob` no soporta brace-expansion, los tests iteran ambos patrones.
+AGENT_WORKFLOWS_GLOBS = (
+    "src/*/workflows/*.py",
+    "src/plugins/*/agent/*/workflows/*.py",
+)
+AGENT_ACTIVITIES_GLOBS = (
+    "src/*/activities/*.py",
+    "src/plugins/*/agent/*/activities/*.py",
+)
+AGENT_TOOLS_GLOBS = (
+    "src/*/tools/*.py",
+    "src/plugins/*/agent/*/tools/*.py",
+)
 
-# Sub-paths con el rol "activity".
-AGENT_ACTIVITIES_GLOB = "src/*/activities/*.py"
-
-# Sub-paths con el rol "tool".
-AGENT_TOOLS_GLOB = "src/*/tools/*.py"
+# Backwards-compat aliases (mantienen el nombre singular hasta migrar callers).
+AGENT_WORKFLOWS_GLOB = AGENT_WORKFLOWS_GLOBS[0]
+AGENT_ACTIVITIES_GLOB = AGENT_ACTIVITIES_GLOBS[0]
+AGENT_TOOLS_GLOB = AGENT_TOOLS_GLOBS[0]
 
 # Paths "contracts.py" — DTOs de boundary.
 CONTRACTS_GLOBS = (
     "src/*/contracts.py",
+    "src/plugins/*/agent/*/contracts.py",
     "src/platform/contracts.py",
 )
 
@@ -61,7 +105,7 @@ R_JSON_FROZEN_EXEMPTIONS: dict[str, str] = {
     "src/platform/contracts.py:ScheduleRemarketingDecision": (
         "Pre-existente. Misma migración que TransferDecision."
     ),
-    "src/remarketing_whatsapp/contracts.py:RemarketingSessionInput": (
+    "src/plugins/chats/agent/remarketing/contracts.py:RemarketingSessionInput": (
         "Pre-existente. Sales ya está frozen=True; Remarketing pendiente."
     ),
 }

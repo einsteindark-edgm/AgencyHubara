@@ -22,7 +22,7 @@ def client_with_temp_vault(tmp_path, monkeypatch):
     monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "test_phone")
     # El dashboard router usa WORKSPACE_VAULT_DIR via import-time. Hacemos
     # patch directo del símbolo en el módulo del dashboard.
-    with patch("src.dashboard.api.WORKSPACE_VAULT_DIR", tmp_path):
+    with patch("src.plugins.chats.api.dashboard.WORKSPACE_VAULT_DIR", tmp_path):
         from src.main import app
         yield TestClient(app), tmp_path
 

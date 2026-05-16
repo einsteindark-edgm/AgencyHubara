@@ -11,18 +11,19 @@
  *   - UI específica de una feature (vive en features/<x>/ui/).
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import { StatusBar, TitleBar, Toolbar, type SectionKey } from "@/shared/ui";
 import { IS_DESKTOP } from "@/shared/lib";
 
-import { useChatInbox, useSessionsStream } from "@/entities/chat";
+import { useSessionsStream } from "@/entities/chat";
 import { useOrders } from "@/entities/order";
 import { useTrackedOrders } from "@/entities/tracked-order";
 
-import { ChatsInbox } from "@/features/chats-inbox";
-import { ChatsConversation } from "@/features/chats-conversation";
-import { ChatsInspector } from "@/features/chats-inspector";
+// PR2: la sección Chats vive en su plugin. El shell sigue siendo el dueño del
+// stream SSE y de las selecciones cross-section; PR3 reemplazará este import
+// estático por consumo dinámico del registry generado.
+import { ChatsSection } from "@plugins/chats/frontend";
 
 import {
   OrdersFilters,
@@ -134,41 +135,9 @@ export function Dashboard() {
 
 /* ── Section orchestrators ───────────────────────────────────────────── */
 
-interface ChatsSectionProps {
-  showSidebar: boolean;
-  showInspector: boolean;
-  selectedChatId: string | null;
-  setSelectedChatId: (id: string) => void;
-}
-
-function ChatsSection({
-  showSidebar,
-  showInspector,
-  selectedChatId,
-  setSelectedChatId,
-}: ChatsSectionProps) {
-  // Auto-seleccionar la primera sesión cuando llega data del SSE — evita el
-  // estado vacío inicial al entrar a la app.
-  const { data: chats = [] } = useChatInbox();
-  useEffect(() => {
-    if (selectedChatId == null && chats.length > 0) {
-      setSelectedChatId(chats[0].id);
-    }
-  }, [chats, selectedChatId, setSelectedChatId]);
-
-  return (
-    <>
-      {showSidebar && (
-        <ChatsInbox
-          selectedId={selectedChatId}
-          onSelect={setSelectedChatId}
-        />
-      )}
-      <ChatsConversation chatId={selectedChatId} />
-      {showInspector && <ChatsInspector chatId={selectedChatId} />}
-    </>
-  );
-}
+// PR2: ChatsSection se exportó al plugin (`@plugins/chats/frontend`). Las
+// otras secciones siguen inline hasta sus respectivos PRs (PR4 agents-admin,
+// PR5 catalog, PR6 eta, PR7 orders).
 
 interface OrdersSectionProps {
   showSidebar: boolean;

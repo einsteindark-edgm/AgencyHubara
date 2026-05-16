@@ -44,16 +44,16 @@ from exoclaw_temporal.config import (  # noqa: E402
     SessionInput,
     WorkspaceConfig,
 )
-from src.sales_whatsapp.workflows.sales_session import (  # noqa: E402
+from src.plugins.chats.agent.sales.workflows.sales_session import (  # noqa: E402
     HubaraSalesSessionWorkflow,
 )
-from src.sales_whatsapp.contracts import (  # noqa: E402
+from src.plugins.chats.agent.sales.contracts import (  # noqa: E402
     SalesSessionInput,
 )
-from src.remarketing_whatsapp.workflows.remarketing import (  # noqa: E402
+from src.plugins.chats.agent.remarketing.workflows.remarketing import (  # noqa: E402
     RemarketingSessionWorkflow,
 )
-from src.remarketing_whatsapp.contracts import (  # noqa: E402
+from src.plugins.chats.agent.remarketing.contracts import (  # noqa: E402
     RemarketingSessionInput,
 )
 

@@ -1,7 +1,7 @@
 """PR-B regression test (remarketing) — system prompt llega via workspace.
 
 Verifica que el system prompt construido desde el workspace canonico de
-Remarketing (`hubara_agency/src/remarketing_whatsapp/workspace/`)
+Remarketing (`hubara_agency/src/plugins/chats/agent/remarketing/workspace/`)
 contiene el mismo contenido de identidad / tono / mision proactiva /
 catalogo que el sistema viejo (shared_brain/*.md inyectado via
 `plugin_context` por `load_remarketing_brain_activity`).
@@ -35,7 +35,10 @@ from exoclaw_conversation.context import ContextBuilder
 WORKSPACE = (
     Path(__file__).resolve().parents[1]
     / "src"
-    / "remarketing_whatsapp"
+    / "plugins"
+    / "chats"
+    / "agent"
+    / "remarketing"
     / "workspace"
 )
 

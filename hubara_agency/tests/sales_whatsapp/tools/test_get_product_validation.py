@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.sales_whatsapp.tools.catalog import GetProductByHandleTool
+from src.plugins.chats.agent.sales.tools.catalog import GetProductByHandleTool
 
 
 class _NeverCalled:

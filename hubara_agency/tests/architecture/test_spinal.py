@@ -23,18 +23,19 @@ import pytest
 from tests.architecture.conftest import (
     DEHA_AGENTS,
     SRC_ROOT,
+    agent_paths,
     parse_file,
     relative_to_hubara,
 )
 
 
 def _agent_worker_path(agent: str) -> Path:
-    return SRC_ROOT / agent / "worker.py"
+    return agent_paths(agent)["worker"]
 
 
 def _workflow_class_names_for_agent(agent: str) -> list[tuple[str, Path]]:
     """[(class_name, file_path)] de todos los @workflow.defn del agente."""
-    agent_root = SRC_ROOT / agent / "workflows"
+    agent_root = agent_paths(agent)["root"] / "workflows"
     if not agent_root.exists():
         return []
     out: list[tuple[str, Path]] = []
@@ -56,7 +57,7 @@ def _workflow_class_names_for_agent(agent: str) -> list[tuple[str, Path]]:
 
 def _activity_function_names_for_agent(agent: str) -> list[tuple[str, Path]]:
     """[(function_name, file_path)] de todos los @activity.defn del agente."""
-    agent_root = SRC_ROOT / agent / "activities"
+    agent_root = agent_paths(agent)["root"] / "activities"
     if not agent_root.exists():
         return []
     out: list[tuple[str, Path]] = []
@@ -78,7 +79,7 @@ def _activity_function_names_for_agent(agent: str) -> list[tuple[str, Path]]:
 
 def _tool_class_names_for_agent(agent: str) -> list[tuple[str, Path]]:
     """[(class_name, file_path)] de todas las subclases de ToolBase del agente."""
-    agent_root = SRC_ROOT / agent / "tools"
+    agent_root = agent_paths(agent)["root"] / "tools"
     if not agent_root.exists():
         return []
     out: list[tuple[str, Path]] = []
@@ -119,20 +120,21 @@ def test_worker_registers_every_workflow_and_activity(agent: str) -> None:
     estilo (lista vs. tuple, kwargs, etc.) que parsear el AST del worker.
     """
     worker_src = _worker_text(agent)
-    assert worker_src, f"src/{agent}/worker.py is missing"
+    worker_path_rel = relative_to_hubara(_agent_worker_path(agent))
+    assert worker_src, f"{worker_path_rel} is missing"
 
     missing: list[str] = []
     for class_name, path in _workflow_class_names_for_agent(agent):
         if class_name not in worker_src:
             missing.append(
                 f"workflow `{class_name}` defined in {relative_to_hubara(path)} "
-                f"is not referenced by src/{agent}/worker.py"
+                f"is not referenced by {worker_path_rel}"
             )
     for fn_name, path in _activity_function_names_for_agent(agent):
         if fn_name not in worker_src:
             missing.append(
                 f"activity `{fn_name}` defined in {relative_to_hubara(path)} "
-                f"is not referenced by src/{agent}/worker.py"
+                f"is not referenced by {worker_path_rel}"
             )
     assert not missing, (
         f"Spinal coherence — worker.py drift for {agent}:\n  " + "\n  ".join(missing)
@@ -145,22 +147,23 @@ def test_worker_registers_every_workflow_and_activity(agent: str) -> None:
 
 @pytest.mark.parametrize("agent", DEHA_AGENTS)
 def test_worker_registers_every_tool(agent: str) -> None:
-    """Cada subclase de ToolBase definida bajo `src/<agent>/tools/` debe aparecer
-    como argumento de algún `register_tool_extension(...)` en `worker.py`.
+    """Cada subclase de ToolBase definida bajo `<agent_root>/tools/` debe aparecer
+    como argumento de algún `register_tool_extension(...)` en el worker del agente.
 
-    Agentes que aún no tienen tools (catalog_sync, remarketing_whatsapp) hacen
+    Agentes que aún no tienen tools (catalog_sync, chats.remarketing) hacen
     short-circuit con un `pass` implícito.
     """
     tool_classes = _tool_class_names_for_agent(agent)
     if not tool_classes:
         return
     worker_src = _worker_text(agent)
+    worker_path_rel = relative_to_hubara(_agent_worker_path(agent))
     missing: list[str] = []
     for class_name, path in tool_classes:
         if f"{class_name}(" not in worker_src:
             missing.append(
                 f"tool `{class_name}` defined in {relative_to_hubara(path)} "
-                f"is not registered in src/{agent}/worker.py via register_tool_extension(...)"
+                f"is not registered in {worker_path_rel} via register_tool_extension(...)"
             )
     assert not missing, (
         f"Spinal coherence — tool not registered in worker.py for {agent}:\n  "
@@ -178,8 +181,10 @@ def _iter_all_src_modules() -> list[str]:
 
     names: list[str] = []
     for module_info in pkgutil.walk_packages(src.__path__, prefix="src."):
-        # Excluimos el dashboard (FastAPI, no DEHA).
-        if module_info.name.startswith("src.dashboard"):
+        # Excluimos los módulos HTTP-edge bajo plugins/<id>/api (FastAPI, no DEHA).
+        # PR2 movió `src.dashboard.*` → `src.plugins.chats.api.*`; mantenemos
+        # la misma exclusión semántica.
+        if module_info.name.startswith("src.plugins.chats.api"):
             continue
         if module_info.name.startswith("src.tests"):
             continue
