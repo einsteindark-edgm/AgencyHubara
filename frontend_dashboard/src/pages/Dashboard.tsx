@@ -10,9 +10,10 @@
  *   - Data fetching de dominio (vive en entities/<x>/api.ts).
  *   - UI específica de una feature (vive en features/<x>/ui/).
  *
- * PR3 — modo híbrido durante migración:
- *   - `chat` se carga desde `PLUGINS` registry (plugin chats ya migrado).
- *   - `orders`, `eta`, `upload`, `agent` siguen inline hasta sus PRs (PR4-7).
+ * Modo híbrido durante migración:
+ *   - `chat` se carga desde `PLUGINS` registry (plugin chats — PR2/PR3).
+ *   - `agent` idem (plugin agents_admin — PR4).
+ *   - `orders`, `eta`, `upload` siguen inline hasta sus PRs (PR5-7).
  */
 
 import { Suspense, useMemo, useState } from "react";
@@ -48,10 +49,6 @@ import { UploadJobs } from "@/features/upload-jobs";
 import { UploadWizard } from "@/features/upload-wizard";
 import { UploadInspector } from "@/features/upload-inspector";
 
-import { AgentsList } from "@/features/agents-list";
-import { AgentsPrompts } from "@/features/agents-prompts";
-import { AgentsInspector } from "@/features/agents-inspector";
-
 export function Dashboard() {
   const [section, setSection] = useState<SectionKey>("chat");
   const [showSidebar, setShowSidebar] = useState(true);
@@ -70,11 +67,15 @@ export function Dashboard() {
   // diseño viven con datos mock locales y no dependen del stream.
   useSessionsStream();
 
-  // PR3: lookup de plugins por id. Memoizado para evitar re-find en cada render.
+  // PR3+: lookup de plugins por id. Memoizado para evitar re-find en cada render.
   // Si el plugin no está habilitado (ENABLED_PLUGINS), `Page` es undefined y la
-  // sección no renderiza nada.
+  // sección no renderiza nada (degradación graceful).
   const ChatsPage = useMemo(
     () => PLUGINS.find((p) => p.id === "chats")?.Page,
+    [],
+  );
+  const AgentsPage = useMemo(
+    () => PLUGINS.find((p) => p.id === "agents_admin")?.Page,
     [],
   );
 
@@ -130,13 +131,15 @@ export function Dashboard() {
             />
           )}
 
-          {section === "agent" && (
-            <AgentsSection
-              showSidebar={showSidebar}
-              showInspector={showInspector}
-              selectedAgentId={selectedAgentId}
-              setSelectedAgentId={setSelectedAgentId}
-            />
+          {section === "agent" && AgentsPage && (
+            <Suspense fallback={null}>
+              <AgentsPage
+                showSidebar={showSidebar}
+                showInspector={showInspector}
+                selectedAgentId={selectedAgentId}
+                setSelectedAgentId={setSelectedAgentId}
+              />
+            </Suspense>
           )}
         </div>
 
@@ -148,9 +151,12 @@ export function Dashboard() {
 
 /* ── Section orchestrators ───────────────────────────────────────────── */
 
-// PR2: ChatsSection se exportó al plugin (`@plugins/chats/frontend`). Las
-// otras secciones siguen inline hasta sus respectivos PRs (PR4 agents-admin,
-// PR5 catalog, PR6 eta, PR7 orders).
+// Plugin sections (cargadas dinámicamente del registry):
+//   - ChatsSection  → @plugins/chats/frontend          (PR2)
+//   - AgentsSection → @plugins/agents_admin/frontend   (PR4)
+//
+// Inline secciones (pendientes de migración a plugin):
+//   - OrdersSection (PR7), EtaSection (PR6), UploadSection (PR5).
 
 interface OrdersSectionProps {
   showSidebar: boolean;
@@ -264,29 +270,3 @@ function UploadSection({
   );
 }
 
-interface AgentsSectionProps {
-  showSidebar: boolean;
-  showInspector: boolean;
-  selectedAgentId: string;
-  setSelectedAgentId: (id: string) => void;
-}
-
-function AgentsSection({
-  showSidebar,
-  showInspector,
-  selectedAgentId,
-  setSelectedAgentId,
-}: AgentsSectionProps) {
-  return (
-    <>
-      {showSidebar && (
-        <AgentsList
-          selectedId={selectedAgentId}
-          onSelect={setSelectedAgentId}
-        />
-      )}
-      <AgentsPrompts agentId={selectedAgentId} />
-      {showInspector && <AgentsInspector agentId={selectedAgentId} />}
-    </>
-  );
-}

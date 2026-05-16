@@ -1,0 +1,27 @@
+id: agents_admin
+version: 0.1.0
+display_name: Agents
+description: UI de gestión de agentes (lista, prompts, inspector). Plugin frontend-only — los datos vienen de `entities/agent` (shared cross-plugin).
+
+depends_on: []
+
+# ── Frontend ───────────────────────────────────────────────────────────
+# El shell renderiza la `Page` del plugin cuando section==="agent".
+frontend:
+  entry: ./frontend
+  contributes:
+    sections:
+      - { key: agent, label: Agents, order: 5 }
+    sidebar:
+      - { route: /agents, label: Agents, icon: bot }
+
+# Sin `api:` — el plugin no aporta endpoints HTTP propios. Los datos de
+# `entities/agent` vienen de `/api/dashboard/agents` (registrado por el plugin
+# chats vía `legacy_routers`). Si en el futuro `agents_admin` necesita
+# endpoints propios (ej. CRUD de agent metadata), se declara aquí.
+
+# Sin `agent:` — plugin frontend-only, sin workflows ni workers Temporal.
+
+wiring_intents:
+  # No requiere recursos compartidos por ahora.
+  env_vars_required: []

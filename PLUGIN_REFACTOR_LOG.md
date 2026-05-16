@@ -17,8 +17,8 @@
 | PR0 (auditoría) | 2026-05-15 | ✅ done | Documento `PLUGIN_REFACTOR_PLAN.md` creado tras auditar el código real. |
 | PR1 (plumbing) | 2026-05-15 | ✅ done | Plumbing completo. `npm run plugins:sync` genera registry, todas las verificaciones verdes. Commit: `4d4d2b2`. |
 | PR2 (migrar chats) | 2026-05-15 | ✅ done | 33 archivos Python + 7 features TS movidos a `plugins/chats/`. Backend + frontend verdes. Commit: `c13387f`. |
-| PR3 (loaders) | 2026-05-15 | ✅ done | Auto-discovery en main.py + run_workers.py + Dashboard.tsx consume PLUGINS. ENABLED_PLUGINS funcional. |
-| PR4 (agents-admin) | — | ⏸ pending | Bloqueado por PR3. |
+| PR3 (loaders) | 2026-05-15 | ✅ done | Auto-discovery en main.py + run_workers.py + Dashboard.tsx consume PLUGINS. ENABLED_PLUGINS funcional. Commit: `fa7d13e`. |
+| PR4 (agents_admin) | 2026-05-15 | ✅ done | Plugin frontend-only. 3 features movidas + AgentsSection extraída + Dashboard usa registry. |
 | PR5 (catalog) | — | ⏸ pending | Bloqueado por PR3. |
 | PR6 (eta) | — | ⏸ pending | Bloqueado por PR3. |
 | PR7 (orders) | — | ⏸ pending | Bloqueado por PR3. |
@@ -497,6 +497,121 @@ PR5 (catalog) que sí tiene agente Temporal.
 
 ✅ **done** — backend + frontend verdes. ENABLED_PLUGINS funcional.
 Listo para commit + PR4.
+
+---
+
+## 2026-05-15 — PR4 (agents_admin) — Claude — ✅ done
+
+### Plan referenciado
+PLUGIN_REFACTOR_PLAN.md §3 — PR4. Primer plugin frontend-only.
+
+### Cambios efectivos
+
+**Frontend** (3 features movidas via `git mv`):
+```
+src/features/agents-list      → src/plugins/agents_admin/frontend/features/
+src/features/agents-prompts   → src/plugins/agents_admin/frontend/features/
+src/features/agents-inspector → src/plugins/agents_admin/frontend/features/
+```
+
+**Frontend nuevos archivos**:
+- `src/plugins/agents_admin/plugin.yaml` — sin `api`, sin `agent`. Solo
+  declara `frontend.contributes.sections` (key="agent").
+- `src/plugins/agents_admin/frontend/AgentsSection.tsx` — extracción de
+  `Dashboard.tsx`.
+- `src/plugins/agents_admin/frontend/index.ts` — barrel: default + named
+  re-exports.
+
+**Backend**:
+- `hubara_agency/src/plugins/agents_admin/__init__.py` — namespace package
+  con docstring (sin código). Reservado para CRUD futuro.
+
+**Frontend imports reescritos**:
+- `@/features/agents-{list,prompts,inspector}` → `@plugins/agents_admin/frontend/features/agents-{list,prompts,inspector}`
+
+**Dashboard.tsx**:
+- `AgentsPage` se busca en `PLUGINS` (idéntico al pattern de `ChatsPage`).
+- Función inline `AgentsSection` removida (vive ahora en el plugin).
+
+### Desviaciones del plan
+
+1. **Naming**: el plan §3 dice "agents-admin" con dash. Usé **snake_case**
+   (`agents_admin`) porque Python no permite dashes en nombres de paquetes,
+   y queremos un id único cross-stack. La convención: ids multi-word usan
+   snake_case en TODO (filesystem + Python + TS). `chats` (single word) no
+   tuvo este problema.
+2. **Sin `api:` en el manifest**: el plan sugería "puede ser stub si no
+   existe lógica de backend todavía". Decidí NO declarar `api` en el
+   manifest si no hay endpoints — el manifest queda más limpio. El loader
+   Python funciona correctamente: skipea plugins sin `api`. El
+   `__init__.py` Python existe como anchor por si en el futuro se necesita
+   agregar endpoints.
+
+### Verificaciones corridas
+
+```bash
+# Frontend
+$ npm run plugins:sync
+[plugins-sync] generated src/app/plugin-registry.generated.ts with 2 plugin(s): agents_admin, chats
+
+$ npx tsc -b --force
+TypeScript compilation completed
+
+$ npm run arch:cruise
+✔ no dependency violations found (159 modules, 339 dependencies cruised)
+
+$ npm run test:arch
+12 passed, 1 skipped
+
+$ npm test
+69 passed, 1 skipped
+
+# Backend
+$ uv run pytest -m architecture
+18 passed, 1 skipped
+
+# Loader
+$ ENABLED_PLUGINS=chats,agents_admin uv run python -c "from src.main import _LOADED_PLUGINS; print(_LOADED_PLUGINS)"
+['chats']  # ← agents_admin no aporta routers, correcto
+```
+
+### Definition of Done (del plan §3 PR4)
+
+- [x] `frontend_dashboard/src/plugins/agents_admin/` con manifest + frontend.
+- [x] 3 features migradas (agents-list, agents-prompts, agents-inspector).
+- [x] `hubara_agency/src/plugins/agents_admin/__init__.py` creado (sin api).
+- [x] `src/features/agents-*` borradas (atómico, mismo PR).
+- [x] Dashboard renderiza `agent` desde el registry.
+- [x] Tests verdes.
+
+### Bloqueadores encontrados
+
+Ninguno. Plugin frontend-only es trivial — el patrón de PR2/PR3 se aplica
+sin fricción.
+
+### Stats
+
+```
+3 features migradas (con sus subdirs model/ + ui/)
+4 archivos nuevos:
+  frontend_dashboard/src/plugins/agents_admin/plugin.yaml
+  frontend_dashboard/src/plugins/agents_admin/frontend/AgentsSection.tsx
+  frontend_dashboard/src/plugins/agents_admin/frontend/index.ts
+  hubara_agency/src/plugins/agents_admin/__init__.py
+1 archivo modificado:
+  frontend_dashboard/src/pages/Dashboard.tsx (~25 LOC eliminadas, ~10 agregadas)
+```
+
+### Próximo paso recomendado
+
+PR5 (`catalog`): migración de `catalog_sync` (worker Temporal con schedule)
++ las 3 features de upload del frontend. Incluye worker, así que es más
+sustancial que PR4 pero más simple que PR2 (no tiene API HTTP, solo worker
++ schedule). Estimado ~1 día.
+
+### Status final
+
+✅ **done** — backend + frontend verdes. Listo para commit + PR5.
 
 ---
 
