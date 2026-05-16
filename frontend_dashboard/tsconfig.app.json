@@ -23,7 +23,8 @@
 
     /* Path aliases — espejo del `resolve.alias` de Vite */
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@plugins/*": ["./src/plugins/*"]
     }
   },
   "include": ["src"],

@@ -22,3 +22,8 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Plugin registry — autogenerado por scripts/plugins-sync.ts.
+# Regla R2 del contrato: generated files no se commitean.
+# Ver PLUGIN_REFACTOR_PLAN.md §3 PR1.
+src/app/plugin-registry.generated.ts

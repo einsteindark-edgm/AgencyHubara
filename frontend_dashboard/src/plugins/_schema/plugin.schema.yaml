@@ -1,0 +1,189 @@
+# JSON Schema (en formato YAML) para validar `plugin.yaml`.
+#
+# Cada plugin de AgencyHubara declara este manifest en
+# `frontend_dashboard/src/plugins/<id>/plugin.yaml`. Es la única fuente
+# de verdad consumida por:
+#
+#   1. `frontend_dashboard/scripts/plugins-sync.ts` → genera
+#      `src/app/plugin-registry.generated.ts`.
+#   2. `hubara_agency/src/main.py` (PR3+) → auto-discovery de routers FastAPI.
+#   3. `hubara_agency/src/run_workers.py` (PR3+) → meta-launcher de workers.
+#
+# Solo `id` y `version` son obligatorios. Todo lo demás es opcional según
+# qué capas habite el plugin (ver PLUGIN_ARCHITECTURE.md §4).
+
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://agencyhubara.dev/schemas/plugin.schema.yaml"
+title: AgencyHubara Plugin Manifest
+type: object
+required: [id, version]
+additionalProperties: false
+
+properties:
+  id:
+    type: string
+    description: Identificador único del plugin (matches directory name)
+    pattern: "^[a-z][a-z0-9-]*$"
+
+  version:
+    type: string
+    description: SemVer del plugin
+    pattern: "^[0-9]+\\.[0-9]+\\.[0-9]+(-[a-z0-9.]+)?$"
+
+  display_name:
+    type: string
+    description: Nombre para mostrar en UI
+
+  description:
+    type: string
+
+  depends_on:
+    type: array
+    description: IDs de otros plugins requeridos
+    items:
+      type: string
+    default: []
+
+  # ── Frontend (consumido por scripts/plugins-sync.ts) ────────────────
+  frontend:
+    type: object
+    additionalProperties: false
+    properties:
+      entry:
+        type: string
+        description: Path relativo al manifest, apunta al index.ts del frontend
+        default: "./frontend"
+      contributes:
+        type: object
+        additionalProperties: false
+        properties:
+          sidebar:
+            type: array
+            items:
+              type: object
+              required: [route, label]
+              properties:
+                route: { type: string }
+                label: { type: string }
+                icon: { type: string }
+                badge_query: { type: string }
+          sections:
+            type: array
+            description: Secciones del shell macOS (consumidas por Toolbar/Dashboard)
+            items:
+              type: object
+              required: [key, label]
+              properties:
+                key: { type: string }
+                label: { type: string }
+                order: { type: integer }
+          dashboard_widgets:
+            type: array
+            items:
+              type: object
+              required: [id, position]
+              properties:
+                id: { type: string }
+                position: { type: string }
+
+  # ── API REST (consumido por main.py en PR3+) ────────────────────────
+  api:
+    type: object
+    additionalProperties: false
+    properties:
+      python_module:
+        type: string
+        description: Módulo Python que exporta `router` (e.g. `src.plugins.chats.api`)
+      prefix:
+        type: string
+        description: Prefijo de URL (e.g. `/api/chats`)
+      tags:
+        type: array
+        items: { type: string }
+      legacy_routers:
+        type: array
+        description: Routers múltiples para compatibilidad con migraciones (ver chats)
+        items:
+          type: object
+          required: [module]
+          properties:
+            module: { type: string }
+            prefix: { type: string }
+            tags:
+              type: array
+              items: { type: string }
+      migrations:
+        type: string
+        description: Path al directorio de migrations (alembic env per-plugin)
+
+  # ── Agente Temporal (opcional) ──────────────────────────────────────
+  agent:
+    type: object
+    additionalProperties: false
+    properties:
+      python_module:
+        type: string
+        description: Módulo que exporta WORKFLOWS, ACTIVITIES, TOOL_FACTORIES
+      worker_module:
+        type: string
+        description: Módulo singular con main() — alternativa a `workers`
+      workers:
+        type: array
+        description: Lista de workers (un plugin puede tener múltiples)
+        items:
+          type: object
+          required: [name, module]
+          properties:
+            name: { type: string }
+            module: { type: string }
+            task_queue: { type: string }
+      task_queue:
+        type: string
+        description: Default task queue del modo (opcional)
+      mode:
+        type: string
+        enum: [session_based, turn_based]
+      graph_spec:
+        type: string
+        description: Path a LangGraph spec (deferred — ver §10 contrato)
+
+  # ── Jobs programados (opcional) ─────────────────────────────────────
+  jobs:
+    type: array
+    items:
+      type: object
+      required: [id, schedule, handler]
+      properties:
+        id: { type: string }
+        schedule: { type: string, description: "Crontab string" }
+        handler: { type: string, description: "Python module:function" }
+
+  # ── Wiring intents (cosas que tocan archivos centrales) ─────────────
+  wiring_intents:
+    type: object
+    additionalProperties: true
+    properties:
+      db_tables:
+        type: array
+        items: { type: string }
+      s3_buckets:
+        type: array
+        items: { type: string }
+      filesystem_volumes:
+        type: array
+        items: { type: string }
+      env_vars_required:
+        type: array
+        items: { type: string }
+
+  # ── Permisos cross-plugin (opcional) ────────────────────────────────
+  permissions:
+    type: object
+    additionalProperties: false
+    properties:
+      reads:
+        type: array
+        items: { type: string }
+      writes:
+        type: array
+        items: { type: string }

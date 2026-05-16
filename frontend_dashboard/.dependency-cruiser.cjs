@@ -156,7 +156,16 @@ module.exports = {
 
   options: {
     doNotFollow: {
-      path: ["node_modules", "dist", "src-tauri"],
+      // `plugin-registry.generated.ts` es un archivo autogenerado que importa
+      // dinámicamente desde múltiples plugins. Excluirlo evita falsos positivos
+      // en las reglas FSD (ej. "shell importa features"). Ver
+      // PLUGIN_REFACTOR_PLAN.md §3 PR1.
+      path: [
+        "node_modules",
+        "dist",
+        "src-tauri",
+        "src/app/plugin-registry.generated.ts",
+      ],
     },
     tsConfig: {
       fileName: "tsconfig.app.json",
