@@ -16,8 +16,8 @@
 |---|---|---|---|
 | PR0 (auditoría) | 2026-05-15 | ✅ done | Documento `PLUGIN_REFACTOR_PLAN.md` creado tras auditar el código real. |
 | PR1 (plumbing) | 2026-05-15 | ✅ done | Plumbing completo. `npm run plugins:sync` genera registry, todas las verificaciones verdes. Commit: `4d4d2b2`. |
-| PR2 (migrar chats) | 2026-05-15 | ✅ done | 33 archivos Python + 7 features TS movidos a `plugins/chats/`. Backend + frontend verdes. |
-| PR3 (loaders) | — | ⏸ pending | Bloqueado por PR2. |
+| PR2 (migrar chats) | 2026-05-15 | ✅ done | 33 archivos Python + 7 features TS movidos a `plugins/chats/`. Backend + frontend verdes. Commit: `c13387f`. |
+| PR3 (loaders) | 2026-05-15 | ✅ done | Auto-discovery en main.py + run_workers.py + Dashboard.tsx consume PLUGINS. ENABLED_PLUGINS funcional. |
 | PR4 (agents-admin) | — | ⏸ pending | Bloqueado por PR3. |
 | PR5 (catalog) | — | ⏸ pending | Bloqueado por PR3. |
 | PR6 (eta) | — | ⏸ pending | Bloqueado por PR3. |
@@ -385,6 +385,118 @@ PR3 (loaders): reescribir `main.py` para auto-discovery via manifest, crear `run
 ### Status final
 
 ✅ **done** — backend + frontend verdes. Listo para commit + PR3.
+
+---
+
+## 2026-05-15 — PR3 (loaders) — Claude — ✅ done
+
+### Plan referenciado
+PLUGIN_REFACTOR_PLAN.md §3 — PR3.
+
+### Cambios efectivos
+
+**Backend**:
+- `hubara_agency/src/main.py` — reescrito como **loader de auto-discovery**.
+  Lee `frontend_dashboard/src/plugins/<id>/plugin.yaml`, filtra por
+  `ENABLED_PLUGINS` env (vacío = todos), registra routers via `api.python_module`
+  o `api.legacy_routers`. Health check ahora reporta `plugins_loaded`.
+- `hubara_agency/src/run_workers.py` — **NUEVO meta-launcher**.
+  Descubre workers via `manifest.agent.workers`/`worker_module`, los arranca
+  en paralelo (asyncio.gather) en un solo proceso. Útil para dev local. En
+  producción cada worker sigue como container separado.
+
+**Frontend**:
+- `frontend_dashboard/src/pages/Dashboard.tsx` — modo **híbrido**:
+  - `chat` se carga del registry: `PLUGINS.find(p => p.id === "chats")?.Page`
+    + `<Suspense>` para code-splitting via lazy.
+  - `orders`, `eta`, `upload`, `agent` siguen inline hasta sus PRs (PR4-7).
+- `frontend_dashboard/.dependency-cruiser.cjs` — excepción documentada en
+  `pages-no-app-or-cross-page` para permitir
+  `pages → src/app/plugin-registry.generated.ts` (artefacto autogenerado, no
+  parte de `app/`).
+
+### Desviaciones del plan
+
+1. **Modo híbrido del shell**: el plan sugería que `Dashboard.tsx` consumiera
+   `PLUGINS` para construir TODAS las secciones, pero hoy solo `chat` está
+   en plugin. Voy con el camino pragmático: el shell consume `PLUGINS` para
+   el plugin migrado y mantiene las otras 4 secciones inline. Cada PR
+   (PR4-7) las irá moviendo. Cuando todas estén migradas, se puede iterar
+   `PLUGINS` como en el plan.
+2. **Toolbar y `SectionKey`**: el plan mencionaba "adaptar Toolbar para
+   sections dinámicas". Lo dejo para cuando >1 plugin esté migrado — hoy
+   no aporta porque toda la lista de secciones sigue siendo la misma.
+3. **`scripts/render-compose.py`**: marcado como "opcional, no bloqueante"
+   en el plan. NO implementado en PR3 — entra como TODO post-PR7.
+
+### Verificaciones corridas
+
+```bash
+# Backend full suite
+$ cd hubara_agency && uv run pytest --tb=short -q
+264 passed, 1 skipped in 12.65s
+
+# Loader sin filtro
+$ uv run python -c "from src.main import app, _LOADED_PLUGINS; print(_LOADED_PLUGINS)"
+['chats']
+
+# Loader con ENABLED_PLUGINS=other (plugin no existente)
+$ ENABLED_PLUGINS=other uv run python -c "from src.main import app, _LOADED_PLUGINS; print(_LOADED_PLUGINS)"
+[]
+
+# Meta-launcher discovery
+$ ENABLED_PLUGINS=chats uv run python -c "from src.run_workers import _discover_workers; print(_discover_workers())"
+[('chats', 'sales', 'src.plugins.chats.workers.sales'), ('chats', 'remarketing', 'src.plugins.chats.workers.remarketing')]
+
+# Frontend
+$ npx tsc -b --force
+TypeScript compilation completed
+
+$ npm run arch:cruise
+✔ no dependency violations found (157 modules, 334 dependencies cruised)
+
+$ npm run test:arch
+8 archivos, 12 tests pass
+
+$ npm test
+19 archivos, 69 tests pass
+```
+
+### Definition of Done (del plan §3 PR3)
+
+- [x] `main.py` no importa ningún plugin estáticamente — todo via importlib.
+- [x] Cambiar `ENABLED_PLUGINS` activa/desactiva chats sin tocar código:
+      `loaded: ['chats']` ↔ `loaded: []` según env.
+- [x] Worker meta-launcher descubre y arranca todos los workers del plugin
+      chats (en este caso, sales + remarketing) en paralelo.
+- [x] Frontend renderiza `chat` desde el registry generado.
+- [x] Tests verdes (backend 264 + frontend 69).
+
+### Bloqueadores encontrados
+
+Ninguno. La complejidad mayor estaba en PR2 (los moves); PR3 es plumbing
+puro de auto-discovery.
+
+### Stats
+
+```
+4 archivos modificados:
+  hubara_agency/src/main.py            (reescrito completo, ~110 LOC)
+  hubara_agency/src/run_workers.py     (nuevo, ~120 LOC)
+  frontend_dashboard/src/pages/Dashboard.tsx
+  frontend_dashboard/.dependency-cruiser.cjs
+```
+
+### Próximo paso recomendado
+
+PR4 (`agents-admin`): el más simple. Solo frontend + API stub. ~15 archivos,
+~1 día. Sirve como dry-run del template "plugin without agent" antes de
+PR5 (catalog) que sí tiene agente Temporal.
+
+### Status final
+
+✅ **done** — backend + frontend verdes. ENABLED_PLUGINS funcional.
+Listo para commit + PR4.
 
 ---
 

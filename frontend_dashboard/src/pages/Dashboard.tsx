@@ -1,17 +1,21 @@
 /**
- * Página `Dashboard`: shell macOS-style con cinco secciones (Chats / Órdenes /
- * Productos / ETA agent / Agentes). Responsabilidades de esta capa:
+ * Página `Dashboard`: shell macOS-style. Responsabilidades de esta capa:
  *
  *   - State de coordinación cross-feature (sección activa, selecciones por
  *     sección, toggles de sidebar/inspector).
- *   - Composición JSX de las features.
+ *   - Composición JSX de las features inline + carga de los plugins desde el
+ *     registry auto-generado (PR3).
  *
  * NO va acá:
  *   - Data fetching de dominio (vive en entities/<x>/api.ts).
  *   - UI específica de una feature (vive en features/<x>/ui/).
+ *
+ * PR3 — modo híbrido durante migración:
+ *   - `chat` se carga desde `PLUGINS` registry (plugin chats ya migrado).
+ *   - `orders`, `eta`, `upload`, `agent` siguen inline hasta sus PRs (PR4-7).
  */
 
-import { useMemo, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
 
 import { StatusBar, TitleBar, Toolbar, type SectionKey } from "@/shared/ui";
 import { IS_DESKTOP } from "@/shared/lib";
@@ -20,10 +24,9 @@ import { useSessionsStream } from "@/entities/chat";
 import { useOrders } from "@/entities/order";
 import { useTrackedOrders } from "@/entities/tracked-order";
 
-// PR2: la sección Chats vive en su plugin. El shell sigue siendo el dueño del
-// stream SSE y de las selecciones cross-section; PR3 reemplazará este import
-// estático por consumo dinámico del registry generado.
-import { ChatsSection } from "@plugins/chats/frontend";
+// PR3: consumo dinámico del registry. Si `chats` no está en `ENABLED_PLUGINS`,
+// `chatsPlugin` es undefined y la sección queda vacía (degradación graceful).
+import { PLUGINS } from "@/app/plugin-registry.generated";
 
 import {
   OrdersFilters,
@@ -67,6 +70,14 @@ export function Dashboard() {
   // diseño viven con datos mock locales y no dependen del stream.
   useSessionsStream();
 
+  // PR3: lookup de plugins por id. Memoizado para evitar re-find en cada render.
+  // Si el plugin no está habilitado (ENABLED_PLUGINS), `Page` es undefined y la
+  // sección no renderiza nada.
+  const ChatsPage = useMemo(
+    () => PLUGINS.find((p) => p.id === "chats")?.Page,
+    [],
+  );
+
   return (
     <div className={"stage" + (IS_DESKTOP ? "" : " is-web")}>
       <div className="win">
@@ -81,13 +92,15 @@ export function Dashboard() {
         />
 
         <div className="body">
-          {section === "chat" && (
-            <ChatsSection
-              showSidebar={showSidebar}
-              showInspector={showInspector}
-              selectedChatId={selectedChatId}
-              setSelectedChatId={setSelectedChatId}
-            />
+          {section === "chat" && ChatsPage && (
+            <Suspense fallback={null}>
+              <ChatsPage
+                showSidebar={showSidebar}
+                showInspector={showInspector}
+                selectedChatId={selectedChatId}
+                setSelectedChatId={setSelectedChatId}
+              />
+            </Suspense>
           )}
 
           {section === "orders" && (

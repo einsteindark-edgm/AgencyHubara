@@ -129,10 +129,13 @@ module.exports = {
       severity: "error",
       comment:
         "src/pages/<X>.tsx must not import src/app/* or src/pages/<Y>.tsx. " +
-        "Pages compose features; cross-page navigation goes through the router (not direct imports).",
+        "Pages compose features; cross-page navigation goes through the router (not direct imports). " +
+        "Excepción: el registry generado de plugins (`src/app/plugin-registry.generated.ts`) " +
+        "es consumido por el shell — es un artefacto autogenerado, no parte de `app/`.",
       from: { path: "^src/pages/" },
       to: {
         path: "^src/app/",
+        pathNot: "^src/app/plugin-registry\\.generated\\.ts$",
       },
     },
 
