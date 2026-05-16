@@ -21,7 +21,9 @@ spec:
         - name: worker
           image: hubara-agency-prod:latest
           imagePullPolicy: Always
-          command: ["python", "-m", "hubara_agency.src.catalog_sync.worker"]
+          # PR5: el worker se movió de `src.catalog_sync.worker` a
+          # `src.plugins.catalog.workers.sync` (refactor a plugins).
+          command: ["python", "-m", "hubara_agency.src.plugins.catalog.workers.sync"]
           env:
             - name: TEMPORAL_URL
               value: "temporal-frontend.temporal.svc.cluster.local:7233"

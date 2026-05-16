@@ -5,8 +5,8 @@ import json
 
 import pytest
 
-from src.catalog_sync.contracts import CatalogSyncInput
-from src.catalog_sync.use_cases.pull_catalog import PullCatalogUseCase
+from src.plugins.catalog.agent.contracts import CatalogSyncInput
+from src.plugins.catalog.agent.use_cases.pull_catalog import PullCatalogUseCase
 
 
 class _FakeClient:

@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict
 
-from src.catalog_sync.contracts import (
+from src.plugins.catalog.agent.contracts import (
     CatalogSyncInput,
     PullCatalogResult,
     WriteSnapshotInput,

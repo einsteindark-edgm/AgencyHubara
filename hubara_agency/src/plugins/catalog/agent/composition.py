@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from src.catalog_sync.use_cases.pull_catalog import PullCatalogUseCase
-from src.catalog_sync.use_cases.write_snapshot import WriteSnapshotUseCase
+from src.plugins.catalog.agent.use_cases.pull_catalog import PullCatalogUseCase
+from src.plugins.catalog.agent.use_cases.write_snapshot import WriteSnapshotUseCase
 from src.platform.medusa.composition import get_medusa_product_service
 
 

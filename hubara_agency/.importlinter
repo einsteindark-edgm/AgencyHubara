@@ -9,12 +9,12 @@
 ;   R-DIP #9  → independence: platform must not depend on any agent
 ;   R-DIP #10 → independence: agents must not import each other (cross-agent via platform/)
 ;
-; PR2 — refactor a plugins/. Las antiguas raíces `src.sales_whatsapp`,
-; `src.remarketing_whatsapp` y `src.dashboard` desaparecieron. Hoy:
+; PR2/PR5 — refactor a plugins/. Las antiguas raíces `src.sales_whatsapp`,
+; `src.remarketing_whatsapp`, `src.dashboard` y `src.catalog_sync` desaparecieron. Hoy:
 ;   - sales agente   → `src.plugins.chats.agent.sales`
 ;   - remarketing    → `src.plugins.chats.agent.remarketing`
 ;   - dashboard HTTP → `src.plugins.chats.api.{dashboard,handoff,dashboard_composition}`
-;   - catalog_sync   → `src.catalog_sync` (sin migrar todavía; PR5)
+;   - catalog        → `src.plugins.catalog.agent` (worker en `src.plugins.catalog.workers.sync`)
 ;
 ; Notes:
 ;   - `plugins/<id>/api/` (FastAPI HTTP edge) está intencionalmente FUERA del scope
@@ -35,7 +35,7 @@ source_modules =
 forbidden_modules =
     src.plugins.chats.agent.sales
     src.plugins.chats.agent.remarketing
-    src.catalog_sync
+    src.plugins.catalog.agent
 ; Agent code is composed on top of platform; reversing the arrow couples them.
 ;
 ; Known debt — documented exceptions (do NOT add more without ADR):
@@ -61,7 +61,7 @@ type = independence
 modules =
     src.plugins.chats.agent.sales
     src.plugins.chats.agent.remarketing
-    src.catalog_sync
+    src.plugins.catalog.agent
 ; Cross-agent flow goes through src.platform.* (dispatcher, contracts, channels).
 ; If you need shared code, lift it to src.platform/ — never import a sibling agent.
 ;

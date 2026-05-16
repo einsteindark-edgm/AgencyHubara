@@ -18,8 +18,8 @@
 | PR1 (plumbing) | 2026-05-15 | ✅ done | Plumbing completo. `npm run plugins:sync` genera registry, todas las verificaciones verdes. Commit: `4d4d2b2`. |
 | PR2 (migrar chats) | 2026-05-15 | ✅ done | 33 archivos Python + 7 features TS movidos a `plugins/chats/`. Backend + frontend verdes. Commit: `c13387f`. |
 | PR3 (loaders) | 2026-05-15 | ✅ done | Auto-discovery en main.py + run_workers.py + Dashboard.tsx consume PLUGINS. ENABLED_PLUGINS funcional. Commit: `fa7d13e`. |
-| PR4 (agents_admin) | 2026-05-15 | ✅ done | Plugin frontend-only. 3 features movidas + AgentsSection extraída + Dashboard usa registry. |
-| PR5 (catalog) | — | ⏸ pending | Bloqueado por PR3. |
+| PR4 (agents_admin) | 2026-05-15 | ✅ done | Plugin frontend-only. 3 features movidas + AgentsSection extraída + Dashboard usa registry. Commit: `847b2c7`. |
+| PR5 (catalog) | 2026-05-15 | ✅ done | catalog_sync (worker + activities + workflows) + 3 features upload migrados. Meta-launcher descubre 3 workers (chats×2 + catalog×1). |
 | PR6 (eta) | — | ⏸ pending | Bloqueado por PR3. |
 | PR7 (orders) | — | ⏸ pending | Bloqueado por PR3. |
 
@@ -612,6 +612,130 @@ sustancial que PR4 pero más simple que PR2 (no tiene API HTTP, solo worker
 ### Status final
 
 ✅ **done** — backend + frontend verdes. Listo para commit + PR5.
+
+---
+
+## 2026-05-15 — PR5 (catalog) — Claude — ✅ done
+
+### Plan referenciado
+PLUGIN_REFACTOR_PLAN.md §3 — PR5.
+
+### Cambios efectivos
+
+**Backend** (12 archivos Python movidos):
+```
+src/catalog_sync/                       → src/plugins/catalog/agent/  (excepto worker)
+src/catalog_sync/worker.py              → src/plugins/catalog/workers/sync.py
+```
+
+**Backend nuevos archivos**:
+- `src/plugins/catalog/__init__.py` (docstring del plugin)
+- `src/plugins/catalog/workers/__init__.py`
+
+**Backend imports reescritos** (~20 sitios via sed):
+- `from src.catalog_sync.X` → `from src.plugins.catalog.agent.X`
+- Strings literales en tests también (importlib.import_module patterns).
+
+**Backend configs actualizadas**:
+- `hubara_agency/.importlinter`: `src.catalog_sync` → `src.plugins.catalog.agent`
+  en contracts `platform-no-agents` y `agents-independent`.
+- `hubara_agency/docker-compose.local.yml`: worker command actualizado.
+- `hubara_agency/k8s/aws-produccion/worker-catalog-sync.yaml`: idem.
+- `hubara_agency/tests/architecture/conftest.py`: `agent_paths()` ahora
+  reconoce `catalog.sync` en lugar de `catalog_sync` legacy.
+- `hubara_agency/tests/test_imports.py`: agregados smoke imports para
+  catalog (workers, activities, workflows).
+- `hubara_agency/src/platform/{catalog,medusa}/__init__.py`: docstrings
+  refrescados con paths nuevos.
+
+**Frontend** (3 features movidas):
+```
+src/features/upload-jobs       → src/plugins/catalog/frontend/features/
+src/features/upload-wizard     → src/plugins/catalog/frontend/features/
+src/features/upload-inspector  → src/plugins/catalog/frontend/features/
+```
+
+**Frontend nuevos archivos**:
+- `src/plugins/catalog/plugin.yaml` (con `agent.workers: [{name: sync, ...}]`).
+- `src/plugins/catalog/frontend/UploadSection.tsx` (extracción).
+- `src/plugins/catalog/frontend/index.ts` (barrel).
+
+**Dashboard.tsx**:
+- `UploadPage` se busca en `PLUGINS` (mismo pattern que Chats/Agents).
+- Función inline `UploadSection` removida.
+
+### Desviaciones del plan
+
+1. **Naming**: el plan §6.1 usa "catalog" (single word) y `catalog_sync` legacy. Decidí usar `catalog` como id del plugin y `sync` como nombre del worker (el viejo "catalog_sync" se descompone en plugin id + worker name). El conftest ahora usa `catalog.sync` como agent id (consistente con `chats.sales`/`chats.remarketing`).
+
+### Verificaciones corridas
+
+```bash
+# Backend
+$ uv run pytest --tb=short -q
+264 passed, 1 skipped
+
+$ uv run pytest -m architecture
+18 passed, 1 skipped
+
+# Loader (catalog no aporta routers, agents_admin tampoco)
+$ ENABLED_PLUGINS=chats,catalog uv run python -c "from src.main import _LOADED_PLUGINS; print(_LOADED_PLUGINS)"
+['chats']
+
+# Meta-launcher (descubre 3 workers ahora)
+$ ENABLED_PLUGINS=chats,catalog uv run python -c "from src.run_workers import _discover_workers; print(_discover_workers())"
+[('catalog', 'sync', 'src.plugins.catalog.workers.sync'),
+ ('chats', 'sales', 'src.plugins.chats.workers.sales'),
+ ('chats', 'remarketing', 'src.plugins.chats.workers.remarketing')]
+
+# Frontend
+$ npm run plugins:sync
+[plugins-sync] generated src/app/plugin-registry.generated.ts with 3 plugin(s): agents_admin, catalog, chats
+
+$ npx tsc -b --force
+TypeScript compilation completed
+
+$ npm run arch:cruise
+✔ no dependency violations found (161 modules, 344 dependencies cruised)
+
+$ npm test
+69 passed, 1 skipped
+```
+
+### Definition of Done (del plan §3 PR5)
+
+- [x] `hubara_agency/src/plugins/catalog/` con agent + workers.
+- [x] 3 features upload migradas.
+- [x] Manifest declara `agent.workers: [{name: sync, ...}]`.
+- [x] docker-compose + k8s actualizados.
+- [x] Carpetas viejas borradas (`src/catalog_sync/`, `src/features/upload-*`).
+- [x] Tests verdes.
+
+### Bloqueadores encontrados
+
+Ninguno. PR5 es esencialmente PR2 simplificado (un solo worker, sin API HTTP).
+
+### Stats
+
+```
+12 archivos Python movidos (catalog_sync → plugins/catalog/agent + workers)
+3 features TS movidas (upload-* → plugins/catalog/frontend/features/)
+2 archivos __init__.py nuevos (estructura plugin)
+3 archivos nuevos frontend (plugin.yaml + UploadSection.tsx + index.ts)
+~20 imports Python reescritos
+~3 imports TS reescritos
+1 archivo modificado: pages/Dashboard.tsx (UploadPage del registry)
+4 configs actualizadas (.importlinter, docker-compose, k8s/worker-catalog-sync, conftest)
+```
+
+### Próximo paso recomendado
+
+PR6 (`eta`): plugin frontend-only (3 features eta-*). Mismo patrón que PR4
+(agents_admin). ~1 día.
+
+### Status final
+
+✅ **done** — backend + frontend verdes. Listo para commit + PR6.
 
 ---
 

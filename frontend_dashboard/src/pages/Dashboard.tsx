@@ -13,7 +13,8 @@
  * Modo híbrido durante migración:
  *   - `chat` se carga desde `PLUGINS` registry (plugin chats — PR2/PR3).
  *   - `agent` idem (plugin agents_admin — PR4).
- *   - `orders`, `eta`, `upload` siguen inline hasta sus PRs (PR5-7).
+ *   - `upload` idem (plugin catalog — PR5).
+ *   - `orders`, `eta` siguen inline hasta sus PRs (PR6-7).
  */
 
 import { Suspense, useMemo, useState } from "react";
@@ -45,10 +46,6 @@ import {
 import { EtaCards } from "@/features/eta-cards";
 import { EtaChat } from "@/features/eta-chat";
 
-import { UploadJobs } from "@/features/upload-jobs";
-import { UploadWizard } from "@/features/upload-wizard";
-import { UploadInspector } from "@/features/upload-inspector";
-
 export function Dashboard() {
   const [section, setSection] = useState<SectionKey>("chat");
   const [showSidebar, setShowSidebar] = useState(true);
@@ -76,6 +73,10 @@ export function Dashboard() {
   );
   const AgentsPage = useMemo(
     () => PLUGINS.find((p) => p.id === "agents_admin")?.Page,
+    [],
+  );
+  const UploadPage = useMemo(
+    () => PLUGINS.find((p) => p.id === "catalog")?.Page,
     [],
   );
 
@@ -122,13 +123,15 @@ export function Dashboard() {
             />
           )}
 
-          {section === "upload" && (
-            <UploadSection
-              showSidebar={showSidebar}
-              showInspector={showInspector}
-              selectedJobId={selectedJobId}
-              setSelectedJobId={setSelectedJobId}
-            />
+          {section === "upload" && UploadPage && (
+            <Suspense fallback={null}>
+              <UploadPage
+                showSidebar={showSidebar}
+                showInspector={showInspector}
+                selectedJobId={selectedJobId}
+                setSelectedJobId={setSelectedJobId}
+              />
+            </Suspense>
           )}
 
           {section === "agent" && AgentsPage && (
@@ -154,9 +157,10 @@ export function Dashboard() {
 // Plugin sections (cargadas dinámicamente del registry):
 //   - ChatsSection  → @plugins/chats/frontend          (PR2)
 //   - AgentsSection → @plugins/agents_admin/frontend   (PR4)
+//   - UploadSection → @plugins/catalog/frontend        (PR5)
 //
 // Inline secciones (pendientes de migración a plugin):
-//   - OrdersSection (PR7), EtaSection (PR6), UploadSection (PR5).
+//   - OrdersSection (PR7), EtaSection (PR6).
 
 interface OrdersSectionProps {
   showSidebar: boolean;
@@ -239,33 +243,6 @@ function EtaSection({
         onSelect={setSelectedTrackedId}
       />
       {showInspector && <EtaChat order={selected} />}
-    </>
-  );
-}
-
-interface UploadSectionProps {
-  showSidebar: boolean;
-  showInspector: boolean;
-  selectedJobId: string;
-  setSelectedJobId: (id: string) => void;
-}
-
-function UploadSection({
-  showSidebar,
-  showInspector,
-  selectedJobId,
-  setSelectedJobId,
-}: UploadSectionProps) {
-  return (
-    <>
-      {showSidebar && (
-        <UploadJobs
-          selectedJobId={selectedJobId}
-          onSelect={setSelectedJobId}
-        />
-      )}
-      <UploadWizard />
-      {showInspector && <UploadInspector />}
     </>
   );
 }

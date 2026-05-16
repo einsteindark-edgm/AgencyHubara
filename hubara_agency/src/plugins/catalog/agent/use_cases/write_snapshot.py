@@ -17,7 +17,7 @@ import shutil
 from pathlib import Path
 from uuid import uuid4
 
-from src.catalog_sync.contracts import WriteSnapshotInput, WriteSnapshotResult
+from src.plugins.catalog.agent.contracts import WriteSnapshotInput, WriteSnapshotResult
 
 
 class WriteSnapshotUseCase:

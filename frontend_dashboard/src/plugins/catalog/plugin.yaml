@@ -1,0 +1,36 @@
+id: catalog
+version: 0.1.0
+display_name: Catalog Sync
+description: Sincronización del catálogo de productos (Medusa → snapshot filesystem). Worker Temporal disparado por schedule o manualmente; el frontend muestra jobs + permite disparar syncs.
+
+depends_on: []
+
+# ── Frontend ───────────────────────────────────────────────────────────
+frontend:
+  entry: ./frontend
+  contributes:
+    sections:
+      - { key: upload, label: Catalog, order: 4 }
+    sidebar:
+      - { route: /catalog, label: Catalog, icon: package }
+
+# Sin `api:` por ahora — el plugin no expone endpoints HTTP propios. El
+# worker se dispara desde scripts/trigger_catalog_sync.py o desde otro plugin
+# que dispare el workflow al final de su pipeline.
+
+# ── Agente Temporal ────────────────────────────────────────────────────
+# Single worker en CATALOG_SYNC_QUEUE. CRITICAL: 1 replica only — race en
+# os.replace si hay múltiples writers (ver k8s/aws-produccion/worker-catalog-sync.yaml).
+agent:
+  python_module: src.plugins.catalog.agent
+  workers:
+    - { name: sync, module: src.plugins.catalog.workers.sync }
+
+wiring_intents:
+  filesystem_volumes:
+    - hubara-vault                       # subPath catalog/
+  env_vars_required:
+    - TEMPORAL_URL
+    - CATALOG_SNAPSHOT_DIR
+    - MEDUSA_BASE_URL
+    - MEDUSA_ADMIN_TOKEN

@@ -6,11 +6,11 @@ import asyncio
 from loguru import logger
 from temporalio.worker import Worker
 
-from src.catalog_sync.activities import (
+from src.plugins.catalog.agent.activities import (
     pull_medusa_catalog_activity,
     write_snapshot_activity,
 )
-from src.catalog_sync.workflows import CatalogSyncWorkflow
+from src.plugins.catalog.agent.workflows import CatalogSyncWorkflow
 from src.platform.constants import CATALOG_SYNC_QUEUE
 from src.platform.logging import setup_logging
 from src.platform.temporal.client import get_temporal_client

@@ -31,20 +31,12 @@ SRC_ROOT: Path = Path(__file__).resolve().parents[2] / "src"
 DASHBOARD_EXCLUDE = {"plugins.chats.api"}
 
 # Agentes DEHA: cada entrada es un id lógico. Los paths se resuelven con
-# `agent_paths()` para soportar el layout post-PR2 (chats sub-divides en sales
-# + remarketing dentro del plugin; catalog_sync sigue top-level hasta PR5).
-DEHA_AGENTS = ("chats.sales", "chats.remarketing", "catalog_sync")
+# `agent_paths()`. Post-PR5 todos los agentes viven bajo `src/plugins/`.
+DEHA_AGENTS = ("chats.sales", "chats.remarketing", "catalog.sync")
 
 
 def agent_paths(agent: str) -> dict[str, Path]:
-    """Mapping de agent id a sus paths físicos.
-
-    Pre-PR2: cada agente vivía en `src/<name>/` (`worker.py`, `workflows/`,
-    `activities/`, `tools/` colgados directo).
-    Post-PR2: `chats` plugin contiene dos sub-agentes (sales + remarketing)
-    en `src/plugins/chats/`. `catalog_sync` sigue en su ubicación top-level
-    hasta PR5.
-    """
+    """Mapping de agent id a sus paths físicos (todos bajo src/plugins/<id>/)."""
     if agent == "chats.sales":
         return {
             "worker": SRC_ROOT / "plugins" / "chats" / "workers" / "sales.py",
@@ -55,10 +47,10 @@ def agent_paths(agent: str) -> dict[str, Path]:
             "worker": SRC_ROOT / "plugins" / "chats" / "workers" / "remarketing.py",
             "root": SRC_ROOT / "plugins" / "chats" / "agent" / "remarketing",
         }
-    if agent == "catalog_sync":
+    if agent == "catalog.sync":
         return {
-            "worker": SRC_ROOT / "catalog_sync" / "worker.py",
-            "root": SRC_ROOT / "catalog_sync",
+            "worker": SRC_ROOT / "plugins" / "catalog" / "workers" / "sync.py",
+            "root": SRC_ROOT / "plugins" / "catalog" / "agent",
         }
     raise ValueError(f"unknown agent id: {agent}")
 

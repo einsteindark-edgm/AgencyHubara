@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from src.catalog_sync.contracts import WriteSnapshotInput
-from src.catalog_sync.use_cases.write_snapshot import WriteSnapshotUseCase
+from src.plugins.catalog.agent.contracts import WriteSnapshotInput
+from src.plugins.catalog.agent.use_cases.write_snapshot import WriteSnapshotUseCase
 
 
 @pytest.mark.asyncio

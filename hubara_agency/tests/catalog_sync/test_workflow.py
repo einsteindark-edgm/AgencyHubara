@@ -6,13 +6,13 @@ from temporalio import activity
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
-from src.catalog_sync.contracts import (
+from src.plugins.catalog.agent.contracts import (
     CatalogSyncInput,
     PullCatalogResult,
     WriteSnapshotInput,
     WriteSnapshotResult,
 )
-from src.catalog_sync.workflows import CatalogSyncWorkflow
+from src.plugins.catalog.agent.workflows import CatalogSyncWorkflow
 
 
 @activity.defn(name="pull_medusa_catalog")

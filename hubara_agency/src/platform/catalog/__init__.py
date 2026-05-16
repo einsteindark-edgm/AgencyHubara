@@ -1,8 +1,8 @@
 """platform.catalog — port (Protocol) y adapter local (snapshot filesystem).
 
 Cross-agent infrastructure. Consumed by:
-  - src/sales_whatsapp/tools/catalog.py (HU-04) — lectura.
-  - src/catalog_sync/use_cases/write_snapshot.py (HU-03) — escritura.
+  - src/plugins/chats/agent/sales/tools/catalog.py (HU-04) — lectura.
+  - src/plugins/catalog/agent/use_cases/write_snapshot.py (HU-03) — escritura.
 
 R-DIP: este paquete NO importa de ningun agente, ni de temporalio, ni de
 exoclaw. Solo stdlib y los DTOs internos.

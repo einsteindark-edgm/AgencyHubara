@@ -5,8 +5,9 @@ Cross-agent infrastructure: este paquete expone `HttpMedusaClient` y
 consuma vía `composition.get_medusa_client()`.
 
 R-DIP: este paquete NO importa de ningún agente. Sus consumers son
-`src/catalog_sync/...` (HU-03) y, opcionalmente en futuro, tools del Sales
-agent que necesiten datos en vivo (stock real-time, pricing por región).
+`src/plugins/catalog/agent/...` (HU-03) y, opcionalmente en futuro, tools
+del plugin chats (sales) que necesiten datos en vivo (stock real-time,
+pricing por región).
 """
 from src.platform.medusa.client import (
     DEFAULT_PRODUCT_FIELDS,

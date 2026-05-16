@@ -10,6 +10,7 @@ import importlib
 def test_workers_importable() -> None:
     importlib.import_module("src.plugins.chats.workers.sales")
     importlib.import_module("src.plugins.chats.workers.remarketing")
+    importlib.import_module("src.plugins.catalog.workers.sync")
 
 
 def test_activities_importable() -> None:
@@ -17,11 +18,13 @@ def test_activities_importable() -> None:
     importlib.import_module("src.platform.whatsapp.activities")
     importlib.import_module("src.plugins.chats.agent.sales.activities")
     importlib.import_module("src.plugins.chats.agent.remarketing.activities")
+    importlib.import_module("src.plugins.catalog.agent.activities")
 
 
 def test_workflows_importable() -> None:
     importlib.import_module("src.plugins.chats.agent.sales.workflows.sales_session")
     importlib.import_module("src.plugins.chats.agent.remarketing.workflows.remarketing")
+    importlib.import_module("src.plugins.catalog.agent.workflows.sync")
 
 
 def test_contracts_importable() -> None:

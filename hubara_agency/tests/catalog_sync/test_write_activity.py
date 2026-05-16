@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 from temporalio.testing import ActivityEnvironment
 
-from src.catalog_sync.activities.write import write_snapshot_activity
-from src.catalog_sync.contracts import WriteSnapshotInput
+from src.plugins.catalog.agent.activities.write import write_snapshot_activity
+from src.plugins.catalog.agent.contracts import WriteSnapshotInput
 
 
 @pytest.mark.asyncio

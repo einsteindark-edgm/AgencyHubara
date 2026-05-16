@@ -150,7 +150,7 @@ def test_worker_registers_every_tool(agent: str) -> None:
     """Cada subclase de ToolBase definida bajo `<agent_root>/tools/` debe aparecer
     como argumento de algún `register_tool_extension(...)` en el worker del agente.
 
-    Agentes que aún no tienen tools (catalog_sync, chats.remarketing) hacen
+    Agentes que aún no tienen tools (catalog.sync, chats.remarketing) hacen
     short-circuit con un `pass` implícito.
     """
     tool_classes = _tool_class_names_for_agent(agent)

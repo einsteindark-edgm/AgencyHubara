@@ -19,8 +19,8 @@ delete de producto). Quien debería disparar:
     por R-DIP):
 
         from src.platform.temporal.client import get_temporal_client
-        from src.catalog_sync.workflows import CatalogSyncWorkflow
-        from src.catalog_sync.contracts import CatalogSyncInput
+        from src.plugins.catalog.agent.workflows import CatalogSyncWorkflow
+        from src.plugins.catalog.agent.contracts import CatalogSyncInput
         from src.platform.catalog.paths import get_snapshot_dir
         from src.platform.constants import CATALOG_SYNC_QUEUE
 
@@ -59,11 +59,11 @@ from __future__ import annotations
 from temporalio import workflow
 
 with workflow.unsafe.imports_passed_through():
-    from src.catalog_sync.activities import (
+    from src.plugins.catalog.agent.activities import (
         pull_medusa_catalog_activity,
         write_snapshot_activity,
     )
-    from src.catalog_sync.contracts import (
+    from src.plugins.catalog.agent.contracts import (
         CatalogSyncInput,
         WriteSnapshotInput,
         WriteSnapshotResult,

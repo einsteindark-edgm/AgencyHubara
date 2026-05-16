@@ -7,8 +7,8 @@ from __future__ import annotations
 
 from temporalio import activity
 
-from src.catalog_sync.composition import get_pull_catalog_use_case
-from src.catalog_sync.contracts import CatalogSyncInput, PullCatalogResult
+from src.plugins.catalog.agent.composition import get_pull_catalog_use_case
+from src.plugins.catalog.agent.contracts import CatalogSyncInput, PullCatalogResult
 from src.platform.temporal.heartbeat import with_heartbeat
 
 

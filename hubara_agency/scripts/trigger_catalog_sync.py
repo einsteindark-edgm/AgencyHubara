@@ -23,8 +23,8 @@ ese agente (porque la activity es el lugar que puede usar
 
     from temporalio import activity
 
-    from src.catalog_sync.contracts import CatalogSyncInput
-    from src.catalog_sync.workflows import CatalogSyncWorkflow
+    from src.plugins.catalog.agent.contracts import CatalogSyncInput
+    from src.plugins.catalog.agent.workflows import CatalogSyncWorkflow
     from src.platform.catalog.paths import get_snapshot_dir
     from src.platform.constants import CATALOG_SYNC_QUEUE
     from src.platform.temporal.client import get_temporal_client
@@ -98,8 +98,8 @@ if str(_REPO_ROOT) not in sys.path:
 
 from temporalio.client import Client  # noqa: E402
 
-from src.catalog_sync.contracts import CatalogSyncInput  # noqa: E402
-from src.catalog_sync.workflows import CatalogSyncWorkflow  # noqa: E402
+from src.plugins.catalog.agent.contracts import CatalogSyncInput  # noqa: E402
+from src.plugins.catalog.agent.workflows import CatalogSyncWorkflow  # noqa: E402
 from src.platform.catalog.paths import get_snapshot_dir  # noqa: E402
 from src.platform.constants import CATALOG_SYNC_QUEUE  # noqa: E402
 from src.platform.temporal.client import get_temporal_client  # noqa: E402

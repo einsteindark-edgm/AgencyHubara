@@ -4,8 +4,8 @@ from __future__ import annotations
 import pytest
 from temporalio.testing import ActivityEnvironment
 
-from src.catalog_sync.activities.pull import pull_medusa_catalog_activity
-from src.catalog_sync.contracts import CatalogSyncInput, PullCatalogResult
+from src.plugins.catalog.agent.activities.pull import pull_medusa_catalog_activity
+from src.plugins.catalog.agent.contracts import CatalogSyncInput, PullCatalogResult
 
 
 class _FakeUseCase:
@@ -20,7 +20,7 @@ class _FakeUseCase:
 @pytest.mark.asyncio
 async def test_activity_calls_use_case(monkeypatch):
     monkeypatch.setattr(
-        "src.catalog_sync.activities.pull.get_pull_catalog_use_case",
+        "src.plugins.catalog.agent.activities.pull.get_pull_catalog_use_case",
         lambda: _FakeUseCase(),
     )
 

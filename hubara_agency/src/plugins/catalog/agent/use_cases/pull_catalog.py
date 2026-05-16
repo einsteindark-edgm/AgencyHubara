@@ -9,7 +9,7 @@ import json
 from dataclasses import asdict
 from datetime import datetime, timezone
 
-from src.catalog_sync.contracts import CatalogSyncInput, PullCatalogResult
+from src.plugins.catalog.agent.contracts import CatalogSyncInput, PullCatalogResult
 from src.platform.catalog.dtos import (
     CatalogImageDTO,
     CatalogPriceDTO,

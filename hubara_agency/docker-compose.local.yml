@@ -136,7 +136,7 @@ services:
       dockerfile: Dockerfile
     container_name: local-hubara-worker-catalog-sync
     working_dir: /app/hubara_agency
-    command: ["python", "-m", "src.catalog_sync.worker"]
+    command: ["python", "-m", "src.plugins.catalog.workers.sync"]
     environment:
       - TEMPORAL_URL=temporal:7233
       - WORKSPACE_VAULT_DIR=/app/hubara_vault

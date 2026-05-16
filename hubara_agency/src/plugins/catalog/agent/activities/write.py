@@ -10,8 +10,8 @@ from dataclasses import replace
 
 from temporalio import activity
 
-from src.catalog_sync.composition import get_write_snapshot_use_case
-from src.catalog_sync.contracts import WriteSnapshotInput, WriteSnapshotResult
+from src.plugins.catalog.agent.composition import get_write_snapshot_use_case
+from src.plugins.catalog.agent.contracts import WriteSnapshotInput, WriteSnapshotResult
 
 
 @activity.defn(name="write_snapshot")
