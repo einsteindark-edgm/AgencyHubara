@@ -14,7 +14,8 @@
  *   - `chat` se carga desde `PLUGINS` registry (plugin chats — PR2/PR3).
  *   - `agent` idem (plugin agents_admin — PR4).
  *   - `upload` idem (plugin catalog — PR5).
- *   - `orders`, `eta` siguen inline hasta sus PRs (PR6-7).
+ *   - `eta` idem (plugin eta — PR6).
+ *   - `orders` sigue inline hasta su PR (PR7).
  */
 
 import { Suspense, useMemo, useState } from "react";
@@ -24,10 +25,9 @@ import { IS_DESKTOP } from "@/shared/lib";
 
 import { useSessionsStream } from "@/entities/chat";
 import { useOrders } from "@/entities/order";
-import { useTrackedOrders } from "@/entities/tracked-order";
 
-// PR3: consumo dinámico del registry. Si `chats` no está en `ENABLED_PLUGINS`,
-// `chatsPlugin` es undefined y la sección queda vacía (degradación graceful).
+// PR3: consumo dinámico del registry. Si el plugin no está en
+// `ENABLED_PLUGINS`, `Page` es undefined y la sección queda vacía.
 import { PLUGINS } from "@/app/plugin-registry.generated";
 
 import {
@@ -37,14 +37,6 @@ import {
 } from "@/features/orders-filters";
 import { OrdersBoard, OrdersHeader } from "@/features/orders-board";
 import { OrdersInspector } from "@/features/orders-inspector";
-
-import {
-  EtaList,
-  FILTER_LABELS as ETA_LABELS,
-  useEtaFilters,
-} from "@/features/eta-list";
-import { EtaCards } from "@/features/eta-cards";
-import { EtaChat } from "@/features/eta-chat";
 
 export function Dashboard() {
   const [section, setSection] = useState<SectionKey>("chat");
@@ -77,6 +69,10 @@ export function Dashboard() {
   );
   const UploadPage = useMemo(
     () => PLUGINS.find((p) => p.id === "catalog")?.Page,
+    [],
+  );
+  const EtaPage = useMemo(
+    () => PLUGINS.find((p) => p.id === "eta")?.Page,
     [],
   );
 
@@ -114,13 +110,15 @@ export function Dashboard() {
             />
           )}
 
-          {section === "eta" && (
-            <EtaSection
-              showSidebar={showSidebar}
-              showInspector={showInspector}
-              selectedTrackedId={selectedTrackedId}
-              setSelectedTrackedId={setSelectedTrackedId}
-            />
+          {section === "eta" && EtaPage && (
+            <Suspense fallback={null}>
+              <EtaPage
+                showSidebar={showSidebar}
+                showInspector={showInspector}
+                selectedTrackedId={selectedTrackedId}
+                setSelectedTrackedId={setSelectedTrackedId}
+              />
+            </Suspense>
           )}
 
           {section === "upload" && UploadPage && (
@@ -158,9 +156,10 @@ export function Dashboard() {
 //   - ChatsSection  → @plugins/chats/frontend          (PR2)
 //   - AgentsSection → @plugins/agents_admin/frontend   (PR4)
 //   - UploadSection → @plugins/catalog/frontend        (PR5)
+//   - EtaSection    → @plugins/eta/frontend            (PR6)
 //
 // Inline secciones (pendientes de migración a plugin):
-//   - OrdersSection (PR7), EtaSection (PR6).
+//   - OrdersSection (PR7).
 
 interface OrdersSectionProps {
   showSidebar: boolean;
@@ -207,42 +206,6 @@ function OrdersSection({
         </div>
       </main>
       {showInspector && <OrdersInspector order={selected} />}
-    </>
-  );
-}
-
-interface EtaSectionProps {
-  showSidebar: boolean;
-  showInspector: boolean;
-  selectedTrackedId: string | null;
-  setSelectedTrackedId: (id: string) => void;
-}
-
-function EtaSection({
-  showSidebar,
-  showInspector,
-  selectedTrackedId,
-  setSelectedTrackedId,
-}: EtaSectionProps) {
-  const { data: tracked = [] } = useTrackedOrders();
-  const f = useEtaFilters(tracked);
-  const selected = useMemo(
-    () => tracked.find((o) => o.id === selectedTrackedId) ?? null,
-    [tracked, selectedTrackedId],
-  );
-
-  return (
-    <>
-      {showSidebar && (
-        <EtaList orders={tracked} filter={f.filter} setFilter={f.setFilter} />
-      )}
-      <EtaCards
-        orders={f.list}
-        filterLabel={ETA_LABELS[f.filter]}
-        selectedId={selectedTrackedId}
-        onSelect={setSelectedTrackedId}
-      />
-      {showInspector && <EtaChat order={selected} />}
     </>
   );
 }

@@ -19,8 +19,8 @@
 | PR2 (migrar chats) | 2026-05-15 | ✅ done | 33 archivos Python + 7 features TS movidos a `plugins/chats/`. Backend + frontend verdes. Commit: `c13387f`. |
 | PR3 (loaders) | 2026-05-15 | ✅ done | Auto-discovery en main.py + run_workers.py + Dashboard.tsx consume PLUGINS. ENABLED_PLUGINS funcional. Commit: `fa7d13e`. |
 | PR4 (agents_admin) | 2026-05-15 | ✅ done | Plugin frontend-only. 3 features movidas + AgentsSection extraída + Dashboard usa registry. Commit: `847b2c7`. |
-| PR5 (catalog) | 2026-05-15 | ✅ done | catalog_sync (worker + activities + workflows) + 3 features upload migrados. Meta-launcher descubre 3 workers (chats×2 + catalog×1). |
-| PR6 (eta) | — | ⏸ pending | Bloqueado por PR3. |
+| PR5 (catalog) | 2026-05-15 | ✅ done | catalog_sync (worker + activities + workflows) + 3 features upload migrados. Meta-launcher descubre 3 workers (chats×2 + catalog×1). Commit: `9b01306`. |
+| PR6 (eta) | 2026-05-15 | ✅ done | Plugin frontend-only (3 features eta-*). Mismo patrón que PR4. |
 | PR7 (orders) | — | ⏸ pending | Bloqueado por PR3. |
 
 ---
@@ -736,6 +736,52 @@ PR6 (`eta`): plugin frontend-only (3 features eta-*). Mismo patrón que PR4
 ### Status final
 
 ✅ **done** — backend + frontend verdes. Listo para commit + PR6.
+
+---
+
+## 2026-05-15 — PR6 (eta) — Claude — ✅ done
+
+### Plan referenciado
+PLUGIN_REFACTOR_PLAN.md §3 — PR6.
+
+### Cambios efectivos
+
+3 features TS migradas (eta-list, eta-cards, eta-chat) →
+`src/plugins/eta/frontend/features/`. Plugin frontend-only — sin api,
+sin agent (los datos vienen de `entities/tracked-order` shared).
+
+**Frontend nuevos archivos**:
+- `src/plugins/eta/plugin.yaml` (solo `frontend.contributes.sections`).
+- `src/plugins/eta/frontend/EtaSection.tsx` (extracción de Dashboard.tsx,
+  incluye `useTrackedOrders` + `useEtaFilters` + `useMemo`).
+- `src/plugins/eta/frontend/index.ts` (barrel + named re-exports).
+
+**Backend**:
+- `hubara_agency/src/plugins/eta/__init__.py` (anchor; sin código).
+
+**Dashboard.tsx**:
+- `EtaPage` se busca en `PLUGINS`.
+- Función inline `EtaSection` removida.
+- `useTrackedOrders` import removido (lo usa el plugin ahora).
+
+### Verificaciones corridas
+
+```bash
+$ npm run plugins:sync
+[plugins-sync] generated src/app/plugin-registry.generated.ts with 4 plugin(s): agents_admin, catalog, chats, eta
+
+$ npx tsc -b --force
+TypeScript compilation completed
+
+$ npm run arch:cruise
+✔ no dependency violations found (163 modules, 350 dependencies cruised)
+
+$ npm test
+19 archivos, 69 passed, 1 skipped
+```
+
+### Status final
+✅ done — registry tiene 4 plugins. Listo para PR7.
 
 ---
 

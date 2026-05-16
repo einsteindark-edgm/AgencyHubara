@@ -1,0 +1,19 @@
+id: eta
+version: 0.1.0
+display_name: ETA Tracker
+description: Visualización del estado de envíos (tracked orders + chat de cliente). Plugin frontend-only — los datos vienen de `entities/tracked-order` (shared).
+
+depends_on: []
+
+frontend:
+  entry: ./frontend
+  contributes:
+    sections:
+      - { key: eta, label: ETA, order: 3 }
+    sidebar:
+      - { route: /eta, label: ETA, icon: truck }
+
+# Sin api: ni agent: — plugin frontend-only.
+
+wiring_intents:
+  env_vars_required: []
