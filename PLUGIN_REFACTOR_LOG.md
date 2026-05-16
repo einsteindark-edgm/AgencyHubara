@@ -21,7 +21,8 @@
 | PR4 (agents_admin) | 2026-05-15 | ✅ done | Plugin frontend-only. 3 features movidas + AgentsSection extraída + Dashboard usa registry. Commit: `847b2c7`. |
 | PR5 (catalog) | 2026-05-15 | ✅ done | catalog_sync (worker + activities + workflows) + 3 features upload migrados. Meta-launcher descubre 3 workers (chats×2 + catalog×1). Commit: `9b01306`. |
 | PR6 (eta) | 2026-05-15 | ✅ done | Plugin frontend-only (3 features eta-*). Mismo patrón que PR4. Commit: `a87f8bb`. |
-| PR7 (orders) | 2026-05-15 | ✅ done | Plugin frontend-only (3 features orders-*). Cierra el refactor — TODAS las secciones del shell se cargan del registry. |
+| PR7 (orders) | 2026-05-15 | ✅ done | Plugin frontend-only (3 features orders-*). Cierra el refactor — TODAS las secciones del shell se cargan del registry. Commit: `b494fa9`. |
+| PR8 (vault hygiene) | 2026-05-15 | ✅ done | Fix tests que contaminaban seeds + fixture autouse defensiva + documentación §8 del vault. |
 
 ---
 
@@ -884,6 +885,109 @@ del plan):
    y validar que la app funciona end-to-end (no probado en esta sesión).
 5. Documentar en `PLUGIN_ARCHITECTURE.md` que el primer refactor está
    cerrado (post-mortem corto).
+
+---
+
+## 2026-05-15 — PR8 (vault hygiene) — Claude — ✅ done
+
+### Contexto
+
+Post-PR7, durante revisión de `git status` con el operador, se detectó un
+patrón sospechoso: cada vez que corría `pytest`, dos `metadata.json` del
+vault aparecían modificados:
+
+- `hubara_agency/hubara_vault/wa_5491234567890/metadata.json`
+- `hubara_agency/hubara_vault/wa_5499876543210/metadata.json`
+
+Los timestamps de las nuevas entradas en `status_history` coincidían con
+los runs de `pytest` durante el refactor. Investigación mostró que estos
+archivos están **commiteados al repo como seed data** para que el frontend
+dev local muestre UI con datos realistas.
+
+### Bug encontrado
+
+`tests/test_tools_protocol.py` instanciaba 5 tools (`ManageConversationTagTool`,
+`TransferToSalesAgentTool`) con `workspace=tmp_path` pero **sin pasar
+`vault_dir=tmp_path`**. Como ambos tools tienen este patrón:
+
+```python
+def __init__(self, workspace, vault_dir=None):
+    self._vault_dir = Path(vault_dir) if vault_dir is not None else WORKSPACE_VAULT_DIR
+```
+
+…cuando `vault_dir` no se pasa, los tools escriben a `WORKSPACE_VAULT_DIR`
+(== `./hubara_vault` por default) en vez de a `tmp_path`. Resultado: cada
+`pytest` agregaba entradas a los seeds reales.
+
+Los **otros** tests (test_escalation_tool, test_transfer_tool, test_dispatcher_*,
+test_handoff_endpoints, etc.) ya pasaban `vault_dir=tmp_path` o usaban
+`monkeypatch.setattr` para el módulo. El bug era específico de un solo
+archivo.
+
+### Fix aplicado
+
+**1. Fix puntual** — `tests/test_tools_protocol.py`:
+   Agregado `vault_dir=tmp_path` a los 5 instanciamientos:
+   - `test_transfer_tool_dispatched_via_registry`
+   - `test_tag_tool_dispatched_via_registry`
+   - `test_tag_tool_rejects_invalid_tag`
+   - `test_tag_tool_rejects_missing_motivo`
+   - `test_transfer_tool_rejects_missing_resumen`
+
+**2. Fix sistémico** — `tests/conftest.py`:
+   Nueva fixture autouse `_isolate_vault_dir` que:
+   - Crea `tmp_path/isolated_vault/` por test.
+   - `monkeypatch.setenv("WORKSPACE_VAULT_DIR", ...)`.
+   - `monkeypatch.setattr(mod, "WORKSPACE_VAULT_DIR", ...)` para los 14
+     módulos que capturaron el global por import (lista canónica
+     `_VAULT_CAPTURING_MODULES` en conftest).
+
+   Cualquier futuro test que olvide pasar `vault_dir=tmp_path` o
+   `monkeypatch.setattr` queda igual aislado del vault real. Defense
+   en profundidad — la DI explícita en el constructor sigue siendo la
+   primera línea (el fixture no la reemplaza).
+
+**3. Documentación** — `PLUGIN_REFACTOR_PLAN.md` §8 (nueva sección):
+   - §8.1 layout físico del vault
+   - §8.2 convención de namespacing por plugin
+   - §8.3 por qué NO sub-vault por plugin (status quo razonado)
+   - §8.4 reglas de testing (3 mecanismos de defensa)
+   - §8.5 historial del bug PR8
+   - §8.6 items diferidos relacionados al vault
+
+### Verificaciones corridas
+
+```bash
+# Suite completa
+$ uv run pytest --tb=short -q
+264 passed, 1 skipped in 13.36s
+
+# Vault NO contaminado después de la corrida
+$ git status --short hubara_vault
+(empty — no changes)
+```
+
+### Definition of Done
+
+- [x] Tests del bug arreglados (test_tools_protocol.py).
+- [x] Defensa en profundidad agregada (fixture autouse).
+- [x] Documentación de la convención del vault (PLAN §8).
+- [x] Suite verde (264 passed).
+- [x] Vault sin modificaciones después de pytest (verificado).
+
+### Stats
+
+```
+3 archivos modificados:
+  hubara_agency/tests/conftest.py        (+71 LOC, fixture autouse + lista de módulos)
+  hubara_agency/tests/test_tools_protocol.py  (+5 vault_dir=tmp_path + 2 comentarios)
+  PLUGIN_REFACTOR_PLAN.md                (+90 LOC, sección §8 nueva)
+```
+
+### Status final
+
+✅ **done** — bug histórico arreglado, defensa en profundidad puesta,
+convención documentada. Commit pendiente.
 
 ---
 

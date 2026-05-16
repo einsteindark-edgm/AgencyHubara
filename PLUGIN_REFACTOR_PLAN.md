@@ -746,6 +746,105 @@ funcionando.
 
 ---
 
+## §8. Vault — convención cross-plugin (PR8)
+
+`hubara_vault/` es **almacenamiento compartido cross-plugin** para datos de
+runtime (state per-sesión + snapshots). NO es del plugin chats exclusivamente,
+aunque hoy chats es su consumer principal.
+
+### §8.1 — Layout físico
+
+```
+$WORKSPACE_VAULT_DIR/                  ← env var, default ./hubara_vault
+├── wa_<phone>/                        ← runtime sessions (plugin chats)
+│   ├── metadata.json                  ← active_route, tag, status_history
+│   └── sessions/<session_id>.jsonl    ← message history (sales+remarketing comparten)
+└── catalog/                           ← snapshot (escribe plugin catalog, lee chats)
+    ├── manifest.json
+    └── products/
+```
+
+### §8.2 — Convención de namespacing
+
+**Cada plugin que escribe al vault usa su propio sub-namespace** (top-level dir).
+Ejemplos válidos:
+- chats → `<vault>/wa_<phone>/`  (varios sub-dirs por sesión)
+- catalog → `<vault>/catalog/`   (un solo sub-dir compartido)
+- futuros → `<vault>/<plugin_id>/...` (recomendado para evitar colisiones)
+
+**Cada plugin declara intent en su `plugin.yaml`**:
+
+```yaml
+wiring_intents:
+  filesystem_volumes:
+    - hubara-vault
+```
+
+El nombre `hubara-vault` referencia al volumen Docker / PVC K8s — los plugins no
+necesitan saber el path físico; lo resuelven via `WORKSPACE_VAULT_DIR`.
+
+### §8.3 — Por qué NO sub-vault por plugin (status quo razonado)
+
+Considerado y rechazado: layout `<vault>/<plugin_id>/<session_id>/...`.
+
+Razones para mantener el status quo plano:
+1. Sales + remarketing son **sub-agentes del mismo plugin** chats — comparten
+   `metadata.json` legítimamente (active_route fluye entre ellos).
+2. Migración del data en producción tendría costo > beneficio para 5 tenants.
+3. Plugins con sub-namespace top-level (chats: `wa_*/`, catalog: `catalog/`) NO
+   colisionan; la convención es suficiente.
+4. Si en el futuro 2 plugins compiten por el mismo path top-level, esa es la
+   señal para introducir un helper `vault_path(plugin_id, ...)` y migrar.
+
+### §8.4 — Reglas de testing (CRÍTICO)
+
+Los `wa_*/metadata.json` están **commiteados al repo como seed data** para que
+el frontend dev local pueda mostrar UI con datos realistas sin levantar el
+backend completo. Esto significa:
+
+**REGLA: ningún test puede escribir al vault real (`./hubara_vault`).**
+
+Tres mecanismos de defensa (en orden de preferencia):
+
+1. **Fixture autouse `_isolate_vault_dir`** (PR8) en `tests/conftest.py`:
+   monkeypatcha `WORKSPACE_VAULT_DIR` a un `tmp_path/isolated_vault/` por test.
+   Cubre módulos que capturan el global por import; lista canónica en
+   `_VAULT_CAPTURING_MODULES`. Cualquier módulo nuevo que importe
+   `WORKSPACE_VAULT_DIR` debe agregarse ahí.
+
+2. **DI explícita** en tools que aceptan `vault_dir=` parameter
+   (ManageConversationTagTool, TransferToSalesAgentTool, EscalateToHumanTool):
+   los tests SIEMPRE pasan `vault_dir=tmp_path` al constructor. La fixture
+   defensiva del punto 1 es backup; la DI explícita es la primera línea.
+
+3. **monkeypatch puntual** del módulo (ver `test_handoff_endpoints.py`,
+   `test_dashboard_handoff_classifier.py`): para tests que necesitan que el
+   módulo capture específicamente un path y `_isolate_vault_dir` no aplica
+   (ej. tests con `TestClient` que inicializan cosas via `import_app`).
+
+### §8.5 — Bug histórico (PR8)
+
+Pre-PR8, `test_tools_protocol.py` construía los tools sin pasar `vault_dir`,
+cayendo al default `WORKSPACE_VAULT_DIR` (= `./hubara_vault`). Cada corrida
+de la suite agregaba entradas al `status_history` de `wa_5491234567890` y
+`wa_5499876543210`, contaminando los seeds y produciendo un git diff sucio
+después de cada `pytest`.
+
+PR8 resolvió:
+- Fix puntual: agregado `vault_dir=tmp_path` a los 5 tests afectados.
+- Fix sistémico: fixture `_isolate_vault_dir` autouse en `tests/conftest.py`.
+
+### §8.6 — Items diferidos relacionados al vault
+
+| Item | Cuándo |
+|------|--------|
+| Helper `vault_path(plugin_id, session_id, *parts)` centralizado | Cuando 2 plugins compitan por mismo top-level dir, o cuando aparezca el primer caso de cross-plugin path. |
+| Limpieza de seeds (mover `wa_*/` a `tests/fixtures/seed_vault/` y gitignorear el vault) | Cuando alguien quiera correr el dashboard sin necesidad de los seeds. |
+| Backup/restore strategy del vault productivo | Cuando se resolva el primer incidente de pérdida de PVC en K8s. |
+| Migración a object storage (S3) en lugar de filesystem | Cuando un tenant alcance ≥1M sesiones (probable nunca para 5 empresas). |
+
+---
+
 ## §6. Cómo usar este documento
 
 1. **Antes de empezar un PR**, lee la sección §3 correspondiente. Si la

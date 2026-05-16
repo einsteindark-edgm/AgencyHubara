@@ -91,8 +91,11 @@ def test_tools_have_no_pydantic_field() -> None:
 
 
 async def test_transfer_tool_dispatched_via_registry(tmp_path: Path) -> None:
+    # PR8: `vault_dir=tmp_path` es CRITICO. Sin él, el tool escribe a
+    # `WORKSPACE_VAULT_DIR` (default `./hubara_vault`) y contamina los
+    # seed metadata commiteados al repo. Ver PLUGIN_REFACTOR_PLAN.md §8.
     registry = ToolRegistry()
-    registry.register(TransferToSalesAgentTool(workspace=tmp_path))
+    registry.register(TransferToSalesAgentTool(workspace=tmp_path, vault_dir=tmp_path))
 
     raw = await registry.execute(
         "transfer_to_sales_agent",
@@ -106,8 +109,9 @@ async def test_transfer_tool_dispatched_via_registry(tmp_path: Path) -> None:
 
 
 async def test_tag_tool_dispatched_via_registry(tmp_path: Path) -> None:
+    # PR8: ver comentario de test_transfer_tool_dispatched_via_registry.
     registry = ToolRegistry()
-    registry.register(ManageConversationTagTool(workspace=tmp_path))
+    registry.register(ManageConversationTagTool(workspace=tmp_path, vault_dir=tmp_path))
 
     raw = await registry.execute(
         "manage_conversation_tag",
@@ -128,7 +132,7 @@ async def test_tag_tool_rejects_invalid_tag(tmp_path: Path) -> None:
     """En pre-PR-C, `tag='FOO'` se silenciaba a `INTERESADO`. Ahora debe ser
     Error (validate_params + enum schema)."""
     registry = ToolRegistry()
-    registry.register(ManageConversationTagTool(workspace=tmp_path))
+    registry.register(ManageConversationTagTool(workspace=tmp_path, vault_dir=tmp_path))
 
     raw = await registry.execute(
         "manage_conversation_tag",
@@ -140,7 +144,7 @@ async def test_tag_tool_rejects_invalid_tag(tmp_path: Path) -> None:
 
 async def test_tag_tool_rejects_missing_motivo(tmp_path: Path) -> None:
     registry = ToolRegistry()
-    registry.register(ManageConversationTagTool(workspace=tmp_path))
+    registry.register(ManageConversationTagTool(workspace=tmp_path, vault_dir=tmp_path))
 
     raw = await registry.execute(
         "manage_conversation_tag",
@@ -152,7 +156,7 @@ async def test_tag_tool_rejects_missing_motivo(tmp_path: Path) -> None:
 
 async def test_transfer_tool_rejects_missing_resumen(tmp_path: Path) -> None:
     registry = ToolRegistry()
-    registry.register(TransferToSalesAgentTool(workspace=tmp_path))
+    registry.register(TransferToSalesAgentTool(workspace=tmp_path, vault_dir=tmp_path))
 
     raw = await registry.execute(
         "transfer_to_sales_agent",
