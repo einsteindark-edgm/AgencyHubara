@@ -20,8 +20,8 @@
 | PR3 (loaders) | 2026-05-15 | ✅ done | Auto-discovery en main.py + run_workers.py + Dashboard.tsx consume PLUGINS. ENABLED_PLUGINS funcional. Commit: `fa7d13e`. |
 | PR4 (agents_admin) | 2026-05-15 | ✅ done | Plugin frontend-only. 3 features movidas + AgentsSection extraída + Dashboard usa registry. Commit: `847b2c7`. |
 | PR5 (catalog) | 2026-05-15 | ✅ done | catalog_sync (worker + activities + workflows) + 3 features upload migrados. Meta-launcher descubre 3 workers (chats×2 + catalog×1). Commit: `9b01306`. |
-| PR6 (eta) | 2026-05-15 | ✅ done | Plugin frontend-only (3 features eta-*). Mismo patrón que PR4. |
-| PR7 (orders) | — | ⏸ pending | Bloqueado por PR3. |
+| PR6 (eta) | 2026-05-15 | ✅ done | Plugin frontend-only (3 features eta-*). Mismo patrón que PR4. Commit: `a87f8bb`. |
+| PR7 (orders) | 2026-05-15 | ✅ done | Plugin frontend-only (3 features orders-*). Cierra el refactor — TODAS las secciones del shell se cargan del registry. |
 
 ---
 
@@ -782,6 +782,108 @@ $ npm test
 
 ### Status final
 ✅ done — registry tiene 4 plugins. Listo para PR7.
+
+---
+
+## 2026-05-15 — PR7 (orders) — Claude — ✅ done
+
+### Plan referenciado
+PLUGIN_REFACTOR_PLAN.md §3 — PR7. **Cierra el refactor de plugins.**
+
+### Cambios efectivos
+
+3 features TS migradas (orders-board, orders-filters, orders-inspector) →
+`src/plugins/orders/frontend/features/`. Plugin frontend-only por ahora.
+
+**Frontend nuevos archivos**:
+- `src/plugins/orders/plugin.yaml` (solo frontend.contributes).
+- `src/plugins/orders/frontend/OrdersSection.tsx` (extracción inline).
+- `src/plugins/orders/frontend/index.ts` (barrel).
+
+**Backend**:
+- `hubara_agency/src/plugins/orders/__init__.py` (anchor).
+
+**Dashboard.tsx — gran limpieza**:
+- Removidos TODOS los imports de features (`@/features/orders-*` ya no
+  existen, los moví al plugin).
+- Removida función inline `OrdersSection` + `useOrders` import.
+- Header docstring actualizado: "Post-PR7: TODAS las secciones se cargan
+  dinámicamente del PLUGINS registry."
+- Comentario de section orchestrators actualizado para reflejar el final
+  state (5 plugins).
+
+### Estado final del Dashboard.tsx (post-PR7)
+
+El shell ahora es **puramente data-driven**:
+- Imports: solo `react`, `@/shared/*`, `@/entities/chat` (para `useSessionsStream`),
+  y `@/app/plugin-registry.generated`.
+- Renderizado: 5 secciones, todas via `<Suspense><Page ... /></Suspense>`
+  donde `Page` viene del registry.
+- Cero código de feature en el shell.
+
+### Verificaciones corridas
+
+```bash
+$ npm run plugins:sync
+[plugins-sync] generated src/app/plugin-registry.generated.ts with 5 plugin(s): agents_admin, catalog, chats, eta, orders
+
+$ npx tsc -b --force
+TypeScript compilation completed
+
+$ npm run arch:cruise
+✔ no dependency violations found (165 modules, 355 dependencies cruised)
+
+$ npm test
+19 archivos, 69 passed, 1 skipped
+
+# Backend (no se tocó, smoke check)
+$ uv run pytest --tb=short -q
+264 passed, 1 skipped
+
+$ uv run python -c "from src.main import _LOADED_PLUGINS; print(_LOADED_PLUGINS)"
+['chats']  # único plugin con api/legacy_routers
+
+$ uv run python -c "from src.run_workers import _discover_workers; print(_discover_workers())"
+[('catalog', 'sync', ...), ('chats', 'sales', ...), ('chats', 'remarketing', ...)]
+```
+
+### Stats finales del refactor (PR0 → PR7)
+
+```
+8 commits (PR0 docs + PR1-7 implementación)
+~146 archivos movidos en total (Python + TS)
+5 plugins migrados
+3 workers Temporal (chats sales, chats remarketing, catalog sync)
+4 routers FastAPI (sales webhook, dashboard, handoff — todos del plugin chats)
+1 frontend shell — pages/Dashboard.tsx (data-driven, sin código de feature)
+0 tests rotos a lo largo del refactor (cada PR cerró con suite verde)
+```
+
+### Status final
+
+✅ **done** — refactor de plugins completo. El sistema es funcionalmente
+equivalente al pre-refactor pero ahora:
+
+- Cada feature vive en su carpeta autocontenida (`plugins/<id>/`).
+- Múltiples agentes/devs pueden trabajar en plugins distintos sin conflicts
+  en archivos centrales (auto-discovery + registry generado).
+- Cada empresa puede habilitar un subset de plugins via `ENABLED_PLUGINS`.
+- Las 3 reglas R1/R2/R3 del contrato se mantienen inviolables.
+
+### Próximo paso recomendado
+
+El refactor base está hecho. Items pendientes (de §10 del contrato y §5
+del plan):
+
+1. Pre-commit hook (husky) que corra `plugins:sync` automáticamente.
+2. `scripts/render-compose.py` que genere `docker-compose.local.yml` y K8s
+   manifests desde los manifests de plugins (hoy se editan a mano).
+3. Toolbar / SectionKey dinámico — el toolbar todavía tiene los keys
+   hardcoded; podría leer `PLUGINS.flatMap(p => p.sections)`.
+4. Smoke test runtime: `docker compose -f hubara_agency/docker-compose.local.yml up -d`
+   y validar que la app funciona end-to-end (no probado en esta sesión).
+5. Documentar en `PLUGIN_ARCHITECTURE.md` que el primer refactor está
+   cerrado (post-mortem corto).
 
 ---
 

@@ -1,0 +1,22 @@
+id: orders
+version: 0.1.0
+display_name: Orders
+description: Tablero kanban de órdenes (estados + filtros + inspector). Plugin frontend-only por ahora — los datos vienen de `entities/order` (shared).
+
+depends_on: []
+
+frontend:
+  entry: ./frontend
+  contributes:
+    sections:
+      - { key: orders, label: Orders, order: 2 }
+    sidebar:
+      - { route: /orders, label: Orders, icon: workflow }
+
+# Sin api: ni agent: por ahora — UI opera con mocks/entities/order. Cuando se
+# necesite CRUD propio o integración con shipping providers, agregar:
+#   api: { python_module: src.plugins.orders.api, prefix: /api/orders, ... }
+#   agent: { workers: [{name: shipping_sync, module: ...}] }
+
+wiring_intents:
+  env_vars_required: []

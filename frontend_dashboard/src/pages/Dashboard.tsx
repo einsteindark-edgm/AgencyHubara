@@ -10,12 +10,9 @@
  *   - Data fetching de dominio (vive en entities/<x>/api.ts).
  *   - UI específica de una feature (vive en features/<x>/ui/).
  *
- * Modo híbrido durante migración:
- *   - `chat` se carga desde `PLUGINS` registry (plugin chats — PR2/PR3).
- *   - `agent` idem (plugin agents_admin — PR4).
- *   - `upload` idem (plugin catalog — PR5).
- *   - `eta` idem (plugin eta — PR6).
- *   - `orders` sigue inline hasta su PR (PR7).
+ * Post-PR7: TODAS las secciones se cargan dinámicamente del `PLUGINS`
+ * registry. El shell ya no importa código de feature directamente; solo
+ * consume el barrel del registry y delega el render a cada plugin.Page.
  */
 
 import { Suspense, useMemo, useState } from "react";
@@ -24,19 +21,11 @@ import { StatusBar, TitleBar, Toolbar, type SectionKey } from "@/shared/ui";
 import { IS_DESKTOP } from "@/shared/lib";
 
 import { useSessionsStream } from "@/entities/chat";
-import { useOrders } from "@/entities/order";
 
-// PR3: consumo dinámico del registry. Si el plugin no está en
-// `ENABLED_PLUGINS`, `Page` es undefined y la sección queda vacía.
+// Post-PR7: consumo dinámico del registry para TODAS las secciones. Si un
+// plugin no está en `ENABLED_PLUGINS`, su `Page` es undefined y la sección
+// queda vacía (degradación graceful).
 import { PLUGINS } from "@/app/plugin-registry.generated";
-
-import {
-  OrdersFilters,
-  filterLabel,
-  useOrderFilters,
-} from "@/features/orders-filters";
-import { OrdersBoard, OrdersHeader } from "@/features/orders-board";
-import { OrdersInspector } from "@/features/orders-inspector";
 
 export function Dashboard() {
   const [section, setSection] = useState<SectionKey>("chat");
@@ -75,6 +64,10 @@ export function Dashboard() {
     () => PLUGINS.find((p) => p.id === "eta")?.Page,
     [],
   );
+  const OrdersPage = useMemo(
+    () => PLUGINS.find((p) => p.id === "orders")?.Page,
+    [],
+  );
 
   return (
     <div className={"stage" + (IS_DESKTOP ? "" : " is-web")}>
@@ -101,13 +94,15 @@ export function Dashboard() {
             </Suspense>
           )}
 
-          {section === "orders" && (
-            <OrdersSection
-              showSidebar={showSidebar}
-              showInspector={showInspector}
-              selectedOrderId={selectedOrderId}
-              setSelectedOrderId={setSelectedOrderId}
-            />
+          {section === "orders" && OrdersPage && (
+            <Suspense fallback={null}>
+              <OrdersPage
+                showSidebar={showSidebar}
+                showInspector={showInspector}
+                selectedOrderId={selectedOrderId}
+                setSelectedOrderId={setSelectedOrderId}
+              />
+            </Suspense>
           )}
 
           {section === "eta" && EtaPage && (
@@ -150,63 +145,15 @@ export function Dashboard() {
   );
 }
 
-/* ── Section orchestrators ───────────────────────────────────────────── */
-
-// Plugin sections (cargadas dinámicamente del registry):
-//   - ChatsSection  → @plugins/chats/frontend          (PR2)
-//   - AgentsSection → @plugins/agents_admin/frontend   (PR4)
-//   - UploadSection → @plugins/catalog/frontend        (PR5)
-//   - EtaSection    → @plugins/eta/frontend            (PR6)
-//
-// Inline secciones (pendientes de migración a plugin):
-//   - OrdersSection (PR7).
-
-interface OrdersSectionProps {
-  showSidebar: boolean;
-  showInspector: boolean;
-  selectedOrderId: string | null;
-  setSelectedOrderId: (id: string) => void;
-}
-
-function OrdersSection({
-  showSidebar,
-  showInspector,
-  selectedOrderId,
-  setSelectedOrderId,
-}: OrdersSectionProps) {
-  const { data: orders = [] } = useOrders();
-  const f = useOrderFilters(orders);
-  const filteredTotal = f.filtered.reduce((a, b) => a + b.total, 0);
-  const selected = orders.find((o) => o.id === selectedOrderId) ?? null;
-
-  return (
-    <>
-      {showSidebar && (
-        <OrdersFilters
-          view={f.view}
-          setView={f.setView}
-          payType={f.payType}
-          setPayType={f.setPayType}
-          orders={orders}
-        />
-      )}
-      <main className="ord-canvas">
-        <OrdersHeader
-          orders={orders}
-          filteredCount={f.filtered.length}
-          filteredTotal={filteredTotal}
-          title={filterLabel(f.view)}
-        />
-        <div className="ord-body">
-          <OrdersBoard
-            orders={f.filtered}
-            selectedId={selectedOrderId}
-            onSelect={setSelectedOrderId}
-          />
-        </div>
-      </main>
-      {showInspector && <OrdersInspector order={selected} />}
-    </>
-  );
-}
+/* Post-PR7: el shell ya no contiene componentes de sección. Cada plugin
+ * exporta su `Page` desde su barrel; el registry generado los expone como
+ * `lazy()` components que el shell renderiza con `<Suspense>`.
+ *
+ * Plugins migrados (orden de PR):
+ *   - ChatsSection  → @plugins/chats/frontend          (PR2)
+ *   - AgentsSection → @plugins/agents_admin/frontend   (PR4)
+ *   - UploadSection → @plugins/catalog/frontend        (PR5)
+ *   - EtaSection    → @plugins/eta/frontend            (PR6)
+ *   - OrdersSection → @plugins/orders/frontend         (PR7)
+ */
 
