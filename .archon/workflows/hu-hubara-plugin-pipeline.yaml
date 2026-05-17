@@ -1,0 +1,818 @@
+name: hu-hubara-plugin-pipeline
+description: |
+  Sub-pipeline del pipeline hubara — corre dentro del worktree de UN
+  plugin específico, secuencial. Lo invoca:
+
+    (a) El orquestador `hu-hubara-pipeline` cuando mode=single_plugin
+        (inline, sin fan-out).
+    (b) El operador manual cuando mode=multi_plugin (fan-out a N
+        terminales, una por plugin).
+    (c) El operador para debug standalone de un plugin.
+
+  Input: "<HU_ID> <plugin_id>" — ej "HU-20260517-143025-add-image-tool chats".
+
+  Trabajo:
+    FASE 0: bootstrap del worktree, checkout hu/<HU_ID>, stage context.
+    FASE 1: skill hubara-feature-planner-archon emite feature-plan-manifest.yaml
+            + tareas/F<NN>-*.md (DAG feature-level dentro del plugin).
+    FASE 2: skill hubara-implementer-archon implementa tareas SECUENCIALES
+            con until_bash determinista (gates: pytest -m architecture +
+            lint-imports + render-compose + npm test + tsc + build +
+            playwright E2E).
+    FASE 3: emite plugin-<plugin_id>-result.yaml + push a hu/<HU_ID>.
+
+  Branch strategy: todos los sub-pipelines (incluso paralelos) commitean
+  al mismo branch hu/<HU_ID> con pull-rebase retry. Conflicts mecánicos
+  resueltos por rebase; conflicts en spinal files los maneja el merger
+  invocado por el orquestador después.
+
+  Smart resume: re-lanzar con HU_ID + plugin_id existente salta feature
+  plan si ya commit, retoma tareas pendientes (lee plugin-results dir).
+
+provider: claude
+model: sonnet
+interactive: false                              # loop interactivo cuando feature-planner pide feedback
+
+worktree:
+  enabled: true
+
+nodes:
+  # ════════════════════════════════════════════════════════════════════
+  # FASE 0 — Bootstrap
+  # ════════════════════════════════════════════════════════════════════
+
+  - id: parse-input
+    bash: |
+      RAW="$ARGUMENTS"
+      HU_ID=$(echo "$RAW" | awk '{print $1}')
+      PLUGIN_ID=$(echo "$RAW" | awk '{print $2}')
+
+      if [ -z "$HU_ID" ] || [ -z "$PLUGIN_ID" ]; then
+        jq -n '{"type":"error","error":"input must be: <HU_ID> <plugin_id>"}'
+        exit 0
+      fi
+
+      if ! echo "$HU_ID" | grep -qE '^HU-[0-9]{8}-[0-9]{4,6}-'; then
+        jq -n --arg h "$HU_ID" '{"type":"error","error":"invalid HU_ID","got":$h}'
+        exit 0
+      fi
+
+      if ! echo "$PLUGIN_ID" | grep -qE '^[a-z][a-z0-9_]*$'; then
+        jq -n --arg p "$PLUGIN_ID" '{"type":"error","error":"invalid plugin_id pattern","got":$p}'
+        exit 0
+      fi
+
+      jq -n \
+        --arg h "$HU_ID" \
+        --arg p "$PLUGIN_ID" \
+        '{
+          type: "ok",
+          hu_id: $h,
+          plugin_id: $p,
+          branch: ("hu/" + $h),
+          plan_dir: ("hubara_agency/.hubara/plans/" + $h),
+          plugin_manifest: ("hubara_agency/.hubara/plans/" + $h + "/plugin-manifest.yaml"),
+          feature_plan_dir: ("hubara_agency/.hubara/plans/" + $h + "/feature-plans/" + $p),
+          results_dir: ("hubara_agency/.hubara/results/" + $h),
+          plugin_result_file: ("hubara_agency/.hubara/results/" + $h + "/plugin-" + $p + "-result.yaml"),
+          feature_results_dir: ("hubara_agency/.hubara/results/" + $h + "/feature-results/" + $p)
+        }'
+
+  - id: cancel-bad-input
+    cancel: "Input inválido: $parse-input.output. Usage: archon workflow run hu-hubara-plugin-pipeline '<HU_ID> <plugin_id>'"
+    when: "$parse-input.output.type == 'error'"
+    depends_on: [parse-input]
+
+  - id: check-prereqs
+    bash: |
+      set -e
+      gh auth status >&2 2>&1 || { echo "FAIL_GH_AUTH"; exit 0; }
+      command -v uv >/dev/null || { echo "FAIL_NO_UV"; exit 0; }
+      command -v npm >/dev/null || { echo "FAIL_NO_NPM"; exit 0; }
+      command -v jq >/dev/null || { echo "FAIL_NO_JQ"; exit 0; }
+      command -v python3 >/dev/null || { echo "FAIL_NO_PYTHON3"; exit 0; }
+      test -f hubara_agency/.hubara/spinal-files.yaml || { echo "FAIL_MISSING_SPINAL_FILES"; exit 0; }
+      test -f hubara_agency/.hubara/project-context.md || { echo "FAIL_MISSING_PROJECT_CONTEXT"; exit 0; }
+      test -f .claude/skills/hubara-feature-planner-archon/SKILL.md || { echo "FAIL_MISSING_FEATURE_PLANNER"; exit 0; }
+      test -f .claude/skills/hubara-implementer-archon/SKILL.md || { echo "FAIL_MISSING_IMPLEMENTER"; exit 0; }
+      test -f .claude/skills/hubara-architecture-guide/SKILL.md || { echo "FAIL_MISSING_GUIDE"; exit 0; }
+      git ls-remote origin HEAD >/dev/null 2>&1 || { echo "FAIL_NO_ORIGIN"; exit 0; }
+      echo "OK"
+    timeout: 60000
+    depends_on: [parse-input]
+    when: "$parse-input.output.type == 'ok'"
+
+  - id: cancel-bad-prereqs
+    cancel: "Pre-requisitos no cumplidos: $check-prereqs.output. Diagnóstico igual que hu-hubara-pipeline.cancel-bad-prereqs."
+    when: "$check-prereqs.output != 'OK'"
+    depends_on: [check-prereqs]
+
+  - id: checkout-branch
+    bash: |
+      set -e
+      BRANCH=$(echo $parse-input.output | jq -r '.branch')
+      HU_ID=$(echo $parse-input.output | jq -r '.hu_id')
+
+      git fetch origin --prune
+
+      # El branch debe existir en origin — fue creado por el orquestador en FASE 0
+      if ! git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+        echo "FAIL_BRANCH_NOT_FOUND: origin/$BRANCH no existe. Lanzá hu-hubara-pipeline '$HU_ID' primero (o pasale una HU URL/path)."
+        exit 1
+      fi
+
+      git checkout -b "$BRANCH" "origin/$BRANCH" || {
+        git checkout "$BRANCH"
+        git pull --ff-only origin "$BRANCH"
+      }
+
+      # Validar que existen los artifacts persisted del orquestador
+      PLAN="hubara_agency/.hubara/plans/${HU_ID}/plugin-manifest.yaml"
+      REFINEMENT="hubara_agency/.hubara/refinements/${HU_ID}-tech.md"
+      if [ ! -f "$PLAN" ]; then
+        echo "FAIL_NO_PLUGIN_MANIFEST: $PLAN no existe. El orquestador hu-hubara-pipeline debe haber completado FASE 2 primero."
+        exit 1
+      fi
+      if [ ! -f "$REFINEMENT" ]; then
+        echo "FAIL_NO_REFINEMENT: $REFINEMENT no existe."
+        exit 1
+      fi
+
+      echo "BRANCH_READY"
+    depends_on: [check-prereqs]
+    when: "$check-prereqs.output == 'OK'"
+
+  - id: cancel-bad-checkout
+    cancel: "$checkout-branch.output"
+    when: "$checkout-branch.output != 'BRANCH_READY'"
+    depends_on: [checkout-branch]
+
+  - id: stage-plugin-context
+    bash: |
+      set -e
+      HU_ID=$(echo $parse-input.output | jq -r '.hu_id')
+      PLUGIN_ID=$(echo $parse-input.output | jq -r '.plugin_id')
+
+      # Stage shared files
+      cp hubara_agency/.hubara/spinal-files.yaml  $ARTIFACTS_DIR/spinal-files.yaml
+      cp hubara_agency/.hubara/project-context.md $ARTIFACTS_DIR/project-context.md
+      cp "hubara_agency/.hubara/plans/${HU_ID}/plugin-manifest.yaml" \
+         $ARTIFACTS_DIR/plugin-manifest.yaml
+      cp "hubara_agency/.hubara/refinements/${HU_ID}-tech.md" \
+         $ARTIFACTS_DIR/hu-refinada.md
+
+      # Extraer el slice de plugin específico (plugin-work.yaml)
+      python3 <<EOF
+      import yaml
+      pm = yaml.safe_load(open('$ARTIFACTS_DIR/plugin-manifest.yaml'))
+      target_plugin = None
+      for p in (pm.get('plugins') or []):
+          if p.get('id') == '$PLUGIN_ID':
+              target_plugin = p
+              break
+      if target_plugin is None:
+          raise SystemExit(
+              "FAIL_PLUGIN_NOT_IN_MANIFEST: '$PLUGIN_ID' no está en plugin-manifest.yaml de '$HU_ID'.\n"
+              f"Plugins declarados: {[p.get('id') for p in (pm.get('plugins') or [])]}"
+          )
+      work = {
+          'hu_id': '$HU_ID',
+          'plugin_id': '$PLUGIN_ID',
+          'work_summary': target_plugin.get('work_summary', ''),
+          'layers': target_plugin.get('layers', []),
+          'template': target_plugin.get('template', 'A'),
+          'affects_layers_detail': target_plugin.get('affects_layers_detail', {}),
+          'affects_shared_files': target_plugin.get('affects_shared_files', []),
+          'estimated_tasks': target_plugin.get('estimated_tasks', 1),
+          'risk': target_plugin.get('risk', 'low'),
+          'depends_on_plugins': target_plugin.get('depends_on', []),
+      }
+      with open('$ARTIFACTS_DIR/plugin-work.yaml', 'w') as f:
+          yaml.safe_dump(work, f, sort_keys=False)
+      print("OK")
+      EOF
+    depends_on: [checkout-branch]
+
+  - id: detect-resume-feature-plan
+    bash: |
+      HU_ID=$(echo $parse-input.output | jq -r '.hu_id')
+      PLUGIN_ID=$(echo $parse-input.output | jq -r '.plugin_id')
+      F="hubara_agency/.hubara/plans/${HU_ID}/feature-plans/${PLUGIN_ID}/feature-plan-manifest.yaml"
+      if [ -f "$F" ]; then
+        cp "$F" $ARTIFACTS_DIR/feature-plan-manifest.yaml
+        # también cp las tareas/
+        TAREAS_DIR="hubara_agency/.hubara/plans/${HU_ID}/feature-plans/${PLUGIN_ID}/tareas"
+        if [ -d "$TAREAS_DIR" ]; then
+          mkdir -p $ARTIFACTS_DIR/tareas
+          cp $TAREAS_DIR/F*.md $ARTIFACTS_DIR/tareas/ 2>/dev/null || true
+        fi
+        echo "RESUMED_FEATURE_PLAN"
+      else
+        echo "NO_RESUME"
+      fi
+    depends_on: [stage-plugin-context]
+
+  # ════════════════════════════════════════════════════════════════════
+  # FASE 1 — Plan feature-level dentro del plugin
+  # ════════════════════════════════════════════════════════════════════
+
+  - id: planificar-feature-auto
+    depends_on: [detect-resume-feature-plan]
+    when: "$detect-resume-feature-plan.output != 'RESUMED_FEATURE_PLAN'"
+    idle_timeout: 600000
+    loop:
+      max_iterations: 2
+      until: FEATURE_PLANNER_OK
+      skills:
+        - hubara-feature-planner-archon
+      gate_message: |
+        Feature plan emitido para plugin $parse-input.output.plugin_id.
+        Revisá:
+          - $ARTIFACTS_DIR/feature-plan-manifest.yaml
+          - $ARTIFACTS_DIR/tareas/F*.md (N task files)
+
+        Si OK, decí "ok" / "aprobado".
+        Si querés ajustar, decí qué (e.g. "splittear F02 en dos").
+      prompt: |
+        Decomponé el trabajo del plugin "$parse-input.output.plugin_id"
+        en un DAG feature-level.
+
+        Inputs:
+          $ARTIFACTS_DIR/plugin-work.yaml   (el slice de tu plugin)
+          $ARTIFACTS_DIR/plugin-manifest.yaml (full plan plugin-level)
+          $ARTIFACTS_DIR/hu-refinada.md     (refinement completo)
+          $ARTIFACTS_DIR/spinal-files.yaml
+          $ARTIFACTS_DIR/project-context.md
+
+        Output:
+          $ARTIFACTS_DIR/feature-plan-manifest.yaml
+          $ARTIFACTS_DIR/tareas/F<NN>-<slug>.md (1 por task)
+
+        Aplicá protocolo del skill hubara-feature-planner-archon. Cargá del
+        guide solo las secciones según template del plugin (A/B/C/D — está
+        en plugin-work.yaml).
+
+        Feedback humano si lo hay: $LOOP_USER_INPUT
+
+        Si plan completo + válido:
+          <promise>FEATURE_PLANNER_OK</promise>
+
+  - id: validate-feature-plan
+    bash: |
+      F="$ARTIFACTS_DIR/feature-plan-manifest.yaml"
+      test -f "$F" || { echo "FAIL_NOT_EXISTS"; exit 0; }
+
+      python3 <<EOF
+      import sys, os, yaml
+      d = yaml.safe_load(open('$F'))
+      if not isinstance(d, dict):
+          print('FAIL_NOT_DICT'); sys.exit(0)
+      mode = d.get('mode')
+      if mode == 'blocked':
+          print('PASS_BLOCKED'); sys.exit(0)
+      tasks = d.get('tasks') or []
+      if not isinstance(tasks, list) or len(tasks) < 1:
+          print('FAIL_NO_TASKS'); sys.exit(0)
+      if len(tasks) > 12:
+          print('FAIL_TOO_MANY_TASKS:', len(tasks)); sys.exit(0)
+      # Cada task con file existente
+      tareas_dir = '$ARTIFACTS_DIR/tareas'
+      for t in tasks:
+          tid = t.get('id')
+          if not tid:
+              print('FAIL_TASK_NO_ID'); sys.exit(0)
+          if not tid.startswith('F') or not tid[1:].isdigit():
+              print('FAIL_BAD_TASK_ID:', tid); sys.exit(0)
+          # Buscar tareas/F<NN>-*.md
+          matches = [f for f in os.listdir(tareas_dir) if f.startswith(tid + '-')]
+          if not matches:
+              print(f'FAIL_MISSING_TASK_FILE_{tid}'); sys.exit(0)
+      print('PASS')
+      EOF
+    depends_on: [planificar-feature-auto, detect-resume-feature-plan]
+    trigger_rule: all_done
+
+  - id: cancel-bad-feature-plan
+    cancel: |
+      Feature plan validation FAILED ($validate-feature-plan.output) en plugin $parse-input.output.plugin_id.
+
+      Opciones para retomar:
+        (a) Edití el plugin-manifest.yaml a mano para clarificar el work_summary,
+            commit, re-lanzá.
+        (b) Edití el feature-plan a mano en hubara_agency/.hubara/plans/<HU_ID>/feature-plans/<plugin_id>/,
+            commit, re-lanzá (smart-resume salta FASE 1).
+    when: "!($validate-feature-plan.output =~ /^PASS/)"
+    depends_on: [validate-feature-plan]
+
+  - id: commit-feature-plan
+    bash: |
+      set -e
+      HU_ID=$(echo $parse-input.output | jq -r '.hu_id')
+      PLUGIN_ID=$(echo $parse-input.output | jq -r '.plugin_id')
+      BRANCH=$(echo $parse-input.output | jq -r '.branch')
+
+      DIR="hubara_agency/.hubara/plans/${HU_ID}/feature-plans/${PLUGIN_ID}"
+      mkdir -p "$DIR/tareas"
+      cp $ARTIFACTS_DIR/feature-plan-manifest.yaml "$DIR/feature-plan-manifest.yaml"
+      cp $ARTIFACTS_DIR/tareas/F*.md "$DIR/tareas/" 2>/dev/null || true
+
+      N=$(ls "$DIR/tareas/" 2>/dev/null | wc -l | tr -d ' ')
+
+      git add "$DIR"
+      if ! git diff --staged --quiet; then
+        git commit -m "${HU_ID} [${PLUGIN_ID}]: feature plan (auto, ${N} tareas)"
+        # Push con pull-rebase retry (concurrencia con sub-pipelines paralelos)
+        git push origin "$BRANCH" 2>&1 | tail -3 >&2
+        if [ ${PIPESTATUS[0]} -ne 0 ]; then
+          echo "push falló, intentando pull --rebase + retry" >&2
+          git pull --rebase origin "$BRANCH" 2>&1 | tail -3 >&2 || true
+          git push origin "$BRANCH" 2>&1 | tail -3 >&2 || \
+            echo "WARN: push falló dos veces — commit local, no en origin" >&2
+        fi
+        echo "committed_${N}"
+      else
+        echo "no_changes"
+      fi
+    when: "$validate-feature-plan.output =~ /^PASS/"
+    depends_on: [validate-feature-plan]
+
+  # Pre-warm uv venv (igual que hu-frontend-pipeline)
+  - id: prewarm-uv-venv
+    bash: |
+      if [ -d hubara_agency ]; then
+        cd hubara_agency && uv sync 2>&1 | tail -10 || echo "uv sync warnings — gate retry"
+      fi
+      echo "ok"
+    timeout: 600000
+    depends_on: [commit-feature-plan]
+    trigger_rule: all_done
+
+  # ════════════════════════════════════════════════════════════════════
+  # FASE 2 — Implementar secuencial dentro del plugin
+  # ════════════════════════════════════════════════════════════════════
+  # El AI escribe código. Las git operations + gates determinísticos las
+  # hace until_bash después de cada iteración.
+
+  - id: implementar-secuencial
+    depends_on: [commit-feature-plan, prewarm-uv-venv]
+    when: "$validate-feature-plan.output == 'PASS'"
+    trigger_rule: all_done
+    idle_timeout: 1800000
+    loop:
+      max_iterations: 50                        # margen para hasta ~12 tasks con retries
+      until: NEVER_AI_SIGNAL                    # until_bash decide cuándo parar
+      fresh_context: true
+      skills:
+        - hubara-implementer-archon
+      until_bash: |
+        set +e
+
+        HU_ID=$(echo $parse-input.output | jq -r '.hu_id')
+        PLUGIN_ID=$(echo $parse-input.output | jq -r '.plugin_id')
+        BRANCH=$(echo $parse-input.output | jq -r '.branch')
+        FEATURE_PLAN_DIR="hubara_agency/.hubara/plans/${HU_ID}/feature-plans/${PLUGIN_ID}"
+        RESULTS_DIR="hubara_agency/.hubara/results/${HU_ID}/feature-results/${PLUGIN_ID}"
+        mkdir -p "$RESULTS_DIR"
+
+        # Limpieza defensiva: result.yaml stale (sin commit en branch) → borrar
+        if [ -d "$RESULTS_DIR" ]; then
+          for stale_f in "$RESULTS_DIR"/F*-result.yaml; do
+            [ -e "$stale_f" ] || continue
+            stale_name=$(basename "$stale_f")
+            STALE_TID="${stale_name%-result.yaml}"
+            if ! git log --oneline -200 2>/dev/null | grep -Fq "${HU_ID} [${PLUGIN_ID}] ${STALE_TID}: status="; then
+              echo "  [until_bash] removiendo stale ${STALE_TID}-result.yaml (sin commit)" >&2
+              rm -f "$stale_f"
+            fi
+          done
+        fi
+
+        yaml_get() {
+          grep -m1 "^${2}:" "$1" 2>/dev/null | awk -F: '{print $2}' | sed 's/^ *//; s/ *$//; s/^["'\'']//; s/["'\'']$//'
+        }
+
+        # ¿El AI escribió task-result.yaml?
+        if [ -f "$ARTIFACTS_DIR/task-result.yaml" ]; then
+          STATUS=$(yaml_get "$ARTIFACTS_DIR/task-result.yaml" status)
+          TASK_ID=$(yaml_get "$ARTIFACTS_DIR/task-result.yaml" task_id)
+
+          if [ -z "$TASK_ID" ]; then
+            echo "ERROR: task-result.yaml sin task_id" >&2
+            rm -f "$ARTIFACTS_DIR/task-result.yaml"
+            exit 1
+          fi
+
+          # ────────────────────────────────────────────────────────────
+          # GATE DETERMINISTA — re-corremos los gates aunque el AI haya
+          # dicho passed. El AI puede mentir / olvidar / silenciar.
+          # ────────────────────────────────────────────────────────────
+          if [ "$STATUS" = "passed" ]; then
+            echo "=== Gate determinista (${TASK_ID}) ===" >&2
+            GATE_LOG="$ARTIFACTS_DIR/test-failures.md"
+            : > "$GATE_LOG"
+            {
+              echo "# Gate determinista — ${TASK_ID}"
+              echo "# Corrido por until_bash después de que AI reportó passed."
+              echo "# Si AI mintió, este archivo lo prueba. Arreglá los errores debajo."
+              echo ""
+            } > "$GATE_LOG"
+            GATE_OK=1
+
+            # Determinar qué gates correr según files modificados por la task
+            FILES_TOUCHED=$(grep -E '^  - (hubara_agency|frontend_dashboard)/' "$ARTIFACTS_DIR/task-result.yaml" | awk '{print $2}' || true)
+            TOUCHED_BACKEND=0
+            TOUCHED_FRONTEND=0
+            TOUCHED_MANIFEST=0
+            TOUCHED_UI=0
+            echo "$FILES_TOUCHED" | grep -q '^hubara_agency/' && TOUCHED_BACKEND=1
+            echo "$FILES_TOUCHED" | grep -q '^frontend_dashboard/' && TOUCHED_FRONTEND=1
+            echo "$FILES_TOUCHED" | grep -qE 'plugin\.yaml$' && TOUCHED_MANIFEST=1
+            echo "$FILES_TOUCHED" | grep -qE 'frontend_dashboard/src/(pages|plugins/[^/]+/frontend|features|entities)/' && TOUCHED_UI=1
+
+            # Backend gates (siempre que haya tocado backend)
+            if [ $TOUCHED_BACKEND -eq 1 ]; then
+              for cmd in "uv run pytest -q --tb=short" "uv run pytest -m architecture --tb=short" "uv run lint-imports"; do
+                echo "" >> "$GATE_LOG"
+                echo "=== \$ cd hubara_agency && $cmd ===" >> "$GATE_LOG"
+                ( cd hubara_agency && eval "$cmd" ) >> "$GATE_LOG" 2>&1
+                RC=$?
+                echo "exit_code=$RC" >> "$GATE_LOG"
+                if [ $RC -ne 0 ]; then
+                  GATE_OK=0
+                  echo "  [GATE backend] $cmd FAILED (exit $RC)" >&2
+                else
+                  echo "  [GATE backend] $cmd OK" >&2
+                fi
+              done
+            fi
+
+            # Render-compose check (si tocó manifest)
+            if [ $TOUCHED_MANIFEST -eq 1 ]; then
+              echo "" >> "$GATE_LOG"
+              echo "=== \$ render-compose drift check ===" >> "$GATE_LOG"
+              ( cd hubara_agency && uv run python scripts/render-compose.py && \
+                git diff --exit-code docker-compose.local.yml ) >> "$GATE_LOG" 2>&1
+              RC=$?
+              echo "exit_code=$RC" >> "$GATE_LOG"
+              if [ $RC -ne 0 ]; then
+                GATE_OK=0
+                echo "  [GATE render-compose] FAILED (drift). Fix: cd hubara_agency && uv run python scripts/render-compose.py && commit." >&2
+              fi
+            fi
+
+            # Frontend gates (si tocó frontend)
+            if [ $TOUCHED_FRONTEND -eq 1 ]; then
+              for cmd in "npm test -- --run" "npm run test:arch" "npx tsc -b" "npm run build"; do
+                echo "" >> "$GATE_LOG"
+                echo "=== \$ cd frontend_dashboard && $cmd ===" >> "$GATE_LOG"
+                ( cd frontend_dashboard && eval "$cmd" ) >> "$GATE_LOG" 2>&1
+                RC=$?
+                echo "exit_code=$RC" >> "$GATE_LOG"
+                if [ $RC -ne 0 ]; then
+                  GATE_OK=0
+                  echo "  [GATE frontend] $cmd FAILED (exit $RC)" >&2
+                fi
+              done
+            fi
+
+            # Playwright E2E con FastAPI background (si tocó UI)
+            if [ $GATE_OK -eq 1 ] && [ $TOUCHED_UI -eq 1 ]; then
+              echo "" >> "$GATE_LOG"
+              echo "=== \$ Playwright E2E (with FastAPI backend) ===" >> "$GATE_LOG"
+
+              EVIDENCE_LOG="$ARTIFACTS_DIR/playwright-evidence-${TASK_ID}.log"
+              UVICORN_LOG="$ARTIFACTS_DIR/.uvicorn-${TASK_ID}.log"
+
+              # Random free port
+              UVICORN_PORT=$(python3 -c "import socket; s=socket.socket(); s.bind(('127.0.0.1',0)); print(s.getsockname()[1]); s.close()" 2>/dev/null)
+              [ -z "$UVICORN_PORT" ] && UVICORN_PORT=8000
+              echo "  [GATE] FastAPI port = $UVICORN_PORT" >&2
+
+              ( cd hubara_agency && UVICORN_PORT=$UVICORN_PORT uv run python run_api.py > "$UVICORN_LOG" 2>&1 ) &
+              UVICORN_PID=$!
+              trap "kill $UVICORN_PID 2>/dev/null; pkill -f 'run_api.py' 2>/dev/null; true" EXIT
+
+              # Wait for liveness probe (180s para tolerar cold uv sync)
+              UVICORN_READY=0
+              for i in $(seq 1 180); do
+                HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$UVICORN_PORT/" 2>/dev/null || echo "000")
+                if [ "$HTTP_CODE" = "200" ]; then
+                  UVICORN_READY=1
+                  echo "  [GATE] FastAPI ready in ${i}s" >&2
+                  break
+                fi
+                sleep 1
+              done
+
+              if [ $UVICORN_READY -eq 0 ]; then
+                echo "  [GATE] Playwright SKIPPED — FastAPI no arrancó" >&2
+                tail -20 "$UVICORN_LOG" >> "$GATE_LOG" 2>/dev/null || true
+                GATE_OK=0
+              else
+                ( cd frontend_dashboard && set -o pipefail && \
+                  VITE_API_URL="http://127.0.0.1:$UVICORN_PORT" \
+                  API_URL="http://127.0.0.1:$UVICORN_PORT" \
+                  npx playwright test --reporter=line 2>&1 | tee -a "$GATE_LOG" ) > /dev/null
+                PW_RC=$?
+                echo "exit_code=$PW_RC" >> "$GATE_LOG"
+                if [ "$PW_RC" -ne 0 ]; then
+                  GATE_OK=0
+                  echo "  [GATE Playwright] FAILED (exit $PW_RC)" >&2
+                else
+                  echo "  [GATE Playwright] OK" >&2
+                fi
+
+                # Extract evidence
+                awk '
+                  /=== \$ *Playwright E2E/ { capture=1; print; next }
+                  capture && /^exit_code=/ { print; capture=0; exit }
+                  capture { print }
+                ' "$GATE_LOG" > "$EVIDENCE_LOG" 2>/dev/null || true
+              fi
+
+              kill $UVICORN_PID 2>/dev/null || true
+              pkill -f "run_api.py" 2>/dev/null || true
+              wait $UVICORN_PID 2>/dev/null || true
+              trap - EXIT
+            fi
+
+            if [ $GATE_OK -eq 0 ]; then
+              DET_RETRY_FILE="$ARTIFACTS_DIR/det-retries-${TASK_ID}.count"
+              DET_RETRIES=$(cat "$DET_RETRY_FILE" 2>/dev/null || echo 0)
+              MAX_DET_RETRIES=2
+
+              if [ "$DET_RETRIES" -lt "$MAX_DET_RETRIES" ]; then
+                NEW_DET=$((DET_RETRIES + 1))
+                echo "$NEW_DET" > "$DET_RETRY_FILE"
+                echo "  [GATE] det-retry ${NEW_DET}/${MAX_DET_RETRIES} — AI re-implementa" >&2
+
+                # Limpiar marcadores: tarea vuelve a pending
+                rm -f "$ARTIFACTS_DIR/task-result.yaml"
+                rm -f "$ARTIFACTS_DIR/task.md"
+                exit 1   # loop continúa
+              fi
+
+              # Retries agotados → permanent failure
+              echo "  [GATE] retries agotados (${DET_RETRIES}/${MAX_DET_RETRIES}). Permanent failure." >&2
+              sed -i.bak 's/^status: *passed/status: blocked/' "$ARTIFACTS_DIR/task-result.yaml"
+              rm -f "$ARTIFACTS_DIR/task-result.yaml.bak"
+              grep -q '^blocked_reason:' "$ARTIFACTS_DIR/task-result.yaml" || \
+                echo "blocked_reason: deterministic_validation_failed" >> "$ARTIFACTS_DIR/task-result.yaml"
+              STATUS="blocked"
+              SHOULD_COMMIT_BROKEN_CODE=0
+            else
+              rm -f "$ARTIFACTS_DIR/det-retries-${TASK_ID}.count"
+              echo "  [GATE] todos los comandos OK — proceeding al commit" >&2
+            fi
+          fi
+
+          # Persistir result.yaml al repo
+          cp "$ARTIFACTS_DIR/task-result.yaml" "${RESULTS_DIR}/${TASK_ID}-result.yaml"
+
+          # Si gate agotó retries, code en src/ está broken — revertir
+          if [ "${SHOULD_COMMIT_BROKEN_CODE:-1}" = "0" ]; then
+            git checkout HEAD -- hubara_agency/src frontend_dashboard/src 2>/dev/null || true
+            echo "  [GATE] src/ revertido — branch limpio" >&2
+          fi
+
+          # Stage relevant files
+          git add hubara_agency/src 2>/dev/null || true
+          git add frontend_dashboard/src 2>/dev/null || true
+          git add hubara_agency/k8s 2>/dev/null || true
+          git add hubara_agency/docker-compose.local.yml 2>/dev/null || true
+          git add hubara_agency/.hubara 2>/dev/null || true
+          git add frontend_dashboard/src/plugins 2>/dev/null || true
+          git add "$RESULTS_DIR/${TASK_ID}-result.yaml" 2>/dev/null || true
+
+          # Reset paths que NO van al commit
+          git reset HEAD frontend_dashboard/node_modules 2>/dev/null || true
+          git reset HEAD frontend_dashboard/dist 2>/dev/null || true
+          git reset HEAD frontend_dashboard/.vite 2>/dev/null || true
+          git reset HEAD frontend_dashboard/coverage 2>/dev/null || true
+          git reset HEAD frontend_dashboard/package-lock.json 2>/dev/null || true
+          git reset HEAD hubara_agency/.venv 2>/dev/null || true
+
+          if ! git diff --staged --quiet; then
+            git commit -m "${HU_ID} [${PLUGIN_ID}] ${TASK_ID}: status=${STATUS} (auto)"
+            git push origin "$BRANCH" > /tmp/push-$$.log 2>&1
+            PUSH_RC=$?
+            tail -5 /tmp/push-$$.log >&2 || true
+            if [ "$PUSH_RC" -ne 0 ]; then
+              echo "push falló, pull --rebase + retry" >&2
+              git pull --rebase origin "$BRANCH" 2>&1 | tail -5 >&2 || true
+              git push origin "$BRANCH" 2>&1 | tail -5 >&2 || \
+                echo "WARN: push falló dos veces — commit local, no en origin" >&2
+            fi
+            rm -f /tmp/push-$$.log
+          fi
+
+          # Si status != passed, decidir transient retry vs permanent failure
+          if [ "$STATUS" != "passed" ]; then
+            BR=$(yaml_get "$ARTIFACTS_DIR/task-result.yaml" blocked_reason)
+
+            IS_TRANSIENT=false
+            case "$BR" in
+              command_timeout|regression) IS_TRANSIENT=true ;;
+            esac
+
+            RETRY_FILE="$ARTIFACTS_DIR/retries-${TASK_ID}.count"
+            RETRIES=$(cat "$RETRY_FILE" 2>/dev/null || echo 0)
+            MAX_RETRIES=1
+
+            if [ "$IS_TRANSIENT" = "true" ] && [ "$RETRIES" -lt "$MAX_RETRIES" ]; then
+              NEW_RETRIES=$((RETRIES + 1))
+              echo "$NEW_RETRIES" > "$RETRY_FILE"
+              rm -f "${RESULTS_DIR}/${TASK_ID}-result.yaml"
+              git checkout HEAD -- hubara_agency/src frontend_dashboard/src 2>/dev/null || true
+              echo "TASK ${TASK_ID} ${STATUS}/${BR}: AUTO-RETRY ${NEW_RETRIES}/${MAX_RETRIES}" >&2
+              rm -f "$ARTIFACTS_DIR/task-result.yaml" "$ARTIFACTS_DIR/task.md"
+              exit 1
+            fi
+
+            # Permanent failure
+            cat > "$ARTIFACTS_DIR/pipeline-error.yaml" <<EOF
+        phase: implementing
+        plugin_id: ${PLUGIN_ID}
+        failed_task: ${TASK_ID}
+        failed_status: ${STATUS}
+        blocked_reason: ${BR:-unknown}
+        retries_attempted: ${RETRIES}/${MAX_RETRIES}
+        branch: ${BRANCH}
+        EOF
+            echo "TASK ${TASK_ID} PERMANENT FAILURE (${STATUS}/${BR})" >&2
+            exit 0
+          fi
+
+          # Limpiar artifacts para próxima iteración
+          rm -f "$ARTIFACTS_DIR/retries-${TASK_ID}.count" 2>/dev/null || true
+          rm -f "$ARTIFACTS_DIR/task-result.yaml"
+          rm -f "$ARTIFACTS_DIR/task.md"
+        fi
+
+        # Check: ¿todas las tasks done?
+        TOTAL=$(grep -cE '^  - id: F[0-9]+' "$FEATURE_PLAN_DIR/feature-plan-manifest.yaml" 2>/dev/null)
+        TOTAL=${TOTAL:-0}
+        PASSED=$(find "$RESULTS_DIR" -name 'F*-result.yaml' -exec grep -l '^status: passed' {} + 2>/dev/null | wc -l | tr -d ' ')
+        PASSED=${PASSED:-0}
+        echo "Progreso plugin ${PLUGIN_ID}: ${PASSED}/${TOTAL}" >&2
+
+        if [ "$PASSED" -ge "$TOTAL" ] && [ "$TOTAL" -gt 0 ]; then
+          echo "ALL TASKS DONE para plugin ${PLUGIN_ID}" >&2
+          exit 0
+        fi
+
+        exit 1   # loop continúa
+      prompt: |
+        SOLO escribís código. Las git operations + gates las hace `until_bash`
+        después de tu iteración.
+
+        Setup:
+          HU_ID=$(echo '$parse-input.output' | jq -r '.hu_id')
+          PLUGIN_ID=$(echo '$parse-input.output' | jq -r '.plugin_id')
+          FEATURE_PLAN_DIR="hubara_agency/.hubara/plans/${HU_ID}/feature-plans/${PLUGIN_ID}"
+          RESULTS_DIR="hubara_agency/.hubara/results/${HU_ID}/feature-results/${PLUGIN_ID}"
+
+        Paso A0 — Si existe $ARTIFACTS_DIR/test-failures.md:
+          Leelo COMPLETO. Es el output del gate determinista en la iter
+          anterior. Tu task-result.yaml dijo passed pero el gate falló.
+          Estás iterando la MISMA tarea para fixear. PROHIBIDO editar files
+          architecture-protected (§5.4 del SKILL hubara-implementer-archon).
+
+        Paso A — Encontrar próxima task pendiente:
+          Iterá parallel_batches[] del feature-plan-manifest.yaml en orden.
+          Dentro de cada batch, iterá tasks[] por F-id ascendente. La primera
+          task cuyo result.yaml NO existe en $RESULTS_DIR (o no tiene
+          status:passed) es la próxima.
+
+          Si NO hay task pendiente, NO escribas task-result.yaml. until_bash
+          detectará que TOTAL==PASSED y terminará.
+
+        Paso B — Implementar la task:
+          1. Cargar inputs:
+             cp "$FEATURE_PLAN_DIR/feature-plan-manifest.yaml" "$ARTIFACTS_DIR/plan-manifest.yaml"
+             cp "$FEATURE_PLAN_DIR/tareas/${TASK_ID}-"*.md "$ARTIFACTS_DIR/task.md"
+             (hu-refinada.md y plugin-manifest.yaml ya stageados en FASE 0)
+          2. Cargar del guide según affects_layers de tu task (ver §1 del SKILL).
+          3. Aplicar protocolo del skill hubara-implementer-archon:
+             - escribir código en hubara_agency/src/ y/o frontend_dashboard/src/
+             - correr §10 verification commands
+             - escribir $ARTIFACTS_DIR/task-result.yaml con status + wiring_intents
+
+        Paso C — NO commit / push / git add. until_bash se encarga.
+
+        Paso D — Si task falló, igual escribí task-result.yaml con status.
+          until_bash detecta y maneja retry / permanent failure.
+
+        No emitas <promise> — until_bash termina el loop con exit 0.
+
+  # ════════════════════════════════════════════════════════════════════
+  # FASE 3 — Reporte de retorno al orquestador
+  # ════════════════════════════════════════════════════════════════════
+
+  - id: check-pipeline-error
+    bash: |
+      if [ -f $ARTIFACTS_DIR/pipeline-error.yaml ]; then
+        cat $ARTIFACTS_DIR/pipeline-error.yaml >&2
+        echo "HAS_ERROR"
+      else
+        echo "OK"
+      fi
+    depends_on: [implementar-secuencial]
+    trigger_rule: all_done
+
+  - id: write-plugin-result
+    bash: |
+      set -e
+      HU_ID=$(echo $parse-input.output | jq -r '.hu_id')
+      PLUGIN_ID=$(echo $parse-input.output | jq -r '.plugin_id')
+      BRANCH=$(echo $parse-input.output | jq -r '.branch')
+      RESULTS_DIR="hubara_agency/.hubara/results/${HU_ID}"
+      FEATURE_RDIR="${RESULTS_DIR}/feature-results/${PLUGIN_ID}"
+      PLUGIN_RFILE="${RESULTS_DIR}/plugin-${PLUGIN_ID}-result.yaml"
+
+      mkdir -p "$RESULTS_DIR"
+
+      # Agregar status global del plugin
+      ALL_PASSED=true
+      FAILED_TASKS=()
+      TOTAL=0
+      PASSED=0
+      if [ -d "$FEATURE_RDIR" ]; then
+        for f in "$FEATURE_RDIR"/F*-result.yaml; do
+          [ -f "$f" ] || continue
+          TOTAL=$((TOTAL + 1))
+          S=$(grep '^status:' "$f" | awk '{print $2}')
+          if [ "$S" = "passed" ]; then
+            PASSED=$((PASSED + 1))
+          else
+            ALL_PASSED=false
+            FAILED_TASKS+=("$(basename $f .yaml)")
+          fi
+        done
+      fi
+
+      cat > "$PLUGIN_RFILE" <<EOF
+      version: 1
+      hu_id: ${HU_ID}
+      plugin_id: ${PLUGIN_ID}
+      pipeline: hu-hubara-plugin-pipeline
+      date: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+      status: $([ "$ALL_PASSED" = "true" ] && [ "$TOTAL" -gt 0 ] && echo "passed" || echo "failed")
+      feature_tasks_total: ${TOTAL}
+      feature_tasks_passed: ${PASSED}
+      failed_tasks:
+      EOF
+      for t in "${FAILED_TASKS[@]}"; do
+        echo "  - ${t}" >> "$PLUGIN_RFILE"
+      done
+
+      git add "$RESULTS_DIR/"
+      if ! git diff --staged --quiet; then
+        git commit -m "${HU_ID} [${PLUGIN_ID}]: plugin result.yaml"
+        git push origin "$BRANCH" 2>&1 | tail -3 >&2 || {
+          git pull --rebase origin "$BRANCH" 2>&1 | tail -3 >&2 || true
+          git push origin "$BRANCH" 2>&1 | tail -3 >&2 || true
+        }
+      fi
+      echo "plugin_result_committed status=$([ "$ALL_PASSED" = "true" ] && [ "$TOTAL" -gt 0 ] && echo "passed" || echo "failed") tasks=$PASSED/$TOTAL"
+    depends_on: [check-pipeline-error]
+    trigger_rule: all_done
+
+  - id: print-summary
+    bash: |
+      HU_ID=$(echo $parse-input.output | jq -r '.hu_id')
+      PLUGIN_ID=$(echo $parse-input.output | jq -r '.plugin_id')
+      PLUGIN_RFILE="hubara_agency/.hubara/results/${HU_ID}/plugin-${PLUGIN_ID}-result.yaml"
+      RESULT_STATUS="unknown"
+      if [ -f "$PLUGIN_RFILE" ]; then
+        RESULT_STATUS=$(grep '^status:' "$PLUGIN_RFILE" | awk '{print $2}')
+      fi
+
+      cat <<EOF
+
+      ╔════════════════════════════════════════════════════════════════════════╗
+      ║ Sub-pipeline plugin completo                                            ║
+      ║                                                                        ║
+      ║ HU id:      ${HU_ID}
+      ║ Plugin:     ${PLUGIN_ID}
+      ║ Status:     ${RESULT_STATUS}
+      ║ Branch:     hu/${HU_ID} (pusheado a origin)
+      ║                                                                        ║
+      ║ Si Status=passed:                                                      ║
+      ║   Tu trabajo terminó. El orquestador hu-hubara-pipeline va a:          ║
+      ║     1. Recoger tu plugin-result.yaml                                   ║
+      ║     2. Si todos los plugins del batch pasaron, avanza a FASE 4 (valid) ║
+      ║     3. Si tu HU tocó shared files, invoca hubara-merger-archon         ║
+      ║   Volvé a la terminal del orquestador y respondé "ready".              ║
+      ║                                                                        ║
+      ║ Si Status=failed:                                                      ║
+      ║   Revisar hubara_agency/.hubara/results/${HU_ID}/feature-results/${PLUGIN_ID}/
+      ║   para ver qué tarea falló. Opciones:                                  ║
+      ║     1. Re-lanzar este sub-pipeline (smart-resume retoma desde failed): ║
+      ║        archon workflow run hu-hubara-plugin-pipeline "${HU_ID} ${PLUGIN_ID}"
+      ║     2. Editar el feature plan a mano, commit, re-lanzar.               ║
+      ║     3. Abandonar este plugin (informar al orquestador).                ║
+      ╚════════════════════════════════════════════════════════════════════════╝
+      EOF
+    depends_on: [write-plugin-result]
+    timeout: 5000
