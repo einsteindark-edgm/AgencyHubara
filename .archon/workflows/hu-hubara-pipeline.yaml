@@ -1,0 +1,763 @@
+name: hu-hubara-pipeline
+description: |
+  Super-pipeline AUTOMATIZADO end-to-end para una HU de AgencyHubara
+  (plugin system: DEHA backend + FSD frontend + Temporal workers).
+  Encadena refinar técnico → planificar plugin-level → implementar (single
+  inline / multi fan-out) → validación final → PR único contra main →
+  trigger review automático.
+
+  **Modelo operacional — dos niveles**:
+    NIVEL A (este pipeline): plugin-level DAG. Decide qué plugins toca
+    la HU y en qué orden. Para single-plugin corre inline; para
+    multi-plugin imprime comandos de fan-out al operador.
+    NIVEL B (sub-pipeline hu-hubara-plugin-pipeline): dentro de cada
+    plugin, feature-level DAG secuencial.
+
+  **Branch strategy**: todos los sub-pipelines commitean al mismo branch
+  `hu/<HU_ID>` con pull-rebase retry. 1 PR consolidado por HU.
+
+  **Smart resume**: re-lanzar el pipeline con un HU_ID existente detecta
+  refinement / plan / per-plugin results ya commiteados y salta esas
+  fases.
+
+  **GitHub Project sync**: opcional, fail-soft. Si
+  `.archon/github-project-config.yaml` existe, actualiza el card en cada
+  fase (Refining → Refined → Planning → Planned → Implementing →
+  Reviewing → Done).
+
+  **Diseño de nodos** (Archon best practices):
+    - Trabajo determinista (cp, mkdir, git, npm, gh, parseo YAML) → `bash:` o `script:`
+    - AI iterativo (refinar, planificar, implementar) → `loop:` con `skills:`
+    - Git operations en implementar → `loop.until_bash` (NO el AI), determinista
+    - Skip de fases ya completas → `when:` sobre output de bash de detección
+    - Fail-fast → `cancel:` con mensaje claro y instrucciones de retomar
+    - Updates al Project que no matan el pipeline → `trigger_rule: all_done`
+
+  **Input** ($USER_MESSAGE / $ARGUMENTS):
+    - URL de GitHub Issue: `https://github.com/<owner>/<repo>/issues/<N>`
+    - Ruta a .md local con la HU
+    - Texto plano de la HU
+    - HU id existente (`HU-YYYYMMDD-HHMMSS-slug`) para RETOMAR (smart-resume)
+
+provider: claude
+model: sonnet
+interactive: false                                # algunos nodos sí son interactive (multi-plugin fan-out)
+
+worktree:
+  enabled: true
+
+nodes:
+  # ════════════════════════════════════════════════════════════════════
+  # FASE 0 — Bootstrap (prereqs + branch + smart-resume detection)
+  # ════════════════════════════════════════════════════════════════════
+
+  - id: check-prereqs
+    bash: |
+      set -e
+      echo "=== Pre-requisitos hubara pipeline ===" >&2
+
+      # gh autenticado
+      gh auth status >&2 2>&1 || { echo "FAIL_GH_AUTH"; exit 0; }
+
+      # Herramientas (orden visibilidad)
+      command -v node   >/dev/null || { echo "FAIL_NO_NODE";   exit 0; }
+      command -v npm    >/dev/null || { echo "FAIL_NO_NPM";    exit 0; }
+      command -v bun    >/dev/null || { echo "FAIL_NO_BUN";    exit 0; }
+      command -v jq     >/dev/null || { echo "FAIL_NO_JQ";     exit 0; }
+      command -v git    >/dev/null || { echo "FAIL_NO_GIT";    exit 0; }
+      command -v curl   >/dev/null || { echo "FAIL_NO_CURL";   exit 0; }
+      command -v uv     >/dev/null || { echo "FAIL_NO_UV";     exit 0; }
+      command -v python3 >/dev/null || { echo "FAIL_NO_PYTHON3"; exit 0; }
+
+      # Convenciones de pipeline committeadas en main
+      for f in \
+        hubara_agency/.hubara/spinal-files.yaml \
+        hubara_agency/.hubara/project-context.md; do
+        test -f "$f" || { echo "FAIL_MISSING_CONVENTION_${f##*/}"; exit 0; }
+      done
+
+      # 5 skills hubara-* en .claude/skills/
+      for s in tech-refiner plugin-planner feature-planner implementer merger; do
+        test -f ".claude/skills/hubara-${s}-archon/SKILL.md" || {
+          echo "FAIL_MISSING_SKILL_${s}"; exit 0;
+        }
+      done
+
+      # Skill arquitectural unificado
+      test -f ".claude/skills/hubara-architecture-guide/SKILL.md" || {
+        echo "FAIL_MISSING_GUIDE_SKILL"; exit 0;
+      }
+
+      # Workflows hubara
+      for w in hu-hubara-pipeline hu-hubara-plugin-pipeline; do
+        test -f ".archon/workflows/${w}.yaml" || {
+          echo "FAIL_MISSING_WORKFLOW_${w}"; exit 0;
+        }
+      done
+
+      # Lock files
+      test -f hubara_agency/uv.lock || { echo "FAIL_NO_UV_LOCK"; exit 0; }
+      test -f frontend_dashboard/package-lock.json || {
+        echo "FAIL_NO_NPM_LOCK"; exit 0;
+      }
+
+      # node_modules — npm ci si falta (no modifica lockfile)
+      if [ ! -d "frontend_dashboard/node_modules" ]; then
+        echo "node_modules ausente — npm ci (puede tardar ~30s)" >&2
+        (cd frontend_dashboard && npm ci --no-audit --no-fund) >&2 || {
+          echo "FAIL_NPM_CI"; exit 0;
+        }
+      fi
+
+      # Verificar remote origin
+      git ls-remote origin HEAD >/dev/null 2>&1 || {
+        echo "FAIL_NO_ORIGIN_OR_NETWORK"; exit 0;
+      }
+
+      # Detectar protected files modificados en main (Archon copia .archon/ al worktree)
+      git fetch origin main >/dev/null 2>&1 || true
+      DIRTY_PROTECTED=$(git diff --name-only origin/main -- \
+        '.archon/' \
+        '.claude/skills/' \
+        'hubara_agency/tests/architecture/' \
+        'hubara_agency/.importlinter' \
+        'frontend_dashboard/src/test/architecture/' \
+        'frontend_dashboard/.dependency-cruiser.cjs' 2>/dev/null \
+        | grep -E '^(\.archon/|\.claude/skills/(hubara|exoclaw|frontend)-|hubara_agency/(tests/architecture/|\.importlinter)|frontend_dashboard/(src/test/architecture/|\.dependency-cruiser\.cjs))' \
+        | head -20)
+      UNTRACKED_PROTECTED=$(git ls-files --others --exclude-standard -- \
+        '.archon/' '.claude/skills/' 2>/dev/null \
+        | grep -E '^(\.archon/|\.claude/skills/(hubara|exoclaw|frontend)-)' \
+        | head -20)
+      if [ -n "$DIRTY_PROTECTED" ] || [ -n "$UNTRACKED_PROTECTED" ]; then
+        {
+          echo "Archivos arquitectura-protegidos modificados/untracked vs origin/main:"
+          [ -n "$DIRTY_PROTECTED" ] && echo "$DIRTY_PROTECTED" | sed 's/^/  M  /'
+          [ -n "$UNTRACKED_PROTECTED" ] && echo "$UNTRACKED_PROTECTED" | sed 's/^/  ?? /'
+        } >&2
+        echo "FAIL_DIRTY_PROTECTED_FILES"
+        exit 0
+      fi
+
+      # Validar scope project si config existe
+      if [ -f .archon/github-project-config.yaml ]; then
+        PN=$(grep '^project_number:' .archon/github-project-config.yaml | awk '{print $2}')
+        PO=$(grep '^project_owner:' .archon/github-project-config.yaml | awk '{print $2}')
+        if [ -n "$PN" ] && [ -n "$PO" ]; then
+          if ! gh project item-list "$PN" --owner "$PO" --format json --limit 1 > /dev/null 2>&1; then
+            echo "FAIL_GH_NO_PROJECT_SCOPE"
+            exit 0
+          fi
+        fi
+      fi
+
+      echo "OK"
+    timeout: 180000
+
+  - id: cancel-bad-prereqs
+    cancel: |
+      Pre-requisitos no cumplidos: $check-prereqs.output
+
+      Diagnóstico:
+        FAIL_GH_AUTH               → gh auth login
+        FAIL_GH_NO_PROJECT_SCOPE   → gh auth refresh -s project,read:project
+        FAIL_NO_NODE/NPM/BUN/JQ/GIT/CURL/UV/PYTHON3
+                                   → brew install <tool>
+                                     (uv: curl -LsSf https://astral.sh/uv/install.sh | sh)
+        FAIL_MISSING_CONVENTION_*  → commit hubara_agency/.hubara/*.{yaml,md} a main
+        FAIL_MISSING_SKILL_*       → commit .claude/skills/hubara-*-archon/ a main
+        FAIL_MISSING_GUIDE_SKILL   → commit .claude/skills/hubara-architecture-guide/ a main
+        FAIL_MISSING_WORKFLOW_*    → commit .archon/workflows/hu-hubara-*.yaml a main
+        FAIL_NO_UV_LOCK            → cd hubara_agency && uv lock
+        FAIL_NO_NPM_LOCK           → cd frontend_dashboard && npm install
+        FAIL_NPM_CI                → revisar stderr de npm
+        FAIL_NO_ORIGIN_OR_NETWORK  → revisar conectividad git
+        FAIL_DIRTY_PROTECTED_FILES → tu main local tiene cambios sin commit en
+                                     `.archon/`, `.claude/skills/hubara-*`,
+                                     tests/architecture/, .importlinter, etc.
+                                     Archon copia esos files al worktree y
+                                     el meta-gate falla al final. Solución:
+                                     git add + commit + push esos archivos a
+                                     main, o git checkout para revertir.
+    when: "$check-prereqs.output != 'OK'"
+    depends_on: [check-prereqs]
+
+  - id: stage-shared-files
+    bash: |
+      set -e
+      cp hubara_agency/.hubara/spinal-files.yaml  $ARTIFACTS_DIR/spinal-files.yaml
+      cp hubara_agency/.hubara/project-context.md $ARTIFACTS_DIR/project-context.md
+      if [ -f .archon/github-project-config.yaml ]; then
+        cp .archon/github-project-config.yaml \
+           $ARTIFACTS_DIR/github-project-config.yaml
+        echo "PROJECT_ENABLED"
+      else
+        echo "PROJECT_DISABLED"
+      fi
+    depends_on: [check-prereqs]
+    when: "$check-prereqs.output == 'OK'"
+
+  - id: resolve-input
+    bash: |
+      set -e
+      RAW="$ARGUMENTS"
+
+      TRIMMED=$(echo "$RAW" | tr -d '[:space:]')
+      if [ -z "$TRIMMED" ]; then
+        jq -n '{"type":"error","error":"empty_input"}'
+        exit 0
+      fi
+
+      if [[ "$RAW" =~ ^https://github\.com/.+/issues/[0-9]+$ ]]; then
+        TYPE="issue_url"
+        if ! gh issue view "$RAW" --json title,body,number,state > $ARTIFACTS_DIR/issue.json 2>/dev/null; then
+          jq -n '{"type":"error","error":"cannot_fetch_issue"}'
+          exit 0
+        fi
+        STATE=$(jq -r '.state' $ARTIFACTS_DIR/issue.json)
+        if [ "$STATE" != "OPEN" ]; then
+          jq -n --arg state "$STATE" '{"type":"error","error":"issue_not_open","state":$state}'
+          exit 0
+        fi
+        TITLE=$(jq -r '.title' $ARTIFACTS_DIR/issue.json)
+        BODY=$(jq -r '.body' $ARTIFACTS_DIR/issue.json)
+        ISSUE_URL="$RAW"
+      elif [[ "$RAW" =~ ^HU-[0-9]{8}-[0-9]{4,6}-.+ ]]; then
+        TYPE="hu_id_resume"
+        ISSUE_URL=""
+        TITLE="RESUME: $RAW"
+        BODY=""
+        HU_ID_OVERRIDE="$RAW"
+      elif [[ -f "$RAW" ]]; then
+        TYPE="local_file"
+        TITLE=$(grep -m1 '^# ' "$RAW" | sed 's/^# //' | head -c 200)
+        TITLE="${TITLE:-$(head -c 100 "$RAW")}"
+        BODY=$(cat "$RAW")
+        ISSUE_URL=""
+      else
+        TYPE="plain_text"
+        TITLE=$(echo "$RAW" | head -c 120)
+        BODY="$RAW"
+        ISSUE_URL=""
+      fi
+
+      jq -n \
+        --arg type "$TYPE" \
+        --arg title "$TITLE" \
+        --arg body "$BODY" \
+        --arg issue_url "$ISSUE_URL" \
+        --arg hu_id_override "${HU_ID_OVERRIDE:-}" \
+        '{type:$type, title:$title, body:$body, issue_url:$issue_url, hu_id_override:$hu_id_override}'
+    depends_on: [stage-shared-files]
+
+  - id: cancel-bad-input
+    cancel: "No pude resolver el input: $resolve-input.output. Si es un Issue, validá que esté abierto: gh issue view <url>."
+    when: "$resolve-input.output.type == 'error'"
+    depends_on: [resolve-input]
+
+  - id: gen-hu-id
+    script: |
+      const input = $resolve-input.output;
+
+      let huId;
+      if (input.type === 'hu_id_resume' && input.hu_id_override) {
+        huId = input.hu_id_override;
+      } else {
+        const slug = (input.title || 'untitled')
+          .normalize('NFKD')
+          .replace(/\p{Diacritic}/gu, '')
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-+|-+$/g, '')
+          .slice(0, 40)
+          .replace(/-$/, '');
+
+        const now = new Date();
+        const iso = now.toISOString();
+        const datePart = iso.slice(0, 10).replace(/-/g, '');
+        const timePart = iso.slice(11, 19).replace(/:/g, '');
+
+        huId = 'HU-' + datePart + '-' + timePart + '-' + (slug || 'no-title');
+      }
+
+      const out = {
+        hu_id: huId,
+        branch: 'hu/' + huId,
+        title: input.title,
+        body: input.body,
+        issue_url: input.issue_url,
+        type: input.type,
+        refinement_path: 'hubara_agency/.hubara/refinements/' + huId + '-tech.md',
+        original_path:   'hubara_agency/.hubara/refinements/' + huId + '-original.md',
+        plan_dir:        'hubara_agency/.hubara/plans/' + huId,
+        results_dir:     'hubara_agency/.hubara/results/' + huId,
+      };
+      console.log(JSON.stringify(out));
+    runtime: bun
+    depends_on: [resolve-input]
+
+  - id: setup-branch
+    bash: |
+      set -e
+      HU_ID=$(echo $gen-hu-id.output | jq -r '.hu_id')
+      BRANCH=$(echo $gen-hu-id.output | jq -r '.branch')
+      TYPE=$(echo $gen-hu-id.output | jq -r '.type')
+      ORIGINAL_PATH=$(echo $gen-hu-id.output | jq -r '.original_path')
+
+      git fetch origin --prune
+
+      # Anti-concurrencia warn: si origin/hu/<id> tiene commit en los últimos 5 min
+      if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+        LAST_COMMIT_TS=$(git log -1 --format=%ct "origin/$BRANCH" 2>/dev/null || echo 0)
+        NOW=$(date -u +%s)
+        AGE=$((NOW - LAST_COMMIT_TS))
+        if [ "$AGE" -lt 300 ]; then
+          echo "WARN: origin/$BRANCH tuvo commit hace ${AGE}s. Otro pipeline puede estar activo." >&2
+          echo "Continuando — si hay race, push fallará al final." >&2
+        fi
+
+        git checkout -b "$BRANCH" "origin/$BRANCH" || {
+          git checkout "$BRANCH"
+          git pull --ff-only origin "$BRANCH"
+        }
+        echo "RESUMED"
+      else
+        git checkout -b "$BRANCH" "origin/main"
+        git push -u origin "$BRANCH"
+        echo "FRESH"
+      fi
+
+      # Persistir HU original.md
+      BODY_CLEAN=$(echo $gen-hu-id.output | jq -r '.body' | grep -v '^HU id:' || true)
+      TITLE=$(echo $gen-hu-id.output | jq -r '.title')
+
+      if [ "$TYPE" = "hu_id_resume" ] && [ -f "$ORIGINAL_PATH" ]; then
+        cp "$ORIGINAL_PATH" $ARTIFACTS_DIR/hu-original.md
+      else
+        {
+          echo "HU id: $HU_ID"
+          echo
+          echo "# $TITLE"
+          echo
+          echo "$BODY_CLEAN"
+        } > $ARTIFACTS_DIR/hu-original.md
+      fi
+    depends_on: [gen-hu-id]
+
+  - id: detect-resume-state
+    bash: |
+      HU_ID=$(echo $gen-hu-id.output | jq -r '.hu_id')
+      REFINEMENT="hubara_agency/.hubara/refinements/${HU_ID}-tech.md"
+      PLUGIN_MANIFEST="hubara_agency/.hubara/plans/${HU_ID}/plugin-manifest.yaml"
+
+      already_refined=false
+      already_planned=false
+      [ -f "$REFINEMENT" ] && already_refined=true
+      [ -f "$PLUGIN_MANIFEST" ] && already_planned=true
+
+      jq -n \
+        --arg ar "$already_refined" \
+        --arg ap "$already_planned" \
+        '{already_refined: $ar, already_planned: $ap}'
+    depends_on: [setup-branch]
+
+  - id: project-set-refining
+    bash: |
+      CFG="$ARTIFACTS_DIR/github-project-config.yaml"
+      [ -f "$CFG" ] || { echo "skipped"; exit 0; }
+      ISSUE_URL=$(echo $gen-hu-id.output | jq -r '.issue_url')
+      [ -z "$ISSUE_URL" ] || [ "$ISSUE_URL" = "null" ] && { echo "skipped"; exit 0; }
+      PN=$(grep '^project_number:' "$CFG" | awk '{print $2}')
+      PO=$(grep '^project_owner:' "$CFG" | awk '{print $2}')
+      PID=$(grep '^project_id:' "$CFG" | awk '{print $2}')
+      FID=$(grep '^status_field_id:' "$CFG" | awk '{print $2}')
+      OID=$(awk '/^status_options:/{f=1; next} f && /^  Refining:/{print $2; exit}' "$CFG")
+      [ -z "$OID" ] && { echo "warn no Refining option"; exit 0; }
+      II=$(gh project item-list "$PN" --owner "$PO" --format json --limit 200 2>/dev/null \
+        | jq -r --arg u "$ISSUE_URL" '.items[] | select(.content.url == $u) | .id' | head -1)
+      [ -z "$II" ] && { echo "warn item not in project"; exit 0; }
+      gh project item-edit --id "$II" --project-id "$PID" \
+        --field-id "$FID" --single-select-option-id "$OID" \
+        > "$ARTIFACTS_DIR/.edit.log" 2>&1
+      [ $? -ne 0 ] && tail -3 "$ARTIFACTS_DIR/.edit.log" || echo "set Refining ok"
+    depends_on: [setup-branch]
+    trigger_rule: all_done
+
+  # ════════════════════════════════════════════════════════════════════
+  # FASE 1 — Refinar técnico (skill hubara-tech-refiner-archon)
+  # ════════════════════════════════════════════════════════════════════
+
+  - id: load-refinement-if-resume
+    bash: |
+      HU_ID=$(echo $gen-hu-id.output | jq -r '.hu_id')
+      F="hubara_agency/.hubara/refinements/${HU_ID}-tech.md"
+      if [ -f "$F" ]; then
+        cp "$F" $ARTIFACTS_DIR/hu-refinada.md
+        echo "RESUMED_REFINEMENT"
+      else
+        echo "NO_RESUME"
+      fi
+    depends_on: [detect-resume-state]
+
+  - id: refinar-auto
+    depends_on: [load-refinement-if-resume, project-set-refining]
+    when: "$detect-resume-state.output.already_refined != 'true'"
+    trigger_rule: all_done
+    idle_timeout: 600000
+    loop:
+      max_iterations: 2                             # 1 try + 1 retry si validate falla
+      until: REFINER_OK
+      skills:
+        - hubara-tech-refiner-archon
+      gate_message: |
+        Refiné la HU técnicamente. Revisá:
+          - $ARTIFACTS_DIR/hu-refinada.md (14 secciones + §0 plugin classification)
+
+        Si está OK, decí "ok" / "aprobada" / "next".
+        Si querés iterar, decí qué cambiar (e.g. "agregá tarea para feature X").
+      prompt: |
+        Refiná técnicamente la HU según el skill hubara-tech-refiner-archon.
+
+        Input:
+          $ARTIFACTS_DIR/hu-original.md
+          $ARTIFACTS_DIR/project-context.md
+          $ARTIFACTS_DIR/spinal-files.yaml
+
+        Output esperado:
+          $ARTIFACTS_DIR/hu-refinada.md con 14 secciones + §0 plugin
+          classification.
+
+        Antes de empezar, cargá del guide arquitectural:
+          Read .claude/skills/hubara-architecture-guide/SKILL.md
+          Read .claude/skills/hubara-architecture-guide/sections/01-general.md
+          Read .claude/skills/hubara-architecture-guide/sections/07-shared-files.md
+
+        Después, según las layers que pinta la HU:
+          - backend: Read sections/02 + sections/03 + sections/04
+          - frontend: Read sections/05 + sections/06
+          - tests/gates: Read sections/08
+          - manifest schema: Read references/manifest-schema.md
+
+        Feedback humano si lo hay: $LOOP_USER_INPUT
+
+        Si el refinement está completo (14 secciones + §0 plugin
+        classification con plugins_affected ≥1 OR mode=no_refinement_needed):
+          <promise>REFINER_OK</promise>
+
+  - id: validate-refinement
+    bash: |
+      F="$ARTIFACTS_DIR/hu-refinada.md"
+      test -f "$F" || { echo "FAIL_NOT_EXISTS"; exit 0; }
+      [ $(wc -c < "$F") -gt 1000 ] || { echo "FAIL_TOO_SHORT_$(wc -c < $F)"; exit 0; }
+
+      # §0 Plugin classification presente
+      grep -qE '^## §0' "$F" || { echo "FAIL_NO_PLUGIN_CLASSIFICATION"; exit 0; }
+      grep -qE '^- \*\*mode:\*\*' "$F" || { echo "FAIL_NO_MODE"; exit 0; }
+
+      # Detectar HU short-form (no_work / blocked)
+      if grep -qE '^- \*\*mode:\*\* `?(no_refinement_needed|blocked)' "$F" 2>/dev/null \
+         || grep -qE 'mode: no_refinement_needed|mode: blocked' "$F" 2>/dev/null; then
+        echo "PASS_NO_WORK"
+        exit 0
+      fi
+
+      # 14 secciones canónicas
+      missing_sections=""
+      for s in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+        grep -qE "^## §${s}" "$F" || missing_sections="${missing_sections} §${s}"
+      done
+      # §15 es opcional (Assumptions made), tolerar si falta solo eso
+      missing_no_15=$(echo "$missing_sections" | sed 's/ §15//' | xargs)
+      [ -z "$missing_no_15" ] || { echo "FAIL_MISSING_SECTIONS:${missing_no_15}"; exit 0; }
+
+      # Architecture-protected files
+      if grep -qE '(\.archon/workflows|\.claude/skills/hubara-|tests/architecture/|\.importlinter|\.dependency-cruiser\.cjs)' "$F" \
+         && ! grep -q 'blocked_reason: requires_architecture_change' "$F"; then
+        # Solo es problema si el refinement los menciona como files a modificar
+        # (no como referencia). Heurística: si aparecen en una tabla de §3.
+        if awk '/^## §3/,/^## §4/' "$F" | grep -qE '(\.archon/workflows|\.claude/skills/hubara-|tests/architecture/|\.importlinter|\.dependency-cruiser\.cjs)'; then
+          echo "FAIL_REFINEMENT_TOUCHES_PROTECTED"
+          exit 0
+        fi
+      fi
+
+      echo "PASS"
+    depends_on: [refinar-auto, load-refinement-if-resume]
+    trigger_rule: all_done
+
+  - id: cancel-bad-refinement
+    cancel: |
+      Refinement validation FAILED ($validate-refinement.output) en branch $gen-hu-id.output.branch.
+
+      Opciones para retomar:
+        (a) Edití manualmente:
+              \$EDITOR hubara_agency/.hubara/refinements/$gen-hu-id.output.hu_id-tech.md
+              git add hubara_agency/.hubara/refinements/
+              git commit -m "<HU_ID>: refinement manual override"
+              git push origin hu/$gen-hu-id.output.hu_id
+              archon workflow run hu-hubara-pipeline "$gen-hu-id.output.hu_id"
+            (smart-resume salta FASE 1 si el refinement ya está committeado)
+        (b) Si la HU pide cambios architecture-protected: ADR + PR separado
+            con label `architecture-change`, mergear, después re-lanzar.
+    when: "$validate-refinement.output != 'PASS' && $validate-refinement.output != 'PASS_NO_WORK'"
+    depends_on: [validate-refinement]
+
+  - id: commit-refinement
+    bash: |
+      set -e
+      HU_ID=$(echo $gen-hu-id.output | jq -r '.hu_id')
+      BRANCH=$(echo $gen-hu-id.output | jq -r '.branch')
+      mkdir -p "hubara_agency/.hubara/refinements"
+      cp $ARTIFACTS_DIR/hu-refinada.md \
+         "hubara_agency/.hubara/refinements/${HU_ID}-tech.md"
+      cp $ARTIFACTS_DIR/hu-original.md \
+         "hubara_agency/.hubara/refinements/${HU_ID}-original.md"
+      git add "hubara_agency/.hubara/refinements/"
+      if ! git diff --staged --quiet; then
+        git commit -m "${HU_ID}: refinement técnico (auto, hubara pipeline)"
+        git push origin "$BRANCH"
+        echo "committed"
+      else
+        echo "no_changes"
+      fi
+    when: "$validate-refinement.output == 'PASS' || $validate-refinement.output == 'PASS_NO_WORK'"
+    depends_on: [validate-refinement]
+
+  - id: project-set-refined
+    bash: |
+      CFG="$ARTIFACTS_DIR/github-project-config.yaml"
+      [ -f "$CFG" ] || { echo "skipped"; exit 0; }
+      ISSUE_URL=$(echo $gen-hu-id.output | jq -r '.issue_url')
+      [ -z "$ISSUE_URL" ] || [ "$ISSUE_URL" = "null" ] && { echo "skipped"; exit 0; }
+      PN=$(grep '^project_number:' "$CFG" | awk '{print $2}')
+      PO=$(grep '^project_owner:' "$CFG" | awk '{print $2}')
+      PID=$(grep '^project_id:' "$CFG" | awk '{print $2}')
+      FID=$(grep '^status_field_id:' "$CFG" | awk '{print $2}')
+      OID=$(awk '/^status_options:/{f=1; next} f && /^  Refined:/{print $2; exit}' "$CFG")
+      [ -z "$OID" ] && exit 0
+      II=$(gh project item-list "$PN" --owner "$PO" --format json --limit 200 2>/dev/null \
+        | jq -r --arg u "$ISSUE_URL" '.items[] | select(.content.url == $u) | .id' | head -1)
+      [ -z "$II" ] && exit 0
+      gh project item-edit --id "$II" --project-id "$PID" \
+        --field-id "$FID" --single-select-option-id "$OID" \
+        > "$ARTIFACTS_DIR/.edit.log" 2>&1
+      [ $? -ne 0 ] && tail -3 "$ARTIFACTS_DIR/.edit.log" || echo "set Refined ok"
+    depends_on: [commit-refinement]
+    trigger_rule: all_done
+
+  # ════════════════════════════════════════════════════════════════════
+  # FASE 2 — Plan plugin-level (skill hubara-plugin-planner-archon)
+  # ════════════════════════════════════════════════════════════════════
+
+  - id: load-plan-if-resume
+    bash: |
+      HU_ID=$(echo $gen-hu-id.output | jq -r '.hu_id')
+      F="hubara_agency/.hubara/plans/${HU_ID}/plugin-manifest.yaml"
+      if [ -f "$F" ]; then
+        cp "$F" $ARTIFACTS_DIR/plugin-manifest.yaml
+        echo "RESUMED_PLAN"
+      else
+        echo "NO_RESUME"
+      fi
+    depends_on: [commit-refinement]
+
+  - id: planificar-auto
+    depends_on: [load-plan-if-resume, project-set-refined]
+    when: "$detect-resume-state.output.already_planned != 'true' && ($validate-refinement.output == 'PASS' || $validate-refinement.output == 'PASS_NO_WORK')"
+    trigger_rule: all_done
+    idle_timeout: 600000
+    loop:
+      max_iterations: 2
+      until: PLANNER_OK
+      skills:
+        - hubara-plugin-planner-archon
+      gate_message: |
+        Plan plugin-level emitido. Revisá:
+          - $ARTIFACTS_DIR/plugin-manifest.yaml (mode + plugins + batches)
+
+        Si está OK, decí "ok" / "aprobado".
+        Si querés ajustar, decí qué (e.g. "splittear plugin X en dos").
+      prompt: |
+        Decomponé la HU refinada en un DAG plugin-level.
+
+        Input:
+          $ARTIFACTS_DIR/hu-refinada.md (con §0 plugin classification)
+          $ARTIFACTS_DIR/plugin-manifest.yaml (versión previa si iter >1)
+          $ARTIFACTS_DIR/spinal-files.yaml
+
+        Output: $ARTIFACTS_DIR/plugin-manifest.yaml con:
+          - mode: single_plugin | multi_plugin | no_work
+          - plugins[]: cada uno con id, layers, action, depends_on,
+            estimated_tasks
+          - plugin_batches[]: topological waves
+          - shared_files_intents[] si requires_merger
+
+        Cargá del guide:
+          Read .claude/skills/hubara-architecture-guide/SKILL.md
+          Read .claude/skills/hubara-architecture-guide/sections/01-general.md
+          Read .claude/skills/hubara-architecture-guide/sections/07-shared-files.md
+          Read .claude/skills/hubara-architecture-guide/references/manifest-schema.md
+
+        Feedback humano si lo hay: $LOOP_USER_INPUT
+
+        Si el plan está completo y válido:
+          <promise>PLANNER_OK</promise>
+
+  - id: validate-plan
+    bash: |
+      M="$ARTIFACTS_DIR/plugin-manifest.yaml"
+      test -f "$M" || { echo "FAIL_NOT_EXISTS"; exit 0; }
+      [ $(wc -c < "$M") -gt 200 ] || { echo "FAIL_TOO_SHORT"; exit 0; }
+
+      python3 -c "
+      import sys, yaml
+      try:
+          d = yaml.safe_load(open('$M'))
+      except yaml.YAMLError as e:
+          print('FAIL_INVALID_YAML:', e); sys.exit(0)
+      if not isinstance(d, dict):
+          print('FAIL_NOT_DICT'); sys.exit(0)
+
+      mode = d.get('mode')
+      if mode not in ('single_plugin', 'multi_plugin', 'no_work', 'blocked'):
+          print('FAIL_BAD_MODE:', mode); sys.exit(0)
+
+      if mode == 'no_work':
+          print('PASS_NO_WORK'); sys.exit(0)
+      if mode == 'blocked':
+          print('PASS_BLOCKED'); sys.exit(0)
+
+      plugins = d.get('plugins') or []
+      if not isinstance(plugins, list) or len(plugins) < 1:
+          print('FAIL_NO_PLUGINS'); sys.exit(0)
+      if len(plugins) > 8:
+          print('FAIL_TOO_MANY_PLUGINS:', len(plugins)); sys.exit(0)
+
+      if mode == 'single_plugin' and len(plugins) != 1:
+          print('FAIL_SINGLE_BUT_MULTIPLE'); sys.exit(0)
+      if mode == 'multi_plugin' and len(plugins) < 2:
+          print('FAIL_MULTI_BUT_SINGLE'); sys.exit(0)
+
+      batches = d.get('plugin_batches') or []
+      if not batches:
+          print('FAIL_NO_BATCHES'); sys.exit(0)
+
+      all_in_batches = set()
+      for b in batches:
+          for p in b.get('plugins') or []:
+              all_in_batches.add(p)
+      declared_ids = set(p.get('id') for p in plugins)
+      if all_in_batches != declared_ids:
+          print('FAIL_BATCH_PLUGINS_MISMATCH'); sys.exit(0)
+
+      print('PASS_' + mode.upper())
+      "
+    depends_on: [planificar-auto, load-plan-if-resume]
+    trigger_rule: all_done
+
+  - id: cancel-bad-plan
+    cancel: |
+      Plan validation FAILED ($validate-plan.output) en branch $gen-hu-id.output.branch.
+
+      Opciones para retomar:
+        (a) Edití el refinement con menos plugins o más detalle, commit, re-lanzar.
+        (b) Edití el plugin-manifest.yaml a mano en
+            hubara_agency/.hubara/plans/$gen-hu-id.output.hu_id/, commit, re-lanzar
+            (bootstrap salta FASE 1 si refinement OK y FASE 2 si plan OK).
+    when: "!($validate-plan.output =~ /^PASS/)"
+    depends_on: [validate-plan]
+
+  - id: commit-plan
+    bash: |
+      set -e
+      HU_ID=$(echo $gen-hu-id.output | jq -r '.hu_id')
+      BRANCH=$(echo $gen-hu-id.output | jq -r '.branch')
+
+      mkdir -p "hubara_agency/.hubara/plans/${HU_ID}"
+      cp $ARTIFACTS_DIR/plugin-manifest.yaml \
+         "hubara_agency/.hubara/plans/${HU_ID}/plugin-manifest.yaml"
+
+      N=$(python3 -c "import yaml; d=yaml.safe_load(open('hubara_agency/.hubara/plans/${HU_ID}/plugin-manifest.yaml')); print(len(d.get('plugins') or []))")
+
+      git add "hubara_agency/.hubara/plans/${HU_ID}/"
+      if ! git diff --staged --quiet; then
+        git commit -m "${HU_ID}: plugin-level plan (auto, ${N} plugins)"
+        git push origin "$BRANCH"
+        echo "committed_${N}"
+      else
+        echo "no_changes"
+      fi
+    when: "$validate-plan.output =~ /^PASS/"
+    depends_on: [validate-plan]
+
+  - id: project-set-planned
+    bash: |
+      CFG="$ARTIFACTS_DIR/github-project-config.yaml"
+      [ -f "$CFG" ] || { echo "skipped"; exit 0; }
+      ISSUE_URL=$(echo $gen-hu-id.output | jq -r '.issue_url')
+      [ -z "$ISSUE_URL" ] || [ "$ISSUE_URL" = "null" ] && { echo "skipped"; exit 0; }
+      PN=$(grep '^project_number:' "$CFG" | awk '{print $2}')
+      PO=$(grep '^project_owner:' "$CFG" | awk '{print $2}')
+      PID=$(grep '^project_id:' "$CFG" | awk '{print $2}')
+      FID=$(grep '^status_field_id:' "$CFG" | awk '{print $2}')
+      OID=$(awk '/^status_options:/{f=1; next} f && /^  Planned:/{print $2; exit}' "$CFG")
+      [ -z "$OID" ] && exit 0
+      II=$(gh project item-list "$PN" --owner "$PO" --format json --limit 200 2>/dev/null \
+        | jq -r --arg u "$ISSUE_URL" '.items[] | select(.content.url == $u) | .id' | head -1)
+      [ -z "$II" ] && exit 0
+      gh project item-edit --id "$II" --project-id "$PID" \
+        --field-id "$FID" --single-select-option-id "$OID" \
+        > "$ARTIFACTS_DIR/.edit.log" 2>&1
+      [ $? -ne 0 ] && tail -3 "$ARTIFACTS_DIR/.edit.log" || echo "set Planned ok"
+    depends_on: [commit-plan]
+    trigger_rule: all_done
+
+  # ════════════════════════════════════════════════════════════════════
+  # FASE 3-5 — Implementación + validación + PR + review
+  # ════════════════════════════════════════════════════════════════════
+  # IMPLEMENTACIÓN PENDIENTE (PR17). En este PR15 solo entregamos FASE 0-2.
+  # El bootstrap + refinement + plan ya funcionan E2E. Para implementar la
+  # HU realmente, todavía hace falta:
+  #   FASE 3: rama-A (single-plugin inline) + rama-B (multi-plugin fan-out)
+  #   FASE 4: validación final consolidada (gates de ambos stacks)
+  #   FASE 5: build-pr-body + create-pr
+  #   FASE 6: trigger-review (lanza review-pr-hubara en background)
+  #
+  # Mientras tanto, este workflow termina después de FASE 2 con un mensaje
+  # para el operador.
+
+  - id: phase3-placeholder
+    bash: |
+      HU_ID=$(echo $gen-hu-id.output | jq -r '.hu_id')
+      MODE=$(python3 -c "
+      import yaml
+      d=yaml.safe_load(open('hubara_agency/.hubara/plans/${HU_ID}/plugin-manifest.yaml'))
+      print(d.get('mode', 'unknown'))
+      " 2>/dev/null || echo "unknown")
+
+      cat <<EOF
+
+      ╔════════════════════════════════════════════════════════════════════════╗
+      ║ ⚠️  Pipeline parcial (PR15) — FASE 0-2 completas, FASE 3-6 pendientes ║
+      ║                                                                        ║
+      ║ HU id:  ${HU_ID}
+      ║ Mode:   ${MODE}
+      ║ Branch: hu/${HU_ID} (pusheado a origin)
+      ║                                                                        ║
+      ║ Artifacts persistidos:                                                 ║
+      ║   - hubara_agency/.hubara/refinements/${HU_ID}-tech.md
+      ║   - hubara_agency/.hubara/plans/${HU_ID}/plugin-manifest.yaml
+      ║                                                                        ║
+      ║ Próximos pasos (manuales hasta PR17):                                  ║
+      ║   1. Lanzá sub-pipelines de plugins (PR16, parcial):                   ║
+      ║      archon workflow run hu-hubara-plugin-pipeline "${HU_ID} <plugin>"
+      ║   2. Esperá que todos terminen y commiteen a hu/${HU_ID}              ║
+      ║   3. Manual: cd hubara_agency && uv run pytest && uv run lint-imports  ║
+      ║   4. Manual: cd frontend_dashboard && npm test && npm run test:arch    ║
+      ║   5. Manual: gh pr create --base main --head hu/${HU_ID}              ║
+      ║                                                                        ║
+      ║ FASE 3-6 completa: ver PR17 (próxima entrega).                         ║
+      ╚════════════════════════════════════════════════════════════════════════╝
+      EOF
+    depends_on: [commit-plan]
+    timeout: 5000
