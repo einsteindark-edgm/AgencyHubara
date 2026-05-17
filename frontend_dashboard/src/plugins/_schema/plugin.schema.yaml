@@ -22,8 +22,12 @@ additionalProperties: false
 properties:
   id:
     type: string
-    description: Identificador único del plugin (matches directory name)
-    pattern: "^[a-z][a-z0-9-]*$"
+    description: |
+      Identificador único del plugin (matches directory name). Convención:
+      snake_case si tiene múltiples palabras (e.g. agents_admin, catalog_sync).
+      Importante: el id se usa también como segmento de import path Python
+      (`src.plugins.<id>`), por lo que NO puede contener guion medio.
+    pattern: "^[a-z][a-z0-9_]*$"
 
   version:
     type: string
@@ -77,6 +81,11 @@ properties:
                 key: { type: string }
                 label: { type: string }
                 order: { type: integer }
+                icon:
+                  type: string
+                  description: |
+                    Nombre del icon en `frontend_dashboard/src/shared/ui/Icon.tsx`.
+                    Si no existe, el Toolbar fallback a `bot` con un warning en consola.
           dashboard_widgets:
             type: array
             items:
@@ -86,23 +95,39 @@ properties:
                 id: { type: string }
                 position: { type: string }
 
-  # ── API REST (consumido por main.py en PR3+) ────────────────────────
+  # ── API REST (consumido por main.py) ────────────────────────────────
+  # Política del loader (ver hubara_agency/src/main.py:_bootstrap_routers):
+  #   - Si `legacy_routers` está presente y no vacío, GANA: cada entry se
+  #     registra con su prefix/tags propios. `python_module` se ignora aunque
+  #     exponga un `router`. Sirve a casos como `chats` donde `api/__init__.py`
+  #     no agrega un router unificado y hay 3 sub-routers con prefijos
+  #     heterogéneos.
+  #   - Si solo `python_module` está y expone `router`, se registra ése con
+  #     el `prefix`/`tags` del manifest (default `/api/<id>`, `[<id>]`).
+  #   - Si `python_module` no expone `router` y no hay `legacy_routers`, el
+  #     plugin no contribuye HTTP — log debug + sigue arrancando.
+  #   - Si hay error de import, fail-fast (el boot rompe).
   api:
     type: object
     additionalProperties: false
     properties:
       python_module:
         type: string
-        description: Módulo Python que exporta `router` (e.g. `src.plugins.chats.api`)
+        description: |
+          Módulo Python que exporta `router` (e.g. `src.plugins.chats.api`).
+          IGNORADO cuando `legacy_routers` está presente (ver política arriba).
       prefix:
         type: string
-        description: Prefijo de URL (e.g. `/api/chats`)
+        description: Prefijo de URL (e.g. `/api/chats`). Solo aplica a `python_module`.
       tags:
         type: array
         items: { type: string }
       legacy_routers:
         type: array
-        description: Routers múltiples para compatibilidad con migraciones (ver chats)
+        description: |
+          Routers múltiples cuando un solo `python_module` no alcanza (caso
+          `chats` con 3 sub-routers de prefijos distintos). Cada entry tiene
+          su propio prefix/tags. GANA sobre `python_module` si ambos están.
         items:
           type: object
           required: [module]
@@ -129,14 +154,78 @@ properties:
         description: Módulo singular con main() — alternativa a `workers`
       workers:
         type: array
-        description: Lista de workers (un plugin puede tener múltiples)
+        description: |
+          Lista de workers Temporal del plugin. Cada entry es la única fuente de
+          verdad para su task queue + deployment (k8s + docker-compose se
+          generan desde aquí — ver scripts/render-compose.py).
         items:
           type: object
-          required: [name, module]
+          required: [name, module, task_queue]
           properties:
-            name: { type: string }
-            module: { type: string }
-            task_queue: { type: string }
+            name:
+              type: string
+              description: Nombre interno del worker dentro del plugin (e.g. "sales").
+            module:
+              type: string
+              description: Python module path del worker (debe exponer `async def main()`).
+            task_queue:
+              type: string
+              description: |
+                Temporal task queue string (e.g. "queue-sales-agent"). El worker
+                escucha aquí; los dispatchers que arrancan workflows en esta
+                queue la leen del manifest via `src.platform.plugin_manifest.get_task_queue`.
+                Convención: prefijo "queue-" + nombre descriptivo.
+              pattern: "^[a-z][a-z0-9-]*$"
+            deployment:
+              type: object
+              description: |
+                Hint para auto-generar el K8s deployment del worker (script
+                pendiente — hoy se mantienen los manifests a mano y un test
+                invariante verifica paridad).
+              additionalProperties: false
+              properties:
+                replicas: { type: integer, minimum: 1 }
+                cpu_request: { type: string }
+                cpu_limit: { type: string }
+                memory_request: { type: string }
+                memory_limit: { type: string }
+                strategy:
+                  type: string
+                  enum: [RollingUpdate, Recreate]
+                  description: Recreate para single-writer (ver catalog).
+                env_secrets:
+                  type: array
+                  description: Lista de env vars que se inyectan desde Secrets de K8s.
+                  items:
+                    type: object
+                    required: [var]
+                    properties:
+                      var: { type: string }
+                      secret: { type: string }
+                      key: { type: string }
+            compose:
+              type: object
+              description: |
+                Hint para auto-generar el service en docker-compose.local.yml
+                (via scripts/render-compose.py). El operador no edita
+                docker-compose.local.yml a mano — se regenera desde aquí.
+              additionalProperties: false
+              properties:
+                env:
+                  type: object
+                  description: Map de env vars → valor (string o "${HOST_VAR}").
+                  additionalProperties:
+                    type: string
+                volumes:
+                  type: array
+                  description: Lista de volumes a montar (formato compose).
+                  items: { type: string }
+                depends_on:
+                  type: array
+                  description: |
+                    Services que este worker requiere up antes de arrancar
+                    (matcheado por nombre exacto del service en docker-compose).
+                  items: { type: string }
       task_queue:
         type: string
         description: Default task queue del modo (opcional)

@@ -22,7 +22,7 @@ delete de producto). Quien debería disparar:
         from src.plugins.catalog.agent.workflows import CatalogSyncWorkflow
         from src.plugins.catalog.agent.contracts import CatalogSyncInput
         from src.platform.catalog.paths import get_snapshot_dir
-        from src.platform.constants import CATALOG_SYNC_QUEUE
+        from src.platform.plugin_manifest import get_task_queue
 
         client = await get_temporal_client()
         handle = await client.start_workflow(
@@ -33,7 +33,7 @@ delete de producto). Quien debería disparar:
                 snapshot_dir=str(get_snapshot_dir()),
             ),
             id=f"catalog-sync-on-demand-{cause}-{int(time.time())}",
-            task_queue=CATALOG_SYNC_QUEUE,
+            task_queue=get_task_queue("catalog", "sync"),
         )
         result = await handle.result()  # opcional: esperar version
 

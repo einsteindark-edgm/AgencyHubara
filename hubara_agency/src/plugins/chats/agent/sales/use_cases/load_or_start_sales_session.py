@@ -50,8 +50,8 @@ from src.platform.constants import (
     ROUTE_HUMANO,
     ROUTE_REMARKETING,
     ROUTE_VENTAS,
-    SALES_QUEUE,
 )
+from src.platform.plugin_manifest import get_task_queue
 from src.plugins.chats.agent.remarketing.workflows.remarketing import (
     RemarketingSessionWorkflow,
 )
@@ -230,7 +230,7 @@ class LoadOrStartSalesSession:
                         runtime_workspace_path=runtime_path,
                     ),
                     id=workflow_id,
-                    task_queue=SALES_QUEUE,
+                    task_queue=get_task_queue("chats", "sales"),
                 )
 
         # 5. Signal del mensaje al workflow seleccionado.

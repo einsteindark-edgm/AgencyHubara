@@ -33,8 +33,10 @@ from exoclaw_temporal.config import (
     WorkspaceConfig,
 )
 
-from src.platform.constants import SALES_QUEUE
+from src.platform.plugin_manifest import get_task_queue
 from src.plugins.chats.agent.sales.contracts import SalesSessionInput
+
+SALES_QUEUE = get_task_queue("chats", "sales")
 from src.plugins.chats.agent.sales.workflows.sales_session import HubaraSalesSessionWorkflow
 
 

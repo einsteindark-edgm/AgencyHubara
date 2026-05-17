@@ -12,7 +12,7 @@ frontend:
   entry: ./frontend
   contributes:
     sections:
-      - { key: chat, label: Chats, order: 1 }
+      - { key: chat, label: Chats, order: 1, icon: chat }
     sidebar:
       - { route: /chats, label: Chats, icon: chat }
 
@@ -37,8 +37,61 @@ api:
 agent:
   python_module: src.plugins.chats.agent
   workers:
-    - { name: sales,       module: src.plugins.chats.workers.sales }
-    - { name: remarketing, module: src.plugins.chats.workers.remarketing }
+    - name: sales
+      module: src.plugins.chats.workers.sales
+      task_queue: queue-sales-agent
+      deployment:
+        replicas: 3                       # high-throughput: cada sesión activa procesa turnos rápido
+        cpu_request: 500m
+        memory_request: 512Mi
+        env_secrets:
+          - { var: DEEPSEEK_API_KEY,        secret: hubara-llm-secret,      key: DEEPSEEK_API_KEY }
+          - { var: WHATSAPP_PHONE_NUMBER_ID, secret: hubara-whatsapp-secret, key: WHATSAPP_PHONE_NUMBER_ID }
+          - { var: WHATSAPP_ACCESS_TOKEN,   secret: hubara-whatsapp-secret, key: WHATSAPP_ACCESS_TOKEN }
+          - { var: WHATSAPP_VERIFY_TOKEN,   secret: hubara-whatsapp-secret, key: WHATSAPP_VERIFY_TOKEN }
+      compose:
+        env:
+          TEMPORAL_URL: temporal:7233
+          API_BASE_LLMLITE: http://litellm:4000
+          WORKSPACE_VAULT_DIR: /app/hubara_vault
+          CATALOG_SNAPSHOT_DIR: /app/hubara_vault/catalog
+          CATALOG_MAX_AGE_MINUTES: "30"
+          DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+          WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID}
+          WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN}
+          WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN}
+        volumes:
+          - hubara-vault-local:/app/hubara_vault
+        depends_on:
+          - temporal
+          - litellm
+
+    - name: remarketing
+      module: src.plugins.chats.workers.remarketing
+      task_queue: queue-remarketing-agent
+      deployment:
+        replicas: 1                       # low-throughput: workflows long-lived que duermen días
+        cpu_request: 250m
+        memory_request: 384Mi
+        env_secrets:
+          - { var: DEEPSEEK_API_KEY,        secret: hubara-llm-secret,      key: DEEPSEEK_API_KEY }
+          - { var: WHATSAPP_PHONE_NUMBER_ID, secret: hubara-whatsapp-secret, key: WHATSAPP_PHONE_NUMBER_ID }
+          - { var: WHATSAPP_ACCESS_TOKEN,   secret: hubara-whatsapp-secret, key: WHATSAPP_ACCESS_TOKEN }
+          - { var: WHATSAPP_VERIFY_TOKEN,   secret: hubara-whatsapp-secret, key: WHATSAPP_VERIFY_TOKEN }
+      compose:
+        env:
+          TEMPORAL_URL: temporal:7233
+          API_BASE_LLMLITE: http://litellm:4000
+          WORKSPACE_VAULT_DIR: /app/hubara_vault
+          DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+          WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID}
+          WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN}
+          WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN}
+        volumes:
+          - hubara-vault-local:/app/hubara_vault
+        depends_on:
+          - temporal
+          - litellm
 
 # ── Wiring intents ─────────────────────────────────────────────────────
 wiring_intents:

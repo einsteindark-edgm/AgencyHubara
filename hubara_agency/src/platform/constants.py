@@ -1,14 +1,21 @@
-"""Constantes cross-cutting (queues, rutas, prefijos de session).
+"""Constantes cross-plugin (rutas, prefijos de session).
 
-Antes vivian dispersas como string literals en service.py / worker.py / tools.
-Centralizar aqui evita typos y facilita renombres.
+NO declarar task queues aquí. Las queues son **per-worker** y viven en el
+manifest del plugin (``agent.workers[].task_queue``). Para resolver una queue
+desde código, usar ``src.platform.plugin_manifest.get_task_queue(plugin_id,
+worker_name)``.
+
+Por qué: pre-PR11 las queues vivían acá como `SALES_QUEUE`, `REMARKETING_QUEUE`,
+`CATALOG_SYNC_QUEUE`. Agregar un worker nuevo requería editar este archivo —
+conflict de merge cuando 2 PRs (Archon agents) trabajan en paralelo. Post-PR11,
+el manifest del plugin es la single source of truth y agregar workers nuevos
+NO toca este archivo.
+
+Las constantes que **sí** viven acá son cross-plugin (no per-plugin):
+rutas y prefijos que múltiples plugins necesitan reconocer al leer/escribir
+metadata.
 """
 from __future__ import annotations
-
-# Task queues
-SALES_QUEUE = "queue-sales-agent"
-REMARKETING_QUEUE = "queue-remarketing-agent"
-CATALOG_SYNC_QUEUE = "queue-catalog-sync"
 
 # Rutas de conversacion (active_route en metadata.json)
 ROUTE_VENTAS = "ventas"

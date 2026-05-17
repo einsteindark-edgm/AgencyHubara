@@ -18,7 +18,7 @@ from temporalio.exceptions import WorkflowAlreadyStartedError
 from temporalio.service import RPCError
 
 from src.platform.config import WORKSPACE_VAULT_DIR
-from src.platform.constants import SALES_QUEUE, REMARKETING_QUEUE
+from src.platform.plugin_manifest import get_task_queue
 from src.platform.contracts import ScheduleRemarketingDecision, TransferDecision
 from src.platform.state import FilesystemMetadataStore
 from src.platform.temporal.client import get_temporal_client
@@ -78,7 +78,7 @@ async def start_or_signal_sales_workflow_activity(decision: TransferDecision) ->
                 runtime_workspace_path=str(get_workspace_path()),
             ),
             id=workflow_id,
-            task_queue=SALES_QUEUE,
+            task_queue=get_task_queue("chats", "sales"),
         )
     except WorkflowAlreadyStartedError:
         # Race entre el describe y el start_workflow — alguien mas lo arranco.
@@ -149,7 +149,7 @@ async def start_remarketing_for_session(
                 runtime_workspace_path=str(get_remarketing_workspace_path()),
             ),
             id=workflow_id,
-            task_queue=REMARKETING_QUEUE,
+            task_queue=get_task_queue("chats", "remarketing"),
             start_delay=delay,
         )
     except WorkflowAlreadyStartedError:

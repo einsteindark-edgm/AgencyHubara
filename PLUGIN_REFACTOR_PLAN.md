@@ -732,17 +732,22 @@ Estos items aparecen en el contrato como "diferidos" o salen naturalmente
 del refactor. **NO se hacen ahora**. Re-evaluar cuando haya 3+ plugins
 funcionando.
 
-| Item | Cuándo |
-|---|---|
-| Pre-commit hook (husky / pre-commit nativo) que corra `plugins:sync` | Cuando un PR olvide regenerar el registry y rompa el build de otro. |
-| `scripts/render-compose.py` que genere `docker-compose.local.yml` desde manifests | Cuando agregar un plugin agéntico nuevo requiera editar 3 archivos. |
-| LangGraph dentro de actividades Temporal | Cuando un plugin necesite tool-loop estructurado (`agent.graph_spec`). |
-| Marketplace UI para activar/desactivar plugins desde la app | Cuando el operador deje de querer editar `ENABLED_PLUGINS` a mano. |
-| Terraform multi-tenant (`infra/tenants/<x>/`) | Cuando llegue el segundo cliente con infra dedicada. |
-| Plugin SDK con tipos estrictos (Pydantic models para manifest, Protocol classes para WORKFLOWS/ACTIVITIES) | Cuando haya 3+ plugins agénticos y sea fácil olvidar una convención. |
-| Cron runner formal (APScheduler / Celery beat / container per cron) | Cuando un plugin necesite `jobs:` y no se pueda usar Temporal Schedule. |
-| Wiring intent merger (aplicar `wiring_intents` automáticamente) | Cuando un plugin necesite tocar `vite.config.ts`/`tsconfig.json` global. |
-| Sales Flow DSL configurable por tenant | Después de PR7 (plugin system estable). |
+| Item | Cuándo | Status |
+|---|---|---|
+| Pre-commit hook (husky / pre-commit nativo) que corra `plugins:sync` | Cuando un PR olvide regenerar el registry y rompa el build de otro. | pendiente |
+| ~~`scripts/render-compose.py` que genere `docker-compose.local.yml` desde manifests~~ | ~~Cuando agregar un plugin agéntico nuevo requiera editar 3 archivos.~~ | ✅ **hecho en PR11** |
+| ~~Mover task queues al manifest~~ | ~~Cuando 2 PRs en paralelo agreguen workers y haya conflict en `constants.py`.~~ | ✅ **hecho en PR11** |
+| ~~Auto-gen test invariant `_EXPECTED_K8S_DEPLOYMENTS`~~ | ~~Cuando agregar un worker requiera editar el dict del test.~~ | ✅ **hecho en PR11** |
+| ~~Auto-discover `_VAULT_CAPTURING_MODULES` (AST scan)~~ | ~~Cuando agregar un módulo que importe `WORKSPACE_VAULT_DIR` requiera editar la lista.~~ | ✅ **hecho en PR11** |
+| Auto-gen K8s manifests desde `agent.workers[].deployment` | Cuando agregar un worker nuevo a producción requiera escribir el yaml a mano (hoy se sigue editando `k8s/aws-produccion/worker-<name>.yaml`; el manifest declara `deployment` block pero el generador no existe aún). | pendiente |
+| Plugin-local icons (`plugins/<id>/frontend/icons.tsx`) | Cuando 2 plugins necesiten editar `shared/ui/Icon.tsx` en paralelo. | pendiente |
+| LangGraph dentro de actividades Temporal | Cuando un plugin necesite tool-loop estructurado (`agent.graph_spec`). | pendiente |
+| Marketplace UI para activar/desactivar plugins desde la app | Cuando el operador deje de querer editar `ENABLED_PLUGINS` a mano. | pendiente |
+| Terraform multi-tenant (`infra/tenants/<x>/`) | Cuando llegue el segundo cliente con infra dedicada. | pendiente |
+| Plugin SDK con tipos estrictos (Pydantic models para manifest, Protocol classes para WORKFLOWS/ACTIVITIES) | Cuando haya 3+ plugins agénticos y sea fácil olvidar una convención. | pendiente |
+| Cron runner formal (APScheduler / Celery beat / container per cron) | Cuando un plugin necesite `jobs:` y no se pueda usar Temporal Schedule. | pendiente |
+| Wiring intent merger (aplicar `wiring_intents` automáticamente) | Cuando un plugin necesite tocar `vite.config.ts`/`tsconfig.json` global. | pendiente |
+| Sales Flow DSL configurable por tenant | Después de PR7 (plugin system estable). | pendiente |
 
 ---
 
@@ -842,6 +847,133 @@ PR8 resolvió:
 | Limpieza de seeds (mover `wa_*/` a `tests/fixtures/seed_vault/` y gitignorear el vault) | Cuando alguien quiera correr el dashboard sin necesidad de los seeds. |
 | Backup/restore strategy del vault productivo | Cuando se resolva el primer incidente de pérdida de PVC en K8s. |
 | Migración a object storage (S3) en lugar de filesystem | Cuando un tenant alcance ≥1M sesiones (probable nunca para 5 empresas). |
+
+---
+
+## §9. Manifest como Single Source of Truth (PR11)
+
+> **Objetivo declarado del refactor cuando se concibió** (commit de
+> `PLUGIN_REFACTOR_PLAN.md` original): permitir que múltiples implementadores
+> (humanos o Archon agents) trabajen en **plugins distintos en paralelo sin
+> conflicts de merge** en archivos compartidos. PR11 cierra la brecha entre
+> esa promesa y la realidad: el `plugin.yaml` ahora declara TODO lo que el
+> plugin necesita conectar con el sistema, y las herramientas (loaders,
+> tests, render-compose) descubren automáticamente desde ahí.
+
+### §9.1 — Qué se declara en el manifest (post-PR11)
+
+```yaml
+id: <plugin_id>
+version: 0.x.y
+display_name: <pretty>
+depends_on: []                          # otros plugins requeridos (reservado)
+
+frontend:                               # consumido por scripts/plugins-sync.ts
+  entry: ./frontend
+  contributes:
+    sections: [{ key, label, order, icon }]
+    sidebar:  [{ route, label, icon }]
+    dashboard_widgets: [{ id, position }]
+
+api:                                    # consumido por src.main loader
+  python_module: src.plugins.<id>.api   # módulo con `router = APIRouter()`
+  prefix: /api/<id>
+  tags: [<Tag>]
+  legacy_routers:                       # alternativa: múltiples sub-routers
+    - { module, prefix, tags }
+
+agent:                                  # consumido por src.run_workers + render-compose + tests
+  python_module: src.plugins.<id>.agent
+  workers:
+    - name: <worker>
+      module: src.plugins.<id>.workers.<worker>
+      task_queue: queue-<descriptive>   # ← PR11: SSoT de la Temporal queue
+      deployment:                       # ← PR11: hint para K8s manifest (auto-gen pendiente)
+        replicas: N
+        cpu_request: <m>
+        memory_request: <Mi>
+        strategy: RollingUpdate | Recreate
+        env_secrets:
+          - { var, secret, key }
+      compose:                          # ← PR11: input de render-compose.py
+        env: { VAR: value | "${HOST_VAR}" }
+        volumes: ["named:/path"]
+        depends_on: [temporal, litellm]
+
+wiring_intents:                         # declarativo (no se aplica automáticamente)
+  filesystem_volumes: [hubara-vault]
+  env_vars_required: [DEEPSEEK_API_KEY, ...]
+```
+
+### §9.2 — Qué descubre cada herramienta desde el manifest
+
+| Herramienta | Lee | Produce |
+|---|---|---|
+| `scripts/plugins-sync.ts` | `id`, `version`, `frontend.contributes` | `frontend_dashboard/src/app/plugin-registry.generated.ts` |
+| `src.main` (FastAPI loader) | `api.python_module`, `api.legacy_routers` | rutas registradas en `app` |
+| `src.run_workers` (meta-launcher) | `agent.workers[]` | tasks `asyncio.gather` por worker |
+| `src.platform.plugin_manifest.get_task_queue` | `agent.workers[].task_queue` | string queue para Temporal Worker / start_workflow |
+| `scripts/render-compose.py` | `agent.workers[].compose` + `agent.workers[].module` | `docker-compose.local.yml` (auto-gen) |
+| `tests/plugins/test_premortem_invariants.py` | TODO el manifest + k8s + sync script | invariantes que rompen si manifest y código divergen |
+
+### §9.3 — Archivos shared y su status post-PR11
+
+Si Archon corre 2 agents en paralelo, ¿en qué archivos pueden chocar?
+
+| Archivo | Pre-PR11 | Post-PR11 |
+|---|---|---|
+| `src/platform/constants.py` (queues) | ❌ conflict por cada worker nuevo | ✅ **eliminado** — queues viven en manifest |
+| `tests/plugins/test_premortem_invariants.py:_EXPECTED_K8S_DEPLOYMENTS` | ❌ conflict por cada worker nuevo | ✅ **eliminado** — discovery desde escaneo de `k8s/` |
+| `tests/conftest.py:_VAULT_CAPTURING_MODULES` | ❌ conflict por cada módulo nuevo que use `WORKSPACE_VAULT_DIR` | ✅ **eliminado** — AST scan auto-discover |
+| `docker-compose.local.yml` | ❌ conflict por cada worker nuevo | ⚠️ **mitigado** — file commiteado, pero auto-generado por script (regen mecánico) |
+| `k8s/aws-produccion/worker-*.yaml` | ❌ archivo nuevo por worker (no conflict, pero edición manual) | ⚠️ **archivo nuevo por worker** (auto-gen desde `deployment` block está pendiente) |
+| `frontend_dashboard/src/shared/ui/Icon.tsx` | ❌ conflict por cada icon custom | ⚠️ **pendiente** — plugin-local icons no implementados |
+| `pyproject.toml` / `package.json` (deps) | ❌ conflict natural | 🚫 **inherente al package manager** — no fixeable a nivel plugin |
+| `PLUGIN_REFACTOR_LOG.md` | ❌ append-only conflict | ⚠️ **mitigable** — refactor a `entries/<date>.md` pendiente |
+
+**Resultado:** crear un plugin nuevo con worker post-PR11 = editar solo:
+1. `frontend_dashboard/src/plugins/<id>/plugin.yaml` (NUEVO)
+2. `hubara_agency/src/plugins/<id>/` (NUEVO árbol)
+3. `frontend_dashboard/src/plugins/<id>/frontend/` (NUEVO árbol, si aplica)
+4. `hubara_agency/k8s/aws-produccion/worker-<name>.yaml` (NUEVO, hasta que se auto-genere)
+5. `hubara_agency/docker-compose.local.yml` (auto-regenerado por script — mecánico)
+
+Los archivos 1-4 son **nuevos** (cero conflict). El 5 es regen mecánico.
+**Cero edición manual de archivos shared para el path crítico.**
+
+### §9.4 — Cómo agregar/modificar un plugin sin pisar a otro Archon
+
+Pasos canónicos:
+
+```bash
+# 1. Crear o editar el plugin.yaml
+$EDITOR frontend_dashboard/src/plugins/<id>/plugin.yaml
+
+# 2. Crear los árboles Python/TS si es plugin nuevo
+mkdir -p hubara_agency/src/plugins/<id>
+mkdir -p frontend_dashboard/src/plugins/<id>/frontend
+
+# 3. Regenerar artefactos derivados (todos auto-gen desde manifests)
+cd hubara_agency && uv run python scripts/render-compose.py
+cd ../frontend_dashboard && npm run plugins:sync
+
+# 4. Si el plugin tiene worker en producción, crear el K8s manifest a mano
+#    (auto-gen pendiente — ver §5 deferred items)
+cp hubara_agency/k8s/aws-produccion/worker-remarketing.yaml \
+   hubara_agency/k8s/aws-produccion/worker-<name>.yaml
+$EDITOR hubara_agency/k8s/aws-produccion/worker-<name>.yaml
+
+# 5. Verificar invariantes
+cd hubara_agency && uv run pytest tests/plugins/ -q
+# - test_every_worker_in_manifest_has_k8s_deployment: detecta paso 4 olvidado
+# - test_docker_compose_local_is_up_to_date_with_manifests: detecta paso 3 olvidado
+# - test_every_manifest_worker_declares_task_queue: detecta task_queue faltante
+# - test_task_queues_are_unique_across_workers: detecta colisión de queue
+```
+
+**Ningún paso edita un archivo shared.** Los conflicts entre PRs paralelos
+quedan en (a) el lock file de uv/npm cuando coinciden deps nuevas, y (b)
+el `LOG.md` append.
 
 ---
 

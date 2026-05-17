@@ -10,9 +10,9 @@ frontend:
   entry: ./frontend
   contributes:
     sections:
-      - { key: upload, label: Catalog, order: 4 }
+      - { key: upload, label: Catalog, order: 4, icon: pkg }
     sidebar:
-      - { route: /catalog, label: Catalog, icon: package }
+      - { route: /catalog, label: Catalog, icon: pkg }
 
 # Sin `api:` por ahora — el plugin no expone endpoints HTTP propios. El
 # worker se dispara desde scripts/trigger_catalog_sync.py o desde otro plugin
@@ -24,7 +24,29 @@ frontend:
 agent:
   python_module: src.plugins.catalog.agent
   workers:
-    - { name: sync, module: src.plugins.catalog.workers.sync }
+    - name: sync
+      module: src.plugins.catalog.workers.sync
+      task_queue: queue-catalog-sync
+      deployment:
+        replicas: 1                       # CRITICAL: single writer (race en os.replace)
+        strategy: Recreate                # evita dos pods escribiendo durante rollout
+        cpu_request: 100m
+        memory_request: 256Mi
+        env_secrets:
+          - { var: MEDUSA_BASE_URL,    secret: hubara-medusa-secret, key: MEDUSA_BASE_URL }
+          - { var: MEDUSA_ADMIN_TOKEN, secret: hubara-medusa-secret, key: MEDUSA_ADMIN_TOKEN }
+      compose:
+        env:
+          TEMPORAL_URL: temporal:7233
+          WORKSPACE_VAULT_DIR: /app/hubara_vault
+          CATALOG_SNAPSHOT_DIR: /app/hubara_vault/catalog
+          CATALOG_MAX_AGE_MINUTES: "30"
+          MEDUSA_BASE_URL: ${MEDUSA_BASE_URL}
+          MEDUSA_ADMIN_TOKEN: ${MEDUSA_ADMIN_TOKEN}
+        volumes:
+          - hubara-vault-local:/app/hubara_vault
+        depends_on:
+          - temporal
 
 wiring_intents:
   filesystem_volumes:

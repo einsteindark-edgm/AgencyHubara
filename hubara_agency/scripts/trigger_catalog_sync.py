@@ -26,7 +26,7 @@ ese agente (porque la activity es el lugar que puede usar
     from src.plugins.catalog.agent.contracts import CatalogSyncInput
     from src.plugins.catalog.agent.workflows import CatalogSyncWorkflow
     from src.platform.catalog.paths import get_snapshot_dir
-    from src.platform.constants import CATALOG_SYNC_QUEUE
+    from src.platform.plugin_manifest import get_task_queue
     from src.platform.temporal.client import get_temporal_client
 
 
@@ -46,7 +46,7 @@ ese agente (porque la activity es el lugar que puede usar
                 snapshot_dir=str(get_snapshot_dir()),
             ),
             id=f"catalog-sync-on-demand-{triggered_by}-{int(time.time())}",
-            task_queue=CATALOG_SYNC_QUEUE,
+            task_queue=get_task_queue("catalog", "sync"),
         )
         # Opcional: esperar el resultado para confirmar que el snapshot
         # se actualizo antes de retornar. Si la activity es invocada en
@@ -101,7 +101,7 @@ from temporalio.client import Client  # noqa: E402
 from src.plugins.catalog.agent.contracts import CatalogSyncInput  # noqa: E402
 from src.plugins.catalog.agent.workflows import CatalogSyncWorkflow  # noqa: E402
 from src.platform.catalog.paths import get_snapshot_dir  # noqa: E402
-from src.platform.constants import CATALOG_SYNC_QUEUE  # noqa: E402
+from src.platform.plugin_manifest import get_task_queue  # noqa: E402
 from src.platform.temporal.client import get_temporal_client  # noqa: E402
 
 
@@ -118,7 +118,7 @@ async def trigger_sync(*, wait_for_result: bool, triggered_by: str) -> None:
             snapshot_dir=snapshot_dir,
         ),
         id=workflow_id,
-        task_queue=CATALOG_SYNC_QUEUE,
+        task_queue=get_task_queue("catalog", "sync"),
     )
     print(f"Started workflow {workflow_id}")
     print(f"  snapshot_dir: {snapshot_dir}")

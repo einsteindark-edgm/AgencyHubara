@@ -24,8 +24,10 @@ from src.platform.constants import (
     ROUTE_HUMANO,
     ROUTE_REMARKETING,
     ROUTE_VENTAS,
-    SALES_QUEUE,
 )
+from src.platform.plugin_manifest import get_task_queue
+
+SALES_QUEUE = get_task_queue("chats", "sales")
 from src.plugins.chats.agent.sales.contracts import SalesSessionInput
 from src.plugins.chats.agent.sales.use_cases.load_or_start_sales_session import (
     LoadOrStartSalesSession,

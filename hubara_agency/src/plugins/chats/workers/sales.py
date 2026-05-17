@@ -4,7 +4,7 @@ from loguru import logger
 from temporalio.worker import Worker
 
 from src.platform.temporal.activities import execute_tool
-from src.platform.constants import SALES_QUEUE
+from src.platform.plugin_manifest import get_task_queue
 from src.platform.temporal.dispatcher import (
     schedule_remarketing_workflow_activity,
     start_or_signal_sales_workflow_activity,
@@ -101,9 +101,10 @@ async def main() -> None:
     logger.info("Conectando Especialista (Ventas) al clúster Temporal mTLS...")
     client = await get_temporal_client()
 
+    task_queue = get_task_queue("chats", "sales")
     worker = Worker(
         client,
-        task_queue=SALES_QUEUE,
+        task_queue=task_queue,
         workflows=[HubaraSalesSessionWorkflow],
         activities=[
             build_prompt,
@@ -121,7 +122,7 @@ async def main() -> None:
         ],
     )
 
-    logger.info("😎 Sales Agent En Vivo. Escuchando la cola exclusiva: '{}'", SALES_QUEUE)
+    logger.info("😎 Sales Agent En Vivo. Escuchando la cola exclusiva: '{}'", task_queue)
     await worker.run()
 
 

@@ -34,11 +34,24 @@ async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
 # Vault isolation (PR8) — auto-applied a TODA la suite.
 # ---------------------------------------------------------------------------
 #
-# Lista de módulos que capturaron `WORKSPACE_VAULT_DIR` por import (== module
-# global). Cualquier módulo nuevo que importe `from src.platform.config import
-# WORKSPACE_VAULT_DIR` debe agregarse aquí — o usar `vault_dir=tmp_path` DI
-# explícito en los tests del módulo.
-_VAULT_CAPTURING_MODULES: tuple[str, ...] = (
+# AUTO-DISCOVER (PR11): pre-PR11 esta lista era hardcoded — agregar un módulo
+# nuevo que importara `WORKSPACE_VAULT_DIR` requería editarla manualmente
+# → conflict de merge cuando 2 PRs (Archon agents) trabajaban en paralelo.
+#
+# Post-PR11, escaneamos el árbol `src/` via AST y descubrimos automáticamente
+# qué módulos hacen `from src.platform.config import WORKSPACE_VAULT_DIR`
+# (o `import src.platform.config` + acceso `.WORKSPACE_VAULT_DIR`).
+#
+# Se ejecuta una sola vez al colectar (cache module-level). Si el scan falla
+# por algún motivo, fallback a la lista hardcoded debajo (defense in depth).
+import ast
+
+
+_SRC_ROOT = Path(__file__).resolve().parents[1] / "src"
+
+# Fallback list — usada solo si el AST scan falla. Mantener sincronizada con
+# los discovers automáticos NO es necesario; esto es solo defensa.
+_VAULT_CAPTURING_MODULES_FALLBACK: tuple[str, ...] = (
     "src.platform.config",
     "src.platform.temporal.dispatcher",
     "src.platform.temporal.activities",
@@ -47,13 +60,55 @@ _VAULT_CAPTURING_MODULES: tuple[str, ...] = (
     "src.platform.session_history.activities",
     "src.platform.whatsapp.activities",
     "src.platform.registries",
-    "src.plugins.chats.agent.sales.tools.tags",
-    "src.plugins.chats.agent.sales.composition",
-    "src.plugins.chats.agent.sales.activities.bootstrap_session",
-    "src.plugins.chats.agent.remarketing.activities.bootstrap_session",
-    "src.plugins.chats.api.dashboard",
-    "src.plugins.chats.api.dashboard_composition",
 )
+
+
+def _module_path_to_dotted(path: Path) -> str:
+    """`src/foo/bar.py` → `src.foo.bar`. Robusto a `__init__.py`."""
+    rel = path.relative_to(_SRC_ROOT.parent)
+    parts = rel.with_suffix("").parts
+    if parts and parts[-1] == "__init__":
+        parts = parts[:-1]
+    return ".".join(parts)
+
+
+def _discover_vault_capturing_modules() -> tuple[str, ...]:
+    """AST scan: módulos que importan `WORKSPACE_VAULT_DIR` desde `src.platform.config`.
+
+    Detecta dos patrones:
+      1. `from src.platform.config import WORKSPACE_VAULT_DIR` (más común)
+      2. `from src.platform.config import (..., WORKSPACE_VAULT_DIR, ...)`
+
+    NO detecta `import src.platform.config` + acceso por atributo — pero ese
+    patrón no se usa en el repo (verificado al introducir el scan).
+    """
+    # Siempre incluir el origen — otros módulos pueden hacer
+    # `import src.platform.config as cfg; cfg.WORKSPACE_VAULT_DIR` y consultar
+    # el valor en runtime, no por capture al import.
+    found: list[str] = ["src.platform.config"]
+    try:
+        for py_file in _SRC_ROOT.rglob("*.py"):
+            if "__pycache__" in py_file.parts:
+                continue
+            try:
+                tree = ast.parse(py_file.read_text(encoding="utf-8"))
+            except (SyntaxError, UnicodeDecodeError):
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ImportFrom):
+                    continue
+                if node.module != "src.platform.config":
+                    continue
+                if any(alias.name == "WORKSPACE_VAULT_DIR" for alias in node.names):
+                    found.append(_module_path_to_dotted(py_file))
+                    break  # un import basta para este file
+        return tuple(sorted(set(found)))
+    except Exception:
+        # Fallback defensivo — si el scan falla, no rompemos pytest collect.
+        return _VAULT_CAPTURING_MODULES_FALLBACK
+
+
+_VAULT_CAPTURING_MODULES: tuple[str, ...] = _discover_vault_capturing_modules()
 
 
 @pytest.fixture(autouse=True)

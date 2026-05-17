@@ -23,6 +23,9 @@
 | PR6 (eta) | 2026-05-15 | ✅ done | Plugin frontend-only (3 features eta-*). Mismo patrón que PR4. Commit: `a87f8bb`. |
 | PR7 (orders) | 2026-05-15 | ✅ done | Plugin frontend-only (3 features orders-*). Cierra el refactor — TODAS las secciones del shell se cargan del registry. Commit: `b494fa9`. |
 | PR8 (vault hygiene) | 2026-05-15 | ✅ done | Fix tests que contaminaban seeds + fixture autouse defensiva + documentación §8 del vault. |
+| PR9 (auditoría + fixes) | 2026-05-16 | ✅ done | Auditoría detallada PR1-PR8: 23 hallazgos (3 críticos / 6 altos / 11 medios / 3 bajos). 12 fixes aplicados, 19 tests nuevos para loaders, Dashboard+Toolbar realmente data-driven, k8s worker-remarketing creado. |
+| PR10 (premortem + fixes) | 2026-05-16 | ✅ done | Premortem sobre los fixes de PR9: 7 escenarios de fallo identificados (1 crítico / 2 altos / 2 medios / 2 bajos). 7 fixes aplicados, 7 tests nuevos. El crítico era el más cerca de morder: worker-remarketing.yaml sin warning sobre secretos necesarios. |
+| PR11 (manifest = SSoT) | 2026-05-16 | ✅ done | Habilita paralelismo real entre Archon agents: task_queue movido al manifest (elimina conflict en constants.py), `_VAULT_CAPTURING_MODULES` auto-discover (AST scan), `_EXPECTED_K8S_DEPLOYMENTS` auto-gen, `render-compose.py` + `docker-compose.base.yml` (auto-gen del local.yml). 3 tests nuevos para invariantes del SSoT. |
 
 ---
 
@@ -988,6 +991,645 @@ $ git status --short hubara_vault
 
 ✅ **done** — bug histórico arreglado, defensa en profundidad puesta,
 convención documentada. Commit pendiente.
+
+---
+
+## 2026-05-16 — PR9 (auditoría + fixes) — Claude — ✅ done
+
+### Contexto
+
+El operador pidió "auditoría detallada de la implementación que hizo tu
+competencia, saca todos los errores de implementación, malas prácticas,
+exponlos y luego fixea para que le enseñes a programar". Auditoría
+exhaustiva de los 8 PRs previos contra el contrato en
+`PLUGIN_REFACTOR_PLAN.md` + buenas prácticas generales.
+
+### Hallazgos (23 totales)
+
+**🔴 Críticos (3)** — bugs reales / promesas incumplidas:
+
+- **H1** Dashboard + Toolbar NO eran data-driven. El LOG PR7 decía
+  textualmente *"TODAS las secciones se cargan dinámicamente del PLUGINS
+  registry"* y *"Cero código de feature en el shell"* — falso. El
+  `Toolbar.tsx` tenía `SectionKey = "chat" | "orders" | "upload" | "eta"
+  | "agent"` HARDCODED y un array `SECTIONS` con labels e icons
+  hardcoded. `Dashboard.tsx` hacía 5 `useMemo(PLUGINS.find(p => p.id ==
+  "X"))` con ids hardcoded. Agregar un plugin requería editar 3 archivos.
+- **H2** `k8s/aws-produccion/worker-remarketing.yaml` NO existía. El
+  plugin chats declara 2 workers, docker-compose levanta los 2, K8s solo
+  tenía sales + catalog-sync. Deploy a producción incompleto.
+- **H3** Schema regex prohibía underscore (`^[a-z][a-z0-9-]*$`) pero
+  `agents_admin` lo usa. Funcionaba solo porque `plugins-sync.ts` no
+  validaba contra el schema.
+
+**🟠 Altos (6)** — malas prácticas / docs stale:
+
+- **H4** `chats/agent/__init__.py` y `catalog/agent/__init__.py`
+  prometían exponer `WORKFLOWS`, `ACTIVITIES`, `TOOL_FACTORIES`. Nunca lo
+  hicieron. Cada worker registra a mano.
+- **H5** `config/env.py` (sales y remarketing) tenía docstrings que
+  decían "sales_whatsapp domain" + paths obsoletos
+  (`<repo>/hubara_agency/src/domains/sales_whatsapp/workspace/` — que no
+  existe).
+- **H6** `tests/test_tools_protocol.py` docstring decía "tools de
+  sales_whatsapp".
+- **H7/H8** `test_r_dip.py`, `test_r_json.py` con paths viejos en
+  comments.
+
+**🟡 Medios (11)** — oportunidades de hardening:
+
+- **H10** `main.py:_register_router` reimportaba el módulo (línea 91)
+  que ya había importado (línea 112).
+- **H11** `main.py` no logueaba qué plugins descubrió ni qué módulos
+  importó — hard-to-debug en prod.
+- **H12** `run_workers.py` no manejaba KeyboardInterrupt limpio.
+- **H13** `run_workers.py` no validaba shape de `workers` items
+  (`KeyError` silencioso).
+- **H14** `plugins-sync.ts` no validaba `id` contra regex.
+- **H15** `plugins-sync.ts` no detectaba colisiones de `section.key`
+  cross-plugin.
+- **H16** `plugins-sync.ts` emitía JSON en una sola línea — git diff
+  ilegible.
+- **H17** `plugins-sync.ts` no chequeaba que `frontend/<entry>` existía.
+- **H18** CERO tests automatizados para `main.py`, `run_workers.py` o
+  `plugins-sync.ts`. El refactor PRINCIPAL no tenía tests.
+- **H19** `chats/api/__init__.py` solo era docstring → manifest
+  `python_module: src.plugins.chats.api` era decorativo (main.py tenía
+  fallback silencioso).
+
+**🟢 Bajos (3)** — cosmética: convención naming sin doc, comments stale,
+directorio `tests/sales_whatsapp/` (debt diferido PR2 — NO se fixea aquí).
+
+### Fixes aplicados (12)
+
+Numerados como en el reporte (P1-P11; P10 cubre H18).
+
+**P1 — Dashboard + Toolbar data-driven** (`shared/ui/chrome/Toolbar.tsx`,
+`pages/Dashboard.tsx`, los 5 `plugin.yaml`):
+
+- `Toolbar` ahora recibe `sections: ToolbarSection[]` como prop. Ya no
+  conoce ids. `SectionKey` cambió a alias `string` para back-compat.
+- `Dashboard` deriva sections de `PLUGINS.flatMap(p => p.sections).sort(order)`,
+  construye `pageByKey: Map<sectionKey, Page>`, y renderiza el page de la
+  section activa. **Cero ids hardcoded.**
+- Agregar un plugin = editar manifest + crear barrel. CERO toques a
+  Dashboard/Toolbar.
+- El botón "Agentes" especial al final de Toolbar eliminado — agents_admin
+  ahora es una section regular con `order: 5` (queda al final por orden).
+- Cada plugin.yaml agregó `icon` field a sus sections.
+- `Icon` lookup con fallback a `Icon.bot` + warning console si el icon
+  declarado no existe.
+
+**P2 — k8s/aws-produccion/worker-remarketing.yaml** creado, paridad con
+docker-compose. `replicas: 1` (low-throughput, sin escalar sin medir).
+
+**P3 — Schema regex** (`_schema/plugin.schema.yaml`):
+`^[a-z][a-z0-9_]*$` (acepta snake_case). Plus docstring explicando que
+`id` se usa como segmento de import path Python (por eso NO se permite
+guion medio).
+
+**P4 — `config/env.py` x2** (sales + remarketing):
+Reescrito en español, paths actualizados a `plugins/chats/agent/{sales,remarketing}/workspace`,
+referencias al ADR mantenidas.
+
+**P5 — Test docstrings** (`test_tools_protocol.py`, `test_r_dip.py`,
+`test_r_json.py`): reemplazadas referencias a paths viejos por los
+nuevos.
+
+**P6 — `__init__.py` x2** (`chats/agent`, `catalog/agent`): eliminadas
+las promesas "PR3 expondrá WORKFLOWS/ACTIVITIES/TOOL_FACTORIES" — se
+documenta la realidad (cada worker registra a mano) y se aclara que
+`agent.python_module` del manifest es ancla simbólica.
+
+**P7 — `main.py`** reescrito:
+
+- Loguea con loguru qué plugins descubrió, qué módulos importó, qué
+  routers registró.
+- `_register_router_from_module(target_app, ...)` recibe el módulo ya
+  importado (no duplicado).
+- Valida que `getattr(mod, "router")` sea un `APIRouter` real (no
+  silenciar bugs tipo `router = "string"`).
+- `_bootstrap_routers(target_app=None)` — el app es parametrizable para
+  tests sin mutar el singleton.
+- Política `legacy_routers > python_module` explicitada: si ambos están,
+  legacy gana (sirve a chats que tiene 3 sub-routers con prefijos
+  heterogéneos y `api/__init__.py` decorativo).
+- Fail-fast con mensajes de error contextuales.
+
+**P8 — `run_workers.py`** reescrito:
+
+- Validación de shape de `agent.workers[]` items con errores claros
+  (qué plugin, qué index, qué campo falta).
+- Signal handlers (SIGINT/SIGTERM) → `stop.set()` → cancela todos los
+  workers + timeout duro de 15s.
+- `asyncio.wait(FIRST_COMPLETED)` permite que un worker que falle
+  arrastre al grupo (fail-fast en dev local).
+- Diagnóstico al shutdown — qué disparó la cancelación.
+- Manejo de `CancelledError` propaga (Temporal Worker flushea en su
+  cancel).
+- Manejo de KeyboardInterrupt en Windows (donde `add_signal_handler`
+  no funciona).
+
+**P9 — `plugins-sync.ts`** reescrito:
+
+- Valida `id` contra `^[a-z][a-z0-9_]*$` (espejo del schema, comentado).
+- Chequea que `frontend.entry` existe en disco antes de emitir el lazy.
+- Detecta colisiones de `section.key` cross-plugin (warning con ambos
+  ids).
+- `JSON.stringify(..., null, 2)` con indent ajustado por nivel — git
+  diffs legibles.
+- Try/catch alrededor del parse YAML con error contextual.
+
+**P10 — Tests** (`tests/plugins/test_main_loader.py`,
+`tests/plugins/test_run_workers.py`):
+
+- **19 tests nuevos** cubriendo:
+  - main loader: real manifests smoke, ENABLED_PLUGINS filter (empty/subset/unknown),
+    id-mismatch skipped, `legacy_routers` wins over `python_module`,
+    `python_module` sin router se skipea, missing module fail-fast,
+    non-APIRouter type fail-fast.
+  - run_workers: real workers discovery, ENABLED_PLUGINS filter,
+    `worker_module` shortcut, missing agent section, malformed
+    workers list / entry missing name / missing module / not-a-dict
+    fail-fast, `_run_worker` rechaza módulo sin `main` y `main` sync.
+- Diseño: tests usan `target_app=FastAPI()` fresco para evitar mutar el
+  singleton de `src.main`.
+
+**P11 — `chats/api/__init__.py`**: docstring claro explica los 3 routers
++ por qué no se unifican + qué hace el loader con `python_module` (lo
+  ignora cuando hay `legacy_routers`). NO expone `router` (intencional,
+  match con la política del loader).
+
+### Cosas decididas y NO hechas
+
+- **H21/H22/H23** (cosmética, debt diferido PR2): no se fixean acá.
+  `tests/sales_whatsapp/` sigue existiendo. Mover queda como
+  housekeeping futuro.
+- **Pre-commit hook husky** (item diferido §5 del PLAN): sigue sin
+  instalarse. El operador puede agregarlo cuando un PR olvide
+  `plugins:sync` y rompa el build.
+- **Render-compose script** (item diferido §5): sigue manual. El nuevo
+  manifest worker-remarketing se creó a mano.
+- **Smoke runtime con `docker compose up`**: no se ejecuta (requiere
+  Docker daemon + secrets reales). El boot del FastAPI funciona y los
+  tests de loaders cubren el caso unitario.
+
+### Verificaciones corridas
+
+```bash
+# Backend
+$ cd hubara_agency && uv run pytest --tb=short -q
+283 passed, 1 skipped in 12.63s        # +19 vs pre-auditoría (264)
+
+$ uv run pytest tests/plugins/ -q
+19 passed in 4.28s                      # 100% nuevos
+
+$ uv run lint-imports
+Contracts: 4 kept, 0 broken.            # R-DIP intacto
+
+# Smoke loaders con logs visibles
+$ ENABLED_PLUGINS=chats uv run python -c "import src.main as m; print(m._LOADED_PLUGINS)"
+[loader] discovered 1 plugin(s): ['chats']
+[loader] registered src.plugins.chats.api.sales → prefix='/api' tags=['WhatsApp_Sales_Domain']
+[loader] registered src.plugins.chats.api.dashboard → prefix='/api/dashboard' tags=['Dashboard']
+[loader] registered src.plugins.chats.api.handoff → prefix='/api/dashboard' tags=['Dashboard_Handoff']
+[loader] bootstrap complete — 1 plugin(s) contributed routers: ['chats']
+['chats']
+
+$ uv run python -c "from src.run_workers import _discover_workers; print(_discover_workers())"
+[('catalog', 'sync', 'src.plugins.catalog.workers.sync'),
+ ('chats', 'sales', 'src.plugins.chats.workers.sales'),
+ ('chats', 'remarketing', 'src.plugins.chats.workers.remarketing')]
+
+# Frontend
+$ cd frontend_dashboard && npm run plugins:sync
+[plugins-sync] generated src/app/plugin-registry.generated.ts with 5 plugin(s): agents_admin, catalog, chats, eta, orders
+
+$ npm run test:arch
+12 passed, 1 skipped                    # sin cambios
+
+$ npm test
+69 passed, 1 skipped                    # sin cambios
+
+$ ./node_modules/.bin/vite build --mode development
+✓ built in 461ms                        # 5 chunks por plugin
+```
+
+### Stats
+
+```
+Hallazgos: 23 (3 críticos / 6 altos / 11 medios / 3 bajos)
+Fixes aplicados: 12
+Tests nuevos: 19 (todos verdes)
+Tests totales backend: 264 → 283
+Líneas tocadas: ~1500 LOC (refactors completos de main.py, run_workers.py,
+                          plugins-sync.ts, Toolbar.tsx, Dashboard.tsx)
+Archivos creados: 4
+  - hubara_agency/k8s/aws-produccion/worker-remarketing.yaml
+  - hubara_agency/tests/plugins/__init__.py
+  - hubara_agency/tests/plugins/test_main_loader.py
+  - hubara_agency/tests/plugins/test_run_workers.py
+Archivos modificados: 15
+```
+
+### Status final
+
+✅ **done** — el refactor de plugins ahora cumple el contrato del PLAN:
+cero ids hardcoded en el shell, schema consistente con la realidad,
+loaders con tests automatizados, k8s manifest paridad con
+docker-compose, y docs/promesas alineadas con la realidad del código.
+
+---
+
+## 2026-05-16 — PR10 (premortem + fixes) — Claude — ✅ done
+
+### Contexto
+
+El operador pidió "hace un premortem, analiza y fixea" sobre los cambios de
+PR9 antes de cualquier deploy. Técnica de Gary Klein: imaginar que el cambio
+ya está en producción y falló — identificar las causas más probables y
+prevenirlas.
+
+### Escenarios de fallo identificados (7)
+
+**🔴 Crítico (1)**:
+
+- **E1** — *Deploy K8s: worker-remarketing arranca pero crashea al primer
+  mensaje real*. El manifest que creé en PR9 (`worker-remarketing.yaml`)
+  copió la estructura de `worker-sales.yaml` pero NO documentó qué env vars
+  privadas necesita el operador inyectar via overlay/kustomize. El worker
+  arranca OK (la conexión a Temporal no requiere claves WhatsApp/LLM), pero
+  el primer mensaje de re-engagement intenta `send_whatsapp_message_activity`
+  o `llm_chat` y revienta. **Y como remarketing son workflows long-lived que
+  duermen horas/días, el bug aparecería DÍAS después del deploy**, mucho
+  después del rollback window. Worker-sales tiene el mismo problema desde
+  siempre, pero el operador ya lo conoce; mi manifest nuevo era una trampa.
+
+**🟠 Altos (2)**:
+
+- **E2** — *Tests dejan archivos `_fake_*.py` huérfanos*. Algunos tests en
+  PR9 usaban `try/finally` manual para borrar los archivos, otros NO. Si un
+  test crashea sin `finally`, el archivo queda y la próxima corrida puede
+  importarlo cuando no debería existir. Bug-prone.
+
+- **E3** — *Política `legacy_routers > python_module` solo documentada en
+  main.py*. Un nuevo dev crea un plugin con ambos, pasa media tarde
+  debuggeando por qué `python_module` no se registra. El schema no menciona
+  la política.
+
+**🟡 Medios (2)**:
+
+- **E4** — *Shutdown timeout 15s hardcoded*. En prod con miles de in-flight
+  workflows, Temporal Worker puede no flushar en 15s, container muere con
+  SIGKILL, workflows en estado weird. Configurable.
+
+- **E5** — *Regex de `id` vive en dos lugares* (`_schema/plugin.schema.yaml`
+  y `plugins-sync.ts`). Si divergen, manifests válidos por uno son rechazados
+  por el otro. Esto YA pasó pre-PR9 (schema decía kebab-case, sync no
+  validaba). Sin test, vuelve a pasar.
+
+**🟢 Bajos (2)**:
+
+- **E6** — `pluginProps` "bandeja completa" en Dashboard.tsx sin contrato
+  documentado. Cuando alguien agregue un plugin que necesite un prop nuevo,
+  no sabrá cómo extenderlo correctamente.
+
+- **E7** — CSS `.tb-agents-btn` huérfano en index.css (lo removí del Toolbar
+  pero quedó en el stylesheet — bytes muertos, futuro confusion).
+
+### Fixes aplicados (7)
+
+**F1 (crítico)** — `k8s/aws-produccion/worker-remarketing.yaml`:
+
+Reescrito con **comentario en bloque ⚠️ REQUIRED** listando explícitamente
+los 4 secretos que el operador debe inyectar (`DEEPSEEK_API_KEY`,
+`WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_VERIFY_TOKEN`)
+y mencionando los 2 patrones aceptables (overlay/kustomize o External Secrets
+Operator). Respeta la convención del proyecto (no commitear claves) pero
+deja un warning imposible de pasar por alto.
+
+NOTA: `worker-sales.yaml` tiene el mismo problema (no documenta secretos)
+pero ya está en prod hace tiempo y el operador lo conoce. NO se fixea para
+no expandir scope; flagged como debt.
+
+**F2 (alto)** — `tests/plugins/conftest.py`:
+
+Nueva fixture `ephemeral_module(name, body) → dotted_path`:
+- Crea archivo `tests/plugins/<name>.py` con el body dado.
+- Registra finalizer pytest (`request.addfinalizer`) que SIEMPRE corre
+  (incluso con AssertionError/excepciones).
+- Cleanup borra el archivo + purga `sys.modules[dotted]` para evitar caching.
+- Assert defensivo: name debe empezar con `_` (convención para que pytest
+  no lo collecte como test).
+
+`test_main_loader.py` y `test_run_workers.py` refactorizados para usar la
+fixture — los `try/finally` manuales desaparecen, los nombres de los
+archivos quedan declarativos.
+
+**F3 (alto)** — `_schema/plugin.schema.yaml`:
+
+Comentario en bloque arriba de la sección `api:` explicando la política del
+loader (`legacy_routers > python_module`, fallback silencioso si `python_module`
+no expone router, fail-fast en import error). Descriptions de `python_module`
+y `legacy_routers` actualizadas con cross-references.
+
+**F4 (medio)** — `src/run_workers.py`:
+
+`_SHUTDOWN_TIMEOUT_S` ahora lo computa `_resolve_shutdown_timeout()` desde
+`RUN_WORKERS_SHUTDOWN_TIMEOUT_S` env var. Default 15s. Si el valor no parsea
+como float, fallback al default con warning.
+
+**F5 (medio)** — `tests/plugins/test_premortem_invariants.py` (NUEVO):
+
+- `test_plugin_id_regex_matches_between_schema_and_sync`: lee el pattern del
+  schema YAML y lo compara con el regex literal de `plugins-sync.ts` via
+  grep. Si divergen, fail con mensaje claro.
+- `test_existing_plugin_ids_match_the_pattern`: sanity check — todos los
+  plugins actuales (5) pasan el pattern del schema.
+- `test_every_worker_in_manifest_has_k8s_deployment`: para cada worker
+  declarado en `plugin.yaml`, verifica que existe el K8s deployment
+  correspondiente. **Esta es la red de seguridad contra E1** — si alguien
+  agrega un worker al manifest y olvida crear el deployment, el test pega.
+- `test_every_k8s_worker_runs_the_correct_module`: el `command` de cada
+  deployment debe contener el dotted path del módulo del worker. Previene
+  rename drift (rename del worker en manifest pero olvido del K8s).
+
+Tabla `_EXPECTED_K8S_DEPLOYMENTS: dict[(plugin_id, worker_name), filename]`
+es la single source of truth para el mapeo manifest ↔ K8s.
+
+**F6 (bajo)** — `pages/Dashboard.tsx`:
+
+Comentario en bloque "CONTRATO/TRADE-OFF/CUÁNDO MIGRAR" sobre `pluginProps`:
+- CONTRATO: shell entrega bandejón con todo el state cross-plugin.
+- TRADE-OFF: tipo `any` → TypeScript no detecta mismatch.
+- CUÁNDO MIGRAR: a Context provider cuando haya 6+ plugins o bug por
+  mismatch.
+
+**F7 (bajo)** — `src/index.css`:
+
+Eliminado bloque `.tb-agents-btn` (14 LOC) — era CSS huérfano después de
+quitar el botón "Agentes" especial del Toolbar en PR9.
+
+### Tests nuevos del premortem (7)
+
+```
+tests/plugins/test_premortem_invariants.py        4 tests
+  - test_every_worker_in_manifest_has_k8s_deployment
+  - test_every_k8s_worker_runs_the_correct_module
+  - test_plugin_id_regex_matches_between_schema_and_sync
+  - test_existing_plugin_ids_match_the_pattern
+
+tests/plugins/test_run_workers.py                 3 tests
+  - test_shutdown_timeout_from_env
+  - test_shutdown_timeout_default_when_unset
+  - test_shutdown_timeout_invalid_value_falls_back_to_default
+```
+
+### Verificaciones corridas
+
+```bash
+# Backend
+$ cd hubara_agency && uv run pytest --tb=line -q
+290 passed, 1 skipped in 12.43s      # +7 vs PR9 (283)
+
+$ uv run pytest tests/plugins/ -q
+26 passed in 3.92s                    # +7 vs PR9 (19)
+
+$ uv run lint-imports
+Contracts: 4 kept, 0 broken.
+
+# Frontend
+$ cd frontend_dashboard && npm run plugins:sync
+[plugins-sync] generated ... with 5 plugin(s): agents_admin, catalog, chats, eta, orders
+
+$ ./node_modules/.bin/vite build --mode development
+✓ built in 578ms
+
+$ npm run test:arch
+12 passed, 1 skipped
+
+$ npm test
+69 passed, 1 skipped
+```
+
+### Stats
+
+```
+Escenarios identificados: 7 (1 crítico / 2 altos / 2 medios / 2 bajos)
+Fixes aplicados: 7
+Tests nuevos: 7 (todos verdes)
+Tests totales backend: 283 → 290
+Líneas tocadas: ~400 LOC (fixture + premortem invariants + k8s + shutdown env)
+Archivos creados: 2
+  - hubara_agency/tests/plugins/conftest.py
+  - hubara_agency/tests/plugins/test_premortem_invariants.py
+Archivos modificados: 6
+```
+
+### Debt explícitamente NO fixeado (para no expandir scope)
+
+- **worker-sales.yaml** tiene el mismo problema que el original
+  worker-remarketing.yaml (no documenta los secretos REQUIRED). Ya estaba
+  así pre-refactor — si alguien lo "arregló" para producción, lo hizo via
+  kustomize/overlay externo. Agregar el warning ahí es trivial pero está
+  fuera del scope de este premortem.
+- **api-deployment.yaml** tiene un comentario parcial ("inyectar llaves
+  privadas usando envFrom -> Secret") pero NO lista explícitamente cuáles.
+  Mismo trade-off.
+
+### Status final
+
+✅ **done** — el premortem fixeó el bug crítico que aparecería días después
+del deploy, agregó la red de seguridad para que no vuelva a colar (test que
+verifica manifest ↔ K8s paridad), y consolidó la consistency del regex de
+plugin id entre Python y TypeScript con un test que rompe si divergen.
+
+---
+
+## 2026-05-16 — PR11 (manifest = single source of truth) — Claude — ✅ done
+
+### Contexto
+
+El operador hizo una pregunta clave después de PR10:
+
+> *"todo este refactor lo hicimos para poder tener varios implementadores en
+> paralelo programando diferentes features con Archon... ¿es cierto según lo
+> que conoces de la arquitectura?"*
+
+Respondí honestamente: **parcialmente**. El isolation funcionaba para crear
+plugins frontend-only, pero plugins agénticos con worker generaban conflicts
+de merge en ~10 archivos compartidos. Identifiqué los 4 más críticos y el
+operador autorizó atacarlos:
+
+1. `src/platform/constants.py` (queues hardcoded)
+2. `tests/plugins/test_premortem_invariants.py:_EXPECTED_K8S_DEPLOYMENTS` (dict hardcoded)
+3. `tests/conftest.py:_VAULT_CAPTURING_MODULES` (lista hardcoded)
+4. `docker-compose.local.yml` (services hardcoded por worker)
+
+Además pidió: "este concepto del manifest va a ser el lugar donde se definen
+todas las conexiones del plugin con el sistema?" → SÍ, esa es la dirección.
+PR11 lo eleva a single source of truth real.
+
+### Fixes aplicados (4)
+
+**FIX 1 — `task_queue` al manifest** (elimina conflict #1):
+
+- Schema extendido: `agent.workers[].task_queue` ahora es **required** (pattern
+  `^[a-z][a-z0-9-]*$`).
+- Nuevo módulo `src/platform/plugin_manifest.py` con:
+  - `load_manifest(plugin_id)` (cacheado per process)
+  - `get_worker_spec(plugin_id, worker_name)`
+  - `get_task_queue(plugin_id, worker_name)` — la API principal
+  - `enumerate_manifest_workers()` (DRY con run_workers)
+  - Exceptions: `ManifestNotFoundError`, `WorkerNotDeclaredError`, `TaskQueueMissingError`
+- Refactorizados **7 call-sites** que importaban queues de `constants.py`:
+  - `src/plugins/chats/workers/{sales,remarketing}.py`
+  - `src/plugins/catalog/workers/sync.py`
+  - `src/plugins/chats/agent/sales/use_cases/load_or_start_sales_session.py`
+  - `src/platform/temporal/dispatcher.py` (2 call-sites)
+  - `scripts/trigger_catalog_sync.py`
+  - `src/plugins/catalog/agent/workflows/sync.py` (en docstring example)
+- 2 tests refactorizados: `tests/test_load_or_start_sales_session.py`,
+  `tests/test_sales_workflow_debounce.py` (definen `SALES_QUEUE = get_task_queue(...)`
+  para mantener legibilidad sin importar de constants).
+- `constants.py` queda solo con rutas/prefijos cross-plugin
+  (`ROUTE_VENTAS`, `WHATSAPP_SESSION_PREFIX`). Las queues legacy
+  desaparecen del archivo. Docstring explica el por qué.
+- Manifests actualizados: `chats/plugin.yaml` declara queues + `deployment` +
+  `compose` blocks; idem `catalog/plugin.yaml`.
+
+**FIX 2 — `_VAULT_CAPTURING_MODULES` auto-discover via AST** (elimina conflict #3):
+
+- Reemplazada la lista hardcoded de 14 módulos por
+  `_discover_vault_capturing_modules()` que:
+  - Escanea `src/**/*.py` con `ast.walk`.
+  - Detecta `from src.platform.config import WORKSPACE_VAULT_DIR` (todos los patterns).
+  - Siempre incluye el origen (`src.platform.config`) como caso especial.
+  - Fallback defensivo a lista hardcoded si el scan falla.
+- Resultado: agregar un módulo nuevo que use `WORKSPACE_VAULT_DIR` **no toca
+  conftest.py**. La fixture autouse lo descubre automáticamente.
+- Side-effect bueno: el scan detectó que la lista hardcoded tenía 1 falso
+  positivo (`remarketing/activities/bootstrap_session.py` solo lo mencionaba
+  en un comentario, no lo importaba).
+
+**FIX 3 — `_EXPECTED_K8S_DEPLOYMENTS` auto-gen** (elimina conflict #2):
+
+- Reemplazado el dict hardcoded por `_discover_k8s_worker_deployments()` que:
+  - Escanea `k8s/aws-produccion/worker-*.yaml`.
+  - Extrae `command` y matchea regex `src\.plugins\.([a-z_]+)\.workers\.([a-z_]+)`.
+  - Devuelve `{(plugin_id, worker_name): deployment_path}`.
+- Test `test_every_worker_in_manifest_has_k8s_deployment` refactorizado.
+- Test NUEVO `test_every_k8s_worker_corresponds_to_a_manifest_worker`:
+  detecta el caso inverso (deployment huérfano que apunta a worker eliminado).
+
+**FIX 4 — `render-compose.py` + `docker-compose.base.yml`** (elimina conflict #4):
+
+- Nuevo `hubara_agency/docker-compose.base.yml`: solo servicios fijos
+  (db, temporal, temporal-ui, litellm, hubara-api, hubara-frontend, volumes).
+- Nuevo `hubara_agency/scripts/render-compose.py`:
+  - Lee `base.yml`.
+  - Itera manifests con `agent.workers[]`.
+  - Para cada worker, genera service con naming `hubara-worker-<plugin_id>-<name>`
+    (override opcional via `compose.service_name`).
+  - Inputs del manifest:
+    - `worker.module` → command `python -m <module>`
+    - `worker.compose.env` → environment list
+    - `worker.compose.volumes` → volumes
+    - `worker.compose.depends_on` → depends_on con `condition: service_healthy`
+  - Output: `docker-compose.local.yml` con header AUTO-GENERATED.
+  - Polish: fix `volname: null` → `volname:` (PyYAML quirk).
+- Test NUEVO `test_docker_compose_local_is_up_to_date_with_manifests`:
+  ejecuta `render()` y compara byte-a-byte con el archivo commiteado.
+  Mensaje claro si drift: "run uv run python scripts/render-compose.py".
+  Bypass intencional: `RENDER_COMPOSE_SKIP=1` para refactor del script.
+
+### Tests nuevos del PR11 (3)
+
+```
+tests/plugins/test_premortem_invariants.py
+  - test_every_k8s_worker_corresponds_to_a_manifest_worker  (FIX 3 — inverso)
+  - test_docker_compose_local_is_up_to_date_with_manifests  (FIX 4)
+  - test_every_manifest_worker_declares_task_queue          (FIX 1 — contrato)
+  - test_task_queues_are_unique_across_workers              (FIX 1 — aislamiento)
+```
+
+(2 reusan helpers compartidos del módulo.)
+
+### Verificaciones corridas
+
+```bash
+$ uv run pytest --tb=line -q
+293 passed, 1 skipped in 14.60s         # +3 vs PR10 (290)
+
+$ uv run pytest tests/plugins/ -q
+29 passed in 4.59s                       # +3 vs PR10 (26)
+
+$ uv run lint-imports
+Contracts: 4 kept, 0 broken.
+
+# Render-compose smoke
+$ uv run python scripts/render-compose.py
+[render-compose] wrote hubara_agency/docker-compose.local.yml (5504 bytes)
+
+# Discovery de queues funciona
+$ uv run python -c "from src.platform.plugin_manifest import get_task_queue; print(get_task_queue('chats', 'sales'))"
+queue-sales-agent
+```
+
+### Archivos cambiados
+
+```
+Nuevos (3):
+  hubara_agency/src/platform/plugin_manifest.py        (~125 LOC)
+  hubara_agency/scripts/render-compose.py              (~120 LOC)
+  hubara_agency/docker-compose.base.yml                (~130 LOC)
+
+Modificados (12):
+  frontend_dashboard/src/plugins/_schema/plugin.schema.yaml   (workers.task_queue + deployment + compose)
+  frontend_dashboard/src/plugins/chats/plugin.yaml            (workers declaran queues + compose)
+  frontend_dashboard/src/plugins/catalog/plugin.yaml          (idem)
+  hubara_agency/src/platform/constants.py                     (queues eliminadas, solo rutas)
+  hubara_agency/src/platform/temporal/dispatcher.py           (usa get_task_queue)
+  hubara_agency/src/plugins/chats/workers/sales.py            (usa get_task_queue)
+  hubara_agency/src/plugins/chats/workers/remarketing.py      (idem)
+  hubara_agency/src/plugins/catalog/workers/sync.py           (idem)
+  hubara_agency/src/plugins/chats/agent/sales/use_cases/load_or_start_sales_session.py
+  hubara_agency/src/plugins/catalog/agent/workflows/sync.py   (docstring)
+  hubara_agency/scripts/trigger_catalog_sync.py
+  hubara_agency/tests/conftest.py                             (AST auto-discover)
+  hubara_agency/tests/plugins/test_premortem_invariants.py    (auto-discover + 3 tests nuevos)
+  hubara_agency/tests/test_load_or_start_sales_session.py
+  hubara_agency/tests/test_sales_workflow_debounce.py
+  hubara_agency/docker-compose.local.yml                       (regenerado por script)
+  PLUGIN_REFACTOR_PLAN.md                                      (§5 deferred items + §9 nueva)
+  PLUGIN_REFACTOR_LOG.md                                       (esta entrada)
+```
+
+### Impacto en isolation para Archon
+
+Tabla de "cambios para agregar un plugin nuevo con worker":
+
+| Archivo a editar | Pre-PR11 | Post-PR11 |
+|---|---|---|
+| `frontend_dashboard/src/plugins/<id>/plugin.yaml` | ✅ nuevo | ✅ nuevo (más campos) |
+| `hubara_agency/src/plugins/<id>/` | ✅ nuevo | ✅ nuevo |
+| `frontend_dashboard/src/plugins/<id>/frontend/` | ✅ nuevo | ✅ nuevo |
+| `src/platform/constants.py` (queue nueva) | ❌ shared | 🎉 **NO se toca** |
+| `docker-compose.local.yml` | ❌ shared | 🎉 **auto-regen** |
+| `_EXPECTED_K8S_DEPLOYMENTS` | ❌ shared | 🎉 **NO se toca** |
+| `_VAULT_CAPTURING_MODULES` | ❌ shared | 🎉 **NO se toca** |
+| `k8s/aws-produccion/worker-*.yaml` | ✅ nuevo | ✅ nuevo (auto-gen pendiente) |
+
+**Resultado: el path crítico para plugins agénticos en paralelo es 100%
+isolation real.** Conflicts restantes son inherentes (lock files de
+package managers) o cosmética (LOG.md append).
+
+### Status final
+
+✅ **done** — el sistema cumple ahora la promesa original del refactor:
+*"varios implementadores en paralelo programando diferentes features con
+Archon, que luego desde los files de configuración se conecten y empiecen
+a funcionar"*. El manifest es la verdadera single source of truth.
 
 ---
 

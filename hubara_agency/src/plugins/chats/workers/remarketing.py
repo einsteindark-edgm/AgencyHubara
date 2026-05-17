@@ -8,7 +8,7 @@ from src.platform.temporal.activities import (
     execute_tool,
     read_workspace_memory_activity,
 )
-from src.platform.constants import REMARKETING_QUEUE
+from src.platform.plugin_manifest import get_task_queue
 from src.platform.temporal.dispatcher import (
     schedule_remarketing_workflow_activity,
     start_or_signal_sales_workflow_activity,
@@ -46,9 +46,10 @@ async def main() -> None:
     logger.info("Conectando Especialista (Remarketing) al clúster Temporal mTLS...")
     client = await get_temporal_client()
 
+    task_queue = get_task_queue("chats", "remarketing")
     worker = Worker(
         client,
-        task_queue=REMARKETING_QUEUE,
+        task_queue=task_queue,
         workflows=[RemarketingSessionWorkflow],
         activities=[
             build_prompt,
@@ -73,7 +74,7 @@ async def main() -> None:
         ],
     )
 
-    logger.info("🎯 Remarketing Agent En Vivo. Escuchando la cola exclusiva: '{}'", REMARKETING_QUEUE)
+    logger.info("🎯 Remarketing Agent En Vivo. Escuchando la cola exclusiva: '{}'", task_queue)
     await worker.run()
 
 
