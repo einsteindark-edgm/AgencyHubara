@@ -713,51 +713,745 @@ nodes:
     trigger_rule: all_done
 
   # ════════════════════════════════════════════════════════════════════
-  # FASE 3-5 — Implementación + validación + PR + review
+  # FASE 3 — Implementación (DOS RAMAS: single-plugin inline / multi-plugin fan-out)
   # ════════════════════════════════════════════════════════════════════
-  # IMPLEMENTACIÓN PENDIENTE (PR17). En este PR15 solo entregamos FASE 0-2.
-  # El bootstrap + refinement + plan ya funcionan E2E. Para implementar la
-  # HU realmente, todavía hace falta:
-  #   FASE 3: rama-A (single-plugin inline) + rama-B (multi-plugin fan-out)
-  #   FASE 4: validación final consolidada (gates de ambos stacks)
-  #   FASE 5: build-pr-body + create-pr
-  #   FASE 6: trigger-review (lanza review-pr-hubara en background)
-  #
-  # Mientras tanto, este workflow termina después de FASE 2 con un mensaje
-  # para el operador.
 
-  - id: phase3-placeholder
+  - id: project-set-implementing
     bash: |
+      CFG="$ARTIFACTS_DIR/github-project-config.yaml"
+      [ -f "$CFG" ] || { echo "skipped"; exit 0; }
+      ISSUE_URL=$(echo $gen-hu-id.output | jq -r '.issue_url')
+      [ -z "$ISSUE_URL" ] || [ "$ISSUE_URL" = "null" ] && { echo "skipped"; exit 0; }
+      PN=$(grep '^project_number:' "$CFG" | awk '{print $2}')
+      PO=$(grep '^project_owner:' "$CFG" | awk '{print $2}')
+      PID=$(grep '^project_id:' "$CFG" | awk '{print $2}')
+      FID=$(grep '^status_field_id:' "$CFG" | awk '{print $2}')
+      OID=$(awk '/^status_options:/{f=1; next} f && /^  Implementing:/{print $2; exit}' "$CFG")
+      [ -z "$OID" ] && exit 0
+      II=$(gh project item-list "$PN" --owner "$PO" --format json --limit 200 2>/dev/null \
+        | jq -r --arg u "$ISSUE_URL" '.items[] | select(.content.url == $u) | .id' | head -1)
+      [ -z "$II" ] && exit 0
+      gh project item-edit --id "$II" --project-id "$PID" \
+        --field-id "$FID" --single-select-option-id "$OID" \
+        > "$ARTIFACTS_DIR/.edit.log" 2>&1 || tail -3 "$ARTIFACTS_DIR/.edit.log"
+      echo "set Implementing ok"
+    depends_on: [commit-plan]
+    trigger_rule: all_done
+
+  - id: classify-mode
+    bash: |
+      # Detectar mode + extraer info crítica para rama A vs B
       HU_ID=$(echo $gen-hu-id.output | jq -r '.hu_id')
-      MODE=$(python3 -c "
-      import yaml
-      d=yaml.safe_load(open('hubara_agency/.hubara/plans/${HU_ID}/plugin-manifest.yaml'))
-      print(d.get('mode', 'unknown'))
-      " 2>/dev/null || echo "unknown")
+      M="hubara_agency/.hubara/plans/${HU_ID}/plugin-manifest.yaml"
+      python3 <<EOF
+      import json, yaml
+      d = yaml.safe_load(open('$M'))
+      out = {
+        'mode': d.get('mode', 'unknown'),
+        'plugins': [p.get('id') for p in (d.get('plugins') or [])],
+        'batches': [],
+        'requires_merger': bool((d.get('totals') or {}).get('requires_merger', False)),
+        'single_plugin_id': None,
+      }
+      for b in (d.get('plugin_batches') or []):
+          out['batches'].append({
+              'id': b.get('batch_id'),
+              'plugins': b.get('plugins') or [],
+          })
+      if out['mode'] == 'single_plugin' and out['plugins']:
+          out['single_plugin_id'] = out['plugins'][0]
+      print(json.dumps(out))
+      EOF
+    depends_on: [commit-plan]
+
+  # Pre-warm uv venv ANTES del fan-out (más rápido los gates posteriores)
+  - id: prewarm-uv-venv
+    bash: |
+      if [ -d hubara_agency ]; then
+        cd hubara_agency && uv sync 2>&1 | tail -10 || echo "uv sync warnings — gates retry"
+      fi
+      echo "ok"
+    timeout: 600000
+    depends_on: [commit-plan, project-set-implementing]
+    trigger_rule: all_done
+
+  # ── RAMA A: single-plugin (auto inline, sin fan-out) ──────────────
+
+  - id: rama-A-single-plugin-inline
+    bash: |
+      # Invoca el sub-pipeline hu-hubara-plugin-pipeline para el único plugin,
+      # ESPERANDO a que termine (no en background — queremos el result).
+      MODE=$(echo $classify-mode.output | jq -r '.mode')
+      [ "$MODE" != "single_plugin" ] && { echo "skipped (mode != single_plugin)"; exit 0; }
+
+      HU_ID=$(echo $gen-hu-id.output | jq -r '.hu_id')
+      PLUGIN_ID=$(echo $classify-mode.output | jq -r '.single_plugin_id')
+      LOG_FILE="$ARTIFACTS_DIR/sub-pipeline-${PLUGIN_ID}.log"
+
+      echo "Invocando hu-hubara-plugin-pipeline '${HU_ID} ${PLUGIN_ID}' inline (single-plugin auto)..." >&2
+
+      # env -u CLAUDECODE para evitar nested archon-in-claude-code hang
+      env -u CLAUDECODE ARCHON_SUPPRESS_NESTED_CLAUDE_WARNING=1 \
+        archon workflow run hu-hubara-plugin-pipeline "${HU_ID} ${PLUGIN_ID}" \
+        > "$LOG_FILE" 2>&1
+      RC=$?
+
+      echo "=== Sub-pipeline log (last 30 lines) ===" >&2
+      tail -30 "$LOG_FILE" >&2
+
+      if [ $RC -ne 0 ]; then
+        echo "FAIL_SUBPIPELINE rc=$RC see $LOG_FILE"
+        exit 0
+      fi
+
+      # Pull los commits que el sub-pipeline pusheo a hu/<HU_ID>
+      BRANCH=$(echo $gen-hu-id.output | jq -r '.branch')
+      git fetch origin "$BRANCH" >/dev/null 2>&1 || true
+      git merge --ff-only "origin/$BRANCH" 2>&1 | tail -3 >&2 || true
+
+      # Validar plugin-result.yaml
+      PLUGIN_RFILE="hubara_agency/.hubara/results/${HU_ID}/plugin-${PLUGIN_ID}-result.yaml"
+      if [ ! -f "$PLUGIN_RFILE" ]; then
+        echo "FAIL_NO_PLUGIN_RESULT $PLUGIN_RFILE no existe"
+        exit 0
+      fi
+      STATUS=$(grep '^status:' "$PLUGIN_RFILE" | awk '{print $2}')
+      if [ "$STATUS" != "passed" ]; then
+        echo "FAIL_PLUGIN_NOT_PASSED status=$STATUS"
+        exit 0
+      fi
+
+      echo "PASS single-plugin completed: $PLUGIN_ID"
+    depends_on: [classify-mode, prewarm-uv-venv]
+    when: "$classify-mode.output.mode == 'single_plugin'"
+    idle_timeout: 3600000                     # 60 min: tasks pueden tardar (uv sync, builds, etc.)
+    timeout: 3600000
+
+  # ── RAMA B: multi-plugin (fan-out manual con approval gates) ──────
+
+  - id: rama-B-print-fan-out-commands
+    bash: |
+      MODE=$(echo $classify-mode.output | jq -r '.mode')
+      [ "$MODE" != "multi_plugin" ] && { echo "skipped (mode != multi_plugin)"; exit 0; }
+
+      HU_ID=$(echo $gen-hu-id.output | jq -r '.hu_id')
+      # Primer batch (paralelizable). Si hay más batches, los hacemos en
+      # iteraciones aparte (rama-B-batch-2, batch-3 — soportamos hasta 3).
+      FIRST_BATCH=$(echo $classify-mode.output | jq -r '.batches[0].plugins | join(" ")')
 
       cat <<EOF
 
       ╔════════════════════════════════════════════════════════════════════════╗
-      ║ ⚠️  Pipeline parcial (PR15) — FASE 0-2 completas, FASE 3-6 pendientes ║
+      ║ MULTI-PLUGIN HU detectada — FAN-OUT MANUAL                              ║
       ║                                                                        ║
-      ║ HU id:  ${HU_ID}
-      ║ Mode:   ${MODE}
-      ║ Branch: hu/${HU_ID} (pusheado a origin)
+      ║ HU id: ${HU_ID}                                                        ║
+      ║ Mode:  multi_plugin                                                    ║
       ║                                                                        ║
-      ║ Artifacts persistidos:                                                 ║
-      ║   - hubara_agency/.hubara/refinements/${HU_ID}-tech.md
-      ║   - hubara_agency/.hubara/plans/${HU_ID}/plugin-manifest.yaml
+      ║ Abrí UNA TERMINAL por cada plugin del primer batch y corré:            ║
       ║                                                                        ║
-      ║ Próximos pasos (manuales hasta PR17):                                  ║
-      ║   1. Lanzá sub-pipelines de plugins (PR16, parcial):                   ║
-      ║      archon workflow run hu-hubara-plugin-pipeline "${HU_ID} <plugin>"
-      ║   2. Esperá que todos terminen y commiteen a hu/${HU_ID}              ║
-      ║   3. Manual: cd hubara_agency && uv run pytest && uv run lint-imports  ║
-      ║   4. Manual: cd frontend_dashboard && npm test && npm run test:arch    ║
-      ║   5. Manual: gh pr create --base main --head hu/${HU_ID}              ║
+      EOF
+      for p in $FIRST_BATCH; do
+        echo "      archon workflow run hu-hubara-plugin-pipeline \"${HU_ID} ${p}\""
+      done
+      cat <<EOF
       ║                                                                        ║
-      ║ FASE 3-6 completa: ver PR17 (próxima entrega).                         ║
+      ║ Cada sub-pipeline:                                                     ║
+      ║   1. Crea su worktree fresh desde origin/hu/${HU_ID}                  ║
+      ║   2. Planifica el feature-level dentro del plugin                      ║
+      ║   3. Implementa las features secuencialmente con gates determinísticos ║
+      ║   4. Commitea + pushea a hu/${HU_ID}                                   ║
+      ║                                                                        ║
+      ║ Cuando TODOS terminen (passed o failed), volvé acá y respondé "ready" ║
+      ║ en el próximo approval.                                                ║
       ╚════════════════════════════════════════════════════════════════════════╝
       EOF
-    depends_on: [commit-plan]
+      echo "$FIRST_BATCH" > $ARTIFACTS_DIR/.current-batch-plugins
+      echo "OK"
+    depends_on: [classify-mode, prewarm-uv-venv]
+    when: "$classify-mode.output.mode == 'multi_plugin'"
+
+  - id: rama-B-wait-fan-out-done
+    depends_on: [rama-B-print-fan-out-commands]
+    when: "$classify-mode.output.mode == 'multi_plugin'"
+    approval:
+      message: |
+        Respondé "ready" cuando TODOS los sub-pipelines del batch actual hayan terminado
+        (con status passed o failed).
+
+        Plugins esperados: $rama-B-print-fan-out-commands.output
+
+        Voy a:
+          1. git fetch origin + git merge --ff-only origin/hu/<HU_ID>
+          2. Validar que cada plugin del batch tiene plugin-<id>-result.yaml con status:passed
+          3. Si algún plugin falló → abortar con detalle
+          4. Si todos passed → invocar merger (si requires_merger) → avanzar al siguiente batch
+             o pasar a FASE 4
+
+        Respondé "abort" si querés frenar todo.
+
+  - id: rama-B-merge-batch
+    bash: |
+      MODE=$(echo $classify-mode.output | jq -r '.mode')
+      [ "$MODE" != "multi_plugin" ] && { echo "skipped"; exit 0; }
+
+      HU_ID=$(echo $gen-hu-id.output | jq -r '.hu_id')
+      BRANCH=$(echo $gen-hu-id.output | jq -r '.branch')
+
+      git fetch origin "$BRANCH" 2>&1 | tail -3 >&2 || true
+      git merge --ff-only "origin/$BRANCH" 2>&1 | tail -3 >&2 || {
+        echo "FAIL_FF_MERGE — branch local divergió. Investigá git status."
+        exit 0
+      }
+
+      RESULTS_DIR="hubara_agency/.hubara/results/${HU_ID}"
+      BATCH_PLUGINS=$(cat $ARTIFACTS_DIR/.current-batch-plugins 2>/dev/null || echo "")
+      MISSING=0
+      FAILED=0
+      FAILED_DETAILS=""
+      for p in $BATCH_PLUGINS; do
+        RFILE="${RESULTS_DIR}/plugin-${p}-result.yaml"
+        if [ ! -f "$RFILE" ]; then
+          MISSING=$((MISSING + 1))
+          FAILED_DETAILS="${FAILED_DETAILS}\n  - MISSING: ${p}"
+        else
+          STATUS=$(grep '^status:' "$RFILE" | awk '{print $2}')
+          if [ "$STATUS" != "passed" ]; then
+            FAILED=$((FAILED + 1))
+            FAILED_DETAILS="${FAILED_DETAILS}\n  - FAILED: ${p} status=${STATUS}"
+          fi
+        fi
+      done
+      if [ "$MISSING" -gt 0 ] || [ "$FAILED" -gt 0 ]; then
+        echo "FAIL_BATCH_INCOMPLETE missing=${MISSING} failed=${FAILED}"
+        printf "%b\n" "$FAILED_DETAILS" >&2
+        exit 0
+      fi
+      echo "BATCH_OK"
+    depends_on: [rama-B-wait-fan-out-done]
+    when: "$classify-mode.output.mode == 'multi_plugin'"
+
+  - id: rama-B-invoke-merger-if-shared
+    depends_on: [rama-B-merge-batch]
+    when: "$classify-mode.output.mode == 'multi_plugin' && $classify-mode.output.requires_merger == true && $rama-B-merge-batch.output == 'BATCH_OK'"
+    idle_timeout: 600000
+    loop:
+      max_iterations: 1
+      until: MERGER_OK
+      skills:
+        - hubara-merger-archon
+      prompt: |
+        Consolidá los wiring_intents de los plugins del batch actual.
+
+        Input:
+          $ARTIFACTS_DIR/batch-results/F*-result.yaml (NO existe — adaptación:
+            lee plugin-*-result.yaml de hubara_agency/.hubara/results/<HU_ID>/
+            que contienen los wiring_intents combinados de todos los feature
+            results del plugin)
+          $ARTIFACTS_DIR/spinal-files.yaml
+
+        Output:
+          - Spinal files modificados in-place en el worktree
+          - $ARTIFACTS_DIR/merge-report.yaml
+
+        Aplicá protocolo del skill hubara-merger-archon. Si todo OK:
+          <promise>MERGER_OK</promise>
+
+  - id: rama-B-commit-merger
+    bash: |
+      MODE=$(echo $classify-mode.output | jq -r '.mode')
+      REQ_MERGER=$(echo $classify-mode.output | jq -r '.requires_merger')
+      [ "$MODE" != "multi_plugin" ] && { echo "skipped"; exit 0; }
+      [ "$REQ_MERGER" != "true" ] && { echo "skipped (no merger needed)"; exit 0; }
+
+      HU_ID=$(echo $gen-hu-id.output | jq -r '.hu_id')
+      BRANCH=$(echo $gen-hu-id.output | jq -r '.branch')
+
+      # Stage spinal files que el merger modificó
+      git add hubara_agency/src frontend_dashboard/src 2>/dev/null || true
+
+      if ! git diff --staged --quiet; then
+        git commit -m "${HU_ID}: merger consolidó wiring_intents del batch (auto)"
+        git push origin "$BRANCH" 2>&1 | tail -3 >&2 || {
+          git pull --rebase origin "$BRANCH" 2>&1 | tail -3 >&2 || true
+          git push origin "$BRANCH" 2>&1 | tail -3 >&2 || true
+        }
+        echo "merger_committed"
+      else
+        echo "no_changes (merger skipped or no intents)"
+      fi
+    depends_on: [rama-B-invoke-merger-if-shared]
+    trigger_rule: all_done
+    when: "$classify-mode.output.mode == 'multi_plugin' && $rama-B-merge-batch.output == 'BATCH_OK'"
+
+  - id: cancel-on-multi-plugin-failure
+    cancel: |
+      Batch multi-plugin INCOMPLETO ($rama-B-merge-batch.output).
+
+      Revisá hubara_agency/.hubara/results/$gen-hu-id.output.hu_id/ para ver
+      qué plugins fallaron / faltaron.
+
+      Para retomar:
+        1. Lanzá los sub-pipelines faltantes:
+           archon workflow run hu-hubara-plugin-pipeline "$gen-hu-id.output.hu_id <plugin>"
+        2. Cuando estén todos passed, re-lanzá:
+           archon workflow run hu-hubara-pipeline "$gen-hu-id.output.hu_id"
+           (smart-resume retoma desde donde quedó)
+    when: "$classify-mode.output.mode == 'multi_plugin' && $rama-B-merge-batch.output != 'BATCH_OK'"
+    depends_on: [rama-B-merge-batch]
+
+  # NOTA: si el plugin-manifest tiene >1 batch, se ejecutarían rama-B-batch-2,
+  # rama-B-batch-3, etc. iterativamente. Por ahora soportamos 1 batch (cubre
+  # la mayoría de los casos multi-plugin). HUs con dependencias topológicas
+  # complejas (>1 batch) requieren correr el orquestador 2 veces: primera
+  # corrida hace batch 1, operador re-lanza para batch 2, etc.
+
+  # ════════════════════════════════════════════════════════════════════
+  # FASE 4 — Validación final consolidada (gates de ambos stacks)
+  # ════════════════════════════════════════════════════════════════════
+
+  - id: check-pipeline-error
+    bash: |
+      # Detectar pipeline-error.yaml de cualquier sub-pipeline
+      HU_ID=$(echo $gen-hu-id.output | jq -r '.hu_id')
+      ERR_FILES=$(find "$ARTIFACTS_DIR" -name 'pipeline-error.yaml' 2>/dev/null)
+      if [ -n "$ERR_FILES" ]; then
+        echo "=== pipeline-error.yaml encontrados ===" >&2
+        cat $ERR_FILES >&2
+        echo "HAS_ERROR"
+      else
+        echo "OK"
+      fi
+    depends_on: [rama-A-single-plugin-inline, rama-B-merge-batch, rama-B-commit-merger]
+    trigger_rule: all_done
+
+  - id: cancel-on-implement-error
+    cancel: |
+      Pipeline INCOMPLETO en FASE 3 (implementación). Branch hu/$gen-hu-id.output.hu_id
+      pushado a origin con todo el progreso hasta el fallo.
+
+      Revisar $ARTIFACTS_DIR/pipeline-error.yaml (logueado a stderr) para
+      detalles + remediation.
+
+      Para retomar:
+        1. Edití el código del branch para arreglar la task fallida.
+        2. Commit + push a hu/<HU_ID>.
+        3. Re-lanzá: archon workflow run hu-hubara-pipeline "<HU_ID>"
+           (smart-resume continúa desde la próxima task pendiente).
+    when: "$check-pipeline-error.output == 'HAS_ERROR'"
+    depends_on: [check-pipeline-error]
+
+  - id: final-validation
+    bash: |
+      set -o pipefail              # CRITICAL — sin esto exit code se pierde en pipes
+
+      echo "=== render-compose drift check ===" >&2
+      cd hubara_agency && uv run python scripts/render-compose.py 2>&1 | tail -5 >&2
+      git diff --exit-code docker-compose.local.yml >/dev/null || {
+        echo "FAIL_RENDER_COMPOSE_DRIFT"; exit 0;
+      }
+      cd ..
+
+      echo "=== uv pytest (full + architecture) ===" >&2
+      cd hubara_agency && uv run pytest -q --tb=short 2>&1 | tail -30 >&2 || {
+        echo "FAIL_PYTEST"; exit 0;
+      }
+      cd hubara_agency && uv run pytest -m architecture --tb=short 2>&1 | tail -20 >&2 || {
+        echo "FAIL_ARCH"; exit 0;
+      }
+      cd ..
+
+      echo "=== uv lint-imports (R-DIP) ===" >&2
+      cd hubara_agency && uv run lint-imports 2>&1 | tail -10 >&2 || {
+        echo "FAIL_LINT_IMPORTS"; exit 0;
+      }
+      cd ..
+
+      echo "=== uv pytest tests/plugins/ (premortem invariants) ===" >&2
+      cd hubara_agency && uv run pytest tests/plugins/ --tb=short 2>&1 | tail -20 >&2 || {
+        echo "FAIL_PREMORTEM"; exit 0;
+      }
+      cd ..
+
+      echo "=== uv pytest tests/functional/ (functional evidence) ===" >&2
+      cd hubara_agency && uv run pytest tests/functional/ -m functional -v 2>&1 \
+        | tee $ARTIFACTS_DIR/functional-evidence.log | tail -30 >&2 || {
+        echo "FAIL_FUNCTIONAL"; exit 0;
+      }
+      cd ..
+
+      echo "=== npm test ===" >&2
+      cd frontend_dashboard && npm test -- --run 2>&1 | tail -30 >&2 || {
+        echo "FAIL_NPM_TEST"; exit 0;
+      }
+      cd ..
+
+      echo "=== npm test:arch ===" >&2
+      cd frontend_dashboard && npm run test:arch 2>&1 | tail -20 >&2 || {
+        echo "FAIL_NPM_ARCH"; exit 0;
+      }
+      cd ..
+
+      echo "=== npx tsc -b ===" >&2
+      cd frontend_dashboard && npx tsc -b 2>&1 | tail -30 >&2 || {
+        echo "FAIL_TSC"; exit 0;
+      }
+      cd ..
+
+      echo "=== npm run build ===" >&2
+      cd frontend_dashboard && npm run build 2>&1 | tail -30 >&2 || {
+        echo "FAIL_BUILD"; exit 0;
+      }
+      cd ..
+
+      echo "=== Playwright E2E final (FastAPI backend) ===" >&2
+      # Random free port para evitar collision con sub-pipelines paralelos
+      UVICORN_PORT=$(python3 -c "import socket; s=socket.socket(); s.bind(('127.0.0.1',0)); print(s.getsockname()[1]); s.close()" 2>/dev/null)
+      [ -z "$UVICORN_PORT" ] && UVICORN_PORT=8000
+      UVICORN_LOG="$ARTIFACTS_DIR/.uvicorn-final.log"
+      ( cd hubara_agency && UVICORN_PORT=$UVICORN_PORT uv run python run_api.py > "$UVICORN_LOG" 2>&1 ) &
+      UVICORN_PID=$!
+      trap "kill $UVICORN_PID 2>/dev/null; pkill -f 'run_api.py' 2>/dev/null; true" EXIT
+
+      UVICORN_READY=0
+      for i in $(seq 1 180); do
+        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$UVICORN_PORT/" 2>/dev/null || echo "000")
+        if [ "$HTTP_CODE" = "200" ]; then
+          UVICORN_READY=1; echo "FastAPI ready in ${i}s" >&2; break
+        fi
+        sleep 1
+      done
+
+      if [ $UVICORN_READY -eq 0 ]; then
+        echo "FAIL_UVICORN_NOT_READY"
+        tail -20 "$UVICORN_LOG" >&2
+        kill $UVICORN_PID 2>/dev/null || true
+        pkill -f "run_api.py" 2>/dev/null || true
+        exit 0
+      fi
+
+      ( cd frontend_dashboard && set -o pipefail && \
+        VITE_API_URL="http://127.0.0.1:$UVICORN_PORT" \
+        API_URL="http://127.0.0.1:$UVICORN_PORT" \
+        npx playwright test --reporter=line 2>&1 \
+        | tee $ARTIFACTS_DIR/playwright-final.log ) > /dev/null
+      PW_RC=$?
+
+      kill $UVICORN_PID 2>/dev/null || true
+      pkill -f "run_api.py" 2>/dev/null || true
+      wait $UVICORN_PID 2>/dev/null || true
+      trap - EXIT
+
+      if [ "$PW_RC" -ne 0 ]; then
+        echo "FAIL_PLAYWRIGHT"; exit 0
+      fi
+
+      echo "PASS"
+    timeout: 1800000                          # 30 min para full suite + builds + E2E
+    when: "$check-pipeline-error.output == 'OK'"
+    depends_on: [check-pipeline-error]
+
+  - id: cancel-on-final-validation-fail
+    cancel: |
+      Validación final pre-PR FALLÓ ($final-validation.output) en branch hu/$gen-hu-id.output.hu_id.
+
+      El branch tiene regresión que ningún gate per-task capturó. Diagnose
+      manual:
+        cd hubara_agency && uv run pytest -q
+        cd hubara_agency && uv run lint-imports
+        cd hubara_agency && uv run pytest tests/plugins/
+        cd frontend_dashboard && npm test
+        cd frontend_dashboard && npm run test:arch
+        cd frontend_dashboard && npx tsc -b && npm run build
+
+      Para retomar después del fix:
+        git add ...; git commit; git push origin hu/$gen-hu-id.output.hu_id
+        archon workflow run hu-hubara-pipeline "$gen-hu-id.output.hu_id"
+    when: "$final-validation.output != 'PASS'"
+    depends_on: [final-validation]
+
+  # ════════════════════════════════════════════════════════════════════
+  # FASE 5 — PR (build body + create)
+  # ════════════════════════════════════════════════════════════════════
+
+  - id: build-pr-body
+    script: |
+      import { readFileSync, readdirSync, existsSync } from 'fs';
+      import { writeFileSync } from 'fs';
+      import { join } from 'path';
+
+      const huInfo = $gen-hu-id.output;
+      const huId = huInfo.hu_id;
+      const artifactsDir = '$ARTIFACTS_DIR';
+
+      const refinementOriginal = `hubara_agency/.hubara/refinements/${huId}-original.md`;
+      const refinementTech = `hubara_agency/.hubara/refinements/${huId}-tech.md`;
+      const planManifest = `hubara_agency/.hubara/plans/${huId}/plugin-manifest.yaml`;
+      const resultsDir = `hubara_agency/.hubara/results/${huId}`;
+
+      // Summary del HU original (primeras 20 líneas)
+      let summary = '';
+      if (existsSync(refinementOriginal)) {
+        const raw = readFileSync(refinementOriginal, 'utf-8');
+        summary = raw.split('\n').slice(0, 20).join('\n');
+      }
+
+      // Plugins tocados desde plugin-manifest.yaml
+      let pluginsTable = '';
+      if (existsSync(planManifest)) {
+        const raw = readFileSync(planManifest, 'utf-8');
+        // Parse muy simple — buscar entries `- id: <plugin>` + `title:`
+        const lines = raw.split('\n');
+        let inPlugins = false;
+        let currentPlugin = null;
+        for (const line of lines) {
+          if (line.match(/^plugins:/)) { inPlugins = true; continue; }
+          if (inPlugins) {
+            if (line.match(/^[a-z]/)) { inPlugins = false; continue; }
+            const idM = line.match(/^\s*- id: (\S+)/);
+            if (idM) {
+              if (currentPlugin) pluginsTable += `- **${currentPlugin.id}**: ${currentPlugin.title || ''}\n`;
+              currentPlugin = { id: idM[1] };
+            }
+            const titleM = line.match(/^\s+title: ["']?([^"']+)["']?/);
+            if (titleM && currentPlugin) currentPlugin.title = titleM[1];
+          }
+        }
+        if (currentPlugin) pluginsTable += `- **${currentPlugin.id}**: ${currentPlugin.title || ''}\n`;
+      }
+
+      // Per-plugin results
+      let resultsTable = '';
+      if (existsSync(resultsDir)) {
+        const files = readdirSync(resultsDir).filter(f => f.startsWith('plugin-') && f.endsWith('-result.yaml')).sort();
+        for (const f of files) {
+          const content = readFileSync(join(resultsDir, f), 'utf-8');
+          const pluginId = f.replace(/^plugin-/, '').replace(/-result\.yaml$/, '');
+          const statusM = content.match(/^status: *(\w+)/m);
+          const tasksTotalM = content.match(/^feature_tasks_total: *(\d+)/m);
+          const tasksPassedM = content.match(/^feature_tasks_passed: *(\d+)/m);
+          const status = statusM ? statusM[1] : 'unknown';
+          const total = tasksTotalM ? tasksTotalM[1] : '?';
+          const passed = tasksPassedM ? tasksPassedM[1] : '?';
+          resultsTable += `- [${status}] **${pluginId}** — ${passed}/${total} feature tasks passed\n`;
+        }
+      }
+
+      // Functional evidence
+      let functionalEvidence = '';
+      const funcLog = `${artifactsDir}/functional-evidence.log`;
+      if (existsSync(funcLog)) {
+        const raw = readFileSync(funcLog, 'utf-8').trim();
+        if (raw.length > 0) {
+          functionalEvidence = '```\n' + raw.slice(-3000) + '\n```\n';
+        }
+      }
+
+      // Playwright evidence (final + per-task)
+      let playwrightEvidence = '';
+      const pwFinal = `${artifactsDir}/playwright-final.log`;
+      if (existsSync(pwFinal)) {
+        const raw = readFileSync(pwFinal, 'utf-8').trim();
+        if (raw.length > 0) {
+          playwrightEvidence = '### Final E2E run\n\n```\n' + raw.slice(-3000) + '\n```\n\n';
+        }
+      }
+      if (existsSync(artifactsDir)) {
+        const logs = readdirSync(artifactsDir)
+          .filter(f => f.startsWith('playwright-evidence-') && f.endsWith('.log'))
+          .sort();
+        for (const logName of logs) {
+          const taskId = logName.replace(/^playwright-evidence-/, '').replace(/\.log$/, '');
+          const raw = readFileSync(join(artifactsDir, logName), 'utf-8').trim();
+          if (raw.length > 0) {
+            playwrightEvidence += `### ${taskId}\n\n\`\`\`\n${raw.slice(-2000)}\n\`\`\`\n\n`;
+          }
+        }
+      }
+
+      const issueUrl = huInfo.issue_url;
+      const closesLine = (issueUrl && issueUrl !== 'null' && issueUrl !== '')
+        ? `\n\nCloses ${issueUrl}\n`
+        : '';
+
+      // Construir body línea por línea para evitar problemas de indent
+      // con template literals multi-línea dentro del block scalar YAML.
+      const lines = [
+        `# ${huInfo.title}`,
+        '',
+        summary,
+        '',
+        '---',
+        '',
+        '## Plugins tocados',
+        '',
+        pluginsTable || '_(none)_',
+        '',
+        '## Per-plugin results',
+        '',
+        resultsTable || '_(none)_',
+        '',
+        '## ✅ Functional test evidence',
+        '',
+        functionalEvidence || '_(no functional log captured)_',
+        '',
+        '## ✅ Playwright E2E evidence',
+        '',
+        playwrightEvidence || '_(no playwright logs captured)_',
+        '',
+        '---',
+        '',
+        '## Validación final (pre-PR)',
+        '',
+        '- ✅ render-compose drift check',
+        '- ✅ uv pytest (full + architecture)',
+        '- ✅ uv lint-imports (R-DIP)',
+        '- ✅ uv pytest tests/plugins/ (premortem invariants)',
+        '- ✅ uv pytest tests/functional/ -m functional',
+        '- ✅ npm test',
+        '- ✅ npm run test:arch',
+        '- ✅ npx tsc -b',
+        '- ✅ npm run build',
+        '- ✅ Playwright E2E (con FastAPI backend en puerto random)',
+        '',
+        '## Pipeline metadata',
+        '',
+        '- HU id: \`' + huId + '\`',
+        '- Branch: \`hu/' + huId + '\`',
+        '- Mode: ' + (($classify-mode.output).mode || 'unknown'),
+        '- Generated by: hu-hubara-pipeline + sub-pipelines',
+        closesLine,
+        '🤖 Generated with [Claude Code](https://claude.com/claude-code) + Archon pipeline',
+      ];
+      const body = lines.join('\n');
+
+      writeFileSync(`${artifactsDir}/pr-body.md`, body);
+      console.log(`pr-body.md written (${body.length} chars)`);
+    runtime: bun
+    depends_on: [final-validation]
+    when: "$final-validation.output == 'PASS'"
+
+  - id: create-pr
+    bash: |
+      HU_ID=$(echo $gen-hu-id.output | jq -r '.hu_id')
+      TITLE=$(echo $gen-hu-id.output | jq -r '.title')
+      BRANCH=$(echo $gen-hu-id.output | jq -r '.branch')
+
+      gh pr create \
+        --title "${HU_ID}: ${TITLE}" \
+        --body-file $ARTIFACTS_DIR/pr-body.md \
+        --base main \
+        --head "$BRANCH" \
+        > $ARTIFACTS_DIR/.pr-create.log 2>&1
+      RC=$?
+
+      if [ $RC -ne 0 ]; then
+        # ¿Ya existe PR? Buscar
+        EXISTING_PR=$(gh pr list --head "$BRANCH" --json url --jq '.[0].url' 2>/dev/null)
+        if [ -n "$EXISTING_PR" ]; then
+          echo "$EXISTING_PR"
+          echo "(PR ya existía — re-utilizamos)" >&2
+          echo "$EXISTING_PR" > $ARTIFACTS_DIR/.pr-url
+          exit 0
+        fi
+        echo "FAIL_PR_CREATE rc=$RC"
+        tail -10 $ARTIFACTS_DIR/.pr-create.log >&2
+        exit 0
+      fi
+
+      PR_URL=$(cat $ARTIFACTS_DIR/.pr-create.log | grep -oE 'https://github\.com/[^ ]+/pull/[0-9]+' | head -1)
+      if [ -z "$PR_URL" ]; then
+        echo "FAIL_PR_URL_NOT_PARSEABLE"
+        cat $ARTIFACTS_DIR/.pr-create.log >&2
+        exit 0
+      fi
+
+      echo "$PR_URL" > $ARTIFACTS_DIR/.pr-url
+      echo "$PR_URL"
+    depends_on: [build-pr-body]
+    when: "$final-validation.output == 'PASS'"
+
+  - id: project-set-done
+    bash: |
+      CFG="$ARTIFACTS_DIR/github-project-config.yaml"
+      [ -f "$CFG" ] || { echo "skipped"; exit 0; }
+      ISSUE_URL=$(echo $gen-hu-id.output | jq -r '.issue_url')
+      [ -z "$ISSUE_URL" ] || [ "$ISSUE_URL" = "null" ] && { echo "skipped"; exit 0; }
+      PN=$(grep '^project_number:' "$CFG" | awk '{print $2}')
+      PO=$(grep '^project_owner:' "$CFG" | awk '{print $2}')
+      PID=$(grep '^project_id:' "$CFG" | awk '{print $2}')
+      FID=$(grep '^status_field_id:' "$CFG" | awk '{print $2}')
+      # Buscar opción "Done — PR ready" (con em-dash) o fallback "Done"
+      OID=$(awk '/^status_options:/{f=1; next} f && /^  "Done — PR ready":/{print $2; exit}' "$CFG")
+      [ -z "$OID" ] && OID=$(awk '/^status_options:/{f=1; next} f && /^  Done:/{print $2; exit}' "$CFG")
+      [ -z "$OID" ] && { echo "warn no Done option"; exit 0; }
+      II=$(gh project item-list "$PN" --owner "$PO" --format json --limit 200 2>/dev/null \
+        | jq -r --arg u "$ISSUE_URL" '.items[] | select(.content.url == $u) | .id' | head -1)
+      [ -z "$II" ] && exit 0
+      gh project item-edit --id "$II" --project-id "$PID" \
+        --field-id "$FID" --single-select-option-id "$OID" \
+        > "$ARTIFACTS_DIR/.edit.log" 2>&1 || tail -3 "$ARTIFACTS_DIR/.edit.log"
+      echo "set Done ok"
+    depends_on: [create-pr]
+    trigger_rule: all_done
+
+  # ════════════════════════════════════════════════════════════════════
+  # FASE 6 — Trigger review automático (en background)
+  # ════════════════════════════════════════════════════════════════════
+
+  - id: trigger-review
+    bash: |
+      PR_URL=""
+      [ -f $ARTIFACTS_DIR/.pr-url ] && PR_URL=$(cat $ARTIFACTS_DIR/.pr-url)
+      if [ -z "$PR_URL" ]; then
+        echo "skipped (no PR URL)"
+        exit 0
+      fi
+
+      # Solo invocar review-pr-hubara si el workflow existe (PR18 lo agrega)
+      if [ ! -f .archon/workflows/review-pr-hubara.yaml ]; then
+        echo "review-pr-hubara workflow no existe todavía (PR18 lo agrega) — skipping"
+        echo "PR creado: $PR_URL — review manual por ahora"
+        exit 0
+      fi
+
+      LOG_FILE="$HOME/.archon/logs/review-hubara-$(date +%s).log"
+      mkdir -p "$HOME/.archon/logs"
+
+      # env -u CLAUDECODE evita nested hang
+      (env -u CLAUDECODE ARCHON_SUPPRESS_NESTED_CLAUDE_WARNING=1 \
+         nohup archon workflow run review-pr-hubara "$PR_URL" \
+         > "$LOG_FILE" 2>&1 & disown) 2>/dev/null \
+        && echo "review_triggered_log=$LOG_FILE" \
+        || echo "review_trigger_failed_run_manually"
+    depends_on: [create-pr]
+    trigger_rule: all_done
+
+  - id: print-final-summary
+    bash: |
+      HU_ID=$(echo $gen-hu-id.output | jq -r '.hu_id')
+      BRANCH=$(echo $gen-hu-id.output | jq -r '.branch')
+      MODE=$(echo $classify-mode.output | jq -r '.mode')
+      PR_URL=""
+      [ -f $ARTIFACTS_DIR/.pr-url ] && PR_URL=$(cat $ARTIFACTS_DIR/.pr-url)
+      REVIEW_STATUS=$trigger-review.output
+
+      cat <<EOF
+
+      ╔════════════════════════════════════════════════════════════════════════╗
+      ║ 🎉 hu-hubara-pipeline completo                                          ║
+      ║                                                                        ║
+      ║ HU id:    ${HU_ID}
+      ║ Mode:     ${MODE}
+      ║ Branch:   ${BRANCH}
+      ║ PR:       ${PR_URL}
+      ║ Review:   ${REVIEW_STATUS}
+      ║                                                                        ║
+      ║ Próximos pasos:                                                        ║
+      ║   1. Revisá el PR cuando termine el review (~3-5 min después de FASE 5)║
+      ║   2. Si todo OK, squash-merge a main                                   ║
+      ║   3. El issue se cierra automáticamente (Closes <url> en el body)      ║
+      ╚════════════════════════════════════════════════════════════════════════╝
+      EOF
+    depends_on: [trigger-review, project-set-done]
+    trigger_rule: all_done
     timeout: 5000
