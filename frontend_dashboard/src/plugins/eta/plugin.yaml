@@ -9,7 +9,7 @@ frontend:
   entry: ./frontend
   contributes:
     sections:
-      - { key: eta, label: ETA, order: 3 }
+      - { key: eta, label: ETA, order: 3, icon: truck }
     sidebar:
       - { route: /eta, label: ETA, icon: truck }
 

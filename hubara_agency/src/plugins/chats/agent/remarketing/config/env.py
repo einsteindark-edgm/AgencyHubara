@@ -1,50 +1,52 @@
 """
-config/env.py — remarketing_whatsapp domain.
+config/env.py — plugin ``chats`` / sub-agente Remarketing.
 
-Resolves the runtime workspace path for the **Remarketing** agent. This module
-is the ONLY place in the remarketing_whatsapp domain allowed to read
-``os.environ`` for path resolution; everywhere else takes the path via
-constructor injection (R-DIP).
+Resuelve el path del workspace runtime del agente Remarketing. Este módulo es
+el ÚNICO lugar dentro del sub-agente Remarketing
+(``src.plugins.chats.agent.remarketing``) autorizado a leer ``os.environ``
+para resolver paths; el resto recibe el path por constructor injection (R-DIP).
 
-Why per-domain (`EXOCLAW_WORKSPACE_REMARKETING`) instead of a global
-`EXOCLAW_WORKSPACE`:
-    The hubara_agency process bundles two agents (sales + remarketing) with
-    different identity, soul, tools and skills. A single global env var would
-    force them to share a workspace dir. Per-domain env vars keep them
-    independently configurable in production (e.g. each gets its own PVC).
-    See ADR-2026-05-06-03 in `agent_coordination/decisions.md`.
+Por qué per-sub-agente (``EXOCLAW_WORKSPACE_REMARKETING``) en vez de un
+global ``EXOCLAW_WORKSPACE``:
 
-The path is wired into a ``WorkspaceConfig(path=str(workspace))`` boundary DTO
-and passed (via PR-A) through ``RemarketingSessionInput.runtime_workspace_path``
-to ``bootstrap_remarketing_session_activity``. PR-B: the activity now consumes
-it and instantiates ``WorkspaceConfig(path=runtime_workspace_path)`` directly
-— ``build_workspace_config(session_id)`` (the per-session vault dir) is no
-longer called for identity/catalog purposes. The per-session vault still owns
-the JSONL message store and metadata files; the workspace dir owns the
-bootstrap files (IDENTITY.md, SOUL.md, USER.md, TOOLS.md, AGENTS.md, plus
-memory/* and skills/*).
+    El plugin ``chats`` empaqueta dos sub-agentes (sales + remarketing) con
+    distinta identidad, soul, tools y skills. Una sola env var global los
+    forzaría a compartir workspace dir. Per-sub-agente queda independiente
+    en producción (cada uno con su propio PVC).
+    Ver ADR-2026-05-06-03 en ``agent_coordination/decisions.md``.
+
+El path se cablea en un ``WorkspaceConfig(path=str(workspace))`` (boundary DTO)
+que viaja (vía PR-A) por ``RemarketingSessionInput.runtime_workspace_path``
+hasta ``bootstrap_remarketing_session_activity``. PR-B: la activity lo consume
+e instancia ``WorkspaceConfig(path=runtime_workspace_path)`` directo —
+``build_workspace_config(session_id)`` (el vault per-session) ya no se llama
+para identidad/catálogo. El vault per-session sigue siendo dueño del JSONL
+message store y los metadata files; el workspace dir es dueño de los bootstrap
+files (IDENTITY.md, SOUL.md, USER.md, TOOLS.md, AGENTS.md, más memory/* y
+skills/*).
 """
 from __future__ import annotations
 
 import os
 from pathlib import Path
 
-# Default = `<repo>/hubara_agency/src/domains/remarketing_whatsapp/workspace/`.
-# `Path(__file__).resolve()` -> .../remarketing_whatsapp/config/env.py
-# .parents[0] -> .../remarketing_whatsapp/config/
-# .parents[1] -> .../remarketing_whatsapp/
+# Default = `<repo>/hubara_agency/src/plugins/chats/agent/remarketing/workspace/`.
+# Resolución mecánica desde __file__:
+#   .parents[0] -> .../remarketing/config/
+#   .parents[1] -> .../remarketing/
+#   .parents[1] / "workspace" -> .../remarketing/workspace/
 _DEFAULT_WORKSPACE = (Path(__file__).resolve().parents[1] / "workspace").resolve()
 
 
 def get_workspace_path() -> Path:
-    """Resolve the **Remarketing** agent's runtime workspace.
+    """Resolve el workspace runtime del sub-agente Remarketing del plugin chats.
 
-    Default: ``<repo>/hubara_agency/src/domains/remarketing_whatsapp/workspace/``
-    (committed to the repo for dev convenience).
+    Default: ``<repo>/hubara_agency/src/plugins/chats/agent/remarketing/workspace/``
+    (committed al repo para dev convenience).
 
-    Override with ``EXOCLAW_WORKSPACE_REMARKETING`` in production to point at a
-    persistent volume so ``memory/MEMORY.md`` and ``memory/HISTORY.md``
-    survive container restarts.
+    Override con ``EXOCLAW_WORKSPACE_REMARKETING`` en producción apuntando a
+    un volumen persistente para que ``memory/MEMORY.md`` y ``memory/HISTORY.md``
+    sobrevivan a restarts del container.
     """
     raw = os.environ.get("EXOCLAW_WORKSPACE_REMARKETING")
     if raw:

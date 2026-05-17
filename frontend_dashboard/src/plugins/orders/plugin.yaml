@@ -9,7 +9,7 @@ frontend:
   entry: ./frontend
   contributes:
     sections:
-      - { key: orders, label: Orders, order: 2 }
+      - { key: orders, label: Orders, order: 2, icon: workflow }
     sidebar:
       - { route: /orders, label: Orders, icon: workflow }
 

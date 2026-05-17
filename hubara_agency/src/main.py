@@ -1,6 +1,6 @@
 """Entry point HTTP — auto-discovery de routers FastAPI desde manifests.
 
-PR3 reemplaza los imports estáticos por un loader que lee
+PR3 reemplazó los imports estáticos por un loader que lee
 ``frontend_dashboard/src/plugins/<id>/plugin.yaml`` y registra los routers
 declarados en ``api.python_module`` y ``api.legacy_routers``.
 
@@ -12,21 +12,29 @@ Convenciones del manifest (ver ``frontend_dashboard/src/plugins/_schema/plugin.s
     python_module: src.plugins.<id>.api      # opcional — módulo con `router`
     prefix: /api/<id>
     tags: [<Tag>]
-    legacy_routers:                           # opcional — múltiples routers
+    legacy_routers:                          # opcional — múltiples routers
       - { module: src.plugins.<id>.api.<sub>, prefix: /api, tags: [...] }
 
-Si ambos están presentes, ambos se registran. Si ninguno, el plugin no
-contribuye routers.
+Si ``legacy_routers`` está presente y no vacío, **gana** y ``python_module`` se
+ignora — el caso del plugin ``chats`` que tiene 3 sub-routers con prefijos
+heterogéneos y ``api/__init__.py`` no expone un router agregado. Si solo está
+``python_module``, se registra ése. Si ninguno, el plugin no contribuye HTTP.
+
+Fail-fast: si un plugin habilitado declara un módulo que no se puede importar
+o no expone ``router``, el boot del proceso falla. Mejor caer rápido en el
+arranque que servir un endpoint silenciosamente ausente.
 """
 from __future__ import annotations
 
 import importlib
 import os
 from pathlib import Path
+from types import ModuleType
 
 import yaml
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from loguru import logger
 
 
 app = FastAPI(
@@ -67,6 +75,9 @@ def _discover_plugin_manifests() -> list[tuple[str, dict]]:
     enabled = _enabled_plugins()
     out: list[tuple[str, dict]] = []
     if not _PLUGINS_MANIFEST_DIR.exists():
+        logger.warning(
+            "[loader] plugins manifest dir not found: {}", _PLUGINS_MANIFEST_DIR
+        )
         return out
     for plugin_dir in sorted(_PLUGINS_MANIFEST_DIR.iterdir()):
         if not plugin_dir.is_dir():
@@ -78,64 +89,135 @@ def _discover_plugin_manifests() -> list[tuple[str, dict]]:
         manifest_path = plugin_dir / "plugin.yaml"
         if not manifest_path.exists():
             continue
-        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+        try:
+            manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError as exc:
+            logger.error(
+                "[loader] skip {!r}: invalid YAML — {}", plugin_dir.name, exc
+            )
+            continue
         if manifest.get("id") != plugin_dir.name:
-            # El sync script ya valida esto; defensa en profundidad.
+            logger.warning(
+                "[loader] skip {!r}: manifest id ({!r}) != directory name",
+                plugin_dir.name,
+                manifest.get("id"),
+            )
             continue
         out.append((plugin_dir.name, manifest))
     return out
 
 
-def _register_router(plugin_id: str, module_path: str, prefix: str, tags: list[str]) -> None:
-    """Importa el módulo y registra su `router` (APIRouter) en `app`."""
-    mod = importlib.import_module(module_path)
+def _register_router_from_module(
+    target_app: FastAPI,
+    plugin_id: str,
+    mod: ModuleType,
+    module_path: str,
+    prefix: str,
+    tags: list[str],
+) -> None:
+    """Registra el ``router`` (APIRouter) de un módulo ya importado en ``target_app``."""
     router = getattr(mod, "router", None)
     if router is None:
         raise RuntimeError(
-            f"plugin {plugin_id!r}: module {module_path!r} no exporta `router`"
+            f"plugin {plugin_id!r}: module {module_path!r} no expone `router`"
         )
-    app.include_router(router, prefix=prefix, tags=tags)
+    if not isinstance(router, APIRouter):
+        raise RuntimeError(
+            f"plugin {plugin_id!r}: module {module_path!r}.router no es APIRouter "
+            f"(got {type(router).__name__})"
+        )
+    target_app.include_router(router, prefix=prefix, tags=tags)
+    logger.info(
+        "[loader] registered {} → prefix={!r} tags={!r}",
+        module_path,
+        prefix,
+        tags,
+    )
 
 
-def _bootstrap_routers() -> list[str]:
-    """Registra routers de todos los plugins habilitados. Devuelve los ids cargados."""
+def _bootstrap_routers(target_app: FastAPI | None = None) -> list[str]:
+    """Registra routers de todos los plugins habilitados en ``target_app``.
+
+    Si ``target_app`` es ``None``, usa el ``app`` global de este módulo —
+    comportamiento por defecto al boot. Tests pueden pasar una ``FastAPI``
+    fresca para evitar mutar el singleton compartido.
+
+    Política: ``legacy_routers`` gana sobre ``python_module``. Si un plugin
+    declara ambos, ``python_module`` se ignora — útil para chats donde
+    ``api/__init__.py`` no expone un router agregado pero el manifest declara
+    el módulo como ancla simbólica.
+    """
+    if target_app is None:
+        target_app = app
     loaded: list[str] = []
-    for plugin_id, manifest in _discover_plugin_manifests():
+    manifests = _discover_plugin_manifests()
+    logger.info(
+        "[loader] discovered {} plugin(s): {}",
+        len(manifests),
+        [pid for pid, _ in manifests],
+    )
+    for plugin_id, manifest in manifests:
         api_cfg = manifest.get("api") or {}
         registered_any = False
+        legacy = api_cfg.get("legacy_routers") or []
 
-        # Modo "single router": el módulo apunta a `<pkg>` con un `router` en su __init__.
-        if "python_module" in api_cfg and api_cfg.get("python_module"):
-            # Si el módulo no expone `router` (e.g. `chats.api` que solo agrupa
-            # sub-routers), saltamos sin error — `legacy_routers` lo cubre.
+        # Modo "legacy routers" — preferido cuando hay múltiples sub-routers
+        # heterogéneos. Importa y registra cada uno explícito.
+        for entry in legacy:
+            mod_path = entry["module"]
             try:
-                mod = importlib.import_module(api_cfg["python_module"])
+                mod = importlib.import_module(mod_path)
+            except ImportError as exc:
+                raise RuntimeError(
+                    f"plugin {plugin_id!r}: cannot import legacy_routers entry "
+                    f"{mod_path!r}: {exc}"
+                ) from exc
+            _register_router_from_module(
+                target_app,
+                plugin_id,
+                mod,
+                mod_path,
+                entry.get("prefix", "/api"),
+                entry.get("tags", [plugin_id]),
+            )
+            registered_any = True
+
+        # Modo "single router" — fallback cuando NO hay legacy_routers. Si el
+        # módulo apunta a algo sin `router` (e.g. `chats.api` que solo agrupa
+        # docstrings), saltamos sin error.
+        if not legacy and api_cfg.get("python_module"):
+            mod_path = api_cfg["python_module"]
+            try:
+                mod = importlib.import_module(mod_path)
             except ImportError as exc:
                 raise RuntimeError(
                     f"plugin {plugin_id!r}: cannot import api.python_module "
-                    f"{api_cfg['python_module']!r}: {exc}"
+                    f"{mod_path!r}: {exc}"
                 ) from exc
             if getattr(mod, "router", None) is not None:
-                _register_router(
+                _register_router_from_module(
+                    target_app,
                     plugin_id,
-                    api_cfg["python_module"],
+                    mod,
+                    mod_path,
                     api_cfg.get("prefix", f"/api/{plugin_id}"),
                     api_cfg.get("tags", [plugin_id]),
                 )
                 registered_any = True
-
-        # Modo "legacy routers": lista de módulos con prefix/tags propios.
-        for legacy in api_cfg.get("legacy_routers", []) or []:
-            _register_router(
-                plugin_id,
-                legacy["module"],
-                legacy.get("prefix", "/api"),
-                legacy.get("tags", [plugin_id]),
-            )
-            registered_any = True
+            else:
+                logger.debug(
+                    "[loader] plugin {!r}: api.python_module {!r} has no `router` attr; skipping",
+                    plugin_id,
+                    mod_path,
+                )
 
         if registered_any:
             loaded.append(plugin_id)
+        elif api_cfg:
+            logger.warning(
+                "[loader] plugin {!r}: api section present but no routers registered",
+                plugin_id,
+            )
     return loaded
 
 
@@ -143,6 +225,11 @@ def _bootstrap_routers() -> list[str]:
 # uvicorn lo importe. Las excepciones suben — un plugin roto rompe el boot
 # en lugar de quedar parcialmente cargado (fail-fast).
 _LOADED_PLUGINS = _bootstrap_routers()
+logger.info(
+    "[loader] bootstrap complete — {} plugin(s) contributed routers: {}",
+    len(_LOADED_PLUGINS),
+    _LOADED_PLUGINS,
+)
 
 
 @app.get("/")

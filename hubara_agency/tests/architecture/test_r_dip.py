@@ -14,10 +14,11 @@ its full output as the assertion message so the operator can see exactly which
 edge broke.
 
 Cache hygiene: import-linter writes `.import_linter_cache/`. When source files
-are renamed (e.g. moving a module from sales_whatsapp/tools/ to platform/tools/)
-the cache can carry stale module-to-module edges and silence violations that
-actually exist in the current source tree. We remove the cache before every
-run so the contract evaluation always uses a fresh graph. (Discovered in the
+are renamed (e.g. plugin refactor moved modules from `src.sales_whatsapp.tools`
+to `src.plugins.chats.agent.sales.tools` and `src.platform.tools`) the cache
+can carry stale module-to-module edges and silence violations that actually
+exist in the current source tree. We remove the cache before every run so
+the contract evaluation always uses a fresh graph. (Discovered in the
 premortem 2026-05-13: stale cache hid 2 cross-agent imports for several days.)
 """
 from __future__ import annotations

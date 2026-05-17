@@ -10,11 +10,22 @@
  * Convención: el archivo generado se ignora vía `.gitignore`. Lo regenera
  * automáticamente `npm run predev` y `npm run prebuild` (ver `package.json`).
  *
+ * Validaciones que el sync aplica (en orden):
+ *
+ *   1. `id` matchea el regex del schema (`^[a-z][a-z0-9_]*$`). Importante:
+ *      el id es también un segmento de path Python.
+ *   2. `id` == nombre del directorio (no se permite que un manifest declare
+ *      `id: foo` viviendo en `src/plugins/bar/`).
+ *   3. `frontend.entry` (default `./frontend`) existe en disco — sino el
+ *      `lazy()` runtime fallaría con un error críptico.
+ *   4. Colisión de `section.key` entre plugins — warning (el shell muestra
+ *      la última, lo que típicamente es un bug).
+ *
  * Diseño explícito:
  *   - Cero dependencias en runtime de la app — el script solo se ejecuta
  *     en build/dev.
  *   - El registry es un módulo TS importable desde `pages/Dashboard.tsx`
- *     (PR3) y desde cualquier shell que necesite enumerar plugins.
+ *     y desde cualquier shell que necesite enumerar plugins.
  *   - El `Page` se carga con `lazy(() => import("@plugins/<id>/frontend"))`
  *     para code-splitting; el bundler decide el chunking.
  */
@@ -29,6 +40,11 @@ const FRONTEND_ROOT = resolve(__dirname, "..");
 const PLUGINS_DIR = join(FRONTEND_ROOT, "src", "plugins");
 const OUT_FILE = join(FRONTEND_ROOT, "src", "app", "plugin-registry.generated.ts");
 
+// Espejo del pattern declarado en `_schema/plugin.schema.yaml`. Single-source-
+// of-truth viviría en el schema pero compilar JSON Schema en runtime es overkill
+// para esta validación. Si cambia uno, cambiar el otro (y agregar un test).
+const PLUGIN_ID_PATTERN = /^[a-z][a-z0-9_]*$/;
+
 type SidebarEntry = {
   route: string;
   label: string;
@@ -40,6 +56,7 @@ type SectionEntry = {
   key: string;
   label: string;
   order?: number;
+  icon?: string;
 };
 
 type DashboardWidget = {
@@ -69,6 +86,15 @@ type RegistryEntry = {
   dashboardWidgets: DashboardWidget[];
 };
 
+/** Loguea con prefijo común — facilita grep en la salida de CI. */
+function logWarn(msg: string): void {
+  console.warn(`[plugins-sync] ${msg}`);
+}
+
+function logInfo(msg: string): void {
+  console.log(`[plugins-sync] ${msg}`);
+}
+
 function discoverManifests(): Map<string, Manifest> {
   const found = new Map<string, Manifest>();
 
@@ -84,17 +110,45 @@ function discoverManifests(): Map<string, Manifest> {
     if (!existsSync(manifestPath)) continue;
 
     const raw = readFileSync(manifestPath, "utf-8");
-    const manifest = parse(raw) as Manifest;
+    let manifest: Manifest;
+    try {
+      manifest = parse(raw) as Manifest;
+    } catch (err) {
+      logWarn(`skip ${entry.name}: invalid YAML — ${(err as Error).message}`);
+      continue;
+    }
 
     if (!manifest?.id || !manifest?.version) {
-      console.warn(`[plugins-sync] skip ${entry.name}: missing id or version`);
+      logWarn(`skip ${entry.name}: missing id or version`);
+      continue;
+    }
+    if (!PLUGIN_ID_PATTERN.test(manifest.id)) {
+      logWarn(
+        `skip ${entry.name}: id "${manifest.id}" violates pattern ${PLUGIN_ID_PATTERN} ` +
+          `(must start with [a-z], contain only [a-z0-9_]; ids are used as Python path segments)`,
+      );
       continue;
     }
     if (manifest.id !== entry.name) {
-      console.warn(
-        `[plugins-sync] skip ${entry.name}: manifest id (${manifest.id}) != directory name`,
+      logWarn(
+        `skip ${entry.name}: manifest id (${manifest.id}) != directory name`,
       );
       continue;
+    }
+
+    // Si el manifest declara frontend, chequear que el entry exista en disco.
+    // Sin esto, `lazy(() => import("@plugins/<id>/frontend"))` falla en runtime
+    // con un error críptico del bundler. Mejor catch al sync time.
+    if (manifest.frontend) {
+      const entryRel = manifest.frontend.entry ?? "./frontend";
+      const entryAbs = resolve(PLUGINS_DIR, entry.name, entryRel);
+      if (!existsSync(entryAbs)) {
+        logWarn(
+          `skip ${entry.name}: frontend.entry "${entryRel}" does not exist ` +
+            `(expected at ${entryAbs.replace(FRONTEND_ROOT + "/", "")})`,
+        );
+        continue;
+      }
     }
 
     found.set(entry.name, manifest);
@@ -114,7 +168,7 @@ function filterEnabled(found: Map<string, Manifest>): Manifest[] {
   for (const id of [...enabled].sort()) {
     const manifest = found.get(id);
     if (!manifest) {
-      console.warn(`[plugins-sync] ENABLED_PLUGINS lists "${id}" but no manifest found`);
+      logWarn(`ENABLED_PLUGINS lists "${id}" but no manifest found`);
       continue;
     }
     out.push(manifest);
@@ -133,10 +187,33 @@ function buildEntry(manifest: Manifest): RegistryEntry {
   };
 }
 
+/**
+ * Detecta plugins distintos que contribuyen la misma `section.key`. El shell
+ * mantiene un map `key → Page` que pisa el anterior; típicamente esto es un
+ * bug del manifest (alguien copió una key sin cambiarla). Warning, no error
+ * — para no romper builds cuando dos plugins genuinamente colisionan durante
+ * una migración (caso transient).
+ */
+function warnSectionKeyCollisions(entries: RegistryEntry[]): void {
+  const seen = new Map<string, string>(); // key → first plugin id
+  for (const e of entries) {
+    for (const s of e.sections) {
+      const prev = seen.get(s.key);
+      if (prev && prev !== e.id) {
+        logWarn(
+          `section.key "${s.key}" is contributed by both "${prev}" and "${e.id}" — ` +
+            `the shell will render only the last one. Use distinct keys.`,
+        );
+      } else {
+        seen.set(s.key, e.id);
+      }
+    }
+  }
+}
+
 function renderRegistry(entries: RegistryEntry[]): string {
   // `lazy` solo se importa si hay al menos un entry — el tsconfig tiene
-  // `noUnusedLocals: true` y rechazaría un import sin uso. Idem para los
-  // tipos de React (los entries los necesitan en el typing del array).
+  // `noUnusedLocals: true` y rechazaría un import sin uso.
   const headerComment = `/**
  * AUTO-GENERATED by frontend_dashboard/scripts/plugins-sync.ts — DO NOT EDIT.
  * Regenerate: \`npm run plugins:sync\`.
@@ -161,6 +238,7 @@ export type SectionEntry = {
   key: string;
   label: string;
   order?: number;
+  icon?: string;
 };
 
 export type DashboardWidget = {
@@ -192,11 +270,9 @@ export const PLUGINS: PluginEntry[] = [];
   }
 
   // El `Page` del registry es deliberadamente laxo en tipos (`ComponentType<any>`)
-  // porque cada plugin define su propia firma de props (chats recibe
-  // selectedChatId/setSelectedChatId, orders recibe selectedOrderId, etc.). El
-  // shell que renderiza `<entry.Page {...props} />` conoce las props específicas
-  // del plugin que está mostrando. PR3 puede introducir un mecanismo más
-  // estricto (slots tipados, generics) cuando hayan más plugins.
+  // porque cada plugin define su propia firma de props. El shell que renderiza
+  // `<entry.Page {...props} />` conoce las props específicas del plugin que
+  // está mostrando. Formalizar con generics queda pendiente.
   const importBlock = `import { lazy, type ComponentType, type LazyExoticComponent } from "react";\n`;
   const fullType = `
 export type PluginEntry = {
@@ -212,18 +288,24 @@ export type PluginEntry = {
 export const PLUGINS: PluginEntry[] = [
 `;
 
+  // JSON pretty (2-space indent) — git diffs legibles cuando un plugin cambia
+  // una sidebar entry. El registry está gitignored, pero algunos devs lo
+  // inspeccionan manualmente para debug.
+  const indent = (s: string, depth: number): string =>
+    s
+      .split("\n")
+      .map((line, i) => (i === 0 ? line : " ".repeat(depth) + line))
+      .join("\n");
+
   const body = entries
     .map((e) => {
-      // Importamos el barrel del plugin: `@plugins/<id>/frontend` debe exportar
-      // un componente default (la "Page" del plugin) — convención FSD-friendly.
-      // Si el plugin no tiene frontend ejecutable todavía, exporta un stub.
       const importExpr = `lazy(() => import("@plugins/${e.id}/frontend"))`;
       return `  {
     id: ${JSON.stringify(e.id)},
     displayName: ${JSON.stringify(e.displayName)},
-    sidebar: ${JSON.stringify(e.sidebar)},
-    sections: ${JSON.stringify(e.sections)},
-    dashboardWidgets: ${JSON.stringify(e.dashboardWidgets)},
+    sidebar: ${indent(JSON.stringify(e.sidebar, null, 2), 4)},
+    sections: ${indent(JSON.stringify(e.sections, null, 2), 4)},
+    dashboardWidgets: ${indent(JSON.stringify(e.dashboardWidgets, null, 2), 4)},
     Page: ${importExpr},
   },`;
     })
@@ -239,12 +321,14 @@ function main() {
   const enabled = filterEnabled(found);
   const entries = enabled.map(buildEntry);
 
+  warnSectionKeyCollisions(entries);
+
   const outDir = dirname(OUT_FILE);
   if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
 
   writeFileSync(OUT_FILE, renderRegistry(entries), "utf-8");
-  console.log(
-    `[plugins-sync] generated ${OUT_FILE.replace(FRONTEND_ROOT + "/", "")} ` +
+  logInfo(
+    `generated ${OUT_FILE.replace(FRONTEND_ROOT + "/", "")} ` +
       `with ${entries.length} plugin(s): ${entries.map((e) => e.id).join(", ") || "(empty)"}`,
   );
 }

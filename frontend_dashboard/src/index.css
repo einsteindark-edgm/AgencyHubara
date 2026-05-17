@@ -226,22 +226,6 @@ h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.02em; margin: 0; }
 .seg button.on svg { opacity: 1; }
 .seg button:hover:not(.on) { color: var(--fg); }
 
-/* Agents toolbar button */
-.tb-agents-btn {
-  display: inline-flex; align-items: center; gap: 6px;
-  height: 24px; padding: 0 12px; border-radius: 6px;
-  background: rgba(0,0,0,0.28);
-  border: 0; outline: 0; cursor: pointer;
-  color: var(--fg-soft); font: 500 12px/1 var(--font-sans);
-  box-shadow: 0 0 0 0.5px rgba(255,255,255,0.06) inset;
-}
-.tb-agents-btn svg { width: 14px; height: 14px; stroke-width: 1.7; flex: 0 0 auto; }
-.tb-agents-btn:hover { background: rgba(255,255,255,0.06); color: var(--fg); }
-.tb-agents-btn.on {
-  background: var(--accent-soft); color: var(--accent-fg);
-  box-shadow: 0 0 0 0.5px rgba(10,132,255,0.3) inset;
-}
-
 /* Body wrapper */
 .body { flex: 1; min-height: 0; display: flex; }
 

@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hubara-worker-remarketing
+  namespace: default
+spec:
+  # Remarketing es low-throughput (workflows long-lived que duermen 1h, 24h, 7d).
+  # Una sola replica alcanza para todos los tenants. NO escalar sin medir —
+  # el dispatcher dedupea por `WorkflowID` (== session_id), así que múltiples
+  # workers solo agregan contención por la misma task queue.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hubara-worker-remarketing
+  template:
+    metadata:
+      labels:
+        app: hubara-worker-remarketing
+    spec:
+      containers:
+        - name: worker
+          image: hubara-agency-prod:latest
+          imagePullPolicy: Always
+          # Worker del plugin chats — sub-agente remarketing. Mantiene paridad
+          # con docker-compose.local.yml (hubara-worker-remarketing service).
+          # Pre-auditoría 2026-05-16 este manifest no existía aunque el plugin
+          # declaraba 2 workers; deploy a prod estaba incompleto.
+          command: ["python", "-m", "hubara_agency.src.plugins.chats.workers.remarketing"]
+          # ⚠️  REQUIRED para producción — el operador DEBE inyectar (vía
+          # `envFrom: secretRef:` en un overlay/kustomize) los siguientes
+          # secretos. Si faltan, el worker arranca OK (conexión Temporal no
+          # requiere estas claves) pero falla en runtime al primer mensaje de
+          # remarketing — workflows long-lived hacen que el bug aparezca DÍAS
+          # después del deploy. Bug detectado en premortem PR9 — ver
+          # PLUGIN_REFACTOR_LOG.md §PR9.
+          #
+          #   - DEEPSEEK_API_KEY            (llamada LLM via litellm)
+          #   - WHATSAPP_PHONE_NUMBER_ID    (send_whatsapp_message_activity)
+          #   - WHATSAPP_ACCESS_TOKEN       (send_whatsapp_message_activity)
+          #   - WHATSAPP_VERIFY_TOKEN       (webhook verification — no usado en
+          #                                  worker pero se inyecta por uniformidad)
+          #
+          # Convención del proyecto: igual que `api-deployment.yaml` y
+          # `worker-sales.yaml`, las llaves privadas se inyectan vía overlay,
+          # NO se commitean al repo. Si tu setup las trae de otro lado
+          # (e.g. External Secrets Operator), respetalo.
+          env:
+            - name: API_BASE_LLMLITE
+              value: "http://litellm-proxy.default.svc.cluster.local:4000"
+            - name: TEMPORAL_URL
+              value: "temporal-frontend.temporal.svc.cluster.local:7233"
+            - name: TEMPORAL_NAMESPACE
+              value: "default"
+            - name: TEMPORAL_TLS_CERT_PATH
+              value: "/etc/temporal-certs/temporal.pem"
+            - name: TEMPORAL_TLS_KEY_PATH
+              value: "/etc/temporal-certs/temporal.key"
+            - name: WORKSPACE_VAULT_DIR
+              value: "/app/hubara_vault"
+          volumeMounts:
+            - name: hubara-vault
+              mountPath: /app/hubara_vault
+            - name: temporal-certs
+              mountPath: "/etc/temporal-certs"
+              readOnly: true
+          resources:
+            requests:
+              cpu: 250m
+              memory: 384Mi
+            limits:
+              cpu: 500m
+              memory: 768Mi
+      volumes:
+        - name: hubara-vault
+          persistentVolumeClaim:
+            claimName: hubara-vault-efs
+        - name: temporal-certs
+          secret:
+            secretName: temporal-cloud-certs

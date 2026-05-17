@@ -1,79 +1,129 @@
 /**
- * Página `Dashboard`: shell macOS-style. Responsabilidades de esta capa:
+ * Página `Dashboard`: shell macOS-style. 100 % data-driven post-auditoría
+ * (2026-05-16).
+ *
+ * Responsabilidades de esta capa:
  *
  *   - State de coordinación cross-feature (sección activa, selecciones por
- *     sección, toggles de sidebar/inspector).
- *   - Composición JSX de las features inline + carga de los plugins desde el
- *     registry auto-generado (PR3).
+ *     plugin, toggles de sidebar/inspector).
+ *   - Composición JSX del shell + carga dinámica del Page de cada plugin
+ *     desde el registry auto-generado (`PLUGINS`).
  *
  * NO va acá:
  *   - Data fetching de dominio (vive en entities/<x>/api.ts).
- *   - UI específica de una feature (vive en features/<x>/ui/).
+ *   - UI específica de una feature (vive en plugins/<id>/frontend/).
+ *   - Lista de plugins hardcoded — la fuente de verdad es PLUGINS.
  *
- * Post-PR7: TODAS las secciones se cargan dinámicamente del `PLUGINS`
- * registry. El shell ya no importa código de feature directamente; solo
- * consume el barrel del registry y delega el render a cada plugin.Page.
+ * Notas de diseño:
+ *
+ *   - El Toolbar recibe `sections` derivadas de `PLUGINS.flatMap` —
+ *     agregar/quitar un plugin no requiere editar este archivo NI el Toolbar.
+ *
+ *   - Cada plugin recibe el mismo "envelope" de props vía `pluginProps`
+ *     (showSidebar, showInspector, selectedXxx, setSelectedXxx + el state
+ *     selections compartido). Los plugins desestructuran lo que necesitan; los
+ *     que no usan algo lo ignoran. Esto es una decisión pragmática mientras
+ *     el contrato de props del Page no está formalizado (PR pendiente).
  */
 
 import { Suspense, useMemo, useState } from "react";
 
-import { StatusBar, TitleBar, Toolbar, type SectionKey } from "@/shared/ui";
+import { StatusBar, TitleBar, Toolbar } from "@/shared/ui";
 import { IS_DESKTOP } from "@/shared/lib";
 
 import { useSessionsStream } from "@/entities/chat";
 
-// Post-PR7: consumo dinámico del registry para TODAS las secciones. Si un
-// plugin no está en `ENABLED_PLUGINS`, su `Page` es undefined y la sección
-// queda vacía (degradación graceful).
 import { PLUGINS } from "@/app/plugin-registry.generated";
 
 export function Dashboard() {
-  const [section, setSection] = useState<SectionKey>("chat");
+  // ── Derivar lista de sections del registry ───────────────────────────
+  // `PLUGINS` ya está ordenado por id; cada plugin contribuye N sections.
+  // Re-ordenamos por `order` para respetar la prioridad declarada en el
+  // manifest. Una section sin order se trata como 0.
+  const sections = useMemo(() => {
+    const flat = PLUGINS.flatMap((p) => p.sections ?? []);
+    return [...flat].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  }, []);
+
+  // Map sectionKey → Page del plugin que la contribuyó. Si dos plugins
+  // contribuyen la misma key (no debería ocurrir; `plugins-sync.ts` lo
+  // detecta), gana el último — el shell no resuelve conflictos.
+  const pageByKey = useMemo(() => {
+    const out = new Map<string, (typeof PLUGINS)[number]["Page"]>();
+    for (const p of PLUGINS) {
+      for (const s of p.sections ?? []) {
+        out.set(s.key, p.Page);
+      }
+    }
+    return out;
+  }, []);
+
+  // Default section: la primera de la lista ordenada. Si el registry está
+  // vacío (ningún plugin habilitado), `section` queda `""` y el shell muestra
+  // marco vacío — degradación graceful.
+  const [section, setSection] = useState<string>(() => sections[0]?.key ?? "");
+
   const [showSidebar, setShowSidebar] = useState(true);
   const [showInspector, setShowInspector] = useState(true);
 
-  // Selecciones cross-feature por sección. El chat real se elige cuando llegan
-  // las sesiones del backend (no podemos prefijar un id mock que no existe).
+  // ── Selections per-plugin ──────────────────────────────────────────────
+  // Cross-plugin state vive aquí porque sobrevive cambios de section.
+  // Cuando el contrato de props del Page se formalice, esto se moverá a
+  // un context o se delegará al state interno del plugin.
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>("#1247");
   const [selectedTrackedId, setSelectedTrackedId] = useState<string | null>(null);
   const [selectedJobId, setSelectedJobId] = useState<string>("j-now");
   const [selectedAgentId, setSelectedAgentId] = useState<string>("a3");
 
-  // SSE de sesiones: se monta UNA vez aquí — empuja el snapshot al cache de
-  // TanStack Query para todas las features de Chats. Las demás secciones del
-  // diseño viven con datos mock locales y no dependen del stream.
+  // Stream SSE de sesiones: se monta UNA vez aquí — empuja el snapshot al
+  // cache de TanStack Query para todas las features de Chats. Las demás
+  // secciones del diseño viven con datos mock locales y no dependen del
+  // stream.
   useSessionsStream();
 
-  // PR3+: lookup de plugins por id. Memoizado para evitar re-find en cada render.
-  // Si el plugin no está habilitado (ENABLED_PLUGINS), `Page` es undefined y la
-  // sección no renderiza nada (degradación graceful).
-  const ChatsPage = useMemo(
-    () => PLUGINS.find((p) => p.id === "chats")?.Page,
-    [],
-  );
-  const AgentsPage = useMemo(
-    () => PLUGINS.find((p) => p.id === "agents_admin")?.Page,
-    [],
-  );
-  const UploadPage = useMemo(
-    () => PLUGINS.find((p) => p.id === "catalog")?.Page,
-    [],
-  );
-  const EtaPage = useMemo(
-    () => PLUGINS.find((p) => p.id === "eta")?.Page,
-    [],
-  );
-  const OrdersPage = useMemo(
-    () => PLUGINS.find((p) => p.id === "orders")?.Page,
-    [],
-  );
+  const ActivePage = pageByKey.get(section);
+
+  // ── pluginProps — contrato (pragmático v1) entre shell y plugin Page ──
+  //
+  // CONTRATO:
+  //   El shell entrega un "bandejón" con TODO el state cross-plugin: toggles
+  //   visuales (showSidebar/showInspector) + las selecciones de cada feature
+  //   (selectedXxxId/setSelectedXxxId). Cada plugin Page desestructura las
+  //   props que necesita e ignora el resto.
+  //
+  // TRADE-OFF aceptado:
+  //   - PRO: agregar un nuevo prop solo requiere editar acá una vez; cada
+  //     Page que lo necesite ya lo recibe.
+  //   - CONTRA: el tipo de la prop es `any` (ver registry generado), así que
+  //     TypeScript NO te avisa si un plugin pide algo que el shell no provee.
+  //
+  // CUÁNDO MIGRAR:
+  //   Cuando haya 6+ plugins o cuando un bug nuevo aparezca por "plugin pide
+  //   prop X pero el shell pasa prop Y", introducir un Context provider y
+  //   firmar el contrato con generics en el registry. Hoy (5 plugins) este
+  //   patrón es la solución más simple que funciona.
+  const pluginProps = {
+    showSidebar,
+    showInspector,
+    selectedChatId,
+    setSelectedChatId,
+    selectedOrderId,
+    setSelectedOrderId,
+    selectedTrackedId,
+    setSelectedTrackedId,
+    selectedJobId,
+    setSelectedJobId,
+    selectedAgentId,
+    setSelectedAgentId,
+  };
 
   return (
     <div className={"stage" + (IS_DESKTOP ? "" : " is-web")}>
       <div className="win">
         {IS_DESKTOP && <TitleBar />}
         <Toolbar
+          sections={sections}
           section={section}
           setSection={setSection}
           showSidebar={showSidebar}
@@ -83,58 +133,9 @@ export function Dashboard() {
         />
 
         <div className="body">
-          {section === "chat" && ChatsPage && (
-            <Suspense fallback={null}>
-              <ChatsPage
-                showSidebar={showSidebar}
-                showInspector={showInspector}
-                selectedChatId={selectedChatId}
-                setSelectedChatId={setSelectedChatId}
-              />
-            </Suspense>
-          )}
-
-          {section === "orders" && OrdersPage && (
-            <Suspense fallback={null}>
-              <OrdersPage
-                showSidebar={showSidebar}
-                showInspector={showInspector}
-                selectedOrderId={selectedOrderId}
-                setSelectedOrderId={setSelectedOrderId}
-              />
-            </Suspense>
-          )}
-
-          {section === "eta" && EtaPage && (
-            <Suspense fallback={null}>
-              <EtaPage
-                showSidebar={showSidebar}
-                showInspector={showInspector}
-                selectedTrackedId={selectedTrackedId}
-                setSelectedTrackedId={setSelectedTrackedId}
-              />
-            </Suspense>
-          )}
-
-          {section === "upload" && UploadPage && (
-            <Suspense fallback={null}>
-              <UploadPage
-                showSidebar={showSidebar}
-                showInspector={showInspector}
-                selectedJobId={selectedJobId}
-                setSelectedJobId={setSelectedJobId}
-              />
-            </Suspense>
-          )}
-
-          {section === "agent" && AgentsPage && (
-            <Suspense fallback={null}>
-              <AgentsPage
-                showSidebar={showSidebar}
-                showInspector={showInspector}
-                selectedAgentId={selectedAgentId}
-                setSelectedAgentId={setSelectedAgentId}
-              />
+          {ActivePage && (
+            <Suspense key={section} fallback={null}>
+              <ActivePage {...pluginProps} />
             </Suspense>
           )}
         </div>
@@ -145,15 +146,21 @@ export function Dashboard() {
   );
 }
 
-/* Post-PR7: el shell ya no contiene componentes de sección. Cada plugin
- * exporta su `Page` desde su barrel; el registry generado los expone como
- * `lazy()` components que el shell renderiza con `<Suspense>`.
+/* Post-auditoría 2026-05-16: el shell es totalmente data-driven.
  *
- * Plugins migrados (orden de PR):
+ * Agregar un plugin nuevo NO requiere tocar este archivo:
+ *
+ *   1. Crear `frontend_dashboard/src/plugins/<id>/plugin.yaml` declarando
+ *      `frontend.contributes.sections: [{ key, label, order, icon }]`.
+ *   2. Crear `frontend_dashboard/src/plugins/<id>/frontend/index.ts` que
+ *      exporte `default` como el componente Page.
+ *   3. `npm run plugins:sync` regenera el registry, el shell descubre la
+ *      nueva section y la muestra en el Toolbar.
+ *
+ * Plugins migrados (orden de PR original):
  *   - ChatsSection  → @plugins/chats/frontend          (PR2)
  *   - AgentsSection → @plugins/agents_admin/frontend   (PR4)
  *   - UploadSection → @plugins/catalog/frontend        (PR5)
  *   - EtaSection    → @plugins/eta/frontend            (PR6)
  *   - OrdersSection → @plugins/orders/frontend         (PR7)
  */
-

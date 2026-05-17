@@ -13,3 +13,7 @@ mise.local.toml
 .import_linter_cache/
 .ruff_cache/
 htmlcov/
+
+# macOS noise
+.DS_Store
+**/.DS_Store

@@ -11,9 +11,9 @@ frontend:
   entry: ./frontend
   contributes:
     sections:
-      - { key: agent, label: Agents, order: 5 }
+      - { key: agent, label: Agents, order: 5, icon: wand }
     sidebar:
-      - { route: /agents, label: Agents, icon: bot }
+      - { route: /agents, label: Agents, icon: wand }
 
 # Sin `api:` — el plugin no aporta endpoints HTTP propios. Los datos de
 # `entities/agent` vienen de `/api/dashboard/agents` (registrado por el plugin

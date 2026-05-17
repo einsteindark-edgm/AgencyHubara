@@ -1,13 +1,16 @@
-"""Tests PR-C — protocol-compliance de las tools de sales_whatsapp.
+"""Tests PR-C — protocol-compliance de las tools del plugin chats / sub-agente sales.
 
-Verifica que las tools migradas en PR-C:
+Verifica que las tools migradas en PR-C (vivían en src.sales_whatsapp.tools
+pre-refactor; hoy en src.plugins.chats.agent.sales.tools y src.platform.tools):
+
   * Implementan el protocolo `Tool` de exoclaw (atributos `name`,
     `description`, `parameters` planos; ningun `pydantic.Field`).
   * Heredan de `ToolBase` y exponen `execute_with_context` (no `execute` con
     `ctx` como kwarg).
   * Pasan `isinstance(_, Tool)` (Protocol runtime-checkable).
   * Funcionan a traves de `ToolRegistry.execute(name, params, ctx)`, que es la
-    forma como `src/core/activities.py:execute_tool` las invoca en produccion.
+    forma como `src.platform.temporal.activities:execute_tool` las invoca en
+    produccion.
   * Rechazan params invalidos via `ToolBase.validate_params` (sin defaults
     silenciosos a la `INTERESADO` que enmascaraban errores en la version
     pre-PR-C).

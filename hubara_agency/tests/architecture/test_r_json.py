@@ -13,7 +13,7 @@ Rules enforced:
 Exempted classes (pre-existing debt, documented in conftest.R_JSON_FROZEN_EXEMPTIONS):
   - src/platform/contracts.py:TransferDecision
   - src/platform/contracts.py:ScheduleRemarketingDecision
-  - src/remarketing_whatsapp/contracts.py:RemarketingSessionInput
+  - src/plugins/chats/agent/remarketing/contracts.py:RemarketingSessionInput
 """
 from __future__ import annotations
 
