@@ -1,0 +1,183 @@
+# Spinal files declaration — hubara_agency (DEHA + FSD + plugin system post-PR11)
+#
+# Spinal files son paths que MULTIPLE atomic tasks paralelas podrían modificar.
+# Son el "skeleton" compartido del repo cross-plugin. Conflict-prone cuando N
+# implementers corren en paralelo.
+#
+# Read by: planner, implementer, merger skills del pipeline hubara
+# (staged en $ARTIFACTS_DIR/spinal-files.yaml por los nodos cargar-*).
+#
+# IMPORTANT — path convention:
+#   - Operador's CWD cuando corre `archon run` = repo root (AgencyHubara/)
+#   - Backend Python: hubara_agency/src/
+#   - Frontend TS: frontend_dashboard/src/
+#   - TODOS los paths acá son relativos al REPO ROOT.
+#   - Glob support: paths con `*` matchean todos los plugins / entities.
+#
+# Las decisiones espinales de este archivo derivan de
+# HUBARA_PIPELINE_PLAN.md §2 "Inventario de shared files post-PR11" y
+# .claude/skills/hubara-architecture-guide/sections/07-shared-files.md.
+
+version: 1
+
+spinal_files:
+  # ── Manifest system (cross-plugin) ────────────────────────────────────
+  # El schema YAML del manifest. Cambia raro pero si 2 plugins agregan
+  # campo nuevo, conflict en `properties:`.
+  - path: frontend_dashboard/src/plugins/_schema/plugin.schema.yaml
+    kind: yaml_dict_keys_append
+    anchors:
+      properties_block: "^properties:"
+    note: |
+      Cambios al schema requieren ADR — feature task NO debería modificar
+      esto. Si lo modifica → marcar status: blocked, requires_planner_update.
+
+  # Validator del registry frontend. Cambios muy raros, mostly stable.
+  - path: frontend_dashboard/scripts/plugins-sync.ts
+    kind: ts_function_body
+    note: |
+      Cambios al validator también requieren ADR.
+
+  # ── Backend platform (cross-plugin DTOs y registries) ──────────────
+  # platform/contracts.py contiene DTOs que cruzan boundary cross-plugin
+  # (TransferDecision, ScheduleRemarketingDecision, EscalationDecision).
+  # Si 2+ plugins agregan DTO nuevo cross-plugin, append-merge necesario.
+  - path: hubara_agency/src/platform/contracts.py
+    kind: python_dataclass_module
+
+  # Base registry pattern. Cambia raro.
+  - path: hubara_agency/src/platform/registries.py
+    kind: python_factory_module
+    note: |
+      Cambios a registry base requieren ADR.
+
+  # DI invertida — register_tool_extension. Si 2+ plugins extienden el
+  # patrón mismo (no solo registran tools), conflict.
+  - path: hubara_agency/src/platform/tool_extensions.py
+    kind: python_factory_module
+    note: |
+      Registrar UNA tool nueva desde el worker NO toca este archivo; va
+      en el worker.py del plugin. Esto solo si extendés el mecanismo
+      (raro).
+
+  # platform/constants.py. Post-PR11 solo contiene cross-plugin constants:
+  # ROUTE_VENTAS, ROUTE_REMARKETING, ROUTE_HUMANO, WHATSAPP_SESSION_PREFIX.
+  # Las queues YA NO viven acá (viven en plugin.yaml).
+  - path: hubara_agency/src/platform/constants.py
+    kind: python_constants_module
+    note: |
+      Si tu feature agrega constante per-plugin → bug del schema, no
+      acá. Las queues van al manifest. Esta sección casi no se edita.
+
+  # Exemptions de architecture tests. PROTECTED — feature task NO debería
+  # tocar. Solo el operador con ADR.
+  - path: hubara_agency/tests/architecture/conftest.py
+    kind: python_dict_entries_append
+    protected: true                # marker — el implementer debe bloquearse si toca esto
+    note: |
+      R_JSON_FROZEN_EXEMPTIONS y R_HEARTBEAT_EXEMPTIONS viven aquí.
+      Feature task NUNCA debe agregar entry — si tu DTO necesita
+      exemption, marcar status: blocked, requires_planner_update + ADR.
+
+  # ── Frontend shared layer ─────────────────────────────────────────
+  # Icon registry centralizado. Hasta que plugin-local icons sea deferred,
+  # cada plugin que agrega icon nuevo toca este archivo.
+  - path: frontend_dashboard/src/shared/ui/Icon.tsx
+    kind: ts_object_entries_append
+    note: |
+      Deferred: plugin-local icons. Mientras tanto, agregar icon nuevo
+      requiere editar el registry ICONS aquí + wiring_intent.
+
+  # Barrels de shared/. Si 2+ plugins agregan primitivas a shared/ui/,
+  # ambos editan index.ts. Merger consolidaría los exports.
+  - path: frontend_dashboard/src/shared/*/index.ts
+    kind: ts_barrel
+    note: |
+      Aplica a shared/ui/index.ts, shared/lib/index.ts, shared/api/index.ts,
+      shared/config/index.ts.
+
+  # App providers chain. Si 2+ plugins agregan provider, conflict en orden.
+  - path: frontend_dashboard/src/app/providers/index.tsx
+    kind: app_provider_composition
+    note: |
+      Raro tocar (la mayoría de plugins no agrega providers). Si tu plugin
+      necesita context global, considerá si vale la pena (provider chain
+      cross-plugin tiende a leak).
+
+  # ── Frontend entities shared (cross-plugin) ──────────────────────
+  # Cuando 2+ plugins agregan hooks/types al mismo entity existente,
+  # los barrels + api.ts + model.ts + contracts.ts + keys.ts conflictan.
+  - path: frontend_dashboard/src/entities/*/index.ts
+    kind: ts_barrel
+  - path: frontend_dashboard/src/entities/*/api.ts
+    kind: ts_factory_module
+  - path: frontend_dashboard/src/entities/*/model.ts
+    kind: ts_dataclass_module
+  - path: frontend_dashboard/src/entities/*/contracts.ts
+    kind: ts_dataclass_module
+  - path: frontend_dashboard/src/entities/*/keys.ts
+    kind: ts_factory_module
+
+  # ── Tailwind theme tokens ────────────────────────────────────────
+  - path: frontend_dashboard/src/index.css
+    kind: css_theme_block
+    anchors:
+      theme_block: "^@theme \\{"
+    note: |
+      Naming rule: NUNCA --color-text-* (anti-pattern). Usar --color-fg.
+
+  # ── Pipeline architecture-protected files (HARD STOP) ────────────
+  # Estos NO son spinal en sentido de "consolidable por merger" — son
+  # PROTECTED. Los listamos acá para que el implementer los marque como
+  # off-limits. Si una task quiere editar alguno, status: blocked +
+  # requires_planner_update.
+  - path: .archon/workflows/**
+    kind: protected
+    protected: true
+    note: |
+      Pipeline YAMLs. Solo el operador (vía ADR) los modifica.
+  - path: .claude/skills/hubara-*/**
+    kind: protected
+    protected: true
+    note: |
+      Skills del pipeline hubara. Solo ADR.
+  - path: hubara_agency/tests/architecture/**
+    kind: protected
+    protected: true
+  - path: hubara_agency/.importlinter
+    kind: protected
+    protected: true
+  - path: frontend_dashboard/src/test/architecture/**
+    kind: protected
+    protected: true
+  - path: frontend_dashboard/.dependency-cruiser.cjs
+    kind: protected
+    protected: true
+  - path: frontend_dashboard/tsconfig.arch.json
+    kind: protected
+    protected: true
+
+# Behavior for files NOT listed here:
+#   - "new" action en path nuevo → parallel-safe (cada plugin crea su path)
+#   - "modify" en path no-spinal → planner refuses 2 tasks en mismo batch
+#     que toquen ese path (no hay rule de merger; reduced parallelism)
+#
+# Files explicitamente NUNCA spinal (single-owner del plugin):
+#   - frontend_dashboard/src/plugins/<id>/**
+#   - hubara_agency/src/plugins/<id>/**
+#   - hubara_agency/k8s/aws-produccion/worker-<name>.yaml (file-per-worker)
+#
+# Files NEVER spinal NI editables sin ADR (operator-owned config):
+#   - hubara_agency/run_api.py
+#   - hubara_agency/src/main.py
+#   - hubara_agency/src/run_workers.py
+#   - hubara_agency/pyproject.toml
+#   - hubara_agency/uv.lock                       (conflict mecánico — uv lock resuelve)
+#   - hubara_agency/docker-compose.local.yml      (autogen por render-compose.py)
+#   - hubara_agency/docker-compose.base.yml       (fijo)
+#   - frontend_dashboard/package.json
+#   - frontend_dashboard/package-lock.json        (conflict mecánico — npm install resuelve)
+#   - frontend_dashboard/vite.config.ts
+#   - frontend_dashboard/tsconfig*.json (no incluye tsconfig.arch.json que es protected)
+#   - frontend_dashboard/src/main.tsx
+#   - frontend_dashboard/src/pages/Dashboard.tsx  (100% data-driven; no se edita por feature)
