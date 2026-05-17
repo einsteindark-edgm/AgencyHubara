@@ -1,0 +1,487 @@
+name: idea-a-hu-hubara
+description: |
+  Entry-point del pipeline hubara: toma una idea de negocio en texto libre
+  o un .md corto y la refina INTERACTIVAMENTE en una HU bien formada
+  (Como/Quiero/Para + Given/When/Then + Out of scope).
+
+  Flujo simplificado (UNA sola approval explícita):
+    1. AI refina tu idea en una HU completa (una pasada, sin iteración)
+    2. Auto-publica el issue + card en Project (sin gate)
+    3. ÚNICA approval: ¿lanzar `hu-hubara-pipeline` ahora? (~$0.50-1.00, 20-40 min)
+       - Sí → arranca en background; pipeline actualiza el card en cada fase
+       - No → terminás con el issue listo, lanzás pipeline a mano cuando quieras
+
+  Si el draft AI queda mal:
+    - Rechazar approval del pipeline.
+    - Editar el issue manualmente en GitHub antes de lanzar.
+    - Borrar el issue y re-correr idea-a-hu-hubara con una idea más detallada.
+
+  **Use when**:
+    - Tenés una idea de feature que cubre el plugin system (backend Python
+      DEHA + frontend FSD + workers Temporal).
+    - Querés que el card en el Project board arranque desde "Idea refined"
+      y avance por Refining → Refined → Planning → Planned → Implementing
+      → Reviewing → Done — PR ready.
+
+  **Input** ($USER_MESSAGE / $ARGUMENTS):
+    - Texto libre: "agregar tool de envío de imágenes al agente sales"
+    - Ruta a un .md con notas más extensas
+    - Pegar texto de un issue existente (lo trata como text plain)
+
+  **Pre-requisitos**:
+    - `gh` autenticado con scope `project` + `read:project` (auto-validado).
+    - `.archon/github-project-config.yaml` (opcional, para Project sync).
+
+  **Output**:
+    - Issue creado en GitHub (URL impresa)
+    - Card en el Project board (status "Idea refined") si Project configurado
+    - Draft local persistido en `hubara_agency/.hubara/drafts/`
+    - Si aprobaste el gate: `hu-hubara-pipeline` corriendo en background
+
+provider: claude
+model: sonnet
+interactive: true                              # tiene loop interactivo + approval gate
+
+worktree:
+  enabled: false                               # solo lee/escribe drafts, no muta código
+
+nodes:
+  # ════════════════════════════════════════════════════════════════════
+  # FASE 0 — Pre-requisitos básicos
+  # ════════════════════════════════════════════════════════════════════
+
+  - id: check-prereqs
+    bash: |
+      set -e
+      gh auth status >&2 2>&1 || { echo "FAIL_GH_AUTH"; exit 0; }
+      command -v jq >/dev/null || { echo "FAIL_NO_JQ"; exit 0; }
+
+      # Validar scope project si .archon/github-project-config.yaml existe.
+      # Smoke test contra el API real (más confiable que parsear gh auth status,
+      # que puede mostrar scopes cacheados post-refresh).
+      if [ -f .archon/github-project-config.yaml ]; then
+        PN=$(grep '^project_number:' .archon/github-project-config.yaml | awk '{print $2}')
+        PO=$(grep '^project_owner:' .archon/github-project-config.yaml | awk '{print $2}')
+        if [ -n "$PN" ] && [ -n "$PO" ]; then
+          if ! gh project item-list "$PN" --owner "$PO" --format json --limit 1 > /dev/null 2>&1; then
+            echo "FAIL_GH_NO_PROJECT_SCOPE"
+            exit 0
+          fi
+        fi
+      fi
+
+      echo "OK"
+    timeout: 30000
+
+  - id: cancel-bad-prereqs
+    cancel: |
+      Pre-requisitos faltantes: $check-prereqs.output
+
+      Diagnóstico:
+        FAIL_GH_AUTH              → gh auth login
+        FAIL_NO_JQ                → brew install jq
+        FAIL_GH_NO_PROJECT_SCOPE  → gh auth refresh -s project,read:project
+                                    (necesario para gh project item-add/edit/list)
+    when: "$check-prereqs.output != 'OK'"
+    depends_on: [check-prereqs]
+
+  # ════════════════════════════════════════════════════════════════════
+  # FASE 1 — Normalizar input (idea cruda → idea-original.md)
+  # ════════════════════════════════════════════════════════════════════
+
+  - id: normalize-input
+    bash: |
+      RAW="$ARGUMENTS"
+
+      # Guard: input vacío o whitespace-only
+      TRIMMED=$(echo "$RAW" | tr -d '[:space:]')
+      if [ -z "$TRIMMED" ]; then
+        echo "FAIL_EMPTY_INPUT"
+        exit 0
+      fi
+
+      if [ -f "$RAW" ]; then
+        cp "$RAW" $ARTIFACTS_DIR/idea-original.md
+      else
+        echo "$RAW" > $ARTIFACTS_DIR/idea-original.md
+      fi
+      SIZE=$(wc -c < $ARTIFACTS_DIR/idea-original.md)
+      if [ "$SIZE" -lt 20 ]; then
+        echo "FAIL_TOO_SHORT_${SIZE}"
+        exit 0
+      fi
+      echo "OK"
+    depends_on: [check-prereqs]
+    when: "$check-prereqs.output == 'OK'"
+    timeout: 30000
+
+  - id: cancel-bad-input
+    cancel: "Input inválido: $normalize-input.output. Pasame una idea no vacía (mínimo 20 chars): archon workflow run idea-a-hu-hubara 'mi idea de feature'"
+    when: "$normalize-input.output != 'OK'"
+    depends_on: [normalize-input]
+
+  # ════════════════════════════════════════════════════════════════════
+  # FASE 2 — Refinar la idea a HU (UNA pasada del AI, sin loop)
+  # ════════════════════════════════════════════════════════════════════
+  # Diseño: el AI genera la HU en una sola pasada y el workflow procede auto
+  # a publicar. Si el draft queda mal, el operador puede:
+  # (a) rechazar approval de gate-lanzar-pipeline
+  # (b) editar el issue manualmente en GitHub antes de lanzar
+  # (c) borrar el issue y re-correr idea-a-hu-hubara con idea más detallada
+  #
+  # IMPORTANTE: este nodo NO usa el skill hubara-tech-refiner-archon — ese
+  # skill produce el REFINEMENT TÉCNICO (con 14 secciones + plugin
+  # classification). Este nodo solo produce la HU narrativa (Como/Quiero/Para
+  # + AC + out of scope) — el refinement técnico lo hace el pipeline real
+  # (hu-hubara-pipeline FASE 1).
+
+  - id: refinar-hu-producto
+    depends_on: [normalize-input]
+    when: "$normalize-input.output == 'OK'"
+    idle_timeout: 600000                     # 10 min para que el AI genere el draft
+    allowed_tools: [Read, Write]
+    prompt: |
+      Sos un product owner experimentado de AgencyHubara — plataforma
+      agéntica multi-plugin (backend Python DEHA + frontend React FSD +
+      workers Temporal). Tu input es una IDEA DE NEGOCIO; tu output es
+      UNA HU bien formada, en una sola pasada (sin iteración con el
+      operador).
+
+      ## Paso 1 — Cargar contexto
+
+      Leé con Read tool:
+        - $ARTIFACTS_DIR/idea-original.md (la idea original del operador)
+
+      Opcionalmente, si la idea menciona plugin / agente / Temporal:
+        - .claude/skills/hubara-architecture-guide/SKILL.md
+        - .claude/skills/hubara-architecture-guide/sections/01-general.md
+
+      ## Paso 2 — Producir la HU
+
+      Escribí $ARTIFACTS_DIR/hu-draft.md con esta estructura EXACTA (lo
+      consume validate-hu y el resto del pipeline downstream):
+
+        # <Título corto y accionable, ≤80 chars, sin punto final>
+
+        Como **<rol del usuario del dashboard o del cliente WhatsApp,
+        e.g. "operador del dashboard", "cliente WhatsApp">**,
+        quiero **<acción concreta>**,
+        para **<beneficio claro de negocio>**.
+
+        ## Acceptance criteria
+
+        - **Given** <contexto inicial>, **when** <acción del usuario>,
+          **then** <resultado observable y testable>.
+        - **Given** ..., **when** ..., **then** ...
+        - (3 a 5 bullets en total, cada uno verificable)
+
+        ## Out of scope
+
+        - <qué NO hace este feature, lista explícita>
+        - <más cosas que el operador podría asumir pero no entran>
+
+        ## Notas técnicas (opcional)
+
+        - <plugins que parece tocar — sin compromiso>
+        - <preferencias inferidas, e.g. "reusar el componente Pill ya existente">
+        - <constraints conocidos>
+
+      ## Paso 3 — Reglas de calidad (verificá antes de salir)
+
+      Asegurate de que el draft cumple:
+        - Título accionable (verbo + objeto), NO descriptivo.
+        - Narrativa Como/Quiero/Para con los 3 elementos.
+        - Cada AC empieza con "Given" y tiene When + Then.
+        - Out of scope lista ≥2 cosas que NO hace.
+        - Documento > 200 bytes.
+        - Inferí lo que falte de la idea original — NO le preguntes al
+          humano, NO uses placeholders "<TBD>" / "<a definir>".
+
+      Si la idea menciona claramente un dominio (chats / catalog / orders /
+      etc.), nombralo en "Notas técnicas". Si no, dejá vacío esa sección.
+
+      Si la idea es ambigua, hacé la mejor inferencia razonable. El humano
+      revisará el draft cuando el pipeline le ponga el issue en GitHub —
+      ahí puede rechazar approval o editar el issue directamente.
+
+      Terminás cuando hayas escrito el archivo (no necesitás emitir promise).
+
+  # ════════════════════════════════════════════════════════════════════
+  # FASE 3 — Validar estructura del HU draft
+  # ════════════════════════════════════════════════════════════════════
+
+  - id: validate-hu
+    bash: |
+      F=$ARTIFACTS_DIR/hu-draft.md
+      test -f "$F" || { echo "FAIL_NOT_EXISTS"; exit 0; }
+      [ $(wc -c < "$F") -gt 200 ] || { echo "FAIL_TOO_SHORT"; exit 0; }
+      grep -qE '^#\s+\S' "$F" || { echo "FAIL_NO_TITLE"; exit 0; }
+      grep -qiE 'como\s+' "$F" || { echo "FAIL_NO_NARRATIVE"; exit 0; }
+      # AC: bullets Given/When/Then
+      ac_count=$(grep -cE '^[[:space:]-]*\*?\*?Given' "$F" 2>/dev/null)
+      ac_count=${ac_count:-0}
+      [ $ac_count -ge 2 ] || { echo "FAIL_FEW_AC_$ac_count"; exit 0; }
+      grep -qiE '^##.*scope' "$F" || { echo "FAIL_NO_SCOPE_SECTION"; exit 0; }
+      echo "PASS"
+    depends_on: [refinar-hu-producto]
+    timeout: 10000
+
+  - id: cancel-bad-hu
+    cancel: "HU draft validation FAILED: $validate-hu.output. Re-lanzá: archon workflow run idea-a-hu-hubara '<tu idea>'"
+    when: "$validate-hu.output != 'PASS'"
+    depends_on: [validate-hu]
+
+  # ════════════════════════════════════════════════════════════════════
+  # FASE 4 — Persistir el draft (siempre, antes de publicar)
+  # ════════════════════════════════════════════════════════════════════
+
+  - id: save-draft
+    bash: |
+      set -e
+      mkdir -p hubara_agency/.hubara/drafts
+      DRAFT_PATH="hubara_agency/.hubara/drafts/idea-$(date -u +%Y%m%d-%H%M%S).md"
+      cp $ARTIFACTS_DIR/hu-draft.md "$DRAFT_PATH"
+      echo "$DRAFT_PATH"
+    when: "$validate-hu.output == 'PASS'"
+    depends_on: [validate-hu]
+
+  # ════════════════════════════════════════════════════════════════════
+  # FASE 5 — Publicar Issue + agregar al Project (auto, sin gate)
+  # ════════════════════════════════════════════════════════════════════
+
+  - id: crear-issue
+    bash: |
+      set -e
+      # Extraer título: primera línea con "# " (sin el "# ")
+      TITLE=$(grep -m1 '^# ' $ARTIFACTS_DIR/hu-draft.md | sed 's/^# //' | head -c 120)
+      test -n "$TITLE" || { echo "FATAL: no extrajo título" >&2; exit 1; }
+
+      # gh imprime SOLO la URL al stdout cuando no-interactive.
+      # --label hubara-hu: si configurás un auto-add workflow en el Project,
+      # esa label lo levanta automático.
+      gh issue create \
+        --title "$TITLE" \
+        --body-file $ARTIFACTS_DIR/hu-draft.md \
+        --label "hubara-hu" \
+        > "$ARTIFACTS_DIR/.gh-create.log" 2>&1
+      GH_RC=$?
+      if [ $GH_RC -ne 0 ]; then
+        echo "FATAL: gh issue create falló (RC=$GH_RC):" >&2
+        tail -10 "$ARTIFACTS_DIR/.gh-create.log" >&2
+        exit 1
+      fi
+
+      ISSUE_URL=$(cat "$ARTIFACTS_DIR/.gh-create.log" | grep -oE 'https://github\.com/[^ ]+/issues/[0-9]+' | head -1)
+      if [ -z "$ISSUE_URL" ]; then
+        echo "FATAL: gh issue create no produjo URL parseable. Output:" >&2
+        cat "$ARTIFACTS_DIR/.gh-create.log" >&2
+        exit 1
+      fi
+
+      # CRÍTICO: persistir a archivo. $create-issue.output se PIERDE cuando
+      # Archon reanuda el workflow tras una approval gate (bug conocido —
+      # prior_success skipea el nodo pero no preserva stdout).
+      echo "$ISSUE_URL" > $ARTIFACTS_DIR/.issue-url
+      echo "$ISSUE_URL"
+    depends_on: [save-draft]
+    retry:
+      max_attempts: 2
+      delay_ms: 5000
+      on_error: transient
+    timeout: 60000
+
+  - id: agregar-a-project
+    bash: |
+      CFG=".archon/github-project-config.yaml"
+      if [ ! -f "$CFG" ]; then
+        echo "skipped no_config"
+        exit 0
+      fi
+
+      # Leer URL del archivo persistido (resume-safe); fallback a substitución
+      if [ -f "$ARTIFACTS_DIR/.issue-url" ]; then
+        ISSUE_URL=$(cat "$ARTIFACTS_DIR/.issue-url")
+      else
+        ISSUE_URL=$create-issue.output
+      fi
+      if [ -z "$ISSUE_URL" ]; then
+        echo "WARN no issue URL — agregar-a-project no puede hacer nada"
+        exit 0
+      fi
+
+      PN=$(grep '^project_number:' "$CFG" | awk '{print $2}')
+      PO=$(grep '^project_owner:' "$CFG" | awk '{print $2}')
+      PID=$(grep '^project_id:' "$CFG" | awk '{print $2}')
+      FID=$(grep '^status_field_id:' "$CFG" | awk '{print $2}')
+
+      # Step 1: item-add (puede fallar como "already exists" si auto-add levantó por label)
+      gh project item-add "$PN" --owner "$PO" --url "$ISSUE_URL" > "$ARTIFACTS_DIR/.add.log" 2>&1
+      ADD_RC=$?
+      if [ $ADD_RC -ne 0 ]; then
+        if grep -qiE "missing required scopes|read:project|gh auth refresh" "$ARTIFACTS_DIR/.add.log"; then
+          echo "FAIL_GH_SCOPE: corré 'gh auth refresh -s project,read:project' y re-lanzá"
+          tail -3 "$ARTIFACTS_DIR/.add.log"
+          exit 1
+        fi
+        if grep -qiE "already|exists|duplicate" "$ARTIFACTS_DIR/.add.log"; then
+          echo "item ya estaba en project"
+        else
+          echo "WARN item-add error (RC=$ADD_RC):"
+          tail -3 "$ARTIFACTS_DIR/.add.log"
+        fi
+      else
+        echo "item-add OK"
+      fi
+
+      # Step 2: encontrar item id (con retry — race con auto-add)
+      ITEM_ID=""
+      for attempt in 1 2 3; do
+        ITEM_ID=$(gh project item-list "$PN" --owner "$PO" --format json --limit 200 2>/dev/null \
+          | jq -r --arg u "$ISSUE_URL" '.items[] | select(.content.url == $u) | .id' | head -1)
+        if [ -n "$ITEM_ID" ]; then break; fi
+        sleep $((attempt * 2))
+      done
+      if [ -z "$ITEM_ID" ]; then
+        echo "WARN item no encontrado en project tras 3 intentos. URL: $ISSUE_URL"
+        exit 0
+      fi
+      echo "item_id=$ITEM_ID"
+
+      # Step 3: get option_id de "Idea refined"
+      OID=$(awk -F: '/^status_options:/{f=1; next} f && /^  "?Idea refined"?:/ {gsub(/^ +| +$/, "", $2); print $2; exit}' "$CFG")
+      if [ -z "$OID" ]; then
+        echo "WARN 'Idea refined' option no está en config — agregalo a status_options:"
+        exit 0
+      fi
+      echo "option_id=$OID"
+
+      # Step 4: item-edit con verificación REAL del exit code
+      gh project item-edit --id "$ITEM_ID" --project-id "$PID" \
+        --field-id "$FID" --single-select-option-id "$OID" \
+        > "$ARTIFACTS_DIR/.edit.log" 2>&1
+      EDIT_RC=$?
+      if [ $EDIT_RC -ne 0 ]; then
+        echo "FAIL item-edit (RC=$EDIT_RC):"
+        tail -5 "$ARTIFACTS_DIR/.edit.log"
+        exit 0   # fail-soft
+      fi
+
+      echo "✅ status 'Idea refined' set en item $ITEM_ID"
+    depends_on: [crear-issue]
+    timeout: 90000
+
+  - id: print-issue-info
+    bash: |
+      if [ -f "$ARTIFACTS_DIR/.issue-url" ]; then
+        ISSUE_URL=$(cat "$ARTIFACTS_DIR/.issue-url")
+      else
+        ISSUE_URL=$create-issue.output
+      fi
+      PROJECT_STATUS=$agregar-a-project.output
+      cat <<EOF
+
+      ╔════════════════════════════════════════════════════════════════╗
+      ║ ✅ Issue creado                                                 ║
+      ║                                                                ║
+      ║ URL:        ${ISSUE_URL}
+      ║ Project:    ${PROJECT_STATUS}
+      ║                                                                ║
+      ║ El card aparece en el Project con status "Idea refined".       ║
+      ║ Cuando arranque hu-hubara-pipeline va a pasar por:             ║
+      ║   Refining → Refined → Planning → Planned → Implementing →     ║
+      ║   Reviewing → Done — PR ready                                  ║
+      ╚════════════════════════════════════════════════════════════════╝
+      EOF
+    depends_on: [crear-issue, agregar-a-project]
+    trigger_rule: none_failed_min_one_success
+    timeout: 5000
+
+  # ════════════════════════════════════════════════════════════════════
+  # FASE 6 — Gate ÚNICO: lanzar pipeline completo?
+  # ════════════════════════════════════════════════════════════════════
+
+  - id: gate-lanzar-pipeline
+    depends_on: [print-issue-info]
+    approval:
+      message: |
+        ✅ Issue publicado: $create-issue.output
+        ✅ Card en el Project: "Idea refined"
+
+        ─────────────────────────────────────────────────────────────────
+        ¿Lanzo `hu-hubara-pipeline` AHORA con este issue?
+        ─────────────────────────────────────────────────────────────────
+
+        APROBAR → arranca en background (~$0.50-1.00, 20-40 min). Va a:
+          1. refinar técnicamente (plugin classification + 14 secciones)
+          2. planificar el DAG plugin-level (single o multi-plugin)
+          3. SI single-plugin → sub-pipeline secuencial inline
+             SI multi-plugin → imprime comandos de fan-out, te pausa
+          4. implementar features secuencialmente (gates determinísticos
+             entre cada tarea: pytest + lint-imports + render-compose +
+             npm test + tsc + build + playwright)
+          5. validación final consolidada + PR único a main
+          6. disparar review automático (5 agentes: deha-compliance,
+             fsd-compliance, plugin-system, test-coverage, security)
+          7. actualizar el card del Project en cada fase
+
+        RECHAZAR → terminamos acá. El issue + card quedan listos.
+          Lanzás el pipeline cuando quieras desde otra terminal:
+            archon workflow run hu-hubara-pipeline "$create-issue.output"
+
+  - id: lanzar-pipeline
+    bash: |
+      # Leer URL del archivo persistido (sobrevive al resume tras approval)
+      if [ -f "$ARTIFACTS_DIR/.issue-url" ]; then
+        ISSUE_URL=$(cat "$ARTIFACTS_DIR/.issue-url")
+      else
+        ISSUE_URL=$create-issue.output
+      fi
+
+      if [ -z "$ISSUE_URL" ]; then
+        echo "FAIL_NO_ISSUE_URL crear-issue no produjo URL"
+        exit 1
+      fi
+      if ! echo "$ISSUE_URL" | grep -qE '^https://github\.com/.+/issues/[0-9]+'; then
+        echo "FAIL_INVALID_URL: ${ISSUE_URL}"
+        exit 1
+      fi
+
+      LOG_FILE="$HOME/.archon/logs/hubara-pipeline-$(date +%s).log"
+      mkdir -p "$HOME/.archon/logs"
+
+      # env -u CLAUDECODE evita "may hang silently" del nested archon-in-claude-code
+      (env -u CLAUDECODE ARCHON_SUPPRESS_NESTED_CLAUDE_WARNING=1 \
+         nohup archon workflow run hu-hubara-pipeline "$ISSUE_URL" \
+         > "$LOG_FILE" 2>&1 & disown) 2>/dev/null \
+        && echo "pipeline_triggered_log=$LOG_FILE" \
+        || echo "pipeline_trigger_failed_run_manually"
+    depends_on: [gate-lanzar-pipeline]
+    timeout: 10000
+
+  - id: print-final-summary
+    bash: |
+      if [ -f "$ARTIFACTS_DIR/.issue-url" ]; then
+        ISSUE_URL=$(cat "$ARTIFACTS_DIR/.issue-url")
+      else
+        ISSUE_URL=$create-issue.output
+      fi
+      PIPELINE=$lanzar-pipeline.output
+      cat <<EOF
+
+      ╔════════════════════════════════════════════════════════════════╗
+      ║ 🎉 idea-a-hu-hubara completo                                    ║
+      ║                                                                ║
+      ║ Issue:     ${ISSUE_URL}
+      ║ Pipeline:  ${PIPELINE}
+      ║                                                                ║
+      ║ Próximos pasos:                                                ║
+      ║   1. Mirá el Project board — card en "Idea refined"             ║
+      ║   2. Si pipeline arrancó, va a ir actualizando status auto      ║
+      ║      (revisá en ~5-10 min)                                      ║
+      ║   3. Cuando termine, vas a ver un PR + comment del review       ║
+      ║   4. Si "pipeline_trigger_failed_run_manually", lanzalo así:    ║
+      ║      archon workflow run hu-hubara-pipeline "${ISSUE_URL}"
+      ╚════════════════════════════════════════════════════════════════╝
+      EOF
+    depends_on: [lanzar-pipeline]
+    timeout: 5000
