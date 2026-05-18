@@ -80,7 +80,7 @@ flowchart TB
   end
 
   subgraph Phase3A["FASE 3 — rama A: single_plugin"]
-    SubInline["hu-hubara-plugin-pipeline INLINE<br/>(feature plan + impl secuencial)"]
+    SubAuto["hu-hubara-plugin-pipeline AUTO-DISPATCH<br/>(feature plan + impl secuencial)"]
   end
 
   subgraph Phase3B["FASE 3 — rama B: multi_plugin"]
@@ -107,11 +107,11 @@ flowchart TB
 
   hu_pipeline --> Refiner
   Refiner --> PluginPlanner
-  PluginPlanner -->|mode=single_plugin| SubInline
+  PluginPlanner -->|mode=single_plugin| SubAuto
   PluginPlanner -->|mode=multi_plugin| FanOut
   FanOut --> SubP1 & SubP2 & SubPN
   SubP1 & SubP2 & SubPN --> Merger
-  SubInline --> Gates
+  SubAuto --> Gates
   Merger --> Gates
   Gates --> PR
   PR --> ReviewAuto
@@ -172,15 +172,15 @@ flowchart TB
   ReviewPipe["review-pr-hubara<br/>(code review automático)"]
 
   IdeaHU -->|approval gate| HuPipe
-  HuPipe -->|invoca inline si single_plugin<br/>o manual fan-out si multi| PluginPipe
+  HuPipe -->|auto-dispatch si single_plugin<br/>o fan-out manual si multi| PluginPipe
   HuPipe -->|trigger background al final| ReviewPipe
 ```
 
 | Workflow | Nodos | Tamaño | Rol |
 |---|---|---|---|
 | `idea-a-hu-hubara` | 14 | 22 KB | Idea cruda → Issue + Project card |
-| `hu-hubara-pipeline` | 40 | 52 KB | Orquestador E2E (FASE 0-6) |
-| `hu-hubara-plugin-pipeline` | 17 | 38 KB | Sub-pipeline por plugin |
+| `hu-hubara-pipeline` | 40 | 62 KB | Orquestador E2E (FASE 0-6) |
+| `hu-hubara-plugin-pipeline` | 17 | 37 KB | Sub-pipeline por plugin |
 | `review-pr-hubara` | 20 | 25 KB | Review automático con 5 agentes |
 
 ### §3.3 Convenciones
@@ -334,8 +334,8 @@ sequenceDiagram
   PP->>Hu: plugin-manifest.yaml (1 plugin)
   Hu->>GH: commit plan → .hubara/plans/<HU_ID>/
 
-  Note over Hu,Sub: FASE 3 — rama A: single_plugin INLINE
-  Hu->>Sub: archon workflow run hu-hubara-plugin-pipeline "<HU> <plugin>"
+  Note over Hu,Sub: FASE 3 — rama A: single_plugin AUTO-DISPATCH
+  Hu->>Sub: archon workflow run hu-hubara-plugin-pipeline "<HU> <plugin>"<br/>(env -u CLAUDECODE, subprocess automático sin fan-out manual)
 
   Note over Sub,FP: Sub-pipeline FASE 1
   Sub->>FP: invoca
@@ -612,8 +612,8 @@ Manejable para Sonnet.
 ```mermaid
 gitGraph
   commit id: "main: PR11 (manifest=SSoT)"
-  branch hu/HU-20260517-143025-add-image-tool
-  checkout hu/HU-20260517-143025-add-image-tool
+  branch "hu/HU-20260517-143025-add-image-tool"
+  checkout "hu/HU-20260517-143025-add-image-tool"
 
   commit id: "HU-...: refinement técnico (auto)"
   commit id: "HU-...: plugin-level plan (auto, 1 plugin)"
@@ -626,7 +626,7 @@ gitGraph
   commit id: "review-pr-hubara: auto-fix 2 critical findings"
 
   checkout main
-  merge hu/HU-20260517-143025-add-image-tool tag: "squash-merge"
+  merge "hu/HU-20260517-143025-add-image-tool" tag: "squash-merge"
 ```
 
 **Decisiones de diseño:**
@@ -643,32 +643,32 @@ gitGraph
 ```mermaid
 gitGraph
   commit id: "main"
-  branch hu/HU-multi
-  checkout hu/HU-multi
+  branch "hu/HU-multi"
+  checkout "hu/HU-multi"
   commit id: "HU-multi: refinement (auto)"
   commit id: "HU-multi: plugin-level plan (auto, 3 plugins)"
 
-  branch sub-pipeline-chats
-  checkout sub-pipeline-chats
+  branch "sub-pipeline-chats"
+  checkout "sub-pipeline-chats"
   commit id: "HU-multi [chats]: feature plan"
   commit id: "HU-multi [chats] F01: status=passed"
   commit id: "HU-multi [chats]: plugin result"
-  checkout hu/HU-multi
-  merge sub-pipeline-chats
+  checkout "hu/HU-multi"
+  merge "sub-pipeline-chats"
 
-  branch sub-pipeline-catalog
-  checkout sub-pipeline-catalog
+  branch "sub-pipeline-catalog"
+  checkout "sub-pipeline-catalog"
   commit id: "HU-multi [catalog]: feature plan"
   commit id: "HU-multi [catalog] F01: status=passed"
   commit id: "HU-multi [catalog]: plugin result"
-  checkout hu/HU-multi
-  merge sub-pipeline-catalog
+  checkout "hu/HU-multi"
+  merge "sub-pipeline-catalog"
 
   commit id: "HU-multi: merger consolidó wiring (auto)"
   commit id: "review-pr-hubara: auto-fix"
 
   checkout main
-  merge hu/HU-multi tag: "squash"
+  merge "hu/HU-multi" tag: "squash"
 ```
 
 Conceptualmente los sub-pipelines son "branches paralelos" pero
@@ -1006,6 +1006,36 @@ archon workflow run hu-hubara-pipeline "HU-..."
 # Smart-resume: detecta refinement OK → salta FASE 1.
 ```
 
+### §13.5 Caso ajustar caps (override de defaults)
+
+Los validators tienen 2 caps duros con defaults conservadores que el
+operador puede overridear vía env var antes del `archon workflow run`:
+
+```bash
+# Subir cap de plugins por HU (default 8) — solo para HUs excepcionales:
+MAX_PLUGINS_PER_HU=12 archon workflow run hu-hubara-pipeline "HU-..."
+
+# Subir cap de features por plugin (default 12):
+MAX_FEATURES_PER_PLUGIN=18 archon workflow run \
+    hu-hubara-plugin-pipeline "HU-... <plugin>"
+
+# Combinar ambos:
+MAX_PLUGINS_PER_HU=10 MAX_FEATURES_PER_PLUGIN=15 \
+    archon workflow run hu-hubara-pipeline "HU-..."
+```
+
+**Cuándo overrideear:**
+- Refactor cross-plugin de gran impacto (e.g. renombre de DTO usado
+  por 9 plugins) — legítimamente alto plugin count.
+- Plugin maduro recibiendo extensión integral (e.g. plugin chats
+  recibe 14 features para un overhaul de UX).
+
+**Cuándo NO overrideear:**
+- "El AI subdividió demasiado" → fix el feature-planner prompt o
+  bundleá tasks manualmente, NO subas el cap.
+- "Quiero hacer todo de una" → splittear en 2 HUs es casi siempre mejor.
+  El cap está ahí por una razón (blast-radius, ergonomía, review-fatigue).
+
 ---
 
 ## §14. Anatomía de un commit del pipeline
@@ -1123,12 +1153,12 @@ mergear (si los pendientes son aceptables) o iterar.
 | Caso | Por qué falla | Workaround |
 |---|---|---|
 | HU pide cambio architecture-protected | refiner lo bloquea con HARD STOP | ADR + PR `architecture-change` separado, después re-lanzar pipeline |
-| HU >8 plugins afectados | plugin-planner cap conservador | Splittear en 2 HUs |
-| Plugin >12 features | feature-planner cap | Splittear el plugin work |
+| HU >8 plugins afectados | `validate-plan` enforza cap `MAX_PLUGINS_PER_HU=8` (configurable env var) y aborta con `FAIL_TOO_MANY_PLUGINS` | Splittear en 2 HUs |
+| Plugin >12 features | `validate-feature-plan` enforza cap `MAX_FEATURES_PER_PLUGIN=12` (configurable env var) y aborta con `FAIL_TOO_MANY_TASKS` | Splittear el plugin work en 2 HUs ortogonales (backend / frontend) |
 | Multi-plugin con deps cíclicas | planner detecta cycle, refuses | Bundlear o re-decomponer |
 | Manifest schema necesita campo nuevo | Cualquier change al schema requiere ADR | PR architecture-change |
 | Implementer mete bug que pasa det-gates pero rompe en producción | Det-gates son tests, no observabilidad real | Review automático debería catchear; en última instancia rollback |
-| Multi-plugin con shared file que el merger NO sabe consolidar (mid-file mutation) | Wiring intent vocabulary describe solo APPENDS | Operador resuelve a mano + commit |
+| Multi-plugin con shared file que el merger NO sabe consolidar (mid-file mutation arbitraria) | Wiring intent vocabulary cubre inserts estructurados (append / register / wrap / mount / factory) — 17 kinds — pero NO mutaciones mid-file arbitrarias ni cambios de schema | Operador resuelve a mano + commit |
 | Operador olvida fan-out de un plugin (responde "ready" antes) | Validación detecta MISSING plugin-result, aborta | Lanzar el faltante + re-lanzar pipeline |
 | Branch `hu/<HU_ID>` divergió de origin (rebase manual conflicto) | Pull-rebase retry falla | Operador resuelve manualmente con git status |
 
@@ -1153,9 +1183,10 @@ diferente (e.g. uno que use LangGraph en vez de Sonnet), solo cambia el
 
 ### §17.2 Modular conocimiento
 
-El skill `hubara-architecture-guide` tiene 22 archivos. Editar
-`sections/04-backend-agents.md` cuando cambia un patrón Temporal NO
-requiere tocar otros skills.
+El skill `hubara-architecture-guide` tiene 20 archivos (1 `SKILL.md` +
+1 `README.md` + 10 `sections/` + 4 `references/` + 4 `examples/`).
+Editar `sections/04-backend-agents.md` cuando cambia un patrón Temporal
+NO requiere tocar otros skills.
 
 Cada skill downstream carga **solo las secciones de su tarea** vía
 `Read tool` — pueden bajar / subir el "consumo" del guide cambiando 1
@@ -1170,9 +1201,17 @@ comparten files**. El pipeline lo explota:
 - Sub-pipelines corren en paralelo.
 - Merger solo se invoca si hay shared (raro).
 
-**Bound del paralelismo:** ~5-8 plugins simultáneos (limitado por
-máquina del operador para correr N terminales + N copias de Sonnet).
-Para HUs típicas de 1-3 plugins, paralelismo real.
+**Bounds del paralelismo (enforced):**
+- `MAX_PLUGINS_PER_HU=8` (default, override por env var) — el orquestador
+  aborta con `FAIL_TOO_MANY_PLUGINS` si la HU lo excede.
+- `MAX_FEATURES_PER_PLUGIN=12` (default, override por env var) — el
+  sub-pipeline aborta con `FAIL_TOO_MANY_TASKS` si el plugin lo excede.
+
+Estos caps no son solo defensivos: el fan-out manual de >8 terminales
+es impracticable para el operador, y el loop secuencial sobre >12
+tasks es lento. Splittear en 2 HUs es la respuesta canónica. Para HUs
+típicas de 1-3 plugins con 3-6 tasks cada uno, paralelismo real sin
+presión.
 
 ---
 

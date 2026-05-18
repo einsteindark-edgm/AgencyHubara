@@ -194,8 +194,7 @@ notes: |
 
 ### §5.1 `mode: no_work` (HU short-form)
 
-Si el refinement dice `mode: no_refinement_needed` o `mode: blocked`,
-emitir:
+Si el refinement dice `mode: no_refinement_needed`, emitir:
 
 ```yaml
 version: 1
@@ -206,9 +205,35 @@ totals: { plugin_count: 0 }
 plugins: []
 plugin_batches: []
 notes: |
-  Refinement says <reason>. No plugin-level work to plan.
+  Refinement says no_refinement_needed. No plugin-level work to plan.
   El downstream sub-pipeline no se invoca.
 ```
+
+### §5.1bis `mode: blocked` (HARD STOP)
+
+Si el refinement está blocked O un cap §6.1 / §6.2 / §7 trigger fail,
+emitir:
+
+```yaml
+version: 1
+hu_id: <id>
+hu_title: <title>
+mode: blocked
+blocked_reason: <too_many_plugins | requires_architecture_change | refiner_blocked | cyclic_plugin_deps>
+blocked_detail: |
+  <one-paragraph qué pasó y qué hacer>
+plugins_proposed: [<lista detectada para context, NO se ejecuta>]
+totals: { plugin_count: 0 }
+plugins: []
+plugin_batches: []
+notes: |
+  Plan abortado. El orquestador NO invoca sub-pipelines. El operador
+  debe splittear la HU / abrir ADR / re-decomponer.
+```
+
+El orquestador (FASE 2) verifica `mode == "blocked"` y aborta con exit
+claro al operador. Esto es un escape determinista — el AI no decide
+"avanzo igual".
 
 ### §5.2 `mode: single_plugin` (caso default — la mayoría)
 
@@ -302,6 +327,29 @@ lista de intents para consolidar el spinal file.
 - **`depends_on` referencia solo plugins existentes en este DAG** (no
   plugins del repo que no participan).
 - **Si `requires_merger: true`, debe haber al menos un `shared_files_intents` entry.**
+
+### §6.1 Plugin count cap (HARD)
+
+- **Default `MAX_PLUGINS_PER_HU = 8`** (override con env var del mismo nombre).
+- Si `len(plugins) > MAX_PLUGINS_PER_HU` → emitir manifest blocked:
+  ```yaml
+  mode: blocked
+  blocked_reason: too_many_plugins
+  blocked_detail: "HU afecta N plugins > cap=8. Splittear en 2+ HUs."
+  plugins_proposed: [<lista de plugin ids detectados>]
+  ```
+- Racional: fan-out manual de >8 terminales es impracticable; el PR consolidado
+  se vuelve impracticable de revisar; el blast-radius por bug crece quadratically.
+- El cap es HARD — el operador NO puede override. Para HUs legítimamente
+  grandes, splitting es la única respuesta correcta.
+
+### §6.2 Single-batch cap (SOFT warning)
+
+- Si un batch tiene `len(plugins_in_batch) > 5` → emitir warning en
+  `notes` del manifest pero NO bloquear:
+  `"batch B<N> tiene 6 plugins paralelos — fan-out manual no trivial"`
+- El operador puede proceder; es señal de que la máquina + ergonomía
+  van a estar tight.
 
 Si validación falla, retornar al usuario con error claro y NO escribir
 yaml.

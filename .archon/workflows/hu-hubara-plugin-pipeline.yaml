@@ -262,8 +262,13 @@ nodes:
       F="$ARTIFACTS_DIR/feature-plan-manifest.yaml"
       test -f "$F" || { echo "FAIL_NOT_EXISTS"; exit 0; }
 
+      # Cap configurable: default 12 features por plugin, override con env var.
+      # Racional §3.4 del skill hubara-feature-planner-archon.
+      export MAX_FEATURES_PER_PLUGIN="${MAX_FEATURES_PER_PLUGIN:-12}"
+
       python3 <<EOF
       import sys, os, yaml
+      MAX = int(os.environ.get('MAX_FEATURES_PER_PLUGIN', '12'))
       d = yaml.safe_load(open('$F'))
       if not isinstance(d, dict):
           print('FAIL_NOT_DICT'); sys.exit(0)
@@ -273,8 +278,9 @@ nodes:
       tasks = d.get('tasks') or []
       if not isinstance(tasks, list) or len(tasks) < 1:
           print('FAIL_NO_TASKS'); sys.exit(0)
-      if len(tasks) > 12:
-          print('FAIL_TOO_MANY_TASKS:', len(tasks)); sys.exit(0)
+      if len(tasks) > MAX:
+          print(f'FAIL_TOO_MANY_TASKS: {len(tasks)} > cap={MAX} (override con env MAX_FEATURES_PER_PLUGIN)')
+          sys.exit(0)
       # Cada task con file existente
       tareas_dir = '$ARTIFACTS_DIR/tareas'
       for t in tasks:
@@ -296,10 +302,23 @@ nodes:
     cancel: |
       Feature plan validation FAILED ($validate-feature-plan.output) en plugin $parse-input.output.plugin_id.
 
-      Opciones para retomar:
-        (a) Edití el plugin-manifest.yaml a mano para clarificar el work_summary,
-            commit, re-lanzá.
-        (b) Edití el feature-plan a mano en hubara_agency/.hubara/plans/<HU_ID>/feature-plans/<plugin_id>/,
+      Decodificación rápida del FAIL code:
+        FAIL_TOO_MANY_TASKS → plugin requiere más tasks que el cap (default 12).
+            Loop secuencial sobre 12+ tasks es lento y blast-radius alto.
+            Opciones:
+              (a) Splittear el work del plugin en 2 HUs ortogonales
+                  (e.g. "HU-A: backend de X" + "HU-B: frontend + e2e de X").
+              (b) Si el caso amerita, bumpear el cap:
+                  MAX_FEATURES_PER_PLUGIN=N archon workflow run \
+                    hu-hubara-plugin-pipeline "<HU_ID> <plugin>"
+        FAIL_MISSING_TASK_FILE_F<NN> → el feature-plan referencia un task file
+            que el planner no escribió. Re-correr el planner.
+        FAIL_BAD_TASK_ID → IDs deben ser F<digits>.
+
+      Recovery genérico:
+        (a) Edití el plugin-manifest.yaml para clarificar work_summary, commit, re-lanzá.
+        (b) Edití el feature-plan-manifest.yaml + tareas/ a mano en
+            hubara_agency/.hubara/plans/<HU_ID>/feature-plans/<plugin_id>/,
             commit, re-lanzá (smart-resume salta FASE 1).
     when: "!($validate-feature-plan.output =~ /^PASS/)"
     depends_on: [validate-feature-plan]

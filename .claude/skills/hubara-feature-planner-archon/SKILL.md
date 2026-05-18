@@ -116,6 +116,27 @@ Vertical slice — la unidad más chica que:
 - Cada task `delivers_acceptance` ≥1 AC de la HU.
 - Suma de `delivers_acceptance` cubre TODOS los AC.
 
+#### Task count cap (HARD)
+
+- **Default `MAX_FEATURES_PER_PLUGIN = 12`** (override con env var del mismo nombre).
+- Si `len(tasks) > MAX_FEATURES_PER_PLUGIN` → emitir feature-plan-manifest blocked:
+  ```yaml
+  mode: blocked
+  blocked_reason: too_many_features
+  blocked_detail: "Plugin requiere N tasks > cap=12. Splittear el plugin work en 2 HUs."
+  tasks_proposed: [<lista de task titles detectados>]
+  ```
+- Racional: el loop de implementación es secuencial dentro del plugin
+  (default 1 task por batch). >12 tasks = pipeline corre >2hs sin checkpoint
+  natural; si falla en task 11, perdés todo el progreso. Mejor splittear.
+- El cap es HARD — para tasks legítimamente extensas, dividir en 2 HUs
+  ortogonales (e.g. "HU-A: backend de la feature" + "HU-B: frontend + e2e").
+
+#### Foundation count cap (SOFT warning)
+
+- Si `foundation_count > 4` (tasks con `depends_on: []`) → warning en
+  notes: `"4+ foundations sugiere falta de estructura — considerá bundlear"`.
+
 ### §3.5 Parallel batches dentro del plugin
 
 A diferencia del plugin-planner, **dentro del plugin las tasks suelen ser

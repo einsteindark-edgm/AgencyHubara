@@ -393,7 +393,8 @@ archon workflow run hu-hubara-pipeline "<HU_ID>"
 | `check-prereqs FAIL_DIRTY_PROTECTED_FILES` | tu main tiene cambios sin commit en `.archon/` o `.claude/skills/hubara-*` (Archon los copia al worktree) | commit / discardalos en main + re-lanzar |
 | `validate-refinement FAIL_NO_PLUGIN_CLASSIFICATION` | el refiner no escribió §0 Plugin Classification | iterá el refiner con feedback "agregá §0" o editá a mano |
 | `validate-refinement FAIL_REFINEMENT_TOUCHES_PROTECTED` | el refinement pide cambios architecture-protected | requiere ADR — PR separado con label architecture-change |
-| `validate-plan FAIL_TOO_MANY_PLUGINS` | el planner emitió >8 plugins (cap conservador) | editá el refinement para bundlear o split en 2 HUs |
+| `validate-plan FAIL_TOO_MANY_PLUGINS: N > cap=8` | el planner emitió >8 plugins (cap `MAX_PLUGINS_PER_HU=8` default) | (a) splittear en 2 HUs; (b) override sólo si el caso amerita: `MAX_PLUGINS_PER_HU=N archon workflow run hu-hubara-pipeline "<HU>"` |
+| `validate-feature-plan FAIL_TOO_MANY_TASKS: N > cap=12` | feature-planner emitió >12 tasks (cap `MAX_FEATURES_PER_PLUGIN=12` default) | (a) splittear el plugin work en 2 HUs ortogonales; (b) override: `MAX_FEATURES_PER_PLUGIN=N archon workflow run hu-hubara-plugin-pipeline "<HU> <plugin>"` |
 | `rama-B-merge-batch FAIL_BATCH_INCOMPLETE missing=N failed=M` | algún sub-pipeline no terminó o falló | revisar `hubara_agency/.hubara/results/<HU_ID>/`, re-lanzar los faltantes, responder "ready" otra vez |
 | `final-validation FAIL_RENDER_COMPOSE_DRIFT` | algún sub-pipeline tocó manifest pero no commit el compose | `cd hubara_agency && uv run python scripts/render-compose.py && git add docker-compose.local.yml && git commit && git push` |
 | `final-validation FAIL_LINT_IMPORTS` | violación R-DIP introducida | leer `lint-imports` output, fixear import path, re-lanzar |
