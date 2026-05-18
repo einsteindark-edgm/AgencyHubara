@@ -1,0 +1,582 @@
+name: review-pr-hubara
+description: |
+  Code review automático de PRs generados por hu-hubara-pipeline. Corre
+  5 agentes especializados en paralelo, consolida findings, auto-fixea
+  CRITICAL/HIGH (revierte si rompe tests), y postea un comment al PR.
+
+  Disparado automáticamente desde hu-hubara-pipeline.trigger-review en
+  background. También se puede invocar manualmente sobre cualquier PR:
+    archon workflow run review-pr-hubara "https://github.com/<owner>/<repo>/pull/<N>"
+
+  Los 5 agentes (clasificador haiku decide cuáles correr según los files
+  del diff):
+
+    1. agent-deha-compliance   — R-rules backend (R-DET, R-JSON, R-STATELESS,
+                                  R-HEARTBEAT, R-DIP) + plugin manifest hygiene
+    2. agent-fsd-compliance    — FSD layering + 4 import rules + 14 anti-patterns
+    3. agent-plugin-system     — manifest schema + parity tests + render-compose drift
+    4. agent-test-coverage     — functional tests + e2e specs presentes
+    5. agent-security          — secrets leaked + env vars hardcoded
+
+  Cada uno carga del skill hubara-architecture-guide solo las secciones
+  relevantes a su dominio.
+
+  Auto-fix: solo CRITICAL + HIGH severity. Si después de aplicar el fix
+  los tests rompen, revierte ese fix. Pendientes (no auto-fixable o que
+  rompen tests) quedan como TODO en el comment del PR.
+
+  El comment NO bloquea el PR — es informativo. Operador decide si mergear
+  o iterar.
+
+provider: claude
+model: sonnet
+interactive: false
+
+worktree:
+  enabled: true
+
+nodes:
+  # ════════════════════════════════════════════════════════════════════
+  # FASE 0 — Bootstrap
+  # ════════════════════════════════════════════════════════════════════
+
+  - id: parse-input
+    bash: |
+      PR_URL="$ARGUMENTS"
+      if ! echo "$PR_URL" | grep -qE '^https://github\.com/.+/pull/[0-9]+$'; then
+        echo "FAIL_BAD_URL: $PR_URL"
+        exit 0
+      fi
+      PR_NUM=$(echo "$PR_URL" | grep -oE '[0-9]+$')
+      echo "$PR_URL" > $ARTIFACTS_DIR/pr-url.txt
+      echo "$PR_NUM" > $ARTIFACTS_DIR/pr-num.txt
+      echo "OK"
+    timeout: 5000
+
+  - id: cancel-bad-input
+    cancel: "Input inválido. Usage: archon workflow run review-pr-hubara '<PR_URL>'"
+    when: "$parse-input.output != 'OK'"
+    depends_on: [parse-input]
+
+  - id: check-prereqs
+    bash: |
+      gh auth status >&2 2>&1 || { echo "FAIL_GH_AUTH"; exit 0; }
+      command -v jq >/dev/null || { echo "FAIL_NO_JQ"; exit 0; }
+      test -f .claude/skills/hubara-architecture-guide/SKILL.md || {
+        echo "FAIL_MISSING_GUIDE_SKILL"; exit 0;
+      }
+      echo "OK"
+    depends_on: [parse-input]
+    when: "$parse-input.output == 'OK'"
+
+  - id: cancel-bad-prereqs
+    cancel: "Pre-requisitos: $check-prereqs.output. (gh auth login / brew install jq / commit guide skill)"
+    when: "$check-prereqs.output != 'OK'"
+    depends_on: [check-prereqs]
+
+  - id: fetch-pr
+    bash: |
+      set -e
+      PR_NUM=$(cat $ARTIFACTS_DIR/pr-num.txt)
+      gh pr view "$PR_NUM" --json title,body,baseRefName,headRefName,files \
+        > $ARTIFACTS_DIR/pr.json
+      BRANCH=$(jq -r '.headRefName' $ARTIFACTS_DIR/pr.json)
+      BASE=$(jq -r '.baseRefName' $ARTIFACTS_DIR/pr.json)
+      echo "branch=$BRANCH base=$BASE"
+      echo "$BRANCH" > $ARTIFACTS_DIR/branch.txt
+      echo "$BASE" > $ARTIFACTS_DIR/base.txt
+    depends_on: [check-prereqs]
+    when: "$check-prereqs.output == 'OK'"
+
+  - id: checkout-branch
+    bash: |
+      set -e
+      BRANCH=$(cat $ARTIFACTS_DIR/branch.txt)
+      git fetch origin "$BRANCH"
+      git checkout "$BRANCH"
+      git pull --ff-only origin "$BRANCH" 2>&1 | tail -3 >&2 || true
+      echo "OK"
+    depends_on: [fetch-pr]
+
+  - id: fetch-diff
+    bash: |
+      BASE=$(cat $ARTIFACTS_DIR/base.txt)
+      git diff "origin/${BASE}...HEAD" > $ARTIFACTS_DIR/diff.patch
+      git diff --name-only "origin/${BASE}...HEAD" > $ARTIFACTS_DIR/files-changed.txt
+      echo "files=$(wc -l < $ARTIFACTS_DIR/files-changed.txt | tr -d ' ')"
+    depends_on: [checkout-branch]
+
+  # ════════════════════════════════════════════════════════════════════
+  # FASE 1 — Classify (haiku) decide qué agentes correr
+  # ════════════════════════════════════════════════════════════════════
+
+  - id: classify
+    depends_on: [fetch-diff]
+    provider: claude
+    model: haiku
+    idle_timeout: 60000
+    loop:
+      max_iterations: 1
+      until: CLASSIFY_OK
+      skills: []
+      gate_message: "Classifier auto."
+      prompt: |
+        Sos un classifier rápido. Leé $ARTIFACTS_DIR/files-changed.txt y
+        decidí qué agentes correr.
+
+        Reglas:
+          - agent-deha-compliance: corré si CUALQUIER file bajo hubara_agency/src/
+          - agent-fsd-compliance: corré si CUALQUIER file bajo frontend_dashboard/src/
+          - agent-plugin-system: corré si TOCA plugin.yaml, plugin.schema.yaml,
+            plugin_manifest.py, scripts/render-compose.py, o k8s/aws-produccion/
+          - agent-test-coverage: corré SIEMPRE (cubre ambos lados)
+          - agent-security: corré si TOCA .env*, secrets/, configmap.yaml,
+            o cualquier file Python que agregue `os.environ` / `getpass` / etc.
+
+        Output: escribí $ARTIFACTS_DIR/agents-to-run.json con shape:
+          {"deha": bool, "fsd": bool, "plugin_system": bool, "test_coverage": true, "security": bool}
+
+        Cuando termines: <promise>CLASSIFY_OK</promise>
+
+  - id: parse-classify
+    bash: |
+      F=$ARTIFACTS_DIR/agents-to-run.json
+      if [ ! -f "$F" ]; then
+        # Default: todos true si classifier no escribió
+        echo '{"deha":true,"fsd":true,"plugin_system":true,"test_coverage":true,"security":true}' > "$F"
+      fi
+      DEHA=$(jq -r '.deha // false' "$F")
+      FSD=$(jq -r '.fsd // false' "$F")
+      PS=$(jq -r '.plugin_system // false' "$F")
+      TC=$(jq -r '.test_coverage // true' "$F")
+      SEC=$(jq -r '.security // false' "$F")
+      jq -n \
+        --argjson deha "$DEHA" --argjson fsd "$FSD" \
+        --argjson ps "$PS" --argjson tc "$TC" --argjson sec "$SEC" \
+        '{deha:$deha, fsd:$fsd, plugin_system:$ps, test_coverage:$tc, security:$sec}'
+    depends_on: [classify]
+    trigger_rule: all_done
+
+  # ════════════════════════════════════════════════════════════════════
+  # FASE 2 — 5 agentes en paralelo (cada uno con `when:` sobre classify)
+  # ════════════════════════════════════════════════════════════════════
+
+  - id: agent-deha-compliance
+    depends_on: [parse-classify]
+    when: "$parse-classify.output.deha == true"
+    idle_timeout: 300000
+    loop:
+      max_iterations: 1
+      until: REPORT_OK
+      skills: []
+      prompt: |
+        Sos experto DEHA. Cargá del guide:
+          Read .claude/skills/hubara-architecture-guide/sections/02-backend-platform.md
+          Read .claude/skills/hubara-architecture-guide/sections/03-backend-plugin.md
+          Read .claude/skills/hubara-architecture-guide/sections/04-backend-agents.md
+          Read .claude/skills/hubara-architecture-guide/references/deha-rules.md
+
+        Inputs:
+          $ARTIFACTS_DIR/diff.patch
+          $ARTIFACTS_DIR/files-changed.txt
+
+        Buscá violaciones:
+          - R-DET: datetime.now() / random / I/O directo / asyncio.sleep en workflows/
+          - R-JSON: dataclasses no-frozen cruzando boundary
+          - R-STATELESS: module-level cache en activities/
+          - R-HEARTBEAT: activities >10s sin @with_heartbeat
+          - R-DIP: platform/ importando plugins/, cross-plugin imports
+          - Plugin manifest hygiene: workers sin task_queue, drift de docker-compose
+          - Constants en src/platform/constants.py que deberían ir al manifest
+
+        Output: $ARTIFACTS_DIR/findings-deha.yaml schema:
+          version: 1
+          agent: deha-compliance
+          findings:
+            - severity: critical|high|medium|low
+              file: <path>
+              line: <int>
+              rule: R-DET | R-JSON | R-STATELESS | R-HEARTBEAT | R-DIP | plugin-manifest
+              message: <one-liner>
+              fix_suggestion: <unified diff patch si obvio, sino "" >
+
+        Si no hay findings, emit findings: [].
+        Cuando termines: <promise>REPORT_OK</promise>
+
+  - id: agent-fsd-compliance
+    depends_on: [parse-classify]
+    when: "$parse-classify.output.fsd == true"
+    idle_timeout: 300000
+    loop:
+      max_iterations: 1
+      until: REPORT_OK
+      skills: []
+      prompt: |
+        Sos experto FSD (Feature-Sliced Design). Cargá del guide:
+          Read .claude/skills/hubara-architecture-guide/sections/05-frontend-fsd.md
+          Read .claude/skills/hubara-architecture-guide/sections/06-frontend-plugin.md
+          Read .claude/skills/hubara-architecture-guide/references/fsd-rules.md
+
+        Inputs:
+          $ARTIFACTS_DIR/diff.patch
+          $ARTIFACTS_DIR/files-changed.txt
+
+        Buscá violaciones (de los 14 anti-patterns + 4 import rules):
+          - Cross-plugin imports (@plugins/A → @plugins/B)
+          - Deep imports (@plugins/X/ui/Y bypassa barrel)
+          - fetch() directo en components/pages
+          - useState para server data (debería ser TanStack Query)
+          - apiClient.get<T>() sin schema.parse() (Zod at boundary)
+          - JSX en .ts (debería ser .tsx)
+          - Cross-feature imports en features/ (legacy) entre features distintos
+          - Tailwind tokens con naming --color-text-* (debería --color-fg)
+          - Env vars hardcoded fuera de shared/config/env.ts
+          - Layering violations (entities importing features, etc.)
+
+        Output: $ARTIFACTS_DIR/findings-fsd.yaml (mismo schema que findings-deha).
+
+        Cuando termines: <promise>REPORT_OK</promise>
+
+  - id: agent-plugin-system
+    depends_on: [parse-classify]
+    when: "$parse-classify.output.plugin_system == true"
+    idle_timeout: 300000
+    loop:
+      max_iterations: 1
+      until: REPORT_OK
+      skills: []
+      prompt: |
+        Sos experto plugin system. Cargá del guide:
+          Read .claude/skills/hubara-architecture-guide/sections/07-shared-files.md
+          Read .claude/skills/hubara-architecture-guide/sections/08-tests-and-gates.md
+          Read .claude/skills/hubara-architecture-guide/references/manifest-schema.md
+
+        Inputs:
+          $ARTIFACTS_DIR/diff.patch
+          $ARTIFACTS_DIR/files-changed.txt
+
+        Verificá:
+          - plugin.yaml valida contra schema (id pattern ^[a-z][a-z0-9_]*$,
+            version SemVer, workers con task_queue declarado)
+          - Workers declarados en manifest tienen K8s manifest correspondiente
+            (worker-<name>.yaml en k8s/aws-produccion/)
+          - K8s manifests no huérfanos (cada worker-*.yaml referencia un
+            worker declarado en algún plugin.yaml)
+          - task_queue es unique cross-plugin (no duplicados)
+          - render-compose no tiene drift (si tocó manifest, debería haber
+            commit de docker-compose.local.yml regenerado)
+          - Plugin id en manifest matchea directory name
+          - Shared files (en spinal-files.yaml) modificados tienen wiring_intents
+            declarados en task-result.yaml correspondiente
+          - Architecture-protected files NO modificados (.archon/workflows/,
+            .claude/skills/hubara-*, tests/architecture/, .importlinter)
+
+        Output: $ARTIFACTS_DIR/findings-plugin-system.yaml.
+
+        Cuando termines: <promise>REPORT_OK</promise>
+
+  - id: agent-test-coverage
+    depends_on: [parse-classify]
+    when: "$parse-classify.output.test_coverage == true"
+    idle_timeout: 300000
+    loop:
+      max_iterations: 1
+      until: REPORT_OK
+      skills: []
+      prompt: |
+        Sos experto test coverage. Cargá del guide:
+          Read .claude/skills/hubara-architecture-guide/sections/08-tests-and-gates.md
+
+        Inputs:
+          $ARTIFACTS_DIR/diff.patch
+          $ARTIFACTS_DIR/files-changed.txt
+
+        Verificá:
+          - Cada feature nueva tiene functional test en hubara_agency/tests/functional/
+            con @pytest.mark.functional (mock_llm fixture si toca LLM)
+          - Si feature toca UI, hay e2e spec en frontend_dashboard/e2e/<feature>/
+            con getByRole / getByText (sin waitForTimeout)
+          - Architecture gates passing (signal del PR body o de los gates corridos
+            por el pipeline)
+          - Premortem invariants passing
+          - Unit tests para cada tool / activity / hook nuevo
+          - Si HU es refactor puro, documentado el skip de functional test en task-result
+
+        Output: $ARTIFACTS_DIR/findings-test-coverage.yaml.
+
+        Cuando termines: <promise>REPORT_OK</promise>
+
+  - id: agent-security
+    depends_on: [parse-classify]
+    when: "$parse-classify.output.security == true"
+    idle_timeout: 300000
+    loop:
+      max_iterations: 1
+      until: REPORT_OK
+      skills: []
+      prompt: |
+        Sos experto security. Cargá del guide:
+          Read .claude/skills/hubara-architecture-guide/sections/02-backend-platform.md
+          Read .claude/skills/hubara-architecture-guide/sections/09-conventions.md
+
+        Inputs:
+          $ARTIFACTS_DIR/diff.patch
+          $ARTIFACTS_DIR/files-changed.txt
+
+        Buscá:
+          - Secrets hardcoded (regex AWS keys: AKIA[A-Z0-9]{16}, GitHub
+            tokens: ghp_*, JWT: ey*.*., passwords en código)
+          - Env vars nuevos no declarados en wiring_intents.env_vars_required
+            del plugin.yaml correspondiente
+          - os.environ en código que cruza boundary (debería leer en worker.py)
+          - Logs que potencialmente exponen secrets (e.g. log full request
+            body de WhatsApp inbound sin sanitizar)
+          - CORS overly permissive en endpoints nuevos
+          - Falta de validación en input HTTP (no Pydantic / no Zod)
+          - K8s secrets no rotables (hardcoded en yaml en vez de valueFrom)
+
+        Output: $ARTIFACTS_DIR/findings-security.yaml.
+
+        Cuando termines: <promise>REPORT_OK</promise>
+
+  # ════════════════════════════════════════════════════════════════════
+  # FASE 3 — Synthesize findings + decidir auto-fix
+  # ════════════════════════════════════════════════════════════════════
+
+  - id: synthesize
+    depends_on:
+      - agent-deha-compliance
+      - agent-fsd-compliance
+      - agent-plugin-system
+      - agent-test-coverage
+      - agent-security
+    trigger_rule: all_done
+    idle_timeout: 180000
+    loop:
+      max_iterations: 1
+      until: SYNTH_OK
+      skills: []
+      prompt: |
+        Leé todos los findings-*.yaml en $ARTIFACTS_DIR/. Consolidalos.
+
+        Output 1 — $ARTIFACTS_DIR/review-report.md (markdown legible):
+
+          # Code Review — PR <number>
+
+          ## Resumen
+          - N findings totales (X critical / Y high / Z medium / W low)
+          - Por agente: deha N, fsd N, plugin-system N, test-coverage N, security N
+
+          ## Findings por severidad
+
+          ### CRITICAL
+          - **<file>:<line>** [<rule>] <message>
+            Fix suggestion: ...
+
+          ### HIGH
+          ...
+
+          ### MEDIUM / LOW
+          ...
+
+          ## Auto-fix attempted
+          (lista de findings con fix_suggestion que vamos a intentar
+          aplicar en FASE 4)
+
+        Output 2 — $ARTIFACTS_DIR/auto-fix-plan.yaml (solo CRITICAL y HIGH
+        con fix_suggestion no vacío):
+
+          fixes:
+            - file: <path>
+              severity: critical | high
+              rule: <rule>
+              patch: |
+                <unified diff>
+              revertible_by_test: <test cmd a correr para verificar que NO rompe>
+
+        Cuando termines: <promise>SYNTH_OK</promise>
+
+  # ════════════════════════════════════════════════════════════════════
+  # FASE 4 — Auto-fix CRITICAL/HIGH (revierte si rompe tests)
+  # ════════════════════════════════════════════════════════════════════
+
+  - id: auto-fix
+    bash: |
+      PLAN=$ARTIFACTS_DIR/auto-fix-plan.yaml
+      APPLIED=$ARTIFACTS_DIR/fixes-applied.yaml
+      REVERTED=$ARTIFACTS_DIR/fixes-reverted.yaml
+      echo "fixes: []" > "$APPLIED"
+      echo "fixes: []" > "$REVERTED"
+
+      if [ ! -f "$PLAN" ]; then
+        echo "no_plan"; exit 0
+      fi
+
+      # Para cada fix: aplicar patch, correr revertible_by_test, si rompe → revertir.
+      # Usamos Python para parsear el YAML + iterate.
+      python3 <<'PYEOF'
+      import yaml, subprocess, os, tempfile
+
+      plan = yaml.safe_load(open(os.environ.get('PLAN_PATH', '$ARTIFACTS_DIR/auto-fix-plan.yaml')))
+      fixes = (plan or {}).get('fixes') or []
+      applied = []
+      reverted = []
+
+      for fix in fixes:
+          file_path = fix.get('file')
+          patch_text = fix.get('patch')
+          test_cmd = fix.get('revertible_by_test', '')
+          if not file_path or not patch_text:
+              continue
+
+          # Snapshot file original
+          snapshot = subprocess.run(
+              ['git', 'show', 'HEAD:' + file_path],
+              capture_output=True, text=True
+          ).stdout
+
+          # Aplicar patch
+          with tempfile.NamedTemporaryFile(mode='w', suffix='.patch', delete=False) as f:
+              f.write(patch_text)
+              patch_file = f.name
+
+          ap = subprocess.run(['git', 'apply', '--check', patch_file], capture_output=True, text=True)
+          if ap.returncode != 0:
+              reverted.append({**fix, 'why': 'patch_did_not_apply', 'stderr': ap.stderr})
+              os.unlink(patch_file)
+              continue
+
+          subprocess.run(['git', 'apply', patch_file], check=True)
+          os.unlink(patch_file)
+
+          # Correr test verificador
+          if test_cmd:
+              t = subprocess.run(['bash', '-c', test_cmd], capture_output=True, text=True, timeout=300)
+              if t.returncode != 0:
+                  # Revertir
+                  subprocess.run(['git', 'checkout', 'HEAD', '--', file_path])
+                  reverted.append({**fix, 'why': 'test_failed_after_fix', 'test_stderr': t.stderr[-500:]})
+                  continue
+
+          applied.append(fix)
+
+      yaml.safe_dump({'fixes': applied}, open(os.environ.get('APPLIED_PATH'), 'w'), sort_keys=False)
+      yaml.safe_dump({'fixes': reverted}, open(os.environ.get('REVERTED_PATH'), 'w'), sort_keys=False)
+      print(f"applied={len(applied)} reverted={len(reverted)}")
+      PYEOF
+    env:
+      PLAN_PATH: $ARTIFACTS_DIR/auto-fix-plan.yaml
+      APPLIED_PATH: $ARTIFACTS_DIR/fixes-applied.yaml
+      REVERTED_PATH: $ARTIFACTS_DIR/fixes-reverted.yaml
+    depends_on: [synthesize]
+    timeout: 1800000
+
+  - id: commit-fixes
+    bash: |
+      BRANCH=$(cat $ARTIFACTS_DIR/branch.txt)
+      git add -A 2>/dev/null || true
+      if git diff --staged --quiet; then
+        echo "no_fixes_to_commit"
+        exit 0
+      fi
+      N=$(yq '.fixes | length' $ARTIFACTS_DIR/fixes-applied.yaml 2>/dev/null || \
+          python3 -c "import yaml; print(len(yaml.safe_load(open('$ARTIFACTS_DIR/fixes-applied.yaml'))['fixes']))" 2>/dev/null || echo "?")
+      git commit -m "review-pr-hubara: auto-fix ${N} critical/high finding(s)"
+      git push origin "$BRANCH" 2>&1 | tail -3 >&2 || {
+        git pull --rebase origin "$BRANCH" 2>&1 | tail -3 >&2 || true
+        git push origin "$BRANCH" 2>&1 | tail -3 >&2 || true
+      }
+      echo "fixes_committed=$N"
+    depends_on: [auto-fix]
+    trigger_rule: all_done
+
+  # ════════════════════════════════════════════════════════════════════
+  # FASE 5 — Post comment al PR
+  # ════════════════════════════════════════════════════════════════════
+
+  - id: post-comment
+    bash: |
+      PR_URL=$(cat $ARTIFACTS_DIR/pr-url.txt)
+      REPORT=$ARTIFACTS_DIR/review-report.md
+      if [ ! -f "$REPORT" ]; then
+        echo "FAIL_NO_REPORT"
+        exit 0
+      fi
+
+      # Header del comment
+      cat > $ARTIFACTS_DIR/comment.md <<EOF
+      ## 🤖 Automated Review — review-pr-hubara
+
+      EOF
+      cat "$REPORT" >> $ARTIFACTS_DIR/comment.md
+
+      # Sumar fixes applied / reverted
+      if [ -f $ARTIFACTS_DIR/fixes-applied.yaml ]; then
+        N_APPLIED=$(python3 -c "import yaml; print(len((yaml.safe_load(open('$ARTIFACTS_DIR/fixes-applied.yaml')) or {}).get('fixes') or []))" 2>/dev/null || echo "?")
+        N_REVERTED=$(python3 -c "import yaml; print(len((yaml.safe_load(open('$ARTIFACTS_DIR/fixes-reverted.yaml')) or {}).get('fixes') or []))" 2>/dev/null || echo "?")
+        cat >> $ARTIFACTS_DIR/comment.md <<EOF
+
+      ## Auto-fix summary
+      - Fixes applied: ${N_APPLIED}
+      - Fixes reverted (rompían tests): ${N_REVERTED}
+      EOF
+      fi
+
+      cat >> $ARTIFACTS_DIR/comment.md <<'EOF'
+
+      ---
+      🤖 Reviewed by [review-pr-hubara](https://github.com/anthropics/claude-code) — 5 agentes especializados (deha-compliance, fsd-compliance, plugin-system, test-coverage, security)
+      EOF
+
+      gh pr comment "$PR_URL" --body-file $ARTIFACTS_DIR/comment.md 2>&1 | tail -3 >&2
+      echo "comment_posted"
+    depends_on: [commit-fixes]
+    trigger_rule: all_done
+
+  - id: project-set-reviewing
+    bash: |
+      # Best-effort: set Project status a "Reviewing" si config existe
+      CFG=".archon/github-project-config.yaml"
+      [ -f "$CFG" ] || { echo "skipped"; exit 0; }
+      PR_NUM=$(cat $ARTIFACTS_DIR/pr-num.txt)
+      # Necesitamos el issue URL — del PR body buscamos Closes <url>
+      ISSUE_URL=$(gh pr view "$PR_NUM" --json body --jq '.body' | grep -oE 'Closes https://[^ ]+' | head -1 | awk '{print $2}')
+      [ -z "$ISSUE_URL" ] && { echo "no_issue_url_in_pr"; exit 0; }
+      PN=$(grep '^project_number:' "$CFG" | awk '{print $2}')
+      PO=$(grep '^project_owner:' "$CFG" | awk '{print $2}')
+      PID=$(grep '^project_id:' "$CFG" | awk '{print $2}')
+      FID=$(grep '^status_field_id:' "$CFG" | awk '{print $2}')
+      OID=$(awk '/^status_options:/{f=1; next} f && /^  Reviewing:/{print $2; exit}' "$CFG")
+      [ -z "$OID" ] && { echo "no_reviewing_option"; exit 0; }
+      II=$(gh project item-list "$PN" --owner "$PO" --format json --limit 200 2>/dev/null \
+        | jq -r --arg u "$ISSUE_URL" '.items[] | select(.content.url == $u) | .id' | head -1)
+      [ -z "$II" ] && exit 0
+      gh project item-edit --id "$II" --project-id "$PID" \
+        --field-id "$FID" --single-select-option-id "$OID" \
+        > $ARTIFACTS_DIR/.edit.log 2>&1 || tail -3 $ARTIFACTS_DIR/.edit.log
+      echo "set Reviewing ok"
+    depends_on: [post-comment]
+    trigger_rule: all_done
+
+  - id: print-summary
+    bash: |
+      PR_URL=$(cat $ARTIFACTS_DIR/pr-url.txt)
+      cat <<EOF
+
+      ╔════════════════════════════════════════════════════════════════════════╗
+      ║ 🎉 review-pr-hubara completo                                            ║
+      ║                                                                        ║
+      ║ PR:        ${PR_URL}
+      ║                                                                        ║
+      ║ Comment posteado con findings consolidados de los 5 agentes.           ║
+      ║ Auto-fixes aplicados (revertidos si rompían tests).                    ║
+      ║                                                                        ║
+      ║ Próximos pasos:                                                        ║
+      ║   1. Revisá el comment en el PR.                                       ║
+      ║   2. Si pendientes (no auto-fixable o reverted), fixealos a mano.      ║
+      ║   3. Squash-merge cuando todo OK.                                      ║
+      ╚════════════════════════════════════════════════════════════════════════╝
+      EOF
+    depends_on: [post-comment, project-set-reviewing]
+    trigger_rule: all_done
+    timeout: 5000
