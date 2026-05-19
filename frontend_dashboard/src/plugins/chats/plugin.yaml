@@ -40,6 +40,16 @@ agent:
     - name: sales
       module: src.plugins.chats.workers.sales
       task_queue: queue-sales-agent
+      # Flujo cross-worker (post-mortem ADR-2026-05-19):
+      # - sales programa remarketing cuando la sesión cierra con tag=INTERESADO
+      #   (ver agent/sales/use_cases/load_or_start_sales_session.py:144 — usa
+      #   start_workflow con RemarketingSessionWorkflow directamente, sin pasar
+      #   por get_task_queue, por eso el scan automático del system_map no lo
+      #   detecta — esta declaración es la SSoT).
+      invokes:
+        - worker: remarketing
+          via: start_workflow
+          when: "tag=INTERESADO al cerrar sesión sales → programa follow-up"
       deployment:
         replicas: 3                       # high-throughput: cada sesión activa procesa turnos rápido
         cpu_request: 500m
@@ -69,6 +79,13 @@ agent:
     - name: remarketing
       module: src.plugins.chats.workers.remarketing
       task_queue: queue-remarketing-agent
+      # Cuando el cliente responde durante un ciclo remarketing, el sistema
+      # transfiere automáticamente a sales (ver IDENTITY.md del remarketing).
+      # El use_case load_or_start_sales_session.py hace el handoff a Sales.
+      invokes:
+        - worker: sales
+          via: get_workflow_handle
+          when: "cliente responde durante remarketing → transferir a sales"
       deployment:
         replicas: 1                       # low-throughput: workflows long-lived que duermen días
         cpu_request: 250m

@@ -176,6 +176,40 @@ properties:
                 queue la leen del manifest via `src.platform.plugin_manifest.get_task_queue`.
                 Convención: prefijo "queue-" + nombre descriptivo.
               pattern: "^[a-z][a-z0-9-]*$"
+            invokes:
+              type: array
+              description: |
+                Workers que este worker invoca (declarativo). Útil para que el
+                system_map visualice el flujo cross-worker sin tener que parsear
+                código. El detector de drift compara contra el scan real del
+                código y warn-ea si hay divergencia.
+              items:
+                type: object
+                required: [worker]
+                additionalProperties: false
+                properties:
+                  plugin:
+                    type: string
+                    description: |
+                      Plugin owner del worker target. Opcional — default = mismo
+                      plugin que el caller. Para cross-plugin, declarar explícito.
+                  worker:
+                    type: string
+                    description: Nombre del worker target (debe existir en su plugin).
+                  via:
+                    type: string
+                    description: Mecanismo Temporal usado para la invocación.
+                    enum:
+                      - start_workflow
+                      - start_child_workflow
+                      - signal
+                      - get_workflow_handle
+                      - continue_as_new
+                  when:
+                    type: string
+                    description: |
+                      Docstring corto de la condición (para humanos). NO se evalúa.
+                      Ejemplo: "tag=INTERESADO al cerrar venta".
             deployment:
               type: object
               description: |

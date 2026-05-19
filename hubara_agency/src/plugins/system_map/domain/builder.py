@@ -250,7 +250,7 @@ def _build_api_nodes(plugin_id: str, manifest: dict[str, Any]) -> list[Node]:
 
 
 def _build_agent_nodes(plugin_id: str, manifest: dict[str, Any]) -> list[Node]:
-    """Workers Temporal — cada uno con su task_queue."""
+    """Workers Temporal — cada uno con su task_queue + `invokes` declarado."""
     agent = manifest.get("agent") or {}
     workers = agent.get("workers") or []
     nodes: list[Node] = []
@@ -261,6 +261,17 @@ def _build_agent_nodes(plugin_id: str, manifest: dict[str, Any]) -> list[Node]:
             continue
         name = worker.get("name") or f"worker-{idx}"
         task_queue = worker.get("task_queue") or ""
+        invokes_raw = worker.get("invokes") or []
+        invokes_data = [
+            {
+                "plugin": inv.get("plugin", plugin_id),  # default = mismo plugin
+                "worker": inv.get("worker"),
+                "via": inv.get("via", "start_workflow"),
+                "when": inv.get("when"),
+            }
+            for inv in invokes_raw
+            if isinstance(inv, dict) and inv.get("worker")
+        ]
         nodes.append(
             Node(
                 id=f"worker:{plugin_id}:{name}",
@@ -272,6 +283,7 @@ def _build_agent_nodes(plugin_id: str, manifest: dict[str, Any]) -> list[Node]:
                     "module": worker.get("module"),
                     "task_queue": task_queue,
                     "replicas": (worker.get("deployment") or {}).get("replicas"),
+                    "invokes": invokes_data,
                 },
             )
         )
@@ -502,6 +514,47 @@ def build_system_graph(
             )
         )
 
+    # Phase 1.5: leer `invokes:` declarados en manifests (worker.invokes en
+    # plugin.yaml). Estos son la SSoT — el code scan se compara contra esto.
+    declared_invocations: set[tuple[str, str]] = set()  # (source_worker_id, target_worker_id)
+    declared_meta: dict[tuple[str, str], dict] = {}     # id pair → {via, when, plugin}
+    for plugin_id in plugin_contributions:
+        for n in plugin_contributions[plugin_id]:
+            if n.kind != "worker":
+                continue
+            source_id = n.id
+            for inv in n.data.get("invokes", []):
+                target_plugin = inv.get("plugin") or plugin_id
+                target_worker = inv.get("worker")
+                target_id = worker_node_by_plugin_and_name.get(
+                    (target_plugin, target_worker)
+                )
+                if not target_id:
+                    warnings.append(
+                        f"{plugin_id}.workers[{n.data['name']}].invokes declara "
+                        f"{target_plugin}.{target_worker} pero ese worker no existe"
+                    )
+                    continue
+                pair = (source_id, target_id)
+                declared_invocations.add(pair)
+                declared_meta[pair] = {
+                    "via": inv.get("via", "start_workflow"),
+                    "when": inv.get("when"),
+                    "source": "manifest",
+                }
+
+    # Emitir edges declarados (sin importar si código los confirma)
+    for (src, tgt), meta in declared_meta.items():
+        all_edges.append(
+            Edge(
+                id=f"e:{src}->declared->{tgt}",
+                source=src,
+                target=tgt,
+                kind="invokes_worker",
+                label=meta["via"],
+            )
+        )
+
     # Phase 2: detectar invocaciones de workers desde código Python.
     # Match `get_task_queue("target_plugin", "worker_name")` y conecta:
     #   - source: el primer api_router del plugin donde está el archivo
@@ -586,13 +639,31 @@ def build_system_graph(
                     continue
 
             if source_id and source_id != target_id:
+                # Dedupe vs declared_invocations: si el manifest ya declara este
+                # par, no emitimos edge duplicado (el manifest gana visualmente).
+                # Solo emitimos si source es WORKER (entonces compara directamente)
+                # — para sources tipo api_router, son siempre del scan (no del
+                # manifest, que es worker→worker).
+                code_pair = (source_id, target_id)
+                if source_id.startswith("worker:") and code_pair in declared_invocations:
+                    continue  # ya declarado en manifest, evita duplicado
+
+                # Si el source es worker y el código tiene invocación pero el
+                # manifest del source-worker NO la declara → warn de drift.
+                if source_id.startswith("worker:") and code_pair not in declared_invocations:
+                    warnings.append(
+                        f"DRIFT: código en {src_rel} invoca {target_plugin}.{worker_name} "
+                        f"desde worker {source_id}, pero el manifest no lo declara en "
+                        f"`workers[].invokes` — agregalo para SSoT"
+                    )
+
                 all_edges.append(
                     Edge(
-                        id=f"e:{source_id}->invokes->{target_id}",
+                        id=f"e:{source_id}->scan->{target_id}",
                         source=source_id,
                         target=target_id,
                         kind="invokes_worker",
-                        label="start_workflow",
+                        label="code scan",
                     )
                 )
 
