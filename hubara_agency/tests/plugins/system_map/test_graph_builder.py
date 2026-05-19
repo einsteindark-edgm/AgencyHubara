@@ -52,7 +52,8 @@ def test_minimal_plugin_produces_one_container_node(tmp_path: Path) -> None:
     assert g.nodes[0].orphan_reason == "empty_plugin"
 
 
-def test_plugin_with_frontend_section_and_sidebar_not_orphan(tmp_path: Path) -> None:
+def test_plugin_with_complete_frontend_not_orphan(tmp_path: Path) -> None:
+    """Plugin con sections + sidebars → frontend_unit completo, no orphan."""
     _write_manifest(
         tmp_path,
         "chats",
@@ -72,29 +73,29 @@ def test_plugin_with_frontend_section_and_sidebar_not_orphan(tmp_path: Path) -> 
 
     g = build_system_graph(tmp_path)
 
-    # plugin + section + sidebar = 3 nodos
-    assert g.stats.total_nodes == 3
-    # plugin container NO es orphan (tiene frontend)
+    # plugin + frontend_unit = 2 nodos
+    assert g.stats.total_nodes == 2
     plugin_node = next(n for n in g.nodes if n.kind == "plugin")
     assert plugin_node.is_orphan is False
-    # section + sidebar match → ninguno orphan
-    section = next(n for n in g.nodes if n.kind == "section")
-    sidebar = next(n for n in g.nodes if n.kind == "sidebar")
-    assert section.is_orphan is False
-    assert sidebar.is_orphan is False
+    fu = next(n for n in g.nodes if n.kind == "frontend_unit")
+    assert fu.is_orphan is False
+    assert fu.data["has_sections"] is True
+    assert fu.data["has_sidebars"] is True
+    assert fu.data["is_complete"] is True
 
 
-def test_section_without_sidebar_flagged_orphan(tmp_path: Path) -> None:
+def test_frontend_unit_section_only_is_incomplete(tmp_path: Path) -> None:
+    """Sections sin sidebar → frontend_incomplete."""
     _write_manifest(
         tmp_path,
-        "orphan_section",
+        "p",
         {
-            "id": "orphan_section",
+            "id": "p",
             "version": "0.1.0",
             "frontend": {
                 "contributes": {
                     "sections": [{"key": "lonely", "label": "Lonely"}],
-                    "sidebar": [],  # no matching sidebar entry
+                    "sidebar": [],
                 },
             },
         },
@@ -102,9 +103,48 @@ def test_section_without_sidebar_flagged_orphan(tmp_path: Path) -> None:
 
     g = build_system_graph(tmp_path)
 
-    section = next(n for n in g.nodes if n.kind == "section")
-    assert section.is_orphan is True
-    assert section.orphan_reason == "section_without_sidebar"
+    fu = next(n for n in g.nodes if n.kind == "frontend_unit")
+    assert fu.is_orphan is True
+    assert fu.orphan_reason == "frontend_incomplete"
+    assert fu.data["has_sections"] is True
+    assert fu.data["has_sidebars"] is False
+
+
+def test_frontend_unit_sidebar_only_is_incomplete(tmp_path: Path) -> None:
+    """Sidebar sin section → frontend_incomplete."""
+    _write_manifest(
+        tmp_path,
+        "p",
+        {
+            "id": "p",
+            "version": "0.1.0",
+            "frontend": {
+                "contributes": {
+                    "sections": [],
+                    "sidebar": [{"route": "/x", "label": "X"}],
+                },
+            },
+        },
+    )
+
+    g = build_system_graph(tmp_path)
+
+    fu = next(n for n in g.nodes if n.kind == "frontend_unit")
+    assert fu.is_orphan is True
+    assert fu.orphan_reason == "frontend_incomplete"
+
+
+def test_plugin_without_frontend_block_no_frontend_unit(tmp_path: Path) -> None:
+    """Si el plugin no declara `frontend:`, NO se emite frontend_unit."""
+    _write_manifest(
+        tmp_path,
+        "backend_only",
+        {"id": "backend_only", "version": "0.1.0", "api": {"python_module": "x", "prefix": "/p"}},
+    )
+
+    g = build_system_graph(tmp_path)
+    frontend_units = [n for n in g.nodes if n.kind == "frontend_unit"]
+    assert frontend_units == []
 
 
 def test_api_legacy_routers_creates_one_node_per_router(tmp_path: Path) -> None:
@@ -320,30 +360,8 @@ def test_plugin_completeness_complete(tmp_path: Path) -> None:
     assert g.plugins[0].completeness == "complete"
 
 
-def test_intra_plugin_edges_sidebar_opens_section(tmp_path: Path) -> None:
-    _write_manifest(
-        tmp_path,
-        "p",
-        {
-            "id": "p",
-            "version": "0.1.0",
-            "frontend": {
-                "contributes": {
-                    "sections": [{"key": "main", "label": "Main"}],
-                    "sidebar": [{"route": "/main", "label": "Main"}],
-                },
-            },
-        },
-    )
-
-    g = build_system_graph(tmp_path)
-    opens_edges = [e for e in g.edges if e.kind == "opens"]
-    assert len(opens_edges) == 1
-    assert opens_edges[0].source == "sidebar:p:/main"
-    assert opens_edges[0].target == "section:p:main"
-
-
-def test_intra_plugin_edges_section_uses_api(tmp_path: Path) -> None:
+def test_frontend_unit_uses_api(tmp_path: Path) -> None:
+    """frontend_unit → api_router (lazy edge intra-plugin)."""
     _write_manifest(
         tmp_path,
         "p",
@@ -358,8 +376,33 @@ def test_intra_plugin_edges_section_uses_api(tmp_path: Path) -> None:
     g = build_system_graph(tmp_path)
     uses_edges = [e for e in g.edges if e.kind == "uses_api"]
     assert len(uses_edges) == 1
-    assert uses_edges[0].source.startswith("section:p:")
+    assert uses_edges[0].source == "frontend:p"
     assert uses_edges[0].target.startswith("api:p:")
+
+
+def test_no_contribute_or_expose_edges_from_plugin(tmp_path: Path) -> None:
+    """Plugin no debe emitir edges de pertenencia (contributes/exposes).
+
+    El plugin_id sticker en cada nodo es suficiente para mostrar pertenencia.
+    """
+    _write_manifest(
+        tmp_path,
+        "p",
+        {
+            "id": "p",
+            "version": "0.1.0",
+            "frontend": {"contributes": {"sections": [{"key": "x"}], "sidebar": [{"route": "/x"}]}},
+            "api": {"python_module": "x.y", "prefix": "/api/p"},
+            "agent": {"workers": [{"name": "w", "module": "m", "task_queue": "q"}]},
+        },
+    )
+
+    g = build_system_graph(tmp_path)
+    # Solo edges esperados: uses_api (frontend → api), consumes_queue (worker → queue)
+    edge_kinds = {e.kind for e in g.edges}
+    assert "contributes" not in edge_kinds
+    assert "exposes" not in edge_kinds
+    assert "opens" not in edge_kinds
 
 
 def test_workflow_invocation_edge_detected_from_python(tmp_path: Path) -> None:

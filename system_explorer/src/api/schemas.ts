@@ -4,8 +4,7 @@ import { z } from "zod";
 
 export const NodeKindSchema = z.enum([
   "plugin",
-  "section",
-  "sidebar",
+  "frontend_unit",  // sidebar + section combinados en una sola caja
   "api_router",
   "api_endpoint",
   "worker",
@@ -14,14 +13,11 @@ export const NodeKindSchema = z.enum([
 export type NodeKind = z.infer<typeof NodeKindSchema>;
 
 export const EdgeKindSchema = z.enum([
-  "depends_on",
-  "contributes",
-  "mounts_on",
-  "consumes_queue",
-  "exposes",
-  "opens",          // sidebar → section (intra-plugin)
-  "uses_api",       // section → api_router (intra-plugin)
-  "invokes_worker", // api_router → worker (detected from Python code)
+  "depends_on",     // plugin → plugin
+  "consumes_queue", // worker → task_queue
+  "uses_api",       // frontend_unit → api_router (lazy)
+  "invokes_worker", // api_router → worker (REAL del código Python)
+  "mounts_on",      // V2
 ]);
 export type EdgeKind = z.infer<typeof EdgeKindSchema>;
 
@@ -40,8 +36,7 @@ export type CompletenessStatus = z.infer<typeof CompletenessStatusSchema>;
 export const OrphanReasonSchema = z
   .enum([
     "empty_plugin",
-    "section_without_sidebar",
-    "sidebar_without_section",
+    "frontend_incomplete",
     "worker_no_task_queue",
     "api_router_no_prefix",
     "manifest_invalid",

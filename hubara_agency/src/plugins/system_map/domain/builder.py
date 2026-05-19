@@ -131,48 +131,75 @@ def _build_plugin_node(plugin_id: str, manifest: dict[str, Any]) -> Node:
 
 
 def _build_frontend_nodes(plugin_id: str, manifest: dict[str, Any]) -> list[Node]:
-    """Sections + sidebar entries del manifest.frontend.contributes."""
-    fe = manifest.get("frontend") or {}
+    """UN `frontend_unit` por plugin con frontend, conteniendo sub-data de
+    sections + sidebars.
+
+    Si el plugin NO declara frontend, retorna [].
+    El frontend_unit tiene `data` con:
+        - `sections`: list[{key, label, order, icon}]
+        - `sidebars`: list[{route, label, icon}]
+        - `entry`: ruta al index del frontend
+        - `has_sections`: bool — al menos 1 section
+        - `has_sidebars`: bool — al menos 1 sidebar
+        - `is_complete`: bool — tiene ambas mitades
+
+    El orphan_detector pinta `frontend_incomplete` si XOR de ambas mitades.
+    """
+    fe = manifest.get("frontend")
+    if not fe:
+        return []
+
     contributes = fe.get("contributes") or {}
-    nodes: list[Node] = []
+    raw_sections = contributes.get("sections") or []
+    raw_sidebars = contributes.get("sidebar") or []
 
-    for idx, section in enumerate(contributes.get("sections") or []):
-        if not isinstance(section, dict):
-            continue
-        key = section.get("key") or f"unnamed-{idx}"
-        nodes.append(
-            Node(
-                id=f"section:{plugin_id}:{key}",
-                kind="section",
-                plugin_id=plugin_id,
-                label=section.get("label") or key,
-                data={
-                    "key": key,
-                    "order": section.get("order"),
-                    "icon": section.get("icon"),
-                    "entry": fe.get("entry", "./frontend"),
-                },
-            )
+    sections_data = [
+        {
+            "key": s.get("key", f"unnamed-{i}"),
+            "label": s.get("label") or s.get("key", f"unnamed-{i}"),
+            "order": s.get("order"),
+            "icon": s.get("icon"),
+        }
+        for i, s in enumerate(raw_sections)
+        if isinstance(s, dict)
+    ]
+    sidebars_data = [
+        {
+            "route": s.get("route", f"/unnamed-{i}"),
+            "label": s.get("label") or s.get("route", f"/unnamed-{i}"),
+            "icon": s.get("icon"),
+        }
+        for i, s in enumerate(raw_sidebars)
+        if isinstance(s, dict)
+    ]
+
+    has_sections = len(sections_data) > 0
+    has_sidebars = len(sidebars_data) > 0
+
+    # Label corto: usa el del primer item disponible
+    if sections_data:
+        label = sections_data[0]["label"]
+    elif sidebars_data:
+        label = sidebars_data[0]["label"]
+    else:
+        label = "Frontend"
+
+    return [
+        Node(
+            id=f"frontend:{plugin_id}",
+            kind="frontend_unit",
+            plugin_id=plugin_id,
+            label=label,
+            data={
+                "entry": fe.get("entry", "./frontend"),
+                "sections": sections_data,
+                "sidebars": sidebars_data,
+                "has_sections": has_sections,
+                "has_sidebars": has_sidebars,
+                "is_complete": has_sections and has_sidebars,
+            },
         )
-
-    for idx, sidebar in enumerate(contributes.get("sidebar") or []):
-        if not isinstance(sidebar, dict):
-            continue
-        route = sidebar.get("route") or f"/unnamed-{idx}"
-        nodes.append(
-            Node(
-                id=f"sidebar:{plugin_id}:{route}",
-                kind="sidebar",
-                plugin_id=plugin_id,
-                label=sidebar.get("label") or route,
-                data={
-                    "route": route,
-                    "icon": sidebar.get("icon"),
-                },
-            )
-        )
-
-    return nodes
+    ]
 
 
 def _build_api_nodes(plugin_id: str, manifest: dict[str, Any]) -> list[Node]:
@@ -293,41 +320,21 @@ def _scan_workflow_invocations(
 
 
 def _build_intra_plugin_edges(plugin_id: str, nodes_of_plugin: list[Node]) -> list[Edge]:
-    """Edges implícitos lazy entre las contribuciones de un plugin.
+    """Edge lazy: frontend_unit → api_router (mismo plugin).
 
-    Heurísticas (NO requieren parsear código frontend — son razonables del
-    manifest):
-        - Si hay sidebars Y sections → cada sidebar `opens` cada section
-        - Si hay sections Y api_routers → cada section `uses_api` cada api_router
-
-    Cuando hay N×M productos cartesianos, los edges resultantes pueden ser
-    ruidosos. Para V1 los emitimos todos — el frontend puede filtrar/colapsar.
+    Asume que la UI del plugin consume el(los) API del propio plugin. No es
+    verificación de código — es razonable del manifest.
     """
-    sections = [n for n in nodes_of_plugin if n.kind == "section"]
-    sidebars = [n for n in nodes_of_plugin if n.kind == "sidebar"]
+    frontend_units = [n for n in nodes_of_plugin if n.kind == "frontend_unit"]
     api_routers = [n for n in nodes_of_plugin if n.kind == "api_router"]
     edges: list[Edge] = []
 
-    # sidebar → section ("opens")
-    for sb in sidebars:
-        for sc in sections:
-            edges.append(
-                Edge(
-                    id=f"e:{sb.id}->{sc.id}",
-                    source=sb.id,
-                    target=sc.id,
-                    kind="opens",
-                    label=None,
-                )
-            )
-
-    # section → api_router ("uses_api")
-    for sc in sections:
+    for fu in frontend_units:
         for ar in api_routers:
             edges.append(
                 Edge(
-                    id=f"e:{sc.id}->{ar.id}",
-                    source=sc.id,
+                    id=f"e:{fu.id}->{ar.id}",
+                    source=fu.id,
                     target=ar.id,
                     kind="uses_api",
                     label=None,
@@ -365,22 +372,13 @@ def _calculate_completeness(
 def _build_edges(
     plugin_node: Node, contributed_nodes: list[Node], all_plugin_ids: set[str]
 ) -> list[Edge]:
-    """Edges desde el plugin container hacia sus contribuciones + depends_on."""
-    edges: list[Edge] = []
+    """Edges semánticos (NO pertenencia — eso se ve por el plugin_id sticker).
 
-    # plugin → contributed nodes (sections, sidebar, api_routers, workers)
-    for n in contributed_nodes:
-        if n.kind == "task_queue":
-            continue  # task_queue se conecta desde worker, no desde plugin
-        kind: EdgeKindLiteral = "exposes" if n.kind == "api_router" else "contributes"  # type: ignore[assignment]
-        edges.append(
-            Edge(
-                id=f"e:{plugin_node.id}->{n.id}",
-                source=plugin_node.id,
-                target=n.id,
-                kind=kind,
-            )
-        )
+    Solo emite:
+        - `consumes_queue` (worker → task_queue) — relación funcional
+        - `depends_on` (plugin → plugin) — declarada en manifest
+    """
+    edges: list[Edge] = []
 
     # worker → task_queue
     for n in contributed_nodes:
@@ -409,13 +407,8 @@ def _build_edges(
                     label="depends_on",
                 )
             )
-        # Si dep no existe, el orphan_detector lo flag con depends_on_missing.
 
     return edges
-
-
-# Workaround para el Literal type — silencia mypy sin importarlo en runtime.
-EdgeKindLiteral = str  # noqa: E731 — type alias for inline use
 
 
 def build_system_graph(
@@ -554,19 +547,25 @@ def build_system_graph(
                 continue
             elif subdir == "agent":
                 # Agent code (e.g. use_case que arranca el workflow del worker).
-                # Conceptualmente el flow es API → use_case → start_workflow(worker),
-                # pero el grep solo ve el use_case → worker. Heurística:
-                #   - Si el plugin tiene api_routers, asumir API es la entry y
-                #     emitir edge desde el primer api_router (el flujo end-to-end
-                #     es API → worker, no es perfecto pero útil visualmente).
-                #   - Si no, edge desde el plugin container.
+                # Skipear self-references: cuando el agent del MISMO plugin
+                # se referencia a sí mismo (catalog/agent/workflows/sync.py
+                # llamando worker `catalog:sync` es un child workflow / continue,
+                # no invocación cross-component). Solo emitir si target ≠ self
+                # O si hay un api_router como entry point legítimo.
                 api_routers = [
                     n for n in plugin_contributions[plugin_id] if n.kind == "api_router"
                 ]
                 if api_routers:
+                    # Flow end-to-end: API → use_case → start_workflow(worker)
                     source_id = api_routers[0].id
-                else:
+                elif target_plugin != plugin_id:
+                    # Cross-plugin invocation desde agent (e.g. catalog agent
+                    # invoca worker de otro plugin). Source = plugin container.
                     source_id = f"plugin:{plugin_id}"
+                else:
+                    # Self-reference dentro del agent del mismo plugin sin API.
+                    # NO emitir edge — no aporta info nueva.
+                    continue
 
             if source_id and source_id != target_id:
                 all_edges.append(

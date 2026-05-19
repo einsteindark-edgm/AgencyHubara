@@ -10,34 +10,29 @@ from typing import Literal
 
 NodeKind = Literal[
     "plugin",
-    "section",      # frontend.contributes.sections entry
-    "sidebar",      # frontend.contributes.sidebar entry
-    "api_router",   # api.python_module o cada api.legacy_routers entry
-    "api_endpoint", # HTTP route concreto (si extraído por introspection — V2)
-    "worker",       # agent.workers entry
-    "task_queue",   # task_queue de un worker (puede ser shared)
+    "frontend_unit",   # contiene sidebar + section como sub-partes (uno por plugin con frontend)
+    "api_router",      # api.python_module o cada api.legacy_routers entry
+    "api_endpoint",    # HTTP route concreto (V2)
+    "worker",          # agent.workers entry
+    "task_queue",      # task_queue de un worker (puede ser shared)
 ]
 
 EdgeKind = Literal[
     "depends_on",       # plugin → plugin (via manifest.depends_on)
-    "contributes",      # plugin → section/sidebar/api_router/worker
-    "mounts_on",        # api_router → api_endpoint (parent → child) — V2
     "consumes_queue",   # worker → task_queue
-    "exposes",          # plugin → api_router (alias semántico de contributes)
-    "opens",            # sidebar → section (mismo plugin — el shell conecta vía código)
-    "uses_api",         # section → api_router (mismo plugin, lazy match)
-    "invokes_worker",   # api_router → worker (DETECTADO de get_task_queue() en código Python)
+    "uses_api",         # frontend_unit → api_router (lazy: mismo plugin)
+    "invokes_worker",   # api_router → worker (DETECTADO de get_task_queue() en código)
+    "mounts_on",        # api_router → api_endpoint (V2)
 ]
 
 
 OrphanReason = Literal[
     "empty_plugin",                # plugin sin frontend/api/agent
-    "section_without_sidebar",     # frontend section sin sidebar entry equivalente
-    "sidebar_without_section",     # sidebar entry sin section declarada
+    "frontend_incomplete",         # frontend_unit con section sin sidebar o viceversa
     "worker_no_task_queue",        # worker sin task_queue declarado (schema bug)
-    "api_router_no_prefix",        # api_router sin prefix (legacy_router malformado)
-    "manifest_invalid",            # YAML parse error o id mismatch (informativo)
-    "depends_on_missing",          # plugin.depends_on apunta a un plugin que no existe
+    "api_router_no_prefix",        # api_router sin prefix
+    "manifest_invalid",            # YAML parse error o id mismatch
+    "depends_on_missing",          # plugin.depends_on apunta a plugin inexistente
 ]
 
 

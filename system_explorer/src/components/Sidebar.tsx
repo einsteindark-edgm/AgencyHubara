@@ -130,13 +130,10 @@ export function Sidebar({
         </h2>
         <ul className="text-[11px] space-y-1">
           {[
-            { c: "#f59e0b", t: "depends_on (animated, amber)" },
-            { c: "#10b981", t: "exposes (plugin → API)" },
+            { c: "#f59e0b", t: "depends_on (plugin → plugin)" },
+            { c: "#0ea5e9", t: "uses_api (frontend → API)", dashed: true },
+            { c: "#ef4444", t: "invokes_worker (REAL, del código)" },
             { c: "#a855f7", t: "consumes_queue (worker → queue)" },
-            { c: "#6366f1", t: "opens (sidebar → section, lazy)", dashed: true },
-            { c: "#0ea5e9", t: "uses_api (section → API, lazy)", dashed: true },
-            { c: "#ef4444", t: "invokes_worker (REAL, scan código)" },
-            { c: "#52525b", t: "contributes (plugin → child)" },
           ].map((row) => (
             <li key={row.t} className="flex items-center gap-2 text-zinc-400">
               <svg width="20" height="6" className="shrink-0">
@@ -154,6 +151,10 @@ export function Sidebar({
             </li>
           ))}
         </ul>
+        <p className="text-[10px] text-zinc-600">
+          La pertenencia plugin → child se ve por el sticker del plugin id en
+          cada nodo (no se dibuja como línea).
+        </p>
       </section>
 
       {/* Orphans */}

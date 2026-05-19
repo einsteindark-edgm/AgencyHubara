@@ -14,9 +14,8 @@ const elk = new ELK();
 // dinámico (CSS auto), pasar las dimensiones reales después de mount.
 // V1: usamos defaults razonables que matchean los custom node JSX.
 const NODE_WIDTH_BY_KIND: Record<string, number> = {
-  plugin: 220,
-  section: 180,
-  sidebar: 180,
+  plugin: 240,
+  frontend_unit: 260,
   api_router: 220,
   api_endpoint: 180,
   worker: 200,
@@ -25,9 +24,8 @@ const NODE_WIDTH_BY_KIND: Record<string, number> = {
 
 const NODE_HEIGHT_BY_KIND: Record<string, number> = {
   plugin: 100,
-  section: 70,
-  sidebar: 70,
-  api_router: 80,
+  frontend_unit: 180,   // más alto: contiene sidebar + section
+  api_router: 90,
   api_endpoint: 60,
   worker: 90,
   task_queue: 60,

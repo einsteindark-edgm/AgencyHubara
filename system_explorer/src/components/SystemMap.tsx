@@ -50,18 +50,16 @@ function toReactFlowNodes(graph: SystemGraph): Node[] {
 }
 
 // Estilo visual por tipo de edge. Diferencia rápida para el ojo humano.
+// Modelo simplificado: solo edges semánticos, no de pertenencia.
 const EDGE_STYLE_BY_KIND: Record<
   string,
   { stroke: string; strokeWidth: number; dash?: string; animated?: boolean }
 > = {
-  depends_on:     { stroke: "#f59e0b", strokeWidth: 2, animated: true },   // amber, animated
-  contributes:    { stroke: "#52525b", strokeWidth: 1.2 },                  // gray
-  exposes:        { stroke: "#10b981", strokeWidth: 1.5 },                  // emerald (plugin → api)
+  depends_on:     { stroke: "#f59e0b", strokeWidth: 2, animated: true },   // amber (plugin → plugin)
   consumes_queue: { stroke: "#a855f7", strokeWidth: 1.5 },                  // purple (worker → queue)
-  opens:          { stroke: "#6366f1", strokeWidth: 1.5, dash: "4 2" },     // indigo dashed (sidebar → section)
-  uses_api:       { stroke: "#0ea5e9", strokeWidth: 1.5, dash: "4 2" },     // sky dashed (section → api)
-  invokes_worker: { stroke: "#ef4444", strokeWidth: 2, animated: true },    // red animated (REAL connection from code)
-  mounts_on:      { stroke: "#52525b", strokeWidth: 1 },
+  uses_api:       { stroke: "#0ea5e9", strokeWidth: 1.5, dash: "4 2" },     // sky dashed (frontend → api, asumido)
+  invokes_worker: { stroke: "#ef4444", strokeWidth: 2, animated: true },    // red animado (REAL del código)
+  mounts_on:      { stroke: "#52525b", strokeWidth: 1 },                    // V2
 };
 
 function toReactFlowEdges(graph: SystemGraph): Edge[] {
