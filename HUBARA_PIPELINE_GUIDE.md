@@ -797,6 +797,57 @@ modo "stdin pipe" esperando input que nunca llega).
 **Solución:** `env -u CLAUDECODE` borra esa env var antes de invocar el
 sub-workflow → arranca como si fuera terminal normal.
 
+### §10.9 ¿Por qué scope-aware gates en FASE 4 (final-validation)?
+
+**Problema:** la FASE 4 originalmente corría TODOS los gates siempre
+(render-compose + 5 pytests + 4 npm gates + playwright). Playwright es
+el gate más caro (~2-5 min con FastAPI ramp-up). En HUs backend-only
+era tiempo perdido — no aporta info porque no hay UI nueva que testear.
+
+**Solución:** `final-validation` detecta scope al inicio comparando el
+branch contra `origin/main`:
+
+```bash
+git fetch origin main
+BASE_REF=$(git merge-base HEAD origin/main)
+FILES_CHANGED=$(git diff --name-only "$BASE_REF"..HEAD)
+
+TOUCHED_BACKEND=$(echo "$FILES_CHANGED" | grep -q '^hubara_agency/' && echo 1 || echo 0)
+TOUCHED_FRONTEND=$(echo "$FILES_CHANGED" | grep -q '^frontend_dashboard/' && echo 1 || echo 0)
+TOUCHED_UI=$(echo "$FILES_CHANGED" | grep -qE '^frontend_dashboard/src/(pages|plugins/[^/]+/frontend|features|entities)/' && echo 1 || echo 0)
+TOUCHED_MANIFEST=$(echo "$FILES_CHANGED" | grep -qE '/plugin\.yaml$' && echo 1 || echo 0)
+```
+
+**Matriz de skipping:**
+
+| Gate | Corre si |
+|---|---|
+| `render-compose` drift check | `TOUCHED_BACKEND` OR `TOUCHED_MANIFEST` |
+| `uv pytest` (full + architecture + lint-imports + plugins/ + functional) | `TOUCHED_BACKEND` |
+| `npm test` + `test:arch` + `tsc -b` + `npm run build` | `TOUCHED_FRONTEND` |
+| **Playwright E2E** (gate más caro) | `TOUCHED_UI` (subset de frontend) |
+
+**Override:** `FORCE_ALL_GATES=1 archon workflow run hu-hubara-pipeline "<HU>"`
+corre todos los gates aunque el scope no toque — útil para debug o
+PRs sospechosos de side-effects.
+
+**Reflejo en PR body:** `final-validation` escribe
+`$ARTIFACTS_DIR/gates-summary.md` con la lista real de gates corridos
+vs skipeados (con marker `⏭️ skipped (no <scope> changes)`). El
+`build-pr-body` lo embebe — la checklist del PR refleja la realidad,
+no una checklist hardcoded falsa.
+
+**Wall time típico ahorrado:**
+- HU backend-only: ~3-7 min (skip 4 npm gates + playwright).
+- HU frontend-only sin UI (e.g. solo config): ~2-5 min (skip playwright).
+- HU full-stack con UI: 0 (corre todo, como antes).
+
+**Nota:** este scope detection es SOLO para FASE 4 (final-validation
+consolidada). Los det-gates per-task del sub-pipeline (FASE 2 del
+`hu-hubara-plugin-pipeline`) ya tenían lógica análoga desde PR16 —
+sólo corren playwright si la task tocó UI. La novedad acá es elevar
+el patrón al gate final.
+
 ---
 
 ## §11. Reglas DURAS que el pipeline enforza

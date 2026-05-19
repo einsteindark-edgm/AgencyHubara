@@ -1063,106 +1063,199 @@ nodes:
     bash: |
       set -o pipefail              # CRITICAL — sin esto exit code se pierde en pipes
 
-      echo "=== render-compose drift check ===" >&2
-      cd hubara_agency && uv run python scripts/render-compose.py 2>&1 | tail -5 >&2
-      git diff --exit-code docker-compose.local.yml >/dev/null || {
-        echo "FAIL_RENDER_COMPOSE_DRIFT"; exit 0;
-      }
-      cd ..
+      # ────────────────────────────────────────────────────────────────
+      # Detección de scope: ¿qué tocó esta HU vs main?
+      # Skipea gates irrelevantes para ganar tiempo (ver §10.6 del guide).
+      # Override con FORCE_ALL_GATES=1 si querés correr todo (debug).
+      # ────────────────────────────────────────────────────────────────
+      git fetch origin main --quiet 2>/dev/null || true
+      BASE_REF=$(git merge-base HEAD origin/main 2>/dev/null || echo "")
+      if [ -z "$BASE_REF" ]; then
+        echo "WARN: no merge-base con origin/main, corriendo TODOS los gates" >&2
+        TOUCHED_BACKEND=1
+        TOUCHED_FRONTEND=1
+        TOUCHED_UI=1
+        TOUCHED_MANIFEST=1
+      else
+        FILES_CHANGED=$(git diff --name-only "$BASE_REF"..HEAD 2>/dev/null || true)
+        TOUCHED_BACKEND=0
+        TOUCHED_FRONTEND=0
+        TOUCHED_UI=0
+        TOUCHED_MANIFEST=0
+        echo "$FILES_CHANGED" | grep -q '^hubara_agency/' && TOUCHED_BACKEND=1
+        echo "$FILES_CHANGED" | grep -q '^frontend_dashboard/' && TOUCHED_FRONTEND=1
+        # UI = pages, plugins/<id>/frontend, features, entities (lo que playwright observa)
+        echo "$FILES_CHANGED" | grep -qE '^frontend_dashboard/src/(pages|plugins/[^/]+/frontend|features|entities)/' && TOUCHED_UI=1
+        # Manifest changes ⇒ render-compose drift check obligatorio
+        echo "$FILES_CHANGED" | grep -qE '/plugin\.yaml$' && TOUCHED_MANIFEST=1
+      fi
 
-      echo "=== uv pytest (full + architecture) ===" >&2
-      cd hubara_agency && uv run pytest -q --tb=short 2>&1 | tail -30 >&2 || {
-        echo "FAIL_PYTEST"; exit 0;
-      }
-      cd hubara_agency && uv run pytest -m architecture --tb=short 2>&1 | tail -20 >&2 || {
-        echo "FAIL_ARCH"; exit 0;
-      }
-      cd ..
+      if [ "${FORCE_ALL_GATES:-0}" = "1" ]; then
+        echo "FORCE_ALL_GATES=1 — overriding scope detection" >&2
+        TOUCHED_BACKEND=1
+        TOUCHED_FRONTEND=1
+        TOUCHED_UI=1
+        TOUCHED_MANIFEST=1
+      fi
 
-      echo "=== uv lint-imports (R-DIP) ===" >&2
-      cd hubara_agency && uv run lint-imports 2>&1 | tail -10 >&2 || {
-        echo "FAIL_LINT_IMPORTS"; exit 0;
-      }
-      cd ..
+      echo "Scope: backend=$TOUCHED_BACKEND frontend=$TOUCHED_FRONTEND ui=$TOUCHED_UI manifest=$TOUCHED_MANIFEST" >&2
 
-      echo "=== uv pytest tests/plugins/ (premortem invariants) ===" >&2
-      cd hubara_agency && uv run pytest tests/plugins/ --tb=short 2>&1 | tail -20 >&2 || {
-        echo "FAIL_PREMORTEM"; exit 0;
-      }
-      cd ..
+      # ────────────────────────────────────────────────────────────────
+      # Backend gates (render-compose, pytest, lint-imports, functional)
+      # ────────────────────────────────────────────────────────────────
+      if [ $TOUCHED_BACKEND -eq 1 ] || [ $TOUCHED_MANIFEST -eq 1 ]; then
+        echo "=== render-compose drift check ===" >&2
+        cd hubara_agency && uv run python scripts/render-compose.py 2>&1 | tail -5 >&2
+        git diff --exit-code docker-compose.local.yml >/dev/null || {
+          echo "FAIL_RENDER_COMPOSE_DRIFT"; exit 0;
+        }
+        cd ..
+      else
+        echo "SKIP render-compose (no backend/manifest changes)" >&2
+      fi
 
-      echo "=== uv pytest tests/functional/ (functional evidence) ===" >&2
-      cd hubara_agency && uv run pytest tests/functional/ -m functional -v 2>&1 \
-        | tee $ARTIFACTS_DIR/functional-evidence.log | tail -30 >&2 || {
-        echo "FAIL_FUNCTIONAL"; exit 0;
-      }
-      cd ..
+      if [ $TOUCHED_BACKEND -eq 1 ]; then
+        echo "=== uv pytest (full + architecture) ===" >&2
+        cd hubara_agency && uv run pytest -q --tb=short 2>&1 | tail -30 >&2 || {
+          echo "FAIL_PYTEST"; exit 0;
+        }
+        cd hubara_agency && uv run pytest -m architecture --tb=short 2>&1 | tail -20 >&2 || {
+          echo "FAIL_ARCH"; exit 0;
+        }
+        cd ..
 
-      echo "=== npm test ===" >&2
-      cd frontend_dashboard && npm test -- --run 2>&1 | tail -30 >&2 || {
-        echo "FAIL_NPM_TEST"; exit 0;
-      }
-      cd ..
+        echo "=== uv lint-imports (R-DIP) ===" >&2
+        cd hubara_agency && uv run lint-imports 2>&1 | tail -10 >&2 || {
+          echo "FAIL_LINT_IMPORTS"; exit 0;
+        }
+        cd ..
 
-      echo "=== npm test:arch ===" >&2
-      cd frontend_dashboard && npm run test:arch 2>&1 | tail -20 >&2 || {
-        echo "FAIL_NPM_ARCH"; exit 0;
-      }
-      cd ..
+        echo "=== uv pytest tests/plugins/ (premortem invariants) ===" >&2
+        cd hubara_agency && uv run pytest tests/plugins/ --tb=short 2>&1 | tail -20 >&2 || {
+          echo "FAIL_PREMORTEM"; exit 0;
+        }
+        cd ..
 
-      echo "=== npx tsc -b ===" >&2
-      cd frontend_dashboard && npx tsc -b 2>&1 | tail -30 >&2 || {
-        echo "FAIL_TSC"; exit 0;
-      }
-      cd ..
+        echo "=== uv pytest tests/functional/ (functional evidence) ===" >&2
+        cd hubara_agency && uv run pytest tests/functional/ -m functional -v 2>&1 \
+          | tee $ARTIFACTS_DIR/functional-evidence.log | tail -30 >&2 || {
+          echo "FAIL_FUNCTIONAL"; exit 0;
+        }
+        cd ..
+      else
+        echo "SKIP backend gates (no hubara_agency/ changes)" >&2
+      fi
 
-      echo "=== npm run build ===" >&2
-      cd frontend_dashboard && npm run build 2>&1 | tail -30 >&2 || {
-        echo "FAIL_BUILD"; exit 0;
-      }
-      cd ..
+      # ────────────────────────────────────────────────────────────────
+      # Frontend gates (npm test / test:arch / tsc / build)
+      # ────────────────────────────────────────────────────────────────
+      if [ $TOUCHED_FRONTEND -eq 1 ]; then
+        echo "=== npm test ===" >&2
+        cd frontend_dashboard && npm test -- --run 2>&1 | tail -30 >&2 || {
+          echo "FAIL_NPM_TEST"; exit 0;
+        }
+        cd ..
 
-      echo "=== Playwright E2E final (FastAPI backend) ===" >&2
-      # Random free port para evitar collision con sub-pipelines paralelos
-      UVICORN_PORT=$(python3 -c "import socket; s=socket.socket(); s.bind(('127.0.0.1',0)); print(s.getsockname()[1]); s.close()" 2>/dev/null)
-      [ -z "$UVICORN_PORT" ] && UVICORN_PORT=8000
-      UVICORN_LOG="$ARTIFACTS_DIR/.uvicorn-final.log"
-      ( cd hubara_agency && UVICORN_PORT=$UVICORN_PORT uv run python run_api.py > "$UVICORN_LOG" 2>&1 ) &
-      UVICORN_PID=$!
-      trap "kill $UVICORN_PID 2>/dev/null; pkill -f 'run_api.py' 2>/dev/null; true" EXIT
+        echo "=== npm test:arch ===" >&2
+        cd frontend_dashboard && npm run test:arch 2>&1 | tail -20 >&2 || {
+          echo "FAIL_NPM_ARCH"; exit 0;
+        }
+        cd ..
 
-      UVICORN_READY=0
-      for i in $(seq 1 180); do
-        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$UVICORN_PORT/" 2>/dev/null || echo "000")
-        if [ "$HTTP_CODE" = "200" ]; then
-          UVICORN_READY=1; echo "FastAPI ready in ${i}s" >&2; break
+        echo "=== npx tsc -b ===" >&2
+        cd frontend_dashboard && npx tsc -b 2>&1 | tail -30 >&2 || {
+          echo "FAIL_TSC"; exit 0;
+        }
+        cd ..
+
+        echo "=== npm run build ===" >&2
+        cd frontend_dashboard && npm run build 2>&1 | tail -30 >&2 || {
+          echo "FAIL_BUILD"; exit 0;
+        }
+        cd ..
+      else
+        echo "SKIP frontend gates (no frontend_dashboard/ changes)" >&2
+      fi
+
+      # ────────────────────────────────────────────────────────────────
+      # Playwright E2E (solo si TOCÓ UI — pages/plugins/frontend/features/entities)
+      # Es el gate más caro (~2-5 min) — skipearlo cuando no aporta info
+      # ────────────────────────────────────────────────────────────────
+      if [ $TOUCHED_UI -eq 1 ]; then
+        echo "=== Playwright E2E final (FastAPI backend) ===" >&2
+        # Random free port para evitar collision con sub-pipelines paralelos
+        UVICORN_PORT=$(python3 -c "import socket; s=socket.socket(); s.bind(('127.0.0.1',0)); print(s.getsockname()[1]); s.close()" 2>/dev/null)
+        [ -z "$UVICORN_PORT" ] && UVICORN_PORT=8000
+        UVICORN_LOG="$ARTIFACTS_DIR/.uvicorn-final.log"
+        ( cd hubara_agency && UVICORN_PORT=$UVICORN_PORT uv run python run_api.py > "$UVICORN_LOG" 2>&1 ) &
+        UVICORN_PID=$!
+        trap "kill $UVICORN_PID 2>/dev/null; pkill -f 'run_api.py' 2>/dev/null; true" EXIT
+
+        UVICORN_READY=0
+        for i in $(seq 1 180); do
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$UVICORN_PORT/" 2>/dev/null || echo "000")
+          if [ "$HTTP_CODE" = "200" ]; then
+            UVICORN_READY=1; echo "FastAPI ready in ${i}s" >&2; break
+          fi
+          sleep 1
+        done
+
+        if [ $UVICORN_READY -eq 0 ]; then
+          echo "FAIL_UVICORN_NOT_READY"
+          tail -20 "$UVICORN_LOG" >&2
+          kill $UVICORN_PID 2>/dev/null || true
+          pkill -f "run_api.py" 2>/dev/null || true
+          exit 0
         fi
-        sleep 1
-      done
 
-      if [ $UVICORN_READY -eq 0 ]; then
-        echo "FAIL_UVICORN_NOT_READY"
-        tail -20 "$UVICORN_LOG" >&2
+        ( cd frontend_dashboard && set -o pipefail && \
+          VITE_API_URL="http://127.0.0.1:$UVICORN_PORT" \
+          API_URL="http://127.0.0.1:$UVICORN_PORT" \
+          npx playwright test --reporter=line 2>&1 \
+          | tee $ARTIFACTS_DIR/playwright-final.log ) > /dev/null
+        PW_RC=$?
+
         kill $UVICORN_PID 2>/dev/null || true
         pkill -f "run_api.py" 2>/dev/null || true
-        exit 0
+        wait $UVICORN_PID 2>/dev/null || true
+        trap - EXIT
+
+        if [ "$PW_RC" -ne 0 ]; then
+          echo "FAIL_PLAYWRIGHT"; exit 0
+        fi
+      else
+        echo "SKIP Playwright E2E (no UI changes — pages/plugins/frontend/features/entities)" >&2
+        echo "SKIPPED_PLAYWRIGHT (no UI touched)" > "$ARTIFACTS_DIR/playwright-final.log"
       fi
 
-      ( cd frontend_dashboard && set -o pipefail && \
-        VITE_API_URL="http://127.0.0.1:$UVICORN_PORT" \
-        API_URL="http://127.0.0.1:$UVICORN_PORT" \
-        npx playwright test --reporter=line 2>&1 \
-        | tee $ARTIFACTS_DIR/playwright-final.log ) > /dev/null
-      PW_RC=$?
+      # ────────────────────────────────────────────────────────────────
+      # Emitir gates-summary.md para que build-pr-body lo embeba.
+      # Refleja qué gates corrieron de verdad vs cuáles se skipearon.
+      # ────────────────────────────────────────────────────────────────
+      {
+        backend_mark="⏭️ skipped (no backend/manifest changes)"
+        [ $TOUCHED_BACKEND -eq 1 ] || [ $TOUCHED_MANIFEST -eq 1 ] && backend_mark="✅ ran"
+        backend_only_mark="⏭️ skipped (no hubara_agency/ changes)"
+        [ $TOUCHED_BACKEND -eq 1 ] && backend_only_mark="✅ ran"
+        frontend_mark="⏭️ skipped (no frontend_dashboard/ changes)"
+        [ $TOUCHED_FRONTEND -eq 1 ] && frontend_mark="✅ ran"
+        ui_mark="⏭️ skipped (no UI changes — pages/plugins/frontend/features/entities)"
+        [ $TOUCHED_UI -eq 1 ] && ui_mark="✅ ran"
 
-      kill $UVICORN_PID 2>/dev/null || true
-      pkill -f "run_api.py" 2>/dev/null || true
-      wait $UVICORN_PID 2>/dev/null || true
-      trap - EXIT
-
-      if [ "$PW_RC" -ne 0 ]; then
-        echo "FAIL_PLAYWRIGHT"; exit 0
-      fi
+        echo "- ${backend_mark}: render-compose drift check"
+        echo "- ${backend_only_mark}: uv pytest (full + architecture)"
+        echo "- ${backend_only_mark}: uv lint-imports (R-DIP)"
+        echo "- ${backend_only_mark}: uv pytest tests/plugins/ (premortem invariants)"
+        echo "- ${backend_only_mark}: uv pytest tests/functional/ -m functional"
+        echo "- ${frontend_mark}: npm test"
+        echo "- ${frontend_mark}: npm run test:arch"
+        echo "- ${frontend_mark}: npx tsc -b"
+        echo "- ${frontend_mark}: npm run build"
+        echo "- ${ui_mark}: Playwright E2E (con FastAPI backend en puerto random)"
+        echo ""
+        echo "_Scope detectado vs origin/main: backend=$TOUCHED_BACKEND frontend=$TOUCHED_FRONTEND ui=$TOUCHED_UI manifest=$TOUCHED_MANIFEST_"
+        echo "_Override con \`FORCE_ALL_GATES=1\` para correr todos los gates aunque scope no toque._"
+      } > "$ARTIFACTS_DIR/gates-summary.md"
 
       echo "PASS"
     timeout: 1800000                          # 30 min para full suite + builds + E2E
@@ -1321,16 +1414,25 @@ nodes:
         '',
         '## Validación final (pre-PR)',
         '',
-        '- ✅ render-compose drift check',
-        '- ✅ uv pytest (full + architecture)',
-        '- ✅ uv lint-imports (R-DIP)',
-        '- ✅ uv pytest tests/plugins/ (premortem invariants)',
-        '- ✅ uv pytest tests/functional/ -m functional',
-        '- ✅ npm test',
-        '- ✅ npm run test:arch',
-        '- ✅ npx tsc -b',
-        '- ✅ npm run build',
-        '- ✅ Playwright E2E (con FastAPI backend en puerto random)',
+        (() => {
+          const gatesSummary = `${artifactsDir}/gates-summary.md`;
+          if (existsSync(gatesSummary)) {
+            return readFileSync(gatesSummary, 'utf-8').trim();
+          }
+          // Fallback si scope detection no corrió (e.g. FORCE_ALL_GATES)
+          return [
+            '- ✅ render-compose drift check',
+            '- ✅ uv pytest (full + architecture)',
+            '- ✅ uv lint-imports (R-DIP)',
+            '- ✅ uv pytest tests/plugins/ (premortem invariants)',
+            '- ✅ uv pytest tests/functional/ -m functional',
+            '- ✅ npm test',
+            '- ✅ npm run test:arch',
+            '- ✅ npx tsc -b',
+            '- ✅ npm run build',
+            '- ✅ Playwright E2E (con FastAPI backend en puerto random)',
+          ].join('\n');
+        })(),
         '',
         '## Pipeline metadata',
         '',
