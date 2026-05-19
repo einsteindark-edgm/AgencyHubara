@@ -24,6 +24,9 @@ EdgeKind = Literal[
     "mounts_on",        # api_router → api_endpoint (parent → child) — V2
     "consumes_queue",   # worker → task_queue
     "exposes",          # plugin → api_router (alias semántico de contributes)
+    "opens",            # sidebar → section (mismo plugin — el shell conecta vía código)
+    "uses_api",         # section → api_router (mismo plugin, lazy match)
+    "invokes_worker",   # api_router → worker (DETECTADO de get_task_queue() en código Python)
 ]
 
 
@@ -35,6 +38,20 @@ OrphanReason = Literal[
     "api_router_no_prefix",        # api_router sin prefix (legacy_router malformado)
     "manifest_invalid",            # YAML parse error o id mismatch (informativo)
     "depends_on_missing",          # plugin.depends_on apunta a un plugin que no existe
+]
+
+
+# Status del plugin según qué layers contribuye. NO es orphan (frontend_only
+# es intencional para plugins como eta/orders), es indicador visual.
+CompletenessStatus = Literal[
+    "complete",         # frontend + api + agent
+    "frontend_only",    # solo frontend (deliberado: eta, orders, agents_admin)
+    "api_only",         # solo api (e.g. system_map)
+    "agent_only",       # solo agent (worker headless)
+    "frontend_api",     # frontend + api (sin agent)
+    "frontend_agent",   # frontend + agent (sin api directa)
+    "api_agent",        # api + agent (backend service)
+    "empty",            # ninguno (depends_on hub or pure dependency)
 ]
 
 
@@ -73,6 +90,7 @@ class PluginSummary:
     has_frontend: bool
     has_api: bool
     has_agent: bool
+    completeness: CompletenessStatus
     node_count: int                  # nodos contribuidos (excluye el container plugin)
     orphan_count: int                # nodos suyos flagged como orphan
 

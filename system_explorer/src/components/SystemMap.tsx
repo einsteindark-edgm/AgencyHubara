@@ -49,19 +49,43 @@ function toReactFlowNodes(graph: SystemGraph): Node[] {
   }));
 }
 
+// Estilo visual por tipo de edge. Diferencia rápida para el ojo humano.
+const EDGE_STYLE_BY_KIND: Record<
+  string,
+  { stroke: string; strokeWidth: number; dash?: string; animated?: boolean }
+> = {
+  depends_on:     { stroke: "#f59e0b", strokeWidth: 2, animated: true },   // amber, animated
+  contributes:    { stroke: "#52525b", strokeWidth: 1.2 },                  // gray
+  exposes:        { stroke: "#10b981", strokeWidth: 1.5 },                  // emerald (plugin → api)
+  consumes_queue: { stroke: "#a855f7", strokeWidth: 1.5 },                  // purple (worker → queue)
+  opens:          { stroke: "#6366f1", strokeWidth: 1.5, dash: "4 2" },     // indigo dashed (sidebar → section)
+  uses_api:       { stroke: "#0ea5e9", strokeWidth: 1.5, dash: "4 2" },     // sky dashed (section → api)
+  invokes_worker: { stroke: "#ef4444", strokeWidth: 2, animated: true },    // red animated (REAL connection from code)
+  mounts_on:      { stroke: "#52525b", strokeWidth: 1 },
+};
+
 function toReactFlowEdges(graph: SystemGraph): Edge[] {
-  return graph.edges.map((e) => ({
-    id: e.id,
-    source: e.source,
-    target: e.target,
-    type: "smoothstep",
-    animated: e.kind === "depends_on",
-    label: e.label ?? undefined,
-    style: {
-      stroke: e.kind === "depends_on" ? "#f59e0b" : "#52525b",
-      strokeWidth: e.kind === "depends_on" ? 2 : 1.5,
-    },
-  }));
+  return graph.edges.map((e) => {
+    const s = EDGE_STYLE_BY_KIND[e.kind] ?? {
+      stroke: "#52525b",
+      strokeWidth: 1.5,
+    };
+    return {
+      id: e.id,
+      source: e.source,
+      target: e.target,
+      type: "smoothstep",
+      animated: s.animated ?? false,
+      label: e.label ?? undefined,
+      labelStyle: { fill: "#a1a1aa", fontSize: 10 },
+      labelBgStyle: { fill: "#18181b", fillOpacity: 0.8 },
+      style: {
+        stroke: s.stroke,
+        strokeWidth: s.strokeWidth,
+        strokeDasharray: s.dash,
+      },
+    };
+  });
 }
 
 function applyPositions(

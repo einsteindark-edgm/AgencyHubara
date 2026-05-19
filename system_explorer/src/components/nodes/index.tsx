@@ -92,14 +92,77 @@ function NodeCard({
   );
 }
 
+const COMPLETENESS_BADGE: Record<
+  string,
+  { label: string; cls: string; tip: string }
+> = {
+  complete: {
+    label: "FE+API+AGT",
+    cls: "bg-emerald-900/50 text-emerald-200 border-emerald-700",
+    tip: "Plugin completo — frontend + API + agent",
+  },
+  frontend_api: {
+    label: "FE+API",
+    cls: "bg-sky-900/50 text-sky-200 border-sky-700",
+    tip: "Frontend + API, sin agent",
+  },
+  frontend_agent: {
+    label: "FE+AGT",
+    cls: "bg-fuchsia-900/50 text-fuchsia-200 border-fuchsia-700",
+    tip: "Frontend + agent, sin API directa",
+  },
+  api_agent: {
+    label: "API+AGT",
+    cls: "bg-indigo-900/50 text-indigo-200 border-indigo-700",
+    tip: "Backend service (API + agent)",
+  },
+  frontend_only: {
+    label: "FE only",
+    cls: "bg-amber-900/50 text-amber-200 border-amber-700",
+    tip: "Plugin frontend-only — no se conecta a API ni agent propios (usa entities/shared)",
+  },
+  api_only: {
+    label: "API only",
+    cls: "bg-zinc-800 text-zinc-300 border-zinc-700",
+    tip: "Solo API (meta-plugin o servicio headless)",
+  },
+  agent_only: {
+    label: "AGT only",
+    cls: "bg-rose-900/50 text-rose-200 border-rose-700",
+    tip: "Solo agent worker (sin UI ni HTTP)",
+  },
+  empty: {
+    label: "empty",
+    cls: "bg-red-900/50 text-red-200 border-red-700",
+    tip: "Plugin sin contribuciones — probable bug o trabajo en progreso",
+  },
+};
+
 export function PluginNode({ data }: NodeProps) {
   const d = data as unknown as SystemNodeData;
-  const meta = d.data as { version?: string; description?: string };
+  const meta = d.data as {
+    version?: string;
+    description?: string;
+    completeness?: string;
+  };
+  const badge = meta.completeness
+    ? COMPLETENESS_BADGE[meta.completeness]
+    : null;
   return (
     <NodeCard data={d}>
-      <p className="text-zinc-500">v{meta.version ?? "?"}</p>
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-zinc-500">v{meta.version ?? "?"}</span>
+        {badge ? (
+          <span
+            title={badge.tip}
+            className={`text-[10px] px-1.5 py-0.5 rounded border font-medium ${badge.cls}`}
+          >
+            {badge.label}
+          </span>
+        ) : null}
+      </div>
       {meta.description ? (
-        <p className="line-clamp-2">{meta.description}</p>
+        <p className="line-clamp-2 mt-1">{meta.description}</p>
       ) : null}
     </NodeCard>
   );

@@ -281,6 +281,153 @@ def test_id_mismatch_emits_warning_but_includes_plugin(tmp_path: Path) -> None:
     assert g.stats.total_plugins == 1
 
 
+def test_plugin_completeness_frontend_only(tmp_path: Path) -> None:
+    _write_manifest(
+        tmp_path,
+        "ui_only",
+        {
+            "id": "ui_only",
+            "version": "0.1.0",
+            "frontend": {
+                "contributes": {
+                    "sections": [{"key": "x", "label": "X"}],
+                    "sidebar": [{"route": "/x", "label": "X"}],
+                },
+            },
+        },
+    )
+
+    g = build_system_graph(tmp_path)
+    assert g.plugins[0].completeness == "frontend_only"
+    plugin_node = next(n for n in g.nodes if n.kind == "plugin")
+    assert plugin_node.data["completeness"] == "frontend_only"
+
+
+def test_plugin_completeness_complete(tmp_path: Path) -> None:
+    _write_manifest(
+        tmp_path,
+        "full_stack",
+        {
+            "id": "full_stack",
+            "version": "0.1.0",
+            "frontend": {"contributes": {"sections": [{"key": "x"}], "sidebar": [{"route": "/x"}]}},
+            "api": {"python_module": "x.y", "prefix": "/api/x"},
+            "agent": {"workers": [{"name": "w", "module": "m", "task_queue": "q-1"}]},
+        },
+    )
+
+    g = build_system_graph(tmp_path)
+    assert g.plugins[0].completeness == "complete"
+
+
+def test_intra_plugin_edges_sidebar_opens_section(tmp_path: Path) -> None:
+    _write_manifest(
+        tmp_path,
+        "p",
+        {
+            "id": "p",
+            "version": "0.1.0",
+            "frontend": {
+                "contributes": {
+                    "sections": [{"key": "main", "label": "Main"}],
+                    "sidebar": [{"route": "/main", "label": "Main"}],
+                },
+            },
+        },
+    )
+
+    g = build_system_graph(tmp_path)
+    opens_edges = [e for e in g.edges if e.kind == "opens"]
+    assert len(opens_edges) == 1
+    assert opens_edges[0].source == "sidebar:p:/main"
+    assert opens_edges[0].target == "section:p:main"
+
+
+def test_intra_plugin_edges_section_uses_api(tmp_path: Path) -> None:
+    _write_manifest(
+        tmp_path,
+        "p",
+        {
+            "id": "p",
+            "version": "0.1.0",
+            "frontend": {"contributes": {"sections": [{"key": "x"}], "sidebar": [{"route": "/x"}]}},
+            "api": {"python_module": "src.plugins.p.api", "prefix": "/api/p"},
+        },
+    )
+
+    g = build_system_graph(tmp_path)
+    uses_edges = [e for e in g.edges if e.kind == "uses_api"]
+    assert len(uses_edges) == 1
+    assert uses_edges[0].source.startswith("section:p:")
+    assert uses_edges[0].target.startswith("api:p:")
+
+
+def test_workflow_invocation_edge_detected_from_python(tmp_path: Path) -> None:
+    """Verifica el scan de `get_task_queue("plugin", "worker")` en código real."""
+    # Manifests dir
+    manifests_dir = tmp_path / "manifests"
+    _write_manifest(
+        manifests_dir,
+        "chats",
+        {
+            "id": "chats",
+            "version": "0.1.0",
+            "api": {
+                "python_module": "src.plugins.chats.api",
+                "prefix": "/api/chats",
+                "legacy_routers": [
+                    {"module": "src.plugins.chats.api.sales", "prefix": "/api", "tags": ["Sales"]},
+                ],
+            },
+            "agent": {"workers": [{"name": "sales", "module": "x", "task_queue": "q-sales"}]},
+        },
+    )
+    # Code dir simulado: hubara_agency/src/plugins/chats/api/sales.py con get_task_queue
+    code_dir = tmp_path / "code"
+    chats_api = code_dir / "chats" / "api"
+    chats_api.mkdir(parents=True)
+    (chats_api / "sales.py").write_text(
+        '''
+from src.platform.plugin_manifest import get_task_queue
+async def start(client):
+    return await client.start_workflow(
+        "Wf.run",
+        id="x",
+        task_queue=get_task_queue("chats", "sales"),
+    )
+''',
+        encoding="utf-8",
+    )
+
+    g = build_system_graph(manifests_dir, code_dir)
+
+    invokes = [e for e in g.edges if e.kind == "invokes_worker"]
+    assert len(invokes) == 1
+    # Source: el api_router con slug "sales"; target: worker:chats:sales
+    assert invokes[0].target == "worker:chats:sales"
+    assert "api:chats:sales" in invokes[0].source
+
+
+def test_workflow_invocation_to_missing_worker_warns(tmp_path: Path) -> None:
+    """get_task_queue apuntando a worker inexistente debe emitir warning, no romper."""
+    manifests_dir = tmp_path / "manifests"
+    _write_manifest(
+        manifests_dir,
+        "p",
+        {"id": "p", "version": "0.1.0", "api": {"python_module": "src.plugins.p.api", "prefix": "/api/p"}},
+    )
+    code_dir = tmp_path / "code"
+    (code_dir / "p" / "api").mkdir(parents=True)
+    (code_dir / "p" / "api" / "x.py").write_text(
+        'get_task_queue("p", "ghost_worker")\n', encoding="utf-8"
+    )
+
+    g = build_system_graph(manifests_dir, code_dir)
+    assert any("ghost_worker" in w for w in g.warnings)
+    invokes = [e for e in g.edges if e.kind == "invokes_worker"]
+    assert invokes == []
+
+
 def test_real_repo_manifests_load_clean(tmp_path: Path) -> None:
     """Smoke test contra los manifests reales del repo.
 

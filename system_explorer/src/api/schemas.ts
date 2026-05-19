@@ -19,8 +19,23 @@ export const EdgeKindSchema = z.enum([
   "mounts_on",
   "consumes_queue",
   "exposes",
+  "opens",          // sidebar → section (intra-plugin)
+  "uses_api",       // section → api_router (intra-plugin)
+  "invokes_worker", // api_router → worker (detected from Python code)
 ]);
 export type EdgeKind = z.infer<typeof EdgeKindSchema>;
+
+export const CompletenessStatusSchema = z.enum([
+  "complete",
+  "frontend_only",
+  "api_only",
+  "agent_only",
+  "frontend_api",
+  "frontend_agent",
+  "api_agent",
+  "empty",
+]);
+export type CompletenessStatus = z.infer<typeof CompletenessStatusSchema>;
 
 export const OrphanReasonSchema = z
   .enum([
@@ -63,6 +78,7 @@ export const PluginSummarySchema = z.object({
   has_frontend: z.boolean(),
   has_api: z.boolean(),
   has_agent: z.boolean(),
+  completeness: CompletenessStatusSchema,
   node_count: z.number().int().nonnegative(),
   orphan_count: z.number().int().nonnegative(),
 });

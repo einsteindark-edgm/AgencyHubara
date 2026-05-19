@@ -82,10 +82,16 @@ export function Sidebar({
         </h2>
         <ul className="text-sm space-y-1">
           {graph.plugins.map((p) => {
-            const layers: string[] = [];
-            if (p.has_frontend) layers.push("FE");
-            if (p.has_api) layers.push("API");
-            if (p.has_agent) layers.push("AGT");
+            const completenessColor = {
+              complete: "text-emerald-300",
+              frontend_api: "text-sky-300",
+              frontend_agent: "text-fuchsia-300",
+              api_agent: "text-indigo-300",
+              frontend_only: "text-amber-300",
+              api_only: "text-zinc-300",
+              agent_only: "text-rose-300",
+              empty: "text-red-300",
+            }[p.completeness];
             return (
               <li key={p.id}>
                 <button
@@ -97,8 +103,8 @@ export function Sidebar({
                     <span className="text-zinc-200 truncate">
                       {p.display_name}
                     </span>
-                    <span className="text-[10px] text-zinc-500 shrink-0">
-                      {layers.join("·") || "—"}
+                    <span className={`text-[10px] shrink-0 ${completenessColor}`}>
+                      {p.completeness.replace("_", "+")}
                     </span>
                   </div>
                   {p.orphan_count > 0 ? (
@@ -114,6 +120,39 @@ export function Sidebar({
               </li>
             );
           })}
+        </ul>
+      </section>
+
+      {/* Edge legend */}
+      <section className="p-4 border-b border-zinc-800 space-y-2">
+        <h2 className="text-xs uppercase tracking-wider text-zinc-500">
+          Edges legend
+        </h2>
+        <ul className="text-[11px] space-y-1">
+          {[
+            { c: "#f59e0b", t: "depends_on (animated, amber)" },
+            { c: "#10b981", t: "exposes (plugin → API)" },
+            { c: "#a855f7", t: "consumes_queue (worker → queue)" },
+            { c: "#6366f1", t: "opens (sidebar → section, lazy)", dashed: true },
+            { c: "#0ea5e9", t: "uses_api (section → API, lazy)", dashed: true },
+            { c: "#ef4444", t: "invokes_worker (REAL, scan código)" },
+            { c: "#52525b", t: "contributes (plugin → child)" },
+          ].map((row) => (
+            <li key={row.t} className="flex items-center gap-2 text-zinc-400">
+              <svg width="20" height="6" className="shrink-0">
+                <line
+                  x1="0"
+                  y1="3"
+                  x2="20"
+                  y2="3"
+                  stroke={row.c}
+                  strokeWidth="2"
+                  strokeDasharray={row.dashed ? "3 2" : undefined}
+                />
+              </svg>
+              <span>{row.t}</span>
+            </li>
+          ))}
         </ul>
       </section>
 
