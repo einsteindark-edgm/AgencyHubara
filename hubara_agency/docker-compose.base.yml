@@ -107,6 +107,11 @@ services:
       - WHATSAPP_VERIFY_TOKEN=${WHATSAPP_VERIFY_TOKEN}
     volumes:
       - hubara-vault-local:/app/hubara_vault
+      # SSoT post-PR11: manifests viven en frontend_dashboard/. El loader
+      # los lee desde /app/frontend_dashboard/src/plugins. En dev mounteamos
+      # el dir del host para que cambios en manifests se reflejen sin
+      # rebuild. En prod (k8s) los manifests vienen vía COPY del Dockerfile.
+      - ../frontend_dashboard/src/plugins:/app/frontend_dashboard/src/plugins:ro
     depends_on:
       temporal:
         condition: service_healthy
@@ -127,6 +132,27 @@ services:
       - /app/node_modules # prevent overwriting container node_modules
     depends_on:
       - hubara-api
+
+  # ── 6. System Explorer (visualizador tipo n8n) ──────────────────────
+  # Lee /api/system-map/graph del hubara-api y renderiza el sistema con
+  # React Flow. Container nginx multi-stage — build con Node, sirve
+  # estático en :80. Host port 5175 (5173/5174 ya tomados).
+  # Ver `system_explorer/README.md` para detalle.
+  system-explorer:
+    build:
+      context: ../system_explorer
+      dockerfile: Dockerfile
+    container_name: local-system-explorer
+    ports:
+      - "5175:80"
+    depends_on:
+      - hubara-api
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
 
 # Simulador del EFS de Amazon
 volumes:

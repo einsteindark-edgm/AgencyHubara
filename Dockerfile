@@ -19,6 +19,13 @@ RUN uv sync --frozen --no-install-project --no-dev
 COPY exoclaw-temporal/ ./exoclaw-temporal/
 COPY hubara_agency/ ./hubara_agency/
 
+# 3b. Los manifests `plugin.yaml` viven en `frontend_dashboard/src/plugins/`
+# (SSoT post-PR11). El backend los lee en runtime via `_PLUGINS_MANIFEST_DIR`
+# en `hubara_agency/src/main.py`. SIN esto, el loader carga 0 plugins en
+# container — _todo_ el plugin system queda mudo. Solo copiamos los .yaml
+# + el schema, no el resto del frontend (que se sirve desde su propio container).
+COPY frontend_dashboard/src/plugins/ ./frontend_dashboard/src/plugins/
+
 # 4. Instalamos el compilado final del proyecto propio
 RUN uv sync --frozen --no-dev
 
