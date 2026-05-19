@@ -1,0 +1,40 @@
+@import "tailwindcss";
+
+/* Tema dark zinc para encajar con el visual de tipo n8n. */
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+    background-color: #09090b; /* zinc-950 */
+    color: #e4e4e7;            /* zinc-200 */
+    font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+      "Segoe UI", Roboto, sans-serif;
+  }
+}
+
+/* Override de React Flow theme — variables CSS oficiales v12. */
+:root {
+  --xy-background-color: #09090b;
+  --xy-background-pattern-color: #27272a;        /* zinc-800 */
+  --xy-node-background-color: #18181b;           /* zinc-900 */
+  --xy-node-border: 1px solid #3f3f46;           /* zinc-700 */
+  --xy-node-color: #e4e4e7;                       /* zinc-200 */
+  --xy-edge-stroke: #52525b;                      /* zinc-600 */
+  --xy-edge-stroke-selected: #a1a1aa;             /* zinc-400 */
+  --xy-handle-background-color: #52525b;
+  --xy-handle-border-color: #18181b;
+  --xy-controls-button-background-color: #18181b;
+  --xy-controls-button-color: #e4e4e7;
+  --xy-controls-button-background-color-hover: #27272a;
+  --xy-minimap-background-color: #18181b;
+  --xy-minimap-mask-background-color: rgba(255, 255, 255, 0.05);
+}
+
+/* Nodos huérfanos: ring rojo + leve glow */
+.node-orphan {
+  outline: 2px solid #dc2626;                     /* red-600 */
+  outline-offset: -2px;
+  box-shadow: 0 0 12px rgba(220, 38, 38, 0.35);
+}

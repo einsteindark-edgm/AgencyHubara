@@ -1,0 +1,22 @@
+id: system_map
+version: 0.1.0
+display_name: System Map
+description: |
+  Plugin meta — expone un endpoint que retorna el grafo del sistema (todos los
+  plugins, sus tools/activities/workflows/APIs/frontend) para visualización en
+  el container `system_explorer/`. NO contribuye frontend al dashboard
+  principal (lo consume un proyecto Vite separado).
+
+depends_on: []
+
+# ── API REST ────────────────────────────────────────────────────────────
+# GET /api/system-map/graph → JSON con nodes + edges + stats + orphans.
+# El builder itera los manifests de TODOS los plugins (incluido este mismo)
+# usando el mismo `_discover_plugin_manifests` que `main.py`.
+api:
+  python_module: src.plugins.system_map.api
+  prefix: /api/system-map
+  tags: [SystemMap]
+
+# NO frontend block: este plugin no contribuye al dashboard principal.
+# La UI vive en `system_explorer/` como container separado (Vite + React Flow).
