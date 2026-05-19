@@ -13,7 +13,8 @@ export const NodeKindSchema = z.enum([
 export type NodeKind = z.infer<typeof NodeKindSchema>;
 
 export const EdgeKindSchema = z.enum([
-  "depends_on",     // plugin → plugin
+  "depends_on",     // plugin → plugin (declarado en manifest)
+  "belongs_to",     // plugin → child (pertenencia muda, visualmente gris punteado)
   "consumes_queue", // worker → task_queue
   "uses_api",       // frontend_unit → api_router (lazy)
   "invokes_worker", // api_router → worker (REAL del código Python)

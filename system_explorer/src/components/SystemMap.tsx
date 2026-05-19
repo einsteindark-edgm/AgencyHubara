@@ -49,17 +49,24 @@ function toReactFlowNodes(graph: SystemGraph): Node[] {
   }));
 }
 
-// Estilo visual por tipo de edge. Diferencia rápida para el ojo humano.
-// Modelo simplificado: solo edges semánticos, no de pertenencia.
+// Estilo visual por tipo de edge.
+// Modelo: edges funcionales (color + animados) vs pertenencia (gris muted muy fino).
 const EDGE_STYLE_BY_KIND: Record<
   string,
-  { stroke: string; strokeWidth: number; dash?: string; animated?: boolean }
+  {
+    stroke: string;
+    strokeWidth: number;
+    dash?: string;
+    animated?: boolean;
+    opacity?: number;
+  }
 > = {
-  depends_on:     { stroke: "#f59e0b", strokeWidth: 2, animated: true },   // amber (plugin → plugin)
-  consumes_queue: { stroke: "#a855f7", strokeWidth: 1.5 },                  // purple (worker → queue)
-  uses_api:       { stroke: "#0ea5e9", strokeWidth: 1.5, dash: "4 2" },     // sky dashed (frontend → api, asumido)
-  invokes_worker: { stroke: "#ef4444", strokeWidth: 2, animated: true },    // red animado (REAL del código)
-  mounts_on:      { stroke: "#52525b", strokeWidth: 1 },                    // V2
+  depends_on:     { stroke: "#f59e0b", strokeWidth: 2, animated: true },        // amber (plugin → plugin)
+  belongs_to:     { stroke: "#3f3f46", strokeWidth: 1, dash: "2 4", opacity: 0.55 }, // zinc-700 muted punteado fino — pertenencia muda
+  consumes_queue: { stroke: "#a855f7", strokeWidth: 1.5 },                       // purple (worker → queue)
+  uses_api:       { stroke: "#0ea5e9", strokeWidth: 1.5, dash: "4 2" },          // sky dashed (frontend → api, asumido)
+  invokes_worker: { stroke: "#ef4444", strokeWidth: 2, animated: true },         // red animado (REAL del código)
+  mounts_on:      { stroke: "#52525b", strokeWidth: 1 },                          // V2
 };
 
 function toReactFlowEdges(graph: SystemGraph): Edge[] {
@@ -81,6 +88,7 @@ function toReactFlowEdges(graph: SystemGraph): Edge[] {
         stroke: s.stroke,
         strokeWidth: s.strokeWidth,
         strokeDasharray: s.dash,
+        opacity: s.opacity ?? 1,
       },
     };
   });

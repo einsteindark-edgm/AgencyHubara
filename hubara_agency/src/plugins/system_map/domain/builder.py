@@ -372,15 +372,33 @@ def _calculate_completeness(
 def _build_edges(
     plugin_node: Node, contributed_nodes: list[Node], all_plugin_ids: set[str]
 ) -> list[Edge]:
-    """Edges semánticos (NO pertenencia — eso se ve por el plugin_id sticker).
+    """Edges del plugin: pertenencia (muted) + funcionales.
 
-    Solo emite:
-        - `consumes_queue` (worker → task_queue) — relación funcional
-        - `depends_on` (plugin → plugin) — declarada en manifest
+    Emite:
+        - `belongs_to` (plugin → child) — pertenencia muda, gris punteado. Para
+          que el grafo muestre visualmente que cada nodo pertenece a su plugin,
+          incluso cuando no tiene conexión funcional con nadie (workers sin
+          invocador, etc.). Excluye task_queue (es shared y se conecta desde
+          worker via `consumes_queue`).
+        - `consumes_queue` (worker → task_queue) — funcional.
+        - `depends_on` (plugin → plugin) — funcional, declarada en manifest.
     """
     edges: list[Edge] = []
 
-    # worker → task_queue
+    # plugin → child (pertenencia muda)
+    for n in contributed_nodes:
+        if n.kind == "task_queue":
+            continue  # task_queue es shared (no es contribución exclusiva)
+        edges.append(
+            Edge(
+                id=f"e:{plugin_node.id}->belongs->{n.id}",
+                source=plugin_node.id,
+                target=n.id,
+                kind="belongs_to",
+            )
+        )
+
+    # worker → task_queue (funcional)
     for n in contributed_nodes:
         if n.kind != "worker":
             continue
@@ -395,7 +413,7 @@ def _build_edges(
                 )
             )
 
-    # plugin.depends_on → otro plugin
+    # plugin.depends_on → otro plugin (funcional)
     for dep in plugin_node.data.get("depends_on", []):
         if dep in all_plugin_ids:
             edges.append(

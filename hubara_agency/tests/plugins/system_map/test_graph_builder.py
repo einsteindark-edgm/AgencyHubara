@@ -380,10 +380,11 @@ def test_frontend_unit_uses_api(tmp_path: Path) -> None:
     assert uses_edges[0].target.startswith("api:p:")
 
 
-def test_no_contribute_or_expose_edges_from_plugin(tmp_path: Path) -> None:
-    """Plugin no debe emitir edges de pertenencia (contributes/exposes).
+def test_plugin_emits_belongs_to_for_each_child(tmp_path: Path) -> None:
+    """Plugin → child con `belongs_to` (gris punteado, muta visualmente).
 
-    El plugin_id sticker en cada nodo es suficiente para mostrar pertenencia.
+    NO emite los viejos `contributes`/`exposes`/`opens`. Excluye `task_queue`
+    (shared, se conecta desde worker via consumes_queue).
     """
     _write_manifest(
         tmp_path,
@@ -398,11 +399,22 @@ def test_no_contribute_or_expose_edges_from_plugin(tmp_path: Path) -> None:
     )
 
     g = build_system_graph(tmp_path)
-    # Solo edges esperados: uses_api (frontend → api), consumes_queue (worker → queue)
     edge_kinds = {e.kind for e in g.edges}
+    # Removed kinds
     assert "contributes" not in edge_kinds
     assert "exposes" not in edge_kinds
     assert "opens" not in edge_kinds
+
+    # belongs_to: plugin → frontend_unit, plugin → api_router, plugin → worker
+    # NO plugin → task_queue (excluido)
+    belongs = [e for e in g.edges if e.kind == "belongs_to"]
+    targets = {e.target for e in belongs}
+    assert "frontend:p" in targets
+    assert any(t.startswith("api:p:") for t in targets)
+    assert "worker:p:w" in targets
+    assert all(not t.startswith("queue:") for t in targets)
+    # Source siempre el plugin
+    assert all(e.source == "plugin:p" for e in belongs)
 
 
 def test_workflow_invocation_edge_detected_from_python(tmp_path: Path) -> None:

@@ -130,10 +130,11 @@ export function Sidebar({
         </h2>
         <ul className="text-[11px] space-y-1">
           {[
-            { c: "#f59e0b", t: "depends_on (plugin → plugin)" },
-            { c: "#0ea5e9", t: "uses_api (frontend → API)", dashed: true },
-            { c: "#ef4444", t: "invokes_worker (REAL, del código)" },
-            { c: "#a855f7", t: "consumes_queue (worker → queue)" },
+            { c: "#ef4444", t: "invokes_worker (REAL, del código)", weight: 2 },
+            { c: "#f59e0b", t: "depends_on (plugin → plugin)", weight: 2 },
+            { c: "#a855f7", t: "consumes_queue (worker → queue)", weight: 1.5 },
+            { c: "#0ea5e9", t: "uses_api (frontend → API)", dashed: true, weight: 1.5 },
+            { c: "#3f3f46", t: "belongs_to (pertenencia muda)", dashed: true, weight: 1, opacity: 0.55 },
           ].map((row) => (
             <li key={row.t} className="flex items-center gap-2 text-zinc-400">
               <svg width="20" height="6" className="shrink-0">
@@ -143,7 +144,8 @@ export function Sidebar({
                   x2="20"
                   y2="3"
                   stroke={row.c}
-                  strokeWidth="2"
+                  strokeWidth={row.weight ?? 2}
+                  strokeOpacity={row.opacity ?? 1}
                   strokeDasharray={row.dashed ? "3 2" : undefined}
                 />
               </svg>
@@ -152,8 +154,9 @@ export function Sidebar({
           ))}
         </ul>
         <p className="text-[10px] text-zinc-600">
-          La pertenencia plugin → child se ve por el sticker del plugin id en
-          cada nodo (no se dibuja como línea).
+          Edges fuertes (animados / colores intensos) = relaciones funcionales.
+          Líneas grises punteadas = pertenencia (el nodo es del plugin, aunque
+          no tenga conexión activa con nadie).
         </p>
       </section>
 

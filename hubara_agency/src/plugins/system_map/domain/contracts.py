@@ -19,6 +19,7 @@ NodeKind = Literal[
 
 EdgeKind = Literal[
     "depends_on",       # plugin → plugin (via manifest.depends_on)
+    "belongs_to",       # plugin → child (pertenencia muda, gris punteado)
     "consumes_queue",   # worker → task_queue
     "uses_api",         # frontend_unit → api_router (lazy: mismo plugin)
     "invokes_worker",   # api_router → worker (DETECTADO de get_task_queue() en código)
