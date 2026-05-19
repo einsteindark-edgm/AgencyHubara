@@ -2,11 +2,23 @@
 
 Heurísticas V1 (todas estáticas, derivadas del manifest sin importar módulos):
   - empty_plugin: plugin que no contribuye frontend/api/agent.
-  - section_without_sidebar: section declarada sin sidebar entry equivalente.
-  - sidebar_without_section: sidebar entry sin section.
+  - section_without_sidebar: plugin tiene >=1 section pero 0 sidebar entries.
+        Semántica: la section es inalcanzable desde la nav del shell.
+  - sidebar_without_section: plugin tiene >=1 sidebar pero 0 sections.
+        Semántica: el botón del sidebar no tiene destino renderizable.
   - worker_no_task_queue: worker sin task_queue (schema malformado).
   - api_router_no_prefix: api_router sin prefix.
   - depends_on_missing: plugin.depends_on apunta a plugin que no existe.
+
+Nota sobre section ↔ sidebar matching:
+    El schema NO impone relación entre `section.key` y `sidebar.route` — son
+    campos independientes que el shell del frontend (App.tsx) conecta vía
+    código (no manifest). Por eso la heurística V1 que comparaba keys con
+    routes producía falsos positivos (chats: section `chat` vs sidebar
+    `/chats` — singular vs plural, ambos OK en runtime).
+
+    V2: parsear App.tsx o plugins-sync.ts para detectar el mapping real
+    section.key → onClick handler en el sidebar.
 
 V2 candidates (NO V1, requieren import introspection):
   - tool sin workflow caller
@@ -29,23 +41,22 @@ def detect_orphans(
     Las heurísticas son aditivas — el primer flag gana. Los nodos son frozen,
     por eso se construye una lista nueva con `Node(...)` replacement.
     """
-    # Index por kind para detección eficiente
-    by_id: dict[str, Node] = {n.id: n for n in nodes}
     plugin_nodes = [n for n in nodes if n.kind == "plugin"]
 
-    # Sets para detección de pares section/sidebar
-    sections_by_plugin: dict[str, set[str]] = {}
-    sidebars_by_plugin: dict[str, set[str]] = {}
+    # Counts por plugin: ¿cuántas sections / sidebar tiene cada uno?
+    # Heurística V2-corregida: si tiene 0 sidebars pero >=1 sections → las
+    # sections son orphan (UI nav imposible). Y viceversa.
+    section_count_by_plugin: dict[str, int] = {}
+    sidebar_count_by_plugin: dict[str, int] = {}
     for n in nodes:
         if n.kind == "section":
-            key = n.data.get("key", "")
-            sections_by_plugin.setdefault(n.plugin_id, set()).add(key)
+            section_count_by_plugin[n.plugin_id] = (
+                section_count_by_plugin.get(n.plugin_id, 0) + 1
+            )
         elif n.kind == "sidebar":
-            # heurística: matchear sidebar.route contra section.key es laxo,
-            # comparar el segmento final de la ruta con la key.
-            route = n.data.get("route") or ""
-            tail = route.lstrip("/").split("/", 1)[0]
-            sidebars_by_plugin.setdefault(n.plugin_id, set()).add(tail)
+            sidebar_count_by_plugin[n.plugin_id] = (
+                sidebar_count_by_plugin.get(n.plugin_id, 0) + 1
+            )
 
     # Detect: depends_on missing
     deps_missing: dict[str, str] = {}  # plugin.id → missing dep id
@@ -72,18 +83,18 @@ def detect_orphans(
                 reason = "depends_on_missing"
 
         elif n.kind == "section":
-            key = n.data.get("key", "")
-            sb = sidebars_by_plugin.get(n.plugin_id, set())
-            # heurística laxa: section sin sidebar entry que mencione la key
-            if key not in sb and key.replace("_", "-") not in sb:
+            # Section orphan SII el plugin no declara NINGÚN sidebar entry.
+            # Si tiene >=1 sidebar, asumimos que el shell conecta los pares
+            # vía código (no manifest) — no es nuestro trabajo verificarlo.
+            sidebar_count = sidebar_count_by_plugin.get(n.plugin_id, 0)
+            if sidebar_count == 0:
                 is_orphan = True
                 reason = "section_without_sidebar"
 
         elif n.kind == "sidebar":
-            route = n.data.get("route") or ""
-            tail = route.lstrip("/").split("/", 1)[0]
-            sc = sections_by_plugin.get(n.plugin_id, set())
-            if tail not in sc and tail.replace("-", "_") not in sc:
+            # Idem: orphan SII el plugin no declara NINGUNA section.
+            section_count = section_count_by_plugin.get(n.plugin_id, 0)
+            if section_count == 0:
                 is_orphan = True
                 reason = "sidebar_without_section"
 
