@@ -1,9 +1,0 @@
-name: test-refinador
-description: Verifica que la skill refinador-tecnico se carga.
-nodes:
-  - id: probar
-    skills:
-      - exoclaw-tech-refiner
-    prompt: |
-      Lista las secciones obligatorias del formato de salida que debes
-      producir según tu protocolo, y los 4 anti-patrones a evitar.

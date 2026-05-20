@@ -47,7 +47,7 @@ describe("R-TAILWIND — token naming + CSS file scope", () => {
       `Tailwind token naming violations:\n` +
         offenders.map((m) => `  - ${m}`).join("\n") +
         `\n\nRename to --color-fg / --color-fg-muted / --color-accent etc. ` +
-        `See frontend-tech-refiner-archon SKILL.md anti-pattern #13.`,
+        `See .claude/skills/hubara-architecture-guide/references/fsd-rules.md anti-pattern #13.`,
     ).toEqual([]);
   });
 

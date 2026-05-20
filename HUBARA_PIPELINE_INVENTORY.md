@@ -218,11 +218,13 @@ output. Si difiere, regenerar.
 
 ---
 
-## §6. Archivos NO usados (legacy + descartes)
+## §6. Archivos legacy — ELIMINADOS
 
-Los siguientes existen en el repo pero NO los usa el pipeline hubara:
+Los siguientes archivos existían en el repo pero NO los usaba el pipeline
+hubara. **Eliminados en commit del 2026-05-20** (cleanup tras adopción del
+pipeline hubara como canonical):
 
-### §6.1 Workflows legacy (a deprecar en PR19)
+### §6.1 Workflows legacy eliminados (11)
 
 ```
 .archon/workflows/idea-a-hu-exoclaw.yaml      ← Pipeline exoclaw (Python only)
@@ -240,7 +242,7 @@ Los siguientes existen en el repo pero NO los usa el pipeline hubara:
 .archon/workflows/test-refinador.yaml         ← Smoke test
 ```
 
-### §6.2 Skills legacy (a deprecar en PR19)
+### §6.2 Skills legacy eliminados (8)
 
 ```
 .claude/skills/archon/                              ← Genérico Archon (no hubara)
@@ -253,9 +255,26 @@ Los siguientes existen en el repo pero NO los usa el pipeline hubara:
 .claude/skills/frontend-implementer-archon/
 ```
 
-**Por qué siguen ahí:** PR19 (deprecation) está bloqueado por la
-validación de 3+ HUs reales pasadas por el pipeline hubara. Hasta
-entonces, los legacy quedan como fallback.
+### §6.3 Otros legacy eliminados
+
+```
+creaskill.md   ← Instrucciones para crear el skill exoclaw (legacy howto)
+```
+
+### §6.4 Verificaciones pre-eliminación
+
+Antes del cleanup se verificó:
+- 0 referencias desde workflows hubara canonical (`grep -rn "Read .claude/skills/"
+  .archon/workflows/{idea-a-hu-hubara,hu-hubara-pipeline,hu-hubara-plugin-pipeline,review-pr-hubara}.yaml | grep -v hubara-`)
+- 0 cross-skill imports desde skills hubara hacia legacy
+- 1 referencia colateral fixeada: `frontend_dashboard/src/test/architecture/test_tokens_and_css.arch.test.ts:50`
+  ahora apunta a `hubara-architecture-guide/references/fsd-rules.md`
+  (skill canonical equivalente)
+
+Las skills globales `~/.claude/skills/exoclaw-tech-refiner` y similares
+(instaladas a nivel usuario, no repo) siguen disponibles para uso ad-hoc
+fuera del pipeline Archon — NO se borraron. Si querés evitar confusión,
+podés desinstalarlas con `claude plugin remove ...`.
 
 ---
 
