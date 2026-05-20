@@ -188,10 +188,82 @@ genérica en `src.platform.*`. NO embed en el dispatcher.
 - ✅ `uv run lint-imports` (4 contracts kept, 0 broken — sin `ignore_imports`)
 - ✅ `uv run pytest tests/architecture/test_r_dip_workflow_class_imports.py -v`
 - ✅ `uv run pytest tests/architecture/test_manifest_orchestration_consistency.py -v`
+- ✅ `uv run pytest tests/platform/orchestration/ -v` (unit tests del dispatcher)
 - ✅ Verificar que `system_map` muestra el edge `invokes_worker` con label
   rico (event + when + via): `curl -s http://localhost:8000/api/system-map/graph | jq '.edges[] | select(.kind=="invokes_worker")'`
 
-Ver `references/deha-rules.md §5.6` y ADR-2026-05-20-declarative-orchestration.
+**Footguns POST-PREMORTEM (NO te los podés saltar):**
+
+#### F1. Dict → dataclass contract — el target Input debe tener defaults
+
+Si tocás un dataclass que es **target de un transition** (e.g.
+`RemarketingSessionInput`, `SalesSessionInput`), CHECK:
+
+1. ¿Agregaste campos NUEVOS? Cada campo nuevo debe tener:
+   - **default value** en el dataclass (`field: type = default_value`), OR
+   - **input_mapping entry** en TODAS las transitions que apuntan a este
+     workflow (`input_mapping: { new_field: "$.event_field" }`), OR
+   - **bootstrap fallback** que tolera ausencia
+     (`field = input.field or compute_default()`).
+
+2. Si no hacés ninguna de las 3: el dispatcher seguirá pasando dict sin el
+   campo nuevo → `TypeError` en producción al arrancar el workflow target.
+
+3. Para verificar: correr el contract test funcional (cold start ~3min):
+   ```bash
+   uv run pytest tests/platform/orchestration/test_dict_to_dataclass_contract.py -m functional -v
+   ```
+   Si lo skipeás localmente por tiempo, **el revisor de CI lo va a correr** —
+   asegurate al menos de razonar el riesgo en `task-result.yaml`.
+
+#### F2. workflow.patched() — paridad de activities entre ramas
+
+Si refactorizás un workflow con `workflow.patched("descriptive-v1")`:
+
+- Ambas ramas DEBEN ejecutar el mismo número de activities (o usar un
+  helper method que encapsula la rama nueva — ver `_handoff_to_sales` en
+  `remarketing.py` como referencia).
+- Si necesitás más activities en la rama nueva (ej: write metadata + emit
+  event), está OK si las ponés en un patched-only branch que workflows
+  pre-patch nunca ejecutan (porque `patched("v1")` retorna False para sus
+  histories y queda inmutable).
+- Para validar: correr el test de replay con history fixture pre-patch:
+  ```bash
+  uv run pytest tests/test_replay_remarketing.py -v
+  ```
+
+#### F3. Path comparisons en tests — siempre `Path.resolve()`
+
+```python
+# ❌ NO USAR
+assert str(expected_path) in str(result.workspace.path)
+
+# ✅ USAR
+from pathlib import Path
+assert Path(result.workspace.path).resolve() == Path(expected_path).resolve()
+```
+
+#### F4. Bootstrap activity debe tolerar `runtime_workspace_path=None`
+
+Si tu task agrega un worker NUEVO con su propio bootstrap activity, el
+bootstrap DEBE hacer fallback a config local cuando `input.runtime_workspace_path`
+viene `None`:
+
+```python
+runtime_path = input.runtime_workspace_path
+if runtime_path is None:
+    # Local fallback — config del propio worker, no leak cross-agent
+    from src.plugins.<self_plugin>.agent.<self_worker>.config.env import (
+        get_workspace_path,
+    )
+    runtime_path = str(get_workspace_path())
+```
+
+Razón: el dispatcher declarativo NO sabe el path del worker target (sería
+R-DIP #10 violation). Cuando arranca workflows cross-worker, omite ese
+campo y el bootstrap lo resuelve localmente.
+
+Ver `references/deha-rules.md §5.6 + §5.7 + §5.8` y ADR-2026-05-20-declarative-orchestration.
 
 ### §5.2 FSD rules (frontend)
 

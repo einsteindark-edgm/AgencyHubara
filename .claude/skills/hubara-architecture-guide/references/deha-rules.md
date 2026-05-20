@@ -607,6 +607,159 @@ await workflow.execute_activity(
 
 Ver ADR-2026-05-20-declarative-orchestration para el rationale completo.
 
+### §5.7 Footguns del declarative orchestration (post-premortem)
+
+Estos 4 patrones SÍ rompen producción aunque no violen R-DIP. Aprendidos del
+premortem de commit `eb27473`. **Pruebá explícitamente cada uno cuando toques
+orchestration:**
+
+#### F1. Dict → dataclass contract en el boundary del workflow target
+
+**Cómo funciona:** el dispatcher pasa un **dict** a
+`client.start_workflow(name, dict, ...)`. Temporal lo deserializa al type
+hint de `@workflow.run(self, input: <TargetInput>)` reconstruyendo
+`TargetInput(**dict)`. Esto solo funciona si:
+
+- **TODO campo no provisto por `input_mapping` tiene default en el dataclass**, O
+- **El bootstrap activity tolera su ausencia** (ej: fallback a config local
+  con `get_workspace_path()` si `runtime_workspace_path` viene `None`).
+
+**Footgun concreto:** alguien agrega un campo NUEVO required (sin default)
+a `RemarketingSessionInput`. El dispatcher sigue pasando
+`{"session_id": "x", "motivo": "y"}` — Temporal lanza `TypeError:
+__init__() missing 1 required positional argument`. **En producción, no en
+CI** (porque los tests architecturales no escanean signatures de input).
+
+```python
+# ❌ MALO — agregás campo required sin actualizar input_mapping
+@dataclass
+class RemarketingSessionInput:
+    session_id: str
+    motivo: str
+    new_field: str          # ← NEW: no default, no en input_mapping → BOOM en runtime
+
+# ✅ BUENO — opción A: default
+@dataclass
+class RemarketingSessionInput:
+    session_id: str
+    motivo: str
+    new_field: str = ""    # ← default
+
+# ✅ BUENO — opción B: agregar al input_mapping del manifest
+# plugin.yaml:
+transitions:
+  - id: ...
+    action:
+      input_mapping:
+        session_id: "$.session_id"
+        motivo: "$.motivo"
+        new_field: "$.something"   # ← derivado del evento
+
+# ✅ BUENO — opción C: bootstrap fallback
+# bootstrap_activity:
+new_field = input.new_field or compute_default()
+```
+
+**Test enforcer:** `tests/platform/orchestration/test_dict_to_dataclass_contract.py`
+(marked `functional`) verifica:
+1. dict → dataclass materialization works
+2. Missing required field fails LOUD (TypeError surfaced, no silencio)
+
+#### F2. `workflow.patched()` debe preservar paridad de activities
+
+Cuando refactorizás un workflow existente a Level 3, el `workflow.patched()`
+gate protege replay. **Pero ambas ramas DEBEN ejecutar el mismo número de
+activities** (Temporal valida count of activity completions vs history).
+
+```python
+# ❌ MALO — ramas con conteo desigual de activities
+if workflow.patched("v1"):
+    await workflow.execute_activity(dispatch_event_activity, ...)  # 1 activity
+    await workflow.execute_activity(write_log, ...)                 # ← 2 total
+else:
+    await workflow.execute_activity(legacy_activity, ...)           # 1 total → NondeterminismError
+
+# ✅ BUENO — paridad
+if workflow.patched("v1"):
+    await workflow.execute_activity(dispatch_event_activity, ...)  # 1 activity
+else:
+    await workflow.execute_activity(legacy_activity, ...)           # 1 activity
+```
+
+Si necesitás side-effects extra en la rama nueva (ej: `write_pending_handoff`
+antes de `dispatch_event`), ponelos en un helper method que SÓLO existe en
+la rama nueva — el legacy mantiene su shape original. Mirá
+`RemarketingSessionWorkflow._handoff_to_sales` como referencia: la rama
+patched llama 2 activities, la legacy 1 — pero **eso solo es safe porque
+los workflows con histories pre-patch ya consumieron la legacy y no se
+re-replay-an con el patch encima** (el `patched()` bool resuelve True para
+nuevos histories, False para viejos, y queda inmutable en history).
+
+**Regla práctica:** si tu refactor cambia el conteo de activities entre
+ramas, leé el doc de `workflow.patched()` antes de mergear. Si dudás,
+agregá un test de replay con histories pre-patch (ver `test_replay_remarketing.py`).
+
+#### F3. Path comparisons en tests sin `Path.resolve()`
+
+```python
+# ❌ FRAGILE — falla en CI con symlinks o relative paths
+assert str(get_workspace_path()) in str(result.workspace.path)
+
+# ✅ ROBUSTO — normaliza ambos lados
+from pathlib import Path
+expected = Path(get_workspace_path()).resolve()
+actual = Path(result.workspace.path).resolve()
+assert actual == expected
+```
+
+#### F4. Eventos opcionales que nadie consume → no_matches silencioso
+
+El dispatcher devuelve `DispatchResult(no_matches=True)` cuando ningún
+transition matchea el evento. Esto **NO es error** (workflows pueden emitir
+eventos terminales para observability). Pero si te equivocaste con `when:`
+o `tag:`, queda silencioso.
+
+**Mitigación:** loguear claramente cuando no hay matches. El dispatcher ya
+lo hace (`structlog.info("no matching transition")`). En tests
+funcionales, asertá explícitamente `result.no_matches is False` cuando
+esperás que la transition dispare.
+
+### §5.8 Checklist obligatorio post-cambio en orchestration
+
+Si tu PR toca CUALQUIERA de:
+- `src/platform/orchestration/`
+- `src/platform/temporal/dispatcher.py`
+- `frontend_dashboard/src/plugins/<plugin>/plugin.yaml` (campos
+  `workflow_classes`, `emits`, `transitions`)
+- `src/plugins/<plugin>/shared/contracts/events.py`
+- Cualquier `Input` dataclass que es target de un transition
+
+**ANTES de emitir `status: passed`:**
+
+1. `uv run lint-imports` → 4 contracts kept, 0 broken
+2. `uv run pytest tests/architecture/test_r_dip_workflow_class_imports.py -v`
+3. `uv run pytest tests/architecture/test_manifest_orchestration_consistency.py -v`
+4. `uv run pytest tests/platform/orchestration/ -v` (orchestration unit tests)
+5. Si modificaste un dataclass target (campos): correr el contract test:
+   `uv run pytest tests/platform/orchestration/test_dict_to_dataclass_contract.py -m functional -v`
+   (cold start ~3min, paciencia)
+6. Si refactorizaste con `workflow.patched()`: agregar test de replay con
+   history fixture pre-patch (mirá `tests/test_replay_remarketing.py` como
+   plantilla)
+7. Si tocaste el manifest: smoke test al system_map:
+   ```bash
+   uv run python -c "
+   from src.plugins.system_map.domain.builder import build_system_graph
+   g = build_system_graph()
+   assert not g.warnings, g.warnings
+   print('edges:', [(e.source, e.target, e.label) for e in g.edges if e.kind=='invokes_worker'])
+   "
+   ```
+   No debe haber warnings y los edges esperados deben aparecer con labels.
+
+Ver ADR-2026-05-20-declarative-orchestration §10 (trade-offs) +
+ADR-2026-05-20-declarative-orchestration §11 (riesgos).
+
 ---
 
 ## §6. Cómo bloquearse correctamente cuando R-rule te lo pide

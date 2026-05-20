@@ -398,6 +398,30 @@ Por cada regla, declarar si aplica + cómo se cumple:
   - NUNCA import directo de workflow class de sibling
   - flag la task con `cross_worker_dispatch: true` en metadata para que
     el implementer sea explícito sobre el patrón
+- **Orchestration footguns (ADR-2026-05-20 premortem):** <applies / N/A> —
+  si la HU toca:
+  - un **Input dataclass** que es target de un transition (e.g.
+    `SalesSessionInput`, `RemarketingSessionInput`), o
+  - un **plugin.yaml** con `transitions[]` (cambio en `input_mapping` o
+    `target_workflow`), o
+  - un **workflow** existente refactorizado con `workflow.patched()`, o
+  - el dispatcher genérico (`src/platform/orchestration/`),
+
+  marcá la task con `orchestration_contract_change: true` en metadata + agregá
+  a `delivers_acceptance` lo siguiente:
+
+  - ☐ Si agregás campo NUEVO al Input dataclass: tiene `default` value O hay
+    `input_mapping` en todas las transitions que apuntan al workflow target
+    O el bootstrap activity hace fallback (uno de los 3, explicitar cuál).
+  - ☐ `workflow.patched(<descriptive-v1>)` gates si refactorizás existente +
+    ambas ramas con paridad de activity counts (o helper method encapsulado).
+  - ☐ Tests: `test_dict_to_dataclass_contract.py` (marked functional) +
+    `test_manifest_orchestration_consistency.py` (architecture) PASS.
+  - ☐ Bootstrap activity nuevo (si aplica) tolera `runtime_workspace_path=None`
+    con fallback local (ver §5.6 deha-rules).
+
+  Si no marcás esto, el implementer caerá en uno de los 4 footguns del
+  premortem (ver `references/deha-rules.md §5.7`).
 - **FSD layering:** <applies / N/A> — <cómo>
 - **Manifest = SSoT:** <applies / N/A> — <cómo>
 

@@ -217,6 +217,98 @@ nodes:
               rule: plugin-manifest, message: "transition references on_event=X
               but emits[] doesn't declare it".
 
+          - **Dict→dataclass contract drift (ADR-2026-05-20 §10 footgun F1)** — HIGH severity:
+              Detectar cuando el PR agrega un campo NUEVO required (sin default)
+              a un dataclass que ES target de un transition declarativo.
+
+              Paso 1 — Identificar Input dataclasses target. Para cada
+              `plugin.yaml` en el diff, listar
+              `agent.workers[].transitions[].action.target_workflow` →
+              extraer el class name (e.g. "RemarketingWorkflow"). Buscar la
+              clase en `src/plugins/<plugin>/agent/<worker>/workflows/*.py`
+              (via @workflow.defn name attribute), y leer la signature de
+              `async def run(self, input: <InputClass>)`. El `<InputClass>`
+              (e.g. RemarketingSessionInput) es lo que vamos a vigilar.
+
+              Paso 2 — Si el PR modifica ese `<InputClass>` (vive típicamente
+              en `agent/<worker>/contracts.py` o `shared/contracts/`):
+              - Para cada campo NUEVO declarado en el diff:
+                * ¿Tiene `= <default>` en su declaración?  → OK
+                * ¿Aparece en algún `input_mapping:` del manifest de
+                  TODAS las transitions que apuntan a este workflow? → OK
+                * ¿El bootstrap activity lo trata como opcional con fallback?
+                  (grep en `agent/<worker>/activities/bootstrap_session.py`
+                  por `or get_workspace_path()` u otro fallback similar) → OK
+                * Si NINGUNA de las 3: MARCAR como:
+                    severity: high
+                    rule: plugin-manifest
+                    file: <archivo del dataclass>
+                    message: "Campo NUEVO '<field>' en <InputClass> sin default
+                              y sin input_mapping en transitions → el dispatcher
+                              pasa dict que romperá con TypeError en producción
+                              (ADR-2026-05-20 §10 F1)"
+                    fix_suggestion: |
+                        Una de:
+                        (a) Agregar default: `<field>: <type> = <value>`
+                        (b) Agregar input_mapping en plugin.yaml transitions:
+                              input_mapping:
+                                <field>: "$.event_source"
+                        (c) Hacer el bootstrap tolerante:
+                              field = input.field or compute_local_default()
+
+          - **workflow.patched() parity (ADR-2026-05-20 §10 footgun F2)** — MEDIUM severity:
+              Si el diff agrega `workflow.patched("<name>")` con branches `if/else`,
+              contar el número de `await workflow.execute_activity(...)` en cada rama.
+
+              - Si ambas ramas tienen el mismo número → OK (replay-safe).
+              - Si difieren: MARCAR como:
+                  severity: medium
+                  rule: R-DET
+                  message: "workflow.patched('<name>') ramas con activity-count
+                            desigual → NondeterminismError al replay de workflows
+                            mid-flight pre-patch (ADR-2026-05-20 §10 F2)"
+                  fix_suggestion: |
+                      Encapsular la rama nueva en un método helper que solo
+                      se invoque dentro del `if workflow.patched(...)` branch.
+                      Histories pre-patch nunca ejecutan ese branch, así que
+                      sus replays no se ven afectados (ver
+                      RemarketingSessionWorkflow._handoff_to_sales como referencia).
+
+          - **Path comparisons sin Path.resolve() (footgun F3)** — LOW severity:
+              Grep en tests del PR:
+                  assert .*str\(.*\) in str\(.*\)\.workspace\.path
+                  assert str\(.*\.path\) == str\(.*\)
+              Si el path comparado puede ser un symlink o relativo, sugerir:
+                  severity: low
+                  rule: plugin-manifest
+                  message: "Path comparison sin Path.resolve() → frágil en CI
+                            con symlinks (ADR-2026-05-20 §10 F3)"
+                  fix_suggestion: |
+                      from pathlib import Path
+                      assert Path(actual).resolve() == Path(expected).resolve()
+
+          - **Bootstrap activity sin fallback para runtime_workspace_path (footgun F4)** — MEDIUM severity:
+              Si el PR agrega un NUEVO worker (nuevo `agent/<worker>/` dir con
+              `activities/bootstrap_session.py`), verificar que el bootstrap
+              maneje `runtime_workspace_path=None`:
+              - Grep por `runtime_workspace_path is None` o `not runtime_path` en
+                el bootstrap activity.
+              - Si ausente Y el manifest declara transitions que apuntan a este
+                worker: MARCAR como:
+                  severity: medium
+                  rule: plugin-manifest
+                  message: "Bootstrap activity no tolera runtime_workspace_path=None.
+                            El dispatcher declarativo no puede inyectarlo cross-worker
+                            (R-DIP #10) → falla al arrancar via transition
+                            (ADR-2026-05-20 §10 F4)"
+                  fix_suggestion: |
+                      runtime_path = input.runtime_workspace_path
+                      if runtime_path is None:
+                          from src.plugins.<plugin>.agent.<worker>.config.env import (
+                              get_workspace_path,
+                          )
+                          runtime_path = str(get_workspace_path())
+
         Output: $ARTIFACTS_DIR/findings-deha.yaml schema:
           version: 1
           agent: deha-compliance
@@ -441,6 +533,14 @@ nodes:
           - Setear merge_blocking: true
           Razón: este es el tipo de bug que documentó ADR-2026-05-20 y NO
           debe entrar a main bajo ningún concepto.
+
+        Nota especial — Dict→dataclass contract footgun (ADR-2026-05-20 §10 F1):
+        Findings con `message` que contengan "Campo NUEVO" + "sin default"
+        + "InputClass" son **runtime-time bugs** (no detectables por mypy
+        ni unit tests, solo por contract test functional o producción).
+        Si severity=high, agregar a merge-decision.yaml en blocking_findings
+        con reason="dict→dataclass contract violation — needs default OR
+        input_mapping OR bootstrap fallback (ADR-2026-05-20 §10)".
 
         Cuando termines: <promise>SYNTH_OK</promise>
 

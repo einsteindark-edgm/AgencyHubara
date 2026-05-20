@@ -309,6 +309,35 @@ Por cada regla aplicable, declarar cómo la HU la cumple:
   - NUNCA fraseo "importar el workflow class del otro worker"
   Si la HU pide explícitamente importar la clase del sibling → bloquear con
   `mode: blocked, blocked_reason: violates_R-DIP_10` + propuesta de re-fraseo.
+- **Orchestration contract changes (ADR-2026-05-20 §10 premortem):** si la
+  HU agrega campos a un Input dataclass que ES target de un transition
+  declarativo (chequear `frontend_dashboard/src/plugins/<plugin>/plugin.yaml`
+  en `transitions[].action.target_workflow`):
+
+  El refinement DEBE explicitar **cuál de las 3 estrategias** se aplica al
+  campo nuevo:
+
+  1. **Default value** en el dataclass — más simple. Especificar el valor
+     default y por qué es safe.
+  2. **input_mapping entry** en TODAS las transitions afectadas — modificar
+     `plugin.yaml` también, no solo el dataclass.
+  3. **Bootstrap fallback** — el activity tolera la ausencia del campo
+     (e.g. `field = input.field or compute_default()`). Especificar dónde
+     vive el fallback.
+
+  Si la HU dice "agregar campo X al Input" sin especificar la estrategia →
+  marcá como `mode: needs_clarification` con la lista de las 3 opciones.
+
+  Si la HU dice "no agregar default" + "no modificar manifest" + "no fallback"
+  → `mode: blocked, blocked_reason: violates_orchestration_contract` con
+  link al ADR §10. Razón: en producción rompe el `client.start_workflow(name,
+  dict, ...)` con TypeError al deserializar.
+
+  Tests obligatorios que el refinement debe listar:
+  - `tests/platform/orchestration/test_dict_to_dataclass_contract.py` (functional)
+  - `tests/architecture/test_manifest_orchestration_consistency.py`
+  - Si refactor con `workflow.patched()`: test de replay con history fixture
+    pre-patch.
 - **FSD layering:** ...
 - **Plugin manifest = SSoT:** ...
 
