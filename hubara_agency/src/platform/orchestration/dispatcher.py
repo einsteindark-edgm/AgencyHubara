@@ -225,8 +225,30 @@ def _build_input(action: TransitionAction, envelope: EventEnvelope) -> Any:
         - No mapping → pass the entire payload as single dict arg
 
     The dispatcher always passes ONE positional arg to start_workflow / signal.
-    Target workflows take that arg (typically a dataclass instance via
-    Temporal's DataConverter when type hints are present at the worker side).
+
+    ──── Important contract: dict → dataclass at the worker boundary ────
+
+    The dispatcher passes a **plain dict** to ``client.start_workflow(name,
+    arg, ...)``. Temporal's default ``DataConverter`` reconstructs the
+    target's input dataclass on the **worker side** by reading the type
+    hint of ``@workflow.run``. This is verified by smoke test (Temporal
+    Python SDK 1.25+ — see ``tests/platform/orchestration/test_dict_to_dataclass_contract.py``).
+
+    Consequence: **the target workflow's input dataclass MUST give every
+    field a default value, or be present in this dispatch's dict.** If you
+    add a non-default field to a dataclass that is the target of any
+    transition, you must ALSO either:
+
+      (a) provide it via ``input_mapping`` in every transition that points
+          at that workflow, OR
+      (b) make the bootstrap activity tolerate its absence (e.g. fallback
+          to local config, as Sales/Remarketing's bootstraps do for
+          ``runtime_workspace_path``).
+
+    The architecture test ``test_manifest_orchestration_consistency`` partly
+    enforces this by requiring ``workflow_classes[]`` to resolve to a real
+    class; making the **field-level** check requires AST inspection of the
+    target's ``run()`` signature (future enhancement).
     """
     mapping = action.input_mapping
     if mapping is None:

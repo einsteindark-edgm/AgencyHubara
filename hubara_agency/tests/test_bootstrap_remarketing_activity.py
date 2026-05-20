@@ -83,6 +83,8 @@ async def test_bootstrap_falls_back_to_local_workspace_when_path_missing() -> No
 
     Pre-ADR-2026-05-20 este caso lanzaba RuntimeError. Ahora hace fallback.
     """
+    from pathlib import Path
+
     from src.plugins.chats.agent.remarketing.activities import (
         bootstrap_remarketing_session_activity,
     )
@@ -98,8 +100,12 @@ async def test_bootstrap_falls_back_to_local_workspace_when_path_missing() -> No
         ),
     )
     assert result is not None
-    expected_path = str(get_workspace_path())
-    assert expected_path in str(result.workspace.path) or str(result.workspace.path) == expected_path
+    # Normalizar paths via Path.resolve() — robusto a symlinks. Premortem fix.
+    expected = Path(get_workspace_path()).resolve()
+    actual = Path(result.workspace.path).resolve()
+    assert actual == expected, (
+        f"Bootstrap fallback path mismatch:\n  expected: {expected}\n  actual:   {actual}"
+    )
 
 
 async def test_bootstrap_is_idempotent(runtime_workspace: Path) -> None:
