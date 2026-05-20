@@ -52,9 +52,6 @@ from src.platform.constants import (
     ROUTE_VENTAS,
 )
 from src.platform.plugin_manifest import get_task_queue
-from src.plugins.chats.agent.remarketing.workflows.remarketing import (
-    RemarketingSessionWorkflow,
-)
 from src.plugins.chats.agent.sales.contracts import SalesSessionInput
 from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
 from src.plugins.chats.agent.sales.workflows.sales_session import HubaraSalesSessionWorkflow
@@ -141,7 +138,15 @@ class LoadOrStartSalesSession:
             logger.info(
                 "Routing webhook to Remarketing Agent", workflow_id=workflow_id
             )
-            workflow_class: type = RemarketingSessionWorkflow
+            # ADR-2026-05-20: NO importamos `RemarketingSessionWorkflow`.
+            # Este branch SOLO reusa un workflow_id existente; si murió,
+            # fallback a Sales. No arrancamos un Remarketing nuevo desde acá
+            # (eso lo hace el dispatcher declarativo cuando Sales emite
+            # `SalesSessionCompletionEvent(tag=INTERESADO)`). La signal usa
+            # el nombre del handler directamente — Temporal acepta
+            # `handle.signal("send_message", args=...)` sin la referencia de
+            # la clase del workflow. Esto elimina la violación R-DIP #10
+            # documentada en .importlinter.
             # PR-D global cleanup (ADR-2026-05-06-10): tras la migracion DEHA
             # workspace de Remarketing (PR-A/PR-B), `RemarketingSessionWorkflow`
             # lee identidad / tono / catalogo desde su workspace canonico via
@@ -192,7 +197,9 @@ class LoadOrStartSalesSession:
         if active_route != ROUTE_REMARKETING:
             workflow_id = f"session-{session_id}"
             logger.info("Routing webhook to Sales Agent", workflow_id=workflow_id)
-            workflow_class = HubaraSalesSessionWorkflow
+            # Sales workflow class import is intra-agent (sales/use_cases →
+            # sales/workflows), so we keep `HubaraSalesSessionWorkflow.run` as
+            # a typed reference — that's NOT a R-DIP #10 issue (same agent).
             # PR-B: el plugin_context legacy (shared_brain/*.md) deja de viajar
             # por el signal del path Sales. La identidad/tono/catalogo ahora
             # viven en `workspace/{IDENTITY,SOUL,USER,TOOLS,AGENTS}.md` y
@@ -234,7 +241,14 @@ class LoadOrStartSalesSession:
                 )
 
         # 5. Signal del mensaje al workflow seleccionado.
+        #
+        # ADR-2026-05-20: signal por NOMBRE (string). Temporal acepta
+        # `handle.signal("send_message", args=...)` además de la referencia
+        # de método. Esto desacopla del workflow class — el path remarketing
+        # ya no necesita el import cross-agent, y el path sales sigue siendo
+        # equivalente al `HubaraSalesSessionWorkflow.send_message` que usaba
+        # antes (mismo nombre de @workflow.signal).
         await handle.signal(
-            workflow_class.send_message,  # type: ignore[attr-defined]
+            "send_message",
             args=[message, None, plugin_context],
         )

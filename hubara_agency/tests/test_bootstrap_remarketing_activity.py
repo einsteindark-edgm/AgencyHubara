@@ -75,25 +75,31 @@ async def test_bootstrap_returns_json_safe_session_input(runtime_workspace: Path
     assert isinstance(tool_defs, list)
 
 
-async def test_bootstrap_failfast_when_workspace_path_missing() -> None:
-    """PR-B: si el composition root no cablea `runtime_workspace_path`, la
-    activity revienta antes de llegar a `build_prompt` y producir un system
-    prompt vacio. Este es un liveness probe — no debe ser silencioso.
+async def test_bootstrap_falls_back_to_local_workspace_when_path_missing() -> None:
+    """ADR-2026-05-20: el dispatcher genérico no conoce el path del worker
+    target (sería R-DIP #10). Cuando el caller cross-worker es el dispatcher
+    declarativo, `runtime_workspace_path` viene en None y el bootstrap
+    resuelve via `get_workspace_path()` (config del propio worker).
+
+    Pre-ADR-2026-05-20 este caso lanzaba RuntimeError. Ahora hace fallback.
     """
     from src.plugins.chats.agent.remarketing.activities import (
         bootstrap_remarketing_session_activity,
     )
+    from src.plugins.chats.agent.remarketing.config.env import get_workspace_path
 
     env = ActivityEnvironment()
-    with pytest.raises(RuntimeError, match="runtime_workspace_path"):
-        await env.run(
-            bootstrap_remarketing_session_activity,
-            RemarketingSessionInput(
-                session_id="wa_5499999999999",
-                motivo="rebote",
-                runtime_workspace_path=None,
-            ),
-        )
+    result = await env.run(
+        bootstrap_remarketing_session_activity,
+        RemarketingSessionInput(
+            session_id="wa_5499999999999",
+            motivo="rebote",
+            runtime_workspace_path=None,
+        ),
+    )
+    assert result is not None
+    expected_path = str(get_workspace_path())
+    assert expected_path in str(result.workspace.path) or str(result.workspace.path) == expected_path
 
 
 async def test_bootstrap_is_idempotent(runtime_workspace: Path) -> None:

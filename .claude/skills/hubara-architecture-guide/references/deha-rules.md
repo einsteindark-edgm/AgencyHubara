@@ -445,6 +445,168 @@ from src.platform.catalog.snapshot import read_catalog_snapshot   # ✅ via plat
 - `lint-imports` (import-linter via `uv run lint-imports`).
 - Falla en CI si rompés algún contrato.
 
+### §5.6 Cross-worker flow: declarative orchestration (ADR-2026-05-20)
+
+**Regla de oro:** un workflow NUNCA importa el class del workflow de otro
+worker hermano (R-DIP #10). Tampoco importa sus `contracts.py` o
+`activities/`. Si necesitás "arrancar el otro workflow cuando termine el mío":
+
+#### Patrón canónico
+
+1. **Define un completion event** en `src/plugins/<plugin>/shared/contracts/events.py`:
+
+```python
+# shared/contracts/events.py — accesible para AMBOS siblings (no viola R-DIP).
+@dataclass(frozen=True)
+class SalesSessionCompletionEvent:
+    session_id: str
+    tag: str              # "INTERESADO" | "HUMANO" | etc.
+    motivo: str = ""
+    delay_seconds: int = 60
+```
+
+2. **Declara el flujo en el manifest** del worker source:
+
+```yaml
+# frontend_dashboard/src/plugins/<plugin>/plugin.yaml
+agent:
+  workers:
+    - name: sales
+      workflow_classes: [HubaraSalesSessionWorkflow]
+      emits: [SalesSessionCompletionEvent]
+      transitions:
+        - id: sales_to_remarketing_on_interested
+          on_event: SalesSessionCompletionEvent
+          when: { tag: INTERESADO }
+          action:
+            via: start_workflow_with_replace
+            target_plugin: <plugin>           # opcional — default = same plugin
+            target_worker: remarketing
+            target_workflow: RemarketingWorkflow   # el @workflow.defn name
+            workflow_id_template: "remarketing-{event.session_id}"
+            input_mapping:
+              session_id: "$.session_id"
+              motivo: "$.motivo"
+            start_delay_field: delay_seconds
+```
+
+3. **El workflow source emite el evento** via `dispatch_event_activity`:
+
+```python
+from src.platform.orchestration import dispatch_event_activity, envelope_for
+from src.plugins.chats.shared.contracts.events import SalesSessionCompletionEvent
+
+# Dentro de @workflow.run, cuando llegue el momento de transition:
+await workflow.execute_activity(
+    dispatch_event_activity,
+    envelope_for(
+        SalesSessionCompletionEvent(
+            session_id=session.session_id,
+            tag="INTERESADO",
+            motivo="cliente dudó del precio",
+            delay_seconds=60,
+        ),
+        source_plugin="<plugin>",
+        source_worker="sales",
+    ),
+    start_to_close_timeout=timedelta(seconds=30),
+    retry_policy=RetryPolicy(maximum_attempts=3),
+)
+```
+
+4. **El dispatcher hace todo lo demás**: lee el manifest, encuentra la
+   transition matchea por `on_event` + `when`, arranca el target workflow
+   por NOMBRE (string) en el task_queue correcto, con el input_mapping
+   aplicado.
+
+#### Verbos disponibles (`action.via`)
+
+| Verbo | Comportamiento |
+|---|---|
+| `start_workflow` | Falla si el workflow_id ya existe |
+| `start_workflow_with_replace` | Termina el existente RUNNING y arranca fresco |
+| `ensure_running` | Noop si RUNNING, arranca si no existe |
+| `signal` | Envía signal al workflow existente (requiere `signal_name:`) |
+
+#### Side-effects (write metadata, etc.)
+
+Si necesitás escribir metadata ANTES del dispatch (e.g.
+`pending_handoff_summary`), invocá una activity genérica de platform/ por
+separado. NO embedas side-effects en el dispatcher. Patrón:
+
+```python
+# 1. Side-effect (generic activity, no agent imports)
+await workflow.execute_activity(
+    write_pending_handoff_activity,
+    args=[session_id, summary],
+    start_to_close_timeout=timedelta(seconds=15),
+)
+
+# 2. Emit event → dispatcher routes via manifest
+await workflow.execute_activity(
+    dispatch_event_activity,
+    envelope_for(MyEvent(...), source_plugin=..., source_worker=...),
+    ...
+)
+```
+
+#### Workflow.patched() durante migración
+
+Si refactorizás un workflow existente de invocación directa a Nivel 3, **DEBÉS
+usar `workflow.patched(...)`** para preservar replay-safety:
+
+```python
+if workflow.patched("declarative-orchestration-v1"):
+    # Level 3 path
+    await workflow.execute_activity(dispatch_event_activity, envelope_for(...))
+else:
+    # Legacy path — preserved hasta drain
+    await workflow.execute_activity(legacy_activity, decision)
+```
+
+Tras `idle_timeout` cumplido en producción (drain), `workflow.deprecate_patch("declarative-orchestration-v1")` y eliminar el legacy branch.
+
+#### Pre-requisitos antes de declarar una transition
+
+1. El **target worker** debe declarar `workflow_classes: [<class_name>]` con
+   el nombre del `@workflow.defn(name="...")` (no el Python class name).
+2. El **target workflow** debe aceptar un dict como input (o tener type hints
+   en `run()` para que Temporal deserialice automaticamente al dataclass).
+3. El **target bootstrap activity** debe ser robusto a campos opcionales del
+   input (fallback a config local con `get_workspace_path()` si necesario).
+
+#### Anti-patterns a evitar
+
+```python
+# ❌ INVÁLIDO — viola R-DIP #10
+from src.plugins.<plugin>.agent.<other_agent>.workflows.X import OtherWorkflow
+await client.start_workflow(OtherWorkflow, ...)
+
+# ❌ INVÁLIDO — workflow class import + .run reference
+from src.plugins.<plugin>.agent.<other_agent>.workflows.X import OtherWorkflow
+await client.start_workflow(OtherWorkflow.run, ...)
+
+# ❌ INVÁLIDO — importing DTO from sibling
+from src.plugins.<plugin>.agent.<other_agent>.contracts import OtherInput
+
+# ✅ VÁLIDO — declarative dispatch via manifest
+await workflow.execute_activity(
+    dispatch_event_activity,
+    envelope_for(MyCompletionEvent(...), source_plugin="<plugin>", source_worker="me"),
+)
+```
+
+#### Enforcement
+
+- `tests/architecture/test_r_dip_workflow_class_imports.py` falla CI si
+  detecta el patrón inválido.
+- `tests/architecture/test_manifest_orchestration_consistency.py` detecta
+  drift (transitions apuntan a eventos no declarados en `emits[]`, o a
+  workflows no declarados en `workflow_classes[]` del target).
+- `lint-imports` falla si un agent importa otro sibling.
+
+Ver ADR-2026-05-20-declarative-orchestration para el rationale completo.
+
 ---
 
 ## §6. Cómo bloquearse correctamente cuando R-rule te lo pide

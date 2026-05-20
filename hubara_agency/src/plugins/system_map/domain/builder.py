@@ -250,7 +250,12 @@ def _build_api_nodes(plugin_id: str, manifest: dict[str, Any]) -> list[Node]:
 
 
 def _build_agent_nodes(plugin_id: str, manifest: dict[str, Any]) -> list[Node]:
-    """Workers Temporal — cada uno con su task_queue + `invokes` declarado."""
+    """Workers Temporal — cada uno con su task_queue, `invokes` y `transitions`.
+
+    ADR-2026-05-20: las `transitions:` declarativas son la SSoT para el flujo
+    cross-worker. Las legacy `invokes:` se mantienen como compat (deprecadas)
+    pero el system_map prefiere `transitions:` para edges si están presentes.
+    """
     agent = manifest.get("agent") or {}
     workers = agent.get("workers") or []
     nodes: list[Node] = []
@@ -272,6 +277,28 @@ def _build_agent_nodes(plugin_id: str, manifest: dict[str, Any]) -> list[Node]:
             for inv in invokes_raw
             if isinstance(inv, dict) and inv.get("worker")
         ]
+        # ADR-2026-05-20: leer transitions[] declarativas como SSoT del flujo.
+        transitions_raw = worker.get("transitions") or []
+        transitions_data = []
+        for t in transitions_raw:
+            if not isinstance(t, dict):
+                continue
+            action = t.get("action") or {}
+            transitions_data.append(
+                {
+                    "id": t.get("id"),
+                    "on_event": t.get("on_event"),
+                    "when": dict(t.get("when") or {}),
+                    "target_plugin": action.get("target_plugin") or plugin_id,
+                    "target_worker": action.get("target_worker"),
+                    "target_workflow": action.get("target_workflow"),
+                    "via": action.get("via"),
+                }
+            )
+        emits_data = [e for e in (worker.get("emits") or []) if isinstance(e, str)]
+        workflow_classes_data = [
+            wc for wc in (worker.get("workflow_classes") or []) if isinstance(wc, str)
+        ]
         nodes.append(
             Node(
                 id=f"worker:{plugin_id}:{name}",
@@ -284,6 +311,9 @@ def _build_agent_nodes(plugin_id: str, manifest: dict[str, Any]) -> list[Node]:
                     "task_queue": task_queue,
                     "replicas": (worker.get("deployment") or {}).get("replicas"),
                     "invokes": invokes_data,
+                    "transitions": transitions_data,
+                    "emits": emits_data,
+                    "workflow_classes": workflow_classes_data,
                 },
             )
         )
@@ -514,15 +544,52 @@ def build_system_graph(
             )
         )
 
-    # Phase 1.5: leer `invokes:` declarados en manifests (worker.invokes en
-    # plugin.yaml). Estos son la SSoT — el code scan se compara contra esto.
+    # Phase 1.5: leer flujo cross-worker del manifest.
+    # SSoT post-ADR-2026-05-20: `transitions[]` declarativas. Si un worker
+    # tiene transitions, IGNORAMOS sus `invokes[]` legacy (evita edges dupes
+    # cuando ambos describen el mismo flujo). Si solo tiene invokes (Nivel 1
+    # legacy), las leemos.
     declared_invocations: set[tuple[str, str]] = set()  # (source_worker_id, target_worker_id)
-    declared_meta: dict[tuple[str, str], dict] = {}     # id pair → {via, when, plugin}
+    declared_meta: dict[tuple[str, str], dict] = {}     # id pair → {via, when, plugin, label}
     for plugin_id in plugin_contributions:
         for n in plugin_contributions[plugin_id]:
             if n.kind != "worker":
                 continue
             source_id = n.id
+
+            # Si el worker declara transitions[] (Nivel 3), usar ESAS.
+            transitions = n.data.get("transitions", [])
+            if transitions:
+                for t in transitions:
+                    target_plugin = t.get("target_plugin") or plugin_id
+                    target_worker = t.get("target_worker")
+                    target_id = worker_node_by_plugin_and_name.get(
+                        (target_plugin, target_worker)
+                    )
+                    if not target_id:
+                        warnings.append(
+                            f"{plugin_id}.workers[{n.data['name']}].transitions[{t.get('id')}] "
+                            f"targets {target_plugin}.{target_worker} but no such worker exists"
+                        )
+                        continue
+                    pair = (source_id, target_id)
+                    declared_invocations.add(pair)
+                    # Label rico: id + when summary + via
+                    when_summary = ""
+                    if t.get("when"):
+                        when_summary = " " + ",".join(
+                            f"{k}={v}" for k, v in (t.get("when") or {}).items()
+                        )
+                    label = f"{t.get('on_event','event')}{when_summary} → {t.get('via','start')}"
+                    declared_meta[pair] = {
+                        "via": t.get("via", "start_workflow"),
+                        "when": t.get("when"),
+                        "source": "manifest_transitions",
+                        "label": label,
+                    }
+                continue  # transitions ganan, no leer invokes
+
+            # Fallback Nivel 1: leer invokes[] legacy.
             for inv in n.data.get("invokes", []):
                 target_plugin = inv.get("plugin") or plugin_id
                 target_worker = inv.get("worker")
@@ -540,7 +607,8 @@ def build_system_graph(
                 declared_meta[pair] = {
                     "via": inv.get("via", "start_workflow"),
                     "when": inv.get("when"),
-                    "source": "manifest",
+                    "source": "manifest_invokes",
+                    "label": inv.get("via", "invokes"),
                 }
 
     # Emitir edges declarados (sin importar si código los confirma)
@@ -551,7 +619,7 @@ def build_system_graph(
                 source=src,
                 target=tgt,
                 kind="invokes_worker",
-                label=meta["via"],
+                label=meta.get("label") or meta["via"],
             )
         )
 

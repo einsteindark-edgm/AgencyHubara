@@ -389,6 +389,15 @@ Por cada regla, declarar si aplica + cómo se cumple:
 - **R-STATELESS:** <applies / N/A> — <cómo>
 - **R-HEARTBEAT:** <applies / N/A> — <cómo>
 - **R-DIP:** <applies / N/A> — <cómo>
+- **R-DIP #10 cross-worker (ADR-2026-05-20):** <applies / N/A> — si la HU
+  hace que un workflow arranque/signale otro workflow registrado por OTRO
+  worker, **debe usar declarative orchestration**:
+  - shared/contracts/events.py con `@dataclass(frozen=True)`
+  - manifest.workers[].emits + transitions
+  - workflow → `dispatch_event_activity` + `envelope_for(...)`
+  - NUNCA import directo de workflow class de sibling
+  - flag la task con `cross_worker_dispatch: true` en metadata para que
+    el implementer sea explícito sobre el patrón
 - **FSD layering:** <applies / N/A> — <cómo>
 - **Manifest = SSoT:** <applies / N/A> — <cómo>
 

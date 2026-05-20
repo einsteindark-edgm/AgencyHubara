@@ -152,6 +152,47 @@ Para cada file, **prefer `Edit` over `Write`**. Solo `Write` si file no existe.
   `parsers.py` no importa httpx/litellm/temporalio, `platform/` no
   importa `plugins/`).
 
+### §5.1.1 R-DIP #10 — Cross-worker dispatch (ADR-2026-05-20)
+
+**Si tu task hace que un workflow arranque/signale otro workflow registrado
+por OTRO worker del mismo plugin (o de otro plugin):**
+
+- ❌ **NO** `from src.plugins.<X>.agent.<other>.workflows.* import *`
+- ❌ **NO** `from src.plugins.<X>.agent.<other>.contracts import *`
+- ❌ **NO** `await client.start_workflow(OtherWorkflowClass, OtherInput(...), ...)`
+- ✅ **SÍ** Definí un `@dataclass(frozen=True)` en `src/plugins/<X>/shared/contracts/events.py`
+- ✅ **SÍ** Declará en el manifest del worker source:
+  ```yaml
+  workflow_classes: [<MyWorkflowName>]
+  emits: [<MyCompletionEvent>]
+  transitions:
+    - id: <descriptive_id>
+      on_event: <EventClassName>
+      when: { tag: <value> }
+      action:
+        via: start_workflow | start_workflow_with_replace | ensure_running | signal
+        target_worker: <other_worker>
+        target_workflow: <OtherWorkflowName>
+        workflow_id_template: "<name>-{event.session_id}"
+        input_mapping: { field_name: "$.event_field" }
+  ```
+- ✅ **SÍ** En el workflow, `await workflow.execute_activity(dispatch_event_activity, envelope_for(event, source_plugin=..., source_worker=...))`
+- ✅ **SÍ** Usar `workflow.patched("descriptive-name-v1")` si refactorizás un
+  workflow existente (preservar replay-safety).
+
+**Side-effects pre-dispatch** (e.g. write metadata): usar activity separada
+genérica en `src.platform.*`. NO embed en el dispatcher.
+
+**Antes de emitir `status: passed`:**
+
+- ✅ `uv run lint-imports` (4 contracts kept, 0 broken — sin `ignore_imports`)
+- ✅ `uv run pytest tests/architecture/test_r_dip_workflow_class_imports.py -v`
+- ✅ `uv run pytest tests/architecture/test_manifest_orchestration_consistency.py -v`
+- ✅ Verificar que `system_map` muestra el edge `invokes_worker` con label
+  rico (event + when + via): `curl -s http://localhost:8000/api/system-map/graph | jq '.edges[] | select(.kind=="invokes_worker")'`
+
+Ver `references/deha-rules.md §5.6` y ADR-2026-05-20-declarative-orchestration.
+
 ### §5.2 FSD rules (frontend)
 
 - Import rules: `shared → entities → features → pages → app` (solo hacia abajo).

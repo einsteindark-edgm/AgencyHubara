@@ -40,12 +40,35 @@ agent:
     - name: sales
       module: src.plugins.chats.workers.sales
       task_queue: queue-sales-agent
-      # Flujo cross-worker (post-mortem ADR-2026-05-19):
-      # - sales programa remarketing cuando la sesión cierra con tag=INTERESADO
-      #   (ver agent/sales/use_cases/load_or_start_sales_session.py:144 — usa
-      #   start_workflow con RemarketingSessionWorkflow directamente, sin pasar
-      #   por get_task_queue, por eso el scan automático del system_map no lo
-      #   detecta — esta declaración es la SSoT).
+      # ADR-2026-05-20 (Declarative Orchestration): el código del workflow NO
+      # importa `RemarketingSessionWorkflow`. Cuando la conversación cierra
+      # con tag=INTERESADO, el workflow EMITE un `SalesSessionCompletionEvent`
+      # via `dispatch_event_activity`; el dispatcher consulta este manifest,
+      # encuentra la transition matchea, y arranca el target workflow por
+      # nombre (string). Cross-worker imports están prohibidos por R-DIP #10
+      # (ver `.importlinter` contracto `agents-independent`).
+      workflow_classes:
+        - HubaraSalesSessionWorkflow
+      emits:
+        - SalesSessionCompletionEvent
+      transitions:
+        - id: sales_to_remarketing_on_interested
+          on_event: SalesSessionCompletionEvent
+          when:
+            tag: INTERESADO
+          action:
+            via: start_workflow_with_replace
+            target_plugin: chats
+            target_worker: remarketing
+            target_workflow: RemarketingWorkflow
+            workflow_id_template: "remarketing-{event.session_id}"
+            input_mapping:
+              session_id: "$.session_id"
+              motivo: "$.motivo"
+            start_delay_field: delay_seconds
+      # LEGACY: declaración documental (Nivel 1, pre-ADR-2026-05-20). Reemplazada
+      # por `transitions:` arriba. Conservada hasta que el system_map drift
+      # detector se actualice para leer transitions (PR9 del ADR).
       invokes:
         - worker: remarketing
           via: start_workflow
@@ -79,9 +102,33 @@ agent:
     - name: remarketing
       module: src.plugins.chats.workers.remarketing
       task_queue: queue-remarketing-agent
-      # Cuando el cliente responde durante un ciclo remarketing, el sistema
-      # transfiere automáticamente a sales (ver IDENTITY.md del remarketing).
-      # El use_case load_or_start_sales_session.py hace el handoff a Sales.
+      # ADR-2026-05-20 (Declarative Orchestration): cuando el cliente responde
+      # durante el ciclo de remarketing (o la herramienta TransferToSales decide
+      # devolver el control), el workflow EMITE un
+      # `CustomerRepliedDuringRemarketingEvent` que el dispatcher rutea a Sales.
+      # El handoff se hace en 2 pasos:
+      #   1. `write_pending_handoff_activity` escribe el summary a metadata
+      #      (el workflow lo invoca explícitamente antes del dispatch).
+      #   2. `dispatch_event_activity` consulta este manifest y arranca/asegura
+      #      el Sales workflow (via=ensure_running).
+      workflow_classes:
+        - RemarketingWorkflow
+      emits:
+        - CustomerRepliedDuringRemarketingEvent
+      transitions:
+        - id: remarketing_to_sales_on_customer_reply
+          on_event: CustomerRepliedDuringRemarketingEvent
+          # when: {} → matchea cualquier instance del evento (no hay sub-tipos).
+          action:
+            via: ensure_running
+            target_plugin: chats
+            target_worker: sales
+            target_workflow: HubaraSalesSessionWorkflow
+            workflow_id_template: "session-{event.session_id}"
+            input_mapping:
+              session_id: "$.session_id"
+      # LEGACY: declaración documental (Nivel 1, pre-ADR-2026-05-20). Reemplazada
+      # por `transitions:` arriba.
       invokes:
         - worker: sales
           via: get_workflow_handle

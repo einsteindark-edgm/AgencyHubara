@@ -176,13 +176,160 @@ properties:
                 queue la leen del manifest via `src.platform.plugin_manifest.get_task_queue`.
                 Convención: prefijo "queue-" + nombre descriptivo.
               pattern: "^[a-z][a-z0-9-]*$"
+            workflow_classes:
+              type: array
+              description: |
+                Nombres canónicos de los workflows que este worker registra. Cada
+                entry es el `__name__` (o el `name=` decorator) de la clase
+                Workflow Python.
+
+                Permite que dispatchers cross-agent arranquen workflows POR
+                STRING (Temporal acepta tanto class como string) sin importar la
+                clase del sibling — desbloquea R-DIP #10 sin excepciones.
+
+                Si el worker NO declara workflow_classes, las invocaciones
+                cross-agent fallan con WorkflowClassNotDeclaredError. Convención:
+                el primer entry es el "main" workflow del worker.
+
+                Ejemplo: ["HubaraSalesSessionWorkflow"], ["RemarketingWorkflow"].
+              items:
+                type: string
+                pattern: "^[A-Z][A-Za-z0-9]*$"
+            emits:
+              type: array
+              description: |
+                Eventos de completion / transición que el workflow puede emitir
+                durante o al final de su ejecución. El dispatcher de
+                src.platform.orchestration matchea estos contra `transitions[]`
+                para arrancar el siguiente nodo declarativamente.
+
+                Cada entry es el nombre canónico del dataclass del evento (e.g.
+                "SalesSessionCompletionEvent"). El evento DEBE estar definido en
+                `src.plugins.<plugin>.shared.contracts.events` (o en
+                `src.platform.contracts` para eventos cross-plugin) como
+                @dataclass(frozen=True) — R-JSON.
+
+                Si un workflow NO emite eventos (terminal), declarar `emits: []`
+                explícitamente.
+
+                Ver ADR-2026-05-20-declarative-orchestration §3.
+              items:
+                type: string
+                pattern: "^[A-Z][A-Za-z0-9]*Event$"
+            transitions:
+              type: array
+              description: |
+                Transiciones declarativas que el dispatcher ejecuta cuando este
+                worker emite un evento. Cada entry es una regla:
+                `on_event + when (matcher simple) + action (target)`.
+
+                El dispatcher (`src.platform.orchestration.dispatcher.dispatch_event_activity`)
+                lee este array, evalúa `when` (igualdad de campos simples),
+                y para cada match ejecuta `action` — sin que el workflow source
+                conozca el target. Esto desacopla siblings completamente.
+
+                Cada transición tiene id único (para logs/traces).
+
+                Reglas de matching `when`:
+                  - keys del dict son campos del evento (debe existir el atributo)
+                  - values son matchers literales (string, int, bool, null)
+                  - todos los pares deben matchear (AND)
+                  - `when: {}` matchea todos los eventos del tipo `on_event`
+
+                Ver ADR-2026-05-20-declarative-orchestration §4.
+              items:
+                type: object
+                required: [id, on_event, action]
+                additionalProperties: false
+                properties:
+                  id:
+                    type: string
+                    description: |
+                      Identificador único de la transición dentro del worker
+                      (para logs / traces / system_map labels). snake_case.
+                    pattern: "^[a-z][a-z0-9_]*$"
+                  on_event:
+                    type: string
+                    description: |
+                      Nombre canónico del evento que dispara la transición.
+                      DEBE matchear un entry de `emits[]` del MISMO worker.
+                    pattern: "^[A-Z][A-Za-z0-9]*Event$"
+                  when:
+                    type: object
+                    description: |
+                      Matcher simple. Igualdad de campos del evento. AND de
+                      todos los pares. `{}` = matchea cualquiera. NO se eval-ea
+                      código — solo `getattr(event, key) == value`.
+
+                      Para lógica compleja: el workflow setea el campo
+                      apropiado y el matcher checa el campo ya calculado.
+                    additionalProperties:
+                      oneOf:
+                        - { type: string }
+                        - { type: integer }
+                        - { type: boolean }
+                        - { type: "null" }
+                  action:
+                    type: object
+                    description: Qué hacer cuando matchea la transición.
+                    required: [via, target_workflow]
+                    additionalProperties: false
+                    properties:
+                      via:
+                        type: string
+                        description: Mecanismo Temporal usado.
+                        enum:
+                          - start_workflow                # falla si ya existe
+                          - start_workflow_with_replace   # termina existente RUNNING, arranca nuevo
+                          - ensure_running                # noop si RUNNING; arranca si no
+                          - signal                        # signal a existing handle
+                      target_plugin:
+                        type: string
+                        description: |
+                          Plugin owner del worker target. Opcional — default =
+                          mismo plugin que el caller. Cross-plugin debe declararse.
+                      target_worker:
+                        type: string
+                        description: |
+                          Nombre del worker target (debe existir en su plugin).
+                      target_workflow:
+                        type: string
+                        description: |
+                          Nombre del workflow target (debe estar en
+                          `workflow_classes[]` del worker target).
+                        pattern: "^[A-Z][A-Za-z0-9]*$"
+                      signal_name:
+                        type: string
+                        description: |
+                          Solo para `via: signal` — nombre del signal handler
+                          en el workflow target (e.g. "send_message").
+                      workflow_id_template:
+                        type: string
+                        description: |
+                          Plantilla del workflow_id. Tokens: `{session_id}`,
+                          `{event.<field>}`. Default: `{event.session_id}` si
+                          el evento lo tiene; sino requerido explícito.
+                      input_mapping:
+                        type: object
+                        description: |
+                          Map de campos del workflow target → expresión del
+                          evento. Path simple: `$.field_name` o `$` (todo).
+                          Si se omite, el dispatcher pasa el evento completo
+                          como single arg.
+                        additionalProperties:
+                          type: string
+                      start_delay_field:
+                        type: string
+                        description: |
+                          Solo `start_workflow*` — nombre del campo del evento
+                          que contiene segundos de delay (e.g. "delay_seconds").
+                          Si está, se aplica `start_delay=timedelta(seconds=v)`.
             invokes:
               type: array
               description: |
-                Workers que este worker invoca (declarativo). Útil para que el
-                system_map visualice el flujo cross-worker sin tener que parsear
-                código. El detector de drift compara contra el scan real del
-                código y warn-ea si hay divergencia.
+                LEGACY — declaración documental solo. Reemplazada por
+                `transitions[]` declarativas (ADR-2026-05-20). Conservada para
+                compat con system_map drift detector durante la migración.
               items:
                 type: object
                 required: [worker]

@@ -8,10 +8,12 @@ from src.platform.temporal.activities import (
     execute_tool,
     read_workspace_memory_activity,
 )
+from src.platform.orchestration import dispatch_event_activity
 from src.platform.plugin_manifest import get_task_queue
 from src.platform.temporal.dispatcher import (
     schedule_remarketing_workflow_activity,
     start_or_signal_sales_workflow_activity,
+    write_pending_handoff_activity,
 )
 from src.platform.whatsapp.activities import (
     send_typing_indicator_activity,
@@ -71,6 +73,9 @@ async def main() -> None:
             # antes de deployar (idle timeout de Remarketing es 24h).
             start_or_signal_sales_workflow_activity,
             schedule_remarketing_workflow_activity,
+            # ADR-2026-05-20: declarative orchestration activities.
+            write_pending_handoff_activity,
+            dispatch_event_activity,
         ],
     )
 

@@ -38,21 +38,14 @@ forbidden_modules =
     src.plugins.catalog.agent
 ; Agent code is composed on top of platform; reversing the arrow couples them.
 ;
-; Known debt — documented exceptions (do NOT add more without ADR):
-;   - dispatcher.py uses LOCAL imports inside @activity.defn bodies to avoid
-;     cycles when dispatching to a sibling agent. Long-term fix: move
-;     SalesSessionInput / RemarketingSessionInput / workflow registry to
-;     src/platform/* and dispatch by workflow name + DTO without importing
-;     agent modules.
-ignore_imports =
-    src.platform.temporal.dispatcher -> src.plugins.chats.agent.sales.config.env
-    src.platform.temporal.dispatcher -> src.plugins.chats.agent.sales.contracts
-    src.platform.temporal.dispatcher -> src.plugins.chats.agent.sales.workflows.sales_session
-    src.platform.temporal.dispatcher -> src.plugins.chats.agent.remarketing.config.env
-    src.platform.temporal.dispatcher -> src.plugins.chats.agent.remarketing.contracts
-unmatched_ignore_imports_alerting = warn
-; Some local-import edges only appear when the activity body is executed.
-; "warn" prevents CI failure when an exception goes unused, but still surfaces it.
+; ADR-2026-05-19 + ADR-2026-05-20 resolved the documented exceptions that
+; previously lived here. Cross-agent dispatch now goes through:
+;   - get_workflow_name(plugin, worker) + string-based start_workflow, OR
+;   - dispatch_event_activity + manifest transitions (declarative).
+;
+; The platform/temporal/dispatcher.py module no longer imports agent
+; modules — verified by tests/architecture/test_r_dip_workflow_class_imports.py.
+; Adding `ignore_imports` here requires opening a new ADR.
 
 ; --- R-DIP #10 — agent siblings stay isolated ---------------------------------
 [importlinter:contract:agents-independent]
@@ -62,30 +55,18 @@ modules =
     src.plugins.chats.agent.sales
     src.plugins.chats.agent.remarketing
     src.plugins.catalog.agent
-; Cross-agent flow goes through src.platform.* (dispatcher, contracts, channels).
-; If you need shared code, lift it to src.platform/ — never import a sibling agent.
+; Cross-agent flow goes through src.platform.* (orchestration dispatcher,
+; events declared in plugins/<plugin>/shared/contracts/).
 ;
-; Known debt — documented exceptions (do NOT add more without ADR):
+; ADR-2026-05-20 resolved all documented exceptions:
+;   1. dispatcher.py local imports → replaced by string dispatch
+;   2. load_or_start_sales_session importing RemarketingSessionWorkflow →
+;      replaced by string dispatch ("send_message" signal name) and the
+;      workflow target being chosen by manifest transitions
 ;
-;   1. The dispatcher activity (src.platform.temporal.dispatcher) uses LOCAL
-;      imports inside @activity.defn bodies to avoid module-level cycles when
-;      routing to a sibling agent. Long-term fix: move SessionInput DTOs +
-;      workspace-path lookups to src.platform.contracts / src.platform.config,
-;      dispatch by workflow name string + DTO without importing agent modules.
-;
-;   2. sales.use_cases.load_or_start_sales_session imports
-;      RemarketingSessionWorkflow as a TYPE for `workflow_class: type` so it
-;      can call `start_workflow(<class>, ...)`. Long-term fix: same as #1 —
-;      when workflow registry lives in platform/, the use-case branches on a
-;      string key and the cross-agent import disappears.
-ignore_imports =
-    src.platform.temporal.dispatcher -> src.plugins.chats.agent.sales.config.env
-    src.platform.temporal.dispatcher -> src.plugins.chats.agent.sales.contracts
-    src.platform.temporal.dispatcher -> src.plugins.chats.agent.sales.workflows.sales_session
-    src.platform.temporal.dispatcher -> src.plugins.chats.agent.remarketing.config.env
-    src.platform.temporal.dispatcher -> src.plugins.chats.agent.remarketing.contracts
-    src.plugins.chats.agent.sales.use_cases.load_or_start_sales_session -> src.plugins.chats.agent.remarketing.workflows.remarketing
-unmatched_ignore_imports_alerting = warn
+; Tests/architecture/test_r_dip_workflow_class_imports.py enforces that no
+; sibling agent module imports another's workflows/, contracts/, or use_cases/.
+; Adding `ignore_imports` here requires opening a new ADR.
 
 ; --- R-DIP #7 — tools/ are pure ----------------------------------------------
 [importlinter:contract:tools-no-temporal]

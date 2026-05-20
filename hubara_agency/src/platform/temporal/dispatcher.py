@@ -24,6 +24,27 @@ from src.platform.state import FilesystemMetadataStore
 from src.platform.temporal.client import get_temporal_client
 
 
+@activity.defn(name="write_pending_handoff")
+async def write_pending_handoff_activity(session_id: str, summary: str) -> None:
+    """Persist a handoff summary into the session metadata.
+
+    Generic side-effect activity used by ADR-2026-05-20 (declarative
+    orchestration): a sibling workflow emits a completion event; the dispatcher
+    routes to the target workflow; this activity runs (typically as a separate
+    explicit step from the source workflow) to seed handoff context.
+
+    Lives in platform/ and does NOT touch any agent module — it just writes a
+    string into ``metadata.pending_handoff_summary`` (POSIX-atomic via
+    ``FilesystemMetadataStore``). The target workflow's bootstrap reads the
+    field on cold start; warm refreshes re-read it per-iteration (see
+    ``read_and_clear_pending_handoff_activity``).
+    """
+    metadata_store = FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
+    data = metadata_store.read(session_id)
+    data["pending_handoff_summary"] = summary
+    metadata_store.write(session_id, data)
+
+
 @activity.defn(name="start_or_signal_sales_workflow")
 async def start_or_signal_sales_workflow_activity(decision: TransferDecision) -> None:
     """Transfiere control a Sales: escribe handoff en metadata + asegura Sales corriendo.
@@ -35,20 +56,30 @@ async def start_or_signal_sales_workflow_activity(decision: TransferDecision) ->
     `read_and_clear_pending_handoff_activity` — primero al iniciar (cold) y
     luego al inicio de cada iteracion del loop (warm). El coalesce lo mueve
     a `plugin_context` para que NO ensucie el rol "user" de la conversacion.
+
+    ADR-2026-05-20 (Level 3 declarative orchestration): este activity sigue
+    existiendo como path legacy + self-loop dentro de sales (sales se invoca
+    a si mismo desde su tool TransferToSales). El cuerpo se refactorizó:
+    ya NO importa la clase ``HubaraSalesSessionWorkflow`` ni el DTO
+    ``SalesSessionInput`` — usa ``get_workflow_name("chats", "sales")`` + un
+    dict input. Eso elimina las ``ignore_imports`` del .importlinter para
+    este módulo (R-DIP #9 + R-DIP #10 cumplen sin excepciones).
+
+    Los nuevos call sites cross-agent (e.g. remarketing → sales) usan
+    ``dispatch_event_activity`` + ``CustomerRepliedDuringRemarketingEvent``
+    en lugar de invocar este activity directamente. Cuando todos los call
+    sites cross-agent estén migrados, este activity quedará solo como
+    self-loop de sales (sales → sales) — ahí se puede inline al workflow.
     """
-    # Imports locales para evitar ciclos: el workflow importa este modulo a traves
-    # de `imports_passed_through`, y workflows no deben importarse mutuamente.
-    from src.plugins.chats.agent.sales.config.env import get_workspace_path
-    from src.plugins.chats.agent.sales.contracts import SalesSessionInput
-    from src.plugins.chats.agent.sales.workflows.sales_session import HubaraSalesSessionWorkflow
+    from src.platform.plugin_manifest import get_workflow_name
 
     session_id = decision.session_id
     summary = decision.summary or "El cliente volvió a interactuar"
 
-    # 1. Persistir contexto de handoff en metadata. Atomic via tmpfile rename
-    #    en FilesystemMetadataStore (POSIX-atomic). El workflow Sales lo
-    #    consumira en el proximo turno (cold via bootstrap, warm via refresh
-    #    per-iteration).
+    # 1. Persistir contexto de handoff en metadata. Reutilizamos la nueva
+    #    activity genérica ``write_pending_handoff_activity`` semánticamente
+    #    (no la invocamos como activity-nested porque este body YA es activity;
+    #    en su lugar replicamos el efecto inline — mismo store, misma key).
     metadata_store = FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
     data = metadata_store.read(session_id)
     data["pending_handoff_summary"] = summary
@@ -58,6 +89,12 @@ async def start_or_signal_sales_workflow_activity(decision: TransferDecision) ->
     #    viaja por metadata, no por signal. Si Sales ya corre, no hace falta
     #    hacer nada mas: su loop principal lee metadata en cada iteracion. Si
     #    no corre, arrancamos uno nuevo (idempotente vs WorkflowAlreadyStartedError).
+    #
+    # ADR-2026-05-20: dispatch por string del manifest (NO importamos
+    # HubaraSalesSessionWorkflow). El input también se construye como dict —
+    # Temporal lo deserializa al SalesSessionInput type hint del worker target.
+    # ``runtime_workspace_path`` se omite del input: el bootstrap activity
+    # del worker target lo resuelve via fallback a su config local.
     client = await get_temporal_client()
     workflow_id = f"session-{session_id}"
 
@@ -70,13 +107,11 @@ async def start_or_signal_sales_workflow_activity(decision: TransferDecision) ->
     except (RPCError, RuntimeError):
         pass
 
+    workflow_name = get_workflow_name("chats", "sales")
     try:
         await client.start_workflow(
-            HubaraSalesSessionWorkflow.run,
-            SalesSessionInput(
-                session_id=session_id,
-                runtime_workspace_path=str(get_workspace_path()),
-            ),
+            workflow_name,
+            {"session_id": session_id},
             id=workflow_id,
             task_queue=get_task_queue("chats", "sales"),
         )
@@ -96,7 +131,8 @@ async def start_remarketing_for_session(
     """Arranca un `RemarketingWorkflow` para `session_id` con `motivo`.
 
     Reusable desde:
-      * `schedule_remarketing_workflow_activity` (worker, via Sales workflow).
+      * `schedule_remarketing_workflow_activity` (worker, via Sales workflow,
+        path legacy pre-ADR-2026-05-20).
       * `dashboard/handoff.py` (HTTP, cuando el humano devuelve el control y
         elige Remarketing como destino).
 
@@ -108,12 +144,16 @@ async def start_remarketing_for_session(
     el mismo workflow_id. Capturamos `WorkflowAlreadyStartedError` por simetría
     con `start_or_signal_sales_workflow_activity` — si ya hay uno corriendo, lo
     aceptamos como buen estado y seguimos.
+
+    ADR-2026-05-20: dispatch por nombre desde el manifest. NO importa
+    ``RemarketingSessionWorkflow``, NO importa ``RemarketingSessionInput`` —
+    pasa un dict que Temporal deserializa al type hint del worker target. El
+    ``runtime_workspace_path`` se omite (el bootstrap del target hace fallback
+    a su config local).
     """
-    from src.plugins.chats.agent.remarketing.config.env import (
-        get_workspace_path as get_remarketing_workspace_path,
-    )
-    from src.plugins.chats.agent.remarketing.contracts import RemarketingSessionInput
     import structlog
+
+    from src.platform.plugin_manifest import get_workflow_name
 
     log = structlog.get_logger()
     workflow_id = f"remarketing-{session_id}"
@@ -140,17 +180,14 @@ async def start_remarketing_for_session(
         # No existe — ok, arranca limpio.
         pass
 
+    workflow_name = get_workflow_name("chats", "remarketing")
     try:
         await client.start_workflow(
-            "RemarketingWorkflow",
-            RemarketingSessionInput(
-                session_id=session_id,
-                motivo=motivo,
-                runtime_workspace_path=str(get_remarketing_workspace_path()),
-            ),
+            workflow_name,
+            {"session_id": session_id, "motivo": motivo},
             id=workflow_id,
             task_queue=get_task_queue("chats", "remarketing"),
-            start_delay=delay,
+            start_delay=delay if delay > timedelta(seconds=0) else None,
         )
     except WorkflowAlreadyStartedError:
         # Race: alguien arrancó un workflow con el mismo ID entre nuestro

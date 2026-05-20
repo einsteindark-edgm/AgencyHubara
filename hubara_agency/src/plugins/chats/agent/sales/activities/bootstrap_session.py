@@ -79,17 +79,31 @@ async def bootstrap_sales_session_activity(input: SalesSessionInput) -> SessionI
     # PR-B: el workspace que ve el runtime es el canonico del agente.
     # Sin path nadie cabledo el composition root correctamente — failfast
     # antes de llegar al `build_prompt` y emitir un system prompt vacio.
-    if input.runtime_workspace_path is None:
-        raise RuntimeError(
-            "runtime_workspace_path missing — composition.py debe wirearlo (PR-A). "
-            "Reviser src/domains/sales_whatsapp/composition.py y "
-            "src/core/infrastructure/temporal/dispatcher_activities.py."
+    #
+    # ADR-2026-05-20 (Level 3 orchestration): el dispatcher genérico
+    # (`src.platform.orchestration.dispatcher.dispatch_event_activity`) NO
+    # sabe del path del worker target (sería R-DIP #10 violation conocer el
+    # config de un sibling agent). Cuando el caller cross-worker es el
+    # dispatcher declarativo, `runtime_workspace_path` viene en None y este
+    # bootstrap lo resuelve localmente via `get_workspace_path()` — config
+    # del worker propio, no leak cross-agent.
+    runtime_path = input.runtime_workspace_path
+    if runtime_path is None:
+        # Local fallback: leemos el path del config del propio agente sales.
+        # Esto es config local — NO cruza fronteras agent.
+        from src.plugins.chats.agent.sales.config.env import get_workspace_path
+        runtime_path = str(get_workspace_path())
+        activity.logger.info(
+            "bootstrap_sales_session_activity: runtime_workspace_path missing "
+            "on input (declarative dispatcher or test fixture) — falling back "
+            "to local config: %s",
+            runtime_path,
         )
 
-    ws = WorkspaceConfig(path=input.runtime_workspace_path)
+    ws = WorkspaceConfig(path=runtime_path)
     activity.logger.info(
         "bootstrap_sales_session_activity: workspace=%s",
-        input.runtime_workspace_path,
+        runtime_path,
     )
 
     # El registry de tools sigue apuntando al workspace canonico tambien;

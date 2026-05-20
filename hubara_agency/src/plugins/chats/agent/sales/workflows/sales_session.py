@@ -8,9 +8,12 @@ from temporalio.common import RetryPolicy
 
 with workflow.unsafe.imports_passed_through():
     from exoclaw_temporal.config import SessionInput
+    from src.platform.orchestration import (
+        dispatch_event_activity,
+        envelope_for,
+    )
     from src.platform.whatsapp.activities import send_whatsapp_message_activity
     from src.platform.temporal.dispatcher import (
-        schedule_remarketing_workflow_activity,
         start_or_signal_sales_workflow_activity,
     )
     from src.platform.temporal.retry_policies import _LLM_OPTIONS
@@ -29,6 +32,9 @@ with workflow.unsafe.imports_passed_through():
         read_and_clear_pending_handoff_activity,
     )
     from src.plugins.chats.agent.sales.contracts import SalesSessionInput
+    from src.plugins.chats.shared.contracts.events import (
+        SalesSessionCompletionEvent,
+    )
 
 _CONTINUE_AS_NEW_AFTER_TURNS = 50
 
@@ -194,15 +200,51 @@ class HubaraSalesSessionWorkflow:
                     self._last_response = result.final_content
                     turn_count += 1
 
-                    # ADR-001: si la tool emitio una decision, ejecutarla via activity dispatcher.
+                    # ADR-001 + ADR-2026-05-20: si la tool emitio una decision,
+                    # convertirla a un completion event y dispatchar por manifest.
+                    # NO importar workflow classes de sibling agents (R-DIP #10).
+                    #
+                    # workflow.patched(): pre-deploy histories tienen
+                    # `schedule_remarketing_workflow_activity` directo; el patched
+                    # gate evita NondeterminismError al replay-arlos. Tras drain,
+                    # `workflow.deprecate_patch("declarative-orchestration-v1")`.
                     if result.schedule_remarketing is not None:
-                        await workflow.execute_activity(
-                            schedule_remarketing_workflow_activity,
-                            result.schedule_remarketing,
-                            start_to_close_timeout=timedelta(seconds=30),
-                            retry_policy=RetryPolicy(maximum_attempts=3),
-                        )
+                        if workflow.patched("declarative-orchestration-v1"):
+                            # Level 3 declarative path: emit event, dispatcher routes via manifest.
+                            await workflow.execute_activity(
+                                dispatch_event_activity,
+                                envelope_for(
+                                    SalesSessionCompletionEvent(
+                                        session_id=result.schedule_remarketing.session_id,
+                                        tag="INTERESADO",
+                                        motivo=result.schedule_remarketing.motivo,
+                                        delay_seconds=result.schedule_remarketing.delay_seconds,
+                                    ),
+                                    source_plugin="chats",
+                                    source_worker="sales",
+                                ),
+                                start_to_close_timeout=timedelta(seconds=30),
+                                retry_policy=RetryPolicy(maximum_attempts=3),
+                            )
+                        else:
+                            # Legacy path for pre-deploy workflows (replay-safe).
+                            # Local import — only resolved when the legacy branch
+                            # actually executes during replay.
+                            from src.platform.temporal.dispatcher import (
+                                schedule_remarketing_workflow_activity,
+                            )
+                            await workflow.execute_activity(
+                                schedule_remarketing_workflow_activity,
+                                result.schedule_remarketing,
+                                start_to_close_timeout=timedelta(seconds=30),
+                                retry_policy=RetryPolicy(maximum_attempts=3),
+                            )
                     if result.transfer_decision is not None:
+                        # Sales self-loop (sales workflow asegurándose de estar
+                        # corriendo + escribir handoff metadata). NO cross-agent —
+                        # se queda con el activity legacy. La activity en si fue
+                        # refactorizada en ADR-2026-05-20 para usar get_workflow_name()
+                        # internamente y no importar HubaraSalesSessionWorkflow.
                         await workflow.execute_activity(
                             start_or_signal_sales_workflow_activity,
                             result.transfer_decision,

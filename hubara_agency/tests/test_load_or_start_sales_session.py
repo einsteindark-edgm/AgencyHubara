@@ -32,10 +32,12 @@ from src.plugins.chats.agent.sales.contracts import SalesSessionInput
 from src.plugins.chats.agent.sales.use_cases.load_or_start_sales_session import (
     LoadOrStartSalesSession,
 )
+# ADR-2026-05-20: the use_case dispatches by signal-name string ("send_message")
+# now, no class references. We keep the imports of HubaraSalesSessionWorkflow
+# only because the test still asserts that the *start_workflow* call references
+# `HubaraSalesSessionWorkflow.run` (intra-agent ref, OK). RemarketingSessionWorkflow
+# is no longer needed (cross-agent — replaced by string dispatch + manifest).
 from src.plugins.chats.agent.sales.workflows.sales_session import HubaraSalesSessionWorkflow
-from src.plugins.chats.agent.remarketing.workflows.remarketing import (
-    RemarketingSessionWorkflow,
-)
 
 
 # --- Fakes -----------------------------------------------------------------
@@ -177,7 +179,8 @@ async def test_starts_new_sales_workflow_when_no_metadata():
     started = client.started_handles["session-wa_42"]
     assert len(started.signals) == 1
     fn, args = started.signals[0]
-    assert fn is HubaraSalesSessionWorkflow.send_message
+    # ADR-2026-05-20: signal dispatch is by NAME (string), not class method ref.
+    assert fn == "send_message"
     assert args == ["hola", None, None]
 
 
@@ -197,7 +200,8 @@ async def test_reuses_running_sales_handle_without_starting_again():
     # El handle existente recibe el signal. PR-B: plugin_context = None.
     assert len(existing.signals) == 1
     fn, args = existing.signals[0]
-    assert fn is HubaraSalesSessionWorkflow.send_message
+    # ADR-2026-05-20: signal dispatch is by NAME (string), not class method ref.
+    assert fn == "send_message"
     assert args == ["hi", None, None]
 
 
@@ -218,7 +222,8 @@ async def test_routes_to_remarketing_when_active_and_running():
     # `ContextBuilder` durante `build_prompt`.
     assert len(rem_handle.signals) == 1
     fn, args = rem_handle.signals[0]
-    assert fn is RemarketingSessionWorkflow.send_message
+    # ADR-2026-05-20: signal dispatch is by NAME (string) — no class ref needed.
+    assert fn == "send_message"
     assert args == ["vuelvo", None, None]
 
 
@@ -285,7 +290,8 @@ async def test_falls_back_to_sales_when_remarketing_handle_dead():
     started = client.started_handles["session-wa_3"]
     assert len(started.signals) == 1
     fn, args = started.signals[0]
-    assert fn is HubaraSalesSessionWorkflow.send_message
+    # ADR-2026-05-20: signal dispatch is by NAME (string), not class method ref.
+    assert fn == "send_message"
     assert args[2] is None
     # PR-D global cleanup (ADR-2026-05-06-10): el `remarketing_brain_loader`
     # ya no existe en el use case; el path Remarketing tambien se alimenta del

@@ -72,22 +72,32 @@ async def test_bootstrap_returns_json_safe_session_input(runtime_workspace: Path
     assert isinstance(tool_defs, list)
 
 
-async def test_bootstrap_failfast_when_workspace_path_missing() -> None:
-    """PR-B: si el composition root no cablea `runtime_workspace_path`, la
-    activity revienta antes de llegar a `build_prompt` y producir un system
-    prompt vacio. Este es un liveness probe — no debe ser silencioso.
+async def test_bootstrap_falls_back_to_local_workspace_when_path_missing() -> None:
+    """ADR-2026-05-20: el dispatcher genérico no conoce el path del worker
+    target (sería R-DIP #10). Cuando el caller cross-worker es el dispatcher
+    declarativo, `runtime_workspace_path` viene en None y el bootstrap
+    resuelve via `get_workspace_path()` (config del propio worker).
+
+    Pre-ADR-2026-05-20 este caso lanzaba RuntimeError. Ahora hace fallback.
+    El path resuelto es el default committed al repo (workspace/ del agente).
     """
     from src.plugins.chats.agent.sales.activities import bootstrap_sales_session_activity
+    from src.plugins.chats.agent.sales.config.env import get_workspace_path
 
     env = ActivityEnvironment()
-    with pytest.raises(RuntimeError, match="runtime_workspace_path"):
-        await env.run(
-            bootstrap_sales_session_activity,
-            SalesSessionInput(
-                session_id="wa_5499999999999",
-                runtime_workspace_path=None,
-            ),
-        )
+    result = await env.run(
+        bootstrap_sales_session_activity,
+        SalesSessionInput(
+            session_id="wa_5499999999999",
+            runtime_workspace_path=None,
+        ),
+    )
+    # El bootstrap usó el path del config local — el resultado tiene un
+    # workspace válido (no None ni vacío).
+    assert result is not None
+    # Sanity check: el path resuelto debe ser el del agente sales.
+    expected_path = str(get_workspace_path())
+    assert expected_path in str(result.workspace.path) or str(result.workspace.path) == expected_path
 
 
 async def test_bootstrap_is_idempotent(runtime_workspace: Path) -> None:

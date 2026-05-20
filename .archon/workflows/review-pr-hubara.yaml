@@ -186,8 +186,36 @@ nodes:
           - R-STATELESS: module-level cache en activities/
           - R-HEARTBEAT: activities >10s sin @with_heartbeat
           - R-DIP: platform/ importando plugins/, cross-plugin imports
+          - **R-DIP #10 cross-agent (ADR-2026-05-20)** — CRITICAL severity:
+              Grep para detectar el patrón:
+                  ^from\s+src\.plugins\.[a-z_]+\.agent\.[a-z_]+\.(workflows|contracts|use_cases|tools|activities)
+              SI el archivo source vive en `src/plugins/<P>/agent/<A>/` y
+              el import es de `src/plugins/<P>/agent/<B>/<sub>` con A!=B y
+              sub en {workflows, contracts, use_cases, tools, activities},
+              MARCAR como:
+                  severity: critical
+                  rule: R-DIP
+                  message: "Cross-agent import: <A> importa <B>.<sub> — viola R-DIP #10"
+                  fix_suggestion: |
+                      Usar declarative orchestration (ADR-2026-05-20):
+                      1. Definir @dataclass(frozen=True) en shared/contracts/events.py
+                      2. Declarar emits + transitions en plugin.yaml manifest
+                      3. workflow → dispatch_event_activity + envelope_for(...)
+                      4. NUNCA importar workflow class del sibling.
+
+              También detectar el patrón legacy:
+                  await client.start_workflow(<ImportedWorkflowClass>, ...)
+                  await client.start_workflow(<ImportedWorkflowClass>.run, ...)
+              Si el `<ImportedWorkflowClass>` viene de un sibling agent → CRITICAL.
+              Solo es OK si la clase es del MISMO agent que el archivo source.
+
           - Plugin manifest hygiene: workers sin task_queue, drift de docker-compose
           - Constants en src/platform/constants.py que deberían ir al manifest
+          - **Declarative orchestration drift**: si el manifest declara
+              `workers[].transitions[]` con `on_event: X`, verificar que
+              `workers[].emits[]` contiene `X`. Si no → severity: high,
+              rule: plugin-manifest, message: "transition references on_event=X
+              but emits[] doesn't declare it".
 
         Output: $ARTIFACTS_DIR/findings-deha.yaml schema:
           version: 1
@@ -199,6 +227,7 @@ nodes:
               rule: R-DET | R-JSON | R-STATELESS | R-HEARTBEAT | R-DIP | plugin-manifest
               message: <one-liner>
               fix_suggestion: <unified diff patch si obvio, sino "" >
+              merge_blocking: true            # solo si severity=critical Y rule=R-DIP cross-agent
 
         Si no hay findings, emit findings: [].
         Cuando termines: <promise>REPORT_OK</promise>
@@ -393,6 +422,25 @@ nodes:
               patch: |
                 <unified diff>
               revertible_by_test: <test cmd a correr para verificar que NO rompe>
+
+        Output 3 — $ARTIFACTS_DIR/merge-decision.yaml:
+          Si algún finding tiene `merge_blocking: true` Y `severity: critical`,
+          este PR NO se puede mergear hasta resolverlo. Emitir:
+            blocked: true | false
+            blocking_findings:
+              - file: <path>
+                rule: <rule>
+                reason: <one-liner>
+          La fase final del workflow lee este artifact y bloquea el merge si
+          blocked=true (deja un comentario en el PR explicando).
+
+        Nota especial — R-DIP #10 cross-agent (ADR-2026-05-20):
+        Si encontrás algún finding con `rule: R-DIP` y `message` contiene
+        "Cross-agent" o "sibling" o "viola R-DIP #10":
+          - Bumpear severity a critical
+          - Setear merge_blocking: true
+          Razón: este es el tipo de bug que documentó ADR-2026-05-20 y NO
+          debe entrar a main bajo ningún concepto.
 
         Cuando termines: <promise>SYNTH_OK</promise>
 

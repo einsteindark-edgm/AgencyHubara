@@ -79,12 +79,27 @@ async def bootstrap_remarketing_session_activity(
     # PR-B: el workspace que ve el runtime es el canonico del agente.
     # Sin path nadie cabledo el composition root correctamente — failfast
     # antes de llegar al `build_prompt` y emitir un system prompt vacio.
+    #
+    # ADR-2026-05-20 (Level 3 orchestration): el dispatcher genérico
+    # (`src.platform.orchestration.dispatcher.dispatch_event_activity`) NO
+    # sabe del path del worker target (sería R-DIP #10 violation conocer el
+    # config de un sibling agent). Cuando el caller cross-worker es el
+    # dispatcher declarativo, `runtime_workspace_path` viene en None y este
+    # bootstrap lo resuelve localmente via `get_workspace_path()` — config
+    # del worker propio, no leak cross-agent.
     runtime_path = input.runtime_workspace_path
     if not runtime_path:
-        raise RuntimeError(
-            "runtime_workspace_path missing on RemarketingSessionInput — "
-            "schedule_remarketing_workflow_activity must wire it via "
-            "remarketing_whatsapp.config.env.get_workspace_path() (PR-A)."
+        # Local fallback: leemos el path del config del propio agente
+        # remarketing. Esto es config local — NO cruza fronteras agent.
+        from src.plugins.chats.agent.remarketing.config.env import (
+            get_workspace_path,
+        )
+        runtime_path = str(get_workspace_path())
+        activity.logger.info(
+            "bootstrap_remarketing_session_activity: runtime_workspace_path "
+            "missing on input (declarative dispatcher) — falling back to "
+            "local config: %s",
+            runtime_path,
         )
 
     llm = build_default_llm_config()

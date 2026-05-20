@@ -8,10 +8,15 @@ from temporalio.common import RetryPolicy
 
 with workflow.unsafe.imports_passed_through():
     from exoclaw_temporal.config import SessionInput
+    from src.platform.orchestration import (
+        dispatch_event_activity,
+        envelope_for,
+    )
     from src.platform.temporal.activities import claim_conversation_routing, read_workspace_memory_activity
     from src.platform.whatsapp.activities import send_whatsapp_message_activity
     from src.platform.temporal.dispatcher import (
         start_or_signal_sales_workflow_activity,
+        write_pending_handoff_activity,
     )
     from src.platform.temporal.retry_policies import _LLM_OPTIONS
     from src.platform.workflow_helpers import (
@@ -29,6 +34,9 @@ with workflow.unsafe.imports_passed_through():
     )
     from src.platform.whatsapp.activities import send_typing_indicator_activity
     from src.plugins.chats.agent.remarketing.contracts import RemarketingSessionInput
+    from src.plugins.chats.shared.contracts.events import (
+        CustomerRepliedDuringRemarketingEvent,
+    )
     from src.platform.constants import ROUTE_REMARKETING, ROUTE_VENTAS
 
 _IDLE_TIMEOUT = timedelta(hours=24)
@@ -69,6 +77,60 @@ class RemarketingSessionWorkflow:
     @workflow.query
     def is_processing(self) -> bool:
         return self._processing
+
+    async def _handoff_to_sales(self, *, session_id: str, summary: str) -> None:
+        """Dispatch a handoff back to Sales.
+
+        ADR-2026-05-20 (Level 3 declarative orchestration):
+            1. Write ``pending_handoff_summary`` to session metadata (so Sales'
+               bootstrap picks it up on cold start, or its per-iter refresh on
+               warm).
+            2. Emit ``CustomerRepliedDuringRemarketingEvent`` — the dispatcher
+               consults the manifest and starts/ensures the Sales workflow
+               running (via=ensure_running, target_workflow="HubaraSalesSessionWorkflow").
+
+        Replay-safety: gated by ``workflow.patched("declarative-orchestration-v1")``.
+        Pre-deploy histories take the legacy branch (direct
+        ``start_or_signal_sales_workflow_activity`` call). After the 24h idle
+        timeout drains all in-flight workflows, ``workflow.deprecate_patch``
+        and inline this method.
+        """
+        if workflow.patched("declarative-orchestration-v1"):
+            # Step 1: persist handoff context to metadata (generic activity,
+            # no agent imports).
+            await workflow.execute_activity(
+                write_pending_handoff_activity,
+                args=[session_id, summary],
+                start_to_close_timeout=timedelta(seconds=15),
+                retry_policy=RetryPolicy(maximum_attempts=3),
+            )
+            # Step 2: emit event → dispatcher routes via manifest.
+            await workflow.execute_activity(
+                dispatch_event_activity,
+                envelope_for(
+                    CustomerRepliedDuringRemarketingEvent(
+                        session_id=session_id,
+                        summary=summary,
+                    ),
+                    source_plugin="chats",
+                    source_worker="remarketing",
+                ),
+                start_to_close_timeout=timedelta(seconds=30),
+                retry_policy=RetryPolicy(maximum_attempts=3),
+            )
+        else:
+            # Legacy path for pre-deploy histories (replay-safe).
+            forced_decision = TransferDecision(
+                session_id=session_id,
+                target_route=ROUTE_VENTAS,
+                summary=summary,
+            )
+            await workflow.execute_activity(
+                start_or_signal_sales_workflow_activity,
+                forced_decision,
+                start_to_close_timeout=timedelta(seconds=30),
+                retry_policy=RetryPolicy(maximum_attempts=3),
+            )
 
     @workflow.run
     async def run(self, input: RemarketingSessionInput) -> None:
@@ -193,31 +255,30 @@ class RemarketingSessionWorkflow:
                     )
                     self._last_response = result.final_content
 
-                    # ADR-001: si la tool emitio una decision de transferir a Sales, ejecutarla
-                    # via activity dispatcher (durable, retriable).
+                    # ADR-001 + ADR-2026-05-20: si la tool emitio una decision
+                    # de transferir a Sales, convertirla a un CompletionEvent y
+                    # dispatchar por manifest. NO importar workflow classes de
+                    # sibling agents (R-DIP #10).
+                    #
+                    # workflow.patched(): histories pre-deploy tienen la llamada
+                    # directa a `start_or_signal_sales_workflow_activity`. El
+                    # patched gate evita NondeterminismError durante replay.
+                    # Tras drain (idle_timeout=24h), `workflow.deprecate_patch(
+                    # "declarative-orchestration-v1")`.
                     if result.transfer_decision is not None:
                         workflow.logger.info("Remarketing ha transferido la sesión de vuelta a Ventas. Fin de Remarketing Workflow.")
-                        await workflow.execute_activity(
-                            start_or_signal_sales_workflow_activity,
-                            result.transfer_decision,
-                            start_to_close_timeout=timedelta(seconds=30),
-                            retry_policy=RetryPolicy(maximum_attempts=3),
+                        await self._handoff_to_sales(
+                            session_id=session_id,
+                            summary=result.transfer_decision.summary or "El cliente volvió a interactuar",
                         )
                         self._force_shutdown = True
                     elif messages_processed > 1 and not self._force_shutdown:
                         # Salvavidas DETERMINISTA: si el usuario respondio y el LLM no
                         # uso la tool de transferir, lo forzamos con una decision sintetica.
                         workflow.logger.info("Remarketing ignoró la transición. Forzando paso a Ventas de forma determinista.")
-                        forced_decision = TransferDecision(
+                        await self._handoff_to_sales(
                             session_id=session_id,
-                            target_route=ROUTE_VENTAS,
                             summary="Usuario respondió: " + str(msg.message)[:60],
-                        )
-                        await workflow.execute_activity(
-                            start_or_signal_sales_workflow_activity,
-                            forced_decision,
-                            start_to_close_timeout=timedelta(seconds=30),
-                            retry_policy=RetryPolicy(maximum_attempts=3),
                         )
                         self._force_shutdown = True
 
