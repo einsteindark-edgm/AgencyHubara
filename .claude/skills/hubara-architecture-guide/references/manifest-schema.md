@@ -51,6 +51,35 @@ frontend:
 | `contributes.sections` | ❌ | array | Lo que el Toolbar muestra |
 | `contributes.dashboard_widgets` | ❌ | array | Reservado para futuro |
 
+### §2.1 Contrato del sync: bloque `frontend:` es el gate de inclusión
+
+`scripts/plugins-sync.ts` usa la **presencia del bloque `frontend:`** como
+switch para decidir si el plugin entra en `src/app/plugin-registry.generated.ts`
+(consumido por `pages/Dashboard.tsx`). Reglas:
+
+1. **Sin bloque `frontend:`** → plugin backend-only. El sync emite
+   `[plugins-sync] skip <id>: backend-only` y NO lo agrega al registry.
+   Caso canónico: `system_map` expone `/api/system-map/graph` y su UI vive
+   en `system_explorer/` (container Vite separado).
+
+2. **Con `frontend:` + entry inexistente en disco** → el sync emite
+   `[plugins-sync] skip <id>: frontend.entry "..." does not exist` y aborta
+   la inclusión. Defensa contra typos en `entry:`.
+
+3. **Con `frontend:` + entry válido** → emite el entry con
+   `Page: lazy(() => import("@plugins/<id>/frontend"))`.
+
+Si un plugin backend-only **declara `frontend:` por error** o un
+frontend-only **omite el bloque por error**, Vite rompe con:
+
+```
+[plugin:vite:import-analysis] Failed to resolve import "@plugins/<id>/frontend"
+```
+
+Test que enforza el contrato:
+`frontend_dashboard/src/test/architecture/test_plugin_registry.arch.test.ts`
+(#19a + #19b). Ver `fsd-rules.md §2.15`.
+
 ---
 
 ## §3. Bloque `api:` (consumido por `src.main`)

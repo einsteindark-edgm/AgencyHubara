@@ -49,3 +49,29 @@ class EscalationDecision:
     session_id: str
     reason_category: str
     summary: str
+
+
+@dataclass(frozen=True)
+class RemarketingEligibility:
+    """Resultado de `check_remarketing_eligibility` activity.
+
+    Post-mortem workflow remarketing-wa_573125671604 run e688685d (2026-05-20):
+    el sales workflow escaló al cliente a humano (`active_route=humano`,
+    tag=HUMANO via `escalate_to_human` tool). Pero un remarketing previamente
+    programado (start_delay=60s) arrancó después de la escalation, hizo
+    `claim_conversation_routing(session_id, ROUTE_REMARKETING)` pisando el
+    routing, y envió un mensaje al cliente reactivando la conversación —
+    lo cual viola la regla de negocio: cuando hay humano en el caso, TODOS
+    los bots quedan quietos hasta que el humano devuelva el control.
+
+    Esta dataclass se usa para que el workflow Remarketing chequee el estado
+    actual del metadata.json ANTES de tocar nada — si `eligible=False`, el
+    workflow returna early sin pisar routing ni enviar mensajes.
+
+    Campos PLANOS (str / bool) para evitar footgun F5 (nested dataclass +
+    PEP 563 en activity return type rompe el workflow sandbox).
+    """
+    eligible: bool
+    current_route: str
+    current_tag: str
+    blocked_reason: str = ""

@@ -252,6 +252,46 @@ function Orders() {
 
 **Linter:** convention.
 
+### §2.15 — Backend-only plugin leaking into dashboard registry (HIGH)
+
+Un plugin que NO declara bloque `frontend:` en `plugin.yaml` (porque expone
+solo API REST y/o workers, o su UI vive en un container Vite separado) NO
+debe aparecer en `src/app/plugin-registry.generated.ts`. Si lo hace, el
+`Page: lazy(() => import("@plugins/<id>/frontend"))` rompe la pasada de
+import-analysis de Vite con un error críptico:
+
+```
+[plugin:vite:import-analysis] Failed to resolve import "@plugins/<id>/frontend"
+```
+
+Caso paradigmático: `system_map` expone `/api/system-map/graph` y su UI vive
+en `system_explorer/` (container Vite separado). Su manifest declara
+explícitamente "NO frontend block".
+
+```yaml
+# ❌ Plugin backend-only con frontend block fake — el directorio no existe
+id: system_map
+frontend:
+  entry: ./frontend     # ← no existe en disco, Vite muere en build
+
+# ✅ Plugin backend-only correcto — sin frontend block
+id: system_map
+api:
+  python_module: src.plugins.system_map.api
+  prefix: /api/system-map
+# (no frontend block — el sync script lo skipea correctamente)
+```
+
+**Contrato del sync script** (`scripts/plugins-sync.ts`):
+
+1. Plugin sin `frontend:` → `logInfo("skip: backend-only")` + continue.
+2. Plugin con `frontend:` pero entry inexistente → `logWarn` + skip.
+3. Plugin con `frontend:` + entry válido → emit entry al registry.
+
+**Linter:** `test_plugin_registry.arch.test.ts` (#19a + #19b):
+- #19a: cada id en `PLUGINS[]` tiene `frontend:` block + entry en disco.
+- #19b: cada plugin con `frontend:` válido aparece en `PLUGINS[]`.
+
 ---
 
 ## §3. Plugin isolation (regla adicional post-refactor)
@@ -307,6 +347,7 @@ cross-dependencies naturales.
 | Direct plugin import en Dashboard | convention | LOW |
 | Component multi-state mess | convention | LOW |
 | Falta loading/error state | convention | LOW |
+| Backend-only plugin en registry | `test_plugin_registry.arch.test.ts` | HIGH |
 
 ---
 

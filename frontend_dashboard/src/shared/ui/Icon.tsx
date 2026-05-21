@@ -278,6 +278,13 @@ export const Icon = {
       <path d="M21 15l-5-5L5 21" />
     </Ico>
   ),
+  megaphone: () => (
+    <Ico>
+      <path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1z" />
+      <path d="M15 8.5a3.5 3.5 0 0 1 0 7" />
+      <path d="M18 6a7 7 0 0 1 0 12" />
+    </Ico>
+  ),
 };
 
 export type IconName = keyof typeof Icon;

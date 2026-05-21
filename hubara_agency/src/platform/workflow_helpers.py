@@ -267,7 +267,77 @@ async def run_agent_turn(
                     {"role": "tool", "tool_call_id": tc.id, "name": tc.name, "content": result},
                 ]
         else:
+            # ── Empty-content recovery (post-mortem run df5a8fe2-bb7c-4627-b861-dc19643467be) ──
+            # DeepSeek v4 (and other thinking-mode models) occasionally finishes
+            # with `content=""` while putting the user-facing answer in
+            # `reasoning_content`. With the previous code path, the empty content
+            # propagated to `send_whatsapp_message_activity` which has a falsy
+            # guard `if result.final_content` → message silenced, client
+            # perceives the bot as "stuck thinking". After 60s the ghosting
+            # timer fires and remarketing kicks in prematurely.
+            #
+            # Recovery: append a workflow-side nudge as a `system` turn and
+            # retry ONE iteration of the LLM loop. We do NOT promote
+            # `reasoning_content` directly to the client — reasoning channels
+            # may contain meta-commentary ("Debo llamar la tool X...") which
+            # would break the agent's human persona. If the retry still ends
+            # empty, surface a natural human fallback that keeps the
+            # conversation moving without sounding scripted.
+            if (
+                not response.content
+                and response.reasoning_content
+                and iteration < session.llm.max_iterations
+            ):
+                workflow.logger.warning(
+                    "LLM returned empty content with reasoning_content present — "
+                    "nudging model to emit the final answer in `content`",
+                    extra={
+                        "session_id": session.session_id,
+                        "reasoning_len": len(response.reasoning_content),
+                        "finish_reason": response.finish_reason,
+                        "iteration": iteration,
+                    },
+                )
+                # Inject a workflow-side nudge as a system-role reminder.
+                # We do NOT echo reasoning_content into the prompt — that
+                # could prime the model to repeat the same failure pattern.
+                messages = [
+                    *messages,
+                    {
+                        "role": "system",
+                        "content": (
+                            "Tu mensaje al cliente debe ir en el campo `content`, "
+                            "no en el canal de razonamiento. Responde ahora al "
+                            "cliente directamente, en español natural y cálido, "
+                            "sin meta-comentarios sobre tu proceso de pensamiento."
+                        ),
+                    },
+                ]
+                # Continue the loop — next iteration retries llm_chat.
+                continue
+
             final_content = response.content
+            # Final empty-content fallback: model failed to recover even after
+            # the nudge (or we hit max_iterations). Use a HUMAN-sounding
+            # natural recovery line that mirrors what a real seller would say
+            # when something hiccups. Critical: do NOT mention "bot", "system",
+            # "error", "AI" — preserve the human persona.
+            if not final_content:
+                workflow.logger.error(
+                    "LLM final response remained empty after recovery attempt — "
+                    "using human-sounding fallback line",
+                    extra={
+                        "session_id": session.session_id,
+                        "reasoning_len": (
+                            len(response.reasoning_content)
+                            if response.reasoning_content
+                            else 0
+                        ),
+                        "iteration": iteration,
+                    },
+                )
+                final_content = "¡Perdón! Justo se me cortó un segundito. ¿Me repetís lo que necesitabas?"
+
             msg_dict: dict[str, Any] = {"role": "assistant", "content": final_content}
             if response.reasoning_content is not None:
                 msg_dict["reasoning_content"] = response.reasoning_content
@@ -277,7 +347,7 @@ async def run_agent_turn(
             break
 
     if final_content is None:
-        final_content = f"Reached max iterations ({session.llm.max_iterations})."
+        final_content = "¡Perdón! Justo se me cortó un segundito. ¿Me repetís lo que necesitabas?"
 
     await workflow.execute_activity(
         record_turn,

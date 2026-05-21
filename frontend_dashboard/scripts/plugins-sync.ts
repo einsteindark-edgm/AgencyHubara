@@ -16,9 +16,15 @@
  *      el id es también un segmento de path Python.
  *   2. `id` == nombre del directorio (no se permite que un manifest declare
  *      `id: foo` viviendo en `src/plugins/bar/`).
- *   3. `frontend.entry` (default `./frontend`) existe en disco — sino el
- *      `lazy()` runtime fallaría con un error críptico.
- *   4. Colisión de `section.key` entre plugins — warning (el shell muestra
+ *   3. El plugin declara bloque `frontend:` en su manifest. Plugins sin
+ *      bloque `frontend:` son backend-only (ej. `system_map` expone solo
+ *      API REST; su UI vive en un container separado). NO deben aparecer
+ *      en el registry del dashboard — un `lazy(() => import("@plugins/<id>/frontend"))`
+ *      sin `frontend/` en disco rompe el bundler con un error críptico.
+ *   4. `frontend.entry` (default `./frontend`) existe en disco — defensa
+ *      adicional para cuando el bloque `frontend:` sí está pero el entry
+ *      apunta a una ruta inexistente.
+ *   5. Colisión de `section.key` entre plugins — warning (el shell muestra
  *      la última, lo que típicamente es un bug).
  *
  * Diseño explícito:
@@ -136,19 +142,31 @@ function discoverManifests(): Map<string, Manifest> {
       continue;
     }
 
-    // Si el manifest declara frontend, chequear que el entry exista en disco.
-    // Sin esto, `lazy(() => import("@plugins/<id>/frontend"))` falla en runtime
-    // con un error críptico del bundler. Mejor catch al sync time.
-    if (manifest.frontend) {
-      const entryRel = manifest.frontend.entry ?? "./frontend";
-      const entryAbs = resolve(PLUGINS_DIR, entry.name, entryRel);
-      if (!existsSync(entryAbs)) {
-        logWarn(
-          `skip ${entry.name}: frontend.entry "${entryRel}" does not exist ` +
-            `(expected at ${entryAbs.replace(FRONTEND_ROOT + "/", "")})`,
-        );
-        continue;
-      }
+    // Plugins backend-only (sin bloque `frontend:` en el manifest) NO entran
+    // al registry del dashboard. Caso paradigmático: `system_map` expone solo
+    // `/api/system-map/graph` y su UI vive en un container Vite separado
+    // (`system_explorer/`). Incluirlos generaría un `import("@plugins/<id>/frontend")`
+    // que el bundler no puede resolver. Info-log para que un dev pueda confirmar
+    // por qué el plugin no aparece en sidebar/sections.
+    if (!manifest.frontend) {
+      logInfo(
+        `skip ${entry.name}: backend-only (no frontend block in manifest) — ` +
+          `does not contribute to the dashboard registry`,
+      );
+      continue;
+    }
+
+    // Bloque `frontend:` declarado → el entry debe existir en disco. Sin esto,
+    // `lazy(() => import("@plugins/<id>/frontend"))` falla en runtime con un
+    // error críptico del bundler. Mejor catch al sync time.
+    const entryRel = manifest.frontend.entry ?? "./frontend";
+    const entryAbs = resolve(PLUGINS_DIR, entry.name, entryRel);
+    if (!existsSync(entryAbs)) {
+      logWarn(
+        `skip ${entry.name}: frontend.entry "${entryRel}" does not exist ` +
+          `(expected at ${entryAbs.replace(FRONTEND_ROOT + "/", "")})`,
+      );
+      continue;
     }
 
     found.set(entry.name, manifest);

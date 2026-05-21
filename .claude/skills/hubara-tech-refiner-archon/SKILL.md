@@ -197,6 +197,20 @@ Sub-cambios:
 | `agent.workers[]` | agregar entry `{name: ..., task_queue: queue-...}` |
 | `wiring_intents.env_vars_required` | sumar `MY_NEW_ENV_VAR` |
 
+**Regla del bloque `frontend:` (FSD §2.15 + manifest-schema §2.1):**
+
+- Si la HU crea un plugin **backend-only** (solo API o solo workers, sin UI en
+  el dashboard principal — caso paradigmático: `system_map`) → en `§0
+  Plugin classification` NO incluyas `frontend` en `layers:`, y en `§3.4`
+  documenta explícitamente "manifest **sin bloque `frontend:`**".
+- Si la HU crea un plugin **con UI en el dashboard** → el manifest debe
+  declarar `frontend.entry` y el implementer debe crear `<plugin>/frontend/`
+  (con `index.ts` exportando el `Page`). Si una de las dos partes falta,
+  `scripts/plugins-sync.ts` skipea el plugin y la HU queda con UI rota
+  silenciosamente.
+- Plantear el caso explícitamente bloquea el footgun: `test_plugin_registry`
+  arch test (#19a/#19b) sino lo agarra después en CI.
+
 ### §3.5 K8s manifest (`k8s/aws-produccion/worker-<name>.yaml`)
 
 (Solo si HU agrega worker nuevo.)

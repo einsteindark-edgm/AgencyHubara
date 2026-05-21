@@ -263,7 +263,131 @@ Razón: el dispatcher declarativo NO sabe el path del worker target (sería
 R-DIP #10 violation). Cuando arranca workflows cross-worker, omite ese
 campo y el bootstrap lo resuelve localmente.
 
-Ver `references/deha-rules.md §5.6 + §5.7 + §5.8` y ADR-2026-05-20-declarative-orchestration.
+#### F5. Nested dataclass + `from __future__ import annotations` en activity return
+
+**Confirmado en producción** (workflow `df5a8fe2-bb7c-4627-b861-dc19643467be`,
+2026-05-20). Si tu archivo combina las 3 condiciones:
+
+1. `from __future__ import annotations` arriba del módulo.
+2. Define un `@activity.defn` cuyo return type es una dataclass.
+3. Esa dataclass tiene un campo con OTRA dataclass anidada
+   (`list[Inner]`, `dict[str, Inner]`, `tuple[Inner, ...]`).
+
+→ **El workflow caller crashea** con `NameError: name 'Inner' is not defined`
+al deserializar el resultado de la activity. Causa: Temporal hace
+`get_type_hints` en el sandbox del workflow, donde el namespace restringido
+no resuelve el forward reference. Síntoma observado: `RuntimeError: Failed
+decoding arguments` + infinite retry loop del workflow.
+
+```python
+# ❌ MALO — combina las 3 condiciones, crashea en runtime
+from __future__ import annotations
+from dataclasses import dataclass, field
+from temporalio import activity
+
+@dataclass(frozen=True)
+class Inner:
+    x: int
+
+@dataclass(frozen=True)
+class Outer:
+    items: list[Inner] = field(default_factory=list)
+
+@activity.defn
+async def my_activity(input: Foo) -> Outer:  # ← Outer con nested Inner
+    ...
+
+# ✅ BUENO — sin future annotations, orden correcto
+from dataclasses import dataclass, field
+from temporalio import activity
+
+@dataclass(frozen=True)
+class Inner:                                   # ← definido ANTES que Outer
+    x: int
+
+@dataclass(frozen=True)
+class Outer:
+    items: list[Inner] = field(default_factory=list)
+
+@activity.defn
+async def my_activity(input: Foo) -> Outer:
+    ...
+```
+
+**Fix:** Remove `from __future__ import annotations`. Asegurate que la inner
+dataclass esté definida ANTES que la outer (orden importa). Si no podés
+remover future annotations, cambia el return type a tipos planos
+(`list[dict]` en lugar de `list[Inner]`) — pierde type safety pero garantiza
+serialización.
+
+Test enforcer: `tests/architecture/test_r_json_nested_dataclass.py`.
+
+#### F6. LLM emite respuesta en `reasoning_content` (thinking-mode)
+
+**Confirmado en producción** (workflow `df5a8fe2`, 2026-05-20). Modelos
+thinking-mode (DeepSeek-R1/v4, o1, R1, Claude extended-thinking) a veces
+devuelven `content=""` con `reasoning_content` poblado. El guard del
+workflow `if result.final_content:` suprime el envío → el bot "se queda
+mudo" → 60s después dispara ghosting prematuro.
+
+**Si tu task toca `run_agent_turn` o crea un nuevo workflow con LLM
+tool-loop**, DEBÉS implementar la recovery (ver `references/deha-rules.md
+§5.9`):
+
+1. Detectar `content=""` + `reasoning_content` no vacío + iter < max.
+2. Inyectar system reminder pidiendo emitir respuesta en `content`.
+3. Retry UN llm_chat. Si vuelve a fallar → fallback humano natural.
+4. El fallback NO debe sonar a bot. Usar frases como "¡Perdón! Justo se me
+   cortó un segundito. ¿Me repetís lo que necesitabas?" — NUNCA "soy un
+   asistente", "sistema", "error".
+
+Si tu agent tiene un ghosting prompt, debe instruir al modelo a NO tratar
+el fallback como ghosting real (ver ejemplo en `sales/prompts.py`).
+
+#### F7. Workflow programado con `start_delay` sin eligibility gate
+
+**Confirmado en producción** (workflow `remarketing-wa_573125671604` run
+`e688685d`, 2026-05-21). Cuando un workflow se programa con
+`start_delay=N seconds`, el state puede cambiar entre el programa y el
+arranque. Si el workflow toca state compartido sin chequear el estado
+actual, puede pisar decisiones humanas.
+
+**Caso real**: sales escala a humano (`active_route=humano`), pero un
+remarketing programado 60s antes arranca después y ciegamente sobrescribe
+`active_route=remarketing` + manda mensaje al cliente.
+
+**Regla:** si tu task agrega/modifica un workflow que arranca con
+`start_delay > 0`, ese workflow DEBE tener una **eligibility gate** como
+primera activity (envuelta en `workflow.patched`). La gate:
+
+1. Lee el state actual del sistema.
+2. Devuelve dataclass plano (no nested — F5) con `eligible: bool` + razón.
+3. Si NO eligible → `return` early SIN side-effects.
+
+```python
+@workflow.run
+async def run(self, input: MyInput) -> None:
+    if workflow.patched("my-workflow-eligibility-gate-v1"):
+        eligibility = await workflow.execute_activity(
+            check_my_eligibility,
+            args=[input.session_id],
+            start_to_close_timeout=timedelta(seconds=15),
+        )
+        if not eligibility.eligible:
+            workflow.logger.warning("Aborted: %s", eligibility.blocked_reason)
+            return  # NO pisar metadata, NO mandar mensajes
+    # ... resto del workflow
+```
+
+Bloqueos típicos: `active_route=humano`, `tag in {HUMANO, COMPRA_EXITOSA}`.
+
+**Fail-safe = NO eligible.** Si el state está corrupto/ilegible, bloquear
+el workflow. Mejor un workflow perdido que pisar un caso humano.
+
+Ver `references/deha-rules.md §5.10` + `tests/test_remarketing_eligibility.py`
+como plantilla.
+
+Ver `references/deha-rules.md §5.6 + §5.7 (F1-F7) + §5.8 + §5.9 + §5.10` y ADR-2026-05-20-declarative-orchestration.
 
 ### §5.2 FSD rules (frontend)
 
@@ -283,6 +407,40 @@ Ver `references/deha-rules.md §5.6 + §5.7 + §5.8` y ADR-2026-05-20-declarativ
 Si necesitás constante per-plugin, va en `plugin.yaml`, NO en
 `constants.py`. Si necesitás expresar algo nuevo no soportado por el
 schema → bug del schema, NO workaround.
+
+#### §5.3.1 Bloque `frontend:` = gate de inclusión en dashboard registry
+
+`scripts/plugins-sync.ts` usa la **presencia del bloque `frontend:`** para
+decidir si el plugin entra en `src/app/plugin-registry.generated.ts`. Hay
+DOS modos invariantes:
+
+1. **Plugin backend-only** (ej. `system_map` — solo expone API REST, su UI
+   vive en otro container Vite). `plugin.yaml` NO debe declarar bloque
+   `frontend:`. Comentario explícito recomendado en el manifest:
+   ```yaml
+   # NO frontend block: este plugin no contribuye al dashboard principal.
+   # La UI vive en <container_dir>/ como container separado.
+   ```
+   El sync emite `[plugins-sync] skip <id>: backend-only` (info, no warn).
+
+2. **Plugin con UI en el dashboard**. `plugin.yaml` declara `frontend:` y el
+   directorio `<plugin>/frontend/` DEBE existir con un `index.ts` válido.
+   Sino, Vite rompe en build con:
+   ```
+   [plugin:vite:import-analysis] Failed to resolve import "@plugins/<id>/frontend"
+   ```
+
+**Footgun a evitar**: declarar `frontend:` en un manifest sin crear el dir
+`./frontend/` (o viceversa). Linter:
+`frontend_dashboard/src/test/architecture/test_plugin_registry.arch.test.ts`
+(#19a + #19b). Después de tocar manifest, **siempre correr**:
+
+```bash
+cd frontend_dashboard && npm run plugins:sync
+# Esperar: "skip X: backend-only" para backend-only, "with N plugin(s): ..." para frontend
+```
+
+Ver `references/manifest-schema.md §2.1` para detalles del contrato.
 
 ### §5.4 Architecture-protected files (HARD STOP)
 

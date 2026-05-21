@@ -4,6 +4,7 @@ from loguru import logger
 from temporalio.worker import Worker
 
 from src.platform.temporal.activities import (
+    check_remarketing_eligibility,
     claim_conversation_routing,
     execute_tool,
     read_workspace_memory_activity,
@@ -58,6 +59,7 @@ async def main() -> None:
             llm_chat,
             execute_tool,
             record_turn,
+            check_remarketing_eligibility,
             claim_conversation_routing,
             send_whatsapp_message_activity,
             send_typing_indicator_activity,

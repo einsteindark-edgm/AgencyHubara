@@ -367,6 +367,14 @@ yaml.
   no existe → marcar como `action: create` y advertir en notes.
 - **Manifest schema changes** requieren ADR → si la HU modifica
   `plugin.schema.yaml`, emitir manifest blocked.
+- **Backend-only plugins NO declaran `frontend:` block** (FSD rule §2.15 +
+  manifest-schema §2.1). Si la HU crea un plugin que solo expone API o
+  workers (su UI vive en otro lado, ej. `system_explorer/`), el
+  `plugin.yaml` NO debe tener bloque `frontend:`. Si lo tiene fake (sin
+  `./frontend/` en disco), Vite rompe con `Failed to resolve import
+  "@plugins/<id>/frontend"`. Mark `layers:` SIN `frontend` para esos
+  plugins. El sync script `scripts/plugins-sync.ts` skipea correctamente
+  cuando no hay bloque `frontend:`.
 
 ---
 

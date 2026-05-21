@@ -30,9 +30,24 @@ Called by workflows like::
 
 The activity returns a ``DispatchResult`` listing the transitions that fired
 and the resulting Temporal workflow ids (useful for logs and tests).
-"""
-from __future__ import annotations
 
+──── Why no ``from __future__ import annotations`` ────
+
+The dispatcher's return type ``DispatchResult`` contains a nested dataclass
+field ``matches: list[DispatchedTransition]``. When the **calling workflow**
+receives the activity result, Temporal's default ``DataConverter`` runs
+``get_type_hints(DispatchResult)`` to reconstruct the dataclass. With PEP 563
+annotations, that triggers an ``eval("list[DispatchedTransition]", ...)`` in
+the workflow's sandbox-restricted namespace — which does NOT carry
+``DispatchedTransition`` and crashes with ``NameError`` (premortem footgun
+F1, confirmed in production on workflow run df5a8fe2-bb7c-4627-b861-dc19643467be).
+
+Without future annotations, hints are evaluated at class-definition time
+and stored as real ``types.GenericAlias`` objects — ``get_type_hints`` returns
+them directly without any eval. Order matters: ``DispatchedTransition`` (line 53)
+MUST be defined before ``DispatchResult`` (line 67). This rule is enforced
+by ``test_no_future_annotations_in_temporal_boundary`` (see ``tests/architecture``).
+"""
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any, Mapping

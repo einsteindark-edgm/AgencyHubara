@@ -15,10 +15,21 @@ from temporalio import activity
 from exoclaw.agent.tools.protocol import ToolContext
 from exoclaw_temporal.config import ExecuteToolInput
 
+from src.platform.constants import ROUTE_HUMANO, ROUTE_VENTAS
+from src.platform.contracts import RemarketingEligibility
 from src.platform.registries import get_base_tools_registry
 from src.platform.tool_extensions import apply_tool_extensions
 from src.platform.temporal.heartbeat import with_heartbeat
 from src.platform.config import WORKSPACE_VAULT_DIR
+
+# Tags terminales — no se reactiva remarketing si la conversación está cerrada.
+# COMPRA_EXITOSA: la venta ya cerró. HUMANO: humano tomó control (sinónimo de
+# active_route=humano, pero algunas tools setean el tag y no el route, así que
+# chequeamos ambos por defense-in-depth).
+_TERMINAL_TAGS_FOR_REMARKETING: frozenset[str] = frozenset({
+    "COMPRA_EXITOSA",
+    "HUMANO",
+})
 
 @activity.defn(name="execute_tool")
 @with_heartbeat(every=10)
@@ -83,6 +94,91 @@ async def claim_conversation_routing(session_id: str, new_route: str) -> None:
     })
 
     metadata_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+@activity.defn(name="check_remarketing_eligibility")
+async def check_remarketing_eligibility(session_id: str) -> RemarketingEligibility:
+    """Verifica si el remarketing puede arrancar según el estado actual del cliente.
+
+    POST-MORTEM workflow remarketing-wa_573125671604 run e688685d-c676-4e61-a152-b22ff49788db
+    (2026-05-20): un remarketing programado con `start_delay=60s` arrancó
+    DESPUÉS de que el sales workflow escaló el caso a humano. El remarketing
+    workflow no chequeaba el estado y ciegamente:
+      1. Llamó `claim_conversation_routing(session_id, ROUTE_REMARKETING)` →
+         pisó el `active_route=humano` que el escalation había setteado.
+      2. Mandó mensaje al cliente reactivando la venta — violando la regla
+         de negocio: cuando hay humano en el caso, ningún bot interviene.
+
+    Esta activity es la primera que invoca `RemarketingWorkflow.run`. Lee el
+    metadata.json actual y devuelve `eligible=False` si:
+      - `active_route == ROUTE_HUMANO` — humano gestionando el caso.
+      - `tag` en `_TERMINAL_TAGS_FOR_REMARKETING` (COMPRA_EXITOSA, HUMANO).
+
+    El workflow respeta la decisión y returna early sin tocar nada. El
+    humano (vía dashboard) puede devolver el control cambiando active_route
+    de vuelta a ventas/remarketing si quiere.
+
+    Devuelve `RemarketingEligibility` (dataclass plano — sin nested
+    dataclasses para evitar footgun F5).
+    """
+    metadata_file = WORKSPACE_VAULT_DIR / session_id / "metadata.json"
+    if not metadata_file.exists():
+        # Sesión nueva sin metadata previa — eligible por default.
+        return RemarketingEligibility(
+            eligible=True,
+            current_route=ROUTE_VENTAS,
+            current_tag="NO_ETIQUETADO",
+        )
+
+    try:
+        data = json.loads(metadata_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        # Si el metadata está corrupto, fail-safe = NO arrancar remarketing.
+        # Mejor un remarketing perdido que pisar un caso humano por accidente.
+        activity.logger.error(
+            "check_remarketing_eligibility: metadata corrupto para session_id=%s — "
+            "fail-safe: bloqueando remarketing. Error: %s",
+            session_id, exc,
+        )
+        return RemarketingEligibility(
+            eligible=False,
+            current_route="unknown",
+            current_tag="unknown",
+            blocked_reason=f"metadata.json corrupto o ilegible: {exc}",
+        )
+
+    current_route = str(data.get("active_route", ROUTE_VENTAS))
+    current_tag = str(data.get("tag", "NO_ETIQUETADO"))
+
+    if current_route == ROUTE_HUMANO:
+        return RemarketingEligibility(
+            eligible=False,
+            current_route=current_route,
+            current_tag=current_tag,
+            blocked_reason=(
+                f"active_route={ROUTE_HUMANO} — humano gestiona el caso. "
+                "El remarketing no debe intervenir hasta que el humano devuelva "
+                "el control via dashboard."
+            ),
+        )
+
+    if current_tag in _TERMINAL_TAGS_FOR_REMARKETING:
+        return RemarketingEligibility(
+            eligible=False,
+            current_route=current_route,
+            current_tag=current_tag,
+            blocked_reason=(
+                f"tag={current_tag} (terminal) — la conversación ya está cerrada. "
+                f"Tags terminales: {sorted(_TERMINAL_TAGS_FOR_REMARKETING)}."
+            ),
+        )
+
+    return RemarketingEligibility(
+        eligible=True,
+        current_route=current_route,
+        current_tag=current_tag,
+    )
+
 
 @activity.defn(name="read_workspace_memory_activity")
 async def read_workspace_memory_activity(session_id: str) -> str:

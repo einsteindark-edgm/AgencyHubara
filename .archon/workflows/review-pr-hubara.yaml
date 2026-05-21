@@ -309,6 +309,84 @@ nodes:
                           )
                           runtime_path = str(get_workspace_path())
 
+          - **Nested dataclass + PEP 563 en activity return (footgun F5)** — HIGH severity, merge_blocking:
+              Confirmado en producción 2026-05-20 (workflow run df5a8fe2-bb7c-4627-b861-dc19643467be).
+              Si el diff modifica un archivo que combina:
+                (a) `from __future__ import annotations`
+                (b) Al menos un `@activity.defn` decorator
+                (c) Una dataclass cuyo return type incluye `list[Y]`, `dict[str, Y]`,
+                    `tuple[Y, ...]` u `Optional[Y]` donde `Y` es OTRA dataclass
+                    declarada en el mismo módulo
+              → MARCAR como:
+                  severity: high
+                  rule: R-JSON
+                  merge_blocking: true
+                  message: "Nested dataclass in activity return type + PEP 563 →
+                            workflow sandbox crashes with NameError at get_type_hints
+                            (ADR-2026-05-20 §10 F5, post-mortem df5a8fe2)"
+                  fix_suggestion: |
+                      Remove `from __future__ import annotations` del módulo.
+                      Asegurate que la inner dataclass esté definida ANTES que
+                      la outer (orden importa con eager evaluation). Si no podés
+                      remover future annotations, cambiar el return type a tipos
+                      planos (list[dict] en lugar de list[Inner]) — pierde
+                      type safety pero garantiza serialización.
+
+              Test enforcer: tests/architecture/test_r_json_nested_dataclass.py
+
+          - **Workflow con start_delay sin eligibility gate (footgun F7)** — HIGH severity, merge_blocking:
+              Confirmado en producción 2026-05-21 (workflow run e688685d-c676-4e61-a152-b22ff49788db).
+              Si el diff agrega/modifica un workflow que se arranca con `start_delay > 0`
+              (típicamente vía dispatcher con `start_delay_field`), el workflow target
+              DEBE tener una eligibility gate como primera activity.
+
+              Detección:
+                1. Grep en el diff por:
+                     start_delay\s*=\s*timedelta\(seconds=\d+\)
+                     start_delay_field\s*:\s*[a-z_]+
+                   Identificar workflows target (target_workflow en manifest transitions
+                   con start_delay_field, o callers directos de start_workflow con start_delay).
+                2. Para cada workflow target identificado, leer su `@workflow.run` body.
+                3. Verificar si la PRIMERA activity (antes de bootstrap / claim_routing /
+                   send_whatsapp / etc.) es una eligibility check — patrón canónico:
+                     await workflow.execute_activity(check_<X>_eligibility, ...)
+                4. Verificar que el resultado tiene un guard `if not eligibility.eligible: return`
+                   ANTES de cualquier side-effect (claim_routing, send_message, write_metadata).
+
+              Si NO encuentra eligibility gate Y el workflow toca state compartido:
+                MARCAR como:
+                  severity: high
+                  rule: R-DET
+                  merge_blocking: true
+                  message: "Workflow <name> arranca con start_delay pero no tiene
+                            eligibility gate. Riesgo: el state puede cambiar entre
+                            programa y arranque (ej. human escalation) — el workflow
+                            puede pisar decisiones humanas (post-mortem e688685d,
+                            ADR-2026-05-20 §10 F7)"
+                  fix_suggestion: |
+                      Agregar como primera activity (envuelta en workflow.patched):
+
+                      @workflow.run
+                      async def run(self, input: MyInput) -> None:
+                          if workflow.patched("<workflow>-eligibility-gate-v1"):
+                              eligibility = await workflow.execute_activity(
+                                  check_<workflow>_eligibility,
+                                  args=[input.session_id],
+                                  start_to_close_timeout=timedelta(seconds=15),
+                              )
+                              if not eligibility.eligible:
+                                  workflow.logger.warning(
+                                      "Aborted by gate: %s", eligibility.blocked_reason
+                                  )
+                                  return  # SIN side-effects
+                          # ... resto del workflow
+
+                      La activity check debe leer el state (metadata.json, DB) y
+                      devolver dataclass plano (no nested — F5) con eligible: bool
+                      + blocked_reason. Fail-safe: si state corrupto → NO eligible.
+
+              Test enforcer plantilla: tests/test_remarketing_eligibility.py
+
         Output: $ARTIFACTS_DIR/findings-deha.yaml schema:
           version: 1
           agent: deha-compliance
@@ -391,6 +469,22 @@ nodes:
             declarados en task-result.yaml correspondiente
           - Architecture-protected files NO modificados (.archon/workflows/,
             .claude/skills/hubara-*, tests/architecture/, .importlinter)
+
+        Footgun F7 — Frontend block contract (FSD §2.15 + manifest-schema §2.1):
+          - Para CADA plugin.yaml tocado:
+            * Si declara bloque `frontend:` → el directorio `<plugin>/frontend/`
+              DEBE existir y tener un `index.ts` exportable. Sino, Vite rompe
+              con `Failed to resolve import "@plugins/<id>/frontend"`.
+              severity: high, merge_blocking: true
+              fix_suggestion: "Crear src/plugins/<id>/frontend/index.ts O remover bloque frontend: del manifest"
+            * Si NO declara `frontend:` → el directorio `<plugin>/frontend/`
+              NO debe existir. Si existe, el código está muerto (sync no lo
+              recoge). severity: medium, fix_suggestion: "Eliminar src/plugins/<id>/frontend/ o agregar bloque frontend: al manifest"
+          - Si el PR tocó algún plugin.yaml o cualquier file en
+            src/plugins/<id>/frontend/ → exigir que el commit incluya
+            `src/app/plugin-registry.generated.ts` regenerado por
+            `npm run plugins:sync` (predev/prebuild lo corre automáticamente
+            pero en CI debe estar al día). severity: low.
 
         Output: $ARTIFACTS_DIR/findings-plugin-system.yaml.
 

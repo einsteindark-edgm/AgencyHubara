@@ -12,7 +12,11 @@ with workflow.unsafe.imports_passed_through():
         dispatch_event_activity,
         envelope_for,
     )
-    from src.platform.temporal.activities import claim_conversation_routing, read_workspace_memory_activity
+    from src.platform.temporal.activities import (
+        check_remarketing_eligibility,
+        claim_conversation_routing,
+        read_workspace_memory_activity,
+    )
     from src.platform.whatsapp.activities import send_whatsapp_message_activity
     from src.platform.temporal.dispatcher import (
         start_or_signal_sales_workflow_activity,
@@ -137,6 +141,41 @@ class RemarketingSessionWorkflow:
         session_id = input.session_id
         motivo = input.motivo
         workflow.logger.info(f"Activando Sesión Conversacional de Remarketing para session: {session_id}")
+
+        # ── Eligibility gate (post-mortem run e688685d-c676-4e61-a152-b22ff49788db) ──
+        # Antes de tocar NADA (no `claim_conversation_routing`, no mensajes), chequear
+        # si el caso es elegible para remarketing. Caso bloqueante observado en
+        # producción 2026-05-20: sales workflow escaló el caso a humano (active_route=
+        # humano, tag=HUMANO) entre el momento que se programó este remarketing con
+        # start_delay=60s y el momento en que arrancó. Sin este gate, el workflow
+        # pisaba el routing y reactivaba la conversación violando la regla de negocio
+        # "cuando hay humano en el caso, ningún bot interviene".
+        #
+        # Si la elegibilidad cambia, returnamos early SIN side-effects. El humano
+        # decide vía dashboard cuándo devolver el control a los bots.
+        #
+        # workflow.patched gate (replay-safe para histories pre-deploy): workflows
+        # ya en vuelo NO ejecutan este branch — ejecutan el path legacy.
+        if workflow.patched("remarketing-eligibility-gate-v1"):
+            eligibility = await workflow.execute_activity(
+                check_remarketing_eligibility,
+                args=[session_id],
+                start_to_close_timeout=timedelta(seconds=15),
+            )
+            if not eligibility.eligible:
+                workflow.logger.warning(
+                    "RemarketingWorkflow aborted by eligibility gate "
+                    "(session_id=%s, route=%s, tag=%s): %s",
+                    session_id,
+                    eligibility.current_route,
+                    eligibility.current_tag,
+                    eligibility.blocked_reason,
+                )
+                # Return early — NO escribimos metadata, NO mandamos mensajes,
+                # NO contaminamos history con turns falsos. El workflow completa
+                # cleanly y libera el workflow_id para futuras reactivaciones
+                # (si el humano devuelve el control via dashboard).
+                return
 
         # Bootstrap: construye SessionInput fuera del workflow (R-DET).
         # Reemplaza el `build_workspace_config` + `get_base_tools_registry` que
