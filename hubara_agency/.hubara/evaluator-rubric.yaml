@@ -1,0 +1,151 @@
+# Rúbrica para el evaluador pre-PR del pipeline Archon.
+# Eleva la Técnica 7 del HARNESS_ENGINEERING.md (evaluador calibrado).
+#
+# Cada criterio tiene:
+#   - weight: peso relativo en el score final
+#   - threshold_hard: si el score de ese criterio baja de este número, FAIL automático
+#                     (independiente del weighted average)
+#   - scoring: anchors de 0, 4, 7, 10 con definición operativa
+#
+# Score final = weighted average de criterios aplicables.
+# Veredicto = pass | warn | block_merge según thresholds globales.
+
+version: "1.0"
+last_calibrated: "2026-05-21"  # actualizar cuando se corra el ritual de calibración
+
+criteria:
+
+  - id: architectural_compliance
+    weight: 30
+    applies_when: always
+    threshold_hard: 7
+    definition: |
+      ¿La task respeta las 5 R-rules DEHA (R-DET / R-JSON / R-STATELESS / R-HEARTBEAT / R-DIP)
+      y los 14 anti-patterns FSD? Verificable corriendo lint-imports + pytest -m architecture
+      + npm run test:arch.
+    scoring:
+      10: "Cumple todas las reglas + documenta explícitamente cualquier borderline case en code comments o ADR linkeado."
+      7: "Cumple todas las reglas; sin docs en borderline cases."
+      4: "Viola 1 regla menor (docstring missing en @with_heartbeat, R-JSON usa Optional[Decimal] sin justificación, etc.). Auto-fixeable."
+      0: "Viola 1+ regla mayor (R-DIP cross-plugin import, R-DET datetime.now() en workflow, R-DIP #10 cross-worker import). Bloqueante."
+    auto_check_commands:
+      - "cd hubara_agency && uv run lint-imports"
+      - "cd hubara_agency && uv run pytest -m architecture --tb=no -q"
+      - "cd frontend_dashboard && npm run test:arch"
+
+  - id: test_coverage_real
+    weight: 25
+    applies_when: always
+    threshold_hard: 7
+    definition: |
+      ¿Hay tests que verifican el COMPORTAMIENTO observable, no solo el schema?
+      Caso paradigmático del repo (memoria backend_behavior_verification): HU
+      mensajes-agente tenía schema válido + tests verdes, pero el backend no emitía
+      los datos. Tests deben verificar el output que el usuario ve, no solo que el
+      código compila.
+    scoring:
+      10: "Unit + functional + (E2E si UI) que verifican el comportamiento observable. Tests fallarían si la feature estuviera rota end-to-end."
+      7: "Unit + functional. E2E omitido pero la HU no es de UI O hay justificación explícita."
+      4: "Solo unit tests. Sin functional o E2E aunque la HU lo requeriría."
+      0: "Sin tests nuevos O tests sin assertions reales (assert True, mock-only tests, etc.)."
+    auto_check_commands:
+      - "cd hubara_agency && uv run pytest --collect-only -q tests/plugins/<plugin>/ tests/functional/"
+      # frontend tests detected via grep en el diff
+    manual_check:
+      - "Inspeccioná las assertions de los tests nuevos — ¿verifican comportamiento o solo shape?"
+      - "Si la HU es de visualización (backend EMITE datos al frontend), los tests E2E deben verificar que los datos LLEGAN al frontend, no solo que el endpoint los devuelve."
+
+  - id: visual_verification
+    weight: 15
+    applies_when: "task_affects_frontend"  # solo si touched frontend_dashboard/src/
+    threshold_hard: 6
+    definition: |
+      ¿La UI se verificó con Playwright contra el dev server vivo? Screenshots como
+      evidencia. Sin esto, los frontend bugs visuales pasan invisibles.
+    scoring:
+      10: "Playwright spec cubre el flujo crítico de la HU + screenshots de cada paso + comparación contra baseline visual si existe."
+      6: "Playwright spec corrió y pasó; screenshots del estado final del flujo."
+      4: "Solo unit tests (vitest); sin Playwright. La HU es de UI."
+      0: "Sin verificación visual Y la HU es de UI. Solo se corrió npm test."
+    auto_check_commands:
+      - "ls $ARTIFACTS_DIR/visual-evidence/ 2>/dev/null | wc -l"  # ≥1 screenshot esperado
+      - "cd frontend_dashboard && find e2e -name '*.spec.ts' -newer .git/HEAD 2>/dev/null"  # specs tocadas en este branch
+
+  - id: code_quality
+    weight: 15
+    applies_when: always
+    threshold_hard: 6
+    definition: |
+      Naming claro, función separada de side effects, no dead code, no comments
+      redundantes, no '// removed' markers, no backwards-compat hacks innecesarios.
+      Side effects al boundary (Adapter), no en use-cases ni domain.
+    scoring:
+      10: "Código que un ingeniero senior aprobaría sin comentarios. Naming intencional, no abstracciones prematuras."
+      6: "Funciona, naming claro, algún code smell menor (e.g., función un poco larga, magic number sin nombre)."
+      4: "1-2 anti-patterns notables (magic numbers, naming críptico, side effect en getter)."
+      0: "Múltiples anti-patterns. Código que pasaría tests pero el siguiente maintainer lo odia."
+    manual_check:
+      - "Grep el diff por '// removed', '// TODO:', 'pass  # placeholder', '_unused' — señales de incompleto."
+      - "Buscá funciones >40 líneas — candidatas a split."
+
+  - id: scope_discipline
+    weight: 15
+    applies_when: always
+    threshold_hard: 7
+    definition: |
+      ¿La task hizo solo lo que la HU pidió, sin refactors oportunistas o features
+      extra? Refactors útiles deberían quedar flagged en §13 out-of-scope del
+      refinement para PR aparte.
+    scoring:
+      10: "Solo el scope de la HU. Cualquier refactor / mejora oportunista detectada está flagged en §13 OOS del refinement."
+      7: "Solo el scope; sin flag explícito de mejoras detectadas."
+      4: "1-2 cambios out-of-scope detectados (e.g., renamed helper que la HU no pedía); no destructivos."
+      0: "Refactor masivo o feature creep. La task hizo 3x lo que la HU pidió."
+    manual_check:
+      - "git diff --stat — comparar archivos modificados vs §3 de la task.md. Hay archivos NO listados modificados?"
+      - "Buscá imports cambiados, renames, formatting changes en archivos no centrales a la task."
+
+# === Veredicto global ===
+verdict:
+  pass_threshold: 7.0
+  warn_threshold: 5.5
+  block_merge_threshold: 5.5  # cualquier score >= 5.5 puede mergear (con warnings si <7); <5.5 bloquea
+
+  rules:
+    - id: any_hard_threshold_failed
+      description: "Si CUALQUIER criterio cae bajo su threshold_hard, veredicto = block_merge sin importar el weighted average."
+      action: block_merge
+
+    - id: weighted_below_block
+      description: "weighted_average < block_merge_threshold → block_merge"
+      action: block_merge
+
+    - id: weighted_below_pass
+      description: "block_merge_threshold ≤ weighted_average < pass_threshold → warn (mergeable, anotado)"
+      action: warn
+
+    - id: weighted_at_pass
+      description: "weighted_average ≥ pass_threshold + no hard threshold failed → pass"
+      action: pass
+
+# === Calibration corpus ===
+# Esta sección la popula el operador después del ritual de calibración (Fase 5.3).
+# Cada entry es un PR histórico real con score esperado (juicio humano).
+# El evaluador se re-prompta hasta que sus scores convergen a ≤1.5 puntos de divergencia
+# en >80% de los entries.
+
+calibration_examples: []
+  # Ejemplo del shape (no incluir hasta tener PRs reales):
+  # - pr_url: "https://github.com/einsteindark-edgm/AgencyHubara/pull/123"
+  #   pr_title: "feat(chats): agregar tag conversation"
+  #   human_score:
+  #     architectural_compliance: 9
+  #     test_coverage_real: 8
+  #     visual_verification: N/A   # backend-only
+  #     code_quality: 8
+  #     scope_discipline: 9
+  #     weighted: 8.6
+  #     verdict: pass
+  #   human_notes: |
+  #     Ejemplo de pase claro. La task respetó scope, hizo functional tests, R-DIP limpio.
+  #   evaluator_target_divergence: 1.5  # punto a alcanzar tras tunear el skill

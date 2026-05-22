@@ -17,3 +17,17 @@ htmlcov/
 # macOS noise
 .DS_Store
 **/.DS_Store
+
+# === Harness artifacts (Fase 0-11 del HARNESS_UPGRADE_PLAN, F4 premortem fix) ===
+# Session metadata + handoffs + tool call logs + progress narratives + metrics.
+# Runtime data, no commits. Refinements/plans/results SÍ se committean via pipeline.
+hubara_agency/.hubara/sessions/
+hubara_agency/.hubara/handoffs/
+hubara_agency/.hubara/agent-logs/
+hubara_agency/.hubara/progress-log/
+hubara_agency/.hubara/metrics.jsonl
+hubara_agency/.hubara/evaluator-calibration/*.yaml  # local calibration outputs
+
+# Codegraph index local
+.codegraph/cache/
+.codegraph/tmp/

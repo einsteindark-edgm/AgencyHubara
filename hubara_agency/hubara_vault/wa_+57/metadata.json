@@ -1,0 +1,70 @@
+{
+  "pending_ui_intents": [
+    {
+      "kind": "order_confirmation",
+      "params": {
+        "reference_id": "HUB-hubara-wa_+57-1779402760",
+        "items": [
+          {
+            "handle": "cruz-de-vida",
+            "retailer_id": "prod_01",
+            "title": "Vela Cruz de Vida",
+            "quantity": 2,
+            "unit_price_cop": 23000,
+            "line_total_cop": 46000
+          }
+        ],
+        "subtotal_cop": 46000,
+        "shipping_cop": 8000,
+        "tax_cop": 0,
+        "total_cop": 54000,
+        "currency": "COP",
+        "shipping_address_summary": "Bogot\u00e1",
+        "payment_method": "card"
+      },
+      "analytics": {
+        "component_id": "order_confirmation",
+        "component_kind": "interactive.order_details",
+        "reference_id": "HUB-hubara-wa_+57-1779402760",
+        "total_cop": 54000
+      },
+      "fallback": {
+        "prefer_native_order_details": true
+      },
+      "queued_at_ms": 1779402760946
+    },
+    {
+      "kind": "order_confirmation",
+      "params": {
+        "reference_id": "HUB-hubara-wa_+57-1779402760",
+        "items": [
+          {
+            "handle": "cruz-de-vida",
+            "retailer_id": "prod_01",
+            "title": "Vela Cruz de Vida",
+            "quantity": 2,
+            "unit_price_cop": 24000,
+            "line_total_cop": 48000
+          }
+        ],
+        "subtotal_cop": 48000,
+        "shipping_cop": 8000,
+        "tax_cop": 0,
+        "total_cop": 56000,
+        "currency": "COP",
+        "shipping_address_summary": "Bogot\u00e1",
+        "payment_method": "card"
+      },
+      "analytics": {
+        "component_id": "order_confirmation",
+        "component_kind": "interactive.order_details",
+        "reference_id": "HUB-hubara-wa_+57-1779402760",
+        "total_cop": 56000
+      },
+      "fallback": {
+        "prefer_native_order_details": true
+      },
+      "queued_at_ms": 1779402760946
+    }
+  ]
+}

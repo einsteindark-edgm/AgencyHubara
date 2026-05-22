@@ -29,6 +29,7 @@ with workflow.unsafe.imports_passed_through():
     from src.plugins.chats.agent.sales.activities import (
         bootstrap_sales_session_activity,
         decide_ghosting_action,
+        flush_pending_ui_intents_activity,
         read_and_clear_pending_handoff_activity,
     )
     from src.plugins.chats.agent.sales.contracts import SalesSessionInput
@@ -279,6 +280,28 @@ class HubaraSalesSessionWorkflow:
                                 start_to_close_timeout=timedelta(seconds=10),
                                 retry_policy=RetryPolicy(maximum_attempts=2),
                             )
+
+                    # HU-002: render UI intents que las decision tools encolaron.
+                    # Las tools `present_*`, `request_*`, `react_to_message`,
+                    # `send_contact_card`, `send_cta_url` escriben intents a
+                    # `metadata.json[pending_ui_intents]`. Esta activity los
+                    # dispatch a `send_*` del cliente WA después de que el
+                    # texto del LLM ya se envió, para que el cliente vea el
+                    # texto + componente visual juntos.
+                    #
+                    # workflow.patched(): histories pre-HU-002 no tienen este
+                    # branch — el patched gate evita NondeterminismError al
+                    # replay-ar workflows en vuelo del deploy anterior.
+                    if (
+                        not self._force_shutdown
+                        and workflow.patched("flush-ui-intents-v1")
+                    ):
+                        await workflow.execute_activity(
+                            flush_pending_ui_intents_activity,
+                            args=[session.session_id],
+                            start_to_close_timeout=timedelta(seconds=120),
+                            retry_policy=RetryPolicy(maximum_attempts=2),
+                        )
 
                     # Escalation a humano: la tool ya escribio metadata
                     # (active_route=humano, tag=HUMANO). Mandado ya el mensaje

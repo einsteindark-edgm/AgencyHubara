@@ -48,3 +48,58 @@ class WriteSnapshotResult:
     version: str
     bytes_written: int
     files_written: int
+
+
+# ---------- Meta Catalog sync (HU-002 Parte B) ----------
+
+
+@dataclass(frozen=True)
+class PushMetaCatalogInput:
+    """Input para `PushMetaCatalogUseCase`.
+
+    `products_json`: viene del `PullCatalogResult` que ya tenés en memoria
+    en el workflow. Reusar evita un segundo pull contra Medusa.
+
+    `catalog_id` + `system_user_token`: por tenant. Vivos en agents_admin
+    plugin; el workflow los inyecta como string en el input (R-JSON).
+
+    `previous_meta_hashes_json`: dict[retailer_id, sha256_hash] del último
+    push exitoso, persistido en el snapshot. Se usa para detectar updates
+    incrementales (solo se manda CREATE/UPDATE si el hash cambió). Si está
+    vacío, se hace push full.
+
+    `site_base_url`: para construir el `url` de cada item en Meta.
+    """
+
+    tenant_id: str
+    catalog_id: str
+    system_user_token: str
+    products_json: str
+    previous_meta_hashes_json: str = "{}"
+    site_base_url: str = "https://hubara.com.co"
+    brand: str = "Hubara"
+    soft_delete_threshold_ratio: float = 0.5  # ver B.8 — no borrar si pull < 50% último count
+    last_meta_count: int = 0  # si > 0, validar threshold
+
+
+@dataclass(frozen=True)
+class PushMetaCatalogResult:
+    """Resultado del push.
+
+    `handle`: el id del batch en Meta (para poll posterior).
+    `next_meta_hashes_json`: el dict actualizado de hashes — persiste en
+    snapshot para el próximo sync incremental.
+    """
+
+    ok: bool
+    handle: str | None
+    creates: int
+    updates: int
+    deletes: int
+    skipped_image: int
+    skipped_price: int
+    skipped_collection: int  # ya filtrados por pull; tracking solo
+    aborted_due_to_threshold: bool
+    error: str | None
+    next_meta_hashes_json: str
+    duration_seconds: float

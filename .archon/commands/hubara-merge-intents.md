@@ -1,7 +1,8 @@
 ---
-name: hubara-merger-archon
 description: Consolida wiring_intents de N implementer agents paralelos (un batch del DAG plugin-level) en los spinal files declarados en hubara_agency/.hubara/spinal-files.yaml. Diseñado exclusivamente para invocación desde el workflow hu-hubara-pipeline (rama multi-plugin, después de merge-fan-out-batch). Lee plugin-*-result.yaml de hubara_agency/.hubara/results/<HU_ID>/ + spinal-files.yaml stageado en $ARTIFACTS_DIR, aplica cada intent deterministically (ordenado por plugin-id, después por kind, después por identifier), escribe spinal files modificados in-place en el worktree, y emite $ARTIFACTS_DIR/merge-report.yaml. NO escribe feature code, NO corre tests, NO commit/push (el orquestador maneja git). Triggers - invocación via Archon workflow skills field; no usar como subagent directo.
+argument-hint: (none — reads from $ARTIFACTS_DIR)
 ---
+
 
 # hubara-merger-archon — Consolidador de wiring_intents cross-plugin
 

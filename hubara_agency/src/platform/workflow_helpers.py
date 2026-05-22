@@ -29,12 +29,13 @@ with workflow.unsafe.imports_passed_through():
         SessionInput,
     )
 
-    from src.platform.temporal.activities import execute_tool
     from src.platform.contracts import (
         EscalationDecision,
         ScheduleRemarketingDecision,
         TransferDecision,
     )
+    from src.platform.llm_text_sanitizer import sanitize_llm_text
+    from src.platform.temporal.activities import execute_tool
     from src.platform.temporal.retry_policies import (
         _CONV_OPTIONS,
         _LLM_OPTIONS,
@@ -316,7 +317,23 @@ async def run_agent_turn(
                 # Continue the loop — next iteration retries llm_chat.
                 continue
 
-            final_content = response.content
+            # Sanitize: strip meta-prefijos ('Here's my attempt:'),
+            # comillas envolventes, y duplicación back-to-back. Bug
+            # 579d34e7 — el LLM emitió ambos defectos a la vez en
+            # remarketing. Defensa última antes de send_*.
+            raw_content = response.content or ""
+            sanitized = sanitize_llm_text(raw_content)
+            if sanitized.changed:
+                workflow.logger.warning(
+                    f"LLM output sanitized: actions={sanitized.actions}",
+                    extra={
+                        "session_id": session.session_id,
+                        "actions": list(sanitized.actions),
+                        "raw_len": len(raw_content),
+                        "clean_len": len(sanitized.text),
+                    },
+                )
+            final_content = sanitized.text
             # Final empty-content fallback: model failed to recover even after
             # the nudge (or we hit max_iterations). Use a HUMAN-sounding
             # natural recovery line that mirrors what a real seller would say

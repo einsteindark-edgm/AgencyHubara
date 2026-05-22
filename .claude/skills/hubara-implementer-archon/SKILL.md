@@ -32,6 +32,75 @@ Podés ser invocado **múltiples veces** dentro del mismo loop (iter via
 
 ---
 
+## §0.5 Bearings ritual (OBLIGATORIO, ANTES de tocar nada)
+
+> **Eleva la Técnica 4 del HARNESS_ENGINEERING.md.** No construyas sobre un sistema roto.
+> Caso paradigmático del repo (memoria `backend_behavior_verification`): HU mensajes-agente
+> tenía tests verdes pero la feature estaba rota porque el backend no emitía los datos.
+> Si la sesión anterior dejó bugs, los heredás silenciosamente y los atribuís a tu código.
+
+### §0.5.1 Secuencia canónica (corré en orden, ANTES de §1)
+
+```bash
+# 1. ¿Dónde estoy?
+pwd
+
+# 2. ¿Cuál es la trayectoria reciente?
+git log --oneline -10
+
+# 3. ¿Cuál es el branch y el HEAD?
+git rev-parse --abbrev-ref HEAD
+git rev-parse --short HEAD
+
+# 4. Preview de la task asignada
+head -30 "$ARTIFACTS_DIR/task.md"
+
+# 5. Plugin classification + scope
+grep -A5 "## §0" "$ARTIFACTS_DIR/hu-refinada.md" 2>/dev/null | head -15
+
+# 6. Estado del DAG plugin-level
+cat "$ARTIFACTS_DIR/feature-plan-manifest.yaml" 2>/dev/null | head -40
+```
+
+### §0.5.2 Smoke test E2E (NO-NEGOCIABLE)
+
+```bash
+bash hubara_agency/.hubara/smoke-test.sh
+```
+
+Variables opcionales según affects_layers de tu task:
+
+| Si la task NO toca... | Usá la flag... |
+|---|---|
+| backend Python (solo frontend) | `SKIP_BACKEND=1 bash hubara_agency/.hubara/smoke-test.sh` |
+| frontend TS (solo backend) | `SKIP_FRONTEND=1 bash hubara_agency/.hubara/smoke-test.sh` |
+| ninguno (sin verificación) | NO APLICA — el smoke test es siempre obligatorio |
+
+Exit code del smoke test:
+
+| Exit | Significa | Acción |
+|---|---|---|
+| 0 | OK | Seguí al §1 (load context) |
+| 2 | Warnings (degraded mode) | Seguí, pero anotá en task-result.yaml `smoke_test_warnings: true` |
+| 1 | Sistema roto | **STOP.** Emit `status: blocked, blocked_reason: smoke_test_failed` con el output del smoke en `task-result.yaml.smoke_test_output`. **Arreglar el bug heredado tiene prioridad absoluta sobre tu task.** |
+
+### §0.5.3 ¿Por qué el smoke es no-negociable?
+
+Cita directa del §5.3 del HARNESS_ENGINEERING.md:
+
+> *"La sesión anterior pudo haber dejado bugs sin documentar. Si el agente empieza a construir sobre un sistema roto:*
+> *- Asume que los bugs son de su nuevo código.*
+> *- Pierde tokens debuggeando en el lugar equivocado.*
+> *- Empeora el estado."*
+
+El smoke test te cuesta 30-90s y te ahorra horas de debug en el lugar equivocado.
+
+### §0.5.4 Excepción única: iteración >1 dentro de la misma sesión
+
+Si ya corriste el smoke test en una iteración previa de la misma sesión (mismo $SESSION_ID), podés saltarlo. En task-result.yaml: `smoke_test_skipped_reason: same_session_iter`. **No es excepción para iteración >1 en sesiones distintas** — siempre re-corré el smoke al arrancar una sesión nueva.
+
+---
+
 ## §1. Step 0 — Cargar contexto (OBLIGATORIO, PRIMERO)
 
 1. `$ARTIFACTS_DIR/project-context.md` — paths + CWD + naming.
@@ -56,6 +125,62 @@ Podés ser invocado **múltiples veces** dentro del mismo loop (iter via
    `references/temporal-patterns.md`.
 
 **Regla:** carga 3-5 secciones por iteración. NO leas todo el guide.
+
+---
+
+## §1.5 Exploración delegada (OBLIGATORIO para tasks que tocan plugins/, platform/ o shared/)
+
+> **Eleva la Técnica 15 del HARNESS_ENGINEERING.md** (separar exploración de edición).
+> Mantiene tu propio contexto limpio para editar — la exploración la hace un subagent.
+
+### §1.5.1 ¿Cuándo aplica?
+
+Aplica si **CUALQUIERA** de estos es cierto:
+
+- La task modifica archivos bajo `hubara_agency/src/plugins/<id>/` o `hubara_agency/src/platform/`.
+- La task modifica archivos bajo `frontend_dashboard/src/{plugins,shared,entities,features,pages,app}/`.
+- La task agrega DTOs / tools / activities / workflows / hooks que serán callers o callees de código existente.
+
+**Excepciones (NO requieren exploración delegada):**
+
+- Tasks que solo escriben en `$ARTIFACTS_DIR/` (refinements, contracts, plans).
+- Tasks que solo modifican docs (`*.md`, README, comments-only edits).
+- Tasks que solo tocan tests bajo `tests/` SIN modificar el código que testean.
+- Tasks marcadas explícitamente como `affects_layers: [docs]` en feature-plan-manifest.yaml.
+
+Si caés en una excepción, registralo en task-result.yaml como `exploration_skipped: <razón>` y seguí al §2.
+
+### §1.5.2 Cómo invocar el explorer
+
+1. **Read** el archivo `.claude/skills/hubara-explorer-archon/SKILL.md` — contiene el template de prompt.
+2. Extraé el bloque `## §3. Protocolo de exploración (subagent execution)` (entre los ` ``` ` triple-backticks).
+3. Sustituí los placeholders con los valores de tu task:
+   - `<TASK_ID>` ← `task.id` del feature-plan-manifest.yaml
+   - `<PATHS_TO_TOUCH>` ← lista de paths en §3 de la task.md
+   - `<AFFECTED_LAYERS>` ← `task.affects_layers`
+   - `<PLUGIN_ID>` ← `task.plugin_id` (si plugin-scoped)
+   - `<HU_ID>` ← `task.hu_id`
+4. Invocá `Agent(subagent_type="Explore", description="Map subsystem for <TASK_ID>", prompt=<prompt-rendered>)`.
+5. Esperá su output (≤500 palabras de Markdown).
+6. **Escribí** ese output a `$ARTIFACTS_DIR/exploration-map.md`.
+
+### §1.5.3 Reglas duras post-exploración
+
+- **NO re-leas el código** que el explorer ya cubrió. Su resumen es lo único que necesitás para editar.
+- **NO uses Read sobre los siblings** que el explorer listó en "Sibling patterns". Su tabla ya destiló lo relevante.
+- **SÍ usá Read** si el explorer marcó `codegraph_stale: true` para un símbolo específico — en ese caso, verificá el código vivo con Read antes de editar ese símbolo.
+
+### §1.5.4 Manejo de flags del explorer
+
+| Flag | Acción del implementer |
+|---|---|
+| `exploration_capped: true` | La task es demasiado amplia. Emit `status: blocked, blocked_reason: task_too_broad` en task-result.yaml. NO intentar implementar — devolver al feature-planner. |
+| `codegraph_stale: true` | Antes de editar los símbolos afectados, hacé Read del código vivo para verificar. Si discrepa con el explorer, gana el código vivo (regla §17.3 del HARNESS_ENGINEERING.md). |
+| `mode: blocked + blocked_reason: requires_architecture_change` | La task pide modificar paths protected. Propagá `status: blocked, blocked_reason: requires_architecture_change` y referenciá `protected_paths_touched` de exploration-map.md. |
+
+### §1.5.5 ¿Y si Agent tool no está disponible?
+
+En sesiones donde Agent tool no es invocable (e.g., contexto limitado del runtime), caer al modo legacy: hacer la exploración inline con codegraph_* + Read, **pero con budget de tool calls explícito**. Marcá en task-result.yaml `exploration_mode: inline_fallback`. El operador debe revisar y considerar restaurar Agent disponibility.
 
 ---
 
@@ -88,6 +213,207 @@ En cada invocación:
 
 ---
 
+## §2.5 Manejo de premortem feedback (`$LOOP_USER_INPUT` = `premortem.yaml`)
+
+> **Activado solo cuando** la sesión te invoca con `$LOOP_USER_INPUT` apuntando a un
+> `$ARTIFACTS_DIR/premortem.yaml` (o el archivo viene staged como ese path).
+>
+> Significa que tu ciclo anterior terminó OK, pero el `hubara-premortem-archon`
+> detectó modos de fallo que NO están manejados. Tu trabajo en esta iter es
+> resolverlos sin introducir deuda silenciosa.
+
+### §2.5.1 Identificar el modo premortem
+
+Detectás que estás en modo premortem si:
+
+- `$LOOP_USER_INPUT` referencia `premortem.yaml`, O
+- Existe `$ARTIFACTS_DIR/premortem.yaml` Y task-result.yaml de tu última iter tiene `status: passed`.
+
+Si es así, **NO empezás una task nueva**. Tu trabajo en esta iter es procesar el premortem.
+
+### §2.5.2 Protocolo
+
+1. **Read** `$ARTIFACTS_DIR/premortem.yaml` completo. Listá los `failure_modes[]`.
+
+2. **Por cada `failure_mode`**, decidí basándote en `fix_complexity`:
+
+   | `fix_complexity` | Acción |
+   |---|---|
+   | `trivial` | **APLICÁ** el `suggested_fix` literalmente. Agregá el test sugerido. |
+   | `medium` | Evaluá si lo podés hacer sin tocar signature pública. Si sí → APLICÁ. Si no → DEFERED. |
+   | `complex` | **NO TOQUES.** Va a `fixes_deferred` con razón. |
+
+3. **Hard rules de fixes**:
+
+   - NO modifiques signatures de funciones / dataclasses públicas (rompe callers).
+   - NO elimines tests existentes para que pase un fix.
+   - NO uses `# type: ignore`, `eslint-disable` o silenciamientos similares para "pasar" tests.
+   - NO modifiques archivos PROTECTED (spinal-files.yaml) — esos siempre van a `fixes_deferred`.
+   - Cada fix viene con UN test que lo verifica. Si no podés escribir el test, el fix es complex.
+
+4. **Re-correr §7 verification** después de aplicar TODOS los fixes triviales:
+   - `cd hubara_agency && uv run pytest tests/plugins/<id>/ -v`
+   - `cd hubara_agency && uv run pytest -m architecture`
+   - `cd hubara_agency && uv run lint-imports`
+   - `cd frontend_dashboard && npm test && npx tsc -b && npm run build` (si tocó frontend)
+   - `cd frontend_dashboard && npx playwright test e2e/<feature>/` (si tocó UI)
+
+5. **Si algún test rompe tras aplicar fixes**:
+   - Identificá CUÁL fix rompió.
+   - **Revertí ese fix individual** (`git checkout <file>` o re-edit a estado pre-fix).
+   - Movélo a `fixes_deferred` con `reason: "introduced regression in <test>"`.
+   - NO commités sin tests verdes.
+
+### §2.5.3 Update task-result.yaml
+
+```yaml
+# Sección nueva al final de task-result.yaml en modo premortem
+premortem_processing:
+  premortem_file: $ARTIFACTS_DIR/premortem.yaml
+  total_failure_modes: <N>
+  fixes_applied:
+    - id: PM-001
+      file: hubara_agency/src/plugins/chats/agent/tools/manage_conversation_tag.py
+      lines_changed: 4
+      test_added: tests/plugins/chats/tools/test_manage_conversation_tag.py::test_empty_content_returns_noop
+    - id: PM-005
+      ...
+  fixes_deferred:
+    - id: PM-002
+      reason: complex_signature_change
+      detail: "Requires adding idempotency_token to TransferDecision dataclass — backwards-incompat. Requiere ADR + nueva HU."
+    - id: PM-007
+      reason: introduced_regression
+      detail: "Mi fix inicial rompió tests/.../test_handoff_flow.py — reverted."
+  post_fix_verification:
+    pytest: passed | failed
+    lint_imports: passed | failed
+    arch_gate: passed | failed
+    tsc: passed | failed | skipped
+    playwright: passed | failed | skipped
+```
+
+### §2.5.4 Promise final (decide el workflow)
+
+Cuando termines de procesar TODOS los failure_modes:
+
+- Si **todos** los critical+high fueron resueltos (applied) Y solo quedan deferred low/medium → emit `<promise>PREMORTEM_RESOLVED</promise>`.
+- Si quedó **alguno critical+high deferred** porque era complex → emit `<promise>PREMORTEM_BLOCKED</promise>` (el workflow va a `cancel-on-premortem-blocked`, no se mergea).
+- Si **todos los tests rompen** post-fix y no podés recuperar → emit `<promise>PREMORTEM_BROKEN</promise>` + `status: failed` en task-result.yaml (caso patológico — operador debe diagnosticar).
+
+### §2.5.5 NUNCA en modo premortem
+
+- NO empezás una task nueva del feature-plan-manifest.yaml.
+- NO modificás archivos fuera de los que `premortem.yaml` flagueó.
+- NO ignorás un failure_mode "porque parece improbable". Si el premortem lo identificó, abordálo (apply o defer con razón explícita).
+- NO commitís — el workflow maneja el commit.
+
+---
+
+## §2.6 Manejo de code-review feedback (`$LOOP_USER_INPUT` = `code-review-findings.yaml`)
+
+> **Activado solo cuando** `$LOOP_USER_INPUT` apunta a `code-review-findings.yaml`.
+> Es el output del `hubara-code-review-archon` que coordinó 5 specialists paralelos
+> (DEHA, FSD, plugin-system, test-coverage, security). Tu trabajo es resolver lo
+> que encontraron sin introducir deuda silenciosa.
+
+### §2.6.1 Identificar el modo code-review
+
+Detectás que estás en modo code-review si:
+
+- `$LOOP_USER_INPUT` referencia `code-review-findings.yaml`, O
+- Existe `$ARTIFACTS_DIR/code-review-findings.yaml` Y task-result.yaml previa tiene `status: passed`.
+
+NO empezás task nueva. Tu trabajo en esta iter es procesar los findings.
+
+### §2.6.2 Protocolo
+
+1. **Read** `$ARTIFACTS_DIR/code-review-findings.yaml` completo. Listá los `findings[]` ordenados por severity.
+
+2. **Skip findings ya cubiertos por premortem**. Cada finding tiene un campo
+   `also_in_premortem: PM-N | null`. Si NO es null, esos ya los procesaste en el
+   ciclo previo del premortem. NO los re-toques (evitar churn).
+
+3. **Por cada finding remaining**, decidí según `fix_complexity` y `severity`:
+
+   | Severidad × Complejidad | Acción |
+   |---|---|
+   | critical × trivial/medium | **APLICÁ** sí o sí. NUNCA defer un critical trivial. |
+   | critical × complex | **DEFERED** + emit `CODE_REVIEW_BLOCKED` (no se mergea). |
+   | high × trivial/medium | **APLICÁ** el suggested_fix. |
+   | high × complex | **DEFERED** con razón explícita en task-result.yaml. |
+   | medium × trivial | **APLICÁ** (low cost / low risk). |
+   | medium × complex | **DEFERED**. |
+   | low × any | **DEFERED** (no vale el churn pre-PR; flagear en next-HU). |
+
+4. **Hard rules de fixes** (idénticas al §2.5.2):
+   - NO modifiques signatures públicas.
+   - NO elimines tests existentes.
+   - NO uses `# type: ignore`, `eslint-disable`.
+   - NO modifiques archivos PROTECTED.
+   - Cada fix viene con UN test que lo verifica.
+
+5. **Re-correr §7 verification** después de aplicar TODOS los fixes:
+   - pytest del subset relevante
+   - lint-imports
+   - arch gates
+   - tsc + build (si tocó frontend)
+   - playwright (si tocó UI crítica)
+
+6. **Si algún test rompe tras los fixes**:
+   - Identificá qué fix lo rompió.
+   - Revertí ese fix individual.
+   - Movélo a `fixes_deferred` con `reason: "introduced regression in <test>"`.
+
+### §2.6.3 Update task-result.yaml
+
+Agregar sección nueva (paralela a `premortem_processing` del §2.5.3):
+
+```yaml
+code_review_processing:
+  code_review_file: $ARTIFACTS_DIR/code-review-findings.yaml
+  total_findings: <N>
+  findings_skipped_already_in_premortem: <count>
+  fixes_applied:
+    - id: CR-001
+      specialist: security
+      severity: critical
+      file: hubara_agency/src/platform/whatsapp/client.py
+      lines_changed: 3
+      test_added: tests/platform/test_whatsapp_client.py::test_token_loaded_from_env
+    - id: CR-002
+      ...
+  fixes_deferred:
+    - id: CR-005
+      severity: high
+      specialist: deha-compliance
+      reason: complex_refactor
+      detail: "R-DIP cross-plugin violation requires moving 3 modules to platform/ — out of scope for this HU. Requiere ADR + nueva HU."
+  post_fix_verification:
+    pytest: passed | failed
+    lint_imports: passed | failed
+    arch_gate: passed | failed
+    tsc: passed | failed | skipped
+    playwright: passed | failed | skipped
+```
+
+### §2.6.4 Promise final (decide el workflow)
+
+Cuando termines de procesar TODOS los findings:
+
+- Si **todos los critical+high fueron resueltos** (aplicados o legítimamente deferred con razón clara medium-complexity), Y `post_fix_verification` todo passed → emit `<promise>CODE_REVIEW_RESOLVED</promise>`.
+- Si quedó **alguno critical** deferred (no debería pasar — un critical trivial/medium SIEMPRE aplica), O algún critical complex que requiere ADR → emit `<promise>CODE_REVIEW_BLOCKED</promise>`. El workflow va a `cancel-on-review-blocked`.
+- Si los fixes rompieron tests irreversibles → emit `<promise>CODE_REVIEW_BROKEN</promise>`.
+
+### §2.6.5 NUNCA en modo code-review
+
+- NO ignorás findings de severity ≥ medium "porque suenan menores". Si el specialist las flageó, abordalas.
+- NO duplicás trabajo del premortem — chequeá `also_in_premortem` antes de actuar.
+- NO commitís manualmente — el workflow maneja.
+- NO desactivás specialists "porque sus findings me molestan". Si la rúbrica del specialist es inadecuada, calibrá su prompt en `hubara-code-review-archon/SKILL.md §3.x`, no lo silencies.
+
+---
+
 ## §3. Verificación de depends_on (BEFORE escribir código)
 
 Para cada F-id en `task.depends_on`:
@@ -104,6 +430,72 @@ Para cross-plugin deps (otro plugin que tu plugin necesita):
 3. Si la HU es multi-plugin y tu plugin tiene `depends_on` cross-plugin,
    los commits del otro plugin deben estar en `hu/<HU_ID>` del branch
    actual. Si no, status: blocked, reason: depends_on_missing.
+
+---
+
+## §3.5 Análisis de impacto pre-edit (OBLIGATORIO antes de modificar signatures existentes)
+
+> **Eleva la Técnica 16 del HARNESS_ENGINEERING.md** (inteligencia estructural).
+> Antes de cambiar la signature de cualquier símbolo no-net-new, trazá su radio de impacto
+> con codegraph para no romper callers silenciosamente.
+
+### §3.5.1 ¿Cuándo aplica?
+
+Aplica si vas a modificar:
+- Signature de cualquier función / método existente (parámetros, return type).
+- Estructura de cualquier `@dataclass(frozen=True)` (campos, tipos, defaults).
+- Public API de cualquier módulo (lo que un `import` externo consume).
+- Schema de cualquier endpoint FastAPI (`pydantic` model, response_model).
+- Public hooks / context exports en frontend (`use<X>`, exports de `entities/<id>/index.ts`).
+
+**NO aplica (excepciones):**
+- Código net-new (función / módulo recién creado en esta task).
+- Internals privados (`_helper`, `_compute`, todo lo que empieza con underscore).
+- Tests (su signature cambio no rompe runtime).
+- Docstrings / comments.
+- Strings literales, constantes que solo se usan localmente.
+- Reordenar imports.
+
+### §3.5.2 Protocolo
+
+Para cada símbolo en la lista anterior:
+
+1. **Llamá `codegraph_impact <symbol.qualified.path>`.**
+2. Si devuelve **0 callers afectados** → seguí, sin anotar.
+3. Si devuelve **1-5 callers afectados:**
+   - Listalos en `task-result.yaml` bajo `impact_warnings`.
+   - **Decidí:** o (a) actualizá los callers en esta misma task; o (b) hacé el cambio backwards-compatible (campo opcional con default, nueva función con signature nueva sin tocar la vieja).
+   - Si elegís (a) → agregá los callers a §4 plan, implementálos en la misma task.
+   - Si elegís (b) → documentá en `task-result.yaml` `compat_strategy: <opcional_default | parallel_signature | other>`.
+4. Si devuelve **>5 callers afectados:**
+   - **STOP.** Esto es scope creep. Emit `status: blocked, blocked_reason: impact_too_wide, callers_count: <N>`.
+   - Listá los callers en `task-result.yaml` para que el feature-planner decida split.
+   - NO procedas hasta que el operador / planner re-decompose.
+
+### §3.5.3 Codegraph stale: regla de oro
+
+> **Si codegraph y el código vivo discrepan, gana el código vivo.** (§17.3 del HARNESS_ENGINEERING.md)
+
+Si después de `codegraph_impact` te queda duda (e.g., el índice parece de antes del último commit), verificá con:
+
+1. `codegraph_status` — confirma que el index está fresco (ver `last_indexed_at` vs git log).
+2. Si stale → `Read` los callers reportados antes de seguir; usá el código vivo como verdad.
+3. Anotá en task-result.yaml: `codegraph_was_stale_at_check: true` para que post-mortem detecte cuándo el watcher se desactualiza.
+
+### §3.5.4 Output esperado en task-result.yaml
+
+```yaml
+impact_analysis:
+  symbols_checked:
+    - symbol: src.plugins.chats.agent.composition.get_send_message_tool
+      callers_count: 3
+      callers:
+        - src.plugins.chats.workers.sales:setup_workflow_environment
+        - src.plugins.chats.api.dashboard:trigger_send_handler
+        - tests/plugins/chats/tools/test_send_message.py:test_factory_returns_singleton
+      action_taken: updated_callers  # | parallel_signature | opcional_default | not_modified
+  codegraph_was_stale_at_check: false
+```
 
 ---
 
@@ -559,14 +951,91 @@ cd frontend_dashboard && npm run build
 
 Mismas reglas para arch-protected (§5.4 frontend list).
 
-### §7.5 Playwright (si task tocó UI)
+### §7.5 Verificación visual con Playwright (OBLIGATORIO si task tocó UI)
+
+> **Eleva la Técnica 6 del HARNESS_ENGINEERING.md** (verificación con herramientas externas).
+> Memoria del repo (backend_behavior_verification): HUs de visualización con tests verdes
+> pero feature rota. Solo verificar end-to-end contra la UI viva detecta esto.
+
+#### §7.5.1 Spec file disponible
+
+Si la HU es de UI (toca `frontend_dashboard/src/`) y NO existe un `.spec.ts` cubriendo el
+flujo crítico de la HU, ese es feature-planner failing en su trabajo:
 
 ```bash
-cd frontend_dashboard && npx playwright test e2e/<feature>/<slice>.spec.ts --reporter=line
+EXISTING_SPEC=$(find frontend_dashboard/e2e -name "*.spec.ts" 2>/dev/null | xargs grep -l "<HU keyword>" 2>/dev/null | head -1)
+[ -z "$EXISTING_SPEC" ] && echo "WARN: no Playwright spec encontrado para esta HU"
 ```
 
-(El pipeline arranca FastAPI backend en puerto random — vos solo corres
-playwright contra `process.env.API_URL`.)
+Si NO hay spec → **STOP**: `status: blocked, blocked_reason: missing_e2e_spec`, devolver al
+feature-planner para que agregue la task de spec antes de continuar.
+
+#### §7.5.2 Setup del dev server
+
+```bash
+# Antes de Playwright, levantamos backend + frontend si no están UP
+BACKEND_UP=$(curl -s -m 2 -o /dev/null -w "%{http_code}" http://localhost:8000/api/dashboard/sessions 2>/dev/null)
+FRONTEND_UP=$(curl -s -m 2 -o /dev/null -w "%{http_code}" http://localhost:5173 2>/dev/null)
+
+if [ "$BACKEND_UP" != "200" ] && [ "$BACKEND_UP" != "404" ]; then
+  cd hubara_agency && nohup uv run python run_api.py > /tmp/api-test.log 2>&1 &
+  API_PID=$!
+  cd ..
+  sleep 8
+fi
+
+if [ "$FRONTEND_UP" != "200" ]; then
+  cd frontend_dashboard && nohup npm run dev > /tmp/vite-test.log 2>&1 &
+  VITE_PID=$!
+  cd ..
+  sleep 10
+fi
+```
+
+#### §7.5.3 Correr Playwright con screenshots
+
+```bash
+mkdir -p "$ARTIFACTS_DIR/visual-evidence/"
+
+cd frontend_dashboard
+npx playwright test e2e/<feature>/<slice>.spec.ts \
+  --reporter=line \
+  --screenshot=on \
+  --output="$ARTIFACTS_DIR/visual-evidence/" \
+  --trace=retain-on-failure
+
+PLAYWRIGHT_EXIT=$?
+cd ..
+```
+
+#### §7.5.4 Cleanup (importante: matar lo que levantaste, no lo que ya estaba)
+
+```bash
+[ -n "$API_PID" ]  && kill $API_PID  2>/dev/null
+[ -n "$VITE_PID" ] && kill $VITE_PID 2>/dev/null
+```
+
+#### §7.5.5 Validar evidencia visual
+
+```bash
+SCREENSHOTS=$(find "$ARTIFACTS_DIR/visual-evidence/" -name "*.png" 2>/dev/null | wc -l)
+if [ "$SCREENSHOTS" -lt 1 ]; then
+  # Sin screenshots = sin evidencia visual. El evaluator castigará esto.
+  echo "WARN: 0 screenshots — visual_verification score limitado"
+fi
+```
+
+#### §7.5.6 Interpretación de resultados
+
+| Estado | Acción |
+|---|---|
+| `PLAYWRIGHT_EXIT=0` + screenshots > 0 | ✅ Visual verification PASA. Record en `task-result.yaml.visual_verification: {status: pass, screenshots: <N>}` |
+| `PLAYWRIGHT_EXIT=0` pero 0 screenshots | ⚠️ Pasó pero sin evidencia. `task-result.yaml.visual_verification: {status: warn, reason: no_screenshots}` |
+| `PLAYWRIGHT_EXIT=1` (test fail) | ❌ Re-correr 2x (flaky?). Si persiste → `status: failed, visual_test_failed`. Examinar trace en `$ARTIFACTS_DIR/visual-evidence/trace.zip`. |
+
+#### §7.5.7 ¿Y si la HU es backend-only o no tiene UI observable?
+
+Skip §7.5 entero. En `task-result.yaml.visual_verification: {applies: false, reason: backend_only}`.
 
 ---
 

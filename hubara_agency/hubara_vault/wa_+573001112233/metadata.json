@@ -1,0 +1,19 @@
+{
+  "pending_ui_intents": [],
+  "last_inbound_message_id": "wamid.fake",
+  "phone_number_id": "PHONE_123",
+  "ui_intents_failures": [
+    {
+      "kind": "reaction",
+      "error": "http_400: {\"error\":{\"message\":\"Unsupported post request. Object with ID 'PHONE_123' does not exist, cannot be loaded due to missing permissions, or does not support this operation. Please read the Graph API documentation at https:\\/\\/developers.facebook.com\\/docs\\/graph-api\",\"type\":\"GraphMethodException\",\"cod"
+    },
+    {
+      "kind": "location_request",
+      "error": "http_400: {\"error\":{\"message\":\"Unsupported post request. Object with ID 'PHONE_123' does not exist, cannot be loaded due to missing permissions, or does not support this operation. Please read the Graph API documentation at https:\\/\\/developers.facebook.com\\/docs\\/graph-api\",\"type\":\"GraphMethodException\",\"cod"
+    },
+    {
+      "kind": "cta_url",
+      "error": "http_400: {\"error\":{\"message\":\"Unsupported post request. Object with ID 'PHONE_123' does not exist, cannot be loaded due to missing permissions, or does not support this operation. Please read the Graph API documentation at https:\\/\\/developers.facebook.com\\/docs\\/graph-api\",\"type\":\"GraphMethodException\",\"cod"
+    }
+  ]
+}

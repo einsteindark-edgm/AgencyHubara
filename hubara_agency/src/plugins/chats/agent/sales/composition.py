@@ -29,12 +29,16 @@ que cambia.
 """
 from __future__ import annotations
 
+import os
+
 from exoclaw_temporal.config import WorkspaceConfig
 
+from src.platform.analytics.composition import setup_analytics
 from src.platform.config import WORKSPACE_VAULT_DIR
+from src.platform.session_history import FilesystemMessageHistoryStore
+from src.platform.state import FilesystemMetadataStore as _PlatformFsMetaStore  # noqa: F401
 from src.platform.temporal.client import get_temporal_client
 from src.plugins.chats.agent.sales.config.env import get_workspace_path
-from src.platform.session_history import FilesystemMessageHistoryStore
 from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
 from src.plugins.chats.agent.sales.use_cases.ingest_inbound_message import (
     IngestInboundMessage,
@@ -53,6 +57,11 @@ def build_ingest_use_case() -> IngestInboundMessage:
     Los stores son stateless (solo leen `WORKSPACE_VAULT_DIR`), asi que es
     seguro compartirlos entre requests. El `client_factory` se invoca por
     request para reaprovechar el patron actual de `get_temporal_client`.
+
+    HU-002: arma también el `EventBus` analytics y lo inyecta para que el
+    ingest emita eventos de referral CTWA + click tracking. Si las env
+    `META_PIXEL_ID`/`META_CAPI_ACCESS_TOKEN` no están seteadas, solo se
+    activa el sink filesystem (auditoría local) — Meta CAPI queda OFF.
     """
     global _INGEST_USE_CASE
     if _INGEST_USE_CASE is not None:
@@ -73,9 +82,15 @@ def build_ingest_use_case() -> IngestInboundMessage:
         sales_runtime_workspace=sales_runtime_workspace,
     )
 
+    # Analytics bus singleton — filesystem siempre, Meta CAPI si hay token.
+    event_bus = setup_analytics()
+    tenant_id = os.getenv("HUBARA_TENANT_ID", "hubara")
+
     _INGEST_USE_CASE = IngestInboundMessage(
         history_store=history_store,
         load_session=load_session,
         metadata_store=metadata_store,
+        event_bus=event_bus,
+        tenant_id=tenant_id,
     )
     return _INGEST_USE_CASE

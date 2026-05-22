@@ -950,30 +950,9 @@ nodes:
     when: "$classify-mode.output.mode == 'multi_plugin'"
 
   - id: rama-B-invoke-merger-if-shared
+    command: hubara-merge-intents
     depends_on: [rama-B-merge-batch]
     when: "$classify-mode.output.mode == 'multi_plugin' && $classify-mode.output.requires_merger == true && $rama-B-merge-batch.output == 'BATCH_OK'"
-    idle_timeout: 600000
-    loop:
-      max_iterations: 1
-      until: MERGER_OK
-      skills:
-        - hubara-merger-archon
-      prompt: |
-        Consolidá los wiring_intents de los plugins del batch actual.
-
-        Input:
-          $ARTIFACTS_DIR/batch-results/F*-result.yaml (NO existe — adaptación:
-            lee plugin-*-result.yaml de hubara_agency/.hubara/results/<HU_ID>/
-            que contienen los wiring_intents combinados de todos los feature
-            results del plugin)
-          $ARTIFACTS_DIR/spinal-files.yaml
-
-        Output:
-          - Spinal files modificados in-place en el worktree
-          - $ARTIFACTS_DIR/merge-report.yaml
-
-        Aplicá protocolo del skill hubara-merger-archon. Si todo OK:
-          <promise>MERGER_OK</promise>
 
   - id: rama-B-commit-merger
     bash: |
@@ -1282,6 +1261,363 @@ nodes:
     depends_on: [final-validation]
 
   # ════════════════════════════════════════════════════════════════════
+  # FASE 4.5 — Premortem self-review (T6 + T7 divergent failure analysis)
+  # ════════════════════════════════════════════════════════════════════
+  # Después de final-validation (gates duros OK), el premortem skill imagina
+  # cómo este código va a fallar en producción y emite failure_modes[].
+  # NO aplica fixes — los pasa al implementer via $LOOP_USER_INPUT en el nodo
+  # loop-implementer-resolves-premortem. Si quedan modos complejos sin resolver,
+  # cancel-on-premortem-blocked aborta el pipeline (operador requiere ADR).
+
+  - id: premortem-self-review
+    command: hubara-premortem
+    depends_on: [final-validation]
+    when: "$final-validation.output == 'PASS'"
+
+  - id: check-premortem-clean
+    bash: |
+      PM="$ARTIFACTS_DIR/premortem.yaml"
+      if [ ! -f "$PM" ]; then
+        echo "PM_MISSING"
+        exit 0
+      fi
+      FAILURE_COUNT=$(grep -c "^  - id: PM-" "$PM" 2>/dev/null || echo 0)
+      CRITICAL_COUNT=$(grep -c "severity: critical" "$PM" 2>/dev/null || echo 0)
+      HIGH_COUNT=$(grep -c "severity: high" "$PM" 2>/dev/null || echo 0)
+
+      echo "failure_modes=$FAILURE_COUNT critical=$CRITICAL_COUNT high=$HIGH_COUNT" >&2
+
+      if [ "$FAILURE_COUNT" -eq 0 ]; then
+        echo "PM_CLEAN"
+      else
+        echo "PM_HAS_ISSUES"
+      fi
+    depends_on: [premortem-self-review]
+
+  - id: loop-implementer-resolves-premortem
+    depends_on: [check-premortem-clean]
+    when: "$check-premortem-clean.output == 'PM_HAS_ISSUES'"
+    idle_timeout: 1800000                   # 30 min — implementer aplica fixes + re-corre §10
+    loop:
+      max_iterations: 2                     # 1 vuelta de fixes + 1 verificación
+      until: PREMORTEM_LOOP_DONE
+      skills:
+        - hubara-implementer-archon
+      prompt: |
+        Modo: PROCESAR PREMORTEM (no empezás task nueva).
+
+        El premortem identificó modos de fallo en tu último ciclo de implementación
+        — están en $ARTIFACTS_DIR/premortem.yaml. Tu trabajo es resolverlos sin
+        introducir deuda silenciosa.
+
+        Inputs:
+          $ARTIFACTS_DIR/premortem.yaml       — failure_modes a procesar
+          $ARTIFACTS_DIR/task-result.yaml     — tu último output (status: passed)
+          $LOOP_USER_INPUT                     — referencia a premortem.yaml
+
+        Protocolo (re-leer §2.5 del SKILL.md para detalle):
+          1. Read $ARTIFACTS_DIR/premortem.yaml.
+          2. Por cada failure_mode, decidí según fix_complexity:
+             - trivial → APLICÁ el suggested_fix + agregá el test sugerido.
+             - medium → aplicá si no requiere cambiar signature pública.
+             - complex → DEFERED con razón (NO aplicar).
+          3. Re-correr §7 verification (pytest + lint-imports + arch + tsc + build).
+          4. Update task-result.yaml con sección premortem_processing.fixes_applied[]
+             y fixes_deferred[] (formato del §2.5.3).
+          5. Emit promise final:
+             - PREMORTEM_RESOLVED si todos critical+high fueron resueltos (only
+               low/medium en deferred es OK).
+             - PREMORTEM_BLOCKED si quedó critical+high deferred por complex.
+             - PREMORTEM_BROKEN si los fixes rompieron tests y no recuperás.
+
+        Hard rules:
+          - NO modifiques signatures públicas (de funciones / dataclasses exportadas).
+          - NO elimines tests existentes para que "pasen" los fixes.
+          - NO uses # type: ignore / eslint-disable.
+          - NO modifiques archivos PROTECTED (spinal-files.yaml).
+          - Cada fix debe venir con UN test que lo verifica.
+
+        Cuando termines (con cualquier promise):
+          <promise>PREMORTEM_LOOP_DONE</promise>
+
+  - id: check-premortem-resolved
+    bash: |
+      RESULT="$ARTIFACTS_DIR/task-result.yaml"
+      if [ ! -f "$RESULT" ]; then
+        echo "PR_RESULT_MISSING"
+        exit 0
+      fi
+      # Look for promise marker en task-result o en notes
+      if grep -qE "(PREMORTEM_RESOLVED|premortem_status:[[:space:]]*resolved)" "$RESULT" 2>/dev/null; then
+        echo "PR_RESOLVED"
+      elif grep -qE "(PREMORTEM_BLOCKED|premortem_status:[[:space:]]*blocked)" "$RESULT" 2>/dev/null; then
+        echo "PR_BLOCKED"
+      elif grep -qE "(PREMORTEM_BROKEN|premortem_status:[[:space:]]*broken)" "$RESULT" 2>/dev/null; then
+        echo "PR_BROKEN"
+      else
+        # Fallback: si hay premortem_processing section, asumir resolved
+        if grep -q "^premortem_processing:" "$RESULT" 2>/dev/null; then
+          echo "PR_RESOLVED"
+        else
+          echo "PR_UNKNOWN"
+        fi
+      fi
+    depends_on: [loop-implementer-resolves-premortem]
+
+  - id: cancel-on-premortem-blocked
+    cancel: |
+      Premortem identificó modos de fallo (critical/high) que el implementer
+      NO pudo resolver en el loop subsiguiente (complejidad alta, requiere ADR
+      o nueva HU para abordarse).
+
+      HU: hu/$gen-hu-id.output.hu_id
+      Premortem report:  $ARTIFACTS_DIR/premortem.yaml (failure_modes deferred)
+      Implementer report: $ARTIFACTS_DIR/task-result.yaml (premortem_processing.fixes_deferred)
+
+      Próximos pasos para el operador:
+        1. Revisar fixes_deferred en task-result.yaml para entender por qué
+           cada uno es complex (signature change / refactor / nuevo API).
+        2. Para fixes que requieren signature change: ADR + nueva HU + refinement.
+        3. Para fixes que requieren refactor amplio: agrupar con próxima HU del
+           plugin (no piggy-back sobre la HU actual).
+        4. Si decidís mergear SIN fix (no recomendado, técnical debt explícita):
+           override desactivando este nodo en esta corrida específica.
+
+      Política: NO merge silencioso con issues criticos/high pendientes.
+      Si te molesta el bloqueo, calibrá la rúbrica del premortem
+      (.claude/skills/hubara-premortem-archon/SKILL.md §6 severidad), no lo
+      desactives.
+    when: "$check-premortem-resolved.output == 'PR_BLOCKED' || $check-premortem-resolved.output == 'PR_BROKEN'"
+    depends_on: [check-premortem-resolved]
+
+  # ════════════════════════════════════════════════════════════════════
+  # FASE 4.6 — Pre-PR evaluation (rúbrica calibrada T7)
+  # ════════════════════════════════════════════════════════════════════
+  # El evaluador escéptico corre DESPUÉS del premortem chain (PM_CLEAN
+  # path O PR_RESOLVED path). Mide criterios cualitativos (scope, code
+  # quality, test coverage real, etc.) contra la rúbrica YAML.
+  #
+  # Si verdict=block_merge → cancel-on-eval-block aborta el pipeline (operador
+  # decide si re-implementar o forzar override con ARCH_EVAL_OVERRIDE=1).
+
+  - id: evaluate-pre-pr
+    command: hubara-evaluate
+    depends_on: [check-premortem-clean, check-premortem-resolved]
+    when: "$check-premortem-clean.output == 'PM_CLEAN' || $check-premortem-resolved.output == 'PR_RESOLVED'"
+
+  - id: gate-evaluator-verdict
+    bash: |
+      EVAL="$ARTIFACTS_DIR/evaluation.yaml"
+      if [ ! -f "$EVAL" ]; then
+        echo "WARN: no evaluation.yaml encontrado — evaluator no produjo output"
+        echo "EVAL_MISSING"
+        exit 0
+      fi
+      VERDICT=$(grep -E "^verdict:" "$EVAL" | head -1 | awk '{print $2}' | tr -d '"')
+      WEIGHTED=$(grep -E "^weighted_average:" "$EVAL" | head -1 | awk '{print $2}')
+      echo "verdict=$VERDICT weighted=$WEIGHTED"
+      case "$VERDICT" in
+        pass)         echo "EVAL_PASS" ;;
+        warn)         echo "EVAL_WARN" ;;
+        block_merge)  echo "EVAL_BLOCK" ;;
+        *)            echo "EVAL_UNKNOWN" ;;
+      esac
+    depends_on: [evaluate-pre-pr]
+
+  - id: cancel-on-eval-block
+    cancel: |
+      Evaluator pre-PR BLOQUEÓ el merge para hu/$gen-hu-id.output.hu_id.
+
+      Veredicto: block_merge (un criterio cayó bajo su hard_threshold, O el
+      weighted_average cayó bajo 5.5).
+
+      Inspeccioná findings críticos en:
+        $ARTIFACTS_DIR/evaluation.yaml
+
+      Recomendaciones del evaluator en:
+        $ARTIFACTS_DIR/evaluation.yaml → recommended_actions[]
+
+      Opciones para el operador:
+        1. Aplicar los fixes recomendados manualmente, push, re-correr el pipeline.
+        2. Forzar override (no recomendado): ARCH_EVAL_OVERRIDE=1 archon workflow run ...
+        3. Devolver al implementer con feedback explícito:
+             $LOOP_USER_INPUT=$ARTIFACTS_DIR/evaluation.yaml
+             (re-correr nodo del implementer del plugin afectado)
+        4. Abort y replantear la HU desde el refiner.
+
+      Política: el evaluador es la última línea convergent ANTES del code-review
+      multi-agent. Si te molesta el bloqueo, calibrá el evaluator
+      (ver hubara_agency/.hubara/evaluator-calibration/), no lo desactives.
+    when: "$gate-evaluator-verdict.output == 'EVAL_BLOCK'"
+    depends_on: [gate-evaluator-verdict]
+
+  # ════════════════════════════════════════════════════════════════════
+  # FASE 4.7 — Multi-agent code review (T2 + T7 defensa en profundidad)
+  # ════════════════════════════════════════════════════════════════════
+  # Después de evaluate-pre-pr (verdict pass/warn — block_merge ya canceló),
+  # 5 specialists corren EN PARALELO (Archon DAG-level parallelism) auditando:
+  # DEHA, FSD, plugin-system, test-coverage, security. Cada uno escribe a
+  # $ARTIFACTS_DIR/review-findings-<area>.yaml. El synthesize node consolida
+  # los outputs en code-review-findings.yaml + cross-ref con premortem.
+  #
+  # Patrón Archon-canonical (mismo que archon-comprehensive-pr-review.yaml):
+  # command: <name> en lugar de skills: [name] + loop. Cada command vive en
+  # .archon/commands/hubara-reviewer-<area>.md y .archon/commands/hubara-synthesize-review.md.
+  #
+  # Si critical/high → loop-implementer §2.6 (max 2 iter) los resuelve.
+  # Si quedan critical/high deferred → cancel-on-review-blocked.
+
+  - id: review-deha
+    command: hubara-reviewer-deha
+    depends_on: [gate-evaluator-verdict]
+    when: "$gate-evaluator-verdict.output == 'EVAL_PASS' || $gate-evaluator-verdict.output == 'EVAL_WARN'"
+
+  - id: review-fsd
+    command: hubara-reviewer-fsd
+    depends_on: [gate-evaluator-verdict]
+    when: "$gate-evaluator-verdict.output == 'EVAL_PASS' || $gate-evaluator-verdict.output == 'EVAL_WARN'"
+
+  - id: review-plugin-system
+    command: hubara-reviewer-plugin-system
+    depends_on: [gate-evaluator-verdict]
+    when: "$gate-evaluator-verdict.output == 'EVAL_PASS' || $gate-evaluator-verdict.output == 'EVAL_WARN'"
+
+  - id: review-test-coverage
+    command: hubara-reviewer-test-coverage
+    depends_on: [gate-evaluator-verdict]
+    when: "$gate-evaluator-verdict.output == 'EVAL_PASS' || $gate-evaluator-verdict.output == 'EVAL_WARN'"
+
+  - id: review-security
+    command: hubara-reviewer-security
+    depends_on: [gate-evaluator-verdict]
+    when: "$gate-evaluator-verdict.output == 'EVAL_PASS' || $gate-evaluator-verdict.output == 'EVAL_WARN'"
+
+  - id: synthesize-review
+    command: hubara-synthesize-review
+    depends_on: [review-deha, review-fsd, review-plugin-system, review-test-coverage, review-security]
+    when: "$gate-evaluator-verdict.output == 'EVAL_PASS' || $gate-evaluator-verdict.output == 'EVAL_WARN'"
+    trigger_rule: one_success                # corre aún si algún specialist falló
+
+  - id: check-review-clean
+    bash: |
+      CR="$ARTIFACTS_DIR/code-review-findings.yaml"
+      if [ ! -f "$CR" ]; then
+        echo "CR_MISSING"
+        exit 0
+      fi
+      TOTAL=$(grep -c "^  - id: CR-" "$CR" 2>/dev/null || echo 0)
+      CRITICAL=$(grep -c "severity: critical" "$CR" 2>/dev/null || echo 0)
+      HIGH=$(grep -c "severity: high" "$CR" 2>/dev/null || echo 0)
+
+      echo "total=$TOTAL critical=$CRITICAL high=$HIGH" >&2
+
+      if [ "$TOTAL" -eq 0 ]; then
+        echo "REVIEW_CLEAN"
+      elif [ "$CRITICAL" -gt 0 ] || [ "$HIGH" -gt 0 ]; then
+        echo "REVIEW_HAS_BLOCKERS"
+      else
+        echo "REVIEW_HAS_MINOR"
+      fi
+    depends_on: [synthesize-review]
+
+  - id: loop-implementer-resolves-review
+    depends_on: [check-review-clean]
+    when: "$check-review-clean.output == 'REVIEW_HAS_BLOCKERS' || $check-review-clean.output == 'REVIEW_HAS_MINOR'"
+    idle_timeout: 1800000                   # 30 min — implementer aplica fixes + re-corre §10
+    loop:
+      max_iterations: 2                     # 2 iteraciones de fixes + verificación
+      until: CODE_REVIEW_LOOP_DONE
+      skills:
+        - hubara-implementer-archon
+      prompt: |
+        Modo: PROCESAR CODE REVIEW FINDINGS (no empezás task nueva).
+
+        Inputs:
+          $ARTIFACTS_DIR/code-review-findings.yaml  — findings ordenados por severity
+          $ARTIFACTS_DIR/premortem.yaml             — findings ya cubiertos (NO duplicar)
+          $ARTIFACTS_DIR/task-result.yaml           — tu último output (status: passed)
+          $LOOP_USER_INPUT                          — referencia a code-review-findings.yaml
+
+        Protocolo (re-leer §2.6 del SKILL.md para detalle):
+          1. Read $ARTIFACTS_DIR/code-review-findings.yaml.
+          2. Skip findings con also_in_premortem != null (ya procesados en §2.5).
+          3. Por cada finding remaining, aplicá según severity × fix_complexity:
+             - critical × trivial/medium → APLICÁ sí o sí.
+             - critical × complex → DEFERED + emit CODE_REVIEW_BLOCKED.
+             - high × trivial/medium → APLICÁ el suggested_fix.
+             - high × complex → DEFERED.
+             - medium × trivial → APLICÁ.
+             - medium × complex → DEFERED.
+             - low × any → DEFERED (no vale el churn pre-PR).
+          4. Re-correr §7 verification (pytest + lint-imports + arch + tsc + build).
+          5. Update task-result.yaml.code_review_processing (§2.6.3).
+          6. Emit promise final según §2.6.4:
+             - CODE_REVIEW_RESOLVED (todos critical+high resueltos).
+             - CODE_REVIEW_BLOCKED (quedó critical complex).
+             - CODE_REVIEW_BROKEN (fixes rompieron tests irreversibles).
+
+        Hard rules:
+          - NO modifiques signatures públicas.
+          - NO elimines tests existentes.
+          - NO uses # type: ignore / eslint-disable.
+          - NO modifiques archivos PROTECTED (spinal-files.yaml).
+          - Cada fix viene con UN test que lo verifica.
+
+        Cuando termines (con cualquier promise):
+          <promise>CODE_REVIEW_LOOP_DONE</promise>
+
+  - id: check-review-resolved
+    bash: |
+      RESULT="$ARTIFACTS_DIR/task-result.yaml"
+      if [ ! -f "$RESULT" ]; then
+        echo "RV_RESULT_MISSING"
+        exit 0
+      fi
+      if grep -qE "(CODE_REVIEW_RESOLVED|code_review_status:[[:space:]]*resolved)" "$RESULT" 2>/dev/null; then
+        echo "REVIEW_RESOLVED"
+      elif grep -qE "(CODE_REVIEW_BLOCKED|code_review_status:[[:space:]]*blocked)" "$RESULT" 2>/dev/null; then
+        echo "REVIEW_BLOCKED"
+      elif grep -qE "(CODE_REVIEW_BROKEN|code_review_status:[[:space:]]*broken)" "$RESULT" 2>/dev/null; then
+        echo "REVIEW_BROKEN"
+      else
+        # Fallback: si hay code_review_processing section, asumir resolved
+        if grep -q "^code_review_processing:" "$RESULT" 2>/dev/null; then
+          echo "REVIEW_RESOLVED"
+        else
+          echo "REVIEW_UNKNOWN"
+        fi
+      fi
+    depends_on: [loop-implementer-resolves-review]
+
+  - id: cancel-on-review-blocked
+    cancel: |
+      Multi-agent code review identificó findings critical/high que el
+      implementer NO pudo resolver en el loop subsiguiente (complejidad alta,
+      requiere ADR o nueva HU).
+
+      HU: hu/$gen-hu-id.output.hu_id
+      Code review report:  $ARTIFACTS_DIR/code-review-findings.yaml
+      Implementer report:  $ARTIFACTS_DIR/task-result.yaml (code_review_processing.fixes_deferred)
+
+      Findings deferred por specialist:
+        $(grep -B1 -A3 "specialist: " "$ARTIFACTS_DIR/code-review-findings.yaml" 2>/dev/null | head -50)
+
+      Próximos pasos para el operador:
+        1. Revisar fixes_deferred — entender qué specialist + por qué complex.
+        2. Si security critical: NUNCA mergear sin fix. ADR + hotfix HU.
+        3. Si DEHA/FSD critical: ADR + nueva HU del plugin afectado.
+        4. Si test-coverage critical: agregar test missing antes de PR.
+        5. Si decidís mergear sin fix (no recomendado): override manual
+           desactivando este nodo en esta corrida específica.
+
+      Política: NO merge silencioso con findings critical pendientes. Si te
+      molestan los specialists del code-review, calibrá los prompts de los 5
+      commands (.archon/commands/hubara-reviewer-{deha,fsd,plugin-system,test-coverage,security}.md),
+      no los desactives.
+    when: "$check-review-resolved.output == 'REVIEW_BLOCKED' || $check-review-resolved.output == 'REVIEW_BROKEN'"
+    depends_on: [check-review-resolved]
+
+  # ════════════════════════════════════════════════════════════════════
   # FASE 5 — PR (build body + create)
   # ════════════════════════════════════════════════════════════════════
 
@@ -1448,8 +1784,8 @@ nodes:
       writeFileSync(`${artifactsDir}/pr-body.md`, body);
       console.log(`pr-body.md written (${body.length} chars)`);
     runtime: bun
-    depends_on: [final-validation]
-    when: "$final-validation.output == 'PASS'"
+    depends_on: [check-review-clean, check-review-resolved]
+    when: "$check-review-clean.output == 'REVIEW_CLEAN' || $check-review-resolved.output == 'REVIEW_RESOLVED'"
 
   - id: create-pr
     bash: |

@@ -1,0 +1,84 @@
+# Exclusiones para Claude Code — paths que NO debe abrir en operación normal.
+# El equivalente de .gitignore pero scoped al agente. Versionado, así todo el equipo
+# (en este caso, el operador) hereda la misma reducción de ruido.
+#
+# Patrones glob estilo gitignore. Path relativo al repo root.
+
+# === Build artifacts ===
+**/node_modules/
+**/.venv/
+**/dist/
+**/build/
+**/.next/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/.tsbuildinfo
+**/*.tsbuildinfo
+
+# === Test outputs y coverage ===
+**/coverage/
+**/.pytest_cache/
+**/.ruff_cache/
+**/.import_linter_cache/
+**/htmlcov/
+**/playwright-report/
+**/test-results/
+**/.vitest-result.json
+
+# === Generated (no editar a mano) ===
+# render-compose genera docker-compose.local.yml a partir de docker-compose.base.yml + manifests.
+# Editarlo a mano dispara el drift check.
+hubara_agency/docker-compose.local.yml
+
+# Codegen de plugin manifests
+frontend_dashboard/src/plugins/_schema/
+
+# Lock files (managed por uv / npm — no editar)
+**/uv.lock
+**/package-lock.json
+**/yarn.lock
+**/bun.lockb
+
+# === OS / IDE noise ===
+.DS_Store
+**/.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# === Caches del codegraph (el .codegraph/db.sqlite sí es legible) ===
+.codegraph/cache/
+.codegraph/tmp/
+
+# === Worktrees del operador (viven fuera del repo pero a veces el agente los toca) ===
+/Users/edgm/.archon/workspaces/
+
+# === Vault runtime (committeados solo seed data; el resto es ephemeral) ===
+hubara_agency/hubara_vault/wa_*/sessions/*.jsonl
+hubara_agency/hubara_vault/catalog/products/*.json
+
+# === Docs históricos grandes (códigos vivo gana sobre estos) ===
+# NO ignorar — el agente puede necesitar leerlos puntualmente.
+# Pero NO indexar para búsqueda automática.
+# (Marker informativo; ningún tool respeta esto hoy, pero documenta intención.)
+# - ARCHITECTURE.md
+# - HUBARA_PIPELINE_GUIDE.md
+# - HUBARA_PIPELINE_PLAN.md
+# - HUBARA_WORKFLOWS_BLUEPRINT.md
+# - HUBARA_SKILL_BLUEPRINT.md
+# - PLUGIN_REFACTOR_LOG.md
+# - PLUGIN_REFACTOR_PLAN.md
+
+# === Env files ===
+**/.env
+**/.env.local
+**/.env.*.local
+# .env.example es READABLE — no ignorar.
+
+# === Misc ===
+**/tmp/
+**/.tmp/
+**/.cache/

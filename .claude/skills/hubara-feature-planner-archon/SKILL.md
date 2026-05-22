@@ -60,6 +60,64 @@ NO escribís código de producción.
 
 ---
 
+## §1.5 Exploración plugin-level delegada (OBLIGATORIO en iteración 1)
+
+> **Eleva la Técnica 15 del HARNESS_ENGINEERING.md.** Antes de descomponer en tasks,
+> mapeá el plugin con un subagent read-only para que las tasks respeten las fronteras
+> reales del código existente (no inventes módulos paralelos cuando ya existen helpers).
+
+### §1.5.1 ¿Cuándo aplica?
+
+**Iteración 1 (primera vez planificando este plugin):** OBLIGATORIO si `plugin_work.action` es `extend` o `refactor` (plugin existente).
+
+**Iteración 1 con `action: create`:** OMITIR (no hay código previo que explorar; el template del guide §3.4 es suficiente).
+
+**Iteración >1:** OMITIR (ya hay un feature-plan-manifest.yaml previo + tareas. Si el explorer hubiera detectado algo crítico, ya está reflejado en la versión previa).
+
+### §1.5.2 Cómo invocar el explorer (plugin-scope)
+
+1. **Read** `.claude/skills/hubara-explorer-archon/SKILL.md` — template de prompt.
+2. Sustituir placeholders con scope plugin-level:
+   - `<TASK_ID>` ← `plugin-exploration-<plugin_id>` (informativo)
+   - `<PATHS_TO_TOUCH>` ← lista de paths de TODOS los archivos que la HU tocará en ESTE plugin (extraído de `hu-refinada.md` §3 + `plugin-work.yaml`)
+   - `<AFFECTED_LAYERS>` ← unión de capas en `plugin_work.affects_layers`
+   - `<PLUGIN_ID>` ← `plugin_work.plugin_id`
+   - `<HU_ID>` ← del refinement
+3. **Importante:** agregá al prompt rendered un párrafo extra:
+
+   ```
+   Scope adicional para feature-planning: además del protocolo §3 del template,
+   listá los módulos top-level del plugin <PLUGIN_ID> (uno por dir/archivo dominante)
+   y para cada uno indicá su responsabilidad en ≤1 línea. Esto se usa para definir
+   "feature boundaries" de las tasks F<NN>.
+   ```
+
+4. **Invocá** `Agent(subagent_type="Explore", description="Plugin-level map for <plugin_id>", prompt=<rendered>)`.
+5. Persistí la salida en `$ARTIFACTS_DIR/plugin-exploration-map.md`.
+
+### §1.5.3 Cómo usar el exploration map en la descomposición
+
+Al construir el DAG de tasks (§3 abajo):
+
+- **Una task = un módulo top-level del plugin** cuando sea posible. Si el explorer dijo que el plugin tiene 3 módulos top-level (`agent/`, `workers/`, `api/`), considerá no mezclar capas en la misma F<NN> a menos que la HU literalmente requiera coupling cross-módulo.
+- **Sibling patterns:** cada task F<NN> debería referenciar el sibling canónico en su §5 Snippets para que el implementer no re-explore.
+- **Tests afectados:** alimentá la sección §9 Tests de cada task con los test files que el explorer listó (en lugar de inventar paths).
+- **Workspace deltas:** si el explorer flageó workspace/*.md que requiere update, asigná esa porción a la task que también modifica el código asociado (no separes en F-task aparte).
+
+### §1.5.4 Manejo de flags
+
+| Flag del explorer | Acción del feature-planner |
+|---|---|
+| `exploration_capped: true` | El plugin es demasiado grande para un solo plugin-exploration. Aceptable — el explorer dio lo que pudo. Anotá `exploration_partial: true` en feature-plan-manifest.yaml metadata. |
+| `codegraph_stale: true` | Anotá en cada task F<NN> afectada: "verificar símbolo X con Read antes de editar" en §1 Context. |
+| `mode: blocked` | El plugin pide modificar protected paths. Propagá `status: blocked, blocked_reason: requires_architecture_change` al pipeline. NO emitir feature-plan-manifest.yaml. |
+
+### §1.5.5 ¿Y si Agent tool no está disponible?
+
+Mismo patrón que el §1.5.5 del implementer: caer a exploración inline con codegraph_* + Read, con budget de tool calls. Anotá `exploration_mode: inline_fallback` en metadata del manifest.
+
+---
+
 ## §2. Iteration handling
 
 En cada invocación:
