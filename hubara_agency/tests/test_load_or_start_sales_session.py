@@ -37,7 +37,6 @@ from src.plugins.chats.agent.sales.use_cases.load_or_start_sales_session import 
 # only because the test still asserts that the *start_workflow* call references
 # `HubaraSalesSessionWorkflow.run` (intra-agent ref, OK). RemarketingSessionWorkflow
 # is no longer needed (cross-agent — replaced by string dispatch + manifest).
-from src.plugins.chats.agent.sales.workflows.sales_session import HubaraSalesSessionWorkflow
 
 
 # --- Fakes -----------------------------------------------------------------
@@ -341,3 +340,94 @@ async def test_fallback_terminate_failure_is_swallowed():
 
     # Sales arranca aunque el terminate haya fallado
     assert len(client.start_calls) == 1
+
+
+# ============================================================================
+# Sesión c4e3416f: override remarketing→sales cuando hay Flow pendiente
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_active_route_overridden_to_sales_when_flow_awaiting_recent():
+    """ANTI-REGRESIÓN sesión c4e3416f: si hay un `nfm_reply` pendiente del
+    WhatsApp Flow (<10 min desde el envío), el routing debe forzar Sales
+    aunque metadata diga `active_route=remarketing`.
+
+    Escenario: primer ghosting pre-Flow programó remarketing con
+    start_delay=60s; remarketing arrancó + claim_routing pisó active_route;
+    cuando llega el nfm_reply, sin este override iría a remarketing — que
+    no tiene tools de venta ni contexto del pedido."""
+    import time
+
+    recent_ms = int(time.time() * 1000) - 60_000  # 1 min atrás
+    metadata = FakeMetadataStore(initial={
+        "active_route": ROUTE_REMARKETING,
+        "shipping_flow_awaiting_reply_since_ms": recent_ms,
+    })
+    # No existe ni sales ni remarketing como running — el use case debe
+    # arrancar un Sales nuevo.
+    client = FakeClient()
+    use_case = _make_use_case(metadata, client)
+
+    await use_case.execute(
+        session_id="wa_flow_pending",
+        message="[datos de envío recibidos] city=Bogotá; ...",
+        phone_number_id=None,
+    )
+
+    # Sales arrancó (no remarketing).
+    assert len(client.start_calls) == 1
+    assert client.start_calls[0]["id"] == "session-wa_flow_pending"
+
+
+@pytest.mark.asyncio
+async def test_no_override_when_flow_awaiting_flag_expired():
+    """Si el flag tiene > 10 min de antigüedad, el override no aplica —
+    seguimos respetando active_route=remarketing."""
+    import time
+
+    stale_ms = int(time.time() * 1000) - (11 * 60 * 1000)  # 11 min atrás
+    metadata = FakeMetadataStore(initial={
+        "active_route": ROUTE_REMARKETING,
+        "shipping_flow_awaiting_reply_since_ms": stale_ms,
+    })
+    rem_handle = FakeHandle(status=WorkflowExecutionStatus.RUNNING)
+    client = FakeClient(
+        existing_handles={"remarketing-wa_stale": rem_handle},
+    )
+    use_case = _make_use_case(metadata, client)
+
+    await use_case.execute(
+        session_id="wa_stale",
+        message="vuelvo después",
+        phone_number_id=None,
+    )
+
+    # Flag vencido → ruteo normal a remarketing (no override)
+    assert client.start_calls == []
+    assert len(rem_handle.signals) == 1
+
+
+@pytest.mark.asyncio
+async def test_no_override_when_active_route_is_ventas():
+    """Si active_route ya es ventas, el flag no cambia el comportamiento
+    (defensa: el override solo aplica para REMARKETING)."""
+    import time
+
+    recent_ms = int(time.time() * 1000) - 60_000
+    metadata = FakeMetadataStore(initial={
+        "active_route": ROUTE_VENTAS,
+        "shipping_flow_awaiting_reply_since_ms": recent_ms,
+    })
+    client = FakeClient()
+    use_case = _make_use_case(metadata, client)
+
+    await use_case.execute(
+        session_id="wa_sales_flag",
+        message="datos",
+        phone_number_id=None,
+    )
+
+    # Sales arrancó normal (sin override — ya era sales)
+    assert len(client.start_calls) == 1
+    assert client.start_calls[0]["id"] == "session-wa_sales_flag"

@@ -75,7 +75,21 @@ class IngestInboundMessage:
         except Exception:  # noqa: BLE001 — best-effort
             metadata = {}
 
-        # --- 2. Referral CTWA: detectar primer touch y persistir ---
+        # --- 2a. Origin classification (4 buckets para reporting) ---
+        # Sticky first-touch + last_touch updated cada inbound. Se persiste
+        # ANTES del CTWA flow porque queremos clasificar incluso a clientes
+        # `direct` (sin referral) o `web_referral` (referral sin ctwa_clid).
+        self._handle_origin(
+            session_id=session_id,
+            metadata=metadata,
+            referral=parsed.referral,
+            inbound_message_id=parsed.message_id,
+        )
+
+        # --- 2b. Referral CTWA: detectar primer touch y persistir ---
+        # Solo Meta-attributable touches (con ctwa_clid) van a ctwa_referrals
+        # — feed de Conversions API. web_referral / direct NO contaminan
+        # esta lista (mantenemos el contrato del HU-002).
         referral_already_seen = False
         if parsed.referral and parsed.referral.get("ctwa_clid"):
             referral_already_seen = self._handle_referral(
@@ -161,9 +175,22 @@ class IngestInboundMessage:
         # --- 6. Persistir history (texto efectivo, NO el JSON raw) ---
         self._history_store.append_user_event(session_id, effective.text)
 
+        # --- 6.5. Limpiar flag de Flow pendiente (sesión c4e3416f) ---
+        # Si el cliente respondió (por texto, por nfm_reply, lo que sea),
+        # ya NO estamos en modo "esperando Flow" — limpiamos el flag para
+        # que el próximo loop del workflow vuelva al timeout normal de 60s.
+        cleared_flow_flag = (
+            metadata.pop("shipping_flow_awaiting_reply_since_ms", None)
+            is not None
+        )
+
         # --- 7. Persistir last_inbound_message_id para typing indicator ---
         if parsed.message_id:
             metadata["last_inbound_message_id"] = parsed.message_id
+            self._safe_write_metadata(session_id, metadata)
+        elif cleared_flow_flag:
+            # No hay message_id PERO limpiamos el flag arriba — persistimos
+            # el pop para que no quede zombie en metadata.
             self._safe_write_metadata(session_id, metadata)
 
         # --- 8. Analytics de interacciones (clicks) ---
@@ -184,6 +211,78 @@ class IngestInboundMessage:
     # =========================================================================
     # Helpers
     # =========================================================================
+
+    def _handle_origin(
+        self,
+        *,
+        session_id: str,
+        metadata: dict[str, Any],
+        referral: dict[str, Any] | None,
+        inbound_message_id: str | None,
+    ) -> None:
+        """Clasifica el origen del cliente en uno de 4 buckets y persiste
+        `origin` (sticky first-touch) + `last_touch` (updated cada inbound).
+
+        Buckets:
+          - "ad" / "post" — referral con ctwa_clid (CTWA atribuible, según
+            source_type del referral).
+          - "web_referral" — referral SIN ctwa_clid (WhatsApp Web / cliente
+            viejo). No atribuible vía Conversions API.
+          - "direct" — sin referral en el payload (escribió al número,
+            QR, link, etc.).
+
+        State shape:
+          metadata["origin"] = {
+            "channel": str, "first_seen_ms": int,
+            "first_inbound_message_id": str | None,
+            "headline": str | None, "source_id": str | None,
+          }
+          metadata["last_touch"] = {
+            "channel": str, "seen_at_ms": int,
+            "inbound_message_id": str | None, "ctwa_clid": str | None,
+            "headline": str | None, "source_id": str | None,
+          }
+
+        `origin` se setea UNA SOLA VEZ (primer inbound de la sesión).
+        `last_touch` se actualiza en CADA inbound, incluso direct.
+
+        NO toca `ctwa_referrals` / `ctwa_clids_seen` — eso lo hace
+        `_handle_referral` (solo cuando hay clid).
+        """
+        channel = _classify_origin_channel(referral)
+        now_ms = _now_ms()
+
+        # last_touch: siempre actualizar
+        metadata["last_touch"] = {
+            "channel": channel,
+            "seen_at_ms": now_ms,
+            "inbound_message_id": inbound_message_id,
+            "ctwa_clid": (referral or {}).get("ctwa_clid"),
+            "headline": (referral or {}).get("headline"),
+            "source_id": (referral or {}).get("source_id"),
+        }
+
+        # origin: sticky first-touch
+        if not metadata.get("origin"):
+            metadata["origin"] = {
+                "channel": channel,
+                "first_seen_ms": now_ms,
+                "first_inbound_message_id": inbound_message_id,
+                "headline": (referral or {}).get("headline"),
+                "source_id": (referral or {}).get("source_id"),
+            }
+            logger.info(
+                "session_origin_classified",
+                session=session_id,
+                channel=channel,
+                source_id=(referral or {}).get("source_id"),
+            )
+
+        # Persistimos inmediatamente — el resto del flujo del ingest hará
+        # más writes con `_safe_write_metadata`, pero queremos que
+        # origin/last_touch queden grabados aunque el flujo posterior
+        # crashee.
+        self._safe_write_metadata(session_id, metadata)
 
     def _handle_referral(
         self,
@@ -448,6 +547,30 @@ class IngestInboundMessage:
 def _now_ms() -> int:
     import time
     return int(time.time() * 1000)
+
+
+def _classify_origin_channel(referral: dict[str, Any] | None) -> str:
+    """Determina el bucket de origen de un inbound según el payload referral.
+
+    Decisión tabla:
+      | referral=None             | "direct"
+      | referral sin ctwa_clid    | "web_referral"
+      | referral con ctwa_clid    | source_type ("ad" | "post"), default "ad"
+
+    `web_referral` cubre WhatsApp Web (donde Meta omite el clid) — el
+    referral trae headline/source_id útiles para reporting pero no es
+    atribuible vía Conversions API.
+    """
+    if not referral:
+        return "direct"
+    if not referral.get("ctwa_clid"):
+        return "web_referral"
+    source_type = referral.get("source_type")
+    if source_type in ("ad", "post"):
+        return source_type
+    # Defensivo: clid presente pero source_type missing/unknown — default a "ad"
+    # (es el caso más común y mantiene compatibilidad con el HU-002).
+    return "ad"
 
 
 def _spawn_safe(coro, *, label: str, session_id: str | None) -> None:

@@ -6,14 +6,15 @@ import asyncio
 from loguru import logger
 from temporalio.worker import Worker
 
+from src.platform.logging import setup_logging
+from src.platform.plugin_manifest import get_task_queue
+from src.platform.temporal.client import get_temporal_client
 from src.plugins.catalog.agent.activities import (
     pull_medusa_catalog_activity,
+    push_meta_catalog_activity,
     write_snapshot_activity,
 )
 from src.plugins.catalog.agent.workflows import CatalogSyncWorkflow
-from src.platform.plugin_manifest import get_task_queue
-from src.platform.logging import setup_logging
-from src.platform.temporal.client import get_temporal_client
 
 setup_logging()
 
@@ -30,6 +31,7 @@ async def main() -> None:
         activities=[
             pull_medusa_catalog_activity,
             write_snapshot_activity,
+            push_meta_catalog_activity,
         ],
     )
 

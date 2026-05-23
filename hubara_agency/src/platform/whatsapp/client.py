@@ -63,6 +63,35 @@ async def send_message(phone_number_id: str, to: str, text: str) -> None:
         logger.error("Failed to reply", error=result.error)
 
 
+async def send_text(
+    phone_number_id: str,
+    to: str,
+    text: str,
+    reply_to_message_id: str | None = None,
+) -> wa_dtos.OutboundResult:
+    """Envía un mensaje de texto plano y devuelve `OutboundResult`.
+
+    A diferencia del legacy `send_message` (que devuelve `None` y se usa
+    desde `send_whatsapp_message_activity`), este shape uniforme se usa
+    desde `flush_pending_ui_intents_activity` — donde necesitamos
+    `OutboundResult.ok` para la idempotencia (pop+write por intent) y
+    `wa_message_id` para correlación analytics.
+
+    Soporta `reply_to_message_id` para citar el mensaje del cliente
+    (Meta `context.message_id`).
+    """
+    data: dict[str, Any] = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": to,
+        "type": "text",
+        "text": {"preview_url": False, "body": text},
+    }
+    if reply_to_message_id:
+        data["context"] = {"message_id": reply_to_message_id}
+    return await _post_json(phone_number_id, data, label="text")
+
+
 async def send_typing_indicator(
     phone_number_id: str,
     message_id: str,

@@ -113,6 +113,32 @@ class LoadOrStartSalesSession:
         data = self._metadata_store.read(session_id)
         active_route = data.get("active_route", ROUTE_VENTAS)
 
+        # 1.1. Sales pendiente de Flow (sesión c4e3416f): si acabamos de
+        # mandar un WhatsApp Flow nativo y todavía estamos esperando el
+        # nfm_reply (< 10 min), forzar ruta Sales aunque active_route diga
+        # remarketing. Sin esto, el primer ghosting pre-Flow programa
+        # remarketing con start_delay=60s; remarketing arranca + claim_routing
+        # pisa active_route a "remarketing"; el nfm_reply se rutea ahí.
+        # El flag se escribe desde `flush_pending_ui_intents_activity` cuando
+        # dispatcha el Flow real, y se limpia al recibir el siguiente inbound
+        # (`ingest_inbound_message` step 6.5).
+        flow_awaiting_since_ms = data.get("shipping_flow_awaiting_reply_since_ms")
+        if (
+            active_route == ROUTE_REMARKETING
+            and isinstance(flow_awaiting_since_ms, int)
+        ):
+            import time as _t
+            elapsed_ms = _t.time() * 1000 - flow_awaiting_since_ms
+            # 10 minutos — mismo cap que `_FLOW_PENDING_TIMEOUT_S` en
+            # bootstrap_session.py:read_idle_timeout_seconds_activity.
+            if 0 <= elapsed_ms < 10 * 60 * 1000:
+                logger.info(
+                    "Override active_route remarketing→ventas: Flow pendiente",
+                    session_id=session_id,
+                    elapsed_ms=int(elapsed_ms),
+                )
+                active_route = ROUTE_VENTAS
+
         if phone_number_id:
             data["phone_number_id"] = phone_number_id
             self._metadata_store.write(session_id, data)

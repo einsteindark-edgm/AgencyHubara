@@ -15,6 +15,7 @@ from src.plugins.chats.agent.sales.activities.bootstrap_session import (
     bootstrap_sales_session_activity,
     decide_ghosting_action,
     read_and_clear_pending_handoff_activity,
+    read_idle_timeout_seconds_activity,
 )
 from src.plugins.chats.agent.sales.activities.flush_ui_intents import (
     flush_pending_ui_intents_activity,
@@ -27,6 +28,7 @@ __all__ = [
     "bootstrap_sales_session_activity",
     "decide_ghosting_action",
     "read_and_clear_pending_handoff_activity",
+    "read_idle_timeout_seconds_activity",
     "flush_pending_ui_intents_activity",
     "transcribe_audio_activity",
 ]

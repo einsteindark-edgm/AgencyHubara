@@ -34,6 +34,7 @@ from src.plugins.chats.agent.sales.activities import (
     decide_ghosting_action,
     flush_pending_ui_intents_activity,
     read_and_clear_pending_handoff_activity,
+    read_idle_timeout_seconds_activity,
     transcribe_audio_activity,
 )
 from src.plugins.chats.agent.sales.tools.catalog import (
@@ -49,7 +50,9 @@ from src.plugins.chats.agent.sales.tools.ui_intents import (
     PresentProductsTool,
     PresentVariantPickerTool,
     ReactToMessageTool,
-    RequestLocationTool,
+    # RequestLocationTool removido (sesión adc6400c) — el botón nativo de
+    # "Compartir ubicación" no funcionó en pruebas reales (cliente abandona).
+    # Ahora la dirección se recolecta conversacionalmente.
     RequestShippingDetailsTool,
     SendContactCardTool,
     SendCTAUrlTool,
@@ -122,6 +125,14 @@ register_tool_extension(
     ),
 )
 
+# Sesión c4e3416f: cierre formal de la venta. Stub por ahora — persiste el
+# pedido a `metadata.registered_order`. En el futuro se conectará con
+# Medusa Orders / ERP / cola de cumplimiento.
+register_tool_extension(
+    "sales.register_order",
+    lambda workspace: RegisterOrderTool(workspace=str(workspace)),
+)
+
 # HU-002: decision tools de UI rica. Emiten "intents" a
 # `metadata.json[pending_ui_intents]` que `flush_pending_ui_intents_activity`
 # renderiza al cliente como mensaje WA nativo (imagen, botones, lista,
@@ -139,10 +150,10 @@ register_tool_extension(
         workspace=str(workspace), catalog=_catalog
     ),
 )
-register_tool_extension(
-    "sales.request_location",
-    lambda workspace: RequestLocationTool(workspace=str(workspace)),
-)
+# sales.request_location removido (sesión adc6400c) — el botón nativo de
+# "Compartir ubicación" abre el mapa, no el formulario, y los clientes
+# abandonan. La dirección se recolecta ahora vía `request_shipping_details`
+# (mensaje de texto formateado) + recolección conversacional turn-by-turn.
 register_tool_extension(
     "sales.request_shipping_details",
     lambda workspace: RequestShippingDetailsTool(workspace=str(workspace)),
@@ -211,6 +222,9 @@ async def main() -> None:
             decide_ghosting_action,
             bootstrap_sales_session_activity,
             read_and_clear_pending_handoff_activity,
+            # Dynamic ghosting timeout (sesión c4e3416f): extiende el wait
+            # cuando hay un WhatsApp Flow pendiente esperando nfm_reply.
+            read_idle_timeout_seconds_activity,
             start_or_signal_sales_workflow_activity,
             schedule_remarketing_workflow_activity,
             # ADR-2026-05-20: declarative orchestration activities.

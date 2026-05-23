@@ -113,10 +113,29 @@ class HubaraSalesSessionWorkflow:
                 )
 
         while True:
+            # Dynamic ghosting timeout (sesión c4e3416f, gated): por default
+            # son 60s, pero si acabamos de enviar un WhatsApp Flow nativo y
+            # estamos esperando el `nfm_reply`, se extiende hasta 10 min para
+            # que el cliente tenga tiempo de llenar el formulario sin que se
+            # dispare ghosting prematuramente (que arrancaría remarketing y
+            # ruteo el nfm_reply ahí cuando llegue).
+            if workflow.patched("dynamic-idle-timeout-v1"):
+                idle_timeout_seconds = await workflow.execute_activity(
+                    read_idle_timeout_seconds_activity,
+                    session.session_id,
+                    start_to_close_timeout=timedelta(seconds=5),
+                    retry_policy=RetryPolicy(maximum_attempts=2),
+                )
+                effective_idle_timeout = timedelta(seconds=idle_timeout_seconds)
+            else:
+                # Pre-patch workflows en replay caen al timeout legacy fijo
+                # para preservar determinismo (R-DET).
+                effective_idle_timeout = _IDLE_TIMEOUT
+
             try:
                 await workflow.wait_condition(
                     lambda: len(self._pending) > 0,
-                    timeout=_IDLE_TIMEOUT,
+                    timeout=effective_idle_timeout,
                 )
             except asyncio.TimeoutError:
                 workflow.logger.info(f"Ghosting detectado para sesión {session.session_id}. Inyectando trigger de auto-etiquetado.")

@@ -143,7 +143,6 @@ async def test_escalation_tool_appends_to_existing_status_history(tmp_path: Path
 @pytest.mark.asyncio
 async def test_escalation_tool_rejects_invalid_reason_category(tmp_path: Path) -> None:
     """El JSON schema enum rechaza categorias fuera de la taxonomia."""
-    from exoclaw.agent.tools import ToolBase
 
     tool = EscalateToHumanTool(workspace=str(tmp_path), vault_dir=tmp_path)
     # ToolBase.validate_params es el chequeo que dispara el dispatch real.
@@ -175,6 +174,9 @@ async def test_escalation_tool_rejects_invalid_reason_category(tmp_path: Path) -
         "CHECKOUT_VERIFY_FAILED",
         "EXPLICIT_REQUEST",
         "CATALOG_GAP",
+        # Sesión c4e3416f — agregada para el caso "cliente confirmó pero no
+        # completó datos de envío" (LLM lo combina con tag CONFIRMADO_SIN_DATOS).
+        "ORDER_PENDING_SHIPPING_DETAILS",
         "OTHER",
     ],
 )

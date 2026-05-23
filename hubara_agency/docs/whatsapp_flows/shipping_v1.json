@@ -1,0 +1,110 @@
+{
+  "version": "7.2",
+  "routing_model": {
+    "SHIPPING_DETAILS": []
+  },
+  "screens": [
+    {
+      "id": "SHIPPING_DETAILS",
+      "title": "Datos de envío",
+      "terminal": true,
+      "success": true,
+      "data": {
+        "order_total_cop": {
+          "type": "number",
+          "__example__": 17000
+        },
+        "items_summary": {
+          "type": "string",
+          "__example__": "1× Vela Cruz de Vida"
+        },
+        "show_cash_on_delivery": {
+          "type": "boolean",
+          "__example__": false
+        },
+        "payment_options": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "title": { "type": "string" }
+            }
+          },
+          "__example__": [
+            { "id": "card", "title": "💳 Tarjeta" },
+            { "id": "transfer", "title": "🏦 Transferencia" }
+          ]
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "TextHeading",
+            "text": "Completá tus datos"
+          },
+          {
+            "type": "TextSubheading",
+            "text": "${data.items_summary}"
+          },
+          {
+            "type": "TextInput",
+            "name": "city",
+            "label": "Ciudad",
+            "required": true,
+            "input-type": "text",
+            "helper-text": "Bogotá, Medellín, Cali…"
+          },
+          {
+            "type": "TextInput",
+            "name": "neighborhood",
+            "label": "Barrio",
+            "required": true,
+            "input-type": "text",
+            "helper-text": "Ej. Chapinero, El Poblado"
+          },
+          {
+            "type": "TextInput",
+            "name": "address",
+            "label": "Dirección",
+            "required": true,
+            "input-type": "text",
+            "helper-text": "Calle, número, apto/casa"
+          },
+          {
+            "type": "TextInput",
+            "name": "phone",
+            "label": "Teléfono de contacto",
+            "required": true,
+            "input-type": "phone",
+            "helper-text": "Para coordinar la entrega"
+          },
+          {
+            "type": "RadioButtonsGroup",
+            "name": "payment_method",
+            "label": "Método de pago",
+            "required": true,
+            "data-source": "${data.payment_options}"
+          },
+          {
+            "type": "Footer",
+            "label": "Confirmar datos",
+            "on-click-action": {
+              "name": "complete",
+              "payload": {
+                "city": "${form.city}",
+                "neighborhood": "${form.neighborhood}",
+                "address": "${form.address}",
+                "phone": "${form.phone}",
+                "payment_method": "${form.payment_method}",
+                "order_total_cop": "${data.order_total_cop}",
+                "items_summary": "${data.items_summary}"
+              }
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

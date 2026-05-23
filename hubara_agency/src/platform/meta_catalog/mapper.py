@@ -16,6 +16,20 @@ Categorías:
 
 GTIN: si `variants[0].sku` tiene 13 dígitos numéricos, se asume GTIN-13. Si no,
 se omite (Meta acepta items sin GTIN).
+
+Imágenes (anti-bug sesión 71f479f7 portado a Meta Catalog):
+  * Meta Commerce Catalog SOLO acepta `image/jpeg` y `image/png`. Los `.webp`
+    son aceptados por la API con 200 OK pero quedan visualmente vacíos en
+    Commerce Manager y en las cards `interactive.product`.
+  * Las URLs del catálogo Hubara apuntan a `assets.hubara.com.co/...webp`.
+  * Usamos `normalize_image_url()` (que vive en `platform/whatsapp/` porque
+    ahí nació, pero la restricción del formato es Meta-global — aplica a
+    Catalog también) para wrappear las URLs con Cloudflare Image Resizing
+    (`/cdn-cgi/image/format=jpeg/`). El push reusa **la URL que ya quedó
+    persistida en el snapshot del pull anterior** — NO re-consulta Medusa.
+  * Comparación de duplicados (`additional` vs `image_url`): se hace ANTES
+    de normalizar, contra la URL cruda del snapshot. Sino, dos URLs que
+    deduplicarian al normalizarse podrian quedar como duplicadas.
 """
 from __future__ import annotations
 
@@ -25,6 +39,7 @@ from typing import Optional
 
 from src.platform.catalog.dtos import CatalogProductDTO
 from src.platform.meta_catalog.dtos import MetaCatalogItem
+from src.platform.whatsapp.media_url import normalize_image_url
 
 _GTIN13_RE = re.compile(r"^\d{13}$")
 
@@ -53,10 +68,11 @@ def map_product_to_meta(
     Devuelve None si el producto NO se puede sincronizar (sin imagen,
     sin precio). El caller debe loguear y skip.
     """
-    image_url = product.thumbnail
-    if not image_url and product.images:
-        image_url = product.images[0].url
-    if not image_url:
+    # Pick primary image (UN-normalized — para deduplicar el additional set).
+    primary_raw = product.thumbnail
+    if not primary_raw and product.images:
+        primary_raw = product.images[0].url
+    if not primary_raw:
         return None
 
     price = _first_price_meta_format(product)
@@ -67,11 +83,19 @@ def map_product_to_meta(
 
     description = product.description or product.title
 
-    additional_images: list[str] = []
+    # Additional images (UN-normalized — para dedupe contra primary_raw).
+    additional_raw: list[str] = []
     if product.images:
         for img in product.images[1:11]:  # Meta acepta hasta 10
-            if img.url and img.url != image_url:
-                additional_images.append(img.url)
+            if img.url and img.url != primary_raw:
+                additional_raw.append(img.url)
+
+    # Normalize a la frontera con Meta — wrappea .webp con Cloudflare Image
+    # Resizing si la URL viene de un host conocido (assets.hubara.com.co).
+    # NOTA: el snapshot del pull anterior ya quedó persistido; estamos
+    # transformando solo el formato de entrega a Meta, no re-fetcheando.
+    image_url = normalize_image_url(primary_raw)
+    additional_images = [normalize_image_url(u) for u in additional_raw]
 
     gtin: str | None = None
     if product.variants:

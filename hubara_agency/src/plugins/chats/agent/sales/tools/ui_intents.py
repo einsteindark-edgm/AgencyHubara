@@ -423,93 +423,44 @@ class PresentProductsTool(ToolBase):
 
 
 # =============================================================================
-# A.4 — Request location
-# =============================================================================
-
-
-class RequestLocationTool(ToolBase):
-    """Le pide al cliente que comparta su ubicación nativa de WhatsApp."""
-
-    name = "request_location"
-    description = (
-        "Le pide al cliente compartir su ubicación nativa de WhatsApp (no "
-        "una dirección escrita — el botón nativo de 'Compartir ubicación'). "
-        "Útil al recolectar datos de envío para resolver zona automáticamente. "
-        "Solo Colombia — si el cliente comparte una ubicación fuera del país, "
-        "el sistema escalará automáticamente."
-    )
-    parameters: dict[str, Any] = {
-        "type": "object",
-        "properties": {
-            "reason": {
-                "type": "string",
-                "maxLength": 200,
-                "description": (
-                    "Por qué necesitamos la ubicación. Aparece en el "
-                    "mensaje al cliente. Ej: 'para calcular el envío'."
-                ),
-            },
-        },
-        "required": ["reason"],
-    }
-
-    def __init__(self, workspace: str | Path) -> None:
-        self._workspace = Path(workspace)
-
-    async def execute_with_context(
-        self, ctx: ToolContext, reason: str
-    ) -> str:
-        logger.info("📍 [TOOL request_location] session={}", ctx.session_key)
-        intent = {
-            "kind": "location_request",
-            "params": {
-                "body": (
-                    f"Compartí tu ubicación {reason.lower()} — "
-                    "el botón está abajo. Si preferís, también podés "
-                    "escribirme tu dirección."
-                ),
-            },
-            "analytics": {
-                "component_id": "location_request",
-                "component_kind": "interactive.location_request",
-            },
-        }
-        _append_intent(ctx.session_key, intent)
-        return json.dumps({
-            "queued": True,
-            "kind": "location_request",
-            "summary": (
-                "Solicitud de ubicación enviada. Esperá a que el cliente "
-                "comparta — recibirás '[ubicación recibida] lat=X lng=Y'."
-            ),
-        }, ensure_ascii=False)
-
-
-# =============================================================================
 # A.9 — Request shipping details (WA Flow)
 # =============================================================================
+#
+# NOTA (sesión adc6400c): el tool `request_location` fue removido. Pedir al
+# cliente compartir ubicación nativa demostró ser un anti-patrón:
+#   * El botón nativo "Compartir ubicación" abre el mapa, NO el formulario.
+#   * Los clientes no entienden por qué tienen que abrir el mapa para una
+#     compra.
+#   * Se perdió la venta en pruebas reales por abandono.
+# Reemplazado por la recolección conversacional (texto plano) que pide
+# ciudad/barrio/dirección/teléfono/pago en un solo mensaje.
 
 
 class RequestShippingDetailsTool(ToolBase):
-    """Abre el WhatsApp Flow de datos de envío.
+    """Solicita los datos de envío al cliente.
 
-    El cliente toca el botón → se abre el formulario nativo con ciudad,
-    barrio, dirección, teléfono, método de pago. Cuando completa, el
-    parser recibe `nfm_reply` y el ingest le pasa al LLM "[datos de envío
-    recibidos] ciudad=X; ...".
+    Mientras el WhatsApp Flow Meta no esté configurado (productivo
+    pendiente), esta tool envía un MENSAJE DE TEXTO PLANO al cliente
+    enumerando los campos que necesitamos (ciudad, barrio, dirección,
+    teléfono, método de pago) — con emojis y formato bonito. El cliente
+    responde por texto y vos parseás su respuesta turn-by-turn.
 
-    Solo se debe llamar UNA SOLA VEZ por sesión. Si el cliente cierra el
-    Flow sin completarlo, el sistema cae a modo texto (legacy).
+    Cuando el Flow esté configurado (cambiando `flow_id` a un id real),
+    esta misma tool abre el formulario nativo y recibe los datos en
+    `nfm_reply`. La tool es agnóstica al modo — el dispatcher decide.
+
+    Solo se debe llamar UNA SOLA VEZ por sesión.
     """
 
     name = "request_shipping_details"
     description = (
-        "Abre el formulario nativo de WhatsApp para recolectar datos de "
-        "envío (ciudad, barrio, dirección, teléfono, método de pago). "
-        "Llámala UNA SOLA VEZ por sesión, después de que el cliente "
-        "confirmó qué quiere comprar. NO pidas estos datos en texto — el "
-        "Flow es 10x más rápido. Si el cliente cierra el Flow sin completar, "
-        "vas a recibir mensaje de fallback y podrás pedir los datos en texto."
+        "Pide al cliente los datos de envío (ciudad, barrio, dirección, "
+        "teléfono, método de pago). Llámala UNA SOLA VEZ por sesión, "
+        "después de que el cliente confirmó qué quiere comprar. El "
+        "sistema le manda un mensaje de texto enumerando los campos — "
+        "el cliente responde libremente por chat y vos vas armando los "
+        "datos hasta tenerlos completos. NO repitas la lista en tu propio "
+        "texto: la tool ya manda el mensaje formateado."
     )
     parameters: dict[str, Any] = {
         "type": "object",
@@ -549,10 +500,31 @@ class RequestShippingDetailsTool(ToolBase):
             ctx.session_key, order_total_cop,
         )
         flow_token = f"shipping_{ctx.session_key}_{int(time.time())}"
+
+        # Opciones de pago dinámicas. El RadioButtonsGroup del Flow JSON
+        # bindea `data-source: ${data.payment_options}`, así que con cambiar
+        # esta lista se cambia lo que ve el cliente — sin republicar el Flow
+        # en Meta. "Contra entrega" solo aparece si el total > $45.000 COP
+        # (política Hubara — pedidos chicos van prepago para asegurar el
+        # margen vs el costo del envío).
+        payment_options: list[dict[str, str]] = [
+            {"id": "card", "title": "💳 Tarjeta"},
+            {"id": "transfer", "title": "🏦 Transferencia"},
+        ]
+        if order_total_cop > 45000:
+            payment_options.append(
+                {"id": "cash_on_delivery", "title": "💵 Contra entrega"}
+            )
+
         intent = {
             "kind": "shipping_flow",
             "params": {
-                "flow_id": "FLOW_ID_SHIPPING_PLACEHOLDER",  # configurar en agents_admin
+                # PLACEHOLDER — el dispatcher resuelve el flow_id real desde
+                # la env var `META_FLOW_ID_SHIPPING`. Si esa env está vacía,
+                # cae al fallback de texto plano (recolección conversacional
+                # turn-by-turn). Operador setup: ver
+                # docs/META_CATALOG_SETUP.md §Fase 13.
+                "flow_id": "FLOW_ID_SHIPPING_PLACEHOLDER",
                 "flow_token": flow_token,
                 "flow_cta": "Completar datos",
                 "flow_action": "navigate",
@@ -561,12 +533,17 @@ class RequestShippingDetailsTool(ToolBase):
                     "order_total_cop": order_total_cop,
                     "items_summary": items_summary,
                     "show_cash_on_delivery": order_total_cop > 45000,
+                    "payment_options": payment_options,
                 },
                 "body": (
-                    "Para completar tu pedido necesito unos datos. "
-                    "Toca el botón abajo — toma 30 segundos."
+                    f"Para enviarte *{items_summary}* necesito unos datos. "
+                    "Tocá el botón para completar el formulario — "
+                    "toma 30 segundos."
                 ),
                 "header_text": "Datos de envío",
+                # Usado por la rama de texto-plano del dispatcher para decidir
+                # si incluir "contra entrega" como opción de pago.
+                "order_total_cop": order_total_cop,
             },
             "analytics": {
                 "component_id": "shipping_flow_v1",
@@ -580,10 +557,13 @@ class RequestShippingDetailsTool(ToolBase):
             "kind": "shipping_flow",
             "flow_token": flow_token,
             "summary": (
-                "Flow de datos de envío enviado. Esperá a que el cliente "
-                "lo complete — recibirás '[datos de envío recibidos] "
-                "ciudad=X; barrio=Y; direccion=Z; telefono=W; pago=P'. "
-                "Cuando llegue, continúa con verify_order_for_checkout."
+                "Mensaje pidiendo datos de envío enviado al cliente "
+                "(ciudad, barrio, dirección, teléfono, método de pago). "
+                "El cliente responde por texto — vos vas recolectando los "
+                "campos en los próximos turnos. Cuando los tengas TODOS, "
+                "continúa con verify_order_for_checkout. NO pidas los "
+                "datos otra vez en tu próximo mensaje — la tool ya los "
+                "pidió formateados."
             ),
         }, ensure_ascii=False)
 
@@ -1339,14 +1319,17 @@ class SendQuickRepliesTool(ToolBase):
 
 
 class PresentVariantPickerTool(ToolBase):
-    """Muestra opciones de variante (aroma, color, tamaño) como lista
-    tappable con emoji curado por opción.
+    """Muestra opciones de variante (aroma, color, tamaño) al cliente
+    como **mensaje de texto plano con emojis curados** por opción,
+    agrupado por categoría sensorial.
 
     Por qué existe (sesión 71f479f7): listar 11 aromas en texto plano con
-    el mismo 🌿 al lado de cada uno se ve repetitivo y poco premium. Una
-    `interactive.list` con emoji distintivo por aroma/color queda elegante
-    y tappable, evitando además que el LLM tenga que repetir la lista en
-    texto.
+    el mismo 🌿 al lado de cada uno se ve repetitivo y poco premium.
+    Pero la `interactive.list` tappable resultó incómoda en pruebas (sesión
+    adc6400c) — el cliente prefiere leer la lista bonita y *escribir* la
+    opción. Solución actual: el dispatcher renderiza un mensaje de texto
+    con `*Sección*\\n💜 Lavanda\\n🌿 Verde menta\\n…` + cierre invitando a
+    escribir la elección.
 
     Anti-hallucination: el emoji NUNCA viene del LLM. Lo resolvemos vía
     `variant_emoji.scent_emoji()` / `color_emoji()` (closed-list). Si
@@ -1360,13 +1343,14 @@ class PresentVariantPickerTool(ToolBase):
 
     name = "present_variant_picker"
     description = (
-        "Muestra al cliente una lista interactiva de variantes (aromas, "
-        "colores, tamaños) para que toque la que prefiere — más elegante "
-        "que listarlas en texto y permite tap directo. Usala cuando vayas "
-        "a presentar 4 o más opciones de aroma/color de un producto. "
-        "El emoji por opción se asigna automáticamente desde el registry "
-        "Hubara — **vos NO pasás emojis, solo el nombre literal del "
-        "envelope**. Si el cliente ya eligió la variante, NO uses esta "
+        "Envía un mensaje de texto bonito al cliente con las opciones de "
+        "variante (aromas / colores / tamaños), con un emoji distintivo "
+        "por opción agrupadas por categoría. El cliente lee y **responde "
+        "por texto** la que prefiere (ej: 'lavanda', 'el morado'). Usala "
+        "cuando vayas a presentar 4 o más opciones de aroma/color de un "
+        "producto. El emoji por opción se asigna automáticamente desde el "
+        "registry Hubara — **vos NO pasás emojis, solo el nombre literal "
+        "del envelope**. Si el cliente ya eligió la variante, NO uses esta "
         "tool — continuá hacia el cierre."
     )
     parameters: dict[str, Any] = {
@@ -1559,7 +1543,9 @@ class PresentVariantPickerTool(ToolBase):
                 },
                 "analytics": {
                     "component_id": f"variant_picker.{variant_type}",
-                    "component_kind": "interactive.list",
+                    # Render actual: texto plano con emojis curados
+                    # (cambiado en sesión adc6400c, antes era interactive.list).
+                    "component_kind": "text.variant_picker",
                     "handle": handle,
                     "count": sum(len(s["rows"]) for s in page_sections),
                     "page": page_idx + 1,
@@ -1580,10 +1566,11 @@ class PresentVariantPickerTool(ToolBase):
             "count": total_options,
             "pages": total_pages,
             "summary": (
-                f"Picker de {variant_type} con {total_options} opciones"
-                f"{paging_note}. Esperá la elección del cliente — recibirás "
-                "'[el cliente seleccionó: <Opción>]'. NO repitas la lista "
-                "en texto."
+                f"Picker de {variant_type} con {total_options} opciones "
+                f"enviado como texto con emojis curados{paging_note}. "
+                "Esperá la respuesta libre del cliente (ej: 'lavanda', "
+                "'el morado'). NO repitas la lista en tu próximo mensaje "
+                "— el cliente acaba de verla."
             ),
         }, ensure_ascii=False)
 

@@ -137,6 +137,7 @@ async def flush_pending_ui_intents_activity(session_id: str) -> int:
                 wa_dtos=wa_dtos,
                 kind=kind,
                 params=params,
+                fallback=intent.get("fallback") or {},
                 phone_number_id=phone_number_id,
                 to_number=to_number,
                 last_inbound_message_id=last_inbound_msg_id,
@@ -220,11 +221,16 @@ async def _dispatch_intent(
     wa_dtos,
     kind: str | None,
     params: dict[str, Any],
+    fallback: dict[str, Any],
     phone_number_id: str,
     to_number: str,
     last_inbound_message_id: str | None,
 ):
     """Mapea `kind` a la función `send_*` correspondiente.
+
+    `fallback`: hints opcionales del tool al dispatcher (ej.
+    `prefer_native_product_list: bool` para `products_list`). Vacío si la
+    tool no lo encoló.
 
     Devuelve `OutboundResult` o None si el kind es desconocido / intent
     invalido sin posibilidad de envío.
@@ -245,8 +251,73 @@ async def _dispatch_intent(
     if kind == "products_list":
         from src.platform.whatsapp import limits as wa_limits
 
+        sections_payload = params.get("sections") or []
+        # `prefer_native_product_list`: flag que encola `present_products` cuando
+        # cree que los productos están en Meta Catalog (Parte B). Si está, y
+        # tenemos META_CATALOG_ID en env, y todas las rows traen
+        # `product_retailer_id`, mandamos `interactive.product_list` (MPM con
+        # cards rendereadas por Meta — A.11). Si no, fallback a
+        # `interactive.list` (lista custom de texto — A.3).
+        prefer_native = bool(fallback.get("prefer_native_product_list"))
+        catalog_id = (os.environ.get("META_CATALOG_ID") or "").strip()
+        all_have_retailer_id = bool(sections_payload) and all(
+            r.get("product_retailer_id")
+            for s in sections_payload
+            for r in (s.get("rows") or [])
+        )
+
+        if prefer_native and catalog_id and all_have_retailer_id:
+            # MPM path — cap Meta es 30 items totales en hasta 10 sections.
+            mpm_sections_raw = sections_payload[: wa_limits.MAX_PRODUCT_LIST_SECTIONS]
+            mpm_total = 0
+            product_sections: list[wa_dtos.ProductSection] = []
+            for s in mpm_sections_raw:
+                rows = s.get("rows") or []
+                room = wa_limits.MAX_PRODUCT_LIST_ITEMS_TOTAL - mpm_total
+                if room <= 0:
+                    break
+                items = [
+                    wa_dtos.ProductItem(
+                        product_retailer_id=r["product_retailer_id"]
+                    )
+                    for r in rows[:room]
+                    if r.get("product_retailer_id")
+                ]
+                if not items:
+                    continue
+                product_sections.append(
+                    wa_dtos.ProductSection(
+                        title=wa_limits.truncate(
+                            s.get("title") or "Productos",
+                            wa_limits.MAX_LIST_SECTION_TITLE,
+                        ),
+                        product_items=items,
+                    )
+                )
+                mpm_total += len(items)
+            if product_sections:
+                return await wa_client.send_product_list(
+                    phone_number_id,
+                    to_number,
+                    wa_dtos.InteractiveProductListOutbound(
+                        catalog_id=catalog_id,
+                        header_text=wa_limits.truncate(
+                            params.get("header_text") or "Nuestro catálogo",
+                            wa_limits.MAX_PRODUCT_LIST_HEADER,
+                        ),
+                        body=wa_limits.truncate(
+                            params.get("intro_text")
+                            or "Tocá un producto para ver más:",
+                            wa_limits.MAX_PRODUCT_LIST_BODY,
+                        ),
+                        sections=product_sections,
+                        footer="Hubara",
+                    ),
+                )
+
+        # Fallback: interactive.list (sin Meta Catalog — cap 10 total).
         sections_payload = wa_limits.cap_list_rows_total(
-            params.get("sections") or [], wa_limits.MAX_LIST_ROWS_TOTAL
+            sections_payload, wa_limits.MAX_LIST_ROWS_TOTAL
         )
         sections = [
             wa_dtos.ListSection(
@@ -275,41 +346,57 @@ async def _dispatch_intent(
             ),
         )
 
-    if kind == "location_request":
-        return await wa_client.send_location_request(
-            phone_number_id,
-            to_number,
-            wa_dtos.InteractiveLocationRequestOutbound(
-                body=params.get("body", "Compartí tu ubicación"),
-            ),
-        )
-
     if kind == "shipping_flow":
-        flow_id = params.get("flow_id")
+        # Resolver el flow_id en este orden de prioridad:
+        #   1. `META_FLOW_ID_SHIPPING` desde env — productivo.
+        #   2. `params.flow_id` que viene del tool — actualmente siempre
+        #      el placeholder, pero queda como override por sesión.
+        #   3. Placeholder → caemos al fallback de texto plano.
+        # El env-first hace que cambiar el Flow en Meta (re-publicar →
+        # nuevo flow_id) sea un re-deploy del worker SIN tocar código.
+        env_flow_id = (os.environ.get("META_FLOW_ID_SHIPPING") or "").strip()
+        flow_id = (
+            env_flow_id
+            if env_flow_id and env_flow_id != "FLOW_ID_SHIPPING_PLACEHOLDER"
+            else params.get("flow_id")
+        )
         if not flow_id or flow_id == "FLOW_ID_SHIPPING_PLACEHOLDER":
-            # Flow no configurado todavía — fallback a pedir datos en texto
-            # via buttons. NO falla silenciosamente: emitimos un texto que
-            # el LLM (next turn) parseará.
-            return await wa_client.send_interactive_buttons(
+            # Flow Meta no configurado — recolectamos los datos
+            # conversacionalmente con un mensaje de texto plano que enumera
+            # los campos requeridos. NO usamos botones (anti-patrón sesión
+            # adc6400c — la opción "Compartir ubicación" no funciona y el
+            # cliente abandona).
+            order_total_cop = int(params.get("order_total_cop") or 0)
+            cod_line = (
+                "\n_Contra entrega disponible para pedidos > $45.000 COP._"
+                if order_total_cop > 45000
+                else ""
+            )
+            text = (
+                "Para coordinar el envío necesito estos datos, podés "
+                "mandármelos en un solo mensaje o de a uno:\n\n"
+                "🏙️ *Ciudad*\n"
+                "📍 *Barrio*\n"
+                "🏠 *Dirección* (calle, número, apartamento)\n"
+                "📞 *Teléfono* de contacto\n"
+                "💳 *Método de pago* (tarjeta, transferencia"
+                f"{', contra entrega' if order_total_cop > 45000 else ''})"
+                f"{cod_line}"
+            )
+            return await wa_client.send_text(
                 phone_number_id,
                 to_number,
-                wa_dtos.InteractiveButtonsOutbound(
-                    body=(
-                        "Para completar tu pedido necesito unos datos. "
-                        "¿Cómo prefieres dármelos?"
-                    ),
-                    buttons=[
-                        wa_dtos.ReplyButton(
-                            id="shipping.via_text",
-                            title="Escribirlos",
-                        ),
-                        wa_dtos.ReplyButton(
-                            id="shipping.share_location",
-                            title="Compartir ubicación",
-                        ),
-                    ],
-                ),
+                text,
             )
+        # Marcar en metadata que estamos esperando un `nfm_reply` para que el
+        # workflow Sales extienda su ghosting timeout (sesión c4e3416f). El
+        # cliente tarda 1-3 min en llenar el form — sin esto, ghosting a los
+        # 60s dispara remarketing y el nfm_reply se rutea ahí.
+        # El flag se setea ANTES del send_flow para que aunque la API call
+        # crashee, el timeout extendido ya esté escrito y proteja el próximo
+        # retry. El nfm_reply (cuando llegue) limpia el flag.
+        _mark_flow_awaiting_reply(to_number)
+
         return await wa_client.send_flow(
             phone_number_id,
             to_number,
@@ -499,40 +586,48 @@ async def _dispatch_intent(
         )
 
     if kind == "variant_picker":
-        # Picker de aromas/colores/tamaños. Mismo render que products_list
-        # pero con sections diferentes (por categoría sensorial) y emojis
-        # curados desde variant_emoji (closed-list).
-        # Defensa en profundidad: cap total ≤10 rows (bug 10d8bd21).
-        from src.platform.whatsapp import limits as wa_limits
-
-        sections_payload = wa_limits.cap_list_rows_total(
-            params.get("sections") or [], wa_limits.MAX_LIST_ROWS_TOTAL
-        )
-        sections = [
-            wa_dtos.ListSection(
-                title=s.get("title", "Opciones"),
-                rows=[
-                    wa_dtos.ListRow(
-                        id=r["id"],
-                        title=r["title"],
-                        description=r.get("description"),
-                    )
-                    for r in (s.get("rows") or [])
-                ],
-            )
-            for s in sections_payload
-            if s.get("rows")
-        ]
-        if not sections:
+        # Aromas/colores/tamaños como **texto plano con emojis curados**.
+        # Antes (sesión adc6400c) usábamos `interactive.list` — visualmente
+        # se sentía robótico y obligaba al cliente a tap-tap para ver más
+        # de 10 opciones. Ahora render de texto: el cliente escribe la
+        # opción ("lavanda") y seguimos la conversación naturalmente.
+        # El emoji por opción YA viene curado dentro de row.title desde
+        # `present_variant_picker` (closed-list, no inventado por LLM).
+        sections_payload = params.get("sections") or []
+        if not sections_payload:
             return None
-        return await wa_client.send_interactive_list(
+
+        intro = (params.get("intro_text") or "Estas son las opciones:").strip()
+        text_lines: list[str] = [intro, ""]
+        for sec in sections_payload:
+            sec_title = (sec.get("title") or "").strip()
+            rows = sec.get("rows") or []
+            if not rows:
+                continue
+            if sec_title and sec_title != "Opciones":
+                text_lines.append(f"*{sec_title}*")
+            for r in rows:
+                row_title = (r.get("title") or "").strip()
+                if row_title:
+                    text_lines.append(row_title)
+            text_lines.append("")  # separador entre sections
+
+        # Pie pidiendo respuesta libre. Sin botones — esperamos texto.
+        variant_type = params.get("variant_type") or ""
+        tail = {
+            "scent": "Decime cuál te gusta y seguimos 🤍",
+            "color": "Contame qué color preferís y seguimos 🤍",
+            "size": "Decime qué tamaño querés y seguimos 🤍",
+        }.get(variant_type, "Decime cuál preferís y seguimos 🤍")
+        text_lines.append(tail)
+
+        text = "\n".join(line for line in text_lines if line is not None).strip()
+        if not text:
+            return None
+        return await wa_client.send_text(
             phone_number_id,
             to_number,
-            wa_dtos.InteractiveListOutbound(
-                body=params.get("intro_text", "Estas son las opciones:"),
-                button_label=params.get("button_label", "Ver opciones"),
-                sections=sections,
-            ),
+            text,
         )
 
     # Unknown kind — sin dispatch
@@ -549,6 +644,34 @@ def _safe_write_metadata(path, data: dict) -> None:
         activity.logger.warning(
             "flush_ui_intents.write_failed", extra={"path": str(path)}
         )
+
+
+def _mark_flow_awaiting_reply(to_number: str) -> None:
+    """Escribe `shipping_flow_awaiting_reply_since_ms` en metadata.json para
+    que el workflow Sales extienda su timeout de ghosting (sesión c4e3416f).
+
+    Best-effort: si falla, loguea pero NO bloquea el envío del Flow.
+    El nfm_reply (cuando llegue) limpia el flag desde `ingest_inbound_message`.
+
+    Resolución del session_id desde `to_number`: respetamos el prefijo
+    canónico `WHATSAPP_SESSION_PREFIX` (mismo del wrapper arriba).
+    """
+    from src.platform.config import WORKSPACE_VAULT_DIR
+
+    session_id = f"{WHATSAPP_SESSION_PREFIX}{to_number}"
+    metadata_file = WORKSPACE_VAULT_DIR / session_id / "metadata.json"
+    if not metadata_file.exists():
+        return
+    try:
+        data = json.loads(metadata_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as e:
+        activity.logger.warning(
+            "flush_ui_intents.flow_awaiting_flag_read_failed",
+            extra={"session_id": session_id, "error": str(e)},
+        )
+        return
+    data["shipping_flow_awaiting_reply_since_ms"] = int(time.time() * 1000)
+    _safe_write_metadata(metadata_file, data)
 
 
 def _humanize_payment(code: str | None) -> str:

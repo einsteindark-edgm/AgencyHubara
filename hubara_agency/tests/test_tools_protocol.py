@@ -69,7 +69,14 @@ def test_tag_tool_implements_protocol(tmp_path: Path) -> None:
     props = tool.parameters["properties"]
     assert "tag" in props and "motivo" in props
     # PR-C: la whitelist vive en el JSON schema, no en if-isinstance defaults.
-    assert props["tag"]["enum"] == ["INTERESADO", "RECHAZO", "COMPRA_EXITOSA"]
+    # Sesión c4e3416f: añadimos CONFIRMADO_SIN_DATOS al enum para el caso
+    # del cliente que confirma compra pero no completa datos de envío.
+    assert props["tag"]["enum"] == [
+        "INTERESADO",
+        "RECHAZO",
+        "COMPRA_EXITOSA",
+        "CONFIRMADO_SIN_DATOS",
+    ]
     assert tool.parameters["required"] == ["tag", "motivo"]
     assert hasattr(tool, "execute_with_context")
     schema = tool.to_schema()

@@ -33,8 +33,10 @@ agent:
         cpu_request: 100m
         memory_request: 256Mi
         env_secrets:
-          - { var: MEDUSA_BASE_URL,    secret: hubara-medusa-secret, key: MEDUSA_BASE_URL }
-          - { var: MEDUSA_ADMIN_TOKEN, secret: hubara-medusa-secret, key: MEDUSA_ADMIN_TOKEN }
+          - { var: MEDUSA_BASE_URL,        secret: hubara-medusa-secret, key: MEDUSA_BASE_URL }
+          - { var: MEDUSA_ADMIN_TOKEN,     secret: hubara-medusa-secret, key: MEDUSA_ADMIN_TOKEN }
+          - { var: META_CATALOG_ID,        secret: hubara-meta-secret,   key: META_CATALOG_ID }
+          - { var: META_SYSTEM_USER_TOKEN, secret: hubara-meta-secret,   key: META_SYSTEM_USER_TOKEN }
       compose:
         env:
           TEMPORAL_URL: temporal:7233
@@ -43,6 +45,11 @@ agent:
           CATALOG_MAX_AGE_MINUTES: "30"
           MEDUSA_BASE_URL: ${MEDUSA_BASE_URL}
           MEDUSA_ADMIN_TOKEN: ${MEDUSA_ADMIN_TOKEN}
+          # Meta Commerce Catalog (HU-002 Parte B) — push paso 3 del workflow.
+          # Si no están seteados en host .env, el push hace graceful skip.
+          # Ver hubara_agency/docs/META_CATALOG_SETUP.md.
+          META_CATALOG_ID: ${META_CATALOG_ID}
+          META_SYSTEM_USER_TOKEN: ${META_SYSTEM_USER_TOKEN}
         volumes:
           - hubara-vault-local:/app/hubara_vault
         depends_on:
@@ -56,3 +63,6 @@ wiring_intents:
     - CATALOG_SNAPSHOT_DIR
     - MEDUSA_BASE_URL
     - MEDUSA_ADMIN_TOKEN
+  env_vars_optional:
+    - META_CATALOG_ID
+    - META_SYSTEM_USER_TOKEN          # sin estos, push paso 3 hace graceful skip

@@ -30,7 +30,18 @@ from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.constants import ROUTE_VENTAS
 
 
-_TAG_ENUM: list[str] = ["INTERESADO", "RECHAZO", "COMPRA_EXITOSA"]
+# Sesión c4e3416f: `CONFIRMADO_SIN_DATOS` es para el caso donde el cliente
+# confirmó el pedido (apretó "Confirmar" en `present_order_confirmation`) pero
+# NO completó los datos de envío y dejó la conversación. Esta tag NO arranca
+# remarketing (a diferencia de INTERESADO) — el LLM la usa SIEMPRE en combo
+# con `escalate_to_human(reason_category="ORDER_PENDING_SHIPPING_DETAILS")`
+# para que un humano cierre la operación pidiendo los datos faltantes.
+_TAG_ENUM: list[str] = [
+    "INTERESADO",
+    "RECHAZO",
+    "COMPRA_EXITOSA",
+    "CONFIRMADO_SIN_DATOS",
+]
 
 
 class ManageConversationTagTool(ToolBase):
@@ -44,8 +55,8 @@ class ManageConversationTagTool(ToolBase):
     name = "manage_conversation_tag"
     description = (
         "Úsala al final de la venta, o si el usuario pierde el interés. "
-        "Registra la etiqueta final ('INTERESADO', 'RECHAZO', 'COMPRA_EXITOSA') "
-        "y un resumen breve del motivo."
+        "Registra la etiqueta final ('INTERESADO', 'RECHAZO', "
+        "'COMPRA_EXITOSA', 'CONFIRMADO_SIN_DATOS') y un resumen breve."
     )
     parameters: dict[str, Any] = {
         "type": "object",
@@ -54,9 +65,17 @@ class ManageConversationTagTool(ToolBase):
                 "type": "string",
                 "enum": _TAG_ENUM,
                 "description": (
-                    "Etiqueta final. Una de: INTERESADO (cliente sigue dudando o "
-                    "se enfrió, programa remarketing), RECHAZO (no compra, cierre "
-                    "definitivo), COMPRA_EXITOSA (cierre con venta concretada)."
+                    "Etiqueta final. Una de: INTERESADO (cliente sigue "
+                    "dudando o se enfrió — programa remarketing 1 hora "
+                    "después), RECHAZO (no compra, cierre definitivo), "
+                    "COMPRA_EXITOSA (cierre con venta concretada — datos "
+                    "de envío recibidos + pago resuelto), "
+                    "CONFIRMADO_SIN_DATOS (cliente confirmó la compra "
+                    "pero NO completó los datos de envío — usá esta tag "
+                    "SIEMPRE en combo con `escalate_to_human"
+                    "(reason_category=ORDER_PENDING_SHIPPING_DETAILS)` "
+                    "para que un humano cierre la operación pidiendo los "
+                    "datos faltantes; NO programa remarketing)."
                 ),
             },
             "motivo": {

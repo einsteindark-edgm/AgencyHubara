@@ -81,6 +81,12 @@ class MetaCatalogClient:
         url = f"{self._base_url}/{self._api_version}/{request.catalog_id}/items_batch"
         body = {
             "access_token": request.access_token,
+            # `item_type` es REQUIRED desde Graph API v21+ — el endpoint
+            # `/items_batch` sirve a múltiples catalog verticals (productos,
+            # hoteles, vuelos) y Meta exige saber cuál. Para Hubara siempre
+            # es PRODUCT_ITEM. Sin esto: error #100 "The parameter item_type
+            # is required" (sesión 2026-05-22).
+            "item_type": request.item_type,
             "requests": requests_payload,
             "allow_upsert": request.allow_upsert,
         }

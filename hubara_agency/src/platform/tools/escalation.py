@@ -54,6 +54,10 @@ _REASON_CATEGORIES: list[str] = [
     "PAYMENT_EDGECASE",    # tarjeta extranjera, divisa, factura regimen especial
     # Operacional
     "CHECKOUT_VERIFY_FAILED",  # verify_order_for_checkout fallo / catalog unavailable
+    # Sesión c4e3416f: cliente confirmó el pedido (present_order_confirmation
+    # con "Confirmar") pero NO completó el Flow de datos de envío en ~10 min.
+    # El humano cierra manualmente pidiendo los datos faltantes por chat o WA.
+    "ORDER_PENDING_SHIPPING_DETAILS",
     "EXPLICIT_REQUEST",        # cliente pide humano o muestra frustracion
     "OTHER",
 ]
@@ -94,8 +98,12 @@ class EscalateToHumanTool(ToolBase):
                     "(fuera de Colombia insiste), PAYMENT_EDGECASE (pago "
                     "no estándar), CHECKOUT_VERIFY_FAILED (no se pudo "
                     "verificar precio live), CATALOG_GAP (producto no "
-                    "aparece pero cliente persiste), EXPLICIT_REQUEST "
-                    "(cliente pide humano o está frustrado), OTHER."
+                    "aparece pero cliente persiste), "
+                    "ORDER_PENDING_SHIPPING_DETAILS (cliente confirmó el "
+                    "pedido pero no completó los datos de envío y dejó la "
+                    "conversación — humano cierra pidiendo los datos), "
+                    "EXPLICIT_REQUEST (cliente pide humano o está "
+                    "frustrado), OTHER."
                 ),
             },
             "summary": {

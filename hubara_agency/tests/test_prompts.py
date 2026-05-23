@@ -33,6 +33,34 @@ def test_ghosting_prompt_defaults_to_interesado_when_in_doubt() -> None:
     assert "no me interesa" in out.lower() or "obvio" in out.lower()
 
 
+def test_ghosting_prompt_handles_confirmed_without_shipping_case() -> None:
+    """Sesión c4e3416f: el prompt debe instruir al LLM a detectar el caso
+    'cliente confirmó pedido pero NO completó datos de envío' y combinarlo
+    con `escalate_to_human(reason_category="ORDER_PENDING_SHIPPING_DETAILS")`.
+
+    Sin esta detección, sales caería a INTERESADO genérico y arrancaría
+    remarketing — perdiendo el lead que estaba a un paso de cerrar."""
+    out = build_ghosting_prompt()
+    # La tag nueva debe estar mencionada explícitamente
+    assert "CONFIRMADO_SIN_DATOS" in out
+    # La razón de escalation correspondiente también
+    assert "ORDER_PENDING_SHIPPING_DETAILS" in out
+    # Y debe explicitar que en este caso van DOS tools (tag + escalate)
+    assert "escalate_to_human" in out
+    # Y que NO se debe usar INTERESADO para este caso (anti-confusión)
+    assert (
+        "NO uses INTERESADO" in out
+        or "no es remarketing genérico" in out.lower()
+    )
+
+
+def test_ghosting_prompt_mentions_register_order_for_compra_exitosa() -> None:
+    """COMPRA_EXITOSA debe estar atada a `register_order` para que el LLM
+    no marque la venta como exitosa sin haber registrado el pedido."""
+    out = build_ghosting_prompt()
+    assert "register_order" in out
+
+
 def test_remarketing_trigger_includes_motivo_and_memory() -> None:
     out = build_remarketing_trigger("cliente pidió tiempo", " >>memoria<<")
     assert "cliente pidió tiempo" in out

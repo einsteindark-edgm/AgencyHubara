@@ -67,6 +67,17 @@ class MetaBatchRequest:
     `creates` + `updates` + `deletes` agrupados internamente.
     Meta procesa en orden — útil para `delete antes de create` con mismo
     retailer_id (caso edge).
+
+    `item_type`: Meta exige este parámetro en el body del `/items_batch`
+    desde Graph API v21+ (sesión 2026-05-22: error #100 "The parameter
+    item_type is required"). El endpoint sirve a TODOS los tipos de
+    catálogo (productos, hoteles, vuelos, vehículos, real estate) y
+    necesita saber cuál es. Para Hubara siempre es PRODUCT_ITEM.
+
+    Valores válidos:
+      * "PRODUCT_ITEM" — e-commerce / retail (lo que usa Hubara)
+      * "HOTEL", "FLIGHT", "DESTINATION", "HOME_LISTING", "VEHICLE",
+        "MEDIA_TITLE" — otros verticals (no aplican)
     """
 
     catalog_id: str
@@ -75,6 +86,7 @@ class MetaBatchRequest:
     updates: list[MetaCatalogItem] = field(default_factory=list)
     deletes: list[str] = field(default_factory=list)  # retailer_ids
     allow_upsert: bool = True  # si True, CREATE actúa como UPSERT
+    item_type: str = "PRODUCT_ITEM"
 
 
 @dataclass(frozen=True)

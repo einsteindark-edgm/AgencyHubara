@@ -103,3 +103,64 @@ class PushMetaCatalogResult:
     error: str | None
     next_meta_hashes_json: str
     duration_seconds: float
+
+
+# ---------- Activity boundary (Meta push) ----------
+
+
+@dataclass(frozen=True)
+class PushMetaActivityInput:
+    """Input al `push_meta_catalog_activity`.
+
+    NO incluye `catalog_id` ni `system_user_token` — esos son secretos y
+    no deben vivir en el workflow event history (Temporal los persiste).
+    La activity los lee de env (META_CATALOG_ID / META_SYSTEM_USER_TOKEN)
+    como hace `write_snapshot_activity` con `CATALOG_SNAPSHOT_DIR`. R-DET:
+    activities pueden leer env, workflows no.
+
+    `snapshot_dir`: para leer `.meta_state.json` (previous_hashes,
+    last_meta_count) y persistir el state nuevo después del push exitoso.
+    """
+
+    tenant_id: str
+    products_json: str
+    snapshot_dir: str
+    site_base_url: str = "https://hubara.com.co"
+    brand: str = "Hubara"
+
+
+@dataclass(frozen=True)
+class PushMetaActivityResult:
+    """Resultado de la activity. Subset de `PushMetaCatalogResult` + flag
+    `pushed` para distinguir "config missing" de "config OK pero no había
+    cambios".
+    """
+
+    ok: bool
+    pushed: bool  # False si META_CATALOG_ID / token vacíos → graceful skip
+    handle: str | None
+    creates: int
+    updates: int
+    deletes: int
+    skipped_image: int
+    skipped_price: int
+    aborted_due_to_threshold: bool
+    error: str | None
+    duration_seconds: float
+
+
+# ---------- Workflow result ----------
+
+
+@dataclass(frozen=True)
+class CatalogSyncResult:
+    """Resultado completo del `CatalogSyncWorkflow`.
+
+    Incluye ambos pasos (snapshot write + Meta push) para que el caller
+    (script ops o el futuro `product_sync_agent`) tenga visibilidad total
+    del run. Si Meta no está configurado, `push.pushed=False` y el resto
+    de `push.*` son zero — el snapshot sigue válido.
+    """
+
+    write: WriteSnapshotResult
+    push: PushMetaActivityResult

@@ -8,10 +8,31 @@ después de cada operación de update — NO hay Schedule periódico.
 USO DESDE OPS (manual)
 ────────────────────────────────────────────────────────────────────
     # Dispara y espera resultado (recomendado para verificación):
-    uv run python scripts/trigger_catalog_sync.py
+    cd hubara_agency && uv run python scripts/trigger_catalog_sync.py
 
     # Fire-and-forget (no espera el resultado):
-    uv run python scripts/trigger_catalog_sync.py --no-wait
+    cd hubara_agency && uv run python scripts/trigger_catalog_sync.py --no-wait
+
+    # Con tag de auditoría custom:
+    cd hubara_agency && uv run python scripts/trigger_catalog_sync.py \\
+        --triggered-by ops_full_resync
+
+────────────────────────────────────────────────────────────────────
+QUÉ DISPARA (tres pasos secuenciales)
+────────────────────────────────────────────────────────────────────
+  1. pull_medusa_catalog_activity  — paginar Medusa Admin API, mapear a DTOs
+  2. write_snapshot_activity       — escritura atómica del snapshot a disco
+  3. push_meta_catalog_activity    — propagar a Meta Commerce Catalog vía
+                                      Graph API `/items_batch`
+
+El paso 3 hace **graceful skip** si `META_CATALOG_ID` o `META_SYSTEM_USER_TOKEN`
+no están en env (típico dev local sin Meta configurado). Verás
+`pushed: False` y `error: meta_not_configured` — no es un fallo del workflow.
+
+Las imágenes que se mandan a Meta son las URLs **ya capturadas** en el snapshot
+del paso 2 (no se re-consulta Medusa). El mapper aplica `normalize_image_url`
+para wrappear `.webp` con Cloudflare Image Resizing (`format=jpeg`) — Meta solo
+acepta JPEG/PNG, sino la imagen queda vacía en la card.
 
 ────────────────────────────────────────────────────────────────────
 USO DESDE OTRO AGENTE / SERVICIO (programmatic)
@@ -53,7 +74,7 @@ ese agente (porque la activity es el lugar que puede usar
         # cascada (ej. al final de un workflow de update), se puede
         # omitir el await result y dejar fire-and-forget.
         result = await handle.result()
-        return result.version
+        return result.write.version
 
 
 Reglas DEHA importantes a respetar cuando se construya el caller:
@@ -98,11 +119,57 @@ if str(_REPO_ROOT) not in sys.path:
 
 from temporalio.client import Client  # noqa: E402
 
-from src.plugins.catalog.agent.contracts import CatalogSyncInput  # noqa: E402
-from src.plugins.catalog.agent.workflows import CatalogSyncWorkflow  # noqa: E402
 from src.platform.catalog.paths import get_snapshot_dir  # noqa: E402
 from src.platform.plugin_manifest import get_task_queue  # noqa: E402
 from src.platform.temporal.client import get_temporal_client  # noqa: E402
+from src.plugins.catalog.agent.contracts import CatalogSyncInput  # noqa: E402
+from src.plugins.catalog.agent.workflows import CatalogSyncWorkflow  # noqa: E402
+
+
+def _print_result(result) -> None:
+    """Muestra el resultado del sync en formato leíble.
+
+    Estructura: `result.write` (WriteSnapshotResult) + `result.push`
+    (PushMetaActivityResult).
+    """
+    print("\n✅ Sync completed")
+    print("  Snapshot (paso 1+2 — pull Medusa + write atómico):")
+    print(f"    version:       {result.write.version}")
+    print(f"    bytes_written: {result.write.bytes_written}")
+    print(f"    files_written: {result.write.files_written}")
+
+    print("\n  Meta push (paso 3 — Graph API /items_batch):")
+    push = result.push
+    if not push.pushed:
+        if push.error == "meta_not_configured":
+            print(
+                "    pushed: False — META_CATALOG_ID o META_SYSTEM_USER_TOKEN "
+                "no están en env."
+            )
+            print(
+                "    Ver hubara_agency/docs/META_CATALOG_SETUP.md para cómo "
+                "obtenerlos."
+            )
+        else:
+            print(f"    pushed: False — error: {push.error}")
+        return
+
+    status_icon = "✅" if push.ok else "❌"
+    print(f"    pushed:        True  {status_icon}")
+    print(f"    handle:        {push.handle or '(none)'}")
+    print(f"    creates:       {push.creates}")
+    print(f"    updates:       {push.updates}")
+    print(f"    deletes:       {push.deletes}")
+    print(f"    skipped (sin imagen):  {push.skipped_image}")
+    print(f"    skipped (sin precio):  {push.skipped_price}")
+    if push.aborted_due_to_threshold:
+        print(
+            "    ⚠️  ABORTED — soft-delete threshold tripped (catálogo "
+            "encogió >50% vs último push)."
+        )
+    if push.error:
+        print(f"    error:         {push.error}")
+    print(f"    duration:      {push.duration_seconds:.2f}s")
 
 
 async def trigger_sync(*, wait_for_result: bool, triggered_by: str) -> None:
@@ -125,12 +192,7 @@ async def trigger_sync(*, wait_for_result: bool, triggered_by: str) -> None:
 
     if wait_for_result:
         result = await handle.result()
-        print(
-            f"\n✅ Sync completed\n"
-            f"  version: {result.version}\n"
-            f"  bytes_written: {result.bytes_written}\n"
-            f"  files_written: {result.files_written}"
-        )
+        _print_result(result)
     else:
         print("\n(fire-and-forget — workflow corre en background)")
 
