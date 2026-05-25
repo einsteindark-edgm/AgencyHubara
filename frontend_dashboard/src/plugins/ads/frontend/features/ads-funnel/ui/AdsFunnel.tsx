@@ -3,6 +3,11 @@
  * WhatsApp. 6 etapas (impresiones → clics → chats iniciados → en conversación
  * → cotizados → ganados), cada una con su barra proporcional, conversion
  * paso-a-paso y drop entre etapas.
+ *
+ * El funnel completo requiere `impressions`, `clicks` (Meta Ads API) y
+ * `conversations` counts (clasificador conversacional). Cuando alguno de
+ * esos está `null`, mostramos un empty card explicativo en lugar de pintar
+ * un funnel con ceros engañosos.
  */
 
 import type { ReactElement } from "react";
@@ -14,6 +19,7 @@ import {
 
 import { fmtN, fmtPct } from "@plugins/ads/frontend/lib/format";
 import { AdsIcon } from "@plugins/ads/frontend/lib/icons";
+import { Icon } from "@/shared/ui";
 
 interface Props {
   campaign: AdsCampaign;
@@ -29,6 +35,44 @@ interface Stage {
 
 export function AdsFunnel({ campaign }: Props) {
   const c = campaign;
+
+  // Datos requeridos para pintar el funnel completo. Si falta cualquiera,
+  // mostramos un empty state — preferimos ser honestos sobre los datos
+  // faltantes a renderizar barras con valor 0 que parecen reales.
+  if (
+    c.conversations === null ||
+    c.impressions === null ||
+    c.clicks === null
+  ) {
+    return (
+      <section className="ads-card">
+        <header className="ads-card-h">
+          <div>
+            <h3>Embudo de conversión</h3>
+            <p>Del anuncio en Meta a cliente cerrado en WhatsApp</p>
+          </div>
+        </header>
+        <div
+          style={{
+            padding: "32px 16px",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 8,
+            color: "var(--fg-faint)",
+          }}
+          title="Pendiente: Meta Ads API (impresiones/clics) + clasificador conversacional"
+        >
+          <Icon.dataPending />
+          <span style={{ fontSize: 13 }}>
+            Embudo pendiente — requiere integración Meta Ads + clasificador
+            conversacional
+          </span>
+        </div>
+      </section>
+    );
+  }
+
   const won = c.conversations.ganado || 0;
   const totalConvos = totalConversations(c);
   const pipeline =

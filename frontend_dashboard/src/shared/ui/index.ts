@@ -8,4 +8,5 @@ export { Icon, type IconName } from "./Icon";
 export { MacButton } from "./Button";
 export { Panel, InsBlock } from "./Panel";
 export { Avatar } from "./Avatar";
+export { MissingData } from "./MissingData";
 export { TitleBar, Toolbar, StatusBar, type SectionKey } from "./chrome";

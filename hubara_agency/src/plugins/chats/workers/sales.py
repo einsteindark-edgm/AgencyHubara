@@ -11,6 +11,7 @@ from src.platform.catalog.medusa_checkout import MedusaCheckoutVerification
 from src.platform.logging import setup_logging
 from src.platform.medusa.composition import get_medusa_product_service
 from src.platform.orchestration import dispatch_event_activity
+from src.platform.orders.composition import get_order_registration_port
 from src.platform.plugin_manifest import get_task_queue
 from src.platform.session_history.activities import (
     persist_assistant_message_activity,
@@ -42,6 +43,9 @@ from src.plugins.chats.agent.sales.tools.catalog import (
     SearchProductsTool,
 )
 from src.plugins.chats.agent.sales.tools.checkout import VerifyOrderForCheckoutTool
+from src.plugins.chats.agent.sales.tools.order_registration import (
+    RegisterOrderTool,
+)
 from src.plugins.chats.agent.sales.tools.tags import ManageConversationTagTool
 from src.plugins.chats.agent.sales.tools.ui_intents import (
     PresentOrderConfirmationTool,
@@ -125,12 +129,21 @@ register_tool_extension(
     ),
 )
 
-# Sesión c4e3416f: cierre formal de la venta. Stub por ahora — persiste el
-# pedido a `metadata.registered_order`. En el futuro se conectará con
-# Medusa Orders / ERP / cola de cumplimiento.
+# Sesión c4e3416f → upgrade vivo: cierre formal de la venta contra Medusa
+# Draft Orders (POST /admin/draft-orders). El port se selecciona en
+# composition time:
+#   - MedusaOrderRegistration: si MEDUSA_REGION_ID + MEDUSA_SALES_CHANNEL_ID
+#     están seteados → registra un draft order real en Medusa.
+#   - StubOrderRegistration: si falta config → solo persiste a metadata local
+#     y loguea WARNING (dev mode, no rompe el flujo).
+# El port es singleton via lru_cache(1) capturado por closure.
+_order_registration_port = get_order_registration_port()
 register_tool_extension(
     "sales.register_order",
-    lambda workspace: RegisterOrderTool(workspace=str(workspace)),
+    lambda workspace: RegisterOrderTool(
+        workspace=str(workspace),
+        port=_order_registration_port,
+    ),
 )
 
 # HU-002: decision tools de UI rica. Emiten "intents" a

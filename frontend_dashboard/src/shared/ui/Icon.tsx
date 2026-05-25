@@ -285,6 +285,15 @@ export const Icon = {
       <path d="M18 6a7 7 0 0 1 0 12" />
     </Ico>
   ),
+  // Marker visual de "dato pendiente de integración upstream" — se renderiza
+  // junto al "—" en celdas/cards cuando el backend devuelve `null`. Reloj
+  // minimalista: la idea es "viene, todavía no llegó".
+  dataPending: () => (
+    <Ico>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 2" />
+    </Ico>
+  ),
 };
 
 export type IconName = keyof typeof Icon;

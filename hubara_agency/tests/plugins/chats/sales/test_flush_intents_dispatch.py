@@ -539,3 +539,193 @@ async def test_location_request_kind_is_no_longer_dispatched():
 
     assert result is None
     wa_client.send_location_request.assert_not_awaited()
+
+
+# =============================================================================
+# Shipping Flow — defensa en profundidad (post-mortem run bc54cb93, 2026-05-25)
+# Si el send_flow nativo falla (Meta 4xx, transport error, NameError local),
+# el dispatcher debe caer al texto plano. Antes se quedaba en `dispatch_failed`
+# y el cliente NO recibía nada.
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_shipping_flow_falls_back_to_text_when_send_flow_returns_not_ok(
+    monkeypatch, tmp_path,
+):
+    """Si Meta rechaza el Flow nativo (4xx → OutboundResult.ok=False), el
+    dispatcher debe ENVIAR texto plano al cliente — nunca quedarse en silencio."""
+    monkeypatch.setenv("META_FLOW_ID_SHIPPING", "1234567890")
+    # Aislar vault para que _mark_flow_awaiting_reply no toque archivos reales.
+    monkeypatch.setattr(
+        "src.platform.config.WORKSPACE_VAULT_DIR", tmp_path,
+    )
+
+    wa_client = _make_wa_client_mock()
+    # Meta rechaza con HTTP 400
+    wa_client.send_flow = AsyncMock(
+        return_value=SimpleNamespace(ok=False, error="http_400: flow not found")
+    )
+
+    result = await _dispatch_intent(
+        wa_client=wa_client,
+        wa_dtos=wa_dtos,
+        kind="shipping_flow",
+        params={
+            "flow_id": "FLOW_ID_SHIPPING_PLACEHOLDER",
+            "flow_token": "tk",
+            "flow_cta": "Completar",
+            "flow_action": "navigate",
+            "flow_action_screen": "SHIPPING_DETAILS",
+            "flow_action_data": {},
+            "body": "body",
+            "order_total_cop": 50000,
+        },
+        fallback={},
+        phone_number_id="phone-1",
+        to_number="573000000000",
+        last_inbound_message_id=None,
+    )
+
+    # Meta dijo NO al Flow → cae al texto plano. Cliente recibe la lista
+    # de campos por texto, NO silencio.
+    wa_client.send_flow.assert_awaited_once()
+    wa_client.send_text.assert_awaited_once()
+    text_sent = wa_client.send_text.call_args.args[2]
+    assert "Ciudad" in text_sent
+    assert "Teléfono" in text_sent
+    assert "contra entrega" in text_sent.lower()  # > 45k COP
+    # Result viene del send_text del fallback (ok=True)
+    assert result is not None
+    assert result.ok is True
+
+
+@pytest.mark.asyncio
+async def test_mark_flow_awaiting_reply_uses_activity_scheduled_time_for_idempotency(
+    monkeypatch, tmp_path,
+):
+    """Verifica que el timestamp escrito a metadata viene de
+    `activity.info().scheduled_time` (estable entre retries) NO de `time.time()`
+    (que cambia entre retries). Esto evita que el ghosting window se renueve
+    si la activity falla mid-execution y Temporal hace retry."""
+    import json
+    from datetime import datetime, timezone
+    from temporalio.testing import ActivityEnvironment
+
+    from src.plugins.chats.agent.sales.activities import flush_ui_intents as fui
+
+    # Aislar vault para que la helper escriba a tmp_path.
+    monkeypatch.setattr(
+        "src.platform.config.WORKSPACE_VAULT_DIR", tmp_path,
+    )
+
+    # Pre-crear metadata.json vacío para que la helper no haga early-return.
+    session_dir = tmp_path / "wa_573000000000"
+    session_dir.mkdir(parents=True)
+    (session_dir / "metadata.json").write_text("{}", encoding="utf-8")
+
+    # Fijar un scheduled_time conocido (no "ahora") para comprobar que es ESE
+    # el que se escribe, no `time.time()` (que sería diferente).
+    fixed_dt = datetime(2026, 5, 25, 14, 55, 0, tzinfo=timezone.utc)
+    expected_ms = int(fixed_dt.timestamp() * 1000)  # 1779721800000
+
+    env = ActivityEnvironment()
+    env.info = ActivityEnvironment.default_info().__class__(
+        **{
+            **env.info.__dict__,
+            "scheduled_time": fixed_dt,
+            "current_attempt_scheduled_time": fixed_dt,
+        }
+    )
+
+    async def _runner() -> None:
+        fui._mark_flow_awaiting_reply("573000000000")
+
+    await env.run(_runner)
+
+    # Verificar el timestamp escrito coincide con scheduled_time (no time.time())
+    data = json.loads(
+        (session_dir / "metadata.json").read_text(encoding="utf-8")
+    )
+    assert data["shipping_flow_awaiting_reply_since_ms"] == expected_ms
+
+
+def test_mark_flow_awaiting_reply_falls_back_to_walltime_outside_activity(
+    monkeypatch, tmp_path,
+):
+    """Defensive: si la helper se invoca fuera de activity context (no debería
+    pasar hoy pero podría en futuras refactor), cae a `time.time()` y NO
+    crashea."""
+    import json
+    import time
+
+    from src.plugins.chats.agent.sales.activities import flush_ui_intents as fui
+
+    monkeypatch.setattr(
+        "src.platform.config.WORKSPACE_VAULT_DIR", tmp_path,
+    )
+    session_dir = tmp_path / "wa_573000000001"
+    session_dir.mkdir(parents=True)
+    (session_dir / "metadata.json").write_text("{}", encoding="utf-8")
+
+    # Llamamos la helper DIRECTAMENTE — sin ActivityEnvironment.
+    # `activity.info()` raisearía RuntimeError → la helper cae al fallback.
+    before_ms = int(time.time() * 1000)
+    fui._mark_flow_awaiting_reply("573000000001")
+    after_ms = int(time.time() * 1000)
+
+    data = json.loads(
+        (session_dir / "metadata.json").read_text(encoding="utf-8")
+    )
+    ts = data["shipping_flow_awaiting_reply_since_ms"]
+    # Debe ser cercano al wall-clock — entre el before y after de la llamada.
+    assert before_ms <= ts <= after_ms
+
+
+@pytest.mark.asyncio
+async def test_shipping_flow_falls_back_to_text_when_send_flow_raises_exception(
+    monkeypatch, tmp_path,
+):
+    """Si `send_flow` lanza una excepción (NameError, transport, build error),
+    el dispatcher la captura y manda texto plano. Esto previene el bug que
+    detectamos en run bc54cb93 (NameError 'time' lanzado en
+    _mark_flow_awaiting_reply rompió toda la rama Flow)."""
+    monkeypatch.setenv("META_FLOW_ID_SHIPPING", "1234567890")
+    monkeypatch.setattr(
+        "src.platform.config.WORKSPACE_VAULT_DIR", tmp_path,
+    )
+
+    wa_client = _make_wa_client_mock()
+    wa_client.send_flow = AsyncMock(
+        side_effect=RuntimeError("Simulated transport explosion")
+    )
+
+    result = await _dispatch_intent(
+        wa_client=wa_client,
+        wa_dtos=wa_dtos,
+        kind="shipping_flow",
+        params={
+            "flow_id": "FLOW_ID_SHIPPING_PLACEHOLDER",
+            "flow_token": "tk",
+            "flow_cta": "Completar",
+            "flow_action": "navigate",
+            "flow_action_screen": "SHIPPING_DETAILS",
+            "flow_action_data": {},
+            "body": "body",
+            "order_total_cop": 17000,  # < 45k — NO debe incluir COD
+        },
+        fallback={},
+        phone_number_id="phone-1",
+        to_number="573000000000",
+        last_inbound_message_id=None,
+    )
+
+    # Exception en send_flow → caímos al texto fallback. NO dispatch_failed.
+    wa_client.send_flow.assert_awaited_once()
+    wa_client.send_text.assert_awaited_once()
+    text_sent = wa_client.send_text.call_args.args[2]
+    assert "Ciudad" in text_sent
+    # Bajo $45k: NO debe ofrecer contra entrega
+    assert "contra entrega" not in text_sent.lower()
+    assert result is not None
+    assert result.ok is True

@@ -174,6 +174,208 @@ class HttpMedusaClient:
             if offset >= page["count"]:
                 break
 
+    # ---------- customers (HU c4e3416f order registration) -------------
+
+    async def list_customers(
+        self,
+        *,
+        email: str | None = None,
+        limit: int = 10,
+    ) -> dict[str, Any]:
+        """List customers, optionally filtered by email.
+
+        Used to find an existing WhatsApp customer (synthesized email) before
+        creating a new one (avoid duplicates on retry).
+        """
+        params: dict[str, Any] = {"limit": limit}
+        if email:
+            params["email"] = email
+        return await self._request("GET", "/admin/customers", params=params)
+
+    async def create_customer(
+        self,
+        *,
+        email: str,
+        first_name: str | None = None,
+        last_name: str | None = None,
+        phone: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Create a customer in Medusa.
+
+        Medusa v2 auto-creates a guest customer from the draft order email if
+        none exists, but we create it explicitly to (a) tag with metadata
+        like `session_key` for cross-reference and (b) reuse on retry to
+        avoid duplicate guest customers.
+
+        Returns the parsed `customer` object (NOT the envelope — the wrapping
+        `{"customer": ...}` is unwrapped here for ergonomic use).
+        """
+        payload: dict[str, Any] = {"email": email}
+        if first_name:
+            payload["first_name"] = first_name
+        if last_name:
+            payload["last_name"] = last_name
+        if phone:
+            payload["phone"] = phone
+        if metadata:
+            payload["metadata"] = metadata
+        data = await self._request("POST", "/admin/customers", json=payload)
+        return data["customer"]
+
+    # ---------- shipping options -------------------------------------
+
+    async def list_shipping_options(
+        self,
+        *,
+        region_id: str | None = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        """List configured shipping options.
+
+        The adapter queries this lazily on first order registration to
+        discover the operator's pre-created shipping option (the user said
+        "ya tengo uno creado"). Filters by `region_id` if provided.
+        """
+        params: dict[str, Any] = {"limit": limit}
+        if region_id:
+            params["region_id"] = region_id
+        return await self._request(
+            "GET", "/admin/shipping-options", params=params
+        )
+
+    # ---------- order querying (dashboard) ---------------------------
+
+    # Default expansion para list/get_order — incluye items + addresses +
+    # customer + sales_channel + transactions. Equivalente al
+    # DEFAULT_PRODUCT_FIELDS pero para orders. NOTA: NO incluye `*fulfillments`
+    # ni `*payment_collections.*` por defecto — son arrays pesados que solo
+    # pedimos en GET /admin/orders/{id} (detalle).
+    DEFAULT_ORDER_LIST_FIELDS = ",".join(
+        [
+            "id", "display_id", "status", "payment_status",
+            "fulfillment_status", "email", "currency_code",
+            "created_at", "updated_at", "total", "subtotal",
+            "shipping_total", "tax_total", "discount_total",
+            "metadata", "region_id", "customer_id", "sales_channel_id",
+            "*items",
+            "*shipping_address",
+            "*billing_address",
+            "*customer",
+            "*sales_channel",
+        ]
+    )
+    DEFAULT_ORDER_DETAIL_FIELDS = DEFAULT_ORDER_LIST_FIELDS + "," + ",".join(
+        [
+            "*fulfillments",
+            "*payment_collections",
+            "*payment_collections.payments",
+            "*shipping_methods",
+            "*transactions",
+        ]
+    )
+
+    async def list_orders(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        order: str = "-created_at",
+        status: list[str] | None = None,
+        sales_channel_id: list[str] | None = None,
+        fields: str | None = None,
+    ) -> dict[str, Any]:
+        """List orders. Used by the dashboard `/api/orders/orders` endpoint.
+
+        Returns the Medusa response envelope `{"orders": [...], "count": N,
+        "offset": M, "limit": L}` — unchanged shape so the adapter can do
+        its own DTO mapping.
+        """
+        params: dict[str, Any] = {
+            "limit": limit,
+            "offset": offset,
+            "order": order,
+            "fields": fields or self.DEFAULT_ORDER_LIST_FIELDS,
+        }
+        if status:
+            params["status[]"] = status
+        if sales_channel_id:
+            params["sales_channel_id[]"] = sales_channel_id
+        return await self._request("GET", "/admin/orders", params=params)
+
+    async def get_order(
+        self,
+        order_id: str,
+        *,
+        fields: str | None = None,
+    ) -> dict[str, Any]:
+        """Get a single order by ID. Unwraps the `{"order": ...}` envelope."""
+        data = await self._request(
+            "GET",
+            f"/admin/orders/{order_id}",
+            params={"fields": fields or self.DEFAULT_ORDER_DETAIL_FIELDS},
+        )
+        return data["order"]
+
+    async def list_draft_orders(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        order: str = "-created_at",
+        fields: str | None = None,
+    ) -> dict[str, Any]:
+        """List draft orders. Draft orders are the ones our `register_order`
+        tool creates on sale close — they live in a separate Medusa endpoint
+        until the operator marks them complete (`is_draft_order=True`).
+
+        The dashboard merges drafts + orders so the operator sees the full
+        kanban including pedidos recién cerrados pero no completados.
+        """
+        params: dict[str, Any] = {
+            "limit": limit,
+            "offset": offset,
+            "order": order,
+            "fields": fields or self.DEFAULT_ORDER_LIST_FIELDS,
+        }
+        return await self._request("GET", "/admin/draft-orders", params=params)
+
+    async def get_draft_order(
+        self,
+        draft_order_id: str,
+        *,
+        fields: str | None = None,
+    ) -> dict[str, Any]:
+        """Get a single draft order by ID."""
+        data = await self._request(
+            "GET",
+            f"/admin/draft-orders/{draft_order_id}",
+            params={"fields": fields or self.DEFAULT_ORDER_DETAIL_FIELDS},
+        )
+        return data["draft_order"]
+
+    # ---------- draft orders -----------------------------------------
+
+    async def create_draft_order(
+        self,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Create a Medusa v2 Draft Order via POST /admin/draft-orders.
+
+        Spec reference: https://docs.medusajs.com/api/admin#draft-orders_postdraftorders
+        Required by the spec: `sales_channel_id`, `email`, `region_id`,
+        `currency_code`, `shipping_methods`, `metadata`. In practice the JS
+        SDK example proves Medusa accepts a more lenient payload — the
+        adapter normalizes/synthesizes the strict ones.
+
+        Returns the parsed `draft_order` object (envelope unwrapped). On
+        non-2xx, raises `MedusaAPIError` like every other client method —
+        the caller (adapter) catches and converts to
+        `OrderRegistrationResult(success=False, ...)`.
+        """
+        data = await self._request("POST", "/admin/draft-orders", json=payload)
+        return data["draft_order"]
+
     # ---------- internals ----------
 
     async def _request(

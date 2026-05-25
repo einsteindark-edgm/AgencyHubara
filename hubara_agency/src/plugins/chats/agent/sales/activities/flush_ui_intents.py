@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import time
 from typing import Any
 
 from temporalio import activity
@@ -360,58 +361,89 @@ async def _dispatch_intent(
             if env_flow_id and env_flow_id != "FLOW_ID_SHIPPING_PLACEHOLDER"
             else params.get("flow_id")
         )
-        if not flow_id or flow_id == "FLOW_ID_SHIPPING_PLACEHOLDER":
-            # Flow Meta no configurado — recolectamos los datos
-            # conversacionalmente con un mensaje de texto plano que enumera
-            # los campos requeridos. NO usamos botones (anti-patrón sesión
-            # adc6400c — la opción "Compartir ubicación" no funciona y el
-            # cliente abandona).
-            order_total_cop = int(params.get("order_total_cop") or 0)
-            cod_line = (
-                "\n_Contra entrega disponible para pedidos > $45.000 COP._"
-                if order_total_cop > 45000
-                else ""
-            )
-            text = (
-                "Para coordinar el envío necesito estos datos, podés "
-                "mandármelos en un solo mensaje o de a uno:\n\n"
-                "🏙️ *Ciudad*\n"
-                "📍 *Barrio*\n"
-                "🏠 *Dirección* (calle, número, apartamento)\n"
-                "📞 *Teléfono* de contacto\n"
-                "💳 *Método de pago* (tarjeta, transferencia"
-                f"{', contra entrega' if order_total_cop > 45000 else ''})"
-                f"{cod_line}"
-            )
-            return await wa_client.send_text(
-                phone_number_id,
-                to_number,
-                text,
-            )
-        # Marcar en metadata que estamos esperando un `nfm_reply` para que el
-        # workflow Sales extienda su ghosting timeout (sesión c4e3416f). El
-        # cliente tarda 1-3 min en llenar el form — sin esto, ghosting a los
-        # 60s dispara remarketing y el nfm_reply se rutea ahí.
-        # El flag se setea ANTES del send_flow para que aunque la API call
-        # crashee, el timeout extendido ya esté escrito y proteja el próximo
-        # retry. El nfm_reply (cuando llegue) limpia el flag.
-        _mark_flow_awaiting_reply(to_number)
+        use_native_flow = bool(flow_id and flow_id != "FLOW_ID_SHIPPING_PLACEHOLDER")
 
-        return await wa_client.send_flow(
+        if use_native_flow:
+            # Defensa en profundidad (post-mortem run bc54cb93, 2026-05-25):
+            # ANTES el send_flow estaba sin try/except. Si Meta rechazaba o
+            # `_mark_flow_awaiting_reply` lanzaba NameError, el cliente se
+            # quedaba SIN nada y tenía que escalar a humano. AHORA si el path
+            # nativo falla, caemos al texto plano — peor que el Flow visual
+            # pero infinitamente mejor que cero respuesta.
+            try:
+                # Marcar en metadata que estamos esperando un `nfm_reply` para
+                # que el workflow Sales extienda su ghosting timeout (sesión
+                # c4e3416f). El cliente tarda 1-3 min en llenar el form — sin
+                # esto, ghosting a los 60s dispara remarketing y el nfm_reply
+                # se rutea ahí. El flag se setea ANTES del send_flow para que
+                # aunque la API call crashee, el timeout extendido ya esté
+                # escrito y proteja el próximo retry. El nfm_reply (cuando
+                # llegue) limpia el flag.
+                _mark_flow_awaiting_reply(to_number)
+                flow_result = await wa_client.send_flow(
+                    phone_number_id,
+                    to_number,
+                    wa_dtos.InteractiveFlowOutbound(
+                        flow_id=flow_id,
+                        flow_token=params.get("flow_token", ""),
+                        flow_cta=params.get("flow_cta", "Completar"),
+                        flow_action=params.get("flow_action", "navigate"),
+                        flow_action_screen=params.get("flow_action_screen"),
+                        flow_action_data=params.get("flow_action_data"),
+                        body=params.get("body"),
+                        header_text=params.get("header_text"),
+                        footer=params.get("footer"),
+                        mode=params.get("mode", "published"),
+                    ),
+                )
+                if flow_result and flow_result.ok:
+                    return flow_result
+                # Meta rechazó (4xx/5xx) — loguear + fallback a texto.
+                activity.logger.warning(
+                    "shipping_flow.native_send_failed_fallback_text",
+                    extra={
+                        "flow_id": flow_id,
+                        "error": (
+                            flow_result.error
+                            if flow_result is not None
+                            else "no_result"
+                        ),
+                    },
+                )
+            except Exception as e:  # noqa: BLE001 — fallback genérico
+                # Cualquier excepción del native path (NameError de imports,
+                # ValueError en build_flow, transport error, etc.).
+                activity.logger.warning(
+                    "shipping_flow.native_exception_fallback_text",
+                    extra={"flow_id": flow_id, "error": str(e)},
+                )
+
+        # Fallback (Flow disabled vía env vacío O native_failed):
+        # recolectamos los datos conversacionalmente con un mensaje de texto
+        # plano que enumera los campos requeridos. NO usamos botones
+        # (anti-patrón sesión adc6400c — la opción "Compartir ubicación" no
+        # funciona y el cliente abandona).
+        order_total_cop = int(params.get("order_total_cop") or 0)
+        cod_line = (
+            "\n_Contra entrega disponible para pedidos > $45.000 COP._"
+            if order_total_cop > 45000
+            else ""
+        )
+        text = (
+            "Para coordinar el envío necesito estos datos, podés "
+            "mandármelos en un solo mensaje o de a uno:\n\n"
+            "🏙️ *Ciudad*\n"
+            "📍 *Barrio*\n"
+            "🏠 *Dirección* (calle, número, apartamento)\n"
+            "📞 *Teléfono* de contacto\n"
+            "💳 *Método de pago* (tarjeta, transferencia"
+            f"{', contra entrega' if order_total_cop > 45000 else ''})"
+            f"{cod_line}"
+        )
+        return await wa_client.send_text(
             phone_number_id,
             to_number,
-            wa_dtos.InteractiveFlowOutbound(
-                flow_id=flow_id,
-                flow_token=params.get("flow_token", ""),
-                flow_cta=params.get("flow_cta", "Completar"),
-                flow_action=params.get("flow_action", "navigate"),
-                flow_action_screen=params.get("flow_action_screen"),
-                flow_action_data=params.get("flow_action_data"),
-                body=params.get("body"),
-                header_text=params.get("header_text"),
-                footer=params.get("footer"),
-                mode=params.get("mode", "published"),
-            ),
+            text,
         )
 
     if kind == "order_confirmation":
@@ -655,6 +687,16 @@ def _mark_flow_awaiting_reply(to_number: str) -> None:
 
     Resolución del session_id desde `to_number`: respetamos el prefijo
     canónico `WHATSAPP_SESSION_PREFIX` (mismo del wrapper arriba).
+
+    Timestamp idempotente entre retries (consult Temporal Python SDK docs,
+    `references/python/determinism.md`): preferimos `activity.info().scheduled_time`
+    sobre `time.time()` porque el SDK lo deja IDÉNTICO entre re-ejecuciones de la
+    misma activity attempt-1 → attempt-N. Si la activity hace retry (Meta tira
+    flaky, worker crash mid-execution), el ghosting window NO se renueva por
+    cada intento — preserva el momento "real" en que el workflow programó el
+    envío del Flow. Fallback a `time.time()` solo defensivo por si la helper se
+    llamara desde fuera de un activity context en el futuro (no es el caso hoy
+    — todos los call-sites están dentro de `flush_pending_ui_intents_activity`).
     """
     from src.platform.config import WORKSPACE_VAULT_DIR
 
@@ -670,7 +712,16 @@ def _mark_flow_awaiting_reply(to_number: str) -> None:
             extra={"session_id": session_id, "error": str(e)},
         )
         return
-    data["shipping_flow_awaiting_reply_since_ms"] = int(time.time() * 1000)
+
+    try:
+        # SDK-native: estable entre retries de esta activity attempt.
+        ts_ms = int(activity.info().scheduled_time.timestamp() * 1000)
+    except RuntimeError:
+        # Defensive — solo dispararía si la helper fuese invocada fuera de un
+        # activity context en el futuro. Wall-clock se acerca lo suficiente.
+        ts_ms = int(time.time() * 1000)
+
+    data["shipping_flow_awaiting_reply_since_ms"] = ts_ms
     _safe_write_metadata(metadata_file, data)
 
 

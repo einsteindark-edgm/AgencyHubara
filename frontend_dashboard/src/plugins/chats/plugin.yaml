@@ -28,6 +28,11 @@ api:
     - { module: src.plugins.chats.api.sales,     prefix: /api,           tags: [WhatsApp_Sales_Domain] }
     - { module: src.plugins.chats.api.dashboard, prefix: /api/dashboard, tags: [Dashboard] }
     - { module: src.plugins.chats.api.handoff,   prefix: /api/dashboard, tags: [Dashboard_Handoff] }
+    # El plugin `ads` no tiene backend propio — sus endpoints viven aquí (donde
+    # están los metadata files de WhatsApp) y leen el `origin` + `last_touch`
+    # que el ingest persiste. Cross-plugin import sería violación de R-DIP, por
+    # eso vive en chats y el frontend del plugin `ads` consume `/api/chats/ads/*`.
+    - { module: src.plugins.chats.api.ads,       prefix: /api/chats,     tags: [Ads] }
 
 # ── Agente Temporal ────────────────────────────────────────────────────
 # Dos workers en task queues exclusivas: SALES_QUEUE y REMARKETING_QUEUE.
@@ -84,6 +89,14 @@ agent:
           - { var: WHATSAPP_VERIFY_TOKEN,   secret: hubara-whatsapp-secret, key: WHATSAPP_VERIFY_TOKEN }
           - { var: META_CATALOG_ID,         secret: hubara-meta-secret,     key: META_CATALOG_ID }
           - { var: META_FLOW_ID_SHIPPING,   secret: hubara-meta-secret,     key: META_FLOW_ID_SHIPPING }
+          # Sesión c4e3416f — Medusa Order Registration. Sin estos vars el
+          # composition cae al StubOrderRegistration (loguea WARNING, no
+          # registra en Medusa). En prod son requeridos.
+          - { var: MEDUSA_BASE_URL,                  secret: hubara-medusa-secret, key: MEDUSA_BASE_URL }
+          - { var: MEDUSA_ADMIN_TOKEN,               secret: hubara-medusa-secret, key: MEDUSA_ADMIN_TOKEN }
+          - { var: MEDUSA_REGION_ID,                 secret: hubara-medusa-secret, key: MEDUSA_REGION_ID }
+          - { var: MEDUSA_SALES_CHANNEL_ID,          secret: hubara-medusa-secret, key: MEDUSA_SALES_CHANNEL_ID }
+          - { var: MEDUSA_DEFAULT_SHIPPING_OPTION_ID, secret: hubara-medusa-secret, key: MEDUSA_DEFAULT_SHIPPING_OPTION_ID }
       compose:
         env:
           TEMPORAL_URL: temporal:7233
@@ -108,6 +121,16 @@ agent:
           # cae a recolección conversacional turn-by-turn (texto plano).
           # Crear el Flow: docs/META_CATALOG_SETUP.md §Fase 13.
           META_FLOW_ID_SHIPPING: ${META_FLOW_ID_SHIPPING}
+          # Medusa Order Registration (sesión c4e3416f). El sales worker
+          # llama POST /admin/draft-orders en cierre exitoso. Si region_id/
+          # sales_channel_id están vacíos, cae al StubOrderRegistration.
+          MEDUSA_BASE_URL: ${MEDUSA_BASE_URL}
+          MEDUSA_ADMIN_TOKEN: ${MEDUSA_ADMIN_TOKEN}
+          MEDUSA_REGION_ID: ${MEDUSA_REGION_ID}
+          MEDUSA_SALES_CHANNEL_ID: ${MEDUSA_SALES_CHANNEL_ID}
+          MEDUSA_DEFAULT_SHIPPING_OPTION_ID: ${MEDUSA_DEFAULT_SHIPPING_OPTION_ID}
+          MEDUSA_DEFAULT_CURRENCY: ${MEDUSA_DEFAULT_CURRENCY:-cop}
+          MEDUSA_DEFAULT_COUNTRY: ${MEDUSA_DEFAULT_COUNTRY:-co}
         volumes:
           - hubara-vault-local:/app/hubara_vault
         depends_on:

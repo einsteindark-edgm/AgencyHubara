@@ -1,7 +1,7 @@
 id: orders
-version: 0.1.0
+version: 0.2.0
 display_name: Orders
-description: Tablero kanban de órdenes (estados + filtros + inspector). Plugin frontend-only por ahora — los datos vienen de `entities/order` (shared).
+description: Tablero kanban de órdenes (estados + filtros + inspector). Backend conectado a Medusa v2 (`/admin/orders` + `/admin/draft-orders`) via `OrderQueryPort` — los datos vivos del registro de ventas (Sales agent `register_order` tool) se ven aquí.
 
 depends_on: []
 
@@ -13,10 +13,17 @@ frontend:
     sidebar:
       - { route: /orders, label: Orders, icon: workflow }
 
-# Sin api: ni agent: por ahora — UI opera con mocks/entities/order. Cuando se
-# necesite CRUD propio o integración con shipping providers, agregar:
-#   api: { python_module: src.plugins.orders.api, prefix: /api/orders, ... }
-#   agent: { workers: [{name: shipping_sync, module: ...}] }
+# Backend: router FastAPI sirviendo el kanban desde Medusa. R-DIP: el módulo
+# importa del platform/ (port + composition) y NO de otro plugin sibling.
+api:
+  python_module: src.plugins.orders.api
+  prefix: /api/orders
+  tags: [Orders]
 
 wiring_intents:
-  env_vars_required: []
+  env_vars_required:
+    # Lectura — basta con base_url + auth para que el dashboard liste
+    # órdenes. Si están vacíos, el endpoint devuelve `catalog_available:
+    # false` + lista vacía (no rompe el dashboard, pinta estado vacío).
+    - MEDUSA_BASE_URL
+    - MEDUSA_ADMIN_TOKEN

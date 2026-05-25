@@ -58,6 +58,13 @@ _REASON_CATEGORIES: list[str] = [
     # con "Confirmar") pero NO completó el Flow de datos de envío en ~10 min.
     # El humano cierra manualmente pidiendo los datos faltantes por chat o WA.
     "ORDER_PENDING_SHIPPING_DETAILS",
+    # Medusa rechazó / no respondió al `register_order` (network down, 5xx
+    # persistente, settings inválidos como MEDUSA_REGION_ID erróneo). El
+    # cliente confirmó el pedido, los datos están guardados en
+    # `metadata.failed_order_registrations[]`, y el humano debe registrarlo
+    # manualmente en Medusa Admin con esos datos. Para que el dashboard
+    # pueda hacer pop fácil de la cola, ver `audit_id` en el envelope.
+    "ORDER_REGISTRATION_FAILED",
     "EXPLICIT_REQUEST",        # cliente pide humano o muestra frustracion
     "OTHER",
 ]
@@ -102,6 +109,9 @@ class EscalateToHumanTool(ToolBase):
                     "ORDER_PENDING_SHIPPING_DETAILS (cliente confirmó el "
                     "pedido pero no completó los datos de envío y dejó la "
                     "conversación — humano cierra pidiendo los datos), "
+                    "ORDER_REGISTRATION_FAILED (Medusa rechazó el "
+                    "register_order — humano registra manualmente con los "
+                    "datos guardados en metadata.failed_order_registrations), "
                     "EXPLICIT_REQUEST (cliente pide humano o está "
                     "frustrado), OTHER."
                 ),

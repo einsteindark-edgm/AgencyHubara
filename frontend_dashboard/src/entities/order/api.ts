@@ -1,42 +1,180 @@
 /**
- * Hook de orders. El prototipo no tiene endpoint backend — devolvemos el
- * dataset estático envuelto en `useQuery` para que las features tengan la misma
- * forma (`data` / `isLoading` / `isError`) que cuando exista `/api/orders`.
+ * Hooks de orders. Consume el backend real (`/api/orders/orders` y
+ * `/api/orders/orders/{id}`) que sirve Medusa v2 vía `MedusaOrderQuery`.
  *
- * Cuando llegue el endpoint real:
- *   1. Mover `MOCK_ORDERS` a un test fixture.
- *   2. Reemplazar `queryFn` por `apiClient.get('/api/orders')` + Zod parse.
- *   3. Las features no requieren cambio (consumen `data` directamente).
+ * Mapping: el backend devuelve shape Zod-validated (`OrderSummary` con
+ * snake_case + nuevos campos como `is_draft`, `due_iso`, etc.). El
+ * `Order` interface histórico (camelCase) sigue siendo el contrato que
+ * consumen `OrdersBoard`, `OrdersFilters`, `OrdersInspector` — el mapper
+ * `toLegacyOrder` traduce.
+ *
+ * Premortem fixes:
+ *  * **C3**: si el backend mismo NO responde (no Medusa, BACKEND) capturamos
+ *    `ApiError` y devolvemos el shape vacío + `catalog_available: false` —
+ *    así la UI muestra el mismo banner que cuando Medusa cae.
+ *  * **A1**: el detail endpoint acepta display_id ("#1247"), así que ya NO
+ *    necesitamos un `_idByDisplay` Map global frágil. Pasamos el display_id
+ *    directo en la URL.
+ *  * **F2+K1**: `useVaultOrders` lista pedidos rechazados/stub para que el
+ *    operador pueda reconciliarlos manualmente.
  */
 
 import { useQuery } from "@tanstack/react-query";
+import { apiClient, ApiError } from "@/shared/api";
+import {
+  orderDetailSchema,
+  orderListResponseSchema,
+  vaultOrdersResponseSchema,
+  type OrderDetail,
+  type OrderListResponse,
+  type OrderSummary,
+  type VaultOrdersResponse,
+} from "./contracts";
 import { orderKeys } from "./keys";
-import type { Order } from "./model";
+import type { Order, OrderStatus, PayStatus, PayType } from "./model";
 
-const MOCK_ORDERS: Order[] = [
-  { id:"#1247", customer:"María Camila Restrepo", short:"MR", color:"a", phone:"+57 314 ••• 8821", city:"Bogotá",       channel:"WhatsApp",      status:"delayed",   payStatus:"paid",    payType:"confirmed", items:3, total:124500, due:"hoy",    dueIso:"2026-05-12", dueTime:"09:30", overdue:true, pieces:8, agent:"Sofía",    priority:"alta"   },
-  { id:"#1246", customer:"Carlos Andrés Vélez",    short:"CV", color:"b", phone:"+57 301 ••• 4412", city:"Medellín",     channel:"Web",           status:"preparing", payStatus:"paid",    payType:"confirmed", items:2, total:78000,  due:"hoy",    dueIso:"2026-05-12", dueTime:"14:00",                pieces:5, agent:"Sofía",    priority:"alta"   },
-  { id:"#1245", customer:"Luisa Fernanda Gómez",   short:"LG", color:"c", phone:"+57 320 ••• 9019", city:"Cali",         channel:"Instagram",     status:"new",       payStatus:"pending", payType:"cod",       items:1, total:36000,  due:"hoy",    dueIso:"2026-05-12", dueTime:"17:30",                pieces:3, agent:"Diego",    priority:"normal" },
-  { id:"#1244", customer:"Andrés Felipe Torres",   short:"AT", color:"d", phone:"+57 312 ••• 7723", city:"Bogotá",       channel:"WhatsApp",      status:"ready",     payStatus:"paid",    payType:"confirmed", items:4, total:182000, due:"hoy",    dueIso:"2026-05-12", dueTime:"19:00",                pieces:9, agent:"Sofía",    priority:"normal" },
-  { id:"#1243", customer:"Daniela Ortiz Pérez",    short:"DO", color:"e", phone:"+57 318 ••• 2231", city:"Barranquilla", channel:"Web",           status:"preparing", payStatus:"partial", payType:"cod",       items:5, total:215000, due:"mañana", dueIso:"2026-05-13", dueTime:"10:00",                pieces:11,agent:"Diego",    priority:"normal" },
-  { id:"#1242", customer:"Mateo Hernández",        short:"MH", color:"f", phone:"+57 305 ••• 5588", city:"Bogotá",       channel:"WhatsApp",      status:"new",       payStatus:"paid",    payType:"confirmed", items:2, total:64000,  due:"mañana", dueIso:"2026-05-13", dueTime:"15:30",                pieces:4, agent:"IA Soporte",priority:"normal" },
-  { id:"#1241", customer:"Valentina Cárdenas",     short:"VC", color:"a", phone:"+57 322 ••• 1144", city:"Cartagena",    channel:"Mercado Libre", status:"ready",     payStatus:"paid",    payType:"confirmed", items:1, total:48500,  due:"mañana", dueIso:"2026-05-13", dueTime:"11:00",                pieces:2, agent:"Sofía",    priority:"baja"   },
-  { id:"#1240", customer:"Juan Sebastián Mora",    short:"JM", color:"b", phone:"+57 311 ••• 6677", city:"Pereira",      channel:"WhatsApp",      status:"preparing", payStatus:"paid",    payType:"confirmed", items:3, total:96000,  due:"jue 14", dueIso:"2026-05-14", dueTime:"12:00",                pieces:6, agent:"Diego",    priority:"normal" },
-  { id:"#1239", customer:"Camila Rojas Suárez",    short:"CR", color:"c", phone:"+57 313 ••• 0099", city:"Bogotá",       channel:"Instagram",     status:"shipping",  payStatus:"paid",    payType:"confirmed", items:2, total:72500,  due:"vie 15", dueIso:"2026-05-15", dueTime:"09:00",                pieces:4, agent:"Sofía",    priority:"normal" },
-  { id:"#1238", customer:"Felipe Quintero",        short:"FQ", color:"d", phone:"+57 316 ••• 4477", city:"Manizales",    channel:"Tienda",        status:"shipping",  payStatus:"paid",    payType:"confirmed", items:6, total:268000, due:"vie 15", dueIso:"2026-05-15", dueTime:"14:30",                pieces:14,agent:"Diego",    priority:"alta"   },
-  { id:"#1237", customer:"Isabella Martínez",      short:"IM", color:"e", phone:"+57 304 ••• 3322", city:"Bucaramanga",  channel:"Web",           status:"new",       payStatus:"pending", payType:"cod",       items:1, total:42000,  due:"sáb 16", dueIso:"2026-05-16", dueTime:"16:00",                pieces:3, agent:"IA Soporte",priority:"normal" },
-  { id:"#1236", customer:"Tomás Echeverri",        short:"TE", color:"f", phone:"+57 318 ••• 5566", city:"Medellín",     channel:"WhatsApp",      status:"preparing", payStatus:"paid",    payType:"confirmed", items:3, total:112000, due:"dom 17", dueIso:"2026-05-17", dueTime:"11:30",                pieces:7, agent:"Sofía",    priority:"normal" },
-  { id:"#1235", customer:"Sofía Acosta",           short:"SA", color:"a", phone:"+57 315 ••• 7788", city:"Bogotá",       channel:"Web",           status:"new",       payStatus:"paid",    payType:"confirmed", items:4, total:156000, due:"lun 18", dueIso:"2026-05-18", dueTime:"10:00",                pieces:8, agent:"Diego",    priority:"normal" },
-  { id:"#1234", customer:"Nicolás Vergara",        short:"NV", color:"b", phone:"+57 310 ••• 2233", city:"Cali",         channel:"Instagram",     status:"preparing", payStatus:"partial", payType:"cod",       items:2, total:84000,  due:"mar 19", dueIso:"2026-05-19", dueTime:"13:00",                pieces:5, agent:"Sofía",    priority:"baja"   },
-  { id:"#1233", customer:"Laura Moncada",          short:"LM", color:"c", phone:"+57 320 ••• 9911", city:"Bogotá",       channel:"WhatsApp",      status:"delivered", payStatus:"paid",    payType:"confirmed", items:2, total:74500,  due:"ayer",   dueIso:"2026-05-11", dueTime:"15:00",                pieces:4, agent:"Sofía",    priority:"normal" },
-  { id:"#1232", customer:"Esteban Patiño",         short:"EP", color:"d", phone:"+57 322 ••• 8855", city:"Medellín",     channel:"Web",           status:"delivered", payStatus:"paid",    payType:"confirmed", items:5, total:198000, due:"ayer",   dueIso:"2026-05-11", dueTime:"11:00",                pieces:12,agent:"Diego",    priority:"normal" },
-  { id:"#1231", customer:"Sara Botero",            short:"SB", color:"e", phone:"+57 313 ••• 2244", city:"Bogotá",       channel:"Instagram",     status:"cancelled", payStatus:"refund",  payType:"confirmed", items:1, total:36000,  due:"ayer",   dueIso:"2026-05-11", dueTime:"17:00",                pieces:0, agent:"Sofía",    priority:"normal" },
-];
+/* ── Mapping snake_case backend → camelCase legacy Order interface ─────── */
+
+export function toLegacyOrder(s: OrderSummary): Order {
+  return {
+    id: s.display_id, // "#1247" — la UI espera el formato display
+    customer: s.customer,
+    short: s.short,
+    color: s.color,
+    phone: s.phone ?? "—",
+    city: s.city ?? "—",
+    channel: s.channel,
+    status: s.status as OrderStatus,
+    payStatus: s.pay_status as PayStatus,
+    payType: s.pay_type as PayType,
+    items: s.items,
+    total: s.total_cop,
+    due: humanizeDue(s.due_iso),
+    dueIso: s.due_iso ?? "",
+    dueTime: s.due_time ?? "—",
+    overdue: computeOverdue(s.due_iso),
+    pieces: s.pieces,
+    agent: s.agent,
+    priority: s.priority,
+    isDraft: s.is_draft,
+    // El `due_iso` viene del backend como estimate (created+1d) — siempre
+    // estimated hasta que tengamos integración real de shipping.
+    isDueEstimated: s.due_iso !== null,
+  };
+}
+
+function computeOverdue(dueIso: string | null): boolean {
+  if (!dueIso) return false;
+  const today = new Date().toISOString().slice(0, 10);
+  return dueIso < today;
+}
+
+function humanizeDue(dueIso: string | null): string {
+  if (!dueIso) return "—";
+  const today = new Date();
+  const due = new Date(dueIso + "T00:00:00");
+  const diffDays = Math.round(
+    (due.getTime() - new Date(today.toISOString().slice(0, 10)).getTime()) /
+      86_400_000,
+  );
+  if (diffDays === 0) return "hoy";
+  if (diffDays === 1) return "mañana";
+  if (diffDays === -1) return "ayer";
+  if (diffDays > 0 && diffDays <= 7) {
+    const dayNames = ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"];
+    return `${dayNames[due.getDay()]} ${due.getDate()}`;
+  }
+  return dueIso;
+}
+
+/* ── Queries ──────────────────────────────────────────────────────────── */
 
 export function useOrders() {
-  return useQuery({
+  return useQuery<{ orders: Order[]; response: OrderListResponse }>({
     queryKey: orderKeys.list(),
-    queryFn: async () => MOCK_ORDERS,
-    staleTime: Infinity,
+    queryFn: async () => {
+      try {
+        const raw = await apiClient.get<unknown>("/api/orders/orders");
+        const parsed = orderListResponseSchema.parse(raw);
+        return {
+          orders: parsed.orders.map(toLegacyOrder),
+          response: parsed,
+        };
+      } catch (exc) {
+        // Premortem C3: si el BACKEND mismo no responde (no Medusa,
+        // backend), generamos un shape válido con catalog_available=false
+        // para que la UI muestre el banner explícito en lugar de un
+        // error genérico "Failed to fetch".
+        if (exc instanceof ApiError) {
+          const empty: OrderListResponse = {
+            orders: [],
+            count: 0,
+            offset: 0,
+            limit: 100,
+            catalog_available: false,
+            error_detail: `backend_api_error: HTTP ${exc.status}`,
+          };
+          return { orders: [], response: empty };
+        }
+        // Network failure (fetch threw before HTTP): mismo trato.
+        if (exc instanceof TypeError && /fetch/i.test(exc.message)) {
+          const empty: OrderListResponse = {
+            orders: [],
+            count: 0,
+            offset: 0,
+            limit: 100,
+            catalog_available: false,
+            error_detail: "backend_unreachable: el backend no responde",
+          };
+          return { orders: [], response: empty };
+        }
+        throw exc; // Zod parse error u otro — propagar para visibilidad.
+      }
+    },
+    // Cuando llegan nuevas órdenes desde Sales (vía `register_order`), la
+    // app debería invalidar este key. Por ahora se refresca cada 30s.
+    refetchInterval: 30_000,
+    staleTime: 10_000,
+    retry: 1, // Premortem C3: 1 retry rápido, luego fallback a empty.
+  });
+}
+
+export function useOrderDetail(displayId: string | null) {
+  return useQuery<OrderDetail>({
+    queryKey: orderKeys.detail(displayId ?? "—"),
+    queryFn: async () => {
+      if (!displayId) throw new Error("displayId required");
+      // Premortem A1: el backend ya resuelve `display_id` ("#1247") al
+      // backend id internamente. Pasamos el display_id directo —
+      // funciona para deep-links sin requerir useOrders() poblado antes.
+      const raw = await apiClient.get<unknown>(
+        `/api/orders/orders/${encodeURIComponent(displayId)}`,
+      );
+      return orderDetailSchema.parse(raw);
+    },
+    enabled: displayId !== null && displayId !== "",
+    staleTime: 10_000,
+  });
+}
+
+export function useVaultOrders() {
+  return useQuery<VaultOrdersResponse>({
+    queryKey: orderKeys.vault(),
+    queryFn: async () => {
+      try {
+        const raw = await apiClient.get<unknown>("/api/orders/vault-orders");
+        return vaultOrdersResponseSchema.parse(raw);
+      } catch (exc) {
+        // Mismo trato C3: si el backend está caído, devolvemos vacío para
+        // no romper la UI principal del kanban.
+        if (exc instanceof ApiError || (exc instanceof TypeError && /fetch/i.test(exc.message))) {
+          return { records: [], count: 0, failed_count: 0, stub_count: 0 };
+        }
+        throw exc;
+      }
+    },
+    refetchInterval: 60_000, // menos frecuente que el kanban — es operacional.
+    staleTime: 30_000,
+    retry: 1,
   });
 }

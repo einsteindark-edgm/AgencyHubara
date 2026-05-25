@@ -21,16 +21,25 @@ interface Props {
 }
 
 export function OrdersFilters({ view, setView, payType, setPayType, orders }: Props) {
+  const today = new Date().toISOString().slice(0, 10);
+  const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
+  // Esta semana = próximos 7 días incluyendo hoy.
+  const weekIsos = new Set<string>();
+  for (let i = 0; i < 7; i++) {
+    weekIsos.add(new Date(Date.now() + i * 86_400_000).toISOString().slice(0, 10));
+  }
+  const weekCount = orders.filter((o) => weekIsos.has(o.dueIso)).length;
+
   const views: {
     key: ViewFilter; label: string; count: number;
     icon: React.ReactNode; accent?: boolean; color?: string;
   }[] = [
-    { key: "all",      label: "Todas",       count: orders.length,                                        icon: <Icon.box /> },
-    { key: "today",    label: "Para hoy",    count: orders.filter((o) => o.dueIso === "2026-05-12").length, icon: <Icon.clock />, accent: true },
-    { key: "overdue",  label: "Retrasadas",  count: orders.filter((o) => o.overdue).length,                icon: <Icon.alert />, color: "#ff7269" },
-    { key: "tomorrow", label: "Mañana",      count: orders.filter((o) => o.dueIso === "2026-05-13").length, icon: <Icon.cal /> },
-    { key: "week",     label: "Esta semana", count: 14,                                                    icon: <Icon.cal /> },
-    { key: "ship",     label: "En camino",   count: orders.filter((o) => o.status === "shipping").length,  icon: <Icon.truck /> },
+    { key: "all",      label: "Todas",       count: orders.length,                                       icon: <Icon.box /> },
+    { key: "today",    label: "Para hoy",    count: orders.filter((o) => o.dueIso === today).length,    icon: <Icon.clock />, accent: true },
+    { key: "overdue",  label: "Retrasadas",  count: orders.filter((o) => o.overdue).length,             icon: <Icon.alert />, color: "#ff7269" },
+    { key: "tomorrow", label: "Mañana",      count: orders.filter((o) => o.dueIso === tomorrow).length, icon: <Icon.cal /> },
+    { key: "week",     label: "Esta semana", count: weekCount,                                          icon: <Icon.cal /> },
+    { key: "ship",     label: "En camino",   count: orders.filter((o) => o.status === "shipping").length, icon: <Icon.truck /> },
   ];
 
   const payTypes: {

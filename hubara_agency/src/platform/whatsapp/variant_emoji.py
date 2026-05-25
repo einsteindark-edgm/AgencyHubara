@@ -61,22 +61,33 @@ SCENT_EMOJI: dict[str, str] = {
 # Categorías para sections del color picker — separación visual entre
 # tonos claros y oscuros ayuda al cliente a decidir más rápido.
 COLOR_GROUPS = (
-    ("Claros y suaves", ("blanco", "rosado", "lila", "amarillo")),
-    ("Vibrantes", ("verde", "naranja", "azul")),
-    ("Profundos", ("morado", "gris")),
+    ("Claros y suaves", ("blanco", "rosado", "rosa", "lila", "amarillo")),
+    ("Vibrantes", ("verde", "naranja", "azul", "rojo")),
+    ("Profundos", ("morado", "gris", "marron", "cafe", "negro")),
 )
 
 COLOR_EMOJI: dict[str, str] = {
     "blanco": "⚪",
-    "gris": "⬛",  # no hay círculo gris en unicode; cuadro gris oscuro
+    # Corazón gris (U+1FA76) — Emoji 15.0, soportado en iOS 16.4+, Android 14+,
+    # WhatsApp Web. ANTES era `⬛` (cuadrado negro) que el cliente leía como
+    # "negro" en lugar de "gris" (post-mortem run bc54cb93, 2026-05-25).
+    "gris": "🩶",
     "amarillo": "🟡",
     "verde": "🟢",
     "naranja": "🟠",
     "morado": "🟣",
     "azul": "🔵",
+    # Rojo: usamos círculo rojo dedicado.
+    "rojo": "🔴",
+    # Negro: cuadrado negro (única opción no-ambigua).
+    "negro": "⬛",
+    # Cafe/marrón: corazón marrón (cliente vio "Marrón" como variante).
+    "marron": "🤎",
+    "cafe": "🤎",
     # No existe round-circle rosa pálido en unicode; usamos flor rosa que es
     # universalmente legible como "rosa/rosado".
     "rosado": "🌸",
+    "rosa": "🌸",
     # Lila no tiene círculo dedicado — usamos corazón violeta (distinto de
     # morado para no chocar visualmente).
     "lila": "💜",

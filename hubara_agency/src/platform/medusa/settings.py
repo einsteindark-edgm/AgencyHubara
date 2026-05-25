@@ -25,3 +25,36 @@ class MedusaSettings(BaseSettings):
     admin_email: str | None = Field(default=None)
     admin_password: str | None = Field(default=None)
     http_timeout: float = Field(default=30.0)
+
+    # --- Order registration (HU c4e3416f) ----------------------------------
+    # Required for `MedusaOrderRegistration` (the OrderRegistrationPort
+    # adapter). When unset, `get_order_registration_port()` falls back to
+    # `StubOrderRegistration` (dev mode). Composition logs a warning.
+    #
+    # `region_id` y `sales_channel_id` se crean en Medusa Admin:
+    #   Settings → Regions → <pick existing or create "Colombia / COP"> → ID
+    #   Settings → Sales Channels → <pick "Default" or "WhatsApp"> → ID
+    region_id: str | None = Field(
+        default=None,
+        description="MEDUSA_REGION_ID — id de la Region en Medusa (ej: 'reg_01...'). Required para draft orders.",
+    )
+    sales_channel_id: str | None = Field(
+        default=None,
+        description="MEDUSA_SALES_CHANNEL_ID — id del Sales Channel (ej: 'sc_01...'). Required.",
+    )
+    default_currency: str = Field(
+        default="cop",
+        description="MEDUSA_DEFAULT_CURRENCY — ISO 4217 lowercase (Medusa v2 usa 'cop', 'usd').",
+    )
+    default_country: str = Field(
+        default="co",
+        description="MEDUSA_DEFAULT_COUNTRY — ISO 3166-1 alpha-2 lowercase para shipping_address.country_code.",
+    )
+    # Opcional — algunas tenant configs de Medusa requieren un shipping
+    # option especifico (el operador lo pre-crea en Admin → Shipping). Si esta
+    # vacio, el adapter usa `list_shipping_options(region_id=...)` y elige la
+    # primera. Es preferible setearlo para evitar la query extra.
+    default_shipping_option_id: str | None = Field(
+        default=None,
+        description="MEDUSA_DEFAULT_SHIPPING_OPTION_ID — opcional. Si vacio, el adapter descubre la primera.",
+    )

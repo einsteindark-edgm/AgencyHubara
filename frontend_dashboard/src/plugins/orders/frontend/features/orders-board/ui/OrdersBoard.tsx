@@ -72,11 +72,39 @@ interface CardProps {
 function Card({ order, selected, onSelect }: CardProps) {
   return (
     <div
-      className={"kcard" + (selected ? " sel" : "")}
+      className={"kcard" + (selected ? " sel" : "") + (order.isDraft ? " is-draft" : "")}
       onClick={() => onSelect(order.id)}
+      // Premortem A2: borde lateral visible para distinguir Draft Orders
+      // (cliente confirmó pero operador no procesó) de orders ya activas.
+      style={
+        order.isDraft
+          ? { borderLeft: "3px solid #d68aff" }
+          : undefined
+      }
     >
       <div className="kc-top">
-        <span className="oid">{order.id}</span>
+        <span className="oid">
+          {order.id}
+          {order.isDraft && (
+            <span
+              style={{
+                marginLeft: 6,
+                fontSize: 8,
+                fontWeight: 700,
+                textTransform: "uppercase",
+                letterSpacing: 0.4,
+                padding: "1px 5px",
+                borderRadius: 3,
+                background: "rgba(214,138,255,0.18)",
+                color: "#d68aff",
+                verticalAlign: "middle",
+              }}
+              title="Draft Order — cliente confirmó la compra pero el operador todavía no la procesó."
+            >
+              Draft
+            </span>
+          )}
+        </span>
         <span className="due-d">
           {dayChipShort(order.dueIso)} · {order.dueTime}
         </span>
@@ -126,7 +154,7 @@ export function OrdersHeader({
   filteredTotal: number;
   title: string;
 }) {
-  const today = "2026-05-12";
+  const today = new Date().toISOString().slice(0, 10);
   const k = useMemo(
     () => ({
       todayCount: orders.filter((o) => o.dueIso === today).length,
@@ -139,7 +167,7 @@ export function OrdersHeader({
       ).length,
       shipping: orders.filter((o) => o.status === "shipping").length,
     }),
-    [orders],
+    [orders, today],
   );
 
   return (
@@ -168,11 +196,11 @@ export function OrdersHeader({
       </div>
 
       <div className="kpi-row">
-        <KPI label="Para hoy"    value={k.todayCount}             tone="accent" sub="3 en preparación" />
-        <KPI label="Retrasadas"  value={k.overdue}                tone="red"    sub="Requieren atención" />
-        <KPI label="En proceso"  value={k.inProc}                 tone="orange" sub="Nuevas + preparando + listas" />
-        <KPI label="En tránsito" value={k.shipping}               tone="cyan"   sub="2 con guía activa" />
-        <KPI label="Ingresos mes" value={fmtMoney(k.revenue, true)} tone="green" sub="↑ 12.4% vs. abril" />
+        <KPI label="Para hoy"    value={k.todayCount} tone="accent" />
+        <KPI label="Retrasadas"  value={k.overdue}    tone="red"    sub="Requieren atención" />
+        <KPI label="En proceso"  value={k.inProc}     tone="orange" sub="Nuevas + preparando + listas" />
+        <KPI label="En tránsito" value={k.shipping}   tone="cyan" />
+        <KPI label="Ingresos mes" value={fmtMoney(k.revenue, true)} tone="green" />
       </div>
 
       <div className="ord-bar">

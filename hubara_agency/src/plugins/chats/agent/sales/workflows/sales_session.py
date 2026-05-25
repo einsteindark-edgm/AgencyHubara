@@ -31,6 +31,7 @@ with workflow.unsafe.imports_passed_through():
         decide_ghosting_action,
         flush_pending_ui_intents_activity,
         read_and_clear_pending_handoff_activity,
+        read_idle_timeout_seconds_activity,
     )
     from src.plugins.chats.agent.sales.contracts import SalesSessionInput
     from src.plugins.chats.shared.contracts.events import (
@@ -357,8 +358,34 @@ class HubaraSalesSessionWorkflow:
                         # el procesamiento (Fix 3 / H3, gated). Antes se
                         # retornaba directo y signals entre `_force_shutdown=True`
                         # y `return` se perdian.
+                        #
+                        # IMPORTANTE (post-mortem run bc54cb93, 2026-05-25):
+                        # NO cancelar shutdown si el motivo es escalation a
+                        # humano. La escalation es definitiva — el cliente
+                        # quedó en cola humana y `active_route=humano` ya
+                        # bloquea el dispatch para mensajes futuros. Si
+                        # llegan mensajes durante el turn-de-escalation,
+                        # el LLM puede emitir respuestas "del pensamiento"
+                        # (vio mensaje, pero no sabe que ya escaló), y eso
+                        # ROMPE LA EXPERIENCIA: el cliente recibe texto
+                        # extra post "te transfiero al humano".
+                        #
+                        # Cancel-shutdown sigue habilitado para el caso
+                        # ghosting (cliente volvió a tiempo) — ahí SÍ
+                        # queremos continuar la conversación.
+                        #
+                        # workflow.patched(): workflows en vuelo pre-fix
+                        # podrían haber tomado la rama legacy (cancel-shutdown
+                        # también para escalation). En replay caen acá con
+                        # `is_escalation = False` para preservar su history.
+                        # Workflows nuevos ven `True` y respetan escalation.
+                        if workflow.patched("escalation-blocks-cancel-shutdown-v1"):
+                            is_escalation = result.escalation_decision is not None
+                        else:
+                            is_escalation = False  # legacy replay path
                         if (
                             self._pending
+                            and not is_escalation
                             and workflow.patched("cancel-shutdown-on-new-pending-v1")
                         ):
                             workflow.logger.info(
@@ -367,6 +394,17 @@ class HubaraSalesSessionWorkflow:
                             )
                             self._force_shutdown = False
                         else:
+                            if is_escalation and self._pending:
+                                # Logueamos explícitamente para que quede
+                                # rastro: mensajes que llegaron post-escalation
+                                # NO se procesan (el humano los verá en el
+                                # dashboard cuando tome la sesión).
+                                workflow.logger.info(
+                                    f"Escalation activa: descartando "
+                                    f"{len(self._pending)} mensaje(s) que "
+                                    "llegaron durante el turno de escalation. "
+                                    "El humano los retoma desde el dashboard."
+                                )
                             workflow.logger.info(f"Auto-diagnóstico concluido. Apagando sesión {session.session_id} por abandono de usuario o transferencia.")
                             return
 

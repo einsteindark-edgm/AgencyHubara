@@ -17,6 +17,7 @@ import { Icon } from "@/shared/ui";
 
 import { fmtMoneyK, fmtN } from "@plugins/ads/frontend/lib/format";
 import { AdsIcon } from "@plugins/ads/frontend/lib/icons";
+import { MissingField } from "@plugins/ads/frontend/lib/MissingField";
 
 type StatusFilter = "active" | "paused" | "all";
 
@@ -27,8 +28,6 @@ interface Props {
 }
 
 export function AdsCampaignsList({ campaigns, selected, onSelect }: Props) {
-  const [filter, setFilter] = useState<StatusFilter>("active");
-
   const counts = useMemo(
     () => ({
       active: campaigns.filter((c) => c.status === "active").length,
@@ -37,6 +36,13 @@ export function AdsCampaignsList({ campaigns, selected, onSelect }: Props) {
     }),
     [campaigns],
   );
+
+  // Default filter: si no tenemos `status` de Meta Ads API todavía (todas
+  // las campañas vienen con `status: null`), arrancamos en "all" — sino el
+  // usuario vería 0 resultados con el filtro "Activas" por default.
+  const defaultFilter: StatusFilter =
+    counts.active === 0 && counts.paused === 0 ? "all" : "active";
+  const [filter, setFilter] = useState<StatusFilter>(defaultFilter);
 
   const list = useMemo(() => {
     if (filter === "all") return campaigns;
@@ -114,7 +120,13 @@ interface RowProps {
 
 function CampaignRow({ campaign, selected, onSelect }: RowProps) {
   const total = totalConversations(campaign);
-  const roas = campaign.revenue / campaign.spend;
+  // ROAS requiere spend Y revenue. Si falta cualquiera, NO podemos calcularlo
+  // — la cell muestra `<MissingField />` y el campo no influye en el color
+  // semaforo. Cuando lleguen Meta Ads API y orders, el cálculo se reactiva.
+  const roas =
+    campaign.revenue !== null && campaign.spend !== null && campaign.spend > 0
+      ? campaign.revenue / campaign.spend
+      : null;
   const [from, to] = campaign.dates.split("→").map((s) => s.trim());
 
   return (
@@ -123,13 +135,27 @@ function CampaignRow({ campaign, selected, onSelect }: RowProps) {
       onClick={() => onSelect(campaign.id)}
     >
       <div className="camp-row-h">
-        <span
-          className={"camp-status " + campaign.status}
-          title={campaign.status === "active" ? "Activa" : "Pausada"}
-        >
-          {campaign.status === "active" ? <AdsIcon.play /> : <AdsIcon.pause />}
+        {/* Status: Meta Ads API aún no integrada → null → marker visual. */}
+        {campaign.status === "active" ? (
+          <span className="camp-status active" title="Activa">
+            <AdsIcon.play />
+          </span>
+        ) : campaign.status === "paused" ? (
+          <span className="camp-status paused" title="Pausada">
+            <AdsIcon.pause />
+          </span>
+        ) : (
+          <span
+            className="camp-status"
+            title="Estado pendiente — Meta Ads API"
+            style={{ opacity: 0.6 }}
+          >
+            <Icon.dataPending />
+          </span>
+        )}
+        <span className="camp-name">
+          {campaign.name ?? <MissingField />}
         </span>
-        <span className="camp-name">{campaign.name}</span>
       </div>
       <div className="camp-row-meta">
         <span className="camp-dates">
@@ -139,7 +165,13 @@ function CampaignRow({ campaign, selected, onSelect }: RowProps) {
       <div className="camp-row-stats">
         <div className="crs">
           <span className="crs-l">Inversión</span>
-          <span className="crs-v">{fmtMoneyK(campaign.spend)}</span>
+          <span className="crs-v">
+            {campaign.spend !== null ? (
+              fmtMoneyK(campaign.spend)
+            ) : (
+              <MissingField withIcon />
+            )}
+          </span>
         </div>
         <div className="crs">
           <span className="crs-l">Chats</span>
@@ -149,10 +181,17 @@ function CampaignRow({ campaign, selected, onSelect }: RowProps) {
           <span className="crs-l">ROAS</span>
           <span
             className={
-              "crs-v " + (roas >= 2 ? "pos" : roas >= 1 ? "neu" : "neg")
+              "crs-v " +
+              (roas === null
+                ? ""
+                : roas >= 2
+                  ? "pos"
+                  : roas >= 1
+                    ? "neu"
+                    : "neg")
             }
           >
-            {roas.toFixed(1)}×
+            {roas !== null ? `${roas.toFixed(1)}×` : <MissingField withIcon />}
           </span>
         </div>
       </div>
@@ -162,12 +201,17 @@ function CampaignRow({ campaign, selected, onSelect }: RowProps) {
 }
 
 interface MicroBarProps {
-  conversations: AdsConversationCounts;
+  /**
+   * Counts por estado conversacional. `null` cuando el backend aún no tiene
+   * clasificador downstream — la barra no se renderiza en ese caso (la
+   * card sigue mostrando el contador de `Chats`).
+   */
+  conversations: AdsConversationCounts | null;
   total: number;
 }
 
 function StateMicroBar({ conversations, total }: MicroBarProps) {
-  if (!total) return null;
+  if (!total || !conversations) return null;
   return (
     <div className="camp-microbar" title="Distribución de estados">
       {ADS_STATE_ORDER.map((s) => {

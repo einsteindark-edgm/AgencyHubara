@@ -1,9 +1,21 @@
 /**
- * Tipos del dominio "orden". El prototipo Agency Desktop no tiene backend real
- * — esta entidad expone los tipos canónicos y un dataset estático en `api.ts`
- * para que las features los consuman vía `useOrders()` con la misma forma que
- * tendrá cuando exista un endpoint `/api/orders`.
+ * Tipos del dominio "orden". Los datos vienen del backend en
+ * `/api/orders/orders` (Medusa v2 v read-side), pero la UI del kanban
+ * necesita un shape específico — este modelo es el contrato canónico
+ * que consumen los componentes (`OrdersBoard`, `OrdersInspector`, etc.).
+ *
+ * Re-exporta tipos del backend (Zod-inferred en `contracts.ts`) + algunas
+ * derivaciones puramente UI (overdue, etc.) que el cliente recalcula al
+ * leer los datos.
  */
+
+import type {
+  OrderDetail,
+  OrderItemDetail,
+  OrderAddress,
+  OrderSummary,
+  OrderTimelineEvent,
+} from "./contracts";
 
 export type OrderStatus =
   | "new"
@@ -17,6 +29,12 @@ export type OrderStatus =
 export type PayStatus = "paid" | "partial" | "pending" | "refund";
 export type PayType = "cod" | "confirmed";
 
+/**
+ * Shape que consume `OrdersBoard` y `OrdersInspector`. Mantiene la forma
+ * histórica del prototipo (camelCase + algunas derivaciones UI) — los
+ * mappers en `api.ts` convierten `OrderSummary` del backend (snake_case)
+ * a este shape para que las features no tengan que cambiar todavía.
+ */
 export interface Order {
   id: string;
   customer: string;
@@ -37,6 +55,9 @@ export interface Order {
   pieces: number;
   agent: string;
   priority: "alta" | "normal" | "baja";
+  // Nuevos: meta del backend para que la UI sepa cuándo pintar markers.
+  isDraft: boolean;
+  isDueEstimated: boolean; // true cuando dueIso es estimate (created+1d)
 }
 
 export interface OrderStatusMeta {
@@ -61,3 +82,6 @@ export const PAY_STATUS_META: Record<PayStatus, { label: string; color: string }
   pending: { label: "Pendiente",   color: "#ff7269" },
   refund:  { label: "Reembolsado", color: "#8e8e93" },
 };
+
+// Re-export the backend types for components that need the richer detail.
+export type { OrderDetail, OrderItemDetail, OrderAddress, OrderSummary, OrderTimelineEvent };

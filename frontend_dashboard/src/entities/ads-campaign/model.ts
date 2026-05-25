@@ -53,60 +53,87 @@ export type CampaignTendency = "up" | "flat" | "down";
 
 export type AdsConversationCounts = Record<AdsState, number>;
 
+/**
+ * Una campaña Meta vista desde el dashboard. Muchos campos son `| null`
+ * porque hoy solo tenemos lo que clasifica el ingest WhatsApp (origin +
+ * referrals) — la integración con Meta Ads API (spend/impressions/clicks)
+ * y con orders (revenue) viene en PRs futuros. Los components muestran
+ * "—" + icono dataPending para los campos `null`.
+ *
+ * El mock `CAMPAIGNS` sigue siendo válido (todos sus campos son no-null
+ * — type es un superset). Los hooks `useAdsCampaigns` pueden retornar
+ * objetos con nulls cuando vienen del backend.
+ */
 export interface AdsCampaign {
+  // --- Disponibles hoy (derivados del ingest WhatsApp) ---
   id: string;
-  name: string;
-  status: CampaignStatus;
-  objective: string;
-  placement: string;
-  audience: string;
-  /** Rango formateado para mostrar tal cual ("1 may → 14 may 2026"). */
-  dates: string;
-  daysRun: number;
-  metaCampaignId: string;
-  adSet: string;
-  creativeTitle: string;
-  template: string;
-  /** Inversión en COP. */
-  spend: number;
-  impressions: number;
-  reach: number;
-  clicks: number;
-  /** Chats iniciados (CTWA). */
+  name: string | null;
+  /** Chats iniciados (CTWA) — count de sesiones con este source_id. */
   started: number;
-  conversations: AdsConversationCounts;
+  /** Rango formateado ("1 may → 14 may 2026"). "—" si no hay timestamps. */
+  dates: string;
+
+  // --- Faltantes (queda null hasta integración Meta Ads / orders) ---
+  status: CampaignStatus | null;
+  objective: string | null;
+  placement: string | null;
+  audience: string | null;
+  daysRun: number | null;
+  metaCampaignId: string | null;
+  adSet: string | null;
+  creativeTitle: string | null;
+  template: string | null;
+  /** Inversión en COP. */
+  spend: number | null;
+  impressions: number | null;
+  reach: number | null;
+  clicks: number | null;
+  /** Counts por estado conversacional — requiere clasificador downstream. */
+  conversations: AdsConversationCounts | null;
   /** Ingresos atribuidos en COP. */
-  revenue: number;
+  revenue: number | null;
   /** Ticket promedio en COP. */
-  avgTicket: number;
+  avgTicket: number | null;
   /** Tiempo a 1ª respuesta del bot (texto formateado tipo "2m 14s"). */
-  firstResp: string;
-  tendency: CampaignTendency;
+  firstResp: string | null;
+  tendency: CampaignTendency | null;
 }
 
 /* ── Conversaciones atribuidas (WhatsApp chats originados por un anuncio) ── */
 
 export type AvatarColor = "a" | "b" | "c" | "d" | "e" | "f";
 
+/**
+ * Conversación WhatsApp atribuida a una campaña. Los campos `| null` los
+ * marca el frontend con "—" + icono dataPending — la mayor parte requiere
+ * integraciones futuras (CRM para `name`/`city`, clasificador para
+ * `state`, orders para `value`).
+ */
 export interface AttributedConversation {
+  // --- Disponibles hoy ---
   id: string;
-  name: string;
-  /** Iniciales para el avatar (2 letras). */
+  /** Iniciales 2-letras — derivadas del nombre o del phone si no hay nombre. */
   short: string;
   color: AvatarColor;
-  city: string;
-  state: AdsState;
-  /** Valor estimado en COP (0 si no aplica). */
-  value: number;
-  /** "Sofía", "Diego", "IA Soporte", "—". */
-  agent: string;
-  /** "Hoy 11:42", "Ayer 19:02", "9 may". */
+  /** "Hoy 11:42", "Ayer 19:02", "9 may" — derivado de started_at_ms. */
   started: string;
-  /** "Hoy 12:18", "—". */
-  lastMsg: string;
   msgs: number;
-  /** Nombre del anuncio que originó el chat (para multi-campaña). */
-  ad: string;
+
+  // --- Disponibles parcialmente / faltantes ---
+  /** Nombre del cliente. Null hasta CRM — la UI muestra phone. */
+  name: string | null;
+  /** Null hasta CRM. */
+  city: string | null;
+  /** "Sofía" / "Diego" / "IA Soporte" / null. Backend devuelve `active_route` como proxy. */
+  agent: string | null;
+  /** Null hasta clasificador conversacional. */
+  state: AdsState | null;
+  /** Valor estimado en COP. Null hasta link a orders. */
+  value: number | null;
+  /** "Hoy 12:18" derivado de last_msg_at_ms. Null si no hubo último mensaje rastreable. */
+  lastMsg: string | null;
+  /** Nombre del anuncio que originó el chat (headline). */
+  ad: string | null;
 }
 
 /* ── Serie diaria — conversaciones iniciadas por día/estado final ────────── */
@@ -308,7 +335,13 @@ export const DAILY_SERIES: AdsDailyPoint[] = [
 
 /* ── Helpers de dominio ─────────────────────────────────────────────────── */
 
-/** Suma todos los estados conversacionales de una campaña. */
+/**
+ * Suma todos los estados conversacionales de una campaña. Si la campaña
+ * aún no tiene counts (backend devuelve `conversations: null` hasta el
+ * clasificador conversacional), devolvemos `c.started` como fallback —
+ * al menos sabemos cuántos chats arrancaron por CTWA.
+ */
 export function totalConversations(c: AdsCampaign): number {
-  return ADS_STATE_ORDER.reduce((acc, s) => acc + (c.conversations[s] || 0), 0);
+  if (!c.conversations) return c.started;
+  return ADS_STATE_ORDER.reduce((acc, s) => acc + (c.conversations![s] || 0), 0);
 }

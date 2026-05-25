@@ -14,7 +14,14 @@ export const ATTRIBUTED_STATE_FILTERS: AttributedStateFilter[] = [
   ...ADS_STATE_ORDER,
 ];
 
-/** Slice de UI-state local de la tabla: filtro por estado + lista filtrada. */
+/**
+ * Slice de UI-state local de la tabla: filtro por estado + lista filtrada.
+ *
+ * `r.state` puede ser `null` cuando el backend aún no tiene clasificador
+ * conversacional para esa sesión. Esos rows aparecen con filter="all"
+ * (no se ocultan al usuario), pero quedan excluidos de filtros específicos
+ * — no podemos asegurar a qué bucket pertenecen.
+ */
 export function useStateFilter(rows: AttributedConversation[]) {
   const [filter, setFilter] = useState<AttributedStateFilter>("all");
 

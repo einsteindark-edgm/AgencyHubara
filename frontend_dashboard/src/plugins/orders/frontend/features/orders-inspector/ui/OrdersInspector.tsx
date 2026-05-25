@@ -2,15 +2,25 @@
  * Inspector de Órdenes (panel derecho). Top: header con ID/cliente/pills/
  * acciones. Body: ReadyForShip + paneles colapsables (Línea de tiempo,
  * Productos, Entrega, Pago, Notas, Historial cliente).
+ *
+ * Datos reales: viene de `useOrderDetail(displayId)` que consulta el
+ * backend `/api/orders/orders/{id}` (Medusa v2 vía MedusaOrderQuery).
+ *
+ * Datos que Medusa NO tiene todavía (timeline detallado, notas internas,
+ * historial cliente, agente asignado) se renderizan con el marker
+ * `MissingData` para que el operador vea explícitamente qué falta integrar.
  */
 
 import {
   ORDER_STATUS_META,
   PAY_STATUS_META,
+  useOrderDetail,
   type Order,
+  type OrderItemDetail,
+  type OrderDetail,
 } from "@/entities/order";
 import { fmtMoney } from "@/shared/lib";
-import { Icon, InsBlock, MacButton } from "@/shared/ui";
+import { Icon, InsBlock, MacButton, MissingData } from "@/shared/ui";
 import { ReadyForShip } from "./ReadyForShip";
 
 interface Props {
@@ -18,6 +28,10 @@ interface Props {
 }
 
 export function OrdersInspector({ order }: Props) {
+  // Llamar el hook SIEMPRE (no condicional) — pasa null cuando no hay
+  // selección y el hook lo desactiva internamente. Cumple Rules of Hooks.
+  const detailQuery = useOrderDetail(order?.id ?? null);
+
   if (!order) {
     return (
       <aside
@@ -37,12 +51,34 @@ export function OrdersInspector({ order }: Props) {
   }
 
   const statusMeta = ORDER_STATUS_META[order.status];
+  const detail = detailQuery.data;
+  const missing = new Set(detail?.data_completeness_missing ?? []);
 
   return (
     <aside className="inspector">
       <div className="ins-head">
         <div className="ih-title">
-          <h3>{order.id}</h3>
+          <h3>
+            {order.id}
+            {order.isDraft && (
+              <span
+                style={{
+                  marginLeft: 8,
+                  fontSize: 9,
+                  fontWeight: 600,
+                  textTransform: "uppercase",
+                  letterSpacing: 0.5,
+                  padding: "2px 6px",
+                  borderRadius: 4,
+                  background: "rgba(214,138,255,0.18)",
+                  color: "#d68aff",
+                  verticalAlign: "middle",
+                }}
+              >
+                Draft
+              </span>
+            )}
+          </h3>
           <p>{order.customer}</p>
         </div>
         <div className="oi-pills">
@@ -82,90 +118,238 @@ export function OrdersInspector({ order }: Props) {
       <div className="ins-body">
         <ReadyForShip order={order} />
 
-        <InsBlock title="Línea de tiempo">
-          <div className="ord-tl">
-            <Timeline t="Orden creada"     sub="11 may · 18:42 · WhatsApp" done />
-            <Timeline t="Pago confirmado"  sub="11 may · 19:01 · Wompi"     done />
-            <Timeline t="En preparación"   sub="12 may · 08:15 · Sofía"     done />
-            <Timeline t="Lista para envío" sub="Estimado: hoy · 11:30"      cur />
-            <Timeline t="En camino"        sub="—" />
-            <Timeline t="Entregada"        sub="Estimado: hoy · 14:00" />
+        {detailQuery.isLoading && (
+          <div style={{ padding: 16, color: "var(--fg-muted)", fontSize: 12 }}>
+            Cargando detalle…
           </div>
-        </InsBlock>
+        )}
 
-        <InsBlock title="Productos (3)">
-          <ItemRow name="Vela Sagrado Rostro" sku="VLA-001" qty={2} price={36000} />
-          <ItemRow name="Vela Ángel Guardián" sku="VLA-002" qty={4} price={42000} />
-          <ItemRow name="Vela Inmaculada"     sku="VLA-003" qty={2} price={29990} />
-          <div style={{ marginTop: 8 }}>
-            <KV k="Subtotal"  v={fmtMoney(216000)} />
-            <KV k="Envío"     v={fmtMoney(12000)} />
-            <KV k="Descuento" v={"− " + fmtMoney(6000)} />
-            <KV k="IVA (19%)" v={fmtMoney(40299)} />
-            <div className="kv tot">
-              <span className="k">Total</span>
-              <span className="v">{fmtMoney(order.total)}</span>
-            </div>
+        {detailQuery.isError && (
+          <div style={{ padding: 16 }}>
+            <MissingData
+              variant="block"
+              label="No se pudo cargar el detalle"
+              reason="Medusa no respondió. Recarga la página o verifica que el backend esté arriba."
+            />
           </div>
-        </InsBlock>
+        )}
 
-        <InsBlock title="Entrega" open>
-          <KV k="Fecha" v="Hoy 12 may · 09:30" />
-          <KV k="Ventana" v="9:00 — 11:00" />
-          <KV k="Dirección" v="Cra 13 #94-30, Bogotá" />
-          <KV k="Transportadora" v="Coordinadora · 215XXX" />
-          <KV k="Guía" v="900112334" />
-          <div className="map-mini">
-            <div className="map-grid-bg" />
-            <span className="map-pin"><Icon.loc /></span>
-            <span className="map-lbl">Bogotá · Chapinero</span>
-          </div>
-        </InsBlock>
-
-        <InsBlock title="Pago" open={false}>
-          <KV
-            k="Estado"
-            v={
-              <span style={{ color: PAY_STATUS_META[order.payStatus].color }}>
-                ● {PAY_STATUS_META[order.payStatus].label}
-              </span>
-            }
-          />
-          <KV k="Método" v="Tarjeta · Visa •• 4421" />
-          <KV k="Pagado" v={fmtMoney(order.total)} />
-          <KV k="Comisión" v={"− " + fmtMoney(Math.floor(order.total * 0.029))} />
-          <KV k="Neto" v={fmtMoney(Math.floor(order.total * 0.971))} />
-        </InsBlock>
-
-        <InsBlock title="Notas internas" open={false}>
-          <div className="note">
-            <div className="nm">Sofía · hace 1 h</div>
-            <div className="nb">
-              Cliente pidió empaque para regalo con tarjeta. Color crema.
-            </div>
-          </div>
-          <div className="note">
-            <div className="nm">Diego · hace 3 h</div>
-            <div className="nb">
-              Confirmar dirección por WhatsApp antes de despachar.
-            </div>
-          </div>
-          <MacButton ghost sm style={{ width: "100%" }}>
-            + Agregar nota
-          </MacButton>
-        </InsBlock>
-
-        <InsBlock title="Historial cliente" open={false}>
-          <KV k="Órdenes totales" v="14" />
-          <KV k="Valor total" v={fmtMoney(1248500)} />
-          <KV k="Última compra" v="hace 22 días" />
-          <KV k="Tag" v="VIP · Recurrente" />
-          <KV k="Score" v="A · Alta probabilidad recompra" />
-        </InsBlock>
+        {detail && (
+          <>
+            <TimelinePanel detail={detail} missing={missing} />
+            <ItemsPanel detail={detail} />
+            <DeliveryPanel detail={detail} missing={missing} order={order} />
+            <PaymentPanel detail={detail} missing={missing} order={order} />
+            <NotesPanel missing={missing} />
+            <CustomerHistoryPanel missing={missing} />
+          </>
+        )}
       </div>
     </aside>
   );
 }
+
+/* ── Panels ──────────────────────────────────────────────────────────── */
+
+function TimelinePanel({
+  detail,
+  missing,
+}: {
+  detail: OrderDetail;
+  missing: Set<string>;
+}) {
+  const events = detail.timeline;
+  return (
+    <InsBlock title={`Línea de tiempo (${events.length})`}>
+      <div className="ord-tl">
+        {events.map((e, i) => (
+          <Timeline
+            key={`${e.type}-${i}`}
+            t={e.label}
+            sub={`${new Date(e.timestamp_ms).toLocaleDateString("es-CO", {
+              day: "2-digit",
+              month: "short",
+              hour: "2-digit",
+              minute: "2-digit",
+            })}${e.detail ? ` · ${e.detail}` : ""}`}
+            done
+          />
+        ))}
+        {events.length === 0 && (
+          <div style={{ fontSize: 11, color: "var(--fg-muted)", padding: 8 }}>
+            Aún no hay eventos en el timeline.
+          </div>
+        )}
+        {(missing.has("tracking_number") || missing.has("shipping_provider")) && (
+          <div style={{ marginTop: 8 }}>
+            <MissingData reason="Tracking + transportadora — pendiente integrar con shipping providers." />
+          </div>
+        )}
+      </div>
+    </InsBlock>
+  );
+}
+
+function ItemsPanel({ detail }: { detail: OrderDetail }) {
+  const items = detail.items_detail;
+  return (
+    <InsBlock title={`Productos (${items.length})`}>
+      {items.map((it, i) => (
+        <ItemRow key={`${it.sku}-${i}`} item={it} />
+      ))}
+      <div style={{ marginTop: 8 }}>
+        <KV k="Subtotal" v={fmtMoney(detail.subtotal_cop)} />
+        {detail.shipping_cop > 0 && (
+          <KV k="Envío" v={fmtMoney(detail.shipping_cop)} />
+        )}
+        {detail.discount_total_cop > 0 && (
+          <KV k="Descuento" v={"− " + fmtMoney(detail.discount_total_cop)} />
+        )}
+        {detail.tax_total_cop > 0 && (
+          <KV k="IVA" v={fmtMoney(detail.tax_total_cop)} />
+        )}
+        <div className="kv tot">
+          <span className="k">Total</span>
+          <span className="v">{fmtMoney(detail.summary.total_cop)}</span>
+        </div>
+      </div>
+    </InsBlock>
+  );
+}
+
+function DeliveryPanel({
+  detail,
+  missing,
+  order,
+}: {
+  detail: OrderDetail;
+  missing: Set<string>;
+  order: Order;
+}) {
+  const addr = detail.shipping_address;
+  return (
+    <InsBlock title="Entrega" open>
+      {addr ? (
+        <>
+          <KV
+            k="Destinatario"
+            v={`${addr.first_name ?? "—"} ${addr.last_name ?? ""}`.trim() || "—"}
+          />
+          <KV k="Dirección" v={addr.address_1 ?? "—"} />
+          {addr.address_2 && <KV k="Barrio" v={addr.address_2} />}
+          <KV k="Ciudad" v={addr.city ?? "—"} />
+          <KV k="Teléfono" v={addr.phone ?? "—"} />
+        </>
+      ) : (
+        <div style={{ fontSize: 11, color: "var(--fg-muted)", padding: 8 }}>
+          Sin dirección de envío.
+        </div>
+      )}
+      <KV
+        k="Fecha estimada"
+        v={
+          missing.has("due_date") ? (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              {order.dueIso || "—"}
+              <MissingData
+                label="Estimada"
+                reason="Hubara aún no tiene tracking de fecha de compromiso de entrega — esta fecha es created_at + 1 día. Cuando integremos shipping providers se reemplaza con la real."
+              />
+            </span>
+          ) : (
+            order.dueIso || "—"
+          )
+        }
+      />
+      {missing.has("tracking_number") && (
+        <KV
+          k="Guía"
+          v={
+            <MissingData
+              label="Pendiente"
+              reason="Tracking number — pendiente integrar con shipping provider."
+            />
+          }
+        />
+      )}
+      {missing.has("shipping_provider") && (
+        <KV
+          k="Transportadora"
+          v={<MissingData reason="Pendiente integrar shipping providers (Coordinadora, Envia, etc.)." />}
+        />
+      )}
+    </InsBlock>
+  );
+}
+
+function PaymentPanel({
+  detail,
+  missing,
+  order,
+}: {
+  detail: OrderDetail;
+  missing: Set<string>;
+  order: Order;
+}) {
+  return (
+    <InsBlock title="Pago" open={false}>
+      <KV
+        k="Estado"
+        v={
+          <span style={{ color: PAY_STATUS_META[order.payStatus].color }}>
+            ● {PAY_STATUS_META[order.payStatus].label}
+          </span>
+        }
+      />
+      <KV
+        k="Método"
+        v={
+          detail.payment_method_label ?? (
+            <MissingData label="Sin información" reason="Medusa no devolvió el método de pago — verifica metadata del Draft Order." />
+          )
+        }
+      />
+      <KV k="Tipo" v={order.payType === "cod" ? "Contra entrega" : "Pago confirmado"} />
+      <KV k="Total" v={fmtMoney(order.total)} />
+      {missing.has("payment_method_detail") && (
+        <KV
+          k="Detalle"
+          v={
+            <MissingData reason="Detalle del cargo (últimos dígitos, comisión gateway) — pendiente integrar con gateway Wompi." />
+          }
+        />
+      )}
+    </InsBlock>
+  );
+}
+
+function NotesPanel({ missing }: { missing: Set<string> }) {
+  if (!missing.has("notes")) return null;
+  return (
+    <InsBlock title="Notas internas" open={false}>
+      <MissingData
+        variant="block"
+        label="Sin notas internas"
+        reason="Aún no implementamos persistencia de notas internas por orden — pendiente desarrollo."
+      />
+    </InsBlock>
+  );
+}
+
+function CustomerHistoryPanel({ missing }: { missing: Set<string> }) {
+  if (!missing.has("customer_history")) return null;
+  return (
+    <InsBlock title="Historial cliente" open={false}>
+      <MissingData
+        variant="block"
+        label="Sin historial de cliente"
+        reason="Aún no agregamos métricas de cliente (LTV, órdenes totales, valor total, tag VIP) — pendiente desarrollo."
+      />
+    </InsBlock>
+  );
+}
+
+/* ── Helpers ─────────────────────────────────────────────────────────── */
 
 function Timeline({
   t,
@@ -187,27 +371,31 @@ function Timeline({
   );
 }
 
-function ItemRow({
-  name,
-  sku,
-  qty,
-  price,
-}: {
-  name: string;
-  sku: string;
-  qty: number;
-  price: number;
-}) {
+function ItemRow({ item }: { item: OrderItemDetail }) {
+  const labelExtra = item.variant_label ? ` (${item.variant_label})` : "";
   return (
     <div className="item-row">
-      <div className="ir-thumb"><Icon.pkg /></div>
+      <div className="ir-thumb">
+        {item.thumbnail ? (
+          <img
+            src={item.thumbnail}
+            alt={item.title}
+            style={{ width: 28, height: 28, objectFit: "cover", borderRadius: 4 }}
+          />
+        ) : (
+          <Icon.pkg />
+        )}
+      </div>
       <div className="ir-b">
-        <div className="ir-n">{name}</div>
+        <div className="ir-n">
+          {item.title}
+          {labelExtra}
+        </div>
         <div className="ir-s">
-          {sku} · {qty} und × {fmtMoney(price)}
+          {item.sku ?? "—"} · {item.quantity} und × {fmtMoney(item.unit_price_cop)}
         </div>
       </div>
-      <div className="ir-t">{fmtMoney(qty * price)}</div>
+      <div className="ir-t">{fmtMoney(item.total_cop)}</div>
     </div>
   );
 }

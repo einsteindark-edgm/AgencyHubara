@@ -1,8 +1,11 @@
 """Plugin `orders` — tablero kanban de órdenes.
 
-Plugin frontend-only por ahora. NO aporta routers FastAPI ni workers Temporal.
-Los datos de `entities/order` (frontend) son mocks; cuando se necesite CRUD
-real se agrega `api/__init__.py` con un router.
+Backend: expone `api/__init__.py` con un router FastAPI que sirve los
+endpoints `/api/orders/orders` (list + detail) consumiendo Medusa v2 via
+`platform/orders/medusa_order_query.py`.
+
+Frontend: `frontend_dashboard/src/plugins/orders/frontend/` (kanban +
+inspector + filtros).
 
 Manifest: `frontend_dashboard/src/plugins/orders/plugin.yaml`.
 """

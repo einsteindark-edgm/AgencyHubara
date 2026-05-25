@@ -2,6 +2,11 @@
  * Tabla de conversaciones de WhatsApp originadas por una campaña. Cada fila
  * representa un contacto, su ciudad, timing, agente asignado, estado y valor
  * (si llegó a "ganado"). Filtrable por estado vía pills sobre la cabecera.
+ *
+ * Tolera campos `null` que devuelve el backend (name, city, agent, state,
+ * value) — para esos slots renderiza un `<MissingField />` con tooltip
+ * explicativo. Cuando se integren las fuentes upstream (CRM, clasificador,
+ * orders) los nulls van desapareciendo sin tocar este componente.
  */
 
 import {
@@ -11,6 +16,7 @@ import {
 import { Avatar } from "@/shared/ui";
 
 import { fmtMoney, fmtN } from "@plugins/ads/frontend/lib/format";
+import { MissingField } from "@plugins/ads/frontend/lib/MissingField";
 
 import {
   ATTRIBUTED_STATE_FILTERS,
@@ -68,38 +74,46 @@ export function AdsAttributedTable({ rows }: Props) {
           </thead>
           <tbody>
             {list.map((c) => {
-              const meta = ADS_STATES[c.state];
+              const meta = c.state ? ADS_STATES[c.state] : null;
               return (
                 <tr key={c.id}>
                   <td>
                     <div className="att-cust">
                       <Avatar initials={c.short} color={c.color} size={26} />
                       <div>
-                        <div className="att-n">{c.name}</div>
+                        <div className="att-n">
+                          {c.name ?? <MissingField />}
+                        </div>
                         <div className="att-id">{c.id}</div>
                       </div>
                     </div>
                   </td>
-                  <td>{c.city}</td>
+                  <td>{c.city ?? <MissingField />}</td>
                   <td>{c.started}</td>
-                  <td>{c.lastMsg}</td>
+                  <td>{c.lastMsg ?? <MissingField />}</td>
                   <td className="num">{c.msgs}</td>
-                  <td>{c.agent}</td>
+                  <td>{c.agent ?? <MissingField />}</td>
                   <td>
-                    <span
-                      className="att-state"
-                      style={{ background: meta.bg, color: meta.color }}
-                    >
+                    {meta ? (
                       <span
-                        className="att-dot"
-                        style={{ background: meta.color }}
-                      />
-                      {meta.label}
-                    </span>
+                        className="att-state"
+                        style={{ background: meta.bg, color: meta.color }}
+                      >
+                        <span
+                          className="att-dot"
+                          style={{ background: meta.color }}
+                        />
+                        {meta.label}
+                      </span>
+                    ) : (
+                      <MissingField withIcon />
+                    )}
                   </td>
                   <td className="num">
-                    {c.value > 0 ? (
+                    {c.value !== null && c.value > 0 ? (
                       fmtMoney(c.value)
+                    ) : c.value === null ? (
+                      <MissingField />
                     ) : (
                       <span style={{ color: "var(--fg-faint)" }}>—</span>
                     )}

@@ -35,6 +35,7 @@ Monorepo con backend Python (Temporal + DEHA hexagonal architecture) + frontend 
 3. **`cd hubara_agency &&`** antes de cualquier `uv run`. **`cd frontend_dashboard &&`** antes de cualquier `npm` / `npx` / `tsc`. La pipeline tiene hooks pre-bash que lo enforzan automáticamente (Fase 1 del plan).
 4. **Código vivo > docs grandes.** `ARCHITECTURE.md` (60 KB) y `HUBARA_PIPELINE_*.md` son históricos. Cuando una HU contradice un doc grande, el código vivo y `hubara-architecture-guide` son la fuente canónica.
 5. **Codegraph stale.** Si `codegraph_*` devuelve resultados que no matchean el código vivo, gana el código vivo. Re-correr `codegraph_status` si parece desactualizado.
+6. **Worker lambda missing import.** `register_tool_extension(name, lambda workspace: XxxTool(...))` en `chats/workers/{sales,remarketing}.py` carga limpio aunque `XxxTool` NO esté importado al top del archivo — Python evalúa el cuerpo del lambda lazy. El `NameError: XxxTool is not defined` aparece **en runtime de la activity** (`bootstrap_*_session_activity` → `apply_tool_extensions`), tumbando conversaciones reales. Al editar `register_tool_extension`, confirmar que la clase referenciada está en los `from ... import ...` del top del worker. Si el traceback en prod no coincide con HEAD local (line N distinta, args distintos), es **deploy stale** — rebuild del container. Caso ya visto: `RegisterOrderTool` en sales worker.
 
 ## Hooks activos (`.claude/settings.json`)
 
