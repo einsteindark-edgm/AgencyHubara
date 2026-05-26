@@ -200,6 +200,22 @@ nodes:
                                      el meta-gate falla al final. Solución:
                                      git add + commit + push esos archivos a
                                      main, o git checkout para revertir.
+
+      📋 Forensic diagnostic bundle:
+         $ARTIFACTS_DIR/diagnostic-bundle.yaml
+         (re-genera con: bash hubara_agency/.hubara/dump-pipeline-diagnostics.sh)
+    when: "$check-prereqs.output != 'OK'"
+    depends_on: [dump-on-cancel-bad-prereqs]
+
+  - id: dump-on-cancel-bad-prereqs
+    bash: |
+      ARTIFACTS_DIR="$ARTIFACTS_DIR" \
+      CANCEL_NODE="cancel-bad-prereqs" \
+      CANCEL_REASON="check-prereqs output: $check-prereqs.output" \
+      PHASE="check-prereqs" \
+      HU_ID="unknown" \
+      ISSUE_URL="unknown" \
+      bash hubara_agency/.hubara/dump-pipeline-diagnostics.sh
     when: "$check-prereqs.output != 'OK'"
     depends_on: [check-prereqs]
 
@@ -271,10 +287,22 @@ nodes:
         '{type:$type, title:$title, body:$body, issue_url:$issue_url, hu_id_override:$hu_id_override}'
     depends_on: [stage-shared-files]
 
-  - id: cancel-bad-input
-    cancel: "No pude resolver el input: $resolve-input.output. Si es un Issue, validá que esté abierto: gh issue view <url>."
+  - id: dump-on-cancel-bad-input
+    bash: |
+      ARTIFACTS_DIR="$ARTIFACTS_DIR" \
+      CANCEL_NODE="cancel-bad-input" \
+      CANCEL_REASON="resolve-input failed: $resolve-input.output" \
+      PHASE="resolve-input" \
+      HU_ID="unknown" \
+      ISSUE_URL="unknown" \
+      bash hubara_agency/.hubara/dump-pipeline-diagnostics.sh
     when: "$resolve-input.output.type == 'error'"
     depends_on: [resolve-input]
+
+  - id: cancel-bad-input
+    cancel: "No pude resolver el input: $resolve-input.output. Si es un Issue, validá que esté abierto: gh issue view <url>. 📋 Diagnostic bundle: $ARTIFACTS_DIR/diagnostic-bundle.yaml"
+    when: "$resolve-input.output.type == 'error'"
+    depends_on: [dump-on-cancel-bad-input]
 
   - id: gen-hu-id
     script: |
@@ -392,7 +420,10 @@ nodes:
       PO=$(grep '^project_owner:' "$CFG" | awk '{print $2}')
       PID=$(grep '^project_id:' "$CFG" | awk '{print $2}')
       FID=$(grep '^status_field_id:' "$CFG" | awk '{print $2}')
-      OID=$(awk '/^status_options:/{f=1; next} f && /^  Refining:/{print $2; exit}' "$CFG")
+      # NOTE: usamos -F: + gsub porque keys con espacios/em-dash
+      # (e.g. "Done — PR ready") rompen el default whitespace FS:
+      # `$2` daría `—` (em-dash) en vez del id real. Bug detectado 2026-05-26.
+      OID=$(awk -F: '/^status_options:/{f=1; next} f && /^  "?Refining"?:/ {gsub(/^ +| +$/, "", $2); print $2; exit}' "$CFG")
       [ -z "$OID" ] && { echo "warn no Refining option"; exit 0; }
       II=$(gh project item-list "$PN" --owner "$PO" --format json --limit 200 2>/dev/null \
         | jq -r --arg u "$ISSUE_URL" '.items[] | select(.content.url == $u) | .id' | head -1)
@@ -506,9 +537,26 @@ nodes:
     depends_on: [refinar-auto, load-refinement-if-resume]
     trigger_rule: all_done
 
+  - id: dump-on-cancel-bad-refinement
+    bash: |
+      HU_ID=$(echo $gen-hu-id.output 2>/dev/null | jq -r '.hu_id' 2>/dev/null || echo unknown)
+      ISSUE_URL=$(echo $gen-hu-id.output 2>/dev/null | jq -r '.issue_url' 2>/dev/null || echo unknown)
+      ARTIFACTS_DIR="$ARTIFACTS_DIR" \
+      CANCEL_NODE="cancel-bad-refinement" \
+      CANCEL_REASON="validate-refinement output: $validate-refinement.output" \
+      PHASE="refiner" \
+      HU_ID="$HU_ID" \
+      ISSUE_URL="$ISSUE_URL" \
+      bash hubara_agency/.hubara/dump-pipeline-diagnostics.sh
+    when: "$validate-refinement.output != 'PASS' && $validate-refinement.output != 'PASS_NO_WORK'"
+    depends_on: [validate-refinement]
+
   - id: cancel-bad-refinement
     cancel: |
       Refinement validation FAILED ($validate-refinement.output) en branch $gen-hu-id.output.branch.
+
+      📋 Forensic diagnostic bundle:
+         $ARTIFACTS_DIR/diagnostic-bundle.yaml
 
       Opciones para retomar:
         (a) Edití manualmente:
@@ -521,7 +569,7 @@ nodes:
         (b) Si la HU pide cambios architecture-protected: ADR + PR separado
             con label `architecture-change`, mergear, después re-lanzar.
     when: "$validate-refinement.output != 'PASS' && $validate-refinement.output != 'PASS_NO_WORK'"
-    depends_on: [validate-refinement]
+    depends_on: [dump-on-cancel-bad-refinement]
 
   - id: commit-refinement
     bash: |
@@ -544,6 +592,77 @@ nodes:
     when: "$validate-refinement.output == 'PASS' || $validate-refinement.output == 'PASS_NO_WORK'"
     depends_on: [validate-refinement]
 
+  # UX fix 2026-05-26: el body del issue NO se modifica durante el pipeline
+  # (intencional — issue es spec inmutable del operador). Pero el operador
+  # quedaba sin pistas visibles del trabajo del refiner. Este nodo postea
+  # UN comentario por iteración con resumen + links al artefacto y a la
+  # branch — fail-soft (si gh API falla, no rompe el pipeline).
+  - id: post-refinement-comment-to-issue
+    bash: |
+      HU_ID=$(echo $gen-hu-id.output | jq -r '.hu_id')
+      BRANCH=$(echo $gen-hu-id.output | jq -r '.branch')
+      ISSUE_URL=$(echo $gen-hu-id.output | jq -r '.issue_url')
+      if [ -z "$ISSUE_URL" ] || [ "$ISSUE_URL" = "null" ]; then
+        echo "skipped no_issue_url"
+        exit 0
+      fi
+      REFINEMENT="hubara_agency/.hubara/refinements/${HU_ID}-tech.md"
+      if [ ! -f "$REFINEMENT" ]; then
+        echo "skipped no_refinement_file"
+        exit 0
+      fi
+      # Stats
+      LINES=$(wc -l < "$REFINEMENT" | tr -d ' ')
+      ORIGINAL_LINES=$(wc -l < "hubara_agency/.hubara/refinements/${HU_ID}-original.md" 2>/dev/null | tr -d ' ' || echo 0)
+      # Sections (## §X. headings)
+      SECTIONS=$(grep -cE '^## §[0-9]+\.' "$REFINEMENT" 2>/dev/null || echo 0)
+      # Mode + plugins from §0 if present
+      MODE=$(grep -m1 -oE '\*\*mode:\*\* `?[a-z_]+`?' "$REFINEMENT" 2>/dev/null | head -1 || echo "")
+      # Spec deltas table from §16
+      DELTAS=$(awk '/^## §16\./,/^## /' "$REFINEMENT" 2>/dev/null | grep -E '^\| `[a-z_]+/' | head -8 || echo "")
+      # Branch URL (best-effort — gh repo view returns the upstream URL)
+      REPO_URL=$(gh repo view --json url -q .url 2>/dev/null || echo "")
+      BRANCH_URL="${REPO_URL}/blob/${BRANCH}/${REFINEMENT}"
+      # Build comment body — heredoc so markdown stays readable
+      BODY_FILE="$ARTIFACTS_DIR/.refinement-comment.md"
+      {
+        echo "## 🛠️ Tech refinement listo — \`$HU_ID\`"
+        echo ""
+        echo "El tech-refiner generó un dossier de implementación a partir de la HU."
+        echo ""
+        echo "**Stats:**"
+        printf -- '- Original: %s líneas → Refinement: %s líneas (%sx)\n' "$ORIGINAL_LINES" "$LINES" "$( [ "$ORIGINAL_LINES" -gt 0 ] && echo "$(( LINES / ORIGINAL_LINES ))" || echo "∞" )"
+        printf -- '- Secciones canónicas: %s/16\n' "$SECTIONS"
+        [ -n "$MODE" ] && printf -- '- Plugin classification: %s\n' "$MODE"
+        echo ""
+        echo "**Archivos producidos (en branch \`$BRANCH\`):**"
+        echo "- 📋 [Refinement técnico]($BRANCH_URL)"
+        printf -- '- 📋 Original: \`hubara_agency/.hubara/refinements/%s-original.md\`\n' "$HU_ID"
+        if [ -n "$DELTAS" ]; then
+          echo ""
+          echo "**Spec deltas (Fase 12 OpenSpec):**"
+          echo ""
+          echo "| Capability | Path delta | Status |"
+          echo "|---|---|---|"
+          echo "$DELTAS"
+        fi
+        echo ""
+        echo "El pipeline continúa con el plugin-planner. Próximo estado: \`Planned\`."
+        echo ""
+        echo "<sub>Auto-posteado por \`post-refinement-comment-to-issue\` node del workflow \`hu-hubara-pipeline\`.</sub>"
+      } > "$BODY_FILE"
+      # Post — fail-soft (warn but don't fail pipeline)
+      if gh issue comment "$ISSUE_URL" --body-file "$BODY_FILE" > "$ARTIFACTS_DIR/.comment.log" 2>&1; then
+        echo "comment_posted"
+      else
+        echo "WARN comment failed:" >&2
+        tail -5 "$ARTIFACTS_DIR/.comment.log" >&2
+        echo "comment_skipped"
+      fi
+    when: "$commit-refinement.output == 'committed' || $commit-refinement.output == 'no_changes'"
+    depends_on: [commit-refinement]
+    trigger_rule: all_done
+
   - id: project-set-refined
     bash: |
       CFG="$ARTIFACTS_DIR/github-project-config.yaml"
@@ -554,7 +673,7 @@ nodes:
       PO=$(grep '^project_owner:' "$CFG" | awk '{print $2}')
       PID=$(grep '^project_id:' "$CFG" | awk '{print $2}')
       FID=$(grep '^status_field_id:' "$CFG" | awk '{print $2}')
-      OID=$(awk '/^status_options:/{f=1; next} f && /^  Refined:/{print $2; exit}' "$CFG")
+      OID=$(awk -F: '/^status_options:/{f=1; next} f && /^  "?Refined"?:/ {gsub(/^ +| +$/, "", $2); print $2; exit}' "$CFG")
       [ -z "$OID" ] && exit 0
       II=$(gh project item-list "$PN" --owner "$PO" --format json --limit 200 2>/dev/null \
         | jq -r --arg u "$ISSUE_URL" '.items[] | select(.content.url == $u) | .id' | head -1)
@@ -683,9 +802,26 @@ nodes:
     depends_on: [planificar-auto, load-plan-if-resume]
     trigger_rule: all_done
 
+  - id: dump-on-cancel-bad-plan
+    bash: |
+      HU_ID=$(echo $gen-hu-id.output 2>/dev/null | jq -r '.hu_id' 2>/dev/null || echo unknown)
+      ISSUE_URL=$(echo $gen-hu-id.output 2>/dev/null | jq -r '.issue_url' 2>/dev/null || echo unknown)
+      ARTIFACTS_DIR="$ARTIFACTS_DIR" \
+      CANCEL_NODE="cancel-bad-plan" \
+      CANCEL_REASON="validate-plan output: $validate-plan.output" \
+      PHASE="planner" \
+      HU_ID="$HU_ID" \
+      ISSUE_URL="$ISSUE_URL" \
+      bash hubara_agency/.hubara/dump-pipeline-diagnostics.sh
+    when: "!($validate-plan.output =~ /^PASS/)"
+    depends_on: [validate-plan]
+
   - id: cancel-bad-plan
     cancel: |
       Plan validation FAILED ($validate-plan.output) en branch $gen-hu-id.output.branch.
+
+      📋 Forensic diagnostic bundle:
+         $ARTIFACTS_DIR/diagnostic-bundle.yaml
 
       Decodificación rápida del FAIL code:
         FAIL_TOO_MANY_PLUGINS → HU afecta más plugins que el cap (default 8).
@@ -705,7 +841,7 @@ nodes:
             hubara_agency/.hubara/plans/$gen-hu-id.output.hu_id/, commit,
             re-lanzar (smart-resume salta FASE 2 si plan OK).
     when: "!($validate-plan.output =~ /^PASS/)"
-    depends_on: [validate-plan]
+    depends_on: [dump-on-cancel-bad-plan]
 
   - id: commit-plan
     bash: |
@@ -740,7 +876,7 @@ nodes:
       PO=$(grep '^project_owner:' "$CFG" | awk '{print $2}')
       PID=$(grep '^project_id:' "$CFG" | awk '{print $2}')
       FID=$(grep '^status_field_id:' "$CFG" | awk '{print $2}')
-      OID=$(awk '/^status_options:/{f=1; next} f && /^  Planned:/{print $2; exit}' "$CFG")
+      OID=$(awk -F: '/^status_options:/{f=1; next} f && /^  "?Planned"?:/ {gsub(/^ +| +$/, "", $2); print $2; exit}' "$CFG")
       [ -z "$OID" ] && exit 0
       II=$(gh project item-list "$PN" --owner "$PO" --format json --limit 200 2>/dev/null \
         | jq -r --arg u "$ISSUE_URL" '.items[] | select(.content.url == $u) | .id' | head -1)
@@ -766,7 +902,7 @@ nodes:
       PO=$(grep '^project_owner:' "$CFG" | awk '{print $2}')
       PID=$(grep '^project_id:' "$CFG" | awk '{print $2}')
       FID=$(grep '^status_field_id:' "$CFG" | awk '{print $2}')
-      OID=$(awk '/^status_options:/{f=1; next} f && /^  Implementing:/{print $2; exit}' "$CFG")
+      OID=$(awk -F: '/^status_options:/{f=1; next} f && /^  "?Implementing"?:/ {gsub(/^ +| +$/, "", $2); print $2; exit}' "$CFG")
       [ -z "$OID" ] && exit 0
       II=$(gh project item-list "$PN" --owner "$PO" --format json --limit 200 2>/dev/null \
         | jq -r --arg u "$ISSUE_URL" '.items[] | select(.content.url == $u) | .id' | head -1)
@@ -775,7 +911,11 @@ nodes:
         --field-id "$FID" --single-select-option-id "$OID" \
         > "$ARTIFACTS_DIR/.edit.log" 2>&1 || tail -3 "$ARTIFACTS_DIR/.edit.log"
       echo "set Implementing ok"
-    depends_on: [commit-plan]
+    # NOTE: depende de project-set-planned (no de commit-plan) para evitar
+    # race condition — ambos compartían commit-plan como upstream, lo que
+    # hacía que llegaran al GitHub API en orden no determinístico y el último
+    # ganara. Forzar Planned → Implementing en serie. 2026-05-26.
+    depends_on: [project-set-planned]
     trigger_rule: all_done
 
   - id: classify-mode
@@ -1002,9 +1142,26 @@ nodes:
     trigger_rule: all_done
     when: "$classify-mode.output.mode == 'multi_plugin' && $rama-B-merge-batch.output == 'BATCH_OK'"
 
+  - id: dump-on-cancel-multi-plugin-failure
+    bash: |
+      HU_ID=$(echo $gen-hu-id.output 2>/dev/null | jq -r '.hu_id' 2>/dev/null || echo unknown)
+      ISSUE_URL=$(echo $gen-hu-id.output 2>/dev/null | jq -r '.issue_url' 2>/dev/null || echo unknown)
+      ARTIFACTS_DIR="$ARTIFACTS_DIR" \
+      CANCEL_NODE="cancel-on-multi-plugin-failure" \
+      CANCEL_REASON="batch result: $rama-B-merge-batch.output" \
+      PHASE="multi-plugin-batch" \
+      HU_ID="$HU_ID" \
+      ISSUE_URL="$ISSUE_URL" \
+      bash hubara_agency/.hubara/dump-pipeline-diagnostics.sh
+    when: "$classify-mode.output.mode == 'multi_plugin' && $rama-B-merge-batch.output != 'BATCH_OK'"
+    depends_on: [rama-B-merge-batch]
+
   - id: cancel-on-multi-plugin-failure
     cancel: |
       Batch multi-plugin INCOMPLETO ($rama-B-merge-batch.output).
+
+      📋 Forensic diagnostic bundle:
+         $ARTIFACTS_DIR/diagnostic-bundle.yaml
 
       Revisá hubara_agency/.hubara/results/$gen-hu-id.output.hu_id/ para ver
       qué plugins fallaron / faltaron.
@@ -1016,7 +1173,7 @@ nodes:
            archon workflow run hu-hubara-pipeline "$gen-hu-id.output.hu_id"
            (smart-resume retoma desde donde quedó)
     when: "$classify-mode.output.mode == 'multi_plugin' && $rama-B-merge-batch.output != 'BATCH_OK'"
-    depends_on: [rama-B-merge-batch]
+    depends_on: [dump-on-cancel-multi-plugin-failure]
 
   # NOTA: si el plugin-manifest tiene >1 batch, se ejecutarían rama-B-batch-2,
   # rama-B-batch-3, etc. iterativamente. Por ahora soportamos 1 batch (cubre
@@ -1043,10 +1200,27 @@ nodes:
     depends_on: [rama-A-single-plugin-inline, rama-B-merge-batch, rama-B-commit-merger]
     trigger_rule: all_done
 
+  - id: dump-on-cancel-implement-error
+    bash: |
+      HU_ID=$(echo $gen-hu-id.output 2>/dev/null | jq -r '.hu_id' 2>/dev/null || echo unknown)
+      ISSUE_URL=$(echo $gen-hu-id.output 2>/dev/null | jq -r '.issue_url' 2>/dev/null || echo unknown)
+      ARTIFACTS_DIR="$ARTIFACTS_DIR" \
+      CANCEL_NODE="cancel-on-implement-error" \
+      CANCEL_REASON="check-pipeline-error: HAS_ERROR (see pipeline-error.yaml)" \
+      PHASE="implementer" \
+      HU_ID="$HU_ID" \
+      ISSUE_URL="$ISSUE_URL" \
+      bash hubara_agency/.hubara/dump-pipeline-diagnostics.sh
+    when: "$check-pipeline-error.output == 'HAS_ERROR'"
+    depends_on: [check-pipeline-error]
+
   - id: cancel-on-implement-error
     cancel: |
       Pipeline INCOMPLETO en FASE 3 (implementación). Branch hu/$gen-hu-id.output.hu_id
       pushado a origin con todo el progreso hasta el fallo.
+
+      📋 Forensic diagnostic bundle:
+         $ARTIFACTS_DIR/diagnostic-bundle.yaml
 
       Revisar $ARTIFACTS_DIR/pipeline-error.yaml (logueado a stderr) para
       detalles + remediation.
@@ -1057,7 +1231,7 @@ nodes:
         3. Re-lanzá: archon workflow run hu-hubara-pipeline "<HU_ID>"
            (smart-resume continúa desde la próxima task pendiente).
     when: "$check-pipeline-error.output == 'HAS_ERROR'"
-    depends_on: [check-pipeline-error]
+    depends_on: [dump-on-cancel-implement-error]
 
   - id: final-validation
     bash: |
@@ -1262,9 +1436,29 @@ nodes:
     when: "$check-pipeline-error.output == 'OK'"
     depends_on: [check-pipeline-error]
 
+  # diagnostic dump runs BEFORE the cancel, capturing all state for forensics.
+  # See hubara_agency/.hubara/dump-pipeline-diagnostics.sh.
+  - id: dump-on-cancel-final-validation-fail
+    bash: |
+      HU_ID=$(echo $gen-hu-id.output 2>/dev/null | jq -r '.hu_id' 2>/dev/null || echo unknown)
+      ISSUE_URL=$(echo $gen-hu-id.output 2>/dev/null | jq -r '.issue_url' 2>/dev/null || echo unknown)
+      ARTIFACTS_DIR="$ARTIFACTS_DIR" \
+      CANCEL_NODE="cancel-on-final-validation-fail" \
+      CANCEL_REASON="final-validation output: $final-validation.output" \
+      PHASE="final-validation" \
+      HU_ID="$HU_ID" \
+      ISSUE_URL="$ISSUE_URL" \
+      bash hubara_agency/.hubara/dump-pipeline-diagnostics.sh
+    when: "$final-validation.output != 'PASS'"
+    depends_on: [final-validation]
+
   - id: cancel-on-final-validation-fail
     cancel: |
       Validación final pre-PR FALLÓ ($final-validation.output) en branch hu/$gen-hu-id.output.hu_id.
+
+      📋 Forensic diagnostic bundle:
+         $ARTIFACTS_DIR/diagnostic-bundle.yaml
+         (re-genera con: bash hubara_agency/.hubara/dump-pipeline-diagnostics.sh)
 
       El branch tiene regresión que ningún gate per-task capturó. Diagnose
       manual:
@@ -1279,7 +1473,7 @@ nodes:
         git add ...; git commit; git push origin hu/$gen-hu-id.output.hu_id
         archon workflow run hu-hubara-pipeline "$gen-hu-id.output.hu_id"
     when: "$final-validation.output != 'PASS'"
-    depends_on: [final-validation]
+    depends_on: [dump-on-cancel-final-validation-fail]
 
   # ════════════════════════════════════════════════════════════════════
   # FASE 4.5 — Premortem self-review (T6 + T7 divergent failure analysis)
@@ -1385,11 +1579,28 @@ nodes:
       fi
     depends_on: [loop-implementer-resolves-premortem]
 
+  - id: dump-on-cancel-premortem-blocked
+    bash: |
+      HU_ID=$(echo $gen-hu-id.output 2>/dev/null | jq -r '.hu_id' 2>/dev/null || echo unknown)
+      ISSUE_URL=$(echo $gen-hu-id.output 2>/dev/null | jq -r '.issue_url' 2>/dev/null || echo unknown)
+      ARTIFACTS_DIR="$ARTIFACTS_DIR" \
+      CANCEL_NODE="cancel-on-premortem-blocked" \
+      CANCEL_REASON="check-premortem-resolved: $check-premortem-resolved.output" \
+      PHASE="premortem" \
+      HU_ID="$HU_ID" \
+      ISSUE_URL="$ISSUE_URL" \
+      bash hubara_agency/.hubara/dump-pipeline-diagnostics.sh
+    when: "$check-premortem-resolved.output == 'PR_BLOCKED' || $check-premortem-resolved.output == 'PR_BROKEN'"
+    depends_on: [check-premortem-resolved]
+
   - id: cancel-on-premortem-blocked
     cancel: |
       Premortem identificó modos de fallo (critical/high) que el implementer
       NO pudo resolver en el loop subsiguiente (complejidad alta, requiere ADR
       o nueva HU para abordarse).
+
+      📋 Forensic diagnostic bundle:
+         $ARTIFACTS_DIR/diagnostic-bundle.yaml
 
       HU: hu/$gen-hu-id.output.hu_id
       Premortem report:  $ARTIFACTS_DIR/premortem.yaml (failure_modes deferred)
@@ -1409,7 +1620,7 @@ nodes:
       (.claude/skills/hubara-premortem-archon/SKILL.md §6 severidad), no lo
       desactives.
     when: "$check-premortem-resolved.output == 'PR_BLOCKED' || $check-premortem-resolved.output == 'PR_BROKEN'"
-    depends_on: [check-premortem-resolved]
+    depends_on: [dump-on-cancel-premortem-blocked]
 
   # ════════════════════════════════════════════════════════════════════
   # FASE 4.6 — Pre-PR evaluation (rúbrica calibrada T7)
@@ -1445,9 +1656,26 @@ nodes:
       esac
     depends_on: [evaluate-pre-pr]
 
+  - id: dump-on-cancel-eval-block
+    bash: |
+      HU_ID=$(echo $gen-hu-id.output 2>/dev/null | jq -r '.hu_id' 2>/dev/null || echo unknown)
+      ISSUE_URL=$(echo $gen-hu-id.output 2>/dev/null | jq -r '.issue_url' 2>/dev/null || echo unknown)
+      ARTIFACTS_DIR="$ARTIFACTS_DIR" \
+      CANCEL_NODE="cancel-on-eval-block" \
+      CANCEL_REASON="gate-evaluator-verdict: $gate-evaluator-verdict.output" \
+      PHASE="evaluator" \
+      HU_ID="$HU_ID" \
+      ISSUE_URL="$ISSUE_URL" \
+      bash hubara_agency/.hubara/dump-pipeline-diagnostics.sh
+    when: "$gate-evaluator-verdict.output == 'EVAL_BLOCK'"
+    depends_on: [gate-evaluator-verdict]
+
   - id: cancel-on-eval-block
     cancel: |
       Evaluator pre-PR BLOQUEÓ el merge para hu/$gen-hu-id.output.hu_id.
+
+      📋 Forensic diagnostic bundle:
+         $ARTIFACTS_DIR/diagnostic-bundle.yaml
 
       Veredicto: block_merge (un criterio cayó bajo su hard_threshold, O el
       weighted_average cayó bajo 5.5).
@@ -1470,7 +1698,7 @@ nodes:
       multi-agent. Si te molesta el bloqueo, calibrá el evaluator
       (ver hubara_agency/.hubara/evaluator-calibration/), no lo desactives.
     when: "$gate-evaluator-verdict.output == 'EVAL_BLOCK'"
-    depends_on: [gate-evaluator-verdict]
+    depends_on: [dump-on-cancel-eval-block]
 
   # ════════════════════════════════════════════════════════════════════
   # FASE 4.7 — Multi-agent code review (T2 + T7 defensa en profundidad)
@@ -1610,11 +1838,28 @@ nodes:
       fi
     depends_on: [loop-implementer-resolves-review]
 
+  - id: dump-on-cancel-review-blocked
+    bash: |
+      HU_ID=$(echo $gen-hu-id.output 2>/dev/null | jq -r '.hu_id' 2>/dev/null || echo unknown)
+      ISSUE_URL=$(echo $gen-hu-id.output 2>/dev/null | jq -r '.issue_url' 2>/dev/null || echo unknown)
+      ARTIFACTS_DIR="$ARTIFACTS_DIR" \
+      CANCEL_NODE="cancel-on-review-blocked" \
+      CANCEL_REASON="check-review-resolved: $check-review-resolved.output" \
+      PHASE="code-review" \
+      HU_ID="$HU_ID" \
+      ISSUE_URL="$ISSUE_URL" \
+      bash hubara_agency/.hubara/dump-pipeline-diagnostics.sh
+    when: "$check-review-resolved.output == 'REVIEW_BLOCKED' || $check-review-resolved.output == 'REVIEW_BROKEN'"
+    depends_on: [check-review-resolved]
+
   - id: cancel-on-review-blocked
     cancel: |
       Multi-agent code review identificó findings critical/high que el
       implementer NO pudo resolver en el loop subsiguiente (complejidad alta,
       requiere ADR o nueva HU).
+
+      📋 Forensic diagnostic bundle:
+         $ARTIFACTS_DIR/diagnostic-bundle.yaml
 
       HU: hu/$gen-hu-id.output.hu_id
       Code review report:  $ARTIFACTS_DIR/code-review-findings.yaml
@@ -1636,7 +1881,7 @@ nodes:
       commands (.archon/commands/hubara-reviewer-{deha,fsd,plugin-system,test-coverage,security}.md),
       no los desactives.
     when: "$check-review-resolved.output == 'REVIEW_BLOCKED' || $check-review-resolved.output == 'REVIEW_BROKEN'"
-    depends_on: [check-review-resolved]
+    depends_on: [dump-on-cancel-review-blocked]
 
   # ════════════════════════════════════════════════════════════════════
   # FASE 5 — PR (build body + create)
@@ -1858,9 +2103,11 @@ nodes:
       PO=$(grep '^project_owner:' "$CFG" | awk '{print $2}')
       PID=$(grep '^project_id:' "$CFG" | awk '{print $2}')
       FID=$(grep '^status_field_id:' "$CFG" | awk '{print $2}')
-      # Buscar opción "Done — PR ready" (con em-dash) o fallback "Done"
-      OID=$(awk '/^status_options:/{f=1; next} f && /^  "Done — PR ready":/{print $2; exit}' "$CFG")
-      [ -z "$OID" ] && OID=$(awk '/^status_options:/{f=1; next} f && /^  Done:/{print $2; exit}' "$CFG")
+      # Buscar opción "Done — PR ready" (con em-dash) o fallback "Done".
+      # CRITICAL: usar -F: + gsub para que `$2` no devuelva el em-dash
+      # cuando la key tiene espacios (default whitespace FS rompe). 2026-05-26.
+      OID=$(awk -F: '/^status_options:/{f=1; next} f && /^  "?Done — PR ready"?:/ {gsub(/^ +| +$/, "", $2); print $2; exit}' "$CFG")
+      [ -z "$OID" ] && OID=$(awk -F: '/^status_options:/{f=1; next} f && /^  "?Done"?:/ {gsub(/^ +| +$/, "", $2); print $2; exit}' "$CFG")
       [ -z "$OID" ] && { echo "warn no Done option"; exit 0; }
       II=$(gh project item-list "$PN" --owner "$PO" --format json --limit 200 2>/dev/null \
         | jq -r --arg u "$ISSUE_URL" '.items[] | select(.content.url == $u) | .id' | head -1)

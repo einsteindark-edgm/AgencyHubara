@@ -51,7 +51,11 @@ status_options:
   "Idea refined": 530dbb08
   Refining: 0cdacd66
   Refined: c7f52dc3
-  Planning: 0cdacd66
+  # NOTE: "Planning" option NO existe en el server. Antes había una línea
+  #   Planning: 0cdacd66
+  # que apuntaba al mismo id que Refining (deuda copy-paste). Removida
+  # 2026-05-26. Si un workflow necesita un estado intermedio "Planning",
+  # primero crearlo con gh project field-create-option y refrescar este file.
   Planned: 982d7d43
   Implementing: 2122c715
   "Done — PR ready": 64739d15
