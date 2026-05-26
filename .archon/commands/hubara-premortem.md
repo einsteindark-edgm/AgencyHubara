@@ -1,5 +1,5 @@
 ---
-description: Premortem skill del pipeline hubara. Corre DESPUÉS de final-validation (gates duros OK) y ANTES de evaluate-pre-pr. Imagina cómo este código va a fallar en producción y emite $ARTIFACTS_DIR/premortem.yaml con failure_modes[] + suggested_fix por cada uno. NO aplica fixes — eso lo hace el implementer en el ciclo loop-implementer-resolves-premortem. Stance escéptico explícito (similar al evaluator). Recorre 10 categorías de modos de fallo específicas al stack DEHA + FSD + Temporal de AgencyHubara. Triggers — invocación via Archon workflow skills field (nodo premortem-self-review); NO usar como subagent directo, NO como user-facing slash command.
+description: Premortem skill del pipeline hubara. Corre DESPUÉS de final-validation (gates duros OK) y ANTES de evaluate-pre-pr. Imagina cómo este código va a fallar en producción y emite $ARTIFACTS_DIR/premortem.yaml con failure_modes[] + suggested_fix por cada uno. NO aplica fixes — eso lo hace el implementer en el ciclo loop-implementer-resolves-premortem. Stance escéptico explícito (similar al evaluator). Recorre 11 categorías de modos de fallo específicas al stack DEHA + FSD + Temporal de AgencyHubara, incluyendo §4.11 spec / behavior contract consistency (Fase 12 OpenSpec integration). Triggers — invocación via Archon workflow skills field (nodo premortem-self-review); NO usar como subagent directo, NO como user-facing slash command.
 argument-hint: (none — reads from $ARTIFACTS_DIR)
 ---
 
@@ -47,11 +47,19 @@ Esta sección la leés en cada invocación.
 
 ## §2. Step 0 — Cargar contexto (OBLIGATORIO)
 
-1. `$ARTIFACTS_DIR/hu-refinada.md` — scope esperado + §1 AC + §12 risks (el refiner ya identificó algunos — no los repitas, ampliá).
+1. `$ARTIFACTS_DIR/hu-refinada.md` — scope esperado + §1 AC + §12 risks (el refiner ya identificó algunos — no los repitas, ampliá). **Mirá §16 — te dice qué capabilities cambian.**
 2. `$ARTIFACTS_DIR/task-result.yaml` — qué hizo el implementer.
 3. `$ARTIFACTS_DIR/exploration-map.md` — convenciones del subsistema.
 4. `$ARTIFACTS_DIR/feature-plan-manifest.yaml` — entender depends_on (¿hay dependencies frágiles?).
-5. **Cargá del guide solo si necesitás detalle de un patrón**:
+5. **Capability specs + deltas (NUEVO — Fase 12 OpenSpec integration)**:
+   - Para cada capability listada en §16 del refinement, cargá:
+     - `$ARTIFACTS_DIR/spec-deltas/<capability>/spec.md` — qué SHALL nuevo / MODIFIED / REMOVED introduce esta HU
+     - `hubara_agency/.hubara/specs/<capability>/spec.md` — comportamiento existente (si la spec existía)
+   - **¿Por qué?** Los failure modes deben fundamentarse en Requirements/Scenarios reales:
+     - "El Scenario X en el delta dice `WHEN payload['discount']='EXPIRED' THEN error 'INVALID_DISCOUNT'`. ¿Qué pasa si el código solo chequea `discount==None` y no `EXPIRED`? → failure mode `runtime: discount expired no rejected`"
+     - "El parent spec dice `idempotency MUST hold para retry`. El delta agrega un nuevo endpoint pero NO menciona idempotency. → failure mode `behavior_contract: nuevo endpoint sin idempotency check`"
+   - Si una capability afectada en §16 NO tiene parent spec ni delta consistente → failure mode `process: capability sin contrato, comportamiento ambiguo` (categoría §4.10).
+6. **Cargá del guide solo si necesitás detalle de un patrón**:
    - `sections/04-backend-agents.md` si el feature toca workflow/activity (busca race conditions, idempotencia).
    - `sections/05-frontend-fsd.md` si toca UI (busca loading/empty/error states).
    - `references/deha-rules.md` si dudás de R-rules en un fix.
@@ -74,9 +82,9 @@ Identificá:
 
 ---
 
-## §4. Las 10 categorías de modos de fallo
+## §4. Las 11 categorías de modos de fallo
 
-Por **cada una** de las 10 categorías, generá **3-5 hipótesis específicas al diff**. NO inventes hipótesis genéricas (e.g., "podría haber bugs"). Cada hipótesis debe citar `archivo:línea` específica del diff.
+Por **cada una** de las 11 categorías, generá **3-5 hipótesis específicas al diff**. NO inventes hipótesis genéricas (e.g., "podría haber bugs"). Cada hipótesis debe citar `archivo:línea` específica del diff.
 
 ### §4.1 Runtime failures (input edge cases)
 
@@ -173,6 +181,27 @@ Preguntas-guía:
 - ¿Qué se muestra cuando `mutation.isError === true`? ¿Hay retry button?
 - ¿El botón de submit está disabled mientras `mutation.isPending`? (Double-submit guard.)
 - ¿Las queries tienen `staleTime` razonable o re-fetchen en cada render?
+
+### §4.11 Spec / behavior contract consistency (Fase 12 OpenSpec)
+
+**Esta categoría es OBLIGATORIA si el §16 del refinement lista al menos
+1 capability con delta.** Si §16 es `(N/A — refactor interno)` podés
+skipearla.
+
+Preguntas-guía (cross-ref `$ARTIFACTS_DIR/spec-deltas/<cap>/spec.md` + diff):
+
+- ¿Cada Scenario nuevo en los deltas tiene un **test que lo verifica**? Si no → failure mode `scenario sin test, contrato no enforced`.
+- ¿El diff introduce comportamiento NO presente en ningún Scenario del delta? (Código sin Requirement detrás.) → failure mode `código sin spec, comportamiento ad-hoc`.
+- ¿Un Requirement modificado (`MODIFIED Requirements`) tiene `(Previously: X)` claro? Si no → failure mode `audit trail roto, consumers downstream no saben qué cambió`.
+- ¿Un `REMOVED Requirements` tiene consumers downstream que dependen del comportamiento removido? (Grep callers de la API/event/tool removida.) → failure mode `breaking change sin migration path`.
+- ¿La parent spec dice `MUST be idempotent` y el diff agrega un endpoint nuevo sin verificación de idempotency? → failure mode `nuevo endpoint contradice invariante del parent spec`.
+- ¿Un Scenario del delta dice `THEN error code X` pero el código devuelve error code Y? → failure mode `scenario miente, código devuelve algo distinto`.
+- ¿El delta agrega Requirement con SHOULD/MAY (recomendado) pero el código lo trata como MUST (rechaza)? → failure mode `force semántica más estricta que el contrato`.
+- Si la HU tiene `seed_inline` (capability nueva sin spec previa): ¿el bootstrap cubre los casos críticos o se enfocó solo en el happy path? → failure mode `seed spec incompleto, capability sin edge cases definidos`.
+
+**Severidad típica**: `high` o `critical` — un Scenario sin test es deuda
+que va a explotar en producción la primera vez que llegue el input que
+imaginaste.
 
 ---
 

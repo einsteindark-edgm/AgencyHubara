@@ -116,6 +116,23 @@ Si `<ImportedWorkflowClass>` viene de sibling agent → CRITICAL.
     - ¿Bootstrap activity tiene fallback? → OK
     - Si ninguna → HIGH severity: "campo nuevo sin default ni input_mapping → dispatcher pasa dict con TypeError en producción".
 
+### H. Capability spec ↔ código consistency (Fase 12 OpenSpec)
+
+**Skip esta categoría si `§16 del refinement = (N/A)`.**
+
+Por cada capability listada en §16 del refinement con `spec-deltas/<cap>/spec.md`:
+
+- Leé el delta + la parent spec en `hubara_agency/.hubara/specs/<cap>/spec.md` (si existe).
+- Grep el diff backend del PR (`/tmp/deha-files.txt`) para cambios que afecten esa capability.
+- Verificá:
+  - **Code without contract**: comportamiento nuevo en el diff (nuevo endpoint, nuevo branch en activity, nuevo tool registration) que NO aparece en ningún Scenario del delta → HIGH severity finding `code_without_spec`.
+  - **Contract without code**: Scenario nuevo en el delta que NO tiene código backend correspondiente (e.g., delta dice `WHEN POST /api/x THEN ...` pero el endpoint no existe en el diff) → CRITICAL `spec_lies` (el implementer prometió comportamiento que no implementó).
+  - **MODIFIED sin "(Previously: X)"**: si el delta tiene `## MODIFIED Requirements` sin contexto "(Previously: ...)" claro → MEDIUM `audit_trail_broken`.
+  - **REMOVED sin migration path**: si delta tiene `## REMOVED Requirements` pero el diff NO documenta cómo los consumers downstream se adaptan → HIGH `breaking_change_no_migration`.
+  - **Idempotency invariante violado**: si la parent spec dice "MUST be idempotent" para una operación, y el diff agrega un nuevo write-path sin idempotency check → HIGH `idempotency_invariant_broken`.
+
+Reportar como findings con `rule: SPEC-CONSISTENCY`.
+
 ---
 
 ## §5. Phase 4 — Cross-reference con premortem
@@ -141,7 +158,7 @@ files_audited: <count>
 findings:
   - id: CR-DEHA-001
     severity: critical | high | medium | low
-    rule: R-DET | R-JSON | R-STATELESS | R-HEARTBEAT | R-DIP | R-DIP-10 | ADR-2026-05-20
+    rule: R-DET | R-JSON | R-STATELESS | R-HEARTBEAT | R-DIP | R-DIP-10 | ADR-2026-05-20 | SPEC-CONSISTENCY
     location: hubara_agency/src/plugins/chats/agent/sales/workflows/session.py:142
     code_excerpt: |
       from src.plugins.remarketing.agent.workflows import RemarketingWorkflow

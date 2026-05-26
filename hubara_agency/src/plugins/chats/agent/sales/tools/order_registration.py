@@ -66,6 +66,9 @@ from src.platform.orders.port import (
     OrderShipping,
 )
 from src.platform.orders.stub import StubOrderRegistration
+from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
+    attach_order_to_active_episode,
+)
 
 
 class RegisterOrderTool(ToolBase):
@@ -265,6 +268,15 @@ class RegisterOrderTool(ToolBase):
 
         if result.success:
             data["registered_order"] = registered_record
+            # Episode lifecycle: anotar order_id en el episodio activo (NO
+            # cerrar — el cierre lo hace manage_conversation_tag(COMPRA_EXITOSA)
+            # que el agente invoca justo después). Defensivo: si no hay
+            # episodio activo, attach_order_to_active_episode crea uno.
+            attach_order_to_active_episode(
+                data,
+                order_id=registered_record["order_id"],
+                now_ms=registered_record["registered_at_ms"],
+            )
         else:
             # Falla: NO sobrescribimos `registered_order` (preserva exitosos
             # previos) pero apendiamos a `failed_order_registrations[]` para

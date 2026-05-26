@@ -121,3 +121,137 @@ async def test_tags_tool_no_decision_for_rechazo(tmp_path: Path) -> None:
 
     assert "schedule_remarketing" not in payload
     assert "message" in payload
+
+
+# --- FU4: wiring tools → episode lifecycle ---------------------------------
+
+
+async def test_tags_tool_closes_active_episode_on_closing_tag(tmp_path: Path) -> None:
+    """FU4: cuando el tag es de cierre (COMPRA_EXITOSA/RECHAZO/CONFIRMADO_SIN_DATOS),
+    el tool debe llamar a close_episode → marca el episodio activo cerrado
+    con closing_tag + closing_motivo. Side effect verificado en metadata.json.
+    """
+    workspace = tmp_path
+    session_key = "wa_5494444444444"
+    # Seedeamos un metadata.json con un episodio activo
+    (workspace / session_key).mkdir(parents=True, exist_ok=True)
+    seed = {
+        "episodes": [
+            {
+                "episode_id": "ep_001",
+                "started_at_ms": 1_700_000_000_000,
+                "started_inbound_message_id": "wamid.A",
+                "closed_at_ms": None,
+                "closing_tag": None,
+                "closing_motivo": None,
+                "order_id": None,
+                "referral_snapshot": None,
+                "msgs_count_at_start": 0,
+                "msgs_count_at_close": None,
+            }
+        ],
+    }
+    (workspace / session_key / "metadata.json").write_text(json.dumps(seed))
+
+    tool = ManageConversationTagTool(workspace=str(workspace), vault_dir=workspace)
+    await tool.execute_with_context(
+        _ctx(session_key), tag="COMPRA_EXITOSA", motivo="venta cerrada"
+    )
+
+    data = json.loads(
+        (workspace / session_key / "metadata.json").read_text(encoding="utf-8")
+    )
+    episodes = data["episodes"]
+    assert len(episodes) == 1
+    ep = episodes[0]
+    assert ep["closed_at_ms"] is not None
+    assert ep["closing_tag"] == "COMPRA_EXITOSA"
+    assert ep["closing_motivo"] == "venta cerrada"
+
+
+async def test_tags_tool_does_not_close_episode_for_interesado(
+    tmp_path: Path,
+) -> None:
+    """FU4: INTERESADO es un tag intermedio (programa remarketing), NO de
+    cierre. El episodio sigue activo después de aplicarlo."""
+    workspace = tmp_path
+    session_key = "wa_5495555555555"
+    (workspace / session_key).mkdir(parents=True, exist_ok=True)
+    seed = {
+        "episodes": [
+            {
+                "episode_id": "ep_001",
+                "started_at_ms": 1_700_000_000_000,
+                "started_inbound_message_id": "wamid.A",
+                "closed_at_ms": None,
+                "closing_tag": None,
+                "closing_motivo": None,
+                "order_id": None,
+                "referral_snapshot": None,
+                "msgs_count_at_start": 0,
+                "msgs_count_at_close": None,
+            }
+        ],
+    }
+    (workspace / session_key / "metadata.json").write_text(json.dumps(seed))
+
+    tool = ManageConversationTagTool(workspace=str(workspace), vault_dir=workspace)
+    await tool.execute_with_context(
+        _ctx(session_key), tag="INTERESADO", motivo="cliente dudó"
+    )
+
+    data = json.loads(
+        (workspace / session_key / "metadata.json").read_text(encoding="utf-8")
+    )
+    ep = data["episodes"][0]
+    # Episodio sigue activo
+    assert ep["closed_at_ms"] is None
+    assert ep["closing_tag"] is None
+    # Pero metadata.tag global sí se actualizó
+    assert data["tag"] == "INTERESADO"
+
+
+async def test_tags_tool_close_persists_msgs_count_at_close(tmp_path: Path) -> None:
+    """FU3 wiring: el tool cuenta líneas del JSONL al cerrar y lo persiste
+    en `episodes[-1].msgs_count_at_close` para que el listing calcule
+    msgs_in_episode exacto."""
+    workspace = tmp_path
+    session_key = "wa_5496666666666"
+    (workspace / session_key).mkdir(parents=True, exist_ok=True)
+    seed = {
+        "episodes": [
+            {
+                "episode_id": "ep_001",
+                "started_at_ms": 1_700_000_000_000,
+                "started_inbound_message_id": "wamid.A",
+                "closed_at_ms": None,
+                "closing_tag": None,
+                "closing_motivo": None,
+                "order_id": None,
+                "referral_snapshot": None,
+                "msgs_count_at_start": 5,  # arrancó cuando el JSONL tenía 5 líneas
+                "msgs_count_at_close": None,
+            }
+        ],
+    }
+    (workspace / session_key / "metadata.json").write_text(json.dumps(seed))
+    # Seedeamos un JSONL con 12 líneas
+    sessions_dir = workspace / session_key / "sessions"
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    jsonl = sessions_dir / f"{session_key}.jsonl"
+    jsonl.write_text(
+        "\n".join(f'{{"role":"user","content":"m{i}"}}' for i in range(12)) + "\n",
+        encoding="utf-8",
+    )
+
+    tool = ManageConversationTagTool(workspace=str(workspace), vault_dir=workspace)
+    await tool.execute_with_context(
+        _ctx(session_key), tag="RECHAZO", motivo="no quiso"
+    )
+
+    data = json.loads(
+        (workspace / session_key / "metadata.json").read_text(encoding="utf-8")
+    )
+    ep = data["episodes"][0]
+    assert ep["msgs_count_at_close"] == 12
+    assert ep["msgs_count_at_start"] == 5  # preserva el original

@@ -100,8 +100,10 @@ function Card({ order, selected, onSelect }: CardProps) {
             </span>
           )}
           {order.payType === "confirmed" && (
+            // "Anticipado" = modalidad (no cash on delivery). NO es estado
+            // de pago — el estado real (paid/pending/etc.) vive en orders.
             <span className="pay-badge confirmed">
-              <Icon.check /> Pagado
+              <Icon.check /> Anticipado
             </span>
           )}
           {order.needs && (

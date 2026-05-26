@@ -83,6 +83,12 @@ export const orderItemDetailSchema = z.object({
   unit_price_cop: z.number().int(),
   total_cop: z.number().int(),
   variant_label: z.string().nullable(),
+  // H3: el LLM pidió una variante que NO matcheó ninguna variante real del
+  // producto en Medusa (ej. producto solo tiene "Unico" pero el LLM mandó
+  // "Ylan ylang, Gris"). Cuando true, la UI debe destacar al operador que
+  // revise manualmente — la variante registrada en Medusa NO refleja lo
+  // pedido. Default false para tolerar payloads viejos pre-feature.
+  variant_label_mismatch: z.boolean().default(false),
   thumbnail: z.string().nullable(),
   handle: z.string().nullable(),
 });
@@ -129,13 +135,38 @@ export const orderDetailSchema = z.object({
   payment_method_label: z.string().nullable(),
   notes: z.array(z.string()),
   // Lista de slots que aún no vienen del backend. La UI pinta un marker
-  // "Datos pendientes" sobre estos campos. Valores conocidos:
-  // 'due_date', 'agent', 'priority', 'notes', 'customer_history',
-  // 'tracking_number', 'shipping_provider', 'payment_method_detail'.
+  // "Datos pendientes" sobre estos campos. Valores conocidos hoy:
+  // 'agent', 'customer_history', 'due_date', 'tracking_number',
+  // 'shipping_provider', 'payment_method_detail'. Lista colapsable según
+  // el operador progresa el flujo.
   data_completeness_missing: z.array(z.string()),
 });
 
 export type OrderDetail = z.infer<typeof orderDetailSchema>;
+
+/* ── Command response — shape de los endpoints write-side (F7) ───────────
+ *
+ * Los 4 endpoints PATCH/POST devuelven SIEMPRE este shape — el componente
+ * que llama al mutation hace switch sobre `success` y `error_detail`.
+ *
+ *   success=true  → invalidate queryKey list+detail; UI muestra toast OK.
+ *   success=false → muestra dialog con el `error_detail`. Kinds canónicos:
+ *      - "not_found: ..."          (HTTP 404 disfrazado de 200 con success=false)
+ *      - "invalid_transition: ..." (DAG violation; UI muestra dialog explicativo)
+ *      - "medusa_unauthorized: ..."(token expirado; pedile al operador rotar)
+ *      - "medusa_unavailable: ..." (5xx / no config; retry en 1-2 min)
+ *      - "medusa_api_error: ..."   (cualquier otro 4xx/5xx)
+ */
+
+export const orderCommandResultSchema = z.object({
+  success: z.boolean(),
+  order_id: z.string(),
+  current_stage: orderUiStatusSchema.nullable(),
+  error_detail: z.string().nullable(),
+  audit_id: z.string().nullable(),
+});
+
+export type OrderCommandResult = z.infer<typeof orderCommandResultSchema>;
 
 // Vault orders — premortem F2+K1.
 // Orders que existen en el vault local (hubara_vault/wa_<id>/metadata.json)

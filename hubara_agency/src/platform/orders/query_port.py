@@ -38,13 +38,24 @@ OrderPayType = Literal["cod", "confirmed"]
 
 @dataclass(frozen=True)
 class OrderItemDTO:
-    """Item del pedido (line item). Snapshot del estado al cierre de venta."""
+    """Item del pedido (line item). Snapshot del estado al cierre de venta.
+
+    `variant_label`: lo que el cliente eligió (ej. "Ylan ylang, Gris") tal como
+    el LLM lo pasó en register_order. Source-of-truth para el operador.
+
+    `variant_label_mismatch`: bandera H3 — el LLM pidió una variante que NO
+    matcheó con ninguna variante real del producto en Medusa (caso típico:
+    producto solo tiene variante "Unico" pero el LLM mandó aroma+color
+    compuesto). Cuando True, la variante registrada en Medusa NO refleja
+    lo que el cliente pidió — el operador debe revisar manualmente.
+    """
     title: str
     sku: str | None
     quantity: int
     unit_price_cop: int
     total_cop: int
     variant_label: str | None = None
+    variant_label_mismatch: bool = False
     thumbnail: str | None = None
     handle: str | None = None  # producto handle si esta en metadata
 

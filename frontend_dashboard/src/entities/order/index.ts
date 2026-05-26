@@ -16,6 +16,10 @@ export {
   useOrders,
   useOrderDetail,
   useVaultOrders,
+  useScheduleOrder,
+  useTransitionOrderStage,
+  useConfirmOrderPayment,
+  useCancelOrder,
   toLegacyOrder,
 } from "./api";
 export {
@@ -23,5 +27,10 @@ export {
   orderDetailSchema,
   orderSummarySchema,
   vaultOrdersResponseSchema,
+  orderCommandResultSchema,
 } from "./contracts";
-export type { VaultOrderRecord, VaultOrdersResponse } from "./contracts";
+export type {
+  VaultOrderRecord,
+  VaultOrdersResponse,
+  OrderCommandResult,
+} from "./contracts";

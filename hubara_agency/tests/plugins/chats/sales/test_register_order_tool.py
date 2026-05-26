@@ -191,6 +191,129 @@ async def test_register_order_persists_to_metadata(ctx, vault):
 
 
 @pytest.mark.asyncio
+async def test_register_order_attaches_order_id_to_active_episode(ctx, vault):
+    """FU4 wiring: cuando register_order tiene success=True, anota el
+    order_id en `episodes[-1].order_id` (sin cerrar el episodio — eso lo
+    hace `manage_conversation_tag(COMPRA_EXITOSA)` después).
+    """
+    # Seed: episodio activo
+    (vault / ctx.session_key / "metadata.json").write_text(
+        json.dumps(
+            {
+                "episodes": [
+                    {
+                        "episode_id": "ep_001",
+                        "started_at_ms": 1_700_000_000_000,
+                        "started_inbound_message_id": "wamid.A",
+                        "closed_at_ms": None,
+                        "closing_tag": None,
+                        "closing_motivo": None,
+                        "order_id": None,
+                        "referral_snapshot": None,
+                        "msgs_count_at_start": 0,
+                        "msgs_count_at_close": None,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    fake = FakeOrderRegistrationPort(fixed_order_id="draft_FU4_attach")
+    tool = RegisterOrderTool(workspace=str(vault), vault_dir=vault, port=fake)
+    await tool.execute_with_context(
+        ctx,
+        items=_SAMPLE_ITEMS,
+        shipping=_SAMPLE_SHIPPING,
+        payment_method="transfer",
+        subtotal_cop=17000,
+        shipping_cop=0,
+        total_cop=17000,
+    )
+
+    metadata = _read_metadata(vault, ctx.session_key)
+    ep = metadata["episodes"][-1]
+    assert ep["order_id"] == "draft_FU4_attach"
+    # NO cerró el episodio
+    assert ep["closed_at_ms"] is None
+    assert ep["closing_tag"] is None
+
+
+@pytest.mark.asyncio
+async def test_register_order_creates_episode_when_none_active(ctx, vault):
+    """FU4 defensivo: si por alguna razón no hay episodio activo cuando se
+    registra una venta, el tool crea uno y anota el order_id ahí.
+    Aceptamos esa tolerancia para no perder la asociación venta↔episodio.
+    """
+    # No seedeamos episodes[] — metadata vacío
+    fake = FakeOrderRegistrationPort(fixed_order_id="draft_FU4_create")
+    tool = RegisterOrderTool(workspace=str(vault), vault_dir=vault, port=fake)
+    await tool.execute_with_context(
+        ctx,
+        items=_SAMPLE_ITEMS,
+        shipping=_SAMPLE_SHIPPING,
+        payment_method="transfer",
+        subtotal_cop=17000,
+        shipping_cop=0,
+        total_cop=17000,
+    )
+
+    metadata = _read_metadata(vault, ctx.session_key)
+    assert "episodes" in metadata
+    assert len(metadata["episodes"]) == 1
+    assert metadata["episodes"][0]["order_id"] == "draft_FU4_create"
+
+
+@pytest.mark.asyncio
+async def test_register_order_failure_does_not_attach_order_id(ctx, vault):
+    """FU4: si el port devuelve success=False (Medusa caído), NO se anota
+    order_id en el episodio (la venta no se concretó)."""
+    # Seed: episodio activo
+    (vault / ctx.session_key / "metadata.json").write_text(
+        json.dumps(
+            {
+                "episodes": [
+                    {
+                        "episode_id": "ep_001",
+                        "started_at_ms": 1_700_000_000_000,
+                        "started_inbound_message_id": "wamid.A",
+                        "closed_at_ms": None,
+                        "closing_tag": None,
+                        "closing_motivo": None,
+                        "order_id": None,
+                        "referral_snapshot": None,
+                        "msgs_count_at_start": 0,
+                        "msgs_count_at_close": None,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    fake = FakeOrderRegistrationPort(
+        return_success=False, error_detail="medusa_down"
+    )
+    tool = RegisterOrderTool(workspace=str(vault), vault_dir=vault, port=fake)
+    await tool.execute_with_context(
+        ctx,
+        items=_SAMPLE_ITEMS,
+        shipping=_SAMPLE_SHIPPING,
+        payment_method="transfer",
+        subtotal_cop=17000,
+        shipping_cop=0,
+        total_cop=17000,
+    )
+
+    metadata = _read_metadata(vault, ctx.session_key)
+    ep = metadata["episodes"][-1]
+    # NO se anotó order_id porque la venta falló
+    assert ep["order_id"] is None
+    # Pero el intento queda registrado en failed_order_registrations
+    assert "failed_order_registrations" in metadata
+
+
+@pytest.mark.asyncio
 async def test_register_order_forwards_correct_dtos_to_port(ctx, vault):
     """El port recibe DTOs frozen con los valores correctos — sin perder el
     variant_label, sin convertir a JSON innecesariamente."""

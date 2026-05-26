@@ -84,8 +84,12 @@ def test_ignores_sessions_without_origin(_isolate_vault_dir: Path):
     assert list_ads_campaigns(_isolate_vault_dir) == []
 
 
-def test_ignores_direct_origin(_isolate_vault_dir: Path):
-    """Sesiones con origin.channel='direct' no son campañas — quedan fuera."""
+def test_direct_origin_creates_synthetic_campaign(_isolate_vault_dir: Path):
+    """Sesiones con origin.channel='direct' se agrupan en una `campaña
+    sintética` con id='direct'. Es la "campaña" de clientes orgánicos /
+    sin atribución a ad/post — útil para que el dashboard ads muestre
+    también el volumen de mensajes que NO vienen de Meta.
+    """
     _write_session(
         _isolate_vault_dir,
         phone="222",
@@ -97,7 +101,108 @@ def test_ignores_direct_origin(_isolate_vault_dir: Path):
             "source_id": None,
         },
     )
-    assert list_ads_campaigns(_isolate_vault_dir) == []
+    _write_session(
+        _isolate_vault_dir,
+        phone="333",
+        origin={
+            "channel": "direct",
+            "first_seen_ms": 1714312500000,
+            "first_inbound_message_id": "wamid.Y",
+            "headline": None,
+            "source_id": None,
+        },
+    )
+
+    campaigns = list_ads_campaigns(_isolate_vault_dir)
+    assert len(campaigns) == 1
+    direct = campaigns[0]
+    assert direct.id == "direct"
+    assert direct.source_type == "direct"
+    assert direct.started == 2
+    assert direct.first_seen_ms == 1714312400000
+    assert direct.last_seen_ms == 1714312500000
+    # Naming visible — sin source_id, el name es un label fijo
+    assert direct.name is not None and "directo" in direct.name.lower()
+
+
+def test_direct_synthetic_coexists_with_real_campaigns(_isolate_vault_dir: Path):
+    """Un ad + un direct → 2 campañas: la real (con source_id) + la
+    sintética 'direct'."""
+    _write_session(
+        _isolate_vault_dir,
+        phone="111",
+        origin={
+            "channel": "ad",
+            "first_seen_ms": 1714312400000,
+            "first_inbound_message_id": "wamid.A",
+            "headline": "Velas Hubara",
+            "source_id": "AD_123",
+        },
+    )
+    _write_session(
+        _isolate_vault_dir,
+        phone="222",
+        origin={
+            "channel": "direct",
+            "first_seen_ms": 1714312500000,
+            "first_inbound_message_id": "wamid.D",
+            "headline": None,
+            "source_id": None,
+        },
+    )
+    campaigns = list_ads_campaigns(_isolate_vault_dir)
+    assert len(campaigns) == 2
+    by_id = {c.id: c for c in campaigns}
+    assert "AD_123" in by_id
+    assert "direct" in by_id
+    assert by_id["direct"].source_type == "direct"
+    assert by_id["AD_123"].source_type == "ad"
+
+
+def test_attributed_conversations_for_direct_campaign(_isolate_vault_dir: Path):
+    """campaign_id='direct' devuelve todas las sesiones con
+    origin.channel='direct' (no se filtra por source_id porque es null)."""
+    _write_session(
+        _isolate_vault_dir,
+        phone="111",
+        origin={
+            "channel": "direct",
+            "first_seen_ms": 1714312400000,
+            "first_inbound_message_id": "wamid.A",
+            "headline": None,
+            "source_id": None,
+        },
+        active_route="ventas",
+    )
+    _write_session(
+        _isolate_vault_dir,
+        phone="222",
+        origin={
+            "channel": "direct",
+            "first_seen_ms": 1714312500000,
+            "first_inbound_message_id": "wamid.B",
+            "headline": None,
+            "source_id": None,
+        },
+        active_route="ventas",
+    )
+    # Un ad NO debe aparecer cuando se pide direct
+    _write_session(
+        _isolate_vault_dir,
+        phone="333",
+        origin={
+            "channel": "ad",
+            "first_seen_ms": 1714312600000,
+            "first_inbound_message_id": "wamid.C",
+            "headline": "Otro",
+            "source_id": "AD_OTHER",
+        },
+    )
+
+    convs = list_attributed_conversations(_isolate_vault_dir, "direct")
+    assert len(convs) == 2
+    phones = {c.phone_number for c in convs}
+    assert phones == {"111", "222"}
 
 
 def test_groups_sessions_by_source_id(_isolate_vault_dir: Path):
@@ -307,11 +412,13 @@ def test_attributed_conversations_filtered_by_campaign(_isolate_vault_dir: Path)
     assert c.started_at_ms == 1714312400000
     assert c.ad_headline == "Velas Hubara"
     assert c.agent == "ventas"
-    # Campos sin data
+    # Campos sin data (CRM/orders pendientes)
     assert c.name is None
     assert c.city is None
-    assert c.state is None
     assert c.value is None
+    # state se deriva del classifier — esta sesión es NO_ETIQUETADO sin
+    # mensajes en JSONL → `nuevo` (heurística default).
+    assert c.state == "nuevo"
 
 
 def test_attributed_conversations_msgs_count_from_jsonl(_isolate_vault_dir: Path):
@@ -422,3 +529,533 @@ def test_attributed_conversations_empty_for_unknown_campaign(
 def test_attributed_conversations_empty_vault(_isolate_vault_dir: Path):
     """Vault vacío → []."""
     assert list_attributed_conversations(_isolate_vault_dir, "AD_X") == []
+
+
+# ---------------------------------------------------------------------------
+# State + conversations counts (classifier integration)
+# ---------------------------------------------------------------------------
+
+
+def test_conversation_with_registered_order_is_state_ganado(_isolate_vault_dir: Path):
+    """Sesión con registered_order.success=True → state=ganado.
+    Es la señal de venta cerrada más fuerte (Medusa)."""
+    _write_session(
+        _isolate_vault_dir,
+        phone="111",
+        origin={
+            "channel": "direct",
+            "first_seen_ms": 1714312400000,
+            "first_inbound_message_id": "wamid.A",
+            "headline": None,
+            "source_id": None,
+        },
+        # Adicionalmente seteamos registered_order via raw merge:
+    )
+    # Mutamos el metadata escrito para agregar el registered_order
+    import json as _json
+    meta_path = _isolate_vault_dir / "wa_111" / "metadata.json"
+    data = _json.loads(meta_path.read_text())
+    data["registered_order"] = {"success": True, "order_id": "order_xyz"}
+    meta_path.write_text(_json.dumps(data))
+
+    convs = list_attributed_conversations(_isolate_vault_dir, "direct")
+    assert len(convs) == 1
+    assert convs[0].state == "ganado"
+
+
+def test_campaign_conversations_counts_aggregate_states(_isolate_vault_dir: Path):
+    """Cuatro sesiones del mismo ad: 2 perdido, 1 ganado, 1 calificado.
+    El bucket de la campaña debe sumar counts correctamente."""
+    import json as _json
+
+    def _add(phone: str, extra_meta: dict):
+        _write_session(
+            _isolate_vault_dir,
+            phone=phone,
+            origin={
+                "channel": "ad",
+                "first_seen_ms": 1714312000000 + int(phone) * 1000,
+                "first_inbound_message_id": f"wamid.{phone}",
+                "headline": "Velas Hubara",
+                "source_id": "AD_MULTI",
+            },
+        )
+        meta_path = _isolate_vault_dir / f"wa_{phone}" / "metadata.json"
+        data = _json.loads(meta_path.read_text())
+        data.update(extra_meta)
+        meta_path.write_text(_json.dumps(data))
+
+    _add("100", {"tag": "RECHAZO"})
+    _add("200", {"tag": "RECHAZO"})
+    _add("300", {"registered_order": {"success": True, "order_id": "x"}})
+    _add("400", {"tag": "INTERESADO"})
+
+    campaigns = list_ads_campaigns(_isolate_vault_dir)
+    assert len(campaigns) == 1
+    counts = campaigns[0].conversations
+    assert counts is not None
+    assert counts["perdido"] == 2
+    assert counts["ganado"] == 1
+    assert counts["calificado"] == 1
+    # Resto en 0
+    assert counts["nuevo"] == 0
+    assert counts["activo"] == 0
+    assert counts["cotizado"] == 0
+    assert counts["no_reply"] == 0
+    # started total = 4
+    assert campaigns[0].started == 4
+    # Counts suman al total
+    assert sum(counts.values()) == 4
+
+
+def test_direct_bucket_conversations_counts(_isolate_vault_dir: Path):
+    """El bucket sintético `direct` también acumula counts por estado."""
+    import json as _json
+
+    def _add(phone: str, extra_meta: dict):
+        _write_session(
+            _isolate_vault_dir,
+            phone=phone,
+            origin={
+                "channel": "direct",
+                "first_seen_ms": 1714312000000 + int(phone) * 1000,
+                "first_inbound_message_id": f"wamid.{phone}",
+                "headline": None,
+                "source_id": None,
+            },
+        )
+        meta_path = _isolate_vault_dir / f"wa_{phone}" / "metadata.json"
+        data = _json.loads(meta_path.read_text())
+        data.update(extra_meta)
+        meta_path.write_text(_json.dumps(data))
+
+    _add("100", {"registered_order": {"success": True, "order_id": "o1"}})
+    _add("200", {"tag": "NO_ETIQUETADO"})  # nuevo (0 msgs)
+
+    campaigns = list_ads_campaigns(_isolate_vault_dir)
+    assert len(campaigns) == 1
+    direct = campaigns[0]
+    assert direct.id == "direct"
+    assert direct.conversations is not None
+    assert direct.conversations["ganado"] == 1
+    assert direct.conversations["nuevo"] == 1
+    assert direct.started == 2
+
+
+def test_session_with_multiple_episodes_produces_one_conversation_per_episode(
+    _isolate_vault_dir: Path,
+):
+    """Una sesión con 2 episodios (ep_001 cerrado COMPRA_EXITOSA + ep_002
+    activo) → 2 conversaciones en la lista de atribuidas, con states
+    distintos. El id incluye el episode_id para diferenciar."""
+    import json as _json
+
+    _write_session(
+        _isolate_vault_dir,
+        phone="555",
+        origin={
+            "channel": "ad",
+            "first_seen_ms": 1714000000000,
+            "first_inbound_message_id": "wamid.A1",
+            "headline": "Velas Hubara",
+            "source_id": "AD_MULTI_EP",
+        },
+    )
+    meta_path = _isolate_vault_dir / "wa_555" / "metadata.json"
+    data = _json.loads(meta_path.read_text())
+    # Simulamos 2 episodios: uno cerrado con orden, otro activo recién creado
+    data["episodes"] = [
+        {
+            "episode_id": "ep_001",
+            "started_at_ms": 1714000000000,
+            "started_inbound_message_id": "wamid.A1",
+            "closed_at_ms": 1714001000000,
+            "closing_tag": "COMPRA_EXITOSA",
+            "closing_motivo": "compró",
+            "order_id": "order_xyz",
+            "referral_snapshot": None,
+        },
+        {
+            "episode_id": "ep_002",
+            "started_at_ms": 1715000000000,
+            "started_inbound_message_id": "wamid.A2",
+            "closed_at_ms": None,
+            "closing_tag": None,
+            "closing_motivo": None,
+            "order_id": None,
+            "referral_snapshot": None,
+        },
+    ]
+    data["tag"] = "NO_ETIQUETADO"  # reset por el episodio nuevo
+    meta_path.write_text(_json.dumps(data))
+
+    convs = list_attributed_conversations(_isolate_vault_dir, "AD_MULTI_EP")
+    assert len(convs) == 2
+
+    by_ep = {c.episode_id: c for c in convs}
+    assert "ep_001" in by_ep
+    assert "ep_002" in by_ep
+    # ep_001 cerrado con order → ganado
+    assert by_ep["ep_001"].state == "ganado"
+    assert by_ep["ep_001"].id == "wa_555__ep_001"
+    # ep_002 activo recién abierto sin msgs → nuevo
+    assert by_ep["ep_002"].state == "nuevo"
+    assert by_ep["ep_002"].id == "wa_555__ep_002"
+    # Mismo phone_number en ambas
+    assert all(c.phone_number == "555" for c in convs)
+
+
+def test_campaign_started_counts_episodes_not_sessions(
+    _isolate_vault_dir: Path,
+):
+    """AdsCampaignSummary.started cuenta EPISODIOS (no sesiones únicas).
+    1 cliente con 2 episodios + 1 cliente con 1 episodio = started=3."""
+    import json as _json
+
+    # Cliente A: 2 episodios
+    _write_session(
+        _isolate_vault_dir,
+        phone="A",
+        origin={
+            "channel": "ad",
+            "first_seen_ms": 1714000000000,
+            "first_inbound_message_id": "wamid.A1",
+            "headline": "h",
+            "source_id": "AD_X",
+        },
+    )
+    meta_a = _isolate_vault_dir / "wa_A" / "metadata.json"
+    data_a = _json.loads(meta_a.read_text())
+    data_a["episodes"] = [
+        {
+            "episode_id": "ep_001",
+            "started_at_ms": 1714000000000,
+            "started_inbound_message_id": "wamid.A1",
+            "closed_at_ms": 1714001000000,
+            "closing_tag": "RECHAZO",
+            "closing_motivo": "no quiso",
+            "order_id": None,
+            "referral_snapshot": None,
+        },
+        {
+            "episode_id": "ep_002",
+            "started_at_ms": 1715000000000,
+            "started_inbound_message_id": "wamid.A2",
+            "closed_at_ms": None,
+            "closing_tag": None,
+            "closing_motivo": None,
+            "order_id": None,
+            "referral_snapshot": None,
+        },
+    ]
+    meta_a.write_text(_json.dumps(data_a))
+
+    # Cliente B: 1 episodio
+    _write_session(
+        _isolate_vault_dir,
+        phone="B",
+        origin={
+            "channel": "ad",
+            "first_seen_ms": 1714500000000,
+            "first_inbound_message_id": "wamid.B1",
+            "headline": "h",
+            "source_id": "AD_X",
+        },
+    )
+    meta_b = _isolate_vault_dir / "wa_B" / "metadata.json"
+    data_b = _json.loads(meta_b.read_text())
+    data_b["episodes"] = [
+        {
+            "episode_id": "ep_001",
+            "started_at_ms": 1714500000000,
+            "started_inbound_message_id": "wamid.B1",
+            "closed_at_ms": None,
+            "closing_tag": None,
+            "closing_motivo": None,
+            "order_id": None,
+            "referral_snapshot": None,
+        },
+    ]
+    meta_b.write_text(_json.dumps(data_b))
+
+    campaigns = list_ads_campaigns(_isolate_vault_dir)
+    assert len(campaigns) == 1
+    camp = campaigns[0]
+    # Total de episodios: 2 + 1 = 3
+    assert camp.started == 3
+    counts = camp.conversations
+    assert counts is not None
+    assert counts["perdido"] == 1  # ep_001 de A
+    assert counts["nuevo"] == 2    # ep_002 de A + ep_001 de B
+
+
+def test_legacy_session_without_episodes_still_yields_one_conversation(
+    _isolate_vault_dir: Path,
+):
+    """Sesión legacy SIN `episodes[]` sigue generando 1 conversación con
+    episode_id=None (id sin sufijo)."""
+    _write_session(
+        _isolate_vault_dir,
+        phone="LEGACY",
+        origin={
+            "channel": "ad",
+            "first_seen_ms": 1714000000000,
+            "first_inbound_message_id": "wamid.L",
+            "headline": "h",
+            "source_id": "AD_LEGACY",
+        },
+    )
+
+    convs = list_attributed_conversations(_isolate_vault_dir, "AD_LEGACY")
+    assert len(convs) == 1
+    assert convs[0].episode_id is None
+    assert convs[0].id == "wa_LEGACY"
+
+
+def test_msgs_count_uses_episode_snapshots_when_present(
+    _isolate_vault_dir: Path,
+):
+    """FU3: cada conversación muestra msgs_in_episode (snapshot close - snapshot start),
+    no el count global del JSONL de la sesión."""
+    import json as _json
+
+    _write_session(
+        _isolate_vault_dir,
+        phone="777",
+        origin={
+            "channel": "ad",
+            "first_seen_ms": 1714000000000,
+            "first_inbound_message_id": "wamid.A1",
+            "headline": "Velas",
+            "source_id": "AD_FU3",
+        },
+        # Fake JSONL con 25 líneas — total global
+        history_lines=[f'{{"role":"user","content":"msg {i}"}}' for i in range(25)],
+    )
+    meta_path = _isolate_vault_dir / "wa_777" / "metadata.json"
+    data = _json.loads(meta_path.read_text())
+    data["episodes"] = [
+        # ep_001: msgs 0..14 = 15 mensajes (cerrado)
+        {
+            "episode_id": "ep_001",
+            "started_at_ms": 1714000000000,
+            "started_inbound_message_id": "wamid.A1",
+            "closed_at_ms": 1714001000000,
+            "closing_tag": "COMPRA_EXITOSA",
+            "closing_motivo": "compró",
+            "order_id": "order_a",
+            "referral_snapshot": None,
+            "msgs_count_at_start": 0,
+            "msgs_count_at_close": 15,
+        },
+        # ep_002: msgs 15..24 = 10 mensajes (activo, no closed)
+        {
+            "episode_id": "ep_002",
+            "started_at_ms": 1715000000000,
+            "started_inbound_message_id": "wamid.B1",
+            "closed_at_ms": None,
+            "closing_tag": None,
+            "closing_motivo": None,
+            "order_id": None,
+            "referral_snapshot": None,
+            "msgs_count_at_start": 15,
+            "msgs_count_at_close": None,
+        },
+    ]
+    data["tag"] = "NO_ETIQUETADO"
+    meta_path.write_text(_json.dumps(data))
+
+    convs = list_attributed_conversations(_isolate_vault_dir, "AD_FU3")
+    by_ep = {c.episode_id: c for c in convs}
+    # ep_001 cerrado: at_close - at_start = 15 - 0 = 15
+    assert by_ep["ep_001"].msgs_count == 15
+    # ep_002 activo: total - at_start = 25 - 15 = 10
+    assert by_ep["ep_002"].msgs_count == 10
+
+
+def test_msgs_count_fallback_when_no_snapshots(_isolate_vault_dir: Path):
+    """Sesión legacy sin snapshots → msgs_count cae al total del JSONL."""
+    _write_session(
+        _isolate_vault_dir,
+        phone="LEGACY",
+        origin={
+            "channel": "ad",
+            "first_seen_ms": 1714000000000,
+            "first_inbound_message_id": "wamid.L1",
+            "headline": "Velas",
+            "source_id": "AD_LEG_FU3",
+        },
+        history_lines=['{"role":"user"}' for _ in range(7)],
+    )
+
+    convs = list_attributed_conversations(_isolate_vault_dir, "AD_LEG_FU3")
+    assert len(convs) == 1
+    assert convs[0].msgs_count == 7  # total del JSONL
+
+
+def test_reattribution_episode_goes_to_snapshot_campaign_not_session_origin(
+    _isolate_vault_dir: Path,
+):
+    """FU2: cliente con ep_001 desde AD_A y ep_002 desde AD_B → ep_001
+    cuenta en AD_A, ep_002 cuenta en AD_B (no en el sticky origin)."""
+    import json as _json
+
+    _write_session(
+        _isolate_vault_dir,
+        phone="999",
+        origin={
+            "channel": "ad",
+            "first_seen_ms": 1714000000000,
+            "first_inbound_message_id": "wamid.A1",
+            "headline": "Velas A",
+            "source_id": "AD_A",
+        },
+    )
+    meta_path = _isolate_vault_dir / "wa_999" / "metadata.json"
+    data = _json.loads(meta_path.read_text())
+    data["episodes"] = [
+        {
+            "episode_id": "ep_001",
+            "started_at_ms": 1714000000000,
+            "started_inbound_message_id": "wamid.A1",
+            "closed_at_ms": 1714001000000,
+            "closing_tag": "COMPRA_EXITOSA",
+            "closing_motivo": "compró",
+            "order_id": "order_a",
+            "referral_snapshot": {
+                "channel": "ad",
+                "source_id": "AD_A",
+                "headline": "Velas A",
+            },
+        },
+        {
+            "episode_id": "ep_002",
+            "started_at_ms": 1715000000000,
+            "started_inbound_message_id": "wamid.B1",
+            "closed_at_ms": None,
+            "closing_tag": None,
+            "closing_motivo": None,
+            "order_id": None,
+            # ep_002 vino desde OTRO ad (AD_B)
+            "referral_snapshot": {
+                "channel": "ad",
+                "source_id": "AD_B",
+                "headline": "Velas B",
+            },
+        },
+    ]
+    data["tag"] = "NO_ETIQUETADO"
+    meta_path.write_text(_json.dumps(data))
+
+    campaigns = list_ads_campaigns(_isolate_vault_dir)
+    by_id = {c.id: c for c in campaigns}
+    # AD_A tiene el ep_001 (ganado)
+    assert "AD_A" in by_id
+    assert by_id["AD_A"].started == 1
+    assert by_id["AD_A"].conversations is not None
+    assert by_id["AD_A"].conversations["ganado"] == 1
+    # AD_B tiene el ep_002 (nuevo)
+    assert "AD_B" in by_id
+    assert by_id["AD_B"].started == 1
+    assert by_id["AD_B"].conversations is not None
+    assert by_id["AD_B"].conversations["nuevo"] == 1
+    # El name de AD_B sale del snapshot, no del origin sticky
+    assert by_id["AD_B"].name == "Velas B"
+
+    # Drill-down: ep_002 sale al consultar AD_B
+    b_convs = list_attributed_conversations(_isolate_vault_dir, "AD_B")
+    assert len(b_convs) == 1
+    assert b_convs[0].episode_id == "ep_002"
+    # Drill-down: ep_001 sale al consultar AD_A
+    a_convs = list_attributed_conversations(_isolate_vault_dir, "AD_A")
+    assert len(a_convs) == 1
+    assert a_convs[0].episode_id == "ep_001"
+
+
+def test_reattribution_to_direct_when_episode_has_no_referral(
+    _isolate_vault_dir: Path,
+):
+    """Cliente vino desde un ad inicialmente (ep_001), pero ep_002 abrió
+    direct (sin referral). ep_002 cuenta en el bucket DIRECT, no en AD_A."""
+    import json as _json
+
+    _write_session(
+        _isolate_vault_dir,
+        phone="888",
+        origin={
+            "channel": "ad",
+            "first_seen_ms": 1714000000000,
+            "first_inbound_message_id": "wamid.A1",
+            "headline": "Velas",
+            "source_id": "AD_X",
+        },
+    )
+    meta_path = _isolate_vault_dir / "wa_888" / "metadata.json"
+    data = _json.loads(meta_path.read_text())
+    data["episodes"] = [
+        {
+            "episode_id": "ep_001",
+            "started_at_ms": 1714000000000,
+            "started_inbound_message_id": "wamid.A1",
+            "closed_at_ms": 1714001000000,
+            "closing_tag": "RECHAZO",
+            "closing_motivo": "no quiso",
+            "order_id": None,
+            "referral_snapshot": {
+                "channel": "ad",
+                "source_id": "AD_X",
+                "headline": "Velas",
+            },
+        },
+        {
+            "episode_id": "ep_002",
+            "started_at_ms": 1715000000000,
+            "started_inbound_message_id": "wamid.B1",
+            "closed_at_ms": None,
+            "closing_tag": None,
+            "closing_motivo": None,
+            "order_id": None,
+            # Direct: cliente volvió sin venir de un ad
+            "referral_snapshot": {"channel": "direct"},
+        },
+    ]
+    data["tag"] = "NO_ETIQUETADO"
+    meta_path.write_text(_json.dumps(data))
+
+    campaigns = list_ads_campaigns(_isolate_vault_dir)
+    by_id = {c.id: c for c in campaigns}
+    # ep_001 va a AD_X (sticky + snapshot coinciden)
+    assert by_id["AD_X"].started == 1
+    assert by_id["AD_X"].conversations["perdido"] == 1
+    # ep_002 va a direct (NO a AD_X aunque la sesión origin sea AD_X)
+    assert "direct" in by_id
+    assert by_id["direct"].started == 1
+    assert by_id["direct"].conversations["nuevo"] == 1
+    # AD_X NO incluye ep_002
+    assert sum(by_id["AD_X"].conversations.values()) == 1
+
+
+def test_campaign_with_zero_classifiable_sessions_has_empty_counts(
+    _isolate_vault_dir: Path,
+):
+    """Campaña con 1 sesión válida → conversations dict NO es None.
+    Si el bucket tiene sesiones, el dict siempre viene poblado (aunque
+    todas vayan al mismo bucket — never None for non-empty)."""
+    _write_session(
+        _isolate_vault_dir,
+        phone="111",
+        origin={
+            "channel": "ad",
+            "first_seen_ms": 1714312000000,
+            "first_inbound_message_id": "wamid.A",
+            "headline": "h",
+            "source_id": "AD_ONE",
+        },
+    )
+    campaigns = list_ads_campaigns(_isolate_vault_dir)
+    assert len(campaigns) == 1
+    counts = campaigns[0].conversations
+    assert counts is not None
+    # No mensajes en JSONL + sin tag → nuevo
+    assert counts["nuevo"] == 1
+    assert sum(counts.values()) == 1

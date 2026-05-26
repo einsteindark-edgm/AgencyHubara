@@ -108,6 +108,24 @@ Por cada plugin tocado:
   - DEBE existir `hubara_agency/src/plugins/<plugin_id>/workers/sales.py`.
   - `composition.py` debe tener factory referenciada.
 
+### G. Capability spec ↔ plugin manifest consistency (Fase 12 OpenSpec)
+
+**Skip si `§16 del refinement = (N/A)`.**
+
+Por cada plugin afectado en §16 del refinement:
+
+- Verificá que `hubara_agency/.hubara/specs/plugins/<plugin_id>/spec.md` existe Y/O se está agregando `seed_inline` en el delta.
+  - Si el plugin existe en código pero NO tiene spec ni delta → MEDIUM `plugin_without_spec` (deuda heredada — bootstrap incremental al menos un Requirement).
+- Si el delta tiene `## ADDED Requirements` que describen nuevos endpoints HTTP / events emitted / tools registradas:
+  - Verificá que `plugin.yaml` del plugin tenga las entradas correspondientes:
+    - Nuevo endpoint → `api.legacy_routers[]` o `api.python_module` debe declararlo.
+    - Nuevo event emitted → `emits: [EventName]` debe estar en el manifest.
+    - Nuevo tool name → registrado via `register_tool_extension(...)` en el worker.
+  - Si delta promete behavior pero manifest no lo refleja → HIGH `spec_manifest_drift`.
+- Si el delta dice `## REMOVED Requirements` con removal de un endpoint / event:
+  - Verificá que el manifest también lo remueve.
+  - Si manifest sigue declarándolo → HIGH `dead_manifest_entry`.
+
 ---
 
 ## §5. Phase 4 — Cross-reference con premortem
@@ -130,7 +148,7 @@ files_audited:
 findings:
   - id: CR-PLUGIN-001
     severity: high
-    rule: footgun-F7   # frontend block contract
+    rule: footgun-F7 | SPEC-MANIFEST-DRIFT | plugin_without_spec
     location: frontend_dashboard/src/plugins/orders/plugin.yaml:14
     code_excerpt: |
       frontend:

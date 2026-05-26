@@ -111,7 +111,15 @@ export type AvatarColor = "a" | "b" | "c" | "d" | "e" | "f";
  */
 export interface AttributedConversation {
   // --- Disponibles hoy ---
+  /** ID único de la conversación. Formato:
+   *  - `wa_<phone>__<episode_id>` cuando viene del modelo nuevo (episodios).
+   *  - `wa_<phone>` para sesiones legacy sin episodios.
+   *  Varias filas pueden compartir `phone_number` (mismo cliente, distintas
+   *  conversaciones a lo largo del tiempo). */
   id: string;
+  /** ID del episodio dentro de la sesión. `null` para legacy. Opcional
+   *  para tolerar el mock histórico (que no lo declara). */
+  episodeId?: string | null;
   /** Iniciales 2-letras — derivadas del nombre o del phone si no hay nombre. */
   short: string;
   color: AvatarColor;

@@ -1186,4 +1186,146 @@ Este plan es un documento vivo. Editarlo libremente conforme se ejecutan las fas
 
 ---
 
+## §11. Fase 12 — OpenSpec integration (2026-05-25)
+
+> Inspirada en [OpenSpec](https://openspec.dev/): adoptar la **disciplina de
+> artefactos** sin instalar el tool. Goal: tener una fuente de verdad
+> persistente de QUÉ HACE el sistema (capability specs), un mecanismo de
+> delta explícito (qué cambia esta HU), y un archive institucional con
+> evolución orgánica de los specs.
+
+### §11.1 Motivación
+
+El pipeline pre-Fase-12 tenía:
+- Refinements per-HU (qué quiere ESTA HU) — ✅
+- Architecture guide (cómo está organizado el código) — ✅
+- Convenciones operacionales (cómo correr/testear) — ✅
+- **Pero NO**: una fuente de verdad persistente de QUÉ HACE el sistema, queryable, organizable por capability.
+
+OpenSpec resuelve ese gap con specs en markdown (`### Requirement: X` + `#### Scenario: Y` Gherkin), deltas estructurados (`## ADDED Requirements`, `## MODIFIED Requirements`, `## REMOVED Requirements`), y archive de cada change shipped.
+
+**Decisión:** adoptar conceptos + formato; NO instalar el CLI (nuestro pipeline es automatizado vía Archon, no manual con slash commands).
+
+### §11.2 Fases ejecutadas
+
+| Fase | Output | Archivos |
+|---|---|---|
+| **A.1** | Crear `hubara_agency/.hubara/specs/` con README + `_index.md` | 2 nuevos |
+| **A.2** | Bootstrap spec `plugins/orders` (8 Requirements + 20+ Scenarios) | 1 nuevo |
+| **A.3** | Bootstrap spec `plugins/chats` (5 Requirements + 13 Scenarios) | 1 nuevo |
+| **A.4** | Bootstrap spec `messaging` cross-plugin (6 Requirements + 14 Scenarios) | 1 nuevo |
+| **A.5** | Bootstrap spec `agents/sales-worker` (8 Requirements + 17 Scenarios) | 1 nuevo |
+| **A.6** | Update root `CLAUDE.md` + `hubara_agency/CLAUDE.md` con sección specs | 2 modificados |
+| **B.1** | Agregar §1.8 (cargar specs) + §16 (template) + §9 (formato deltas) al `hubara-tech-refiner-archon` | 1 modificado (+~160 LOC) |
+| **C.1** | Agregar §2.5 (cargar specs+deltas) + §4.11 (spec consistency) al `hubara-premortem` command | 1 modificado (+~50 LOC) |
+| **C.2** | Agregar §4.H (spec ↔ código) al `hubara-reviewer-deha` + §4.G (spec ↔ manifest) al `hubara-reviewer-plugin-system` | 2 modificados (+~60 LOC) |
+| **D.1** | Crear `hubara-archive-hu` command (snapshot artefactos + merge deltas a specs) | 1 nuevo |
+| **D.2** | Agregar Fase 5.5 al workflow `hu-hubara-pipeline.yaml` (archive-hu + commit-archive); update print-final-summary deps | 1 modificado (+~70 LOC) |
+| **E.1** | Agregar `scenario_coverage` criterion al `evaluator-rubric.yaml` (peso 10, hard threshold 7) | 1 modificado |
+| **E.2** | Agregar §7.6 (scenario coverage verification) + campo `scenario_coverage` al task-result.yaml + DoD item al `hubara-implementer-archon` | 1 modificado (+~95 LOC) |
+| **README** | `hubara_agency/.hubara/archive/README.md` | 1 nuevo |
+
+**Stats:** 60 nodos en el workflow (era 58, +2: archive-hu + commit-archive). 6 capability specs bootstrappeadas (4 active + 2 placeholder pendientes). 1 command nuevo. 5 archivos del pipeline tocados.
+
+### §11.3 Flujo cross-fase
+
+```
+                ┌──── tech-refiner ─→ hu-refinada.md + spec-deltas/
+                │     (§1.8 lee specs / §16 índice / §9 formato deltas)
+                │
+                ↓
+       implementer ── escribe tests citando scenarios (§7.6) → task-result.yaml.scenario_coverage
+                │
+                ↓
+        premortem ─── lee specs+deltas (§2.5) / aplica §4.11 spec consistency
+                │
+                ↓
+        evaluator ─── scenario_coverage criterion (weight 10, hard 7)
+                │
+                ↓
+       reviewers ──── DEHA §4.H spec↔código / plugin-system §4.G spec↔manifest
+                │
+                ↓
+            PR ───── archive-hu ─→ specs/<cap>/ mergeados / archive/<date>-<HU>/ snapshot
+                                   commit-archive ─→ git push
+```
+
+### §11.4 Beneficios esperados
+
+1. **Onboarding humano/agent**: leer `specs/plugins/orders/spec.md` es más rápido que leer 350 LOC de `api/__init__.py`.
+2. **Refiner no inventa**: si la spec dice `MUST be idempotent`, el refiner no propone una API que violaría esa invariante.
+3. **Premortem fundamentado**: failure modes citan Scenarios reales en vez de hipótesis genéricas.
+4. **Reviewers ven contracts**: el reviewer DEHA puede flagear "código sin spec" como finding (deuda silenciosa atrapada).
+5. **Scenarios → tests**: el evaluator castiga el sad-path test missing — el implementer no puede shipear "happy path only".
+6. **Evolución orgánica**: la spec del orders plugin del Q4 2026 va a tener 50+ Requirements, todos derivados de deltas reales — no escritos en una sentada por un humano cansado.
+7. **Memoria institucional**: `archive/` es greppeable. "¿Cuándo agregamos discount?" → `grep -r "discount" hubara_agency/.hubara/archive/*/spec-deltas/`.
+
+### §11.5 Capabilities pendientes (bootstrap incremental)
+
+| Capability | Cuándo bootstrappear |
+|---|---|
+| `plugins/catalog` | Próxima HU que toque catalog (refiner emite seed_inline) |
+| `plugins/eta` | Idem |
+| `plugins/agents_admin` | Idem |
+| `plugins/system_map` | Idem |
+| `agents/remarketing-worker` | Próxima HU del remarketing worker |
+| `observability` | Próxima HU que toque logging/tracing convenciones |
+| `auth` | Cuando se implemente auth real (hoy no aplica) |
+
+El refiner produce `seed_inline` deltas para capabilities sin spec previa; el archive command las promociona a parent spec al cerrar el PR.
+
+### §11.6 Premortem de la propia integración (Fase 12)
+
+Aplicado el mismo framework de las 11 categorías que pedimos al
+`hubara-premortem` command, sobre mi propia integración OpenSpec.
+
+#### Failure modes encontrados y fixeados
+
+| ID | Severidad | Categoría | Descripción | Fix |
+|---|---|---|---|---|
+| **F-OS-1** | LOW | §4.1 runtime | `archive-result.yaml` puede no existir si archive-hu falla | Check `[ -f "$RESULT" ]` ya estaba en commit-archive ✅ |
+| **F-OS-2** | MEDIUM | §4.1 runtime | `HU_ID` con caracteres especiales rompe printf en commit message | Sanear con `tr -cd '[:alnum:]_-'` |
+| **F-OS-3** | MEDIUM | §4.1 runtime | `grep "^hu_id:"` puede matchear sub-líneas YAML | `grep ... \| head -1` + sanear |
+| **F-OS-4** | LOW | §4.1 runtime | `$ARCHIVE_DIR` con espacios | Ya estaba quoteado ✅ |
+| **F-OS-5** | LOW | §4.1 runtime | `$CLAUDE_PROJECT_DIR` ausente en worktree raro | Fallback a `git rev-parse --show-toplevel` |
+| **F-OS-17** | LOW | §4.8 observability | Commit archive no linkea al PR | Agregar PR_URL al message via `$ARTIFACTS_DIR/.pr-url` |
+| **F-OS-20** | LOW | §4.11 spec consistency | Spec dice "8 decision tools" — código real tiene **10** | Fixed en `specs/agents/sales-worker/spec.md` y `specs/plugins/chats/spec.md` |
+| **F-OS-21** | **HIGH** | §4.11 spec consistency | Spec messaging tenía `conversation_state` con valores inventados (`new, sales_active, awaiting_handoff, ...`) que NO existen en código. El código real usa `active_route ∈ {ventas, remarketing, humano}` (constantes en `platform/constants.py`) + `classify_conversation_state` use case con `{nuevo, activo, calificado, cotizado, ganado, perdido, no_reply}` | Re-escribí el Requirement entero basándome en código real |
+| **F-OS-22** | — | descartado | Archive corre en feature branch (no en main post-merge); commits podrían perderse en squash | By-design: archive es parte del PR; squash absorbe sus cambios. NO es bug. |
+| **F-OS-23** | **HIGH** | §4.2 race | Pipeline restart → archive-hu corre 2x → spec deltas se mergean 2x (duplicación) | Idempotency check: si `archive/<date>-<HU_ID>/hu-refinada.md` existe → `status: skipped, reason: already_archived` |
+| **F-OS-29** | **HIGH** | §4.11 spec consistency | Pseudo-code del merge usaba funciones que tendría que implementar a mano con Read/Edit, error-prone. Si la heurística MODIFIED-by-title falla, parent spec se corrompe | **Simplificar V1 a append-safe**: TODOS los deltas se appendan a sección `## Updates from HU X` al final del parent. Human review del PR resuelve MODIFIED/REMOVED manualmente. V2 (futuro) puede automatizar cuando haya corpus para validar heurística. |
+
+#### Failure modes evaluados sin acción (acceptable risk)
+
+- **§4.5 Network failures** — archive es 100% local + push optional; OK.
+- **§4.6 Backwards compat** — HUs viejas sin deltas: el archive command handlea correctamente (`if [[ -d "$DELTAS_DIR" ]]`). OK.
+- **§4.7 i18n** — em-dash `—` rompía YAML inicial; fijé con `--`. Tildes UTF-8 en specs en español → git/markdown soportan nativamente. OK.
+- **§4.9 Performance** — archive lee/escribe pocos archivos (~10 tool calls para 5 capabilities). Aceptable.
+- **§4.10 UI states** — no toqué frontend. N/A.
+- **F-OS-26** — weights del rubric cambiaron (`test_coverage_real: 25→15` + nuevo `scenario_coverage: 10`). PRs históricos calibrados con weight viejo no son comparables. → re-calibrar cuando haya corpus real (no urgente).
+- **F-OS-27** — `scenario_coverage` usa heurística (`grep "Scenario from spec-deltas"`). Frágil si dev no usa convención. Mitigation: la heurística incluye múltiples sources (filename + body keyword). LOW risk, mejorable en V2.
+- **F-OS-28** — Delta con Scenarios contradictorios entre ADDED y MODIFIED. Sin schema validator. → dejarlo a humano review del PR.
+
+#### Validación final
+
+```bash
+$ archon validate workflows hu-hubara-pipeline
+hu-hubara-pipeline                       ok
+Results: 1 valid, 0 with errors
+```
+
+60 nodos, todos los gates pasan parse. Capability specs corregidas
+matchean el código real verificado en `hubara_agency/src/`.
+
+#### Meta-reflexión
+
+> **El premortem encontró un HIGH severity en MI propia spec** (F-OS-21
+> — inventé un Requirement entero de `conversation_state`). Si esto le
+> pasa a quien diseñó la integración, le va a pasar al implementer en
+> cada HU. **Esto valida la decisión de la Fase 12**: sin specs como
+> ancla, los agents inventan comportamiento; con specs auditables, los
+> reviewers atrapan invenciones.
+
+---
+
 **Fin del plan.**

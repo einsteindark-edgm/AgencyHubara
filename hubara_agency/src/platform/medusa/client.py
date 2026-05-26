@@ -255,7 +255,7 @@ class HttpMedusaClient:
         [
             "id", "display_id", "status", "payment_status",
             "fulfillment_status", "email", "currency_code",
-            "created_at", "updated_at", "total", "subtotal",
+            "created_at", "updated_at", "canceled_at", "total", "subtotal",
             "shipping_total", "tax_total", "discount_total",
             "metadata", "region_id", "customer_id", "sales_channel_id",
             "*items",
@@ -375,6 +375,157 @@ class HttpMedusaClient:
         """
         data = await self._request("POST", "/admin/draft-orders", json=payload)
         return data["draft_order"]
+
+    async def patch_draft_order_metadata(
+        self,
+        draft_order_id: str,
+        metadata_patch: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Merge-patch del campo `metadata` de un draft order.
+
+        Estrategia merge:
+          1. Lee el draft actual (`get_draft_order`).
+          2. Combina `metadata_patch` sobre la metadata existente (shallow merge —
+             las keys del patch reemplazan; las viejas no presentes en patch se
+             preservan).
+          3. POST `/admin/draft-orders/{id}` con el dict completo.
+
+        Por qué shallow merge en lugar de PUT full-replace: la metadata ya tiene
+        `session_key`, `idempotency_key`, `payment_method` puestos por la tool
+        `register_order`. El humano agregando `hubara_stage="preparing"` NO debe
+        borrar esos. Shallow merge es lo conservador.
+
+        Para nested updates (ej. agregar entry a `hubara_stage_history[]`), el
+        caller debe leer history existente y pasar el array completo en el
+        patch — el helper `transition_stage` en `platform/orders/state.py`
+        encapsula este patrón.
+        """
+        existing = await self.get_draft_order(
+            draft_order_id, fields="id,metadata"
+        )
+        current_metadata = existing.get("metadata") or {}
+        merged = {**current_metadata, **metadata_patch}
+        data = await self._request(
+            "POST",
+            f"/admin/draft-orders/{draft_order_id}",
+            json={"metadata": merged},
+        )
+        return data["draft_order"]
+
+    async def patch_order_metadata(
+        self,
+        order_id: str,
+        metadata_patch: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Merge-patch del campo `metadata` de una Order real (no draft).
+
+        Espejo de `patch_draft_order_metadata` pero contra `/admin/orders/{id}`.
+        En Medusa v2 el endpoint POST acepta body parcial; solo enviamos el
+        campo `metadata` con el merge resuelto del lado nuestro.
+        """
+        existing = await self.get_order(order_id, fields="id,metadata")
+        current_metadata = existing.get("metadata") or {}
+        merged = {**current_metadata, **metadata_patch}
+        data = await self._request(
+            "POST",
+            f"/admin/orders/{order_id}",
+            json={"metadata": merged},
+        )
+        return data["order"]
+
+    async def cancel_order(self, order_id: str) -> dict[str, Any]:
+        """Cancelar una Order via `POST /admin/orders/{id}/cancel`.
+
+        Medusa v2 marca el order como `status=canceled` y rollback de
+        inventario reservado. La cancelación de Orders ya consumadas es
+        irreversible en Medusa — usar con cuidado.
+        """
+        return await self._request(
+            "POST", f"/admin/orders/{order_id}/cancel"
+        )
+
+    async def cancel_draft_order(self, draft_order_id: str) -> dict[str, Any]:
+        """Eliminar/cancelar un draft order via `DELETE /admin/draft-orders/{id}`.
+
+        Para drafts, Medusa permite delete (no es una venta consumada).
+        Después del delete, el id deja de ser resoluble — el frontend
+        debe quitar la card del kanban.
+        """
+        return await self._request(
+            "DELETE", f"/admin/draft-orders/{draft_order_id}"
+        )
+
+    async def create_payment_collection(
+        self,
+        order_id: str,
+        amount: int,
+    ) -> dict[str, Any]:
+        """Create a Medusa payment collection associated to an Order.
+
+        Sequence verified live (2026-05-25) — `POST /admin/payment-collections`
+        with `{order_id, amount}` returns the new payment_collection with
+        `status="not_paid"`. Required pre-step for `mark_payment_collection_paid`.
+
+        `amount` is in zero-decimal units (COP integer), matching Medusa v2
+        conventions for orders in `currency_code="cop"`.
+        """
+        data = await self._request(
+            "POST",
+            "/admin/payment-collections",
+            json={"order_id": order_id, "amount": amount},
+        )
+        return data["payment_collection"]
+
+    async def mark_payment_collection_paid(
+        self,
+        payment_collection_id: str,
+        order_id: str,
+    ) -> dict[str, Any]:
+        """Mark a payment_collection as fully paid via `pp_system_default`.
+
+        Sequence verified live (2026-05-25):
+          * POST `/admin/payment-collections/{id}/mark-as-paid`
+            with `{order_id}` in body.
+          * Medusa internamente crea un `payment_session` con
+            `provider_id="pp_system_default"` (autorizado) + un `payment`
+            con `captured_at` set (capturado).
+          * El Order asociado pasa a `payment_status="captured"`.
+
+        Este es el flujo "pago offline" — útil cuando el cliente paga via
+        transferencia / COD y el operador registra el pago manualmente
+        desde el dashboard. Para integración futura con gateways (Wompi),
+        se reemplaza este path por el flujo gateway-specific.
+        """
+        data = await self._request(
+            "POST",
+            f"/admin/payment-collections/{payment_collection_id}/mark-as-paid",
+            json={"order_id": order_id},
+        )
+        return data["payment_collection"]
+
+    async def convert_draft_to_order(
+        self, draft_order_id: str
+    ) -> dict[str, Any]:
+        """Convertir un DraftOrder en una Order real via
+        `POST /admin/draft-orders/{id}/convert-to-order`.
+
+        Verificado contra Medusa v2 live (2026-05-25):
+          * NO requiere payment registrado.
+          * La Order resultante tiene `status="pending"`, `payment_status="not_paid"`.
+          * El `id` permanece igual — solo cambia el tipo (status).
+          * `pp_system_default` payment provider está activo por default —
+            el humano puede registrar el pago manualmente cuando el cliente
+            transfiera / pague COD, sin necesidad de gateway externo.
+
+        El campo `metadata` se preserva intacto en la conversión, así que
+        los `hubara_*` keys escritos en el draft sobreviven.
+
+        Devuelve el Order unwrapped (sin `{"order": ...}` envelope).
+        """
+        data = await self._request(
+            "POST", f"/admin/draft-orders/{draft_order_id}/convert-to-order"
+        )
+        return data["order"]
 
     # ---------- internals ----------
 

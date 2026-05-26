@@ -18,6 +18,8 @@ Monorepo con backend Python (Temporal + DEHA hexagonal architecture) + frontend 
 - `.claude/skills/` — skills del pipeline (`hubara-*-archon`). **PROTECTED**.
 - `.codegraph/` — knowledge graph del codebase. Usá `codegraph_*` tools antes de `grep`.
 - `hubara_agency/.hubara/` — convenciones del pipeline (`project-context.md`, `spinal-files.yaml`).
+- `hubara_agency/.hubara/specs/` — **capability specs** (behavior contracts persistentes por capability). Fuente de verdad de **QUÉ HACE** el sistema. Ver `hubara_agency/.hubara/specs/README.md`.
+- `hubara_agency/.hubara/archive/` — snapshots de HUs shipped (memoria institucional).
 - `CODEMAP.md` — mapa de navegación detallado.
 - `HARNESS_UPGRADE_PLAN.md` — plan de mejora del propio pipeline.
 
@@ -138,10 +140,25 @@ PR
 
 **Diseño deliberado:** ningún gate aplica fixes. Cada uno emite findings + suggested_fix + complexity, y delega al implementer (vía `$LOOP_USER_INPUT`) — que aplica con su contexto completo (exploration map, sibling patterns, R-rules). Si los issues son `complex` (signature change / refactor / requieren ADR), el implementer los marca `deferred` y el workflow se cancela visiblemente. **No hay deuda silenciosa.**
 
-## Para detalles canónicos
+## Fuentes de verdad — tres lentes complementarias
 
-- DEHA + R-rules + FSD + plugin system: `.claude/skills/hubara-architecture-guide/sections/`
-- Convenciones pipeline: `hubara_agency/.hubara/project-context.md`
+Cuando una HU contradice una doc grande, **el código vivo gana**. Cuando una HU
+es sobre comportamiento del sistema, hay 3 lentes complementarias:
+
+| Lente | Vive en | Pregunta que responde |
+|---|---|---|
+| **Estructura** | `.claude/skills/hubara-architecture-guide/sections/` | "¿Cómo está organizado el código?" — DEHA R-rules, FSD anti-patterns, plugin system |
+| **Comportamiento (capability specs)** | `hubara_agency/.hubara/specs/<capability>/spec.md` | "¿Qué hace el sistema?" — Requirements + Scenarios (SHALL/MUST + Gherkin) |
+| **Convenciones operacionales** | `hubara_agency/.hubara/project-context.md` | "¿Cómo lo corro/testeo/configuro?" — comandos, naming, env vars |
+
+Skills del pipeline leen las tres:
+- **Tech-refiner** lee specs antes de refinar (para no contradecir) + escribe deltas (`spec-deltas/`)
+- **Premortem** fundamenta failure modes en Requirements existentes
+- **Reviewers** cross-ref findings contra Scenarios
+- **Archive** mergea deltas a specs al cerrar la HU
+
+## Otras refs
+
 - Spinal files (paths cross-plugin / protected): `hubara_agency/.hubara/spinal-files.yaml`
 - Plan de mejora del harness: `HARNESS_UPGRADE_PLAN.md`
 - Concepto base de harness engineering: `HARNESS_ENGINEERING.md`

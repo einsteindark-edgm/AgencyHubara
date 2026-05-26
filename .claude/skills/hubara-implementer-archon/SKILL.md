@@ -1037,6 +1037,115 @@ fi
 
 Skip §7.5 entero. En `task-result.yaml.visual_verification: {applies: false, reason: backend_only}`.
 
+### §7.6 Scenario coverage (Fase 12 OpenSpec — OBLIGATORIO si hay deltas)
+
+> El refiner produjo `$ARTIFACTS_DIR/spec-deltas/<capability>/spec.md` con
+> Scenarios (GIVEN/WHEN/THEN). Cada Scenario nuevo o modificado **debe**
+> tener un test que lo verifique. Sin esto, los deltas son ficción.
+
+#### §7.6.1 Detectar deltas
+
+```bash
+DELTAS_DIR="$ARTIFACTS_DIR/spec-deltas"
+
+if [ ! -d "$DELTAS_DIR" ]; then
+  echo "No spec-deltas — skip §7.6 (HU sin behavior changes)"
+  # task-result.yaml.scenario_coverage: {applies: false, reason: no_deltas}
+  exit 0  # solo en esta sub-sección
+fi
+
+# Listar todos los Scenarios nuevos/modificados
+find "$DELTAS_DIR" -name "spec.md" -exec grep -H "^#### Scenario:" {} \; > /tmp/scenarios-to-cover.txt
+echo "Total scenarios to cover:"
+wc -l /tmp/scenarios-to-cover.txt
+```
+
+#### §7.6.2 Mapping Scenario → test
+
+Por cada Scenario en `/tmp/scenarios-to-cover.txt`:
+
+1. Extraer el título: `#### Scenario: <Title>`
+2. Buscar test que lo cubra (heurística — orden de preferencia):
+   - Test cuyo nombre/describe block menciona el `<Title>` exacto (case insensitive). Ejemplo:
+     - Scenario: `Idle timeout`
+     - Test: `def test_idle_timeout(...)`
+   - Test cuyo body contiene los keywords centrales del WHEN/THEN. Ejemplo:
+     - Scenario WHEN: `30 minutes pass without activity`
+     - Scenario THEN: `the session is invalidated`
+     - Test body: usa `freeze_time` con 31min + assert `session.invalidated is True`
+3. Si NO encontrás test correspondiente:
+   - **Para Scenario nuevo en `## ADDED Requirements`** → escribir un test que lo cubra. Es parte de tu trabajo, no del próximo dev.
+   - **Para Scenario en `## MODIFIED Requirements`** → buscar el test existente del comportamiento anterior y actualizarlo. NO dejes el test viejo verde (mentiría sobre el comportamiento nuevo).
+   - **Para Scenario `THEN error ...`** (sad path) son LOS MÁS PROPENSOS a quedar sin test. Forzate a escribir uno aunque parezca trivial.
+
+#### §7.6.3 Citar Scenarios en los nombres de test (audit trail)
+
+Para que el evaluator pueda hacer el mapping automático, usá esta convención
+en los nombres de los tests:
+
+```python
+# Backend (pytest)
+def test_orders_list__scenario_medusa_configurado_y_respondiendo():
+    """Scenario from spec-deltas/plugins/orders/spec.md: Medusa configurado y respondiendo"""
+    ...
+
+def test_register_order__scenario_medusa_rechaza_payload():
+    """Scenario from spec-deltas/agents/sales-worker/spec.md: Medusa rechaza el payload"""
+    ...
+```
+
+```typescript
+// Frontend (vitest)
+describe('OrdersKanban', () => {
+  it('scenario: estado vacio cuando catalog_available=false', () => {
+    // From spec-deltas/plugins/orders/spec.md
+  })
+})
+```
+
+#### §7.6.4 Validar cobertura
+
+```bash
+# Heurística: contar Scenarios vs tests con marker "Scenario from"
+SCENARIOS_TOTAL=$(wc -l < /tmp/scenarios-to-cover.txt)
+TESTS_WITH_MARKER=$(grep -rE "Scenario from spec-deltas|scenario:[[:space:]]" \
+  hubara_agency/tests/ frontend_dashboard/src/ frontend_dashboard/e2e/ 2>/dev/null \
+  | wc -l)
+
+# Cobertura aproximada
+if [ "$SCENARIOS_TOTAL" -gt 0 ]; then
+  COVERAGE_PCT=$(( (TESTS_WITH_MARKER * 100) / SCENARIOS_TOTAL ))
+  echo "Scenario coverage approx: $COVERAGE_PCT% ($TESTS_WITH_MARKER/$SCENARIOS_TOTAL)"
+else
+  COVERAGE_PCT=100
+fi
+
+if [ "$COVERAGE_PCT" -lt 90 ]; then
+  echo "WARN: scenario_coverage <90% — evaluator castigará en criterio scenario_coverage"
+fi
+```
+
+#### §7.6.5 Reportar en task-result.yaml
+
+En el §8 schema, agregar:
+
+```yaml
+scenario_coverage:
+  applies: true                     # false si no hay deltas
+  scenarios_total: 12
+  scenarios_covered: 11
+  scenarios_uncovered:
+    - capability: agents/sales-worker
+      scenario: "AND log es emitido"
+      reason: "trivial — log assertion no agrega valor"
+      severity: low
+  coverage_pct: 91.7
+  mapping:                          # Scenario → test file:line (opcional pero útil)
+    - scenario: "Medusa configurado y respondiendo"
+      capability: plugins/orders
+      test: hubara_agency/tests/plugins/orders/api/test_orders_list.py:test_orders_list__scenario_medusa_configurado_y_respondiendo
+```
+
 ---
 
 ## §8. Step 5 — Reportar (`task-result.yaml`)
@@ -1125,6 +1234,20 @@ playwright_gate:                             # solo si tocó UI
   exit_code: 0
   duration_s: 12.5
   evidence_log_path: $ARTIFACTS_DIR/playwright-evidence-F<NN>.log
+scenario_coverage:                           # Fase 12 OpenSpec — solo si hay spec-deltas/
+  applies: true | false
+  scenarios_total: 12
+  scenarios_covered: 11
+  scenarios_uncovered:                       # vacío si 100%
+    - capability: agents/sales-worker
+      scenario: "AND log es emitido"
+      reason: "trivial — log assertion no agrega valor"
+      severity: low
+  coverage_pct: 91.7
+  mapping:
+    - scenario: "Medusa configurado y respondiendo"
+      capability: plugins/orders
+      test: hubara_agency/tests/plugins/orders/api/test_orders_list.py:test_orders_list__scenario_medusa_configurado_y_respondiendo
 r_rules:
   R-DET:       { applies: false, verified: true, note: "no workflow code touched" }
   R-JSON:      { applies: true, verified: true, note: "<NewTool> in contracts.py:42 is frozen + str/int fields" }
@@ -1150,6 +1273,7 @@ dod_checklist:
   - { item: "Frontend gates green (if frontend touched)", done: true, note: "" }
   - { item: "Playwright spec exists + passes (if UI touched)", done: true, note: "" }
   - { item: "Functional test exists + passes", done: true, note: "" }
+  - { item: "Scenario coverage ≥ 90% (Fase 12 OpenSpec, if spec-deltas/ present)", done: true, note: "11/12 = 91.7%" }
   - { item: "No edits to protected paths", done: true, note: "" }
   - { item: "Workspace deltas in §6 present on disk (if applicable)", done: true, note: "" }
   - { item: "Worker registration in §8 present on disk (if applicable)", done: true, note: "" }

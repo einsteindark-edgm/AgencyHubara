@@ -1,6 +1,11 @@
 /**
  * Sidebar de Órdenes: vistas (Todas/Hoy/Retrasadas/Mañana/Semana/En camino) +
- * Tipo de pago (Pago confirmado / Contra entrega) + Canales + Etiquetas.
+ * Modalidad de pago (Anticipado / Contra entrega) + Canales + Etiquetas.
+ *
+ * IMPORTANT: el filtro filtra por `payType` (modalidad — cómo se paga), NO
+ * por `payStatus` (estado del pago — si está capturado). "Anticipado" = no es
+ * COD; puede estar pagado o pendiente. El badge de estado del pago vive en
+ * la card del kanban.
  *
  * Recibe el estado de filtros por prop. Owner del estado: la página, vía
  * `useOrderFilters` reusado por ambas features (filters + board).
@@ -28,26 +33,33 @@ export function OrdersFilters({ view, setView, payType, setPayType, orders }: Pr
   for (let i = 0; i < 7; i++) {
     weekIsos.add(new Date(Date.now() + i * 86_400_000).toISOString().slice(0, 10));
   }
-  const weekCount = orders.filter((o) => weekIsos.has(o.dueIso)).length;
+  // Bug fix 2026-05-26: counters de las vistas excluyen órdenes canceladas.
+  // Las canceladas viven en la columna "Cancelada" del kanban pero NO se
+  // suman a las métricas operacionales (sería ruido — "5 órdenes para hoy"
+  // incluyendo 3 canceladas no es accionable).
+  const active = orders.filter((o) => o.status !== "cancelled");
+  const weekCount = active.filter((o) => !!o.dueIso && weekIsos.has(o.dueIso)).length;
 
   const views: {
     key: ViewFilter; label: string; count: number;
     icon: React.ReactNode; accent?: boolean; color?: string;
   }[] = [
-    { key: "all",      label: "Todas",       count: orders.length,                                       icon: <Icon.box /> },
-    { key: "today",    label: "Para hoy",    count: orders.filter((o) => o.dueIso === today).length,    icon: <Icon.clock />, accent: true },
-    { key: "overdue",  label: "Retrasadas",  count: orders.filter((o) => o.overdue).length,             icon: <Icon.alert />, color: "#ff7269" },
-    { key: "tomorrow", label: "Mañana",      count: orders.filter((o) => o.dueIso === tomorrow).length, icon: <Icon.cal /> },
-    { key: "week",     label: "Esta semana", count: weekCount,                                          icon: <Icon.cal /> },
-    { key: "ship",     label: "En camino",   count: orders.filter((o) => o.status === "shipping").length, icon: <Icon.truck /> },
+    { key: "all",         label: "Todas",        count: active.length,                                                       icon: <Icon.box /> },
+    { key: "unscheduled", label: "Sin agendar",  count: active.filter((o) => !o.dueIso).length,                              icon: <Icon.cal />, color: "#ffb44a" },
+    { key: "today",       label: "Para hoy",     count: active.filter((o) => !!o.dueIso && o.dueIso === today).length,       icon: <Icon.clock />, accent: true },
+    { key: "overdue",     label: "Retrasadas",   count: active.filter((o) => o.overdue).length,                              icon: <Icon.alert />, color: "#ff7269" },
+    { key: "tomorrow",    label: "Mañana",       count: active.filter((o) => !!o.dueIso && o.dueIso === tomorrow).length,    icon: <Icon.cal /> },
+    { key: "week",        label: "Esta semana",  count: weekCount,                                                           icon: <Icon.cal /> },
+    { key: "inprocess",   label: "En proceso",   count: active.filter((o) => o.status === "preparing" || o.status === "ready").length, icon: <Icon.pkg /> },
+    { key: "ship",        label: "En camino",    count: active.filter((o) => o.status === "shipping").length,                icon: <Icon.truck /> },
   ];
 
   const payTypes: {
     key: PayTypeFilter; label: string; count: number; dot: string;
   }[] = [
-    { key: "all",       label: "Todos los tipos", count: orders.length,                                        dot: "rgba(255,255,255,0.25)" },
-    { key: "confirmed", label: "Pago confirmado",  count: orders.filter((o) => o.payType === "confirmed").length, dot: "#5be07b" },
-    { key: "cod",       label: "Contra entrega",   count: orders.filter((o) => o.payType === "cod").length,       dot: "#ffb44a" },
+    { key: "all",       label: "Todas las modalidades", count: active.length,                                          dot: "rgba(255,255,255,0.25)" },
+    { key: "confirmed", label: "Anticipado",            count: active.filter((o) => o.payType === "confirmed").length, dot: "#5be07b" },
+    { key: "cod",       label: "Contra entrega",        count: active.filter((o) => o.payType === "cod").length,       dot: "#ffb44a" },
   ];
 
   return (
@@ -80,7 +92,7 @@ export function OrdersFilters({ view, setView, payType, setPayType, orders }: Pr
       </div>
 
       <div className="sb-section">
-        <div className="sb-section-h"><span>Tipo de pago</span></div>
+        <div className="sb-section-h"><span>Modalidad de pago</span></div>
         {payTypes.map((p) => (
           <div
             key={p.key}
@@ -101,7 +113,7 @@ export function OrdersFilters({ view, setView, payType, setPayType, orders }: Pr
             <span className="st-dot" style={{ background: "rgba(255,255,255,0.25)" }} />
             <span className="ofl">{c}</span>
             <span className="ofn">
-              {orders.filter((o) => o.channel === c).length || "—"}
+              {active.filter((o) => o.channel === c).length || "—"}
             </span>
           </div>
         ))}
@@ -123,7 +135,9 @@ export function OrdersFilters({ view, setView, payType, setPayType, orders }: Pr
       </div>
 
       <div className="sb-foot">
-        <span>{orders.length} órdenes · $ 2.1 M</span>
+        {/* Footer: solo cuenta órdenes activas (no canceladas). Si querés ver
+            las canceladas, mirá la columna "Cancelada" en el kanban. */}
+        <span>{active.length} órdenes activas</span>
         <button className="ico-btn" title="Exportar">
           <Icon.download />
         </button>

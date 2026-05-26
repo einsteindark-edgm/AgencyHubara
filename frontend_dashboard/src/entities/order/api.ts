@@ -19,12 +19,14 @@
  *    operador pueda reconciliarlos manualmente.
  */
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient, ApiError } from "@/shared/api";
 import {
+  orderCommandResultSchema,
   orderDetailSchema,
   orderListResponseSchema,
   vaultOrdersResponseSchema,
+  type OrderCommandResult,
   type OrderDetail,
   type OrderListResponse,
   type OrderSummary,
@@ -154,6 +156,141 @@ export function useOrderDetail(displayId: string | null) {
     },
     enabled: displayId !== null && displayId !== "",
     staleTime: 10_000,
+  });
+}
+
+/* ── Write-side mutations (F10) ────────────────────────────────────────
+ *
+ * 4 endpoints PATCH/POST que el dashboard usa para mutar órdenes:
+ *   useScheduleOrder       → PATCH /api/orders/orders/{id}/schedule
+ *   useTransitionOrderStage→ PATCH /api/orders/orders/{id}/stage
+ *   useConfirmOrderPayment → PATCH /api/orders/orders/{id}/confirm-payment
+ *   useCancelOrder         → POST  /api/orders/orders/{id}/cancel
+ *
+ * Todas devuelven `OrderCommandResult` (success/error_detail) y todas
+ * invalidate `orderKeys.list()` + `orderKeys.detail(id)` al succeed.
+ * El componente que llama maneja el dialog de error_detail si success=false.
+ */
+
+interface ScheduleOrderVariables {
+  orderId: string;
+  delivery_iso: string;
+  delivery_time?: string;
+  note?: string;
+}
+
+export function useScheduleOrder() {
+  const qc = useQueryClient();
+  return useMutation<OrderCommandResult, Error, ScheduleOrderVariables>({
+    mutationFn: async ({ orderId, ...body }) => {
+      const raw = await apiClient.patch<unknown>(
+        `/api/orders/orders/${encodeURIComponent(orderId)}/schedule`,
+        body,
+      );
+      return orderCommandResultSchema.parse(raw);
+    },
+    onSuccess: (result, vars) => {
+      if (result.success) {
+        qc.invalidateQueries({ queryKey: orderKeys.list() });
+        qc.invalidateQueries({ queryKey: orderKeys.detail(vars.orderId) });
+      }
+    },
+  });
+}
+
+interface TransitionStageVariables {
+  orderId: string;
+  to_stage: OrderStatus;
+  note?: string;
+  force?: boolean;
+}
+
+export function useTransitionOrderStage() {
+  const qc = useQueryClient();
+  return useMutation<OrderCommandResult, Error, TransitionStageVariables>({
+    mutationFn: async ({ orderId, to_stage, note, force }) => {
+      const raw = await apiClient.patch<unknown>(
+        `/api/orders/orders/${encodeURIComponent(orderId)}/stage`,
+        { stage: to_stage, note, force: force ?? false },
+      );
+      return orderCommandResultSchema.parse(raw);
+    },
+    onMutate: async ({ orderId, to_stage }) => {
+      // Optimistic update del kanban: movemos la card antes de la respuesta.
+      // Si el server rechaza (success=false), `onError` hace rollback.
+      await qc.cancelQueries({ queryKey: orderKeys.list() });
+      const previous = qc.getQueryData<{
+        orders: Order[];
+        response: OrderListResponse;
+      }>(orderKeys.list());
+      if (previous) {
+        qc.setQueryData(orderKeys.list(), {
+          ...previous,
+          orders: previous.orders.map((o) =>
+            o.id === orderId ? { ...o, status: to_stage } : o,
+          ),
+        });
+      }
+      return { previous };
+    },
+    onError: (_err, _vars, context) => {
+      const ctx = context as { previous?: unknown } | undefined;
+      if (ctx?.previous) {
+        qc.setQueryData(orderKeys.list(), ctx.previous);
+      }
+    },
+    onSettled: (_data, _err, vars) => {
+      // Siempre refetch para reconciliar con server state.
+      qc.invalidateQueries({ queryKey: orderKeys.list() });
+      qc.invalidateQueries({ queryKey: orderKeys.detail(vars.orderId) });
+    },
+  });
+}
+
+interface ConfirmPaymentVariables {
+  orderId: string;
+}
+
+export function useConfirmOrderPayment() {
+  const qc = useQueryClient();
+  return useMutation<OrderCommandResult, Error, ConfirmPaymentVariables>({
+    mutationFn: async ({ orderId }) => {
+      const raw = await apiClient.patch<unknown>(
+        `/api/orders/orders/${encodeURIComponent(orderId)}/confirm-payment`,
+        {},
+      );
+      return orderCommandResultSchema.parse(raw);
+    },
+    onSuccess: (result, vars) => {
+      if (result.success) {
+        qc.invalidateQueries({ queryKey: orderKeys.list() });
+        qc.invalidateQueries({ queryKey: orderKeys.detail(vars.orderId) });
+      }
+    },
+  });
+}
+
+interface CancelOrderVariables {
+  orderId: string;
+  reason?: string;
+}
+
+export function useCancelOrder() {
+  const qc = useQueryClient();
+  return useMutation<OrderCommandResult, Error, CancelOrderVariables>({
+    mutationFn: async ({ orderId, reason }) => {
+      const raw = await apiClient.post<unknown>(
+        `/api/orders/orders/${encodeURIComponent(orderId)}/cancel`,
+        { reason },
+      );
+      return orderCommandResultSchema.parse(raw);
+    },
+    onSuccess: (result, vars) => {
+      if (result.success) {
+        qc.invalidateQueries({ queryKey: orderKeys.list() });
+        qc.invalidateQueries({ queryKey: orderKeys.detail(vars.orderId) });
+      }
+    },
   });
 }
 

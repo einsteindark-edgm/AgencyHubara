@@ -149,9 +149,10 @@ function mapBackendCampaign(b: BackendAdsCampaign): AdsCampaign {
     impressions: b.impressions,
     reach: b.reach,
     clicks: b.clicks,
-    // `conversations` queda null hasta clasificador downstream — los
-    // components usan `totalConversations(c)` que cae al `started`.
-    conversations: null,
+    // Counts por estado conversacional — backend devuelve dict con 7 keys
+    // (clasificador heurístico via `classify_state`). Habilita
+    // `AdsStateDistribution` y partial `AdsFunnel`.
+    conversations: b.conversations,
     revenue: b.revenue,
     avgTicket: b.avg_ticket,
     firstResp: b.first_resp,
@@ -164,6 +165,7 @@ function mapBackendConversation(
 ): AttributedConversation {
   return {
     id: b.id,
+    episodeId: b.episode_id,
     short: deriveInitials(b.name, b.phone_number),
     color: deriveColor(b.phone_number),
     started: formatRelativeMs(b.started_at_ms) ?? "—",

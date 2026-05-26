@@ -68,6 +68,23 @@ Antes de escribir nada, leé en este orden con `Read tool`:
 
 7. `references/manifest-schema.md` si la HU agrega/cambia un campo del manifest.
 
+8. **Capability specs afectadas** — la fuente de verdad de QUÉ HACE el
+   sistema. Cargá los specs relevantes desde
+   `hubara_agency/.hubara/specs/` (ver `_index.md` para la lista).
+   Heurística:
+   - Si la HU toca plugin X → leé `specs/plugins/X/spec.md` (si existe)
+   - Si la HU toca worker agéntico → leé `specs/agents/<worker>/spec.md`
+   - Si la HU toca flujo cross-plugin (WhatsApp, EventLog) → leé
+     `specs/messaging/spec.md`
+   - Si la spec NO existe todavía para la capability afectada → marcalo
+     en §16 como `seed_inline` (vos escribís el spec inicial bootstrap
+     dentro del delta).
+
+   **¿Por qué cargar specs?** Para NO contradecir comportamiento ya
+   acordado. Si la HU pide algo que rompe un Requirement existente,
+   marcalo en §15 Assumptions + proponé MODIFY o REMOVE del Requirement
+   en el delta de §16.
+
 ---
 
 ## §2. Iteration handling (crítico)
@@ -387,6 +404,24 @@ Cada una con default chosen + reversibilidad.)
   Reversibilidad: alta (mover a plugin-local cuando se implemente).
 - **A2:** Asumí 1 sola task queue para el nuevo worker. Default: 1.
   Reversibilidad: alta (agregar otra queue post-merge si fuera necesario).
+
+## §16. Spec deltas — capability behavior changes
+
+(Lista de las capabilities cuyas specs cambian con esta HU. El detalle
+estructurado va a archivos separados bajo `$ARTIFACTS_DIR/spec-deltas/`.
+Acá solo el índice + status.)
+
+| Capability | Path delta | Status | Resumen |
+|---|---|---|---|
+| `plugins/orders` | `$ARTIFACTS_DIR/spec-deltas/plugins/orders/spec.md` | added (existed) | Nuevo Requirement: "Discount en orden" |
+| `messaging` | `$ARTIFACTS_DIR/spec-deltas/messaging/spec.md` | modified (existed) | Nuevo Scenario en "Outbound envelope" |
+| `agents/sales-worker` | `$ARTIFACTS_DIR/spec-deltas/agents/sales-worker/spec.md` | seed_inline (no existía) | Bootstrap completo del spec |
+
+Si esta HU NO toca comportamiento observable de ninguna capability
+(e.g., refactor interno puro, fix typo en docs, lint changes) →
+`spec-deltas/` queda vacío y esta tabla pone `(N/A)`.
+
+Detalle del formato de cada delta → ver §9 de este SKILL.
 ```
 
 ---
@@ -492,9 +527,16 @@ Para clasificar correctamente, recorré la HU y respondé:
 
 ## §8. Salida final
 
-Escribir `$ARTIFACTS_DIR/hu-refinada.md` con el template completo (§3).
+Escribir DOS outputs:
 
-Imprimir al usuario un summary de 6 líneas:
+1. **`$ARTIFACTS_DIR/hu-refinada.md`** con el template completo (§3),
+   incluyendo §16 con el índice de spec deltas.
+
+2. **`$ARTIFACTS_DIR/spec-deltas/<capability>/spec.md`** — un archivo
+   por capability con cambios. Formato canónico en §9. Si no hay
+   cambios de comportamiento observable → omitir directorio entero.
+
+Imprimir al usuario un summary de 7 líneas:
 
 ```
 HU refinement — <título>
@@ -502,10 +544,118 @@ mode: <single|multi>_plugin
 plugins_affected: <lista>
 shared_files_touched: <count>
 requires_merger: <bool>
+spec_deltas: <N capabilities afectadas o "none">
 iteration: <n>
 ```
 
 NO imprimir "next steps" — el workflow Archon maneja la fan-out.
+
+---
+
+## §9. Spec deltas — formato canónico (output secundario)
+
+Por cada capability afectada, escribir `$ARTIFACTS_DIR/spec-deltas/<capability>/spec.md`
+con esta estructura:
+
+```markdown
+# Delta for <capability>
+
+> HU: <HU_ID> — <título>
+> Date: <ISO 8601>
+> Status: <added | modified | seed_inline>
+> Parent spec: hubara_agency/.hubara/specs/<capability>/spec.md
+
+## ADDED Requirements
+
+(Comportamiento NUEVO. Cada Requirement con al menos 1 Scenario.)
+
+### Requirement: <Title>
+El sistema SHALL <observable behavior>.
+
+#### Scenario: <Happy path>
+- GIVEN <precondition>
+- WHEN <action>
+- THEN <outcome>
+
+#### Scenario: <Edge case>
+- GIVEN ...
+- WHEN ...
+- THEN ...
+
+## MODIFIED Requirements
+
+(Comportamiento que CAMBIA. Citá explícitamente "(Previously: X)" para
+audit trail. Re-escribí el Requirement completo + sus Scenarios.)
+
+### Requirement: <Existing Title>
+El sistema SHALL <new observable behavior>.
+(Previously: <old behavior>)
+
+#### Scenario: <Re-escrito o nuevo>
+- GIVEN ...
+
+## REMOVED Requirements
+
+(Comportamiento DEPRECADO. Solo el título + razón.)
+
+### Requirement: <Title to remove>
+(Deprecated por <razón> — HU <HU_ID>. Consumers deben adaptarse antes
+de mergear.)
+```
+
+### Cuándo aplica `seed_inline` (capability nueva)
+
+Si la capability afectada NO tiene `spec.md` todavía bajo
+`hubara_agency/.hubara/specs/`, podés bootstrappear inline:
+
+```markdown
+# Delta for <capability>
+
+> Status: seed_inline (esta capability no existía en specs/)
+> Parent spec: hubara_agency/.hubara/specs/<capability>/spec.md (se creará en archive)
+
+## Purpose
+
+<Bootstrap purpose paragraph — qué rol juega esta capability.>
+
+## ADDED Requirements
+
+(Todos los Requirements iniciales — porque la spec se crea desde cero.)
+
+### Requirement: ...
+```
+
+El comando `hubara-archive-hu` post-merge promociona este seed a
+`specs/<capability>/spec.md` como spec inicial.
+
+### Cuándo NO emitir deltas
+
+- HU es **refactor interno puro** sin cambio observable (e.g., extraer
+  helper a otro file). → No emitir deltas. Marcar `§16 = (N/A — refactor interno)`.
+- HU es **fix typo en doc / lint** sin código. → No emitir deltas.
+- HU es **bump de dependencia** sin cambio de comportamiento. → No emitir deltas.
+
+Si dudás "¿esto cambia comportamiento observable?" — el test mental es:
+**¿un consumer downstream (frontend, API caller, otro plugin) notaría
+la diferencia?** Si sí, emitir delta. Si no, omitir.
+
+### Anti-patterns en deltas
+
+- ❌ Repetir Requirements que NO cambian (los deltas son *solo* lo que
+  cambia — el resto queda en el parent spec sin tocar).
+- ❌ Mencionar nombres de clase Python / archivos específicos en
+  Requirements (eso va al refinement §3, no a los deltas).
+- ❌ "Quizás hacer X, depende" — los deltas son afirmaciones SHALL,
+  no opciones. Si hay decisión abierta, va al §13 del refinement, NO al delta.
+- ❌ Scenarios sin GIVEN explícito (siempre estado inicial concreto).
+- ❌ Modificar un Requirement sin marcar "(Previously: ...)".
+
+### Cross-ref con el refinement
+
+Cada Requirement nuevo/modificado en los deltas DEBE estar respaldado
+por al menos un cambio en §3 (Cambios por stack) del refinement. Si
+proponés Requirement nuevo pero no listás archivos a tocar → es señal
+de underspecified, agregalo a §3.
 
 ---
 

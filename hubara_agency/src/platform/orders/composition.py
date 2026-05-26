@@ -21,10 +21,15 @@ from src.platform.medusa.composition import (
     get_medusa_product_service,
     get_medusa_settings,
 )
+from src.platform.orders.command_port import OrderCommandPort
 from src.platform.orders.empty_query import EmptyOrderQuery
 from src.platform.orders.medusa_order import (
     MedusaOrderConfigError,
     MedusaOrderRegistration,
+)
+from src.platform.orders.medusa_order_command import (
+    MedusaOrderCommand,
+    NoopOrderCommand,
 )
 from src.platform.orders.medusa_order_query import MedusaOrderQuery
 from src.platform.orders.port import OrderRegistrationPort
@@ -111,3 +116,44 @@ def get_order_query_port() -> OrderQueryPort:
             exc,
         )
         return EmptyOrderQuery()
+
+
+@lru_cache(maxsize=1)
+def get_order_command_port() -> OrderCommandPort:
+    """Return the configured OrderCommandPort (Medusa live or noop).
+
+    Mismo gating que `get_order_query_port`: requiere `MEDUSA_BASE_URL` +
+    auth. Si falta config → `NoopOrderCommand` (devuelve success=False con
+    detail explícito en cada call, para que el frontend muestre el dialog
+    correcto sin romper con 500).
+
+    NOTA: distinct del registration port — éste sí necesita poder leer +
+    escribir orders/drafts existentes. La distinción `MedusaOrderConfigError`
+    no aplica acá porque no creamos drafts nuevos, solo los mutamos.
+    """
+    settings = get_medusa_settings()
+    has_auth = bool(
+        settings.admin_token
+        or (settings.admin_email and settings.admin_password)
+    )
+    if not (settings.base_url and has_auth):
+        log.warning(
+            "OrderCommandPort = NoopOrderCommand (Medusa no configurado). "
+            "Botones de schedule/cancel/transition van a fallar con detail "
+            "explícito. Configura MEDUSA_BASE_URL + MEDUSA_ADMIN_TOKEN en .env."
+        )
+        return NoopOrderCommand()
+    try:
+        port = MedusaOrderCommand(client=get_medusa_client())
+        log.info(
+            "OrderCommandPort = MedusaOrderCommand (base_url=%s)",
+            settings.base_url,
+        )
+        return port
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "OrderCommandPort: failed to build MedusaOrderCommand (%s). "
+            "Fallback a NoopOrderCommand.",
+            exc,
+        )
+        return NoopOrderCommand()

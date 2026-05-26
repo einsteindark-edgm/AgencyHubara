@@ -17,6 +17,35 @@ src/plugins/<id>/   ← un plugin = una bounded context
 
 `src/sales_whatsapp/` y `src/remarketing_whatsapp/` son shells legacy del pre-PR11 — el código real vive en `src/plugins/chats/workers/{sales,remarketing}.py`.
 
+## Capability specs (behavior contracts)
+
+`.hubara/specs/` es la **fuente de verdad de QUÉ HACE el sistema**, organizada
+por capability (no por plugin / no por layer). Inspirado en
+[OpenSpec](https://openspec.dev/).
+
+Formato canónico: Markdown con `## Purpose` + `### Requirement: X` (SHALL/MUST,
+RFC 2119) + `#### Scenario: Y` (GIVEN/WHEN/THEN).
+
+| Capability bootstrapeada | Path |
+|---|---|
+| `plugins/orders` | `.hubara/specs/plugins/orders/spec.md` |
+| `plugins/chats` | `.hubara/specs/plugins/chats/spec.md` |
+| `messaging` (cross-plugin) | `.hubara/specs/messaging/spec.md` |
+| `agents/sales-worker` | `.hubara/specs/agents/sales-worker/spec.md` |
+
+Pendientes (bootstrap incremental cuando una HU toque): `plugins/catalog`,
+`plugins/eta`, `plugins/agents_admin`, `plugins/system_map`,
+`agents/remarketing-worker`, `observability`.
+
+**Quién lee qué:**
+- `hubara-tech-refiner-archon`: lee specs afectadas + escribe `spec-deltas/`
+- `hubara-premortem-archon`: fundamenta failure modes en Requirements
+- `hubara-reviewer-deha` + `hubara-reviewer-plugin-system`: cross-ref findings
+- `hubara-evaluator-archon`: verifica scenario coverage
+- `hubara-archive-hu`: aplica deltas a specs post-merge
+
+Detalle completo en `.hubara/specs/README.md`.
+
 ## 5 R-rules DEHA (hard rules)
 
 1. **R-DET** — workflows son determinísticos (no I/O directo, no `datetime.now()`, no `random`). Side effects → activity.

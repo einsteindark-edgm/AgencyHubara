@@ -37,7 +37,13 @@ export function OrdersSection({
   const orders = query.data?.orders ?? [];
   const response = query.data?.response;
   const f = useOrderFilters(orders);
-  const filteredTotal = f.filtered.reduce((a, b) => a + b.total, 0);
+  // Counter "X órdenes · Y en valor" del header solo cuenta órdenes activas
+  // (excluye canceladas). El kanban sigue mostrando la columna "Cancelada"
+  // con sus cards — los counters reflejan productividad operacional, no
+  // inventory total. Bug fix 2026-05-26.
+  const filteredActive = f.filtered.filter((o) => o.status !== "cancelled");
+  const filteredActiveCount = filteredActive.length;
+  const filteredActiveTotal = filteredActive.reduce((a, b) => a + b.total, 0);
   const selected = orders.find((o) => o.id === selectedOrderId) ?? null;
 
   // Banner cuando Medusa no responde — el operador necesita saberlo.
@@ -62,8 +68,8 @@ export function OrdersSection({
       <main className="ord-canvas">
         <OrdersHeader
           orders={orders}
-          filteredCount={f.filtered.length}
-          filteredTotal={filteredTotal}
+          filteredCount={filteredActiveCount}
+          filteredTotal={filteredActiveTotal}
           title={filterLabel(f.view)}
         />
         {showBackendUnavailable && (

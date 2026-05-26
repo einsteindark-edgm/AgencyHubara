@@ -175,9 +175,11 @@ async def test_list_returns_summaries_with_correct_shape(adapter):
     assert o.total_cop == 124500
     assert o.currency_code == "COP"
     assert o.is_draft is False
-    # due estimate = created_at + 1 día
-    assert o.due_iso == "2026-05-23"
-    assert o.due_time == "—"
+    # Post-2026-05-26: no más estimate (created_at + 1d). Si no hay
+    # `metadata.hubara_scheduled_delivery_iso`, `due_iso` queda None y
+    # el frontend pinta "Sin agendar" en el inspector.
+    assert o.due_iso is None
+    assert o.due_time is None
     assert o.overdue is False  # derivado client-side
     assert o.priority == "normal"  # 30k < 124500 < 200k
     assert o.agent == "—"
@@ -315,25 +317,34 @@ async def test_get_order_detail_full_shape(adapter):
     assert len(detail.timeline) == 1
     assert detail.timeline[0].type == "created"
     # data_completeness_missing debe listar los slots ausentes
+    # NOTA: post-feature de stages, `notes` y `priority` ya NO van acá —
+    # notes ahora vive en metadata.hubara_human_note + cancelled_reason, y
+    # priority sigue siendo derivación heurística client-side del total.
     assert "due_date" in detail.data_completeness_missing
     assert "agent" in detail.data_completeness_missing
-    assert "notes" in detail.data_completeness_missing
+    assert "customer_history" in detail.data_completeness_missing
     assert "tracking_number" in detail.data_completeness_missing
 
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_get_draft_order_uses_draft_endpoint(adapter):
-    draft_route = respx.get(f"{_BASE_URL}/admin/draft-orders/draft_xyz").mock(
-        return_value=Response(200, json={"draft_order": _sample_order(id="draft_xyz")})
+async def test_get_draft_via_orders_endpoint_with_status_field(adapter):
+    """Medusa v2: GET /admin/orders/{id} devuelve drafts también con
+    status="draft". El adapter SOLO debería tocar el endpoint draft-orders
+    como fallback (404). En este caso, orders responde 200 con status=draft
+    → no se toca el fallback."""
+    sample = _sample_order(id="draft_xyz")
+    sample["status"] = "draft"  # Medusa v2 marca el draft así
+    orders_route = respx.get(f"{_BASE_URL}/admin/orders/draft_xyz").mock(
+        return_value=Response(200, json={"order": sample})
     )
-    orders_route = respx.get(f"{_BASE_URL}/admin/orders/draft_xyz")
+    draft_route = respx.get(f"{_BASE_URL}/admin/draft-orders/draft_xyz")
 
     detail = await adapter.get("draft_xyz")
     assert detail is not None
-    assert detail.summary.is_draft is True
-    assert draft_route.called
-    assert not orders_route.called
+    assert detail.summary.is_draft is True  # derived from status="draft"
+    assert orders_route.called
+    assert not draft_route.called  # fallback NO se usa
 
 
 @pytest.mark.asyncio
@@ -563,8 +574,11 @@ async def test_premortem_a1_display_id_falls_back_to_draft_orders(adapter):
             "count": 1, "offset": 0, "limit": 50,
         })
     )
-    respx.get(f"{_BASE_URL}/admin/draft-orders/draft_real_a1c").mock(
-        return_value=Response(200, json={"draft_order": _sample_order(id="draft_real_a1c", display_id=9999)})
+    # /admin/orders/{id} devuelve el draft también (Medusa v2 real behavior).
+    draft_sample = _sample_order(id="draft_real_a1c", display_id=9999)
+    draft_sample["status"] = "draft"
+    respx.get(f"{_BASE_URL}/admin/orders/draft_real_a1c").mock(
+        return_value=Response(200, json={"order": draft_sample})
     )
     detail = await adapter.get("#9999")
     assert detail is not None
@@ -584,3 +598,173 @@ async def test_premortem_a1_display_id_returns_none_when_not_found(adapter):
     )
     detail = await adapter.get("#0000")
     assert detail is None
+
+
+# ----------------------------------------------------------------------
+# Bug fix 2026-05-26 — orden cancelada en Medusa debe ir a columna
+# "Cancelada", aunque tenga `hubara_stage_history` de un evento previo.
+# Caso real: pago confirmado → cancelación via Medusa Admin → la card
+# aparecía en "Nueva" porque el elif `hubara_stage_history` ganaba sobre
+# el legacy `_map_status` que sí detectaba cancellation.
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_canceled_in_medusa_overrides_hubara_history(adapter):
+    """Orden con `status="canceled"` y `canceled_at` set, AUNQUE tenga
+    `hubara_stage_history` (sin un entry "cancelled" explícito), debe
+    mapearse a status="cancelled" — el cancel de Medusa es source of truth."""
+    sample = _sample_order(id="order_canceled_via_admin")
+    sample["status"] = "canceled"
+    sample["canceled_at"] = "2026-05-26T00:35:36.327Z"
+    # Metadata con history de payment_confirmed pero SIN stage cancelled.
+    # Esto reproduce el caso real del bug.
+    sample["metadata"] = {
+        **sample.get("metadata", {}),
+        "hubara_stage_history": [
+            {
+                "by": "human",
+                "to": "new",
+                "from": "new",
+                "at_ms": 1779752654024,
+                "event": "payment_confirmed",
+            }
+        ],
+        "hubara_payment_confirmed": True,
+    }
+    respx.get(f"{_BASE_URL}/admin/orders").mock(
+        return_value=Response(200, json={
+            "orders": [sample], "count": 1, "offset": 0, "limit": 50,
+        })
+    )
+    respx.get(f"{_BASE_URL}/admin/draft-orders").mock(
+        return_value=Response(200, json={
+            "draft_orders": [], "count": 0, "offset": 0, "limit": 50,
+        })
+    )
+    result = await adapter.list(limit=50, include_drafts=True)
+    assert len(result.orders) == 1
+    assert result.orders[0].status == "cancelled"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_canceled_at_alone_triggers_cancelled(adapter):
+    """`canceled_at` truthy con `status="pending"` debería igual mapear a
+    cancelled — defensa belt-and-suspenders contra inconsistencias de
+    Medusa (canceled_at set pero status no actualizado)."""
+    sample = _sample_order(id="order_only_canceled_at")
+    sample["status"] = "pending"
+    sample["canceled_at"] = "2026-05-26T00:35:36.327Z"
+    respx.get(f"{_BASE_URL}/admin/orders").mock(
+        return_value=Response(200, json={
+            "orders": [sample], "count": 1, "offset": 0, "limit": 50,
+        })
+    )
+    respx.get(f"{_BASE_URL}/admin/draft-orders").mock(
+        return_value=Response(200, json={
+            "draft_orders": [], "count": 0, "offset": 0, "limit": 50,
+        })
+    )
+    result = await adapter.list(limit=50, include_drafts=True)
+    assert result.orders[0].status == "cancelled"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_canceled_priority_over_hubara_stage_running(adapter):
+    """Edge: hubara_stage="preparing" pero Medusa canceled → cancelled gana.
+    Caso: alguien movió la card a "preparing" y después la cancelaron via
+    Medusa Admin. El kanban debe reflejar la cancelación."""
+    sample = _sample_order(id="order_canceled_after_prep")
+    sample["status"] = "canceled"
+    sample["canceled_at"] = "2026-05-26T01:00:00.000Z"
+    sample["metadata"] = {
+        **sample.get("metadata", {}),
+        "hubara_stage": "preparing",
+        "hubara_stage_history": [
+            {"by": "human", "to": "preparing", "from": "new", "at_ms": 1779700000000},
+        ],
+    }
+    respx.get(f"{_BASE_URL}/admin/orders").mock(
+        return_value=Response(200, json={
+            "orders": [sample], "count": 1, "offset": 0, "limit": 50,
+        })
+    )
+    respx.get(f"{_BASE_URL}/admin/draft-orders").mock(
+        return_value=Response(200, json={
+            "draft_orders": [], "count": 0, "offset": 0, "limit": 50,
+        })
+    )
+    result = await adapter.list(limit=50, include_drafts=True)
+    assert result.orders[0].status == "cancelled"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_timeline_appends_cancel_event_from_canceled_at(adapter):
+    """Si la orden fue cancelada via Medusa Admin (canceled_at set), pero
+    el `hubara_stage_history` NO refleja la cancelación, el timeline debe
+    incluir un evento sintético `stage:cancelled` con el timestamp de
+    Medusa. Sin esto, el inspector pinta sin evento de cierre."""
+    sample = _sample_order(id="order_canceled_in_admin")
+    sample["status"] = "canceled"
+    sample["canceled_at"] = "2026-05-26T00:35:36.327Z"
+    sample["metadata"] = {
+        **sample.get("metadata", {}),
+        "hubara_stage_history": [
+            {
+                "by": "human",
+                "to": "new",
+                "from": "new",
+                "at_ms": 1779752654024,
+                "event": "payment_confirmed",
+            }
+        ],
+    }
+    respx.get(f"{_BASE_URL}/admin/orders/order_canceled_in_admin").mock(
+        return_value=Response(200, json={"order": sample})
+    )
+    detail = await adapter.get("order_canceled_in_admin")
+    assert detail is not None
+    assert detail.summary.status == "cancelled"
+    # Timeline debería tener al menos: payment_confirmed + stage:cancelled.
+    cancel_events = [e for e in detail.timeline if e.type == "stage:cancelled"]
+    assert len(cancel_events) == 1
+    assert cancel_events[0].label == "Cancelado"
+    assert cancel_events[0].detail == "vía Medusa Admin"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_timeline_no_duplicate_cancel_event(adapter):
+    """Si el `hubara_stage_history` YA tiene una transición a "cancelled"
+    (cancel via dashboard que también propaga a Medusa), NO duplicamos el
+    evento — el sintético solo agrega cuando falta."""
+    sample = _sample_order(id="order_canceled_via_dashboard")
+    sample["status"] = "canceled"
+    sample["canceled_at"] = "2026-05-26T01:00:00.000Z"
+    sample["metadata"] = {
+        **sample.get("metadata", {}),
+        "hubara_stage": "cancelled",
+        "hubara_stage_history": [
+            {
+                "by": "human",
+                "to": "cancelled",
+                "from": "preparing",
+                "at_ms": 1779800000000,
+                "note": "Cliente arrepentido",
+            },
+        ],
+    }
+    respx.get(f"{_BASE_URL}/admin/orders/order_canceled_via_dashboard").mock(
+        return_value=Response(200, json={"order": sample})
+    )
+    detail = await adapter.get("order_canceled_via_dashboard")
+    assert detail is not None
+    cancel_events = [e for e in detail.timeline if e.type == "stage:cancelled"]
+    # Solo uno — el del history, no el sintético duplicado.
+    assert len(cancel_events) == 1
+    # Y debe ser el original (no el "vía Medusa Admin").
+    assert cancel_events[0].detail != "vía Medusa Admin"

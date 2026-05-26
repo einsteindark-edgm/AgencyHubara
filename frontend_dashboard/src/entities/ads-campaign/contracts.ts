@@ -15,14 +15,30 @@ import { z } from "zod";
 
 /* ── Campaña (response de GET /api/chats/ads/campaigns) ──────────────────── */
 
+/** Counts por estado conversacional — backend devuelve dict con TODAS las
+ * 7 keys de `AdsState`. `null` solo si el bucket está vacío (caso edge).
+ * El frontend consume esto para `AdsStateDistribution` y `AdsFunnel`. */
+export const backendAdsConversationsCountsSchema = z
+  .object({
+    no_reply: z.number().int(),
+    nuevo: z.number().int(),
+    activo: z.number().int(),
+    calificado: z.number().int(),
+    cotizado: z.number().int(),
+    ganado: z.number().int(),
+    perdido: z.number().int(),
+  })
+  .nullable();
+
 export const backendAdsCampaignSchema = z.object({
   // Disponibles hoy
   id: z.string(),
   name: z.string().nullable(),
-  source_type: z.string().nullable(), // "ad" | "post" | "web_referral"
+  source_type: z.string().nullable(), // "ad" | "post" | "web_referral" | "direct"
   started: z.number().int(),
   first_seen_ms: z.number().nullable(),
   last_seen_ms: z.number().nullable(),
+  conversations: backendAdsConversationsCountsSchema,
 
   // Faltantes — backend serializa null hasta integrar Meta Ads API / orders
   spend: z.number().nullable(),
@@ -54,18 +70,23 @@ export const backendAdsCampaignsResponseSchema = z.object({
 
 export const backendAttributedConversationSchema = z.object({
   // Disponibles hoy
-  id: z.string(),
+  id: z.string(), // "wa_<phone>__<episode_id>" o "wa_<phone>" (legacy)
   phone_number: z.string(),
+  /** ID del episodio dentro de la sesión. `null` para sesiones legacy
+   *  sin `episodes[]`. Cuando está presente, varias filas pueden
+   *  compartir el mismo `phone_number` (cliente con múltiples conversaciones
+   *  a lo largo del tiempo). */
+  episode_id: z.string().nullable(),
   started_at_ms: z.number().int(),
   last_msg_at_ms: z.number().nullable(),
   msgs_count: z.number().int(),
   ad_headline: z.string().nullable(),
   agent: z.string().nullable(),
+  state: z.string().nullable(), // AdsState derivado por classifier
 
-  // Faltantes — backend devuelve null hasta integrar CRM / clasificador / orders
+  // Faltantes — backend devuelve null hasta integrar CRM / orders
   name: z.string().nullable(),
   city: z.string().nullable(),
-  state: z.string().nullable(), // AdsState — requiere clasificador conversacional
   value: z.number().nullable(),
 });
 

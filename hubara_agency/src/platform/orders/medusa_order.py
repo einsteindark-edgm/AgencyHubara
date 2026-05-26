@@ -384,6 +384,16 @@ class MedusaOrderRegistration:
         if not label:
             return variants[0], False
 
+        # Single-variant products NEVER mismatch (2026-05-26):
+        # En esta tienda los "aromas" y "colores" viven como **tags** del
+        # producto, NO como variantes — los productos generalmente tienen
+        # 1 sola variante ("Unico"). Cuando el LLM nos pasa label="Limoncillo,
+        # Lila", esto describe atributos descriptivos (tags), no una variante
+        # alternativa. Marcar mismatch cuando solo hay 1 variante es
+        # ruidoso y confunde al operador con un warning falso.
+        if len(variants) == 1:
+            return variants[0], False
+
         # Premortem (post-mortem run bc54cb93, 2026-05-25):
         # El LLM pasa labels COMPUESTOS cuando un producto tiene 2+ variant
         # options (ej `cruz-de-vida` tiene aroma + color). Casos vistos:

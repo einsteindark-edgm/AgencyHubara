@@ -15,6 +15,11 @@ ADR-001: the tool is inert w.r.t. Temporal. It writes the tag to `metadata.json`
 and returns a JSON envelope (`schedule_remarketing` + `message`); the workflow
 parses the envelope and issues the dispatcher activity. No `temporal_client`,
 no `start_workflow`, no workflow imports.
+
+Episode lifecycle: cuando el tag es un cierre formal (`CLOSING_TAGS` —
+COMPRA_EXITOSA, RECHAZO, CONFIRMADO_SIN_DATOS), se cierra el episodio
+activo via `close_episode(metadata, ...)`. El siguiente inbound del mismo
+cliente abrirá un episodio nuevo automáticamente.
 """
 
 from __future__ import annotations
@@ -28,6 +33,11 @@ from exoclaw.agent.tools import ToolBase, ToolContext
 
 from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.constants import ROUTE_VENTAS
+from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
+    CLOSING_TAGS,
+    close_episode,
+    count_session_jsonl_lines,
+)
 
 
 # Sesión c4e3416f: `CONFIRMADO_SIN_DATOS` es para el caso donde el cliente
@@ -99,9 +109,13 @@ class ManageConversationTagTool(ToolBase):
         # compatibilidad pero NO se usa para metadata.
         # `vault_dir` (DI-friendly para tests): default = `WORKSPACE_VAULT_DIR`.
         self._workspace = Path(workspace)
-        self._vault_dir = Path(vault_dir) if vault_dir is not None else WORKSPACE_VAULT_DIR
+        self._vault_dir = (
+            Path(vault_dir) if vault_dir is not None else WORKSPACE_VAULT_DIR
+        )
 
-    async def execute_with_context(self, ctx: ToolContext, tag: str, motivo: str) -> str:
+    async def execute_with_context(
+        self, ctx: ToolContext, tag: str, motivo: str
+    ) -> str:
         # Path per-sesion (NO el workspace canonico del agente).
         metadata_file = self._vault_dir / ctx.session_key / "metadata.json"
         metadata_file.parent.mkdir(parents=True, exist_ok=True)
@@ -112,6 +126,7 @@ class ManageConversationTagTool(ToolBase):
         data["tag"] = tag
         data["motivo"] = motivo
 
+        now_ms = int(time.time() * 1000)
         history = data.setdefault("status_history", [])
         history.append(
             {
@@ -121,6 +136,26 @@ class ManageConversationTagTool(ToolBase):
                 "timestamp": time.time(),
             }
         )
+
+        # Episode lifecycle: cierre formal del episodio activo si el tag
+        # es de cierre. Idempotente: si el episodio ya está cerrado, no
+        # rompe (close_episode devuelve None y seguimos). Backfill lazy
+        # cubre sesiones legacy sin `episodes[]`.
+        #
+        # `msgs_count_at_close` (FU3): snapshot del total de líneas del
+        # JSONL al cerrar — el listing use case lo usa para calcular
+        # `msgs_in_episode = at_close - at_start` exacto.
+        if tag in CLOSING_TAGS:
+            msgs_at_close = count_session_jsonl_lines(
+                self._vault_dir, ctx.session_key
+            )
+            close_episode(
+                data,
+                closing_tag=tag,
+                closing_motivo=motivo,
+                now_ms=now_ms,
+                msgs_count_at_close=msgs_at_close,
+            )
 
         metadata_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
@@ -135,6 +170,8 @@ class ManageConversationTagTool(ToolBase):
                 "motivo": motivo,
                 "delay_seconds": 60,
             }
-            response["message"] += " Se programó un ciclo de remarketing automáticamente."
+            response[
+                "message"
+            ] += " Se programó un ciclo de remarketing automáticamente."
 
         return json.dumps(response, ensure_ascii=False)

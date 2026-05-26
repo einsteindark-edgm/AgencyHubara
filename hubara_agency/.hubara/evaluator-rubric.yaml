@@ -10,8 +10,8 @@
 # Score final = weighted average de criterios aplicables.
 # Veredicto = pass | warn | block_merge según thresholds globales.
 
-version: "1.0"
-last_calibrated: "2026-05-21"  # actualizar cuando se corra el ritual de calibración
+version: "1.1"  # Fase 12 OpenSpec: agregado criterio scenario_coverage
+last_calibrated: "2026-05-25"  # actualizar cuando se corra el ritual de calibración
 
 criteria:
 
@@ -34,7 +34,7 @@ criteria:
       - "cd frontend_dashboard && npm run test:arch"
 
   - id: test_coverage_real
-    weight: 25
+    weight: 15  # reducido de 25 → 15 al agregar scenario_coverage (v1.1)
     applies_when: always
     threshold_hard: 7
     definition: |
@@ -54,6 +54,35 @@ criteria:
     manual_check:
       - "Inspeccioná las assertions de los tests nuevos — ¿verifican comportamiento o solo shape?"
       - "Si la HU es de visualización (backend EMITE datos al frontend), los tests E2E deben verificar que los datos LLEGAN al frontend, no solo que el endpoint los devuelve."
+
+  - id: scenario_coverage
+    weight: 10
+    applies_when: "spec_deltas_present"   # solo si $ARTIFACTS_DIR/spec-deltas/ no está vacío
+    threshold_hard: 7
+    definition: |
+      Fase 12 OpenSpec — ¿Cada Scenario nuevo o modificado en los spec-deltas
+      tiene un test que lo verifica end-to-end? Los Scenarios son GIVEN/WHEN/THEN
+      executables. Si un Scenario dice "WHEN payload['discount']='EXPIRED' THEN
+      error INVALID_DISCOUNT" y no hay un test que mande ese payload y verifique
+      ese error, el Scenario es ficción.
+
+      Cómputo de cobertura:
+        coverage = (scenarios con test asociado) / (total scenarios en deltas)
+
+      Un Scenario tiene test asociado si existe un test cuya función o describe
+      block menciona el título del Scenario, O cuyo body contiene los keywords
+      del WHEN/THEN del Scenario (heurística).
+    scoring:
+      10: "100% de Scenarios nuevos/modificados tienen test ejecutado en CI verde. Los títulos de los tests citan el Scenario para audit trail."
+      7: "≥90% de Scenarios cubiertos. Los que faltan son edge cases triviales (e.g., 'AND log es emitido')."
+      4: "70-89% de Scenarios cubiertos. Hay Scenarios críticos sin test."
+      0: "<70% de cobertura, O hay Scenarios `THEN error X` sin test que verifique el error path."
+    auto_check_commands:
+      - "test -d $ARTIFACTS_DIR/spec-deltas/ && find $ARTIFACTS_DIR/spec-deltas/ -name 'spec.md' -exec grep -c '^#### Scenario:' {} \\; | paste -sd+ | bc"
+      # Para mapping Scenario → test, ver task-result.yaml.scenario_coverage[]
+    manual_check:
+      - "Leé cada Scenario nuevo en spec-deltas/. ¿Existe un test que mande exactamente el WHEN y assertee el THEN? Si no, ese Scenario es deuda."
+      - "Los Scenarios `THEN error code X` son los más propensos a quedar sin test — el implementer prueba el happy path y olvida el sad path. Cross-ref obligatorio."
 
   - id: visual_verification
     weight: 15

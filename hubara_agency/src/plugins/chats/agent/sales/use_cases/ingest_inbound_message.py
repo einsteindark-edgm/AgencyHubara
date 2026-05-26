@@ -40,7 +40,12 @@ from src.plugins.chats.agent.sales.translate import (
     EffectiveText,
     translate_to_effective_text,
 )
+from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.session_history import FilesystemMessageHistoryStore
+from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
+    count_session_jsonl_lines,
+    ensure_active_episode,
+)
 from src.plugins.chats.agent.sales.use_cases.load_or_start_sales_session import (
     LoadOrStartSalesSession,
 )
@@ -98,6 +103,32 @@ class IngestInboundMessage:
                 referral=parsed.referral,
                 inbound_message_id=parsed.message_id,
             )
+
+        # --- 2c. Episode lifecycle: garantizar episodio activo ---
+        # Cada inbound del cliente debe estar dentro de un episodio. Si el
+        # último episodio del cliente está cerrado (COMPRA_EXITOSA / RECHAZO /
+        # CONFIRMADO_SIN_DATOS / TIMEOUT), arrancamos uno nuevo automáticamente —
+        # representa "el cliente volvió con una nueva intención".
+        #
+        # El snapshot del referral se enriquece con el `channel` resuelto
+        # (ad / post / web_referral / direct) para que el listing use case
+        # pueda asignar el episodio a una campaña por sí mismo, sin depender
+        # del `origin` sticky de la sesión (FU2: re-atribución por episodio).
+        #
+        # `msgs_count_at_start` snapshotea el count del JSONL ANTES de
+        # appendear el evento del usuario actual (FU3). Permite derivar
+        # `msgs_in_episode` exacto downstream.
+        msgs_count_at_start = count_session_jsonl_lines(
+            WORKSPACE_VAULT_DIR, session_id
+        )
+        ensure_active_episode(
+            metadata,
+            now_ms=_now_ms(),
+            inbound_message_id=parsed.message_id,
+            referral_snapshot=_make_episode_snapshot(parsed.referral),
+            msgs_count_at_start=msgs_count_at_start,
+        )
+        self._safe_write_metadata(session_id, metadata)
 
         # --- 3. Traducir a texto efectivo (LLM-ready) ---
         # `catalog=None` por ahora — list_reply usa el title raw del cliente.
@@ -547,6 +578,23 @@ class IngestInboundMessage:
 def _now_ms() -> int:
     import time
     return int(time.time() * 1000)
+
+
+def _make_episode_snapshot(referral: dict[str, Any] | None) -> dict[str, Any]:
+    """Construye el `referral_snapshot` que se persiste en cada episodio.
+
+    El snapshot enriquece el referral raw del payload con el `channel`
+    resuelto (`_classify_origin_channel`). Eso le permite al listing use
+    case asignar el episodio a una campaña con la atribución del INBOUND
+    que abrió ese episodio — no la sticky de la sesión.
+
+    Para clientes sin referral (channel=direct), el snapshot igual se
+    persiste con `channel="direct"` para que el bucket del episodio sea
+    explícito en disco.
+    """
+    base: dict[str, Any] = dict(referral) if referral else {}
+    base["channel"] = _classify_origin_channel(referral)
+    return base
 
 
 def _classify_origin_channel(referral: dict[str, Any] | None) -> str:

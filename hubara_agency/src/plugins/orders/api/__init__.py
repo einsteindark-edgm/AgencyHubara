@@ -25,10 +25,20 @@ import logging
 from dataclasses import asdict
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Path, Query
+from fastapi import APIRouter, Body, HTTPException, Path, Query
 
 from src.platform.config import WORKSPACE_VAULT_DIR
-from src.platform.orders.composition import get_order_query_port
+from src.platform.orders.command_port import (
+    CancelOrderCommand,
+    ConfirmPaymentCommand,
+    ScheduleDeliveryCommand,
+    TransitionStageCommand,
+)
+from src.platform.orders.composition import (
+    get_order_command_port,
+    get_order_query_port,
+)
+from src.platform.orders.state import STAGE_VALUES
 from src.plugins.orders.vault_scanner import scan_vault_orders
 
 router = APIRouter()
@@ -158,6 +168,154 @@ async def get_vault_orders() -> dict[str, Any]:
         "count": len(records),
         "failed_count": len(failed),
         "stub_count": len(stub),
+    }
+
+
+@router.patch("/orders/{order_id}/schedule")
+async def schedule_order(
+    order_id: str = Path(..., min_length=1, max_length=200),
+    body: dict[str, Any] = Body(
+        ...,
+        examples=[
+            {
+                "delivery_iso": "2026-05-26",
+                "delivery_time": "09:00",
+                "note": "Cliente prefiere antes de las 10am",
+            }
+        ],
+    ),
+) -> dict[str, Any]:
+    """Agendar entrega + transicionar `new → preparing`.
+
+    Body:
+      * `delivery_iso` (required) — YYYY-MM-DD
+      * `delivery_time` (optional) — HH:MM
+      * `note` (optional) — texto del humano
+
+    Response: `{success, current_stage, error_detail?}` plano.
+      * HTTP 200 con success=True → frontend invalidate query list+detail.
+      * HTTP 200 con success=False → frontend muestra el error_detail.
+      * HTTP 4xx solo si validación del body falla.
+    """
+    delivery_iso = body.get("delivery_iso")
+    if not isinstance(delivery_iso, str) or not delivery_iso:
+        raise HTTPException(
+            status_code=422,
+            detail="`delivery_iso` (YYYY-MM-DD) es requerido",
+        )
+    cmd = ScheduleDeliveryCommand(
+        order_id=order_id,
+        delivery_iso=delivery_iso,
+        delivery_time=body.get("delivery_time")
+        if isinstance(body.get("delivery_time"), str)
+        else None,
+        note=body.get("note")
+        if isinstance(body.get("note"), str)
+        else None,
+    )
+    port = get_order_command_port()
+    result = await port.schedule_delivery(cmd)
+    return _serialize_command_result(result)
+
+
+@router.patch("/orders/{order_id}/stage")
+async def transition_order_stage(
+    order_id: str = Path(..., min_length=1, max_length=200),
+    body: dict[str, Any] = Body(
+        ...,
+        examples=[{"stage": "ready", "note": "Empaquetado"}],
+    ),
+) -> dict[str, Any]:
+    """Drag-and-drop o click directo. Valida transición permitida.
+
+    Body:
+      * `stage` (required) — uno de: new, preparing, ready, shipping,
+        delivered, cancelled.
+      * `note` (optional)
+      * `force` (optional bool, default False) — bypassa DAG. Usar solo
+        para correcciones explícitas (UI debe pedir confirm dialog).
+
+    Response shape igual que `/schedule`. `success=False` con
+    `error_detail` que empieza con `invalid_transition:` cuando el
+    movimiento no es permitido (frontend muestra dialog explicativo).
+    """
+    stage_raw = body.get("stage")
+    if stage_raw not in STAGE_VALUES:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"`stage` debe ser uno de {sorted(STAGE_VALUES)}, "
+                f"recibido {stage_raw!r}"
+            ),
+        )
+    cmd = TransitionStageCommand(
+        order_id=order_id,
+        to_stage=stage_raw,  # type: ignore[arg-type]
+        note=body.get("note")
+        if isinstance(body.get("note"), str)
+        else None,
+        force=bool(body.get("force", False)),
+    )
+    port = get_order_command_port()
+    result = await port.transition_stage(cmd)
+    return _serialize_command_result(result)
+
+
+@router.patch("/orders/{order_id}/confirm-payment")
+async def confirm_order_payment(
+    order_id: str = Path(..., min_length=1, max_length=200),
+    body: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    """Marcar pago como confirmado (manual del humano).
+
+    Body opcional `{"by": "string"}` para auditoría.
+
+    Hoy esto NO toca el `payment_status` real de Medusa (sin gateway
+    integrado). Solo escribe `hubara_payment_confirmed=True` en metadata.
+    Cuando integremos gateway, este endpoint también capturará el pago en
+    Medusa.
+
+    Idempotente: si ya estaba confirmado, devuelve success=True sin
+    side effects.
+    """
+    by = body.get("by") if isinstance(body.get("by"), str) else "human"
+    cmd = ConfirmPaymentCommand(order_id=order_id, by=by)
+    port = get_order_command_port()
+    result = await port.confirm_payment(cmd)
+    return _serialize_command_result(result)
+
+
+@router.post("/orders/{order_id}/cancel")
+async def cancel_order_endpoint(
+    order_id: str = Path(..., min_length=1, max_length=200),
+    body: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    """Cancelar la orden. Transición a `cancelled` con `force=True`.
+
+    Body opcional `{"reason": "texto"}` — persiste como
+    `hubara_cancelled_reason` y aparece en el inspector + timeline.
+
+    Idempotente si ya estaba cancelada (devuelve success=True).
+    """
+    reason = (
+        body.get("reason")
+        if isinstance(body.get("reason"), str)
+        else None
+    )
+    cmd = CancelOrderCommand(order_id=order_id, reason=reason)
+    port = get_order_command_port()
+    result = await port.cancel_order(cmd)
+    return _serialize_command_result(result)
+
+
+def _serialize_command_result(result) -> dict[str, Any]:
+    """Shape común para los 4 endpoints write-side."""
+    return {
+        "success": result.success,
+        "order_id": result.order_id,
+        "current_stage": result.current_stage,
+        "error_detail": result.error_detail,
+        "audit_id": result.audit_id,
     }
 
 
