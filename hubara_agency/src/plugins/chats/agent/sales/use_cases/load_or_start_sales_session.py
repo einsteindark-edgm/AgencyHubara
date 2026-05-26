@@ -235,7 +235,16 @@ class LoadOrStartSalesSession:
             # signal y en `PendingMessage` como hueco para datos volatiles del
             # turno (A-MEM, snippets retrieved). Documentado en
             # `core/workflow_helpers.py:PendingMessage`.
-            plugin_context = None
+            #
+            # HU dialecto colombiano: inyectamos la hora actual en zona
+            # `America/Bogota` y el saludo apropiado (Buenos días / tardes /
+            # noches) como elemento de plugin_context. El ContextBuilder lo
+            # incluye en el system prompt como "# Retrieved Context", de modo
+            # que el LLM tenga la hora autoritativa de Colombia sin depender
+            # de la TZ del servidor (típicamente UTC en contenedores). Side
+            # effect aceptable: el system prompt cambia 2 líneas por turno —
+            # cache miss mínimo, vale la corrección del saludo.
+            plugin_context = [build_bogota_context_string()]
 
             try:
                 handle = client.get_workflow_handle(workflow_id)
