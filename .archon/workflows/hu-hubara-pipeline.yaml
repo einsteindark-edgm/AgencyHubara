@@ -76,8 +76,9 @@ nodes:
         test -f "$f" || { echo "FAIL_MISSING_CONVENTION_${f##*/}"; exit 0; }
       done
 
-      # 5 skills hubara-* en .claude/skills/
-      for s in tech-refiner plugin-planner feature-planner implementer merger; do
+      # 4 skills hubara-*-archon en .claude/skills/ (iterativos, con loop:)
+      # NOTE: merger migrado a command (Fase 11.r → hubara-merge-intents)
+      for s in tech-refiner plugin-planner feature-planner implementer; do
         test -f ".claude/skills/hubara-${s}-archon/SKILL.md" || {
           echo "FAIL_MISSING_SKILL_${s}"; exit 0;
         }
@@ -87,6 +88,18 @@ nodes:
       test -f ".claude/skills/hubara-architecture-guide/SKILL.md" || {
         echo "FAIL_MISSING_GUIDE_SKILL"; exit 0;
       }
+
+      # Commands hubara-* en .archon/commands/ (deterministas, one-shot)
+      # Fases 10.r / 11.r / 12 migraron varios skills a commands. Si falta uno,
+      # el workflow se rompe en runtime — validamos acá.
+      for c in merge-intents premortem evaluate \
+               reviewer-deha reviewer-fsd reviewer-plugin-system \
+               reviewer-test-coverage reviewer-security \
+               synthesize-review archive-hu; do
+        test -f ".archon/commands/hubara-${c}.md" || {
+          echo "FAIL_MISSING_COMMAND_${c}"; exit 0;
+        }
+      done
 
       # Workflows hubara
       for w in hu-hubara-pipeline hu-hubara-plugin-pipeline; do
@@ -167,6 +180,7 @@ nodes:
         FAIL_MISSING_CONVENTION_*  → commit hubara_agency/.hubara/*.{yaml,md} a main
         FAIL_MISSING_SKILL_*       → commit .claude/skills/hubara-*-archon/ a main
         FAIL_MISSING_GUIDE_SKILL   → commit .claude/skills/hubara-architecture-guide/ a main
+        FAIL_MISSING_COMMAND_*     → commit .archon/commands/hubara-*.md a main
         FAIL_MISSING_WORKFLOW_*    → commit .archon/workflows/hu-hubara-*.yaml a main
         FAIL_NO_UV_LOCK            → cd hubara_agency && uv lock
         FAIL_NO_NPM_LOCK           → cd frontend_dashboard && npm install

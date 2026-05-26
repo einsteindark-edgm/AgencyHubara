@@ -256,6 +256,14 @@ nodes:
       TITLE=$(grep -m1 '^# ' $ARTIFACTS_DIR/hu-draft.md | sed 's/^# //' | head -c 120)
       test -n "$TITLE" || { echo "FATAL: no extrajo título" >&2; exit 1; }
 
+      # Asegurar que la label exista (idempotente). gh label create falla con
+      # exit != 0 si ya existe — silenciamos eso. Si falla por otra razón
+      # (auth, network), gh issue create también fallará abajo y veremos ahí.
+      gh label create "hubara-hu" \
+        --description "HU del pipeline hu-hubara-pipeline" \
+        --color "0E8A16" \
+        > "$ARTIFACTS_DIR/.gh-label.log" 2>&1 || true
+
       # gh imprime SOLO la URL al stdout cuando no-interactive.
       # --label hubara-hu: si configurás un auto-add workflow en el Project,
       # esa label lo levanta automático.
