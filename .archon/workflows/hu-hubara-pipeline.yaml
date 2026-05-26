@@ -109,7 +109,13 @@ nodes:
       done
 
       # Lock files
-      test -f hubara_agency/uv.lock || { echo "FAIL_NO_UV_LOCK"; exit 0; }
+      # NOTE: el repo es un uv workspace ([tool.uv.workspace] en /pyproject.toml
+      # con members=["exoclaw-temporal","hubara_agency"]), así que uv siempre
+      # deposita el lockfile en el ROOT del repo, no en hubara_agency/.
+      # Aceptamos cualquiera de las 2 para sobrevivir un eventual de-workspace.
+      test -f uv.lock || test -f hubara_agency/uv.lock || {
+        echo "FAIL_NO_UV_LOCK"; exit 0;
+      }
       test -f frontend_dashboard/package-lock.json || {
         echo "FAIL_NO_NPM_LOCK"; exit 0;
       }
@@ -182,7 +188,8 @@ nodes:
         FAIL_MISSING_GUIDE_SKILL   → commit .claude/skills/hubara-architecture-guide/ a main
         FAIL_MISSING_COMMAND_*     → commit .archon/commands/hubara-*.md a main
         FAIL_MISSING_WORKFLOW_*    → commit .archon/workflows/hu-hubara-*.yaml a main
-        FAIL_NO_UV_LOCK            → cd hubara_agency && uv lock
+        FAIL_NO_UV_LOCK            → uv lock (desde root del monorepo;
+                                     es un workspace, el lockfile va a /uv.lock)
         FAIL_NO_NPM_LOCK           → cd frontend_dashboard && npm install
         FAIL_NPM_CI                → revisar stderr de npm
         FAIL_NO_ORIGIN_OR_NETWORK  → revisar conectividad git
