@@ -163,7 +163,7 @@ nodes:
 
   - id: agent-deha-compliance
     depends_on: [parse-classify]
-    when: "$parse-classify.output.deha == true"
+    when: "$parse-classify.output.deha == 'true'"
     idle_timeout: 300000
     loop:
       max_iterations: 1
@@ -404,7 +404,7 @@ nodes:
 
   - id: agent-fsd-compliance
     depends_on: [parse-classify]
-    when: "$parse-classify.output.fsd == true"
+    when: "$parse-classify.output.fsd == 'true'"
     idle_timeout: 300000
     loop:
       max_iterations: 1
@@ -438,7 +438,7 @@ nodes:
 
   - id: agent-plugin-system
     depends_on: [parse-classify]
-    when: "$parse-classify.output.plugin_system == true"
+    when: "$parse-classify.output.plugin_system == 'true'"
     idle_timeout: 300000
     loop:
       max_iterations: 1
@@ -492,7 +492,7 @@ nodes:
 
   - id: agent-test-coverage
     depends_on: [parse-classify]
-    when: "$parse-classify.output.test_coverage == true"
+    when: "$parse-classify.output.test_coverage == 'true'"
     idle_timeout: 300000
     loop:
       max_iterations: 1
@@ -523,7 +523,7 @@ nodes:
 
   - id: agent-security
     depends_on: [parse-classify]
-    when: "$parse-classify.output.security == true"
+    when: "$parse-classify.output.security == 'true'"
     idle_timeout: 300000
     loop:
       max_iterations: 1

@@ -320,7 +320,9 @@ nodes:
         (b) Edití el feature-plan-manifest.yaml + tareas/ a mano en
             hubara_agency/.hubara/plans/<HU_ID>/feature-plans/<plugin_id>/,
             commit, re-lanzá (smart-resume salta FASE 1).
-    when: "!($validate-feature-plan.output =~ /^PASS/)"
+    # parser de Archon no soporta regex. validate-feature-plan emite solo
+    # 'PASS' o 'FAIL_*', así que != 'PASS' equivale al regex original.
+    when: "$validate-feature-plan.output != 'PASS'"
     depends_on: [validate-feature-plan]
 
   - id: commit-feature-plan
@@ -352,7 +354,7 @@ nodes:
       else
         echo "no_changes"
       fi
-    when: "$validate-feature-plan.output =~ /^PASS/"
+    when: "$validate-feature-plan.output == 'PASS'"
     depends_on: [validate-feature-plan]
 
   # Pre-warm uv venv (igual que hu-frontend-pipeline)

@@ -38,14 +38,21 @@ fi
 mkdir -p "$ARTIFACTS_DIR"
 OUT="$ARTIFACTS_DIR/diagnostic-bundle.yaml"
 
-# Helper: safely capture command output with bounded size + redact obvious secrets
+# Helper: safely capture command output with bounded size + redact obvious secrets.
+# Redaction is targeted to AVOID matching filesystem paths (which contain /):
+#   - common API key prefixes (sk_, pk_, ghp_, ghs_, github_pat_, eyJ.* JWT)
+#   - "Authorization: Bearer ..." headers
+#   - "<key>=<value>" where value is 40+ chars alnum/underscore (env-var leaks)
+# Bounded to 50 lines per capture to keep bundle small.
 capture() {
   local label="$1"
   shift
   printf '  %s: |\n' "$label"
   "$@" 2>&1 \
-    | sed 's/[A-Za-z0-9_+/]\{40,\}=*/[REDACTED-LONG-TOKEN]/g' \
-    | sed 's/\(Authorization:\s*Bearer\s*\)\S\+/\1[REDACTED]/g' \
+    | sed -E 's/(sk|pk|ghp|ghs|gho|github_pat)_[A-Za-z0-9_]{20,}/[REDACTED-API-KEY]/g' \
+    | sed -E 's/eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/[REDACTED-JWT]/g' \
+    | sed -E 's/(Authorization:[[:space:]]*Bearer[[:space:]]+)[^[:space:]]+/\1[REDACTED]/g' \
+    | sed -E 's/([A-Z_]{2,}_(KEY|TOKEN|SECRET|PASSWORD)=)[^[:space:]]+/\1[REDACTED]/g' \
     | head -50 \
     | sed 's/^/    /'
 }
@@ -71,6 +78,19 @@ capture() {
   capture "tree" find "$ARTIFACTS_DIR" -maxdepth 4 -type f -not -name "diagnostic-bundle.yaml"
   echo ""
   capture "edit_log_tail" tail -20 "$ARTIFACTS_DIR/.edit.log"
+  echo ""
+  # Final-validation progress log — critico para diagnosticar timeouts
+  # del final-validation node (qué gate específico se atascó).
+  capture "final_validation_progress" cat "$ARTIFACTS_DIR/final-validation-progress.log"
+  echo ""
+  # Uvicorn log si el playwright gate fue intentado
+  capture "uvicorn_log_tail" tail -30 "$ARTIFACTS_DIR/.uvicorn-final.log"
+  echo ""
+  # Playwright log si se ejecutó
+  capture "playwright_log_tail" tail -30 "$ARTIFACTS_DIR/playwright-final.log"
+  echo ""
+  # Functional evidence
+  capture "functional_evidence_tail" tail -30 "$ARTIFACTS_DIR/functional-evidence.log"
   echo ""
   echo "git:"
   capture "current_branch" git -C "$(pwd)" branch --show-current

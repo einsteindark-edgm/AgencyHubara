@@ -701,9 +701,28 @@ nodes:
       fi
     depends_on: [commit-refinement]
 
+  # Gate node — el parser de Archon (condition-evaluator.ts) NO soporta
+  # paréntesis para grouping. La condición original `A && (B || C)` la
+  # encapsulamos en este bash que emite CAN_PLAN | SKIP_PLAN_ALREADY_PLANNED
+  # | SKIP_PLAN_BAD_REFINEMENT — values legibles para el when downstream
+  # y para el diagnostic-bundle. 2026-05-26.
+  - id: gate-can-plan
+    bash: |
+      AP="$detect-resume-state.output.already_planned"
+      VR="$validate-refinement.output"
+      if [ "$AP" = "true" ]; then
+        echo "SKIP_PLAN_ALREADY_PLANNED"
+      elif [ "$VR" = "PASS" ] || [ "$VR" = "PASS_NO_WORK" ]; then
+        echo "CAN_PLAN"
+      else
+        echo "SKIP_PLAN_BAD_REFINEMENT"
+      fi
+    depends_on: [detect-resume-state, validate-refinement, load-plan-if-resume]
+    trigger_rule: all_done
+
   - id: planificar-auto
-    depends_on: [load-plan-if-resume, project-set-refined]
-    when: "$detect-resume-state.output.already_planned != 'true' && ($validate-refinement.output == 'PASS' || $validate-refinement.output == 'PASS_NO_WORK')"
+    depends_on: [load-plan-if-resume, project-set-refined, gate-can-plan]
+    when: "$gate-can-plan.output == 'CAN_PLAN'"
     trigger_rule: all_done
     idle_timeout: 600000
     loop:
@@ -802,6 +821,20 @@ nodes:
     depends_on: [planificar-auto, load-plan-if-resume]
     trigger_rule: all_done
 
+  # Gate node — el parser de Archon no soporta regex `=~`, así que en vez de
+  # `!($validate-plan.output =~ /^PASS/)` clasificamos a PASS|FAIL para que
+  # los downstream usen comparación literal `==`. El detalle del FAIL
+  # (FAIL_TOO_MANY_PLUGINS, FAIL_NO_BATCHES, etc.) sigue disponible vía
+  # `$validate-plan.output` para mensajes y diagnostics. 2026-05-26.
+  - id: gate-plan-verdict
+    bash: |
+      OUT="$validate-plan.output"
+      case "$OUT" in
+        PASS*) echo "PASS" ;;
+        *)     echo "FAIL" ;;
+      esac
+    depends_on: [validate-plan]
+
   - id: dump-on-cancel-bad-plan
     bash: |
       HU_ID=$(echo $gen-hu-id.output 2>/dev/null | jq -r '.hu_id' 2>/dev/null || echo unknown)
@@ -813,8 +846,8 @@ nodes:
       HU_ID="$HU_ID" \
       ISSUE_URL="$ISSUE_URL" \
       bash hubara_agency/.hubara/dump-pipeline-diagnostics.sh
-    when: "!($validate-plan.output =~ /^PASS/)"
-    depends_on: [validate-plan]
+    when: "$gate-plan-verdict.output == 'FAIL'"
+    depends_on: [validate-plan, gate-plan-verdict]
 
   - id: cancel-bad-plan
     cancel: |
@@ -840,8 +873,8 @@ nodes:
         (b) Edití el plugin-manifest.yaml a mano en
             hubara_agency/.hubara/plans/$gen-hu-id.output.hu_id/, commit,
             re-lanzar (smart-resume salta FASE 2 si plan OK).
-    when: "!($validate-plan.output =~ /^PASS/)"
-    depends_on: [dump-on-cancel-bad-plan]
+    when: "$gate-plan-verdict.output == 'FAIL'"
+    depends_on: [dump-on-cancel-bad-plan, gate-plan-verdict]
 
   - id: commit-plan
     bash: |
@@ -863,8 +896,8 @@ nodes:
       else
         echo "no_changes"
       fi
-    when: "$validate-plan.output =~ /^PASS/"
-    depends_on: [validate-plan]
+    when: "$gate-plan-verdict.output == 'PASS'"
+    depends_on: [validate-plan, gate-plan-verdict]
 
   - id: project-set-planned
     bash: |
@@ -1113,7 +1146,9 @@ nodes:
   - id: rama-B-invoke-merger-if-shared
     command: hubara-merge-intents
     depends_on: [rama-B-merge-batch]
-    when: "$classify-mode.output.mode == 'multi_plugin' && $classify-mode.output.requires_merger == true && $rama-B-merge-batch.output == 'BATCH_OK'"
+    # NOTE: requires_merger es JSON boolean → el parser de Archon lo convierte
+    # a string 'true'/'false' antes de comparar. Quotes obligatorias.
+    when: "$classify-mode.output.mode == 'multi_plugin' && $classify-mode.output.requires_merger == 'true' && $rama-B-merge-batch.output == 'BATCH_OK'"
 
   - id: rama-B-commit-merger
     bash: |
@@ -1238,10 +1273,28 @@ nodes:
       set -o pipefail              # CRITICAL — sin esto exit code se pierde en pipes
 
       # ────────────────────────────────────────────────────────────────
+      # Progress log incremental — escribe START + END/FAIL/TIMEOUT por
+      # cada gate a $ARTIFACTS_DIR/final-validation-progress.log con
+      # timestamp UTC. Si el global timeout dispara, este archivo dice
+      # qué gate se atascó (sin esto perdemos visibilidad por completo).
+      # Diagnostic dump-pipeline-diagnostics.sh lo captura. 2026-05-26.
+      # ────────────────────────────────────────────────────────────────
+      PROGRESS_LOG="$ARTIFACTS_DIR/final-validation-progress.log"
+      : > "$PROGRESS_LOG"
+      log_phase() {
+        local marker="$1"; local label="$2"
+        local t=$(date -u +%H:%M:%S)
+        printf '[%s] %s %s\n' "$t" "$marker" "$label" >> "$PROGRESS_LOG"
+        echo "▶ [$t] $marker $label" >&2
+      }
+      log_phase "START" "final-validation begin"
+
+      # ────────────────────────────────────────────────────────────────
       # Detección de scope: ¿qué tocó esta HU vs main?
       # Skipea gates irrelevantes para ganar tiempo (ver §10.6 del guide).
       # Override con FORCE_ALL_GATES=1 si querés correr todo (debug).
       # ────────────────────────────────────────────────────────────────
+      log_phase "START" "scope-detection"
       git fetch origin main --quiet 2>/dev/null || true
       BASE_REF=$(git merge-base HEAD origin/main 2>/dev/null || echo "")
       if [ -z "$BASE_REF" ]; then
@@ -1273,82 +1326,105 @@ nodes:
       fi
 
       echo "Scope: backend=$TOUCHED_BACKEND frontend=$TOUCHED_FRONTEND ui=$TOUCHED_UI manifest=$TOUCHED_MANIFEST" >&2
+      log_phase "END  " "scope-detection (backend=$TOUCHED_BACKEND fe=$TOUCHED_FRONTEND ui=$TOUCHED_UI mf=$TOUCHED_MANIFEST)"
 
       # ────────────────────────────────────────────────────────────────
       # Backend gates (render-compose, pytest, lint-imports, functional)
       # ────────────────────────────────────────────────────────────────
       if [ $TOUCHED_BACKEND -eq 1 ] || [ $TOUCHED_MANIFEST -eq 1 ]; then
-        echo "=== render-compose drift check ===" >&2
+        log_phase "START" "render-compose drift check"
         cd hubara_agency && uv run python scripts/render-compose.py 2>&1 | tail -5 >&2
         git diff --exit-code docker-compose.local.yml >/dev/null || {
+          log_phase "FAIL " "render-compose drift detected"
           echo "FAIL_RENDER_COMPOSE_DRIFT"; exit 0;
         }
         cd ..
+        log_phase "END  " "render-compose drift check"
       else
-        echo "SKIP render-compose (no backend/manifest changes)" >&2
+        log_phase "SKIP " "render-compose (no backend/manifest changes)"
       fi
 
       if [ $TOUCHED_BACKEND -eq 1 ]; then
-        echo "=== uv pytest (full + architecture) ===" >&2
+        log_phase "START" "uv pytest (full)"
         cd hubara_agency && uv run pytest -q --tb=short 2>&1 | tail -30 >&2 || {
+          log_phase "FAIL " "uv pytest (full)"
           echo "FAIL_PYTEST"; exit 0;
         }
+        log_phase "END  " "uv pytest (full)"
+
+        log_phase "START" "uv pytest -m architecture"
         cd hubara_agency && uv run pytest -m architecture --tb=short 2>&1 | tail -20 >&2 || {
+          log_phase "FAIL " "uv pytest -m architecture"
           echo "FAIL_ARCH"; exit 0;
         }
         cd ..
+        log_phase "END  " "uv pytest -m architecture"
 
-        echo "=== uv lint-imports (R-DIP) ===" >&2
+        log_phase "START" "uv lint-imports (R-DIP)"
         cd hubara_agency && uv run lint-imports 2>&1 | tail -10 >&2 || {
+          log_phase "FAIL " "uv lint-imports"
           echo "FAIL_LINT_IMPORTS"; exit 0;
         }
         cd ..
+        log_phase "END  " "uv lint-imports"
 
-        echo "=== uv pytest tests/plugins/ (premortem invariants) ===" >&2
+        log_phase "START" "uv pytest tests/plugins/ (premortem invariants)"
         cd hubara_agency && uv run pytest tests/plugins/ --tb=short 2>&1 | tail -20 >&2 || {
+          log_phase "FAIL " "uv pytest tests/plugins/"
           echo "FAIL_PREMORTEM"; exit 0;
         }
         cd ..
+        log_phase "END  " "uv pytest tests/plugins/"
 
-        echo "=== uv pytest tests/functional/ (functional evidence) ===" >&2
+        log_phase "START" "uv pytest tests/functional/ (CAN HANG on external deps)"
         cd hubara_agency && uv run pytest tests/functional/ -m functional -v 2>&1 \
           | tee $ARTIFACTS_DIR/functional-evidence.log | tail -30 >&2 || {
+          log_phase "FAIL " "uv pytest tests/functional/"
           echo "FAIL_FUNCTIONAL"; exit 0;
         }
         cd ..
+        log_phase "END  " "uv pytest tests/functional/"
       else
-        echo "SKIP backend gates (no hubara_agency/ changes)" >&2
+        log_phase "SKIP " "backend gates (no hubara_agency/ changes)"
       fi
 
       # ────────────────────────────────────────────────────────────────
       # Frontend gates (npm test / test:arch / tsc / build)
       # ────────────────────────────────────────────────────────────────
       if [ $TOUCHED_FRONTEND -eq 1 ]; then
-        echo "=== npm test ===" >&2
+        log_phase "START" "npm test"
         cd frontend_dashboard && npm test -- --run 2>&1 | tail -30 >&2 || {
+          log_phase "FAIL " "npm test"
           echo "FAIL_NPM_TEST"; exit 0;
         }
         cd ..
+        log_phase "END  " "npm test"
 
-        echo "=== npm test:arch ===" >&2
+        log_phase "START" "npm test:arch"
         cd frontend_dashboard && npm run test:arch 2>&1 | tail -20 >&2 || {
+          log_phase "FAIL " "npm test:arch"
           echo "FAIL_NPM_ARCH"; exit 0;
         }
         cd ..
+        log_phase "END  " "npm test:arch"
 
-        echo "=== npx tsc -b ===" >&2
+        log_phase "START" "npx tsc -b"
         cd frontend_dashboard && npx tsc -b 2>&1 | tail -30 >&2 || {
+          log_phase "FAIL " "npx tsc -b"
           echo "FAIL_TSC"; exit 0;
         }
         cd ..
+        log_phase "END  " "npx tsc -b"
 
-        echo "=== npm run build ===" >&2
+        log_phase "START" "npm run build"
         cd frontend_dashboard && npm run build 2>&1 | tail -30 >&2 || {
+          log_phase "FAIL " "npm run build"
           echo "FAIL_BUILD"; exit 0;
         }
         cd ..
+        log_phase "END  " "npm run build"
       else
-        echo "SKIP frontend gates (no frontend_dashboard/ changes)" >&2
+        log_phase "SKIP " "frontend gates (no frontend_dashboard/ changes)"
       fi
 
       # ────────────────────────────────────────────────────────────────
@@ -1356,25 +1432,35 @@ nodes:
       # Es el gate más caro (~2-5 min) — skipearlo cuando no aporta info
       # ────────────────────────────────────────────────────────────────
       if [ $TOUCHED_UI -eq 1 ]; then
-        echo "=== Playwright E2E final (FastAPI backend) ===" >&2
+        log_phase "START" "Playwright E2E + FastAPI backend"
         # Random free port para evitar collision con sub-pipelines paralelos
         UVICORN_PORT=$(python3 -c "import socket; s=socket.socket(); s.bind(('127.0.0.1',0)); print(s.getsockname()[1]); s.close()" 2>/dev/null)
         [ -z "$UVICORN_PORT" ] && UVICORN_PORT=8000
         UVICORN_LOG="$ARTIFACTS_DIR/.uvicorn-final.log"
+        log_phase "INFO " "uvicorn port=$UVICORN_PORT log=$UVICORN_LOG"
         ( cd hubara_agency && UVICORN_PORT=$UVICORN_PORT uv run python run_api.py > "$UVICORN_LOG" 2>&1 ) &
         UVICORN_PID=$!
         trap "kill $UVICORN_PID 2>/dev/null; pkill -f 'run_api.py' 2>/dev/null; true" EXIT
 
         UVICORN_READY=0
-        for i in $(seq 1 180); do
+        # Reducimos de 180s a 60s — 1min es plenty para FastAPI; si tarda más
+        # algo está mal y no vale la pena esperar (es un bash node con global
+        # timeout limitado). Log progress cada 10s.
+        for i in $(seq 1 60); do
           HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$UVICORN_PORT/" 2>/dev/null || echo "000")
           if [ "$HTTP_CODE" = "200" ]; then
-            UVICORN_READY=1; echo "FastAPI ready in ${i}s" >&2; break
+            UVICORN_READY=1
+            log_phase "INFO " "FastAPI ready in ${i}s"
+            break
+          fi
+          if [ $((i % 10)) -eq 0 ]; then
+            log_phase "INFO " "still waiting uvicorn (${i}s, HTTP=$HTTP_CODE)"
           fi
           sleep 1
         done
 
         if [ $UVICORN_READY -eq 0 ]; then
+          log_phase "FAIL " "uvicorn never became ready (60s)"
           echo "FAIL_UVICORN_NOT_READY"
           tail -20 "$UVICORN_LOG" >&2
           kill $UVICORN_PID 2>/dev/null || true
@@ -1382,6 +1468,7 @@ nodes:
           exit 0
         fi
 
+        log_phase "START" "npx playwright test"
         ( cd frontend_dashboard && set -o pipefail && \
           VITE_API_URL="http://127.0.0.1:$UVICORN_PORT" \
           API_URL="http://127.0.0.1:$UVICORN_PORT" \
@@ -1395,10 +1482,12 @@ nodes:
         trap - EXIT
 
         if [ "$PW_RC" -ne 0 ]; then
+          log_phase "FAIL " "playwright (rc=$PW_RC)"
           echo "FAIL_PLAYWRIGHT"; exit 0
         fi
+        log_phase "END  " "Playwright E2E"
       else
-        echo "SKIP Playwright E2E (no UI changes — pages/plugins/frontend/features/entities)" >&2
+        log_phase "SKIP " "Playwright E2E (no UI changes)"
         echo "SKIPPED_PLAYWRIGHT (no UI touched)" > "$ARTIFACTS_DIR/playwright-final.log"
       fi
 
@@ -1431,8 +1520,13 @@ nodes:
         echo "_Override con \`FORCE_ALL_GATES=1\` para correr todos los gates aunque scope no toque._"
       } > "$ARTIFACTS_DIR/gates-summary.md"
 
+      log_phase "END  " "final-validation PASS"
       echo "PASS"
-    timeout: 1800000                          # 30 min para full suite + builds + E2E
+    # 20min (1200000ms) — antes era 30min pero los logs muestran que cuando
+    # falla, falla por una hang específica (uvicorn no levanta, test corre forever).
+    # Bajamos para fail-faster + el progress log dice exactamente qué gate
+    # se atascó. Override con FORCE_ALL_GATES=1 + ajustar manualmente.
+    timeout: 1200000
     when: "$check-pipeline-error.output == 'OK'"
     depends_on: [check-pipeline-error]
 
