@@ -92,6 +92,25 @@ capture() {
   # Functional evidence
   capture "functional_evidence_tail" tail -30 "$ARTIFACTS_DIR/functional-evidence.log"
   echo ""
+  echo "archon_run_log:"
+  # Captura el JSONL de eventos del workflow para diagnosticar skips silenciosos
+  # del DAG executor (e.g. node_skipped por when_condition). El path se deriva
+  # del basename del ARTIFACTS_DIR (mismo run_id que el .jsonl). Si el log no
+  # existe (run muy reciente o flushed), reportamos missing.
+  RUN_ID=$(basename "$ARTIFACTS_DIR")
+  # ARCHON_LOG_DIR default match con dag-executor.ts (workspace-root/logs/).
+  # Estructura conocida: ~/.archon/workspaces/<user>/<repo>/logs/<run_id>.jsonl
+  ARCHON_WS_LOG="$HOME/.archon/workspaces"
+  RUN_LOG=$(find "$ARCHON_WS_LOG" -maxdepth 4 -name "${RUN_ID}.jsonl" 2>/dev/null | head -1)
+  if [ -n "$RUN_LOG" ] && [ -f "$RUN_LOG" ]; then
+    printf '  log_file: %s\n' "$RUN_LOG"
+    # Eventos de skip/cancel — los que nos dicen POR QUÉ el workflow se atascó
+    capture "skipped_nodes"   grep -E '"type":"node_skipped"' "$RUN_LOG"
+    capture "all_events_tail" tail -40 "$RUN_LOG"
+  else
+    echo "  log_file: missing (RUN_ID=$RUN_ID)"
+  fi
+  echo ""
   echo "git:"
   capture "current_branch" git -C "$(pwd)" branch --show-current
   capture "status_short" git -C "$(pwd)" status --short
