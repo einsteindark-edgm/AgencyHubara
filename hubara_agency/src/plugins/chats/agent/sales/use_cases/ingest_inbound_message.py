@@ -42,6 +42,10 @@ from src.plugins.chats.agent.sales.translate import (
 )
 from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.session_history import FilesystemMessageHistoryStore
+from src.platform.whatsapp.window import (
+    compute_ctwa_window_expiry,
+    compute_service_window_expiry,
+)
 from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
     count_session_jsonl_lines,
     ensure_active_episode,
@@ -121,13 +125,38 @@ class IngestInboundMessage:
         msgs_count_at_start = count_session_jsonl_lines(
             WORKSPACE_VAULT_DIR, session_id
         )
+        # HU-WA24H-001 F1.1: single now_ms para todo el bloque (episode
+        # lifecycle + service window tracking) — más simple que llamar
+        # _now_ms() en múltiples lugares y mantiene consistencia (los
+        # timestamps de un mismo inbound son idénticos).
+        now_ms = _now_ms()
         ensure_active_episode(
             metadata,
-            now_ms=_now_ms(),
+            now_ms=now_ms,
             inbound_message_id=parsed.message_id,
             referral_snapshot=_make_episode_snapshot(parsed.referral),
             msgs_count_at_start=msgs_count_at_start,
         )
+
+        # HU-WA24H-001 F1.1: persistir timestamps de la ventana de servicio.
+        # Cada inbound del cliente reabre la ventana 24h — esto es lo que
+        # permite al watchdog (Sprint 2) saber cuándo está por cerrarse y
+        # disparar un utility template legítimo.
+        metadata["last_inbound_at_ms"] = now_ms
+        metadata["service_window_expires_at_ms"] = compute_service_window_expiry(now_ms)
+
+        # HU-WA24H-001 F1.3: ventana extendida 72h CTWA. Solo se setea la
+        # PRIMERA vez que vemos ctwa_clid — la ventana CTWA NO se renueva
+        # con inbounds subsecuentes. Defensivo: chequeamos presencia previa
+        # del campo, no `referral_already_seen` (que es por ad_id, no por
+        # ventana de pricing).
+        if (
+            parsed.referral
+            and parsed.referral.get("ctwa_clid")
+            and "ctwa_window_expires_at_ms" not in metadata
+        ):
+            metadata["ctwa_window_expires_at_ms"] = compute_ctwa_window_expiry(now_ms)
+
         self._safe_write_metadata(session_id, metadata)
 
         # --- 3. Traducir a texto efectivo (LLM-ready) ---

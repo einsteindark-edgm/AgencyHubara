@@ -1,0 +1,32 @@
+# WhatsApp Cloud API rate card — Colombia Q2 2026 v1
+#
+# Fuente: Meta WhatsApp Business Platform pricing, vigente desde abril 1, 2026.
+# Próximo update programado por Meta: julio 1, 2026 (rates aún no publicados al
+# cierre de este archivo — cuando se publiquen, crear `co_2026q3_v1.yaml`).
+#
+# Reglas (resumidas, ver HU-WA24H-001 §13.2):
+#   - pricing.billable == false                        → costo 0
+#   - pricing.pricing_type == "free_customer_service" → costo 0 (dentro de ventana 24h)
+#   - pricing.pricing_type == "free_entry_point"      → costo 0 (dentro de 72h CTWA)
+#   - pricing.pricing_type == "regular"               → rates[category].cents_per_message
+#
+# IMPORTANTE: este archivo es INMUTABLE una vez en producción. Si Meta cambia
+# las tarifas, crear un archivo NUEVO con sufijo de versión incrementada.
+# Episodios históricos snapshotean `rate_card_version` para retener cost preciso.
+
+version: co_2026q2_v1
+effective_from_ms: 1717200000000   # 2026-04-01T00:00:00Z (abril 1, 2026)
+country: CO
+currency: USD
+
+rates:
+  marketing:
+    cents_per_message: 125         # $0.0125 USD
+  utility:
+    cents_per_message: 8           # $0.0008 USD
+  authentication:
+    cents_per_message: 8           # $0.0008 USD
+  authentication_international:
+    cents_per_message: null        # NO listado para Colombia al cierre del informe
+  service:
+    cents_per_message: 0           # free-form dentro de ventana 24h

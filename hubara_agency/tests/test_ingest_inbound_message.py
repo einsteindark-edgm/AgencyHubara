@@ -520,3 +520,190 @@ async def test_existing_ctwa_referrals_contract_unchanged():
     # Y ahora también:
     assert state["origin"]["channel"] == "ad"
     assert state["last_touch"]["channel"] == "ad"
+
+
+# =============================================================================
+# HU-WA24H-001 F1.1 + F1.3 — Service window + CTWA window timestamps
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_persists_last_inbound_at_ms_and_service_window_expiry():
+    """F1.1: cada inbound persiste last_inbound_at_ms + service_window_expires_at_ms
+    (= last_inbound_at_ms + 24h). Es la base del watchdog del Sprint 2."""
+    history = FakeHistoryStore()
+    loader = FakeLoadOrStart()
+    metadata = FakeMetadataStore()
+    use_case = IngestInboundMessage(
+        history_store=history,  # type: ignore[arg-type]
+        load_session=loader,  # type: ignore[arg-type]
+        metadata_store=metadata,  # type: ignore[arg-type]
+    )
+
+    await use_case.execute(_make_text_message(text="hola"))
+
+    state = metadata.store["wa_5491111111111"]
+    assert "last_inbound_at_ms" in state
+    assert "service_window_expires_at_ms" in state
+    assert isinstance(state["last_inbound_at_ms"], int)
+    assert isinstance(state["service_window_expires_at_ms"], int)
+    # Service window = last_inbound_at_ms + 24h exactos.
+    twenty_four_hours_ms = 24 * 60 * 60 * 1000
+    delta = state["service_window_expires_at_ms"] - state["last_inbound_at_ms"]
+    assert delta == twenty_four_hours_ms
+
+
+@pytest.mark.asyncio
+async def test_service_window_renews_on_each_inbound():
+    """F1.1: cada inbound del cliente reabre la ventana 24h. El timestamp
+    del primer inbound se sobreescribe con el del segundo."""
+    history = FakeHistoryStore()
+    loader = FakeLoadOrStart()
+    metadata = FakeMetadataStore()
+    use_case = IngestInboundMessage(
+        history_store=history,  # type: ignore[arg-type]
+        load_session=loader,  # type: ignore[arg-type]
+        metadata_store=metadata,  # type: ignore[arg-type]
+    )
+
+    await use_case.execute(_make_text_message(text="primer mensaje"))
+    first_inbound_at = metadata.store["wa_5491111111111"]["last_inbound_at_ms"]
+    first_expiry = metadata.store["wa_5491111111111"]["service_window_expires_at_ms"]
+
+    # Pausa real mínima para garantizar que _now_ms() devuelva valor distinto.
+    import asyncio
+
+    await asyncio.sleep(0.01)
+
+    await use_case.execute(_make_text_message(text="segundo mensaje"))
+    second_inbound_at = metadata.store["wa_5491111111111"]["last_inbound_at_ms"]
+    second_expiry = metadata.store["wa_5491111111111"]["service_window_expires_at_ms"]
+
+    assert second_inbound_at > first_inbound_at
+    assert second_expiry > first_expiry
+
+
+@pytest.mark.asyncio
+async def test_ctwa_window_set_only_when_ctwa_clid_present():
+    """F1.3: ctwa_window_expires_at_ms se setea SOLO si referral.ctwa_clid
+    está presente en el inbound (origen Click-to-WhatsApp Ad)."""
+    history = FakeHistoryStore()
+    loader = FakeLoadOrStart()
+    metadata = FakeMetadataStore()
+    use_case = IngestInboundMessage(
+        history_store=history,  # type: ignore[arg-type]
+        load_session=loader,  # type: ignore[arg-type]
+        metadata_store=metadata,  # type: ignore[arg-type]
+    )
+
+    msg_ctwa = WhatsAppMessage(
+        message_id="wamid.CTWA",
+        from_number="5491111111111",
+        phone_number_id="PID",
+        text="Hola, vi el anuncio",
+        media=None,
+        timestamp="1714312400",
+        msg_type="text",
+        referral={
+            "ctwa_clid": "CLID_XYZ",
+            "source_type": "ad",
+            "source_id": "AD_999",
+            "headline": "Velas Hubara",
+            "body": "Promo",
+        },
+    )
+    await use_case.execute(msg_ctwa)
+
+    state = metadata.store["wa_5491111111111"]
+    assert "ctwa_window_expires_at_ms" in state
+    seventy_two_hours_ms = 72 * 60 * 60 * 1000
+    delta = state["ctwa_window_expires_at_ms"] - state["last_inbound_at_ms"]
+    assert delta == seventy_two_hours_ms
+
+
+@pytest.mark.asyncio
+async def test_ctwa_window_not_set_for_direct_inbound():
+    """F1.3: cliente sin CTWA — solo service window (24h), NO ctwa window."""
+    history = FakeHistoryStore()
+    loader = FakeLoadOrStart()
+    metadata = FakeMetadataStore()
+    use_case = IngestInboundMessage(
+        history_store=history,  # type: ignore[arg-type]
+        load_session=loader,  # type: ignore[arg-type]
+        metadata_store=metadata,  # type: ignore[arg-type]
+    )
+
+    # Direct message — sin referral CTWA.
+    await use_case.execute(_make_text_message(text="hola"))
+
+    state = metadata.store["wa_5491111111111"]
+    assert "service_window_expires_at_ms" in state
+    assert "ctwa_window_expires_at_ms" not in state
+
+
+@pytest.mark.asyncio
+async def test_ctwa_window_not_overwritten_on_subsequent_inbound():
+    """F1.3: la ventana CTWA NO se renueva con inbounds subsecuentes —
+    el cliente solo entra una vez por CTWA. El timestamp del primer touch
+    persiste aunque el cliente mande N mensajes después.
+
+    Edge case: si el mismo cliente vuelve a click un CTWA dentro de los 72h
+    (caso teórico), el ctwa_clid puede repetirse en el referral — defendemos
+    contra reset de la ventana original con el chequeo `if "ctwa_window_expires_at_ms"
+    not in metadata`."""
+    history = FakeHistoryStore()
+    loader = FakeLoadOrStart()
+    metadata = FakeMetadataStore()
+    use_case = IngestInboundMessage(
+        history_store=history,  # type: ignore[arg-type]
+        load_session=loader,  # type: ignore[arg-type]
+        metadata_store=metadata,  # type: ignore[arg-type]
+    )
+
+    msg_ctwa = WhatsAppMessage(
+        message_id="wamid.CTWA1",
+        from_number="5491111111111",
+        phone_number_id="PID",
+        text="Hola, vi el anuncio",
+        media=None,
+        timestamp="1714312400",
+        msg_type="text",
+        referral={
+            "ctwa_clid": "CLID_FIRST",
+            "source_type": "ad",
+            "source_id": "AD_1",
+            "headline": "h",
+            "body": "b",
+        },
+    )
+    await use_case.execute(msg_ctwa)
+    first_ctwa_expiry = metadata.store["wa_5491111111111"]["ctwa_window_expires_at_ms"]
+
+    import asyncio
+
+    await asyncio.sleep(0.01)
+
+    # Segundo inbound, también con referral (caso teórico). NO debe pisar.
+    msg_ctwa_2 = WhatsAppMessage(
+        message_id="wamid.CTWA2",
+        from_number="5491111111111",
+        phone_number_id="PID",
+        text="otra pregunta",
+        media=None,
+        timestamp="1714312500",
+        msg_type="text",
+        referral={
+            "ctwa_clid": "CLID_SECOND",
+            "source_type": "ad",
+            "source_id": "AD_2",
+            "headline": "h",
+            "body": "b",
+        },
+    )
+    await use_case.execute(msg_ctwa_2)
+
+    second_ctwa_expiry = metadata.store["wa_5491111111111"][
+        "ctwa_window_expires_at_ms"
+    ]
+    # CTWA window inmutable después del primer touch.
+    assert second_ctwa_expiry == first_ctwa_expiry

@@ -1,0 +1,182 @@
+"""Tests de helpers puros de la ventana de servicio WhatsApp.
+
+Ver `src/platform/whatsapp/window.py` y HU-WA24H-001 §3.3.
+"""
+from __future__ import annotations
+
+
+from src.platform.whatsapp.window import (
+    CTWA_WINDOW_MS,
+    SERVICE_WINDOW_MS,
+    WATCHDOG_PRE_EXPIRY_MS,
+    compute_ctwa_window_expiry,
+    compute_service_window_expiry,
+    is_in_ctwa_window,
+    is_in_service_window,
+    is_message_billable,
+    watchdog_fire_at,
+)
+
+
+# Anchors de tiempo (epoch ms). Elegidos para ser legibles en debug.
+NOW_MS = 1_716_700_000_000
+ONE_HOUR_MS = 60 * 60 * 1000
+ONE_DAY_MS = 24 * ONE_HOUR_MS
+
+
+# =============================================================================
+# Constantes
+# =============================================================================
+
+
+class TestConstants:
+    def test_service_window_is_24_hours(self):
+        assert SERVICE_WINDOW_MS == 24 * 60 * 60 * 1000
+
+    def test_ctwa_window_is_72_hours(self):
+        assert CTWA_WINDOW_MS == 72 * 60 * 60 * 1000
+
+    def test_watchdog_fires_30_min_before_expiry(self):
+        assert WATCHDOG_PRE_EXPIRY_MS == 30 * 60 * 1000
+
+
+# =============================================================================
+# compute_service_window_expiry
+# =============================================================================
+
+
+class TestComputeServiceWindowExpiry:
+    def test_exact_24h_offset(self):
+        assert compute_service_window_expiry(NOW_MS) == NOW_MS + ONE_DAY_MS
+
+
+# =============================================================================
+# compute_ctwa_window_expiry
+# =============================================================================
+
+
+class TestComputeCtwaWindowExpiry:
+    def test_exact_72h_offset(self):
+        assert compute_ctwa_window_expiry(NOW_MS) == NOW_MS + (3 * ONE_DAY_MS)
+
+
+# =============================================================================
+# is_in_service_window
+# =============================================================================
+
+
+class TestIsInServiceWindow:
+    def test_returns_true_when_inside(self):
+        metadata = {"service_window_expires_at_ms": NOW_MS + ONE_HOUR_MS}
+        assert is_in_service_window(NOW_MS, metadata) is True
+
+    def test_returns_false_when_past_expiry(self):
+        metadata = {"service_window_expires_at_ms": NOW_MS - ONE_HOUR_MS}
+        assert is_in_service_window(NOW_MS, metadata) is False
+
+    def test_returns_false_at_exact_expiry(self):
+        # Edge: now == exp. Decisión: NO está dentro (ya expiró).
+        metadata = {"service_window_expires_at_ms": NOW_MS}
+        assert is_in_service_window(NOW_MS, metadata) is False
+
+    def test_returns_false_when_field_missing(self):
+        assert is_in_service_window(NOW_MS, {}) is False
+
+    def test_returns_false_when_field_none(self):
+        assert is_in_service_window(NOW_MS, {"service_window_expires_at_ms": None}) is False
+
+    def test_returns_false_when_field_non_int(self):
+        # Defensa contra metadata corrupta (e.g., string serializado mal).
+        metadata = {"service_window_expires_at_ms": "1716700000000"}
+        assert is_in_service_window(NOW_MS, metadata) is False
+
+
+# =============================================================================
+# is_in_ctwa_window
+# =============================================================================
+
+
+class TestIsInCtwaWindow:
+    def test_returns_true_when_inside(self):
+        metadata = {"ctwa_window_expires_at_ms": NOW_MS + ONE_HOUR_MS}
+        assert is_in_ctwa_window(NOW_MS, metadata) is True
+
+    def test_returns_false_when_past_expiry(self):
+        metadata = {"ctwa_window_expires_at_ms": NOW_MS - ONE_HOUR_MS}
+        assert is_in_ctwa_window(NOW_MS, metadata) is False
+
+    def test_returns_false_when_field_missing(self):
+        assert is_in_ctwa_window(NOW_MS, {}) is False
+
+    def test_ctwa_independent_from_service_window(self):
+        # Servicio expiró, pero CTWA sigue. is_in_ctwa_window True.
+        metadata = {
+            "service_window_expires_at_ms": NOW_MS - ONE_HOUR_MS,
+            "ctwa_window_expires_at_ms": NOW_MS + ONE_HOUR_MS,
+        }
+        assert is_in_service_window(NOW_MS, metadata) is False
+        assert is_in_ctwa_window(NOW_MS, metadata) is True
+
+
+# =============================================================================
+# is_message_billable
+# =============================================================================
+
+
+class TestIsMessageBillable:
+    def test_inside_service_window_not_billable(self):
+        metadata = {"service_window_expires_at_ms": NOW_MS + ONE_HOUR_MS}
+        assert is_message_billable(NOW_MS, metadata) is False
+
+    def test_inside_ctwa_window_not_billable(self):
+        metadata = {"ctwa_window_expires_at_ms": NOW_MS + ONE_HOUR_MS}
+        assert is_message_billable(NOW_MS, metadata) is False
+
+    def test_both_windows_open_not_billable(self):
+        metadata = {
+            "service_window_expires_at_ms": NOW_MS + ONE_HOUR_MS,
+            "ctwa_window_expires_at_ms": NOW_MS + ONE_HOUR_MS,
+        }
+        assert is_message_billable(NOW_MS, metadata) is False
+
+    def test_both_windows_closed_billable(self):
+        metadata = {
+            "service_window_expires_at_ms": NOW_MS - ONE_HOUR_MS,
+            "ctwa_window_expires_at_ms": NOW_MS - ONE_HOUR_MS,
+        }
+        assert is_message_billable(NOW_MS, metadata) is True
+
+    def test_no_metadata_at_all_billable(self):
+        # Nunca hubo inbound — cualquier outbound es billable.
+        assert is_message_billable(NOW_MS, {}) is True
+
+
+# =============================================================================
+# watchdog_fire_at
+# =============================================================================
+
+
+class TestWatchdogFireAt:
+    def test_returns_30min_before_expiry(self):
+        exp = NOW_MS + ONE_DAY_MS
+        metadata = {"service_window_expires_at_ms": exp}
+        assert watchdog_fire_at(metadata) == exp - WATCHDOG_PRE_EXPIRY_MS
+
+    def test_returns_none_when_field_missing(self):
+        assert watchdog_fire_at({}) is None
+
+    def test_returns_none_when_field_none(self):
+        assert watchdog_fire_at({"service_window_expires_at_ms": None}) is None
+
+    def test_returns_none_when_field_non_int(self):
+        assert watchdog_fire_at({"service_window_expires_at_ms": "abc"}) is None
+
+    def test_fire_at_can_be_in_past_if_window_already_closing_soon(self):
+        # Si el llamado llega cuando ya pasó el fire_at (e.g., webhook
+        # demorado), retorna el valor pasado igual. El caller decide qué
+        # hacer (típicamente: NO programar watchdog si delta_ms <= 0).
+        exp = NOW_MS + (10 * 60 * 1000)  # 10 min al cierre
+        metadata = {"service_window_expires_at_ms": exp}
+        result = watchdog_fire_at(metadata)
+        assert result is not None
+        assert result < NOW_MS  # fire_at quedó en el pasado
