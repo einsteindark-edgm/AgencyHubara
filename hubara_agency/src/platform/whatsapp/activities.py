@@ -24,7 +24,9 @@ import structlog
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
-from src.platform.config import WORKSPACE_VAULT_DIR
+from src.platform.config import (
+    WORKSPACE_VAULT_DIR,
+)
 from src.platform.constants import WHATSAPP_SESSION_PREFIX
 from src.platform.temporal.heartbeat import with_heartbeat
 from src.platform.whatsapp import client as whatsapp_client
