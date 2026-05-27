@@ -21,12 +21,17 @@ Prioridad de señales (de mayor a menor confianza):
   2. `episode.closing_tag == COMPRA_EXITOSA` → ganado
   3. `episode.closing_tag == RECHAZO`        → perdido
   4. `episode.closing_tag == CONFIRMADO_SIN_DATOS` → cotizado
-  5. episode.closed_at_ms != null (otro)     → cotizado  (cierre desconocido, conservador)
-  6. current_tag == INTERESADO               → calificado
-  7. current_tag in HUMANO/RETOMA_VENTA      → activo
-  8. NO_ETIQUETADO + total_msgs ≤ 2          → nuevo
-  9. NO_ETIQUETADO + last_inbound ≥ 24h      → no_reply
-  10. fallback                                → activo
+  5. `episode.closing_tag == CONFIRMADO_PAGO_PENDIENTE` → ganado
+       (orden registrada en Medusa, falta solo verificación humana del
+       pago — para el dashboard de ads ya es "ganado" porque la intención
+       de compra cerró desde el cliente; el ajuste a "perdido" se hace si
+       el humano aborta el pedido y reabre el chat).
+  6. episode.closed_at_ms != null (otro)     → cotizado  (cierre desconocido, conservador)
+  7. current_tag == INTERESADO               → calificado
+  8. current_tag in HUMANO/RETOMA_VENTA      → activo
+  9. NO_ETIQUETADO + total_msgs ≤ 2          → nuevo
+  10. NO_ETIQUETADO + last_inbound ≥ 24h     → no_reply
+  11. fallback                                → activo
 """
 from __future__ import annotations
 
@@ -80,15 +85,22 @@ def classify_episode_state(
 
     closing_tag = episode.get("closing_tag")
 
-    # 2-4. Cierre formal via tag.
+    # 2-5. Cierre formal via tag.
     if closing_tag == "COMPRA_EXITOSA":
         return "ganado"
     if closing_tag == "RECHAZO":
         return "perdido"
     if closing_tag == "CONFIRMADO_SIN_DATOS":
         return "cotizado"
+    if closing_tag == "CONFIRMADO_PAGO_PENDIENTE":
+        # La orden está registrada en Medusa. Para el funnel ads cuenta
+        # como ganado — la intención del cliente cerró exitosamente; el
+        # paso humano de verificar el pago no es responsabilidad del LLM
+        # ni del cliente. Si el humano aborta el pedido, el dashboard de
+        # orders revierte el estado de la orden en Medusa, no acá.
+        return "ganado"
 
-    # 5. Cierre con tag desconocido (defensivo) — conservador: cotizado.
+    # 6. Cierre con tag desconocido (defensivo) — conservador: cotizado.
     if episode.get("closed_at_ms") is not None:
         return "cotizado"
 
@@ -114,7 +126,12 @@ def classify_episode_state(
 # Repetido acá para evitar import circular (este módulo está más arriba en
 # el grafo de imports que `episode_lifecycle`).
 _CLOSING_TAG_SET: frozenset[str] = frozenset(
-    {"COMPRA_EXITOSA", "RECHAZO", "CONFIRMADO_SIN_DATOS"}
+    {
+        "COMPRA_EXITOSA",
+        "RECHAZO",
+        "CONFIRMADO_SIN_DATOS",
+        "CONFIRMADO_PAGO_PENDIENTE",
+    }
 )
 
 

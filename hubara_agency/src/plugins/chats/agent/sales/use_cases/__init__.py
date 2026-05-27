@@ -7,6 +7,9 @@ resto del dominio es mas claro de descubrir.
 """
 from __future__ import annotations
 
+from src.plugins.chats.agent.sales.use_cases.ingest_delivery_status import (
+    IngestDeliveryStatus,
+)
 from src.plugins.chats.agent.sales.use_cases.ingest_inbound_message import (
     IngestInboundMessage,
 )
@@ -15,6 +18,7 @@ from src.plugins.chats.agent.sales.use_cases.load_or_start_sales_session import 
 )
 
 __all__ = [
+    "IngestDeliveryStatus",
     "IngestInboundMessage",
     "LoadOrStartSalesSession",
 ]

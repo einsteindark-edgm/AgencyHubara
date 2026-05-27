@@ -75,6 +75,18 @@ def test_tag_confirmado_sin_datos_is_cotizado():
     )
 
 
+def test_tag_confirmado_pago_pendiente_is_ganado():
+    """HU "verificación humana de pago": orden registrada en Medusa, falta
+    verificar pago. Para el funnel ads cuenta como ganado (el cliente
+    completó la intención de compra). Si el humano aborta el pedido luego,
+    eso se refleja como cambio de estado en Medusa, no acá."""
+    metadata = {"tag": "CONFIRMADO_PAGO_PENDIENTE"}
+    assert (
+        classify_state(metadata, total_msgs=10, last_inbound_ms=_NOW_MS, now_ms=_NOW_MS)
+        == "ganado"
+    )
+
+
 # --- Calificado (interesado pero sin propuesta final) --------------------
 
 

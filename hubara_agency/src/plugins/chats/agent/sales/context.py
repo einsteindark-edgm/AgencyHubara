@@ -18,10 +18,33 @@ determinístico. Desde un use case (que ya puede hacer I/O) se llama directo.
 """
 from __future__ import annotations
 
-from datetime import datetime
-from zoneinfo import ZoneInfo
+import logging
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-_BOGOTA_TZ = ZoneInfo("America/Bogota")
+log = logging.getLogger(__name__)
+
+
+def _resolve_bogota_tz() -> "ZoneInfo | timezone":
+    """Carga la TZ de Bogotá con fallback defensivo.
+
+    Premortem FIX #4: en algunos containers minimalistas (`alpine` sin
+    `tzdata`) `ZoneInfo("America/Bogota")` lanza `ZoneInfoNotFoundError`.
+    Caemos a UTC-5 fijo (Colombia no tiene horario de verano, así que el
+    offset es estable todo el año) con warning para alertar la operación.
+    """
+    try:
+        return ZoneInfo("America/Bogota")
+    except ZoneInfoNotFoundError:
+        log.warning(
+            "tzdata para America/Bogota no disponible; usando offset fijo "
+            "UTC-5. Considerá instalar tzdata en el container para precisión "
+            "futura si Colombia adopta DST."
+        )
+        return timezone(timedelta(hours=-5))
+
+
+_BOGOTA_TZ = _resolve_bogota_tz()
 
 # Días de la semana en español (lunes=0, ..., domingo=6) — alineado con
 # datetime.weekday() que devuelve 0 para lunes.

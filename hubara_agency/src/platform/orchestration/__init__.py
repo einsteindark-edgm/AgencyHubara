@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from src.platform.orchestration.dispatcher import (
     DispatchResult,
+    dispatch_envelope_with_client,
     dispatch_event_activity,
 )
 from src.platform.orchestration.events import (
@@ -44,6 +45,7 @@ __all__ = [
     "EventEnvelope",
     "Transition",
     "TransitionAction",
+    "dispatch_envelope_with_client",
     "dispatch_event_activity",
     "envelope_for",
     "event_get",

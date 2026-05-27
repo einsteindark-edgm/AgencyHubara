@@ -71,11 +71,15 @@ def test_tag_tool_implements_protocol(tmp_path: Path) -> None:
     # PR-C: la whitelist vive en el JSON schema, no en if-isinstance defaults.
     # Sesión c4e3416f: añadimos CONFIRMADO_SIN_DATOS al enum para el caso
     # del cliente que confirma compra pero no completa datos de envío.
+    # HU verificación humana de pago: CONFIRMADO_PAGO_PENDIENTE para el
+    # caso operativo donde el LLM registró la orden pero no puede
+    # confirmar el pago (sin pasarela).
     assert props["tag"]["enum"] == [
         "INTERESADO",
         "RECHAZO",
         "COMPRA_EXITOSA",
         "CONFIRMADO_SIN_DATOS",
+        "CONFIRMADO_PAGO_PENDIENTE",
     ]
     assert tool.parameters["required"] == ["tag", "motivo"]
     assert hasattr(tool, "execute_with_context")
@@ -174,3 +178,90 @@ async def test_transfer_tool_rejects_missing_resumen(tmp_path: Path) -> None:
         _ctx(),
     )
     assert raw.startswith("Error: Invalid parameters"), raw
+
+
+# ---------------------------------------------------------------------------
+# Premortem FIX #1: CONFIRMADO_PAGO_PENDIENTE requiere register_order previo
+# ---------------------------------------------------------------------------
+
+
+async def test_tag_tool_rejects_confirmado_pago_pendiente_without_register_order(
+    tmp_path: Path,
+) -> None:
+    """Si el LLM intenta marcar CONFIRMADO_PAGO_PENDIENTE sin que
+    `register_order` haya escrito `metadata.registered_order.success=True`,
+    la tool debe devolver error claro para que el LLM corrija el orden y
+    NO escribir el tag (evita metadata inconsistente: tag dice "pago
+    pendiente" pero no hay orden en Medusa para verificar)."""
+    session_key = "wa_57300055555"
+    # metadata.json existe pero SIN registered_order (caso bug del LLM)
+    chat_dir = tmp_path / session_key
+    chat_dir.mkdir(parents=True, exist_ok=True)
+    (chat_dir / "metadata.json").write_text(
+        json.dumps({"tag": "INTERESADO"}),
+        encoding="utf-8",
+    )
+
+    registry = ToolRegistry()
+    registry.register(
+        ManageConversationTagTool(workspace=tmp_path, vault_dir=tmp_path)
+    )
+
+    raw = await registry.execute(
+        "manage_conversation_tag",
+        {
+            "tag": "CONFIRMADO_PAGO_PENDIENTE",
+            "motivo": "el LLM se adelantó",
+        },
+        _ctx(session_key),
+    )
+    payload = json.loads(raw)
+    assert "error" in payload
+    assert "precondition_failed" in payload["error"]
+    assert "register_order" in payload["error"]
+
+    # El tag NO se escribió — sigue siendo INTERESADO
+    data = json.loads((chat_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert data["tag"] == "INTERESADO"
+
+
+async def test_tag_tool_accepts_confirmado_pago_pendiente_when_registered(
+    tmp_path: Path,
+) -> None:
+    """Happy path: si `metadata.registered_order.success=True` ya está,
+    el LLM puede marcar CONFIRMADO_PAGO_PENDIENTE."""
+    session_key = "wa_57300066666"
+    chat_dir = tmp_path / session_key
+    chat_dir.mkdir(parents=True, exist_ok=True)
+    (chat_dir / "metadata.json").write_text(
+        json.dumps(
+            {
+                "tag": "INTERESADO",
+                "registered_order": {
+                    "success": True,
+                    "order_id": "draft_01XYZ",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    registry = ToolRegistry()
+    registry.register(
+        ManageConversationTagTool(workspace=tmp_path, vault_dir=tmp_path)
+    )
+
+    raw = await registry.execute(
+        "manage_conversation_tag",
+        {
+            "tag": "CONFIRMADO_PAGO_PENDIENTE",
+            "motivo": "Pedido draft_01XYZ por $50.000, transferencia",
+        },
+        _ctx(session_key),
+    )
+    payload = json.loads(raw)
+    assert "error" not in payload
+    assert "CONFIRMADO_PAGO_PENDIENTE" in payload["message"]
+
+    data = json.loads((chat_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert data["tag"] == "CONFIRMADO_PAGO_PENDIENTE"

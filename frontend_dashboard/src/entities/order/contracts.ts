@@ -200,3 +200,63 @@ export const vaultOrdersResponseSchema = z.object({
 });
 
 export type VaultOrdersResponse = z.infer<typeof vaultOrdersResponseSchema>;
+
+/* ── Customer Score — panel "Historial cliente" del inspector ────────────
+ *
+ * Backend: GET /api/orders/orders/{id}/customer-score
+ *
+ * El backend computa el score del cliente cruzando episodes del vault con
+ * orders de Medusa. Determinístico — sale del rules.yaml editable en
+ * caliente. Para clientes sin historial (sesión vacía o sin phone), backend
+ * devuelve tag="Sin datos" + letter="—" para que el frontend pinte
+ * MissingData.
+ *
+ * `rules_version` permite auditar "¿con qué rules se computó esto?". Si
+ * después de editar rules.yaml el score cambia, el version bump es visible.
+ */
+
+export const scoreBreakdownItemSchema = z.object({
+  feature: z.string(),
+  feature_value: z.number(),
+  points: z.number().int(),
+});
+
+export type ScoreBreakdownItem = z.infer<typeof scoreBreakdownItemSchema>;
+
+export const customerScoreSchema = z.object({
+  tag: z.string(),                                  // VIP / Recurrente / Nuevo / Frío / Estándar / Sin datos
+  score_letter: z.string(),                         // A / B / C / D / —
+  score_value: z.number().int(),
+  score_reason: z.string(),
+  monetary_cop: z.number().int(),
+  last_purchase_at_ms: z.number().nullable(),
+  last_purchase_iso: z.string().nullable(),         // YYYY-MM-DD (helper backend)
+  // 5° KV: "X compras de Y episodios" — conversion rate del cliente.
+  // .default() para tolerar respuestas backend viejas (pre-feature) sin romper.
+  frequency_total: z.number().int().default(0),     // # COMPRA_EXITOSA
+  episodes_total: z.number().int().default(0),      // # episodios totales
+  rules_version: z.number().int(),
+  breakdown: z.array(scoreBreakdownItemSchema),
+  session_id: z.string().nullable(),                // debug — `wa_<phone>` o null
+});
+
+export type CustomerScore = z.infer<typeof customerScoreSchema>;
+
+/* ── Customer Summary — botón "Resumir con IA" on-demand ─────────────────
+ *
+ * Backend: POST /api/orders/orders/{id}/customer-summary
+ *
+ * Llama Gemini Flash via litellm con el score determinístico + episodes.
+ * Degrada gracefully: si el LLM falla, devuelve summary fallback con
+ * `error_detail` poblado (UI muestra warning pero igual renderea texto).
+ */
+
+export const customerSummarySchema = z.object({
+  summary: z.string(),
+  model: z.string(),
+  latency_ms: z.number().int(),
+  rules_version: z.number().int(),
+  error_detail: z.string().nullable(),
+});
+
+export type CustomerSummary = z.infer<typeof customerSummarySchema>;

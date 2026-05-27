@@ -50,7 +50,7 @@ by ``test_no_future_annotations_in_temporal_boundary`` (see ``tests/architecture
 """
 from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import Any, Mapping
+from typing import Any
 
 import structlog
 from temporalio import activity
@@ -95,34 +95,30 @@ class DispatchResult:
     no_matches: bool = False
 
 
-@activity.defn(name="orchestration.dispatch_event")
-async def dispatch_event_activity(envelope: EventEnvelope) -> DispatchResult:
-    """Dispatch a completion event according to the manifest.
+async def dispatch_envelope_with_client(
+    envelope: EventEnvelope, client: Client
+) -> DispatchResult:
+    """Manifest-driven dispatch given an already-acquired Temporal `client`.
 
-    Steps:
-        1. Load all transitions for ``(source_plugin, source_worker)`` from
-           the manifest.
-        2. Filter by ``Transition.matches(envelope)`` — event_type + when.
-        3. For each match, execute ``action`` via Temporal:
-              - ``start_workflow``: ``client.start_workflow(name, ...)`` — fails
-                with WorkflowAlreadyStartedError → caught, recorded as raced.
-              - ``start_workflow_with_replace``: terminate RUNNING + start.
-              - ``ensure_running``: if RUNNING → noop, else start.
-              - ``signal``: signal handler by name on existing handle.
+    Pure function — same logic as ``dispatch_event_activity`` minus the
+    Temporal activity wrapper and minus the implicit ``get_temporal_client``
+    call. Exists so HTTP / use case callers (which already hold a client via
+    DI) can emit envelopes without spinning up a workflow + activity. The
+    activity (`dispatch_event_activity`) is now a thin async wrapper around
+    this function.
 
-    All errors are logged but non-fatal at the level of an individual
-    transition — failed transitions are recorded in the result and the
-    activity continues. This matches the existing dispatcher behavior
-    (best-effort routing) — Temporal's retry policy at the activity level
-    handles transient failures of the dispatcher as a whole.
+    The reason for the carve-out: HU-WA24H-001 Sprint 2 emits
+    `ServiceWindowOpenedEvent` / `CustomerRepliedEvent` from
+    `IngestInboundMessage`, which runs in the FastAPI request handler — not
+    inside a workflow. Using the activity from there would require spinning
+    up a wrapper workflow just to call one activity, defeating the purpose.
+
+    All side effects (start_workflow / signal / terminate-and-replace) go
+    through `_execute_action`, exactly like the activity. Errors at the
+    level of an individual transition propagate up — same semantics as the
+    activity (no per-transition swallow).
     """
-    # Local import to avoid a module-level cycle:
-    # plugin_manifest reads manifests (no Temporal dep); we want
-    # dispatch_event_activity to depend on plugin_manifest, but
-    # plugin_manifest should not eagerly import orchestration (would
-    # circularize when orchestration imports plugin_manifest for typing).
     from src.platform.plugin_manifest import get_task_queue, get_transitions
-    from src.platform.temporal.client import get_temporal_client
 
     log.info(
         "orchestration.dispatch_event: received envelope",
@@ -149,7 +145,6 @@ async def dispatch_event_activity(envelope: EventEnvelope) -> DispatchResult:
             no_matches=True,
         )
 
-    client = await get_temporal_client()
     outcomes: list[DispatchedTransition] = []
 
     for t in matched:
@@ -194,6 +189,37 @@ async def dispatch_event_activity(envelope: EventEnvelope) -> DispatchResult:
         event_type=envelope.event_type,
         matches=outcomes,
     )
+
+
+@activity.defn(name="orchestration.dispatch_event")
+async def dispatch_event_activity(envelope: EventEnvelope) -> DispatchResult:
+    """Dispatch a completion event according to the manifest.
+
+    Steps:
+        1. Load all transitions for ``(source_plugin, source_worker)`` from
+           the manifest.
+        2. Filter by ``Transition.matches(envelope)`` — event_type + when.
+        3. For each match, execute ``action`` via Temporal:
+              - ``start_workflow``: ``client.start_workflow(name, ...)`` — fails
+                with WorkflowAlreadyStartedError → caught, recorded as raced.
+              - ``start_workflow_with_replace``: terminate RUNNING + start.
+              - ``ensure_running``: if RUNNING → noop, else start.
+              - ``signal``: signal handler by name on existing handle.
+
+    All errors are logged but non-fatal at the level of an individual
+    transition — failed transitions are recorded in the result and the
+    activity continues. This matches the existing dispatcher behavior
+    (best-effort routing) — Temporal's retry policy at the activity level
+    handles transient failures of the dispatcher as a whole.
+
+    Implementation: thin wrapper around ``dispatch_envelope_with_client``
+    that acquires the Temporal client first. HTTP callers can use the
+    underlying function directly.
+    """
+    from src.platform.temporal.client import get_temporal_client
+
+    client = await get_temporal_client()
+    return await dispatch_envelope_with_client(envelope, client)
 
 
 # ── helpers ────────────────────────────────────────────────────────────────
@@ -343,7 +369,7 @@ async def _execute_action(
 
     if via == "start_workflow_with_replace":
         await _terminate_if_running(
-            client, workflow_id, reason=f"Replaced by orchestration transition"
+            client, workflow_id, reason="Replaced by orchestration transition"
         )
 
     try:

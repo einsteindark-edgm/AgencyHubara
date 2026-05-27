@@ -65,6 +65,15 @@ _REASON_CATEGORIES: list[str] = [
     # manualmente en Medusa Admin con esos datos. Para que el dashboard
     # pueda hacer pop fácil de la cola, ver `audit_id` en el envelope.
     "ORDER_REGISTRATION_FAILED",
+    # HU "verificación humana de pago" (operativo hasta tener pasarela):
+    # `register_order` devolvió `registered=true` (orden creada en Medusa)
+    # pero el LLM NO puede confirmar si el pago se efectuó. Los 3 métodos
+    # (card, transfer, cash_on_delivery) requieren verificación humana
+    # del pago antes de marcar la venta como cerrada. El humano confirma
+    # o rechaza el pago desde el dashboard de orders y, según el resultado,
+    # cambia la tag a COMPRA_EXITOSA o aborta el pedido. SIEMPRE usar en
+    # combo con `manage_conversation_tag("CONFIRMADO_PAGO_PENDIENTE")`.
+    "PAYMENT_VERIFICATION_PENDING",
     "EXPLICIT_REQUEST",        # cliente pide humano o muestra frustracion
     "OTHER",
 ]
@@ -112,6 +121,11 @@ class EscalateToHumanTool(ToolBase):
                     "ORDER_REGISTRATION_FAILED (Medusa rechazó el "
                     "register_order — humano registra manualmente con los "
                     "datos guardados en metadata.failed_order_registrations), "
+                    "PAYMENT_VERIFICATION_PENDING (orden registrada OK pero "
+                    "el LLM no puede confirmar si el pago se efectuó — "
+                    "obligatorio para los 3 métodos de pago hasta que haya "
+                    "pasarela integrada; usar SIEMPRE en combo con "
+                    "manage_conversation_tag('CONFIRMADO_PAGO_PENDIENTE')), "
                     "EXPLICIT_REQUEST (cliente pide humano o está "
                     "frustrado), OTHER."
                 ),

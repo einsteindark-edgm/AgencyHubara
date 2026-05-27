@@ -14,7 +14,6 @@ de silencio expira.
 """
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
@@ -86,6 +85,14 @@ def _make_fake_activities(
         _handoff_state["summary"] = None
         return result
 
+    @activity.defn(name="read_idle_timeout_seconds")
+    async def fake_read_idle_timeout(session_id: str) -> int:
+        return 60
+
+    @activity.defn(name="flush_pending_ui_intents_activity")
+    async def fake_flush_ui_intents(session_id: str) -> int:
+        return 0
+
     @activity.defn(name="send_typing_indicator_activity")
     async def fake_typing(session_id: str) -> None:
         tracker.typing_calls.append(session_id)
@@ -141,6 +148,8 @@ def _make_fake_activities(
     return [
         fake_bootstrap,
         fake_read_handoff,
+        fake_read_idle_timeout,
+        fake_flush_ui_intents,
         fake_typing,
         fake_build_prompt,
         fake_llm,

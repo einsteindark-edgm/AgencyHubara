@@ -183,6 +183,52 @@ def make_outbound_sent(
     )
 
 
+def make_delivery_status(
+    *,
+    session_id: str | None,
+    tenant_id: str | None,
+    wa_message_id: str,
+    status: str,  # "sent" | "delivered" | "read" | "failed"
+    pricing_type: str | None = None,
+    category: str | None = None,
+    billable: bool | None = None,
+    cost_cents_usd: int | None = None,
+) -> AnalyticsEvent:
+    """Webhook `message_status` materializado de WhatsApp Cloud API.
+
+    Emitido por `IngestDeliveryStatus` cada vez que Meta nos manda un update
+    de delivery (sent/delivered/read/failed) sobre un outbound nuestro. Lleva
+    el `pricing` que Meta resolvió + el `cost_cents_usd` ya computado contra
+    el rate card local, para que dashboards downstream lo consuman directo
+    sin re-cruzar pricing × rate card.
+
+    `session_id` es `None` cuando el status no se pudo matchear a un
+    outbound persistido (dead-letter); aún así emitimos el evento para que
+    el dashboard registre el orphan.
+
+    HU-WA24H-001 F1.10.
+    """
+    return AnalyticsEvent(
+        event_id=_new_id(),
+        timestamp_ms=_now_ms(),
+        category="wa_outbound",
+        kind="delivery_status",
+        correlation={
+            "session_id": session_id,
+            "tenant_id": tenant_id,
+            "wa_message_id": wa_message_id,
+        },
+        payload={
+            "status": status,
+            "pricing_type": pricing_type,
+            "category": category,
+            "billable": billable,
+            "cost_cents_usd": cost_cents_usd,
+        },
+        tags=["outbound", "delivery_status", status],
+    )
+
+
 def make_conversion(
     *,
     session_id: str,

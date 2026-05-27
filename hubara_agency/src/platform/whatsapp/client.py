@@ -300,6 +300,30 @@ async def send_reaction(
 
 
 # =============================================================================
+# Templates (HU-WA24H-001 F1.7)
+# =============================================================================
+
+
+async def send_template(
+    phone_number_id: str,
+    to: str,
+    spec: Any,  # TemplateSpec — forward typing por evitar import cycle
+    variables: dict[str, str],
+) -> wa_dtos.OutboundResult:
+    """Envía un template aprobado por Meta.
+
+    Construye el payload con `outbound.build_template_message` (que valida
+    variables vs spec) y POST a la Cloud API. Templates NO aceptan
+    `reply_to_message_id` — son business-initiated, no replies.
+
+    El `OutboundResult` retornado tiene `wa_message_id` para correlación
+    con el webhook `message_status` que después trae `pricing` + cost.
+    """
+    data = wa_outbound.build_template_message(to, spec, variables)
+    return await _post_json(phone_number_id, data, label="template")
+
+
+# =============================================================================
 # Internal: POST helper
 # =============================================================================
 

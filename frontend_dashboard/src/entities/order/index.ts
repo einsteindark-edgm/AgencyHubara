@@ -20,6 +20,8 @@ export {
   useTransitionOrderStage,
   useConfirmOrderPayment,
   useCancelOrder,
+  useCustomerScore,
+  useGenerateCustomerSummary,
   toLegacyOrder,
 } from "./api";
 export {
@@ -28,9 +30,14 @@ export {
   orderSummarySchema,
   vaultOrdersResponseSchema,
   orderCommandResultSchema,
+  customerScoreSchema,
+  customerSummarySchema,
 } from "./contracts";
 export type {
   VaultOrderRecord,
   VaultOrdersResponse,
   OrderCommandResult,
+  CustomerScore,
+  CustomerSummary,
+  ScoreBreakdownItem,
 } from "./contracts";

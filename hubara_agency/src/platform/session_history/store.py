@@ -46,7 +46,20 @@ class FilesystemMessageHistoryStore:
             f.write(json.dumps(event, ensure_ascii=False) + "\n")
 
     def append_user_event(self, session_id: str, content: str) -> None:
-        self._append(session_id, {"role": "user", "content": content})
+        """Persiste un inbound del cliente con timestamp ISO UTC.
+
+        HU-WA24H-001 F1.2: simetria con `append_assistant_event` —
+        downstream usa el timestamp para tracking de service window 24h
+        + métricas de tiempo de respuesta del agente.
+        """
+        self._append(
+            session_id,
+            {
+                "role": "user",
+                "content": content,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            },
+        )
 
     def append_assistant_event(
         self,

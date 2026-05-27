@@ -58,15 +58,24 @@ def count_session_jsonl_lines(vault_dir: Path, session_key: str) -> int:
         return 0
 
 # Tags que cierran formalmente un episodio. Coinciden con los que
-# `ManageConversationTagTool` acepta en su `_TAG_ENUM` (los 3 que indican
+# `ManageConversationTagTool` acepta en su `_TAG_ENUM` (los 4 que indican
 # fin de la intención del cliente):
-#   - COMPRA_EXITOSA → cliente compró
+#   - COMPRA_EXITOSA → cliente compró Y pago verificado (humano lo confirma)
 #   - RECHAZO → cliente no compra (cierre definitivo)
 #   - CONFIRMADO_SIN_DATOS → confirmó pero faltó shipping (escalado a humano)
+#   - CONFIRMADO_PAGO_PENDIENTE → orden registrada + datos completos, falta
+#     verificación humana del pago (transferencia / efectivo / tarjeta sin
+#     pasarela). El episodio se cierra porque la intención de compra terminó
+#     desde el lado del cliente — el humano solo confirma el pago.
 # INTERESADO NO está acá: indica "cliente sigue dudando, programa
 # remarketing" — el episodio sigue activo esperando reacción del cliente.
 CLOSING_TAGS: frozenset[str] = frozenset(
-    {"COMPRA_EXITOSA", "RECHAZO", "CONFIRMADO_SIN_DATOS"}
+    {
+        "COMPRA_EXITOSA",
+        "RECHAZO",
+        "CONFIRMADO_SIN_DATOS",
+        "CONFIRMADO_PAGO_PENDIENTE",
+    }
 )
 
 

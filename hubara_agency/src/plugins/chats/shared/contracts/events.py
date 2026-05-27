@@ -86,3 +86,101 @@ class CustomerRepliedDuringRemarketingEvent:
 
     session_id: str
     summary: str = ""
+
+
+# =============================================================================
+# HU-WA24H-001 Sprint 2 — Service window watchdog events
+# =============================================================================
+#
+# Three lifecycle events tied to the WhatsApp 24h service window. The
+# watchdog workflow (`ServiceWindowWatchdogWorkflow`) is started, signaled
+# (reschedule / cancel) and cancelled in response to these events via the
+# manifest declarative orchestration (ADR-2026-05-20). No sibling workflow
+# imports — sales/remarketing only depend on this module + the dispatcher.
+
+
+@dataclass(frozen=True)
+class ServiceWindowOpenedEvent:
+    """Emitted by IngestInboundMessage when an inbound (re)opens the 24h
+    WhatsApp service window for an active episode.
+
+    The dispatcher consumes this via a `start_workflow_with_replace`
+    transition that starts the watchdog with `start_delay` = `fire_at_ms -
+    now`. If an existing watchdog is running for the same
+    `(session_id, episode_id)`, the replace verb terminates it and starts a
+    fresh one — that's how consecutive inbounds extend the window without
+    growing parallel watchdogs.
+
+    Fields:
+        session_id: the chats session id (`wa_<phone>`).
+        episode_id: the active episode id (`ep_NNN`).
+        fire_at_ms: epoch ms when the watchdog should attempt the nudge.
+            Equal to `service_window_expires_at_ms - WATCHDOG_PRE_EXPIRY_MS`
+            (30 min before the window closes). The dispatcher does NOT use
+            this for `start_delay` directly — the workflow body sleeps to
+            `fire_at_ms` itself so reschedules can happen via signal.
+        suggested_template_kind: hint about the template type the watchdog
+            should resolve at fire time (`"quote_pending"` /
+            `"payment_pending"` / `"order_status"`). The actual template
+            resolution happens fresh in the eligibility activity 23.5h
+            later, since the episode stage may have evolved.
+    """
+
+    session_id: str
+    episode_id: str
+    fire_at_ms: int
+    suggested_template_kind: str = ""
+
+
+@dataclass(frozen=True)
+class CustomerRepliedEvent:
+    """Emitted when a customer inbound arrives while a watchdog workflow
+    is already scheduled.
+
+    Routed by manifest via `via: signal, signal_handler: cancel_watchdog`
+    to the watchdog workflow id `watchdog-{session_id}-{episode_id}`. The
+    signal cancels the watchdog cleanly — the customer already responded,
+    no nudge needed.
+
+    Fields:
+        session_id: the chats session id.
+        episode_id: the active episode id. The watchdog is per-episode, so
+            the cancellation targets the right workflow id even if multiple
+            historical watchdogs exist for the session.
+    """
+
+    session_id: str
+    episode_id: str
+
+
+@dataclass(frozen=True)
+class EpisodeClosedEvent:
+    """Emitted when an episode formally closes (COMPRA_EXITOSA / RECHAZO /
+    CONFIRMADO_SIN_DATOS / CONFIRMADO_PAGO_PENDIENTE / TIMEOUT).
+
+    Routed by manifest via `via: signal, signal_handler: cancel_watchdog`
+    — same target workflow id template as `CustomerRepliedEvent`. The
+    watchdog has no point firing if the deal is closed; the signal stops
+    it before it sends a nudge.
+
+    Fields:
+        session_id: the chats session id.
+        episode_id: the episode that closed.
+        closing_tag: the closing tag string. Carried for observability +
+            potential routing logic in future transitions (e.g., a
+            `RECHAZO` could also block cadence whereas `COMPRA_EXITOSA`
+            might trigger a post-sale onboarding workflow).
+    """
+
+    session_id: str
+    episode_id: str
+    closing_tag: str
+
+
+__all__ = [
+    "SalesSessionCompletionEvent",
+    "CustomerRepliedDuringRemarketingEvent",
+    "ServiceWindowOpenedEvent",
+    "CustomerRepliedEvent",
+    "EpisodeClosedEvent",
+]

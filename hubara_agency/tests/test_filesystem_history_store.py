@@ -20,7 +20,31 @@ def test_append_creates_jsonl_with_correct_shape(tmp_path):
     assert log.exists()
     lines = log.read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) == 1
-    assert json.loads(lines[0]) == {"role": "user", "content": "hola"}
+    parsed = json.loads(lines[0])
+    assert parsed["role"] == "user"
+    assert parsed["content"] == "hola"
+    # HU-WA24H-001 F1.2: user events ahora incluyen timestamp ISO UTC
+    # (simetria con assistant — el campo se necesita para tracking de
+    # service window 24h + tiempo de respuesta del agente).
+    assert isinstance(parsed["timestamp"], str)
+    assert "T" in parsed["timestamp"]
+
+
+def test_append_user_event_timestamp_is_iso_utc(tmp_path):
+    """User event timestamp es ISO con TZ (formato Python isoformat)."""
+    store = FilesystemMessageHistoryStore(tmp_path)
+    store.append_user_event("wa_1", "hola")
+
+    log = tmp_path / "wa_1" / "sessions" / "wa_1.jsonl"
+    parsed = json.loads(log.read_text(encoding="utf-8").strip())
+    ts = parsed["timestamp"]
+    # ISO 8601 con TZ +00:00 (UTC)
+    assert ts.endswith("+00:00")
+    # Parseable round-trip por datetime
+    from datetime import datetime
+
+    parsed_dt = datetime.fromisoformat(ts)
+    assert parsed_dt.utcoffset().total_seconds() == 0  # type: ignore[union-attr]
 
 
 def test_append_multiple_events_accumulates(tmp_path):
@@ -43,7 +67,11 @@ def test_append_preserves_non_ascii(tmp_path):
     log = tmp_path / "wa_1" / "sessions" / "wa_1.jsonl"
     raw = log.read_text(encoding="utf-8").strip()
     assert "ñandú" in raw  # ensure_ascii=False
-    assert json.loads(raw) == {"role": "user", "content": "ñandú está acá"}
+    parsed = json.loads(raw)
+    assert parsed["role"] == "user"
+    assert parsed["content"] == "ñandú está acá"
+    # HU-WA24H-001 F1.2: timestamp ahora presente en user events.
+    assert "timestamp" in parsed
 
 
 def test_append_isolates_per_session(tmp_path):

@@ -41,10 +41,6 @@ import type {
 
 /* ── Adapters internos ─────────────────────────────────────────────── */
 
-const KNOWN_TAGS: ChatTag[] = [
-  "HUMANO", "INTERESADO", "PENDIENTE", "CLIENTE", "REMARKETING", "FRÍO",
-];
-
 /** Mapa de tag canónico → clase CSS del prototipo (`t-int`, `t-cli`, …). */
 const TAG_CLASS: Record<string, string> = {
   HUMANO:      "t-human",
@@ -54,6 +50,52 @@ const TAG_CLASS: Record<string, string> = {
   REMARKETING: "t-rem",
   FRÍO:        "t-cold",
   FRIO:        "t-cold",
+};
+
+/**
+ * Bridge backend ↔ inbox: los tags que escribe el LLM via
+ * `manage_conversation_tag` (`COMPRA_EXITOSA`, `RECHAZO`,
+ * `CONFIRMADO_SIN_DATOS`, `INTERESADO`, `NO_ETIQUETADO`) NO matchean 1:1 con
+ * los filtros del inbox del dashboard (`HUMANO`, `INTERESADO`, `PENDIENTE`,
+ * `CLIENTE`, `REMARKETING`, `FRÍO`).
+ *
+ * Antes del fix: cualquier tag fuera del set inbox caía al fallback `FRÍO`
+ * — bug reportado: venta ya procesada (`COMPRA_EXITOSA`) aparecía como Frío
+ * en el inbox porque `COMPRA_EXITOSA` no estaba en KNOWN_TAGS.
+ *
+ * Mapeo semántico:
+ *   - `COMPRA_EXITOSA` → `CLIENTE` (ya compró, es cliente real)
+ *   - `RECHAZO` → `FRÍO` (no quiso comprar — Frío real, no fallback)
+ *   - `CONFIRMADO_SIN_DATOS` → `PENDIENTE` (confirmó pero falta envío)
+ *   - `INTERESADO` → `INTERESADO` (cliente activo en negociación)
+ *   - `NO_ETIQUETADO` → `PENDIENTE` (conversación nueva sin clasificar)
+ *   - `HUMANO` → `HUMANO`
+ *
+ * El estado REMARKETING NO viene del tag (manage_conversation_tag no lo
+ * emite). Se deriva de `active_agent_route === "remarketing"` en
+ * `normalizeTag` antes de mirar el tag.
+ */
+const BACKEND_TO_INBOX_TAG: Record<string, ChatTag> = {
+  // Tags emitidos por el backend Python (manage_conversation_tag + defaults)
+  INTERESADO: "INTERESADO",
+  COMPRA_EXITOSA: "CLIENTE",
+  RECHAZO: "FRÍO",
+  CONFIRMADO_SIN_DATOS: "PENDIENTE",
+  // HU "verificación humana de pago" (operativo hasta tener pasarela):
+  // orden registrada en Medusa, falta verificación humana del pago. El
+  // chat queda en cola humana (`escalate_to_human("PAYMENT_VERIFICATION_PENDING")`
+  // dispara `active_agent_route="humano"` que ya re-rutea al filtro HUMANO),
+  // pero si por alguna razón el `tag` queda CONFIRMADO_PAGO_PENDIENTE sin
+  // el route flip, lo mostramos como PENDIENTE en el inbox.
+  CONFIRMADO_PAGO_PENDIENTE: "PENDIENTE",
+  NO_ETIQUETADO: "PENDIENTE",
+  HUMANO: "HUMANO",
+  // Aliases / tags ya alineados (seeds del prototipo o vistas legacy)
+  PENDIENTE: "PENDIENTE",
+  CLIENTE: "CLIENTE",
+  REMARKETING: "REMARKETING",
+  FRÍO: "FRÍO",
+  FRIO: "FRÍO",
 };
 
 const AVATAR_COLORS: AvatarColor[] = ["purple", "blue", "green", "orange", "pink", "teal"];
@@ -72,22 +114,30 @@ function shortInitials(phone: string): string {
   return trimmed.slice(-2).toUpperCase();
 }
 
-function normalizeTag(raw: string): { tag: ChatTag; tagClass: string } {
-  const upper = raw.toUpperCase();
-  if (KNOWN_TAGS.includes(upper as ChatTag)) {
-    return {
-      tag: upper as ChatTag,
-      tagClass: TAG_CLASS[upper] ?? "t-cold",
-    };
+function normalizeTag(
+  rawTag: string,
+  activeAgentRoute?: string,
+): { tag: ChatTag; tagClass: string } {
+  // 1. Route override: si el dispatcher movió la sesión a remarketing, el tag
+  // semántico para el inbox es REMARKETING (aunque el LLM no lo emita).
+  if (activeAgentRoute === "remarketing") {
+    return { tag: "REMARKETING", tagClass: TAG_CLASS.REMARKETING };
   }
-  // Estados que no son del set canónico — el prototipo los pinta con look
-  // de tag genérico (sin color). Etiquetamos como FRÍO sólo para fines de
-  // filtrado y dejamos la clase neutra.
-  return { tag: "FRÍO", tagClass: "t-cold" };
+  // 2. Mapear tag backend → tag inbox. Case-insensitive para tolerar
+  // seeds antiguos.
+  const upper = (rawTag ?? "").toUpperCase();
+  const mapped = BACKEND_TO_INBOX_TAG[upper];
+  if (mapped) {
+    return { tag: mapped, tagClass: TAG_CLASS[mapped] ?? "t-pen" };
+  }
+  // 3. Fallback verdadero: tag desconocido → PENDIENTE (no FRÍO).
+  // FRÍO ahora tiene semántica real ("cliente rechazó"); mandar lo
+  // desconocido al PENDIENTE evita reportes falsos de churn.
+  return { tag: "PENDIENTE", tagClass: "t-pen" };
 }
 
 function adaptSession(s: ChatSession): ChatInboxItem {
-  const { tag, tagClass } = normalizeTag(s.tag);
+  const { tag, tagClass } = normalizeTag(s.tag, s.active_agent_route);
   return {
     id: s.session_id,
     name: s.phone_number,

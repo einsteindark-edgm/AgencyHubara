@@ -52,6 +52,31 @@ class EscalationDecision:
 
 
 @dataclass(frozen=True)
+class EpisodeClosedDecision:
+    """Decision emitted by `ManageConversationTagTool` when a CLOSING_TAG
+    formally closes an active episode (HU-WA24H-001 Sprint 2).
+
+    The workflow lifts this into a `EpisodeClosedEvent` and dispatches via
+    the manifest — the dispatcher routes it to `cancel_watchdog` signal on
+    `ServiceWindowWatchdogWorkflow` for the (session_id, episode_id) pair.
+
+    Required because the tool runs inside an activity sandbox (R-DIP forbids
+    `temporalio.client` imports from tools), so it can't dispatch directly.
+    Same envelope-decision pattern as `ScheduleRemarketingDecision` (ADR-001).
+
+    Fields:
+        session_id: the chats session id (`wa_<phone>`).
+        episode_id: the episode that just closed (`ep_NNN`).
+        closing_tag: the tag that closed it. Carried as the cancellation
+            reason for observability (the watchdog logs which tag killed it).
+    """
+
+    session_id: str
+    episode_id: str
+    closing_tag: str
+
+
+@dataclass(frozen=True)
 class RemarketingEligibility:
     """Resultado de `check_remarketing_eligibility` activity.
 

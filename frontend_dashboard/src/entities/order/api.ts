@@ -22,10 +22,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient, ApiError } from "@/shared/api";
 import {
+  customerScoreSchema,
+  customerSummarySchema,
   orderCommandResultSchema,
   orderDetailSchema,
   orderListResponseSchema,
   vaultOrdersResponseSchema,
+  type CustomerScore,
+  type CustomerSummary,
   type OrderCommandResult,
   type OrderDetail,
   type OrderListResponse,
@@ -313,5 +317,57 @@ export function useVaultOrders() {
     refetchInterval: 60_000, // menos frecuente que el kanban — es operacional.
     staleTime: 30_000,
     retry: 1,
+  });
+}
+
+/* ── Customer Score — panel "Historial cliente" del inspector ────────────
+ *
+ * GET /api/orders/orders/{id}/customer-score — derivado del vault metadata
+ * + Medusa orders cruzados con el rules.yaml del backend. Determinístico:
+ * el mismo cliente siempre da el mismo score (modulo cambios en rules.yaml,
+ * que el backend detecta por mtime y recarga sin redeploy).
+ *
+ * Si la order no tiene phone o el vault no tiene historial, devuelve
+ * tag="Sin datos" + letter="—" — el componente renderea MissingData en
+ * ese caso.
+ */
+
+export function useCustomerScore(displayId: string | null) {
+  return useQuery<CustomerScore>({
+    queryKey: orderKeys.customerScore(displayId ?? "—"),
+    queryFn: async () => {
+      if (!displayId) throw new Error("displayId required");
+      const raw = await apiClient.get<unknown>(
+        `/api/orders/orders/${encodeURIComponent(displayId)}/customer-score`,
+      );
+      return customerScoreSchema.parse(raw);
+    },
+    enabled: displayId !== null && displayId !== "",
+    // El score cambia con baja frecuencia (depende de episodes nuevos +
+    // rules.yaml). 5min staleTime es razonable.
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+/* ── Customer Summary — botón "Resumir con IA" on-demand ─────────────────
+ *
+ * POST /api/orders/orders/{id}/customer-summary — invoca al LLM. Mutation
+ * (no query) porque tiene side-effect (costo de tokens) y el operador la
+ * dispara explícitamente. No cacheamos — siempre fresh.
+ */
+
+interface GenerateCustomerSummaryVariables {
+  orderId: string;
+}
+
+export function useGenerateCustomerSummary() {
+  return useMutation<CustomerSummary, Error, GenerateCustomerSummaryVariables>({
+    mutationFn: async ({ orderId }) => {
+      const raw = await apiClient.post<unknown>(
+        `/api/orders/orders/${encodeURIComponent(orderId)}/customer-summary`,
+        {},
+      );
+      return customerSummarySchema.parse(raw);
+    },
   });
 }
