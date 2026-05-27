@@ -1070,18 +1070,26 @@ nodes:
       git merge --ff-only "origin/$BRANCH" 2>&1 | tail -3 >&2 || true
 
       # Validar plugin-result.yaml
+      # Aceptamos `passed` y `passed_with_warnings` como continuables — ambos
+      # significa "todas las feature tasks corrieron sin failures". Sólo
+      # `failed`, `blocked` o cualquier otra cosa bloquea el pipeline.
+      # Ver línea 1164 del SKILL hubara-implementer-archon.
       PLUGIN_RFILE="hubara_agency/.hubara/results/${HU_ID}/plugin-${PLUGIN_ID}-result.yaml"
       if [ ! -f "$PLUGIN_RFILE" ]; then
         echo "FAIL_NO_PLUGIN_RESULT $PLUGIN_RFILE no existe"
         exit 0
       fi
-      STATUS=$(grep '^status:' "$PLUGIN_RFILE" | awk '{print $2}')
-      if [ "$STATUS" != "passed" ]; then
-        echo "FAIL_PLUGIN_NOT_PASSED status=$STATUS"
-        exit 0
-      fi
+      STATUS=$(grep '^status:' "$PLUGIN_RFILE" | awk '{print $2}' | tr -d '"' | tr -d "'")
+      case "$STATUS" in
+        passed|passed_with_warnings)
+          ;;  # continuable
+        *)
+          echo "FAIL_PLUGIN_NOT_PASSED status=$STATUS"
+          exit 0
+          ;;
+      esac
 
-      echo "PASS single-plugin completed: $PLUGIN_ID"
+      echo "PASS single-plugin completed: $PLUGIN_ID (status=$STATUS)"
     depends_on: [classify-mode, prewarm-uv-venv]
     when: "$classify-mode.output.mode == 'single_plugin'"
     idle_timeout: 3600000                     # 60 min: tasks pueden tardar (uv sync, builds, etc.)
@@ -1167,24 +1175,39 @@ nodes:
       BATCH_PLUGINS=$(cat $ARTIFACTS_DIR/.current-batch-plugins 2>/dev/null || echo "")
       MISSING=0
       FAILED=0
+      WARNED=0
       FAILED_DETAILS=""
+      WARNED_DETAILS=""
       for p in $BATCH_PLUGINS; do
         RFILE="${RESULTS_DIR}/plugin-${p}-result.yaml"
         if [ ! -f "$RFILE" ]; then
           MISSING=$((MISSING + 1))
           FAILED_DETAILS="${FAILED_DETAILS}\n  - MISSING: ${p}"
         else
-          STATUS=$(grep '^status:' "$RFILE" | awk '{print $2}')
-          if [ "$STATUS" != "passed" ]; then
-            FAILED=$((FAILED + 1))
-            FAILED_DETAILS="${FAILED_DETAILS}\n  - FAILED: ${p} status=${STATUS}"
-          fi
+          STATUS=$(grep '^status:' "$RFILE" | awk '{print $2}' | tr -d '"' | tr -d "'")
+          # `passed_with_warnings` se acepta como continuable. SKILL.md L1164.
+          case "$STATUS" in
+            passed)
+              ;;  # all good
+            passed_with_warnings)
+              WARNED=$((WARNED + 1))
+              WARNED_DETAILS="${WARNED_DETAILS}\n  - WARNED: ${p}"
+              ;;
+            *)
+              FAILED=$((FAILED + 1))
+              FAILED_DETAILS="${FAILED_DETAILS}\n  - FAILED: ${p} status=${STATUS}"
+              ;;
+          esac
         fi
       done
       if [ "$MISSING" -gt 0 ] || [ "$FAILED" -gt 0 ]; then
         echo "FAIL_BATCH_INCOMPLETE missing=${MISSING} failed=${FAILED}"
         printf "%b\n" "$FAILED_DETAILS" >&2
+        [ -n "$WARNED_DETAILS" ] && printf "Plugins with warnings:%b\n" "$WARNED_DETAILS" >&2
         exit 0
+      fi
+      if [ "$WARNED" -gt 0 ]; then
+        printf "Batch OK con warnings:%b\n" "$WARNED_DETAILS" >&2
       fi
       echo "BATCH_OK"
     depends_on: [rama-B-wait-fan-out-done]

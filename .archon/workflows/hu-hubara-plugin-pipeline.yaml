@@ -477,9 +477,13 @@ nodes:
 
           # ────────────────────────────────────────────────────────────
           # GATE DETERMINISTA — re-corremos los gates aunque el AI haya
-          # dicho passed. El AI puede mentir / olvidar / silenciar.
+          # dicho passed (o passed_with_warnings). El AI puede mentir /
+          # olvidar / silenciar. `passed_with_warnings` también necesita
+          # verificación porque el implementer puede usarlo para esconder
+          # warnings reales (SKILL.md L1164: status:passed|passed_with_warnings|...).
           # ────────────────────────────────────────────────────────────
-          if [ "$STATUS" = "passed" ]; then
+          case "$STATUS" in passed|passed_with_warnings) STATUS_OK=1 ;; *) STATUS_OK=0 ;; esac
+          if [ "$STATUS_OK" = "1" ]; then
             echo "=== Gate determinista (${TASK_ID}) ===" >&2
             GATE_LOG="$ARTIFACTS_DIR/test-failures.md"
             : > "$GATE_LOG"
@@ -680,8 +684,14 @@ nodes:
             rm -f /tmp/push-$$.log
           fi
 
-          # Si status != passed, decidir transient retry vs permanent failure
-          if [ "$STATUS" != "passed" ]; then
+          # Si status NO es passed/passed_with_warnings, decidir transient
+          # retry vs permanent failure. passed_with_warnings se trata como
+          # éxito (no retry) — SKILL.md L1164.
+          case "$STATUS" in
+            passed|passed_with_warnings) STATUS_IS_FAIL=0 ;;
+            *)                           STATUS_IS_FAIL=1 ;;
+          esac
+          if [ "$STATUS_IS_FAIL" = "1" ]; then
             BR=$(yaml_get "$ARTIFACTS_DIR/task-result.yaml" blocked_reason)
 
             IS_TRANSIENT=false
@@ -807,22 +817,54 @@ nodes:
       mkdir -p "$RESULTS_DIR"
 
       # Agregar status global del plugin
+      # CRITICAL — implementer emite 4 status válidos (SKILL.md línea 1164):
+      #   passed | passed_with_warnings | failed | blocked
+      # `passed_with_warnings` es legítimo (e.g. smoke test skipped por macOS
+      # sin `timeout`, pre-existing branch failures, etc.) y NO debe contar
+      # como failed. Bug detectado run 25512e9 (2026-05-27) — ambos plugins
+      # emitieron `passed_with_warnings` y el aggregator los marcó failed →
+      # rama-B-merge-batch del main pipeline canceló todo. Tratamos como
+      # passed cualquier status que empiece con `passed`.
       ALL_PASSED=true
       FAILED_TASKS=()
+      WARNED_TASKS=()
       TOTAL=0
       PASSED=0
+      WARNED=0
       if [ -d "$FEATURE_RDIR" ]; then
         for f in "$FEATURE_RDIR"/F*-result.yaml; do
           [ -f "$f" ] || continue
           TOTAL=$((TOTAL + 1))
-          S=$(grep '^status:' "$f" | awk '{print $2}')
-          if [ "$S" = "passed" ]; then
-            PASSED=$((PASSED + 1))
-          else
-            ALL_PASSED=false
-            FAILED_TASKS+=("$(basename $f .yaml)")
-          fi
+          S=$(grep '^status:' "$f" | awk '{print $2}' | tr -d '"' | tr -d "'")
+          case "$S" in
+            passed)
+              PASSED=$((PASSED + 1))
+              ;;
+            passed_with_warnings)
+              PASSED=$((PASSED + 1))
+              WARNED=$((WARNED + 1))
+              WARNED_TASKS+=("$(basename $f .yaml)")
+              ;;
+            *)
+              ALL_PASSED=false
+              FAILED_TASKS+=("$(basename $f .yaml)(status=$S)")
+              ;;
+          esac
         done
+      fi
+
+      # status del plugin: passed | passed_with_warnings | failed
+      # - passed: TOTAL > 0 y todas las tasks pasaron sin warnings
+      # - passed_with_warnings: TOTAL > 0, todas pasaron, alguna con warnings
+      # - failed: TOTAL == 0 OR alguna task tiene status != passed*
+      if [ "$ALL_PASSED" = "true" ] && [ "$TOTAL" -gt 0 ]; then
+        if [ "$WARNED" -gt 0 ]; then
+          PLUGIN_STATUS="passed_with_warnings"
+        else
+          PLUGIN_STATUS="passed"
+        fi
+      else
+        PLUGIN_STATUS="failed"
       fi
 
       cat > "$PLUGIN_RFILE" <<EOF
@@ -831,14 +873,21 @@ nodes:
       plugin_id: ${PLUGIN_ID}
       pipeline: hu-hubara-plugin-pipeline
       date: $(date -u +%Y-%m-%dT%H:%M:%SZ)
-      status: $([ "$ALL_PASSED" = "true" ] && [ "$TOTAL" -gt 0 ] && echo "passed" || echo "failed")
+      status: ${PLUGIN_STATUS}
       feature_tasks_total: ${TOTAL}
       feature_tasks_passed: ${PASSED}
+      feature_tasks_with_warnings: ${WARNED}
       failed_tasks:
       EOF
       for t in "${FAILED_TASKS[@]}"; do
         echo "  - ${t}" >> "$PLUGIN_RFILE"
       done
+      if [ "$WARNED" -gt 0 ]; then
+        echo "warned_tasks:" >> "$PLUGIN_RFILE"
+        for t in "${WARNED_TASKS[@]}"; do
+          echo "  - ${t}" >> "$PLUGIN_RFILE"
+        done
+      fi
 
       git add "$RESULTS_DIR/" >&2
       if ! git diff --staged --quiet; then
@@ -849,7 +898,7 @@ nodes:
           git push origin "HEAD:$BRANCH" 2>&1 | tail -3 >&2 || true
         }
       fi
-      echo "plugin_result_committed status=$([ "$ALL_PASSED" = "true" ] && [ "$TOTAL" -gt 0 ] && echo "passed" || echo "failed") tasks=$PASSED/$TOTAL"
+      echo "plugin_result_committed status=${PLUGIN_STATUS} tasks=$PASSED/$TOTAL warnings=$WARNED"
     depends_on: [check-pipeline-error]
     trigger_rule: all_done
 
