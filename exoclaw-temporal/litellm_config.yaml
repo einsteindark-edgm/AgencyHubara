@@ -1,7 +1,7 @@
 model_list:
-  - model_name: sales-agent
+  - model_name: deepseek-v4-pro
     litellm_params:
-      model: deepseek/deepseek-v4-flash
+      model: deepseek/deepseek-v4-pro
       api_key: "os.environ/DEEPSEEK_API_KEY"
       override_raw_request_params:
       api_key: "os.environ/DEEPSEEK_API_KEY"
@@ -18,6 +18,6 @@ router_settings:
   # Como cada model_name tiene solo un proveedor, siempre elegirá ese.
   routing_strategy: simple-shuffle
   num_retries: 1
-  # El failover se activa aquí: si falla 'sales-agent', salta a 'gemini-backup'
-  fallbacks: [{"sales-agent": ["gemini-backup"]}]
+  # El failover se activa aquí: si falla 'deepseek-v4-pro', salta a 'gemini-backup'
+  fallbacks: [{"deepseek-v4-pro": ["gemini-backup"]}]
   drop_params: True

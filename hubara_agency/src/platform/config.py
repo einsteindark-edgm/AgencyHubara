@@ -12,7 +12,7 @@ TEMPORAL_TLS_CERT_PATH = os.getenv("TEMPORAL_TLS_CERT_PATH", "")
 TEMPORAL_TLS_KEY_PATH = os.getenv("TEMPORAL_TLS_KEY_PATH", "")
 
 # Modelos y Proveedores Base
-DEFAULT_LLM_MODEL = os.getenv("DEFAULT_LLM_MODEL", "deepseek/sales-agent")
+DEFAULT_LLM_MODEL = os.getenv("DEFAULT_LLM_MODEL", "deepseek/deepseek-v4-pro")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "mispolainas")
 API_BASE_LLMLITE = os.getenv("API_BASE_LLMLITE", "http://localhost:4000")
 

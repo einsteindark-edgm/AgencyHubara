@@ -23,13 +23,30 @@ from src.platform.config import API_BASE_LLMLITE ,DEFAULT_LLM_MODEL, DEEPSEEK_AP
 # `register_tool_extension(...)`. `platform/` no debe conocer tools de dominios.
 
 def build_default_llm_config() -> LLMConfig:
-    """Configuración inyectable base para el motor LLM."""
+    """Configuración inyectable base para el motor LLM.
+
+    Tuneada para DeepSeek V4 Pro (`deepseek-v4-pro` en litellm_config.yaml):
+    priorizamos PRECISIÓN sobre velocidad/costo.
+
+    - reasoning_effort="high": activa thinking mode de V4 Pro. La litellm 1.82.6
+      colapsa cualquier valor graduado a `thinking:{"type":"enabled"}`
+      (DeepSeekChatConfig.map_openai_params), así que el server corre Think High
+      (su default con thinking on). "xhigh"/Think Max requiere upgrade de litellm.
+      El round-trip de `reasoning_content` (requerido por V4 Pro en multi-turn,
+      400 si falta) lo maneja exoclaw via LLMResponseData.to_assistant_message().
+    - max_tokens=32768: el CoT de thinking cuenta contra el output; 4096 truncaba
+      el razonamiento. Es un CAP, no un target — el texto final a WhatsApp lo
+      gobierna el prompt, no este valor.
+    - temperature=0.1: V4 Pro la ignora en thinking mode, pero la respeta el
+      fallback `gemini-backup`.
+    """
     return LLMConfig(
         model=DEFAULT_LLM_MODEL,
         api_key=DEEPSEEK_API_KEY,
         api_base=API_BASE_LLMLITE,
         temperature=0.1,
-        max_tokens=4096,
+        max_tokens=32768,
+        reasoning_effort="high",
         max_iterations=10 # Cap the iterations for general tasks
     )
 
