@@ -21,13 +21,22 @@ array `data_completeness_missing[]` y el frontend pinta un marker
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import asdict
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Body, HTTPException, Path, Query
 
 from src.platform.config import WORKSPACE_VAULT_DIR
+from src.platform.customer_scoring.composition import (
+    get_customer_scoring_port,
+    get_customer_summary_adapter,
+    utc_now_ms,
+)
+from src.platform.medusa.client import MedusaAPIError
+from src.platform.medusa.composition import get_medusa_client
 from src.platform.orders.command_port import (
     CancelOrderCommand,
     ConfirmPaymentCommand,
@@ -39,6 +48,7 @@ from src.platform.orders.composition import (
     get_order_query_port,
 )
 from src.platform.orders.state import STAGE_VALUES
+from src.platform.state import FilesystemMetadataStore
 from src.plugins.orders.vault_scanner import scan_vault_orders
 
 router = APIRouter()
@@ -317,6 +327,288 @@ def _serialize_command_result(result) -> dict[str, Any]:
         "error_detail": result.error_detail,
         "audit_id": result.audit_id,
     }
+
+
+@router.get("/orders/{order_id}/customer-score")
+async def get_customer_score(
+    order_id: str = Path(..., min_length=1, max_length=200),
+) -> dict[str, Any]:
+    """Compute scoring del cliente asociado al order.
+
+    Flow:
+      1. Resolver display_id ("#2") → backend_id (premortem A1 espejado).
+      2. Get order detail → extraer phone del shipping_address.
+      3. Build session_id = `wa_<phone>` (convención sales worker).
+      4. Read vault metadata.json → episodios.
+      5. Para cada `episode.order_id`, fetch total + created_at de Medusa
+         (paralelizado con asyncio.gather; tolerante a 404 individuales).
+      6. Llamar `CustomerScoringPort.score_session(...)`.
+
+    Response shape:
+      {
+        "tag": "VIP" | "Recurrente" | "Nuevo" | "Frío" | "Estándar" | "Sin datos",
+        "score_letter": "A" | "B" | "C" | "D" | "—",
+        "score_value": int,
+        "score_reason": str,
+        "monetary_cop": int,
+        "last_purchase_at_ms": int | null,
+        "last_purchase_iso": str | null,         # ISO YYYY-MM-DD (UI helper)
+        "rules_version": int,
+        "breakdown": [{ "feature": str, "feature_value": float, "points": int }, ...],
+        "session_id": str | null,                # debug — para que el operador
+                                                  # sepa de qué wa_* salió
+      }
+
+    Si la order NO tiene phone o el vault no tiene esa sesión, devuelve un
+    score "Sin datos" en lugar de 404 (el frontend pinta MissingData).
+    """
+    qport = get_order_query_port()
+    detail = await qport.get(order_id)
+    if detail is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Order {order_id!r} not found in Medusa.",
+        )
+
+    # Extraer phone — preferimos shipping_address.phone (más fiable que
+    # summary.phone que viene de la order top-level).
+    phone: str | None = None
+    if detail.shipping_address is not None:
+        phone = detail.shipping_address.phone
+    if not phone:
+        phone = detail.summary.phone
+
+    if not phone:
+        # Sin phone no podemos resolver session_id — devolver score vacío
+        # explícito (frontend mostrará "Sin historial").
+        return _empty_score_response()
+
+    session_id = _phone_to_session_id(phone)
+
+    # Read vault metadata para extraer order_ids de episodios.
+    metadata_store = FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
+    metadata = metadata_store.read(session_id)
+    order_ids_in_episodes = _collect_order_ids_from_metadata(metadata)
+
+    # Fetch totals + created_at de Medusa en paralelo (cap: solo los ids del
+    # vault; el customer típicamente tiene <10 orders).
+    totals_cop: dict[str, int] = {}
+    created_ats_ms: dict[str, int] = {}
+    if order_ids_in_episodes:
+        client = get_medusa_client()
+        results = await asyncio.gather(
+            *(
+                _fetch_order_total_and_date(client, oid)
+                for oid in order_ids_in_episodes
+            ),
+            return_exceptions=True,
+        )
+        for oid, res in zip(order_ids_in_episodes, results):
+            if isinstance(res, tuple):
+                total_cop, created_at_ms = res
+                if total_cop is not None:
+                    totals_cop[oid] = total_cop
+                if created_at_ms is not None:
+                    created_ats_ms[oid] = created_at_ms
+
+    # Score.
+    score_port = get_customer_scoring_port()
+    score = score_port.score_session(
+        session_id,
+        now_ms=utc_now_ms(),
+        medusa_order_totals_cop=totals_cop,
+        medusa_order_created_at_ms=created_ats_ms,
+    )
+
+    # Serialize + enrich con ISO date para el UI.
+    payload = asdict(score)
+    payload["session_id"] = session_id
+    payload["last_purchase_iso"] = (
+        _ms_to_iso_date(score.last_purchase_at_ms)
+        if score.last_purchase_at_ms
+        else None
+    )
+    return payload
+
+
+def _phone_to_session_id(phone: str) -> str:
+    """Convención del sales worker: session_id = `wa_<phone_sin_plus>`."""
+    return f"wa_{phone.lstrip('+').strip()}"
+
+
+def _collect_order_ids_from_metadata(
+    metadata: dict[str, Any],
+) -> list[str]:
+    """Extrae order_ids únicos de `episodes[].order_id` + legacy
+    `registered_order.order_id`. Solo IDs Medusa válidos (filter `order_*`
+    o `draft_*` prefix — descarta stubs HUB-* / AUDIT-* que NO están en
+    Medusa)."""
+    ids: set[str] = set()
+    for ep in metadata.get("episodes") or []:
+        oid = ep.get("order_id") if isinstance(ep, dict) else None
+        if isinstance(oid, str) and (
+            oid.startswith("order_") or oid.startswith("draft_")
+        ):
+            ids.add(oid)
+    reg = metadata.get("registered_order")
+    if isinstance(reg, dict) and reg.get("success") is True:
+        oid = reg.get("order_id")
+        if isinstance(oid, str) and (
+            oid.startswith("order_") or oid.startswith("draft_")
+        ):
+            ids.add(oid)
+    return sorted(ids)
+
+
+async def _fetch_order_total_and_date(
+    client, order_id: str
+) -> tuple[int | None, int | None]:
+    """Fetch `total` (COP major) + `created_at` (ms epoch) para un order_id.
+
+    Devuelve `(None, None)` si Medusa 404 / 5xx (el order_id existe en el
+    vault pero ya no en Medusa — e.g. fue borrado manualmente).
+
+    Bug fix 2026-05-26 paralelo: usamos `client.get_order(order_id, fields=...)`
+    que retry-ea con tenacity por debajo. NO levanta excepción acá —
+    `asyncio.gather(..., return_exceptions=True)` captura los errores y
+    el caller los filtra.
+    """
+    try:
+        data = await client.get_order(
+            order_id, fields="id,total,created_at,currency_code"
+        )
+    except MedusaAPIError as exc:
+        log.info(
+            "customer_score: order %s no fetcheable (%s) — skip",
+            order_id, exc.status_code,
+        )
+        return None, None
+
+    total_raw = data.get("total")
+    total_cop: int | None = None
+    if isinstance(total_raw, (int, float)) and total_raw > 0:
+        # Medusa stores amounts en minor units para algunos providers, en
+        # major para CO/MX. El query adapter ya tiene `_to_int_cop` que
+        # heurística decide; acá replicamos la misma lógica simple:
+        # int() truncado preserva el major-unit behavior por default.
+        total_cop = int(total_raw)
+
+    created_at_ms: int | None = None
+    created_at_str = data.get("created_at")
+    if isinstance(created_at_str, str):
+        try:
+            dt = datetime.fromisoformat(
+                created_at_str.replace("Z", "+00:00")
+            )
+            created_at_ms = int(dt.timestamp() * 1000)
+        except (ValueError, OSError):
+            created_at_ms = None
+    return total_cop, created_at_ms
+
+
+def _ms_to_iso_date(ms: int) -> str:
+    """ms epoch → YYYY-MM-DD UTC. El frontend formatea relativa ("hace 22 días")."""
+    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+
+
+def _empty_score_response() -> dict[str, Any]:
+    """Score 'Sin datos' como dict — para early-returns del endpoint."""
+    return {
+        "tag": "Sin datos",
+        "score_letter": "—",
+        "score_value": 0,
+        "score_reason": "No hay historial suficiente para calificar al cliente",
+        "monetary_cop": 0,
+        "last_purchase_at_ms": None,
+        "last_purchase_iso": None,
+        "frequency_total": 0,
+        "episodes_total": 0,
+        "rules_version": 0,
+        "breakdown": [],
+        "session_id": None,
+    }
+
+
+@router.post("/orders/{order_id}/customer-summary")
+async def post_customer_summary(
+    order_id: str = Path(..., min_length=1, max_length=200),
+) -> dict[str, Any]:
+    """LLM on-demand summary del cliente. Costoso — solo se invoca cuando
+    el operador clickea el botón "Resumir con IA" en el panel.
+
+    NO cachea — siempre fresh para que cambios al metadata se reflejen.
+    Si la llamada al LLM falla, devuelve fallback determinístico con
+    `error_detail` poblado (frontend muestra warning).
+
+    Response shape:
+      {
+        "summary": str,            # 2-3 oraciones
+        "model": str,              # modelo que respondió
+        "latency_ms": int,
+        "rules_version": int,      # del score usado como input
+        "error_detail": str | null
+      }
+    """
+    # Mismo flow que /customer-score para obtener el session_id + score.
+    qport = get_order_query_port()
+    detail = await qport.get(order_id)
+    if detail is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Order {order_id!r} not found in Medusa.",
+        )
+
+    phone = None
+    if detail.shipping_address is not None:
+        phone = detail.shipping_address.phone
+    if not phone:
+        phone = detail.summary.phone
+    if not phone:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "La order no tiene phone — no podemos resolver el session_id "
+                "del cliente."
+            ),
+        )
+
+    session_id = _phone_to_session_id(phone)
+    metadata_store = FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
+    metadata = metadata_store.read(session_id)
+
+    # Compute score primero (cheap, deterministic) — el LLM lo usa como input.
+    order_ids_in_episodes = _collect_order_ids_from_metadata(metadata)
+    totals_cop: dict[str, int] = {}
+    created_ats_ms: dict[str, int] = {}
+    if order_ids_in_episodes:
+        client = get_medusa_client()
+        results = await asyncio.gather(
+            *(
+                _fetch_order_total_and_date(client, oid)
+                for oid in order_ids_in_episodes
+            ),
+            return_exceptions=True,
+        )
+        for oid, res in zip(order_ids_in_episodes, results):
+            if isinstance(res, tuple):
+                total_cop, created_at_ms = res
+                if total_cop is not None:
+                    totals_cop[oid] = total_cop
+                if created_at_ms is not None:
+                    created_ats_ms[oid] = created_at_ms
+
+    score_port = get_customer_scoring_port()
+    score = score_port.score_session(
+        session_id,
+        now_ms=utc_now_ms(),
+        medusa_order_totals_cop=totals_cop,
+        medusa_order_created_at_ms=created_ats_ms,
+    )
+
+    # Llamar al LLM (degrada graciosamente — el adapter NO levanta).
+    summary_adapter = get_customer_summary_adapter()
+    result = await summary_adapter.summarize(score=score, metadata=metadata)
+    return asdict(result)
 
 
 @router.get("/orders-health")

@@ -22,9 +22,12 @@ traduce a `OrderCommandResult(success=False, error_detail=...)`.
 """
 from __future__ import annotations
 
+import json
 import logging
+import time
 from typing import Any
 
+from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.medusa.client import HttpMedusaClient, MedusaAPIError
 from src.platform.orders.command_port import (
     CancelOrderCommand,
@@ -43,6 +46,158 @@ from src.platform.orders.state import (
 )
 
 log = logging.getLogger(__name__)
+
+
+# ----------------------------------------------------------------------
+# Cross-system sync: cuando el humano confirma pago, también actualizar
+# el chat metadata para que el inbox refleje el cierre.
+# ----------------------------------------------------------------------
+
+
+def apply_payment_confirmation_to_chat_metadata(
+    chat_metadata: dict[str, Any],
+    *,
+    now_ms: int,
+    by: str | None = None,
+) -> bool:
+    """Aplica el cierre con tag `COMPRA_EXITOSA` al `metadata.json` del chat
+    después de que un humano confirmó el pago desde el dashboard de orders.
+
+    Muta `chat_metadata` in place. Devuelve True si hubo cambios, False si
+    no (idempotente).
+
+    Cambios aplicados:
+      * `tag` → "COMPRA_EXITOSA" (override del "HUMANO" actual).
+      * `motivo` → resumen del cierre por verificación humana.
+      * `status_history` append (no duplica si ya está cerrado).
+      * `episodes[-1]` con `closing_tag="CONFIRMADO_PAGO_PENDIENTE"` →
+        actualizado a "COMPRA_EXITOSA" + `payment_confirmed_at_ms` +
+        `payment_confirmed_by` para auditoría.
+
+    NO toca `active_route` — se queda en "humano" porque el humano cerró
+    el caso. Si el cliente vuelve a escribir, el routing sigue
+    enviándolo a la cola humana (el bot no retoma sesiones cerradas con
+    venta confirmada).
+
+    Idempotente: si `tag` ya es "COMPRA_EXITOSA", la función devuelve
+    False sin tocar nada. Esto cierra correctamente el escenario donde
+    `confirm_payment` se llama varias veces (retry / dashboard hace
+    refetch + click).
+    """
+    if chat_metadata.get("tag") == "COMPRA_EXITOSA":
+        return False  # idempotente — ya cerrado por verificación previa
+
+    motivo = (
+        f"Pago verificado por {by or 'humano'} desde dashboard de orders"
+    )
+    chat_metadata["tag"] = "COMPRA_EXITOSA"
+    chat_metadata["motivo"] = motivo
+
+    history = chat_metadata.setdefault("status_history", [])
+    if isinstance(history, list):
+        history.append(
+            {
+                "tag": "COMPRA_EXITOSA",
+                "motivo": motivo,
+                "active_route": chat_metadata.get("active_route", "humano"),
+                "timestamp": now_ms / 1000.0,
+            }
+        )
+
+    # Actualizar el episodio cerrado con CONFIRMADO_PAGO_PENDIENTE al nuevo
+    # tag final. Buscamos desde el más reciente, paramos en el primero que
+    # match (solo el último episodio queda esperando verificación).
+    episodes = chat_metadata.get("episodes") or []
+    if isinstance(episodes, list):
+        for ep in reversed(episodes):
+            if (
+                isinstance(ep, dict)
+                and ep.get("closing_tag") == "CONFIRMADO_PAGO_PENDIENTE"
+            ):
+                ep["closing_tag"] = "COMPRA_EXITOSA"
+                ep["payment_confirmed_at_ms"] = now_ms
+                ep["payment_confirmed_by"] = by or "humano"
+                break
+
+    return True
+
+
+def apply_order_cancellation_to_chat_metadata(
+    chat_metadata: dict[str, Any],
+    *,
+    now_ms: int,
+    reason: str | None = None,
+    by: str | None = None,
+) -> bool:
+    """Aplica el cierre con tag `RECHAZO` al `metadata.json` del chat después
+    de que un humano canceló la orden desde el dashboard de orders.
+
+    Espejo de `apply_payment_confirmation_to_chat_metadata` pero para el
+    caso "el humano decidió no procesar este pedido" (pago no llegó /
+    cliente se arrepintió / problema con el inventario). Premortem FIX #3:
+    sin esto, el chat queda con tag=HUMANO incluso después de cancelar la
+    orden, y el operador no ve consistencia entre el dashboard de orders y
+    el inbox de chats.
+
+    Muta `chat_metadata` in place. Devuelve True si hubo cambios.
+
+    Cambios aplicados:
+      * `tag` → "RECHAZO" (override de "HUMANO" si estaba escalado).
+      * `motivo` → resumen del cierre por cancelación humana.
+      * `status_history` append.
+      * `episodes[-1]` con `closing_tag="CONFIRMADO_PAGO_PENDIENTE"` →
+        actualizado a "RECHAZO" + `cancelled_at_ms` + `cancelled_by` +
+        opcionalmente `cancellation_reason`.
+
+    NO toca `active_route` (queda en "humano" — la cancelación cierra el
+    caso del lado del humano).
+
+    Idempotente: si `tag` ya es "RECHAZO" o ya es "COMPRA_EXITOSA" (lo que
+    indicaría que el pago fue confirmado antes de intentar cancelar →
+    estado terminal previo) la función devuelve False sin tocar nada.
+    """
+    current_tag = chat_metadata.get("tag")
+    if current_tag in ("RECHAZO", "COMPRA_EXITOSA"):
+        # Idempotente: RECHAZO ya aplicado. Y si llegamos a este código con
+        # COMPRA_EXITOSA significa que el humano canceló DESPUÉS de haber
+        # confirmado pago (inusual). Preservamos COMPRA_EXITOSA porque es
+        # estado terminal positivo; la cancelación se refleja del lado
+        # Medusa pero no revertimos el chat.
+        return False
+
+    motivo_text = (
+        f"Orden cancelada por {by or 'humano'}"
+        + (f": {reason}" if reason else "")
+    )
+    chat_metadata["tag"] = "RECHAZO"
+    chat_metadata["motivo"] = motivo_text
+
+    history = chat_metadata.setdefault("status_history", [])
+    if isinstance(history, list):
+        history.append(
+            {
+                "tag": "RECHAZO",
+                "motivo": motivo_text,
+                "active_route": chat_metadata.get("active_route", "humano"),
+                "timestamp": now_ms / 1000.0,
+            }
+        )
+
+    episodes = chat_metadata.get("episodes") or []
+    if isinstance(episodes, list):
+        for ep in reversed(episodes):
+            if (
+                isinstance(ep, dict)
+                and ep.get("closing_tag") == "CONFIRMADO_PAGO_PENDIENTE"
+            ):
+                ep["closing_tag"] = "RECHAZO"
+                ep["cancelled_at_ms"] = now_ms
+                ep["cancelled_by"] = by or "humano"
+                if reason:
+                    ep["cancellation_reason"] = reason
+                break
+
+    return True
 
 
 class MedusaOrderCommand:
@@ -73,7 +228,9 @@ class MedusaOrderCommand:
         cambiar el estado del pedido a una orden real".
         """
         try:
-            is_draft, current_data = await self._fetch_with_kind(command.order_id)
+            backend_id, is_draft, current_data = await self._fetch_with_kind(
+                command.order_id
+            )
         except MedusaAPIError as exc:
             return _exc_to_result(command.order_id, exc, "schedule_delivery")
 
@@ -110,18 +267,21 @@ class MedusaOrderCommand:
 
         # Si es draft, convertirlo a Order REAL antes del patch.
         # La conversion preserva id + metadata existente.
+        # Importante: usar `backend_id` (resuelto), NO `command.order_id` —
+        # éste puede ser un display_id ("#2") y romperia httpx con el fragment.
         if is_draft:
             try:
-                await self._client.convert_draft_to_order(command.order_id)
+                await self._client.convert_draft_to_order(backend_id)
                 log.info(
                     "schedule_delivery: draft converted to order",
-                    extra={"order_id": command.order_id},
+                    extra={"order_id": command.order_id, "backend_id": backend_id},
                 )
             except MedusaAPIError as exc:
                 log.error(
                     "schedule_delivery: convert-to-order failed",
                     extra={
                         "order_id": command.order_id,
+                        "backend_id": backend_id,
                         "status_code": exc.status_code,
                         "body": str(exc)[:200],
                     },
@@ -131,7 +291,7 @@ class MedusaOrderCommand:
         # Patch metadata sobre el endpoint de orders (ya no es draft).
         try:
             updated = await self._client.patch_order_metadata(
-                command.order_id, patch
+                backend_id, patch
             )
         except MedusaAPIError as exc:
             return _exc_to_result(command.order_id, exc, "patch_order_metadata")
@@ -142,6 +302,7 @@ class MedusaOrderCommand:
             "schedule_delivery: OK",
             extra={
                 "order_id": command.order_id,
+                "backend_id": backend_id,
                 "new_stage": new_stage,
                 "was_draft": is_draft,
             },
@@ -194,7 +355,9 @@ class MedusaOrderCommand:
         order_id = command.order_id
 
         try:
-            is_draft, current_data = await self._fetch_with_kind(order_id)
+            backend_id, is_draft, current_data = await self._fetch_with_kind(
+                order_id
+            )
         except MedusaAPIError as exc:
             return _exc_to_result(order_id, exc, "confirm_payment.fetch")
 
@@ -246,17 +409,20 @@ class MedusaOrderCommand:
                     ),
                 )
             try:
+                # Usar backend_id en todas las llamadas Medusa — order_id
+                # puede ser display_id ("#2") y romperia httpx (fragment).
                 pc = await self._client.create_payment_collection(
-                    order_id, amount=amount
+                    backend_id, amount=amount
                 )
                 pc_id = str(pc["id"])
                 await self._client.mark_payment_collection_paid(
-                    pc_id, order_id=order_id
+                    pc_id, order_id=backend_id
                 )
                 log.info(
                     "confirm_payment: Medusa payment registered",
                     extra={
                         "order_id": order_id,
+                        "backend_id": backend_id,
                         "payment_collection_id": pc_id,
                         "amount": amount,
                     },
@@ -268,12 +434,13 @@ class MedusaOrderCommand:
 
         # Patch metadata con el flag. Solo después de que Medusa ya está OK.
         try:
-            updated = await self._client.patch_order_metadata(order_id, patch)
+            updated = await self._client.patch_order_metadata(backend_id, patch)
         except MedusaAPIError as exc:
             log.error(
                 "confirm_payment: Medusa captured but metadata patch failed",
                 extra={
                     "order_id": order_id,
+                    "backend_id": backend_id,
                     "status_code": exc.status_code,
                     "body": str(exc)[:200],
                 },
@@ -283,11 +450,134 @@ class MedusaOrderCommand:
             )
 
         new_metadata: dict[str, Any] = updated.get("metadata") or {}
+
+        # HU verificación humana de pago: sincronizar el chat metadata para
+        # que el inbox refleje el cierre con tag COMPRA_EXITOSA. Best-effort:
+        # si el chat metadata no existe (orden manual sin chat) o no se
+        # puede patchear, NO fallar el endpoint — Medusa side ya está OK.
+        chat_session_key = current_metadata.get("session_key")
+        if isinstance(chat_session_key, str) and chat_session_key:
+            self._sync_chat_payment_confirmation(
+                session_key=chat_session_key,
+                order_id=order_id,
+                by=command.by,
+            )
+
         return OrderCommandResult(
             success=True,
             order_id=order_id,
             current_stage=read_stage(new_metadata),
         )
+
+    def _sync_chat_payment_confirmation(
+        self,
+        *,
+        session_key: str,
+        order_id: str,
+        by: str | None,
+    ) -> None:
+        """Side effect: patchear el `metadata.json` del chat para reflejar
+        el cierre con tag COMPRA_EXITOSA después de que el humano confirmó
+        el pago.
+
+        Defensivo: si el file no existe / está corrupto / falla la
+        escritura, logueamos warning pero NO levantamos — el Medusa side
+        ya está OK y eso es el side effect crítico. El humano puede
+        sincronizar manualmente desde el dashboard si quedó desfasado.
+        """
+        chat_meta_file = WORKSPACE_VAULT_DIR / session_key / "metadata.json"
+        if not chat_meta_file.exists():
+            log.info(
+                "confirm_payment: chat metadata not found, skipping sync",
+                extra={"order_id": order_id, "session_key": session_key},
+            )
+            return
+        try:
+            chat_data = json.loads(chat_meta_file.read_text(encoding="utf-8"))
+            if not isinstance(chat_data, dict):
+                return
+            changed = apply_payment_confirmation_to_chat_metadata(
+                chat_data,
+                now_ms=int(time.time() * 1000),
+                by=by,
+            )
+            if changed:
+                chat_meta_file.write_text(
+                    json.dumps(chat_data, indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                log.info(
+                    "confirm_payment: chat metadata synced to COMPRA_EXITOSA",
+                    extra={
+                        "order_id": order_id,
+                        "session_key": session_key,
+                    },
+                )
+        except (OSError, json.JSONDecodeError) as exc:
+            log.warning(
+                "confirm_payment: failed to sync chat metadata "
+                "(Medusa side already OK)",
+                extra={
+                    "order_id": order_id,
+                    "session_key": session_key,
+                    "error": str(exc)[:200],
+                },
+            )
+
+    def _sync_chat_cancellation(
+        self,
+        *,
+        session_key: str,
+        order_id: str,
+        reason: str | None,
+        by: str | None,
+    ) -> None:
+        """Side effect: patchear el `metadata.json` del chat para reflejar
+        el cierre con tag RECHAZO después de que el humano canceló la
+        orden. Espejo defensivo de `_sync_chat_payment_confirmation`.
+
+        Defensivo: si el file no existe / está corrupto / falla la
+        escritura, logueamos warning pero NO levantamos.
+        """
+        chat_meta_file = WORKSPACE_VAULT_DIR / session_key / "metadata.json"
+        if not chat_meta_file.exists():
+            log.info(
+                "cancel_order: chat metadata not found, skipping sync",
+                extra={"order_id": order_id, "session_key": session_key},
+            )
+            return
+        try:
+            chat_data = json.loads(chat_meta_file.read_text(encoding="utf-8"))
+            if not isinstance(chat_data, dict):
+                return
+            changed = apply_order_cancellation_to_chat_metadata(
+                chat_data,
+                now_ms=int(time.time() * 1000),
+                reason=reason,
+                by=by,
+            )
+            if changed:
+                chat_meta_file.write_text(
+                    json.dumps(chat_data, indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                log.info(
+                    "cancel_order: chat metadata synced to RECHAZO",
+                    extra={
+                        "order_id": order_id,
+                        "session_key": session_key,
+                    },
+                )
+        except (OSError, json.JSONDecodeError) as exc:
+            log.warning(
+                "cancel_order: failed to sync chat metadata "
+                "(Medusa cancel already done)",
+                extra={
+                    "order_id": order_id,
+                    "session_key": session_key,
+                    "error": str(exc)[:200],
+                },
+            )
 
     async def cancel_order(
         self, command: CancelOrderCommand
@@ -330,7 +620,9 @@ class MedusaOrderCommand:
         # Medusa para mantener consistencia con su payment_collections /
         # inventory. Si es draft, soft-cancel suficiente.
         try:
-            is_draft, _ = await self._fetch_with_kind(command.order_id)
+            backend_id, is_draft, current_data = await self._fetch_with_kind(
+                command.order_id
+            )
         except MedusaAPIError as exc:
             log.warning(
                 "cancel_order: post-patch fetch failed; soft-cancel only",
@@ -341,15 +633,34 @@ class MedusaOrderCommand:
             )
             return result
 
+        # Premortem FIX #3: sincronizar chat metadata si la orden viene de
+        # WhatsApp. Esto cierra el loop UX igual que confirm_payment:
+        # cuando el humano cancela en el dashboard de orders, el inbox de
+        # chats refleja RECHAZO sin que el operador haga nada extra.
+        # Best-effort, no falla la cancelación si el chat sync falla.
+        current_metadata: dict[str, Any] = current_data.get("metadata") or {}
+        chat_session_key = current_metadata.get("session_key")
+        if isinstance(chat_session_key, str) and chat_session_key:
+            self._sync_chat_cancellation(
+                session_key=chat_session_key,
+                order_id=command.order_id,
+                reason=command.reason,
+                by=command.by,
+            )
+
         if is_draft:
             return result
 
-        # Order real — hard-cancel via Medusa.
+        # Order real — hard-cancel via Medusa. Usar backend_id (display_id
+        # like "#2" rompe httpx con fragment marker).
         try:
-            await self._client.cancel_order(command.order_id)
+            await self._client.cancel_order(backend_id)
             log.info(
                 "cancel_order: Medusa hard-cancel OK",
-                extra={"order_id": command.order_id},
+                extra={
+                    "order_id": command.order_id,
+                    "backend_id": backend_id,
+                },
             )
         except MedusaAPIError as exc:
             # Idempotente: si la order ya estaba cancelada en Medusa,
@@ -359,6 +670,7 @@ class MedusaOrderCommand:
                     "cancel_order: Medusa already canceled (idempotent)",
                     extra={
                         "order_id": command.order_id,
+                        "backend_id": backend_id,
                         "status_code": exc.status_code,
                     },
                 )
@@ -369,6 +681,7 @@ class MedusaOrderCommand:
                 "cancel_order: Medusa hard-cancel failed; metadata-only state",
                 extra={
                     "order_id": command.order_id,
+                    "backend_id": backend_id,
                     "status_code": exc.status_code,
                     "body": str(exc)[:200],
                 },
@@ -399,7 +712,9 @@ class MedusaOrderCommand:
         a `OrderCommandResult(success=False, error_detail=...)`.
         """
         try:
-            is_draft, current_data = await self._fetch_with_kind(order_id)
+            backend_id, is_draft, current_data = await self._fetch_with_kind(
+                order_id
+            )
         except MedusaAPIError as exc:
             log.warning(
                 "MedusaOrderCommand: fetch failed",
@@ -455,19 +770,22 @@ class MedusaOrderCommand:
             )
 
         try:
+            # Usar backend_id (resuelto) para las llamadas Medusa — order_id
+            # original puede ser display_id ("#2") que rompe httpx (fragment).
             if is_draft:
                 updated = await self._client.patch_draft_order_metadata(
-                    order_id, patch
+                    backend_id, patch
                 )
             else:
                 updated = await self._client.patch_order_metadata(
-                    order_id, patch
+                    backend_id, patch
                 )
         except MedusaAPIError as exc:
             log.error(
                 "MedusaOrderCommand: patch failed",
                 extra={
                     "order_id": order_id,
+                    "backend_id": backend_id,
                     "operation": operation,
                     "status_code": exc.status_code,
                     "body": str(exc)[:200],
@@ -500,19 +818,51 @@ class MedusaOrderCommand:
 
     async def _fetch_with_kind(
         self, order_id: str
-    ) -> tuple[bool, dict[str, Any]]:
-        """Detect draft vs order y fetch en una sola pasada.
+    ) -> tuple[str, bool, dict[str, Any]]:
+        """Resolve display_id si aplica, detect draft vs order, y fetch en una
+        sola pasada.
 
-        Returns: (is_draft, raw_data).
+        Returns: (resolved_backend_id, is_draft, raw_data).
 
-        Bug fix 2026-05-26: Medusa v2 NO usa prefijo `draft_*` — todos los
-        IDs son `order_*`. El distinguishing factor es el campo `status` del
-        payload, no el prefijo. Además `/admin/orders/{id}` devuelve drafts
-        también (con status="draft"). Estrategia revisada:
+        Bug fix 2026-05-26 (command path): el frontend manda `display_id`
+        ("#2", "#1247") como `order.id` porque el entity layer hace
+        `id: s.display_id` (premortem A1, contrato establecido para el query
+        endpoint). El command path NO lo manejaba — `httpx` trata `#` como
+        URL fragment, así que `/admin/orders/#2` se convertía silenciosamente
+        en `/admin/orders/` (list endpoint) y devolvía `{"orders":[...]}`,
+        que luego rompía `data["order"]` con KeyError → 500. Ahora el command
+        adapter espeja la lógica del query port: si entra un display_id
+        (numérico, con o sin '#'), lo resolvemos a backend_id antes de
+        cualquier llamada a Medusa.
+
+        Importante: el caller DEBE usar el `resolved_backend_id` retornado
+        para las llamadas Medusa subsecuentes (`convert_draft_to_order`,
+        `patch_order_metadata`, `cancel_order`, `create_payment_collection`).
+        Pasarle el display_id original a esos endpoints reintroduciría el
+        bug del fragment marker.
+
+        Bug fix 2026-05-26 (kind detection): Medusa v2 NO usa prefijo `draft_*` —
+        todos los IDs son `order_*`. El distinguishing factor es el campo
+        `status` del payload, no el prefijo. Además `/admin/orders/{id}`
+        devuelve drafts también (con status="draft"). Estrategia revisada:
           1. Probar `/admin/orders/{id}` (devuelve ambos tipos).
           2. Si 404 → fallback a `/admin/draft-orders/{id}`.
           3. is_draft = (payload.status == "draft").
         """
+        # ---- Resolver display_id → backend_id (premortem A1 extendido) ----
+        normalized = order_id.lstrip("#")
+        if normalized.isdigit():
+            resolved = await self._resolve_display_id(normalized)
+            if resolved is None:
+                # Forzar el path de 404 uniforme — los callers ya saben
+                # traducir MedusaAPIError(404) a not_found en el result.
+                raise MedusaAPIError(
+                    404,
+                    f"/admin/orders/{order_id}",
+                    f"display_id {order_id!r} no resuelve a una order/draft",
+                )
+            order_id = resolved
+
         fields = "id,metadata,total,payment_status,status"
         try:
             data = await self._client.get_order(order_id, fields=fields)
@@ -520,7 +870,7 @@ class MedusaOrderCommand:
             # Medusa v2 live retorna status="draft" para drafts también vía
             # este endpoint (verified 2026-05-26).
             is_draft = data.get("status") == "draft"
-            return is_draft, data
+            return order_id, is_draft, data
         except MedusaAPIError as exc:
             if exc.status_code != 404:
                 raise
@@ -528,7 +878,45 @@ class MedusaOrderCommand:
         # exponen drafts via /admin/draft-orders/{id}. Si llegamos acá, sabemos
         # con certeza que es draft (porque /admin/orders/{id} respondió 404).
         data = await self._client.get_draft_order(order_id, fields=fields)
-        return True, data
+        return order_id, True, data
+
+    async def _resolve_display_id(self, display_id_str: str) -> str | None:
+        """Resolve display_id ("1247") → backend_id ("order_01HXX...").
+
+        Copia local del helper de `MedusaOrderQuery._resolve_display_id` — los
+        dos adapters necesitan ser tolerantes a display_id en input. Mantener
+        copias paralelas (en vez de extraer a un helper compartido) evita
+        coupling entre adapters; si esto crece a 3+ adapters, vale extraer.
+
+        Strategy: page-scan de `/admin/orders` (limit=50) primero, luego
+        `/admin/draft-orders` (limit=50). Suficiente para uso interactivo del
+        dashboard. Si una tienda crece a >50 orders activas con cancelaciones
+        recientes, este lookup puede no encontrarlas — pero en ese caso el
+        operador ya estaría usando filtros en el frontend, no clicking en
+        drafts viejos. Vale la pena el upgrade a filter-by-display_id cuando
+        Medusa lo soporte universalmente.
+        """
+        try:
+            page = await self._client.list_orders(limit=50, offset=0)
+            for o in page.get("orders", []):
+                if str(o.get("display_id")) == display_id_str:
+                    return str(o["id"])
+        except MedusaAPIError as exc:
+            log.warning(
+                "_resolve_display_id (command): orders lookup failed (%s) — trying drafts",
+                exc,
+            )
+        try:
+            page = await self._client.list_draft_orders(limit=50, offset=0)
+            for o in page.get("draft_orders", []):
+                if str(o.get("display_id")) == display_id_str:
+                    return str(o["id"])
+        except MedusaAPIError as exc:
+            log.warning(
+                "_resolve_display_id (command): draft_orders lookup failed (%s)",
+                exc,
+            )
+        return None
 
 
 # ----------------------------------------------------------------------
