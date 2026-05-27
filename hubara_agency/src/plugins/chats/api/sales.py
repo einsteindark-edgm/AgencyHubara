@@ -9,10 +9,13 @@ preservar el import path que usa `src/main.py`. Mover a
 """
 from __future__ import annotations
 
+import json
+
 import structlog
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
-from src.platform.config import WHATSAPP_VERIFY_TOKEN
+from src.platform.config import WHATSAPP_APP_SECRET, WHATSAPP_VERIFY_TOKEN
+from src.platform.whatsapp.webhook_security import verify_meta_signature
 from src.plugins.chats.agent.sales.composition import (
     build_ingest_delivery_status_use_case,
     build_ingest_use_case,
@@ -55,10 +58,42 @@ async def handle_whatsapp_webhook(request: Request, background_tasks: Background
 
     Ambos handlers corren como background tasks — devolvemos 200 al toque
     para evitar timeout de Meta.
-    """
-    body = await request.json()
 
-    # Statuses primero — no requieren ser mutuamente excluyentes con
+    HU-WA24H-001 pre-mortem F9.2: verifica X-Hub-Signature-256 vía HMAC
+    SHA256 antes de procesar. Bloquea inyección de fake statuses/messages
+    que corromperían cost metrics o triggerían workflows fantasma.
+
+    Si `WHATSAPP_APP_SECRET` está vacío (modo dev/local sin app real
+    detrás), el handler logea warning pero NO rechaza — facilita desarrollo
+    local con webhooks simulados. Pre-launch el operador DEBE setear el env
+    var, sino el handler queda inseguro.
+    """
+    # 1. Leer RAW body antes de json parsing (HMAC se calcula sobre bytes
+    #    exactos enviados por Meta — cualquier normalización rompe el hash).
+    raw_body = await request.body()
+    signature_header = request.headers.get("X-Hub-Signature-256")
+
+    if WHATSAPP_APP_SECRET:
+        if not verify_meta_signature(raw_body, signature_header, WHATSAPP_APP_SECRET):
+            logger.warning(
+                "webhook_signature_rejected",
+                signature_header=signature_header[:30] if signature_header else None,
+            )
+            raise HTTPException(status_code=403, detail="invalid signature")
+    else:
+        logger.warning(
+            "webhook_signature_verification_disabled",
+            reason="WHATSAPP_APP_SECRET not configured — dev mode only",
+        )
+
+    # 2. Parsear body (validamos shape después de verificar autenticidad).
+    try:
+        body = json.loads(raw_body)
+    except json.JSONDecodeError as exc:
+        logger.warning("webhook_body_not_json", error=str(exc))
+        raise HTTPException(status_code=400, detail=f"malformed body: {exc}")
+
+    # 3. Statuses primero — no requieren ser mutuamente excluyentes con
     # messages (Meta podría enviarlos juntos).
     for status_update in parse_whatsapp_statuses(body):
         delivery_use_case = build_ingest_delivery_status_use_case()

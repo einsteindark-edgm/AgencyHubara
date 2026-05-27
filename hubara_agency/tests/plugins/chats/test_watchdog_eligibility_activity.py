@@ -291,3 +291,137 @@ async def test_pre_expiry_constant_is_30_minutes() -> None:
     """Sanity check on the constant used by the activity. If this changes,
     the eligibility window math above must move too."""
     assert WATCHDOG_PRE_EXPIRY_MS == 30 * 60 * 1000
+
+
+# ---------------------------------------------------------------------------
+# Quiet hours (HU-WA24H-001 pre-mortem F4.1)
+# ---------------------------------------------------------------------------
+
+
+class TestQuietHours:
+    """Verifica que el watchdog NO dispara fuera del horario permitido del
+    cliente (default 08:00-22:00 hora local). Critical para evitar quality
+    rating drop por sends nocturnos."""
+
+    def test_resolve_local_timezone_colombia(self):
+        from src.plugins.chats.agent.remarketing.activities.watchdog_activities import (
+            _resolve_local_timezone,
+        )
+
+        tz = _resolve_local_timezone("wa_+573001112233")
+        assert str(tz) == "America/Bogota"
+
+    def test_resolve_local_timezone_argentina(self):
+        from src.plugins.chats.agent.remarketing.activities.watchdog_activities import (
+            _resolve_local_timezone,
+        )
+
+        tz = _resolve_local_timezone("wa_+541112345678")
+        assert str(tz) == "America/Argentina/Buenos_Aires"
+
+    def test_resolve_local_timezone_mexico(self):
+        from src.plugins.chats.agent.remarketing.activities.watchdog_activities import (
+            _resolve_local_timezone,
+        )
+
+        tz = _resolve_local_timezone("wa_+525512345678")
+        assert str(tz) == "America/Mexico_City"
+
+    def test_resolve_local_timezone_unknown_country_falls_to_utc(self):
+        from src.plugins.chats.agent.remarketing.activities.watchdog_activities import (
+            _resolve_local_timezone,
+        )
+
+        # +99 no existe; longest-match no encuentra, default UTC
+        tz = _resolve_local_timezone("wa_+999999999999")
+        assert str(tz) == "UTC"
+
+    def test_is_quiet_hours_returns_true_at_3am_colombia(self):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from src.plugins.chats.agent.remarketing.activities.watchdog_activities import (
+            _is_quiet_hours_for_session,
+        )
+
+        # 08:00 UTC = 03:00 Colombia (UTC-5). Quiet hours.
+        utc_3am_co = datetime(2026, 6, 1, 8, 0, 0, tzinfo=ZoneInfo("UTC"))
+        assert _is_quiet_hours_for_session("wa_+573001112233", utc_3am_co) is True
+
+    def test_is_quiet_hours_returns_false_at_10am_colombia(self):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from src.plugins.chats.agent.remarketing.activities.watchdog_activities import (
+            _is_quiet_hours_for_session,
+        )
+
+        # 15:00 UTC = 10:00 Colombia (UTC-5). Allowed.
+        utc_10am_co = datetime(2026, 6, 1, 15, 0, 0, tzinfo=ZoneInfo("UTC"))
+        assert _is_quiet_hours_for_session("wa_+573001112233", utc_10am_co) is False
+
+    def test_is_quiet_hours_returns_true_at_23_colombia(self):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from src.plugins.chats.agent.remarketing.activities.watchdog_activities import (
+            _is_quiet_hours_for_session,
+        )
+
+        # 04:00 UTC = 23:00 Colombia. Fuera del rango 08-22.
+        utc_11pm_co = datetime(2026, 6, 2, 4, 0, 0, tzinfo=ZoneInfo("UTC"))
+        assert _is_quiet_hours_for_session("wa_+573001112233", utc_11pm_co) is True
+
+    def test_quiet_hours_respect_env_var_override(self, monkeypatch):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from src.plugins.chats.agent.remarketing.activities.watchdog_activities import (
+            _is_quiet_hours_for_session,
+        )
+
+        # Operador setea 09-21 (más estricto). 08:30 ya es quiet.
+        monkeypatch.setenv("WATCHDOG_QUIET_HOURS_START", "9")
+        monkeypatch.setenv("WATCHDOG_QUIET_HOURS_END", "21")
+        # 13:30 UTC = 08:30 Colombia. Con start=9, es quiet.
+        utc_830am_co = datetime(2026, 6, 1, 13, 30, 0, tzinfo=ZoneInfo("UTC"))
+        assert _is_quiet_hours_for_session("wa_+573001112233", utc_830am_co) is True
+
+
+@pytest.mark.asyncio
+async def test_eligibility_returns_outside_quiet_hours_at_3am(
+    monkeypatch: pytest.MonkeyPatch,
+    _isolate_vault_dir: Path,
+) -> None:
+    """Integration: el activity respeta quiet hours.
+
+    Hack monkeypatch del datetime.utcnow() para simular las 03:00 Colombia.
+    """
+    monkeypatch.setenv("WATCHDOG_ENABLED", "1")
+    now_ms = int(time.time() * 1000)
+    _write_metadata(_isolate_vault_dir, SESSION_ID, _base_metadata(now_ms=now_ms))
+
+    # Monkeypatch del datetime.utcnow del módulo del activity
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    import src.plugins.chats.agent.remarketing.activities.watchdog_activities as wa_mod
+
+    fixed_utc = datetime(2026, 6, 1, 8, 0, 0)  # 03:00 Colombia
+
+    class FixedDatetime:
+        @staticmethod
+        def utcnow():
+            return fixed_utc
+
+        @staticmethod
+        def now(tz=None):
+            if tz is not None:
+                return datetime(2026, 6, 1, 8, 0, 0, tzinfo=ZoneInfo("UTC")).astimezone(tz)
+            return fixed_utc
+
+    monkeypatch.setattr(wa_mod, "datetime", FixedDatetime)
+
+    result = await check_watchdog_eligibility_activity(SESSION_ID, EPISODE_ID)
+
+    assert result.eligible is False
+    assert result.reason == "outside_quiet_hours"

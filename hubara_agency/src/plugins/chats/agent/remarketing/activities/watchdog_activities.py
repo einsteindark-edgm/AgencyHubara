@@ -19,13 +19,19 @@ string annotations of locally-defined types like `WatchdogEligibilityResult`.
 import os
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import structlog
 from temporalio import activity
 
 from src.platform.config import WORKSPACE_VAULT_DIR
-from src.platform.constants import ROUTE_REMARKETING, ROUTE_VENTAS
+from src.platform.constants import (
+    ROUTE_REMARKETING,
+    ROUTE_VENTAS,
+    WHATSAPP_SESSION_PREFIX,
+)
 from src.platform.state import FilesystemMetadataStore
 from src.platform.whatsapp.dtos import OutboundResult
 from src.platform.whatsapp.templates.registry import (
@@ -37,6 +43,72 @@ from src.platform.whatsapp.window import WATCHDOG_PRE_EXPIRY_MS
 from src.plugins.chats.agent.remarketing.watchdog_contracts import (
     WatchdogEligibilityResult,
 )
+
+
+# =============================================================================
+# Quiet hours (HU-WA24H-001 pre-mortem F4.1)
+# =============================================================================
+
+#: Hora de inicio del horario permitido (hora local del cliente, 24h format).
+#: Override via WATCHDOG_QUIET_HOURS_START env var.
+_DEFAULT_QUIET_HOURS_START: int = 8
+
+#: Hora de fin del horario permitido (exclusive).
+#: Override via WATCHDOG_QUIET_HOURS_END env var.
+_DEFAULT_QUIET_HOURS_END: int = 22
+
+#: Mapping country code (sin +) → IANA timezone. Cubre los mercados objetivo
+#: de AgencyHubara (LATAM core). Extensible: agregar entries cuando se
+#: onboardee un mercado nuevo. Default fallback es UTC (conservador — si no
+#: sabemos timezone, no presumimos hora local).
+_COUNTRY_CODE_TO_TZ: dict[str, str] = {
+    "57": "America/Bogota",          # Colombia
+    "54": "America/Argentina/Buenos_Aires",  # Argentina
+    "52": "America/Mexico_City",     # México
+    "56": "America/Santiago",        # Chile
+    "51": "America/Lima",            # Perú
+    "55": "America/Sao_Paulo",       # Brasil
+    "1": "America/New_York",         # USA / Canada (genérico — pueden tener varios TZ; conservador)
+}
+
+
+def _resolve_local_timezone(session_id: str) -> ZoneInfo:
+    """Mapea el session_id (`wa_<+code><phone>`) a su IANA timezone.
+
+    Heurística: el primer 1-3 dígitos del número de teléfono (post-`+`) son
+    el country code. Hacemos longest-match contra `_COUNTRY_CODE_TO_TZ`.
+    Si no matchea ningún prefijo conocido → UTC (no asumimos horario local
+    erróneo).
+
+    NOTA: country codes ambiguos (e.g. +1 cubre USA + Canada + varios
+    pequeños) usan un TZ representativo. Para precisión sub-país se
+    requeriría DI de un servicio de phone → timezone lookup (out of scope).
+    """
+    if not session_id.startswith(WHATSAPP_SESSION_PREFIX):
+        return ZoneInfo("UTC")
+    phone = session_id[len(WHATSAPP_SESSION_PREFIX):].lstrip("+")
+    # Longest-match en country codes (1 dígito vs 2 vs 3).
+    for code_len in (3, 2, 1):
+        prefix = phone[:code_len]
+        tz_name = _COUNTRY_CODE_TO_TZ.get(prefix)
+        if tz_name:
+            try:
+                return ZoneInfo(tz_name)
+            except ZoneInfoNotFoundError:
+                continue
+    return ZoneInfo("UTC")
+
+
+def _is_quiet_hours_for_session(session_id: str, now_utc: datetime) -> bool:
+    """True si la hora LOCAL del cliente está fuera del horario permitido
+    (08:00 - 22:00 default, override por env var)."""
+    tz = _resolve_local_timezone(session_id)
+    local_dt = now_utc.astimezone(tz)
+    local_hour = local_dt.hour
+    start = int(os.environ.get("WATCHDOG_QUIET_HOURS_START", _DEFAULT_QUIET_HOURS_START))
+    end = int(os.environ.get("WATCHDOG_QUIET_HOURS_END", _DEFAULT_QUIET_HOURS_END))
+    # Quiet hours: hora < start O hora >= end. Allowed: start <= hora < end.
+    return not (start <= local_hour < end)
 
 
 log = structlog.get_logger()
@@ -261,7 +333,21 @@ async def check_watchdog_eligibility_activity(
             eligible=False, reason="window_not_expiring_soon"
         )
 
-    # 4. Resolve template for the current episode stage.
+    # 4. Quiet hours check (HU-WA24H-001 pre-mortem F4.1) — no disparar en
+    #    horario nocturno hora local del cliente (3am Colombia = quality
+    #    rating drop garantizado).
+    if _is_quiet_hours_for_session(session_id, datetime.utcnow().replace(tzinfo=ZoneInfo("UTC"))):
+        log.info(
+            "watchdog_eligibility_skipped",
+            session_id=session_id,
+            episode_id=episode_id,
+            reason="outside_quiet_hours",
+        )
+        return WatchdogEligibilityResult(
+            eligible=False, reason="outside_quiet_hours"
+        )
+
+    # 5. Resolve template for the current episode stage.
     stage = _infer_episode_stage(metadata)
     registry = get_template_registry()
     spec = get_watchdog_template_for_stage(registry, stage or "")
@@ -383,9 +469,10 @@ async def persist_watchdog_outcome_activity(
         existing["fired_at_ms"] = now_ms
         existing["cancelled_at_ms"] = None
         existing["reason_cancelled"] = None
-        # `detail` for "fired" is the wa_message_id of the sent template —
-        # we don't persist it here (the OutboundLogEntry covers that), but
-        # we log it for traceability.
+        # HU-WA24H-001 pre-mortem F5.2: persistir el wa_message_id para que
+        # el dashboard del operador correlacione metadata.watchdog ↔ JSONL del
+        # session_history sin tener que cruzar logs estructurados.
+        existing["last_fire_wa_message_id"] = detail
         log.info(
             "watchdog_outcome_persisted",
             session_id=session_id,

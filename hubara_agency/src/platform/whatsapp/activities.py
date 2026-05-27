@@ -349,6 +349,16 @@ async def send_template_to_session(
     metadata["last_outbound"] = asdict(log_entry)
     _write_metadata(session_id, metadata)
 
+    # HU-WA24H-001 pre-mortem F2.2: el dashboard del operador lee el JSONL
+    # del session_history para mostrar el chat. Sin esto, los templates
+    # enviados quedan invisibles al operador humano que tome el caso.
+    # Persistimos un marker semántico — no el body literal del template
+    # (vive en Meta Business Manager, no en código), pero suficiente para
+    # que el operador entienda qué se mandó.
+    _append_template_to_session_history(
+        session_id, template_name, variables, spec.waba_template_name
+    )
+
     log.info(
         "template_send_success",
         session_id=session_id,
@@ -356,6 +366,59 @@ async def send_template_to_session(
         wa_message_id=result.wa_message_id,
     )
     return result
+
+
+def _append_template_to_session_history(
+    session_id: str,
+    template_name: str,
+    variables: dict[str, str],
+    waba_template_name: str,
+) -> None:
+    """Persiste un marker del template enviado al JSONL del session_history.
+
+    Shape del evento (compatible con `append_assistant_event` shape):
+        {"role": "assistant", "kind": "template", "template_name": "...",
+         "waba_template_name": "...", "variables": {...},
+         "content": "[Template: ...] var1=val1, var2=val2",
+         "timestamp": "<ISO>"}
+
+    El `content` es un string human-readable que el dashboard puede pintar
+    si no quiere parsear los campos estructurados.
+
+    Best-effort: si el write falla, log warning y continúa — el send ya
+    ocurrió, el log JSONL es secondary observability.
+    """
+    history_path = WORKSPACE_VAULT_DIR / session_id / "sessions" / f"{session_id}.jsonl"
+    try:
+        history_path.parent.mkdir(parents=True, exist_ok=True)
+        var_summary = ", ".join(f"{k}={v}" for k, v in variables.items())
+        content = f"[Template: {template_name}] {var_summary}".strip()
+        event = {
+            "role": "assistant",
+            "kind": "template",
+            "template_name": template_name,
+            "waba_template_name": waba_template_name,
+            "variables": variables,
+            "content": content,
+            "timestamp": _now_iso_utc(),
+        }
+        with history_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(event, ensure_ascii=False) + "\n")
+    except OSError as e:
+        log.warning(
+            "template_session_history_persist_failed",
+            session_id=session_id,
+            template_name=template_name,
+            error=str(e),
+        )
+
+
+def _now_iso_utc() -> str:
+    """ISO 8601 UTC string para timestamps del JSONL (simetría con
+    assistant_event y human_event existentes)."""
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()
 
 
 @activity.defn(name="send_whatsapp_template_activity")

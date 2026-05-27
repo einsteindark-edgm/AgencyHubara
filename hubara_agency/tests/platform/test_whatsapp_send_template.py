@@ -168,6 +168,28 @@ class TestSendTemplateHappyPath:
         # last_outbound mirror
         assert metadata["last_outbound"]["wa_message_id"] == "wamid.NEW"
 
+        # HU-WA24H-001 pre-mortem F2.2: el template send también se persiste
+        # al JSONL del session_history para que el dashboard del operador lo
+        # vea como parte del chat.
+        history_path = (
+            isolated_vault / session_id / "sessions" / f"{session_id}.jsonl"
+        )
+        assert history_path.exists()
+        lines = history_path.read_text(encoding="utf-8").strip().splitlines()
+        assert len(lines) == 1
+        history_event = json.loads(lines[0])
+        assert history_event["role"] == "assistant"
+        assert history_event["kind"] == "template"
+        assert history_event["template_name"] == "quote_ready_utility_v1"
+        assert history_event["waba_template_name"] == "quote_ready_utility"
+        assert history_event["variables"] == {
+            "customer_first_name": "Juan",
+            "product_or_quote_label": "vela",
+        }
+        assert "[Template: quote_ready_utility_v1]" in history_event["content"]
+        assert "customer_first_name=Juan" in history_event["content"]
+        assert "T" in history_event["timestamp"]
+
     @pytest.mark.asyncio
     async def test_resolves_phone_id_from_env_when_not_in_metadata(
         self, isolated_vault, monkeypatch
