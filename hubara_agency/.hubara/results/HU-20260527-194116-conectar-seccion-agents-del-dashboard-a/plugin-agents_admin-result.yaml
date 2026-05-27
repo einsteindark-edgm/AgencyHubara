@@ -1,0 +1,10 @@
+version: 1
+hu_id: HU-20260527-194116-conectar-seccion-agents-del-dashboard-a
+plugin_id: agents_admin
+pipeline: hu-hubara-plugin-pipeline
+date: 2026-05-27T21:57:36Z
+status: failed
+feature_tasks_total: 1
+feature_tasks_passed: 0
+failed_tasks:
+  - F01-result
