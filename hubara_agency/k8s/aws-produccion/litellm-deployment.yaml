@@ -15,8 +15,8 @@ spec:
     spec:
       containers:
         - name: litellm
-          image: ghcr.io/berriai/litellm:main-latest
-          imagePullPolicy: Always
+          image: ghcr.io/berriai/litellm:v1.86.2
+          imagePullPolicy: IfNotPresent
           command: ["--config", "/app/config.yaml", "--port", "4000", "--debug"]
           ports:
             - containerPort: 4000
