@@ -34,9 +34,39 @@ with workflow.unsafe.imports_passed_through():
         read_idle_timeout_seconds_activity,
     )
     from src.plugins.chats.agent.sales.contracts import SalesSessionInput
+    from src.platform.whatsapp.capi_activity import (
+        LEAD_CLOSING_TAGS,
+        PURCHASE_CLOSING_TAGS,
+        send_capi_event_activity,
+    )
     from src.plugins.chats.shared.contracts.events import (
+        EpisodeClosedEvent,
         SalesSessionCompletionEvent,
     )
+
+
+# HU-WA24H-001 Sprint CAPI: helper module-level que mapea el closing_tag al
+# CAPI event_name correspondiente. Vive afuera del workflow body porque los
+# frozenset son inmutables y los lookups son O(1) determinísticos (R-DET
+# safe). Devuelve None para tags que no disparan CAPI (RECHAZO / GHOSTED
+# / TIMEOUT).
+def _map_closing_tag_to_capi_event(closing_tag: str) -> str | None:
+    """Map a sales episode closing tag to its CAPI event name, or None."""
+    if closing_tag in PURCHASE_CLOSING_TAGS:
+        return "Purchase"
+    if closing_tag in LEAD_CLOSING_TAGS:
+        return "Lead"
+    return None
+
+
+# Module-level anchor que evita que ruff strippee el import de
+# `send_capi_event_activity` antes de que el workflow body lo referencie en
+# `workflow.execute_activity(...)`. El workflow body usa el import
+# directamente (no `_CAPI_ACTIVITY`), así que esta línea es defensa
+# pura contra el formatter — se puede borrar cuando el workflow body
+# garantice el uso.
+_CAPI_ACTIVITY: object = send_capi_event_activity
+
 
 _CONTINUE_AS_NEW_AFTER_TURNS = 50
 
@@ -298,6 +328,52 @@ class HubaraSalesSessionWorkflow:
                             start_to_close_timeout=timedelta(seconds=30),
                             retry_policy=RetryPolicy(maximum_attempts=3),
                         )
+
+                    # HU-WA24H-001 Sprint CAPI: cuando el episodio cierra,
+                    # disparar el CAPI event correspondiente (Lead /
+                    # Purchase) si aplica. La activity tiene guards
+                    # internos completos (ctwa_clid presente + dentro de
+                    # los 7d de attribution window, terminal_event check,
+                    # idempotencia via event_id estable), así que si no
+                    # corresponde, hace un "skipped_*" silencioso sin
+                    # raise.
+                    #
+                    # Falla del CAPI NUNCA bloquea el workflow — la
+                    # atribución a ads es secundaria al flujo del
+                    # cliente. Catcheamos cualquier excepción y seguimos.
+                    # La activity ya loguea el outcome (sent / skipped /
+                    # failed) — observabilidad vive en logs + metadata.
+                    #
+                    # workflow.patched(): gating para evitar
+                    # NondeterminismError al replay de workflows en vuelo
+                    # pre-deploy. Cuando todos los workflows pre-CAPI
+                    # hayan drainado (idle timeout 1min en sales),
+                    # `workflow.deprecate_patch("capi-event-emit-v1")`.
+                    if (
+                        result.episode_closed_decision is not None
+                        and workflow.patched("capi-event-emit-v1")
+                    ):
+                        capi_event_name = _map_closing_tag_to_capi_event(
+                            result.episode_closed_decision.closing_tag
+                        )
+                        if capi_event_name is not None:
+                            try:
+                                await workflow.execute_activity(
+                                    send_capi_event_activity,
+                                    args=[
+                                        result.episode_closed_decision.session_id,
+                                        result.episode_closed_decision.episode_id,
+                                        capi_event_name,
+                                    ],
+                                    start_to_close_timeout=timedelta(seconds=30),
+                                    retry_policy=RetryPolicy(maximum_attempts=3),
+                                )
+                            except Exception as exc:  # noqa: BLE001
+                                workflow.logger.warning(
+                                    "CAPI dispatch falló (non-blocking): "
+                                    f"session={result.episode_closed_decision.session_id} "
+                                    f"event={capi_event_name} err={exc!r}"
+                                )
 
                     if result.final_content and not self._force_shutdown:
                         # Evitamos enviar respuestas vacías o alucinar respuestas internas durante auto-cierres
