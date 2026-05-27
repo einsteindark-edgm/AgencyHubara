@@ -92,6 +92,11 @@ class TurnResult:
     transfer_decision: TransferDecision | None = None
     schedule_remarketing: ScheduleRemarketingDecision | None = None
     escalation_decision: EscalationDecision | None = None
+    # HU-WA24H-001 Sprint 2: emitted by `ManageConversationTagTool` when a
+    # CLOSING_TAG actually closes an active episode (idempotent — only set
+    # when close_episode mutated state). The workflow lifts this into
+    # `EpisodeClosedEvent` via the dispatcher to cancel any running watchdog.
+    episode_closed_decision: EpisodeClosedDecision | None = None
 
 
 def _try_parse_decision_payload(raw: str) -> dict[str, Any] | None:
@@ -207,6 +212,7 @@ async def run_agent_turn(
     transfer_decision: TransferDecision | None = None
     schedule_remarketing: ScheduleRemarketingDecision | None = None
     escalation_decision: EscalationDecision | None = None
+    episode_closed_decision: EpisodeClosedDecision | None = None
 
     while iteration < session.llm.max_iterations:
         iteration += 1
@@ -262,6 +268,20 @@ async def run_agent_turn(
                             reason_category=str(ed.get("reason_category", "OTHER")),
                             summary=str(ed.get("summary", "")),
                         )
+                    if "episode_closed" in payload and isinstance(payload["episode_closed"], dict):
+                        # HU-WA24H-001 Sprint 2: parsing del envelope que
+                        # `ManageConversationTagTool` emite cuando un
+                        # CLOSING_TAG efectivamente cerró un episodio activo.
+                        ec = payload["episode_closed"]
+                        episode_id_raw = ec.get("episode_id")
+                        if isinstance(episode_id_raw, str) and episode_id_raw:
+                            episode_closed_decision = EpisodeClosedDecision(
+                                session_id=str(
+                                    ec.get("session_id", session.session_id)
+                                ),
+                                episode_id=episode_id_raw,
+                                closing_tag=str(ec.get("closing_tag", "")),
+                            )
 
                 messages = [
                     *messages,
@@ -383,4 +403,5 @@ async def run_agent_turn(
         transfer_decision=transfer_decision,
         schedule_remarketing=schedule_remarketing,
         escalation_decision=escalation_decision,
+        episode_closed_decision=episode_closed_decision,
     )

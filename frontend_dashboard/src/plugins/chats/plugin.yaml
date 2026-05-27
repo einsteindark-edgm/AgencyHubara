@@ -56,6 +56,16 @@ agent:
         - HubaraSalesSessionWorkflow
       emits:
         - SalesSessionCompletionEvent
+        # HU-WA24H-001 Sprint 2: service-window lifecycle events.
+        # `IngestInboundMessage` (use case del sales worker) emite estos en
+        # cada inbound del cliente. Los routea el dispatcher al watchdog que
+        # vive en el worker `remarketing` (decisión §5.1 del refinement).
+        - ServiceWindowOpenedEvent
+        - CustomerRepliedEvent
+        # `EpisodeClosedEvent` se emite desde el sales workflow cuando una
+        # tool LLM cierra el episodio (ManageConversationTagTool con un
+        # CLOSING_TAG). Cancela el watchdog del episodio cerrado.
+        - EpisodeClosedEvent
       transitions:
         - id: sales_to_remarketing_on_interested
           on_event: SalesSessionCompletionEvent
@@ -71,6 +81,63 @@ agent:
               session_id: "$.session_id"
               motivo: "$.motivo"
             start_delay_field: delay_seconds
+        # ── HU-WA24H-001 Sprint 2 — watchdog wiring ──────────────────────
+        # ServiceWindowOpenedEvent → arranca (o reemplaza) un watchdog por
+        # episodio. `start_workflow_with_replace` mata cualquier watchdog
+        # previo del mismo (session, episode) y arranca uno nuevo — así los
+        # inbounds consecutivos extienden la ventana sin acumular workflows
+        # paralelos.
+        - id: sales_inbound_opens_service_window
+          on_event: ServiceWindowOpenedEvent
+          action:
+            via: start_workflow_with_replace
+            target_plugin: chats
+            target_worker: remarketing
+            target_workflow: ServiceWindowWatchdogWorkflow
+            workflow_id_template: "watchdog-{event.session_id}-{event.episode_id}"
+            input_mapping:
+              session_id: "$.session_id"
+              episode_id: "$.episode_id"
+              fire_at_ms: "$.fire_at_ms"
+              suggested_template_kind: "$.suggested_template_kind"
+        # CustomerRepliedEvent → cancel del watchdog (cliente respondió,
+        # no necesita nudge). `via=signal` apunta al mismo workflow_id —
+        # si no hay watchdog corriendo, Temporal noopea el signal.
+        # El dispatcher pasa el dict del `input_mapping` como UN solo arg
+        # al signal handler — `cancel_watchdog(self, payload: dict)`
+        # extrae `payload["reason"]`. Acá inyectamos un literal mediante un
+        # field del evento que ya conocemos su valor para esta transition.
+        - id: sales_inbound_cancels_watchdog_on_reply
+          on_event: CustomerRepliedEvent
+          action:
+            via: signal
+            target_plugin: chats
+            target_worker: remarketing
+            target_workflow: ServiceWindowWatchdogWorkflow
+            workflow_id_template: "watchdog-{event.session_id}-{event.episode_id}"
+            signal_name: cancel_watchdog
+            input_mapping:
+              # No hay un campo literal "customer_replied" en el evento —
+              # mappeamos episode_id como anchor del payload; el reason
+              # útil para el log lo genera el caller cuando enrique el
+              # envelope (futuro). Por ahora el handler ve
+              # {"reason": "<episode_id>"} y normaliza.
+              reason: "$.episode_id"
+        # EpisodeClosedEvent → cancel del watchdog (episodio cerró, no hay
+        # razón comercial para seguir nudgeando). El closing_tag viaja al
+        # handler como reason — útil para logs ("TIMEOUT" vs "COMPRA_EXITOSA"
+        # vs "RECHAZO").
+        - id: sales_episode_close_cancels_watchdog
+          on_event: EpisodeClosedEvent
+          action:
+            via: signal
+            target_plugin: chats
+            target_worker: remarketing
+            target_workflow: ServiceWindowWatchdogWorkflow
+            workflow_id_template: "watchdog-{event.session_id}-{event.episode_id}"
+            signal_name: cancel_watchdog
+            input_mapping:
+              reason: "$.closing_tag"
       # LEGACY: declaración documental (Nivel 1, pre-ADR-2026-05-20). Reemplazada
       # por `transitions:` arriba. Conservada hasta que el system_map drift
       # detector se actualice para leer transitions (PR9 del ADR).
@@ -149,10 +216,21 @@ agent:
       #      (el workflow lo invoca explícitamente antes del dispatch).
       #   2. `dispatch_event_activity` consulta este manifest y arranca/asegura
       #      el Sales workflow (via=ensure_running).
+      # HU-WA24H-001 Sprint 2: el watchdog vive registrado acá (decisión
+      # §5.1 del refinement — reusar el worker remarketing en lugar de crear
+      # un worker `watchdog` nuevo; menos overhead operativo, mismas
+      # task_queues, comparte composition).
       workflow_classes:
         - RemarketingWorkflow
+        - ServiceWindowWatchdogWorkflow
       emits:
         - CustomerRepliedDuringRemarketingEvent
+        # Los inbounds durante remarketing también deben (a) extender la
+        # ventana → ServiceWindowOpenedEvent, (b) cancelar el watchdog
+        # actual → CustomerRepliedEvent. Mirror exacto del worker sales.
+        - ServiceWindowOpenedEvent
+        - CustomerRepliedEvent
+        - EpisodeClosedEvent
       transitions:
         - id: remarketing_to_sales_on_customer_reply
           on_event: CustomerRepliedDuringRemarketingEvent
@@ -165,6 +243,42 @@ agent:
             workflow_id_template: "session-{event.session_id}"
             input_mapping:
               session_id: "$.session_id"
+        # ── HU-WA24H-001 Sprint 2 — watchdog wiring (mirror de sales) ────
+        - id: remarketing_inbound_opens_service_window
+          on_event: ServiceWindowOpenedEvent
+          action:
+            via: start_workflow_with_replace
+            target_plugin: chats
+            target_worker: remarketing
+            target_workflow: ServiceWindowWatchdogWorkflow
+            workflow_id_template: "watchdog-{event.session_id}-{event.episode_id}"
+            input_mapping:
+              session_id: "$.session_id"
+              episode_id: "$.episode_id"
+              fire_at_ms: "$.fire_at_ms"
+              suggested_template_kind: "$.suggested_template_kind"
+        - id: remarketing_inbound_cancels_watchdog_on_reply
+          on_event: CustomerRepliedEvent
+          action:
+            via: signal
+            target_plugin: chats
+            target_worker: remarketing
+            target_workflow: ServiceWindowWatchdogWorkflow
+            workflow_id_template: "watchdog-{event.session_id}-{event.episode_id}"
+            signal_name: cancel_watchdog
+            input_mapping:
+              reason: "$.episode_id"
+        - id: remarketing_episode_close_cancels_watchdog
+          on_event: EpisodeClosedEvent
+          action:
+            via: signal
+            target_plugin: chats
+            target_worker: remarketing
+            target_workflow: ServiceWindowWatchdogWorkflow
+            workflow_id_template: "watchdog-{event.session_id}-{event.episode_id}"
+            signal_name: cancel_watchdog
+            input_mapping:
+              reason: "$.closing_tag"
       # LEGACY: declaración documental (Nivel 1, pre-ADR-2026-05-20). Reemplazada
       # por `transitions:` arriba.
       invokes:

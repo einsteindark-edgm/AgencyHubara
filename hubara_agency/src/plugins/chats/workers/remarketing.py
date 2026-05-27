@@ -26,9 +26,17 @@ from src.platform.tool_extensions import register_tool_extension
 from src.plugins.chats.agent.remarketing.activities import (
     bootstrap_remarketing_session_activity,
     build_remarketing_trigger_activity,
+    check_watchdog_eligibility_activity,
+    persist_watchdog_outcome_activity,
+    send_watchdog_template_activity,
 )
 from src.platform.session_history.activities import persist_assistant_message_activity
-from src.plugins.chats.agent.remarketing.workflows.remarketing import RemarketingSessionWorkflow
+from src.plugins.chats.agent.remarketing.workflows.remarketing import (
+    RemarketingSessionWorkflow,
+)
+from src.plugins.chats.agent.remarketing.workflows.watchdog import (
+    ServiceWindowWatchdogWorkflow,
+)
 from src.platform.tools.routing import TransferToSalesAgentTool
 from exoclaw_temporal.activities.conversation import build_prompt, record_turn
 from exoclaw_temporal.activities.llm import llm_chat
@@ -53,7 +61,10 @@ async def main() -> None:
     worker = Worker(
         client,
         task_queue=task_queue,
-        workflows=[RemarketingSessionWorkflow],
+        # HU-WA24H-001 Sprint 2: ServiceWindowWatchdogWorkflow vive en el
+        # mismo worker que RemarketingSessionWorkflow (decisión §5.1 del
+        # refinement — reuso vs nuevo worker `watchdog`).
+        workflows=[RemarketingSessionWorkflow, ServiceWindowWatchdogWorkflow],
         activities=[
             build_prompt,
             llm_chat,
@@ -78,6 +89,10 @@ async def main() -> None:
             # ADR-2026-05-20: declarative orchestration activities.
             write_pending_handoff_activity,
             dispatch_event_activity,
+            # HU-WA24H-001 Sprint 2: watchdog activities.
+            check_watchdog_eligibility_activity,
+            send_watchdog_template_activity,
+            persist_watchdog_outcome_activity,
         ],
     )
 

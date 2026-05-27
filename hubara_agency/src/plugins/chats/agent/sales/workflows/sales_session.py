@@ -273,6 +273,32 @@ class HubaraSalesSessionWorkflow:
                             retry_policy=RetryPolicy(maximum_attempts=3),
                         )
 
+                    # HU-WA24H-001 Sprint 2: el LLM cerró el episodio via
+                    # `ManageConversationTagTool` con un CLOSING_TAG. Emitir
+                    # `EpisodeClosedEvent` para que el dispatcher manifest
+                    # signale `cancel_watchdog` al watchdog del episodio.
+                    # Gated bajo el mismo patch que el path declarativo —
+                    # workflows en vuelo pre-deploy NO ven este branch
+                    # (replay-safe).
+                    if (
+                        result.episode_closed_decision is not None
+                        and workflow.patched("watchdog-event-emit-v1")
+                    ):
+                        await workflow.execute_activity(
+                            dispatch_event_activity,
+                            envelope_for(
+                                EpisodeClosedEvent(
+                                    session_id=result.episode_closed_decision.session_id,
+                                    episode_id=result.episode_closed_decision.episode_id,
+                                    closing_tag=result.episode_closed_decision.closing_tag,
+                                ),
+                                source_plugin="chats",
+                                source_worker="sales",
+                            ),
+                            start_to_close_timeout=timedelta(seconds=30),
+                            retry_policy=RetryPolicy(maximum_attempts=3),
+                        )
+
                     if result.final_content and not self._force_shutdown:
                         # Evitamos enviar respuestas vacías o alucinar respuestas internas durante auto-cierres
                         await workflow.execute_activity(

@@ -390,7 +390,18 @@ def test_get_active_returns_none_when_empty():
 
 
 def test_closing_tags_are_canonical_set():
-    """Los tags que cierran episodio coinciden con los del agente."""
+    """Los tags que cierran episodio coinciden con los del agente.
+
+    HU "verificación humana de pago": `CONFIRMADO_PAGO_PENDIENTE` se
+    agregó al set canónico (orden registrada en Medusa, falta solo el
+    paso operativo humano de verificar el pago). Cierra el episodio
+    porque la intención del cliente terminó desde su lado.
+    """
     assert CLOSING_TAGS == frozenset(
-        {"COMPRA_EXITOSA", "RECHAZO", "CONFIRMADO_SIN_DATOS"}
+        {
+            "COMPRA_EXITOSA",
+            "RECHAZO",
+            "CONFIRMADO_SIN_DATOS",
+            "CONFIRMADO_PAGO_PENDIENTE",
+        }
     )
