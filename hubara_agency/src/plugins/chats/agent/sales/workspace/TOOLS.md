@@ -14,14 +14,15 @@ Cómo el agente debe pensar sus herramientas. Las **definiciones** Python viven 
 - **Use when**: la conversación de venta termina (ya sea porque el cliente no contestó más en un punto muerto, porque finalizó su compra, o porque rechazó la oferta). Es OBLIGATORIO etiquetar al cierre.
 - **Don't use when**: la conversación sigue activa y aún no hay desenlace claro.
 - **Required context**: el resumen de qué pasó en la conversación.
-- **Side effects**: persiste la etiqueta en el `metadata.json` de la sesión y, si la etiqueta es `INTERESADO`, programa automáticamente un ciclo de remarketing. Las otras tags (`COMPRA_EXITOSA`, `RECHAZO`, `CONFIRMADO_SIN_DATOS`) NO programan remarketing.
+- **Side effects**: persiste la etiqueta en el `metadata.json` de la sesión y, si la etiqueta es `INTERESADO`, programa automáticamente un ciclo de remarketing. Las otras tags (`COMPRA_EXITOSA`, `RECHAZO`, `CONFIRMADO_SIN_DATOS`, `CONFIRMADO_PAGO_PENDIENTE`) NO programan remarketing.
 
 #### Etiquetas (taxonomía obligatoria)
 
 - `INTERESADO`: el cliente mostró interés pero aún no compró o pidió tiempo. Describe brevemente por qué. **→ Programa remarketing automático**.
-- `COMPRA_EXITOSA`: el cliente finalizó la compra Y tú ya llamaste `register_order(...)` con éxito. Describe qué compró. **→ NO programa remarketing**.
+- `COMPRA_EXITOSA`: cierre con venta concretada Y **pago verificado por un humano**. **Esta tag la pone el humano desde el dashboard de orders, NO el LLM.** El LLM solo la usa en el caso edge en que el ghost trigger llega DESPUÉS de que un humano ya confirmó el pago y reabrió el chat (raro, ver protocolo abajo). **→ NO programa remarketing**.
 - `RECHAZO`: el cliente descartó la compra. Describe el motivo. **→ NO programa remarketing**.
 - `CONFIRMADO_SIN_DATOS`: el cliente confirmó la compra (apretó '✅ Confirmar' tras `present_order_confirmation`) PERO NO completó los datos de envío en el Flow y dejó la conversación. **Usalo SIEMPRE en combo con `escalate_to_human(reason_category="ORDER_PENDING_SHIPPING_DETAILS")`** para que un humano cierre la operación pidiendo los datos faltantes por chat. **→ NO programa remarketing**.
+- `CONFIRMADO_PAGO_PENDIENTE`: el cliente confirmó el pedido + dio todos los datos de envío + tú llamaste `register_order(...)` y devolvió `registered=true` (orden en Medusa). **El LLM NO puede confirmar si el pago se efectuó** (no hay pasarela integrada todavía). **Usalo SIEMPRE en combo con `escalate_to_human(reason_category="PAYMENT_VERIFICATION_PENDING")`** para que un humano verifique el pago en el dashboard de orders. **Aplica a los 3 métodos de pago** (card, transfer, cash_on_delivery) — el humano confirma manualmente la recepción del pago y, si todo OK, marca la venta como COMPRA_EXITOSA desde el dashboard. **→ NO programa remarketing**.
 
 ### `search_products`
 
@@ -348,17 +349,21 @@ Si el cliente vino por referral CTWA (banner `[el cliente vino desde un anuncio�
 
 ### Secuencia canónica al cerrar (3 escenarios)
 
-**Escenario A, Cierre exitoso (cliente confirmó + completó datos)**:
+**Escenario A, Cierre operativo (cliente confirmó + completó datos + orden registrada)**:
+
+> **Regla operativa actual (hasta que haya pasarela de pago integrada)**: el LLM NUNCA marca `COMPRA_EXITOSA` directamente, sin importar el método de pago. La razón: no hay manera técnica de saber si el pago se efectuó (transferencia / efectivo / tarjeta sin pasarela). El cierre formal de la venta lo hace un humano desde el dashboard de orders tras verificar el pago. El LLM solo registra la orden en Medusa y delega.
+
 1. `verify_order_for_checkout(items)` → `verified: true, discrepancy: false`.
 2. `present_order_confirmation(items, shipping_cop, shipping_address_summary, payment_method)`.
 3. Cliente apreta '✅ Confirmar'.
 4. **`register_order(items, shipping, payment_method, subtotal_cop, shipping_cop, total_cop)`** ← PASO OBLIGATORIO. Lee `registered` del envelope:
-   - Si **`registered=true`** (Medusa aceptó):
-     5. `manage_conversation_tag(tag="COMPRA_EXITOSA", motivo="...")`.
-     6. Mensaje cálido de despedida (sin repetir datos del pedido).
+   - Si **`registered=true`** (Medusa aceptó la orden):
+     5. `manage_conversation_tag(tag="CONFIRMADO_PAGO_PENDIENTE", motivo="Cliente confirmó pedido X por $Y, método de pago <transfer|card|cash_on_delivery>, falta verificación humana del pago")`.
+     6. `escalate_to_human(reason_category="PAYMENT_VERIFICATION_PENDING", summary="Pedido <order_id> registrado en Medusa. Cliente eligió pago por <transfer|card|cash_on_delivery>. Verificar recepción del pago en el dashboard de orders y confirmar el envío o abortar el pedido")`.
+     7. Mensaje al cliente: *"Tu pedido quedó registrado 🤍. Un colega del equipo verifica el pago y te confirma el envío en unos minutos."* **NO marques `COMPRA_EXITOSA`** — esa tag la pone el humano cuando confirma el pago.
    - Si **`registered=false`** (Medusa rechazó / network down / config rota):
      5. `escalate_to_human(reason_category="ORDER_REGISTRATION_FAILED", summary="cliente cerró pedido pero Medusa rechazó el registro, humano completa con datos en metadata.failed_order_registrations")`.
-     6. Mensaje al cliente: "Tu pedido quedó tomado y un humano te confirma en unos minutos 🤍". NO marques COMPRA_EXITOSA.
+     6. Mensaje al cliente: *"Tu pedido quedó tomado y un humano te confirma en unos minutos 🤍"*. **NO marques `COMPRA_EXITOSA`** ni `CONFIRMADO_PAGO_PENDIENTE` — la orden NI siquiera está registrada.
 
 **Escenario B, Confirmó pero NO completó datos de envío (caso edge, sesión c4e3416f)**:
 - Síntoma: el cliente apretó '✅ Confirmar' tras `present_order_confirmation`, tú llamaste `request_shipping_details(...)`, pero el cliente NO completó el Flow ni respondió por texto con los datos.
@@ -398,6 +403,7 @@ Tu objetivo es cerrar la venta dentro del chat, pero hay casos donde un humano l
 | **Catalog gap**: cliente menciona un producto que NO aparece en 2 búsquedas distintas (variaciones de nombre) y sigue insistiendo | `CATALOG_GAP` | "quiero la *Vela de la Abuela*" tras 2 search vacíos |
 | **Pedido confirmado, faltan datos**: cliente apretó '✅ Confirmar' tras `present_order_confirmation` pero NUNCA completó el Flow de envío ni mandó los datos por texto. Detectado en el ghost trigger (sesión c4e3416f). | `ORDER_PENDING_SHIPPING_DETAILS` | (interno, combinar con `manage_conversation_tag(CONFIRMADO_SIN_DATOS)`) |
 | **`register_order` falló**: el cliente confirmó el pedido + dio todos los datos, pero Medusa rechazó el `POST /admin/draft-orders` (5xx persistente, config inválida, handle no existe en Medusa). `metadata.failed_order_registrations[]` tiene el payload completo para que el humano lo registre manualmente. | `ORDER_REGISTRATION_FAILED` | (interno, el envelope de `register_order` devuelve `registered=false` con instrucción explícita) |
+| **Verificación de pago pendiente (OBLIGATORIO post-`register_order` exitoso)**: la orden quedó registrada en Medusa (`registered=true`) pero el LLM NO puede confirmar si el cliente efectivamente pagó. Aplica a los 3 métodos de pago (card / transfer / cash_on_delivery) hasta que haya pasarela integrada. Usar SIEMPRE en combo con `manage_conversation_tag("CONFIRMADO_PAGO_PENDIENTE")`. El humano verifica el pago desde el dashboard de orders y allá marca la venta como COMPRA_EXITOSA o la aborta. | `PAYMENT_VERIFICATION_PENDING` | (interno post-`register_order`, ver Escenario A de "Secuencia canónica al cerrar") |
 
 **Regla de oro**: en duda, escalar es mejor que cerrar mal una venta complicada. Pero NO escales preguntas básicas que sí puedes responder con las tools.
 
