@@ -573,6 +573,15 @@ nodes:
 
   - id: commit-refinement
     bash: |
+      # CRITICAL: stdout debe ser EXACTAMENTE 'committed' o 'no_changes' (sin
+      # nada más), porque downstream nodes hacen strict equality `==` en when:.
+      # `git commit` y `git push` emiten resumen multi-línea a stdout — si
+      # queda en stdout, el `==` falla aunque la última línea sea correcta.
+      # Bug detectado en run cadd3d61 (2026-05-27): commit-refinement output
+      # multi-línea → post-refinement-comment-to-issue skipped silenciosamente
+      # → ningún comentario al issue, sin que apareciera en logs. Fix: redirigir
+      # git output a stderr (visible en bash_node_stderr para debugging) y
+      # mantener stdout limpio para la comparación.
       set -e
       HU_ID=$(echo $gen-hu-id.output | jq -r '.hu_id')
       BRANCH=$(echo $gen-hu-id.output | jq -r '.branch')
@@ -581,10 +590,10 @@ nodes:
          "hubara_agency/.hubara/refinements/${HU_ID}-tech.md"
       cp $ARTIFACTS_DIR/hu-original.md \
          "hubara_agency/.hubara/refinements/${HU_ID}-original.md"
-      git add "hubara_agency/.hubara/refinements/"
+      git add "hubara_agency/.hubara/refinements/" >&2
       if ! git diff --staged --quiet; then
-        git commit -m "${HU_ID}: refinement técnico (auto, hubara pipeline)"
-        git push origin "$BRANCH"
+        git commit -m "${HU_ID}: refinement técnico (auto, hubara pipeline)" >&2
+        git push origin "$BRANCH" >&2
         echo "committed"
       else
         echo "no_changes"
@@ -706,10 +715,30 @@ nodes:
   # encapsulamos en este bash que emite CAN_PLAN | SKIP_PLAN_ALREADY_PLANNED
   # | SKIP_PLAN_BAD_REFINEMENT — values legibles para el when downstream
   # y para el diagnostic-bundle. 2026-05-26.
+  #
+  # CRITICAL — shellQuote gotcha (descubierto 2026-05-27 en run cadd3d61).
+  # Archon hace `substituteNodeOutputRefs(..., escapedForBash=true)` para
+  # bash nodes, lo que wrappea cada `$node.output[.field]` en SINGLE QUOTES
+  # via `shellQuote`. Si el bash hace `AP="$node.output"`, las dquotes
+  # *PROTEGEN* las single quotes y AP queda con valor LITERAL `'false'`
+  # (incluye las comillas). El test `[ "$AP" = "true" ]` falla siempre.
+  # Resultado: gate emitía SKIP_PLAN_BAD_REFINEMENT cuando debía decir
+  # CAN_PLAN → planner se skipeaba → validate-plan FAIL_NOT_EXISTS.
+  # Fix: SIN dquotes en el assignment → bash strip-quote-removal limpia
+  # las single quotes y AP queda con `false` (sin comillas). Las dquotes
+  # SI van en el USO posterior (`"$AP"`) para protección normal.
+  # Empirical proof: bash <<<'AP=$x; AP="$x"; echo [$AP1] [$AP2]' con x="'v'".
+  # Bug introduced: commit 135f646 (2026-05-26). Detected: run cadd3d61
+  # (2026-05-27 01:32). See logs/cadd3d61ff29d9e9913d269b90f7158a.jsonl
+  # planificar-auto node_skipped.
   - id: gate-can-plan
     bash: |
-      AP="$detect-resume-state.output.already_planned"
-      VR="$validate-refinement.output"
+      # NO dquotes en el RHS — Archon shellQuote-encierra el valor en '..'
+      # y bash quote-removal lo limpia. Ver comentario arriba.
+      AP=$detect-resume-state.output.already_planned
+      VR=$validate-refinement.output
+      # Trace para diagnostic-bundle (visible en stderr → bash_node_stderr).
+      echo "TRACE gate-can-plan: AP=[$AP] VR=[$VR]" >&2
       if [ "$AP" = "true" ]; then
         echo "SKIP_PLAN_ALREADY_PLANNED"
       elif [ "$VR" = "PASS" ] || [ "$VR" = "PASS_NO_WORK" ]; then
@@ -826,9 +855,13 @@ nodes:
   # los downstream usen comparación literal `==`. El detalle del FAIL
   # (FAIL_TOO_MANY_PLUGINS, FAIL_NO_BATCHES, etc.) sigue disponible vía
   # `$validate-plan.output` para mensajes y diagnostics. 2026-05-26.
+  #
+  # shellQuote gotcha — ver comentario extenso arriba en gate-can-plan
+  # (run cadd3d61, 2026-05-27). SIN dquotes en el assignment del RHS.
   - id: gate-plan-verdict
     bash: |
-      OUT="$validate-plan.output"
+      OUT=$validate-plan.output
+      echo "TRACE gate-plan-verdict: OUT=[$OUT]" >&2
       case "$OUT" in
         PASS*) echo "PASS" ;;
         *)     echo "FAIL" ;;
@@ -853,11 +886,24 @@ nodes:
     cancel: |
       Plan validation FAILED ($validate-plan.output) en branch $gen-hu-id.output.branch.
 
+      ── Gate trace (para diagnosticar SKIP silencioso del planner) ───
+        gate-can-plan       → $gate-can-plan.output
+        validate-refinement → $validate-refinement.output
+        validate-plan       → $validate-plan.output
+        gate-plan-verdict   → $gate-plan-verdict.output
+
       📋 Forensic diagnostic bundle:
          $ARTIFACTS_DIR/diagnostic-bundle.yaml
 
       Decodificación rápida del FAIL code:
-        FAIL_TOO_MANY_PLUGINS → HU afecta más plugins que el cap (default 8).
+        FAIL_NOT_EXISTS          → planner skill no escribió plugin-manifest.yaml.
+            Si gate-can-plan != 'CAN_PLAN' → planner fue SKIPPED. Mirá VR/AP
+            en el TRACE de stderr para ver por qué (validate-refinement no
+            PASS, o already_planned=true por resume bug).
+            Si gate-can-plan == 'CAN_PLAN' → planner corrió pero no escribió.
+            Posible: skill agotó max_iterations sin <promise>PLANNER_OK</promise>,
+            o tuvo error mid-execution. Re-correr o editar manifest a mano.
+        FAIL_TOO_MANY_PLUGINS    → HU afecta más plugins que el cap (default 8).
             Opciones:
               (a) Splittear la HU en 2 GitHub issues independientes.
               (b) Si el caso amerita, bumpear el cap: MAX_PLUGINS_PER_HU=N
@@ -878,6 +924,7 @@ nodes:
 
   - id: commit-plan
     bash: |
+      # Ver comentario en commit-refinement — stdout limpio para downstream `==`.
       set -e
       HU_ID=$(echo $gen-hu-id.output | jq -r '.hu_id')
       BRANCH=$(echo $gen-hu-id.output | jq -r '.branch')
@@ -888,10 +935,10 @@ nodes:
 
       N=$(python3 -c "import yaml; d=yaml.safe_load(open('hubara_agency/.hubara/plans/${HU_ID}/plugin-manifest.yaml')); print(len(d.get('plugins') or []))")
 
-      git add "hubara_agency/.hubara/plans/${HU_ID}/"
+      git add "hubara_agency/.hubara/plans/${HU_ID}/" >&2
       if ! git diff --staged --quiet; then
-        git commit -m "${HU_ID}: plugin-level plan (auto, ${N} plugins)"
-        git push origin "$BRANCH"
+        git commit -m "${HU_ID}: plugin-level plan (auto, ${N} plugins)" >&2
+        git push origin "$BRANCH" >&2
         echo "committed_${N}"
       else
         echo "no_changes"
@@ -1733,15 +1780,22 @@ nodes:
 
   - id: gate-evaluator-verdict
     bash: |
+      # CRITICAL — stdout debe ser UNA línea EXACTA (EVAL_PASS|EVAL_WARN|EVAL_BLOCK|
+      # EVAL_MISSING|EVAL_UNKNOWN) porque downstream nodes usan strict `==`.
+      # Cualquier "WARN: ..." o "verdict=X weighted=Y" extra rompe la comparación.
+      # Bug pattern descubierto en run cadd3d61: commit-refinement multi-línea
+      # causó skip silencioso de post-refinement-comment. Lección: TODO mensaje
+      # diagnostic va a stderr (visible en bash_node_stderr), stdout solo el
+      # status canónico.
       EVAL="$ARTIFACTS_DIR/evaluation.yaml"
       if [ ! -f "$EVAL" ]; then
-        echo "WARN: no evaluation.yaml encontrado — evaluator no produjo output"
+        echo "WARN: no evaluation.yaml encontrado — evaluator no produjo output" >&2
         echo "EVAL_MISSING"
         exit 0
       fi
       VERDICT=$(grep -E "^verdict:" "$EVAL" | head -1 | awk '{print $2}' | tr -d '"')
       WEIGHTED=$(grep -E "^weighted_average:" "$EVAL" | head -1 | awk '{print $2}')
-      echo "verdict=$VERDICT weighted=$WEIGHTED"
+      echo "TRACE gate-evaluator-verdict: verdict=$VERDICT weighted=$WEIGHTED" >&2
       case "$VERDICT" in
         pass)         echo "EVAL_PASS" ;;
         warn)         echo "EVAL_WARN" ;;
