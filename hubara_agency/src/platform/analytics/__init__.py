@@ -36,6 +36,7 @@ from src.platform.analytics.events import (
     make_wa_interaction,
     make_outbound_sent,
     make_conversion,
+    make_delivery_status,
 )
 from src.platform.analytics.port import AnalyticsSink
 
@@ -50,4 +51,5 @@ __all__ = [
     "make_wa_interaction",
     "make_outbound_sent",
     "make_conversion",
+    "make_delivery_status",
 ]

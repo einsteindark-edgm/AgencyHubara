@@ -271,6 +271,83 @@ def parse_whatsapp_inbound(body: dict) -> WhatsAppMessage | None:
     )
 
 
+@dataclass(frozen=True)
+class WhatsAppStatusUpdate:
+    """Status update normalizado de ``entry[*].changes[*].value.statuses[]``.
+
+    Meta envía uno o más statuses por webhook delivery (sent / delivered /
+    read / failed). El `pricing` puede faltar (e.g. ``status=failed`` sin
+    delivery exitoso), por eso es ``dict | None``.
+
+    HU-WA24H-001 F1.10 — ver `IngestDeliveryStatus` use case.
+    """
+
+    wa_message_id: str
+    status: str  # "sent" | "delivered" | "read" | "failed"
+    pricing: dict[str, Any] | None  # {billable, pricing_type, category} | None
+
+
+def parse_whatsapp_statuses(body: dict) -> list[WhatsAppStatusUpdate]:
+    """Extrae el array `statuses[]` del webhook Meta.
+
+    Defensivo contra shapes malformadas: si el body no tiene la estructura
+    esperada devuelve ``[]`` (NO levanta — los inbound messages se siguen
+    parseando aparte). Solo levanta ``ValueError`` para shapes obviamente
+    inválidas que `parse_whatsapp_inbound` también rechaza.
+
+    Cada status del array tiene shape Meta:
+        {"id": "wamid.HBg...", "status": "delivered",
+         "timestamp": "...", "recipient_id": "+57...",
+         "pricing": {"billable": true, "pricing_type": "regular",
+                     "category": "marketing"}}
+
+    Retorna lista vacía si no hay ``statuses[]`` o todos son malformados.
+    """
+    if not isinstance(body, dict):
+        return []
+    entries = body.get("entry")
+    if not isinstance(entries, list):
+        return []
+
+    out: list[WhatsAppStatusUpdate] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        changes = entry.get("changes")
+        if not isinstance(changes, list):
+            continue
+        for change in changes:
+            if not isinstance(change, dict):
+                continue
+            value = change.get("value")
+            if not isinstance(value, dict):
+                continue
+            statuses = value.get("statuses")
+            if not isinstance(statuses, list):
+                continue
+            for status in statuses:
+                if not isinstance(status, dict):
+                    continue
+                wa_message_id = status.get("id")
+                status_kind = status.get("status")
+                if not isinstance(wa_message_id, str) or not isinstance(
+                    status_kind, str
+                ):
+                    continue
+                pricing = status.get("pricing")
+                # pricing puede ser dict o ausente; ambos son válidos
+                if pricing is not None and not isinstance(pricing, dict):
+                    pricing = None
+                out.append(
+                    WhatsAppStatusUpdate(
+                        wa_message_id=wa_message_id,
+                        status=status_kind,
+                        pricing=pricing,
+                    )
+                )
+    return out
+
+
 def _parse_referral(obj: Any) -> dict[str, Any] | None:
     """Extrae el objeto referral completo de un inbound CTWA / FB post.
 

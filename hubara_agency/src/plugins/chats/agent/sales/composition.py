@@ -38,8 +38,12 @@ from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.session_history import FilesystemMessageHistoryStore
 from src.platform.state import FilesystemMetadataStore as _PlatformFsMetaStore  # noqa: F401
 from src.platform.temporal.client import get_temporal_client
+from src.platform.whatsapp.composition import get_current_rate_card
 from src.plugins.chats.agent.sales.config.env import get_workspace_path
 from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
+from src.plugins.chats.agent.sales.use_cases.ingest_delivery_status import (
+    IngestDeliveryStatus,
+)
 from src.plugins.chats.agent.sales.use_cases.ingest_inbound_message import (
     IngestInboundMessage,
 )
@@ -49,6 +53,7 @@ from src.plugins.chats.agent.sales.use_cases.load_or_start_sales_session import 
 
 
 _INGEST_USE_CASE: IngestInboundMessage | None = None
+_DELIVERY_STATUS_USE_CASE: IngestDeliveryStatus | None = None
 
 
 def build_ingest_use_case() -> IngestInboundMessage:
@@ -94,3 +99,32 @@ def build_ingest_use_case() -> IngestInboundMessage:
         tenant_id=tenant_id,
     )
     return _INGEST_USE_CASE
+
+
+def build_ingest_delivery_status_use_case() -> IngestDeliveryStatus:
+    """Singleton del `IngestDeliveryStatus` use case (HU-WA24H-001 F1.10).
+
+    Consumido por el handler `statuses[]` del webhook FastAPI. Reusa el
+    `MetadataStore` + `EventBus` que ya construye `build_ingest_use_case`,
+    y agrega:
+
+      * `RateCard` vigente (singleton del composition root WhatsApp).
+      * `vault_dir` para escanear sesiones por wa_message_id.
+      * Dead-letter path en `<vault>/_orphan_delivery_statuses.jsonl`.
+    """
+    global _DELIVERY_STATUS_USE_CASE
+    if _DELIVERY_STATUS_USE_CASE is not None:
+        return _DELIVERY_STATUS_USE_CASE
+
+    metadata_store = FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
+    event_bus = setup_analytics()
+    tenant_id = os.getenv("HUBARA_TENANT_ID", "hubara")
+
+    _DELIVERY_STATUS_USE_CASE = IngestDeliveryStatus(
+        metadata_store=metadata_store,
+        rate_card=get_current_rate_card(),
+        event_bus=event_bus,
+        vault_dir=WORKSPACE_VAULT_DIR,
+        tenant_id=tenant_id,
+    )
+    return _DELIVERY_STATUS_USE_CASE

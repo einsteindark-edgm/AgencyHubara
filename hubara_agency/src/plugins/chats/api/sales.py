@@ -13,8 +13,14 @@ import structlog
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from src.platform.config import WHATSAPP_VERIFY_TOKEN
-from src.plugins.chats.agent.sales.composition import build_ingest_use_case
-from src.plugins.chats.agent.sales.parsers import parse_whatsapp_inbound
+from src.plugins.chats.agent.sales.composition import (
+    build_ingest_delivery_status_use_case,
+    build_ingest_use_case,
+)
+from src.plugins.chats.agent.sales.parsers import (
+    parse_whatsapp_inbound,
+    parse_whatsapp_statuses,
+)
 
 logger = structlog.get_logger()
 
@@ -36,8 +42,32 @@ async def verify_webhook(request: Request):
 
 @router.post("/webhook")
 async def handle_whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
-    """Receives JSON body directly and frees connection to prevent Timeout."""
+    """Receives JSON body directly and frees connection to prevent Timeout.
+
+    Dos clases de eventos pueden venir en el mismo body (Meta los puede
+    mezclar pero típicamente un body trae UNO):
+
+    * `entry[*].changes[*].value.messages[]` — inbound del cliente.
+      Delegado a `IngestInboundMessage` (legacy path).
+    * `entry[*].changes[*].value.statuses[]` — delivery status de un
+      outbound nuestro (HU-WA24H-001 F1.10). Delegado a
+      `IngestDeliveryStatus` para materializar cost + summary.
+
+    Ambos handlers corren como background tasks — devolvemos 200 al toque
+    para evitar timeout de Meta.
+    """
     body = await request.json()
+
+    # Statuses primero — no requieren ser mutuamente excluyentes con
+    # messages (Meta podría enviarlos juntos).
+    for status_update in parse_whatsapp_statuses(body):
+        delivery_use_case = build_ingest_delivery_status_use_case()
+        background_tasks.add_task(
+            delivery_use_case.execute,
+            status_update.wa_message_id,
+            status_update.status,
+            status_update.pricing,
+        )
 
     try:
         parsed = parse_whatsapp_inbound(body)
@@ -46,7 +76,7 @@ async def handle_whatsapp_webhook(request: Request, background_tasks: Background
         raise HTTPException(status_code=400, detail=f"malformed payload: {exc}")
 
     if parsed is None:
-        # Status update or other non-message event: ack 200 without dispatch.
+        # Sin messages[] — ya despachamos los statuses arriba (si había).
         return {"status": "ok"}
 
     use_case = build_ingest_use_case()
