@@ -1,0 +1,137 @@
+# =============================================================================
+# Customer Scoring Rules — v1
+# =============================================================================
+#
+# Este file define cómo el dashboard "Historial cliente" califica a cada
+# cliente (panel del OrdersInspector). Editable EN CALIENTE: cambios acá se
+# aplican al siguiente request sin redeploy (hot-reload por mtime).
+#
+# Si el YAML queda inválido después de un edit, el sistema sigue usando la
+# última versión válida y loguea WARNING — no rompe el dashboard. Para forzar
+# reload: tocar el mtime del file o reiniciar el container.
+#
+# Las features que las rules pueden consultar vienen de
+# `platform/customer_scoring/features.py::CustomerFeatures`. Las features
+# canónicas RFM (Recency-Frequency-Monetary) son:
+#   * monetary_cop          - suma de totales de órdenes ganadas (COP major)
+#   * frequency_total       - # de COMPRA_EXITOSA del cliente
+#   * recency_days          - días desde última venta (None = nunca compró)
+#   * lost_ratio            - # RECHAZO / (won + lost)
+#   * episodes_total        - # episodios totales (incluye activos)
+#   * first_seen_days_ago   - antigüedad del cliente
+#   * msgs_avg_to_close     - fricción (msgs/episodio cerrado)
+#   * episodes_active       - episodios actualmente abiertos
+#
+# Operadores en `when:` y bin upper:
+#   ">=", "<=", ">", "<", "==", "!="
+#
+# Cambios → bump `version`. El score persiste con el rules_version que lo
+# computó (auditoría).
+#
+# =============================================================================
+
+version: 1
+description: "Customer scoring v1 — RFM clásico adaptado a sales WhatsApp."
+
+# -----------------------------------------------------------------------------
+# Tag categórico — la PRIMERA regla que matchea wins.
+# Si ninguna matchea → "Estándar".
+# -----------------------------------------------------------------------------
+tags:
+  - name: "VIP"
+    when:
+      monetary_cop: { ">=": 1000000 }
+      frequency_total: { ">=": 3 }
+
+  - name: "Recurrente"
+    when:
+      frequency_total: { ">=": 2 }
+
+  - name: "Nuevo"
+    when:
+      episodes_total: { "<=": 1 }
+      first_seen_days_ago: { "<=": 7 }
+
+  - name: "Frío"
+    when:
+      recency_days: { ">=": 60 }
+      lost_ratio: { ">=": 0.5 }
+
+# -----------------------------------------------------------------------------
+# Score 0-100 — suma de bins por feature.
+#
+# Para cada `score_weights[]`, buscamos el PRIMER bin cuyo `upper` cubre el
+# valor de la feature. El último bin sin `upper` es el "default/cap" (se aplica
+# si todos los bins anteriores no cubrieron).
+#
+# Total estimado: monetary (40) + frequency (25) + recency (25) + lost_ratio
+# (10) = 100 puntos máx.
+# -----------------------------------------------------------------------------
+score_weights:
+  - feature: monetary_cop
+    bins:
+      - { upper: 200000,   points: 5 }    # < 200k → 5 pts
+      - { upper: 500000,   points: 15 }   # 200k–500k → 15 pts
+      - { upper: 1000000,  points: 25 }   # 500k–1M → 25 pts
+      - { upper: 2000000,  points: 35 }   # 1M–2M → 35 pts
+      - { points: 40 }                     # > 2M → cap 40 pts
+
+  - feature: frequency_total
+    bins:
+      - { upper: 0, points: 0 }   # nunca compró
+      - { upper: 1, points: 5 }   # 1 compra
+      - { upper: 3, points: 15 }  # 2-3 compras
+      - { points: 25 }            # 4+ compras
+
+  - feature: recency_days
+    bins:
+      - { upper: 7,   points: 25 }  # última semana
+      - { upper: 30,  points: 18 }  # último mes
+      - { upper: 90,  points: 10 }  # último trimestre
+      - { upper: 180, points: 3 }   # último semestre
+      - { points: 0 }               # >6m o nunca
+
+  - feature: lost_ratio
+    bins:
+      - { upper: 0.2, points: 10 }   # <20% rechazos → bonus
+      - { upper: 0.5, points: 0 }    # 20-50% → neutral
+      - { points: -10 }              # >50% → penaliza
+
+# -----------------------------------------------------------------------------
+# Letter grade — primer rule cuyo `min` es <= score.
+# Internal sort hace este matching descendente.
+# -----------------------------------------------------------------------------
+score_letter:
+  - { min: 80, letter: "A", reason: "Cliente de alto valor, muy activo" }
+  - { min: 60, letter: "B", reason: "Cliente sólido, comportamiento positivo" }
+  - { min: 40, letter: "C", reason: "Cliente promedio" }
+  - { min: 0,  letter: "D", reason: "Cliente de bajo valor o frío" }
+
+# -----------------------------------------------------------------------------
+# Reason hints — primer que matchea sobreescribe la `reason` del letter rule.
+# Útil para mensajes contextuales cuando el score por sí solo no cuenta la
+# historia (e.g. cliente A pero hace 80 días que no compra → "Necesita
+# reactivación").
+# -----------------------------------------------------------------------------
+reason_hints:
+  - when:
+      monetary_cop: { ">=": 1000000 }
+      recency_days: { ">=": 60 }
+    message: "Cliente de alto valor pero frío — recomendamos reactivación"
+
+  - when:
+      lost_ratio: { ">=": 0.5 }
+    message: "Histórico de rechazos altos — revisar pricing o producto"
+
+  - when:
+      monetary_cop: { ">=": 1000000 }
+    message: "Alta probabilidad de recompra — cliente premium"
+
+  - when:
+      episodes_total: { "<=": 1 }
+      first_seen_days_ago: { "<=": 7 }
+    message: "Cliente nuevo — primer episodio reciente"
+
+  - when:
+      recency_days: { ">=": 90 }
+    message: "Sin actividad reciente — riesgo de churn"
