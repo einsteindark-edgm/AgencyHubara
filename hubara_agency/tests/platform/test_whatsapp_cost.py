@@ -1,7 +1,7 @@
 """Tests del cost helper de WhatsApp Cloud API.
 
 Cubre:
-  * compute_message_cost_cents — todos los pricing_types + missing category.
+  * compute_message_cost_micros — todos los pricing_types + missing category.
   * add_outbound_to_summary — agregado inicial (billable / free / pending).
   * materialize_pending_in_summary — resolución de pending al llegar webhook.
   * load_rate_card_from_yaml — carga del YAML real Colombia Q2 2026.
@@ -19,7 +19,7 @@ from src.platform.whatsapp.cost import (
     RateCard,
     RateCardEntry,
     add_outbound_to_summary,
-    compute_message_cost_cents,
+    compute_message_cost_micros,
     empty_episode_cost_summary,
     load_rate_card_from_yaml,
     materialize_pending_in_summary,
@@ -40,17 +40,17 @@ def co_q2_2026() -> RateCard:
         country="CO",
         currency="USD",
         rates={
-            "marketing": RateCardEntry(cents_per_message=125),
-            "utility": RateCardEntry(cents_per_message=8),
-            "authentication": RateCardEntry(cents_per_message=8),
-            "authentication_international": RateCardEntry(cents_per_message=None),
-            "service": RateCardEntry(cents_per_message=0),
+            "marketing": RateCardEntry(usd_micros_per_message=12500),
+            "utility": RateCardEntry(usd_micros_per_message=800),
+            "authentication": RateCardEntry(usd_micros_per_message=800),
+            "authentication_international": RateCardEntry(usd_micros_per_message=None),
+            "service": RateCardEntry(usd_micros_per_message=0),
         },
     )
 
 
 # =============================================================================
-# compute_message_cost_cents
+# compute_message_cost_micros
 # =============================================================================
 
 
@@ -59,7 +59,7 @@ class TestComputeMessageCostCents:
         pricing = PricingSnapshot(
             billable=False, pricing_type="regular", category="marketing"
         )
-        assert compute_message_cost_cents(pricing, co_q2_2026) == 0
+        assert compute_message_cost_micros(pricing, co_q2_2026) == 0
 
     def test_free_customer_service_is_zero(self, co_q2_2026: RateCard):
         pricing = PricingSnapshot(
@@ -67,7 +67,7 @@ class TestComputeMessageCostCents:
             pricing_type="free_customer_service",
             category="utility",
         )
-        assert compute_message_cost_cents(pricing, co_q2_2026) == 0
+        assert compute_message_cost_micros(pricing, co_q2_2026) == 0
 
     def test_free_entry_point_is_zero(self, co_q2_2026: RateCard):
         # CTWA dentro de 72h — cualquier category gratis, incluso marketing.
@@ -76,25 +76,25 @@ class TestComputeMessageCostCents:
             pricing_type="free_entry_point",
             category="marketing",
         )
-        assert compute_message_cost_cents(pricing, co_q2_2026) == 0
+        assert compute_message_cost_micros(pricing, co_q2_2026) == 0
 
     def test_regular_marketing_charges_full_rate(self, co_q2_2026: RateCard):
         pricing = PricingSnapshot(
             billable=True, pricing_type="regular", category="marketing"
         )
-        assert compute_message_cost_cents(pricing, co_q2_2026) == 125
+        assert compute_message_cost_micros(pricing, co_q2_2026) == 12500
 
     def test_regular_utility_charges_full_rate(self, co_q2_2026: RateCard):
         pricing = PricingSnapshot(
             billable=True, pricing_type="regular", category="utility"
         )
-        assert compute_message_cost_cents(pricing, co_q2_2026) == 8
+        assert compute_message_cost_micros(pricing, co_q2_2026) == 800
 
     def test_regular_authentication_charges_full_rate(self, co_q2_2026: RateCard):
         pricing = PricingSnapshot(
             billable=True, pricing_type="regular", category="authentication"
         )
-        assert compute_message_cost_cents(pricing, co_q2_2026) == 8
+        assert compute_message_cost_micros(pricing, co_q2_2026) == 800
 
     def test_unpriced_category_returns_zero(self, co_q2_2026: RateCard):
         # authentication_international tiene None en Colombia Q2.
@@ -103,7 +103,7 @@ class TestComputeMessageCostCents:
             pricing_type="regular",
             category="authentication_international",
         )
-        assert compute_message_cost_cents(pricing, co_q2_2026) == 0
+        assert compute_message_cost_micros(pricing, co_q2_2026) == 0
 
     def test_missing_category_returns_zero(self, co_q2_2026: RateCard):
         # Defensivo: si Meta agrega una category nueva y nuestro rate card
@@ -111,7 +111,7 @@ class TestComputeMessageCostCents:
         pricing = PricingSnapshot(
             billable=True, pricing_type="regular", category="brand_new_category"
         )
-        assert compute_message_cost_cents(pricing, co_q2_2026) == 0
+        assert compute_message_cost_micros(pricing, co_q2_2026) == 0
 
 
 # =============================================================================
@@ -128,7 +128,7 @@ class TestAddOutboundToSummary:
             kind="template",
             template_name="quote_ready_utility_v1",
             pricing=None,
-            cost_cents_usd=None,
+            cost_usd_micros=None,
             rate_card_version=None,
         )
 
@@ -138,7 +138,7 @@ class TestAddOutboundToSummary:
         assert result.messages_pending_count == 1
         assert result.messages_billable_count == 0
         assert result.messages_free_count == 0
-        assert result.total_cents_usd == 0
+        assert result.total_usd_micros == 0
         assert result.by_category == {}
         assert result.by_pricing_type == {}
 
@@ -155,7 +155,7 @@ class TestAddOutboundToSummary:
             kind="text",
             template_name=None,
             pricing=pricing,
-            cost_cents_usd=0,
+            cost_usd_micros=0,
             rate_card_version="co_2026q2_v1",
         )
 
@@ -165,11 +165,11 @@ class TestAddOutboundToSummary:
         assert result.messages_free_count == 1
         assert result.messages_billable_count == 0
         assert result.messages_pending_count == 0
-        assert result.total_cents_usd == 0
+        assert result.total_usd_micros == 0
         # Count en breakdown sube pero cents queda en 0.
-        assert result.by_category["utility"] == CategoryCostBreakdown(count=1, cents_usd=0)
+        assert result.by_category["utility"] == CategoryCostBreakdown(count=1, usd_micros=0)
         assert result.by_pricing_type["free_customer_service"] == CategoryCostBreakdown(
-            count=1, cents_usd=0
+            count=1, usd_micros=0
         )
 
     def test_billable_message_increments_total_and_breakdowns(self):
@@ -183,7 +183,7 @@ class TestAddOutboundToSummary:
             kind="template",
             template_name="cart_recovery_marketing_v1",
             pricing=pricing,
-            cost_cents_usd=125,
+            cost_usd_micros=12500,
             rate_card_version="co_2026q2_v1",
         )
 
@@ -191,12 +191,12 @@ class TestAddOutboundToSummary:
 
         assert result.messages_count == 1
         assert result.messages_billable_count == 1
-        assert result.total_cents_usd == 125
+        assert result.total_usd_micros == 12500
         assert result.by_category["marketing"] == CategoryCostBreakdown(
-            count=1, cents_usd=125
+            count=1, usd_micros=12500
         )
         assert result.by_pricing_type["regular"] == CategoryCostBreakdown(
-            count=1, cents_usd=125
+            count=1, usd_micros=12500
         )
 
     def test_mixed_sequence_maintains_invariants(self):
@@ -211,7 +211,7 @@ class TestAddOutboundToSummary:
                 kind="text",
                 template_name=None,
                 pricing=None,
-                cost_cents_usd=None,
+                cost_usd_micros=None,
                 rate_card_version=None,
             ),
         )
@@ -228,7 +228,7 @@ class TestAddOutboundToSummary:
                     pricing_type="free_customer_service",
                     category="utility",
                 ),
-                cost_cents_usd=0,
+                cost_usd_micros=0,
                 rate_card_version="co_2026q2_v1",
             ),
         )
@@ -243,7 +243,7 @@ class TestAddOutboundToSummary:
                 pricing=PricingSnapshot(
                     billable=True, pricing_type="regular", category="marketing"
                 ),
-                cost_cents_usd=125,
+                cost_usd_micros=12500,
                 rate_card_version="co_2026q2_v1",
             ),
         )
@@ -258,7 +258,7 @@ class TestAddOutboundToSummary:
                 pricing=PricingSnapshot(
                     billable=True, pricing_type="regular", category="utility"
                 ),
-                cost_cents_usd=8,
+                cost_usd_micros=800,
                 rate_card_version="co_2026q2_v1",
             ),
         )
@@ -267,25 +267,25 @@ class TestAddOutboundToSummary:
         assert summary.messages_pending_count == 1
         assert summary.messages_free_count == 1
         assert summary.messages_billable_count == 2
-        assert summary.total_cents_usd == 133
+        assert summary.total_usd_micros == 13300
 
-        # Invariante: total == sum(by_category[*].cents_usd)
-        total_from_cat = sum(b.cents_usd for b in summary.by_category.values())
-        assert total_from_cat == summary.total_cents_usd
+        # Invariante: total == sum(by_category[*].usd_micros)
+        total_from_cat = sum(b.usd_micros for b in summary.by_category.values())
+        assert total_from_cat == summary.total_usd_micros
 
-        # Invariante: total == sum(by_pricing_type[*].cents_usd)
+        # Invariante: total == sum(by_pricing_type[*].usd_micros)
         total_from_type = sum(
-            b.cents_usd for b in summary.by_pricing_type.values()
+            b.usd_micros for b in summary.by_pricing_type.values()
         )
-        assert total_from_type == summary.total_cents_usd
+        assert total_from_type == summary.total_usd_micros
 
         # by_category solo tiene entradas para outbounds con pricing
         # (3: 1 free utility + 1 marketing + 1 billable utility = 2 en utility, 1 en marketing).
         assert summary.by_category["utility"] == CategoryCostBreakdown(
-            count=2, cents_usd=8
+            count=2, usd_micros=800
         )
         assert summary.by_category["marketing"] == CategoryCostBreakdown(
-            count=1, cents_usd=125
+            count=1, usd_micros=12500
         )
 
 
@@ -306,7 +306,7 @@ class TestMaterializePendingInSummary:
                 kind="template",
                 template_name="quote",
                 pricing=None,
-                cost_cents_usd=None,
+                cost_usd_micros=None,
                 rate_card_version=None,
             ),
         )
@@ -322,16 +322,16 @@ class TestMaterializePendingInSummary:
             pricing=PricingSnapshot(
                 billable=True, pricing_type="regular", category="utility"
             ),
-            cost_cents_usd=8,
+            cost_usd_micros=800,
             rate_card_version="co_2026q2_v1",
         )
         summary = materialize_pending_in_summary(summary, resolved)
 
         assert summary.messages_pending_count == 0
         assert summary.messages_billable_count == 1
-        assert summary.total_cents_usd == 8
+        assert summary.total_usd_micros == 800
         assert summary.by_category["utility"] == CategoryCostBreakdown(
-            count=1, cents_usd=8
+            count=1, usd_micros=800
         )
 
     def test_pending_resolves_to_free(self):
@@ -344,7 +344,7 @@ class TestMaterializePendingInSummary:
                 kind="text",
                 template_name=None,
                 pricing=None,
-                cost_cents_usd=None,
+                cost_usd_micros=None,
                 rate_card_version=None,
             ),
         )
@@ -359,14 +359,14 @@ class TestMaterializePendingInSummary:
                 pricing_type="free_customer_service",
                 category="service",
             ),
-            cost_cents_usd=0,
+            cost_usd_micros=0,
             rate_card_version="co_2026q2_v1",
         )
         summary = materialize_pending_in_summary(summary, resolved)
 
         assert summary.messages_pending_count == 0
         assert summary.messages_free_count == 1
-        assert summary.total_cents_usd == 0
+        assert summary.total_usd_micros == 0
 
     def test_idempotent_when_pending_already_zero(self):
         """Defensa: webhook duplicado (Meta a veces reenvía) NO debe
@@ -382,7 +382,7 @@ class TestMaterializePendingInSummary:
             pricing=PricingSnapshot(
                 billable=True, pricing_type="regular", category="utility"
             ),
-            cost_cents_usd=8,
+            cost_usd_micros=800,
             rate_card_version="co_2026q2_v1",
         )
         summary = materialize_pending_in_summary(summary, resolved)
@@ -391,7 +391,7 @@ class TestMaterializePendingInSummary:
         assert summary.messages_pending_count == 0
         # Pero el total y billable count sí suben (es un mensaje real).
         assert summary.messages_billable_count == 1
-        assert summary.total_cents_usd == 8
+        assert summary.total_usd_micros == 800
 
     def test_unresolved_log_entry_does_not_corrupt_summary(self):
         """Si por error el caller pasa un log_entry con cost None,
@@ -405,7 +405,7 @@ class TestMaterializePendingInSummary:
                 kind="text",
                 template_name=None,
                 pricing=None,
-                cost_cents_usd=None,
+                cost_usd_micros=None,
                 rate_card_version=None,
             ),
         )
@@ -417,7 +417,7 @@ class TestMaterializePendingInSummary:
             kind="text",
             template_name=None,
             pricing=None,
-            cost_cents_usd=None,
+            cost_usd_micros=None,
             rate_card_version=None,
         )
         after = materialize_pending_in_summary(summary, unresolved)
@@ -437,22 +437,22 @@ class TestLoadRateCardFromYaml:
         assert rate_card.version == "co_2026q2_v1"
         assert rate_card.country == "CO"
         assert rate_card.currency == "USD"
-        assert rate_card.rates["marketing"].cents_per_message == 125
-        assert rate_card.rates["utility"].cents_per_message == 8
-        assert rate_card.rates["authentication"].cents_per_message == 8
+        assert rate_card.rates["marketing"].usd_micros_per_message == 12500
+        assert rate_card.rates["utility"].usd_micros_per_message == 800
+        assert rate_card.rates["authentication"].usd_micros_per_message == 800
         assert (
-            rate_card.rates["authentication_international"].cents_per_message is None
+            rate_card.rates["authentication_international"].usd_micros_per_message is None
         )
-        assert rate_card.rates["service"].cents_per_message == 0
+        assert rate_card.rates["service"].usd_micros_per_message == 0
 
     def test_raises_when_version_not_found(self):
         with pytest.raises(FileNotFoundError, match="Rate card YAML not found"):
             load_rate_card_from_yaml("nonexistent_version_999")
 
     def test_integration_compute_cost_with_real_yaml(self):
-        """E2E: rate card real cargado del YAML + compute_message_cost_cents."""
+        """E2E: rate card real cargado del YAML + compute_message_cost_micros."""
         rate_card = load_rate_card_from_yaml("co_2026q2_v1")
         pricing = PricingSnapshot(
             billable=True, pricing_type="regular", category="marketing"
         )
-        assert compute_message_cost_cents(pricing, rate_card) == 125
+        assert compute_message_cost_micros(pricing, rate_card) == 12500

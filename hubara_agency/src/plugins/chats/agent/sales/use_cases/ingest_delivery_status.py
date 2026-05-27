@@ -22,10 +22,10 @@ Algoritmo:
   4. Si persiste sin encontrarlo → dead-letter a
      `<vault>/_orphan_delivery_statuses.jsonl`.
   5. Si el episodio está cerrado → dead-letter (no mutar summary).
-  6. Si la entry ya está materializada (cost_cents_usd != None) → emitir
+  6. Si la entry ya está materializada (cost_usd_micros != None) → emitir
      analytic event pero NO duplicar el delta en summary (defensa contra
      webhook duplicado de Meta).
-  7. Path feliz: computar cost via `compute_message_cost_cents`, reemplazar
+  7. Path feliz: computar cost via `compute_message_cost_micros`, reemplazar
      el entry en `outbound_messages[]` y llamar
      `materialize_pending_in_summary` para reflejar el cost.
   8. Emitir `wa_delivery_status` event.
@@ -58,7 +58,7 @@ from src.platform.whatsapp.cost import (
     OutboundLogEntry,
     PricingSnapshot,
     RateCard,
-    compute_message_cost_cents,
+    compute_message_cost_micros,
     empty_episode_cost_summary,
     materialize_pending_in_summary,
 )
@@ -147,7 +147,7 @@ class IngestDeliveryStatus:
                 wa_message_id=wa_message_id,
                 status=status,
                 snapshot=snapshot,
-                cost_cents_usd=None,
+                cost_usd_micros=None,
             )
             return
 
@@ -187,7 +187,7 @@ class IngestDeliveryStatus:
                 wa_message_id=wa_message_id,
                 status=status,
                 snapshot=snapshot,
-                cost_cents_usd=None,
+                cost_usd_micros=None,
             )
             return
 
@@ -207,7 +207,7 @@ class IngestDeliveryStatus:
         )
 
         # 3. Sin pricing (status=failed sin pricing object): emitir el
-        # status pero NO tocar cost. El entry queda con cost_cents_usd=None
+        # status pero NO tocar cost. El entry queda con cost_usd_micros=None
         # (sigue en pending_count). Defensa contra dataset incompleto de Meta.
         if snapshot is None:
             await self._emit_event(
@@ -215,7 +215,7 @@ class IngestDeliveryStatus:
                 wa_message_id=wa_message_id,
                 status=status,
                 snapshot=None,
-                cost_cents_usd=existing_entry.cost_cents_usd,
+                cost_usd_micros=existing_entry.cost_usd_micros,
             )
             return
 
@@ -223,13 +223,13 @@ class IngestDeliveryStatus:
         # webhook es duplicado. NO llamar materialize_pending_in_summary
         # (el helper acumularía total/by_category/by_pricing_type otra vez,
         # rompiendo invariantes — solo el pending_count está clamped a 0).
-        already_materialized = existing_entry.cost_cents_usd is not None
+        already_materialized = existing_entry.cost_usd_micros is not None
 
-        cost = compute_message_cost_cents(snapshot, self._rate_card)
+        cost = compute_message_cost_micros(snapshot, self._rate_card)
         new_entry = replace(
             existing_entry,
             pricing=snapshot,
-            cost_cents_usd=cost,
+            cost_usd_micros=cost,
             rate_card_version=self._rate_card.version,
         )
         outbound_messages[log_entry_idx] = _outbound_log_entry_to_dict(new_entry)
@@ -259,7 +259,7 @@ class IngestDeliveryStatus:
             wa_message_id=wa_message_id,
             status=status,
             snapshot=snapshot,
-            cost_cents_usd=cost,
+            cost_usd_micros=cost,
         )
 
     # =====================================================================
@@ -364,7 +364,7 @@ class IngestDeliveryStatus:
         wa_message_id: str,
         status: str,
         snapshot: PricingSnapshot | None,
-        cost_cents_usd: int | None,
+        cost_usd_micros: int | None,
     ) -> None:
         if self._event_bus is None:
             return
@@ -376,7 +376,7 @@ class IngestDeliveryStatus:
             pricing_type=snapshot.pricing_type if snapshot else None,
             category=snapshot.category if snapshot else None,
             billable=snapshot.billable if snapshot else None,
-            cost_cents_usd=cost_cents_usd,
+            cost_usd_micros=cost_usd_micros,
         )
         try:
             await self._event_bus.record(event)
@@ -427,7 +427,7 @@ def _outbound_log_entry_from_dict(d: dict[str, Any]) -> OutboundLogEntry:
         kind=str(d.get("kind", "")),
         template_name=d.get("template_name"),
         pricing=pricing,
-        cost_cents_usd=d.get("cost_cents_usd"),
+        cost_usd_micros=d.get("cost_usd_micros"),
         rate_card_version=d.get("rate_card_version"),
     )
 
@@ -441,7 +441,7 @@ def _outbound_log_entry_to_dict(entry: OutboundLogEntry) -> dict[str, Any]:
         "kind": entry.kind,
         "template_name": entry.template_name,
         "pricing": pricing_dict,
-        "cost_cents_usd": entry.cost_cents_usd,
+        "cost_usd_micros": entry.cost_usd_micros,
         "rate_card_version": entry.rate_card_version,
     }
 
@@ -454,7 +454,7 @@ def _summary_from_episode(episode: dict[str, Any]) -> EpisodeCostSummary:
     by_category = {
         k: CategoryCostBreakdown(
             count=int(v.get("count", 0)),
-            cents_usd=int(v.get("cents_usd", 0)),
+            usd_micros=int(v.get("usd_micros", 0)),
         )
         for k, v in (raw.get("by_category") or {}).items()
         if isinstance(v, dict)
@@ -462,13 +462,13 @@ def _summary_from_episode(episode: dict[str, Any]) -> EpisodeCostSummary:
     by_pricing_type = {
         k: CategoryCostBreakdown(
             count=int(v.get("count", 0)),
-            cents_usd=int(v.get("cents_usd", 0)),
+            usd_micros=int(v.get("usd_micros", 0)),
         )
         for k, v in (raw.get("by_pricing_type") or {}).items()
         if isinstance(v, dict)
     }
     return EpisodeCostSummary(
-        total_cents_usd=int(raw.get("total_cents_usd", 0)),
+        total_usd_micros=int(raw.get("total_usd_micros", 0)),
         messages_count=int(raw.get("messages_count", 0)),
         messages_billable_count=int(raw.get("messages_billable_count", 0)),
         messages_free_count=int(raw.get("messages_free_count", 0)),
@@ -481,17 +481,17 @@ def _summary_from_episode(episode: dict[str, Any]) -> EpisodeCostSummary:
 def _summary_to_dict(summary: EpisodeCostSummary) -> dict[str, Any]:
     """Serializa EpisodeCostSummary a dict JSON-safe."""
     return {
-        "total_cents_usd": summary.total_cents_usd,
+        "total_usd_micros": summary.total_usd_micros,
         "messages_count": summary.messages_count,
         "messages_billable_count": summary.messages_billable_count,
         "messages_free_count": summary.messages_free_count,
         "messages_pending_count": summary.messages_pending_count,
         "by_category": {
-            k: {"count": v.count, "cents_usd": v.cents_usd}
+            k: {"count": v.count, "usd_micros": v.usd_micros}
             for k, v in summary.by_category.items()
         },
         "by_pricing_type": {
-            k: {"count": v.count, "cents_usd": v.cents_usd}
+            k: {"count": v.count, "usd_micros": v.usd_micros}
             for k, v in summary.by_pricing_type.items()
         },
     }

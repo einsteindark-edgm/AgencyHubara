@@ -46,10 +46,10 @@ def co_rate_card() -> RateCard:
         country="CO",
         currency="USD",
         rates={
-            "marketing": RateCardEntry(cents_per_message=125),
-            "utility": RateCardEntry(cents_per_message=8),
-            "authentication": RateCardEntry(cents_per_message=8),
-            "service": RateCardEntry(cents_per_message=0),
+            "marketing": RateCardEntry(usd_micros_per_message=12500),
+            "utility": RateCardEntry(usd_micros_per_message=800),
+            "authentication": RateCardEntry(usd_micros_per_message=800),
+            "service": RateCardEntry(usd_micros_per_message=0),
         },
     )
 
@@ -139,12 +139,12 @@ def _seed_episode_with_pending_entry(
                         "kind": kind,
                         "template_name": template_name,
                         "pricing": None,
-                        "cost_cents_usd": None,
+                        "cost_usd_micros": None,
                         "rate_card_version": None,
                     }
                 ],
                 "cost_summary": {
-                    "total_cents_usd": 0,
+                    "total_usd_micros": 0,
                     "messages_count": 1,
                     "messages_billable_count": 0,
                     "messages_free_count": 0,
@@ -192,7 +192,7 @@ async def test_regular_marketing_materializes_cost_and_summary(
 
     metadata = store.read(session_id)
     entry = metadata["episodes"][0]["outbound_messages"][0]
-    assert entry["cost_cents_usd"] == 125  # marketing Colombia Q2 2026
+    assert entry["cost_usd_micros"] == 12500  # marketing Colombia Q2 2026
     assert entry["rate_card_version"] == "co_2026q2_v1"
     assert entry["pricing"] == {
         "billable": True,
@@ -201,19 +201,19 @@ async def test_regular_marketing_materializes_cost_and_summary(
     }
 
     summary = metadata["episodes"][0]["cost_summary"]
-    assert summary["total_cents_usd"] == 125
+    assert summary["total_usd_micros"] == 12500
     assert summary["messages_billable_count"] == 1
     assert summary["messages_free_count"] == 0
     assert summary["messages_pending_count"] == 0
-    assert summary["by_category"]["marketing"] == {"count": 1, "cents_usd": 125}
-    assert summary["by_pricing_type"]["regular"] == {"count": 1, "cents_usd": 125}
+    assert summary["by_category"]["marketing"] == {"count": 1, "usd_micros": 12500}
+    assert summary["by_pricing_type"]["regular"] == {"count": 1, "usd_micros": 12500}
 
     # Analytics emitido
     assert len(sink.events) == 1
     event = sink.events[0]
     assert event.kind == "delivery_status"
     assert event.payload["status"] == "delivered"
-    assert event.payload["cost_cents_usd"] == 125
+    assert event.payload["cost_usd_micros"] == 12500
     assert event.payload["category"] == "marketing"
     assert event.correlation["session_id"] == session_id
 
@@ -252,18 +252,18 @@ async def test_free_customer_service_increments_free_count(
 
     metadata = store.read(session_id)
     entry = metadata["episodes"][0]["outbound_messages"][0]
-    assert entry["cost_cents_usd"] == 0  # dentro de ventana 24h → gratis
+    assert entry["cost_usd_micros"] == 0  # dentro de ventana 24h → gratis
     assert entry["rate_card_version"] == "co_2026q2_v1"
 
     summary = metadata["episodes"][0]["cost_summary"]
-    assert summary["total_cents_usd"] == 0
+    assert summary["total_usd_micros"] == 0
     assert summary["messages_billable_count"] == 0
     assert summary["messages_free_count"] == 1
     assert summary["messages_pending_count"] == 0
-    assert summary["by_category"]["service"] == {"count": 1, "cents_usd": 0}
+    assert summary["by_category"]["service"] == {"count": 1, "usd_micros": 0}
     assert summary["by_pricing_type"]["free_customer_service"] == {
         "count": 1,
-        "cents_usd": 0,
+        "usd_micros": 0,
     }
 
 
@@ -360,7 +360,7 @@ async def test_race_resolves_on_retry_via_sleeper_side_effect(
 
     metadata = store.read(session_id)
     entry = metadata["episodes"][0]["outbound_messages"][0]
-    assert entry["cost_cents_usd"] == 125
+    assert entry["cost_usd_micros"] == 12500
     # NO dead-letter (encontró en retry)
     dead_letter = vault_dir / "_orphan_delivery_statuses.jsonl"
     assert not dead_letter.exists()
@@ -405,12 +405,12 @@ async def test_duplicate_webhook_is_idempotent(
     metadata = store.read(session_id)
     summary = metadata["episodes"][0]["cost_summary"]
     # Invariantes intactos: NO double-count
-    assert summary["total_cents_usd"] == 125
+    assert summary["total_usd_micros"] == 12500
     assert summary["messages_billable_count"] == 1
     assert summary["messages_free_count"] == 0
     assert summary["messages_pending_count"] == 0
-    assert summary["by_category"]["marketing"] == {"count": 1, "cents_usd": 125}
-    assert summary["by_pricing_type"]["regular"] == {"count": 1, "cents_usd": 125}
+    assert summary["by_category"]["marketing"] == {"count": 1, "usd_micros": 12500}
+    assert summary["by_pricing_type"]["regular"] == {"count": 1, "usd_micros": 12500}
 
     # Invariante global: messages_count == billable + free + pending
     assert summary["messages_count"] == (
@@ -473,14 +473,14 @@ async def test_closed_episode_dead_letters_and_does_not_mutate_summary(
     assert post_summary == pre_summary
     # Entry tampoco se mutó
     entry = store.read(session_id)["episodes"][0]["outbound_messages"][0]
-    assert entry["cost_cents_usd"] is None
+    assert entry["cost_usd_micros"] is None
     assert entry["pricing"] is None
 
-    # Analytics emitido con session_id pero cost_cents_usd=None (dead-letter
+    # Analytics emitido con session_id pero cost_usd_micros=None (dead-letter
     # también es audit trail)
     assert len(sink.events) == 1
     assert sink.events[0].correlation["session_id"] == session_id
-    assert sink.events[0].payload["cost_cents_usd"] is None
+    assert sink.events[0].payload["cost_usd_micros"] is None
 
 
 # =============================================================================
@@ -514,9 +514,9 @@ async def test_status_without_pricing_does_not_touch_cost(
         pricing=None,  # no pricing object
     )
 
-    # Entry sigue como pending (cost_cents_usd=None)
+    # Entry sigue como pending (cost_usd_micros=None)
     entry = store.read(session_id)["episodes"][0]["outbound_messages"][0]
-    assert entry["cost_cents_usd"] is None
+    assert entry["cost_usd_micros"] is None
     assert entry["pricing"] is None
 
     # Summary sin cambios
@@ -529,7 +529,7 @@ async def test_status_without_pricing_does_not_touch_cost(
     assert event.payload["status"] == "failed"
     assert event.payload["pricing_type"] is None
     assert event.payload["category"] is None
-    assert event.payload["cost_cents_usd"] is None
+    assert event.payload["cost_usd_micros"] is None
 
 
 # =============================================================================
@@ -578,6 +578,6 @@ async def test_lookup_traverses_multiple_sessions(
     a = store.read("wa_+5730000001")["episodes"][0]["outbound_messages"][0]
     b = store.read("wa_+5730000002")["episodes"][0]["outbound_messages"][0]
     c = store.read("wa_+5730000003")["episodes"][0]["outbound_messages"][0]
-    assert a["cost_cents_usd"] is None
-    assert b["cost_cents_usd"] == 8  # utility = 8 cents
-    assert c["cost_cents_usd"] is None
+    assert a["cost_usd_micros"] is None
+    assert b["cost_usd_micros"] == 800  # utility = 800 micros = $0.0008
+    assert c["cost_usd_micros"] is None

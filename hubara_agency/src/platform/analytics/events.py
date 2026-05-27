@@ -192,13 +192,13 @@ def make_delivery_status(
     pricing_type: str | None = None,
     category: str | None = None,
     billable: bool | None = None,
-    cost_cents_usd: int | None = None,
+    cost_usd_micros: int | None = None,
 ) -> AnalyticsEvent:
     """Webhook `message_status` materializado de WhatsApp Cloud API.
 
     Emitido por `IngestDeliveryStatus` cada vez que Meta nos manda un update
     de delivery (sent/delivered/read/failed) sobre un outbound nuestro. Lleva
-    el `pricing` que Meta resolvió + el `cost_cents_usd` ya computado contra
+    el `pricing` que Meta resolvió + el `cost_usd_micros` ya computado contra
     el rate card local, para que dashboards downstream lo consuman directo
     sin re-cruzar pricing × rate card.
 
@@ -223,7 +223,7 @@ def make_delivery_status(
             "pricing_type": pricing_type,
             "category": category,
             "billable": billable,
-            "cost_cents_usd": cost_cents_usd,
+            "cost_usd_micros": cost_usd_micros,
         },
         tags=["outbound", "delivery_status", status],
     )

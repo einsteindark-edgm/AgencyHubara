@@ -8,12 +8,17 @@ Este módulo:
   1. Define los DTOs frozen (R-JSON) del pricing snapshot, rate card, log
      entry y episode summary.
   2. Carga rate cards versionados desde YAML (`rate_cards/<version>.yaml`).
-  3. Cruza `pricing` × `rate_card` → `cost_cents_usd` (int).
+  3. Cruza `pricing` × `rate_card` → `cost_usd_micros` (int).
   4. Mantiene el agregado `EpisodeCostSummary` precomputado.
 
 Mantenido 100% puro — sin Temporal, sin I/O al filesystem fuera del loader.
 El caller (use case `IngestDeliveryStatus`) toma el RateCard del composition
 root y pasa los DTOs por argumento.
+
+UNIDAD: **USD micros** (10^-6 USD por unit). Standard de la industria
+(Google Ads, Stripe, etc) para precios sub-cent. Permite representar el
+rate marketing Colombia de $0.0125 como int 12500 sin perder precision.
+Conversión: 1 cent = 10000 micros; $1 = 1_000_000 micros.
 
 Ver HU-WA24H-001 §3.4 para el contrato completo.
 """
@@ -28,6 +33,10 @@ import yaml
 
 
 log = logging.getLogger(__name__)
+
+
+#: Conversión de unit a USD: 1 micro = 10^-6 USD = 0.0001 cents.
+MICROS_PER_USD: int = 1_000_000
 
 
 # =============================================================================
@@ -52,11 +61,11 @@ class PricingSnapshot:
 
 @dataclass(frozen=True)
 class RateCardEntry:
-    """Un entry del rate card por category. `cents_per_message=None` indica
+    """Un entry del rate card por category. `usd_micros_per_message=None` indica
     que la category NO tiene precio publicado en este mercado (ej.
     authentication_international en Colombia al Q2 2026)."""
 
-    cents_per_message: int | None
+    usd_micros_per_message: int | None
 
 
 @dataclass(frozen=True)
@@ -79,7 +88,7 @@ class RateCard:
 class OutboundLogEntry:
     """Entry de `metadata.episodes[*].outbound_messages[]`.
 
-    `cost_cents_usd` y `rate_card_version` son None mientras el webhook
+    `cost_usd_micros` y `rate_card_version` son None mientras el webhook
     `message_status` con pricing no ha llegado. Cuando llega, se reemplaza
     el log entry vía `dataclasses.replace`.
     """
@@ -89,7 +98,7 @@ class OutboundLogEntry:
     kind: str  # "text" | "template" | "image" | "interactive_buttons" | ...
     template_name: str | None
     pricing: PricingSnapshot | None
-    cost_cents_usd: int | None
+    cost_usd_micros: int | None
     rate_card_version: str | None
 
 
@@ -98,7 +107,7 @@ class CategoryCostBreakdown:
     """Sub-agregado del cost_summary, por category o por pricing_type."""
 
     count: int
-    cents_usd: int
+    usd_micros: int
 
 
 @dataclass(frozen=True)
@@ -111,11 +120,11 @@ class EpisodeCostSummary:
     Invariantes:
       * messages_count == messages_billable_count + messages_free_count
                           + messages_pending_count
-      * total_cents_usd == sum(by_category[*].cents_usd)
-                        == sum(by_pricing_type[*].cents_usd)
+      * total_usd_micros == sum(by_category[*].usd_micros)
+                         == sum(by_pricing_type[*].usd_micros)
     """
 
-    total_cents_usd: int = 0
+    total_usd_micros: int = 0
     messages_count: int = 0
     messages_billable_count: int = 0
     messages_free_count: int = 0
@@ -135,19 +144,19 @@ FREE_PRICING_TYPES: frozenset[str] = frozenset(
 )
 
 
-def compute_message_cost_cents(
+def compute_message_cost_micros(
     pricing: PricingSnapshot,
     rate_card: RateCard,
 ) -> int:
-    """Devuelve costo en cents USD (entero) para UN mensaje outbound.
+    """Devuelve costo en USD micros (entero) para UN mensaje outbound.
 
     Reglas (en orden de precedencia):
       1. ``pricing.billable == False`` → 0
       2. ``pricing.pricing_type in FREE_PRICING_TYPES`` → 0
          (gratis dentro de ventana 24h o 72h CTWA)
       3. ``pricing.pricing_type == "regular"`` →
-         ``rate_card.rates[pricing.category].cents_per_message``
-      4. Si la category no está en el rate card o ``cents_per_message=None``
+         ``rate_card.rates[pricing.category].usd_micros_per_message``
+      4. Si la category no está en el rate card o ``usd_micros_per_message=None``
          (ej. authentication_international en Colombia) → 0 + warning log.
     """
     if not pricing.billable:
@@ -165,7 +174,7 @@ def compute_message_cost_cents(
             },
         )
         return 0
-    if entry.cents_per_message is None:
+    if entry.usd_micros_per_message is None:
         log.warning(
             "rate_card_category_unpriced",
             extra={
@@ -175,7 +184,7 @@ def compute_message_cost_cents(
             },
         )
         return 0
-    return entry.cents_per_message
+    return entry.usd_micros_per_message
 
 
 # =============================================================================
@@ -195,7 +204,7 @@ def add_outbound_to_summary(
 ) -> EpisodeCostSummary:
     """Acumula un outbound NUEVO al summary. Retorna un nuevo summary (frozen).
 
-    Distingue 3 estados según `log_entry.cost_cents_usd`:
+    Distingue 3 estados según `log_entry.cost_usd_micros`:
       * ``None``  → messages_pending_count += 1 (esperando webhook pricing)
       * ``0``     → messages_free_count += 1 (gratis dentro window/CTWA)
       * ``> 0``   → messages_billable_count += 1, total y breakdowns += cost
@@ -207,7 +216,7 @@ def add_outbound_to_summary(
     primera vez. Para resolver un pending (cuando llega el webhook con
     pricing), usar `materialize_pending_in_summary`.
     """
-    total = summary.total_cents_usd
+    total = summary.total_usd_micros
     messages_count = summary.messages_count + 1
     billable_count = summary.messages_billable_count
     free_count = summary.messages_free_count
@@ -215,26 +224,26 @@ def add_outbound_to_summary(
     by_category = dict(summary.by_category)
     by_pricing_type = dict(summary.by_pricing_type)
 
-    if log_entry.cost_cents_usd is None:
+    if log_entry.cost_usd_micros is None:
         pending_count += 1
-    elif log_entry.cost_cents_usd == 0:
+    elif log_entry.cost_usd_micros == 0:
         free_count += 1
         if log_entry.pricing is not None:
             _bump(by_category, log_entry.pricing.category, 0)
             _bump(by_pricing_type, log_entry.pricing.pricing_type, 0)
     else:
         billable_count += 1
-        total += log_entry.cost_cents_usd
+        total += log_entry.cost_usd_micros
         if log_entry.pricing is not None:
-            _bump(by_category, log_entry.pricing.category, log_entry.cost_cents_usd)
+            _bump(by_category, log_entry.pricing.category, log_entry.cost_usd_micros)
             _bump(
                 by_pricing_type,
                 log_entry.pricing.pricing_type,
-                log_entry.cost_cents_usd,
+                log_entry.cost_usd_micros,
             )
 
     return EpisodeCostSummary(
-        total_cents_usd=total,
+        total_usd_micros=total,
         messages_count=messages_count,
         messages_billable_count=billable_count,
         messages_free_count=free_count,
@@ -253,11 +262,11 @@ def materialize_pending_in_summary(
     Pasa pending_count -1 → billable/free según el cost resuelto. El total
     y los breakdowns se acumulan con el nuevo cost.
 
-    ASUME que `log_entry.cost_cents_usd` ya NO es None y que `log_entry.pricing`
+    ASUME que `log_entry.cost_usd_micros` ya NO es None y que `log_entry.pricing`
     está presente. Defensivo: si pending_count ya es 0, no decrementa
     (idempotente — protege contra duplicate webhook delivery).
     """
-    if log_entry.cost_cents_usd is None or log_entry.pricing is None:
+    if log_entry.cost_usd_micros is None or log_entry.pricing is None:
         # Defensa: caller no debería pasar un log_entry sin resolver. Devolver
         # summary sin cambios para no corromper invariantes.
         return summary
@@ -265,23 +274,23 @@ def materialize_pending_in_summary(
     pending_count = max(0, summary.messages_pending_count - 1)
     billable_count = summary.messages_billable_count
     free_count = summary.messages_free_count
-    total = summary.total_cents_usd
+    total = summary.total_usd_micros
     by_category = dict(summary.by_category)
     by_pricing_type = dict(summary.by_pricing_type)
 
-    if log_entry.cost_cents_usd == 0:
+    if log_entry.cost_usd_micros == 0:
         free_count += 1
         _bump(by_category, log_entry.pricing.category, 0)
         _bump(by_pricing_type, log_entry.pricing.pricing_type, 0)
     else:
         billable_count += 1
-        total += log_entry.cost_cents_usd
-        _bump(by_category, log_entry.pricing.category, log_entry.cost_cents_usd)
-        _bump(by_pricing_type, log_entry.pricing.pricing_type, log_entry.cost_cents_usd)
+        total += log_entry.cost_usd_micros
+        _bump(by_category, log_entry.pricing.category, log_entry.cost_usd_micros)
+        _bump(by_pricing_type, log_entry.pricing.pricing_type, log_entry.cost_usd_micros)
 
     return replace(
         summary,
-        total_cents_usd=total,
+        total_usd_micros=total,
         messages_billable_count=billable_count,
         messages_free_count=free_count,
         messages_pending_count=pending_count,
@@ -291,16 +300,16 @@ def materialize_pending_in_summary(
 
 
 def _bump(
-    breakdown: dict[str, CategoryCostBreakdown], key: str, cents_delta: int
+    breakdown: dict[str, CategoryCostBreakdown], key: str, micros_delta: int
 ) -> None:
-    """Incrementa el count y cents_usd del breakdown[key]. Mutates."""
+    """Incrementa el count y usd_micros del breakdown[key]. Mutates."""
     existing = breakdown.get(key)
     if existing is None:
-        breakdown[key] = CategoryCostBreakdown(count=1, cents_usd=cents_delta)
+        breakdown[key] = CategoryCostBreakdown(count=1, usd_micros=micros_delta)
     else:
         breakdown[key] = CategoryCostBreakdown(
             count=existing.count + 1,
-            cents_usd=existing.cents_usd + cents_delta,
+            usd_micros=existing.usd_micros + micros_delta,
         )
 
 
@@ -344,17 +353,17 @@ def _build_rate_card_from_dict(raw: dict[str, Any]) -> RateCard:
 
     rates: dict[str, RateCardEntry] = {}
     for category, entry_raw in rates_raw.items():
-        if not isinstance(entry_raw, dict) or "cents_per_message" not in entry_raw:
+        if not isinstance(entry_raw, dict) or "usd_micros_per_message" not in entry_raw:
             raise ValueError(
-                f"Rate card entry '{category}' must be {{cents_per_message: int|null}}"
+                f"Rate card entry '{category}' must be {{usd_micros_per_message: int|null}}"
             )
-        cents = entry_raw["cents_per_message"]
-        if cents is not None and not isinstance(cents, int):
+        micros = entry_raw["usd_micros_per_message"]
+        if micros is not None and not isinstance(micros, int):
             raise ValueError(
-                f"Rate card '{category}.cents_per_message' must be int|null, "
-                f"got {type(cents).__name__}"
+                f"Rate card '{category}.usd_micros_per_message' must be int|null, "
+                f"got {type(micros).__name__}"
             )
-        rates[category] = RateCardEntry(cents_per_message=cents)
+        rates[category] = RateCardEntry(usd_micros_per_message=micros)
 
     return RateCard(
         version=raw["version"],
