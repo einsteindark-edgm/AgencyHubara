@@ -1,0 +1,102 @@
+# WhatsApp template catalog — HU-WA24H-001
+#
+# Cada entrada describe un template pre-aprobado por Meta para esta WABA.
+# La aprobación real de Meta es Sprint 0 operacional (F0.1, F0.2) — los
+# `waba_template_name` aquí están como MOCK hasta que el operador termine
+# el approval cycle (24-72h por template) en Business Manager.
+#
+# Convención:
+#   * `name` — id interno (incluye sufijo _vN para versionar copy/semantics
+#     localmente sin re-aprobar Meta).
+#   * `waba_template_name` — el nombre exacto que vive en Meta Business
+#     Manager. Es el ID estable que se envía en el payload Cloud API.
+#   * `category` — debe MATCHEAR la categoría aprobada por Meta. Si Meta
+#     re-categoriza un utility → marketing, el `pricing` capturado por
+#     webhook gana (fuente de verdad post-facto).
+#   * `triggers_when_window_expiring` — si true, el watchdog del Sprint 2
+#     puede dispararlo automáticamente cuando la ventana 24h por expirar.
+#     Marketing templates DEBEN ser false aquí (el watchdog nunca dispara
+#     marketing — eso es decisión consciente del LLM o cadencia).
+#   * `requires_episode_stage` — el stage del episodio donde el template
+#     es semánticamente válido. Usado por la eligibility activity para
+#     resolver qué template aplicar.
+
+templates:
+  # ===== UTILITY templates (gratis dentro de ventana 24h) =====================
+
+  - name: quote_ready_utility_v1
+    category: utility
+    language: es_CO
+    waba_template_name: quote_ready_utility   # MOCK — pending Meta approval
+    semantics: "Notificar al cliente que su cotización está lista"
+    triggers_when_window_expiring: true
+    requires_episode_stage: awaiting_quote
+    variables:
+      - name: customer_first_name
+        type: string
+        max_length: 60
+        description: "Nombre del cliente (de metadata.profile.name o primer turno)"
+      - name: product_or_quote_label
+        type: string
+        max_length: 120
+        description: "Descripción corta del producto cotizado"
+
+  - name: payment_pending_utility_v1
+    category: utility
+    language: es_CO
+    waba_template_name: payment_pending_utility   # MOCK
+    semantics: "Recordar pago pendiente de orden creada"
+    triggers_when_window_expiring: true
+    requires_episode_stage: awaiting_payment
+    variables:
+      - name: customer_first_name
+        type: string
+        max_length: 60
+      - name: order_reference
+        type: string
+        max_length: 60
+        description: "ID legible de la orden (e.g., 'Orden #1042')"
+      - name: amount_currency
+        type: string
+        max_length: 40
+        description: "Monto formateado con moneda (e.g., '$120.000 COP')"
+
+  - name: order_status_utility_v1
+    category: utility
+    language: es_CO
+    waba_template_name: order_status_utility   # MOCK
+    semantics: "Update post-compra del estado de la orden (despachado / en camino / demorado / entregado)"
+    triggers_when_window_expiring: true
+    requires_episode_stage: post_purchase
+    variables:
+      - name: customer_first_name
+        type: string
+        max_length: 60
+      - name: order_reference
+        type: string
+        max_length: 60
+      - name: status_label
+        type: string
+        max_length: 60
+        description: "Estado humano-readable (e.g., 'en camino', 'entregado')"
+
+  # ===== MARKETING templates (cobran $0.0125 USD en Colombia) =================
+
+  - name: cart_recovery_marketing_v1
+    category: marketing
+    language: es_CO
+    waba_template_name: cart_recovery_marketing   # MOCK
+    semantics: "Recovery de carrito abandonado fuera de ventana, con incentivo"
+    triggers_when_window_expiring: false   # MARKETING nunca por watchdog
+    requires_episode_stage: any
+    variables:
+      - name: customer_first_name
+        type: string
+        max_length: 60
+      - name: product_label
+        type: string
+        max_length: 120
+      - name: discount_label
+        type: string
+        max_length: 40
+        description: "Etiqueta del descuento (e.g., '10% off', 'envío gratis')"

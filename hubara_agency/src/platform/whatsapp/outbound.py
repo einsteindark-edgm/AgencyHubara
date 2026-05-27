@@ -575,6 +575,83 @@ def build_reaction(to: str, p: wa_dtos.ReactionOutbound) -> dict[str, Any]:
 
 
 # =============================================================================
+# Template messages (HU-WA24H-001 F1.6)
+# =============================================================================
+
+
+def build_template_message(
+    to: str,
+    spec: "TemplateSpec",  # forward ref para no romper import cycles
+    variables: dict[str, str],
+) -> dict[str, Any]:
+    """Construye el payload Meta para enviar un template aprobado.
+
+    Shape Meta Cloud API:
+        {
+          "messaging_product": "whatsapp",
+          "to": "+57...",
+          "type": "template",
+          "template": {
+            "name": "<waba_template_name>",
+            "language": {"code": "es_CO"},
+            "components": [
+              {"type": "body", "parameters": [
+                {"type": "text", "text": "<var_1_value>"},
+                {"type": "text", "text": "<var_2_value>"},
+                ...
+              ]}
+            ]
+          }
+        }
+
+    El orden de los parameters es POSICIONAL — debe matchear el orden de
+    `spec.variables` (que matchea el {{1}}, {{2}} del template aprobado en
+    Meta Business Manager). Por eso este builder REQUIERE el spec — no
+    se puede pasar solo el waba_template_name + un dict de variables sin
+    conocer el orden esperado.
+
+    Validación: invoca `validate_variables` del registry y levanta
+    `ValueError` con la lista de errores agregados si algo no matchea.
+    Si pasa la validación, todas las variables están presentes, son str,
+    y respetan max_length.
+    """
+    # Lazy import para evitar cycle (registry → composition → activities →
+    # outbound). Es safe porque solo se ejecuta cuando se llama este builder.
+    from src.platform.whatsapp.templates.registry import validate_variables
+
+    errors = validate_variables(spec, variables)
+    if errors:
+        raise ValueError(
+            f"Template {spec.name!r} variables invalid: {'; '.join(errors)}"
+        )
+
+    # Construir parameters EN EL ORDEN DECLARADO POR spec.variables.
+    # Meta los usa posicionalmente como {{1}}, {{2}}, ...
+    parameters = [
+        {"type": "text", "text": variables[var.name]} for var in spec.variables
+    ]
+
+    template_payload: dict[str, Any] = {
+        "name": spec.waba_template_name,
+        "language": {"code": spec.language},
+    }
+    if parameters:
+        # Si el template no tiene variables (raro pero posible), Meta acepta
+        # template sin `components`.
+        template_payload["components"] = [
+            {"type": "body", "parameters": parameters}
+        ]
+
+    return {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": to,
+        "type": "template",
+        "template": template_payload,
+    }
+
+
+# =============================================================================
 # Re-export `asdict` for symmetry with callers that want raw dicts
 # =============================================================================
 
@@ -594,5 +671,6 @@ __all__ = [
     "build_location",
     "build_contacts",
     "build_reaction",
+    "build_template_message",
     "asdict",
 ]
