@@ -209,7 +209,7 @@ def _append_outbound_to_active_episode(
     raro: outbound sin haber recibido inbound), retorna sin tocar — el
     OutboundLogEntry se persiste en `metadata.last_outbound` solamente.
 
-    Detalle de cost: el `log_entry` viene con `cost_cents_usd=None` y
+    Detalle de cost: el `log_entry` viene con `cost_usd_micros=None` y
     `pricing=None` porque el send activity NO conoce el pricing todavía
     (viene por webhook delivery status). `IngestDeliveryStatus` lo
     materializa después usando `materialize_pending_in_summary`.
@@ -242,15 +242,15 @@ def _append_outbound_to_active_episode(
                 return {}
             out: dict[str, CategoryCostBreakdown] = {}
             for k, v in raw.items():
-                if isinstance(v, dict) and "count" in v and "cents_usd" in v:
+                if isinstance(v, dict) and "count" in v and "usd_micros" in v:
                     out[k] = CategoryCostBreakdown(
-                        count=int(v["count"]), cents_usd=int(v["cents_usd"])
+                        count=int(v["count"]), usd_micros=int(v["usd_micros"])
                     )
             return out
 
         try:
             summary = EpisodeCostSummary(
-                total_cents_usd=int(summary_raw.get("total_cents_usd", 0)),
+                total_usd_micros=int(summary_raw.get("total_usd_micros", 0)),
                 messages_count=int(summary_raw.get("messages_count", 0)),
                 messages_billable_count=int(
                     summary_raw.get("messages_billable_count", 0)
@@ -342,7 +342,7 @@ async def send_template_to_session(
         kind="template",
         template_name=template_name,
         pricing=None,
-        cost_cents_usd=None,
+        cost_usd_micros=None,
         rate_card_version=None,
     )
     _append_outbound_to_active_episode(metadata, log_entry)

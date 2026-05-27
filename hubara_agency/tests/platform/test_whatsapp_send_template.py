@@ -11,7 +11,7 @@ Verifica:
     last_outbound).
   * Episodio cerrado → log_entry NO se persiste en ese episode.
   * Race con `_append_outbound_to_active_episode`: pending_count incrementa
-    al primer add (cost_cents_usd=None).
+    al primer add (cost_usd_micros=None).
 
 Ver `src/platform/whatsapp/activities.py::send_template_to_session` y
 HU-WA24H-001 §4.6, §3.1.b.
@@ -157,13 +157,13 @@ class TestSendTemplateHappyPath:
         assert log_entry["template_name"] == "quote_ready_utility_v1"
         assert log_entry["kind"] == "template"
         assert log_entry["pricing"] is None
-        assert log_entry["cost_cents_usd"] is None
+        assert log_entry["cost_usd_micros"] is None
 
         # cost_summary started empty, now pending_count == 1
         summary = episode["cost_summary"]
         assert summary["messages_count"] == 1
         assert summary["messages_pending_count"] == 1
-        assert summary["total_cents_usd"] == 0
+        assert summary["total_usd_micros"] == 0
 
         # last_outbound mirror
         assert metadata["last_outbound"]["wa_message_id"] == "wamid.NEW"

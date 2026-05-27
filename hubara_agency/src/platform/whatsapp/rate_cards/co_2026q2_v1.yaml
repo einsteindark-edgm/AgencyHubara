@@ -8,7 +8,15 @@
 #   - pricing.billable == false                        → costo 0
 #   - pricing.pricing_type == "free_customer_service" → costo 0 (dentro de ventana 24h)
 #   - pricing.pricing_type == "free_entry_point"      → costo 0 (dentro de 72h CTWA)
-#   - pricing.pricing_type == "regular"               → rates[category].cents_per_message
+#   - pricing.pricing_type == "regular"               → rates[category].usd_micros_per_message
+#
+# UNIDAD: USD micros (10^-6 USD por unit). Standard de la industria (Google
+# Ads, Stripe Connect, etc) para precios sub-cent. Permite representar
+# $0.0125 como 12500 (int exacto) sin perder precision como float.
+#   1 cent USD     = 10000 micros
+#   $0.01          = 10000 micros
+#   $0.0125        = 12500 micros
+#   $0.0008        = 800 micros
 #
 # IMPORTANTE: este archivo es INMUTABLE una vez en producción. Si Meta cambia
 # las tarifas, crear un archivo NUEVO con sufijo de versión incrementada.
@@ -21,12 +29,12 @@ currency: USD
 
 rates:
   marketing:
-    cents_per_message: 125         # $0.0125 USD
+    usd_micros_per_message: 12500       # $0.0125 USD
   utility:
-    cents_per_message: 8           # $0.0008 USD
+    usd_micros_per_message: 800         # $0.0008 USD
   authentication:
-    cents_per_message: 8           # $0.0008 USD
+    usd_micros_per_message: 800         # $0.0008 USD
   authentication_international:
-    cents_per_message: null        # NO listado para Colombia al cierre del informe
+    usd_micros_per_message: null        # NO listado para Colombia al cierre del informe
   service:
-    cents_per_message: 0           # free-form dentro de ventana 24h
+    usd_micros_per_message: 0           # free-form dentro de ventana 24h

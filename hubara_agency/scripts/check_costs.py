@@ -100,9 +100,13 @@ def _parse_since(since_arg: str | None) -> int | None:
 # =============================================================================
 
 
-def _fmt_usd(cents: int) -> str:
-    """Centavos USD → '$X.XXXX' con 4 decimales (los costs típicos son sub-cent)."""
-    return f"${cents / 100:.4f}"
+def _fmt_usd(micros: int) -> str:
+    """USD micros (10^-6 USD per unit) → '$X.XXXX' con 4 decimales.
+
+    $0.0125 marketing = 12500 micros; $0.0008 utility = 800 micros.
+    Conversión: 1 USD = 1_000_000 micros.
+    """
+    return f"${micros / 1_000_000:.4f}"
 
 
 def _fmt_pct(num: int, denom: int) -> str:
@@ -149,7 +153,7 @@ def cmd_summary(args: argparse.Namespace) -> int:
         for ep in episodes:
             episodes_count += 1
             summary = ep.get("cost_summary") or {}
-            total_cents += summary.get("total_cents_usd", 0)
+            total_cents += summary.get("total_usd_micros", 0)
             total_messages += summary.get("messages_count", 0)
             billable_count += summary.get("messages_billable_count", 0)
             free_count += summary.get("messages_free_count", 0)
@@ -157,11 +161,11 @@ def cmd_summary(args: argparse.Namespace) -> int:
             for cat, v in (summary.get("by_category") or {}).items():
                 if isinstance(v, dict):
                     by_category[cat]["count"] += v.get("count", 0)
-                    by_category[cat]["cents"] += v.get("cents_usd", 0)
+                    by_category[cat]["cents"] += v.get("usd_micros", 0)
             for pt, v in (summary.get("by_pricing_type") or {}).items():
                 if isinstance(v, dict):
                     by_pricing_type[pt]["count"] += v.get("count", 0)
-                    by_pricing_type[pt]["cents"] += v.get("cents_usd", 0)
+                    by_pricing_type[pt]["cents"] += v.get("usd_micros", 0)
 
     print(f"Vault: {vault_dir}")
     if since_ms is not None:
@@ -169,7 +173,7 @@ def cmd_summary(args: argparse.Namespace) -> int:
     print()
     print(f"  Sessions:                {sessions_count}")
     print(f"  Episodes:                {episodes_count}")
-    print(f"  Total spend:             {_fmt_usd(total_cents)} USD ({total_cents} cents)")
+    print(f"  Total spend:             {_fmt_usd(total_cents)} USD ({total_cents} micros)")
     print(f"  Messages total:          {total_messages}")
     print(f"  Messages billable:       {billable_count} ({_fmt_pct(billable_count, total_messages)})")
     print(f"  Messages free:           {free_count} ({_fmt_pct(free_count, total_messages)})")
@@ -216,7 +220,7 @@ def cmd_top(args: argparse.Namespace) -> int:
     for session_id, metadata in _iter_sessions(vault_dir):
         episodes = _filter_episodes_by_time(metadata.get("episodes") or [], since_ms)
         total = sum(
-            (ep.get("cost_summary") or {}).get("total_cents_usd", 0) for ep in episodes
+            (ep.get("cost_summary") or {}).get("total_usd_micros", 0) for ep in episodes
         )
         msgs = sum(
             (ep.get("cost_summary") or {}).get("messages_count", 0) for ep in episodes
@@ -272,13 +276,13 @@ def cmd_customer(args: argparse.Namespace) -> int:
     grand_total = 0
     for ep in episodes:
         summary = ep.get("cost_summary") or {}
-        total = summary.get("total_cents_usd", 0)
+        total = summary.get("total_usd_micros", 0)
         grand_total += total
         marketing_cents = (summary.get("by_category", {}).get("marketing") or {}).get(
-            "cents_usd", 0
+            "usd_micros", 0
         )
         utility_cents = (summary.get("by_category", {}).get("utility") or {}).get(
-            "cents_usd", 0
+            "usd_micros", 0
         )
         rows.append(
             [
@@ -308,7 +312,7 @@ def cmd_customer(args: argparse.Namespace) -> int:
                 continue
             print(f"\n  Episode {ep.get('episode_id')}:")
             for ob in outbounds:
-                cost = ob.get("cost_cents_usd")
+                cost = ob.get("cost_usd_micros")
                 cost_str = _fmt_usd(cost) if cost is not None else "pending"
                 pt = (ob.get("pricing") or {}).get("pricing_type", "?")
                 cat = (ob.get("pricing") or {}).get("category", "?")
@@ -341,7 +345,7 @@ def cmd_episodes(args: argparse.Namespace) -> int:
             if not args.closing_tag and tag is None:
                 continue  # Solo cerrados si no especifica filtro
             summary = ep.get("cost_summary") or {}
-            total = summary.get("total_cents_usd", 0)
+            total = summary.get("total_usd_micros", 0)
             total_spend += total
             if tag == "COMPRA_EXITOSA":
                 won_spend += total
@@ -406,7 +410,7 @@ def cmd_marketing(args: argparse.Namespace) -> int:
                 pricing = ob.get("pricing") or {}
                 if pricing.get("category") != "marketing":
                     continue
-                cost = ob.get("cost_cents_usd") or 0
+                cost = ob.get("cost_usd_micros") or 0
                 total_cents += cost
                 total_count += 1
                 by_session[session_id] += cost
@@ -458,7 +462,7 @@ def cmd_pending(args: argparse.Namespace) -> int:
             total_msgs += summary.get("messages_count", 0)
             pending += summary.get("messages_pending_count", 0)
             for ob in ep.get("outbound_messages") or []:
-                if ob.get("cost_cents_usd") is None and ob.get("pricing") is None:
+                if ob.get("cost_usd_micros") is None and ob.get("pricing") is None:
                     pending_details.append(
                         (
                             session_id,
@@ -528,7 +532,7 @@ def cmd_by_channel(args: argparse.Namespace) -> int:
             if ep.get("closing_tag") == "COMPRA_EXITOSA":
                 by_channel[channel]["won"] += 1
             summary = ep.get("cost_summary") or {}
-            by_channel[channel]["spend"] += summary.get("total_cents_usd", 0)
+            by_channel[channel]["spend"] += summary.get("total_usd_micros", 0)
 
     print("Spend by origin channel:")
     if since_ms is not None:

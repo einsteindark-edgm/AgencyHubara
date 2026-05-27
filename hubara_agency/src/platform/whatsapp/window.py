@@ -85,7 +85,7 @@ def is_message_billable(now_ms: int, metadata: dict[str, Any]) -> bool:
     Conveniencia para el caller: si está dentro de cualquier free window
     (servicio O CTWA), Meta NO cobra. Si está fuera de ambas, depende de
     la category (utility/marketing/auth) — el cost real se computa con
-    `compute_message_cost_cents` cuando llega el webhook.
+    `compute_message_cost_micros` cuando llega el webhook.
 
     NOTE: este es un PRE-check basado en metadata local. La verdad
     autoritativa viene del `pricing` object del webhook `message_status`.

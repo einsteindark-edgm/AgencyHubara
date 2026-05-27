@@ -14,9 +14,9 @@ Simula el flujo end-to-end del refinement §4.7:
     cost_summary del episodio
 
 Verificamos:
-  * El entry pasó de pending (cost_cents_usd=None) a materializado
-    (cost_cents_usd=125 para marketing CO 2026Q2, o 8 para utility).
-  * cost_summary del episodio refleja el nuevo cost: total_cents_usd,
+  * El entry pasó de pending (cost_usd_micros=None) a materializado
+    (cost_usd_micros=12500 para marketing CO 2026Q2, o 8 para utility).
+  * cost_summary del episodio refleja el nuevo cost: total_usd_micros,
     messages_billable_count, by_category, by_pricing_type.
   * El analytics event `delivery_status` se emitió con todos los campos.
 
@@ -63,10 +63,10 @@ def co_rate_card() -> RateCard:
         country="CO",
         currency="USD",
         rates={
-            "marketing": RateCardEntry(cents_per_message=125),
-            "utility": RateCardEntry(cents_per_message=8),
-            "authentication": RateCardEntry(cents_per_message=8),
-            "service": RateCardEntry(cents_per_message=0),
+            "marketing": RateCardEntry(usd_micros_per_message=12500),
+            "utility": RateCardEntry(usd_micros_per_message=800),
+            "authentication": RateCardEntry(usd_micros_per_message=800),
+            "service": RateCardEntry(usd_micros_per_message=0),
         },
     )
 
@@ -133,17 +133,17 @@ def _ensure_active_episode(metadata: dict[str, Any], *, now_ms: int) -> dict[str
 def _summary_to_dict_e2e(summary):
     """Serializa EpisodeCostSummary para test (copia local del helper interno)."""
     return {
-        "total_cents_usd": summary.total_cents_usd,
+        "total_usd_micros": summary.total_usd_micros,
         "messages_count": summary.messages_count,
         "messages_billable_count": summary.messages_billable_count,
         "messages_free_count": summary.messages_free_count,
         "messages_pending_count": summary.messages_pending_count,
         "by_category": {
-            k: {"count": v.count, "cents_usd": v.cents_usd}
+            k: {"count": v.count, "usd_micros": v.usd_micros}
             for k, v in summary.by_category.items()
         },
         "by_pricing_type": {
-            k: {"count": v.count, "cents_usd": v.cents_usd}
+            k: {"count": v.count, "usd_micros": v.usd_micros}
             for k, v in summary.by_pricing_type.items()
         },
     }
@@ -177,7 +177,7 @@ async def fake_send_whatsapp_template_activity(
         kind="template",
         template_name=template_name,
         pricing=None,
-        cost_cents_usd=None,
+        cost_usd_micros=None,
         rate_card_version=None,
     )
     outbound_messages = list(episode.get("outbound_messages") or [])
@@ -188,7 +188,7 @@ async def fake_send_whatsapp_template_activity(
             "kind": pending_entry.kind,
             "template_name": pending_entry.template_name,
             "pricing": None,
-            "cost_cents_usd": None,
+            "cost_usd_micros": None,
             "rate_card_version": None,
         }
     )
@@ -199,7 +199,7 @@ async def fake_send_whatsapp_template_activity(
 
     current_summary_raw = episode.get("cost_summary") or {}
     current_summary = EpisodeCostSummary(
-        total_cents_usd=current_summary_raw.get("total_cents_usd", 0),
+        total_usd_micros=current_summary_raw.get("total_usd_micros", 0),
         messages_count=current_summary_raw.get("messages_count", 0),
         messages_billable_count=current_summary_raw.get(
             "messages_billable_count", 0
@@ -287,11 +287,11 @@ async def test_send_template_then_delivered_webhook_materializes_cost(
     metadata_after_send = store.read(session_id)
     pending_entry = metadata_after_send["episodes"][0]["outbound_messages"][0]
     assert pending_entry["wa_message_id"] == wa_msg
-    assert pending_entry["cost_cents_usd"] is None
+    assert pending_entry["cost_usd_micros"] is None
     assert pending_entry["pricing"] is None
     pending_summary = metadata_after_send["episodes"][0]["cost_summary"]
     assert pending_summary["messages_pending_count"] == 1
-    assert pending_summary["total_cents_usd"] == 0
+    assert pending_summary["total_usd_micros"] == 0
 
     # 2) Meta envía webhook status `delivered` con pricing
     webhook_body = _build_webhook_status_body(
@@ -336,7 +336,7 @@ async def test_send_template_then_delivered_webhook_materializes_cost(
     final_metadata = store.read(session_id)
     final_entry = final_metadata["episodes"][0]["outbound_messages"][0]
     assert final_entry["wa_message_id"] == wa_msg
-    assert final_entry["cost_cents_usd"] == 8  # utility CO 2026Q2 = 8 cents
+    assert final_entry["cost_usd_micros"] == 800  # utility CO 2026Q2 = 800 micros = $0.0008
     assert final_entry["rate_card_version"] == "co_2026q2_v1"
     assert final_entry["pricing"] == {
         "billable": True,
@@ -346,15 +346,15 @@ async def test_send_template_then_delivered_webhook_materializes_cost(
 
     # Summary actualizado
     final_summary = final_metadata["episodes"][0]["cost_summary"]
-    assert final_summary["total_cents_usd"] == 8
+    assert final_summary["total_usd_micros"] == 800
     assert final_summary["messages_count"] == 1
     assert final_summary["messages_billable_count"] == 1
     assert final_summary["messages_pending_count"] == 0
     assert final_summary["messages_free_count"] == 0
-    assert final_summary["by_category"]["utility"] == {"count": 1, "cents_usd": 8}
+    assert final_summary["by_category"]["utility"] == {"count": 1, "usd_micros": 800}
     assert final_summary["by_pricing_type"]["regular"] == {
         "count": 1,
-        "cents_usd": 8,
+        "usd_micros": 800,
     }
 
     # Invariante cross-cutting
@@ -374,7 +374,7 @@ async def test_send_template_then_delivered_webhook_materializes_cost(
     assert event.payload["category"] == "utility"
     assert event.payload["pricing_type"] == "regular"
     assert event.payload["billable"] is True
-    assert event.payload["cost_cents_usd"] == 8
+    assert event.payload["cost_usd_micros"] == 800
 
 
 @pytest.mark.asyncio
@@ -424,14 +424,14 @@ async def test_send_template_then_free_window_webhook_zero_cost(
 
     final_metadata = store.read(session_id)
     final_entry = final_metadata["episodes"][0]["outbound_messages"][0]
-    assert final_entry["cost_cents_usd"] == 0
+    assert final_entry["cost_usd_micros"] == 0
 
     final_summary = final_metadata["episodes"][0]["cost_summary"]
-    assert final_summary["total_cents_usd"] == 0
+    assert final_summary["total_usd_micros"] == 0
     assert final_summary["messages_free_count"] == 1
     assert final_summary["messages_billable_count"] == 0
     assert final_summary["messages_pending_count"] == 0
     assert final_summary["by_pricing_type"]["free_customer_service"] == {
         "count": 1,
-        "cents_usd": 0,
+        "usd_micros": 0,
     }
