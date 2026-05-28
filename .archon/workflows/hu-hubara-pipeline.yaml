@@ -347,6 +347,12 @@ nodes:
 
   - id: setup-branch
     bash: |
+      # CRITICAL — main pipeline también necesita detached HEAD para sobrevivir
+      # a worktrees stale. Worst case: run anterior cancelló sin limpiar su
+      # worktree → branch sigue checked-out en `thread-XXX` → nuevo main pipeline
+      # crashea acá con "branch already checked out elsewhere". El sub-pipeline
+      # ya usa --detach (run 52fa70e fix); aplicamos el mismo patrón acá.
+      # Bug detectado run 710e0eb6 (2026-05-27, después de cancel 25512e91).
       set -e
       HU_ID=$(echo $gen-hu-id.output | jq -r '.hu_id')
       BRANCH=$(echo $gen-hu-id.output | jq -r '.branch')
@@ -355,8 +361,8 @@ nodes:
 
       git fetch origin --prune
 
-      # Anti-concurrencia warn: si origin/hu/<id> tiene commit en los últimos 5 min
       if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+        # Anti-concurrencia warn: commit reciente en origin = otro run activo
         LAST_COMMIT_TS=$(git log -1 --format=%ct "origin/$BRANCH" 2>/dev/null || echo 0)
         NOW=$(date -u +%s)
         AGE=$((NOW - LAST_COMMIT_TS))
@@ -365,14 +371,14 @@ nodes:
           echo "Continuando — si hay race, push fallará al final." >&2
         fi
 
-        git checkout -b "$BRANCH" "origin/$BRANCH" || {
-          git checkout "$BRANCH"
-          git pull --ff-only origin "$BRANCH"
-        }
+        # Detached HEAD — soporta worktrees stale + multi-worktree concurrency
+        git checkout --detach "origin/$BRANCH" 2>&1 | tail -3 >&2
         echo "RESUMED"
       else
-        git checkout -b "$BRANCH" "origin/main"
-        git push -u origin "$BRANCH"
+        # Fresh branch: creamos ref en origin desde main, después detached
+        git push origin "origin/main:refs/heads/$BRANCH" 2>&1 | tail -3 >&2
+        git fetch origin "$BRANCH" 2>&1 | tail -3 >&2
+        git checkout --detach "origin/$BRANCH" 2>&1 | tail -3 >&2
         echo "FRESH"
       fi
 
@@ -593,7 +599,8 @@ nodes:
       git add "hubara_agency/.hubara/refinements/" >&2
       if ! git diff --staged --quiet; then
         git commit -m "${HU_ID}: refinement técnico (auto, hubara pipeline)" >&2
-        git push origin "$BRANCH" >&2
+        # HEAD:$BRANCH — setup-branch dejó detached HEAD
+        git push origin "HEAD:$BRANCH" >&2
         echo "committed"
       else
         echo "no_changes"
@@ -938,7 +945,7 @@ nodes:
       git add "hubara_agency/.hubara/plans/${HU_ID}/" >&2
       if ! git diff --staged --quiet; then
         git commit -m "${HU_ID}: plugin-level plan (auto, ${N} plugins)" >&2
-        git push origin "$BRANCH" >&2
+        git push origin "HEAD:$BRANCH" >&2
         echo "committed_${N}"
       else
         echo "no_changes"
@@ -1234,10 +1241,11 @@ nodes:
       git add hubara_agency/src frontend_dashboard/src 2>/dev/null || true
 
       if ! git diff --staged --quiet; then
-        git commit -m "${HU_ID}: merger consolidó wiring_intents del batch (auto)"
-        git push origin "$BRANCH" 2>&1 | tail -3 >&2 || {
+        git commit -m "${HU_ID}: merger consolidó wiring_intents del batch (auto)" >&2
+        # HEAD:$BRANCH — main pipeline también en detached HEAD (run 710e0eb6 fix)
+        git push origin "HEAD:$BRANCH" 2>&1 | tail -3 >&2 || {
           git pull --rebase origin "$BRANCH" 2>&1 | tail -3 >&2 || true
-          git push origin "$BRANCH" 2>&1 | tail -3 >&2 || true
+          git push origin "HEAD:$BRANCH" 2>&1 | tail -3 >&2 || true
         }
         echo "merger_committed"
       else
