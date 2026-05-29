@@ -30,8 +30,10 @@ from src.platform.whatsapp.activities import (
     send_typing_indicator_activity,
     send_whatsapp_message_activity,
 )
+from src.platform.whatsapp.capi_activity import send_capi_event_activity
 from src.plugins.chats.agent.sales.activities import (
     bootstrap_sales_session_activity,
+    compute_bogota_context_activity,
     decide_ghosting_action,
     flush_pending_ui_intents_activity,
     read_and_clear_pending_handoff_activity,
@@ -254,6 +256,11 @@ async def main() -> None:
             # cliente entrante usa el helper puro `context.py` desde
             # `load_or_start_sales_session.py`.
             compute_bogota_context_activity,
+            # HU-WA24H-001 Sprint CAPI: Meta Conversions API event
+            # dispatch (Lead / Purchase) en cierre de episode. Disparado
+            # por el workflow vía `_map_closing_tag_to_capi_event`. Tiene
+            # guards internos completos — skip silencioso si no aplica.
+            send_capi_event_activity,
         ],
     )
 

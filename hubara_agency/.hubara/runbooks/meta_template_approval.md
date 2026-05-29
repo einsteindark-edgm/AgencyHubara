@@ -1,9 +1,16 @@
-# Runbook — Aprobación de Templates en Meta Business Manager
+# Runbook — Setup operacional Meta Business Manager (Templates + CAPI)
 
-> **Audience:** Vos (operador AgencyHubara) — alguien que NUNCA aprobó un template Meta antes.
-> **Triggered when:** estás listo para activar el HU-WA24H-001 (watchdog + cadencia remarketing) y necesitás los 4 templates iniciales aprobados.
-> **Tiempo estimado:** **45-60 min activos** (redactar + submit los 4). **24-72h pasivos** (esperando approval de Meta por template).
-> **Cuándo arrancar:** YA. No hay razón para esperar. Cuanto antes empezás, antes tenés activable el watchdog en producción.
+> **Audience:** Vos (operador AgencyHubara) — alguien que NUNCA aprobó un template Meta ni configuró CAPI antes.
+> **Scope:** Este doc cubre 2 setups operacionales que tenés que hacer manualmente en Meta Business Manager antes de activar HU-WA24H-001 en prod:
+>   - **§1-§10** — Aprobación de los 4 templates iniciales (watchdog + remarketing).
+>   - **§11-§22** — Configuración de **CAPI (Conversions API) for Business Messaging** — necesario para que los CTWA (Click-to-WhatsApp Ads) sean atribuibles y Meta pueda optimizar tus campañas hacia compras reales.
+> **Triggered when:** estás listo para activar HU-WA24H-001 Y/O vas a empezar a comprar tráfico CTWA.
+> **Tiempo estimado:**
+>   - Templates: **45-60 min activos** (redactar + submit los 4). **24-72h pasivos** (esperando approval Meta por template).
+>   - CAPI: **30-45 min activos** (Events Manager + token + smoke test). **0 tiempo pasivo** (no hay approval — funciona apenas mandes el primer event).
+> **Cuándo arrancar:**
+>   - Templates: YA. Cuanto antes empezás, antes tenés activable el watchdog.
+>   - CAPI: ANTES de poner un solo CTWA ad live. Sin CAPI los ads son CIEGOS — Meta no sabe si convierten.
 
 ---
 
@@ -312,8 +319,438 @@ Meta cambia la UI de Business Manager cada 3-6 meses. Si llegás a una pantalla 
 1. Buscar la opción equivalente por nombre (ej. si "Account tools" se renombró a "Manage tools", es lo mismo).
 2. Si te trabás >10 min: tomá screenshot de dónde estás + qué buscás, y pedime ayuda — actualizamos este runbook con lo que veas.
 
-## §10 Referencias
+## §10 Referencias (templates)
 
 - Meta — Create message templates: https://developers.facebook.com/docs/whatsapp/business-management-api/message-templates/
 - Meta — Template guidelines: https://developers.facebook.com/docs/whatsapp/business-management-api/message-templates/template-guidelines
 - HU-WA24H-001 refinement §4.5 (template registry) y §7.0 (Fase 0 operacional).
+
+---
+
+# Parte 2 — CAPI (Conversions API) for Business Messaging
+
+## §11 Qué es CAPI y por qué lo necesitás
+
+### §11.1 El problema sin CAPI
+
+Cuando vos comprás un **CTWA ad** (Click-to-WhatsApp Ad) en Facebook/Instagram, alguien lo clickea y arranca un chat con tu agente. **Sin CAPI**, Meta ve:
+
+1. ✅ Usuario clickeó el ad (clic atribuido).
+2. ✅ Usuario abrió WhatsApp y mandó "Hola".
+3. ❌ **Después? Meta no tiene idea.** No sabe si el lead se cerró en venta, si pagó, si se fue.
+
+Resultado: el algoritmo de optimización de Meta NO puede encontrar más gente como tus compradores reales — solo más gente como "gente que clickea ads". El **CPL** (costo por lead) baja al principio pero el **CAC** (costo de adquisición de cliente real) se va a la nube porque traés volumen sin calidad.
+
+### §11.2 Lo que CAPI agrega
+
+CAPI es un **endpoint server-to-server** donde TU sistema le dice a Meta:
+
+> "Oye Meta: el cliente que mandaste vía el ad XYZ (identificado por `ctwa_clid`) **acaba de comprar** por $80.000 COP. Toma este `Purchase` event."
+
+Meta matchea el `ctwa_clid` contra la impresión original del ad y registra una **conversión bottom-of-funnel**. Con suficientes Purchase events, su algoritmo aprende **qué tipo de impresión convierte** y empieza a buscar más usuarios parecidos. **CPL baja Y CAC baja al mismo tiempo** — el algoritmo finalmente puede optimizar para compras y no clics.
+
+### §11.3 Por qué en 2026 es obligatorio (no opcional)
+
+Meta apretó tornillos de atribución desde fines de 2025:
+- **Ventana de atribución más corta** (7 días para CTWA CAPI events, antes 28).
+- **Advantage+ requiere señales de conversión** para entrar en fase de aprendizaje productiva.
+- iOS 14+ siguió erosionando el tracking client-side → CAPI es el único path confiable.
+
+> **TL;DR:** si vas a poner CTWA en producción sin CAPI, estás quemando plata. El setup toma 30-45 min — paga 100x lo que cuesta.
+
+### §11.4 Los 2 únicos eventos que CAPI Business Messaging soporta
+
+Meta limitó CAPI for Business Messaging (WhatsApp) a **2 eventos**:
+
+| Evento | Cuándo mandarlo | Requiere |
+|---|---|---|
+| **Lead** | Cliente mostró intención cualificada (pidió cotización, dijo "quiero comprar", entregó datos) | `ctwa_clid` |
+| **Purchase** | Orden CONFIRMADA con pago | `ctwa_clid`, `value`, `currency` |
+
+> ⚠️ **Otros eventos clásicos NO aplican aquí.** `AddToCart`, `InitiateCheckout`, `CompleteRegistration` etc. funcionan en el CAPI estándar (websites), pero **NO** en `action_source: business_messaging`. Si los mandás, Meta los ignora silenciosamente.
+
+> ⚠️ **Solo 1 CAPI event por ad event.** Esto es CRÍTICO: si una conversación generó Lead y después Purchase, **solo el Purchase cuenta** — Meta dedupea y se queda con el último/más fuerte. Estrategia: priorizar Purchase si ocurre dentro de 7 días, fallback Lead.
+
+---
+
+## §12 Pre-requisitos antes del setup CAPI
+
+Asegurate de tener:
+
+- [ ] **Templates §1-§9 ya iniciados.** No bloquea CAPI, pero arrancá esos en paralelo (Meta los procesa async).
+- [ ] **Permisos Admin** en la Business Manager (los mismos que necesitaste para templates).
+- [ ] **Pixel ya creado** en la BM (si no tenés uno, los pasos §13 te guían a crearlo — un Pixel y un Dataset son lo mismo conceptualmente; Meta los unificó).
+- [ ] **WABA verificada** y conectada a una Facebook Page (esto suele estar listo si ya operás WhatsApp Business; si no, lo hacés en Settings → Business Settings → WhatsApp Accounts).
+- [ ] **Acceso a env vars / Vault** de producción donde vas a guardar el token. **No commitees el token al repo.**
+
+---
+
+## §13 Setup en Events Manager — paso a paso clicks
+
+### §13.1 Llegar a Events Manager
+
+1. Abrir **https://business.facebook.com/events_manager**.
+2. Si te lleva a la home de BM en lugar de Events Manager, en el menú izquierdo buscá el ícono de gráfico de barras (📊) que dice **"Events Manager"** — o usá **"All tools"** y buscalo.
+3. Una vez dentro vas a ver la lista de **Data Sources** (Pixels, Datasets, Conversions API gateways).
+
+### §13.2 Crear o seleccionar el Dataset
+
+**Caso A — ya tenés un Pixel/Dataset asociado a tu WABA:**
+- Click sobre él para abrirlo.
+- Saltá a §13.3.
+
+**Caso B — no tenés ninguno (lo más probable si estás pre-launch):**
+1. Botón **"Connect data sources"** o **"+ Add"** arriba a la izquierda.
+2. Modal aparece — elegir **"Web"** (Pixel funciona para web Y messaging; Meta unificó).
+   - Si te pregunta entre "Conversions API only" o "Pixel + CAPI", elegir **"Conversions API"** o el que incluya server events.
+3. **Nombre del Dataset**: `AgencyHubara Dataset Prod` (o lo que quieras — humano-legible).
+4. **Connect to**: tu Business Manager (debería estar pre-seleccionado).
+5. Click **"Create"** o **"Confirm"**.
+6. El Dataset aparece en la lista.
+
+### §13.3 Encontrar el dataset_id
+
+Una vez dentro del Dataset:
+
+1. En la URL del browser vas a ver algo como `https://business.facebook.com/events_manager/data-sources/{NUMERO_LARGO}/...` — **ese `{NUMERO_LARGO}` es tu `dataset_id`**. Anotalo (ej. `1234567890123456`).
+2. Alternativamente: en el panel del Dataset, arriba en el header dice "Dataset ID: 1234567890123456". Botón copy al lado.
+3. **Guardalo seguro** — lo vas a meter en una env var (§18).
+
+---
+
+## §14 Generar el Access Token de CAPI
+
+Sin token no podés mandar events. El access token es **server-to-server**, NO uses el token de usuario.
+
+### §14.1 Ir a Settings del Dataset
+
+1. Dentro del Dataset (de §13), en el menú lateral izquierdo del panel del Dataset buscar **"Settings"** (ícono de tuerca ⚙️).
+2. Scroll hasta la sección **"Conversions API"**.
+3. Subsección **"Set up manually"** o **"Generate access token"**.
+
+### §14.2 Generar el token
+
+1. Click en **"Generate access token"**.
+2. Modal muestra el token (string largo, ~190 chars que empieza con `EAA...`).
+3. **Copiar AHORA** — Meta lo muestra una sola vez. Si lo perdés, hay que generar uno nuevo.
+4. Guardarlo en un password manager (1Password, Bitwarden) etiquetado como `Meta CAPI Token — AgencyHubara — Prod — 2026-05-27`.
+5. Cerrar modal — **no** lo dejes en pantalla.
+
+### §14.3 Anotar fecha de expiración
+
+- El token de CAPI **no expira por default** (es System User token de larga duración), pero si lo rotás (best practice cada 90 días), poné un recordatorio en el calendario.
+- Si en algún momento te aparece "Token expired" en logs → §19.5 troubleshooting.
+
+---
+
+## §15 Linkear WABA con el Dataset
+
+Sin este link, el `ctwa_clid` que llega en los webhooks NO se conecta con los CAPI events que mandás.
+
+### §15.1 Conectar
+
+1. Dentro del Dataset → **Settings**.
+2. Sección **"Connected Assets"** o **"Data Sources"** (a veces dice "Linked WhatsApp Business Accounts").
+3. Botón **"+ Add WhatsApp Business Account"**.
+4. Modal con dropdown — elegir tu WABA (la que ya usás para templates).
+5. **Confirmar**.
+
+### §15.2 Verificar conexión
+
+- La WABA aparece en la lista de Connected Assets con status "Active".
+- Si dice "Pending" o "Failed": esperar 2-5 min y refresh. Si persiste → §19.4.
+
+---
+
+## §16 Test Events — verificar que llegan
+
+ANTES de poner CTWA ads en producción, mandar un event de prueba.
+
+### §16.1 Conseguir el Test Event Code
+
+1. Dentro del Dataset → tab **"Test events"** (en el menú top del Dataset).
+2. Sección **"Server"**.
+3. Vas a ver un campo **"Test event code"** con un valor del tipo `TEST12345`.
+4. **Copiar** ese código.
+
+### §16.2 Mandar un event de prueba (desde el código local)
+
+> ⚠️ Esto requiere que el backend ya tenga el activity `send_capi_event_activity` implementado — ver §18.1 si todavía no existe.
+
+Por ahora, smoke test manual con curl:
+
+```bash
+# Exportar las 3 vars (poner valores reales):
+export META_CAPI_DATASET_ID="1234567890123456"     # del §13.3
+export META_CAPI_ACCESS_TOKEN="EAA..."             # del §14.2
+export META_CAPI_TEST_CODE="TEST12345"             # del §16.1
+export WABA_ID="9876543210987654"                  # tu WABA id (lo tenés en metadata.json o env)
+
+# Mandar Lead event con test_event_code:
+curl -X POST "https://graph.facebook.com/v18.0/${META_CAPI_DATASET_ID}/events?access_token=${META_CAPI_ACCESS_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "data": [{
+      "event_name": "Lead",
+      "event_time": '$(date +%s)',
+      "event_id": "smoke_test_'$(date +%s)'",
+      "action_source": "business_messaging",
+      "messaging_channel": "whatsapp",
+      "user_data": {
+        "whatsapp_business_account_id": "'${WABA_ID}'",
+        "ctwa_clid": "FAKE_CLID_SMOKE_TEST"
+      }
+    }],
+    "test_event_code": "'${META_CAPI_TEST_CODE}'"
+  }'
+```
+
+### §16.3 Verificar en Events Manager
+
+1. Refresh el tab **"Test events"** del Dataset.
+2. Tu event debería aparecer en la lista con:
+   - **Event name**: Lead
+   - **Action source**: business_messaging
+   - **Status**: ✅ Received
+3. Si NO aparece:
+   - Verificar que el `dataset_id` en la URL del curl matchea el del Dataset.
+   - Verificar que el access_token no esté trunco al pegarlo.
+   - Verificar que el `test_event_code` esté en el body (no en URL).
+   - Ver §19.2.
+
+### §16.4 Match Quality — qué chequear
+
+En el Dataset → tab **"Overview"** vas a ver el **Event Match Quality (EMQ)** score (0-10) por evento. Para CTWA con `ctwa_clid`:
+- Score esperado: **8-10** (alto, porque ctwa_clid es match perfecto).
+- Si está <6 → es porque te falta el `ctwa_clid` o lo estás mandando mal. NO mandes más events hasta arreglar.
+
+---
+
+## §17 Eventos que vamos a mandar y CUÁNDO — estrategia AgencyHubara
+
+Acá vivís la decisión de diseño. Sólo 2 eventos, cuándo dispararlos.
+
+### §17.1 Estrategia de disparo (high level)
+
+```
+┌────────────────────────────────────────────────────────────────────┐
+│ Customer clickea CTWA ad → entra a WhatsApp                         │
+│       │                                                              │
+│       ▼ ctwa_clid llega en referral del primer webhook              │
+│ ┌──────────────────────────────┐                                    │
+│ │ persist ctwa_clid en         │ ← F2.2 metadata.json                │
+│ │ episode metadata.json        │   con timestamp                     │
+│ │ (TTL 7 días — attribution    │                                    │
+│ │  window expiry)              │                                    │
+│ └──────────────────────────────┘                                    │
+│       │                                                              │
+│       ▼                                                              │
+│ Customer engages — agente conversational                             │
+│       │                                                              │
+│       ├──► [Trigger A] qualified_intent_detected                     │
+│       │      (ej: pidió cotización, dijo "quiero pagar")            │
+│       │      → emit IntentQualifiedEvent                            │
+│       │      → workflow re-checks: ¿ya mandamos Purchase para        │
+│       │        este ctwa_clid? Sí → SKIP. No → mandar Lead.          │
+│       │                                                              │
+│       └──► [Trigger B] OrderConfirmed (orders plugin)                │
+│              → workflow chequea: ¿ctwa_clid presente en episode?     │
+│              → Sí + < 7 días → mandar Purchase (PRIORIDAD).          │
+│              → Marca metadata.capi_event_sent = "Purchase"           │
+│              → Si después llega otro Lead trigger → SKIP             │
+│                                                                      │
+│  Regla de oro: Purchase reemplaza a Lead. Una vez mandado Purchase, │
+│  no se manda nada más para ese ctwa_clid.                           │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+### §17.2 Lead — cuándo dispararlo
+
+**Disparar Lead cuando el customer cruza el umbral de "intención cualificada"** — NO al primer "Hola".
+
+Triggers que cuentan:
+- ✅ Customer pidió cotización explícita ("¿cuánto vale el kit de rosas?", "mándame el precio del envío a Cali").
+- ✅ Customer pidió enviar info de pago/transferencia.
+- ✅ Customer entregó datos de envío (dirección, contacto).
+- ✅ Customer respondió afirmativamente a un quote (e.g., "ok, lo quiero").
+- ✅ Customer reactivó episode via watchdog y respondió >1 turn.
+
+Triggers que NO cuentan (no mandar Lead):
+- ❌ Primer "Hola" sin contexto.
+- ❌ "¿Aún está disponible?" sin cualificación posterior.
+- ❌ Spam / consulta off-topic.
+- ❌ Customer abrió y no respondió (timeout).
+
+**Tracking sugerido** (Lead Response Management Study aplicado):
+- Si entre clic del ad y primera respuesta del agente pasan **<5 min**, el lead converte ~100x más que >20 min. Mandar Lead apenas el customer entrega señal cualificada ayuda a Meta a optimizar para CTWA donde respondemos rápido.
+
+### §17.3 Purchase — cuándo dispararlo
+
+**Disparar Purchase cuando hay orden CONFIRMADA con pago.**
+
+Trigger único:
+- ✅ `OrderConfirmedEvent` emitido por `orders` plugin con `payment_status="confirmed"`.
+
+Payload obligatorio:
+- `value`: monto de la orden (numérico, en la moneda real cobrada).
+- `currency`: ISO 4217 → para Colombia siempre `"COP"`.
+
+> ⚠️ **Cuidado con currency.** Si la orden está en COP y mandás `value: 80000` con `currency: "USD"` → Meta computa $80,000 USD de revenue. Esto rompe el cost-per-purchase de tus ads catastróficamente. Doble-checkear en el activity de send.
+
+### §17.4 Idempotencia y dedup
+
+Meta dedupea events por `event_id`. Estrategia:
+
+- **Lead** `event_id`: `lead_{episode_id}_{first_qualified_intent_at_ms}`
+- **Purchase** `event_id`: `purchase_{order_id}` (el order_id es naturalmente único)
+
+Si el activity falla y reintenta, el `event_id` es estable → Meta dedupea solo. **No** generar UUID random — pierde idempotencia.
+
+### §17.5 Persistencia del ctwa_clid en metadata.json
+
+El `ctwa_clid` lo necesitás **hasta 7 días después del clic** porque ese es el attribution window. Esquema sugerido en `metadata.json` del episode:
+
+```yaml
+attribution:
+  ctwa_clid: "ARxxxxxxxxxxxxxxxxxx"            # del referral object
+  ctwa_clid_received_at_ms: 1716800000000
+  ctwa_clid_expires_at_ms: 1717404800000        # +7 días desde recibido
+  capi_events:
+    - event_name: "Lead"
+      event_id: "lead_wa_+573001234567_ep_42_1716810000000"
+      sent_at_ms: 1716810000000
+      meta_received: true
+  capi_terminal_event: "Purchase"               # si ya se mandó Purchase, no mandar más
+```
+
+> Este esquema es **propuesta** — el sprint de implementación CAPI (futuro HU) lo va a aterrizar. Por ahora basta con que vos sepas que el backend va a necesitar esto.
+
+### §17.6 Cuándo NO mandar ningún CAPI event
+
+- Episode sin `ctwa_clid` (vino por entrada orgánica, no por CTWA ad) → **no mandar nada**. Solo CTWA events alimentan al algoritmo de ads.
+- `ctwa_clid_expires_at_ms` ya pasó (>7 días) → mandar es desperdicio, Meta no lo atribuye.
+- Ya mandaste Purchase para ese ctwa_clid → no mandar Lead aunque ocurra después (el "1 event per ad event" limit hace que la lectura sea: el último gana, pero por seguridad, no lo retoques).
+
+---
+
+## §18 Variables de entorno y backend wiring
+
+Después de §13-§16 tenés que setear estas env vars en el deploy de los workers:
+
+```bash
+# .env / k8s secret
+META_CAPI_DATASET_ID="1234567890123456"       # del §13.3
+META_CAPI_ACCESS_TOKEN="EAA..."               # del §14.2 — SECRET, no commitear
+META_CAPI_TEST_EVENT_CODE=""                  # vacío en prod, set en staging para usar §16
+WABA_ID="9876543210987654"                    # de tu WhatsApp Business Account
+```
+
+### §18.1 Files que el backend va a tocar (futuro sprint CAPI)
+
+> Estos NO existen aún — son los placeholders que un próximo HU va a implementar. Te los listo para que sepas que el setup de §11-§16 va a ser consumido por código real.
+
+- `hubara_agency/src/platform/whatsapp/capi.py` — DTOs (`CapiEvent`, `CapiUserData`, `CapiCustomData`) + función pura `build_capi_event(...)`.
+- `hubara_agency/src/platform/whatsapp/activities.py` — nuevo `send_capi_event_activity` con retry policy non-retryable para 4xx (auth, malformed).
+- `hubara_agency/src/plugins/chats/agent/sales/use_cases/ingest_inbound_message.py` — extraer `referral.ctwa_clid` y persistirlo en `metadata.json` del episode con `ctwa_clid_expires_at_ms = received + 7d`.
+- `hubara_agency/src/plugins/chats/agent/sales/workflows/...` — listener para `IntentQualifiedEvent` → trigger Lead CAPI activity.
+- `hubara_agency/src/plugins/orders/...` — al confirmar order, si episode tiene `ctwa_clid` vigente, trigger Purchase CAPI activity.
+- `hubara_agency/src/platform/config.py` — sumar `META_CAPI_DATASET_ID`, `META_CAPI_ACCESS_TOKEN`, `META_CAPI_TEST_EVENT_CODE`.
+
+> Hito recomendado: ese sprint CAPI implementa solo Lead + Purchase para CTWA. NO mezclar con web/app CAPI (es otro `action_source`, otro Pixel/Dataset si querés separar revenue por canal).
+
+---
+
+## §19 Troubleshooting CAPI
+
+### §19.1 "Invalid OAuth access token" / 401
+
+**Causa:** token mal pegado, expirado, o usás token de user en vez de System User.
+**Fix:**
+1. Volver a §14, regenerar el token.
+2. Verificar que el deploy esté usando la env var actualizada (kubectl exec / docker exec y echo $META_CAPI_ACCESS_TOKEN).
+3. Si persiste, asegurate que el token tenga scope `ads_management` (debería traerlo por default).
+
+### §19.2 Event no aparece en Test events
+
+**Causa:** `test_event_code` no enviado, o enviado en lugar incorrecto del payload.
+**Fix:**
+1. `test_event_code` va en el **body** del POST, NO en URL.
+2. Va a NIVEL RAÍZ del payload, NO dentro de `data[]`.
+3. Si llamás sin `test_event_code` → el event llega a producción directo (saltea Test Events panel y aparece en Overview con delay 20 min). Para smoke verificar inmediatamente, **siempre** usar test_event_code en staging.
+
+### §19.3 Event llega pero Match Quality bajo (<6)
+
+**Causa más común:** `ctwa_clid` ausente o vacío.
+**Fix:**
+1. Verificar en metadata.json del episode que efectivamente capturaste `referral.ctwa_clid` del primer webhook.
+2. Si el primer webhook no traía `referral` → ese episode NO vino de un CTWA ad → NO mandar CAPI event (no aplica).
+3. Si todos tus episodes vienen sin `referral` pero esperás que vinieran de ads: chequear que tu CTWA ad esté usando el ad format "Click to WhatsApp" (no "Send to messenger" o web link).
+
+### §19.4 WABA no aparece en Connected Assets
+
+**Causa:** la WABA no está en la misma Business Manager que el Dataset.
+**Fix:**
+1. Settings → Business Settings → WhatsApp Accounts — verificar que tu WABA aparezca y esté "Active".
+2. Si está en otra BM → moverla o duplicar el Dataset en la BM correcta.
+
+### §19.5 "This token has expired"
+
+**Causa:** rotaste el token o Meta lo revocó.
+**Fix:**
+1. Volver a §14.2 → generar nuevo token.
+2. Update env var en prod + restart workers.
+3. **No te olvides** de actualizar el password manager.
+
+### §19.6 EMQ alto, events llegan, pero ad no muestra purchases atribuidas
+
+**Causa probable:** atribución toma 24-48h en aparecer en Ads Manager.
+**Fix:**
+1. Esperar 48h.
+2. Verificar en Ads Manager que el ad esté usando el Pixel/Dataset correcto en su event tracking (Edit ad set → Conversion event).
+3. Si configuraste el ad con "Lead" como conversion goal pero estás mandando solo "Purchase" eventos → cambiar el ad goal a "Purchase" o mandar Lead también (respetando §17.4 dedup).
+
+---
+
+## §20 Cheat sheet CAPI — todo en una pantalla
+
+| Setting | Valor |
+|---|---|
+| Endpoint | `POST https://graph.facebook.com/v18.0/{dataset_id}/events` |
+| Auth | `?access_token=...` (query param) o header `Authorization: Bearer ...` |
+| `action_source` | `business_messaging` (siempre) |
+| `messaging_channel` | `whatsapp` (siempre) |
+| `user_data.whatsapp_business_account_id` | tu WABA_ID |
+| `user_data.ctwa_clid` | del `referral.ctwa_clid` del primer webhook |
+| Events soportados | `Lead`, `Purchase` (NO otros) |
+| Attribution window | 7 días desde clic del ad |
+| Eventos por ad click | 1 (el más fuerte gana — priorizar Purchase) |
+| Currency Colombia | `COP` |
+| `event_id` Lead | `lead_{episode_id}_{first_qualified_intent_ms}` |
+| `event_id` Purchase | `purchase_{order_id}` |
+| Smoke test | `test_event_code` en root del payload (NO en data[]) |
+
+---
+
+## §21 Cuándo activar CAPI en producción — checklist
+
+Antes de poner el primer CTWA ad live:
+
+- [ ] §11-§15 completos: Dataset creado, token generado, WABA linkeada.
+- [ ] §16 verificado: smoke test pasó con curl, event aparece en Test events del panel.
+- [ ] Backend implementado (sprint CAPI futuro): activities + persistencia ctwa_clid + triggers Lead/Purchase listos y mergeados.
+- [ ] Env vars en deploy de prod: `META_CAPI_DATASET_ID`, `META_CAPI_ACCESS_TOKEN`, `META_CAPI_TEST_EVENT_CODE=""` (vacío en prod).
+- [ ] Workers restart con nuevas env vars cargadas.
+- [ ] Test E2E manual: spawneás un episode con ctwa_clid mock, disparás IntentQualifiedEvent, verificás que Lead event aparece en Events Manager Overview (sin test_event_code, espera ~20 min).
+- [ ] EMQ score >7 en Lead events.
+- [ ] CTWA ad live con conversion goal = Purchase (no Lead — empezás midiendo bottom funnel desde día 1).
+
+---
+
+## §22 Referencias CAPI
+
+- Meta — [Conversions API for Business Messaging](https://developers.facebook.com/docs/marketing-api/conversions-api/business-messaging/)
+- Meta — [Onboarding guide](https://developers.facebook.com/documentation/ads-commerce/conversions-api/business-messaging)
+- Meta — [Conversions API overview](https://developers.facebook.com/docs/marketing-api/conversions-api/)
+- Meta — [Dataset Quality API](https://developers.facebook.com/docs/marketing-api/conversions-api/dataset-quality-api/) (para monitorear EMQ programáticamente)
+- HU-WA24H-001 refinement §0 (contexto CTWA) y §3 (cost tracking baseline — el integral con CAPI viene en sprint futuro).
+- AsisteClick — [CTWA Ads 2026 guide](https://asisteclick.com/en/blog/click-to-whatsapp-ads-ctwa-conversion-2026/) (tactical complement).

@@ -54,7 +54,7 @@ services:
     depends_on:
     - temporal
   litellm:
-    image: ghcr.io/berriai/litellm:main-latest
+    image: ghcr.io/berriai/litellm:v1.86.2
     container_name: local-litellm
     ports:
     - 4000:4000
