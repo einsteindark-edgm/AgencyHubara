@@ -1035,6 +1035,22 @@ nodes:
   - id: prewarm-uv-venv
     bash: |
       if [ -d hubara_agency ]; then
+        # CRITICAL — los Settings classes de hubara_agency (MedusaSettings,
+        # WhatsApp, etc.) validan env vars AL IMPORT TIME via pydantic-settings.
+        # En el worktree de Archon NO hay `.env` (gitignored), así que cualquier
+        # `pytest -m architecture` que importe `src.plugins.chats.workers.sales`
+        # crashea con "MedusaSettings: base_url Field required".
+        # Local dev tiene `.env` con valores reales, por eso pasa en main.
+        # Bug detectado run 940be3b9 (2026-05-29). Fix: copiar .env.example
+        # → .env si no existe — los placeholders son válidos para la
+        # validación de pydantic (cualquier URL/token string). Tests que
+        # realmente HACEN API calls a Medusa/WhatsApp seguirán fallando si
+        # los placeholders no son reales, pero esos serían tests integration
+        # (no architecture/import).
+        if [ ! -f hubara_agency/.env ] && [ -f hubara_agency/.env.example ]; then
+          cp hubara_agency/.env.example hubara_agency/.env
+          echo "Bootstrapped .env from .env.example (worktree had no .env)" >&2
+        fi
         cd hubara_agency && uv sync 2>&1 | tail -10 || echo "uv sync warnings — gates retry"
       fi
       echo "ok"
