@@ -1424,55 +1424,67 @@ nodes:
 
       if [ $TOUCHED_BACKEND -eq 1 ]; then
         # ───────────────────────────────────────────────────────────────
-        # Watchdog wrapper para pytest — macOS no tiene `timeout` y
-        # pytest-timeout no está en deps. Si un test cuelga (e.g. Temporal
-        # workflow esperando activity, fixture sin teardown), el watchdog
-        # mata el proceso. Run df0a0cb78f (2026-05-28) — pytest -q quedó
-        # 12min en I/O wait sin progreso. Sin watchdog, todo el final-
-        # validation se atasca y consume el global timeout (20min).
-        # Cada test individual no debería tardar >60s; 180s da margen
-        # para el setup de uv venv en el primer test.
+        # Watchdog wrapper para pytest — el bug histórico de runs
+        # 0538c537 / df0a0cb78f / 710e0eb6:
+        #
+        # 1. macOS no tiene `timeout` y pytest-timeout no está en deps.
+        # 2. uv run pytest spawnea uv + pytest + temporal-test-server
+        #    como hijos. Si los matamos via `kill -9 $PYT_PID`, solo
+        #    morir el subshell — los nietos quedan como orphans
+        #    adoptados por init.
+        # 3. Esos orphans HEREDARON el stdout/stderr del bash node.
+        # 4. Cuando el bash hace `exit 0`, Archon (Node.js execFileAsync)
+        #    espera EOF en su stdout pipe — pero los orphans la mantienen
+        #    abierta. Resultado: bash ya salió pero Archon sigue esperando
+        #    hasta el global timeout (20min). Pareció que el watchdog no
+        #    funcionaba, pero sí — el bug era el pipe heredado.
+        #
+        # Fix: redirigir TODA la I/O de cada pytest a un archivo. Los
+        # orphans escriben al file (no al pipe a Archon). Cuando el bash
+        # exit, su stdout pipe cierra → Archon recibe EOF → promise
+        # resuelve inmediatamente.
+        #
+        # `pkill` defensivo al inicio mata cualquier orphan pytest/uv/
+        # temporal-test-server de runs anteriores que pudieron sobrevivir
+        # (acumulan CPU/RAM y bloquean tests).
         # ───────────────────────────────────────────────────────────────
-        run_with_watchdog() {
-          local label="$1"
-          local secs="$2"
-          shift 2
-          local LOG="$ARTIFACTS_DIR/.gate-$$.log"
-          ( "$@" ) > "$LOG" 2>&1 &
-          local pid=$!
-          ( sleep "$secs"; kill -9 -$pid 2>/dev/null; kill -9 $pid 2>/dev/null ) &
-          local wd=$!
-          local exit_code=0
-          wait $pid; exit_code=$?
-          kill $wd 2>/dev/null; wait $wd 2>/dev/null
-          tail -30 "$LOG" >&2
-          if [ "$exit_code" -ne 0 ]; then
-            echo "WATCHDOG: $label exited with code $exit_code (may have been killed at ${secs}s)" >&2
-          fi
-          rm -f "$LOG"
-          return $exit_code
-        }
+        log_phase "START" "cleanup orphan processes from prior runs"
+        pkill -9 -f 'temporal-test-server-sdk-python' 2>/dev/null || true
+        pkill -9 -f '\.venv/bin/pytest' 2>/dev/null || true
+        pkill -9 -f 'uv run pytest' 2>/dev/null || true
+        log_phase "END  " "cleanup orphan processes"
+
+        PYTEST_FULL_LOG="$ARTIFACTS_DIR/.pytest-full.log"
+        PYTEST_ARCH_LOG="$ARTIFACTS_DIR/.pytest-arch.log"
+        PYTEST_PLG_LOG="$ARTIFACTS_DIR/.pytest-plugins.log"
 
         log_phase "START" "uv pytest (full)"
-        ( cd hubara_agency && uv run pytest -q --tb=short ) &
+        # CRITICAL: redirect stdout+stderr to file so orphan children don't
+        # hold open Archon's stdout pipe after we exit.
+        ( cd hubara_agency && exec uv run pytest -q --tb=short ) > "$PYTEST_FULL_LOG" 2>&1 &
         PYT_PID=$!
-        ( sleep 240; kill -9 -$PYT_PID 2>/dev/null; kill -9 $PYT_PID 2>/dev/null; echo "WATCHDOG killed pytest -q after 240s" >&2 ) &
+        ( sleep 240; kill -9 -$PYT_PID 2>/dev/null; kill -9 $PYT_PID 2>/dev/null ) &
         WD_PID=$!
         wait $PYT_PID; PYT_RC=$?
         kill $WD_PID 2>/dev/null; wait $WD_PID 2>/dev/null
+        # Best-effort: tear down any orphan children of pytest
+        pkill -9 -P $PYT_PID 2>/dev/null || true
+        tail -40 "$PYTEST_FULL_LOG" >&2
         if [ "$PYT_RC" -ne 0 ]; then
-          log_phase "FAIL " "uv pytest (full) rc=$PYT_RC"
+          log_phase "FAIL " "uv pytest (full) rc=$PYT_RC (240s watchdog or test fail)"
           echo "FAIL_PYTEST"; exit 0;
         fi
         log_phase "END  " "uv pytest (full)"
 
         log_phase "START" "uv pytest -m architecture"
-        ( cd hubara_agency && uv run pytest -m architecture --tb=short ) &
+        ( cd hubara_agency && exec uv run pytest -m architecture --tb=short ) > "$PYTEST_ARCH_LOG" 2>&1 &
         ARC_PID=$!
-        ( sleep 120; kill -9 -$ARC_PID 2>/dev/null; kill -9 $ARC_PID 2>/dev/null; echo "WATCHDOG killed pytest -m architecture after 120s" >&2 ) &
+        ( sleep 120; kill -9 -$ARC_PID 2>/dev/null; kill -9 $ARC_PID 2>/dev/null ) &
         WD_PID=$!
         wait $ARC_PID; ARC_RC=$?
         kill $WD_PID 2>/dev/null; wait $WD_PID 2>/dev/null
+        pkill -9 -P $ARC_PID 2>/dev/null || true
+        tail -30 "$PYTEST_ARCH_LOG" >&2
         if [ "$ARC_RC" -ne 0 ]; then
           log_phase "FAIL " "uv pytest -m architecture rc=$ARC_RC"
           echo "FAIL_ARCH"; exit 0;
@@ -1480,20 +1492,23 @@ nodes:
         log_phase "END  " "uv pytest -m architecture"
 
         log_phase "START" "uv lint-imports (R-DIP)"
-        cd hubara_agency && uv run lint-imports 2>&1 | tail -10 >&2 || {
+        cd hubara_agency && uv run lint-imports > "$ARTIFACTS_DIR/.lint-imports.log" 2>&1 || {
           log_phase "FAIL " "uv lint-imports"
+          tail -10 "$ARTIFACTS_DIR/.lint-imports.log" >&2
           echo "FAIL_LINT_IMPORTS"; exit 0;
         }
         cd ..
         log_phase "END  " "uv lint-imports"
 
         log_phase "START" "uv pytest tests/plugins/ (premortem invariants)"
-        ( cd hubara_agency && uv run pytest tests/plugins/ --tb=short ) &
+        ( cd hubara_agency && exec uv run pytest tests/plugins/ --tb=short ) > "$PYTEST_PLG_LOG" 2>&1 &
         PLG_PID=$!
-        ( sleep 120; kill -9 -$PLG_PID 2>/dev/null; kill -9 $PLG_PID 2>/dev/null; echo "WATCHDOG killed pytest tests/plugins after 120s" >&2 ) &
+        ( sleep 120; kill -9 -$PLG_PID 2>/dev/null; kill -9 $PLG_PID 2>/dev/null ) &
         WD_PID=$!
         wait $PLG_PID; PLG_RC=$?
         kill $WD_PID 2>/dev/null; wait $WD_PID 2>/dev/null
+        pkill -9 -P $PLG_PID 2>/dev/null || true
+        tail -30 "$PYTEST_PLG_LOG" >&2
         if [ "$PLG_RC" -ne 0 ]; then
           log_phase "FAIL " "uv pytest tests/plugins/ rc=$PLG_RC"
           echo "FAIL_PREMORTEM"; exit 0;
@@ -1501,12 +1516,17 @@ nodes:
         log_phase "END  " "uv pytest tests/plugins/"
 
         log_phase "START" "uv pytest tests/functional/ (CAN HANG on external deps)"
-        ( cd hubara_agency && uv run pytest tests/functional/ -m functional -v ) > $ARTIFACTS_DIR/functional-evidence.log 2>&1 &
+        ( cd hubara_agency && exec uv run pytest tests/functional/ -m functional -v ) > $ARTIFACTS_DIR/functional-evidence.log 2>&1 &
         FN_PID=$!
-        ( sleep 180; kill -9 -$FN_PID 2>/dev/null; kill -9 $FN_PID 2>/dev/null; echo "WATCHDOG killed pytest tests/functional after 180s" >&2 ) &
+        ( sleep 180; kill -9 -$FN_PID 2>/dev/null; kill -9 $FN_PID 2>/dev/null ) &
         WD_PID=$!
         wait $FN_PID; FN_RC=$?
         kill $WD_PID 2>/dev/null; wait $WD_PID 2>/dev/null
+        pkill -9 -P $FN_PID 2>/dev/null || true
+        # Tambien matar cualquier temporal-test-server que la suite haya
+        # arrancado y que pueda seguir vivo (clean-up post-test garantiza
+        # que Archon reciba EOF rápido).
+        pkill -9 -f 'temporal-test-server-sdk-python' 2>/dev/null || true
         tail -30 $ARTIFACTS_DIR/functional-evidence.log >&2
         if [ "$FN_RC" -ne 0 ]; then
           log_phase "FAIL " "uv pytest tests/functional/ rc=$FN_RC"
