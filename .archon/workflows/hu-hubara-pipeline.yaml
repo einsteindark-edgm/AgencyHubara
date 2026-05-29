@@ -1555,6 +1555,27 @@ nodes:
       # Frontend gates (npm test / test:arch / tsc / build)
       # ────────────────────────────────────────────────────────────────
       if [ $TOUCHED_FRONTEND -eq 1 ]; then
+        # CRITICAL — generar el plugin-registry ANTES de cualquier gate de
+        # frontend. `src/app/plugin-registry.generated.ts` es gitignored
+        # (artefacto generado por `npm run plugins:sync`). Los hooks predev/
+        # prebuild lo generan, pero `npm test` (vitest run) NO tiene pretest
+        # hook, así que en un worktree fresh el registry no existe y rompen:
+        #   - test_plugin_registry.arch.test.ts (no encuentra el archivo)
+        #   - test_typescript_compiles.arch.test.ts (Dashboard.tsx importa
+        #     @/app/plugin-registry.generated → TS2307 module not found)
+        #   - npx tsc -b (mismo import faltante)
+        # Local pasa porque alguna vez corriste dev/build (que disparó el
+        # hook). Mismo patrón que el .env bootstrap. Bug detectado run
+        # 4fb24fc1 (2026-05-29). Generamos una vez acá → todos los gates
+        # de frontend ven el registry.
+        log_phase "START" "npm run plugins:sync (generate registry)"
+        cd frontend_dashboard && npm run plugins:sync 2>&1 | tail -10 >&2 || {
+          log_phase "FAIL " "npm run plugins:sync"
+          echo "FAIL_PLUGINS_SYNC"; exit 0;
+        }
+        cd ..
+        log_phase "END  " "npm run plugins:sync"
+
         log_phase "START" "npm test"
         cd frontend_dashboard && npm test -- --run 2>&1 | tail -30 >&2 || {
           log_phase "FAIL " "npm test"
