@@ -1423,19 +1423,60 @@ nodes:
       fi
 
       if [ $TOUCHED_BACKEND -eq 1 ]; then
-        log_phase "START" "uv pytest (full)"
-        cd hubara_agency && uv run pytest -q --tb=short 2>&1 | tail -30 >&2 || {
-          log_phase "FAIL " "uv pytest (full)"
-          echo "FAIL_PYTEST"; exit 0;
+        # ───────────────────────────────────────────────────────────────
+        # Watchdog wrapper para pytest — macOS no tiene `timeout` y
+        # pytest-timeout no está en deps. Si un test cuelga (e.g. Temporal
+        # workflow esperando activity, fixture sin teardown), el watchdog
+        # mata el proceso. Run df0a0cb78f (2026-05-28) — pytest -q quedó
+        # 12min en I/O wait sin progreso. Sin watchdog, todo el final-
+        # validation se atasca y consume el global timeout (20min).
+        # Cada test individual no debería tardar >60s; 180s da margen
+        # para el setup de uv venv en el primer test.
+        # ───────────────────────────────────────────────────────────────
+        run_with_watchdog() {
+          local label="$1"
+          local secs="$2"
+          shift 2
+          local LOG="$ARTIFACTS_DIR/.gate-$$.log"
+          ( "$@" ) > "$LOG" 2>&1 &
+          local pid=$!
+          ( sleep "$secs"; kill -9 -$pid 2>/dev/null; kill -9 $pid 2>/dev/null ) &
+          local wd=$!
+          local exit_code=0
+          wait $pid; exit_code=$?
+          kill $wd 2>/dev/null; wait $wd 2>/dev/null
+          tail -30 "$LOG" >&2
+          if [ "$exit_code" -ne 0 ]; then
+            echo "WATCHDOG: $label exited with code $exit_code (may have been killed at ${secs}s)" >&2
+          fi
+          rm -f "$LOG"
+          return $exit_code
         }
+
+        log_phase "START" "uv pytest (full)"
+        ( cd hubara_agency && uv run pytest -q --tb=short ) &
+        PYT_PID=$!
+        ( sleep 240; kill -9 -$PYT_PID 2>/dev/null; kill -9 $PYT_PID 2>/dev/null; echo "WATCHDOG killed pytest -q after 240s" >&2 ) &
+        WD_PID=$!
+        wait $PYT_PID; PYT_RC=$?
+        kill $WD_PID 2>/dev/null; wait $WD_PID 2>/dev/null
+        if [ "$PYT_RC" -ne 0 ]; then
+          log_phase "FAIL " "uv pytest (full) rc=$PYT_RC"
+          echo "FAIL_PYTEST"; exit 0;
+        fi
         log_phase "END  " "uv pytest (full)"
 
         log_phase "START" "uv pytest -m architecture"
-        cd hubara_agency && uv run pytest -m architecture --tb=short 2>&1 | tail -20 >&2 || {
-          log_phase "FAIL " "uv pytest -m architecture"
+        ( cd hubara_agency && uv run pytest -m architecture --tb=short ) &
+        ARC_PID=$!
+        ( sleep 120; kill -9 -$ARC_PID 2>/dev/null; kill -9 $ARC_PID 2>/dev/null; echo "WATCHDOG killed pytest -m architecture after 120s" >&2 ) &
+        WD_PID=$!
+        wait $ARC_PID; ARC_RC=$?
+        kill $WD_PID 2>/dev/null; wait $WD_PID 2>/dev/null
+        if [ "$ARC_RC" -ne 0 ]; then
+          log_phase "FAIL " "uv pytest -m architecture rc=$ARC_RC"
           echo "FAIL_ARCH"; exit 0;
-        }
-        cd ..
+        fi
         log_phase "END  " "uv pytest -m architecture"
 
         log_phase "START" "uv lint-imports (R-DIP)"
@@ -1447,20 +1488,30 @@ nodes:
         log_phase "END  " "uv lint-imports"
 
         log_phase "START" "uv pytest tests/plugins/ (premortem invariants)"
-        cd hubara_agency && uv run pytest tests/plugins/ --tb=short 2>&1 | tail -20 >&2 || {
-          log_phase "FAIL " "uv pytest tests/plugins/"
+        ( cd hubara_agency && uv run pytest tests/plugins/ --tb=short ) &
+        PLG_PID=$!
+        ( sleep 120; kill -9 -$PLG_PID 2>/dev/null; kill -9 $PLG_PID 2>/dev/null; echo "WATCHDOG killed pytest tests/plugins after 120s" >&2 ) &
+        WD_PID=$!
+        wait $PLG_PID; PLG_RC=$?
+        kill $WD_PID 2>/dev/null; wait $WD_PID 2>/dev/null
+        if [ "$PLG_RC" -ne 0 ]; then
+          log_phase "FAIL " "uv pytest tests/plugins/ rc=$PLG_RC"
           echo "FAIL_PREMORTEM"; exit 0;
-        }
-        cd ..
+        fi
         log_phase "END  " "uv pytest tests/plugins/"
 
         log_phase "START" "uv pytest tests/functional/ (CAN HANG on external deps)"
-        cd hubara_agency && uv run pytest tests/functional/ -m functional -v 2>&1 \
-          | tee $ARTIFACTS_DIR/functional-evidence.log | tail -30 >&2 || {
-          log_phase "FAIL " "uv pytest tests/functional/"
+        ( cd hubara_agency && uv run pytest tests/functional/ -m functional -v ) > $ARTIFACTS_DIR/functional-evidence.log 2>&1 &
+        FN_PID=$!
+        ( sleep 180; kill -9 -$FN_PID 2>/dev/null; kill -9 $FN_PID 2>/dev/null; echo "WATCHDOG killed pytest tests/functional after 180s" >&2 ) &
+        WD_PID=$!
+        wait $FN_PID; FN_RC=$?
+        kill $WD_PID 2>/dev/null; wait $WD_PID 2>/dev/null
+        tail -30 $ARTIFACTS_DIR/functional-evidence.log >&2
+        if [ "$FN_RC" -ne 0 ]; then
+          log_phase "FAIL " "uv pytest tests/functional/ rc=$FN_RC"
           echo "FAIL_FUNCTIONAL"; exit 0;
-        }
-        cd ..
+        fi
         log_phase "END  " "uv pytest tests/functional/"
       else
         log_phase "SKIP " "backend gates (no hubara_agency/ changes)"
