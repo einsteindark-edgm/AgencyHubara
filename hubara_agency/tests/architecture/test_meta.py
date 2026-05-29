@@ -88,6 +88,31 @@ def _current_branch() -> str | None:
     return name or None
 
 
+def _merge_base(base: str) -> str | None:
+    """Return the merge-base SHA between `base` and HEAD, or None if unavailable.
+
+    Why merge-base instead of `base` directly
+    ------------------------------------------
+    A two-dot diff (`git diff <base>`) flags every file where the worktree
+    differs from `base` — INCLUDING files that `base` (origin/main) advanced
+    AFTER this branch forked or last merged. That produces false positives:
+    a feature branch that never touched `.archon/workflows/` gets flagged
+    simply because `main` landed an unrelated workflow fix in the meantime.
+
+    Diffing against the merge-base (the fork/last-merge point) instead is the
+    standard PR-diff semantics (what GitHub Actions `pull_request` uses): it
+    reports ONLY what THIS branch changed, ignoring what `main` advanced. The
+    protection stays intact — if the branch genuinely modifies a protected
+    file in one of its own commits (after the merge-base), it is still caught.
+    See ADR-2026-05-29-meta-gate-merge-base. Bug surfaced run 78a6e0c4.
+    """
+    code, out = _git("merge-base", base, "HEAD")
+    if code != 0:
+        return None
+    sha = out.strip()
+    return sha or None
+
+
 def _changed_files_vs(base: str) -> list[str]:
     """Files changed in current worktree vs `base`.
 
@@ -144,7 +169,13 @@ def test_protected_files_unchanged_vs_main() -> None:
     if branch == "main":
         pytest.skip("HEAD is on `main` — there is no PR to compare against.")
 
-    changed = _changed_files_vs(base)
+    # Diff against the merge-base, not `base` directly — see _merge_base().
+    # This is PR-diff semantics: only flag what THIS branch changed, not what
+    # `main` advanced after the fork/last-merge. Falls back to `base` if the
+    # merge-base can't be computed (e.g. unrelated histories) so the gate
+    # never silently disables itself.
+    diff_base = _merge_base(base) or base
+    changed = _changed_files_vs(diff_base)
     offenders = sorted(p for p in changed if _is_protected(p))
     assert not offenders, (
         f"Meta-gate violation — architecture-protected files modified vs `{base}` "
