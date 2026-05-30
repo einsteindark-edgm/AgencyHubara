@@ -812,9 +812,34 @@ nodes:
       BRANCH=$(echo $parse-input.output | jq -r '.branch')
       RESULTS_DIR="hubara_agency/.hubara/results/${HU_ID}"
       FEATURE_RDIR="${RESULTS_DIR}/feature-results/${PLUGIN_ID}"
+      FEATURE_PLAN_DIR="hubara_agency/.hubara/plans/${HU_ID}/feature-plans/${PLUGIN_ID}"
       PLUGIN_RFILE="${RESULTS_DIR}/plugin-${PLUGIN_ID}-result.yaml"
 
       mkdir -p "$RESULTS_DIR"
+
+      # ────────────────────────────────────────────────────────────────
+      # COMPLETENESS — cuántas tasks ESPERABA el plan vs cuántas tienen
+      # result.yaml. CRITICAL: sin esto, el aggregator contaba solo los
+      # F*-result.yaml que EXISTEN y reportaba `passed` aunque faltaran
+      # tasks. Caso real: agents_admin tenía F01/F02/F03 en el feature-plan
+      # pero el loop solo completó F01 → reportó passed con 1/3 → el main
+      # pipeline avanzó hasta que el premortem detectó que F02/F03 (todo el
+      # frontend) nunca se implementaron. Bug visto run b9b95fc5 (2026-05-29).
+      # Si faltan tasks → status=failed con missing_tasks explícito.
+      # ────────────────────────────────────────────────────────────────
+      PLANNED=0
+      MISSING_TASKS=()
+      MANIFEST="${FEATURE_PLAN_DIR}/feature-plan-manifest.yaml"
+      if [ -f "$MANIFEST" ]; then
+        # Extraer los ids F<NN> declarados como tasks en el manifest
+        PLANNED_IDS=$(grep -oE '^  - id: F[0-9]+' "$MANIFEST" 2>/dev/null | awk '{print $3}')
+        for tid in $PLANNED_IDS; do
+          PLANNED=$((PLANNED + 1))
+          if [ ! -f "${FEATURE_RDIR}/${tid}-result.yaml" ]; then
+            MISSING_TASKS+=("$tid")
+          fi
+        done
+      fi
 
       # Agregar status global del plugin
       # CRITICAL — implementer emite 4 status válidos (SKILL.md línea 1164):
@@ -854,10 +879,16 @@ nodes:
       fi
 
       # status del plugin: passed | passed_with_warnings | failed
-      # - passed: TOTAL > 0 y todas las tasks pasaron sin warnings
-      # - passed_with_warnings: TOTAL > 0, todas pasaron, alguna con warnings
-      # - failed: TOTAL == 0 OR alguna task tiene status != passed*
-      if [ "$ALL_PASSED" = "true" ] && [ "$TOTAL" -gt 0 ]; then
+      # - passed: PLANNED tasks todas con result + todas pasaron sin warnings
+      # - passed_with_warnings: todas las planned con result + pasaron, ≥1 warning
+      # - failed: faltan tasks del plan (incompleto) OR alguna task != passed*
+      #           OR TOTAL == 0
+      if [ "${#MISSING_TASKS[@]}" -gt 0 ]; then
+        # Incompleto — faltan tasks del feature-plan. NUNCA reportar passed.
+        PLUGIN_STATUS="failed"
+        ALL_PASSED=false
+        echo "INCOMPLETE: plan tenía ${PLANNED} tasks, faltan result.yaml de: ${MISSING_TASKS[*]}" >&2
+      elif [ "$ALL_PASSED" = "true" ] && [ "$TOTAL" -gt 0 ]; then
         if [ "$WARNED" -gt 0 ]; then
           PLUGIN_STATUS="passed_with_warnings"
         else
@@ -874,11 +905,16 @@ nodes:
       pipeline: hu-hubara-plugin-pipeline
       date: $(date -u +%Y-%m-%dT%H:%M:%SZ)
       status: ${PLUGIN_STATUS}
+      feature_tasks_planned: ${PLANNED}
       feature_tasks_total: ${TOTAL}
       feature_tasks_passed: ${PASSED}
       feature_tasks_with_warnings: ${WARNED}
-      failed_tasks:
+      missing_tasks:
       EOF
+      for t in "${MISSING_TASKS[@]}"; do
+        echo "  - ${t}" >> "$PLUGIN_RFILE"
+      done
+      echo "failed_tasks:" >> "$PLUGIN_RFILE"
       for t in "${FAILED_TASKS[@]}"; do
         echo "  - ${t}" >> "$PLUGIN_RFILE"
       done
