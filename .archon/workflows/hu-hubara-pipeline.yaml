@@ -1868,36 +1868,54 @@ nodes:
       HU_ID="$HU_ID" \
       ISSUE_URL="$ISSUE_URL" \
       bash hubara_agency/.hubara/dump-pipeline-diagnostics.sh
-    when: "$check-premortem-resolved.output == 'PR_BLOCKED' || $check-premortem-resolved.output == 'PR_BROKEN'"
+    # CRITICAL — incluir PR_RESULT_MISSING y PR_UNKNOWN. Sin estos, esos 2
+    # estados caían en un AGUJERO: evaluate-pre-pr (when PR_RESOLVED) los
+    # skipeaba, este cancel (when PR_BLOCKED||PR_BROKEN) también → toda la
+    # cadena downstream (evaluator, review, PR) se skipeaba SILENCIOSAMENTE
+    # y el workflow "completaba" sin crear PR ni avisar. El único estado que
+    # debe CONTINUAR es PR_RESOLVED; cualquier otro cancela visiblemente.
+    # Run b9b95fc5 (2026-05-29): premortem detectó F02/F03 sin implementar,
+    # el loop no dejó task-result.yaml → PR_RESULT_MISSING → agujero.
+    when: "$check-premortem-resolved.output == 'PR_BLOCKED' || $check-premortem-resolved.output == 'PR_BROKEN' || $check-premortem-resolved.output == 'PR_RESULT_MISSING' || $check-premortem-resolved.output == 'PR_UNKNOWN'"
     depends_on: [check-premortem-resolved]
 
   - id: cancel-on-premortem-blocked
     cancel: |
-      Premortem identificó modos de fallo (critical/high) que el implementer
-      NO pudo resolver en el loop subsiguiente (complejidad alta, requiere ADR
-      o nueva HU para abordarse).
+      Premortem chain NO produjo un estado resoluble
+      ($check-premortem-resolved.output).
+
+      Decodificación:
+        PR_BLOCKED / PR_BROKEN  → el implementer encontró los fixes complex
+            (signature change / refactor / nuevo API) y los defirió, o los
+            fixes rompieron tests irrecuperablemente.
+        PR_RESULT_MISSING       → el loop-implementer NO escribió
+            task-result.yaml. Suele indicar que los failure_modes del
+            premortem son tan grandes (ej: tasks enteras del feature-plan SIN
+            implementar) que el implementer no pudo procesarlos como "fixes".
+            REVISÁ premortem.yaml — si dice "F0X never implemented", la HU
+            está INCOMPLETA: el sub-pipeline no completó todas sus tasks.
+        PR_UNKNOWN              → task-result.yaml existe pero sin marcador de
+            status reconocible. Revisá su contenido.
 
       📋 Forensic diagnostic bundle:
          $ARTIFACTS_DIR/diagnostic-bundle.yaml
+      Premortem report: $ARTIFACTS_DIR/premortem.yaml
 
       HU: hu/$gen-hu-id.output.hu_id
-      Premortem report:  $ARTIFACTS_DIR/premortem.yaml (failure_modes deferred)
-      Implementer report: $ARTIFACTS_DIR/task-result.yaml (premortem_processing.fixes_deferred)
 
       Próximos pasos para el operador:
-        1. Revisar fixes_deferred en task-result.yaml para entender por qué
-           cada uno es complex (signature change / refactor / nuevo API).
-        2. Para fixes que requieren signature change: ADR + nueva HU + refinement.
-        3. Para fixes que requieren refactor amplio: agrupar con próxima HU del
-           plugin (no piggy-back sobre la HU actual).
-        4. Si decidís mergear SIN fix (no recomendado, técnical debt explícita):
-           override desactivando este nodo en esta corrida específica.
+        1. Si la HU está INCOMPLETA (tasks del feature-plan sin implementar):
+           re-correr el sub-pipeline del plugin afectado para completar las
+           tasks faltantes:
+             archon workflow run hu-hubara-plugin-pipeline "<HU_ID> <plugin>"
+           (smart-resume retoma desde la primera task sin result.yaml).
+        2. Si son fixes complex deferred: ADR + nueva HU + refinement.
+        3. Si querés mergear SIN fix (deuda explícita, NO recomendado):
+           override desactivando este nodo en esta corrida.
 
-      Política: NO merge silencioso con issues criticos/high pendientes.
-      Si te molesta el bloqueo, calibrá la rúbrica del premortem
-      (.claude/skills/hubara-premortem-archon/SKILL.md §6 severidad), no lo
-      desactives.
-    when: "$check-premortem-resolved.output == 'PR_BLOCKED' || $check-premortem-resolved.output == 'PR_BROKEN'"
+      Política: NO merge silencioso con issues criticos/high pendientes ni
+      con tasks del plan incompletas.
+    when: "$check-premortem-resolved.output == 'PR_BLOCKED' || $check-premortem-resolved.output == 'PR_BROKEN' || $check-premortem-resolved.output == 'PR_RESULT_MISSING' || $check-premortem-resolved.output == 'PR_UNKNOWN'"
     depends_on: [dump-on-cancel-premortem-blocked]
 
   # ════════════════════════════════════════════════════════════════════
@@ -2134,7 +2152,10 @@ nodes:
       HU_ID="$HU_ID" \
       ISSUE_URL="$ISSUE_URL" \
       bash hubara_agency/.hubara/dump-pipeline-diagnostics.sh
-    when: "$check-review-resolved.output == 'REVIEW_BLOCKED' || $check-review-resolved.output == 'REVIEW_BROKEN'"
+    # Mismo fix que cancel-on-premortem-blocked — capturar RV_RESULT_MISSING
+    # y REVIEW_UNKNOWN para que no caigan en el agujero (silent skip de
+    # build-pr-body + create-pr). Solo REVIEW_RESOLVED continúa al PR.
+    when: "$check-review-resolved.output == 'REVIEW_BLOCKED' || $check-review-resolved.output == 'REVIEW_BROKEN' || $check-review-resolved.output == 'RV_RESULT_MISSING' || $check-review-resolved.output == 'REVIEW_UNKNOWN'"
     depends_on: [check-review-resolved]
 
   - id: cancel-on-review-blocked
@@ -2161,11 +2182,16 @@ nodes:
         5. Si decidís mergear sin fix (no recomendado): override manual
            desactivando este nodo en esta corrida específica.
 
+      Si el estado es RV_RESULT_MISSING o REVIEW_UNKNOWN: el loop-implementer
+      del code-review no produjo un task-result.yaml legible. Revisá si la HU
+      está incompleta (igual que el caso premortem) — re-correr el sub-pipeline
+      del plugin afectado si faltan tasks.
+
       Política: NO merge silencioso con findings critical pendientes. Si te
       molestan los specialists del code-review, calibrá los prompts de los 5
       commands (.archon/commands/hubara-reviewer-{deha,fsd,plugin-system,test-coverage,security}.md),
       no los desactives.
-    when: "$check-review-resolved.output == 'REVIEW_BLOCKED' || $check-review-resolved.output == 'REVIEW_BROKEN'"
+    when: "$check-review-resolved.output == 'REVIEW_BLOCKED' || $check-review-resolved.output == 'REVIEW_BROKEN' || $check-review-resolved.output == 'RV_RESULT_MISSING' || $check-review-resolved.output == 'REVIEW_UNKNOWN'"
     depends_on: [dump-on-cancel-review-blocked]
 
   # ════════════════════════════════════════════════════════════════════
