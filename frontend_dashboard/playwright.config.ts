@@ -29,7 +29,12 @@
  */
 import { defineConfig, devices } from "@playwright/test";
 
-const PORT = Number(process.env.PORT ?? 5173);
+// Dedicated test port (NOT 5173). The dashboard's vite.config pins `server.port`
+// to 5173, which collides with other Vite/Astro dev servers an operator may have
+// running locally (e.g. Archon). With `reuseExistingServer` that collision makes
+// Playwright silently test the WRONG app. Binding the test server to its own port
+// (overridable via PORT) keeps the gate hermetic. Run 6a3cbde1 surfaced this.
+const PORT = Number(process.env.PORT ?? 5189);
 const BASE_URL = `http://localhost:${PORT}`;
 
 export default defineConfig({
@@ -62,7 +67,9 @@ export default defineConfig({
   // The dev server itself proxies API calls to localhost:8000 (FastAPI), which
   // the pipeline starts in background BEFORE invoking playwright.
   webServer: {
-    command: "npm run dev",
+    // Bind Vite explicitly to our test port (--strictPort: fail loudly instead
+    // of silently auto-incrementing, which would desync from `url` below).
+    command: `npm run dev -- --port ${PORT} --strictPort`,
     url: BASE_URL,
     reuseExistingServer: !process.env.CI,
     timeout: 60_000,
