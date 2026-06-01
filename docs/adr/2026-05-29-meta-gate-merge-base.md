@@ -87,3 +87,23 @@ en paralelo.
    que motivó este ADR.
 3. **Excluir `.archon/workflows/` de los prefijos protegidos**: perdería la
    protección sobre los workflows del orquestador, que SÍ son arquitectura.
+
+## Update 2026-06-01 — mismo fix al meta-gate del FRONTEND
+
+- **Run que lo surfaceó**: `38d8223e` (HU-20260527-194116).
+- **Archivo**: `frontend_dashboard/src/test/architecture/test_meta.arch.test.ts`.
+
+El meta-gate del frontend (`test_meta.arch.test.ts`) tenía el **mismo two-dot
+diff** vs `origin/main` que tenía el backend (`changedFilesVs(base)` con
+`git diff --name-only base`). El fix original (2026-05-29) solo tocó el gate
+de backend (`tests/architecture/test_meta.py`); el de frontend quedó con el
+bug. Al landear el guard de HU_ID en `main` (commit que toca
+`.archon/workflows/hu-hubara-pipeline.yaml`, un prefijo protegido), la HU branch
+en vuelo — que NO tocó el workflow — fue marcada offender por el gate de
+frontend con exactamente el falso positivo que este ADR describe.
+
+Se aplicó la **misma** semántica merge-base: nuevo helper `mergeBaseWith(base)`
++ `changedFilesVs(mergeBaseWith(base))`. Fallback a `base` si merge-base no
+existe. La protección se mantiene idéntica (los prefijos de
+`ARCHITECTURE_PROTECTED_PREFIXES` no cambian; solo cambia el punto de
+comparación). Ahora **ambos** meta-gates (backend + frontend) usan merge-base.
