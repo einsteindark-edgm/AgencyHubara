@@ -64,7 +64,7 @@ export function AgentsList({ selectedId, onSelect }: Props) {
         </div>
       </div>
 
-      <div className="ag-list">
+      <div className="ag-list" role="list">
         {[...groups.entries()].map(([cat, arr]) => (
           <div key={cat}>
             <div className="side-section">
@@ -117,7 +117,7 @@ function AgentRow({ agent, selected, onSelect }: RowProps) {
                 : "")
             }
           />
-          {agent.calls.toLocaleString()} sesiones
+          {agent.calls?.toLocaleString() ?? "—"} sesiones
           {agent.csat != null && (
             <>
               <span style={{ color: "var(--fg-faint)" }}>·</span>★ {agent.csat}

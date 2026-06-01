@@ -1,12 +1,5 @@
-/**
- * `AgentsSection` — la Page del plugin agents_admin.
- *
- * Extraída de `pages/Dashboard.tsx` en PR4. Mantiene la firma de props que
- * tenía cuando vivía inline en el shell.
- *
- * Plugin frontend-only (sin agente Temporal, sin worker, sin endpoints de API
- * propios — los datos vienen de `entities/agent` que es shared cross-plugin).
- */
+import { useState } from "react";
+import { useAgents } from "@/entities/agent";
 import { AgentsList } from "@plugins/agents_admin/frontend/features/agents-list";
 import { AgentsPrompts } from "@plugins/agents_admin/frontend/features/agents-prompts";
 import { AgentsInspector } from "@plugins/agents_admin/frontend/features/agents-inspector";
@@ -14,26 +7,24 @@ import { AgentsInspector } from "@plugins/agents_admin/frontend/features/agents-
 export interface AgentsSectionProps {
   showSidebar: boolean;
   showInspector: boolean;
-  selectedAgentId: string;
-  setSelectedAgentId: (id: string) => void;
 }
 
-export function AgentsSection({
-  showSidebar,
-  showInspector,
-  selectedAgentId,
-  setSelectedAgentId,
-}: AgentsSectionProps) {
+export function AgentsSection({ showSidebar, showInspector }: AgentsSectionProps) {
+  const { data: agents = [] } = useAgents();
+  const [selectedId, setSelectedId] = useState<string>("");
+  const activeId = selectedId || (agents[0]?.id ?? "");
+  const activeAgent = agents.find((a) => a.id === activeId) ?? agents[0];
+
   return (
     <>
       {showSidebar && (
         <AgentsList
-          selectedId={selectedAgentId}
-          onSelect={setSelectedAgentId}
+          selectedId={activeId}
+          onSelect={setSelectedId}
         />
       )}
-      <AgentsPrompts agentId={selectedAgentId} />
-      {showInspector && <AgentsInspector agentId={selectedAgentId} />}
+      {activeAgent && <AgentsPrompts agent={activeAgent} />}
+      {showInspector && activeAgent && <AgentsInspector agent={activeAgent} />}
     </>
   );
 }

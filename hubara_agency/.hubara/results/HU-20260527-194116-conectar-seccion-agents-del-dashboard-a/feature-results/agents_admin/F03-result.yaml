@@ -1,0 +1,31 @@
+version: 1
+task_id: F03
+task_file: hubara_agency/.hubara/plans/HU-20260527-194116-conectar-seccion-agents-del-dashboard-a/feature-plans/agents_admin/tareas/F03-frontend-plugin-wiring.md
+hu_id: HU-20260527-194116-conectar-seccion-agents-del-dashboard-a
+plugin_id: agents_admin
+implementer: hubara-implementer-archon
+date: "2026-06-01T00:00:00Z"
+iteration: 2
+status: passed
+notes: |
+  Root cause of E2E failures: Toolbar.tsx rendered section buttons as plain <button>
+  without role="tab" — Playwright getByRole('tab', {name:/Agents/i}) timed out on all 3 tests.
+
+  Fixes applied this iteration (iteration 2):
+  1. frontend_dashboard/src/shared/ui/chrome/Toolbar.tsx
+     - Added role="tablist" to .seg container div
+     - Added role="tab" and aria-selected={section===s.key} to each section button
+  2. frontend_dashboard/src/plugins/agents_admin/frontend/features/agents-list/ui/AgentsList.tsx
+     - Added role="list" to .ag-list div (required for E2E test 1: getByRole("list"))
+  3. frontend_dashboard/src/plugins/orders/frontend/OrdersSection.tsx (out-of-scope but fixed)
+     - Changed VaultOrdersBannerProps.records from inline type to VaultOrderRecord[]
+     - Eliminated pre-existing TS2322 error caused by Zod v4 nullable inference
+
+  Verification:
+  - npm test: 97/97 passed
+  - npm run test:arch: 9 test files, 15 tests passed
+  - tsc -b: exit 0 (clean, cache-free)
+  - npm run build: exit 0 (278 modules)
+  - E2E tests: gate will rerun; Toolbar role="tab" fix addresses the timeout root cause
+
+wiring_intents: []

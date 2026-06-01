@@ -1,20 +1,11 @@
-/**
- * Inspector de Agentes — sólo Modelo + Capacidades, en modo lectura.
- * (Feedback del usuario: la sección de Agentes es informativa, no editable.)
- */
-
-import { useAgents } from "@/entities/agent";
+import { type Agent } from "@/entities/agent";
 import { Icon, Panel, type IconName } from "@/shared/ui";
 
 interface Props {
-  agentId: string;
+  agent: Agent;
 }
 
-export function AgentsInspector({ agentId }: Props) {
-  const { data: agents = [] } = useAgents();
-  const agent = agents.find((a) => a.id === agentId) ?? agents[0];
-  if (!agent) return null;
-
+export function AgentsInspector({ agent }: Props) {
   return (
     <aside className="inspector">
       <div className="insp-body">

@@ -1,30 +1,12 @@
-/**
- * Centro de Agentes: 5 prompts read-only (Agents/Identity/Soul/Tools/Users)
- * del agente seleccionado. La personalidad determina el texto de cada prompt.
- */
-
-import {
-  PROMPT_SECTIONS,
-  useAgents,
-  usePersonalities,
-} from "@/entities/agent";
+import { type Agent, PROMPT_SECTIONS } from "@/entities/agent";
 import { wordCount } from "@/shared/lib";
 import { Icon, type IconName } from "@/shared/ui";
 
 interface Props {
-  agentId: string;
+  agent: Agent;
 }
 
-export function AgentsPrompts({ agentId }: Props) {
-  const { data: agents = [] } = useAgents();
-  const { data: personalities = [] } = usePersonalities();
-
-  const agent = agents.find((a) => a.id === agentId) ?? agents[0];
-  if (!agent) return null;
-
-  const personality = personalities.find((p) => p.key === agent.personality);
-  if (!personality) return null;
-
+export function AgentsPrompts({ agent }: Props) {
   const HeaderIcon = Icon[agent.icon as IconName];
 
   return (
@@ -65,7 +47,7 @@ export function AgentsPrompts({ agentId }: Props) {
 
       <div className="ag-form">
         {PROMPT_SECTIONS.map((s) => {
-          const text = personality.prompts[s.key] ?? "";
+          const text = agent.workspace[s.key] ?? "";
           const wc = wordCount(text);
           const SectionIcon = Icon[s.icon as IconName];
           return (
@@ -89,6 +71,12 @@ export function AgentsPrompts({ agentId }: Props) {
             </div>
           );
         })}
+        {agent.workspace.skills.map((skill) => (
+          <div key={skill.name} className="prompt-section">
+            <div className="ps-head">{skill.name}</div>
+            <div className="prompt-view">{skill.content}</div>
+          </div>
+        ))}
       </div>
     </main>
   );
