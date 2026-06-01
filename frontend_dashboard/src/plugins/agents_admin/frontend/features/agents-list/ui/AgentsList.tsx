@@ -16,8 +16,26 @@ interface Props {
 }
 
 export function AgentsList({ selectedId, onSelect }: Props) {
-  const { data: agents = [] } = useAgents();
+  const { data: agents = [], isLoading, isError } = useAgents();
   const [filter, setFilter] = useState("Todos");
+
+  if (isError) {
+    return (
+      <aside className="sidebar">
+        <p style={{ color: "var(--fg-danger)", padding: 16 }}>
+          Error al cargar agentes — reintente recargando.
+        </p>
+      </aside>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <aside className="sidebar">
+        <p style={{ padding: 16 }}>Cargando…</p>
+      </aside>
+    );
+  }
 
   const groups = new Map<string, Agent[]>();
   agents.forEach((a) => {

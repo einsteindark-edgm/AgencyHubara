@@ -13,7 +13,9 @@ export function useAgents() {
   return useQuery({
     queryKey: agentKeys.list(),
     queryFn: async (): Promise<Agent[]> => {
-      const raw = await apiClient.get<unknown>("/api/agents_admin");
+      const raw = await apiClient.get<unknown>("/api/agents_admin", {
+        headers: { "X-Internal-Dashboard": "1" },
+      });
       const dtos = agentListDtoSchema.parse(raw);
       return dtos.map(dto => ({
         ...dto,
