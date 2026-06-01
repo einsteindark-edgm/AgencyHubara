@@ -1875,25 +1875,42 @@ nodes:
 
   - id: check-premortem-resolved
     bash: |
-      RESULT="$ARTIFACTS_DIR/task-result.yaml"
-      if [ ! -f "$RESULT" ]; then
-        echo "PR_RESULT_MISSING"
-        exit 0
+      # task-result.yaml puede estar en $ARTIFACTS_DIR (single-plugin) O en
+      # feature-results/<plugin>/ (multi-plugin: el implementer ACTUALIZA el
+      # result existente ahí, no escribe en $ARTIFACTS_DIR). Buscamos en AMBOS
+      # para no dar un PR_RESULT_MISSING falso → cancel engañoso. Run 894495e1:
+      # el implementer resolvió el premortem (promise: PREMORTEM_RESOLVED) pero
+      # escribió en feature-results/, y el gate —mirando solo $ARTIFACTS_DIR—
+      # canceló como si no hubiera resultado. Stdout = SOLO el status canónico
+      # (single line; diagnostics a stderr) para no romper el == downstream.
+      HU_ID=$(echo $gen-hu-id.output 2>/dev/null | jq -r '.hu_id' 2>/dev/null || echo "")
+      CANDS="$ARTIFACTS_DIR/task-result.yaml"
+      FR="hubara_agency/.hubara/results/${HU_ID}/feature-results"
+      if [ -n "$HU_ID" ] && [ -d "$FR" ]; then
+        CANDS="$CANDS $(find "$FR" -name task-result.yaml 2>/dev/null)"
       fi
-      # Look for promise marker en task-result o en notes
-      if grep -qE "(PREMORTEM_RESOLVED|premortem_status:[[:space:]]*resolved)" "$RESULT" 2>/dev/null; then
-        echo "PR_RESOLVED"
-      elif grep -qE "(PREMORTEM_BLOCKED|premortem_status:[[:space:]]*blocked)" "$RESULT" 2>/dev/null; then
-        echo "PR_BLOCKED"
-      elif grep -qE "(PREMORTEM_BROKEN|premortem_status:[[:space:]]*broken)" "$RESULT" 2>/dev/null; then
+      echo "check-premortem-resolved: candidatos = $CANDS" >&2
+
+      FOUND=0; RESOLVED=0; BLOCKED=0; BROKEN=0
+      for R in $CANDS; do
+        [ -f "$R" ] || continue
+        FOUND=1
+        grep -qE "(PREMORTEM_BROKEN|premortem_status:[[:space:]]*broken)" "$R" 2>/dev/null && BROKEN=1
+        grep -qE "(PREMORTEM_BLOCKED|premortem_status:[[:space:]]*blocked)" "$R" 2>/dev/null && BLOCKED=1
+        grep -qE "(PREMORTEM_RESOLVED|premortem_status:[[:space:]]*resolved|^premortem_processing:)" "$R" 2>/dev/null && RESOLVED=1
+      done
+
+      # Precedencia: broken > blocked > resolved (cualquier plugin bloqueado gana).
+      if [ "$FOUND" -eq 0 ]; then
+        echo "PR_RESULT_MISSING"
+      elif [ "$BROKEN" -eq 1 ]; then
         echo "PR_BROKEN"
+      elif [ "$BLOCKED" -eq 1 ]; then
+        echo "PR_BLOCKED"
+      elif [ "$RESOLVED" -eq 1 ]; then
+        echo "PR_RESOLVED"
       else
-        # Fallback: si hay premortem_processing section, asumir resolved
-        if grep -q "^premortem_processing:" "$RESULT" 2>/dev/null; then
-          echo "PR_RESOLVED"
-        else
-          echo "PR_UNKNOWN"
-        fi
+        echo "PR_UNKNOWN"
       fi
     depends_on: [loop-implementer-resolves-premortem]
 
@@ -2160,24 +2177,37 @@ nodes:
 
   - id: check-review-resolved
     bash: |
-      RESULT="$ARTIFACTS_DIR/task-result.yaml"
-      if [ ! -f "$RESULT" ]; then
-        echo "RV_RESULT_MISSING"
-        exit 0
+      # Mismo path-fix que check-premortem-resolved: el implementer (review
+      # resolution multi-plugin) actualiza task-result.yaml en feature-results/,
+      # no en $ARTIFACTS_DIR. Buscamos en ambos para no dar RV_RESULT_MISSING
+      # falso → cancel engañoso (run 894495e1). Stdout = SOLO status canónico.
+      HU_ID=$(echo $gen-hu-id.output 2>/dev/null | jq -r '.hu_id' 2>/dev/null || echo "")
+      CANDS="$ARTIFACTS_DIR/task-result.yaml"
+      FR="hubara_agency/.hubara/results/${HU_ID}/feature-results"
+      if [ -n "$HU_ID" ] && [ -d "$FR" ]; then
+        CANDS="$CANDS $(find "$FR" -name task-result.yaml 2>/dev/null)"
       fi
-      if grep -qE "(CODE_REVIEW_RESOLVED|code_review_status:[[:space:]]*resolved)" "$RESULT" 2>/dev/null; then
-        echo "REVIEW_RESOLVED"
-      elif grep -qE "(CODE_REVIEW_BLOCKED|code_review_status:[[:space:]]*blocked)" "$RESULT" 2>/dev/null; then
-        echo "REVIEW_BLOCKED"
-      elif grep -qE "(CODE_REVIEW_BROKEN|code_review_status:[[:space:]]*broken)" "$RESULT" 2>/dev/null; then
+      echo "check-review-resolved: candidatos = $CANDS" >&2
+
+      FOUND=0; RESOLVED=0; BLOCKED=0; BROKEN=0
+      for R in $CANDS; do
+        [ -f "$R" ] || continue
+        FOUND=1
+        grep -qE "(CODE_REVIEW_BROKEN|code_review_status:[[:space:]]*broken)" "$R" 2>/dev/null && BROKEN=1
+        grep -qE "(CODE_REVIEW_BLOCKED|code_review_status:[[:space:]]*blocked)" "$R" 2>/dev/null && BLOCKED=1
+        grep -qE "(CODE_REVIEW_RESOLVED|code_review_status:[[:space:]]*resolved|^code_review_processing:)" "$R" 2>/dev/null && RESOLVED=1
+      done
+
+      if [ "$FOUND" -eq 0 ]; then
+        echo "RV_RESULT_MISSING"
+      elif [ "$BROKEN" -eq 1 ]; then
         echo "REVIEW_BROKEN"
+      elif [ "$BLOCKED" -eq 1 ]; then
+        echo "REVIEW_BLOCKED"
+      elif [ "$RESOLVED" -eq 1 ]; then
+        echo "REVIEW_RESOLVED"
       else
-        # Fallback: si hay code_review_processing section, asumir resolved
-        if grep -q "^code_review_processing:" "$RESULT" 2>/dev/null; then
-          echo "REVIEW_RESOLVED"
-        else
-          echo "REVIEW_UNKNOWN"
-        fi
+        echo "REVIEW_UNKNOWN"
       fi
     depends_on: [loop-implementer-resolves-review]
 
