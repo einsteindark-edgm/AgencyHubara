@@ -329,23 +329,63 @@ nodes:
         huId = 'HU-' + datePart + '-' + timePart + '-' + (slug || 'no-title');
       }
 
-      const out = {
-        hu_id: huId,
-        branch: 'hu/' + huId,
-        title: input.title,
-        body: input.body,
-        issue_url: input.issue_url,
-        type: input.type,
-        refinement_path: 'hubara_agency/.hubara/refinements/' + huId + '-tech.md',
-        original_path:   'hubara_agency/.hubara/refinements/' + huId + '-original.md',
-        plan_dir:        'hubara_agency/.hubara/plans/' + huId,
-        results_dir:     'hubara_agency/.hubara/results/' + huId,
-      };
-      console.log(JSON.stringify(out));
+      // ── Guard: HU_ID debe ser UN solo token bien formado (run 38d8223e) ──
+      // El pipeline PRINCIPAL toma SOLO un issue URL o un HU_ID. Si el operador
+      // pasa los args del SUB-pipeline (formato "HU_ID plugin_id"), el override
+      // quedaba con un espacio → branch "hu/... plugin" → refspec git inválido →
+      // push falla → 30 min de run muerto que recién cancela en premortem.
+      // Fallamos rápido y explícito ANTES de tocar git.
+      const HU_ID_RE = /^HU-\d{8}-\d{4,6}-[a-z0-9][a-z0-9-]*$/;
+      if (!HU_ID_RE.test(huId)) {
+        const hasSpace = /\s/.test(huId);
+        console.log(JSON.stringify({
+          valid: 'false',
+          error: 'invalid_hu_id',
+          hu_id: huId,
+          hint: hasSpace
+            ? 'HU_ID contiene espacios/tokens extra. Parece que pasaste los args del SUB-pipeline (formato HU_ID plugin_id) al pipeline PRINCIPAL. hu-hubara-pipeline toma SOLO un issue URL o un HU_ID; para implementar un plugin puntual usá hu-hubara-plugin-pipeline.'
+            : 'HU_ID no matchea ^HU-YYYYMMDD-HHMMSS-<slug>$ (slug lowercase a-z0-9 y guiones).'
+        }));
+      } else {
+        const out = {
+          valid: 'true',
+          hu_id: huId,
+          branch: 'hu/' + huId,
+          title: input.title,
+          body: input.body,
+          issue_url: input.issue_url,
+          type: input.type,
+          refinement_path: 'hubara_agency/.hubara/refinements/' + huId + '-tech.md',
+          original_path:   'hubara_agency/.hubara/refinements/' + huId + '-original.md',
+          plan_dir:        'hubara_agency/.hubara/plans/' + huId,
+          results_dir:     'hubara_agency/.hubara/results/' + huId,
+        };
+        console.log(JSON.stringify(out));
+      }
     runtime: bun
     depends_on: [resolve-input]
 
+  - id: dump-on-cancel-bad-hu-id
+    bash: |
+      ARTIFACTS_DIR="$ARTIFACTS_DIR" \
+      CANCEL_NODE="cancel-bad-hu-id" \
+      CANCEL_REASON="gen-hu-id rechazó el HU_ID: $gen-hu-id.output" \
+      PHASE="gen-hu-id" \
+      HU_ID="invalid" \
+      ISSUE_URL="unknown" \
+      bash hubara_agency/.hubara/dump-pipeline-diagnostics.sh
+    when: "$gen-hu-id.output.valid == 'false'"
+    depends_on: [gen-hu-id]
+
+  - id: cancel-bad-hu-id
+    cancel: "HU_ID inválido (recibido: '$gen-hu-id.output.hu_id'). $gen-hu-id.output.hint 📋 Diagnostic bundle: $ARTIFACTS_DIR/diagnostic-bundle.yaml"
+    when: "$gen-hu-id.output.valid == 'false'"
+    depends_on: [dump-on-cancel-bad-hu-id]
+
   - id: setup-branch
+    # Guard: solo corremos si gen-hu-id validó el HU_ID. Evita crear "hu/null"
+    # o un branch con espacio cuando el HU_ID viene malformado (run 38d8223e).
+    when: "$gen-hu-id.output.valid == 'true'"
     bash: |
       # CRITICAL — main pipeline también necesita detached HEAD para sobrevivir
       # a worktrees stale. Worst case: run anterior cancelló sin limpiar su

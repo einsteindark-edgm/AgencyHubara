@@ -60,6 +60,25 @@ function pickBaseRef(): string | null {
   return null;
 }
 
+/**
+ * Resolve the merge-base between `base` and HEAD so the gate diffs with
+ * PR-diff semantics (`git diff base...HEAD`) instead of a two-dot diff.
+ *
+ * A two-dot `git diff origin/main` flags every file that `main` ADVANCED after
+ * the branch forked — a false positive that breaks in-flight HU branches each
+ * time the harness lands a fix on `main` (e.g. an edit to
+ * `.archon/workflows/*.yaml`). The merge-base reports ONLY what the branch
+ * itself introduced. Falls back to `base` if merge-base is unavailable
+ * (unrelated histories) — never auto-disables the protection.
+ * See docs/adr/2026-05-29-meta-gate-merge-base.md.
+ */
+function mergeBaseWith(base: string): string {
+  const { code, stdout } = runGit("merge-base", base, "HEAD");
+  if (code !== 0) return base;
+  const sha = stdout.trim();
+  return sha === "" ? base : sha;
+}
+
 function currentBranch(): string | null {
   const { code, stdout } = runGit("rev-parse", "--abbrev-ref", "HEAD");
   if (code !== 0) return null;
@@ -125,7 +144,11 @@ describe("Meta-gate — architecture files unchanged vs main", () => {
       return;
     }
 
-    const changed = changedFilesVs(base);
+    // PR-diff semantics: compare against the merge-base, not `base` directly,
+    // so files that `main` advanced in parallel are not misattributed to this
+    // branch. See docs/adr/2026-05-29-meta-gate-merge-base.md.
+    const diffBase = mergeBaseWith(base);
+    const changed = changedFilesVs(diffBase);
     const offenders = changed.filter(isProtectedPath).sort();
     if (offenders.length > 0) {
       throw new Error(
