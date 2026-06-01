@@ -153,11 +153,15 @@ async def test_picker_emoji_ignored_if_llm_passes_it(ctx, seeded_vault):
 
 
 @pytest.mark.asyncio
-async def test_picker_paginates_when_over_meta_10_row_limit(ctx, seeded_vault):
-    """Anti-bug 10d8bd21 v2 (pagination): 11 aromas → 2 intents
-    consecutivos, cada uno ≤10 rows, todas las opciones preservadas."""
+async def test_picker_single_message_even_over_10_options(ctx, seeded_vault):
+    """Bug run fe86d4e4: 11 aromas → UN SOLO intent con todas las opciones.
+
+    Antes se paginaba en 2 mensajes (`paginate_list_rows` con el cap de 10
+    rows de Meta). Pero el render es TEXTO plano, no `interactive.list`, así
+    que el cap de 10 no aplica — paginaba sin necesidad partiendo las
+    variantes en dos burbujas. Ahora todas van en un único mensaje."""
     tool = PresentVariantPickerTool(workspace=str(seeded_vault))
-    # 11 aromas — el caso exacto del bug
+    # 11 aromas — el caso exacto del bug histórico de paginación
     result = json.loads(await tool.execute_with_context(
         ctx,
         variant_type="scent",
@@ -177,34 +181,23 @@ async def test_picker_paginates_when_over_meta_10_row_limit(ctx, seeded_vault):
         intro_text="Tenemos estos aromas:",
     ))
     assert result["queued"] is True
-    # Todas las 11 opciones preservadas — distribuidas en pages
+    # Todas las 11 opciones preservadas en UN solo mensaje
     assert result["count"] == 11
-    assert result["pages"] >= 2  # mínimo 2 mensajes
+    assert result["pages"] == 1  # NO se pagina — un único mensaje
 
     intents = _read_intents(seeded_vault, ctx.session_key)
-    # Un intent por page
-    assert len(intents) == result["pages"]
+    # Un único intent encolado
+    assert len(intents) == 1
 
-    # Cada intent NUNCA excede el cap de Meta (10 rows)
-    for intent in intents:
-        total_rows = sum(len(s["rows"]) for s in intent["params"]["sections"])
-        assert total_rows <= 10, (
-            f"Intent con {total_rows} rows rompería Meta"
-        )
+    intent = intents[0]
+    # Las 11 opciones preservadas dentro del único intent
+    total_rows = sum(len(s["rows"]) for s in intent["params"]["sections"])
+    assert total_rows == 11
 
-    # Suma de todas las pages = 11 (todas las opciones preservadas)
-    total_across_pages = sum(
-        len(s["rows"]) for intent in intents for s in intent["params"]["sections"]
-    )
-    assert total_across_pages == 11
-
-    # Page 1 usa el intro_text del LLM; page 2+ usa body de continuación
-    assert intents[0]["params"]["intro_text"] == "Tenemos estos aromas:"
-    assert intents[1]["params"]["intro_text"] == "Más aromas disponibles:"
-    # Metadata de paginación
-    assert intents[0]["params"]["page"] == 1
-    assert intents[0]["params"]["total_pages"] == result["pages"]
-    assert intents[1]["params"]["page"] == 2
+    # Usa el intro_text del LLM tal cual, sin body de continuación
+    assert intent["params"]["intro_text"] == "Tenemos estos aromas:"
+    assert intent["params"]["page"] == 1
+    assert intent["params"]["total_pages"] == 1
 
 
 @pytest.mark.asyncio

@@ -56,7 +56,7 @@ import structlog
 from temporalio import activity
 from temporalio.client import Client, WorkflowExecutionStatus
 from temporalio.exceptions import WorkflowAlreadyStartedError
-from temporalio.service import RPCError
+from temporalio.service import RPCError, RPCStatusCode
 
 from src.platform.orchestration.events import EventEnvelope
 from src.platform.orchestration.transitions import Transition, TransitionAction
@@ -75,7 +75,7 @@ class DispatchedTransition:
     target_worker: str
     target_workflow: str
     workflow_id: str
-    outcome: str  # "started" | "signaled" | "noop_already_running" | "raced_already_started"
+    outcome: str  # "started" | "signaled" | "noop_already_running" | "raced_already_started" | "noop_target_not_found"
 
 
 @dataclass(frozen=True)
@@ -350,7 +350,27 @@ async def _execute_action(
                 f"(workflow={action.target_workflow}, id={workflow_id})"
             )
         handle = client.get_workflow_handle(workflow_id)
-        await handle.signal(signal_name, target_input)
+        try:
+            await handle.signal(signal_name, target_input)
+        except RPCError as exc:
+            # Señalar un workflow que NO existe (nunca arrancó, o ya cerró)
+            # devuelve gRPC NOT_FOUND — con el backend postgres el detalle sale
+            # como "sql: no rows in result set". NO es el no-op silencioso que
+            # los comentarios del manifest asumen. Para signals de cancelación
+            # (las únicas via=signal hoy: `cancel_watchdog`) esto es benigno: no
+            # hay nada que cancelar. Absorbemos NOT_FOUND para que un target
+            # cerrado/ausente no tumbe TODO el dispatch (run 3b3fbaee: un
+            # EpisodeClosedEvent crasheó el Sales workflow intentando cancelar un
+            # watchdog que nunca corrió). Los RPCError transitorios (UNAVAILABLE,
+            # DEADLINE_EXCEEDED, etc.) SIGUEN propagando → Temporal reintenta.
+            if _is_not_found(exc):
+                log.info(
+                    "orchestration.dispatch_event: signal target not found, noop",
+                    workflow_id=workflow_id,
+                    signal_name=signal_name,
+                )
+                return "noop_target_not_found"
+            raise
         log.info(
             "orchestration.dispatch_event: signaled",
             workflow_id=workflow_id,
@@ -396,6 +416,21 @@ async def _execute_action(
             workflow_id=workflow_id,
         )
         return "raced_already_started"
+
+
+def _is_not_found(exc: RPCError) -> bool:
+    """True si un ``RPCError`` indica que el workflow target no existe.
+
+    Temporal devuelve gRPC NOT_FOUND cuando se señala/describe un workflow_id
+    sin ejecución (running o cualquiera). Con el backend postgres el detalle
+    aflora como ``"sql: no rows in result set"``. Matcheamos el status code
+    (robusto) y, defensivamente, esa firma textual por si cambia entre
+    versiones del server.
+    """
+    if getattr(exc, "status", None) == RPCStatusCode.NOT_FOUND:
+        return True
+    msg = str(getattr(exc, "message", "") or exc).lower()
+    return "no rows in result set" in msg or "workflow not found" in msg
 
 
 async def _is_running(client: Client, workflow_id: str) -> bool:

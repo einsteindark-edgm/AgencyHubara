@@ -930,3 +930,144 @@ def test_pick_variant_partial_coverage_still_picks_best_but_surfaces_mismatch():
 # de ProductVariant pero alcanzan para los 2 atributos que `_count_matching_parts`
 # lee: `title` y `options[].value`. Eso preserva la lógica de coverage sin
 # acoplarse al shape Pydantic real (que cambia entre versiones de Medusa).
+
+
+# ----------------------------------------------------------------------
+# Idempotencia (fix integridad orden↔tag): fingerprint + pre-check
+# ----------------------------------------------------------------------
+
+
+def test_fingerprint_is_stable_and_content_sensitive():
+    """Mismo contenido → mismo fingerprint; distinto contenido → distinto."""
+    from src.platform.orders.medusa_order import _compute_order_fingerprint
+
+    fp1 = _compute_order_fingerprint(_ITEMS, 22000, "transfer")
+    assert fp1 == _compute_order_fingerprint(_ITEMS, 22000, "transfer")  # determinístico
+    # Distinto total / método → distinto (no deduplica compras legítimas distintas).
+    assert _compute_order_fingerprint(_ITEMS, 25000, "transfer") != fp1
+    assert _compute_order_fingerprint(_ITEMS, 22000, "card") != fp1
+    # El orden de los items no cambia el hash (sorted internamente).
+    two = [
+        _ITEMS[0],
+        OrderItem(handle="vela-otra", quantity=2, unit_price_cop=5000),
+    ]
+    assert _compute_order_fingerprint(two, 1, "x") == _compute_order_fingerprint(
+        list(reversed(two)), 1, "x"
+    )
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_idempotency_pre_check_reuses_existing_draft(adapter):
+    """Si ya existe un draft con el mismo (session_key, fingerprint), el adapter
+    lo reusa SIN crear uno nuevo — cubre el retry de Temporal tras un crash que
+    ocurrió DESPUÉS de crear la orden en Medusa pero antes de reportar a Temporal."""
+    from src.platform.orders.medusa_order import _compute_order_fingerprint
+
+    fp = _compute_order_fingerprint(_ITEMS, 22000, "transfer")
+    respx.get(f"{_BASE_URL}/admin/draft-orders").mock(
+        return_value=Response(
+            200,
+            json={
+                "draft_orders": [
+                    {
+                        "id": "draft_already_there",
+                        "customer_id": "cus_prev",
+                        "metadata": {
+                            "session_key": "wa_111",
+                            "order_fingerprint": fp,
+                        },
+                    }
+                ],
+                "count": 1, "offset": 0, "limit": 50,
+            },
+        )
+    )
+    # Estas rutas NO deben llamarse (return temprano por idempotencia).
+    products_route = respx.get(f"{_BASE_URL}/admin/products")
+    create_route = respx.post(f"{_BASE_URL}/admin/draft-orders")
+
+    result = await adapter.register_order(
+        session_key="wa_111",
+        items=_ITEMS,
+        shipping=_SHIPPING,
+        payment_method="transfer",
+        subtotal_cop=17000,
+        shipping_cop=5000,
+        total_cop=22000,
+    )
+
+    assert result.success is True
+    assert result.order_id == "draft_already_there"  # reusado, NO uno nuevo
+    assert not products_route.called  # ni siquiera resolvió items
+    assert not create_route.called    # NO creó draft duplicado
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_idempotency_distinct_content_creates_new_draft(adapter):
+    """Un draft reciente con fingerprint DISTINTO no bloquea: el adapter crea el
+    nuevo (no es falso-positivo entre compras distintas) y embebe el
+    `order_fingerprint` en el metadata del draft nuevo para futuros pre-checks."""
+    from src.platform.orders.medusa_order import _compute_order_fingerprint
+
+    fp_other = _compute_order_fingerprint(
+        [OrderItem(handle="otra-cosa", quantity=9, unit_price_cop=999)], 9, "card"
+    )
+    respx.get(f"{_BASE_URL}/admin/draft-orders").mock(
+        return_value=Response(
+            200,
+            json={
+                "draft_orders": [
+                    {
+                        "id": "draft_old",
+                        "metadata": {
+                            "session_key": "wa_111",
+                            "order_fingerprint": fp_other,
+                        },
+                    }
+                ],
+                "count": 1, "offset": 0, "limit": 50,
+            },
+        )
+    )
+    respx.get(f"{_BASE_URL}/admin/products").mock(
+        return_value=Response(200, json=_product_payload_for_handle("cruz-de-vida"))
+    )
+    respx.get(f"{_BASE_URL}/admin/customers").mock(
+        return_value=Response(200, json={"customers": [], "count": 0, "offset": 0, "limit": 1})
+    )
+    respx.post(f"{_BASE_URL}/admin/customers").mock(
+        return_value=Response(
+            200, json={"customer": {"id": "cus_new", "email": "wa+wa_111@hubara.local"}}
+        )
+    )
+    respx.get(f"{_BASE_URL}/admin/shipping-options").mock(
+        return_value=Response(
+            200,
+            json={"shipping_options": [{"id": "so_01", "name": "Envío estándar"}], "count": 1, "offset": 0, "limit": 50},
+        )
+    )
+    draft_route = respx.post(f"{_BASE_URL}/admin/draft-orders").mock(
+        return_value=Response(200, json={"draft_order": {"id": "draft_new_001", "status": "draft"}})
+    )
+
+    result = await adapter.register_order(
+        session_key="wa_111",
+        items=_ITEMS,
+        shipping=_SHIPPING,
+        payment_method="transfer",
+        subtotal_cop=17000,
+        shipping_cop=5000,
+        total_cop=22000,
+    )
+
+    assert result.success is True
+    assert result.order_id == "draft_new_001"  # creó uno nuevo
+    assert draft_route.called
+    import json as _json
+    body = _json.loads(draft_route.calls[0].request.content)
+    assert body["metadata"]["order_fingerprint"] == _compute_order_fingerprint(
+        _ITEMS, 22000, "transfer"
+    )
+    assert body["metadata"]["idempotency_key"].startswith("wa_111:")

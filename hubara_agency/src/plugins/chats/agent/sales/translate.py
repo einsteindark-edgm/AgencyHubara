@@ -65,6 +65,9 @@ class EffectiveText:
     text: str | None
     requires_transcription: bool = False
     audio_media_id: str | None = None
+    requires_vision: bool = False
+    image_media_id: str | None = None
+    image_mime_type: str | None = None
     referral_attribution: dict[str, Any] | None = None
     structured_payload: dict[str, Any] | None = None
     is_first_touch_from_ad: bool = False
@@ -272,8 +275,22 @@ async def translate_to_effective_text(
         tags.append(f"media:{kind}")
         text = f"[el cliente envió un {kind}]"
         text = _prepend_referral_banner_if_needed(text, msg.referral, referral_already_seen, tags)
+        # Imágenes: marcamos requires_vision para que el ingest las describa
+        # con un modelo multimodal (Gemini) y reinyecte la descripción como
+        # texto. Solo "image" — video/document/sticker quedan en el placeholder
+        # (sticker suele ser emoji; PDF/document es follow-up). El `text` de
+        # arriba queda como fallback si la visión está deshabilitada.
+        image_id = msg.media.get("id") if kind == "image" else None
+        wants_vision = kind == "image" and isinstance(image_id, str)
+        if wants_vision:
+            tags.append("requires_vision")
         return EffectiveText(
             text=text,
+            requires_vision=wants_vision,
+            image_media_id=image_id if isinstance(image_id, str) else None,
+            image_mime_type=(
+                msg.media.get("mime_type") if kind == "image" else None
+            ),
             referral_attribution=msg.referral,
             is_first_touch_from_ad=bool(msg.referral) and not referral_already_seen,
             media_inbound_kind=kind,

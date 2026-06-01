@@ -88,7 +88,7 @@ async def transcribe_audio_activity(session_id: str) -> str:
         data["transcription_failures"] = errors[-20:]
         _safe_write_metadata(metadata_file, data)
 
-        # Avisar al cliente: pedile que escriba
+        # Avisar al cliente: pídele que escriba
         phone_number_id = data.get("phone_number_id") or os.getenv(
             "WHATSAPP_PHONE_NUMBER_ID"
         )
@@ -98,13 +98,13 @@ async def transcribe_audio_activity(session_id: str) -> str:
                 if result.error == "too_long":
                     msg = (
                         "Recibí tu audio pero es muy largo para procesarlo "
-                        "automáticamente. ¿Podés contarme con mensajes "
-                        "cortos o esperá que te conecte con un asesor? 🤍"
+                        "automáticamente. ¿Puedes contarme con mensajes "
+                        "cortos o espera que te conecte con un asesor? 🤍"
                     )
                 else:
                     msg = (
                         "Recibí tu audio pero no logré entenderlo bien. "
-                        "¿Me lo escribís en un mensaje? 🤍"
+                        "¿Me lo escribes en un mensaje? 🤍"
                     )
                 await wa_client.send_message(phone_number_id, to_number, msg)
             except Exception:  # noqa: BLE001

@@ -29,10 +29,13 @@ with workflow.unsafe.imports_passed_through():
     from src.plugins.chats.agent.sales.activities import (
         bootstrap_sales_session_activity,
         decide_ghosting_action,
+        ensure_closing_escalation_activity,
+        ensure_payment_pending_closure_activity,
         flush_pending_ui_intents_activity,
         read_and_clear_pending_handoff_activity,
         read_idle_timeout_seconds_activity,
     )
+    from src.platform.contracts import EpisodeClosedDecision
     from src.plugins.chats.agent.sales.contracts import SalesSessionInput
     from src.platform.whatsapp.capi_activity import (
         LEAD_CLOSING_TAGS,
@@ -66,6 +69,17 @@ def _map_closing_tag_to_capi_event(closing_tag: str) -> str | None:
 # pura contra el formatter — se puede borrar cuando el workflow body
 # garantice el uso.
 _CAPI_ACTIVITY: object = send_capi_event_activity
+
+
+# Fix integridad orden↔tag (patrón A): closing tags que EXIGEN escalación a
+# humano. Si el LLM marca el tag (cierra el episodio) pero no llama
+# `escalate_to_human`, el workflow garantiza la escalación correspondiente vía
+# `ensure_closing_escalation_activity`. CONFIRMADO_PAGO_PENDIENTE NO va acá: lo
+# cubre la red disparada por `order_registered_decision` (que además puede
+# forzar el cierre del episodio). RECHAZO / COMPRA_EXITOSA no requieren humano.
+_CLOSING_TAGS_REQUIRING_ESCALATION: dict[str, str] = {
+    "CONFIRMADO_SIN_DATOS": "ORDER_PENDING_SHIPPING_DETAILS",
+}
 
 
 _CONTINUE_AS_NEW_AFTER_TURNS = 50
@@ -303,24 +317,73 @@ class HubaraSalesSessionWorkflow:
                             retry_policy=RetryPolicy(maximum_attempts=3),
                         )
 
-                    # HU-WA24H-001 Sprint 2: el LLM cerró el episodio via
-                    # `ManageConversationTagTool` con un CLOSING_TAG. Emitir
-                    # `EpisodeClosedEvent` para que el dispatcher manifest
-                    # signale `cancel_watchdog` al watchdog del episodio.
-                    # Gated bajo el mismo patch que el path declarativo —
-                    # workflows en vuelo pre-deploy NO ven este branch
-                    # (replay-safe).
+                    # RED DE SEGURIDAD orden↔tag (fix integridad): si el LLM
+                    # registró una orden con éxito (`order_registered_decision`),
+                    # garantizamos el cierre "pago pendiente" + la escalación
+                    # AUNQUE el LLM no haya emitido `manage_conversation_tag` /
+                    # `escalate_to_human`. La secuencia de cierre la decide el
+                    # LLM en tool calls separadas (coordinadas solo por el
+                    # prompt); Temporal reanuda el turno tras un crash pero NO
+                    # fuerza al LLM a emitir las tools. Esta activity es
+                    # idempotente: no pisa si el LLM ya cerró.
+                    #
+                    # workflow.patched(): workflows en vuelo pre-deploy NO
+                    # tienen esta activity en su history — el gate evita
+                    # NondeterminismError al replay-arlos. Tras el drain
+                    # (idle 1min en Sales), `deprecate_patch`.
+                    episode_closed_decision = result.episode_closed_decision
+                    safety_net_escalated = False
                     if (
-                        result.episode_closed_decision is not None
+                        result.order_registered_decision is not None
+                        and workflow.patched("ensure-order-closure-v1")
+                    ):
+                        closure = await workflow.execute_activity(
+                            ensure_payment_pending_closure_activity,
+                            args=[
+                                result.order_registered_decision.session_id,
+                                result.order_registered_decision.order_id,
+                                result.order_registered_decision.motivo,
+                            ],
+                            start_to_close_timeout=timedelta(seconds=15),
+                            retry_policy=RetryPolicy(maximum_attempts=3),
+                        )
+                        # Si la red cerró el episodio (el LLM no lo hizo —
+                        # mutuamente excluyente con el path del LLM, porque si
+                        # el LLM cerró, `closure.acted=False`), adoptamos su
+                        # decisión para emitir EpisodeClosedEvent + CAPI abajo
+                        # sin duplicar.
+                        if closure.acted and episode_closed_decision is None:
+                            episode_closed_decision = EpisodeClosedDecision(
+                                session_id=result.order_registered_decision.session_id,
+                                episode_id=closure.closed_episode_id,
+                                closing_tag=closure.closing_tag,
+                            )
+                        if closure.escalated:
+                            # La red escaló a humano → cerrar el workflow como
+                            # cualquier escalation (cliente queda en cola
+                            # humana; `active_route=humano` bloquea dispatch
+                            # de mensajes futuros).
+                            self._force_shutdown = True
+                            safety_net_escalated = True
+
+                    # HU-WA24H-001 Sprint 2: el episodio cerró con un
+                    # CLOSING_TAG (vía `ManageConversationTagTool` O vía la red
+                    # de seguridad de arriba). Emitir `EpisodeClosedEvent` para
+                    # que el dispatcher manifest signale `cancel_watchdog` al
+                    # watchdog del episodio. Gated bajo el mismo patch que el
+                    # path declarativo — workflows en vuelo pre-deploy NO ven
+                    # este branch (replay-safe).
+                    if (
+                        episode_closed_decision is not None
                         and workflow.patched("watchdog-event-emit-v1")
                     ):
                         await workflow.execute_activity(
                             dispatch_event_activity,
                             envelope_for(
                                 EpisodeClosedEvent(
-                                    session_id=result.episode_closed_decision.session_id,
-                                    episode_id=result.episode_closed_decision.episode_id,
-                                    closing_tag=result.episode_closed_decision.closing_tag,
+                                    session_id=episode_closed_decision.session_id,
+                                    episode_id=episode_closed_decision.episode_id,
+                                    closing_tag=episode_closed_decision.closing_tag,
                                 ),
                                 source_plugin="chats",
                                 source_worker="sales",
@@ -350,19 +413,19 @@ class HubaraSalesSessionWorkflow:
                     # hayan drainado (idle timeout 1min en sales),
                     # `workflow.deprecate_patch("capi-event-emit-v1")`.
                     if (
-                        result.episode_closed_decision is not None
+                        episode_closed_decision is not None
                         and workflow.patched("capi-event-emit-v1")
                     ):
                         capi_event_name = _map_closing_tag_to_capi_event(
-                            result.episode_closed_decision.closing_tag
+                            episode_closed_decision.closing_tag
                         )
                         if capi_event_name is not None:
                             try:
                                 await workflow.execute_activity(
                                     send_capi_event_activity,
                                     args=[
-                                        result.episode_closed_decision.session_id,
-                                        result.episode_closed_decision.episode_id,
+                                        episode_closed_decision.session_id,
+                                        episode_closed_decision.episode_id,
                                         capi_event_name,
                                     ],
                                     start_to_close_timeout=timedelta(seconds=30),
@@ -371,18 +434,65 @@ class HubaraSalesSessionWorkflow:
                             except Exception as exc:  # noqa: BLE001
                                 workflow.logger.warning(
                                     "CAPI dispatch falló (non-blocking): "
-                                    f"session={result.episode_closed_decision.session_id} "
+                                    f"session={episode_closed_decision.session_id} "
                                     f"event={capi_event_name} err={exc!r}"
                                 )
 
+                    # RED DE SEGURIDAD escalación (patrón A): un closing tag que
+                    # EXIGE escalación a humano (ej. CONFIRMADO_SIN_DATOS) cerró
+                    # el episodio, pero el LLM NO llamó `escalate_to_human`. El
+                    # workflow garantiza la escalación faltante. Skip si ya se
+                    # escaló (LLM o la red de pago pendiente). Gated por patch
+                    # (replay-safe). CONFIRMADO_PAGO_PENDIENTE no entra al mapa:
+                    # lo cubre la red de `order_registered_decision`.
+                    if (
+                        episode_closed_decision is not None
+                        and not safety_net_escalated
+                        and result.escalation_decision is None
+                        and workflow.patched("ensure-closing-escalation-v1")
+                    ):
+                        _esc_reason = _CLOSING_TAGS_REQUIRING_ESCALATION.get(
+                            episode_closed_decision.closing_tag
+                        )
+                        if _esc_reason is not None:
+                            _escalated = await workflow.execute_activity(
+                                ensure_closing_escalation_activity,
+                                args=[
+                                    episode_closed_decision.session_id,
+                                    _esc_reason,
+                                    "Cierre con datos de envío pendientes — "
+                                    "un humano debe pedir los datos faltantes.",
+                                ],
+                                start_to_close_timeout=timedelta(seconds=15),
+                                retry_policy=RetryPolicy(maximum_attempts=3),
+                            )
+                            if _escalated:
+                                self._force_shutdown = True
+                                safety_net_escalated = True
+
+                    # UN SOLO MENSAJE en pickers de variante (bug run fe86d4e4):
+                    # cuando el LLM llama `present_variant_picker`, el render de
+                    # texto del intent (intro + opciones + invitación a elegir)
+                    # YA es el mensaje completo del agente. Si además mandáramos
+                    # `final_content`, el cliente vería DOS burbujas repitiendo
+                    # la misma pregunta. Suprimimos el send de texto en ese caso
+                    # — el flush del intent (más abajo) entrega el picker como
+                    # burbuja única. Gated por patch para no romper el replay de
+                    # workflows en vuelo (R-DET): histories pre-deploy no tienen
+                    # el marker → patched()=False → mandan el texto como antes.
+                    suppress_text_for_picker = (
+                        workflow.patched("suppress-text-when-variant-picker-v1")
+                        and "present_variant_picker" in result.tools_used
+                    )
                     if result.final_content and not self._force_shutdown:
                         # Evitamos enviar respuestas vacías o alucinar respuestas internas durante auto-cierres
-                        await workflow.execute_activity(
-                            send_whatsapp_message_activity,
-                            args=[session.session_id, result.final_content],
-                            start_to_close_timeout=timedelta(seconds=90),
-                            retry_policy=RetryPolicy(maximum_attempts=2)
-                        )
+                        if not suppress_text_for_picker:
+                            await workflow.execute_activity(
+                                send_whatsapp_message_activity,
+                                args=[session.session_id, result.final_content],
+                                start_to_close_timeout=timedelta(seconds=90),
+                                retry_policy=RetryPolicy(maximum_attempts=2)
+                            )
                         # Persistir la respuesta al JSONL DESPUES del send: si el
                         # send falla y retry, no contaminamos el log con mensajes
                         # que el cliente nunca vio. El dashboard lee este JSONL
@@ -482,7 +592,14 @@ class HubaraSalesSessionWorkflow:
                         # `is_escalation = False` para preservar su history.
                         # Workflows nuevos ven `True` y respetan escalation.
                         if workflow.patched("escalation-blocks-cancel-shutdown-v1"):
-                            is_escalation = result.escalation_decision is not None
+                            # La escalación de la RED DE SEGURIDAD orden↔tag es
+                            # tan definitiva como la del LLM: el cliente quedó
+                            # en cola humana para verificación de pago. NO
+                            # cancelar el shutdown aunque lleguen mensajes.
+                            is_escalation = (
+                                result.escalation_decision is not None
+                                or safety_net_escalated
+                            )
                         else:
                             is_escalation = False  # legacy replay path
                         if (

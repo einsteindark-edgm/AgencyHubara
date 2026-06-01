@@ -22,7 +22,11 @@ from typing import Any
 
 import litellm
 
-from src.platform.config import API_BASE_LLMLITE, DEFAULT_LLM_MODEL
+from src.platform.config import (
+    API_BASE_LLMLITE,
+    CUSTOMER_SUMMARY_MODEL,
+    LITELLM_API_KEY,
+)
 from src.platform.customer_scoring.port import CustomerScore
 
 log = logging.getLogger(__name__)
@@ -78,9 +82,9 @@ class CustomerSummaryAdapter:
     def __init__(
         self,
         *,
-        model: str = DEFAULT_LLM_MODEL,
+        model: str = CUSTOMER_SUMMARY_MODEL,
         api_base: str | None = API_BASE_LLMLITE,
-        api_key: str | None = None,
+        api_key: str | None = LITELLM_API_KEY,
         timeout_seconds: float = 15.0,
     ) -> None:
         self._model = model

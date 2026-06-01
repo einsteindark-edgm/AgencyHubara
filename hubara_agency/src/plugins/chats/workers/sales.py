@@ -35,6 +35,8 @@ from src.plugins.chats.agent.sales.activities import (
     bootstrap_sales_session_activity,
     compute_bogota_context_activity,
     decide_ghosting_action,
+    ensure_closing_escalation_activity,
+    ensure_payment_pending_closure_activity,
     flush_pending_ui_intents_activity,
     read_and_clear_pending_handoff_activity,
     read_idle_timeout_seconds_activity,
@@ -247,6 +249,13 @@ async def main() -> None:
             dispatch_event_activity,
             # HU-002: render UI intents emitidos por decision tools (post-LLM).
             flush_pending_ui_intents_activity,
+            # Fix integridad orden↔tag: red de seguridad determinística que
+            # garantiza el cierre "pago pendiente" + escalación tras un
+            # register_order exitoso aunque el LLM no emita el tag/escalación.
+            ensure_payment_pending_closure_activity,
+            # Patrón A (CONFIRMADO_SIN_DATOS): garantiza la escalación a humano
+            # cuando el LLM marca un closing tag que la exige pero no escala.
+            ensure_closing_escalation_activity,
             # HU-002 / A.5: transcripción de audio inbound (Groq/OpenAI).
             transcribe_audio_activity,
             # HU dialecto colombiano: hora de Bogotá + saludo apropiado

@@ -51,6 +51,7 @@ que el activity NO se cuelgue.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import time
 from typing import Any
@@ -81,6 +82,14 @@ _REGISTER_ORDER_TIMEOUT_S = 45.0
 # orden (deduplicación a nivel adapter). 600s = 10min — si el LLM o el
 # workflow retry llega 2x en esa ventana, mismo idempotency_key.
 _IDEMPOTENCY_BUCKET_S = 600
+
+# Resiliencia orden↔tag (fix integridad): cuántos draft orders recientes
+# inspeccionar en el pre-check de idempotencia antes de crear uno nuevo.
+# El duplicado (retry de Temporal) ocurre en segundos → queda al tope del
+# orden `-created_at`. 50 cubre minutos de actividad en baja frecuencia
+# (agencia WhatsApp). Si el volumen creciera, migrar a filtro server-side
+# por `metadata` cuando Medusa lo soporte de forma estable.
+_IDEMPOTENCY_LOOKBACK_DRAFTS = 50
 
 # Premortem H1: keywords que indican "envio normal/estandar". Si una shipping
 # option matchea, la preferimos sobre las que NO matchean (e.g. "Recogida en
@@ -209,7 +218,46 @@ class MedusaOrderRegistration:
             },
         )
 
+        # Idempotencia (resiliencia orden↔tag): fingerprint ESTABLE del
+        # contenido de la orden. Dos `register_order` con el mismo contenido
+        # (retry de Temporal tras un crash, o el LLM llamando dos veces) →
+        # mismo fingerprint → reusamos el draft existente en vez de crear un
+        # duplicado. Incluir el fingerprint (no solo session+bucket) evita el
+        # falso-positivo de deduplicar dos compras LEGÍTIMAS y distintas del
+        # mismo cliente en la misma ventana de 10min.
+        fingerprint = _compute_order_fingerprint(items, total_cop, payment_method)
+        idempotency_bucket = int(time.time()) // _IDEMPOTENCY_BUCKET_S
+        idempotency_key = f"{session_key}:{idempotency_bucket}:{fingerprint}"
+
         try:
+            # 0) Pre-check de idempotencia (best-effort): ¿ya existe un draft
+            #    con este mismo contenido? Cubre la ventana donde el intento
+            #    previo creó la orden en Medusa pero el worker murió ANTES de
+            #    que la activity `execute_tool` reportara completion a Temporal
+            #    (→ retry). Medusa es la fuente de verdad, así que el check
+            #    contra Medusa cierra esa ventana que ni el replay ni la
+            #    metadata local cubren.
+            existing = await self._find_existing_draft_order(
+                session_key=session_key, fingerprint=fingerprint
+            )
+            if existing is not None:
+                log.warning(
+                    "MedusaOrderRegistration: idempotency hit — reusing "
+                    "existing draft order instead of creating a duplicate",
+                    extra={
+                        "session_key": session_key,
+                        "order_id": existing.get("id"),
+                        "fingerprint": fingerprint,
+                    },
+                )
+                return OrderRegistrationResult(
+                    success=True,
+                    order_id=str(existing["id"]),
+                    provider="medusa",
+                    raw_payload=_safe_dict(existing),
+                    customer_id=existing.get("customer_id"),
+                )
+
             # 1) Resolve handle → variant_id (paralelizado — Premortem E1).
             resolved_items, variant_mismatches = await self._resolve_items(items)
 
@@ -237,6 +285,8 @@ class MedusaOrderRegistration:
                 total_cop=total_cop,
                 currency_code=self._settings.default_currency,
                 variant_mismatches=variant_mismatches,
+                idempotency_key=idempotency_key,
+                fingerprint=fingerprint,
             )
 
             # 5) POST /admin/draft-orders.
@@ -581,6 +631,48 @@ class MedusaOrderRegistration:
         )
         return self._cached_shipping_option_id
 
+    async def _find_existing_draft_order(
+        self,
+        *,
+        session_key: str,
+        fingerprint: str,
+    ) -> dict[str, Any] | None:
+        """Pre-check de idempotencia: ¿ya existe un draft con este contenido?
+
+        Busca en los `_IDEMPOTENCY_LOOKBACK_DRAFTS` más recientes uno cuyo
+        `metadata.session_key` + `metadata.order_fingerprint` coincidan. El
+        match ignora el bucket de tiempo embebido en `idempotency_key` para no
+        fallar cuando el retry cruza el borde de un bucket de 10min.
+
+        Best-effort: si el listado falla (Medusa transitoriamente caído) NO
+        bloqueamos la venta — devolvemos None y el caller procede a crear. El
+        peor caso de proceder es un duplicado (que el operador reconcilia); el
+        peor caso de bloquear sería perder una venta ya confirmada.
+        """
+        try:
+            page = await self._client.list_draft_orders(
+                limit=_IDEMPOTENCY_LOOKBACK_DRAFTS,
+                order="-created_at",
+                fields="id,customer_id,metadata,created_at",
+            )
+        except Exception as exc:  # noqa: BLE001 — best-effort, no bloquear venta
+            log.warning(
+                "MedusaOrderRegistration: idempotency pre-check failed "
+                "(proceeding to create) — %s",
+                exc,
+                extra={"session_key": session_key, "fingerprint": fingerprint},
+            )
+            return None
+
+        for draft in page.get("draft_orders", []):
+            md = draft.get("metadata") or {}
+            if (
+                md.get("session_key") == session_key
+                and md.get("order_fingerprint") == fingerprint
+            ):
+                return draft
+        return None
+
     def _build_payload(
         self,
         *,
@@ -596,6 +688,8 @@ class MedusaOrderRegistration:
         total_cop: int,
         currency_code: str,
         variant_mismatches: list[dict[str, Any]],
+        idempotency_key: str,
+        fingerprint: str,
     ) -> dict[str, Any]:
         """Build the POST /admin/draft-orders payload per OpenAPI spec."""
         # shipping_address: country_code en lowercase per spec.
@@ -615,13 +709,13 @@ class MedusaOrderRegistration:
             },
         }
 
-        # Premortem B1: idempotency_key estable por session_key + bucket de
-        # 10min. Si el LLM o el workflow retry llega 2x dentro de la ventana,
-        # mismo key. El backend puede deduplicar consultando
-        # `metadata.idempotency_key`.
-        idempotency_bucket = int(time.time()) // _IDEMPOTENCY_BUCKET_S
-        idempotency_key = f"{session_key}:{idempotency_bucket}"
-
+        # Premortem B1 + fix idempotencia: `idempotency_key` y `fingerprint`
+        # llegan ya computados desde `_register_order_inner` (el mismo par que
+        # alimentó el pre-check `_find_existing_draft_order`). Embebemos AMBOS
+        # en metadata: `order_fingerprint` es la llave estable por contenido
+        # que el pre-check matchea (independiente del bucket de tiempo, para
+        # no fallar en el borde de bucket); `idempotency_key` queda para
+        # auditoría / dedup downstream.
         metadata: dict[str, Any] = {
             "session_key": session_key,
             "payment_method": payment_method,
@@ -630,6 +724,7 @@ class MedusaOrderRegistration:
             "total_cop": total_cop,
             "source": "hubara_whatsapp_sales",
             "idempotency_key": idempotency_key,
+            "order_fingerprint": fingerprint,
         }
         # Premortem H3: surface variant mismatches to the operator via
         # Medusa metadata. Each entry lists requested label + selected variant.
@@ -665,6 +760,27 @@ class MedusaOrderRegistration:
 # ----------------------------------------------------------------------
 # Helpers
 # ----------------------------------------------------------------------
+
+
+def _compute_order_fingerprint(
+    items: list[OrderItem], total_cop: int, payment_method: str
+) -> str:
+    """Hash estable y corto del contenido de la orden.
+
+    Dos `register_order` con el MISMO contenido (retry de Temporal / doble
+    llamada del LLM) producen el mismo fingerprint; una compra distinta del
+    mismo cliente produce uno distinto. Esto hace seguro el pre-check de
+    idempotencia: solo deduplica lo que es realmente el mismo pedido.
+
+    Determinístico: ordenamos los items para que el orden de llegada no
+    cambie el hash.
+    """
+    parts = sorted(
+        f"{it.handle}:{it.quantity}:{it.unit_price_cop}:{it.variant_label or ''}"
+        for it in items
+    )
+    raw = "|".join(parts) + f"|total={total_cop}|pay={payment_method}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
 def _pick_preferred_shipping_option(

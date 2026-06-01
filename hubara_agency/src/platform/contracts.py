@@ -77,6 +77,62 @@ class EpisodeClosedDecision:
 
 
 @dataclass(frozen=True)
+class OrderRegisteredDecision:
+    """Decision emitida por `RegisterOrderTool` cuando `register_order` cierra
+    con éxito (orden creada en Medusa, `registered=true`).
+
+    Fix integridad orden↔tag: la secuencia canónica de cierre
+    (`register_order` → `manage_conversation_tag(CONFIRMADO_PAGO_PENDIENTE)` →
+    `escalate_to_human(PAYMENT_VERIFICATION_PENDING)`) la decide el LLM en
+    tool calls separadas, coordinadas SOLO por el prompt. Si el LLM no emite
+    el tag/escalación (alucina, agota iteraciones, responde texto directo),
+    quedaba una orden huérfana: registrada en Medusa pero sin tag de cierre,
+    sin episodio cerrado, sin señal al humano para verificar el pago.
+
+    Esta decisión hace VISIBLE el registro al workflow (antes era invisible —
+    el envelope de la tool no llevaba ninguna decisión). El workflow la lee y
+    ejecuta `ensure_payment_pending_closure_activity` como RED DE SEGURIDAD
+    determinística: garantiza el cierre "pago pendiente" + escalación con la
+    durabilidad de Temporal, aunque el LLM no haya completado la secuencia.
+
+    Mismo patrón envelope-decision que `EpisodeClosedDecision` /
+    `EscalationDecision` (ADR-001): la tool es inerte respecto a Temporal.
+
+    `motivo` se sintetiza en la tool para que la red de seguridad tenga un
+    texto de `status_history` / escalación coherente si tiene que actuar.
+    """
+
+    session_id: str
+    order_id: str
+    payment_method: str
+    total_cop: int
+    currency: str
+    motivo: str
+
+
+@dataclass(frozen=True)
+class PaymentPendingClosureResult:
+    """Resultado de `ensure_payment_pending_closure_activity` (red de seguridad).
+
+    La activity es IDEMPOTENTE: si el LLM ya cerró el episodio con
+    `CONFIRMADO_PAGO_PENDIENTE` y ya escaló, no toca nada y devuelve
+    `episode_closed=None` + `acted=False`. Si el LLM NO completó la secuencia,
+    aplica el tag de cierre + escalación y devuelve la `EpisodeClosedDecision`
+    del episodio que efectivamente cerró (para que el workflow emita el
+    `EpisodeClosedEvent` + CAPI sin duplicar el path del LLM).
+
+    Campos PLANOS para evitar footgun F5 (nested frozen dataclass como return
+    type de activity rompe el workflow sandbox). El workflow reconstruye la
+    `EpisodeClosedDecision` desde estos campos si `episode_id` viene seteado.
+    """
+
+    acted: bool
+    escalated: bool
+    closed_episode_id: str = ""
+    closing_tag: str = ""
+
+
+@dataclass(frozen=True)
 class RemarketingEligibility:
     """Resultado de `check_remarketing_eligibility` activity.
 

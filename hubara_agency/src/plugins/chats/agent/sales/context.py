@@ -38,7 +38,7 @@ def _resolve_bogota_tz() -> "ZoneInfo | timezone":
     except ZoneInfoNotFoundError:
         log.warning(
             "tzdata para America/Bogota no disponible; usando offset fijo "
-            "UTC-5. Considerá instalar tzdata en el container para precisión "
+            "UTC-5. Considera instalar tzdata en el container para precisión "
             "futura si Colombia adopta DST."
         )
         return timezone(timedelta(hours=-5))

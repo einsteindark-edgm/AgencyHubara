@@ -22,6 +22,7 @@ import {
   useSendHumanMessageMutation,
   type TargetRoute,
 } from "@/entities/handoff";
+import { ConfirmPaymentAction } from "./ConfirmPaymentAction";
 
 interface Props {
   chatId: string | null;
@@ -32,7 +33,12 @@ export function ChatsComposer({ chatId }: Props) {
   const isHumano = session?.active_agent_route === "humano";
 
   if (isHumano) {
-    return <InterveneActiveComposer chatId={chatId} />;
+    return (
+      <InterveneActiveComposer
+        chatId={chatId}
+        pendingPaymentOrderId={session?.pending_payment_order_id ?? null}
+      />
+    );
   }
   return (
     <BotManagingComposer
@@ -87,9 +93,14 @@ function BotManagingComposer({ chatId, routeLabel }: BotManagingProps) {
 
 interface InterveneActiveProps {
   chatId: string | null;
+  /** Pedido esperando confirmación de pago (id backend), o null si no hay. */
+  pendingPaymentOrderId: string | null;
 }
 
-function InterveneActiveComposer({ chatId }: InterveneActiveProps) {
+function InterveneActiveComposer({
+  chatId,
+  pendingPaymentOrderId,
+}: InterveneActiveProps) {
   const [text, setText] = useState("");
   const [showReturnPicker, setShowReturnPicker] = useState(false);
 
@@ -129,6 +140,9 @@ function InterveneActiveComposer({ chatId }: InterveneActiveProps) {
           <Icon.emoji />
         </button>
         <span className="right">
+          {pendingPaymentOrderId && (
+            <ConfirmPaymentAction orderId={pendingPaymentOrderId} />
+          )}
           <button
             className="interv-off"
             onClick={() => setShowReturnPicker(true)}

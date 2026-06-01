@@ -1,4 +1,4 @@
-# Tools — Especialista de Remarketing Clara
+# Tools — Asesor de Hubara (modo Recuperación Comercial)
 
 Cómo el agente debe pensar sus herramientas. Las **definiciones** viven en `infrastructure/tools/` y se registran en el worker; este archivo enseña al LLM **cuándo y cómo** invocarlas.
 

@@ -7,6 +7,57 @@ from src.platform.config import WORKSPACE_VAULT_DIR
 
 router = APIRouter()
 
+
+# Reason por la que el agente escala una venta para que un humano verifique el
+# pago (lo escribe `escalate_to_human(reason_category="PAYMENT_VERIFICATION_PENDING")`).
+_PAYMENT_PENDING_REASON = "PAYMENT_VERIFICATION_PENDING"
+
+
+def _compute_pending_payment_order_id(data: dict) -> str | None:
+    """¿Esta sesión tiene un pedido esperando que un humano confirme el pago?
+
+    Devuelve el `order_id` (id backend de Medusa) a confirmar, o ``None``.
+
+    El agente, al cerrar una venta, registra el pedido en Medusa y escala con
+    `escalate_to_human(reason_category="PAYMENT_VERIFICATION_PENDING")` — eso
+    deja en el `metadata.json` del chat: ``active_route="humano"``,
+    ``escalation_reason="PAYMENT_VERIFICATION_PENDING"`` y el
+    ``registered_order`` exitoso. Esta función reconoce ese estado para que el
+    frontend muestre el botón "Confirmar pago" en el chat (mismo endpoint que
+    el tablero de orders).
+
+    Cuando el humano confirma el pago (desde el chat o desde orders), el command
+    `confirm_payment` reescribe este mismo `metadata.json`: ``tag`` pasa a
+    ``COMPRA_EXITOSA`` y el episodio del pedido recibe ``payment_confirmed_at_ms``.
+    Cualquiera de esas marcas hace que esta función devuelva ``None`` → el botón
+    desaparece solo en el próximo tick del SSE. Idéntico para ``RECHAZO`` (cancel).
+    """
+    if data.get("active_route") != "humano":
+        return None
+    if data.get("escalation_reason") != _PAYMENT_PENDING_REASON:
+        return None
+    # tag terminal → ya resuelto (confirmado o rechazado).
+    if data.get("tag") in ("COMPRA_EXITOSA", "RECHAZO"):
+        return None
+    registered = data.get("registered_order")
+    if not isinstance(registered, dict) or registered.get("success") is not True:
+        return None
+    order_id = registered.get("order_id")
+    if not isinstance(order_id, str) or not order_id:
+        return None
+    # Doble chequeo: si el episodio de este pedido ya tiene la marca de pago
+    # confirmado (la escribe `apply_payment_confirmation_to_chat_metadata`), no
+    # está pendiente — aunque el tag no se haya actualizado por algún flujo raro.
+    for episode in data.get("episodes") or []:
+        if (
+            isinstance(episode, dict)
+            and episode.get("order_id") == order_id
+            and episode.get("payment_confirmed_at_ms")
+        ):
+            return None
+    return order_id
+
+
 # Note: the liveness probe for the whole FastAPI app is `GET /` (defined in
 # src/main.py:24). The frontend pipeline polls that endpoint before invoking
 # Playwright. We intentionally do NOT add a duplicate `/api/dashboard/health`
@@ -45,7 +96,8 @@ async def list_dashboard_sessions():
             motivo = "Sin diagnóstico todavía"
             active_route = "ventas"
             phone_number_id = None
-            
+            pending_payment_order_id = None
+
             if metadata_file.exists():
                 try:
                     data = json.loads(metadata_file.read_text(encoding="utf-8"))
@@ -53,6 +105,7 @@ async def list_dashboard_sessions():
                     motivo = data.get("motivo", motivo)
                     active_route = data.get("active_route", active_route)
                     phone_number_id = data.get("phone_number_id")
+                    pending_payment_order_id = _compute_pending_payment_order_id(data)
                 except json.JSONDecodeError:
                     pass
             
@@ -71,6 +124,7 @@ async def list_dashboard_sessions():
                 "motivo": motivo,
                 "active_agent_route": active_route,
                 "phone_number_id": phone_number_id,
+                "pending_payment_order_id": pending_payment_order_id,
                 "last_updated_timestamp": last_updated
             })
             
@@ -130,7 +184,8 @@ async def get_session_history(session_id: str):
     active_route = "ventas"
     phone_number_id = None
     status_history = []
-    
+    pending_payment_order_id = None
+
     metadata_file = session_path / "metadata.json"
     if metadata_file.exists():
         try:
@@ -140,6 +195,7 @@ async def get_session_history(session_id: str):
             active_route = data.get("active_route", active_route)
             phone_number_id = data.get("phone_number_id")
             status_history = data.get("status_history", [])
+            pending_payment_order_id = _compute_pending_payment_order_id(data)
         except json.JSONDecodeError:
             pass
 
@@ -156,6 +212,7 @@ async def get_session_history(session_id: str):
         "memory_content": memory_content,
         "active_agent_route": active_route,
         "phone_number_id": phone_number_id,
+        "pending_payment_order_id": pending_payment_order_id,
         "status_history": status_history,
         "messages": messages
     }

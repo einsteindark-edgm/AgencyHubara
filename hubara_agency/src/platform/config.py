@@ -12,9 +12,29 @@ TEMPORAL_TLS_CERT_PATH = os.getenv("TEMPORAL_TLS_CERT_PATH", "")
 TEMPORAL_TLS_KEY_PATH = os.getenv("TEMPORAL_TLS_KEY_PATH", "")
 
 # Modelos y Proveedores Base
-DEFAULT_LLM_MODEL = os.getenv("DEFAULT_LLM_MODEL", "deepseek/deepseek-v4-pro")
+DEFAULT_LLM_MODEL = os.getenv("DEFAULT_LLM_MODEL", "deepseek/deepseek-v4-flash")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "mispolainas")
 API_BASE_LLMLITE = os.getenv("API_BASE_LLMLITE", "http://localhost:4000")
+
+# Modelo para tareas de SÍNTESIS corta de texto (no-agente, no-reasoning):
+# el resumen on-demand del cliente en "Historial cliente". El modelo de
+# agentes por defecto (DeepSeek V4) está tuneado para conversación con tools,
+# no para síntesis batch single-turn. Gemini Flash-Lite (alias `gemini-backup`
+# del litellm config) es
+# rápido, barato y devuelve `content` estándar. Mismo modelo que usa el
+# pipeline de transcripción de audio.
+#
+# El prefijo `litellm_proxy/` le dice al litellm SDK que rutee al PROXY
+# (api_base) y resuelva el alias ahí — la GEMINI_API_KEY vive en el container
+# litellm, no en hubara-api. Sin el prefijo, el SDK intenta resolver el
+# provider localmente y falla con "LLM Provider NOT provided".
+CUSTOMER_SUMMARY_MODEL = os.getenv(
+    "CUSTOMER_SUMMARY_MODEL", "litellm_proxy/gemini-backup"
+)
+# El litellm SDK exige un api_key NO-None para el provider `litellm_proxy`,
+# aunque el proxy local no valide auth. En prod, setear LITELLM_API_KEY con
+# el master key del proxy. Local: cualquier string sirve.
+LITELLM_API_KEY = os.getenv("LITELLM_API_KEY", "sk-litellm-proxy-local")
 
 # Workspace Configurations
 WORKSPACE_VAULT_DIR = Path(os.getenv("WORKSPACE_VAULT_DIR", "./hubara_vault")).resolve()

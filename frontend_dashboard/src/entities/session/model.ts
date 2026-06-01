@@ -13,6 +13,8 @@ export interface ChatSession {
   motivo: string;
   active_agent_route: string;
   phone_number_id: string | null;
+  /** Pedido (id backend Medusa) esperando confirmación de pago humana, o null. */
+  pending_payment_order_id: string | null;
   /** Unix epoch en segundos (lo que devuelve `stat().st_mtime`). */
   last_updated_timestamp: number;
 }
@@ -34,6 +36,8 @@ export interface SessionDetails {
   memory_content: string | null;
   active_agent_route: string;
   phone_number_id: string | null;
+  /** Pedido (id backend Medusa) esperando confirmación de pago humana, o null. */
+  pending_payment_order_id: string | null;
   status_history: StatusHistoryEntry[];
   messages: ChatMessage[];
 }

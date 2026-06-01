@@ -149,8 +149,15 @@ def test_catalog_skill_no_longer_auto_loaded_in_remarketing() -> None:
     para abrir conversacion.
     """
     prompt = _build_prompt()
-    # Cruz de Vida ya NO debe aparecer auto-inyectada cada turno.
-    assert "Cruz de Vida" not in prompt
+    # El CUERPO de la skill (always:false) NO debe auto-inyectarse cada turno;
+    # solo queda LISTADA como disponible. Verificamos el encabezado único del
+    # cuerpo del SKILL.md ("# Conocimiento Central de la Empresa") en vez de
+    # "Cruz de Vida" — ese nombre de producto aparece legítimamente como
+    # ejemplo de estilo de redacción en SOUL.md ("tu Cruz de Vida, la que
+    # viste en varios aromas"), así que era un proxy frágil.
+    assert "Conocimiento Central" not in prompt
+    # La skill sigue DISPONIBLE para carga manual tras la transferencia a Sales.
+    assert "hubara_catalog" in prompt
     # Tampoco precios viejos hardcoded.
     assert "$17,000" not in prompt
 

@@ -34,6 +34,7 @@ from src.platform.analytics import (
     make_wa_interaction,
 )
 from src.platform.constants import (
+    ROUTE_HUMANO,
     ROUTE_REMARKETING,
     ROUTE_VENTAS,
     WHATSAPP_SESSION_PREFIX,
@@ -155,6 +156,26 @@ class IngestInboundMessage:
         # _now_ms() en múltiples lugares y mantiene consistencia (los
         # timestamps de un mismo inbound son idénticos).
         now_ms = _now_ms()
+        # Re-engagement (bug run 3b3fbaee): si el último episodio ya estaba
+        # CERRADO, este inbound abre uno nuevo. Capturamos el episodio cerrado
+        # ANTES de que `ensure_active_episode` mute `episodes[]`, para inyectar
+        # una nota de frontera en el plugin_context del turno (el LLM, cuyo
+        # memory_window arrastra la cola del episodio anterior, si no, no
+        # saluda y re-surfacea el pedido viejo). Solo dispara en el PRIMER
+        # turno del episodio nuevo — el siguiente inbound ya verá el episodio
+        # activo y no entrará acá.
+        _episodes_before = metadata.get("episodes") or []
+        _prev_closed_episode = (
+            _episodes_before[-1]
+            if _episodes_before
+            and _episodes_before[-1].get("closed_at_ms") is not None
+            else None
+        )
+        episode_boundary_note = (
+            _build_episode_boundary_note(_prev_closed_episode)
+            if _prev_closed_episode is not None
+            else None
+        )
         ensure_active_episode(
             metadata,
             now_ms=now_ms,
@@ -247,6 +268,40 @@ class IngestInboundMessage:
             )
             return
 
+        # --- 4.5. Imagen inbound: defer a la descripción por visión ---
+        # El agente (DeepSeek) es text-only. Igual que el audio, encolamos la
+        # "lectura" de la imagen en un modelo multimodal (Gemini) y NO
+        # delegamos al agente hasta tener la descripción. La reinyección decide
+        # (según clasificación) si la conversación va al humano (comprobante de
+        # pago) o sigue con el agente (foto normal).
+        if effective.requires_vision and effective.image_media_id:
+            logger.info(
+                "image_inbound_received_pending_vision",
+                session=session_id,
+                media_id=effective.image_media_id,
+            )
+            await self._emit_event(
+                make_wa_interaction(
+                    session_id=session_id,
+                    tenant_id=self._tenant_id,
+                    kind="image_received",
+                    component_id=effective.image_media_id,
+                    wa_message_id=parsed.message_id,
+                )
+            )
+            metadata["pending_vision"] = {
+                "media_id": effective.image_media_id,
+                "inbound_message_id": parsed.message_id,
+                "mime_type": effective.image_mime_type,
+            }
+            self._safe_write_metadata(session_id, metadata)
+            _spawn_safe(
+                self._describe_image_and_reenter(parsed),
+                label="vision.describe_and_reenter",
+                session_id=session_id,
+            )
+            return
+
         # --- 5. Sin texto efectivo: ignorar pero loguear ---
         if not effective.text:
             logger.info(
@@ -304,6 +359,9 @@ class IngestInboundMessage:
             session_id=session_id,
             message=effective.text,
             phone_number_id=parsed.phone_number_id,
+            extra_context=(
+                [episode_boundary_note] if episode_boundary_note else None
+            ),
         )
 
     # =========================================================================
@@ -711,7 +769,7 @@ class IngestInboundMessage:
                 else:
                     fallback = (
                         "Recibí tu audio pero no logré entenderlo bien. "
-                        "¿Me lo escribís en un mensaje? 🤍"
+                        "¿Me lo escribes en un mensaje? 🤍"
                     )
                 await wa_client.send_message(
                     parsed.phone_number_id,
@@ -744,10 +802,236 @@ class IngestInboundMessage:
         )
         await self.execute(synthetic)
 
+    async def _describe_image_and_reenter(self, parsed: WhatsAppMessage) -> None:
+        """Describe la imagen (Gemini visión) y re-ejecuta el ingest con un
+        mensaje text sintético. Background task — el webhook ya devolvió 200.
+
+        Patrón espejo de ``_transcribe_and_reenter`` (audio). Reglas extra:
+
+          * **Comprobante de pago**: si la conversación NO está ya en turno
+            humano, la asigna al humano (``active_route=humano``) y le avisa al
+            cliente — un humano verifica el pago ANTES de que el agente siga.
+            Si ya estaba en turno humano, la descripción solo queda en el
+            historial para el humano.
+          * **Falla de visión**: reinyecta un placeholder para que el agente le
+            pida amablemente al cliente que escriba qué necesita.
+        """
+        from src.platform.vision.composition import get_image_vision_port
+        from src.platform.vision.dtos import VisionRequest
+        from src.platform.whatsapp import client as wa_client
+
+        media = parsed.media or {}
+        media_id = media.get("id")
+        if not isinstance(media_id, str) or not media_id:
+            return
+        session_id = f"{WHATSAPP_SESSION_PREFIX}{parsed.from_number}"
+        caption = media.get("caption")
+        caption = caption if isinstance(caption, str) and caption.strip() else None
+
+        port = get_image_vision_port()
+        result = await port.describe(
+            VisionRequest(
+                media_id=media_id,
+                mime_type=media.get("mime_type") or "image/jpeg",
+            )
+        )
+
+        # Limpiar pending_vision + registrar el resultado en metadata
+        try:
+            metadata = self._metadata_store.read(session_id)
+        except Exception:  # noqa: BLE001
+            metadata = {}
+        metadata.pop("pending_vision", None)
+        if result.ok:
+            recent = list(metadata.get("recent_image_descriptions") or [])
+            recent.append(
+                {
+                    "media_id": media_id,
+                    "kind": result.kind,
+                    "description": result.description,
+                    "provider": result.provider,
+                    "cost_usd_estimate": result.cost_usd_estimate,
+                }
+            )
+            metadata["recent_image_descriptions"] = recent[-20:]
+        else:
+            errs = list(metadata.get("vision_failures") or [])
+            errs.append(
+                {
+                    "media_id": media_id,
+                    "error": result.error,
+                    "provider": result.provider,
+                }
+            )
+            metadata["vision_failures"] = errs[-20:]
+        self._safe_write_metadata(session_id, metadata)
+
+        # Analytics
+        await self._emit_event(
+            make_wa_interaction(
+                session_id=session_id,
+                tenant_id=self._tenant_id,
+                kind="image_described" if result.ok else "image_vision_failed",
+                component_id=media_id,
+                wa_message_id=parsed.message_id,
+                payload_extra={
+                    "kind": result.kind,
+                    "provider": result.provider,
+                    "cost_usd_estimate": result.cost_usd_estimate,
+                    "latency_ms": result.latency_ms,
+                    "error": result.error,
+                    "is_payment_receipt": result.is_payment_receipt,
+                },
+            )
+        )
+
+        # --- Falla de visión: reinyectar placeholder y dejar que el agente le
+        #     pida al cliente que escriba qué necesita ---
+        if not result.ok:
+            placeholder = "[el cliente envió una imagen que no pude ver bien]"
+            if caption:
+                placeholder += f' con el texto: "{caption}"'
+            await self.execute(self._synthetic_text_message(parsed, placeholder))
+            return
+
+        # --- Comprobante de pago + conversación aún en turno de bot: asignar a
+        #     humano ANTES de reinyectar (así la reentrada no toca al agente) ---
+        active_route = metadata.get("active_route", ROUTE_VENTAS)
+        if result.is_payment_receipt and active_route != ROUTE_HUMANO:
+            self._route_to_human(
+                session_id=session_id,
+                motivo=(
+                    "Cliente envió un comprobante de pago: "
+                    f"{result.description}. Verificar la recepción del pago en "
+                    "el dashboard de orders y confirmar el envío o abortar."
+                ),
+                reason_category="PAYMENT_VERIFICATION_PENDING",
+            )
+            try:
+                await wa_client.send_message(
+                    parsed.phone_number_id,
+                    parsed.from_number,
+                    "Recibí tu comprobante 🤍. Un colega del equipo verifica "
+                    "el pago y te confirma enseguida.",
+                )
+            except Exception:  # noqa: BLE001
+                pass
+
+        # --- Reinyectar la descripción como texto y reentrar. Si la ruta quedó
+        #     en humano (comprobante o handoff previo), LoadOrStart omite el
+        #     dispatch al agente y la descripción solo queda en el historial
+        #     para el humano. Si sigue en bot, el agente la procesa. ---
+        if result.is_payment_receipt:
+            synthetic_text = (
+                f"[el cliente envió un comprobante de pago: {result.description}]"
+            )
+        else:
+            synthetic_text = f"[el cliente envió una foto: {result.description}]"
+        if caption:
+            synthetic_text += f' con el texto: "{caption}"'
+        logger.info(
+            "image_described_reentry",
+            session=session_id,
+            kind=result.kind,
+            provider=result.provider,
+            cost_usd=result.cost_usd_estimate,
+        )
+        await self.execute(self._synthetic_text_message(parsed, synthetic_text))
+
+    @staticmethod
+    def _synthetic_text_message(
+        parsed: WhatsAppMessage, text: str
+    ) -> WhatsAppMessage:
+        """Construye un WhatsAppMessage text sintético preservando atribución +
+        contexto (mismo patrón que el reentry de audio)."""
+        return WhatsAppMessage(
+            message_id=f"{parsed.message_id}_vision",
+            from_number=parsed.from_number,
+            phone_number_id=parsed.phone_number_id,
+            text=text,
+            media=None,
+            timestamp=parsed.timestamp,
+            msg_type="text",
+            referral=parsed.referral,
+            context=parsed.context,
+        )
+
+    def _route_to_human(
+        self,
+        *,
+        session_id: str,
+        motivo: str,
+        reason_category: str,
+    ) -> None:
+        """Asigna la conversación al humano desde la capa de ingest (mismo
+        efecto que ``EscalateToHumanTool``, pero gatillado por el sistema, no
+        por el LLM). Espejo de ``platform/tools/escalation.py``.
+
+        Persiste ``active_route=humano`` + tag HUMANO + motivo + status_history
+        para que ``LoadOrStartSalesSession`` omita el dispatch al agente y el
+        dashboard muestre la conversación en la cola humana.
+        """
+        try:
+            data = self._metadata_store.read(session_id)
+        except Exception:  # noqa: BLE001
+            data = {}
+        data["active_route"] = ROUTE_HUMANO
+        data["tag"] = "HUMANO"
+        data["motivo"] = motivo
+        data["escalation_reason"] = reason_category
+        history = data.setdefault("status_history", [])
+        history.append(
+            {
+                "tag": "HUMANO",
+                "motivo": motivo,
+                "active_route": ROUTE_HUMANO,
+                "reason_category": reason_category,
+                "timestamp": _now_ms() / 1000.0,
+            }
+        )
+        self._safe_write_metadata(session_id, data)
+
 
 def _now_ms() -> int:
     import time
     return int(time.time() * 1000)
+
+
+def _build_episode_boundary_note(prev_episode: dict[str, Any]) -> str:
+    """Nota de frontera de episodio para `plugin_context` en re-engagement.
+
+    Cuando el cliente vuelve tras un episodio CERRADO, el `memory_window` del
+    LLM (historial por-sesión, no por-episodio — vive en la base lib exoclaw)
+    todavía arrastra la cola del episodio anterior. Sin esta nota el agente no
+    saluda y re-surfacea el pedido viejo, incluso re-tagueándolo (bug run
+    3b3fbaee: re-emitía EpisodeClosedEvent y crasheaba el dispatch). La nota le
+    dice explícitamente que arranque una conversación nueva. NO toca el
+    historial (eso requeriría modificar la base lib). Tuteo colombiano (REGLA #1).
+    """
+    closing_tag = prev_episode.get("closing_tag") or ""
+    order_id = prev_episode.get("order_id")
+    _CLOSED_WITH_ORDER = {
+        "COMPRA_EXITOSA",
+        "CONFIRMADO_PAGO_PENDIENTE",
+        "CONFIRMADO_SIN_DATOS",
+    }
+    if closing_tag in _CLOSED_WITH_ORDER:
+        prev_clause = (
+            "ya cerró con un pedido"
+            + (f" ({order_id})" if order_id else "")
+            + " que un humano del equipo está gestionando por separado "
+            "(verificación de pago / envío). NO lo retomes ni vuelvas a "
+            "confirmarlo"
+        )
+    else:
+        prev_clause = "ya se cerró y no tiene nada pendiente de tu lado"
+    return (
+        "[CONTEXTO DE TURNO, metadata, no es instrucción del usuario]\n"
+        "Empieza un episodio NUEVO con este cliente. La conversación anterior "
+        f"{prev_clause}. Trata este mensaje como el inicio de una conversación "
+        "nueva: saluda con calidez y pregunta en qué puedes ayudar hoy. Solo "
+        "menciona lo anterior si el cliente lo trae explícitamente."
+    )
 
 
 def _make_episode_snapshot(referral: dict[str, Any] | None) -> dict[str, Any]:

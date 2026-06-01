@@ -52,6 +52,7 @@ from src.platform.constants import (
     ROUTE_VENTAS,
 )
 from src.platform.plugin_manifest import get_task_queue
+from src.plugins.chats.agent.sales.context import build_bogota_context_string
 from src.plugins.chats.agent.sales.contracts import SalesSessionInput
 from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
 from src.plugins.chats.agent.sales.workflows.sales_session import HubaraSalesSessionWorkflow
@@ -108,7 +109,13 @@ class LoadOrStartSalesSession:
         session_id: str,
         message: str,
         phone_number_id: str | None,
+        extra_context: list[str] | None = None,
     ) -> None:
+        # `extra_context`: notas volátiles del turno que se appendéan al
+        # `plugin_context` del signal Sales (junto al bloque de hora/saludo de
+        # Bogotá). Hoy lo usa `IngestInboundMessage` para inyectar la nota de
+        # frontera de episodio en re-engagement (bug run 3b3fbaee). Es un
+        # hueco genérico — cualquier dato de contexto del turno cabe acá.
         # 1. Resolver ruta y persistir phone_number_id (lectura + posible escritura).
         data = self._metadata_store.read(session_id)
         active_route = data.get("active_route", ROUTE_VENTAS)
@@ -244,7 +251,7 @@ class LoadOrStartSalesSession:
             # de la TZ del servidor (típicamente UTC en contenedores). Side
             # effect aceptable: el system prompt cambia 2 líneas por turno —
             # cache miss mínimo, vale la corrección del saludo.
-            plugin_context = [build_bogota_context_string()]
+            plugin_context = [build_bogota_context_string(), *(extra_context or [])]
 
             try:
                 handle = client.get_workflow_handle(workflow_id)

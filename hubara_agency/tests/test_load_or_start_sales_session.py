@@ -11,9 +11,11 @@ Tambien valida que `phone_number_id` se persiste en metadata cuando llega.
 
 PR-D global cleanup (ADR-2026-05-06-10): el `FakeBrainLoader` fue eliminado.
 Tras la migracion DEHA workspace de Remarketing, `LoadOrStartSalesSession`
-no carga `shared_brain/*.md` para ninguna ruta — `plugin_context` es siempre
-`None`. Las assertions sobre `args[2]` esperan `None` en ambas rutas (Sales
-y Remarketing).
+no carga `shared_brain/*.md` para ninguna ruta. La ruta Remarketing manda
+`plugin_context=None`. La ruta Sales inyecta el bloque de contexto de
+Bogotá (`build_bogota_context_string()`) para que el LLM use el saludo
+correcto segun la hora local de Colombia — las assertions de Sales validan
+la forma de ese bloque, no el contenido literal (depende de `datetime.now`).
 """
 from __future__ import annotations
 
@@ -173,14 +175,18 @@ async def test_starts_new_sales_workflow_when_no_metadata():
     assert call["task_queue"] == SALES_QUEUE
     assert isinstance(call["payload"], SalesSessionInput)
     assert call["payload"].session_id == "wa_42"
-    # 3. Signal con el mensaje. PR-B: plugin_context = None para Sales — la
-    #    identidad/tono/catalogo ahora viajan via workspace files, no via signal.
+    # 3. Signal con el mensaje. La identidad/tono/catalogo viajan via workspace
+    #    files; `plugin_context` ahora trae el bloque de contexto de Bogotá
+    #    (hora + saludo) — validamos la forma, no el contenido literal.
     started = client.started_handles["session-wa_42"]
     assert len(started.signals) == 1
     fn, args = started.signals[0]
     # ADR-2026-05-20: signal dispatch is by NAME (string), not class method ref.
     assert fn == "send_message"
-    assert args == ["hola", None, None]
+    assert args[0] == "hola"
+    assert args[1] is None
+    assert isinstance(args[2], list) and len(args[2]) == 1
+    assert "Hora actual en Colombia" in args[2][0]
 
 
 @pytest.mark.asyncio
@@ -196,12 +202,16 @@ async def test_reuses_running_sales_handle_without_starting_again():
     assert metadata.writes == []
     # No se arranco workflow nuevo.
     assert client.start_calls == []
-    # El handle existente recibe el signal. PR-B: plugin_context = None.
+    # El handle existente recibe el signal. Ruta Sales → plugin_context trae
+    # el bloque de contexto Bogotá; validamos la forma.
     assert len(existing.signals) == 1
     fn, args = existing.signals[0]
     # ADR-2026-05-20: signal dispatch is by NAME (string), not class method ref.
     assert fn == "send_message"
-    assert args == ["hi", None, None]
+    assert args[0] == "hi"
+    assert args[1] is None
+    assert isinstance(args[2], list) and len(args[2]) == 1
+    assert "Hora actual en Colombia" in args[2][0]
 
 
 @pytest.mark.asyncio
@@ -285,13 +295,15 @@ async def test_falls_back_to_sales_when_remarketing_handle_dead():
     # Se arranca Sales workflow nuevo.
     assert len(client.start_calls) == 1
     assert client.start_calls[0]["id"] == "session-wa_3"
-    # El nuevo Sales handle recibe el signal. PR-B: plugin_context = None.
+    # El nuevo Sales handle recibe el signal. Ruta Sales → plugin_context trae
+    # el bloque de contexto Bogotá; validamos la forma.
     started = client.started_handles["session-wa_3"]
     assert len(started.signals) == 1
     fn, args = started.signals[0]
     # ADR-2026-05-20: signal dispatch is by NAME (string), not class method ref.
     assert fn == "send_message"
-    assert args[2] is None
+    assert isinstance(args[2], list) and len(args[2]) == 1
+    assert "Hora actual en Colombia" in args[2][0]
     # PR-D global cleanup (ADR-2026-05-06-10): el `remarketing_brain_loader`
     # ya no existe en el use case; el path Remarketing tambien se alimenta del
     # workspace canonico via `bootstrap_remarketing_session_activity`.

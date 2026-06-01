@@ -10,6 +10,7 @@ const session = (overrides: Partial<ChatSession>): ChatSession => ({
   motivo: "Quiere precio",
   active_agent_route: "ventas",
   phone_number_id: null,
+  pending_payment_order_id: null,
   last_updated_timestamp: 0,
   ...overrides,
 });

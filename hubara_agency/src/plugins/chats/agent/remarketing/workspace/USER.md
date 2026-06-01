@@ -1,6 +1,6 @@
 # User Profile
 
-Información sobre el tenant que personaliza el comportamiento de la Especialista de Remarketing.
+Información sobre el tenant que personaliza el comportamiento del Asesor de Hubara (modo Recuperación Comercial).
 
 ## Tenant / Organización
 

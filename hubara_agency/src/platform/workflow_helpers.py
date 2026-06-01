@@ -30,7 +30,9 @@ with workflow.unsafe.imports_passed_through():
     )
 
     from src.platform.contracts import (
+        EpisodeClosedDecision,
         EscalationDecision,
+        OrderRegisteredDecision,
         ScheduleRemarketingDecision,
         TransferDecision,
     )
@@ -97,6 +99,12 @@ class TurnResult:
     # when close_episode mutated state). The workflow lifts this into
     # `EpisodeClosedEvent` via the dispatcher to cancel any running watchdog.
     episode_closed_decision: EpisodeClosedDecision | None = None
+    # Fix integridad orden↔tag: emitted by `RegisterOrderTool` when an order
+    # registers successfully. Makes the registration VISIBLE to the workflow,
+    # which runs `ensure_payment_pending_closure_activity` as a deterministic
+    # safety net — guaranteeing the "pago pendiente" tag + escalation land
+    # even if the LLM never emits the follow-up tool calls.
+    order_registered_decision: OrderRegisteredDecision | None = None
 
 
 def _try_parse_decision_payload(raw: str) -> dict[str, Any] | None:
@@ -213,6 +221,7 @@ async def run_agent_turn(
     schedule_remarketing: ScheduleRemarketingDecision | None = None
     escalation_decision: EscalationDecision | None = None
     episode_closed_decision: EpisodeClosedDecision | None = None
+    order_registered_decision: OrderRegisteredDecision | None = None
 
     while iteration < session.llm.max_iterations:
         iteration += 1
@@ -281,6 +290,23 @@ async def run_agent_turn(
                                 ),
                                 episode_id=episode_id_raw,
                                 closing_tag=str(ec.get("closing_tag", "")),
+                            )
+                    if "order_registered" in payload and isinstance(payload["order_registered"], dict):
+                        # Fix integridad orden↔tag: `RegisterOrderTool` emitió
+                        # esto al cerrar una orden con éxito. Lo levantamos para
+                        # que el workflow corra la red de seguridad de cierre.
+                        orr = payload["order_registered"]
+                        order_id_raw = orr.get("order_id")
+                        if isinstance(order_id_raw, str) and order_id_raw:
+                            order_registered_decision = OrderRegisteredDecision(
+                                session_id=str(
+                                    orr.get("session_id", session.session_id)
+                                ),
+                                order_id=order_id_raw,
+                                payment_method=str(orr.get("payment_method", "")),
+                                total_cop=int(orr.get("total_cop", 0)),
+                                currency=str(orr.get("currency", "COP")),
+                                motivo=str(orr.get("motivo", "")),
                             )
 
                 messages = [
@@ -373,7 +399,7 @@ async def run_agent_turn(
                         "iteration": iteration,
                     },
                 )
-                final_content = "¡Perdón! Justo se me cortó un segundito. ¿Me repetís lo que necesitabas?"
+                final_content = "¡Perdón! Justo se me cortó un segundito. ¿Me repites lo que necesitabas?"
 
             msg_dict: dict[str, Any] = {"role": "assistant", "content": final_content}
             if response.reasoning_content is not None:
@@ -384,7 +410,7 @@ async def run_agent_turn(
             break
 
     if final_content is None:
-        final_content = "¡Perdón! Justo se me cortó un segundito. ¿Me repetís lo que necesitabas?"
+        final_content = "¡Perdón! Justo se me cortó un segundito. ¿Me repites lo que necesitabas?"
 
     await workflow.execute_activity(
         record_turn,
@@ -404,4 +430,5 @@ async def run_agent_turn(
         schedule_remarketing=schedule_remarketing,
         escalation_decision=escalation_decision,
         episode_closed_decision=episode_closed_decision,
+        order_registered_decision=order_registered_decision,
     )

@@ -101,8 +101,11 @@ agent:
               fire_at_ms: "$.fire_at_ms"
               suggested_template_kind: "$.suggested_template_kind"
         # CustomerRepliedEvent → cancel del watchdog (cliente respondió,
-        # no necesita nudge). `via=signal` apunta al mismo workflow_id —
-        # si no hay watchdog corriendo, Temporal noopea el signal.
+        # no necesita nudge). `via=signal` apunta al mismo workflow_id.
+        # OJO: si NO hay watchdog corriendo, Temporal NO noopea — lanza gRPC
+        # NOT_FOUND ("sql: no rows in result set"). El dispatcher absorbe ese
+        # caso como noop (`_is_not_found`), así que señalar un watchdog ausente
+        # es seguro. (Antes crasheaba el Sales workflow — run 3b3fbaee.)
         # El dispatcher pasa el dict del `input_mapping` como UN solo arg
         # al signal handler — `cancel_watchdog(self, payload: dict)`
         # extrae `payload["reason"]`. Acá inyectamos un literal mediante un

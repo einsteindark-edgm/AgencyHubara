@@ -1,6 +1,6 @@
 # Long-term Memory
 
-Hechos importantes que deben persistir entre sesiones. La Especialista de Remarketing Clara va anexando aquí cuando aprende algo durable sobre el tenant, el dominio o un cliente recurrente.
+Hechos importantes que deben persistir entre sesiones. El Asesor de Hubara (modo Recuperación Comercial) va anexando aquí cuando aprende algo durable sobre el tenant, el dominio o un cliente recurrente.
 
 ## User / tenant information
 

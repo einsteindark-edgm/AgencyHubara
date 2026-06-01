@@ -393,9 +393,9 @@ async def test_register_order_idempotent_history(ctx, vault):
 
 @pytest.mark.asyncio
 async def test_register_order_summary_directs_llm_to_next_step(ctx, vault):
-    """El summary success debe decirle al LLM qué hacer después (tag
-    COMPRA_EXITOSA + despedida) para que la secuencia canónica de cierre
-    se respete."""
+    """El summary success debe dirigir al LLM a la secuencia canónica de cierre:
+    CONFIRMADO_PAGO_PENDIENTE + escalación PAYMENT_VERIFICATION_PENDING — NO
+    COMPRA_EXITOSA (esa tag la pone el humano tras verificar el pago)."""
     fake = FakeOrderRegistrationPort()
     tool = RegisterOrderTool(
         workspace=str(vault), vault_dir=vault, port=fake
@@ -412,8 +412,44 @@ async def test_register_order_summary_directs_llm_to_next_step(ctx, vault):
         )
     )
     summary = result["summary"]
-    assert "COMPRA_EXITOSA" in summary
+    assert "CONFIRMADO_PAGO_PENDIENTE" in summary
     assert "manage_conversation_tag" in summary
+    assert "PAYMENT_VERIFICATION_PENDING" in summary
+    # El summary debe DESALENTAR COMPRA_EXITOSA (solo en contexto prohibitivo).
+    assert "NO uses" in summary and "COMPRA_EXITOSA" in summary
+
+    # Fix integridad orden↔tag: el envelope ahora lleva la decisión
+    # `order_registered` que el workflow levanta para correr la red de
+    # seguridad de cierre.
+    assert result["registered"] is True
+    decision = result["order_registered"]
+    assert decision["session_id"] == ctx.session_key
+    assert decision["order_id"] == fake.fixed_order_id
+    assert decision["payment_method"] == "transfer"
+    assert decision["total_cop"] == 17000
+    assert decision["currency"] == "COP"
+    assert decision["motivo"]  # motivo sintético no vacío
+
+
+@pytest.mark.asyncio
+async def test_register_order_failure_emits_no_decision(ctx, vault):
+    """En el path failure NO debe emitirse `order_registered` (no hay orden que
+    cerrar) — la red de seguridad del workflow no debe dispararse."""
+    fake = FakeOrderRegistrationPort(return_success=False, error_detail="boom")
+    tool = RegisterOrderTool(workspace=str(vault), vault_dir=vault, port=fake)
+    result = json.loads(
+        await tool.execute_with_context(
+            ctx,
+            items=_SAMPLE_ITEMS,
+            shipping=_SAMPLE_SHIPPING,
+            payment_method="transfer",
+            subtotal_cop=17000,
+            shipping_cop=0,
+            total_cop=17000,
+        )
+    )
+    assert result["registered"] is False
+    assert "order_registered" not in result
 
 
 # ----------------------------------------------------------------------

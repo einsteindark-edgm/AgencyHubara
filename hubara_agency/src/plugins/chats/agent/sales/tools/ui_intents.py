@@ -249,7 +249,7 @@ class PresentProductsTool(ToolBase):
     workflow renderiza `interactive.product_list` (A.11). Si no, fallback
     a `interactive.list` (A.3) con un row por producto.
 
-    Hasta 30 productos. Si recibís más, recortá vos los más relevantes y
+    Hasta 30 productos. Si recibes más, recorta tú los más relevantes y
     el cliente puede pedir "ver más" para paginar.
     """
 
@@ -258,7 +258,7 @@ class PresentProductsTool(ToolBase):
         "Envía una lista tappable de hasta 30 productos al cliente — el "
         "cliente la ve como un menú dentro del chat y puede tocar uno para "
         "elegirlo. Úsala cuando vayas a mostrar 4 o más productos. Para "
-        "1-3 productos, mejor describílos en texto. Para UN producto con "
+        "1-3 productos, mejor descríbelos en texto. Para UN producto con "
         "foto, usa present_product_detail. Los handles deben venir de "
         "search_products (closed-list strict)."
     )
@@ -272,7 +272,7 @@ class PresentProductsTool(ToolBase):
                 "items": {"type": "string", "minLength": 1, "maxLength": 200},
                 "description": (
                     "Handles de los productos a mostrar, en el orden que "
-                    "querés que aparezcan. Solo handles vistos en "
+                    "quieres que aparezcan. Solo handles vistos en "
                     "search_products."
                 ),
             },
@@ -331,7 +331,7 @@ class PresentProductsTool(ToolBase):
                 "queued": False,
                 "error": "no_valid_handles",
                 "missing": missing,
-                "message": "Ningún handle resolvió. Llamá search_products primero.",
+                "message": "Ningún handle resolvió. Llama search_products primero.",
             }, ensure_ascii=False)
 
         # Agrupar
@@ -416,7 +416,7 @@ class PresentProductsTool(ToolBase):
             "missing": missing,
             "summary": (
                 f"Lista de {len(products)} productos enviada al cliente "
-                f"como menú tappable{paging_note}. Esperá su selección — "
+                f"como menú tappable{paging_note}. Espera su selección — "
                 "cuando toque uno, recibirás '[el cliente seleccionó: <título>]'."
             ),
         }, ensure_ascii=False)
@@ -443,7 +443,7 @@ class RequestShippingDetailsTool(ToolBase):
     pendiente), esta tool envía un MENSAJE DE TEXTO PLANO al cliente
     enumerando los campos que necesitamos (ciudad, barrio, dirección,
     teléfono, método de pago) — con emojis y formato bonito. El cliente
-    responde por texto y vos parseás su respuesta turn-by-turn.
+    responde por texto y tú parseas su respuesta turn-by-turn.
 
     Cuando el Flow esté configurado (cambiando `flow_id` a un id real),
     esta misma tool abre el formulario nativo y recibe los datos en
@@ -458,7 +458,7 @@ class RequestShippingDetailsTool(ToolBase):
         "teléfono, método de pago). Llámala UNA SOLA VEZ por sesión, "
         "después de que el cliente confirmó qué quiere comprar. El "
         "sistema le manda un mensaje de texto enumerando los campos — "
-        "el cliente responde libremente por chat y vos vas armando los "
+        "el cliente responde libremente por chat y tú vas armando los "
         "datos hasta tenerlos completos. NO repitas la lista en tu propio "
         "texto: la tool ya manda el mensaje formateado."
     )
@@ -537,7 +537,7 @@ class RequestShippingDetailsTool(ToolBase):
                 },
                 "body": (
                     f"Para enviarte *{items_summary}* necesito unos datos. "
-                    "Tocá el botón para completar el formulario — "
+                    "Toca el botón para completar el formulario — "
                     "toma 30 segundos."
                 ),
                 "header_text": "Datos de envío",
@@ -559,7 +559,7 @@ class RequestShippingDetailsTool(ToolBase):
             "summary": (
                 "Mensaje pidiendo datos de envío enviado al cliente "
                 "(ciudad, barrio, dirección, teléfono, método de pago). "
-                "El cliente responde por texto — vos vas recolectando los "
+                "El cliente responde por texto — tú vas recolectando los "
                 "campos en los próximos turnos. Cuando los tengas TODOS, "
                 "continúa con verify_order_for_checkout. NO pidas los "
                 "datos otra vez en tu próximo mensaje — la tool ya los "
@@ -589,10 +589,10 @@ class PresentOrderConfirmationTool(ToolBase):
     description = (
         "Envía la confirmación formal del pedido al cliente: items, "
         "precios, envío, total, dirección, y botón para confirmar/pagar. "
-        "Llamala SOLO después de que `verify_order_for_checkout` retornó "
+        "Llámala SOLO después de que `verify_order_for_checkout` retornó "
         "verified=True y discrepancy=False. Si hay discrepancia, primero "
-        "informá al cliente honestamente y pedile confirmación con el "
-        "precio nuevo, recién después usás esta tool."
+        "informa al cliente honestamente y pídele confirmación con el "
+        "precio nuevo, recién después usas esta tool."
     )
     parameters: dict[str, Any] = {
         "type": "object",
@@ -719,8 +719,8 @@ class PresentOrderConfirmationTool(ToolBase):
                 "message": (
                     "Algunos precios que pasaste NO coinciden con el "
                     "snapshot del catálogo (drift >5%). NO se encoló la "
-                    "confirmación. Volvé a llamar `verify_order_for_checkout` "
-                    "con los items y usá los precios EXACTOS del envelope "
+                    "confirmación. Vuelve a llamar `verify_order_for_checkout` "
+                    "con los items y usa los precios EXACTOS del envelope "
                     "que devuelve."
                 ),
             }, ensure_ascii=False)
@@ -757,7 +757,7 @@ class PresentOrderConfirmationTool(ToolBase):
             "total_cop": total,
             "summary": (
                 f"Confirmación enviada con total ${total:,} COP. "
-                "Esperá la respuesta del cliente: si confirma con "
+                "Espera la respuesta del cliente: si confirma con "
                 "Order Details nativo, recibirás el evento "
                 "order_status:captured. Si fallback a botones, "
                 "recibirás '[el cliente tocó el botón: Confirmar]'."
@@ -781,7 +781,7 @@ class ReactToMessageTool(ToolBase):
 
     name = "react_to_message"
     description = (
-        "Reacciona al último mensaje del cliente con un emoji. Usalo como "
+        "Reacciona al último mensaje del cliente con un emoji. Úsalo como "
         "ack visual breve, no como reemplazo de una respuesta de texto. "
         "Emojis permitidos: 🤍 ✨ 👍 🎉 ❤️ 🙏. Una sola reacción por turno."
     )
@@ -849,7 +849,7 @@ class SendContactCardTool(ToolBase):
         "(nombre + número). Úsala SOLO cuando el cliente lo pide "
         "explícitamente o como parte de una escalación con consentimiento. "
         "NO lo uses como sustituto de seguir la conversación — el cliente "
-        "espera que vos sigas atendiéndolo."
+        "espera que tú sigas atendiéndolo."
     )
     parameters: dict[str, Any] = {
         "type": "object",
@@ -858,7 +858,7 @@ class SendContactCardTool(ToolBase):
                 "type": "string",
                 "maxLength": 200,
                 "description": (
-                    "Por qué compartís el contacto. Aparece como nota al "
+                    "Por qué compartes el contacto. Aparece como nota al "
                     "cliente. Ej: 'para que coordines la entrega manualmente'."
                 ),
             },
@@ -890,7 +890,7 @@ class SendContactCardTool(ToolBase):
             "kind": "contact_card",
             "summary": (
                 "Contacto del asesor enviado al cliente. "
-                "Reasoná en tu próximo turno como continuación natural."
+                "Razona en tu próximo turno como continuación natural."
             ),
         }, ensure_ascii=False)
 
@@ -910,7 +910,7 @@ class SendCTAUrlTool(ToolBase):
 
     name = "send_cta_url"
     description = (
-        "Envía un botón con URL al cliente. Usalo SOLO si el cliente lo "
+        "Envía un botón con URL al cliente. Úsalo SOLO si el cliente lo "
         "pide explícitamente (ej: 'ver Instagram'). NO lo uses como atajo "
         "para no responder en el chat — el cierre de venta debe ser dentro "
         "de WhatsApp. Dominios permitidos: hubara.com.co, "
@@ -974,9 +974,9 @@ class SendCTAUrlTool(ToolBase):
                 "message": (
                     "Esa URL apunta a un producto/checkout — el cliente "
                     "NO debe salir del chat para eso. Si pide más fotos, "
-                    "usá `present_product_gallery`. Si pide ver el "
-                    "producto, usá `present_product_detail`. Si quiere "
-                    "comprar, seguí el flow de checkout en WhatsApp."
+                    "usa `present_product_gallery`. Si pide ver el "
+                    "producto, usa `present_product_detail`. Si quiere "
+                    "comprar, sigue el flow de checkout en WhatsApp."
                 ),
             }, ensure_ascii=False)
         if not any(url.startswith(prefix) for prefix in self._WHITELIST):
@@ -986,7 +986,7 @@ class SendCTAUrlTool(ToolBase):
                 "url": url,
                 "message": (
                     "Esa URL no está en la whitelist Hubara. "
-                    "Continuá la conversación en texto."
+                    "Continúa la conversación en texto."
                 ),
             }, ensure_ascii=False)
 
@@ -1040,7 +1040,7 @@ class PresentProductGalleryTool(ToolBase):
     name = "present_product_gallery"
     description = (
         "Envía varias fotos adicionales del MISMO producto al cliente, "
-        "como una secuencia de imágenes dentro de WhatsApp. Usala cuando "
+        "como una secuencia de imágenes dentro de WhatsApp. Úsala cuando "
         "el cliente pide 'más fotos', 'otra imagen', 'cómo se ve por "
         "atrás', 'más ángulos', etc. NUNCA mandes al cliente a la web "
         "(ni con send_cta_url ni con texto) para ver fotos — esta tool "
@@ -1103,7 +1103,7 @@ class PresentProductGalleryTool(ToolBase):
                 "queued": False,
                 "error": "handle_not_found",
                 "message": (
-                    f"El handle '{handle}' no existe. Usá search_products "
+                    f"El handle '{handle}' no existe. Usa search_products "
                     "primero."
                 ),
             }, ensure_ascii=False)
@@ -1134,8 +1134,8 @@ class PresentProductGalleryTool(ToolBase):
                 "queued": False,
                 "error": "no_additional_images",
                 "message": (
-                    f"No tengo más fotos de {product.title}. Continuá en "
-                    "texto — preguntale al cliente por aroma/color."
+                    f"No tengo más fotos de {product.title}. Continúa en "
+                    "texto — pregúntale al cliente por aroma/color."
                 ),
             }, ensure_ascii=False)
         # Cap defensivo
@@ -1172,7 +1172,7 @@ class PresentProductGalleryTool(ToolBase):
                 f"{len(additional)} foto(s) adicionales de {product.title} "
                 "enviadas en secuencia. NO le mandes el link a la web — el "
                 "cliente ya las está viendo en el chat. Tu próximo "
-                "mensaje: invitalo a elegir aroma/color o cerrar la compra."
+                "mensaje: invítalo a elegir aroma/color o cerrar la compra."
             ),
         }, ensure_ascii=False)
 
@@ -1307,7 +1307,7 @@ class SendQuickRepliesTool(ToolBase):
             "count": len(normalized),
             "summary": (
                 f"{len(normalized)} botón(es) de respuesta rápida enviado(s). "
-                "Esperá la elección del cliente — recibirás "
+                "Espera la elección del cliente — recibirás "
                 "'[el cliente tocó el botón: <título>]'."
             ),
         }, ensure_ascii=False)
@@ -1346,12 +1346,12 @@ class PresentVariantPickerTool(ToolBase):
         "Envía un mensaje de texto bonito al cliente con las opciones de "
         "variante (aromas / colores / tamaños), con un emoji distintivo "
         "por opción agrupadas por categoría. El cliente lee y **responde "
-        "por texto** la que prefiere (ej: 'lavanda', 'el morado'). Usala "
+        "por texto** la que prefiere (ej: 'lavanda', 'el morado'). Úsala "
         "cuando vayas a presentar 4 o más opciones de aroma/color de un "
         "producto. El emoji por opción se asigna automáticamente desde el "
-        "registry Hubara — **vos NO pasás emojis, solo el nombre literal "
+        "registry Hubara — **tú NO pasas emojis, solo el nombre literal "
         "del envelope**. Si el cliente ya eligió la variante, NO uses esta "
-        "tool — continuá hacia el cierre."
+        "tool — continúa hacia el cierre."
     )
     parameters: dict[str, Any] = {
         "type": "object",
@@ -1497,80 +1497,59 @@ class PresentVariantPickerTool(ToolBase):
                 ],
             })
 
-        # Paginación (bug 10d8bd21): Meta limita el TOTAL de rows a 10
-        # sumadas todas las sections de UN mensaje. Hubara tiene 11
-        # aromas, así que cuando se piden TODOS hay que dividir en 2
-        # mensajes consecutivos. `paginate_list_rows` preserva el orden
-        # de sections y trata de NO partir sections cuando se puede
-        # (mejor UX: una categoría completa por mensaje).
-        pages = wa_limits.paginate_list_rows(
-            sections_payload, wa_limits.MAX_LIST_ROWS_TOTAL
-        )
-
-        if not pages:
+        # UN SOLO MENSAJE (bug run fe86d4e4): el render es texto plano
+        # (cambiado en sesión adc6400c). Un mensaje de texto NO tiene el cap
+        # de 10 rows de `interactive.list` — ese límite era de Meta para las
+        # listas tappables, que ya no usamos. Por eso ya NO paginamos: TODAS
+        # las opciones (aromas/colores) van en UN solo mensaje, evitando
+        # partir las variantes en dos burbujas. El único límite real es el de
+        # caracteres del body de WhatsApp (~4096), de sobra para las ~13
+        # variantes de Hubara con sus secciones.
+        if not sections_payload:
             return json.dumps({
                 "queued": False,
                 "error": "no_rows",
                 "message": "No quedaron rows tras sanitización.",
             }, ensure_ascii=False)
 
-        # Body de continuación según variant_type (en español, profesional).
-        continuation_body = {
-            "scent": "Más aromas disponibles:",
-            "color": "Más colores disponibles:",
-            "size": "Más opciones:",
-        }.get(variant_type, "Más opciones:")
+        total_options = sum(len(s["rows"]) for s in sections_payload)
+        intent = {
+            "kind": "variant_picker",
+            "params": {
+                "variant_type": variant_type,
+                "intro_text": intro_text,
+                "sections": sections_payload,
+                "button_label": "Ver opciones",
+                "handle": handle,
+                "page": 1,
+                "total_pages": 1,
+            },
+            "analytics": {
+                "component_id": f"variant_picker.{variant_type}",
+                # Render actual: texto plano con emojis curados
+                # (cambiado en sesión adc6400c, antes era interactive.list).
+                "component_kind": "text.variant_picker",
+                "handle": handle,
+                "count": total_options,
+                "page": 1,
+                "total_pages": 1,
+            },
+        }
+        _append_intent(ctx.session_key, intent)
 
-        total_pages = len(pages)
-        total_options = sum(len(s["rows"]) for p in pages for s in p)
-        for page_idx, page_sections in enumerate(pages):
-            is_first = page_idx == 0
-            body = (
-                wa_limits.truncate(intro_text, wa_limits.MAX_LIST_BODY)
-                if is_first
-                else continuation_body
-            )
-            intent = {
-                "kind": "variant_picker",
-                "params": {
-                    "variant_type": variant_type,
-                    "intro_text": body,
-                    "sections": page_sections,
-                    "button_label": "Ver opciones",
-                    "handle": handle,
-                    "page": page_idx + 1,
-                    "total_pages": total_pages,
-                },
-                "analytics": {
-                    "component_id": f"variant_picker.{variant_type}",
-                    # Render actual: texto plano con emojis curados
-                    # (cambiado en sesión adc6400c, antes era interactive.list).
-                    "component_kind": "text.variant_picker",
-                    "handle": handle,
-                    "count": sum(len(s["rows"]) for s in page_sections),
-                    "page": page_idx + 1,
-                    "total_pages": total_pages,
-                },
-            }
-            _append_intent(ctx.session_key, intent)
-
-        paging_note = (
-            f" (enviado en {total_pages} mensajes para mostrar todos)"
-            if total_pages > 1
-            else ""
-        )
         return json.dumps({
             "queued": True,
             "kind": "variant_picker",
             "variant_type": variant_type,
             "count": total_options,
-            "pages": total_pages,
+            "pages": 1,
             "summary": (
                 f"Picker de {variant_type} con {total_options} opciones "
-                f"enviado como texto con emojis curados{paging_note}. "
-                "Esperá la respuesta libre del cliente (ej: 'lavanda', "
-                "'el morado'). NO repitas la lista en tu próximo mensaje "
-                "— el cliente acaba de verla."
+                "enviado como UN solo mensaje de texto con emojis curados. "
+                "Ese mensaje YA incluye el texto introductorio y la invitación "
+                "a elegir — NO escribas texto adicional en este turno; el "
+                "picker es tu mensaje completo. Espera la respuesta libre del "
+                "cliente (ej: 'lavanda', 'el morado')."
             ),
         }, ensure_ascii=False)
 

@@ -70,10 +70,12 @@ def test_identity_in_system_prompt() -> None:
 def test_soul_in_system_prompt() -> None:
     """SOUL.md cruza al system prompt — tono y reglas de formato."""
     prompt = _build_prompt()
-    # Token de SOUL.md (la regla del doble salto de linea para fragmentar
-    # mensajes en WhatsApp).
+    # Token de SOUL.md: la regla de fragmentar mensajes en WhatsApp con doble
+    # salto. El SOUL.md actual lo redacta como "Cada idea fragmentada con
+    # doble salto `\n\n`" (antes era "DOBLE SALTO DE LÍNEA" — el test buscaba
+    # ese wording viejo y quedó desactualizado al reescribirse el SOUL).
     assert "WhatsApp" in prompt
-    assert "DOBLE SALTO DE L" in prompt or "doble salto de l" in prompt.lower()
+    assert "doble salto" in prompt.lower()
 
 
 def test_agents_in_system_prompt() -> None:
@@ -110,11 +112,19 @@ def test_catalog_skill_no_longer_auto_loaded() -> None:
     `test_catalog_skill_loads_always`).
     """
     prompt = _build_prompt()
-    # La primera vela del catalogo hardcoded NO debe aparecer cada turno.
-    assert "Cruz de Vida" not in prompt, (
-        "skill hubara_catalog deberia estar deprecada (always:false) — "
-        "el catalogo dinamico vive en las tools de HU-04"
+    # El CUERPO de la skill (always:false) NO debe inyectarse inline cada
+    # turno; solo debe quedar LISTADA como disponible para `load_skill`.
+    # Verificamos el encabezado único del cuerpo del SKILL.md
+    # ("# Conocimiento Central de la Empresa") en vez de un nombre de producto
+    # ("Cruz de Vida") — ese string aparece legítimamente en TOOLS.md como
+    # ejemplo de handle de variante, así que era un proxy frágil.
+    assert "Conocimiento Central" not in prompt, (
+        "skill hubara_catalog deberia estar deprecada (always:false) — su "
+        "cuerpo no debe auto-cargarse; el catalogo dinamico vive en las "
+        "tools de HU-04"
     )
+    # Pero la skill sigue DISPONIBLE para carga manual (fallback).
+    assert "hubara_catalog" in prompt
 
 
 def test_catalog_tools_documented_in_tools_md() -> None:

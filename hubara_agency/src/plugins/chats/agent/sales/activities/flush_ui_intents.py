@@ -53,8 +53,6 @@ async def _gallery_inter_delay() -> None:
     o configurable por intent.
     """
     await asyncio.sleep(_GALLERY_INTER_IMAGE_DELAY_S)
-# Cap defensivo: no mandamos más de 4 imágenes en un solo gallery intent.
-_GALLERY_MAX_IMAGES = 4
 
 
 @activity.defn(name="flush_pending_ui_intents_activity")
@@ -308,7 +306,7 @@ async def _dispatch_intent(
                         ),
                         body=wa_limits.truncate(
                             params.get("intro_text")
-                            or "Tocá un producto para ver más:",
+                            or "Toca un producto para ver más:",
                             wa_limits.MAX_PRODUCT_LIST_BODY,
                         ),
                         sections=product_sections,
@@ -341,7 +339,7 @@ async def _dispatch_intent(
             phone_number_id,
             to_number,
             wa_dtos.InteractiveListOutbound(
-                body=params.get("intro_text", "Mirá las opciones:"),
+                body=params.get("intro_text", "Mira las opciones:"),
                 button_label=params.get("button_label", "Ver opciones"),
                 sections=sections,
             ),
@@ -430,8 +428,8 @@ async def _dispatch_intent(
             else ""
         )
         text = (
-            "Para coordinar el envío necesito estos datos, podés "
-            "mandármelos en un solo mensaje o de a uno:\n\n"
+            "Para coordinar el envío necesito estos datos, puedes "
+            "mandármelos en un solo mensaje o uno por uno:\n\n"
             "🏙️ *Ciudad*\n"
             "📍 *Barrio*\n"
             "🏠 *Dirección* (calle, número, apartamento)\n"
@@ -556,7 +554,7 @@ async def _dispatch_intent(
         # Múltiples fotos del MISMO producto como secuencia.
         # Estrategia: send_image en loop con pausas pequeñas. La primera
         # imagen lleva caption (título); las siguientes van limpias para
-        # que la conversación luzca como "tomá, mirá también esta… y esta".
+        # que la conversación luzca como "toma, mira también esta… y esta".
         urls = list(params.get("image_urls") or [])
         urls = urls[:_GALLERY_MAX_IMAGES]
         if not urls:
@@ -647,10 +645,10 @@ async def _dispatch_intent(
         # Pie pidiendo respuesta libre. Sin botones — esperamos texto.
         variant_type = params.get("variant_type") or ""
         tail = {
-            "scent": "Decime cuál te gusta y seguimos 🤍",
-            "color": "Contame qué color preferís y seguimos 🤍",
-            "size": "Decime qué tamaño querés y seguimos 🤍",
-        }.get(variant_type, "Decime cuál preferís y seguimos 🤍")
+            "scent": "Dime cuál te gusta y seguimos 🤍",
+            "color": "Cuéntame qué color prefieres y seguimos 🤍",
+            "size": "Dime qué tamaño quieres y seguimos 🤍",
+        }.get(variant_type, "Dime cuál prefieres y seguimos 🤍")
         text_lines.append(tail)
 
         text = "\n".join(line for line in text_lines if line is not None).strip()

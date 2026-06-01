@@ -84,17 +84,17 @@ class RegisterOrderTool(ToolBase):
     description = (
         "Registra formalmente el pedido del cliente en Medusa cuando la "
         "venta cerró exitosamente. Llámala SOLO después de que el cliente "
-        "confirmó el pedido (vía `present_order_confirmation`) Y ya tenés "
+        "confirmó el pedido (vía `present_order_confirmation`) Y ya tienes "
         "todos los datos de envío (ciudad, barrio, dirección, teléfono, "
         "método de pago). Esta tool crea un Draft Order en Medusa para que "
         "el equipo de Hubara lo procese. Lee el campo `registered` de la "
-        "respuesta: si es `true`, llamá `manage_conversation_tag"
-        "(tag='COMPRA_EXITOSA', motivo=...)` y despedí al cliente. Si es "
-        "`false` (Medusa caído / config rota), llamá `escalate_to_human"
+        "respuesta: si es `true`, llama `manage_conversation_tag"
+        "(tag='COMPRA_EXITOSA', motivo=...)` y despide al cliente. Si es "
+        "`false` (Medusa caído / config rota), llama `escalate_to_human"
         "(reason_category='ORDER_REGISTRATION_FAILED')` para que un humano "
         "registre manualmente — los datos quedan persistidos en metadata "
         "para que el humano los reconstruya. Si el cliente confirmó pero "
-        "NO completó los datos de envío, NO uses esta tool — usá "
+        "NO completó los datos de envío, NO uses esta tool — usa "
         "`escalate_to_human(reason_category='ORDER_PENDING_SHIPPING_DETAILS')`."
     )
     parameters: dict[str, Any] = {
@@ -299,17 +299,42 @@ class RegisterOrderTool(ToolBase):
         # Envelope para el LLM.
         # ------------------------------------------------------------
         if result.success:
+            # Motivo sintético: lo lee la RED DE SEGURIDAD del workflow
+            # (`ensure_payment_pending_closure_activity`) si el LLM no completa
+            # la secuencia de cierre, para que el `status_history` / la
+            # escalación tengan un texto coherente.
+            order_motivo = (
+                f"Cliente confirmó pedido {result.order_id} por "
+                f"${total_cop} {currency}, método {payment_method}; "
+                "falta verificación humana del pago."
+            )
             envelope = {
                 "registered": True,
                 "order_id": result.order_id,
                 "provider": result.provider,
+                # Fix integridad orden↔tag (ADR-001): decisión que el workflow
+                # levanta en `TurnResult.order_registered_decision`. Hace
+                # VISIBLE el registro al workflow para que garantice el cierre
+                # "pago pendiente" + escalación aunque el LLM no emita las
+                # tools siguientes.
+                "order_registered": {
+                    "session_id": ctx.session_key,
+                    "order_id": result.order_id,
+                    "payment_method": payment_method,
+                    "total_cop": total_cop,
+                    "currency": currency,
+                    "motivo": order_motivo,
+                },
                 "summary": (
                     f"Pedido registrado en Medusa con ID {result.order_id}. "
-                    f"Total: ${total_cop:,} {currency}. Llamá ahora "
-                    "`manage_conversation_tag(tag='COMPRA_EXITOSA', "
-                    "motivo=...)` para cerrar la conversación, y despedí "
-                    "al cliente con un mensaje cálido (sin repetir los "
-                    "datos del pedido — ya los confirmó)."
+                    f"Total: ${total_cop:,} {currency}. Llama ahora "
+                    "`manage_conversation_tag(tag='CONFIRMADO_PAGO_PENDIENTE', "
+                    "motivo=...)` y luego `escalate_to_human(reason_category="
+                    "'PAYMENT_VERIFICATION_PENDING', summary=...)` para que un "
+                    "humano verifique el pago, y despide al cliente con un "
+                    "mensaje cálido (sin repetir los datos del pedido). NO uses "
+                    "`COMPRA_EXITOSA` — esa tag la pone el humano tras verificar "
+                    "el pago."
                 ).replace(",", "."),
             }
         else:
@@ -324,10 +349,10 @@ class RegisterOrderTool(ToolBase):
                     f"{result.error_detail or 'unknown error'}. Los datos "
                     f"quedaron guardados localmente con audit_id={local_audit_id} "
                     "para que un humano pueda completarlo manualmente. "
-                    "Llamá AHORA `escalate_to_human"
+                    "Llama AHORA `escalate_to_human"
                     "(reason_category='ORDER_REGISTRATION_FAILED', "
                     "summary='cliente cerró pedido pero Medusa rechazó el "
-                    "registro')` y despedí al cliente con: 'Tu pedido quedó "
+                    "registro')` y despide al cliente con: 'Tu pedido quedó "
                     "tomado y un humano te confirma en unos minutos.' NO uses "
                     "`manage_conversation_tag(COMPRA_EXITOSA)` — la venta NO "
                     "está formalmente cerrada hasta que el humano la registre."

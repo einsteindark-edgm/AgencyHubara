@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from temporalio.client import WorkflowExecutionStatus
 from temporalio.exceptions import WorkflowAlreadyStartedError
-from temporalio.service import RPCError
+from temporalio.service import RPCError, RPCStatusCode
 
 from src.platform.orchestration import dispatch_event_activity, envelope_for
 from src.platform.orchestration.transitions import Transition
@@ -382,6 +382,33 @@ class TestStartWorkflowWithReplace:
         assert len(client.started) == 1
 
 
+class _SignalRaisingClient(_FakeClient):
+    """Fake cuyo ``handle.signal`` lanza una excepción configurable.
+
+    Para testear el path NOT_FOUND del dispatcher (run 3b3fbaee): señalar un
+    workflow inexistente debe ser noop, no crash.
+    """
+
+    def __init__(self, signal_exc: Exception) -> None:
+        super().__init__()
+        self._signal_exc = signal_exc
+
+    def get_workflow_handle(self, workflow_id: str) -> Any:
+        exc = self._signal_exc
+
+        class _Handle:
+            async def describe(self):
+                raise RPCError("not found", None, None)  # type: ignore[arg-type]
+
+            async def signal(self, name, arg):
+                raise exc
+
+            async def terminate(self, reason: str):
+                pass
+
+        return _Handle()
+
+
 class TestSignalVerb:
     async def test_signals_existing_handle(self, fake_client_factory, patch_manifest):
         client = _FakeClient()
@@ -407,6 +434,79 @@ class TestSignalVerb:
             {"id": "remarketing-x", "name": "send_message", "arg": {"text": "hola"}}
         ]
         assert result.matches[0].outcome == "signaled"
+
+    async def test_signal_to_missing_workflow_is_noop_not_found_status(
+        self, fake_client_factory, patch_manifest
+    ):
+        """Run 3b3fbaee: señalar un workflow inexistente devuelve gRPC
+        NOT_FOUND ("sql: no rows in result set"). El dispatcher lo absorbe como
+        noop en vez de tumbar TODO el dispatch (antes: el EpisodeClosedEvent
+        crasheaba el Sales workflow al cancelar un watchdog que nunca corrió)."""
+        client = _SignalRaisingClient(
+            RPCError("sql: no rows in result set", RPCStatusCode.NOT_FOUND, None)  # type: ignore[arg-type]
+        )
+        fake_client_factory(client)
+        patch_manifest(
+            [
+                _make_transition(
+                    via="signal",
+                    signal_name="cancel_watchdog",
+                    input_mapping={"reason": "$.motivo"},
+                )
+            ]
+        )
+
+        envelope = envelope_for(
+            _Event(session_id="x", motivo="CONFIRMADO_PAGO_PENDIENTE"),
+            source_plugin="chats",
+            source_worker="sales",
+        )
+        # NO debe lanzar.
+        result = await dispatch_event_activity(envelope)
+        assert result.matches[0].outcome == "noop_target_not_found"
+
+    async def test_signal_to_missing_workflow_is_noop_by_message_signature(
+        self, fake_client_factory, patch_manifest
+    ):
+        """Defensa cross-version: aunque el status no sea exactamente NOT_FOUND,
+        la firma textual del backend postgres ('no rows in result set') también
+        se trata como target ausente → noop."""
+        client = _SignalRaisingClient(
+            RPCError("sql: no rows in result set", RPCStatusCode.UNKNOWN, None)  # type: ignore[arg-type]
+        )
+        fake_client_factory(client)
+        patch_manifest(
+            [_make_transition(via="signal", signal_name="cancel_watchdog")]
+        )
+
+        envelope = envelope_for(
+            _Event(session_id="x"),
+            source_plugin="chats",
+            source_worker="sales",
+        )
+        result = await dispatch_event_activity(envelope)
+        assert result.matches[0].outcome == "noop_target_not_found"
+
+    async def test_signal_transient_rpcerror_propagates(
+        self, fake_client_factory, patch_manifest
+    ):
+        """Un RPCError transitorio (NO not-found) DEBE propagar para que la
+        retry policy de la activity de Temporal lo reintente — no lo enmascaramos."""
+        client = _SignalRaisingClient(
+            RPCError("service unavailable", RPCStatusCode.UNAVAILABLE, None)  # type: ignore[arg-type]
+        )
+        fake_client_factory(client)
+        patch_manifest(
+            [_make_transition(via="signal", signal_name="cancel_watchdog")]
+        )
+
+        envelope = envelope_for(
+            _Event(session_id="x"),
+            source_plugin="chats",
+            source_worker="sales",
+        )
+        with pytest.raises(RPCError):
+            await dispatch_event_activity(envelope)
 
     async def test_signal_without_signal_name_raises(
         self, fake_client_factory, patch_manifest

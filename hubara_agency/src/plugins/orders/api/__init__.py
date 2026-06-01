@@ -22,9 +22,12 @@ array `data_completeness_missing[]` y el frontend pinta un marker
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import re
 from dataclasses import asdict
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Body, HTTPException, Path, Query
@@ -370,20 +373,24 @@ async def get_customer_score(
             detail=f"Order {order_id!r} not found in Medusa.",
         )
 
-    # Extraer phone — preferimos shipping_address.phone (más fiable que
-    # summary.phone que viene de la order top-level).
-    phone: str | None = None
+    # Shipping phone — solo se usa como ÚLTIMO recurso en la resolución
+    # (ver _resolve_session_for_order). El link canónico es
+    # order.metadata.session_key, no el número de envío.
+    shipping_phone: str | None = None
     if detail.shipping_address is not None:
-        phone = detail.shipping_address.phone
-    if not phone:
-        phone = detail.summary.phone
+        shipping_phone = detail.shipping_address.phone
+    if not shipping_phone:
+        shipping_phone = detail.summary.phone
 
-    if not phone:
-        # Sin phone no podemos resolver session_id — devolver score vacío
-        # explícito (frontend mostrará "Sin historial").
+    session_id = await _resolve_session_for_order(
+        backend_order_id=detail.summary.id,
+        shipping_phone=shipping_phone,
+        vault_dir=WORKSPACE_VAULT_DIR,
+    )
+    if session_id is None:
+        # La orden no se puede linkear a ninguna sesión del vault → sin
+        # historial (frontend muestra "Sin historial").
         return _empty_score_response()
-
-    session_id = _phone_to_session_id(phone)
 
     # Read vault metadata para extraer order_ids de episodios.
     metadata_store = FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
@@ -431,9 +438,187 @@ async def get_customer_score(
     return payload
 
 
-def _phone_to_session_id(phone: str) -> str:
-    """Convención del sales worker: session_id = `wa_<phone_sin_plus>`."""
-    return f"wa_{phone.lstrip('+').strip()}"
+def _phone_match_key(value: str) -> str:
+    """Normaliza un phone o session_id a su clave de match: los últimos 10
+    dígitos.
+
+    Por qué 10: en Colombia (y la mayoría de LatAm) el móvil nacional son 10
+    dígitos (`3125671604`). El número internacional agrega el country code
+    (`57` → `573125671604`). Dos identificadores refieren al mismo cliente si
+    comparten los últimos 10 dígitos, sin importar:
+      * presencia/ausencia del country code (`57`)
+      * prefijo `+`
+      * separadores (espacios, guiones, paréntesis)
+
+    Si el valor tiene menos de 10 dígitos, devolvemos todos los que haya
+    (caller decide si confía en un match tan corto).
+    """
+    digits = re.sub(r"\D", "", value)
+    return digits[-10:] if len(digits) >= 10 else digits
+
+
+def _resolve_session_id_for_phone(vault_dir: Path, phone: str) -> str | None:
+    """Resuelve el phone de una orden Medusa → session_id del vault
+    (`wa_<phone>`), tolerante a discrepancias de country code y formato.
+
+    Bug fix 2026-05-29: el phone que Medusa guarda en el shipping_address
+    suele venir SIN country code (`3125671604`), mientras la sesión de
+    WhatsApp usa el número internacional completo (`wa_573125671604`). El
+    mapeo ingenuo `wa_<phone>` fallaba y el panel "Historial cliente" siempre
+    mostraba "Sin datos" aunque el cliente tuviera episodios.
+
+    Estrategia (de más barata a más robusta):
+      1. **Fast path** — candidatos directos sin listar el dir:
+         `wa_<digits>`, `wa_+<digits>`, `wa_57<digits>`, `wa_+57<digits>`.
+         Cubre el caso común sin tocar el filesystem más de 4 stats.
+      2. **Scan fallback** — si ninguno matcheó, recorre `vault_dir/wa_*` y
+         compara `_phone_match_key` (últimos 10 dígitos). Maneja cualquier
+         formato raro de country code que los candidatos directos no cubran.
+
+    Returns el `session_id` (nombre del dir, e.g. `wa_573125671604`) o `None`
+    si ningún match tiene `metadata.json`.
+    """
+    digits = re.sub(r"\D", "", phone)
+    if len(digits) < 7:
+        # Demasiado corto para matchear con confianza — evitamos falsos
+        # positivos (e.g. extensiones internas, números mal capturados).
+        return None
+
+    # 1. Fast path: candidatos directos (Colombia cc = 57).
+    direct = [
+        f"wa_{digits}",
+        f"wa_+{digits}",
+        f"wa_57{digits}",
+        f"wa_+57{digits}",
+    ]
+    for cand in direct:
+        if (vault_dir / cand / "metadata.json").exists():
+            return cand
+
+    # 2. Scan fallback: suffix-match sobre los últimos 10 dígitos.
+    key = _phone_match_key(phone)
+    if len(key) < 7 or not vault_dir.exists():
+        return None
+    try:
+        for entry in vault_dir.iterdir():
+            if not entry.is_dir() or not entry.name.startswith("wa_"):
+                continue
+            if _phone_match_key(entry.name) != key:
+                continue
+            if (entry / "metadata.json").exists():
+                return entry.name
+    except OSError:
+        # Vault no listable — degrada a None (panel mostrará "Sin datos").
+        log.warning(
+            "customer_score: no pude listar el vault %s para resolver phone",
+            vault_dir,
+        )
+    return None
+
+
+def _resolve_session_by_order_id(
+    vault_dir: Path, backend_order_id: str
+) -> str | None:
+    """Reverse lookup: ¿qué sesión del vault tiene este order_id en sus
+    episodios?
+
+    El link canónico order↔cliente es que `register_order` anota el
+    `order_id` en el episodio activo de la sesión (`episodes[].order_id`).
+    Este reverse lookup recorre el vault y devuelve la sesión cuyo set de
+    order_ids (de `episodes[]` + `registered_order`) contiene el target.
+
+    Es la red de seguridad cuando `order.metadata.session_key` no está
+    disponible (e.g. fue stripeado, o la order es vieja). Más confiable que
+    el shipping phone porque NO depende del número de envío (que puede ser
+    de un tercero o tener typos).
+
+    O(N) reads de metadata.json — solo corre como fallback (la mayoría de
+    las órdenes resuelven por session_key directo sin tocar esto).
+    """
+    if not vault_dir.exists():
+        return None
+    try:
+        for entry in sorted(vault_dir.iterdir()):
+            if not entry.is_dir() or not entry.name.startswith("wa_"):
+                continue
+            meta_file = entry / "metadata.json"
+            if not meta_file.exists():
+                continue
+            try:
+                meta = json.loads(meta_file.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(meta, dict):
+                continue
+            if backend_order_id in _collect_order_ids_from_metadata(meta):
+                return entry.name
+    except OSError:
+        log.warning(
+            "customer_score: no pude escanear vault %s para reverse-lookup "
+            "de order_id %s",
+            vault_dir, backend_order_id,
+        )
+    return None
+
+
+async def _resolve_session_for_order(
+    *,
+    backend_order_id: str,
+    shipping_phone: str | None,
+    vault_dir: Path,
+) -> str | None:
+    """Resuelve la sesión del cliente dueño de una orden, por orden de
+    confiabilidad (de canónico a frágil):
+
+      1. **`order.metadata.session_key`** — el link canónico. `register_order`
+         lo escribe en la metadata de la draft/order al cerrar la venta
+         (`metadata.session_key = wa_<phone>`). Es la identidad WhatsApp real
+         del cliente, no el número de envío.
+
+      2. **Reverse lookup por order_id** — si la metadata no tiene session_key
+         (order vieja / stripeada), buscamos qué sesión referencia este
+         order_id en sus `episodes[]`. Igual de confiable que (1), solo más
+         caro (scan del vault).
+
+      3. **Shipping phone** — último recurso, SOLO para órdenes creadas fuera
+         del bot (manualmente en Medusa Admin) que no tienen session_key ni
+         aparecen en ningún episodio. FRÁGIL: el phone de envío puede ser de
+         un tercero (regalo) o tener typos — por eso es el último fallback,
+         NO el primero.
+
+    Bug fix 2026-05-29: antes resolvíamos SOLO por shipping phone (3), lo que
+    causaba que dos órdenes del MISMO cliente con teléfonos de envío distintos
+    mostraran historiales distintos (una con datos, otra "Sin datos"). El
+    `metadata.session_key` elimina esa ambigüedad.
+    """
+    # 1. Canonical: order.metadata.session_key.
+    try:
+        client = get_medusa_client()
+        raw = await client.get_order(backend_order_id, fields="id,metadata")
+        session_key = (raw.get("metadata") or {}).get("session_key")
+        if (
+            isinstance(session_key, str)
+            and session_key.startswith("wa_")
+            and (vault_dir / session_key / "metadata.json").exists()
+        ):
+            return session_key
+    except MedusaAPIError as exc:
+        log.info(
+            "customer_score: get_order(%s) para session_key falló (%s) — "
+            "probando fallbacks",
+            backend_order_id, getattr(exc, "status_code", "?"),
+        )
+
+    # 2. Reverse lookup por order_id en episodios del vault.
+    by_order = _resolve_session_by_order_id(vault_dir, backend_order_id)
+    if by_order is not None:
+        return by_order
+
+    # 3. Shipping phone (último recurso, frágil).
+    if shipping_phone:
+        return _resolve_session_id_for_phone(vault_dir, shipping_phone)
+
+    return None
 
 
 def _collect_order_ids_from_metadata(
@@ -558,21 +743,27 @@ async def post_customer_summary(
             detail=f"Order {order_id!r} not found in Medusa.",
         )
 
-    phone = None
+    shipping_phone = None
     if detail.shipping_address is not None:
-        phone = detail.shipping_address.phone
-    if not phone:
-        phone = detail.summary.phone
-    if not phone:
+        shipping_phone = detail.shipping_address.phone
+    if not shipping_phone:
+        shipping_phone = detail.summary.phone
+
+    session_id = await _resolve_session_for_order(
+        backend_order_id=detail.summary.id,
+        shipping_phone=shipping_phone,
+        vault_dir=WORKSPACE_VAULT_DIR,
+    )
+    if session_id is None:
         raise HTTPException(
-            status_code=422,
+            status_code=404,
             detail=(
-                "La order no tiene phone — no podemos resolver el session_id "
-                "del cliente."
+                "No pudimos linkear la orden a ninguna sesión de WhatsApp "
+                "(sin metadata.session_key, sin episodio que la referencie, "
+                "y el teléfono de envío no matchea) — el cliente no tiene "
+                "historial."
             ),
         )
-
-    session_id = _phone_to_session_id(phone)
     metadata_store = FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
     metadata = metadata_store.read(session_id)
 

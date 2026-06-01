@@ -14,6 +14,7 @@ del humano al cliente sin pasar por el worker. La activity la envuelve.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import time
@@ -277,6 +278,68 @@ def _append_outbound_to_active_episode(
     last["cost_summary"] = asdict(new_summary)
 
 
+# Idempotencia de template sends (fix integridad — patrón B). Un template es un
+# side effect EXTERNO que cuesta dinero (Meta per-message billing). Si la
+# activity envía a Meta pero el worker crashea antes de reportar a Temporal, el
+# retry reenviaría → doble cobro + doble mensaje. Meta NO expone idempotency key
+# para envíos, así que deduplicamos nosotros con un fingerprint del contenido +
+# una ventana corta que cubre el retry de Temporal (segundos) sin bloquear
+# reenvíos legítimos posteriores (ej. recordatorios horas/días después).
+#
+# Limitación honesta: NO es exactly-once. Queda una ventana residual mínima si
+# el crash ocurre ENTRE el POST a Meta y la persistencia de la marca (un write
+# local de ms). Cerrarla del todo exigiría un idempotency key del proveedor (no
+# existe) o un check a nivel workflow (ej. `watchdog.fired_at_ms`).
+_TEMPLATE_DEDUP_WINDOW_MS = 120_000  # 2 min
+_RECENT_TEMPLATE_SENDS_CAP = 20
+
+
+def _template_fingerprint(template_name: str, variables: dict[str, str]) -> str:
+    """Hash estable del contenido del template send (nombre + variables)."""
+    raw = template_name + "|" + json.dumps(
+        variables or {}, sort_keys=True, ensure_ascii=False
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def _find_recent_template_send(
+    metadata: dict[str, Any], fingerprint: str, now_ms: int
+) -> str | None:
+    """Devuelve el wa_message_id de un envío idéntico reciente (< ventana), o None.
+
+    Reciente = dentro de `_TEMPLATE_DEDUP_WINDOW_MS` — suficiente para detectar
+    un retry de Temporal pero no para confundir un reenvío legítimo posterior.
+    """
+    for entry in reversed(metadata.get("recent_template_sends") or []):
+        sent_at = entry.get("sent_at_ms")
+        if (
+            entry.get("fingerprint") == fingerprint
+            and isinstance(sent_at, int)
+            and 0 <= now_ms - sent_at < _TEMPLATE_DEDUP_WINDOW_MS
+        ):
+            return str(entry.get("wa_message_id") or "")
+    return None
+
+
+def _record_template_send(
+    metadata: dict[str, Any], fingerprint: str, wa_message_id: str, now_ms: int
+) -> None:
+    """Registra (muta `metadata`) el envío para que un retry posterior lo dedupe.
+
+    Capado a los últimos `_RECENT_TEMPLATE_SENDS_CAP` para no crecer sin límite.
+    """
+    sends = metadata.setdefault("recent_template_sends", [])
+    sends.append(
+        {
+            "fingerprint": fingerprint,
+            "wa_message_id": wa_message_id,
+            "sent_at_ms": now_ms,
+        }
+    )
+    if len(sends) > _RECENT_TEMPLATE_SENDS_CAP:
+        metadata["recent_template_sends"] = sends[-_RECENT_TEMPLATE_SENDS_CAP:]
+
+
 async def send_template_to_session(
     session_id: str,
     template_name: str,
@@ -317,6 +380,20 @@ async def send_template_to_session(
     phone_number_id = _resolve_phone_number_id(metadata)
     to_number = session_id.replace(WHATSAPP_SESSION_PREFIX, "")
 
+    # 2.5 Idempotencia: ¿ya enviamos este mismo template hace segundos (retry)?
+    fingerprint = _template_fingerprint(template_name, variables)
+    now_ms = _now_ms()
+    prior_wa_id = _find_recent_template_send(metadata, fingerprint, now_ms)
+    if prior_wa_id is not None:
+        log.warning(
+            "template_send_idempotency_hit",
+            session_id=session_id,
+            template_name=template_name,
+            wa_message_id=prior_wa_id,
+            note="skipping duplicate template send (Temporal retry)",
+        )
+        return OutboundResult(wa_message_id=prior_wa_id, ok=True, error=None)
+
     # 3. Send
     result = await whatsapp_client.send_template(
         phone_number_id, to_number, spec, variables
@@ -349,6 +426,11 @@ async def send_template_to_session(
     )
     _append_outbound_to_active_episode(metadata, log_entry)
     metadata["last_outbound"] = asdict(log_entry)
+    # Marca de idempotencia: persistida en la MISMA escritura que el outbound
+    # para que un retry posterior (post-persistencia) la encuentre y dedupe.
+    _record_template_send(
+        metadata, fingerprint, result.wa_message_id or "", now_ms
+    )
     _write_metadata(session_id, metadata)
 
     # HU-WA24H-001 pre-mortem F2.2: el dashboard del operador lee el JSONL

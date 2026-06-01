@@ -25,20 +25,21 @@ from src.platform.config import API_BASE_LLMLITE ,DEFAULT_LLM_MODEL, DEEPSEEK_AP
 def build_default_llm_config() -> LLMConfig:
     """Configuración inyectable base para el motor LLM.
 
-    Tuneada para DeepSeek V4 Pro (`deepseek-v4-pro` en litellm_config.yaml):
-    priorizamos PRECISIÓN sobre velocidad/costo.
+    Tuneada para el modelo de agentes DeepSeek V4 Flash (`deepseek-v4-flash`
+    en litellm_config.yaml): priorizamos LATENCIA y costo manteniendo la
+    calidad conversacional.
 
-    - reasoning_effort="high": activa thinking mode de V4 Pro. La litellm 1.82.6
+    - reasoning_effort="high": si el modelo expone thinking, litellm 1.82.6
       colapsa cualquier valor graduado a `thinking:{"type":"enabled"}`
-      (DeepSeekChatConfig.map_openai_params), así que el server corre Think High
-      (su default con thinking on). "xhigh"/Think Max requiere upgrade de litellm.
-      El round-trip de `reasoning_content` (requerido por V4 Pro en multi-turn,
-      400 si falta) lo maneja exoclaw via LLMResponseData.to_assistant_message().
-    - max_tokens=32768: el CoT de thinking cuenta contra el output; 4096 truncaba
-      el razonamiento. Es un CAP, no un target — el texto final a WhatsApp lo
-      gobierna el prompt, no este valor.
-    - temperature=0.1: V4 Pro la ignora en thinking mode, pero la respeta el
-      fallback `gemini-backup`.
+      (DeepSeekChatConfig.map_openai_params). Flash es un modelo rápido — si
+      NO expone thinking, litellm dropea el param (`drop_params: True`), así
+      que dejarlo acá es inocuo. El round-trip de `reasoning_content` (que
+      algunos modelos DeepSeek exigen en multi-turn) lo maneja exoclaw via
+      LLMResponseData.to_assistant_message().
+    - max_tokens=32768: es un CAP del output, no un target — el texto final a
+      WhatsApp lo gobierna el prompt, no este valor.
+    - temperature=0.1: respuestas estables; el fallback `gemini-backup` la
+      respeta.
     """
     return LLMConfig(
         model=DEFAULT_LLM_MODEL,

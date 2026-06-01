@@ -28,6 +28,7 @@ function makeSession(overrides: Partial<ChatSession> = {}): ChatSession {
     motivo: "Cliente preguntó por lavanda",
     active_agent_route: "ventas",
     phone_number_id: null,
+    pending_payment_order_id: null,
     last_updated_timestamp: 1716700000,
     ...overrides,
   };

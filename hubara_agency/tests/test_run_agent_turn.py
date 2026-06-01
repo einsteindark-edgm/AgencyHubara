@@ -123,3 +123,44 @@ def test_turn_result_with_decisions_serializable() -> None:
     payload = asdict(tr)
     assert payload["transfer_decision"]["session_id"] == "wa_A"
     assert payload["schedule_remarketing"]["motivo"] == "m"
+
+
+def test_workflow_helpers_binds_all_decision_symbols() -> None:
+    """Anti-regresión bug run fe86d4e4 (NameError: EpisodeClosedDecision).
+
+    `run_agent_turn` construye 4 dataclasses de decisión DENTRO del cuerpo de
+    la función (resolución diferida): TransferDecision,
+    ScheduleRemarketingDecision, EscalationDecision y EpisodeClosedDecision.
+    Si alguno falta en el `imports_passed_through()` del módulo, éste importa
+    limpio pero el workflow truena en runtime con NameError cuando ese payload
+    aparece (caso EpisodeClosedDecision: al cerrar el episodio tras confirmar
+    el pedido → el cliente toca '✅ Confirmar' y el workflow queda en retry
+    infinito). Este guard falla si se vuelve a soltar cualquiera de los 4."""
+    import src.platform.workflow_helpers as wh
+
+    for symbol in (
+        "TransferDecision",
+        "ScheduleRemarketingDecision",
+        "EscalationDecision",
+        "EpisodeClosedDecision",
+    ):
+        assert hasattr(wh, symbol), (
+            f"{symbol} no está en el namespace de workflow_helpers — "
+            "run_agent_turn lo usaría y tiraría NameError en runtime"
+        )
+
+
+def test_turn_result_with_episode_closed_serializable() -> None:
+    """El campo `episode_closed_decision` viaja workflow→activity (R-JSON)."""
+    from src.platform.contracts import EpisodeClosedDecision
+
+    tr = TurnResult(
+        final_content="listo",
+        tools_used=["manage_conversation_tag"],
+        episode_closed_decision=EpisodeClosedDecision(
+            session_id="wa_C", episode_id="ep_001", closing_tag="COMPRA_EXITOSA"
+        ),
+    )
+    payload = asdict(tr)
+    assert payload["episode_closed_decision"]["episode_id"] == "ep_001"
+    assert payload["episode_closed_decision"]["closing_tag"] == "COMPRA_EXITOSA"

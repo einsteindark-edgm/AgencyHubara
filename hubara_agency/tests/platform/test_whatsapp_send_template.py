@@ -473,3 +473,73 @@ class TestNonRetryableCodes:
 
     def test_is_frozenset_immutable(self):
         assert isinstance(NON_RETRYABLE_META_ERROR_CODES, frozenset)
+
+
+# =============================================================================
+# Idempotencia de template sends (fix integridad — patrón B)
+# =============================================================================
+
+
+class TestSendTemplateIdempotency:
+    """Un retry de Temporal NO debe reenviar el mismo template (doble cobro)."""
+
+    @pytest.mark.asyncio
+    async def test_duplicate_send_is_deduplicated(self, isolated_vault, monkeypatch):
+        session_id = "wa_5491111111111"
+        _write_metadata(
+            isolated_vault, session_id, {"phone_number_id": "PHONE", "episodes": []}
+        )
+        mock_send = AsyncMock(
+            return_value=OutboundResult(wa_message_id="wamid.ONCE", ok=True)
+        )
+        monkeypatch.setattr(
+            "src.platform.whatsapp.activities.whatsapp_client.send_template", mock_send
+        )
+        args = (
+            session_id,
+            "quote_ready_utility_v1",
+            {"customer_first_name": "Ana", "product_or_quote_label": "vela"},
+        )
+
+        first = await send_template_to_session(*args)
+        # Segunda llamada idéntica (simula el retry de la activity tras crash).
+        second = await send_template_to_session(*args)
+
+        # Meta fue golpeado UNA sola vez; la segunda reusó el wa_message_id.
+        assert mock_send.call_count == 1
+        assert first.wa_message_id == "wamid.ONCE"
+        assert second.wa_message_id == "wamid.ONCE"
+        assert second.ok is True
+        # El outbound NO se duplicó en el episodio (un solo registro).
+        metadata = _read_metadata(isolated_vault, session_id)
+        assert len(metadata["recent_template_sends"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_distinct_content_is_not_deduplicated(
+        self, isolated_vault, monkeypatch
+    ):
+        session_id = "wa_5491111111111"
+        _write_metadata(
+            isolated_vault, session_id, {"phone_number_id": "PHONE", "episodes": []}
+        )
+        mock_send = AsyncMock(
+            side_effect=[
+                OutboundResult(wa_message_id="wamid.A", ok=True),
+                OutboundResult(wa_message_id="wamid.B", ok=True),
+            ]
+        )
+        monkeypatch.setattr(
+            "src.platform.whatsapp.activities.whatsapp_client.send_template", mock_send
+        )
+
+        await send_template_to_session(
+            session_id, "quote_ready_utility_v1",
+            {"customer_first_name": "Ana", "product_or_quote_label": "vela"},
+        )
+        # Variables DISTINTAS → es un mensaje distinto, debe enviarse.
+        await send_template_to_session(
+            session_id, "quote_ready_utility_v1",
+            {"customer_first_name": "Beto", "product_or_quote_label": "difusor"},
+        )
+
+        assert mock_send.call_count == 2

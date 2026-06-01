@@ -36,6 +36,7 @@ class _Call:
     session_id: str
     message: str
     phone_number_id: str | None
+    extra_context: list[str] | None = None
 
 
 class FakeLoadOrStart:
@@ -43,9 +44,15 @@ class FakeLoadOrStart:
         self.calls: list[_Call] = []
 
     async def execute(
-        self, session_id: str, message: str, phone_number_id: str | None
+        self,
+        session_id: str,
+        message: str,
+        phone_number_id: str | None,
+        extra_context: list[str] | None = None,
     ) -> None:
-        self.calls.append(_Call(session_id, message, phone_number_id))
+        self.calls.append(
+            _Call(session_id, message, phone_number_id, extra_context)
+        )
 
 
 class FakeMetadataStore:
@@ -77,12 +84,14 @@ def _make_text_message(
 
 
 def _make_media_message() -> WhatsAppMessage:
+    # Video (no "image"): sigue surfaceando como marker. Las IMÁGENES ahora
+    # van por el pipeline de visión (ver test_ingest_image_vision.py).
     return WhatsAppMessage(
-        message_id="wamid.IMG",
+        message_id="wamid.VID",
         from_number="5491111111111",
         phone_number_id="PID",
         text=None,
-        media={"type": "image", "id": "x"},
+        media={"type": "video", "id": "vid1"},
         timestamp="1714312345",
     )
 
@@ -92,9 +101,10 @@ def _make_media_message() -> WhatsAppMessage:
 
 @pytest.mark.asyncio
 async def test_media_inbound_surfaces_as_marker_text_to_llm():
-    """HU-002: media (image/video/document/sticker) sin caption ya no se
-    descarta — surface al LLM como marker "[el cliente envió un X]" para
-    que pueda reaccionar contextualmente en vez de quedarse mudo."""
+    """HU-002: media no-imagen (video/document/sticker) sin caption ya no se
+    descarta — surface al LLM como marker "[el cliente envió un X]" para que
+    pueda reaccionar en vez de quedarse mudo. Las IMÁGENES ahora se describen
+    con visión (ver test_ingest_image_vision.py)."""
     history = FakeHistoryStore()
     loader = FakeLoadOrStart()
     use_case = IngestInboundMessage(
@@ -105,9 +115,92 @@ async def test_media_inbound_surfaces_as_marker_text_to_llm():
 
     await use_case.execute(_make_media_message())
 
-    assert history.events == [("wa_5491111111111", "[el cliente envió un image]")]
+    assert history.events == [("wa_5491111111111", "[el cliente envió un video]")]
     assert len(loader.calls) == 1
-    assert loader.calls[0].message == "[el cliente envió un image]"
+    assert loader.calls[0].message == "[el cliente envió un video]"
+
+
+@pytest.mark.asyncio
+async def test_reengagement_injects_episode_boundary_note():
+    """Bug run 3b3fbaee: el cliente vuelve tras un episodio CERRADO. El ingest
+    debe inyectar una nota de frontera en `extra_context` para que el agente
+    arranque una conversación nueva en vez de re-surfacear (y re-taguear) el
+    pedido del episodio anterior — cuyo memory_window el LLM todavía arrastra."""
+    loader = FakeLoadOrStart()
+    metadata = FakeMetadataStore()
+    metadata.store["wa_5491111111111"] = {
+        "active_route": "ventas",
+        "episodes": [
+            {
+                "episode_id": "ep_001",
+                "started_at_ms": 1,
+                "closed_at_ms": 1000,
+                "closing_tag": "CONFIRMADO_PAGO_PENDIENTE",
+                "order_id": "order_ABC",
+            }
+        ],
+    }
+    use_case = IngestInboundMessage(
+        history_store=FakeHistoryStore(),  # type: ignore[arg-type]
+        load_session=loader,  # type: ignore[arg-type]
+        metadata_store=metadata,  # type: ignore[arg-type]
+    )
+
+    await use_case.execute(_make_text_message(text="Hola"))
+
+    assert len(loader.calls) == 1
+    ctx = loader.calls[0].extra_context
+    assert ctx is not None and len(ctx) == 1
+    note = ctx[0]
+    assert "episodio NUEVO" in note
+    assert "order_ABC" in note  # referencia el pedido cerrado
+    assert "NO lo retomes" in note
+
+
+@pytest.mark.asyncio
+async def test_fresh_session_has_no_episode_boundary_note():
+    """Sesión nueva (sin episodios previos) → sin nota de frontera."""
+    loader = FakeLoadOrStart()
+    use_case = IngestInboundMessage(
+        history_store=FakeHistoryStore(),  # type: ignore[arg-type]
+        load_session=loader,  # type: ignore[arg-type]
+        metadata_store=FakeMetadataStore(),  # type: ignore[arg-type]
+    )
+
+    await use_case.execute(_make_text_message(text="Hola"))
+
+    assert len(loader.calls) == 1
+    assert loader.calls[0].extra_context is None
+
+
+@pytest.mark.asyncio
+async def test_active_episode_continuation_has_no_boundary_note():
+    """Episodio activo (closed_at_ms=None) → es continuación, NO re-engagement:
+    no se inyecta nota de frontera. La detección corre ANTES de
+    `ensure_active_episode`, así que un episodio aún-abierto no dispara."""
+    loader = FakeLoadOrStart()
+    metadata = FakeMetadataStore()
+    metadata.store["wa_5491111111111"] = {
+        "active_route": "ventas",
+        "episodes": [
+            {
+                "episode_id": "ep_001",
+                "started_at_ms": 1,
+                "closed_at_ms": None,
+                "closing_tag": None,
+            }
+        ],
+    }
+    use_case = IngestInboundMessage(
+        history_store=FakeHistoryStore(),  # type: ignore[arg-type]
+        load_session=loader,  # type: ignore[arg-type]
+        metadata_store=metadata,  # type: ignore[arg-type]
+    )
+
+    await use_case.execute(_make_text_message(text="seguimos"))
+
+    assert len(loader.calls) == 1
+    assert loader.calls[0].extra_context is None
 
 
 @pytest.mark.asyncio
@@ -213,7 +306,9 @@ async def test_history_is_appended_before_routing():
             order.append("history")
 
     class TrackingLoader:
-        async def execute(self, session_id, message, phone_number_id) -> None:
+        async def execute(
+            self, session_id, message, phone_number_id, extra_context=None
+        ) -> None:
             order.append("load_session")
 
     use_case = IngestInboundMessage(

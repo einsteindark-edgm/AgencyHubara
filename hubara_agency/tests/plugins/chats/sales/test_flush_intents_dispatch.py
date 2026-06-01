@@ -273,8 +273,13 @@ async def test_variant_picker_renders_as_plain_text_with_emojis():
     assert "🌿 Verde menta" in text
     assert "☕ Café" in text
     assert "🪵 Sándalo" in text
-    # Cierre invitando a responder
-    assert "Decime cuál te gusta" in text or "Decime" in text
+    # Cierre invitando a responder — DEBE ser tuteo colombiano (REGLA #1 de
+    # IDENTITY.md), NUNCA voseo rioplatense (bug run fe86d4e4: el tail
+    # hardcodeado decía "Decime" aunque el LLM sí respetaba el tuteo).
+    assert "Dime cuál te gusta" in text
+    # Anti-regresión voseo: ninguna forma rioplatense puede colarse en el cierre.
+    for voseo in ("Decime", "Contame", "preferís", "querés", "elegí", "mirá"):
+        assert voseo not in text, f"voseo '{voseo}' filtrado en el cierre: {text!r}"
 
 
 @pytest.mark.asyncio
