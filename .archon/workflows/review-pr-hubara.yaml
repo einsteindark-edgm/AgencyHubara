@@ -702,8 +702,12 @@ nodes:
 
           applied.append(fix)
 
-      yaml.safe_dump({'fixes': applied}, open(os.environ.get('APPLIED_PATH'), 'w'), sort_keys=False)
-      yaml.safe_dump({'fixes': reverted}, open(os.environ.get('REVERTED_PATH'), 'w'), sort_keys=False)
+      # Fallback a la ruta literal (Archon substituye $ARTIFACTS_DIR en el texto
+      # del script — el bloque `env:` del nodo NO llega al subproceso bash, por eso
+      # os.environ.get('APPLIED_PATH') daba None → open(None) → TypeError. Mismo
+      # patrón que PLAN_PATH arriba. (run 2484bd91)
+      yaml.safe_dump({'fixes': applied}, open(os.environ.get('APPLIED_PATH', '$ARTIFACTS_DIR/fixes-applied.yaml'), 'w'), sort_keys=False)
+      yaml.safe_dump({'fixes': reverted}, open(os.environ.get('REVERTED_PATH', '$ARTIFACTS_DIR/fixes-reverted.yaml'), 'w'), sort_keys=False)
       print(f"applied={len(applied)} reverted={len(reverted)}")
       PYEOF
     env:
