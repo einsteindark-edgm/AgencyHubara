@@ -1827,6 +1827,15 @@ nodes:
       fi
     depends_on: [premortem-self-review]
 
+  # Hole-fix: PM_MISSING (premortem-self-review no produjo premortem.yaml) no
+  # matcheaba ni el loop (PM_HAS_ISSUES) ni evaluate-pre-pr (PM_CLEAN) → skip
+  # silencioso de TODO el resto → "completado" sin PR ni cancel. Ahora cancela
+  # fuerte. (Auditoría proactiva pre-run, misma clase que gotcha #8.)
+  - id: cancel-on-premortem-missing
+    cancel: "Premortem no produjo premortem.yaml (PM_MISSING) — el command hubara-premortem-archon falló o no escribió output. La HU quedó SIN auditar. Revisá el log del nodo premortem-self-review y re-corré."
+    when: "$check-premortem-clean.output == 'PM_MISSING'"
+    depends_on: [check-premortem-clean]
+
   - id: loop-implementer-resolves-premortem
     depends_on: [check-premortem-clean]
     when: "$check-premortem-clean.output == 'PM_HAS_ISSUES'"
@@ -2027,7 +2036,7 @@ nodes:
       HU_ID="$HU_ID" \
       ISSUE_URL="$ISSUE_URL" \
       bash hubara_agency/.hubara/dump-pipeline-diagnostics.sh
-    when: "$gate-evaluator-verdict.output == 'EVAL_BLOCK'"
+    when: "$gate-evaluator-verdict.output == 'EVAL_BLOCK' || $gate-evaluator-verdict.output == 'EVAL_MISSING' || $gate-evaluator-verdict.output == 'EVAL_UNKNOWN'"
     depends_on: [gate-evaluator-verdict]
 
   - id: cancel-on-eval-block
@@ -2057,7 +2066,7 @@ nodes:
       Política: el evaluador es la última línea convergent ANTES del code-review
       multi-agent. Si te molesta el bloqueo, calibrá el evaluator
       (ver hubara_agency/.hubara/evaluator-calibration/), no lo desactives.
-    when: "$gate-evaluator-verdict.output == 'EVAL_BLOCK'"
+    when: "$gate-evaluator-verdict.output == 'EVAL_BLOCK' || $gate-evaluator-verdict.output == 'EVAL_MISSING' || $gate-evaluator-verdict.output == 'EVAL_UNKNOWN'"
     depends_on: [dump-on-cancel-eval-block]
 
   # ════════════════════════════════════════════════════════════════════
@@ -2128,6 +2137,14 @@ nodes:
         echo "REVIEW_HAS_MINOR"
       fi
     depends_on: [synthesize-review]
+
+  # Hole-fix: CR_MISSING (synthesize-review no produjo code-review-findings.yaml)
+  # no matcheaba ni el loop ni build-pr-body → skip silencioso → "completado"
+  # sin PR ni cancel. Ahora cancela fuerte. (Auditoría proactiva pre-run.)
+  - id: cancel-on-review-missing
+    cancel: "Code-review no produjo code-review-findings.yaml (CR_MISSING) — synthesize-review falló o no escribió output. La HU quedó SIN revisar. Revisá los logs de los review-* + synthesize-review y re-corré."
+    when: "$check-review-clean.output == 'CR_MISSING'"
+    depends_on: [check-review-clean]
 
   - id: loop-implementer-resolves-review
     depends_on: [check-review-clean]
