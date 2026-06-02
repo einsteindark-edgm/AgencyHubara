@@ -116,7 +116,7 @@ nodes:
     model: haiku
     idle_timeout: 60000
     loop:
-      max_iterations: 1
+      max_iterations: 2   # retry: el agente a veces termina la review sin emitir el promise de completion en 1 sola iteración (run 2484bd91, agent-plugin-system). 2da vuelta lo deja emitirlo. No-op si ya lo emitió en la 1ra.
       until: CLASSIFY_OK
       skills: []
       gate_message: "Classifier auto."
@@ -166,7 +166,7 @@ nodes:
     when: "$parse-classify.output.deha == 'true'"
     idle_timeout: 300000
     loop:
-      max_iterations: 1
+      max_iterations: 2   # retry: el agente a veces termina la review sin emitir el promise de completion en 1 sola iteración (run 2484bd91, agent-plugin-system). 2da vuelta lo deja emitirlo. No-op si ya lo emitió en la 1ra.
       until: REPORT_OK
       skills: []
       prompt: |
@@ -407,7 +407,7 @@ nodes:
     when: "$parse-classify.output.fsd == 'true'"
     idle_timeout: 300000
     loop:
-      max_iterations: 1
+      max_iterations: 2   # retry: el agente a veces termina la review sin emitir el promise de completion en 1 sola iteración (run 2484bd91, agent-plugin-system). 2da vuelta lo deja emitirlo. No-op si ya lo emitió en la 1ra.
       until: REPORT_OK
       skills: []
       prompt: |
@@ -441,7 +441,7 @@ nodes:
     when: "$parse-classify.output.plugin_system == 'true'"
     idle_timeout: 300000
     loop:
-      max_iterations: 1
+      max_iterations: 2   # retry: el agente a veces termina la review sin emitir el promise de completion en 1 sola iteración (run 2484bd91, agent-plugin-system). 2da vuelta lo deja emitirlo. No-op si ya lo emitió en la 1ra.
       until: REPORT_OK
       skills: []
       prompt: |
@@ -495,7 +495,7 @@ nodes:
     when: "$parse-classify.output.test_coverage == 'true'"
     idle_timeout: 300000
     loop:
-      max_iterations: 1
+      max_iterations: 2   # retry: el agente a veces termina la review sin emitir el promise de completion en 1 sola iteración (run 2484bd91, agent-plugin-system). 2da vuelta lo deja emitirlo. No-op si ya lo emitió en la 1ra.
       until: REPORT_OK
       skills: []
       prompt: |
@@ -526,7 +526,7 @@ nodes:
     when: "$parse-classify.output.security == 'true'"
     idle_timeout: 300000
     loop:
-      max_iterations: 1
+      max_iterations: 2   # retry: el agente a veces termina la review sin emitir el promise de completion en 1 sola iteración (run 2484bd91, agent-plugin-system). 2da vuelta lo deja emitirlo. No-op si ya lo emitió en la 1ra.
       until: REPORT_OK
       skills: []
       prompt: |
@@ -568,7 +568,7 @@ nodes:
     trigger_rule: all_done
     idle_timeout: 180000
     loop:
-      max_iterations: 1
+      max_iterations: 2   # retry: el agente a veces termina la review sin emitir el promise de completion en 1 sola iteración (run 2484bd91, agent-plugin-system). 2da vuelta lo deja emitirlo. No-op si ya lo emitió en la 1ra.
       until: SYNTH_OK
       skills: []
       prompt: |
