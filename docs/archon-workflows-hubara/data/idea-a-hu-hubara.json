@@ -1,0 +1,448 @@
+{
+  "pipeline_id": "idea-a-hu-hubara",
+  "title": "idea-a-hu-hubara — IDEA-to-HU front-end (raw idea → GitHub Issue + Project card → optional pipeline launch)",
+  "purpose": "Entry-point del pipeline hubara. Toma una idea de negocio en texto libre (o ruta a un .md corto, o texto pegado de un issue) y, en UNA sola pasada de AI (sin loop de refinamiento), la convierte en una HU narrativa de PRODUCTO bien formada (# Título ≤80 chars + Como/Quiero/Para + ## Acceptance criteria Given/When/Then + ## Out of scope + ## Notas técnicas opcional). Valida la estructura del draft determinísticamente, lo persiste a hubara_agency/.hubara/drafts/idea-<ts>.md, publica un Issue en GitHub con label `hubara-hu`, lo agrega al GitHub Project board con status \\\"Idea refined\\\" (si existe .archon/github-project-config.yaml), y presenta UNA única approval gate explícita: ¿lanzar `hu-hubara-pipeline` ahora en background? APROBAR dispara el super-orquestador via nohup/disown fire-and-forget; RECHAZAR termina dejando el Issue + card listos para lanzar a mano. NO produce el refinement TÉCNICO (14 secciones + §0 plugin classification) — eso lo hace el pipeline real (hu-hubara-pipeline). Este workflow solo produce la HU narrativa de producto. worktree.enabled: false — no crea branch ni HU_ID; el único side-effect en el working tree es save-draft.",
+  "trigger": "archon workflow run idea-a-hu-hubara \\\"<idea>\\\"  — donde <idea> ($ARGUMENTS / $USER_MESSAGE) es: (a) texto libre de una idea de feature, (b) ruta a un .md con notas más extensas (detectado con `[ -f \\\"$RAW\\\" ]` y copiado), o (c) texto pegado de un issue existente (tratado como text plain). Sin flags. provider: claude, model: sonnet, interactive: true (tiene approval gate), worktree.enabled: false.",
+  "node_count": 14,
+  "inputs": [
+    "$ARGUMENTS / $USER_MESSAGE — la idea cruda (texto libre, ruta a .md corto, o texto de issue pegado)",
+    "$ARTIFACTS_DIR — workspace efímero del run (env var real para bash + substituido como literal text)",
+    ".archon/github-project-config.yaml — OPCIONAL; si existe habilita Project sync (project_number, project_owner, project_id, status_field_id, status_options con 'Idea refined'). Leído por check-prereqs (smoke test) y agregar-a-project",
+    "gh CLI autenticado con scope project + read:project (validado por check-prereqs via gh project item-list smoke test)",
+    "jq disponible en PATH (validado por check-prereqs con command -v jq)",
+    "$ARTIFACTS_DIR/idea-original.md — escrito por normalize-input, leído por refinar-hu-producto",
+    "$ARTIFACTS_DIR/hu-draft.md — escrito por refinar-hu-producto (Write), leído por validate-hu/save-draft/crear-issue",
+    "$ARTIFACTS_DIR/.issue-url — escrito por crear-issue, leído por agregar-a-project/print-issue-info/lanzar-pipeline/print-final-summary (RESUME-SAFE: $create-issue.output se pierde tras la approval)"
+  ],
+  "global_logic": "MODE DETECTION: este workflow NO clasifica single vs multi_plugin (eso ocurre downstream en hubara-tech-refiner-archon §0 dentro de hu-hubara-pipeline). Su único \\\"modo\\\" interno es input-type detection en normalize-input: si `[ -f \\\"$RAW\\\" ]` copia el archivo, si no hace echo del texto a idea-original.md. KEY ENV VARS / REFS: $ARGUMENTS (la idea), $ARTIFACTS_DIR (workspace efímero; env var real en bash Y literal substituido), $create-issue.output (la URL del issue — usada en el approval message y como fallback), $<node>.output refs en los 6 when conditions. NO usa HU_ID, BRANCH ni WORKFLOW_ID — worktree.enabled: false; el HU_ID/branch los crea el pipeline downstream. BRANCH STRATEGY: ninguna — no hace checkout/detach/push; el único write al tree es save-draft (hubara_agency/.hubara/drafts/, NO commitea). RUN-WIDE INVARIANTS: (1) RESUME-SAFETY — la URL del issue se persiste a $ARTIFACTS_DIR/.issue-url porque $create-issue.output se PIERDE cuando Archon reanuda tras la approval gate (bug documentado en líneas 289-291: prior_success skipea el nodo pero no preserva stdout). Los 4 nodos post-crear-issue leen el archivo con fallback a $create-issue.output. (2) FAIL-SOFT en Project sync — agregar-a-project y print-issue-info casi nunca tumban el run (mayoría exit 0); ÚNICA excepción exit 1 = FAIL_GH_SCOPE en agregar-a-project. (3) UNA ÚNICA approval explícita (gate-lanzar-pipeline); el resto es auto. (4) 3 cancel nodes usan when negativo (output != valor-OK) y abortan con diagnóstico. (5) idempotencia GitHub — gh label create silenciado con `|| true`, item-add tolera 'already/exists/duplicate', item-list con loop de 3 reintentos para el race con auto-add. (6) PATRÓN DE EXIT CODES MIXTO: los validadores (check-prereqs, normalize-input, validate-hu) usan exit 0 + código-en-stdout → routing por VALOR de output (cancel nodes disparan por when); pero crear-issue (FATAL), agregar-a-project (solo FAIL_GH_SCOPE) y lanzar-pipeline (FAIL_NO_ISSUE_URL/FAIL_INVALID_URL) usan exit 1 → propagan como node_error y, al NO tener cancel node dedicado, cortan la cadena downstream por all_success.",
+  "nodes": [
+    {
+      "id": "check-prereqs",
+      "type": "bash",
+      "summary": "Valida pre-requisitos de runtime: gh auth, jq, y scope project del GitHub Project (smoke test).",
+      "detail": "`set -e`. Corre `gh auth status` (redirigido) y si falla emite `FAIL_GH_AUTH` + exit 0. Verifica `command -v jq`, si no emite `FAIL_NO_JQ` + exit 0. Si existe `.archon/github-project-config.yaml`, parsea project_number (PN) y project_owner (PO) con grep+awk y hace un SMOKE TEST real: `gh project item-list $PN --owner $PO --format json --limit 1`; si falla emite `FAIL_GH_NO_PROJECT_SCOPE` + exit 0 (comentario: smoke test > parsear gh auth status que cachea scopes). Si todo pasa emite `OK`. timeout 30000.",
+      "depends_on": [],
+      "trigger_rule": "all_success",
+      "when": "",
+      "produces": "output in {OK, FAIL_GH_AUTH, FAIL_NO_JQ, FAIL_GH_NO_PROJECT_SCOPE}",
+      "invokes": "",
+      "loop": "",
+      "is_gate": true,
+      "is_cancel": false,
+      "notes": "GATE de valor: su output (OK vs FAIL_*) rutea normalize-input (continue) vs cancel-bad-prereqs (cancel). Todos los paths de fallo usan exit 0 — routing por VALOR, no por exit code. El smoke-test de project scope SOLO corre si el config existe Y tiene PN y PO no vacíos; si no, el scope project NUNCA se valida (silent hole leve: un repo sin config no chequea scope, pero agregar-a-project skipea limpio si no hay config). README §7 menciona FAIL_MISSING_*/FAIL_DIRTY_PROTECTED_FILES para check-prereqs, pero esos NO existen en este YAML (son de hu-hubara-pipeline; doc-vs-YAML mismatch). Nodo de entrada (depends_on vacío)."
+    },
+    {
+      "id": "cancel-bad-prereqs",
+      "type": "manual",
+      "summary": "Cancela el run con diagnóstico si check-prereqs no emitió OK.",
+      "detail": "Nodo `cancel:` (aborta el run). El mensaje incluye `$check-prereqs.output` y una tabla de diagnóstico: FAIL_GH_AUTH → `gh auth login`; FAIL_NO_JQ → `brew install jq`; FAIL_GH_NO_PROJECT_SCOPE → `gh auth refresh -s project,read:project`. Solo dispara cuando el when es true.",
+      "depends_on": [
+        "check-prereqs"
+      ],
+      "trigger_rule": "all_success",
+      "when": "$check-prereqs.output != 'OK'",
+      "produces": "cancela el run (sin output downstream)",
+      "invokes": "",
+      "loop": "",
+      "is_gate": false,
+      "is_cancel": true,
+      "notes": "trigger_rule default all_success — check-prereqs siempre termina con exit 0 (success) en todos sus paths de fallo, así que el cancel dispara correctamente vía el when. Fail-closed: solo aborta si output != 'OK'. Terminal → edge a END."
+    },
+    {
+      "id": "normalize-input",
+      "type": "bash",
+      "summary": "Normaliza la idea cruda ($ARGUMENTS) a $ARTIFACTS_DIR/idea-original.md con guards de vacío y tamaño mínimo (≥20 chars).",
+      "detail": "Lee `RAW=\"$ARGUMENTS\"`. Guard 1: trimea whitespace (`tr -d '[:space:]'`); si queda vacío emite `FAIL_EMPTY_INPUT` + exit 0. Si `[ -f \"$RAW\" ]` copia ese archivo a idea-original.md; si no, hace `echo \"$RAW\" >` idea-original.md. Guard 2: mide `SIZE=$(wc -c < idea-original.md)`; si SIZE < 20 emite `FAIL_TOO_SHORT_${SIZE}` + exit 0. Si todo pasa emite `OK`. timeout 30000.",
+      "depends_on": [
+        "check-prereqs"
+      ],
+      "trigger_rule": "all_success",
+      "when": "$check-prereqs.output == 'OK'",
+      "produces": "output in {OK, FAIL_EMPTY_INPUT, FAIL_TOO_SHORT_<N>}",
+      "invokes": "",
+      "loop": "",
+      "is_gate": true,
+      "is_cancel": false,
+      "notes": "GATE de valor: su output (OK vs FAIL_*) rutea refinar-hu-producto (continue) vs cancel-bad-input (cancel). Gated además por when sobre check-prereqs.output == 'OK' (redundante con dependencia + cancel-bad-prereqs, pero fail-closed). NO tiene `set -e` (a diferencia de otros bash nodes), pero usa exit 0 explícito en cada guard. El umbral de 20 chars aquí es distinto del de >200 bytes que aplica validate-hu al draft."
+    },
+    {
+      "id": "cancel-bad-input",
+      "type": "manual",
+      "summary": "Cancela el run si la idea normalizada fue inválida (vacía o <20 chars).",
+      "detail": "Nodo `cancel:` (aborta). Mensaje: 'Input inválido: $normalize-input.output. Pasame una idea no vacía (mínimo 20 chars): archon workflow run idea-a-hu-hubara ...'. Dispara solo si when true.",
+      "depends_on": [
+        "normalize-input"
+      ],
+      "trigger_rule": "all_success",
+      "when": "$normalize-input.output != 'OK'",
+      "produces": "cancela el run",
+      "invokes": "",
+      "loop": "",
+      "is_gate": false,
+      "is_cancel": true,
+      "notes": "normalize-input siempre exit 0 → success → all_success satisface → el when discrimina. Fail-closed. Terminal → edge a END."
+    },
+    {
+      "id": "refinar-hu-producto",
+      "type": "command",
+      "summary": "Nodo AI (prompt LLM) que genera la HU narrativa en UNA sola pasada y la escribe a $ARTIFACTS_DIR/hu-draft.md.",
+      "detail": "Nodo de prompt LLM (NO bash, NO skill): tiene `prompt:`, `allowed_tools: [Read, Write]`, `idle_timeout: 600000` (10 min). El prompt instruye actuar como product owner de AgencyHubara: Paso 1 lee idea-original.md (opcionalmente hubara-architecture-guide SKILL.md + sections/01-general.md si la idea menciona plugin/agente/Temporal); Paso 2 escribe hu-draft.md con estructura EXACTA (# Título ≤80 chars sin punto; Como/Quiero/Para; ## Acceptance criteria 3-5 bullets Given/When/Then; ## Out of scope ≥2 items; ## Notas técnicas opcional); Paso 3 reglas de calidad: título accionable, narrativa completa, AC empiezan con Given, out-of-scope ≥2, doc >200 bytes, INFERIR lo que falte (NO preguntar al humano, NO usar placeholders <TBD>). Termina al escribir el archivo — NO emite promise.",
+      "depends_on": [
+        "normalize-input"
+      ],
+      "trigger_rule": "all_success",
+      "when": "$normalize-input.output == 'OK'",
+      "produces": "$ARTIFACTS_DIR/hu-draft.md (efecto secundario vía Write); NO emite output estructurado ni promise",
+      "invokes": "(prompt inline — NO invoca el skill hubara-tech-refiner-archon; ver notes)",
+      "loop": "",
+      "is_gate": false,
+      "is_cancel": false,
+      "notes": "GOTCHA explícito en el YAML (líneas 132-136): este nodo NO usa el skill hubara-tech-refiner-archon — ese skill produce el refinement TÉCNICO (14 secciones + §0 plugin classification). Este nodo solo produce la HU narrativa de producto. UNA pasada, SIN loop (no hay loop: block, ni max_iterations, ni gate_message — explícito en línea 207 'no necesitás emitir promise'). Diseño deliberado: si el draft queda mal el operador (a) rechaza gate-lanzar-pipeline, (b) edita el issue en GitHub, o (c) borra el issue y re-corre. Tipado 'command' por falta de mejor encaje (es un nodo prompt/AI puro con allowed_tools, NO un .archon/commands/<name>.md ni un .claude/skills). Su output NO se valida por valor — la validación es validate-hu sobre el archivo escrito. RIESGO SILENT-HOLE: si el AI no escribe el archivo / hace timeout / escribe basura, no hay promise ni signal que lo detecte aquí; recae 100% en validate-hu — pero validate-hu depende con all_success, así que si este nodo termina en node_error/timeout, validate-hu NO corre y NO hay cancel con all_done que capture ese caso (run colgado/fallado sin diagnóstico)."
+    },
+    {
+      "id": "validate-hu",
+      "type": "bash",
+      "summary": "Valida estructuralmente $ARTIFACTS_DIR/hu-draft.md (existe, >200 bytes, título, narrativa, ≥2 AC Given, sección scope).",
+      "detail": "Early-exit emitiendo un código por cada fallo: `test -f` → FAIL_NOT_EXISTS; `wc -c > 200` → FAIL_TOO_SHORT; `grep -qE '^#\\s+\\S'` → FAIL_NO_TITLE; `grep -qiE 'como\\s+'` → FAIL_NO_NARRATIVE; cuenta bullets Given (`grep -cE '^[[:space:]-]*\\*?\\*?Given'`, default 0); si <2 → FAIL_FEW_AC_$ac_count; `grep -qiE '^##.*scope'` → FAIL_NO_SCOPE_SECTION. Si todo pasa emite `PASS`. timeout 10000. NO tiene when (corre siempre que refinar-hu-producto haya tenido success).",
+      "depends_on": [
+        "refinar-hu-producto"
+      ],
+      "trigger_rule": "all_success",
+      "when": "",
+      "produces": "output in {PASS, FAIL_NOT_EXISTS, FAIL_TOO_SHORT, FAIL_NO_TITLE, FAIL_NO_NARRATIVE, FAIL_FEW_AC_<N>, FAIL_NO_SCOPE_SECTION}",
+      "invokes": "",
+      "loop": "",
+      "is_gate": true,
+      "is_cancel": false,
+      "notes": "GATE estructural cuyo VALOR (PASS vs FAIL_*) rutea save-draft (continue) vs cancel-bad-hu (cancel). Todos los fallos hacen exit 0 → siempre success → routing por valor. La validación de narrativa busca literal 'como' case-insensitive en cualquier parte (no ancla a la línea narrativa) — un 'como' en otro contexto la satisface (silent hole leve). El conteo de AC busca Given con prefijo opcional de espacios/guion/asteriscos — alineado con el formato `- **Given**` del prompt. NO tiene when (confirmado líneas 213-227): es la única red de seguridad para un draft AI defectuoso, pero solo corre si refinar-hu-producto terminó success (all_success)."
+    },
+    {
+      "id": "cancel-bad-hu",
+      "type": "manual",
+      "summary": "Cancela el run si la validación estructural del draft no dio PASS.",
+      "detail": "Nodo `cancel:` (aborta). Mensaje: 'HU draft validation FAILED: $validate-hu.output. Re-lanzá: archon workflow run idea-a-hu-hubara ...'. Dispara solo si when true.",
+      "depends_on": [
+        "validate-hu"
+      ],
+      "trigger_rule": "all_success",
+      "when": "$validate-hu.output != 'PASS'",
+      "produces": "cancela el run",
+      "invokes": "",
+      "loop": "",
+      "is_gate": false,
+      "is_cancel": true,
+      "notes": "validate-hu siempre exit 0 → success → el when discrimina PASS vs FAIL. Fail-closed. Terminal → edge a END."
+    },
+    {
+      "id": "save-draft",
+      "type": "bash",
+      "summary": "Persiste el draft validado a hubara_agency/.hubara/drafts/idea-<timestamp>.md (siempre, antes de publicar).",
+      "detail": "`set -e`. Crea el dir `hubara_agency/.hubara/drafts` con mkdir -p. Construye `DRAFT_PATH=hubara_agency/.hubara/drafts/idea-$(date -u +%Y%m%d-%H%M%S).md` y copia hu-draft.md ahí. Emite la ruta del draft (DRAFT_PATH) a stdout.",
+      "depends_on": [
+        "validate-hu"
+      ],
+      "trigger_rule": "all_success",
+      "when": "$validate-hu.output == 'PASS'",
+      "produces": "output = ruta del draft persistido (hubara_agency/.hubara/drafts/idea-<ts>.md)",
+      "invokes": "",
+      "loop": "",
+      "is_gate": false,
+      "is_cancel": false,
+      "notes": "Escribe en el working tree directamente (worktree.enabled: false). El draft NO se commitea por este workflow (solo lo deja en el tree). when redundante con la dependencia + cancel-bad-hu pero fail-closed. Comparte dependencia (validate-hu) con cancel-bad-hu — son ramas mutuamente excluyentes por when (PASS vs !=PASS). ÚNICO side-effect del workflow en el tree."
+    },
+    {
+      "id": "crear-issue",
+      "type": "bash",
+      "summary": "Crea el Issue en GitHub con label hubara-hu, parsea la URL y la persiste a $ARTIFACTS_DIR/.issue-url.",
+      "detail": "`set -e`. Extrae TITLE de la primera línea `# ` del draft (`grep -m1 '^# ' | sed 's/^# //' | head -c 120`); si vacío → `FATAL: no extrajo título` + exit 1. Crea la label `hubara-hu` (color 0E8A16) de forma idempotente (`gh label create ... || true`, log a .gh-label.log). Corre `gh issue create --title --body-file hu-draft.md --label hubara-hu` (log a .gh-create.log); si RC != 0 → FATAL + tail log + exit 1. Parsea ISSUE_URL del log con `grep -oE 'https://github\\.com/[^ ]+/issues/[0-9]+'`; si vacío → FATAL + exit 1. CRÍTICO: persiste la URL a $ARTIFACTS_DIR/.issue-url (sobrevive al resume tras approval) y la emite a stdout. retry: max_attempts 2, delay_ms 5000, on_error transient. timeout 60000.",
+      "depends_on": [
+        "save-draft"
+      ],
+      "trigger_rule": "all_success",
+      "when": "",
+      "produces": "output = ISSUE_URL (https://github.com/.../issues/N); side-effects: $ARTIFACTS_DIR/.issue-url, Issue en GitHub con label hubara-hu",
+      "invokes": "",
+      "loop": "",
+      "is_gate": false,
+      "is_cancel": false,
+      "notes": "ÚNICO nodo con retry block (transient, 2 intentos). Los fallos aquí SÍ usan exit 1 (FATAL) — distinto del patrón exit-0-con-código de los validadores; un FATAL propaga como node_error y (sin cancel node propio) cortaría la cadena downstream por all_success dejando el run fallado aquí sin diagnóstico de cancel. GOTCHA documentado (líneas 289-291): $create-issue.output se PIERDE en el resume post-approval (prior_success skipea el nodo pero no preserva stdout) — por eso la URL se persiste a archivo y todos los downstream leen el archivo con fallback a $create-issue.output. La label create silenciada con `|| true`. El --label hubara-hu puede disparar un auto-add workflow del Project (race con agregar-a-project, manejado con el loop de 3 reintentos allí). FAN-OUT: tiene 2 dependientes (agregar-a-project + print-issue-info)."
+    },
+    {
+      "id": "agregar-a-project",
+      "type": "bash",
+      "summary": "Agrega el issue al GitHub Project board y le setea status 'Idea refined' (fail-soft, skip si no hay config).",
+      "detail": "Si NO existe .archon/github-project-config.yaml → `echo skipped no_config` + exit 0. Lee ISSUE_URL de $ARTIFACTS_DIR/.issue-url (fallback a $create-issue.output); si vacío → WARN + exit 0. Parsea PN/PO/PID/FID del config. Step 1: `gh project item-add` (log .add.log); si RC!=0 y log matchea 'missing required scopes|read:project|gh auth refresh' → FAIL_GH_SCOPE + exit 1; si matchea 'already|exists|duplicate' → 'item ya estaba'; else WARN. Step 2: encuentra ITEM_ID con loop de 3 intentos (`gh project item-list ... | jq` filtrando por content.url, sleep attempt*2, race con auto-add); si no lo encuentra → WARN + exit 0. Step 3: extrae OID (option_id de 'Idea refined') del config con awk; si vacío → WARN + exit 0. Step 4: `gh project item-edit --single-select-option-id $OID` (log .edit.log); si RC!=0 → FAIL item-edit + tail + exit 0 (fail-soft). Si OK emite '✅ status Idea refined set'. timeout 90000.",
+      "depends_on": [
+        "crear-issue"
+      ],
+      "trigger_rule": "all_success",
+      "when": "",
+      "produces": "output in {skipped no_config, WARN ..., item-add OK, item ya estaba en project, FAIL_GH_SCOPE: ..., item_id=..., option_id=..., ✅ status 'Idea refined' set ...} (informativo)",
+      "invokes": "",
+      "loop": "",
+      "is_gate": false,
+      "is_cancel": false,
+      "notes": "FAIL-SOFT por diseño: casi todos los paths hacen exit 0 (no rompen el run). ÚNICA excepción: FAIL_GH_SCOPE hace exit 1 — propagaría como node_error y cortaría la cadena por all_success (no hay cancel node que lo capture; el run quedaría fallado aquí Y print-issue-info NO correría porque su trigger_rule none_failed_min_one_success exige ningún dep fallido). El output se referencia en print-issue-info (PROJECT_STATUS=$agregar-a-project.output) pero NO sobrevive al resume post-approval igual que crear-issue.output (no se persiste a archivo) — seguro solo porque print-issue-info corre PRE-approval. El loop interno de 3 intentos maneja el race con el auto-add del Project disparado por la label."
+    },
+    {
+      "id": "print-issue-info",
+      "type": "bash",
+      "summary": "Imprime un banner con la URL del issue y el status del Project antes de la approval gate.",
+      "detail": "Lee ISSUE_URL de $ARTIFACTS_DIR/.issue-url (fallback a $create-issue.output). Toma PROJECT_STATUS=$agregar-a-project.output. Imprime un banner ASCII (heredoc) con '✅ Issue creado', la URL, el Project status, y la lista de fases que recorrerá hu-hubara-pipeline (Refining → Refined → Planning → Planned → Implementing → Reviewing → Done). timeout 5000.",
+      "depends_on": [
+        "crear-issue",
+        "agregar-a-project"
+      ],
+      "trigger_rule": "none_failed_min_one_success",
+      "when": "",
+      "produces": "banner informativo a stdout (no estructurado)",
+      "invokes": "",
+      "loop": "",
+      "is_gate": false,
+      "is_cancel": false,
+      "notes": "ÚNICO nodo con trigger_rule explícito y NO estándar: `none_failed_min_one_success` (línea 404 — NO pertenece al set base all_success/all_done/one_success del modelo; variante Archon: ningún dep falló Y al menos uno tuvo éxito). Le permite correr aunque agregar-a-project haya hecho exit 0 con WARN/skip, pero NO si crear-issue o agregar-a-project fallaron (exit!=0). FAN-IN de 2 deps (crear-issue + agregar-a-project). PROJECT_STATUS puede venir vacío en resume post-approval (no persistido) — pero este nodo corre PRE-approval así que normalmente está poblado. Si agregar-a-project hizo FAIL_GH_SCOPE (exit 1), none_failed es false → print-issue-info NO corre → cadena cortada antes del gate."
+    },
+    {
+      "id": "gate-lanzar-pipeline",
+      "type": "manual",
+      "summary": "ÚNICA approval gate del workflow: ¿lanzar hu-hubara-pipeline ahora en background?",
+      "detail": "Nodo `approval:` con `message:` largo (líneas 413-437). Muestra: Issue publicado ($create-issue.output), Card en 'Idea refined', y la decisión. APROBAR → arranca hu-hubara-pipeline en background (~$0.50-1.00, 20-40 min) describiendo los 7 pasos (refinar técnico → plan plugin-level → single inline / multi fan-out → implementar con gates determinísticos → validación final + PR único → review 5 agentes → Project sync). RECHAZAR → termina; el comando manual queda impreso: `archon workflow run hu-hubara-pipeline \"$create-issue.output\"`.",
+      "depends_on": [
+        "print-issue-info"
+      ],
+      "trigger_rule": "all_success",
+      "when": "",
+      "produces": "decisión humana approve/reject que rutea lanzar-pipeline (approve → corre; reject → run termina sin banner final)",
+      "invokes": "",
+      "loop": "",
+      "is_gate": true,
+      "is_cancel": false,
+      "notes": "is_gate=true (nodo approval). El message referencia $create-issue.output (la URL) — se preserva en el message porque se renderiza ANTES del resume; pero el RESUME del nodo lanzar-pipeline ya NO puede confiar en $create-issue.output (de ahí la lectura desde .issue-url). Esta es la única approval; todo lo anterior es auto. Si el operador rechaza, lanzar-pipeline (su único downstream) NO corre por all_success y el run termina. Gate de routing humano: el VALOR (approve/reject) decide continue vs stop. No tiene when."
+    },
+    {
+      "id": "lanzar-pipeline",
+      "type": "bash",
+      "summary": "Dispara hu-hubara-pipeline en background vía nohup/disown con la URL del issue (resume-safe, fire-and-forget).",
+      "detail": "Lee ISSUE_URL de $ARTIFACTS_DIR/.issue-url (fallback a $create-issue.output, comentario: sobrevive al resume tras approval). Si vacío → FAIL_NO_ISSUE_URL + exit 1. Valida la URL con `grep -qE '^https://github\\.com/.+/issues/[0-9]+'`; si no matchea → FAIL_INVALID_URL + exit 1. Crea LOG_FILE=$HOME/.archon/logs/hubara-pipeline-<epoch>.log (mkdir -p). Lanza en background: `(env -u CLAUDECODE ARCHON_SUPPRESS_NESTED_CLAUDE_WARNING=1 nohup archon workflow run hu-hubara-pipeline \"$ISSUE_URL\" > LOG_FILE 2>&1 & disown) 2>/dev/null` y emite `pipeline_triggered_log=$LOG_FILE` (&&) o `pipeline_trigger_failed_run_manually` (||). timeout 10000.",
+      "depends_on": [
+        "gate-lanzar-pipeline"
+      ],
+      "trigger_rule": "all_success",
+      "when": "",
+      "produces": "output in {pipeline_triggered_log=<path>, pipeline_trigger_failed_run_manually, FAIL_NO_ISSUE_URL ..., FAIL_INVALID_URL: ...}",
+      "invokes": "archon workflow run hu-hubara-pipeline (sub-workflow fire-and-forget en background via nohup/disown — NO es una sub-pipeline invocation gestionada por Archon; es un proceso detached que NO se espera ni se mergea)",
+      "loop": "",
+      "is_gate": false,
+      "is_cancel": false,
+      "notes": "`env -u CLAUDECODE` + ARCHON_SUPPRESS_NESTED_CLAUDE_WARNING=1 evita el 'may hang silently' del nested archon-in-claude-code. Fire-and-forget: NO espera ni mergea resultado del pipeline lanzado (a diferencia de la rama-A inline del pipeline real). Los FAIL_* aquí usan exit 1 (FATAL) → si la URL falta/es inválida, propaga node_error y print-final-summary (all_success) NO corre. El éxito del background nunca es exit!=0 por el `&& ... || echo ...` (captura el resultado del subshell). Smart-resume del propio idea-a-hu-hubara: si se re-corre, este nodo ya estaría en prior_success y se skipearía (de ahí la dependencia en .issue-url y no en $create-issue.output). No tiene when."
+    },
+    {
+      "id": "print-final-summary",
+      "type": "bash",
+      "summary": "Imprime el banner final del workflow con la URL del issue y el estado del lanzamiento del pipeline.",
+      "detail": "Lee ISSUE_URL de $ARTIFACTS_DIR/.issue-url (fallback a $create-issue.output). Toma PIPELINE=$lanzar-pipeline.output. Imprime banner ASCII (heredoc) '🎉 idea-a-hu-hubara completo' con Issue, Pipeline status, y próximos pasos (mirar Project board, esperar status auto, ver PR+comment del review, y el comando manual de fallback si fue pipeline_trigger_failed_run_manually). timeout 5000.",
+      "depends_on": [
+        "lanzar-pipeline"
+      ],
+      "trigger_rule": "all_success",
+      "when": "",
+      "produces": "banner final informativo a stdout",
+      "invokes": "",
+      "loop": "",
+      "is_gate": false,
+      "is_cancel": false,
+      "notes": "Nodo TERMINAL (ningún nodo depende de él) → edge a END. Solo corre si lanzar-pipeline tuvo éxito (all_success); si lanzar-pipeline emitió FAIL_* con exit 1, este nodo NO corre. Si el operador rechazó la approval, este nodo NO corre (lanzar-pipeline no corrió). Banner cosmético sin efectos. No tiene when."
+    }
+  ],
+  "edges": [
+    {
+      "from": "START",
+      "to": "check-prereqs",
+      "kind": "sequence",
+      "condition": ""
+    },
+    {
+      "from": "check-prereqs",
+      "to": "cancel-bad-prereqs",
+      "kind": "cancel",
+      "condition": "$check-prereqs.output != 'OK'"
+    },
+    {
+      "from": "check-prereqs",
+      "to": "normalize-input",
+      "kind": "gate",
+      "condition": "$check-prereqs.output == 'OK'"
+    },
+    {
+      "from": "normalize-input",
+      "to": "cancel-bad-input",
+      "kind": "cancel",
+      "condition": "$normalize-input.output != 'OK'"
+    },
+    {
+      "from": "normalize-input",
+      "to": "refinar-hu-producto",
+      "kind": "gate",
+      "condition": "$normalize-input.output == 'OK'"
+    },
+    {
+      "from": "refinar-hu-producto",
+      "to": "validate-hu",
+      "kind": "sequence",
+      "condition": ""
+    },
+    {
+      "from": "validate-hu",
+      "to": "cancel-bad-hu",
+      "kind": "cancel",
+      "condition": "$validate-hu.output != 'PASS'"
+    },
+    {
+      "from": "validate-hu",
+      "to": "save-draft",
+      "kind": "gate",
+      "condition": "$validate-hu.output == 'PASS'"
+    },
+    {
+      "from": "save-draft",
+      "to": "crear-issue",
+      "kind": "sequence",
+      "condition": ""
+    },
+    {
+      "from": "crear-issue",
+      "to": "agregar-a-project",
+      "kind": "fan-out",
+      "condition": ""
+    },
+    {
+      "from": "crear-issue",
+      "to": "print-issue-info",
+      "kind": "fan-out",
+      "condition": ""
+    },
+    {
+      "from": "agregar-a-project",
+      "to": "print-issue-info",
+      "kind": "fan-in",
+      "condition": ""
+    },
+    {
+      "from": "print-issue-info",
+      "to": "gate-lanzar-pipeline",
+      "kind": "sequence",
+      "condition": ""
+    },
+    {
+      "from": "gate-lanzar-pipeline",
+      "to": "lanzar-pipeline",
+      "kind": "gate",
+      "condition": ""
+    },
+    {
+      "from": "lanzar-pipeline",
+      "to": "print-final-summary",
+      "kind": "sequence",
+      "condition": ""
+    },
+    {
+      "from": "print-final-summary",
+      "to": "END",
+      "kind": "sequence",
+      "condition": ""
+    },
+    {
+      "from": "cancel-bad-prereqs",
+      "to": "END",
+      "kind": "sequence",
+      "condition": ""
+    },
+    {
+      "from": "cancel-bad-input",
+      "to": "END",
+      "kind": "sequence",
+      "condition": ""
+    },
+    {
+      "from": "cancel-bad-hu",
+      "to": "END",
+      "kind": "sequence",
+      "condition": ""
+    }
+  ],
+  "phases": [
+    {
+      "name": "prereqs",
+      "nodes": [
+        "check-prereqs",
+        "cancel-bad-prereqs"
+      ],
+      "description": "FASE 0 del YAML — Pre-requisitos básicos. check-prereqs valida gh auth, jq, y (si hay config) el scope project del GitHub Project mediante un smoke test real contra el API. Es un gate de valor: cancel-bad-prereqs aborta con diagnóstico si output != OK."
+    },
+    {
+      "name": "normalize-input",
+      "nodes": [
+        "normalize-input",
+        "cancel-bad-input"
+      ],
+      "description": "FASE 1 del YAML — Normalizar input. normalize-input convierte la idea cruda ($ARGUMENTS, texto o ruta a .md) en $ARTIFACTS_DIR/idea-original.md con guards de vacío y tamaño mínimo (≥20 chars). Gate de valor: cancel-bad-input aborta si output != OK."
+    },
+    {
+      "name": "refine",
+      "nodes": [
+        "refinar-hu-producto"
+      ],
+      "description": "FASE 2 del YAML — Refinar la idea a HU narrativa en UNA sola pasada de AI (prompt LLM con allowed_tools [Read, Write], sin loop, sin gate_message). Produce $ARTIFACTS_DIR/hu-draft.md. Explícitamente NO usa el skill hubara-tech-refiner-archon (no es el refinement técnico de 14 secciones)."
+    },
+    {
+      "name": "validate-draft",
+      "nodes": [
+        "validate-hu",
+        "cancel-bad-hu"
+      ],
+      "description": "FASE 3 del YAML — Validar estructura del HU draft. validate-hu es un gate determinístico (existencia, >200 bytes, título, narrativa 'como', ≥2 AC Given, sección scope). cancel-bad-hu aborta si output != PASS (la única red de seguridad para un draft AI defectuoso, pero solo si refinar-hu-producto terminó success)."
+    },
+    {
+      "name": "persist-draft",
+      "nodes": [
+        "save-draft"
+      ],
+      "description": "FASE 4 del YAML — Persistir el draft validado a hubara_agency/.hubara/drafts/idea-<ts>.md (siempre, antes de publicar). Único side-effect del workflow en el working tree; no commitea."
+    },
+    {
+      "name": "publish-issue",
+      "nodes": [
+        "crear-issue",
+        "agregar-a-project",
+        "print-issue-info"
+      ],
+      "description": "FASE 5 del YAML — Publicar Issue + agregar al Project (auto, sin gate). crear-issue publica el Issue con label hubara-hu y persiste la URL a .issue-url (resume-safe, con retry); fan-out a agregar-a-project (lo agrega al board con status 'Idea refined', fail-soft) y print-issue-info (fan-in de ambos con trigger_rule none_failed_min_one_success, muestra el banner pre-gate)."
+    },
+    {
+      "name": "launch-gate",
+      "nodes": [
+        "gate-lanzar-pipeline",
+        "lanzar-pipeline",
+        "print-final-summary"
+      ],
+      "description": "FASE 6 del YAML — Gate ÚNICO + lanzamiento. gate-lanzar-pipeline es la única approval explícita; si se aprueba, lanzar-pipeline dispara hu-hubara-pipeline en background (nohup/disown, env -u CLAUDECODE, fire-and-forget) leyendo la URL desde .issue-url; print-final-summary imprime el banner final. Si se rechaza, el run termina dejando Issue + card listos."
+    }
+  ],
+  "purpose_verification_placeholder": "unused",
+  "verification_notes": [
+    "AUTHORITATIVE COUNT (independiente, desde cero): leí el archivo COMPLETO (496 líneas, single Read) + dos greps de cross-check de keys estructurales. El YAML define EXACTAMENTE 14 nodos (un `- id:` cada uno): check-prereqs(53), cancel-bad-prereqs(76), normalize-input(92), cancel-bad-input(118), refinar-hu-producto(138), validate-hu(213), cancel-bad-hu(229), save-draft(238), crear-issue(252), agregar-a-project(301), print-issue-info(381), gate-lanzar-pipeline(411), lanzar-pipeline(439), print-final-summary(469). node_count=14, nodes[]=14. CONFIRMADO: el first pass acertó node_count=14, NO inventó nodos, NO faltó ninguno.",
+    "Tipos de nodo (independiente): 9 bash (check-prereqs, normalize-input, validate-hu, save-draft, crear-issue, agregar-a-project, print-issue-info, lanzar-pipeline, print-final-summary), 3 cancel (cancel-bad-prereqs/input/hu → mapeados a type 'manual' is_cancel=true), 1 approval (gate-lanzar-pipeline → 'manual' is_gate=true), 1 prompt/AI (refinar-hu-producto, con `prompt:` + `allowed_tools:[Read,Write]` + `idle_timeout:600000` → mapeado a 'command' por ser nodo prompt puro, NO un .archon/commands/ ni un skill). 9+3+1+1=14. CORRIJO una incoherencia interna de la verification del first pass: dijo '8 bash' en una nota y '9 bash' en otra — el conteo CORRECTO es 9 bash.",
+    "DISCREPANCIA CORREGIDA #1 (is_gate): el first pass marcó SOLO validate-hu como is_gate=true. Pero check-prereqs y normalize-input son ESTRUCTURALMENTE el mismo gate de valor — su output (OK vs FAIL_*) rutea continue (downstream) vs cancel (cancel-bad-prereqs / cancel-bad-input), exactamente la definición del modelo ('GATE node: its output VALUE routes the downstream chain continue vs cancel'). CORREGIDO: marqué los TRES (check-prereqs, normalize-input, validate-hu) como is_gate=true para coherencia. El first pass era inconsistente al flaggear solo uno de los tres gates idénticos.",
+    "DISCREPANCIA CORREGIDA #2 (edge kinds en el fan-out/fan-in de crear-issue→print-issue-info): el first pass marcó crear-issue→agregar-a-project como 'sequence' y crear-issue→print-issue-info como 'sequence', con solo agregar-a-project→print-issue-info como 'fan-in'. CORREGIDO: crear-issue tiene 2 dependientes (fan-out), así que crear-issue→agregar-a-project y crear-issue→print-issue-info son ambos kind 'fan-out'; print-issue-info tiene 2 deps (fan-in), así que crear-issue→print-issue-info y agregar-a-project→print-issue-info convergen — marqué agregar-a-project→print-issue-info como 'fan-in'. El conteo total de edges NO cambia.",
+    "when conditions VERBATIM verificados línea por línea (vía grep): SOLO 6 nodos tienen when — cancel-bad-prereqs(85) '$check-prereqs.output != \\'OK\\''; normalize-input(115) '$check-prereqs.output == \\'OK\\''; cancel-bad-input(120) '$normalize-input.output != \\'OK\\''; refinar-hu-producto(140) '$normalize-input.output == \\'OK\\''; cancel-bad-hu(231) '$validate-hu.output != \\'PASS\\''; save-draft(245) '$validate-hu.output == \\'PASS\\''. Los otros 8 nodos (check-prereqs, validate-hu, crear-issue, agregar-a-project, print-issue-info, gate-lanzar-pipeline, lanzar-pipeline, print-final-summary) NO tienen when. CONFIRMADO: el first pass acertó TODOS los when, incluyendo el sutil — validate-hu NO tiene when (correctamente vacío).",
+    "trigger_rule verificado (vía grep): SOLO print-issue-info tiene trigger_rule explícito = 'none_failed_min_one_success' (línea 404, variante Archon fuera del set base all_success/all_done/one_success). Los otros 13 nodos lo omiten → default all_success. CONFIRMADO: el first pass acertó esto exactamente, reportando el valor verbatim del YAML en vez de forzarlo al enum base.",
+    "depends_on verificado (vía grep, línea por línea): check-prereqs []; cancel-bad-prereqs/normalize-input/refinar-hu-producto [check-prereqs|normalize-input]; cancel-bad-input [normalize-input]; validate-hu [refinar-hu-producto]; cancel-bad-hu/save-draft [validate-hu]; crear-issue [save-draft]; agregar-a-project [crear-issue]; print-issue-info [crear-issue, agregar-a-project]; gate-lanzar-pipeline [print-issue-info]; lanzar-pipeline [gate-lanzar-pipeline]; print-final-summary [lanzar-pipeline]. CONFIRMADO: TODOS los depends_on del first pass son correctos, incluyendo el único multi-dep (print-issue-info con 2).",
+    "is_cancel verificado: 3 nodos con `cancel:` key = cancel-bad-prereqs(77), cancel-bad-input(119), cancel-bad-hu(230). CONFIRMADO: first pass correcto. is_gate: gate-lanzar-pipeline (approval, 413) correcto; + las 3 correcciones de gate de valor arriba (#1).",
+    "Edges: 19 totales (14 dependency edges + 1 START→check-prereqs + 4 →END: print-final-summary terminal + los 3 cancel nodes terminales). CONFIRMADO: el first pass tenía 19 edges con el mismo grafo exacto. Las ÚNICAS diferencias son las 2 re-etiquetas de kind del fan-out de crear-issue (discrepancia #2); ningún edge faltante ni inventado, ningún from/to incorrecto, ninguna condition incorrecta.",
+    "Branch/HU_ID: CONFIRMADO worktree.enabled:false (línea 46) — el workflow NO usa HU_ID/BRANCH/WORKFLOW_ID, NO hace checkout/detach/push. Único write al tree: save-draft → hubara_agency/.hubara/drafts/. El HU_ID y branch hu/<HU_ID> los crea el pipeline downstream. First pass correcto.",
+    "Loops: CONFIRMADO ningún nodo tiene `loop:` block. refinar-hu-producto es one-shot (línea 207: 'no necesitás emitir promise'; sin max_iterations/until/gate_message). First pass correcto.",
+    "GOTCHAS confirmados del YAML (relevantes para entender el grafo, ambos capturados correctamente por el first pass): (a) resume-safety líneas 289-291 — $create-issue.output se pierde tras la approval, por eso .issue-url se persiste a archivo y 4 downstream leen con fallback; (b) líneas 132-136 — refinar-hu-producto explícitamente NO es el skill hubara-tech-refiner-archon (solo HU narrativa, no refinement técnico).",
+    "RIESGOS SILENT-HOLE confirmados (ambos ya notados por el first pass, los mantengo): (1) si refinar-hu-producto (AI) termina en node_error/timeout, validate-hu (all_success) NO corre y NO hay cancel con all_done → run colgado sin diagnóstico. (2) FAIL_GH_SCOPE en agregar-a-project (exit 1) propaga como node_error sin cancel dedicado → corta la cadena (y none_failed_min_one_success de print-issue-info pasa a false). (3) check-prereqs solo valida project scope si el config existe con PN+PO no vacíos.",
+    "VEREDICTO: el first pass estaba SUSTANCIALMENTE CORRECTO en la espina dorsal (14 nodos, todos los depends_on, todos los when verbatim incl. el sutil validate-hu sin when, el trigger_rule no estándar, is_cancel, los 19 edges con el grafo correcto). Las ÚNICAS correcciones aplicadas: (#1) marqué check-prereqs y normalize-input también como is_gate=true para coherencia con validate-hu (los tres son gates de valor idénticos); (#2) re-etiqueté los 2 edges salientes de crear-issue como fan-out (tiene 2 dependientes). Ninguna corrección afecta node_count (14), el conteo de edges (19), ni la topología."
+  ]
+}
