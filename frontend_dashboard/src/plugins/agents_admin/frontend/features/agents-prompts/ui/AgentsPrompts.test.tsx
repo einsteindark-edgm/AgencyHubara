@@ -1,85 +1,83 @@
-import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
-import type { Agent } from "@/entities/agent";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, waitFor, cleanup } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactElement } from "react";
 import { AgentsPrompts } from "./AgentsPrompts";
 
-/**
- * Render proof for AgentsPrompts.
- *
- * The vitest hook tests (entities/agent/api.test.tsx) verify the FETCH + mapping,
- * but not that the component actually RENDERS the backend-sourced workspace. This
- * test closes that gap (evaluator R-194116: "un bug en AgentsPrompts leyendo la
- * fuente equivocada pasaría invisible"). Each workspace field carries a unique
- * marker so a regression that reads the wrong source (or a hardcoded mock) fails
- * loudly.
- */
-function makeAgent(overrides: Partial<Agent> = {}): Agent {
-  return {
-    id: "chats:sales",
-    plugin_id: "chats",
-    worker_name: "sales",
-    name: "Ventas Velas",
-    role: "Asesor de ventas · catálogo de velas",
-    workspace: {
-      identity: "IDENTITY_MARKER · soy el asesor de ventas de la marca de velas.",
-      soul: "SOUL_MARKER · valoro la calidez y la honestidad.",
-      tools: "TOOLS_MARKER · catálogo, base de conocimiento y links de pago.",
-      agents: "AGENTS_MARKER · coordino vía handoff con el agente de triage.",
-      users: "USERS_MARKER · clientes B2C que valoran el trato cercano.",
-      skills: [],
-    },
-    model: "deepseek-chat",
-    icon: "bolt",
-    color: "blue",
-    status: "online",
-    calls: null,
-    csat: null,
-    category: "Sales",
-    capabilities: [],
-    ...overrides,
-  };
+const fetchMock = vi.fn();
+
+function renderWithClient(ui: ReactElement) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={client}>{ui}</QueryClientProvider>,
+  );
 }
 
+const SALES_AGENT = {
+  id: "sales",
+  name: "Asesor de Ventas",
+  role: "Ventas premium por WhatsApp",
+  model: "DeepSeek V4 Pro",
+  category: "Ventas",
+  icon: "bolt",
+  color: "blue",
+  workspace: "hubara_agency/src/plugins/chats/agent/sales/workspace",
+  capabilities: [],
+  prompts: [
+    { key: "agents", filename: "AGENTS.md", content: "Coordínate con otros agentes IA.", word_count: 4 },
+    { key: "identity", filename: "IDENTITY.md", content: "Eres el Asesor Exclusivo de Ventas de Hubara.", word_count: 8 },
+    { key: "soul", filename: "SOUL.md", content: "Tu propósito es vender con calidez.", word_count: 6 },
+    { key: "tools", filename: "TOOLS.md", content: "Puedes buscar productos y registrar pedidos.", word_count: 6 },
+    { key: "users", filename: "USER.md", content: "Tus clientes son colombianos por WhatsApp.", word_count: 6 },
+  ],
+};
+
+function jsonResponse(body: unknown) {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+beforeEach(() => {
+  vi.stubGlobal("fetch", fetchMock);
+});
+
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+  fetchMock.mockReset();
+});
+
 describe("AgentsPrompts", () => {
-  it("renders the agent's name and role", () => {
-    render(<AgentsPrompts agent={makeAgent()} />);
-    expect(screen.getByText("Ventas Velas")).toBeInTheDocument();
-    expect(
-      screen.getByText("Asesor de ventas · catálogo de velas"),
-    ).toBeInTheDocument();
+  it("renders the 5 real workspace prompts (content + filenames), without the mock version badge", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ agents: [SALES_AGENT] }));
+
+    renderWithClient(<AgentsPrompts agentId="sales" />);
+
+    // El header trae el nombre real del agente.
+    await waitFor(() => screen.getByText("Asesor de Ventas"));
+
+    // El CONTENIDO REAL de cada .md llega al DOM (getByText lanza si falta).
+    screen.getByText("Eres el Asesor Exclusivo de Ventas de Hubara.");
+    screen.getByText("Puedes buscar productos y registrar pedidos.");
+    screen.getByText("Tus clientes son colombianos por WhatsApp.");
+
+    // Los nombres de archivo son los reales del workspace (no "identity.md" inventado).
+    screen.getByText("IDENTITY.md");
+    screen.getByText("TOOLS.md");
+
+    // El badge mockeado "v1.4.2" ya no existe.
+    expect(screen.queryByText(/v1\.4\.2/)).toBeNull();
   });
 
-  it("renders the REAL workspace content for every prompt section", () => {
-    render(<AgentsPrompts agent={makeAgent()} />);
-    // Each marker proves the component reads agent.workspace[key] (the
-    // backend-sourced field) — not a hardcoded/mock value or the wrong key.
-    expect(screen.getByText(/IDENTITY_MARKER/)).toBeInTheDocument();
-    expect(screen.getByText(/SOUL_MARKER/)).toBeInTheDocument();
-    expect(screen.getByText(/TOOLS_MARKER/)).toBeInTheDocument();
-    expect(screen.getByText(/AGENTS_MARKER/)).toBeInTheDocument();
-    expect(screen.getByText(/USERS_MARKER/)).toBeInTheDocument();
-  });
+  it("shows a placeholder (not a crash) when the backend returns no agents", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ agents: [] }));
 
-  it("swaps the rendered workspace when a different agent is selected", () => {
-    const { rerender } = render(<AgentsPrompts agent={makeAgent()} />);
-    expect(screen.getByText(/IDENTITY_MARKER/)).toBeInTheDocument();
+    renderWithClient(<AgentsPrompts agentId="sales" />);
 
-    rerender(
-      <AgentsPrompts
-        agent={makeAgent({
-          name: "Remarketing",
-          workspace: {
-            identity: "REMARKETING_IDENTITY · reactivo leads tibios.",
-            soul: "s",
-            tools: "t",
-            agents: "a",
-            users: "u",
-            skills: [],
-          },
-        })}
-      />,
-    );
-    expect(screen.getByText(/REMARKETING_IDENTITY/)).toBeInTheDocument();
-    expect(screen.queryByText(/IDENTITY_MARKER/)).not.toBeInTheDocument();
+    await waitFor(() => screen.getByText("No hay agentes configurados."));
   });
 });

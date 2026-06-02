@@ -1,14 +1,12 @@
 /**
- * Sidebar de Agentes IA — agrupados por categoría (Ventas, Filtro, Remarketing,
- * Soporte, Cobranza, Onboarding, Encuestas, Interno). El estado de selección
- * lo pasa la página (cross-feature con AgentsPrompts + AgentsInspector).
+ * Sidebar de Agentes IA — los agentes reales del sistema, agrupados por
+ * categoría. El estado de selección lo pasa la página (cross-feature con
+ * AgentsPrompts + AgentsInspector).
  */
 
 import { useState } from "react";
 import { useAgents, type Agent } from "@/entities/agent";
 import { Icon, type IconName } from "@/shared/ui";
-
-const FILTERS = ["Todos", "Activos", "Borradores", "Pausados"];
 
 interface Props {
   selectedId: string;
@@ -16,29 +14,20 @@ interface Props {
 }
 
 export function AgentsList({ selectedId, onSelect }: Props) {
-  const { data: agents = [], isLoading, isError } = useAgents();
-  const [filter, setFilter] = useState("Todos");
+  const { data: agents = [] } = useAgents();
+  const [query, setQuery] = useState("");
 
-  if (isError) {
-    return (
-      <aside className="sidebar">
-        <p style={{ color: "var(--fg-danger)", padding: 16 }}>
-          Error al cargar agentes — reintente recargando.
-        </p>
-      </aside>
-    );
-  }
-
-  if (isLoading) {
-    return (
-      <aside className="sidebar">
-        <p style={{ padding: 16 }}>Cargando…</p>
-      </aside>
-    );
-  }
+  const q = query.trim().toLowerCase();
+  const filtered = q
+    ? agents.filter((a) =>
+        [a.name, a.role, a.category].some((field) =>
+          field.toLowerCase().includes(q),
+        ),
+      )
+    : agents;
 
   const groups = new Map<string, Agent[]>();
-  agents.forEach((a) => {
+  filtered.forEach((a) => {
     const arr = groups.get(a.category) ?? [];
     arr.push(a);
     groups.set(a.category, arr);
@@ -66,23 +55,15 @@ export function AgentsList({ selectedId, onSelect }: Props) {
 
         <div className="side-search">
           <Icon.search />
-          <input placeholder="Buscar agentes…" />
-        </div>
-
-        <div className="side-tabs">
-          {FILTERS.map((f) => (
-            <button
-              key={f}
-              className={"pill" + (filter === f ? " on" : "")}
-              onClick={() => setFilter(f)}
-            >
-              {f}
-            </button>
-          ))}
+          <input
+            placeholder="Buscar agentes…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
         </div>
       </div>
 
-      <div className="ag-list" role="list">
+      <div className="ag-list">
         {[...groups.entries()].map(([cat, arr]) => (
           <div key={cat}>
             <div className="side-section">
@@ -112,7 +93,7 @@ interface RowProps {
 }
 
 function AgentRow({ agent, selected, onSelect }: RowProps) {
-  const IconComp = Icon[agent.icon as IconName];
+  const IconComp = Icon[agent.icon as IconName] ?? Icon.wand;
   return (
     <div
       className={"ag-row" + (selected ? " sel" : "")}
@@ -124,24 +105,6 @@ function AgentRow({ agent, selected, onSelect }: RowProps) {
       <div className="ag-body">
         <span className="ag-name">{agent.name}</span>
         <span className="ag-sub">{agent.role}</span>
-        <span className="ag-meta">
-          <span
-            className={
-              "pulse " +
-              (agent.status === "idle"
-                ? "idle"
-                : agent.status === "off"
-                ? "off"
-                : "")
-            }
-          />
-          {agent.calls?.toLocaleString() ?? "—"} sesiones
-          {agent.csat != null && (
-            <>
-              <span style={{ color: "var(--fg-faint)" }}>·</span>★ {agent.csat}
-            </>
-          )}
-        </span>
       </div>
     </div>
   );

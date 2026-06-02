@@ -3,65 +3,70 @@ import fs from "node:fs";
 import path from "node:path";
 
 /**
- * Visual + functional E2E for the Agents section (HU-194116: dashboard → datos
- * reales del backend). Proves end-to-end that AgentsSection renders the agents
- * served by GET /api/agents_admin and swaps the workspace prompts on select.
+ * Visual + functional E2E de la sección Agents (datos reales del backend).
+ * Prueba end-to-end que AgentsSection renderiza los agentes servidos por
+ * GET /api/agents y que al seleccionar otro agente intercambia los prompts
+ * (el contenido REAL de sus .md de workspace).
  *
- * Hermetic by design: stubs /api/agents_admin via page.route so the spec is
- * deterministic and needs no live FastAPI (playwright.config documents this as
- * the in-spec isolation path). Screenshots are written to
- * $ARTIFACTS_DIR/visual-evidence/ — exactly where hubara-evaluate counts them —
- * so final-validation's playwright run produces the visual evidence the
- * evaluator's visual_verification gate requires (local runs fall back to
- * playwright-report/visual-evidence/).
+ * Hermético: stubea GET /api/agents vía page.route, así el spec es
+ * determinista y no necesita una FastAPI viva. Los screenshots se escriben a
+ * $ARTIFACTS_DIR/visual-evidence/ (o playwright-report/visual-evidence/ en
+ * local) — donde hubara-evaluate cuenta la evidencia visual.
  */
 const EVIDENCE_DIR = path.join(
   process.env.ARTIFACTS_DIR ?? path.join(process.cwd(), "playwright-report"),
   "visual-evidence",
 );
 
-const AGENTS_FIXTURE = [
-  {
-    id: "chats:sales",
-    plugin_id: "chats",
-    worker_name: "sales",
-    name: "Ventas Velas",
-    role: "Asesor de ventas",
-    workspace: {
-      identity: "E2E_IDENTITY_SALES · asesor de ventas de velas artesanales.",
-      soul: "Valoro la calidez y la honestidad.",
-      tools: "Catálogo, base de conocimiento y links de pago.",
-      agents: "Coordino vía handoff con el agente de triage.",
-      users: "Clientes B2C que valoran el trato cercano.",
-      skills: [],
+function promptSet(tag: string) {
+  return [
+    { key: "agents", filename: "AGENTS.md", content: `E2E_AGENTS_${tag} · coordino handoff.`, word_count: 4 },
+    { key: "identity", filename: "IDENTITY.md", content: `E2E_IDENTITY_${tag} · así me presento.`, word_count: 5 },
+    { key: "soul", filename: "SOUL.md", content: `E2E_SOUL_${tag} · mis valores.`, word_count: 4 },
+    { key: "tools", filename: "TOOLS.md", content: `E2E_TOOLS_${tag} · mis herramientas.`, word_count: 4 },
+    { key: "users", filename: "USER.md", content: `E2E_USERS_${tag} · mi audiencia.`, word_count: 4 },
+  ];
+}
+
+// Shape EXACTO de GET /api/agents (ver src/entities/agent/contracts.ts).
+const AGENTS_RESPONSE = {
+  agents: [
+    {
+      id: "sales",
+      name: "Asesor de Ventas",
+      role: "Ventas premium por WhatsApp",
+      model: "DeepSeek V4 Pro",
+      category: "Ventas",
+      icon: "bolt",
+      color: "blue",
+      workspace: "hubara_agency/src/plugins/chats/agent/sales/workspace",
+      capabilities: [{ label: "Buscar en el catálogo", icon: "notes" }],
+      prompts: promptSet("SALES"),
     },
-  },
-  {
-    id: "chats:remarketing",
-    plugin_id: "chats",
-    worker_name: "remarketing",
-    name: "Reactivación Leads",
-    role: "Reactivación de leads tibios",
-    workspace: {
-      identity: "E2E_IDENTITY_REMARKETING · reactivo leads tibios y abandonos.",
-      soul: "Persistente pero siempre respetuoso.",
-      tools: "Plantillas de mensaje y links de reactivación.",
-      agents: "Coordino con el agente de ventas.",
-      users: "Leads que abandonaron el carrito.",
-      skills: [],
+    {
+      id: "remarketing",
+      name: "Recuperación Comercial",
+      role: "Reactivación de leads INTERESADO",
+      model: "DeepSeek V4 Pro",
+      category: "Remarketing",
+      icon: "refresh",
+      color: "orange",
+      workspace: "hubara_agency/src/plugins/chats/agent/remarketing/workspace",
+      capabilities: [{ label: "Transferir la charla a Ventas", icon: "user" }],
+      prompts: promptSet("REMARKETING"),
     },
-  },
-];
+  ],
+};
 
 test.describe("Agents section — datos reales del backend", () => {
   test.beforeEach(async ({ page }) => {
-    await page.route("**/api/agents_admin", async (route) => {
-      await route.fulfill({ json: AGENTS_FIXTURE });
+    await page.route("**/api/agents", async (route) => {
+      await route.fulfill({ json: AGENTS_RESPONSE });
     });
     fs.mkdirSync(EVIDENCE_DIR, { recursive: true });
   });
 
-  test("lista agentes del backend y muestra sus prompts al seleccionar", async ({
+  test("lista los agentes del backend y muestra sus prompts al seleccionar", async ({
     page,
   }) => {
     await page.goto("/");
@@ -73,10 +78,10 @@ test.describe("Agents section — datos reales del backend", () => {
     const canvas = page.locator(".ag-canvas");
 
     // La lista muestra AMBOS agentes provenientes del backend stubbeado.
-    await expect(sidebar.getByText("Ventas Velas")).toBeVisible();
-    await expect(sidebar.getByText("Reactivación Leads")).toBeVisible();
+    await expect(sidebar.getByText("Asesor de Ventas")).toBeVisible();
+    await expect(sidebar.getByText("Recuperación Comercial")).toBeVisible();
 
-    // El panel de prompts muestra el workspace REAL del primer agente.
+    // El panel muestra el workspace REAL del primer agente (default: sales).
     await expect(canvas.getByText(/E2E_IDENTITY_SALES/)).toBeVisible();
 
     await page.screenshot({
@@ -85,7 +90,7 @@ test.describe("Agents section — datos reales del backend", () => {
     });
 
     // Seleccionar el segundo agente intercambia el workspace renderizado.
-    await sidebar.getByText("Reactivación Leads").click();
+    await sidebar.getByText("Recuperación Comercial").click();
     await expect(canvas.getByText(/E2E_IDENTITY_REMARKETING/)).toBeVisible();
     await expect(canvas.getByText(/E2E_IDENTITY_SALES/)).toHaveCount(0);
 

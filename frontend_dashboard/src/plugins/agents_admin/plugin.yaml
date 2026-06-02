@@ -1,9 +1,7 @@
 id: agents_admin
 version: 0.1.0
 display_name: Agents
-description: UI de gestión de agentes (lista, prompts, inspector) + endpoint GET /api/agents_admin que expone workers agénticos con workspace de prompts.
-
-agentic: false  # agents_admin es el lector, no un agente conversacional
+description: UI de los agentes reales del sistema (lista, prompts, inspector). Lee los agentes de los manifests + el contenido vivo de sus workspaces vía GET /api/agents.
 
 depends_on: []
 
@@ -17,13 +15,19 @@ frontend:
     sidebar:
       - { route: /agents, label: Agents, icon: wand }
 
-# ── API REST ───────────────────────────────────────────────────────────
+# ── API REST (consumido por main.py) ────────────────────────────────────
+# `agents_admin` aporta un endpoint propio: GET /api/agents devuelve los
+# agentes reales del sistema + el contenido VIVO de sus workspaces
+# (IDENTITY/SOUL/AGENTS/USER/TOOLS.md). El router descubre los agentes
+# genéricamente desde los manifests (workers con bloque `dashboard:`) — no
+# hardcodea ningún plugin. Ver src/plugins/agents_admin/service.py.
 api:
-  python_module: src.plugins.agents_admin.api.routes
-  prefix: /api/agents_admin
-  tags: [AgentsAdmin]
+  python_module: src.plugins.agents_admin.api
+  prefix: /api/agents
+  tags: [Agents]
 
-# Sin `agent:` — plugin sin workers Temporal (Template B).
+# Sin `agent:` — agents_admin no corre workers Temporal; solo lee y expone los
+# agentes que SÍ los corren (declarados en otros manifests).
 
 wiring_intents:
   # No requiere recursos compartidos por ahora.

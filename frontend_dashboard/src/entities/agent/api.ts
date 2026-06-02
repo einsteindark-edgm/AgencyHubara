@@ -1,33 +1,24 @@
+/**
+ * Datos de los agentes reales del sistema. Fetch a `GET /api/agents`, que
+ * descubre los agentes de los manifests y devuelve el contenido VIVO de sus
+ * workspaces (IDENTITY/SOUL/AGENTS/USER/TOOLS.md). Validado con Zod en el
+ * boundary HTTP. Sin mocks.
+ */
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "@/shared/api/client";
 import { agentKeys } from "./keys";
-import { agentListDtoSchema } from "./contracts";
+import { agentsListResponseSchema } from "./contracts";
 import type { Agent } from "./model";
 
-const _DEFAULTS: Record<string, { icon: string; color: string }> = {
-  sales:       { icon: "bolt",    color: "blue"   },
-  remarketing: { icon: "refresh", color: "orange" },
-};
+async function fetchAgents(): Promise<Agent[]> {
+  const raw = await apiClient.get<unknown>("/api/agents");
+  return agentsListResponseSchema.parse(raw).agents;
+}
 
 export function useAgents() {
   return useQuery({
     queryKey: agentKeys.list(),
-    queryFn: async (): Promise<Agent[]> => {
-      const raw = await apiClient.get<unknown>("/api/agents_admin", {
-        headers: { "X-Internal-Dashboard": "1" },
-      });
-      const dtos = agentListDtoSchema.parse(raw);
-      return dtos.map(dto => ({
-        ...dto,
-        model: "deepseek-chat",
-        icon: (_DEFAULTS[dto.worker_name]?.icon ?? "bot") as Agent["icon"],
-        color: (_DEFAULTS[dto.worker_name]?.color ?? "blue") as Agent["color"],
-        status: "online" as const,
-        calls: null,
-        csat: null,
-        category: dto.worker_name.charAt(0).toUpperCase() + dto.worker_name.slice(1),
-        capabilities: [],
-      }));
-    },
+    queryFn: fetchAgents,
+    staleTime: 5 * 60 * 1000,
   });
 }

@@ -74,7 +74,7 @@ export function Dashboard() {
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>("#1247");
   const [selectedTrackedId, setSelectedTrackedId] = useState<string | null>(null);
   const [selectedJobId, setSelectedJobId] = useState<string>("j-now");
-  const [selectedAgentId, setSelectedAgentId] = useState<string>("a3");
+  const [selectedAgentId, setSelectedAgentId] = useState<string>("sales");
 
   // Stream SSE de sesiones: se monta UNA vez aquí — empuja el snapshot al
   // cache de TanStack Query para todas las features de Chats. Las demás

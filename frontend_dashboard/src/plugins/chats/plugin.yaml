@@ -46,6 +46,31 @@ agent:
     - name: sales
       module: src.plugins.chats.workers.sales
       task_queue: queue-sales-agent
+      # ── Dashboard "Agents" (consumido por el plugin agents_admin) ─────────
+      # Marca este worker como un AGENTE visible en la sección Agents del
+      # dashboard y declara la ruta EXACTA de su workspace — donde viven
+      # IDENTITY.md / SOUL.md / AGENTS.md / USER.md / TOOLS.md — + la metadata
+      # de display. El backend de `agents_admin` escanea TODOS los manifests
+      # buscando workers con un bloque `dashboard:`; NO hardcodea `chats`, así
+      # que un agente nuevo aparece en la UI con solo declararlo aquí.
+      dashboard:
+        display_name: Asesor de Ventas
+        role: Ventas premium de velas artesanales de cera de palma por WhatsApp
+        category: Ventas
+        icon: bolt
+        color: blue
+        model: DeepSeek V4 Pro
+        # Ruta repo-root-relative; el backend resuelve <repo>/<workspace>.
+        workspace: hubara_agency/src/plugins/chats/agent/sales/workspace
+        # Capacidades reales (derivadas de las tools LLM registradas por el
+        # worker sales — ver workspace/TOOLS.md). NO son métricas inventadas.
+        capabilities:
+          - { label: Buscar en el catálogo, icon: notes }
+          - { label: Presentar productos con UI rica, icon: files }
+          - { label: Tomar y registrar pedidos, icon: bolt }
+          - { label: Recolectar datos de envío, icon: clipboard }
+          - { label: Gestionar etiquetas de conversación, icon: tag }
+          - { label: Escalar a un humano, icon: user }
       # ADR-2026-05-20 (Declarative Orchestration): el código del workflow NO
       # importa `RemarketingSessionWorkflow`. Cuando la conversación cierra
       # con tag=INTERESADO, el workflow EMITE un `SalesSessionCompletionEvent`
@@ -211,6 +236,20 @@ agent:
     - name: remarketing
       module: src.plugins.chats.workers.remarketing
       task_queue: queue-remarketing-agent
+      # ── Dashboard "Agents" (ver la nota extensa en el worker `sales`) ─────
+      dashboard:
+        display_name: Recuperación Comercial
+        role: Reactivación de leads INTERESADO que quedaron silentes
+        category: Remarketing
+        icon: refresh
+        color: orange
+        model: DeepSeek V4 Pro
+        workspace: hubara_agency/src/plugins/chats/agent/remarketing/workspace
+        # Remarketing es deliberadamente minimalista: un gancho conversacional
+        # + transferencia a Ventas (su única tool LLM es transfer_to_sales_agent).
+        capabilities:
+          - { label: Reactivar leads INTERESADO, icon: refresh }
+          - { label: Transferir la charla a Ventas, icon: user }
       # ADR-2026-05-20 (Declarative Orchestration): cuando el cliente responde
       # durante el ciclo de remarketing (o la herramienta TransferToSales decide
       # devolver el control), el workflow EMITE un
