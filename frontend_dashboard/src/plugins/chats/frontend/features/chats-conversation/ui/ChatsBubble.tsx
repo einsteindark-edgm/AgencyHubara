@@ -55,6 +55,21 @@ export function ChatsBubble({ message: m }: Props) {
           <span>Humano</span>
         </div>
       )}
+      {m.imageUrl && (
+        <a
+          className="bubble-img"
+          href={m.imageUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          title="Abrir imagen en tamaño completo"
+        >
+          <img
+            src={m.imageUrl}
+            alt="Imagen enviada por el cliente"
+            loading="lazy"
+          />
+        </a>
+      )}
       {m.text}
       <div className="meta">
         {m.time}

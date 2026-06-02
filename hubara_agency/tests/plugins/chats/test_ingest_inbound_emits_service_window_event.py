@@ -35,7 +35,9 @@ class FakeHistoryStore:
     def __init__(self) -> None:
         self.events: list[tuple[str, str]] = []
 
-    def append_user_event(self, session_id: str, content: str) -> None:
+    def append_user_event(
+        self, session_id: str, content: str, *, image_url: str | None = None
+    ) -> None:
         self.events.append((session_id, content))
 
 

@@ -101,7 +101,20 @@ class IngestInboundMessage:
         # ingest legacy que no necesitan el watchdog wiring.
         self._temporal_client_factory = temporal_client_factory
 
-    async def execute(self, parsed: WhatsAppMessage) -> None:
+    async def execute(
+        self,
+        parsed: WhatsAppMessage,
+        *,
+        persisted_image_url: str | None = None,
+    ) -> None:
+        """Procesa un inbound parseado.
+
+        ``persisted_image_url`` es un canal interno del reentry de visión: cuando
+        ``_describe_image_and_reenter`` reinyecta la descripción como texto
+        sintético, pasa acá la URL de la imagen ya persistida en el media store
+        para que el evento del cliente en el JSONL la lleve y el dashboard la
+        renderice. Los inbounds normales (texto del webhook) lo dejan en None.
+        """
         session_id = f"{WHATSAPP_SESSION_PREFIX}{parsed.from_number}"
 
         # --- 1. Read metadata UNA vez al principio (atribución + typing) ---
@@ -326,7 +339,11 @@ class IngestInboundMessage:
         )
 
         # --- 6. Persistir history (texto efectivo, NO el JSON raw) ---
-        self._history_store.append_user_event(session_id, effective.text)
+        # `persisted_image_url` solo viene poblado desde el reentry de visión:
+        # el evento del cliente queda con la foto adjunta para el dashboard.
+        self._history_store.append_user_event(
+            session_id, effective.text, image_url=persisted_image_url
+        )
 
         # --- 6.5. Limpiar flag de Flow pendiente (sesión c4e3416f) ---
         # Si el cliente respondió (por texto, por nfm_reply, lo que sea),
@@ -828,6 +845,15 @@ class IngestInboundMessage:
         caption = media.get("caption")
         caption = caption if isinstance(caption, str) and caption.strip() else None
 
+        # Persistir la imagen para el dashboard ANTES de describirla. Es
+        # independiente de la visión: aunque Gemini falle, el humano igual debe
+        # poder ver la foto (un comprobante de pago se verifica mirándolo, no
+        # leyendo una descripción). `persisted_image_url` viaja después al
+        # evento del cliente en el JSONL via el reentry.
+        persisted_image_url = await self._persist_inbound_image(
+            session_id, media_id, media.get("mime_type")
+        )
+
         port = get_image_vision_port()
         result = await port.describe(
             VisionRequest(
@@ -891,7 +917,10 @@ class IngestInboundMessage:
             placeholder = "[el cliente envió una imagen que no pude ver bien]"
             if caption:
                 placeholder += f' con el texto: "{caption}"'
-            await self.execute(self._synthetic_text_message(parsed, placeholder))
+            await self.execute(
+                self._synthetic_text_message(parsed, placeholder),
+                persisted_image_url=persisted_image_url,
+            )
             return
 
         # --- Comprobante de pago + conversación aún en turno de bot: asignar a
@@ -936,7 +965,60 @@ class IngestInboundMessage:
             provider=result.provider,
             cost_usd=result.cost_usd_estimate,
         )
-        await self.execute(self._synthetic_text_message(parsed, synthetic_text))
+        await self.execute(
+            self._synthetic_text_message(parsed, synthetic_text),
+            persisted_image_url=persisted_image_url,
+        )
+
+    async def _persist_inbound_image(
+        self, session_id: str, media_id: str, mime_type: str | None
+    ) -> str | None:
+        """Descarga la imagen de Meta y la persiste en el media store.
+
+        Devuelve la URL relativa (para el JSONL + dashboard) o None si algo
+        falla. Best-effort: una falla acá NO rompe el pipeline de visión ni el
+        ruteo — solo significa que el dashboard mostrará la descripción de texto
+        sin la foto. Re-descarga del media_id (la URL temporal de Meta expira a
+        los 5 min, pero el media_id sigue resolviendo); el costo de un fetch
+        extra de una imagen chica en background es despreciable frente al call
+        de visión, y mantiene la persistencia desacoplada del adapter de visión.
+        """
+        from src.platform.audio.meta_media_fetcher import fetch_media_bytes
+        from src.platform.media import media_url_for, persist_inbound_image
+
+        try:
+            fetched = await fetch_media_bytes(media_id)
+        except Exception as e:  # noqa: BLE001 — best-effort
+            logger.warning(
+                "inbound_image_fetch_failed",
+                session=session_id,
+                media_id=media_id,
+                error=str(e),
+            )
+            return None
+        if not fetched:
+            return None
+        data, fetched_mime = fetched
+        try:
+            filename = persist_inbound_image(
+                session_id, media_id, data, mime_type or fetched_mime
+            )
+        except Exception as e:  # noqa: BLE001 — best-effort
+            logger.warning(
+                "inbound_image_persist_failed",
+                session=session_id,
+                media_id=media_id,
+                error=str(e),
+            )
+            return None
+        logger.info(
+            "inbound_image_persisted",
+            session=session_id,
+            media_id=media_id,
+            filename=filename,
+            bytes=len(data),
+        )
+        return media_url_for(session_id, filename)
 
     @staticmethod
     def _synthetic_text_message(

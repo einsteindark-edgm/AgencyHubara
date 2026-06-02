@@ -28,6 +28,7 @@ import {
   type ChatMessage,
 } from "@/entities/message";
 import { formatHourMinute } from "@/shared/lib";
+import { env } from "@/shared/config";
 import type {
   AvatarColor,
   ChatInboxItem,
@@ -155,6 +156,13 @@ function adaptSession(s: ChatSession): ChatInboxItem {
   };
 }
 
+/** El backend escribe `image_url` como ref relativa (`/api/dashboard/media/...`);
+ *  la volvemos absoluta con la base del API para usarla directo en `<img src>`.
+ *  Si ya viniera absoluta (http…), la respetamos. */
+function toMediaUrl(ref: string): string {
+  return ref.startsWith("http") ? ref : `${env.apiUrl}${ref}`;
+}
+
 function adaptMessage(m: ChatMessage): ChatMessageItem {
   const sender = getMessageSender(m);
   // sender: "user"|"agent"|"human"
@@ -176,6 +184,7 @@ function adaptMessage(m: ChatMessage): ChatMessageItem {
           : "",
     status: isOutbound ? "read" : undefined,
     author: isOutbound ? (sender === "human" ? "human" : "bot") : undefined,
+    imageUrl: m.image_url ? toMediaUrl(m.image_url) : undefined,
   };
 }
 

@@ -28,9 +28,14 @@ from src.plugins.chats.agent.sales.use_cases.ingest_inbound_message import (
 class FakeHistoryStore:
     def __init__(self) -> None:
         self.events: list[tuple[str, str]] = []
+        # image_urls[i] acompaña a events[i] — None salvo imágenes persistidas.
+        self.image_urls: list[str | None] = []
 
-    def append_user_event(self, session_id: str, content: str) -> None:
+    def append_user_event(
+        self, session_id: str, content: str, *, image_url: str | None = None
+    ) -> None:
         self.events.append((session_id, content))
+        self.image_urls.append(image_url)
 
 
 @dataclass
@@ -238,6 +243,130 @@ async def test_caption_preserved_in_reinjection(monkeypatch):
     )
 
     assert "¿tienen esta?" in loader.calls[0].message
+
+
+@pytest.mark.asyncio
+async def test_inbound_image_persisted_and_url_in_history(monkeypatch, tmp_path):
+    """Comportamiento clave del feature (no solo schema): la imagen del cliente
+    se DESCARGA de Meta, se PERSISTE en el vault, y el evento del cliente en el
+    historial lleva su `image_url` apuntando al endpoint del dashboard. Sin
+    esto el operador humano solo tendría la descripción de texto de la visión,
+    nunca la foto."""
+    monkeypatch.setenv("IMAGE_VISION_PROVIDER", "fake")
+    # Vault temporal para el media store (no tocar el vault real del repo).
+    monkeypatch.setattr(
+        "src.platform.media.store.WORKSPACE_VAULT_DIR", tmp_path, raising=True
+    )
+
+    # Fake de la descarga de Meta — sin red.
+    async def _fake_fetch(media_id):  # noqa: ANN001
+        return (b"\xff\xd8\xff\xe0JFIF-fake-bytes", "image/jpeg")
+
+    monkeypatch.setattr(
+        "src.platform.audio.meta_media_fetcher.fetch_media_bytes",
+        _fake_fetch,
+        raising=True,
+    )
+
+    history = FakeHistoryStore()
+    loader = FakeLoadOrStart()
+    metadata = FakeMetadataStore()
+    use_case = _make_use_case(history, loader, metadata)
+
+    await use_case._describe_image_and_reenter(_make_image("product_1"))
+
+    # 1. Los bytes quedaron en <vault>/<session>/media/.
+    media_dir = tmp_path / "wa_5491111111111" / "media"
+    files = list(media_dir.iterdir())
+    assert len(files) == 1
+    assert files[0].name == "product_1.jpg"
+    assert files[0].read_bytes() == b"\xff\xd8\xff\xe0JFIF-fake-bytes"
+
+    # 2. El evento del cliente en el history lleva la URL del endpoint.
+    assert (
+        history.image_urls[-1]
+        == "/api/dashboard/media/wa_5491111111111/product_1.jpg"
+    )
+
+
+@pytest.mark.asyncio
+async def test_payment_receipt_image_persisted_for_human(monkeypatch, tmp_path):
+    """El caso que motivó la HU: un comprobante de pago se persiste y su
+    `image_url` llega al historial para que el humano verifique el pago
+    MIRANDO la imagen, no solo leyendo la descripción."""
+    monkeypatch.setenv("IMAGE_VISION_PROVIDER", "fake")
+    monkeypatch.setattr(
+        "src.platform.media.store.WORKSPACE_VAULT_DIR", tmp_path, raising=True
+    )
+
+    async def _fake_fetch(media_id):  # noqa: ANN001
+        return (b"receipt-bytes", "image/jpeg")
+
+    monkeypatch.setattr(
+        "src.platform.audio.meta_media_fetcher.fetch_media_bytes",
+        _fake_fetch,
+        raising=True,
+    )
+
+    async def _fake_send(phone_number_id, to_number, text):  # noqa: ANN001
+        pass
+
+    monkeypatch.setattr(
+        "src.platform.whatsapp.client.send_message", _fake_send, raising=False
+    )
+
+    history = FakeHistoryStore()
+    loader = FakeLoadOrStart()
+    metadata = FakeMetadataStore(seed={"active_route": "ventas"})
+    use_case = _make_use_case(history, loader, metadata)
+
+    await use_case._describe_image_and_reenter(_make_image("receipt_1"))
+
+    # Imagen persistida — extensión del mime declarado por Meta (image/jpeg via
+    # `_make_image`). El mime del fetch es solo fallback si el webhook no lo
+    # trae; la cobertura de png/webp vive en test_media_store.py.
+    media_dir = tmp_path / "wa_5491111111111" / "media"
+    files = list(media_dir.iterdir())
+    assert [f.name for f in files] == ["receipt_1.jpg"]
+    # El evento del comprobante en el history lleva la URL para el humano.
+    assert (
+        history.image_urls[-1]
+        == "/api/dashboard/media/wa_5491111111111/receipt_1.jpg"
+    )
+    # Y la conversación quedó asignada a humano (verificación de pago).
+    assert metadata.store["wa_5491111111111"]["active_route"] == "humano"
+
+
+@pytest.mark.asyncio
+async def test_image_fetch_failure_does_not_break_reentry(monkeypatch, tmp_path):
+    """Si la descarga de la imagen falla, el flujo NO se rompe: el agente igual
+    recibe la descripción de texto, solo que sin `image_url` (degradado, no
+    roto)."""
+    monkeypatch.setenv("IMAGE_VISION_PROVIDER", "fake")
+    monkeypatch.setattr(
+        "src.platform.media.store.WORKSPACE_VAULT_DIR", tmp_path, raising=True
+    )
+
+    async def _fake_fetch(media_id):  # noqa: ANN001
+        return None  # Meta devolvió error / URL expirada
+
+    monkeypatch.setattr(
+        "src.platform.audio.meta_media_fetcher.fetch_media_bytes",
+        _fake_fetch,
+        raising=True,
+    )
+
+    history = FakeHistoryStore()
+    loader = FakeLoadOrStart()
+    metadata = FakeMetadataStore()
+    use_case = _make_use_case(history, loader, metadata)
+
+    await use_case._describe_image_and_reenter(_make_image("product_1"))
+
+    # Reentry ocurrió (agente recibió la descripción), pero sin image_url.
+    assert len(loader.calls) == 1
+    assert history.image_urls[-1] is None
+    assert not (tmp_path / "wa_5491111111111" / "media").exists()
 
 
 def test_parse_kind_and_description_robust():
