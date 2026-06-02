@@ -1,0 +1,490 @@
+{
+  "pipeline_id": "hu-hubara-plugin-pipeline",
+  "title": "Hubara Plugin Sub-Pipeline (per-plugin feature plan + sequential implement, detached-HEAD worktree)",
+  "purpose": "Sub-pipeline that runs inside ONE plugin's worktree. Given \"<HU_ID> <plugin_id>\", it does a detached-HEAD checkout of origin/hu/<HU_ID>, stages that plugin's slice of the orchestrator-committed plugin-manifest (plugin-work.yaml), runs the feature-planner skill (interactive, max 2 iter) to produce a feature-level DAG (feature-plan-manifest.yaml + tareas/F<NN>-*.md), validates it deterministically (shape, F-id format, task-file existence, cap of 12), commits+pushes the plan to HEAD:<BRANCH>, then loops the implementer skill SEQUENTIALLY (max 50 iter, fresh_context) where a large until_bash is the real controller: re-runs pytest + pytest -m architecture + lint-imports + render-compose drift + npm test/test:arch/tsc/build + Playwright (with a backgrounded FastAPI on a random free port) per task, commits+pushes each passed task to HEAD:<BRANCH>, handles det-retries (max 2) and transient retries (max 1), and on permanent failure writes pipeline-error.yaml and exits 0. Finally it computes the plugin's authoritative status with a strict completeness check (planned-vs-produced result files; passed_with_warnings counts as passing) and writes+commits+pushes plugin-<id>-result.yaml for the orchestrator to aggregate, then prints a summary box.",
+  "trigger": "archon workflow run hu-hubara-plugin-pipeline \"<HU_ID> <plugin_id>\" — EXACTLY 2 whitespace-separated tokens. $ARGUMENTS is split with awk '{print $1}' (HU_ID) and awk '{print $2}' (PLUGIN_ID). Example: \"HU-20260517-143025-add-image-tool chats\". Optional env override: MAX_FEATURES_PER_PLUGIN (default 12). worktree.enabled: true (runs in a dedicated worktree). interactive: false at file level, but the feature-planner loop carries a gate_message. Invoked (a) inline by hu-hubara-pipeline when mode=single_plugin, (b) manually fanned-out N times by the operator when mode=multi_plugin (one terminal per plugin), (c) standalone for plugin debug. It does NOT itself detect single vs multi — each invocation handles exactly one plugin_id.",
+  "node_count": 17,
+  "nodes": [
+    {
+      "id": "parse-input",
+      "type": "bash",
+      "summary": "Parse '<HU_ID> <plugin_id>' from $ARGUMENTS into a structured JSON object with all derived paths (always exit 0).",
+      "detail": "Splits $ARGUMENTS with awk into HU_ID ($1) and PLUGIN_ID ($2). Emits a jq error object {type:error,...} (exit 0) if either token is empty, if HU_ID fails grep -qE '^HU-[0-9]{8}-[0-9]{4,6}-', or if PLUGIN_ID fails grep -qE '^[a-z][a-z0-9_]*$'. On success emits a jq object {type:ok, hu_id, plugin_id, branch:('hu/'+h), plan_dir, plugin_manifest, feature_plan_dir, results_dir, plugin_result_file, feature_results_dir} — all computed paths under hubara_agency/.hubara/. ALWAYS exits 0 so routing is by output.type, not exit code.",
+      "depends_on": [],
+      "trigger_rule": "all_success",
+      "when": "",
+      "produces": "output.type in {ok,error}; on ok: hu_id, plugin_id, branch, plan_dir, plugin_manifest, feature_plan_dir, results_dir, plugin_result_file, feature_results_dir; on error: error (+ optional got)",
+      "invokes": "",
+      "loop": "",
+      "is_gate": true,
+      "is_cancel": false,
+      "notes": "Root node (no depends_on; START attaches here). The whole $parse-input.output JSON is the run-wide source of truth — nearly every downstream bash node re-derives HU_ID/PLUGIN_ID/BRANCH via `echo $parse-input.output | jq -r '.field'`. HU_ID regex (^HU-[0-9]{8}-[0-9]{4,6}-) is LOOSER than the main pipeline's (only a trailing hyphen, no slug-char class). exit 0 on all paths is deliberate."
+    },
+    {
+      "id": "cancel-bad-input",
+      "type": "manual",
+      "summary": "Cancel node: aborts the run when parse-input reported an input error.",
+      "detail": "Single-line cancel: message echoes $parse-input.output and prints the usage string (archon workflow run hu-hubara-plugin-pipeline '<HU_ID> <plugin_id>'). Fires only when parse-input emitted type:error (bad/missing tokens or failed regex). Terminates the workflow.",
+      "depends_on": [
+        "parse-input"
+      ],
+      "trigger_rule": "all_success",
+      "when": "$parse-input.output.type == 'error'",
+      "produces": "cancel (terminates run)",
+      "invokes": "",
+      "loop": "",
+      "is_gate": false,
+      "is_cancel": true,
+      "notes": "Default trigger_rule all_success: only fires if parse-input SUCCEEDED (exit 0) AND its when matches. parse-input always exits 0, so this is reliable. Mutually exclusive branch vs check-prereqs (which has when type=='ok')."
+    },
+    {
+      "id": "check-prereqs",
+      "type": "bash",
+      "summary": "Verify runtime prerequisites: gh auth, uv/npm/jq/python3 on PATH, required spinal/context files, the 3 hubara skills, and origin reachability.",
+      "detail": "`set -e` then a sequence of guarded checks, each `|| { echo FAIL_*; exit 0; }`: gh auth status (FAIL_GH_AUTH; stdout redirected >&2 2>&1), command -v uv/npm/jq/python3 (FAIL_NO_UV/NPM/JQ/PYTHON3), test -f hubara_agency/.hubara/spinal-files.yaml (FAIL_MISSING_SPINAL_FILES) and project-context.md (FAIL_MISSING_PROJECT_CONTEXT), test -f the SKILL.md of hubara-feature-planner-archon / hubara-implementer-archon / hubara-architecture-guide (FAIL_MISSING_FEATURE_PLANNER / FAIL_MISSING_IMPLEMENTER / FAIL_MISSING_GUIDE), git ls-remote origin HEAD (FAIL_NO_ORIGIN). Echoes 'OK' only if all pass. timeout 60000.",
+      "depends_on": [
+        "parse-input"
+      ],
+      "trigger_rule": "all_success",
+      "when": "$parse-input.output.type == 'ok'",
+      "produces": "output == 'OK' | FAIL_GH_AUTH | FAIL_NO_UV | FAIL_NO_NPM | FAIL_NO_JQ | FAIL_NO_PYTHON3 | FAIL_MISSING_SPINAL_FILES | FAIL_MISSING_PROJECT_CONTEXT | FAIL_MISSING_FEATURE_PLANNER | FAIL_MISSING_IMPLEMENTER | FAIL_MISSING_GUIDE | FAIL_NO_ORIGIN",
+      "invokes": "",
+      "loop": "",
+      "is_gate": true,
+      "is_cancel": false,
+      "notes": "Despite `set -e`, every check uses `|| { echo FAIL...; exit 0; }`, so it always exits 0 with a single-line status — routing is by output value. This sub-pipeline does NOT check gh project scope (no FAIL_GH_NO_PROJECT_SCOPE token here, unlike the main pipeline). gh auth status output redirected so stdout stays clean."
+    },
+    {
+      "id": "cancel-bad-prereqs",
+      "type": "manual",
+      "summary": "Cancel node: aborts when check-prereqs did not return exactly 'OK'.",
+      "detail": "Single-line cancel: message echoes $check-prereqs.output and points to the same diagnostics as hu-hubara-pipeline.cancel-bad-prereqs. Fires whenever the prereq check produced any FAIL_* token instead of OK.",
+      "depends_on": [
+        "check-prereqs"
+      ],
+      "trigger_rule": "all_success",
+      "when": "$check-prereqs.output != 'OK'",
+      "produces": "cancel (terminates run)",
+      "invokes": "",
+      "loop": "",
+      "is_gate": false,
+      "is_cancel": true,
+      "notes": "Default trigger_rule all_success. check-prereqs always exits 0, so all_success holds and the when decides. Silent-hole risk low because check-prereqs cannot crash (always exit 0)."
+    },
+    {
+      "id": "checkout-branch",
+      "type": "bash",
+      "summary": "Detached-HEAD checkout of origin/hu/<HU_ID>, then verify the orchestrator-persisted plugin-manifest and refinement files exist.",
+      "detail": "`set -e`. Reads BRANCH and HU_ID from $parse-input.output via jq. Runs `git fetch origin --prune`. If `git ls-remote --exit-code --heads origin $BRANCH` fails → echoes FAIL_BRANCH_NOT_FOUND and exit 1. Else `git checkout --detach origin/$BRANCH` (stderr tee'd via tail -3 >&2). Then checks PLAN=hubara_agency/.hubara/plans/$HU_ID/plugin-manifest.yaml exists (else FAIL_NO_PLUGIN_MANIFEST, exit 1) and REFINEMENT=hubara_agency/.hubara/refinements/$HU_ID-tech.md exists (else FAIL_NO_REFINEMENT, exit 1). Echoes BRANCH_READY on full success.",
+      "depends_on": [
+        "check-prereqs"
+      ],
+      "trigger_rule": "all_success",
+      "when": "$check-prereqs.output == 'OK'",
+      "produces": "output == 'BRANCH_READY' (exit 0) | FAIL_BRANCH_NOT_FOUND (exit 1) | FAIL_NO_PLUGIN_MANIFEST (exit 1) | FAIL_NO_REFINEMENT (exit 1)",
+      "invokes": "",
+      "loop": "",
+      "is_gate": true,
+      "is_cancel": false,
+      "notes": "Architectural fix (run 52fa70e0, 2026-05-27): detached HEAD (`git checkout --detach origin/$BRANCH`) instead of `git checkout $BRANCH`, so N concurrent sub-pipeline worktrees can target the same hu/<HU_ID> without git's 'already checked out' refusal. Consequently EVERY push in the file uses `git push origin HEAD:$BRANCH`. Unlike parse-input/check-prereqs, the FAIL_* paths here exit 1 (NON-ZERO) — so the cancel that follows MUST use trigger_rule all_done. The BRANCH_READY value is reused as a cross-node guard by validate-feature-plan and cancel-bad-feature-plan."
+    },
+    {
+      "id": "cancel-bad-checkout",
+      "type": "manual",
+      "summary": "Cancel node: aborts when checkout-branch did not reach BRANCH_READY (with worktree-cleanup guidance).",
+      "detail": "Multi-line cancel: echoes $checkout-branch.output, explains the most frequent cause (branch already checked out in another worktree — suggests `git worktree list` and `git worktree remove --force <path>`), plus decode of FAIL_BRANCH_NOT_FOUND (run hu-hubara-pipeline first), FAIL_NO_PLUGIN_MANIFEST (orchestrator didn't finish FASE 2), FAIL_NO_REFINEMENT (didn't finish FASE 1).",
+      "depends_on": [
+        "checkout-branch"
+      ],
+      "trigger_rule": "all_done",
+      "when": "$checkout-branch.output != 'BRANCH_READY'",
+      "produces": "cancel (terminates run)",
+      "invokes": "",
+      "loop": "",
+      "is_gate": false,
+      "is_cancel": true,
+      "notes": "CRITICAL (YAML comment L181-185): trigger_rule MUST be all_done (NOT default all_success) because checkout-branch FAIL paths exit 1. With default all_success this cancel would be SKIPPED on a non-zero exit and the real error would be masked by the misleading cancel-bad-feature-plan FAIL_NOT_EXISTS (cascading-skip). Lesson from run 52fa70e0."
+    },
+    {
+      "id": "stage-plugin-context",
+      "type": "bash",
+      "summary": "Copy shared context files into $ARTIFACTS_DIR and extract this plugin's slice (plugin-work.yaml) from the plugin-manifest.",
+      "detail": "`set -e`. Reads HU_ID, PLUGIN_ID via jq. Copies spinal-files.yaml, project-context.md, plans/$HU_ID/plugin-manifest.yaml (→ plugin-manifest.yaml), and refinements/$HU_ID-tech.md (→ hu-refinada.md) into $ARTIFACTS_DIR. Then runs a python3 heredoc that loads plugin-manifest.yaml, finds plugins[] entry with id==PLUGIN_ID; if not found raises SystemExit('FAIL_PLUGIN_NOT_IN_MANIFEST...') listing declared ids. If found, builds a `work` dict (hu_id, plugin_id, work_summary, layers, template default 'A', affects_layers_detail, affects_shared_files, estimated_tasks default 1, risk default 'low', depends_on_plugins) and yaml.safe_dumps it to $ARTIFACTS_DIR/plugin-work.yaml, then prints OK.",
+      "depends_on": [
+        "checkout-branch"
+      ],
+      "trigger_rule": "all_success",
+      "when": "",
+      "produces": "output: OK (stdout) | crashes (set -e + python SystemExit) on FAIL_PLUGIN_NOT_IN_MANIFEST; side-effect: $ARTIFACTS_DIR/{spinal-files.yaml, project-context.md, plugin-manifest.yaml, hu-refinada.md, plugin-work.yaml}",
+      "invokes": "",
+      "loop": "",
+      "is_gate": false,
+      "is_cancel": false,
+      "notes": "No `when` clause + default trigger_rule all_success: runs only if checkout-branch SUCCEEDED (exit 0 = BRANCH_READY), so the checkout-failure cascade naturally skips it. SILENT-HOLE RISK (confirmed): FAIL_PLUGIN_NOT_IN_MANIFEST raises SystemExit (non-zero) under `set -e`, but there is NO dedicated cancel node guarding stage-plugin-context. A crash here surfaces only as cascading skips / all_done re-evaluation downstream, not as a clear cancel message."
+    },
+    {
+      "id": "detect-resume-feature-plan",
+      "type": "bash",
+      "summary": "Smart-resume probe: if a committed feature-plan-manifest already exists for this plugin, copy it (+ tareas) into $ARTIFACTS_DIR and signal resume.",
+      "detail": "Reads HU_ID, PLUGIN_ID via jq. Checks F=hubara_agency/.hubara/plans/$HU_ID/feature-plans/$PLUGIN_ID/feature-plan-manifest.yaml. If it exists: copies it to $ARTIFACTS_DIR/feature-plan-manifest.yaml, and if the sibling tareas/ dir exists, mkdir $ARTIFACTS_DIR/tareas and `cp $TAREAS_DIR/F*.md` into it (errors ignored with || true), then echoes RESUMED_FEATURE_PLAN. Otherwise echoes NO_RESUME.",
+      "depends_on": [
+        "stage-plugin-context"
+      ],
+      "trigger_rule": "all_success",
+      "when": "",
+      "produces": "output == 'RESUMED_FEATURE_PLAN' | 'NO_RESUME'",
+      "invokes": "",
+      "loop": "",
+      "is_gate": true,
+      "is_cancel": false,
+      "notes": "Gate that routes the planner: planificar-feature-auto runs only when output != RESUMED_FEATURE_PLAN. Default all_success → depends on stage-plugin-context succeeding. Its output is consumed by planificar-feature-auto (when) AND it is also a dep of validate-feature-plan (so validate runs via all_done on both the auto path and the smart-resume path)."
+    },
+    {
+      "id": "planificar-feature-auto",
+      "type": "skills",
+      "summary": "Feature-planner loop: invoke hubara-feature-planner-archon (max 2 iter) to decompose the plugin's work into a feature-level DAG, with operator gate feedback.",
+      "detail": "skills node carrying a loop {max_iterations:2, until:FEATURE_PLANNER_OK, skills:[hubara-feature-planner-archon], gate_message, prompt}. Prompt: decompose plugin '$parse-input.output.plugin_id' into a feature-level DAG, reading $ARTIFACTS_DIR/{plugin-work.yaml, plugin-manifest.yaml, hu-refinada.md, spinal-files.yaml, project-context.md} and writing $ARTIFACTS_DIR/feature-plan-manifest.yaml + tareas/F<NN>-<slug>.md (one per task), loading only guide sections matching the plugin template (A/B/C/D from plugin-work.yaml). Feedback via $LOOP_USER_INPUT. Completion signal <promise>FEATURE_PLANNER_OK</promise>. gate_message asks operator to review manifest + task files and say 'ok'/'aprobado' or request adjustments. node-level idle_timeout 600000.",
+      "depends_on": [
+        "detect-resume-feature-plan"
+      ],
+      "trigger_rule": "all_success",
+      "when": "$detect-resume-feature-plan.output != 'RESUMED_FEATURE_PLAN'",
+      "produces": "side-effect: $ARTIFACTS_DIR/feature-plan-manifest.yaml + $ARTIFACTS_DIR/tareas/F*.md; completion signal <promise>FEATURE_PLANNER_OK</promise>",
+      "invokes": "hubara-feature-planner-archon",
+      "loop": "max_iterations:2, until:FEATURE_PLANNER_OK",
+      "is_gate": false,
+      "is_cancel": false,
+      "notes": "Interactive loop (gate_message + max_iterations:2) — uses skills+loop rather than command: because operator feedback iteration is needed. SKIPPED entirely on smart-resume (when guard). Writes only to $ARTIFACTS_DIR (ephemeral); the durable commit happens later in commit-feature-plan. idle_timeout 600000ms is the interactive idle gate."
+    },
+    {
+      "id": "validate-feature-plan",
+      "type": "bash",
+      "summary": "Deterministic validation of the feature-plan-manifest: existence, dict shape, blocked-mode, task-count cap, F<NN> ids, and a matching task file per task.",
+      "detail": "Guarded by `when` checkout==BRANCH_READY. Checks $ARTIFACTS_DIR/feature-plan-manifest.yaml exists (else FAIL_NOT_EXISTS, exit 0). Exports MAX_FEATURES_PER_PLUGIN (default 12). python3 heredoc: loads yaml; if not a dict → FAIL_NOT_DICT; if mode=='blocked' → PASS_BLOCKED; if tasks not a non-empty list → FAIL_NO_TASKS; if len(tasks) > MAX → FAIL_TOO_MANY_TASKS: <n> > cap=<MAX>...; per task: missing id → FAIL_TASK_NO_ID, id not F+digits → FAIL_BAD_TASK_ID: <id>, no file in $ARTIFACTS_DIR/tareas starting with '<id>-' → FAIL_MISSING_TASK_FILE_<id>; else PASS. All paths exit 0.",
+      "depends_on": [
+        "planificar-feature-auto",
+        "detect-resume-feature-plan"
+      ],
+      "trigger_rule": "all_done",
+      "when": "$checkout-branch.output == 'BRANCH_READY'",
+      "produces": "output: PASS | PASS_BLOCKED | FAIL_NOT_EXISTS | FAIL_NOT_DICT | FAIL_NO_TASKS | FAIL_TOO_MANY_TASKS:... | FAIL_TASK_NO_ID | FAIL_BAD_TASK_ID:... | FAIL_MISSING_TASK_FILE_<id>",
+      "invokes": "",
+      "loop": "",
+      "is_gate": true,
+      "is_cancel": false,
+      "notes": "CONVERGENCE/FAN-IN node: two deps (planificar-feature-auto, detect-resume-feature-plan) with trigger_rule all_done, so it runs whether the planner ran (auto path) OR was skipped (smart-resume path, where detect-resume staged the manifest). The `when` guard (checkout==BRANCH_READY) is the documented fix (run 52fa70e0): without it, on a checkout failure this node would run via all_done and emit the misleading FAIL_NOT_EXISTS instead of letting cancel-bad-checkout surface the real error. AMBIGUITY: emits both 'PASS' and 'PASS_BLOCKED', but every downstream consumer keys on =='PASS' (commit/implement) or !='PASS' (cancel) — so a legitimately blocked plan (mode:blocked → PASS_BLOCKED) routes to cancel-bad-feature-plan (treated as a validation failure), with no distinct blocked-handler."
+    },
+    {
+      "id": "cancel-bad-feature-plan",
+      "type": "manual",
+      "summary": "Cancel node: aborts when the feature plan failed validation AND checkout had succeeded, with FAIL-code decode + recovery options.",
+      "detail": "Multi-line cancel: echoes $validate-feature-plan.output and the plugin id, then decodes FAIL_TOO_MANY_TASKS (split HU or bump MAX_FEATURES_PER_PLUGIN), FAIL_MISSING_TASK_FILE_F<NN> (re-run planner), FAIL_BAD_TASK_ID, plus generic recovery (edit plugin-manifest work_summary and re-run, or hand-edit feature-plan + tareas and re-run via smart-resume). Fires only when checkout reached BRANCH_READY AND validation != PASS.",
+      "depends_on": [
+        "validate-feature-plan"
+      ],
+      "trigger_rule": "all_success",
+      "when": "$checkout-branch.output == 'BRANCH_READY' && $validate-feature-plan.output != 'PASS'",
+      "produces": "cancel (terminates run)",
+      "invokes": "",
+      "loop": "",
+      "is_gate": false,
+      "is_cancel": true,
+      "notes": "Compound when (YAML comment L369-374): the extra `checkout==BRANCH_READY` guard prevents a confusing fire when checkout failed → validate skipped → its output '' which is != 'PASS'. Archon has NO regex, so `!= 'PASS'` substitutes for the original PASS-only regex. CAVEAT: because the guard is `!= 'PASS'`, a legitimate PASS_BLOCKED also trips this cancel — no separate blocked path. Default trigger_rule all_success: validate-feature-plan always exits 0, so this holds."
+    },
+    {
+      "id": "commit-feature-plan",
+      "type": "bash",
+      "summary": "Persist the validated feature plan into the repo (plans/.../feature-plans/<plugin>/) and commit+push HEAD:<BRANCH>.",
+      "detail": "`set -e`. Reads HU_ID, PLUGIN_ID, BRANCH via jq. DIR=hubara_agency/.hubara/plans/$HU_ID/feature-plans/$PLUGIN_ID; mkdir DIR/tareas; copies $ARTIFACTS_DIR/feature-plan-manifest.yaml and tareas/F*.md into it. N=files in DIR/tareas. `git add DIR` (>&2). If staged diff non-empty: `git commit -m '<HU_ID> [<PLUGIN_ID>]: feature plan (auto, <N> tareas)'` (>&2), then `git push origin HEAD:$BRANCH` (tail -3 >&2). If PIPESTATUS[0] != 0 → `git pull --rebase origin $BRANCH` then retry push; if it fails twice, warns 'commit local, no en origin'. Echoes committed_<N>. Else echoes no_changes.",
+      "depends_on": [
+        "validate-feature-plan"
+      ],
+      "trigger_rule": "all_success",
+      "when": "$validate-feature-plan.output == 'PASS'",
+      "produces": "output: committed_<N> | no_changes; side-effect: commit + push HEAD:$BRANCH of the feature plan",
+      "invokes": "",
+      "loop": "",
+      "is_gate": false,
+      "is_cancel": false,
+      "notes": "STDOUT-POLLUTION DISCIPLINE: all git output (add/commit/push) redirected to >&2 so stdout is single-line (committed_<N> | no_changes), per repo gotcha #8. Push uses HEAD:$BRANCH because checkout-branch left detached HEAD. Concurrency with parallel sub-pipelines handled via pull --rebase + single retry. `when ==PASS` excludes PASS_BLOCKED (a blocked plan never commits — it's already cancelled by cancel-bad-feature-plan)."
+    },
+    {
+      "id": "prewarm-uv-venv",
+      "type": "bash",
+      "summary": "Pre-warm the uv virtualenv (cd hubara_agency && uv sync) before the implementer loop, to avoid cold-sync stalls in the gates.",
+      "detail": "If a hubara_agency dir exists, cd into it and run `uv sync` (tail -10; on warnings echoes 'uv sync warnings — gate retry'). Always echoes 'ok' at the end. timeout 600000 (10 min) to tolerate a cold full sync.",
+      "depends_on": [
+        "commit-feature-plan"
+      ],
+      "trigger_rule": "all_done",
+      "when": "",
+      "produces": "output: ok (always)",
+      "invokes": "",
+      "loop": "",
+      "is_gate": false,
+      "is_cancel": false,
+      "notes": "trigger_rule all_done so it runs even if commit-feature-plan emitted no_changes or had warnings (no `when`, doesn't gate on a value). Best-effort warm-up — never fails the run (always echoes ok). Mirrors hu-frontend-pipeline's prewarm. One of the two deps of implementar-secuencial."
+    },
+    {
+      "id": "implementar-secuencial",
+      "type": "skills",
+      "summary": "Sequential implementer loop: hubara-implementer-archon writes code per task; a large until_bash runs deterministic gates, commits/pushes, handles retries, and decides loop termination via exit code.",
+      "detail": "skills node with loop {max_iterations:50, until:NEVER_AI_SIGNAL, fresh_context:true, skills:[hubara-implementer-archon], until_bash, prompt}; node-level idle_timeout 1800000. The AI prompt restricts the implementer to ONLY writing code for the next pending task (iterate parallel_batches[] then tasks[] by ascending F-id; first task whose F<id>-result.yaml is missing/not status:passed in RESULTS_DIR), reading task.md + selective guide sections, running §10 verification, writing $ARTIFACTS_DIR/task-result.yaml with status + wiring_intents — NO git ops; if $ARTIFACTS_DIR/test-failures.md exists (gate feedback) it must fix the SAME task. The until_bash is the real controller: cleans stale result.yaml without a matching commit; if task-result.yaml status is passed|passed_with_warnings it RE-RUNS deterministic gates by FILES_TOUCHED (backend: pytest -q, pytest -m architecture, lint-imports; render-compose drift if a *plugin.yaml manifest touched; frontend: npm test --run, npm run test:arch, npx tsc -b, npm run build; Playwright E2E with a backgrounded FastAPI on a random free port if UI touched), logging to test-failures.md. On gate failure → det-retry up to MAX_DET_RETRIES=2 (rm task-result.yaml+task.md, exit 1 to re-loop); on exhaustion → rewrites status→blocked, reverts src/, SHOULD_COMMIT_BROKEN_CODE=0. On gate success → copies result.yaml to RESULTS_DIR, git add src/k8s/compose/.hubara/plugins + result, resets node_modules/dist/.vite/coverage/lock/.venv, commits '<HU_ID> [<PLUGIN_ID>] <TASK_ID>: status=<STATUS> (auto)' and pushes HEAD:$BRANCH (pull --rebase + retry). For non-passed status it classifies transient (blocked_reason in {command_timeout,regression}) → 1 auto-retry, else writes pipeline-error.yaml and exit 0. Finally TOTAL=grep -cE '^  - id: F[0-9]+' feature-plan-manifest vs PASSED=find F*-result.yaml with '^status: passed'; exit 0 when PASSED>=TOTAL>0, else exit 1 to continue.",
+      "depends_on": [
+        "commit-feature-plan",
+        "prewarm-uv-venv"
+      ],
+      "trigger_rule": "all_done",
+      "when": "$validate-feature-plan.output == 'PASS'",
+      "produces": "side-effects: per-task commits+pushes to HEAD:$BRANCH; $ARTIFACTS_DIR/{task-result.yaml(transient), test-failures.md, det-retries-<TASK>.count, retries-<TASK>.count, playwright-evidence-<TASK>.log, .uvicorn-<TASK>.log}; RESULTS_DIR/F<NN>-result.yaml (durable); on permanent failure $ARTIFACTS_DIR/pipeline-error.yaml. Loop exits 0 when all tasks passed OR a permanent failure occurred.",
+      "invokes": "hubara-implementer-archon",
+      "loop": "max_iterations:50, until:NEVER_AI_SIGNAL (until_bash exit code controls termination)",
+      "is_gate": false,
+      "is_cancel": false,
+      "notes": "CONVERGENCE/FAN-IN node: two deps (commit-feature-plan, prewarm-uv-venv); trigger_rule all_done lets it run even though prewarm is best-effort. until:NEVER_AI_SIGNAL is a sentinel the AI never emits — the loop is driven ENTIRELY by until_bash exit codes (0=stop, 1=continue), capped at max_iterations:50. fresh_context:true wipes AI context each iteration; cross-iteration state lives ONLY in files. `when ==PASS` excludes PASS_BLOCKED. CRITICAL silent-hole nuance: a PERMANENT task failure exits 0 (NOT a crash), writing pipeline-error.yaml — so the loop 'completes successfully' and the failed verdict is recomputed downstream by write-plugin-result, NOT by an in-pipeline cancel. The det gate re-runs even on passed_with_warnings (SKILL.md L1164) because the AI can lie/silence. Playwright path traps EXIT to kill uvicorn; 180s liveness probe. All pushes use HEAD:$BRANCH (detached HEAD)."
+    },
+    {
+      "id": "check-pipeline-error",
+      "type": "bash",
+      "summary": "Detect whether the implementer loop left a permanent-failure marker (pipeline-error.yaml).",
+      "detail": "If $ARTIFACTS_DIR/pipeline-error.yaml exists, cats it to >&2 and echoes HAS_ERROR; otherwise echoes OK. Runs with trigger_rule all_done so it executes regardless of how implementar-secuencial finished.",
+      "depends_on": [
+        "implementar-secuencial"
+      ],
+      "trigger_rule": "all_done",
+      "when": "",
+      "produces": "output == 'HAS_ERROR' | 'OK'",
+      "invokes": "",
+      "loop": "",
+      "is_gate": true,
+      "is_cancel": false,
+      "notes": "SILENT-HOLE / DESIGN FLAG (confirmed): emits HAS_ERROR but NOTHING downstream gates on it — write-plugin-result depends on it with trigger_rule all_done and NO `when`, so HAS_ERROR does NOT cancel the run. The permanent-failure signal is effectively informational; the actual 'failed' verdict is recomputed independently by write-plugin-result via missing-tasks / non-passed result.yaml scanning. A pipeline-error.yaml alone (with all result files somehow present-and-passed) would not by itself force failed status."
+    },
+    {
+      "id": "write-plugin-result",
+      "type": "bash",
+      "summary": "Compute the plugin's overall status (with a strict completeness check) and write+commit+push plugin-<id>-result.yaml.",
+      "detail": "`set -e`. Reads HU_ID, PLUGIN_ID, BRANCH via jq. COMPLETENESS: parses feature-plan-manifest (grep -oE '^  - id: F[0-9]+') to get PLANNED ids; for each, if FEATURE_RDIR/<tid>-result.yaml is missing, adds to MISSING_TASKS. STATUS AGGREGATION: scans FEATURE_RDIR/F*-result.yaml; 'passed' → PASSED++, 'passed_with_warnings' → PASSED++ & WARNED++ & WARNED_TASKS, anything else → ALL_PASSED=false & FAILED_TASKS. Plugin status: if MISSING_TASKS non-empty → failed (NEVER passed); elif ALL_PASSED and TOTAL>0 → passed_with_warnings if WARNED>0 else passed; else failed. Writes PLUGIN_RFILE (results/<HU_ID>/plugin-<PLUGIN_ID>-result.yaml) with version, hu_id, plugin_id, pipeline, date, status, feature_tasks_planned/total/passed/with_warnings, and missing_tasks/failed_tasks/warned_tasks lists. git add results/, and if staged diff non-empty commit '<HU_ID> [<PLUGIN_ID>]: plugin result.yaml' + push HEAD:$BRANCH (pull --rebase + retry fallback). Echoes plugin_result_committed status=<...> tasks=<PASSED>/<TOTAL> warnings=<WARNED>.",
+      "depends_on": [
+        "check-pipeline-error"
+      ],
+      "trigger_rule": "all_done",
+      "when": "",
+      "produces": "output: plugin_result_committed status=<PLUGIN_STATUS> tasks=<P>/<T> warnings=<W>; side-effect: results/<HU_ID>/plugin-<plugin_id>-result.yaml committed+pushed; PLUGIN_STATUS in {passed, passed_with_warnings, failed}",
+      "invokes": "",
+      "loop": "",
+      "is_gate": false,
+      "is_cancel": false,
+      "notes": "trigger_rule all_done + NO `when` → ALWAYS runs; this is the report-back step the orchestrator reads, and the CANONICAL source of the plugin's verdict (independent of check-pipeline-error's HAS_ERROR). Two CRITICAL fixes encoded: (1) completeness check (run b9b95fc5, 2026-05-29) — counts PLANNED vs result files so a loop that completed only F01 of F01/F02/F03 reports failed with explicit missing_tasks, not passed; (2) passed_with_warnings counts as passing (run 25512e9, 2026-05-27) so the orchestrator's rama-B-merge-batch is not wrongly cancelled."
+    },
+    {
+      "id": "print-summary",
+      "type": "bash",
+      "summary": "Print a human-readable box summarizing HU id, plugin, final status, branch, and operator next-steps.",
+      "detail": "Reads HU_ID, PLUGIN_ID via jq. Reads RESULT_STATUS from grep '^status:' of plugin-<id>-result.yaml (default 'unknown' if file missing). Cats an ASCII box with HU id, plugin, status, branch hu/<HU_ID>, and conditional guidance: if Status=passed the orchestrator collects the result, advances to FASE 4, and invokes the merger if shared files were touched (operator returns to orchestrator terminal and says 'ready'); if Status=failed it points to the feature-results dir and lists options (re-launch sub-pipeline for smart-resume, hand-edit the plan, or abandon the plugin). timeout 5000.",
+      "depends_on": [
+        "write-plugin-result"
+      ],
+      "trigger_rule": "all_success",
+      "when": "",
+      "produces": "output: human-readable summary box (RESULT_STATUS read from plugin-result.yaml)",
+      "invokes": "",
+      "loop": "",
+      "is_gate": false,
+      "is_cancel": false,
+      "notes": "Terminal node (nothing depends on it; END attaches here). Default trigger_rule all_success → only prints if write-plugin-result succeeded (it has set -e but always reaches an echo, so normally exits 0). Purely informational; no push/mutate. Short timeout (5000ms)."
+    }
+  ],
+  "edges": [
+    {
+      "from": "START",
+      "to": "parse-input",
+      "kind": "sequence",
+      "condition": ""
+    },
+    {
+      "from": "parse-input",
+      "to": "cancel-bad-input",
+      "kind": "cancel",
+      "condition": "$parse-input.output.type == 'error'"
+    },
+    {
+      "from": "parse-input",
+      "to": "check-prereqs",
+      "kind": "gate",
+      "condition": "$parse-input.output.type == 'ok'"
+    },
+    {
+      "from": "check-prereqs",
+      "to": "cancel-bad-prereqs",
+      "kind": "cancel",
+      "condition": "$check-prereqs.output != 'OK'"
+    },
+    {
+      "from": "check-prereqs",
+      "to": "checkout-branch",
+      "kind": "gate",
+      "condition": "$check-prereqs.output == 'OK'"
+    },
+    {
+      "from": "checkout-branch",
+      "to": "cancel-bad-checkout",
+      "kind": "cancel",
+      "condition": "$checkout-branch.output != 'BRANCH_READY'"
+    },
+    {
+      "from": "checkout-branch",
+      "to": "stage-plugin-context",
+      "kind": "sequence",
+      "condition": ""
+    },
+    {
+      "from": "stage-plugin-context",
+      "to": "detect-resume-feature-plan",
+      "kind": "sequence",
+      "condition": ""
+    },
+    {
+      "from": "detect-resume-feature-plan",
+      "to": "planificar-feature-auto",
+      "kind": "gate",
+      "condition": "$detect-resume-feature-plan.output != 'RESUMED_FEATURE_PLAN'"
+    },
+    {
+      "from": "planificar-feature-auto",
+      "to": "validate-feature-plan",
+      "kind": "fan-in",
+      "condition": "$checkout-branch.output == 'BRANCH_READY'"
+    },
+    {
+      "from": "detect-resume-feature-plan",
+      "to": "validate-feature-plan",
+      "kind": "fan-in",
+      "condition": "$checkout-branch.output == 'BRANCH_READY'"
+    },
+    {
+      "from": "validate-feature-plan",
+      "to": "cancel-bad-feature-plan",
+      "kind": "cancel",
+      "condition": "$checkout-branch.output == 'BRANCH_READY' && $validate-feature-plan.output != 'PASS'"
+    },
+    {
+      "from": "validate-feature-plan",
+      "to": "commit-feature-plan",
+      "kind": "gate",
+      "condition": "$validate-feature-plan.output == 'PASS'"
+    },
+    {
+      "from": "commit-feature-plan",
+      "to": "prewarm-uv-venv",
+      "kind": "sequence",
+      "condition": ""
+    },
+    {
+      "from": "commit-feature-plan",
+      "to": "implementar-secuencial",
+      "kind": "fan-in",
+      "condition": "$validate-feature-plan.output == 'PASS'"
+    },
+    {
+      "from": "prewarm-uv-venv",
+      "to": "implementar-secuencial",
+      "kind": "fan-in",
+      "condition": "$validate-feature-plan.output == 'PASS'"
+    },
+    {
+      "from": "implementar-secuencial",
+      "to": "check-pipeline-error",
+      "kind": "sequence",
+      "condition": ""
+    },
+    {
+      "from": "check-pipeline-error",
+      "to": "write-plugin-result",
+      "kind": "sequence",
+      "condition": ""
+    },
+    {
+      "from": "write-plugin-result",
+      "to": "print-summary",
+      "kind": "sequence",
+      "condition": ""
+    },
+    {
+      "from": "print-summary",
+      "to": "END",
+      "kind": "sequence",
+      "condition": ""
+    }
+  ],
+  "phases": [
+    {
+      "name": "FASE 0 — Bootstrap & input validation",
+      "nodes": [
+        "parse-input",
+        "cancel-bad-input",
+        "check-prereqs",
+        "cancel-bad-prereqs",
+        "checkout-branch",
+        "cancel-bad-checkout",
+        "stage-plugin-context",
+        "detect-resume-feature-plan"
+      ],
+      "description": "Parse and validate the '<HU_ID> <plugin_id>' input, verify runtime prerequisites and required files/skills, detached-HEAD-checkout origin/hu/<HU_ID>, verify the orchestrator-persisted plugin-manifest + refinement, stage shared context and extract the per-plugin plugin-work.yaml, and probe for a resumable feature plan. Three cancel nodes (input, prereqs, checkout) guard this phase; cancel-bad-checkout uses all_done to survive checkout's non-zero exits. stage-plugin-context can crash (FAIL_PLUGIN_NOT_IN_MANIFEST) with NO dedicated cancel."
+    },
+    {
+      "name": "FASE 1 — Feature-level plan (within the plugin)",
+      "nodes": [
+        "planificar-feature-auto",
+        "validate-feature-plan",
+        "cancel-bad-feature-plan",
+        "commit-feature-plan",
+        "prewarm-uv-venv"
+      ],
+      "description": "Run the hubara-feature-planner-archon skill (interactive, max 2 iter, gate_message) to decompose the plugin's work into feature-plan-manifest.yaml + tareas/F<NN>-*.md, unless smart-resume already staged them. Deterministically validate the plan (shape, blocked-mode, task cap 12, F-ids, task files) — validate is a fan-in of planner+detect-resume with all_done. Cancel on failure (PASS_BLOCKED also trips the cancel), commit+push the plan to HEAD:<BRANCH>, and pre-warm the uv venv for the implement phase."
+    },
+    {
+      "name": "FASE 2 — Sequential implement (per-task gated loop)",
+      "nodes": [
+        "implementar-secuencial"
+      ],
+      "description": "Loop the hubara-implementer-archon skill (max 50 iter, fresh_context, fan-in of commit-feature-plan+prewarm) over each pending task. The implementer only writes code; a large until_bash re-runs all deterministic gates (pytest, arch, lint-imports, render-compose drift, npm/tsc/build, Playwright with a backgrounded FastAPI on a random free port), handles det-retries (max 2) and transient retries (max 1), commits+pushes each passed task to HEAD:<BRANCH>, and terminates via exit code when all tasks pass OR a permanent failure is recorded (pipeline-error.yaml, exit 0)."
+    },
+    {
+      "name": "FASE 3 — Report back to orchestrator",
+      "nodes": [
+        "check-pipeline-error",
+        "write-plugin-result",
+        "print-summary"
+      ],
+      "description": "Detect any permanent-failure marker (informational only — nothing gates on HAS_ERROR), then compute the plugin's authoritative status with a strict completeness check (planned vs produced result files; passed_with_warnings counts as passing), write+commit+push plugin-<id>-result.yaml to HEAD:<BRANCH>, and print a human-readable summary box with operator next-steps. write-plugin-result always runs (all_done, no when) so the orchestrator always gets a result."
+    }
+  ],
+  "global_logic": "MODE / ROLE: This is the SUB-pipeline, invoked once per plugin. It does NOT itself detect single vs multi_plugin — that classification lives upstream in hu-hubara-tech-refiner / the orchestrator (hu-hubara-pipeline). The orchestrator either invokes this inline once (single_plugin) or has the operator fan it out N times (multi_plugin), each invocation handling exactly ONE plugin_id. Input contract is strictly 2 whitespace tokens: HU_ID (awk $1) + plugin_id (awk $2); a 1-token input (the main-pipeline shape) would leave plugin_id empty → cancel-bad-input. File-level: provider claude, model sonnet, interactive:false, worktree.enabled:true.\n\nKEY ENV / VARS: $ARGUMENTS (raw input). $parse-input.output is the run-wide source of truth — a JSON object carrying hu_id, plugin_id, branch=hu/<HU_ID>, and all derived hubara_agency/.hubara/ paths; almost every bash node re-derives HU_ID/PLUGIN_ID/BRANCH from it via jq. $ARTIFACTS_DIR is the ephemeral per-run workspace (skills read/write canonical filenames here; also a real env var in bash nodes). $WORKFLOW_ID is not referenced in this file. Tunable: MAX_FEATURES_PER_PLUGIN (default 12) caps feature tasks per plugin. fresh_context:true on the implement loop means NO context carries across iterations — all cross-iteration state is on disk (task-result.yaml, det-retries-<TASK>.count, retries-<TASK>.count, test-failures.md, RESULTS_DIR/*-result.yaml, pipeline-error.yaml).\n\nBRANCH STRATEGY (the load-bearing invariant): checkout-branch does `git checkout --detach origin/$BRANCH` (DETACHED HEAD, never claims the branch) precisely so N concurrent sub-pipeline worktrees can all target the same hu/<HU_ID>. Consequently EVERY push in the file is `git push origin HEAD:$BRANCH` (never `git push origin $BRANCH`). Inter-pipeline push concurrency is resolved by `git pull --rebase origin $BRANCH` + a single retry, with a 'commit local, no en origin' warning if it fails twice. The branch must already exist on origin (created by the orchestrator); else FAIL_BRANCH_NOT_FOUND. Smart-resume: re-launching with an existing HU_ID+plugin skips FASE 1 when feature-plan-manifest is already committed (detect-resume) and skips already-passed tasks (the implement loop scans RESULTS_DIR).\n\nRUN-WIDE INVARIANTS / DISCIPLINE: (1) status-on-stdout-single-line — every gate/bash node sends git and diagnostic output to >&2 and reserves stdout for a single canonical token, because Archon's condition evaluator does strict equality (repo gotcha #8). (2) all_done on the cancel/report nodes that follow steps which can exit non-zero (cancel-bad-checkout, validate-feature-plan, prewarm-uv-venv, implementar-secuencial, check-pipeline-error, write-plugin-result — exactly 6 nodes carry trigger_rule:all_done; the other 11 use the default all_success) — the default all_success would skip them on a crash and hide the real error (repo gotcha #9, run 52fa70e0). (3) The deterministic gate in until_bash NEVER trusts the AI's reported status — it re-runs the real gates even on passed/passed_with_warnings, and only commits code that passes; on gate-failure exhaustion it reverts src/ and marks blocked. (4) No silent 'passed' on incomplete work — write-plugin-result reports failed if any planned task lacks a result file. (5) passed_with_warnings is a first-class passing status everywhere (gate, retry decision, aggregation) per implementer SKILL.md L1164. RISK: check-pipeline-error emits HAS_ERROR but no node gates on it; the failed verdict is recomputed by write-plugin-result, and a permanent-failure (pipeline-error.yaml) exits the implement loop with 0 rather than crashing — so failure surfaces via the plugin-result.yaml status, never via a cancel node inside this sub-pipeline.",
+  "inputs": [
+    "$ARGUMENTS = \"<HU_ID> <plugin_id>\" (exactly 2 whitespace tokens; e.g. \"HU-20260517-143025-add-image-tool chats\")",
+    "HU_ID must match ^HU-[0-9]{8}-[0-9]{4,6}- (validated in parse-input; looser than main pipeline)",
+    "plugin_id must match ^[a-z][a-z0-9_]*$ (validated in parse-input)",
+    "Pre-existing origin branch hu/<HU_ID> (created by hu-hubara-pipeline)",
+    "Pre-committed hubara_agency/.hubara/plans/<HU_ID>/plugin-manifest.yaml (orchestrator FASE 2)",
+    "Pre-committed hubara_agency/.hubara/refinements/<HU_ID>-tech.md (orchestrator FASE 1)",
+    "Pre-committed hubara_agency/.hubara/spinal-files.yaml and project-context.md",
+    "Skills present: hubara-feature-planner-archon, hubara-implementer-archon, hubara-architecture-guide",
+    "Tooling on PATH: gh (authenticated), uv, npm, jq, python3 (curl/npx used inside gates)",
+    "Optional env: MAX_FEATURES_PER_PLUGIN (default 12)"
+  ],
+  "verification_notes": [
+    "INDEPENDENT RE-READ: full file read in one Read call (978 lines — file ends at line 978, not 979 as the first pass stated; minor metadata error, no node impact). Node ids enumerated directly from the YAML by grepping top-level `- id:` lines plus inner loop markers to exclude `until:`/`max_iterations:` false positives.",
+    "NODE COUNT CONFIRMED = 17 (independently counted). First pass node_count=17 is CORRECT. The 17 ids verbatim: parse-input, cancel-bad-input, check-prereqs, cancel-bad-prereqs, checkout-branch, cancel-bad-checkout, stage-plugin-context, detect-resume-feature-plan, planificar-feature-auto, validate-feature-plan, cancel-bad-feature-plan, commit-feature-plan, prewarm-uv-venv, implementar-secuencial, check-pipeline-error, write-plugin-result, print-summary. NO nodes missed, NO nodes invented by the first pass.",
+    "depends_on for ALL 17 nodes verified against the YAML line-by-line (L84,102,108,161,187,233,252,259,344,376,410,420,430,804,938,977): every first-pass depends_on is CORRECT. Two multi-dep nodes confirmed: validate-feature-plan=[planificar-feature-auto, detect-resume-feature-plan]; implementar-secuencial=[commit-feature-plan, prewarm-uv-venv].",
+    "ALL `when` conditions verified verbatim against the YAML, including the two compound conditions: cancel-bad-feature-plan `$checkout-branch.output == 'BRANCH_READY' && $validate-feature-plan.output != 'PASS'` (L375) and the cross-node guard on validate-feature-plan `$checkout-branch.output == 'BRANCH_READY'` (L306). All match first pass. Nodes with NO `when` (correctly): parse-input, stage-plugin-context, detect-resume-feature-plan, prewarm-uv-venv, check-pipeline-error, write-plugin-result, print-summary.",
+    "trigger_rule verified by grepping every `trigger_rule:` line: exactly SIX nodes carry all_done — cancel-bad-checkout (L186), validate-feature-plan (L345), prewarm-uv-venv (L421), implementar-secuencial (L432), check-pipeline-error (L805), write-plugin-result (L939). The other 11 nodes have NO trigger_rule line → default all_success. This matches the first pass EXACTLY.",
+    "is_gate / is_cancel verified: 4 cancel nodes (cancel-bad-input, cancel-bad-prereqs, cancel-bad-checkout, cancel-bad-feature-plan) all use the `cancel:` key (L82,106,165,348) and are manual/cancel type — matches first pass. Gate (output-routing) nodes: parse-input, check-prereqs, checkout-branch, detect-resume-feature-plan, validate-feature-plan, check-pipeline-error — matches first pass.",
+    "Loop specs verified: planificar-feature-auto loop {max_iterations:2 (L263), until:FEATURE_PLANNER_OK (L264), skills:[hubara-feature-planner-archon], gate_message present (L267) → interactive}. implementar-secuencial loop {max_iterations:50 (L435), until:NEVER_AI_SIGNAL (L436) — sentinel, termination via until_bash exit code; fresh_context:true (L437); has until_bash, no gate_message}. Both match the first pass.",
+    "ONLY SUBSTANTIVE CORRECTION (edge KIND): the first pass labeled the two convergence edges into multi-dep nodes as kind:gate. I re-classified them as kind:fan-in to surface the DAG's only two convergence points: (validate-feature-plan ← planificar-feature-auto, validate-feature-plan ← detect-resume-feature-plan) and (implementar-secuencial ← commit-feature-plan, implementar-secuencial ← prewarm-uv-venv). The edge CONDITIONS are unchanged and preserved (validate's incoming carry checkout=='BRANCH_READY'; implementar's incoming carry validate=='PASS'). This is a modeling-precision refinement, not a correctness fix in the first pass's topology.",
+    "Edge TOPOLOGY otherwise identical to the first pass: 19 dependency edges + START→parse-input + print-summary→END = 21 edges total. Every (dep→node) pair independently re-derived and matches. Single root = parse-input (empty depends_on); single terminal = print-summary (no dependents).",
+    "CONFIRMED FLAGS (not transcription errors, re-verified): (a) check-pipeline-error emits HAS_ERROR but write-plugin-result (all_done, no when) does NOT gate on it — failure verdict recomputed by write-plugin-result; (b) a permanent task failure in implementar-secuencial exits the loop with code 0 (L727), writing pipeline-error.yaml — failure surfaces via plugin-result.yaml status, never via an in-sub-pipeline cancel; (c) validate-feature-plan can emit PASS_BLOCKED (L323) but all consumers key on =='PASS'/!='PASS' so PASS_BLOCKED routes to cancel-bad-feature-plan (no distinct blocked-handler); (d) stage-plugin-context can crash (set -e + python SystemExit FAIL_PLUGIN_NOT_IN_MANIFEST, L213) with NO dedicated cancel node. All four first-pass design flags are accurate.",
+    "Branch/push invariant re-confirmed across all 3 push sites: commit-feature-plan (L398,402), implementar-secuencial until_bash (L675,681), write-plugin-result (L932,934) — all use `git push origin HEAD:$BRANCH` with pull --rebase + retry, consistent with the detached-HEAD checkout (L146).",
+    "VERDICT: the first pass was almost entirely correct — node count, all node ids, all depends_on, all when (incl. both compounds), all trigger_rules, all is_gate/is_cancel, both loop specs, and the full 21-edge topology were accurate. Corrections made: (1) edge kind gate→fan-in on the 4 convergence edges (precision); (2) noted the file is 978 lines (first pass said 979). No node was missed or invented; no when/trigger_rule/depends_on was wrong."
+  ]
+}

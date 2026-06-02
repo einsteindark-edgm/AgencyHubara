@@ -1,0 +1,605 @@
+{
+  "pipeline_id": "review-pr-hubara",
+  "title": "review-pr-hubara — Automated post-PR multi-agent code review + auto-fix",
+  "purpose": "POST-PR automated, NON-BLOCKING code review of PRs produced by hu-hubara-pipeline (or invoked manually on any PR URL). Bootstraps by validating the URL, checking prereqs, fetching the PR via gh, checking out its head branch (full checkout, not detached), and computing the merge-base diff vs origin/base. A haiku classifier loop decides which of 5 specialist review agents to run (deha-compliance, fsd-compliance, plugin-system, test-coverage[always], security). The 5 agents run in parallel, each as a loop node that Reads only its relevant hubara-architecture-guide sections and emits findings-<agent>.yaml. A synthesize loop node consolidates all findings into review-report.md, auto-fix-plan.yaml (CRITICAL/HIGH only), and merge-decision.yaml. An auto-fix bash node applies each fix patch, runs its verifier test, and reverts (git checkout HEAD -- file) any fix that breaks tests. Surviving fixes are committed/pushed to the PR branch. Finally it posts a consolidated informational comment to the PR and best-effort sets the GitHub Project status to 'Reviewing'. The comment does NOT block merge — the operator decides whether to merge or iterate.",
+  "trigger": "archon workflow run review-pr-hubara \"<PR_URL>\" where PR_URL matches ^https://github\\.com/.+/pull/[0-9]+$. Also auto-triggered in background by hu-hubara-pipeline.trigger-review. Top-level config: provider: claude, model: sonnet, interactive: false, worktree.enabled: true. Single positional argument ($ARGUMENTS) = the PR URL.",
+  "node_count": 20,
+  "global_logic": "No HU_ID / single-vs-multi_plugin mode detection exists in THIS workflow (that lives in hu-hubara-pipeline). The run-wide selector here is the haiku classifier output: agents-to-run.json = {deha:bool, fsd:bool, plugin_system:bool, test_coverage:true(always), security:bool}, parsed by parse-classify (line 141) into a structured JSON object via `jq -n --argjson ...` so Archon exposes output.deha/fsd/plugin_system/test_coverage/security as structured fields. Each of the 5 agents is gated via `when: $parse-classify.output.<field> == 'true'` (compares the JSON boolean rendered as the STRING 'true'). Key env/substitution vars: $ARGUMENTS (PR URL), $ARTIFACTS_DIR (ephemeral per-run workspace; both literal text substitution AND a real env var for bash nodes). BRANCH/BASE are NOT workflow env vars — derived at runtime from pr.json (jq .headRefName / .baseRefName) and persisted to $ARTIFACTS_DIR/branch.txt + base.txt; pr-url.txt + pr-num.txt persisted by parse-input. Branch strategy: FULL checkout of the PR head branch (git fetch origin BRANCH; git checkout BRANCH; git pull --ff-only) — NOT detached HEAD (unlike the plugin sub-pipelines, project gotcha #9). Diff computed `git diff origin/BASE...HEAD` (three-dot, merge-base). Auto-fix commits land on the SAME PR branch via `git push origin BRANCH` with pull --rebase + retry fallback. Invariant: only TWO cancel nodes (cancel-bad-input, cancel-bad-prereqs), both pre-diff (FASE 0). After bootstrap NO gate cancels the run. SILENT HOLE: merge-decision.yaml is PRODUCED by synthesize and its prompt (lines 620-621) asserts 'la fase final del workflow lee este artifact y bloquea el merge si blocked=true', but NO downstream node ever reads merge-decision.yaml — the merge_blocking machinery (R-DIP cross-agent, F5, F7, F1) is computed but never enforced; the review is purely informational (lines 28-29 confirm). Convention for bash status nodes: canonical single-line status on stdout (OK / FAIL_* / no_plan / no_fixes_to_commit / skipped / etc.), diagnostics to stderr (>&2). Several bash nodes use `exit 0` even on failure (emitting a FAIL_* token) so all_done downstream nodes still fire; only the two explicit cancel nodes abort.",
+  "inputs": [
+    "$ARGUMENTS = PR URL (^https://github\\.com/.+/pull/[0-9]+$)",
+    "Runtime prereqs: gh authenticated, jq present, .claude/skills/hubara-architecture-guide/SKILL.md present",
+    "Git remote 'origin' with the PR head + base branches fetchable",
+    "hubara-architecture-guide sections (02-09) + references (deha-rules.md, fsd-rules.md, manifest-schema.md) Read by the 5 agents",
+    "Optional .archon/github-project-config.yaml for the Project 'Reviewing' status update",
+    "PR body containing 'Closes <issue-url>' for project-set-reviewing to locate the project item"
+  ],
+  "nodes": [
+    {
+      "id": "parse-input",
+      "type": "bash",
+      "summary": "Validate the PR URL argument and persist URL + PR number.",
+      "detail": "Reads PR_URL=$ARGUMENTS. If it does NOT match ^https://github\\.com/.+/pull/[0-9]+$, echoes 'FAIL_BAD_URL: <url>' and exits 0 (non-fatal). On match, extracts the trailing PR number via grep -oE '[0-9]+$', writes $ARTIFACTS_DIR/pr-url.txt and pr-num.txt, echoes 'OK'. timeout 5000ms.",
+      "depends_on": [],
+      "trigger_rule": "all_success",
+      "when": "",
+      "produces": "stdout: 'OK' | 'FAIL_BAD_URL: <url>'. Files: pr-url.txt, pr-num.txt.",
+      "invokes": "",
+      "loop": "",
+      "is_gate": true,
+      "is_cancel": false,
+      "notes": "Entry node (no depends_on). Exits 0 even on bad URL — its output VALUE routes the fork: cancel-bad-input (!= 'OK') vs check-prereqs (== 'OK'). Functionally a gate identical in shape to check-prereqs (first pass omitted is_gate here — corrected to true)."
+    },
+    {
+      "id": "cancel-bad-input",
+      "type": "manual",
+      "summary": "Abort run if the PR URL was invalid.",
+      "detail": "A `cancel:` node (line 57) carrying the message \"Input inválido. Usage: archon workflow run review-pr-hubara '<PR_URL>'\". Fires only when parse-input did not emit exactly 'OK'. Cancels the whole workflow.",
+      "depends_on": [
+        "parse-input"
+      ],
+      "trigger_rule": "all_success",
+      "when": "$parse-input.output != 'OK'",
+      "produces": "Run cancellation with usage message.",
+      "invokes": "",
+      "loop": "",
+      "is_gate": false,
+      "is_cancel": true,
+      "notes": "No explicit trigger_rule → default all_success. parse-input always exits 0 (so it is 'success'), thus this node is eligible; the `when` is the real guard routing the FAIL_BAD_URL branch to termination."
+    },
+    {
+      "id": "check-prereqs",
+      "type": "bash",
+      "summary": "Verify gh auth, jq, and the architecture-guide skill exist.",
+      "detail": "`gh auth status >&2 2>&1` → on failure echoes 'FAIL_GH_AUTH', exit 0. `command -v jq` → 'FAIL_NO_JQ'. `test -f .claude/skills/hubara-architecture-guide/SKILL.md` → 'FAIL_MISSING_GUIDE_SKILL'. If all pass echoes 'OK'. Gated on parse-input == 'OK'.",
+      "depends_on": [
+        "parse-input"
+      ],
+      "trigger_rule": "all_success",
+      "when": "$parse-input.output == 'OK'",
+      "produces": "stdout: 'OK' | 'FAIL_GH_AUTH' | 'FAIL_NO_JQ' | 'FAIL_MISSING_GUIDE_SKILL'.",
+      "invokes": "",
+      "loop": "",
+      "is_gate": true,
+      "is_cancel": false,
+      "notes": "Line 63 `gh auth status >&2 2>&1` sends gh output to stderr keeping the canonical status line clean. Each check exits 0 with a FAIL_* token (not non-zero), deferring the abort to cancel-bad-prereqs. Its output VALUE routes the fork."
+    },
+    {
+      "id": "cancel-bad-prereqs",
+      "type": "manual",
+      "summary": "Abort run if any prerequisite check failed.",
+      "detail": "A `cancel:` node (line 73) with message \"Pre-requisitos: $check-prereqs.output. (gh auth login / brew install jq / commit guide skill)\" interpolating the FAIL_* token. Fires when check-prereqs did not emit 'OK'.",
+      "depends_on": [
+        "check-prereqs"
+      ],
+      "trigger_rule": "all_success",
+      "when": "$check-prereqs.output != 'OK'",
+      "produces": "Run cancellation with the failing prereq token echoed back.",
+      "invokes": "",
+      "loop": "",
+      "is_gate": false,
+      "is_cancel": true,
+      "notes": "Default trigger_rule all_success (check-prereqs always exits 0); the `when` does the routing."
+    },
+    {
+      "id": "fetch-pr",
+      "type": "bash",
+      "summary": "Fetch PR metadata via gh and persist head/base branch names.",
+      "detail": "`set -e`. Reads PR_NUM from pr-num.txt, `gh pr view PR_NUM --json title,body,baseRefName,headRefName,files > pr.json`. Extracts BRANCH=jq .headRefName, BASE=jq .baseRefName, echoes 'branch=<B> base=<B>', writes branch.txt + base.txt. Gated on check-prereqs == 'OK'.",
+      "depends_on": [
+        "check-prereqs"
+      ],
+      "trigger_rule": "all_success",
+      "when": "$check-prereqs.output == 'OK'",
+      "produces": "stdout: 'branch=<head> base=<base>'. Files: pr.json, branch.txt, base.txt.",
+      "invokes": "",
+      "loop": "",
+      "is_gate": false,
+      "is_cancel": false,
+      "notes": "`set -e` means a gh/jq failure aborts the node non-zero (unlike the prereq nodes). NO cancel node guards fetch-pr — a failure here lets downstream all_success deps simply not fire (checkout-branch is default all_success), silently halting without an explicit cancel message. Silent-hole / observability gap."
+    },
+    {
+      "id": "checkout-branch",
+      "type": "bash",
+      "summary": "Fetch and checkout the PR head branch (fast-forward pull).",
+      "detail": "`set -e`. Reads BRANCH from branch.txt; `git fetch origin BRANCH`; `git checkout BRANCH`; `git pull --ff-only origin BRANCH` (output to stderr, '|| true' so a non-ff pull doesn't abort). Echoes 'OK'.",
+      "depends_on": [
+        "fetch-pr"
+      ],
+      "trigger_rule": "all_success",
+      "when": "",
+      "produces": "stdout: 'OK'. Working tree on the PR head branch.",
+      "invokes": "",
+      "loop": "",
+      "is_gate": false,
+      "is_cancel": false,
+      "notes": "FULL branch checkout (claims the branch), NOT detached HEAD (contrast project gotcha #9 plugin sub-pipelines). Safe as a standalone review run in its own worktree. `set -e` + NO cancel guard: a checkout failure halts downstream silently (no FAIL token, no cancel)."
+    },
+    {
+      "id": "fetch-diff",
+      "type": "bash",
+      "summary": "Compute the PR diff and changed-file list vs origin/base.",
+      "detail": "Reads BASE from base.txt. Writes `git diff origin/BASE...HEAD` → diff.patch and `git diff --name-only origin/BASE...HEAD` → files-changed.txt (three-dot = merge-base). Echoes 'files=<count>' (wc -l). These two artifacts feed the classifier and all 5 agents.",
+      "depends_on": [
+        "checkout-branch"
+      ],
+      "trigger_rule": "all_success",
+      "when": "",
+      "produces": "stdout: 'files=<N>'. Files: diff.patch, files-changed.txt.",
+      "invokes": "",
+      "loop": "",
+      "is_gate": false,
+      "is_cancel": false,
+      "notes": "No `set -e`; if origin/BASE is unresolvable git diff errors but the node still exits 0 with a possibly-empty diff. Three-dot merge-base diff (consistent with the recent frontend meta-gate commits)."
+    },
+    {
+      "id": "classify",
+      "type": "skills",
+      "summary": "Haiku classifier loop decides which of the 5 agents to run.",
+      "detail": "provider: claude, model: haiku, idle_timeout 60000. Loop node (skills: [] empty — pure prompt, gate_message 'Classifier auto.') reads files-changed.txt and writes agents-to-run.json = {deha,fsd,plugin_system,test_coverage:true,security}. Rules: deha if any hubara_agency/src/; fsd if any frontend_dashboard/src/; plugin_system if plugin.yaml/plugin.schema.yaml/plugin_manifest.py/scripts/render-compose.py/k8s/aws-produccion/; test_coverage ALWAYS true; security if .env*/secrets/configmap.yaml or Python adding os.environ/getpass. Emits <promise>CLASSIFY_OK</promise>.",
+      "depends_on": [
+        "fetch-diff"
+      ],
+      "trigger_rule": "all_success",
+      "when": "",
+      "produces": "File: agents-to-run.json. Completion signal: <promise>CLASSIFY_OK</promise>.",
+      "invokes": "inline loop prompt (skills: [] empty)",
+      "loop": "max_iterations:2, until:CLASSIFY_OK",
+      "is_gate": false,
+      "is_cancel": false,
+      "notes": "loop max_iterations:2 is a retry safety net — the agent sometimes finishes without emitting the promise on iteration 1 (run 2484bd91, agent-plugin-system); 2nd pass lets it emit, no-op if already done. If classifier writes nothing, parse-classify defaults to all-true."
+    },
+    {
+      "id": "parse-classify",
+      "type": "bash",
+      "summary": "Parse agents-to-run.json into structured boolean output fields.",
+      "detail": "F=$ARTIFACTS_DIR/agents-to-run.json. If absent, writes default {all true incl test_coverage}. Reads DEHA=jq '.deha//false', FSD=jq '.fsd//false', PS=jq '.plugin_system//false', TC=jq '.test_coverage//true', SEC=jq '.security//false', then emits a JSON object via `jq -n --argjson ...` so Archon exposes output.deha/fsd/plugin_system/test_coverage/security as structured fields. trigger_rule: all_done.",
+      "depends_on": [
+        "classify"
+      ],
+      "trigger_rule": "all_done",
+      "when": "",
+      "produces": "structured output: output.deha/fsd/plugin_system/test_coverage/security each {true,false} JSON booleans (compared as strings 'true' downstream).",
+      "invokes": "",
+      "loop": "",
+      "is_gate": true,
+      "is_cancel": false,
+      "notes": "The fan-out selector/gate. test_coverage defaults to true (jq '.test_coverage // true') so the test-coverage agent runs even if classifier omitted it. Downstream `when` clauses compare to the STRING 'true'. trigger_rule all_done is critical: classify can exhaust its 2 loops without CLASSIFY_OK (non-success) yet parse-classify must still fire to default the agents."
+    },
+    {
+      "id": "agent-deha-compliance",
+      "type": "skills",
+      "summary": "DEHA R-rules + plugin-manifest specialist review agent.",
+      "detail": "idle_timeout 300000. Loop node (skills: []) gated on classifier.deha. Reads guide sections 02/03/04-backend + references/deha-rules.md plus diff.patch + files-changed.txt. Hunts R-DET/R-JSON/R-STATELESS/R-HEARTBEAT/R-DIP including the CRITICAL cross-agent import pattern (ADR-2026-05-20 #10) and start_workflow on a sibling agent's workflow class; plus footguns F1 (dict→dataclass contract drift, HIGH), F2 (workflow.patched branch parity, MEDIUM), F3 (Path.resolve, LOW), F4 (bootstrap runtime_workspace_path fallback, MEDIUM), F5 (nested dataclass + PEP 563 in activity return, HIGH merge_blocking), F7 (start_delay without eligibility gate, HIGH merge_blocking). Emits findings-deha.yaml. <promise>REPORT_OK</promise>.",
+      "depends_on": [
+        "parse-classify"
+      ],
+      "trigger_rule": "all_success",
+      "when": "$parse-classify.output.deha == 'true'",
+      "produces": "File: findings-deha.yaml (findings[] or findings: []). Signal: <promise>REPORT_OK</promise>.",
+      "invokes": "inline loop prompt (reads hubara-architecture-guide via Read; skills: [])",
+      "loop": "max_iterations:2, until:REPORT_OK",
+      "is_gate": false,
+      "is_cancel": false,
+      "notes": "Default trigger_rule all_success. Runs in parallel with the other 4 (all depend only on parse-classify). Skipped if deha not selected. By far the richest prompt (~240 lines). Only R-DIP cross-agent and F5/F7 set merge_blocking."
+    },
+    {
+      "id": "agent-fsd-compliance",
+      "type": "skills",
+      "summary": "Frontend Feature-Sliced Design compliance review agent.",
+      "detail": "idle_timeout 300000. Loop node gated on classifier.fsd. Reads guide sections 05/06-frontend + references/fsd-rules.md plus diff.patch + files-changed.txt. Hunts the 14 anti-patterns + 4 import rules: cross-plugin imports, deep imports bypassing barrel, direct fetch() in components/pages, useState for server data, apiClient.get<T>() without schema.parse(), JSX in .ts, cross-feature imports, Tailwind --color-text-* naming, hardcoded env vars outside shared/config/env.ts, layering violations. Emits findings-fsd.yaml (same schema as deha). <promise>REPORT_OK</promise>.",
+      "depends_on": [
+        "parse-classify"
+      ],
+      "trigger_rule": "all_success",
+      "when": "$parse-classify.output.fsd == 'true'",
+      "produces": "File: findings-fsd.yaml. Signal: <promise>REPORT_OK</promise>.",
+      "invokes": "inline loop prompt (skills: [])",
+      "loop": "max_iterations:2, until:REPORT_OK",
+      "is_gate": false,
+      "is_cancel": false,
+      "notes": "Default trigger_rule all_success. Parallel sibling; skipped if fsd not selected. No merge_blocking footguns defined for this agent."
+    },
+    {
+      "id": "agent-plugin-system",
+      "type": "skills",
+      "summary": "Plugin manifest schema + parity + render-compose drift agent.",
+      "detail": "idle_timeout 300000. Loop node gated on classifier.plugin_system. Reads guide sections 07/08 + references/manifest-schema.md plus diff.patch + files-changed.txt. Verifies plugin.yaml schema (id ^[a-z][a-z0-9_]*$, SemVer, workers with task_queue), worker↔K8s manifest correspondence (worker-<name>.yaml in k8s/aws-produccion/), no orphan K8s manifests, task_queue uniqueness cross-plugin, render-compose drift, plugin id == directory name, shared-file wiring_intents, architecture-protected files NOT modified. Footgun F7 frontend block contract: manifest declares frontend: → <plugin>/frontend/index.ts MUST exist (HIGH merge_blocking); not declared → dir must NOT exist (MEDIUM); touching plugin.yaml/frontend requires regenerated src/app/plugin-registry.generated.ts (LOW). Emits findings-plugin-system.yaml. <promise>REPORT_OK</promise>.",
+      "depends_on": [
+        "parse-classify"
+      ],
+      "trigger_rule": "all_success",
+      "when": "$parse-classify.output.plugin_system == 'true'",
+      "produces": "File: findings-plugin-system.yaml. Signal: <promise>REPORT_OK</promise>.",
+      "invokes": "inline loop prompt (skills: [])",
+      "loop": "max_iterations:2, until:REPORT_OK",
+      "is_gate": false,
+      "is_cancel": false,
+      "notes": "Default trigger_rule all_success. The agent named in run 2484bd91 that motivated the max_iterations:2 retry across ALL loop nodes. Its 'frontend block contract' F7 is a DIFFERENT F7 than the deha agent's start_delay F7 — naming collision."
+    },
+    {
+      "id": "agent-test-coverage",
+      "type": "skills",
+      "summary": "Functional + e2e test coverage presence review agent.",
+      "detail": "idle_timeout 300000. Loop node gated on classifier.test_coverage (defaults true → effectively always runs). Reads guide section 08 plus diff.patch + files-changed.txt. Verifies each new feature has a functional test in hubara_agency/tests/functional/ with @pytest.mark.functional (mock_llm if LLM); UI changes have e2e specs in frontend_dashboard/e2e/<feature>/ using getByRole/getByText (no waitForTimeout); architecture gates + premortem invariants passing; unit tests per new tool/activity/hook; pure-refactor skips documented in task-result. Emits findings-test-coverage.yaml. <promise>REPORT_OK</promise>.",
+      "depends_on": [
+        "parse-classify"
+      ],
+      "trigger_rule": "all_success",
+      "when": "$parse-classify.output.test_coverage == 'true'",
+      "produces": "File: findings-test-coverage.yaml. Signal: <promise>REPORT_OK</promise>.",
+      "invokes": "inline loop prompt (skills: [])",
+      "loop": "max_iterations:2, until:REPORT_OK",
+      "is_gate": false,
+      "is_cancel": false,
+      "notes": "Default trigger_rule all_success. Has a `when` clause despite being 'always run' — relies on parse-classify's jq default (.test_coverage // true), which only fires when the key is absent/null. If the classifier explicitly wrote test_coverage:false this agent would be silently skipped. Verifies test PRESENCE only, not behavior (project gotcha #1)."
+    },
+    {
+      "id": "agent-security",
+      "type": "skills",
+      "summary": "Secrets / env-var / CORS / input-validation security agent.",
+      "detail": "idle_timeout 300000. Loop node gated on classifier.security. Reads guide sections 02-backend + 09-conventions plus diff.patch + files-changed.txt. Hunts hardcoded secrets (AKIA[A-Z0-9]{16}, ghp_*, JWT ey*.*., passwords), new env vars not declared in wiring_intents.env_vars_required, os.environ crossing boundary, logs exposing secrets (unsanitized WhatsApp inbound body), overly-permissive CORS, missing HTTP input validation (no Pydantic/Zod), non-rotatable K8s secrets (hardcoded vs valueFrom). Emits findings-security.yaml. <promise>REPORT_OK</promise>.",
+      "depends_on": [
+        "parse-classify"
+      ],
+      "trigger_rule": "all_success",
+      "when": "$parse-classify.output.security == 'true'",
+      "produces": "File: findings-security.yaml. Signal: <promise>REPORT_OK</promise>.",
+      "invokes": "inline loop prompt (skills: [])",
+      "loop": "max_iterations:2, until:REPORT_OK",
+      "is_gate": false,
+      "is_cancel": false,
+      "notes": "Default trigger_rule all_success. Parallel sibling; skipped if security not selected. No merge_blocking footguns defined."
+    },
+    {
+      "id": "synthesize",
+      "type": "skills",
+      "summary": "Consolidate all findings-*.yaml into report + auto-fix-plan + merge-decision.",
+      "detail": "idle_timeout 180000. Loop node depending on ALL 5 agents with trigger_rule all_done (tolerates skipped/failed agents). Reads every findings-*.yaml present. Output 1: review-report.md (severity counts + per-agent + grouped findings + 'Auto-fix attempted' list). Output 2: auto-fix-plan.yaml = fixes[] (ONLY critical+high with non-empty fix_suggestion) each {file,severity,rule,patch (unified diff), revertible_by_test}. Output 3: merge-decision.yaml {blocked:bool, blocking_findings[]}. Special rules: any R-DIP finding whose message contains 'Cross-agent'/'sibling'/'viola R-DIP #10' → bump to critical + merge_blocking:true; dict→dataclass F1 high findings → add to blocking_findings. <promise>SYNTH_OK</promise>.",
+      "depends_on": [
+        "agent-deha-compliance",
+        "agent-fsd-compliance",
+        "agent-plugin-system",
+        "agent-test-coverage",
+        "agent-security"
+      ],
+      "trigger_rule": "all_done",
+      "when": "",
+      "produces": "Files: review-report.md, auto-fix-plan.yaml (fixes[]), merge-decision.yaml (blocked + blocking_findings[]). Signal: <promise>SYNTH_OK</promise>.",
+      "invokes": "inline loop prompt (skills: [])",
+      "loop": "max_iterations:2, until:SYNTH_OK",
+      "is_gate": false,
+      "is_cancel": false,
+      "notes": "Fan-in of the 5-agent parallel section. CRITICAL silent hole: merge-decision.yaml is produced and the prompt (lines 620-621) claims 'la fase final del workflow lee este artifact y bloquea el merge si blocked=true' — but NO downstream node reads merge-decision.yaml. The merge-blocking machinery is dead/unenforced; the comment is purely informational (lines 28-29). all_done means even if every agent was skipped, synthesize still runs and must handle absent findings files."
+    },
+    {
+      "id": "auto-fix",
+      "type": "bash",
+      "summary": "Apply each CRITICAL/HIGH fix patch; revert any that breaks its test.",
+      "detail": "timeout 1800000ms (30 min). Initializes fixes-applied.yaml and fixes-reverted.yaml to 'fixes: []'. If auto-fix-plan.yaml absent → echo 'no_plan'; exit 0. Otherwise an inline python3 heredoc loads the plan, iterates fixes[]; for each snapshots `git show HEAD:<file>`, writes patch to tempfile, `git apply --check` (fail → reverted+'patch_did_not_apply'), then `git apply`. If revertible_by_test given, runs it (timeout 300s) — on non-zero `git checkout HEAD -- <file>` and records 'test_failed_after_fix'. Successful → applied[]. Dumps via os.environ.get('APPLIED_PATH','$ARTIFACTS_DIR/...') with literal-path fallback. Prints 'applied=<n> reverted=<m>'. Node `env:` PLAN_PATH/APPLIED_PATH/REVERTED_PATH.",
+      "depends_on": [
+        "synthesize"
+      ],
+      "trigger_rule": "all_success",
+      "when": "",
+      "produces": "stdout: 'no_plan' | 'applied=<n> reverted=<m>'. Files: fixes-applied.yaml, fixes-reverted.yaml. Mutates working tree with applied patches.",
+      "invokes": "",
+      "loop": "",
+      "is_gate": false,
+      "is_cancel": false,
+      "notes": "Default trigger_rule all_success: if synthesize never reached SYNTH_OK (loop exhausted = non-success) auto-fix is SKIPPED → cascade; commit-fixes/post-comment use all_done so they still fire but with no report. Comment (lines 705-708, run 2484bd91): node-level `env:` does NOT reach the python subprocess (os.environ.get('APPLIED_PATH')→None→open(None) TypeError); fix is the literal '$ARTIFACTS_DIR/...' fallback Archon text-substitutes. PLAN_PATH (line 662) uses the same fallback. Reverts via `git checkout HEAD -- <file>` revert the ENTIRE file → multi-fix-same-file ordering hazard (discards an earlier applied fix to the same file)."
+    },
+    {
+      "id": "commit-fixes",
+      "type": "bash",
+      "summary": "Commit and push applied auto-fixes to the PR branch.",
+      "detail": "Reads BRANCH from branch.txt. `git add -A` (|| true). If `git diff --staged --quiet` (nothing staged) → echo 'no_fixes_to_commit'; exit 0. Else N = count of fixes-applied.yaml fixes (yq, python3 yaml fallback, else '?'); `git commit -m \"review-pr-hubara: auto-fix ${N} critical/high finding(s)\"`; `git push origin BRANCH` with a `git pull --rebase origin BRANCH` + retry-push fallback (all diagnostics → stderr). Echoes 'fixes_committed=<N>'. trigger_rule all_done.",
+      "depends_on": [
+        "auto-fix"
+      ],
+      "trigger_rule": "all_done",
+      "when": "",
+      "produces": "stdout: 'no_fixes_to_commit' | 'fixes_committed=<N>'. Side-effect: commit + push to PR branch.",
+      "invokes": "",
+      "loop": "",
+      "is_gate": false,
+      "is_cancel": false,
+      "notes": "Diagnostics correctly redirected to stderr (>&2) so stdout stays single-line (project gotcha #8). Pushes the FULL branch ref `git push origin BRANCH` (not HEAD:BRANCH) since checkout-branch claimed the branch. pull --rebase retry handles concurrency. $ARTIFACTS_DIR is outside the worktree, so git add -A stages only real code fixes."
+    },
+    {
+      "id": "post-comment",
+      "type": "bash",
+      "summary": "Post the consolidated review report as a PR comment.",
+      "detail": "Reads PR_URL from pr-url.txt; REPORT=$ARTIFACTS_DIR/review-report.md. If report absent → echo 'FAIL_NO_REPORT'; exit 0. Builds comment.md: a '🤖 Automated Review' header, the full report appended, then an 'Auto-fix summary' block (N_APPLIED/N_REVERTED counted from fixes-applied.yaml/fixes-reverted.yaml via python3, '?' fallback) if fixes-applied.yaml exists, then a footer. Posts via `gh pr comment PR_URL --body-file comment.md` (output→stderr). Echoes 'comment_posted'. trigger_rule all_done.",
+      "depends_on": [
+        "commit-fixes"
+      ],
+      "trigger_rule": "all_done",
+      "when": "",
+      "produces": "stdout: 'FAIL_NO_REPORT' | 'comment_posted'. Side-effect: a GitHub PR comment. File: comment.md.",
+      "invokes": "",
+      "loop": "",
+      "is_gate": false,
+      "is_cancel": false,
+      "notes": "The comment is INFORMATIONAL and non-blocking (lines 28-29). Does NOT read merge-decision.yaml — even if synthesize flagged blocked:true this comment never surfaces or enforces it. all_done ensures it posts even when commit-fixes/auto-fix were skipped. If review-report.md is missing it emits FAIL_NO_REPORT, exits 0, no comment — silent partial completion (no cancel)."
+    },
+    {
+      "id": "project-set-reviewing",
+      "type": "bash",
+      "summary": "Best-effort set GitHub Project status to 'Reviewing'.",
+      "detail": "If .archon/github-project-config.yaml absent → echo 'skipped'; exit 0. Reads PR_NUM, derives ISSUE_URL from the PR body (`gh pr view --jq .body | grep -oE 'Closes https://[^ ]+' | head -1 | awk '{print $2}'`); if none → 'no_issue_url_in_pr'. Parses project_number/owner/id/status_field_id and the 'Reviewing' option id (awk); if no option → 'no_reviewing_option'. Finds the project item id matching the issue URL via `gh project item-list ... | jq`; if none → exit 0. Runs `gh project item-edit` to set the single-select status field. Echoes 'set Reviewing ok'.",
+      "depends_on": [
+        "post-comment"
+      ],
+      "trigger_rule": "all_done",
+      "when": "",
+      "produces": "stdout: 'skipped' | 'no_issue_url_in_pr' | 'no_reviewing_option' | 'set Reviewing ok' (or silent exit 0).",
+      "invokes": "",
+      "loop": "",
+      "is_gate": false,
+      "is_cancel": false,
+      "notes": "Entirely best-effort; every failure path exits 0 with a status token. Depends on the PR body containing 'Closes <issue-url>' (produced by hu-hubara-pipeline's build-pr-body). Manually-reviewed PRs lacking that line → 'no_issue_url_in_pr' and no project update."
+    },
+    {
+      "id": "print-summary",
+      "type": "bash",
+      "summary": "Print the final completion banner with next steps.",
+      "detail": "timeout 5000ms. Reads PR_URL from pr-url.txt and prints an ASCII box: '🎉 review-pr-hubara completo', the PR URL, a note that the comment was posted with consolidated findings + auto-fixes applied (reverted if they broke tests), and next steps (review comment, fix pendings by hand, squash-merge when OK). Depends on BOTH post-comment and project-set-reviewing with trigger_rule all_done.",
+      "depends_on": [
+        "post-comment",
+        "project-set-reviewing"
+      ],
+      "trigger_rule": "all_done",
+      "when": "",
+      "produces": "stdout: human-readable completion banner.",
+      "invokes": "",
+      "loop": "",
+      "is_gate": false,
+      "is_cancel": false,
+      "notes": "Terminal node (no other node depends on it). all_done + dual deps means it prints regardless of whether the comment/project steps succeeded. The dependency on post-comment (also transitive via project-set-reviewing) is listed explicitly — harmless redundancy, but both deps are real edges in the YAML."
+    }
+  ],
+  "edges": [
+    {
+      "from": "START",
+      "to": "parse-input",
+      "kind": "sequence",
+      "condition": ""
+    },
+    {
+      "from": "parse-input",
+      "to": "cancel-bad-input",
+      "kind": "cancel",
+      "condition": "$parse-input.output != 'OK'"
+    },
+    {
+      "from": "parse-input",
+      "to": "check-prereqs",
+      "kind": "gate",
+      "condition": "$parse-input.output == 'OK'"
+    },
+    {
+      "from": "check-prereqs",
+      "to": "cancel-bad-prereqs",
+      "kind": "cancel",
+      "condition": "$check-prereqs.output != 'OK'"
+    },
+    {
+      "from": "check-prereqs",
+      "to": "fetch-pr",
+      "kind": "gate",
+      "condition": "$check-prereqs.output == 'OK'"
+    },
+    {
+      "from": "fetch-pr",
+      "to": "checkout-branch",
+      "kind": "sequence",
+      "condition": ""
+    },
+    {
+      "from": "checkout-branch",
+      "to": "fetch-diff",
+      "kind": "sequence",
+      "condition": ""
+    },
+    {
+      "from": "fetch-diff",
+      "to": "classify",
+      "kind": "sequence",
+      "condition": ""
+    },
+    {
+      "from": "classify",
+      "to": "parse-classify",
+      "kind": "sequence",
+      "condition": ""
+    },
+    {
+      "from": "parse-classify",
+      "to": "agent-deha-compliance",
+      "kind": "fan-out",
+      "condition": "$parse-classify.output.deha == 'true'"
+    },
+    {
+      "from": "parse-classify",
+      "to": "agent-fsd-compliance",
+      "kind": "fan-out",
+      "condition": "$parse-classify.output.fsd == 'true'"
+    },
+    {
+      "from": "parse-classify",
+      "to": "agent-plugin-system",
+      "kind": "fan-out",
+      "condition": "$parse-classify.output.plugin_system == 'true'"
+    },
+    {
+      "from": "parse-classify",
+      "to": "agent-test-coverage",
+      "kind": "fan-out",
+      "condition": "$parse-classify.output.test_coverage == 'true'"
+    },
+    {
+      "from": "parse-classify",
+      "to": "agent-security",
+      "kind": "fan-out",
+      "condition": "$parse-classify.output.security == 'true'"
+    },
+    {
+      "from": "agent-deha-compliance",
+      "to": "synthesize",
+      "kind": "fan-in",
+      "condition": ""
+    },
+    {
+      "from": "agent-fsd-compliance",
+      "to": "synthesize",
+      "kind": "fan-in",
+      "condition": ""
+    },
+    {
+      "from": "agent-plugin-system",
+      "to": "synthesize",
+      "kind": "fan-in",
+      "condition": ""
+    },
+    {
+      "from": "agent-test-coverage",
+      "to": "synthesize",
+      "kind": "fan-in",
+      "condition": ""
+    },
+    {
+      "from": "agent-security",
+      "to": "synthesize",
+      "kind": "fan-in",
+      "condition": ""
+    },
+    {
+      "from": "synthesize",
+      "to": "auto-fix",
+      "kind": "sequence",
+      "condition": ""
+    },
+    {
+      "from": "auto-fix",
+      "to": "commit-fixes",
+      "kind": "sequence",
+      "condition": ""
+    },
+    {
+      "from": "commit-fixes",
+      "to": "post-comment",
+      "kind": "sequence",
+      "condition": ""
+    },
+    {
+      "from": "post-comment",
+      "to": "project-set-reviewing",
+      "kind": "sequence",
+      "condition": ""
+    },
+    {
+      "from": "post-comment",
+      "to": "print-summary",
+      "kind": "sequence",
+      "condition": ""
+    },
+    {
+      "from": "project-set-reviewing",
+      "to": "print-summary",
+      "kind": "fan-in",
+      "condition": ""
+    },
+    {
+      "from": "cancel-bad-input",
+      "to": "END",
+      "kind": "cancel",
+      "condition": ""
+    },
+    {
+      "from": "cancel-bad-prereqs",
+      "to": "END",
+      "kind": "cancel",
+      "condition": ""
+    },
+    {
+      "from": "print-summary",
+      "to": "END",
+      "kind": "sequence",
+      "condition": ""
+    }
+  ],
+  "phases": [
+    {
+      "name": "FASE 0 — Bootstrap (parse + prereqs + checkout + diff)",
+      "nodes": [
+        "parse-input",
+        "cancel-bad-input",
+        "check-prereqs",
+        "cancel-bad-prereqs",
+        "fetch-pr",
+        "checkout-branch",
+        "fetch-diff"
+      ],
+      "description": "Validates the PR URL and runtime prerequisites (gh/jq/guide skill), cancelling early on either failure (the workflow's ONLY two cancel nodes). Fetches PR metadata, FULL-checks-out the PR head branch, and computes the merge-base diff (diff.patch + files-changed.txt) that feeds the classifier and all 5 agents. fetch-pr/checkout-branch use `set -e` with no cancel guard — an observability gap."
+    },
+    {
+      "name": "FASE 1 — Classify (haiku selects agents)",
+      "nodes": [
+        "classify",
+        "parse-classify"
+      ],
+      "description": "A fast haiku loop reads files-changed.txt and writes agents-to-run.json deciding which of the 5 specialist agents to run (test_coverage always true). parse-classify (all_done) turns that JSON into structured boolean output fields (defaulting all-true if the classifier wrote nothing) that gate the parallel agents via `when: ... == 'true'`."
+    },
+    {
+      "name": "FASE 2 — 5 specialist agents in parallel",
+      "nodes": [
+        "agent-deha-compliance",
+        "agent-fsd-compliance",
+        "agent-plugin-system",
+        "agent-test-coverage",
+        "agent-security"
+      ],
+      "description": "Five independent loop agents fan out from parse-classify, each gated by its classifier flag and each Reading only its relevant hubara-architecture-guide sections. They audit their vertical (DEHA R-rules+footguns, FSD anti-patterns, plugin manifest/schema, test coverage, security) and emit findings-<agent>.yaml, signalling REPORT_OK. All default to trigger_rule all_success."
+    },
+    {
+      "name": "FASE 3 — Synthesize findings + decide auto-fix",
+      "nodes": [
+        "synthesize"
+      ],
+      "description": "Fan-in (all_done) over the 5 agents. Consolidates every findings-*.yaml into review-report.md, an auto-fix-plan.yaml restricted to CRITICAL/HIGH fixes with patches+verifier tests, and a merge-decision.yaml (blocked/blocking_findings) that — per the prompt — is meant to block merge but is NEVER read downstream (dead machinery)."
+    },
+    {
+      "name": "FASE 4 — Auto-fix CRITICAL/HIGH (revert on test failure)",
+      "nodes": [
+        "auto-fix",
+        "commit-fixes"
+      ],
+      "description": "auto-fix applies each planned patch, runs its revertible_by_test command, and reverts (git checkout HEAD -- file) any fix whose test fails (recording applied vs reverted). commit-fixes then commits and pushes the surviving fixes to the PR branch with pull --rebase retry, or reports no_fixes_to_commit."
+    },
+    {
+      "name": "FASE 5 — Post comment + project status + summary",
+      "nodes": [
+        "post-comment",
+        "project-set-reviewing",
+        "print-summary"
+      ],
+      "description": "Posts the consolidated, non-blocking review comment (report + auto-fix summary) to the PR, best-effort sets the GitHub Project card to 'Reviewing', and prints the final completion banner with operator next steps. All three use trigger_rule all_done so the run finishes cleanly even when upstream steps were skipped or partially failed."
+    }
+  ],
+  "verification_notes": [
+    "INDEPENDENT RECOUNT: read the entire 828-line YAML from scratch and extracted node ids via grep -nE '^  - id:' → exactly 20 nodes. node_count = 20 CONFIRMED, matching the first pass. (First pass said 829 lines; the file is 828 lines — trivial off-by-one in prose, no impact on the model.)",
+    "First pass was SUBSTANTIALLY CORRECT. No nodes missed, no nodes invented. All 20 nodes, all depends_on lists, all `when` clauses, all trigger_rule values, all is_cancel flags, and all loop {max_iterations:2, until} signals verified line-by-line against the YAML and match exactly.",
+    "CORRECTION 1 (is_gate): First pass marked check-prereqs and parse-classify as is_gate=true but left parse-input as is_gate=false. parse-input is structurally identical to check-prereqs — its output VALUE ('OK' vs 'FAIL_BAD_URL') routes the fork between cancel-bad-input (when != 'OK') and check-prereqs (when == 'OK'). Corrected parse-input.is_gate to true for consistency. (Minor; does not change the DAG.)",
+    "CORRECTION 2 (edge kind): First pass tagged the project-set-reviewing→print-summary edge as kind 'sequence'. print-summary depends on BOTH post-comment AND project-set-reviewing (line 826) — it is a join of the two FASE-5 branches, so I re-tagged project-set-reviewing→print-summary as 'fan-in' (post-comment→print-summary stays 'sequence' as the primary chain). Cosmetic edge-kind refinement; both edges exist in either model.",
+    "EDGE COUNT: 28 total edges. Independently derived: 24 dependency edges + 1 START→parse-input + 3 END edges (cancel-bad-input→END, cancel-bad-prereqs→END, print-summary→END). First pass listed 29 — the difference is solely that I do not duplicate; on careful recount both models contain the identical edge SET. Verified each dependency produces exactly one edge: parse-input(2 children), check-prereqs(2), fetch-pr(1), checkout-branch(1), fetch-diff(1), classify(1), parse-classify(5 fan-out), 5 agents→synthesize(5 fan-in), synthesize(1), auto-fix(1), commit-fixes(1), post-comment(2: project-set-reviewing+print-summary), project-set-reviewing(1: print-summary) = 24 dependency edges.",
+    "trigger_rule audit: only FOUR nodes carry explicit trigger_rule: all_done — parse-classify (line 158), synthesize (line 568), commit-fixes (line 737), post-comment (line 780), project-set-reviewing (line 805), print-summary (line 827). Recount: that is SIX nodes with explicit all_done (parse-classify, synthesize, commit-fixes, post-comment, project-set-reviewing, print-summary). All other nodes (incl. auto-fix line 645-718 and ALL 5 agents) have NO trigger_rule → default all_success. First pass captured all six all_done nodes and the all_success defaults correctly.",
+    "CANCEL nodes: exactly TWO — cancel-bad-input (line 56, `cancel:` key) and cancel-bad-prereqs (line 72, `cancel:` key), both pre-diff in FASE 0. Confirmed via grep '^    cancel:'. After bootstrap there is NO cancel/abort path — the review is fully informational. First pass correct.",
+    "SILENT HOLE CONFIRMED (high-value): synthesize PRODUCES merge-decision.yaml (lines 612-621) and its prompt asserts 'La fase final del workflow lee este artifact y bloquea el merge si blocked=true' — but I grepped every downstream bash node (auto-fix, commit-fixes, post-comment, project-set-reviewing, print-summary) and NONE reads merge-decision.yaml. The merge_blocking machinery (R-DIP cross-agent, F5, F7, F1) is computed and bumped but never enforced; lines 28-29 confirm 'El comment NO bloquea el PR — es informativo.' First pass flagged this correctly.",
+    "auto-fix `env:` block (lines 713-716) verified NOT to reach the python3 heredoc subprocess — the inline comment (lines 705-708, run 2484bd91) and the literal '$ARTIFACTS_DIR/...' fallbacks at lines 662/709/710 confirm this is a known footgun the YAML works around via text substitution. First pass note accurate.",
+    "Naming collision CONFIRMED: TWO different 'footgun F7' — agent-deha-compliance F7 (line 337) = 'Workflow con start_delay sin eligibility gate' (HIGH merge_blocking); agent-plugin-system F7 (line 473) = 'Frontend block contract' (HIGH merge_blocking). Same label, different agents/meaning. First pass flagged correctly.",
+    "test_coverage gating CONFIRMED: agent-test-coverage has `when: $parse-classify.output.test_coverage == 'true'` (line 495) despite 'corré SIEMPRE' (line 132). Relies on parse-classify's jq default `.test_coverage // true` (line 151), which only fires when the key is absent/null — an explicit test_coverage:false would silently skip the agent. First pass note accurate.",
+    "Branch strategy CONFIRMED FULL checkout (git fetch origin BRANCH; git checkout BRANCH; git pull --ff-only — lines 95-97; push origin BRANCH — line 731), NOT detached HEAD. Differs from plugin sub-pipelines (project gotcha #9). First pass correct.",
+    "Loop retry rationale (max_iterations:2, until:<SIGNAL>) is uniform across classify (CLASSIFY_OK), all 5 agents (REPORT_OK), and synthesize (SYNTH_OK) — 7 loop nodes total. Verified each `until:` value via grep. First pass correct.",
+    "FINAL VERDICT: The first pass model is accurate. The only substantive corrections are (1) parse-input.is_gate false→true (consistency with check-prereqs) and (2) the project-set-reviewing→print-summary edge re-tagged sequence→fan-in (it is the join point of FASE 5's two branches). All node attributes, depends_on, when, trigger_rule, is_cancel, and the edge SET are otherwise confirmed correct. node_count = 20 (independently counted)."
+  ]
+}
