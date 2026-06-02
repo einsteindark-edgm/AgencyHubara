@@ -1,0 +1,8 @@
+version: 1
+task_id: F02
+status: passed_with_warnings
+result_file: hubara_agency/.hubara/results/HU-20260527-194116-conectar-seccion-agents-del-dashboard-a/feature-results/agents_admin/F02-result.yaml
+notes: |
+  4/4 unit tests pass. dep-cruiser PASS. plugin-registry PASS.
+  tsc-b fails with 4 errors in F03-scope files (AgentsList/AgentsPrompts) — per §13 risk.
+  build fails same reason. F03 will fix.

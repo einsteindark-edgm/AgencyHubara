@@ -1,0 +1,38 @@
+task_id: F01
+slug: chats-manifest-agentic
+plugin_id: chats
+hu_id: HU-20260527-194116-conectar-seccion-agents-del-dashboard-a
+status: passed_with_warnings
+timestamp: "2026-05-27T22:20:00Z"
+
+summary: |
+  agentic: true ya estaba presente en frontend_dashboard/src/plugins/chats/plugin.yaml
+  (línea 5) — agregado por el trabajo de agents_admin en el mismo batch. Sin cambios
+  de código en esta task. plugins:sync, build y lint-imports pasan. Test failures son
+  pre-existentes del branch (agents_admin modificó spinal files + archon workflows).
+
+files_changed: []
+
+verification:
+  plugins_sync: pass
+  tsc_b: warn  # 3 errores pre-existentes en session/api.ts y orders/OrdersSection.tsx (no relacionados)
+  build: pass
+  test_arch_frontend: warn  # pre-existing: meta-gate detecta .archon/workflows + plugin.schema.yaml de agents_admin
+  render_compose: pass
+  pytest_architecture: warn  # pre-existing: test_protected_files_unchanged_vs_main + MedusaSettings ValidationError
+  lint_imports: pass
+
+warnings:
+  - type: pre_existing_tsc_errors
+    detail: "3 TypeScript errors en src/entities/session/api.ts (2) y src/plugins/orders/frontend/OrdersSection.tsx (1) — property optional mismatch, no relacionados a esta task"
+  - type: pre_existing_arch_gate
+    detail: "test_protected_files_unchanged_vs_main falla porque agents_admin modificó .archon/workflows/hu-hubara-plugin-pipeline.yaml y frontend_dashboard/src/plugins/_schema/plugin.schema.yaml vs main. No generado por esta task."
+  - type: pre_existing_spinal_import
+    detail: "test_every_src_module_imports_cleanly falla por MedusaSettings ValidationError (base_url required) — pre-existing en el branch."
+
+wiring_intents:
+  manifest_discriminator:
+    plugin_id: chats
+    field: agentic
+    value: true
+    affects_endpoint: GET /api/agents_admin

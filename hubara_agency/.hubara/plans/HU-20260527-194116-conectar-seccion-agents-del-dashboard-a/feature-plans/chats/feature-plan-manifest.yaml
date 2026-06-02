@@ -1,0 +1,61 @@
+version: 1
+hu_id: HU-20260527-194116-conectar-seccion-agents-del-dashboard-a
+plugin_id: chats
+plugin_template: D
+generated_by: hubara-feature-planner-archon
+generated_at: 2026-05-27T00:00:00Z
+iteration: 1
+
+metadata:
+  exploration_mode: inline_direct
+  # chats/plugin.yaml leído directamente — campo agentic ya presente en worktree.
+  # Schema (plugin.schema.yaml) también ya tiene el campo definido.
+  # El implementer debe confirmar estado antes de editar (puede ser no-op).
+
+totals:
+  task_count: 1
+  foundation_count: 1
+  dag_max_depth: 1
+  estimated_loc_total: 3
+  acceptance_coverage: [AC-1, AC-3, AC-5]
+
+tasks:
+  - id: F01
+    title: "Agregar agentic: true al manifest de chats"
+    slug: chats-manifest-agentic
+    file: tareas/F01-chats-manifest-agentic.md
+    depends_on: []
+    blocks: []
+    delivers_acceptance: [AC-1, AC-3, AC-5]
+    affects_layers: [manifest]
+    affects_new_files: []
+    affects_modified_files:
+      - frontend_dashboard/src/plugins/chats/plugin.yaml
+    affects_spinal_files: []
+    estimated_loc: 3
+    risk: low
+
+parallel_batches:
+  - batch_id: B1
+    tasks: [F01]
+    warnings:
+      - |
+        Guard schema_and_feature_same_pr: plugins:sync valida additionalProperties:false.
+        El campo agentic debe estar en plugin.schema.yaml antes de correr plugins:sync.
+        En este worktree el schema YA tiene el campo (agents_admin del mismo batch).
+        Si el implementer corre en un branch limpio sin agents_admin, debe verificar
+        el schema antes de plugins:sync.
+
+notes: |
+  DAG de 1 sola task. El trabajo del plugin chats en esta HU es exclusivamente
+  manifest: agregar `agentic: true` a frontend_dashboard/src/plugins/chats/plugin.yaml.
+  Sin cambios Python, sin cambios de worker Temporal, sin cambios de frontend del
+  plugin. El campo actúa como discriminador — solo plugins con agentic=true
+  aparecen en GET /api/agents_admin (AC-5).
+
+  Observación de exploración: al leer el plugin.yaml en el worktree actual el
+  campo `agentic: true` ya está en línea 5. Esto puede indicar que agents_admin
+  lo agregó como parte de su propio trabajo, o que ya estaba en la rama base.
+  El implementer debe verificar el estado vs main y proceder en consecuencia:
+  - Si ya está: correr solo los verification commands (DOD satisfecho).
+  - Si no está: agregar la línea y correr verification commands.

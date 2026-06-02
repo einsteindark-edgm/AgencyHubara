@@ -1,0 +1,9 @@
+version: 1
+task_id: F01
+task_file: hubara_agency/.hubara/plans/HU-20260527-194116-conectar-seccion-agents-del-dashboard-a/feature-plans/agents_admin/tareas/F01-backend-api-schema.md
+hu_id: HU-20260527-194116-conectar-seccion-agents-del-dashboard-a
+plugin_id: agents_admin
+implementer: hubara-implementer-archon
+date: "2026-05-27T00:00:00Z"
+iteration: 1
+status: passed_with_warnings

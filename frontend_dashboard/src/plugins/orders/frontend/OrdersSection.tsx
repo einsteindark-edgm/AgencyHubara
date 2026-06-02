@@ -16,7 +16,7 @@ import {
 } from "@plugins/orders/frontend/features/orders-board";
 import { OrdersInspector } from "@plugins/orders/frontend/features/orders-inspector";
 
-import { useOrders, useVaultOrders } from "@/entities/order";
+import { useOrders, useVaultOrders, type VaultOrderRecord } from "@/entities/order";
 import { Icon, MissingData } from "@/shared/ui";
 
 export interface OrdersSectionProps {
@@ -136,19 +136,7 @@ export function OrdersSection({
 interface VaultOrdersBannerProps {
   failedCount: number;
   stubCount: number;
-  records: Array<{
-    kind: "failed" | "stub";
-    session_key: string;
-    order_id: string;
-    customer_phone: string | null;
-    customer_city: string | null;
-    total_cop: number;
-    currency: string;
-    items_count: number;
-    payment_method: string | null;
-    error_detail: string | null;
-    registered_at_ms: number;
-  }>;
+  records: VaultOrderRecord[];
 }
 
 function VaultOrdersBanner({

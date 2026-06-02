@@ -26,7 +26,10 @@ from functools import cache
 from pathlib import Path
 from typing import Any
 
+import structlog
 import yaml
+
+_pm_logger = structlog.get_logger()
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -240,7 +243,8 @@ def enumerate_manifest_workers() -> list[tuple[str, str, str]]:
             continue
         try:
             manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
-        except yaml.YAMLError:
+        except yaml.YAMLError as exc:
+            _pm_logger.warning("manifest_yaml_error", plugin_dir=str(plugin_dir), error=str(exc))
             continue
         if not isinstance(manifest, dict):
             continue

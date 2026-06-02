@@ -99,12 +99,14 @@ export function Toolbar({
 
       <div className="tb-sep" />
 
-      <div className="seg">
+      <div className="seg" role="tablist">
         {sections.map((s) => {
           const IconComp = resolveIcon(s.icon);
           return (
             <button
               key={s.key}
+              role="tab"
+              aria-selected={section === s.key}
               className={section === s.key ? "on" : ""}
               onClick={() => setSection(s.key)}
             >
