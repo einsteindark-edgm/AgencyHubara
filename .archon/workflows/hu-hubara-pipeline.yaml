@@ -2295,6 +2295,11 @@ nodes:
       const huId = huInfo.hu_id;
       const artifactsDir = '$ARTIFACTS_DIR';
 
+      // Los logs de playwright/pytest traen códigos ANSI (color + cursor) que
+      // GitHub no renderiza (se ven como ^[[2m / ^[[1A). Los limpiamos antes de
+      // embeber en el PR body. (run 5d99ee6b — el operador vio basura ANSI.)
+      const stripAnsi = (s) => s.replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, '');
+
       const refinementOriginal = `hubara_agency/.hubara/refinements/${huId}-original.md`;
       const refinementTech = `hubara_agency/.hubara/refinements/${huId}-tech.md`;
       const planManifest = `hubara_agency/.hubara/plans/${huId}/plugin-manifest.yaml`;
@@ -2352,7 +2357,7 @@ nodes:
       let functionalEvidence = '';
       const funcLog = `${artifactsDir}/functional-evidence.log`;
       if (existsSync(funcLog)) {
-        const raw = readFileSync(funcLog, 'utf-8').trim();
+        const raw = stripAnsi(readFileSync(funcLog, 'utf-8').trim());
         if (raw.length > 0) {
           functionalEvidence = '```\n' + raw.slice(-3000) + '\n```\n';
         }
@@ -2362,7 +2367,7 @@ nodes:
       let playwrightEvidence = '';
       const pwFinal = `${artifactsDir}/playwright-final.log`;
       if (existsSync(pwFinal)) {
-        const raw = readFileSync(pwFinal, 'utf-8').trim();
+        const raw = stripAnsi(readFileSync(pwFinal, 'utf-8').trim());
         if (raw.length > 0) {
           playwrightEvidence = '### Final E2E run\n\n```\n' + raw.slice(-3000) + '\n```\n\n';
         }
@@ -2373,7 +2378,7 @@ nodes:
           .sort();
         for (const logName of logs) {
           const taskId = logName.replace(/^playwright-evidence-/, '').replace(/\.log$/, '');
-          const raw = readFileSync(join(artifactsDir, logName), 'utf-8').trim();
+          const raw = stripAnsi(readFileSync(join(artifactsDir, logName), 'utf-8').trim());
           if (raw.length > 0) {
             playwrightEvidence += `### ${taskId}\n\n\`\`\`\n${raw.slice(-2000)}\n\`\`\`\n\n`;
           }
@@ -2456,6 +2461,43 @@ nodes:
       HU_ID=$(echo $gen-hu-id.output | jq -r '.hu_id')
       TITLE=$(echo $gen-hu-id.output | jq -r '.title')
       BRANCH=$(echo $gen-hu-id.output | jq -r '.branch')
+
+      # ── Visual evidence: commitear los screenshots de Playwright + embeberlos
+      # en el PR body como imágenes (raw.githubusercontent por SHA → permanentes).
+      # final-validation los dejó en $ARTIFACTS_DIR/visual-evidence/. NON-FATAL:
+      # si el commit/push falla, el PR se crea igual (sin imágenes). Solo embebemos
+      # si el push tuvo éxito (si no, la raw URL daría 404). Run 5d99ee6b.
+      if ls "$ARTIFACTS_DIR/visual-evidence/"*.png >/dev/null 2>&1; then
+        VE_DEST="hubara_agency/.hubara/visual-evidence/$HU_ID"
+        mkdir -p "$VE_DEST"
+        cp "$ARTIFACTS_DIR/visual-evidence/"*.png "$VE_DEST"/ 2>/dev/null
+        git add "$VE_DEST" >/dev/null 2>&1
+        PUSHED=0
+        if ! git diff --cached --quiet 2>/dev/null; then
+          git commit -m "$HU_ID: visual evidence (playwright screenshots)" >/dev/null 2>&1
+          for i in 1 2 3; do
+            if git push origin "HEAD:$BRANCH" >/dev/null 2>&1; then PUSHED=1; break; fi
+            git pull --rebase origin "$BRANCH" >/dev/null 2>&1
+          done
+        fi
+        if [ "$PUSHED" = "1" ]; then
+          SLUG=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || echo einsteindark-edgm/AgencyHubara)
+          VE_SHA=$(git rev-parse HEAD)
+          RAW="https://raw.githubusercontent.com/${SLUG}/${VE_SHA}/${VE_DEST}"
+          {
+            echo ""
+            echo "## 📸 Visual evidence (screenshots)"
+            echo ""
+            for png in "$ARTIFACTS_DIR/visual-evidence/"*.png; do
+              n=$(basename "$png")
+              echo "![${n%.png}](${RAW}/${n})"
+              echo ""
+            done
+          } >> "$ARTIFACTS_DIR/pr-body.md"
+        else
+          echo "WARN: no pude pushear visual-evidence; PR sin screenshots embebidos" >&2
+        fi
+      fi
 
       gh pr create \
         --title "${HU_ID}: ${TITLE}" \
