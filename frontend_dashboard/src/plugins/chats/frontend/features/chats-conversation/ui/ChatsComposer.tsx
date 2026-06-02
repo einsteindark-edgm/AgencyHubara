@@ -122,23 +122,6 @@ function InterveneActiveComposer({
           <Icon.user />
           Intervenido por ti · Bot pausado
         </span>
-        <span className="tb-sep" />
-        <button className="tb-btn" title="Plantillas">
-          <Icon.template />
-        </button>
-        <button className="tb-btn" title="Adjuntar">
-          <Icon.attach />
-        </button>
-        <button className="tb-btn" title="Audio">
-          <Icon.mic />
-        </button>
-        <span className="tb-sep" />
-        <button className="tb-btn" title="Asistente IA">
-          <Icon.wand />
-        </button>
-        <button className="tb-btn" title="Emoji">
-          <Icon.emoji />
-        </button>
         <span className="right">
           {pendingPaymentOrderId && (
             <ConfirmPaymentAction orderId={pendingPaymentOrderId} />

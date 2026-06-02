@@ -18,7 +18,6 @@ Mockeamos:
 from __future__ import annotations
 
 import json
-from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -157,6 +156,73 @@ def test_intervene_still_succeeds_if_temporal_unreachable(client_and_vault):
     data = _read_metadata(vault, "wa_unreachable")
     assert data["active_route"] == "humano"
     assert data["tag"] == "HUMANO"
+
+
+def test_intervene_passes_watchdog_id_for_active_episode(client_and_vault):
+    """El watchdog per-episodio (`watchdog-{id}-{episode_id}`) se pasa a
+    `terminate_session_workflows` como `extra_workflow_ids` para que no dispare
+    un template de re-engagement sobre el operador humano."""
+    client, vault = client_and_vault
+    _write_metadata(
+        vault,
+        "wa_wd",
+        {
+            "active_route": "ventas",
+            "episodes": [{"episode_id": "ep_002", "closed_at_ms": None}],
+        },
+    )
+
+    captured: dict = {}
+
+    async def _fake_terminate(_client, session_id, *, extra_workflow_ids=()):
+        captured["extra"] = list(extra_workflow_ids)
+        return []
+
+    with (
+        patch(
+            "src.plugins.chats.api.handoff.get_temporal_client",
+            new=AsyncMock(return_value=object()),
+        ),
+        patch(
+            "src.plugins.chats.api.handoff.terminate_session_workflows",
+            new=_fake_terminate,
+        ),
+    ):
+        res = client.post("/api/dashboard/sessions/wa_wd/intervene", json={})
+
+    assert res.status_code == 200
+    assert captured["extra"] == ["watchdog-wa_wd-ep_002"]
+
+
+def test_running_watchdog_ids_helper():
+    """Unidad del helper: episodio activo → id determinístico; cerrado → vacío;
+    `watchdog.workflow_id` persistido toma precedencia + dedupe."""
+    from src.plugins.chats.api.handoff import _running_watchdog_ids
+
+    # Episodio activo (no cerrado) → id determinístico.
+    assert _running_watchdog_ids(
+        {"episodes": [{"episode_id": "ep_005", "closed_at_ms": None}]}, "wa_x"
+    ) == ["watchdog-wa_x-ep_005"]
+
+    # Episodio cerrado → no hay watchdog que cerrar.
+    assert (
+        _running_watchdog_ids(
+            {"episodes": [{"episode_id": "ep_005", "closed_at_ms": 123}]}, "wa_x"
+        )
+        == []
+    )
+
+    # workflow_id persistido + mismo episodio → un solo id (dedupe).
+    assert _running_watchdog_ids(
+        {
+            "watchdog": {"workflow_id": "watchdog-wa_x-ep_009"},
+            "episodes": [{"episode_id": "ep_009", "closed_at_ms": None}],
+        },
+        "wa_x",
+    ) == ["watchdog-wa_x-ep_009"]
+
+    # Metadata vacía/sin episodios → [] (nunca rompe el take-over).
+    assert _running_watchdog_ids({}, "wa_x") == []
 
 
 # ---------- /messages ----------
