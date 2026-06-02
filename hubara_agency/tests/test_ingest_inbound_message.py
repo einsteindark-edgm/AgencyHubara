@@ -204,6 +204,83 @@ async def test_active_episode_continuation_has_no_boundary_note():
 
 
 @pytest.mark.asyncio
+async def test_active_episode_with_draft_injects_breadcrumb():
+    """El order_draft del episodio activo se proyecta como breadcrumb en
+    `extra_context` para que el LLM no re-pregunte datos ya confirmados
+    (color, aroma, ...). Es el wiring del determinismo de slots."""
+    import time
+
+    recent_ms = int(time.time() * 1000) - 60_000  # 1 min atras: no timeout
+    loader = FakeLoadOrStart()
+    metadata = FakeMetadataStore()
+    metadata.store["wa_5491111111111"] = {
+        "active_route": "ventas",
+        "episodes": [
+            {
+                "episode_id": "ep_001",
+                "started_at_ms": recent_ms,
+                "closed_at_ms": None,
+                "closing_tag": None,
+                "order_id": None,
+                "order_draft": {
+                    "slots": {"color": "Blanco", "aroma": "Lavanda"}
+                },
+            }
+        ],
+    }
+    use_case = IngestInboundMessage(
+        history_store=FakeHistoryStore(),  # type: ignore[arg-type]
+        load_session=loader,  # type: ignore[arg-type]
+        metadata_store=metadata,  # type: ignore[arg-type]
+    )
+
+    await use_case.execute(_make_text_message(text="seguimos"))
+
+    assert len(loader.calls) == 1
+    ctx = loader.calls[0].extra_context
+    assert ctx is not None
+    breadcrumb = "\n".join(ctx)
+    assert "DATOS DEL PEDIDO YA CONFIRMADOS" in breadcrumb
+    assert "Color: Blanco" in breadcrumb
+    assert "Aroma: Lavanda" in breadcrumb
+
+
+@pytest.mark.asyncio
+async def test_registered_order_episode_has_no_breadcrumb():
+    """Post-register_order (episodio con order_id): el draft deja de
+    proyectarse — la orden es la fuente de verdad, no el breadcrumb."""
+    import time
+
+    recent_ms = int(time.time() * 1000) - 60_000
+    loader = FakeLoadOrStart()
+    metadata = FakeMetadataStore()
+    metadata.store["wa_5491111111111"] = {
+        "active_route": "ventas",
+        "episodes": [
+            {
+                "episode_id": "ep_001",
+                "started_at_ms": recent_ms,
+                "closed_at_ms": None,
+                "closing_tag": None,
+                "order_id": "order_XYZ",
+                "order_draft": {"slots": {"color": "Blanco"}},
+            }
+        ],
+    }
+    use_case = IngestInboundMessage(
+        history_store=FakeHistoryStore(),  # type: ignore[arg-type]
+        load_session=loader,  # type: ignore[arg-type]
+        metadata_store=metadata,  # type: ignore[arg-type]
+    )
+
+    await use_case.execute(_make_text_message(text="ok"))
+
+    assert len(loader.calls) == 1
+    breadcrumb = "\n".join(loader.calls[0].extra_context or [])
+    assert "DATOS DEL PEDIDO" not in breadcrumb
+
+
+@pytest.mark.asyncio
 async def test_audio_inbound_defers_to_transcription():
     """HU-002 / A.5: audio inbound NO encola workflow — queda
     pending_transcription en metadata. La activity de transcripción

@@ -63,6 +63,10 @@ from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
 from src.plugins.chats.agent.sales.use_cases.load_or_start_sales_session import (
     LoadOrStartSalesSession,
 )
+from src.plugins.chats.agent.sales.use_cases.order_draft import (
+    build_order_draft_note,
+    get_projectable_draft,
+)
 from src.plugins.chats.shared.contracts.events import (
     CustomerRepliedEvent,
     ServiceWindowOpenedEvent,
@@ -355,13 +359,29 @@ class IngestInboundMessage:
             )
 
         # --- 9. Resolver ruta + signal al workflow correspondiente ---
+        # Breadcrumb determinista del pedido: si el episodio activo tiene un
+        # order_draft proyectable (slots no vacios, episodio sin order_id), lo
+        # inyectamos al plugin_context para que el LLM NO vuelva a preguntar
+        # datos ya confirmados (color, aroma, ciudad, ...). Episodio-scoped por
+        # construccion: un episodio nuevo de re-engagement no tiene draft -> no
+        # se proyecta -> no leak (mismo principio que la nota de frontera de
+        # arriba). Advisory: register_order sigue siendo la fuente de verdad.
+        _projectable_draft = get_projectable_draft(metadata)
+        order_draft_note = (
+            build_order_draft_note(_projectable_draft)
+            if _projectable_draft
+            else None
+        )
         await self._load_session.execute(
             session_id=session_id,
             message=effective.text,
             phone_number_id=parsed.phone_number_id,
-            extra_context=(
-                [episode_boundary_note] if episode_boundary_note else None
-            ),
+            extra_context=[
+                note
+                for note in (episode_boundary_note, order_draft_note)
+                if note
+            ]
+            or None,
         )
 
     # =========================================================================
