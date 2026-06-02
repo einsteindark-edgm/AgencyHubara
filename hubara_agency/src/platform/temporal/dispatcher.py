@@ -198,12 +198,23 @@ async def start_remarketing_for_session(
         )
 
 
-async def terminate_session_workflows(client, session_id: str) -> list[str]:
+async def terminate_session_workflows(
+    client,
+    session_id: str,
+    *,
+    extra_workflow_ids: Sequence[str] = (),
+) -> list[str]:
     """Termina cualquier workflow Sales/Remarketing RUNNING para `session_id`.
 
     Usado por el endpoint `intervene` del dashboard handoff: si el humano toma
     el control mientras un workflow está procesando un turno, evitamos que el
     bot responda en paralelo al humano.
+
+    `extra_workflow_ids`: ids adicionales a terminar junto con los canónicos
+    `session-{id}` / `remarketing-{id}`. El endpoint los usa para cerrar el
+    watchdog per-episodio (`watchdog-{session_id}-{episode_id}`), que NO sigue
+    el patrón de prefijo de sesión y por eso no se descubre solo. Keyword-only
+    para no romper los callers existentes (firma backward-compatible).
 
     **Best-effort**: capturamos CUALQUIER excepción por workflow individual
     (RPC error, race entre describe y terminate, conexión interrumpida) y
@@ -219,7 +230,12 @@ async def terminate_session_workflows(client, session_id: str) -> list[str]:
 
     log = structlog.get_logger()
     terminated: list[str] = []
-    for workflow_id in (f"session-{session_id}", f"remarketing-{session_id}"):
+    workflow_ids = [
+        f"session-{session_id}",
+        f"remarketing-{session_id}",
+        *extra_workflow_ids,
+    ]
+    for workflow_id in workflow_ids:
         try:
             handle = client.get_workflow_handle(workflow_id)
             desc = await handle.describe()

@@ -9,7 +9,7 @@ Cubren los caminos defensivos pre-mortem:
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 from temporalio.client import WorkflowExecutionStatus
@@ -146,6 +146,42 @@ async def test_terminate_handles_describe_failure_gracefully():
     )
     terminated = await terminate_session_workflows(client, "wa_1")
     assert terminated == ["remarketing-wa_1"]
+
+
+@pytest.mark.asyncio
+async def test_terminate_includes_extra_workflow_ids():
+    """`extra_workflow_ids` (ej. el watchdog per-episodio) se terminan junto
+    con los canónicos `session-`/`remarketing-`. Es como `intervene` cierra el
+    `watchdog-{id}-{episode_id}` para que no dispare un template sobre el humano."""
+    client = _Client(
+        handles={
+            "session-wa_1": _Handle(),
+            "watchdog-wa_1-ep_003": _Handle(),
+        }
+    )
+    terminated = await terminate_session_workflows(
+        client, "wa_1", extra_workflow_ids=["watchdog-wa_1-ep_003"]
+    )
+    assert terminated == ["session-wa_1", "watchdog-wa_1-ep_003"]
+    assert client.handles["watchdog-wa_1-ep_003"].terminated is True
+
+
+@pytest.mark.asyncio
+async def test_terminate_extra_id_failure_is_best_effort():
+    """Si el watchdog ya cerró (NOT_FOUND) o falla terminate, no rompe el resto."""
+    client = _Client(
+        handles={
+            "session-wa_1": _Handle(),
+            "watchdog-wa_1-ep_003": _Handle(
+                terminate_raises=RuntimeError("race"),
+            ),
+        }
+    )
+    terminated = await terminate_session_workflows(
+        client, "wa_1", extra_workflow_ids=["watchdog-wa_1-ep_003"]
+    )
+    # session sí, watchdog explotó → no aparece, pero no rompió el endpoint.
+    assert terminated == ["session-wa_1"]
 
 
 # ---------- start_remarketing_for_session ----------

@@ -134,6 +134,45 @@ def _append_status(
     history.append(entry)
 
 
+def _running_watchdog_ids(data: dict, session_id: str) -> list[str]:
+    """Best-effort: workflow ids del watchdog per-episodio para esta sesión.
+
+    El watchdog de ventana 24h corre como `watchdog-{session_id}-{episode_id}`
+    y NO sigue el prefijo `session-`/`remarketing-`, así que `terminate_session_
+    workflows` no lo descubre solo. Cuando el humano toma el control lo cerramos
+    también para que un template de re-engagement no se dispare sobre el operador.
+
+    Defense-in-depth ya hace que el watchdog se auto-skipee con
+    `active_route=humano` (ver `check_watchdog_eligibility_activity`); terminarlo
+    explícitamente solo libera de inmediato el workflow que quedaría colgado
+    durmiendo hasta que cierre la ventana.
+
+    Devuelve `[]` ante cualquier metadata ausente/malformada — nunca rompe el
+    take-over.
+    """
+    ids: list[str] = []
+
+    # 1. Id autoritativo si el orquestador lo persistió en metadata.watchdog.
+    watchdog = data.get("watchdog") or {}
+    wid = watchdog.get("workflow_id")
+    if isinstance(wid, str) and wid:
+        ids.append(wid)
+
+    # 2. Id determinístico desde el episodio activo (último, no cerrado) — es
+    #    como lo construye el ingest al emitir `ServiceWindowOpenedEvent`.
+    episodes = data.get("episodes") or []
+    if episodes:
+        active_ep = episodes[-1]
+        if isinstance(active_ep, dict) and active_ep.get("closed_at_ms") is None:
+            episode_id = active_ep.get("episode_id")
+            if isinstance(episode_id, str) and episode_id:
+                candidate = f"watchdog-{session_id}-{episode_id}"
+                if candidate not in ids:
+                    ids.append(candidate)
+
+    return ids
+
+
 # ---------- Endpoints ----------
 
 
@@ -174,7 +213,11 @@ async def intervene(
     terminated: list[str] = []
     try:
         client = await get_temporal_client()
-        terminated = await terminate_session_workflows(client, session_id)
+        terminated = await terminate_session_workflows(
+            client,
+            session_id,
+            extra_workflow_ids=_running_watchdog_ids(data, session_id),
+        )
     except Exception as e:
         logger.warning(
             "dashboard.intervene: termination best-effort failed",

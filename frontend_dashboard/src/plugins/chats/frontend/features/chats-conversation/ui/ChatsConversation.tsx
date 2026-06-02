@@ -5,6 +5,7 @@
 
 import { useState } from "react";
 import { useChatInbox, useChatMessages } from "@/entities/chat";
+import { useSession } from "@/entities/session";
 import { Avatar, Icon } from "@/shared/ui";
 import { ChatsNotes } from "./ChatsNotes";
 import { ChatsFiles } from "./ChatsFiles";
@@ -19,6 +20,9 @@ interface Props {
 export function ChatsConversation({ chatId }: Props) {
   const { data: chats = [] } = useChatInbox();
   const { data: messages = [] } = useChatMessages(chatId);
+  // Misma query (cache compartido) que el composer — header y composer nunca
+  // discrepan sobre quién maneja la conversación.
+  const { data: session } = useSession(chatId);
   const [subTab, setSubTab] = useState<SubTab>("Chat");
 
   const chat = chats.find((c) => c.id === chatId) ?? null;
@@ -44,6 +48,7 @@ export function ChatsConversation({ chatId }: Props) {
         name={chat.name}
         short={chat.short}
         color={chat.color}
+        route={session?.active_agent_route}
       />
 
       <div className="sub-tabs">
@@ -93,9 +98,11 @@ interface HeaderProps {
   name: string;
   short: string;
   color: string;
+  /** `active_agent_route` de la sesión: humano | ventas | remarketing. */
+  route?: string;
 }
 
-function Header({ name, short, color }: HeaderProps) {
+function Header({ name, short, color, route }: HeaderProps) {
   return (
     <div className="chat-header">
       <Avatar initials={short} color={color} size={38} presence="online" />
@@ -104,7 +111,7 @@ function Header({ name, short, color }: HeaderProps) {
         <span className="sub">
           <span className="live">En línea</span>
           <span style={{ color: "var(--fg-faint)" }}>·</span>
-          Active Route
+          <RouteState route={route} />
           <span style={{ color: "var(--fg-faint)" }}>·</span>
           WhatsApp API
         </span>
@@ -116,4 +123,17 @@ function Header({ name, short, color }: HeaderProps) {
       </div>
     </div>
   );
+}
+
+/** Quién maneja la conversación, de un vistazo en el header. El humano
+ *  intervenido resalta (acento + bold); el bot va en tono normal. */
+function RouteState({ route }: { route?: string }) {
+  if (route === "humano") {
+    return (
+      <span style={{ color: "var(--color-accent-fg, #b45309)", fontWeight: 600 }}>
+        Intervenido · bot en pausa
+      </span>
+    );
+  }
+  return <span>{route === "remarketing" ? "Bot remarketing" : "Bot ventas"}</span>;
 }
