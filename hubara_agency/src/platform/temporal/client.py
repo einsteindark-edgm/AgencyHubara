@@ -1,5 +1,6 @@
 import os
 from temporalio.client import Client, TLSConfig
+from temporalio.contrib.opentelemetry import TracingInterceptor
 from src.platform.config import (
     TEMPORAL_URL, 
     TEMPORAL_NAMESPACE,
@@ -29,8 +30,13 @@ async def get_temporal_client() -> Client:
         else:
             logger.warning("TLS certificates defined but not found. Falling back to insecure connection.")
 
+    # OTel obs: TracingInterceptor crea spans OTel automáticos para cada client call,
+    # workflow execution y activity execution, propagados a través del server (un trace
+    # por Workflow Execution). Si OTel no se inicializó (init_otel no corrió o
+    # OTEL_SDK_DISABLED=true), usa el TracerProvider no-op global → cero efecto.
     return await Client.connect(
         TEMPORAL_URL,
         namespace=TEMPORAL_NAMESPACE,
-        tls=tls_config
+        tls=tls_config,
+        interceptors=[TracingInterceptor()],
     )
