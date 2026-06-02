@@ -2,6 +2,8 @@
 # Edit `docker-compose.base.yml` (infra fija) or `plugin.yaml` (workers)
 # instead, then re-run: `uv run python scripts/render-compose.py`.
 
+include:
+- deploy/signoz/docker/docker-compose.yaml
 services:
   db:
     image: postgres:14

@@ -104,8 +104,30 @@ def init_otel(service_name: str) -> None:
     )
     metrics.set_meter_provider(meter_provider)
 
-    # --- GenAI (LiteLLM) ---
-    _enable_litellm_otel()
+    # --- Logs (OTel-logs aún experimental en Python; lo configuramos para que los
+    # events/logs de OpenLIT tengan LoggerProvider — sin esto: "Failed to export
+    # logs batch" al shutdown). 3a señal correlacionada por trace_id. ---
+    from opentelemetry._logs import set_logger_provider
+    from opentelemetry.sdk._logs import LoggerProvider
+    from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+
+    if use_otlp:
+        from opentelemetry.exporter.otlp.proto.grpc._log_exporter import (
+            OTLPLogExporter,
+        )
+
+        log_exporter = OTLPLogExporter()
+    else:
+        from opentelemetry.sdk._logs.export import ConsoleLogExporter
+
+        log_exporter = ConsoleLogExporter()
+
+    logger_provider = LoggerProvider(resource=resource)
+    logger_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
+    set_logger_provider(logger_provider)
+
+    # --- GenAI (OpenLIT → gen_ai.* estándar + métricas tokens/cost/latencia) ---
+    _instrument_genai(service_name)
 
     _INITIALIZED = True
     logger.info(
@@ -115,20 +137,58 @@ def init_otel(service_name: str) -> None:
     )
 
 
-def _enable_litellm_otel() -> None:
-    """Appendea ``"otel"`` a ``litellm.callbacks`` SIN tocar ``success_callback``.
+def _instrument_genai(service_name: str) -> None:
+    """Instrumenta LiteLLM con OpenLIT → spans ``gen_ai.*`` estándar + métricas.
 
-    GOTCHA (HU-003 §11.3): LiteLLM tiene DOS listas de callbacks distintas:
-      - ``litellm.success_callback`` → ya usada por el cache logger en
-        ``exoclaw_temporal/activities/llm.py`` (NO tocar).
-      - ``litellm.callbacks``        → donde vive el handler ``"otel"``.
-    Asignar (``= [...]``) en vez de appendear mataría el cache logger. Por eso
-    se lee lo existente y se appendea idempotentemente.
+    Reemplaza el callback nativo de LiteLLM (que emitía el namespace propietario
+    ``llm.litellm_proxy.*`` — no portable, no lo entiende RAGAS ni otro backend
+    sin mapeo custom). OpenLIT auto-instrumenta LiteLLM y emite:
+      - traces con ``gen_ai.*`` semantic conventions (prompt/completion estándar),
+      - métricas de valores: token usage (prompt/completion), costo USD, latencia.
+
+    Reusa el TracerProvider GLOBAL ya configurado por init_otel (no crea
+    exporters propios) → los spans del LLM cuelgan del trace de Temporal
+    (correlación workflow→activity→LLM) y van al mismo SigNoz. El cache logger
+    en ``litellm.success_callback`` queda intacto (OpenLIT no toca esa lista).
+
+    Si OpenLIT no está o falla, cae al callback nativo de LiteLLM
+    (``llm.litellm_proxy.*``) — degradado pero sin perder observabilidad.
+    """
+    try:
+        import openlit
+
+        # SIN otlp_endpoint ni tracer: OpenLIT reusa el TracerProvider/MeterProvider
+        # GLOBAL ya configurado por init_otel → los spans del LLM cuelgan del trace de
+        # Temporal (correlación) y van al mismo SigNoz. Defaults relevantes:
+        # capture_message_content=True (prompt/completion), disable_metrics=False (valores).
+        openlit.init(
+            application_name=service_name,
+            environment=os.getenv("ENVIRONMENT", "dev"),
+            # evals_logs_export usa OTel-logs (experimental, sin LoggerProvider en
+            # nuestro setup) → causaba "Failed to export logs batch" al shutdown.
+            # Lo desactivamos; traces (gen_ai.*) + métricas (tokens/cost/latencia)
+            # NO se ven afectados. Para prod: agregar LoggerProvider y reactivar.
+            evals_logs_export=False,
+        )
+        logger.info("otel.openlit_instrumented", service=service_name)
+        return
+    except Exception as exc:  # noqa: BLE001 — degradar, no romper el worker
+        logger.warning("otel.openlit_failed", error=str(exc), fallback="litellm_native")
+
+    _enable_litellm_native_callback()
+
+
+def _enable_litellm_native_callback() -> None:
+    """Fallback: appendea ``"otel"`` a ``litellm.callbacks`` (NO toca ``success_callback``).
+
+    GOTCHA (HU-003 §11.3): LiteLLM tiene DOS listas — ``success_callback`` (cache
+    logger en activities/llm.py, NO tocar) y ``callbacks`` (handler ``"otel"``).
+    Appendea idempotentemente. Emite el formato propietario ``llm.litellm_proxy.*``.
     """
     try:
         import litellm
     except ImportError:
-        logger.warning("otel.litellm_missing", detail="litellm no importable; skip GenAI callback")
+        logger.warning("otel.litellm_missing", detail="litellm no importable; skip GenAI")
         return
 
     existing = list(getattr(litellm, "callbacks", None) or [])

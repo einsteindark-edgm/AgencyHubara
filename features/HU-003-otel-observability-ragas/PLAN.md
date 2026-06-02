@@ -3,7 +3,10 @@
 > Documento de implementación. Self-contained: un humano (o agente single-shot) lee
 > esto y puede empezar a commitear sin re-litigar decisiones.
 >
-> **Status**: spec en diseño, pendiente de cerrar §11 (decisiones abiertas).
+> **Status**: Fase A (A1–A3) implementada, verificada y commiteada (`9e5046a`, branch
+> `feat/otel-observability-poc`). A5 (integrar SigNoz self-hosted al docker-compose) + A4
+> (validar prompt/completion) en curso. Backend: **SigNoz Community self-hosted** (Cloud
+> descartado — mínimo $49/mes confirmado, no viable para bootstrapped).
 > **Owner**: TBD.
 > **Estimación**: Parte A (OTel) ~3 días · Parte B (RAGAS) ~2 días · ~18 commits total.
 > **Relación**: Parte B reusa el dataset de [HU-001](../HU-001-conversation-eval-harness/PLAN.md).
