@@ -1,0 +1,11 @@
+version: 1
+hu_id: HU-20260527-194116-conectar-seccion-agents-del-dashboard-a
+plugin_id: chats
+pipeline: hu-hubara-plugin-pipeline
+date: 2026-05-27T22:21:14Z
+status: passed_with_warnings
+feature_tasks_total: 1
+feature_tasks_passed: 1
+feature_tasks_with_warnings: 1
+warned_tasks:
+  - F01-result

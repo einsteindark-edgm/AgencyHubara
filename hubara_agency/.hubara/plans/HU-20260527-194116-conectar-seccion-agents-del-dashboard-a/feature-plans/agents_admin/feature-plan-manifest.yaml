@@ -1,0 +1,117 @@
+version: 1
+hu_id: HU-20260527-194116-conectar-seccion-agents-del-dashboard-a
+plugin_id: agents_admin
+plugin_template: B  # migración A → B
+generated_by: hubara-feature-planner-archon
+generated_at: "2026-05-27T00:00:00Z"
+iteration: 1
+
+exploration_mode: agent_explore  # §1.5 — subagent Explore corrido correctamente
+exploration_map: plugin-exploration-map.md
+
+# ── Schema change flag (operador debe confirmar) ──────────────────────────────
+schema_change_note: |
+  F01 toca frontend_dashboard/src/plugins/_schema/plugin.schema.yaml (spinal).
+  El campo `agentic` es aditivo (optional boolean, default false).
+  spinal-files.yaml lo clasifica como "feature task NO debería modificar esto".
+  Sin embargo: el plugin-manifest (schema_and_feature_same_pr guard) exige que
+  schema + chats/plugin.yaml vayan en el mismo PR (sin el schema update,
+  plugins-sync.ts falla la validación). El operador debe confirmar:
+    Opción A (recomendada): incluir el campo agentic en este PR (lo avala el guard).
+    Opción B: PR de arquitectura previo con solo el campo agentic, luego este PR.
+  El implementer debe flag esto al operador antes de mergear.
+
+totals:
+  task_count: 3
+  foundation_count: 2   # F01 y F02 (depends_on: [])
+  dag_max_depth: 2
+  estimated_loc_total: 395
+  acceptance_coverage: ["AC-1", "AC-2", "AC-3", "AC-4", "AC-5"]
+
+tasks:
+  - id: F01
+    title: "Backend API: router GET /api/agents_admin + schema agentic"
+    slug: backend-api-schema
+    file: tareas/F01-backend-api-schema.md
+    depends_on: []
+    blocks: ["F03"]
+    delivers_acceptance: ["AC-3", "AC-5"]
+    affects_layers: ["api", "tests", "manifest"]
+    affects_new_files:
+      - hubara_agency/src/plugins/agents_admin/api/__init__.py
+      - hubara_agency/src/plugins/agents_admin/api/routes.py
+      - hubara_agency/tests/plugins/agents_admin/__init__.py
+      - hubara_agency/tests/plugins/agents_admin/api/__init__.py
+      - hubara_agency/tests/plugins/agents_admin/api/test_routes.py
+    affects_spinal_files:
+      - frontend_dashboard/src/plugins/_schema/plugin.schema.yaml  # operator decision
+    affects_existing_files:
+      - frontend_dashboard/src/plugins/agents_admin/plugin.yaml    # agrega api: block
+    estimated_loc: 175
+    risk: low
+
+  - id: F02
+    title: "Frontend entity: rewrite entities/agent/* con Zod + hook real"
+    slug: frontend-entity-rewrite
+    file: tareas/F02-frontend-entity-rewrite.md
+    depends_on: []
+    blocks: ["F03"]
+    delivers_acceptance: ["AC-4"]
+    affects_layers: ["frontend/entity"]
+    affects_new_files:
+      - frontend_dashboard/src/entities/agent/contracts.ts
+      - frontend_dashboard/src/entities/agent/api.test.tsx
+    affects_spinal_files:
+      - frontend_dashboard/src/entities/agent/model.ts
+      - frontend_dashboard/src/entities/agent/api.ts
+      - frontend_dashboard/src/entities/agent/keys.ts
+      - frontend_dashboard/src/entities/agent/index.ts
+    estimated_loc: 165
+    risk: medium  # rewrite completo — verificar consumers antes de eliminar tipos
+
+  - id: F03
+    title: "Frontend plugin: AgentsSection + AgentsPrompts + null-safe consumers"
+    slug: frontend-plugin-wiring
+    file: tareas/F03-frontend-plugin-wiring.md
+    depends_on: ["F01", "F02"]
+    blocks: []
+    delivers_acceptance: ["AC-1", "AC-2"]
+    affects_layers: ["frontend/plugin"]
+    affects_new_files:
+      - frontend_dashboard/e2e/agents/agents-list.spec.ts
+    affects_existing_files:
+      - frontend_dashboard/src/plugins/agents_admin/frontend/AgentsSection.tsx
+      - frontend_dashboard/src/plugins/agents_admin/frontend/features/agents-prompts/ui/AgentsPrompts.tsx
+      - frontend_dashboard/src/plugins/agents_admin/frontend/features/agents-list/ui/AgentsList.tsx   # null-safe calls/csat
+      - frontend_dashboard/src/plugins/agents_admin/frontend/features/agents-inspector/ui/AgentsInspector.tsx  # null-safe capabilities
+    affects_spinal_files: []
+    estimated_loc: 55
+    risk: low
+
+parallel_batches:
+  - batch_id: B1
+    tasks: ["F01", "F02"]
+    rationale: |
+      F01 (backend Python + manifest) y F02 (entity TS frontend) no comparten
+      ningún archivo. Backend no importa del frontend ni viceversa (R-DIP).
+      Pueden correr en paralelo. El feature-planner los pone en el mismo batch;
+      el implementer puede elegir ejecutarlos secuencialmente si prefiere
+      (defaults a secuencial dentro del plugin).
+    warnings: []
+  - batch_id: B2
+    tasks: ["F03"]
+    rationale: |
+      F03 necesita que el hook useAgents() de F02 esté disponible (import TS).
+      También necesita el endpoint de F01 para que las E2E tests pasen.
+    warnings: []
+
+notes: |
+  - exploration_map.md detectó que usePersonalities() tiene UN SOLO caller
+    (AgentsPrompts.tsx) — safe to delete sin grep adicional.
+  - AgentsList.tsx consume useAgents() y usa agent.calls.toLocaleString() sin
+    null-check — F03 debe aplicar null-safe fix.
+  - PROMPT_SECTIONS keys en el frontend deben matchear las keys del JSON del backend
+    (identity, soul, tools, agents, users). El backend responde con key "users" (no "user").
+    Verificar que PROMPT_SECTIONS.find(s => s.key) matchee exactamente.
+  - plugin.schema.yaml: operador debe decidir entre opción A y B (ver schema_change_note).
+    El implementer de F01 flageará esto al terminar la task.

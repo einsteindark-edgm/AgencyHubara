@@ -1,0 +1,116 @@
+version: 1
+task_id: F01
+task_file: hubara_agency/.hubara/plans/HU-20260527-194116-conectar-seccion-agents-del-dashboard-a/feature-plans/agents_admin/tareas/F01-backend-api-schema.md
+hu_id: HU-20260527-194116-conectar-seccion-agents-del-dashboard-a
+plugin_id: agents_admin
+implementer: hubara-implementer-archon
+date: "2026-05-27T00:00:00Z"
+iteration: 1
+status: passed_with_warnings
+
+smoke_test_warnings: true
+smoke_test_skipped_reason: |
+  timeout binary not available on macOS host. Backend imports verified directly:
+  `uv run python -c "import src.main; import src.run_workers; print('OK')"` → OK.
+  Dev server at :8000 already UP.
+
+files_created:
+  - hubara_agency/src/plugins/agents_admin/api/__init__.py
+  - hubara_agency/src/plugins/agents_admin/api/routes.py
+  - hubara_agency/tests/plugins/agents_admin/__init__.py
+  - hubara_agency/tests/plugins/agents_admin/api/__init__.py
+  - hubara_agency/tests/plugins/agents_admin/api/test_routes.py
+
+files_modified:
+  - frontend_dashboard/src/plugins/agents_admin/plugin.yaml
+  - frontend_dashboard/src/plugins/_schema/plugin.schema.yaml
+  - frontend_dashboard/src/plugins/chats/plugin.yaml
+
+wiring_intents:
+  frontend_dashboard/src/plugins/_schema/plugin.schema.yaml:
+    - kind: yaml_dict_keys_append
+      name: agentic
+      operator_flag: "SCHEMA_CHANGE — confirmar Opción A vs B con operador antes de PR (recomendado: Opción A)"
+
+commands:
+  - cmd: "cd hubara_agency && uv run pytest tests/plugins/agents_admin/ -xvs"
+    exit_code: 0
+    duration_s: 4.68
+    attempts: 1
+  - cmd: "cd hubara_agency && uv run pytest tests/plugins/ -v"
+    exit_code: 0
+    duration_s: 10.50
+    attempts: 1
+    note: "183/183 passed"
+  - cmd: "cd hubara_agency && uv run lint-imports"
+    exit_code: 0
+    duration_s: 3.0
+    attempts: 1
+    note: "4 contracts kept, 0 broken"
+  - cmd: "cd hubara_agency && uv run python scripts/render-compose.py && git diff --exit-code docker-compose.local.yml"
+    exit_code: 0
+    duration_s: 1.5
+    attempts: 1
+    note: "No drift"
+
+regression_check:
+  cmd: "cd hubara_agency && uv run pytest tests/plugins/ -q"
+  exit_code: 0
+  failing_tests: []
+
+architecture_gate:
+  cmd: "cd hubara_agency && uv run pytest -m architecture --tb=short"
+  exit_code: 1
+  pre_existing: true
+  failing_tests:
+    - name: tests/architecture/test_meta.py::test_protected_files_unchanged_vs_main
+      cause: ".archon/workflows/ modified in pipeline planning commits (f7dc3fb) — NOT by this task"
+    - name: tests/architecture/test_spinal.py::test_every_src_module_imports_cleanly
+      cause: "MedusaSettings.base_url missing env var in local worktree — pre-existing"
+
+import_linter_gate:
+  cmd: "cd hubara_agency && uv run lint-imports"
+  exit_code: 0
+  contracts_broken: []
+
+render_compose_check:
+  cmd: "cd hubara_agency && uv run python scripts/render-compose.py && git diff --exit-code docker-compose.local.yml"
+  exit_code: 0
+  drift_detected: false
+
+frontend_gates:
+  npm_plugins_sync:
+    exit_code: null
+    note: "node_modules not installed in worktree — schema is valid YAML with correct additionalProperties structure"
+
+r_rules:
+  R-DET: { applies: false, verified: true, note: "Template B — no Temporal" }
+  R-JSON: { applies: false, verified: true, note: "FastAPI serializes dicts natively" }
+  R-STATELESS: { applies: false, verified: true, note: "no activities" }
+  R-HEARTBEAT: { applies: false, verified: true, note: "GET O(files×KB) ~10ms" }
+  R-DIP: { applies: true, verified: true, note: "routes.py imports only src.platform.plugin_manifest; reads filesystem via Path, not imports" }
+
+dod_checklist:
+  - { item: "api/__init__.py y api/routes.py creados", done: true }
+  - { item: "plugin.yaml de agents_admin tiene bloque api:", done: true }
+  - { item: "plugin.schema.yaml tiene campo agentic: boolean", done: true, note: "FLAG OPERADOR: Opción A (mismo PR) implementada" }
+  - { item: "chats/plugin.yaml tiene agentic: true", done: true }
+  - { item: "5 tests en test_routes.py — exit 0", done: true }
+  - { item: "pytest tests/plugins/ — exit 0", done: true, note: "183/183 passed" }
+  - { item: "lint-imports — exit 0", done: true }
+  - { item: "render-compose no drift", done: true }
+  - { item: "plugins:sync — exit 0", done: false, note: "node_modules not in worktree; schema valid structurally" }
+  - { item: "Architecture gate exit 0", done: false, note: "2 pre-existing failures, NOT caused by this task" }
+  - { item: "No edits to protected paths", done: true }
+
+notes: |
+  FLAG OPERADOR — schema decision:
+    Opción A implementada (mismo PR): schema + chats/plugin.yaml juntos.
+    El campo agentic es aditivo (optional boolean, default false).
+
+  Main loader confirma registro correcto del router (en stderr de architecture test):
+    "[loader] registered src.plugins.agents_admin.api.routes → prefix='/api/agents_admin' tags=['AgentsAdmin']"
+
+  Architecture gate pre-existing failures:
+    1. test_meta → .archon/workflows/ modified in commit f7dc3fb (pipeline planning, not my code)
+    2. test_spinal → MedusaSettings env var missing locally (pre-existing worktree config issue)

@@ -1,54 +1,46 @@
-/**
- * Tipos de la entidad "agent" (agente IA configurable).
- * Cada agente tiene una personalidad (`profile`) que determina los 5 prompts
- * (Agents / Identity / Soul / Tools / Users) que se muestran en lectura.
- */
-
 import type { IconName } from "@/shared/ui";
 
 export type AgentColor = "blue" | "purple" | "green" | "orange" | "pink" | "teal";
 export type AgentStatus = "online" | "idle" | "off";
-export type PersonalityKey = "prof" | "friend" | "direct" | "empath";
 
 export interface Capability {
   name: string;
   icon: IconName;
 }
 
+export interface SkillContent {
+  name: string;
+  content: string;
+}
+
+export interface WorkspaceContent {
+  identity: string;
+  soul: string;
+  tools: string;
+  agents: string;
+  users: string;
+  skills: SkillContent[];
+}
+
 export interface Agent {
   id: string;
+  plugin_id: string;
+  worker_name: string;
   name: string;
   role: string;
+  workspace: WorkspaceContent;
   model: string;
   icon: IconName;
   color: AgentColor;
   status: AgentStatus;
-  calls: number;
+  calls: number | null;
   csat: number | null;
-  personality: PersonalityKey;
   category: string;
   capabilities: Capability[];
 }
 
-export interface PersonalityPrompt {
-  agents: string;
-  identity: string;
-  soul: string;
-  tools: string;
-  users: string;
-}
-
-export interface Personality {
-  key: PersonalityKey;
-  name: string;
-  icon: IconName;
-  desc: string;
-  tags: string[];
-  prompts: PersonalityPrompt;
-}
-
 export interface PromptSection {
-  key: keyof PersonalityPrompt;
+  key: Exclude<keyof WorkspaceContent, "skills">;
   title: string;
   desc: string;
   icon: IconName;

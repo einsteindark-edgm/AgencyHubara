@@ -1,0 +1,262 @@
+# plugin-manifest.yaml — DAG plugin-level
+# HU: HU-20260527-194116-conectar-seccion-agents-del-dashboard-a
+# Generado por: hubara-plugin-planner-archon
+# Fecha: 2026-05-27
+# Iteración: 1
+
+hu_id: HU-20260527-194116-conectar-seccion-agents-del-dashboard-a
+mode: multi_plugin
+requires_merger: true
+
+# ── Plugins afectados ────────────────────────────────────────────────────────
+plugins:
+  - id: agents_admin
+    layers: [api, frontend]
+    action: extend
+    template_from: A
+    template_to: B
+    depends_on: []
+    estimated_tasks: 3
+    description: |
+      Migración Template A→B: se agrega la capa api/ con un router FastAPI
+      GET /api/agents_admin que lee workspaces del filesystem.
+      Frontend: rewrite completo de entities/agent/* (model, api, keys, index,
+      contracts nuevo) + simplificación de AgentsSection.tsx (estado interno)
+      y AgentsPrompts.tsx (workspace real en vez de mock de personalidades).
+      Todos los shared files de entities/agent/* son tocados únicamente por
+      este plugin — no hay contención paralela hoy, pero se declaran como
+      spinal para el merger por protocolo.
+    task_groups:
+      - group: backend_api
+        label: "Backend: router GET /api/agents_admin"
+        files_new:
+          - hubara_agency/src/plugins/agents_admin/api/__init__.py
+          - hubara_agency/src/plugins/agents_admin/api/routes.py
+          - hubara_agency/tests/plugins/agents_admin/__init__.py
+          - hubara_agency/tests/plugins/agents_admin/api/__init__.py
+          - hubara_agency/tests/plugins/agents_admin/api/test_routes.py
+        files_modified:
+          - frontend_dashboard/src/plugins/agents_admin/plugin.yaml  # agrega bloque api:
+        spinal_files_touched: []
+
+      - group: frontend_entity
+        label: "Frontend entity: rewrite entities/agent/*"
+        files_new:
+          - frontend_dashboard/src/entities/agent/contracts.ts
+        files_modified:
+          - frontend_dashboard/src/entities/agent/model.ts
+          - frontend_dashboard/src/entities/agent/api.ts
+          - frontend_dashboard/src/entities/agent/keys.ts
+          - frontend_dashboard/src/entities/agent/index.ts
+        spinal_files_touched:
+          - frontend_dashboard/src/entities/agent/model.ts
+          - frontend_dashboard/src/entities/agent/api.ts
+          - frontend_dashboard/src/entities/agent/keys.ts
+          - frontend_dashboard/src/entities/agent/index.ts
+          - frontend_dashboard/src/entities/agent/contracts.ts  # nuevo pero path spinal
+
+      - group: frontend_plugin
+        label: "Frontend plugin: AgentsSection + AgentsPrompts"
+        files_new: []
+        files_modified:
+          - frontend_dashboard/src/plugins/agents_admin/frontend/AgentsSection.tsx
+          - frontend_dashboard/src/plugins/agents_admin/frontend/features/agents-prompts/ui/AgentsPrompts.tsx
+        spinal_files_touched: []
+
+  - id: chats
+    layers: [manifest]
+    action: extend
+    template_from: D
+    template_to: D
+    depends_on: []
+    estimated_tasks: 1
+    description: |
+      Solo cambio de manifest: agregar `agentic: true` al plugin.yaml de chats.
+      Sin cambios en Python, frontend del plugin chats, ni workers Temporal.
+      El campo agentic actúa como discriminador: solo plugins con agentic=true
+      aparecen en GET /api/agents_admin — filtra catalog que tiene sección agent:
+      pero no es conversacional (AC-5).
+    task_groups:
+      - group: manifest_only
+        label: "Manifest: agregar agentic: true a chats/plugin.yaml"
+        files_new: []
+        files_modified:
+          - frontend_dashboard/src/plugins/chats/plugin.yaml
+        spinal_files_touched: []
+
+# ── Schema compartido (afectado por agents_admin) ────────────────────────────
+# Nota: plugin.schema.yaml es spinal (protected: requires ADR según spinal-files.yaml).
+# La HU trata este cambio como parte del mismo PR porque el campo `agentic` es
+# aditivo (optional, default false) y sin el cambio chats/plugin.yaml falla la
+# validación schema (additionalProperties: false). Se documenta explícitamente
+# en Risk §12.1 de la HU refinada. El implementer debe confirmar con el operador
+# si esto requiere un PR previo de arquitectura o puede ir junto al feature.
+schema_changes:
+  - path: frontend_dashboard/src/plugins/_schema/plugin.schema.yaml
+    kind: yaml_dict_keys_append
+    field: agentic
+    reason: |
+      Nuevo campo `agentic: boolean` (optional, default false). Discriminador
+      explícito que separa plugins con workers Temporal no conversacionales
+      (catalog) de plugins con agentes de lenguaje (chats). Campo obligatorio
+      antes de que chats/plugin.yaml pueda declarar `agentic: true` sin fallar
+      la validación JSON Schema.
+    protected_note: |
+      spinal-files.yaml marca este archivo con nota "Cambios al schema requieren
+      ADR — feature task NO debería modificar esto". Sin embargo, el campo es
+      puramente aditivo y el refiner lo clasifica como change que DEBE ir junto
+      al feature (sin él, chats/plugin.yaml falla la validación). El implementer
+      debe flag esto al operador para decisión: PR único vs PR de arquitectura
+      previo.
+
+# ── Topological waves (batches) ──────────────────────────────────────────────
+plugin_batches:
+  - batch: 1
+    parallel: true
+    plugins: [agents_admin, chats]
+    rationale: |
+      agents_admin y chats no tienen dependencia Python entre sí — el router de
+      agents_admin lee el filesystem de chats vía Path, no vía import Python
+      (R-DIP satisfecho). El manifest de chats es una edición single-file sin
+      conflicto. Ambos pueden implementarse en paralelo; el merger consolida
+      los shared files al finalizar el batch.
+    notes: |
+      Dentro de agents_admin, el orden interno recomendado de los task_groups es:
+        1. backend_api (crea api/ + tests — base del endpoint)
+        2. frontend_entity (rewrite entities/agent/* — habilita el hook useAgents)
+        3. frontend_plugin (conecta hook a los componentes — requiere 2 previos)
+      Los grupos 1 y 2 son independientes entre sí y pueden paralelizarse si el
+      feature-planner lo considera conveniente.
+
+# ── Shared files intents (para el merger) ────────────────────────────────────
+# Todos los shared files son tocados solo por agents_admin en esta HU.
+# requires_merger=true se mantiene porque plugin.schema.yaml es spinal y
+# el protocolo exige declarar intents. El merger verificará que no hay
+# conflictos cruzados (en este caso: trivial — un solo contributor por file).
+shared_files_intents:
+
+  - path: frontend_dashboard/src/plugins/_schema/plugin.schema.yaml
+    kind: yaml_dict_keys_append
+    plugins_touching: [agents_admin]
+    intent:
+      name: agentic
+      definition: |
+        agentic:
+          type: boolean
+          description: |
+            Marca que el plugin alberga agentes conversacionales con workspace
+            de prompts (IDENTITY.md, SOUL.md, TOOLS.md, AGENTS.md, USER.md).
+            Solo los plugins con agentic=true aparecen en GET /api/agents_admin.
+            Aplica independientemente de si el plugin tiene sección `agent:` — un
+            plugin puede tener workers Temporal no conversacionales (e.g. catalog).
+          default: false
+      order_hint: alphabetical_by_name
+    merge_complexity: trivial  # un solo contributor
+
+  - path: frontend_dashboard/src/entities/agent/model.ts
+    kind: ts_dataclass_module
+    plugins_touching: [agents_admin]
+    intent:
+      operations:
+        - op: add
+          names: [SkillContent, WorkspaceContent]
+          note: Nuevas interfaces; SkillContent tiene {name, content}; WorkspaceContent tiene los 5 secciones + skills[]
+        - op: modify
+          names: [Agent]
+          note: |
+            workspace: WorkspaceContent reemplaza personality: PersonalityKey;
+            calls: number | null (era number); csat: number | null (era number).
+            Resto de campos presentacionales conservados.
+        - op: delete
+          names: [Personality, PersonalityKey, PersonalityPrompt]
+          note: Tipos de mock eliminados; usePersonalities() eliminado junto con ellos
+        - op: keep
+          names: [PROMPT_SECTIONS, AgentColor, AgentStatus, IconName, Capability]
+          note: Estos tipos/constantes se conservan sin cambio
+      order_hint: append
+    merge_complexity: trivial
+
+  - path: frontend_dashboard/src/entities/agent/api.ts
+    kind: ts_factory_module
+    plugins_touching: [agents_admin]
+    intent:
+      operations:
+        - op: rewrite
+          note: |
+            Elimina: const AGENTS = [...], const PERSONALITIES = [...],
+                     usePersonalities(), mock hooks.
+            Agrega: useAgents() con useQuery({ queryKey: agentKeys.list(),
+                    queryFn → apiClient.get('/api/agents_admin') + agentListDtoSchema.parse() +
+                    map a Agent con defaults presentacionales }).
+            staleTime omitido (default 0 → refetch on mount, satisface AC-4).
+    merge_complexity: trivial
+
+  - path: frontend_dashboard/src/entities/agent/keys.ts
+    kind: ts_factory_module
+    plugins_touching: [agents_admin]
+    intent:
+      operations:
+        - op: delete
+          names: [personalities]
+          note: "personalities: () => [...agentKeys.all, 'personalities'] eliminado"
+        - op: keep
+          names: [agentKeys, list]
+          note: agentKeys.all y agentKeys.list() se conservan
+    merge_complexity: trivial
+
+  - path: frontend_dashboard/src/entities/agent/index.ts
+    kind: ts_barrel
+    plugins_touching: [agents_admin]
+    intent:
+      operations:
+        - op: add
+          exports:
+            - "export type { SkillContent, WorkspaceContent, AgentDto } from './contracts';"
+            - "export { agentDtoSchema, agentListDtoSchema } from './contracts';"
+        - op: delete
+          exports:
+            - "export { usePersonalities } from './api';"
+            - "export type { Personality, PersonalityKey, PersonalityPrompt } from './model';"
+        - op: keep
+          exports:
+            - "export { PROMPT_SECTIONS } from './model';"
+            - "export { useAgents } from './api';"
+            - "export type { Agent } from './model';"
+    merge_complexity: trivial
+
+  - path: frontend_dashboard/src/entities/agent/contracts.ts
+    kind: ts_dataclass_module
+    plugins_touching: [agents_admin]
+    is_new_file: true
+    intent:
+      note: |
+        Archivo nuevo — no existía previamente. Contiene Zod schemas:
+        skillContentSchema, workspaceContentSchema, agentDtoSchema, agentListDtoSchema.
+        AgentDto = z.infer<typeof agentDtoSchema>.
+        No requiere merge real (un solo contributor, archivo nuevo).
+    merge_complexity: trivial
+
+# ── Verificación de guards del implementer ───────────────────────────────────
+implementer_guards:
+  - guard: no_temporal_in_agents_admin
+    description: agents_admin es Template B. El implementer NO debe crear workflows,
+      activities ni workers Temporal para este plugin.
+  - guard: no_cross_plugin_import
+    description: |
+      routes.py NO puede hacer `from src.plugins.chats.* import ...`.
+      Lee filesystem de chats vía Path solamente. R-DIP.
+  - guard: schema_and_feature_same_pr
+    description: |
+      El campo `agentic` en plugin.schema.yaml debe ir en el mismo PR que
+      `agentic: true` en chats/plugin.yaml. Sin el schema update primero,
+      plugins-sync.ts falla la validación (additionalProperties: false).
+  - guard: null_safe_calls_csat
+    description: |
+      Al cambiar Agent.calls/csat a number|null, el implementer debe hacer
+      null-safe todos los render sites: AgentsList.tsx, etc.
+      `agent.calls?.toLocaleString() ?? '—'` en vez de `agent.calls.toLocaleString()`.
+  - guard: personality_consumers_cleared
+    description: |
+      Antes de eliminar Personality/PersonalityKey/usePersonalities, confirmar
+      con grep que el único consumidor era AgentsPrompts.tsx (ver A7/A8 de §15).
+      Si hay consumidor oculto, no proceder con la eliminación.

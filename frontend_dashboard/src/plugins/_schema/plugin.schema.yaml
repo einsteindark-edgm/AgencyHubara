@@ -48,6 +48,16 @@ properties:
       type: string
     default: []
 
+  agentic:
+    type: boolean
+    description: |
+      Marca que el plugin alberga agentes conversacionales con workspace
+      de prompts (IDENTITY.md, SOUL.md, TOOLS.md, AGENTS.md, USER.md).
+      Solo los plugins con agentic=true aparecen en GET /api/agents_admin.
+      Aplica independientemente de si el plugin tiene sección `agent:` —
+      un plugin puede tener workers Temporal no conversacionales (e.g. catalog).
+    default: false
+
   # ── Frontend (consumido por scripts/plugins-sync.ts) ────────────────
   frontend:
     type: object
