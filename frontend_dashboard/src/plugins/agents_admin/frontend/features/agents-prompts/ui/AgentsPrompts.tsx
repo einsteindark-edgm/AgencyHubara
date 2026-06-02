@@ -1,14 +1,10 @@
 /**
- * Centro de Agentes: 5 prompts read-only (Agents/Identity/Soul/Tools/Users)
- * del agente seleccionado. La personalidad determina el texto de cada prompt.
+ * Centro de Agentes: los 5 prompts read-only (Agents/Identity/Soul/Tools/Users)
+ * del agente seleccionado, con el CONTENIDO REAL de los .md de su workspace
+ * (servidos por GET /api/agents). Sin personalidades mockeadas.
  */
 
-import {
-  PROMPT_SECTIONS,
-  useAgents,
-  usePersonalities,
-} from "@/entities/agent";
-import { wordCount } from "@/shared/lib";
+import { PROMPT_SECTIONS, useAgents } from "@/entities/agent";
 import { Icon, type IconName } from "@/shared/ui";
 
 interface Props {
@@ -16,16 +12,25 @@ interface Props {
 }
 
 export function AgentsPrompts({ agentId }: Props) {
-  const { data: agents = [] } = useAgents();
-  const { data: personalities = [] } = usePersonalities();
+  const { data: agents = [], isLoading, isError } = useAgents();
 
   const agent = agents.find((a) => a.id === agentId) ?? agents[0];
-  if (!agent) return null;
 
-  const personality = personalities.find((p) => p.key === agent.personality);
-  if (!personality) return null;
+  if (!agent) {
+    return (
+      <main className="ag-canvas">
+        <div style={{ padding: 32, color: "var(--fg-mute)", fontSize: 13 }}>
+          {isLoading
+            ? "Cargando agentes…"
+            : isError
+            ? "No se pudieron cargar los agentes."
+            : "No hay agentes configurados."}
+        </div>
+      </main>
+    );
+  }
 
-  const HeaderIcon = Icon[agent.icon as IconName];
+  const HeaderIcon = Icon[agent.icon as IconName] ?? Icon.wand;
 
   return (
     <main className="ag-canvas">
@@ -34,39 +39,17 @@ export function AgentsPrompts({ agentId }: Props) {
           <HeaderIcon />
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <h1>
-            {agent.name}
-            <span className="ver">v1.4.2</span>
-            <span
-              style={{
-                fontSize: 11,
-                color: "var(--green)",
-                fontWeight: 500,
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 4,
-              }}
-            >
-              <span
-                style={{
-                  width: 6,
-                  height: 6,
-                  borderRadius: "50%",
-                  background: "currentColor",
-                  boxShadow: "0 0 0 2px rgba(48,209,88,0.18)",
-                }}
-              />
-              Activo
-            </span>
-          </h1>
+          <h1>{agent.name}</h1>
           <div className="desc">{agent.role}</div>
         </div>
       </div>
 
       <div className="ag-form">
         {PROMPT_SECTIONS.map((s) => {
-          const text = personality.prompts[s.key] ?? "";
-          const wc = wordCount(text);
+          const prompt = agent.prompts.find((p) => p.key === s.key);
+          const text = prompt?.content ?? "";
+          const wc = prompt?.word_count ?? 0;
+          const filename = prompt?.filename ?? `${s.key}.md`;
           const SectionIcon = Icon[s.icon as IconName];
           return (
             <div key={s.key} className="prompt-section">
@@ -82,9 +65,13 @@ export function AgentsPrompts({ agentId }: Props) {
               </div>
               <div className="prompt-view">
                 <div className="prompt-bar">
-                  <span className="pip">{s.key}.md</span>
+                  <span className="pip">{filename}</span>
                 </div>
-                <div className="prompt-body">{text}</div>
+                <div className="prompt-body" style={{ whiteSpace: "pre-wrap" }}>
+                  {text || (
+                    <span style={{ color: "var(--fg-faint)" }}>— sin contenido —</span>
+                  )}
+                </div>
               </div>
             </div>
           );

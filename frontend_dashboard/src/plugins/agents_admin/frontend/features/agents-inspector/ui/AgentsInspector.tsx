@@ -1,6 +1,6 @@
 /**
- * Inspector de Agentes — sólo Modelo + Capacidades, en modo lectura.
- * (Feedback del usuario: la sección de Agentes es informativa, no editable.)
+ * Inspector de Agentes — Modelo + Capacidades, en modo lectura.
+ * Datos reales declarados en el manifest del agente (no editable desde la UI).
  */
 
 import { useAgents } from "@/entities/agent";
@@ -30,25 +30,27 @@ export function AgentsInspector({ agentId }: Props) {
         <Panel title="Modelo">
           <div className="form-row">
             <span className="lbl">Modelo</span>
-            <span className="val mono">{agent.model}</span>
+            <span className="val mono">{agent.model ?? "—"}</span>
           </div>
         </Panel>
 
-        <Panel title="Capacidades">
-          {agent.capabilities.map((c, i) => {
-            const Comp = Icon[c.icon as IconName];
-            return (
-              <div key={i} className="cap-row">
-                <span className="cico">
-                  <Comp />
-                </span>
-                <span style={{ flex: 1 }}>
-                  <div className="cn">{c.name}</div>
-                </span>
-              </div>
-            );
-          })}
-        </Panel>
+        {agent.capabilities.length > 0 && (
+          <Panel title="Capacidades">
+            {agent.capabilities.map((c, i) => {
+              const Comp = Icon[c.icon as IconName] ?? Icon.bolt;
+              return (
+                <div key={i} className="cap-row">
+                  <span className="cico">
+                    <Comp />
+                  </span>
+                  <span style={{ flex: 1 }}>
+                    <div className="cn">{c.label}</div>
+                  </span>
+                </div>
+              );
+            })}
+          </Panel>
+        )}
       </div>
     </aside>
   );
