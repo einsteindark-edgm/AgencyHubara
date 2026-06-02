@@ -101,3 +101,13 @@ def test_session_id_with_e164_plus_is_served(vault):
     assert path is not None
     # Pero el `+` no relaja la defensa de traversal.
     assert media_store.resolve_media_file("wa_+573001112233", "../x") is None
+
+
+def test_retention_class_for():
+    # Comprobantes de pago → retención larga; todo lo demás → corta.
+    assert media_store.retention_class_for("comprobante_pago") == media_store.RETENTION_RECEIPT
+    assert media_store.retention_class_for("foto_producto") == media_store.RETENTION_EPHEMERAL
+    assert media_store.retention_class_for("otro") == media_store.RETENTION_EPHEMERAL
+    # Visión fallida / desconocida → ephemeral (la descripción nunca existió).
+    assert media_store.retention_class_for("unknown") == media_store.RETENTION_EPHEMERAL
+    assert media_store.retention_class_for(None) == media_store.RETENTION_EPHEMERAL

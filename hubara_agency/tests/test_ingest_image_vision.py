@@ -369,6 +369,100 @@ async def test_image_fetch_failure_does_not_break_reentry(monkeypatch, tmp_path)
     assert not (tmp_path / "wa_5491111111111" / "media").exists()
 
 
+@pytest.mark.asyncio
+async def test_media_index_records_episode_kind_and_retention(monkeypatch, tmp_path):
+    """Fase 0: cada imagen persistida queda indexada con su episodio, tipo,
+    clase de retención y timestamp — la traza que un futuro job / S3 Lifecycle
+    usará para limpiar. Comprobante → receipt; foto de producto → ephemeral."""
+    monkeypatch.setenv("IMAGE_VISION_PROVIDER", "fake")
+    monkeypatch.setattr(
+        "src.platform.media.store.WORKSPACE_VAULT_DIR", tmp_path, raising=True
+    )
+
+    async def _fake_fetch(media_id):  # noqa: ANN001
+        return (b"img-bytes", "image/jpeg")
+
+    monkeypatch.setattr(
+        "src.platform.audio.meta_media_fetcher.fetch_media_bytes",
+        _fake_fetch,
+        raising=True,
+    )
+
+    async def _fake_send(phone_number_id, to_number, text):  # noqa: ANN001
+        pass
+
+    monkeypatch.setattr(
+        "src.platform.whatsapp.client.send_message", _fake_send, raising=False
+    )
+
+    history = FakeHistoryStore()
+    loader = FakeLoadOrStart()
+    # Episodio activo seedeado — el índice debe capturar su id.
+    metadata = FakeMetadataStore(
+        seed={
+            "active_route": "ventas",
+            "episodes": [{"episode_id": "ep_007", "closed_at_ms": None}],
+        }
+    )
+    use_case = _make_use_case(history, loader, metadata)
+
+    # 1) Comprobante de pago → receipt, atado al episodio activo.
+    await use_case._describe_image_and_reenter(_make_image("receipt_1"))
+    index = metadata.store["wa_5491111111111"]["media_index"]
+    assert len(index) == 1
+    entry = index[0]
+    assert entry["media_id"] == "receipt_1"
+    assert entry["filename"] == "receipt_1.jpg"
+    assert entry["episode_id"] == "ep_007"
+    assert entry["kind"] == "comprobante_pago"
+    assert entry["retention_class"] == "receipt"
+    assert isinstance(entry["created_at_ms"], int)
+
+    # 2) Foto de producto → ephemeral (mismo episodio).
+    await use_case._describe_image_and_reenter(_make_image("product_1"))
+    index = metadata.store["wa_5491111111111"]["media_index"]
+    assert len(index) == 2
+    assert index[1]["kind"] == "foto_producto"
+    assert index[1]["retention_class"] == "ephemeral"
+
+    # 3) Idempotencia: reprocesar el mismo media_id NO duplica la entrada.
+    await use_case._describe_image_and_reenter(_make_image("product_1"))
+    assert len(metadata.store["wa_5491111111111"]["media_index"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_media_index_vision_failure_marks_unknown_ephemeral(monkeypatch, tmp_path):
+    """Si la visión falla, la imagen igual se indexa (kind=unknown, ephemeral)
+    para no dejar un archivo huérfano sin traza de retención."""
+    monkeypatch.setenv("IMAGE_VISION_PROVIDER", "off")
+    monkeypatch.setattr(
+        "src.platform.media.store.WORKSPACE_VAULT_DIR", tmp_path, raising=True
+    )
+
+    async def _fake_fetch(media_id):  # noqa: ANN001
+        return (b"img-bytes", "image/jpeg")
+
+    monkeypatch.setattr(
+        "src.platform.audio.meta_media_fetcher.fetch_media_bytes",
+        _fake_fetch,
+        raising=True,
+    )
+
+    history = FakeHistoryStore()
+    loader = FakeLoadOrStart()
+    metadata = FakeMetadataStore()
+    use_case = _make_use_case(history, loader, metadata)
+
+    await use_case._describe_image_and_reenter(_make_image("img_1"))
+
+    index = metadata.store["wa_5491111111111"]["media_index"]
+    assert len(index) == 1
+    assert index[0]["kind"] == "unknown"
+    assert index[0]["retention_class"] == "ephemeral"
+    # Sin episodio seedeado → episode_id None (no rompe).
+    assert index[0]["episode_id"] is None
+
+
 def test_parse_kind_and_description_robust():
     """El parser TIPO/DESCRIPCION tolera formato imperfecto del modelo."""
     from src.platform.vision.litellm_adapter import _parse_kind_and_description
