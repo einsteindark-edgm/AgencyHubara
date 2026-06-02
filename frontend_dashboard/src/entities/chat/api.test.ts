@@ -12,7 +12,7 @@
  * estuviera procesada — el operador lo confundía con un cliente sin interés.
  */
 import { describe, expect, it } from "vitest";
-import { useChatInbox } from "./api";
+import { useChatInbox, useChatMessages } from "./api";
 import type { ChatSession } from "@/entities/session";
 import { renderHook } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -146,5 +146,70 @@ describe("normalizeTag via useChatInbox (regression: venta=Frío bug)", () => {
     ]);
     expect(data?.[0]?.tag).toBe("FRÍO");
     expect(data?.[1]?.tag).toBe("FRÍO");
+  });
+});
+
+/* ── useChatMessages: imágenes inbound ───────────────────────────────── */
+
+interface RawMsg {
+  ui_type: string;
+  role: string;
+  content: string | null;
+  image_url?: string;
+  timestamp?: string | number;
+}
+
+function mockSessionDetail(messages: RawMsg[]) {
+  globalThis.fetch = (() =>
+    Promise.resolve(
+      new Response(
+        JSON.stringify({
+          session_id: "wa_x",
+          phone_number: "x",
+          tag: "HUMANO",
+          motivo: "",
+          memory_content: null,
+          active_agent_route: "humano",
+          phone_number_id: null,
+          pending_payment_order_id: null,
+          status_history: [],
+          messages,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    )) as unknown as typeof fetch;
+}
+
+async function runMessages(messages: RawMsg[]) {
+  mockSessionDetail(messages);
+  const { result } = renderHook(() => useChatMessages("wa_x"), { wrapper: wrap });
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 10));
+  return result.current.data;
+}
+
+describe("useChatMessages — imagen inbound (comprobantes de pago)", () => {
+  it("mapea image_url relativa del backend → imageUrl absoluta en el bubble", async () => {
+    const data = await runMessages([
+      {
+        ui_type: "user_message",
+        role: "user",
+        content: "[el cliente envió un comprobante de pago: Nequi $34.000]",
+        image_url: "/api/dashboard/media/wa_x/receipt_1.jpg",
+      },
+    ]);
+    const bubble = data?.find((m) => m.kind === "in");
+    // env.apiUrl en tests = http://localhost:8000 (vitest.config.ts).
+    expect(bubble?.imageUrl).toBe(
+      "http://localhost:8000/api/dashboard/media/wa_x/receipt_1.jpg",
+    );
+  });
+
+  it("mensaje de texto sin imagen → imageUrl undefined", async () => {
+    const data = await runMessages([
+      { ui_type: "user_message", role: "user", content: "hola, info?" },
+    ]);
+    const bubble = data?.find((m) => m.kind === "in");
+    expect(bubble?.imageUrl).toBeUndefined();
   });
 });

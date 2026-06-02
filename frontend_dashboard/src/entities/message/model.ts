@@ -25,4 +25,8 @@ export interface ChatMessage {
   timestamp?: string | number;
   /** Para tool_execution_result */
   name?: string;
+  /** Ref relativa a una imagen inbound (comprobante de pago / foto del
+   *  cliente) servida por `/api/dashboard/media/...`. Solo presente en
+   *  mensajes del cliente que adjuntaron una imagen. */
+  image_url?: string;
 }

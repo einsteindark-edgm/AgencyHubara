@@ -41,6 +41,10 @@ export interface ChatMessageItem {
   dur?: string;
   /** Sólo definido cuando kind="out". Indica si lo escribió el bot o el humano operador. */
   author?: OutboundAuthor;
+  /** URL absoluta de una imagen adjunta (comprobante de pago / foto del
+   *  cliente). Cuando está presente, el bubble la renderiza. Ya viene
+   *  absolutizada por el adaptador (`adaptMessage`) lista para `<img src>`. */
+  imageUrl?: string;
 }
 
 export interface MemoryItem {

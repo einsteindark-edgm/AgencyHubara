@@ -25,6 +25,11 @@ export const chatMessageSchema = z.object({
   sender: z.literal("human").optional(),
   timestamp: z.union([z.string(), z.number()]).optional(),
   name: z.string().optional(),
+  /** Ref relativa a una imagen inbound que el cliente envió por WhatsApp
+   *  (típicamente un comprobante de pago). El backend persiste la imagen y la
+   *  expone en `/api/dashboard/media/...`; el frontend la pinta en la burbuja
+   *  para que el operador humano la vea. Ausente en mensajes sin imagen. */
+  image_url: z.string().optional(),
 });
 
 export type ChatMessageDto = z.infer<typeof chatMessageSchema>;

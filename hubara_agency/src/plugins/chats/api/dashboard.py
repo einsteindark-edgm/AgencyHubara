@@ -1,9 +1,10 @@
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 import asyncio
 import json
 import os
 from src.platform.config import WORKSPACE_VAULT_DIR
+from src.platform.media import resolve_media_file
 
 router = APIRouter()
 
@@ -216,3 +217,22 @@ async def get_session_history(session_id: str):
         "status_history": status_history,
         "messages": messages
     }
+
+
+@router.get("/media/{session_id}/{filename}")
+async def get_session_media(session_id: str, filename: str):
+    """Sirve una imagen inbound persistida de una sesión de WhatsApp.
+
+    El cliente manda fotos por WhatsApp (típicamente comprobantes de pago); el
+    ingest las descarga de Meta y las persiste en ``<vault>/<session_id>/media/``
+    (ver ``platform/media``). El JSONL del chat referencia cada una con
+    ``image_url=/api/dashboard/media/<session_id>/<filename>`` y el frontend la
+    pinta en la burbuja para que el operador humano la pueda ver.
+
+    ``resolve_media_file`` valida ambos segmentos (anti path-traversal) y que el
+    archivo exista dentro del directorio de media de la sesión; si no, 404.
+    """
+    path = resolve_media_file(session_id, filename)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Media not found")
+    return FileResponse(path)

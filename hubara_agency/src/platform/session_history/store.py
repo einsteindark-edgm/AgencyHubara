@@ -45,21 +45,34 @@ class FilesystemMessageHistoryStore:
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(event, ensure_ascii=False) + "\n")
 
-    def append_user_event(self, session_id: str, content: str) -> None:
+    def append_user_event(
+        self,
+        session_id: str,
+        content: str,
+        *,
+        image_url: str | None = None,
+    ) -> None:
         """Persiste un inbound del cliente con timestamp ISO UTC.
 
         HU-WA24H-001 F1.2: simetria con `append_assistant_event` —
         downstream usa el timestamp para tracking de service window 24h
         + métricas de tiempo de respuesta del agente.
+
+        ``image_url``: ref relativa a una imagen inbound ya persistida en el
+        media store (ver ``platform/media``). Solo lo pobla el reentry de
+        visión del ingest; los inbounds de texto lo dejan en None. Cuando
+        está presente, el dashboard renderiza la foto en la burbuja (clave
+        para comprobantes de pago que el humano debe ver, no solo leer la
+        descripción que generó la visión).
         """
-        self._append(
-            session_id,
-            {
-                "role": "user",
-                "content": content,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            },
-        )
+        event: dict[str, Any] = {
+            "role": "user",
+            "content": content,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        if image_url:
+            event["image_url"] = image_url
+        self._append(session_id, event)
 
     def append_assistant_event(
         self,
