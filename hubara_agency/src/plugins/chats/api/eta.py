@@ -1,18 +1,26 @@
 """HTTP endpoints del plugin frontend `eta` — sirviéndose desde `chats`.
 
-El plugin `eta` es frontend-only (visualización de pedidos en seguimiento). Sus
-datos viven en dos lugares, ambos accesibles vía **platform ports** (R-DIP:
-chats → platform, nunca chats → plugin sibling):
+El plugin `eta` es frontend-only (visualización de pedidos en seguimiento).
 
-  * El **timeline** (mensajes que el Agente ETA envió + respuestas del cliente)
-    vive en ``metadata.eta_tracking`` de cada sesión del vault — lo escribe el
-    ``HubaraEtaSessionWorkflow`` (chats/eta).
-  * Los **datos del pedido** (cliente, ciudad, total, tipo de pago, stage
-    actual) vienen del order query port (Medusa).
+  * El **listado** se deriva del **order query port**: todos los pedidos en una
+    etapa de fulfillment (``preparing``/``ready``/``shipping``/``delivered``) —
+    la MISMA fuente que el kanban de orders. Así un pedido aparece en
+    seguimiento apenas entra a preparación, exista o no todavía un timeline del
+    agente (clave: los pedidos ya en fulfillment ANTES de que el agente
+    existiera igual se muestran; el timeline se llena cuando el agente notifica).
+  * Sobre cada pedido se **superpone el timeline** (mensajes que el Agente ETA
+    envió + respuestas del cliente), que vive en ``metadata.eta_tracking`` de la
+    sesión del vault — lo escribe el ``HubaraEtaSessionWorkflow`` (chats/eta).
+    El match pedido↔timeline es por ``eta_tracking.order_id`` == el id Medusa.
 
-Por eso el endpoint vive en `chats` (donde está el vault) y el frontend del
-plugin `eta` consume ``/api/chats/eta/*`` — mismo patrón que `ads`
-(``chats/api/ads.py``).
+Ambas fuentes son **platform ports / vault** (R-DIP: chats → platform, nunca
+chats → plugin sibling). Por eso el endpoint vive en `chats` (donde está el
+vault) y el frontend del plugin `eta` consume ``/api/chats/eta/*`` — mismo
+patrón que `ads` (``chats/api/ads.py``).
+
+Si Medusa no está configurado (dev sin .env / order list falla), el listado cae
+a **timeline-only**: solo los pedidos que el agente ya trackeó, derivados de
+``eta_tracking`` sin datos vivos del pedido.
 
 Endpoints:
   GET /api/chats/eta/tracked-orders        → lista de pedidos en seguimiento.
@@ -20,7 +28,6 @@ Endpoints:
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from datetime import datetime
@@ -136,49 +143,78 @@ def _iter_eta_sessions(vault_dir: Path) -> list[tuple[str, dict[str, Any]]]:
     return out
 
 
-def _build_tracked_order(
-    session_id: str,
-    tracking: dict[str, Any],
-    detail: Any | None,
-    *,
-    now: datetime,
-) -> dict[str, Any] | None:
-    """Compone un ``TrackedOrder`` desde el tracking (timeline) + el detalle Medusa.
+# Límite del listado. Los pedidos "en seguimiento" son un subconjunto chico
+# (solo fulfillment); 100 cubre el board sin paginar. Si se supera, se loguea
+# (no truncado silencioso).
+_LIST_LIMIT = 100
 
-    Devuelve ``None`` si el stage actual no es uno de los 4 que mostramos
-    (``new`` aún no entró a seguimiento; ``cancelled`` es terminal).
+
+def _tracking_index(vault_dir: Path) -> dict[str, dict[str, Any]]:
+    """``{order_id: eta_tracking}`` para superponer el timeline sobre cada pedido.
+
+    Si dos sesiones trackean el mismo ``order_id`` (no debería pasar), gana la
+    última — el board muestra un solo timeline por pedido.
     """
-    order_id = str(tracking.get("order_id") or "")
-    events_raw = tracking.get("events") or []
+    out: dict[str, dict[str, Any]] = {}
+    for _sid, tracking in _iter_eta_sessions(vault_dir):
+        oid = str(tracking.get("order_id") or "")
+        if oid:
+            out[oid] = tracking
+    return out
+
+
+def _events_from_tracking(
+    tracking: dict[str, Any] | None, *, now: datetime
+) -> tuple[list[dict[str, Any]], bool]:
+    """``eta_tracking.events`` → eventos del frontend + flag ``needs`` (algún flagged)."""
+    events_raw = (tracking or {}).get("events") or []
     events = [_event_to_tracked(e, now=now) for e in events_raw if isinstance(e, dict)]
     needs = any(e["flagged"] for e in events)
+    return events, needs
 
-    if detail is not None:
-        s = detail.summary
-        backend_stage = s.status
-        current = _STAGE_MAP.get(backend_stage)
-        if current is None:
-            return None  # new / cancelled → fuera del tablero de seguimiento
-        return {
-            "id": s.display_id,
-            "customer": s.customer,
-            "short": s.short,
-            "color": s.color,
-            "city": s.city or "",
-            "current": current,
-            "channel": s.channel,
-            "needs": needs,
-            "payType": s.pay_type,
-            "total": s.total_cop,
-            "messagesUnread": 0,
-            "events": events,
-        }
 
-    # Sin detalle Medusa (stub / borrado / Medusa no configurado): mostramos el
-    # timeline igual (es el valor del seguimiento) con datos mínimos.
+def _tracked_from_summary(
+    summary: Any,
+    tracking: dict[str, Any] | None,
+    *,
+    current: str,
+    now: datetime,
+) -> dict[str, Any]:
+    """``OrderSummaryDTO`` (datos vivos del pedido) + timeline → ``TrackedOrder``.
+
+    El pedido se muestra SIEMPRE (viene del order port); el ``tracking`` puede
+    ser ``None`` (el agente todavía no notificó este pedido) → timeline vacío.
+    """
+    events, needs = _events_from_tracking(tracking, now=now)
+    return {
+        "id": summary.display_id,
+        "customer": summary.customer,
+        "short": summary.short,
+        "color": summary.color,
+        "city": summary.city or "",
+        "current": current,
+        "channel": summary.channel,
+        "needs": needs,
+        "payType": summary.pay_type,
+        "total": summary.total_cop,
+        "messagesUnread": 0,
+        "events": events,
+    }
+
+
+def _tracked_from_timeline(
+    session_id: str, tracking: dict[str, Any], *, now: datetime
+) -> dict[str, Any] | None:
+    """Fallback timeline-only (Medusa caído / sin configurar): construye el
+    ``TrackedOrder`` SOLO desde ``eta_tracking``, con datos mínimos del pedido.
+
+    Devuelve ``None`` si el stage actual no es uno de los 4 visibles.
+    """
     current = _STAGE_MAP.get(str(tracking.get("current_stage") or ""))
     if current is None:
         return None
+    order_id = str(tracking.get("order_id") or "")
+    events, needs = _events_from_tracking(tracking, now=now)
     return {
         "id": order_id,
         "customer": "Cliente",
@@ -195,31 +231,66 @@ def _build_tracked_order(
     }
 
 
+def _timeline_only(vault_dir: Path, *, now: datetime) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for session_id, tracking in _iter_eta_sessions(vault_dir):
+        built = _tracked_from_timeline(session_id, tracking, now=now)
+        if built is not None:
+            out.append(built)
+    return out
+
+
+async def _compose_tracked_orders(*, now: datetime) -> list[dict[str, Any]]:
+    """Lista de ``TrackedOrder``: pedidos en fulfillment (order port) + timeline.
+
+    Esta es la corrección del bug "la sección ETA no carga ninguna orden": el
+    listado se deriva de los pedidos REALES en fulfillment, no de qué sesiones
+    tienen ``eta_tracking``. Así los pedidos que ya estaban en preparación/envío
+    antes de que el agente existiera igual aparecen (con timeline vacío hasta que
+    el agente notifique).
+    """
+    vault = Path(WORKSPACE_VAULT_DIR)
+    port = _safe_query_port()
+    if port is None:
+        return _timeline_only(vault, now=now)
+
+    try:
+        listing = await port.list(limit=_LIST_LIMIT, offset=0, include_drafts=True)
+    except Exception:  # noqa: BLE001 — Medusa caído → servimos lo trackeado
+        log.warning(
+            "eta: order list falló — sirvo timeline-only desde eta_tracking",
+            exc_info=True,
+        )
+        return _timeline_only(vault, now=now)
+
+    if listing.count > _LIST_LIMIT:
+        log.info(
+            "eta: %d pedidos exceden el cap %d — el board muestra los primeros",
+            listing.count, _LIST_LIMIT,
+        )
+
+    tracking_by_order = _tracking_index(vault)
+    out: list[dict[str, Any]] = []
+    for summary in listing.orders:
+        current = _STAGE_MAP.get(summary.status)
+        if current is None:
+            continue  # new / cancelled → fuera del tablero de seguimiento
+        out.append(
+            _tracked_from_summary(
+                summary, tracking_by_order.get(summary.id), current=current, now=now
+            )
+        )
+    return out
+
+
 @router.get("/eta/tracked-orders")
 async def list_tracked_orders() -> dict[str, Any]:
     """Lista de pedidos en seguimiento por el Agente ETA (para la sección ETA).
 
+    Pedidos en fulfillment (order port) con el timeline del agente superpuesto.
     Response: ``{"orders": [TrackedOrder, ...], "count": int}``.
     """
-    now = datetime.now(_BOGOTA)
-    sessions = _iter_eta_sessions(Path(WORKSPACE_VAULT_DIR))
-    port = _safe_query_port()
-
-    if port is None:
-        details: list[Any] = [None] * len(sessions)
-    else:
-        details = await asyncio.gather(
-            *(port.get(tracking["order_id"]) for _sid, tracking in sessions),
-            return_exceptions=True,
-        )
-
-    orders: list[dict[str, Any]] = []
-    for (session_id, tracking), detail in zip(sessions, details):
-        resolved = detail if not isinstance(detail, BaseException) else None
-        built = _build_tracked_order(session_id, tracking, resolved, now=now)
-        if built is not None:
-            orders.append(built)
-
+    orders = await _compose_tracked_orders(now=datetime.now(_BOGOTA))
     return {"orders": orders, "count": len(orders)}
 
 
@@ -228,20 +299,9 @@ async def get_tracked_order(
     display_id: str = PathParam(..., min_length=1, max_length=64),
 ) -> dict[str, Any]:
     """Un pedido en seguimiento por su ``display_id`` (ej. ``#1247`` o ``1247``)."""
-    now = datetime.now(_BOGOTA)
     needle = display_id.lstrip("#")
-    sessions = _iter_eta_sessions(Path(WORKSPACE_VAULT_DIR))
-    port = _safe_query_port()
-
-    for session_id, tracking in sessions:
-        detail = None
-        if port is not None:
-            try:
-                detail = await port.get(tracking["order_id"])
-            except Exception:  # noqa: BLE001 — best-effort por pedido
-                detail = None
-        built = _build_tracked_order(session_id, tracking, detail, now=now)
-        if built is not None and built["id"].lstrip("#") == needle:
+    for built in await _compose_tracked_orders(now=datetime.now(_BOGOTA)):
+        if built["id"].lstrip("#") == needle:
             return built
 
     raise HTTPException(status_code=404, detail=f"Tracked order {display_id!r} not found.")

@@ -151,19 +151,34 @@ function Card({ order, selected, onSelect }: CardProps) {
       </div>
 
       <div className="ec-last">
-        <div className="ec-last-row">
-          <span className="ec-last-ico"><Icon.bot /></span>
-          <span className="ec-last-t">Último mensaje del agente</span>
-          <span className="ec-last-time">
-            {lastEvent.date} · {lastEvent.time}
-          </span>
-        </div>
-        <div className="ec-last-msg">{truncate(lastEvent.agentMsg, 130)}</div>
-        {order.needs && lastReplyEvent && (
-          <div className="ec-last-row reply">
-            <span className="ec-last-ico flag"><Icon.alert /></span>
-            <span className="ec-last-t">
-              Cliente respondió sin que el agente supiera contestar
+        {lastEvent ? (
+          <>
+            <div className="ec-last-row">
+              <span className="ec-last-ico"><Icon.bot /></span>
+              <span className="ec-last-t">Último mensaje del agente</span>
+              <span className="ec-last-time">
+                {lastEvent.date} · {lastEvent.time}
+              </span>
+            </div>
+            <div className="ec-last-msg">{truncate(lastEvent.agentMsg, 130)}</div>
+            {order.needs && lastReplyEvent && (
+              <div className="ec-last-row reply">
+                <span className="ec-last-ico flag"><Icon.alert /></span>
+                <span className="ec-last-t">
+                  Cliente respondió sin que el agente supiera contestar
+                </span>
+              </div>
+            )}
+          </>
+        ) : (
+          // El pedido está en seguimiento pero el agente todavía no envió
+          // ninguna notificación (recién entró a fulfillment / aún sin cambio
+          // de estado notificado). Sin esto, `lastEvent` undefined rompía la
+          // tarjeta — los pedidos reales arrancan con timeline vacío.
+          <div className="ec-last-row">
+            <span className="ec-last-ico"><Icon.bot /></span>
+            <span className="ec-last-t muted">
+              Aún sin notificaciones · el agente avisará en el próximo cambio de estado
             </span>
           </div>
         )}
