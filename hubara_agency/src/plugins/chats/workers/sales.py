@@ -47,6 +47,7 @@ from src.plugins.chats.agent.sales.tools.catalog import (
     SearchProductsTool,
 )
 from src.plugins.chats.agent.sales.tools.checkout import VerifyOrderForCheckoutTool
+from src.plugins.chats.agent.sales.tools.order_draft import SetOrderSlotTool
 from src.plugins.chats.agent.sales.tools.order_registration import (
     RegisterOrderTool,
 )
@@ -148,6 +149,17 @@ register_tool_extension(
         workspace=str(workspace),
         port=_order_registration_port,
     ),
+)
+
+# Breadcrumb determinista de datos del pedido: fija color/aroma/cantidad/
+# ciudad/etc. en `episodes[-1].order_draft` apenas el cliente los confirma. El
+# ingest los re-inyecta al prompt cada turno (via `get_projectable_draft` +
+# `build_order_draft_note`) para que el LLM no re-pregunte datos ya dados.
+# Tool de borde (escribe metadata.json atomico), advisory: `register_order`
+# sigue siendo la fuente de verdad de la orden.
+register_tool_extension(
+    "sales.set_order_slot",
+    lambda workspace: SetOrderSlotTool(workspace=str(workspace)),
 )
 
 # HU-002: decision tools de UI rica. Emiten "intents" a

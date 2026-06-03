@@ -429,7 +429,7 @@ async def _dispatch_intent(
         )
         text = (
             "Para coordinar el envío necesito estos datos, puedes "
-            "mandármelos en un solo mensaje o uno por uno:\n\n"
+            "enviármelos en un solo mensaje o uno por uno:\n\n"
             "🏙️ *Ciudad*\n"
             "📍 *Barrio*\n"
             "🏠 *Dirección* (calle, número, apartamento)\n"

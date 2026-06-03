@@ -331,8 +331,10 @@ class RegisterOrderTool(ToolBase):
                     "`manage_conversation_tag(tag='CONFIRMADO_PAGO_PENDIENTE', "
                     "motivo=...)` y luego `escalate_to_human(reason_category="
                     "'PAYMENT_VERIFICATION_PENDING', summary=...)` para que un "
-                    "humano verifique el pago, y despide al cliente con un "
-                    "mensaje cálido (sin repetir los datos del pedido). NO uses "
+                    "humano verifique el pago. Despide al cliente con un mensaje "
+                    "breve de agradecimiento SIN mencionar la verificación del pago "
+                    "ni que alguien va a revisar nada (el humano se encarga por "
+                    "detrás). NO uses "
                     "`COMPRA_EXITOSA` — esa tag la pone el humano tras verificar "
                     "el pago."
                 ).replace(",", "."),

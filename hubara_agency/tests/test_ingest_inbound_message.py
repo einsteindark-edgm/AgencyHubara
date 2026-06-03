@@ -206,6 +206,128 @@ async def test_active_episode_continuation_has_no_boundary_note():
 
 
 @pytest.mark.asyncio
+async def test_active_episode_with_draft_injects_breadcrumb():
+    """El order_draft del episodio activo se proyecta como breadcrumb en
+    `extra_context` para que el LLM no re-pregunte datos ya confirmados
+    (color, aroma, ...). Es el wiring del determinismo de slots."""
+    import time
+
+    recent_ms = int(time.time() * 1000) - 60_000  # 1 min atras: no timeout
+    loader = FakeLoadOrStart()
+    metadata = FakeMetadataStore()
+    metadata.store["wa_5491111111111"] = {
+        "active_route": "ventas",
+        "episodes": [
+            {
+                "episode_id": "ep_001",
+                "started_at_ms": recent_ms,
+                "closed_at_ms": None,
+                "closing_tag": None,
+                "order_id": None,
+                "order_draft": {
+                    "slots": {"color": "Blanco", "aroma": "Lavanda"}
+                },
+            }
+        ],
+    }
+    use_case = IngestInboundMessage(
+        history_store=FakeHistoryStore(),  # type: ignore[arg-type]
+        load_session=loader,  # type: ignore[arg-type]
+        metadata_store=metadata,  # type: ignore[arg-type]
+    )
+
+    await use_case.execute(_make_text_message(text="seguimos"))
+
+    assert len(loader.calls) == 1
+    ctx = loader.calls[0].extra_context
+    assert ctx is not None
+    breadcrumb = "\n".join(ctx)
+    assert "DATOS DEL PEDIDO YA CONFIRMADOS" in breadcrumb
+    assert "Color: Blanco" in breadcrumb
+    assert "Aroma: Lavanda" in breadcrumb
+
+
+@pytest.mark.asyncio
+async def test_registered_order_episode_has_no_breadcrumb():
+    """Post-register_order (episodio con order_id): el draft deja de
+    proyectarse — la orden es la fuente de verdad, no el breadcrumb."""
+    import time
+
+    recent_ms = int(time.time() * 1000) - 60_000
+    loader = FakeLoadOrStart()
+    metadata = FakeMetadataStore()
+    metadata.store["wa_5491111111111"] = {
+        "active_route": "ventas",
+        "episodes": [
+            {
+                "episode_id": "ep_001",
+                "started_at_ms": recent_ms,
+                "closed_at_ms": None,
+                "closing_tag": None,
+                "order_id": "order_XYZ",
+                "order_draft": {"slots": {"color": "Blanco"}},
+            }
+        ],
+    }
+    use_case = IngestInboundMessage(
+        history_store=FakeHistoryStore(),  # type: ignore[arg-type]
+        load_session=loader,  # type: ignore[arg-type]
+        metadata_store=metadata,  # type: ignore[arg-type]
+    )
+
+    await use_case.execute(_make_text_message(text="ok"))
+
+    assert len(loader.calls) == 1
+    breadcrumb = "\n".join(loader.calls[0].extra_context or [])
+    assert "DATOS DEL PEDIDO" not in breadcrumb
+
+
+@pytest.mark.asyncio
+async def test_human_route_does_not_rotate_episode_or_reset_tag():
+    """Bug wa_573125671604: con la conversación ya en manos de un humano
+    (active_route=humano), un inbound nuevo NO debe abrir un episodio ni
+    resetear el tag a NO_ETIQUETADO. Eso borraría el tag=HUMANO que dejó
+    escalate_to_human y sacaría el chat de la bandeja humana del dashboard
+    (que filtra por tag=HUMANO): el bot no responde (route=humano) y el humano
+    tampoco lo ve → chat huérfano."""
+    loader = FakeLoadOrStart()
+    metadata = FakeMetadataStore()
+    metadata.store["wa_5491111111111"] = {
+        "active_route": "humano",
+        "tag": "HUMANO",
+        "motivo": "Pedido order_X registrado en Medusa, verificar pago",
+        "escalation_reason": "PAYMENT_VERIFICATION_PENDING",
+        "episodes": [
+            {
+                "episode_id": "ep_001",
+                "started_at_ms": 1,
+                "closed_at_ms": 1000,
+                "closing_tag": "CONFIRMADO_PAGO_PENDIENTE",
+                "order_id": "order_X",
+            }
+        ],
+    }
+    use_case = IngestInboundMessage(
+        history_store=FakeHistoryStore(),  # type: ignore[arg-type]
+        load_session=loader,  # type: ignore[arg-type]
+        metadata_store=metadata,  # type: ignore[arg-type]
+    )
+
+    await use_case.execute(_make_text_message(text="ya pagué, te mando el comprobante"))
+
+    saved = metadata.store["wa_5491111111111"]
+    # El tag NO se reseteó: sigue HUMANO (visible en la bandeja humana).
+    assert saved["tag"] == "HUMANO"
+    # NO se abrió un episodio nuevo: sigue el único, cerrado.
+    assert len(saved["episodes"]) == 1
+    assert saved["episodes"][-1]["closed_at_ms"] is not None
+    # El motivo de la escalación se preserva (ensure_active_episode lo borraría).
+    assert saved["motivo"] == "Pedido order_X registrado en Medusa, verificar pago"
+    # Sigue en ruta humana.
+    assert saved["active_route"] == "humano"
+
+
+@pytest.mark.asyncio
 async def test_audio_inbound_defers_to_transcription():
     """HU-002 / A.5: audio inbound NO encola workflow — queda
     pending_transcription en metadata. La activity de transcripción

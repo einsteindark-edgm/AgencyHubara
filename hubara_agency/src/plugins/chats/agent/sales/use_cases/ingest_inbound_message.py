@@ -63,6 +63,10 @@ from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
 from src.plugins.chats.agent.sales.use_cases.load_or_start_sales_session import (
     LoadOrStartSalesSession,
 )
+from src.plugins.chats.agent.sales.use_cases.order_draft import (
+    build_order_draft_note,
+    get_projectable_draft,
+)
 from src.plugins.chats.shared.contracts.events import (
     CustomerRepliedEvent,
     ServiceWindowOpenedEvent,
@@ -177,25 +181,40 @@ class IngestInboundMessage:
         # saluda y re-surfacea el pedido viejo). Solo dispara en el PRIMER
         # turno del episodio nuevo — el siguiente inbound ya verá el episodio
         # activo y no entrará acá.
-        _episodes_before = metadata.get("episodes") or []
-        _prev_closed_episode = (
-            _episodes_before[-1]
-            if _episodes_before
-            and _episodes_before[-1].get("closed_at_ms") is not None
-            else None
-        )
-        episode_boundary_note = (
-            _build_episode_boundary_note(_prev_closed_episode)
-            if _prev_closed_episode is not None
-            else None
-        )
-        ensure_active_episode(
-            metadata,
-            now_ms=now_ms,
-            inbound_message_id=parsed.message_id,
-            referral_snapshot=_make_episode_snapshot(parsed.referral),
-            msgs_count_at_start=msgs_count_at_start,
-        )
+        #
+        # GUARD (bug sesión wa_573125671604): NO corremos el ciclo de vida de
+        # episodios cuando la conversación ya está en manos de un humano
+        # (active_route == humano). El cliente le responde al humano (p.ej. el
+        # comprobante de pago tras un CONFIRMADO_PAGO_PENDIENTE), no arranca una
+        # venta nueva. Si lo corriéramos, `ensure_active_episode` vería el
+        # episodio cerrado, abriría uno nuevo y RESETEARÍA `metadata.tag` a
+        # NO_ETIQUETADO — borrando el `tag=HUMANO` que dejó `escalate_to_human`
+        # y dejando el chat huérfano (route=humano pero FUERA de la bandeja
+        # humana del dashboard, que filtra por tag=HUMANO). El mensaje igual se
+        # persiste al JSONL más abajo para que el humano lo lea; lo único que
+        # saltamos es la rotación de episodios + el reset del tag. Al volver al
+        # bot (return-to-bot pone active_route=ventas) se reanuda el ciclo.
+        episode_boundary_note: str | None = None
+        if metadata.get("active_route") != ROUTE_HUMANO:
+            _episodes_before = metadata.get("episodes") or []
+            _prev_closed_episode = (
+                _episodes_before[-1]
+                if _episodes_before
+                and _episodes_before[-1].get("closed_at_ms") is not None
+                else None
+            )
+            episode_boundary_note = (
+                _build_episode_boundary_note(_prev_closed_episode)
+                if _prev_closed_episode is not None
+                else None
+            )
+            ensure_active_episode(
+                metadata,
+                now_ms=now_ms,
+                inbound_message_id=parsed.message_id,
+                referral_snapshot=_make_episode_snapshot(parsed.referral),
+                msgs_count_at_start=msgs_count_at_start,
+            )
 
         # HU-WA24H-001 F1.1: persistir timestamps de la ventana de servicio.
         # Cada inbound del cliente reabre la ventana 24h — esto es lo que
@@ -372,13 +391,29 @@ class IngestInboundMessage:
             )
 
         # --- 9. Resolver ruta + signal al workflow correspondiente ---
+        # Breadcrumb determinista del pedido: si el episodio activo tiene un
+        # order_draft proyectable (slots no vacios, episodio sin order_id), lo
+        # inyectamos al plugin_context para que el LLM NO vuelva a preguntar
+        # datos ya confirmados (color, aroma, ciudad, ...). Episodio-scoped por
+        # construccion: un episodio nuevo de re-engagement no tiene draft -> no
+        # se proyecta -> no leak (mismo principio que la nota de frontera de
+        # arriba). Advisory: register_order sigue siendo la fuente de verdad.
+        _projectable_draft = get_projectable_draft(metadata)
+        order_draft_note = (
+            build_order_draft_note(_projectable_draft)
+            if _projectable_draft
+            else None
+        )
         await self._load_session.execute(
             session_id=session_id,
             message=effective.text,
             phone_number_id=parsed.phone_number_id,
-            extra_context=(
-                [episode_boundary_note] if episode_boundary_note else None
-            ),
+            extra_context=[
+                note
+                for note in (episode_boundary_note, order_draft_note)
+                if note
+            ]
+            or None,
         )
 
     # =========================================================================

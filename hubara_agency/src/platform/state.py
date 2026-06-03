@@ -16,8 +16,44 @@ mismo razonamiento (lo necesitan sales, remarketing y el dashboard handoff).
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
+
+
+def atomic_write_json(path: Path, data: Any) -> None:
+    """Escribe `data` como JSON a `path` de forma atomica (temp + os.replace).
+
+    Por que atomico: `metadata.json` lo escriben varios procesos sin lock (el
+    ingest del webhook, tools como `register_order` / `set_order_slot`, la red
+    de seguridad de cierre, y `dashboard/handoff.py`). Un `write_text` plano
+    hace truncate+write: un lector concurrente puede leer el archivo a medio
+    escribir, caer en `JSONDecodeError` y -- via el `read()` tolerante de
+    abajo -- recibir `{}`, pisando el estado real en el siguiente write.
+    Escribir a un temp en el MISMO directorio y `os.replace` garantiza que un
+    lector siempre vea el archivo viejo COMPLETO o el nuevo COMPLETO, nunca uno
+    roto (rename es atomico dentro del mismo filesystem).
+
+    `ensure_ascii=False`: mantiene acentos/enies legibles en disco, consistente
+    con lo que ya escribe `register_order`.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(data, indent=2, ensure_ascii=False)
+    fd, tmp_name = tempfile.mkstemp(
+        dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(payload)
+        os.replace(tmp_name, path)
+    except BaseException:
+        # Limpieza best-effort del temp si algo falla antes del replace.
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
 
 
 class FilesystemMetadataStore:
@@ -25,8 +61,9 @@ class FilesystemMetadataStore:
 
     Cada sesion mapea a ``<vault_dir>/<session_id>/metadata.json``. La lectura
     es tolerante a archivos corruptos (retorna ``{}`` ante ``JSONDecodeError``);
-    la escritura es atomica por simple ``write_text`` (mismo comportamiento que
-    el legado en ``service.py``).
+    la escritura es **atomica** (temp file + ``os.replace`` via
+    ``atomic_write_json``) para no exponer archivos a medio escribir a lectores
+    concurrentes (ingest, tools, dashboard handoff comparten el archivo).
 
     Previo: vivia en `src/sales_whatsapp/state.py` cuando solo sales lo usaba.
     Movido a `platform/` cuando `dashboard/handoff.py` empezo a leer/escribir
@@ -52,6 +89,4 @@ class FilesystemMetadataStore:
         return data
 
     def write(self, session_id: str, data: dict[str, Any]) -> None:
-        path = self._path_for(session_id)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        atomic_write_json(self._path_for(session_id), data)
