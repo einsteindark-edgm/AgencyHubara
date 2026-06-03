@@ -144,6 +144,11 @@ services:
     volumes:
       - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml
       - ../common/signoz/otel-collector-opamp-config.yaml:/etc/manager-config.yaml
+      # Tier 3 (Infrastructure): host read-only en /hostfs para que el receiver
+      # hostmetrics (root_path=/hostfs) lea /proc,/sys,/etc del host. macOS=VM de Docker;
+      # prod=host real. Si el collector NO levanta healthy tras el rebuild, quitar esta
+      # línea + el receiver/pipeline hostmetrics del otel-collector-config.yaml y revert.
+      - /:/hostfs:ro
     environment:
       - OTEL_RESOURCE_ATTRIBUTES=host.name=signoz-host,os.type=linux
       - LOW_CARDINAL_EXCEPTION_GROUPING=false

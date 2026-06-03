@@ -12,6 +12,14 @@ receivers:
         endpoint: 0.0.0.0:4317
       http:
         endpoint: 0.0.0.0:4318
+        # Tier 2 (frontend): permite que el dashboard React (browser) mande traces
+        # OTLP-HTTP al collector. Sin CORS el browser bloquea el POST cross-origin y
+        # el trace del frontend nunca llega. localhost:* = dev (Vite); https://* = prod.
+        cors:
+          allowed_origins:
+            - "http://localhost:*"
+            - "https://*"
+          allowed_headers: ["*"]
   prometheus:
     config:
       global:
@@ -23,6 +31,20 @@ receivers:
               - localhost:8888
             labels:
               job_name: otel-collector
+  # Tier 3 (Infrastructure): scrapea métricas del host → pestaña Infrastructure de
+  # SigNoz. root_path=/hostfs lee el FS del host montado read-only (ver el volume
+  # `/:/hostfs:ro` del collector en docker-compose.yaml). En Docker Desktop/macOS mide
+  # la VM de Linux; en prod (VPS Linux) mide el host real. Mismo config en ambos.
+  hostmetrics:
+    collection_interval: 30s
+    root_path: /hostfs
+    scrapers:
+      cpu: {}
+      load: {}
+      memory: {}
+      disk: {}
+      filesystem: {}
+      network: {}
 processors:
   batch:
     send_batch_size: 10000
@@ -116,3 +138,9 @@ service:
       receivers: [signozmeter]
       processors: [batch/meter]
       exporters: [signozclickhousemeter]
+    # Tier 3 (Infrastructure): métricas del host → mismo exporter que el resto de
+    # métricas. resourcedetection agrega host.name/host.type para identificar la máquina.
+    metrics/hostmetrics:
+      receivers: [hostmetrics]
+      processors: [resourcedetection, batch]
+      exporters: [signozclickhousemetrics, metadataexporter, signozmeter]

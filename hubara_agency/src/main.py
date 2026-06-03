@@ -36,6 +36,14 @@ from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
+from src.platform.observability.otel import init_otel, instrument_fastapi_app
+
+# OTel ANTES de `_bootstrap_routers()` (que importa los plugins → litellm/exoclaw):
+# hace del proceso HTTP el servicio "api-gateway" en SigNoz, raíz del trace que se
+# propaga a Temporal (webhook → workflow → activity → LLM → tool). Idempotente;
+# no-op con OTEL_SDK_DISABLED=true.
+init_otel("api-gateway")
+
 
 app = FastAPI(
     title="Agency API",
@@ -50,6 +58,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Cada request HTTP (webhook WhatsApp, endpoints del dashboard) genera un span
+# SERVER raíz. La propagación del webhook a Temporal la hace add_traced_background_task
+# (en el router de chats); httpx ya lo instrumenta OpenLIT (no se duplica acá).
+instrument_fastapi_app(app)
 
 
 # ---------------------------------------------------------------------------

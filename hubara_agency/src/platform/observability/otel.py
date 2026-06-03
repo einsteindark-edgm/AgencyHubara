@@ -20,6 +20,7 @@ fuera del sandbox determinista. Esto vive en `platform/observability/`, no en un
 
 from __future__ import annotations
 
+import logging
 import os
 
 import structlog
@@ -134,6 +135,22 @@ def init_otel(service_name: str) -> None:
     logger_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
     set_logger_provider(logger_provider)
 
+    # Puente stdlib logging → OTel (Tier 4 "logs enriquecidos"): cada log que pasa
+    # por el `logging` estándar (uvicorn HTTP, httpx, temporalio, litellm, urllib3,
+    # asyncio…) se exporta como OTel log con su severity y el trace_id/span_id del
+    # span activo → navegación trace↔logs en SigNoz. Coexiste con el InterceptHandler
+    # de setup_logging (stdlib→loguru→stdout): el record va a AMBOS, sin loop. (Los
+    # logs emitidos por loguru/structlog DIRECTO no pasan por stdlib → follow-up si
+    # se quiere ese nivel; lo operacionalmente crítico —HTTP/Temporal/LLM/errores—
+    # viaja por stdlib y queda cubierto.)
+    from opentelemetry.sdk._logs import LoggingHandler
+
+    _root_logger = logging.getLogger()
+    if not any(isinstance(h, LoggingHandler) for h in _root_logger.handlers):
+        _root_logger.addHandler(
+            LoggingHandler(level=logging.INFO, logger_provider=logger_provider)
+        )
+
     # --- GenAI (OpenLIT → gen_ai.* estándar + métricas tokens/cost/latencia) ---
     _instrument_genai(service_name)
 
@@ -143,6 +160,33 @@ def init_otel(service_name: str) -> None:
         service=service_name,
         exporter="otlp-grpc" if use_otlp else "console",
     )
+
+
+def instrument_fastapi_app(app: object) -> None:
+    """Instrumenta una app FastAPI con OTel — un span SERVER por request HTTP.
+
+    Llamar desde el entrypoint HTTP (``src/main.py``) DESPUÉS de ``init_otel()``.
+    Hace que el proceso API sea el servicio ``api-gateway`` en SigNoz: el webhook
+    de WhatsApp y los endpoints del dashboard aparecen como spans raíz, y —vía
+    ``add_traced_background_task``— ese span se propaga a Temporal, encadenando
+    webhook → workflow → activity → LLM → tool en UN solo trace distribuido.
+
+    El paquete ``opentelemetry-instrumentation-fastapi`` ya viene instalado
+    (dependencia transitiva de OpenLIT). ``instrument_app`` es idempotente. httpx
+    NO se toca acá: OpenLIT ya lo instrumenta (evita spans duplicados).
+
+    Degrada sin romper (``OTEL_SDK_DISABLED`` o falta del paquete) — nunca tumba
+    el arranque del proceso HTTP por un tema de observabilidad.
+    """
+    if _flag("OTEL_SDK_DISABLED"):
+        return
+    try:
+        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
+        FastAPIInstrumentor.instrument_app(app)
+        logger.info("otel.fastapi_instrumented")
+    except Exception as exc:  # noqa: BLE001 — degradar, no romper el proceso HTTP
+        logger.warning("otel.fastapi_failed", error=str(exc))
 
 
 def _instrument_genai(service_name: str) -> None:
