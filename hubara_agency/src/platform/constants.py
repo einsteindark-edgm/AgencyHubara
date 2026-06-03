@@ -24,6 +24,14 @@ ROUTE_REMARKETING = "remarketing"
 # Se setea via `EscalateToHumanTool`. `LoadOrStartSalesSession` chequea esta ruta
 # antes de signalear al workflow — si match, solo persiste el mensaje y vuelve.
 ROUTE_HUMANO = "humano"
+# Ruta "eta": la conversacion la maneja el Agente ETA (notificaciones de estado
+# de pedido). Se setea cuando un pedido entra en `preparing` (orders API emite
+# `OrderStageChangedEvent` → dispatcher arranca `HubaraEtaSessionWorkflow`, cuyo
+# bootstrap marca `active_route=eta`). `LoadOrStartSalesSession` rutea los
+# inbounds del cliente al workflow `eta-{session_id}` en vez de a Sales. El
+# Agente ETA puede devolver el control a Sales (transfer_to_sales_agent →
+# active_route=ventas) o escalar a humano (escalate_to_human → active_route=humano).
+ROUTE_ETA = "eta"
 
 # Prefijos de session_id por canal
 WHATSAPP_SESSION_PREFIX = "wa_"
