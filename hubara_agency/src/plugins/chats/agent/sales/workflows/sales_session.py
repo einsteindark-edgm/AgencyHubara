@@ -470,6 +470,41 @@ class HubaraSalesSessionWorkflow:
                                 self._force_shutdown = True
                                 safety_net_escalated = True
 
+                    # SALUDO DESCARTADO (bug run ddd0d472 / session-wa_573125671604):
+                    # cuando el LLM emite texto client-facing JUNTO con una tool
+                    # call (ej. "Buenos días. Bienvenido a *Hubara*..." encolando
+                    # send_quick_replies), ese texto antes NO llegaba al cliente —
+                    # el loop solo enviaba `final_content` (el content del último
+                    # mensaje sin tools). `run_agent_turn` ahora los expone en
+                    # `result.pre_tool_messages`; los mandamos como burbujas en
+                    # orden ANTES del final_content y los persistimos al store del
+                    # dashboard igual que final_content. Skip en force_shutdown
+                    # (ghosting/escalation no envían texto).
+                    #
+                    # workflow.patched(): histories en vuelo pre-deploy NO tienen
+                    # estos sends en su shape; el gate evita NondeterminismError al
+                    # replay-arlas. Tras el drain (idle 1min en Sales), eliminar el
+                    # if + `workflow.deprecate_patch("send-pre-tool-messages-v1")`.
+                    if (
+                        result.pre_tool_messages
+                        and not self._force_shutdown
+                        and workflow.patched("send-pre-tool-messages-v1")
+                    ):
+                        for pre_msg in result.pre_tool_messages:
+                            await workflow.execute_activity(
+                                send_whatsapp_message_activity,
+                                args=[session.session_id, pre_msg],
+                                start_to_close_timeout=timedelta(seconds=90),
+                                retry_policy=RetryPolicy(maximum_attempts=2),
+                            )
+                            if workflow.patched("persist-assistant-message-v1"):
+                                await workflow.execute_activity(
+                                    persist_assistant_message_activity,
+                                    args=[session.session_id, pre_msg],
+                                    start_to_close_timeout=timedelta(seconds=10),
+                                    retry_policy=RetryPolicy(maximum_attempts=2),
+                                )
+
                     # UN SOLO MENSAJE en pickers de variante (bug run fe86d4e4):
                     # cuando el LLM llama `present_variant_picker`, el render de
                     # texto del intent (intro + opciones + invitación a elegir)

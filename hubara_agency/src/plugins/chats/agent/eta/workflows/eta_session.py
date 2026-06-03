@@ -308,6 +308,31 @@ class HubaraEtaSessionWorkflow:
         result = await run_agent_turn(session, msg)
         self._last_response = result.final_content
 
+        # TEXTO DESCARTADO (mismo bug del loop compartido run_agent_turn,
+        # run ddd0d472): el texto client-facing que el LLM emite JUNTO con una
+        # tool call se perdía — solo viajaba final_content. Lo enviamos como
+        # burbuja antes del final_content. A diferencia del resto de este archivo
+        # (greenfield, sin gating), usamos workflow.patched() porque el agente ETA
+        # ya está en prod con idle 7d → puede haber histories en vuelo sin estos
+        # sends. Mismo patch id que sales/remarketing (un solo deprecate cubre los 3).
+        if (
+            result.pre_tool_messages
+            and not self._force_shutdown
+            and workflow.patched("send-pre-tool-messages-v1")
+        ):
+            for pre_msg in result.pre_tool_messages:
+                await workflow.execute_activity(
+                    send_whatsapp_message_activity,
+                    args=[session.session_id, pre_msg],
+                    start_to_close_timeout=timedelta(seconds=90),
+                    retry_policy=RetryPolicy(maximum_attempts=2),
+                )
+                await workflow.execute_activity(
+                    persist_assistant_message_activity,
+                    args=[session.session_id, pre_msg],
+                    **_FAST,
+                )
+
         if result.final_content and not self._force_shutdown:
             await workflow.execute_activity(
                 send_whatsapp_message_activity,

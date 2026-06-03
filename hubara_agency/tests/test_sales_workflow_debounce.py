@@ -29,6 +29,7 @@ from exoclaw_temporal.config import (
     LLMResponseData,
     RecordTurnInput,
     SessionInput,
+    ToolCallData,
     WorkspaceConfig,
 )
 
@@ -59,6 +60,7 @@ def _make_fake_activities(
     *,
     workspace_path: str,
     pending_handoff: str | None = None,
+    llm_responses: list[LLMResponseData] | None = None,
 ):
     """Crea las activities fakes con `tracker` cerrado en closure.
 
@@ -105,9 +107,25 @@ def _make_fake_activities(
             {"role": "user", "content": input.message},
         ]
 
+    # Secuencia opcional de respuestas LLM (para escenarios multi-iteración como
+    # "content + tool_call" seguido de "content final"). Si se agota o no se
+    # pasa, devuelve un cierre neutro sin tools (cubre el turno ghost).
+    _llm_state = {"i": 0}
+
     @activity.defn(name="llm_chat")
     async def fake_llm(input: LLMChatInput) -> LLMResponseData:
         tracker.llm_calls += 1
+        if llm_responses:
+            i = _llm_state["i"]
+            if i < len(llm_responses):
+                _llm_state["i"] += 1
+                return llm_responses[i]
+            return LLMResponseData(
+                content="ok",
+                finish_reason="stop",
+                has_tool_calls=False,
+                tool_calls=[],
+            )
         return LLMResponseData(
             content="respuesta combinada del bot",
             finish_reason="stop",
@@ -328,3 +346,85 @@ async def test_typing_indicator_fires_before_llm(tmp_path: Path) -> None:
     # tambien puede dispararlo, pero como minimo el user turn debe.
     assert len(tracker.typing_calls) >= 1
     assert tracker.typing_calls[0] == "wa_test3"
+
+
+@pytest.mark.asyncio
+async def test_pre_tool_content_is_sent_as_bubble(tmp_path: Path) -> None:
+    """Bug saludo descartado (run ddd0d472 / session-wa_573125671604).
+
+    Cuando el LLM emite texto client-facing JUNTO con una tool call (el saludo
+    de apertura "Buenos días. Bienvenido a Hubara..." encolando send_quick_replies),
+    ese texto DEBE llegar al cliente como burbuja — antes se perdía porque el
+    loop solo enviaba `final_content` (el content del último mensaje SIN tools).
+
+    Reproduce el turno real del run: iter 1 = saludo + tool call; iter 2 = texto
+    final sin tools. Verifica que el cliente recibe AMBOS, el saludo primero, y
+    que el saludo se persiste al store del dashboard.
+    """
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    greeting = "Buenos dias. Bienvenido a Hubara, velas artesanales hechas a mano."
+    follow_up = "Cuentame que buscas y con gusto te asesoro."
+    responses = [
+        # Turno user, iter 1: saludo + tool call (ANTES se descartaba)
+        LLMResponseData(
+            content=greeting,
+            finish_reason="tool_calls",
+            has_tool_calls=True,
+            tool_calls=[
+                ToolCallData(
+                    id="call_1",
+                    name="send_quick_replies",
+                    arguments={"body": "¿En qué te ayudo?", "buttons": []},
+                )
+            ],
+        ),
+        # Turno user, iter 2: texto final sin tools
+        LLMResponseData(
+            content=follow_up,
+            finish_reason="stop",
+            has_tool_calls=False,
+            tool_calls=[],
+        ),
+    ]
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=SALES_QUEUE,
+            workflows=[HubaraSalesSessionWorkflow],
+            activities=_make_fake_activities(
+                tracker, workspace_path=str(workspace), llm_responses=responses
+            ),
+        ):
+            handle = await env.client.start_workflow(
+                HubaraSalesSessionWorkflow.run,
+                SalesSessionInput(
+                    session_id="wa_greet",
+                    runtime_workspace_path=str(workspace),
+                ),
+                id="session-wa_greet",
+                task_queue=SALES_QUEUE,
+            )
+            await handle.signal(
+                HubaraSalesSessionWorkflow.send_message,
+                args=["Hola", None, None],
+            )
+            await handle.result()
+
+    sent = [m for (_sid, m) in tracker.send_whatsapp_calls]
+    # El saludo (content que acompañaba la tool call) debe haber llegado.
+    assert greeting in sent, f"El saludo de apertura se perdió. Enviado: {sent}"
+    # El texto final también.
+    assert follow_up in sent, f"El follow-up no llegó. Enviado: {sent}"
+    # Orden: saludo ANTES del follow-up.
+    assert sent.index(greeting) < sent.index(follow_up), (
+        f"El saludo debe ir antes del follow-up. Enviado: {sent}"
+    )
+    # Y se persistió al store del dashboard (igual que final_content).
+    persisted = [m for (_sid, m) in tracker.persist_calls]
+    assert greeting in persisted, (
+        f"El saludo no se persistió al dashboard. Persistido: {persisted}"
+    )
