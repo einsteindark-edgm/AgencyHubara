@@ -32,6 +32,91 @@ agent:
     - name: reconcile
       module: src.plugins.orders.workers.reconcile
       task_queue: queue-orders-reconcile
+      # ── Orquestación declarativa (ADR-2026-05-20) — disparo del Agente ETA ──
+      # La orders API emite `OrderStageChangedEvent` tras cada transición de
+      # stage (PATCH .../schedule → preparing, PATCH .../stage, POST .../cancel).
+      # El dispatcher lo rutea acá: `preparing` ARRANCA el workflow de
+      # seguimiento ETA (chats/eta); el resto lo SIGNALEA (`notify_stage_change`).
+      # Si no hay workflow ETA corriendo, el signal devuelve NOT_FOUND y el
+      # dispatcher lo absorbe como no-op (`dispatcher._is_not_found`).
+      # NOTA: el emisor real es la HTTP API (no el proceso `reconcile`), pero las
+      # transiciones se declaran bajo este worker porque es el agente del plugin
+      # `orders` que orquesta el ciclo de vida del pedido — el dispatcher las
+      # busca por (source_plugin, source_worker) = (orders, reconcile). Mismo
+      # patrón que el ingest HTTP de chats emitiendo con source_worker=sales.
+      emits:
+        - OrderStageChangedEvent
+      transitions:
+        - id: order_preparing_starts_eta
+          on_event: OrderStageChangedEvent
+          when:
+            to_stage: preparing
+          action:
+            via: start_workflow_with_replace
+            target_plugin: chats
+            target_worker: eta
+            target_workflow: HubaraEtaSessionWorkflow
+            workflow_id_template: "eta-{event.session_id}"
+            input_mapping:
+              session_id: "$.session_id"
+              order_id: "$.order_id"
+              to_stage: "$.to_stage"
+        - id: order_ready_notifies_eta
+          on_event: OrderStageChangedEvent
+          when:
+            to_stage: ready
+          action:
+            via: signal
+            target_plugin: chats
+            target_worker: eta
+            target_workflow: HubaraEtaSessionWorkflow
+            workflow_id_template: "eta-{event.session_id}"
+            signal_name: notify_stage_change
+            input_mapping:
+              to_stage: "$.to_stage"
+              order_id: "$.order_id"
+        - id: order_shipping_notifies_eta
+          on_event: OrderStageChangedEvent
+          when:
+            to_stage: shipping
+          action:
+            via: signal
+            target_plugin: chats
+            target_worker: eta
+            target_workflow: HubaraEtaSessionWorkflow
+            workflow_id_template: "eta-{event.session_id}"
+            signal_name: notify_stage_change
+            input_mapping:
+              to_stage: "$.to_stage"
+              order_id: "$.order_id"
+        - id: order_delivered_notifies_eta
+          on_event: OrderStageChangedEvent
+          when:
+            to_stage: delivered
+          action:
+            via: signal
+            target_plugin: chats
+            target_worker: eta
+            target_workflow: HubaraEtaSessionWorkflow
+            workflow_id_template: "eta-{event.session_id}"
+            signal_name: notify_stage_change
+            input_mapping:
+              to_stage: "$.to_stage"
+              order_id: "$.order_id"
+        - id: order_cancelled_notifies_eta
+          on_event: OrderStageChangedEvent
+          when:
+            to_stage: cancelled
+          action:
+            via: signal
+            target_plugin: chats
+            target_worker: eta
+            target_workflow: HubaraEtaSessionWorkflow
+            workflow_id_template: "eta-{event.session_id}"
+            signal_name: notify_stage_change
+            input_mapping:
+              to_stage: "$.to_stage"
+              order_id: "$.order_id"
       deployment:
         replicas: 1                       # barrido idempotente — no hace falta paralelismo
         strategy: Recreate

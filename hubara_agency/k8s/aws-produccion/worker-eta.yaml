@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hubara-worker-eta
+  namespace: default
+spec:
+  # ETA es low-throughput: workflows long-lived que duermen entre cambios de
+  # estado del pedido (preparación → entrega puede tomar días). Una réplica
+  # alcanza — el WorkflowID (== eta-{session_id}) dedupea, así que más workers
+  # solo agregan contención por la misma task queue.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hubara-worker-eta
+  template:
+    metadata:
+      labels:
+        app: hubara-worker-eta
+    spec:
+      containers:
+        - name: worker
+          image: hubara-agency-prod:latest
+          imagePullPolicy: Always
+          # Worker del plugin chats — sub-agente ETA. Mantiene paridad con
+          # docker-compose.local.yml (hubara-worker-eta service) y con el
+          # manifest (chats/plugin.yaml → agent.workers[name=eta]).
+          command: ["python", "-m", "hubara_agency.src.plugins.chats.workers.eta"]
+          # ⚠️  REQUIRED para producción — el operador DEBE inyectar (vía
+          # `envFrom: secretRef:` en un overlay/kustomize) los siguientes
+          # secretos. Sin ellos el worker arranca OK (la conexión Temporal no
+          # los requiere) pero falla en runtime al primer cambio de estado:
+          #
+          #   - DEEPSEEK_API_KEY            (llamada LLM via litellm)
+          #   - WHATSAPP_PHONE_NUMBER_ID    (send_whatsapp_message_activity)
+          #   - WHATSAPP_ACCESS_TOKEN       (send_whatsapp_message_activity)
+          #   - WHATSAPP_VERIFY_TOKEN       (uniformidad con los otros workers)
+          #   - MEDUSA_BASE_URL             (claim_eta_notification → order query port)
+          #   - MEDUSA_ADMIN_TOKEN          (claim_eta_notification → order query port)
+          #
+          # Convención del proyecto: igual que `worker-sales.yaml` /
+          # `worker-remarketing.yaml`, las llaves privadas se inyectan vía
+          # overlay, NO se commitean al repo.
+          env:
+            - name: API_BASE_LLMLITE
+              value: "http://litellm-proxy.default.svc.cluster.local:4000"
+            - name: TEMPORAL_URL
+              value: "temporal-frontend.temporal.svc.cluster.local:7233"
+            - name: TEMPORAL_NAMESPACE
+              value: "default"
+            - name: TEMPORAL_TLS_CERT_PATH
+              value: "/etc/temporal-certs/temporal.pem"
+            - name: TEMPORAL_TLS_KEY_PATH
+              value: "/etc/temporal-certs/temporal.key"
+            - name: WORKSPACE_VAULT_DIR
+              value: "/app/hubara_vault"
+          volumeMounts:
+            - name: hubara-vault
+              mountPath: /app/hubara_vault
+            - name: temporal-certs
+              mountPath: "/etc/temporal-certs"
+              readOnly: true
+          resources:
+            requests:
+              cpu: 250m
+              memory: 384Mi
+            limits:
+              cpu: 500m
+              memory: 768Mi
+      volumes:
+        - name: hubara-vault
+          persistentVolumeClaim:
+            claimName: hubara-vault-efs
+        - name: temporal-certs
+          secret:
+            secretName: temporal-cloud-certs

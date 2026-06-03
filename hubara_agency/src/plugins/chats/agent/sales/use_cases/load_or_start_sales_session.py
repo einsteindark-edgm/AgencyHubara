@@ -47,6 +47,7 @@ from temporalio.service import RPCError
 from exoclaw_temporal.config import WorkspaceConfig
 
 from src.platform.constants import (
+    ROUTE_ETA,
     ROUTE_HUMANO,
     ROUTE_REMARKETING,
     ROUTE_VENTAS,
@@ -165,6 +166,30 @@ class LoadOrStartSalesSession:
         # 2. Conectar al cluster.
         client = await self._client_factory()
 
+        # 2.5. Ruta ETA: el Agente de Seguimiento maneja la conversación
+        # (notificaciones de estado de pedido). El workflow `eta-{session_id}`
+        # lo arrancó el dispatcher declarativo cuando el pedido entró en
+        # `preparing` (orders → OrderStageChangedEvent). Acá SOLO le signaleamos
+        # la respuesta del cliente — signal por NOMBRE, sin importar
+        # `HubaraEtaSessionWorkflow` (igual patrón que remarketing; intra-chats,
+        # pero el handle-by-id no necesita la clase). Si el workflow ETA ya
+        # cerró (entrega vieja, idle 7d), caemos a Sales: el cliente abrió una
+        # conversación nueva no relacionada al seguimiento.
+        if active_route == ROUTE_ETA:
+            workflow_id = f"eta-{session_id}"
+            logger.info("Routing webhook to ETA Agent", workflow_id=workflow_id)
+            plugin_context = None
+            try:
+                handle = client.get_workflow_handle(workflow_id)
+                desc = await handle.describe()
+                if desc.status != WorkflowExecutionStatus.RUNNING:
+                    raise RuntimeError("ETA workflow is no longer running")
+            except (RPCError, RuntimeError):
+                logger.warning(
+                    "ETA workflow not found or finished, falling back to Sales"
+                )
+                active_route = ROUTE_VENTAS
+
         # 3. Si la ruta activa es remarketing, intentamos reusar; si murio, fallback.
         if active_route == ROUTE_REMARKETING:
             workflow_id = f"remarketing-{session_id}"
@@ -227,7 +252,7 @@ class LoadOrStartSalesSession:
                 active_route = ROUTE_VENTAS
 
         # 4. Caso default (o fallback): rutear a Sales.
-        if active_route != ROUTE_REMARKETING:
+        if active_route not in (ROUTE_REMARKETING, ROUTE_ETA):
             workflow_id = f"session-{session_id}"
             logger.info("Routing webhook to Sales Agent", workflow_id=workflow_id)
             # Sales workflow class import is intra-agent (sales/use_cases →
