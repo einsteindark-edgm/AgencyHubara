@@ -245,12 +245,44 @@ async def test_build_prompt_loads_eta_workspace_and_templates(_isolate_vault_dir
 
 
 # ════════════════════════════════════════════════════════════════════════
-# Dashboard API — shaping eta_tracking → TrackedOrder
+# Dashboard API — listado desde el order port + overlay del timeline
 # ════════════════════════════════════════════════════════════════════════
-def test_build_tracked_order_from_detail_maps_fields():
+def _summary(**over):
+    """``OrderSummaryDTO`` con defaults razonables (solo override lo relevante)."""
+    from src.platform.orders.query_port import OrderSummaryDTO
+
+    base = dict(
+        id="order_X", display_id="#9", customer="Cliente WhatsApp", short="CW",
+        color="a", phone=None, city="Bogotá", channel="WhatsApp",
+        status="preparing", pay_status="paid", pay_type="confirmed",
+        items=1, pieces=1, total_cop=100000, currency_code="COP", is_draft=False,
+        due_iso=None, due_time=None, overdue=False, priority="normal", agent="—",
+        created_at_ms=1_780_000_000_000, updated_at_ms=1_780_000_000_000,
+    )
+    base.update(over)
+    return OrderSummaryDTO(**base)
+
+
+class _ListPort:
+    """Fake del order query port: solo necesita ``list`` (el endpoint dejó de
+    hacer N ``get`` por sesión)."""
+
+    def __init__(self, summaries):
+        self._summaries = summaries
+
+    async def list(self, *, limit=50, offset=0, include_drafts=True):
+        from src.platform.orders.query_port import OrderListDTO
+
+        return OrderListDTO(
+            orders=list(self._summaries), count=len(self._summaries),
+            offset=offset, limit=limit, catalog_available=True,
+        )
+
+
+def test_tracked_from_summary_overlays_timeline():
     from datetime import datetime
 
-    from src.plugins.chats.api.eta import _build_tracked_order, _BOGOTA
+    from src.plugins.chats.api.eta import _BOGOTA, _tracked_from_summary
 
     tracking = {
         "order_id": ORDER,
@@ -260,12 +292,8 @@ def test_build_tracked_order_from_detail_maps_fields():
             {"stage": "shipping", "agent_msg": "Va en camino", "at_ms": 1_780_100_000_000, "reply": "¿cambio dirección?", "flagged": True, "flag": "address"},
         ],
     }
-    detail = _fake_detail(
-        status="shipping", display_id="#1247", customer="María Camila", short="MR",
-        color="a", city="Bogotá", channel="WhatsApp", pay_type="confirmed", total_cop=124500,
-    )
-    out = _build_tracked_order(SID, tracking, detail, now=datetime.now(_BOGOTA))
-    assert out is not None
+    s = _summary(id=ORDER, display_id="#1247", customer="María Camila", status="shipping", total_cop=124500)
+    out = _tracked_from_summary(s, tracking, current="shipping", now=datetime.now(_BOGOTA))
     assert out["id"] == "#1247"
     assert out["current"] == "shipping"
     assert out["payType"] == "confirmed"
@@ -275,22 +303,50 @@ def test_build_tracked_order_from_detail_maps_fields():
     assert out["events"][1]["flagged"] is True
 
 
-def test_build_tracked_order_cancelled_excluded():
+def test_tracked_from_summary_without_tracking_has_empty_timeline():
     from datetime import datetime
 
-    from src.plugins.chats.api.eta import _build_tracked_order, _BOGOTA
+    from src.plugins.chats.api.eta import _BOGOTA, _tracked_from_summary
 
-    tracking = {"order_id": ORDER, "current_stage": "cancelled", "events": []}
-    detail = _fake_detail(
-        status="cancelled", display_id="#9", customer="X", short="X", color="b",
-        city="", channel="Web", pay_type="cod", total_cop=1000,
-    )
-    assert _build_tracked_order(SID, tracking, detail, now=datetime.now(_BOGOTA)) is None
+    s = _summary(display_id="#5", status="preparing")
+    out = _tracked_from_summary(s, None, current="preparing", now=datetime.now(_BOGOTA))
+    assert out["id"] == "#5"
+    assert out["current"] == "preparing"
+    assert out["events"] == []   # el agente todavía no notificó
+    assert out["needs"] is False
 
 
-async def test_list_endpoint_surfaces_sent_notification(_isolate_vault_dir: Path, monkeypatch):
+async def test_list_surfaces_fulfillment_orders_without_tracking(
+    _isolate_vault_dir: Path, monkeypatch
+):
+    """Regresión del bug reportado ("la sección ETA no carga ninguna orden"):
+    los pedidos en fulfillment se muestran AUNQUE ninguna sesión tenga
+    ``eta_tracking`` todavía — el caso de los pedidos que ya existían antes de
+    que el Agente ETA existiera. ``new`` y ``cancelled`` quedan fuera."""
+    from src.plugins.chats.api import eta as eta_api
+
+    # Vault SIN ninguna sesión con eta_tracking (réplica del estado real).
+    summaries = [
+        _summary(id="order_5", display_id="#5", status="preparing"),
+        _summary(id="order_4", display_id="#4", status="shipping"),
+        _summary(id="order_2", display_id="#2", status="delivered"),
+        _summary(id="order_6", display_id="#6", status="new"),        # excluido
+        _summary(id="order_1", display_id="#1", status="cancelled"),  # excluido
+    ]
+    monkeypatch.setattr(eta_api, "get_order_query_port", lambda: _ListPort(summaries))
+
+    resp = await eta_api.list_tracked_orders()
+    assert resp["count"] == 3
+    assert {o["id"] for o in resp["orders"]} == {"#5", "#4", "#2"}
+    assert all(o["events"] == [] for o in resp["orders"])  # sin timeline aún
+
+
+async def test_list_endpoint_overlays_sent_notification(
+    _isolate_vault_dir: Path, monkeypatch
+):
     """Behavior (gotcha #1): el mensaje que el agente ENVIÓ queda visible en el
-    timeline que la sección ETA del dashboard consume."""
+    timeline, superpuesto sobre el pedido vivo del order port (match por
+    ``eta_tracking.order_id`` == el id Medusa del summary)."""
     from src.plugins.chats.api import eta as eta_api
 
     _write_meta(
@@ -300,18 +356,37 @@ async def test_list_endpoint_surfaces_sent_notification(_isolate_vault_dir: Path
             "events": [{"stage": "preparing", "agent_msg": "¡Hola María! Tu pedido #1247 entró en preparación.", "at_ms": 1_780_000_000_000, "reply": None, "flagged": False, "flag": None}],
         }},
     )
+    summaries = [_summary(id=ORDER, display_id="#1247", customer="María Camila", status="preparing", total_cop=124500)]
+    monkeypatch.setattr(eta_api, "get_order_query_port", lambda: _ListPort(summaries))
 
-    class _Port:
-        async def get(self, oid):
-            return _fake_detail(
-                status="preparing", display_id="#1247", customer="María Camila", short="MR",
-                color="a", city="Bogotá", channel="WhatsApp", pay_type="confirmed", total_cop=124500,
-            )
-
-    monkeypatch.setattr(eta_api, "get_order_query_port", lambda: _Port())
     resp = await eta_api.list_tracked_orders()
     assert resp["count"] == 1
     order = resp["orders"][0]
     assert order["id"] == "#1247"
     assert order["current"] == "preparing"
     assert order["events"][0]["agentMsg"].startswith("¡Hola María!")
+
+
+async def test_list_timeline_only_when_port_unavailable(
+    _isolate_vault_dir: Path, monkeypatch
+):
+    """Sin Medusa (dev sin .env / order list falla): el listado cae a
+    timeline-only — solo los pedidos que el agente ya trackeó."""
+    from src.plugins.chats.api import eta as eta_api
+
+    _write_meta(
+        _isolate_vault_dir, SID,
+        {"eta_tracking": {
+            "order_id": ORDER, "current_stage": "shipping", "notified_stages": ["shipping"],
+            "events": [{"stage": "shipping", "agent_msg": "Va en camino", "at_ms": 1_780_000_000_000, "reply": None, "flagged": False, "flag": None}],
+        }},
+    )
+
+    def _raise():
+        raise ValueError("MEDUSA_BASE_URL missing")
+
+    monkeypatch.setattr(eta_api, "get_order_query_port", _raise)
+    resp = await eta_api.list_tracked_orders()
+    assert resp["count"] == 1
+    assert resp["orders"][0]["current"] == "shipping"
+    assert resp["orders"][0]["events"][0]["agentMsg"] == "Va en camino"
