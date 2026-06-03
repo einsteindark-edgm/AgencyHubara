@@ -1,4 +1,17 @@
+# ruff: noqa: E402
+# (Los imports van DESPUÉS de init_otel() a propósito — Bug A HU-003: hay que
+#  parchear litellm antes de que el provider importe `acompletion`. Ver abajo.)
 import asyncio
+
+# Bug A (orden de imports — HU-003): init_otel() DEBE correr ANTES de importar el
+# provider litellm (`from litellm import acompletion`). Sino esa referencia queda
+# sin instrumentar por OpenLIT → el span gen_ai se crea pero gen_ai.usage.*
+# (tokens/cost) sale 0. Ver la nota más detallada en el worker `sales`.
+from src.platform.logging import setup_logging
+from src.platform.observability import init_otel, otel_workflow_runner
+
+setup_logging()
+init_otel("remarketing-agent")
 
 from loguru import logger
 from temporalio.worker import Worker
@@ -20,8 +33,6 @@ from src.platform.whatsapp.activities import (
     send_typing_indicator_activity,
     send_whatsapp_message_activity,
 )
-from src.platform.logging import setup_logging
-from src.platform.observability import init_otel, otel_workflow_runner
 from src.platform.observability.cost_attribution import get_active_episode_id_activity
 from src.platform.temporal.client import get_temporal_client
 from src.platform.tool_extensions import register_tool_extension
@@ -42,12 +53,6 @@ from src.plugins.chats.agent.remarketing.workflows.watchdog import (
 from src.platform.tools.routing import TransferToSalesAgentTool
 from exoclaw_temporal.activities.conversation import build_prompt, record_turn
 from exoclaw_temporal.activities.llm import llm_chat
-
-setup_logging()
-
-# OTel obs (HU-003 features/): bootstrap OTel para el worker de Remarketing.
-# No-op si OTEL_SDK_DISABLED=true; consola si no hay OTEL_EXPORTER_OTLP_ENDPOINT.
-init_otel("remarketing-agent")
 
 # NEW-5 cerrado: el worker de Remarketing tambien necesita la tool de
 # transferencia (es la unica forma de que el agente vuelva a Ventas).
