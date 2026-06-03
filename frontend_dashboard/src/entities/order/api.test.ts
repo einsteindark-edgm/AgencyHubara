@@ -11,6 +11,8 @@ import { toLegacyOrder } from "./api";
 import {
   orderDetailSchema,
   orderListResponseSchema,
+  reconciliationOutcomeSchema,
+  vaultOrderRecordSchema,
   type OrderSummary,
 } from "./contracts";
 
@@ -200,5 +202,85 @@ describe("orderDetailSchema", () => {
       data_completeness_missing: ["due_date", "agent", "notes"],
     };
     expect(() => orderDetailSchema.parse(detail)).not.toThrow();
+  });
+});
+
+describe("vaultOrderRecordSchema — reconciliación", () => {
+  const base = {
+    kind: "failed",
+    session_key: "wa_57311",
+    order_id: "AUDIT-1",
+    customer_phone: "+57311",
+    customer_city: "Bogotá",
+    total_cop: 17000,
+    currency: "COP",
+    items_count: 1,
+    payment_method: "transfer",
+    error_detail: "medusa_api_error: HTTP 503",
+    registered_at_ms: 1779800400000,
+  };
+
+  it("parses status and attempts when present", () => {
+    const r = vaultOrderRecordSchema.parse({
+      ...base,
+      status: "abandoned",
+      attempts: 5,
+    });
+    expect(r.status).toBe("abandoned");
+    expect(r.attempts).toBe(5);
+  });
+
+  it("defaults status=pending and attempts=0 for legacy records", () => {
+    const r = vaultOrderRecordSchema.parse(base);
+    expect(r.status).toBe("pending");
+    expect(r.attempts).toBe(0);
+  });
+
+  it("rejects an unknown status", () => {
+    expect(() =>
+      vaultOrderRecordSchema.parse({ ...base, status: "frozen" }),
+    ).toThrow();
+  });
+});
+
+describe("reconciliationOutcomeSchema", () => {
+  it("accepts a resolved outcome", () => {
+    const ok = {
+      session_key: "wa_57311",
+      audit_id: "AUDIT-1",
+      outcome: "resolved",
+      resolved_order_id: "draft_01HXX",
+      provider: "medusa",
+      error_detail: null,
+      attempts: 1,
+    };
+    expect(() => reconciliationOutcomeSchema.parse(ok)).not.toThrow();
+  });
+
+  it("accepts still_failing with null resolved id", () => {
+    const out = {
+      session_key: "wa_57311",
+      audit_id: "AUDIT-1",
+      outcome: "still_failing",
+      resolved_order_id: null,
+      provider: "medusa",
+      error_detail: "still down",
+      attempts: 2,
+    };
+    expect(() => reconciliationOutcomeSchema.parse(out)).not.toThrow();
+  });
+
+  it("rejects an unknown outcome value", () => {
+    expect(() =>
+      reconciliationOutcomeSchema.parse({
+        session_key: "wa_1",
+        audit_id: "A",
+        outcome: "maybe",
+        resolved_order_id: null,
+        provider: null,
+        error_detail: null,
+        attempts: 0,
+      }),
+    ).toThrow();
   });
 });

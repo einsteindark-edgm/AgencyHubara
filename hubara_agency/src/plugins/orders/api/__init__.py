@@ -27,7 +27,6 @@ import logging
 import re
 from dataclasses import asdict
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Body, HTTPException, Path, Query
@@ -49,6 +48,13 @@ from src.platform.orders.command_port import (
 from src.platform.orders.composition import (
     get_order_command_port,
     get_order_query_port,
+    get_order_registration_port,
+)
+from src.platform.orders.reconciliation import (
+    OUTCOME_ERROR,
+    OUTCOME_NOT_FOUND,
+    mark_resolved_manually,
+    reconcile_one,
 )
 from src.platform.orders.state import STAGE_VALUES
 from src.platform.state import FilesystemMetadataStore
@@ -182,6 +188,77 @@ async def get_vault_orders() -> dict[str, Any]:
         "failed_count": len(failed),
         "stub_count": len(stub),
     }
+
+
+@router.post("/vault-orders/{session_key}/{audit_id}/retry")
+async def retry_vault_order(
+    session_key: str = Path(..., min_length=1, max_length=200),
+    audit_id: str = Path(..., min_length=1, max_length=200),
+) -> dict[str, Any]:
+    """Reintenta registrar en Medusa UN pedido pendiente. Idempotente.
+
+    Lo dispara el operador desde el banner del dashboard ("Reintentar"). Usa
+    el MISMO núcleo idempotente (`reconcile_one`) que el barrido automático
+    (`scripts/reconcile_pending_orders.py`), así que apretarlo varias veces
+    es seguro: si ya está resuelto devuelve `already_resolved` sin duplicar,
+    y el adapter Medusa pre-chequea por fingerprint antes de crear.
+
+    Devuelve el `ReconciliationOutcome` serializado:
+      {"session_key", "audit_id", "outcome", "resolved_order_id",
+       "provider", "error_detail", "attempts"}.
+    `outcome` ∈ resolved | still_failing | already_resolved | abandoned.
+    404 si no existe el (session_key, audit_id); 422 si el record está
+    malformado y no se puede reconstruir.
+    """
+    port = get_order_registration_port()
+    outcome = await reconcile_one(
+        vault_dir=WORKSPACE_VAULT_DIR,
+        session_key=session_key,
+        audit_id=audit_id,
+        port=port,
+    )
+    if outcome.outcome == OUTCOME_NOT_FOUND:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Pedido {audit_id!r} no encontrado en sesión {session_key!r}.",
+        )
+    if outcome.outcome == OUTCOME_ERROR:
+        raise HTTPException(
+            status_code=422,
+            detail=outcome.error_detail or "record de pedido malformado",
+        )
+    return asdict(outcome)
+
+
+@router.post("/vault-orders/{session_key}/{audit_id}/resolve")
+async def resolve_vault_order(
+    session_key: str = Path(..., min_length=1, max_length=200),
+    audit_id: str = Path(..., min_length=1, max_length=200),
+    note: str | None = Body(default=None, embed=True),
+    resolved_order_id: str | None = Body(default=None, embed=True),
+) -> dict[str, Any]:
+    """Marca un pedido pendiente como resuelto a mano.
+
+    Para cuando el operador ya lo registró en Medusa Admin manualmente: saca
+    el record del banner SIN tocar Medusa. Idempotente (si ya estaba resuelto,
+    devuelve `already_resolved`).
+
+    Body opcional: `{"note": "...", "resolved_order_id": "order_01..."}`.
+    404 si no existe el (session_key, audit_id).
+    """
+    outcome = mark_resolved_manually(
+        vault_dir=WORKSPACE_VAULT_DIR,
+        session_key=session_key,
+        audit_id=audit_id,
+        note=note,
+        resolved_order_id=resolved_order_id,
+    )
+    if outcome.outcome == OUTCOME_NOT_FOUND:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Pedido {audit_id!r} no encontrado en sesión {session_key!r}.",
+        )
+    return asdict(outcome)
 
 
 @router.patch("/orders/{order_id}/schedule")

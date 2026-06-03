@@ -65,6 +65,7 @@ from src.platform.orders.port import (
     OrderRegistrationResult,
     OrderShipping,
 )
+from src.platform.orders.reconciliation import STATUS_PENDING
 from src.platform.orders.stub import StubOrderRegistration
 from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
     attach_order_to_active_episode,
@@ -281,6 +282,10 @@ class RegisterOrderTool(ToolBase):
             # Falla: NO sobrescribimos `registered_order` (preserva exitosos
             # previos) pero apendiamos a `failed_order_registrations[]` para
             # que el humano sepa que hubo intento + tenga el payload completo.
+            # `status=pending` habilita el loop de reconciliación
+            # (platform/orders/reconciliation.py): un reintento automático
+            # (script/cron) o manual (dashboard) lo marcará resolved/abandoned.
+            registered_record["status"] = STATUS_PENDING
             failed_log = data.setdefault("failed_order_registrations", [])
             failed_log.append(registered_record)
         history = data.setdefault("registered_orders_history", [])
