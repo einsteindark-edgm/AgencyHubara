@@ -321,6 +321,32 @@ class RemarketingSessionWorkflow:
                         )
                         self._force_shutdown = True
 
+                    # TEXTO DESCARTADO (mismo bug del loop compartido run_agent_turn,
+                    # run ddd0d472): el texto client-facing que el LLM emite JUNTO
+                    # con una tool call se perdía — solo viajaba final_content. Lo
+                    # enviamos como burbuja antes del final_content. Skip si
+                    # _force_shutdown (transfer a Sales no manda texto).
+                    # workflow.patched(): histories en vuelo no tienen estos sends.
+                    if (
+                        result.pre_tool_messages
+                        and not self._force_shutdown
+                        and workflow.patched("send-pre-tool-messages-v1")
+                    ):
+                        for pre_msg in result.pre_tool_messages:
+                            await workflow.execute_activity(
+                                send_whatsapp_message_activity,
+                                args=[session_id, pre_msg],
+                                start_to_close_timeout=timedelta(seconds=90),
+                                retry_policy=RetryPolicy(maximum_attempts=2),
+                            )
+                            if workflow.patched("persist-assistant-message-v1"):
+                                await workflow.execute_activity(
+                                    persist_assistant_message_activity,
+                                    args=[session_id, pre_msg],
+                                    start_to_close_timeout=timedelta(seconds=10),
+                                    retry_policy=RetryPolicy(maximum_attempts=2),
+                                )
+
                     if result.final_content and not self._force_shutdown:
                         await workflow.execute_activity(
                             send_whatsapp_message_activity,

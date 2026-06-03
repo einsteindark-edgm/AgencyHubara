@@ -102,6 +102,14 @@ class TurnResult:
     """
     final_content: str
     tools_used: list[str] = field(default_factory=list)
+    # Bug saludo descartado (run ddd0d472 / session-wa_573125671604): el texto
+    # client-facing que el LLM emite JUNTO con una tool call (ej. "Buenos días.
+    # Bienvenido a *Hubara*..." acompañando `send_quick_replies`) antes se perdía
+    # — el loop solo capturaba `final_content` (el content del último mensaje SIN
+    # tool_calls). Acá acumulamos, en orden, los content no vacíos de cada
+    # iteración con tool_calls para que el workflow los envíe como burbujas antes
+    # de `final_content`. Vacío en el caso normal (un solo mensaje sin tools).
+    pre_tool_messages: list[str] = field(default_factory=list)
     transfer_decision: TransferDecision | None = None
     schedule_remarketing: ScheduleRemarketingDecision | None = None
     escalation_decision: EscalationDecision | None = None
@@ -284,6 +292,11 @@ async def _run_agent_turn_impl(
     iteration = 0
     final_content: str | None = None
     tools_used: list[str] = []
+    # Bug saludo descartado (run ddd0d472): textos client-facing emitidos JUNTO
+    # con tool calls. Solo manipulación de lista en memoria → no agrega commands
+    # al history (replay-safe sin gate; el gate vive en el workflow que decide
+    # enviarlos).
+    pre_tool_messages: list[str] = []
     transfer_decision: TransferDecision | None = None
     schedule_remarketing: ScheduleRemarketingDecision | None = None
     escalation_decision: EscalationDecision | None = None
@@ -317,6 +330,16 @@ async def _run_agent_turn_impl(
             )
 
         if response.has_tool_calls:
+            # Capturar el texto client-facing que acompaña la(s) tool call(s)
+            # ANTES de descartarlo. El LLM legítimamente emite "content +
+            # tool_call" (ej. saluda y a la vez encola un quick_replies). Sin
+            # esto, ese content nunca llegaba al cliente (solo `final_content`,
+            # el del último mensaje sin tools). Sanitizamos igual que el final
+            # (em dash, comillas envolventes, meta-prefijos, duplicación).
+            if response.content:
+                sanitized_pre = sanitize_llm_text(response.content)
+                if sanitized_pre.text:
+                    pre_tool_messages.append(sanitized_pre.text)
             messages = [*messages, response.to_assistant_message()]
             for tc in response.tool_calls:
                 tools_used.append(tc.name)
@@ -527,6 +550,7 @@ async def _run_agent_turn_impl(
     return TurnResult(
         final_content=final_content,
         tools_used=tools_used,
+        pre_tool_messages=pre_tool_messages,
         transfer_decision=transfer_decision,
         schedule_remarketing=schedule_remarketing,
         escalation_decision=escalation_decision,
