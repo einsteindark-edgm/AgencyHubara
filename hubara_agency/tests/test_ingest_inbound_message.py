@@ -281,6 +281,51 @@ async def test_registered_order_episode_has_no_breadcrumb():
 
 
 @pytest.mark.asyncio
+async def test_human_route_does_not_rotate_episode_or_reset_tag():
+    """Bug wa_573125671604: con la conversación ya en manos de un humano
+    (active_route=humano), un inbound nuevo NO debe abrir un episodio ni
+    resetear el tag a NO_ETIQUETADO. Eso borraría el tag=HUMANO que dejó
+    escalate_to_human y sacaría el chat de la bandeja humana del dashboard
+    (que filtra por tag=HUMANO): el bot no responde (route=humano) y el humano
+    tampoco lo ve → chat huérfano."""
+    loader = FakeLoadOrStart()
+    metadata = FakeMetadataStore()
+    metadata.store["wa_5491111111111"] = {
+        "active_route": "humano",
+        "tag": "HUMANO",
+        "motivo": "Pedido order_X registrado en Medusa, verificar pago",
+        "escalation_reason": "PAYMENT_VERIFICATION_PENDING",
+        "episodes": [
+            {
+                "episode_id": "ep_001",
+                "started_at_ms": 1,
+                "closed_at_ms": 1000,
+                "closing_tag": "CONFIRMADO_PAGO_PENDIENTE",
+                "order_id": "order_X",
+            }
+        ],
+    }
+    use_case = IngestInboundMessage(
+        history_store=FakeHistoryStore(),  # type: ignore[arg-type]
+        load_session=loader,  # type: ignore[arg-type]
+        metadata_store=metadata,  # type: ignore[arg-type]
+    )
+
+    await use_case.execute(_make_text_message(text="ya pagué, te mando el comprobante"))
+
+    saved = metadata.store["wa_5491111111111"]
+    # El tag NO se reseteó: sigue HUMANO (visible en la bandeja humana).
+    assert saved["tag"] == "HUMANO"
+    # NO se abrió un episodio nuevo: sigue el único, cerrado.
+    assert len(saved["episodes"]) == 1
+    assert saved["episodes"][-1]["closed_at_ms"] is not None
+    # El motivo de la escalación se preserva (ensure_active_episode lo borraría).
+    assert saved["motivo"] == "Pedido order_X registrado en Medusa, verificar pago"
+    # Sigue en ruta humana.
+    assert saved["active_route"] == "humano"
+
+
+@pytest.mark.asyncio
 async def test_audio_inbound_defers_to_transcription():
     """HU-002 / A.5: audio inbound NO encola workflow — queda
     pending_transcription en metadata. La activity de transcripción
