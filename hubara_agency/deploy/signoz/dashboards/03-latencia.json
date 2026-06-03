@@ -1,0 +1,972 @@
+{
+  "title": "Latencia & Velocidad · AgencyHubara",
+  "description": "Performance del agente: latencia del modelo (p50/p95/p99), time-to-first-token, velocidad de generación, y latencia de cada activity y dependencia externa.",
+  "tags": [
+    "latencia",
+    "performance",
+    "velocidad",
+    "llm",
+    "hubara"
+  ],
+  "layout": [
+    {
+      "i": "v-llm-p95",
+      "x": 0,
+      "y": 0,
+      "w": 4,
+      "h": 3,
+      "moved": false,
+      "static": false
+    },
+    {
+      "i": "v-ttft-p95",
+      "x": 4,
+      "y": 0,
+      "w": 4,
+      "h": 3,
+      "moved": false,
+      "static": false
+    },
+    {
+      "i": "v-tool-p95",
+      "x": 8,
+      "y": 0,
+      "w": 4,
+      "h": 3,
+      "moved": false,
+      "static": false
+    },
+    {
+      "i": "g-llm-latency",
+      "x": 0,
+      "y": 3,
+      "w": 12,
+      "h": 6,
+      "moved": false,
+      "static": false
+    },
+    {
+      "i": "g-ttft-time",
+      "x": 0,
+      "y": 9,
+      "w": 6,
+      "h": 6,
+      "moved": false,
+      "static": false
+    },
+    {
+      "i": "g-tpot",
+      "x": 6,
+      "y": 9,
+      "w": 6,
+      "h": 6,
+      "moved": false,
+      "static": false
+    },
+    {
+      "i": "t-activity-latency",
+      "x": 0,
+      "y": 15,
+      "w": 12,
+      "h": 6,
+      "moved": false,
+      "static": false
+    },
+    {
+      "i": "g-whatsapp-latency",
+      "x": 0,
+      "y": 21,
+      "w": 6,
+      "h": 6,
+      "moved": false,
+      "static": false
+    },
+    {
+      "i": "t-external-latency",
+      "x": 6,
+      "y": 21,
+      "w": 6,
+      "h": 6,
+      "moved": false,
+      "static": false
+    }
+  ],
+  "widgets": [
+    {
+      "id": "v-llm-p95",
+      "title": "Latencia LLM p95",
+      "description": "p95 de duración del span del modelo (gen_ai).",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "value",
+      "query": {
+        "queryType": "builder",
+        "builder": {
+          "queryData": [
+            {
+              "dataSource": "traces",
+              "queryName": "A",
+              "aggregateOperator": "p95",
+              "aggregateAttribute": {
+                "key": "durationNano",
+                "dataType": "float64",
+                "type": "",
+                "isColumn": true,
+                "isJSON": false,
+                "id": "durationNano--float64----true"
+              },
+              "timeAggregation": "p95",
+              "spaceAggregation": "p95",
+              "functions": [],
+              "filters": {
+                "op": "AND",
+                "items": [
+                  {
+                    "id": "f-gen_ai.usage.cost-exists",
+                    "key": {
+                      "key": "gen_ai.usage.cost",
+                      "dataType": "float64",
+                      "type": "tag",
+                      "isColumn": false,
+                      "isJSON": false,
+                      "id": "gen_ai.usage.cost--float64--tag--false"
+                    },
+                    "op": "exists",
+                    "value": ""
+                  }
+                ]
+              },
+              "expression": "A",
+              "disabled": false,
+              "stepInterval": 60,
+              "having": [],
+              "limit": null,
+              "orderBy": [],
+              "groupBy": [],
+              "legend": "",
+              "reduceTo": "max"
+            }
+          ],
+          "queryFormulas": []
+        },
+        "promql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "clickhouse_sql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "id": "v-llm-p95"
+      },
+      "timePreferance": "GLOBAL",
+      "softMin": null,
+      "softMax": null,
+      "selectedLogFields": [],
+      "selectedTracesFields": [],
+      "fillSpans": false,
+      "yAxisUnit": "ns"
+    },
+    {
+      "id": "v-ttft-p95",
+      "title": "Time to First Token p95",
+      "description": "p95 de gen_ai.server.time_to_first_token — qué tan rápido empieza a responder.",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "value",
+      "query": {
+        "queryType": "builder",
+        "builder": {
+          "queryData": [
+            {
+              "dataSource": "traces",
+              "queryName": "A",
+              "aggregateOperator": "p95",
+              "aggregateAttribute": {
+                "key": "gen_ai.server.time_to_first_token",
+                "dataType": "float64",
+                "type": "tag",
+                "isColumn": false,
+                "isJSON": false,
+                "id": "gen_ai.server.time_to_first_token--float64--tag--false"
+              },
+              "timeAggregation": "p95",
+              "spaceAggregation": "p95",
+              "functions": [],
+              "filters": {
+                "op": "AND",
+                "items": [
+                  {
+                    "id": "f-gen_ai.server.time_to_first_token-exists",
+                    "key": {
+                      "key": "gen_ai.server.time_to_first_token",
+                      "dataType": "float64",
+                      "type": "tag",
+                      "isColumn": false,
+                      "isJSON": false,
+                      "id": "gen_ai.server.time_to_first_token--float64--tag--false"
+                    },
+                    "op": "exists",
+                    "value": ""
+                  }
+                ]
+              },
+              "expression": "A",
+              "disabled": false,
+              "stepInterval": 60,
+              "having": [],
+              "limit": null,
+              "orderBy": [],
+              "groupBy": [],
+              "legend": "",
+              "reduceTo": "max"
+            }
+          ],
+          "queryFormulas": []
+        },
+        "promql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "clickhouse_sql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "id": "v-ttft-p95"
+      },
+      "timePreferance": "GLOBAL",
+      "softMin": null,
+      "softMax": null,
+      "selectedLogFields": [],
+      "selectedTracesFields": [],
+      "fillSpans": false,
+      "yAxisUnit": "s"
+    },
+    {
+      "id": "v-tool-p95",
+      "title": "Latencia execute_tool p95",
+      "description": "p95 de las tools del agente (Medusa, órdenes, etc.).",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "value",
+      "query": {
+        "queryType": "builder",
+        "builder": {
+          "queryData": [
+            {
+              "dataSource": "traces",
+              "queryName": "A",
+              "aggregateOperator": "p95",
+              "aggregateAttribute": {
+                "key": "durationNano",
+                "dataType": "float64",
+                "type": "",
+                "isColumn": true,
+                "isJSON": false,
+                "id": "durationNano--float64----true"
+              },
+              "timeAggregation": "p95",
+              "spaceAggregation": "p95",
+              "functions": [],
+              "filters": {
+                "op": "AND",
+                "items": [
+                  {
+                    "id": "f-name-=",
+                    "key": {
+                      "key": "name",
+                      "dataType": "string",
+                      "type": "",
+                      "isColumn": true,
+                      "isJSON": false,
+                      "id": "name--string----true"
+                    },
+                    "op": "=",
+                    "value": "RunActivity:execute_tool"
+                  }
+                ]
+              },
+              "expression": "A",
+              "disabled": false,
+              "stepInterval": 60,
+              "having": [],
+              "limit": null,
+              "orderBy": [],
+              "groupBy": [],
+              "legend": "",
+              "reduceTo": "max"
+            }
+          ],
+          "queryFormulas": []
+        },
+        "promql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "clickhouse_sql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "id": "v-tool-p95"
+      },
+      "timePreferance": "GLOBAL",
+      "softMin": null,
+      "softMax": null,
+      "selectedLogFields": [],
+      "selectedTracesFields": [],
+      "fillSpans": false,
+      "yAxisUnit": "ns"
+    },
+    {
+      "id": "g-llm-latency",
+      "title": "Latencia del modelo en el tiempo (p50/p95/p99)",
+      "description": "Duración del span gen_ai — tendencia de velocidad del LLM.",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "graph",
+      "query": {
+        "queryType": "builder",
+        "builder": {
+          "queryData": [
+            {
+              "dataSource": "traces",
+              "queryName": "A",
+              "aggregateOperator": "p50",
+              "aggregateAttribute": {
+                "key": "durationNano",
+                "dataType": "float64",
+                "type": "",
+                "isColumn": true,
+                "isJSON": false,
+                "id": "durationNano--float64----true"
+              },
+              "timeAggregation": "p50",
+              "spaceAggregation": "p50",
+              "functions": [],
+              "filters": {
+                "op": "AND",
+                "items": [
+                  {
+                    "id": "f-gen_ai.usage.cost-exists",
+                    "key": {
+                      "key": "gen_ai.usage.cost",
+                      "dataType": "float64",
+                      "type": "tag",
+                      "isColumn": false,
+                      "isJSON": false,
+                      "id": "gen_ai.usage.cost--float64--tag--false"
+                    },
+                    "op": "exists",
+                    "value": ""
+                  }
+                ]
+              },
+              "expression": "A",
+              "disabled": false,
+              "stepInterval": 60,
+              "having": [],
+              "limit": null,
+              "orderBy": [],
+              "groupBy": [],
+              "legend": "p50",
+              "reduceTo": "sum"
+            },
+            {
+              "dataSource": "traces",
+              "queryName": "B",
+              "aggregateOperator": "p95",
+              "aggregateAttribute": {
+                "key": "durationNano",
+                "dataType": "float64",
+                "type": "",
+                "isColumn": true,
+                "isJSON": false,
+                "id": "durationNano--float64----true"
+              },
+              "timeAggregation": "p95",
+              "spaceAggregation": "p95",
+              "functions": [],
+              "filters": {
+                "op": "AND",
+                "items": [
+                  {
+                    "id": "f-gen_ai.usage.cost-exists",
+                    "key": {
+                      "key": "gen_ai.usage.cost",
+                      "dataType": "float64",
+                      "type": "tag",
+                      "isColumn": false,
+                      "isJSON": false,
+                      "id": "gen_ai.usage.cost--float64--tag--false"
+                    },
+                    "op": "exists",
+                    "value": ""
+                  }
+                ]
+              },
+              "expression": "B",
+              "disabled": false,
+              "stepInterval": 60,
+              "having": [],
+              "limit": null,
+              "orderBy": [],
+              "groupBy": [],
+              "legend": "p95",
+              "reduceTo": "sum"
+            },
+            {
+              "dataSource": "traces",
+              "queryName": "C",
+              "aggregateOperator": "p99",
+              "aggregateAttribute": {
+                "key": "durationNano",
+                "dataType": "float64",
+                "type": "",
+                "isColumn": true,
+                "isJSON": false,
+                "id": "durationNano--float64----true"
+              },
+              "timeAggregation": "p99",
+              "spaceAggregation": "p99",
+              "functions": [],
+              "filters": {
+                "op": "AND",
+                "items": [
+                  {
+                    "id": "f-gen_ai.usage.cost-exists",
+                    "key": {
+                      "key": "gen_ai.usage.cost",
+                      "dataType": "float64",
+                      "type": "tag",
+                      "isColumn": false,
+                      "isJSON": false,
+                      "id": "gen_ai.usage.cost--float64--tag--false"
+                    },
+                    "op": "exists",
+                    "value": ""
+                  }
+                ]
+              },
+              "expression": "C",
+              "disabled": false,
+              "stepInterval": 60,
+              "having": [],
+              "limit": null,
+              "orderBy": [],
+              "groupBy": [],
+              "legend": "p99",
+              "reduceTo": "sum"
+            }
+          ],
+          "queryFormulas": []
+        },
+        "promql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "clickhouse_sql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "id": "g-llm-latency"
+      },
+      "timePreferance": "GLOBAL",
+      "softMin": null,
+      "softMax": null,
+      "selectedLogFields": [],
+      "selectedTracesFields": [],
+      "fillSpans": false,
+      "yAxisUnit": "ns"
+    },
+    {
+      "id": "g-ttft-time",
+      "title": "Time to First Token en el tiempo (p95)",
+      "description": "Latencia percibida por el cliente al inicio de cada respuesta.",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "graph",
+      "query": {
+        "queryType": "builder",
+        "builder": {
+          "queryData": [
+            {
+              "dataSource": "traces",
+              "queryName": "A",
+              "aggregateOperator": "p95",
+              "aggregateAttribute": {
+                "key": "gen_ai.server.time_to_first_token",
+                "dataType": "float64",
+                "type": "tag",
+                "isColumn": false,
+                "isJSON": false,
+                "id": "gen_ai.server.time_to_first_token--float64--tag--false"
+              },
+              "timeAggregation": "p95",
+              "spaceAggregation": "p95",
+              "functions": [],
+              "filters": {
+                "op": "AND",
+                "items": [
+                  {
+                    "id": "f-gen_ai.server.time_to_first_token-exists",
+                    "key": {
+                      "key": "gen_ai.server.time_to_first_token",
+                      "dataType": "float64",
+                      "type": "tag",
+                      "isColumn": false,
+                      "isJSON": false,
+                      "id": "gen_ai.server.time_to_first_token--float64--tag--false"
+                    },
+                    "op": "exists",
+                    "value": ""
+                  }
+                ]
+              },
+              "expression": "A",
+              "disabled": false,
+              "stepInterval": 60,
+              "having": [],
+              "limit": null,
+              "orderBy": [],
+              "groupBy": [],
+              "legend": "p95 TTFT",
+              "reduceTo": "sum"
+            }
+          ],
+          "queryFormulas": []
+        },
+        "promql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "clickhouse_sql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "id": "g-ttft-time"
+      },
+      "timePreferance": "GLOBAL",
+      "softMin": null,
+      "softMax": null,
+      "selectedLogFields": [],
+      "selectedTracesFields": [],
+      "fillSpans": false,
+      "yAxisUnit": "s"
+    },
+    {
+      "id": "g-tpot",
+      "title": "Velocidad de generación — tiempo por token (p95)",
+      "description": "gen_ai.server.time_per_output_token: menor = el modelo escribe más rápido.",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "graph",
+      "query": {
+        "queryType": "builder",
+        "builder": {
+          "queryData": [
+            {
+              "dataSource": "traces",
+              "queryName": "A",
+              "aggregateOperator": "p95",
+              "aggregateAttribute": {
+                "key": "gen_ai.server.time_per_output_token",
+                "dataType": "float64",
+                "type": "tag",
+                "isColumn": false,
+                "isJSON": false,
+                "id": "gen_ai.server.time_per_output_token--float64--tag--false"
+              },
+              "timeAggregation": "p95",
+              "spaceAggregation": "p95",
+              "functions": [],
+              "filters": {
+                "op": "AND",
+                "items": [
+                  {
+                    "id": "f-gen_ai.server.time_per_output_token-exists",
+                    "key": {
+                      "key": "gen_ai.server.time_per_output_token",
+                      "dataType": "float64",
+                      "type": "tag",
+                      "isColumn": false,
+                      "isJSON": false,
+                      "id": "gen_ai.server.time_per_output_token--float64--tag--false"
+                    },
+                    "op": "exists",
+                    "value": ""
+                  }
+                ]
+              },
+              "expression": "A",
+              "disabled": false,
+              "stepInterval": 60,
+              "having": [],
+              "limit": null,
+              "orderBy": [],
+              "groupBy": [],
+              "legend": "s/token",
+              "reduceTo": "sum"
+            }
+          ],
+          "queryFormulas": []
+        },
+        "promql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "clickhouse_sql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "id": "g-tpot"
+      },
+      "timePreferance": "GLOBAL",
+      "softMin": null,
+      "softMax": null,
+      "selectedLogFields": [],
+      "selectedTracesFields": [],
+      "fillSpans": false,
+      "yAxisUnit": "s"
+    },
+    {
+      "id": "t-activity-latency",
+      "title": "Latencia p95 por activity",
+      "description": "Qué paso del turno es el cuello de botella (llm_chat, whatsapp, tools…).",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "table",
+      "query": {
+        "queryType": "builder",
+        "builder": {
+          "queryData": [
+            {
+              "dataSource": "traces",
+              "queryName": "A",
+              "aggregateOperator": "p95",
+              "aggregateAttribute": {
+                "key": "durationNano",
+                "dataType": "float64",
+                "type": "",
+                "isColumn": true,
+                "isJSON": false,
+                "id": "durationNano--float64----true"
+              },
+              "timeAggregation": "p95",
+              "spaceAggregation": "p95",
+              "functions": [],
+              "filters": {
+                "op": "AND",
+                "items": [
+                  {
+                    "id": "f-name-contains",
+                    "key": {
+                      "key": "name",
+                      "dataType": "string",
+                      "type": "",
+                      "isColumn": true,
+                      "isJSON": false,
+                      "id": "name--string----true"
+                    },
+                    "op": "contains",
+                    "value": "RunActivity"
+                  }
+                ]
+              },
+              "expression": "A",
+              "disabled": false,
+              "stepInterval": 60,
+              "having": [],
+              "limit": 50,
+              "orderBy": [
+                {
+                  "columnName": "#SIGNOZ_VALUE",
+                  "order": "desc"
+                }
+              ],
+              "groupBy": [
+                {
+                  "key": "name",
+                  "dataType": "string",
+                  "type": "",
+                  "isColumn": true,
+                  "isJSON": false,
+                  "id": "name--string----true"
+                }
+              ],
+              "legend": "",
+              "reduceTo": "max"
+            }
+          ],
+          "queryFormulas": []
+        },
+        "promql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "clickhouse_sql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "id": "t-activity-latency"
+      },
+      "timePreferance": "GLOBAL",
+      "softMin": null,
+      "softMax": null,
+      "selectedLogFields": [],
+      "selectedTracesFields": [],
+      "fillSpans": false,
+      "columnUnits": {
+        "A": "ns"
+      }
+    },
+    {
+      "id": "g-whatsapp-latency",
+      "title": "Latencia de envío WhatsApp (p95)",
+      "description": "p95 de send_whatsapp_message_activity — salud de la Cloud API de Meta.",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "graph",
+      "query": {
+        "queryType": "builder",
+        "builder": {
+          "queryData": [
+            {
+              "dataSource": "traces",
+              "queryName": "A",
+              "aggregateOperator": "p95",
+              "aggregateAttribute": {
+                "key": "durationNano",
+                "dataType": "float64",
+                "type": "",
+                "isColumn": true,
+                "isJSON": false,
+                "id": "durationNano--float64----true"
+              },
+              "timeAggregation": "p95",
+              "spaceAggregation": "p95",
+              "functions": [],
+              "filters": {
+                "op": "AND",
+                "items": [
+                  {
+                    "id": "f-name-=",
+                    "key": {
+                      "key": "name",
+                      "dataType": "string",
+                      "type": "",
+                      "isColumn": true,
+                      "isJSON": false,
+                      "id": "name--string----true"
+                    },
+                    "op": "=",
+                    "value": "RunActivity:send_whatsapp_message_activity"
+                  }
+                ]
+              },
+              "expression": "A",
+              "disabled": false,
+              "stepInterval": 60,
+              "having": [],
+              "limit": null,
+              "orderBy": [],
+              "groupBy": [],
+              "legend": "p95 envío",
+              "reduceTo": "sum"
+            }
+          ],
+          "queryFormulas": []
+        },
+        "promql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "clickhouse_sql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "id": "g-whatsapp-latency"
+      },
+      "timePreferance": "GLOBAL",
+      "softMin": null,
+      "softMax": null,
+      "selectedLogFields": [],
+      "selectedTracesFields": [],
+      "fillSpans": false,
+      "yAxisUnit": "ns"
+    },
+    {
+      "id": "t-external-latency",
+      "title": "Latencia de dependencias externas (p95)",
+      "description": "p95 por URL saliente: WhatsApp vs LLM vs Medusa — quién te frena.",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "table",
+      "query": {
+        "queryType": "builder",
+        "builder": {
+          "queryData": [
+            {
+              "dataSource": "traces",
+              "queryName": "A",
+              "aggregateOperator": "p95",
+              "aggregateAttribute": {
+                "key": "durationNano",
+                "dataType": "float64",
+                "type": "",
+                "isColumn": true,
+                "isJSON": false,
+                "id": "durationNano--float64----true"
+              },
+              "timeAggregation": "p95",
+              "spaceAggregation": "p95",
+              "functions": [],
+              "filters": {
+                "op": "AND",
+                "items": [
+                  {
+                    "id": "f-http.url-exists",
+                    "key": {
+                      "key": "http.url",
+                      "dataType": "string",
+                      "type": "tag",
+                      "isColumn": false,
+                      "isJSON": false,
+                      "id": "http.url--string--tag--false"
+                    },
+                    "op": "exists",
+                    "value": ""
+                  }
+                ]
+              },
+              "expression": "A",
+              "disabled": false,
+              "stepInterval": 60,
+              "having": [],
+              "limit": 50,
+              "orderBy": [
+                {
+                  "columnName": "#SIGNOZ_VALUE",
+                  "order": "desc"
+                }
+              ],
+              "groupBy": [
+                {
+                  "key": "http.url",
+                  "dataType": "string",
+                  "type": "tag",
+                  "isColumn": false,
+                  "isJSON": false,
+                  "id": "http.url--string--tag--false"
+                }
+              ],
+              "legend": "",
+              "reduceTo": "max"
+            }
+          ],
+          "queryFormulas": []
+        },
+        "promql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "clickhouse_sql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "id": "t-external-latency"
+      },
+      "timePreferance": "GLOBAL",
+      "softMin": null,
+      "softMax": null,
+      "selectedLogFields": [],
+      "selectedTracesFields": [],
+      "fillSpans": false,
+      "columnUnits": {
+        "A": "ns"
+      }
+    }
+  ],
+  "variables": {},
+  "version": "v4"
+}

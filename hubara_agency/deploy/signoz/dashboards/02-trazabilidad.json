@@ -1,0 +1,909 @@
+{
+  "title": "Trazabilidad & Durable Execution · AgencyHubara",
+  "description": "Traces de Temporal (workflows + activities) y dependencias externas del agente WhatsApp. Salud de la ejecución durable, errores y flujo de orquestación.",
+  "tags": [
+    "traces",
+    "temporal",
+    "trazabilidad",
+    "errores",
+    "hubara"
+  ],
+  "layout": [
+    {
+      "i": "v-spans-total",
+      "x": 0,
+      "y": 0,
+      "w": 4,
+      "h": 3,
+      "moved": false,
+      "static": false
+    },
+    {
+      "i": "v-errors",
+      "x": 4,
+      "y": 0,
+      "w": 4,
+      "h": 3,
+      "moved": false,
+      "static": false
+    },
+    {
+      "i": "v-llm-calls",
+      "x": 8,
+      "y": 0,
+      "w": 4,
+      "h": 3,
+      "moved": false,
+      "static": false
+    },
+    {
+      "i": "g-throughput",
+      "x": 0,
+      "y": 3,
+      "w": 12,
+      "h": 6,
+      "moved": false,
+      "static": false
+    },
+    {
+      "i": "t-by-service",
+      "x": 0,
+      "y": 9,
+      "w": 6,
+      "h": 6,
+      "moved": false,
+      "static": false
+    },
+    {
+      "i": "t-activities",
+      "x": 6,
+      "y": 9,
+      "w": 6,
+      "h": 6,
+      "moved": false,
+      "static": false
+    },
+    {
+      "i": "t-status",
+      "x": 0,
+      "y": 15,
+      "w": 6,
+      "h": 6,
+      "moved": false,
+      "static": false
+    },
+    {
+      "i": "t-errors-by-op",
+      "x": 6,
+      "y": 15,
+      "w": 6,
+      "h": 6,
+      "moved": false,
+      "static": false
+    },
+    {
+      "i": "t-workflows",
+      "x": 0,
+      "y": 21,
+      "w": 6,
+      "h": 6,
+      "moved": false,
+      "static": false
+    },
+    {
+      "i": "t-external",
+      "x": 6,
+      "y": 21,
+      "w": 6,
+      "h": 6,
+      "moved": false,
+      "static": false
+    }
+  ],
+  "widgets": [
+    {
+      "id": "v-spans-total",
+      "title": "Spans totales",
+      "description": "Volumen total de spans (traces) en el rango.",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "value",
+      "query": {
+        "queryType": "builder",
+        "builder": {
+          "queryData": [
+            {
+              "dataSource": "traces",
+              "queryName": "A",
+              "aggregateOperator": "count",
+              "aggregateAttribute": {},
+              "timeAggregation": "rate",
+              "spaceAggregation": "sum",
+              "functions": [],
+              "filters": {
+                "op": "AND",
+                "items": []
+              },
+              "expression": "A",
+              "disabled": false,
+              "stepInterval": 60,
+              "having": [],
+              "limit": null,
+              "orderBy": [],
+              "groupBy": [],
+              "legend": "",
+              "reduceTo": "sum"
+            }
+          ],
+          "queryFormulas": []
+        },
+        "promql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "clickhouse_sql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "id": "v-spans-total"
+      },
+      "timePreferance": "GLOBAL",
+      "softMin": null,
+      "softMax": null,
+      "selectedLogFields": [],
+      "selectedTracesFields": [],
+      "fillSpans": false
+    },
+    {
+      "id": "v-errors",
+      "title": "Spans con error",
+      "description": "Spans con status=Error (hasError=true). Vigilar.",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "value",
+      "query": {
+        "queryType": "builder",
+        "builder": {
+          "queryData": [
+            {
+              "dataSource": "traces",
+              "queryName": "A",
+              "aggregateOperator": "count",
+              "aggregateAttribute": {},
+              "timeAggregation": "rate",
+              "spaceAggregation": "sum",
+              "functions": [],
+              "filters": {
+                "op": "AND",
+                "items": [
+                  {
+                    "id": "f-hasError-=",
+                    "key": {
+                      "key": "hasError",
+                      "dataType": "bool",
+                      "type": "",
+                      "isColumn": true,
+                      "isJSON": false,
+                      "id": "hasError--bool----true"
+                    },
+                    "op": "=",
+                    "value": true
+                  }
+                ]
+              },
+              "expression": "A",
+              "disabled": false,
+              "stepInterval": 60,
+              "having": [],
+              "limit": null,
+              "orderBy": [],
+              "groupBy": [],
+              "legend": "",
+              "reduceTo": "sum"
+            }
+          ],
+          "queryFormulas": []
+        },
+        "promql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "clickhouse_sql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "id": "v-errors"
+      },
+      "timePreferance": "GLOBAL",
+      "softMin": null,
+      "softMax": null,
+      "selectedLogFields": [],
+      "selectedTracesFields": [],
+      "fillSpans": false
+    },
+    {
+      "id": "v-llm-calls",
+      "title": "Llamadas al modelo",
+      "description": "Spans gen_ai (1 por completion del LLM).",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "value",
+      "query": {
+        "queryType": "builder",
+        "builder": {
+          "queryData": [
+            {
+              "dataSource": "traces",
+              "queryName": "A",
+              "aggregateOperator": "count",
+              "aggregateAttribute": {},
+              "timeAggregation": "rate",
+              "spaceAggregation": "sum",
+              "functions": [],
+              "filters": {
+                "op": "AND",
+                "items": [
+                  {
+                    "id": "f-gen_ai.usage.cost-exists",
+                    "key": {
+                      "key": "gen_ai.usage.cost",
+                      "dataType": "float64",
+                      "type": "tag",
+                      "isColumn": false,
+                      "isJSON": false,
+                      "id": "gen_ai.usage.cost--float64--tag--false"
+                    },
+                    "op": "exists",
+                    "value": ""
+                  }
+                ]
+              },
+              "expression": "A",
+              "disabled": false,
+              "stepInterval": 60,
+              "having": [],
+              "limit": null,
+              "orderBy": [],
+              "groupBy": [],
+              "legend": "",
+              "reduceTo": "sum"
+            }
+          ],
+          "queryFormulas": []
+        },
+        "promql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "clickhouse_sql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "id": "v-llm-calls"
+      },
+      "timePreferance": "GLOBAL",
+      "softMin": null,
+      "softMax": null,
+      "selectedLogFields": [],
+      "selectedTracesFields": [],
+      "fillSpans": false
+    },
+    {
+      "id": "g-throughput",
+      "title": "Throughput de spans en el tiempo",
+      "description": "Spans/seg por servicio — actividad del sistema.",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "graph",
+      "query": {
+        "queryType": "builder",
+        "builder": {
+          "queryData": [
+            {
+              "dataSource": "traces",
+              "queryName": "A",
+              "aggregateOperator": "count",
+              "aggregateAttribute": {},
+              "timeAggregation": "rate",
+              "spaceAggregation": "sum",
+              "functions": [],
+              "filters": {
+                "op": "AND",
+                "items": []
+              },
+              "expression": "A",
+              "disabled": false,
+              "stepInterval": 60,
+              "having": [],
+              "limit": 50,
+              "orderBy": [
+                {
+                  "columnName": "#SIGNOZ_VALUE",
+                  "order": "desc"
+                }
+              ],
+              "groupBy": [
+                {
+                  "key": "serviceName",
+                  "dataType": "string",
+                  "type": "",
+                  "isColumn": true,
+                  "isJSON": false,
+                  "id": "serviceName--string----true"
+                }
+              ],
+              "legend": "{{serviceName}}",
+              "reduceTo": "sum"
+            }
+          ],
+          "queryFormulas": []
+        },
+        "promql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "clickhouse_sql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "id": "g-throughput"
+      },
+      "timePreferance": "GLOBAL",
+      "softMin": null,
+      "softMax": null,
+      "selectedLogFields": [],
+      "selectedTracesFields": [],
+      "fillSpans": false
+    },
+    {
+      "id": "t-by-service",
+      "title": "Volumen por servicio",
+      "description": "sales-agent vs remarketing-agent (+ ruido de probes).",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "table",
+      "query": {
+        "queryType": "builder",
+        "builder": {
+          "queryData": [
+            {
+              "dataSource": "traces",
+              "queryName": "A",
+              "aggregateOperator": "count",
+              "aggregateAttribute": {},
+              "timeAggregation": "rate",
+              "spaceAggregation": "sum",
+              "functions": [],
+              "filters": {
+                "op": "AND",
+                "items": []
+              },
+              "expression": "A",
+              "disabled": false,
+              "stepInterval": 60,
+              "having": [],
+              "limit": 50,
+              "orderBy": [
+                {
+                  "columnName": "#SIGNOZ_VALUE",
+                  "order": "desc"
+                }
+              ],
+              "groupBy": [
+                {
+                  "key": "serviceName",
+                  "dataType": "string",
+                  "type": "",
+                  "isColumn": true,
+                  "isJSON": false,
+                  "id": "serviceName--string----true"
+                }
+              ],
+              "legend": "",
+              "reduceTo": "sum"
+            }
+          ],
+          "queryFormulas": []
+        },
+        "promql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "clickhouse_sql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "id": "t-by-service"
+      },
+      "timePreferance": "GLOBAL",
+      "softMin": null,
+      "softMax": null,
+      "selectedLogFields": [],
+      "selectedTracesFields": [],
+      "fillSpans": false
+    },
+    {
+      "id": "t-activities",
+      "title": "Actividades Temporal por tipo",
+      "description": "Cada RunActivity = una activity durable ejecutada (build_prompt, llm_chat, …).",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "table",
+      "query": {
+        "queryType": "builder",
+        "builder": {
+          "queryData": [
+            {
+              "dataSource": "traces",
+              "queryName": "A",
+              "aggregateOperator": "count",
+              "aggregateAttribute": {},
+              "timeAggregation": "rate",
+              "spaceAggregation": "sum",
+              "functions": [],
+              "filters": {
+                "op": "AND",
+                "items": [
+                  {
+                    "id": "f-name-contains",
+                    "key": {
+                      "key": "name",
+                      "dataType": "string",
+                      "type": "",
+                      "isColumn": true,
+                      "isJSON": false,
+                      "id": "name--string----true"
+                    },
+                    "op": "contains",
+                    "value": "RunActivity"
+                  }
+                ]
+              },
+              "expression": "A",
+              "disabled": false,
+              "stepInterval": 60,
+              "having": [],
+              "limit": 50,
+              "orderBy": [
+                {
+                  "columnName": "#SIGNOZ_VALUE",
+                  "order": "desc"
+                }
+              ],
+              "groupBy": [
+                {
+                  "key": "name",
+                  "dataType": "string",
+                  "type": "",
+                  "isColumn": true,
+                  "isJSON": false,
+                  "id": "name--string----true"
+                }
+              ],
+              "legend": "",
+              "reduceTo": "sum"
+            }
+          ],
+          "queryFormulas": []
+        },
+        "promql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "clickhouse_sql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "id": "t-activities"
+      },
+      "timePreferance": "GLOBAL",
+      "softMin": null,
+      "softMax": null,
+      "selectedLogFields": [],
+      "selectedTracesFields": [],
+      "fillSpans": false
+    },
+    {
+      "id": "t-status",
+      "title": "Estado de spans",
+      "description": "Distribución Ok / Unset / Error (Temporal deja Unset en éxito).",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "table",
+      "query": {
+        "queryType": "builder",
+        "builder": {
+          "queryData": [
+            {
+              "dataSource": "traces",
+              "queryName": "A",
+              "aggregateOperator": "count",
+              "aggregateAttribute": {},
+              "timeAggregation": "rate",
+              "spaceAggregation": "sum",
+              "functions": [],
+              "filters": {
+                "op": "AND",
+                "items": []
+              },
+              "expression": "A",
+              "disabled": false,
+              "stepInterval": 60,
+              "having": [],
+              "limit": 50,
+              "orderBy": [
+                {
+                  "columnName": "#SIGNOZ_VALUE",
+                  "order": "desc"
+                }
+              ],
+              "groupBy": [
+                {
+                  "key": "statusCodeString",
+                  "dataType": "string",
+                  "type": "",
+                  "isColumn": true,
+                  "isJSON": false,
+                  "id": "statusCodeString--string----true"
+                }
+              ],
+              "legend": "",
+              "reduceTo": "sum"
+            }
+          ],
+          "queryFormulas": []
+        },
+        "promql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "clickhouse_sql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "id": "t-status"
+      },
+      "timePreferance": "GLOBAL",
+      "softMin": null,
+      "softMax": null,
+      "selectedLogFields": [],
+      "selectedTracesFields": [],
+      "fillSpans": false
+    },
+    {
+      "id": "t-errors-by-op",
+      "title": "Errores por operación",
+      "description": "Qué operación falló (hasError=true GROUP BY name).",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "table",
+      "query": {
+        "queryType": "builder",
+        "builder": {
+          "queryData": [
+            {
+              "dataSource": "traces",
+              "queryName": "A",
+              "aggregateOperator": "count",
+              "aggregateAttribute": {},
+              "timeAggregation": "rate",
+              "spaceAggregation": "sum",
+              "functions": [],
+              "filters": {
+                "op": "AND",
+                "items": [
+                  {
+                    "id": "f-hasError-=",
+                    "key": {
+                      "key": "hasError",
+                      "dataType": "bool",
+                      "type": "",
+                      "isColumn": true,
+                      "isJSON": false,
+                      "id": "hasError--bool----true"
+                    },
+                    "op": "=",
+                    "value": true
+                  }
+                ]
+              },
+              "expression": "A",
+              "disabled": false,
+              "stepInterval": 60,
+              "having": [],
+              "limit": 50,
+              "orderBy": [
+                {
+                  "columnName": "#SIGNOZ_VALUE",
+                  "order": "desc"
+                }
+              ],
+              "groupBy": [
+                {
+                  "key": "name",
+                  "dataType": "string",
+                  "type": "",
+                  "isColumn": true,
+                  "isJSON": false,
+                  "id": "name--string----true"
+                }
+              ],
+              "legend": "",
+              "reduceTo": "sum"
+            }
+          ],
+          "queryFormulas": []
+        },
+        "promql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "clickhouse_sql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "id": "t-errors-by-op"
+      },
+      "timePreferance": "GLOBAL",
+      "softMin": null,
+      "softMax": null,
+      "selectedLogFields": [],
+      "selectedTracesFields": [],
+      "fillSpans": false
+    },
+    {
+      "id": "t-workflows",
+      "title": "Workflows & señales",
+      "description": "Lifecycle del workflow durable: Complete/Signal/Start (HubaraSalesSessionWorkflow…).",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "table",
+      "query": {
+        "queryType": "builder",
+        "builder": {
+          "queryData": [
+            {
+              "dataSource": "traces",
+              "queryName": "A",
+              "aggregateOperator": "count",
+              "aggregateAttribute": {},
+              "timeAggregation": "rate",
+              "spaceAggregation": "sum",
+              "functions": [],
+              "filters": {
+                "op": "AND",
+                "items": [
+                  {
+                    "id": "f-name-contains",
+                    "key": {
+                      "key": "name",
+                      "dataType": "string",
+                      "type": "",
+                      "isColumn": true,
+                      "isJSON": false,
+                      "id": "name--string----true"
+                    },
+                    "op": "contains",
+                    "value": "Workflow"
+                  }
+                ]
+              },
+              "expression": "A",
+              "disabled": false,
+              "stepInterval": 60,
+              "having": [],
+              "limit": 50,
+              "orderBy": [
+                {
+                  "columnName": "#SIGNOZ_VALUE",
+                  "order": "desc"
+                }
+              ],
+              "groupBy": [
+                {
+                  "key": "name",
+                  "dataType": "string",
+                  "type": "",
+                  "isColumn": true,
+                  "isJSON": false,
+                  "id": "name--string----true"
+                }
+              ],
+              "legend": "",
+              "reduceTo": "sum"
+            }
+          ],
+          "queryFormulas": []
+        },
+        "promql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "clickhouse_sql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "id": "t-workflows"
+      },
+      "timePreferance": "GLOBAL",
+      "softMin": null,
+      "softMax": null,
+      "selectedLogFields": [],
+      "selectedTracesFields": [],
+      "fillSpans": false
+    },
+    {
+      "id": "t-external",
+      "title": "Dependencias externas (HTTP)",
+      "description": "Llamadas salientes: WhatsApp (graph.facebook), LLM (litellm), Medusa backend.",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "table",
+      "query": {
+        "queryType": "builder",
+        "builder": {
+          "queryData": [
+            {
+              "dataSource": "traces",
+              "queryName": "A",
+              "aggregateOperator": "count",
+              "aggregateAttribute": {},
+              "timeAggregation": "rate",
+              "spaceAggregation": "sum",
+              "functions": [],
+              "filters": {
+                "op": "AND",
+                "items": [
+                  {
+                    "id": "f-http.url-exists",
+                    "key": {
+                      "key": "http.url",
+                      "dataType": "string",
+                      "type": "tag",
+                      "isColumn": false,
+                      "isJSON": false,
+                      "id": "http.url--string--tag--false"
+                    },
+                    "op": "exists",
+                    "value": ""
+                  }
+                ]
+              },
+              "expression": "A",
+              "disabled": false,
+              "stepInterval": 60,
+              "having": [],
+              "limit": 50,
+              "orderBy": [
+                {
+                  "columnName": "#SIGNOZ_VALUE",
+                  "order": "desc"
+                }
+              ],
+              "groupBy": [
+                {
+                  "key": "http.url",
+                  "dataType": "string",
+                  "type": "tag",
+                  "isColumn": false,
+                  "isJSON": false,
+                  "id": "http.url--string--tag--false"
+                }
+              ],
+              "legend": "",
+              "reduceTo": "sum"
+            }
+          ],
+          "queryFormulas": []
+        },
+        "promql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "clickhouse_sql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "id": "t-external"
+      },
+      "timePreferance": "GLOBAL",
+      "softMin": null,
+      "softMax": null,
+      "selectedLogFields": [],
+      "selectedTracesFields": [],
+      "fillSpans": false
+    }
+  ],
+  "variables": {},
+  "version": "v4"
+}

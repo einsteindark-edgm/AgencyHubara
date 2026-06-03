@@ -15,6 +15,7 @@ import structlog
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from src.platform.config import WHATSAPP_APP_SECRET, WHATSAPP_VERIFY_TOKEN
+from src.platform.observability.tracing import add_traced_background_task
 from src.platform.whatsapp.webhook_security import verify_meta_signature
 from src.plugins.chats.agent.sales.composition import (
     build_ingest_delivery_status_use_case,
@@ -97,7 +98,8 @@ async def handle_whatsapp_webhook(request: Request, background_tasks: Background
     # messages (Meta podría enviarlos juntos).
     for status_update in parse_whatsapp_statuses(body):
         delivery_use_case = build_ingest_delivery_status_use_case()
-        background_tasks.add_task(
+        add_traced_background_task(
+            background_tasks,
             delivery_use_case.execute,
             status_update.wa_message_id,
             status_update.status,
@@ -115,5 +117,5 @@ async def handle_whatsapp_webhook(request: Request, background_tasks: Background
         return {"status": "ok"}
 
     use_case = build_ingest_use_case()
-    background_tasks.add_task(use_case.execute, parsed)
+    add_traced_background_task(background_tasks, use_case.execute, parsed)
     return {"status": "ok"}

@@ -1,0 +1,909 @@
+{
+  "title": "Operación del Agente · AgencyHubara",
+  "description": "Comportamiento y calidad del agente: tools, finish reasons (truncados), fallback de modelo, tokens, cache, y actividad por cliente y por venta.",
+  "tags": [
+    "agente",
+    "comportamiento",
+    "calidad",
+    "tools",
+    "hubara"
+  ],
+  "layout": [
+    {
+      "i": "v-trunc",
+      "x": 0,
+      "y": 0,
+      "w": 4,
+      "h": 3,
+      "moved": false,
+      "static": false
+    },
+    {
+      "i": "v-cache",
+      "x": 4,
+      "y": 0,
+      "w": 4,
+      "h": 3,
+      "moved": false,
+      "static": false
+    },
+    {
+      "i": "v-tool-calls",
+      "x": 8,
+      "y": 0,
+      "w": 4,
+      "h": 3,
+      "moved": false,
+      "static": false
+    },
+    {
+      "i": "t-tools",
+      "x": 0,
+      "y": 3,
+      "w": 6,
+      "h": 6,
+      "moved": false,
+      "static": false
+    },
+    {
+      "i": "t-finish",
+      "x": 6,
+      "y": 3,
+      "w": 6,
+      "h": 6,
+      "moved": false,
+      "static": false
+    },
+    {
+      "i": "t-models",
+      "x": 0,
+      "y": 9,
+      "w": 6,
+      "h": 6,
+      "moved": false,
+      "static": false
+    },
+    {
+      "i": "g-tokens-io",
+      "x": 6,
+      "y": 9,
+      "w": 6,
+      "h": 6,
+      "moved": false,
+      "static": false
+    },
+    {
+      "i": "t-by-number",
+      "x": 0,
+      "y": 15,
+      "w": 6,
+      "h": 6,
+      "moved": false,
+      "static": false
+    },
+    {
+      "i": "t-by-episode",
+      "x": 6,
+      "y": 15,
+      "w": 6,
+      "h": 6,
+      "moved": false,
+      "static": false
+    }
+  ],
+  "widgets": [
+    {
+      "id": "v-trunc",
+      "title": "Respuestas truncadas (length)",
+      "description": "Completions cortadas por max_tokens (finish_reason=length). Alto = subir el límite.",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "value",
+      "query": {
+        "queryType": "builder",
+        "builder": {
+          "queryData": [
+            {
+              "dataSource": "traces",
+              "queryName": "A",
+              "aggregateOperator": "count",
+              "aggregateAttribute": {},
+              "timeAggregation": "rate",
+              "spaceAggregation": "sum",
+              "functions": [],
+              "filters": {
+                "op": "AND",
+                "items": [
+                  {
+                    "id": "f-gen_ai.response.finish_reasons-contains",
+                    "key": {
+                      "key": "gen_ai.response.finish_reasons",
+                      "dataType": "string",
+                      "type": "tag",
+                      "isColumn": false,
+                      "isJSON": false,
+                      "id": "gen_ai.response.finish_reasons--string--tag--false"
+                    },
+                    "op": "contains",
+                    "value": "length"
+                  }
+                ]
+              },
+              "expression": "A",
+              "disabled": false,
+              "stepInterval": 60,
+              "having": [],
+              "limit": null,
+              "orderBy": [],
+              "groupBy": [],
+              "legend": "",
+              "reduceTo": "sum"
+            }
+          ],
+          "queryFormulas": []
+        },
+        "promql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "clickhouse_sql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "id": "v-trunc"
+      },
+      "timePreferance": "GLOBAL",
+      "softMin": null,
+      "softMax": null,
+      "selectedLogFields": [],
+      "selectedTracesFields": [],
+      "fillSpans": false
+    },
+    {
+      "id": "v-cache",
+      "title": "Tokens leídos de cache",
+      "description": "sum gen_ai.usage.cache_read.input_tokens — ahorro por prompt caching.",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "value",
+      "query": {
+        "queryType": "builder",
+        "builder": {
+          "queryData": [
+            {
+              "dataSource": "traces",
+              "queryName": "A",
+              "aggregateOperator": "sum",
+              "aggregateAttribute": {
+                "key": "gen_ai.usage.cache_read.input_tokens",
+                "dataType": "float64",
+                "type": "tag",
+                "isColumn": false,
+                "isJSON": false,
+                "id": "gen_ai.usage.cache_read.input_tokens--float64--tag--false"
+              },
+              "timeAggregation": "sum",
+              "spaceAggregation": "sum",
+              "functions": [],
+              "filters": {
+                "op": "AND",
+                "items": [
+                  {
+                    "id": "f-gen_ai.usage.cache_read.input_tokens-exists",
+                    "key": {
+                      "key": "gen_ai.usage.cache_read.input_tokens",
+                      "dataType": "float64",
+                      "type": "tag",
+                      "isColumn": false,
+                      "isJSON": false,
+                      "id": "gen_ai.usage.cache_read.input_tokens--float64--tag--false"
+                    },
+                    "op": "exists",
+                    "value": ""
+                  }
+                ]
+              },
+              "expression": "A",
+              "disabled": false,
+              "stepInterval": 60,
+              "having": [],
+              "limit": null,
+              "orderBy": [],
+              "groupBy": [],
+              "legend": "",
+              "reduceTo": "sum"
+            }
+          ],
+          "queryFormulas": []
+        },
+        "promql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "clickhouse_sql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "id": "v-cache"
+      },
+      "timePreferance": "GLOBAL",
+      "softMin": null,
+      "softMax": null,
+      "selectedLogFields": [],
+      "selectedTracesFields": [],
+      "fillSpans": false
+    },
+    {
+      "id": "v-tool-calls",
+      "title": "Tool calls totales",
+      "description": "Veces que el LLM invocó una herramienta.",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "value",
+      "query": {
+        "queryType": "builder",
+        "builder": {
+          "queryData": [
+            {
+              "dataSource": "traces",
+              "queryName": "A",
+              "aggregateOperator": "count",
+              "aggregateAttribute": {},
+              "timeAggregation": "rate",
+              "spaceAggregation": "sum",
+              "functions": [],
+              "filters": {
+                "op": "AND",
+                "items": [
+                  {
+                    "id": "f-gen_ai.tool.name-exists",
+                    "key": {
+                      "key": "gen_ai.tool.name",
+                      "dataType": "string",
+                      "type": "tag",
+                      "isColumn": false,
+                      "isJSON": false,
+                      "id": "gen_ai.tool.name--string--tag--false"
+                    },
+                    "op": "exists",
+                    "value": ""
+                  }
+                ]
+              },
+              "expression": "A",
+              "disabled": false,
+              "stepInterval": 60,
+              "having": [],
+              "limit": null,
+              "orderBy": [],
+              "groupBy": [],
+              "legend": "",
+              "reduceTo": "sum"
+            }
+          ],
+          "queryFormulas": []
+        },
+        "promql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "clickhouse_sql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "id": "v-tool-calls"
+      },
+      "timePreferance": "GLOBAL",
+      "softMin": null,
+      "softMax": null,
+      "selectedLogFields": [],
+      "selectedTracesFields": [],
+      "fillSpans": false
+    },
+    {
+      "id": "t-tools",
+      "title": "Tools usadas por el agente",
+      "description": "Frecuencia de cada herramienta (GROUP BY gen_ai.tool.name).",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "table",
+      "query": {
+        "queryType": "builder",
+        "builder": {
+          "queryData": [
+            {
+              "dataSource": "traces",
+              "queryName": "A",
+              "aggregateOperator": "count",
+              "aggregateAttribute": {},
+              "timeAggregation": "rate",
+              "spaceAggregation": "sum",
+              "functions": [],
+              "filters": {
+                "op": "AND",
+                "items": [
+                  {
+                    "id": "f-gen_ai.tool.name-exists",
+                    "key": {
+                      "key": "gen_ai.tool.name",
+                      "dataType": "string",
+                      "type": "tag",
+                      "isColumn": false,
+                      "isJSON": false,
+                      "id": "gen_ai.tool.name--string--tag--false"
+                    },
+                    "op": "exists",
+                    "value": ""
+                  }
+                ]
+              },
+              "expression": "A",
+              "disabled": false,
+              "stepInterval": 60,
+              "having": [],
+              "limit": 50,
+              "orderBy": [
+                {
+                  "columnName": "#SIGNOZ_VALUE",
+                  "order": "desc"
+                }
+              ],
+              "groupBy": [
+                {
+                  "key": "gen_ai.tool.name",
+                  "dataType": "string",
+                  "type": "tag",
+                  "isColumn": false,
+                  "isJSON": false,
+                  "id": "gen_ai.tool.name--string--tag--false"
+                }
+              ],
+              "legend": "",
+              "reduceTo": "sum"
+            }
+          ],
+          "queryFormulas": []
+        },
+        "promql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "clickhouse_sql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "id": "t-tools"
+      },
+      "timePreferance": "GLOBAL",
+      "softMin": null,
+      "softMax": null,
+      "selectedLogFields": [],
+      "selectedTracesFields": [],
+      "fillSpans": false
+    },
+    {
+      "id": "t-finish",
+      "title": "Finish reasons",
+      "description": "Cómo terminan las respuestas: stop (normal) / tool_calls / length (truncado).",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "table",
+      "query": {
+        "queryType": "builder",
+        "builder": {
+          "queryData": [
+            {
+              "dataSource": "traces",
+              "queryName": "A",
+              "aggregateOperator": "count",
+              "aggregateAttribute": {},
+              "timeAggregation": "rate",
+              "spaceAggregation": "sum",
+              "functions": [],
+              "filters": {
+                "op": "AND",
+                "items": [
+                  {
+                    "id": "f-gen_ai.response.finish_reasons-exists",
+                    "key": {
+                      "key": "gen_ai.response.finish_reasons",
+                      "dataType": "string",
+                      "type": "tag",
+                      "isColumn": false,
+                      "isJSON": false,
+                      "id": "gen_ai.response.finish_reasons--string--tag--false"
+                    },
+                    "op": "exists",
+                    "value": ""
+                  }
+                ]
+              },
+              "expression": "A",
+              "disabled": false,
+              "stepInterval": 60,
+              "having": [],
+              "limit": 50,
+              "orderBy": [
+                {
+                  "columnName": "#SIGNOZ_VALUE",
+                  "order": "desc"
+                }
+              ],
+              "groupBy": [
+                {
+                  "key": "gen_ai.response.finish_reasons",
+                  "dataType": "string",
+                  "type": "tag",
+                  "isColumn": false,
+                  "isJSON": false,
+                  "id": "gen_ai.response.finish_reasons--string--tag--false"
+                }
+              ],
+              "legend": "",
+              "reduceTo": "sum"
+            }
+          ],
+          "queryFormulas": []
+        },
+        "promql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "clickhouse_sql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "id": "t-finish"
+      },
+      "timePreferance": "GLOBAL",
+      "softMin": null,
+      "softMax": null,
+      "selectedLogFields": [],
+      "selectedTracesFields": [],
+      "fillSpans": false
+    },
+    {
+      "id": "t-models",
+      "title": "Uso por modelo (fallback)",
+      "description": "deepseek-v4-flash (primario) vs gemini-backup. Fallback frecuente = revisar.",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "table",
+      "query": {
+        "queryType": "builder",
+        "builder": {
+          "queryData": [
+            {
+              "dataSource": "traces",
+              "queryName": "A",
+              "aggregateOperator": "count",
+              "aggregateAttribute": {},
+              "timeAggregation": "rate",
+              "spaceAggregation": "sum",
+              "functions": [],
+              "filters": {
+                "op": "AND",
+                "items": [
+                  {
+                    "id": "f-gen_ai.request.model-exists",
+                    "key": {
+                      "key": "gen_ai.request.model",
+                      "dataType": "string",
+                      "type": "tag",
+                      "isColumn": false,
+                      "isJSON": false,
+                      "id": "gen_ai.request.model--string--tag--false"
+                    },
+                    "op": "exists",
+                    "value": ""
+                  }
+                ]
+              },
+              "expression": "A",
+              "disabled": false,
+              "stepInterval": 60,
+              "having": [],
+              "limit": 50,
+              "orderBy": [
+                {
+                  "columnName": "#SIGNOZ_VALUE",
+                  "order": "desc"
+                }
+              ],
+              "groupBy": [
+                {
+                  "key": "gen_ai.request.model",
+                  "dataType": "string",
+                  "type": "tag",
+                  "isColumn": false,
+                  "isJSON": false,
+                  "id": "gen_ai.request.model--string--tag--false"
+                }
+              ],
+              "legend": "",
+              "reduceTo": "sum"
+            }
+          ],
+          "queryFormulas": []
+        },
+        "promql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "clickhouse_sql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "id": "t-models"
+      },
+      "timePreferance": "GLOBAL",
+      "softMin": null,
+      "softMax": null,
+      "selectedLogFields": [],
+      "selectedTracesFields": [],
+      "fillSpans": false
+    },
+    {
+      "id": "g-tokens-io",
+      "title": "Tokens input vs output en el tiempo",
+      "description": "Volumen de contexto (input) vs generación (output). El input domina el costo.",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "graph",
+      "query": {
+        "queryType": "builder",
+        "builder": {
+          "queryData": [
+            {
+              "dataSource": "traces",
+              "queryName": "A",
+              "aggregateOperator": "sum",
+              "aggregateAttribute": {
+                "key": "gen_ai.usage.input_tokens",
+                "dataType": "float64",
+                "type": "tag",
+                "isColumn": false,
+                "isJSON": false,
+                "id": "gen_ai.usage.input_tokens--float64--tag--false"
+              },
+              "timeAggregation": "sum",
+              "spaceAggregation": "sum",
+              "functions": [],
+              "filters": {
+                "op": "AND",
+                "items": [
+                  {
+                    "id": "f-gen_ai.usage.cost-exists",
+                    "key": {
+                      "key": "gen_ai.usage.cost",
+                      "dataType": "float64",
+                      "type": "tag",
+                      "isColumn": false,
+                      "isJSON": false,
+                      "id": "gen_ai.usage.cost--float64--tag--false"
+                    },
+                    "op": "exists",
+                    "value": ""
+                  }
+                ]
+              },
+              "expression": "A",
+              "disabled": false,
+              "stepInterval": 60,
+              "having": [],
+              "limit": null,
+              "orderBy": [],
+              "groupBy": [],
+              "legend": "input",
+              "reduceTo": "sum"
+            },
+            {
+              "dataSource": "traces",
+              "queryName": "B",
+              "aggregateOperator": "sum",
+              "aggregateAttribute": {
+                "key": "gen_ai.usage.output_tokens",
+                "dataType": "float64",
+                "type": "tag",
+                "isColumn": false,
+                "isJSON": false,
+                "id": "gen_ai.usage.output_tokens--float64--tag--false"
+              },
+              "timeAggregation": "sum",
+              "spaceAggregation": "sum",
+              "functions": [],
+              "filters": {
+                "op": "AND",
+                "items": [
+                  {
+                    "id": "f-gen_ai.usage.cost-exists",
+                    "key": {
+                      "key": "gen_ai.usage.cost",
+                      "dataType": "float64",
+                      "type": "tag",
+                      "isColumn": false,
+                      "isJSON": false,
+                      "id": "gen_ai.usage.cost--float64--tag--false"
+                    },
+                    "op": "exists",
+                    "value": ""
+                  }
+                ]
+              },
+              "expression": "B",
+              "disabled": false,
+              "stepInterval": 60,
+              "having": [],
+              "limit": null,
+              "orderBy": [],
+              "groupBy": [],
+              "legend": "output",
+              "reduceTo": "sum"
+            }
+          ],
+          "queryFormulas": []
+        },
+        "promql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "clickhouse_sql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "id": "g-tokens-io"
+      },
+      "timePreferance": "GLOBAL",
+      "softMin": null,
+      "softMax": null,
+      "selectedLogFields": [],
+      "selectedTracesFields": [],
+      "fillSpans": false
+    },
+    {
+      "id": "t-by-number",
+      "title": "Actividad por número de WhatsApp",
+      "description": "Llamadas LLM por cliente — engagement / clientes más intensivos.",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "table",
+      "query": {
+        "queryType": "builder",
+        "builder": {
+          "queryData": [
+            {
+              "dataSource": "traces",
+              "queryName": "A",
+              "aggregateOperator": "count",
+              "aggregateAttribute": {},
+              "timeAggregation": "rate",
+              "spaceAggregation": "sum",
+              "functions": [],
+              "filters": {
+                "op": "AND",
+                "items": [
+                  {
+                    "id": "f-whatsapp.number-exists",
+                    "key": {
+                      "key": "whatsapp.number",
+                      "dataType": "string",
+                      "type": "tag",
+                      "isColumn": false,
+                      "isJSON": false,
+                      "id": "whatsapp.number--string--tag--false"
+                    },
+                    "op": "exists",
+                    "value": ""
+                  }
+                ]
+              },
+              "expression": "A",
+              "disabled": false,
+              "stepInterval": 60,
+              "having": [],
+              "limit": 50,
+              "orderBy": [
+                {
+                  "columnName": "#SIGNOZ_VALUE",
+                  "order": "desc"
+                }
+              ],
+              "groupBy": [
+                {
+                  "key": "whatsapp.number",
+                  "dataType": "string",
+                  "type": "tag",
+                  "isColumn": false,
+                  "isJSON": false,
+                  "id": "whatsapp.number--string--tag--false"
+                }
+              ],
+              "legend": "",
+              "reduceTo": "sum"
+            }
+          ],
+          "queryFormulas": []
+        },
+        "promql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "clickhouse_sql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "id": "t-by-number"
+      },
+      "timePreferance": "GLOBAL",
+      "softMin": null,
+      "softMax": null,
+      "selectedLogFields": [],
+      "selectedTracesFields": [],
+      "fillSpans": false
+    },
+    {
+      "id": "t-by-episode",
+      "title": "Llamadas LLM por episodio (venta)",
+      "description": "Cuántas interacciones del modelo tomó cada venta (GROUP BY episode.id).",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "table",
+      "query": {
+        "queryType": "builder",
+        "builder": {
+          "queryData": [
+            {
+              "dataSource": "traces",
+              "queryName": "A",
+              "aggregateOperator": "count",
+              "aggregateAttribute": {},
+              "timeAggregation": "rate",
+              "spaceAggregation": "sum",
+              "functions": [],
+              "filters": {
+                "op": "AND",
+                "items": [
+                  {
+                    "id": "f-episode.id-exists",
+                    "key": {
+                      "key": "episode.id",
+                      "dataType": "string",
+                      "type": "tag",
+                      "isColumn": false,
+                      "isJSON": false,
+                      "id": "episode.id--string--tag--false"
+                    },
+                    "op": "exists",
+                    "value": ""
+                  }
+                ]
+              },
+              "expression": "A",
+              "disabled": false,
+              "stepInterval": 60,
+              "having": [],
+              "limit": 50,
+              "orderBy": [
+                {
+                  "columnName": "#SIGNOZ_VALUE",
+                  "order": "desc"
+                }
+              ],
+              "groupBy": [
+                {
+                  "key": "episode.id",
+                  "dataType": "string",
+                  "type": "tag",
+                  "isColumn": false,
+                  "isJSON": false,
+                  "id": "episode.id--string--tag--false"
+                }
+              ],
+              "legend": "",
+              "reduceTo": "sum"
+            }
+          ],
+          "queryFormulas": []
+        },
+        "promql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "clickhouse_sql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "id": "t-by-episode"
+      },
+      "timePreferance": "GLOBAL",
+      "softMin": null,
+      "softMax": null,
+      "selectedLogFields": [],
+      "selectedTracesFields": [],
+      "fillSpans": false
+    }
+  ],
+  "variables": {},
+  "version": "v4"
+}
