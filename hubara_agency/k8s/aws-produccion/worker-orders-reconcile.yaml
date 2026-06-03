@@ -1,0 +1,86 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hubara-worker-orders-reconcile
+  namespace: default
+spec:
+  # Single replica: el barrido es idempotente y no necesita paralelismo.
+  # Además mantiene un solo asegurador del Temporal Schedule (create_schedule
+  # es idempotente igual, via ScheduleAlreadyRunningError, pero 1 réplica
+  # evita ruido de N pods intentando crearlo al mismo tiempo).
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: hubara-worker-orders-reconcile
+  template:
+    metadata:
+      labels:
+        app: hubara-worker-orders-reconcile
+    spec:
+      containers:
+        - name: worker
+          image: hubara-agency-prod:latest
+          imagePullPolicy: Always
+          # Worker de reconciliación del plugin orders (premortem F2+K1). Al
+          # boot asegura el Temporal Schedule que dispara
+          # OrderReconciliationWorkflow cada ORDER_RECONCILE_INTERVAL_MINUTES.
+          command: ["python", "-m", "hubara_agency.src.plugins.orders.workers.reconcile"]
+          env:
+            - name: TEMPORAL_URL
+              value: "temporal-frontend.temporal.svc.cluster.local:7233"
+            - name: TEMPORAL_NAMESPACE
+              value: "default"
+            - name: TEMPORAL_TLS_CERT_PATH
+              value: "/etc/temporal-certs/temporal.pem"
+            - name: TEMPORAL_TLS_KEY_PATH
+              value: "/etc/temporal-certs/temporal.key"
+            - name: WORKSPACE_VAULT_DIR
+              value: "/app/hubara_vault" # mismo PVC anclado que el sales worker
+            # Intervalo del Schedule de reconciliación (default 5 min).
+            - name: ORDER_RECONCILE_INTERVAL_MINUTES
+              value: "5"
+            # WRITE port (MedusaOrderRegistration): los 4 son necesarios para
+            # registrar en Medusa. Sin REGION_ID + SALES_CHANNEL_ID el adapter
+            # cae al stub y NO marca resuelto (ver platform/orders/reconciliation.py).
+            - name: MEDUSA_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: hubara-medusa-secret
+                  key: MEDUSA_BASE_URL
+            - name: MEDUSA_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hubara-medusa-secret
+                  key: MEDUSA_ADMIN_TOKEN
+            - name: MEDUSA_REGION_ID
+              valueFrom:
+                secretKeyRef:
+                  name: hubara-medusa-secret
+                  key: MEDUSA_REGION_ID
+            - name: MEDUSA_SALES_CHANNEL_ID
+              valueFrom:
+                secretKeyRef:
+                  name: hubara-medusa-secret
+                  key: MEDUSA_SALES_CHANNEL_ID
+          volumeMounts:
+            - name: hubara-vault
+              mountPath: /app/hubara_vault
+            - name: temporal-certs
+              mountPath: "/etc/temporal-certs"
+              readOnly: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+      volumes:
+        - name: hubara-vault
+          persistentVolumeClaim:
+            claimName: hubara-vault-efs
+        - name: temporal-certs
+          secret:
+            secretName: temporal-cloud-certs

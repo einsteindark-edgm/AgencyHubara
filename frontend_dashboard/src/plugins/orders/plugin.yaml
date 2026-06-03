@@ -20,10 +20,55 @@ api:
   prefix: /api/orders
   tags: [Orders]
 
+# ── Agente Temporal ────────────────────────────────────────────────────
+# Worker de reconciliación (premortem F2+K1): al boot asegura un Temporal
+# Schedule que dispara OrderReconciliationWorkflow cada N min para reintentar
+# los pedidos que NO llegaron a Medusa (Medusa caído durante el cierre). El
+# barrido es idempotente (reconcile_one no duplica drafts), así que single
+# replica + overlap=SKIP alcanza.
+agent:
+  python_module: src.plugins.orders.agent
+  workers:
+    - name: reconcile
+      module: src.plugins.orders.workers.reconcile
+      task_queue: queue-orders-reconcile
+      deployment:
+        replicas: 1                       # barrido idempotente — no hace falta paralelismo
+        strategy: Recreate
+        cpu_request: 50m
+        memory_request: 128Mi
+        env_secrets:
+          - { var: MEDUSA_BASE_URL,         secret: hubara-medusa-secret, key: MEDUSA_BASE_URL }
+          - { var: MEDUSA_ADMIN_TOKEN,      secret: hubara-medusa-secret, key: MEDUSA_ADMIN_TOKEN }
+          - { var: MEDUSA_REGION_ID,        secret: hubara-medusa-secret, key: MEDUSA_REGION_ID }
+          - { var: MEDUSA_SALES_CHANNEL_ID, secret: hubara-medusa-secret, key: MEDUSA_SALES_CHANNEL_ID }
+      compose:
+        env:
+          TEMPORAL_URL: temporal:7233
+          WORKSPACE_VAULT_DIR: /app/hubara_vault
+          ORDER_RECONCILE_INTERVAL_MINUTES: "5"
+          MEDUSA_BASE_URL: ${MEDUSA_BASE_URL}
+          MEDUSA_ADMIN_TOKEN: ${MEDUSA_ADMIN_TOKEN}
+          # WRITE port: sin REGION_ID + SALES_CHANNEL_ID el adapter cae al stub
+          # y NO marca resuelto (ver reconciliation.py) — necesarios para registrar.
+          MEDUSA_REGION_ID: ${MEDUSA_REGION_ID}
+          MEDUSA_SALES_CHANNEL_ID: ${MEDUSA_SALES_CHANNEL_ID}
+        volumes:
+          - hubara-vault-local:/app/hubara_vault
+        depends_on:
+          - temporal
+
 wiring_intents:
   env_vars_required:
-    # Lectura — basta con base_url + auth para que el dashboard liste
-    # órdenes. Si están vacíos, el endpoint devuelve `catalog_available:
-    # false` + lista vacía (no rompe el dashboard, pinta estado vacío).
+    # Lectura (API kanban) — basta con base_url + auth. Si están vacíos, el
+    # endpoint devuelve `catalog_available: false` + lista vacía (no rompe el
+    # dashboard, pinta estado vacío).
     - MEDUSA_BASE_URL
     - MEDUSA_ADMIN_TOKEN
+    # Escritura (worker reconcile) — el WRITE port exige estos para registrar
+    # en Medusa; sin ellos cae al stub y NO resuelve.
+    - MEDUSA_REGION_ID
+    - MEDUSA_SALES_CHANNEL_ID
+    - TEMPORAL_URL
+  env_vars_optional:
+    - ORDER_RECONCILE_INTERVAL_MINUTES   # default 5 min

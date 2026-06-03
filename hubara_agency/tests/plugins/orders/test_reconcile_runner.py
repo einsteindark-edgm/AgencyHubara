@@ -14,9 +14,7 @@ from pathlib import Path
 import pytest
 
 from src.platform.orders.port import (
-    OrderItem,
     OrderRegistrationResult,
-    OrderShipping,
 )
 from src.platform.orders.reconciliation import (
     STATUS_ABANDONED,
