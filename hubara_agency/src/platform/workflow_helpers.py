@@ -50,7 +50,9 @@ with workflow.unsafe.imports_passed_through():
     # Acá solo derivamos los IDs y resolvemos el episodio activo.
     from src.platform.constants import WHATSAPP_SESSION_PREFIX
     from src.platform.observability.cost_attribution import (
+        RecordEpisodeLLMUsageInput,
         get_active_episode_id_activity,
+        record_episode_llm_usage_activity,
     )
 
 
@@ -231,7 +233,11 @@ async def run_agent_turn(
     if episode_id:
         baggage["episode.id"] = episode_id
     return await _run_agent_turn_impl(
-        session, msg, fallback_plugin_context, baggage=baggage
+        session,
+        msg,
+        fallback_plugin_context,
+        baggage=baggage,
+        episode_id=episode_id,
     )
 
 
@@ -240,6 +246,7 @@ async def _run_agent_turn_impl(
     msg: PendingMessage,
     fallback_plugin_context: list[str] | None = None,
     baggage: dict[str, str] | None = None,
+    episode_id: str | None = None,
 ) -> TurnResult:
     """Ejecuta un turno completo de LLM con tool-loop. Es invocado desde `@workflow.run`.
 
@@ -282,6 +289,10 @@ async def _run_agent_turn_impl(
     escalation_decision: EscalationDecision | None = None
     episode_closed_decision: EpisodeClosedDecision | None = None
     order_registered_decision: OrderRegisteredDecision | None = None
+    # Costo por episodio: acumula los tokens del turno sobre las N iteraciones del
+    # tool-loop; se persiste al episodio tras el loop (record_episode_llm_usage).
+    turn_prompt_tokens = 0
+    turn_completion_tokens = 0
 
     while iteration < session.llm.max_iterations:
         iteration += 1
@@ -299,6 +310,11 @@ async def _run_agent_turn_impl(
             ),
             **_LLM_OPTIONS,  # type: ignore[arg-type]
         )
+        if response.usage:
+            turn_prompt_tokens += int(response.usage.get("prompt_tokens", 0) or 0)
+            turn_completion_tokens += int(
+                response.usage.get("completion_tokens", 0) or 0
+            )
 
         if response.has_tool_calls:
             messages = [*messages, response.to_assistant_message()]
@@ -486,6 +502,27 @@ async def _run_agent_turn_impl(
         ),
         **_CONV_OPTIONS,  # type: ignore[arg-type]
     )
+
+    # Persistir el costo LLM del turno al episodio (dato de negocio → frontend).
+    # Gated por replay-safety (session workflows long-lived; histories viejas
+    # toman el else → no se agrega el execute_activity nuevo). Solo si hay episodio
+    # resuelto y se consumieron tokens. La activity es idempotente (activity_id).
+    if (
+        episode_id
+        and (turn_prompt_tokens or turn_completion_tokens)
+        and workflow.patched("episode-llm-cost-v1")
+    ):
+        await workflow.execute_activity(
+            record_episode_llm_usage_activity,
+            RecordEpisodeLLMUsageInput(
+                session_id=session.session_id,
+                episode_id=episode_id,
+                prompt_tokens=turn_prompt_tokens,
+                completion_tokens=turn_completion_tokens,
+                model=session.llm.model,
+            ),
+            **_CONV_OPTIONS,  # type: ignore[arg-type]
+        )
 
     return TurnResult(
         final_content=final_content,

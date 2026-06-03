@@ -24,7 +24,10 @@ from src.platform.analytics.composition import setup_analytics
 from src.platform.catalog.composition import get_catalog_client
 from src.platform.catalog.medusa_checkout import MedusaCheckoutVerification
 from src.platform.medusa.composition import get_medusa_product_service
-from src.platform.observability.cost_attribution import get_active_episode_id_activity
+from src.platform.observability.cost_attribution import (
+    get_active_episode_id_activity,
+    record_episode_llm_usage_activity,
+)
 from src.platform.orchestration import dispatch_event_activity
 from src.platform.orders.composition import get_order_registration_port
 from src.platform.plugin_manifest import get_task_queue
@@ -262,6 +265,8 @@ async def main() -> None:
             # costos del LLM (session.id + episode.id en el span gen_ai). La
             # llama run_agent_turn detrás de un workflow.patched gate.
             get_active_episode_id_activity,
+            # HU costo-por-episodio: persiste tokens+costo del turno al episodio.
+            record_episode_llm_usage_activity,
             send_whatsapp_message_activity,
             send_typing_indicator_activity,
             persist_assistant_message_activity,

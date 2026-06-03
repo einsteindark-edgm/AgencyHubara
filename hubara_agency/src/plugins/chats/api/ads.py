@@ -85,7 +85,9 @@ def get_ads_campaign_conversations(
             "name": null,         # pendiente de integrar CRM
             "city": null,
             "state": null,        # pendiente de clasificador conversacional
-            "value": null         # pendiente de integrar orders
+            "value": null,        # pendiente de integrar orders
+            "llm_cost_usd": 0.00178,  # costo LLM del episodio (USD, congelado)
+            "llm_tokens": 1930        # tokens totales del episodio
           },
           ...
         ]

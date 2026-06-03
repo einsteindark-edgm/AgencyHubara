@@ -88,6 +88,12 @@ export const backendAttributedConversationSchema = z.object({
   name: z.string().nullable(),
   city: z.string().nullable(),
   value: z.number().nullable(),
+
+  // Costo LLM del episodio (USD, congelado a la tarifa del momento) + tokens
+  // totales — de `episode.llm_usage` en metadata.json. null si el episodio aún
+  // no acumuló uso (sesión legacy / episodio sin turnos LLM).
+  llm_cost_usd: z.number().nullable(),
+  llm_tokens: z.number().int().nullable(),
 });
 
 export type BackendAttributedConversation = z.infer<

@@ -25,11 +25,16 @@ DEHA:
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from temporalio import activity
 
 from src.platform.config import WORKSPACE_VAULT_DIR
+from src.platform.observability.pricing import (
+    compute_llm_cost_usd,
+    load_pricing_table,
+)
 from src.platform.state import FilesystemMetadataStore
 
 
@@ -60,3 +65,108 @@ async def get_active_episode_id_activity(session_id: str) -> str:
     """
     metadata = FilesystemMetadataStore(WORKSPACE_VAULT_DIR).read(session_id)
     return _active_episode_id(metadata)
+
+
+@dataclass(frozen=True)
+class RecordEpisodeLLMUsageInput:
+    """Input de ``record_episode_llm_usage_activity`` (R-JSON, frozen)."""
+
+    session_id: str
+    episode_id: str
+    prompt_tokens: int
+    completion_tokens: int
+    model: str
+
+
+def _apply_episode_llm_usage(
+    metadata: dict[str, Any],
+    *,
+    episode_id: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    model: str,
+    dedup_key: str,
+    pricing_table: dict[str, dict[str, Any]],
+) -> bool:
+    """Suma tokens+costo al episodio ``episode_id`` dentro de ``metadata`` (mutates).
+
+    Idempotente por ``dedup_key``: si ya se registró, no-op. Devuelve ``True`` si
+    aplicó (el caller debe persistir), ``False`` si fue no-op (episodio inexistente /
+    ya contado / sin tokens). **Pura** (sin I/O) → unit-testable sin contexto Temporal.
+    """
+    if prompt_tokens <= 0 and completion_tokens <= 0:
+        return False
+    episodes = metadata.get("episodes")
+    if not isinstance(episodes, list):
+        return False
+    ep = next(
+        (
+            e
+            for e in episodes
+            if isinstance(e, dict) and e.get("episode_id") == episode_id
+        ),
+        None,
+    )
+    if ep is None:
+        return False  # episodio no encontrado (cerrado/borrado)
+
+    # Dedup (sibling interno; el API lee `llm_usage`, ignora esto).
+    counted = ep.setdefault("_llm_counted", [])
+    if dedup_key and dedup_key in counted:
+        return False  # retry → ya contado
+    if dedup_key:
+        counted.append(dedup_key)
+
+    cost = compute_llm_cost_usd(model, prompt_tokens, completion_tokens, pricing_table)
+    usage = ep.setdefault(
+        "llm_usage",
+        {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "cost_usd": 0.0,
+        },
+    )
+    usage["prompt_tokens"] += prompt_tokens
+    usage["completion_tokens"] += completion_tokens
+    usage["total_tokens"] += prompt_tokens + completion_tokens
+    usage["cost_usd"] = round(usage["cost_usd"] + cost, 8)
+    return True
+
+
+@activity.defn(name="record_episode_llm_usage")
+async def record_episode_llm_usage_activity(
+    input: RecordEpisodeLLMUsageInput,
+) -> None:
+    """Acumula tokens + costo USD del turno en ``episode.llm_usage`` (metadata.json).
+
+    Persiste el costo LLM por episodio (= por venta) como **dato de negocio** para el
+    frontend — independiente del path de observabilidad (SigNoz). El costo queda
+    **congelado** a la tarifa del momento (lo que realmente costó esa conversación).
+
+    **Idempotente** vía ``activity.info().activity_id`` (estable entre reintentos de
+    Temporal) → un retry NO vuelve a sumar. Busca el episodio por id (genérico, no
+    necesariamente el activo — el turno puede haberlo cerrado).
+
+    DEHA: R-STATELESS (sin cache; lee pricing + metadata por llamada), R-JSON (in
+    frozen / out None), R-DIP (NO importa ``src.plugins`` — busca el episodio por id
+    sin la lógica de chats). Sin heartbeat (read+write de un JSON chico).
+    """
+    try:
+        dedup_key = activity.info().activity_id  # estable entre reintentos
+    except RuntimeError:
+        dedup_key = ""  # fuera de contexto activity (tests directos)
+
+    store = FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
+    metadata = store.read(input.session_id)
+    applied = _apply_episode_llm_usage(
+        metadata,
+        episode_id=input.episode_id,
+        prompt_tokens=input.prompt_tokens,
+        completion_tokens=input.completion_tokens,
+        model=input.model,
+        dedup_key=dedup_key,
+        pricing_table=load_pricing_table(),
+    )
+    if applied:
+        store.write(input.session_id, metadata)

@@ -121,6 +121,12 @@ class AdsAttributedConversation:
     city: str | None = None
     value: float | None = None
 
+    # Costo LLM del episodio (USD, congelado a la tarifa del momento) + tokens
+    # totales — de `episode.llm_usage` en metadata.json. None si el episodio aún
+    # no acumuló uso (sesión legacy / episodio sin turnos LLM).
+    llm_cost_usd: float | None = None
+    llm_tokens: int | None = None
+
 
 # =============================================================================
 # Lectura de vault
@@ -539,6 +545,7 @@ def list_attributed_conversations(
                 ep_last_msg = last_msg_ms
                 ad_headline = origin.get("headline")
 
+            _usage = ep.get("llm_usage") if isinstance(ep, dict) else None
             convs.append(
                 AdsAttributedConversation(
                     id=conv_id,
@@ -550,6 +557,14 @@ def list_attributed_conversations(
                     ad_headline=ad_headline,
                     agent=metadata.get("active_route"),
                     state=state,
+                    llm_cost_usd=(
+                        _usage.get("cost_usd") if isinstance(_usage, dict) else None
+                    ),
+                    llm_tokens=(
+                        _usage.get("total_tokens")
+                        if isinstance(_usage, dict)
+                        else None
+                    ),
                 )
             )
 

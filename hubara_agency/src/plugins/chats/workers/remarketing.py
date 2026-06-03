@@ -33,7 +33,10 @@ from src.platform.whatsapp.activities import (
     send_typing_indicator_activity,
     send_whatsapp_message_activity,
 )
-from src.platform.observability.cost_attribution import get_active_episode_id_activity
+from src.platform.observability.cost_attribution import (
+    get_active_episode_id_activity,
+    record_episode_llm_usage_activity,
+)
 from src.platform.temporal.client import get_temporal_client
 from src.platform.tool_extensions import register_tool_extension
 from src.plugins.chats.agent.remarketing.activities import (
@@ -85,6 +88,8 @@ async def main() -> None:
             # costos del LLM (session.id + episode.id en el span gen_ai). La
             # llama run_agent_turn detrás de un workflow.patched gate.
             get_active_episode_id_activity,
+            # HU costo-por-episodio: persiste tokens+costo del turno al episodio.
+            record_episode_llm_usage_activity,
             check_remarketing_eligibility,
             claim_conversation_routing,
             send_whatsapp_message_activity,

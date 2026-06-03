@@ -160,7 +160,7 @@ function mapBackendCampaign(b: BackendAdsCampaign): AdsCampaign {
   };
 }
 
-function mapBackendConversation(
+export function mapBackendConversation(
   b: BackendAttributedConversation,
 ): AttributedConversation {
   return {
@@ -177,6 +177,8 @@ function mapBackendConversation(
     value: b.value,
     lastMsg: formatRelativeMs(b.last_msg_at_ms),
     ad: b.ad_headline,
+    llmCostUsd: b.llm_cost_usd,
+    llmTokens: b.llm_tokens,
   };
 }
 

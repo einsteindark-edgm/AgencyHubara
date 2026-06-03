@@ -96,6 +96,9 @@ async def llm_chat(input: LLMChatInput) -> LLMResponseData:
             ],
             reasoning_content=response.reasoning_content,
             thinking_blocks=response.thinking_blocks,
+            # usage (prompt/completion/total tokens) para persistir el costo LLM
+            # por episodio. El provider lo expone en LLMResponse.usage (dict).
+            usage=dict(response.usage) if getattr(response, "usage", None) else None,
         )
     finally:
         _detach_baggage(_baggage_token)

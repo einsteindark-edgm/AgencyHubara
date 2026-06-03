@@ -142,6 +142,10 @@ class LLMResponseData:
     tool_calls: list[ToolCallData]
     reasoning_content: str | None = None
     thinking_blocks: list[dict[str, Any]] | None = None
+    # Tokens de ESTA llamada (prompt/completion/total). El provider los expone en
+    # LLMResponse.usage; el caller (workflow) los suma por turno y los persiste al
+    # episodio en metadata.json (costo LLM por venta). Optional → replay-safe.
+    usage: dict[str, int] | None = None
 
     def to_assistant_message(self) -> dict[str, Any]:
         msg: dict[str, Any] = {"role": "assistant", "content": self.content}
