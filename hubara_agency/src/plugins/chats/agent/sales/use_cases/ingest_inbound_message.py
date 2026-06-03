@@ -884,10 +884,12 @@ class IngestInboundMessage:
         # independiente de la visión: aunque Gemini falle, el humano igual debe
         # poder ver la foto (un comprobante de pago se verifica mirándolo, no
         # leyendo una descripción). `persisted_image_url` viaja después al
-        # evento del cliente en el JSONL via el reentry.
-        persisted_image_url = await self._persist_inbound_image(
+        # evento del cliente en el JSONL via el reentry; `persisted` retiene el
+        # filename para indexar la imagen (retención, Fase 0).
+        persisted = await self._persist_inbound_image(
             session_id, media_id, media.get("mime_type")
         )
+        persisted_image_url = persisted[0] if persisted else None
 
         port = get_image_vision_port()
         result = await port.describe(
@@ -925,6 +927,16 @@ class IngestInboundMessage:
                 }
             )
             metadata["vision_failures"] = errs[-20:]
+        # Retención (Fase 0): indexar la imagen persistida con su episodio,
+        # tipo, clase de retención y timestamp. NO borra nada — deja la traza
+        # lista para que un futuro job / S3 Lifecycle decida qué limpiar.
+        if persisted is not None:
+            self._index_persisted_media(
+                metadata,
+                media_id=media_id,
+                filename=persisted[1],
+                kind=result.kind if result.ok else "unknown",
+            )
         self._safe_write_metadata(session_id, metadata)
 
         # Analytics
@@ -1007,16 +1019,17 @@ class IngestInboundMessage:
 
     async def _persist_inbound_image(
         self, session_id: str, media_id: str, mime_type: str | None
-    ) -> str | None:
+    ) -> tuple[str, str] | None:
         """Descarga la imagen de Meta y la persiste en el media store.
 
-        Devuelve la URL relativa (para el JSONL + dashboard) o None si algo
-        falla. Best-effort: una falla acá NO rompe el pipeline de visión ni el
-        ruteo — solo significa que el dashboard mostrará la descripción de texto
-        sin la foto. Re-descarga del media_id (la URL temporal de Meta expira a
-        los 5 min, pero el media_id sigue resolviendo); el costo de un fetch
-        extra de una imagen chica en background es despreciable frente al call
-        de visión, y mantiene la persistencia desacoplada del adapter de visión.
+        Devuelve ``(url_relativa, filename)`` o None si algo falla — la URL va al
+        JSONL/dashboard y el filename se indexa para retención (Fase 0).
+        Best-effort: una falla acá NO rompe el pipeline de visión ni el ruteo —
+        solo significa que el dashboard mostrará la descripción de texto sin la
+        foto. Re-descarga del media_id (la URL temporal de Meta expira a los 5
+        min, pero el media_id sigue resolviendo); el costo de un fetch extra de
+        una imagen chica en background es despreciable frente al call de visión,
+        y mantiene la persistencia desacoplada del adapter de visión.
         """
         from src.platform.audio.meta_media_fetcher import fetch_media_bytes
         from src.platform.media import media_url_for, persist_inbound_image
@@ -1053,7 +1066,49 @@ class IngestInboundMessage:
             filename=filename,
             bytes=len(data),
         )
-        return media_url_for(session_id, filename)
+        return (media_url_for(session_id, filename), filename)
+
+    def _index_persisted_media(
+        self,
+        metadata: dict[str, Any],
+        *,
+        media_id: str,
+        filename: str,
+        kind: str,
+    ) -> None:
+        """Indexa una imagen persistida en ``metadata["media_index"]`` (Fase 0).
+
+        Cada entrada vincula el archivo con su episodio, tipo, clase de retención
+        y timestamp. Es la fuente de verdad para una limpieza futura: un job en
+        disco, o (preferido) el uploader a S3 que traduce ``retention_class`` a
+        un object tag y deja que **S3 Lifecycle** borre solo. NO borra ni mueve
+        nada; solo muta ``metadata`` in-place (el caller hace el write).
+
+        Idempotente: si el ``media_id`` ya está indexado (reentry doble), noopea.
+        El ``episode_id`` es el del episodio activo cuando llegó la imagen.
+        """
+        from src.platform.media import retention_class_for
+
+        index = list(metadata.get("media_index") or [])
+        if any(
+            isinstance(e, dict) and e.get("media_id") == media_id for e in index
+        ):
+            return
+        episodes = metadata.get("episodes") or []
+        episode_id = None
+        if episodes and isinstance(episodes[-1], dict):
+            episode_id = episodes[-1].get("episode_id")
+        index.append(
+            {
+                "media_id": media_id,
+                "filename": filename,
+                "episode_id": episode_id,
+                "kind": kind,
+                "retention_class": retention_class_for(kind),
+                "created_at_ms": _now_ms(),
+            }
+        )
+        metadata["media_index"] = index
 
     @staticmethod
     def _synthetic_text_message(

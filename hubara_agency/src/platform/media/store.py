@@ -27,8 +27,33 @@ from pathlib import Path
 import structlog
 
 from src.platform.config import WORKSPACE_VAULT_DIR
+from src.platform.vision.dtos import VISION_KIND_PAYMENT_RECEIPT
 
 logger = structlog.get_logger()
+
+# --- Política de retención (Fase 0) ---------------------------------------
+# Solo CLASIFICA: asigna a cada imagen una "clase de retención" que un futuro
+# uploader a S3 traducirá a un object tag / prefijo para que **S3 Lifecycle**
+# borre automáticamente (sin código ni cómputo). Fase 0 NO borra nada — solo
+# deja el label persistido en el índice de media.
+RETENTION_RECEIPT = "receipt"  # comprobantes de pago → retención larga
+RETENTION_EPHEMERAL = "ephemeral"  # foto de producto / otro / visión fallida
+
+
+def retention_class_for(kind: str | None) -> str:
+    """Clase de retención de una imagen según su clasificación de visión.
+
+    * ``comprobante_pago`` → ``receipt``: valor contable / disputa / chargeback,
+      se necesita mucho después del episodio → retención larga.
+    * cualquier otra cosa (foto de producto, ``otro``, o visión fallida) →
+      ``ephemeral``: la descripción de texto ya quedó en el historial, así que
+      la imagen pierde valor al cerrar el episodio → retención corta.
+    """
+    return (
+        RETENTION_RECEIPT
+        if kind == VISION_KIND_PAYMENT_RECEIPT
+        else RETENTION_EPHEMERAL
+    )
 
 # Extensión por mime — WhatsApp manda jpeg/png/webp. Default jpg.
 _MIME_EXT: dict[str, str] = {
