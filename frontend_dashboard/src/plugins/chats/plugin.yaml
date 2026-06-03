@@ -172,6 +172,19 @@ agent:
           TEMPORAL_URL: temporal:7233
           API_BASE_LLMLITE: http://litellm:4000
           WORKSPACE_VAULT_DIR: /app/hubara_vault
+          # Observabilidad OTel (HU-003 A6). El worker exporta traces/métricas/
+          # gen_ai al collector de SigNoz. host.docker.internal:4317 = puerto
+          # publicado al host: workers y SigNoz viven en redes distintas y
+          # render-compose.py no soporta compose.networks. Sin esta env,
+          # init_otel() cae a ConsoleSpanExporter y nada sale del container.
+          # (Caveat Linux/prod: requiere extra_hosts o red compartida.)
+          OTEL_EXPORTER_OTLP_ENDPOINT: http://host.docker.internal:4317
+          OTEL_SEMCONV_STABILITY_OPT_IN: gen_ai_latest_experimental
+          # HU-003 A7: tarifas para que OpenLIT calcule el costo USD por petición
+          # (gen_ai.usage.cost). deepseek-v4-flash es muy nuevo para la tabla
+          # pública de OpenLIT → sin esto cost=0 (los tokens igual se capturan).
+          # Rellenar las tarifas reales en deploy/openlit/pricing.json.
+          OPENLIT_PRICING_JSON: /app/hubara_agency/deploy/openlit/pricing.json
           CATALOG_SNAPSHOT_DIR: /app/hubara_vault/catalog
           CATALOG_MAX_AGE_MINUTES: "30"
           DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
@@ -302,6 +315,12 @@ agent:
           TEMPORAL_URL: temporal:7233
           API_BASE_LLMLITE: http://litellm:4000
           WORKSPACE_VAULT_DIR: /app/hubara_vault
+          # Observabilidad OTel (HU-003 A6) — ver nota en el worker `sales`.
+          OTEL_EXPORTER_OTLP_ENDPOINT: http://host.docker.internal:4317
+          OTEL_SEMCONV_STABILITY_OPT_IN: gen_ai_latest_experimental
+          # HU-003 A7: tarifas para que OpenLIT calcule el costo USD por petición.
+          # Rellenar las tarifas reales en deploy/openlit/pricing.json.
+          OPENLIT_PRICING_JSON: /app/hubara_agency/deploy/openlit/pricing.json
           DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
           WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID}
           WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN}

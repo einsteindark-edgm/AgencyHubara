@@ -22,6 +22,7 @@ from src.platform.whatsapp.activities import (
 )
 from src.platform.logging import setup_logging
 from src.platform.observability import init_otel, otel_workflow_runner
+from src.platform.observability.cost_attribution import get_active_episode_id_activity
 from src.platform.temporal.client import get_temporal_client
 from src.platform.tool_extensions import register_tool_extension
 from src.plugins.chats.agent.remarketing.activities import (
@@ -75,6 +76,10 @@ async def main() -> None:
             llm_chat,
             execute_tool,
             record_turn,
+            # HU-003 A7: resuelve el episode_id activo para la atribución de
+            # costos del LLM (session.id + episode.id en el span gen_ai). La
+            # llama run_agent_turn detrás de un workflow.patched gate.
+            get_active_episode_id_activity,
             check_remarketing_eligibility,
             claim_conversation_routing,
             send_whatsapp_message_activity,

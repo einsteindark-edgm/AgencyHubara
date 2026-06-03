@@ -86,6 +86,14 @@ def init_otel(service_name: str) -> None:
     tracer_provider = TracerProvider(resource=resource)
     # BatchSpanProcessor: exporta en background — NO suma latencia al hot path del turno.
     tracer_provider.add_span_processor(BatchSpanProcessor(span_exporter))
+    # BaggageSpanProcessor (HU-003 A7): copia session.id / episode.id /
+    # whatsapp.number (seteados como baggage en run_agent_turn y auto-propagados
+    # workflow→activity por el TracingInterceptor) a atributos de CADA span del
+    # turno — incluido el span gen_ai de OpenLIT. Habilita la atribución de costo
+    # por conversación/número en SigNoz (GROUP BY session.id, episode.id).
+    from src.platform.observability.baggage import BaggageSpanProcessor
+
+    tracer_provider.add_span_processor(BaggageSpanProcessor())
     trace.set_tracer_provider(tracer_provider)
 
     # --- Metrics ---
@@ -164,6 +172,14 @@ def _instrument_genai(service_name: str) -> None:
         openlit.init(
             application_name=service_name,
             environment=os.getenv("ENVIRONMENT", "dev"),
+            # Pricing del costo (HU-003 A7): OpenLIT calcula gen_ai.usage.cost =
+            # tokens × tarifa de SU tabla (NO reusa el cost de litellm). Los
+            # modelos deepseek-v4-flash/gemini-backup son nuevos/custom y NO están
+            # en la tabla pública remota de OpenLIT → sin esto cost=0 (los tokens
+            # SÍ se capturan igual). `OPENLIT_PRICING_JSON` apunta a un archivo
+            # local con las tarifas (deploy/openlit/pricing.json). Si no está
+            # seteado → None → OpenLIT usa su tabla remota (default, requiere red).
+            pricing_json=os.getenv("OPENLIT_PRICING_JSON") or None,
             # evals_logs_export usa OTel-logs (experimental, sin LoggerProvider en
             # nuestro setup) → causaba "Failed to export logs batch" al shutdown.
             # Lo desactivamos; traces (gen_ai.*) + métricas (tokens/cost/latencia)

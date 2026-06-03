@@ -145,6 +145,13 @@ def _make_fake_activities(
     async def fake_schedule_remarketing(decision) -> None:
         pass
 
+    # HU-003 A7: run_agent_turn resuelve el episodio activo (detrás de
+    # workflow.patched("cost-attribution-episode-v1")) para atribuir el costo
+    # del LLM — los fresh runs lo invocan, así que el worker debe registrarlo.
+    @activity.defn(name="get_active_episode_id")
+    async def fake_get_active_episode_id(session_id: str) -> str:
+        return "ep_001"
+
     return [
         fake_bootstrap,
         fake_read_handoff,
@@ -160,6 +167,7 @@ def _make_fake_activities(
         fake_ghosting,
         fake_start_sales,
         fake_schedule_remarketing,
+        fake_get_active_episode_id,
     ]
 
 
