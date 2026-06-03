@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from src.platform.orders.reconciliation import STATUS_PENDING, STATUS_RESOLVED
+
 log = logging.getLogger(__name__)
 
 
@@ -47,15 +49,26 @@ class VaultOrderRecord:
     payment_method: str | None
     error_detail: str | None   # solo para kind="failed"
     registered_at_ms: int
+    status: str = STATUS_PENDING       # pending | resolved | abandoned
+    attempts: int = 0                  # reintentos de reconciliación acumulados
     raw: dict[str, Any] = field(default_factory=dict)
 
 
-def scan_vault_orders(vault_dir: Path | str) -> list[VaultOrderRecord]:
+def scan_vault_orders(
+    vault_dir: Path | str, *, include_resolved: bool = False
+) -> list[VaultOrderRecord]:
     """Walk `vault_dir/wa_*/metadata.json` y extrae:
       * Todos los `failed_order_registrations[]` (kind=failed).
       * Los `registered_order` con `provider=stub` (kind=stub).
 
     Ordenados por `registered_at_ms` descendente (más recientes primero).
+
+    Por default OMITE los records ya resueltos (`status="resolved"`) — el
+    banner solo debe mostrar lo que falta reconciliar. Los `abandoned`
+    (auto-retry agotado) SÍ se muestran: necesitan intervención manual.
+    Pasá `include_resolved=True` para traer todo (auditoría / histórico).
+
+    Records legacy sin campo `status` se tratan como `pending` (se muestran).
 
     Si el vault no existe o esta vacio, devuelve `[]`. Cualquier
     metadata.json corrupto se ignora con log warning.
@@ -85,16 +98,16 @@ def scan_vault_orders(vault_dir: Path | str) -> list[VaultOrderRecord]:
 
         # Failed registrations.
         for failed in data.get("failed_order_registrations") or []:
-            records.append(_to_record(
-                failed, kind="failed", session_key=session_key,
-            ))
+            rec = _to_record(failed, kind="failed", session_key=session_key)
+            if include_resolved or rec.status != STATUS_RESOLVED:
+                records.append(rec)
 
         # Stub orders (registered exitosamente pero solo localmente).
         registered = data.get("registered_order")
         if isinstance(registered, dict) and registered.get("provider") == "stub":
-            records.append(_to_record(
-                registered, kind="stub", session_key=session_key,
-            ))
+            rec = _to_record(registered, kind="stub", session_key=session_key)
+            if include_resolved or rec.status != STATUS_RESOLVED:
+                records.append(rec)
 
     records.sort(key=lambda r: r.registered_at_ms, reverse=True)
     return records
@@ -117,5 +130,7 @@ def _to_record(
         payment_method=raw.get("payment_method"),
         error_detail=raw.get("error_detail"),
         registered_at_ms=int(raw.get("registered_at_ms") or 0),
+        status=str(raw.get("status") or STATUS_PENDING),
+        attempts=len(raw.get("reconciliation_attempts") or []),
         raw=raw,
     )

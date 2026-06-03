@@ -227,5 +227,28 @@ services:
         condition: service_healthy
       litellm:
         condition: service_healthy
+  hubara-worker-orders-reconcile:
+    build:
+      context: ../
+      dockerfile: Dockerfile
+    container_name: local-hubara-worker-orders-reconcile
+    working_dir: /app/hubara_agency
+    command:
+    - python
+    - -m
+    - src.plugins.orders.workers.reconcile
+    environment:
+    - TEMPORAL_URL=temporal:7233
+    - WORKSPACE_VAULT_DIR=/app/hubara_vault
+    - ORDER_RECONCILE_INTERVAL_MINUTES=5
+    - MEDUSA_BASE_URL=${MEDUSA_BASE_URL}
+    - MEDUSA_ADMIN_TOKEN=${MEDUSA_ADMIN_TOKEN}
+    - MEDUSA_REGION_ID=${MEDUSA_REGION_ID}
+    - MEDUSA_SALES_CHANNEL_ID=${MEDUSA_SALES_CHANNEL_ID}
+    volumes:
+    - hubara-vault-local:/app/hubara_vault
+    depends_on:
+      temporal:
+        condition: service_healthy
 volumes:
   hubara-vault-local:

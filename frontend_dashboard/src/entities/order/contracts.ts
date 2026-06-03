@@ -187,6 +187,10 @@ export const vaultOrderRecordSchema = z.object({
   payment_method: z.string().nullable(),
   error_detail: z.string().nullable(),
   registered_at_ms: z.number(),
+  // Estado del loop de reconciliación. El backend filtra los `resolved` por
+  // default, así que el banner normalmente ve `pending` | `abandoned`.
+  status: z.enum(["pending", "resolved", "abandoned"]).default("pending"),
+  attempts: z.number().int().default(0),
   raw: z.record(z.string(), z.unknown()).default({}),
 });
 
@@ -200,6 +204,26 @@ export const vaultOrdersResponseSchema = z.object({
 });
 
 export type VaultOrdersResponse = z.infer<typeof vaultOrdersResponseSchema>;
+
+// Resultado de POST /vault-orders/{session_key}/{audit_id}/retry|resolve.
+export const reconciliationOutcomeSchema = z.object({
+  session_key: z.string(),
+  audit_id: z.string(),
+  outcome: z.enum([
+    "resolved",
+    "still_failing",
+    "already_resolved",
+    "abandoned",
+    "not_found",
+    "error",
+  ]),
+  resolved_order_id: z.string().nullable(),
+  provider: z.string().nullable(),
+  error_detail: z.string().nullable(),
+  attempts: z.number().int(),
+});
+
+export type ReconciliationOutcome = z.infer<typeof reconciliationOutcomeSchema>;
 
 /* ── Customer Score — panel "Historial cliente" del inspector ────────────
  *

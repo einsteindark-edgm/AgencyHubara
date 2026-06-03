@@ -16,7 +16,13 @@ import {
 } from "@plugins/orders/frontend/features/orders-board";
 import { OrdersInspector } from "@plugins/orders/frontend/features/orders-inspector";
 
-import { useOrders, useVaultOrders, type VaultOrderRecord } from "@/entities/order";
+import {
+  useOrders,
+  useVaultOrders,
+  useRetryVaultOrder,
+  useResolveVaultOrder,
+  type VaultOrderRecord,
+} from "@/entities/order";
 import { Icon, MissingData } from "@/shared/ui";
 
 export interface OrdersSectionProps {
@@ -201,58 +207,13 @@ function VaultOrdersBanner({
               <th style={{ padding: "4px 8px" }}>Sesión</th>
               <th style={{ padding: "4px 8px" }}>Cliente</th>
               <th style={{ padding: "4px 8px" }}>Total</th>
-              <th style={{ padding: "4px 8px" }}>Error</th>
+              <th style={{ padding: "4px 8px" }}>Estado</th>
+              <th style={{ padding: "4px 8px" }}>Acciones</th>
             </tr>
           </thead>
           <tbody>
             {records.slice(0, 10).map((r) => (
-              <tr
-                key={r.order_id}
-                style={{ borderTop: "1px solid rgba(255,255,255,0.04)" }}
-              >
-                <td style={{ padding: "4px 8px" }}>
-                  <span
-                    style={{
-                      padding: "1px 5px",
-                      borderRadius: 3,
-                      background:
-                        r.kind === "failed"
-                          ? "rgba(255,114,105,0.18)"
-                          : "rgba(214,138,255,0.18)",
-                      color: r.kind === "failed" ? "#ff7269" : "#d68aff",
-                      fontSize: 9,
-                      textTransform: "uppercase",
-                      fontWeight: 700,
-                    }}
-                  >
-                    {r.kind === "failed" ? "Rechazado" : "Local (stub)"}
-                  </span>
-                </td>
-                <td
-                  style={{ padding: "4px 8px", fontFamily: "var(--font-mono)" }}
-                >
-                  {r.session_key}
-                </td>
-                <td style={{ padding: "4px 8px" }}>
-                  {r.customer_phone ?? "—"} · {r.customer_city ?? "—"}
-                </td>
-                <td style={{ padding: "4px 8px" }}>
-                  ${r.total_cop.toLocaleString("es-CO")} {r.currency}
-                </td>
-                <td
-                  style={{
-                    padding: "4px 8px",
-                    color: "var(--fg-muted)",
-                    maxWidth: 240,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                  title={r.error_detail ?? ""}
-                >
-                  {r.error_detail ?? "—"}
-                </td>
-              </tr>
+              <VaultOrderRow key={r.order_id} r={r} />
             ))}
           </tbody>
         </table>
@@ -263,6 +224,123 @@ function VaultOrdersBanner({
         )}
       </details>
     </div>
+  );
+}
+
+/* ── VaultOrderRow — una fila con acciones de reconciliación ───────────────
+ * Cada fila tiene sus propios mutation hooks (estado per-fila): así el
+ * spinner de "Reintentando…" afecta solo la fila tocada. "Reintentar" usa el
+ * mismo núcleo idempotente que el barrido automático del backend; "Marcar
+ * resuelto" saca el record del banner sin tocar Medusa (el operador ya lo
+ * registró a mano). Tras resolver, la invalidación de `orderKeys.vault()`
+ * hace que la fila desaparezca.
+ */
+function VaultOrderRow({ r }: { r: VaultOrderRecord }) {
+  const retry = useRetryVaultOrder();
+  const resolve = useResolveVaultOrder();
+  const busy = retry.isPending || resolve.isPending;
+  const outcome = retry.data?.outcome;
+
+  const onResolve = () => {
+    if (
+      window.confirm(
+        "¿Marcar este pedido como resuelto? Hacelo solo si ya lo registraste " +
+          "en Medusa Admin — desaparecerá del banner.",
+      )
+    ) {
+      resolve.mutate({ sessionKey: r.session_key, auditId: r.order_id });
+    }
+  };
+
+  let estado = r.status === "abandoned" ? "Abandonado" : "Pendiente";
+  if (retry.isError || resolve.isError) estado = "Error de red";
+  else if (outcome === "still_failing") estado = "Medusa sigue caído";
+
+  return (
+    <tr style={{ borderTop: "1px solid rgba(255,255,255,0.04)" }}>
+      <td style={{ padding: "4px 8px" }}>
+        <span
+          style={{
+            padding: "1px 5px",
+            borderRadius: 3,
+            background:
+              r.kind === "failed"
+                ? "rgba(255,114,105,0.18)"
+                : "rgba(214,138,255,0.18)",
+            color: r.kind === "failed" ? "#ff7269" : "#d68aff",
+            fontSize: 9,
+            textTransform: "uppercase",
+            fontWeight: 700,
+          }}
+        >
+          {r.kind === "failed" ? "Rechazado" : "Local (stub)"}
+        </span>
+      </td>
+      <td style={{ padding: "4px 8px", fontFamily: "var(--font-mono)" }}>
+        {r.session_key}
+      </td>
+      <td style={{ padding: "4px 8px" }}>
+        {r.customer_phone ?? "—"} · {r.customer_city ?? "—"}
+      </td>
+      <td style={{ padding: "4px 8px" }}>
+        ${r.total_cop.toLocaleString("es-CO")} {r.currency}
+      </td>
+      <td
+        style={{
+          padding: "4px 8px",
+          color: r.status === "abandoned" ? "#ff4d4d" : "var(--fg-muted)",
+          maxWidth: 200,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+        title={r.error_detail ?? ""}
+      >
+        {estado}
+        {r.attempts > 0
+          ? ` · ${r.attempts} intento${r.attempts === 1 ? "" : "s"}`
+          : ""}
+      </td>
+      <td style={{ padding: "4px 8px", whiteSpace: "nowrap" }}>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() =>
+            retry.mutate({ sessionKey: r.session_key, auditId: r.order_id })
+          }
+          style={{
+            fontSize: 10,
+            padding: "2px 8px",
+            borderRadius: 4,
+            border: "1px solid rgba(255,255,255,0.14)",
+            background: "transparent",
+            color: "var(--fg-soft)",
+            cursor: busy ? "wait" : "pointer",
+            opacity: busy ? 0.5 : 1,
+            marginRight: 4,
+          }}
+        >
+          {retry.isPending ? "Reintentando…" : "Reintentar"}
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onResolve}
+          style={{
+            fontSize: 10,
+            padding: "2px 8px",
+            borderRadius: 4,
+            border: "1px solid rgba(255,255,255,0.14)",
+            background: "transparent",
+            color: "var(--fg-soft)",
+            cursor: busy ? "wait" : "pointer",
+            opacity: busy ? 0.5 : 1,
+          }}
+        >
+          Marcar resuelto
+        </button>
+      </td>
+    </tr>
   );
 }
 

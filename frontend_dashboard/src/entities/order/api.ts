@@ -27,6 +27,7 @@ import {
   orderCommandResultSchema,
   orderDetailSchema,
   orderListResponseSchema,
+  reconciliationOutcomeSchema,
   vaultOrdersResponseSchema,
   type CustomerScore,
   type CustomerSummary,
@@ -34,6 +35,7 @@ import {
   type OrderDetail,
   type OrderListResponse,
   type OrderSummary,
+  type ReconciliationOutcome,
   type VaultOrdersResponse,
 } from "./contracts";
 import { orderKeys } from "./keys";
@@ -317,6 +319,61 @@ export function useVaultOrders() {
     refetchInterval: 60_000, // menos frecuente que el kanban — es operacional.
     staleTime: 30_000,
     retry: 1,
+  });
+}
+
+/* ── Reconciliación — acciones del banner de pedidos pendientes ────────── */
+
+interface RetryVaultOrderVariables {
+  sessionKey: string;
+  auditId: string;
+}
+
+/**
+ * Reintenta registrar en Medusa un pedido pendiente ("Reintentar").
+ * Idempotente — usa el MISMO núcleo que el barrido automático del backend.
+ * Invalida el banner: si se resolvió, el record desaparece.
+ */
+export function useRetryVaultOrder() {
+  const qc = useQueryClient();
+  return useMutation<ReconciliationOutcome, Error, RetryVaultOrderVariables>({
+    mutationFn: async ({ sessionKey, auditId }) => {
+      const raw = await apiClient.post<unknown>(
+        `/api/orders/vault-orders/${encodeURIComponent(sessionKey)}/${encodeURIComponent(auditId)}/retry`,
+      );
+      return reconciliationOutcomeSchema.parse(raw);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: orderKeys.vault() });
+      qc.invalidateQueries({ queryKey: orderKeys.list() });
+    },
+  });
+}
+
+interface ResolveVaultOrderVariables {
+  sessionKey: string;
+  auditId: string;
+  note?: string;
+  resolvedOrderId?: string;
+}
+
+/**
+ * Marca un pedido pendiente como resuelto a mano ("Marcar resuelto"). NO toca
+ * Medusa — el operador ya lo registró en Medusa Admin manualmente.
+ */
+export function useResolveVaultOrder() {
+  const qc = useQueryClient();
+  return useMutation<ReconciliationOutcome, Error, ResolveVaultOrderVariables>({
+    mutationFn: async ({ sessionKey, auditId, note, resolvedOrderId }) => {
+      const raw = await apiClient.post<unknown>(
+        `/api/orders/vault-orders/${encodeURIComponent(sessionKey)}/${encodeURIComponent(auditId)}/resolve`,
+        { note, resolved_order_id: resolvedOrderId },
+      );
+      return reconciliationOutcomeSchema.parse(raw);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: orderKeys.vault() });
+    },
   });
 }
 

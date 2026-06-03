@@ -280,3 +280,89 @@ def test_vault_orders_endpoint_returns_records(app_with_temp_vault):
     assert body["stub_count"] == 1
     kinds = sorted(r["kind"] for r in body["records"])
     assert kinds == ["failed", "stub"]
+
+
+# ----------------------------------------------------------------------
+# Status filtering (loop de reconciliación)
+# ----------------------------------------------------------------------
+
+
+def _failed(order_id, status, total=1000, ts=1779000000000, **extra) -> dict:
+    rec = {
+        "order_id": order_id, "provider": "medusa", "success": False,
+        "items": [], "shipping": {}, "total_cop": total, "currency": "COP",
+        "payment_method": "card", "registered_at_ms": ts, "status": status,
+    }
+    rec.update(extra)
+    return rec
+
+
+def test_scan_hides_resolved_by_default(tmp_path):
+    _write_metadata(tmp_path, "wa_r", {
+        "failed_order_registrations": [
+            _failed("AUDIT-resolved", "resolved", ts=1779000000000),
+            _failed("AUDIT-pending", "pending", ts=1779100000000),
+        ],
+    })
+    records = scan_vault_orders(tmp_path)
+    assert [r.order_id for r in records] == ["AUDIT-pending"]
+
+
+def test_scan_shows_abandoned(tmp_path):
+    """Abandoned NO se oculta — necesita intervención manual del operador."""
+    _write_metadata(tmp_path, "wa_a", {
+        "failed_order_registrations": [_failed("AUDIT-ab", "abandoned")],
+    })
+    records = scan_vault_orders(tmp_path)
+    assert len(records) == 1
+    assert records[0].status == "abandoned"
+
+
+def test_scan_include_resolved_shows_all(tmp_path):
+    _write_metadata(tmp_path, "wa_r", {
+        "failed_order_registrations": [_failed("AUDIT-resolved", "resolved")],
+    })
+    assert scan_vault_orders(tmp_path) == []
+    all_records = scan_vault_orders(tmp_path, include_resolved=True)
+    assert len(all_records) == 1
+    assert all_records[0].status == "resolved"
+
+
+def test_scan_exposes_status_and_attempts(tmp_path):
+    _write_metadata(tmp_path, "wa_x", {
+        "failed_order_registrations": [
+            _failed("AUDIT-1", "pending", reconciliation_attempts=[
+                {"ts_ms": 1, "ok": False}, {"ts_ms": 2, "ok": False},
+            ]),
+        ],
+    })
+    r = scan_vault_orders(tmp_path)[0]
+    assert r.status == "pending"
+    assert r.attempts == 2
+
+
+def test_scan_legacy_record_without_status_is_shown(tmp_path):
+    """Backward-compat: record sin `status` se trata como pending."""
+    _write_metadata(tmp_path, "wa_legacy", {
+        "failed_order_registrations": [{
+            "order_id": "AUDIT-legacy", "provider": "medusa", "success": False,
+            "items": [], "shipping": {}, "total_cop": 5000, "currency": "COP",
+            "payment_method": "card", "registered_at_ms": 1779000000000,
+        }],
+    })
+    records = scan_vault_orders(tmp_path)
+    assert len(records) == 1
+    assert records[0].status == "pending"
+
+
+def test_scan_hides_resolved_stub(tmp_path):
+    """Un stub migrado a Medusa (status=resolved) tampoco aparece."""
+    _write_metadata(tmp_path, "wa_s", {
+        "registered_order": {
+            "order_id": "HUB-1", "provider": "stub", "success": True,
+            "items": [], "shipping": {}, "total_cop": 1000, "currency": "COP",
+            "payment_method": "transfer", "registered_at_ms": 1779000000000,
+            "status": "resolved",
+        },
+    })
+    assert scan_vault_orders(tmp_path) == []
