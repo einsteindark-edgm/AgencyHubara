@@ -144,16 +144,24 @@ async def record_episode_llm_usage_activity(
     frontend — independiente del path de observabilidad (SigNoz). El costo queda
     **congelado** a la tarifa del momento (lo que realmente costó esa conversación).
 
-    **Idempotente** vía ``activity.info().activity_id`` (estable entre reintentos de
-    Temporal) → un retry NO vuelve a sumar. Busca el episodio por id (genérico, no
-    necesariamente el activo — el turno puede haberlo cerrado).
+    **Idempotente** vía ``activity.info()`` → ``run_id:activity_id``: único por turno Y
+    entre workflow runs distintos (sales vs remarketing, o tras continue-as-new del
+    session workflow), pero estable entre reintentos del mismo turno → un retry NO
+    vuelve a sumar, y dos turnos distintos (aun de runs distintos) NUNCA colisionan.
+    Busca el episodio por id (genérico, no necesariamente el activo — el turno puede
+    haberlo cerrado).
 
     DEHA: R-STATELESS (sin cache; lee pricing + metadata por llamada), R-JSON (in
     frozen / out None), R-DIP (NO importa ``src.plugins`` — busca el episodio por id
     sin la lógica de chats). Sin heartbeat (read+write de un JSON chico).
     """
     try:
-        dedup_key = activity.info().activity_id  # estable entre reintentos
+        info = activity.info()
+        # run_id + activity_id: único por turno Y entre runs distintos (sales vs
+        # remarketing, o tras continue-as-new), estable entre reintentos del mismo
+        # turno. Solo `activity_id` colisionaría — se reinicia por run → contaría de
+        # menos turnos de runs distintos sobre el mismo episodio.
+        dedup_key = f"{info.workflow_run_id}:{info.activity_id}"
     except RuntimeError:
         dedup_key = ""  # fuera de contexto activity (tests directos)
 

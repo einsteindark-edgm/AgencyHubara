@@ -111,6 +111,39 @@ def test_apply_idempotent_same_dedup_key() -> None:
     assert usage["prompt_tokens"] == 1000
 
 
+def test_apply_distinct_runs_same_activity_id_both_count() -> None:
+    # Sales (run R1) y Remarketing (run R2) pueden tener el MISMO activity_id ("5")
+    # porque el contador se reinicia por workflow run. Con la clave run_id:activity_id
+    # NO colisionan → AMBOS turnos cuentan (el bug era contar uno solo).
+    m = _meta()
+    a = _apply_episode_llm_usage(
+        m, episode_id="ep_001", prompt_tokens=1000, completion_tokens=0,
+        model="deepseek-v4-flash", dedup_key="R1:5", pricing_table=_TABLE,
+    )
+    b = _apply_episode_llm_usage(
+        m, episode_id="ep_001", prompt_tokens=1000, completion_tokens=0,
+        model="deepseek-v4-flash", dedup_key="R2:5", pricing_table=_TABLE,
+    )
+    assert a is True and b is True
+    usage = m["episodes"][0]["llm_usage"]
+    assert usage["prompt_tokens"] == 2000  # ambos contaron
+    assert usage["cost_usd"] == 0.00028  # 0.00014 × 2
+
+
+def test_apply_multi_agent_episode_sums_all_turns() -> None:
+    # Un episodio = toda la venta: sales (run R1) ×2 + remarketing (run R2) ×2 → 4
+    # turnos. R1:3/R2:3 y R1:8/R2:8 = mismo activity_id, distinto run → NO se pisan.
+    m = _meta()
+    for key in ("R1:3", "R1:8", "R2:3", "R2:8"):
+        _apply_episode_llm_usage(
+            m, episode_id="ep_001", prompt_tokens=1000, completion_tokens=500,
+            model="deepseek-v4-flash", dedup_key=key, pricing_table=_TABLE,
+        )
+    usage = m["episodes"][0]["llm_usage"]
+    assert usage["total_tokens"] == 4 * 1500  # los 4 turnos sumados
+    assert usage["cost_usd"] == round(4 * 0.00028, 8)
+
+
 def test_apply_missing_episode_noop() -> None:
     m = _meta("ep_001")
     applied = _apply_episode_llm_usage(
