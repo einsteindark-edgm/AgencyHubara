@@ -110,6 +110,13 @@ class LLMChatInput:
     messages: list[dict[str, Any]]
     llm: LLMConfig
     tool_definitions_json: str = "[]"
+    # Baggage OTel (HU-003): IDs de contexto (p.ej. session.id / episode.id /
+    # whatsapp.number) que `llm_chat` attachea al contexto ANTES del LLM call,
+    # para que el span gen_ai de OpenLIT los reciba como atributos (atribución de
+    # costo por conversación). Genérico: exoclaw NO conoce la semántica de las
+    # keys. Viaja por el input porque Temporal NO propaga baggage workflow→
+    # activity (verificado). Optional + default → replay-safe (R-JSON).
+    baggage: dict[str, str] | None = None
 
     def tool_definitions(self) -> list[dict[str, Any]]:
         result = json.loads(self.tool_definitions_json)
@@ -135,6 +142,10 @@ class LLMResponseData:
     tool_calls: list[ToolCallData]
     reasoning_content: str | None = None
     thinking_blocks: list[dict[str, Any]] | None = None
+    # Tokens de ESTA llamada (prompt/completion/total). El provider los expone en
+    # LLMResponse.usage; el caller (workflow) los suma por turno y los persiste al
+    # episodio en metadata.json (costo LLM por venta). Optional → replay-safe.
+    usage: dict[str, int] | None = None
 
     def to_assistant_message(self) -> dict[str, Any]:
         msg: dict[str, Any] = {"role": "assistant", "content": self.content}

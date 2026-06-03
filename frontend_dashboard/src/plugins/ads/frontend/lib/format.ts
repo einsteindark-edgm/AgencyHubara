@@ -28,3 +28,12 @@ export function fmtPct(n: number, d = 1): string {
 export function fmtN(n: number): string {
   return COP.format(n);
 }
+
+/** "US$0.0018" — costo LLM en USD (sub-centavo). 4 decimales para que el
+ *  micro-costo sea legible; sube a 2 decimales cuando supera 1¢. "US$0" si 0.
+ *  Etiquetado "US$" para distinguir del COP de las ventas. */
+export function fmtUsd(n: number): string {
+  if (!n) return "US$0";
+  if (n < 0.01) return "US$" + n.toFixed(4);
+  return "US$" + n.toFixed(2);
+}

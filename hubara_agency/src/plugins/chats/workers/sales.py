@@ -1,4 +1,19 @@
+# ruff: noqa: E402
+# (Los imports van DESPUÉS de init_otel() a propósito — Bug A HU-003: hay que
+#  parchear litellm con OpenLIT antes de que el provider importe `acompletion`,
+#  sino el usage del LLM no se captura. Ver la nota detallada abajo.)
 import asyncio
+
+# Bug A (orden de imports — HU-003): init_otel() DEBE correr ANTES de importar el
+# provider litellm. El provider hace `from litellm import acompletion` al
+# importarse; si OpenLIT no parcheó litellm todavía, esa referencia queda sin
+# instrumentar → el span gen_ai se crea pero gen_ai.usage.* (tokens/cost) sale 0.
+# Por eso setup_logging + init_otel van acá arriba, antes de exoclaw_temporal.*
+from src.platform.logging import setup_logging
+from src.platform.observability import init_otel, otel_workflow_runner
+
+setup_logging()
+init_otel("sales-agent")
 
 from exoclaw_temporal.activities.conversation import build_prompt, record_turn
 from exoclaw_temporal.activities.llm import llm_chat
@@ -8,10 +23,11 @@ from temporalio.worker import Worker
 from src.platform.analytics.composition import setup_analytics
 from src.platform.catalog.composition import get_catalog_client
 from src.platform.catalog.medusa_checkout import MedusaCheckoutVerification
-from src.platform.logging import setup_logging
 from src.platform.medusa.composition import get_medusa_product_service
-from src.platform.observability import init_otel, otel_workflow_runner
-from src.platform.observability.cost_attribution import get_active_episode_id_activity
+from src.platform.observability.cost_attribution import (
+    get_active_episode_id_activity,
+    record_episode_llm_usage_activity,
+)
 from src.platform.orchestration import dispatch_event_activity
 from src.platform.orders.composition import get_order_registration_port
 from src.platform.plugin_manifest import get_task_queue
@@ -73,15 +89,6 @@ from src.plugins.chats.agent.sales.tools.ui_intents import (
 from src.plugins.chats.agent.sales.workflows.sales_session import (
     HubaraSalesSessionWorkflow,
 )
-
-setup_logging()
-
-# OTel obs: bootstrap OTel — traces (workflow/activity vía TracingInterceptor
-# en get_temporal_client) + GenAI (LiteLLM callback `otel`). No-op si
-# OTEL_SDK_DISABLED=true. Sin OTEL_EXPORTER_OTLP_ENDPOINT exporta a consola.
-# Corre acá (antes de main/worker.run) para que el provider esté seteado cuando
-# el client construye el interceptor y antes del primer llm_chat.
-init_otel("sales-agent")
 
 # HU-002: analytics bus singleton — filesystem siempre, Meta CAPI si hay
 # token. El bus es global para todo el proceso del worker; las activities
@@ -258,6 +265,8 @@ async def main() -> None:
             # costos del LLM (session.id + episode.id en el span gen_ai). La
             # llama run_agent_turn detrás de un workflow.patched gate.
             get_active_episode_id_activity,
+            # HU costo-por-episodio: persiste tokens+costo del turno al episodio.
+            record_episode_llm_usage_activity,
             send_whatsapp_message_activity,
             send_typing_indicator_activity,
             persist_assistant_message_activity,

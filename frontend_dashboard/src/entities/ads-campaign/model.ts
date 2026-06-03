@@ -142,6 +142,13 @@ export interface AttributedConversation {
   lastMsg: string | null;
   /** Nombre del anuncio que originó el chat (headline). */
   ad: string | null;
+
+  // --- Costo LLM del episodio (HU costo por venta) ---
+  /** Costo LLM del episodio en USD (congelado a la tarifa del momento). `null`
+   *  si el episodio aún no acumuló uso. Opcional para tolerar el mock histórico. */
+  llmCostUsd?: number | null;
+  /** Tokens totales (prompt+completion) del episodio. */
+  llmTokens?: number | null;
 }
 
 /* ── Serie diaria — conversaciones iniciadas por día/estado final ────────── */

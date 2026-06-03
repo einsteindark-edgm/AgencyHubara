@@ -15,7 +15,7 @@ import {
 } from "@/entities/ads-campaign";
 import { Avatar } from "@/shared/ui";
 
-import { fmtMoney, fmtN } from "@plugins/ads/frontend/lib/format";
+import { fmtMoney, fmtN, fmtUsd } from "@plugins/ads/frontend/lib/format";
 import { MissingField } from "@plugins/ads/frontend/lib/MissingField";
 
 import {
@@ -70,6 +70,7 @@ export function AdsAttributedTable({ rows }: Props) {
               <th>Agente</th>
               <th>Estado</th>
               <th className="num">Valor</th>
+              <th className="num">Costo LLM</th>
             </tr>
           </thead>
           <tbody>
@@ -118,12 +119,28 @@ export function AdsAttributedTable({ rows }: Props) {
                       <span style={{ color: "var(--fg-faint)" }}>—</span>
                     )}
                   </td>
+                  <td className="num">
+                    {c.llmCostUsd != null ? (
+                      <div>
+                        <div>{fmtUsd(c.llmCostUsd)}</div>
+                        {c.llmTokens != null && (
+                          <div
+                            style={{ fontSize: 11, color: "var(--fg-mute)" }}
+                          >
+                            {fmtN(c.llmTokens)} tok
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <MissingField />
+                    )}
+                  </td>
                 </tr>
               );
             })}
             {list.length === 0 && (
               <tr>
-                <td colSpan={8} className="att-empty">
+                <td colSpan={9} className="att-empty">
                   Sin chats que coincidan con el filtro.
                 </td>
               </tr>

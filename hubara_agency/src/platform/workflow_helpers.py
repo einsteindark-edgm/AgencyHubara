@@ -44,15 +44,15 @@ with workflow.unsafe.imports_passed_through():
         _TOOL_OPTIONS,
     )
 
-    # HU-003 A7 — atribución de costos vía OTel baggage (ver `run_agent_turn`).
-    # `opentelemetry` es passthrough del sandbox (otel_workflow_runner()); estas
-    # ops (set_baggage/attach/detach) son puras de contextvars → R-DET safe.
-    import opentelemetry.baggage as _otel_baggage
-    import opentelemetry.context as _otel_context
-
+    # HU-003 — atribución de costos: el baggage (session.id/episode.id/whatsapp.
+    # number) se setea DENTRO de la activity `llm_chat` (Temporal NO propaga
+    # baggage workflow→activity — verificado), pasándolo por LLMChatInput.baggage.
+    # Acá solo derivamos los IDs y resolvemos el episodio activo.
     from src.platform.constants import WHATSAPP_SESSION_PREFIX
     from src.platform.observability.cost_attribution import (
+        RecordEpisodeLLMUsageInput,
         get_active_episode_id_activity,
+        record_episode_llm_usage_activity,
     )
 
 
@@ -193,23 +193,23 @@ async def run_agent_turn(
     fallback_plugin_context: list[str] | None = None,
     episode_id: str | None = None,
 ) -> TurnResult:
-    """Wrapper de atribución de costos (HU-003 A7) sobre `_run_agent_turn_impl`.
+    """Wrapper de atribución de costos (HU-003) sobre `_run_agent_turn_impl`.
 
-    Setea `session.id` / `whatsapp.number` / `episode.id` como OTel **baggage**
-    durante TODO el turno. El `TracingInterceptor` de Temporal auto-propaga el
-    baggage a cada activity (incl. `llm_chat`), y el `BaggageSpanProcessor`
-    (registrado en `init_otel`) lo copia como atributos al span gen_ai de OpenLIT
-    → habilita `GROUP BY session.id, episode.id` sobre `gen_ai.usage.cost` en
-    SigNoz (sectorizar gasto por conversación / número de WhatsApp).
+    Arma el `baggage` (`session.id` / `whatsapp.number` / `episode.id`) y lo pasa
+    a `_run_agent_turn_impl`, que lo mete en `LLMChatInput.baggage`. La activity
+    `llm_chat` lo attachea al contexto ANTES del LLM call → el `BaggageSpanProcessor`
+    lo copia como atributos al span gen_ai de OpenLIT → habilita
+    `GROUP BY session.id, episode.id` sobre `gen_ai.usage.cost` en SigNoz.
+
+    **El baggage NO se setea acá (en el workflow)**: Temporal NO propaga OTel
+    baggage workflow→activity (verificado) — por eso los IDs viajan por el input
+    de la activity, donde sí funciona el contexto live.
 
     `episode_id` se resuelve per-turn vía `get_active_episode_id_activity`
-    (platform; las lecturas compartidas cruzan por platform, no cross-agente). La
-    llamada va detrás de `workflow.patched("cost-attribution-episode-v1")` para
-    ser replay-safe en los session workflows long-lived (histories previas al
-    deploy atribuyen sólo por número). Un caller puede pasar `episode_id`
-    explícito para saltear la activity (tests). R-DET: set_baggage/attach/detach
-    son ops puras de contextvars; con `OTEL_SDK_DISABLED` el baggage se setea
-    pero ningún processor lo lee.
+    (platform; las lecturas compartidas cruzan por platform, no cross-agente),
+    detrás de `workflow.patched("cost-attribution-episode-v1")` para ser
+    replay-safe en los session workflows long-lived (histories previas al deploy
+    atribuyen sólo por número). Un caller puede pasar `episode_id` explícito (tests).
     """
     if episode_id is None and workflow.patched("cost-attribution-episode-v1"):
         # Resolver el episodio activo per-turn (read-only). Gated: los session
@@ -229,21 +229,24 @@ async def run_agent_turn(
         if sid.startswith(WHATSAPP_SESSION_PREFIX)
         else sid
     )
-    ctx = _otel_baggage.set_baggage("session.id", sid)
-    ctx = _otel_baggage.set_baggage("whatsapp.number", num, context=ctx)
+    baggage: dict[str, str] = {"session.id": sid, "whatsapp.number": num}
     if episode_id:
-        ctx = _otel_baggage.set_baggage("episode.id", episode_id, context=ctx)
-    token = _otel_context.attach(ctx)
-    try:
-        return await _run_agent_turn_impl(session, msg, fallback_plugin_context)
-    finally:
-        _otel_context.detach(token)
+        baggage["episode.id"] = episode_id
+    return await _run_agent_turn_impl(
+        session,
+        msg,
+        fallback_plugin_context,
+        baggage=baggage,
+        episode_id=episode_id,
+    )
 
 
 async def _run_agent_turn_impl(
     session: SessionInput,
     msg: PendingMessage,
     fallback_plugin_context: list[str] | None = None,
+    baggage: dict[str, str] | None = None,
+    episode_id: str | None = None,
 ) -> TurnResult:
     """Ejecuta un turno completo de LLM con tool-loop. Es invocado desde `@workflow.run`.
 
@@ -286,6 +289,10 @@ async def _run_agent_turn_impl(
     escalation_decision: EscalationDecision | None = None
     episode_closed_decision: EpisodeClosedDecision | None = None
     order_registered_decision: OrderRegisteredDecision | None = None
+    # Costo por episodio: acumula los tokens del turno sobre las N iteraciones del
+    # tool-loop; se persiste al episodio tras el loop (record_episode_llm_usage).
+    turn_prompt_tokens = 0
+    turn_completion_tokens = 0
 
     while iteration < session.llm.max_iterations:
         iteration += 1
@@ -296,9 +303,18 @@ async def _run_agent_turn_impl(
                 messages=messages,
                 llm=session.llm,
                 tool_definitions_json=session.tool_definitions_json,
+                # HU-003: IDs de atribución de costo. `llm_chat` los attachea al
+                # contexto → el span gen_ai de OpenLIT los recibe (Temporal no
+                # propaga baggage workflow→activity, por eso van por el input).
+                baggage=baggage,
             ),
             **_LLM_OPTIONS,  # type: ignore[arg-type]
         )
+        if response.usage:
+            turn_prompt_tokens += int(response.usage.get("prompt_tokens", 0) or 0)
+            turn_completion_tokens += int(
+                response.usage.get("completion_tokens", 0) or 0
+            )
 
         if response.has_tool_calls:
             messages = [*messages, response.to_assistant_message()]
@@ -486,6 +502,27 @@ async def _run_agent_turn_impl(
         ),
         **_CONV_OPTIONS,  # type: ignore[arg-type]
     )
+
+    # Persistir el costo LLM del turno al episodio (dato de negocio → frontend).
+    # Gated por replay-safety (session workflows long-lived; histories viejas
+    # toman el else → no se agrega el execute_activity nuevo). Solo si hay episodio
+    # resuelto y se consumieron tokens. La activity es idempotente (activity_id).
+    if (
+        episode_id
+        and (turn_prompt_tokens or turn_completion_tokens)
+        and workflow.patched("episode-llm-cost-v1")
+    ):
+        await workflow.execute_activity(
+            record_episode_llm_usage_activity,
+            RecordEpisodeLLMUsageInput(
+                session_id=session.session_id,
+                episode_id=episode_id,
+                prompt_tokens=turn_prompt_tokens,
+                completion_tokens=turn_completion_tokens,
+                model=session.llm.model,
+            ),
+            **_CONV_OPTIONS,  # type: ignore[arg-type]
+        )
 
     return TurnResult(
         final_content=final_content,
