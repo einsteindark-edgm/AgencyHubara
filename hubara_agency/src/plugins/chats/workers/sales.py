@@ -10,6 +10,8 @@ from src.platform.catalog.composition import get_catalog_client
 from src.platform.catalog.medusa_checkout import MedusaCheckoutVerification
 from src.platform.logging import setup_logging
 from src.platform.medusa.composition import get_medusa_product_service
+from src.platform.observability import init_otel, otel_workflow_runner
+from src.platform.observability.cost_attribution import get_active_episode_id_activity
 from src.platform.orchestration import dispatch_event_activity
 from src.platform.orders.composition import get_order_registration_port
 from src.platform.plugin_manifest import get_task_queue
@@ -73,6 +75,13 @@ from src.plugins.chats.agent.sales.workflows.sales_session import (
 )
 
 setup_logging()
+
+# OTel obs: bootstrap OTel — traces (workflow/activity vía TracingInterceptor
+# en get_temporal_client) + GenAI (LiteLLM callback `otel`). No-op si
+# OTEL_SDK_DISABLED=true. Sin OTEL_EXPORTER_OTLP_ENDPOINT exporta a consola.
+# Corre acá (antes de main/worker.run) para que el provider esté seteado cuando
+# el client construye el interceptor y antes del primer llm_chat.
+init_otel("sales-agent")
 
 # HU-002: analytics bus singleton — filesystem siempre, Meta CAPI si hay
 # token. El bus es global para todo el proceso del worker; las activities
@@ -245,6 +254,10 @@ async def main() -> None:
             llm_chat,
             execute_tool,
             record_turn,
+            # HU-003 A7: resuelve el episode_id activo para la atribución de
+            # costos del LLM (session.id + episode.id en el span gen_ai). La
+            # llama run_agent_turn detrás de un workflow.patched gate.
+            get_active_episode_id_activity,
             send_whatsapp_message_activity,
             send_typing_indicator_activity,
             persist_assistant_message_activity,
@@ -283,6 +296,10 @@ async def main() -> None:
             # guards internos completos — skip silencioso si no aplica.
             send_capi_event_activity,
         ],
+        # OTel obs: el TracingInterceptor (en get_temporal_client) crea spans
+        # dentro del workflow sandbox → necesita opentelemetry como passthrough
+        # o rompe con RestrictedWorkflowAccessError. Ver otel_workflow_runner.
+        workflow_runner=otel_workflow_runner(),
     )
 
     logger.info("😎 Sales Agent En Vivo. Escuchando la cola exclusiva: '{}'", task_queue)

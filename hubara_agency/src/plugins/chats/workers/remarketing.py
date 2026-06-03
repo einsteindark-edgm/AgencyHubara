@@ -21,6 +21,8 @@ from src.platform.whatsapp.activities import (
     send_whatsapp_message_activity,
 )
 from src.platform.logging import setup_logging
+from src.platform.observability import init_otel, otel_workflow_runner
+from src.platform.observability.cost_attribution import get_active_episode_id_activity
 from src.platform.temporal.client import get_temporal_client
 from src.platform.tool_extensions import register_tool_extension
 from src.plugins.chats.agent.remarketing.activities import (
@@ -42,6 +44,10 @@ from exoclaw_temporal.activities.conversation import build_prompt, record_turn
 from exoclaw_temporal.activities.llm import llm_chat
 
 setup_logging()
+
+# OTel obs (HU-003 features/): bootstrap OTel para el worker de Remarketing.
+# No-op si OTEL_SDK_DISABLED=true; consola si no hay OTEL_EXPORTER_OTLP_ENDPOINT.
+init_otel("remarketing-agent")
 
 # NEW-5 cerrado: el worker de Remarketing tambien necesita la tool de
 # transferencia (es la unica forma de que el agente vuelva a Ventas).
@@ -70,6 +76,10 @@ async def main() -> None:
             llm_chat,
             execute_tool,
             record_turn,
+            # HU-003 A7: resuelve el episode_id activo para la atribución de
+            # costos del LLM (session.id + episode.id en el span gen_ai). La
+            # llama run_agent_turn detrás de un workflow.patched gate.
+            get_active_episode_id_activity,
             check_remarketing_eligibility,
             claim_conversation_routing,
             send_whatsapp_message_activity,
@@ -94,6 +104,9 @@ async def main() -> None:
             send_watchdog_template_activity,
             persist_watchdog_outcome_activity,
         ],
+        # OTel obs: passthrough opentelemetry en el sandbox del workflow
+        # (mismo motivo que en sales.py). Ver otel_workflow_runner.
+        workflow_runner=otel_workflow_runner(),
     )
 
     logger.info("🎯 Remarketing Agent En Vivo. Escuchando la cola exclusiva: '{}'", task_queue)

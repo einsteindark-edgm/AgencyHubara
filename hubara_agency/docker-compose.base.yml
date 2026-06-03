@@ -9,6 +9,13 @@
 #   1. Editar este archivo (cambios a infra fija) o `plugin.yaml` (workers).
 #   2. `python scripts/render-compose.py` → regenera `docker-compose.local.yml`.
 #   3. `docker compose -f docker-compose.local.yml up -d`.
+#
+# SigNoz (observabilidad, HU-003) — vendorizado en deploy/signoz/. Con `include`,
+# un solo `docker compose -f docker-compose.local.yml up` levanta TODO el entorno
+# (stack hubara + SigNoz). Los workers exportan OTLP al collector publicado en el
+# host (host.docker.internal:4317) — ver el env de los workers en plugin.yaml.
+include:
+  - deploy/signoz/docker/docker-compose.yaml
 
 services:
   # ── 1. Base de Datos ────────────────────────────────────────────────

@@ -13,6 +13,12 @@ dependencies = [
     "pydantic>=2.6,<3",
     "pydantic-settings>=2,<3",
     "tenacity>=8.2,<10",
+    # --- Observabilidad OTel (HU-002) ---
+    "opentelemetry-api>=1.27.0",
+    "opentelemetry-sdk>=1.27.0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.27.0",
+    # GenAI instrumentation → gen_ai.* semantic conventions estándar + métricas
+    "openlit>=1.0",
 ]
 
 [tool.uv.sources]

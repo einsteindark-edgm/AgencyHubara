@@ -44,6 +44,17 @@ with workflow.unsafe.imports_passed_through():
         _TOOL_OPTIONS,
     )
 
+    # HU-003 A7 — atribución de costos vía OTel baggage (ver `run_agent_turn`).
+    # `opentelemetry` es passthrough del sandbox (otel_workflow_runner()); estas
+    # ops (set_baggage/attach/detach) son puras de contextvars → R-DET safe.
+    import opentelemetry.baggage as _otel_baggage
+    import opentelemetry.context as _otel_context
+
+    from src.platform.constants import WHATSAPP_SESSION_PREFIX
+    from src.platform.observability.cost_attribution import (
+        get_active_episode_id_activity,
+    )
+
 
 @dataclass
 class PendingMessage:
@@ -177,6 +188,59 @@ def coalesce_pending(pending: list[PendingMessage]) -> PendingMessage:
 
 
 async def run_agent_turn(
+    session: SessionInput,
+    msg: PendingMessage,
+    fallback_plugin_context: list[str] | None = None,
+    episode_id: str | None = None,
+) -> TurnResult:
+    """Wrapper de atribución de costos (HU-003 A7) sobre `_run_agent_turn_impl`.
+
+    Setea `session.id` / `whatsapp.number` / `episode.id` como OTel **baggage**
+    durante TODO el turno. El `TracingInterceptor` de Temporal auto-propaga el
+    baggage a cada activity (incl. `llm_chat`), y el `BaggageSpanProcessor`
+    (registrado en `init_otel`) lo copia como atributos al span gen_ai de OpenLIT
+    → habilita `GROUP BY session.id, episode.id` sobre `gen_ai.usage.cost` en
+    SigNoz (sectorizar gasto por conversación / número de WhatsApp).
+
+    `episode_id` se resuelve per-turn vía `get_active_episode_id_activity`
+    (platform; las lecturas compartidas cruzan por platform, no cross-agente). La
+    llamada va detrás de `workflow.patched("cost-attribution-episode-v1")` para
+    ser replay-safe en los session workflows long-lived (histories previas al
+    deploy atribuyen sólo por número). Un caller puede pasar `episode_id`
+    explícito para saltear la activity (tests). R-DET: set_baggage/attach/detach
+    son ops puras de contextvars; con `OTEL_SDK_DISABLED` el baggage se setea
+    pero ningún processor lo lee.
+    """
+    if episode_id is None and workflow.patched("cost-attribution-episode-v1"):
+        # Resolver el episodio activo per-turn (read-only). Gated: los session
+        # workflows son long-lived; sin el gate, replay-ar turnos previos al
+        # deploy chocaría con NondeterminismError al ver este execute_activity
+        # nuevo. Las histories viejas toman el else → episode_id=None.
+        raw_episode_id = await workflow.execute_activity(
+            get_active_episode_id_activity,
+            session.session_id,
+            **_CONV_OPTIONS,  # type: ignore[arg-type]
+        )
+        episode_id = raw_episode_id or None
+
+    sid = session.session_id
+    num = (
+        sid[len(WHATSAPP_SESSION_PREFIX):]
+        if sid.startswith(WHATSAPP_SESSION_PREFIX)
+        else sid
+    )
+    ctx = _otel_baggage.set_baggage("session.id", sid)
+    ctx = _otel_baggage.set_baggage("whatsapp.number", num, context=ctx)
+    if episode_id:
+        ctx = _otel_baggage.set_baggage("episode.id", episode_id, context=ctx)
+    token = _otel_context.attach(ctx)
+    try:
+        return await _run_agent_turn_impl(session, msg, fallback_plugin_context)
+    finally:
+        _otel_context.detach(token)
+
+
+async def _run_agent_turn_impl(
     session: SessionInput,
     msg: PendingMessage,
     fallback_plugin_context: list[str] | None = None,

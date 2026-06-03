@@ -200,6 +200,14 @@ async def mock_bootstrap_sales_session_activity(input: SalesSessionInput) -> Ses
     )
 
 
+# HU-003 A7: run_agent_turn resuelve el episodio activo (detrás de
+# workflow.patched("cost-attribution-episode-v1")) para atribuir el costo del
+# LLM. Los fresh runs lo invocan, así que el worker de fixtures debe registrarlo.
+@activity.defn(name="get_active_episode_id")
+async def mock_get_active_episode_id(session_id: str) -> str:
+    return "ep_001"
+
+
 SALES_ACTIVITIES = [
     mock_build_prompt,
     mock_llm_chat,
@@ -210,6 +218,7 @@ SALES_ACTIVITIES = [
     mock_bootstrap_sales_session_activity,
     mock_start_or_signal_sales_workflow,
     mock_schedule_remarketing_workflow,
+    mock_get_active_episode_id,
 ]
 
 
@@ -227,6 +236,7 @@ REMARKETING_ACTIVITIES = [
     # workflow no invoca la activity (la identidad vive en `workspace/*.md`).
     mock_start_or_signal_sales_workflow,
     mock_schedule_remarketing_workflow,
+    mock_get_active_episode_id,
 ]
 
 

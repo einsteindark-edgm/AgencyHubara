@@ -1,0 +1,9 @@
+{
+  "_README": "HU-003 A7 — tarifas para que OpenLIT calcule gen_ai.usage.cost (costo USD por peticion LLM). promptPrice/completionPrice = USD POR 1000 TOKENS. Valores cargados = PRECIO DE LISTA PUBLICO (Jun 2026) — VERIFICAR contra tu contrato real (podes tener descuento por volumen). DeepSeek V4 Flash: input $0.14/1M (cache-miss), output $0.28/1M. Gemini 3.1 Flash-Lite Preview: input $0.25/1M, output $1.50/1M. NOTA cache: OpenLIT NO distingue tokens cacheados — usa promptPrice para TODO el input, asi que el costo de input usa la tarifa cache-MISS (leve sobreestimacion cuando hay cache hit). OpenLIT busca por nombre exacto y por la parte tras '/', asi que 'deepseek-v4-flash' cubre 'deepseek/deepseek-v4-flash' y 'litellm_proxy/deepseek-v4-flash'.",
+  "chat": {
+    "deepseek-v4-flash": { "promptPrice": 0.00014, "completionPrice": 0.00028 },
+    "deepseek/deepseek-v4-flash": { "promptPrice": 0.00014, "completionPrice": 0.00028 },
+    "gemini-backup": { "promptPrice": 0.00025, "completionPrice": 0.0015 },
+    "gemini-3.1-flash-lite-preview": { "promptPrice": 0.00025, "completionPrice": 0.0015 }
+  }
+}
