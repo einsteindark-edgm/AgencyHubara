@@ -36,14 +36,11 @@ interface Stage {
 export function AdsFunnel({ campaign }: Props) {
   const c = campaign;
 
-  // Datos requeridos para pintar el funnel completo. Si falta cualquiera,
-  // mostramos un empty state — preferimos ser honestos sobre los datos
-  // faltantes a renderizar barras con valor 0 que parecen reales.
-  if (
-    c.conversations === null ||
-    c.impressions === null ||
-    c.clicks === null
-  ) {
+  // Sin counts conversacionales no hay embudo honesto que pintar (el
+  // clasificador es la única fuente irreemplazable). Las impresiones/clics de
+  // Meta, en cambio, son opcionales: si faltan arrancamos el embudo en "Chats
+  // iniciados" (embudo WhatsApp-only) en vez de ocultarlo entero.
+  if (c.conversations === null) {
     return (
       <section className="ads-card">
         <header className="ads-card-h">
@@ -61,12 +58,11 @@ export function AdsFunnel({ campaign }: Props) {
             gap: 8,
             color: "var(--fg-faint)",
           }}
-          title="Pendiente: Meta Ads API (impresiones/clics) + clasificador conversacional"
+          title="Pendiente: clasificador conversacional"
         >
           <Icon.dataPending />
           <span style={{ fontSize: 13 }}>
-            Embudo pendiente — requiere integración Meta Ads + clasificador
-            conversacional
+            Embudo pendiente — requiere clasificador conversacional
           </span>
         </div>
       </section>
@@ -75,33 +71,50 @@ export function AdsFunnel({ campaign }: Props) {
 
   const won = c.conversations.ganado || 0;
   const totalConvos = totalConversations(c);
-  const pipeline =
-    (c.conversations.nuevo || 0) +
-    (c.conversations.activo || 0) +
-    (c.conversations.calificado || 0) +
-    (c.conversations.cotizado || 0);
+  // "En conversación" = todos los que respondieron (engaged) = total − sin
+  // respuesta. Incluir ganado/perdido (no solo el pipeline intermedio) mantiene
+  // el embudo MONOTÓNICO: cada etapa ⊇ la siguiente. Sino "Cotizados" podía
+  // superar a "En conversación" cuando hay más ganados que chats en pipeline,
+  // ensanchando una barra a mitad del embudo y mostrando un drop negativo.
+  const engaged = totalConvos - (c.conversations.no_reply || 0);
 
+  // Las 2 etapas Meta solo entran si AMBAS métricas existen. Si faltan, el
+  // embudo es WhatsApp-only (desde "Chats iniciados").
+  const hasMeta = c.impressions !== null && c.clicks !== null;
+  const metaStages: Stage[] = hasMeta
+    ? [
+        { key: "imp", label: "Impresiones",      value: c.impressions as number, icon: <AdsIcon.eye />,   color: "#5fa9ff" },
+        { key: "clk", label: "Clics al anuncio", value: c.clicks as number,      icon: <AdsIcon.click />, color: "#5fdcff" },
+      ]
+    : [];
   const stages: Stage[] = [
-    { key: "imp", label: "Impresiones",      value: c.impressions, icon: <AdsIcon.eye />,    color: "#5fa9ff" },
-    { key: "clk", label: "Clics al anuncio", value: c.clicks,      icon: <AdsIcon.click />,  color: "#5fdcff" },
+    ...metaStages,
     { key: "ini", label: "Chats iniciados",  value: c.started,     icon: <AdsIcon.msg />,    color: "#d68aff" },
-    { key: "act", label: "En conversación",  value: pipeline,      icon: <AdsIcon.users />,  color: "#ffb44a" },
+    { key: "act", label: "En conversación",  value: engaged,       icon: <AdsIcon.users />,  color: "#ffb44a" },
     { key: "cot", label: "Cotizados",        value: (c.conversations.cotizado || 0) + won, icon: <AdsIcon.dollar />, color: "#ff9f6a" },
     { key: "won", label: "Ganados (cliente)", value: won,          icon: <AdsIcon.trophy />, color: "#5be07b" },
   ];
 
   const max = stages[0].value || 1;
-  const overallConv = c.impressions > 0 ? won / c.impressions : 0;
+  // Conversión total: contra impresiones (si hay Meta) o contra chats
+  // iniciados (embudo WhatsApp-only).
+  const overallConv = max > 0 ? won / max : 0;
 
   return (
     <section className="ads-card">
       <header className="ads-card-h">
         <div>
           <h3>Embudo de conversión</h3>
-          <p>Del anuncio en Meta a cliente cerrado en WhatsApp</p>
+          <p>
+            {hasMeta
+              ? "Del anuncio en Meta a cliente cerrado en WhatsApp"
+              : "Del chat iniciado a cliente cerrado · impresiones/clics pendientes de Meta Ads"}
+          </p>
         </div>
         <span className="ads-card-meta">
-          {fmtPct(overallConv, 3)} conversión total · {fmtN(totalConvos)} chats
+          {fmtPct(overallConv, hasMeta ? 3 : 1)}{" "}
+          {hasMeta ? "conversión total" : "iniciados → ganados"} ·{" "}
+          {fmtN(totalConvos)} chats
         </span>
       </header>
       <div className="funnel">

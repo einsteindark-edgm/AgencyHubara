@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 
 import { mapBackendConversation } from "./api";
 import {
+  backendAdsDailyResponseSchema,
   backendAttributedConversationSchema,
   type BackendAttributedConversation,
 } from "./contracts";
@@ -26,6 +27,7 @@ const sample: BackendAttributedConversation = {
   name: null,
   city: null,
   value: 124500,
+  duration_ms: 4200000,
   llm_cost_usd: 0.0042,
   llm_tokens: 1930,
 };
@@ -60,6 +62,57 @@ describe("backendAttributedConversationSchema — costo LLM", () => {
       backendAttributedConversationSchema.parse({
         ...sample,
         llm_cost_usd: "0.0042",
+      }),
+    ).toThrow();
+  });
+});
+
+describe("mapBackendConversation — value + duración", () => {
+  it("mapea value (COP) y duration_ms → durationMs", () => {
+    const c = mapBackendConversation(sample);
+    expect(c.value).toBe(124500);
+    expect(c.durationMs).toBe(4200000);
+  });
+
+  it("conserva null en value/durationMs cuando el episodio no cerró venta", () => {
+    const c = mapBackendConversation({
+      ...sample,
+      value: null,
+      duration_ms: null,
+    });
+    expect(c.value).toBeNull();
+    expect(c.durationMs).toBeNull();
+  });
+});
+
+describe("backendAdsDailyResponseSchema — serie diaria", () => {
+  const okPoint = {
+    d: "21 may",
+    ganado: 2,
+    cotizado: 3,
+    calificado: 4,
+    activo: 5,
+    nuevo: 2,
+    no_reply: 8,
+    perdido: 1,
+  };
+
+  it("parsea una serie diaria válida", () => {
+    expect(() =>
+      backendAdsDailyResponseSchema.parse({
+        campaign_id: "AD_X",
+        days: 14,
+        series: [okPoint],
+      }),
+    ).not.toThrow();
+  });
+
+  it("rechaza un count no-entero (contract drift)", () => {
+    expect(() =>
+      backendAdsDailyResponseSchema.parse({
+        campaign_id: "AD_X",
+        days: 14,
+        series: [{ ...okPoint, ganado: "2" }],
       }),
     ).toThrow();
   });

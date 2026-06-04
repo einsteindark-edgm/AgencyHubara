@@ -7,13 +7,13 @@
  * WhatsApp). Los responses se validan en el boundary con Zod y se mapean
  * al modelo de dominio.
  *
- * `useDailySeries` sigue retornando mock — la serie diaria aún no está
- * implementada server-side y requiere un rollup temporal que no es parte
- * del scope de esta integración inicial.
+ * `useDailySeries` también hace fetch real (`/api/chats/ads/campaigns/{id}/daily`):
+ * el backend bucketea los episodios por día (America/Bogota) y los segmenta por
+ * estado, devolviendo una serie continua de 14 días.
  *
- * Datos faltantes (spend, revenue, status Meta, name de cliente, etc.)
- * viajan como `null` y los components los pintan con "—" + icono
- * `dataPending`.
+ * Datos faltantes (spend, impressions/clicks de Meta, status Meta, name de
+ * cliente, etc.) viajan como `null` y los components los pintan con "—" + icono
+ * `dataPending`. `revenue`/`avg_ticket` (orders) y el costo LLM ya se pueblan.
  */
 
 import { useQuery } from "@tanstack/react-query";
@@ -22,13 +22,13 @@ import { apiClient } from "@/shared/api";
 
 import {
   backendAdsCampaignsResponseSchema,
+  backendAdsDailyResponseSchema,
   backendAttributedConversationsResponseSchema,
   type BackendAdsCampaign,
   type BackendAttributedConversation,
 } from "./contracts";
 import { adsCampaignKeys } from "./keys";
 import {
-  DAILY_SERIES,
   type AdsCampaign,
   type AdsDailyPoint,
   type AdsState,
@@ -155,6 +155,9 @@ function mapBackendCampaign(b: BackendAdsCampaign): AdsCampaign {
     conversations: b.conversations,
     revenue: b.revenue,
     avgTicket: b.avg_ticket,
+    llmCostUsd: b.llm_cost_usd,
+    llmTokens: b.llm_tokens,
+    avgEpisodeDurationMs: b.avg_episode_duration_ms,
     firstResp: b.first_resp,
     tendency: asCampaignTendency(b.tendency),
   };
@@ -177,6 +180,7 @@ export function mapBackendConversation(
     value: b.value,
     lastMsg: formatRelativeMs(b.last_msg_at_ms),
     ad: b.ad_headline,
+    durationMs: b.duration_ms,
     llmCostUsd: b.llm_cost_usd,
     llmTokens: b.llm_tokens,
   };
@@ -184,16 +188,27 @@ export function mapBackendConversation(
 
 /* ── Hooks públicos ──────────────────────────────────────────────────────── */
 
+/** `?days=N` cuando hay ventana acotada; "" para `total` (sin filtro). */
+function daysQuery(days: number | null): string {
+  return days != null ? `?days=${days}` : "";
+}
+
 /**
  * Lista todas las campañas detectadas en el vault. Backend agrupa por
  * `origin.source_id`. Empty state (vault vacío o sin sesiones de ad/post)
  * → `[]`, el caller muestra "Sin campañas para mostrar".
+ *
+ * `days` acota la ventana (filtro por fecha empujado al backend): la
+ * agregación solo procesa episodios en rango → el cómputo escala con la
+ * ventana, no con todo el historial. `null` = todo.
  */
-export function useAdsCampaigns() {
+export function useAdsCampaigns(days: number | null = null) {
   return useQuery<AdsCampaign[]>({
-    queryKey: adsCampaignKeys.list(),
+    queryKey: adsCampaignKeys.list(days),
     queryFn: async () => {
-      const raw = await apiClient.get<unknown>("/api/chats/ads/campaigns");
+      const raw = await apiClient.get<unknown>(
+        `/api/chats/ads/campaigns${daysQuery(days)}`,
+      );
       const parsed = backendAdsCampaignsResponseSchema.parse(raw);
       return parsed.campaigns.map(mapBackendCampaign);
     },
@@ -204,14 +219,17 @@ export function useAdsCampaigns() {
 /**
  * Conversaciones atribuidas a una campaña específica. El backend filtra
  * por `origin.source_id == campaignId`. Si la campaña no existe →
- * `conversations: []`.
+ * `conversations: []`. `days` acota la ventana (igual que `useAdsCampaigns`).
  */
-export function useAttributedConversations(campaignId: string) {
+export function useAttributedConversations(
+  campaignId: string,
+  days: number | null = null,
+) {
   return useQuery<AttributedConversation[]>({
-    queryKey: adsCampaignKeys.attributed(campaignId),
+    queryKey: adsCampaignKeys.attributed(campaignId, days),
     queryFn: async () => {
       const raw = await apiClient.get<unknown>(
-        `/api/chats/ads/campaigns/${encodeURIComponent(campaignId)}/conversations`,
+        `/api/chats/ads/campaigns/${encodeURIComponent(campaignId)}/conversations${daysQuery(days)}`,
       );
       const parsed =
         backendAttributedConversationsResponseSchema.parse(raw);
@@ -223,15 +241,37 @@ export function useAttributedConversations(campaignId: string) {
 }
 
 /**
- * Serie diaria (14 días) — SIGUE SIENDO MOCK. El backend aún no expone
- * un rollup temporal de las sesiones; cuando se agregue, este hook pasa
- * a un fetch + Zod parse análogo a los anteriores.
+ * Serie diaria — fetch real contra `/api/chats/ads/campaigns/{id}/daily`. El
+ * backend bucketea los episodios por día calendario (America/Bogota) y los
+ * segmenta por estado actual; devuelve una serie continua de `days` puntos
+ * (días sin actividad en 0). El shape de cada punto espeja `AdsDailyPoint`, así
+ * que el mapeo es directo tras el Zod parse.
+ *
+ * `days` es la ventana de la serie (el caller mapea el rango "total" al cap de
+ * 90 días — un gráfico no puede tener infinitas columnas).
  */
-export function useDailySeries(campaignId: string) {
+export function useDailySeries(campaignId: string, days = 14) {
   return useQuery<AdsDailyPoint[]>({
-    queryKey: adsCampaignKeys.daily(campaignId),
-    queryFn: async () => DAILY_SERIES,
-    staleTime: Infinity,
+    queryKey: adsCampaignKeys.daily(campaignId, days),
+    queryFn: async () => {
+      const raw = await apiClient.get<unknown>(
+        `/api/chats/ads/campaigns/${encodeURIComponent(campaignId)}/daily?days=${days}`,
+      );
+      const parsed = backendAdsDailyResponseSchema.parse(raw);
+      return parsed.series.map(
+        (p): AdsDailyPoint => ({
+          d: p.d,
+          ganado: p.ganado,
+          cotizado: p.cotizado,
+          calificado: p.calificado,
+          activo: p.activo,
+          nuevo: p.nuevo,
+          no_reply: p.no_reply,
+          perdido: p.perdido,
+        }),
+      );
+    },
+    staleTime: 30_000,
     enabled: Boolean(campaignId),
   });
 }

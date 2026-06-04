@@ -134,6 +134,12 @@ def _make_empty_episode(
         "closing_tag": None,
         "closing_motivo": None,
         "order_id": None,
+        # Total congelado de la orden (COP, major units) atribuida al episodio.
+        # Se setea junto al `order_id` en `attach_order_to_active_episode` — es
+        # el ingreso REAL de esta conversación, frozen al cierre (mismo patrón
+        # que `llm_usage`). None mientras el episodio no tenga venta registrada.
+        "order_total_cop": None,
+        "order_currency": None,
         "referral_snapshot": referral_snapshot,
         "msgs_count_at_start": msgs_count_at_start,
         "msgs_count_at_close": None,
@@ -286,12 +292,20 @@ def attach_order_to_active_episode(
     *,
     order_id: str,
     now_ms: int,
+    order_total_cop: int | None = None,
+    currency: str | None = None,
 ) -> dict[str, Any]:
-    """Anota `order_id` en el episodio activo. Mutates.
+    """Anota `order_id` (+ total congelado) en el episodio activo. Mutates.
 
     NO cierra el episodio — el cierre formal viene del
     `manage_conversation_tag(COMPRA_EXITOSA)` que el agente invoca justo
     después según el flow documentado en `workspace/TOOLS.md`.
+
+    `order_total_cop`/`currency` congelan el ingreso de la venta en el
+    episodio (major units COP). Es el dato de negocio que consume el
+    dashboard ads para atribuir `revenue` por campaña — frozen al cierre,
+    igual que `llm_usage`. `None` preserva el valor previo (no lo pisa con
+    None si un caller no lo provee).
 
     Defensivo: si no hay episodio activo, crea uno (preferimos no perder
     la asociación venta↔episodio aunque haya un bug upstream que invoque
@@ -303,4 +317,8 @@ def attach_order_to_active_episode(
     if ep is None:
         ep = ensure_active_episode(metadata, now_ms=now_ms)
     ep["order_id"] = order_id
+    if order_total_cop is not None:
+        ep["order_total_cop"] = order_total_cop
+    if currency is not None:
+        ep["order_currency"] = currency
     return ep

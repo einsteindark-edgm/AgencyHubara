@@ -37,3 +37,15 @@ export function fmtUsd(n: number): string {
   if (n < 0.01) return "US$" + n.toFixed(4);
   return "US$" + n.toFixed(2);
 }
+
+/** "1h 12m" / "45m" / "38s" — duración legible desde milisegundos. Para el
+ *  "tiempo" del embudo (duración de episodio). "—" si null/0/negativo. */
+export function fmtDuration(ms: number): string {
+  if (!ms || ms < 0) return "—";
+  const totalMin = Math.round(ms / 60000);
+  if (totalMin < 1) return Math.round(ms / 1000) + "s";
+  if (totalMin < 60) return totalMin + "m";
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  return m ? `${h}h ${m}m` : `${h}h`;
+}

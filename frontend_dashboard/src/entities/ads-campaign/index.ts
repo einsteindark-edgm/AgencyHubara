@@ -2,6 +2,7 @@ export type {
   AdsCampaign,
   AdsConversationCounts,
   AdsDailyPoint,
+  AdsDateRange,
   AdsState,
   AdsStateMeta,
   AttributedConversation,
@@ -10,11 +11,10 @@ export type {
   CampaignTendency,
 } from "./model";
 export {
+  ADS_DATE_RANGES,
   ADS_STATES,
   ADS_STATE_ORDER,
-  CAMPAIGNS,
-  ATTRIBUTED_CONVERSATIONS,
-  DAILY_SERIES,
+  rangeDays,
   totalConversations,
 } from "./model";
 export { adsCampaignKeys } from "./keys";
