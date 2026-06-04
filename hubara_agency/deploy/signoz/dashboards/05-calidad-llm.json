@@ -1,6 +1,6 @@
 {
   "title": "Calidad del LLM — Asesor de Ventas",
-  "description": "Evaluación de calidad del agente de ventas (DeepEval → SigNoz). Adherencia al guion, estilo, no-alucinación, handoff y avance de conversión, sobre tráfico real. ⚠️ Verificar metric type en la UI tras la primera corrida del harness (las métricas gen_ai.eval.* nacen ahí).",
+  "description": "Evaluación de calidad del agente de ventas (DeepEval → SigNoz): adherencia al guion, estilo, no-alucinación, handoff y conversión. Las métricas gen_ai.eval.* nacen cuando corre el harness (worker sales_eval). Si un panel se ve vacío, ampliá el rango de tiempo.",
   "tags": [
     "hubara",
     "llm",
@@ -10,7 +10,7 @@
   ],
   "layout": [
     {
-      "i": "v-score-por-metrica",
+      "i": "v-score-metrica",
       "x": 0,
       "y": 0,
       "w": 6,
@@ -19,7 +19,7 @@
       "static": false
     },
     {
-      "i": "v-adherencia-guion",
+      "i": "v-conteo-veredicto",
       "x": 6,
       "y": 0,
       "w": 6,
@@ -37,7 +37,7 @@
       "static": false
     },
     {
-      "i": "v-passrate",
+      "i": "v-candidatas",
       "x": 6,
       "y": 4,
       "w": 6,
@@ -46,17 +46,8 @@
       "static": false
     },
     {
-      "i": "v-candidatas",
-      "x": 0,
-      "y": 8,
-      "w": 6,
-      "h": 4,
-      "moved": false,
-      "static": false
-    },
-    {
       "i": "v-costo-juez",
-      "x": 6,
+      "x": 0,
       "y": 8,
       "w": 6,
       "h": 4,
@@ -66,38 +57,39 @@
   ],
   "widgets": [
     {
-      "id": "v-score-por-metrica",
-      "title": "Score promedio por métrica",
-      "description": "Promedio de gen_ai.eval.score agrupado por métrica de calidad en el tiempo.",
+      "id": "v-score-metrica",
+      "title": "Score promedio por métrica de calidad",
+      "description": "Promedio del score (0..1) por métrica. A=sum, B=count, F1=A/B.",
       "isStacked": false,
       "nullZeroValues": "zero",
       "opacity": "1",
-      "panelTypes": "graph",
+      "panelTypes": "table",
       "query": {
         "queryType": "builder",
         "builder": {
           "queryData": [
             {
-              "dataSource": "metrics",
               "queryName": "A",
-              "aggregateOperator": "avg",
+              "dataSource": "metrics",
+              "aggregateOperator": "latest",
               "aggregateAttribute": {
-                "key": "gen_ai.eval.score",
+                "key": "gen_ai.eval.score.sum",
                 "dataType": "float64",
-                "type": "Histogram",
+                "type": "Sum",
                 "isColumn": true,
                 "isJSON": false,
-                "id": "gen_ai.eval.score--float64--Histogram--true"
+                "id": "gen_ai.eval.score.sum--float64--Sum--true"
               },
-              "timeAggregation": "avg",
-              "spaceAggregation": "avg",
+              "temporality": "Cumulative",
+              "timeAggregation": "latest",
+              "spaceAggregation": "sum",
               "functions": [],
               "filters": {
                 "op": "AND",
                 "items": []
               },
               "expression": "A",
-              "disabled": false,
+              "disabled": true,
               "stepInterval": 60,
               "having": [],
               "limit": null,
@@ -112,161 +104,57 @@
                   "id": "metric.name--string--tag--false"
                 }
               ],
-              "legend": "{{metric.name}}",
-              "reduceTo": "avg"
-            }
-          ],
-          "queryFormulas": []
-        },
-        "promql": [
-          {
-            "name": "A",
-            "query": "",
-            "legend": "",
-            "disabled": false
-          }
-        ],
-        "clickhouse_sql": [
-          {
-            "name": "A",
-            "query": "",
-            "legend": "",
-            "disabled": false
-          }
-        ],
-        "id": "v-score-por-metrica"
-      },
-      "timePreferance": "GLOBAL_TIME",
-      "softMax": 0,
-      "softMin": 0,
-      "selectedLogFields": [],
-      "selectedTracesFields": []
-    },
-    {
-      "id": "v-adherencia-guion",
-      "title": "Adherencia al guion (promedio)",
-      "description": "Score promedio de la métrica central script_adherence.",
-      "isStacked": false,
-      "nullZeroValues": "zero",
-      "opacity": "1",
-      "panelTypes": "value",
-      "query": {
-        "queryType": "builder",
-        "builder": {
-          "queryData": [
-            {
-              "dataSource": "metrics",
-              "queryName": "A",
-              "aggregateOperator": "avg",
-              "aggregateAttribute": {
-                "key": "gen_ai.eval.score",
-                "dataType": "float64",
-                "type": "Histogram",
-                "isColumn": true,
-                "isJSON": false,
-                "id": "gen_ai.eval.score--float64--Histogram--true"
-              },
-              "timeAggregation": "avg",
-              "spaceAggregation": "avg",
-              "functions": [],
-              "filters": {
-                "op": "AND",
-                "items": [
-                  {
-                    "id": "f-metric.name-0",
-                    "key": {
-                      "key": "metric.name",
-                      "dataType": "string",
-                      "type": "tag",
-                      "isColumn": false,
-                      "isJSON": false,
-                      "id": "metric.name--string--tag--false"
-                    },
-                    "op": "=",
-                    "value": "script_adherence"
-                  }
-                ]
-              },
-              "expression": "A",
-              "disabled": false,
-              "stepInterval": 60,
-              "having": [],
-              "limit": null,
-              "orderBy": [],
-              "groupBy": [],
               "legend": "",
-              "reduceTo": "avg"
-            }
-          ],
-          "queryFormulas": []
-        },
-        "promql": [
-          {
-            "name": "A",
-            "query": "",
-            "legend": "",
-            "disabled": false
-          }
-        ],
-        "clickhouse_sql": [
-          {
-            "name": "A",
-            "query": "",
-            "legend": "",
-            "disabled": false
-          }
-        ],
-        "id": "v-adherencia-guion"
-      },
-      "timePreferance": "GLOBAL_TIME",
-      "softMax": 0,
-      "softMin": 0,
-      "selectedLogFields": [],
-      "selectedTracesFields": []
-    },
-    {
-      "id": "v-score-conversacion",
-      "title": "Score global por conversación",
-      "description": "Promedio de gen_ai.eval.conversation (score agregado por conversación).",
-      "isStacked": false,
-      "nullZeroValues": "zero",
-      "opacity": "1",
-      "panelTypes": "graph",
-      "query": {
-        "queryType": "builder",
-        "builder": {
-          "queryData": [
+              "reduceTo": "last"
+            },
             {
+              "queryName": "B",
               "dataSource": "metrics",
-              "queryName": "A",
-              "aggregateOperator": "avg",
+              "aggregateOperator": "latest",
               "aggregateAttribute": {
-                "key": "gen_ai.eval.conversation",
+                "key": "gen_ai.eval.score.count",
                 "dataType": "float64",
-                "type": "Histogram",
+                "type": "Sum",
                 "isColumn": true,
                 "isJSON": false,
-                "id": "gen_ai.eval.conversation--float64--Histogram--true"
+                "id": "gen_ai.eval.score.count--float64--Sum--true"
               },
-              "timeAggregation": "avg",
-              "spaceAggregation": "avg",
+              "temporality": "Cumulative",
+              "timeAggregation": "latest",
+              "spaceAggregation": "sum",
               "functions": [],
               "filters": {
                 "op": "AND",
                 "items": []
               },
-              "expression": "A",
-              "disabled": false,
+              "expression": "B",
+              "disabled": true,
               "stepInterval": 60,
               "having": [],
               "limit": null,
               "orderBy": [],
-              "groupBy": [],
-              "legend": "score promedio",
-              "reduceTo": "avg"
+              "groupBy": [
+                {
+                  "key": "metric.name",
+                  "dataType": "string",
+                  "type": "tag",
+                  "isColumn": false,
+                  "isJSON": false,
+                  "id": "metric.name--string--tag--false"
+                }
+              ],
+              "legend": "",
+              "reduceTo": "last"
             }
           ],
-          "queryFormulas": []
+          "queryFormulas": [
+            {
+              "queryName": "F1",
+              "expression": "A/B",
+              "legend": "{{metric.name}}",
+              "disabled": false
+            }
+          ]
         },
         "promql": [
           {
@@ -284,18 +172,18 @@
             "disabled": false
           }
         ],
-        "id": "v-score-conversacion"
+        "id": "v-score-metrica"
       },
       "timePreferance": "GLOBAL_TIME",
-      "softMax": 0,
+      "softMax": 1,
       "softMin": 0,
       "selectedLogFields": [],
       "selectedTracesFields": []
     },
     {
-      "id": "v-passrate",
-      "title": "Conteo por veredicto y métrica",
-      "description": "Cantidad de evaluaciones pass/fail por métrica (pass rate).",
+      "id": "v-conteo-veredicto",
+      "title": "Evaluaciones por métrica y veredicto",
+      "description": "Cantidad de evals pass/fail por métrica (pass rate).",
       "isStacked": false,
       "nullZeroValues": "zero",
       "opacity": "1",
@@ -305,19 +193,20 @@
         "builder": {
           "queryData": [
             {
-              "dataSource": "metrics",
               "queryName": "A",
-              "aggregateOperator": "count",
+              "dataSource": "metrics",
+              "aggregateOperator": "latest",
               "aggregateAttribute": {
-                "key": "gen_ai.eval.score",
+                "key": "gen_ai.eval.score.count",
                 "dataType": "float64",
-                "type": "Histogram",
+                "type": "Sum",
                 "isColumn": true,
                 "isJSON": false,
-                "id": "gen_ai.eval.score--float64--Histogram--true"
+                "id": "gen_ai.eval.score.count--float64--Sum--true"
               },
-              "timeAggregation": "count",
-              "spaceAggregation": "count",
+              "temporality": "Cumulative",
+              "timeAggregation": "latest",
+              "spaceAggregation": "sum",
               "functions": [],
               "filters": {
                 "op": "AND",
@@ -347,8 +236,8 @@
                   "id": "verdict--string--tag--false"
                 }
               ],
-              "legend": "{{metric.name}} {{verdict}}",
-              "reduceTo": "sum"
+              "legend": "{{metric.name}} · {{verdict}}",
+              "reduceTo": "last"
             }
           ],
           "queryFormulas": []
@@ -369,18 +258,18 @@
             "disabled": false
           }
         ],
-        "id": "v-passrate"
+        "id": "v-conteo-veredicto"
       },
       "timePreferance": "GLOBAL_TIME",
-      "softMax": 0,
+      "softMax": 1,
       "softMin": 0,
       "selectedLogFields": [],
       "selectedTracesFields": []
     },
     {
-      "id": "v-candidatas",
-      "title": "Conversaciones candidatas a golden",
-      "description": "Conversaciones que cayeron bajo el umbral (candidate=true) → auto-curación.",
+      "id": "v-score-conversacion",
+      "title": "Score promedio por conversación",
+      "description": "Promedio agregado por conversación (gen_ai.eval.conversation).",
       "isStacked": false,
       "nullZeroValues": "zero",
       "opacity": "1",
@@ -390,37 +279,130 @@
         "builder": {
           "queryData": [
             {
-              "dataSource": "metrics",
               "queryName": "A",
-              "aggregateOperator": "count",
+              "dataSource": "metrics",
+              "aggregateOperator": "latest",
               "aggregateAttribute": {
-                "key": "gen_ai.eval.conversation",
+                "key": "gen_ai.eval.conversation.sum",
                 "dataType": "float64",
-                "type": "Histogram",
+                "type": "Sum",
                 "isColumn": true,
                 "isJSON": false,
-                "id": "gen_ai.eval.conversation--float64--Histogram--true"
+                "id": "gen_ai.eval.conversation.sum--float64--Sum--true"
               },
-              "timeAggregation": "count",
-              "spaceAggregation": "count",
+              "temporality": "Cumulative",
+              "timeAggregation": "latest",
+              "spaceAggregation": "sum",
               "functions": [],
               "filters": {
                 "op": "AND",
-                "items": [
-                  {
-                    "id": "f-candidate-0",
-                    "key": {
-                      "key": "candidate",
-                      "dataType": "string",
-                      "type": "tag",
-                      "isColumn": false,
-                      "isJSON": false,
-                      "id": "candidate--string--tag--false"
-                    },
-                    "op": "=",
-                    "value": "true"
-                  }
-                ]
+                "items": []
+              },
+              "expression": "A",
+              "disabled": true,
+              "stepInterval": 60,
+              "having": [],
+              "limit": null,
+              "orderBy": [],
+              "groupBy": [],
+              "legend": "",
+              "reduceTo": "last"
+            },
+            {
+              "queryName": "B",
+              "dataSource": "metrics",
+              "aggregateOperator": "latest",
+              "aggregateAttribute": {
+                "key": "gen_ai.eval.conversation.count",
+                "dataType": "float64",
+                "type": "Sum",
+                "isColumn": true,
+                "isJSON": false,
+                "id": "gen_ai.eval.conversation.count--float64--Sum--true"
+              },
+              "temporality": "Cumulative",
+              "timeAggregation": "latest",
+              "spaceAggregation": "sum",
+              "functions": [],
+              "filters": {
+                "op": "AND",
+                "items": []
+              },
+              "expression": "B",
+              "disabled": true,
+              "stepInterval": 60,
+              "having": [],
+              "limit": null,
+              "orderBy": [],
+              "groupBy": [],
+              "legend": "",
+              "reduceTo": "last"
+            }
+          ],
+          "queryFormulas": [
+            {
+              "queryName": "F1",
+              "expression": "A/B",
+              "legend": "score promedio",
+              "disabled": false
+            }
+          ]
+        },
+        "promql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "clickhouse_sql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "id": "v-score-conversacion"
+      },
+      "timePreferance": "GLOBAL_TIME",
+      "softMax": 1,
+      "softMin": 0,
+      "selectedLogFields": [],
+      "selectedTracesFields": []
+    },
+    {
+      "id": "v-candidatas",
+      "title": "Conversaciones evaluadas (por candidato a golden)",
+      "description": "Conteo de conversaciones; candidate=true → fueron a auto-curación.",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "table",
+      "query": {
+        "queryType": "builder",
+        "builder": {
+          "queryData": [
+            {
+              "queryName": "A",
+              "dataSource": "metrics",
+              "aggregateOperator": "latest",
+              "aggregateAttribute": {
+                "key": "gen_ai.eval.conversation.count",
+                "dataType": "float64",
+                "type": "Sum",
+                "isColumn": true,
+                "isJSON": false,
+                "id": "gen_ai.eval.conversation.count--float64--Sum--true"
+              },
+              "temporality": "Cumulative",
+              "timeAggregation": "latest",
+              "spaceAggregation": "sum",
+              "functions": [],
+              "filters": {
+                "op": "AND",
+                "items": []
               },
               "expression": "A",
               "disabled": false,
@@ -428,9 +410,18 @@
               "having": [],
               "limit": null,
               "orderBy": [],
-              "groupBy": [],
-              "legend": "",
-              "reduceTo": "sum"
+              "groupBy": [
+                {
+                  "key": "candidate",
+                  "dataType": "string",
+                  "type": "tag",
+                  "isColumn": false,
+                  "isJSON": false,
+                  "id": "candidate--string--tag--false"
+                }
+              ],
+              "legend": "candidate={{candidate}}",
+              "reduceTo": "last"
             }
           ],
           "queryFormulas": []
@@ -454,7 +445,7 @@
         "id": "v-candidatas"
       },
       "timePreferance": "GLOBAL_TIME",
-      "softMax": 0,
+      "softMax": 1,
       "softMin": 0,
       "selectedLogFields": [],
       "selectedTracesFields": []
@@ -462,7 +453,7 @@
     {
       "id": "v-costo-juez",
       "title": "Costo del juez (USD)",
-      "description": "Costo LLM del servicio sales-eval-agent (el juez también se mide).",
+      "description": "Costo LLM del servicio sales-eval-agent (el juez también se instrumenta).",
       "isStacked": false,
       "nullZeroValues": "zero",
       "opacity": "1",
@@ -472,8 +463,8 @@
         "builder": {
           "queryData": [
             {
-              "dataSource": "traces",
               "queryName": "A",
+              "dataSource": "traces",
               "aggregateOperator": "sum",
               "aggregateAttribute": {
                 "key": "gen_ai.usage.cost",
@@ -511,7 +502,7 @@
               "limit": null,
               "orderBy": [],
               "groupBy": [],
-              "legend": "",
+              "legend": "costo juez",
               "reduceTo": "sum"
             }
           ],
@@ -536,7 +527,7 @@
         "id": "v-costo-juez"
       },
       "timePreferance": "GLOBAL_TIME",
-      "softMax": 0,
+      "softMax": 1,
       "softMin": 0,
       "selectedLogFields": [],
       "selectedTracesFields": []
