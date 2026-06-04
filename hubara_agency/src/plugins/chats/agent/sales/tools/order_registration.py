@@ -277,6 +277,11 @@ class RegisterOrderTool(ToolBase):
                 data,
                 order_id=registered_record["order_id"],
                 now_ms=registered_record["registered_at_ms"],
+                # Congela el ingreso de la venta en el episodio (major units
+                # COP) — lo agrega `list_ads_campaigns` como `revenue` por
+                # campaña sin tener que consultar Medusa en read-time (R-DIP).
+                order_total_cop=total_cop,
+                currency=currency,
             )
         else:
             # Falla: NO sobrescribimos `registered_order` (preserva exitosos

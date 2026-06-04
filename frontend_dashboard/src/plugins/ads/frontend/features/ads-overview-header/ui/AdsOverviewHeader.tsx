@@ -13,8 +13,10 @@
 import type { ReactNode } from "react";
 
 import {
+  ADS_DATE_RANGES,
   totalConversations,
   type AdsCampaign,
+  type AdsDateRange,
 } from "@/entities/ads-campaign";
 import { Icon } from "@/shared/ui";
 
@@ -23,15 +25,19 @@ import {
   fmtMoneyK,
   fmtN,
   fmtPct,
+  fmtUsd,
 } from "@plugins/ads/frontend/lib/format";
 import { AdsIcon } from "@plugins/ads/frontend/lib/icons";
 import { MissingField } from "@plugins/ads/frontend/lib/MissingField";
 
 interface Props {
   campaign: AdsCampaign;
+  /** Ventana temporal seleccionada (filtro por fecha, controlado por la Page). */
+  range: AdsDateRange;
+  onRangeChange: (r: AdsDateRange) => void;
 }
 
-export function AdsOverviewHeader({ campaign }: Props) {
+export function AdsOverviewHeader({ campaign, range, onRangeChange }: Props) {
   const total = totalConversations(campaign);
   const won = campaign.conversations?.ganado ?? null;
 
@@ -100,10 +106,15 @@ export function AdsOverviewHeader({ campaign }: Props) {
         </div>
         <div className="ads-head-actions">
           <div className="ads-range-seg">
-            <button>7d</button>
-            <button className="on">14d</button>
-            <button>30d</button>
-            <button>Total</button>
+            {ADS_DATE_RANGES.map((r) => (
+              <button
+                key={r.key}
+                className={range === r.key ? "on" : ""}
+                onClick={() => onRangeChange(r.key)}
+              >
+                {r.label}
+              </button>
+            ))}
           </div>
           <button className="insp-button">
             <Icon.refresh />
@@ -116,7 +127,9 @@ export function AdsOverviewHeader({ campaign }: Props) {
         </div>
       </div>
 
-      <div className="ads-kpis">
+      {/* 7 KPIs — override inline del grid (la clase base es repeat(6,1fr) y
+          el 7º caería solo en una 2ª fila). */}
+      <div className="ads-kpis" style={{ gridTemplateColumns: "repeat(7, 1fr)" }}>
         <Kpi
           hero
           tone="green"
@@ -213,6 +226,21 @@ export function AdsOverviewHeader({ campaign }: Props) {
                 <MissingField /> de {total} chats
               </>
             )
+          }
+        />
+        <Kpi
+          label="Costo LLM"
+          value={
+            campaign.llmCostUsd !== null ? (
+              fmtUsd(campaign.llmCostUsd)
+            ) : (
+              <MissingField withIcon />
+            )
+          }
+          sub={
+            campaign.llmTokens !== null
+              ? `${fmtN(campaign.llmTokens)} tokens`
+              : "— tokens"
           }
         />
       </div>

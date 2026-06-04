@@ -14,11 +14,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from src.plugins.chats.agent.sales.use_cases.list_ads_campaigns import (
     AdsAttributedConversation,
     AdsCampaignSummary,
     list_ads_campaigns,
     list_attributed_conversations,
+    list_daily_series,
 )
 
 
@@ -1059,3 +1062,373 @@ def test_campaign_with_zero_classifiable_sessions_has_empty_counts(
     # No mensajes en JSONL + sin tag → nuevo
     assert counts["nuevo"] == 1
     assert sum(counts.values()) == 1
+
+
+# ---------------------------------------------------------------------------
+# Agregados de negocio: revenue, costo LLM, duración + serie diaria
+# ---------------------------------------------------------------------------
+
+
+def _ep(
+    episode_id: str,
+    *,
+    started_at_ms: int,
+    closed_at_ms: int | None = None,
+    order_id: str | None = None,
+    order_total_cop: int | None = None,
+    closing_tag: str | None = None,
+    llm_cost_usd: float | None = None,
+    llm_tokens: int | None = None,
+) -> dict:
+    """Construye un episodio con shape de `episode_lifecycle._make_empty_episode`.
+    `referral_snapshot=None` → la atribución cae al `origin` de la sesión."""
+    ep: dict = {
+        "episode_id": episode_id,
+        "started_at_ms": started_at_ms,
+        "started_inbound_message_id": None,
+        "closed_at_ms": closed_at_ms,
+        "closing_tag": closing_tag,
+        "closing_motivo": None,
+        "order_id": order_id,
+        "order_total_cop": order_total_cop,
+        "order_currency": "COP" if order_total_cop is not None else None,
+        "referral_snapshot": None,
+        "msgs_count_at_start": None,
+        "msgs_count_at_close": None,
+    }
+    if llm_cost_usd is not None or llm_tokens is not None:
+        ep["llm_usage"] = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": llm_tokens or 0,
+            "cost_usd": llm_cost_usd if llm_cost_usd is not None else 0.0,
+        }
+    return ep
+
+
+def _write_episodic_session(
+    vault: Path,
+    *,
+    phone: str,
+    source_id: str,
+    episodes: list[dict],
+    channel: str = "ad",
+    headline: str = "Velas",
+    registered_order: dict | None = None,
+    first_seen_ms: int = 1714312400000,
+) -> Path:
+    """Crea wa_<phone>/metadata.json con origin (ad/source_id) + episodes[]."""
+    session_dir = vault / f"wa_{phone}"
+    session_dir.mkdir(parents=True, exist_ok=True)
+    metadata: dict = {
+        "origin": {
+            "channel": channel,
+            "first_seen_ms": first_seen_ms,
+            "first_inbound_message_id": f"wamid.{phone}",
+            "headline": headline,
+            "source_id": source_id,
+        },
+        "active_route": "ventas",
+        "episodes": episodes,
+    }
+    if registered_order is not None:
+        metadata["registered_order"] = registered_order
+    (session_dir / "metadata.json").write_text(
+        json.dumps(metadata, indent=2), encoding="utf-8"
+    )
+    return session_dir
+
+
+def _only(campaigns: list[AdsCampaignSummary], camp_id: str) -> AdsCampaignSummary:
+    by_id = {c.id: c for c in campaigns}
+    assert camp_id in by_id, f"{camp_id} no encontrada en {list(by_id)}"
+    return by_id[camp_id]
+
+
+def test_aggregates_llm_cost_and_tokens_per_campaign(_isolate_vault_dir: Path):
+    """`llm_cost_usd`/`llm_tokens` suman `episode.llm_usage` de todos los
+    episodios del bucket."""
+    _write_episodic_session(
+        _isolate_vault_dir,
+        phone="111",
+        source_id="AD_X",
+        episodes=[
+            _ep("ep_001", started_at_ms=1, closed_at_ms=2, llm_cost_usd=0.002, llm_tokens=1000),
+            _ep("ep_002", started_at_ms=3, llm_cost_usd=0.001, llm_tokens=500),
+        ],
+    )
+    camp = _only(list_ads_campaigns(_isolate_vault_dir), "AD_X")
+    assert camp.llm_cost_usd == pytest.approx(0.003)
+    assert camp.llm_tokens == 1500
+
+
+def test_campaign_without_llm_usage_has_none(_isolate_vault_dir: Path):
+    """Si ningún episodio acumuló uso LLM → None (distinto de 0)."""
+    _write_episodic_session(
+        _isolate_vault_dir,
+        phone="111",
+        source_id="AD_X",
+        episodes=[_ep("ep_001", started_at_ms=1, closed_at_ms=2)],
+    )
+    camp = _only(list_ads_campaigns(_isolate_vault_dir), "AD_X")
+    assert camp.llm_cost_usd is None
+    assert camp.llm_tokens is None
+
+
+def test_aggregates_revenue_from_frozen_episode_total(_isolate_vault_dir: Path):
+    """`revenue` suma `episode.order_total_cop`; `avg_ticket` = revenue / nº de
+    episodios que aportaron ingreso."""
+    _write_episodic_session(
+        _isolate_vault_dir,
+        phone="111",
+        source_id="AD_X",
+        episodes=[
+            _ep("ep_001", started_at_ms=1, closed_at_ms=2, order_id="o1", order_total_cop=198000),
+            _ep("ep_002", started_at_ms=3, closed_at_ms=4, order_id="o2", order_total_cop=102000),
+        ],
+    )
+    camp = _only(list_ads_campaigns(_isolate_vault_dir), "AD_X")
+    assert camp.revenue == 300000
+    assert camp.avg_ticket == 150000
+
+
+def test_revenue_backfills_from_registered_order(_isolate_vault_dir: Path):
+    """Episodio ganado SIN `order_total_cop` (venta previa al freeze) →
+    backfill desde `registered_order.total_cop` por order_id."""
+    _write_episodic_session(
+        _isolate_vault_dir,
+        phone="111",
+        source_id="AD_X",
+        episodes=[_ep("ep_001", started_at_ms=1, closed_at_ms=2, order_id="ORDER_OLD")],
+        registered_order={
+            "order_id": "ORDER_OLD",
+            "total_cop": 250000,
+            "success": True,
+        },
+    )
+    camp = _only(list_ads_campaigns(_isolate_vault_dir), "AD_X")
+    assert camp.revenue == 250000
+
+
+def test_campaign_without_sales_has_none_revenue(_isolate_vault_dir: Path):
+    """Sin ventas (episodio rechazado) → revenue/avg_ticket None."""
+    _write_episodic_session(
+        _isolate_vault_dir,
+        phone="111",
+        source_id="AD_X",
+        episodes=[
+            _ep("ep_001", started_at_ms=1, closed_at_ms=2, closing_tag="RECHAZO"),
+        ],
+    )
+    camp = _only(list_ads_campaigns(_isolate_vault_dir), "AD_X")
+    assert camp.revenue is None
+    assert camp.avg_ticket is None
+
+
+def test_avg_episode_duration_over_closed_episodes(_isolate_vault_dir: Path):
+    """`avg_episode_duration_ms` promedia (closed−started) de los episodios
+    CERRADOS; el activo (closed=None) se ignora."""
+    _write_episodic_session(
+        _isolate_vault_dir,
+        phone="111",
+        source_id="AD_X",
+        episodes=[
+            _ep("ep_001", started_at_ms=1000, closed_at_ms=4000),  # 3000
+            _ep("ep_002", started_at_ms=5000, closed_at_ms=6000),  # 1000
+            _ep("ep_003", started_at_ms=7000),  # activo → ignorado
+        ],
+    )
+    camp = _only(list_ads_campaigns(_isolate_vault_dir), "AD_X")
+    assert camp.avg_episode_duration_ms == 2000  # (3000 + 1000) / 2
+
+
+def test_attributed_conversation_value_and_duration(_isolate_vault_dir: Path):
+    """La conversación atribuida expone `value` (order_total_cop) +
+    `duration_ms` (closed−started) + costo LLM del episodio."""
+    _write_episodic_session(
+        _isolate_vault_dir,
+        phone="111",
+        source_id="AD_X",
+        episodes=[
+            _ep(
+                "ep_001",
+                started_at_ms=1000,
+                closed_at_ms=4000,
+                order_id="o1",
+                order_total_cop=198000,
+                llm_cost_usd=0.002,
+                llm_tokens=900,
+            ),
+        ],
+    )
+    convs = list_attributed_conversations(_isolate_vault_dir, "AD_X")
+    assert len(convs) == 1
+    c = convs[0]
+    assert c.value == 198000
+    assert c.duration_ms == 3000
+    assert c.llm_cost_usd == pytest.approx(0.002)
+    assert c.llm_tokens == 900
+
+
+def test_daily_series_buckets_by_day_and_is_continuous(_isolate_vault_dir: Path):
+    """La serie diaria bucketea episodios por día (Bogota), devuelve 14 puntos
+    continuos y segmenta por estado."""
+    day_ms = 24 * 60 * 60 * 1000
+    # Mediodía Bogota (07:00) — lejos de la frontera de medianoche.
+    now_ms = 1778889600000 + 12 * 60 * 60 * 1000
+    _write_episodic_session(
+        _isolate_vault_dir,
+        phone="111",
+        source_id="AD_X",
+        episodes=[
+            # ganado HOY
+            _ep("ep_001", started_at_ms=now_ms, closed_at_ms=now_ms, order_id="o1", order_total_cop=100000),
+            # cotizado hace 2 días
+            _ep("ep_002", started_at_ms=now_ms - 2 * day_ms, closed_at_ms=now_ms - 2 * day_ms, closing_tag="CONFIRMADO_SIN_DATOS"),
+        ],
+    )
+    series = list_daily_series(_isolate_vault_dir, "AD_X", days=14, now_ms=now_ms)
+    assert len(series) == 14
+    assert series[-1].ganado == 1  # hoy
+    assert series[-3].cotizado == 1  # hace 2 días
+    total = sum(
+        p.ganado + p.cotizado + p.calificado + p.activo + p.nuevo + p.no_reply + p.perdido
+        for p in series
+    )
+    assert total == 2
+    assert all(isinstance(p.d, str) and p.d for p in series)
+
+
+def test_daily_series_empty_campaign_is_continuous_zeros(_isolate_vault_dir: Path):
+    """Campaña inexistente → serie de 14 puntos en 0 (no rompe, sin huecos)."""
+    series = list_daily_series(
+        _isolate_vault_dir, "NOPE", days=14, now_ms=1778889600000
+    )
+    assert len(series) == 14
+    assert all(
+        p.ganado == 0 and p.cotizado == 0 and p.activo == 0 and p.nuevo == 0
+        for p in series
+    )
+
+
+def test_sessions_param_matches_fresh_scan(_isolate_vault_dir: Path):
+    """Pasar un scan pre-parseado (`sessions=`) da EXACTAMENTE el mismo
+    resultado que escanear fresco en las 3 funciones. Guarda del refactor de
+    performance: el cache compartido de la capa API no debe cambiar la data,
+    solo evitar releer el vault 3 veces por page-view."""
+    from src.plugins.chats.agent.sales.use_cases.list_ads_campaigns import (
+        scan_ad_sessions,
+    )
+
+    _write_episodic_session(
+        _isolate_vault_dir,
+        phone="111",
+        source_id="AD_X",
+        episodes=[
+            _ep("ep_001", started_at_ms=1, closed_at_ms=2, order_id="o1", order_total_cop=198000, llm_cost_usd=0.002, llm_tokens=900),
+            _ep("ep_002", started_at_ms=3),  # activo
+        ],
+    )
+    scan = scan_ad_sessions(_isolate_vault_dir)
+    now = 1779000000000
+
+    assert list_ads_campaigns(_isolate_vault_dir) == list_ads_campaigns(
+        _isolate_vault_dir, sessions=scan
+    )
+    assert list_attributed_conversations(
+        _isolate_vault_dir, "AD_X"
+    ) == list_attributed_conversations(_isolate_vault_dir, "AD_X", sessions=scan)
+    assert list_daily_series(
+        _isolate_vault_dir, "AD_X", days=7, now_ms=now
+    ) == list_daily_series(_isolate_vault_dir, "AD_X", days=7, now_ms=now, sessions=scan)
+
+
+# ---------------------------------------------------------------------------
+# Filtro por fecha (ventana) — empujado al backend
+# ---------------------------------------------------------------------------
+
+_DAY_MS = 24 * 60 * 60 * 1000
+_BASE_MS = 1779000000000
+
+
+def test_since_ms_filters_campaign_episodes_by_start_date(_isolate_vault_dir: Path):
+    """`since_ms` recorta la agregación: solo episodios iniciados en/después del
+    corte cuentan (revenue/started reflejan la ventana)."""
+    _write_episodic_session(
+        _isolate_vault_dir,
+        phone="111",
+        source_id="AD_X",
+        episodes=[
+            _ep("ep_old", started_at_ms=_BASE_MS - 60 * _DAY_MS, closed_at_ms=_BASE_MS - 60 * _DAY_MS + 1000, order_id="o1", order_total_cop=100000),
+            _ep("ep_new", started_at_ms=_BASE_MS - 5 * _DAY_MS, closed_at_ms=_BASE_MS - 5 * _DAY_MS + 1000, order_id="o2", order_total_cop=300000),
+        ],
+    )
+    full = _only(list_ads_campaigns(_isolate_vault_dir), "AD_X")
+    assert full.started == 2 and full.revenue == 400000
+
+    since = _BASE_MS - 30 * _DAY_MS
+    windowed = _only(list_ads_campaigns(_isolate_vault_dir, since_ms=since), "AD_X")
+    assert windowed.started == 1
+    assert windowed.revenue == 300000  # solo ep_new
+
+
+def test_since_ms_excludes_campaign_with_no_in_window_episodes(_isolate_vault_dir: Path):
+    """Campaña con TODA su actividad fuera de ventana no aparece."""
+    _write_episodic_session(
+        _isolate_vault_dir,
+        phone="111",
+        source_id="AD_OLD",
+        episodes=[_ep("ep_001", started_at_ms=_BASE_MS - 100 * _DAY_MS, closed_at_ms=_BASE_MS - 100 * _DAY_MS + 1000, order_id="o1", order_total_cop=100000)],
+    )
+    assert list_ads_campaigns(_isolate_vault_dir, since_ms=_BASE_MS - 30 * _DAY_MS) == []
+
+
+def test_since_ms_filters_conversations_by_start_date(_isolate_vault_dir: Path):
+    """`since_ms` deja solo las conversaciones iniciadas en la ventana."""
+    _write_episodic_session(
+        _isolate_vault_dir,
+        phone="111",
+        source_id="AD_X",
+        episodes=[
+            _ep("ep_old", started_at_ms=_BASE_MS - 60 * _DAY_MS, closed_at_ms=_BASE_MS - 60 * _DAY_MS + 1),
+            _ep("ep_new", started_at_ms=_BASE_MS - 5 * _DAY_MS, closed_at_ms=_BASE_MS - 5 * _DAY_MS + 1),
+        ],
+    )
+    convs = list_attributed_conversations(
+        _isolate_vault_dir, "AD_X", since_ms=_BASE_MS - 30 * _DAY_MS
+    )
+    assert len(convs) == 1
+    assert convs[0].episode_id == "ep_new"
+
+
+def test_scan_skips_sessions_untouched_since_via_mtime(_isolate_vault_dir: Path):
+    """`scan_ad_sessions(since_ms=...)` saltea (por mtime, sin parsear) sesiones
+    cuyo metadata.json no se tocó desde el corte — el skip que hace que el scan
+    escale con la ventana, no con todo el historial."""
+    import os
+
+    from src.plugins.chats.agent.sales.use_cases.list_ads_campaigns import (
+        scan_ad_sessions,
+    )
+
+    old = _write_episodic_session(
+        _isolate_vault_dir, phone="old", source_id="AD_OLD",
+        episodes=[_ep("ep_001", started_at_ms=_BASE_MS - 100 * _DAY_MS, closed_at_ms=_BASE_MS - 100 * _DAY_MS + 1)],
+    )
+    new = _write_episodic_session(
+        _isolate_vault_dir, phone="new", source_id="AD_NEW",
+        episodes=[_ep("ep_001", started_at_ms=_BASE_MS - 1 * _DAY_MS, closed_at_ms=_BASE_MS - 1 * _DAY_MS + 1)],
+    )
+    # Forzamos mtime real de los archivos: viejo = hace 100 días, nuevo = ayer.
+    old_s = (_BASE_MS - 100 * _DAY_MS) / 1000
+    new_s = (_BASE_MS - 1 * _DAY_MS) / 1000
+    os.utime(old / "metadata.json", (old_s, old_s))
+    os.utime(new / "metadata.json", (new_s, new_s))
+
+    since = _BASE_MS - 30 * _DAY_MS
+    scanned = scan_ad_sessions(_isolate_vault_dir, since_ms=since)
+    names = {sd.name for sd, _ in scanned}
+    assert names == {"wa_new"}  # wa_old salteado por mtime sin parsear
+
+    # Sin since_ms, escanea todas.
+    assert {sd.name for sd, _ in scan_ad_sessions(_isolate_vault_dir)} == {"wa_old", "wa_new"}

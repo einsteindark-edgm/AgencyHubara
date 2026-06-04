@@ -362,6 +362,33 @@ def test_attach_order_creates_episode_if_none_active():
     assert ep["order_id"] == "order_01"
 
 
+def test_attach_order_freezes_total_and_currency_on_episode():
+    """El total de la venta (COP) + currency se congelan en el episodio — es el
+    `revenue` que consume el dashboard ads sin consultar Medusa en read-time."""
+    metadata: dict = {}
+    ensure_active_episode(metadata, now_ms=_NOW_MS, inbound_message_id="wamid.A")
+    ep = attach_order_to_active_episode(
+        metadata,
+        order_id="order_01",
+        now_ms=_LATER_MS,
+        order_total_cop=198000,
+        currency="COP",
+    )
+    assert ep["order_total_cop"] == 198000
+    assert ep["order_currency"] == "COP"
+
+
+def test_attach_order_without_total_leaves_total_none():
+    """Backward-compat: si el caller no pasa total (callers viejos), el campo
+    queda en None (no se pisa con basura) — el episodio nace con None."""
+    metadata: dict = {}
+    ensure_active_episode(metadata, now_ms=_NOW_MS, inbound_message_id="wamid.A")
+    ep = attach_order_to_active_episode(metadata, order_id="order_01", now_ms=_LATER_MS)
+    assert ep["order_id"] == "order_01"
+    assert ep["order_total_cop"] is None
+    assert ep["order_currency"] is None
+
+
 # --- get_active_episode ---------------------------------------------------
 
 

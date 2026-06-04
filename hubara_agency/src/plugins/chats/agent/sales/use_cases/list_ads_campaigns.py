@@ -30,12 +30,13 @@ DEHA:
 """
 from __future__ import annotations
 
+import datetime
 import json
 import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 from src.plugins.chats.agent.sales.use_cases.classify_conversation_state import (
     VALID_STATES,
@@ -78,9 +79,23 @@ class AdsCampaignSummary:
     # Agrega los episodios de TODAS las sesiones del grupo.
     conversations: dict[str, int] | None = None
 
+    # --- Derivados del vault (negocio congelado por episodio) ---
+    # Ingreso atribuido (COP major units) — suma de `episode.order_total_cop`
+    # de los episodios ganados del bucket. None si ningún episodio del bucket
+    # tiene venta con total conocido.
+    revenue: float | None = None
+    # Ticket promedio (COP) = revenue / nº de episodios que aportaron ingreso.
+    avg_ticket: float | None = None
+    # Costo LLM agregado (USD) + tokens de TODOS los episodios del bucket —
+    # de `episode.llm_usage`. None si ningún episodio acumuló uso LLM.
+    llm_cost_usd: float | None = None
+    llm_tokens: int | None = None
+    # Duración media de los episodios CERRADOS del bucket (ms) — el "tiempo"
+    # del embudo. None si no hay episodios cerrados con timestamps válidos.
+    avg_episode_duration_ms: int | None = None
+
     # --- Faltantes (queda None — frontend marca visual) ---
     spend: float | None = None
-    revenue: float | None = None
     impressions: int | None = None
     reach: int | None = None
     clicks: int | None = None
@@ -92,7 +107,6 @@ class AdsCampaignSummary:
     creative_title: str | None = None
     template: str | None = None
     meta_campaign_id: str | None = None
-    avg_ticket: float | None = None
     first_resp: str | None = None
     tendency: str | None = None
     days_run: int | None = None
@@ -119,13 +133,42 @@ class AdsAttributedConversation:
     # --- Faltantes (queda None — frontend marca visual) ---
     name: str | None = None
     city: str | None = None
+    # Valor de la venta atribuida al episodio (COP major units) — de
+    # `episode.order_total_cop` congelado al cierre (backfill desde
+    # `registered_order` para ventas previas al freeze). None si el episodio
+    # no cerró venta o el total no es recuperable.
     value: float | None = None
+
+    # Duración del episodio (ms) = closed_at_ms - started_at_ms. None si el
+    # episodio sigue activo o no tiene timestamps válidos.
+    duration_ms: int | None = None
 
     # Costo LLM del episodio (USD, congelado a la tarifa del momento) + tokens
     # totales — de `episode.llm_usage` en metadata.json. None si el episodio aún
     # no acumuló uso (sesión legacy / episodio sin turnos LLM).
     llm_cost_usd: float | None = None
     llm_tokens: int | None = None
+
+
+@dataclass(frozen=True)
+class AdsDailySeriesPoint:
+    """Un día de la serie temporal de una campaña: chats **iniciados ese día**
+    (por `started_at_ms` del episodio) segmentados por su estado actual.
+
+    `d` es la etiqueta visible ("29 abr", formato español) — el frontend la
+    parte con `d.split(" ")[0]` para la etiqueta corta del eje X. Los counts
+    arrancan en 0 para que los días sin actividad rendericen una columna vacía
+    (la serie es continua, sin huecos).
+    """
+
+    d: str
+    ganado: int = 0
+    cotizado: int = 0
+    calificado: int = 0
+    activo: int = 0
+    nuevo: int = 0
+    no_reply: int = 0
+    perdido: int = 0
 
 
 # =============================================================================
@@ -179,7 +222,12 @@ def _history_jsonl_path(session_dir: Path) -> Path:
 
 
 def _count_history_lines(jsonl_path: Path) -> int:
-    """Cuenta líneas no vacías del JSONL. 0 si no existe o falla."""
+    """Cuenta líneas no vacías del JSONL. 0 si no existe o falla.
+
+    Lee el archivo COMPLETO (no hay forma de contar líneas sin leerlo). Por eso
+    su invocación se difiere vía `_make_line_counter` — el historial de una
+    conversación crece sin límite y leerlo es el costo dominante a escala.
+    """
     if not jsonl_path.exists():
         return 0
     try:
@@ -187,6 +235,70 @@ def _count_history_lines(jsonl_path: Path) -> int:
             return sum(1 for line in f if line.strip())
     except OSError:
         return 0
+
+
+def _make_line_counter(session_dir: Path) -> Callable[[], int]:
+    """Devuelve un getter MEMOIZADO del conteo de líneas del history JSONL.
+
+    Difiere la lectura del archivo hasta que algún consumidor realmente la
+    necesite, y la cachea para que un mismo session_dir se lea a lo sumo una
+    vez por request. La mayoría de los episodios (cerrados: order_id /
+    closing_tag / closed_at_ms) se clasifican SIN el conteo → para ellos el
+    JSONL nunca se abre. Esto convierte el costo de O(bytes de todo el
+    historial del vault) a O(bytes de las conversaciones aún activas).
+    """
+    cache: list[int | None] = [None]
+
+    def get() -> int:
+        if cache[0] is None:
+            cache[0] = _count_history_lines(_history_jsonl_path(session_dir))
+        return cache[0]
+
+    return get
+
+
+def _session_touched_since(session_dir: Path, since_ms: int) -> bool:
+    """True si la `metadata.json` se escribió en/después de `since_ms`.
+
+    Pre-filtro BARATO (un `stat`, sin parsear) para el filtro por fecha: crear o
+    avanzar un episodio SIEMPRE reescribe la metadata, así que si el archivo no
+    se tocó desde `since_ms`, ningún episodio empezó en la ventana → es seguro
+    saltear la sesión sin leerla (sin falsos negativos). Esto hace que el scan
+    escale con la ventana elegida, no con todo el historial del vault.
+
+    Defensivo: si no se puede statear, devuelve True (no saltear → parsear).
+    """
+    try:
+        mtime_ms = int((session_dir / "metadata.json").stat().st_mtime * 1000)
+    except OSError:
+        return True
+    return mtime_ms >= since_ms
+
+
+def scan_ad_sessions(
+    vault_dir: Path, *, since_ms: int | None = None
+) -> list[tuple[Path, dict[str, Any]]]:
+    """Lee + parsea los `wa_*/metadata.json` del vault una sola vez.
+
+    Es el costo O(N sesiones) compartible: los 3 endpoints de ads consumen el
+    MISMO set de metadata parseadas. La capa API lo cachea (TTL corto) y se lo
+    pasa a las 3 funciones vía `sessions=`, colapsando los 3 scans por
+    page-view en uno solo. Las funciones siguen siendo PURAS: con
+    `sessions=None` escanean fresco (los tests no dependen del cache).
+
+    `since_ms`: si se provee, saltea (vía `mtime`, sin parsear) las sesiones sin
+    actividad desde esa fecha — el scan escala con la ventana, no con la historia
+    completa. El filtro PRECISO por episodio lo hace cada use case sobre el
+    resultado (mtime es solo un pre-filtro superset, nunca pierde data).
+    """
+    out: list[tuple[Path, dict[str, Any]]] = []
+    for session_dir in _iter_session_dirs(vault_dir):
+        if since_ms is not None and not _session_touched_since(session_dir, since_ms):
+            continue
+        metadata = _read_metadata(session_dir)
+        if metadata is not None:
+            out.append((session_dir, metadata))
+    return out
 
 
 def _last_msg_at_ms(
@@ -218,7 +330,7 @@ def _iter_episodes(
     session_dir: Path,
     origin: dict[str, Any],
     last_touch: dict[str, Any] | None,
-    total_msgs: int,
+    total_msgs_fn: Callable[[], int],
     last_msg_ms: int | None,
     now_ms: int,
 ) -> Iterator[tuple[dict[str, Any] | None, str]]:
@@ -230,6 +342,12 @@ def _iter_episodes(
       Para el episodio activo (último sin cerrar), `current_tag=metadata.tag`.
     - Si NO hay `episodes[]` (legacy) → yields un solo `(None, state)`
       donde `state` se computa con `classify_state` legacy.
+
+    `total_msgs_fn` es un getter LAZY del conteo de mensajes (lee el JSONL).
+    Solo se invoca donde la clasificación realmente lo usa: el episodio ACTIVO
+    sin tag de cierre (umbral "nuevo") y el fallback legacy. Los episodios
+    CERRADOS se clasifican por order_id/closing_tag/closed_at_ms (reglas 1-6 de
+    `classify_episode_state`) sin tocar el conteo → no se lee su historial.
     """
     episodes = metadata.get("episodes")
 
@@ -237,7 +355,7 @@ def _iter_episodes(
         # Legacy fallback: una "pseudo-conversación" por sesión.
         state = classify_state(
             metadata,
-            total_msgs=total_msgs,
+            total_msgs=total_msgs_fn(),
             last_inbound_ms=last_msg_ms,
             now_ms=now_ms,
         )
@@ -252,6 +370,9 @@ def _iter_episodes(
         # current_tag solo aplica al episodio activo. Para episodios cerrados,
         # closing_tag ya está en el episode dict.
         tag_for_episode = current_tag if is_active else None
+        # total_msgs solo lo consume la rama de episodio ACTIVO (umbral "nuevo").
+        # Un episodio cerrado retorna antes (reglas 1-6) → no leemos su JSONL.
+        total_msgs = total_msgs_fn() if is_active else 0
         state = classify_episode_state(
             ep,
             current_tag=tag_for_episode,
@@ -328,27 +449,104 @@ def _episode_headline(
 
 
 def _episode_msgs_count(
-    episode: dict[str, Any] | None, total_msgs: int
+    episode: dict[str, Any] | None, total_msgs_fn: Callable[[], int]
 ) -> int:
     """Cuenta mensajes que pertenecen al episodio (FU3).
 
     Prioridad:
-      - Episodio cerrado con snapshots: `msgs_count_at_close - msgs_count_at_start`.
+      - Episodio cerrado con snapshots: `msgs_count_at_close - msgs_count_at_start`
+        (NO lee el JSONL — usa los snapshots congelados).
       - Episodio activo con snapshot start: `total_msgs - msgs_count_at_start`.
       - Sin snapshots (legacy / pre-FU3): `total_msgs` global como fallback.
 
-    El fallback pierde precisión en multi-episodio legacy, pero mantiene
-    consistencia con el comportamiento previo y nunca devuelve negativos.
+    `total_msgs_fn` es el getter lazy: solo se invoca para episodios sin
+    snapshot de cierre (activos o legacy). Los cerrados con ambos snapshots
+    nunca abren el historial. El fallback pierde precisión en multi-episodio
+    legacy, pero mantiene consistencia con el comportamiento previo y nunca
+    devuelve negativos.
     """
     if episode is None:
-        return total_msgs
+        return total_msgs_fn()
     at_start = episode.get("msgs_count_at_start")
     at_close = episode.get("msgs_count_at_close")
     if isinstance(at_start, int) and isinstance(at_close, int):
         return max(0, at_close - at_start)
     if isinstance(at_start, int):
-        return max(0, total_msgs - at_start)
-    return total_msgs
+        return max(0, total_msgs_fn() - at_start)
+    return total_msgs_fn()
+
+
+def _session_order_totals(metadata: dict[str, Any]) -> dict[str, int]:
+    """Map `order_id → total_cop` recuperable del metadata de la sesión.
+
+    Fuente de **backfill** para episodios cuyo `order_total_cop` aún no fue
+    congelado (ventas registradas ANTES de que el write path persistiera el
+    total en el episodio). Solo el `registered_order` (última venta exitosa)
+    conserva su `total_cop` a nivel sesión; `registered_orders_history` no
+    guarda totales. Los episodios nuevos traen su propio `order_total_cop` y
+    no dependen de este map.
+    """
+    totals: dict[str, int] = {}
+    reg = metadata.get("registered_order")
+    if isinstance(reg, dict):
+        oid = reg.get("order_id")
+        total = reg.get("total_cop")
+        if isinstance(oid, str) and isinstance(total, (int, float)) and not isinstance(
+            total, bool
+        ):
+            totals[oid] = int(total)
+    return totals
+
+
+def _episode_revenue_cop(
+    episode: dict[str, Any] | None, order_totals: dict[str, int]
+) -> int | None:
+    """Ingreso (COP major units) atribuido a un episodio, o None si no hay venta.
+
+    Prioridad:
+      1. `episode.order_total_cop` (frozen al cierre — fuente canónica).
+      2. Backfill: `order_totals[episode.order_id]` (registered_order legacy).
+      3. Legacy sin episodes[]: el total del único registered_order de la sesión.
+    """
+    if episode is not None:
+        frozen = episode.get("order_total_cop")
+        if isinstance(frozen, (int, float)) and not isinstance(frozen, bool):
+            return int(frozen)
+        oid = episode.get("order_id")
+        if isinstance(oid, str) and oid in order_totals:
+            return order_totals[oid]
+        return None
+    # Legacy (sin episodes[]): a lo sumo un registered_order por sesión.
+    if order_totals:
+        return sum(order_totals.values())
+    return None
+
+
+def _episode_duration_ms(episode: dict[str, Any] | None) -> int | None:
+    """Duración del episodio (closed - started) en ms, o None si está activo /
+    sin timestamps válidos."""
+    if episode is None:
+        return None
+    started = episode.get("started_at_ms")
+    closed = episode.get("closed_at_ms")
+    if isinstance(started, int) and isinstance(closed, int) and closed >= started:
+        return closed - started
+    return None
+
+
+def _episode_llm_usage(episode: dict[str, Any] | None) -> tuple[float, int] | None:
+    """`(cost_usd, total_tokens)` del episodio, o None si no acumuló uso LLM."""
+    if not isinstance(episode, dict):
+        return None
+    usage = episode.get("llm_usage")
+    if not isinstance(usage, dict):
+        return None
+    cost = usage.get("cost_usd")
+    tokens = usage.get("total_tokens")
+    return (
+        float(cost) if isinstance(cost, (int, float)) and not isinstance(cost, bool) else 0.0,
+        int(tokens) if isinstance(tokens, (int, float)) and not isinstance(tokens, bool) else 0,
+    )
 
 
 # =============================================================================
@@ -356,7 +554,12 @@ def _episode_msgs_count(
 # =============================================================================
 
 
-def list_ads_campaigns(vault_dir: Path) -> list[AdsCampaignSummary]:
+def list_ads_campaigns(
+    vault_dir: Path,
+    *,
+    sessions: list[tuple[Path, dict[str, Any]]] | None = None,
+    since_ms: int | None = None,
+) -> list[AdsCampaignSummary]:
     """Lista de campañas únicas detectadas en el vault.
 
     Agrupación POR EPISODIO (FU2). Cada episodio se asigna a un bucket
@@ -382,22 +585,24 @@ def list_ads_campaigns(vault_dir: Path) -> list[AdsCampaignSummary]:
     now_ms = int(time.time() * 1000)
     buckets: dict[str, dict[str, Any]] = {}
 
-    for session_dir in _iter_session_dirs(vault_dir):
-        metadata = _read_metadata(session_dir)
-        if metadata is None:
-            continue
+    for session_dir, metadata in (
+        sessions
+        if sessions is not None
+        else scan_ad_sessions(vault_dir, since_ms=since_ms)
+    ):
         origin = metadata.get("origin") or {}
 
         last_touch = metadata.get("last_touch")
         last_msg_ms = _last_msg_at_ms(session_dir, last_touch, origin)
-        msgs_count = _count_history_lines(_history_jsonl_path(session_dir))
+        count_fn = _make_line_counter(session_dir)
+        order_totals = _session_order_totals(metadata)
 
         for ep, state in _iter_episodes(
             metadata,
             session_dir=session_dir,
             origin=origin,
             last_touch=last_touch,
-            total_msgs=msgs_count,
+            total_msgs_fn=count_fn,
             last_msg_ms=last_msg_ms,
             now_ms=now_ms,
         ):
@@ -412,6 +617,14 @@ def list_ads_campaigns(vault_dir: Path) -> list[AdsCampaignSummary]:
                 ep.get("started_at_ms") if ep is not None else origin.get("first_seen_ms")
             )
 
+            # Filtro por fecha (ventana de la UI): solo episodios iniciados
+            # en/después de `since_ms`. None (sin fecha) se excluye de una
+            # ventana acotada.
+            if since_ms is not None and (
+                ep_started_ms is None or ep_started_ms < since_ms
+            ):
+                continue
+
             bucket = buckets.setdefault(
                 campaign_id,
                 {
@@ -422,10 +635,36 @@ def list_ads_campaigns(vault_dir: Path) -> list[AdsCampaignSummary]:
                     "name": headline,
                     "_name_at_ms": ep_started_ms,
                     "counts": _empty_state_counts(),
+                    # Acumuladores de negocio (ver helpers _episode_*).
+                    "revenue": 0,
+                    "revenue_count": 0,
+                    "llm_cost": 0.0,
+                    "llm_tokens": 0,
+                    "has_llm": False,
+                    "dur_sum": 0,
+                    "dur_count": 0,
                 },
             )
             bucket["started"] += 1
             bucket["counts"][state] = bucket["counts"].get(state, 0) + 1
+
+            # Ingreso atribuido (frozen en el episodio, backfill desde
+            # registered_order). Solo episodios con venta aportan.
+            rev = _episode_revenue_cop(ep, order_totals)
+            if rev is not None:
+                bucket["revenue"] += rev
+                bucket["revenue_count"] += 1
+            # Costo LLM agregado del episodio.
+            usage = _episode_llm_usage(ep)
+            if usage is not None:
+                bucket["llm_cost"] += usage[0]
+                bucket["llm_tokens"] += usage[1]
+                bucket["has_llm"] = True
+            # Duración (solo episodios cerrados con timestamps válidos).
+            dur = _episode_duration_ms(ep)
+            if dur is not None:
+                bucket["dur_sum"] += dur
+                bucket["dur_count"] += 1
 
             if isinstance(ep_started_ms, int):
                 if (
@@ -461,6 +700,21 @@ def list_ads_campaigns(vault_dir: Path) -> list[AdsCampaignSummary]:
         else:
             name = bucket["name"]
             source_type = bucket["source_type"]
+        # Agregados de negocio — None honesto cuando no hubo data (distingue
+        # "0 real" de "pendiente"), consistente con el resto de campos null.
+        revenue = bucket["revenue"] if bucket["revenue_count"] > 0 else None
+        avg_ticket = (
+            round(bucket["revenue"] / bucket["revenue_count"])
+            if bucket["revenue_count"] > 0
+            else None
+        )
+        llm_cost_usd = round(bucket["llm_cost"], 6) if bucket["has_llm"] else None
+        llm_tokens = bucket["llm_tokens"] if bucket["has_llm"] else None
+        avg_episode_duration_ms = (
+            round(bucket["dur_sum"] / bucket["dur_count"])
+            if bucket["dur_count"] > 0
+            else None
+        )
         summaries.append(
             AdsCampaignSummary(
                 id=camp_id,
@@ -470,6 +724,11 @@ def list_ads_campaigns(vault_dir: Path) -> list[AdsCampaignSummary]:
                 first_seen_ms=bucket["first_seen_ms"],
                 last_seen_ms=bucket["last_seen_ms"],
                 conversations=bucket["counts"],
+                revenue=revenue,
+                avg_ticket=avg_ticket,
+                llm_cost_usd=llm_cost_usd,
+                llm_tokens=llm_tokens,
+                avg_episode_duration_ms=avg_episode_duration_ms,
             )
         )
 
@@ -481,7 +740,11 @@ def list_ads_campaigns(vault_dir: Path) -> list[AdsCampaignSummary]:
 
 
 def list_attributed_conversations(
-    vault_dir: Path, campaign_id: str
+    vault_dir: Path,
+    campaign_id: str,
+    *,
+    sessions: list[tuple[Path, dict[str, Any]]] | None = None,
+    since_ms: int | None = None,
 ) -> list[AdsAttributedConversation]:
     """Conversaciones WhatsApp atribuidas a una campaña.
 
@@ -498,24 +761,26 @@ def list_attributed_conversations(
     now_ms = int(time.time() * 1000)
     convs: list[AdsAttributedConversation] = []
 
-    for session_dir in _iter_session_dirs(vault_dir):
-        metadata = _read_metadata(session_dir)
-        if metadata is None:
-            continue
+    for session_dir, metadata in (
+        sessions
+        if sessions is not None
+        else scan_ad_sessions(vault_dir, since_ms=since_ms)
+    ):
         origin = metadata.get("origin") or {}
 
         session_id = session_dir.name
         phone = session_id[len("wa_") :]
         last_touch = metadata.get("last_touch")
         last_msg_ms = _last_msg_at_ms(session_dir, last_touch, origin)
-        msgs_count = _count_history_lines(_history_jsonl_path(session_dir))
+        count_fn = _make_line_counter(session_dir)
+        order_totals = _session_order_totals(metadata)
 
         for ep, state in _iter_episodes(
             metadata,
             session_dir=session_dir,
             origin=origin,
             last_touch=last_touch,
-            total_msgs=msgs_count,
+            total_msgs_fn=count_fn,
             last_msg_ms=last_msg_ms,
             now_ms=now_ms,
         ):
@@ -545,6 +810,11 @@ def list_attributed_conversations(
                 ep_last_msg = last_msg_ms
                 ad_headline = origin.get("headline")
 
+            # Filtro por fecha (ventana de la UI): solo conversaciones iniciadas
+            # en/después de `since_ms`.
+            if since_ms is not None and started < since_ms:
+                continue
+
             _usage = ep.get("llm_usage") if isinstance(ep, dict) else None
             convs.append(
                 AdsAttributedConversation(
@@ -553,10 +823,14 @@ def list_attributed_conversations(
                     episode_id=ep_id,
                     started_at_ms=started,
                     last_msg_at_ms=ep_last_msg,
-                    msgs_count=_episode_msgs_count(ep, msgs_count),
+                    msgs_count=_episode_msgs_count(ep, count_fn),
                     ad_headline=ad_headline,
                     agent=metadata.get("active_route"),
                     state=state,
+                    # Valor de la venta atribuida (frozen en el episodio,
+                    # backfill desde registered_order) + duración del episodio.
+                    value=_episode_revenue_cop(ep, order_totals),
+                    duration_ms=_episode_duration_ms(ep),
                     llm_cost_usd=(
                         _usage.get("cost_usd") if isinstance(_usage, dict) else None
                     ),
@@ -570,3 +844,113 @@ def list_attributed_conversations(
 
     convs.sort(key=lambda c: c.started_at_ms, reverse=True)
     return convs
+
+
+# =============================================================================
+# Serie diaria
+# =============================================================================
+
+# Colombia opera en America/Bogota = UTC-5 fijo (sin DST desde 1993). Bucketeamos
+# los días en hora local del operador — usar UTC correría la frontera de día 5h
+# y partiría conversaciones nocturnas al día equivocado. Offset fijo en vez de
+# tzdata: evita la dependencia y es exacto para CO.
+_BOGOTA_OFFSET_MS = 5 * 60 * 60 * 1000
+
+# Abreviaturas de mes en español — `datetime` no las da sin locale (y depender
+# del locale del host es frágil). Espeja el formato del eje X del dashboard.
+_MONTH_ABBR_ES = {
+    1: "ene", 2: "feb", 3: "mar", 4: "abr", 5: "may", 6: "jun",
+    7: "jul", 8: "ago", 9: "sep", 10: "oct", 11: "nov", 12: "dic",
+}
+
+
+def _bogota_date(ms: int) -> datetime.date:
+    """Fecha calendario en America/Bogota (UTC-5 fijo) de un epoch ms."""
+    dt = datetime.datetime.fromtimestamp(
+        (ms - _BOGOTA_OFFSET_MS) / 1000, tz=datetime.timezone.utc
+    )
+    return dt.date()
+
+
+def _day_label(d: datetime.date) -> str:
+    """'29 abr' — etiqueta del eje X (día + mes abreviado español)."""
+    return f"{d.day} {_MONTH_ABBR_ES[d.month]}"
+
+
+def list_daily_series(
+    vault_dir: Path,
+    campaign_id: str,
+    *,
+    days: int = 14,
+    now_ms: int | None = None,
+    sessions: list[tuple[Path, dict[str, Any]]] | None = None,
+) -> list[AdsDailySeriesPoint]:
+    """Serie diaria de una campaña: chats iniciados por día, por estado actual.
+
+    Cada episodio atribuido a `campaign_id` (re-atribución FU2 — mismo criterio
+    que `list_attributed_conversations`) se bucketea por el día calendario
+    (America/Bogota) de su `started_at_ms` y suma 1 a su estado. Devuelve una
+    serie CONTINUA de los últimos `days` días terminando hoy — los días sin
+    actividad vienen con counts en 0 (no se omiten) para que el gráfico no
+    tenga huecos.
+
+    `now_ms` se inyecta en tests para fijar la ventana; en producción es el
+    instante de la request.
+    """
+    if now_ms is None:
+        now_ms = int(time.time() * 1000)
+    days = max(1, min(days, 90))  # clamp defensivo
+
+    today = _bogota_date(now_ms)
+    start_day = today - datetime.timedelta(days=days - 1)
+    window = [start_day + datetime.timedelta(days=i) for i in range(days)]
+    by_day: dict[datetime.date, dict[str, int]] = {
+        d: _empty_state_counts() for d in window
+    }
+    # La ventana ES el filtro por fecha de la serie. Derivamos `since_ms` para
+    # que el scan directo (sin `sessions=`) saltee sesiones fuera de rango; el
+    # bucketeo por `by_day` ya descarta con precisión lo que cae fuera.
+    since_ms = now_ms - days * 24 * 60 * 60 * 1000
+
+    for session_dir, metadata in (
+        sessions if sessions is not None else scan_ad_sessions(vault_dir, since_ms=since_ms)
+    ):
+        origin = metadata.get("origin") or {}
+        last_touch = metadata.get("last_touch")
+        last_msg_ms = _last_msg_at_ms(session_dir, last_touch, origin)
+        count_fn = _make_line_counter(session_dir)
+
+        for ep, state in _iter_episodes(
+            metadata,
+            session_dir=session_dir,
+            origin=origin,
+            last_touch=last_touch,
+            total_msgs_fn=count_fn,
+            last_msg_ms=last_msg_ms,
+            now_ms=now_ms,
+        ):
+            if _episode_to_campaign_id(ep, origin) != campaign_id:
+                continue
+            ep_started_ms = (
+                ep.get("started_at_ms") if ep is not None else origin.get("first_seen_ms")
+            )
+            if not isinstance(ep_started_ms, int):
+                continue
+            day = _bogota_date(ep_started_ms)
+            counts = by_day.get(day)
+            if counts is not None:  # episodio fuera de la ventana → se ignora
+                counts[state] = counts.get(state, 0) + 1
+
+    return [
+        AdsDailySeriesPoint(
+            d=_day_label(d),
+            ganado=by_day[d].get("ganado", 0),
+            cotizado=by_day[d].get("cotizado", 0),
+            calificado=by_day[d].get("calificado", 0),
+            activo=by_day[d].get("activo", 0),
+            nuevo=by_day[d].get("nuevo", 0),
+            no_reply=by_day[d].get("no_reply", 0),
+            perdido=by_day[d].get("perdido", 0),
+        )
+        for d in window
+    ]

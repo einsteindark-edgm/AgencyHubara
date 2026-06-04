@@ -19,7 +19,13 @@ import {
 } from "@/entities/ads-campaign";
 import { Icon } from "@/shared/ui";
 
-import { fmtMoney, fmtN, fmtPct } from "@plugins/ads/frontend/lib/format";
+import {
+  fmtDuration,
+  fmtMoney,
+  fmtN,
+  fmtPct,
+  fmtUsd,
+} from "@plugins/ads/frontend/lib/format";
 import { AdsIcon } from "@plugins/ads/frontend/lib/icons";
 import { MissingField } from "@plugins/ads/frontend/lib/MissingField";
 
@@ -152,6 +158,9 @@ export function AdsInspector({ campaign }: Props) {
           <Row label="Tiempo a 1ª respuesta">
             {c.firstResp ?? <MissingField />}
           </Row>
+          <Row label="Duración media de conversación">
+            {nv(c.avgEpisodeDurationMs, fmtDuration)}
+          </Row>
           <Row label="% calificados">
             {nv(qualifiedRate, (v) => fmtPct(v, 1))}
           </Row>
@@ -159,6 +168,7 @@ export function AdsInspector({ campaign }: Props) {
             {nv(winRate, (v) => fmtPct(v, 1))}
           </Row>
           <Row label="Ticket promedio">{nv(c.avgTicket, fmtMoney)}</Row>
+          <Row label="Costo LLM (total)">{nv(c.llmCostUsd, fmtUsd)}</Row>
         </StaticPanel>
 
         <StaticPanel title="Sugerencias del agente IA">

@@ -15,7 +15,7 @@ import {
 } from "@/entities/ads-campaign";
 import { Icon } from "@/shared/ui";
 
-import { fmtMoneyK, fmtN } from "@plugins/ads/frontend/lib/format";
+import { fmtMoneyK, fmtN, fmtUsd } from "@plugins/ads/frontend/lib/format";
 import { AdsIcon } from "@plugins/ads/frontend/lib/icons";
 import { MissingField } from "@plugins/ads/frontend/lib/MissingField";
 
@@ -162,7 +162,10 @@ function CampaignRow({ campaign, selected, onSelect }: RowProps) {
           {from} → {to ?? "—"}
         </span>
       </div>
-      <div className="camp-row-stats">
+      <div
+        className="camp-row-stats"
+        style={{ gridTemplateColumns: "repeat(2, 1fr)" }}
+      >
         <div className="crs">
           <span className="crs-l">Inversión</span>
           <span className="crs-v">
@@ -192,6 +195,16 @@ function CampaignRow({ campaign, selected, onSelect }: RowProps) {
             }
           >
             {roas !== null ? `${roas.toFixed(1)}×` : <MissingField withIcon />}
+          </span>
+        </div>
+        <div className="crs">
+          <span className="crs-l">Costo LLM</span>
+          <span className="crs-v">
+            {campaign.llmCostUsd !== null ? (
+              fmtUsd(campaign.llmCostUsd)
+            ) : (
+              <MissingField withIcon />
+            )}
           </span>
         </div>
       </div>

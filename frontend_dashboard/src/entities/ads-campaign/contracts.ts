@@ -40,9 +40,18 @@ export const backendAdsCampaignSchema = z.object({
   last_seen_ms: z.number().nullable(),
   conversations: backendAdsConversationsCountsSchema,
 
+  // Derivados del vault (negocio congelado por episodio). `revenue`/`avg_ticket`
+  // ahora se pueblan desde `episode.order_total_cop`; `llm_*` desde
+  // `episode.llm_usage`; `avg_episode_duration_ms` de closed−started. Cada uno
+  // es `null` solo si el bucket no tuvo data (venta / uso LLM / cierre).
+  revenue: z.number().nullable(),
+  avg_ticket: z.number().nullable(),
+  llm_cost_usd: z.number().nullable(),
+  llm_tokens: z.number().int().nullable(),
+  avg_episode_duration_ms: z.number().int().nullable(),
+
   // Faltantes — backend serializa null hasta integrar Meta Ads API / orders
   spend: z.number().nullable(),
-  revenue: z.number().nullable(),
   impressions: z.number().nullable(),
   reach: z.number().nullable(),
   clicks: z.number().nullable(),
@@ -54,7 +63,6 @@ export const backendAdsCampaignSchema = z.object({
   creative_title: z.string().nullable(),
   template: z.string().nullable(),
   meta_campaign_id: z.string().nullable(),
-  avg_ticket: z.number().nullable(),
   first_resp: z.string().nullable(),
   tendency: z.string().nullable(),
   days_run: z.number().nullable(),
@@ -84,10 +92,17 @@ export const backendAttributedConversationSchema = z.object({
   agent: z.string().nullable(),
   state: z.string().nullable(), // AdsState derivado por classifier
 
+  // `value` ahora se puebla desde `episode.order_total_cop` (COP). null si el
+  // episodio no cerró venta o el total no es recuperable.
+  value: z.number().nullable(),
+
+  // Duración del episodio (ms) = closed_at_ms − started_at_ms. null si sigue
+  // activo o no tiene timestamps válidos.
+  duration_ms: z.number().int().nullable(),
+
   // Faltantes — backend devuelve null hasta integrar CRM / orders
   name: z.string().nullable(),
   city: z.string().nullable(),
-  value: z.number().nullable(),
 
   // Costo LLM del episodio (USD, congelado a la tarifa del momento) + tokens
   // totales — de `episode.llm_usage` en metadata.json. null si el episodio aún
@@ -103,4 +118,28 @@ export type BackendAttributedConversation = z.infer<
 export const backendAttributedConversationsResponseSchema = z.object({
   campaign_id: z.string(),
   conversations: z.array(backendAttributedConversationSchema),
+});
+
+/* ── Serie diaria (response de GET /ads/campaigns/{id}/daily) ────────────── */
+
+/** Un día de la serie: chats iniciados ese día por estado. El shape espeja
+ *  exactamente `AdsDailyPoint` del modelo — el backend ya emite las 7 keys de
+ *  estado + la etiqueta `d` ("21 may"). */
+export const backendAdsDailyPointSchema = z.object({
+  d: z.string(),
+  ganado: z.number().int(),
+  cotizado: z.number().int(),
+  calificado: z.number().int(),
+  activo: z.number().int(),
+  nuevo: z.number().int(),
+  no_reply: z.number().int(),
+  perdido: z.number().int(),
+});
+
+export type BackendAdsDailyPoint = z.infer<typeof backendAdsDailyPointSchema>;
+
+export const backendAdsDailyResponseSchema = z.object({
+  campaign_id: z.string(),
+  days: z.number().int(),
+  series: z.array(backendAdsDailyPointSchema),
 });
