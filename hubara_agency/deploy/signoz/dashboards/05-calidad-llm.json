@@ -1,0 +1,538 @@
+{
+  "title": "Calidad del LLM — Asesor de Ventas",
+  "description": "Evaluación de calidad del agente de ventas (DeepEval → SigNoz): adherencia al guion, estilo, no-alucinación, handoff y conversión. Las métricas gen_ai.eval.* nacen cuando corre el harness (worker sales_eval). Si un panel se ve vacío, ampliá el rango de tiempo.",
+  "tags": [
+    "hubara",
+    "llm",
+    "evals",
+    "calidad",
+    "sales"
+  ],
+  "layout": [
+    {
+      "i": "v-score-metrica",
+      "x": 0,
+      "y": 0,
+      "w": 6,
+      "h": 4,
+      "moved": false,
+      "static": false
+    },
+    {
+      "i": "v-conteo-veredicto",
+      "x": 6,
+      "y": 0,
+      "w": 6,
+      "h": 4,
+      "moved": false,
+      "static": false
+    },
+    {
+      "i": "v-score-conversacion",
+      "x": 0,
+      "y": 4,
+      "w": 6,
+      "h": 4,
+      "moved": false,
+      "static": false
+    },
+    {
+      "i": "v-candidatas",
+      "x": 6,
+      "y": 4,
+      "w": 6,
+      "h": 4,
+      "moved": false,
+      "static": false
+    },
+    {
+      "i": "v-costo-juez",
+      "x": 0,
+      "y": 8,
+      "w": 6,
+      "h": 4,
+      "moved": false,
+      "static": false
+    }
+  ],
+  "widgets": [
+    {
+      "id": "v-score-metrica",
+      "title": "Score promedio por métrica de calidad",
+      "description": "Promedio del score (0..1) por métrica. A=sum, B=count, F1=A/B.",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "table",
+      "query": {
+        "queryType": "builder",
+        "builder": {
+          "queryData": [
+            {
+              "queryName": "A",
+              "dataSource": "metrics",
+              "aggregateOperator": "latest",
+              "aggregateAttribute": {
+                "key": "gen_ai.eval.score.sum",
+                "dataType": "float64",
+                "type": "Sum",
+                "isColumn": true,
+                "isJSON": false,
+                "id": "gen_ai.eval.score.sum--float64--Sum--true"
+              },
+              "temporality": "Cumulative",
+              "timeAggregation": "latest",
+              "spaceAggregation": "sum",
+              "functions": [],
+              "filters": {
+                "op": "AND",
+                "items": []
+              },
+              "expression": "A",
+              "disabled": true,
+              "stepInterval": 60,
+              "having": [],
+              "limit": null,
+              "orderBy": [],
+              "groupBy": [
+                {
+                  "key": "metric.name",
+                  "dataType": "string",
+                  "type": "tag",
+                  "isColumn": false,
+                  "isJSON": false,
+                  "id": "metric.name--string--tag--false"
+                }
+              ],
+              "legend": "",
+              "reduceTo": "last"
+            },
+            {
+              "queryName": "B",
+              "dataSource": "metrics",
+              "aggregateOperator": "latest",
+              "aggregateAttribute": {
+                "key": "gen_ai.eval.score.count",
+                "dataType": "float64",
+                "type": "Sum",
+                "isColumn": true,
+                "isJSON": false,
+                "id": "gen_ai.eval.score.count--float64--Sum--true"
+              },
+              "temporality": "Cumulative",
+              "timeAggregation": "latest",
+              "spaceAggregation": "sum",
+              "functions": [],
+              "filters": {
+                "op": "AND",
+                "items": []
+              },
+              "expression": "B",
+              "disabled": true,
+              "stepInterval": 60,
+              "having": [],
+              "limit": null,
+              "orderBy": [],
+              "groupBy": [
+                {
+                  "key": "metric.name",
+                  "dataType": "string",
+                  "type": "tag",
+                  "isColumn": false,
+                  "isJSON": false,
+                  "id": "metric.name--string--tag--false"
+                }
+              ],
+              "legend": "",
+              "reduceTo": "last"
+            }
+          ],
+          "queryFormulas": [
+            {
+              "queryName": "F1",
+              "expression": "A/B",
+              "legend": "{{metric.name}}",
+              "disabled": false
+            }
+          ]
+        },
+        "promql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "clickhouse_sql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "id": "v-score-metrica"
+      },
+      "timePreferance": "GLOBAL_TIME",
+      "softMax": 1,
+      "softMin": 0,
+      "selectedLogFields": [],
+      "selectedTracesFields": []
+    },
+    {
+      "id": "v-conteo-veredicto",
+      "title": "Evaluaciones por métrica y veredicto",
+      "description": "Cantidad de evals pass/fail por métrica (pass rate).",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "table",
+      "query": {
+        "queryType": "builder",
+        "builder": {
+          "queryData": [
+            {
+              "queryName": "A",
+              "dataSource": "metrics",
+              "aggregateOperator": "latest",
+              "aggregateAttribute": {
+                "key": "gen_ai.eval.score.count",
+                "dataType": "float64",
+                "type": "Sum",
+                "isColumn": true,
+                "isJSON": false,
+                "id": "gen_ai.eval.score.count--float64--Sum--true"
+              },
+              "temporality": "Cumulative",
+              "timeAggregation": "latest",
+              "spaceAggregation": "sum",
+              "functions": [],
+              "filters": {
+                "op": "AND",
+                "items": []
+              },
+              "expression": "A",
+              "disabled": false,
+              "stepInterval": 60,
+              "having": [],
+              "limit": null,
+              "orderBy": [],
+              "groupBy": [
+                {
+                  "key": "metric.name",
+                  "dataType": "string",
+                  "type": "tag",
+                  "isColumn": false,
+                  "isJSON": false,
+                  "id": "metric.name--string--tag--false"
+                },
+                {
+                  "key": "verdict",
+                  "dataType": "string",
+                  "type": "tag",
+                  "isColumn": false,
+                  "isJSON": false,
+                  "id": "verdict--string--tag--false"
+                }
+              ],
+              "legend": "{{metric.name}} · {{verdict}}",
+              "reduceTo": "last"
+            }
+          ],
+          "queryFormulas": []
+        },
+        "promql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "clickhouse_sql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "id": "v-conteo-veredicto"
+      },
+      "timePreferance": "GLOBAL_TIME",
+      "softMax": 1,
+      "softMin": 0,
+      "selectedLogFields": [],
+      "selectedTracesFields": []
+    },
+    {
+      "id": "v-score-conversacion",
+      "title": "Score promedio por conversación",
+      "description": "Promedio agregado por conversación (gen_ai.eval.conversation).",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "value",
+      "query": {
+        "queryType": "builder",
+        "builder": {
+          "queryData": [
+            {
+              "queryName": "A",
+              "dataSource": "metrics",
+              "aggregateOperator": "latest",
+              "aggregateAttribute": {
+                "key": "gen_ai.eval.conversation.sum",
+                "dataType": "float64",
+                "type": "Sum",
+                "isColumn": true,
+                "isJSON": false,
+                "id": "gen_ai.eval.conversation.sum--float64--Sum--true"
+              },
+              "temporality": "Cumulative",
+              "timeAggregation": "latest",
+              "spaceAggregation": "sum",
+              "functions": [],
+              "filters": {
+                "op": "AND",
+                "items": []
+              },
+              "expression": "A",
+              "disabled": true,
+              "stepInterval": 60,
+              "having": [],
+              "limit": null,
+              "orderBy": [],
+              "groupBy": [],
+              "legend": "",
+              "reduceTo": "last"
+            },
+            {
+              "queryName": "B",
+              "dataSource": "metrics",
+              "aggregateOperator": "latest",
+              "aggregateAttribute": {
+                "key": "gen_ai.eval.conversation.count",
+                "dataType": "float64",
+                "type": "Sum",
+                "isColumn": true,
+                "isJSON": false,
+                "id": "gen_ai.eval.conversation.count--float64--Sum--true"
+              },
+              "temporality": "Cumulative",
+              "timeAggregation": "latest",
+              "spaceAggregation": "sum",
+              "functions": [],
+              "filters": {
+                "op": "AND",
+                "items": []
+              },
+              "expression": "B",
+              "disabled": true,
+              "stepInterval": 60,
+              "having": [],
+              "limit": null,
+              "orderBy": [],
+              "groupBy": [],
+              "legend": "",
+              "reduceTo": "last"
+            }
+          ],
+          "queryFormulas": [
+            {
+              "queryName": "F1",
+              "expression": "A/B",
+              "legend": "score promedio",
+              "disabled": false
+            }
+          ]
+        },
+        "promql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "clickhouse_sql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "id": "v-score-conversacion"
+      },
+      "timePreferance": "GLOBAL_TIME",
+      "softMax": 1,
+      "softMin": 0,
+      "selectedLogFields": [],
+      "selectedTracesFields": []
+    },
+    {
+      "id": "v-candidatas",
+      "title": "Conversaciones evaluadas (por candidato a golden)",
+      "description": "Conteo de conversaciones; candidate=true → fueron a auto-curación.",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "table",
+      "query": {
+        "queryType": "builder",
+        "builder": {
+          "queryData": [
+            {
+              "queryName": "A",
+              "dataSource": "metrics",
+              "aggregateOperator": "latest",
+              "aggregateAttribute": {
+                "key": "gen_ai.eval.conversation.count",
+                "dataType": "float64",
+                "type": "Sum",
+                "isColumn": true,
+                "isJSON": false,
+                "id": "gen_ai.eval.conversation.count--float64--Sum--true"
+              },
+              "temporality": "Cumulative",
+              "timeAggregation": "latest",
+              "spaceAggregation": "sum",
+              "functions": [],
+              "filters": {
+                "op": "AND",
+                "items": []
+              },
+              "expression": "A",
+              "disabled": false,
+              "stepInterval": 60,
+              "having": [],
+              "limit": null,
+              "orderBy": [],
+              "groupBy": [
+                {
+                  "key": "candidate",
+                  "dataType": "string",
+                  "type": "tag",
+                  "isColumn": false,
+                  "isJSON": false,
+                  "id": "candidate--string--tag--false"
+                }
+              ],
+              "legend": "candidate={{candidate}}",
+              "reduceTo": "last"
+            }
+          ],
+          "queryFormulas": []
+        },
+        "promql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "clickhouse_sql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "id": "v-candidatas"
+      },
+      "timePreferance": "GLOBAL_TIME",
+      "softMax": 1,
+      "softMin": 0,
+      "selectedLogFields": [],
+      "selectedTracesFields": []
+    },
+    {
+      "id": "v-costo-juez",
+      "title": "Costo del juez (USD)",
+      "description": "Costo LLM del servicio sales-eval-agent (el juez también se instrumenta).",
+      "isStacked": false,
+      "nullZeroValues": "zero",
+      "opacity": "1",
+      "panelTypes": "value",
+      "query": {
+        "queryType": "builder",
+        "builder": {
+          "queryData": [
+            {
+              "queryName": "A",
+              "dataSource": "traces",
+              "aggregateOperator": "sum",
+              "aggregateAttribute": {
+                "key": "gen_ai.usage.cost",
+                "dataType": "float64",
+                "type": "tag",
+                "isColumn": false,
+                "isJSON": false,
+                "id": "gen_ai.usage.cost--float64--tag--false"
+              },
+              "timeAggregation": "sum",
+              "spaceAggregation": "sum",
+              "functions": [],
+              "filters": {
+                "op": "AND",
+                "items": [
+                  {
+                    "id": "f-serviceName-0",
+                    "key": {
+                      "key": "serviceName",
+                      "dataType": "string",
+                      "type": "tag",
+                      "isColumn": false,
+                      "isJSON": false,
+                      "id": "serviceName--string--tag--false"
+                    },
+                    "op": "=",
+                    "value": "sales-eval-agent"
+                  }
+                ]
+              },
+              "expression": "A",
+              "disabled": false,
+              "stepInterval": 60,
+              "having": [],
+              "limit": null,
+              "orderBy": [],
+              "groupBy": [],
+              "legend": "costo juez",
+              "reduceTo": "sum"
+            }
+          ],
+          "queryFormulas": []
+        },
+        "promql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "clickhouse_sql": [
+          {
+            "name": "A",
+            "query": "",
+            "legend": "",
+            "disabled": false
+          }
+        ],
+        "id": "v-costo-juez"
+      },
+      "timePreferance": "GLOBAL_TIME",
+      "softMax": 1,
+      "softMin": 0,
+      "selectedLogFields": [],
+      "selectedTracesFields": []
+    }
+  ],
+  "variables": {},
+  "version": "v4"
+}

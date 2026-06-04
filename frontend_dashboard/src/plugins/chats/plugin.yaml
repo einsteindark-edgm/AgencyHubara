@@ -39,6 +39,7 @@ api:
     # query port (platform) + el `metadata.eta_tracking` per-sesión. El frontend
     # del plugin `eta` consume `/api/chats/eta/*` (mismo patrón que `ads`).
     - { module: src.plugins.chats.api.eta,       prefix: /api/chats,     tags: [ETA] }
+    - { module: src.plugins.chats.api.evals,     prefix: /api/chats,     tags: [Evals] }
 
 # ── Agente Temporal ────────────────────────────────────────────────────
 # Dos workers en task queues exclusivas: SALES_QUEUE y REMARKETING_QUEUE.
@@ -426,6 +427,50 @@ agent:
           WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN}
           MEDUSA_BASE_URL: ${MEDUSA_BASE_URL}
           MEDUSA_ADMIN_TOKEN: ${MEDUSA_ADMIN_TOKEN}
+        volumes:
+          - hubara-vault-local:/app/hubara_vault
+        depends_on:
+          - temporal
+          - litellm
+
+    # ── Harness de evaluación de calidad del Asesor de Ventas ─────────────
+    # Worker del eval loop (LLMOps): un Temporal Schedule (3×/día, hora Bogotá)
+    # dispara SalesEvalWorkflow → muestrea conversaciones reales → DeepEval
+    # (LLM-juez) puntúa adherencia al guion + estilo + no-alucinación → emite
+    # scores a SigNoz + auto-curación de goldens. NO es un agente conversacional
+    # (sin dashboard "Agents", sin emits/transitions). Requiere el extra `evals`
+    # (deepeval): su imagen instala `uv sync --extra evals`.
+    - name: sales_eval
+      module: src.plugins.chats.workers.sales_eval
+      task_queue: queue-sales-eval
+      workflow_classes:
+        - SalesEvalWorkflow
+      deployment:
+        replicas: 1
+        cpu_request: 250m
+        memory_request: 512Mi
+        env_secrets:
+          - { var: DEEPSEEK_API_KEY, secret: hubara-llm-secret, key: DEEPSEEK_API_KEY }
+      compose:
+        env:
+          TEMPORAL_URL: temporal:7233
+          API_BASE_LLMLITE: http://litellm:4000
+          WORKSPACE_VAULT_DIR: /app/hubara_vault
+          # Observabilidad OTel (HU-003) — el juez también se mide en SigNoz.
+          OTEL_EXPORTER_OTLP_ENDPOINT: http://host.docker.internal:4317
+          OTEL_SEMCONV_STABILITY_OPT_IN: gen_ai_latest_experimental
+          OPENLIT_PRICING_JSON: /app/hubara_agency/deploy/openlit/pricing.json
+          # Juez LLM (alias del proxy litellm). Default = gemini-backup, distinto
+          # al modelo del agente (deepseek-v4-flash) → evita self-preference.
+          EVAL_JUDGE_MODEL: litellm_proxy/gemini-backup
+          # Candidatos a golden (auto-curación) → path montado durable; el
+          # operador los baja, redacta y promueve a tests/evals/.../curated.json.
+          EVAL_CANDIDATES_DIR: /app/hubara_vault/_evals/candidates
+          # Cadencia/ventana del schedule (08/14/20 hora Bogotá por default).
+          SALES_EVAL_SCHEDULE_ENABLED: "true"
+          SALES_EVAL_LOOKBACK_HOURS: "8"
+          SALES_EVAL_MAX_CONVERSATIONS: "50"
+          DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
         volumes:
           - hubara-vault-local:/app/hubara_vault
         depends_on:
