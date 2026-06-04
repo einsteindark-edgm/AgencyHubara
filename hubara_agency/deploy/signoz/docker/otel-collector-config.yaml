@@ -43,7 +43,18 @@ receivers:
       load: {}
       memory: {}
       disk: {}
-      filesystem: {}
+      # En Docker Desktop/macOS, los bind-mounts del host (/Users, /Volumes, /private,
+      # /tmp, /var/folders) aparecen en el mount table con fstype `fakeowner` y device
+      # /run/host_mark/* que NO existe dentro del collector → el scraper logea en bucle
+      # "failed to read usage at /hostfs/run/host_mark/...". Excluir el fstype `fakeowner`
+      # (artefacto exclusivo de Docker Desktop) elimina ese ruido sin perder métricas
+      # reales. En un host Linux real (VPS/prod) no existe el fstype `fakeowner`, así que
+      # es no-op allí — mismo config en ambos entornos.
+      filesystem:
+        exclude_fs_types:
+          fs_types:
+            - fakeowner
+          match_type: strict
       network: {}
 processors:
   batch:
