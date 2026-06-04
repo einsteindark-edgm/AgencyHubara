@@ -21,6 +21,11 @@ dependencies = [
     "openlit>=1.0",
 ]
 
+[project.optional-dependencies]
+evals = [
+    "deepeval>=4.0.5",
+]
+
 [tool.uv.sources]
 exoclaw-temporal = { workspace = true }
 
@@ -39,4 +44,5 @@ testpaths = ["tests"]
 markers = [
     "architecture: tests de arquitectura DEHA — bloquean merge a main",
     "functional: tests funcionales end-to-end — evidencia del feature, adjunta al PR comment",
+    "eval: tests de evaluación LLM (DeepEval) — requieren el extra `evals` + un juez (litellm). Correr con `uv run --extra evals pytest -m eval`",
 ]

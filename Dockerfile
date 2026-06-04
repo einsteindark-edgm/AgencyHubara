@@ -26,8 +26,13 @@ COPY hubara_agency/ ./hubara_agency/
 # + el schema, no el resto del frontend (que se sirve desde su propio container).
 COPY frontend_dashboard/src/plugins/ ./frontend_dashboard/src/plugins/
 
-# 4. Instalamos el compilado final del proyecto propio
-RUN uv sync --frozen --no-dev
+# 4. Instalamos el compilado final del proyecto propio.
+# `--all-extras` incluye el extra `evals` (deepeval) que necesita el worker
+# `sales-eval` (harness de evaluación LLM). La imagen es compartida por todos los
+# workers + la API; el extra solo lo usa el eval worker, los demás lo ignoran.
+# Mantener deepeval como extra (no dep default) deja lean el gate de arquitectura
+# local (`uv run pytest -m architecture` sin --extra ejercita los import guards).
+RUN uv sync --frozen --no-dev --all-extras
 
 # Insertamos el ambiente virtual al Path del sistema
 ENV PATH="/app/.venv/bin:$PATH"

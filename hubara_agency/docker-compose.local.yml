@@ -265,6 +265,36 @@ services:
         condition: service_healthy
       litellm:
         condition: service_healthy
+  hubara-worker-chats-sales_eval:
+    build:
+      context: ../
+      dockerfile: Dockerfile
+    container_name: local-hubara-worker-chats-sales_eval
+    working_dir: /app/hubara_agency
+    command:
+    - python
+    - -m
+    - src.plugins.chats.workers.sales_eval
+    environment:
+    - TEMPORAL_URL=temporal:7233
+    - API_BASE_LLMLITE=http://litellm:4000
+    - WORKSPACE_VAULT_DIR=/app/hubara_vault
+    - OTEL_EXPORTER_OTLP_ENDPOINT=http://host.docker.internal:4317
+    - OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental
+    - OPENLIT_PRICING_JSON=/app/hubara_agency/deploy/openlit/pricing.json
+    - EVAL_JUDGE_MODEL=litellm_proxy/gemini-backup
+    - EVAL_CANDIDATES_DIR=/app/hubara_vault/_evals/candidates
+    - SALES_EVAL_SCHEDULE_ENABLED=true
+    - SALES_EVAL_LOOKBACK_HOURS=8
+    - SALES_EVAL_MAX_CONVERSATIONS=50
+    - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+    volumes:
+    - hubara-vault-local:/app/hubara_vault
+    depends_on:
+      temporal:
+        condition: service_healthy
+      litellm:
+        condition: service_healthy
   hubara-worker-orders-reconcile:
     build:
       context: ../

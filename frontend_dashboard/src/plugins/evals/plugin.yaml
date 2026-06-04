@@ -1,0 +1,21 @@
+id: evals
+version: 0.1.0
+display_name: Calidad LLM
+description: |
+  Plugin frontend-only — pestaña "Calidad LLM" del dashboard. Cura los goldens del
+  harness de evaluación del Asesor de Ventas: lista los candidatos auto-curados por
+  el juez, permite revisar la conversación (PII redactada) + scores, editar el
+  expected_outcome propuesto y aprobar (→ approved/, el operador lo mergea a
+  tests/evals/.../curated.json) o descartar. Consume /api/chats/evals/* (servida por
+  el plugin chats, dueño del agente sales_eval). NO tiene backend propio.
+
+depends_on: []
+
+# ── Frontend (sin api/agent/workers) ──────────────────────────────────────
+frontend:
+  entry: ./frontend
+  contributes:
+    sections:
+      - { key: evals, label: Calidad LLM, order: 7, icon: shield }
+    sidebar:
+      - { route: /evals, label: Calidad LLM, icon: shield }
