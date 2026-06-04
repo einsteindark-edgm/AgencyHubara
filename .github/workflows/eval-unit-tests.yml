@@ -13,7 +13,7 @@ on:
   pull_request:
     branches: [main, master]
 
-# Mínimos permisos para anotar el PR con los resultados.
+# Permisos para el reporte (Job Summary), el comentario en el PR y las anotaciones.
 permissions:
   contents: read
   checks: write
@@ -48,18 +48,35 @@ jobs:
         working-directory: hubara_agency
         run: uv run pytest tests/evals/ -v --junit-xml=../eval-results.xml
 
-      # Visualización clara: tabla de resultados en el Job Summary + anotaciones
-      # inline en los tests que fallan. `annotate_only` evita un check duplicado
-      # (el gate es ESTE job). `fail_on_failure` por las dudas (el step de pytest
-      # ya falla el job de por sí).
-      - name: Publicar reporte de tests
+      # Reporte VISUAL "qué se evaluó": resultados + las 9 métricas de calidad + el
+      # golden dataset (escenarios + resultado esperado) + los invariantes del guion.
+      # Va al Job Summary del run. `if: always()` → también se ve cuando algo falla.
+      - name: Reporte visual (qué se evaluó + resultados)
+        if: always()
+        working-directory: hubara_agency
+        run: |
+          uv run python scripts/eval_ci_report.py ../eval-results.xml \
+            | tee ../eval-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      # Mismo reporte como comentario (sticky: se actualiza, no spamea) en el PR,
+      # para verlo sin entrar a Actions.
+      - name: Comentar el reporte en el PR
+        if: always()
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: eval-report
+          path: eval-report.md
+
+      # Anotaciones inline en los tests que fallan (la línea exacta en el diff).
+      # `annotate_only` + `detailed_summary: false` → no duplica el resumen (ese ya
+      # lo da el reporte visual). `fail_on_failure` por si pytest no hubiera fallado.
+      - name: Anotaciones inline en tests fallidos
         if: always()
         uses: mikepenz/action-junit-report@v5
         with:
           report_paths: eval-results.xml
-          detailed_summary: true
-          include_passed: true
           annotate_only: true
+          detailed_summary: false
+          include_passed: false
           fail_on_failure: true
           require_tests: true
-          summary: "Resultados de los **unit eval** (harness de calidad del Asesor de Ventas)."
