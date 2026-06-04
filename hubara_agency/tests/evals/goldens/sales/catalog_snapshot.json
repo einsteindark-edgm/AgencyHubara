@@ -1,0 +1,164 @@
+[
+  {
+    "id": "1yxc1gm6cn",
+    "handle": "luz-serena",
+    "title": "Luz Serena",
+    "status": "published",
+    "description": "Vela religiosa Luz Serena de Hubara — disponible en múltiples aromas y colores.",
+    "thumbnail": "https://assets.hubara.com.co/hero-desktop_2560x1440%20(1)-01KN0WTG0ZYM3QTMWYRFZJWT4N.webp",
+    "variants": [
+      {
+        "id": "1yxc1gm6cn-v1",
+        "title": "Unico",
+        "sku": null,
+        "prices": [
+          {
+            "amount": "23000",
+            "currency_code": "cop"
+          }
+        ]
+      }
+    ],
+    "images": [
+      {
+        "url": "https://assets.hubara.com.co/hero-desktop_2560x1440%20(1)-01KN0WTG0ZYM3QTMWYRFZJWT4N.webp",
+        "rank": 0
+      },
+      {
+        "url": "https://assets.hubara.com.co/product-vertical-3-4_1500x2000%20(10)-01KN0WTH28F8DR8PXFY8F0XM4N.webp",
+        "rank": 1
+      },
+      {
+        "url": "https://assets.hubara.com.co/product-vertical-3-4_1500x2000%20(11)-01KN0WTHJSH7XYD20S17M831DC.webp",
+        "rank": 2
+      },
+      {
+        "url": "https://assets.hubara.com.co/product-vertical-3-4_1500x2000%20(12)-01KN0WTJ57R840FQD66M1TMZ0D.webp",
+        "rank": 3
+      },
+      {
+        "url": "https://assets.hubara.com.co/product-vertical-3-4_1500x2000%20(13)-01KN0WTJWVVJESZVK8ES6P06KH.webp",
+        "rank": 4
+      },
+      {
+        "url": "https://assets.hubara.com.co/product-vertical-3-4_1500x2000%20(2)-01KN0WTKQJ2G7RYB71J13ARGG4.webp",
+        "rank": 5
+      },
+      {
+        "url": "https://assets.hubara.com.co/product-vertical-3-4_1500x2000%20(8)-01KN0WTMJTM4WDMRBP9DYGHA6B.webp",
+        "rank": 6
+      },
+      {
+        "url": "https://assets.hubara.com.co/product-vertical-3-4_1500x2000%20(9)-01KN0WTN7EES9ZY9SQB5AGHKPE.webp",
+        "rank": 7
+      }
+    ],
+    "tags": [
+      "Aroma: Caballero de la noche",
+      "Aroma: Limoncillo",
+      "Color: gris",
+      "Color: Amarillo",
+      "Color: verde",
+      "Aroma: Lavanda",
+      "Aroma: Café",
+      "Aroma: Sándalo",
+      "Aroma: Ylan ylang",
+      "Aroma: Coco cremoso",
+      "Aroma: Frutos rojos",
+      "Aroma: Verde menta",
+      "Aroma: Drakar",
+      "Aroma: Chanel",
+      "Color: Naranja",
+      "Color: Morado",
+      "Color: Azul",
+      "Color: Blanco",
+      "Color: Lila",
+      "Color: Rosado"
+    ],
+    "categories": [
+      "religiosas"
+    ],
+    "metadata": null
+  },
+  {
+    "id": "kpirhs1jrp",
+    "handle": "cruz-de-vida",
+    "title": "Cruz de Vida",
+    "status": "published",
+    "description": "Vela religiosa Cruz de Vida de Hubara — disponible en múltiples aromas y colores.",
+    "thumbnail": "https://assets.hubara.com.co/hero-desktop_2560x1440%20(1)-01KN0WTXJ5PD59GW932VYHYXDQ.webp",
+    "variants": [
+      {
+        "id": "kpirhs1jrp-v1",
+        "title": "Unico",
+        "sku": null,
+        "prices": [
+          {
+            "amount": "17000",
+            "currency_code": "cop"
+          }
+        ]
+      }
+    ],
+    "images": [
+      {
+        "url": "https://assets.hubara.com.co/hero-desktop_2560x1440%20(1)-01KN0WTXJ5PD59GW932VYHYXDQ.webp",
+        "rank": 0
+      },
+      {
+        "url": "https://assets.hubara.com.co/product-vertical-3-4_1500x2000%20(10)-01KN0WTY5C3P4Q7BQ5TGZGVMJ2.webp",
+        "rank": 1
+      },
+      {
+        "url": "https://assets.hubara.com.co/product-vertical-3-4_1500x2000%20(11)-01KN0WTYQWWFP7JDJWYXJEWRN3.webp",
+        "rank": 2
+      },
+      {
+        "url": "https://assets.hubara.com.co/product-vertical-3-4_1500x2000%20(12)-01KN0WTZDG71SMBK3YAPX8D4RP.webp",
+        "rank": 3
+      },
+      {
+        "url": "https://assets.hubara.com.co/product-vertical-3-4_1500x2000%20(14)-01KN0WTZZN1AXTM90PNH86FV03.webp",
+        "rank": 4
+      },
+      {
+        "url": "https://assets.hubara.com.co/product-vertical-3-4_1500x2000%20(2)-01KN0WV0NT6ZM3S9V7K8S6RJGE.webp",
+        "rank": 5
+      },
+      {
+        "url": "https://assets.hubara.com.co/product-vertical-3-4_1500x2000%20(8)-01KN0WV18M1SBJ48AT59GBR4SR.webp",
+        "rank": 6
+      },
+      {
+        "url": "https://assets.hubara.com.co/product-vertical-3-4_1500x2000%20(9)-01KN0WV1V9R7D19BVR01MEVFAK.webp",
+        "rank": 7
+      }
+    ],
+    "tags": [
+      "Aroma: Caballero de la noche",
+      "Aroma: Limoncillo",
+      "Color: gris",
+      "Color: Amarillo",
+      "Color: verde",
+      "Aroma: Lavanda",
+      "Aroma: Café",
+      "Aroma: Sándalo",
+      "Aroma: Ylan ylang",
+      "Aroma: Coco cremoso",
+      "Aroma: Frutos rojos",
+      "Aroma: Verde menta",
+      "Aroma: Drakar",
+      "Aroma: Chanel",
+      "Color: Naranja",
+      "Color: Morado",
+      "Color: Azul",
+      "Color: Blanco",
+      "Color: Lila",
+      "Color: Rosado"
+    ],
+    "categories": [
+      "religiosas"
+    ],
+    "metadata": null
+  }
+]
