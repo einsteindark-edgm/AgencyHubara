@@ -32,6 +32,7 @@ import {
   type AdsCampaign,
   type AdsDailyPoint,
   type AdsState,
+  type AdsWindowParams,
   type AttributedConversation,
   type AvatarColor,
   type CampaignStatus,
@@ -188,9 +189,21 @@ export function mapBackendConversation(
 
 /* ── Hooks públicos ──────────────────────────────────────────────────────── */
 
-/** `?days=N` cuando hay ventana acotada; "" para `total` (sin filtro). */
-function daysQuery(days: number | null): string {
-  return days != null ? `?days=${days}` : "";
+/**
+ * Query string de la ventana: `?from=…&to=…` para un rango custom; `?days=N`
+ * para un preset acotado; "" para `total` (sin filtro). El backend prioriza
+ * `from`/`to` sobre `days`.
+ */
+function windowQuery(p: AdsWindowParams): string {
+  const q = new URLSearchParams();
+  if (p.from && p.to) {
+    q.set("from", p.from);
+    q.set("to", p.to);
+  } else if (p.days != null) {
+    q.set("days", String(p.days));
+  }
+  const s = q.toString();
+  return s ? `?${s}` : "";
 }
 
 /**
@@ -202,12 +215,12 @@ function daysQuery(days: number | null): string {
  * agregación solo procesa episodios en rango → el cómputo escala con la
  * ventana, no con todo el historial. `null` = todo.
  */
-export function useAdsCampaigns(days: number | null = null) {
+export function useAdsCampaigns(params: AdsWindowParams) {
   return useQuery<AdsCampaign[]>({
-    queryKey: adsCampaignKeys.list(days),
+    queryKey: adsCampaignKeys.list(params),
     queryFn: async () => {
       const raw = await apiClient.get<unknown>(
-        `/api/chats/ads/campaigns${daysQuery(days)}`,
+        `/api/chats/ads/campaigns${windowQuery(params)}`,
       );
       const parsed = backendAdsCampaignsResponseSchema.parse(raw);
       return parsed.campaigns.map(mapBackendCampaign);
@@ -223,13 +236,13 @@ export function useAdsCampaigns(days: number | null = null) {
  */
 export function useAttributedConversations(
   campaignId: string,
-  days: number | null = null,
+  params: AdsWindowParams,
 ) {
   return useQuery<AttributedConversation[]>({
-    queryKey: adsCampaignKeys.attributed(campaignId, days),
+    queryKey: adsCampaignKeys.attributed(campaignId, params),
     queryFn: async () => {
       const raw = await apiClient.get<unknown>(
-        `/api/chats/ads/campaigns/${encodeURIComponent(campaignId)}/conversations${daysQuery(days)}`,
+        `/api/chats/ads/campaigns/${encodeURIComponent(campaignId)}/conversations${windowQuery(params)}`,
       );
       const parsed =
         backendAttributedConversationsResponseSchema.parse(raw);
@@ -247,15 +260,16 @@ export function useAttributedConversations(
  * (días sin actividad en 0). El shape de cada punto espeja `AdsDailyPoint`, así
  * que el mapeo es directo tras el Zod parse.
  *
- * `days` es la ventana de la serie (el caller mapea el rango "total" al cap de
- * 90 días — un gráfico no puede tener infinitas columnas).
+ * `params` es la ventana de la serie: `from`/`to` para un rango custom, o `days`
+ * para un preset (el caller mapea "total" al cap de 90 días — un gráfico no puede
+ * tener infinitas columnas). El backend clampa el rango custom a 90 columnas.
  */
-export function useDailySeries(campaignId: string, days = 14) {
+export function useDailySeries(campaignId: string, params: AdsWindowParams) {
   return useQuery<AdsDailyPoint[]>({
-    queryKey: adsCampaignKeys.daily(campaignId, days),
+    queryKey: adsCampaignKeys.daily(campaignId, params),
     queryFn: async () => {
       const raw = await apiClient.get<unknown>(
-        `/api/chats/ads/campaigns/${encodeURIComponent(campaignId)}/daily?days=${days}`,
+        `/api/chats/ads/campaigns/${encodeURIComponent(campaignId)}/daily${windowQuery(params)}`,
       );
       const parsed = backendAdsDailyResponseSchema.parse(raw);
       return parsed.series.map(

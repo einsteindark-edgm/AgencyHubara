@@ -36,6 +36,7 @@ from fastapi import APIRouter, Path, Query
 
 from src.platform.config import WORKSPACE_VAULT_DIR
 from src.plugins.chats.agent.sales.use_cases.list_ads_campaigns import (
+    bogota_day_start_ms,
     list_ads_campaigns,
     list_attributed_conversations,
     list_daily_series,
@@ -66,20 +67,42 @@ def _since_ms(days: int | None) -> int | None:
     return int(time.time() * 1000) - days * _DAY_MS
 
 
-def _cached_sessions(days: int | None) -> list[tuple[FsPath, dict[str, Any]]]:
-    """Scan del vault cacheado por TTL + ventana, compartido por los 3 endpoints.
+def _window(
+    days: int | None, frm: str | None, to: str | None
+) -> tuple[int | None, int | None]:
+    """`(since_ms, until_ms)` de la ventana de la UI.
 
-    Cache-miss → un scan O(sesiones en ventana) (con skip por mtime). Cache-hit
-    → O(1). Keyed por (vault, `days`) — estable durante el TTL aunque `since_ms`
-    se mueva; los 3 endpoints de una page-view usan el mismo `days` → comparten
-    el scan.
+    - Rango custom (`from`+`to`, YYYY-MM-DD, ambos inclusive): gana sobre `days`.
+      `until_ms` es EXCLUSIVO (medianoche del día siguiente a `to`) para incluir
+      todo el día `to`. Orden tolerante (si `from` > `to` se intercambian). Fecha
+      inválida → ventana abierta (degradación leniente, no 422).
+    - Preset (`days`): `since = now − days`, `until = None` (hasta ahora).
     """
-    key = f"{WORKSPACE_VAULT_DIR}|{days if days else 'all'}"
+    if frm and to:
+        lo, hi = (frm, to) if frm <= to else (to, frm)
+        since = bogota_day_start_ms(lo)
+        hi_start = bogota_day_start_ms(hi)
+        if since is None or hi_start is None:
+            return None, None
+        return since, hi_start + _DAY_MS
+    return _since_ms(days), None
+
+
+def _cached_sessions(since_ms: int | None) -> list[tuple[FsPath, dict[str, Any]]]:
+    """Scan del vault cacheado por TTL + `since_ms`, compartido por los 3 endpoints.
+
+    El scan SOLO depende de `since_ms` (pre-filtro por mtime; el `until_ms` del
+    rango custom se aplica per-episodio en cada use case). Por eso la key es
+    `since_ms`: los 3 endpoints de una page-view (preset o rango custom) comparten
+    el mismo `since` → un solo scan. Cache-miss → scan O(sesiones en ventana) (con
+    skip por mtime); cache-hit → O(1).
+    """
+    key = f"{WORKSPACE_VAULT_DIR}|{since_ms if since_ms is not None else 'all'}"
     now = time.monotonic()
     hit = _scan_cache.get(key)
     if hit is not None and (now - hit[0]) < _SCAN_TTL_S:
         return hit[1]
-    data = scan_ad_sessions(WORKSPACE_VAULT_DIR, since_ms=_since_ms(days))
+    data = scan_ad_sessions(WORKSPACE_VAULT_DIR, since_ms=since_ms)
     _scan_cache[key] = (now, data)
     return data
 
@@ -89,15 +112,24 @@ def get_ads_campaigns(
     days: int | None = Query(
         None, ge=1, le=365, description="ventana en días; omitir = todo el historial"
     ),
+    frm: str | None = Query(
+        None,
+        alias="from",
+        description="YYYY-MM-DD inicio (inclusive); con `to` activa rango custom y anula `days`",
+    ),
+    to: str | None = Query(
+        None, description="YYYY-MM-DD fin (inclusive); requiere `from`"
+    ),
 ) -> dict:
     """Lista de campañas detectadas en el vault.
 
     Cada campaña se infiere de las sesiones WhatsApp cuyo `origin.channel`
     es `ad`, `post` o `web_referral`. Se agrupa por `origin.source_id`.
 
-    `days` acota la ventana: solo episodios iniciados en los últimos `days`
-    días entran a la agregación (revenue/costo LLM/counts reflejan la ventana).
-    Omitirlo agrega todo el historial.
+    Filtro por fecha: `days` acota la ventana relativa (últimos N días); o bien
+    `from`+`to` (YYYY-MM-DD, ambos inclusive) para un rango exacto que gana sobre
+    `days`. Solo episodios iniciados en la ventana entran a la agregación
+    (revenue/costo LLM/counts la reflejan). Sin ninguno → todo el historial.
 
     Response shape:
       {
@@ -118,8 +150,12 @@ def get_ads_campaigns(
         ]
       }
     """
+    since_ms, until_ms = _window(days, frm, to)
     campaigns = list_ads_campaigns(
-        WORKSPACE_VAULT_DIR, sessions=_cached_sessions(days), since_ms=_since_ms(days)
+        WORKSPACE_VAULT_DIR,
+        sessions=_cached_sessions(since_ms),
+        since_ms=since_ms,
+        until_ms=until_ms,
     )
     return {"campaigns": [asdict(c) for c in campaigns]}
 
@@ -129,6 +165,14 @@ def get_ads_campaign_conversations(
     campaign_id: str = Path(..., description="source_id de la campaña"),
     days: int | None = Query(
         None, ge=1, le=365, description="ventana en días; omitir = todo el historial"
+    ),
+    frm: str | None = Query(
+        None,
+        alias="from",
+        description="YYYY-MM-DD inicio (inclusive); con `to` activa rango custom y anula `days`",
+    ),
+    to: str | None = Query(
+        None, description="YYYY-MM-DD fin (inclusive); requiere `from`"
     ),
 ) -> dict:
     """Conversaciones WhatsApp atribuidas a una campaña.
@@ -162,11 +206,13 @@ def get_ads_campaign_conversations(
     Si el `campaign_id` no existe, devuelve `conversations: []`. El
     frontend muestra el empty state existente.
     """
+    since_ms, until_ms = _window(days, frm, to)
     convs = list_attributed_conversations(
         WORKSPACE_VAULT_DIR,
         campaign_id,
-        sessions=_cached_sessions(days),
-        since_ms=_since_ms(days),
+        sessions=_cached_sessions(since_ms),
+        since_ms=since_ms,
+        until_ms=until_ms,
     )
     return {
         "campaign_id": campaign_id,
@@ -178,13 +224,22 @@ def get_ads_campaign_conversations(
 def get_ads_campaign_daily(
     campaign_id: str = Path(..., description="source_id de la campaña"),
     days: int = Query(14, ge=1, le=90, description="ventana en días (default 14)"),
+    frm: str | None = Query(
+        None,
+        alias="from",
+        description="YYYY-MM-DD inicio (inclusive); con `to` activa rango custom y anula `days`",
+    ),
+    to: str | None = Query(
+        None, description="YYYY-MM-DD fin (inclusive); requiere `from`"
+    ),
 ) -> dict:
     """Serie diaria de conversaciones de una campaña (chats iniciados por día).
 
     Cada día cuenta los episodios cuyo `started_at_ms` cae en ese día
-    calendario (America/Bogota), segmentados por estado actual. Serie
-    CONTINUA de los últimos `days` días terminando hoy — los días sin
-    actividad vienen con counts en 0.
+    calendario (America/Bogota), segmentados por estado actual. Serie CONTINUA
+    (días sin actividad en 0). La ventana es los últimos `days` días terminando
+    hoy, o el rango `from`+`to` (YYYY-MM-DD inclusive) si se proveen — clampeada
+    a 90 columnas. `days` del response es la longitud real de la serie.
 
     Response shape:
       {
@@ -199,11 +254,22 @@ def get_ads_campaign_daily(
 
     Si el `campaign_id` no existe, la serie viene toda en 0 (no rompe).
     """
+    if frm and to:
+        since_ms, until_ms = _window(None, frm, to)
+        scan_since = since_ms
+    else:
+        since_ms = until_ms = None
+        scan_since = _since_ms(days)
     points = list_daily_series(
-        WORKSPACE_VAULT_DIR, campaign_id, days=days, sessions=_cached_sessions(days)
+        WORKSPACE_VAULT_DIR,
+        campaign_id,
+        days=days,
+        since_ms=since_ms,
+        until_ms=until_ms,
+        sessions=_cached_sessions(scan_since),
     )
     return {
         "campaign_id": campaign_id,
-        "days": days,
+        "days": len(points),
         "series": [asdict(p) for p in points],
     }

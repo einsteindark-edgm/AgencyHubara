@@ -3,8 +3,10 @@ export type {
   AdsConversationCounts,
   AdsDailyPoint,
   AdsDateRange,
+  AdsRangeSelection,
   AdsState,
   AdsStateMeta,
+  AdsWindowParams,
   AttributedConversation,
   AvatarColor,
   CampaignStatus,
@@ -14,7 +16,9 @@ export {
   ADS_DATE_RANGES,
   ADS_STATES,
   ADS_STATE_ORDER,
+  DEFAULT_ADS_SELECTION,
   rangeDays,
+  selectionToParams,
   totalConversations,
 } from "./model";
 export { adsCampaignKeys } from "./keys";

@@ -10,13 +10,14 @@
  * con tooltip explicativo en lugar de calcular sobre null.
  */
 
-import type { ReactNode } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 
 import {
   ADS_DATE_RANGES,
   totalConversations,
   type AdsCampaign,
   type AdsDateRange,
+  type AdsRangeSelection,
 } from "@/entities/ads-campaign";
 import { Icon } from "@/shared/ui";
 
@@ -32,12 +33,40 @@ import { MissingField } from "@plugins/ads/frontend/lib/MissingField";
 
 interface Props {
   campaign: AdsCampaign;
-  /** Ventana temporal seleccionada (filtro por fecha, controlado por la Page). */
-  range: AdsDateRange;
-  onRangeChange: (r: AdsDateRange) => void;
+  /** Selección de ventana (preset 7d/30d/90d/total o rango custom fecha
+   *  inicio→fin), controlada por la Page. */
+  selection: AdsRangeSelection;
+  onSelectionChange: (s: AdsRangeSelection) => void;
 }
 
-export function AdsOverviewHeader({ campaign, range, onRangeChange }: Props) {
+export function AdsOverviewHeader({
+  campaign,
+  selection,
+  onSelectionChange,
+}: Props) {
+  // Borrador local de las fechas custom (los <input type="date">). La selección
+  // APLICADA vive en la Page; acá solo manejamos la edición en curso y la
+  // aplicamos cuando AMBAS fechas están puestas. Elegir un preset las limpia.
+  const [from, setFrom] = useState(
+    selection.kind === "custom" ? selection.from : "",
+  );
+  const [to, setTo] = useState(selection.kind === "custom" ? selection.to : "");
+  const isPreset = selection.kind === "preset";
+
+  function pickPreset(p: AdsDateRange) {
+    setFrom("");
+    setTo("");
+    onSelectionChange({ kind: "preset", preset: p });
+  }
+  function pickFrom(v: string) {
+    setFrom(v);
+    if (v && to) onSelectionChange({ kind: "custom", from: v, to });
+  }
+  function pickTo(v: string) {
+    setTo(v);
+    if (from && v) onSelectionChange({ kind: "custom", from, to: v });
+  }
+
   const total = totalConversations(campaign);
   const won = campaign.conversations?.ganado ?? null;
 
@@ -109,12 +138,37 @@ export function AdsOverviewHeader({ campaign, range, onRangeChange }: Props) {
             {ADS_DATE_RANGES.map((r) => (
               <button
                 key={r.key}
-                className={range === r.key ? "on" : ""}
-                onClick={() => onRangeChange(r.key)}
+                className={isPreset && selection.preset === r.key ? "on" : ""}
+                onClick={() => pickPreset(r.key)}
               >
                 {r.label}
               </button>
             ))}
+          </div>
+          {/* Rango exacto (fecha inicio → fecha fin). Se aplica al tener ambas
+              fechas; elegir un preset lo limpia. `min`/`max` impiden invertirlo. */}
+          <div
+            className="ads-range-dates"
+            title="Rango personalizado (fecha inicio → fecha fin)"
+            style={{ display: "flex", alignItems: "center", gap: 6 }}
+          >
+            <input
+              type="date"
+              aria-label="Fecha inicio"
+              value={from}
+              max={to || undefined}
+              onChange={(e) => pickFrom(e.target.value)}
+              style={dateInputStyle(!isPreset)}
+            />
+            <span style={{ opacity: 0.5, fontSize: 12 }}>→</span>
+            <input
+              type="date"
+              aria-label="Fecha fin"
+              value={to}
+              min={from || undefined}
+              onChange={(e) => pickTo(e.target.value)}
+              style={dateInputStyle(!isPreset)}
+            />
           </div>
           <button className="insp-button">
             <Icon.refresh />
@@ -268,4 +322,20 @@ function Kpi({ label, value, sub, tone, hero }: KpiProps) {
       {sub && <div className="ads-kpi-s">{sub}</div>}
     </div>
   );
+}
+
+/** Estilo inline del `<input type="date">` del rango custom (dark; resalta el
+ *  borde cuando el rango custom está activo). Inline para no tocar el bloque
+ *  `@theme` de index.css (spinal file). */
+function dateInputStyle(active: boolean): CSSProperties {
+  return {
+    background: "rgba(255,255,255,0.04)",
+    border: active ? "1px solid #5fa9ff" : "1px solid rgba(255,255,255,0.14)",
+    borderRadius: 8,
+    color: "inherit",
+    font: "inherit",
+    fontSize: 12,
+    padding: "5px 8px",
+    colorScheme: "dark",
+  };
 }
