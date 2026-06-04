@@ -559,6 +559,7 @@ def list_ads_campaigns(
     *,
     sessions: list[tuple[Path, dict[str, Any]]] | None = None,
     since_ms: int | None = None,
+    until_ms: int | None = None,
 ) -> list[AdsCampaignSummary]:
     """Lista de campañas únicas detectadas en el vault.
 
@@ -617,13 +618,17 @@ def list_ads_campaigns(
                 ep.get("started_at_ms") if ep is not None else origin.get("first_seen_ms")
             )
 
-            # Filtro por fecha (ventana de la UI): solo episodios iniciados
-            # en/después de `since_ms`. None (sin fecha) se excluye de una
-            # ventana acotada.
-            if since_ms is not None and (
-                ep_started_ms is None or ep_started_ms < since_ms
-            ):
-                continue
+            # Filtro por fecha (ventana de la UI). `since_ms` = límite inferior
+            # (preset o `from`); `until_ms` = límite superior EXCLUSIVO (rango
+            # custom `to`). Un episodio sin `started_at_ms` no se puede ubicar en
+            # una ventana acotada → se excluye si hay cualquier límite activo.
+            if since_ms is not None or until_ms is not None:
+                if ep_started_ms is None:
+                    continue
+                if since_ms is not None and ep_started_ms < since_ms:
+                    continue
+                if until_ms is not None and ep_started_ms >= until_ms:
+                    continue
 
             bucket = buckets.setdefault(
                 campaign_id,
@@ -745,6 +750,7 @@ def list_attributed_conversations(
     *,
     sessions: list[tuple[Path, dict[str, Any]]] | None = None,
     since_ms: int | None = None,
+    until_ms: int | None = None,
 ) -> list[AdsAttributedConversation]:
     """Conversaciones WhatsApp atribuidas a una campaña.
 
@@ -810,9 +816,11 @@ def list_attributed_conversations(
                 ep_last_msg = last_msg_ms
                 ad_headline = origin.get("headline")
 
-            # Filtro por fecha (ventana de la UI): solo conversaciones iniciadas
-            # en/después de `since_ms`.
+            # Filtro por fecha (ventana de la UI): `since_ms` (límite inferior,
+            # inclusive) + `until_ms` (límite superior, EXCLUSIVO — rango custom).
             if since_ms is not None and started < since_ms:
+                continue
+            if until_ms is not None and started >= until_ms:
                 continue
 
             _usage = ep.get("llm_usage") if isinstance(ep, dict) else None
@@ -877,12 +885,37 @@ def _day_label(d: datetime.date) -> str:
     return f"{d.day} {_MONTH_ABBR_ES[d.month]}"
 
 
+def _bogota_day_start_ms(d: datetime.date) -> int:
+    """Epoch ms de la medianoche (00:00 America/Bogota, UTC-5) de una fecha."""
+    midnight_utc = datetime.datetime(
+        d.year, d.month, d.day, tzinfo=datetime.timezone.utc
+    )
+    return int(midnight_utc.timestamp() * 1000) + _BOGOTA_OFFSET_MS
+
+
+def bogota_day_start_ms(date_str: str) -> int | None:
+    """'YYYY-MM-DD' → epoch ms de su medianoche (America/Bogota). None si no parsea.
+
+    Inverso de `_bogota_date`. La capa API la usa para traducir el rango
+    fecha-inicio/fecha-fin de la UI (`?from=&to=`) a los límites `since_ms`/
+    `until_ms` del filtro — manteniendo TODA la lógica de timezone en este módulo
+    (un solo lugar, sin que el frontend tenga que adivinar el huso del operador).
+    """
+    try:
+        d = datetime.date.fromisoformat(date_str)
+    except (ValueError, TypeError):
+        return None
+    return _bogota_day_start_ms(d)
+
+
 def list_daily_series(
     vault_dir: Path,
     campaign_id: str,
     *,
     days: int = 14,
     now_ms: int | None = None,
+    since_ms: int | None = None,
+    until_ms: int | None = None,
     sessions: list[tuple[Path, dict[str, Any]]] | None = None,
 ) -> list[AdsDailySeriesPoint]:
     """Serie diaria de una campaña: chats iniciados por día, por estado actual.
@@ -890,30 +923,57 @@ def list_daily_series(
     Cada episodio atribuido a `campaign_id` (re-atribución FU2 — mismo criterio
     que `list_attributed_conversations`) se bucketea por el día calendario
     (America/Bogota) de su `started_at_ms` y suma 1 a su estado. Devuelve una
-    serie CONTINUA de los últimos `days` días terminando hoy — los días sin
-    actividad vienen con counts en 0 (no se omiten) para que el gráfico no
-    tenga huecos.
+    serie CONTINUA — los días sin actividad vienen con counts en 0 (no se omiten)
+    para que el gráfico no tenga huecos.
+
+    Ventana:
+      - Preset (default): los últimos `days` días terminando hoy.
+      - Custom (`since_ms`/`until_ms`, del rango fecha-inicio/fecha-fin de la UI):
+        de `since_ms` a `until_ms` (este último exclusivo). Clampeada a 90 columnas
+        (un gráfico no puede tener infinitas barras) anclando el corte al final.
 
     `now_ms` se inyecta en tests para fijar la ventana; en producción es el
     instante de la request.
     """
     if now_ms is None:
         now_ms = int(time.time() * 1000)
-    days = max(1, min(days, 90))  # clamp defensivo
+    days = max(1, min(days, 90))  # clamp defensivo del preset
 
-    today = _bogota_date(now_ms)
-    start_day = today - datetime.timedelta(days=days - 1)
-    window = [start_day + datetime.timedelta(days=i) for i in range(days)]
+    # Ventana [start_day, end_day] (días calendario Bogota, ambos inclusive):
+    #  - Custom (since_ms/until_ms del rango fecha-inicio/fecha-fin de la UI):
+    #    end_day = día de `until_ms` (exclusivo → −1ms cae en el último día),
+    #    start_day = día de `since_ms`.
+    #  - Preset (sin since/until): los últimos `days` días terminando hoy.
+    if until_ms is not None:
+        end_day = _bogota_date(until_ms - 1)
+    else:
+        end_day = _bogota_date(now_ms)
+    if since_ms is not None:
+        start_day = min(_bogota_date(since_ms), end_day)
+        span = (end_day - start_day).days + 1
+        if span > 90:  # un gráfico no puede tener infinitas columnas
+            start_day = end_day - datetime.timedelta(days=89)
+            span = 90
+    else:
+        span = days
+        start_day = end_day - datetime.timedelta(days=span - 1)
+
+    window = [start_day + datetime.timedelta(days=i) for i in range(span)]
     by_day: dict[datetime.date, dict[str, int]] = {
         d: _empty_state_counts() for d in window
     }
-    # La ventana ES el filtro por fecha de la serie. Derivamos `since_ms` para
-    # que el scan directo (sin `sessions=`) saltee sesiones fuera de rango; el
-    # bucketeo por `by_day` ya descarta con precisión lo que cae fuera.
-    since_ms = now_ms - days * 24 * 60 * 60 * 1000
+    # `since` para el scan directo (sin `sessions=`): inicio del primer día de la
+    # ventana — superset-safe (crear/avanzar un episodio reescribe metadata, y el
+    # bucketeo por `by_day` descarta con precisión lo que caiga fuera). Para el
+    # preset usamos la ventana relativa, preservando el comportamiento previo.
+    scan_since = (
+        _bogota_day_start_ms(start_day)
+        if (since_ms is not None or until_ms is not None)
+        else now_ms - span * 24 * 60 * 60 * 1000
+    )
 
     for session_dir, metadata in (
-        sessions if sessions is not None else scan_ad_sessions(vault_dir, since_ms=since_ms)
+        sessions if sessions is not None else scan_ad_sessions(vault_dir, since_ms=scan_since)
     ):
         origin = metadata.get("origin") or {}
         last_touch = metadata.get("last_touch")

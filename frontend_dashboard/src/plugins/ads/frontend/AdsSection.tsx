@@ -18,11 +18,13 @@
 import { useMemo, useState } from "react";
 
 import {
-  rangeDays,
+  DEFAULT_ADS_SELECTION,
+  selectionToParams,
   useAdsCampaigns,
   useAttributedConversations,
   useDailySeries,
-  type AdsDateRange,
+  type AdsRangeSelection,
+  type AdsWindowParams,
 } from "@/entities/ads-campaign";
 
 import { AdsCampaignsList } from "@plugins/ads/frontend/features/ads-campaigns-list";
@@ -39,15 +41,22 @@ export interface AdsSectionProps {
 }
 
 export function AdsSection({ showSidebar, showInspector }: AdsSectionProps) {
-  // Ventana temporal — default 30d (acotada) para que el cómputo del backend
-  // no escale con todo el historial; el operador puede ampliar a Total.
-  const [range, setRange] = useState<AdsDateRange>("30d");
-  const aggDays = rangeDays(range); // null = Total (sin filtro)
-  // El gráfico diario no puede tener infinitas columnas → "Total" cae al cap
-  // del backend (90 días).
-  const dailyDays = aggDays ?? 90;
+  // Ventana temporal — default preset 30d (acotada) para que el cómputo del
+  // backend no escale con todo el historial. El operador puede ampliar a Total
+  // o fijar un rango exacto (fecha inicio → fecha fin) desde el header.
+  const [selection, setSelection] = useState<AdsRangeSelection>(
+    DEFAULT_ADS_SELECTION,
+  );
+  const params = selectionToParams(selection);
+  // El gráfico diario no puede tener infinitas columnas: un preset manda `days`
+  // (Total → cap 90 del backend); un rango custom manda from/to y el backend lo
+  // clampa a 90.
+  const dailyParams: AdsWindowParams =
+    selection.kind === "custom"
+      ? params
+      : { days: params.days ?? 90, from: null, to: null };
 
-  const { data: campaigns = [] } = useAdsCampaigns(aggDays);
+  const { data: campaigns = [] } = useAdsCampaigns(params);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   // Default a la primera campaña activa una vez que llegan los datos. Si la
@@ -68,9 +77,9 @@ export function AdsSection({ showSidebar, showInspector }: AdsSectionProps) {
 
   const { data: attributed = [] } = useAttributedConversations(
     campaign?.id ?? "",
-    aggDays,
+    params,
   );
-  const { data: daily = [] } = useDailySeries(campaign?.id ?? "", dailyDays);
+  const { data: daily = [] } = useDailySeries(campaign?.id ?? "", dailyParams);
 
   if (!campaign) {
     // Empty-state: aún sin campañas cargadas. Idéntico al patrón de eta-chat.
@@ -93,8 +102,8 @@ export function AdsSection({ showSidebar, showInspector }: AdsSectionProps) {
       <main className="ads-canvas">
         <AdsOverviewHeader
           campaign={campaign}
-          range={range}
-          onRangeChange={setRange}
+          selection={selection}
+          onSelectionChange={setSelection}
         />
         <div className="ads-body">
           <AdsFunnel campaign={campaign} />

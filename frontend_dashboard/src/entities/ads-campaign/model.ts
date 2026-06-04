@@ -72,6 +72,47 @@ export function rangeDays(r: AdsDateRange): number | null {
   return ADS_DATE_RANGES.find((x) => x.key === r)?.days ?? null;
 }
 
+/**
+ * Selección de ventana del dashboard, discriminada por `kind`:
+ *  - `preset`: uno de los atajos 7d/30d/90d/total (límite inferior relativo a hoy).
+ *  - `custom`: rango calendario explícito `[from, to]` (YYYY-MM-DD, America/Bogota),
+ *    ambos inclusive — para analizar un mes/trimestre puntual con precisión.
+ * Los presets cubren el día a día; el rango custom da exactitud (y acota el
+ * cómputo a una ventana fija).
+ */
+export type AdsRangeSelection =
+  | { kind: "preset"; preset: AdsDateRange }
+  | { kind: "custom"; from: string; to: string };
+
+/** Selección por defecto — preset acotado (no escanea todo el historial). */
+export const DEFAULT_ADS_SELECTION: AdsRangeSelection = {
+  kind: "preset",
+  preset: "30d",
+};
+
+/**
+ * Parámetros de query que la selección empuja al backend. El backend acepta
+ * `days` (preset; límite inferior = hoy − días) O `from`/`to` (rango custom,
+ * ambos inclusive); `from`/`to` ganan sobre `days`. Mantener `days` además del
+ * rango deja que el caller derive la ventana del gráfico diario sin re-derivar.
+ */
+export interface AdsWindowParams {
+  days: number | null;
+  from: string | null;
+  to: string | null;
+}
+
+/** Traduce una selección a los parámetros de query del backend. */
+export function selectionToParams(sel: AdsRangeSelection): AdsWindowParams {
+  if (sel.kind === "custom") {
+    // Normalizamos el orden (YYYY-MM-DD compara cronológicamente como string).
+    const [from, to] =
+      sel.from <= sel.to ? [sel.from, sel.to] : [sel.to, sel.from];
+    return { days: null, from, to };
+  }
+  return { days: rangeDays(sel.preset), from: null, to: null };
+}
+
 export type AdsConversationCounts = Record<AdsState, number>;
 
 /**

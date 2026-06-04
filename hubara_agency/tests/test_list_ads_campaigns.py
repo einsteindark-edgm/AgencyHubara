@@ -1432,3 +1432,133 @@ def test_scan_skips_sessions_untouched_since_via_mtime(_isolate_vault_dir: Path)
 
     # Sin since_ms, escanea todas.
     assert {sd.name for sd, _ in scan_ad_sessions(_isolate_vault_dir)} == {"wa_old", "wa_new"}
+
+
+# ---------------------------------------------------------------------------
+# Rango custom (fecha inicio / fecha fin) — `until_ms` (límite superior) +
+# ventana diaria explícita. Complementa el filtro `since_ms` de arriba.
+# ---------------------------------------------------------------------------
+
+
+def test_until_ms_filters_campaign_episodes_by_start_date(_isolate_vault_dir: Path):
+    """`until_ms` (límite superior EXCLUSIVO) recorta la agregación: los
+    episodios iniciados en/después del corte no cuentan."""
+    _write_episodic_session(
+        _isolate_vault_dir,
+        phone="111",
+        source_id="AD_X",
+        episodes=[
+            _ep("ep_early", started_at_ms=_BASE_MS - 20 * _DAY_MS, closed_at_ms=_BASE_MS - 20 * _DAY_MS + 1000, order_id="o1", order_total_cop=100000),
+            _ep("ep_late", started_at_ms=_BASE_MS - 2 * _DAY_MS, closed_at_ms=_BASE_MS - 2 * _DAY_MS + 1000, order_id="o2", order_total_cop=300000),
+        ],
+    )
+    windowed = _only(
+        list_ads_campaigns(_isolate_vault_dir, until_ms=_BASE_MS - 10 * _DAY_MS), "AD_X"
+    )
+    assert windowed.started == 1
+    assert windowed.revenue == 100000  # solo ep_early (antes del corte superior)
+
+
+def test_window_since_and_until_bound_campaigns(_isolate_vault_dir: Path):
+    """`since_ms` + `until_ms` acotan ambos extremos: solo el episodio dentro de
+    [since, until) entra a la agregación."""
+    _write_episodic_session(
+        _isolate_vault_dir,
+        phone="111",
+        source_id="AD_X",
+        episodes=[
+            _ep("ep_before", started_at_ms=_BASE_MS - 40 * _DAY_MS, closed_at_ms=_BASE_MS - 40 * _DAY_MS + 1000, order_id="o1", order_total_cop=100000),
+            _ep("ep_in", started_at_ms=_BASE_MS - 20 * _DAY_MS, closed_at_ms=_BASE_MS - 20 * _DAY_MS + 1000, order_id="o2", order_total_cop=200000),
+            _ep("ep_after", started_at_ms=_BASE_MS - 2 * _DAY_MS, closed_at_ms=_BASE_MS - 2 * _DAY_MS + 1000, order_id="o3", order_total_cop=300000),
+        ],
+    )
+    camp = _only(
+        list_ads_campaigns(
+            _isolate_vault_dir,
+            since_ms=_BASE_MS - 30 * _DAY_MS,
+            until_ms=_BASE_MS - 10 * _DAY_MS,
+        ),
+        "AD_X",
+    )
+    assert camp.started == 1
+    assert camp.revenue == 200000  # solo ep_in
+
+
+def test_until_ms_filters_conversations_by_start_date(_isolate_vault_dir: Path):
+    """`until_ms` deja fuera las conversaciones iniciadas en/después del corte."""
+    _write_episodic_session(
+        _isolate_vault_dir,
+        phone="111",
+        source_id="AD_X",
+        episodes=[
+            _ep("ep_early", started_at_ms=_BASE_MS - 20 * _DAY_MS, closed_at_ms=_BASE_MS - 20 * _DAY_MS + 1),
+            _ep("ep_late", started_at_ms=_BASE_MS - 2 * _DAY_MS, closed_at_ms=_BASE_MS - 2 * _DAY_MS + 1),
+        ],
+    )
+    convs = list_attributed_conversations(
+        _isolate_vault_dir, "AD_X", until_ms=_BASE_MS - 10 * _DAY_MS
+    )
+    assert len(convs) == 1
+    assert convs[0].episode_id == "ep_early"
+
+
+def test_daily_series_custom_window_uses_since_until(_isolate_vault_dir: Path):
+    """Con `since_ms`/`until_ms` la serie cubre [from_day, to_day] (ambos
+    inclusive) en vez de 'últimos N días terminando hoy', y bucketea por día."""
+    from src.plugins.chats.agent.sales.use_cases.list_ads_campaigns import (
+        bogota_day_start_ms,
+    )
+
+    since = bogota_day_start_ms("2026-05-01")
+    until = bogota_day_start_ms("2026-05-07") + _DAY_MS  # `to` inclusive → 7 días
+    in_window = bogota_day_start_ms("2026-05-03") + 12 * 60 * 60 * 1000  # mediodía Bogota
+    out_window = bogota_day_start_ms("2026-05-20") + 12 * 60 * 60 * 1000
+    _write_episodic_session(
+        _isolate_vault_dir,
+        phone="111",
+        source_id="AD_X",
+        episodes=[
+            _ep("ep_in", started_at_ms=in_window, closed_at_ms=in_window, order_id="o1", order_total_cop=100000),
+            _ep("ep_out", started_at_ms=out_window, closed_at_ms=out_window, order_id="o2", order_total_cop=200000),
+        ],
+    )
+    series = list_daily_series(
+        _isolate_vault_dir, "AD_X", since_ms=since, until_ms=until
+    )
+    assert len(series) == 7  # 1..7 may inclusive (no "últimos 14 terminando hoy")
+    assert series[0].d == "1 may"
+    assert series[-1].d == "7 may"
+    assert series[2].ganado == 1  # 3 may
+    assert sum(p.ganado for p in series) == 1  # ep_out (20 may) fuera de ventana
+
+
+def test_daily_series_custom_window_clamps_to_90_columns(_isolate_vault_dir: Path):
+    """Un rango custom > 90 días se clampa a 90 columnas ancladas al final (`to`)."""
+    from src.plugins.chats.agent.sales.use_cases.list_ads_campaigns import (
+        bogota_day_start_ms,
+    )
+
+    since = bogota_day_start_ms("2026-01-01")
+    until = bogota_day_start_ms("2026-06-30") + _DAY_MS  # ~180 días
+    series = list_daily_series(
+        _isolate_vault_dir, "NOPE", since_ms=since, until_ms=until
+    )
+    assert len(series) == 90
+    assert series[-1].d == "30 jun"  # ancla al final del rango
+
+
+def test_bogota_day_start_ms_roundtrips_with_bogota_date(_isolate_vault_dir: Path):
+    """`bogota_day_start_ms` es el inverso de `_bogota_date` y maneja la frontera
+    de medianoche Bogota; fecha inválida → None (la API degrada a ventana abierta)."""
+    import datetime as dt
+
+    from src.plugins.chats.agent.sales.use_cases.list_ads_campaigns import (
+        _bogota_date,
+        bogota_day_start_ms,
+    )
+
+    ms = bogota_day_start_ms("2026-05-15")
+    assert ms is not None
+    assert _bogota_date(ms) == dt.date(2026, 5, 15)
+    assert _bogota_date(ms - 1) == dt.date(2026, 5, 14)  # 1ms antes = día anterior
+    assert bogota_day_start_ms("not-a-date") is None
