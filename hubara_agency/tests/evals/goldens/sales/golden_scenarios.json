@@ -1,0 +1,532 @@
+{
+  "version": "1.0",
+  "description": "Golden scenarios para el EVAL DEL AGENTE REAL de ventas Hubara. A diferencia de curated.json (transcripciones ejemplares para unit tests), esto NO contiene respuestas del agente: contiene los TURNOS DEL CLIENTE (escenarios). El runner del golden-eval maneja al agente de ventas REAL a traves de estos turnos (cerebro DeepSeek real, workspace real, tools reales con puertos stub + sin flush de envios), captura el ledger conductual (tools usadas, intents, decisiones) y lo califica con el JUEZ REAL (el mismo de SigNoz). Doble lente: (1) juez LLM sobre el texto; (2) asserts deterministas sobre expected_behaviors.",
+  "guion_source": "hubara_agency/.../workspace/skills/sales_script/SKILL.md  (resumen testeable en src/plugins/chats/agent/sales_eval/evals/script_rubric.py)",
+  "funnel": "Apertura -> Descubrimiento -> Recomendacion -> Objeciones -> Cierre(BANT) -> Despedida",
+  "conventions": {
+    "customer_turns": "Cada string es UN mensaje del cliente. El runner lo manda al agente y recoge la respuesta + el ledger antes del siguiente turno.",
+    "markers": {
+      "[BTN: <texto>]": "El cliente toco un boton nativo de WhatsApp (quick reply / lista). El runner lo mapea al payload del boton.",
+      "[FLOW: k=v; ...]": "El cliente envio un WhatsApp Flow (form) con esos campos (ej. datos de envio). El runner lo mapea al submit del flow.",
+      "[CART: <items>]": "El cliente armo un carrito nativo.",
+      "[IMG]": "El cliente envio una imagen (el agente normalmente no la ve).",
+      "[REDACTED:campo]": "PII real reemplazada para poder committear (telefono/direccion/nombre)."
+    }
+  },
+  "expected_behavior_vocab": {
+    "greeting_first_turn": "El 1er mensaje del agente abre con saludo por hora de Colombia (Buenos dias/tardes/noches) + marca 'Hubara' + propuesta de valor. greeting_compliance.",
+    "forbidden_opener_absent": "El agente NO abre con '¡Hola!'/'Hey'/'Buen dia' (singular).",
+    "offer_catalog_opening": "En la apertura ofrece el catalogo (boton 'Ver catalogo' / send_quick_replies).",
+    "tool_called": "El agente llamo la tool {tool} en algun momento del escenario.",
+    "tool_not_called": "El agente NO llamo la tool {tool} (ej. no register_order si no hubo cierre).",
+    "search_before_naming": "Hubo un search_products ANTES de nombrar productos/precios/aromas concretos (no_hallucination).",
+    "no_hallucinated_product": "El agente NO afirmo la existencia del producto inexistente {needle}; busco y ofrecio alternativas o dijo que no esta.",
+    "escalate": "El agente llamo escalate_to_human por el trigger {trigger} (discount|wholesale_b2b|corporate_event|safety_health|explicit_human|international).",
+    "no_escalation": "El agente resolvio sin escalar (guard anti sobre-escalacion en consultas normales).",
+    "register_order_attempted": "El agente llamo register_order (en eval pega al StubOrderRegistration -> no crea orden real, pero emite order_registered). Se valida que los items/cantidad sean los pedidos.",
+    "tag_set": "El agente llamo manage_conversation_tag con el tag {tag} (ej. CONFIRMADO_PAGO_PENDIENTE).",
+    "tag_not_set": "El agente NO marco el tag {tag} (ej. nunca COMPRA_EXITOSA directo).",
+    "single_closing_message": "Tras el cierre hay UN solo mensaje; no hay un segundo mensaje espontaneo.",
+    "no_forbidden_closing": "No usa frases prohibidas ('gracias por tu compra', 'pago procesado', 'compra exitosa', etc.).",
+    "no_voseo": "Cero voseo rioplatense (vos/tenes/queres/dale/che...). Tuteo colombiano.",
+    "no_em_dash": "Cero em dash (—) ni en dash (–) en el texto al cliente.",
+    "emoji_allowlist": "Maximo 1 emoji por burbuja y solo de la allowlist (🤍 ✨ 🕯️ 🌿).",
+    "no_reask": "No vuelve a preguntar el dato {field} que el cliente ya dio.",
+    "no_ai_reveal": "No revela que es una IA; deflecta con gracia y sigue el guion (sin romper la cuarta pared ni afirmar falsamente ser humano de forma forzada).",
+    "proactive_offering_back_to_catalog": "Ante un pedido fuera de scope, redirige con gracia al catalogo de velas en vez de quedarse pasivo o inventar otro rubro."
+  },
+  "judge_metrics_default": [
+    "greeting_compliance", "style_compliance", "script_adherence",
+    "proactive_offering", "no_hallucination", "conversion_progress",
+    "correct_handoff", "role_adherence", "knowledge_retention"
+  ],
+  "scenarios": [
+    {
+      "id": "apertura_fria_hola",
+      "title": "Apertura fria — el cliente solo dice 'Hola'",
+      "category": "apertura",
+      "source": "synthetic",
+      "probes": "El saludo canonico + oferta de catalogo. Modo de falla historico: saludo descartado, abrir con '¡Hola!'.",
+      "customer_turns": ["Hola"],
+      "expected_behaviors": [
+        {"type": "greeting_first_turn"},
+        {"type": "forbidden_opener_absent"},
+        {"type": "offer_catalog_opening"},
+        {"type": "no_voseo"}, {"type": "no_em_dash"}, {"type": "emoji_allowlist"}
+      ],
+      "judge_metrics": ["greeting_compliance", "style_compliance", "proactive_offering", "script_adherence"]
+    },
+    {
+      "id": "apertura_buenas_tardes",
+      "title": "Apertura — 'Buenas tardes'",
+      "category": "apertura",
+      "source": "synthetic",
+      "probes": "Saludo coherente con la hora + marca + valor.",
+      "customer_turns": ["Buenas tardes"],
+      "expected_behaviors": [
+        {"type": "greeting_first_turn"}, {"type": "forbidden_opener_absent"},
+        {"type": "offer_catalog_opening"}, {"type": "no_voseo"}, {"type": "emoji_allowlist"}
+      ],
+      "judge_metrics": ["greeting_compliance", "style_compliance", "proactive_offering"]
+    },
+    {
+      "id": "apertura_pregunta_directa",
+      "title": "Apertura con pregunta directa de producto",
+      "category": "apertura",
+      "source": "synthetic",
+      "probes": "Saluda Y atiende la intencion (no ignora la pregunta por seguir el guion roboticamente).",
+      "customer_turns": ["Tienen velas aromaticas?"],
+      "expected_behaviors": [
+        {"type": "greeting_first_turn"}, {"type": "offer_catalog_opening"},
+        {"type": "no_voseo"}, {"type": "no_em_dash"}
+      ],
+      "judge_metrics": ["greeting_compliance", "proactive_offering", "script_adherence"]
+    },
+    {
+      "id": "apertura_voseo_bait",
+      "title": "El cliente usa voseo rioplatense — el agente NO debe espejarlo",
+      "category": "estilo",
+      "source": "synthetic",
+      "probes": "Modo de falla #voseo: el agente copia el registro del cliente. Debe mantener tuteo colombiano.",
+      "customer_turns": ["Che, ¿vos tenés velas piolas? dale pasame el catalogo"],
+      "expected_behaviors": [
+        {"type": "greeting_first_turn"}, {"type": "no_voseo"},
+        {"type": "offer_catalog_opening"}, {"type": "emoji_allowlist"}
+      ],
+      "judge_metrics": ["style_compliance", "greeting_compliance", "role_adherence"]
+    },
+    {
+      "id": "apertura_emoji_flood",
+      "title": "Cliente manda muchos emojis — el agente se mantiene en la allowlist",
+      "category": "estilo",
+      "source": "synthetic",
+      "probes": "Regla de emojis (max 1/burbuja, allowlist). Que no se contagie de la efusividad.",
+      "customer_turns": ["holaaa 😍😍🔥🥳 quiero velasss 🎉🎉"],
+      "expected_behaviors": [
+        {"type": "greeting_first_turn"}, {"type": "emoji_allowlist"},
+        {"type": "no_em_dash"}, {"type": "no_voseo"}
+      ],
+      "judge_metrics": ["style_compliance", "greeting_compliance"]
+    },
+    {
+      "id": "descubrimiento_regalo",
+      "title": "Descubrimiento — 'es para un regalo'",
+      "category": "descubrimiento",
+      "source": "synthetic",
+      "probes": "SPIN: una pregunta por turno (¿para quien? ¿que aroma/momento?) ANTES de recomendar.",
+      "customer_turns": ["Buenas, busco una vela para un regalo"],
+      "expected_behaviors": [
+        {"type": "greeting_first_turn"},
+        {"type": "tool_not_called", "tool": "register_order"},
+        {"type": "no_voseo"}
+      ],
+      "judge_metrics": ["script_adherence", "proactive_offering", "conversion_progress"]
+    },
+    {
+      "id": "descubrimiento_intencion_clara",
+      "title": "Intencion clara — saltar el descubrimiento e ir a recomendar",
+      "category": "descubrimiento",
+      "source": "synthetic",
+      "probes": "Si el cliente ya dio intencion clara, NO repreguntar de mas; buscar y presentar.",
+      "customer_turns": ["Hola, quiero la vela Cruz de Vida en aroma cafe, ¿la tienen?"],
+      "expected_behaviors": [
+        {"type": "greeting_first_turn"},
+        {"type": "search_before_naming"},
+        {"type": "tool_called", "tool": "search_products"},
+        {"type": "no_reask", "field": "intencion"}
+      ],
+      "judge_metrics": ["script_adherence", "no_hallucination", "conversion_progress"]
+    },
+    {
+      "id": "descubrimiento_cliente_vago",
+      "title": "Cliente vago — 'no se que quiero'",
+      "category": "descubrimiento",
+      "source": "synthetic",
+      "probes": "Guia con preguntas SPIN sin abrumar; no se queda pasivo ni recomienda a ciegas.",
+      "customer_turns": ["Buenas", "No se, algo lindo para mi casa"],
+      "expected_behaviors": [
+        {"type": "greeting_first_turn"}, {"type": "no_voseo"}
+      ],
+      "judge_metrics": ["proactive_offering", "script_adherence", "conversion_progress"]
+    },
+    {
+      "id": "recomendacion_busca_primero",
+      "title": "Recomendacion — debe buscar antes de nombrar aromas",
+      "category": "recomendacion",
+      "source": "synthetic",
+      "probes": "no_hallucination: search_products ANTES de enumerar aromas/precios.",
+      "customer_turns": ["Buenas tardes", "¿Que aromas manejan y a que precio?"],
+      "expected_behaviors": [
+        {"type": "search_before_naming"},
+        {"type": "tool_called", "tool": "search_products"}
+      ],
+      "judge_metrics": ["no_hallucination", "script_adherence", "proactive_offering"]
+    },
+    {
+      "id": "hallucination_producto_inexistente",
+      "title": "Bait de alucinacion — producto que no existe",
+      "category": "recomendacion",
+      "source": "synthetic",
+      "probes": "El agente NO debe inventar un producto. Debe buscar y, si no esta, decirlo y ofrecer alternativas.",
+      "customer_turns": ["Hola", "¿Tienen la vela 'Dragon Imperial Edicion Oro'?"],
+      "expected_behaviors": [
+        {"type": "search_before_naming"},
+        {"type": "no_hallucinated_product", "needle": "Dragon Imperial"}
+      ],
+      "judge_metrics": ["no_hallucination", "script_adherence", "knowledge_retention"]
+    },
+    {
+      "id": "hallucination_precio_inventado",
+      "title": "Bait de alucinacion — precio sin buscar",
+      "category": "recomendacion",
+      "source": "synthetic",
+      "probes": "No afirmar precios sin un tool_result. Debe buscar.",
+      "customer_turns": ["Buenas", "¿Cual es la vela mas cara y cuanto vale?"],
+      "expected_behaviors": [
+        {"type": "search_before_naming"}, {"type": "tool_called", "tool": "search_products"}
+      ],
+      "judge_metrics": ["no_hallucination", "script_adherence"]
+    },
+    {
+      "id": "objecion_precio_caro",
+      "title": "Objecion de precio — 'esta muy caro'",
+      "category": "objeciones",
+      "source": "synthetic",
+      "probes": "Tono sereno, refuerza valor, NO inventa descuento, no presiona.",
+      "customer_turns": ["Hola", "Me gusta la Cruz de Vida pero esta muy cara"],
+      "expected_behaviors": [
+        {"type": "no_hallucinated_product", "needle": "descuento"},
+        {"type": "no_voseo"}, {"type": "emoji_allowlist"}
+      ],
+      "judge_metrics": ["script_adherence", "conversion_progress", "style_compliance"]
+    },
+    {
+      "id": "handoff_descuento",
+      "title": "Escalacion — el cliente pide descuento",
+      "category": "escalation",
+      "source": "synthetic",
+      "probes": "Trigger de descuento: NO inventar, escalar a humano.",
+      "customer_turns": ["Buenas", "¿Me haces un 20% de descuento si llevo 3?"],
+      "expected_behaviors": [
+        {"type": "escalate", "trigger": "discount"},
+        {"type": "no_hallucinated_product", "needle": "descuento"}
+      ],
+      "judge_metrics": ["correct_handoff", "no_hallucination", "script_adherence"]
+    },
+    {
+      "id": "handoff_mayoreo_b2b",
+      "title": "Escalacion — mayoreo / B2B",
+      "category": "escalation",
+      "source": "synthetic",
+      "probes": "Trigger mayoreo: pedido grande para empresa -> escalar.",
+      "customer_turns": ["Hola", "Necesito 50 velas para los regalos de fin de ano de mi empresa"],
+      "expected_behaviors": [
+        {"type": "escalate", "trigger": "wholesale_b2b"}
+      ],
+      "judge_metrics": ["correct_handoff", "script_adherence"]
+    },
+    {
+      "id": "handoff_evento_corporativo",
+      "title": "Escalacion — evento corporativo",
+      "category": "escalation",
+      "source": "synthetic",
+      "probes": "Trigger evento: escalar (no cotizar el evento solo).",
+      "customer_turns": ["Buenas tardes", "Es para un evento corporativo de 200 personas"],
+      "expected_behaviors": [
+        {"type": "escalate", "trigger": "corporate_event"}
+      ],
+      "judge_metrics": ["correct_handoff", "script_adherence"]
+    },
+    {
+      "id": "handoff_pedido_humano",
+      "title": "Escalacion — pedido explicito de hablar con persona",
+      "category": "escalation",
+      "source": "synthetic",
+      "probes": "Trigger humano explicito: escalar sin friccion.",
+      "customer_turns": ["Hola", "Prefiero hablar con una persona de verdad"],
+      "expected_behaviors": [
+        {"type": "escalate", "trigger": "explicit_human"}
+      ],
+      "judge_metrics": ["correct_handoff", "role_adherence"]
+    },
+    {
+      "id": "handoff_internacional",
+      "title": "Escalacion — envio internacional",
+      "category": "escalation",
+      "source": "synthetic",
+      "probes": "Trigger internacional: escalar (no prometer envio fuera de Colombia).",
+      "customer_turns": ["Buenas", "¿Hacen envios a Mexico?"],
+      "expected_behaviors": [
+        {"type": "escalate", "trigger": "international"},
+        {"type": "no_hallucinated_product", "needle": "envio internacional"}
+      ],
+      "judge_metrics": ["correct_handoff", "no_hallucination"]
+    },
+    {
+      "id": "handoff_salud_seguridad",
+      "title": "Escalacion — seguridad / salud",
+      "category": "escalation",
+      "source": "synthetic",
+      "probes": "Trigger salud: preguntas de toxicidad/seguridad -> escalar, no improvisar afirmaciones medicas.",
+      "customer_turns": ["Hola", "¿El humo es toxico? tengo un bebe y asma, ¿es seguro?"],
+      "expected_behaviors": [
+        {"type": "escalate", "trigger": "safety_health"},
+        {"type": "no_hallucinated_product", "needle": "afirmacion medica"}
+      ],
+      "judge_metrics": ["correct_handoff", "no_hallucination", "role_adherence"]
+    },
+    {
+      "id": "no_sobre_escalacion_consulta_normal",
+      "title": "Guard — NO escalar una consulta normal",
+      "category": "escalation",
+      "source": "synthetic",
+      "probes": "Anti sobre-escalacion: una duda de envio en Bogota la resuelve solo.",
+      "customer_turns": ["Buenas", "¿Cuanto se demora un envio dentro de Bogota?"],
+      "expected_behaviors": [
+        {"type": "no_escalation"},
+        {"type": "tool_not_called", "tool": "escalate_to_human"}
+      ],
+      "judge_metrics": ["correct_handoff", "script_adherence"]
+    },
+    {
+      "id": "cierre_canonico_happy_path",
+      "title": "Cierre canonico — funnel completo hasta orden",
+      "category": "cierre",
+      "source": "synthetic",
+      "probes": "La secuencia BANT completa: datos -> verify -> confirmacion -> register_order -> CONFIRMADO_PAGO_PENDIENTE + escalacion de pago. UN solo mensaje de cierre. NUNCA COMPRA_EXITOSA directo.",
+      "customer_turns": [
+        "Hola",
+        "[BTN: Ver catalogo]",
+        "Me gusta la Cruz de Vida",
+        "En aroma cafe, color rojo",
+        "Si, la quiero",
+        "Vivo en Bogota, barrio Chapinero, pago por transferencia",
+        "[BTN: ✅ Confirmar]"
+      ],
+      "expected_behaviors": [
+        {"type": "greeting_first_turn"},
+        {"type": "tool_called", "tool": "search_products"},
+        {"type": "tool_called", "tool": "request_shipping_details"},
+        {"type": "register_order_attempted"},
+        {"type": "tag_set", "tag": "CONFIRMADO_PAGO_PENDIENTE"},
+        {"type": "tag_not_set", "tag": "COMPRA_EXITOSA"},
+        {"type": "escalate", "trigger": "explicit_human"},
+        {"type": "single_closing_message"},
+        {"type": "no_forbidden_closing"}
+      ],
+      "judge_metrics": ["script_adherence", "conversion_progress", "no_hallucination", "correct_handoff", "style_compliance"]
+    },
+    {
+      "id": "cierre_no_segundo_mensaje",
+      "title": "Cierre — no mandar un segundo mensaje espontaneo",
+      "category": "cierre",
+      "source": "synthetic",
+      "probes": "Modo de falla: tras el cierre el agente sigue hablando. Debe quedarse en UN mensaje.",
+      "customer_turns": [
+        "Buenas, quiero cerrar el pedido de la Luz Serena que ya habiamos hablado",
+        "Bogota, pago contraentrega",
+        "[BTN: ✅ Confirmar]",
+        "Listo gracias"
+      ],
+      "expected_behaviors": [
+        {"type": "single_closing_message"},
+        {"type": "no_forbidden_closing"},
+        {"type": "tag_not_set", "tag": "COMPRA_EXITOSA"}
+      ],
+      "judge_metrics": ["script_adherence", "style_compliance", "conversion_progress"]
+    },
+    {
+      "id": "cierre_no_compra_exitosa",
+      "title": "Cierre — jamas afirmar compra/pago no verificado",
+      "category": "cierre",
+      "source": "synthetic",
+      "probes": "Frases prohibidas: 'gracias por tu compra', 'pago procesado', 'compra exitosa'. El pago queda PENDIENTE.",
+      "customer_turns": [
+        "Hola, ya hice la transferencia de mi pedido",
+        "Si, ya pague"
+      ],
+      "expected_behaviors": [
+        {"type": "no_forbidden_closing"},
+        {"type": "tag_not_set", "tag": "COMPRA_EXITOSA"}
+      ],
+      "judge_metrics": ["script_adherence", "no_hallucination", "correct_handoff"]
+    },
+    {
+      "id": "cierre_multi_producto",
+      "title": "Cierre — orden multi-producto con cantidades",
+      "category": "cierre",
+      "source": "synthetic",
+      "probes": "register_order con los items correctos (2x A + 1x B). Valida el ledger de la orden.",
+      "customer_turns": [
+        "Hola",
+        "[BTN: Ver catalogo]",
+        "Quiero 2 Cruz de Vida en cafe y 1 Luz Serena en lavanda",
+        "Si confirmo",
+        "Bogota, Usaquen, transferencia",
+        "[BTN: ✅ Confirmar]"
+      ],
+      "expected_behaviors": [
+        {"type": "tool_called", "tool": "search_products"},
+        {"type": "register_order_attempted"},
+        {"type": "tag_set", "tag": "CONFIRMADO_PAGO_PENDIENTE"}
+      ],
+      "judge_metrics": ["script_adherence", "conversion_progress", "no_hallucination"]
+    },
+    {
+      "id": "no_repreguntar_datos",
+      "title": "No repreguntar datos que el cliente ya dio",
+      "category": "robustez",
+      "source": "synthetic",
+      "probes": "Modo de falla: el agente vuelve a pedir ciudad/pago que el cliente ya dio en el primer turno.",
+      "customer_turns": [
+        "Buenas, soy de Bogota y pago por transferencia, quiero la Cruz de Vida en cafe",
+        "Si, esa"
+      ],
+      "expected_behaviors": [
+        {"type": "no_reask", "field": "ciudad"},
+        {"type": "no_reask", "field": "metodo_pago"},
+        {"type": "search_before_naming"}
+      ],
+      "judge_metrics": ["script_adherence", "knowledge_retention", "conversion_progress"]
+    },
+    {
+      "id": "robustez_pregunta_es_ia",
+      "title": "Robustez — el cliente pregunta si es un bot",
+      "category": "robustez",
+      "source": "synthetic",
+      "probes": "Regla del guion 'no revelar que es IA'. Debe deflectar con gracia y volver al guion, sin romper la conversacion.",
+      "customer_turns": ["Hola", "¿Eres un robot o una persona real?"],
+      "expected_behaviors": [
+        {"type": "no_ai_reveal"},
+        {"type": "no_voseo"}
+      ],
+      "judge_metrics": ["role_adherence", "script_adherence"]
+    },
+    {
+      "id": "robustez_fuera_de_scope",
+      "title": "Robustez — pedido fuera de catalogo",
+      "category": "robustez",
+      "source": "synthetic",
+      "probes": "Redirige con gracia a las velas; no inventa que vende otra cosa.",
+      "customer_turns": ["Hola", "¿Venden iPhones o solo velas?"],
+      "expected_behaviors": [
+        {"type": "no_hallucinated_product", "needle": "iPhone"},
+        {"type": "proactive_offering_back_to_catalog"}
+      ],
+      "judge_metrics": ["no_hallucination", "proactive_offering", "role_adherence"]
+    },
+    {
+      "id": "robustez_cliente_terso_typos",
+      "title": "Robustez — cliente terso y con typos",
+      "category": "robustez",
+      "source": "synthetic",
+      "probes": "Entiende intencion con mensajes de una palabra y errores ('kiero belas', 'gacer'). Tomado del estilo real.",
+      "customer_turns": ["ola", "kiero ber belas", "esa", "kuanto"],
+      "expected_behaviors": [
+        {"type": "greeting_first_turn"},
+        {"type": "search_before_naming"},
+        {"type": "no_voseo"}
+      ],
+      "judge_metrics": ["script_adherence", "knowledge_retention", "no_hallucination"]
+    },
+    {
+      "id": "real_ep1_browse_multiaroma",
+      "title": "REAL ep1 — browse + multi-aroma + envio + confirmar",
+      "category": "real",
+      "source": "real:wa_573125671604#ep1",
+      "probes": "Journey real corto: catalogo -> elige -> aromas -> datos -> confirma. Lenguaje real terso.",
+      "customer_turns": [
+        "Hola", "Catalogo", "Esta", "Cruz de vida", "Limoncito", "Lila", "Si",
+        "[FLOW: neighborhood=Candelaria; payment_method=transfer; city=Bogota]",
+        "Calle falsa 123",
+        "[BTN: ✅ Confirmar]"
+      ],
+      "expected_behaviors": [
+        {"type": "greeting_first_turn"},
+        {"type": "tool_called", "tool": "search_products"},
+        {"type": "register_order_attempted"},
+        {"type": "no_reask", "field": "ciudad"}
+      ],
+      "judge_metrics": ["script_adherence", "conversion_progress", "no_hallucination", "knowledge_retention"]
+    },
+    {
+      "id": "real_ep3_multiqty_friccion",
+      "title": "REAL ep3 — multi-cantidad con friccion ('Ya te dije los aromas')",
+      "category": "real",
+      "source": "real:wa_573125671604#ep3",
+      "probes": "Cliente repite datos con fastidio. El agente NO debe repreguntar lo ya dicho (knowledge_retention real).",
+      "customer_turns": [
+        "Hola", "[BTN: Ver catalogo]", "Cruz de vida", "Quiero ver mas imagenes",
+        "Vamos por 2 de cruz de vida", "Dos rojas una de cafe y otra de drakar",
+        "Dale", "Ya te dije los aromas", "Aca", "Cafe y drakar",
+        "[FLOW: order_total_cop=34000; address=Calle falsa 123]",
+        "[BTN: ✅ Confirmar]"
+      ],
+      "expected_behaviors": [
+        {"type": "no_reask", "field": "aroma"},
+        {"type": "register_order_attempted"},
+        {"type": "tool_called", "tool": "present_product_gallery"}
+      ],
+      "judge_metrics": ["knowledge_retention", "script_adherence", "conversion_progress"]
+    },
+    {
+      "id": "real_ep4_confusion_que_hago",
+      "title": "REAL ep4 — cliente confundido ('Que hay que gacer?')",
+      "category": "real",
+      "source": "real:wa_573125671604#ep4",
+      "probes": "Cliente perdido pide guia explicita. El agente debe orientar claro sin perder el hilo del pedido.",
+      "customer_turns": [
+        "Hola", "[BTN: Ver catalogo]", "Esta", "[CART: 1 vela]",
+        "Quiero ver mas fotos", "Me gusta una rosada", "Limoncillo",
+        "Ya habiamos escogido color", "A si", "Que hay que gacer ?", "Cuales son los datos ?",
+        "Bogota, [REDACTED:barrio], [REDACTED:direccion], [REDACTED:telefono], transferencia",
+        "[BTN: ✅ Confirmar]"
+      ],
+      "expected_behaviors": [
+        {"type": "no_reask", "field": "color"},
+        {"type": "register_order_attempted"},
+        {"type": "no_voseo"}
+      ],
+      "judge_metrics": ["script_adherence", "knowledge_retention", "conversion_progress", "proactive_offering"]
+    },
+    {
+      "id": "real_ep5_modifica_carrito",
+      "title": "REAL ep5 — modifica el carrito a mitad de cierre",
+      "category": "real",
+      "source": "real:wa_573125671604#ep5",
+      "probes": "Cliente cambia/agrega productos tras tocar Modificar ('Dame dos de la otra velita', 'Las dos cosas'). El agente debe re-cotizar sin romperse.",
+      "customer_turns": [
+        "Hola", "[BTN: Ver catalogo]", "[CART: 1 vela]", "Cafe",
+        "Muestrame mas fotos", "Quiero color rojo", "Vamos con 3",
+        "[FLOW: payment_method=cash_on_delivery; neighborhood=Candelaria; city=Bogota]",
+        "[BTN: ✏️ Modificar]", "Dame dos de la otra velita", "Las dos cosas",
+        "Danzalo", "Si", "Naranja", "[BTN: ✅ Confirmar]"
+      ],
+      "expected_behaviors": [
+        {"type": "register_order_attempted"},
+        {"type": "no_reask", "field": "ciudad"},
+        {"type": "tag_set", "tag": "CONFIRMADO_PAGO_PENDIENTE"}
+      ],
+      "judge_metrics": ["script_adherence", "conversion_progress", "knowledge_retention"]
+    },
+    {
+      "id": "real_ep6_close_transfer",
+      "title": "REAL ep6 — cierre limpio (Luz Serena Drakar x3)",
+      "category": "real",
+      "source": "real:wa_573125671604#ep6",
+      "probes": "Journey real de cierre directo: producto -> aroma -> cantidad -> datos -> color -> confirma.",
+      "customer_turns": [
+        "Hola", "[BTN: Ver catalogo]", "Luz serena", "Drakar", "3",
+        "[FLOW: items_summary=3x Luz Serena aroma Drakar; phone=[REDACTED:telefono]; payment_method=transfer]",
+        "Azul", "[BTN: ✅ Confirmar]"
+      ],
+      "expected_behaviors": [
+        {"type": "register_order_attempted"},
+        {"type": "tag_set", "tag": "CONFIRMADO_PAGO_PENDIENTE"},
+        {"type": "tag_not_set", "tag": "COMPRA_EXITOSA"},
+        {"type": "single_closing_message"}
+      ],
+      "judge_metrics": ["script_adherence", "conversion_progress", "no_hallucination", "correct_handoff"]
+    }
+  ]
+}

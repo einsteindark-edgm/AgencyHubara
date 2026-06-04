@@ -1,0 +1,92 @@
+# Golden Eval — corre el AGENTE DE VENTAS REAL + JUEZ REAL contra el golden set.
+#
+# On-demand (workflow_dispatch): lo disparás desde la pestaña Actions cuando
+# quieras verificar el sales sobre main (p.ej. tras afinar el prompt). NO es un
+# gate de PR (el agente+juez son no-deterministas) — es un reporte de scores.
+#
+# REQUIERE estos GitHub Secrets (Settings -> Secrets and variables -> Actions):
+#   DEEPSEEK_API_KEY  — el modelo del agente (igual que prod)
+#   GEMINI_API_KEY    — el modelo del juez (igual que SigNoz)
+# (Opcional LITELLM_MASTER_KEY si tu litellm_config.yaml valida master key.)
+#
+# Fidelidad: el agente corre su loop real con tools reales, pero los puertos de
+# ESCRITURA quedan stub (no se setean MEDUSA_REGION_ID/SALES_CHANNEL_ID ->
+# StubOrderRegistration) y NO se corre el flush de envíos -> cero órdenes/mensajes
+# reales. El catálogo viene del snapshot committeado (catalog_snapshot.json).
+name: Golden Eval (agente real · juez real)
+
+on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: "id de un escenario puntual (opcional)"
+        required: false
+      category:
+        description: "categoría: apertura|descubrimiento|recomendacion|objeciones|escalation|cierre|robustez|estilo|real (opcional)"
+        required: false
+      limit:
+        description: "correr solo los primeros N (opcional)"
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  golden-eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Levantar litellm (modelos reales)
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          docker run -d --name litellm -p 4000:4000 \
+            -v "${{ github.workspace }}/exoclaw-temporal/litellm_config.yaml:/app/config.yaml:ro" \
+            -e DEEPSEEK_API_KEY -e GEMINI_API_KEY \
+            ghcr.io/berriai/litellm:v1.86.2 --config /app/config.yaml --port 4000
+          echo "Esperando litellm…"
+          for i in $(seq 1 40); do
+            if curl -sf http://localhost:4000/health/liveliness >/dev/null 2>&1; then
+              echo "litellm listo tras ${i} intentos"; break; fi
+            sleep 3
+          done
+          curl -sf http://localhost:4000/health/liveliness || (docker logs litellm | tail -40; exit 1)
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.11"
+
+      - name: Instalar deps (con evals)
+        working-directory: hubara_agency
+        run: uv sync --frozen --extra evals
+
+      - name: Correr golden-eval
+        working-directory: hubara_agency
+        env:
+          API_BASE_LLMLITE: http://localhost:4000
+          LITELLM_API_KEY: sk-litellm-proxy-local
+          OTEL_SDK_DISABLED: "true"
+          GOLDEN_EVAL_VAULT: /tmp/golden_eval_vault
+        run: |
+          ARGS=""
+          [ -n "${{ inputs.scenario }}" ] && ARGS="$ARGS --scenario ${{ inputs.scenario }}"
+          [ -n "${{ inputs.category }}" ] && ARGS="$ARGS --category ${{ inputs.category }}"
+          [ -n "${{ inputs.limit }}" ]    && ARGS="$ARGS --limit ${{ inputs.limit }}"
+          set -o pipefail
+          uv run --extra evals python scripts/golden_eval.py $ARGS 2>&1 | tee /tmp/golden.log
+          {
+            echo "## 🎯 Golden Eval — agente real · juez real";
+            echo '```';
+            sed -n '/=== RESUMEN ===/,$p' /tmp/golden.log;
+            echo '```';
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Subir log completo
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-eval-log
+          path: /tmp/golden.log
