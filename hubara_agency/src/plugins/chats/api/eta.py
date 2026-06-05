@@ -16,7 +16,8 @@ El plugin `eta` es frontend-only (visualización de pedidos en seguimiento).
 Ambas fuentes son **platform ports / vault** (R-DIP: chats → platform, nunca
 chats → plugin sibling). Por eso el endpoint vive en `chats` (donde está el
 vault) y el frontend del plugin `eta` consume ``/api/chats/eta/*`` — mismo
-patrón que `ads` (``chats/api/ads.py``).
+patrón legacy que tenía `ads` antes de extraerse a `plugins/ads` (eta pendiente
+de su propia extracción — PLUGIN_CONTRACT.md §5.2).
 
 Si Medusa no está configurado (dev sin .env / order list falla), el listado cae
 a **timeline-only**: solo los pedidos que el agente ya trackeó, derivados de

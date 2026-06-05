@@ -9,7 +9,7 @@ No parsea el JSONL del history. Determinístico (pasa `now_ms` por DI).
 """
 from __future__ import annotations
 
-from src.plugins.chats.agent.sales.use_cases.classify_conversation_state import (
+from src.plugins.ads.classification import (
     classify_state,
 )
 

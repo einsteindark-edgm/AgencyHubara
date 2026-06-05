@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from src.plugins.chats.agent.sales.use_cases.list_ads_campaigns import (
+from src.plugins.ads.aggregation import (
     AdsAttributedConversation,
     AdsCampaignSummary,
     list_ads_campaigns,
@@ -1316,7 +1316,7 @@ def test_sessions_param_matches_fresh_scan(_isolate_vault_dir: Path):
     resultado que escanear fresco en las 3 funciones. Guarda del refactor de
     performance: el cache compartido de la capa API no debe cambiar la data,
     solo evitar releer el vault 3 veces por page-view."""
-    from src.plugins.chats.agent.sales.use_cases.list_ads_campaigns import (
+    from src.plugins.ads.aggregation import (
         scan_ad_sessions,
     )
 
@@ -1407,7 +1407,7 @@ def test_scan_skips_sessions_untouched_since_via_mtime(_isolate_vault_dir: Path)
     escale con la ventana, no con todo el historial."""
     import os
 
-    from src.plugins.chats.agent.sales.use_cases.list_ads_campaigns import (
+    from src.plugins.ads.aggregation import (
         scan_ad_sessions,
     )
 
@@ -1505,7 +1505,7 @@ def test_until_ms_filters_conversations_by_start_date(_isolate_vault_dir: Path):
 def test_daily_series_custom_window_uses_since_until(_isolate_vault_dir: Path):
     """Con `since_ms`/`until_ms` la serie cubre [from_day, to_day] (ambos
     inclusive) en vez de 'últimos N días terminando hoy', y bucketea por día."""
-    from src.plugins.chats.agent.sales.use_cases.list_ads_campaigns import (
+    from src.plugins.ads.aggregation import (
         bogota_day_start_ms,
     )
 
@@ -1534,7 +1534,7 @@ def test_daily_series_custom_window_uses_since_until(_isolate_vault_dir: Path):
 
 def test_daily_series_custom_window_clamps_to_90_columns(_isolate_vault_dir: Path):
     """Un rango custom > 90 días se clampa a 90 columnas ancladas al final (`to`)."""
-    from src.plugins.chats.agent.sales.use_cases.list_ads_campaigns import (
+    from src.plugins.ads.aggregation import (
         bogota_day_start_ms,
     )
 
@@ -1552,7 +1552,7 @@ def test_bogota_day_start_ms_roundtrips_with_bogota_date(_isolate_vault_dir: Pat
     de medianoche Bogota; fecha inválida → None (la API degrada a ventana abierta)."""
     import datetime as dt
 
-    from src.plugins.chats.agent.sales.use_cases.list_ads_campaigns import (
+    from src.plugins.ads.aggregation import (
         _bogota_date,
         bogota_day_start_ms,
     )

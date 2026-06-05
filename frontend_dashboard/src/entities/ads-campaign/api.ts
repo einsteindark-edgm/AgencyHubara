@@ -2,12 +2,12 @@
  * Hooks de fetching de campañas y conversaciones atribuidas.
  *
  * `useAdsCampaigns` y `useAttributedConversations` ahora hacen fetch real
- * contra el backend (`/api/chats/ads/*` — los endpoints viven en chats
- * porque las campañas se derivan del estado clasificado por el ingest
- * WhatsApp). Los responses se validan en el boundary con Zod y se mapean
+ * contra el backend (`/api/ads/*` — el plugin `ads` deriva las campañas
+ * del estado clasificado por el ingest WhatsApp; backend self-contained
+ * extraído de chats). Los responses se validan en el boundary con Zod y se mapean
  * al modelo de dominio.
  *
- * `useDailySeries` también hace fetch real (`/api/chats/ads/campaigns/{id}/daily`):
+ * `useDailySeries` también hace fetch real (`/api/ads/campaigns/{id}/daily`):
  * el backend bucketea los episodios por día (America/Bogota) y los segmenta por
  * estado, devolviendo una serie continua de 14 días.
  *
@@ -220,7 +220,7 @@ export function useAdsCampaigns(params: AdsWindowParams) {
     queryKey: adsCampaignKeys.list(params),
     queryFn: async () => {
       const raw = await apiClient.get<unknown>(
-        `/api/chats/ads/campaigns${windowQuery(params)}`,
+        `/api/ads/campaigns${windowQuery(params)}`,
       );
       const parsed = backendAdsCampaignsResponseSchema.parse(raw);
       return parsed.campaigns.map(mapBackendCampaign);
@@ -242,7 +242,7 @@ export function useAttributedConversations(
     queryKey: adsCampaignKeys.attributed(campaignId, params),
     queryFn: async () => {
       const raw = await apiClient.get<unknown>(
-        `/api/chats/ads/campaigns/${encodeURIComponent(campaignId)}/conversations${windowQuery(params)}`,
+        `/api/ads/campaigns/${encodeURIComponent(campaignId)}/conversations${windowQuery(params)}`,
       );
       const parsed =
         backendAttributedConversationsResponseSchema.parse(raw);
@@ -254,7 +254,7 @@ export function useAttributedConversations(
 }
 
 /**
- * Serie diaria — fetch real contra `/api/chats/ads/campaigns/{id}/daily`. El
+ * Serie diaria — fetch real contra `/api/ads/campaigns/{id}/daily`. El
  * backend bucketea los episodios por día calendario (America/Bogota) y los
  * segmenta por estado actual; devuelve una serie continua de `days` puntos
  * (días sin actividad en 0). El shape de cada punto espeja `AdsDailyPoint`, así
@@ -269,7 +269,7 @@ export function useDailySeries(campaignId: string, params: AdsWindowParams) {
     queryKey: adsCampaignKeys.daily(campaignId, params),
     queryFn: async () => {
       const raw = await apiClient.get<unknown>(
-        `/api/chats/ads/campaigns/${encodeURIComponent(campaignId)}/daily${windowQuery(params)}`,
+        `/api/ads/campaigns/${encodeURIComponent(campaignId)}/daily${windowQuery(params)}`,
       );
       const parsed = backendAdsDailyResponseSchema.parse(raw);
       return parsed.series.map(

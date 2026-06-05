@@ -22,8 +22,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-import src.plugins.chats.api.ads as ads_mod
-from src.plugins.chats.agent.sales.use_cases.list_ads_campaigns import (
+import src.plugins.ads.api as ads_mod
+from src.plugins.ads.aggregation import (
     bogota_day_start_ms,
 )
 
@@ -73,7 +73,7 @@ def ads_client(tmp_path: Path):
     ads_mod._scan_cache.clear()
     with patch.object(ads_mod, "WORKSPACE_VAULT_DIR", tmp_path):
         app = FastAPI()
-        app.include_router(ads_mod.router, prefix="/api/chats")
+        app.include_router(ads_mod.router, prefix="/api/ads")
         yield TestClient(app), tmp_path
     ads_mod._scan_cache.clear()
 
@@ -110,13 +110,13 @@ def test_campaigns_endpoint_applies_custom_range_via_from_alias(ads_client):
     client, vault = ads_client
     _seed_two_episodes(vault)
 
-    full = client.get("/api/chats/ads/campaigns")
+    full = client.get("/api/ads/campaigns")
     assert full.status_code == 200
     camp_full = next(c for c in full.json()["campaigns"] if c["id"] == "AD_X")
     assert camp_full["started"] == 2  # sin filtro: ambos episodios
 
     windowed = client.get(
-        "/api/chats/ads/campaigns", params={"from": "2026-05-01", "to": "2026-05-31"}
+        "/api/ads/campaigns", params={"from": "2026-05-01", "to": "2026-05-31"}
     )
     assert windowed.status_code == 200
     camp_win = next(c for c in windowed.json()["campaigns"] if c["id"] == "AD_X")
@@ -130,7 +130,7 @@ def test_daily_endpoint_custom_range_length_matches_series(ads_client):
     _seed_two_episodes(vault)
 
     resp = client.get(
-        "/api/chats/ads/campaigns/AD_X/daily",
+        "/api/ads/campaigns/AD_X/daily",
         params={"from": "2026-05-01", "to": "2026-05-07"},
     )
     assert resp.status_code == 200

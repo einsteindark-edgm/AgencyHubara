@@ -29,11 +29,8 @@ api:
     - { module: src.plugins.chats.api.sales,     prefix: /api,           tags: [WhatsApp_Sales_Domain] }
     - { module: src.plugins.chats.api.dashboard, prefix: /api/dashboard, tags: [Dashboard] }
     - { module: src.plugins.chats.api.handoff,   prefix: /api/dashboard, tags: [Dashboard_Handoff] }
-    # El plugin `ads` no tiene backend propio — sus endpoints viven aquí (donde
-    # están los metadata files de WhatsApp) y leen el `origin` + `last_touch`
-    # que el ingest persiste. Cross-plugin import sería violación de R-DIP, por
-    # eso vive en chats y el frontend del plugin `ads` consume `/api/chats/ads/*`.
-    - { module: src.plugins.chats.api.ads,       prefix: /api/chats,     tags: [Ads] }
+    # (ads extraído a su propio plugin `plugins/ads` — backend self-contained en
+    #  `src.plugins.ads.api` con prefix `/api/ads`. PLUGIN_CONTRACT.md §5.2.)
     # Agente ETA: el plugin frontend `eta` es frontend-only — sus endpoints viven
     # aquí (en chats, donde están el vault + las conversaciones) y leen el order
     # query port (platform) + el `metadata.eta_tracking` per-sesión. El frontend
