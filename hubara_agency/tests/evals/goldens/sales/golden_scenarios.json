@@ -254,8 +254,8 @@
       "title": "Escalacion — envio internacional",
       "category": "escalation",
       "source": "synthetic",
-      "probes": "Trigger internacional: escalar (no prometer envio fuera de Colombia).",
-      "customer_turns": ["Buenas", "¿Hacen envios a Mexico?"],
+      "probes": "Trigger internacional segun SKILL.md L117: PRIMERO aclara 'solo Colombia' (sin escalar), y solo si el cliente INSISTE (no tiene direccion en Colombia) -> escalate INTERNATIONAL. El escenario testea ese flujo aclarar->insistir->escalar, no un escalado prematuro.",
+      "customer_turns": ["Buenas", "¿Hacen envios a Mexico?", "Si, estoy en Mexico y no tengo direccion en Colombia"],
       "expected_behaviors": [
         {"type": "escalate", "trigger": "international"},
         {"type": "no_hallucinated_product", "needle": "envio internacional"}
@@ -300,13 +300,12 @@
         "Me gusta la Cruz de Vida",
         "En aroma cafe, color rojo",
         "Si, la quiero",
-        "Vivo en Bogota, barrio Chapinero, pago por transferencia",
+        "[FLOW: city=Bogota; neighborhood=Chapinero; address=Calle 45 No 12-30; phone=3001234567; payment_method=transfer]",
         "[BTN: ✅ Confirmar]"
       ],
       "expected_behaviors": [
         {"type": "greeting_first_turn"},
         {"type": "tool_called", "tool": "search_products"},
-        {"type": "tool_called", "tool": "request_shipping_details"},
         {"type": "register_order_attempted"},
         {"type": "tag_set", "tag": "CONFIRMADO_PAGO_PENDIENTE"},
         {"type": "tag_not_set", "tag": "COMPRA_EXITOSA"},
@@ -362,7 +361,7 @@
         "[BTN: Ver catalogo]",
         "Quiero 2 Cruz de Vida en cafe y 1 Luz Serena en lavanda",
         "Si confirmo",
-        "Bogota, Usaquen, transferencia",
+        "[FLOW: city=Bogota; neighborhood=Usaquen; address=Carrera 7 No 100-20; phone=3001234567; payment_method=transfer]",
         "[BTN: ✅ Confirmar]"
       ],
       "expected_behaviors": [

@@ -86,6 +86,54 @@ def marker_to_text(turn: str) -> str:
     return t
 
 
+class _StubCheckoutVerification:
+    """Verifier de eval: siempre verified=true, catalogo disponible, sin discrepancia.
+
+    FIDELIDAD: en prod `verify_order_for_checkout` pega a Medusa LIVE y en el happy
+    path devuelve verified=true (snapshot y live coinciden). En el eval Medusa es un
+    dummy (MEDUSA_BASE_URL=http://localhost:1) -> verify_items falla -> el tool emite
+    `catalog_unavailable` -> el agente ESCALA (CHECKOUT_VERIFY_FAILED) en vez de
+    registrar la orden, rompiendo TODO escenario de cierre (register_order nunca se
+    llama, CONFIRMADO_PAGO_PENDIENTE nunca se marca). Igual que StubOrderRegistration
+    (que neutraliza register_order via ausencia de REGION_ID/SALES_CHANNEL_ID),
+    stubbeamos el verifier para que el cierre pueda completarse. NO toca produccion."""
+
+    async def verify_items(self, items):  # noqa: ANN001, ANN201
+        from src.platform.catalog.checkout_port import (
+            CheckoutVerification,
+            VerifiedItem,
+        )
+        verified = [
+            VerifiedItem(
+                handle=it.handle, title=it.handle, snapshot_price=None,
+                live_price=None, currency="COP", in_stock=True, discrepancy=False,
+            )
+            for it in items
+        ]
+        return CheckoutVerification(verified=True, catalog_available=True, items=verified)
+
+
+def _install_eval_stubs() -> None:
+    """Neutraliza la I/O live de Medusa en el path de cierre (verify + register).
+
+    El worker `sales.py` setea `_checkout_verifier` y `_order_registration_port` a
+    nivel modulo, y los lambdas de `register_tool_extension` los resuelven como
+    globals en cada build de la tool — reasignarlos aca (DESPUES de importar el
+    worker) hace que el eval use los stubs.
+
+    Por que NO basta con popear MEDUSA_REGION_ID/SALES_CHANNEL_ID (como asumia el
+    runner): `get_order_registration_port()` lee `get_medusa_settings()`, que carga
+    el `.env` del repo (tiene region_id/sales_channel_id reales) DESPUES del pop ->
+    selecciona MedusaOrderRegistration -> register_order pega al Medusa dummy
+    (MEDUSA_BASE_URL=http://localhost:1) y devuelve success=False -> el agente cae al
+    path ORDER_REGISTRATION_FAILED y NUNCA marca CONFIRMADO_PAGO_PENDIENTE. Forzar el
+    StubOrderRegistration (success=True, provider='stub', sin red) es robusto."""
+    import src.plugins.chats.workers.sales as _sw
+    from src.platform.orders.stub import StubOrderRegistration
+    _sw._checkout_verifier = _StubCheckoutVerification()
+    _sw._order_registration_port = StubOrderRegistration()
+
+
 def _read_projectable_draft(sid: str):
     """Lee el order_draft acumulado en metadata (lo que set_order_slot fue guardando).
     FIDELIDAD: en prod, ingest_inbound_message hace esto cada turno y re-inyecta el
@@ -165,6 +213,7 @@ async def drive_scenario(scn: dict) -> dict:
             messages.append({"role": "user", "content": cust})
 
         turn_tools: list[str] = []
+        turn_outputs: list[dict] = []   # resultado de cada tool (para que el juez vea el grounding)
         pre_tool: list[str] = []   # texto emitido JUNTO con tool calls (prod: pre_tool_messages)
         final = ""
         it = 0
@@ -202,13 +251,19 @@ async def drive_scenario(scn: dict) -> dict:
                         "role": "tool", "tool_call_id": getattr(tc, "id", tc.name),
                         "name": tc.name, "content": result,
                     })
+                    # FIDELIDAD juez: el no_hallucination GEval solo ve CONTENT/ROLE/
+                    # TOOLS_CALLED; sin el OUTPUT de search_products, un precio correcto
+                    # (grounded) le parece inventado. Adjuntamos el resultado (capado)
+                    # al ToolCall para que pueda verificar el grounding.
+                    turn_outputs.append({"name": tc.name, "output": result[:1000]})
                 continue
             final = (resp.content or "").strip()
             break
 
         visible = "\n".join([*pre_tool, final] if final else pre_tool).strip()
         responses.append(visible or "(turno solo-tool / sin texto)")
-        turns.append({"role": "assistant", "content": visible, "tools": list(turn_tools)})
+        turns.append({"role": "assistant", "content": visible, "tools": list(turn_tools),
+                      "tool_outputs": turn_outputs})
 
     # pending_ui_intents capturados en metadata (no se enviaron)
     intents = []
@@ -309,12 +364,17 @@ async def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--scenario"); ap.add_argument("--category")
     ap.add_argument("--limit", type=int); ap.add_argument("--no-judge", action="store_true")
+    ap.add_argument("--dump", action="store_true",
+                    help="imprime la transcripcion completa (cliente + agente + tools) para diagnostico")
+    ap.add_argument("--repeat", type=int, default=1,
+                    help="corre cada escenario N veces (trending: agente+juez son no-deterministas)")
     args = ap.parse_args()
 
     data = json.loads(_SCENARIOS.read_text("utf-8"))
     scns = data["scenarios"]
     if args.scenario:
-        scns = [s for s in scns if s["id"] == args.scenario]
+        wanted = {x.strip() for x in args.scenario.split(",") if x.strip()}
+        scns = [s for s in scns if s["id"] in wanted]
     if args.category:
         scns = [s for s in scns if s["category"] == args.category]
     if args.limit:
@@ -326,43 +386,76 @@ async def main() -> None:
     # registrar las tools de dominio (las register_tool_extension de sales.py)
     import src.plugins.chats.workers.sales  # noqa: F401
 
+    # neutralizar la I/O live de cierre (Medusa verify) -> el cierre puede completarse
+    _install_eval_stubs()
+
     summary = []
     for idx, scn in enumerate(scns, 1):
-        print(f"[{idx}/{len(scns)}] {scn['id']}  ({scn['category']})")
-        try:
-            res = await drive_scenario(scn)
-        except Exception as exc:  # noqa: BLE001
-            print(f"   ERROR manejando el agente: {str(exc)[:200]}\n")
-            summary.append({"id": scn["id"], "error": str(exc)[:120]})
-            continue
+        runs = []   # una entrada por corrida: {"behaviors": "x/y", "judge": {k: score}} | {"error": ...}
+        for rep in range(1, args.repeat + 1):
+            head = f"[{idx}/{len(scns)}] {scn['id']}  ({scn['category']})"
+            head += f"  · run {rep}/{args.repeat}" if args.repeat > 1 else ""
+            print(head)
+            try:
+                res = await drive_scenario(scn)
+            except Exception as exc:  # noqa: BLE001
+                print(f"   ERROR manejando el agente: {str(exc)[:200]}\n")
+                runs.append({"error": str(exc)[:120]})
+                continue
 
-        behs = check_behaviors(scn, res)
-        bpass = sum(1 for b in behs if b["ok"] is True)
-        bcheck = sum(1 for b in behs if b["ok"] is not None)
-        print(f"   turnos: {len(scn['customer_turns'])} · tools usadas: "
-              f"{','.join(sorted({e['name'].split('.')[-1] for e in res['ledger']})) or '(ninguna)'}")
-        for b in behs:
-            mark = "✅" if b["ok"] is True else ("❌" if b["ok"] is False else "·")
-            print(f"     {mark} {b['behavior']:26s} {b['detail'][:50]}")
+            if args.dump:
+                for t in res["turns"]:
+                    if t["role"] == "user":
+                        print(f"   👤 {t['content'][:300]}")
+                    else:
+                        tg = f"  «{','.join(t['tools'])}»" if t["tools"] else ""
+                        print(f"   🤖{tg}\n      {(t['content'] or '(sin texto)')[:600]}")
 
-        judged = {}
-        if not args.no_judge:
-            judged = await grade_judge(scn, res)
-            for k, v in judged.items():
-                mark = "✅" if v["ok"] else ("❌" if v["ok"] is False else "·")
-                sc = "n/a" if v["score"] is None else f"{v['score']:.2f}"
-                print(f"     {mark} judge:{k:20s} {sc}  {v['reason'][:160]}")
-        print()
-        summary.append({"id": scn["id"], "behaviors": f"{bpass}/{bcheck}",
-                        "judge": {k: v["score"] for k, v in judged.items()}})
+            behs = check_behaviors(scn, res)
+            bpass = sum(1 for b in behs if b["ok"] is True)
+            bcheck = sum(1 for b in behs if b["ok"] is not None)
+            print(f"   turnos: {len(scn['customer_turns'])} · tools usadas: "
+                  f"{','.join(sorted({e['name'].split('.')[-1] for e in res['ledger']})) or '(ninguna)'}")
+            for b in behs:
+                mark = "✅" if b["ok"] is True else ("❌" if b["ok"] is False else "·")
+                print(f"     {mark} {b['behavior']:26s} {b['detail'][:50]}")
+
+            judged = {}
+            if not args.no_judge:
+                judged = await grade_judge(scn, res)
+                for k, v in judged.items():
+                    mark = "✅" if v["ok"] else ("❌" if v["ok"] is False else "·")
+                    sc = "n/a" if v["score"] is None else f"{v['score']:.2f}"
+                    print(f"     {mark} judge:{k:20s} {sc}  {v['reason'][:160]}")
+            print()
+            runs.append({"behaviors": f"{bpass}/{bcheck}",
+                         "judge": {k: v["score"] for k, v in judged.items()}})
+        summary.append({"id": scn["id"], "runs": runs})
 
     print("=== RESUMEN ===")
     for s in summary:
-        if "error" in s:
-            print(f"  ERROR {s['id']}: {s['error']}")
-        else:
-            js = " ".join(f"{k}={v}" for k, v in (s.get("judge") or {}).items())
-            print(f"  {s['id']:34s} behaviors {s['behaviors']:7s} {js}")
+        runs = s["runs"]
+        oks = [r for r in runs if "judge" in r]
+        errs = [r for r in runs if "error" in r]
+        if not oks:
+            print(f"  ERROR {s['id']:34s} {errs[0]['error'] if errs else '??'}")
+            continue
+        keys = []
+        for r in oks:
+            for k in r["judge"]:
+                if k not in keys:
+                    keys.append(k)
+        parts = []
+        for k in keys:
+            vals = [r["judge"][k] for r in oks if r["judge"].get(k) is not None]
+            if not vals:
+                parts.append(f"{k}=n/a")
+            elif len(vals) == 1:
+                parts.append(f"{k}={vals[0]}")
+            else:  # trending: media[min-max] sobre las corridas
+                parts.append(f"{k}={round(sum(vals) / len(vals), 2)}[{min(vals)}-{max(vals)}]")
+        nerr = f"  ({len(errs)} err)" if errs else ""
+        print(f"  {s['id']:34s} beh {oks[-1]['behaviors']:7s} {'  '.join(parts)}{nerr}")
 
 
 if __name__ == "__main__":
