@@ -149,6 +149,29 @@ def _read_projectable_draft(sid: str):
         return None
 
 
+async def _run_with_retry(env, fn, inp, *, attempts: int = 4):  # noqa: ANN001, ANN202
+    """Corre una activity con reintento ante fallas TRANSITORIAS del LLM.
+
+    DeepSeek (y el proxy litellm) tiran 'Server disconnected' / 'Connection reset' /
+    'InternalServerError' / 'No deployments' bajo carga sostenida — visto matando
+    5/9 escenarios en una corrida de trending. Reintento con backoff lineal para que
+    un blip de red no invalide la medicion. Errores NO transitorios se propagan tal cual."""
+    import asyncio
+    _TRANSIENT = ("InternalServerError", "Server disconnected", "Connection reset",
+                  "No deployments", "ServiceUnavailable", "Timeout", "timeout",
+                  "RemoteProtocolError", "APIConnectionError")
+    last: Exception | None = None
+    for i in range(attempts):
+        try:
+            return await env.run(fn, inp)
+        except Exception as exc:  # noqa: BLE001
+            last = exc
+            if not any(s in str(exc) for s in _TRANSIENT):
+                raise
+            await asyncio.sleep(2 * (i + 1))
+    raise last  # type: ignore[misc]
+
+
 async def drive_scenario(scn: dict) -> dict:
     """Maneja al agente real por los turnos del escenario. Devuelve turns (para el
     juez) + ledger (tools usadas) + responses + error."""
@@ -166,6 +189,12 @@ async def drive_scenario(scn: dict) -> dict:
 
     env = ActivityEnvironment()
     sid = "wa_golden_" + scn["id"][:28]
+    # Aislar cada corrida: limpiar el dir de sesion antes de bootstrap. Sin esto,
+    # --repeat reusa el sid y el metadata.json (con el order_draft) se ACUMULA entre
+    # reps -> el agente "recuerda" datos de la corrida anterior y contamina el
+    # trending (sobre todo knowledge_retention). Cada rep arranca de cero.
+    import shutil
+    shutil.rmtree(Path(_VAULT, sid), ignore_errors=True)
     session = await env.run(
         bootstrap_sales_session_activity,
         SalesSessionInput(session_id=sid, runtime_workspace_path=None),
@@ -219,7 +248,8 @@ async def drive_scenario(scn: dict) -> dict:
         it = 0
         while it < session.llm.max_iterations:
             it += 1
-            resp = await env.run(
+            resp = await _run_with_retry(
+                env,
                 llm_chat,
                 LLMChatInput(
                     messages=messages, llm=session.llm,
@@ -347,16 +377,25 @@ async def grade_judge(scn: dict, res: dict) -> dict:
     want = [k for k in scn.get("judge_metrics", [])
             if not (k in _FULL_FUNNEL and ncust < 3)]
     out = {}
+    _TRANSIENT = ("RateLimitError", "429", "InternalServerError", "Server disconnected",
+                  "Connection reset", "Timeout", "timeout", "APIConnectionError",
+                  "ServiceUnavailable")
     for k in want:
         m = by_key.get(k)
         if m is None:
             continue
-        try:
-            await m.a_measure(tc)
-            out[k] = {"score": round(float(m.score or 0), 2), "ok": bool(m.is_successful()),
-                      "reason": (m.reason or "")[:300]}
-        except Exception as exc:  # noqa: BLE001
-            out[k] = {"score": None, "ok": None, "reason": f"ERROR: {str(exc)[:100]}"}
+        for attempt in range(3):  # reintento del JUEZ ante 429/transitorios (Gemini)
+            try:
+                await m.a_measure(tc)
+                out[k] = {"score": round(float(m.score or 0), 2), "ok": bool(m.is_successful()),
+                          "reason": (m.reason or "")[:300]}
+                break
+            except Exception as exc:  # noqa: BLE001
+                if attempt < 2 and any(s in str(exc) for s in _TRANSIENT):
+                    await asyncio.sleep(3 * (attempt + 1))
+                    continue
+                out[k] = {"score": None, "ok": None, "reason": f"ERROR: {str(exc)[:100]}"}
+                break
     return out
 
 

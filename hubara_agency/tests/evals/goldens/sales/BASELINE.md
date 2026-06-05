@@ -74,3 +74,67 @@ search-before-naming flaky (`no_hallucination` 0.0 intermitente).
 
 **Fidelidad pendiente** (no es prompt, es input): markers `[FLOW]`/`[BTN]` nativos +
 media `[IMG]` (visión). + `episode_boundary_note` si se testea re-engagement.
+
+## Update — gap fixes (run 6, juez Gemini Pro, trending)
+
+Se atacaron los gaps del `SALES_EVAL_GAPS_HANDOFF.md`. Diagnóstico por TRANSCRIPCIÓN
+separó 3 tipos de causa: **agente real**, **infidelidad del eval/juez**, **escenario
+mal calibrado**. Cada métrica corrida 2-3× (trending: agente Y juez no-deterministas).
+
+| Escenario · métrica | Baseline (run5, 1×) | Post-fix (trending) | Tipo de fix |
+|---|---|---|---|
+| `cierre_canonico` behaviors | 4/8 | **7/7** | env+agente+data |
+| `cierre_canonico` script_adherence | 0.2 | **0.55** [0.4-0.7] | (cierre completa) |
+| `cierre_canonico` conversion | 0.3 | **1.0** | |
+| `cierre_multi_producto` behaviors | 1/3 | **3/3** | register+tag ya disparan |
+| `descubrimiento_intencion_clara` no_hallucination | 0.0 | **1.0** [1.0-1.0] | juez (ve tool outputs) |
+| `handoff_internacional` correct_handoff | 0.0 | **1.0** [1.0-1.0] | agente+escenario |
+| `apertura_voseo_bait` role_adherence | 0.0 | 0.33 [0.0-1.0] | agente (pico 1.0; resto ruido del built-in) |
+| `apertura_voseo_bait` style | 0.75 | 0.83-0.88 | (residual: em dash de Flash) |
+| `handoff_salud` correct_handoff / no_halluc | 1.0 / 1.0 | 1.0 / 1.0 | mantenido |
+| `handoff_pedido_humano` / `salud` role | 0.5 | 0.5 | sin cambio (RoleAdherenceMetric built-in penaliza el handoff) |
+| `cierre_no_segundo` script | 0.0 | 0.1 | marginal (el escenario asume contexto previo que el eval no monta) |
+| `no_repreguntar` knowledge_retention | 0.0 | n/a | juez Gemini rate-limited (429); métrica menos confiable en 2 turnos |
+
+### Qué se cambió (y de qué TIPO es cada fix)
+
+**Infidelidad del eval (el eval era injusto):**
+1. **Stub de `verify_order_for_checkout` + `register_order`** en el runner. Ambos pegan a
+   Medusa LIVE (URL dummy) y fallaban → el agente escalaba/abortaba en vez de cerrar, así
+   que NINGÚN escenario de cierre podía registrar. El `.env` recarga `MEDUSA_REGION_ID`
+   DESPUÉS del `os.environ.pop` del runner, por eso `MedusaOrderRegistration` seguía activo
+   (el handoff asumía `StubOrderRegistration`). Fix: patch del global del módulo (robusto).
+2. **El juez ve los OUTPUTS de las tools** (`ToolCall.output`). El `no_hallucination` GEval
+   solo veía CONTENT/ROLE/TOOLS_CALLED → un precio correcto (grounded) parecía inventado.
+
+**Agente real (gaps confirmados en transcripción, SKILL.md):**
+3. **Anti-loop**: ante cualquier señal de avanzar con un atributo opcional sin resolver,
+   ASUMIR + avanzar a `request_shipping_details`. (Flash loopeaba en color 3× y no cerraba.)
+4. **Voseo bait**: ni espejar NI comentar el registro del cliente. (Decía "¡Qué intento!
+   ...tuteo colombiano 😉" → rompía el rol premium + emoji fuera de allowlist.)
+5. **Internacional**: escalar cuando el cliente insiste sin dirección en Colombia.
+
+**Escenario mal calibrado (el test pedía algo imposible/incorrecto):**
+6. `handoff_internacional`: 2→3 turnos (aclarar → insistir → escalar), para testear el
+   flujo REAL del SKILL.md L117 en vez de un escalado prematuro.
+7. `cierre_canonico` / `cierre_multi_producto`: los datos de envío venían incompletos (3 de
+   5 campos, sin dirección/teléfono) → ningún agente podía registrar. Ahora completos vía
+   `[FLOW]`, fiel al form `request_shipping_details` de prod.
+
+**Robustez del runner**: `--repeat N` (trending), `--dump` (transcripciones), reintento
+ante transitorios del LLM (agente Y juez — DeepSeek/litellm tiran "Server disconnected" /
+429 bajo carga; litellm llegó a OOM-killearse en un run largo), y aislamiento del vault por
+corrida (sin esto `--repeat` acumulaba el `order_draft` entre reps y contaminaba la medición).
+
+### Lo que NO se movió (honesto)
+- `role_adherence` en handoffs (0.5) y el ruido de `voseo_bait` role: es el
+  `RoleAdherenceMetric` **built-in de deepeval** siendo inconsistente/severo con el "tono
+  premium" — el agente ya no rompe el rol (behaviors limpios). Es ruido del juez, no gap.
+- `cierre_multi_producto` script_adherence 1.0→0.3: el 1.0 del baseline era UN sample
+  (ruido); el agente ahora hace MÁS (registra, beh 1/3→3/3) pero el GEval de script puntúa
+  bajo y ruidoso. La señal confiable es el behavior determinista.
+- `cierre_no_segundo` y `no_repreguntar`: residual real menor + límite de cuota del juez.
+
+**Lección reforzada**: el baseline de 1 corrida MIENTE (caso `cierre_multi` script 1.0→0.3,
+`voseo` role 0.0→[0.0-1.0]). El behavior determinista es la señal dura; el juez LLM hay que
+promediarlo. Y el juez tiene que ser independiente Y resiliente (rate-limits reales).
