@@ -3,12 +3,17 @@ import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
 
 const srcDir = fileURLToPath(new URL("./src", import.meta.url));
+// Espeja el alias de vite.config.ts: los tests que importan barrels de plugins
+// (`@plugins/<id>/frontend/...`, p.ej. composición intra-plugin de features)
+// deben resolver igual que en build/tsc.
+const pluginsDir = fileURLToPath(new URL("./src/plugins", import.meta.url));
 
 export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
       "@": srcDir,
+      "@plugins": pluginsDir,
     },
   },
   test: {

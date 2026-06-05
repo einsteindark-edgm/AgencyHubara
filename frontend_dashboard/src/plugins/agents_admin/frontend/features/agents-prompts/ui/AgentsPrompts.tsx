@@ -1,10 +1,16 @@
 /**
- * Centro de Agentes: los 5 prompts read-only (Agents/Identity/Soul/Tools/Users)
- * del agente seleccionado, con el CONTENIDO REAL de los .md de su workspace
- * (servidos por GET /api/agents). Sin personalidades mockeadas.
+ * Canvas central de Agentes. Para el agente `sales` expone dos tabs:
+ *   - "Personalidad": los 5 prompts read-only (Agents/Identity/Soul/Tools/Users)
+ *     con el CONTENIDO REAL de los .md de su workspace (GET /api/agents).
+ *   - "Calidad LLM": el panel de evaluación (tendencia + curación de goldens),
+ *     compuesto desde `agents-quality`. Solo `sales` tiene harness de evals hoy.
+ * El resto de agentes ve solo los prompts (sin tabs).
  */
 
+import { useEffect, useState } from "react";
+
 import { PROMPT_SECTIONS, useAgents } from "@/entities/agent";
+import { AgentsQuality } from "@plugins/agents_admin/frontend/features/agents-quality";
 import { Icon, type IconName } from "@/shared/ui";
 
 interface Props {
@@ -15,6 +21,14 @@ export function AgentsPrompts({ agentId }: Props) {
   const { data: agents = [], isLoading, isError } = useAgents();
 
   const agent = agents.find((a) => a.id === agentId) ?? agents[0];
+
+  // Tab del canvas: solo el agente `sales` tiene panel de Calidad LLM. Los hooks
+  // van antes del early-return (Rules of Hooks). Reseteo a "personalidad" al
+  // cambiar de agente.
+  const [tab, setTab] = useState<"personalidad" | "calidad">("personalidad");
+  useEffect(() => {
+    setTab("personalidad");
+  }, [agent?.id]);
 
   if (!agent) {
     return (
@@ -30,6 +44,7 @@ export function AgentsPrompts({ agentId }: Props) {
     );
   }
 
+  const isSales = agent.id === "sales";
   const HeaderIcon = Icon[agent.icon as IconName] ?? Icon.wand;
 
   return (
@@ -44,6 +59,28 @@ export function AgentsPrompts({ agentId }: Props) {
         </div>
       </div>
 
+      {isSales && (
+        <div className="sub-tabs">
+          <button
+            type="button"
+            className={"sub-tab" + (tab === "personalidad" ? " on" : "")}
+            onClick={() => setTab("personalidad")}
+          >
+            <Icon.wand /> Personalidad
+          </button>
+          <button
+            type="button"
+            className={"sub-tab" + (tab === "calidad" ? " on" : "")}
+            onClick={() => setTab("calidad")}
+          >
+            <Icon.shield /> Calidad LLM
+          </button>
+        </div>
+      )}
+
+      {isSales && tab === "calidad" ? (
+        <AgentsQuality />
+      ) : (
       <div className="ag-form">
         {PROMPT_SECTIONS.map((s) => {
           const prompt = agent.prompts.find((p) => p.key === s.key);
@@ -77,6 +114,7 @@ export function AgentsPrompts({ agentId }: Props) {
           );
         })}
       </div>
+      )}
     </main>
   );
 }
