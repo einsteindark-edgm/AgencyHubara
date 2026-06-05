@@ -60,14 +60,18 @@ from src.plugins.chats.agent.sales_eval.workflows.sales_eval import SalesEvalWor
 
 _SCHEDULE_ID = "sales-eval-schedule"
 _WORKFLOW_ID = "sales-eval"
-_DEFAULT_CRON = "0 8,14,20 * * *"  # 08:00 / 14:00 / 20:00
+# Eval ONLINE (conversaciones REALES del vault): 1×/día a las 23:00 (fin del día),
+# con lookback de 24h -> evalúa las conversaciones de ESE día. (Tunable por env.)
+_DEFAULT_CRON = "0 23 * * *"
 _DEFAULT_TZ = "America/Bogota"
 
-# Golden suite: el MISMO eval del GitHub Action, agendado 1×/día (default 06:00) ->
-# SigNoz con eval.suite=golden. Pesado (61 escenarios x juez), por eso 1×/día.
+# Golden suite: el MISMO eval del GitHub Action (set controlado) -> SigNoz con
+# eval.suite=golden. NO es el feed diario (ese es el online de arriba): el golden
+# vive en el GitHub Action (CI). Acá queda como OPT-IN (schedule OFF por default);
+# se habilita con GOLDEN_EVAL_SCHEDULE_ENABLED=true si se quiere también en SigNoz.
 _GOLDEN_SCHEDULE_ID = "golden-eval-schedule"
 _GOLDEN_WORKFLOW_ID = "golden-eval"
-_GOLDEN_DEFAULT_CRON = "0 6 * * *"  # 06:00
+_GOLDEN_DEFAULT_CRON = "0 6 * * *"  # 06:00 (solo si se habilita)
 
 
 def _env_int(name: str, default: int) -> int:
@@ -83,9 +87,10 @@ def _env_int(name: str, default: int) -> int:
 
 
 def _window_from_env() -> EvalWindowInput:
+    # Corrida diaria -> ventana de 24h ("las conversaciones de ese día").
     return EvalWindowInput(
-        lookback_hours=_env_int("SALES_EVAL_LOOKBACK_HOURS", 8),
-        max_conversations=_env_int("SALES_EVAL_MAX_CONVERSATIONS", 50),
+        lookback_hours=_env_int("SALES_EVAL_LOOKBACK_HOURS", 24),
+        max_conversations=_env_int("SALES_EVAL_MAX_CONVERSATIONS", 100),
     )
 
 
@@ -133,8 +138,10 @@ async def _ensure_golden_schedule(client: Client, task_queue: str) -> None:
     `GOLDEN_EVAL_SCHEDULE_ENABLED=false` lo deshabilita (el worker igual corre →
     triggers manuales desde la Temporal UI funcionan). Cron via
     `GOLDEN_EVAL_SCHEDULE_CRON` (default 06:00 America/Bogota)."""
-    if os.environ.get("GOLDEN_EVAL_SCHEDULE_ENABLED", "true").strip().lower() == "false":
-        logger.info("📅 Golden schedule deshabilitado (GOLDEN_EVAL_SCHEDULE_ENABLED=false)")
+    # OPT-IN: el feed diario de SigNoz es el ONLINE (conversaciones reales). El golden
+    # vive en el GitHub Action; acá solo se agenda si se pide explícitamente.
+    if os.environ.get("GOLDEN_EVAL_SCHEDULE_ENABLED", "false").strip().lower() != "true":
+        logger.info("📅 Golden schedule OFF (opt-in: GOLDEN_EVAL_SCHEDULE_ENABLED=true)")
         return
     cron = os.environ.get("GOLDEN_EVAL_SCHEDULE_CRON", "").strip() or _GOLDEN_DEFAULT_CRON
     try:
