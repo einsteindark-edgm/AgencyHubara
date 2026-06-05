@@ -39,7 +39,7 @@ def test_exact_579d34e7_payload_cleaned():
     )
     result = sanitize_llm_text(raw)
     expected = (
-        "¡Hola de nuevo! 🌿 Quedó pendiente lo de la *Plegaria de Luz* — "
+        "¡Hola de nuevo! 🌿 Quedó pendiente lo de la *Plegaria de Luz*, "
         "¿quieres que terminemos de ajustar los datos de envío y la dejamos lista? 🤍"
     )
     assert result.text == expected
@@ -224,7 +224,45 @@ def test_message_starting_with_colon_phrase_not_stripped():
 
 def test_legitimate_quoted_inner_content():
     """Si el cliente dijo X, el LLM puede citar al cliente — no debemos
-    romper esa cita."""
+    romper esa cita. (El em dash sí se normaliza a coma; la cita queda intacta.)"""
     raw = 'Entiendo que dijiste "no me llegó" — déjame revisar.'
     result = sanitize_llm_text(raw)
-    assert result.text == raw  # intacto
+    assert '"no me llegó"' in result.text  # la cita interna intacta
+    assert "wrapping_quotes_stripped" not in result.actions
+    assert result.text == 'Entiendo que dijiste "no me llegó", déjame revisar.'
+
+
+# =============================================================================
+# Em / en dash -> coma (regla de estilo "cero em dash")
+# =============================================================================
+
+
+def test_em_dash_normalized_to_comma():
+    result = sanitize_llm_text("corregido — Medellín, 2 a 3 días")
+    assert result.text == "corregido, Medellín, 2 a 3 días"
+    assert "em_dash_normalized" in result.actions
+
+
+def test_en_dash_normalized_to_comma():
+    result = sanitize_llm_text("Plegaria de Luz – pendiente")
+    assert "–" not in result.text
+    assert result.text == "Plegaria de Luz, pendiente"
+
+
+def test_em_dash_no_spaces_normalized():
+    result = sanitize_llm_text("colores—¿te gusta?")
+    assert result.text == "colores, ¿te gusta?"
+
+
+def test_regular_hyphen_not_touched():
+    """El guion-menos normal (U+002D) NO se toca: '1-2 días', 'contra-entrega'."""
+    raw = "Bogotá 1-2 días, contra-entrega"
+    result = sanitize_llm_text(raw)
+    assert result.text == raw
+    assert "em_dash_normalized" not in result.actions
+
+
+def test_em_dash_normalization_idempotent():
+    once = sanitize_llm_text("texto — y más — y otro").text
+    twice = sanitize_llm_text(once).text
+    assert once == twice == "texto, y más, y otro"

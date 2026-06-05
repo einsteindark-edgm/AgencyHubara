@@ -159,6 +159,15 @@ def sanitize_llm_text(raw: str) -> SanitizeResult:
         text = cleaned
         actions.append("wrapping_quotes_stripped")
 
+    # 6.5 Em/en dash -> coma. Regla de estilo de marca ("cero em dash"): el
+    # prompt NO basta (DeepSeek-Flash los emite igual, visto en 7/29 escenarios
+    # del golden-eval). Acá lo enforzamos de forma determinista. NO tocamos el
+    # guion normal (-, U+002D) que sí se usa (1 a 2 días, contra-entrega).
+    cleaned, removed = _normalize_dashes(text)
+    if removed:
+        text = cleaned
+        actions.append("em_dash_normalized")
+
     # 7. Trim final.
     text = text.strip()
 
@@ -224,6 +233,24 @@ def _strip_unbalanced_outer_quotes(text: str) -> tuple[str, bool]:
         if not any(q in body for q in _OPEN_QUOTES + _CLOSE_QUOTES):
             return body.rstrip(), True
     return text, False
+
+
+# Em dash (U+2014) y en dash (U+2013). El guion-menos normal (U+002D) NO se toca.
+_DASH_RE = re.compile(r"\s*[—–]\s*")
+
+
+def _normalize_dashes(text: str) -> tuple[str, bool]:
+    """Reemplaza em/en dash por coma (puntuación natural de la marca).
+
+    Idempotente. Limpia comas huérfanas que la sustitución pueda dejar (dobles,
+    o al inicio del texto). Conserva el guion normal `-`."""
+    if "—" not in text and "–" not in text:
+        return text, False
+    out = _DASH_RE.sub(", ", text)
+    out = re.sub(r",\s*,", ", ", out)        # comas dobles -> una
+    out = re.sub(r"^\s*,\s*", "", out)        # coma huérfana al inicio
+    out = re.sub(r"\s+,", ",", out)           # espacio antes de coma
+    return out, out != text
 
 
 def _dedupe_back_to_back(text: str) -> tuple[str, bool]:

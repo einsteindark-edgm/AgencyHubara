@@ -86,6 +86,54 @@ def marker_to_text(turn: str) -> str:
     return t
 
 
+class _StubCheckoutVerification:
+    """Verifier de eval: siempre verified=true, catalogo disponible, sin discrepancia.
+
+    FIDELIDAD: en prod `verify_order_for_checkout` pega a Medusa LIVE y en el happy
+    path devuelve verified=true (snapshot y live coinciden). En el eval Medusa es un
+    dummy (MEDUSA_BASE_URL=http://localhost:1) -> verify_items falla -> el tool emite
+    `catalog_unavailable` -> el agente ESCALA (CHECKOUT_VERIFY_FAILED) en vez de
+    registrar la orden, rompiendo TODO escenario de cierre (register_order nunca se
+    llama, CONFIRMADO_PAGO_PENDIENTE nunca se marca). Igual que StubOrderRegistration
+    (que neutraliza register_order via ausencia de REGION_ID/SALES_CHANNEL_ID),
+    stubbeamos el verifier para que el cierre pueda completarse. NO toca produccion."""
+
+    async def verify_items(self, items):  # noqa: ANN001, ANN201
+        from src.platform.catalog.checkout_port import (
+            CheckoutVerification,
+            VerifiedItem,
+        )
+        verified = [
+            VerifiedItem(
+                handle=it.handle, title=it.handle, snapshot_price=None,
+                live_price=None, currency="COP", in_stock=True, discrepancy=False,
+            )
+            for it in items
+        ]
+        return CheckoutVerification(verified=True, catalog_available=True, items=verified)
+
+
+def _install_eval_stubs() -> None:
+    """Neutraliza la I/O live de Medusa en el path de cierre (verify + register).
+
+    El worker `sales.py` setea `_checkout_verifier` y `_order_registration_port` a
+    nivel modulo, y los lambdas de `register_tool_extension` los resuelven como
+    globals en cada build de la tool — reasignarlos aca (DESPUES de importar el
+    worker) hace que el eval use los stubs.
+
+    Por que NO basta con popear MEDUSA_REGION_ID/SALES_CHANNEL_ID (como asumia el
+    runner): `get_order_registration_port()` lee `get_medusa_settings()`, que carga
+    el `.env` del repo (tiene region_id/sales_channel_id reales) DESPUES del pop ->
+    selecciona MedusaOrderRegistration -> register_order pega al Medusa dummy
+    (MEDUSA_BASE_URL=http://localhost:1) y devuelve success=False -> el agente cae al
+    path ORDER_REGISTRATION_FAILED y NUNCA marca CONFIRMADO_PAGO_PENDIENTE. Forzar el
+    StubOrderRegistration (success=True, provider='stub', sin red) es robusto."""
+    import src.plugins.chats.workers.sales as _sw
+    from src.platform.orders.stub import StubOrderRegistration
+    _sw._checkout_verifier = _StubCheckoutVerification()
+    _sw._order_registration_port = StubOrderRegistration()
+
+
 def _read_projectable_draft(sid: str):
     """Lee el order_draft acumulado en metadata (lo que set_order_slot fue guardando).
     FIDELIDAD: en prod, ingest_inbound_message hace esto cada turno y re-inyecta el
@@ -101,6 +149,29 @@ def _read_projectable_draft(sid: str):
         return None
 
 
+async def _run_with_retry(env, fn, inp, *, attempts: int = 4):  # noqa: ANN001, ANN202
+    """Corre una activity con reintento ante fallas TRANSITORIAS del LLM.
+
+    DeepSeek (y el proxy litellm) tiran 'Server disconnected' / 'Connection reset' /
+    'InternalServerError' / 'No deployments' bajo carga sostenida — visto matando
+    5/9 escenarios en una corrida de trending. Reintento con backoff lineal para que
+    un blip de red no invalide la medicion. Errores NO transitorios se propagan tal cual."""
+    import asyncio
+    _TRANSIENT = ("InternalServerError", "Server disconnected", "Connection reset",
+                  "No deployments", "ServiceUnavailable", "Timeout", "timeout",
+                  "RemoteProtocolError", "APIConnectionError")
+    last: Exception | None = None
+    for i in range(attempts):
+        try:
+            return await env.run(fn, inp)
+        except Exception as exc:  # noqa: BLE001
+            last = exc
+            if not any(s in str(exc) for s in _TRANSIENT):
+                raise
+            await asyncio.sleep(2 * (i + 1))
+    raise last  # type: ignore[misc]
+
+
 async def drive_scenario(scn: dict) -> dict:
     """Maneja al agente real por los turnos del escenario. Devuelve turns (para el
     juez) + ledger (tools usadas) + responses + error."""
@@ -108,6 +179,7 @@ async def drive_scenario(scn: dict) -> dict:
 
     from exoclaw_temporal.activities.conversation import BuildPromptInput, build_prompt
     from exoclaw_temporal.activities.llm import LLMChatInput, llm_chat
+    from src.platform.llm_text_sanitizer import sanitize_llm_text
     from src.platform.temporal.activities import ExecuteToolInput, execute_tool
 
     from src.plugins.chats.agent.sales.activities.bootstrap_session import (
@@ -118,6 +190,12 @@ async def drive_scenario(scn: dict) -> dict:
 
     env = ActivityEnvironment()
     sid = "wa_golden_" + scn["id"][:28]
+    # Aislar cada corrida: limpiar el dir de sesion antes de bootstrap. Sin esto,
+    # --repeat reusa el sid y el metadata.json (con el order_draft) se ACUMULA entre
+    # reps -> el agente "recuerda" datos de la corrida anterior y contamina el
+    # trending (sobre todo knowledge_retention). Cada rep arranca de cero.
+    import shutil
+    shutil.rmtree(Path(_VAULT, sid), ignore_errors=True)
     session = await env.run(
         bootstrap_sales_session_activity,
         SalesSessionInput(session_id=sid, runtime_workspace_path=None),
@@ -165,12 +243,14 @@ async def drive_scenario(scn: dict) -> dict:
             messages.append({"role": "user", "content": cust})
 
         turn_tools: list[str] = []
+        turn_outputs: list[dict] = []   # resultado de cada tool (para que el juez vea el grounding)
         pre_tool: list[str] = []   # texto emitido JUNTO con tool calls (prod: pre_tool_messages)
         final = ""
         it = 0
         while it < session.llm.max_iterations:
             it += 1
-            resp = await env.run(
+            resp = await _run_with_retry(
+                env,
                 llm_chat,
                 LLMChatInput(
                     messages=messages, llm=session.llm,
@@ -183,7 +263,10 @@ async def drive_scenario(scn: dict) -> dict:
                 # Prod lo captura en pre_tool_messages; el texto visible del turno =
                 # pre_tool_messages + final_content. Sin esto perdiamos el saludo.
                 if resp.content and resp.content.strip():
-                    pre_tool.append(resp.content.strip())
+                    # FIDELIDAD: prod sanitiza el texto del LLM antes de enviarlo
+                    # (sanitize_llm_text: meta-prefijos, dedupe, em dash -> coma).
+                    # El eval debe medir lo que el cliente VE, no el raw.
+                    pre_tool.append(sanitize_llm_text(resp.content).text)
                 messages.append(resp.to_assistant_message())
                 for tc in resp.tool_calls:
                     turn_tools.append(tc.name)
@@ -202,13 +285,26 @@ async def drive_scenario(scn: dict) -> dict:
                         "role": "tool", "tool_call_id": getattr(tc, "id", tc.name),
                         "name": tc.name, "content": result,
                     })
+                    # FIDELIDAD juez: el no_hallucination GEval solo ve CONTENT/ROLE/
+                    # TOOLS_CALLED; sin el OUTPUT de search_products, un precio correcto
+                    # (grounded) le parece inventado. Adjuntamos el resultado (capado)
+                    # al ToolCall para que pueda verificar el grounding.
+                    turn_outputs.append({"name": tc.name, "output": result[:1000]})
                 continue
-            final = (resp.content or "").strip()
+            # prod sanitiza el final_content antes de enviarlo -> el eval también.
+            final = sanitize_llm_text(resp.content or "").text
+            # FIDELIDAD CRÍTICA: agregar la respuesta de TEXTO del agente al history.
+            # Sin esto, los turnos solo-texto (saludo sin tool, "déjame pensarlo",
+            # objeciones) se PERDÍAN del contexto -> el agente no veía lo que dijo y
+            # RE-SALUDABA / perdía el hilo en el turno siguiente (visto en regateo, foto,
+            # mensaje_larguisimo). En prod el session_history store SÍ los persiste.
+            messages.append(resp.to_assistant_message())
             break
 
         visible = "\n".join([*pre_tool, final] if final else pre_tool).strip()
         responses.append(visible or "(turno solo-tool / sin texto)")
-        turns.append({"role": "assistant", "content": visible, "tools": list(turn_tools)})
+        turns.append({"role": "assistant", "content": visible, "tools": list(turn_tools),
+                      "tool_outputs": turn_outputs})
 
     # pending_ui_intents capturados en metadata (no se enviaron)
     intents = []
@@ -292,16 +388,25 @@ async def grade_judge(scn: dict, res: dict) -> dict:
     want = [k for k in scn.get("judge_metrics", [])
             if not (k in _FULL_FUNNEL and ncust < 3)]
     out = {}
+    _TRANSIENT = ("RateLimitError", "429", "InternalServerError", "Server disconnected",
+                  "Connection reset", "Timeout", "timeout", "APIConnectionError",
+                  "ServiceUnavailable")
     for k in want:
         m = by_key.get(k)
         if m is None:
             continue
-        try:
-            await m.a_measure(tc)
-            out[k] = {"score": round(float(m.score or 0), 2), "ok": bool(m.is_successful()),
-                      "reason": (m.reason or "")[:300]}
-        except Exception as exc:  # noqa: BLE001
-            out[k] = {"score": None, "ok": None, "reason": f"ERROR: {str(exc)[:100]}"}
+        for attempt in range(3):  # reintento del JUEZ ante 429/transitorios (Gemini)
+            try:
+                await m.a_measure(tc)
+                out[k] = {"score": round(float(m.score or 0), 2), "ok": bool(m.is_successful()),
+                          "reason": (m.reason or "")[:300]}
+                break
+            except Exception as exc:  # noqa: BLE001
+                if attempt < 2 and any(s in str(exc) for s in _TRANSIENT):
+                    await asyncio.sleep(3 * (attempt + 1))
+                    continue
+                out[k] = {"score": None, "ok": None, "reason": f"ERROR: {str(exc)[:100]}"}
+                break
     return out
 
 
@@ -309,12 +414,17 @@ async def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--scenario"); ap.add_argument("--category")
     ap.add_argument("--limit", type=int); ap.add_argument("--no-judge", action="store_true")
+    ap.add_argument("--dump", action="store_true",
+                    help="imprime la transcripcion completa (cliente + agente + tools) para diagnostico")
+    ap.add_argument("--repeat", type=int, default=1,
+                    help="corre cada escenario N veces (trending: agente+juez son no-deterministas)")
     args = ap.parse_args()
 
     data = json.loads(_SCENARIOS.read_text("utf-8"))
     scns = data["scenarios"]
     if args.scenario:
-        scns = [s for s in scns if s["id"] == args.scenario]
+        wanted = {x.strip() for x in args.scenario.split(",") if x.strip()}
+        scns = [s for s in scns if s["id"] in wanted]
     if args.category:
         scns = [s for s in scns if s["category"] == args.category]
     if args.limit:
@@ -326,43 +436,76 @@ async def main() -> None:
     # registrar las tools de dominio (las register_tool_extension de sales.py)
     import src.plugins.chats.workers.sales  # noqa: F401
 
+    # neutralizar la I/O live de cierre (Medusa verify) -> el cierre puede completarse
+    _install_eval_stubs()
+
     summary = []
     for idx, scn in enumerate(scns, 1):
-        print(f"[{idx}/{len(scns)}] {scn['id']}  ({scn['category']})")
-        try:
-            res = await drive_scenario(scn)
-        except Exception as exc:  # noqa: BLE001
-            print(f"   ERROR manejando el agente: {str(exc)[:200]}\n")
-            summary.append({"id": scn["id"], "error": str(exc)[:120]})
-            continue
+        runs = []   # una entrada por corrida: {"behaviors": "x/y", "judge": {k: score}} | {"error": ...}
+        for rep in range(1, args.repeat + 1):
+            head = f"[{idx}/{len(scns)}] {scn['id']}  ({scn['category']})"
+            head += f"  · run {rep}/{args.repeat}" if args.repeat > 1 else ""
+            print(head)
+            try:
+                res = await drive_scenario(scn)
+            except Exception as exc:  # noqa: BLE001
+                print(f"   ERROR manejando el agente: {str(exc)[:200]}\n")
+                runs.append({"error": str(exc)[:120]})
+                continue
 
-        behs = check_behaviors(scn, res)
-        bpass = sum(1 for b in behs if b["ok"] is True)
-        bcheck = sum(1 for b in behs if b["ok"] is not None)
-        print(f"   turnos: {len(scn['customer_turns'])} · tools usadas: "
-              f"{','.join(sorted({e['name'].split('.')[-1] for e in res['ledger']})) or '(ninguna)'}")
-        for b in behs:
-            mark = "✅" if b["ok"] is True else ("❌" if b["ok"] is False else "·")
-            print(f"     {mark} {b['behavior']:26s} {b['detail'][:50]}")
+            if args.dump:
+                for t in res["turns"]:
+                    if t["role"] == "user":
+                        print(f"   👤 {t['content'][:300]}")
+                    else:
+                        tg = f"  «{','.join(t['tools'])}»" if t["tools"] else ""
+                        print(f"   🤖{tg}\n      {(t['content'] or '(sin texto)')[:600]}")
 
-        judged = {}
-        if not args.no_judge:
-            judged = await grade_judge(scn, res)
-            for k, v in judged.items():
-                mark = "✅" if v["ok"] else ("❌" if v["ok"] is False else "·")
-                sc = "n/a" if v["score"] is None else f"{v['score']:.2f}"
-                print(f"     {mark} judge:{k:20s} {sc}  {v['reason'][:160]}")
-        print()
-        summary.append({"id": scn["id"], "behaviors": f"{bpass}/{bcheck}",
-                        "judge": {k: v["score"] for k, v in judged.items()}})
+            behs = check_behaviors(scn, res)
+            bpass = sum(1 for b in behs if b["ok"] is True)
+            bcheck = sum(1 for b in behs if b["ok"] is not None)
+            print(f"   turnos: {len(scn['customer_turns'])} · tools usadas: "
+                  f"{','.join(sorted({e['name'].split('.')[-1] for e in res['ledger']})) or '(ninguna)'}")
+            for b in behs:
+                mark = "✅" if b["ok"] is True else ("❌" if b["ok"] is False else "·")
+                print(f"     {mark} {b['behavior']:26s} {b['detail'][:50]}")
+
+            judged = {}
+            if not args.no_judge:
+                judged = await grade_judge(scn, res)
+                for k, v in judged.items():
+                    mark = "✅" if v["ok"] else ("❌" if v["ok"] is False else "·")
+                    sc = "n/a" if v["score"] is None else f"{v['score']:.2f}"
+                    print(f"     {mark} judge:{k:20s} {sc}  {v['reason'][:160]}")
+            print()
+            runs.append({"behaviors": f"{bpass}/{bcheck}",
+                         "judge": {k: v["score"] for k, v in judged.items()}})
+        summary.append({"id": scn["id"], "runs": runs})
 
     print("=== RESUMEN ===")
     for s in summary:
-        if "error" in s:
-            print(f"  ERROR {s['id']}: {s['error']}")
-        else:
-            js = " ".join(f"{k}={v}" for k, v in (s.get("judge") or {}).items())
-            print(f"  {s['id']:34s} behaviors {s['behaviors']:7s} {js}")
+        runs = s["runs"]
+        oks = [r for r in runs if "judge" in r]
+        errs = [r for r in runs if "error" in r]
+        if not oks:
+            print(f"  ERROR {s['id']:34s} {errs[0]['error'] if errs else '??'}")
+            continue
+        keys = []
+        for r in oks:
+            for k in r["judge"]:
+                if k not in keys:
+                    keys.append(k)
+        parts = []
+        for k in keys:
+            vals = [r["judge"][k] for r in oks if r["judge"].get(k) is not None]
+            if not vals:
+                parts.append(f"{k}=n/a")
+            elif len(vals) == 1:
+                parts.append(f"{k}={vals[0]}")
+            else:  # trending: media[min-max] sobre las corridas
+                parts.append(f"{k}={round(sum(vals) / len(vals), 2)}[{min(vals)}-{max(vals)}]")
+        nerr = f"  ({len(errs)} err)" if errs else ""
+        print(f"  {s['id']:34s} beh {oks[-1]['behaviors']:7s} {'  '.join(parts)}{nerr}")
 
 
 if __name__ == "__main__":

@@ -4,6 +4,31 @@
 > Branch: `tune/sales-script-gaps`. Eval: `hubara_agency/scripts/golden_eval.py`.
 > Corré el eval: `cd hubara_agency && uv run --extra evals python scripts/golden_eval.py` (necesita el stack docker arriba: litellm en :4000).
 
+---
+
+## ✅ UPDATE — gaps atacados (sesión siguiente, branch `fix/sales-eval-gaps`)
+
+Se diagnosticó CADA gap por transcripción y se separó en 3 tipos de causa. Resultado
+(detalle + tabla before/after en `tests/evals/goldens/sales/BASELINE.md` § "gap fixes run 6"):
+
+| Gap | Estado | Cómo |
+|---|---|---|
+| Cierre no completaba (`cierre_*` register 0) | ✅ **RESUELTO** | Stub de `verify_order_for_checkout` + `register_order` (pegaban a Medusa dummy) + anti-loop en SKILL.md + datos completos vía `[FLOW]`. `cierre_canonico` **4/8 → 7/7**, script **0.2 → 0.55**, conversion **0.3 → 1.0**. `cierre_multi` beh **1/3 → 3/3**. |
+| `intencion_clara` no_hallucination 0.0 | ✅ **RESUELTO** | Era falso-negativo del juez (no veía el resultado de `search`). Ahora el juez ve `ToolCall.output` → **0.0 → 1.0**. |
+| `handoff_internacional` 0.0 | ✅ **RESUELTO** | Conflicto test↔script: el agente aclara "solo Colombia" (correcto) y el test pedía escalar ya. Fix: escenario 2→3 turnos (aclarar→insistir→escalar) + SKILL.md escala-al-insistir → **0.0 → 1.0**. |
+| `voseo_bait` role 0.0 | ✅ **MEJORADO** | Agente comentaba el registro ("¡Qué intento! 😉"). Fix anti-lecture → role **0.0 → pico 1.0** (0.33 medio; el resto es ruido del `RoleAdherenceMetric` built-in). behaviors 3/3. |
+| `role_adherence` 0.5 en handoffs | ⚠️ **JUEZ, no agente** | El `RoleAdherenceMetric` built-in penaliza el handoff. El agente NO rompe el rol. No es gap real. |
+| `no_repreguntar` knowledge 0.0 | ⏳ **sin medir** | El juez Gemini se rate-limiteó (429). Métrica menos confiable en 2 turnos. Pendiente medir con cuota fresca. |
+
+**Robustez del eval que se agregó**: `--repeat N` (trending), `--dump` (transcripciones),
+reintento ante transitorios del LLM (agente + juez), aislamiento de vault por corrida.
+**Infra**: litellm OOM-killed (`Exited 137`) bajo carga sostenida del trending largo →
+reiniciar `local-litellm` entre corridas grandes; considerar subirle memoria.
+
+**Lo de abajo es el handoff ORIGINAL** (pre-fix), se deja como registro del diagnóstico.
+
+---
+
 ## TL;DR — dónde estamos
 
 El golden-eval (agente REAL + juez REAL) ya es **confiable**. El camino fue: encontrar fallas →

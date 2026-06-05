@@ -129,7 +129,12 @@ def build_conversational_test_case(
 
     dt_turns = []
     for t in turns:
-        tools_called = [ToolCall(name=n) for n in t.get("tools", [])] or None
+        # `tool_outputs` (opcional) permite que el juez vea QUE devolvio cada tool
+        # (grounding para no_hallucination). Backward-compatible: si no viene, el
+        # output queda None y el comportamiento es identico al previo (solo nombre).
+        _outs = {o["name"]: o.get("output") for o in t.get("tool_outputs", [])} \
+            if t.get("tool_outputs") else {}
+        tools_called = [ToolCall(name=n, output=_outs.get(n)) for n in t.get("tools", [])] or None
         dt_turns.append(
             Turn(
                 role=t["role"],
