@@ -179,6 +179,7 @@ async def drive_scenario(scn: dict) -> dict:
 
     from exoclaw_temporal.activities.conversation import BuildPromptInput, build_prompt
     from exoclaw_temporal.activities.llm import LLMChatInput, llm_chat
+    from src.platform.llm_text_sanitizer import sanitize_llm_text
     from src.platform.temporal.activities import ExecuteToolInput, execute_tool
 
     from src.plugins.chats.agent.sales.activities.bootstrap_session import (
@@ -262,7 +263,10 @@ async def drive_scenario(scn: dict) -> dict:
                 # Prod lo captura en pre_tool_messages; el texto visible del turno =
                 # pre_tool_messages + final_content. Sin esto perdiamos el saludo.
                 if resp.content and resp.content.strip():
-                    pre_tool.append(resp.content.strip())
+                    # FIDELIDAD: prod sanitiza el texto del LLM antes de enviarlo
+                    # (sanitize_llm_text: meta-prefijos, dedupe, em dash -> coma).
+                    # El eval debe medir lo que el cliente VE, no el raw.
+                    pre_tool.append(sanitize_llm_text(resp.content).text)
                 messages.append(resp.to_assistant_message())
                 for tc in resp.tool_calls:
                     turn_tools.append(tc.name)
@@ -287,7 +291,8 @@ async def drive_scenario(scn: dict) -> dict:
                     # al ToolCall para que pueda verificar el grounding.
                     turn_outputs.append({"name": tc.name, "output": result[:1000]})
                 continue
-            final = (resp.content or "").strip()
+            # prod sanitiza el final_content antes de enviarlo -> el eval también.
+            final = sanitize_llm_text(resp.content or "").text
             # FIDELIDAD CRÍTICA: agregar la respuesta de TEXTO del agente al history.
             # Sin esto, los turnos solo-texto (saludo sin tool, "déjame pensarlo",
             # objeciones) se PERDÍAN del contexto -> el agente no veía lo que dijo y

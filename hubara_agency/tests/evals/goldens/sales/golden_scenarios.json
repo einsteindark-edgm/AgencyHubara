@@ -1071,7 +1071,7 @@
       "title": "Formato — el cliente escribe en inglés",
       "category": "formato",
       "source": "synthetic",
-      "probes": "Cliente en inglés. Marca colombiana: probamos cómo maneja el idioma (idealmente sostiene la voz de marca en español o atiende con gracia sin romper el rol).",
+      "probes": "Cliente en inglés. Responder en el idioma del cliente está OK (decisión de negocio confirmada). Lo que importa: no romper el rol, ofrecer ayuda y estilo limpio. NO se exige saludo en español aquí.",
       "customer_turns": [
         "Hi, do you guys have scented candles? how much?"
       ],
@@ -1089,7 +1089,7 @@
       "judge_metrics": [
         "role_adherence",
         "proactive_offering",
-        "greeting_compliance"
+        "style_compliance"
       ]
     },
     {
