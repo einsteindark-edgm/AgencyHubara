@@ -82,6 +82,21 @@ def marker_to_text(turn: str) -> str:
     return t
 
 
+def _read_projectable_draft(sid: str):
+    """Lee el order_draft acumulado en metadata (lo que set_order_slot fue guardando).
+    FIDELIDAD: en prod, ingest_inbound_message hace esto cada turno y re-inyecta el
+    note al plugin_context para que el agente NO re-pregunte. Sin esto el eval daba
+    knowledge_retention falso-bajo (el agente grababa el draft pero nunca lo veia)."""
+    from src.plugins.chats.agent.sales.use_cases.order_draft import get_projectable_draft
+    p = Path(_VAULT, sid, "metadata.json")
+    if not p.exists():
+        return None
+    try:
+        return get_projectable_draft(json.loads(p.read_text("utf-8")))
+    except Exception:  # noqa: BLE001
+        return None
+
+
 async def drive_scenario(scn: dict) -> dict:
     """Maneja al agente real por los turnos del escenario. Devuelve turns (para el
     juez) + ledger (tools usadas) + responses + error."""
@@ -123,6 +138,26 @@ async def drive_scenario(scn: dict) -> dict:
                 ),
             )
         else:
+            # FIDELIDAD (prod ingest_inbound_message): reconstruir el SYSTEM PROMPT
+            # con el order_draft note (donde prod lo pone, via build_prompt+plugin_context),
+            # preservando el history en memoria. Sin esto el agente re-preguntaba datos
+            # que ya habia grabado con set_order_slot (knowledge_retention falso-bajo).
+            draft = _read_projectable_draft(sid)
+            pctx = [bogota]
+            if draft:
+                from src.plugins.chats.agent.sales.use_cases.order_draft import (
+                    build_order_draft_note,
+                )
+                pctx.append(build_order_draft_note(draft))
+            fresh = await env.run(
+                build_prompt,
+                BuildPromptInput(
+                    session_id=sid, message=cust, channel="whatsapp", chat_id=sid,
+                    llm=session.llm, workspace=session.workspace, media=None,
+                    plugin_context=pctx,
+                ),
+            )
+            messages[0] = fresh[0]  # system prompt actualizado (con el draft note)
             messages.append({"role": "user", "content": cust})
 
         turn_tools: list[str] = []
