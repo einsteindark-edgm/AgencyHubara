@@ -15,7 +15,7 @@ function Sparkline({
   threshold: number;
 }) {
   const pts = series.points;
-  if (pts.length === 0) return <span className="text-xs text-black/30">sin datos</span>;
+  if (pts.length === 0) return <span className="text-xs text-fg-faint">sin datos</span>;
 
   const xs = (i: number) =>
     pts.length === 1 ? W / 2 : PAD + (i * (W - 2 * PAD)) / (pts.length - 1);
@@ -25,15 +25,15 @@ function Sparkline({
 
   return (
     <svg width={W} height={H} className="shrink-0" role="img" aria-label={`tendencia ${series.metric}`}>
-      <line x1={PAD} y1={yThr} x2={W - PAD} y2={yThr} stroke="#d1d5db" strokeWidth={1} strokeDasharray="3 3" />
-      <polyline points={line} fill="none" stroke="#6366f1" strokeWidth={1.5} />
+      <line x1={PAD} y1={yThr} x2={W - PAD} y2={yThr} stroke="var(--color-line-strong)" strokeWidth={1} strokeDasharray="3 3" />
+      <polyline points={line} fill="none" stroke="var(--color-accent-fg)" strokeWidth={1.5} />
       {pts.map((p, i) => (
         <circle
           key={p.date}
           cx={xs(i)}
           cy={ys(p.avg)}
           r={p.avg < threshold ? 2.6 : 1.8}
-          fill={p.avg < threshold ? "#ef4444" : "#6366f1"}
+          fill={p.avg < threshold ? "var(--color-red)" : "var(--color-accent-fg)"}
         >
           <title>{`${p.date}: ${p.avg.toFixed(2)} (min ${p.min.toFixed(2)}, n=${p.n})`}</title>
         </circle>
@@ -55,12 +55,12 @@ function MetricRow({ series, threshold }: { series: EvalTrendSeries; threshold: 
         : last < first - 0.02
           ? "↓"
           : "→";
-  const dirColor = dir === "↑" ? "text-emerald-600" : dir === "↓" ? "text-red-500" : "text-black/40";
-  const lastColor = last === null ? "text-black/30" : last < threshold ? "text-red-500" : "text-emerald-600";
+  const dirColor = dir === "↑" ? "text-green" : dir === "↓" ? "text-red" : "text-fg-faint";
+  const lastColor = last === null ? "text-fg-faint" : last < threshold ? "text-red" : "text-green";
 
   return (
-    <div className="flex items-center gap-3 border-b border-black/5 py-2">
-      <div className="w-44 shrink-0 truncate text-sm font-medium" title={series.metric}>
+    <div className="flex items-center gap-3 border-b border-line py-2">
+      <div className="w-44 shrink-0 truncate text-sm font-medium text-fg" title={series.metric}>
         {series.metric}
       </div>
       <Sparkline series={series} threshold={threshold} />
@@ -68,12 +68,12 @@ function MetricRow({ series, threshold }: { series: EvalTrendSeries; threshold: 
         {last === null ? "—" : last.toFixed(2)}
       </div>
       <div className={"w-5 shrink-0 text-center text-sm " + dirColor}>{dir}</div>
-      <div className="min-w-0 flex-1 text-xs text-black/50">
+      <div className="min-w-0 flex-1 text-xs text-fg-muted">
         {lowDates.length === 0 ? (
-          <span className="text-emerald-600/70">sin días bajos</span>
+          <span className="text-green/70">sin días bajos</span>
         ) : (
           <span title={lowDates.join(", ")}>
-            <span className="font-semibold text-red-500">{lowDates.length}</span> día
+            <span className="font-semibold text-red">{lowDates.length}</span> día
             {lowDates.length > 1 ? "s" : ""} bajo {threshold}: {lowDates.slice(-3).join(", ")}
             {lowDates.length > 3 ? "…" : ""}
           </span>
@@ -94,11 +94,11 @@ export function EvalTrendChart() {
   const threshold = data?.threshold ?? 0.7;
 
   return (
-    <section className="rounded-lg border border-black/10 p-4">
+    <section className="rounded-lg border border-line p-4 text-fg">
       <header className="mb-3 flex flex-wrap items-center gap-2">
         <h3 className="text-sm font-semibold">Tendencia de calidad</h3>
-        <span className="text-xs text-black/40">últimos 30 días · umbral {threshold}</span>
-        <div className="ml-auto flex gap-1 rounded-md bg-black/5 p-0.5 text-xs">
+        <span className="text-xs text-fg-faint">últimos 30 días · umbral {threshold}</span>
+        <div className="ml-auto flex gap-1 rounded-md bg-white/5 p-0.5 text-xs">
           {(["online", "golden"] as const).map((s) => (
             <button
               key={s}
@@ -106,7 +106,7 @@ export function EvalTrendChart() {
               onClick={() => setSuite(s)}
               className={
                 "rounded px-2 py-0.5 " +
-                (suite === s ? "bg-white font-semibold shadow-sm" : "text-black/50")
+                (suite === s ? "bg-white/15 font-semibold text-fg" : "text-fg-muted")
               }
             >
               {s === "online" ? "conversaciones reales" : "golden (CI)"}
@@ -116,13 +116,13 @@ export function EvalTrendChart() {
       </header>
 
       {isLoading ? (
-        <p className="py-6 text-center text-sm text-black/40">Cargando tendencia…</p>
+        <p className="py-6 text-center text-sm text-fg-faint">Cargando tendencia…</p>
       ) : isError ? (
-        <p className="py-6 text-center text-sm text-red-500/70">
+        <p className="py-6 text-center text-sm text-red/70">
           No se pudo leer la tendencia.
         </p>
       ) : !data || data.series.length === 0 ? (
-        <p className="py-6 text-center text-sm text-black/40">
+        <p className="py-6 text-center text-sm text-fg-faint">
           Aún no hay histórico para esta suite. Se llena con cada corrida del eval
           {suite === "online" ? " diario sobre conversaciones reales" : " golden"}.
         </p>

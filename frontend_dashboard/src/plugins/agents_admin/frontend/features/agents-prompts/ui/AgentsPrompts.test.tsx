@@ -34,6 +34,14 @@ const SALES_AGENT = {
   ],
 };
 
+const REMARKETING_AGENT = {
+  ...SALES_AGENT,
+  id: "remarketing",
+  name: "Remarketing",
+  role: "Reactivación por WhatsApp",
+  category: "Remarketing",
+};
+
 function jsonResponse(body: unknown) {
   return new Response(JSON.stringify(body), {
     status: 200,
@@ -79,5 +87,31 @@ describe("AgentsPrompts", () => {
     renderWithClient(<AgentsPrompts agentId="sales" />);
 
     await waitFor(() => screen.getByText("No hay agentes configurados."));
+  });
+
+  it("ofrece los tabs Personalidad | Calidad LLM solo para el agente sales", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ agents: [SALES_AGENT] }));
+
+    renderWithClient(<AgentsPrompts agentId="sales" />);
+
+    await waitFor(() => screen.getByText("Asesor de Ventas"));
+
+    // El canvas de `sales` ofrece ambos tabs; "Personalidad" es el default
+    // (los prompts siguen visibles, el panel de Calidad LLM no se monta aún).
+    expect(screen.getByRole("button", { name: /Personalidad/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Calidad LLM/i })).toBeTruthy();
+    screen.getByText("Eres el Asesor Exclusivo de Ventas de Hubara.");
+  });
+
+  it("no ofrece el tab Calidad LLM para agentes sin harness de evals", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ agents: [REMARKETING_AGENT] }));
+
+    renderWithClient(<AgentsPrompts agentId="remarketing" />);
+
+    await waitFor(() => screen.getByText("Remarketing"));
+
+    // Solo `sales` tiene panel de Calidad LLM: el resto ve los prompts sin tabs.
+    expect(screen.queryByRole("button", { name: /Calidad LLM/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Personalidad/i })).toBeNull();
   });
 });
