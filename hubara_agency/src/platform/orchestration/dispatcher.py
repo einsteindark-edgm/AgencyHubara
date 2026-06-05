@@ -93,6 +93,12 @@ class DispatchResult:
     event_type: str
     matches: list[DispatchedTransition] = field(default_factory=list)
     no_matches: bool = False
+    # Transitions cuyo target_plugin NO está habilitado en este deployment
+    # (ENABLED_PLUGINS) — skipeadas en vez de disparar al vacío. Cada entry es
+    # "target_plugin/target_worker". Vacío cuando ENABLED_PLUGINS está ausente
+    # (todos habilitados) → comportamiento idéntico al previo al skip (prod-safe).
+    # `list[str]` (builtin) es replay-safe sin eval (ver nota de annotations arriba).
+    skipped_disabled: list[str] = field(default_factory=list)
 
 
 async def dispatch_envelope_with_client(
@@ -118,7 +124,11 @@ async def dispatch_envelope_with_client(
     level of an individual transition propagate up — same semantics as the
     activity (no per-transition swallow).
     """
-    from src.platform.plugin_manifest import get_task_queue, get_transitions
+    from src.platform.plugin_manifest import (
+        enabled_plugins,
+        get_task_queue,
+        get_transitions,
+    )
 
     log.info(
         "orchestration.dispatch_event: received envelope",
@@ -127,6 +137,7 @@ async def dispatch_envelope_with_client(
         source_worker=envelope.source_worker,
     )
 
+    enabled = enabled_plugins()  # set[str] | None — None = todos habilitados
     transitions = get_transitions(envelope.source_plugin, envelope.source_worker)
     matched: list[Transition] = [t for t in transitions if t.matches(envelope)]
 
@@ -146,6 +157,7 @@ async def dispatch_envelope_with_client(
         )
 
     outcomes: list[DispatchedTransition] = []
+    skipped: list[str] = []
 
     for t in matched:
         target_plugin = t.action.target_plugin or envelope.source_plugin
@@ -156,6 +168,23 @@ async def dispatch_envelope_with_client(
                 f"has no target_worker — required for all verbs in "
                 f"orchestration v1. Fix the manifest."
             )
+
+        # P-SKIP (PLUGIN_CONTRACT.md §5.4): las transitions cross-plugin son SOFT.
+        # Si el target_plugin no está habilitado en este deployment, se skipea en
+        # vez de disparar al vacío (sin workflow huérfano pending, sin signal
+        # NOT_FOUND). `enabled is None` (ENABLED_PLUGINS ausente) → nunca skipea →
+        # comportamiento idéntico al previo (prod-safe). Cierra REQ-2 sin
+        # `depends_on` duro: ej. `orders` corre standalone aunque `chats`/eta estén
+        # apagados — la notificación ETA simplemente no ocurre (degradación limpia).
+        if enabled is not None and target_plugin not in enabled:
+            log.info(
+                "orchestration.dispatch_event: target plugin disabled, skipping transition",
+                transition_id=t.id,
+                target_plugin=target_plugin,
+                target_worker=target_worker,
+            )
+            skipped.append(f"{target_plugin}/{target_worker}")
+            continue
 
         task_queue = get_task_queue(target_plugin, target_worker)
         workflow_id = _resolve_workflow_id(t.action, envelope)
@@ -188,6 +217,7 @@ async def dispatch_envelope_with_client(
         source_worker=envelope.source_worker,
         event_type=envelope.event_type,
         matches=outcomes,
+        skipped_disabled=skipped,
     )
 
 

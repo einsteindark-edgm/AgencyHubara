@@ -112,22 +112,12 @@ def test_p14_consumes_blocks_are_well_formed() -> None:
 # ----------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason="AP-3/F3: `orders` declara 5 transitions -> chats con depends_on:[]. "
-    "Verde cuando se declare la dep (o el dispatcher skipee targets no habilitados).",
-    strict=False,
-)
-def test_p5_transition_targets_declared_in_depends_on() -> None:
-    """P-DEPS: todo target_plugin!=self de una transition está en depends_on."""
-    bad: list[str] = []
-    for pid, manifest in all_manifests():
-        deps = set(manifest.get("depends_on") or [])
-        for w in (manifest.get("agent") or {}).get("workers") or []:
-            for t in w.get("transitions") or []:
-                target = (t.get("action") or {}).get("target_plugin", pid)
-                if target != pid and target not in deps:
-                    bad.append(f"{pid}/{w.get('name')} -> {target} (depends_on={sorted(deps)})")
-    assert not bad, "P-DEPS (P-5) — transition a plugin no declarado en depends_on:\n  " + "\n  ".join(bad)
+# P-5 (transition target ∈ depends_on) ELIMINADO — refinamiento de diseño 2026-06-05:
+# las transitions cross-plugin son SOFT, NO deps duras. La seguridad de toggle la da
+# P-SKIP (el dispatcher skipea targets cuyo plugin no está habilitado), IMPLEMENTADO +
+# testeado en tests/platform/orchestration/test_dispatcher.py::TestEnabledPluginsSkip.
+# `depends_on` queda para deps DURAS (cast/consumes — ver P-14). Por eso
+# `orders.depends_on: []` con transitions -> chats/eta es CORRECTO (no es violación).
 
 
 @pytest.mark.xfail(

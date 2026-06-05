@@ -124,7 +124,7 @@ Cada regla tiene su test (P-#) en [PLUGIN_ARCHITECTURE_TESTS.md](PLUGIN_ARCHITEC
 | **P-OWN** | Todo el comportamiento de X vive bajo `plugins/X/` en ambos stacks. Ningún plugin frontend "frontend-only" depende del backend de otro plugin sin declararlo. | Split plugins (eta/ads/evals) | P-2, P-9 |
 | **P-NOXIMPORT** | Ningún módulo bajo `src/plugins/X/` importa `src.plugins.Y` (Y≠X). Única frontera: `shared/contracts/` propio. | Cross-plugin import backend | P-3 |
 | **P-PLATFORM** | Ningún módulo bajo `src/platform/` importa `src.plugins.*`. | Platform→plugin (R-DIP #9) genérico | P-4 |
-| **P-DEPS** | Todo `target_plugin` (≠self) de una transition, y toda API/entity cross-plugin consumida, está declarado en `depends_on`. | Coupling oculto (orders→chats/eta) | P-5 |
+| **P-DEPS** | `depends_on` = solo deps DURAS (providers de un `consumes`/cast — el plugin no funciona sin ellas). Las transitions cross-plugin son SOFT: las declara la transition + el dispatcher las skipea si el target está apagado (P-SKIP); **NO** van en `depends_on`. | Mezclar soft/hard; coupling duro oculto | P-7, P-14 |
 | **P-ENABLED** | Al boot, para el `ENABLED_PLUGINS` activo, todo `depends_on` de un plugin habilitado también está habilitado (fail-fast). | Habilitar X sin su dep → roto silencioso | P-6 |
 | **P-SKIP** | El dispatcher skipea toda transition cuyo `target_plugin`/`target_worker` no esté habilitado (no dispara al vacío). | orders sin chats/eta → ETA al vacío | P-7 |
 | **P-FECROSS** | Ningún archivo bajo `src/plugins/X/frontend/` importa `@plugins/Y`, `@/features/*`, `@/pages/*`, `@/app/*`, ni la entity poseída por otro plugin. | Cross-plugin/cross-layer frontend | P-10 |
@@ -268,7 +268,7 @@ cd frontend_dashboard && npm run test:arch && npx tsc -b
 |---|---|---|---|---|
 | **AP-1 Split plugin** | Backend de X dentro de Y | `eta`/`ads` backend en `chats`; `evals` backend en `chats`+UI en `agents_admin` | §5.2 extracción a `plugins/<id>/` + `platform/conversation` | P-1, P-2, P-9 |
 | **AP-2 Central entity** | Entity de dominio en PROTECTED `src/entities/` | TODAS las entities (10) centrales; el merge agregó `eval-trend/` central | §5.3 entities por-plugin + cast declarado | P-11, P-14 |
-| **AP-3 Hidden coupling** | Dep runtime sin declarar | `orders` 5 transitions →`chats/eta`, `depends_on:[]` | §5.4 declarar + enforce + dispatcher skip | P-5, P-6, P-7 |
+| **AP-3 Hidden coupling** | Dep DURA sin declarar / target soft que dispara al vacío | `orders` 5 transitions →`chats/eta` (soft, **ya resuelto** por dispatcher-skip) | dispatcher-skip ✅ + `depends_on` solo duras | P-6, P-7, P-14 |
 | **AP-4 Central icon** | Glifo nuevo edita `Icon.tsx` PROTECTED | `resolveIcon` contra registry central | §5.3 íconos contribuidos | P-12 |
 | **AP-5 Mega-plugin** | Un plugin con N dominios togglables juntos | `chats` = 4 workers + 6 routers | extraer (§5.2); `chats` = núcleo conversacional | P-2, P-9 |
 | **AP-6 Cross-stack asymmetry** | Frontend gateado por un id, backend por otro | `eta` FE por `eta`, backend por `chats` | P-PARITY + extracción | P-9, P-13 |

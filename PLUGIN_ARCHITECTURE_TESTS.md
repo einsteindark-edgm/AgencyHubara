@@ -113,23 +113,12 @@ def test_platform_never_imports_plugins():
 > El `.importlinter` solo prohíbe 3 paquetes-agente; esto prohíbe CUALQUIER
 > plugin, y por AST evita el falso positivo del ejemplo en `dispatcher.py:14`.
 
-### P-5 · `test_transition_targets_declared_in_depends_on` — 🔴 (falla hoy)
-Regla P-DEPS · AP-3 / F3. Todo `target_plugin`≠self de una transition está en `depends_on`.
-```python
-def test_transition_targets_declared_in_depends_on():
-    bad = []
-    for pid, manifest in all_manifests():
-        deps = set(manifest.get("depends_on") or [])
-        for w in (manifest.get("agent") or {}).get("workers") or []:
-            for t in w.get("transitions") or []:
-                target = (t.get("action") or {}).get("target_plugin", pid)
-                if target != pid and target not in deps:
-                    bad.append(f"{pid}/{w['name']} → {target} no está en depends_on={sorted(deps)}")
-    assert not bad, "\n".join(bad)
-```
-> 🔴 Hoy: `orders` tiene 5 transitions → `chats` con `depends_on: []`. Este test
-> rojo se vuelve verde cuando se declara `orders.depends_on: [chats]` (o se
-> elimina el coupling). Documenta el fix.
+### P-5 · ~~`test_transition_targets_declared_in_depends_on`~~ — ❌ RETIRADO (refinamiento 2026-06-05)
+Regla retirada al implementar P-7. Quedó claro que las transitions cross-plugin son
+**SOFT**, no deps duras: forzar `target ∈ depends_on` acoplaría `orders` a `chats`
+(mal). La seguridad de toggle la da **P-7** (dispatcher-skip, ya implementado); las
+deps DURAS van por **P-14** (`consumes`/cast ∈ depends_on). Por eso
+`orders.depends_on: []` con transitions → chats/eta es **correcto** (no es violación).
 
 ### P-6 · `test_enabled_plugins_satisfies_depends_on` — 🔴 (requiere el loader nuevo)
 Regla P-ENABLED · AP-3/AP-8. La validación de boot exige que las deps estén habilitadas.
@@ -145,19 +134,15 @@ def test_validate_enabled_raises_on_missing_dep():
 > `run_workers.py` / `plugins-sync.ts`). Sin él, habilitar un plugin sin su dep
 > rompe en silencio.
 
-### P-7 · `test_dispatcher_skips_disabled_target` — 🔴 (requiere dispatcher tolerante)
-Regla P-SKIP · AP-3 / F3. El dispatcher no dispara a un target deshabilitado.
-```python
-async def test_dispatcher_skips_disabled_target(monkeypatch, fake_temporal_client):
-    monkeypatch.setenv("ENABLED_PLUGINS", "orders")    # chats/eta NO habilitado
-    env = envelope_for(OrderStageChangedEvent(to_stage="preparing", ...),
-                       source_plugin="orders", source_worker="reconcile")
-    result = await dispatch_event_activity(env)
-    assert result.skipped_disabled == ["chats/eta"]
-    assert result.matches == []                        # nada disparado al vacío
-```
-> 🔴 Requiere que `dispatch_event_activity` lea `ENABLED_PLUGINS` y skipee.
-> Cierra REQ-2: `orders` corre standalone, ETA simplemente no ocurre.
+### P-7 · `TestEnabledPluginsSkip` — 🟢 IMPLEMENTADO (2026-06-05)
+Regla P-SKIP · AP-3 / F3. El dispatcher skipea transitions a plugins no habilitados.
+Implementado en `dispatch_envelope_with_client`: lee `enabled_plugins()` de
+`plugin_manifest` (`ENABLED_PLUGINS` ausente → `None` → no skipea = **prod-safe**) +
+el campo nuevo `DispatchResult.skipped_disabled`. Tests en
+`tests/platform/orchestration/test_dispatcher.py::TestEnabledPluginsSkip` (3): skip
+cuando el target está apagado · no-skip con `ENABLED_PLUGINS` ausente · fire cuando
+habilitado. **Verificado: 21 passed.** Cierra REQ-2 sin `depends_on` duro: `orders`
+corre standalone, la notificación ETA simplemente no ocurre (degradación limpia).
 
 ### P-9 · `test_frontend_plugin_calls_only_own_api` — 🔴 (el que hubiera cazado AP-1)
 Regla P-OWN/P-PARITY · AP-1/AP-6 / F1. El frontend de X no llama a `/api/<otro>/*`.
@@ -300,9 +285,9 @@ test("cada plugin con backend declarado existe en ambos stacks", () => {
 | P-2 backend parity | P-PARITY | AP-1/F13 | 🟡 | idem |
 | P-3 no cross-plugin import | P-NOXIMPORT | AP-1 | 🟢 | idem (+ generaliza `.importlinter`) |
 | P-4 platform↛plugins | P-PLATFORM | F(R-DIP#9) | 🟢 | idem |
-| P-5 transition targets ∈ depends_on | P-DEPS | AP-3/F3 | 🔴 | idem |
+| ~~P-5 transition targets ∈ depends_on~~ | — | — | ❌ retirado | reemplazado por P-7 + P-14 |
 | P-6 enabled satisfies depends_on | P-ENABLED | AP-3/AP-8 | 🔴 | idem + `platform/plugin_loader.py` (nuevo) |
-| P-7 dispatcher skips disabled | P-SKIP | AP-3/F3 | 🔴 | `tests/architecture/` + `orchestration/dispatcher.py` |
+| P-7 dispatcher skips disabled | P-SKIP | AP-3/F3 | 🟢 hecho | `dispatcher.py` + `test_dispatcher.py::TestEnabledPluginsSkip` |
 | P-9 frontend calls own API only | P-OWN | AP-1/F1 | 🔴 | `tests/architecture/test_plugin_isolation.py` |
 | P-10 cruiser rules (+features,+entities) | P-FECROSS | AP-7/F10 | 🟢+🔴 | `.dependency-cruiser.cjs` |
 | P-11 central entities dir empty | P-ENTITY | AP-2/F2 | 🔴 | `src/test/architecture/` |
@@ -310,9 +295,9 @@ test("cada plugin con backend declarado existe en ambos stacks", () => {
 | P-12 manifest icons exist | P-ICON | AP-4/F4 | 🟢 | `src/test/architecture/` |
 | P-13 ids consistent cross-stack | P-PARITY | F13 | 🟡 | `src/test/architecture/` |
 
-**Rojos = la definition-of-done del refactor** (§5 del audit): P-5/P-6/P-7
-(depends_on + dispatcher), P-9/P-2 (extracción de splits), P-11/P-14 (entities
-por-plugin + cast declarado). Verdes = candados anti-regresión que se agregan ya.
+**Rojos = la definition-of-done del refactor** (§5 del audit): P-6 (enforce
+depends_on duras), P-9/P-2 (extracción de splits), P-11/P-14 (entities por-plugin +
+cast declarado). **P-7 (dispatcher-skip) ✅ hecho.** Verdes = candados que se agregan ya.
 
 ---
 

@@ -22,6 +22,7 @@ filesystem se toca al startup del worker o al startup del FastAPI loader.
 """
 from __future__ import annotations
 
+import os
 from functools import cache
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,24 @@ _pm_logger = structlog.get_logger()
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _PLUGINS_MANIFEST_DIR = _REPO_ROOT / "frontend_dashboard" / "src" / "plugins"
+
+
+def enabled_plugins() -> set[str] | None:
+    """Plugins habilitados vía ``ENABLED_PLUGINS`` (csv). ``None`` = todos (sin filtro).
+
+    Misma semántica que el filtro de los loaders (``main.py`` / ``run_workers.py``):
+    vacío/ausente → todos los descubiertos.
+
+    El dispatcher la usa para **skipear transitions cuyo target_plugin no esté
+    habilitado** en este deployment (toggle simétrico — REQ-2 del
+    PLUGIN_CONTRACT.md): un target ausente no se dispara al vacío. Esto convierte
+    el coupling cross-plugin de eventos en SOFT (opcional) sin necesitar
+    ``depends_on`` duro — `depends_on` queda reservado para deps de datos/cast.
+    """
+    raw = os.environ.get("ENABLED_PLUGINS", "").strip()
+    if not raw:
+        return None
+    return {p.strip() for p in raw.split(",") if p.strip()}
 
 
 class ManifestNotFoundError(LookupError):
