@@ -289,10 +289,10 @@ test("cada plugin con backend declarado existe en ambos stacks", () => {
 | P-6 enabled satisfies depends_on | P-ENABLED | AP-3/AP-8 | 🔴 | idem + `platform/plugin_loader.py` (nuevo) |
 | P-7 dispatcher skips disabled | P-SKIP | AP-3/F3 | 🟢 hecho | `dispatcher.py` + `test_dispatcher.py::TestEnabledPluginsSkip` |
 | P-9 frontend calls own API only | P-OWN | AP-1/F1 | 🔴 | `tests/architecture/test_plugin_isolation.py` |
-| P-10 cruiser rules (+features,+entities) | P-FECROSS | AP-7/F10 | 🟢+🔴 | `.dependency-cruiser.cjs` |
+| P-10 cruiser `plugins-no-features` | P-FECROSS | AP-7/F10 | 🟢 hecho | `.dependency-cruiser.cjs` (entity-rule redundante con `plugins-no-cross-plugin`, no agregada) |
 | P-11 central entities dir empty | P-ENTITY | AP-2/F2 | 🔴 | `src/test/architecture/` |
 | P-14 cross-plugin via declared cast | P-CAST | AP-2/F2/F8 | 🔴 | `tests/architecture/` + manifest `consumes:` |
-| P-12 manifest icons exist | P-ICON | AP-4/F4 | 🟢 | `src/test/architecture/` |
+| P-12 manifest icons exist | P-ICON | AP-4/F4 | 🟢 hecho | `src/test/architecture/test_plugin_icons.arch.test.ts` |
 | P-13 ids consistent cross-stack | P-PARITY | F13 | 🟡 | `src/test/architecture/` |
 
 **Rojos = la definition-of-done del refactor** (§5 del audit): P-6 (enforce
