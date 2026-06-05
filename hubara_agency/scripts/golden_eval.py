@@ -288,6 +288,12 @@ async def drive_scenario(scn: dict) -> dict:
                     turn_outputs.append({"name": tc.name, "output": result[:1000]})
                 continue
             final = (resp.content or "").strip()
+            # FIDELIDAD CRÍTICA: agregar la respuesta de TEXTO del agente al history.
+            # Sin esto, los turnos solo-texto (saludo sin tool, "déjame pensarlo",
+            # objeciones) se PERDÍAN del contexto -> el agente no veía lo que dijo y
+            # RE-SALUDABA / perdía el hilo en el turno siguiente (visto en regateo, foto,
+            # mensaje_larguisimo). En prod el session_history store SÍ los persiste.
+            messages.append(resp.to_assistant_message())
             break
 
         visible = "\n".join([*pre_tool, final] if final else pre_tool).strip()
