@@ -48,15 +48,26 @@ from src.platform.plugin_manifest import get_task_queue
 from src.platform.temporal.client import get_temporal_client
 from src.plugins.chats.agent.sales_eval.activities.eval_activities import (
     evaluate_sales_conversation_activity,
+    run_golden_suite_activity,
     select_conversations_to_eval_activity,
 )
-from src.plugins.chats.agent.sales_eval.evals.contracts import EvalWindowInput
+from src.plugins.chats.agent.sales_eval.evals.contracts import (
+    EvalWindowInput,
+    GoldenEvalInput,
+)
+from src.plugins.chats.agent.sales_eval.workflows.golden_eval import GoldenEvalWorkflow
 from src.plugins.chats.agent.sales_eval.workflows.sales_eval import SalesEvalWorkflow
 
 _SCHEDULE_ID = "sales-eval-schedule"
 _WORKFLOW_ID = "sales-eval"
 _DEFAULT_CRON = "0 8,14,20 * * *"  # 08:00 / 14:00 / 20:00
 _DEFAULT_TZ = "America/Bogota"
+
+# Golden suite: el MISMO eval del GitHub Action, agendado 1×/día (default 06:00) ->
+# SigNoz con eval.suite=golden. Pesado (61 escenarios x juez), por eso 1×/día.
+_GOLDEN_SCHEDULE_ID = "golden-eval-schedule"
+_GOLDEN_WORKFLOW_ID = "golden-eval"
+_GOLDEN_DEFAULT_CRON = "0 6 * * *"  # 06:00
 
 
 def _env_int(name: str, default: int) -> int:
@@ -106,24 +117,66 @@ async def _ensure_schedule(client: Client, task_queue: str) -> None:
         logger.info("📅 Schedule '{}' ya existe — no se re-crea", _SCHEDULE_ID)
 
 
+def _golden_input_from_env() -> GoldenEvalInput:
+    return GoldenEvalInput(
+        scenario=os.environ.get("GOLDEN_EVAL_SCENARIO", "").strip(),
+        category=os.environ.get("GOLDEN_EVAL_CATEGORY", "").strip(),
+        repeat=_env_int("GOLDEN_EVAL_REPEAT", 1),
+        no_judge=os.environ.get("GOLDEN_EVAL_NO_JUDGE", "").strip().lower()
+        in ("1", "true", "yes"),
+    )
+
+
+async def _ensure_golden_schedule(client: Client, task_queue: str) -> None:
+    """Crea el Schedule del golden set (idempotente). Off-switch por env.
+
+    `GOLDEN_EVAL_SCHEDULE_ENABLED=false` lo deshabilita (el worker igual corre →
+    triggers manuales desde la Temporal UI funcionan). Cron via
+    `GOLDEN_EVAL_SCHEDULE_CRON` (default 06:00 America/Bogota)."""
+    if os.environ.get("GOLDEN_EVAL_SCHEDULE_ENABLED", "true").strip().lower() == "false":
+        logger.info("📅 Golden schedule deshabilitado (GOLDEN_EVAL_SCHEDULE_ENABLED=false)")
+        return
+    cron = os.environ.get("GOLDEN_EVAL_SCHEDULE_CRON", "").strip() or _GOLDEN_DEFAULT_CRON
+    try:
+        await client.create_schedule(
+            _GOLDEN_SCHEDULE_ID,
+            Schedule(
+                action=ScheduleActionStartWorkflow(
+                    GoldenEvalWorkflow.run,
+                    _golden_input_from_env(),
+                    id=_GOLDEN_WORKFLOW_ID,
+                    task_queue=task_queue,
+                ),
+                spec=ScheduleSpec(cron_expressions=[cron], time_zone_name=_DEFAULT_TZ),
+                policy=SchedulePolicy(overlap=ScheduleOverlapPolicy.SKIP),
+            ),
+        )
+        logger.info("📅 Schedule '{}' creado — golden cron '{}' ({})",
+                    _GOLDEN_SCHEDULE_ID, cron, _DEFAULT_TZ)
+    except ScheduleAlreadyRunningError:
+        logger.info("📅 Schedule '{}' ya existe — no se re-crea", _GOLDEN_SCHEDULE_ID)
+
+
 async def main() -> None:
     logger.info("Conectando sales-eval al clúster Temporal...")
     client = await get_temporal_client()
     task_queue = get_task_queue("chats", "sales_eval")
 
     await _ensure_schedule(client, task_queue)
+    await _ensure_golden_schedule(client, task_queue)
 
     worker = Worker(
         client,
         task_queue=task_queue,
-        workflows=[SalesEvalWorkflow],
+        workflows=[SalesEvalWorkflow, GoldenEvalWorkflow],
         activities=[
             select_conversations_to_eval_activity,
             evaluate_sales_conversation_activity,
+            run_golden_suite_activity,
         ],
         workflow_runner=otel_workflow_runner(),
     )
-    logger.info("🧪 sales-eval worker arriba. Cola: '{}'", task_queue)
+    logger.info("🧪 sales-eval worker arriba (online + golden). Cola: '{}'", task_queue)
     await worker.run()
 
 

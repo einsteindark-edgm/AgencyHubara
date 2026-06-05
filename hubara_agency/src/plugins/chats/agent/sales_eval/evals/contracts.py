@@ -78,3 +78,39 @@ class EvalRunSummary:
     candidates: int = 0
     skipped: int = 0
     errors: int = 0
+
+
+@dataclass(frozen=True)
+class GoldenEvalInput:
+    """Parámetros de una corrida del GOLDEN set (input de GoldenEvalWorkflow).
+
+    A diferencia de EvalWindowInput (muestreo online de conversaciones reales),
+    esto corre el MISMO set de escenarios controlado que el GitHub Action — el
+    agente REAL es manejado por cada escenario y los scores se emiten a SigNoz con
+    `eval.suite=golden`. Inmutable y replay-safe.
+    """
+
+    scenario: str = ""
+    """id(s) de escenario separados por coma (vacío = los 61)."""
+
+    category: str = ""
+    """Filtrar por categoría (vacío = todas)."""
+
+    repeat: int = 1
+    """Correr cada escenario N veces (trending: agente+juez no-deterministas)."""
+
+    no_judge: bool = False
+    """Solo behaviors deterministas (sin juez LLM) — rápido y barato."""
+
+
+@dataclass(frozen=True)
+class GoldenSuiteResult:
+    """Agregado de una corrida del golden set (output de GoldenEvalWorkflow)."""
+
+    scenarios: int = 0
+    behaviors_ok: int = 0
+    """Escenarios donde TODOS los behaviors deterministas pasan."""
+    errored: int = 0
+    judge: bool = False
+    """Si corrió el juez (y por ende emitió scores a SigNoz)."""
+    duration_s: int = 0

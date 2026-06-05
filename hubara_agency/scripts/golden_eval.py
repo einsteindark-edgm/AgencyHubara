@@ -679,6 +679,20 @@ async def main() -> None:
         Path(args.json_out).write_text(json.dumps(summary, ensure_ascii=False, indent=2), "utf-8")
         print(f"📦 json -> {args.json_out}")
 
+    if _SIGNOZ:
+        # Proceso corto: forzamos el flush de spans + métricas ANTES de salir, sino
+        # el BatchSpanProcessor / PeriodicExportingMetricReader no alcanzan a exportar
+        # a SigNoz. (En el worker long-lived el periodic reader exporta solo; acá no.)
+        from contextlib import suppress
+
+        from opentelemetry import metrics as _m
+        from opentelemetry import trace as _t
+        with suppress(Exception):
+            _t.get_tracer_provider().force_flush()  # type: ignore[attr-defined]
+        with suppress(Exception):
+            _m.get_meter_provider().force_flush()  # type: ignore[attr-defined]
+        print("📊 SigNoz: flush de métricas/spans completado")
+
 
 if __name__ == "__main__":
     asyncio.run(main())
