@@ -73,7 +73,7 @@ export function Dashboard() {
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>("#1247");
   const [selectedTrackedId, setSelectedTrackedId] = useState<string | null>(null);
-  const [selectedJobId, setSelectedJobId] = useState<string>("j-now");
+  const [selectedJobId, setSelectedJobId] = useState<string>("");
   const [selectedAgentId, setSelectedAgentId] = useState<string>("sales");
 
   // Stream SSE de sesiones: se monta UNA vez aquí — empuja el snapshot al
@@ -160,7 +160,7 @@ export function Dashboard() {
  * Plugins migrados (orden de PR original):
  *   - ChatsSection  → @plugins/chats/frontend          (PR2)
  *   - AgentsSection → @plugins/agents_admin/frontend   (PR4)
- *   - UploadSection → @plugins/catalog/frontend        (PR5)
+ *   - CatalogSyncSection → @plugins/catalog/frontend   (PR5)
  *   - EtaSection    → @plugins/eta/frontend            (PR6)
  *   - OrdersSection → @plugins/orders/frontend         (PR7)
  */

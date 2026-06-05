@@ -9,6 +9,8 @@ Los fakes simulan el contrato sin tocar HTTP / filesystem real.
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 from temporalio import activity
 from temporalio.testing import WorkflowEnvironment
@@ -135,3 +137,61 @@ async def test_workflow_continues_when_meta_not_configured():
             assert result.push.pushed is False
             assert result.push.error == "meta_not_configured"
             assert result.push.ok is True  # NOT a failure
+
+
+@pytest.mark.asyncio
+async def test_progress_query_reports_live_steps():
+    """La query `progress` refleja el step-by-step real: tras completar, los 3
+    pasos quedan en su estado final (done) con sus detalles. Es exactamente lo
+    que pollea el dashboard (`GET /api/catalog/sync/{id}`) para pintar el
+    progreso en vivo."""
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue="test-catalog-progress",
+            workflows=[CatalogSyncWorkflow],
+            activities=[fake_pull, fake_write, fake_push],
+        ):
+            handle = await env.client.start_workflow(
+                CatalogSyncWorkflow.run,
+                CatalogSyncInput(snapshot_dir="/tmp/test-snapshot"),
+                id="test-progress-1",
+                task_queue="test-catalog-progress",
+            )
+            await handle.result()
+            progress = json.loads(await handle.query("progress"))
+
+    assert progress["phase"] == "completed"
+    assert progress["product_count"] == 1
+    assert progress["version"] == "abc"
+    assert [s["key"] for s in progress["steps"]] == ["pull", "write", "push"]
+    by_key = {s["key"]: s for s in progress["steps"]}
+    assert by_key["pull"]["status"] == "done"
+    assert by_key["pull"]["detail"] == "1 productos"
+    assert by_key["write"]["status"] == "done"
+    assert by_key["push"]["status"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_progress_query_marks_push_skipped_when_meta_off():
+    """Si Meta no esta configurado, el paso push queda `skipped` (no `failed`)
+    — el dashboard lo pinta como 'omitido', no como error."""
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue="test-catalog-progress-skip",
+            workflows=[CatalogSyncWorkflow],
+            activities=[fake_pull, fake_write, fake_push_skipped],
+        ):
+            handle = await env.client.start_workflow(
+                CatalogSyncWorkflow.run,
+                CatalogSyncInput(snapshot_dir="/tmp/test-snapshot"),
+                id="test-progress-skip-1",
+                task_queue="test-catalog-progress-skip",
+            )
+            await handle.result()
+            progress = json.loads(await handle.query("progress"))
+
+    by_key = {s["key"]: s for s in progress["steps"]}
+    assert by_key["push"]["status"] == "skipped"
+    assert "omitido" in by_key["push"]["detail"]

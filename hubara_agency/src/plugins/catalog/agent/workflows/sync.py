@@ -1,9 +1,11 @@
 """CatalogSyncWorkflow — disparado ON-DEMAND por un caller externo.
 
 Three-step: pull desde Medusa → write atomico del snapshot → push a Meta
-Commerce Catalog. Sin signals, sin queries, sin continue-as-new. El
-snapshot ES el state durable; Meta es una proyección eventualmente
-consistente del snapshot.
+Commerce Catalog. Sin signals, sin continue-as-new. Expone UNA query
+read-only (`progress`) para que el dashboard pinte el step-by-step en
+vivo de los 3 pasos reales — la query no muta state ni afecta el
+determinismo (R-DET). El snapshot ES el state durable; Meta es una
+proyección eventualmente consistente del snapshot.
 
 ────────────────────────────────────────────────────────────────────────
 CÓMO SE DISPARA (v1)
@@ -73,6 +75,8 @@ credenciales Meta las lee la activity push, no el workflow.
 """
 from __future__ import annotations
 
+import json
+
 from temporalio import workflow
 
 with workflow.unsafe.imports_passed_through():
@@ -95,16 +99,69 @@ with workflow.unsafe.imports_passed_through():
 
 @workflow.defn(name="CatalogSyncWorkflow")
 class CatalogSyncWorkflow:
+    """Sync Medusa → copia local → Meta, con progreso observable.
+
+    El estado de progreso (`self._steps` + `self._phase`) se inicializa en
+    `__init__` (determinístico, sin args) y SOLO se muta dentro de `run`
+    antes/después de cada activity — nunca desde la query. La query
+    `progress` lo serializa para que el dashboard pinte el step-by-step real.
+    """
+
+    # Etiquetas estables de los 3 pasos reales (las consume el frontend).
+    _STEP_LABELS = (
+        ("pull", "Traer productos de Medusa"),
+        ("write", "Escribir copia local (snapshot)"),
+        ("push", "Propagar a Meta Commerce Catalog"),
+    )
+
+    def __init__(self) -> None:
+        self._phase: str = "starting"
+        self._product_count: int = 0
+        self._version: str = ""
+        self._error: str | None = None
+        self._steps: list[dict] = [
+            {"key": key, "label": label, "status": "pending", "detail": ""}
+            for key, label in self._STEP_LABELS
+        ]
+
+    def _set_step(self, key: str, status: str, detail: str = "") -> None:
+        for step in self._steps:
+            if step["key"] == key:
+                step["status"] = status
+                if detail:
+                    step["detail"] = detail
+                break
+
+    @workflow.query(name="progress")
+    def progress(self) -> str:
+        """JSON-string del progreso (R-JSON: evita dataclasses anidados en el
+        cliente). Lo consume `GET /api/catalog/sync/{id}`."""
+        return json.dumps(
+            {
+                "phase": self._phase,
+                "product_count": self._product_count,
+                "version": self._version,
+                "error": self._error,
+                "steps": self._steps,
+            }
+        )
+
     @workflow.run
     async def run(self, input: CatalogSyncInput) -> CatalogSyncResult:
         # 1) Pull (activity con heartbeat).
+        self._phase = "pulling"
+        self._set_step("pull", "running")
         pull_result = await workflow.execute_activity(
             pull_medusa_catalog_activity,
             input,
             **_TOOL_OPTIONS,
         )
+        self._product_count = pull_result.count
+        self._set_step("pull", "done", f"{pull_result.count} productos")
 
         # 2) Write atomico del snapshot.
+        self._phase = "writing"
+        self._set_step("write", "running")
         write_input = WriteSnapshotInput(
             products_json=pull_result.products_json,
             count=pull_result.count,
@@ -117,6 +174,12 @@ class CatalogSyncWorkflow:
             write_input,
             **_CONV_OPTIONS,
         )
+        self._version = write_result.version
+        self._set_step(
+            "write",
+            "done",
+            f"{write_result.files_written} archivos · v{write_result.version[:8]}",
+        )
 
         # 3) Push a Meta Commerce Catalog. Graceful skip si env no configurado.
         # Reusamos `products_json` de pull (no re-leemos snapshot — ya está en
@@ -125,6 +188,8 @@ class CatalogSyncWorkflow:
         # Usamos el `snapshot_dir` ya resuelto en write_input para que coincida
         # con el del snapshot escrito (no el `input.snapshot_dir` que podría
         # estar vacío y haber sido resuelto por fallback en write_snapshot).
+        self._phase = "pushing"
+        self._set_step("push", "running")
         push_input = PushMetaActivityInput(
             tenant_id=input.tenant_id,
             products_json=pull_result.products_json,
@@ -135,5 +200,19 @@ class CatalogSyncWorkflow:
             push_input,
             **_TOOL_OPTIONS,
         )
+        if push_result.pushed:
+            self._set_step(
+                "push",
+                "done",
+                f"{push_result.creates} nuevos · {push_result.updates} actualizados",
+            )
+        else:
+            reason = (
+                "Meta no configurado"
+                if push_result.error == "meta_not_configured"
+                else (push_result.error or "sin cambios")
+            )
+            self._set_step("push", "skipped", f"omitido — {reason}")
 
+        self._phase = "completed"
         return CatalogSyncResult(write=write_result, push=push_result)

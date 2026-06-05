@@ -97,3 +97,21 @@ Modificar PROTECTED silenciosamente rompe CI en `npm run test:arch`.
 - `src/plugins/<id>/frontend/index.ts` debe exportar `default { Page }` o `scripts/plugins-sync.ts` skipea el plugin silenciosamente.
 - TanStack Query keys viven en `entities/<id>/keys.ts`. Si dos features queryean la misma entity, **comparten el key factory** — no duplicar.
 - `tsc -b` (composite) requiere que cada `tsconfig.*.json` esté bien linkeado. Si un import "no resuelve", chequear `tsconfig.json` references primero.
+
+## Verificación visual — SIEMPRE usar el stack Docker desplegado (NO levantar un vite suelto)
+
+**Antes de abrir el navegador para verificar tu trabajo, corré `docker ps`.** El stack ya está desplegado en Docker; ahí están los puertos REALES. NO levantes un `vite` / backend a mano: chocás con otros procesos y perdés tiempo (ver abajo).
+
+| Servicio | Container | URL real | Qué es |
+|---|---|---|---|
+| **Frontend** | `local-hubara-frontend` | **http://localhost:5174** | Vite **dev con HMR** sobre bind-mount del source (`5174→5173` del container) |
+| API | `local-hubara-api` | http://localhost:8000 | FastAPI (el `VITE_API_URL` del front apunta acá) |
+| Temporal UI | `local-temporal-ui` | http://localhost:8233 | Ver runs/queries de los workflows (ej. `CatalogSyncWorkflow`) |
+| Temporal | `local-temporal` | localhost:7233 | gRPC para `get_temporal_client()` |
+
+- **El frontend HMR-ea el source bind-mounteado** (`docker inspect local-hubara-frontend` → Mounts). Hoy ese mount es el checkout **`main`** (`/Users/.../AgencyHubara/frontend_dashboard`), NO un worktree. Editar `frontend_dashboard/src` en **main** se refleja en vivo en `:5174` — sin rebuild, sin dev server propio.
+- **Trabajando en un WORKTREE:** `:5174` sigue sirviendo `main`, así que NO ves tus cambios del worktree ahí. Para verlos: o trabajás en main, o re-apuntás el bind-mount del container al worktree (`docker compose -f hubara_agency/docker-compose.local.yml up -d --no-deps --build hubara-frontend` desde el worktree) — pero eso **reinicia un servicio del stack vivo del usuario, pedí OK primero**.
+- Rebuild de un servicio puntual: `cd hubara_agency && docker compose -f docker-compose.local.yml up -d --build <servicio>` (el compose se regenera con `uv run python scripts/render-compose.py`). El backend (`hubara-api` + workers) necesita rebuild para tomar cambios de `.py`; el frontend no (HMR).
+- **NO levantar `vite` suelto en :5173** — el usuario corre el Vite de **Archon** en `[::1]:5173` (IPv6). Un `vite --port 5173` del worktree bindea `*:5173` (IPv4) y NO colisiona → el browser entra por `localhost`→`::1`→**carga Archon, no tu dashboard**. Si DEBÉS usar tu propio vite, navegá a `http://127.0.0.1:5174/5173` (IPv4 explícito). Ver [[local_dual_backend_localhost_race]] en memoria.
+- Las secciones del dashboard se cambian por el **toolbar in-app** (click en "Catalog"), no por URL `/catalog` fresca (deja el root vacío — el SPA setea section por estado).
+- Los workers (ej. `local-hubara-worker-catalog-sync`) corren con credenciales reales (Medusa/Meta). Disparar un sync real desde `:5174` es **outward-facing** (push a Meta Commerce Catalog) — confirmá antes.

@@ -10,10 +10,13 @@ Subpaquetes:
 - ``workers/sync.py``: composition root del worker. Registra activities
   + arranca el ``Worker(...)`` en ``CATALOG_SYNC_QUEUE``.
 
-Plugin sin API HTTP — el frontend (features upload) interactúa via las APIs
-del plugin chats (`/api/dashboard/*`) cuando aplica. La sync se dispara
-desde ``scripts/trigger_catalog_sync.py`` o desde otro plugin (ej. un futuro
-``product_sync_agent`` que dispare el workflow al final de su pipeline).
+Subpaquete ``api/``: router FastAPI (`/api/catalog/*`) que el dashboard usa
+para disparar el sync (`POST /sync`), seguir el step-by-step en vivo
+(`GET /sync/{id}`), listar el historial (`GET /syncs`) y leer el estado de la
+copia local (`GET /snapshot`). El handler arranca/consulta el
+``CatalogSyncWorkflow`` vía ``get_temporal_client()`` — un endpoint HTTP no es
+workflow ni tool, así que R-DIP lo permite. La sync también se dispara
+standalone desde ``scripts/trigger_catalog_sync.py``.
 
 Manifest: ``frontend_dashboard/src/plugins/catalog/plugin.yaml``.
 """

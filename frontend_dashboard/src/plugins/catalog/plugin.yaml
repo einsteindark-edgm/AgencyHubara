@@ -14,9 +14,15 @@ frontend:
     sidebar:
       - { route: /catalog, label: Catalog, icon: pkg }
 
-# Sin `api:` por ahora — el plugin no expone endpoints HTTP propios. El
-# worker se dispara desde scripts/trigger_catalog_sync.py o desde otro plugin
-# que dispare el workflow al final de su pipeline.
+# ── API HTTP ───────────────────────────────────────────────────────────
+# El dashboard dispara + observa el sync vía estos endpoints. El handler usa
+# get_temporal_client() para arrancar/consultar el CatalogSyncWorkflow (un
+# endpoint HTTP NO es workflow ni tool, así que R-DIP lo permite). El worker
+# también se puede disparar standalone desde scripts/trigger_catalog_sync.py.
+api:
+  python_module: src.plugins.catalog.api
+  prefix: /api/catalog
+  tags: [Catalog]
 
 # ── Agente Temporal ────────────────────────────────────────────────────
 # Single worker en CATALOG_SYNC_QUEUE. CRITICAL: 1 replica only — race en
