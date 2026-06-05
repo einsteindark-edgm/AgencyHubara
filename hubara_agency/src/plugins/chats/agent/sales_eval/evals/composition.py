@@ -31,6 +31,24 @@ def get_vault_dir() -> Path:
 
 
 @lru_cache(maxsize=1)
+def get_eval_history_dir() -> Path:
+    """Directorio del HISTÓRICO de scores (un JSONL por día) para la tendencia.
+
+    Default = `<vault>/_evals/history` — UNDER el vault, así que el worker (escribe)
+    y la API (lee) lo comparten automáticamente (ambos tienen WORKSPACE_VAULT_DIR
+    al mismo volumen), sin env extra. Override con `EVAL_HISTORY_DIR`.
+    """
+    import os
+
+    override = os.getenv("EVAL_HISTORY_DIR", "").strip()
+    if override:
+        return Path(override)
+    from src.platform.config import WORKSPACE_VAULT_DIR
+
+    return WORKSPACE_VAULT_DIR / "_evals" / "history"
+
+
+@lru_cache(maxsize=1)
 def get_candidates_dir() -> Path:
     """Directorio donde se escriben los candidatos a golden (auto-curación).
 

@@ -19,14 +19,22 @@ on:
   workflow_dispatch:
     inputs:
       scenario:
-        description: "id de un escenario puntual (opcional)"
+        description: "id(s) de escenario, separados por coma (opcional; default = los 61)"
         required: false
       category:
-        description: "categoría: apertura|descubrimiento|recomendacion|objeciones|escalation|cierre|robustez|estilo|real (opcional)"
+        description: "categoría (opcional): apertura|descubrimiento|recomendacion|objeciones|objeciones_avanzadas|escalation|cierre|cierre_edge|robustez|estilo|real|desvio|indecision|adversarial|formato|catalogo_edge"
         required: false
       limit:
         description: "correr solo los primeros N (opcional)"
         required: false
+      repeat:
+        description: "correr cada escenario N veces (trending; default 1)"
+        required: false
+      no_judge:
+        description: "true = solo behaviors deterministas, sin juez LLM (rápido y barato)"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -70,23 +78,26 @@ jobs:
           LITELLM_API_KEY: sk-litellm-proxy-local
           OTEL_SDK_DISABLED: "true"
           GOLDEN_EVAL_VAULT: /tmp/golden_eval_vault
+          EVAL_JUDGE_MODEL: litellm_proxy/gemini-pro-judge
         run: |
           ARGS=""
           [ -n "${{ inputs.scenario }}" ] && ARGS="$ARGS --scenario ${{ inputs.scenario }}"
           [ -n "${{ inputs.category }}" ] && ARGS="$ARGS --category ${{ inputs.category }}"
           [ -n "${{ inputs.limit }}" ]    && ARGS="$ARGS --limit ${{ inputs.limit }}"
+          [ -n "${{ inputs.repeat }}" ]   && ARGS="$ARGS --repeat ${{ inputs.repeat }}"
+          [ "${{ inputs.no_judge }}" = "true" ] && ARGS="$ARGS --no-judge"
           set -o pipefail
-          uv run --extra evals python scripts/golden_eval.py $ARGS 2>&1 | tee /tmp/golden.log
-          {
-            echo "## 🎯 Golden Eval — agente real · juez real";
-            echo '```';
-            sed -n '/=== RESUMEN ===/,$p' /tmp/golden.log;
-            echo '```';
-          } >> "$GITHUB_STEP_SUMMARY"
+          uv run --extra evals python scripts/golden_eval.py $ARGS \
+            --report-md /tmp/report.md --json /tmp/golden.json 2>&1 | tee /tmp/golden.log
+          # el reporte lindo (agrupado por categoría) va al resumen del run
+          cat /tmp/report.md >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Subir log completo
+      - name: Subir log + json + reporte
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: golden-eval-log
-          path: /tmp/golden.log
+          name: golden-eval-resultados
+          path: |
+            /tmp/golden.log
+            /tmp/golden.json
+            /tmp/report.md

@@ -59,12 +59,17 @@ def emit_eval_score(
     whatsapp_number: str = "",
     agent: str = "sales-agent",
     environment: str = "dev",
+    suite: str = "online",
 ) -> None:
     """Emite un score de evaluación: métrica (baja card) + span attrs (alta card).
 
     Pensado para llamarse DENTRO de la activity de evaluación, donde el span
     activo es el de "evaluar conversación X" — así los atributos de detalle caen
     en ESE span y quedan navegables en SigNoz Traces junto al trace de prod.
+
+    `suite` (baja card): 'online' (muestreo de conversaciones reales) vs 'golden'
+    (set de escenarios controlado, el mismo del GitHub Action) — el dashboard los
+    separa con un filtro.
     """
     verdict = _verdict(score, threshold)
 
@@ -77,6 +82,7 @@ def emit_eval_score(
                 "verdict": verdict,
                 "gen_ai.agent": agent,
                 "deployment.environment": environment,
+                "eval.suite": suite,
             },
         )
     except Exception as exc:  # noqa: BLE001 — observabilidad nunca rompe
@@ -88,6 +94,7 @@ def emit_eval_score(
 
         span = trace.get_current_span()
         if span is not None:
+            span.set_attribute("eval.suite", suite)
             prefix = f"gen_ai.eval.{metric_name}"
             span.set_attribute(f"{prefix}.score", float(score))
             span.set_attribute(f"{prefix}.verdict", verdict)
@@ -112,6 +119,7 @@ def emit_conversation_verdict(
     num_metrics: int,
     agent: str = "sales-agent",
     environment: str = "dev",
+    suite: str = "online",
 ) -> None:
     """Emite el veredicto agregado de una conversación (score promedio + flags).
 
@@ -133,6 +141,7 @@ def emit_conversation_verdict(
                 "candidate": str(is_candidate).lower(),
                 "gen_ai.agent": agent,
                 "deployment.environment": environment,
+                "eval.suite": suite,
             },
         )
     except Exception as exc:  # noqa: BLE001

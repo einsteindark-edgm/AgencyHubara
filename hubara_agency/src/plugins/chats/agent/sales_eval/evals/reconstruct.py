@@ -106,6 +106,13 @@ def to_evaluable_turns(
             for name in (_tool_name(tc) for tc in (ev.get("tool_calls") or []))
             if name
         ]
+        # FUTURO (paridad de input online vs golden): acá solo extraemos los NOMBRES
+        # de las tools, no sus RESULTADOS. El golden sí le pasa los outputs al juez
+        # (build_conversational_test_case acepta `tool_outputs`), por eso su
+        # `no_hallucination` ve el grounding (ej. el search devolvió $17.000) y el
+        # online no -> el online es más estricto en esa métrica (sesga hacia abajo,
+        # nunca oculta problemas). Cerrarlo requiere PERSISTIR los `role:tool` en el
+        # session_history (write-path de prod) y reconstruirlos como tool_outputs.
         text = redact_turn_content(role, content) if redact else content
         turns.append({"role": role, "content": text, "tools": tools})
     return turns

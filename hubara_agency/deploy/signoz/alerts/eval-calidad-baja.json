@@ -1,0 +1,107 @@
+{
+  "alert": "Calidad del agente de ventas por debajo de 0.7",
+  "alertType": "METRIC_BASED_ALERT",
+  "ruleType": "threshold_rule",
+  "evalWindow": "6h0m0s",
+  "frequency": "1h0m0s",
+  "condition": {
+    "selectedQueryName": "F1",
+    "op": "2",
+    "target": 0.7,
+    "matchType": "1",
+    "targetUnit": "",
+    "compositeQuery": {
+      "queryType": "builder",
+      "panelType": "graph",
+      "unit": "",
+      "builderQueries": {
+        "A": {
+          "queryName": "A",
+          "dataSource": "metrics",
+          "aggregateAttribute": {
+            "key": "gen_ai.eval.conversation.sum",
+            "dataType": "float64",
+            "type": "Sum",
+            "isColumn": true,
+            "isJSON": false,
+            "id": "gen_ai.eval.conversation.sum--float64--Sum--true"
+          },
+          "aggregateOperator": "latest",
+          "timeAggregation": "latest",
+          "spaceAggregation": "sum",
+          "temporality": "Cumulative",
+          "reduceTo": "last",
+          "filters": {
+            "op": "AND",
+            "items": [
+              {
+                "key": {"key": "eval.suite", "dataType": "string", "type": "tag", "isColumn": false, "isJSON": false},
+                "op": "=",
+                "value": "online"
+              }
+            ]
+          },
+          "functions": [],
+          "expression": "A",
+          "disabled": true,
+          "stepInterval": 60,
+          "having": [],
+          "limit": null,
+          "orderBy": [],
+          "groupBy": [],
+          "legend": ""
+        },
+        "B": {
+          "queryName": "B",
+          "dataSource": "metrics",
+          "aggregateAttribute": {
+            "key": "gen_ai.eval.conversation.count",
+            "dataType": "float64",
+            "type": "Sum",
+            "isColumn": true,
+            "isJSON": false,
+            "id": "gen_ai.eval.conversation.count--float64--Sum--true"
+          },
+          "aggregateOperator": "latest",
+          "timeAggregation": "latest",
+          "spaceAggregation": "sum",
+          "temporality": "Cumulative",
+          "reduceTo": "last",
+          "filters": {
+            "op": "AND",
+            "items": [
+              {
+                "key": {"key": "eval.suite", "dataType": "string", "type": "tag", "isColumn": false, "isJSON": false},
+                "op": "=",
+                "value": "online"
+              }
+            ]
+          },
+          "functions": [],
+          "expression": "B",
+          "disabled": true,
+          "stepInterval": 60,
+          "having": [],
+          "limit": null,
+          "orderBy": [],
+          "groupBy": [],
+          "legend": ""
+        },
+        "F1": {
+          "queryName": "F1",
+          "expression": "A/B",
+          "legend": "score promedio",
+          "disabled": false
+        }
+      }
+    }
+  },
+  "labels": {
+    "severity": "warning",
+    "team": "ventas"
+  },
+  "annotations": {
+    "summary": "Eval del agente de ventas < 0.7",
+    "description": "El score promedio de evaluación (gen_ai.eval.conversation, eval.suite=online) de las conversaciones reales del día cayó por debajo de 0.7. Revisá el detalle en el dashboard 'Calidad LLM' o en SigNoz Traces filtrando eval.suite=online y los gen_ai.eval.<metric>.score más bajos."
+  }
+}

@@ -12,8 +12,9 @@ Wrapper custom de `DeepEvalBaseLLM` (NO el `LiteLLMModel` nativo) — deliberado
     `LITELLM_API_KEY`). Privacidad: la conversación (PII) no sale de la infra propia.
 
 **El juez es un alias de config, no código** — cambiarlo es trivial via
-`EVAL_JUDGE_MODEL` (default `CUSTOMER_SUMMARY_MODEL` = `litellm_proxy/gemini-backup`,
-distinto al `deepseek-v4-flash` del agente → evita self-preference).
+`EVAL_JUDGE_MODEL` (default `litellm_proxy/gemini-pro-judge` = Gemini Pro, frontier e
+independiente del `deepseek-v4-flash` del agente → evita self-preference). Es el MISMO
+juez que el golden del GitHub Action: el eval online y el de CI tienen el mismo criterio.
 
 `deepeval` se importa con guard al top (→ `object` si ausente) para que el módulo
 sea importable sin el extra `evals` (gate de arquitectura). `litellm` es dep
@@ -30,11 +31,22 @@ except Exception:  # noqa: BLE001
     _Base = object  # type: ignore[assignment,misc]
 
 
-def get_judge_model_name() -> str:
-    """Alias del modelo juez. Env `EVAL_JUDGE_MODEL` o `CUSTOMER_SUMMARY_MODEL`."""
-    from src.platform.config import CUSTOMER_SUMMARY_MODEL
+# El MISMO juez para el eval online (conversaciones reales -> SigNoz) y el golden
+# del GitHub Action (CI). Sin esto, el online caía al default `gemini-backup` (más
+# débil, y además es el fallback del propio agente DeepSeek -> riesgo de
+# self-preference) mientras el golden usaba `gemini-pro-judge`: la MISMA conversación
+# habría tenido criterio distinto según el path. Override puntual con EVAL_JUDGE_MODEL.
+_DEFAULT_JUDGE_MODEL = "litellm_proxy/gemini-pro-judge"
 
-    return os.getenv("EVAL_JUDGE_MODEL", CUSTOMER_SUMMARY_MODEL)
+
+def get_judge_model_name() -> str:
+    """Alias del modelo juez. Env `EVAL_JUDGE_MODEL`, default `gemini-pro-judge`.
+
+    PARIDAD del criterio: mismo modelo (Gemini Pro, frontier e independiente del
+    DeepSeek del agente), misma temperatura (0) y mismas métricas/rúbricas/umbrales
+    (`all_sales_metrics`) que el golden del CI — online y GitHub Action juzgan igual.
+    """
+    return os.getenv("EVAL_JUDGE_MODEL", _DEFAULT_JUDGE_MODEL)
 
 
 class LiteLLMJudge(_Base):  # type: ignore[misc,valid-type]

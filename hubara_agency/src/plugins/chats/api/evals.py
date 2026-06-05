@@ -27,7 +27,11 @@ from typing import Any
 
 from fastapi import APIRouter, Body, HTTPException
 
-from src.plugins.chats.agent.sales_eval.evals.composition import get_candidates_dir
+from src.plugins.chats.agent.sales_eval.evals import history
+from src.plugins.chats.agent.sales_eval.evals.composition import (
+    get_candidates_dir,
+    get_eval_history_dir,
+)
 
 router = APIRouter()
 
@@ -72,6 +76,22 @@ def _summary(path: Path, data: dict[str, Any]) -> dict[str, Any]:
         "failed_metrics": [m.get("metric") for m in (meta.get("failed_metrics") or [])],
         "expected_outcome_preview": (data.get("expected_outcome", "") or "")[:200],
     }
+
+
+@router.get("/evals/history")
+def eval_history(days: int = 30, suite: str = "online") -> dict[str, Any]:
+    """Tendencia de scores por métrica en el tiempo (para el frontend Calidad LLM).
+
+    Agrega el histórico (un JSONL por día que escribe el eval) en una serie por
+    métrica: por cada día, avg/min/n/n_below(0.7). Así el front dibuja "tal fecha
+    la métrica estuvo bajo, tal otra fecha mejoró/empeoró". `suite` = online|golden.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    days = max(1, min(days, 180))
+    today = datetime.now(timezone.utc).date()
+    dates = [(today - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days)]
+    return history.read_trend(get_eval_history_dir(), dates=dates, suite=suite)
 
 
 @router.get("/evals/candidates")

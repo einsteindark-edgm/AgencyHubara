@@ -42,7 +42,16 @@ os.environ.setdefault("WORKSPACE_VAULT_DIR", _VAULT)
 os.environ.setdefault("CATALOG_SNAPSHOT_DIR", str(Path(_VAULT) / "catalog"))
 os.environ.setdefault("API_BASE_LLMLITE", "http://localhost:4000")
 os.environ.setdefault("LITELLM_API_KEY", "sk-litellm-proxy-local")
-os.environ.setdefault("OTEL_SDK_DISABLED", "true")
+# --signoz: en vez de desactivar OTEL, lo dejamos activo apuntando al collector de
+# SigNoz -> los scores se emiten al MISMO dashboard "Calidad del LLM" (gen_ai.eval.score)
+# vía emit_eval_score, igual que el path online. Sin --signoz, OTEL off (corrida local).
+_SIGNOZ = ("--signoz" in sys.argv) or (
+    os.environ.get("GOLDEN_EVAL_SIGNOZ", "").strip().lower() in ("1", "true", "yes")
+)
+if _SIGNOZ:
+    os.environ.setdefault("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
+else:
+    os.environ.setdefault("OTEL_SDK_DISABLED", "true")
 # Juez del eval: Gemini Pro 3.1 — frontier INDEPENDIENTE del agente (DeepSeek).
 # El flash-lite daba falsos negativos; usar el modelo del agente como juez
 # (deepseek) tiene sesgo de auto-evaluacion. Override con EVAL_JUDGE_MODEL.
@@ -399,15 +408,147 @@ async def grade_judge(scn: dict, res: dict) -> dict:
             try:
                 await m.a_measure(tc)
                 out[k] = {"score": round(float(m.score or 0), 2), "ok": bool(m.is_successful()),
-                          "reason": (m.reason or "")[:300]}
+                          "reason": (m.reason or "")[:300],
+                          "threshold": float(getattr(m, "threshold", 0.7) or 0.7)}
                 break
             except Exception as exc:  # noqa: BLE001
                 if attempt < 2 and any(s in str(exc) for s in _TRANSIENT):
                     await asyncio.sleep(3 * (attempt + 1))
                     continue
-                out[k] = {"score": None, "ok": None, "reason": f"ERROR: {str(exc)[:100]}"}
+                out[k] = {"score": None, "ok": None, "reason": f"ERROR: {str(exc)[:100]}",
+                          "threshold": 0.7}
                 break
     return out
+
+
+def _emit_signoz(scn: dict, judged: dict, environment: str) -> None:
+    """Emite los scores del escenario golden a SigNoz (mismo path que el online).
+
+    Métrica `gen_ai.eval.score` (baja card) + detalle en el span activo. `eval.suite`
+    = 'golden' para separarlo del muestreo online en el dashboard."""
+    from src.platform.observability.eval_metrics import (
+        emit_conversation_verdict,
+        emit_eval_score,
+    )
+    sid = "wa_golden_" + scn["id"][:28]
+    valid = [(k, v) for k, v in judged.items() if v.get("score") is not None]
+    for k, v in valid:
+        emit_eval_score(
+            metric_name=k, score=float(v["score"]), threshold=float(v.get("threshold", 0.7)),
+            reason=v.get("reason", ""), session_id=sid, whatsapp_number="",
+            agent="sales-agent", environment=environment, suite="golden",
+        )
+    if valid:
+        avg = sum(float(v["score"]) for _, v in valid) / len(valid)
+        emit_conversation_verdict(
+            session_id=sid, avg_score=avg,
+            overall_pass=all(v.get("ok") for _, v in valid),
+            is_candidate=False, num_metrics=len(valid),
+            environment=environment, suite="golden",
+        )
+
+
+def _agg_judge(runs: list[dict]) -> dict:
+    """Promedia los judge scores sobre las corridas -> {metric: (mean, min, max, n)}."""
+    oks = [r for r in runs if "judge" in r]
+    keys: list[str] = []
+    for r in oks:
+        for k in r["judge"]:
+            if k not in keys:
+                keys.append(k)
+    agg: dict = {}
+    for k in keys:
+        vals = [r["judge"][k] for r in oks if r["judge"].get(k) is not None]
+        if vals:
+            agg[k] = (round(sum(vals) / len(vals), 2), min(vals), max(vals), len(vals))
+    return agg
+
+
+_CAT_LABEL = {
+    "apertura": "🚪 Apertura", "descubrimiento": "🔎 Descubrimiento",
+    "recomendacion": "🕯️ Recomendación", "objeciones": "🛡️ Objeciones",
+    "objeciones_avanzadas": "🛡️ Objeciones avanzadas", "escalation": "📞 Escalación / handoff",
+    "cierre": "✅ Cierre", "cierre_edge": "✅ Cierre (edge)", "estilo": "🎨 Estilo",
+    "robustez": "🧱 Robustez", "real": "📒 Conversaciones reales", "desvio": "↪️ Desvíos de tema",
+    "indecision": "🤔 Indecisión / caos humano", "adversarial": "⚔️ Adversarial / seguridad",
+    "formato": "📱 Formato WhatsApp", "catalogo_edge": "📦 Catálogo (edge)",
+}
+
+
+def format_report_md(summary: list[dict], *, repeat: int, judged: bool) -> str:
+    """Reporte markdown lindo agrupado por categoría — qué prueba cada caso + scores."""
+    from collections import defaultdict
+    by_cat: dict[str, list[dict]] = defaultdict(list)
+    for s in summary:
+        by_cat[s["category"]].append(s)
+
+    def beh_str(s: dict) -> str:
+        oks = [r for r in s["runs"] if "behaviors" in r]
+        return oks[-1]["behaviors"] if oks else "—"
+
+    def beh_ok(s: dict) -> bool:
+        oks = [r for r in s["runs"] if "behaviors" in r]
+        if not oks:
+            return False
+        p, t = oks[-1]["behaviors"].split("/")
+        return p == t
+
+    lines: list[str] = []
+    lines.append("# 🎯 Golden Eval, Asesor de Ventas Hubara")
+    lines.append("")
+    lines.append(f"**{len(summary)} escenarios** · agente REAL (DeepSeek) · "
+                 f"{'juez REAL (Gemini Pro)' if judged else 'solo ledger determinista'}"
+                 f"{f' · {repeat}× cada uno (trending)' if repeat > 1 else ''}")
+    lines.append("")
+    lines.append("> Fidelidad: el agente corre su loop real con tools reales; los puertos de "
+                 "ESCRITURA quedan stub (cero órdenes/mensajes reales) y el catálogo viene del "
+                 "snapshot committeado. El texto se sanitiza igual que en prod.")
+    lines.append("")
+
+    # --- resumen por categoría ---
+    lines.append("## Resumen por categoría")
+    lines.append("")
+    lines.append("| Categoría | Casos | Behaviors OK | Errores |")
+    lines.append("|---|---|---|---|")
+    for cat in sorted(by_cat, key=lambda c: _CAT_LABEL.get(c, c)):
+        items = by_cat[cat]
+        ok_n = sum(1 for s in items if beh_ok(s))
+        errs = sum(1 for s in items if not any("judge" in r or "behaviors" in r for r in s["runs"]))
+        lines.append(f"| {_CAT_LABEL.get(cat, cat)} | {len(items)} | {ok_n}/{len(items)} | "
+                     f"{errs if errs else '—'} |")
+    lines.append("")
+
+    # --- detalle por categoría ---
+    lines.append("## Detalle, qué prueba cada caso")
+    for cat in sorted(by_cat, key=lambda c: _CAT_LABEL.get(c, c)):
+        lines.append("")
+        lines.append(f"### {_CAT_LABEL.get(cat, cat)}")
+        lines.append("")
+        lines.append("| Estado | Escenario | Qué prueba | Behaviors | Juez |")
+        lines.append("|:--:|---|---|:--:|---|")
+        for s in by_cat[cat]:
+            errs = [r for r in s["runs"] if "error" in r]
+            has_data = any("judge" in r or "behaviors" in r for r in s["runs"])
+            if not has_data:
+                emoji = "💥"
+            elif beh_ok(s):
+                emoji = "✅"
+            else:
+                emoji = "⚠️"
+            agg = _agg_judge(s["runs"])
+            jcell = " · ".join(
+                f"{k} **{m}**" + (f" [{lo}-{hi}]" if n > 1 and lo != hi else "")
+                for k, (m, lo, hi, n) in agg.items()
+            ) or ("—" if judged else "(sin juez)")
+            probe = (s.get("probes") or "").replace("|", "/")[:130]
+            nerr = f" ({len(errs)} err)" if errs else ""
+            lines.append(f"| {emoji} | `{s['id']}` | {probe} | {beh_str(s)}{nerr} | {jcell} |")
+    lines.append("")
+    lines.append("---")
+    lines.append("_Leyenda: ✅ todos los behaviors deterministas pasan · ⚠️ alguno falla "
+                 "(ver detalle) · 💥 error de corrida. El juez LLM es no-determinista; "
+                 "con `--repeat N` se muestra media [min-max]._")
+    return "\n".join(lines)
 
 
 async def main() -> None:
@@ -418,7 +559,19 @@ async def main() -> None:
                     help="imprime la transcripcion completa (cliente + agente + tools) para diagnostico")
     ap.add_argument("--repeat", type=int, default=1,
                     help="corre cada escenario N veces (trending: agente+juez son no-deterministas)")
+    ap.add_argument("--report-md", help="escribe un reporte markdown lindo a este path (GH Action)")
+    ap.add_argument("--json", dest="json_out", help="vuelca los resultados estructurados a este path")
+    ap.add_argument("--signoz", action="store_true",
+                    help="emite los scores a SigNoz (mismo dashboard que el path online; eval.suite=golden)")
+    ap.add_argument("--environment", default=os.getenv("ENVIRONMENT", "dev"),
+                    help="deployment.environment para las métricas de SigNoz")
     args = ap.parse_args()
+
+    if _SIGNOZ:
+        from src.platform.observability import init_otel
+        init_otel("golden-eval")
+        print("📊 SigNoz: emisión activa (eval.suite=golden) -> "
+              f"{os.environ.get('OTEL_EXPORTER_OTLP_ENDPOINT')}\n")
 
     data = json.loads(_SCENARIOS.read_text("utf-8"))
     scns = data["scenarios"]
@@ -472,7 +625,16 @@ async def main() -> None:
 
             judged = {}
             if not args.no_judge:
-                judged = await grade_judge(scn, res)
+                if _SIGNOZ:
+                    from opentelemetry import trace
+                    tracer = trace.get_tracer("hubara.golden_eval")
+                    with tracer.start_as_current_span("golden_eval.scenario") as span:
+                        span.set_attribute("eval.scenario", scn["id"])
+                        span.set_attribute("eval.category", scn["category"])
+                        judged = await grade_judge(scn, res)
+                        _emit_signoz(scn, judged, args.environment)
+                else:
+                    judged = await grade_judge(scn, res)
                 for k, v in judged.items():
                     mark = "✅" if v["ok"] else ("❌" if v["ok"] is False else "·")
                     sc = "n/a" if v["score"] is None else f"{v['score']:.2f}"
@@ -480,7 +642,9 @@ async def main() -> None:
             print()
             runs.append({"behaviors": f"{bpass}/{bcheck}",
                          "judge": {k: v["score"] for k, v in judged.items()}})
-        summary.append({"id": scn["id"], "runs": runs})
+        summary.append({"id": scn["id"], "title": scn.get("title", ""),
+                        "category": scn["category"], "probes": scn.get("probes", ""),
+                        "runs": runs})
 
     print("=== RESUMEN ===")
     for s in summary:
@@ -506,6 +670,28 @@ async def main() -> None:
                 parts.append(f"{k}={round(sum(vals) / len(vals), 2)}[{min(vals)}-{max(vals)}]")
         nerr = f"  ({len(errs)} err)" if errs else ""
         print(f"  {s['id']:34s} beh {oks[-1]['behaviors']:7s} {'  '.join(parts)}{nerr}")
+
+    if args.report_md:
+        Path(args.report_md).write_text(
+            format_report_md(summary, repeat=args.repeat, judged=not args.no_judge), "utf-8")
+        print(f"\n📝 reporte markdown -> {args.report_md}")
+    if args.json_out:
+        Path(args.json_out).write_text(json.dumps(summary, ensure_ascii=False, indent=2), "utf-8")
+        print(f"📦 json -> {args.json_out}")
+
+    if _SIGNOZ:
+        # Proceso corto: forzamos el flush de spans + métricas ANTES de salir, sino
+        # el BatchSpanProcessor / PeriodicExportingMetricReader no alcanzan a exportar
+        # a SigNoz. (En el worker long-lived el periodic reader exporta solo; acá no.)
+        from contextlib import suppress
+
+        from opentelemetry import metrics as _m
+        from opentelemetry import trace as _t
+        with suppress(Exception):
+            _t.get_tracer_provider().force_flush()  # type: ignore[attr-defined]
+        with suppress(Exception):
+            _m.get_meter_provider().force_flush()  # type: ignore[attr-defined]
+        print("📊 SigNoz: flush de métricas/spans completado")
 
 
 if __name__ == "__main__":
