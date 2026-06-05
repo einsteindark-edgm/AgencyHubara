@@ -43,6 +43,10 @@ os.environ.setdefault("CATALOG_SNAPSHOT_DIR", str(Path(_VAULT) / "catalog"))
 os.environ.setdefault("API_BASE_LLMLITE", "http://localhost:4000")
 os.environ.setdefault("LITELLM_API_KEY", "sk-litellm-proxy-local")
 os.environ.setdefault("OTEL_SDK_DISABLED", "true")
+# Juez del eval: Gemini Pro 3.1 — frontier INDEPENDIENTE del agente (DeepSeek).
+# El flash-lite daba falsos negativos; usar el modelo del agente como juez
+# (deepseek) tiene sesgo de auto-evaluacion. Override con EVAL_JUDGE_MODEL.
+os.environ.setdefault("EVAL_JUDGE_MODEL", "litellm_proxy/gemini-pro-judge")
 # Medusa dummy -> el modulo importa, pero el order port queda STUB (no creamos
 # ordenes reales) porque NO seteamos REGION_ID / SALES_CHANNEL_ID, y forzamos su
 # ausencia por si vinieran del entorno.
@@ -295,7 +299,7 @@ async def grade_judge(scn: dict, res: dict) -> dict:
         try:
             await m.a_measure(tc)
             out[k] = {"score": round(float(m.score or 0), 2), "ok": bool(m.is_successful()),
-                      "reason": (m.reason or "")[:120]}
+                      "reason": (m.reason or "")[:300]}
         except Exception as exc:  # noqa: BLE001
             out[k] = {"score": None, "ok": None, "reason": f"ERROR: {str(exc)[:100]}"}
     return out
@@ -347,7 +351,7 @@ async def main() -> None:
             for k, v in judged.items():
                 mark = "✅" if v["ok"] else ("❌" if v["ok"] is False else "·")
                 sc = "n/a" if v["score"] is None else f"{v['score']:.2f}"
-                print(f"     {mark} judge:{k:20s} {sc}  {v['reason'][:70]}")
+                print(f"     {mark} judge:{k:20s} {sc}  {v['reason'][:160]}")
         print()
         summary.append({"id": scn["id"], "behaviors": f"{bpass}/{bcheck}",
                         "judge": {k: v["score"] for k, v in judged.items()}})

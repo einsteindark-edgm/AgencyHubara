@@ -13,6 +13,14 @@ model_list:
       override_raw_request_params:
       api_key: "os.environ/GEMINI_API_KEY"
 
+  # Juez frontier del golden-eval: Gemini Pro 3.1 — independiente del agente
+  # (DeepSeek) y mucho más fuerte que el flash-lite (que daba falsos negativos,
+  # ej. no_hallucination 0.0 -> 1.0 con un juez capaz). Misma GEMINI_API_KEY.
+  - model_name: gemini-pro-judge
+    litellm_params:
+      model: gemini/gemini-3.1-pro-preview
+      api_key: "os.environ/GEMINI_API_KEY"
+
 router_settings:
   # 'simple-shuffle' es la estrategia estándar. 
   # Como cada model_name tiene solo un proveedor, siempre elegirá ese.
