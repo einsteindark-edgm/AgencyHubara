@@ -19,7 +19,8 @@ Env:
     Schedule (el worker igual corre → triggers manuales funcionan).
   * `SALES_EVAL_SCHEDULE_CRON` (default "0 8,14,20 * * *", tz America/Bogota).
   * `SALES_EVAL_LOOKBACK_HOURS` (default 8), `SALES_EVAL_MAX_CONVERSATIONS` (50).
-  * `EVAL_JUDGE_MODEL` — alias del proxy litellm para el juez (default gemini-backup).
+  * `EVAL_JUDGE_MODEL` — alias del juez (default `gemini-pro-judge`, EL MISMO que el
+    golden del GitHub Action: el eval online y el de CI tienen idéntico criterio).
 
 R-DIP: importa `platform/` + el propio plugin `chats`; no plugins siblings.
 """
