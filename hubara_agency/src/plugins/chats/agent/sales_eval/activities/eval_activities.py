@@ -30,6 +30,7 @@ from src.platform.temporal.heartbeat import with_heartbeat
 from src.plugins.chats.agent.sales_eval.evals import (
     composition,
     curation,
+    history,
     reconstruct,
     script_rubric,
 )
@@ -132,6 +133,19 @@ async def evaluate_sales_conversation_activity(
         session_id=session_id, avg_score=avg, overall_pass=overall_pass,
         is_candidate=is_candidate, num_metrics=n, environment=_env(),
     )
+
+    # Histórico para la tendencia del frontend (un registro por conversación/día).
+    # Activity -> puede usar now(); best-effort (no rompe la eval si falla).
+    try:
+        from datetime import datetime, timezone
+
+        history.append_history_record(
+            composition.get_eval_history_dir(),
+            run_date=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            session_id=session_id, suite="online", scores=scores,
+        )
+    except Exception as exc:  # noqa: BLE001
+        activity.logger.warning("eval history append falló: %s", exc)
 
     candidate_path = ""
     if is_candidate and window.draft_goldens:

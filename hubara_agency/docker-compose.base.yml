@@ -108,6 +108,10 @@ services:
       - TEMPORAL_URL=temporal:7233
       - API_BASE_LLMLITE=http://litellm:4000
       - WORKSPACE_VAULT_DIR=/app/hubara_vault
+      # La API LEE los candidatos a golden que el worker sales-eval ESCRIBE acá
+      # (mismo path en el volumen compartido hubara-vault). Sin esto, get_candidates_dir()
+      # cae al default tests/_candidates (efímero) y el frontend Calidad LLM sale vacío.
+      - EVAL_CANDIDATES_DIR=/app/hubara_vault/_evals/candidates
       # Manda los traces de la API (service.name=api-gateway) al collector de SigNoz
       # vía OTLP. Sin esto, init_otel() cae a ConsoleSpanExporter e imprime CADA span
       # HTTP como JSON a stdout (ruido en docker logs) y la API nunca aparece en SigNoz.
