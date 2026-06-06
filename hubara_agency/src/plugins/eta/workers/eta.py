@@ -28,14 +28,14 @@ from src.platform.whatsapp.activities import (
     send_whatsapp_message_activity,
     send_whatsapp_template_activity,
 )
-from src.plugins.chats.agent.eta.activities import (
+from src.plugins.eta.agent.eta.activities import (
     bootstrap_eta_session_activity,
     claim_eta_notification_activity,
     record_eta_notification_activity,
     record_eta_reply_activity,
     start_eta_tracking_activity,
 )
-from src.plugins.chats.agent.eta.workflows.eta_session import (
+from src.plugins.eta.agent.eta.workflows.eta_session import (
     HubaraEtaSessionWorkflow,
 )
 
@@ -65,7 +65,7 @@ async def main() -> None:
     logger.info("Conectando Especialista (ETA) al clúster Temporal mTLS...")
     client = await get_temporal_client()
 
-    task_queue = get_task_queue("chats", "eta")
+    task_queue = get_task_queue("eta", "eta")
     worker = Worker(
         client,
         task_queue=task_queue,

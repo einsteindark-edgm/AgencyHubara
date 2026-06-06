@@ -1,7 +1,8 @@
 id: eta
 version: 0.1.0
 display_name: ETA Tracker
-description: Visualización del estado de envíos (tracked orders + chat de cliente). Plugin frontend-only — los datos vienen de `entities/tracked-order` (shared).
+description: Agente de seguimiento de envíos — notifica al cliente cada cambio de estado del pedido por WhatsApp + sección de visualización (tracked orders + chat). Backend self-contained (`/api/eta` + worker `eta`); datos del frontend vía `entities/tracked-order`.
+agentic: true  # worker conversacional ETA con workspace IDENTITY/SOUL/TOOLS/AGENTS/USER
 
 depends_on: []
 
@@ -13,7 +14,74 @@ frontend:
     sidebar:
       - { route: /eta, label: ETA, icon: truck }
 
-# Sin api: ni agent: — plugin frontend-only.
+# ── API REST ────────────────────────────────────────────────────────────
+# Backend self-contained (extraído de chats — PLUGIN_CONTRACT.md §5.2). Sirve la
+# sección ETA del dashboard derivando los pedidos en fulfillment del order query
+# port (platform) + el `metadata.eta_tracking` per-sesión del vault. No importa
+# de ningún plugin sibling (R-DIP: eta → platform).
+api:
+  python_module: src.plugins.eta.api
+  prefix: /api/eta
+  tags: [ETA]
+
+# ── Agente Temporal ────────────────────────────────────────────────────
+# Sub-agente ETA (notificaciones de estado de pedido). Es un TARGET de
+# orquestación: lo arranca/signalea el dispatcher cuando `orders` emite
+# OrderStageChangedEvent (NO emite eventos propios → sin `emits`/`transitions`).
+# Declara su workflow_class para que `test_transition_targets_exist` lo resuelva.
+agent:
+  python_module: src.plugins.eta.agent
+  workers:
+    - name: eta
+      module: src.plugins.eta.workers.eta
+      task_queue: queue-eta-agent
+      dashboard:
+        display_name: Asistente de Seguimiento
+        role: Notifica al cliente cada cambio de estado de su pedido por WhatsApp
+        category: Postventa
+        icon: truck
+        color: green
+        model: DeepSeek V4 Pro
+        workspace: hubara_agency/src/plugins/eta/agent/eta/workspace
+        capabilities:
+          - { label: Notificar cambios de estado del pedido, icon: bolt }
+          - { label: Responder dudas del envío, icon: chat }
+          - { label: Escalar a un humano, icon: user }
+          - { label: Transferir a Ventas, icon: refresh }
+      workflow_classes:
+        - HubaraEtaSessionWorkflow
+      deployment:
+        replicas: 1                       # long-lived que duermen entre cambios de estado
+        cpu_request: 250m
+        memory_request: 384Mi
+        env_secrets:
+          - { var: DEEPSEEK_API_KEY,        secret: hubara-llm-secret,      key: DEEPSEEK_API_KEY }
+          - { var: WHATSAPP_PHONE_NUMBER_ID, secret: hubara-whatsapp-secret, key: WHATSAPP_PHONE_NUMBER_ID }
+          - { var: WHATSAPP_ACCESS_TOKEN,   secret: hubara-whatsapp-secret, key: WHATSAPP_ACCESS_TOKEN }
+          - { var: WHATSAPP_VERIFY_TOKEN,   secret: hubara-whatsapp-secret, key: WHATSAPP_VERIFY_TOKEN }
+          # READ-only de Medusa: `claim_eta_notification_activity` lee el order
+          # query port para los slots del mensaje (nombre, total, tipo de pago).
+          - { var: MEDUSA_BASE_URL,         secret: hubara-medusa-secret, key: MEDUSA_BASE_URL }
+          - { var: MEDUSA_ADMIN_TOKEN,      secret: hubara-medusa-secret, key: MEDUSA_ADMIN_TOKEN }
+      compose:
+        env:
+          TEMPORAL_URL: temporal:7233
+          API_BASE_LLMLITE: http://litellm:4000
+          WORKSPACE_VAULT_DIR: /app/hubara_vault
+          OTEL_EXPORTER_OTLP_ENDPOINT: http://host.docker.internal:4317
+          OTEL_SEMCONV_STABILITY_OPT_IN: gen_ai_latest_experimental
+          OPENLIT_PRICING_JSON: /app/hubara_agency/deploy/openlit/pricing.json
+          DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+          WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID}
+          WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN}
+          WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN}
+          MEDUSA_BASE_URL: ${MEDUSA_BASE_URL}
+          MEDUSA_ADMIN_TOKEN: ${MEDUSA_ADMIN_TOKEN}
+        volumes:
+          - hubara-vault-local:/app/hubara_vault
+        depends_on:
+          - temporal
+          - litellm
 
 wiring_intents:
   env_vars_required: []

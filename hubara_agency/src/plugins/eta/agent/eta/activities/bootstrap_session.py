@@ -19,7 +19,7 @@ from src.platform.registries import (
     get_base_tools_registry,
 )
 from src.platform.tool_extensions import apply_tool_extensions
-from src.plugins.chats.agent.eta.contracts import EtaSessionInput
+from src.plugins.eta.agent.eta.contracts import EtaSessionInput
 
 
 @activity.defn(name="bootstrap_eta_session_activity")
@@ -34,7 +34,7 @@ async def bootstrap_eta_session_activity(input: EtaSessionInput) -> SessionInput
     """
     runtime_path = input.runtime_workspace_path
     if not runtime_path:
-        from src.plugins.chats.agent.eta.config.env import get_workspace_path
+        from src.plugins.eta.agent.eta.config.env import get_workspace_path
 
         runtime_path = str(get_workspace_path())
         activity.logger.info(

@@ -8,7 +8,7 @@ const TRACKED_ORDERS_REFETCH_MS = 5_000;
 
 /**
  * Pedidos en seguimiento por el Agente ETA. Datos REALES: el backend
- * (`/api/chats/eta/tracked-orders`) compone el listado desde
+ * (`/api/eta/tracked-orders`) compone el listado desde
  * `metadata.eta_tracking` (timeline de notificaciones + respuestas) + el order
  * query port (cliente, ciudad, total, tipo de pago, stage actual).
  *
@@ -17,7 +17,7 @@ const TRACKED_ORDERS_REFETCH_MS = 5_000;
  * de estado a medida que el operador mueve los pedidos en el kanban de orders.
  */
 async function fetchTrackedOrders(): Promise<TrackedOrder[]> {
-  const raw = await apiClient.get<unknown>("/api/chats/eta/tracked-orders");
+  const raw = await apiClient.get<unknown>("/api/eta/tracked-orders");
   return trackedOrdersListResponseSchema.parse(raw).orders as TrackedOrder[];
 }
 

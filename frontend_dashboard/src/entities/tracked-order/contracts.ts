@@ -1,10 +1,10 @@
 /**
  * Schemas Zod para validar las respuestas del backend en el boundary HTTP.
  * Se activan en `api.ts` con `.parse(data)`, así un cambio de contrato del
- * endpoint `/api/chats/eta/tracked-orders` truena temprano y con mensaje claro.
+ * endpoint `/api/eta/tracked-orders` truena temprano y con mensaje claro.
  *
  * Reflejan los tipos de `model.ts` (`TrackedOrder` / `TrackedEvent`). El backend
- * que los emite es `hubara_agency/src/plugins/chats/api/eta.py`.
+ * que los emite es `hubara_agency/src/plugins/eta/api/__init__.py`.
  */
 
 import { z } from "zod";

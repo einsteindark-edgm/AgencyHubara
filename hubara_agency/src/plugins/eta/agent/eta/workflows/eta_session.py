@@ -48,15 +48,15 @@ with workflow.unsafe.imports_passed_through():
         coalesce_pending,
         run_agent_turn,
     )
-    from src.plugins.chats.agent.eta.activities import (
+    from src.plugins.eta.agent.eta.activities import (
         bootstrap_eta_session_activity,
         claim_eta_notification_activity,
         record_eta_notification_activity,
         record_eta_reply_activity,
         start_eta_tracking_activity,
     )
-    from src.plugins.chats.agent.eta.contracts import EtaSessionInput
-    from src.plugins.chats.agent.eta.prompts import (
+    from src.plugins.eta.agent.eta.contracts import EtaSessionInput
+    from src.plugins.eta.agent.eta.prompts import (
         STAGE_LABELS,
         build_stage_notification_turn,
     )
