@@ -1,0 +1,116 @@
+# Architecture Gates — el candado que hace cumplir el conocimiento arquitectónico.
+#
+# Corre los UNIT TESTS FUERTES DE ARQUITECTURA en cada PR a `main` y en cada push a
+# `main`. Si algo viola las reglas que el repo aprendió, el check falla y el merge
+# se bloquea. Cubre las dos capas:
+#
+#   Backend (DEHA + aislamiento de plugins):
+#     · import-linter (R-DIP): platform ↛ plugins, plugins ↛ plugins siblings.
+#     · pytest tests/architecture/ (auto-marcado `architecture` por el conftest):
+#         - R-rules DEHA (R-DET/R-JSON/R-STATELESS/R-HEARTBEAT/R-DIP)
+#         - plugin-contract P-1..P-14 (self-contained, no cross-import, parity, cast)
+#         - consistencia de orquestación (transitions resuelven a workers reales)
+#         - meta-gate (Capa 3): nadie edita archivos de arquitectura protegidos sin
+#           el label `architecture-change`.
+#
+#   Frontend (FSD + aislamiento de plugins):
+#     · tsc -b (type-check composite — imports rotos = fallo).
+#     · npm run test:arch (vitest): dependency-cruiser (FSD + plugins-no-cross),
+#       íconos de manifest, parity, y el meta-gate frontend.
+#
+# ── OBLIGATORIEDAD ───────────────────────────────────────────────────────────
+# Este workflow CORRE en cada PR, pero para que BLOQUEE el merge hay que marcarlo
+# como "required status check" en la branch protection de `main` (es un setting de
+# repo, lo hace un admin — ver el comando en la descripción del PR). Una vez
+# requerido, GitHub no deja mergear con estos checks en rojo.
+#
+# ── Archivos de arquitectura PROTEGIDOS ──────────────────────────────────────
+# El meta-gate (backend `test_meta.py` + frontend `test_meta.arch.test.ts`) bloquea
+# ediciones a `tests/architecture/**`, `.dependency-cruiser.cjs`, `.importlinter`,
+# `.archon/workflows/**`, etc. SALVO que el PR lleve el label `architecture-change`.
+# El CI traduce ese label a `ARCH_CHANGE_APPROVED=1` (out-of-band: el label lo pone
+# un humano con review — un AI implementer no puede auto-otorgárselo en su diff).
+name: Architecture Gates
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: arch-gates-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Label `architecture-change` → ARCH_CHANGE_APPROVED=1. En push a main no hay PR
+  # (la expresión cae a ''), pero ahí el meta-gate no ve diff (HEAD == main) y pasa.
+  ARCH_CHANGE_APPROVED: ${{ contains(github.event.pull_request.labels.*.name, 'architecture-change') && '1' || '' }}
+
+jobs:
+  backend-arch:
+    name: Backend — DEHA + aislamiento de plugins
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # El meta-gate diffea vs merge-base(origin/main): necesita historia + el ref de main.
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.11"
+
+      - name: Instalar deps (uv workspace, lock en la raíz)
+        working-directory: hubara_agency
+        run: uv sync --frozen
+
+      - name: R-DIP — import-linter
+        working-directory: hubara_agency
+        run: uv run lint-imports
+
+      - name: Tests de arquitectura (R-rules + plugin-contract + orquestación + meta-gate)
+        working-directory: hubara_agency
+        env:
+          # Dummies: algunos módulos construyen clientes Medusa a nivel de módulo. Los
+          # tests de arquitectura son AST/filesystem → los dummies bastan y NO cuelgan
+          # (a diferencia de tests/platform/, que sí cuelga con esto y NO se corre acá).
+          MEDUSA_BASE_URL: http://medusa.invalid
+          MEDUSA_ADMIN_TOKEN: ci-dummy
+          OTEL_SDK_DISABLED: "true"
+        run: uv run pytest tests/architecture -q
+
+  frontend-arch:
+    name: Frontend — FSD + aislamiento de plugins
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend_dashboard/package-lock.json
+
+      - name: Instalar deps
+        working-directory: frontend_dashboard
+        run: npm ci
+
+      - name: Generar plugin registry (codegen — requerido por tsc)
+        working-directory: frontend_dashboard
+        run: npm run plugins:sync
+
+      - name: Type-check composite (tsc -b)
+        working-directory: frontend_dashboard
+        run: npx tsc -b
+
+      - name: Tests de arquitectura (dep-cruiser FSD + íconos + meta-gate)
+        working-directory: frontend_dashboard
+        run: npm run test:arch
