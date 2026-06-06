@@ -35,6 +35,10 @@ name: Architecture Gates
 on:
   pull_request:
     branches: [main]
+    # `labeled`/`unlabeled` además de los defaults: re-corre el gate cuando cambia
+    # el label `architecture-change`. Si alguien lo SACA, el meta-gate re-evalúa sin
+    # bypass y BLOQUEA → no se cuela un cambio de arquitectura sin label + review.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
   push:
     branches: [main]
 
