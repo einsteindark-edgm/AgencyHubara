@@ -88,6 +88,20 @@ jobs:
           OTEL_SDK_DISABLED: "true"
         run: uv run pytest tests/architecture -q
 
+      - name: Premortem invariants (compose drift + paridad k8s + colas únicas)
+        # Complementa el modo `strict: false` de la branch protection. Dos PRs de
+        # plugins distintos igual regeneran docker-compose.local.yml (se genera de
+        # TODOS los manifests). Este test verifica que el compose committeado ==
+        # output de render-compose.py → un drift cross-PR se caza en el run
+        # post-merge a main (push trigger) en vez de quedar silencioso. También:
+        # paridad worker↔k8s y unicidad de task_queues.
+        working-directory: hubara_agency
+        env:
+          MEDUSA_BASE_URL: http://medusa.invalid
+          MEDUSA_ADMIN_TOKEN: ci-dummy
+          OTEL_SDK_DISABLED: "true"
+        run: uv run pytest tests/plugins/test_premortem_invariants.py -q
+
   frontend-arch:
     name: Frontend — FSD + aislamiento de plugins
     runs-on: ubuntu-latest
