@@ -5,10 +5,12 @@
 > Cada test mapea a una regla **P-#** del contrato y a un anti-pattern **AP-#** /
 > hallazgo **F#** de la [auditoría](PLUGIN_ISOLATION_AUDIT.md).
 >
-> **Estado.** PROPUESTO — sketches, no implementación. Varios **fallan HOY**
-> (marcados 🔴): eso es deliberado — el conjunto de tests rojos == la
-> definition-of-done del refactor. Los verdes 🟢 ya se cumplen y se agregan como
-> candado anti-regresión.
+> **Estado.** PARCIALMENTE IMPLEMENTADO (PR #49). Verdes y puestos como candado:
+> P-1/2/3/4/12/14(forma) + P-7 (dispatcher-skip). Siguen 🔴 (definition-of-done
+> pendiente): P-6, P-9 (solo evals), P-11, P-14(uso). **Nuevos del pre-mortem
+> (§3.5, P-15..P-19):** los modos de fallo que las extracciones `ads`/`eta`
+> destaparon y que ningún gate de import/manifest atrapa. El conjunto rojo == lo
+> que falta; los verdes congelan lo bueno.
 >
 > **Relación con los gates existentes.** Hoy hay 3 capas: `.importlinter`
 > (R-DIP, pero solo lista 3 paquetes), `.dependency-cruiser.cjs` (frontend, con
@@ -160,12 +162,14 @@ def test_frontend_plugin_calls_only_own_api():
                     bad.append(f"{pid} llama /api/{other}/ en {f.name}")
     assert not bad, "Frontend llama API de otro plugin:\n" + "\n".join(bad)
 ```
-> 🔴 Caza `agents_admin` (Calidad LLM) → `/api/chats/evals`: consumo del eval del
-> agente `sales` por el plano de gestión (`evals` queda PER-AGENTE — decisión
-> 2026-06-05, NO se extrae; formalizar server-side en agents_admin). `ads` ✅
-> extraído (entity ads-campaign → `/api/ads`). `eta` sigue split pero mediado por
-> la entity central `tracked-order` (→ P-11). Verde cuando agents_admin no llame
-> `/api/chats` + `eta` extraído.
+> 🔴 (xfail, strict=False) Tras `ads` ✅ + `eta` ✅ extraídos, el ÚNICO ofensor que
+> queda es `agents_admin` (Calidad LLM) → `/api/chats/evals`: el plano de gestión
+> consume el eval del agente `sales` (`evals` queda PER-AGENTE — decisión
+> 2026-06-05, NO se extrae; a formalizar server-side: agents_admin agrega los evals
+> y sirve `/api/agents_admin/...`). `eta` ya NO es split (backend en `plugins/eta`,
+> entity `tracked-order` → `/api/eta`). Verde cuando agents_admin no llame
+> `/api/chats`. **OJO (PM-12):** el `reason` del xfail en el código todavía dice
+> "eta sigue split" — STALE; el archivo es PROTECTED, actualizar pide `ARCH_CHANGE_APPROVED`.
 
 ### P-2 · `test_frontend_backend_parity` — 🔴
 Regla P-PARITY · AP-1/AP-6 / F1/F13. Todo manifest que declara `api`/`agent` tiene backend propio; el set de ids es coherente.
@@ -181,10 +185,10 @@ def test_every_backend_surface_has_own_dir():
                 bad.append(f"{pid}: declara backend pero src/plugins/{pid}/ no tiene código")
     assert not bad, "\n".join(bad)
 ```
-> 🟢/🔴 según fase: hoy `eta` declara `agent`/`api`? No — el manifest de `eta` es
-> frontend-only (sin api/agent), así que P-2 pasa pero ENGAÑA (su backend está en
-> chats). Por eso P-2 se complementa con P-9 (api-call), que SÍ caza el split.
-> Post-refactor `eta` declara su propio backend y P-2 lo verifica.
+> 🟢 Post-refactor: `eta` ya declara `api:` + `agent:` propios y tiene código bajo
+> `src/plugins/eta/` → P-2 lo verifica de verdad (ya no es el caso "frontend-only que
+> engaña"). Sigue complementado por P-9 (api-call) para cazar futuros splits donde el
+> manifest sea frontend-only pero el frontend llame al backend de otro plugin.
 
 ### P-14 · `test_cross_plugin_data_goes_through_declared_cast` — 🔴 (mecanismo nuevo)
 Regla P-CAST · AP-2 / F2/F8. Todo consumo cross-plugin de datos se declara en `consumes:` (provider+contract+into+cast) y el cast resuelve; ningún plugin adopta la entity de otro.
@@ -280,27 +284,141 @@ test("cada plugin con backend declarado existe en ambos stacks", () => {
 
 ---
 
+## §3.5 Tests derivados del pre-mortem (P-15..P-19) — 🔴 PROPUESTOS
+
+> Estos NO existían antes del refactor; salieron del
+> [§9 pre-mortem del contrato](PLUGIN_CONTRACT.md#9-pre-mortem--modos-de-fallo-de-una-extracción).
+> Cada uno atrapa un modo de fallo (PM-#) que NINGÚN gate actual ve, porque viven en
+> strings, paths, o convenciones — no en imports/manifests. Son la red de seguridad
+> que hubiera hecho la extracción de `eta` aburrida en vez de un campo minado.
+
+### P-15 · `test_dashboard_workspace_paths_exist` — 🔴 (PM-6)
+Regla nueva (P-WORKSPACE) · AP-1 adyacente. Todo `agent.workers[].dashboard.workspace` resuelve a un dir existente.
+```python
+def test_dashboard_workspace_paths_exist():
+    bad = []
+    for pid, manifest in all_manifests():
+        for w in (manifest.get("agent") or {}).get("workers") or []:
+            ws = ((w.get("dashboard") or {}).get("workspace") or "").strip()
+            if ws and not (REPO / ws).is_dir():        # ws es path desde el repo root
+                bad.append(f"{pid}/{w.get('name')}: workspace {ws!r} no existe en disco")
+    assert not bad, "dashboard.workspace stale (PM-6):\n" + "\n".join(bad)
+```
+> Hubiera cazado en segundos si hubiera olvidado repointar `eta/agent/workspace` →
+> `eta/agent/eta/workspace`. Hoy ese path se actualiza a mano sin red.
+
+### P-16 · `test_worker_task_queue_self_reference_matches_dir` — 🔴 (PM-5 / AP-9)
+Regla nueva (P-SELFQUEUE). Ningún `src/plugins/X/workers/*.py` llama `get_task_queue("Y", ...)` con Y≠X.
+```python
+def test_worker_task_queue_self_reference():
+    bad = []
+    for pdir in BE.iterdir():
+        if not pdir.is_dir() or pdir.name.startswith(("_",".")): continue
+        for py in (pdir / "workers").glob("*.py"):
+            tree = ast.parse(py.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "get_task_queue"
+                        and node.args and isinstance(node.args[0], ast.Constant)):
+                    if node.args[0].value != pdir.name:
+                        bad.append(f"{py.relative_to(BE)} → get_task_queue({node.args[0].value!r}, ...) ≠ plugin {pdir.name!r}")
+    assert not bad, "Worker referencia (plugin,worker) ajeno (PM-5):\n" + "\n".join(bad)
+```
+> El worker de eta tenía `get_task_queue("chats","eta")` y había que cambiarlo a
+> `("eta","eta")`. Un grep de imports cross-plugin NO lo ve (es un string, no un import).
+
+### P-17 · `test_agentic_flag_matches_dashboard_workers` — 🔴 (PM-3 / AP-11)
+Regla nueva (P-AGENTIC). `agentic: true` ⟺ el plugin tiene ≥1 worker con bloque `dashboard:`. Cierra el mismatch schema↔código.
+```python
+def test_agentic_flag_consistent_with_dashboard():
+    bad = []
+    for pid, manifest in all_manifests():
+        has_dash = any((w.get("dashboard")) for w in (manifest.get("agent") or {}).get("workers") or [])
+        agentic = bool(manifest.get("agentic", False))
+        if has_dash != agentic:
+            bad.append(f"{pid}: agentic={agentic} pero has_dashboard_worker={has_dash}")
+    assert not bad, "agentic ⊥ dashboard (PM-3):\n" + "\n".join(bad)
+```
+> El schema dice que `agentic` gatea `GET /api/agents_admin`, pero `service.py` lo
+> IGNORA (escanea `dashboard:` blocks). Este test fuerza que no driften. **Fix
+> complementario (código):** que `discover_agents()` filtre por `agentic` Y por
+> `enabled_plugins()` (cierra PM-4/AP-8 también).
+
+### P-18 · `test_routing_workflow_id_templates_are_consistent` — 🔴 (PM-2 / AP-10)
+Regla nueva (P-ROUTE). El template de `workflow_id` hardcodeado en el ruteo de inbounds (`chats`) coincide con el `workflow_id_template` que el manifest de `orders` declara para el mismo agente. Mientras el route-registry declarativo (§5.1) siga diferido, este guard ata las dos copias.
+```python
+def test_routing_template_matches_manifest():
+    # 1. extraé los prefijos de workflow_id del ruteo de inbounds (AST: f-strings `eta-{...}`)
+    use_case = BE / "chats/agent/sales/use_cases/load_or_start_sales_session.py"
+    hardcoded = _f_string_prefixes(use_case)            # {"eta-"} (de f"eta-{session_id}")
+    # 2. prefijos declarados en TODAS las transitions de los manifests
+    declared = set()
+    for _pid, m in all_manifests():
+        for w in (m.get("agent") or {}).get("workers") or []:
+            for t in (w.get("transitions") or []):
+                tpl = (t.get("action") or {}).get("workflow_id_template", "")
+                declared.add(tpl.split("{")[0])         # "eta-" de "eta-{event.session_id}"
+    assert hardcoded <= declared, (
+        f"Ruteo usa prefijos {hardcoded - declared} que ningún manifest declara (PM-2) — "
+        "el template de workflow_id drifteó entre chats y orders")
+```
+> 🔴 Es un parche mientras exista el residuo de Opción A. El fix REAL es el route
+> registry (`agent.owns_route`) que elimina el hardcode — cuando eso entre, este test
+> se reemplaza por "el ruteo NO hardcodea ningún `<plugin>-{...}`".
+
+### P-19 · `test_transition_resolves_to_live_worker_config` — 🔴 (PM-13)
+Regla reforzada (P-DISPATCH). Más fuerte que "el target existe": para cada transition, el `(task_queue, workflow_name)` que el dispatcher RESOLVERÍA coincide con lo que el worker target realmente registra. Acerca el gate al comportamiento sin bootear Temporal.
+```python
+def test_transition_targets_resolve_to_worker_runtime():
+    bad = []
+    for _pid, m in all_manifests():
+        for w in (m.get("agent") or {}).get("workers") or []:
+            for t in (w.get("transitions") or []):
+                tp, tw = t["action"]["target_plugin"], t["action"]["target_worker"]
+                # el target worker debe declarar el workflow_name que la transition invoca
+                tgt = get_worker_spec(tp, tw)                       # raise si no existe
+                wf = t["action"].get("target_workflow")
+                if wf and wf not in (tgt.get("workflow_classes") or []):
+                    bad.append(f"{tp}/{tw}: transition invoca {wf} que el worker no declara")
+                # y la task_queue debe resolver (no raise)
+                get_task_queue(tp, tw)
+    assert not bad, "Transition no resuelve al runtime del worker (PM-13):\n" + "\n".join(bad)
+```
+> 🔴 Complemento AST de un smoke de comportamiento real (emitir el evento y ver el
+> workflow arrancar). Lo ideal es AMBOS: este (rápido, en CI) + un functional test
+> que dispare un `OrderStageChangedEvent` y assert que el workflow eta arranca en
+> `queue-eta-agent`.
+
+---
+
 ## §4. Resumen — test → regla → anti-pattern → estado hoy → archivo destino
 
 | Test | Regla | AP/F | Hoy | Destino |
 |---|---|---|---|---|
-| P-1 self-contained modules | P-SELF | AP-1 | 🟢 | `tests/architecture/test_plugin_isolation.py` |
-| P-2 backend parity | P-PARITY | AP-1/F13 | 🟡 | idem |
-| P-3 no cross-plugin import | P-NOXIMPORT | AP-1 | 🟢 | idem (+ generaliza `.importlinter`) |
-| P-4 platform↛plugins | P-PLATFORM | F(R-DIP#9) | 🟢 | idem |
+| Test | Regla | AP/F/PM | Hoy | Destino |
+|---|---|---|---|---|
+| P-1 self-contained modules | P-SELF | AP-1 | 🟢 hecho | `tests/architecture/test_plugin_contract.py` |
+| P-2 backend parity | P-PARITY | AP-1/F13 | 🟢 hecho | idem (eta/ads ya declaran backend propio) |
+| P-3 no cross-plugin import | P-NOXIMPORT | AP-1 | 🟢 hecho | idem (+ generaliza `.importlinter`) |
+| P-4 platform↛plugins | P-PLATFORM | F(R-DIP#9) | 🟢 hecho | idem |
 | ~~P-5 transition targets ∈ depends_on~~ | — | — | ❌ retirado | reemplazado por P-7 + P-14 |
-| P-6 enabled satisfies depends_on | P-ENABLED | AP-3/AP-8 | 🔴 | idem + `platform/plugin_loader.py` (nuevo) |
+| P-6 enabled satisfies depends_on | P-ENABLED | AP-3/AP-8 | 🔴 | `tests/architecture/` + `platform/plugin_loader.py` (nuevo) |
 | P-7 dispatcher skips disabled | P-SKIP | AP-3/F3 | 🟢 hecho | `dispatcher.py` + `test_dispatcher.py::TestEnabledPluginsSkip` |
-| P-9 frontend calls own API only | P-OWN | AP-1/F1 | 🔴 | `tests/architecture/test_plugin_isolation.py` |
-| P-10 cruiser `plugins-no-features` | P-FECROSS | AP-7/F10 | 🟢 hecho | `.dependency-cruiser.cjs` (entity-rule redundante con `plugins-no-cross-plugin`, no agregada) |
-| P-11 central entities dir empty | P-ENTITY | AP-2/F2 | 🔴 | `src/test/architecture/` |
-| P-14 cross-plugin via declared cast | P-CAST | AP-2/F2/F8 | 🔴 | `tests/architecture/` + manifest `consumes:` |
+| P-9 frontend calls own API only | P-OWN | AP-1/F1 | 🟡 xfail | `test_plugin_contract.py` (solo queda agents_admin→/api/chats/evals) |
+| P-10 cruiser `plugins-no-features` | P-FECROSS | AP-7/F10 | 🟢 hecho | `.dependency-cruiser.cjs` |
+| P-11 central entities dir empty | P-ENTITY | AP-2/F2/PM-9 | 🔴 | `src/test/architecture/` (eta `tracked-order` sigue central) |
+| P-14 cross-plugin via declared cast | P-CAST | AP-2/F2/F8 | 🟢 forma / 🔴 uso | `test_plugin_contract.py` (valida forma; sin `consumes:` reales aún) |
 | P-12 manifest icons exist | P-ICON | AP-4/F4 | 🟢 hecho | `src/test/architecture/test_plugin_icons.arch.test.ts` |
 | P-13 ids consistent cross-stack | P-PARITY | F13 | 🟡 | `src/test/architecture/` |
+| **P-15 workspace paths exist** | P-WORKSPACE | PM-6 | 🔴 | `tests/architecture/` |
+| **P-16 worker queue self-ref** | P-SELFQUEUE | PM-5/AP-9 | 🔴 | `tests/architecture/` |
+| **P-17 agentic ⟺ dashboard** | P-AGENTIC | PM-3/AP-11 | 🔴 | `tests/architecture/` (+ fix código agents_admin) |
+| **P-18 routing template consistency** | P-ROUTE | PM-2/AP-10 | 🔴 | `tests/architecture/` (parche hasta route-registry) |
+| **P-19 transition→worker runtime** | P-DISPATCH | PM-13 | 🔴 | `tests/architecture/` + functional smoke |
 
-**Rojos = la definition-of-done del refactor** (§5 del audit): P-6 (enforce
-depends_on duras), P-9/P-2 (extracción de splits), P-11/P-14 (entities por-plugin +
-cast declarado). **P-7 (dispatcher-skip) ✅ hecho.** Verdes = candados que se agregan ya.
+**Verdes (candados puestos, PR #49):** P-1/2/3/4/12/14(forma) + P-7 (dispatcher-skip) +
+P-10. **Rojos = lo que falta:** P-6 (enforce depends_on), P-9 (queda solo evals
+per-agente), P-11/P-14-uso (entities por-plugin + cast), y los **5 del pre-mortem
+(P-15..P-19)** — la red que faltó para que las extracciones no fueran un campo minado.
 
 ---
 
