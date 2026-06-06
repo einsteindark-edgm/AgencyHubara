@@ -121,11 +121,12 @@ def test_p14_consumes_blocks_are_well_formed() -> None:
 
 
 @pytest.mark.xfail(
-    reason="AP-1/F1: split plugins. Hoy caza el caso DIRECTO: agents_admin "
-    "(Calidad LLM) llama /api/chats/ desde su feature. Los casos eta/ads van "
-    "MEDIADOS por entities CENTRALES (tracked-order, ads-campaign) — los fuerza "
-    "afuera P-11; una vez plugin-local, P-9 también los caza. Verde cuando cada "
-    "plugin sirva su propio /api/<id>.",
+    reason="Caza agents_admin (Calidad LLM) -> /api/chats/evals: el plano de "
+    "gestión consume el eval del agente `sales` (evals queda PER-AGENTE por "
+    "decisión 2026-06-05 — NO se extrae). A formalizar server-side (agents_admin "
+    "backend agrega los evals y sirve /api/agents_admin/...). `ads` ya extraído; "
+    "`eta` sigue split pero mediado por la entity central `tracked-order` (-> P-11). "
+    "Verde cuando agents_admin no llame /api/chats + eta extraído.",
     strict=False,
 )
 def test_p9_frontend_plugin_calls_only_own_api() -> None:

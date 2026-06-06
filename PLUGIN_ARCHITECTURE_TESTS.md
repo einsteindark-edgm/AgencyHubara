@@ -160,9 +160,12 @@ def test_frontend_plugin_calls_only_own_api():
                     bad.append(f"{pid} llama /api/{other}/ en {f.name}")
     assert not bad, "Frontend llama API de otro plugin:\n" + "\n".join(bad)
 ```
-> 🔴 Hoy: `eta` FE llama `/api/chats/eta/*`, `ads` FE `/api/chats/ads/*`,
-> `agents_admin` (Calidad LLM) `/api/chats/evals/*`. Estos 3 rojos == los splits a
-> extraer. Cuando cada uno sirva su propio `/api/<id>/*`, verde.
+> 🔴 Caza `agents_admin` (Calidad LLM) → `/api/chats/evals`: consumo del eval del
+> agente `sales` por el plano de gestión (`evals` queda PER-AGENTE — decisión
+> 2026-06-05, NO se extrae; formalizar server-side en agents_admin). `ads` ✅
+> extraído (entity ads-campaign → `/api/ads`). `eta` sigue split pero mediado por
+> la entity central `tracked-order` (→ P-11). Verde cuando agents_admin no llame
+> `/api/chats` + `eta` extraído.
 
 ### P-2 · `test_frontend_backend_parity` — 🔴
 Regla P-PARITY · AP-1/AP-6 / F1/F13. Todo manifest que declara `api`/`agent` tiene backend propio; el set de ids es coherente.

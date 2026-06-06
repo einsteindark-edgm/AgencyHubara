@@ -121,7 +121,7 @@ Cada regla tiene su test (P-#) en [PLUGIN_ARCHITECTURE_TESTS.md](PLUGIN_ARCHITEC
 | Regla | Enunciado | Previene | Test |
 |---|---|---|---|
 | **P-SELF** | Todos los módulos referenciados por el manifest de X (`api.python_module`, `api.legacy_routers[].module`, `agent.python_module`, `agent.workers[].module`) empiezan con `src.plugins.<id>.`. | Manifest declarando módulos de otro plugin | P-1 |
-| **P-OWN** | Todo el comportamiento de X vive bajo `plugins/X/` en ambos stacks. Ningún plugin frontend "frontend-only" depende del backend de otro plugin sin declararlo. | Split plugins (eta/ads/evals) | P-2, P-9 |
+| **P-OWN** | Todo el comportamiento de X vive bajo `plugins/X/` en ambos stacks. Ningún plugin frontend "frontend-only" depende del backend de otro plugin sin declararlo. | Split plugins (eta/ads) | P-2, P-9 |
 | **P-NOXIMPORT** | Ningún módulo bajo `src/plugins/X/` importa `src.plugins.Y` (Y≠X). Única frontera: `shared/contracts/` propio. | Cross-plugin import backend | P-3 |
 | **P-PLATFORM** | Ningún módulo bajo `src/platform/` importa `src.plugins.*`. | Platform→plugin (R-DIP #9) genérico | P-4 |
 | **P-DEPS** | `depends_on` = solo deps DURAS (providers de un `consumes`/cast — el plugin no funciona sin ellas). Las transitions cross-plugin son SOFT: las declara la transition + el dispatcher las skipea si el target está apagado (P-SKIP); **NO** van en `depends_on`. | Mezclar soft/hard; coupling duro oculto | P-7, P-14 |
@@ -141,8 +141,10 @@ Cada regla tiene su test (P-#) en [PLUGIN_ARCHITECTURE_TESTS.md](PLUGIN_ARCHITEC
 Estado vivo (main e4d95a6): `eta` y `ads` son plugins frontend con backend dentro
 de `chats`; el concern de evals/"Calidad LLM" quedó como frontend dentro de
 `agents_admin` con backend (`sales_eval`) aún en `chats`. El operador decidió:
-**`eta`/`ads`/`evals` deben poder togglearse independientes de `chats`** → se
-EXTRAEN a plugins propios.
+**`eta` y `ads` deben poder togglearse independientes de `chats`** → se EXTRAEN a
+plugins propios. **`evals` NO se extrae: queda acoplado a los AGENTES** — cada
+agente tendrá sus propios evals (es un concern per-agente, no un plugin
+standalone). `ads` ya está extraído (commit `a5bc586`).
 
 ### §5.1 La pieza clave: `platform/conversation/` (capability compartida)
 
@@ -171,16 +173,22 @@ Resultado: `sales`, `remarketing`, `eta` son plugins-agente delgados sobre
 |---|---|---|---|---|
 | **eta** | `chats.workers.eta` + `chats.api.eta` + `chats.agent.eta` (+ shell vacío `plugins/eta/__init__.py`) | `plugins/eta/{agent,workers,api,frontend}` | `platform/conversation` + `platform/orders` (query port) | `agent.owns_route: eta`; es TARGET de las transitions de `orders`; `depends_on: [orders]` (consume sus eventos) |
 | **ads** | `chats.api.ads` | `plugins/ads/{api,frontend}` | `platform/whatsapp` o `platform/attribution` (lee origin/last_touch del vault) | sin agente; `depends_on: []` |
-| **evals** | `chats.workers.sales_eval` + `chats.api.evals` + `chats.agent.sales_eval` | `plugins/evals/{workers,api}` (backend) | `platform/conversation` (lee vault) + judge LLM | la UI "Calidad LLM" se queda en `agents_admin` → `agents_admin.depends_on: [evals]` + consume `/api/evals/*` (decidido) |
+| **evals** | — **NO se extrae** | se queda con el agente: `sales_eval` en `chats` (el eval del agente de ventas); el eval de `eta` irá dentro de `plugins/eta` cuando se extraiga | — | per-agente. La UI "Calidad LLM" (`agents_admin`) es el **plano de gestión** que muestra el eval de cada agente — a formalizar server-side (decisión 1) |
 
 `chats` queda como el **núcleo conversacional**: webhook ingest + inbox/SSE +
-handoff + `sales` + `remarketing`. **`sales` y `remarketing` van SIEMPRE juntos —
-están completamente acoplados por el funnel y nunca se separan** (decidido). Eso es
-lo que `chats` genuinamente posee; `eta`/`ads`/`evals` se extraen.
+handoff + `sales` + `remarketing` (+ el eval `sales_eval` del agente de ventas).
+**`sales` y `remarketing` van SIEMPRE juntos — están completamente acoplados por el
+funnel y nunca se separan** (decidido). Eso es lo que `chats` genuinamente posee;
+`eta` y `ads` se extraen, `evals` queda per-agente.
 
 **Decisiones cerradas (2026-06-05):**
-1. **evals UI** se queda en `agents_admin` (sin frontend propio); `agents_admin`
-   declara `depends_on: [evals]` y consume `/api/evals/*` (canal 2/4 declarado).
+1. **evals NO es un plugin** — queda acoplado al agente (cada agente tiene su
+   propio eval: `sales_eval` en `chats`; el de `eta` irá en `plugins/eta`). La UI
+   "Calidad LLM" (`agents_admin`) es el **plano de gestión** que muestra el eval de
+   cada agente. Consumir el eval de un agente debe formalizarse server-side (el
+   backend de `agents_admin` agrega los evals y sirve `/api/agents_admin/…`, igual
+   que `discover_agents` escanea manifests) para no violar P-OWN. Open design point
+   hasta que un 2º agente tenga eval propio.
 2. **Entities:** cada plugin posee la suya + cast declarado (§5.3) — sin shared.
 3. **sales+remarketing** permanecen juntos dentro de `chats` (acoplados por el funnel).
 
@@ -189,7 +197,8 @@ lo que `chats` genuinamente posee; `eta`/`ads`/`evals` se extraen.
 **Cada plugin posee su entity; cross-plugin vía cast declarado (canal 3).** Se mudan
 a `plugins/<id>/frontend/entities/`: `order`→orders, `tracked-order`→eta,
 `chat`/`session`/`message`/`handoff`→chats, `ads-campaign`→ads,
-`eval-trend`/`eval-candidate`→evals, `agent`→agents_admin, `catalog-sync`→catalog.
+`eval-trend`/`eval-candidate`→agents_admin (evals per-agente: las views viven en el
+plano de gestión), `agent`→agents_admin, `catalog-sync`→catalog.
 `src/entities/` central queda **vacío** — no hay shared entities.
 
 El caso `order` (lo necesitan `orders` Y el canvas de pago de `chats`) es el ejemplo
@@ -266,7 +275,7 @@ cd frontend_dashboard && npm run test:arch && npx tsc -b
 
 | # | Anti-pattern | Síntoma vivo | Fix | Test |
 |---|---|---|---|---|
-| **AP-1 Split plugin** | Backend de X dentro de Y | `eta`/`ads` backend en `chats`; `evals` backend en `chats`+UI en `agents_admin` | §5.2 extracción a `plugins/<id>/` + `platform/conversation` | P-1, P-2, P-9 |
+| **AP-1 Split plugin** | Backend de X dentro de Y | `eta` backend en `chats` (`ads` ✅ extraído; `evals` queda per-agente por decisión) | §5.2 extracción a `plugins/<id>/` + `platform/conversation` | P-1, P-2, P-9 |
 | **AP-2 Central entity** | Entity de dominio en PROTECTED `src/entities/` | TODAS las entities (10) centrales; el merge agregó `eval-trend/` central | §5.3 entities por-plugin + cast declarado | P-11, P-14 |
 | **AP-3 Hidden coupling** | Dep DURA sin declarar / target soft que dispara al vacío | `orders` 5 transitions →`chats/eta` (soft, **ya resuelto** por dispatcher-skip) | dispatcher-skip ✅ + `depends_on` solo duras | P-6, P-7, P-14 |
 | **AP-4 Central icon** | Glifo nuevo edita `Icon.tsx` PROTECTED | `resolveIcon` contra registry central | §5.3 íconos contribuidos | P-12 |
