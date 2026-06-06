@@ -36,7 +36,7 @@ agent:
       # La orders API emite `OrderStageChangedEvent` tras cada transición de
       # stage (PATCH .../schedule → preparing, PATCH .../stage, POST .../cancel).
       # El dispatcher lo rutea acá: `preparing` ARRANCA el workflow de
-      # seguimiento ETA (chats/eta); el resto lo SIGNALEA (`notify_stage_change`).
+      # seguimiento ETA (eta/eta); el resto lo SIGNALEA (`notify_stage_change`).
       # Si no hay workflow ETA corriendo, el signal devuelve NOT_FOUND y el
       # dispatcher lo absorbe como no-op (`dispatcher._is_not_found`).
       # NOTA: el emisor real es la HTTP API (no el proceso `reconcile`), pero las
@@ -53,7 +53,7 @@ agent:
             to_stage: preparing
           action:
             via: start_workflow_with_replace
-            target_plugin: chats
+            target_plugin: eta
             target_worker: eta
             target_workflow: HubaraEtaSessionWorkflow
             workflow_id_template: "eta-{event.session_id}"
@@ -67,7 +67,7 @@ agent:
             to_stage: ready
           action:
             via: signal
-            target_plugin: chats
+            target_plugin: eta
             target_worker: eta
             target_workflow: HubaraEtaSessionWorkflow
             workflow_id_template: "eta-{event.session_id}"
@@ -81,7 +81,7 @@ agent:
             to_stage: shipping
           action:
             via: signal
-            target_plugin: chats
+            target_plugin: eta
             target_worker: eta
             target_workflow: HubaraEtaSessionWorkflow
             workflow_id_template: "eta-{event.session_id}"
@@ -95,7 +95,7 @@ agent:
             to_stage: delivered
           action:
             via: signal
-            target_plugin: chats
+            target_plugin: eta
             target_worker: eta
             target_workflow: HubaraEtaSessionWorkflow
             workflow_id_template: "eta-{event.session_id}"
@@ -109,7 +109,7 @@ agent:
             to_stage: cancelled
           action:
             via: signal
-            target_plugin: chats
+            target_plugin: eta
             target_worker: eta
             target_workflow: HubaraEtaSessionWorkflow
             workflow_id_template: "eta-{event.session_id}"

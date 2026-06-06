@@ -1,8 +1,8 @@
 /**
  * Schemas Zod para validar respuestas del backend de `ads`.
  *
- * El endpoint vive en el plugin chats (`/api/chats/ads/*`) porque las
- * campañas se derivan del estado clasificado por el ingest WhatsApp
+ * El endpoint vive en el plugin `ads` (`/api/ads/*`) — las campañas
+ * se derivan del estado clasificado por el ingest WhatsApp
  * (`origin` + `last_touch` en metadata.json). Los campos `nullable()` son
  * los que el backend aún no puede derivar — el frontend muestra "—" +
  * icono dataPending en esos slots para que sea visible qué falta.
@@ -13,7 +13,7 @@
 
 import { z } from "zod";
 
-/* ── Campaña (response de GET /api/chats/ads/campaigns) ──────────────────── */
+/* ── Campaña (response de GET /api/ads/campaigns) ──────────────────── */
 
 /** Counts por estado conversacional — backend devuelve dict con TODAS las
  * 7 keys de `AdsState`. `null` solo si el bucket está vacío (caso edge).

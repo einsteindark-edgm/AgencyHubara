@@ -19,15 +19,15 @@ from types import SimpleNamespace
 
 from temporalio.testing import ActivityEnvironment
 
-from src.plugins.chats.agent.eta.activities import (
+from src.plugins.eta.agent.eta.activities import (
     bootstrap_eta_session_activity,
     claim_eta_notification_activity,
     record_eta_notification_activity,
     record_eta_reply_activity,
     start_eta_tracking_activity,
 )
-from src.plugins.chats.agent.eta.contracts import EtaSessionInput
-from src.plugins.chats.agent.eta.prompts import build_stage_notification_turn
+from src.plugins.eta.agent.eta.contracts import EtaSessionInput
+from src.plugins.eta.agent.eta.prompts import build_stage_notification_turn
 
 
 SID = "wa_573001112233"
@@ -199,7 +199,7 @@ async def test_record_reply_attaches_to_last_event_with_flag(_isolate_vault_dir:
 
 
 async def test_bootstrap_falls_back_to_local_workspace(_isolate_vault_dir: Path):
-    from src.plugins.chats.agent.eta.config.env import get_workspace_path
+    from src.plugins.eta.agent.eta.config.env import get_workspace_path
 
     result = await ActivityEnvironment().run(
         bootstrap_eta_session_activity, EtaSessionInput(session_id=SID, order_id=ORDER, to_stage="preparing")
@@ -220,7 +220,7 @@ async def test_build_prompt_loads_eta_workspace_and_templates(_isolate_vault_dir
     from exoclaw_temporal.config import BuildPromptInput, WorkspaceConfig
 
     from src.platform.registries import build_default_llm_config
-    from src.plugins.chats.agent.eta.config.env import get_workspace_path
+    from src.plugins.eta.agent.eta.config.env import get_workspace_path
 
     ws = WorkspaceConfig(path=str(get_workspace_path()))
     messages = await ActivityEnvironment().run(
@@ -282,7 +282,7 @@ class _ListPort:
 def test_tracked_from_summary_overlays_timeline():
     from datetime import datetime
 
-    from src.plugins.chats.api.eta import _BOGOTA, _tracked_from_summary
+    from src.plugins.eta.api import _BOGOTA, _tracked_from_summary
 
     tracking = {
         "order_id": ORDER,
@@ -306,7 +306,7 @@ def test_tracked_from_summary_overlays_timeline():
 def test_tracked_from_summary_without_tracking_has_empty_timeline():
     from datetime import datetime
 
-    from src.plugins.chats.api.eta import _BOGOTA, _tracked_from_summary
+    from src.plugins.eta.api import _BOGOTA, _tracked_from_summary
 
     s = _summary(display_id="#5", status="preparing")
     out = _tracked_from_summary(s, None, current="preparing", now=datetime.now(_BOGOTA))
@@ -323,7 +323,7 @@ async def test_list_surfaces_fulfillment_orders_without_tracking(
     los pedidos en fulfillment se muestran AUNQUE ninguna sesión tenga
     ``eta_tracking`` todavía — el caso de los pedidos que ya existían antes de
     que el Agente ETA existiera. ``new`` y ``cancelled`` quedan fuera."""
-    from src.plugins.chats.api import eta as eta_api
+    from src.plugins.eta import api as eta_api
 
     # Vault SIN ninguna sesión con eta_tracking (réplica del estado real).
     summaries = [
@@ -347,7 +347,7 @@ async def test_list_endpoint_overlays_sent_notification(
     """Behavior (gotcha #1): el mensaje que el agente ENVIÓ queda visible en el
     timeline, superpuesto sobre el pedido vivo del order port (match por
     ``eta_tracking.order_id`` == el id Medusa del summary)."""
-    from src.plugins.chats.api import eta as eta_api
+    from src.plugins.eta import api as eta_api
 
     _write_meta(
         _isolate_vault_dir, SID,
@@ -372,7 +372,7 @@ async def test_list_timeline_only_when_port_unavailable(
 ):
     """Sin Medusa (dev sin .env / order list falla): el listado cae a
     timeline-only — solo los pedidos que el agente ya trackeó."""
-    from src.plugins.chats.api import eta as eta_api
+    from src.plugins.eta import api as eta_api
 
     _write_meta(
         _isolate_vault_dir, SID,

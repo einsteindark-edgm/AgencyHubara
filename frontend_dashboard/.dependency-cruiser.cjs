@@ -120,6 +120,20 @@ module.exports = {
         path: "^src/plugins/",
       },
     },
+    {
+      // PLUGIN_CONTRACT.md P-FECROSS — cierra el gap F10 de la auditoría
+      // (PLUGIN_ISOLATION_AUDIT.md §2-F10). Inverso de features-no-plugins.
+      name: "plugins-no-features",
+      severity: "error",
+      comment:
+        "src/plugins/<id>/* must not import from src/features/* (la capa features " +
+        "compartida). Un plugin es autónomo: usa @/shared + sus propias entities. " +
+        "Acoplarse a un feature compartido rompe su portabilidad por-tenant.",
+      from: { path: "^src/plugins/" },
+      to: {
+        path: "^src/features/",
+      },
+    },
 
     // ------------------------------------------------------------------------
     // #4 — pages/ cannot import app/ or other pages.

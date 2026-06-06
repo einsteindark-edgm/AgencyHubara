@@ -1,6 +1,6 @@
-"""HTTP endpoints del plugin frontend `eta` — sirviéndose desde `chats`.
+"""HTTP endpoints del plugin `eta` — backend self-contained.
 
-El plugin `eta` es frontend-only (visualización de pedidos en seguimiento).
+Sirve la sección ETA del dashboard (visualización de pedidos en seguimiento):
 
   * El **listado** se deriva del **order query port**: todos los pedidos en una
     etapa de fulfillment (``preparing``/``ready``/``shipping``/``delivered``) —
@@ -10,21 +10,21 @@ El plugin `eta` es frontend-only (visualización de pedidos en seguimiento).
     existiera igual se muestran; el timeline se llena cuando el agente notifica).
   * Sobre cada pedido se **superpone el timeline** (mensajes que el Agente ETA
     envió + respuestas del cliente), que vive en ``metadata.eta_tracking`` de la
-    sesión del vault — lo escribe el ``HubaraEtaSessionWorkflow`` (chats/eta).
+    sesión del vault — lo escribe el ``HubaraEtaSessionWorkflow`` (plugin `eta`).
     El match pedido↔timeline es por ``eta_tracking.order_id`` == el id Medusa.
 
-Ambas fuentes son **platform ports / vault** (R-DIP: chats → platform, nunca
-chats → plugin sibling). Por eso el endpoint vive en `chats` (donde está el
-vault) y el frontend del plugin `eta` consume ``/api/chats/eta/*`` — mismo
-patrón que `ads` (``chats/api/ads.py``).
+Ambas fuentes son **platform ports / vault** (R-DIP: eta → platform, nunca
+eta → plugin sibling). Self-contained: lee el order query port + el vault vía
+`platform`, no importa de ningún plugin sibling (extraído de chats —
+PLUGIN_CONTRACT.md §5.2).
 
 Si Medusa no está configurado (dev sin .env / order list falla), el listado cae
 a **timeline-only**: solo los pedidos que el agente ya trackeó, derivados de
 ``eta_tracking`` sin datos vivos del pedido.
 
-Endpoints:
-  GET /api/chats/eta/tracked-orders        → lista de pedidos en seguimiento.
-  GET /api/chats/eta/tracked-orders/{id}   → uno (por display_id, ej. "#1247").
+Endpoints (prefix `/api/eta` del manifest):
+  GET /api/eta/tracked-orders        → lista de pedidos en seguimiento.
+  GET /api/eta/tracked-orders/{id}   → uno (por display_id, ej. "#1247").
 """
 from __future__ import annotations
 
@@ -283,7 +283,7 @@ async def _compose_tracked_orders(*, now: datetime) -> list[dict[str, Any]]:
     return out
 
 
-@router.get("/eta/tracked-orders")
+@router.get("/tracked-orders")
 async def list_tracked_orders() -> dict[str, Any]:
     """Lista de pedidos en seguimiento por el Agente ETA (para la sección ETA).
 
@@ -294,7 +294,7 @@ async def list_tracked_orders() -> dict[str, Any]:
     return {"orders": orders, "count": len(orders)}
 
 
-@router.get("/eta/tracked-orders/{display_id}")
+@router.get("/tracked-orders/{display_id}")
 async def get_tracked_order(
     display_id: str = PathParam(..., min_length=1, max_length=64),
 ) -> dict[str, Any]:

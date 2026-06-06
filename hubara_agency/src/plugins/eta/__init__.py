@@ -1,12 +1,17 @@
-"""Plugin `eta` — visualización del estado de envíos.
+"""Plugin `eta` — Agente de seguimiento de envíos (notificaciones de estado).
 
-Plugin frontend-only por ahora. NO aporta routers FastAPI ni workers Temporal.
-Los datos de `entities/tracked-order` (frontend) provienen de endpoints
-existentes (mocks por ahora).
+Plugin self-contained (extraído de `chats` — PLUGIN_CONTRACT.md §5.2). Tres capas:
 
-Si en el futuro se necesitan endpoints propios (ej. CRUD de tracked orders,
-webhook de transportistas), se crea `api/__init__.py` con un `router` y se
-declara en el manifest.
+- ``agent/``   — workspace + workflow + activities del sub-agente ETA.
+- ``workers/`` — worker Temporal ``eta`` (queue ``queue-eta-agent``).
+- ``api/``     — router FastAPI (``/api/eta/tracked-orders``) que sirve la sección
+  ETA del dashboard derivando los pedidos en fulfillment del order query port
+  (platform) + el ``metadata.eta_tracking`` per-sesión del vault.
+
+Es un TARGET de orquestación declarativa: el dispatcher lo arranca/signalea
+cuando `orders` emite ``OrderStageChangedEvent`` (ver las transitions del
+manifest de `orders`, target_plugin=eta). NO importa de ningún plugin sibling —
+solo `exoclaw_temporal` (session runtime) + `src.platform.*` (ports compartidos).
 
 Manifest: `frontend_dashboard/src/plugins/eta/plugin.yaml`.
 """

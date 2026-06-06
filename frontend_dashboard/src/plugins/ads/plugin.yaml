@@ -4,8 +4,8 @@ display_name: Ads Analytics
 description: |
   Análisis de campañas Meta Ads → WhatsApp (CTWA). KPIs de ROAS/CAC, embudo
   de conversión, distribución por estado, serie diaria y conversaciones
-  atribuidas. Plugin frontend-only por ahora — los datos vienen de
-  `entities/ads-campaign` (mock; reemplazable cuando exista backend Meta sync).
+  atribuidas. Backend self-contained (`/api/ads`) que deriva las campañas del
+  vault (origin/last_touch del ingest WhatsApp); extraído de chats.
 
 depends_on: []
 
@@ -17,10 +17,14 @@ frontend:
     sidebar:
       - { route: /ads, label: Ads, icon: megaphone }
 
-# Sin api: ni agent: por ahora — UI opera con mocks/entities/ads-campaign.
-# Cuando se necesite sync con Meta Ads o atribución cross-channel, agregar:
-#   api: { python_module: src.plugins.ads.api, prefix: /api/ads, ... }
-#   agent: { workers: [{ name: meta_sync, module: ... }] }
+# Backend self-contained (extraído de chats — PLUGIN_CONTRACT.md §5.2). Lee el
+# vault (origin/last_touch que persiste el ingest de WhatsApp) vía platform; no
+# importa de ningún plugin sibling. Agregación en `src.plugins.ads.aggregation`,
+# clasificación de estado en `src.plugins.ads.classification`.
+api:
+  python_module: src.plugins.ads.api
+  prefix: /api/ads
+  tags: [Ads]
 
 wiring_intents:
   env_vars_required: []

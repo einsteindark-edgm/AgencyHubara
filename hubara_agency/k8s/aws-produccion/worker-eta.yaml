@@ -21,10 +21,10 @@ spec:
         - name: worker
           image: hubara-agency-prod:latest
           imagePullPolicy: Always
-          # Worker del plugin chats — sub-agente ETA. Mantiene paridad con
+          # Worker del plugin eta — sub-agente de seguimiento. Mantiene paridad con
           # docker-compose.local.yml (hubara-worker-eta service) y con el
-          # manifest (chats/plugin.yaml → agent.workers[name=eta]).
-          command: ["python", "-m", "hubara_agency.src.plugins.chats.workers.eta"]
+          # manifest (eta/plugin.yaml → agent.workers[name=eta]).
+          command: ["python", "-m", "hubara_agency.src.plugins.eta.workers.eta"]
           # ⚠️  REQUIRED para producción — el operador DEBE inyectar (vía
           # `envFrom: secretRef:` en un overlay/kustomize) los siguientes
           # secretos. Sin ellos el worker arranca OK (la conexión Temporal no

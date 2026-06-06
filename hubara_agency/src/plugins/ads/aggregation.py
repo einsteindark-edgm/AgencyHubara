@@ -38,7 +38,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
-from src.plugins.chats.agent.sales.use_cases.classify_conversation_state import (
+from src.plugins.ads.classification import (
     VALID_STATES,
     classify_episode_state,
     classify_state,

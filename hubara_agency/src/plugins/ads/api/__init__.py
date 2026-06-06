@@ -1,15 +1,16 @@
-"""HTTP endpoints del plugin `ads` (frontend) — leyendo del plugin `chats`.
+"""HTTP endpoints del plugin `ads` — backend self-contained.
 
-El plugin `ads` no tiene backend propio: las campañas se derivan del estado
-clasificado por el ingest de WhatsApp (`origin` + `last_touch` + referrals
-en `wa_*/metadata.json` del vault). Por eso el endpoint vive dentro del
-plugin `chats` — donde están los metadata files — y respeta R-DIP (un
-plugin frontend NO importa código backend del plugin sibling).
+El plugin `ads` deriva las campañas del estado clasificado por el ingest de
+WhatsApp (`origin` + `last_touch` + referrals en `wa_*/metadata.json` del
+vault). Lee el vault vía `platform` (`WORKSPACE_VAULT_DIR`); la agregación vive
+en `src.plugins.ads.aggregation` y la clasificación en
+`src.plugins.ads.classification` — internas al plugin (extraído de chats,
+PLUGIN_CONTRACT.md §5.2). Self-contained: no importa de ningún plugin sibling.
 
-Endpoints:
-  GET /api/chats/ads/campaigns
+Endpoints (prefix `/api/ads` del manifest):
+  GET /api/ads/campaigns
        → lista de campañas detectadas (agrupadas por source_id).
-  GET /api/chats/ads/campaigns/{campaign_id}/conversations
+  GET /api/ads/campaigns/{campaign_id}/conversations
        → conversaciones WhatsApp atribuidas a esa campaña.
 
 Datos faltantes (spend, revenue, status Meta, etc.) se devuelven como
@@ -35,7 +36,7 @@ from typing import Any
 from fastapi import APIRouter, Path, Query
 
 from src.platform.config import WORKSPACE_VAULT_DIR
-from src.plugins.chats.agent.sales.use_cases.list_ads_campaigns import (
+from src.plugins.ads.aggregation import (
     bogota_day_start_ms,
     list_ads_campaigns,
     list_attributed_conversations,
@@ -107,7 +108,7 @@ def _cached_sessions(since_ms: int | None) -> list[tuple[FsPath, dict[str, Any]]
     return data
 
 
-@router.get("/ads/campaigns")
+@router.get("/campaigns")
 def get_ads_campaigns(
     days: int | None = Query(
         None, ge=1, le=365, description="ventana en días; omitir = todo el historial"
@@ -160,7 +161,7 @@ def get_ads_campaigns(
     return {"campaigns": [asdict(c) for c in campaigns]}
 
 
-@router.get("/ads/campaigns/{campaign_id}/conversations")
+@router.get("/campaigns/{campaign_id}/conversations")
 def get_ads_campaign_conversations(
     campaign_id: str = Path(..., description="source_id de la campaña"),
     days: int | None = Query(
@@ -220,7 +221,7 @@ def get_ads_campaign_conversations(
     }
 
 
-@router.get("/ads/campaigns/{campaign_id}/daily")
+@router.get("/campaigns/{campaign_id}/daily")
 def get_ads_campaign_daily(
     campaign_id: str = Path(..., description="source_id de la campaña"),
     days: int = Query(14, ge=1, le=90, description="ventana en días (default 14)"),

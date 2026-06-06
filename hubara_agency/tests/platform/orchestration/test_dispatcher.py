@@ -198,6 +198,93 @@ class TestNoMatches:
         assert client.started == []
 
 
+class TestEnabledPluginsSkip:
+    """P-SKIP (PLUGIN_CONTRACT.md §5.4): las transitions a plugins NO habilitados
+    se skipean (toggle simétrico, REQ-2). ENABLED_PLUGINS ausente → nunca skipea
+    (prod-safe). Cierra el coupling soft orders->chats/eta sin `depends_on` duro.
+    """
+
+    async def test_skips_transition_when_target_plugin_disabled(
+        self, fake_client_factory, patch_manifest, monkeypatch
+    ):
+        monkeypatch.setenv("ENABLED_PLUGINS", "chats")  # 'eta' NO habilitado
+        client = _FakeClient()
+        fake_client_factory(client)
+        patch_manifest(
+            [
+                _make_transition(
+                    via="start_workflow",
+                    target_plugin="eta",
+                    target_worker="eta",
+                    workflow_id_template="eta-{event.session_id}",
+                )
+            ]
+        )
+        envelope = envelope_for(
+            _Event(session_id="abc"),
+            source_plugin="chats",
+            source_worker="sales",
+        )
+        result = await dispatch_event_activity(envelope)
+
+        assert client.started == []                  # NO se disparó al vacío
+        assert result.matches == []
+        assert result.no_matches is False            # SÍ matcheó; se skipeó por disabled
+        assert result.skipped_disabled == ["eta/eta"]
+
+    async def test_does_not_skip_when_enabled_plugins_unset(
+        self, fake_client_factory, patch_manifest, monkeypatch
+    ):
+        monkeypatch.delenv("ENABLED_PLUGINS", raising=False)  # None = todos → no skip
+        client = _FakeClient()
+        fake_client_factory(client)
+        patch_manifest(
+            [
+                _make_transition(
+                    via="start_workflow",
+                    target_plugin="eta",
+                    target_worker="eta",
+                    workflow_id_template="eta-{event.session_id}",
+                )
+            ]
+        )
+        envelope = envelope_for(
+            _Event(session_id="abc"),
+            source_plugin="chats",
+            source_worker="sales",
+        )
+        result = await dispatch_event_activity(envelope)
+
+        assert len(client.started) == 1              # se disparó (default prod-safe)
+        assert result.skipped_disabled == []
+
+    async def test_fires_when_target_plugin_enabled(
+        self, fake_client_factory, patch_manifest, monkeypatch
+    ):
+        monkeypatch.setenv("ENABLED_PLUGINS", "chats,eta")  # eta habilitado
+        client = _FakeClient()
+        fake_client_factory(client)
+        patch_manifest(
+            [
+                _make_transition(
+                    via="start_workflow",
+                    target_plugin="eta",
+                    target_worker="eta",
+                    workflow_id_template="eta-{event.session_id}",
+                )
+            ]
+        )
+        envelope = envelope_for(
+            _Event(session_id="abc"),
+            source_plugin="chats",
+            source_worker="sales",
+        )
+        result = await dispatch_event_activity(envelope)
+
+        assert len(client.started) == 1
+        assert result.skipped_disabled == []
+
+
 class TestStartWorkflowVerb:
     async def test_starts_with_default_workflow_id_template(
         self, fake_client_factory, patch_manifest

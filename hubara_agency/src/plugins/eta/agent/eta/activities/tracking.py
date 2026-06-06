@@ -18,7 +18,7 @@ estado durable vive en ``metadata.json`` del vault, no en módulo.
       "started_at_ms": 1779...
     }
 
-Es la **fuente del timeline** que la dashboard API (``chats/api/eta.py``) lee
+Es la **fuente del timeline** que la dashboard API (``eta/api``) lee
 para pintar la sección ETA del frontend.
 """
 from __future__ import annotations

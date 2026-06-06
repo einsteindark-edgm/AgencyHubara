@@ -29,16 +29,10 @@ api:
     - { module: src.plugins.chats.api.sales,     prefix: /api,           tags: [WhatsApp_Sales_Domain] }
     - { module: src.plugins.chats.api.dashboard, prefix: /api/dashboard, tags: [Dashboard] }
     - { module: src.plugins.chats.api.handoff,   prefix: /api/dashboard, tags: [Dashboard_Handoff] }
-    # El plugin `ads` no tiene backend propio — sus endpoints viven aquí (donde
-    # están los metadata files de WhatsApp) y leen el `origin` + `last_touch`
-    # que el ingest persiste. Cross-plugin import sería violación de R-DIP, por
-    # eso vive en chats y el frontend del plugin `ads` consume `/api/chats/ads/*`.
-    - { module: src.plugins.chats.api.ads,       prefix: /api/chats,     tags: [Ads] }
-    # Agente ETA: el plugin frontend `eta` es frontend-only — sus endpoints viven
-    # aquí (en chats, donde están el vault + las conversaciones) y leen el order
-    # query port (platform) + el `metadata.eta_tracking` per-sesión. El frontend
-    # del plugin `eta` consume `/api/chats/eta/*` (mismo patrón que `ads`).
-    - { module: src.plugins.chats.api.eta,       prefix: /api/chats,     tags: [ETA] }
+    # (ads extraído a su propio plugin `plugins/ads` — backend self-contained en
+    #  `src.plugins.ads.api` con prefix `/api/ads`. PLUGIN_CONTRACT.md §5.2.)
+    # (eta extraído a su propio plugin `plugins/eta` — backend self-contained en
+    #  `src.plugins.eta.api` con prefix `/api/eta`. PLUGIN_CONTRACT.md §5.2.)
     - { module: src.plugins.chats.api.evals,     prefix: /api/chats,     tags: [Evals] }
 
 # ── Agente Temporal ────────────────────────────────────────────────────
@@ -377,61 +371,10 @@ agent:
           - temporal
           - litellm
 
-    # ── Sub-agente ETA (notificaciones de estado de pedido) ───────────────
-    # Tercer agente conversacional del plugin. Es un TARGET de orquestación: lo
-    # arranca/signalea el dispatcher cuando `orders` emite OrderStageChangedEvent
-    # (NO emite eventos propios → sin `emits`/`transitions`). Declara su
-    # workflow_class para que `test_transition_targets_exist` lo resuelva.
-    - name: eta
-      module: src.plugins.chats.workers.eta
-      task_queue: queue-eta-agent
-      dashboard:
-        display_name: Asistente de Seguimiento
-        role: Notifica al cliente cada cambio de estado de su pedido por WhatsApp
-        category: Postventa
-        icon: truck
-        color: green
-        model: DeepSeek V4 Pro
-        workspace: hubara_agency/src/plugins/chats/agent/eta/workspace
-        capabilities:
-          - { label: Notificar cambios de estado del pedido, icon: bolt }
-          - { label: Responder dudas del envío, icon: chat }
-          - { label: Escalar a un humano, icon: user }
-          - { label: Transferir a Ventas, icon: refresh }
-      workflow_classes:
-        - HubaraEtaSessionWorkflow
-      deployment:
-        replicas: 1                       # long-lived que duermen entre cambios de estado
-        cpu_request: 250m
-        memory_request: 384Mi
-        env_secrets:
-          - { var: DEEPSEEK_API_KEY,        secret: hubara-llm-secret,      key: DEEPSEEK_API_KEY }
-          - { var: WHATSAPP_PHONE_NUMBER_ID, secret: hubara-whatsapp-secret, key: WHATSAPP_PHONE_NUMBER_ID }
-          - { var: WHATSAPP_ACCESS_TOKEN,   secret: hubara-whatsapp-secret, key: WHATSAPP_ACCESS_TOKEN }
-          - { var: WHATSAPP_VERIFY_TOKEN,   secret: hubara-whatsapp-secret, key: WHATSAPP_VERIFY_TOKEN }
-          # READ-only de Medusa: `claim_eta_notification_activity` lee el order
-          # query port para los slots del mensaje (nombre, total, tipo de pago).
-          - { var: MEDUSA_BASE_URL,         secret: hubara-medusa-secret, key: MEDUSA_BASE_URL }
-          - { var: MEDUSA_ADMIN_TOKEN,      secret: hubara-medusa-secret, key: MEDUSA_ADMIN_TOKEN }
-      compose:
-        env:
-          TEMPORAL_URL: temporal:7233
-          API_BASE_LLMLITE: http://litellm:4000
-          WORKSPACE_VAULT_DIR: /app/hubara_vault
-          OTEL_EXPORTER_OTLP_ENDPOINT: http://host.docker.internal:4317
-          OTEL_SEMCONV_STABILITY_OPT_IN: gen_ai_latest_experimental
-          OPENLIT_PRICING_JSON: /app/hubara_agency/deploy/openlit/pricing.json
-          DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
-          WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID}
-          WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN}
-          WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN}
-          MEDUSA_BASE_URL: ${MEDUSA_BASE_URL}
-          MEDUSA_ADMIN_TOKEN: ${MEDUSA_ADMIN_TOKEN}
-        volumes:
-          - hubara-vault-local:/app/hubara_vault
-        depends_on:
-          - temporal
-          - litellm
+    # (Sub-agente ETA extraído a su propio plugin `plugins/eta` — su worker,
+    #  workflow y workspace viven ahora bajo `src.plugins.eta`. Sigue siendo un
+    #  TARGET de orquestación: el dispatcher lo arranca/signalea cuando `orders`
+    #  emite OrderStageChangedEvent, ahora con target_plugin=eta. §5.2.)
 
     # ── Harness de evaluación de calidad del Asesor de Ventas ─────────────
     # Worker del eval loop (LLMOps): un Temporal Schedule (3×/día, hora Bogotá)
