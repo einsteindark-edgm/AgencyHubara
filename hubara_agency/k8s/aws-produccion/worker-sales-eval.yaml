@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hubara-worker-sales-eval
+  namespace: default
+spec:
+  # Harness de evaluación de calidad (LLMOps): un Temporal Schedule (3×/día, hora
+  # Bogotá) dispara SalesEvalWorkflow → muestrea conversaciones reales → DeepEval
+  # (LLM-juez) puntúa adherencia al guion → emite scores a SigNoz + auto-curación.
+  # NO es agente conversacional (sin dashboard, sin emits/transitions). Una
+  # réplica alcanza (workflow agendado, no por-sesión).
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hubara-worker-sales-eval
+  template:
+    metadata:
+      labels:
+        app: hubara-worker-sales-eval
+    spec:
+      containers:
+        - name: worker
+          # ⚠️  Este worker requiere el extra `evals` (deepeval): su imagen se
+          # construye con `uv sync --extra evals`. Ajustar el tag si se publica
+          # una imagen separada con ese extra.
+          image: hubara-agency-prod:latest
+          imagePullPolicy: Always
+          # Worker del plugin chats — sub-agente sales_eval. Mantiene paridad con
+          # docker-compose.local.yml (hubara-worker-chats-sales_eval service) y con
+          # el manifest (chats/plugin.yaml → agent.workers[name=sales_eval]).
+          command: ["python", "-m", "hubara_agency.src.plugins.chats.workers.sales_eval"]
+          # ⚠️  REQUIRED para producción — inyectar vía `envFrom: secretRef:`
+          # (overlay/kustomize), NO commitear:
+          #   - DEEPSEEK_API_KEY  (llamada LLM via litellm — agente + fallback de juez)
+          # Convención del proyecto: igual que `worker-sales.yaml` /
+          # `worker-eta.yaml`, las llaves privadas se inyectan vía overlay.
+          env:
+            - name: API_BASE_LLMLITE
+              value: "http://litellm-proxy.default.svc.cluster.local:4000"
+            - name: TEMPORAL_URL
+              value: "temporal-frontend.temporal.svc.cluster.local:7233"
+            - name: TEMPORAL_NAMESPACE
+              value: "default"
+            - name: TEMPORAL_TLS_CERT_PATH
+              value: "/etc/temporal-certs/temporal.pem"
+            - name: TEMPORAL_TLS_KEY_PATH
+              value: "/etc/temporal-certs/temporal.key"
+            - name: WORKSPACE_VAULT_DIR
+              value: "/app/hubara_vault"
+            # Juez LLM (alias del proxy litellm) — distinto al modelo del agente
+            # para evitar self-preference.
+            - name: EVAL_JUDGE_MODEL
+              value: "litellm_proxy/gemini-backup"
+            # Candidatos a golden (auto-curación) → path montado durable.
+            - name: EVAL_CANDIDATES_DIR
+              value: "/app/hubara_vault/_evals/candidates"
+            # Cadencia/ventana del schedule (08/14/20 hora Bogotá por default).
+            - name: SALES_EVAL_SCHEDULE_ENABLED
+              value: "true"
+            - name: SALES_EVAL_LOOKBACK_HOURS
+              value: "8"
+            - name: SALES_EVAL_MAX_CONVERSATIONS
+              value: "50"
+          volumeMounts:
+            - name: hubara-vault
+              mountPath: /app/hubara_vault
+            - name: temporal-certs
+              mountPath: "/etc/temporal-certs"
+              readOnly: true
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 500m
+              memory: 768Mi
+      volumes:
+        - name: hubara-vault
+          persistentVolumeClaim:
+            claimName: hubara-vault-efs
+        - name: temporal-certs
+          secret:
+            secretName: temporal-cloud-certs
