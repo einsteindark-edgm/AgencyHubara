@@ -14,11 +14,12 @@
 ┌─────────────────────────────────────────┐
 │ 5. app/                                  │ ← imports todo lo de abajo
 ├─────────────────────────────────────────┤
-│ 4. pages/                                │ ← imports entities + plugins + shared
+│ 4. pages/                                │ ← imports registry + shared (plugins via lazy)
 ├─────────────────────────────────────────┤
-│ 3. plugins/<id>/frontend/  (features)    │ ← imports entities + shared
+│ 3. plugins/<id>/frontend/  (features +   │ ← imports SUS entities + shared
+│    entities del plugin)                  │
 ├─────────────────────────────────────────┤
-│ 2. entities/                             │ ← imports shared
+│ 2. entities/  (VACÍA post-F1-F8, P-11)   │ ← (histórico) imports shared
 ├─────────────────────────────────────────┤
 │ 1. shared/                               │ ← NO imports de src/*
 └─────────────────────────────────────────┘
@@ -28,9 +29,9 @@
 
 | # | Regla | Enforcement |
 |---|---|---|
-| 1 | `shared/` no importa de `src/*` (es el floor) | dep-cruiser `shared-no-upstream` |
-| 2 | `entities/` solo importa `shared/` | dep-cruiser `entities-only-shared` |
-| 3 | `plugins/<id>/frontend/` solo importa `entities/` + `shared/` (NO `pages/`, `app/`, ni otros plugins) | dep-cruiser `plugins-isolated` |
+| 1 | `shared/` no importa de `src/*` (es el floor) | dep-cruiser `shared-no-internal-imports` |
+| 2 | `entities/` solo importa `shared/` — capa central VACÍA post-F1-F8: las entities viven en `plugins/<id>/frontend/entities/` (gate P-11) | dep-cruiser `entities-no-features-pages-app` |
+| 3 | `plugins/<id>/frontend/` solo importa SUS entities + `shared/` (NO `pages/`, `app/`, `features/` ni otros plugins — ni sus entities, P-22) | dep-cruiser `plugins-no-cross-plugin` + `plugins-no-pages-app` + `plugins-no-features` |
 | 4 | `pages/` + `app/` pueden importar todo lo de abajo | (sin regla, es la cima) |
 
 ### §1.2 Excepción documentada
@@ -49,11 +50,14 @@ generado para descubrir plugins.
 // ❌ plugins/chats/frontend/ChatsSection.tsx
 import { OrderCard } from "@plugins/orders";          // CRITICAL: cross-plugin
 
-// ✅ Fix: si necesitás OrderCard cross-plugin, promovelo a shared/ui/
+// ✅ Fix UI genérica: promovela a shared/ui/
 import { OrderCard } from "@/shared/ui";
+// ✅ Fix DATOS de otro plugin: cast declarado (consumes: en plugin.yaml +
+//    cast server-side + entity LOCAL que llama /api/<tu-id>/*) — NUNCA
+//    importar la entity del otro plugin (gate P-22; PLUGIN_CONTRACT.md §5.3).
 ```
 
-**Linter:** dep-cruiser `plugins-no-cross-plugin`.
+**Linter:** dep-cruiser `plugins-no-cross-plugin` + P-22.
 
 ### §2.2 — Deep imports (CRITICAL)
 
@@ -63,11 +67,11 @@ import { SearchProducts } from "@plugins/chats/frontend/features/sales/ui/Search
 
 // ✅ Usar barrel
 import { SearchProducts } from "@plugins/chats/frontend/features/sales";
-// O mejor, si la feature lo export-default-ea via plugin barrel:
-import { ChatsSection } from "@plugins/chats";
+// O mejor, si la feature lo re-exporta via el barrel del plugin:
+import { ChatsSection } from "@plugins/chats/frontend";
 ```
 
-**Linter:** dep-cruiser `no-deep-imports`.
+**Linter:** dep-cruiser `no-deep-import-entities` + `no-deep-import-features`.
 
 ### §2.3 — `fetch()` directo en componentes (HIGH)
 
@@ -75,8 +79,8 @@ import { ChatsSection } from "@plugins/chats";
 // ❌ feature/<x>/ui/Component.tsx
 const data = await fetch("/api/x").then(r => r.json());
 
-// ✅ Usar entity hook
-import { useX } from "@/entities/x";
+// ✅ Usar entity hook (la entity vive en TU plugin, post-F1-F8)
+import { useX } from "@plugins/<id>/frontend/entities/x";
 const { data } = useX();
 ```
 
@@ -132,7 +136,7 @@ import { ChatBubble } from "@/features/chats";   // cross-feature legacy
 import { ChatBubble } from "@/shared/ui";
 ```
 
-**Linter:** dep-cruiser `legacy-features-isolated`.
+**Linter:** dep-cruiser `features-no-cross-feature`.
 
 ### §2.8 — Tailwind tokens con naming `--color-text-*` (MEDIUM)
 
@@ -257,8 +261,8 @@ function Orders() {
 Un plugin que NO declara bloque `frontend:` en `plugin.yaml` (porque expone
 solo API REST y/o workers, o su UI vive en un container Vite separado) NO
 debe aparecer en `src/app/plugin-registry.generated.ts`. Si lo hace, el
-`Page: lazy(() => import("@plugins/<id>/frontend"))` rompe la pasada de
-import-analysis de Vite con un error críptico:
+`Page: lazy(() => import("@plugins/<id>/frontend").then(assertPluginModule))`
+rompe la pasada de import-analysis de Vite con un error críptico:
 
 ```
 [plugin:vite:import-analysis] Failed to resolve import "@plugins/<id>/frontend"
@@ -303,8 +307,10 @@ api:
 import { Dashboard } from "@/pages/Dashboard";   // upstream import
 ```
 
-El plugin es agnóstico al shell. Si necesitás algo del shell, eso es un
-prop bandejón (ver `sections/06-frontend-plugin.md §3`).
+El plugin es agnóstico al shell. Si necesitás algo del shell, eso va por
+el contrato PluginHost — `usePluginHost()` / `useSelection()` de
+`@/shared/lib` (el "props bandejón" ya no existe; ver
+`sections/06-frontend-plugin.md §3`).
 
 ### §3.2 Plugins prohibido importar otros plugins
 
@@ -312,16 +318,19 @@ prop bandejón (ver `sections/06-frontend-plugin.md §3`).
 // ❌ plugins/chats/frontend/ChatsSection.tsx
 import { OrderCard } from "@plugins/orders/frontend/features/orders-board";
 
-// ✅ Si necesitás funcionalidad cross-plugin, promote a entities/ o shared/
+// ✅ UI genuinamente compartida → shared/ui/. DATOS de otro plugin →
+//    cast declarado (consumes: + cast server-side + entity LOCAL) —
+//    JAMÁS la entity del otro plugin (P-22). Caso real: chats consume
+//    order@v1 de orders vía api/order_actions → entity local order-ref.
 ```
 
 ### §3.3 Cross-feature DENTRO del mismo plugin está OK (relajación)
 
 ```typescript
-// ✅ plugins/chats/frontend/features/sales/ui/X.tsx
-import { ChatBubble } from "../../shared/components/ChatBubble";
-// O via paths:
+// ✅ plugins/chats/frontend/features/sales/ui/X.tsx — SIEMPRE via alias:
 import { ChatBubble } from "@plugins/chats/frontend/features/messages/components/ChatBubble";
+// (rutas relativas "../../" están prohibidas por dep-cruiser
+//  `no-relative-cross-layer`; las "./" entre siblings del mismo slice OK)
 ```
 
 Razón: el plugin es una unidad lógica. Sus features internas tienen
@@ -334,12 +343,12 @@ cross-dependencies naturales.
 | Anti-pattern | Linter | Severidad |
 |---|---|---|
 | Cross-plugin import | dep-cruiser `plugins-no-cross-plugin` | CRITICAL |
-| Deep import (`@plugins/X/ui/Y`) | dep-cruiser `no-deep-imports` | CRITICAL |
+| Deep import (`@plugins/X/ui/Y`) | dep-cruiser `no-deep-import-entities` + `no-deep-import-features` | CRITICAL |
 | `fetch()` directo en componente | dep-cruiser + grep | HIGH |
 | `useState` para server data | convention | HIGH |
 | `apiClient.get<T>()` sin Zod parse | `test_zod_at_boundary` (AST) | HIGH |
 | JSX en `.ts` | `test_jsx_uses_tsx_ext` | HIGH |
-| Cross-feature imports en `features/*` (legacy) | dep-cruiser `legacy-features-isolated` | MEDIUM |
+| Cross-feature imports en `features/*` (legacy) | dep-cruiser `features-no-cross-feature` | MEDIUM |
 | Tailwind `--color-text-*` | `test_tailwind_token_naming` | MEDIUM |
 | Env var hardcoded | `test_env_centralization` | MEDIUM |
 | Multiple QueryClients sin retry: false | convention | LOW |
@@ -348,6 +357,9 @@ cross-dependencies naturales.
 | Component multi-state mess | convention | LOW |
 | Falta loading/error state | convention | LOW |
 | Backend-only plugin en registry | `test_plugin_registry.arch.test.ts` | HIGH |
+| Entity en `src/entities/` central (debe quedar VACÍO) | `test_plugin_entity_ownership.arch.test.ts` (P-11) | CRITICAL |
+| Import de entity ajena / alias muerto `@/entities/*` | mismo archivo (P-22) + P-23 | CRITICAL |
+| Icon de manifest fuera de base ∪ contribuciones | `test_plugin_icons.arch.test.ts` (P-12) | HIGH |
 
 ---
 

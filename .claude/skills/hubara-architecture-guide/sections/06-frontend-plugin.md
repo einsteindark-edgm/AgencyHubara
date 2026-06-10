@@ -18,6 +18,8 @@ frontend_dashboard/src/plugins/<id>/
 └── frontend/
     ├── index.ts                         # BARREL — export default <Id>Section
     ├── <Id>Section.tsx                  # Page component (root del plugin)
+    ├── entities/                        # Entities DEL plugin (post-F1-F8; antes src/entities/)
+    │   └── <entity>/                    #   api.ts + contracts.ts + keys.ts + model.ts + index.ts
     ├── features/                        # Features internas (cross-feature OK acá)
     │   ├── <feature-a>/
     │   │   ├── index.ts
@@ -28,18 +30,26 @@ frontend_dashboard/src/plugins/<id>/
     │   └── <Component>.tsx
     ├── hooks/                           # Hooks locales al plugin
     │   └── use<X>.ts
+    ├── icons.tsx                        # (opcional) glifos NUEVOS del plugin → PLUGIN_ICONS (§5)
     └── styles.css                       # (opcional) tokens específicos del plugin
 ```
 
 ### Reglas críticas:
 
 - **`index.ts` debe `export default`** — el registry generado usa
-  `lazy(() => import("@plugins/<id>/frontend"))` y necesita el default.
+  `lazy(() => import("@plugins/<id>/frontend").then(assertPluginModule))`;
+  `assertPluginModule` hace que `tsc` FALLE EN COMPILACIÓN si falta el default.
 - **`<Id>Section.tsx`** es el componente que renderiza el shell — no
-  tiene `<html>`, `<body>` ni router. Es un subtree React.
+  tiene `<html>`, `<body>` ni router. Es un subtree React. NO recibe props
+  (contrato PluginHost — ver §3).
+- **Las entities del dominio viven ACÁ** (`frontend/entities/<x>/`), no en
+  `src/entities/` central (que DEBE quedar vacío — gate P-11). Imports vía
+  alias `@plugins/<id>/frontend/entities/<x>`, nunca `../../` ni `@/entities/`.
 - **Cross-feature dentro del plugin OK** (relajación del FSD strict):
   `features/<a>/` PUEDE importar de `features/<b>/`.
-- **Cross-plugin SIEMPRE prohibido**: `@plugins/chats/* ❌→ @plugins/orders/*`.
+- **Cross-plugin SIEMPRE prohibido**: `@plugins/chats/* ❌→ @plugins/orders/*`
+  (incluye la entity de otro plugin — gate P-22; el dato cross-plugin va por
+  cast declarado, PLUGIN_CONTRACT.md §5.3).
 
 ---
 
@@ -48,35 +58,42 @@ frontend_dashboard/src/plugins/<id>/
 ```typescript
 // canonical — plugins/<id>/frontend/index.ts
 export { default, <Id>Section } from "./<Id>Section";
-export type { <Id>SectionProps } from "./<Id>Section";
 ```
 
-El `default` es lo que `lazy()` importa. El named export + el `type`
-quedan para uso interno o tests.
+El `default` es lo que `lazy()` importa (y lo que `assertPluginModule`
+verifica en compilación). El named export queda para uso interno o tests.
+Ya no hay `<Id>SectionProps` que exportar — el Page no recibe props (§3).
 
 ---
 
 ## §3. Section component — contrato "props bandejón"
 
-El shell renderiza `<ActivePage showSidebar showInspector ... />` con un
-set fijo de props. Tu plugin recibe esas props y decide qué mostrar.
+> **(post-refactor F1-F8)** El "props bandejón" (las 12 props
+> `selectedChatId/setSelectedChatId/...`) **YA NO EXISTE** — el nombre de
+> esta sección quedó por compatibilidad de anchors. El shell renderiza
+> `<ActivePage />` SIN props, dentro de `<PluginHostProvider>`. El plugin
+> lee el shell vía los hooks de `@/shared/lib`: `usePluginHost()` (chrome:
+> `showSidebar`/`showInspector`) y `useSelection("<plugin-id>")`
+> (selección persistente cross-sección).
 
 ### §3.1 Props bandejón (contrato canónico)
 
 ```typescript
 // canonical — plugins/<id>/frontend/<Id>Section.tsx
-export interface <Id>SectionProps {
-  showSidebar: boolean;        // operador toggled la sidebar; respetá si renderizar
-  showInspector: boolean;      // operador toggled el inspector (panel derecho)
-  // futuras props del shell van acá — siempre OPTIONAL si las agregás
-}
+import { usePluginHost, useSelection } from "@/shared/lib";
 
-export function <Id>Section({ showSidebar, showInspector }: <Id>SectionProps) {
+export function <Id>Section() {
+  // Chrome global del shell (toggles del Toolbar).
+  const { showSidebar, showInspector } = usePluginHost();
+  // Selección persistente del plugin: clave = tu plugin id; el shell NO
+  // conoce las claves. Segundo arg opcional = fallback inicial.
+  const [selectedId, setSelectedId] = useSelection("<plugin-id>");
+
   return (
     <>
-      {showSidebar && <aside className="sidebar"><SidebarContent /></aside>}
-      <main className="main"><MainContent /></main>
-      {showInspector && <aside className="inspector"><InspectorContent /></aside>}
+      {showSidebar && <aside className="sidebar"><SidebarContent onSelect={setSelectedId} /></aside>}
+      <main className="main"><MainContent id={selectedId} /></main>
+      {showInspector && <aside className="inspector"><InspectorContent id={selectedId} /></aside>}
     </>
   );
 }
@@ -86,17 +103,19 @@ export default <Id>Section;
 
 ### §3.2 Por qué "props bandejón"
 
-El shell pasa un set de booleans y callbacks fijos a TODOS los plugins.
-Esto permite:
+El contrato genérico PluginHost (que reemplazó al bandejón) permite:
 
 - **Consistencia visual** — sidebar y inspector son iguales cross-plugin.
 - **Toggling unificado** — el operador clickea "hide sidebar" en el
   Toolbar y TODOS los plugins responden uniforme.
 - **Cero acoplamiento** — el plugin no necesita saber qué otros plugins
-  existen ni cómo orquestar el shell.
+  existen ni cómo orquestar el shell, y el shell no conoce el estado de
+  selección de ningún plugin (la clave del mapa la elige cada plugin).
+- **Dashboard.tsx intocado** — un plugin nuevo con selección propia NO
+  edita ningún archivo central: `useSelection("mi_plugin")` y listo.
 
-Si tu plugin NO necesita sidebar o inspector, simplemente ignorá las
-props.
+Si tu plugin NO necesita sidebar o inspector, simplemente no leas esos
+campos de `usePluginHost()`.
 
 ---
 
@@ -137,28 +156,30 @@ alfabéticamente por `key`.
 
 ## §5. Icon registry (spinal hasta plugin-local icons)
 
-```typescript
-// frontend_dashboard/src/shared/ui/Icon.tsx (extracto)
-export const ICONS = {
-  chat: ChatIcon,
-  workflow: WorkflowIcon,
-  pkg: PkgIcon,
-  bot: BotIcon,           // fallback si el plugin pide un icon que no existe
-  bolt: BoltIcon,
-  // ...
-} as const;
+> **(post-refactor F1-F8)** Plugin-local icons YA LLEGÓ. Un glifo NUEVO
+> ya NO se appendea a `shared/ui/Icon.tsx`: el plugin lo trae consigo.
 
-export type IconName = keyof typeof ICONS;
+```typescript
+// canonical — plugins/<id>/frontend/icons.tsx
+export const icons = {
+  nombreDelGlifo: ComponenteSvg,   // mismo trato visual que Icon.tsx (stroke 1.6 / 16px / currentColor)
+} as const;
 ```
 
-**Hasta que plugin-local icons sea deferido**, agregar icon nuevo
-requiere editar `Icon.tsx`. Es **spinal** (declarar `wiring_intent`
-`ts_object_entries_append` en task-result.yaml si tu task agrega icons).
+`npm run plugins:sync` detecta el archivo y mergea esos glifos al export
+`PLUGIN_ICONS` del registry generado. El Toolbar resuelve en orden:
+contribuciones (`PLUGIN_ICONS`) → set base (`Icon.tsx`) → fallback bot.
+
+`shared/ui/Icon.tsx` queda como **SET BASE compartido** — sigue listado
+como spinal en `spinal-files.yaml` pero solo se edita para glifos
+genuinamente compartidos cross-plugin (raro; ver
+`sections/07-shared-files.md`). El gate **P-12** valida que todo icon
+referenciado en un manifest exista en base ∪ contribuciones.
 
 ### Convención si el plugin pide un icon que NO existe:
 
-`Toolbar.tsx` fallback a `Icon.bot` con un `console.warn(...)`. NO rompe
-el shell — solo se ve raro.
+`Toolbar.tsx` fallback a `Icon.bot`. NO rompe el shell — solo se ve raro
+(y P-12 lo caza en `npm run test:arch` si vino de un manifest).
 
 ---
 
@@ -167,20 +188,37 @@ el shell — solo se ve raro.
 ```typescript
 // canonical — plugins/<id>/frontend/<Id>Section.test.tsx
 import { render, screen } from "@testing-library/react";
+import { PluginHostProvider, type PluginHostState } from "@/shared/lib";
 import { <Id>Section } from "./<Id>Section";
 
+// El Page no recibe props: el shell-state entra por PluginHostProvider.
+function renderWithHost(overrides: Partial<PluginHostState> = {}) {
+  const host: PluginHostState = {
+    showSidebar: true,
+    showInspector: true,
+    selection: {},
+    setSelection: vi.fn(),
+    ...overrides,
+  };
+  return render(
+    <PluginHostProvider value={host}>
+      <<Id>Section />
+    </PluginHostProvider>,
+  );
+}
+
 test("renders main content always", () => {
-  render(<<Id>Section showSidebar={false} showInspector={false} />);
+  renderWithHost({ showSidebar: false, showInspector: false });
   expect(screen.getByRole("main")).toBeInTheDocument();
 });
 
 test("renders sidebar when showSidebar is true", () => {
-  render(<<Id>Section showSidebar showInspector={false} />);
+  renderWithHost({ showInspector: false });
   expect(screen.getByRole("complementary", { name: /sidebar/i })).toBeInTheDocument();
 });
 
 test("hides inspector when showInspector is false", () => {
-  render(<<Id>Section showSidebar={false} showInspector={false} />);
+  renderWithHost({ showSidebar: false, showInspector: false });
   expect(screen.queryByRole("complementary", { name: /inspector/i })).not.toBeInTheDocument();
 });
 ```
@@ -197,17 +235,19 @@ Cada plugin se carga **lazy** automáticamente desde el registry generado:
 
 ```typescript
 // auto-gen en plugin-registry.generated.ts
-Page: lazy(() => import("@plugins/chats/frontend")),
+Page: lazy(() => import("@plugins/chats/frontend").then(assertPluginModule)),
 ```
 
 El `Dashboard.tsx` envuelve la `ActivePage` en `<Suspense>` con un
 fallback. Cuando el operador clickea la section, el bundle del plugin se
-descarga en background.
+descarga en background. `assertPluginModule` verifica EN COMPILACIÓN que
+el entry default-exporte el componente Page.
 
 **Implicancia para vos:** mantenete dentro del plugin dir. Si importás
-algo de `@/entities/*` o `@/shared/*`, eso queda en el bundle principal
-(es código shared, ya cargado). Si importás algo de `@plugins/<other>/*`
-(prohibido por dep-cruiser), rompés el code splitting + el aislamiento.
+algo de `@/shared/*`, eso queda en el bundle principal (es código shared,
+ya cargado); tus entities (`@plugins/<id>/frontend/entities/*`) viajan en
+TU bundle. Si importás algo de `@plugins/<other>/*` (prohibido por
+dep-cruiser + P-22), rompés el code splitting + el aislamiento.
 
 ---
 
@@ -243,11 +283,11 @@ plugins/catalog/frontend/features/
 
 | # | Anti-pattern | Por qué mal | Qué hacer |
 |---|---|---|---|
-| 1 | `<Id>Section` sin `export default` | `lazy(() => import(...))` falla — registry roto | Agregar `export default <Id>Section` al fin del archivo |
-| 2 | `import { X } from "@plugins/orders"` desde plugin `chats` | Cross-plugin — viola dep-cruiser | Mover X a `entities/` o `shared/ui/` |
-| 3 | Component del shell hardcodeado (e.g. `<Toolbar />` dentro del plugin) | El plugin no orquesta el shell | El shell pasa props bandejón; el plugin renderiza su content |
-| 4 | `fetch(...)` directo en Section | Viola FSD "no fetch in components" | Usar entity hook (`useX()`) |
-| 5 | Icon nuevo agregado sin declarar wiring_intent | Conflict si 2 plugins agregan icons | Declarar `wiring_intent` `ts_object_entries_append` para `shared/ui/Icon.tsx` |
+| 1 | `<Id>Section` sin `export default` | `assertPluginModule` rompe `tsc` — registry roto en compilación | Agregar `export default <Id>Section` al fin del archivo |
+| 2 | `import { X } from "@plugins/orders"` desde plugin `chats` | Cross-plugin — viola dep-cruiser + P-22 | UI genérica → `shared/ui/`; dato de otro plugin → cast declarado + entity LOCAL (PLUGIN_CONTRACT.md §5.3) |
+| 3 | Component del shell hardcodeado (e.g. `<Toolbar />` dentro del plugin) | El plugin no orquesta el shell | El plugin lee `usePluginHost()`/`useSelection()`; el shell orquesta |
+| 4 | `fetch(...)` directo en Section | Viola FSD "no fetch in components" | Usar entity hook (`useX()` de `frontend/entities/<x>`) |
+| 5 | Glifo nuevo appendeado a `shared/ui/Icon.tsx` | Icon.tsx es el SET BASE compartido, no el registry para glifos de UN plugin | Traerlo en `frontend/icons.tsx` del plugin (`export const icons = {...}`) + `npm run plugins:sync` (P-12) |
 
 ---
 

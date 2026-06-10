@@ -1,10 +1,16 @@
 # Example — Plugin frontend-only (template A)
 
-> **Plugins reales del repo que siguen este template:** `orders`, `eta`,
-> `agents_admin`.
+> **(post-refactor F1-F8)** Hoy NINGÚN plugin del repo queda en template A
+> puro — `orders` (la base de este ejemplo), `eta` y `agents_admin` fueron
+> promovidos (todos declaran `api:`; orders/eta además `agent:`). El
+> frontend que se muestra acá sigue siendo el canónico.
 >
-> **Use cuándo:** tu plugin solo tiene UI; consume datos via `entities/`
-> shared o via endpoints de otro plugin.
+> **Use cuándo:** tu plugin solo tiene UI estática/derivada. Si necesita
+> datos de red, ya NO es template A puro: los sirve TU propia API
+> (template B) y los consume una entity LOCAL
+> (`frontend/entities/<x>/` → `/api/<tu-id>/*`). Llamar `/api/<otro>/`
+> desde tu frontend está prohibido (gate P-9); el dato de otro plugin
+> entra por cast declarado (`consumes:` — PLUGIN_CONTRACT.md §5.3).
 
 ---
 
@@ -16,6 +22,13 @@ frontend_dashboard/src/plugins/orders/
 └── frontend/
     ├── index.ts                               # barrel
     ├── OrdersSection.tsx                      # Page root
+    ├── entities/
+    │   └── order/                             # entity LOCAL del plugin (post-F1-F8;
+    │       ├── api.ts                         #   llama SOLO /api/orders/* — P-9)
+    │       ├── contracts.ts
+    │       ├── keys.ts
+    │       ├── model.ts
+    │       └── index.ts
     └── features/
         ├── orders-board/
         │   ├── index.ts
@@ -31,18 +44,23 @@ hubara_agency/src/plugins/orders/
 └── __init__.py                                # anchor con docstring (no expone nada)
 ```
 
+(El dir `entities/` solo aparece si el plugin tiene datos de red — y en
+ese caso el plugin también necesita su `api:`, ver nota del header.)
+
 ---
 
 ## §2. Manifest (`plugin.yaml`)
 
 ```yaml
-# frontend_dashboard/src/plugins/orders/plugin.yaml (real)
+# frontend_dashboard/src/plugins/orders/plugin.yaml (histórico — el orders
+# real hoy es v0.2.0 full-stack: sumó `api:` + `agent:`; este es el
+# manifest mínimo de un template A)
 id: orders
 version: 0.1.0
 display_name: Orders
-description: Tablero kanban de órdenes (estados + filtros + inspector). Plugin frontend-only por ahora — los datos vienen de `entities/order` (shared).
+description: Tablero kanban de órdenes (estados + filtros + inspector). Plugin frontend-only por ahora — los datos vendrán de su propia API + entity local cuando se promueva a B.
 
-depends_on: []
+depends_on: []                    # deps DURAS — validadas al boot (P-6) si declarás alguna
 
 frontend:
   entry: ./frontend
@@ -67,8 +85,9 @@ wiring_intents:
 
 ```typescript
 // canonical — plugins/orders/frontend/index.ts
+// El default es OBLIGATORIO: el registry lo verifica en compilación
+// (assertPluginModule). Ya no hay Props que exportar (el Page no recibe props).
 export { default, OrdersSection } from "./OrdersSection";
-export type { OrdersSectionProps } from "./OrdersSection";
 ```
 
 ---
@@ -78,17 +97,18 @@ export type { OrdersSectionProps } from "./OrdersSection";
 ```typescript
 // canonical — plugins/orders/frontend/OrdersSection.tsx
 import { useState } from "react";
+import { usePluginHost, useSelection } from "@/shared/lib";
 import { OrdersBoard } from "./features/orders-board";
 import { OrdersFilters } from "./features/orders-filters";
 import { OrdersInspector } from "./features/orders-inspector";
 
-export interface OrdersSectionProps {
-  showSidebar: boolean;
-  showInspector: boolean;
-}
-
-export function OrdersSection({ showSidebar, showInspector }: OrdersSectionProps) {
-  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
+// El Page NO recibe props (post-F7): chrome y selección llegan por el
+// contexto PluginHost que el shell provee.
+export function OrdersSection() {
+  const { showSidebar, showInspector } = usePluginHost();
+  // Selección persistente cross-sección — clave = el plugin id; el
+  // segundo arg (opcional) es el fallback inicial.
+  const [selectedOrderId, setSelectedOrderId] = useSelection("orders");
   const [filter, setFilter] = useState<string>("");
 
   return (
@@ -123,11 +143,12 @@ export default OrdersSection;
 
 **Notar:**
 
-- Props bandejón (`showSidebar` + `showInspector`) — el shell las pasa,
-  el plugin las honora.
+- Contrato PluginHost (`usePluginHost()` + `useSelection("orders")`) — el
+  Page no recibe props; el "props bandejón" ya no existe (post-F7).
 - Cross-feature import dentro del plugin OK (`OrdersFilters` y
-  `OrdersBoard` se referencian via barrels).
-- Estado local del plugin (selected + filter) vive en la Section. Si crece,
+  `OrdersBoard` se referencian via barrels, siempre por alias `@plugins/...`).
+- La selección vive en el PluginHost (sobrevive cambios de sección); el
+  estado puramente local (filter) sigue en `useState`. Si crece,
   considerar `features/orders-board/model/useOrdersState.ts`.
 
 ---
@@ -136,7 +157,8 @@ export default OrdersSection;
 
 ```typescript
 // canonical — features/orders-board/ui/OrdersBoard.tsx
-import { useOrders } from "@/entities/order";           // OK: entity shared
+// Entity LOCAL del plugin (post-F1-F8) — alias completo, nunca "@/entities/":
+import { useOrders } from "@plugins/orders/frontend/entities/order";
 import { OrderCard } from "./OrderCard";
 
 interface Props {
@@ -187,11 +209,26 @@ export { OrdersBoard } from "./ui/OrdersBoard";
 // canonical — plugins/orders/frontend/OrdersSection.test.tsx
 import { render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { PluginHostProvider, type PluginHostState } from "@/shared/lib";
 import { OrdersSection } from "./OrdersSection";
 
-function wrap(children: React.ReactNode) {
+// El Page no recibe props — el shell-state se inyecta vía PluginHostProvider.
+function wrap(overrides: Partial<PluginHostState> = {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
+  const host: PluginHostState = {
+    showSidebar: true,
+    showInspector: true,
+    selection: {},
+    setSelection: vi.fn(),
+    ...overrides,
+  };
+  return (
+    <QueryClientProvider client={qc}>
+      <PluginHostProvider value={host}>
+        <OrdersSection />
+      </PluginHostProvider>
+    </QueryClientProvider>
+  );
 }
 
 beforeEach(() => {
@@ -204,12 +241,12 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 test("renders board when showSidebar=false, showInspector=false", () => {
-  render(wrap(<OrdersSection showSidebar={false} showInspector={false} />));
+  render(wrap({ showSidebar: false, showInspector: false }));
   expect(screen.getByRole("main")).toBeInTheDocument();
 });
 
 test("hides sidebar when showSidebar=false", () => {
-  render(wrap(<OrdersSection showSidebar={false} showInspector />));
+  render(wrap({ showSidebar: false }));
   expect(screen.queryByRole("complementary", { name: /sidebar/i })).not.toBeInTheDocument();
 });
 ```
@@ -236,12 +273,16 @@ test.describe("orders", () => {
 
 ## §8. Lo que NO está acá (porque no aplica al template A)
 
-- `api:` block en el manifest — el plugin no tiene endpoints.
+- `api:` block en el manifest — el plugin no tiene endpoints (y por eso
+  tampoco entities con fetch: sin API propia no hay de dónde leer — P-9).
 - `agent:` block — el plugin no tiene workers Temporal.
-- `hubara_agency/src/plugins/orders/api/` — no existe.
-- `hubara_agency/src/plugins/orders/agent/` — no existe.
-- `hubara_agency/src/plugins/orders/workers/` — no existe.
-- `hubara_agency/k8s/aws-produccion/worker-orders-*.yaml` — no existe.
+- `hubara_agency/src/plugins/<id>/api/` — no existe.
+- `hubara_agency/src/plugins/<id>/agent/` — no existe.
+- `hubara_agency/src/plugins/<id>/workers/` — no existe.
+- `hubara_agency/k8s/aws-produccion/worker-<id>-*.yaml` — no existe.
+
+(En el `orders` REAL de hoy todos esos paths SÍ existen — fue promovido a
+full-stack. Acá describen el template A genérico.)
 
 Si tu plugin va a crecer (e.g. sumarle worker), ver `examples/plugin-with-worker.md`.
 
@@ -252,7 +293,7 @@ Si tu plugin va a crecer (e.g. sumarle worker), ver `examples/plugin-with-worker
 | Pro | Limitación |
 |---|---|
 | Simple — solo frontend | No tiene lógica propia backend |
-| 0 conflictos cross-plugin | Depende 100% de `entities/` shared y APIs de otros plugins |
+| 0 conflictos cross-plugin | Sin API propia no puede mostrar datos de red (P-9 prohíbe `/api/<otro>/`; no hay entities shared) |
 | Setup rápido (~30 min) | Si el dominio crece, hay que promover a B o C |
 | Tests rápidos (solo Vitest + Playwright) | Sin functional tests Python |
 
@@ -262,10 +303,11 @@ Si tu plugin va a crecer (e.g. sumarle worker), ver `examples/plugin-with-worker
 
 | Caso | Template recomendado |
 |---|---|
+| Necesitás mostrar datos de red (propios o de otro plugin) | B (frontend + API) — entity local + tu API; si el dato es ajeno, cast declarado (`consumes:`) |
 | Necesitás endpoint propio | B (frontend + API) |
 | Necesitás workflow Temporal | C o D |
 | Necesitás integración con LLM | C o D |
-| El dominio tiene state propio cross-plugin | Promover a `entities/` shared antes de meter en plugin |
+| Otro plugin necesita TUS datos | Publicar contrato versionado (`order@v1`-style); el consumidor declara `depends_on` + `consumes` — NUNCA entities compartidas |
 
 ---
 

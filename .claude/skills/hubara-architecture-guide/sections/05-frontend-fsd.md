@@ -1,7 +1,7 @@
 # Sección 05 — Frontend FSD (capas + plugin registry + entities + features)
 
-> **Cuándo leer esto:** vas a editar `frontend_dashboard/src/{entities,
-> features,shared,app,pages}/`, o agregar feature shared cross-plugin.
+> **Cuándo leer esto:** vas a editar `frontend_dashboard/src/{shared,app,
+> pages}/`, o las entities de un plugin (`plugins/<id>/frontend/entities/`).
 > **Pre-requisito:** `sections/01-general.md`. Si vas a crear/editar el
 > frontend de un plugin específico, después leé `sections/06-frontend-plugin.md`.
 > **Tamaño:** ~10 KB.
@@ -17,9 +17,9 @@
 ├─────────────────────────────────────────────────────┤
 │ 4. pages/      — shells (Dashboard.tsx)             │ ← consume entities + plugins + shared
 ├─────────────────────────────────────────────────────┤
-│ 3. plugins/<id>/frontend/  — features del plugin    │ ← consume entities + shared
+│ 3. plugins/<id>/frontend/  — features + entities    │ ← consume SUS entities + shared
 ├─────────────────────────────────────────────────────┤
-│ 2. entities/   — dominio shared cross-plugin        │ ← consume shared
+│ 2. entities/   — VACÍA post-F1-F8 (gate P-11)       │ ← entities viven en cada plugin
 ├─────────────────────────────────────────────────────┤
 │ 1. shared/     — primitivas UI + lib + api          │ ← floor; NO consume nada de src/*
 └─────────────────────────────────────────────────────┘
@@ -28,19 +28,20 @@
 **Las 4 import rules** (enforced por `dependency-cruiser`):
 
 1. `shared/` no importa nada de `src/` (es el floor).
-2. `entities/` solo importa `shared/`.
-3. `features/` (legacy) solo importa `entities/` + `shared/`.
+2. `entities/` solo importa `shared/` (capa central hoy VACÍA — ver §3).
+3. `features/` (legacy) solo importa `entities/` + `shared/` (también vacía).
 4. `pages/` y `app/` pueden importar todo lo de abajo.
 
 **Reglas extra del refactor** (también enforced por dep-cruiser):
 
 | Regla | Significa |
 |---|---|
-| Cross-plugin imports prohibidos | `@plugins/chats/* ❌→ @plugins/orders/*` |
+| Cross-plugin imports prohibidos | `@plugins/chats/* ❌→ @plugins/orders/*` (incluye entities — gate P-22) |
 | Plugins prohibido importar `pages/` o `app/` | El plugin es agnóstico al shell |
 | `features/*` (legacy) prohibido importar `plugins/*` | Las features legacy no saben de plugins |
 | Excepción documentada | `pages/Dashboard.tsx → app/plugin-registry.generated.ts` (el shell consume el registry) |
 | Dentro del mismo plugin, cross-feature OK | Relajación del FSD strict; ver §3.2 abajo |
+| Imports intra-plugin SIEMPRE por alias | `@plugins/<id>/frontend/entities/<x>` — `../../` relativo lo prohíbe dep-cruiser (`no-relative-cross-layer`); `@/entities/...` es alias MUERTO (otro gate lo caza) |
 
 Detalle de los **14 anti-patterns FSD** en `references/fsd-rules.md`.
 
@@ -51,7 +52,7 @@ Detalle de los **14 anti-patterns FSD** en `references/fsd-rules.md`.
 ```
 frontend_dashboard/src/shared/
 ├── ui/                          # primitivas visuales: Icon, Button, Panel, Toolbar, TitleBar, StatusBar
-│   ├── Icon.tsx                 # registry centralizado de SVG icons (spinal — ver §07)
+│   ├── Icon.tsx                 # SET BASE de SVG icons compartidos (glifos nuevos van en el plugin — ver §07)
 │   ├── Button.tsx
 │   ├── Panel.tsx
 │   ├── Toolbar.tsx              # segmented control con sections dinámicas (props-driven)
@@ -75,8 +76,8 @@ frontend_dashboard/src/shared/
 
 - **Zero domain knowledge** — un componente de `shared/` no conoce
   "chat", "order", "agent" (cualquier nombre del dominio).
-- **Zero `useState` para server data** — TanStack Query vive en `entities/`,
-  NO en `shared/`.
+- **Zero `useState` para server data** — TanStack Query vive en las
+  entities del plugin (`plugins/<id>/frontend/entities/`), NO en `shared/`.
 - **Sin fetch directo en componentes** — todo HTTP pasa por
   `apiClient.get/post/...` (definido en `shared/api/client.ts`).
 - **Zod at the boundary** — cada `apiClient.get<unknown>(...)` se sigue de
@@ -86,22 +87,31 @@ frontend_dashboard/src/shared/
 
 ## §3. `entities/` — dominio shared cross-plugin
 
-```
-frontend_dashboard/src/entities/
-├── chat/                        # useChatInbox, useSessionsStream (SSE)
-├── message/
-├── session/
-├── agent/                       # useAgents
-├── order/                       # useOrders
-├── tracked-order/               # useTrackedOrders
-├── customer/
-└── upload-job/
-```
-
-Cada entity tiene la estructura típica FSD:
+> **(post-refactor F1-F8)** Las entities ya NO viven en `src/entities/`
+> central: cada entity de dominio es **single-owner** y vive dentro de su
+> plugin, en `plugins/<id>/frontend/entities/<entity>/`. `src/entities/`
+> central DEBE quedar VACÍO — lo enforcea el gate **P-11**
+> (`src/test/architecture/test_plugin_entity_ownership.arch.test.ts`).
+> Un plugin JAMÁS importa la entity de otro plugin (gate **P-22**); el
+> caso cross-plugin va por cast declarado (ver §3.2).
 
 ```
-entities/<x>/
+frontend_dashboard/src/plugins/
+├── chats/frontend/entities/
+│   ├── chat/                    # useChatInbox
+│   ├── session/                 # useSessionsStream (SSE)
+│   ├── message/
+│   ├── handoff/
+│   └── order-ref/               # entity LOCAL del cast chats→orders (§3.2)
+├── orders/frontend/entities/order/        # useOrders
+├── eta/frontend/entities/tracked-order/   # useTrackedOrders
+└── agents_admin/frontend/entities/agent/  # useAgents
+```
+
+Cada entity tiene la estructura típica FSD (mismos roles que antes):
+
+```
+plugins/<id>/frontend/entities/<x>/
 ├── model.ts                     # interface <X> (pure TS types, no Zod)
 ├── contracts.ts                 # z.object({...}) — Zod schemas
 ├── keys.ts                      # query key factory: <x>Keys.all / .detail(id) / ...
@@ -111,16 +121,21 @@ entities/<x>/
 └── (api.test.tsx, etc.)
 ```
 
+Imports DENTRO del plugin: SIEMPRE vía alias
+`@plugins/<id>/frontend/entities/<entity>` — NUNCA rutas relativas
+`../../` (dep-cruiser las prohíbe) ni `@/entities/...` (alias muerto,
+otro gate lo caza).
+
 ### §3.1 Patrón canónico de una entity
 
 ```typescript
-// canonical — entities/<x>/model.ts
+// canonical — plugins/<id>/frontend/entities/<x>/model.ts
 export interface <X> {
   id: string;
   // ...
 }
 
-// canonical — entities/<x>/contracts.ts
+// canonical — plugins/<id>/frontend/entities/<x>/contracts.ts
 import { z } from "zod";
 export const <x>Schema = z.object({
   id: z.string(),
@@ -128,28 +143,29 @@ export const <x>Schema = z.object({
 });
 export type <X>Dto = z.infer<typeof <x>Schema>;
 
-// canonical — entities/<x>/keys.ts
+// canonical — plugins/<id>/frontend/entities/<x>/keys.ts
 export const <x>Keys = {
   all: ["<x>"] as const,
   list: () => [...<x>Keys.all, "list"] as const,
   detail: (id: string) => [...<x>Keys.all, "detail", id] as const,
 } as const;
 
-// canonical — entities/<x>/api.ts
+// canonical — plugins/<id>/frontend/entities/<x>/api.ts
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "@/shared/api/client";
 import { <x>Keys } from "./keys";
 import { <x>Schema } from "./contracts";
 
+// La entity llama SOLO a la API de SU plugin: /api/<plugin>/* (gate P-9).
 export function use<X>(id: string | null) {
   return useQuery({
     queryKey: <x>Keys.detail(id ?? ""),
-    queryFn: async () => <x>Schema.parse(await apiClient.get<unknown>(`/api/<x>/${id}`)),
+    queryFn: async () => <x>Schema.parse(await apiClient.get<unknown>(`/api/<plugin>/<x>/${id}`)),
     enabled: !!id,
   });
 }
 
-// canonical — entities/<x>/index.ts
+// canonical — plugins/<id>/frontend/entities/<x>/index.ts
 export { <x>Keys } from "./keys";
 export { use<X> } from "./api";
 export type { <X> } from "./model";
@@ -159,14 +175,16 @@ export type { <X> } from "./model";
 
 | Caso | Acción |
 |---|---|
-| Hook nuevo sobre dato YA modelado (e.g. `useSessionTags(id)`) | Agregar a `entities/session/api.ts` |
-| Tipo / schema relacionado a dato YA modelado | Agregar a `entities/session/model.ts` + `contracts.ts` |
-| Dato nuevo (e.g. `reservation`) | Crear `entities/reservation/` nuevo |
-| Dato CRUD propio de un plugin (e.g. configuración del plugin chats) | NO va en `entities/`. Va en `plugins/chats/frontend/features/<x>/` (interno al plugin) |
+| Hook nuevo sobre dato YA modelado (e.g. `useSessionTags(id)`) | Agregar a `plugins/chats/frontend/entities/session/api.ts` |
+| Tipo / schema relacionado a dato YA modelado | Agregar a `model.ts` + `contracts.ts` de esa entity del plugin |
+| Dato nuevo (e.g. `reservation`) | Crear `plugins/<id>/frontend/entities/reservation/` en el plugin DUEÑO del dato |
+| Dato de OTRO plugin que tu plugin necesita | NUNCA importar su entity (P-22). Cast declarado: `depends_on` + `consumes` en tu plugin.yaml, cast server-side en TU api, entity LOCAL que llama solo `/api/<tu-id>/*` (PLUGIN_CONTRACT.md §5.3, canal 3) |
 
-**Regla de oro:** entities/ es para **dominio que 2+ plugins consumen**.
-Si solo un plugin lo usa, el dato va dentro del plugin (en su
-`frontend/features/`).
+**Regla de oro (post-refactor F1-F8):** cada entity tiene UN solo dueño —
+el plugin. No existen entities shared: el caso "2+ plugins consumen el
+dato" se resuelve con cast declarado, no con una entity central. Ejemplo
+real: `plugins/chats/frontend/entities/order-ref/` consume `order@v1` de
+orders vía el cast `hubara_agency/src/plugins/chats/api/order_actions.py`.
 
 ---
 
@@ -213,38 +231,43 @@ Ejemplo del output:
 ```typescript
 // AUTO-GENERATED — DO NOT EDIT
 import { lazy, type ComponentType, type LazyExoticComponent } from "react";
+import { icons as etaIcons } from "@plugins/eta/frontend/icons";
 
-export interface SectionContribution {
-  key: string;
-  label: string;
-  order?: number;
-  icon?: string;
-}
-export interface SidebarContribution {
-  route: string;
-  label: string;
-  icon?: string;
-}
-export interface PluginEntry {
+export type SectionEntry = { key: string; label: string; order?: number; icon?: string };
+export type SidebarEntry = { route: string; label: string; icon?: string; badge_query?: string };
+
+// Protocolo estructural del entry: `@plugins/<id>/frontend` DEBE
+// default-exportar un componente. assertPluginModule no hace nada en
+// runtime — existe para que `tsc` FALLE EN COMPILACIÓN si un plugin
+// rompe su contrato de entry.
+type PluginModule = { default: ComponentType<any> };
+const assertPluginModule = (m: PluginModule): PluginModule => m;
+
+export type PluginEntry = {
   id: string;
-  displayName?: string;
-  sections: SectionContribution[];
-  sidebar: SidebarContribution[];
+  displayName: string;
+  sidebar: SidebarEntry[];
+  sections: SectionEntry[];
   dashboardWidgets: Array<{ id: string; position: string }>;
   Page: LazyExoticComponent<ComponentType<any>>;
-}
+};
 
 export const PLUGINS: PluginEntry[] = [
   {
     id: "chats",
     displayName: "Chats",
-    sections: [{ "key": "chat", "label": "Chats", "order": 1, "icon": "chat" }],
     sidebar: [{ "route": "/chats", "label": "Chats", "icon": "chat" }],
+    sections: [{ "key": "chat", "label": "Chats", "order": 1, "icon": "chat" }],
     dashboardWidgets: [],
-    Page: lazy(() => import("@plugins/chats/frontend")),
+    Page: lazy(() => import("@plugins/chats/frontend").then(assertPluginModule)),
   },
   // ... uno por plugin habilitado
 ];
+
+// Glifos aportados por plugins (frontend/icons.tsx) — merge en el shell.
+export const PLUGIN_ICONS: Record<string, ComponentType<any>> = {
+  ...etaIcons,
+};
 ```
 
 ---
@@ -254,18 +277,23 @@ export const PLUGINS: PluginEntry[] = [
 Es la **única página** del frontend (no hay router multi-página por
 ahora). Su contrato es:
 
-1. Lee `PLUGINS` del registry generado.
-2. Deriva las sections del Toolbar de `PLUGINS.flatMap(p => p.sections)`.
+1. Lee `PLUGINS` + `PLUGIN_ICONS` del registry generado.
+2. Deriva las sections del Toolbar de `PLUGINS.flatMap(p => p.sections)`;
+   el Toolbar resuelve íconos contra base (`Icon.tsx`) ∪ contribuciones
+   (`PLUGIN_ICONS`) con fallback bot.
 3. Indexa `pageByKey: Map<sectionKey, Page>` para resolver qué plugin
    renderizar cuando el operador clickea una section.
-4. Renderiza `<ActivePage showSidebar showInspector ... />` (props
-   bandejón — ver `sections/06-frontend-plugin.md`).
+4. Renderiza `<ActivePage />` SIN props, envuelto en
+   `<PluginHostProvider value={host}>` — el "pluginProps bag" YA NO
+   EXISTE; el plugin lee el shell vía `usePluginHost()`/`useSelection()`
+   (ver `sections/06-frontend-plugin.md`).
 
 ```typescript
 // canonical — pages/Dashboard.tsx (estructura, no completo)
-import { PLUGINS } from "@/app/plugin-registry.generated";
-import { Toolbar } from "@/shared/ui/Toolbar";
-import { Suspense, useState, useMemo } from "react";
+import { PLUGINS, PLUGIN_ICONS } from "@/app/plugin-registry.generated";
+import { Toolbar } from "@/shared/ui";
+import { PluginHostProvider } from "@/shared/lib";
+import { Suspense, useCallback, useState, useMemo } from "react";
 
 export function Dashboard() {
   const sections = useMemo(
@@ -280,14 +308,33 @@ export function Dashboard() {
     return m;
   }, []);
 
-  const [activeKey, setActiveKey] = useState(sections[0]?.key);
-  const ActivePage = pageByKey.get(activeKey);
+  const [section, setSection] = useState(sections[0]?.key ?? "");
+  const [showSidebar, setShowSidebar] = useState(true);
+  const [showInspector, setShowInspector] = useState(true);
+
+  // PluginHost (F7): contexto GENÉRICO shell↔plugin. La selección
+  // cross-sección vive en un mapa clave→id; el shell NO conoce las claves.
+  const [selection, setSelectionMap] = useState<Record<string, string | null>>({});
+  const setSelection = useCallback((key: string, id: string | null) => {
+    setSelectionMap(prev => (prev[key] === id ? prev : { ...prev, [key]: id }));
+  }, []);
+  const host = useMemo(
+    () => ({ showSidebar, showInspector, selection, setSelection }),
+    [showSidebar, showInspector, selection, setSelection],
+  );
+
+  const ActivePage = pageByKey.get(section);
 
   return (
     <div className="dashboard-shell">
-      <Toolbar sections={sections} activeKey={activeKey} onSelect={setActiveKey} />
-      <Suspense fallback={<div>Loading…</div>}>
-        {ActivePage && <ActivePage showSidebar showInspector />}
+      <Toolbar sections={sections} section={section} setSection={setSection}
+               pluginIcons={PLUGIN_ICONS} /* + toggles sidebar/inspector */ />
+      <Suspense key={section} fallback={null}>
+        {ActivePage && (
+          <PluginHostProvider value={host}>
+            <ActivePage />
+          </PluginHostProvider>
+        )}
       </Suspense>
     </div>
   );
@@ -428,8 +475,8 @@ test("use<X> fetches and validates with Zod", async () => {
 |---|---|---|---|
 | 1 | `fetch(...)` directo en componente | Viola "no fetch in components" | Usar entity hook (`useX`) |
 | 2 | `useState` para server data | Cache se pierde con re-mount | TanStack Query (`useX`) |
-| 3 | `from "@plugins/chats/ui/X"` (deep import) | Bypassa el barrel | `from "@plugins/chats"` (barrel-only) |
-| 4 | `import { X } from "@/features/orders"` desde `features/chats` | Cross-feature import | Promover X a `shared/ui/` o `entities/order/` |
+| 3 | `from "@plugins/orders/..."` desde `plugins/chats/` | Cross-plugin import — P-22 | Cast declarado + entity LOCAL (§3.2) |
+| 4 | `from "@/entities/order"` o `from "../../entities/order"` | Alias muerto / ruta relativa cross-layer (dep-cruiser) | `@plugins/<id>/frontend/entities/order` (alias intra-plugin) |
 | 5 | `--color-text-primary` token | Naming anti-pattern #13 | `--color-fg`, `--color-fg-muted` |
 
 Detalle de los **14 anti-patterns** en `references/fsd-rules.md`.

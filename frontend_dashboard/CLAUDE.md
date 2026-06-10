@@ -51,7 +51,7 @@ Detalle en `.claude/skills/hubara-architecture-guide/sections/05-frontend-fsd.md
 9. `any` en boundaries de query.
 10. Tailwind tokens hardcoded en lugar de `@theme` vars.
 11. Importar de `@/shared/ui` con paths absolutos que rompen el barrel.
-12. Modificar `shared/ui/Icon.tsx` sin agregar al `iconRegistry` (rompe spinal file contract).
+12. Meter un glifo per-plugin en `shared/ui/Icon.tsx` — el plugin lo trae en su `frontend/icons.tsx` (post-F7; `Icon.tsx` es solo el set base compartido).
 13. Crear `providers` fuera de `app/providers/index.tsx`.
 14. Edits ad-hoc a `src/index.css` (debe pasar por el `@theme` block).
 
@@ -67,36 +67,37 @@ Detalle en `.claude/skills/hubara-architecture-guide/sections/05-frontend-fsd.md
 | Build prod | `cd frontend_dashboard && npm run build` |
 | E2E Playwright | `cd frontend_dashboard && npx playwright test` |
 
-## Paths PROTECTED (no editar sin ADR)
+## Paths PROTECTED (post-refactor F1-F8: fuente ÚNICA)
 
-**Spinal files cross-plugin:**
-- `src/shared/ui/Icon.tsx` — append-only iconRegistry (kind `ts_object_entries_append`)
-- `src/shared/{ui,lib,api,config}/index.ts` — 4 barrel files (kind `ts_barrel`)
-- `src/entities/<id>/{index.ts, api.ts, model.ts, contracts.ts, keys.ts}` — entity boundary
-- `src/app/providers/index.tsx` — composition root
-- `src/index.css` — `@theme` block
+La lista de paths protegidos vive en **`hubara_agency/.hubara/spinal-files.yaml`**
+(entries `protected: true`) — el meta-gate de este stack
+(`src/test/architecture/helpers.ts`) y el del backend la DERIVAN de ahí.
+Para este stack hoy cubre: `src/test/architecture/**`, `.dependency-cruiser.cjs`,
+`tsconfig.arch.json` (+ workflows/skills del pipeline). Editar un protected:
+local con `ARCH_CHANGE_APPROVED=1`; el PR lleva el label `architecture-change`.
 
-**Architecture gates:**
-- `src/test/architecture/**` — dep-cruiser + tsc-arch tests
-- `.dependency-cruiser.cjs`
-- `tsconfig.arch.json`
+Spinal files mergeables (append-only, NO requieren label pero sí cuidado):
+`src/shared/{ui,lib,api,config}/index.ts` (barrels), `src/app/providers/index.tsx`,
+`src/index.css` (@theme block), `src/shared/ui/Icon.tsx` (solo glifos
+genuinamente compartidos — los per-plugin van en el plugin, ver abajo).
 
-Modificar PROTECTED silenciosamente rompe CI en `npm run test:arch`.
-
-## Cuando agregar / modificar
+## Cuando agregar / modificar (post-refactor F1-F8)
 
 - **Feature nueva:** leer `.claude/skills/hubara-architecture-guide/sections/05-frontend-fsd.md` (4 import rules + 14 anti-patterns).
-- **Plugin frontend nuevo:** sección `06-frontend-plugin.md` + `examples/plugin-frontend-only.md`.
-- **Entity nueva:** layout `entities/<id>/{api.ts, contracts.ts, model.ts, keys.ts, index.ts}` + tests `*.test.ts`.
-- **Icon nuevo:** appendear a `iconRegistry` de `shared/ui/Icon.tsx` (NO crear archivo nuevo).
+- **Plugin frontend nuevo:** sección `06-frontend-plugin.md` + `examples/plugin-frontend-only.md`. Checklist completo: `PLUGIN_CONTRACT.md` §6 + `PLUGIN_PROTOCOL_fable.md`.
+- **Entity nueva:** vive EN EL PLUGIN — `src/plugins/<id>/frontend/entities/<entity>/{api.ts, contracts.ts, model.ts, keys.ts, index.ts}` + tests. `src/entities/` central DEBE quedar vacío (gate P-11). Imports con alias `@plugins/<id>/frontend/entities/<entity>` (ni relativos `../../` ni `@/entities/` — gates los cazan).
+- **Datos de OTRO plugin:** NUNCA importar su entity (gate P-22). Declarar `consumes:` + `depends_on:` en el manifest y servir un cast server-side bajo `/api/<tu-id>/*` (ejemplos: `chats/api/order_actions.py`, `agents_admin/api/evals.py`).
+- **Icon nuevo:** el plugin lo TRAE en `src/plugins/<id>/frontend/icons.tsx` (`export const icons = { nombre: Componente }`) + `npm run plugins:sync`. Cero ediciones a `Icon.tsx` (gate P-12 valida base ∪ contribuciones).
+- **Chrome/selección del shell:** los Pages NO reciben props — `usePluginHost()` + `useSelection("<plugin-id>")` desde `@/shared/lib`. `Dashboard.tsx` no se toca.
 - **Tailwind token nuevo:** appendear al `@theme` block en `src/index.css`.
 
 ## Gotcha local
 
 - `src/index.css` mide ~93 KB. La mayor parte es el `@theme` block (Tailwind v4). Editar SOLO entre los markers del bloque; tocar fuera rompe variables CSS de otros features.
-- `src/plugins/<id>/frontend/index.ts` debe exportar `default { Page }` o `scripts/plugins-sync.ts` skipea el plugin silenciosamente.
-- TanStack Query keys viven en `entities/<id>/keys.ts`. Si dos features queryean la misma entity, **comparten el key factory** — no duplicar.
+- `src/plugins/<id>/frontend/index.ts` debe **default-exportar el componente Page** — el registry generado lo verifica EN COMPILACIÓN (`assertPluginModule`); sin bloque `frontend:` en el manifest, plugins-sync lo skipea con info-log.
+- TanStack Query keys viven en `plugins/<id>/frontend/entities/<entity>/keys.ts`. Si dos features del MISMO plugin queryean la misma entity, **comparten el key factory** — no duplicar.
 - `tsc -b` (composite) requiere que cada `tsconfig.*.json` esté bien linkeado. Si un import "no resuelve", chequear `tsconfig.json` references primero.
+- Correr `npm run test:arch` tras tocar un PROTECTED requiere `ARCH_CHANGE_APPROVED=1` en el env (el meta-gate diffea contra origin/main).
 
 ## Verificación visual — SIEMPRE usar el stack Docker desplegado (NO levantar un vite suelto)
 

@@ -352,8 +352,9 @@ export const PLUGIN_ICONS: Record<string, never> = {};
   // ── Íconos contribuidos (F7 — INV-1 / AP-4) ───────────────────────────
   // Un plugin que necesita un glifo NUEVO lo trae consigo en
   // `frontend/icons.tsx` (export const icons = { nombre: Componente }) en
-  // vez de editar el PROTECTED `shared/ui/Icon.tsx`. El codegen los agrega
-  // al registry; el Toolbar resuelve base + contribuciones.
+  // vez de editar el spinal compartido `shared/ui/Icon.tsx` (set base, solo
+  // glifos genuinamente cross-plugin). El codegen los agrega al registry; el
+  // Toolbar resuelve contribuciones → base → fallback.
   const iconImports = iconContributors
     .map((id) => `import { icons as ${id}Icons } from "@plugins/${id}/frontend/icons";\n`)
     .join("");
