@@ -8,7 +8,7 @@
  */
 
 import { useMemo, useState } from "react";
-import type { Order, PayType } from "@/entities/order";
+import type { Order, PayType } from "@plugins/orders/frontend/entities/order";
 
 export type ViewFilter =
   | "all"

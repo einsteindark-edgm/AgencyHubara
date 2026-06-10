@@ -3,7 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   useConfirmOrderPayment,
   useScheduleOrder,
-} from "@/entities/order";
+} from "@plugins/chats/frontend/entities/order-ref";
 import { sessionKeys } from "@plugins/chats/frontend/entities/session";
 
 interface Props {

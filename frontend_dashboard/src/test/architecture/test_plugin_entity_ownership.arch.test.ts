@@ -35,10 +35,8 @@ const PLUGINS_DIR = join(SRC, "plugins");
 
 // ── Deuda conocida (igualdad EXACTA — shrink obligatorio al arreglar) ──────
 // Formato P-22: "<plugin> importa @/entities/<entity> (owner: <owner>)"
-const EXPECTED_P22_OFFENDERS = [
-  // F4 (cast order-ref server-side en chats) la elimina:
-  "chats importa @/entities/order (owner: orders)",
-].sort();
+// F4c eliminó el último ofensor (chats→order ahora va por el cast order-ref).
+const EXPECTED_P22_OFFENDERS: string[] = [];
 
 // Formato P-23: "<owner-del-archivo> → <literal>"
 const EXPECTED_P23_OFFENDERS = [

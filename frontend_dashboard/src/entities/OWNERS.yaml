@@ -18,7 +18,7 @@
 # violación que P-23 registra como deuda conocida hasta F5.
 
 # (migradas F4a: ads-campaign→ads · agent→agents_admin · catalog-sync→catalog
-#  · tracked-order→eta. F4b: chat/message/session/handoff→chats.)
+#  · tracked-order→eta. F4b: chat/message/session/handoff→chats.
+#  F4c: order→orders, con cast order-ref en chats.)
 eval-candidate: agents_admin
 eval-trend: agents_admin
-order: orders

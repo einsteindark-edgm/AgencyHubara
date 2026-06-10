@@ -12,7 +12,7 @@
  */
 
 import { useState } from "react";
-import { useScheduleOrder, type Order } from "@/entities/order";
+import { useScheduleOrder, type Order } from "@plugins/orders/frontend/entities/order";
 import { Icon, MacButton } from "@/shared/ui";
 
 interface Props {

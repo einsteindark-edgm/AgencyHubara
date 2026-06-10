@@ -12,7 +12,7 @@
  */
 
 import { Icon, MacButton } from "@/shared/ui";
-import type { Order } from "@/entities/order";
+import type { Order } from "@plugins/orders/frontend/entities/order";
 import type { PayTypeFilter, ViewFilter } from "../model/useOrderFilters";
 
 const CHANNELS = ["WhatsApp", "Instagram", "Web", "Tienda", "Mercado Libre"];

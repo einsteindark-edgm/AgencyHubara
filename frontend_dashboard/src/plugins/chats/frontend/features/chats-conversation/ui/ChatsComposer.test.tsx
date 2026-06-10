@@ -8,7 +8,7 @@
  *    aparece cuando ese campo es null). Clic → confirm-payment mutation con el id.
  *
  * Mockeamos `useSession` (entities/session), las mutaciones de handoff
- * (entities/handoff) y `useConfirmOrderPayment` (entities/order) para aislar
+ * (entities/handoff) y `useConfirmOrderPayment` (entities/order-ref local) para aislar
  * el componente de la red.
  */
 
@@ -57,7 +57,7 @@ vi.mock("@plugins/chats/frontend/entities/handoff", () => ({
   }),
 }));
 
-vi.mock("@/entities/order", () => ({
+vi.mock("@plugins/chats/frontend/entities/order-ref", () => ({
   useConfirmOrderPayment: () => ({
     mutate: confirmPaymentMutate,
     isPending: false,

@@ -4,7 +4,20 @@ display_name: Chats
 description: Conversaciones WhatsApp con agente Temporal (sales + remarketing) + dashboard SSE + handoff humano.
 agentic: true  # workers conversacionales con workspace IDENTITY/SOUL/TOOLS/AGENTS/USER
 
-depends_on: []
+# Dep DURA (P-DEPS): el canvas de pago del chat consume el contrato order@v1
+# del plugin `orders` vía el cast server-side `api/order_actions` (consumes:
+# abajo). P-6 exige orders habilitado siempre que chats lo esté.
+depends_on: [orders]
+
+# Canal 3 (PLUGIN_CONTRACT §5.3) — casting declarado. El frontend de chats
+# SOLO ve su entity local `order-ref` (plugins/chats/frontend/entities/
+# order-ref) y llama `/api/chats/order-actions/*`; el cast traduce al
+# contrato publicado del provider. Swap de provider = cambiar SOLO el cast.
+consumes:
+  - provider: orders
+    contract: order@v1          # PATCH /api/orders/orders/{id}/{schedule,confirm-payment}
+    into: order-ref
+    cast: api/order_actions
 
 # ── Frontend ───────────────────────────────────────────────────────────
 # El barrel `./frontend/index.ts` exporta `Page` (la `ChatsSection` que el
@@ -34,6 +47,9 @@ api:
     # (eta extraído a su propio plugin `plugins/eta` — backend self-contained en
     #  `src.plugins.eta.api` con prefix `/api/eta`. PLUGIN_CONTRACT.md §5.2.)
     - { module: src.plugins.chats.api.evals,     prefix: /api/chats,     tags: [Evals] }
+    # Cast chats→orders (canal 3): sirve /api/chats/order-actions/* para el
+    # canvas de pago. Ver `consumes:` arriba + src.plugins.chats.api.order_actions.
+    - { module: src.plugins.chats.api.order_actions, prefix: /api/chats, tags: [Chats_OrderActions] }
 
 # ── Agente Temporal ────────────────────────────────────────────────────
 # Dos workers en task queues exclusivas: SALES_QUEUE y REMARKETING_QUEUE.

@@ -86,7 +86,11 @@ def test_p6_eta_requires_chats_in_live_manifests() -> None:
     )
     with pytest.raises(PluginDependencyError):
         validate_enabled({"eta"}, manifests)
-    validate_enabled({"eta", "chats"}, manifests)
+    # F4c: chats declara depends_on: [orders] (cast order-ref) — el cierre
+    # transitivo mínimo de eta es {eta, chats, orders}.
+    with pytest.raises(PluginDependencyError):
+        validate_enabled({"eta", "chats"}, manifests)
+    validate_enabled({"eta", "chats", "orders"}, manifests)
 
 
 # ----------------------------------------------------------------------------

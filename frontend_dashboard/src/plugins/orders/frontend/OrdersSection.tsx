@@ -22,7 +22,7 @@ import {
   useRetryVaultOrder,
   useResolveVaultOrder,
   type VaultOrderRecord,
-} from "@/entities/order";
+} from "@plugins/orders/frontend/entities/order";
 import { Icon, MissingData } from "@/shared/ui";
 
 export interface OrdersSectionProps {
