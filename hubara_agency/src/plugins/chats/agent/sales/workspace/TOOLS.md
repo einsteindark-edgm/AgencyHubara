@@ -72,6 +72,8 @@ Cómo el agente debe pensar sus herramientas. Las **definiciones** Python viven 
 
 Estas tools NO devuelven texto al LLM, emiten **intents de UI** que el workflow renderiza como mensaje WA nativo (foto, botones, lista, Flow, etc.) DESPUÉS de tu respuesta. Tu respuesta de texto SIGUE siendo necesaria, piénsala como el "comentario" que acompaña al componente visual. NO repitas el precio/título en tu texto si la tool ya los mostró.
 
+⚠️ **UN solo comentario, y va en tu respuesta FINAL — nunca junto a la tool call** (run 844745bd): el texto que escribas en el MISMO turno de la tool call también se envía como burbuja, así que si narras ahí ("Déjame mostrarte las opciones") Y luego comentas en tu respuesta final ("Estos son los colores disponibles:"), el cliente lee DOS frases casi iguales. Al llamar la tool: `content` vacío (salvo el saludo de apertura). El comentario único va después, cuando ya viste el tool result.
+
 ### `present_product_detail`
 
 - **Use when**: vas a mostrar UN producto específico con foto + título + precio. Ideal para "te muestro la X" o "esta podría interesarte".
@@ -112,7 +114,7 @@ Estas tools NO devuelven texto al LLM, emiten **intents de UI** que el workflow 
 - **Don't use when**: hay discrepancia de precio (primero confirmas con el cliente el precio nuevo), o no llamaste verify_order_for_checkout.
 - **Input**: `items` (lista con handle+quantity+unit_price), `shipping_cop`, `shipping_address_summary`, `payment_method`.
 - **Side effects**: encola `interactive.order_details` con botón Pagar nativo (A.12, requiere Meta Catalog + gateway). Si no está activo, fallback a 3 botones [Confirmar][Modificar][Cancelar] (A.2).
-- **Tu próximo texto**: SOLO una línea breve de transición, ej "Te muestro el resumen para confirmar 🤍". 🚫 **NO escribas el resumen del pedido en texto** (items, aroma, color, total, dirección): la tarjeta de `present_order_confirmation` YA muestra todo eso + el botón de confirmar. Si lo repetís en texto, el cliente ve el resumen DOS veces (una sin botón y otra con botón). La tarjeta ES el resumen; vos solo agregás la línea de transición.
+- **Tu próximo texto**: **NINGUNO** (run 844745bd). La tarjeta YA es el resumen completo + el botón de confirmar + su propio título/llamado a la acción — cualquier texto tuyo ("Te presento el resumen", "Revísalo y confírmalo con el botón", el resumen en texto) DUPLICA lo que la tarjeta dice. Llama la tool con `content` vacío. 🚫 Tampoco verifiques en voz alta antes ("todo está verificado, los precios coinciden") — la verificación es interna.
 
 ### `register_order`
 
@@ -127,6 +129,7 @@ Estas tools NO devuelven texto al LLM, emiten **intents de UI** que el workflow 
   - Si el envelope devuelve `registered=true`:
     1. `manage_conversation_tag(tag="COMPRA_EXITOSA", motivo="...")`.
     2. Mensaje cálido de despedida (sin repetir los datos del pedido, el cliente ya los vio).
+    3. 🚫 **Estos pasos son INTERNOS** (run 844745bd): jamás los narres al cliente — nada de "quedó registrado en Medusa", "procedo con el protocolo de cierre", "marco la conversación". El cliente solo ve la despedida cálida ("¡Listo! Tu pedido quedó confirmado 🤍 Te avisamos cada paso de la entrega.").
   - Si el envelope devuelve `registered=false` (Medusa caído / config rota / handle no existe en Medusa):
     1. `escalate_to_human(reason_category="ORDER_REGISTRATION_FAILED", summary="cliente confirmó pedido pero Medusa rechazó el registro, humano completa con datos en metadata.failed_order_registrations")`.
     2. Mensaje al cliente: "Tu pedido quedó tomado y un humano te confirma en unos minutos 🤍".
