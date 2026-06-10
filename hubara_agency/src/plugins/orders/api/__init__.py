@@ -25,7 +25,6 @@ import asyncio
 import json
 import logging
 import re
-import time
 from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any
@@ -308,7 +307,7 @@ async def schedule_order(
     result = await port.schedule_delivery(cmd)
     # new → preparing: arranca el seguimiento del Agente ETA (primera notificación).
     if result.success and result.current_stage:
-        asyncio.create_task(_emit_stage_changed_event(order_id, result.current_stage))
+        _spawn_emit(order_id, result.current_stage)
     return _serialize_command_result(result)
 
 
@@ -356,7 +355,7 @@ async def transition_order_stage(
     # dispatcher matchea por `to_stage`; stages sin transición declarada (ej.
     # `new`) caen en no-match → no-op. Dedup vive en el workflow ETA.
     if result.success and result.current_stage:
-        asyncio.create_task(_emit_stage_changed_event(order_id, result.current_stage))
+        _spawn_emit(order_id, result.current_stage)
     return _serialize_command_result(result)
 
 
@@ -406,7 +405,7 @@ async def cancel_order_endpoint(
     result = await port.cancel_order(cmd)
     # Cancelación: el Agente ETA avisa al cliente (si la sesión sigue en ruta eta).
     if result.success and result.current_stage:
-        asyncio.create_task(_emit_stage_changed_event(order_id, result.current_stage))
+        _spawn_emit(order_id, result.current_stage)
     return _serialize_command_result(result)
 
 
@@ -421,69 +420,45 @@ def _serialize_command_result(result) -> dict[str, Any]:
     }
 
 
-async def _emit_stage_changed_event(order_id: str, to_stage: str) -> None:
-    """Publica ``OrderStageChangedEvent`` para que el Agente ETA notifique al cliente.
+# Referencias fuertes a las tasks fire-and-forget del emit (L-7): sin esto,
+# asyncio puede GC-recolectar una task PENDIENTE mientras espera I/O largo
+# (Medusa@Railway tarda 30s+ por GET) — muere sin log, sin warning, y la
+# notificación ETA simplemente no sale. Patrón estándar de los docs de
+# asyncio: set global + done_callback(discard).
+_emit_tasks: set[asyncio.Task] = set()
 
-    Best-effort: resuelve la sesión WhatsApp dueña del pedido (link canónico
-    ``order.metadata.session_key`` → reverse lookup por episodio → teléfono de
-    envío) y emite el evento por el dispatcher declarativo (ADR-2026-05-20). El
-    dispatcher consulta las ``transitions`` del worker ``orders/reconcile`` y, según
-    ``to_stage``, arranca (``preparing``) o signalea (resto) el
-    ``HubaraEtaSessionWorkflow`` del plugin ``eta`` — sin que orders importe ese
-    workflow (R-DIP).
 
-    NO levanta: la transición de stage ya se aplicó en Medusa; una falla acá solo
-    significa que la notificación no salió (la reconciliación / un reintento
-    manual del operador pueden recuperarla). Se invoca **fire-and-forget**
-    (``asyncio.create_task``) desde el endpoint — el operador NO debe esperar a
-    que se resuelva la sesión + se conecte a Temporal para que el dashboard
-    responda (mismo patrón que el ingest del webhook, ``_spawn_safe``). Esta
-    coroutine atrapa TODA excepción internamente, así que la task nunca queda
-    "exception never retrieved".
-    """
+async def _start_durable_emit(order_id: str, to_stage: str) -> None:
+    """L-8b: la emisión es un workflow Temporal (EmitOrderStageWorkflow en
+    queue-orders-reconcile) — durable, con retries y visible en la UI :8233.
+    Reemplaza el create_task best-effort (L-7). El start tarda ~ms; si el
+    MISMO (order, stage) ya está en vuelo, Temporal lo dedupea por id."""
+    from temporalio.exceptions import WorkflowAlreadyStartedError
+
+    from src.platform.plugin_manifest import get_task_queue
+    from src.platform.temporal.client import get_temporal_client
+
     try:
-        session_id = await _resolve_session_for_order(
-            backend_order_id=order_id,
-            shipping_phone=None,
-            vault_dir=WORKSPACE_VAULT_DIR,
-        )
-        if not session_id:
-            log.info(
-                "eta_emit: order %s sin sesión WhatsApp asociada — no se notifica",
-                order_id,
-            )
-            return
-
-        from src.platform.orchestration import (
-            dispatch_envelope_with_client,
-            envelope_for,
-        )
-        from src.platform.temporal.client import get_temporal_client
-        from src.plugins.orders.shared.contracts.events import OrderStageChangedEvent
-
         client = await get_temporal_client()
-        await dispatch_envelope_with_client(
-            envelope_for(
-                OrderStageChangedEvent(
-                    session_id=session_id,
-                    order_id=order_id,
-                    to_stage=to_stage,
-                    occurred_at_ms=int(time.time() * 1000),
-                ),
-                source_plugin="orders",
-                source_worker="reconcile",
-            ),
-            client,
+        await client.start_workflow(
+            "EmitOrderStageWorkflow",
+            {"order_id": order_id, "to_stage": to_stage},
+            id=f"order-stage-changed-{order_id.lstrip('#')}-{to_stage}",
+            task_queue=get_task_queue("orders", "reconcile"),
         )
-        log.info(
-            "eta_emit: OrderStageChangedEvent despachado order=%s stage=%s session=%s",
-            order_id, to_stage, session_id,
-        )
-    except Exception:  # noqa: BLE001 — best-effort, no rompe la transición
+    except WorkflowAlreadyStartedError:
+        log.info("eta_emit: emisión ya en vuelo order=%s stage=%s", order_id, to_stage)
+    except Exception:  # noqa: BLE001 — la transición YA se aplicó; no romper el 200
         log.warning(
-            "eta_emit: dispatch falló para order=%s stage=%s (transición OK, notif no salió)",
+            "eta_emit: no pude ARRANCAR la emisión durable order=%s stage=%s",
             order_id, to_stage, exc_info=True,
         )
+
+
+def _spawn_emit(order_id: str, to_stage: str) -> None:
+    task = asyncio.create_task(_start_durable_emit(order_id, to_stage))
+    _emit_tasks.add(task)
+    task.add_done_callback(_emit_tasks.discard)
 
 
 @router.get("/orders/{order_id}/customer-score")
@@ -746,6 +721,10 @@ async def _resolve_session_for_order(
     `metadata.session_key` elimina esa ambigüedad.
     """
     # 1. Canonical: order.metadata.session_key.
+    # KeyError defensivo: un display_id sin resolver ("#6") hace que httpx
+    # trate el "#" como fragment → el GET pega a la LISTA y la respuesta no
+    # trae la key "order" (L-7b) — eso NO es MedusaAPIError y mataba el
+    # resolver entero en silencio.
     try:
         client = get_medusa_client()
         raw = await client.get_order(backend_order_id, fields="id,metadata")
@@ -756,11 +735,11 @@ async def _resolve_session_for_order(
             and (vault_dir / session_key / "metadata.json").exists()
         ):
             return session_key
-    except MedusaAPIError as exc:
+    except (MedusaAPIError, KeyError) as exc:
         log.info(
             "customer_score: get_order(%s) para session_key falló (%s) — "
             "probando fallbacks",
-            backend_order_id, getattr(exc, "status_code", "?"),
+            backend_order_id, getattr(exc, "status_code", type(exc).__name__),
         )
 
     # 2. Reverse lookup por order_id en episodios del vault.

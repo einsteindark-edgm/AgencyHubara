@@ -32,6 +32,7 @@ def build_stage_notification_turn(
     total_label: str,
     pay_type: str,
     delivery_window: str | None,
+    items_label: str = "",
 ) -> str:
     """Mensaje sintético del turno que dispara una notificación de cambio de estado.
 
@@ -60,6 +61,7 @@ def build_stage_notification_turn(
         f"- estado_nuevo: {stage_label} (clave interna: {stage})\n"
         f"- nombre_cliente: {customer_name}\n"
         f"- numero_pedido: {order_display_id}\n"
+        f"- productos: {items_label or '(no disponibles — NO los inventes, omite mencionarlos)'}\n"
         f"- monto_total: {total_label}\n"
         f"- tipo_pago: {pay_type} — {pay_hint}\n"
         f"- ventana_entrega: {window}"

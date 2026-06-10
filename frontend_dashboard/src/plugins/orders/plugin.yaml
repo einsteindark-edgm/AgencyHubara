@@ -66,57 +66,61 @@ agent:
           when:
             to_stage: ready
           action:
-            via: signal
+            via: signal_with_start
             target_plugin: eta
             target_worker: eta
             target_workflow: HubaraEtaSessionWorkflow
             workflow_id_template: "eta-{event.session_id}"
             signal_name: notify_stage_change
             input_mapping:
-              to_stage: "$.to_stage"
+              session_id: "$.session_id"
               order_id: "$.order_id"
+              to_stage: "$.to_stage"
         - id: order_shipping_notifies_eta
           on_event: OrderStageChangedEvent
           when:
             to_stage: shipping
           action:
-            via: signal
+            via: signal_with_start
             target_plugin: eta
             target_worker: eta
             target_workflow: HubaraEtaSessionWorkflow
             workflow_id_template: "eta-{event.session_id}"
             signal_name: notify_stage_change
             input_mapping:
-              to_stage: "$.to_stage"
+              session_id: "$.session_id"
               order_id: "$.order_id"
+              to_stage: "$.to_stage"
         - id: order_delivered_notifies_eta
           on_event: OrderStageChangedEvent
           when:
             to_stage: delivered
           action:
-            via: signal
+            via: signal_with_start
             target_plugin: eta
             target_worker: eta
             target_workflow: HubaraEtaSessionWorkflow
             workflow_id_template: "eta-{event.session_id}"
             signal_name: notify_stage_change
             input_mapping:
-              to_stage: "$.to_stage"
+              session_id: "$.session_id"
               order_id: "$.order_id"
+              to_stage: "$.to_stage"
         - id: order_cancelled_notifies_eta
           on_event: OrderStageChangedEvent
           when:
             to_stage: cancelled
           action:
-            via: signal
+            via: signal_with_start
             target_plugin: eta
             target_worker: eta
             target_workflow: HubaraEtaSessionWorkflow
             workflow_id_template: "eta-{event.session_id}"
             signal_name: notify_stage_change
             input_mapping:
-              to_stage: "$.to_stage"
+              session_id: "$.session_id"
               order_id: "$.order_id"
+              to_stage: "$.to_stage"
       deployment:
         replicas: 1                       # barrido idempotente — no hace falta paralelismo
         strategy: Recreate

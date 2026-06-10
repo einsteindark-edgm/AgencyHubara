@@ -408,6 +408,33 @@ async def _execute_action(
         )
         return "signaled"
 
+    if via == "signal_with_start":
+        # Atómico (Temporal signal-with-start): si el workflow corre → signal;
+        # si no existe / cerró → lo ARRANCA con `target_input` y le entrega el
+        # signal. Cierra el hueco del `via: signal` pelado (L-8): un target
+        # cerrado por idle/fail descartaba la notificación como noop.
+        signal_name = action.signal_name
+        if signal_name is None:
+            raise ValueError(
+                f"Action via=signal_with_start requires signal_name "
+                f"(workflow={action.target_workflow}, id={workflow_id})"
+            )
+        await client.start_workflow(
+            action.target_workflow,
+            target_input,
+            id=workflow_id,
+            task_queue=task_queue,
+            start_signal=signal_name,
+            start_signal_args=[target_input],
+        )
+        log.info(
+            "orchestration.dispatch_event: signaled_with_start",
+            workflow_id=workflow_id,
+            signal_name=signal_name,
+            target_workflow=action.target_workflow,
+        )
+        return "signaled_with_start"
+
     if via == "ensure_running":
         if await _is_running(client, workflow_id):
             log.info(
