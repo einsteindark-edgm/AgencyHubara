@@ -17,10 +17,15 @@ Multi-pedido: una sola sesión de workflow por cliente notifica TODOS sus
 pedidos en tránsito (el payload de cada signal trae su ``order_id``; el
 tracking por pedido vive en ``metadata.eta_tracking.orders``).
 
-NOTA DE DEPLOY: el shape conversacional anterior (signal ``send_message`` +
-``run_agent_turn`` de inbounds) se eliminó SIN ``workflow.patched()`` — drenar
-(terminate) los workflows ``eta-*`` en vuelo antes del rollout, como el
-precedente PR-D de remarketing.
+NOTA DE DEPLOY (L-9): los runs ``eta-*`` viven días — TODO cambio que altere
+la secuencia de comandos del workflow (nuevo ``execute_activity``, timer,
+signal handler que emita comandos) va detrás de ``workflow.patched("<id>")``,
+o el primer replay post-restart del worker rompe los runs vivos con
+TMPRL1100 (nondeterminism). El sticky cache ENMASCARA el error hasta que el
+worker se reinicia. Alternativa válida solo si se acepta perder los runs en
+vuelo: drenarlos (terminate) como parte del rollout (precedente PR-D de
+remarketing — el estado real vive en ``metadata.eta_tracking``, y
+``signal_with_start`` los revive gratis al próximo evento).
 
 DEHA: workflow = driving adapter. Toda I/O vía ``workflow.execute_activity``
 (R-DET / R-HEARTBEAT).
@@ -164,8 +169,15 @@ class HubaraEtaSessionWorkflow:
             # TODOS los pedidos trackeados quedaron entregados/cancelados, el
             # workflow termina en vez de dormir el idle de 7 días. Revivir es
             # gratis: un pedido nuevo lo re-arranca vía signal_with_start (L-8).
-            if saw_terminal_stage and not self._pending_stages:
-                saw_terminal_stage = False
+            # ``patched``: este bloque agrega un execute_activity al loop de un
+            # workflow de vida larga — sin el gate, el replay de runs nacidos
+            # antes del deploy emite comandos que el historial viejo no tiene
+            # (TMPRL1100, L-9: run 4d5e7baf quedó atascado tras un delivered).
+            if (
+                saw_terminal_stage
+                and not self._pending_stages
+                and workflow.patched("eta-proactive-close-v1")
+            ):
                 all_done = await workflow.execute_activity(
                     all_trackings_terminal_activity,
                     session.session_id,
@@ -177,6 +189,7 @@ class HubaraEtaSessionWorkflow:
                         "terminal — cierre proactivo."
                     )
                     return
+            saw_terminal_stage = False
 
             if self._force_shutdown:
                 workflow.logger.info(
