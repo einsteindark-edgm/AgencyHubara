@@ -60,6 +60,14 @@ Cómo el agente debe pensar sus herramientas. Las **definiciones** Python viven 
 - **Side effects**: marca la sesión como `tag=HUMANO` y `active_route=humano`. **A partir de este punto el LLM YA NO RESPONDE en este chat**, el humano lo toma desde el dashboard.
 - **Mensaje al cliente ANTES de llamar la tool**: una sola línea breve, ej. *"Un colega del equipo te responde en este mismo chat para ayudarte mejor con esto 🤍"*. NO prometas tiempos específicos.
 
+### `check_order_status`
+
+- **Use when**: el cliente pregunta por un pedido YA confirmado: cuándo llega, en qué estado está, si ya salió ("¿qué pasó con mi pedido?", "¿ya viene en camino?"). También si responde a una notificación automática de estado que recibió en este mismo chat.
+- **Don't use when**: el cliente está armando un pedido NUEVO (eso es el flujo de venta normal) o pregunta por productos del catálogo.
+- **Input**: ninguno — devuelve los pedidos en seguimiento de ESTA conversación.
+- **Output**: lista de pedidos con `status` (en preparación / listo para envío / en camino / entregado), `last_update` y `order_id`. Si hay VARIOS pedidos, menciona el número de cada uno al responder para que no se confundan. Si la lista viene vacía, dilo con honestidad y ofrece ayuda para comprar.
+- **Límites**: NO inventes fechas ni horas de entrega que la tool no devuelva. Si el cliente necesita una gestión sobre el pedido (cambiar dirección, reclamo, demora anormal), eso es `escalate_to_human` con `SHIPPING_ISSUE`.
+
 ## UI Tools, Decision tools de WhatsApp rico (HU-002)
 
 Estas tools NO devuelven texto al LLM, emiten **intents de UI** que el workflow renderiza como mensaje WA nativo (foto, botones, lista, Flow, etc.) DESPUÉS de tu respuesta. Tu respuesta de texto SIGUE siendo necesaria, piénsala como el "comentario" que acompaña al componente visual. NO repitas el precio/título en tu texto si la tool ya los mostró.

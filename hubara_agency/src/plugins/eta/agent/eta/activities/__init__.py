@@ -11,7 +11,6 @@ from src.plugins.eta.agent.eta.activities.bootstrap_session import (
 from src.plugins.eta.agent.eta.activities.tracking import (
     claim_eta_notification_activity,
     record_eta_notification_activity,
-    record_eta_reply_activity,
     start_eta_tracking_activity,
 )
 
@@ -19,6 +18,5 @@ __all__ = [
     "bootstrap_eta_session_activity",
     "claim_eta_notification_activity",
     "record_eta_notification_activity",
-    "record_eta_reply_activity",
     "start_eta_tracking_activity",
 ]

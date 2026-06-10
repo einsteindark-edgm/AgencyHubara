@@ -194,15 +194,25 @@ def test_p13_p26_backend_dirs_and_manifests_are_coherent() -> None:
 
 def test_p18_route_registry_resolves_declared_routes() -> None:
     """El registry (platform/routing) construye desde los manifests reales:
-    rutas únicas, no-core, template con {session_id}. `eta` resuelve a su
-    dueño declarado."""
+    todo `owns_route` declarado produce ruta única, no-core, con template
+    `{session_id}` válido.
+
+    Convivencia ETA/Sales (2026-06-10): `eta` ya NO declara `owns_route` — es
+    notificador puro; los inbounds van SIEMPRE a Sales (o humano) y el
+    dispatch de notificaciones usa el `workflow_id_template` de las
+    transitions de orders. Un registry VACÍO es estado válido (el mecanismo
+    queda para futuros agentes conversacionales con ruta propia)."""
     from src.platform.routing import _build_registry
 
     registry = _build_registry(None)  # None = todos (validación del universo)
-    assert "eta" in registry, "eta/plugin.yaml debe declarar owns_route: eta"
-    target = registry["eta"]
-    assert (target.plugin_id, target.worker_name) == ("eta", "eta")
-    assert target.workflow_id("wa_123") == "eta-wa_123"
+    assert "eta" not in registry, (
+        "eta volvió a declarar owns_route — si es deliberado (el ETA vuelve a "
+        "conversar), revertí la convivencia ETA/Sales completa: router, "
+        "check_order_status y este test."
+    )
+    for route, target in registry.items():
+        assert route not in {"ventas", "remarketing", "humano"}
+        assert target.workflow_id("wa_123").endswith("wa_123")
 
 
 def test_p18_transitions_match_route_owner_template() -> None:

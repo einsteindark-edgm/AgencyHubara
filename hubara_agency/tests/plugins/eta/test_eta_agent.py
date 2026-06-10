@@ -23,7 +23,6 @@ from src.plugins.eta.agent.eta.activities import (
     bootstrap_eta_session_activity,
     claim_eta_notification_activity,
     record_eta_notification_activity,
-    record_eta_reply_activity,
     start_eta_tracking_activity,
 )
 from src.plugins.eta.agent.eta.contracts import EtaSessionInput
@@ -83,27 +82,48 @@ def test_prompt_confirmed_recuerda_pagado():
 # ════════════════════════════════════════════════════════════════════════
 # Activities — tracking state machine
 # ════════════════════════════════════════════════════════════════════════
-async def test_start_tracking_sets_route_tag_and_inits(_isolate_vault_dir: Path):
+def _entry(meta: dict, order_id: str) -> dict:
+    """Entry del pedido en el mapa multi-pedido (shape v2)."""
+    return meta["eta_tracking"]["orders"][order_id]
+
+
+async def test_start_tracking_does_not_touch_route_or_tag(_isolate_vault_dir: Path):
+    """Convivencia ETA/Sales: el ETA es notificador puro — start NO toma el
+    turno conversacional (antes seteaba active_route=eta + tag=ETA acá)."""
+    _write_meta(_isolate_vault_dir, SID, {"active_route": "ventas", "tag": "EN_CURSO"})
     await ActivityEnvironment().run(start_eta_tracking_activity, SID, ORDER)
     meta = _read_meta(_isolate_vault_dir, SID)
-    assert meta["active_route"] == "eta"
-    assert meta["tag"] == "ETA"  # route↔tag invariante: sale de la bandeja humana
-    tr = meta["eta_tracking"]
+    assert meta["active_route"] == "ventas"  # intacto
+    assert meta["tag"] == "EN_CURSO"         # intacto
+    tr = _entry(meta, ORDER)
     assert tr["order_id"] == ORDER
     assert tr["notified_stages"] == []
     assert tr["events"] == []
 
 
-async def test_start_tracking_resets_on_different_order(_isolate_vault_dir: Path):
+async def test_start_tracking_preserves_route_humano(_isolate_vault_dir: Path):
+    """Bug fix: el start anterior pisaba incluso `humano` (el claim lo
+    respetaba pero el start no — inconsistencia interna)."""
+    _write_meta(_isolate_vault_dir, SID, {"active_route": "humano", "tag": "HUMANO"})
+    await ActivityEnvironment().run(start_eta_tracking_activity, SID, ORDER)
+    meta = _read_meta(_isolate_vault_dir, SID)
+    assert meta["active_route"] == "humano"
+    assert meta["tag"] == "HUMANO"
+
+
+async def test_start_tracking_adds_second_order_without_reset(_isolate_vault_dir: Path):
+    """Multi-pedido: un pedido nuevo NO resetea el tracking del anterior
+    (antes lo descartaba y sus notificaciones quedaban 'stale')."""
     _write_meta(
         _isolate_vault_dir, SID,
         {"eta_tracking": {"order_id": "order_OLD", "notified_stages": ["preparing"], "events": [{"stage": "preparing"}]}},
     )
     await ActivityEnvironment().run(start_eta_tracking_activity, SID, ORDER)
-    tr = _read_meta(_isolate_vault_dir, SID)["eta_tracking"]
-    assert tr["order_id"] == ORDER
-    assert tr["notified_stages"] == []  # pedido nuevo → tracking fresco
-    assert tr["events"] == []
+    meta = _read_meta(_isolate_vault_dir, SID)
+    orders = meta["eta_tracking"]["orders"]
+    assert set(orders) == {"order_OLD", ORDER}
+    assert orders["order_OLD"]["notified_stages"] == ["preparing"]  # intacto (migrado v1→v2)
+    assert orders[ORDER]["notified_stages"] == []
 
 
 async def test_claim_returns_facts_happy_path(_isolate_vault_dir: Path, monkeypatch):
@@ -162,16 +182,36 @@ async def test_claim_dedups_already_notified(_isolate_vault_dir: Path):
     assert facts is None
 
 
-async def test_claim_skips_on_order_mismatch(_isolate_vault_dir: Path):
+async def test_claim_creates_entry_for_unknown_order(_isolate_vault_dir: Path):
+    """Multi-pedido: un order_id sin tracking previo (p.ej. entró directo en
+    `ready`) se da de alta en el claim — antes se descartaba como 'stale'."""
     _write_meta(_isolate_vault_dir, SID, {"active_route": "eta", "eta_tracking": {"order_id": ORDER, "notified_stages": []}})
     facts = await ActivityEnvironment().run(claim_eta_notification_activity, SID, "order_OTHER", "ready")
-    assert facts is None  # el tracking sigue otro pedido
+    assert facts is not None  # notifica (Medusa no configurado → datos mínimos)
+    orders = _read_meta(_isolate_vault_dir, SID)["eta_tracking"]["orders"]
+    assert set(orders) == {ORDER, "order_OTHER"}  # el viejo migró, el nuevo se creó
+
+
+async def test_claim_dedup_is_per_order(_isolate_vault_dir: Path):
+    """El dedup de stages es POR pedido: `ready` notificado en un pedido no
+    bloquea el `ready` de otro."""
+    _write_meta(
+        _isolate_vault_dir, SID,
+        {"eta_tracking": {"orders": {
+            ORDER: {"order_id": ORDER, "notified_stages": ["ready"], "events": []},
+            "order_B": {"order_id": "order_B", "notified_stages": [], "events": []},
+        }}},
+    )
+    assert await ActivityEnvironment().run(claim_eta_notification_activity, SID, ORDER, "ready") is None
+    facts_b = await ActivityEnvironment().run(claim_eta_notification_activity, SID, "order_B", "ready")
+    assert facts_b is not None
 
 
 async def test_record_notification_appends_event_and_dedups(_isolate_vault_dir: Path):
     _write_meta(_isolate_vault_dir, SID, {"eta_tracking": {"order_id": ORDER, "notified_stages": [], "events": []}})
-    await ActivityEnvironment().run(record_eta_notification_activity, SID, "preparing", "¡Hola! Tu pedido entró en preparación.")
-    tr = _read_meta(_isolate_vault_dir, SID)["eta_tracking"]
+    await ActivityEnvironment().run(record_eta_notification_activity, SID, ORDER, "preparing", "¡Hola! Tu pedido entró en preparación.")
+    meta = _read_meta(_isolate_vault_dir, SID)
+    tr = _entry(meta, ORDER)
     assert "preparing" in tr["notified_stages"]
     assert tr["current_stage"] == "preparing"
     assert len(tr["events"]) == 1
@@ -179,23 +219,20 @@ async def test_record_notification_appends_event_and_dedups(_isolate_vault_dir: 
     assert tr["events"][0]["stage"] == "preparing"
 
 
-async def test_record_reply_attaches_to_last_event_with_flag(_isolate_vault_dir: Path):
+async def test_record_notification_isolated_per_order(_isolate_vault_dir: Path):
+    """Multi-pedido: el record de un pedido no contamina el timeline del otro."""
     _write_meta(
         _isolate_vault_dir, SID,
-        {"eta_tracking": {"order_id": ORDER, "notified_stages": ["shipping"],
-                          "events": [{"stage": "shipping", "agent_msg": "Va en camino", "reply": None, "flagged": False}]}},
+        {"eta_tracking": {"orders": {
+            ORDER: {"order_id": ORDER, "notified_stages": ["preparing"], "events": [{"stage": "preparing"}]},
+        }}},
     )
-    await ActivityEnvironment().run(
-        record_eta_reply_activity,
-        SID,
-        "¿puedo cambiar la dirección?",
-        True,
-        "Cliente pidió cambio de dirección",
-    )
-    ev = _read_meta(_isolate_vault_dir, SID)["eta_tracking"]["events"][-1]
-    assert ev["reply"] == "¿puedo cambiar la dirección?"
-    assert ev["flagged"] is True
-    assert ev["flag"] == "Cliente pidió cambio de dirección"
+    await ActivityEnvironment().run(record_eta_notification_activity, SID, "order_B", "ready", "Tu pedido order_B está listo.")
+    meta = _read_meta(_isolate_vault_dir, SID)
+    assert _entry(meta, ORDER)["notified_stages"] == ["preparing"]
+    entry_b = _entry(meta, "order_B")
+    assert entry_b["notified_stages"] == ["ready"]
+    assert entry_b["current_stage"] == "ready"
 
 
 async def test_bootstrap_falls_back_to_local_workspace(_isolate_vault_dir: Path):

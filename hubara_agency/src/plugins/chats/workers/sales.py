@@ -61,6 +61,7 @@ from src.plugins.chats.agent.sales.tools.catalog import (
 )
 from src.plugins.chats.agent.sales.tools.checkout import VerifyOrderForCheckoutTool
 from src.plugins.chats.agent.sales.tools.order_draft import SetOrderSlotTool
+from src.plugins.chats.agent.sales.tools.order_status import CheckOrderStatusTool
 from src.plugins.chats.agent.sales.tools.order_registration import (
     RegisterOrderTool,
 )
@@ -127,6 +128,14 @@ register_tool_extension(
 register_tool_extension(
     "sales.escalate_to_human",
     lambda workspace: EscalateToHumanTool(workspace=str(workspace)),
+)
+
+# Convivencia ETA/Sales (2026-06-10): el agente ETA es notificador puro — las
+# preguntas de entrega ("¿cuándo llega mi pedido?") las responde SALES con
+# esta tool (lee el estado compartido `metadata.eta_tracking` de la sesión).
+register_tool_extension(
+    "sales.check_order_status",
+    lambda workspace: CheckOrderStatusTool(workspace=str(workspace)),
 )
 
 # Verificacion LIVE de precio/stock al checkout: el snapshot es la verdad

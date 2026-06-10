@@ -1,7 +1,7 @@
 id: eta
 version: 0.1.0
 display_name: ETA Tracker
-description: Agente de seguimiento de envíos — notifica al cliente cada cambio de estado del pedido por WhatsApp + sección de visualización (tracked orders + chat). Backend self-contained (`/api/eta` + worker `eta`); datos del frontend vía `entities/tracked-order`.
+description: Notificador de envíos — empuja al cliente cada cambio de estado de sus pedidos por WhatsApp SIN tomar el turno conversacional (las respuestas las atiende Sales) + sección de visualización (tracked orders + chat). Backend self-contained (`/api/eta` + worker `eta`); datos del frontend vía `entities/tracked-order`.
 agentic: true  # worker conversacional ETA con workspace IDENTITY/SOUL/TOOLS/AGENTS/USER
 
 # Dep DURA (P-DEPS): el ingest de WhatsApp (webhook + ruteo de inbounds) vive
@@ -40,16 +40,16 @@ agent:
     - name: eta
       module: src.plugins.eta.workers.eta
       task_queue: queue-eta-agent
-      # Route registry (F6 — platform/routing.py): este worker POSEE la ruta
-      # de conversación `eta`. El ruteo de inbounds (chats) la resuelve del
-      # registry — ningún agente nombra a otro, y el template del workflow_id
-      # vive UNA sola vez acá (el gate de conformance ata las transitions de
-      # otros manifests a este prefijo — mata PM-2).
-      owns_route: eta
-      route_workflow_id_template: "eta-{session_id}"
+      # SIN `owns_route` (convivencia ETA/Sales, 2026-06-10): el ETA es un
+      # notificador puro — NO recibe inbounds. El turno conversacional es
+      # SIEMPRE de Sales (o humano); las preguntas de entrega las responde
+      # Sales con su tool `check_order_status`. El dispatch de notificaciones
+      # NO depende de esto (las transitions de orders/plugin.yaml llevan su
+      # propio workflow_id_template). Sesiones legacy con active_route=eta
+      # caen a Sales por el fallback del router (ruta no registrada).
       dashboard:
         display_name: Asistente de Seguimiento
-        role: Notifica al cliente cada cambio de estado de su pedido por WhatsApp
+        role: Notifica al cliente cada cambio de estado de sus pedidos por WhatsApp (sin tomar el turno de la conversación)
         category: Postventa
         icon: truck
         color: green
@@ -57,9 +57,8 @@ agent:
         workspace: hubara_agency/src/plugins/eta/agent/eta/workspace
         capabilities:
           - { label: Notificar cambios de estado del pedido, icon: bolt }
-          - { label: Responder dudas del envío, icon: chat }
+          - { label: Seguir varios pedidos en tránsito a la vez, icon: truck }
           - { label: Escalar a un humano, icon: user }
-          - { label: Transferir a Ventas, icon: refresh }
       workflow_classes:
         - HubaraEtaSessionWorkflow
       deployment:
