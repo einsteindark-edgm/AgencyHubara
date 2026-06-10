@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { useSessionFilters } from "./useSessionFilters";
-import type { ChatSession } from "@/entities/session";
+import type { ChatSession } from "@plugins/chats/frontend/entities/session";
 
 const session = (overrides: Partial<ChatSession>): ChatSession => ({
   session_id: "wa_1",

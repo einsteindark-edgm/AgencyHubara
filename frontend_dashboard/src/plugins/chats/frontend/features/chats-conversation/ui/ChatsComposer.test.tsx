@@ -20,9 +20,9 @@ import { ChatsComposer } from "./ChatsComposer";
 
 const useSessionMock = vi.fn();
 
-vi.mock("@/entities/session", async () => {
-  const actual = await vi.importActual<typeof import("@/entities/session")>(
-    "@/entities/session",
+vi.mock("@plugins/chats/frontend/entities/session", async () => {
+  const actual = await vi.importActual<typeof import("@plugins/chats/frontend/entities/session")>(
+    "@plugins/chats/frontend/entities/session",
   );
   return {
     ...actual,
@@ -36,7 +36,7 @@ const returnMutate = vi.fn();
 const confirmPaymentMutate = vi.fn();
 const scheduleOrderMutate = vi.fn();
 
-vi.mock("@/entities/handoff", () => ({
+vi.mock("@plugins/chats/frontend/entities/handoff", () => ({
   useInterveneMutation: () => ({
     mutate: interveneMutate,
     isPending: false,

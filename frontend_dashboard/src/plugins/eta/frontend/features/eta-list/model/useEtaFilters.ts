@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import type { TrackedOrder } from "@/entities/tracked-order";
+import type { TrackedOrder } from "@plugins/eta/frontend/entities/tracked-order";
 
 export type EtaFilter = "all" | "flag" | "cod" | "prep" | "ready" | "ship";
 

@@ -6,13 +6,18 @@
  * Dashboard pueda reemplazar `<ChatsSection ...>` con `<Page ...>` en PR3 sin
  * cambios funcionales.
  *
- * Auto-selecciona la primera sesión cuando llega data del SSE. La fuente del
- * stream sigue siendo el shell (`useSessionsStream()` en Dashboard.tsx) — el
- * plugin solo lee el cache de TanStack Query via `useChatInbox`.
+ * Auto-selecciona la primera sesión cuando llega data del SSE. F4 (INV-1): el
+ * stream SSE es DEL PLUGIN — `useSessionsStream()` se monta acá (antes vivía
+ * en el shell, que importaba la entity de chats: acople shell→dominio). El
+ * stream vive mientras la sección Chats esté montada; al volver a entrar,
+ * `useChatInbox` refetchea y el stream reconecta.
  */
 import { useEffect } from "react";
 
-import { useChatInbox } from "@/entities/chat";
+import {
+  useChatInbox,
+  useSessionsStream,
+} from "@plugins/chats/frontend/entities/chat";
 
 import { ChatsInbox } from "@plugins/chats/frontend/features/chats-inbox";
 import { ChatsConversation } from "@plugins/chats/frontend/features/chats-conversation";
@@ -31,6 +36,7 @@ export function ChatsSection({
   selectedChatId,
   setSelectedChatId,
 }: ChatsSectionProps) {
+  useSessionsStream();
   const { data: chats = [] } = useChatInbox();
   useEffect(() => {
     if (selectedChatId == null && chats.length > 0) {

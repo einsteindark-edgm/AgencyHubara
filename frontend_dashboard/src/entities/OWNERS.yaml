@@ -17,14 +17,8 @@
 # las recibirá en F4/F5). Que HOY llamen /api/chats/evals es exactamente la
 # violación que P-23 registra como deuda conocida hasta F5.
 
-ads-campaign: ads
-agent: agents_admin
-catalog-sync: catalog
-chat: chats
+# (migradas F4a: ads-campaign→ads · agent→agents_admin · catalog-sync→catalog
+#  · tracked-order→eta. F4b: chat/message/session/handoff→chats.)
 eval-candidate: agents_admin
 eval-trend: agents_admin
-handoff: chats
-message: chats
 order: orders
-session: chats
-tracked-order: eta

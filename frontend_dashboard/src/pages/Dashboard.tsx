@@ -31,8 +31,6 @@ import { Suspense, useMemo, useState } from "react";
 import { StatusBar, TitleBar, Toolbar } from "@/shared/ui";
 import { IS_DESKTOP } from "@/shared/lib";
 
-import { useSessionsStream } from "@/entities/chat";
-
 import { PLUGINS } from "@/app/plugin-registry.generated";
 
 export function Dashboard() {
@@ -76,12 +74,9 @@ export function Dashboard() {
   const [selectedJobId, setSelectedJobId] = useState<string>("");
   const [selectedAgentId, setSelectedAgentId] = useState<string>("sales");
 
-  // Stream SSE de sesiones: se monta UNA vez aquí — empuja el snapshot al
-  // cache de TanStack Query para todas las features de Chats. Las demás
-  // secciones del diseño viven con datos mock locales y no dependen del
-  // stream.
-  useSessionsStream();
-
+  // F4 (INV-1): el stream SSE de sesiones era una suscripción del SHELL a la
+  // entity de chats — acople shell→dominio. Ahora lo monta el Page de chats
+  // (dueño del stream); el shell quedó 100% libre de imports de dominio.
   const ActivePage = pageByKey.get(section);
 
   // ── pluginProps — contrato (pragmático v1) entre shell y plugin Page ──

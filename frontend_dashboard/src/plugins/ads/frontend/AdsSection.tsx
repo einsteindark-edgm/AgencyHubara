@@ -25,7 +25,7 @@ import {
   useDailySeries,
   type AdsRangeSelection,
   type AdsWindowParams,
-} from "@/entities/ads-campaign";
+} from "@plugins/ads/frontend/entities/ads-campaign";
 
 import { AdsCampaignsList } from "@plugins/ads/frontend/features/ads-campaigns-list";
 import { AdsOverviewHeader } from "@plugins/ads/frontend/features/ads-overview-header";

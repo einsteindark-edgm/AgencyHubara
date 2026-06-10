@@ -10,7 +10,7 @@
  */
 
 import { useMemo, useState } from "react";
-import type { ChatSession } from "@/entities/session";
+import type { ChatSession } from "@plugins/chats/frontend/entities/session";
 
 const HIDDEN_TAG = "NO_ETIQUETADO";
 

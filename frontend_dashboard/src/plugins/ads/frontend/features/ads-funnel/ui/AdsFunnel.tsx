@@ -15,7 +15,7 @@ import type { ReactElement } from "react";
 import {
   totalConversations,
   type AdsCampaign,
-} from "@/entities/ads-campaign";
+} from "@plugins/ads/frontend/entities/ads-campaign";
 
 import { fmtN, fmtPct } from "@plugins/ads/frontend/lib/format";
 import { AdsIcon } from "@plugins/ads/frontend/lib/icons";

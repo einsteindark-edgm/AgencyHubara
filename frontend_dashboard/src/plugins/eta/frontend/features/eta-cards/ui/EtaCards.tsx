@@ -7,7 +7,7 @@
 import {
   TRACKED_STAGES,
   type TrackedOrder,
-} from "@/entities/tracked-order";
+} from "@plugins/eta/frontend/entities/tracked-order";
 import { truncate } from "@/shared/lib";
 import { Avatar, Icon } from "@/shared/ui";
 

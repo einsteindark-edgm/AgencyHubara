@@ -5,7 +5,7 @@
  */
 
 import { useState } from "react";
-import { useAgents, type Agent } from "@/entities/agent";
+import { useAgents, type Agent } from "@plugins/agents_admin/frontend/entities/agent";
 import { Icon, type IconName } from "@/shared/ui";
 
 interface Props {

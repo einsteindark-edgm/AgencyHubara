@@ -14,7 +14,7 @@ import {
   totalConversations,
   type AdsCampaign,
   type AdsState,
-} from "@/entities/ads-campaign";
+} from "@plugins/ads/frontend/entities/ads-campaign";
 import { Icon } from "@/shared/ui";
 
 import { fmtMoney, fmtMoneyK, fmtN } from "@plugins/ads/frontend/lib/format";

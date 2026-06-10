@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { type ChatMessage, isVisibleChatMessage, getMessageSender } from "@/entities/message";
+import { type ChatMessage, isVisibleChatMessage, getMessageSender } from "@plugins/chats/frontend/entities/message";
 import { ChatBubble } from "./ChatBubble";
 
 interface Props {

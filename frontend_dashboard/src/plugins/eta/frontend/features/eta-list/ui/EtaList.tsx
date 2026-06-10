@@ -3,7 +3,7 @@
  * filtros (Necesita atención / Contra entrega / por stage).
  */
 
-import type { TrackedOrder } from "@/entities/tracked-order";
+import type { TrackedOrder } from "@plugins/eta/frontend/entities/tracked-order";
 import { Icon } from "@/shared/ui";
 import { type EtaFilter } from "../model/useEtaFilters";
 

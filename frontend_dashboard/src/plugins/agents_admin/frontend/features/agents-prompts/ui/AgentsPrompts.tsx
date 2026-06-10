@@ -9,7 +9,7 @@
 
 import { useEffect, useState } from "react";
 
-import { PROMPT_SECTIONS, useAgents } from "@/entities/agent";
+import { PROMPT_SECTIONS, useAgents } from "@plugins/agents_admin/frontend/entities/agent";
 import { AgentsQuality } from "@plugins/agents_admin/frontend/features/agents-quality";
 import { Icon, type IconName } from "@/shared/ui";
 

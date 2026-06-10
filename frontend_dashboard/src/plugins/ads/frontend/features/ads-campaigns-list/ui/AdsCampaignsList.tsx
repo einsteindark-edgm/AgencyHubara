@@ -12,7 +12,7 @@ import {
   totalConversations,
   type AdsCampaign,
   type AdsConversationCounts,
-} from "@/entities/ads-campaign";
+} from "@plugins/ads/frontend/entities/ads-campaign";
 import { Icon } from "@/shared/ui";
 
 import { fmtMoneyK, fmtN, fmtUsd } from "@plugins/ads/frontend/lib/format";

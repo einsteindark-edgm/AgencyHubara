@@ -4,7 +4,7 @@ import {
   useConfirmOrderPayment,
   useScheduleOrder,
 } from "@/entities/order";
-import { sessionKeys } from "@/entities/session";
+import { sessionKeys } from "@plugins/chats/frontend/entities/session";
 
 interface Props {
   /** Id backend (Medusa) del pedido a confirmar — `session.pending_payment_order_id`. */

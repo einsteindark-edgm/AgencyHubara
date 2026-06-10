@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { render } from "@testing-library/react";
 import { ChatBubble } from "./ChatBubble";
-import type { ChatMessage } from "@/entities/message";
+import type { ChatMessage } from "@plugins/chats/frontend/entities/message";
 
 const userMsg: ChatMessage = {
   ui_type: "user_message",

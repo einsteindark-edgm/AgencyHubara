@@ -10,7 +10,7 @@ import {
   syncStatusLabel,
   useSyncHistory,
   type SyncHistoryItem,
-} from "@/entities/catalog-sync";
+} from "@plugins/catalog/frontend/entities/catalog-sync";
 import { Icon } from "@/shared/ui";
 
 interface Props {

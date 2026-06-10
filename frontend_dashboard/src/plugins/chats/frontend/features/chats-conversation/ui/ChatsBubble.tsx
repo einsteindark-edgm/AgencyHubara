@@ -1,4 +1,4 @@
-import type { ChatMessageItem } from "@/entities/chat";
+import type { ChatMessageItem } from "@plugins/chats/frontend/entities/chat";
 import { Icon } from "@/shared/ui";
 
 interface Props {

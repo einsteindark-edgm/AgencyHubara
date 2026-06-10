@@ -1,4 +1,4 @@
-import type { ChatMessageItem } from "@/entities/chat";
+import type { ChatMessageItem } from "@plugins/chats/frontend/entities/chat";
 import { ChatsBubble } from "./ChatsBubble";
 import { ChatsComposer } from "./ChatsComposer";
 import { useAutoScroll } from "../model/useAutoScroll";

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { ChatsMessageList } from "./ChatsMessageList";
-import type { ChatMessageItem } from "@/entities/chat";
+import type { ChatMessageItem } from "@plugins/chats/frontend/entities/chat";
 
 const scrollToBottomMock = vi.fn();
 

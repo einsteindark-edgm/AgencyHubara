@@ -13,7 +13,7 @@
  * reciente del historial (así el centro muestra algo útil al entrar).
  */
 
-import { useSyncHistory } from "@/entities/catalog-sync";
+import { useSyncHistory } from "@plugins/catalog/frontend/entities/catalog-sync";
 import { SyncHistory } from "@plugins/catalog/frontend/features/sync-history";
 import { SyncInspector } from "@plugins/catalog/frontend/features/sync-inspector";
 import { SyncRunner } from "@plugins/catalog/frontend/features/sync-runner";

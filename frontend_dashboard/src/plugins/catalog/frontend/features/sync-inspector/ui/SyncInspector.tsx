@@ -8,7 +8,7 @@ import {
   syncStatusLabel,
   useSnapshotInfo,
   useSyncStatus,
-} from "@/entities/catalog-sync";
+} from "@plugins/catalog/frontend/entities/catalog-sync";
 import { Icon, InsBlock } from "@/shared/ui";
 
 interface Props {

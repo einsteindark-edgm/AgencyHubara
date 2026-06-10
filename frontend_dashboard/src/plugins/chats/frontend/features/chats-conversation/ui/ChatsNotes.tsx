@@ -5,7 +5,7 @@
  */
 
 import { useState, useMemo } from "react";
-import { useChatNotes, type NoteItem } from "@/entities/chat";
+import { useChatNotes, type NoteItem } from "@plugins/chats/frontend/entities/chat";
 import { Avatar, Icon } from "@/shared/ui";
 
 interface Props {

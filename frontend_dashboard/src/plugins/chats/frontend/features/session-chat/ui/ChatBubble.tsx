@@ -1,4 +1,4 @@
-import type { ChatMessage, MessageSender } from "@/entities/message";
+import type { ChatMessage, MessageSender } from "@plugins/chats/frontend/entities/message";
 
 interface Props {
   message: ChatMessage;

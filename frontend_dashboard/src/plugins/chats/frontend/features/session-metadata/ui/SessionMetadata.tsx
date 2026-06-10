@@ -9,7 +9,7 @@
  * `SessionMetadata` no se entera ni le importa.
  */
 
-import { useSession, useSessions } from "@/entities/session";
+import { useSession, useSessions } from "@plugins/chats/frontend/entities/session";
 import { useCombinedHistory } from "../model/useCombinedHistory";
 import { CurrentStatusSection } from "./CurrentStatusSection";
 import { AgentDetailsSection } from "./AgentDetailsSection";

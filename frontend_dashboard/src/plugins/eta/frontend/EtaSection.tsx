@@ -9,7 +9,7 @@
  */
 import { useMemo } from "react";
 
-import { useTrackedOrders } from "@/entities/tracked-order";
+import { useTrackedOrders } from "@plugins/eta/frontend/entities/tracked-order";
 
 import {
   EtaList,

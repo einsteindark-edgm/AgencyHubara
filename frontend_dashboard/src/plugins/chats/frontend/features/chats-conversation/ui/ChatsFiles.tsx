@@ -1,4 +1,4 @@
-import { useChatFiles } from "@/entities/chat";
+import { useChatFiles } from "@plugins/chats/frontend/entities/chat";
 import { Icon } from "@/shared/ui";
 
 interface Props {

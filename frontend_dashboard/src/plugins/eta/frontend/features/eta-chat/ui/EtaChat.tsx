@@ -4,7 +4,7 @@
  * Si el pedido necesita atención, banner rojo + "Intervenir manualmente".
  */
 
-import type { TrackedOrder } from "@/entities/tracked-order";
+import type { TrackedOrder } from "@plugins/eta/frontend/entities/tracked-order";
 import { Avatar, Icon } from "@/shared/ui";
 
 interface Props {

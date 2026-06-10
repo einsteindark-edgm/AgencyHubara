@@ -10,7 +10,7 @@
  */
 
 import { useMemo } from "react";
-import type { ChatMessage } from "@/entities/message";
+import type { ChatMessage } from "@plugins/chats/frontend/entities/message";
 
 export interface TimelineEvent {
   type: ChatMessage["ui_type"];
