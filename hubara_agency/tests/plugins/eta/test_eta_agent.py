@@ -20,6 +20,7 @@ from types import SimpleNamespace
 from temporalio.testing import ActivityEnvironment
 
 from src.plugins.eta.agent.eta.activities import (
+    all_trackings_terminal_activity,
     bootstrap_eta_session_activity,
     claim_eta_notification_activity,
     record_eta_notification_activity,
@@ -431,3 +432,46 @@ async def test_list_timeline_only_when_port_unavailable(
     assert resp["count"] == 1
     assert resp["orders"][0]["current"] == "shipping"
     assert resp["orders"][0]["events"][0]["agentMsg"] == "Va en camino"
+
+
+async def test_claim_facts_include_items_label(_isolate_vault_dir: Path, monkeypatch):
+    """El cliente no reconoce "#6": los facts llevan los productos del pedido."""
+    _write_meta(_isolate_vault_dir, SID, {"eta_tracking": {"order_id": ORDER, "notified_stages": []}})
+
+    class _Port:
+        async def get(self, oid):
+            return SimpleNamespace(
+                summary=SimpleNamespace(customer="Ana María", display_id="#6", total_cop=51000, pay_type="cod"),
+                items_detail=[
+                    SimpleNamespace(title="Vela Cruz de Vida", quantity=3),
+                    SimpleNamespace(title="Vela Sándalo", quantity=1),
+                ],
+            )
+
+    monkeypatch.setattr("src.platform.orders.composition.get_order_query_port", lambda: _Port())
+    facts = await ActivityEnvironment().run(claim_eta_notification_activity, SID, ORDER, "shipping")
+    assert facts["items_label"] == "3× Vela Cruz de Vida, Vela Sándalo"
+
+
+async def test_all_trackings_terminal(_isolate_vault_dir: Path):
+    """Cierre proactivo: True solo cuando TODOS los pedidos están terminales."""
+    _write_meta(
+        _isolate_vault_dir, SID,
+        {"eta_tracking": {"orders": {
+            "order_A": {"order_id": "order_A", "current_stage": "delivered", "notified_stages": [], "events": []},
+            "order_B": {"order_id": "order_B", "current_stage": "shipping", "notified_stages": [], "events": []},
+        }}},
+    )
+    assert await ActivityEnvironment().run(all_trackings_terminal_activity, SID) is False
+
+    _write_meta(
+        _isolate_vault_dir, SID,
+        {"eta_tracking": {"orders": {
+            "order_A": {"order_id": "order_A", "current_stage": "delivered", "notified_stages": [], "events": []},
+            "order_B": {"order_id": "order_B", "current_stage": "cancelled", "notified_stages": [], "events": []},
+        }}},
+    )
+    assert await ActivityEnvironment().run(all_trackings_terminal_activity, SID) is True
+
+    _write_meta(_isolate_vault_dir, SID, {})
+    assert await ActivityEnvironment().run(all_trackings_terminal_activity, SID) is False

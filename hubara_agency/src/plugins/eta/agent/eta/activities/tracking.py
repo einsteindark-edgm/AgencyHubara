@@ -117,6 +117,22 @@ def _write_orders_map(
     store.write(session_id, data)
 
 
+
+def _items_label(detail: object) -> str:
+    """Resumen humano de los productos del pedido: "2× Vela Cruz de Vida,
+    1× Vela Sándalo" (máx 3, luego "y N más"). El cliente no sabe qué es
+    "#6" — el mensaje SIEMPRE nombra qué se está moviendo."""
+    items = getattr(detail, "items_detail", None) or []
+    parts: list[str] = []
+    for it in items[:3]:
+        title = getattr(it, "title", "") or ""
+        qty = getattr(it, "quantity", 0) or 0
+        if title:
+            parts.append(f"{qty}× {title}" if qty > 1 else title)
+    if len(items) > 3:
+        parts.append(f"y {len(items) - 3} más")
+    return ", ".join(parts)
+
 @activity.defn(name="start_eta_tracking_activity")
 async def start_eta_tracking_activity(session_id: str, order_id: str) -> None:
     """Inicializa (idempotente) el tracking del pedido en el mapa multi-pedido.
@@ -212,6 +228,7 @@ async def claim_eta_notification_activity(
             "total_label": "",
             "pay_type": "confirmed",
             "delivery_window": None,
+            "items_label": "",
             "in_service_window": in_window,
         }
 
@@ -224,6 +241,7 @@ async def claim_eta_notification_activity(
         # v1: mensaje genérico — sin transportadora/guía/ventana específica
         # (el backend no las modela todavía). El slot queda para una HU futura.
         "delivery_window": None,
+        "items_label": _items_label(detail),
         "in_service_window": in_window,
     }
 
@@ -263,3 +281,23 @@ async def record_eta_notification_activity(
     entry["events"] = events
     orders[order_id] = entry
     _write_orders_map(store, session_id, data, orders)
+
+
+_TERMINAL_STAGES = {"delivered", "cancelled"}
+
+
+@activity.defn(name="all_trackings_terminal_activity")
+async def all_trackings_terminal_activity(session_id: str) -> bool:
+    """True si TODOS los pedidos trackeados están en estado terminal
+    (delivered/cancelled) y hay al menos uno. El workflow lo usa para
+    cerrarse proactivamente en vez de dormir el idle de 7 días — revivir
+    es gratis (signal_with_start, L-8)."""
+    store = _store()
+    data = _safe_read(store, session_id)
+    orders = _orders_map(data)
+    if not orders:
+        return False
+    return all(
+        (e.get("current_stage") or "") in _TERMINAL_STAGES
+        for e in orders.values()
+    )

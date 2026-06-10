@@ -20,6 +20,7 @@ from src.platform.whatsapp.activities import (
     send_whatsapp_template_activity,
 )
 from src.plugins.eta.agent.eta.activities import (
+    all_trackings_terminal_activity,
     bootstrap_eta_session_activity,
     claim_eta_notification_activity,
     record_eta_notification_activity,
@@ -75,6 +76,7 @@ async def main() -> None:
             start_eta_tracking_activity,
             claim_eta_notification_activity,
             record_eta_notification_activity,
+            all_trackings_terminal_activity,
         ],
         workflow_runner=otel_workflow_runner(),
     )

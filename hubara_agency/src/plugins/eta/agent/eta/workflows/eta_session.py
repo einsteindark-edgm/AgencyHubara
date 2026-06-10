@@ -49,6 +49,7 @@ with workflow.unsafe.imports_passed_through():
         run_agent_turn,
     )
     from src.plugins.eta.agent.eta.activities import (
+        all_trackings_terminal_activity,
         bootstrap_eta_session_activity,
         claim_eta_notification_activity,
         record_eta_notification_activity,
@@ -127,6 +128,7 @@ class HubaraEtaSessionWorkflow:
             )
 
         turn_count = input.turn_count
+        saw_terminal_stage = False
 
         while True:
             try:
@@ -155,6 +157,26 @@ class HubaraEtaSessionWorkflow:
                         f"ETA notify_stage falló (no-fatal): session={session.session_id} "
                         f"stage={stage} err={exc!r}"
                     )
+                if stage in ("delivered", "cancelled"):
+                    saw_terminal_stage = True
+
+            # Cierre proactivo: si acabamos de procesar un stage terminal y
+            # TODOS los pedidos trackeados quedaron entregados/cancelados, el
+            # workflow termina en vez de dormir el idle de 7 días. Revivir es
+            # gratis: un pedido nuevo lo re-arranca vía signal_with_start (L-8).
+            if saw_terminal_stage and not self._pending_stages:
+                saw_terminal_stage = False
+                all_done = await workflow.execute_activity(
+                    all_trackings_terminal_activity,
+                    session.session_id,
+                    **_FAST,
+                )
+                if all_done:
+                    workflow.logger.info(
+                        f"ETA: todos los pedidos de {session.session_id} en estado "
+                        "terminal — cierre proactivo."
+                    )
+                    return
 
             if self._force_shutdown:
                 workflow.logger.info(
@@ -210,6 +232,7 @@ class HubaraEtaSessionWorkflow:
             total_label=facts.get("total_label", ""),
             pay_type=facts.get("pay_type", "confirmed"),
             delivery_window=facts.get("delivery_window"),
+            items_label=facts.get("items_label", ""),
         )
         result = await run_agent_turn(session, PendingMessage(message=synthetic))
         self._last_response = result.final_content
@@ -249,9 +272,15 @@ class HubaraEtaSessionWorkflow:
         con 131008 — estado conocido y observable, NO un crash.
         """
         status_label = STAGE_LABELS.get(stage, stage)
+        reference = facts.get("order_display_id") or "tu pedido"
+        items_label = facts.get("items_label") or ""
+        if items_label:
+            # El cliente no sabe qué es "#6" — nombramos los productos en el
+            # slot de referencia (texto libre del template, truncado corto).
+            reference = f"{reference} ({items_label})"[:120]
         variables = {
             "customer_first_name": facts.get("customer_name") or "",
-            "order_reference": facts.get("order_display_id") or "tu pedido",
+            "order_reference": reference,
             "status_label": status_label,
         }
         await workflow.execute_activity(
