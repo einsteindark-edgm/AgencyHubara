@@ -429,7 +429,7 @@ async def _emit_stage_changed_event(order_id: str, to_stage: str) -> None:
     envío) y emite el evento por el dispatcher declarativo (ADR-2026-05-20). El
     dispatcher consulta las ``transitions`` del worker ``orders/reconcile`` y, según
     ``to_stage``, arranca (``preparing``) o signalea (resto) el
-    ``HubaraEtaSessionWorkflow`` del plugin ``chats`` — sin que orders importe ese
+    ``HubaraEtaSessionWorkflow`` del plugin ``eta`` — sin que orders importe ese
     workflow (R-DIP).
 
     NO levanta: la transición de stage ya se aplicó en Medusa; una falla acá solo

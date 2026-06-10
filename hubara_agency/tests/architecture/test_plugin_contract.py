@@ -121,12 +121,14 @@ def test_p14_consumes_blocks_are_well_formed() -> None:
 
 
 @pytest.mark.xfail(
-    reason="Caza agents_admin (Calidad LLM) -> /api/chats/evals: el plano de "
-    "gestión consume el eval del agente `sales` (evals queda PER-AGENTE por "
-    "decisión 2026-06-05 — NO se extrae). A formalizar server-side (agents_admin "
-    "backend agrega los evals y sirve /api/agents_admin/...). `ads` ya extraído; "
-    "`eta` sigue split pero mediado por la entity central `tracked-order` (-> P-11). "
-    "Verde cuando agents_admin no llame /api/chats + eta extraído.",
+    # Reason redactado por INVARIANTE, no por lista de ofensores (lección
+    # PM-12: las listas de ofensores se pudren; el invariante no).
+    reason="P-OWN: el frontend de un plugin solo consume su propia API. "
+    "Sale del xfail cuando todo consumo cross-plugin pase por el backend "
+    "propio del consumidor (cast server-side, PLUGIN_CONTRACT.md §5.3) — "
+    "plan F5 de PLUGIN_REFACTOR_PLAN_fable.md. OJO: este test grepea TEXTO "
+    "(comentarios incluidos) bajo plugins/; la detección del canal real "
+    "(lavado vía entities centrales) la dan P-22/P-23 en el frontend.",
     strict=False,
 )
 def test_p9_frontend_plugin_calls_only_own_api() -> None:

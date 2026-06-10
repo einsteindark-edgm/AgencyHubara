@@ -21,6 +21,11 @@ import pytest
 
 
 def _reload_run_workers(monkeypatch: pytest.MonkeyPatch, manifest_dir: Path) -> object:
+    # validate_enabled (P-6) lee los manifests vía plugin_manifest — apuntarlo
+    # al mismo dir temporal que el loader para que vea el mismo universo.
+    import src.platform.plugin_manifest as pm
+
+    monkeypatch.setattr(pm, "_PLUGINS_MANIFEST_DIR", manifest_dir)
     if "src.run_workers" in sys.modules:
         del sys.modules["src.run_workers"]
     import src.run_workers as mod

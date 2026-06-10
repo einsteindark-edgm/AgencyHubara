@@ -74,6 +74,7 @@ type Manifest = {
   id?: string;
   version?: string;
   display_name?: string;
+  depends_on?: string[];
   frontend?: {
     entry?: string;
     contributes?: {
@@ -175,6 +176,58 @@ function discoverManifests(): Map<string, Manifest> {
   return found;
 }
 
+/**
+ * Scan liviano de TODOS los manifests (incluidos los backend-only que
+ * `discoverManifests` excluye del registry) → `{id: depends_on[]}`.
+ * Necesario para validar P-ENABLED: un plugin frontend puede depender de un
+ * plugin sin bloque `frontend:`.
+ */
+function readAllDependsOn(): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  if (!existsSync(PLUGINS_DIR)) return out;
+  for (const entry of readdirSync(PLUGINS_DIR, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    if (entry.name.startsWith("_") || entry.name.startsWith(".")) continue;
+    const manifestPath = join(PLUGINS_DIR, entry.name, "plugin.yaml");
+    if (!existsSync(manifestPath)) continue;
+    try {
+      const manifest = parse(readFileSync(manifestPath, "utf-8")) as Manifest;
+      out.set(entry.name, manifest?.depends_on ?? []);
+    } catch {
+      // YAML inválido ya lo reporta discoverManifests; acá solo lo omitimos.
+    }
+  }
+  return out;
+}
+
+/**
+ * P-ENABLED (PLUGIN_CONTRACT.md §5.4) — espejo TS de
+ * `src/platform/plugin_loader.validate_enabled`: el set habilitado debe (1)
+ * referenciar solo plugins existentes y (2) incluir el `depends_on` de cada
+ * habilitado. Tira Error → `predev`/`prebuild` fallan (fail-fast, no warning).
+ */
+function validateEnabled(enabled: Set<string>, allDeps: Map<string, string[]>): void {
+  const problems: string[] = [];
+  for (const id of [...enabled].sort()) {
+    if (!allDeps.has(id)) {
+      problems.push(`ENABLED_PLUGINS incluye "${id}" pero no existe ningún manifest con ese id`);
+      continue;
+    }
+    const missing = (allDeps.get(id) ?? []).filter((dep) => !enabled.has(dep)).sort();
+    if (missing.length > 0) {
+      problems.push(
+        `plugin "${id}" declara depends_on=[${missing.join(", ")}] pero no están en ` +
+          `ENABLED_PLUGINS — habilitá las deps o deshabilitá "${id}"`,
+      );
+    }
+  }
+  if (problems.length > 0) {
+    throw new Error(
+      `ENABLED_PLUGINS inválido (P-ENABLED, PLUGIN_CONTRACT.md §5.4):\n  - ${problems.join("\n  - ")}`,
+    );
+  }
+}
+
 function filterEnabled(found: Map<string, Manifest>): Manifest[] {
   const envValue = process.env.ENABLED_PLUGINS?.trim();
   if (!envValue) {
@@ -182,11 +235,14 @@ function filterEnabled(found: Map<string, Manifest>): Manifest[] {
     return [...found.values()].sort((a, b) => a.id!.localeCompare(b.id!));
   }
   const enabled = new Set(envValue.split(",").map((s) => s.trim()).filter(Boolean));
+  validateEnabled(enabled, readAllDependsOn());
   const out: Manifest[] = [];
   for (const id of [...enabled].sort()) {
     const manifest = found.get(id);
     if (!manifest) {
-      logWarn(`ENABLED_PLUGINS lists "${id}" but no manifest found`);
+      // Id válido pero backend-only (sin bloque `frontend:`) — no contribuye
+      // al registry. Los typos reales ya los cazó validateEnabled (throw).
+      logInfo(`"${id}" habilitado pero backend-only — no entra al registry del dashboard`);
       continue;
     }
     out.push(manifest);

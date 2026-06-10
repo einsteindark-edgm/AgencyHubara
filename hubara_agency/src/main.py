@@ -27,7 +27,6 @@ arranque que servir un endpoint silenciosamente ausente.
 from __future__ import annotations
 
 import importlib
-import os
 from pathlib import Path
 from types import ModuleType
 
@@ -37,6 +36,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
 from src.platform.observability.otel import init_otel, instrument_fastapi_app
+from src.platform.plugin_loader import validate_enabled
+from src.platform.plugin_manifest import enabled_plugins
 
 # OTel ANTES de `_bootstrap_routers()` (que importa los plugins → litellm/exoclaw):
 # hace del proceso HTTP el servicio "api-gateway" en SigNoz, raíz del trace que se
@@ -76,11 +77,12 @@ _PLUGINS_MANIFEST_DIR = _REPO_ROOT / "frontend_dashboard" / "src" / "plugins"
 
 
 def _enabled_plugins() -> set[str] | None:
-    """Devuelve el set de plugin ids habilitados, o None si todos."""
-    raw = os.environ.get("ENABLED_PLUGINS", "").strip()
-    if not raw:
-        return None
-    return {part.strip() for part in raw.split(",") if part.strip()}
+    """Devuelve el set de plugin ids habilitados, o None si todos.
+
+    Delegado a la implementación canónica de ``plugin_manifest`` — una sola
+    semántica de ``ENABLED_PLUGINS`` para loaders + dispatcher (N-7).
+    """
+    return enabled_plugins()
 
 
 def _discover_plugin_manifests() -> list[tuple[str, dict]]:
@@ -110,12 +112,14 @@ def _discover_plugin_manifests() -> list[tuple[str, dict]]:
             )
             continue
         if manifest.get("id") != plugin_dir.name:
-            logger.warning(
-                "[loader] skip {!r}: manifest id ({!r}) != directory name",
-                plugin_dir.name,
-                manifest.get("id"),
+            # Fail-fast (N-9): un typo de `id` apagaba el plugin EN SILENCIO
+            # (warning + skip). Mismo trato que un import roto: el boot muere
+            # con mensaje accionable en vez de servir un sistema parcial.
+            raise RuntimeError(
+                f"plugin manifest inválido: {plugin_dir.name}/plugin.yaml declara "
+                f"id={manifest.get('id')!r} pero el directorio se llama "
+                f"{plugin_dir.name!r} — deben coincidir (P-PARITY)."
             )
-            continue
         out.append((plugin_dir.name, manifest))
     return out
 
@@ -162,6 +166,9 @@ def _bootstrap_routers(target_app: FastAPI | None = None) -> list[str]:
     """
     if target_app is None:
         target_app = app
+    # P-ENABLED (PLUGIN_CONTRACT.md §5.4): el set habilitado debe satisfacer
+    # los depends_on de cada plugin habilitado — fail-fast al boot.
+    validate_enabled(_enabled_plugins())
     loaded: list[str] = []
     manifests = _discover_plugin_manifests()
     logger.info(

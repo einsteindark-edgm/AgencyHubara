@@ -43,6 +43,12 @@ def _isolated_loader(monkeypatch: pytest.MonkeyPatch, manifest_dir: Path):
 
     NO mutamos ``mod.app`` — usamos un app fresco para evitar leakage entre tests.
     """
+    # validate_enabled (P-6) lee los manifests vía plugin_manifest — apuntarlo
+    # al mismo dir temporal ANTES de importar src.main (el bootstrap corre en
+    # module-load y valida el env contra ese universo).
+    import src.platform.plugin_manifest as pm
+
+    monkeypatch.setattr(pm, "_PLUGINS_MANIFEST_DIR", manifest_dir)
     if "src.main" in sys.modules:
         del sys.modules["src.main"]
     import src.main as mod
@@ -141,24 +147,35 @@ def test_enabled_plugins_filter_subset(
     assert loaded == ["alpha"]
 
 
-def test_enabled_plugins_unknown_id_yields_empty(
+def test_enabled_plugins_unknown_id_fails_fast(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """ENABLED_PLUGINS con id inexistente → no carga nada, no crash."""
+    """ENABLED_PLUGINS con id inexistente → error de boot (P-6, antes: silencio).
+
+    Cambio de contrato F1 (PLUGIN_REFACTOR_PLAN_fable.md): un typo en
+    ENABLED_PLUGINS apagaba el plugin sin ruido; ahora el boot muere con
+    mensaje accionable.
+    """
     monkeypatch.setenv("ENABLED_PLUGINS", "ghost")
     _write_manifest(tmp_path / "alpha", "id: alpha\nversion: 0.1.0\n")
-    mod, fresh_app = _isolated_loader(monkeypatch, tmp_path)
-    assert mod._bootstrap_routers(fresh_app) == []
+
+    import src.platform.plugin_manifest as pm
+    from src.platform.plugin_loader import PluginDependencyError, validate_enabled
+
+    monkeypatch.setattr(pm, "_PLUGINS_MANIFEST_DIR", tmp_path)
+    with pytest.raises(PluginDependencyError, match="ghost"):
+        validate_enabled()
 
 
-def test_id_mismatch_directory_is_skipped(
+def test_id_mismatch_directory_fails_fast(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Manifest con `id: x` en dir `y` se rechaza (defense in depth)."""
+    """Manifest con `id: x` en dir `y` → RuntimeError (N-9, antes: skip silencioso)."""
     monkeypatch.delenv("ENABLED_PLUGINS", raising=False)
     _write_manifest(tmp_path / "alpha", "id: BOGUS\nversion: 0.1.0\n")
     mod, fresh_app = _isolated_loader(monkeypatch, tmp_path)
-    assert mod._bootstrap_routers(fresh_app) == []
+    with pytest.raises(RuntimeError, match="deben coincidir"):
+        mod._bootstrap_routers(fresh_app)
 
 
 # ---------------------------------------------------------------------------

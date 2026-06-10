@@ -23,6 +23,8 @@ from pathlib import Path
 import yaml
 from loguru import logger
 
+from src.platform.plugin_manifest import enabled_plugins
+
 # ---------------------------------------------------------------------------
 # Localización del repo root + manifests (mismo árbol que src/main.py lee).
 # ---------------------------------------------------------------------------
@@ -172,9 +174,15 @@ def discover_agents() -> list[AgentDTO]:
         )
         return []
 
+    # PM-4 / AP-8: el plano de gestión respeta el toggle — un plugin apagado
+    # no muestra sus agentes (antes escaneaba TODOS los manifests del disco).
+    enabled = enabled_plugins()
+
     agents: list[AgentDTO] = []
     for plugin_dir in sorted(_PLUGINS_MANIFEST_DIR.iterdir()):
         if not plugin_dir.is_dir() or plugin_dir.name.startswith(("_", ".")):
+            continue
+        if enabled is not None and plugin_dir.name not in enabled:
             continue
         manifest_path = plugin_dir / "plugin.yaml"
         if not manifest_path.is_file():
@@ -183,6 +191,10 @@ def discover_agents() -> list[AgentDTO]:
             manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
         except yaml.YAMLError as exc:
             logger.error("[agents_admin] YAML inválido en {}: {}", manifest_path, exc)
+            continue
+        # PM-3 / AP-11: el schema promete que `agentic: true` gatea esta lista;
+        # ahora el código lo honra (P-17 mantiene flag ⟺ dashboard coherentes).
+        if not manifest.get("agentic"):
             continue
         agent_cfg = manifest.get("agent") or {}
         for worker in agent_cfg.get("workers") or []:

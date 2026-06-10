@@ -242,6 +242,34 @@ def find_matching_transitions(
     return [t for t in transitions if t.matches(envelope)]
 
 
+def all_manifests() -> list[tuple[str, dict[str, Any]]]:
+    """``[(plugin_id, manifest_dict)]`` de TODOS los manifests del repo.
+
+    Ignora el filtro ``ENABLED_PLUGINS`` — los consumidores que filtran
+    (loaders) lo aplican ellos; los que necesitan el universo completo
+    (``plugin_loader.validate_enabled``, tests) lo usan tal cual.
+    """
+    out: list[tuple[str, dict[str, Any]]] = []
+    if not _PLUGINS_MANIFEST_DIR.exists():
+        return out
+    for plugin_dir in sorted(_PLUGINS_MANIFEST_DIR.iterdir()):
+        if not plugin_dir.is_dir() or plugin_dir.name.startswith(("_", ".")):
+            continue
+        manifest_path = plugin_dir / "plugin.yaml"
+        if not manifest_path.exists():
+            continue
+        try:
+            manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError as exc:
+            _pm_logger.warning(
+                "manifest_yaml_error", plugin_dir=str(plugin_dir), error=str(exc)
+            )
+            continue
+        if isinstance(manifest, dict):
+            out.append((plugin_dir.name, manifest))
+    return out
+
+
 def enumerate_manifest_workers() -> list[tuple[str, str, str]]:
     """[(plugin_id, worker_name, module_path)] de TODOS los manifests del repo.
 

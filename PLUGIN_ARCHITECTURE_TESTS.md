@@ -171,7 +171,7 @@ def test_frontend_plugin_calls_only_own_api():
 > `/api/chats`. **OJO (PM-12):** el `reason` del xfail en el código todavía dice
 > "eta sigue split" — STALE; el archivo es PROTECTED, actualizar pide `ARCH_CHANGE_APPROVED`.
 
-### P-2 · `test_frontend_backend_parity` — 🔴
+### P-2 · `test_frontend_backend_parity` — 🟢 (post-extracciones ads/eta)
 Regla P-PARITY · AP-1/AP-6 / F1/F13. Todo manifest que declara `api`/`agent` tiene backend propio; el set de ids es coherente.
 ```python
 def test_every_backend_surface_has_own_dir():
@@ -365,7 +365,15 @@ def test_routing_template_matches_manifest():
 > registry (`agent.owns_route`) que elimina el hardcode — cuando eso entre, este test
 > se reemplaza por "el ruteo NO hardcodea ningún `<plugin>-{...}`".
 
-### P-19 · `test_transition_resolves_to_live_worker_config` — 🔴 (PM-13)
+### P-19 · `test_transition_resolves_to_live_worker_config` — 🟡 (PM-13)
+
+> **CORRECCIÓN (auditoría fable 2026-06-09):** la mitad ESTÁTICA de este test
+> **ya existe** y este doc no lo registraba:
+> `tests/architecture/test_manifest_orchestration_consistency.py` valida (a)
+> `workflow_classes` ⇔ `@workflow.defn(name=)` por AST, (b) `on_event ∈ emits`,
+> (c) target `(plugin, worker)` + `target_workflow` resuelven contra el índice
+> de manifests, (d) eventos importables. Lo que falta es SOLO el smoke
+> funcional (emitir el evento y assert que el workflow arranca).
 Regla reforzada (P-DISPATCH). Más fuerte que "el target existe": para cada transition, el `(task_queue, workflow_name)` que el dispatcher RESOLVERÍA coincide con lo que el worker target realmente registra. Acerca el gate al comportamiento sin bootear Temporal.
 ```python
 def test_transition_targets_resolve_to_worker_runtime():
@@ -404,7 +412,7 @@ def test_transition_targets_resolve_to_worker_runtime():
 | P-6 enabled satisfies depends_on | P-ENABLED | AP-3/AP-8 | 🔴 | `tests/architecture/` + `platform/plugin_loader.py` (nuevo) |
 | P-7 dispatcher skips disabled | P-SKIP | AP-3/F3 | 🟢 hecho | `dispatcher.py` + `test_dispatcher.py::TestEnabledPluginsSkip` |
 | P-9 frontend calls own API only | P-OWN | AP-1/F1 | 🟡 xfail | `test_plugin_contract.py` (solo queda agents_admin→/api/chats/evals) |
-| P-10 cruiser `plugins-no-features` | P-FECROSS | AP-7/F10 | 🟢 hecho | `.dependency-cruiser.cjs` |
+| P-10 cruiser `plugins-no-features` | P-FECROSS | AP-7/F10 | 🟡 `plugins-no-features` hecho; `plugins-own-entities-only` PENDIENTE (entra con P-11, plan F4) | `.dependency-cruiser.cjs` |
 | P-11 central entities dir empty | P-ENTITY | AP-2/F2/PM-9 | 🔴 | `src/test/architecture/` (eta `tracked-order` sigue central) |
 | P-14 cross-plugin via declared cast | P-CAST | AP-2/F2/F8 | 🟢 forma / 🔴 uso | `test_plugin_contract.py` (valida forma; sin `consumes:` reales aún) |
 | P-12 manifest icons exist | P-ICON | AP-4/F4 | 🟢 hecho | `src/test/architecture/test_plugin_icons.arch.test.ts` |
