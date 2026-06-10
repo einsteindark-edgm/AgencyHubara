@@ -19,7 +19,6 @@ from temporalio.worker import Worker
 from src.platform.temporal.activities import (
     check_remarketing_eligibility,
     claim_conversation_routing,
-    execute_tool,
     read_workspace_memory_activity,
 )
 from src.platform.orchestration import dispatch_event_activity
@@ -34,12 +33,9 @@ from src.platform.whatsapp.activities import (
     send_typing_indicator_activity,
     send_whatsapp_message_activity,
 )
-from src.platform.observability.cost_attribution import (
-    get_active_episode_id_activity,
-    record_episode_llm_usage_activity,
-)
 from src.platform.temporal.client import get_temporal_client
 from src.platform.tool_extensions import register_tool_extension
+from src.platform.workflow_helpers import CONVERSATIONAL_TURN_ACTIVITIES
 from src.plugins.chats.agent.remarketing.activities import (
     bootstrap_remarketing_session_activity,
     build_remarketing_trigger_activity,
@@ -55,8 +51,6 @@ from src.plugins.chats.agent.remarketing.workflows.watchdog import (
     ServiceWindowWatchdogWorkflow,
 )
 from src.platform.tools.routing import TransferToSalesAgentTool
-from exoclaw_temporal.activities.conversation import build_prompt, record_turn
-from exoclaw_temporal.activities.llm import llm_chat
 
 # NEW-5 cerrado: el worker de Remarketing tambien necesita la tool de
 # transferencia (es la unica forma de que el agente vuelva a Ventas).
@@ -82,16 +76,10 @@ async def main() -> None:
         # refinement — reuso vs nuevo worker `watchdog`).
         workflows=[RemarketingSessionWorkflow, ServiceWindowWatchdogWorkflow],
         activities=[
-            build_prompt,
-            llm_chat,
-            execute_tool,
-            record_turn,
-            # HU-003 A7: resuelve el episode_id activo para la atribución de
-            # costos del LLM (session.id + episode.id en el span gen_ai). La
-            # llama run_agent_turn detrás de un workflow.patched gate.
-            get_active_episode_id_activity,
-            # HU costo-por-episodio: persiste tokens+costo del turno al episodio.
-            record_episode_llm_usage_activity,
+            # Set conversacional compartido — TODO worker que corra
+            # run_agent_turn lo spread-ea desde workflow_helpers (fuente
+            # única, L-3). Nunca listar esas activities a mano.
+            *CONVERSATIONAL_TURN_ACTIVITIES,
             check_remarketing_eligibility,
             claim_conversation_routing,
             send_whatsapp_message_activity,

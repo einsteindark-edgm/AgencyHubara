@@ -56,6 +56,28 @@ with workflow.unsafe.imports_passed_through():
     )
 
 
+# ----------------------------------------------------------------------
+# L-3: registro mínimo para CUALQUIER worker cuyo workflow corra
+# `run_agent_turn` — exactamente las activities que los helpers de este
+# módulo invocan. Un worker que registre menos NO falla al boot: muere en
+# runtime con NotFoundError en el primer turno real (caso eta:
+# `record_episode_llm_usage` faltaba y la invocación vive detrás del gate
+# `patched("episode-llm-cost-v1")` — la detonó la primera conversación
+# real de un cliente con el agente). Los workers conversacionales deben
+# spread-ear esta tupla en su `activities=[...]`, nunca listar estas a
+# mano. Si agregás un `execute_activity` nuevo a los helpers, sumalo acá
+# EN EL MISMO COMMIT.
+# ----------------------------------------------------------------------
+CONVERSATIONAL_TURN_ACTIVITIES: tuple = (
+    build_prompt,
+    llm_chat,
+    execute_tool,
+    record_turn,
+    get_active_episode_id_activity,
+    record_episode_llm_usage_activity,
+)
+
+
 @dataclass
 class PendingMessage:
     """DTO compartido para el queue de mensajes pendientes en cada workflow.

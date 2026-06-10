@@ -3,20 +3,14 @@ import asyncio
 from loguru import logger
 from temporalio.worker import Worker
 
-from exoclaw_temporal.activities.conversation import build_prompt, record_turn
-from exoclaw_temporal.activities.llm import llm_chat
 
 from src.platform.logging import setup_logging
 from src.platform.observability import init_otel, otel_workflow_runner
-from src.platform.observability.cost_attribution import (
-    get_active_episode_id_activity,
-)
 from src.platform.plugin_manifest import get_task_queue
 from src.platform.plugin_runtime import ensure_plugin_enabled
 from src.platform.session_history.activities import (
     persist_assistant_message_activity,
 )
-from src.platform.temporal.activities import execute_tool
 from src.platform.temporal.client import get_temporal_client
 from src.platform.temporal.dispatcher import (
     start_or_signal_sales_workflow_activity,
@@ -24,6 +18,7 @@ from src.platform.temporal.dispatcher import (
 from src.platform.tool_extensions import register_tool_extension
 from src.platform.tools.escalation import EscalateToHumanTool
 from src.platform.tools.routing import TransferToSalesAgentTool
+from src.platform.workflow_helpers import CONVERSATIONAL_TURN_ACTIVITIES
 from src.platform.whatsapp.activities import (
     send_typing_indicator_activity,
     send_whatsapp_message_activity,
@@ -73,14 +68,12 @@ async def main() -> None:
         task_queue=task_queue,
         workflows=[HubaraEtaSessionWorkflow],
         activities=[
-            # Core conversación / LLM / tools (exoclaw + platform).
-            build_prompt,
-            llm_chat,
-            execute_tool,
-            record_turn,
-            # run_agent_turn (greenfield → patched()=True) resuelve el episode_id
-            # activo para la atribución de costos del LLM.
-            get_active_episode_id_activity,
+            # Set conversacional compartido — TODO worker que corra
+            # run_agent_turn lo spread-ea desde workflow_helpers (fuente
+            # única, L-3: este worker registraba 5 de las 6 a mano;
+            # `record_episode_llm_usage` faltó y el primer cliente que
+            # conversó con el agente mató el workflow con NotFoundError).
+            *CONVERSATIONAL_TURN_ACTIVITIES,
             # Outbound + persistencia para el dashboard.
             send_whatsapp_message_activity,
             # Template de utilidad para notificaciones fuera de la ventana 24h.
