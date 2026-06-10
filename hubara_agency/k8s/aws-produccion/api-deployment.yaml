@@ -21,6 +21,11 @@ spec:
           ports:
             - containerPort: 8000
           env:
+            # P-20 (INV-2): set explícito de plugins de ESTE deployment — el
+            # loader FastAPI registra SOLO los routers de estos plugins y el
+            # dispatcher skipea transitions hacia los demás (P-7 operativo).
+            - name: ENABLED_PLUGINS
+              value: "ads,agents_admin,catalog,chats,eta,orders,system_map"
             - name: API_BASE_LLMLITE
               value: "http://litellm-proxy.default.svc.cluster.local:4000"
             - name: TEMPORAL_URL

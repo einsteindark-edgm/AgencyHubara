@@ -26,6 +26,7 @@ históricos (e.g. el viejo `hubara-worker` para sales).
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,47 @@ _BASE_YML = _HUBARA_ROOT / "docker-compose.base.yml"
 _OUT_YML = _HUBARA_ROOT / "docker-compose.local.yml"
 _PLUGINS_DIR = _REPO_ROOT / "frontend_dashboard" / "src" / "plugins"
 
+# Para reusar la validación canónica P-6 (src.platform.plugin_loader) cuando
+# el operador renderiza con un set filtrado.
+sys.path.insert(0, str(_HUBARA_ROOT))
+
+# Services del base.yml que corren código nuestro gateado por plugins — el
+# render les inyecta el set resuelto para que NINGÚN proceso del stack corra
+# con ENABLED_PLUGINS implícito (decisión D3a: el default fail-open jamás
+# llega a un artefacto; el artefacto siempre lleva el set explícito).
+_GATED_BASE_SERVICES = ("hubara-api", "hubara-frontend")
+
+
+def _all_plugin_ids() -> list[str]:
+    """Ids de todos los plugins con manifest (orden estable)."""
+    if not _PLUGINS_DIR.exists():
+        return []
+    return sorted(
+        d.name
+        for d in _PLUGINS_DIR.iterdir()
+        if d.is_dir() and not d.name.startswith(("_", ".")) and (d / "plugin.yaml").exists()
+    )
+
+
+def _resolved_enabled() -> list[str]:
+    """Set habilitado del ARTEFACTO: env ``ENABLED_PLUGINS`` o todos (explícito).
+
+    P-20 (deploy parity): el compose generado encodea su set — los workers de
+    plugins fuera del set NO se renderizan, y todos los services gateados
+    reciben ``ENABLED_PLUGINS=<csv>``. Sin env → el set es TODOS los plugins,
+    pero queda EXPLÍCITO en el artefacto (nunca implícito en runtime).
+    """
+    raw = os.environ.get("ENABLED_PLUGINS", "").strip()
+    if not raw:
+        return _all_plugin_ids()
+    enabled = sorted({p.strip() for p in raw.split(",") if p.strip()})
+    # Validación canónica (P-6): deps duras + ids existentes, mismo error que
+    # verían main.py / run_workers / plugins-sync.
+    from src.platform.plugin_loader import validate_enabled
+
+    validate_enabled(set(enabled))
+    return enabled
+
 # Header del archivo generado — usado también por el test de sincronía para
 # detectar drift.
 _GENERATED_HEADER = (
@@ -48,13 +90,22 @@ _GENERATED_HEADER = (
 )
 
 
-def _discover_worker_services() -> dict[str, dict[str, Any]]:
-    """{service_name: service_spec} para cada worker en los manifests."""
+def _discover_worker_services(enabled: list[str]) -> dict[str, dict[str, Any]]:
+    """{service_name: service_spec} para cada worker de los plugins HABILITADOS.
+
+    P-20: un plugin fuera del set no aporta containers — apagar un plugin =
+    re-renderizar; su worker desaparece del artefacto (y P-21 mata cualquier
+    container huérfano que haya quedado de un render anterior).
+    """
     services: dict[str, dict[str, Any]] = {}
+    enabled_set = set(enabled)
+    enabled_csv = ",".join(enabled)
     if not _PLUGINS_DIR.exists():
         return services
     for plugin_dir in sorted(_PLUGINS_DIR.iterdir()):
         if not plugin_dir.is_dir() or plugin_dir.name.startswith("_"):
+            continue
+        if plugin_dir.name not in enabled_set:
             continue
         manifest_path = plugin_dir / "plugin.yaml"
         if not manifest_path.exists():
@@ -62,7 +113,7 @@ def _discover_worker_services() -> dict[str, dict[str, Any]]:
         manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
         agent_cfg = manifest.get("agent") or {}
         for worker in agent_cfg.get("workers") or []:
-            name, spec = _render_worker_service(plugin_dir.name, worker)
+            name, spec = _render_worker_service(plugin_dir.name, worker, enabled_csv)
             if name in services:
                 raise RuntimeError(
                     f"service name collision: {name!r} declared by 2 workers. "
@@ -72,7 +123,9 @@ def _discover_worker_services() -> dict[str, dict[str, Any]]:
     return services
 
 
-def _render_worker_service(plugin_id: str, worker: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+def _render_worker_service(
+    plugin_id: str, worker: dict[str, Any], enabled_csv: str
+) -> tuple[str, dict[str, Any]]:
     """Convierte un entry de `agent.workers[]` en un service de docker-compose."""
     worker_name = worker["name"]
     module = worker["module"]
@@ -83,6 +136,9 @@ def _render_worker_service(plugin_id: str, worker: dict[str, Any]) -> tuple[str,
 
     env_dict = compose_hints.get("env") or {}
     env_list = [f"{k}={v}" for k, v in env_dict.items()]
+    # P-20/P-21: todo worker corre con el set del artefacto explícito — el
+    # self-gate del worker (plugin_runtime.ensure_plugin_enabled) lo lee.
+    env_list.append(f"ENABLED_PLUGINS={enabled_csv}")
 
     depends_on: dict[str, dict[str, str]] = {}
     for dep in compose_hints.get("depends_on") or []:
@@ -117,7 +173,21 @@ def render() -> str:
         raise FileNotFoundError(f"base yml not found: {_BASE_YML}")
     base = yaml.safe_load(_BASE_YML.read_text(encoding="utf-8")) or {}
     base.setdefault("services", {})
-    worker_services = _discover_worker_services()
+    enabled = _resolved_enabled()
+    enabled_csv = ",".join(enabled)
+    # Inyectar el set explícito en los services gateados del base (api +
+    # frontend): el loader FastAPI filtra routers y el `predev` del frontend
+    # (plugins-sync) genera el registry con EL MISMO set que los workers.
+    for svc_name in _GATED_BASE_SERVICES:
+        svc = base["services"].get(svc_name)
+        if not isinstance(svc, dict):
+            continue
+        env = svc.setdefault("environment", [])
+        if isinstance(env, list):
+            env.append(f"ENABLED_PLUGINS={enabled_csv}")
+        elif isinstance(env, dict):
+            env["ENABLED_PLUGINS"] = enabled_csv
+    worker_services = _discover_worker_services(enabled)
     base["services"].update(worker_services)
     return _GENERATED_HEADER + _yaml_dump(base)
 
@@ -125,9 +195,12 @@ def render() -> str:
 def main() -> None:
     output = render()
     _OUT_YML.write_text(output, encoding="utf-8")
-    worker_count = output.count("python\n  - -m\n") + output.count("- python\n      - -m")
     rel = _OUT_YML.relative_to(_REPO_ROOT)
-    print(f"[render-compose] wrote {rel} ({len(output)} bytes)")
+    enabled = _resolved_enabled()
+    print(
+        f"[render-compose] wrote {rel} ({len(output)} bytes) — "
+        f"ENABLED_PLUGINS={','.join(enabled)}"
+    )
 
 
 if __name__ == "__main__":

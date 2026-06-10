@@ -163,6 +163,63 @@ def test_p16_worker_task_queue_self_reference_matches_dir() -> None:
 
 
 # ----------------------------------------------------------------------------
+# P-21 · P-SELFGATE — todo worker se auto-gatea con ensure_plugin_enabled
+# ----------------------------------------------------------------------------
+
+
+def _ensure_plugin_enabled_args(pyfile) -> list[str]:
+    """Valores del primer arg constante de toda llamada a ensure_plugin_enabled."""
+    tree = ast.parse(pyfile.read_text(encoding="utf-8"), filename=str(pyfile))
+    out: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        fn = node.func
+        name = fn.id if isinstance(fn, ast.Name) else (
+            fn.attr if isinstance(fn, ast.Attribute) else None
+        )
+        if name != "ensure_plugin_enabled" or not node.args:
+            continue
+        first = node.args[0]
+        if isinstance(first, ast.Constant) and isinstance(first.value, str):
+            out.append(first.value)
+    return out
+
+
+def test_p21_every_worker_self_gates_with_own_plugin() -> None:
+    """Todo módulo de worker llama ``ensure_plugin_enabled("<su-plugin>")``.
+
+    Defensa en profundidad de INV-2 (N-1): los containers de prod corren
+    ``python -m <worker>`` directo (NO pasan por run_workers) — sin este
+    self-gate, un container huérfano (PM-1) o un deployment mal configurado
+    pollea su queue aunque el plugin esté apagado. El protocolo de plugin
+    exige el gate como primera línea del ``main()``.
+    """
+    bad: list[str] = []
+    for pdir in sorted(BE_PLUGINS.iterdir()):
+        if not pdir.is_dir() or pdir.name.startswith((".", "_")):
+            continue
+        workers_dir = pdir / "workers"
+        if not workers_dir.is_dir():
+            continue
+        for py in workers_dir.glob("*.py"):
+            if py.name == "__init__.py":
+                continue
+            args = _ensure_plugin_enabled_args(py)
+            if not args:
+                bad.append(
+                    f"{py.relative_to(HUBARA_ROOT).as_posix()}: no llama "
+                    f"ensure_plugin_enabled(...) — agregá el self-gate al main()"
+                )
+            elif any(a != pdir.name for a in args):
+                bad.append(
+                    f"{py.relative_to(HUBARA_ROOT).as_posix()}: se gatea con "
+                    f"{args!r} ≠ su plugin {pdir.name!r}"
+                )
+    assert not bad, "Worker sin self-gate (P-21 / N-1):\n  " + "\n  ".join(bad)
+
+
+# ----------------------------------------------------------------------------
 # P-17 · P-AGENTIC — agentic ⟺ dashboard workers (PM-3 / AP-11)
 # ----------------------------------------------------------------------------
 

@@ -12,6 +12,7 @@ from src.platform.observability.cost_attribution import (
     get_active_episode_id_activity,
 )
 from src.platform.plugin_manifest import get_task_queue
+from src.platform.plugin_runtime import ensure_plugin_enabled
 from src.platform.session_history.activities import (
     persist_assistant_message_activity,
 )
@@ -62,6 +63,7 @@ register_tool_extension(
 
 async def main() -> None:
     """Worker exclusivo del Agente ETA (notificaciones de estado de pedido)."""
+    ensure_plugin_enabled("eta")  # P-21: self-gate del toggle (INV-2)
     logger.info("Conectando Especialista (ETA) al clúster Temporal mTLS...")
     client = await get_temporal_client()
 

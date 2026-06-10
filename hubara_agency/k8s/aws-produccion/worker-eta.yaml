@@ -41,6 +41,12 @@ spec:
           # `worker-remarketing.yaml`, las llaves privadas se inyectan vía
           # overlay, NO se commitean al repo.
           env:
+            # P-20/P-21 (INV-2): set explícito de plugins de ESTE deployment.
+            # El worker se auto-gatea (plugin_runtime.ensure_plugin_enabled) —
+            # si este valor no incluye su plugin, el pod CrashLoopea visible
+            # en vez de pollear una queue que no le corresponde.
+            - name: ENABLED_PLUGINS
+              value: "ads,agents_admin,catalog,chats,eta,orders,system_map"
             - name: API_BASE_LLMLITE
               value: "http://litellm-proxy.default.svc.cluster.local:4000"
             - name: TEMPORAL_URL

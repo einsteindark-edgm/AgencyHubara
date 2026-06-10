@@ -46,6 +46,7 @@ from temporalio.client import (
 from temporalio.worker import Worker
 
 from src.platform.plugin_manifest import get_task_queue
+from src.platform.plugin_runtime import ensure_plugin_enabled
 from src.platform.temporal.client import get_temporal_client
 from src.plugins.chats.agent.sales_eval.activities.eval_activities import (
     evaluate_sales_conversation_activity,
@@ -166,6 +167,7 @@ async def _ensure_golden_schedule(client: Client, task_queue: str) -> None:
 
 
 async def main() -> None:
+    ensure_plugin_enabled("chats")  # P-21: self-gate del toggle (INV-2)
     logger.info("Conectando sales-eval al clúster Temporal...")
     client = await get_temporal_client()
     task_queue = get_task_queue("chats", "sales_eval")

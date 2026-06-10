@@ -36,6 +36,7 @@ from temporalio.worker import Worker
 
 from src.platform.logging import setup_logging
 from src.platform.plugin_manifest import get_task_queue
+from src.platform.plugin_runtime import ensure_plugin_enabled
 from src.platform.temporal.client import get_temporal_client
 from src.plugins.orders.agent.activities import reconcile_pending_orders_activity
 from src.plugins.orders.agent.contracts import ReconcileInput
@@ -94,6 +95,7 @@ async def _ensure_schedule(client: Client, task_queue: str) -> None:
 
 
 async def main() -> None:
+    ensure_plugin_enabled("orders")  # P-21: self-gate del toggle (INV-2)
     logger.info("Conectando orders/reconcile al cluster Temporal...")
     client = await get_temporal_client()
     task_queue = get_task_queue("orders", "reconcile")
