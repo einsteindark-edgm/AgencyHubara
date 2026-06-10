@@ -46,6 +46,7 @@ from src.platform.orders.command_port import (
     ScheduleDeliveryCommand,
     TransitionStageCommand,
 )
+from src.platform.orders import display_id_cache
 from src.platform.orders.composition import (
     get_order_command_port,
     get_order_query_port,
@@ -455,7 +456,17 @@ async def _emit_stage_changed_event(order_id: str, to_stage: str) -> None:
     coroutine atrapa TODA excepción internamente, así que la task nunca queda
     "exception never retrieved".
     """
+    log.info("eta_emit: start order=%s stage=%s", order_id, to_stage)
     try:
+        # El handler recibe el order_id CRUDO del path — puede ser un
+        # display_id ("#6") que rompe httpx (fragment) en get_order. El
+        # kanban ya pobló el cache display→backend (L-2); resolvemos acá.
+        normalized = order_id.lstrip("#")
+        if normalized.isdigit():
+            cached = display_id_cache.get(normalized)
+            if cached:
+                order_id = cached
+
         session_id = await _resolve_session_for_order(
             backend_order_id=order_id,
             shipping_phone=None,
@@ -760,6 +771,10 @@ async def _resolve_session_for_order(
     `metadata.session_key` elimina esa ambigüedad.
     """
     # 1. Canonical: order.metadata.session_key.
+    # KeyError defensivo: un display_id sin resolver ("#6") hace que httpx
+    # trate el "#" como fragment → el GET pega a la LISTA y la respuesta no
+    # trae la key "order" (L-7b) — eso NO es MedusaAPIError y mataba el
+    # resolver entero en silencio.
     try:
         client = get_medusa_client()
         raw = await client.get_order(backend_order_id, fields="id,metadata")
@@ -770,11 +785,11 @@ async def _resolve_session_for_order(
             and (vault_dir / session_key / "metadata.json").exists()
         ):
             return session_key
-    except MedusaAPIError as exc:
+    except (MedusaAPIError, KeyError) as exc:
         log.info(
             "customer_score: get_order(%s) para session_key falló (%s) — "
             "probando fallbacks",
-            backend_order_id, getattr(exc, "status_code", "?"),
+            backend_order_id, getattr(exc, "status_code", type(exc).__name__),
         )
 
     # 2. Reverse lookup por order_id en episodios del vault.

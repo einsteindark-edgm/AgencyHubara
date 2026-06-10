@@ -32,6 +32,10 @@ Via = Literal[
     "start_workflow_with_replace",
     "ensure_running",
     "signal",
+    # L-8: signal si el target corre, START + signal si no (atómico, Temporal
+    # nativo). Para notificaciones que NO pueden perderse cuando el workflow
+    # destino cerró (idle timeout / fail) — `signal` pelado las descarta noop.
+    "signal_with_start",
 ]
 
 
