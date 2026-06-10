@@ -170,10 +170,14 @@ async def test_claim_reports_service_window_state(_isolate_vault_dir: Path):
     assert facts2 is not None and facts2["in_service_window"] is False
 
 
-async def test_claim_skips_when_route_humano(_isolate_vault_dir: Path):
+async def test_claim_notifies_even_when_route_humano(_isolate_vault_dir: Path):
+    """L-6: la notificación es push informativo — NO depende del turno. Toda
+    venta exitosa termina en route=humano (verificación de pago, terminal);
+    el guard viejo bloqueaba las notificaciones de TODOS los pedidos vendidos
+    (run 19ee6679: mover preparing→ready no notificó nada)."""
     _write_meta(_isolate_vault_dir, SID, {"active_route": "humano", "eta_tracking": {"order_id": ORDER, "notified_stages": []}})
     facts = await ActivityEnvironment().run(claim_eta_notification_activity, SID, ORDER, "ready")
-    assert facts is None  # humano tomó la conversación → no notificar
+    assert facts is not None
 
 
 async def test_claim_dedups_already_notified(_isolate_vault_dir: Path):
