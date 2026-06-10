@@ -308,7 +308,7 @@ async def schedule_order(
     result = await port.schedule_delivery(cmd)
     # new → preparing: arranca el seguimiento del Agente ETA (primera notificación).
     if result.success and result.current_stage:
-        asyncio.create_task(_emit_stage_changed_event(order_id, result.current_stage))
+        _spawn_emit(order_id, result.current_stage)
     return _serialize_command_result(result)
 
 
@@ -356,7 +356,7 @@ async def transition_order_stage(
     # dispatcher matchea por `to_stage`; stages sin transición declarada (ej.
     # `new`) caen en no-match → no-op. Dedup vive en el workflow ETA.
     if result.success and result.current_stage:
-        asyncio.create_task(_emit_stage_changed_event(order_id, result.current_stage))
+        _spawn_emit(order_id, result.current_stage)
     return _serialize_command_result(result)
 
 
@@ -406,7 +406,7 @@ async def cancel_order_endpoint(
     result = await port.cancel_order(cmd)
     # Cancelación: el Agente ETA avisa al cliente (si la sesión sigue en ruta eta).
     if result.success and result.current_stage:
-        asyncio.create_task(_emit_stage_changed_event(order_id, result.current_stage))
+        _spawn_emit(order_id, result.current_stage)
     return _serialize_command_result(result)
 
 
@@ -419,6 +419,20 @@ def _serialize_command_result(result) -> dict[str, Any]:
         "error_detail": result.error_detail,
         "audit_id": result.audit_id,
     }
+
+
+# Referencias fuertes a las tasks fire-and-forget del emit (L-7): sin esto,
+# asyncio puede GC-recolectar una task PENDIENTE mientras espera I/O largo
+# (Medusa@Railway tarda 30s+ por GET) — muere sin log, sin warning, y la
+# notificación ETA simplemente no sale. Patrón estándar de los docs de
+# asyncio: set global + done_callback(discard).
+_emit_tasks: set[asyncio.Task] = set()
+
+
+def _spawn_emit(order_id: str, to_stage: str) -> None:
+    task = asyncio.create_task(_emit_stage_changed_event(order_id, to_stage))
+    _emit_tasks.add(task)
+    task.add_done_callback(_emit_tasks.discard)
 
 
 async def _emit_stage_changed_event(order_id: str, to_stage: str) -> None:

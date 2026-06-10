@@ -341,6 +341,14 @@ Otras micro-lecciones del refactor: BSD `sed` no soporta `\b` (usar `perl -pi -e
 - **Regla para el skill:** cuando cambies el MODELO de un subsistema (p.ej. "notificar ya no implica poseer el turno"), buscá TODOS los guards que existían por el modelo anterior y re-justificá cada uno bajo el modelo nuevo — un guard sin re-justificar no es conservador, es un bug latente con tests verdes. Preguntate: "¿este check protege algo que todavía existe?". Y al validar, probá el ciclo de negocio COMPLETO (venta → cierre → tracking), no cada pieza aislada: este bug solo aparece encadenando venta exitosa + cambio de stage.
 - **Guard:** `test_claim_notifies_even_when_route_humano` (tests/plugins/eta) — codifica la decisión nueva con el porqué en el docstring.
 
+### L-7 · Fire-and-forget sin referencia: el GC mata la task pendiente sin log (2026-06-10, validación en vivo)
+
+- **Síntoma:** mover pedidos de stage devuelve `success=true` pero el ETA nunca se activa. Cero logs del emisor (`eta_emit`) — ni éxito, ni "sin sesión", ni el except. La coroutine ni empezó.
+- **Causa raíz:** `asyncio.create_task(_emit_stage_changed_event(...))` sin guardar referencia. Los docs de asyncio lo advierten: el event loop solo guarda referencia débil — si la task espera I/O largo, el GC puede recolectarla PENDIENTE. Con Medusa@Railway rápido la task terminaba antes de cualquier GC (por eso funcionó temprano); con Railway degradado (GETs de 30s+, L-2) la ventana se abre y las tasks mueren en silencio. Heisenbug dependiente de la latencia del upstream.
+- **Fix aplicado:** branch `fix/eta-emit-task-gc` — patrón estándar: set module-level de referencias fuertes + `add_done_callback(set.discard)` (`_spawn_emit`), aplicado a los 3 emisores (schedule, /stage, confirm-payment).
+- **Regla para el skill:** NUNCA `asyncio.create_task(...)` a secas para fire-and-forget — siempre el patrón referencia-fuerte + done_callback (o un helper `_spawn_safe` existente). Cualquier task sin referencia es un heisenbug que aparece justo cuando el I/O se pone lento. Grepeá `create_task` en code review: cada uso debe guardar la referencia.
+- **Guard:** PENDIENTE — candidato P-#: gate AST que rechace `asyncio.create_task` cuyo resultado no se asigna ni registra.
+
 <!-- AÑADIR NUEVAS LECCIONES ARRIBA DE ESTA LÍNEA, NUMERADAS L-1, L-2, ... -->
 
 ---
