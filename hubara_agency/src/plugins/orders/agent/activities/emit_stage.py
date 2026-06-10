@@ -37,6 +37,27 @@ async def emit_order_stage_activity(
     from src.platform.temporal.client import get_temporal_client
     from src.plugins.orders.shared.contracts.events import OrderStageChangedEvent
 
+    # Normalizar display_id ("#6") → backend id: el handler pasa el order_id
+    # CRUDO del path y el "#" rompe httpx (fragment). Cache L-2 primero; en
+    # miss, una list() lo puebla (el kanban normalmente ya lo hizo).
+    from src.platform.orders import display_id_cache
+    from src.platform.orders.composition import get_order_query_port
+
+    normalized = order_id.lstrip("#")
+    if normalized.isdigit():
+        cached = display_id_cache.get(normalized)
+        if cached is None:
+            await get_order_query_port().list(limit=50, offset=0)
+            cached = display_id_cache.get(normalized)
+        if cached:
+            order_id = cached
+        else:
+            activity.logger.warning(
+                "emit_order_stage: display_id %s no resuelve a pedido — skip",
+                order_id,
+            )
+            return "unresolved_display_id"
+
     session_id = await _resolve_session_for_order(
         backend_order_id=order_id,
         shipping_phone=None,
