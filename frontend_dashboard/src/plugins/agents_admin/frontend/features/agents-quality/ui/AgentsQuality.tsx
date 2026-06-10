@@ -6,7 +6,7 @@ import { GoldenEvalCuration } from "@plugins/agents_admin/frontend/features/gold
  * (ver `agents-prompts`), visible solo para el agente `sales` — el único con
  * harness de evaluación hoy.
  *
- * Compone las dos superficies del eval loop, que leen `/api/chats/evals/*`:
+ * Compone las dos superficies del eval loop, que leen `/api/agents/evals/*`:
  *   1. Tendencia de calidad: score por métrica en el tiempo (registro de días
  *      bajos y recuperación), alimentada por el eval diario online.
  *   2. Curación de goldens: las conversaciones reales que puntuaron bajo, para

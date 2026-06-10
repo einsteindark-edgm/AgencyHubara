@@ -9,7 +9,7 @@ import {
 import { evalCandidateKeys } from "./keys";
 import type { EvalCandidateDetail, EvalCandidateSummary } from "./model";
 
-const BASE = "/api/chats/evals/candidates";
+const BASE = "/api/agents/evals/candidates";
 
 async function fetchCandidates(): Promise<EvalCandidateSummary[]> {
   const raw = await apiClient.get<unknown>(BASE);

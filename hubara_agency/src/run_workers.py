@@ -44,6 +44,9 @@ from pathlib import Path
 import yaml
 from loguru import logger
 
+from src.platform.plugin_loader import validate_enabled
+from src.platform.plugin_manifest import enabled_plugins
+
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _PLUGINS_MANIFEST_DIR = _REPO_ROOT / "frontend_dashboard" / "src" / "plugins"
@@ -75,10 +78,8 @@ _SHUTDOWN_TIMEOUT_S = _resolve_shutdown_timeout()
 
 
 def _enabled_plugins() -> set[str] | None:
-    raw = os.environ.get("ENABLED_PLUGINS", "").strip()
-    if not raw:
-        return None
-    return {part.strip() for part in raw.split(",") if part.strip()}
+    """Delegado a la implementación canónica (una sola semántica — N-7)."""
+    return enabled_plugins()
 
 
 def _validate_worker_entry(plugin_id: str, idx: int, entry: object) -> tuple[str, str]:
@@ -104,6 +105,8 @@ def _validate_worker_entry(plugin_id: str, idx: int, entry: object) -> tuple[str
 def _discover_workers() -> list[tuple[str, str, str]]:
     """[(plugin_id, worker_name, worker_module)] de los plugins habilitados."""
     enabled = _enabled_plugins()
+    # P-ENABLED: fail-fast si el set viola algún depends_on (PLUGIN_CONTRACT §5.4).
+    validate_enabled(enabled)
     out: list[tuple[str, str, str]] = []
     if not _PLUGINS_MANIFEST_DIR.exists():
         logger.warning(
@@ -127,6 +130,14 @@ def _discover_workers() -> list[tuple[str, str, str]]:
                 "[run_workers] skip {!r}: invalid YAML — {}", plugin_dir.name, exc
             )
             continue
+        if manifest.get("id") != plugin_dir.name:
+            # Fail-fast (N-9) — mismo criterio que src.main: un typo de id no
+            # puede apagar un plugin en silencio.
+            raise RuntimeError(
+                f"plugin manifest inválido: {plugin_dir.name}/plugin.yaml declara "
+                f"id={manifest.get('id')!r} pero el directorio se llama "
+                f"{plugin_dir.name!r} — deben coincidir (P-PARITY)."
+            )
         agent_cfg = manifest.get("agent") or {}
         workers = agent_cfg.get("workers")
         if workers:

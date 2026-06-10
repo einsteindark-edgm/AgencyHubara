@@ -8,7 +8,7 @@ import {
   useChatInbox,
   useChatMemory,
   useChatRoutingLog,
-} from "@/entities/chat";
+} from "@plugins/chats/frontend/entities/chat";
 import { Icon, Panel } from "@/shared/ui";
 
 type InspectorTab = "tag" | "agent" | "mem";

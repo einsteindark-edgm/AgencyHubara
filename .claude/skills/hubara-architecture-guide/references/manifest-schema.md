@@ -15,11 +15,52 @@ id: <required>                  # pattern ^[a-z][a-z0-9_]*$, debe matchear el di
 version: <required>             # SemVer: ^[0-9]+\.[0-9]+\.[0-9]+(-[a-z0-9.]+)?$
 display_name: <optional>        # nombre para mostrar en UI
 description: <optional>         # descripción breve
-depends_on: []                  # array de plugin ids requeridos (reservado, no usado hoy)
+depends_on: []                  # array de plugin ids — deps DURAS, enforced AL BOOT (ver abajo)
+agentic: false                  # true si el plugin alberga agentes conversacionales (HONRADO — ver abajo)
+consumes: []                    # casts declarados de contratos de otros plugins (canal 3 — ver abajo)
 ```
 
 **Solo `id` y `version` son obligatorios.** Todo lo demás depende de
 qué stacks contribuye el plugin.
+
+### §1.1 `depends_on:` — deps DURAS, validadas al boot (post-refactor F1-F8)
+
+Ya NO es un campo reservado: son dependencias **DURAS** (P-DEPS,
+PLUGIN_CONTRACT.md §4) — el plugin NO funciona sin ellas (típicamente el
+provider de un `consumes:`/cast, o una capability que vive en otro plugin,
+ej. `eta → chats` por el ingest de WhatsApp). **ENFORCED AL BOOT** (gate
+P-6): los 3 loaders (`main.py`, `run_workers.py`, `plugins-sync.ts`)
+llaman `validate_enabled()` — habilitar un plugin sin sus deps mata el
+boot con mensaje claro. Las transitions cross-plugin son SOFT y NO van
+acá (el dispatcher las skipea si el target está apagado).
+
+### §1.2 `agentic:` — HONRADO (post-refactor F1-F8)
+
+Marca que el plugin alberga agentes conversacionales con workspace de
+prompts (IDENTITY.md, SOUL.md, TOOLS.md, AGENTS.md, USER.md). Ya no es
+decorativo: `agents_admin` solo expone (`GET /api/agents`) los agentes de
+plugins **agentic + habilitados**. El gate P-17 exige coherencia:
+`agentic: true` ⟺ ≥1 worker con bloque `dashboard:`.
+
+### §1.3 `consumes:` — casts declarados (canal 3, PLUGIN_CONTRACT.md §5.3)
+
+La ÚNICA forma de consumir DATOS de otro plugin:
+
+```yaml
+consumes:
+  - provider: orders            # plugin id del dueño del contrato (∈ depends_on)
+    contract: order@v1          # contrato versionado que el provider publica
+    into: order-ref             # nombre de la entity/vista LOCAL del consumidor
+    cast: api/order_actions     # módulo cast, path relativo al plugin
+```
+
+El cast corre **SERVER-SIDE** (reenvía al contrato HTTP publicado del
+provider o usa un platform port); el frontend del consumidor define una
+entity LOCAL que llama SOLO `/api/<este-id>/*`. Gates: P-14 (forma +
+existencia del cast), P-9 (cero strings `/api/<otro>/` en frontends,
+estricto), P-23 (literales `/api` pertenecen al owner del archivo).
+Ejemplos vivos: chats (`order@v1` → `order-ref` vía `api/order_actions`),
+agents_admin (`evals@v1` vía `api/evals`).
 
 ---
 
@@ -32,7 +73,7 @@ frontend:
     sidebar:                    # array de entradas del sidebar (reservado)
       - route: /chats
         label: Chats
-        icon: chat              # debe matchear key en shared/ui/Icon.tsx (fallback: bot)
+        icon: chat              # debe existir en base (Icon.tsx) ∪ contribuciones (frontend/icons.tsx → PLUGIN_ICONS) — gate P-12; fallback: bot
         badge_query: ...        # opcional, query key de TanStack
     sections:                   # array de entradas del segmented control del Toolbar
       - key: chat               # único; usado por el shell para indexar
@@ -67,7 +108,9 @@ switch para decidir si el plugin entra en `src/app/plugin-registry.generated.ts`
    la inclusión. Defensa contra typos en `entry:`.
 
 3. **Con `frontend:` + entry válido** → emite el entry con
-   `Page: lazy(() => import("@plugins/<id>/frontend"))`.
+   `Page: lazy(() => import("@plugins/<id>/frontend").then(assertPluginModule))`
+   — el entry DEBE default-exportar el componente Page; `assertPluginModule`
+   lo verifica EN COMPILACIÓN (`tsc` rompe si falta).
 
 Si un plugin backend-only **declara `frontend:` por error** o un
 frontend-only **omite el bloque por error**, Vite rompe con:
@@ -120,8 +163,11 @@ agent:
   worker_module: src.plugins.<id>.workers.default   # ALTERNATIVA a `workers` (single-worker)
   workers:                                 # array — PREFERIDO post-PR11
     - name: <required>                     # nombre interno del worker
-      module: <required>                   # python module path con `async def main()`
+      module: <required>                   # python module con `async def main()` cuya PRIMERA
+                                           # línea es ensure_plugin_enabled("<id>") (gate P-21)
       task_queue: <required>               # ← SSoT post-PR11; pattern ^[a-z][a-z0-9-]*$
+      owns_route: <opcional>               # ruta de conversación que este worker POSEE (ver §4.3)
+      route_workflow_id_template: "<prefijo>-{session_id}"   # requerido si hay owns_route
       deployment:                          # opcional — hint para K8s
         replicas: 1
         cpu_request: 100m
@@ -153,8 +199,10 @@ agent:
 | Campo | Required | Notas |
 |---|---|---|
 | `name` | ✅ | snake_case, único por plugin |
-| `module` | ✅ | módulo Python con `async def main()` |
+| `module` | ✅ | módulo Python con `async def main()`; primera línea = `ensure_plugin_enabled("<id>")` (P-21, verificado por AST) |
 | `task_queue` | ✅ (post-PR11) | sin esto, `TaskQueueMissingError` al boot |
+| `owns_route` | ❌ (solo dueños de ruta conversacional) | ver §4.3; requiere `route_workflow_id_template` |
+| `route_workflow_id_template` | ❌ (✅ si hay `owns_route`) | DEBE contener `{session_id}` |
 | `deployment` | ❌ (recomendado) | hint K8s; sin esto, K8s manifest se mantiene a mano |
 | `deployment.replicas` | ❌ (default 1 en K8s) | int ≥ 1 |
 | `deployment.env_secrets` | ❌ | array; cada entry necesita `var` |
@@ -180,6 +228,29 @@ agent:
 
 **Recomendado:** usar `workers:` siempre, aunque sea un solo worker. Da
 explícito el `task_queue` y permite extender después.
+
+### §4.3 `owns_route` + `route_workflow_id_template` (route registry, post-refactor F1-F8)
+
+Declaran la ruta de conversación (`active_route` en metadata) que el
+worker **POSEE**. El ruteo de inbounds la resuelve genéricamente del
+**route registry** (`src/platform/routing.py`) — ningún agente nombra a
+otro. `ROUTE_ETA` **ya no existe** en `platform/constants.py`: solo
+quedan las rutas core (`ventas`/`remarketing`/`humano`), que NO son
+registrables. `route_workflow_id_template` (ej. `"eta-{session_id}"`) es
+la ÚNICA copia del template en el sistema: el registry la usa para rutear
+y el gate **P-18** ata a su prefijo los `workflow_id_template` de las
+transitions de OTROS manifests que targetean a este worker.
+
+```yaml
+# real — plugins/eta/plugin.yaml (extracto)
+agent:
+  workers:
+    - name: eta
+      module: src.plugins.eta.workers.eta
+      task_queue: queue-eta-agent
+      owns_route: eta
+      route_workflow_id_template: "eta-{session_id}"
+```
 
 ---
 
@@ -209,8 +280,10 @@ wiring_intents:
     - WHATSAPP_PHONE_NUMBER_ID
 ```
 
-**No se aplica automáticamente.** Sirve para docs + tests + setup
-multi-tenant futuro.
+**No se aplica automáticamente**, pero ya NO es solo documental: el gate
+**P-25** verifica `wiring_intents.env_vars_required` ⊆ env del compose
+renderizado (un var declarado que ningún worker recibe = drift). Sirve
+además para docs + setup multi-tenant futuro.
 
 ---
 
@@ -335,6 +408,18 @@ id: chats
 version: 0.1.0
 display_name: Chats
 description: Conversaciones WhatsApp con agente Temporal (sales + remarketing) + dashboard SSE + handoff humano.
+agentic: true                    # workers conversacionales con workspace (P-17)
+
+# Dep DURA (P-6): el canvas de pago consume order@v1 de `orders` vía cast.
+depends_on: [orders]
+
+# Canal 3 (PLUGIN_CONTRACT.md §5.3) — cast declarado (P-14). El frontend
+# de chats SOLO ve su entity local `order-ref` y llama /api/chats/*.
+consumes:
+  - provider: orders
+    contract: order@v1
+    into: order-ref
+    cast: api/order_actions
 
 frontend:
   entry: ./frontend
@@ -412,17 +497,19 @@ wiring_intents:
 [plugin.yaml]
      │
      ▼
-[plugins-sync.ts] ──── valida `id`, `version`, `frontend.contributes`. Si rompe, EXIT 1.
-     │
+[plugins-sync.ts] ──── valida `id`, `version`, `frontend.contributes` +
+     │                 validate_enabled (deps duras, P-6). Si rompe, EXIT 1.
      ▼
-[src.main loader] ──── valida `api`, importa `python_module`/`legacy_routers`. Si rompe, fail-fast.
-     │
+[src.main loader] ──── validate_enabled + valida `api`, importa
+     │                 `python_module`/`legacy_routers`. Si rompe, fail-fast.
      ▼
-[src.run_workers] ──── valida `agent.workers[]`. Si rompe, RuntimeError.
-     │
+[src.run_workers] ──── validate_enabled + valida `agent.workers[]`. Si rompe,
+     │                 RuntimeError. (Cada worker además se auto-gatea con
+     │                 ensure_plugin_enabled() — P-21.)
      ▼
-[tests/plugins/test_premortem_invariants.py] ──── cross-check con K8s, schema regex, compose drift.
-     │
+[tests/plugins/test_premortem_invariants.py +
+ tests/architecture/test_plugin_conformance.py] ──── cross-check con K8s,
+     │                 schema regex, compose drift (P-20), routes (P-18), etc.
      ▼
 [plugin operacional]
 ```
@@ -434,7 +521,9 @@ rápido al boot que servir un endpoint silenciosamente ausente.
 
 ## §10. Extender el schema
 
-**Solo en PR explícito de architecture-change** (no feature task):
+**Solo en PR explícito de architecture-change** (no feature task; el PR
+lleva el label `architecture-change` y localmente los tests corren con
+`ARCH_CHANGE_APPROVED=1`):
 
 1. ADR documentando el campo nuevo + por qué.
 2. Editar `frontend_dashboard/src/plugins/_schema/plugin.schema.yaml`.
@@ -443,9 +532,12 @@ rápido al boot que servir un endpoint silenciosamente ausente.
 4. Editar `hubara_agency/src/main.py`, `src/run_workers.py`,
    `src/platform/plugin_manifest.py` o `scripts/render-compose.py`
    según qué loader lo consume.
-5. Test invariante nuevo en `tests/plugins/test_premortem_invariants.py`
-   si aplica.
+5. **REGLA DE ORO: ningún campo nuevo sin su check de conformidad en el
+   MISMO PR** (`tests/architecture/test_plugin_conformance.py`); sumar
+   invariante en `tests/plugins/test_premortem_invariants.py` si aplica.
 6. Update reference `references/manifest-schema.md` (este archivo).
+   Referencia canónica del protocolo: `PLUGIN_PROTOCOL_fable.md` +
+   `PLUGIN_CONTRACT.md` (repo root).
 
 **Feature task NUNCA agrega campo al schema** — bloquea con
 `requires_planner_update`.

@@ -8,7 +8,7 @@
  */
 
 import type { CSSProperties } from "react";
-import { useSessions } from "@/entities/session";
+import { useSessions } from "@plugins/chats/frontend/entities/session";
 import { useSessionFilters } from "../model/useSessionFilters";
 import { SearchBar } from "./SearchBar";
 import { TagFilterBar } from "./TagFilterBar";

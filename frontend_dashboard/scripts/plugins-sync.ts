@@ -74,6 +74,7 @@ type Manifest = {
   id?: string;
   version?: string;
   display_name?: string;
+  depends_on?: string[];
   frontend?: {
     entry?: string;
     contributes?: {
@@ -175,6 +176,58 @@ function discoverManifests(): Map<string, Manifest> {
   return found;
 }
 
+/**
+ * Scan liviano de TODOS los manifests (incluidos los backend-only que
+ * `discoverManifests` excluye del registry) → `{id: depends_on[]}`.
+ * Necesario para validar P-ENABLED: un plugin frontend puede depender de un
+ * plugin sin bloque `frontend:`.
+ */
+function readAllDependsOn(): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  if (!existsSync(PLUGINS_DIR)) return out;
+  for (const entry of readdirSync(PLUGINS_DIR, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    if (entry.name.startsWith("_") || entry.name.startsWith(".")) continue;
+    const manifestPath = join(PLUGINS_DIR, entry.name, "plugin.yaml");
+    if (!existsSync(manifestPath)) continue;
+    try {
+      const manifest = parse(readFileSync(manifestPath, "utf-8")) as Manifest;
+      out.set(entry.name, manifest?.depends_on ?? []);
+    } catch {
+      // YAML inválido ya lo reporta discoverManifests; acá solo lo omitimos.
+    }
+  }
+  return out;
+}
+
+/**
+ * P-ENABLED (PLUGIN_CONTRACT.md §5.4) — espejo TS de
+ * `src/platform/plugin_loader.validate_enabled`: el set habilitado debe (1)
+ * referenciar solo plugins existentes y (2) incluir el `depends_on` de cada
+ * habilitado. Tira Error → `predev`/`prebuild` fallan (fail-fast, no warning).
+ */
+function validateEnabled(enabled: Set<string>, allDeps: Map<string, string[]>): void {
+  const problems: string[] = [];
+  for (const id of [...enabled].sort()) {
+    if (!allDeps.has(id)) {
+      problems.push(`ENABLED_PLUGINS incluye "${id}" pero no existe ningún manifest con ese id`);
+      continue;
+    }
+    const missing = (allDeps.get(id) ?? []).filter((dep) => !enabled.has(dep)).sort();
+    if (missing.length > 0) {
+      problems.push(
+        `plugin "${id}" declara depends_on=[${missing.join(", ")}] pero no están en ` +
+          `ENABLED_PLUGINS — habilitá las deps o deshabilitá "${id}"`,
+      );
+    }
+  }
+  if (problems.length > 0) {
+    throw new Error(
+      `ENABLED_PLUGINS inválido (P-ENABLED, PLUGIN_CONTRACT.md §5.4):\n  - ${problems.join("\n  - ")}`,
+    );
+  }
+}
+
 function filterEnabled(found: Map<string, Manifest>): Manifest[] {
   const envValue = process.env.ENABLED_PLUGINS?.trim();
   if (!envValue) {
@@ -182,11 +235,14 @@ function filterEnabled(found: Map<string, Manifest>): Manifest[] {
     return [...found.values()].sort((a, b) => a.id!.localeCompare(b.id!));
   }
   const enabled = new Set(envValue.split(",").map((s) => s.trim()).filter(Boolean));
+  validateEnabled(enabled, readAllDependsOn());
   const out: Manifest[] = [];
   for (const id of [...enabled].sort()) {
     const manifest = found.get(id);
     if (!manifest) {
-      logWarn(`ENABLED_PLUGINS lists "${id}" but no manifest found`);
+      // Id válido pero backend-only (sin bloque `frontend:`) — no contribuye
+      // al registry. Los typos reales ya los cazó validateEnabled (throw).
+      logInfo(`"${id}" habilitado pero backend-only — no entra al registry del dashboard`);
       continue;
     }
     out.push(manifest);
@@ -229,7 +285,7 @@ function warnSectionKeyCollisions(entries: RegistryEntry[]): void {
   }
 }
 
-function renderRegistry(entries: RegistryEntry[]): string {
+function renderRegistry(entries: RegistryEntry[], iconContributors: string[]): string {
   // `lazy` solo se importa si hay al menos un entry — el tsconfig tiene
   // `noUnusedLocals: true` y rechazaría un import sin uso.
   const headerComment = `/**
@@ -283,6 +339,8 @@ export type PluginEntry = {
 };
 
 export const PLUGINS: PluginEntry[] = [];
+
+export const PLUGIN_ICONS: Record<string, never> = {};
 `
     );
   }
@@ -291,8 +349,35 @@ export const PLUGINS: PluginEntry[] = [];
   // porque cada plugin define su propia firma de props. El shell que renderiza
   // `<entry.Page {...props} />` conoce las props específicas del plugin que
   // está mostrando. Formalizar con generics queda pendiente.
-  const importBlock = `import { lazy, type ComponentType, type LazyExoticComponent } from "react";\n`;
+  // ── Íconos contribuidos (F7 — INV-1 / AP-4) ───────────────────────────
+  // Un plugin que necesita un glifo NUEVO lo trae consigo en
+  // `frontend/icons.tsx` (export const icons = { nombre: Componente }) en
+  // vez de editar el spinal compartido `shared/ui/Icon.tsx` (set base, solo
+  // glifos genuinamente cross-plugin). El codegen los agrega al registry; el
+  // Toolbar resuelve contribuciones → base → fallback.
+  const iconImports = iconContributors
+    .map((id) => `import { icons as ${id}Icons } from "@plugins/${id}/frontend/icons";\n`)
+    .join("");
+  const iconExport =
+    `\n// Glifos aportados por plugins (frontend/icons.tsx) — merge en el shell.\n` +
+    `// eslint-disable-next-line @typescript-eslint/no-explicit-any\n` +
+    `export const PLUGIN_ICONS: Record<string, ComponentType<any>> = {\n` +
+    iconContributors.map((id) => `  ...${id}Icons,\n`).join("") +
+    `};\n`;
+
+  const importBlock = `import { lazy, type ComponentType, type LazyExoticComponent } from "react";\n${iconImports}`;
   const fullType = `
+/**
+ * Protocolo estructural del entry de plugin (estilo Swift \`some Protocol\`):
+ * el módulo \`@plugins/<id>/frontend\` DEBE default-exportar un componente.
+ * \`assertPluginModule\` no hace nada en runtime — existe para que \`tsc\`
+ * FALLE EN COMPILACIÓN si un plugin rompe su contrato de entry (antes: el
+ * bundler explotaba en runtime con un error críptico).
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type PluginModule = { default: ComponentType<any> };
+const assertPluginModule = (m: PluginModule): PluginModule => m;
+
 export type PluginEntry = {
   id: string;
   displayName: string;
@@ -317,7 +402,7 @@ export const PLUGINS: PluginEntry[] = [
 
   const body = entries
     .map((e) => {
-      const importExpr = `lazy(() => import("@plugins/${e.id}/frontend"))`;
+      const importExpr = `lazy(() => import("@plugins/${e.id}/frontend").then(assertPluginModule))`;
       return `  {
     id: ${JSON.stringify(e.id)},
     displayName: ${JSON.stringify(e.displayName)},
@@ -331,20 +416,25 @@ export const PLUGINS: PluginEntry[] = [
 
   const footer = `\n];\n`;
 
-  return headerComment + importBlock + sharedTypes + fullType + body + footer;
+  return headerComment + importBlock + sharedTypes + fullType + body + footer + iconExport;
 }
 
 function main() {
   const found = discoverManifests();
   const enabled = filterEnabled(found);
   const entries = enabled.map(buildEntry);
+  // Plugins que traen glifos propios (frontend/icons.tsx) — ver renderRegistry.
+  const iconContributors = enabled
+    .map((m) => m.id!)
+    .filter((id) => existsSync(join(PLUGINS_DIR, id, "frontend", "icons.tsx")))
+    .sort();
 
   warnSectionKeyCollisions(entries);
 
   const outDir = dirname(OUT_FILE);
   if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
 
-  writeFileSync(OUT_FILE, renderRegistry(entries), "utf-8");
+  writeFileSync(OUT_FILE, renderRegistry(entries, iconContributors), "utf-8");
   logInfo(
     `generated ${OUT_FILE.replace(FRONTEND_ROOT + "/", "")} ` +
       `with ${entries.length} plugin(s): ${entries.map((e) => e.id).join(", ") || "(empty)"}`,

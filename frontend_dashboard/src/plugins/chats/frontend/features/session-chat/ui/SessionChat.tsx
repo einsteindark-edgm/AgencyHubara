@@ -6,7 +6,7 @@
  * el doble polling que existía en el código legado.
  */
 
-import { useSession } from "@/entities/session";
+import { useSession } from "@plugins/chats/frontend/entities/session";
 import { ChatHeader } from "./ChatHeader";
 import { ChatMessageList } from "./ChatMessageList";
 import { ChatMessageListSkeleton } from "./ChatMessageListSkeleton";

@@ -26,7 +26,7 @@ import {
   type OrderItemDetail,
   type OrderDetail,
   type OrderStatus,
-} from "@/entities/order";
+} from "@plugins/orders/frontend/entities/order";
 import { fmtMoney } from "@/shared/lib";
 import { Icon, InsBlock, MacButton, MissingData } from "@/shared/ui";
 import { ReadyForShip } from "./ReadyForShip";

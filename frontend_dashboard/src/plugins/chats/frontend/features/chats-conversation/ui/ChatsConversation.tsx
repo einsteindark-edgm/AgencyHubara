@@ -4,8 +4,8 @@
  */
 
 import { useState } from "react";
-import { useChatInbox, useChatMessages } from "@/entities/chat";
-import { useSession } from "@/entities/session";
+import { useChatInbox, useChatMessages } from "@plugins/chats/frontend/entities/chat";
+import { useSession } from "@plugins/chats/frontend/entities/session";
 import { Avatar, Icon } from "@/shared/ui";
 import { ChatsNotes } from "./ChatsNotes";
 import { ChatsFiles } from "./ChatsFiles";

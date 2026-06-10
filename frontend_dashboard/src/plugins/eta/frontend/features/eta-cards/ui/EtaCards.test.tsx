@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { render } from "@testing-library/react";
 import { EtaCards } from "./EtaCards";
-import type { TrackedOrder } from "@/entities/tracked-order";
+import type { TrackedOrder } from "@plugins/eta/frontend/entities/tracked-order";
 
 function makeOrder(over: Partial<TrackedOrder> = {}): TrackedOrder {
   return {

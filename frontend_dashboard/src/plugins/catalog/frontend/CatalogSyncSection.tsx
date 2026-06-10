@@ -13,27 +13,21 @@
  * reciente del historial (así el centro muestra algo útil al entrar).
  */
 
-import { useSyncHistory } from "@/entities/catalog-sync";
+import { usePluginHost, useSelection } from "@/shared/lib";
+
+import { useSyncHistory } from "@plugins/catalog/frontend/entities/catalog-sync";
 import { SyncHistory } from "@plugins/catalog/frontend/features/sync-history";
 import { SyncInspector } from "@plugins/catalog/frontend/features/sync-inspector";
 import { SyncRunner } from "@plugins/catalog/frontend/features/sync-runner";
 
-export interface CatalogSyncSectionProps {
-  showSidebar: boolean;
-  showInspector: boolean;
-  selectedJobId: string;
-  setSelectedJobId: (id: string) => void;
-}
-
 /** Los workflow_id reales arrancan con este prefijo (ver el backend). */
 const WORKFLOW_ID_PREFIX = "catalog-sync";
 
-export function CatalogSyncSection({
-  showSidebar,
-  showInspector,
-  selectedJobId,
-  setSelectedJobId,
-}: CatalogSyncSectionProps) {
+export function CatalogSyncSection() {
+  // F7: chrome + selección llegan por el PluginHost (contrato genérico).
+  const { showSidebar, showInspector } = usePluginHost();
+  const [selectedJobIdRaw, setSelectedJobId] = useSelection("catalog", "");
+  const selectedJobId = selectedJobIdRaw ?? "";
   const { data } = useSyncHistory();
 
   const selectedReal = selectedJobId.startsWith(WORKFLOW_ID_PREFIX)

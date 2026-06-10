@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import re
 
-import pytest
 
 from tests.architecture._plugin_contract_helpers import (
     BE_PLUGINS,
@@ -120,17 +119,16 @@ def test_p14_consumes_blocks_are_well_formed() -> None:
 # `orders.depends_on: []` con transitions -> chats/eta es CORRECTO (no es violación).
 
 
-@pytest.mark.xfail(
-    reason="Caza agents_admin (Calidad LLM) -> /api/chats/evals: el plano de "
-    "gestión consume el eval del agente `sales` (evals queda PER-AGENTE por "
-    "decisión 2026-06-05 — NO se extrae). A formalizar server-side (agents_admin "
-    "backend agrega los evals y sirve /api/agents_admin/...). `ads` ya extraído; "
-    "`eta` sigue split pero mediado por la entity central `tracked-order` (-> P-11). "
-    "Verde cuando agents_admin no llame /api/chats + eta extraído.",
-    strict=False,
-)
 def test_p9_frontend_plugin_calls_only_own_api() -> None:
-    """P-OWN: el frontend de X no llama a `/api/<otro-plugin>/*`."""
+    """P-OWN: el frontend de X no llama a `/api/<otro-plugin>/*`.
+
+    VERDE ESTRICTO desde F5 (PLUGIN_REFACTOR_PLAN_fable.md): todo consumo
+    cross-plugin pasa por el backend propio del consumidor (casts declarados —
+    chats→orders vía order-ref, agents_admin→chats vía /api/agents/evals).
+    Este test grepea TEXTO (comentarios incluidos) bajo plugins/ — es la red
+    gruesa; la detección fina del canal lavado (literales en CÓDIGO + ownership
+    de entities) la dan P-22/P-23 en src/test/architecture del frontend.
+    """
     ids = set(manifest_ids())
     bad: list[str] = []
     for pid in sorted(ids):

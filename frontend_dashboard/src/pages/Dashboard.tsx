@@ -26,14 +26,12 @@
  *     el contrato de props del Page no está formalizado (PR pendiente).
  */
 
-import { Suspense, useMemo, useState } from "react";
+import { Suspense, useCallback, useMemo, useState } from "react";
 
 import { StatusBar, TitleBar, Toolbar } from "@/shared/ui";
-import { IS_DESKTOP } from "@/shared/lib";
+import { IS_DESKTOP, PluginHostProvider } from "@/shared/lib";
 
-import { useSessionsStream } from "@/entities/chat";
-
-import { PLUGINS } from "@/app/plugin-registry.generated";
+import { PLUGINS, PLUGIN_ICONS } from "@/app/plugin-registry.generated";
 
 export function Dashboard() {
   // ── Derivar lista de sections del registry ───────────────────────────
@@ -66,57 +64,33 @@ export function Dashboard() {
   const [showSidebar, setShowSidebar] = useState(true);
   const [showInspector, setShowInspector] = useState(true);
 
-  // ── Selections per-plugin ──────────────────────────────────────────────
-  // Cross-plugin state vive aquí porque sobrevive cambios de section.
-  // Cuando el contrato de props del Page se formalice, esto se moverá a
-  // un context o se delegará al state interno del plugin.
-  const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
-  const [selectedOrderId, setSelectedOrderId] = useState<string | null>("#1247");
-  const [selectedTrackedId, setSelectedTrackedId] = useState<string | null>(null);
-  const [selectedJobId, setSelectedJobId] = useState<string>("");
-  const [selectedAgentId, setSelectedAgentId] = useState<string>("sales");
+  // ── PluginHost (F7 — INV-1) ────────────────────────────────────────────
+  // El contrato shell↔plugin ya no es un "bandejón" de props hardcodeado
+  // (12 props × 5 plugins): es el contexto GENÉRICO `PluginHostProvider`
+  // (shared/lib/plugin-host). La selección cross-sección vive en un mapa
+  // clave→id; cada plugin elige su clave vía `useSelection("<plugin-id>")`.
+  // Agregar un plugin con selección propia NO toca este archivo.
+  //
+  // Los defaults preservan el comportamiento previo del prototipo (orders
+  // abre con "#1247" seleccionado; agents con "sales"). Son SEEDS del estado,
+  // no conocimiento del shell sobre los plugins: un plugin ausente los ignora.
+  const [selection, setSelectionMap] = useState<Record<string, string | null>>({
+    orders: "#1247",
+    agents_admin: "sales",
+    catalog: "",
+  });
+  const setSelection = useCallback((key: string, id: string | null) => {
+    setSelectionMap((prev) => (prev[key] === id ? prev : { ...prev, [key]: id }));
+  }, []);
+  const host = useMemo(
+    () => ({ showSidebar, showInspector, selection, setSelection }),
+    [showSidebar, showInspector, selection, setSelection],
+  );
 
-  // Stream SSE de sesiones: se monta UNA vez aquí — empuja el snapshot al
-  // cache de TanStack Query para todas las features de Chats. Las demás
-  // secciones del diseño viven con datos mock locales y no dependen del
-  // stream.
-  useSessionsStream();
-
+  // F4 (INV-1): el stream SSE de sesiones era una suscripción del SHELL a la
+  // entity de chats — acople shell→dominio. Ahora lo monta el Page de chats
+  // (dueño del stream); el shell quedó 100% libre de imports de dominio.
   const ActivePage = pageByKey.get(section);
-
-  // ── pluginProps — contrato (pragmático v1) entre shell y plugin Page ──
-  //
-  // CONTRATO:
-  //   El shell entrega un "bandejón" con TODO el state cross-plugin: toggles
-  //   visuales (showSidebar/showInspector) + las selecciones de cada feature
-  //   (selectedXxxId/setSelectedXxxId). Cada plugin Page desestructura las
-  //   props que necesita e ignora el resto.
-  //
-  // TRADE-OFF aceptado:
-  //   - PRO: agregar un nuevo prop solo requiere editar acá una vez; cada
-  //     Page que lo necesite ya lo recibe.
-  //   - CONTRA: el tipo de la prop es `any` (ver registry generado), así que
-  //     TypeScript NO te avisa si un plugin pide algo que el shell no provee.
-  //
-  // CUÁNDO MIGRAR:
-  //   Cuando haya 6+ plugins o cuando un bug nuevo aparezca por "plugin pide
-  //   prop X pero el shell pasa prop Y", introducir un Context provider y
-  //   firmar el contrato con generics en el registry. Hoy (5 plugins) este
-  //   patrón es la solución más simple que funciona.
-  const pluginProps = {
-    showSidebar,
-    showInspector,
-    selectedChatId,
-    setSelectedChatId,
-    selectedOrderId,
-    setSelectedOrderId,
-    selectedTrackedId,
-    setSelectedTrackedId,
-    selectedJobId,
-    setSelectedJobId,
-    selectedAgentId,
-    setSelectedAgentId,
-  };
 
   return (
     <div className={"stage" + (IS_DESKTOP ? "" : " is-web")}>
@@ -130,12 +104,15 @@ export function Dashboard() {
           setShowSidebar={setShowSidebar}
           showInspector={showInspector}
           setShowInspector={setShowInspector}
+          pluginIcons={PLUGIN_ICONS}
         />
 
         <div className="body">
           {ActivePage && (
             <Suspense key={section} fallback={null}>
-              <ActivePage {...pluginProps} />
+              <PluginHostProvider value={host}>
+                <ActivePage />
+              </PluginHostProvider>
             </Suspense>
           )}
         </div>

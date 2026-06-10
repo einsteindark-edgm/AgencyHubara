@@ -73,8 +73,11 @@ def _find_temporal_workflow_name(module_path: str, target_name: str) -> bool:
     Importing the workflow module triggers Temporal client wiring that's
     too heavyweight for an architecture test.
     """
+    # N-11 (auditoría fable): el naming oficial permite dígitos
+    # (`^[a-z][a-z0-9_]*$`); el regex anterior (`[a-z_]+`) hacía fallar el
+    # gate con mensaje engañoso para un futuro plugin tipo `ads2`.
     m = re.match(
-        r"^src\.plugins\.(?P<plugin>[a-z_]+)\.workers\.(?P<name>[a-z_]+)$",
+        r"^src\.plugins\.(?P<plugin>[a-z][a-z0-9_]*)\.workers\.(?P<name>[a-z][a-z0-9_]*)$",
         module_path,
     )
     if not m:

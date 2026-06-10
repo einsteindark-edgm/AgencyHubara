@@ -45,6 +45,9 @@ spec:
           # NO se commitean al repo. Si tu setup las trae de otro lado
           # (e.g. External Secrets Operator), respetalo.
           env:
+            # P-20/P-21 (INV-2): set explícito de plugins de ESTE deployment.
+            - name: ENABLED_PLUGINS
+              value: "ads,agents_admin,catalog,chats,eta,orders,system_map"
             - name: API_BASE_LLMLITE
               value: "http://litellm-proxy.default.svc.cluster.local:4000"
             - name: TEMPORAL_URL

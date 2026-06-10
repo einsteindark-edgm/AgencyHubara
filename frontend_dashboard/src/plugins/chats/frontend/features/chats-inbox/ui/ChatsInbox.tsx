@@ -7,7 +7,7 @@
  * es la página `Dashboard`.
  */
 
-import { useChatInbox, type ChatInboxItem } from "@/entities/chat";
+import { useChatInbox, type ChatInboxItem } from "@plugins/chats/frontend/entities/chat";
 import { Avatar, Icon } from "@/shared/ui";
 import { useInboxFilters } from "../model/useInboxFilters";
 

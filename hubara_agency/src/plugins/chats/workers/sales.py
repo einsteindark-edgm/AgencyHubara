@@ -31,6 +31,7 @@ from src.platform.observability.cost_attribution import (
 from src.platform.orchestration import dispatch_event_activity
 from src.platform.orders.composition import get_order_registration_port
 from src.platform.plugin_manifest import get_task_queue
+from src.platform.plugin_runtime import ensure_plugin_enabled
 from src.platform.session_history.activities import (
     persist_assistant_message_activity,
 )
@@ -248,6 +249,7 @@ register_tool_extension(
 
 async def main() -> None:
     """Worker Exclusivo para el Dominio de Ventas de WhatsApp."""
+    ensure_plugin_enabled("chats")  # P-21: self-gate del toggle (INV-2)
     logger.info("Conectando Especialista (Ventas) al clúster Temporal mTLS...")
     client = await get_temporal_client()
 

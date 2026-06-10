@@ -13,7 +13,7 @@ import {
   useTransitionOrderStage,
   type Order,
   type OrderStatus,
-} from "@/entities/order";
+} from "@plugins/orders/frontend/entities/order";
 import { Avatar, Icon, MacButton } from "@/shared/ui";
 import { dayChipShort, fmtMoney } from "@/shared/lib";
 

@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import { useEvalTrend, type EvalTrendSeries } from "@/entities/eval-trend";
+import { useEvalTrend, type EvalTrendSeries } from "@plugins/agents_admin/frontend/entities/eval-trend";
 
 const W = 160;
 const H = 36;
@@ -86,7 +86,7 @@ function MetricRow({ series, threshold }: { series: EvalTrendSeries; threshold: 
 /**
  * Tendencia de calidad del agente: por cada métrica, su score por día (sparkline),
  * el umbral 0.7, y el registro de los días en que estuvo bajo. Lee
- * GET /api/chats/evals/history (lo alimenta el eval diario online).
+ * GET /api/agents/evals/history (lo alimenta el eval diario online).
  */
 export function EvalTrendChart() {
   const [suite, setSuite] = useState<"online" | "golden">("online");

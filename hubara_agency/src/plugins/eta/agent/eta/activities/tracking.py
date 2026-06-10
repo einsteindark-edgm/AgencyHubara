@@ -29,9 +29,16 @@ from typing import Any
 from temporalio import activity
 
 from src.platform.config import WORKSPACE_VAULT_DIR
-from src.platform.constants import ROUTE_ETA, ROUTE_HUMANO
+from src.platform.constants import ROUTE_HUMANO
+from src.platform.plugin_manifest import get_worker_spec
 from src.platform.state import FilesystemMetadataStore
 from src.platform.whatsapp.window import is_in_service_window
+
+# F6 (route registry): la ruta que ESTE agente posee se declara en SU manifest
+# (`agent.workers[eta].owns_route`) — única fuente de verdad. Pre-F6 era la
+# constante `ROUTE_ETA` en platform/constants.py (spinal PROTECTED): un agente
+# nuevo con ruta propia tenía que editar un archivo central (violación INV-1).
+_OWN_ROUTE: str = str(get_worker_spec("eta", "eta").get("owns_route") or "eta")
 
 
 def _store() -> FilesystemMetadataStore:
@@ -72,7 +79,7 @@ async def start_eta_tracking_activity(session_id: str, order_id: str) -> None:
     """
     store = _store()
     data = _safe_read(store, session_id)
-    data["active_route"] = ROUTE_ETA
+    data["active_route"] = _OWN_ROUTE
     data["tag"] = "ETA"
 
     tracking = data.get("eta_tracking")

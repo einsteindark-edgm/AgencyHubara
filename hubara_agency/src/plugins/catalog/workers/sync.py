@@ -8,6 +8,7 @@ from temporalio.worker import Worker
 
 from src.platform.logging import setup_logging
 from src.platform.plugin_manifest import get_task_queue
+from src.platform.plugin_runtime import ensure_plugin_enabled
 from src.platform.temporal.client import get_temporal_client
 from src.plugins.catalog.agent.activities import (
     pull_medusa_catalog_activity,
@@ -20,6 +21,7 @@ setup_logging()
 
 
 async def main() -> None:
+    ensure_plugin_enabled("catalog")  # P-21: self-gate del toggle (INV-2)
     logger.info("Conectando catalog_sync al cluster Temporal...")
     client = await get_temporal_client()
 

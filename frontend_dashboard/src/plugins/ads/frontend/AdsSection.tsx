@@ -17,6 +17,8 @@
 
 import { useMemo, useState } from "react";
 
+import { usePluginHost } from "@/shared/lib";
+
 import {
   DEFAULT_ADS_SELECTION,
   selectionToParams,
@@ -25,7 +27,7 @@ import {
   useDailySeries,
   type AdsRangeSelection,
   type AdsWindowParams,
-} from "@/entities/ads-campaign";
+} from "@plugins/ads/frontend/entities/ads-campaign";
 
 import { AdsCampaignsList } from "@plugins/ads/frontend/features/ads-campaigns-list";
 import { AdsOverviewHeader } from "@plugins/ads/frontend/features/ads-overview-header";
@@ -35,12 +37,10 @@ import { AdsDailyTrend } from "@plugins/ads/frontend/features/ads-daily-trend";
 import { AdsAttributedTable } from "@plugins/ads/frontend/features/ads-attributed-table";
 import { AdsInspector } from "@plugins/ads/frontend/features/ads-inspector";
 
-export interface AdsSectionProps {
-  showSidebar: boolean;
-  showInspector: boolean;
-}
-
-export function AdsSection({ showSidebar, showInspector }: AdsSectionProps) {
+export function AdsSection() {
+  // F7: el chrome del shell llega por el PluginHost (contrato genérico) — el
+  // shell ya no pasa props por plugin.
+  const { showSidebar, showInspector } = usePluginHost();
   // Ventana temporal — default preset 30d (acotada) para que el cómputo del
   // backend no escale con todo el historial. El operador puede ampliar a Total
   // o fijar un rango exacto (fecha inicio → fecha fin) desde el header.

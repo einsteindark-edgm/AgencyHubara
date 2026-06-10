@@ -3,7 +3,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ChatsInspector } from "./ChatsInspector";
 
-vi.mock("@/entities/chat", () => ({
+vi.mock("@plugins/chats/frontend/entities/chat", () => ({
   useChatInbox: vi.fn(() => ({ data: [] })),
   useChatMemory: vi.fn(() => ({ data: [] })),
   useChatRoutingLog: vi.fn(() => ({ data: [] })),

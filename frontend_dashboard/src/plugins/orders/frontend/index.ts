@@ -5,7 +5,6 @@
  * desde el registry. Plus named re-exports para tests y back-compat.
  */
 export { default, OrdersSection } from "./OrdersSection";
-export type { OrdersSectionProps } from "./OrdersSection";
 
 export {
   OrdersFilters,

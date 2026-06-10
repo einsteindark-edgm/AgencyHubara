@@ -18,7 +18,7 @@ import {
   type AdsCampaign,
   type AdsDateRange,
   type AdsRangeSelection,
-} from "@/entities/ads-campaign";
+} from "@plugins/ads/frontend/entities/ads-campaign";
 import { Icon } from "@/shared/ui";
 
 import {

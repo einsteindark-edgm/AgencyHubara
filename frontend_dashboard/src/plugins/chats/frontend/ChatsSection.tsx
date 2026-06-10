@@ -6,31 +6,30 @@
  * Dashboard pueda reemplazar `<ChatsSection ...>` con `<Page ...>` en PR3 sin
  * cambios funcionales.
  *
- * Auto-selecciona la primera sesión cuando llega data del SSE. La fuente del
- * stream sigue siendo el shell (`useSessionsStream()` en Dashboard.tsx) — el
- * plugin solo lee el cache de TanStack Query via `useChatInbox`.
+ * Auto-selecciona la primera sesión cuando llega data del SSE. F4 (INV-1): el
+ * stream SSE es DEL PLUGIN — `useSessionsStream()` se monta acá (antes vivía
+ * en el shell, que importaba la entity de chats: acople shell→dominio). El
+ * stream vive mientras la sección Chats esté montada; al volver a entrar,
+ * `useChatInbox` refetchea y el stream reconecta.
  */
 import { useEffect } from "react";
 
-import { useChatInbox } from "@/entities/chat";
+import { usePluginHost, useSelection } from "@/shared/lib";
+
+import {
+  useChatInbox,
+  useSessionsStream,
+} from "@plugins/chats/frontend/entities/chat";
 
 import { ChatsInbox } from "@plugins/chats/frontend/features/chats-inbox";
 import { ChatsConversation } from "@plugins/chats/frontend/features/chats-conversation";
 import { ChatsInspector } from "@plugins/chats/frontend/features/chats-inspector";
 
-export interface ChatsSectionProps {
-  showSidebar: boolean;
-  showInspector: boolean;
-  selectedChatId: string | null;
-  setSelectedChatId: (id: string) => void;
-}
-
-export function ChatsSection({
-  showSidebar,
-  showInspector,
-  selectedChatId,
-  setSelectedChatId,
-}: ChatsSectionProps) {
+export function ChatsSection() {
+  // F7: chrome + selección llegan por el PluginHost (contrato genérico).
+  const { showSidebar, showInspector } = usePluginHost();
+  const [selectedChatId, setSelectedChatId] = useSelection("chats");
+  useSessionsStream();
   const { data: chats = [] } = useChatInbox();
   useEffect(() => {
     if (selectedChatId == null && chats.length > 0) {

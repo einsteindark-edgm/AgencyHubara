@@ -43,9 +43,37 @@ properties:
 
   depends_on:
     type: array
-    description: IDs de otros plugins requeridos
+    description: |
+      IDs de otros plugins requeridos — SOLO dependencias DURAS (P-DEPS,
+      PLUGIN_CONTRACT.md §4): el plugin NO funciona sin ellas (típicamente el
+      provider de un `consumes:`/cast, o una capability que hoy vive en otro
+      plugin, ej. eta→chats por el ingest de WhatsApp). ENFORCED AL BOOT
+      (P-6): los 3 loaders (main.py, run_workers.py, plugins-sync.ts) llaman
+      validate_enabled() — habilitar este plugin sin sus deps mata el proceso
+      con mensaje accionable. Las transitions cross-plugin son SOFT y NO van
+      acá (el dispatcher las skipea si el target está apagado — P-SKIP).
     items:
       type: string
+    default: []
+
+  consumes:
+    type: array
+    description: |
+      Casts declarados (canal 3, PLUGIN_CONTRACT.md §5.3) — la ÚNICA forma de
+      consumir DATOS de otro plugin. Cada entry: el provider DEBE estar en
+      depends_on, y `cast` apunta a un módulo real bajo este plugin (el cast
+      corre SERVER-SIDE: el frontend del consumidor solo llama
+      /api/<este-id>/*). Gate P-14 valida forma + existencia del cast.
+      Ejemplos vivos: chats (order@v1 → order-ref vía api/order_actions),
+      agents_admin (evals@v1 vía api/evals).
+    items:
+      type: object
+      properties:
+        provider: { type: string, description: plugin id del dueño del contrato (∈ depends_on) }
+        contract: { type: string, description: contrato versionado que el provider publica (ej. order@v1) }
+        into: { type: string, description: nombre de la entity/vista LOCAL del consumidor }
+        cast: { type: string, description: path relativo al plugin del módulo cast (ej. api/order_actions) }
+      required: [provider, contract, into, cast]
     default: []
 
   agentic:
@@ -53,7 +81,10 @@ properties:
     description: |
       Marca que el plugin alberga agentes conversacionales con workspace
       de prompts (IDENTITY.md, SOUL.md, TOOLS.md, AGENTS.md, USER.md).
-      Solo los plugins con agentic=true aparecen en GET /api/agents_admin.
+      Solo los plugins con agentic=true aparecen en GET /api/agents
+      (agents_admin) — HONRADO por el código desde F1 (refactor fable):
+      discover_agents() filtra por este flag + ENABLED_PLUGINS. El gate P-17
+      exige coherencia: agentic=true ⟺ ≥1 worker con bloque `dashboard:`.
       Aplica independientemente de si el plugin tiene sección `agent:` —
       un plugin puede tener workers Temporal no conversacionales (e.g. catalog).
     default: false
@@ -177,7 +208,30 @@ properties:
               description: Nombre interno del worker dentro del plugin (e.g. "sales").
             module:
               type: string
-              description: Python module path del worker (debe exponer `async def main()`).
+              description: |
+                Python module path del worker (debe exponer `async def main()`
+                cuya PRIMERA línea sea `ensure_plugin_enabled("<plugin-id>")`
+                — self-gate P-21, src.platform.plugin_runtime; el gate de
+                conformance lo verifica por AST).
+            owns_route:
+              type: string
+              description: |
+                Ruta de conversación (`active_route` en metadata.json) que este
+                worker POSEE — route registry F6 (src/platform/routing.py). El
+                ruteo de inbounds la resuelve genéricamente: ningún agente
+                nombra a otro, y las rutas core (ventas/remarketing/humano) no
+                son registrables. Requiere `route_workflow_id_template`. Gate
+                P-18: el registry resuelve + las transitions de otros manifests
+                que targetean a este worker usan SU prefijo + el ruteo de chats
+                no puede hardcodear ninguno.
+            route_workflow_id_template:
+              type: string
+              description: |
+                Template del workflow id de sesión del dueño de la ruta — DEBE
+                contener "{session_id}" (ej. "eta-{session_id}"). Es la ÚNICA
+                copia del template en el sistema: el registry la usa para rutear
+                inbounds y P-18 ata a su prefijo los workflow_id_template de
+                las transitions que targetean este worker.
             task_queue:
               type: string
               description: |

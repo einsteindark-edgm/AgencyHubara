@@ -30,13 +30,9 @@ consolida los intents después.
 | `hubara_agency/src/platform/registries.py` | ✅ (raro) | `python_factory_module` | Pattern de registries cambia |
 | `hubara_agency/src/platform/tool_extensions.py` | ✅ (raro) | `python_factory_module` | DI invertida cambia |
 | `hubara_agency/tests/architecture/conftest.py` — `R_JSON_FROZEN_EXEMPTIONS` / `R_HEARTBEAT_EXEMPTIONS` | ✅ | `python_dict_entries_append` | 2+ plugins piden exemption |
-| `frontend_dashboard/src/shared/ui/Icon.tsx` | ✅ | `ts_object_entries_append` | 2+ plugins agregan icons (deferred: plugin-local icons) |
+| `frontend_dashboard/src/shared/ui/Icon.tsx` | ✅ (raro) | `ts_object_entries_append` | SOLO glifos genuinamente compartidos cross-plugin; el glifo de UN plugin va en su `frontend/icons.tsx` (NO spinal) — gate P-12 |
 | `frontend_dashboard/src/shared/*/index.ts` | ✅ | `ts_barrel` | 2+ plugins agregan primitivas shared |
-| `frontend_dashboard/src/entities/*/index.ts` | ✅ | `ts_barrel` | 2+ plugins agregan hooks al mismo entity |
-| `frontend_dashboard/src/entities/*/api.ts` | ✅ | `ts_factory_module` | Mismo |
-| `frontend_dashboard/src/entities/*/model.ts` | ✅ | `ts_dataclass_module` | 2+ plugins agregan tipos a la misma entity |
-| `frontend_dashboard/src/entities/*/contracts.ts` | ✅ | `ts_dataclass_module` | Mismo, para Zod schemas |
-| `frontend_dashboard/src/entities/*/keys.ts` | ✅ | `ts_factory_module` | Mismo, para query keys |
+| `frontend_dashboard/src/plugins/<id>/frontend/entities/**` | ❌ | single-owner | Post-refactor F1-F8: cada entity tiene UN dueño (su plugin) — dos tasks paralelas no comparten entity |
 | `frontend_dashboard/src/app/providers/index.tsx` | ✅ | `app_provider_composition` | 2+ plugins agregan provider |
 | `frontend_dashboard/src/pages/Dashboard.tsx` | ❌ | — | 100% data-driven; no se edita por feature |
 | `frontend_dashboard/src/index.css` (`@theme {...}`) | ✅ | `css_theme_block` | 2+ plugins agregan tokens Tailwind |
@@ -48,6 +44,15 @@ consolida los intents después.
 | `hubara_agency/src/plugins/<id>/**` (Python) | ❌ | propio del plugin | No cross |
 | `frontend_dashboard/src/plugins/<id>/frontend/**` | ❌ | propio del plugin | No cross |
 | `hubara_agency/k8s/aws-produccion/worker-<name>.yaml` | ❌ | file-per-worker | No cross |
+
+> **(post-refactor F1-F8)** Las entries glob de `src/entities/*` que vivían
+> en esta tabla ya no aplican: `src/entities/` central quedó VACÍO (gate
+> P-11) y las entities son **single-owner del plugin** — nunca spinal. El
+> dato que 2+ plugins consumen va por **cast declarado** (`consumes:` del
+> manifest + cast server-side; PLUGIN_CONTRACT.md §5.3), no por una entity
+> compartida. Y `Icon.tsx` dejó de ser el único camino para glifos: el
+> default es `plugins/<id>/frontend/icons.tsx` (mergeado a `PLUGIN_ICONS`
+> por `plugins:sync`).
 
 ### §2.1 NUNCA spinal (operator-owned)
 
@@ -65,6 +70,14 @@ consolida los intents después.
 | `frontend_dashboard/.dependency-cruiser.cjs` | Idem |
 | `hubara_agency/tests/architecture/` (excepto las exemption dicts) | Tests architecture |
 | `hubara_agency/.importlinter` | Contratos R-DIP |
+
+> **Fuente única de los protected (F8):** la lista de paths protegidos
+> vive ÚNICA en `hubara_agency/.hubara/spinal-files.yaml` (entries
+> `protected: true`); los meta-gates de ambos stacks (backend
+> `tests/architecture/conftest.py`, frontend
+> `src/test/architecture/helpers.ts`) la DERIVAN de ahí. Para editar un
+> protected: localmente correr los tests con `ARCH_CHANGE_APPROVED=1`; el
+> PR lleva el label `architecture-change`.
 
 ---
 
@@ -88,10 +101,10 @@ consume estos kinds y aplica de forma determinística.
 
 | Kind | Target files | Qué hace |
 |---|---|---|
-| `ts_barrel` | `entities/*/index.ts`, `features/*/index.ts`, `shared/*/index.ts` | Append `export { X } from "./Y";` |
-| `ts_factory_module` | `entities/*/api.ts`, `entities/*/keys.ts` | Append función / hook |
-| `ts_dataclass_module` | `entities/*/model.ts`, `entities/*/contracts.ts` | Append interface / Zod schema |
-| `ts_object_entries_append` | `shared/ui/Icon.tsx:ICONS` | Append `key: ValueComponent,` dentro del objeto |
+| `ts_barrel` | `shared/*/index.ts` (las entities del plugin son single-owner — sin intent) | Append `export { X } from "./Y";` |
+| `ts_factory_module` | (histórico: `entities/*/api.ts` central — hoy esas entities viven en el plugin y NO emiten intent) | Append función / hook |
+| `ts_dataclass_module` | (histórico: `entities/*/model.ts` + `contracts.ts` central — ídem, single-owner) | Append interface / Zod schema |
+| `ts_object_entries_append` | `shared/ui/Icon.tsx:ICONS` (SOLO glifos genuinamente compartidos; el resto va en `frontend/icons.tsx` del plugin) | Append `key: ValueComponent,` dentro del objeto |
 | `ts_function_body` | `scripts/plugins-sync.ts` (raro) | Modificar cuerpo de función específica |
 | `app_provider_composition` | `app/providers/index.tsx` | Wrap `<NewProvider>` alrededor de `{children}` |
 | `page_feature_mount` | `pages/<X>.tsx` (raro post-PR11) | Mount `<NewFeature />` en un anchor de la page |
@@ -144,7 +157,8 @@ wiring_intents:
       category: "color"
       order_hint: alphabetical_by_name
 
-# Plugin que agrega un icon al Icon registry:
+# Glifo GENUINAMENTE compartido promovido al SET BASE (raro post-F7 —
+# el glifo de UN solo plugin va en su frontend/icons.tsx, SIN intent):
 wiring_intents:
   frontend_dashboard/src/shared/ui/Icon.tsx:
     - kind: ts_object_entries_append
@@ -280,6 +294,9 @@ Cualquiera de estos tests rompe = bug en tu task o en el manifest del plugin:
 | `test_existing_plugin_ids_match_the_pattern` | Plugin id no cumple el pattern |
 | `plugins-no-cross-plugin` (dep-cruiser) | `@plugins/A/* → @plugins/B/*` |
 | `agents-independent` (import-linter) | `src.plugins.A.agent → src.plugins.B.agent` |
+| P-11 (`test_plugin_entity_ownership.arch.test.ts`) | `src/entities/` central con contenido (debe quedar VACÍO) |
+| P-22 (mismo archivo) | Un plugin importando la entity de otro plugin |
+| P-9 (`test_plugin_contract.py`) | Frontend con strings `/api/<otro-plugin>/` (estricto, sin xfail) |
 
 Detalle en `sections/08-tests-and-gates.md`.
 

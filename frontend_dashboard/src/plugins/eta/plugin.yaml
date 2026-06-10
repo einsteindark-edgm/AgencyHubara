@@ -4,7 +4,12 @@ display_name: ETA Tracker
 description: Agente de seguimiento de envíos — notifica al cliente cada cambio de estado del pedido por WhatsApp + sección de visualización (tracked orders + chat). Backend self-contained (`/api/eta` + worker `eta`); datos del frontend vía `entities/tracked-order`.
 agentic: true  # worker conversacional ETA con workspace IDENTITY/SOUL/TOOLS/AGENTS/USER
 
-depends_on: []
+# Dep DURA (P-DEPS): el ingest de WhatsApp (webhook + ruteo de inbounds) vive
+# en `chats` — sin él, ETA notifica pero NUNCA recibe respuestas del cliente
+# (hallazgo N-2, PLUGIN_ISOLATION_AUDIT_fable.md; decisión D4a del plan).
+# `validate_enabled` (P-6) exige chats habilitado siempre que eta lo esté.
+# Cuando el ingest se mueva a platform (plan F6/D4b), esta dep se elimina.
+depends_on: [chats]
 
 frontend:
   entry: ./frontend
@@ -35,6 +40,13 @@ agent:
     - name: eta
       module: src.plugins.eta.workers.eta
       task_queue: queue-eta-agent
+      # Route registry (F6 — platform/routing.py): este worker POSEE la ruta
+      # de conversación `eta`. El ruteo de inbounds (chats) la resuelve del
+      # registry — ningún agente nombra a otro, y el template del workflow_id
+      # vive UNA sola vez acá (el gate de conformance ata las transitions de
+      # otros manifests a este prefijo — mata PM-2).
+      owns_route: eta
+      route_workflow_id_template: "eta-{session_id}"
       dashboard:
         display_name: Asistente de Seguimiento
         role: Notifica al cliente cada cambio de estado de su pedido por WhatsApp

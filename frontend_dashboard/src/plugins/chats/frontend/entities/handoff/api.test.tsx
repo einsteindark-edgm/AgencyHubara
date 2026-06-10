@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, waitFor, act } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { sessionKeys } from "@/entities/session";
+import { sessionKeys } from "@plugins/chats/frontend/entities/session";
 import {
   useInterveneMutation,
   useReturnToBotMutation,

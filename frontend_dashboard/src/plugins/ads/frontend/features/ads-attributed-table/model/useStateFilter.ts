@@ -4,7 +4,7 @@ import {
   ADS_STATE_ORDER,
   type AdsState,
   type AttributedConversation,
-} from "@/entities/ads-campaign";
+} from "@plugins/ads/frontend/entities/ads-campaign";
 
 export type AttributedStateFilter = "all" | AdsState;
 

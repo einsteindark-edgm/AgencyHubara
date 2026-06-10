@@ -13,7 +13,7 @@ import {
   useTriggerSync,
   type SyncStep,
   type SyncStepStatus,
-} from "@/entities/catalog-sync";
+} from "@plugins/catalog/frontend/entities/catalog-sync";
 import { Icon, MacButton } from "@/shared/ui";
 
 interface Props {

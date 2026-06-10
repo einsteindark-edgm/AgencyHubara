@@ -4,7 +4,7 @@
  */
 
 import { useMemo, useState } from "react";
-import type { ChatInboxItem } from "@/entities/chat";
+import type { ChatInboxItem } from "@plugins/chats/frontend/entities/chat";
 
 export type InboxFilter = "Humano" | "Todas" | "Interesado" | "Pendiente" | "Cliente" | "Remarketing" | "Frío";
 

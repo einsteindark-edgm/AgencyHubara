@@ -75,6 +75,9 @@ def test_discover_from_temp_manifest_skips_workers_without_dashboard(
     manifest = {
         "id": "demo",
         "version": "0.1.0",
+        # P-17/PM-3: discover_agents ahora honra el flag del schema — solo los
+        # plugins `agentic: true` exponen agentes.
+        "agentic": True,
         "agent": {
             "workers": [
                 {
@@ -116,6 +119,81 @@ def test_discover_from_temp_manifest_skips_workers_without_dashboard(
     assert {p.key for p in foo.prompts} == _PROMPT_KEYS
     identity = next(p for p in foo.prompts if p.key == "identity")
     assert identity.content == "Soy un agente de prueba"
+
+
+def test_discover_respects_enabled_plugins_toggle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PM-4/AP-8: un plugin fuera de ENABLED_PLUGINS no muestra sus agentes.
+
+    Era la asimetría destapada por la extracción de eta: la sección FE
+    desaparecía pero la card del agente seguía en Agents.
+    """
+    repo_root = tmp_path
+    ws_rel = "pkg/agent/foo/workspace"
+    _write_workspace(repo_root / ws_rel)
+    manifest_dir = repo_root / "frontend_dashboard" / "src" / "plugins"
+    plugin_dir = manifest_dir / "demo"
+    plugin_dir.mkdir(parents=True)
+    manifest = {
+        "id": "demo",
+        "version": "0.1.0",
+        "agentic": True,
+        "agent": {
+            "workers": [
+                {
+                    "name": "foo",
+                    "module": "x",
+                    "task_queue": "queue-foo",
+                    "dashboard": {"display_name": "Foo Bot", "workspace": ws_rel},
+                }
+            ]
+        },
+    }
+    (plugin_dir / "plugin.yaml").write_text(yaml.safe_dump(manifest), encoding="utf-8")
+    monkeypatch.setattr(service, "_REPO_ROOT", repo_root)
+    monkeypatch.setattr(service, "_PLUGINS_MANIFEST_DIR", manifest_dir)
+
+    monkeypatch.setenv("ENABLED_PLUGINS", "demo")
+    assert [a.id for a in service.discover_agents()] == ["foo"]
+
+    monkeypatch.setenv("ENABLED_PLUGINS", "otro")
+    assert service.discover_agents() == []
+
+
+def test_discover_skips_non_agentic_plugins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PM-3/AP-11: sin `agentic: true` el plugin no expone agentes aunque
+    tenga bloques `dashboard:` (el schema ya no miente — P-17 mantiene la
+    coherencia flag⟺dashboard en los manifests reales)."""
+    repo_root = tmp_path
+    ws_rel = "pkg/agent/foo/workspace"
+    _write_workspace(repo_root / ws_rel)
+    manifest_dir = repo_root / "frontend_dashboard" / "src" / "plugins"
+    plugin_dir = manifest_dir / "demo"
+    plugin_dir.mkdir(parents=True)
+    manifest = {
+        "id": "demo",
+        "version": "0.1.0",
+        # sin agentic → invisible para agents_admin
+        "agent": {
+            "workers": [
+                {
+                    "name": "foo",
+                    "module": "x",
+                    "task_queue": "queue-foo",
+                    "dashboard": {"display_name": "Foo Bot", "workspace": ws_rel},
+                }
+            ]
+        },
+    }
+    (plugin_dir / "plugin.yaml").write_text(yaml.safe_dump(manifest), encoding="utf-8")
+    monkeypatch.setattr(service, "_REPO_ROOT", repo_root)
+    monkeypatch.setattr(service, "_PLUGINS_MANIFEST_DIR", manifest_dir)
+    monkeypatch.delenv("ENABLED_PLUGINS", raising=False)
+
+    assert service.discover_agents() == []
 
 
 def test_workspace_escaping_repo_root_is_rejected(

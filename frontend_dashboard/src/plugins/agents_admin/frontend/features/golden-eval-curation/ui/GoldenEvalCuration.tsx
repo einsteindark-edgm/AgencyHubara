@@ -6,7 +6,7 @@ import {
   useEvalCandidate,
   useEvalCandidates,
   type EvalCandidateSummary,
-} from "@/entities/eval-candidate";
+} from "@plugins/agents_admin/frontend/entities/eval-candidate";
 import { Icon } from "@/shared/ui";
 
 /**

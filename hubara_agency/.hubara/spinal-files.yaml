@@ -80,13 +80,15 @@ spinal_files:
       exemption, marcar status: blocked, requires_planner_update + ADR.
 
   # ── Frontend shared layer ─────────────────────────────────────────
-  # Icon registry centralizado. Hasta que plugin-local icons sea deferred,
-  # cada plugin que agrega icon nuevo toca este archivo.
+  # Icon registry BASE. Post-F7 (refactor fable) los glifos per-plugin van en
+  # `plugins/<id>/frontend/icons.tsx` (plugins-sync los mergea a PLUGIN_ICONS
+  # del registry generado) — este archivo solo se toca para glifos
+  # genuinamente compartidos cross-plugin (raro).
   - path: frontend_dashboard/src/shared/ui/Icon.tsx
     kind: ts_object_entries_append
     note: |
-      Deferred: plugin-local icons. Mientras tanto, agregar icon nuevo
-      requiere editar el registry ICONS aquí + wiring_intent.
+      Glifo per-plugin → frontend/icons.tsx del plugin (NO acá). Gate P-12
+      valida manifests contra base ∪ contribuciones.
 
   # Barrels de shared/. Si 2+ plugins agregan primitivas a shared/ui/,
   # ambos editan index.ts. Merger consolidaría los exports.
@@ -104,19 +106,13 @@ spinal_files:
       necesita context global, considerá si vale la pena (provider chain
       cross-plugin tiende a leak).
 
-  # ── Frontend entities shared (cross-plugin) ──────────────────────
-  # Cuando 2+ plugins agregan hooks/types al mismo entity existente,
-  # los barrels + api.ts + model.ts + contracts.ts + keys.ts conflictan.
-  - path: frontend_dashboard/src/entities/*/index.ts
-    kind: ts_barrel
-  - path: frontend_dashboard/src/entities/*/api.ts
-    kind: ts_factory_module
-  - path: frontend_dashboard/src/entities/*/model.ts
-    kind: ts_dataclass_module
-  - path: frontend_dashboard/src/entities/*/contracts.ts
-    kind: ts_dataclass_module
-  - path: frontend_dashboard/src/entities/*/keys.ts
-    kind: ts_factory_module
+  # ── Frontend entities ─────────────────────────────────────────────
+  # Post-F4 (refactor fable): las entities son SINGLE-OWNER del plugin
+  # (`plugins/<id>/frontend/entities/<entity>/`) y `src/entities/` central
+  # queda VACÍO (gate P-11). Ya NO son spinal: dos tasks paralelas no
+  # comparten entity — datos cross-plugin van por cast declarado
+  # (`consumes:` del manifest + cast server-side; gates P-14/P-22/P-23).
+  # Las entries glob de `src/entities/*` se eliminaron (matcheaban nada).
 
   # ── Tailwind theme tokens ────────────────────────────────────────
   - path: frontend_dashboard/src/index.css
@@ -131,6 +127,13 @@ spinal_files:
   # PROTECTED. Los listamos acá para que el implementer los marque como
   # off-limits. Si una task quiere editar alguno, status: blocked +
   # requires_planner_update.
+  #
+  # F8 (plan fable — cierra N-8/PM-11): esta lista es además la FUENTE ÚNICA
+  # de los meta-gates de CI. `hubara_agency/tests/architecture/conftest.py`
+  # y `frontend_dashboard/src/test/architecture/helpers.ts` derivan sus
+  # prefijos protegidos DE ACÁ (entries con `protected: true`; el glob se
+  # trunca en el primer `*`). Agregar/sacar un path protegido = editar SOLO
+  # este archivo (con ADR) — los dos gates lo toman al siguiente run.
   - path: .archon/workflows/**
     kind: protected
     protected: true
@@ -141,9 +144,25 @@ spinal_files:
     protected: true
     note: |
       Skills del pipeline hubara. Solo ADR.
+  - path: .claude/skills/exoclaw-*/**
+    kind: protected
+    protected: true
+    note: |
+      Skills DEHA base (los vigilaba solo el meta-gate backend; unificado F8).
+  - path: .claude/skills/frontend-*/**
+    kind: protected
+    protected: true
+    note: |
+      Skills FSD (los vigilaba solo el meta-gate frontend; unificado F8).
   - path: hubara_agency/tests/architecture/**
     kind: protected
     protected: true
+  - path: hubara_agency/tests/plugins/test_premortem_invariants.py
+    kind: protected
+    protected: true
+    note: |
+      Invariantes del plugin system (queues/k8s/compose/P-20). El CLAUDE.md
+      lo declaraba PROTECTED pero ningún meta-gate lo cubría (N-8).
   - path: hubara_agency/.importlinter
     kind: protected
     protected: true

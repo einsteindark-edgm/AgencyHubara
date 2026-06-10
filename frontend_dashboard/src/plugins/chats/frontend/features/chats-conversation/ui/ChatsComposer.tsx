@@ -15,13 +15,13 @@
 
 import { useState } from "react";
 import { Icon } from "@/shared/ui";
-import { useSession } from "@/entities/session";
+import { useSession } from "@plugins/chats/frontend/entities/session";
 import {
   useInterveneMutation,
   useReturnToBotMutation,
   useSendHumanMessageMutation,
   type TargetRoute,
-} from "@/entities/handoff";
+} from "@plugins/chats/frontend/entities/handoff";
 import { ConfirmPaymentAction } from "./ConfirmPaymentAction";
 
 interface Props {

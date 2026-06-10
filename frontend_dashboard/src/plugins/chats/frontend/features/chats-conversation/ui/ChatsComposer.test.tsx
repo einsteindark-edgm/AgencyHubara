@@ -8,7 +8,7 @@
  *    aparece cuando ese campo es null). Clic → confirm-payment mutation con el id.
  *
  * Mockeamos `useSession` (entities/session), las mutaciones de handoff
- * (entities/handoff) y `useConfirmOrderPayment` (entities/order) para aislar
+ * (entities/handoff) y `useConfirmOrderPayment` (entities/order-ref local) para aislar
  * el componente de la red.
  */
 
@@ -20,9 +20,9 @@ import { ChatsComposer } from "./ChatsComposer";
 
 const useSessionMock = vi.fn();
 
-vi.mock("@/entities/session", async () => {
-  const actual = await vi.importActual<typeof import("@/entities/session")>(
-    "@/entities/session",
+vi.mock("@plugins/chats/frontend/entities/session", async () => {
+  const actual = await vi.importActual<typeof import("@plugins/chats/frontend/entities/session")>(
+    "@plugins/chats/frontend/entities/session",
   );
   return {
     ...actual,
@@ -36,7 +36,7 @@ const returnMutate = vi.fn();
 const confirmPaymentMutate = vi.fn();
 const scheduleOrderMutate = vi.fn();
 
-vi.mock("@/entities/handoff", () => ({
+vi.mock("@plugins/chats/frontend/entities/handoff", () => ({
   useInterveneMutation: () => ({
     mutate: interveneMutate,
     isPending: false,
@@ -57,7 +57,7 @@ vi.mock("@/entities/handoff", () => ({
   }),
 }));
 
-vi.mock("@/entities/order", () => ({
+vi.mock("@plugins/chats/frontend/entities/order-ref", () => ({
   useConfirmOrderPayment: () => ({
     mutate: confirmPaymentMutate,
     isPending: false,

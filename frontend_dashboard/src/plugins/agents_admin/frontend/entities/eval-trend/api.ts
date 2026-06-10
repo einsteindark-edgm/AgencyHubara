@@ -8,7 +8,7 @@ import type { EvalTrend } from "./model";
 
 async function fetchTrend(days: number, suite: string): Promise<EvalTrend> {
   const raw = await apiClient.get<unknown>(
-    `/api/chats/evals/history?days=${days}&suite=${encodeURIComponent(suite)}`,
+    `/api/agents/evals/history?days=${days}&suite=${encodeURIComponent(suite)}`,
   );
   return evalTrendSchema.parse(raw);
 }

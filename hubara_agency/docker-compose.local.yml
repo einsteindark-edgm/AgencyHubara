@@ -105,6 +105,7 @@ services:
     - WHATSAPP_PHONE_NUMBER_ID=${WHATSAPP_PHONE_NUMBER_ID}
     - WHATSAPP_ACCESS_TOKEN=${WHATSAPP_ACCESS_TOKEN}
     - WHATSAPP_VERIFY_TOKEN=${WHATSAPP_VERIFY_TOKEN}
+    - ENABLED_PLUGINS=ads,agents_admin,catalog,chats,eta,orders,system_map
     volumes:
     - hubara-vault-local:/app/hubara_vault
     - ../frontend_dashboard/src/plugins:/app/frontend_dashboard/src/plugins:ro
@@ -125,6 +126,8 @@ services:
     - /app/node_modules
     depends_on:
     - hubara-api
+    environment:
+    - ENABLED_PLUGINS=ads,agents_admin,catalog,chats,eta,orders,system_map
   system-explorer:
     build:
       context: ../system_explorer
@@ -165,6 +168,7 @@ services:
     - MEDUSA_ADMIN_TOKEN=${MEDUSA_ADMIN_TOKEN}
     - META_CATALOG_ID=${META_CATALOG_ID}
     - META_SYSTEM_USER_TOKEN=${META_SYSTEM_USER_TOKEN}
+    - ENABLED_PLUGINS=ads,agents_admin,catalog,chats,eta,orders,system_map
     volumes:
     - hubara-vault-local:/app/hubara_vault
     depends_on:
@@ -202,6 +206,7 @@ services:
     - MEDUSA_DEFAULT_SHIPPING_OPTION_ID=${MEDUSA_DEFAULT_SHIPPING_OPTION_ID}
     - MEDUSA_DEFAULT_CURRENCY=${MEDUSA_DEFAULT_CURRENCY:-cop}
     - MEDUSA_DEFAULT_COUNTRY=${MEDUSA_DEFAULT_COUNTRY:-co}
+    - ENABLED_PLUGINS=ads,agents_admin,catalog,chats,eta,orders,system_map
     volumes:
     - hubara-vault-local:/app/hubara_vault
     depends_on:
@@ -230,6 +235,7 @@ services:
     - WHATSAPP_PHONE_NUMBER_ID=${WHATSAPP_PHONE_NUMBER_ID}
     - WHATSAPP_ACCESS_TOKEN=${WHATSAPP_ACCESS_TOKEN}
     - WHATSAPP_VERIFY_TOKEN=${WHATSAPP_VERIFY_TOKEN}
+    - ENABLED_PLUGINS=ads,agents_admin,catalog,chats,eta,orders,system_map
     volumes:
     - hubara-vault-local:/app/hubara_vault
     depends_on:
@@ -260,6 +266,7 @@ services:
     - SALES_EVAL_LOOKBACK_HOURS=8
     - SALES_EVAL_MAX_CONVERSATIONS=50
     - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+    - ENABLED_PLUGINS=ads,agents_admin,catalog,chats,eta,orders,system_map
     volumes:
     - hubara-vault-local:/app/hubara_vault
     depends_on:
@@ -290,6 +297,7 @@ services:
     - WHATSAPP_VERIFY_TOKEN=${WHATSAPP_VERIFY_TOKEN}
     - MEDUSA_BASE_URL=${MEDUSA_BASE_URL}
     - MEDUSA_ADMIN_TOKEN=${MEDUSA_ADMIN_TOKEN}
+    - ENABLED_PLUGINS=ads,agents_admin,catalog,chats,eta,orders,system_map
     volumes:
     - hubara-vault-local:/app/hubara_vault
     depends_on:
@@ -315,6 +323,7 @@ services:
     - MEDUSA_ADMIN_TOKEN=${MEDUSA_ADMIN_TOKEN}
     - MEDUSA_REGION_ID=${MEDUSA_REGION_ID}
     - MEDUSA_SALES_CHANNEL_ID=${MEDUSA_SALES_CHANNEL_ID}
+    - ENABLED_PLUGINS=ads,agents_admin,catalog,chats,eta,orders,system_map
     volumes:
     - hubara-vault-local:/app/hubara_vault
     depends_on:

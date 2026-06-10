@@ -15,7 +15,7 @@ export const evalTrendSeriesSchema = z.object({
   points: z.array(evalTrendPointSchema).default([]),
 });
 
-/** Respuesta de GET /api/chats/evals/history — tendencia por métrica en el tiempo. */
+/** Respuesta de GET /api/agents/evals/history — tendencia por métrica en el tiempo. */
 export const evalTrendSchema = z.object({
   threshold: z.number().default(0.7),
   suite: z.string().default("online"),

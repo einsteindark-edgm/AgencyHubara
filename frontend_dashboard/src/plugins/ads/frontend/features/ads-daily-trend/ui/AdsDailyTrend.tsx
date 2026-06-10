@@ -8,7 +8,7 @@ import {
   ADS_STATES,
   ADS_STATE_ORDER,
   type AdsDailyPoint,
-} from "@/entities/ads-campaign";
+} from "@plugins/ads/frontend/entities/ads-campaign";
 
 import { fmtN } from "@plugins/ads/frontend/lib/format";
 

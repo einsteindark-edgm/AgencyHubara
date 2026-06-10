@@ -24,6 +24,7 @@ from src.platform.temporal.activities import (
 )
 from src.platform.orchestration import dispatch_event_activity
 from src.platform.plugin_manifest import get_task_queue
+from src.platform.plugin_runtime import ensure_plugin_enabled
 from src.platform.temporal.dispatcher import (
     schedule_remarketing_workflow_activity,
     start_or_signal_sales_workflow_activity,
@@ -68,6 +69,7 @@ register_tool_extension(
 
 async def main() -> None:
     """Worker Exclusivo para el Dominio de Remarketing."""
+    ensure_plugin_enabled("chats")  # P-21: self-gate del toggle (INV-2)
     logger.info("Conectando Especialista (Remarketing) al clúster Temporal mTLS...")
     client = await get_temporal_client()
 

@@ -12,7 +12,7 @@
 import {
   ADS_STATES,
   type AttributedConversation,
-} from "@/entities/ads-campaign";
+} from "@plugins/ads/frontend/entities/ads-campaign";
 import { Avatar } from "@/shared/ui";
 
 import { fmtMoney, fmtN, fmtUsd } from "@plugins/ads/frontend/lib/format";

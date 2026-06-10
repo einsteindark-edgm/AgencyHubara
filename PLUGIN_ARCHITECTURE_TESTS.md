@@ -171,7 +171,7 @@ def test_frontend_plugin_calls_only_own_api():
 > `/api/chats`. **OJO (PM-12):** el `reason` del xfail en el código todavía dice
 > "eta sigue split" — STALE; el archivo es PROTECTED, actualizar pide `ARCH_CHANGE_APPROVED`.
 
-### P-2 · `test_frontend_backend_parity` — 🔴
+### P-2 · `test_frontend_backend_parity` — 🟢 (post-extracciones ads/eta)
 Regla P-PARITY · AP-1/AP-6 / F1/F13. Todo manifest que declara `api`/`agent` tiene backend propio; el set de ids es coherente.
 ```python
 def test_every_backend_surface_has_own_dir():
@@ -365,7 +365,15 @@ def test_routing_template_matches_manifest():
 > registry (`agent.owns_route`) que elimina el hardcode — cuando eso entre, este test
 > se reemplaza por "el ruteo NO hardcodea ningún `<plugin>-{...}`".
 
-### P-19 · `test_transition_resolves_to_live_worker_config` — 🔴 (PM-13)
+### P-19 · `test_transition_resolves_to_live_worker_config` — 🟡 (PM-13)
+
+> **CORRECCIÓN (auditoría fable 2026-06-09):** la mitad ESTÁTICA de este test
+> **ya existe** y este doc no lo registraba:
+> `tests/architecture/test_manifest_orchestration_consistency.py` valida (a)
+> `workflow_classes` ⇔ `@workflow.defn(name=)` por AST, (b) `on_event ∈ emits`,
+> (c) target `(plugin, worker)` + `target_workflow` resuelven contra el índice
+> de manifests, (d) eventos importables. Lo que falta es SOLO el smoke
+> funcional (emitir el evento y assert que el workflow arranca).
 Regla reforzada (P-DISPATCH). Más fuerte que "el target existe": para cada transition, el `(task_queue, workflow_name)` que el dispatcher RESOLVERÍA coincide con lo que el worker target realmente registra. Acerca el gate al comportamiento sin bootear Temporal.
 ```python
 def test_transition_targets_resolve_to_worker_runtime():
@@ -403,10 +411,10 @@ def test_transition_targets_resolve_to_worker_runtime():
 | ~~P-5 transition targets ∈ depends_on~~ | — | — | ❌ retirado | reemplazado por P-7 + P-14 |
 | P-6 enabled satisfies depends_on | P-ENABLED | AP-3/AP-8 | 🔴 | `tests/architecture/` + `platform/plugin_loader.py` (nuevo) |
 | P-7 dispatcher skips disabled | P-SKIP | AP-3/F3 | 🟢 hecho | `dispatcher.py` + `test_dispatcher.py::TestEnabledPluginsSkip` |
-| P-9 frontend calls own API only | P-OWN | AP-1/F1 | 🟡 xfail | `test_plugin_contract.py` (solo queda agents_admin→/api/chats/evals) |
-| P-10 cruiser `plugins-no-features` | P-FECROSS | AP-7/F10 | 🟢 hecho | `.dependency-cruiser.cjs` |
-| P-11 central entities dir empty | P-ENTITY | AP-2/F2/PM-9 | 🔴 | `src/test/architecture/` (eta `tracked-order` sigue central) |
-| P-14 cross-plugin via declared cast | P-CAST | AP-2/F2/F8 | 🟢 forma / 🔴 uso | `test_plugin_contract.py` (valida forma; sin `consumes:` reales aún) |
+| P-9 frontend calls own API only | P-OWN | AP-1/F1 | 🟢 ESTRICTO (F5 fable: casts order-ref + evals server-side) | `test_plugin_contract.py` |
+| P-10 cruiser `plugins-no-features` | P-FECROSS | AP-7/F10 | 🟡 `plugins-no-features` hecho; `plugins-own-entities-only` PENDIENTE (entra con P-11, plan F4) | `.dependency-cruiser.cjs` |
+| P-11 central entities dir empty | P-ENTITY | AP-2/F2/PM-9 | 🟢 (F4 fable: 11/11 entities migradas; src/entities/ vacío) | `src/test/architecture/test_plugin_entity_ownership.arch.test.ts` |
+| P-14 cross-plugin via declared cast | P-CAST | AP-2/F2/F8 | 🟢 forma + USO (2 consumes reales: chats→orders order-ref · agents_admin→chats evals) | `test_plugin_contract.py` |
 | P-12 manifest icons exist | P-ICON | AP-4/F4 | 🟢 hecho | `src/test/architecture/test_plugin_icons.arch.test.ts` |
 | P-13 ids consistent cross-stack | P-PARITY | F13 | 🟡 | `src/test/architecture/` |
 | **P-15 workspace paths exist** | P-WORKSPACE | PM-6 | 🔴 | `tests/architecture/` |
@@ -415,10 +423,18 @@ def test_transition_targets_resolve_to_worker_runtime():
 | **P-18 routing template consistency** | P-ROUTE | PM-2/AP-10 | 🔴 | `tests/architecture/` (parche hasta route-registry) |
 | **P-19 transition→worker runtime** | P-DISPATCH | PM-13 | 🔴 | `tests/architecture/` + functional smoke |
 
-**Verdes (candados puestos, PR #49):** P-1/2/3/4/12/14(forma) + P-7 (dispatcher-skip) +
-P-10. **Rojos = lo que falta:** P-6 (enforce depends_on), P-9 (queda solo evals
-per-agente), P-11/P-14-uso (entities por-plugin + cast), y los **5 del pre-mortem
-(P-15..P-19)** — la red que faltó para que las extracciones no fueran un campo minado.
+**ACTUALIZACIÓN FINAL (refactor fable F1–F8, 2026-06-09/10): TODO el set está
+VERDE.** P-1/2/3/4 + P-6 (validate_enabled ×3 loaders) + P-7 + P-9 ESTRICTO
+(sin xfail) + P-10 + P-11 (src/entities/ vacío) + P-12 (base ∪ contribuciones)
++ P-13/P-26 (coherencia cross-stack + dirs huérfanos) + P-14 (forma + USO: 2
+casts reales) + P-15/P-16/P-17 + P-18 ×3 (route registry) + P-19-estático.
+**Nuevos del refactor:** P-20 (deploy parity compose+k8s), P-21 (worker
+self-gate), P-22/P-23 (ownership de entities + literales /api en código),
+P-25 (wiring↔compose env). Dónde vive cada uno + la regla de oro ("ningún
+campo del manifest sin su check"): [PLUGIN_PROTOCOL_fable.md](PLUGIN_PROTOCOL_fable.md).
+Pendiente deliberado: el smoke FUNCIONAL del dispatch (P-19b — emitir un
+OrderStageChangedEvent real contra Temporal y assert que el workflow eta
+arranca) vive mejor en `tests/functional/` con el stack Docker arriba.
 
 ---
 

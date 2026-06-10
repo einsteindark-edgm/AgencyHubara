@@ -9,7 +9,9 @@
  */
 import { useMemo } from "react";
 
-import { useTrackedOrders } from "@/entities/tracked-order";
+import { usePluginHost, useSelection } from "@/shared/lib";
+
+import { useTrackedOrders } from "@plugins/eta/frontend/entities/tracked-order";
 
 import {
   EtaList,
@@ -19,19 +21,10 @@ import {
 import { EtaCards } from "@plugins/eta/frontend/features/eta-cards";
 import { EtaChat } from "@plugins/eta/frontend/features/eta-chat";
 
-export interface EtaSectionProps {
-  showSidebar: boolean;
-  showInspector: boolean;
-  selectedTrackedId: string | null;
-  setSelectedTrackedId: (id: string) => void;
-}
-
-export function EtaSection({
-  showSidebar,
-  showInspector,
-  selectedTrackedId,
-  setSelectedTrackedId,
-}: EtaSectionProps) {
+export function EtaSection() {
+  // F7: chrome + selección llegan por el PluginHost (contrato genérico).
+  const { showSidebar, showInspector } = usePluginHost();
+  const [selectedTrackedId, setSelectedTrackedId] = useSelection("eta");
   const { data: tracked = [] } = useTrackedOrders();
   const f = useEtaFilters(tracked);
   const selected = useMemo(

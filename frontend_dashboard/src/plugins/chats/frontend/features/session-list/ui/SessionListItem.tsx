@@ -1,4 +1,4 @@
-import type { ChatSession } from "@/entities/session";
+import type { ChatSession } from "@plugins/chats/frontend/entities/session";
 import { formatHourMinute } from "../model/format";
 
 interface Props {

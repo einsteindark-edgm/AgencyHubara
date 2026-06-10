@@ -15,10 +15,17 @@
 > aspiracionales/desactualizadas de [PLUGIN_ARCHITECTURE.md](PLUGIN_ARCHITECTURE.md)
 > (que sigue siendo válido para D1–D11; este doc corrige R1–R3 y los amplía).
 >
-> **Estado.** PARCIALMENTE IMPLEMENTADO (PR #49). Hecho: candados backend+frontend
-> (P-1/2/3/4/12/14 + dispatcher-skip P-7), extracciones `ads` + `eta`, decisión
-> `evals` per-agente. Pendiente: P-6 (enforce `depends_on` al boot), P-9/P-11
-> (entities por-plugin + cast), y los guards derivados del pre-mortem (§9: P-15..P-19).
+> **Estado.** IMPLEMENTADO (refactor fable F1–F8, 2026-06-09/10, branch
+> claude/relaxed-shaw-91fbdd — ver
+> [PLUGIN_REFACTOR_PLAN_fable.md](PLUGIN_REFACTOR_PLAN_fable.md) §Estado).
+> Cerrado: P-6 (validate_enabled en los 3 loaders), P-9 VERDE ESTRICTO,
+> P-11 (src/entities/ VACÍO — 11 entities migradas), P-14 con USO real (2
+> casts: chats→orders `order-ref`, agents_admin→chats evals), P-15..P-18,
+> P-20 (deploy parity), P-21 (worker self-gate), P-22/P-23 (detección real),
+> route registry (`owns_route` — ROUTE_ETA eliminada de platform),
+> PluginHost context + íconos contribuidos, meta-gates unificados en
+> spinal-files.yaml. El concepto "agente enforcement" se formalizó como
+> PROTOCOLO DE PLUGIN: [PLUGIN_PROTOCOL_fable.md](PLUGIN_PROTOCOL_fable.md).
 > Las lecciones REALES de las extracciones están en [§9 Pre-mortem](#9-pre-mortem--modos-de-fallo-de-una-extracción).
 
 ---
@@ -271,7 +278,7 @@ El agente enforcement corre esta lista. Cada item es verificable.
 3. ☐ Cada worker expone `async def main()` + declara `task_queue: queue-<...>` única (invariante existente).
 4. ☐ Flujo cross-plugin SOLO vía `emits`/`transitions` (manifest) + eventos en `shared/contracts/`. Ningún import del target (P-NOXIMPORT).
 5. ☐ Toda dep cross-plugin declarada en `depends_on` (P-DEPS).
-6. ☐ Si es agéntico conversacional: consume `platform/conversation`, declara `agent.owns_route` si posee una ruta.
+6. ☐ Si es agéntico conversacional y posee una ruta: declara `owns_route` + `route_workflow_id_template` en su worker (route registry `platform/routing.py` — F6); el worker llama `ensure_plugin_enabled("<id>")` primero en su `main()` (P-21).
 
 **Frontend (`frontend_dashboard/src/plugins/<id>/frontend/`):**
 7. ☐ `index.ts` con `export default { Page }`.

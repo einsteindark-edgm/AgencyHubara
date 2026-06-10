@@ -69,16 +69,17 @@
 | `hubara_vault/` | Runtime state (sessions, catalog) — seed data committeado |
 | `run_api.py`, `src/run_workers.py`, `src/main.py` | Entry points |
 
-**Plugins backend actuales:** `agents_admin`, `catalog`, `chats` (2 workers: sales + remarketing), `eta`, `orders`, `system_map`.
+**Plugins backend actuales:** `ads`, `agents_admin`, `catalog`, `chats` (3 workers: sales + remarketing + sales_eval), `eta`, `orders`, `system_map`.
 
 ## `frontend_dashboard/` (frontend)
 
 | Path | Función |
 |---|---|
 | `src/shared/` | UI primitives + lib + api + config |
-| `src/shared/ui/Icon.tsx` | iconRegistry append-only — **spinal** |
+| `src/shared/ui/Icon.tsx` | iconRegistry BASE (post-F7: glifos per-plugin van en `plugins/<id>/frontend/icons.tsx`) — **spinal** |
+| `src/shared/lib/plugin-host.tsx` | Contrato shell↔plugin: `usePluginHost` + `useSelection` (post-F7) |
 | `src/shared/{ui,lib,api,config}/index.ts` | Barrels — **spinal** |
-| `src/entities/<id>/` | Entity layer: `model.ts`, `api.ts`, `contracts.ts` (Zod), `keys.ts`, `index.ts` |
+| `src/entities/` | **VACÍO por contrato** (gate P-11, post-F4) — las entities viven en `plugins/<id>/frontend/entities/<entity>/` (`model/api/contracts/keys/index`) |
 | `src/features/` | Componentes con lógica UX/business |
 | `src/plugins/<id>/frontend/` | Plugin-local FSD (mini árbol con pages/features/entities) |
 | `src/plugins/_schema/` | Codegen artifact — NO editar |

@@ -123,17 +123,37 @@ FORBIDDEN_TOP_LEVEL_PACKAGES: tuple[str, ...] = (
 # Paths protegidos vs main (Capa 3 — meta-test).
 # Cualquier PR que los modifique sin la env var ARCH_CHANGE_APPROVED=1 falla.
 # Relativos a la raíz del repo (no a hubara_agency/).
-ARCHITECTURE_PROTECTED_PREFIXES: tuple[str, ...] = (
-    # Tests + import-linter contract — la arquitectura DEHA misma.
-    "hubara_agency/tests/architecture/",
-    "hubara_agency/.importlinter",
-    # Workflows de Archon y skills que orquestan el pipeline. Si un AI
-    # implementer pudiera editar el pipeline YAML o el SKILL.md mismo, podría
-    # deshabilitar el gate determinista o borrar las reglas §11. Protegerlos
-    # cierra ese hueco — Capa 3 cubre ahora también el "framework" que evalúa.
-    ".archon/workflows/",
-    ".claude/skills/exoclaw-",
-)
+#
+# F8 (cierra N-8/PM-11 — "dos definiciones de PROTECTED que no coinciden"):
+# la lista ya NO vive acá. La FUENTE ÚNICA es
+# `hubara_agency/.hubara/spinal-files.yaml` (entries `protected: true`);
+# este loader deriva los prefijos truncando cada glob en su primer `*`.
+# El meta-gate frontend (src/test/architecture/helpers.ts) lee EL MISMO
+# archivo — un solo lugar para agregar/sacar paths protegidos (con ADR).
+
+
+def _load_protected_prefixes() -> tuple[str, ...]:
+    import yaml as _yaml
+
+    spinal = SRC_ROOT.parents[1] / "hubara_agency" / ".hubara" / "spinal-files.yaml"
+    data = _yaml.safe_load(spinal.read_text(encoding="utf-8")) or {}
+    prefixes: list[str] = []
+    for entry in data.get("spinal_files") or []:
+        if not isinstance(entry, dict) or not entry.get("protected"):
+            continue
+        raw = str(entry.get("path") or "")
+        prefix = raw.split("*", 1)[0]
+        if prefix:
+            prefixes.append(prefix)
+    if not prefixes:
+        raise RuntimeError(
+            f"spinal-files.yaml sin entries protected:true — el meta-gate quedaría "
+            f"vacío (¿se movió {spinal}?)."
+        )
+    return tuple(sorted(set(prefixes)))
+
+
+ARCHITECTURE_PROTECTED_PREFIXES: tuple[str, ...] = _load_protected_prefixes()
 
 
 # ----------------------------------------------------------------------------

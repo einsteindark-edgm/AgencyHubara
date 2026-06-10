@@ -3,8 +3,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   useConfirmOrderPayment,
   useScheduleOrder,
-} from "@/entities/order";
-import { sessionKeys } from "@/entities/session";
+} from "@plugins/chats/frontend/entities/order-ref";
+import { sessionKeys } from "@plugins/chats/frontend/entities/session";
 
 interface Props {
   /** Id backend (Medusa) del pedido a confirmar — `session.pending_payment_order_id`. */

@@ -6,7 +6,6 @@
  * Plus named re-exports de las features para tests y back-compat.
  */
 export { default, CatalogSyncSection } from "./CatalogSyncSection";
-export type { CatalogSyncSectionProps } from "./CatalogSyncSection";
 
 export { SyncHistory } from "@plugins/catalog/frontend/features/sync-history";
 export { SyncRunner } from "@plugins/catalog/frontend/features/sync-runner";

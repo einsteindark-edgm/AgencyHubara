@@ -252,8 +252,8 @@ curl -X POST http://localhost:8000/api/<id>/my-endpoint -d '{"foo": "bar"}'
 | Path | Acción |
 |---|---|
 | `hubara_agency/src/plugins/<id>/api/<my_stream>.py` | NEW |
-| `frontend_dashboard/src/entities/<x>/api.ts` | MODIFY (agregar `use<X>Stream`) |
-| `frontend_dashboard/tests/<x>/api.stream.test.tsx` | NEW |
+| `frontend_dashboard/src/plugins/<id>/frontend/entities/<x>/api.ts` | MODIFY (agregar `use<X>Stream` — la entity es del plugin, post-F1-F8) |
+| `frontend_dashboard/src/plugins/<id>/frontend/entities/<x>/api.stream.test.tsx` | NEW |
 | (test functional + e2e según patrón) | NEW |
 
 ### Snippet
@@ -277,7 +277,7 @@ async def stream_x():
 ```
 
 ```typescript
-// canonical — entities/<x>/api.ts addition
+// canonical — plugins/<id>/frontend/entities/<x>/api.ts addition
 import { subscribeSse } from "@/shared/api/sse";
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -285,7 +285,8 @@ import { useQueryClient } from "@tanstack/react-query";
 export function use<X>Stream() {
   const qc = useQueryClient();
   useEffect(() => {
-    const sub = subscribeSse(`/api/<x>/stream`, {
+    // SOLO la API del propio plugin (gate P-9):
+    const sub = subscribeSse(`/api/<id>/<x>/stream`, {
       onMessage(msg) {
         qc.setQueryData(<x>Keys.list(), (prev: <X>[] | undefined) =>
           mergeNewItem(prev, msg)
@@ -316,7 +317,8 @@ export function use<X>Stream() {
 
 ```typescript
 // canonical — features/<my_feature>/ui/<Component>.tsx
-import { useChats } from "@/entities/chat";   // OK: entity shared
+// Entity DEL plugin, vía alias completo (nunca "../../" ni "@/entities/"):
+import { useChats } from "@plugins/<id>/frontend/entities/chat";
 
 export function MyFeature() {
   const { data, isLoading } = useChats();
@@ -337,16 +339,21 @@ import { MyFeature } from "./features/my-feature";
 
 ## §7. Agregar entity shared cross-plugin (NUEVO entity)
 
-**Template aplicable:** cualquiera (es shared, no del plugin).
+> **(post-refactor F1-F8)** Ya NO existen entities shared: `src/entities/`
+> central DEBE quedar VACÍO (gate P-11) y toda entity nueva se crea en el
+> plugin DUEÑO del dato. Esta receta cubre el reemplazo: entity
+> plugin-local + cast declarado para el caso cross-plugin.
+
+**Template aplicable:** cualquiera (la entity es del plugin dueño).
 
 ### Files (todos NEW)
 
 ```
-frontend_dashboard/src/entities/<x>/
+frontend_dashboard/src/plugins/<id>/frontend/entities/<x>/
 ├── model.ts
 ├── contracts.ts
 ├── keys.ts
-├── api.ts
+├── api.ts                       # llama SOLO /api/<id>/* (gate P-9)
 ├── index.ts
 └── api.test.tsx
 ```
@@ -355,13 +362,20 @@ frontend_dashboard/src/entities/<x>/
 
 ```bash
 cd frontend_dashboard
-npm test -- entities/<x>
-npm run test:arch                # asegura barrel-only public API
+npm test -- plugins/<id>/frontend/entities/<x>
+npm run test:arch                # P-11 / P-22 / barrel-only public API
 ```
 
-**Importante:** si el entity es consumido por UN solo plugin, NO va en
-`entities/` — va dentro del plugin (`plugins/<id>/frontend/features/<x>/`).
-La regla es **2+ consumidores → promote**.
+**Importante:** si OTRO plugin necesita ese dato, NO importa tu entity
+(gate P-22). El consumidor declara en SU plugin.yaml `depends_on:
+[<provider>]` + bloque `consumes: [{provider, contract, into, cast}]`
+(gate P-14), implementa el cast SERVER-SIDE en su propia api (reenvía al
+contrato HTTP publicado del provider o usa un platform port) y define una
+entity LOCAL que llama solo `/api/<su-propio-id>/*`. Ejemplos reales:
+`hubara_agency/src/plugins/chats/api/order_actions.py` (chats consume
+`order@v1` de orders → entity local `order-ref`) y
+`hubara_agency/src/plugins/agents_admin/api/evals.py` (consume `evals@v1`
+de chats → sirve `/api/agents/evals/*`). PLUGIN_CONTRACT.md §5.3, canal 3.
 
 ---
 
@@ -415,15 +429,18 @@ frontend:
 
 ```typescript
 // frontend_dashboard/src/plugins/my_plugin/frontend/index.ts
+// El default es OBLIGATORIO: el registry lo verifica EN COMPILACIÓN
+// (assertPluginModule).
 export { default, MyPluginSection } from "./MyPluginSection";
 
 // frontend_dashboard/src/plugins/my_plugin/frontend/MyPluginSection.tsx
-export interface MyPluginSectionProps {
-  showSidebar: boolean;
-  showInspector: boolean;
-}
-export function MyPluginSection({ showSidebar, showInspector }: MyPluginSectionProps) {
-  return <main>Hello plugin</main>;
+// El Page NO recibe props (post-F7): chrome y selección vienen del shell
+// vía usePluginHost() / useSelection("my_plugin") de "@/shared/lib".
+import { usePluginHost } from "@/shared/lib";
+
+export function MyPluginSection() {
+  const { showSidebar } = usePluginHost();
+  return <main>Hello plugin{showSidebar ? " (con sidebar)" : ""}</main>;
 }
 export default MyPluginSection;
 ```
@@ -459,13 +476,20 @@ touch hubara_agency/src/plugins/orders/agent/composition.py
 touch hubara_agency/src/plugins/orders/workers/sync.py
 ```
 
-2. Editar `plugin.yaml` agregando bloque `agent:` (ver §3 sección 03).
+2. Editar `plugin.yaml` agregando bloque `agent:` (ver §3 sección 03). Si
+   el plugin depende de otro, declarar `depends_on: [ids]` — los 3 loaders
+   lo validan AL BOOT (`validate_enabled`, gate P-6).
 
-3. Crear K8s manifest `worker-orders-sync.yaml`.
+3. La PRIMERA línea de `async def main()` del worker es
+   `ensure_plugin_enabled("orders")` (import de
+   `src.platform.plugin_runtime`) — gate P-21 lo exige por AST (ver §12).
 
-4. Regenerar docker-compose: `uv run python scripts/render-compose.py`.
+4. Crear K8s manifest `worker-orders-sync.yaml` (con `ENABLED_PLUGINS` en
+   el env, a mano — paridad gate P-20).
 
-5. Tests:
+5. Regenerar docker-compose: `uv run python scripts/render-compose.py`.
+
+6. Tests:
 ```bash
 uv run pytest tests/plugins/                # premortem invariants verdes
 uv run python -m src.plugins.orders.workers.sync   # smoke boot
@@ -489,9 +513,16 @@ agent:
 ```python
 # src/plugins/<id>/workers/my_new_worker.py
 from src.platform.plugin_manifest import get_task_queue
-# ...
-task_queue = get_task_queue("<id>", "my_new_worker")
-worker = Worker(client, task_queue=task_queue, ...)
+from src.platform.plugin_runtime import ensure_plugin_enabled
+
+async def main() -> None:
+    # PRIMERA línea de TODO main() de worker (gate P-21, por AST):
+    # sin el self-gate, un container huérfano sirve un plugin apagado
+    # (prod corre `python -m <module>` directo).
+    ensure_plugin_enabled("<id>")
+    # ...
+    task_queue = get_task_queue("<id>", "my_new_worker")
+    worker = Worker(client, task_queue=task_queue, ...)
 ```
 
 ```bash
@@ -533,6 +564,15 @@ git push
 Si el script falla con error de YAML, abrí `docker-compose.local.yml` y
 verificá que no haya null literals (`volname: null`). El script tiene
 un helper `_yaml_dump` que reemplaza `": null\n"` por `":\n"`.
+
+**Toggle de plugins (post-refactor F1-F8):** `render-compose.py` lee
+`ENABLED_PLUGINS` (unset → TODOS, explícito), renderiza SOLO los workers
+habilitados e inyecta `ENABLED_PLUGINS=<csv>` en `hubara-api`,
+`hubara-frontend` y cada worker (los yamls k8s llevan el env a mano —
+paridad gate P-20; P-25 chequea `wiring_intents.env_vars_required` ⊆ env
+del compose). Togglear un plugin = re-render + `docker compose up -d
+--remove-orphans` (SIEMPRE `--remove-orphans`, si no el worker apagado
+queda corriendo).
 
 ---
 

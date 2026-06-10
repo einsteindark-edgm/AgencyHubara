@@ -169,3 +169,4 @@ Skills del pipeline leen las tres:
 - Spinal files (paths cross-plugin / protected): `hubara_agency/.hubara/spinal-files.yaml`
 - Plan de mejora del harness: `HARNESS_UPGRADE_PLAN.md`
 - Concepto base de harness engineering: `HARNESS_ENGINEERING.md`
+- **Arquitectura de plugins post-refactor F1-F8 (2026-06-10)**: `ARCHITECTURE_FINAL_fable.md` (doc VIVO, semilla del skill de desarrollador — recetas + reglas duras + lecciones L-#) · `PLUGIN_PROTOCOL_fable.md` (protocolo en 3 capas + regla de oro "ningún campo del manifest sin su check") · `PLUGIN_CONTRACT.md` (la ley INV-1/INV-2). Entities por-plugin, casts declarados, route registry (`owns_route`), toggle real en deploy, PluginHost. La lista PROTECTED vive ÚNICA en `hubara_agency/.hubara/spinal-files.yaml`.

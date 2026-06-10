@@ -1,4 +1,4 @@
-import type { StatusHistoryEntry } from "@/entities/session";
+import type { StatusHistoryEntry } from "@plugins/chats/frontend/entities/session";
 
 interface Props {
   currentTag: string | undefined;

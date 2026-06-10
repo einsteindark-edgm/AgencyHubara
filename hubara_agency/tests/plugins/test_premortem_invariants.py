@@ -103,7 +103,7 @@ def test_every_worker_in_manifest_has_k8s_deployment() -> None:
     assert not missing, (
         "Workers declarados en manifests sin K8s deployment correspondiente:\n  - "
         + "\n  - ".join(f"{p}/{n}" for p, n in missing)
-        + f"\n\nDeployments encontrados:\n  - "
+        + "\n\nDeployments encontrados:\n  - "
         + "\n  - ".join(f"{p}/{n} → {path.name}" for (p, n), path in discovered.items())
     )
 
@@ -233,15 +233,7 @@ def test_docker_compose_local_is_up_to_date_with_manifests() -> None:
     if os.environ.get("RENDER_COMPOSE_SKIP"):
         return
 
-    import importlib.util
-
-    script_path = _HUBARA_ROOT / "scripts" / "render-compose.py"
-    spec = importlib.util.spec_from_file_location("render_compose", script_path)
-    assert spec and spec.loader, f"cannot load {script_path}"
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-
-    expected = module.render()
+    expected = _render_compose_canonical()
     actual_path = _HUBARA_ROOT / "docker-compose.local.yml"
     actual = actual_path.read_text(encoding="utf-8")
     assert expected == actual, (
@@ -249,6 +241,210 @@ def test_docker_compose_local_is_up_to_date_with_manifests() -> None:
         "Run: uv run python scripts/render-compose.py\n"
         "(set RENDER_COMPOSE_SKIP=1 to bypass during script refactors)"
     )
+
+
+def _render_compose_canonical() -> str:
+    """Render del compose con el set canónico (todos los plugins).
+
+    F2 (P-20): ``render()`` ahora lee ``ENABLED_PLUGINS`` — para que el drift
+    test sea determinista lo neutralizamos: el artefacto COMMITEADO es siempre
+    el render full-set (un operador que comitee un compose filtrado rompería
+    este test a propósito — eso es correcto: los sets por-deployment van en
+    artefactos/overlays propios, no en el local de referencia).
+    """
+    import importlib.util
+    import os
+
+    script_path = _HUBARA_ROOT / "scripts" / "render-compose.py"
+    spec = importlib.util.spec_from_file_location("render_compose", script_path)
+    assert spec and spec.loader, f"cannot load {script_path}"
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    saved = os.environ.pop("ENABLED_PLUGINS", None)
+    try:
+        return module.render()
+    finally:
+        if saved is not None:
+            os.environ["ENABLED_PLUGINS"] = saved
+
+
+# ---------------------------------------------------------------------------
+# P-20 — deploy parity (F2 del plan fable; hallazgo N-1 de la auditoría)
+# ---------------------------------------------------------------------------
+#
+# El toggle de plugins solo existe de verdad si los ARTEFACTOS que corren
+# (compose / k8s) lo encodean. Pre-F2: ningún container seteaba
+# ENABLED_PLUGINS → enabled_plugins()=None en prod → dispatcher-skip (P-7)
+# inerte y workers de plugins "apagados" corriendo igual.
+
+
+def _compose_services() -> dict[str, dict]:
+    compose = yaml.safe_load(
+        (_HUBARA_ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+    )
+    return compose.get("services") or {}
+
+
+def _env_value(service: dict, key: str) -> str | None:
+    env = service.get("environment")
+    if isinstance(env, list):
+        for entry in env:
+            if isinstance(entry, str) and entry.startswith(f"{key}="):
+                return entry.split("=", 1)[1]
+    elif isinstance(env, dict):
+        val = env.get(key)
+        return None if val is None else str(val)
+    return None
+
+
+def test_p20_compose_embeds_explicit_enabled_set() -> None:
+    """Todo service gateado del compose lleva ENABLED_PLUGINS explícito y
+    CONSISTENTE, y los workers presentes son EXACTAMENTE los de ese set.
+
+    Cierra N-1: el default fail-open (env ausente = todos) nunca llega a un
+    artefacto — el artefacto siempre dice su set. P-21 (self-gate del worker)
+    usa este env para matar containers huérfanos (PM-1).
+    """
+    services = _compose_services()
+    api_set = _env_value(services.get("hubara-api") or {}, "ENABLED_PLUGINS")
+    assert api_set, "hubara-api sin ENABLED_PLUGINS explícito en el compose (P-20)"
+    enabled = {p for p in api_set.split(",") if p}
+
+    problems: list[str] = []
+    worker_plugins_present: set[tuple[str, str]] = set()
+    for name, svc in services.items():
+        if not name.startswith("hubara-worker-"):
+            continue
+        svc_set = _env_value(svc, "ENABLED_PLUGINS")
+        if svc_set != api_set:
+            problems.append(
+                f"{name}: ENABLED_PLUGINS={svc_set!r} ≠ api ({api_set!r}) — "
+                "todos los services del artefacto comparten EL MISMO set"
+            )
+        command = " ".join(str(c) for c in (svc.get("command") or []))
+        match = _WORKER_MODULE_RE.search(command)
+        if not match:
+            problems.append(f"{name}: command no apunta a src.plugins.<id>.workers.<w>")
+            continue
+        plugin_id, worker_name = match.group(1), match.group(2)
+        worker_plugins_present.add((plugin_id, worker_name))
+        if plugin_id not in enabled:
+            problems.append(
+                f"{name}: corre el plugin {plugin_id!r} que NO está en su propio "
+                f"ENABLED_PLUGINS — render-compose roto o edición manual"
+            )
+
+    declared = {
+        (p, w) for p, w in _enumerate_manifest_workers() if p in enabled
+    }
+    missing = sorted(declared - worker_plugins_present)
+    extra = sorted(worker_plugins_present - declared)
+    for p, w in missing:
+        problems.append(f"worker {p}/{w} habilitado pero SIN service en el compose")
+    for p, w in extra:
+        problems.append(f"worker {p}/{w} con service en el compose pero fuera del set/manifests")
+
+    assert not problems, "P-20 deploy parity (compose):\n  - " + "\n  - ".join(problems)
+
+
+def test_p25_wiring_env_required_present_in_compose() -> None:
+    """P-25 (cierra PM-10 de CONTENIDO): todo `wiring_intents.env_vars_required`
+    del manifest está presente en el environment del compose renderizado para
+    los workers de ese plugin (o en el del api, para plugins api-only).
+
+    Sin esto, un manifest puede PROMETER que necesita `MEDUSA_BASE_URL` y el
+    artefacto no traerlo — el worker arranca y falla en runtime días después
+    (el modo de fallo exacto del premortem PR9).
+    """
+    services = _compose_services()
+
+    def _service_env_keys(svc: dict) -> set[str]:
+        env = svc.get("environment")
+        keys: set[str] = set()
+        if isinstance(env, list):
+            keys = {e.split("=", 1)[0] for e in env if isinstance(e, str)}
+        elif isinstance(env, dict):
+            keys = set(env.keys())
+        return keys
+
+    api_keys = _service_env_keys(services.get("hubara-api") or {})
+
+    # worker services por plugin (via command → módulo)
+    plugin_worker_keys: dict[str, set[str]] = {}
+    for name, svc in services.items():
+        if not name.startswith("hubara-worker-"):
+            continue
+        command = " ".join(str(c) for c in (svc.get("command") or []))
+        match = _WORKER_MODULE_RE.search(command)
+        if not match:
+            continue
+        plugin_worker_keys.setdefault(match.group(1), set()).update(
+            _service_env_keys(svc)
+        )
+
+    problems: list[str] = []
+    for plugin_dir in sorted(_PLUGINS_DIR.iterdir()):
+        if not plugin_dir.is_dir() or plugin_dir.name.startswith("_"):
+            continue
+        manifest_path = plugin_dir / "plugin.yaml"
+        if not manifest_path.exists():
+            continue
+        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+        required = (manifest.get("wiring_intents") or {}).get("env_vars_required") or []
+        if not required:
+            continue
+        pid = plugin_dir.name
+        # Workers del plugin si los tiene; si es api-only, el env del api.
+        available = plugin_worker_keys.get(pid, api_keys)
+        missing = sorted(str(v) for v in required if str(v) not in available)
+        if missing:
+            problems.append(
+                f"{pid}: wiring_intents.env_vars_required={missing} ausentes del "
+                f"environment renderizado ({'workers' if pid in plugin_worker_keys else 'api'})"
+            )
+    assert not problems, "P-25 wiring↔compose env (PM-10):\n  - " + "\n  - ".join(problems)
+
+
+def test_p20_k8s_workers_declare_enabled_plugins() -> None:
+    """Cada deployment k8s de worker (y el api) lleva ENABLED_PLUGINS y su
+    propio plugin está incluido.
+
+    k8s es hand-maintained (no hay render): este invariante es lo que impide
+    que un deployment quede sin el env (→ fail-open silencioso en prod) o con
+    un set que excluye a su propio worker (→ CrashLoop por P-21, pero mejor
+    cazarlo en CI que en el cluster).
+    """
+    problems: list[str] = []
+    targets = sorted(_K8S_DIR.glob("worker-*.yaml")) + [
+        _K8S_DIR / "api-deployment.yaml"
+    ]
+    for k8s_file in targets:
+        if not k8s_file.exists():
+            problems.append(f"{k8s_file.name}: no existe")
+            continue
+        body = k8s_file.read_text(encoding="utf-8")
+        doc = yaml.safe_load(body)
+        containers = (
+            ((doc.get("spec") or {}).get("template") or {}).get("spec") or {}
+        ).get("containers") or []
+        env_entries = [e for c in containers for e in (c.get("env") or [])]
+        values = [
+            str(e.get("value", ""))
+            for e in env_entries
+            if e.get("name") == "ENABLED_PLUGINS"
+        ]
+        if not values:
+            problems.append(f"{k8s_file.name}: sin env ENABLED_PLUGINS (P-20)")
+            continue
+        enabled = {p for p in values[0].split(",") if p}
+        match = _WORKER_MODULE_RE.search(body)
+        if match and match.group(1) not in enabled:
+            problems.append(
+                f"{k8s_file.name}: su plugin {match.group(1)!r} no está en su "
+                f"propio ENABLED_PLUGINS — el pod moriría al boot (P-21)"
+            )
+    assert not problems, "P-20 deploy parity (k8s):\n  - " + "\n  - ".join(problems)
 
 
 def test_existing_plugin_ids_match_the_pattern() -> None:

@@ -3,7 +3,7 @@
  * Datos reales declarados en el manifest del agente (no editable desde la UI).
  */
 
-import { useAgents } from "@/entities/agent";
+import { useAgents } from "@plugins/agents_admin/frontend/entities/agent";
 import { Icon, Panel, type IconName } from "@/shared/ui";
 
 interface Props {

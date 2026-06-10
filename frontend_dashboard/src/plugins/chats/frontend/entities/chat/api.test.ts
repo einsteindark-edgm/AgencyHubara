@@ -13,7 +13,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { useChatInbox, useChatMessages } from "./api";
-import type { ChatSession } from "@/entities/session";
+import type { ChatSession } from "@plugins/chats/frontend/entities/session";
 import { renderHook } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";

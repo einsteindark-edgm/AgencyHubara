@@ -21,12 +21,12 @@ import {
   type ChatSession,
   type SessionDetails,
   type StatusHistoryEntry,
-} from "@/entities/session";
+} from "@plugins/chats/frontend/entities/session";
 import {
   getMessageSender,
   isVisibleChatMessage,
   type ChatMessage,
-} from "@/entities/message";
+} from "@plugins/chats/frontend/entities/message";
 import { formatHourMinute } from "@/shared/lib";
 import { env } from "@/shared/config";
 import type {
@@ -284,4 +284,4 @@ export function useChatFiles(_id: string | null) {
 
 /* Re-export del SSE para que la página lo monte sin importar directamente
  * de session — mantiene un único punto de entrada `entities/chat`. */
-export { useSessionsStream } from "@/entities/session";
+export { useSessionsStream } from "@plugins/chats/frontend/entities/session";

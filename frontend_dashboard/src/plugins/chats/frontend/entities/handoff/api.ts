@@ -9,7 +9,7 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/shared/api/client";
-import { sessionKeys } from "@/entities/session";
+import { sessionKeys } from "@plugins/chats/frontend/entities/session";
 import {
   handoffResponseSchema,
   humanMessageResponseSchema,

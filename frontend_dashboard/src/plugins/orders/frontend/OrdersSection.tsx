@@ -22,22 +22,14 @@ import {
   useRetryVaultOrder,
   useResolveVaultOrder,
   type VaultOrderRecord,
-} from "@/entities/order";
+} from "@plugins/orders/frontend/entities/order";
 import { Icon, MissingData } from "@/shared/ui";
+import { usePluginHost, useSelection } from "@/shared/lib";
 
-export interface OrdersSectionProps {
-  showSidebar: boolean;
-  showInspector: boolean;
-  selectedOrderId: string | null;
-  setSelectedOrderId: (id: string) => void;
-}
-
-export function OrdersSection({
-  showSidebar,
-  showInspector,
-  selectedOrderId,
-  setSelectedOrderId,
-}: OrdersSectionProps) {
+export function OrdersSection() {
+  // F7: chrome + selección llegan por el PluginHost (contrato genérico).
+  const { showSidebar, showInspector } = usePluginHost();
+  const [selectedOrderId, setSelectedOrderId] = useSelection("orders", "#1247");
   const query = useOrders();
   const vaultQuery = useVaultOrders();
   const orders = query.data?.orders ?? [];
