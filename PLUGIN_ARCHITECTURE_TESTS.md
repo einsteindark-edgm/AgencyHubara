@@ -411,10 +411,10 @@ def test_transition_targets_resolve_to_worker_runtime():
 | ~~P-5 transition targets ∈ depends_on~~ | — | — | ❌ retirado | reemplazado por P-7 + P-14 |
 | P-6 enabled satisfies depends_on | P-ENABLED | AP-3/AP-8 | 🔴 | `tests/architecture/` + `platform/plugin_loader.py` (nuevo) |
 | P-7 dispatcher skips disabled | P-SKIP | AP-3/F3 | 🟢 hecho | `dispatcher.py` + `test_dispatcher.py::TestEnabledPluginsSkip` |
-| P-9 frontend calls own API only | P-OWN | AP-1/F1 | 🟡 xfail | `test_plugin_contract.py` (solo queda agents_admin→/api/chats/evals) |
+| P-9 frontend calls own API only | P-OWN | AP-1/F1 | 🟢 ESTRICTO (F5 fable: casts order-ref + evals server-side) | `test_plugin_contract.py` |
 | P-10 cruiser `plugins-no-features` | P-FECROSS | AP-7/F10 | 🟡 `plugins-no-features` hecho; `plugins-own-entities-only` PENDIENTE (entra con P-11, plan F4) | `.dependency-cruiser.cjs` |
-| P-11 central entities dir empty | P-ENTITY | AP-2/F2/PM-9 | 🔴 | `src/test/architecture/` (eta `tracked-order` sigue central) |
-| P-14 cross-plugin via declared cast | P-CAST | AP-2/F2/F8 | 🟢 forma / 🔴 uso | `test_plugin_contract.py` (valida forma; sin `consumes:` reales aún) |
+| P-11 central entities dir empty | P-ENTITY | AP-2/F2/PM-9 | 🟢 (F4 fable: 11/11 entities migradas; src/entities/ vacío) | `src/test/architecture/test_plugin_entity_ownership.arch.test.ts` |
+| P-14 cross-plugin via declared cast | P-CAST | AP-2/F2/F8 | 🟢 forma + USO (2 consumes reales: chats→orders order-ref · agents_admin→chats evals) | `test_plugin_contract.py` |
 | P-12 manifest icons exist | P-ICON | AP-4/F4 | 🟢 hecho | `src/test/architecture/test_plugin_icons.arch.test.ts` |
 | P-13 ids consistent cross-stack | P-PARITY | F13 | 🟡 | `src/test/architecture/` |
 | **P-15 workspace paths exist** | P-WORKSPACE | PM-6 | 🔴 | `tests/architecture/` |

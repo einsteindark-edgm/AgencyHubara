@@ -3,7 +3,20 @@ version: 0.1.0
 display_name: Agents
 description: UI de los agentes reales del sistema (lista, prompts, inspector). Lee los agentes de los manifests + el contenido vivo de sus workspaces vía GET /api/agents.
 
-depends_on: []
+# Dep DURA (P-DEPS): la UI "Calidad LLM" consume el eval del agente sales
+# (provider: chats) vía el cast server-side `api/evals`. P-6 exige chats
+# habilitado siempre que agents_admin lo esté.
+depends_on: [chats]
+
+# Canal 3 (PLUGIN_CONTRACT §5.3): el plano de gestión agrega los evals
+# per-agente y los sirve bajo SU propio prefix (/api/agents/evals/*). El
+# frontend de agents_admin nunca llama /api/chats. Cuando un 2º agente tenga
+# eval propio, el cast pasa de passthrough a agregador sin tocar el frontend.
+consumes:
+  - provider: chats
+    contract: evals@v1          # GET history · GET/POST/DELETE candidates
+    into: eval-views
+    cast: api/evals
 
 # ── Frontend ───────────────────────────────────────────────────────────
 # El shell renderiza la `Page` del plugin cuando section==="agent".

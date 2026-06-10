@@ -1,8 +1,8 @@
 /**
  * Mutations del canvas de pago — SIEMPRE contra el API PROPIO de chats
  * (`/api/chats/order-actions/*`, el cast declarado en el manifest), nunca
- * contra `/api/orders/*` (P-23: los literales /api del código de chats deben
- * pertenecer a chats).
+ * contra el API del plugin orders (P-9/P-23: los literales /api del código
+ * de chats deben pertenecer a chats).
  *
  * Nota de cache: NO invalidamos las query keys del plugin orders (sería
  * acoplamiento de cache cross-plugin). El tablero de orders se refresca por

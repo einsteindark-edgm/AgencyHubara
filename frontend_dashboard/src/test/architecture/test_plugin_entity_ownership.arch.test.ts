@@ -39,11 +39,9 @@ const PLUGINS_DIR = join(SRC, "plugins");
 const EXPECTED_P22_OFFENDERS: string[] = [];
 
 // Formato P-23: "<owner-del-archivo> → <literal>"
-const EXPECTED_P23_OFFENDERS = [
-  // F5 (evals server-side bajo /api/agents) las elimina:
-  "agents_admin → /api/chats/evals/candidates",
-  "agents_admin → /api/chats/evals/history",
-].sort();
+// F5 eliminó las últimas (evals server-side bajo /api/agents). CERO deuda:
+// todo literal /api del código pertenece al owner de su archivo.
+const EXPECTED_P23_OFFENDERS: string[] = [];
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -72,9 +70,13 @@ function stripComments(src: string): string {
 }
 
 function owners(): Map<string, string> {
-  const raw = readFileSync(join(ENTITIES_DIR, "OWNERS.yaml"), "utf-8");
-  const doc = parse(raw) as Record<string, string>;
-  return new Map(Object.entries(doc));
+  // OWNERS.yaml fue el mapa TRANSITORIO de F3 mientras existían entities
+  // centrales. Post-F4/F5 (todas migradas) ya no existe: toda entity vive
+  // bajo plugins/<owner>/frontend/entities/ y el owner es el plugin del path.
+  const path = join(ENTITIES_DIR, "OWNERS.yaml");
+  if (!existsSync(path)) return new Map();
+  const doc = parse(readFileSync(path, "utf-8")) as Record<string, string>;
+  return new Map(Object.entries(doc ?? {}));
 }
 
 function pluginIds(): string[] {
@@ -122,6 +124,33 @@ function resolveApiOwner(path: string, prefixes: Map<string, string>): string | 
 
 const API_LITERAL_RE = /["'`](\/api\/[A-Za-z0-9_\-./${}?=&]*)/g;
 const ENTITY_IMPORT_RE = /from\s+["']@\/entities\/([a-z0-9-]+)/g;
+
+// ── P-11 — src/entities/ central queda VACÍO ───────────────────────────────
+
+describe("P-11 — toda entity de dominio es plugin-local (INV-1)", () => {
+  test("src/entities/ no contiene ninguna entity (sin allowlist)", () => {
+    const dirs = existsSync(ENTITIES_DIR)
+      ? readdirSync(ENTITIES_DIR).filter((d) =>
+          statSync(join(ENTITIES_DIR, d)).isDirectory(),
+        )
+      : [];
+    // Sin shared entities: el caso cross-plugin va por cast declarado (P-14).
+    // Agregar una entity acá = retroceder a F2 de la auditoría original.
+    expect(dirs).toEqual([]);
+  });
+
+  test("ningún archivo del repo importa @/entities/* (alias muerto)", () => {
+    const offenders: string[] = [];
+    for (const file of walk(SRC, [".ts", ".tsx"])) {
+      if (file.includes("/test/architecture/")) continue;
+      const code = stripComments(readFileSync(file, "utf-8"));
+      if (/from\s+["']@\/entities\//.test(code)) {
+        offenders.push(file.slice(SRC.length + 1));
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+});
 
 // ── P-22 — ownership de imports de entities ───────────────────────────────
 
