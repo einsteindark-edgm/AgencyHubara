@@ -22,6 +22,7 @@ traduce a `OrderCommandResult(success=False, error_detail=...)`.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -29,6 +30,7 @@ from typing import Any
 
 from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.medusa.client import HttpMedusaClient, MedusaAPIError
+from src.platform.orders import display_id_cache
 from src.platform.orders.command_port import (
     CancelOrderCommand,
     ConfirmPaymentCommand,
@@ -888,34 +890,61 @@ class MedusaOrderCommand:
         copias paralelas (en vez de extraer a un helper compartido) evita
         coupling entre adapters; si esto crece a 3+ adapters, vale extraer.
 
-        Strategy: page-scan de `/admin/orders` (limit=50) primero, luego
-        `/admin/draft-orders` (limit=50). Suficiente para uso interactivo del
-        dashboard. Si una tienda crece a >50 orders activas con cancelaciones
-        recientes, este lookup puede no encontrarlas — pero en ese caso el
-        operador ya estaría usando filtros en el frontend, no clicking en
-        drafts viejos. Vale la pena el upgrade a filter-by-display_id cuando
-        Medusa lo soporte universalmente.
+        Strategy: page-scan de `/admin/orders` (limit=50) + `/admin/draft-orders`
+        (limit=50) EN PARALELO, con `fields=id,display_id` (L-2: el scan con
+        los fields default —items/addresses/customer— costaba 3-4s POR página
+        en Railway; liviano baja a <1s). Precedencia en caso de doble match:
+        orders > drafts (mismo orden semántico que la versión secuencial).
+        Suficiente para uso interactivo del dashboard. Si una tienda crece a
+        >50 orders activas con cancelaciones recientes, este lookup puede no
+        encontrarlas — pero en ese caso el operador ya estaría usando filtros
+        en el frontend, no clicking en drafts viejos. Vale la pena el upgrade
+        a filter-by-display_id cuando Medusa lo soporte universalmente.
+
+        Cache first (L-2): el mapeo display→id es inmutable y la lista del
+        dashboard lo puebla — en el flujo real del operador este scan solo
+        corre para ids nunca vistos por el proceso.
         """
-        try:
-            page = await self._client.list_orders(limit=50, offset=0)
+        cached = display_id_cache.get(display_id_str)
+        if cached is not None:
+            return cached
+
+        resolve_fields = "id,display_id"
+
+        async def _scan_orders() -> str | None:
+            page = await self._client.list_orders(
+                limit=50, offset=0, fields=resolve_fields
+            )
             for o in page.get("orders", []):
                 if str(o.get("display_id")) == display_id_str:
                     return str(o["id"])
-        except MedusaAPIError as exc:
-            log.warning(
-                "_resolve_display_id (command): orders lookup failed (%s) — trying drafts",
-                exc,
+            return None
+
+        async def _scan_drafts() -> str | None:
+            page = await self._client.list_draft_orders(
+                limit=50, offset=0, fields=resolve_fields
             )
-        try:
-            page = await self._client.list_draft_orders(limit=50, offset=0)
             for o in page.get("draft_orders", []):
                 if str(o.get("display_id")) == display_id_str:
                     return str(o["id"])
-        except MedusaAPIError as exc:
-            log.warning(
-                "_resolve_display_id (command): draft_orders lookup failed (%s)",
-                exc,
-            )
+            return None
+
+        results = await asyncio.gather(
+            _scan_orders(), _scan_drafts(), return_exceptions=True
+        )
+        for kind, res in zip(("orders", "drafts"), results):
+            if isinstance(res, BaseException):
+                if isinstance(res, MedusaAPIError):
+                    log.warning(
+                        "_resolve_display_id (command): %s lookup failed (%s)",
+                        kind,
+                        res,
+                    )
+                    continue
+                raise res
+            if res:
+                display_id_cache.put(display_id_str, res)
+                return res
         return None
 
 
