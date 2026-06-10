@@ -35,6 +35,7 @@ from typing import Any, cast
 
 from src.platform.medusa.client import HttpMedusaClient, MedusaAPIError
 from src.platform.medusa.settings import MedusaSettings
+from src.platform.orders import display_id_cache
 from src.platform.orders.query_port import (
     OrderAddressDTO,
     OrderDetailDTO,
@@ -127,8 +128,10 @@ class MedusaOrderQuery:
             summaries: list[OrderSummaryDTO] = []
             for raw in orders_resp.get("orders", []):
                 summaries.append(self._build_summary(raw, is_draft=False))
+                self._cache_display_id(raw)
             for raw in drafts_resp.get("draft_orders", []):
                 summaries.append(self._build_summary(raw, is_draft=True))
+                self._cache_display_id(raw)
 
             # Ordenar por created_at descendiente (mas reciente primero) —
             # los draft_orders se intercalan con orders por timestamp.
@@ -226,31 +229,64 @@ class MedusaOrderQuery:
                 raise
         return self._build_detail(raw, is_draft=is_draft)
 
+    @staticmethod
+    def _cache_display_id(raw: dict[str, Any]) -> None:
+        """Poblar el cache display→id desde filas de lista (L-2, gratis)."""
+        did = raw.get("display_id")
+        backend_id = raw.get("id")
+        if did is not None and backend_id:
+            display_id_cache.put(str(did), str(backend_id))
+
     async def _resolve_display_id(self, display_id_str: str) -> str | None:
         """Premortem A1: resolve `display_id` ("1247") → backend id
-        ("order_01HXX..."). Probamos primero `/admin/orders?display_id=N`,
-        después `/admin/draft-orders`.
+        ("order_01HXX..."). Cache first (el mapeo es inmutable y `list()` lo
+        puebla); en miss, escanea `/admin/orders` + `/admin/draft-orders` EN
+        PARALELO con `fields=id,display_id`. Precedencia: orders > drafts.
+
+        L-2: en Railway esos list endpoints tardan 2-10s c/u con variabilidad
+        alta aun con fields mínimos — el cache es lo que de verdad los evita.
         """
+        cached = display_id_cache.get(display_id_str)
+        if cached is not None:
+            return cached
+
         # Algunos clients de Medusa no soportan filter por display_id
         # directamente — entonces hacemos page-scan limit=50, suficiente
         # para uso interactivo del dashboard.
-        try:
-            page = await self._client.list_orders(limit=50, offset=0)
+        resolve_fields = "id,display_id"
+
+        async def _scan_orders() -> str | None:
+            page = await self._client.list_orders(
+                limit=50, offset=0, fields=resolve_fields
+            )
             for o in page.get("orders", []):
                 if str(o.get("display_id")) == display_id_str:
                     return str(o["id"])
-        except MedusaAPIError as exc:
-            log.warning(
-                "_resolve_display_id: orders lookup failed (%s) — trying drafts.",
-                exc,
+            return None
+
+        async def _scan_drafts() -> str | None:
+            page = await self._client.list_draft_orders(
+                limit=50, offset=0, fields=resolve_fields
             )
-        try:
-            page = await self._client.list_draft_orders(limit=50, offset=0)
             for o in page.get("draft_orders", []):
                 if str(o.get("display_id")) == display_id_str:
                     return str(o["id"])
-        except MedusaAPIError as exc:
-            log.warning("_resolve_display_id: draft_orders lookup failed (%s)", exc)
+            return None
+
+        results = await asyncio.gather(
+            _scan_orders(), _scan_drafts(), return_exceptions=True
+        )
+        for kind, res in zip(("orders", "drafts"), results):
+            if isinstance(res, BaseException):
+                if isinstance(res, MedusaAPIError):
+                    log.warning(
+                        "_resolve_display_id: %s lookup failed (%s)", kind, res
+                    )
+                    continue
+                raise res
+            if res:
+                display_id_cache.put(display_id_str, res)
+                return res
         return None
 
     # ------------------------------------------------------------------
