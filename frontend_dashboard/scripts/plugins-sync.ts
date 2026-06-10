@@ -366,6 +366,17 @@ export const PLUGIN_ICONS: Record<string, never> = {};
 
   const importBlock = `import { lazy, type ComponentType, type LazyExoticComponent } from "react";\n${iconImports}`;
   const fullType = `
+/**
+ * Protocolo estructural del entry de plugin (estilo Swift \`some Protocol\`):
+ * el módulo \`@plugins/<id>/frontend\` DEBE default-exportar un componente.
+ * \`assertPluginModule\` no hace nada en runtime — existe para que \`tsc\`
+ * FALLE EN COMPILACIÓN si un plugin rompe su contrato de entry (antes: el
+ * bundler explotaba en runtime con un error críptico).
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type PluginModule = { default: ComponentType<any> };
+const assertPluginModule = (m: PluginModule): PluginModule => m;
+
 export type PluginEntry = {
   id: string;
   displayName: string;
@@ -390,7 +401,7 @@ export const PLUGINS: PluginEntry[] = [
 
   const body = entries
     .map((e) => {
-      const importExpr = `lazy(() => import("@plugins/${e.id}/frontend"))`;
+      const importExpr = `lazy(() => import("@plugins/${e.id}/frontend").then(assertPluginModule))`;
       return `  {
     id: ${JSON.stringify(e.id)},
     displayName: ${JSON.stringify(e.displayName)},

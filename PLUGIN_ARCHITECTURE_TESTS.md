@@ -423,10 +423,18 @@ def test_transition_targets_resolve_to_worker_runtime():
 | **P-18 routing template consistency** | P-ROUTE | PM-2/AP-10 | 🔴 | `tests/architecture/` (parche hasta route-registry) |
 | **P-19 transition→worker runtime** | P-DISPATCH | PM-13 | 🔴 | `tests/architecture/` + functional smoke |
 
-**Verdes (candados puestos, PR #49):** P-1/2/3/4/12/14(forma) + P-7 (dispatcher-skip) +
-P-10. **Rojos = lo que falta:** P-6 (enforce depends_on), P-9 (queda solo evals
-per-agente), P-11/P-14-uso (entities por-plugin + cast), y los **5 del pre-mortem
-(P-15..P-19)** — la red que faltó para que las extracciones no fueran un campo minado.
+**ACTUALIZACIÓN FINAL (refactor fable F1–F8, 2026-06-09/10): TODO el set está
+VERDE.** P-1/2/3/4 + P-6 (validate_enabled ×3 loaders) + P-7 + P-9 ESTRICTO
+(sin xfail) + P-10 + P-11 (src/entities/ vacío) + P-12 (base ∪ contribuciones)
++ P-13/P-26 (coherencia cross-stack + dirs huérfanos) + P-14 (forma + USO: 2
+casts reales) + P-15/P-16/P-17 + P-18 ×3 (route registry) + P-19-estático.
+**Nuevos del refactor:** P-20 (deploy parity compose+k8s), P-21 (worker
+self-gate), P-22/P-23 (ownership de entities + literales /api en código),
+P-25 (wiring↔compose env). Dónde vive cada uno + la regla de oro ("ningún
+campo del manifest sin su check"): [PLUGIN_PROTOCOL_fable.md](PLUGIN_PROTOCOL_fable.md).
+Pendiente deliberado: el smoke FUNCIONAL del dispatch (P-19b — emitir un
+OrderStageChangedEvent real contra Temporal y assert que el workflow eta
+arranca) vive mejor en `tests/functional/` con el stack Docker arriba.
 
 ---
 

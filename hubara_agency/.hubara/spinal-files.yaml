@@ -131,6 +131,13 @@ spinal_files:
   # PROTECTED. Los listamos acá para que el implementer los marque como
   # off-limits. Si una task quiere editar alguno, status: blocked +
   # requires_planner_update.
+  #
+  # F8 (plan fable — cierra N-8/PM-11): esta lista es además la FUENTE ÚNICA
+  # de los meta-gates de CI. `hubara_agency/tests/architecture/conftest.py`
+  # y `frontend_dashboard/src/test/architecture/helpers.ts` derivan sus
+  # prefijos protegidos DE ACÁ (entries con `protected: true`; el glob se
+  # trunca en el primer `*`). Agregar/sacar un path protegido = editar SOLO
+  # este archivo (con ADR) — los dos gates lo toman al siguiente run.
   - path: .archon/workflows/**
     kind: protected
     protected: true
@@ -141,9 +148,25 @@ spinal_files:
     protected: true
     note: |
       Skills del pipeline hubara. Solo ADR.
+  - path: .claude/skills/exoclaw-*/**
+    kind: protected
+    protected: true
+    note: |
+      Skills DEHA base (los vigilaba solo el meta-gate backend; unificado F8).
+  - path: .claude/skills/frontend-*/**
+    kind: protected
+    protected: true
+    note: |
+      Skills FSD (los vigilaba solo el meta-gate frontend; unificado F8).
   - path: hubara_agency/tests/architecture/**
     kind: protected
     protected: true
+  - path: hubara_agency/tests/plugins/test_premortem_invariants.py
+    kind: protected
+    protected: true
+    note: |
+      Invariantes del plugin system (queues/k8s/compose/P-20). El CLAUDE.md
+      lo declaraba PROTECTED pero ningún meta-gate lo cubría (N-8).
   - path: hubara_agency/.importlinter
     kind: protected
     protected: true

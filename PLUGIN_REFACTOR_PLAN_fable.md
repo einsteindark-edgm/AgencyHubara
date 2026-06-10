@@ -1,5 +1,20 @@
 # Plan de refactor + control de arquitectura (fable)
 
+> **ESTADO DE EJECUCIÓN (2026-06-10): F1–F8 EJECUTADAS Y VERDES** en la branch
+> `claude/relaxed-shaw-91fbdd`, un commit por fase: F1 `e1cbbed` · F2 `6fea13d`
+> · F3 `b5bddb8` · F4a/b `1a60df0` · F4c `0fff924` · F5 `c4db5f8` · F6
+> `3731a8f` · F7 `a79d937` · F8 (protocolo + meta-gates únicos). Decisiones
+> tomadas con las opciones recomendadas: D1a (render gateado + P-21), D2a
+> (build por tenant — documentado, sin refactor de shell), D3a (artefactos
+> siempre con set explícito; default fail-open solo en dev), D4a (eta declara
+> `depends_on: [chats]` por el ingest; D4b queda opcional a futuro).
+> Los gates corren en CI (`architecture-gates.yml`) y bloquean merge a main;
+> el PR de esta branch requiere el label **`architecture-change`** (tocó
+> tests PROTECTED — por diseño). Verificación final: backend 419 passed +
+> routing 5/5 + lint-imports 4/0; frontend tsc limpio + 19/19+1skip arch +
+> 144 units + build prod. Persisten 3 fallos PRE-existentes de main en
+> tests/plugins/chats (voseo + 2 watchdog), fuera del alcance (chip spawneado).
+
 > **Qué es.** El plan ejecutable para llevar el sistema de plugins desde el
 > estado real auditado en
 > [PLUGIN_ISOLATION_AUDIT_fable.md](PLUGIN_ISOLATION_AUDIT_fable.md)

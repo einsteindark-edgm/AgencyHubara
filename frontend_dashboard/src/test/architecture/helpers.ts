@@ -11,6 +11,8 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+
+import { parse as parseYaml } from "yaml";
 import { fileURLToPath } from "node:url";
 
 import { globSync } from "glob";
@@ -35,7 +37,11 @@ export const LAYER_GLOBS = {
   shared: "shared/**/*.{ts,tsx}",
 } as const;
 
-export const ENTITY_API_GLOB = "entities/*/api.{ts,tsx}";
+// F8: post-F4 las entities viven en plugins/<id>/frontend/entities/ — el gate
+// de Zod-at-boundary cubre AMBAS ubicaciones (la central quedó vacía, P-11,
+// pero el glob la conserva por si una regresión re-crea una entity ahí).
+export const ENTITY_API_GLOB =
+  "{entities,plugins/*/frontend/entities}/*/api.{ts,tsx}";
 export const SHARED_API_GLOB = "shared/api/**/*.{ts,tsx}";
 
 // Tests co-located inside slices follow the FSD convention; the architecture
@@ -79,18 +85,33 @@ export const CSS_FILE_ALLOWLIST: ReadonlySet<string> = new Set([
   "src/index.css",
 ]);
 
-/** Architecture-protected paths (Capa 3 — meta-gate). Relative to REPO_ROOT. */
-export const ARCHITECTURE_PROTECTED_PREFIXES: readonly string[] = [
-  // Tests + dependency-cruiser contract — la arquitectura FSD misma.
-  "frontend_dashboard/src/test/architecture/",
-  "frontend_dashboard/.dependency-cruiser.cjs",
-  // Workflows de Archon y skills que orquestan el pipeline. Si un AI
-  // implementer pudiera editar el pipeline YAML o el SKILL.md mismo, podría
-  // deshabilitar el gate determinista o borrar las reglas §11. Protegerlos
-  // cierra ese hueco — Capa 3 cubre ahora también el "framework" que evalúa.
-  ".archon/workflows/",
-  ".claude/skills/frontend-",
-];
+/**
+ * Architecture-protected paths (Capa 3 — meta-gate). Relative to REPO_ROOT.
+ *
+ * F8 (cierra N-8/PM-11): la lista ya NO vive acá. La FUENTE ÚNICA es
+ * `hubara_agency/.hubara/spinal-files.yaml` (entries `protected: true`);
+ * este loader deriva los prefijos truncando cada glob en su primer `*`.
+ * El meta-gate backend (tests/architecture/conftest.py) lee EL MISMO archivo.
+ */
+function loadProtectedPrefixes(): readonly string[] {
+  const spinalPath = resolve(REPO_ROOT, "hubara_agency", ".hubara", "spinal-files.yaml");
+  const doc = parseYaml(readFileSync(spinalPath, "utf-8")) as {
+    spinal_files?: Array<{ path?: string; protected?: boolean }>;
+  };
+  const prefixes = (doc?.spinal_files ?? [])
+    .filter((e) => e?.protected)
+    .map((e) => String(e.path ?? "").split("*", 1)[0])
+    .filter((p) => p.length > 0);
+  if (prefixes.length === 0) {
+    throw new Error(
+      `spinal-files.yaml sin entries protected:true — el meta-gate quedaría vacío (${spinalPath}).`,
+    );
+  }
+  return [...new Set(prefixes)].sort();
+}
+
+export const ARCHITECTURE_PROTECTED_PREFIXES: readonly string[] =
+  loadProtectedPrefixes();
 
 // ----------------------------------------------------------------------------
 // File iteration utilities.

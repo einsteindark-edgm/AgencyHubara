@@ -348,6 +348,64 @@ def test_p20_compose_embeds_explicit_enabled_set() -> None:
     assert not problems, "P-20 deploy parity (compose):\n  - " + "\n  - ".join(problems)
 
 
+def test_p25_wiring_env_required_present_in_compose() -> None:
+    """P-25 (cierra PM-10 de CONTENIDO): todo `wiring_intents.env_vars_required`
+    del manifest está presente en el environment del compose renderizado para
+    los workers de ese plugin (o en el del api, para plugins api-only).
+
+    Sin esto, un manifest puede PROMETER que necesita `MEDUSA_BASE_URL` y el
+    artefacto no traerlo — el worker arranca y falla en runtime días después
+    (el modo de fallo exacto del premortem PR9).
+    """
+    services = _compose_services()
+
+    def _service_env_keys(svc: dict) -> set[str]:
+        env = svc.get("environment")
+        keys: set[str] = set()
+        if isinstance(env, list):
+            keys = {e.split("=", 1)[0] for e in env if isinstance(e, str)}
+        elif isinstance(env, dict):
+            keys = set(env.keys())
+        return keys
+
+    api_keys = _service_env_keys(services.get("hubara-api") or {})
+
+    # worker services por plugin (via command → módulo)
+    plugin_worker_keys: dict[str, set[str]] = {}
+    for name, svc in services.items():
+        if not name.startswith("hubara-worker-"):
+            continue
+        command = " ".join(str(c) for c in (svc.get("command") or []))
+        match = _WORKER_MODULE_RE.search(command)
+        if not match:
+            continue
+        plugin_worker_keys.setdefault(match.group(1), set()).update(
+            _service_env_keys(svc)
+        )
+
+    problems: list[str] = []
+    for plugin_dir in sorted(_PLUGINS_DIR.iterdir()):
+        if not plugin_dir.is_dir() or plugin_dir.name.startswith("_"):
+            continue
+        manifest_path = plugin_dir / "plugin.yaml"
+        if not manifest_path.exists():
+            continue
+        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+        required = (manifest.get("wiring_intents") or {}).get("env_vars_required") or []
+        if not required:
+            continue
+        pid = plugin_dir.name
+        # Workers del plugin si los tiene; si es api-only, el env del api.
+        available = plugin_worker_keys.get(pid, api_keys)
+        missing = sorted(str(v) for v in required if str(v) not in available)
+        if missing:
+            problems.append(
+                f"{pid}: wiring_intents.env_vars_required={missing} ausentes del "
+                f"environment renderizado ({'workers' if pid in plugin_worker_keys else 'api'})"
+            )
+    assert not problems, "P-25 wiring↔compose env (PM-10):\n  - " + "\n  - ".join(problems)
+
+
 def test_p20_k8s_workers_declare_enabled_plugins() -> None:
     """Cada deployment k8s de worker (y el api) lleva ENABLED_PLUGINS y su
     propio plugin está incluido.

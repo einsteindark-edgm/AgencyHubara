@@ -39,6 +39,8 @@ from tests.architecture._plugin_contract_helpers import (
     HUBARA_ROOT,
     REPO_ROOT,
     all_manifests,
+    backend_plugin_ids,
+    manifest_ids,
 )
 
 
@@ -164,6 +166,25 @@ def test_p16_worker_task_queue_self_reference_matches_dir() -> None:
                         f"get_task_queue({plugin_arg!r}, ...) ≠ plugin {pdir.name!r}"
                     )
     assert not bad, "Worker con self-reference ajena (P-16 / PM-5):\n  " + "\n  ".join(bad)
+
+
+# ----------------------------------------------------------------------------
+# P-13 / P-26 · P-PARITY — ids coherentes cross-stack, sin huérfanos
+# ----------------------------------------------------------------------------
+
+
+def test_p13_p26_backend_dirs_and_manifests_are_coherent() -> None:
+    """Todo dir backend `src/plugins/<id>/` tiene su manifest (P-26: un dir
+    huérfano es código muerto invisible — ningún loader lo levanta) y todo
+    manifest id es un id válido. La dirección inversa (manifest que declara
+    backend sin código) la cubre P-2."""
+    manifests = set(manifest_ids())
+    orphans = sorted(set(backend_plugin_ids()) - manifests)
+    assert not orphans, (
+        "Dirs backend sin manifest (P-26 — código muerto invisible):\n  - "
+        + "\n  - ".join(f"hubara_agency/src/plugins/{o}/" for o in orphans)
+        + "\nCreá frontend_dashboard/src/plugins/<id>/plugin.yaml o borrá el dir."
+    )
 
 
 # ----------------------------------------------------------------------------
