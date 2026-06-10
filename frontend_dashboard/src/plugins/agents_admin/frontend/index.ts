@@ -8,7 +8,6 @@
  * Plugin frontend-only (sin agente Temporal, sin API propio).
  */
 export { default, AgentsSection } from "./AgentsSection";
-export type { AgentsSectionProps } from "./AgentsSection";
 
 export { AgentsList } from "@plugins/agents_admin/frontend/features/agents-list";
 export { AgentsPrompts } from "@plugins/agents_admin/frontend/features/agents-prompts";

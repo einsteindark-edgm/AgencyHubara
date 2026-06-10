@@ -14,6 +14,8 @@
  */
 import { useEffect } from "react";
 
+import { usePluginHost, useSelection } from "@/shared/lib";
+
 import {
   useChatInbox,
   useSessionsStream,
@@ -23,19 +25,10 @@ import { ChatsInbox } from "@plugins/chats/frontend/features/chats-inbox";
 import { ChatsConversation } from "@plugins/chats/frontend/features/chats-conversation";
 import { ChatsInspector } from "@plugins/chats/frontend/features/chats-inspector";
 
-export interface ChatsSectionProps {
-  showSidebar: boolean;
-  showInspector: boolean;
-  selectedChatId: string | null;
-  setSelectedChatId: (id: string) => void;
-}
-
-export function ChatsSection({
-  showSidebar,
-  showInspector,
-  selectedChatId,
-  setSelectedChatId,
-}: ChatsSectionProps) {
+export function ChatsSection() {
+  // F7: chrome + selección llegan por el PluginHost (contrato genérico).
+  const { showSidebar, showInspector } = usePluginHost();
+  const [selectedChatId, setSelectedChatId] = useSelection("chats");
   useSessionsStream();
   const { data: chats = [] } = useChatInbox();
   useEffect(() => {

@@ -7,23 +7,20 @@
  * Plugin frontend-only (sin agente Temporal, sin worker, sin endpoints de API
  * propios — los datos vienen de `entities/agent` que es shared cross-plugin).
  */
+import { usePluginHost, useSelection } from "@/shared/lib";
+
 import { AgentsList } from "@plugins/agents_admin/frontend/features/agents-list";
 import { AgentsPrompts } from "@plugins/agents_admin/frontend/features/agents-prompts";
 import { AgentsInspector } from "@plugins/agents_admin/frontend/features/agents-inspector";
 
-export interface AgentsSectionProps {
-  showSidebar: boolean;
-  showInspector: boolean;
-  selectedAgentId: string;
-  setSelectedAgentId: (id: string) => void;
-}
-
-export function AgentsSection({
-  showSidebar,
-  showInspector,
-  selectedAgentId,
-  setSelectedAgentId,
-}: AgentsSectionProps) {
+export function AgentsSection() {
+  // F7: chrome + selección llegan por el PluginHost (contrato genérico).
+  const { showSidebar, showInspector } = usePluginHost();
+  const [selectedAgentIdRaw, setSelectedAgentId] = useSelection(
+    "agents_admin",
+    "sales",
+  );
+  const selectedAgentId = selectedAgentIdRaw ?? "sales";
   return (
     <>
       {showSidebar && (

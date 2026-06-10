@@ -23,6 +23,10 @@ import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 
 import { Icon } from "@/shared/ui/Icon";
+// F7: los plugins pueden CONTRIBUIR glifos propios (frontend/icons.tsx) que
+// plugins-sync agrega al registry generado — el set efectivo del Toolbar es
+// base ∪ contribuciones. Requiere `npm run plugins:sync` previo (CI lo corre).
+import { PLUGIN_ICONS } from "@/app/plugin-registry.generated";
 
 import { SRC_ROOT } from "./helpers";
 
@@ -56,20 +60,21 @@ function manifestIcons(): Array<{ plugin: string; icon: string }> {
 }
 
 describe("R-PLUGIN-ICONS — manifest icons resolve in the Icon registry", () => {
-  it("every icon declared in a plugin manifest exists in Icon", () => {
-    const registry = new Set(Object.keys(Icon));
+  it("every icon declared in a plugin manifest exists in Icon ∪ PLUGIN_ICONS", () => {
+    const registry = new Set([...Object.keys(Icon), ...Object.keys(PLUGIN_ICONS)]);
     const offenders = manifestIcons()
       .filter(({ icon }) => !registry.has(icon))
       .map(({ plugin, icon }) => `${plugin}: "${icon}"`);
 
     expect(
       offenders,
-      `Plugin manifests reference icons missing from src/shared/ui/Icon.tsx ` +
-        `(Toolbar renders the 'bot' fallback silently — PLUGIN_CONTRACT.md P-ICON):\n` +
+      `Plugin manifests reference icons missing from the effective registry ` +
+        `(base Icon.tsx + plugin contributions) — Toolbar renders the 'bot' ` +
+        `fallback silently (PLUGIN_CONTRACT.md P-ICON):\n` +
         offenders.map((m) => `  - ${m}`).join("\n") +
-        `\n\nFix: append the glyph to the Icon registry (append-only spinal file), ` +
-        `or — in the target architecture — have the plugin contribute it via its ` +
-        `own frontend/ so plugins-sync injects it (no central edit).`,
+        `\n\nFix (F7): que el plugin TRAIGA su glifo en frontend/icons.tsx ` +
+        `(export const icons = { nombre: Componente }) y corras ` +
+        `\`npm run plugins:sync\` — cero ediciones a Icon.tsx (INV-1).`,
     ).toEqual([]);
   });
 });

@@ -17,7 +17,6 @@
  * `scripts/plugins-sync.ts`).
  */
 export { default, ChatsSection } from "./ChatsSection";
-export type { ChatsSectionProps } from "./ChatsSection";
 
 // Named re-exports — Dashboard.tsx (PR2) los importa directo de aquí en vez de
 // de las features individuales para mantener una superficie pública estable.

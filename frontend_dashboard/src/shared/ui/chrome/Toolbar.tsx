@@ -17,6 +17,8 @@
  * cuando un manifest cambia el nombre del icono y nadie regeneró el registry.
  */
 
+import type { ComponentType } from "react";
+
 import { Icon, type IconName } from "../Icon";
 
 /**
@@ -49,15 +51,31 @@ interface Props {
   setShowSidebar: (v: boolean) => void;
   showInspector: boolean;
   setShowInspector: (v: boolean) => void;
+  /**
+   * Glifos aportados por plugins (F7 — `PLUGIN_ICONS` del registry generado).
+   * Inyectados como prop por el shell para que `shared/ui` NO importe del
+   * registry (`app/`) — la dirección FSD se preserva. Resolución: primero
+   * contribuciones del plugin, después el set base `Icon`, después fallback.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  pluginIcons?: Record<string, ComponentType<any>>;
 }
 
 /**
- * Devuelve un componente de icono dado su nombre. Si el nombre no matchea
- * ningún glyph registrado en `Icon`, devuelve `Icon.bot` como fallback visible
- * (mejor que romper el render). En dev, el warning queda en consola para que
- * sea fácil notar la inconsistencia entre el manifest y el icon set.
+ * Devuelve un componente de icono dado su nombre. Orden de resolución:
+ * contribución del plugin (`pluginIcons`, F7) → set base `Icon` → fallback
+ * `Icon.bot` visible + warning (mejor que romper el render cuando un manifest
+ * cambia el nombre del icono y nadie regeneró el registry).
  */
-function resolveIcon(name: string | undefined): () => React.ReactElement {
+function resolveIcon(
+  name: string | undefined,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  pluginIcons?: Record<string, ComponentType<any>>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+): ComponentType<any> {
+  if (name && pluginIcons && name in pluginIcons) {
+    return pluginIcons[name];
+  }
   if (name && (name as IconName) in Icon) {
     return Icon[name as IconName];
   }
@@ -78,6 +96,7 @@ export function Toolbar({
   setShowSidebar,
   showInspector,
   setShowInspector,
+  pluginIcons,
 }: Props) {
   return (
     <div className="toolbar">
@@ -101,7 +120,7 @@ export function Toolbar({
 
       <div className="seg" role="tablist">
         {sections.map((s) => {
-          const IconComp = resolveIcon(s.icon);
+          const IconComp = resolveIcon(s.icon, pluginIcons);
           return (
             <button
               key={s.key}

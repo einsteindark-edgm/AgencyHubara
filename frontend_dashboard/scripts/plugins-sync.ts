@@ -285,7 +285,7 @@ function warnSectionKeyCollisions(entries: RegistryEntry[]): void {
   }
 }
 
-function renderRegistry(entries: RegistryEntry[]): string {
+function renderRegistry(entries: RegistryEntry[], iconContributors: string[]): string {
   // `lazy` solo se importa si hay al menos un entry — el tsconfig tiene
   // `noUnusedLocals: true` y rechazaría un import sin uso.
   const headerComment = `/**
@@ -339,6 +339,8 @@ export type PluginEntry = {
 };
 
 export const PLUGINS: PluginEntry[] = [];
+
+export const PLUGIN_ICONS: Record<string, never> = {};
 `
     );
   }
@@ -347,7 +349,22 @@ export const PLUGINS: PluginEntry[] = [];
   // porque cada plugin define su propia firma de props. El shell que renderiza
   // `<entry.Page {...props} />` conoce las props específicas del plugin que
   // está mostrando. Formalizar con generics queda pendiente.
-  const importBlock = `import { lazy, type ComponentType, type LazyExoticComponent } from "react";\n`;
+  // ── Íconos contribuidos (F7 — INV-1 / AP-4) ───────────────────────────
+  // Un plugin que necesita un glifo NUEVO lo trae consigo en
+  // `frontend/icons.tsx` (export const icons = { nombre: Componente }) en
+  // vez de editar el PROTECTED `shared/ui/Icon.tsx`. El codegen los agrega
+  // al registry; el Toolbar resuelve base + contribuciones.
+  const iconImports = iconContributors
+    .map((id) => `import { icons as ${id}Icons } from "@plugins/${id}/frontend/icons";\n`)
+    .join("");
+  const iconExport =
+    `\n// Glifos aportados por plugins (frontend/icons.tsx) — merge en el shell.\n` +
+    `// eslint-disable-next-line @typescript-eslint/no-explicit-any\n` +
+    `export const PLUGIN_ICONS: Record<string, ComponentType<any>> = {\n` +
+    iconContributors.map((id) => `  ...${id}Icons,\n`).join("") +
+    `};\n`;
+
+  const importBlock = `import { lazy, type ComponentType, type LazyExoticComponent } from "react";\n${iconImports}`;
   const fullType = `
 export type PluginEntry = {
   id: string;
@@ -387,20 +404,25 @@ export const PLUGINS: PluginEntry[] = [
 
   const footer = `\n];\n`;
 
-  return headerComment + importBlock + sharedTypes + fullType + body + footer;
+  return headerComment + importBlock + sharedTypes + fullType + body + footer + iconExport;
 }
 
 function main() {
   const found = discoverManifests();
   const enabled = filterEnabled(found);
   const entries = enabled.map(buildEntry);
+  // Plugins que traen glifos propios (frontend/icons.tsx) — ver renderRegistry.
+  const iconContributors = enabled
+    .map((m) => m.id!)
+    .filter((id) => existsSync(join(PLUGINS_DIR, id, "frontend", "icons.tsx")))
+    .sort();
 
   warnSectionKeyCollisions(entries);
 
   const outDir = dirname(OUT_FILE);
   if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
 
-  writeFileSync(OUT_FILE, renderRegistry(entries), "utf-8");
+  writeFileSync(OUT_FILE, renderRegistry(entries, iconContributors), "utf-8");
   logInfo(
     `generated ${OUT_FILE.replace(FRONTEND_ROOT + "/", "")} ` +
       `with ${entries.length} plugin(s): ${entries.map((e) => e.id).join(", ") || "(empty)"}`,

@@ -5,7 +5,6 @@
  * el registry. Plus named re-exports de cada feature para tests y back-compat.
  */
 export { default, AdsSection } from "./AdsSection";
-export type { AdsSectionProps } from "./AdsSection";
 
 export { AdsCampaignsList } from "@plugins/ads/frontend/features/ads-campaigns-list";
 export { AdsOverviewHeader } from "@plugins/ads/frontend/features/ads-overview-header";
