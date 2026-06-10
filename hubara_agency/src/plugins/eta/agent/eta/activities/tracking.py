@@ -1,22 +1,40 @@
-"""Activities de tracking del sub-agente ETA.
+"""Activities de tracking del sub-agente ETA (notificador puro).
 
 Manejan el estado per-sesión del seguimiento (``metadata.eta_tracking``) y la
 lectura de los datos vivos del pedido. Todas son I/O puras (R-STATELESS): el
 estado durable vive en ``metadata.json`` del vault, no en módulo.
 
-``metadata.eta_tracking`` shape::
+**Cambio de comportamiento (2026-06-10, "convivencia ETA/Sales")**: el ETA ya
+NO posee la conversación. ``start_eta_tracking`` NO toca ``active_route`` ni
+``tag`` — el turno conversacional es SIEMPRE de Sales (o humano); el ETA solo
+empuja notificaciones de estado. Antes ``start`` pisaba la ruta (incluso
+``humano`` — bug: el claim respetaba humano pero el start no) y secuestraba la
+conversación entera mientras el pedido estuviera en tránsito.
+
+**Multi-pedido**: un cliente puede tener N pedidos en tránsito a la vez. El
+tracking es un mapa por ``order_id`` (antes era UNO solo y un pedido nuevo
+reseteaba el anterior, descartando sus notificaciones como "stale").
+
+``metadata.eta_tracking`` shape (v2)::
 
     {
-      "order_id": "order_01...",
-      "current_stage": "shipping",
-      "notified_stages": ["preparing", "ready", "shipping"],
-      "events": [
-        {"stage": "preparing", "agent_msg": "...", "at_ms": 1779...,
-         "reply": "ok 👍", "flagged": false, "flag": null},
-        ...
-      ],
-      "started_at_ms": 1779...
+      "orders": {
+        "order_01...": {
+          "order_id": "order_01...",
+          "current_stage": "shipping",
+          "notified_stages": ["preparing", "ready", "shipping"],
+          "events": [
+            {"stage": "preparing", "agent_msg": "...", "at_ms": 1779...,
+             "reply": null, "flagged": false, "flag": null},
+            ...
+          ],
+          "started_at_ms": 1779...
+        }
+      }
     }
+
+El shape v1 (un solo pedido top-level, con ``order_id`` en la raíz) se migra
+on-read con ``_orders_map`` y se persiste como v2 en la próxima escritura.
 
 Es la **fuente del timeline** que la dashboard API (``eta/api``) lee
 para pintar la sección ETA del frontend.
@@ -30,15 +48,8 @@ from temporalio import activity
 
 from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.constants import ROUTE_HUMANO
-from src.platform.plugin_manifest import get_worker_spec
 from src.platform.state import FilesystemMetadataStore
 from src.platform.whatsapp.window import is_in_service_window
-
-# F6 (route registry): la ruta que ESTE agente posee se declara en SU manifest
-# (`agent.workers[eta].owns_route`) — única fuente de verdad. Pre-F6 era la
-# constante `ROUTE_ETA` en platform/constants.py (spinal PROTECTED): un agente
-# nuevo con ruta propia tenía que editar un archivo central (violación INV-1).
-_OWN_ROUTE: str = str(get_worker_spec("eta", "eta").get("owns_route") or "eta")
 
 
 def _store() -> FilesystemMetadataStore:
@@ -67,34 +78,64 @@ def _format_cop(total_cop: int | None) -> str:
     return "$ " + f"{int(total_cop):,}".replace(",", ".")
 
 
+def _empty_entry(order_id: str) -> dict[str, Any]:
+    return {
+        "order_id": order_id,
+        "current_stage": None,
+        "notified_stages": [],
+        "events": [],
+        "started_at_ms": int(time.time() * 1000),
+    }
+
+
+def _orders_map(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Mapa ``order_id → tracking entry`` desde ``metadata.eta_tracking``.
+
+    Acepta el shape v2 (``{"orders": {...}}``) y migra on-read el v1 legacy
+    (un solo pedido con ``order_id`` en la raíz). NO escribe — la migración
+    persiste cuando la activity que llamó escriba el mapa de vuelta.
+    """
+    tracking = data.get("eta_tracking")
+    if not isinstance(tracking, dict):
+        return {}
+    orders = tracking.get("orders")
+    if isinstance(orders, dict):
+        return {str(k): dict(v) for k, v in orders.items() if isinstance(v, dict)}
+    legacy_id = tracking.get("order_id")
+    if legacy_id:
+        entry = dict(tracking)
+        return {str(legacy_id): entry}
+    return {}
+
+
+def _write_orders_map(
+    store: FilesystemMetadataStore,
+    session_id: str,
+    data: dict[str, Any],
+    orders: dict[str, dict[str, Any]],
+) -> None:
+    data["eta_tracking"] = {"orders": orders}
+    store.write(session_id, data)
+
+
 @activity.defn(name="start_eta_tracking_activity")
 async def start_eta_tracking_activity(session_id: str, order_id: str) -> None:
-    """Marca la conversación como propiedad del Agente ETA e inicializa el
-    estado de tracking. Idempotente.
+    """Inicializa (idempotente) el tracking del pedido en el mapa multi-pedido.
 
-    Setea ``active_route=eta`` + ``tag=ETA`` JUNTOS (mantiene el invariante
-    route↔tag: la conversación sale de la bandeja humana y entra a tracking ETA).
-    Si ya había ``eta_tracking`` para OTRO ``order_id``, lo resetea — un pedido
-    nuevo entró en preparación, empieza un seguimiento fresco.
+    NO toca ``active_route`` ni ``tag``: el ETA es un notificador puro — el
+    turno conversacional es de Sales (o humano) y las notificaciones se
+    intercalan en el hilo sin robarlo. (El diseño anterior seteaba
+    ``active_route=eta`` + ``tag=ETA`` acá, pisando incluso ``humano``.)
     """
     store = _store()
     data = _safe_read(store, session_id)
-    data["active_route"] = _OWN_ROUTE
-    data["tag"] = "ETA"
-
-    tracking = data.get("eta_tracking")
-    if not isinstance(tracking, dict) or tracking.get("order_id") != order_id:
-        tracking = {
-            "order_id": order_id,
-            "current_stage": None,
-            "notified_stages": [],
-            "events": [],
-            "started_at_ms": int(time.time() * 1000),
-        }
-    data["eta_tracking"] = tracking
-    store.write(session_id, data)
+    orders = _orders_map(data)
+    if order_id not in orders:
+        orders[order_id] = _empty_entry(order_id)
+    _write_orders_map(store, session_id, data, orders)
     activity.logger.info(
-        "start_eta_tracking_activity: session=%s order=%s", session_id, order_id
+        "start_eta_tracking_activity: session=%s order=%s (tracked=%d)",
+        session_id, order_id, len(orders),
     )
 
 
@@ -106,11 +147,11 @@ async def claim_eta_notification_activity(
     los datos vivos del pedido para rellenar el mensaje.
 
     Devuelve ``None`` (saltar la notificación) cuando:
-      * ``active_route == humano`` — un humano tomó la conversación (p.ej. ETA
-        ya escaló una queja); no pisamos su turno con una notificación automática.
-      * el tracking activo es de OTRO ``order_id`` — la sesión sigue un pedido
-        distinto (un pedido nuevo reemplazó al anterior); este stage es stale.
-      * el stage ya está en ``notified_stages`` — dedup ante eventos duplicados.
+      * ``active_route == humano`` — un humano tomó la conversación (p.ej. tras
+        una escalación); no le metemos notificaciones automáticas en su turno.
+      * el stage ya está en ``notified_stages`` DE ESE pedido — dedup ante
+        eventos duplicados. (Multi-pedido: cada ``order_id`` tiene su tracking;
+        un pedido sin entry la crea acá — p.ej. entró directo en ``ready``.)
 
     Si corresponde, fetchea los datos del pedido del order query port (platform,
     R-DIP OK) y los devuelve como slots JSON-safe. NO reserva el stage acá: la
@@ -127,18 +168,19 @@ async def claim_eta_notification_activity(
         )
         return None
 
-    tracking = data.get("eta_tracking")
-    if not isinstance(tracking, dict) or tracking.get("order_id") != order_id:
-        activity.logger.info(
-            "claim_eta_notification: session=%s tracking no coincide con order=%s "
-            "— skip stage=%s", session_id, order_id, stage,
-        )
-        return None
+    orders = _orders_map(data)
+    entry = orders.get(order_id)
+    if entry is None:
+        # Pedido sin tracking previo (stage inicial distinto de `preparing`,
+        # p.ej. movido directo a `ready`): lo damos de alta acá.
+        entry = _empty_entry(order_id)
+        orders[order_id] = entry
+        _write_orders_map(store, session_id, data, orders)
 
-    if stage in (tracking.get("notified_stages") or []):
+    if stage in (entry.get("notified_stages") or []):
         activity.logger.info(
-            "claim_eta_notification: session=%s stage=%s ya notificado — dedup",
-            session_id, stage,
+            "claim_eta_notification: session=%s order=%s stage=%s ya notificado "
+            "— dedup", session_id, order_id, stage,
         )
         return None
 
@@ -192,7 +234,7 @@ async def claim_eta_notification_activity(
 
 @activity.defn(name="record_eta_notification_activity")
 async def record_eta_notification_activity(
-    session_id: str, stage: str, agent_msg: str
+    session_id: str, order_id: str, stage: str, agent_msg: str
 ) -> None:
     """Persiste la notificación enviada en el timeline + reserva el stage.
 
@@ -202,24 +244,16 @@ async def record_eta_notification_activity(
     """
     store = _store()
     data = _safe_read(store, session_id)
-    tracking = data.get("eta_tracking")
-    if not isinstance(tracking, dict):
-        # Defensivo: el bootstrap debería haber inicializado el tracking.
-        tracking = {
-            "order_id": "",
-            "current_stage": None,
-            "notified_stages": [],
-            "events": [],
-            "started_at_ms": int(time.time() * 1000),
-        }
+    orders = _orders_map(data)
+    entry = orders.get(order_id) or _empty_entry(order_id)
 
-    notified = list(tracking.get("notified_stages") or [])
+    notified = list(entry.get("notified_stages") or [])
     if stage not in notified:
         notified.append(stage)
-    tracking["notified_stages"] = notified
-    tracking["current_stage"] = stage
+    entry["notified_stages"] = notified
+    entry["current_stage"] = stage
 
-    events = list(tracking.get("events") or [])
+    events = list(entry.get("events") or [])
     events.append(
         {
             "stage": stage,
@@ -230,46 +264,6 @@ async def record_eta_notification_activity(
             "flag": None,
         }
     )
-    tracking["events"] = events
-    data["eta_tracking"] = tracking
-    store.write(session_id, data)
-
-
-@activity.defn(name="record_eta_reply_activity")
-async def record_eta_reply_activity(
-    session_id: str, reply: str, flagged: bool, flag: str | None
-) -> None:
-    """Adjunta la respuesta del cliente al último evento del timeline.
-
-    El mock muestra la respuesta del cliente colgada del stage al que responde
-    (``reply``), y marca ``flagged`` + ``flag`` cuando la pregunta se salió del
-    alcance del agente y se escaló a humano. Si todavía no hay ningún evento
-    (el cliente escribió antes de cualquier notificación), crea uno mínimo.
-    """
-    store = _store()
-    data = _safe_read(store, session_id)
-    tracking = data.get("eta_tracking")
-    if not isinstance(tracking, dict):
-        return  # sin tracking activo — nada que anotar (no debería pasar)
-
-    events = list(tracking.get("events") or [])
-    if not events:
-        events.append(
-            {
-                "stage": tracking.get("current_stage"),
-                "agent_msg": "",
-                "at_ms": int(time.time() * 1000),
-                "reply": reply,
-                "flagged": flagged,
-                "flag": flag,
-            }
-        )
-    else:
-        last = dict(events[-1])
-        last["reply"] = reply
-        last["flagged"] = flagged
-        last["flag"] = flag
-        events[-1] = last
-    tracking["events"] = events
-    data["eta_tracking"] = tracking
-    store.write(session_id, data)
+    entry["events"] = events
+    orders[order_id] = entry
+    _write_orders_map(store, session_id, data, orders)

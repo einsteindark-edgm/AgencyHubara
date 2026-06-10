@@ -117,7 +117,13 @@ def _event_to_tracked(ev: dict[str, Any], *, now: datetime) -> dict[str, Any]:
 
 
 def _iter_eta_sessions(vault_dir: Path) -> list[tuple[str, dict[str, Any]]]:
-    """Devuelve [(session_id, eta_tracking)] de las sesiones con seguimiento ETA."""
+    """Devuelve [(session_id, tracking_entry)] — UNA tupla POR PEDIDO trackeado.
+
+    Multi-pedido (shape v2): ``eta_tracking.orders`` es un mapa por
+    ``order_id``; una sesión con N pedidos en tránsito aporta N tuplas.
+    Compat shape v1 (un solo pedido top-level con ``order_id`` en la raíz):
+    se trata como un mapa de una entry.
+    """
     out: list[tuple[str, dict[str, Any]]] = []
     if not vault_dir.exists():
         return out
@@ -138,7 +144,14 @@ def _iter_eta_sessions(vault_dir: Path) -> list[tuple[str, dict[str, Any]]]:
         if not isinstance(meta, dict):
             continue
         tracking = meta.get("eta_tracking")
-        if isinstance(tracking, dict) and tracking.get("order_id"):
+        if not isinstance(tracking, dict):
+            continue
+        orders = tracking.get("orders")
+        if isinstance(orders, dict):  # shape v2
+            for oid, t in sorted(orders.items()):
+                if isinstance(t, dict) and oid:
+                    out.append((entry.name, t))
+        elif tracking.get("order_id"):  # shape v1 legacy
             out.append((entry.name, tracking))
     return out
 

@@ -1,24 +1,29 @@
-"""``HubaraEtaSessionWorkflow`` — sesión long-lived del Agente ETA.
+"""``HubaraEtaSessionWorkflow`` — notificador puro de estado de pedidos.
 
-Notifica al cliente cada cambio de estado de su pedido y atiende sus
-respuestas dentro de su rol (escalando a humano lo que se sale de él).
+**Cambio de comportamiento (2026-06-10, "convivencia ETA/Sales")**: el ETA ya
+NO conversa ni posee la ruta. Empuja notificaciones de cambio de estado al
+hilo de WhatsApp del cliente SIN robar el turno — Sales (o humano) siempre es
+quien responde los inbounds; las preguntas de entrega las contesta Sales con
+su tool ``check_order_status``. El manifest ya no declara ``owns_route`` (las
+sesiones legacy con ``active_route=eta`` caen a Sales por el fallback del
+router — ruta no registrada).
 
-Disparadores:
-  * **Outbound** (``notify_stage_change`` signal): lo emite el dispatcher cuando
-    la orders API publica ``OrderStageChangedEvent``. El workflow genera, vía el
-    LLM (con plantillas cacheadas del workspace), el mensaje de la etapa y lo
-    envía por WhatsApp.
-  * **Inbound** (``send_message`` signal): lo emite ``LoadOrStartSalesSession``
-    cuando el cliente responde y ``active_route == eta``. El agente responde si
-    la pregunta está en su alcance, o escala a humano / transfiere a Ventas.
+Disparador único (``notify_stage_change`` signal / start): lo emite el
+dispatcher cuando la orders API publica ``OrderStageChangedEvent``. El workflow
+genera, vía el LLM (plantillas cacheadas del workspace) o el template de
+utilidad de Meta (fuera de ventana 24h), el mensaje de la etapa y lo envía.
 
-Arranque: el dispatcher hace ``start_workflow_with_replace`` con
-``EtaSessionInput(session_id, order_id, to_stage="preparing")``. ``run`` marca
-``active_route=eta`` y procesa la notificación inicial.
+Multi-pedido: una sola sesión de workflow por cliente notifica TODOS sus
+pedidos en tránsito (el payload de cada signal trae su ``order_id``; el
+tracking por pedido vive en ``metadata.eta_tracking.orders``).
+
+NOTA DE DEPLOY: el shape conversacional anterior (signal ``send_message`` +
+``run_agent_turn`` de inbounds) se eliminó SIN ``workflow.patched()`` — drenar
+(terminate) los workflows ``eta-*`` en vuelo antes del rollout, como el
+precedente PR-D de remarketing.
 
 DEHA: workflow = driving adapter. Toda I/O vía ``workflow.execute_activity``
-(R-DET / R-HEARTBEAT). Greenfield → sin ``workflow.patched()`` (no hay histories
-pre-deploy que preservar).
+(R-DET / R-HEARTBEAT).
 """
 from __future__ import annotations
 
@@ -34,25 +39,19 @@ with workflow.unsafe.imports_passed_through():
     from src.platform.session_history.activities import (
         persist_assistant_message_activity,
     )
-    from src.platform.temporal.dispatcher import (
-        start_or_signal_sales_workflow_activity,
-    )
     from src.platform.temporal.retry_policies import _LLM_OPTIONS
     from src.platform.whatsapp.activities import (
-        send_typing_indicator_activity,
         send_whatsapp_message_activity,
         send_whatsapp_template_activity,
     )
     from src.platform.workflow_helpers import (
         PendingMessage,
-        coalesce_pending,
         run_agent_turn,
     )
     from src.plugins.eta.agent.eta.activities import (
         bootstrap_eta_session_activity,
         claim_eta_notification_activity,
         record_eta_notification_activity,
-        record_eta_reply_activity,
         start_eta_tracking_activity,
     )
     from src.plugins.eta.agent.eta.contracts import EtaSessionInput
@@ -83,25 +82,12 @@ class HubaraEtaSessionWorkflow:
     """Sesión de notificaciones de estado de pedido (Agente ETA)."""
 
     def __init__(self) -> None:
-        self._pending: list[PendingMessage] = []           # inbounds del cliente
         self._pending_stages: list[dict] = []              # cambios de estado a notificar
         self._last_response: str | None = None
         self._processing = False
         self._force_shutdown = False
 
     # ── Signals ──────────────────────────────────────────────────────────
-    @workflow.signal
-    async def send_message(
-        self,
-        message: str,
-        media: list[str] | None = None,
-        plugin_context: list[str] | None = None,
-    ) -> None:
-        """Inbound del cliente (lo rutea ``LoadOrStartSalesSession``)."""
-        self._pending.append(
-            PendingMessage(message=message, media=media, plugin_context=plugin_context)
-        )
-
     @workflow.signal
     async def notify_stage_change(self, payload: dict) -> None:
         """Cambio de estado del pedido (lo emite el dispatcher por el manifest).
@@ -126,8 +112,8 @@ class HubaraEtaSessionWorkflow:
             bootstrap_eta_session_activity, input, **_LLM_OPTIONS
         )
 
-        # Marca la conversación como ETA-owned (route=eta + tag=ETA) e inicializa
-        # el tracking del pedido.
+        # Inicializa el tracking del pedido seed en el mapa multi-pedido.
+        # NO toca active_route/tag — el ETA no posee la conversación.
         await workflow.execute_activity(
             start_eta_tracking_activity,
             args=[session.session_id, input.order_id],
@@ -145,7 +131,7 @@ class HubaraEtaSessionWorkflow:
         while True:
             try:
                 await workflow.wait_condition(
-                    lambda: bool(self._pending) or bool(self._pending_stages),
+                    lambda: bool(self._pending_stages),
                     timeout=_IDLE_TIMEOUT,
                 )
             except asyncio.TimeoutError:
@@ -154,7 +140,7 @@ class HubaraEtaSessionWorkflow:
                 )
                 return
 
-            # 1) Notificaciones de cambio de estado (outbound) primero.
+            # Notificaciones de cambio de estado (única responsabilidad).
             while self._pending_stages and not self._force_shutdown:
                 ev = self._pending_stages.pop(0)
                 stage = str(ev.get("to_stage", ""))
@@ -170,19 +156,14 @@ class HubaraEtaSessionWorkflow:
                         f"stage={stage} err={exc!r}"
                     )
 
-            # 2) Inbounds del cliente.
-            if self._pending and not self._force_shutdown:
-                turn_count += 1
-                await self._handle_inbound(session)
-
             if self._force_shutdown:
                 workflow.logger.info(
-                    f"ETA cerrando sesión {session.session_id} (escalación/transferencia)."
+                    f"ETA cerrando sesión {session.session_id} (escalación)."
                 )
                 return
 
             if turn_count >= _CONTINUE_AS_NEW_AFTER_TURNS and not (
-                self._pending or self._pending_stages
+                self._pending_stages
             ):
                 workflow.continue_as_new(
                     EtaSessionInput(
@@ -214,12 +195,12 @@ class HubaraEtaSessionWorkflow:
             return  # ruta humano / order distinto / ya notificado → skip
 
         if facts.get("in_service_window"):
-            await self._notify_free_form(session, stage, facts)
+            await self._notify_free_form(session, order_id, stage, facts)
         else:
-            await self._notify_template(session, stage, facts)
+            await self._notify_template(session, order_id, stage, facts)
 
     async def _notify_free_form(
-        self, session: SessionInput, stage: str, facts: dict
+        self, session: SessionInput, order_id: str, stage: str, facts: dict
     ) -> None:
         """Notificación DENTRO de ventana: el LLM genera el mensaje (cacheado)."""
         synthetic = build_stage_notification_turn(
@@ -252,12 +233,12 @@ class HubaraEtaSessionWorkflow:
             )
             await workflow.execute_activity(
                 record_eta_notification_activity,
-                args=[session.session_id, stage, result.final_content],
+                args=[session.session_id, order_id, stage, result.final_content],
                 **_FAST,
             )
 
     async def _notify_template(
-        self, session: SessionInput, stage: str, facts: dict
+        self, session: SessionInput, order_id: str, stage: str, facts: dict
     ) -> None:
         """Notificación FUERA de ventana: template de utilidad aprobado.
 
@@ -283,95 +264,9 @@ class HubaraEtaSessionWorkflow:
             record_eta_notification_activity,
             args=[
                 session.session_id,
+                order_id,
                 stage,
                 f"[Notificación de estado enviada por template: {status_label}]",
             ],
             **_FAST,
         )
-
-    async def _handle_inbound(self, session: SessionInput) -> None:
-        """Procesa la(s) respuesta(s) del cliente: responder o escalar/transferir."""
-        batch = list(self._pending)
-        self._pending.clear()
-        msg = coalesce_pending(batch)
-
-        try:
-            await workflow.execute_activity(
-                send_typing_indicator_activity,
-                session.session_id,
-                start_to_close_timeout=timedelta(seconds=5),
-                retry_policy=RetryPolicy(maximum_attempts=1),
-            )
-        except Exception:  # noqa: BLE001 — best-effort
-            pass
-
-        result = await run_agent_turn(session, msg)
-        self._last_response = result.final_content
-
-        # TEXTO DESCARTADO (mismo bug del loop compartido run_agent_turn,
-        # run ddd0d472): el texto client-facing que el LLM emite JUNTO con una
-        # tool call se perdía — solo viajaba final_content. Lo enviamos como
-        # burbuja antes del final_content. A diferencia del resto de este archivo
-        # (greenfield, sin gating), usamos workflow.patched() porque el agente ETA
-        # ya está en prod con idle 7d → puede haber histories en vuelo sin estos
-        # sends. Mismo patch id que sales/remarketing (un solo deprecate cubre los 3).
-        if (
-            result.pre_tool_messages
-            and not self._force_shutdown
-            and workflow.patched("send-pre-tool-messages-v1")
-        ):
-            for pre_msg in result.pre_tool_messages:
-                await workflow.execute_activity(
-                    send_whatsapp_message_activity,
-                    args=[session.session_id, pre_msg],
-                    start_to_close_timeout=timedelta(seconds=90),
-                    retry_policy=RetryPolicy(maximum_attempts=2),
-                )
-                await workflow.execute_activity(
-                    persist_assistant_message_activity,
-                    args=[session.session_id, pre_msg],
-                    **_FAST,
-                )
-
-        if result.final_content and not self._force_shutdown:
-            await workflow.execute_activity(
-                send_whatsapp_message_activity,
-                args=[session.session_id, result.final_content],
-                start_to_close_timeout=timedelta(seconds=90),
-                retry_policy=RetryPolicy(maximum_attempts=2),
-            )
-            await workflow.execute_activity(
-                persist_assistant_message_activity,
-                args=[session.session_id, result.final_content],
-                **_FAST,
-            )
-
-        # Anota la respuesta del cliente en el timeline (la dashboard la muestra
-        # colgada del último stage; flagged=True cuando se escaló a humano).
-        flagged = result.escalation_decision is not None
-        flag = result.escalation_decision.summary if result.escalation_decision else None
-        await workflow.execute_activity(
-            record_eta_reply_activity,
-            args=[session.session_id, msg.message, flagged, flag],
-            **_FAST,
-        )
-
-        # Transferencia a Ventas: el cliente quiere comprar más. La tool ya
-        # escribió route=ventas; aseguramos el Sales workflow corriendo + handoff.
-        if result.transfer_decision is not None:
-            await workflow.execute_activity(
-                start_or_signal_sales_workflow_activity,
-                result.transfer_decision,
-                start_to_close_timeout=timedelta(seconds=30),
-                retry_policy=RetryPolicy(maximum_attempts=3),
-            )
-            self._force_shutdown = True
-
-        # Escalación a humano: la tool ya escribió route=humano + tag=HUMANO.
-        # El mensaje de despedida del LLM ya se envió arriba; cerramos.
-        if result.escalation_decision is not None:
-            workflow.logger.info(
-                f"ETA sesión {session.session_id} escalada a humano "
-                f"(reason={result.escalation_decision.reason_category})."
-            )
-            self._force_shutdown = True
