@@ -1,0 +1,30 @@
+# Ownership de entities centrales — mapa TRANSITORIO (F3 del plan fable).
+#
+# Mientras las entities de dominio vivan en src/entities/ (central), este
+# archivo declara a qué plugin PERTENECE cada una — definido como el plugin
+# que poseerá la entity cuando migre a plugins/<id>/frontend/entities/ (F4),
+# que coincide con el dueño del API que la entity debería consumir.
+#
+# Lo consumen los gates P-22 (un plugin no importa la entity de otro sin un
+# `consumes:` declarado) y P-23 (los literales /api/<x> en el código de una
+# entity/plugin pertenecen a su owner) en
+# src/test/architecture/test_plugin_entity_ownership.arch.test.ts.
+#
+# Al migrar una entity en F4: borrá su línea de acá. Cuando el archivo quede
+# vacío, src/entities/ está vacío (P-11) y este archivo se elimina.
+#
+# NOTA eval-*: el owner es agents_admin (el plano de gestión que las usa y
+# las recibirá en F4/F5). Que HOY llamen /api/chats/evals es exactamente la
+# violación que P-23 registra como deuda conocida hasta F5.
+
+ads-campaign: ads
+agent: agents_admin
+catalog-sync: catalog
+chat: chats
+eval-candidate: agents_admin
+eval-trend: agents_admin
+handoff: chats
+message: chats
+order: orders
+session: chats
+tracked-order: eta
