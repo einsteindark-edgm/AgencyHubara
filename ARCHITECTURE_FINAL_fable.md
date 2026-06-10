@@ -292,6 +292,14 @@ cd frontend_dashboard && npm run plugins:sync && npx tsc -b && \
 
 Otras micro-lecciones del refactor: BSD `sed` no soporta `\b` (usar `perl -pi -e`) · `git mv` necesita `mkdir -p` del directorio destino · el meta-gate corre contra `origin/main` — en branches con PROTECTED tocados, TODA corrida local de arch-tests lleva `ARCH_CHANGE_APPROVED=1` · los smokes de toggle se hacen con render filtrado + restaurar el render full ANTES de commitear (el drift test compara el artefacto canónico).
 
+### L-1 · Cast HTTP con timeout dimensionado para el hop local, no para el upstream del provider (2026-06-10, validación en vivo)
+
+- **Síntoma:** `PATCH /api/chats/order-actions/{id}/schedule` → **502** en el canvas al agendar un pedido (chat en humano)… pero el pedido SÍ se agendó: labels cambiaron y el Agente ETA arrancó. La UI reportó fallo de un comando que se aplicó.
+- **Causa raíz:** el cast chats→orders (`_forward_patch`) tenía `timeout=15s` razonado como "self-call loopback = rápido". Pero el timeout efectivo de un cast lo dicta la CADENA del provider: orders habla con Medusa cloud (30s/request × 3 retries tenacity ≈ 95s peor caso, un GET simple medido en 7.6s) y `schedule` encadena varias llamadas. httpx abortó a los 15s → uvicorn **canceló el request interno** (su access-log ni aparece) → el `asyncio.create_task(_emit_stage_changed_event)` del provider nunca corrió. El cambio en Medusa ya estaba aplicado; el **reconcile** lo detectó y emitió el evento (`source_worker=reconcile` en el log) — la red de seguridad idempotente convergió, pero el usuario vio un error falso. Segundo hueco: TODO error de transporte (incluido timeout) se traducía a 502 "no respondió", afirmando implícitamente que el comando no pasó.
+- **Fix aplicado:** branch `fix/validation-l1-cast-timeout` — timeout default 120s + override `ORDERS_CAST_TIMEOUT_S`; `ConnectError/ConnectTimeout` → 502 "el comando NO se aplicó" (única garantía real), `ReadTimeout/WriteTimeout/PoolTimeout` → **504** "PUEDE haberse aplicado — refrescá antes de reintentar". Tests unit del cast creados (no existían — el F4 nació sin ellos).
+- **Regla para el skill:** al escribir un cast HTTP, dimensioná el timeout por la cadena completa del provider (su upstream + sus retries), nunca por el hop local. Y nunca traduzcas un timeout a un error que afirme "no pasó nada": timeout = resultado DESCONOCIDO (504 + mensaje honesto); solo el fallo de conexión garantiza no-aplicación (502). Todo cast nuevo nace con tests de sus 4 paths: éxito, error-del-provider passthrough, timeout, no-disponible.
+- **Guard:** `tests/plugins/test_chats_order_actions_cast.py` (9 tests: timeout→504 honesto, connect→502, passthrough, default ≥ cadena Medusa).
+
 <!-- AÑADIR NUEVAS LECCIONES ARRIBA DE ESTA LÍNEA, NUMERADAS L-1, L-2, ... -->
 
 ---

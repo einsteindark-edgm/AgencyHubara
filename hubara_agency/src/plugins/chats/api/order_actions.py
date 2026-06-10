@@ -29,6 +29,14 @@ Reglas del cast (por qué está hecho así):
   FastAPI sirve ambos routers — async, sin deadlock). IPv4 explícito para
   evitar la carrera localhost IPv4/::1. Override: `ORDERS_API_BASE` (p.ej.
   si orders viviera en otro servicio).
+* **Timeout dimensionado por el UPSTREAM del provider, no por el hop local**
+  (lección L-1): orders habla con Medusa cloud — 30s/request × 3 retries
+  tenacity, y `schedule` encadena varias llamadas. Default 120s, override
+  `ORDERS_CAST_TIMEOUT_S`.
+* **Timeout ≠ "no pasó nada"**: si el provider no respondió a tiempo, el
+  comando PUEDE haberse aplicado igual (el request interno sigue/avanzó
+  server-side; el reconcile converge el estado). Eso se reporta 504 con
+  mensaje honesto. Solo un fallo de CONEXIÓN garantiza no-aplicación → 502.
 """
 from __future__ import annotations
 
@@ -40,7 +48,14 @@ from fastapi import APIRouter, Body, HTTPException, Path
 
 router = APIRouter()
 
-_TIMEOUT_S = 15.0
+# Peor caso de UNA llamada Medusa del provider: 30s × 3 retries tenacity
+# (+ backoff) ≈ 95s; `schedule` encadena varias. 15s (el valor original,
+# pensado para loopback) abortaba comandos que SÍ se aplicaban (L-1).
+_DEFAULT_TIMEOUT_S = 120.0
+
+
+def _timeout_s() -> float:
+    return float(os.environ.get("ORDERS_CAST_TIMEOUT_S", _DEFAULT_TIMEOUT_S))
 
 
 def _orders_base() -> str:
@@ -51,14 +66,34 @@ async def _forward_patch(path: str, body: dict[str, Any]) -> dict[str, Any]:
     """PATCH al contrato publicado de orders; errores → HTTP claros del cast."""
     url = f"{_orders_base()}{path}"
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT_S) as client:
+        async with httpx.AsyncClient(timeout=_timeout_s()) as client:
             resp = await client.patch(url, json=body)
+    except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+        # Nunca conectó → garantizado que el comando NO se aplicó.
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"cast chats→orders: provider no disponible ({exc.__class__.__name__}); "
+                f"el comando NO se aplicó. ¿`orders` está habilitado y sirviendo? "
+                f"(depends_on lo exige al boot)"
+            ),
+        ) from exc
+    except httpx.TimeoutException as exc:
+        # Conectó pero no respondió a tiempo → resultado DESCONOCIDO: el
+        # request interno pudo completar server-side (L-1). No afirmar fallo.
+        raise HTTPException(
+            status_code=504,
+            detail=(
+                f"cast chats→orders: el provider no respondió a tiempo "
+                f"({exc.__class__.__name__}). El comando PUEDE haberse aplicado — "
+                f"refrescá el estado del pedido antes de reintentar."
+            ),
+        ) from exc
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=502,
             detail=(
-                f"cast chats→orders: el provider no respondió ({exc.__class__.__name__}). "
-                f"¿`orders` está habilitado y sirviendo? (depends_on lo exige al boot)"
+                f"cast chats→orders: fallo de transporte ({exc.__class__.__name__})."
             ),
         ) from exc
     if resp.status_code >= 400:
