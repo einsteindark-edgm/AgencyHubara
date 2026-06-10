@@ -430,8 +430,35 @@ def _serialize_command_result(result) -> dict[str, Any]:
 _emit_tasks: set[asyncio.Task] = set()
 
 
+async def _start_durable_emit(order_id: str, to_stage: str) -> None:
+    """L-8b: la emisión es un workflow Temporal (EmitOrderStageWorkflow en
+    queue-orders-reconcile) — durable, con retries y visible en la UI :8233.
+    Reemplaza el create_task best-effort (L-7). El start tarda ~ms; si el
+    MISMO (order, stage) ya está en vuelo, Temporal lo dedupea por id."""
+    from temporalio.client import WorkflowAlreadyStartedError
+
+    from src.platform.plugin_manifest import get_task_queue
+    from src.platform.temporal.client import get_temporal_client
+
+    try:
+        client = await get_temporal_client()
+        await client.start_workflow(
+            "EmitOrderStageWorkflow",
+            {"order_id": order_id, "to_stage": to_stage},
+            id=f"emit-stage-{order_id.lstrip('#')}-{to_stage}",
+            task_queue=get_task_queue("orders", "reconcile"),
+        )
+    except WorkflowAlreadyStartedError:
+        log.info("eta_emit: emisión ya en vuelo order=%s stage=%s", order_id, to_stage)
+    except Exception:  # noqa: BLE001 — la transición YA se aplicó; no romper el 200
+        log.warning(
+            "eta_emit: no pude ARRANCAR la emisión durable order=%s stage=%s",
+            order_id, to_stage, exc_info=True,
+        )
+
+
 def _spawn_emit(order_id: str, to_stage: str) -> None:
-    task = asyncio.create_task(_emit_stage_changed_event(order_id, to_stage))
+    task = asyncio.create_task(_start_durable_emit(order_id, to_stage))
     _emit_tasks.add(task)
     task.add_done_callback(_emit_tasks.discard)
 
