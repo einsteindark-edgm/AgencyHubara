@@ -40,6 +40,13 @@ agent:
     - name: eta
       module: src.plugins.eta.workers.eta
       task_queue: queue-eta-agent
+      # Route registry (F6 — platform/routing.py): este worker POSEE la ruta
+      # de conversación `eta`. El ruteo de inbounds (chats) la resuelve del
+      # registry — ningún agente nombra a otro, y el template del workflow_id
+      # vive UNA sola vez acá (el gate de conformance ata las transitions de
+      # otros manifests a este prefijo — mata PM-2).
+      owns_route: eta
+      route_workflow_id_template: "eta-{session_id}"
       dashboard:
         display_name: Asistente de Seguimiento
         role: Notifica al cliente cada cambio de estado de su pedido por WhatsApp

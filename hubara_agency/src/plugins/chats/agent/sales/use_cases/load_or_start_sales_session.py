@@ -47,12 +47,12 @@ from temporalio.service import RPCError
 from exoclaw_temporal.config import WorkspaceConfig
 
 from src.platform.constants import (
-    ROUTE_ETA,
     ROUTE_HUMANO,
     ROUTE_REMARKETING,
     ROUTE_VENTAS,
 )
 from src.platform.plugin_manifest import get_task_queue
+from src.platform.routing import resolve_route_workflow_id
 from src.plugins.chats.agent.sales.context import build_bogota_context_string
 from src.plugins.chats.agent.sales.contracts import SalesSessionInput
 from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
@@ -166,27 +166,35 @@ class LoadOrStartSalesSession:
         # 2. Conectar al cluster.
         client = await self._client_factory()
 
-        # 2.5. Ruta ETA: el Agente de Seguimiento maneja la conversación
-        # (notificaciones de estado de pedido). El workflow `eta-{session_id}`
-        # lo arrancó el dispatcher declarativo cuando el pedido entró en
-        # `preparing` (orders → OrderStageChangedEvent). Acá SOLO le signaleamos
-        # la respuesta del cliente — signal por NOMBRE, sin importar
-        # `HubaraEtaSessionWorkflow` (igual patrón que remarketing; intra-chats,
-        # pero el handle-by-id no necesita la clase). Si el workflow ETA ya
-        # cerró (entrega vieja, idle 7d), caemos a Sales: el cliente abrió una
-        # conversación nueva no relacionada al seguimiento.
-        if active_route == ROUTE_ETA:
-            workflow_id = f"eta-{session_id}"
-            logger.info("Routing webhook to ETA Agent", workflow_id=workflow_id)
+        # 2.5. Rutas de PLUGIN (route registry — `platform/routing.py`, F6):
+        # si un plugin-agente DECLARÓ poseer `active_route` en su manifest
+        # (`owns_route` + `route_workflow_id_template`), el inbound se
+        # signalea a SU workflow de sesión. Genérico: chats no nombra a
+        # ningún agente (antes este branch comparaba contra una constante de
+        # platform y armaba el workflow id a mano, duplicado con el manifest
+        # de orders — PM-2/AP-10; el gate P-18 prohíbe re-hardcodearlo).
+        # Si la ruta no resuelve (plugin apagado → registry la omite, igual
+        # espíritu que P-7) o el workflow dueño ya cerró (entrega vieja,
+        # idle 7d), caemos a Sales: conversación nueva no relacionada.
+        plugin_route_handle = None
+        routed_workflow_id = resolve_route_workflow_id(active_route, session_id)
+        if routed_workflow_id is not None:
+            logger.info(
+                "Routing webhook to plugin-owned route",
+                route=active_route,
+                workflow_id=routed_workflow_id,
+            )
             plugin_context = None
             try:
-                handle = client.get_workflow_handle(workflow_id)
+                handle = client.get_workflow_handle(routed_workflow_id)
                 desc = await handle.describe()
                 if desc.status != WorkflowExecutionStatus.RUNNING:
-                    raise RuntimeError("ETA workflow is no longer running")
+                    raise RuntimeError("route-owner workflow is no longer running")
+                plugin_route_handle = handle
             except (RPCError, RuntimeError):
                 logger.warning(
-                    "ETA workflow not found or finished, falling back to Sales"
+                    "Route-owner workflow not found or finished, falling back to Sales",
+                    route=active_route,
                 )
                 active_route = ROUTE_VENTAS
 
@@ -252,7 +260,7 @@ class LoadOrStartSalesSession:
                 active_route = ROUTE_VENTAS
 
         # 4. Caso default (o fallback): rutear a Sales.
-        if active_route not in (ROUTE_REMARKETING, ROUTE_ETA):
+        if plugin_route_handle is None and active_route != ROUTE_REMARKETING:
             workflow_id = f"session-{session_id}"
             logger.info("Routing webhook to Sales Agent", workflow_id=workflow_id)
             # Sales workflow class import is intra-agent (sales/use_cases →

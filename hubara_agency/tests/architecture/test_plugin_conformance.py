@@ -167,6 +167,82 @@ def test_p16_worker_task_queue_self_reference_matches_dir() -> None:
 
 
 # ----------------------------------------------------------------------------
+# P-18 · P-ROUTE — route registry declarativo (PM-2 / AP-10)
+# ----------------------------------------------------------------------------
+
+
+def test_p18_route_registry_resolves_declared_routes() -> None:
+    """El registry (platform/routing) construye desde los manifests reales:
+    rutas únicas, no-core, template con {session_id}. `eta` resuelve a su
+    dueño declarado."""
+    from src.platform.routing import _build_registry
+
+    registry = _build_registry(None)  # None = todos (validación del universo)
+    assert "eta" in registry, "eta/plugin.yaml debe declarar owns_route: eta"
+    target = registry["eta"]
+    assert (target.plugin_id, target.worker_name) == ("eta", "eta")
+    assert target.workflow_id("wa_123") == "eta-wa_123"
+
+
+def test_p18_transitions_match_route_owner_template() -> None:
+    """PM-2 (el coupling tolerante más peligroso): el template del workflow_id
+    de la ruta vive UNA vez (en el manifest del dueño). Toda transition de
+    CUALQUIER manifest que targetee a un worker dueño de ruta debe usar el
+    MISMO prefijo — si drifta, el inbound rutearía a un workflow inexistente
+    y caería a Sales EN SILENCIO."""
+    owners: dict[tuple[str, str], str] = {}
+    for pid, manifest in all_manifests():
+        for w in (manifest.get("agent") or {}).get("workers") or []:
+            if isinstance(w, dict) and w.get("owns_route"):
+                tpl = str(w.get("route_workflow_id_template") or "")
+                owners[(pid, str(w.get("name")))] = tpl.split("{")[0]
+
+    bad: list[str] = []
+    for pid, manifest in all_manifests():
+        for w in (manifest.get("agent") or {}).get("workers") or []:
+            if not isinstance(w, dict):
+                continue
+            for t in w.get("transitions") or []:
+                action = (t or {}).get("action") or {}
+                key = (
+                    str(action.get("target_plugin") or pid),
+                    str(action.get("target_worker") or ""),
+                )
+                if key not in owners:
+                    continue
+                tpl = str(action.get("workflow_id_template") or "")
+                prefix = tpl.split("{")[0]
+                if prefix != owners[key]:
+                    bad.append(
+                        f"{pid}: transition {t.get('id')!r} → {key[0]}/{key[1]} usa "
+                        f"prefijo {prefix!r} ≠ {owners[key]!r} declarado por el dueño"
+                    )
+    assert not bad, "Template de ruta drifteado (P-18 / PM-2):\n  " + "\n  ".join(bad)
+
+
+def test_p18_inbound_routing_has_no_hardcoded_route_prefixes() -> None:
+    """El ruteo de inbounds de chats NO hardcodea el workflow-id de ninguna
+    ruta de plugin — debe resolver TODO por el registry. (El reemplazo del
+    parche P-18 transitorio: ya no atamos dos copias; prohibimos la segunda.)"""
+    from src.platform.routing import _build_registry
+
+    use_case = (
+        BE_PLUGINS / "chats" / "agent" / "sales" / "use_cases" /
+        "load_or_start_sales_session.py"
+    )
+    source = use_case.read_text(encoding="utf-8")
+    bad: list[str] = []
+    for route, target in _build_registry(None).items():
+        prefix = target.workflow_id_template.split("{")[0]
+        if prefix and f'"{prefix}' in source.replace(f'f"{prefix}', f'"{prefix}'):
+            bad.append(
+                f"ruta {route!r}: el prefijo {prefix!r} aparece hardcodeado en "
+                f"{use_case.name} — usá resolve_route_workflow_id (P-18)"
+            )
+    assert not bad, "\n  ".join(bad)
+
+
+# ----------------------------------------------------------------------------
 # P-21 · P-SELFGATE — todo worker se auto-gatea con ensure_plugin_enabled
 # ----------------------------------------------------------------------------
 
