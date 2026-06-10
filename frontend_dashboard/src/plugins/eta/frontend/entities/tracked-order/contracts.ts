@@ -17,8 +17,21 @@ export const trackedStageSchema = z.enum([
   "delivered",
 ]);
 
+/**
+ * Stage de un EVENTO del timeline. Superset del stage del pedido: el agente
+ * también notifica cancelaciones (`cancelled`), así que el historial puede
+ * contenerlas aunque el pedido ya no esté cancelado (ej. re-activado) — el
+ * tablero igual NO lista pedidos cuyo stage ACTUAL sea cancelled (filtra el
+ * backend). Sin este valor, UN evento cancelled tumbaba el parse de TODA la
+ * respuesta y la sección quedaba vacía en silencio (L-10).
+ */
+export const trackedEventStageSchema = z.enum([
+  ...trackedStageSchema.options,
+  "cancelled",
+]);
+
 export const trackedEventSchema = z.object({
-  stage: trackedStageSchema,
+  stage: trackedEventStageSchema,
   time: z.string(),
   date: z.string(),
   note: z.string().nullable().optional(),

@@ -6,6 +6,14 @@
 
 export type TrackedStage = "preparing" | "ready" | "shipping" | "out" | "delivered";
 
+/**
+ * Stage de un evento del timeline: superset del stage de pedido — el agente
+ * también notifica cancelaciones. El stage ACTUAL de un pedido del tablero
+ * nunca es `cancelled` (los filtra el backend), pero su historial sí puede
+ * contener esa notificación.
+ */
+export type TrackedEventStage = TrackedStage | "cancelled";
+
 export interface TrackedStageMeta {
   key: TrackedStage;
   label: string;
@@ -21,7 +29,7 @@ export const TRACKED_STAGES: TrackedStageMeta[] = [
 ];
 
 export interface TrackedEvent {
-  stage: TrackedStage;
+  stage: TrackedEventStage;
   time: string;
   date: string;
   note?: string;

@@ -10,6 +10,7 @@
 import { useMemo } from "react";
 
 import { usePluginHost, useSelection } from "@/shared/lib";
+import { Icon } from "@/shared/ui";
 
 import { useTrackedOrders } from "@plugins/eta/frontend/entities/tracked-order";
 
@@ -25,12 +26,31 @@ export function EtaSection() {
   // F7: chrome + selección llegan por el PluginHost (contrato genérico).
   const { showSidebar, showInspector } = usePluginHost();
   const [selectedTrackedId, setSelectedTrackedId] = useSelection("eta");
-  const { data: tracked = [] } = useTrackedOrders();
+  // `isError` SE MUESTRA (no se traga): con el default `= []`, un fallo de
+  // fetch o de validación Zod vaciaba el tablero en silencio y parecía "no hay
+  // pedidos" (L-10 — un evento `cancelled` fuera del enum vació la sección).
+  const { data: tracked = [], isError } = useTrackedOrders();
   const f = useEtaFilters(tracked);
   const selected = useMemo(
     () => tracked.find((o) => o.id === selectedTrackedId) ?? null,
     [tracked, selectedTrackedId],
   );
+
+  if (isError) {
+    return (
+      <main className="eta-canvas">
+        <div className="eta-empty">
+          <span className="ee-ico"><Icon.alert /></span>
+          <div className="ee-t">No se pudo cargar el seguimiento</div>
+          <div className="ee-s">
+            El backend no respondió o devolvió un formato inesperado.
+            Reintentamos automáticamente cada 5 segundos — si persiste, revisa
+            la consola del navegador y los logs del API.
+          </div>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <>

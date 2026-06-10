@@ -365,6 +365,14 @@ Otras micro-lecciones del refactor: BSD `sed` no soporta `\b` (usar `perl -pi -e
 - **Regla para el skill:** los workflows de sesión viven DÍAS — todo cambio que altere su secuencia de comandos (nuevo `execute_activity`/timer/child, reordenamiento, eliminación) va detrás de `workflow.patched("<feature>-v1")`. La alternativa (drenar/terminate los runs vivos en el rollout) es válida SOLO si el estado real vive fuera del workflow y algo lo revive (acá: `metadata.eta_tracking` + signal_with_start de L-8) — y es una decisión explícita del deploy, no un default. "Los tests pasan" no cubre esta clase: solo un replay de historial viejo la caza.
 - **Guard:** PENDIENTE — candidato P-#: test de replay con `temporalio.worker.Replayer` sobre historiales JSON de runs reales (descargados con `temporal workflow show --output json`) como fixtures de CI.
 
+### L-10 · El dominio creció en el backend y el contrato Zod del frontend quedó atrás — parse estricto sin estado de error = sección vacía en silencio (2026-06-10, validación en vivo)
+
+- **Síntoma:** la sección ETA del dashboard no muestra NADA — ni pedidos ni error — aunque `/api/eta/tracked-orders` responde 200 con 7 pedidos válidos.
+- **Causa raíz (dos mitades):** (1) el agente ETA ahora notifica cancelaciones (PR #54) → el timeline de un pedido puede traer un evento `stage: "cancelled"`, valor que el enum Zod del frontend no aceptaba → `.parse()` rechaza la respuesta ENTERA (un evento mató 7 pedidos). (2) La Page hacía `const { data = [] } = useQuery(...)` SIN mirar `isError` → el fallo de validación se degradó a "tablero vacío", indistinguible de "no hay pedidos". El parse estricto en el boundary es correcto y deliberado — lo que faltó fue actualizar el contrato junto con el dominio y hacer el error VISIBLE.
+- **Fix aplicado:** `trackedEventStageSchema` = stages del tablero + `cancelled` (el stage ACTUAL del pedido sigue estricto — cancelled no se lista, filtra el backend); `TrackedEventStage` en el model; `EtaSection` renderiza estado de error explícito en vez de tablero vacío; test de regresión del contrato (`contracts.test.ts`) + verificación del parse contra la respuesta real del backend.
+- **Regla para el skill:** cuando un cambio de backend agrega un VALOR nuevo a un campo enumerado que viaja al dashboard (stage, status, tipo), el contrato Zod del boundary frontend es parte del MISMO cambio — buscá los `z.enum` que validan ese campo antes de mergear. Y toda Page que consuma un query con default `= []` debe mostrar `isError`: un boundary estricto sin estado de error visible convierte cualquier drift en una sección vacía sin diagnóstico.
+- **Guard:** el test de contrato cubre el valor nuevo; PENDIENTE candidato P-#: derivar los enums compartidos de una fuente única (backend exporta el dominio → codegen o fixture compartida) para que el drift truene en CI, no en producción.
+
 <!-- AÑADIR NUEVAS LECCIONES ARRIBA DE ESTA LÍNEA, NUMERADAS L-1, L-2, ... -->
 
 ---
