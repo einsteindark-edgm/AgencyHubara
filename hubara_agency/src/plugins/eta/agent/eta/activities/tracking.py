@@ -47,7 +47,6 @@ from typing import Any
 from temporalio import activity
 
 from src.platform.config import WORKSPACE_VAULT_DIR
-from src.platform.constants import ROUTE_HUMANO
 from src.platform.state import FilesystemMetadataStore
 from src.platform.whatsapp.window import is_in_service_window
 
@@ -146,12 +145,16 @@ async def claim_eta_notification_activity(
     """Decide si corresponde notificar este cambio de estado y, si sí, devuelve
     los datos vivos del pedido para rellenar el mensaje.
 
-    Devuelve ``None`` (saltar la notificación) cuando:
-      * ``active_route == humano`` — un humano tomó la conversación (p.ej. tras
-        una escalación); no le metemos notificaciones automáticas en su turno.
-      * el stage ya está en ``notified_stages`` DE ESE pedido — dedup ante
-        eventos duplicados. (Multi-pedido: cada ``order_id`` tiene su tracking;
-        un pedido sin entry la crea acá — p.ej. entró directo en ``ready``.)
+    Devuelve ``None`` (saltar la notificación) SOLO cuando el stage ya está en
+    ``notified_stages`` DE ESE pedido — dedup ante eventos duplicados.
+    (Multi-pedido: cada ``order_id`` tiene su tracking; un pedido sin entry la
+    crea acá — p.ej. entró directo en ``ready``.)
+
+    ``active_route == humano`` NO bloquea (L-6, run 19ee6679): el guard venía
+    del modelo viejo donde notificar = tomar el turno conversacional. Hoy la
+    notificación es push informativo puro — y como TODA venta exitosa termina
+    con ``route=humano`` (verificación de pago, terminal por diseño), el guard
+    bloqueaba las notificaciones de TODOS los pedidos vendidos.
 
     Si corresponde, fetchea los datos del pedido del order query port (platform,
     R-DIP OK) y los devuelve como slots JSON-safe. NO reserva el stage acá: la
@@ -160,13 +163,6 @@ async def claim_eta_notification_activity(
     """
     store = _store()
     data = _safe_read(store, session_id)
-
-    if data.get("active_route") == ROUTE_HUMANO:
-        activity.logger.info(
-            "claim_eta_notification: session=%s en ruta humano — skip stage=%s",
-            session_id, stage,
-        )
-        return None
 
     orders = _orders_map(data)
     entry = orders.get(order_id)

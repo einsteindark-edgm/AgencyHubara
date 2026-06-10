@@ -333,6 +333,14 @@ Otras micro-lecciones del refactor: BSD `sed` no soporta `\b` (usar `perl -pi -e
 - **Regla para el skill:** cuando un canal técnico se vuelve visible al usuario (pre-tool text → burbujas), TODO el prompt que asumía que ese canal era invisible queda obsoleto — auditá las instrucciones de "texto de acompañamiento" de cada tool. Y las instrucciones de prompts que piden texto extra ("una línea de transición") son fuente directa de duplicación cuando el componente UI ya trae título/CTA: el default correcto es content VACÍO junto a tool calls.
 - **Guard:** PENDIENTE — candidato: eval de conversación en `evaluator-calibration/` que penalice (a) dos burbujas consecutivas del agente con >70% de similitud, (b) menciones de sistemas internos (Medusa, protocolo, tag, registro) en mensajes al cliente. Por ahora: validación en vivo del operador.
 
+### L-6 · Guard heredado de un modelo viejo bloqueaba el caso de negocio principal (2026-06-10, validación en vivo, run 19ee6679)
+
+- **Síntoma:** mover un pedido de "en preparación" a "listo" arranca el workflow ETA, que queda RUNNING "sin hacer nada": cero notificación al cliente. Log: `claim_eta_notification: en ruta humano — skip`.
+- **Causa raíz:** el claim conservaba el guard `active_route == humano → no notificar`, diseñado para el modelo VIEJO (notificar implicaba que el agente conversacional ETA tomara el turno — pisarle el turno a un humano era incorrecto). Tras L-4 (notificador puro) el guard quedó sin propósito… y se volvió dañino: **toda venta exitosa termina con `route=humano`** (verificación de pago, estado terminal por diseño — el bot no retoma ventas cerradas), así que el guard bloqueaba las notificaciones de TODOS los pedidos vendidos. La feature entera quedaba muerta en su caso de uso principal y los tests seguían verdes (el test `test_claim_skips_when_route_humano` codificaba el guard como comportamiento deseado).
+- **Fix aplicado:** branch `fix/eta-notify-despite-humano` — el claim solo skipea por dedup de stage; la notificación sale siempre (es push informativo, no toma turno). Test invertido a `test_claim_notifies_even_when_route_humano`.
+- **Regla para el skill:** cuando cambies el MODELO de un subsistema (p.ej. "notificar ya no implica poseer el turno"), buscá TODOS los guards que existían por el modelo anterior y re-justificá cada uno bajo el modelo nuevo — un guard sin re-justificar no es conservador, es un bug latente con tests verdes. Preguntate: "¿este check protege algo que todavía existe?". Y al validar, probá el ciclo de negocio COMPLETO (venta → cierre → tracking), no cada pieza aislada: este bug solo aparece encadenando venta exitosa + cambio de stage.
+- **Guard:** `test_claim_notifies_even_when_route_humano` (tests/plugins/eta) — codifica la decisión nueva con el porqué en el docstring.
+
 <!-- AÑADIR NUEVAS LECCIONES ARRIBA DE ESTA LÍNEA, NUMERADAS L-1, L-2, ... -->
 
 ---
