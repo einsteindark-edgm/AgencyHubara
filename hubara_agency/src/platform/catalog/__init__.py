@@ -24,6 +24,13 @@ from src.platform.catalog.errors import (
 from src.platform.catalog.local_snapshot import LocalSnapshotCatalogClient
 from src.platform.catalog.paths import get_max_age_minutes, get_snapshot_dir
 from src.platform.catalog.port import CatalogPort
+from src.platform.catalog.variant_attrs import (
+    VariantAttrs,
+    match_option,
+    normalize_label,
+    parse_variant_tags,
+    split_multi_label,
+)
 
 __all__ = [
     "CatalogError",
@@ -37,7 +44,12 @@ __all__ = [
     "LocalSnapshotCatalogClient",
     "ProductNotFoundError",
     "SearchResult",
+    "VariantAttrs",
     "get_catalog_client",
     "get_max_age_minutes",
     "get_snapshot_dir",
+    "match_option",
+    "normalize_label",
+    "parse_variant_tags",
+    "split_multi_label",
 ]

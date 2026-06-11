@@ -23,6 +23,7 @@ from src.platform.catalog import (
     CatalogUnavailableError,
     ProductNotFoundError,
     SearchResult,
+    parse_variant_tags,
 )
 
 
@@ -207,6 +208,7 @@ class GetProductByHandleTool(ToolBase):
 def _product_summary(p: CatalogProductDTO) -> dict[str, Any]:
     """Version liviana para search_products (sin description larga)."""
     price, currency = _first_price(p)
+    attrs = parse_variant_tags(p.tags)
     return {
         "id": p.id,
         "handle": p.handle,
@@ -216,17 +218,25 @@ def _product_summary(p: CatalogProductDTO) -> dict[str, Any]:
         "in_stock": True,  # v1: asumimos True. Stock real-time es follow-up.
         "thumbnail_url": p.thumbnail,
         "tags": p.tags,
+        # Listas CERRADAS ya parseadas de los tags (caso ep_010: el LLM recitaba
+        # "14 aromas y 10 colores" parseando mal los prefijos). Estos son LOS
+        # aromas/colores que existen — cualquier otro es invento.
+        "aromas": attrs.aromas,
+        "colors": attrs.colors,
     }
 
 
 def _product_full(p: CatalogProductDTO) -> dict[str, Any]:
     """Version completa para get_product_by_handle."""
+    attrs = parse_variant_tags(p.tags)
     return {
         "id": p.id,
         "handle": p.handle,
         "title": p.title,
         "description": p.description,
         "thumbnail": p.thumbnail,
+        "aromas": attrs.aromas,
+        "colors": attrs.colors,
         "variants": [
             {
                 "id": v.id,

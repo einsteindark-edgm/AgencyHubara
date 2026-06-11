@@ -1336,9 +1336,14 @@ class PresentVariantPickerTool(ToolBase):
     agregamos un aroma nuevo al catálogo y no está en el map, sale con
     fallback genérico (🕯️ / ⚪) — el LLM no puede inventarlo.
 
-    Closed-list strict: las opciones deben venir del envelope de
-    `get_product_by_handle` (campo `tags` con prefijo `Aroma:` / `Color:`).
-    NUNCA del conocimiento general del LLM.
+    Closed-list strict ENFORCED (caso ep_010, run fa1eb974): el LLM mostró
+    "Crema" y "Melocotón" como colores AUN habiendo llamado search_products
+    en el episodio — la instrucción de prompt no alcanza. Cuando la tool
+    recibe `catalog`, valida cada opción contra los aromas/colores REALES
+    del producto (match normalizado, case/acentos-insensible) y DESCARTA
+    las inventadas antes de que el cliente las vea. Si el catálogo no está
+    disponible, degrada abierto (no bloquea la venta) y lo marca en el
+    envelope.
     """
 
     name = "present_variant_picker"
@@ -1400,9 +1405,10 @@ class PresentVariantPickerTool(ToolBase):
             "handle": {
                 "type": "string",
                 "description": (
-                    "Handle del producto al que pertenecen estas variantes "
-                    "(opcional, para analytics y para que el LLM pueda "
-                    "correlacionar la elección con el contexto)."
+                    "Handle del producto al que pertenecen estas variantes. "
+                    "PÁSALO SIEMPRE que el picker sea de un producto: la tool "
+                    "valida las opciones contra el catálogo real de ese "
+                    "producto y elimina cualquier opción que no exista."
                 ),
                 "maxLength": 200,
             },
@@ -1410,8 +1416,51 @@ class PresentVariantPickerTool(ToolBase):
         "required": ["variant_type", "options", "intro_text"],
     }
 
-    def __init__(self, workspace: str | Path) -> None:
+    def __init__(
+        self,
+        workspace: str | Path,
+        catalog: CatalogPort | None = None,
+    ) -> None:
         self._workspace = Path(workspace)
+        self._catalog = catalog
+
+    async def _valid_labels_for(
+        self, variant_type: str, handle: str | None
+    ) -> list[str] | None:
+        """Lista cerrada real para validar, o None si no se puede validar.
+
+        Con `handle` → los atributos de ESE producto. Sin handle → la unión de
+        todo el catálogo (más laxo, pero igual mata "Melocotón"). `None` si el
+        catálogo está caído o el tipo no es scent/color (size no tiene tags).
+        """
+        if self._catalog is None or variant_type not in ("scent", "color"):
+            return None
+        from src.platform.catalog import parse_variant_tags
+
+        try:
+            if handle:
+                product = await self._catalog.get_by_handle(handle)
+                products = [product]
+            else:
+                result = await self._catalog.search(q="", limit=30)
+                products = list(result.results)
+        except Exception as exc:  # noqa: BLE001 — catálogo caído: degradar abierto
+            logger.warning(
+                "🎨 [TOOL present_variant_picker] catálogo no disponible para "
+                "validar ({}) — picker sin validación",
+                exc,
+            )
+            return None
+        valid: list[str] = []
+        seen: set[str] = set()
+        for p in products:
+            attrs = parse_variant_tags(p.tags)
+            for label in attrs.aromas if variant_type == "scent" else attrs.colors:
+                key = label.casefold()
+                if key not in seen:
+                    seen.add(key)
+                    valid.append(label)
+        return valid or None
 
     async def execute_with_context(
         self,
@@ -1421,6 +1470,7 @@ class PresentVariantPickerTool(ToolBase):
         intro_text: str,
         handle: str | None = None,
     ) -> str:
+        from src.platform.catalog import match_option
         from src.platform.whatsapp.variant_emoji import (
             color_emoji,
             group_colors,
@@ -1445,6 +1495,44 @@ class PresentVariantPickerTool(ToolBase):
                     "Si solo hay 1, mostrala en texto."
                 ),
             }, ensure_ascii=False)
+
+        # Validación closed-list contra el catálogo REAL (caso ep_010:
+        # "Crema"/"Melocotón" inventados llegaron al cliente). Las opciones
+        # inválidas se DESCARTAN; el envelope se lo dice al LLM para que no
+        # las vuelva a ofrecer ni las acepte si el cliente las pide.
+        removed_invalid: list[str] = []
+        valid_labels = await self._valid_labels_for(variant_type, handle)
+        if valid_labels is not None:
+            canonical: list[str] = []
+            seen_canon: set[str] = set()
+            for lbl in labels:
+                matched = match_option(lbl, valid_labels)
+                if matched is None:
+                    removed_invalid.append(lbl)
+                elif matched.casefold() not in seen_canon:
+                    seen_canon.add(matched.casefold())
+                    canonical.append(matched)
+            if removed_invalid:
+                logger.warning(
+                    "🎨 [TOOL present_variant_picker] session={} opciones "
+                    "INVENTADAS descartadas: {} (válidas: {})",
+                    ctx.session_key, removed_invalid, valid_labels,
+                )
+            labels = canonical
+            if len(labels) < 2:
+                return json.dumps({
+                    "queued": False,
+                    "error": "invalid_options",
+                    "removed_invalid_options": removed_invalid,
+                    "available_options": valid_labels,
+                    "message": (
+                        "Las opciones que pasaste NO existen en el catálogo "
+                        "de este producto — no se mostró nada al cliente. "
+                        "Opciones reales: "
+                        + ", ".join(valid_labels)
+                        + ". Vuelve a llamar la tool usando SOLO esas."
+                    ),
+                }, ensure_ascii=False)
 
         # Construcción de sections con emoji desde closed-list
         sections_payload: list[dict[str, Any]] = []
@@ -1537,7 +1625,7 @@ class PresentVariantPickerTool(ToolBase):
         }
         _append_intent(ctx.session_key, intent)
 
-        return json.dumps({
+        envelope: dict[str, Any] = {
             "queued": True,
             "kind": "variant_picker",
             "variant_type": variant_type,
@@ -1551,7 +1639,16 @@ class PresentVariantPickerTool(ToolBase):
                 "picker es tu mensaje completo. Espera la respuesta libre del "
                 "cliente (ej: 'lavanda', 'el morado')."
             ),
-        }, ensure_ascii=False)
+        }
+        if removed_invalid:
+            envelope["removed_invalid_options"] = removed_invalid
+            envelope["summary"] += (
+                " ATENCIÓN: estas opciones que pasaste NO existen en el "
+                "catálogo y NO se mostraron: "
+                + ", ".join(removed_invalid)
+                + ". No las ofrezcas ni las aceptes si el cliente las pide."
+            )
+        return json.dumps(envelope, ensure_ascii=False)
 
 
 def _slug(label: str) -> str:

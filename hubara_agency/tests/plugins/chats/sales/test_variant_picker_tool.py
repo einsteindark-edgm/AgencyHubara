@@ -240,3 +240,139 @@ async def test_picker_unknown_scent_gets_fallback(ctx, seeded_vault):
     # AromaInventado va con fallback
     inventado_title = next(t for t in titles if "AromaInventado" in t)
     assert "🕯️" in inventado_title
+
+
+# ----------------------------------------------------------------------
+# Validación closed-list contra el catálogo (caso ep_010, run fa1eb974:
+# el LLM mostró "Crema"/"Melocotón" como colores que NO existen).
+# ----------------------------------------------------------------------
+
+from src.platform.catalog import (  # noqa: E402
+    CatalogManifestDTO,
+    CatalogProductDTO,
+    CatalogUnavailableError,
+    SearchResult,
+)
+
+_CRUZ = CatalogProductDTO(
+    id="prod_cruz",
+    handle="cruz-de-vida",
+    title="Cruz de Vida",
+    status="published",
+    tags=[
+        "Aroma: Lavanda", "Aroma: Café", "Aroma: Drakar",
+        "Color: gris", "Color: Blanco", "Color: Rosado", "Color: Azul",
+    ],
+)
+
+_MANIFEST = CatalogManifestDTO(version="v1", fetched_at="2026-06-11T00:00:00Z", product_count=1)
+
+
+class FakeCatalog:
+    """CatalogPort fake: un producto, sin IO."""
+
+    def __init__(self, fail: bool = False) -> None:
+        self.fail = fail
+
+    async def search(self, q: str, *, limit: int = 10) -> SearchResult:
+        if self.fail:
+            raise CatalogUnavailableError("snapshot ausente")
+        return SearchResult(
+            query=q, count=1, truncated=False, stale=False,
+            manifest=_MANIFEST, results=[_CRUZ],
+        )
+
+    async def get_by_handle(self, handle: str) -> CatalogProductDTO:
+        if self.fail:
+            raise CatalogUnavailableError("snapshot ausente")
+        if handle != _CRUZ.handle:
+            from src.platform.catalog import ProductNotFoundError
+
+            raise ProductNotFoundError(handle)
+        return _CRUZ
+
+
+@pytest.mark.asyncio
+async def test_picker_drops_invented_colors(ctx, seeded_vault):
+    """ep_010 exacto: Blanco/Crema/Rosado/Melocotón → Crema y Melocotón fuera."""
+    tool = PresentVariantPickerTool(workspace=str(seeded_vault), catalog=FakeCatalog())
+    result = json.loads(await tool.execute_with_context(
+        ctx,
+        variant_type="color",
+        options=[
+            {"label": "Blanco"},
+            {"label": "Crema"},
+            {"label": "Rosado"},
+            {"label": "Melocotón"},
+        ],
+        intro_text="Colores disponibles:",
+        handle="cruz-de-vida",
+    ))
+    assert result["queued"] is True
+    assert sorted(result["removed_invalid_options"]) == ["Crema", "Melocotón"]
+    assert "NO existen" in result["summary"]
+    intents = _read_intents(seeded_vault, ctx.session_key)
+    titles = [r["title"] for s in intents[-1]["params"]["sections"] for r in s["rows"]]
+    joined = " | ".join(titles)
+    assert "Melocot" not in joined and "Crema" not in joined
+    assert "Blanco" in joined and "Rosado" in joined
+
+
+@pytest.mark.asyncio
+async def test_picker_all_invalid_blocks_and_lists_real_options(ctx, seeded_vault):
+    tool = PresentVariantPickerTool(workspace=str(seeded_vault), catalog=FakeCatalog())
+    result = json.loads(await tool.execute_with_context(
+        ctx,
+        variant_type="color",
+        options=[{"label": "Melocotón"}, {"label": "Crema"}],
+        intro_text="Colores:",
+        handle="cruz-de-vida",
+    ))
+    assert result["queued"] is False
+    assert result["error"] == "invalid_options"
+    assert "gris" in result["available_options"]
+    # nada llegó al cliente
+    assert _read_intents(seeded_vault, ctx.session_key) == []
+
+
+@pytest.mark.asyncio
+async def test_picker_without_handle_validates_against_whole_catalog(ctx, seeded_vault):
+    tool = PresentVariantPickerTool(workspace=str(seeded_vault), catalog=FakeCatalog())
+    result = json.loads(await tool.execute_with_context(
+        ctx,
+        variant_type="scent",
+        options=[{"label": "Lavanda"}, {"label": "Vainilla"}, {"label": "Drakar"}],
+        intro_text="Aromas:",
+    ))
+    assert result["queued"] is True
+    assert result["removed_invalid_options"] == ["Vainilla"]
+
+
+@pytest.mark.asyncio
+async def test_picker_catalog_down_degrades_open(ctx, seeded_vault):
+    """Catálogo caído NUNCA bloquea la venta: picker sale sin validación."""
+    tool = PresentVariantPickerTool(
+        workspace=str(seeded_vault), catalog=FakeCatalog(fail=True)
+    )
+    result = json.loads(await tool.execute_with_context(
+        ctx,
+        variant_type="color",
+        options=[{"label": "Blanco"}, {"label": "Melocotón"}],
+        intro_text="Colores:",
+        handle="cruz-de-vida",
+    ))
+    assert result["queued"] is True
+    assert "removed_invalid_options" not in result
+
+
+@pytest.mark.asyncio
+async def test_picker_size_type_skips_validation(ctx, seeded_vault):
+    """'size' no tiene tags en el catálogo — no se valida."""
+    tool = PresentVariantPickerTool(workspace=str(seeded_vault), catalog=FakeCatalog())
+    result = json.loads(await tool.execute_with_context(
+        ctx,
+        variant_type="size",
+        options=[{"label": "Grande"}, {"label": "Pequeña"}],
+        intro_text="Tamaños:",
+    ))
+    assert result["queued"] is True

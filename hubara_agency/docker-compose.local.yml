@@ -260,7 +260,7 @@ services:
     - OTEL_EXPORTER_OTLP_ENDPOINT=http://host.docker.internal:4317
     - OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental
     - OPENLIT_PRICING_JSON=/app/hubara_agency/deploy/openlit/pricing.json
-    - EVAL_JUDGE_MODEL=litellm_proxy/gemini-backup
+    - EVAL_JUDGE_MODEL=litellm_proxy/gemini-pro-judge
     - EVAL_CANDIDATES_DIR=/app/hubara_vault/_evals/candidates
     - SALES_EVAL_SCHEDULE_ENABLED=false
     - SALES_EVAL_LOOKBACK_HOURS=8

@@ -24,13 +24,15 @@ from src.platform.session_history.store import FilesystemMessageHistoryStore
 async def persist_assistant_message_activity(
     session_id: str,
     content: str,
+    tools_used: list[str] | None = None,
 ) -> None:
     """Append ``role=assistant`` event al JSONL de la sesion.
 
-    El timestamp lo agrega el store (ISO UTC). ``tool_calls`` quedan fuera del
-    contrato de esta activity v1 — si en el futuro se quieren persistir, se
-    extiende la signature con un parametro opcional o se crea una segunda
-    activity (``persist_agent_tool_call_activity``).
+    El timestamp lo agrega el store (ISO UTC). ``tools_used`` (opcional, param
+    posicional 3 — los callers viejos con 2 args siguen funcionando): nombres
+    de las tools ejecutadas en el turno; evidencia para el juez del eval (ver
+    docstring de ``append_assistant_event``). NO confundir con ``tool_calls``
+    (payload completo), que sigue fuera del contrato v1.
     """
     if not content:
         # Empty/None content -> el agente decidio no responder (ej. tool-only
@@ -38,4 +40,4 @@ async def persist_assistant_message_activity(
         return
 
     store = FilesystemMessageHistoryStore(WORKSPACE_VAULT_DIR)
-    store.append_assistant_event(session_id, content)
+    store.append_assistant_event(session_id, content, tools_used=tools_used)

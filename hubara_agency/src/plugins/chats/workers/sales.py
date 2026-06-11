@@ -176,10 +176,12 @@ register_tool_extension(
 # ingest los re-inyecta al prompt cada turno (via `get_projectable_draft` +
 # `build_order_draft_note`) para que el LLM no re-pregunte datos ya dados.
 # Tool de borde (escribe metadata.json atomico), advisory: `register_order`
-# sigue siendo la fuente de verdad de la orden.
+# sigue siendo la fuente de verdad de la orden. `catalog`: valida aroma/color
+# contra la lista cerrada del producto (caso ep_010: "Melocotón" no existe y
+# entró al draft → a la orden real).
 register_tool_extension(
     "sales.set_order_slot",
-    lambda workspace: SetOrderSlotTool(workspace=str(workspace)),
+    lambda workspace: SetOrderSlotTool(workspace=str(workspace), catalog=_catalog),
 )
 
 # HU-002: decision tools de UI rica. Emiten "intents" a
@@ -244,9 +246,14 @@ register_tool_extension(
 # Fix sesión 71f479f7: cuando hay ≥4 aromas/colores, lista tappable con
 # emoji curado (variant_emoji.py) — más premium que listarlos en texto
 # con el mismo 🌿 repetido. El emoji jamás lo elige el LLM (closed-list).
+# `catalog` (caso ep_010, run fa1eb974): valida las opciones contra los
+# aromas/colores REALES del producto y descarta las inventadas
+# ("Crema"/"Melocotón") antes de que el cliente las vea.
 register_tool_extension(
     "sales.present_variant_picker",
-    lambda workspace: PresentVariantPickerTool(workspace=str(workspace)),
+    lambda workspace: PresentVariantPickerTool(
+        workspace=str(workspace), catalog=_catalog
+    ),
 )
 
 

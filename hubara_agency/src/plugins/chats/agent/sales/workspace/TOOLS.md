@@ -32,7 +32,7 @@ Cómo el agente debe pensar sus herramientas. Las **definiciones** Python viven 
   - El cliente menciona un nombre específico (ej. el nombre del producto que vio antes) → llama con `q="<nombre>"` ANTES de `get_product_by_handle`. Esto te devuelve el `handle` REAL, NUNCA lo inventes desde el nombre.
 - **Don't use when**: el cliente ya está cerrando y solo confirmas precio, usa `get_product_by_handle` con el handle EXACTO que viste en una respuesta previa.
 - **Input**: `q` (texto de búsqueda; `""` = todo), `limit` (opcional, default 10, máx 30).
-- **Output**: `{query, count, truncated, stale, manifest, results: [{id, handle, title, price, currency, in_stock, thumbnail_url, tags}]}`.
+- **Output**: `{query, count, truncated, stale, manifest, results: [{id, handle, title, price, currency, in_stock, thumbnail_url, tags, aromas, colors}]}`. Los campos `aromas` y `colors` son las **listas cerradas ya parseadas** de los tags: úsalas directo (nombres y CONTEOS salen de ahí, no los calcules tú).
 - **Tip**: el search matchea por substring en title, handle, tags, categorías Y description del producto. Una sola búsqueda buena es mejor que 4 búsquedas a tientas.
 
 ### `get_product_by_handle`
@@ -172,7 +172,7 @@ Estas tools NO devuelven texto al LLM, emiten **intents de UI** que el workflow 
   - `variant_type`: `"scent"` (aromas), `"color"` (colores) o `"size"` (tamaños).
   - `options`: lista de `{label}` con el nombre **literal del envelope** (ej `{"label": "Lavanda"}`). **🚫 No pases campo `emoji`**, el sistema lo asigna desde el registry Hubara automáticamente.
   - `intro_text`: 1 línea breve que acompaña ("Tenemos estos aromas:"). NO listes las opciones en este texto.
-  - `handle`: opcional, handle del producto para analytics.
+  - `handle`: **pásalo SIEMPRE** que el picker sea de un producto: la tool valida tus `options` contra el catálogo real de ese producto. Si pasas una opción que no existe, la tool la **descarta** (y te lo dice en `removed_invalid_options`) — no la vuelvas a ofrecer ni la aceptes si el cliente la pide.
 - **Side effects**: encola intent `variant_picker` → el workflow lo renderiza como **UN SOLO mensaje de texto plano** con secciones agrupadas en `*bold*` (Frescos / Cítricos y frutales / Cálidos y dulces / Notas perfumadas para aromas; Claros y suaves / Vibrantes / Profundos para colores) y un cierre del estilo *"Dime cuál te gusta y seguimos 🤍"*. **TODAS las opciones van en ese único mensaje** — no se paginan (es texto, no lista tappable de Meta).
 - **En el MISMO turno que llamas esta tool, NO escribas texto**: el picker ES tu mensaje completo (ya trae intro + opciones + invitación a elegir). Si además escribieras `content`, el cliente vería dos burbujas repitiendo la pregunta. Deja `content` vacío cuando llames `present_variant_picker`.
 - **Tu próximo texto**: NO repitas la lista, NO mandes emojis al lado de las variantes en otra burbuja, NO te adelantes a confirmar, la tool ya lo dijo todo. Tu siguiente mensaje SOLO debe llegar **después** de que el cliente respondió.
@@ -364,7 +364,8 @@ Aplica a TODO mensaje que le escribís al cliente:
    - Lista los valores **literales** del envelope. **NUNCA** cites un aroma/color que no esté en `tags`.
    - **PROHIBIDO** completar la lista con tu conocimiento general de velas (vainilla, canela, etc. SI no están en `tags`).
    - Si NO has visto los `tags` del producto específico en este turno, **DEBES** llamar `get_product_by_handle(handle="<el handle>")` antes de hablar de aromas/colores. La info detallada del producto NO se puede inferir desde tu memoria.
-   - Si el `tag` viene con formato `"Aroma: Lavanda"`, al cliente solo le mencionas `"Lavanda"` (sin el prefijo `"Aroma:"`).
+   - Si el `tag` viene con formato `"Aroma: Lavanda"`, al cliente solo le mencionas `"Lavanda"` (sin el prefijo `"Aroma:"`). Mejor aún: el envelope ya trae `aromas` y `colors` parseados — usa esas listas tal cual.
+   - **El sistema valida por ti**: `present_variant_picker` descarta opciones que no existen y `set_order_slot` **rechaza** un aroma/color inexistente (envelope con `rejected` + las opciones `available`). Si eso pasa, díselo al cliente con calidez ("ese color no lo manejo, tengo X, Y, Z"), ofrece SOLO las disponibles y vuelve a llamar la tool con la elección real. NUNCA insistas con el valor rechazado.
 
 8. **No inventes conteos numéricos** (bug `8a34b54a`): si vas a mencionar cuántos productos / aromas / colores / variantes hay, o **cuentas exactamente** los elementos del envelope ANTES de escribir el número, o usas una frase no-numérica ("varios aromas", "muchas opciones", "los aromas que manejamos"). **PROHIBIDO** estimar ni redondear (ej. decir "14 aromas" cuando son 11 = alucinación que genera expectativa falsa al cliente).
 

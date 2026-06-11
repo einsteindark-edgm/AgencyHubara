@@ -415,3 +415,99 @@ def test_window_candidate_threshold_semantics(score, threshold, verdict):
     # avg_score < candidate_threshold ⇒ candidata. (Documenta la semántica.)
     is_candidate = score < threshold
     assert is_candidate is (not verdict)
+
+
+# ---------------------------------------------------------------------------
+# Evidencia de tools + hechos del sistema (fix falsos negativos ep_010).
+# ---------------------------------------------------------------------------
+
+
+def test_turns_merge_tool_calls_and_tools_used():
+    """`tools_used` (nombres persistidos por el workflow) llega al juez igual
+    que `tool_calls` (payload legacy), dedupeado."""
+    events = [
+        {"role": "user", "content": "Hola"},
+        {
+            "role": "assistant",
+            "content": "Tenemos dos velas.",
+            "tool_calls": [{"name": "search_products"}],
+            "tools_used": ["search_products", "present_product_detail"],
+        },
+    ]
+    turns = reconstruct.to_evaluable_turns(events, redact=False)
+    assert turns[1]["tools"] == ["search_products", "present_product_detail"]
+
+
+def test_build_system_facts_full_episode():
+    episode = {
+        "episode_id": "ep_010",
+        "closing_tag": "CONFIRMADO_PAGO_PENDIENTE",
+        "closing_motivo": "Cliente confirmó pedido X por $34.000.",
+        "order_id": "order_01KTV",
+        "order_total_cop": 34000,
+        "order_currency": "COP",
+    }
+    metadata = {
+        "episodes": [{"episode_id": "ep_009"}, episode],
+        "escalation_reason": "PAYMENT_VERIFICATION_PENDING",
+        "active_route": "humano",
+    }
+    facts = reconstruct.build_system_facts(episode, metadata, episode_is_last=True)
+    joined = " ".join(facts)
+    assert "CONFIRMADO_PAGO_PENDIENTE" in joined
+    assert "order_01KTV" in joined
+    assert "PAYMENT_VERIFICATION_PENDING" in joined
+    assert "red de seguridad" in joined  # garantía del workflow para este tag
+    assert "ruta 'humano'" in joined
+
+
+def test_build_system_facts_non_last_episode_excludes_session_state():
+    """escalation_reason/active_route son estado ACTUAL de la sesión: solo
+    atribuibles al último episodio."""
+    episode = {"episode_id": "ep_002", "closing_tag": "INTERESADO"}
+    metadata = {
+        "episodes": [episode, {"episode_id": "ep_003"}],
+        "escalation_reason": "PAYMENT_VERIFICATION_PENDING",
+    }
+    facts = reconstruct.build_system_facts(episode, metadata, episode_is_last=False)
+    joined = " ".join(facts)
+    assert "INTERESADO" in joined
+    assert "PAYMENT_VERIFICATION_PENDING" not in joined
+
+
+def test_build_system_facts_empty_when_nothing_registered():
+    assert reconstruct.build_system_facts(None, {}, episode_is_last=True) == []
+    assert reconstruct.build_system_facts({}, {}, episode_is_last=False) == []
+
+
+def test_is_last_episode():
+    meta = {"episodes": [{"episode_id": "ep_001"}, {"episode_id": "ep_002"}]}
+    assert reconstruct.is_last_episode(meta, "ep_002") is True
+    assert reconstruct.is_last_episode(meta, "ep_001") is False
+    assert reconstruct.is_last_episode({}, "") is True  # legacy sin episodes[]
+
+
+def test_has_critical_failure():
+    ok = [("style_compliance", 0.75, False, "x"), ("no_hallucination", 1.0, True, "")]
+    bad = [("no_hallucination", 0.0, False, "inventó Melocotón")]
+    assert curation.has_critical_failure(ok) is False
+    assert curation.has_critical_failure(bad) is True
+
+
+def test_geval_metrics_feed_scenario_to_judge():
+    """El Scenario (hechos del sistema + catálogo) DEBE estar en
+    evaluation_params — sin eso el juez no lo ve (solo turnos)."""
+    deepeval = pytest.importorskip("deepeval")  # noqa: F841 — extra `evals`
+    from deepeval.test_case import TurnParams
+
+    from src.plugins.chats.agent.sales_eval.evals import metrics as M
+
+    metric = M.correct_handoff_metric(model=None)
+    assert TurnParams.SCENARIO in metric.evaluation_params
+
+
+def test_rubric_steps_reference_system_facts_and_catalog():
+    handoff = " ".join(R.CORRECT_HANDOFF_STEPS)
+    halluc = " ".join(R.NO_HALLUCINATION_STEPS)
+    assert "HECHOS VERIFICADOS DEL SISTEMA" in handoff
+    assert "CATÁLOGO REAL" in halluc
