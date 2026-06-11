@@ -8,7 +8,7 @@ import { useEvalTrend } from "@plugins/agents_admin/frontend/entities/eval-trend
 
 import {
   lineFromAggregate,
-  linesFromEpisode,
+  linesFromClientEpisodes,
   type TrendLine,
   type TrendLinePoint,
 } from "../lib/series";
@@ -21,7 +21,8 @@ interface Props {
   /** Día seleccionado en modo agregado (filtra la lista de episodios). */
   selectedDate?: string | null;
   onSelectDate?: (date: string | null) => void;
-  /** Episodio aislado (`<session>::<episode>`) o null = promedio de todos. */
+  /** Episodio "actual" de la comparativa (`<session>::<episode>`), lifted: lo
+   *  comparte la lista de episodios. null = promedio de todos los clientes. */
   selectedEpisodeKey?: string | null;
   onSelectEpisode?: (key: string | null) => void;
   /** Ventana (días) de conversaciones — compartida con la lista de episodios. */
@@ -86,7 +87,7 @@ function Sparkline({
   );
 }
 
-/** Bloque de un extremo de la serie: valor + su fecha (inicio o actual). */
+/** Bloque de un extremo de la serie: valor + su fecha/episodio (inicio o actual). */
 function Endpoint({ caption, point }: { caption: string; point?: TrendLinePoint }) {
   const color = !point ? "text-fg-faint" : point.below ? "text-red" : "text-green";
   return (
@@ -109,7 +110,7 @@ function MetricRow({
 }: {
   line: TrendLine;
   threshold: number;
-  mode: "aggregate" | "episode";
+  mode: "aggregate" | "episodes";
   selectedDate?: string | null;
   onSelectDate?: (date: string | null) => void;
 }) {
@@ -168,12 +169,13 @@ function MetricRow({
             </span>
           )
         ) : pts.length < 2 ? (
-          <span className="text-fg-faint">una sola eval — sin evolución todavía</span>
+          <span className="text-fg-faint">un solo episodio — elegí un rango para comparar</span>
         ) : lowCount === 0 ? (
-          <span className="text-green/70">todas las evals sobre el umbral</span>
+          <span className="text-green/70">todos los episodios sobre el umbral</span>
         ) : (
           <span>
-            <span className="font-semibold text-red">{lowCount}</span>/{pts.length} evals bajo {threshold}
+            <span className="font-semibold text-red">{lowCount}</span>/{pts.length} episodios bajo{" "}
+            {threshold}
           </span>
         )}
       </div>
@@ -182,15 +184,18 @@ function MetricRow({
 }
 
 /**
- * Tendencia de calidad del agente. Cada línea de métrica muestra su valor
- * INICIAL (con fecha) y el ACTUAL (con fecha) flanqueando el sparkline, para ver
- * de un vistazo el avance o la pérdida.
+ * Tendencia de calidad del agente (solo conversaciones reales — el golden corre
+ * en CI y sus resultados viven en SigNoz, no en esta API). Cada línea de métrica
+ * muestra su valor INICIAL (con etiqueta) y el ACTUAL flanqueando el sparkline.
  *
- * Dos modos (selector "Conversación" en el header, solo `online`):
- *   - **Todas**: promedio diario de TODOS los episodios (salud global del agente);
+ * Dos modos (selector "cliente" en el header):
+ *   - **Todos**: promedio diario de TODOS los episodios (salud global del agente);
  *     los días bajos son clickeables → filtran la lista de episodios.
- *   - **Un episodio**: su evolución por métrica a través de SUS evals, sin
- *     contaminación de otros episodios (cada episodio es una intención distinta).
+ *   - **Un cliente**: la evolución ENTRE sus episodios (un punto por episodio).
+ *     El operador elige el episodio de **inicio** y el de **actual** para ver,
+ *     métrica por métrica, si mejoró o empeoró de una conversación a la otra
+ *     (cada episodio se evalúa una sola vez, así que comparar SUS re-evals no
+ *     dice nada — la señal está ENTRE episodios).
  */
 export function EvalTrendChart({
   selectedDate,
@@ -199,54 +204,84 @@ export function EvalTrendChart({
   onSelectEpisode = () => {},
   windowDays = 30,
 }: Props) {
-  const [suite, setSuite] = useState<"online" | "golden">("online");
-  const { data: aggData, isLoading: aggLoading, isError: aggError } = useEvalTrend(30, suite);
+  const { data: aggData, isLoading: aggLoading, isError: aggError } = useEvalTrend(30, "online");
   const { data: convData, isLoading: convLoading } = useConversationEvals(windowDays, "online");
   const threshold = aggData?.threshold ?? 0.7;
 
   const conversations = convData?.conversations ?? [];
-  const selectedConv =
-    selectedEpisodeKey && suite === "online"
-      ? conversations.find((c) => episodeUnitKey(c) === selectedEpisodeKey) ?? null
-      : null;
-  const episodeSelected = !!selectedEpisodeKey && suite === "online";
-  const mode: "aggregate" | "episode" = selectedConv ? "episode" : "aggregate";
 
-  // Cascada cliente → episodio. El cliente se DERIVA del episodio seleccionado
-  // (`<session>::<episode>`), así que no hace falta estado extra: elegir un
-  // cliente auto-enfoca su episodio más reciente.
+  // Cliente en foco: derivado del episodio "actual" seleccionado
+  // (`<session>::<episode>`), así que no hace falta estado extra para el cliente.
   const derivedSession = selectedEpisodeKey ? selectedEpisodeKey.split("::")[0] : null;
+
+  // Episodios del cliente en orden del EPISODIO (ep_001 → ep_011), no por fecha
+  // de evaluación: el backfill puede haber evaluado los históricos todos juntos
+  // un día, así que ordenar por `last_ts` los mezcla. `episode_id` es el orden
+  // real en que ocurrieron las conversaciones del cliente (numeric-aware para
+  // ep_2 < ep_11). La sesión legacy sin episodio ("") va al final.
+  const episodesAsc = useMemo(
+    () =>
+      derivedSession
+        ? [...conversations.filter((c) => c.session_id === derivedSession)].sort((a, b) =>
+            (a.episode_id || "zzz").localeCompare(b.episode_id || "zzz", undefined, {
+              numeric: true,
+            }),
+          )
+        : [],
+    [conversations, derivedSession],
+  );
+  const keysAsc = useMemo(() => episodesAsc.map(episodeUnitKey), [episodesAsc]);
+
+  // Extremos de la comparativa. "actual" = el lifted selectedEpisodeKey (lo fija
+  // también la lista); "inicio" = estado local, default el episodio más viejo.
+  const [startKey, setStartKey] = useState<string | null>(null);
+  const actualKey =
+    selectedEpisodeKey && keysAsc.includes(selectedEpisodeKey)
+      ? selectedEpisodeKey
+      : (keysAsc.at(-1) ?? null);
+  const startKeyEff =
+    startKey && keysAsc.includes(startKey) ? startKey : (keysAsc[0] ?? null);
+
+  // Recorte [inicio..actual] en orden cronológico (tolera que se elijan al revés).
+  const slice = useMemo(() => {
+    const iA = keysAsc.indexOf(startKeyEff ?? "");
+    const iB = keysAsc.indexOf(actualKey ?? "");
+    if (iA < 0 || iB < 0) return [];
+    return episodesAsc.slice(Math.min(iA, iB), Math.max(iA, iB) + 1);
+  }, [episodesAsc, keysAsc, startKeyEff, actualKey]);
+
+  const clientSelected = !!derivedSession && episodesAsc.length > 0;
+  const mode: "aggregate" | "episodes" = clientSelected ? "episodes" : "aggregate";
+
   const clientSessions = useMemo(() => {
     const count = new Map<string, number>();
     for (const c of conversations) count.set(c.session_id, (count.get(c.session_id) ?? 0) + 1);
     return [...count.entries()].map(([session, episodes]) => ({ session, episodes }));
   }, [conversations]);
-  const episodesOfClient = useMemo(
-    () =>
-      derivedSession
-        ? [...conversations.filter((c) => c.session_id === derivedSession)].sort((a, b) =>
-            (b.last_date + b.last_ts).localeCompare(a.last_date + a.last_ts),
-          )
-        : [],
-    [conversations, derivedSession],
-  );
+
+  // Episodios del cliente más recientes primero (para listar en los dropdowns).
+  const episodesDesc = useMemo(() => [...episodesAsc].reverse(), [episodesAsc]);
 
   const pickClient = (session: string | null) => {
+    setStartKey(null); // reset del extremo "inicio" al cambiar de cliente
     if (!session) return onSelectEpisode(null);
     const eps = [...conversations.filter((c) => c.session_id === session)].sort((a, b) =>
-      (b.last_date + b.last_ts).localeCompare(a.last_date + a.last_ts),
+      (b.episode_id || "").localeCompare(a.episode_id || "", undefined, { numeric: true }),
     );
-    onSelectEpisode(eps[0] ? episodeUnitKey(eps[0]) : null); // el más reciente
+    onSelectEpisode(eps[0] ? episodeUnitKey(eps[0]) : null); // "actual" = el episodio más nuevo
   };
 
   const lines: TrendLine[] = useMemo(() => {
-    if (selectedConv) return linesFromEpisode(selectedConv);
+    if (mode === "episodes") return linesFromClientEpisodes(slice);
     return (aggData?.series ?? []).map((s) => lineFromAggregate(s, threshold));
-  }, [selectedConv, aggData, threshold]);
+  }, [mode, slice, aggData, threshold]);
 
-  const switchSuite = (s: "online" | "golden") => {
-    if (s === "golden") onSelectEpisode(null); // los goldens no son episodios reales
-    setSuite(s);
+  const epOption = (key: string) => {
+    const c = episodesDesc.find((x) => episodeUnitKey(x) === key);
+    if (!c) return key;
+    return `${c.episode_id || "sesión completa"} · ${
+      c.last_avg === null ? "—" : c.last_avg.toFixed(2)
+    }${c.closing_tag ? ` · ${c.closing_tag}` : ""}`;
   };
 
   return (
@@ -254,74 +289,78 @@ export function EvalTrendChart({
       <header className="mb-2 flex flex-wrap items-center gap-2">
         <h3 className="text-sm font-semibold">Tendencia de calidad</h3>
 
-        {suite === "online" && (
-          <div className="flex flex-wrap items-center gap-2 text-xs text-fg-muted">
-            <label className="flex items-center gap-1">
-              <span className="text-fg-faint">cliente:</span>
-              <select
-                value={derivedSession ?? ""}
-                onChange={(e) => pickClient(e.target.value || null)}
-                className="max-w-[12rem] truncate rounded-md border border-line bg-white/5 px-2 py-1 text-xs text-fg-soft focus:border-accent focus:outline-none"
-              >
-                <option value="">Todos (promedio diario)</option>
-                {clientSessions.map(({ session, episodes }) => (
-                  <option key={session} value={session}>
-                    {sessionLabel(session)} ({episodes} ep{episodes > 1 ? "s" : ""})
-                  </option>
-                ))}
-              </select>
-            </label>
-            {derivedSession && (
+        <div className="flex flex-wrap items-center gap-2 text-xs text-fg-muted">
+          <label className="flex items-center gap-1">
+            <span className="text-fg-faint">cliente:</span>
+            <select
+              value={derivedSession ?? ""}
+              onChange={(e) => pickClient(e.target.value || null)}
+              className="max-w-[12rem] truncate rounded-md border border-line bg-white/5 px-2 py-1 text-xs text-fg-soft focus:border-accent focus:outline-none"
+            >
+              <option value="">Todos (promedio diario)</option>
+              {clientSessions.map(({ session, episodes }) => (
+                <option key={session} value={session}>
+                  {sessionLabel(session)} ({episodes} ep{episodes > 1 ? "s" : ""})
+                </option>
+              ))}
+            </select>
+          </label>
+          {clientSelected && (
+            <>
               <label className="flex items-center gap-1">
-                <span className="text-fg-faint">episodio:</span>
+                <span className="text-fg-faint">inicio:</span>
                 <select
-                  value={selectedEpisodeKey ?? ""}
-                  onChange={(e) => onSelectEpisode(e.target.value || null)}
+                  value={startKeyEff ?? ""}
+                  onChange={(e) => setStartKey(e.target.value || null)}
                   className="max-w-[13rem] truncate rounded-md border border-line bg-white/5 px-2 py-1 text-xs text-fg-soft focus:border-accent focus:outline-none"
                 >
-                  {episodesOfClient.map((c) => {
+                  {episodesDesc.map((c) => {
                     const key = episodeUnitKey(c);
                     return (
                       <option key={key} value={key}>
-                        {c.episode_id || "sesión completa"} ·{" "}
-                        {c.last_avg === null ? "—" : c.last_avg.toFixed(2)}
-                        {c.closing_tag ? ` · ${c.closing_tag}` : ""}
+                        {epOption(key)}
                       </option>
                     );
                   })}
                 </select>
               </label>
-            )}
-          </div>
-        )}
-
-        <div className="ml-auto flex gap-1 rounded-md bg-white/5 p-0.5 text-xs">
-          {(["online", "golden"] as const).map((s) => (
-            <button
-              key={s}
-              type="button"
-              onClick={() => switchSuite(s)}
-              className={
-                "rounded px-2 py-0.5 " +
-                (suite === s ? "bg-white/15 font-semibold text-fg" : "text-fg-muted")
-              }
-            >
-              {s === "online" ? "conversaciones reales" : "golden (CI)"}
-            </button>
-          ))}
+              <label className="flex items-center gap-1">
+                <span className="text-fg-faint">actual:</span>
+                <select
+                  value={actualKey ?? ""}
+                  onChange={(e) => onSelectEpisode(e.target.value || null)}
+                  className="max-w-[13rem] truncate rounded-md border border-line bg-white/5 px-2 py-1 text-xs text-fg-soft focus:border-accent focus:outline-none"
+                >
+                  {episodesDesc.map((c) => {
+                    const key = episodeUnitKey(c);
+                    return (
+                      <option key={key} value={key}>
+                        {epOption(key)}
+                      </option>
+                    );
+                  })}
+                </select>
+              </label>
+            </>
+          )}
         </div>
+
+        <span
+          className="ml-auto text-[10px] text-fg-faint"
+          title="El golden set corre en el GitHub Action (CI) y sus scores se emiten a SigNoz, no a esta API. Acá ves solo conversaciones reales."
+        >
+          conversaciones reales · golden → SigNoz/CI
+        </span>
       </header>
 
-      {/* Subtítulo: explica qué se está promediando (o que es un episodio aislado). */}
-      {mode === "episode" && selectedConv ? (
+      {/* Subtítulo: explica qué se está promediando (o qué episodios se comparan). */}
+      {mode === "episodes" ? (
         <p className="mb-3 flex flex-wrap items-center gap-x-2 text-xs text-fg-muted">
           <span>
-            Episodio aislado:{" "}
-            <span className="font-mono text-fg-soft">
-              {sessionLabel(selectedConv.session_id)} · {selectedConv.episode_id || "sesión completa"}
-            </span>{" "}
-            — {selectedConv.evals_count} eval{selectedConv.evals_count === 1 ? "" : "s"}, sin mezclar
-            con otros episodios.
+            Comparando episodios de{" "}
+            <span className="font-mono text-fg-soft">{sessionLabel(derivedSession!)}</span> —{" "}
+            {slice.length} episodio{slice.length === 1 ? "" : "s"} entre inicio y actual. Cada punto
+            es un episodio; el delta dice si la métrica mejoró o empeoró.
           </span>
           <button
             type="button"
@@ -333,17 +372,17 @@ export function EvalTrendChart({
         </p>
       ) : (
         <p className="mb-3 text-xs text-fg-faint">
-          últimos 30 días · umbral {threshold} · promedio de TODOS los episodios por día — elegí una
-          conversación arriba para aislar un episodio y ver su evolución sin contaminación.
+          últimos 30 días · umbral {threshold} · promedio de TODOS los episodios por día — elegí un
+          cliente arriba para comparar la evolución entre sus episodios.
         </p>
       )}
 
-      {episodeSelected && !selectedConv ? (
+      {derivedSession && episodesAsc.length === 0 ? (
         convLoading ? (
-          <p className="py-6 text-center text-sm text-fg-faint">Cargando episodio…</p>
+          <p className="py-6 text-center text-sm text-fg-faint">Cargando episodios…</p>
         ) : (
           <p className="py-6 text-center text-sm text-fg-muted">
-            Ese episodio ya no está en la ventana.{" "}
+            Ese cliente ya no tiene episodios en la ventana.{" "}
             <button
               type="button"
               onClick={() => onSelectEpisode(null)}
@@ -359,11 +398,9 @@ export function EvalTrendChart({
         <p className="py-6 text-center text-sm text-red/70">No se pudo leer la tendencia.</p>
       ) : lines.length === 0 ? (
         <p className="py-6 text-center text-sm text-fg-faint">
-          {mode === "episode"
-            ? "Este episodio aún no tiene métricas registradas."
-            : `Aún no hay histórico para esta suite. Se llena con cada corrida del eval${
-                suite === "online" ? " diario sobre conversaciones reales" : " golden"
-              }.`}
+          {mode === "episodes"
+            ? "Estos episodios aún no tienen métricas registradas."
+            : "Aún no hay histórico. Se llena con cada eval al cerrar un episodio real."}
         </p>
       ) : (
         <div>
