@@ -27,7 +27,7 @@ from src.plugins.eta.agent.eta.activities import (
     start_eta_tracking_activity,
 )
 from src.plugins.eta.agent.eta.contracts import EtaSessionInput
-from src.plugins.eta.agent.eta.prompts import build_stage_notification_turn
+from src.plugins.eta.agent.eta.prompts import render_stage_notification
 
 
 SID = "wa_573001112233"
@@ -49,35 +49,85 @@ def _fake_detail(**summary):
 
 
 # ════════════════════════════════════════════════════════════════════════
-# Prompts puros
+# Renderer determinista — el string EXACTO que recibe el cliente (sin LLM)
 # ════════════════════════════════════════════════════════════════════════
-def test_prompt_cod_recuerda_monto():
-    msg = build_stage_notification_turn(
-        stage="shipping",
-        customer_name="Daniela",
-        order_display_id="#1243",
-        total_label="$ 215.000",
-        pay_type="cod",
-        delivery_window=None,
+def test_render_preparing_pending_no_name_omits_payment():
+    """Bug reportado (2026-06-11): nuevo→preparación con prepago SIN confirmar
+    y sin nombre real. El mensaje NO afirma pago ('ya está confirmado' sería
+    mentira) y saluda solo con '¡Hola!' — nunca 'Hola Cliente'."""
+    msg = render_stage_notification(
+        stage="preparing", customer_name="", order_display_id="#1246",
+        total_label="$ 78.000", pay_type="confirmed", payment_confirmed=False,
+        items_label="Vela Sándalo",
     )
-    assert "En camino" in msg
-    assert "Daniela" in msg and "#1243" in msg and "$ 215.000" in msg
-    assert "contra entrega" in msg  # hint COD
-    assert "aún no definida" in msg  # ventana None
+    assert msg == (
+        "¡Hola! Soy tu asistente de seguimiento de Hubara. Tu pedido #1246 "
+        "(Vela Sándalo) acaba de entrar en preparación. Te aviso en cada paso 🙌"
+    )
 
 
-def test_prompt_confirmed_recuerda_pagado():
-    msg = build_stage_notification_turn(
-        stage="preparing",
-        customer_name="Carlos",
-        order_display_id="#1246",
-        total_label="$ 78.000",
-        pay_type="confirmed",
-        delivery_window="hoy 11:00-14:00",
+def test_render_preparing_confirmed_claims_paid():
+    """Pago REALMENTE confirmado (pay_status=='paid') → sí dice 'ya está confirmado'."""
+    msg = render_stage_notification(
+        stage="preparing", customer_name="Carlos", order_display_id="#1246",
+        total_label="$ 78.000", pay_type="confirmed", payment_confirmed=True,
+        items_label="Vela Sándalo",
     )
-    assert "En preparación" in msg
-    assert "pago" in msg.lower() and "confirmado" in msg.lower()
-    assert "hoy 11:00-14:00" in msg
+    assert msg == (
+        "¡Hola Carlos! Soy tu asistente de seguimiento de Hubara. Tu pedido "
+        "#1246 (Vela Sándalo) acaba de entrar en preparación. Tu pago ya está "
+        "confirmado, así que cuando llegue solo tienes que recibirlo 🙌 Te aviso "
+        "en cada paso."
+    )
+
+
+def test_render_preparing_cod_reminds_amount():
+    msg = render_stage_notification(
+        stage="preparing", customer_name="Daniela", order_display_id="#1243",
+        total_label="$ 215.000", pay_type="cod", payment_confirmed=False,
+        items_label="Vela Cruz",
+    )
+    assert "¡Hola Daniela!" in msg
+    assert "es contra entrega: pagarás $ 215.000 en efectivo o transferencia" in msg
+
+
+def test_render_shipping_pending_has_no_payment_line():
+    msg = render_stage_notification(
+        stage="shipping", customer_name="Ana", order_display_id="#9",
+        total_label="", pay_type="confirmed", payment_confirmed=False,
+        items_label="Difusor",
+    )
+    assert msg == (
+        "Tu pedido #9 (Difusor) ya va en camino 🚚. Te aviso cuando esté por llegar."
+    )
+    assert "pagado" not in msg and "pagar" not in msg
+
+
+def test_render_cancelled_without_name():
+    msg = render_stage_notification(
+        stage="cancelled", customer_name="", order_display_id="#9",
+        total_label="", pay_type="confirmed", payment_confirmed=False,
+    )
+    assert msg.startswith("Hola, te confirmo que tu pedido #9 fue cancelado.")
+
+
+def test_render_omits_products_when_missing():
+    """Sin items_label NO inventa productos: 'tu pedido #6' a secas, sin '()'."""
+    msg = render_stage_notification(
+        stage="preparing", customer_name="Ana", order_display_id="#6",
+        total_label="", pay_type="confirmed", payment_confirmed=True,
+        items_label="",
+    )
+    assert "Tu pedido #6 acaba de entrar" in msg
+    assert "()" not in msg
+
+
+def test_render_unknown_stage_returns_none():
+    """Stage no notificable (p.ej. 'new') → None: el workflow lo saltea."""
+    assert render_stage_notification(
+        stage="new", customer_name="Ana", order_display_id="#6",
+        total_label="", pay_type="confirmed", payment_confirmed=False,
+    ) is None
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -133,7 +183,10 @@ async def test_claim_returns_facts_happy_path(_isolate_vault_dir: Path, monkeypa
     class _Port:
         async def get(self, oid):
             assert oid == ORDER
-            return _fake_detail(customer="María Camila Restrepo", display_id="#1247", total_cop=124500, pay_type="confirmed")
+            return _fake_detail(
+                customer="María Camila Restrepo", display_id="#1247",
+                total_cop=124500, pay_type="confirmed", pay_status="paid",
+            )
 
     monkeypatch.setattr("src.platform.orders.composition.get_order_query_port", lambda: _Port())
     facts = await ActivityEnvironment().run(claim_eta_notification_activity, SID, ORDER, "ready")
@@ -142,8 +195,33 @@ async def test_claim_returns_facts_happy_path(_isolate_vault_dir: Path, monkeypa
     assert facts["order_display_id"] == "#1247"
     assert facts["total_label"] == "$ 124.500"
     assert facts["pay_type"] == "confirmed"
+    assert facts["payment_confirmed"] is True  # pay_status == "paid" → pago real
     # sin `service_window_expires_at_ms` → ventana cerrada → el workflow usará template
     assert facts["in_service_window"] is False
+
+
+async def test_claim_placeholder_name_and_unconfirmed_payment(
+    _isolate_vault_dir: Path, monkeypatch
+):
+    """Bug reportado (2026-06-11): nuevo→preparación dice "Hola Cliente" + "tu
+    pago ya está confirmado" siendo mentira. El customer Medusa de ventas
+    WhatsApp es el placeholder "Cliente WhatsApp" y su pago está `pending` hasta
+    que el humano lo confirme. La activity NO debe propagar el nombre falso ni
+    marcar el pago como confirmado."""
+    _write_meta(_isolate_vault_dir, SID, {"active_route": "eta", "eta_tracking": {"order_id": ORDER, "notified_stages": []}})
+
+    class _Port:
+        async def get(self, oid):
+            return _fake_detail(
+                customer="Cliente WhatsApp", display_id="#1250",
+                total_cop=90000, pay_type="confirmed", pay_status="pending",
+            )
+
+    monkeypatch.setattr("src.platform.orders.composition.get_order_query_port", lambda: _Port())
+    facts = await ActivityEnvironment().run(claim_eta_notification_activity, SID, ORDER, "preparing")
+    assert facts is not None
+    assert facts["customer_name"] == ""          # placeholder filtrado → sin nombre
+    assert facts["payment_confirmed"] is False    # pending → NO afirmar pago
 
 
 async def test_claim_reports_service_window_state(_isolate_vault_dir: Path):
