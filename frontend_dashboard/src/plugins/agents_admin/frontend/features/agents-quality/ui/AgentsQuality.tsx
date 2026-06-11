@@ -5,6 +5,11 @@ import { EvalTrendChart } from "@plugins/agents_admin/frontend/features/eval-tre
 import { GoldenEvalCuration } from "@plugins/agents_admin/frontend/features/golden-eval-curation";
 import { Icon } from "@/shared/ui";
 
+/** Ventana compartida (días) entre la tendencia y la lista de episodios — el
+ *  mismo `useConversationEvals(WINDOW_DAYS, "online")` alimenta a ambos (una
+ *  sola fetch, cache de TanStack). */
+const WINDOW_DAYS = 30;
+
 /**
  * Panel "Calidad LLM" del agente de ventas. Vive como tab del canvas central
  * (ver `agents-prompts`), visible solo para el agente `sales` — el único con
@@ -15,22 +20,25 @@ import { Icon } from "@/shared/ui";
  * bajo el umbral se vuelven candidatos a golden (regresión de CI). Las tres
  * superficies (todas leen `/api/agents/evals/*`):
  *
- *   1. **Tendencia** — promedio por métrica por día. Click en un día → filtra
- *      la vista de episodios a ese día (trazar el día bajo hasta SU conversación).
- *   2. **Episodios** — la vista central: qué conversación puntuó qué, su
- *      timeline de evals (¿mejoró o quedó igual?), por qué falló cada métrica,
- *      y si es candidata a golden.
+ *   1. **Tendencia** — valor inicial→actual (con fecha) por métrica. Selector
+ *      de conversación: "Todas" promedia por día; un episodio aísla SU evolución
+ *      sin contaminación. Los días bajos (modo Todas) filtran la lista.
+ *   2. **Episodios** — la vista central: qué conversación puntuó qué, su timeline
+ *      de evals, por qué falló cada métrica, y si es candidata a golden.
  *   3. **Goldens** — curación de candidatos (aprobar → regresión en CI).
  *
  * Nota FSD: composición intra-plugin (feature → feature del MISMO plugin), que
  * `dependency-cruiser` permite — la regla `plugins-no-cross-plugin` solo veta el
  * acoplamiento entre plugins distintos. El estado compartido entre superficies
- * (día seleccionado, candidato a abrir) vive ACÁ, lifted: las features hermanas
- * no se hablan entre sí, reciben callbacks del padre.
+ * (episodio aislado, día seleccionado, candidato a abrir) vive ACÁ, lifted: las
+ * features hermanas no se hablan entre sí, reciben callbacks del padre. El
+ * episodio seleccionado es UNO: lo fija tanto el selector de la tendencia como
+ * un click en la lista, y ambas superficies lo reflejan.
  */
 export function AgentsQuality() {
   const [view, setView] = useState<"episodios" | "goldens">("episodios");
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [selectedEpisodeKey, setSelectedEpisodeKey] = useState<string | null>(null);
   const [goldenToOpen, setGoldenToOpen] = useState<string | null>(null);
 
   const openCandidate = (candidateId: string) => {
@@ -38,15 +46,33 @@ export function AgentsQuality() {
     setView("goldens");
   };
 
+  // Día y episodio son filtros mutuamente excluyentes de la misma vista.
   const selectDate = (date: string | null) => {
     setSelectedDate(date);
-    if (date) setView("episodios");
+    if (date) {
+      setSelectedEpisodeKey(null);
+      setView("episodios");
+    }
+  };
+
+  const selectEpisode = (key: string | null) => {
+    setSelectedEpisodeKey(key);
+    if (key) {
+      setSelectedDate(null);
+      setView("episodios");
+    }
   };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden p-3 text-fg">
       <div className="shrink-0">
-        <EvalTrendChart selectedDate={selectedDate} onSelectDate={selectDate} />
+        <EvalTrendChart
+          windowDays={WINDOW_DAYS}
+          selectedDate={selectedDate}
+          onSelectDate={selectDate}
+          selectedEpisodeKey={selectedEpisodeKey}
+          onSelectEpisode={selectEpisode}
+        />
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-line">
@@ -79,8 +105,11 @@ export function AgentsQuality() {
         <div className="min-h-0 flex-1 overflow-hidden">
           {view === "episodios" ? (
             <EpisodeEvals
+              windowDays={WINDOW_DAYS}
               dateFilter={selectedDate}
               onClearDateFilter={() => setSelectedDate(null)}
+              selectedKey={selectedEpisodeKey}
+              onSelectKey={selectEpisode}
               onOpenCandidate={openCandidate}
             />
           ) : (

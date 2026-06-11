@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 
 import {
+  episodeUnitKey,
   useConversationEvals,
   useEvalTranscript,
   type ConversationEval,
@@ -21,14 +22,18 @@ import { Icon } from "@/shared/ui";
  */
 
 interface Props {
+  /** Ventana (días) de conversaciones — compartida con la tendencia. */
+  windowDays: number;
   /** Día seleccionado en la tendencia (filtra la lista a episodios evaluados ese día). */
   dateFilter: string | null;
   onClearDateFilter: () => void;
+  /** Episodio seleccionado (`<session>::<episode>`), lifted: lo comparte el
+   *  selector de la tendencia. null = nada seleccionado. */
+  selectedKey: string | null;
+  onSelectKey: (key: string | null) => void;
   /** Abre el candidato en la pestaña de curación de goldens. */
   onOpenCandidate: (candidateId: string) => void;
 }
-
-const convKey = (c: ConversationEval) => `${c.session_id}::${c.episode_id}`;
 
 function scoreColor(avg: number | null): string {
   if (avg === null) return "text-fg-faint";
@@ -48,20 +53,29 @@ function sessionLabel(sessionId: string): string {
   return sessionId.startsWith("wa_") ? sessionId.slice(3) : sessionId;
 }
 
-export function EpisodeEvals({ dateFilter, onClearDateFilter, onOpenCandidate }: Props) {
-  const { data, isLoading, isError } = useConversationEvals(7, "online");
+export function EpisodeEvals({
+  windowDays,
+  dateFilter,
+  onClearDateFilter,
+  selectedKey,
+  onSelectKey,
+  onOpenCandidate,
+}: Props) {
+  const { data, isLoading, isError } = useConversationEvals(windowDays, "online");
   const [onlyFailing, setOnlyFailing] = useState(false);
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
 
+  const allConversations = data?.conversations ?? [];
   const conversations = useMemo(() => {
-    let list = data?.conversations ?? [];
+    let list = allConversations;
     if (onlyFailing) list = list.filter((c) => !c.last_passed || c.is_candidate);
     if (dateFilter) list = list.filter((c) => c.evals.some((e) => e.date === dateFilter));
     return list;
-  }, [data, onlyFailing, dateFilter]);
+  }, [allConversations, onlyFailing, dateFilter]);
 
-  const selected =
-    conversations.find((c) => convKey(c) === selectedKey) ?? null;
+  // El detalle se busca en la lista COMPLETA (no la filtrada): un episodio
+  // seleccionado desde el selector de la tendencia debe verse aunque los
+  // filtros locales de la lista lo escondan.
+  const selected = allConversations.find((c) => episodeUnitKey(c) === selectedKey) ?? null;
 
   return (
     <div className="flex h-full min-h-0 w-full text-fg">
@@ -109,17 +123,17 @@ export function EpisodeEvals({ dateFilter, onClearDateFilter, onOpenCandidate }:
             <p className="px-2 text-sm text-fg-muted">
               {dateFilter || onlyFailing
                 ? "Nada que mostrar con los filtros activos."
-                : "Sin evaluaciones en los últimos 7 días. El eval online corre " +
-                  "varias veces al día y puntúa cada episodio de conversación real."}
+                : "Sin evaluaciones recientes. El eval online corre varias veces " +
+                  "al día y puntúa cada episodio de conversación real."}
             </p>
           ) : (
             <ul className="space-y-1">
               {conversations.map((c) => (
-                <li key={convKey(c)}>
+                <li key={episodeUnitKey(c)}>
                   <ConversationRow
                     conv={c}
-                    active={convKey(c) === selectedKey}
-                    onClick={() => setSelectedKey(convKey(c))}
+                    active={episodeUnitKey(c) === selectedKey}
+                    onClick={() => onSelectKey(episodeUnitKey(c))}
                   />
                 </li>
               ))}
@@ -132,7 +146,7 @@ export function EpisodeEvals({ dateFilter, onClearDateFilter, onOpenCandidate }:
       <section className="min-w-0 flex-1 overflow-y-auto p-4">
         {selected ? (
           <ConversationPane
-            key={convKey(selected)}
+            key={episodeUnitKey(selected)}
             conv={selected}
             threshold={data?.threshold ?? 0.7}
             onOpenCandidate={onOpenCandidate}
