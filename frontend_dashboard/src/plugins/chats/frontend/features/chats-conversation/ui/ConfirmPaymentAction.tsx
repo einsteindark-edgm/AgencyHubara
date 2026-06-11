@@ -5,6 +5,7 @@ import {
   useScheduleOrder,
 } from "@plugins/chats/frontend/entities/order-ref";
 import { sessionKeys } from "@plugins/chats/frontend/entities/session";
+import { addDaysIso, todayIso } from "@/shared/lib";
 
 interface Props {
   /** Id backend (Medusa) del pedido a confirmar — `session.pending_payment_order_id`. */
@@ -42,7 +43,9 @@ export function ConfirmPaymentAction({ orderId }: Props) {
   const schedule = useScheduleOrder();
   const confirm = useConfirmOrderPayment();
   const [open, setOpen] = useState(false);
-  const [date, setDate] = useState(defaultTomorrowIso);
+  // Lazy init: "mañana" se calcula al montar, no al cargar el módulo — un
+  // module-const quedaba stale si el dashboard pasaba la medianoche abierto.
+  const [date, setDate] = useState(() => addDaysIso(1));
   const [time, setTime] = useState("");
   const [err, setErr] = useState<string | null>(null);
 
@@ -162,15 +165,6 @@ export function ConfirmPaymentAction({ orderId }: Props) {
     </span>
   );
 }
-
-/* ── date helpers (espejo de ReadyForShip) ─────────────────────────────── */
-
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-const defaultTomorrowIso = new Date(Date.now() + 86_400_000)
-  .toISOString()
-  .slice(0, 10);
 
 /* ── styles (inline para no tocar el index.css spinal — mismo criterio que
    el resto del composer, que ya usa estilos inline / clases existentes) ── */

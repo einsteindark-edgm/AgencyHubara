@@ -5,6 +5,8 @@
  * `MedusaOrderQuery`). Cuando Medusa no responde, `response.catalog_available`
  * es `false` y mostramos un estado vacío explícito.
  */
+import { useState } from "react";
+
 import {
   OrdersFilters,
   filterLabel,
@@ -227,21 +229,33 @@ function VaultOrdersBanner({
  * registró a mano). Tras resolver, la invalidación de `orderKeys.vault()`
  * hace que la fila desaparezca.
  */
+// Estilo compartido de los botones de acción de la fila (mismo idioma inline
+// del resto del banner; la migración a tokens es F4).
+const vaultActionBtnStyle = (busy: boolean): React.CSSProperties => ({
+  fontSize: 10,
+  padding: "2px 8px",
+  borderRadius: 4,
+  border: "1px solid rgba(255,255,255,0.14)",
+  background: "transparent",
+  color: "var(--fg-soft)",
+  cursor: busy ? "wait" : "pointer",
+  opacity: busy ? 0.5 : 1,
+});
+
 function VaultOrderRow({ r }: { r: VaultOrderRecord }) {
   const retry = useRetryVaultOrder();
   const resolve = useResolveVaultOrder();
+  // Confirmación inline en dos pasos (patrón DangerPanel del inspector).
+  // `window.confirm` quedó prohibido: en los webviews de Tauri (WKWebView)
+  // los diálogos JS nativos no son confiables — el operador podía quedar
+  // sin forma de confirmar (auditoría 2026-06-10, F0.6).
+  const [confirmingResolve, setConfirmingResolve] = useState(false);
   const busy = retry.isPending || resolve.isPending;
   const outcome = retry.data?.outcome;
 
   const onResolve = () => {
-    if (
-      window.confirm(
-        "¿Marcar este pedido como resuelto? Hacelo solo si ya lo registraste " +
-          "en Medusa Admin — desaparecerá del banner.",
-      )
-    ) {
-      resolve.mutate({ sessionKey: r.session_key, auditId: r.order_id });
-    }
+    setConfirmingResolve(false);
+    resolve.mutate({ sessionKey: r.session_key, auditId: r.order_id });
   };
 
   let estado = r.status === "abandoned" ? "Abandonado" : "Pendiente";
@@ -294,43 +308,54 @@ function VaultOrderRow({ r }: { r: VaultOrderRecord }) {
           : ""}
       </td>
       <td style={{ padding: "4px 8px", whiteSpace: "nowrap" }}>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() =>
-            retry.mutate({ sessionKey: r.session_key, auditId: r.order_id })
-          }
-          style={{
-            fontSize: 10,
-            padding: "2px 8px",
-            borderRadius: 4,
-            border: "1px solid rgba(255,255,255,0.14)",
-            background: "transparent",
-            color: "var(--fg-soft)",
-            cursor: busy ? "wait" : "pointer",
-            opacity: busy ? 0.5 : 1,
-            marginRight: 4,
-          }}
-        >
-          {retry.isPending ? "Reintentando…" : "Reintentar"}
-        </button>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={onResolve}
-          style={{
-            fontSize: 10,
-            padding: "2px 8px",
-            borderRadius: 4,
-            border: "1px solid rgba(255,255,255,0.14)",
-            background: "transparent",
-            color: "var(--fg-soft)",
-            cursor: busy ? "wait" : "pointer",
-            opacity: busy ? 0.5 : 1,
-          }}
-        >
-          Marcar resuelto
-        </button>
+        {confirmingResolve ? (
+          <>
+            <span style={{ marginRight: 6, color: "var(--fg-soft)" }}>
+              ¿Ya lo registraste en Medusa Admin?
+            </span>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onResolve}
+              style={{
+                ...vaultActionBtnStyle(busy),
+                color: "#5be07b",
+                borderColor: "rgba(91,224,123,0.4)",
+                marginRight: 4,
+              }}
+            >
+              Sí, marcar resuelto
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirmingResolve(false)}
+              style={vaultActionBtnStyle(false)}
+            >
+              Volver
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() =>
+                retry.mutate({ sessionKey: r.session_key, auditId: r.order_id })
+              }
+              style={{ ...vaultActionBtnStyle(busy), marginRight: 4 }}
+            >
+              {retry.isPending ? "Reintentando…" : "Reintentar"}
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => setConfirmingResolve(true)}
+              style={vaultActionBtnStyle(busy)}
+            >
+              Marcar resuelto
+            </button>
+          </>
+        )}
       </td>
     </tr>
   );

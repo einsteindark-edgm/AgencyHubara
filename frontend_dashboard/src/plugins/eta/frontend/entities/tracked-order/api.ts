@@ -16,15 +16,19 @@ const TRACKED_ORDERS_REFETCH_MS = 5_000;
  * + validación Zod en el boundary y poll cada 5s para reflejar nuevos cambios
  * de estado a medida que el operador mueve los pedidos en el kanban de orders.
  */
-async function fetchTrackedOrders(): Promise<TrackedOrder[]> {
-  const raw = await apiClient.get<unknown>("/api/eta/tracked-orders");
+async function fetchTrackedOrders(
+  signal?: AbortSignal,
+): Promise<TrackedOrder[]> {
+  const raw = await apiClient.get<unknown>("/api/eta/tracked-orders", {
+    signal,
+  });
   return trackedOrdersListResponseSchema.parse(raw).orders as TrackedOrder[];
 }
 
 export function useTrackedOrders() {
   return useQuery({
     queryKey: trackedOrderKeys.list(),
-    queryFn: fetchTrackedOrders,
+    queryFn: ({ signal }) => fetchTrackedOrders(signal),
     refetchInterval: TRACKED_ORDERS_REFETCH_MS,
   });
 }

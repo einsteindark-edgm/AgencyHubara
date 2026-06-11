@@ -10,15 +10,15 @@ import { agentKeys } from "./keys";
 import { agentsListResponseSchema } from "./contracts";
 import type { Agent } from "./model";
 
-async function fetchAgents(): Promise<Agent[]> {
-  const raw = await apiClient.get<unknown>("/api/agents");
+async function fetchAgents(signal?: AbortSignal): Promise<Agent[]> {
+  const raw = await apiClient.get<unknown>("/api/agents", { signal });
   return agentsListResponseSchema.parse(raw).agents;
 }
 
 export function useAgents() {
   return useQuery({
     queryKey: agentKeys.list(),
-    queryFn: fetchAgents,
+    queryFn: ({ signal }) => fetchAgents(signal),
     staleTime: 5 * 60 * 1000,
   });
 }

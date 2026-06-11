@@ -43,6 +43,10 @@ import type { Order, OrderStatus, PayStatus, PayType } from "./model";
 
 /* ── Mapping snake_case backend → camelCase legacy Order interface ─────── */
 
+// Mapper PURO (auditoría 2026-06-10, F0.5): nada de `new Date()` acá — un
+// dato cacheado no puede depender del reloj del momento del fetch. `overdue`
+// viene calculado del backend (única fuente); los labels relativos
+// ("hoy/mañana") se derivan en render (ver `dayChipShort` en OrdersBoard).
 export function toLegacyOrder(s: OrderSummary): Order {
   return {
     id: s.display_id, // "#1247" — la UI espera el formato display
@@ -57,10 +61,9 @@ export function toLegacyOrder(s: OrderSummary): Order {
     payType: s.pay_type as PayType,
     items: s.items,
     total: s.total_cop,
-    due: humanizeDue(s.due_iso),
     dueIso: s.due_iso ?? "",
     dueTime: s.due_time ?? "—",
-    overdue: computeOverdue(s.due_iso),
+    overdue: s.overdue,
     pieces: s.pieces,
     agent: s.agent,
     priority: s.priority,
@@ -71,38 +74,16 @@ export function toLegacyOrder(s: OrderSummary): Order {
   };
 }
 
-function computeOverdue(dueIso: string | null): boolean {
-  if (!dueIso) return false;
-  const today = new Date().toISOString().slice(0, 10);
-  return dueIso < today;
-}
-
-function humanizeDue(dueIso: string | null): string {
-  if (!dueIso) return "—";
-  const today = new Date();
-  const due = new Date(dueIso + "T00:00:00");
-  const diffDays = Math.round(
-    (due.getTime() - new Date(today.toISOString().slice(0, 10)).getTime()) /
-      86_400_000,
-  );
-  if (diffDays === 0) return "hoy";
-  if (diffDays === 1) return "mañana";
-  if (diffDays === -1) return "ayer";
-  if (diffDays > 0 && diffDays <= 7) {
-    const dayNames = ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"];
-    return `${dayNames[due.getDay()]} ${due.getDate()}`;
-  }
-  return dueIso;
-}
-
 /* ── Queries ──────────────────────────────────────────────────────────── */
 
 export function useOrders() {
   return useQuery<{ orders: Order[]; response: OrderListResponse }>({
     queryKey: orderKeys.list(),
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       try {
-        const raw = await apiClient.get<unknown>("/api/orders/orders");
+        const raw = await apiClient.get<unknown>("/api/orders/orders", {
+          signal,
+        });
         const parsed = orderListResponseSchema.parse(raw);
         return {
           orders: parsed.orders.map(toLegacyOrder),
@@ -150,13 +131,14 @@ export function useOrders() {
 export function useOrderDetail(displayId: string | null) {
   return useQuery<OrderDetail>({
     queryKey: orderKeys.detail(displayId ?? "—"),
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       if (!displayId) throw new Error("displayId required");
       // Premortem A1: el backend ya resuelve `display_id` ("#1247") al
       // backend id internamente. Pasamos el display_id directo —
       // funciona para deep-links sin requerir useOrders() poblado antes.
       const raw = await apiClient.get<unknown>(
         `/api/orders/orders/${encodeURIComponent(displayId)}`,
+        { signal },
       );
       return orderDetailSchema.parse(raw);
     },
@@ -303,9 +285,11 @@ export function useCancelOrder() {
 export function useVaultOrders() {
   return useQuery<VaultOrdersResponse>({
     queryKey: orderKeys.vault(),
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       try {
-        const raw = await apiClient.get<unknown>("/api/orders/vault-orders");
+        const raw = await apiClient.get<unknown>("/api/orders/vault-orders", {
+          signal,
+        });
         return vaultOrdersResponseSchema.parse(raw);
       } catch (exc) {
         // Mismo trato C3: si el backend está caído, devolvemos vacío para
@@ -392,10 +376,11 @@ export function useResolveVaultOrder() {
 export function useCustomerScore(displayId: string | null) {
   return useQuery<CustomerScore>({
     queryKey: orderKeys.customerScore(displayId ?? "—"),
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       if (!displayId) throw new Error("displayId required");
       const raw = await apiClient.get<unknown>(
         `/api/orders/orders/${encodeURIComponent(displayId)}/customer-score`,
+        { signal },
       );
       return customerScoreSchema.parse(raw);
     },

@@ -22,13 +22,20 @@ import type { ChatSession, SessionDetails } from "./model";
 
 const SESSION_DETAIL_REFETCH_MS = 3_000;
 
-async function fetchSessions(): Promise<ChatSession[]> {
-  const raw = await apiClient.get<unknown>("/api/dashboard/sessions");
+async function fetchSessions(signal?: AbortSignal): Promise<ChatSession[]> {
+  const raw = await apiClient.get<unknown>("/api/dashboard/sessions", {
+    signal,
+  });
   return sessionsListResponseSchema.parse(raw).sessions;
 }
 
-async function fetchSessionDetail(id: string): Promise<SessionDetails> {
-  const raw = await apiClient.get<unknown>(`/api/dashboard/sessions/${id}`);
+async function fetchSessionDetail(
+  id: string,
+  signal?: AbortSignal,
+): Promise<SessionDetails> {
+  const raw = await apiClient.get<unknown>(`/api/dashboard/sessions/${id}`, {
+    signal,
+  });
   return sessionDetailsSchema.parse(raw);
 }
 
@@ -36,7 +43,7 @@ async function fetchSessionDetail(id: string): Promise<SessionDetails> {
 export function useSessions() {
   return useQuery({
     queryKey: sessionKeys.list(),
-    queryFn: fetchSessions,
+    queryFn: ({ signal }) => fetchSessions(signal),
   });
 }
 
@@ -48,7 +55,7 @@ export function useSessions() {
 export function useSession(id: string | null) {
   return useQuery({
     queryKey: sessionKeys.detail(id ?? ""),
-    queryFn: () => fetchSessionDetail(id!),
+    queryFn: ({ signal }) => fetchSessionDetail(id!, signal),
     enabled: !!id,
     refetchInterval: SESSION_DETAIL_REFETCH_MS,
   });

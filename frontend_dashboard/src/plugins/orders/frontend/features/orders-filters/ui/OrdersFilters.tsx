@@ -12,6 +12,7 @@
  */
 
 import { Icon, MacButton } from "@/shared/ui";
+import { addDaysIso, nextDaysIsoSet, todayIso } from "@/shared/lib";
 import type { Order } from "@plugins/orders/frontend/entities/order";
 import type { PayTypeFilter, ViewFilter } from "../model/useOrderFilters";
 
@@ -26,13 +27,10 @@ interface Props {
 }
 
 export function OrdersFilters({ view, setView, payType, setPayType, orders }: Props) {
-  const today = new Date().toISOString().slice(0, 10);
-  const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
+  const today = todayIso();
+  const tomorrow = addDaysIso(1);
   // Esta semana = próximos 7 días incluyendo hoy.
-  const weekIsos = new Set<string>();
-  for (let i = 0; i < 7; i++) {
-    weekIsos.add(new Date(Date.now() + i * 86_400_000).toISOString().slice(0, 10));
-  }
+  const weekIsos = nextDaysIsoSet(7);
   // Bug fix 2026-05-26: counters de las vistas excluyen órdenes canceladas.
   // Las canceladas viven en la columna "Cancelada" del kanban pero NO se
   // suman a las métricas operacionales (sería ruido — "5 órdenes para hoy"

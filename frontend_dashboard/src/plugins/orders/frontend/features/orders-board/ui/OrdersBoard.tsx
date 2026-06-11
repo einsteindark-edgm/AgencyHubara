@@ -15,7 +15,7 @@ import {
   type OrderStatus,
 } from "@plugins/orders/frontend/entities/order";
 import { Avatar, Icon, MacButton } from "@/shared/ui";
-import { dayChipShort, fmtMoney } from "@/shared/lib";
+import { dayChipShort, fmtMoney, todayIso } from "@/shared/lib";
 
 const COLUMNS: OrderStatus[] = ["new", "preparing", "ready", "shipping", "delivered", "cancelled"];
 
@@ -303,7 +303,7 @@ export function OrdersHeader({
   filteredTotal: number;
   title: string;
 }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayIso();
   // YYYY-MM del mes actual — usado para filtrar dueIso del mes corriente.
   const monthPrefix = today.slice(0, 7);
   const k = useMemo(

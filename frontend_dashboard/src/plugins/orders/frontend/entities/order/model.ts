@@ -4,9 +4,10 @@
  * necesita un shape específico — este modelo es el contrato canónico
  * que consumen los componentes (`OrdersBoard`, `OrdersInspector`, etc.).
  *
- * Re-exporta tipos del backend (Zod-inferred en `contracts.ts`) + algunas
- * derivaciones puramente UI (overdue, etc.) que el cliente recalcula al
- * leer los datos.
+ * Re-exporta tipos del backend (Zod-inferred en `contracts.ts`). Todo lo
+ * dependiente del reloj (`overdue`) viene calculado del backend; los labels
+ * relativos ("hoy/mañana") se derivan en render, nunca en el mapper
+ * (auditoría 2026-06-10, F0.5).
  */
 
 import type {
@@ -48,7 +49,6 @@ export interface Order {
   payType: PayType;
   items: number;
   total: number;
-  due: string;
   dueIso: string;
   dueTime: string;
   overdue?: boolean;

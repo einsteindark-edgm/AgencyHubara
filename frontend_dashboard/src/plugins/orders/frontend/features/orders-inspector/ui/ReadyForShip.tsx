@@ -14,19 +14,17 @@
 import { useState } from "react";
 import { useScheduleOrder, type Order } from "@plugins/orders/frontend/entities/order";
 import { Icon, MacButton } from "@/shared/ui";
+import { addDaysIso, todayIso } from "@/shared/lib";
 
 interface Props {
   order: Order;
 }
 
 export function ReadyForShip({ order }: Props) {
-  // Default = mañana en formato YYYY-MM-DD
-  const tomorrow = new Date(Date.now() + 86_400_000)
-    .toISOString()
-    .slice(0, 10);
-  const todayIso = new Date().toISOString().slice(0, 10);
+  // Default = mañana; el input no permite fechas pasadas (min = hoy).
+  const minDate = todayIso();
 
-  const [date, setDate] = useState<string>(order.dueIso || tomorrow);
+  const [date, setDate] = useState<string>(order.dueIso || addDaysIso(1));
   const [time, setTime] = useState<string>(
     order.dueTime && order.dueTime !== "—" ? order.dueTime : "",
   );
@@ -73,7 +71,7 @@ export function ReadyForShip({ order }: Props) {
           <input
             type="date"
             value={date}
-            min={todayIso}
+            min={minDate}
             onChange={(e) => setDate(e.target.value)}
             required
           />

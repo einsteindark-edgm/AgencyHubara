@@ -40,9 +40,11 @@ function isBackendDown(exc: unknown): boolean {
 export function useSyncHistory() {
   return useQuery<SyncHistoryResponse>({
     queryKey: catalogSyncKeys.history(),
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       try {
-        const raw = await apiClient.get<unknown>("/api/catalog/syncs");
+        const raw = await apiClient.get<unknown>("/api/catalog/syncs", {
+          signal,
+        });
         return syncHistoryResponseSchema.parse(raw);
       } catch (exc) {
         if (isBackendDown(exc)) return EMPTY_HISTORY;
@@ -60,8 +62,10 @@ export function useSyncHistory() {
 export function useSnapshotInfo() {
   return useQuery<SnapshotInfo>({
     queryKey: catalogSyncKeys.snapshot(),
-    queryFn: async () => {
-      const raw = await apiClient.get<unknown>("/api/catalog/snapshot");
+    queryFn: async ({ signal }) => {
+      const raw = await apiClient.get<unknown>("/api/catalog/snapshot", {
+        signal,
+      });
       return snapshotInfoSchema.parse(raw);
     },
     refetchInterval: 15_000,
@@ -75,10 +79,11 @@ export function useSnapshotInfo() {
 export function useSyncStatus(workflowId: string | null) {
   return useQuery<SyncDetail>({
     queryKey: catalogSyncKeys.status(workflowId ?? "—"),
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       if (!workflowId) throw new Error("workflowId required");
       const raw = await apiClient.get<unknown>(
         `/api/catalog/sync/${encodeURIComponent(workflowId)}`,
+        { signal },
       );
       return syncDetailSchema.parse(raw);
     },
