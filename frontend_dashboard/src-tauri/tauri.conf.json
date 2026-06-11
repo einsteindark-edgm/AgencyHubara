@@ -2,10 +2,10 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Hubara Dashboard",
   "version": "0.1.0",
-  "identifier": "com.tauri.dev",
+  "identifier": "com.hubara.dashboard",
   "build": {
     "frontendDist": "../dist",
-    "devUrl": "http://localhost:5173",
+    "devUrl": "http://127.0.0.1:5173",
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build"
   },
@@ -13,14 +13,18 @@
     "windows": [
       {
         "title": "Hubara Dashboard",
-        "width": 800,
-        "height": 600,
+        "width": 1280,
+        "height": 800,
+        "minWidth": 1100,
+        "minHeight": 700,
+        "center": true,
         "resizable": true,
         "fullscreen": false
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost http://localhost:8000 http://127.0.0.1:8000 http://localhost:4318 http://127.0.0.1:4318; img-src 'self' data: http: https:; font-src 'self' data:",
+      "devCsp": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost ws://127.0.0.1:5173 http://127.0.0.1:5173 http://localhost:8000 http://127.0.0.1:8000 http://localhost:4318 http://127.0.0.1:4318; img-src 'self' data: http: https:; font-src 'self' data:"
     }
   },
   "bundle": {
