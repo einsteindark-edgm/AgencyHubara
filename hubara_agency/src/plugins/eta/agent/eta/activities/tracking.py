@@ -70,6 +70,23 @@ def _first_name(full_name: str | None) -> str:
     return full_name.strip().split()[0] if full_name.strip() else ""
 
 
+# El customer de ventas WhatsApp se crea en Medusa con un nombre placeholder
+# (``first_name="Cliente"``, ``last_name="WhatsApp"`` — ver
+# ``medusa_order._upsert_customer``). Sin este filtro, TODA notificación
+# saludaría "¡Hola Cliente!". Preferimos "¡Hola!" a secas antes que un nombre
+# falso: devolvemos "" y el prompt/plantilla saludan sin nombre.
+_PLACEHOLDER_NAMES = {"cliente whatsapp", "cliente sin nombre", "cliente"}
+
+
+def _display_first_name(full_name: str | None) -> str:
+    """Primer nombre para el saludo, o "" si es el placeholder de Medusa."""
+    if not full_name:
+        return ""
+    if full_name.strip().lower() in _PLACEHOLDER_NAMES:
+        return ""
+    return _first_name(full_name)
+
+
 def _format_cop(total_cop: int | None) -> str:
     """Formatea un monto COP al estilo del mock: ``$ 215.000`` (miles con punto)."""
     if not total_cop:
@@ -221,12 +238,15 @@ async def claim_eta_notification_activity(
 
     if detail is None:
         # Pedido no resoluble (stub / borrado / Medusa caído). Igual notificamos
-        # con lo mínimo: número = order_id, sin monto.
+        # con lo mínimo: número = order_id, sin monto. Sin datos del pedido NO
+        # sabemos si el pago está confirmado → `payment_confirmed=False` para que
+        # el mensaje NO afirme un pago que no podemos verificar.
         return {
             "customer_name": "",
             "order_display_id": order_id,
             "total_label": "",
             "pay_type": "confirmed",
+            "payment_confirmed": False,
             "delivery_window": None,
             "items_label": "",
             "in_service_window": in_window,
@@ -234,10 +254,17 @@ async def claim_eta_notification_activity(
 
     summary = detail.summary
     return {
-        "customer_name": _first_name(summary.customer),
+        "customer_name": _display_first_name(summary.customer),
         "order_display_id": summary.display_id,
         "total_label": _format_cop(summary.total_cop),
         "pay_type": summary.pay_type,
+        # `pay_type` es solo la MODALIDAD (cod vs prepago) y defaultea a
+        # "confirmed" cuando falta `payment_method` — NO dice si el cliente ya
+        # pagó. El pago real lo confirma el flag humano "Confirmar pago", que
+        # llega como `pay_status == "paid"`. Pasamos ese booleano honesto para
+        # que la notificación NO mienta ("tu pago ya está confirmado") en pedidos
+        # nuevos/en preparación cuyo pago aún no se confirmó.
+        "payment_confirmed": getattr(summary, "pay_status", None) == "paid",
         # v1: mensaje genérico — sin transportadora/guía/ventana específica
         # (el backend no las modela todavía). El slot queda para una HU futura.
         "delivery_window": None,
