@@ -162,6 +162,34 @@ def test_conversation_evals_failing_sorted_first(tmp_path):
     assert out["conversations"][0]["last_passed"] is False
 
 
+def test_is_flagged_uses_avg_or_candidate_not_passed(tmp_path):
+    """El criterio de alerta/orden = avg<umbral O candidato (NO 'falló alguna
+    métrica'): un happy path de 0.96 con el tono apenas bajo no es problema."""
+    hist = tmp_path / "h"
+    # wa_happy (ep_011): avg 0.83, falló una métrica de tono → passed False pero
+    # NO flagged (avg > umbral, no candidato).
+    history.append_history_record(
+        hist, run_date="2026-06-03", session_id="wa_happy", suite="online",
+        scores=[("script", 1.0, True, ""), ("role", 0.66, False, "tono")],
+        episode_id="ep_011", ts="2026-06-03T12:00:00+00:00",
+    )
+    # wa_crit (ep_010): avg 0.72 > umbral pero candidato (falla crítica
+    # alucinación) → flagged.
+    history.append_history_record(
+        hist, run_date="2026-06-03", session_id="wa_crit", suite="online",
+        scores=[("script", 1.0, True, ""), ("no_hallucination", 0.44, False, "halu")],
+        episode_id="ep_010", ts="2026-06-03T11:00:00+00:00", is_candidate=True,
+    )
+    out = history.read_conversation_evals(
+        hist, dates=["2026-06-03"], suite="online", threshold=0.7
+    )
+    by = {c["session_id"]: c for c in out["conversations"]}
+    assert history.is_flagged_conversation(by["wa_happy"], 0.7) is False
+    assert history.is_flagged_conversation(by["wa_crit"], 0.7) is True
+    # El candidato (flagged) va ARRIBA del happy path, aunque su eval sea más vieja.
+    assert out["conversations"][0]["session_id"] == "wa_crit"
+
+
 def test_conversation_evals_tolerates_legacy_records(tmp_path):
     """Registros pre-episodio (sin episode_id/avg/failed) siguen siendo legibles."""
     import json

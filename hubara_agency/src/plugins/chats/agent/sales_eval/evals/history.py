@@ -190,6 +190,24 @@ def _trend(avgs: list[float], *, epsilon: float = 0.02) -> str:
     return "flat"
 
 
+def is_flagged_conversation(conv: dict[str, Any], threshold: float) -> bool:
+    """¿La conversación amerita atención del operador?
+
+    `last_avg < threshold` (score genuinamente bajo) O `is_candidate` (el último
+    eval marcó candidato a golden — incluye fallas de métrica CRÍTICA como
+    no_hallucination=0, que el promedio podía esconder; ver `curation`).
+
+    Reemplaza el viejo criterio `not last_passed` ("falló cualquiera de las 9
+    métricas estrictas"), que era ruidoso: un episodio de 0.96 con un tono
+    apenas bajo (role_adherence 0.66) marcaba "falla" sin ser un problema real.
+    Caso ep_011 (run 24d061f6): happy path impecable, avg 0.963, aparecía como
+    falla. UNA definición que comparten el orden (acá), el badge de alerta y el
+    filtro "solo con fallas" del frontend (`isFlaggedEpisode`)."""
+    avg = conv.get("last_avg")
+    below = isinstance(avg, (int, float)) and avg < threshold
+    return below or bool(conv.get("is_candidate"))
+
+
 def read_conversation_evals(
     history_dir: Path,
     *,
@@ -264,10 +282,11 @@ def read_conversation_evals(
             }
         )
 
-    # Más recientes primero; a igual fecha, los de peor score arriba (son los
-    # que el operador necesita ver).
+    # Más recientes primero; luego los flagged arriba (avg bajo umbral o
+    # candidato a golden — los que el operador necesita ver). NO `last_passed`:
+    # ese marcaba arriba a un 0.96 que falló una métrica de tono (ruido).
     conversations.sort(key=lambda c: (c["last_date"], c["last_ts"]), reverse=True)
-    conversations.sort(key=lambda c: c["last_passed"])
+    conversations.sort(key=lambda c: not is_flagged_conversation(c, threshold))
 
     return {
         "threshold": threshold,
