@@ -501,8 +501,11 @@ def test_geval_metrics_feed_scenario_to_judge():
     from deepeval.test_case import TurnParams
 
     from src.plugins.chats.agent.sales_eval.evals import metrics as M
+    from src.plugins.chats.agent.sales_eval.evals.judge import LiteLLMJudge
 
-    metric = M.correct_handoff_metric(model=None)
+    # LiteLLMJudge se construye sin red (model=None caería al GPTModel default
+    # de deepeval, que exige OPENAI_API_KEY).
+    metric = M.correct_handoff_metric(model=LiteLLMJudge())
     assert TurnParams.SCENARIO in metric.evaluation_params
 
 
@@ -511,3 +514,72 @@ def test_rubric_steps_reference_system_facts_and_catalog():
     halluc = " ".join(R.NO_HALLUCINATION_STEPS)
     assert "HECHOS VERIFICADOS DEL SISTEMA" in handoff
     assert "CATÁLOGO REAL" in halluc
+
+
+# ---------------------------------------------------------------------------
+# Scenario builder compartido (online + golden) — paridad de criterio.
+# ---------------------------------------------------------------------------
+
+
+def test_build_scenario_composes_base_facts_and_catalog():
+    from src.plugins.chats.agent.sales_eval.evals import scenario as S
+
+    episode = {"closing_tag": "INTERESADO"}
+    text = S.build_scenario(
+        episode, {}, episode_is_last=True, catalog_block="CATÁLOGO REAL VIGENTE: X",
+    )
+    assert text.startswith(S.BASE_SCENARIO)
+    assert "HECHOS VERIFICADOS DEL SISTEMA" in text
+    assert "INTERESADO" in text
+    assert "CATÁLOGO REAL VIGENTE: X" in text
+
+
+def test_build_scenario_minimal_is_just_base():
+    from src.plugins.chats.agent.sales_eval.evals import scenario as S
+
+    assert S.build_scenario(None, {}, episode_is_last=True, catalog_block="") == S.BASE_SCENARIO
+
+
+@pytest.mark.asyncio
+async def test_catalog_ground_truth_renders_closed_lists():
+    from src.plugins.chats.agent.sales_eval.evals import scenario as S
+
+    class _P:
+        id = "p1"
+        handle = "cruz-de-vida"
+        title = "Cruz de Vida"
+        tags = ["Aroma: Drakar", "Aroma: Café", "Color: Blanco"]
+
+        class _Pr:
+            amount = "17000"
+            currency_code = "cop"
+
+        class _V:
+            pass
+
+        _V.prices = [_Pr()]
+        variants = [_V()]
+
+    class _Fake:
+        async def search(self, q, *, limit=10):
+            class _R:
+                results = [_P()]
+
+            return _R()
+
+    block = await S.catalog_ground_truth(catalog=_Fake())
+    assert "CATÁLOGO REAL VIGENTE" in block
+    assert "aromas (2): Drakar, Café" in block
+    assert "colores (1): Blanco" in block
+    assert "$17000 COP" in block
+
+
+@pytest.mark.asyncio
+async def test_catalog_ground_truth_degrades_to_empty():
+    from src.plugins.chats.agent.sales_eval.evals import scenario as S
+
+    class _Broken:
+        async def search(self, q, *, limit=10):
+            raise RuntimeError("snapshot ausente")
+
+    assert await S.catalog_ground_truth(catalog=_Broken()) == ""
