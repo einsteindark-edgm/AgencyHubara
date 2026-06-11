@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import { useConversationEvals } from "@plugins/agents_admin/frontend/entities/episode-eval";
 import { EpisodeEvals } from "@plugins/agents_admin/frontend/features/episode-evals";
 import { EvalTrendChart } from "@plugins/agents_admin/frontend/features/eval-trend-chart";
 import { GoldenEvalCuration } from "@plugins/agents_admin/frontend/features/golden-eval-curation";
@@ -40,10 +41,24 @@ export function AgentsQuality() {
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [selectedEpisodeKey, setSelectedEpisodeKey] = useState<string | null>(null);
   const [goldenToOpen, setGoldenToOpen] = useState<string | null>(null);
+  const [onlyFailing, setOnlyFailing] = useState(false);
+
+  // Alerta de calidad: cuántos episodios evaluados están bajo el umbral (la
+  // última eval falló alguna métrica). Es el "te aviso de los malos" que pediste
+  // — siempre visible en la nav, derivado del mismo query (cache compartido).
+  const { data: convData } = useConversationEvals(WINDOW_DAYS, "online");
+  const failingCount = (convData?.conversations ?? []).filter(
+    (c) => !c.last_passed,
+  ).length;
 
   const openCandidate = (candidateId: string) => {
     setGoldenToOpen(candidateId);
     setView("goldens");
+  };
+
+  const showFailing = () => {
+    setOnlyFailing(true);
+    setView("episodios");
   };
 
   // Día y episodio son filtros mutuamente excluyentes de la misma vista.
@@ -101,6 +116,16 @@ export function AgentsQuality() {
           >
             <Icon.shield /> Curación de goldens
           </button>
+          {failingCount > 0 && (
+            <button
+              type="button"
+              onClick={showFailing}
+              className="ml-auto inline-flex items-center gap-1.5 rounded-md bg-red/15 px-3 py-1.5 text-xs font-semibold text-red transition hover:bg-red/25"
+              title="Ver los episodios cuya última evaluación falló alguna métrica"
+            >
+              <Icon.alert /> {failingCount} episodio{failingCount > 1 ? "s" : ""} bajo el umbral
+            </button>
+          )}
         </nav>
         <div className="min-h-0 flex-1 overflow-hidden">
           {view === "episodios" ? (
@@ -110,6 +135,8 @@ export function AgentsQuality() {
               onClearDateFilter={() => setSelectedDate(null)}
               selectedKey={selectedEpisodeKey}
               onSelectKey={selectEpisode}
+              onlyFailing={onlyFailing}
+              onOnlyFailingChange={setOnlyFailing}
               onOpenCandidate={openCandidate}
             />
           ) : (

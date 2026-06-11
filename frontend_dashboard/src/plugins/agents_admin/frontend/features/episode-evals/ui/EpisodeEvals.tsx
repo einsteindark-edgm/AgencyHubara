@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 
 import {
   episodeUnitKey,
@@ -31,6 +31,9 @@ interface Props {
    *  selector de la tendencia. null = nada seleccionado. */
   selectedKey: string | null;
   onSelectKey: (key: string | null) => void;
+  /** "Solo con fallas", lifted: lo activa el badge de alerta de AgentsQuality. */
+  onlyFailing: boolean;
+  onOnlyFailingChange: (value: boolean) => void;
   /** Abre el candidato en la pestaña de curación de goldens. */
   onOpenCandidate: (candidateId: string) => void;
 }
@@ -59,10 +62,11 @@ export function EpisodeEvals({
   onClearDateFilter,
   selectedKey,
   onSelectKey,
+  onlyFailing,
+  onOnlyFailingChange,
   onOpenCandidate,
 }: Props) {
   const { data, isLoading, isError } = useConversationEvals(windowDays, "online");
-  const [onlyFailing, setOnlyFailing] = useState(false);
 
   const allConversations = data?.conversations ?? [];
   // Cliente en foco: derivado del episodio seleccionado (`<session>::<episode>`).
@@ -98,7 +102,7 @@ export function EpisodeEvals({
               <input
                 type="checkbox"
                 checked={onlyFailing}
-                onChange={(e) => setOnlyFailing(e.target.checked)}
+                onChange={(e) => onOnlyFailingChange(e.target.checked)}
                 className="accent-current"
               />
               solo con fallas

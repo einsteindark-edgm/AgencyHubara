@@ -57,6 +57,9 @@ from src.plugins.chats.agent.sales_eval.evals.contracts import (
     EvalWindowInput,
     GoldenEvalInput,
 )
+from src.plugins.chats.agent.sales_eval.workflows.evaluate_episode import (
+    EvaluateEpisodeWorkflow,
+)
 from src.plugins.chats.agent.sales_eval.workflows.golden_eval import GoldenEvalWorkflow
 from src.plugins.chats.agent.sales_eval.workflows.sales_eval import SalesEvalWorkflow
 
@@ -178,7 +181,7 @@ async def main() -> None:
     worker = Worker(
         client,
         task_queue=task_queue,
-        workflows=[SalesEvalWorkflow, GoldenEvalWorkflow],
+        workflows=[SalesEvalWorkflow, GoldenEvalWorkflow, EvaluateEpisodeWorkflow],
         activities=[
             select_conversations_to_eval_activity,
             evaluate_sales_conversation_activity,

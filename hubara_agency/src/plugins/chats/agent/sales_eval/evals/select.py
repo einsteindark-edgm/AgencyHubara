@@ -184,6 +184,66 @@ def select_eval_units(
     return selected
 
 
+def select_all_closed_episodes(
+    *,
+    vault_dir: Path | None = None,
+    min_turns: int = 4,
+    already: set[tuple[str, str]] | None = None,
+) -> list[str]:
+    """Unit ids `<session>::<episode>` de TODOS los episodios CERRADOS del vault,
+    SIN ventana temporal — para el BACKFILL de calidad por episodio.
+
+    A diferencia de `select_eval_units` (muestreo de la ventana de 24h), enumera
+    cada episodio con `closed_at_ms` de cada sesión, sin importar cuándo cerró.
+    Es la pieza que cierra el hueco del muestreo: permite calificar episodios
+    históricos viejos que el cron diario nunca tocaría.
+
+    * `min_turns` se aplica POR EPISODIO (sobre el slice).
+    * `already` (set de `(session_id, episode_id)` ya evaluados, típicamente de
+      `history.read_evaluated_session_episodes`) se EXCLUYE: el backfill no
+      re-evalúa lo que ya tiene nota — idempotente, no duplica registros ni
+      gasta juez de más.
+    * Sesiones legacy sin `episodes[]` se evalúan enteras (unit = session id).
+
+    Priorizado por largo (episodios más largos primero — más señal a evaluar).
+    """
+    if vault_dir is None:
+        from src.platform.config import WORKSPACE_VAULT_DIR
+
+        vault_dir = WORKSPACE_VAULT_DIR
+    already = already or set()
+
+    units: list[tuple[str, int]] = []  # (unit_id, n_turns)
+    for sd in _session_dirs(vault_dir):
+        jsonl = _jsonl_path(sd)
+        if not jsonl.exists():
+            continue
+        sid = sd.name
+        episodes = reconstruct.read_session_metadata(vault_dir, sid).get("episodes") or []
+        episodes = [e for e in episodes if isinstance(e, dict) and e.get("episode_id")]
+        if not episodes:
+            if (sid, "") in already:
+                continue
+            nlines = _count_lines(jsonl)
+            if nlines >= min_turns:
+                units.append((sid, nlines))
+            continue
+        events = reconstruct.read_session_events(vault_dir, sid)
+        for ep in episodes:
+            if not isinstance(ep.get("closed_at_ms"), int):
+                continue  # solo episodios CERRADOS (los activos los cubre el cierre)
+            eid = str(ep["episode_id"])
+            if (sid, eid) in already:
+                continue
+            n = len(reconstruct.slice_episode_events(events, ep))
+            if n < min_turns:
+                continue
+            units.append((reconstruct.make_eval_unit_id(sid, eid), n))
+
+    units.sort(key=lambda u: u[1], reverse=True)
+    return [u[0] for u in units]
+
+
 def _maybe_prioritize_by_signoz(
     session_ids: list[str], window: EvalWindowInput
 ) -> list[str]:

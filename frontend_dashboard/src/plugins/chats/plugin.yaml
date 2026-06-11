@@ -183,6 +183,23 @@ agent:
             signal_name: cancel_watchdog
             input_mapping:
               reason: "$.closing_tag"
+        # EpisodeClosedEvent → evaluar ESE episodio (calidad LLM, event-driven).
+        # Cada episodio que cierra queda calificado una vez en el histórico —
+        # cobertura completa por episodio, no muestreo temporal. `start_workflow`
+        # con id por episodio: una re-entrega del evento no arranca dos (idempotente).
+        # El target es efímero (evalúa y termina), por eso start_workflow y no signal.
+        - id: sales_episode_close_triggers_eval
+          on_event: EpisodeClosedEvent
+          action:
+            via: start_workflow
+            target_plugin: chats
+            target_worker: sales_eval
+            target_workflow: EvaluateEpisodeWorkflow
+            workflow_id_template: "eval-episode-{event.session_id}-{event.episode_id}"
+            input_mapping:
+              session_id: "$.session_id"
+              episode_id: "$.episode_id"
+              closing_tag: "$.closing_tag"
       # LEGACY: declaración documental (Nivel 1, pre-ADR-2026-05-20). Reemplazada
       # por `transitions:` arriba. Conservada hasta que el system_map drift
       # detector se actualice para leer transitions (PR9 del ADR).
@@ -404,6 +421,9 @@ agent:
       task_queue: queue-sales-eval
       workflow_classes:
         - SalesEvalWorkflow
+        # Eval dirigida de UN episodio al cerrar (event-driven). La dispara la
+        # transition `sales_episode_close_triggers_eval` del worker `sales`.
+        - EvaluateEpisodeWorkflow
       deployment:
         replicas: 1
         cpu_request: 250m
