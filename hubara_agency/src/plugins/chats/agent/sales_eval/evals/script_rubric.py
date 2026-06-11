@@ -126,7 +126,10 @@ SCRIPT_ADHERENCE_STEPS = [
     "Verifica si en el cierre siguió la secuencia canónica (request_shipping_details "
     "→ verify_order_for_checkout → present_order_confirmation → register_order → "
     "CONFIRMADO_PAGO_PENDIENTE + escalación PAYMENT_VERIFICATION_PENDING) con UN solo "
-    "mensaje de cierre y SIN marcar 'COMPRA_EXITOSA' directo.",
+    "mensaje de cierre y SIN marcar 'COMPRA_EXITOSA' directo. Las tool calls del "
+    "cierre pueden no estar registradas en el transcript: si los HECHOS VERIFICADOS "
+    "DEL SISTEMA del Scenario registran la orden/etiqueta/escalación, considera esa "
+    "parte de la secuencia CUMPLIDA.",
     "Penaliza fuerte: inventar datos, voseo rioplatense, prometer tiempos futuros, "
     "revelar que es una IA, repreguntar datos que el cliente ya dio, o mandar un "
     "segundo mensaje después del cierre.",
@@ -147,11 +150,18 @@ PROACTIVE_OFFERING_STEPS = [
 ]
 
 NO_HALLUCINATION_STEPS = [
-    "Verifica que todo producto, precio, aroma, color o política que el asistente "
-    "afirmó corresponda a algo que una tool devolvió (debe haber un tool_call de "
-    "search_products ANTES de nombrar productos concretos).",
-    "Penaliza nombrar productos/precios sin un search_products previo, inventar "
-    "descuentos, o prometer tiempos de envío exactos sin base.",
+    "Si el Scenario incluye un CATÁLOGO REAL VIGENTE, esa es la fuente de verdad: "
+    "contrasta CADA producto, precio, aroma, color y CONTEO de opciones ('14 "
+    "aromas', '10 colores') que el asistente afirmó contra esas listas cerradas. "
+    "Afirmar una opción o un conteo que NO está en el catálogo es alucinación "
+    "grave, aunque haya tool calls registradas.",
+    "Verifica que el asistente usó tools (search_products / get_product_by_handle) "
+    "antes de afirmar datos de catálogo. OJO: el transcript puede NO registrar "
+    "todas las tool calls (limitación de persistencia) — NO penalices 'no llamó "
+    "tools' como única razón si lo afirmado coincide exactamente con el catálogo "
+    "real del Scenario; penaliza las AFIRMACIONES que lo contradicen.",
+    "Penaliza nombrar productos/precios que no existen, inventar descuentos, o "
+    "prometer tiempos de envío exactos sin base.",
 ]
 
 CONVERSION_PROGRESS_STEPS = [
@@ -168,7 +178,14 @@ CORRECT_HANDOFF_STEPS = [
     "disparadores correctos: pedido de descuento, mayoreo/B2B, evento corporativo, "
     "seguridad/salud, pedido explícito de hablar con una persona, envío "
     "internacional, y tras register_order (PAYMENT_VERIFICATION_PENDING).",
+    "IMPORTANTE: las tools del cierre (manage_conversation_tag, escalate_to_human) "
+    "corren en turnos que el transcript puede NO registrar. Si el Scenario trae "
+    "HECHOS VERIFICADOS DEL SISTEMA que registran la escalación, la etiqueta o la "
+    "red de seguridad del workflow, DA LA ESCALACIÓN POR OCURRIDA — esos hechos "
+    "son del runtime, más confiables que la ausencia de tool calls en el "
+    "transcript. No penalices 'no escaló' si el sistema registró la escalación.",
     "Verifica que NO escaló innecesariamente consultas normales que podía resolver "
     "por sí mismo.",
-    "Penaliza no escalar cuando el guion lo exige, o escalar de más.",
+    "Penaliza no escalar cuando el guion lo exige (sin evidencia en transcript NI "
+    "en hechos del sistema), o escalar de más.",
 ]

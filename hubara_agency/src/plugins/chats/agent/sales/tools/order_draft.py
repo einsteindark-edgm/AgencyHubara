@@ -37,9 +37,19 @@ from typing import Any
 from exoclaw.agent.tools import ToolBase, ToolContext
 from loguru import logger
 
+from src.platform.catalog import (
+    CatalogPort,
+    match_option,
+    normalize_label,
+    parse_variant_tags,
+    split_multi_label,
+)
 from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.state import FilesystemMetadataStore
-from src.plugins.chats.agent.sales.use_cases.order_draft import update_order_draft
+from src.plugins.chats.agent.sales.use_cases.order_draft import (
+    get_projectable_draft,
+    update_order_draft,
+)
 
 
 class SetOrderSlotTool(ToolBase):
@@ -110,15 +120,71 @@ class SetOrderSlotTool(ToolBase):
         self,
         workspace: str | Path,
         vault_dir: str | Path | None = None,
+        catalog: CatalogPort | None = None,
     ) -> None:
         # Mismo patron que `RegisterOrderTool`: el `workspace` es el runtime
         # workspace canonico compartido (no se usa para metadata). `vault_dir`
-        # DI-friendly: default al vault canonico.
+        # DI-friendly: default al vault canonico. `catalog` habilita la
+        # validacion closed-list de aroma/color (None = sin validacion).
         self._workspace = Path(workspace)
         self._vault_dir = (
             Path(vault_dir) if vault_dir is not None else WORKSPACE_VAULT_DIR
         )
         self._store = FilesystemMetadataStore(self._vault_dir)
+        self._catalog = catalog
+
+    async def _resolve_product(self, producto: str | None):
+        """Producto del catalogo cuyo titulo matchea `producto`, o None.
+
+        Match normalizado (case/acentos-insensible) por titulo o handle. Si el
+        catalogo esta caido o no hay match claro, None (no se valida — la tool
+        es advisory y degrada abierto: nunca bloquea por infra).
+        """
+        if self._catalog is None or not producto:
+            return None
+        try:
+            result = await self._catalog.search(q="", limit=30)
+        except Exception as exc:  # noqa: BLE001 — catálogo caído: degradar abierto
+            logger.warning(
+                "📝 [TOOL set_order_slot] catálogo no disponible para validar "
+                "({}) — slots sin validación",
+                exc,
+            )
+            return None
+        wanted = normalize_label(producto)
+        for p in result.results:
+            if normalize_label(p.title) == wanted or normalize_label(p.handle) == wanted:
+                return p
+        return None
+
+    def _validate_choice(
+        self, kind: str, raw_value: str, valid: list[str]
+    ) -> tuple[str | None, dict[str, Any] | None]:
+        """Valida una eleccion (posiblemente multiple) contra la lista cerrada.
+
+        Devuelve `(valor_canonico, None)` si TODOS los tokens existen (con el
+        casing real del catalogo), o `(None, rechazo)` si alguno no existe.
+        Lista vacia → no hay contra qué validar → se acepta tal cual.
+        """
+        if not valid:
+            return raw_value, None
+        tokens = split_multi_label(raw_value) or [raw_value]
+        canonical: list[str] = []
+        invalid: list[str] = []
+        for token in tokens:
+            matched = match_option(token, valid)
+            if matched is None:
+                invalid.append(token.strip())
+            else:
+                canonical.append(matched)
+        if invalid:
+            return None, {
+                "field": kind,
+                "given": raw_value,
+                "invalid": invalid,
+                "available": valid,
+            }
+        return ", ".join(canonical), None
 
     async def execute_with_context(
         self,
@@ -168,19 +234,53 @@ class SetOrderSlotTool(ToolBase):
 
         now_ms = int(time.time() * 1000)
         data = self._store.read(ctx.session_key)
-        draft = update_order_draft(data, slots=provided, now_ms=now_ms)
-        self._store.write(ctx.session_key, data)
 
-        current_slots = draft.get("slots", {})
+        # Validacion closed-list de aroma/color (caso ep_010, run fa1eb974: el
+        # color "Melocotón" no existe y entro al draft → llego a la orden real).
+        # El producto se resuelve del arg `producto` de ESTA llamada o del que
+        # ya este en el draft. Los valores invalidos NO se escriben; el envelope
+        # le dice al LLM las opciones reales (guion: "el rojo no lo manejo").
+        rejected: list[dict[str, Any]] = []
+        to_check = [
+            k for k in ("aroma", "color")
+            if isinstance(provided.get(k), str) and provided[k].strip()
+        ]
+        if to_check and self._catalog is not None:
+            draft_slots_now = get_projectable_draft(data) or {}
+            product = await self._resolve_product(
+                provided.get("producto") or draft_slots_now.get("producto")
+            )
+            if product is not None:
+                attrs = parse_variant_tags(product.tags)
+                valid_by_kind = {"aroma": attrs.aromas, "color": attrs.colors}
+                for kind in to_check:
+                    canonical, rejection = self._validate_choice(
+                        kind, provided[kind], valid_by_kind[kind]
+                    )
+                    if rejection is not None:
+                        rejected.append(rejection)
+                        provided.pop(kind, None)
+                    else:
+                        provided[kind] = canonical
+
+        wrote = bool(provided)
+        if wrote:
+            draft = update_order_draft(data, slots=provided, now_ms=now_ms)
+            self._store.write(ctx.session_key, data)
+            current_slots = draft.get("slots", {})
+        else:
+            current_slots = (get_projectable_draft(data) or {})
+
         logger.info(
-            "📝 [TOOL set_order_slot] session={} captured={} draft_now={}",
+            "📝 [TOOL set_order_slot] session={} captured={} rejected={} draft_now={}",
             ctx.session_key,
             provided,
+            [r["field"] for r in rejected],
             current_slots,
         )
 
-        envelope = {
-            "updated": True,
+        envelope: dict[str, Any] = {
+            "updated": wrote,
             "captured": provided,
             "order_draft": current_slots,
             "summary": (
@@ -189,4 +289,18 @@ class SetOrderSlotTool(ToolBase):
                 "cliente cambia algo, volve a llamar set_order_slot."
             ),
         }
+        if rejected:
+            envelope["rejected"] = rejected
+            parts = [
+                f"{r['field']} {r['given']!r} NO existe en el catálogo de este "
+                f"producto (disponibles: {', '.join(r['available'])})"
+                for r in rejected
+            ]
+            envelope["summary"] = (
+                ("Datos guardados parcialmente. " if wrote else "NO se guardó: ")
+                + "; ".join(parts)
+                + ". Dile al cliente con calidez que esa opción no la manejas, "
+                "ofrécele SOLO las disponibles y vuelve a llamar set_order_slot "
+                "con la elección real."
+            )
         return json.dumps(envelope, ensure_ascii=False)

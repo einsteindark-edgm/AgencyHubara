@@ -55,6 +55,65 @@ def _env() -> str:
     return os.getenv("ENVIRONMENT", "dev")
 
 
+async def _catalog_ground_truth() -> str:
+    """Listas cerradas del catálogo REAL (snapshot local) para el juez.
+
+    Sin esto, `no_hallucination` no puede saber que "Melocotón" no existe (caso
+    ep_010): el juez solo veía los turnos. Best-effort: catálogo caído → ""
+    (el juez evalúa como antes, sin ground truth).
+    """
+    try:
+        from src.platform.catalog import get_catalog_client, parse_variant_tags
+
+        result = await get_catalog_client().search(q="", limit=30)
+        lines: list[str] = []
+        for p in result.results:
+            attrs = parse_variant_tags(p.tags)
+            price = ""
+            if p.variants and p.variants[0].prices:
+                pr = p.variants[0].prices[0]
+                price = f" — ${pr.amount} {pr.currency_code.upper()}"
+            lines.append(
+                f"• {p.title} (handle: {p.handle}){price}"
+                f" — aromas ({len(attrs.aromas)}): {', '.join(attrs.aromas) or '(ninguno)'}"
+                f" — colores ({len(attrs.colors)}): {', '.join(attrs.colors) or '(ninguno)'}"
+            )
+        if not lines:
+            return ""
+        return (
+            "CATÁLOGO REAL VIGENTE (lista cerrada, snapshot local del sistema; "
+            "puede diferir levemente del vigente al momento de la conversación):\n"
+            + "\n".join(lines)
+            + "\nTodo producto, precio, aroma, color o CONTEO de opciones que el "
+            "asistente afirme y no esté en estas listas es invención."
+        )
+    except Exception:  # noqa: BLE001 — sin catálogo el juez evalúa como antes
+        return ""
+
+
+def _build_scenario(
+    episode: dict | None, metadata: dict, episode_is_last: bool, catalog_block: str
+) -> str:
+    """Scenario del test case = contexto base + hechos del sistema + catálogo.
+
+    Viaja al prompt del juez vía `TurnParams.SCENARIO` (ver `metrics._geval`).
+    """
+    parts = [_SCENARIO]
+    facts = reconstruct.build_system_facts(
+        episode, metadata, episode_is_last=episode_is_last
+    )
+    if facts:
+        parts.append(
+            "HECHOS VERIFICADOS DEL SISTEMA (registrados por el workflow "
+            "runtime, NO generados por el LLM; las tool calls del cierre pueden "
+            "no aparecer en el transcript — estos hechos prueban que ocurrieron):\n"
+            + "\n".join(f"- {f}" for f in facts)
+        )
+    if catalog_block:
+        parts.append(catalog_block)
+    return "\n\n".join(parts)
+
+
 @activity.defn(name="select_conversations_to_eval")
 async def select_conversations_to_eval_activity(window: EvalWindowInput) -> list[str]:
     """Enumera + prioriza las unidades a evaluar (lee vault).
@@ -96,8 +155,21 @@ async def evaluate_sales_conversation_activity(
             num_turns=len(turns), skipped=True, error="too_few_turns",
         )
 
+    # Scenario enriquecido: hechos verificados del sistema (cierre/orden/
+    # escalada desde metadata — fix del falso negativo de correct_handoff en
+    # ep_010) + catálogo real (ground truth de no_hallucination). Llega al
+    # prompt del juez vía TurnParams.SCENARIO.
+    metadata = reconstruct.read_session_metadata(vault_dir, session_id)
+    scenario = _build_scenario(
+        _episode,
+        metadata,
+        episode_is_last=(
+            reconstruct.is_last_episode(metadata, episode_id) if episode_id else True
+        ),
+        catalog_block=await _catalog_ground_truth(),
+    )
     test_case = reconstruct.build_conversational_test_case(
-        turns, scenario=_SCENARIO, context=[script_rubric.SCRIPT_CONTEXT], name=unit_id,
+        turns, scenario=scenario, context=[script_rubric.SCRIPT_CONTEXT], name=unit_id,
     )
 
     judge = composition.get_judge()
@@ -134,8 +206,12 @@ async def evaluate_sales_conversation_activity(
     avg = sum(s for (_, s, _, _) in scores) / n
     overall_pass = n_pass == n
     # Candidata a golden: el promedio cae bajo el umbral (la conversación está por
-    # debajo de la barra global). Tunable vía `window.candidate_threshold`.
-    is_candidate = avg < window.candidate_threshold
+    # debajo de la barra global) O falló una métrica CRÍTICA (ep_010: alucinación
+    # de catálogo con avg 0.72 — el promedio no la salvaba de ser material de
+    # regresión). Tunable vía `window.candidate_threshold` / `CRITICAL_METRICS`.
+    is_candidate = avg < window.candidate_threshold or curation.has_critical_failure(
+        scores
+    )
 
     emit_conversation_verdict(
         session_id=session_id, avg_score=avg, overall_pass=overall_pass,

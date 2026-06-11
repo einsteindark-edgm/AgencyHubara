@@ -193,11 +193,13 @@ def _geval(key: str, name: str, steps: list[str], model: Any, threshold: float) 
     from deepeval.metrics import ConversationalGEval
     from deepeval.test_case import TurnParams
 
-    # `evaluation_params` solo admite params PER-TURNO (CONTENT/ROLE/TOOLS_CALLED/
-    # METADATA/TAGS/RETRIEVAL_CONTEXT). scenario/chatbot_role/context son del test
-    # case (ConversationalGEval los usa internamente, NO van acá — pasar
-    # CHATBOT_ROLE/SCENARIO/CONTEXT revienta con KeyError). El guion completo ya
-    # vive en `evaluation_steps`, así que el juez tiene toda la rúbrica.
+    # `evaluation_params`: CONTENT/ROLE/TOOLS_CALLED van per-turno. SCENARIO es
+    # conversation-level y SÍ está soportado (CONVERSATIONAL_G_EVAL_PARAMS lo
+    # mapea) — por ahí entran los HECHOS VERIFICADOS DEL SISTEMA y el CATÁLOGO
+    # REAL que arma `eval_activities._build_scenario` (sin SCENARIO acá, el
+    # juez NO ve el scenario del test case: solo los turnos). CHATBOT_ROLE y
+    # CONTEXT siguen SIN soporte en esa tabla → KeyError; el guion vive en
+    # `evaluation_steps`.
     metric = ConversationalGEval(
         name=name,
         evaluation_steps=steps,
@@ -205,6 +207,7 @@ def _geval(key: str, name: str, steps: list[str], model: Any, threshold: float) 
             TurnParams.CONTENT,
             TurnParams.ROLE,
             TurnParams.TOOLS_CALLED,
+            TurnParams.SCENARIO,
         ],
         model=model,
         threshold=threshold,

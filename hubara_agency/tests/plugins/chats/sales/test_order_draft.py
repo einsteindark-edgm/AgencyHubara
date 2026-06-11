@@ -307,3 +307,132 @@ async def test_register_order_stops_draft_projection(ctx, vault):
     meta = _read_metadata(vault, ctx.session_key)
     assert meta["episodes"][-1]["order_id"]  # register_order anoto el order_id
     assert get_projectable_draft(meta) is None  # draft deja de proyectarse
+
+
+# ----------------------------------------------------------------------
+# Validación closed-list de aroma/color (caso ep_010, run fa1eb974: el color
+# "Melocotón" no existe en el catálogo y entró al draft → a la orden real).
+# ----------------------------------------------------------------------
+
+from src.platform.catalog import (  # noqa: E402
+    CatalogManifestDTO,
+    CatalogProductDTO,
+    CatalogUnavailableError,
+    SearchResult,
+)
+
+_CRUZ = CatalogProductDTO(
+    id="prod_cruz",
+    handle="cruz-de-vida",
+    title="Cruz de Vida",
+    status="published",
+    tags=[
+        "Aroma: Lavanda", "Aroma: Café", "Aroma: Drakar",
+        "Color: gris", "Color: Blanco", "Color: Rosado",
+    ],
+)
+
+_MANIFEST = CatalogManifestDTO(
+    version="v1", fetched_at="2026-06-11T00:00:00Z", product_count=1
+)
+
+
+class FakeCatalog:
+    def __init__(self, fail: bool = False) -> None:
+        self.fail = fail
+
+    async def search(self, q: str, *, limit: int = 10) -> SearchResult:
+        if self.fail:
+            raise CatalogUnavailableError("snapshot ausente")
+        return SearchResult(
+            query=q, count=1, truncated=False, stale=False,
+            manifest=_MANIFEST, results=[_CRUZ],
+        )
+
+    async def get_by_handle(self, handle: str) -> CatalogProductDTO:
+        if self.fail:
+            raise CatalogUnavailableError("snapshot ausente")
+        return _CRUZ
+
+
+@pytest.mark.asyncio
+async def test_slot_rejects_nonexistent_color(ctx, vault):
+    """ep_010 exacto: color Melocotón con producto Cruz de Vida → rechazado."""
+    tool = SetOrderSlotTool(
+        workspace=str(vault), vault_dir=vault, catalog=FakeCatalog()
+    )
+    result = json.loads(await tool.execute_with_context(
+        ctx, producto="Cruz de Vida", color="Melocotón"
+    ))
+    assert result["rejected"][0]["field"] == "color"
+    assert "gris" in result["rejected"][0]["available"]
+    assert "Melocot" in result["summary"]
+    # el producto (válido) sí se guardó; el color NO
+    meta = _read_metadata(vault, ctx.session_key)
+    slots = meta["episodes"][-1]["order_draft"]["slots"]
+    assert slots.get("producto") == "Cruz de Vida"
+    assert "color" not in slots
+
+
+@pytest.mark.asyncio
+async def test_slot_resolves_product_from_existing_draft(ctx, vault):
+    """El producto quedó en el draft en una llamada previa; la validación lo usa."""
+    tool = SetOrderSlotTool(
+        workspace=str(vault), vault_dir=vault, catalog=FakeCatalog()
+    )
+    await tool.execute_with_context(ctx, producto="Cruz de Vida")
+    result = json.loads(await tool.execute_with_context(ctx, color="Melocotón"))
+    assert result["updated"] is False
+    assert result["rejected"][0]["field"] == "color"
+    meta = _read_metadata(vault, ctx.session_key)
+    assert "color" not in meta["episodes"][-1]["order_draft"]["slots"]
+
+
+@pytest.mark.asyncio
+async def test_slot_accepts_and_canonicalizes_multi_aroma(ctx, vault):
+    """"drakar, café" (casing del cliente) → "Drakar, Café" (casing del catálogo)."""
+    tool = SetOrderSlotTool(
+        workspace=str(vault), vault_dir=vault, catalog=FakeCatalog()
+    )
+    result = json.loads(await tool.execute_with_context(
+        ctx, producto="Cruz de Vida", aroma="drakar, café", color="blanco"
+    ))
+    assert result["updated"] is True
+    assert "rejected" not in result
+    slots = _read_metadata(vault, ctx.session_key)["episodes"][-1]["order_draft"]["slots"]
+    assert slots["aroma"] == "Drakar, Café"
+    assert slots["color"] == "Blanco"
+
+
+@pytest.mark.asyncio
+async def test_slot_without_product_context_accepts(ctx, vault):
+    """Sin producto resoluble no hay contra qué validar — se acepta (advisory)."""
+    tool = SetOrderSlotTool(
+        workspace=str(vault), vault_dir=vault, catalog=FakeCatalog()
+    )
+    result = json.loads(await tool.execute_with_context(ctx, color="Melocotón"))
+    assert result["updated"] is True
+    slots = _read_metadata(vault, ctx.session_key)["episodes"][-1]["order_draft"]["slots"]
+    assert slots["color"] == "Melocotón"
+
+
+@pytest.mark.asyncio
+async def test_slot_catalog_down_degrades_open(ctx, vault):
+    tool = SetOrderSlotTool(
+        workspace=str(vault), vault_dir=vault, catalog=FakeCatalog(fail=True)
+    )
+    result = json.loads(await tool.execute_with_context(
+        ctx, producto="Cruz de Vida", color="Melocotón"
+    ))
+    assert result["updated"] is True
+    assert "rejected" not in result
+
+
+@pytest.mark.asyncio
+async def test_slot_without_catalog_keeps_legacy_behavior(ctx, vault):
+    tool = SetOrderSlotTool(workspace=str(vault), vault_dir=vault)
+    result = json.loads(await tool.execute_with_context(
+        ctx, producto="Cruz de Vida", color="Melocotón"
+    ))
+    assert result["updated"] is True
+    assert "rejected" not in result

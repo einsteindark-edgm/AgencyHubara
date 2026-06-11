@@ -439,9 +439,12 @@ agent:
           OTEL_EXPORTER_OTLP_ENDPOINT: http://host.docker.internal:4317
           OTEL_SEMCONV_STABILITY_OPT_IN: gen_ai_latest_experimental
           OPENLIT_PRICING_JSON: /app/hubara_agency/deploy/openlit/pricing.json
-          # Juez LLM (alias del proxy litellm). Default = gemini-backup, distinto
-          # al modelo del agente (deepseek-v4-flash) → evita self-preference.
-          EVAL_JUDGE_MODEL: litellm_proxy/gemini-backup
+          # Juez LLM (alias del proxy litellm). gemini-pro-judge = el MISMO juez
+          # del golden de CI (paridad de criterio, ver judge.py). El valor
+          # anterior (gemini-backup) era el fallback del PROPIO agente DeepSeek
+          # → más débil y con riesgo de self-preference; quedó de antes del fix
+          # de paridad.
+          EVAL_JUDGE_MODEL: litellm_proxy/gemini-pro-judge
           # Candidatos a golden (auto-curación) → path montado durable; el
           # operador los baja, redacta y promueve a tests/evals/.../curated.json.
           EVAL_CANDIDATES_DIR: /app/hubara_vault/_evals/candidates

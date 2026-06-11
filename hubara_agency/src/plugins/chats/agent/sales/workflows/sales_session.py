@@ -541,9 +541,20 @@ class HubaraSalesSessionWorkflow:
                         # quedan in-flight pre-patch, eliminar el if + el patch_id
                         # con `workflow.deprecate_patch()` en el deploy siguiente.
                         if workflow.patched("persist-assistant-message-v1"):
+                            # `tools_used` (3er arg, opcional): evidencia para el
+                            # juez del eval — sin esto el juez no ve que el turno
+                            # llamó search_products / escalate_to_human y puntúa
+                            # falsos negativos (caso ep_010, run fa1eb974).
+                            # patched(): runs en vuelo replayean con el shape de
+                            # 2 args de su history (L-9).
+                            _persist_args: list = [
+                                session.session_id, result.final_content
+                            ]
+                            if workflow.patched("persist-tools-used-v1"):
+                                _persist_args.append(list(result.tools_used or []))
                             await workflow.execute_activity(
                                 persist_assistant_message_activity,
-                                args=[session.session_id, result.final_content],
+                                args=_persist_args,
                                 start_to_close_timeout=timedelta(seconds=10),
                                 retry_policy=RetryPolicy(maximum_attempts=2),
                             )

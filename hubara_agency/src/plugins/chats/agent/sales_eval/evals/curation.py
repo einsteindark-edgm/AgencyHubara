@@ -21,6 +21,17 @@ from typing import Any
 
 from src.plugins.chats.agent.sales_eval.evals import script_rubric as R
 
+# Métricas cuyo fallo amerita candidato a golden AUNQUE el promedio pase la
+# barra. Caso ep_010: no_hallucination=0.0 (colores inventados llegaron a la
+# orden real) pero avg 0.72 ≥ 0.70 → sin la regla, ni candidato ni regresión.
+# Alucinar catálogo es venta de algo que no existe: siempre material de golden.
+CRITICAL_METRICS: frozenset[str] = frozenset({"no_hallucination"})
+
+
+def has_critical_failure(scores: list[tuple[str, float, bool, str]]) -> bool:
+    """¿Alguna métrica CRÍTICA falló? `scores` = [(key, score, success, reason)]."""
+    return any(key in CRITICAL_METRICS and not ok for (key, _, ok, _) in scores)
+
 
 def _render_transcript(turns: list[dict[str, Any]]) -> str:
     lines = []

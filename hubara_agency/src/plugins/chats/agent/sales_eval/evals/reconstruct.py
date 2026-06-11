@@ -213,21 +213,108 @@ def to_evaluable_turns(
         content = ev.get("content")
         if not isinstance(content, str) or not content.strip():
             continue
-        tools = [
-            name
-            for name in (_tool_name(tc) for tc in (ev.get("tool_calls") or []))
-            if name
-        ]
+        # Evidencia de tools del turno: `tool_calls` (payload legacy) +
+        # `tools_used` (nombres planos que el workflow persiste desde
+        # `result.tools_used` — fix del caso ep_010: el juez puntuaba "no llamó
+        # search_products / no escaló" cuando la history de Temporal probaba lo
+        # contrario; las tools corrían pero no quedaban en el JSONL).
+        tools: list[str] = []
+        seen_tools: set[str] = set()
+        raw_tools = list(ev.get("tool_calls") or []) + list(ev.get("tools_used") or [])
+        for raw_tc in raw_tools:
+            name = _tool_name(raw_tc)
+            if name and name not in seen_tools:
+                seen_tools.add(name)
+                tools.append(name)
         # FUTURO (paridad de input online vs golden): acá solo extraemos los NOMBRES
         # de las tools, no sus RESULTADOS. El golden sí le pasa los outputs al juez
         # (build_conversational_test_case acepta `tool_outputs`), por eso su
         # `no_hallucination` ve el grounding (ej. el search devolvió $17.000) y el
         # online no -> el online es más estricto en esa métrica (sesga hacia abajo,
-        # nunca oculta problemas). Cerrarlo requiere PERSISTIR los `role:tool` en el
-        # session_history (write-path de prod) y reconstruirlos como tool_outputs.
+        # nunca oculta problemas). El catálogo real ahora viaja en el Scenario
+        # (ver `eval_activities._catalog_ground_truth`), que cubre el grounding
+        # de catálogo; los outputs de las demás tools siguen pendientes.
         text = redact_turn_content(role, content) if redact else content
         turns.append({"role": role, "content": text, "tools": tools})
     return turns
+
+
+# --------------------------------------------------------------------------- #
+# Hechos verificados del sistema → contexto del juez.
+#
+# Los turnos tool-only NO se persisten en el JSONL (la secuencia canónica de
+# cierre — manage_conversation_tag + escalate_to_human — corre en un turno sin
+# texto), así que el juez no puede verlos en el transcript. Pero la metadata
+# del episodio/sesión SÍ registra el resultado real (closing_tag, order_id,
+# escalation_reason): evidencia determinista escrita por el workflow runtime,
+# no generada por el LLM. Caso ep_010 (run fa1eb974): el juez puntuó
+# correct_handoff=0.5 "no escaló a humano" cuando la history de Temporal
+# muestra escalate_to_human(PAYMENT_VERIFICATION_PENDING) ejecutada.
+# --------------------------------------------------------------------------- #
+
+
+def is_last_episode(metadata: dict[str, Any], episode_id: str) -> bool:
+    """¿`episode_id` es el último de la sesión? (los hechos a nivel sesión —
+    escalation_reason, active_route — reflejan el estado ACTUAL, así que solo
+    son atribuibles al último episodio). Sin episodes[] (legacy) → True."""
+    episodes = [e for e in (metadata.get("episodes") or []) if isinstance(e, dict)]
+    if not episodes:
+        return True
+    return episodes[-1].get("episode_id") == episode_id
+
+
+def build_system_facts(
+    episode: dict[str, Any] | None,
+    metadata: dict[str, Any],
+    *,
+    episode_is_last: bool = True,
+) -> list[str]:
+    """Hechos del cierre registrados por el sistema, para el Scenario del juez.
+
+    Deterministas (vienen de metadata escrita por workflow/tools de borde, no
+    del LLM). Lista vacía si no hay nada registrado — el juez evalúa solo con
+    el transcript, como antes.
+    """
+    facts: list[str] = []
+
+    closing_tag = (episode or {}).get("closing_tag") or ""
+    if closing_tag:
+        motivo = (episode or {}).get("closing_motivo") or ""
+        fact = f"El episodio cerró con la etiqueta '{closing_tag}'"
+        if motivo:
+            fact += f" (motivo registrado: {motivo})"
+        facts.append(fact + ".")
+
+    order_id = (episode or {}).get("order_id") or ""
+    if order_id:
+        total = (episode or {}).get("order_total_cop")
+        currency = (episode or {}).get("order_currency") or "COP"
+        fact = f"register_order corrió con éxito: orden '{order_id}' registrada"
+        if isinstance(total, (int, float)):
+            fact += f" por ${total:,.0f} {currency}".replace(",", ".")
+        facts.append(fact + ".")
+
+    if closing_tag == "CONFIRMADO_PAGO_PENDIENTE":
+        facts.append(
+            "Para este cierre el workflow corre una red de seguridad idempotente "
+            "(ensure_payment_pending_closure) que garantiza la etiqueta "
+            "CONFIRMADO_PAGO_PENDIENTE y la escalación a humano "
+            "PAYMENT_VERIFICATION_PENDING, aunque esas tool calls no aparezcan "
+            "en el transcript."
+        )
+
+    if episode_is_last:
+        escalation_reason = metadata.get("escalation_reason") or ""
+        if escalation_reason:
+            fact = (
+                "escalate_to_human corrió: escalación registrada con razón "
+                f"'{escalation_reason}'"
+            )
+            if metadata.get("active_route") == "humano":
+                fact += " y la conversación quedó en ruta 'humano'"
+            facts.append(fact + ".")
+
+    return facts
 
 
 def build_conversational_test_case(

@@ -79,7 +79,17 @@ class FilesystemMessageHistoryStore:
         session_id: str,
         content: str,
         tool_calls: list[dict[str, Any]] | None = None,
+        tools_used: list[str] | None = None,
     ) -> None:
+        """``tools_used``: NOMBRES de las tools que el agente ejecutó durante el
+        turno que culminó en este mensaje. Campo distinto de ``tool_calls`` a
+        propósito: el clasificador del dashboard proyecta ``tool_calls`` →
+        ``ui_type: agent_tool_call`` (burbuja distinta), mientras que
+        ``tools_used`` es metadata de auditoría que el dashboard ignora y el
+        eval (reconstruct.to_evaluable_turns) le pasa al juez — sin esto el
+        juez no ve que el turno llamó search_products/escalate_to_human y
+        falla con falsos negativos (caso ep_010: correct_handoff=0.5 con la
+        escalada efectivamente hecha)."""
         event: dict[str, Any] = {
             "role": "assistant",
             "content": content,
@@ -87,6 +97,8 @@ class FilesystemMessageHistoryStore:
         }
         if tool_calls:
             event["tool_calls"] = tool_calls
+        if tools_used:
+            event["tools_used"] = list(tools_used)
         self._append(session_id, event)
 
     def append_human_event(self, session_id: str, content: str) -> None:
