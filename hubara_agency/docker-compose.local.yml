@@ -262,7 +262,7 @@ services:
     - OPENLIT_PRICING_JSON=/app/hubara_agency/deploy/openlit/pricing.json
     - EVAL_JUDGE_MODEL=litellm_proxy/gemini-backup
     - EVAL_CANDIDATES_DIR=/app/hubara_vault/_evals/candidates
-    - SALES_EVAL_SCHEDULE_ENABLED=true
+    - SALES_EVAL_SCHEDULE_ENABLED=false
     - SALES_EVAL_LOOKBACK_HOURS=8
     - SALES_EVAL_MAX_CONVERSATIONS=50
     - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}

@@ -100,9 +100,25 @@ def _window_from_env() -> EvalWindowInput:
 
 
 async def _ensure_schedule(client: Client, task_queue: str) -> None:
-    """Crea el Schedule cron si no existe (idempotente). Off-switch por env."""
+    """Sincroniza el Schedule cron con el toggle `SALES_EVAL_SCHEDULE_ENABLED`.
+
+    Idempotente en AMBOS sentidos (toggle real, INV-2): con el modelo
+    event-driven (cada episodio se evalúa al CERRAR — ver
+    `EvaluateEpisodeWorkflow`), el muestreo diario es redundante. Apagar el
+    toggle no solo skipea la creación: BORRA el schedule existente, así el env
+    gobierna el estado real en Temporal (sino un schedule creado por un boot
+    previo seguiría disparando aunque el env diga `false`).
+    """
     if os.environ.get("SALES_EVAL_SCHEDULE_ENABLED", "true").strip().lower() == "false":
-        logger.info("📅 Schedule de evals deshabilitado (SALES_EVAL_SCHEDULE_ENABLED=false)")
+        try:
+            await client.get_schedule_handle(_SCHEDULE_ID).delete()
+            logger.info(
+                "📅 Schedule '{}' BORRADO (SALES_EVAL_SCHEDULE_ENABLED=false) — "
+                "la eval es event-driven al cerrar cada episodio",
+                _SCHEDULE_ID,
+            )
+        except Exception:  # noqa: BLE001 — no existía / ya borrado: idempotente
+            logger.info("📅 Schedule de evals deshabilitado (no había schedule activo)")
         return
     cron = os.environ.get("SALES_EVAL_SCHEDULE_CRON", "").strip() or _DEFAULT_CRON
     try:

@@ -445,8 +445,13 @@ agent:
           # Candidatos a golden (auto-curación) → path montado durable; el
           # operador los baja, redacta y promueve a tests/evals/.../curated.json.
           EVAL_CANDIDATES_DIR: /app/hubara_vault/_evals/candidates
-          # Cadencia/ventana del schedule (08/14/20 hora Bogotá por default).
-          SALES_EVAL_SCHEDULE_ENABLED: "true"
+          # Muestreo diario APAGADO: la eval es event-driven (cada episodio se
+          # evalúa al CERRAR vía EvaluateEpisodeWorkflow). El cron de 24h era
+          # redundante — re-evaluaba lo ya cubierto al cierre. El worker borra el
+          # schedule existente al bootear con esto en "false" (toggle real, INV-2).
+          # Ventana/cadencia quedan declaradas por si se reactiva (solo barrido de
+          # episodios activos largos), pero hoy no se usan con el schedule apagado.
+          SALES_EVAL_SCHEDULE_ENABLED: "false"
           SALES_EVAL_LOOKBACK_HOURS: "8"
           SALES_EVAL_MAX_CONVERSATIONS: "50"
           DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
