@@ -76,10 +76,14 @@ def build_candidate_golden(
     scenario: str,
     expected_outcome: str,
     scores: list[tuple[str, float, bool, str]],
+    episode_id: str = "",
 ) -> dict[str, Any]:
     """Arma el dict del candidato a golden (shape `ConversationalGolden` + metadata).
 
     `turns` deben venir ya redactados. `scores` = [(metric_key, score, success, reason)].
+    `episode_id` ata el candidato al episodio que falló (vacío = sesión entera
+    legacy) — es lo que permite que la UI muestre QUÉ conversación se va a
+    convertir en golden, no solo el número de WhatsApp.
     """
     return {
         "scenario": scenario,
@@ -89,6 +93,7 @@ def build_candidate_golden(
         "additional_metadata": {
             "source": "auto_curation",
             "source_session_redacted": session_id,
+            "source_episode": episode_id,
             "status": "needs_human_review",
             "failed_metrics": [
                 {"metric": k, "score": s, "success": ok, "reason": r}
@@ -103,12 +108,14 @@ def build_candidate_golden(
 
 
 def write_candidate(
-    candidates_dir: Path, session_id: str, golden: dict[str, Any]
+    candidates_dir: Path, unit_id: str, golden: dict[str, Any]
 ) -> Path:
-    """Escribe el candidato a `<candidates_dir>/<safe_session>.json`. Idempotente
-    (un re-eval pisa el candidato previo de la misma sesión)."""
+    """Escribe el candidato a `<candidates_dir>/<safe_unit>.json`. Idempotente
+    POR UNIDAD: un re-eval pisa el candidato previo del MISMO episodio
+    (`wa_x::ep_002` → `wa_x__ep_002.json`), pero episodios distintos de la
+    misma sesión conviven como candidatos separados."""
     candidates_dir.mkdir(parents=True, exist_ok=True)
-    safe = "".join(c if c.isalnum() or c in "+-_" else "_" for c in session_id)
+    safe = "".join(c if c.isalnum() or c in "+-_" else "_" for c in unit_id)
     path = candidates_dir / f"{safe}.json"
     path.write_text(json.dumps(golden, ensure_ascii=False, indent=2), encoding="utf-8")
     return path

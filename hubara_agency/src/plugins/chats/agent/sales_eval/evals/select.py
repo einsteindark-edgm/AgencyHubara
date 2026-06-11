@@ -6,6 +6,10 @@ presupuesto de juez (`max_conversations`). Diseño:
   * **Base confiable = scan del vault**: enumera `<vault>/wa_*/sessions/*.jsonl`,
     filtra por ventana (mtime dentro de `lookback_hours`) y por `min_turns`, y
     prioriza por señal (handoff a humano > conversación larga > reciente).
+  * **Unidad = episodio** (`select_eval_units`): cada sesión en ventana se
+    expande a sus episodios elegibles (activo o cerrado dentro de la ventana) y
+    se evalúa CADA episodio por separado — unit id `<session>::<episode>`. Las
+    sesiones legacy sin `episodes[]` se evalúan enteras (unit id = session id).
   * **Enhancement opcional = SigNoz**: si `SIGNOZ_API_URL` está seteado, se puede
     reordenar por costo/latencia consultando las trazas. Es best-effort y degrada
     a [] si SigNoz no responde — la selección NUNCA depende de que SigNoz esté
@@ -18,6 +22,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
+from src.plugins.chats.agent.sales_eval.evals import reconstruct
 from src.plugins.chats.agent.sales_eval.evals.contracts import EvalWindowInput
 
 
@@ -103,6 +108,79 @@ def select_sessions(
 
     # Enhancement opcional: reordenar por costo vía SigNoz (best-effort).
     selected = _maybe_prioritize_by_signoz(selected, window) or selected
+    return selected
+
+
+def select_eval_units(
+    window: EvalWindowInput,
+    *,
+    vault_dir: Path | None = None,
+    now: float | None = None,
+) -> list[str]:
+    """Devuelve unit ids `<session>::<episode>` a evaluar, hasta `max_conversations`.
+
+    Expande cada sesión en ventana a sus episodios elegibles:
+      * episodio ACTIVO (último sin `closed_at_ms`), o
+      * episodio CERRADO dentro de la ventana (`closed_at_ms >= cutoff`) — así un
+        cierre reciente se evalúa completo aunque ya no esté activo.
+    Sesiones legacy sin `episodes[]` → un unit por la sesión entera (id sin
+    `::`, mismo shape que la selección histórica — backward compatible).
+
+    `min_turns` se aplica POR EPISODIO (eventos del slice), no por sesión: un
+    `wa_*` con 80 mensajes históricos y un episodio nuevo de 2 no se evalúa.
+    """
+    if vault_dir is None:
+        from src.platform.config import WORKSPACE_VAULT_DIR
+
+        vault_dir = WORKSPACE_VAULT_DIR
+    now = now if now is not None else time.time()
+    cutoff_ms = int((now - window.lookback_hours * 3600) * 1000)
+
+    units: list[tuple[str, str, float, int, bool]] = []  # (unit, sid, mtime, n, handoff)
+    for sd in _session_dirs(vault_dir):
+        jsonl = _jsonl_path(sd)
+        if not jsonl.exists():
+            continue
+        try:
+            mtime = jsonl.stat().st_mtime
+        except OSError:
+            continue
+        if mtime * 1000 < cutoff_ms:
+            continue
+        handoff = _is_handoff(sd)
+        sid = sd.name
+        episodes = reconstruct.read_session_metadata(vault_dir, sid).get("episodes") or []
+        episodes = [e for e in episodes if isinstance(e, dict) and e.get("episode_id")]
+        if not episodes:
+            nlines = _count_lines(jsonl)
+            if nlines >= window.min_turns:
+                units.append((sid, sid, mtime, nlines, handoff))
+            continue
+        events = reconstruct.read_session_events(vault_dir, sid)
+        for ep in episodes:
+            closed = ep.get("closed_at_ms")
+            is_active = closed is None
+            closed_in_window = isinstance(closed, int) and closed >= cutoff_ms
+            if not (is_active or closed_in_window):
+                continue
+            n = len(reconstruct.slice_episode_events(events, ep))
+            if n < window.min_turns:
+                continue
+            unit = reconstruct.make_eval_unit_id(sid, str(ep["episode_id"]))
+            units.append((unit, sid, mtime, n, handoff))
+
+    units.sort(key=lambda u: (u[4], u[3], u[2]), reverse=True)
+    selected = [u[0] for u in units[: window.max_conversations]]
+
+    # SigNoz rankea por session.id — reordenar los units por el rank de su sesión
+    # (estable dentro de la misma sesión). Best-effort, degrada al orden del vault.
+    session_order = list(dict.fromkeys(u[1] for u in units))
+    ranked_sessions = _maybe_prioritize_by_signoz(session_order, window)
+    if ranked_sessions:
+        rank = {s: i for i, s in enumerate(ranked_sessions)}
+        selected.sort(
+            key=lambda unit: rank.get(reconstruct.parse_eval_unit_id(unit)[0], len(rank))
+        )
     return selected
 
 

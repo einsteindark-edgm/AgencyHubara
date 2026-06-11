@@ -6,14 +6,23 @@ const W = 160;
 const H = 36;
 const PAD = 3;
 
+interface DaySelection {
+  /** Día seleccionado (filtra la vista por-episodio de abajo). */
+  selectedDate?: string | null;
+  /** Click en un punto/día de la serie. `null` = limpiar. */
+  onSelectDate?: (date: string | null) => void;
+}
+
 /** Sparkline SVG sin dependencias: línea del avg por día + umbral + puntos bajos en rojo. */
 function Sparkline({
   series,
   threshold,
+  selectedDate,
+  onSelectDate,
 }: {
   series: EvalTrendSeries;
   threshold: number;
-}) {
+} & DaySelection) {
   const pts = series.points;
   if (pts.length === 0) return <span className="text-xs text-fg-faint">sin datos</span>;
 
@@ -32,17 +41,30 @@ function Sparkline({
           key={p.date}
           cx={xs(i)}
           cy={ys(p.avg)}
-          r={p.avg < threshold ? 2.6 : 1.8}
+          r={p.date === selectedDate ? 3.4 : p.avg < threshold ? 2.6 : 1.8}
           fill={p.avg < threshold ? "var(--color-red)" : "var(--color-accent-fg)"}
+          stroke={p.date === selectedDate ? "var(--color-fg)" : "none"}
+          strokeWidth={p.date === selectedDate ? 1 : 0}
+          className={onSelectDate ? "cursor-pointer" : undefined}
+          onClick={
+            onSelectDate
+              ? () => onSelectDate(p.date === selectedDate ? null : p.date)
+              : undefined
+          }
         >
-          <title>{`${p.date}: ${p.avg.toFixed(2)} (min ${p.min.toFixed(2)}, n=${p.n})`}</title>
+          <title>{`${p.date}: ${p.avg.toFixed(2)} (min ${p.min.toFixed(2)}, n=${p.n})${onSelectDate ? " — click para ver las conversaciones de ese día" : ""}`}</title>
         </circle>
       ))}
     </svg>
   );
 }
 
-function MetricRow({ series, threshold }: { series: EvalTrendSeries; threshold: number }) {
+function MetricRow({
+  series,
+  threshold,
+  selectedDate,
+  onSelectDate,
+}: { series: EvalTrendSeries; threshold: number } & DaySelection) {
   const pts = series.points;
   const last = pts.at(-1)?.avg ?? null;
   const first = pts[0]?.avg ?? null;
@@ -63,7 +85,12 @@ function MetricRow({ series, threshold }: { series: EvalTrendSeries; threshold: 
       <div className="w-44 shrink-0 truncate text-sm font-medium text-fg" title={series.metric}>
         {series.metric}
       </div>
-      <Sparkline series={series} threshold={threshold} />
+      <Sparkline
+        series={series}
+        threshold={threshold}
+        selectedDate={selectedDate}
+        onSelectDate={onSelectDate}
+      />
       <div className={"w-12 shrink-0 text-right text-sm font-semibold " + lastColor}>
         {last === null ? "—" : last.toFixed(2)}
       </div>
@@ -74,7 +101,22 @@ function MetricRow({ series, threshold }: { series: EvalTrendSeries; threshold: 
         ) : (
           <span title={lowDates.join(", ")}>
             <span className="font-semibold text-red">{lowDates.length}</span> día
-            {lowDates.length > 1 ? "s" : ""} bajo {threshold}: {lowDates.slice(-3).join(", ")}
+            {lowDates.length > 1 ? "s" : ""} bajo {threshold}:{" "}
+            {lowDates.slice(-3).map((d, i) => (
+              <button
+                key={d}
+                type="button"
+                onClick={() => onSelectDate?.(d === selectedDate ? null : d)}
+                className={
+                  "underline decoration-dotted underline-offset-2 hover:text-fg " +
+                  (d === selectedDate ? "font-semibold text-fg" : "")
+                }
+                title="Ver las conversaciones evaluadas ese día"
+              >
+                {d}
+                {i < Math.min(lowDates.length, 3) - 1 ? ", " : ""}
+              </button>
+            ))}
             {lowDates.length > 3 ? "…" : ""}
           </span>
         )}
@@ -86,9 +128,11 @@ function MetricRow({ series, threshold }: { series: EvalTrendSeries; threshold: 
 /**
  * Tendencia de calidad del agente: por cada métrica, su score por día (sparkline),
  * el umbral 0.7, y el registro de los días en que estuvo bajo. Lee
- * GET /api/agents/evals/history (lo alimenta el eval diario online).
+ * GET /api/agents/evals/history (lo alimenta el eval online por episodio).
+ * Click en un día → la vista por-episodio de abajo se filtra a ese día (así un
+ * día bajo se traza hasta LA conversación que lo causó).
  */
-export function EvalTrendChart() {
+export function EvalTrendChart({ selectedDate, onSelectDate }: DaySelection) {
   const [suite, setSuite] = useState<"online" | "golden">("online");
   const { data, isLoading, isError } = useEvalTrend(30, suite);
   const threshold = data?.threshold ?? 0.7;
@@ -97,7 +141,10 @@ export function EvalTrendChart() {
     <section className="rounded-lg border border-line p-4 text-fg">
       <header className="mb-3 flex flex-wrap items-center gap-2">
         <h3 className="text-sm font-semibold">Tendencia de calidad</h3>
-        <span className="text-xs text-fg-faint">últimos 30 días · umbral {threshold}</span>
+        <span className="text-xs text-fg-faint">
+          últimos 30 días · umbral {threshold} · promedio de TODAS las
+          conversaciones evaluadas cada día — el detalle por conversación está abajo
+        </span>
         <div className="ml-auto flex gap-1 rounded-md bg-white/5 p-0.5 text-xs">
           {(["online", "golden"] as const).map((s) => (
             <button
@@ -129,7 +176,13 @@ export function EvalTrendChart() {
       ) : (
         <div>
           {data.series.map((s) => (
-            <MetricRow key={s.metric} series={s} threshold={threshold} />
+            <MetricRow
+              key={s.metric}
+              series={s}
+              threshold={threshold}
+              selectedDate={selectedDate}
+              onSelectDate={suite === "online" ? onSelectDate : undefined}
+            />
           ))}
         </div>
       )}

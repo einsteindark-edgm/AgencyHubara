@@ -41,7 +41,7 @@ from src.plugins.chats.agent.sales_eval.evals.contracts import (
     GoldenEvalInput,
     GoldenSuiteResult,
 )
-from src.plugins.chats.agent.sales_eval.evals.select import select_sessions
+from src.plugins.chats.agent.sales_eval.evals.select import select_eval_units
 
 # hubara_agency/ (raíz del paquete): activities/ -> sales_eval -> agent -> chats ->
 # plugins -> src -> hubara_agency
@@ -57,39 +57,47 @@ def _env() -> str:
 
 @activity.defn(name="select_conversations_to_eval")
 async def select_conversations_to_eval_activity(window: EvalWindowInput) -> list[str]:
-    """Enumera + prioriza las conversaciones a evaluar en la ventana (lee vault)."""
-    sessions = select_sessions(window, vault_dir=composition.get_vault_dir())
+    """Enumera + prioriza las unidades a evaluar (lee vault).
+
+    Devuelve unit ids `<session>::<episode>` — UNA entrada por episodio elegible
+    (sesiones legacy sin episodes[] → el session id pelado, sesión entera). El
+    workflow no interpreta el string: lo pasa tal cual a la activity de eval.
+    """
+    units = select_eval_units(window, vault_dir=composition.get_vault_dir())
     activity.logger.info(
-        "eval.select: %d conversaciones seleccionadas (ventana %dh, tope %d)",
-        len(sessions), window.lookback_hours, window.max_conversations,
+        "eval.select: %d episodios/conversaciones seleccionados (ventana %dh, tope %d)",
+        len(units), window.lookback_hours, window.max_conversations,
     )
-    return sessions
+    return units
 
 
 @activity.defn(name="evaluate_sales_conversation")
 @with_heartbeat(every=10)
 async def evaluate_sales_conversation_activity(
-    session_id: str, window: EvalWindowInput
+    unit_id: str, window: EvalWindowInput
 ) -> ConversationEvalResult:
-    """Evalúa UNA conversación: reconstruye → puntúa → emite a SigNoz → (auto-curación).
+    """Evalúa UN episodio (o sesión legacy): reconstruye → puntúa → SigNoz → curación.
 
+    `unit_id` = `<session>::<episode>` (o el session id pelado para sesiones sin
+    episodes[] / runs viejos en replay — L-9: el shape viejo sigue siendo válido).
     El detalle por-métrica se emite a SigNoz dentro de esta activity (span attrs +
-    métrica). El return es escalar (lo agrega el workflow). Si una conversación es
+    métrica). El return es escalar (lo agrega el workflow). Si la conversación es
     candidata a golden y `draft_goldens`, el juez redacta el `expected_outcome`.
     """
     vault_dir = composition.get_vault_dir()
+    session_id, episode_id = reconstruct.parse_eval_unit_id(unit_id)
     wa_number = reconstruct.whatsapp_number_from_session(session_id)
 
-    events = reconstruct.read_session_events(vault_dir, session_id)
+    events, _episode = reconstruct.read_episode_events(vault_dir, session_id, episode_id)
     turns = reconstruct.to_evaluable_turns(events, redact=window.redact_pii)
     if len(turns) < window.min_turns:
         return ConversationEvalResult(
-            session_id=session_id, whatsapp_number=wa_number, num_turns=len(turns),
-            skipped=True, error="too_few_turns",
+            session_id=session_id, episode_id=episode_id, whatsapp_number=wa_number,
+            num_turns=len(turns), skipped=True, error="too_few_turns",
         )
 
     test_case = reconstruct.build_conversational_test_case(
-        turns, scenario=_SCENARIO, context=[script_rubric.SCRIPT_CONTEXT], name=session_id,
+        turns, scenario=_SCENARIO, context=[script_rubric.SCRIPT_CONTEXT], name=unit_id,
     )
 
     judge = composition.get_judge()
@@ -117,8 +125,8 @@ async def evaluate_sales_conversation_activity(
 
     if not scores:
         return ConversationEvalResult(
-            session_id=session_id, whatsapp_number=wa_number, num_turns=len(turns),
-            error="no_metrics_evaluated",
+            session_id=session_id, episode_id=episode_id, whatsapp_number=wa_number,
+            num_turns=len(turns), error="no_metrics_evaluated",
         )
 
     n = len(scores)
@@ -134,15 +142,19 @@ async def evaluate_sales_conversation_activity(
         is_candidate=is_candidate, num_metrics=n, environment=_env(),
     )
 
-    # Histórico para la tendencia del frontend (un registro por conversación/día).
+    # Histórico para el frontend (un registro por episodio por corrida) — alimenta
+    # la tendencia Y la vista por-conversación ("¿cuál falló?, ¿mejoró?").
     # Activity -> puede usar now(); best-effort (no rompe la eval si falla).
     try:
         from datetime import datetime, timezone
 
+        now_utc = datetime.now(timezone.utc)
         history.append_history_record(
             composition.get_eval_history_dir(),
-            run_date=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            run_date=now_utc.strftime("%Y-%m-%d"),
             session_id=session_id, suite="online", scores=scores,
+            episode_id=episode_id, ts=now_utc.isoformat(timespec="seconds"),
+            is_candidate=is_candidate,
         )
     except Exception as exc:  # noqa: BLE001
         activity.logger.warning("eval history append falló: %s", exc)
@@ -154,10 +166,10 @@ async def evaluate_sales_conversation_activity(
             expected = await curation.propose_expected_outcome(judge, turns, failed)
             golden = curation.build_candidate_golden(
                 session_id=session_id, turns=turns, scenario=_SCENARIO,
-                expected_outcome=expected, scores=scores,
+                expected_outcome=expected, scores=scores, episode_id=episode_id,
             )
             path = curation.write_candidate(
-                composition.get_candidates_dir(), session_id, golden
+                composition.get_candidates_dir(), unit_id, golden
             )
             candidate_path = str(path)
             activity.logger.info("eval.candidate escrito: %s", candidate_path)
@@ -165,9 +177,10 @@ async def evaluate_sales_conversation_activity(
             activity.logger.warning("eval golden draft falló: %s", exc)
 
     return ConversationEvalResult(
-        session_id=session_id, whatsapp_number=wa_number, num_turns=len(turns),
-        metrics_evaluated=n, metrics_passed=n_pass, avg_score=round(avg, 4),
-        overall_pass=overall_pass, is_candidate=is_candidate, candidate_path=candidate_path,
+        session_id=session_id, episode_id=episode_id, whatsapp_number=wa_number,
+        num_turns=len(turns), metrics_evaluated=n, metrics_passed=n_pass,
+        avg_score=round(avg, 4), overall_pass=overall_pass, is_candidate=is_candidate,
+        candidate_path=candidate_path,
     )
 
 

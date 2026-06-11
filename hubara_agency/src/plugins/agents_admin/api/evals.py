@@ -81,6 +81,30 @@ async def eval_history(
     )
 
 
+@router.get("/evals/conversations")
+async def eval_conversations(
+    days: int = Query(default=7, ge=1, le=90),
+    suite: str = Query(default="online"),
+) -> dict[str, Any]:
+    """Evaluaciones por conversación (sesión + episodio) con timeline + curación."""
+    return await _forward(
+        "GET", "/api/chats/evals/conversations", params={"days": days, "suite": suite}
+    )
+
+
+@router.get("/evals/transcript")
+async def eval_transcript(
+    session_id: str = Query(..., min_length=1, max_length=120),
+    episode_id: str = Query(default=""),
+) -> dict[str, Any]:
+    """Transcript del episodio evaluado (el mismo segmento que vio el juez)."""
+    return await _forward(
+        "GET",
+        "/api/chats/evals/transcript",
+        params={"session_id": session_id, "episode_id": episode_id},
+    )
+
+
 @router.get("/evals/candidates")
 async def list_candidates() -> dict[str, Any]:
     """Candidatos a golden pendientes de curación."""
