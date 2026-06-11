@@ -46,6 +46,9 @@ export const trackedOrderSchema = z.object({
   customer: z.string(),
   short: z.string(),
   color: z.enum(["a", "b", "c", "d", "e", "f"]),
+  // Clave real de agrupación por cliente (el nombre puede ser genérico).
+  // `.default("")` para tolerar un backend aún sin el campo.
+  phone: z.string().optional().default(""),
   city: z.string(),
   current: trackedStageSchema,
   channel: z.string(),

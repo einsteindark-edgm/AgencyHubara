@@ -18,6 +18,7 @@ function order(over: Partial<TrackedOrder> = {}): TrackedOrder {
     customer: "Cliente WhatsApp",
     short: "CW",
     color: "a",
+    phone: "573001112233",
     city: "",
     current: "preparing",
     channel: "WhatsApp",
@@ -48,6 +49,20 @@ describe("useEtaFilters", () => {
     const { result } = renderHook(() => useEtaFilters(ORDERS));
     act(() => result.current.setFilter("codToday"));
     expect(result.current.list.map((o) => o.id)).toEqual(["#6"]);
+  });
+
+  it("`delivered` lista solo las entregadas (filtro nuevo del sidebar)", () => {
+    const { result } = renderHook(() => useEtaFilters(ORDERS));
+    act(() => result.current.setFilter("delivered"));
+    expect(result.current.list.map((o) => o.id)).toEqual(["#5"]);
+  });
+
+  it("volver a `all` des-filtra (toggle del sidebar sin chip 'Todas')", () => {
+    const { result } = renderHook(() => useEtaFilters(ORDERS));
+    act(() => result.current.setFilter("cod"));
+    expect(result.current.list).toHaveLength(2);
+    act(() => result.current.setFilter("all"));
+    expect(result.current.list).toHaveLength(ORDERS.length);
   });
 
   it("isCodToday acepta `out` y rechaza COD que no salió ni pagos anticipados", () => {

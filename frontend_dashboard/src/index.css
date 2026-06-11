@@ -1414,9 +1414,34 @@ h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.02em; margin: 0; }
 .eta-list-head p { font-size: 11.5px; color: var(--fg-muted); margin-top: 3px; }
 
 .eta-list-body {
-  flex: 1; overflow-y: auto; padding: 12px 18px 20px;
-  display: flex; flex-direction: column; gap: 10px;
+  flex: 1; overflow-y: auto; padding: 0 18px 20px;
+  display: flex; flex-direction: column;
 }
+
+/* ── Group-by cliente (pantalla central ETA) ───────────────────────────── */
+/* El header es sticky DENTRO de su grupo: se queda arriba mientras
+   scrolleás los pedidos de ese cliente y el grupo siguiente lo empuja. */
+.eta-group { display: flex; flex-direction: column; gap: 8px; padding-top: 12px; }
+.eta-group-h {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; align-items: center; gap: 9px;
+  padding: 9px 2px 8px;
+  background: var(--canvas);
+  border-bottom: 0.5px solid var(--line);
+}
+.eg-id { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.eg-name { font-size: 12.5px; font-weight: 650; letter-spacing: -0.01em; }
+.eg-phone { font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-muted); margin-top: 1px; }
+.eg-count {
+  font-size: 10.5px; color: var(--fg-muted); white-space: nowrap;
+  border: 0.5px solid var(--line); border-radius: 20px; padding: 2px 8px;
+}
+.eg-cod { font-size: 10.5px; color: var(--fg-muted); white-space: nowrap; }
+.eg-cod b { color: #ffb44a; font-weight: 650; }
+.eg-flag { color: #ff7269; display: inline-flex; }
+.eg-flag svg { width: 13px; height: 13px; }
+.eta-group-cards { display: flex; flex-direction: column; gap: 8px; }
+.ec-id.strong { font-size: 12.5px; font-weight: 650; color: var(--fg); }
 
 .eta-card {
   background: rgba(255,255,255,0.025);

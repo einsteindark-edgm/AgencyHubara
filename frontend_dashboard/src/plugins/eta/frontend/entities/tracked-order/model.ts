@@ -39,11 +39,24 @@ export interface TrackedEvent {
   flag?: string;
 }
 
+/**
+ * "Contra entrega hoy" = COD que ya está EN LA CALLE (shipping/out): la plata
+ * se cobra al entregar, así que es lo que el repartidor recauda hoy. Vive en
+ * la entity porque lo comparten el banner/filtros del sidebar (eta-list) y
+ * los headers de grupo por cliente (eta-cards) — FSD: feature → entity, nunca
+ * feature → feature.
+ */
+export function isCodToday(o: TrackedOrder): boolean {
+  return o.payType === "cod" && (o.current === "shipping" || o.current === "out");
+}
+
 export interface TrackedOrder {
   id: string;
   customer: string;
   short: string;
   color: "a" | "b" | "c" | "d" | "e" | "f";
+  /** Teléfono del cliente — clave real del group-by (el nombre puede ser genérico). */
+  phone: string;
   city: string;
   current: TrackedStage;
   channel: string;

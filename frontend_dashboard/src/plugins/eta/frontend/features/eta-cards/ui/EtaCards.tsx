@@ -1,8 +1,15 @@
 /**
- * Lista vertical de pedidos rastreados (centro de ETA). Cada tarjeta tiene:
- * cabecera con cliente + badges (pago/atención), mini-stepper horizontal
- * compacto y preview del último mensaje del agente.
+ * Pantalla central de ETA: pedidos rastreados AGRUPADOS POR CLIENTE.
+ *
+ * Cada grupo lleva un header sticky con la identidad del cliente (avatar,
+ * nombre, teléfono), cuántos pedidos tiene en seguimiento, si alguno necesita
+ * atención y cuánto hay que cobrarle hoy (COD en la calle). Las tarjetas
+ * dentro del grupo son compactas: el header ya carga la identidad, así que la
+ * tarjeta abre con el número de pedido y su mini-stepper. Diseñado para
+ * escalar a muchos seguimientos sin repetir cliente en cada tarjeta.
  */
+
+import { useMemo } from "react";
 
 import {
   TRACKED_STAGES,
@@ -11,6 +18,8 @@ import {
 import { truncate } from "@/shared/lib";
 import { Avatar, Icon } from "@/shared/ui";
 
+import { groupTrackedOrders, type TrackedOrderGroup } from "../model/groupTrackedOrders";
+
 interface Props {
   orders: TrackedOrder[];
   filterLabel: string;
@@ -18,25 +27,36 @@ interface Props {
   onSelect: (id: string) => void;
 }
 
+/** "573125671604" → "+57 312 567 1604" (best-effort; fallback `+<raw>`). */
+function formatPhone(phone: string): string {
+  if (/^57\d{10}$/.test(phone)) {
+    return `+57 ${phone.slice(2, 5)} ${phone.slice(5, 8)} ${phone.slice(8)}`;
+  }
+  return `+${phone}`;
+}
+
 export function EtaCards({ orders, filterLabel, selectedId, onSelect }: Props) {
+  const groups = useMemo(() => groupTrackedOrders(orders), [orders]);
+
   return (
     <main className="eta-canvas">
       <div className="eta-list-head">
         <div>
           <h1>{filterLabel}</h1>
           <p>
-            {orders.length} pedido{orders.length !== 1 ? "s" : ""} · Toca uno
-            para ver la conversación con el cliente
+            {orders.length} pedido{orders.length !== 1 ? "s" : ""} ·{" "}
+            {groups.length} cliente{groups.length !== 1 ? "s" : ""} · Toca un
+            pedido para ver la conversación
           </p>
         </div>
       </div>
 
       <div className="eta-list-body">
-        {orders.map((o) => (
-          <Card
-            key={o.id}
-            order={o}
-            selected={selectedId === o.id}
+        {groups.map((g) => (
+          <Group
+            key={g.key}
+            group={g}
+            selectedId={selectedId}
             onSelect={onSelect}
           />
         ))}
@@ -51,6 +71,54 @@ export function EtaCards({ orders, filterLabel, selectedId, onSelect }: Props) {
         )}
       </div>
     </main>
+  );
+}
+
+interface GroupProps {
+  group: TrackedOrderGroup;
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+}
+
+function Group({ group, selectedId, onSelect }: GroupProps) {
+  return (
+    <section className="eta-group">
+      <div className="eta-group-h">
+        <Avatar initials={group.short} color={group.color} size={26} />
+        <div className="eg-id">
+          <span className="eg-name">{group.customer}</span>
+          {group.phone && (
+            <span className="eg-phone">{formatPhone(group.phone)}</span>
+          )}
+        </div>
+        {group.needs && (
+          <span className="eg-flag" title="Algún pedido necesita atención">
+            <Icon.alert />
+          </span>
+        )}
+        {group.codPending > 0 && (
+          <span
+            className="eg-cod"
+            title="Contra entrega en la calle — se cobra al entregar"
+          >
+            A cobrar hoy <b>$ {group.codPending.toLocaleString("es-CO")}</b>
+          </span>
+        )}
+        <span className="eg-count">
+          {group.orders.length} pedido{group.orders.length !== 1 ? "s" : ""}
+        </span>
+      </div>
+      <div className="eta-group-cards">
+        {group.orders.map((o) => (
+          <Card
+            key={o.id}
+            order={o}
+            selected={selectedId === o.id}
+            onSelect={onSelect}
+          />
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -75,18 +143,20 @@ function Card({ order, selected, onSelect }: CardProps) {
       onClick={() => onSelect(order.id)}
     >
       <div className="ec-row1">
-        <Avatar initials={order.short} color={order.color} size={34} />
         <div className="ec-id-block">
           <div className="ec-id-name">
-            <span className="ec-cust">{order.customer}</span>
-            <span className="ec-id">{order.id}</span>
+            <span className="ec-id strong">{order.id}</span>
           </div>
           <div className="ec-meta-row">
-            <span className="ec-city">
-              <Icon.loc />
-              {order.city}
-            </span>
-            <span className="dot-sep">·</span>
+            {order.city && (
+              <>
+                <span className="ec-city">
+                  <Icon.loc />
+                  {order.city}
+                </span>
+                <span className="dot-sep">·</span>
+              </>
+            )}
             <span>{order.channel}</span>
           </div>
         </div>

@@ -1,6 +1,17 @@
 import { useMemo, useState } from "react";
-import type { TrackedOrder } from "@plugins/eta/frontend/entities/tracked-order";
+import {
+  isCodToday,
+  type TrackedOrder,
+} from "@plugins/eta/frontend/entities/tracked-order";
 
+// Re-export: el predicado vive en la entity (lo comparte eta-cards); el
+// banner COD del sidebar lo sigue importando desde acá.
+export { isCodToday };
+
+/**
+ * `"all"` es el estado SIN filtro (no tiene chip en el sidebar — se llega
+ * des-seleccionando el filtro activo con un segundo click, ver `EtaList`).
+ */
 export type EtaFilter =
   | "all"
   | "flag"
@@ -8,33 +19,34 @@ export type EtaFilter =
   | "codToday"
   | "prep"
   | "ready"
-  | "ship";
+  | "ship"
+  | "delivered";
 
 /**
- * "Contra entrega hoy" = COD que ya está EN LA CALLE (shipping/out): la plata
- * se cobra al entregar, así que es lo que el repartidor recauda hoy. Es el
- * MISMO predicado que usa el banner `cod-alert` del sidebar — el click del
- * banner debe mostrar exactamente el conjunto que el banner contó (antes
- * ruteaba al filtro `cod` genérico y aparecían también los COD en
- * preparación/listos, que aún no se cobran).
+ * FUENTE ÚNICA de los predicados de filtrado. El hook filtra con esto y los
+ * chips del sidebar derivan sus contadores de esto — un chip nunca puede
+ * mostrar un número distinto del que su click filtra (la clase de bug del
+ * banner COD: contaba con un predicado y filtraba con otro).
  */
-export function isCodToday(o: TrackedOrder): boolean {
-  return o.payType === "cod" && (o.current === "shipping" || o.current === "out");
-}
+export const FILTER_PREDICATES: Record<
+  Exclude<EtaFilter, "all">,
+  (o: TrackedOrder) => boolean
+> = {
+  flag: (o) => o.needs,
+  cod: (o) => o.payType === "cod",
+  codToday: isCodToday,
+  prep: (o) => o.current === "preparing",
+  ready: (o) => o.current === "ready",
+  ship: (o) => o.current === "shipping" || o.current === "out",
+  delivered: (o) => o.current === "delivered",
+};
 
 export function useEtaFilters(orders: TrackedOrder[]) {
   const [filter, setFilter] = useState<EtaFilter>("all");
 
   const list = useMemo(() => {
-    return orders.filter((o) => {
-      if (filter === "flag")     return o.needs;
-      if (filter === "cod")      return o.payType === "cod";
-      if (filter === "codToday") return isCodToday(o);
-      if (filter === "prep")     return o.current === "preparing";
-      if (filter === "ready")    return o.current === "ready";
-      if (filter === "ship")     return o.current === "shipping" || o.current === "out";
-      return true;
-    });
+    if (filter === "all") return orders;
+    return orders.filter(FILTER_PREDICATES[filter]);
   }, [orders, filter]);
 
   return { filter, setFilter, list };
@@ -48,4 +60,5 @@ export const FILTER_LABELS: Record<EtaFilter, string> = {
   prep: "En preparación",
   ready: "Listos para envío",
   ship: "En camino",
+  delivered: "Entregadas",
 };

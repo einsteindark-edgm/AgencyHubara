@@ -9,6 +9,7 @@ function makeOrder(over: Partial<TrackedOrder> = {}): TrackedOrder {
     customer: "Cliente WhatsApp",
     short: "CW",
     color: "a",
+    phone: "573125671604",
     city: "Bogotá",
     current: "preparing",
     channel: "WhatsApp",
@@ -37,6 +38,27 @@ describe("EtaCards", () => {
     );
     expect(getByText("#5")).toBeTruthy();
     expect(getByText(/Aún sin notificaciones/i)).toBeTruthy();
+  });
+
+  it("agrupa por cliente: header con teléfono, conteo y COD a cobrar hoy", () => {
+    const { getByText } = render(
+      <EtaCards
+        orders={[
+          makeOrder({ id: "#6", payType: "cod", current: "shipping", total: 97000 }),
+          makeOrder({ id: "#8", payType: "cod", current: "ready", total: 61000 }),
+          makeOrder({ id: "#9", phone: "573009998877", customer: "Otra Persona" }),
+        ]}
+        filterLabel="Todos"
+        selectedId={null}
+        onSelect={() => {}}
+      />,
+    );
+    expect(getByText("+57 312 567 1604")).toBeTruthy();
+    expect(getByText("2 pedidos")).toBeTruthy(); // grupo del 573125671604
+    // A cobrar hoy del grupo = SOLO el #6 (en la calle); el #8 (ready) no.
+    expect(getByText("$ 97.000")).toBeTruthy();
+    expect(getByText("Otra Persona")).toBeTruthy();
+    expect(getByText(/2 cliente/)).toBeTruthy(); // subtítulo del canvas
   });
 
   it("renders the last agent message when the timeline has events", () => {

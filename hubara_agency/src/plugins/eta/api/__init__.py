@@ -162,17 +162,25 @@ def _iter_eta_sessions(vault_dir: Path) -> list[tuple[str, dict[str, Any]]]:
 _LIST_LIMIT = 100
 
 
-def _tracking_index(vault_dir: Path) -> dict[str, dict[str, Any]]:
-    """``{order_id: eta_tracking}`` para superponer el timeline sobre cada pedido.
+def _session_phone(session_id: str) -> str:
+    """``wa_+573125671604`` / ``wa_573125671604`` → ``573125671604``."""
+    return session_id.removeprefix(WHATSAPP_SESSION_PREFIX).lstrip("+")
+
+
+def _tracking_index(vault_dir: Path) -> dict[str, tuple[str, dict[str, Any]]]:
+    """``{order_id: (session_id, eta_tracking)}`` para superponer el timeline
+    sobre cada pedido. La sesión viaja junto al tracking porque es la fuente
+    del TELÉFONO del cliente (clave del group-by del dashboard) — el order
+    query port hoy no trae phone en el listado.
 
     Si dos sesiones trackean el mismo ``order_id`` (no debería pasar), gana la
     última — el board muestra un solo timeline por pedido.
     """
-    out: dict[str, dict[str, Any]] = {}
-    for _sid, tracking in _iter_eta_sessions(vault_dir):
+    out: dict[str, tuple[str, dict[str, Any]]] = {}
+    for sid, tracking in _iter_eta_sessions(vault_dir):
         oid = str(tracking.get("order_id") or "")
         if oid:
-            out[oid] = tracking
+            out[oid] = (sid, tracking)
     return out
 
 
@@ -188,22 +196,28 @@ def _events_from_tracking(
 
 def _tracked_from_summary(
     summary: Any,
-    tracking: dict[str, Any] | None,
+    tracked: tuple[str, dict[str, Any]] | None,
     *,
     current: str,
     now: datetime,
 ) -> dict[str, Any]:
     """``OrderSummaryDTO`` (datos vivos del pedido) + timeline → ``TrackedOrder``.
 
-    El pedido se muestra SIEMPRE (viene del order port); el ``tracking`` puede
-    ser ``None`` (el agente todavía no notificó este pedido) → timeline vacío.
+    El pedido se muestra SIEMPRE (viene del order port); ``tracked`` puede ser
+    ``None`` (el agente todavía no notificó este pedido) → timeline vacío.
     """
+    session_id, tracking = tracked if tracked else ("", None)
     events, needs = _events_from_tracking(tracking, now=now)
     return {
         "id": summary.display_id,
         "customer": summary.customer,
         "short": summary.short,
         "color": summary.color,
+        # Clave de agrupación por cliente del dashboard (group-by de la
+        # sección ETA): el nombre puede ser genérico ("Cliente WhatsApp"),
+        # el teléfono identifica de verdad. El listado de Medusa no trae
+        # phone — la sesión WhatsApp dueña del tracking sí (wa_<phone>).
+        "phone": (summary.phone or "") or (_session_phone(session_id) if session_id else ""),
         "city": summary.city or "",
         "current": current,
         "channel": summary.channel,
@@ -233,6 +247,8 @@ def _tracked_from_timeline(
         "customer": "Cliente",
         "short": "—",
         "color": _color_for(order_id or session_id),
+        # En timeline-only el cliente ES la sesión: wa_<phone>.
+        "phone": _session_phone(session_id),
         "city": "",
         "current": current,
         "channel": "WhatsApp",

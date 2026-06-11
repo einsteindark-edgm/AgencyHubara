@@ -335,7 +335,9 @@ def test_tracked_from_summary_overlays_timeline():
         ],
     }
     s = _summary(id=ORDER, display_id="#1247", customer="María Camila", status="shipping", total_cop=124500)
-    out = _tracked_from_summary(s, tracking, current="shipping", now=datetime.now(_BOGOTA))
+    out = _tracked_from_summary(
+        s, ("wa_+573125671604", tracking), current="shipping", now=datetime.now(_BOGOTA)
+    )
     assert out["id"] == "#1247"
     assert out["current"] == "shipping"
     assert out["payType"] == "confirmed"
@@ -343,6 +345,9 @@ def test_tracked_from_summary_overlays_timeline():
     assert out["needs"] is True  # hay un evento flagged
     assert out["events"][0]["agentMsg"] == "Entró en preparación"
     assert out["events"][1]["flagged"] is True
+    # El teléfono del group-by sale de la sesión dueña del tracking (el order
+    # port no trae phone en el listado) — normalizado sin "wa_" ni "+".
+    assert out["phone"] == "573125671604"
 
 
 def test_tracked_from_summary_without_tracking_has_empty_timeline():
@@ -356,6 +361,7 @@ def test_tracked_from_summary_without_tracking_has_empty_timeline():
     assert out["current"] == "preparing"
     assert out["events"] == []   # el agente todavía no notificó
     assert out["needs"] is False
+    assert out["phone"] == ""    # sin sesión conocida → sin teléfono (no se agrupa)
 
 
 async def test_list_surfaces_fulfillment_orders_without_tracking(

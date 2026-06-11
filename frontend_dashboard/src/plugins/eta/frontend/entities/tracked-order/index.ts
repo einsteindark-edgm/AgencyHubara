@@ -5,7 +5,7 @@ export type {
   TrackedEventStage,
   TrackedStageMeta,
 } from "./model";
-export { TRACKED_STAGES } from "./model";
+export { TRACKED_STAGES, isCodToday } from "./model";
 export { trackedOrderKeys } from "./keys";
 export { useTrackedOrders } from "./api";
 export {
