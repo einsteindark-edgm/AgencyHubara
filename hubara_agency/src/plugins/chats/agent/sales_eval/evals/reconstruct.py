@@ -34,6 +34,118 @@ def _session_jsonl_path(vault_dir: Path, session_id: str) -> Path:
     return vault_dir / session_id / "sessions" / f"{session_id}.jsonl"
 
 
+# --------------------------------------------------------------------------- #
+# Episodios — la UNIDAD de evaluación (no la sesión entera).
+#
+# `metadata["episodes"]` (ver chats/agent/sales/use_cases/episode_lifecycle.py)
+# delimita cada tramo de intención del cliente. Evaluar la sesión completa
+# mezcla episodios (una compra de hace 2 meses + la cotización de hoy) y hace
+# imposible saber QUÉ conversación generó el mal score. Acá se rebana el JSONL
+# por episodio:
+#   * exacto, por `msgs_count_at_start/close` (snapshot de líneas — FU3);
+#   * fallback por timestamps ISO de los eventos vs started/closed_at_ms;
+#   * sesión legacy sin episodes[] → se evalúa entera (episode_id = "").
+# --------------------------------------------------------------------------- #
+
+EPISODE_SEP = "::"
+"""Separador del unit id `<session_id>::<episode_id>` que viaja por el
+workflow de eval. Va en strings (no DTO nuevo) para no cambiar la firma de
+las activities ya registradas — los runs vivos replayean sin patch (L-9)."""
+
+
+def make_eval_unit_id(session_id: str, episode_id: str = "") -> str:
+    return f"{session_id}{EPISODE_SEP}{episode_id}" if episode_id else session_id
+
+
+def parse_eval_unit_id(unit_id: str) -> tuple[str, str]:
+    """`wa_x::ep_002` → (wa_x, ep_002); `wa_x` (legacy/sesión entera) → (wa_x, "")."""
+    session_id, _, episode_id = unit_id.partition(EPISODE_SEP)
+    return session_id, episode_id
+
+
+def read_session_metadata(vault_dir: Path, session_id: str) -> dict[str, Any]:
+    """Lee `<vault>/<session>/metadata.json`. `{}` si no existe o está corrupto."""
+    path = vault_dir / session_id / "metadata.json"
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def find_episode(metadata: dict[str, Any], episode_id: str) -> dict[str, Any] | None:
+    for ep in metadata.get("episodes") or []:
+        if isinstance(ep, dict) and ep.get("episode_id") == episode_id:
+            return ep
+    return None
+
+
+def _event_ts_ms(event: dict[str, Any]) -> int | None:
+    """Timestamp ISO del evento → epoch ms. None si falta o no parsea."""
+    raw = event.get("timestamp")
+    if not isinstance(raw, str) or not raw:
+        return None
+    from datetime import datetime
+
+    try:
+        return int(datetime.fromisoformat(raw).timestamp() * 1000)
+    except ValueError:
+        return None
+
+
+def slice_episode_events(
+    events: list[dict[str, Any]], episode: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Recorta los eventos de la sesión al tramo del episodio.
+
+    Preferencia: `msgs_count_at_start/close` (índices exactos de línea,
+    snapshoteados por el lifecycle al abrir/cerrar). Fallback: timestamps de
+    los eventos dentro de `[started_at_ms, closed_at_ms)` — eventos sin
+    timestamp parseable se omiten en ese modo (no hay forma de ubicarlos).
+    """
+    start_count = episode.get("msgs_count_at_start")
+    close_count = episode.get("msgs_count_at_close")
+    if isinstance(start_count, int) and start_count >= 0:
+        end = close_count if isinstance(close_count, int) and close_count >= start_count else len(events)
+        return events[start_count:end]
+
+    started_ms = episode.get("started_at_ms")
+    if not isinstance(started_ms, int):
+        return events  # episodio sin límites usables → mejor la sesión entera
+    closed_ms = episode.get("closed_at_ms")
+    upper = closed_ms if isinstance(closed_ms, int) else None
+    out: list[dict[str, Any]] = []
+    for ev in events:
+        ts = _event_ts_ms(ev)
+        if ts is None:
+            continue
+        if ts < started_ms:
+            continue
+        if upper is not None and ts >= upper:
+            continue
+        out.append(ev)
+    return out
+
+
+def read_episode_events(
+    vault_dir: Path, session_id: str, episode_id: str
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    """Eventos del episodio + el dict del episodio (None si no existe en metadata).
+
+    `episode_id` vacío → sesión entera (legacy). Episodio no encontrado →
+    sesión entera también (defensivo: mejor evaluar de más que devolver []).
+    """
+    events = read_session_events(vault_dir, session_id)
+    if not episode_id:
+        return events, None
+    episode = find_episode(read_session_metadata(vault_dir, session_id), episode_id)
+    if episode is None:
+        return events, None
+    return slice_episode_events(events, episode), episode
+
+
 def read_session_events(vault_dir: Path, session_id: str) -> list[dict[str, Any]]:
     """Lee el JSONL crudo de la sesión. `[]` si no existe o está corrupto.
 

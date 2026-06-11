@@ -60,3 +60,128 @@ def test_suite_filter_golden(tmp_path):
     trend = history.read_trend(hist, dates=["2026-06-03"], suite="golden")
     assert trend["metrics"] == ["role_adherence"]
     assert trend["series"][0]["points"][0]["n_below"] == 1  # 0.5 < 0.7
+
+
+# --------------------------------------------------------------------------- #
+# Registros por episodio + razones (los campos nuevos del record).
+# --------------------------------------------------------------------------- #
+def test_record_carries_episode_avg_passed_and_failed_reasons(tmp_path):
+    import json
+
+    hist = tmp_path / "h"
+    history.append_history_record(
+        hist, run_date="2026-06-05", session_id="wa_a", suite="online",
+        scores=[("greeting", 0.0, False, "no saludó con la marca"),
+                ("style", 1.0, True, "ok")],
+        episode_id="ep_002", ts="2026-06-05T10:00:00+00:00", is_candidate=True,
+    )
+    raw = (hist / "2026-06-05.jsonl").read_text(encoding="utf-8").strip()
+    rec = json.loads(raw)
+    assert rec["episode_id"] == "ep_002"
+    assert rec["ts"] == "2026-06-05T10:00:00+00:00"
+    assert rec["avg"] == 0.5
+    assert rec["passed"] is False
+    assert rec["is_candidate"] is True
+    assert rec["failed"] == [
+        {"metric": "greeting", "score": 0.0, "reason": "no saludó con la marca"}
+    ]
+
+
+def test_record_truncates_long_judge_reasons(tmp_path):
+    import json
+
+    hist = tmp_path / "h"
+    history.append_history_record(
+        hist, run_date="2026-06-05", session_id="wa_a", suite="online",
+        scores=[("script", 0.2, False, "x" * 1000)],
+    )
+    rec = json.loads((hist / "2026-06-05.jsonl").read_text(encoding="utf-8"))
+    assert len(rec["failed"][0]["reason"]) == 400
+
+
+# --------------------------------------------------------------------------- #
+# Vista por conversación (read_conversation_evals).
+# --------------------------------------------------------------------------- #
+def test_conversation_evals_groups_by_episode_and_derives_trend(tmp_path):
+    hist = tmp_path / "h"
+    # ep_001 de wa_a: dos evals, mejora 0.5 -> 0.8 (trend up)
+    history.append_history_record(
+        hist, run_date="2026-06-01", session_id="wa_a", suite="online",
+        scores=[("script", 0.5, False, "flojo")],
+        episode_id="ep_001", ts="2026-06-01T08:00:00+00:00", is_candidate=True,
+    )
+    history.append_history_record(
+        hist, run_date="2026-06-02", session_id="wa_a", suite="online",
+        scores=[("script", 0.8, True, "ok")],
+        episode_id="ep_001", ts="2026-06-02T08:00:00+00:00",
+    )
+    # ep_002 de wa_a: una sola eval (single) — episodio distinto, grupo distinto
+    history.append_history_record(
+        hist, run_date="2026-06-02", session_id="wa_a", suite="online",
+        scores=[("script", 0.9, True, "ok")],
+        episode_id="ep_002", ts="2026-06-02T09:00:00+00:00",
+    )
+
+    out = history.read_conversation_evals(
+        hist, dates=["2026-06-01", "2026-06-02"], suite="online", threshold=0.7
+    )
+    assert out["count"] == 2
+    by_key = {(c["session_id"], c["episode_id"]): c for c in out["conversations"]}
+
+    ep1 = by_key[("wa_a", "ep_001")]
+    assert ep1["evals_count"] == 2
+    assert [e["avg"] for e in ep1["evals"]] == [0.5, 0.8]  # cronológico
+    assert ep1["trend"] == "up"
+    assert ep1["first_avg"] == 0.5 and ep1["last_avg"] == 0.8
+    assert ep1["last_passed"] is True
+    # la PRIMERA eval falló con razón; la última no tiene falladas
+    assert ep1["evals"][0]["failed"][0]["reason"] == "flojo"
+    assert ep1["failed_metrics"] == []  # derivado de la ÚLTIMA eval
+
+    ep2 = by_key[("wa_a", "ep_002")]
+    assert ep2["trend"] == "single"
+
+
+def test_conversation_evals_failing_sorted_first(tmp_path):
+    hist = tmp_path / "h"
+    history.append_history_record(
+        hist, run_date="2026-06-02", session_id="wa_ok", suite="online",
+        scores=[("script", 0.9, True, "")], episode_id="ep_001",
+        ts="2026-06-02T10:00:00+00:00",
+    )
+    history.append_history_record(
+        hist, run_date="2026-06-01", session_id="wa_mala", suite="online",
+        scores=[("script", 0.3, False, "mal")], episode_id="ep_001",
+        ts="2026-06-01T10:00:00+00:00",
+    )
+    out = history.read_conversation_evals(
+        hist, dates=["2026-06-01", "2026-06-02"], suite="online"
+    )
+    # La fallada va primero aunque sea más vieja.
+    assert out["conversations"][0]["session_id"] == "wa_mala"
+    assert out["conversations"][0]["last_passed"] is False
+
+
+def test_conversation_evals_tolerates_legacy_records(tmp_path):
+    """Registros pre-episodio (sin episode_id/avg/failed) siguen siendo legibles."""
+    import json
+
+    hist = tmp_path / "h"
+    hist.mkdir()
+    legacy = {
+        "date": "2026-06-01", "session_id": "wa_vieja", "suite": "online",
+        "metrics": {"script": 0.4, "style": 0.8},
+    }
+    (hist / "2026-06-01.jsonl").write_text(
+        json.dumps(legacy) + "\n", encoding="utf-8"
+    )
+    out = history.read_conversation_evals(
+        hist, dates=["2026-06-01"], suite="online", threshold=0.7
+    )
+    assert out["count"] == 1
+    conv = out["conversations"][0]
+    assert conv["episode_id"] == ""          # sesión entera
+    assert conv["last_avg"] == 0.6           # derivado del mapa de métricas
+    assert conv["last_passed"] is False      # 0.6 < threshold
+    assert conv["evals"][0]["failed"] == []  # sin razones persistidas
+    assert conv["trend"] == "single"

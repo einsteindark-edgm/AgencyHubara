@@ -13,6 +13,9 @@ export const evalCandidateSummarySchema = z.object({
   scenario: z.string().default(""),
   status: z.string().default("needs_human_review"),
   source: z.string().default(""),
+  /** Sesión + episodio que originaron el candidato ("" en legacy pre-episodio). */
+  session_id: z.string().default(""),
+  episode_id: z.string().default(""),
   num_turns: z.number().default(0),
   avg_score: z.number().nullable().default(null),
   failed_metrics: z.array(z.string()).default([]),

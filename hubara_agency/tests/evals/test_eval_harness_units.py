@@ -111,6 +111,62 @@ def test_reconstruct_missing_jsonl_is_empty(tmp_path: Path):
 
 
 # --------------------------------------------------------------------------- #
+# Episodios: unit ids + slicing del JSONL por episodio.
+# --------------------------------------------------------------------------- #
+def test_eval_unit_id_roundtrip():
+    assert reconstruct.make_eval_unit_id("wa_x", "ep_002") == "wa_x::ep_002"
+    assert reconstruct.parse_eval_unit_id("wa_x::ep_002") == ("wa_x", "ep_002")
+    # Legacy / sesión entera: sin episodio.
+    assert reconstruct.make_eval_unit_id("wa_x") == "wa_x"
+    assert reconstruct.parse_eval_unit_id("wa_x") == ("wa_x", "")
+
+
+def test_slice_episode_by_msgs_counts():
+    events = [{"role": "user", "content": f"m{i}"} for i in range(10)]
+    ep = {"episode_id": "ep_001", "msgs_count_at_start": 3, "msgs_count_at_close": 7}
+    assert reconstruct.slice_episode_events(events, ep) == events[3:7]
+    # Episodio activo (sin close): hasta el final.
+    ep_activo = {"episode_id": "ep_002", "msgs_count_at_start": 7,
+                 "msgs_count_at_close": None}
+    assert reconstruct.slice_episode_events(events, ep_activo) == events[7:]
+
+
+def test_slice_episode_by_timestamps_fallback():
+    def ev(ts_iso: str, i: int) -> dict:
+        return {"role": "user", "content": f"m{i}", "timestamp": ts_iso}
+
+    events = [
+        ev("2026-06-01T10:00:00+00:00", 0),   # antes del episodio
+        ev("2026-06-02T10:00:00+00:00", 1),   # dentro
+        ev("2026-06-02T11:00:00+00:00", 2),   # dentro
+        ev("2026-06-03T10:00:00+00:00", 3),   # después del cierre
+        {"role": "user", "content": "sin ts"},  # sin timestamp → fuera en modo ts
+    ]
+    import datetime as dt
+
+    start = int(dt.datetime.fromisoformat("2026-06-02T00:00:00+00:00").timestamp() * 1000)
+    close = int(dt.datetime.fromisoformat("2026-06-03T00:00:00+00:00").timestamp() * 1000)
+    ep = {"episode_id": "ep_001", "started_at_ms": start, "closed_at_ms": close}
+    sliced = reconstruct.slice_episode_events(events, ep)
+    assert [e["content"] for e in sliced] == ["m1", "m2"]
+
+
+def test_slice_episode_without_bounds_returns_all():
+    events = [{"role": "user", "content": "a"}]
+    assert reconstruct.slice_episode_events(events, {"episode_id": "ep_001"}) == events
+
+
+def test_read_episode_events_full_session_when_episode_missing(tmp_path: Path):
+    sid = "wa_x"
+    _write_session(tmp_path, sid, [{"role": "user", "content": "hola"}])
+    # Sin metadata / episodio inexistente → sesión entera, episode None.
+    events, ep = reconstruct.read_episode_events(tmp_path, sid, "ep_999")
+    assert len(events) == 1 and ep is None
+    events, ep = reconstruct.read_episode_events(tmp_path, sid, "")
+    assert len(events) == 1 and ep is None
+
+
+# --------------------------------------------------------------------------- #
 # Selección / muestreo.
 # --------------------------------------------------------------------------- #
 def test_select_respects_min_turns_window_and_handoff(tmp_path: Path):
@@ -144,6 +200,76 @@ def test_select_excludes_out_of_window(tmp_path: Path):
     window = EvalWindowInput(lookback_hours=8, max_conversations=10, min_turns=4)
     selected = select.select_sessions(window, vault_dir=tmp_path, now=time.time())
     assert "wa_vieja" not in selected
+
+
+# --------------------------------------------------------------------------- #
+# Selección por EPISODIO (select_eval_units).
+# --------------------------------------------------------------------------- #
+def _write_metadata(vault: Path, session_id: str, metadata: dict) -> None:
+    (vault / session_id).mkdir(parents=True, exist_ok=True)
+    (vault / session_id / "metadata.json").write_text(
+        json.dumps(metadata, ensure_ascii=False), encoding="utf-8"
+    )
+
+
+def test_select_units_expands_episodes_and_applies_min_turns(tmp_path: Path):
+    import time
+
+    now_ms = int(time.time() * 1000)
+    # 10 mensajes: ep_001 (cerrado hace 1h) ocupa [0:6) = 6 turnos; ep_002
+    # (activo) ocupa [6:10) = 4 turnos. Con min_turns=5, solo ep_001 califica —
+    # min_turns se aplica POR EPISODIO, no por el total de la sesión (10).
+    _write_session(tmp_path, "wa_multi", [{"role": "user", "content": f"m{i}"} for i in range(10)])
+    _write_metadata(tmp_path, "wa_multi", {
+        "episodes": [
+            {"episode_id": "ep_001", "started_at_ms": now_ms - 7200_000,
+             "closed_at_ms": now_ms - 3600_000,
+             "msgs_count_at_start": 0, "msgs_count_at_close": 6},
+            {"episode_id": "ep_002", "started_at_ms": now_ms - 1800_000,
+             "closed_at_ms": None,
+             "msgs_count_at_start": 6, "msgs_count_at_close": None},
+        ],
+    })
+    window = EvalWindowInput(lookback_hours=24, max_conversations=10, min_turns=5)
+    units = select.select_eval_units(window, vault_dir=tmp_path, now=time.time())
+    assert units == ["wa_multi::ep_001"]  # ep_002 (4 turnos) < min_turns=5
+
+
+def test_select_units_includes_active_and_recent_closed_excludes_old_closed(tmp_path: Path):
+    import time
+
+    now = time.time()
+    now_ms = int(now * 1000)
+    _write_session(tmp_path, "wa_eps", [{"role": "user", "content": f"m{i}"} for i in range(12)])
+    _write_metadata(tmp_path, "wa_eps", {
+        "episodes": [
+            # Cerrado hace 3 días → fuera de la ventana de 24h.
+            {"episode_id": "ep_001", "started_at_ms": now_ms - 80 * 3600_000,
+             "closed_at_ms": now_ms - 72 * 3600_000,
+             "msgs_count_at_start": 0, "msgs_count_at_close": 4},
+            # Cerrado hace 1h → dentro.
+            {"episode_id": "ep_002", "started_at_ms": now_ms - 7200_000,
+             "closed_at_ms": now_ms - 3600_000,
+             "msgs_count_at_start": 4, "msgs_count_at_close": 8},
+            # Activo → dentro.
+            {"episode_id": "ep_003", "started_at_ms": now_ms - 600_000,
+             "closed_at_ms": None,
+             "msgs_count_at_start": 8, "msgs_count_at_close": None},
+        ],
+    })
+    window = EvalWindowInput(lookback_hours=24, max_conversations=10, min_turns=4)
+    units = select.select_eval_units(window, vault_dir=tmp_path, now=now)
+    assert "wa_eps::ep_001" not in units
+    assert set(units) == {"wa_eps::ep_002", "wa_eps::ep_003"}
+
+
+def test_select_units_legacy_session_without_episodes(tmp_path: Path):
+    import time
+
+    _write_session(tmp_path, "wa_legacy", [{"role": "user", "content": f"m{i}"} for i in range(5)])
+    window = EvalWindowInput(lookback_hours=24, max_conversations=10, min_turns=4)
+    units = select.select_eval_units(window, vault_dir=tmp_path, now=time.time())
+    assert units == ["wa_legacy"]  # unit id pelado = sesión entera
 
 
 # --------------------------------------------------------------------------- #
@@ -250,6 +376,27 @@ def test_build_and_write_candidate(tmp_path: Path):
     path = curation.write_candidate(tmp_path, "wa_+57X", golden)
     assert path.exists()
     assert json.loads(path.read_text(encoding="utf-8"))["expected_outcome"] == "debió saludar"
+
+
+def test_candidate_carries_episode_and_filename_is_per_unit(tmp_path: Path):
+    turns = [{"role": "user", "content": "hola"}, {"role": "assistant", "content": "hey"}]
+    scores = [("greeting_compliance", 0.0, False, "no saludó")]
+    golden = curation.build_candidate_golden(
+        session_id="wa_+57X", turns=turns, scenario="esc",
+        expected_outcome="debió saludar", scores=scores, episode_id="ep_002",
+    )
+    assert golden["additional_metadata"]["source_episode"] == "ep_002"
+    assert golden["additional_metadata"]["source_session_redacted"] == "wa_+57X"
+
+    # El filename incluye el episodio: re-eval del MISMO episodio pisa, episodios
+    # distintos de la misma sesión conviven.
+    p1 = curation.write_candidate(tmp_path, "wa_+57X::ep_001", golden)
+    p2 = curation.write_candidate(tmp_path, "wa_+57X::ep_002", golden)
+    assert p1 != p2
+    assert p1.name == "wa_+57X__ep_001.json"
+    assert {p.name for p in tmp_path.glob("*.json")} == {
+        "wa_+57X__ep_001.json", "wa_+57X__ep_002.json",
+    }
 
 
 # --------------------------------------------------------------------------- #

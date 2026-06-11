@@ -20,6 +20,11 @@ from typing import Any
 DEFAULT_THRESHOLD = 0.7
 
 
+_REASON_MAX_CHARS = 400
+"""Las razones del juez pueden ser párrafos — se truncan para que el JSONL del
+histórico no engorde sin límite (la razón completa vive en SigNoz)."""
+
+
 def append_history_record(
     history_dir: Path,
     *,
@@ -27,14 +32,37 @@ def append_history_record(
     session_id: str,
     suite: str,
     scores: list[tuple[str, float, bool, str]],
+    episode_id: str = "",
+    ts: str = "",
+    is_candidate: bool = False,
 ) -> None:
-    """Appendea UN registro (una conversación) al JSONL del día. Best-effort: si
-    falla la escritura, NO rompe la evaluación (lo llama una activity)."""
+    """Appendea UN registro (una evaluación de un episodio/conversación) al JSONL
+    del día. Best-effort: si falla la escritura, NO rompe la evaluación (lo llama
+    una activity).
+
+    Además del mapa `metrics` (compat con registros viejos), persiste lo que la
+    UI por-episodio necesita: `episode_id` (vacío = sesión entera legacy), `ts`
+    (hora ISO de la corrida — distingue re-evals del mismo día), `avg`/`passed`
+    derivados, `is_candidate`, y las razones del juez de las métricas FALLADAS
+    (`failed`) para responder "¿por qué puntuó bajo?" sin ir a SigNoz.
+    """
+    metrics = {k: round(float(s), 4) for (k, s, _ok, _r) in scores}
+    avg = round(sum(metrics.values()) / len(metrics), 4) if metrics else 0.0
     record = {
         "date": run_date,
+        "ts": ts,
         "session_id": session_id,
+        "episode_id": episode_id,
         "suite": suite,
-        "metrics": {k: round(float(s), 4) for (k, s, _ok, _r) in scores},
+        "metrics": metrics,
+        "avg": avg,
+        "passed": all(ok for (_k, _s, ok, _r) in scores) if scores else False,
+        "is_candidate": is_candidate,
+        "failed": [
+            {"metric": k, "score": round(float(s), 4), "reason": r[:_REASON_MAX_CHARS]}
+            for (k, s, ok, r) in scores
+            if not ok
+        ],
     }
     try:
         history_dir.mkdir(parents=True, exist_ok=True)
@@ -107,4 +135,117 @@ def read_trend(
         "suite": suite,
         "metrics": [s["metric"] for s in series],
         "series": series,
+    }
+
+
+def _record_avg(record: dict[str, Any]) -> float | None:
+    """`avg` del registro; registros legacy (sin `avg`) lo derivan de `metrics`."""
+    avg = record.get("avg")
+    if isinstance(avg, (int, float)):
+        return round(float(avg), 4)
+    metrics = record.get("metrics") or {}
+    vals = [float(v) for v in metrics.values() if isinstance(v, (int, float))]
+    return round(sum(vals) / len(vals), 4) if vals else None
+
+
+def _trend(avgs: list[float], *, epsilon: float = 0.02) -> str:
+    """Evolución del score de la conversación entre su primera y última eval.
+
+    `single` = una sola eval (sin historia todavía); `up`/`down` solo si el
+    delta supera `epsilon` (mismo criterio que la flecha del trend chart).
+    """
+    if len(avgs) < 2:
+        return "single"
+    delta = avgs[-1] - avgs[0]
+    if delta > epsilon:
+        return "up"
+    if delta < -epsilon:
+        return "down"
+    return "flat"
+
+
+def read_conversation_evals(
+    history_dir: Path,
+    *,
+    dates: list[str],
+    suite: str = "online",
+    threshold: float = DEFAULT_THRESHOLD,
+) -> dict[str, Any]:
+    """Las evaluaciones agrupadas POR CONVERSACIÓN (sesión + episodio).
+
+    Es la vista que responde las preguntas del operador que el agregado por día
+    no puede: ¿QUÉ conversación generó los malos scores? ¿mejoró entre evals o
+    quedó igual? Cada grupo trae su timeline de evals (ordenado cronológicamente)
+    y derivados listos para la UI (`last_avg`, `trend`, `failed_metrics`).
+
+    Tolerante a registros legacy (sin episode_id/avg/failed): episodio "" se
+    presenta como sesión entera; `passed` se deriva de avg vs threshold.
+    """
+    records = [r for r in _read_records(history_dir, dates=dates) if r.get("suite") == suite]
+
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for r in records:
+        session_id = str(r.get("session_id", ""))
+        if not session_id:
+            continue
+        episode_id = str(r.get("episode_id", "") or "")
+        avg = _record_avg(r)
+        if avg is None:
+            continue
+        passed = r.get("passed")
+        evaluation = {
+            "date": str(r.get("date", "")),
+            "ts": str(r.get("ts", "") or ""),
+            "avg": avg,
+            "passed": bool(passed) if isinstance(passed, bool) else avg >= threshold,
+            "is_candidate": bool(r.get("is_candidate", False)),
+            "metrics": {
+                k: round(float(v), 4)
+                for k, v in (r.get("metrics") or {}).items()
+                if isinstance(v, (int, float))
+            },
+            "failed": [
+                {
+                    "metric": str(f.get("metric", "")),
+                    "score": float(f.get("score", 0.0)),
+                    "reason": str(f.get("reason", "")),
+                }
+                for f in (r.get("failed") or [])
+                if isinstance(f, dict)
+            ],
+        }
+        groups.setdefault((session_id, episode_id), []).append(evaluation)
+
+    conversations = []
+    for (session_id, episode_id), evals in groups.items():
+        evals.sort(key=lambda e: (e["date"], e["ts"]))
+        avgs = [e["avg"] for e in evals]
+        last = evals[-1]
+        conversations.append(
+            {
+                "session_id": session_id,
+                "episode_id": episode_id,
+                "evals": evals,
+                "evals_count": len(evals),
+                "first_avg": avgs[0],
+                "last_avg": last["avg"],
+                "last_date": last["date"],
+                "last_ts": last["ts"],
+                "last_passed": last["passed"],
+                "is_candidate": last["is_candidate"],
+                "trend": _trend(avgs),
+                "failed_metrics": [f["metric"] for f in last["failed"]],
+            }
+        )
+
+    # Más recientes primero; a igual fecha, los de peor score arriba (son los
+    # que el operador necesita ver).
+    conversations.sort(key=lambda c: (c["last_date"], c["last_ts"]), reverse=True)
+    conversations.sort(key=lambda c: c["last_passed"])
+
+    return {
+        "threshold": threshold,
+        "suite": suite,
+        "count": len(conversations),
+        "conversations": conversations,
     }
