@@ -5,7 +5,7 @@
 
 import type { TrackedOrder } from "@plugins/eta/frontend/entities/tracked-order";
 import { Icon } from "@/shared/ui";
-import { type EtaFilter } from "../model/useEtaFilters";
+import { isCodToday, type EtaFilter } from "../model/useEtaFilters";
 
 interface Props {
   orders: TrackedOrder[];
@@ -16,10 +16,10 @@ interface Props {
 export function EtaList({ orders, filter, setFilter }: Props) {
   const flagged = orders.filter((o) => o.needs).length;
   const active = orders.length;
-  const codToday = orders.filter(
-    (o) =>
-      o.payType === "cod" && (o.current === "shipping" || o.current === "out"),
-  );
+  // Mismo predicado que el filtro `codToday` — el click del banner muestra
+  // EXACTAMENTE el conjunto que el banner cuenta (regresión: ruteaba a `cod`
+  // genérico y aparecían COD que todavía no están en la calle).
+  const codToday = orders.filter(isCodToday);
   const codTotal = codToday.reduce((a, b) => a + b.total, 0);
 
   const filters: {
@@ -57,7 +57,7 @@ export function EtaList({ orders, filter, setFilter }: Props) {
       </div>
 
       {codToday.length > 0 && (
-        <div className="cod-alert" onClick={() => setFilter("cod")}>
+        <div className="cod-alert" onClick={() => setFilter("codToday")}>
           <span className="ca-i"><Icon.alert /></span>
           <div>
             <div className="ca-t">{codToday.length} contra entrega hoy</div>
