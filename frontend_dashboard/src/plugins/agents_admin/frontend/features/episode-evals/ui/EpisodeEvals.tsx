@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 
 import {
   episodeUnitKey,
@@ -31,6 +31,9 @@ interface Props {
    *  selector de la tendencia. null = nada seleccionado. */
   selectedKey: string | null;
   onSelectKey: (key: string | null) => void;
+  /** "Solo con fallas", lifted: lo activa el badge de alerta de AgentsQuality. */
+  onlyFailing: boolean;
+  onOnlyFailingChange: (value: boolean) => void;
   /** Abre el candidato en la pestaña de curación de goldens. */
   onOpenCandidate: (candidateId: string) => void;
 }
@@ -59,18 +62,23 @@ export function EpisodeEvals({
   onClearDateFilter,
   selectedKey,
   onSelectKey,
+  onlyFailing,
+  onOnlyFailingChange,
   onOpenCandidate,
 }: Props) {
   const { data, isLoading, isError } = useConversationEvals(windowDays, "online");
-  const [onlyFailing, setOnlyFailing] = useState(false);
 
   const allConversations = data?.conversations ?? [];
+  // Cliente en foco: derivado del episodio seleccionado (`<session>::<episode>`).
+  // Cuando hay uno, la lista se acota a SUS episodios (cascada cliente→episodio).
+  const sessionFilter = selectedKey ? selectedKey.split("::")[0] : null;
   const conversations = useMemo(() => {
     let list = allConversations;
+    if (sessionFilter) list = list.filter((c) => c.session_id === sessionFilter);
     if (onlyFailing) list = list.filter((c) => !c.last_passed || c.is_candidate);
     if (dateFilter) list = list.filter((c) => c.evals.some((e) => e.date === dateFilter));
     return list;
-  }, [allConversations, onlyFailing, dateFilter]);
+  }, [allConversations, sessionFilter, onlyFailing, dateFilter]);
 
   // El detalle se busca en la lista COMPLETA (no la filtrada): un episodio
   // seleccionado desde el selector de la tendencia debe verse aunque los
@@ -94,7 +102,7 @@ export function EpisodeEvals({
               <input
                 type="checkbox"
                 checked={onlyFailing}
-                onChange={(e) => setOnlyFailing(e.target.checked)}
+                onChange={(e) => onOnlyFailingChange(e.target.checked)}
                 className="accent-current"
               />
               solo con fallas
@@ -107,6 +115,16 @@ export function EpisodeEvals({
                 title="Quitar el filtro de día (viene de la tendencia)"
               >
                 evaluadas el {dateFilter} <Icon.x />
+              </button>
+            )}
+            {sessionFilter && (
+              <button
+                type="button"
+                onClick={() => onSelectKey(null)}
+                className="inline-flex items-center gap-1 rounded-full bg-accent-soft px-2 py-0.5 text-xs text-fg"
+                title="Quitar el filtro de cliente (ver todos)"
+              >
+                cliente {sessionLabel(sessionFilter)} <Icon.x />
               </button>
             )}
           </div>

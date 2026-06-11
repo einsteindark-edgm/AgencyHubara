@@ -121,10 +121,20 @@ def test_sales_episode_closed_signals_cancel() -> None:
         source_worker="sales",
     )
     matching = [t for t in transitions if t.matches(env)]
-    assert len(matching) == 1
-    t = matching[0]
-    assert t.action.via == "signal"
-    assert t.action.signal_name == "cancel_watchdog"
+    # EpisodeClosedEvent dispara DOS transitions: (1) cancela el watchdog del
+    # episodio cerrado, (2) evalúa la calidad de ESE episodio (event-driven).
+    assert len(matching) == 2, f"Expected 2 matches, got {len(matching)}"
+
+    cancel = [t for t in matching if t.action.signal_name == "cancel_watchdog"]
+    assert len(cancel) == 1
+    assert cancel[0].action.via == "signal"
+
+    evals = [
+        t for t in matching if t.action.target_workflow == "EvaluateEpisodeWorkflow"
+    ]
+    assert len(evals) == 1
+    assert evals[0].action.via == "start_workflow"
+    assert evals[0].action.target_worker == "sales_eval"
 
 
 # ---------------------------------------------------------------------------

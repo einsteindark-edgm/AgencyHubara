@@ -114,3 +114,21 @@ class GoldenSuiteResult:
     judge: bool = False
     """Si corrió el juez (y por ende emitió scores a SigNoz)."""
     duration_s: int = 0
+
+
+@dataclass(frozen=True)
+class EvaluateEpisodeInput:
+    """Input de `EvaluateEpisodeWorkflow` — evaluación dirigida de UN episodio.
+
+    Lo arma el dispatcher desde `EpisodeClosedEvent` (transition
+    `sales_episode_close_triggers_eval`): cuando un episodio cierra, se evalúa
+    SOLO ese episodio (no un muestreo). `closing_tag` viaja para observability
+    (qué cierre disparó la eval); el workflow construye el unit_id
+    `<session>::<episode>` y delega en la activity de eval.
+
+    Inmutable y replay-safe (R-JSON): solo escalares.
+    """
+
+    session_id: str
+    episode_id: str = ""
+    closing_tag: str = ""

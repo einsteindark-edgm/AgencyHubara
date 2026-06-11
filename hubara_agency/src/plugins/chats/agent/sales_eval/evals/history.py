@@ -88,6 +88,32 @@ def _read_records(history_dir: Path, *, dates: list[str]) -> list[dict[str, Any]
     return out
 
 
+def read_evaluated_session_episodes(history_dir: Path) -> set[tuple[str, str]]:
+    """`(session_id, episode_id)` de TODOS los registros del histórico (cualquier día).
+
+    Para el backfill: saber qué episodios ya tienen al menos una eval, y NO
+    re-evaluarlos (ni gastar juez ni duplicar registros). Escanea todos los
+    `*.jsonl` del dir sin filtrar por fecha. `episode_id` ausente = "" (sesión
+    entera legacy). Solo stdlib (la API/scripts lo importan sin el extra deepeval).
+    """
+    out: set[tuple[str, str]] = set()
+    if not history_dir.exists():
+        return out
+    for p in sorted(history_dir.glob("*.jsonl")):
+        try:
+            for line in p.read_text("utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                r = json.loads(line)
+                sid = str(r.get("session_id", ""))
+                if sid:
+                    out.add((sid, str(r.get("episode_id", "") or "")))
+        except (OSError, json.JSONDecodeError):
+            continue
+    return out
+
+
 def read_trend(
     history_dir: Path,
     *,

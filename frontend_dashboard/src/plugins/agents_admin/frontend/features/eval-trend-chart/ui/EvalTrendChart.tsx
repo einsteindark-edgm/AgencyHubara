@@ -212,6 +212,33 @@ export function EvalTrendChart({
   const episodeSelected = !!selectedEpisodeKey && suite === "online";
   const mode: "aggregate" | "episode" = selectedConv ? "episode" : "aggregate";
 
+  // Cascada cliente → episodio. El cliente se DERIVA del episodio seleccionado
+  // (`<session>::<episode>`), así que no hace falta estado extra: elegir un
+  // cliente auto-enfoca su episodio más reciente.
+  const derivedSession = selectedEpisodeKey ? selectedEpisodeKey.split("::")[0] : null;
+  const clientSessions = useMemo(() => {
+    const count = new Map<string, number>();
+    for (const c of conversations) count.set(c.session_id, (count.get(c.session_id) ?? 0) + 1);
+    return [...count.entries()].map(([session, episodes]) => ({ session, episodes }));
+  }, [conversations]);
+  const episodesOfClient = useMemo(
+    () =>
+      derivedSession
+        ? [...conversations.filter((c) => c.session_id === derivedSession)].sort((a, b) =>
+            (b.last_date + b.last_ts).localeCompare(a.last_date + a.last_ts),
+          )
+        : [],
+    [conversations, derivedSession],
+  );
+
+  const pickClient = (session: string | null) => {
+    if (!session) return onSelectEpisode(null);
+    const eps = [...conversations.filter((c) => c.session_id === session)].sort((a, b) =>
+      (b.last_date + b.last_ts).localeCompare(a.last_date + a.last_ts),
+    );
+    onSelectEpisode(eps[0] ? episodeUnitKey(eps[0]) : null); // el más reciente
+  };
+
   const lines: TrendLine[] = useMemo(() => {
     if (selectedConv) return linesFromEpisode(selectedConv);
     return (aggData?.series ?? []).map((s) => lineFromAggregate(s, threshold));
@@ -228,26 +255,44 @@ export function EvalTrendChart({
         <h3 className="text-sm font-semibold">Tendencia de calidad</h3>
 
         {suite === "online" && (
-          <label className="flex items-center gap-1 text-xs text-fg-muted">
-            <span className="text-fg-faint">conversación:</span>
-            <select
-              value={selectedEpisodeKey ?? ""}
-              onChange={(e) => onSelectEpisode(e.target.value || null)}
-              className="max-w-[17rem] truncate rounded-md border border-line bg-white/5 px-2 py-1 text-xs text-fg-soft focus:border-accent focus:outline-none"
-            >
-              <option value="">Todas (promedio diario)</option>
-              {conversations.map((c) => {
-                const key = episodeUnitKey(c);
-                return (
-                  <option key={key} value={key}>
-                    {sessionLabel(c.session_id)} · {c.episode_id || "sesión"} ·{" "}
-                    {c.last_avg === null ? "—" : c.last_avg.toFixed(2)}
-                    {c.closing_tag ? ` · ${c.closing_tag}` : ""}
+          <div className="flex flex-wrap items-center gap-2 text-xs text-fg-muted">
+            <label className="flex items-center gap-1">
+              <span className="text-fg-faint">cliente:</span>
+              <select
+                value={derivedSession ?? ""}
+                onChange={(e) => pickClient(e.target.value || null)}
+                className="max-w-[12rem] truncate rounded-md border border-line bg-white/5 px-2 py-1 text-xs text-fg-soft focus:border-accent focus:outline-none"
+              >
+                <option value="">Todos (promedio diario)</option>
+                {clientSessions.map(({ session, episodes }) => (
+                  <option key={session} value={session}>
+                    {sessionLabel(session)} ({episodes} ep{episodes > 1 ? "s" : ""})
                   </option>
-                );
-              })}
-            </select>
-          </label>
+                ))}
+              </select>
+            </label>
+            {derivedSession && (
+              <label className="flex items-center gap-1">
+                <span className="text-fg-faint">episodio:</span>
+                <select
+                  value={selectedEpisodeKey ?? ""}
+                  onChange={(e) => onSelectEpisode(e.target.value || null)}
+                  className="max-w-[13rem] truncate rounded-md border border-line bg-white/5 px-2 py-1 text-xs text-fg-soft focus:border-accent focus:outline-none"
+                >
+                  {episodesOfClient.map((c) => {
+                    const key = episodeUnitKey(c);
+                    return (
+                      <option key={key} value={key}>
+                        {c.episode_id || "sesión completa"} ·{" "}
+                        {c.last_avg === null ? "—" : c.last_avg.toFixed(2)}
+                        {c.closing_tag ? ` · ${c.closing_tag}` : ""}
+                      </option>
+                    );
+                  })}
+                </select>
+              </label>
+            )}
+          </div>
         )}
 
         <div className="ml-auto flex gap-1 rounded-md bg-white/5 p-0.5 text-xs">
