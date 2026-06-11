@@ -8,5 +8,5 @@ export type {
   TranscriptTurn,
 } from "./model";
 export { episodeEvalKeys } from "./keys";
-export { episodeUnitKey } from "./lib";
+export { episodeUnitKey, isFlaggedEpisode } from "./lib";
 export { useConversationEvals, useEvalTranscript } from "./api";

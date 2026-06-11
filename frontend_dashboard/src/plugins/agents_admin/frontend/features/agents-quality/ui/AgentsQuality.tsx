@@ -1,6 +1,9 @@
 import { useState } from "react";
 
-import { useConversationEvals } from "@plugins/agents_admin/frontend/entities/episode-eval";
+import {
+  isFlaggedEpisode,
+  useConversationEvals,
+} from "@plugins/agents_admin/frontend/entities/episode-eval";
 import { EpisodeEvals } from "@plugins/agents_admin/frontend/features/episode-evals";
 import { EvalTrendChart } from "@plugins/agents_admin/frontend/features/eval-trend-chart";
 import { GoldenEvalCuration } from "@plugins/agents_admin/frontend/features/golden-eval-curation";
@@ -43,12 +46,15 @@ export function AgentsQuality() {
   const [goldenToOpen, setGoldenToOpen] = useState<string | null>(null);
   const [onlyFailing, setOnlyFailing] = useState(false);
 
-  // Alerta de calidad: cuántos episodios evaluados están bajo el umbral (la
-  // última eval falló alguna métrica). Es el "te aviso de los malos" que pediste
-  // — siempre visible en la nav, derivado del mismo query (cache compartido).
+  // Alerta de calidad: cuántos episodios ameritan atención — score bajo el
+  // umbral O candidato a golden (incluye fallas de métrica crítica como
+  // alucinación). NO "falló alguna métrica": eso marcaba un 0.96 con el tono
+  // apenas bajo (ruido). Es el "te aviso de los malos" que pediste — siempre
+  // visible en la nav, derivado del mismo query (cache compartido).
   const { data: convData } = useConversationEvals(WINDOW_DAYS, "online");
-  const failingCount = (convData?.conversations ?? []).filter(
-    (c) => !c.last_passed,
+  const threshold = convData?.threshold ?? 0.7;
+  const failingCount = (convData?.conversations ?? []).filter((c) =>
+    isFlaggedEpisode(c, threshold),
   ).length;
 
   const openCandidate = (candidateId: string) => {
@@ -121,9 +127,9 @@ export function AgentsQuality() {
               type="button"
               onClick={showFailing}
               className="ml-auto inline-flex items-center gap-1.5 rounded-md bg-red/15 px-3 py-1.5 text-xs font-semibold text-red transition hover:bg-red/25"
-              title="Ver los episodios cuya última evaluación falló alguna métrica"
+              title="Episodios cuya última eval quedó bajo el umbral o es candidata a golden (incluye fallas críticas como alucinación)"
             >
-              <Icon.alert /> {failingCount} episodio{failingCount > 1 ? "s" : ""} bajo el umbral
+              <Icon.alert /> {failingCount} episodio{failingCount > 1 ? "s" : ""} para revisar
             </button>
           )}
         </nav>

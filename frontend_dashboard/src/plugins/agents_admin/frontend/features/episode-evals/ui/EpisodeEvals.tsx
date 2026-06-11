@@ -2,6 +2,7 @@ import { useMemo } from "react";
 
 import {
   episodeUnitKey,
+  isFlaggedEpisode,
   useConversationEvals,
   useEvalTranscript,
   type ConversationEval,
@@ -69,16 +70,19 @@ export function EpisodeEvals({
   const { data, isLoading, isError } = useConversationEvals(windowDays, "online");
 
   const allConversations = data?.conversations ?? [];
+  const threshold = data?.threshold ?? 0.7;
   // Cliente en foco: derivado del episodio seleccionado (`<session>::<episode>`).
   // Cuando hay uno, la lista se acota a SUS episodios (cascada cliente→episodio).
   const sessionFilter = selectedKey ? selectedKey.split("::")[0] : null;
   const conversations = useMemo(() => {
     let list = allConversations;
     if (sessionFilter) list = list.filter((c) => c.session_id === sessionFilter);
-    if (onlyFailing) list = list.filter((c) => !c.last_passed || c.is_candidate);
+    // "Solo con fallas" = mismo criterio que el badge/orden: bajo umbral o
+    // candidato (no "falló alguna métrica", que colaba happy paths de 0.96).
+    if (onlyFailing) list = list.filter((c) => isFlaggedEpisode(c, threshold));
     if (dateFilter) list = list.filter((c) => c.evals.some((e) => e.date === dateFilter));
     return list;
-  }, [allConversations, sessionFilter, onlyFailing, dateFilter]);
+  }, [allConversations, sessionFilter, onlyFailing, dateFilter, threshold]);
 
   // El detalle se busca en la lista COMPLETA (no la filtrada): un episodio
   // seleccionado desde el selector de la tendencia debe verse aunque los

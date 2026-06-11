@@ -384,12 +384,38 @@ def check_behaviors(scn: dict, res: dict) -> list[dict]:
 
 # --- lente 2: juez LLM -------------------------------------------------------
 async def grade_judge(scn: dict, res: dict) -> dict:
-    from src.plugins.chats.agent.sales_eval.evals import composition, metrics, reconstruct
+    from src.plugins.chats.agent.sales_eval.evals import (
+        composition,
+        metrics,
+        reconstruct,
+    )
+    from src.plugins.chats.agent.sales_eval.evals import scenario as scenario_mod
 
     # Fix B (calibracion): filtrar turnos sin texto (solo-tool). Un turno con
     # content="" rompia KnowledgeRetentionMetric ("2 validation errors for Knowledge").
     graded = [t for t in res["turns"] if (t.get("content") or "").strip()]
-    tc = reconstruct.build_conversational_test_case(graded, name=scn["id"])
+    # PARIDAD con el eval online: el Scenario lleva el CATALOGO REAL (el fixture
+    # committeado que el agente uso — ground truth de no_hallucination: los
+    # tool_outputs van capados a 1000 chars y el envelope del search se trunca)
+    # + los HECHOS DEL SISTEMA del vault temp (escalation_reason/orden que las
+    # tools de borde escribieron). NO se pasa el expected del escenario (eso
+    # seria soplarle la respuesta al juez).
+    sid = "wa_golden_" + scn["id"][:28]
+    meta: dict = {}
+    try:
+        meta = json.loads(Path(_VAULT, sid, "metadata.json").read_text("utf-8"))
+    except Exception:  # noqa: BLE001 — sin metadata: scenario sin hechos
+        meta = {}
+    episodes = [e for e in (meta.get("episodes") or []) if isinstance(e, dict)]
+    scenario_text = scenario_mod.build_scenario(
+        episodes[-1] if episodes else None,
+        meta,
+        episode_is_last=True,
+        catalog_block=await scenario_mod.catalog_ground_truth(),
+    )
+    tc = reconstruct.build_conversational_test_case(
+        graded, scenario=scenario_text, name=scn["id"]
+    )
     judge = composition.get_judge()
     by_key = {metrics.metric_key(m): m for m in metrics.all_sales_metrics(judge)}
     # Fix A (calibracion): full-funnel metrics solo si hay embudo (>=3 turnos cliente).
