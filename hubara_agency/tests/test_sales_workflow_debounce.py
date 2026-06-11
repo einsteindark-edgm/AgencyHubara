@@ -350,25 +350,26 @@ async def test_typing_indicator_fires_before_llm(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_pre_tool_content_is_sent_as_bubble(tmp_path: Path) -> None:
-    """Bug saludo descartado (run ddd0d472 / session-wa_573125671604).
+    """Bug saludo descartado (run ddd0d472) + corte de turno L-11 (run b730c006).
 
     Cuando el LLM emite texto client-facing JUNTO con una tool call (el saludo
     de apertura "Buenos días. Bienvenido a Hubara..." encolando send_quick_replies),
     ese texto DEBE llegar al cliente como burbuja — antes se perdía porque el
     loop solo enviaba `final_content` (el content del último mensaje SIN tools).
 
-    Reproduce el turno real del run: iter 1 = saludo + tool call; iter 2 = texto
-    final sin tools. Verifica que el cliente recibe AMBOS, el saludo primero, y
-    que el saludo se persiste al store del dashboard.
+    Contrato L-11: `send_quick_replies` es TURN-ENDING — tras ejecutarla el
+    loop corta SIN volver a llamar al LLM (los botones ya invitan a responder;
+    un follow-up sería redundante y abría la puerta a que el modelo "siguiera
+    solo", como en b730c006). El cliente recibe el saludo y nada más.
     """
     tracker = Tracker()
     workspace = tmp_path / "ws"
     workspace.mkdir()
 
     greeting = "Buenos dias. Bienvenido a Hubara, velas artesanales hechas a mano."
-    follow_up = "Cuentame que buscas y con gusto te asesoro."
     responses = [
-        # Turno user, iter 1: saludo + tool call (ANTES se descartaba)
+        # Turno user, iter única: saludo + tool call terminal (send_quick_replies).
+        # L-11: NO hay iter 2 — el corte de turno evita la segunda llamada LLM.
         LLMResponseData(
             content=greeting,
             finish_reason="tool_calls",
@@ -380,13 +381,6 @@ async def test_pre_tool_content_is_sent_as_bubble(tmp_path: Path) -> None:
                     arguments={"body": "¿En qué te ayudo?", "buttons": []},
                 )
             ],
-        ),
-        # Turno user, iter 2: texto final sin tools
-        LLMResponseData(
-            content=follow_up,
-            finish_reason="stop",
-            has_tool_calls=False,
-            tool_calls=[],
         ),
     ]
 
@@ -415,13 +409,18 @@ async def test_pre_tool_content_is_sent_as_bubble(tmp_path: Path) -> None:
             await handle.result()
 
     sent = [m for (_sid, m) in tracker.send_whatsapp_calls]
-    # El saludo (content que acompañaba la tool call) debe haber llegado.
-    assert greeting in sent, f"El saludo de apertura se perdió. Enviado: {sent}"
-    # El texto final también.
-    assert follow_up in sent, f"El follow-up no llegó. Enviado: {sent}"
-    # Orden: saludo ANTES del follow-up.
-    assert sent.index(greeting) < sent.index(follow_up), (
-        f"El saludo debe ir antes del follow-up. Enviado: {sent}"
+    # El saludo (content que acompañaba la tool call) debe haber llegado, y
+    # PRIMERO (es la burbuja del turno del usuario).
+    assert sent and sent[0] == greeting, (
+        f"El saludo de apertura se perdió o no fue primero. Enviado: {sent}"
+    )
+    # L-11: send_quick_replies TERMINA el turno — el tool-loop del turno del
+    # usuario hace UNA sola llamada LLM (sin iteración 2). La segunda llamada
+    # que cuenta el tracker es el ghost turn del watchdog (time-skipping),
+    # igual que en test_debounce (ver "1 user turn + 1 ghost" arriba).
+    assert tracker.llm_calls == 2, (
+        f"El turno del usuario debió cortar tras send_quick_replies "
+        f"(1 user + 1 ghost). llm_calls={tracker.llm_calls}"
     )
     # Y se persistió al store del dashboard (igual que final_content).
     persisted = [m for (_sid, m) in tracker.persist_calls]

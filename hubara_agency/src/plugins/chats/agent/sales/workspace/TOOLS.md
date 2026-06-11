@@ -107,6 +107,8 @@ Estas tools NO devuelven texto al LLM, emiten **intents de UI** que el workflow 
 - **Side effects**: envía al cliente un mensaje de texto formateado pidiendo **ciudad, barrio, dirección, teléfono, método de pago** (con emojis y `*bold*` en cada campo). Si `order_total_cop > 45000 COP`, incluye "contra entrega" como método de pago disponible. Cuando el Flow Meta esté configurado en producción, esta misma tool abrirá el formulario nativo en vez del texto, sin cambio en tu lado.
 - **Cómo continuar**: el cliente responde por chat libremente. Puede mandarlo todo junto o de a uno. Tú vas armando los datos turn-by-turn. **NO repitas la lista de campos** en tu próximo mensaje, la tool ya la mandó. Solo confirma lo que vas recibiendo ("perfecto, anoté Chapinero") y pide lo que falte ("me faltaría el teléfono y el método de pago").
 - **Cuando los tengas TODOS** (ciudad + barrio + dirección + teléfono + pago): continúa con `verify_order_for_checkout`.
+- ⛔ **Esta tool TERMINA tu turno** (el sistema corta la iteración después de ejecutarla — L-11, run b730c006). NO llames más tools ni fijes datos después de ella en el mismo turno. Los datos de envío salen SOLO de lo que el cliente responda al formulario — **jamás** los pre-llenes con direcciones de pedidos anteriores de la memoria.
+- ⛔ **Prerrequisito**: TODOS los productos del pedido tienen aroma Y color elegidos por el cliente. Si falta una elección, NO pidas datos de envío todavía.
 
 ### `present_order_confirmation`
 
@@ -115,6 +117,7 @@ Estas tools NO devuelven texto al LLM, emiten **intents de UI** que el workflow 
 - **Input**: `items` (lista con handle+quantity+unit_price), `shipping_cop`, `shipping_address_summary`, `payment_method`.
 - **Side effects**: encola `interactive.order_details` con botón Pagar nativo (A.12, requiere Meta Catalog + gateway). Si no está activo, fallback a 3 botones [Confirmar][Modificar][Cancelar] (A.2).
 - **Tu próximo texto**: **NINGUNO** (run 844745bd). La tarjeta YA es el resumen completo + el botón de confirmar + su propio título/llamado a la acción — cualquier texto tuyo ("Te presento el resumen", "Revísalo y confírmalo con el botón", el resumen en texto) DUPLICA lo que la tarjeta dice. Llama la tool con `content` vacío. 🚫 Tampoco verifiques en voz alta antes ("todo está verificado, los precios coinciden") — la verificación es interna.
+- ⛔ **Esta tool TERMINA tu turno** (el sistema corta la iteración — L-11). La respuesta del cliente (botón Confirmar/Modificar/Cancelar) llega en el próximo turno.
 
 ### `register_order`
 
@@ -173,6 +176,8 @@ Estas tools NO devuelven texto al LLM, emiten **intents de UI** que el workflow 
 - **Side effects**: encola intent `variant_picker` → el workflow lo renderiza como **UN SOLO mensaje de texto plano** con secciones agrupadas en `*bold*` (Frescos / Cítricos y frutales / Cálidos y dulces / Notas perfumadas para aromas; Claros y suaves / Vibrantes / Profundos para colores) y un cierre del estilo *"Dime cuál te gusta y seguimos 🤍"*. **TODAS las opciones van en ese único mensaje** — no se paginan (es texto, no lista tappable de Meta).
 - **En el MISMO turno que llamas esta tool, NO escribas texto**: el picker ES tu mensaje completo (ya trae intro + opciones + invitación a elegir). Si además escribieras `content`, el cliente vería dos burbujas repitiendo la pregunta. Deja `content` vacío cuando llames `present_variant_picker`.
 - **Tu próximo texto**: NO repitas la lista, NO mandes emojis al lado de las variantes en otra burbuja, NO te adelantes a confirmar, la tool ya lo dijo todo. Tu siguiente mensaje SOLO debe llegar **después** de que el cliente respondió.
+- ⛔ **Esta tool TERMINA tu turno** (el sistema corta la iteración después de ejecutarla — L-11, run b730c006: el modelo mandó el picker de colores y en el MISMO turno "eligió" un color por el cliente, fijó cantidad y pidió datos de envío. Eso ya es mecánicamente imposible). La elección NO existe hasta que el cliente la escriba.
+- **De dónde salen las `options`**: EXCLUSIVAMENTE de los tags del producto que devolvió `get_product_by_handle` en ESTA conversación (`"Aroma: X"` → opción `X`; `"Color: Y"` → opción `Y`). NUNCA de tu memoria, de pickers de pedidos anteriores ni de lo que "suele tener" el producto — el catálogo cambia.
 - **Cuando vuelva**: el cliente escribe libremente (ej. *"lavanda"*, *"el azul me gusta"*, *"primera opción"*). Tú interpretas esa respuesta contra el closed-list de tags y continúas. Si la respuesta es ambigua, repregunta puntualmente, NO vuelvas a invocar `present_variant_picker`.
 - **Anti-hallucination**: si un aroma/color no está en el registry Hubara, sale con un emoji genérico (`🕯️`/`⚪`). NUNCA reasignes el emoji tú mismo.
 
@@ -186,6 +191,7 @@ Estas tools NO devuelven texto al LLM, emiten **intents de UI** que el workflow 
   - El cliente ya te dijo qué quiere (no le des botones, proceed con la venta).
   - Necesitas más de 3 opciones (usa `present_products` con `group_by="none"`).
 - **Input**: `body` (texto corto, ≤1024 chars) + `buttons` (lista de 1-3 con `{id, title}`). `id` semántico namespace.dot (ej: `catalog.browse`, `catalog.by_scent`, `help.advice`). `title` ≤20 chars.
+- ⛔ **Esta tool TERMINA tu turno** (el sistema corta la iteración — L-11). El texto que la acompaña (ej. el saludo) sí se envía; después, a esperar la respuesta del cliente.
 - **Side effects**: encola intent `quick_replies` → workflow renderiza como `interactive.button` (A.2). Cliente toca → recibes `"[el cliente tocó el botón: <título>]"`.
 - **Tu próximo texto**: NO repitas las opciones en texto, el cliente las ve como botones.
 

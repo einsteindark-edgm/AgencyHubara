@@ -166,6 +166,44 @@ def _try_parse_decision_payload(raw: str) -> dict[str, Any] | None:
     return parsed
 
 
+# ── Corte de turno por tools que esperan al cliente (run b730c006, L-11) ────
+# El tool-loop deja al LLM encadenar tools hasta que él decida parar. Cuando
+# una tool deja la conversación ESPERANDO input del cliente (picker de
+# variantes, formulario de envío, confirmación de pedido, quick replies),
+# seguir iterando es la receta del desastre: en el run b730c006 el modelo
+# mandó el picker de colores y EN EL MISMO TURNO "respondió" por el cliente
+# (set_order_slot color inventado), fijó cantidad y mandó el formulario de
+# envío. El prompt ya lo prohibía (TOOLS.md: "tu siguiente mensaje SOLO después
+# de que el cliente respondió") — el corte mecánico lo hace imposible.
+TURN_ENDING_TOOLS: frozenset[str] = frozenset({
+    "present_variant_picker",
+    "request_shipping_details",
+    "present_order_confirmation",
+    "send_quick_replies",
+})
+
+# Tools cuyo render ES un mensaje al cliente: el `content` que las acompaña es
+# una intro legítima (ej. el saludo junto a `send_quick_replies` — run
+# ddd0d472, la razón de ser de `pre_tool_messages`). Junto a tools INTERNAS
+# (verify_order_for_checkout / set_order_slot / load_skill / register_order...)
+# el content es narración de proceso ("Todo está verificado y los precios
+# coinciden. Déjame revisar la info de envío.") y NO debe llegar al cliente —
+# el prompt anti-narración demostró no bastar (reincidencia en b730c006).
+PRESENTATIONAL_TOOLS: frozenset[str] = TURN_ENDING_TOOLS | frozenset(
+    {"present_products"}
+)
+
+
+def _ends_turn(tool_names: list[str]) -> bool:
+    """¿Este batch de tool calls deja la conversación esperando al cliente?"""
+    return any(name in TURN_ENDING_TOOLS for name in tool_names)
+
+
+def _keeps_pre_tool_content(tool_names: list[str]) -> bool:
+    """¿El content que acompaña este batch es una intro legítima (presentacional)?"""
+    return any(name in PRESENTATIONAL_TOOLS for name in tool_names)
+
+
 def coalesce_pending(pending: list[PendingMessage]) -> PendingMessage:
     """Combina N mensajes pendientes en un solo `PendingMessage` para un turno.
 
@@ -319,6 +357,11 @@ async def _run_agent_turn_impl(
     # al history (replay-safe sin gate; el gate vive en el workflow que decide
     # enviarlos).
     pre_tool_messages: list[str] = []
+    # L-11 (run b730c006): corte de turno en tools que esperan al cliente +
+    # descarte del content que acompaña tools internas. Gated: ambos cambian la
+    # cantidad de commands del turno (menos llm_chat/execute_tool; menos sends
+    # del caller) — histories pre-deploy toman la rama vieja (L-9).
+    turn_cut_v1 = workflow.patched("turn-ending-tools-v1")
     transfer_decision: TransferDecision | None = None
     schedule_remarketing: ScheduleRemarketingDecision | None = None
     escalation_decision: EscalationDecision | None = None
@@ -352,16 +395,26 @@ async def _run_agent_turn_impl(
             )
 
         if response.has_tool_calls:
+            batch_tool_names = [tc.name for tc in response.tool_calls]
             # Capturar el texto client-facing que acompaña la(s) tool call(s)
             # ANTES de descartarlo. El LLM legítimamente emite "content +
             # tool_call" (ej. saluda y a la vez encola un quick_replies). Sin
             # esto, ese content nunca llegaba al cliente (solo `final_content`,
             # el del último mensaje sin tools). Sanitizamos igual que el final
             # (em dash, comillas envolventes, meta-prefijos, duplicación).
+            # L-11: el content solo se conserva si el batch incluye una tool
+            # PRESENTACIONAL — junto a tools internas es narración de proceso
+            # ("Todo está verificado...") y se descarta.
             if response.content:
                 sanitized_pre = sanitize_llm_text(response.content)
                 if sanitized_pre.text:
-                    pre_tool_messages.append(sanitized_pre.text)
+                    if not turn_cut_v1 or _keeps_pre_tool_content(batch_tool_names):
+                        pre_tool_messages.append(sanitized_pre.text)
+                    else:
+                        workflow.logger.info(
+                            "pre-tool content descartado (narración junto a tools "
+                            f"internas {batch_tool_names}): {sanitized_pre.text[:120]!r}"
+                        )
             messages = [*messages, response.to_assistant_message()]
             for tc in response.tool_calls:
                 tools_used.append(tc.name)
@@ -438,6 +491,23 @@ async def _run_agent_turn_impl(
                     *messages,
                     {"role": "tool", "tool_call_id": tc.id, "name": tc.name, "content": result},
                 ]
+
+            # L-11: el batch dejó la conversación ESPERANDO al cliente (picker /
+            # formulario / confirmación / quick replies) → el turno termina ACÁ.
+            # Sin esto el LLM puede "responderse a sí mismo" (run b730c006:
+            # mandó el picker de colores y en el mismo turno fijó un color que
+            # el cliente nunca eligió + el formulario de envío). Se ejecuta el
+            # batch COMPLETO antes de cortar (cada tool_call_id ya tiene su
+            # result en `messages` — protocolo LLM intacto). `final_content=""`
+            # explícito: el fallback "se me cortó un segundito" es para fallas
+            # del modelo, no para este corte deliberado (el guard falsy del
+            # caller no envía burbuja vacía).
+            if turn_cut_v1 and _ends_turn(batch_tool_names):
+                workflow.logger.info(
+                    f"turno cortado: {batch_tool_names} espera respuesta del cliente"
+                )
+                final_content = ""
+                break
         else:
             # ── Empty-content recovery (post-mortem run df5a8fe2-bb7c-4627-b861-dc19643467be) ──
             # DeepSeek v4 (and other thinking-mode models) occasionally finishes

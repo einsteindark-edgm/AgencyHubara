@@ -164,3 +164,42 @@ def test_turn_result_with_episode_closed_serializable() -> None:
     payload = asdict(tr)
     assert payload["episode_closed_decision"]["episode_id"] == "ep_001"
     assert payload["episode_closed_decision"]["closing_tag"] == "COMPRA_EXITOSA"
+
+
+# ── L-11 (run b730c006): corte de turno + filtro de narración pre-tool ──────
+
+
+def test_ends_turn_on_client_waiting_tools() -> None:
+    from src.platform.workflow_helpers import _ends_turn
+
+    assert _ends_turn(["present_variant_picker"]) is True
+    assert _ends_turn(["request_shipping_details"]) is True
+    assert _ends_turn(["present_order_confirmation"]) is True
+    assert _ends_turn(["send_quick_replies"]) is True
+    # El batch real del run b730c006 que NO debió continuar: el picker estaba.
+    assert _ends_turn(["set_order_slot", "present_variant_picker"]) is True
+    # Tools internas no cortan.
+    assert _ends_turn(["set_order_slot", "search_products", "register_order"]) is False
+    assert _ends_turn([]) is False
+
+
+def test_pre_tool_content_kept_only_with_presentational_tools() -> None:
+    from src.platform.workflow_helpers import _keeps_pre_tool_content
+
+    # El saludo junto a quick_replies (run ddd0d472) SIGUE pasando.
+    assert _keeps_pre_tool_content(["send_quick_replies"]) is True
+    assert _keeps_pre_tool_content(["present_products"]) is True
+    # La narración del run b730c006 ("Todo está verificado y los precios
+    # coinciden...") acompañaba tools internas → se descarta.
+    assert _keeps_pre_tool_content(["verify_order_for_checkout"]) is False
+    assert _keeps_pre_tool_content(["load_skill"]) is False
+    assert _keeps_pre_tool_content(["set_order_slot"]) is False
+    assert _keeps_pre_tool_content(["register_order"]) is False
+    assert _keeps_pre_tool_content([]) is False
+
+
+def test_turn_ending_tools_are_presentational() -> None:
+    """Toda tool que corta el turno es presentacional: su intro pre-tool pasa."""
+    from src.platform.workflow_helpers import PRESENTATIONAL_TOOLS, TURN_ENDING_TOOLS
+
+    assert TURN_ENDING_TOOLS <= PRESENTATIONAL_TOOLS
