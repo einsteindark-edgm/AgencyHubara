@@ -1,11 +1,18 @@
-import type { ConversationEval } from "@plugins/agents_admin/frontend/entities/episode-eval";
+import {
+  episodeUnitKey,
+  type ConversationEval,
+} from "@plugins/agents_admin/frontend/entities/episode-eval";
 import type { EvalTrendSeries } from "@plugins/agents_admin/frontend/entities/eval-trend";
 
 /**
- * Helpers puros de la tendencia. Dos fuentes de líneas:
+ * Helpers puros de la tendencia. Tres fuentes de líneas:
  *   - `lineFromAggregate`: el promedio diario de TODOS los episodios (vista global).
- *   - `linesFromEpisode`: la evolución de UN episodio a través de sus evals (sin
- *     contaminación de otros episodios — el caso que el operador pidió aislar).
+ *   - `linesFromEpisode`: la evolución de UN episodio a través de sus re-evals.
+ *   - `linesFromClientEpisodes`: la evolución ENTRE episodios de un cliente (un
+ *     punto por episodio) — la comparativa inicio→actual que el operador pidió:
+ *     como cada episodio se evalúa una sola vez al cerrar, comparar SUS re-evals
+ *     da un solo punto; lo útil es ver cómo cambió la métrica de un episodio al
+ *     siguiente.
  *
  * Pura y testeable: cero React, cero fetch.
  */
@@ -86,5 +93,43 @@ export function linesFromEpisode(conv: ConversationEval): TrendLine[] {
           hint: `${label}: ${value.toFixed(2)}${failed ? " (falló)" : ""}`,
         };
       }),
+  }));
+}
+
+/**
+ * Episodios de UN cliente → una línea por métrica, un punto POR EPISODIO.
+ *
+ * El valor de cada punto es el de la ÚLTIMA eval de ese episodio (su nota final).
+ * `episodes` debe venir CRONOLÓGICO (viejo→nuevo) y ya recortado al rango
+ * inicio..actual que el operador eligió: así el primer punto es "inicio", el
+ * último "actual", y el delta entre ambos dice si la métrica mejoró o empeoró
+ * de un episodio al otro. `below` = esa métrica falló en la última eval del
+ * episodio (umbral POR métrica, igual que `linesFromEpisode`).
+ */
+export function linesFromClientEpisodes(episodes: ConversationEval[]): TrendLine[] {
+  const metrics = new Set<string>();
+  for (const c of episodes) {
+    const last = c.evals.at(-1);
+    if (last) Object.keys(last.metrics).forEach((m) => metrics.add(m));
+  }
+  return [...metrics].sort().map((metric) => ({
+    metric,
+    points: episodes.flatMap((c) => {
+      const last = c.evals.at(-1);
+      if (!last || !(metric in last.metrics)) return [];
+      const value = last.metrics[metric];
+      const failed = last.failed.some((f) => f.metric === metric);
+      const ep = c.episode_id || "sesión";
+      return [
+        {
+          key: episodeUnitKey(c),
+          label: ep,
+          date: c.last_date,
+          value,
+          below: failed,
+          hint: `${ep} (${c.last_date}): ${value.toFixed(2)}${failed ? " (falló)" : ""}`,
+        },
+      ];
+    }),
   }));
 }
