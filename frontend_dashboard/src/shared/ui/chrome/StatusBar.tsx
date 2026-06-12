@@ -32,10 +32,10 @@ export function StatusBar({ connection }: StatusBarProps) {
             style={{
               background:
                 connection === "open"
-                  ? "var(--ok, #5be07b)"
+                  ? "var(--color-ok)"
                   : connection === "reconnecting"
-                    ? "var(--warn, #ffb44a)"
-                    : "var(--fg-muted)",
+                    ? "var(--color-warn)"
+                    : "var(--color-fg-muted)",
             }}
           />
         )}

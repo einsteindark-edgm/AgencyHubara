@@ -29,26 +29,27 @@ export function ReadyForShip({ order }: Props) {
     order.dueTime && order.dueTime !== "—" ? order.dueTime : "",
   );
   const [note, setNote] = useState<string>("");
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const schedule = useScheduleOrder();
+
+  // F5.3 (auditoría 2026-06-10): el error NO se duplica en un useState — se
+  // DERIVA de la mutation (única fuente del estado del flujo). Así no existen
+  // combinaciones imposibles tipo "pending + error viejo en pantalla".
+  const errorMsg = schedule.isPending
+    ? null
+    : schedule.isError
+      ? schedule.error.message
+      : schedule.data && !schedule.data.success
+        ? (schedule.data.error_detail ?? "No se pudo agendar la entrega.")
+        : null;
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setErrorMsg(null);
-    schedule.mutate(
-      {
-        orderId: order.id,
-        delivery_iso: date,
-        delivery_time: time || undefined,
-        note: note || undefined,
-      },
-      {
-        onSuccess: (r) => {
-          if (!r.success && r.error_detail) setErrorMsg(r.error_detail);
-        },
-        onError: (err) => setErrorMsg(err.message),
-      },
-    );
+    schedule.mutate({
+      orderId: order.id,
+      delivery_iso: date,
+      delivery_time: time || undefined,
+      note: note || undefined,
+    });
   };
 
   return (
