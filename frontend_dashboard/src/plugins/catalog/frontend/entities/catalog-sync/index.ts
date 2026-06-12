@@ -34,6 +34,7 @@ export {
 export { catalogSyncKeys } from "./keys";
 
 export {
+  useCatalogEvents,
   useSyncHistory,
   useSnapshotInfo,
   useSyncStatus,

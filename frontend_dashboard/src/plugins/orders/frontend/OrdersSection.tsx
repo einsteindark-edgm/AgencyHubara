@@ -20,6 +20,7 @@ import { OrdersInspector } from "@plugins/orders/frontend/features/orders-inspec
 
 import {
   useOrders,
+  useOrdersEvents,
   useVaultOrders,
   useRetryVaultOrder,
   useResolveVaultOrder,
@@ -32,6 +33,7 @@ export function OrdersSection() {
   // F7: chrome + selección llegan por el PluginHost (contrato genérico).
   const { showSidebar, showInspector } = usePluginHost();
   const [selectedOrderId, setSelectedOrderId] = useSelection("orders", "#1247");
+  useOrdersEvents(); // push del stream → invalidaciones (F1)
   const query = useOrders();
   const vaultQuery = useVaultOrders();
   const orders = query.data?.orders ?? [];

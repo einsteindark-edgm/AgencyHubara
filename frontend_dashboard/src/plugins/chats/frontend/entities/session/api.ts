@@ -1,18 +1,22 @@
 /**
  * Hooks de data-fetching del dominio "sesión".
  *
- * Win arquitectónico vs. el código legado:
- *   - `useSession(id)` es UNO solo — CenterCol y RightCol comparten el cache
- *     vía `queryKey`, eliminando el doble fetch cada 3s al mismo endpoint.
- *   - El polling se declara en el hook, no en cada `useEffect` por componente.
- *   - `useSessionsStream()` empuja el snapshot SSE al cache vía `setQueryData`,
- *     evitando un refetch redundante.
+ * F1 (auditoría 2026-06-10): cero polling propio. El stream multiplexado
+ * (`useDashboardEvents`, una sola conexión app-level) empuja:
+ *   - `chats.sessions_snapshot` → `setQueryData` de la lista (sin refetch)
+ *   - `chats.session_updated(id)` → invalida SOLO ese detalle
+ * `refetchInterval` queda únicamente como fallback lento (5 min) por si el
+ * stream estuviera caído — la reconexión ya reconcilia vía
+ * `useInvalidateOnReconnect`.
  */
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { useCallback } from "react";
 import { apiClient } from "@/shared/api/client";
-import { subscribeSse } from "@/shared/api/sse";
+import {
+  useDashboardEvents,
+  useInvalidateOnReconnect,
+} from "@/shared/api/events";
 import { sessionKeys } from "./keys";
 import {
   sessionDetailsSchema,
@@ -20,7 +24,8 @@ import {
 } from "./contracts";
 import type { ChatSession, SessionDetails } from "./model";
 
-const SESSION_DETAIL_REFETCH_MS = 3_000;
+// Fallback, NO el mecanismo primario (eso es el push del stream).
+const SESSION_DETAIL_FALLBACK_REFETCH_MS = 5 * 60_000;
 
 async function fetchSessions(signal?: AbortSignal): Promise<ChatSession[]> {
   const raw = await apiClient.get<unknown>("/api/dashboard/sessions", {
@@ -49,40 +54,53 @@ export function useSessions() {
 
 /**
  * Detalle de una sesión. `enabled` se desactiva si `id` es null para evitar
- * un fetch al string vacío. El refetch interval mantiene paridad con el
- * polling legado (3s) hasta que el backend exponga SSE per-sesión.
+ * un fetch al string vacío. La actualización primaria llega por el evento
+ * `chats.session_updated(id)` (ver `useSessionsStream`); el interval es solo
+ * red de seguridad. (Antes: poll duro cada 3s.)
  */
 export function useSession(id: string | null) {
   return useQuery({
     queryKey: sessionKeys.detail(id ?? ""),
     queryFn: ({ signal }) => fetchSessionDetail(id!, signal),
     enabled: !!id,
-    refetchInterval: SESSION_DETAIL_REFETCH_MS,
+    refetchInterval: SESSION_DETAIL_FALLBACK_REFETCH_MS,
   });
 }
 
 /**
- * Suscripción al SSE de la lista. Cada mensaje sustituye el cache directamente
- * (sin refetch). Montar este hook UNA sola vez en el árbol — vive en el layout
- * raíz, no en componentes hoja.
+ * Suscripción del plugin chats al stream multiplexado del dashboard.
+ * Montar UNA sola vez por sección (lo hace ChatsSection):
+ *   - snapshot → reemplaza el cache de la lista (structural sharing evita
+ *     re-renders si nada cambió)
+ *   - session_updated → invalida el detalle puntual
+ *   - reconexión → invalida todo el dominio (gap de eventos perdidos)
  */
 export function useSessionsStream() {
   const qc = useQueryClient();
 
-  useEffect(() => {
-    const sub = subscribeSse<unknown>("/api/dashboard/stream", {
-      onMessage: (raw) => {
-        const parsed = sessionsListResponseSchema.safeParse(raw);
-        if (!parsed.success) {
-          console.warn("SSE payload inválido", parsed.error);
-          return;
+  useDashboardEvents(
+    "chats",
+    useCallback(
+      (event) => {
+        if (event.type === "sessions_snapshot") {
+          const parsed = sessionsListResponseSchema.safeParse(event.payload);
+          if (!parsed.success) {
+            console.warn("snapshot de sesiones inválido", parsed.error);
+            return;
+          }
+          qc.setQueryData(sessionKeys.list(), parsed.data.sessions);
+        } else if (event.type === "session_updated" && event.id) {
+          qc.invalidateQueries({ queryKey: sessionKeys.detail(event.id) });
         }
-        qc.setQueryData(sessionKeys.list(), parsed.data.sessions);
       },
-      onError: (err) => {
-        console.warn("SSE error", err);
-      },
-    });
-    return () => sub.close();
-  }, [qc]);
+      [qc],
+    ),
+  );
+
+  useInvalidateOnReconnect(
+    useCallback(
+      () => qc.invalidateQueries({ queryKey: sessionKeys.all }),
+      [qc],
+    ),
+  );
 }

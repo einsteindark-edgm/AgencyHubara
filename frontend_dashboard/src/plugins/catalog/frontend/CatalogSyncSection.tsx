@@ -15,7 +15,10 @@
 
 import { usePluginHost, useSelection } from "@/shared/lib";
 
-import { useSyncHistory } from "@plugins/catalog/frontend/entities/catalog-sync";
+import {
+  useCatalogEvents,
+  useSyncHistory,
+} from "@plugins/catalog/frontend/entities/catalog-sync";
 import { SyncHistory } from "@plugins/catalog/frontend/features/sync-history";
 import { SyncInspector } from "@plugins/catalog/frontend/features/sync-inspector";
 import { SyncRunner } from "@plugins/catalog/frontend/features/sync-runner";
@@ -28,6 +31,7 @@ export function CatalogSyncSection() {
   const { showSidebar, showInspector } = usePluginHost();
   const [selectedJobIdRaw, setSelectedJobId] = useSelection("catalog", "");
   const selectedJobId = selectedJobIdRaw ?? "";
+  useCatalogEvents(); // push del stream → invalidaciones (F1)
   const { data } = useSyncHistory();
 
   const selectedReal = selectedJobId.startsWith(WORKFLOW_ID_PREFIX)

@@ -8,13 +8,18 @@
  */
 
 import type { ReactNode } from "react";
+import { EventStreamProvider } from "@/shared/api";
 import { ErrorBoundary } from "@/shared/ui";
 import { QueryProvider } from "./QueryProvider";
 
 export function AppProviders({ children }: { children: ReactNode }) {
   return (
     <ErrorBoundary scope="app">
-      <QueryProvider>{children}</QueryProvider>
+      <QueryProvider>
+        {/* UNA conexión SSE para toda la app (F1) — los plugins se suscriben
+            por dominio vía useDashboardEvents, nunca abren streams propios. */}
+        <EventStreamProvider>{children}</EventStreamProvider>
+      </QueryProvider>
     </ErrorBoundary>
   );
 }

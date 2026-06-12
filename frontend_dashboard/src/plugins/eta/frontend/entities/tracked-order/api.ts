@@ -1,10 +1,19 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback } from "react";
 import { apiClient } from "@/shared/api/client";
+import {
+  useDashboardEvents,
+  useInvalidateOnReconnect,
+} from "@/shared/api/events";
 import { trackedOrderKeys } from "./keys";
 import { trackedOrdersListResponseSchema } from "./contracts";
 import type { TrackedOrder } from "./model";
 
-const TRACKED_ORDERS_REFETCH_MS = 5_000;
+// Fallback, NO el mecanismo primario: la lista se refresca por eventos
+// `eta.changed` (escrituras de eta_tracking en el vault, vía sampler) y
+// `orders.changed` (los movimientos del kanban gatillan notificaciones ETA).
+// Antes: poll duro cada 5s (auditoría F1).
+const TRACKED_ORDERS_FALLBACK_REFETCH_MS = 5 * 60_000;
 
 /**
  * Pedidos en seguimiento por el Agente ETA. Datos REALES: el backend
@@ -29,6 +38,22 @@ export function useTrackedOrders() {
   return useQuery({
     queryKey: trackedOrderKeys.list(),
     queryFn: ({ signal }) => fetchTrackedOrders(signal),
-    refetchInterval: TRACKED_ORDERS_REFETCH_MS,
+    refetchInterval: TRACKED_ORDERS_FALLBACK_REFETCH_MS,
   });
+}
+
+/**
+ * Suscripción del plugin eta al stream del dashboard (montar UNA vez en
+ * EtaSection). Invalida la lista ante `eta.changed` Y `orders.changed`: el
+ * timeline ETA deriva de ambos (tracking del vault + stage actual del kanban).
+ */
+export function useTrackedOrdersEvents() {
+  const qc = useQueryClient();
+  const invalidate = useCallback(
+    () => qc.invalidateQueries({ queryKey: trackedOrderKeys.all }),
+    [qc],
+  );
+  useDashboardEvents("eta", invalidate);
+  useDashboardEvents("orders", invalidate);
+  useInvalidateOnReconnect(invalidate);
 }

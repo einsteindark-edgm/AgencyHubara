@@ -27,6 +27,7 @@
 
 import { Suspense, useCallback, useMemo, useState } from "react";
 
+import { useEventStreamState } from "@/shared/api";
 import { ErrorBoundary, StatusBar, Toolbar } from "@/shared/ui";
 import { IS_DESKTOP, PluginHostProvider } from "@/shared/lib";
 
@@ -87,6 +88,9 @@ export function Dashboard() {
   // F4 (INV-1): el stream SSE de sesiones era una suscripción del SHELL a la
   // entity de chats — acople shell→dominio. Ahora lo monta el Page de chats
   // (dueño del stream); el shell quedó 100% libre de imports de dominio.
+  // (El estado de CONEXIÓN del stream compartido sí es del shell — es infra
+  // genérica de shared/api, no dominio.)
+  const connection = useEventStreamState();
   const ActivePage = pageByKey.get(section);
 
   return (
@@ -119,7 +123,7 @@ export function Dashboard() {
           )}
         </div>
 
-        <StatusBar />
+        <StatusBar connection={connection} />
       </div>
     </div>
   );

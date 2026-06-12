@@ -20,7 +20,13 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiClient, ApiError } from "@/shared/api";
+import { useCallback } from "react";
+import {
+  apiClient,
+  ApiError,
+  useDashboardEvents,
+  useInvalidateOnReconnect,
+} from "@/shared/api";
 import {
   customerScoreSchema,
   customerSummarySchema,
@@ -76,6 +82,28 @@ export function toLegacyOrder(s: OrderSummary): Order {
 
 /* ── Queries ──────────────────────────────────────────────────────────── */
 
+// Fallback, NO el mecanismo primario: las órdenes se refrescan por el evento
+// `orders.changed` (mutaciones del API + register_order del agente vía el
+// sampler del vault). Antes: poll duro 30s lista + 60s vault (auditoría F1).
+const ORDERS_FALLBACK_REFETCH_MS = 5 * 60_000;
+
+/**
+ * Suscripción del plugin orders al stream del dashboard. Montar UNA vez por
+ * sección (OrdersSection): cualquier `orders.changed` invalida el dominio
+ * entero (lista + vault + detalle + score comparten el prefijo `orderKeys.all`
+ * — el server es la única fuente; refetch targeted llega con keys por id en
+ * el evento si algún día hace falta granularidad).
+ */
+export function useOrdersEvents() {
+  const qc = useQueryClient();
+  const invalidate = useCallback(
+    () => qc.invalidateQueries({ queryKey: orderKeys.all }),
+    [qc],
+  );
+  useDashboardEvents("orders", invalidate);
+  useInvalidateOnReconnect(invalidate);
+}
+
 export function useOrders() {
   return useQuery<{ orders: Order[]; response: OrderListResponse }>({
     queryKey: orderKeys.list(),
@@ -120,9 +148,9 @@ export function useOrders() {
         throw exc; // Zod parse error u otro — propagar para visibilidad.
       }
     },
-    // Cuando llegan nuevas órdenes desde Sales (vía `register_order`), la
-    // app debería invalidar este key. Por ahora se refresca cada 30s.
-    refetchInterval: 30_000,
+    // Primario: evento `orders.changed` (useOrdersEvents). Esto es solo
+    // la red de seguridad si el stream está caído.
+    refetchInterval: ORDERS_FALLBACK_REFETCH_MS,
     staleTime: 10_000,
     retry: 1, // Premortem C3: 1 retry rápido, luego fallback a empty.
   });
@@ -300,7 +328,8 @@ export function useVaultOrders() {
         throw exc;
       }
     },
-    refetchInterval: 60_000, // menos frecuente que el kanban — es operacional.
+    // Primario: evento `orders.changed` (las acciones del banner publican).
+    refetchInterval: ORDERS_FALLBACK_REFETCH_MS,
     staleTime: 30_000,
     retry: 1,
   });
