@@ -314,8 +314,9 @@ uno modelado de un plugin real del repo y alineado con la clasificación
 A/B/C/D que ya usa el pipeline; su arquitectura interna obligatoria y cómo se
 enforcea de por vida: §4.5):
 
-- `api_only` (modelo: `ads`) — manifest + `api/` + entities frontend opcionales.
-- `full_stack` (modelo: `orders`) — api + frontend FSD completo + sección.
+- `api_only` (modelo: `system_map`) — backend puro: manifest + `api/`, sin
+  bloque `frontend:` (su UI, si existe, vive en una app aparte).
+- `full_stack` (modelo: `orders`, `ads`) — api + frontend FSD completo + sección.
 - `agentic` (modelo: `chats`/`eta` conversacional) — worker Temporal + workspace
   (IDENTITY/SOUL/TOOLS) + `agentkit` + transitions declaradas.
 - `notifier` (modelo: `eta` post-L-4) — worker push puro, sin `owns_route`
@@ -364,8 +365,8 @@ mini-FSD, R-rules — no inventan estructura nueva):
 
 | Arquetipo | Capas internas obligatorias (backend) | Reglas de import internas (ejemplos enforced) |
 |---|---|---|
-| `api_only` (modelo: ads) | `api/` (routers delgados) → `domain/` (lógica pura) → `adapters/` opcional | `domain/` sin I/O (httpx/fs/DB prohibidos); `api/` solo importa domain + sdk (jamás vendors); contracts frozen |
-| `full_stack` (modelo: orders) | = api_only + frontend mini-FSD `entities → features → pages` | las reglas FSD existentes aplicadas por-plugin: Zod en boundary, Page sin props (PluginHost), fetch solo vía client compartido |
+| `api_only` (modelo: system_map) | `api/` (routers delgados) → `domain/` (lógica pura) → `adapters/` opcional; sin bloque `frontend:` | `domain/` sin I/O (httpx/fs/DB prohibidos); `api/` solo importa domain + sdk (jamás vendors); contracts frozen |
+| `full_stack` (modelo: orders, ads) | = api_only + frontend mini-FSD `entities → features → pages` | las reglas FSD existentes aplicadas por-plugin: Zod en boundary, Page sin props (PluginHost), fetch solo vía client compartido |
 | `agentic` (modelo: chats) | `agent/<worker>/{workflows, activities, tools, use_cases, workspace}` + `workers/` + `shared/contracts/events.py` | R-DET (workflows sin I/O), R-DIP#7 (tools ↛ temporalio), activities = único lugar con I/O, use_cases puros orquestando ports, events frozen JSON-safe, spread de `CONVERSATIONAL_TURN_ACTIVITIES` (L-3), tools de UI ∈ `TURN_ENDING_TOOLS` (L-11), workspace completo (P-15) |
 | `notifier` (modelo: eta post-L-4) | = agentic SIN superficie conversacional | sin `owns_route`, sin tools de conversación registradas, NUNCA escribe `active_route` (L-4 horneada como regla de perfil) |
 | `sync` (modelo: catalog) | `agent/<worker>/{workflows, activities, use_cases}` + `workers/` + `api/` (trigger + estado de jobs) + frontend de jobs opcional — SIN `tools/` ni `workspace/` (un sync no conversa ni usa LLM) | workflows = ciclo pull→diff→apply→checkpoint (R-DET, `continue-as-new` si pagina); activities = único I/O y SOLO vía ports source/sink/store (P-31); use_cases PUROS computan el **diff plan** (el corazón testeable sin red); apply idempotente (fingerprint + pre-check) con R-HEARTBEAT |
@@ -402,8 +403,8 @@ src/platform/connectors/
 │   ├── acl.py              ← traducción modelos Medusa → DTOs de los ports
 │   └── tests/              ← instancia las contract suites de sus ports
 ├── meta/                   ← Meta es OTRO vendor: provee [catalog.sink] hoy;
-│                              [whatsapp.messaging, capi.events] después —
-│                              un connector puede proveer N ports
+│                              [whatsapp.messaging, capi.events, ads.insights]
+│                              después — un connector puede proveer N ports
 └── hubspot/                ← el CRM futuro: misma forma, CERO cambios en plugins
 ```
 
@@ -500,9 +501,35 @@ precios, contactos de un CRM — misma forma. Por eso el template se
 parametriza: `hubara create plugin inventory_sync --archetype sync
 --source inventory.source --sink erp.sink`.
 
+#### El caso ads: la atribución como read model + Meta como UN solo connector
+
+`ads` es el espejo interesante de catalog: hoy **no llama a ningún vendor**
+(verificado: cero httpx/Graph API en su código — ya cumple P-31 de
+nacimiento). Es agregación LOCAL pura: sus KPIs (ROAS/CAC, embudo) se
+computan sobre la atribución CTWA (`ctwa_clid`, `origin`, `last_touch`) que
+el **ingest de WhatsApp escribe** en el metadata de cada sesión… y que ads
+hoy lee **escaneando el vault a mano**. Tres formalizaciones:
+
+1. **La atribución es un read model de plataforma** (mismo patrón que el
+   snapshot de catálogo): `AttributionReadPort` en el SDK con su fake
+   in-memory. Writer = el ingest (chats); readers = ads hoy y **CAPI mañana**
+   (el evento de conversión `Purchase`/`Lead` necesita exactamente el mismo
+   `ctwa_clid`). Ads deja de conocer el layout del vault; sus tests corren
+   contra el fake sin filesystem.
+2. **Re-perfilado a `full_stack` (P-29):** ads tiene sección frontend
+   completa (entities/features) — no es `api_only`. Su backend hoy es plano:
+   `aggregation.py` y `classification.py` viven en la raíz del plugin;
+   migran a `domain/` tal cual (son lógica pura — encajan en el perfil sin
+   tocar una línea).
+3. **Evolución sin acople nuevo:** cuando se quiera spend REAL para el ROAS,
+   entra como port `ads.insights` (Marketing API) del MISMO
+   `connectors/meta/`; las conversiones salientes, como `capi.events`. El
+   plugin solo suma consumo de ports — Meta sigue siendo UN vendor, UN
+   connector, N ports.
+
 **Candidatos siguientes del ConnectorKit** (mismo molde, no solo commerce):
-el resto de Meta (`whatsapp.messaging`, CAPI) consolidándose en
-`connectors/meta/`, y SigNoz/observabilidad.
+el resto de Meta (`whatsapp.messaging`, `capi.events`, `ads.insights`)
+consolidándose en `connectors/meta/`, y SigNoz/observabilidad.
 
 ### 4.7 Catálogo: system-explorer v2 (Fase 5)
 
@@ -567,7 +594,7 @@ creado": `hubara certify && abrir :5175`.
 | **F-SDK-1 · Foundation tipada** (1–2 PRs) | `PluginManifest` pydantic validado contra `plugin.schema.yaml` + campo **`archetype:`** en el schema; protocolos faltantes (`EventEmitter`, `CastProvider/Consumer`, `ToolExtension`); catálogo `HubaraDiagnostic` (P-x → fix) | contract test schema↔pydantic↔Zod (mata drift L-10 del manifest); checks nuevos de eventos frozen y casts 4-paths | los 3 lectores del manifest comparten el modelo; `validate_manifest(path)` es una función pública |
 | **F-SDK-2 · TestKit (TCK) + perfiles de arquetipo** (2 PRs) | `src/sdk/testkit/` empaquetando los gates existentes parametrizados por plugin; perfiles declarativos en `src/sdk/archetypes/` (§4.5) y clasificación de los 7 plugins existentes; archivos `tests/conformance/test_<id>_conformance.py` (3 líneas); writer de `certification/<id>.json` | **P-27**: plugin sin TCK instanciado → rojo. **P-29**: estructura interna + import-graph del plugin cumplen el perfil de su `archetype:` declarado | `uv run hubara certify eta` (o el pytest equivalente) emite el reporte con nivel C2, incluyendo el veredicto del perfil interno |
 | **F-SDK-3 · CLI** (2 PRs) | PR-a: `hubara check / certify / explain / graph` (verificador). PR-b: `hubara create plugin` con los 5 arquetipos — el skeleton se genera DESDE los perfiles de §4.5, no de copias — + `hubara dev` | test de oro del scaffolder: **crear un plugin de cada arquetipo en CI y exigir que nazca C2** (luego se borra) | un dev (o el pipeline) crea un plugin funcional sin copiar-pegar y sin tocar archivos centrales |
-| **F-SDK-4 · ConnectorKit** (2–3 PRs; paralelizable desde F-1) | ports promovidos a `sdk.connectorkit.ports`; `connectors/medusa/` (mover client + `medusa_order*.py` + ACL); `connectors/meta/` (catalog.sink); split de ports de catálogo (source/store/read/sink) y re-perfilado de `catalog` a `archetype: sync` con su golden de idempotencia (§4.6 caso completo); fakes oficiales por port; contract suites por port; binding por registry/env; `hubara create connector` | **P-31**: plugins ↛ vendors/connectors — solo ports del SDK (ratchet sobre los 4 plugins que hoy tocan medusa) + regla "ningún port sin fake; ningún connector sin contract suite" | cambiar de vendor = escribir un connector + 1 env de binding, CERO cambios en plugins; `grep -ri medusa src/plugins` → 0; el sync de catálogo corre ENTERO contra fakes en CI (segunda corrida = diff vacío) |
+| **F-SDK-4 · ConnectorKit** (2–3 PRs; paralelizable desde F-1) | ports promovidos a `sdk.connectorkit.ports`; `connectors/medusa/` (mover client + `medusa_order*.py` + ACL); `connectors/meta/` (catalog.sink); split de ports de catálogo (source/store/read/sink) y re-perfilado de `catalog` a `archetype: sync` con su golden de idempotencia (§4.6 caso completo); `AttributionReadPort` (read model de atribución CTWA: writer = ingest, readers = ads/CAPI — §4.6 caso ads); fakes oficiales por port; contract suites por port; binding por registry/env; `hubara create connector` | **P-31**: plugins ↛ vendors/connectors — solo ports del SDK (ratchet sobre los 4 plugins que hoy tocan medusa) + regla "ningún port sin fake; ningún connector sin contract suite" | cambiar de vendor = escribir un connector + 1 env de binding, CERO cambios en plugins; `grep -ri medusa src/plugins` → 0; el sync de catálogo corre ENTERO contra fakes en CI (segunda corrida = diff vacío) |
 | **F-SDK-5 · Catálogo (explorer v2)** (1–2 PRs) | grafo con `certification` por plugin; badges; sección Cuarentena con fixes; scorecard drawer; nodos `connector` con sus ports y binding activo | test del builder: plugin con reporte fallido aparece en cuarentena con el diagnóstico correcto; reporte stale → "sin certificar" | en :5175 se ve qué plugins están certificados y por qué los demás no |
 | **F-SDK-6 · Merge gate + pipeline** (1 PR) | job CI `plugin-certification` required; scorecard-diff comment en PR; skills del pipeline llaman `hubara check`/leen reportes | branch protection actualizado; el implementer §0.5 usa el CLI | un PR con plugin < C2 NO puede mergear; el pipeline corre el CLI en vez de recetas |
 | **F-SDK-7 · Conducta (C3)** (2+ PRs) | manifest linkea capability specs (`specs:`); golden evals por plugin agentic enchufadas al certify; smoke E2E mínimo (1 turno real — L-3); harness de replay (L-9) | check "spec linkeada existe y sus Scenarios tienen test"; eval threshold en certify | el catálogo distingue C2 de C3; gotcha #1 (tests verdes, feature muerta) tiene gate |
