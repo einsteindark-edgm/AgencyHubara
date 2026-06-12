@@ -6,14 +6,20 @@
 ## Layering DEHA (hexagonal)
 
 ```
-src/platform/       ← contracts, registries, composition compartido cross-plugin
-src/plugins/<id>/   ← un plugin = una bounded context
+src/sdk/            ← LA superficie pública para plugins (Foundation + kits +
+                      TestKit/TCK + CLI). Plugins importan src.sdk, NUNCA
+                      src.platform directo (ratchet P-28). Ver src/sdk/CLAUDE.md
+                      + docs/_sdk/ (raíz del repo).
+src/platform/       ← implementación PRIVADA: contracts, registries, composition
+src/plugins/<id>/   ← un plugin = una bounded context (con `archetype:` en su
+                      manifest — P-29 audita su forma interna de por vida)
   ├── agent/        ← workspace + tools LLM + composition (factories)
   ├── workers/      ← Temporal workers (workflows + activities)
   └── api/          ← endpoints FastAPI (opcional)
+tests/conformance/  ← el TCK instanciado por plugin (3 líneas c/u — P-27)
 ```
 
-**Plugins actuales:** `agents_admin`, `catalog`, `chats`, `eta`, `orders`, `system_map`.
+**Plugins actuales:** `ads`, `agents_admin`, `catalog`, `chats`, `eta`, `orders`, `system_map`.
 
 `src/sales_whatsapp/` y `src/remarketing_whatsapp/` son shells legacy del pre-PR11 — el código real vive en `src/plugins/chats/workers/{sales,remarketing}.py`.
 
@@ -70,6 +76,10 @@ Detalle en `.claude/skills/hubara-architecture-guide/references/deha-rules.md`.
 | Functional E2E | `cd hubara_agency && uv run pytest tests/functional/ -m functional -v` |
 | Import-linter (R-DIP) | `cd hubara_agency && uv run lint-imports` |
 | Regenerar compose | `cd hubara_agency && uv run python scripts/render-compose.py` |
+| **CLI del SDK (compilador)** | `cd hubara_agency && uv run python -m src.sdk.cli check` |
+| Certificar plugins (C0–C2) | `cd hubara_agency && uv run python -m src.sdk.cli certify` |
+| Plugin nuevo (nace C2) | `cd hubara_agency && uv run python -m src.sdk.cli create plugin <id> --archetype <a>` |
+| TCK por plugin | `cd hubara_agency && uv run pytest tests/conformance -q` |
 
 Tabla completa con vault, k8s, env vars: `hubara_agency/.hubara/project-context.md` §2.
 

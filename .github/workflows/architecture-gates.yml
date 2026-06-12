@@ -132,3 +132,49 @@ jobs:
       - name: Tests de arquitectura (dep-cruiser FSD + íconos + meta-gate)
         working-directory: frontend_dashboard
         run: npm run test:arch
+
+  # ── F-SDK-6 (ADR-2026-06-12) — el merge gate de la certificación ──────────
+  # "Sin TCK no compila": corre los conformance suites instanciados por plugin
+  # (tests/conformance/) + emite los reportes de certificación C0–C2 y los
+  # publica como artifact del run. Para que BLOQUEE merges: agregar este job a
+  # los required status checks de main (mismo procedimiento que los otros dos).
+  plugin-certification:
+    name: Plugin certification — TCK + niveles C0–C2
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.11"
+
+      - name: Instalar deps (uv workspace, lock en la raíz)
+        working-directory: hubara_agency
+        run: uv sync --frozen
+
+      - name: TCK por plugin (un plugin sin conformance no mergea — P-27)
+        working-directory: hubara_agency
+        env:
+          MEDUSA_BASE_URL: http://medusa.invalid
+          MEDUSA_ADMIN_TOKEN: ci-dummy
+          OTEL_SDK_DISABLED: "true"
+        run: uv run pytest tests/conformance -q
+
+      - name: Certificar y emitir reportes (CLI hubara — niveles C0–C2)
+        working-directory: hubara_agency
+        env:
+          MEDUSA_BASE_URL: http://medusa.invalid
+          MEDUSA_ADMIN_TOKEN: ci-dummy
+          OTEL_SDK_DISABLED: "true"
+        run: uv run python -m src.sdk.cli certify
+
+      - name: Publicar reportes de certificación (artifact del run)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: certification-reports
+          path: hubara_agency/.hubara/certification/
+          if-no-files-found: warn

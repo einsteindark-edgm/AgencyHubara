@@ -17,6 +17,7 @@ Monorepo con backend Python (Temporal + DEHA hexagonal architecture) + frontend 
 - `.archon/workflows/` — pipeline definitions. **PROTECTED** (ver `hubara_agency/.hubara/spinal-files.yaml`).
 - `.claude/skills/` — skills del pipeline (`hubara-*-archon`). **PROTECTED**.
 - `.codegraph/` — knowledge graph del codebase. Usá `codegraph_*` tools antes de `grep`.
+- `hubara_agency/src/sdk/` — **Hubara SDK** (F-SDK-0..6, ADR-2026-06-12): la superficie pública para plugins (Foundation + kits + TestKit/TCK + CLI `uv run python -m src.sdk.cli`). Plugins importan `src.sdk`, NUNCA `src.platform` (ratchet P-28) ni vendors (P-31); cada plugin instancia su TCK en `tests/conformance/` (P-27) y declara `archetype:` (P-29). Docs por funcionalidad: `docs/_sdk/`.
 - `hubara_agency/.hubara/` — convenciones del pipeline (`project-context.md`, `spinal-files.yaml`).
 - `hubara_agency/.hubara/specs/` — **capability specs** (behavior contracts persistentes por capability). Fuente de verdad de **QUÉ HACE** el sistema. Ver `hubara_agency/.hubara/specs/README.md`.
 - `hubara_agency/.hubara/archive/` — snapshots de HUs shipped (memoria institucional).
