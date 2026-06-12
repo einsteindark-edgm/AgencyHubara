@@ -1,0 +1,16 @@
+# P-31 — imports de VENDOR congelados en src/plugins/ (ratchet).
+# NO agregar líneas: los plugins consumen ports (src.sdk.connectorkit).
+# Borrar la línea correspondiente al drenar (el gate lo exige).
+# Regenerar SOLO al drenar: uv run python -m tests.architecture.test_p31_vendor_isolation
+src/plugins/catalog/agent/composition.py -> src.platform.medusa.composition
+src/plugins/catalog/agent/composition.py -> src.platform.meta_catalog.client
+src/plugins/catalog/agent/composition.py -> src.platform.meta_catalog.port
+src/plugins/catalog/agent/use_cases/pull_catalog.py -> src.platform.medusa.models
+src/plugins/catalog/agent/use_cases/pull_catalog.py -> src.platform.medusa.service
+src/plugins/catalog/agent/use_cases/push_meta_catalog.py -> src.platform.meta_catalog.dtos
+src/plugins/catalog/agent/use_cases/push_meta_catalog.py -> src.platform.meta_catalog.mapper
+src/plugins/catalog/agent/use_cases/push_meta_catalog.py -> src.platform.meta_catalog.port
+src/plugins/chats/workers/sales.py -> src.platform.catalog.medusa_checkout
+src/plugins/chats/workers/sales.py -> src.platform.medusa.composition
+src/plugins/orders/api/__init__.py -> src.platform.medusa.client
+src/plugins/orders/api/__init__.py -> src.platform.medusa.composition

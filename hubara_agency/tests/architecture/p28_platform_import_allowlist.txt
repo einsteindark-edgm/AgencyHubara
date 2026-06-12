@@ -2,7 +2,6 @@
 # NO agregar líneas: código nuevo importa `src.sdk` (ADR-2026-06-12).
 # Borrar la línea correspondiente al drenar un import (el gate lo exige).
 # Regenerar SOLO al drenar: uv run python -m tests.architecture.test_p28_sdk_surface
-src/plugins/ads/api/__init__.py -> src.platform.config
 src/plugins/agents_admin/service.py -> src.platform.plugin_manifest
 src/plugins/catalog/agent/activities/pull.py -> src.platform.temporal.heartbeat
 src/plugins/catalog/agent/activities/push.py -> src.platform.catalog.paths
