@@ -11,27 +11,35 @@ import type { EvalCandidateDetail, EvalCandidateSummary } from "./model";
 
 const BASE = "/api/agents/evals/candidates";
 
-async function fetchCandidates(): Promise<EvalCandidateSummary[]> {
-  const raw = await apiClient.get<unknown>(BASE);
+async function fetchCandidates(
+  signal?: AbortSignal,
+): Promise<EvalCandidateSummary[]> {
+  const raw = await apiClient.get<unknown>(BASE, { signal });
   return evalCandidatesListSchema.parse(raw).candidates;
 }
 
-async function fetchCandidate(id: string): Promise<EvalCandidateDetail> {
-  const raw = await apiClient.get<unknown>(`${BASE}/${encodeURIComponent(id)}`);
+async function fetchCandidate(
+  id: string,
+  signal?: AbortSignal,
+): Promise<EvalCandidateDetail> {
+  const raw = await apiClient.get<unknown>(
+    `${BASE}/${encodeURIComponent(id)}`,
+    { signal },
+  );
   return evalCandidateDetailSchema.parse(raw);
 }
 
 export function useEvalCandidates() {
   return useQuery({
     queryKey: evalCandidateKeys.list(),
-    queryFn: fetchCandidates,
+    queryFn: ({ signal }) => fetchCandidates(signal),
   });
 }
 
 export function useEvalCandidate(id: string | null) {
   return useQuery({
     queryKey: evalCandidateKeys.detail(id ?? ""),
-    queryFn: () => fetchCandidate(id!),
+    queryFn: ({ signal }) => fetchCandidate(id!, signal),
     enabled: !!id,
   });
 }

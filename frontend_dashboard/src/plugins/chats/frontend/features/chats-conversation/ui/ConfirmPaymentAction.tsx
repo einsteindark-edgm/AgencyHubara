@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useReducer, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   useConfirmOrderPayment,
   useScheduleOrder,
 } from "@plugins/chats/frontend/entities/order-ref";
 import { sessionKeys } from "@plugins/chats/frontend/entities/session";
+import { addDaysIso, todayIso } from "@/shared/lib";
 
 interface Props {
   /** Id backend (Medusa) del pedido a confirmar — `session.pending_payment_order_id`. */
@@ -37,53 +38,94 @@ interface Props {
  * backend es idempotente (`schedule` sobre algo ya agendado devuelve success
  * sin reconvertir), así garantizamos el pre-requisito sin chequear estado acá.
  */
+/**
+ * F5.3 (auditoría 2026-06-10): el flujo de 2 pasos se modela con una unión
+ * discriminada + reducer — estados imposibles ("agendando" y "error" a la
+ * vez) quedan irrepresentables. Este es el patrón de referencia para flujos
+ * multi-paso del dashboard (CLAUDE.md frontend §estado, regla 3).
+ */
+type FlowState =
+  | { phase: "idle" }
+  | { phase: "scheduling" }
+  | { phase: "confirming" }
+  | { phase: "error"; message: string };
+
+type FlowAction =
+  | { type: "submit" }
+  | { type: "advance" }
+  | { type: "settle" }
+  | { type: "fail"; message: string };
+
+function flowReducer(_state: FlowState, action: FlowAction): FlowState {
+  switch (action.type) {
+    case "submit":
+      return { phase: "scheduling" };
+    case "advance":
+      return { phase: "confirming" };
+    case "settle":
+      return { phase: "idle" };
+    case "fail":
+      return { phase: "error", message: action.message };
+  }
+}
+
+const FLOW_LABEL: Record<FlowState["phase"], string> = {
+  idle: "Confirmar pago",
+  scheduling: "Agendando…",
+  confirming: "Confirmando pago…",
+  error: "Confirmar pago",
+};
+
 export function ConfirmPaymentAction({ orderId }: Props) {
   const qc = useQueryClient();
   const schedule = useScheduleOrder();
   const confirm = useConfirmOrderPayment();
   const [open, setOpen] = useState(false);
-  const [date, setDate] = useState(defaultTomorrowIso);
+  // Lazy init: "mañana" se calcula al montar, no al cargar el módulo — un
+  // module-const quedaba stale si el dashboard pasaba la medianoche abierto.
+  const [date, setDate] = useState(() => addDaysIso(1));
   const [time, setTime] = useState("");
-  const [err, setErr] = useState<string | null>(null);
+  const [flow, dispatch] = useReducer(flowReducer, { phase: "idle" });
 
-  const busy = schedule.isPending || confirm.isPending;
-  const phase = schedule.isPending
-    ? "Agendando…"
-    : confirm.isPending
-      ? "Confirmando pago…"
-      : "Confirmar pago";
+  const busy = flow.phase === "scheduling" || flow.phase === "confirming";
+  const err = flow.phase === "error" ? flow.message : null;
 
-  const submit = () => {
+  const submit = async () => {
     if (busy || !date) return;
-    setErr(null);
-    // Paso 1: agendar (convierte draft → Order real).
-    schedule.mutate(
-      { orderId, delivery_iso: date, delivery_time: time || undefined },
-      {
-        onSuccess: (sr) => {
-          if (!sr.success) {
-            setErr(sr.error_detail ?? "No se pudo agendar la entrega.");
-            return;
-          }
-          // Paso 2: confirmar el pago sobre la Order ya convertida.
-          confirm.mutate(
-            { orderId },
-            {
-              onSuccess: (cr) => {
-                if (cr.success) {
-                  qc.invalidateQueries({ queryKey: sessionKeys.all });
-                  setOpen(false);
-                } else {
-                  setErr(cr.error_detail ?? "No se pudo confirmar el pago.");
-                }
-              },
-              onError: (e) => setErr(e.message),
-            },
-          );
-        },
-        onError: (e) => setErr(e.message),
-      },
-    );
+    dispatch({ type: "submit" });
+    try {
+      // Paso 1: agendar (convierte draft → Order real).
+      const sr = await schedule.mutateAsync({
+        orderId,
+        delivery_iso: date,
+        delivery_time: time || undefined,
+      });
+      if (!sr.success) {
+        dispatch({
+          type: "fail",
+          message: sr.error_detail ?? "No se pudo agendar la entrega.",
+        });
+        return;
+      }
+      // Paso 2: confirmar el pago sobre la Order ya convertida.
+      dispatch({ type: "advance" });
+      const cr = await confirm.mutateAsync({ orderId });
+      if (!cr.success) {
+        dispatch({
+          type: "fail",
+          message: cr.error_detail ?? "No se pudo confirmar el pago.",
+        });
+        return;
+      }
+      qc.invalidateQueries({ queryKey: sessionKeys.all });
+      dispatch({ type: "settle" });
+      setOpen(false);
+    } catch (e) {
+      dispatch({
+        type: "fail",
+        message: e instanceof Error ? e.message : String(e),
+      });
+    }
   };
 
   return (
@@ -108,7 +150,7 @@ export function ConfirmPaymentAction({ orderId }: Props) {
           <div style={{ fontWeight: 700, fontSize: "0.82rem", marginBottom: 2 }}>
             Confirmar pago del pedido
           </div>
-          <p style={{ margin: 0, fontSize: "0.72rem", color: "var(--fg-faint, #8e8e93)", lineHeight: 1.35 }}>
+          <p style={{ margin: 0, fontSize: "0.72rem", color: "var(--fg-faint, var(--color-neutral))", lineHeight: 1.35 }}>
             El pedido se agenda (queda como pedido en preparación) y se marca el
             pago como recibido, en un solo paso.
           </p>
@@ -154,7 +196,7 @@ export function ConfirmPaymentAction({ orderId }: Props) {
               disabled={busy || !date}
               style={{ ...confirmBtnStyle, marginRight: 0, opacity: busy || !date ? 0.65 : 1 }}
             >
-              {phase}
+              {FLOW_LABEL[flow.phase]}
             </button>
           </div>
         </div>
@@ -162,15 +204,6 @@ export function ConfirmPaymentAction({ orderId }: Props) {
     </span>
   );
 }
-
-/* ── date helpers (espejo de ReadyForShip) ─────────────────────────────── */
-
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-const defaultTomorrowIso = new Date(Date.now() + 86_400_000)
-  .toISOString()
-  .slice(0, 10);
 
 /* ── styles (inline para no tocar el index.css spinal — mismo criterio que
    el resto del composer, que ya usa estilos inline / clases existentes) ── */
@@ -215,7 +248,7 @@ const fieldStyle: React.CSSProperties = {
 };
 const lblStyle: React.CSSProperties = {
   fontSize: "0.68rem",
-  color: "var(--fg-faint, #8e8e93)",
+  color: "var(--fg-faint, var(--color-neutral))",
 };
 const inputStyle: React.CSSProperties = {
   padding: "0.35rem 0.5rem",
@@ -230,7 +263,7 @@ const errStyle: React.CSSProperties = {
   borderRadius: 6,
   background: "rgba(255,114,105,0.14)",
   border: "1px solid rgba(255,114,105,0.4)",
-  color: "#ff7269",
+  color: "var(--color-danger)",
   fontSize: "0.7rem",
   lineHeight: 1.3,
 };

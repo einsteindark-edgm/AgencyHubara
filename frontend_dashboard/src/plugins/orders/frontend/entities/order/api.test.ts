@@ -76,34 +76,15 @@ describe("toLegacyOrder", () => {
     expect(o.isDraft).toBe(true);
   });
 
-  it("computes overdue when due_iso is in the past", () => {
-    const yesterday = new Date(Date.now() - 86_400_000)
-      .toISOString()
-      .slice(0, 10);
-    const o = toLegacyOrder({ ...sampleSummary, due_iso: yesterday });
-    expect(o.overdue).toBe(true);
-  });
-
-  it("does NOT flag overdue when due_iso is today or future", () => {
-    const today = new Date().toISOString().slice(0, 10);
-    const tomorrow = new Date(Date.now() + 86_400_000)
-      .toISOString()
-      .slice(0, 10);
-    expect(toLegacyOrder({ ...sampleSummary, due_iso: today }).overdue).toBe(false);
-    expect(toLegacyOrder({ ...sampleSummary, due_iso: tomorrow }).overdue).toBe(false);
-  });
-
-  it("humanizes due to 'hoy' / 'mañana' / 'ayer'", () => {
-    const today = new Date().toISOString().slice(0, 10);
-    const tomorrow = new Date(Date.now() + 86_400_000)
-      .toISOString()
-      .slice(0, 10);
-    const yesterday = new Date(Date.now() - 86_400_000)
-      .toISOString()
-      .slice(0, 10);
-    expect(toLegacyOrder({ ...sampleSummary, due_iso: today }).due).toBe("hoy");
-    expect(toLegacyOrder({ ...sampleSummary, due_iso: tomorrow }).due).toBe("mañana");
-    expect(toLegacyOrder({ ...sampleSummary, due_iso: yesterday }).due).toBe("ayer");
+  // F0.5: el mapper es PURO — `overdue` es passthrough del backend (única
+  // fuente del cálculo de reloj), no se recalcula client-side.
+  it("passes through backend-computed overdue verbatim", () => {
+    expect(toLegacyOrder({ ...sampleSummary, overdue: true }).overdue).toBe(
+      true,
+    );
+    expect(toLegacyOrder({ ...sampleSummary, overdue: false }).overdue).toBe(
+      false,
+    );
   });
 });
 

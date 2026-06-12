@@ -32,6 +32,7 @@ from typing import Any
 from fastapi import APIRouter, Body, HTTPException, Path, Query
 
 from src.platform.config import WORKSPACE_VAULT_DIR
+from src.platform.events import get_dashboard_event_bus
 from src.platform.customer_scoring.composition import (
     get_customer_scoring_port,
     get_customer_summary_adapter,
@@ -62,6 +63,15 @@ from src.plugins.orders.vault_scanner import scan_vault_orders
 
 router = APIRouter()
 log = logging.getLogger(__name__)
+
+
+def _publish_orders_changed(order_id: str | None = None) -> None:
+    """F1 (auditoría frontend 2026-06-10): cada mutación del API publica al
+    bus del dashboard → el frontend invalida sus queries por evento en vez de
+    pollear cada 30s. Las mutaciones que ocurren en los WORKERS (register_order
+    del agente Sales) llegan por otro camino: el sampler del vault en
+    chats/api/dashboard.py detecta el cambio de metadata y publica él."""
+    get_dashboard_event_bus().publish("orders", "changed", id=order_id)
 
 
 @router.get("/orders")
@@ -227,6 +237,7 @@ async def retry_vault_order(
             status_code=422,
             detail=outcome.error_detail or "record de pedido malformado",
         )
+    _publish_orders_changed(audit_id)
     return asdict(outcome)
 
 
@@ -258,6 +269,7 @@ async def resolve_vault_order(
             status_code=404,
             detail=f"Pedido {audit_id!r} no encontrado en sesión {session_key!r}.",
         )
+    _publish_orders_changed(audit_id)
     return asdict(outcome)
 
 
@@ -308,6 +320,8 @@ async def schedule_order(
     # new → preparing: arranca el seguimiento del Agente ETA (primera notificación).
     if result.success and result.current_stage:
         _spawn_emit(order_id, result.current_stage)
+    if result.success:
+        _publish_orders_changed(order_id)
     return _serialize_command_result(result)
 
 
@@ -356,6 +370,8 @@ async def transition_order_stage(
     # `new`) caen en no-match → no-op. Dedup vive en el workflow ETA.
     if result.success and result.current_stage:
         _spawn_emit(order_id, result.current_stage)
+    if result.success:
+        _publish_orders_changed(order_id)
     return _serialize_command_result(result)
 
 
@@ -380,6 +396,8 @@ async def confirm_order_payment(
     cmd = ConfirmPaymentCommand(order_id=order_id, by=by)
     port = get_order_command_port()
     result = await port.confirm_payment(cmd)
+    if result.success:
+        _publish_orders_changed(order_id)
     return _serialize_command_result(result)
 
 
@@ -406,6 +424,8 @@ async def cancel_order_endpoint(
     # Cancelación: el Agente ETA avisa al cliente (si la sesión sigue en ruta eta).
     if result.success and result.current_stage:
         _spawn_emit(order_id, result.current_stage)
+    if result.success:
+        _publish_orders_changed(order_id)
     return _serialize_command_result(result)
 
 

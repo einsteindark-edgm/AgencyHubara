@@ -19,16 +19,16 @@
  *   - El Toolbar recibe `sections` derivadas de `PLUGINS.flatMap` —
  *     agregar/quitar un plugin no requiere editar este archivo NI el Toolbar.
  *
- *   - Cada plugin recibe el mismo "envelope" de props vía `pluginProps`
- *     (showSidebar, showInspector, selectedXxx, setSelectedXxx + el state
- *     selections compartido). Los plugins desestructuran lo que necesitan; los
- *     que no usan algo lo ignoran. Esto es una decisión pragmática mientras
- *     el contrato de props del Page no está formalizado (PR pendiente).
+ *   - Los Pages NO reciben props: el contrato shell↔plugin es el contexto
+ *     genérico `PluginHostProvider` (chrome + mapa de selección). Cada plugin
+ *     lee lo suyo con `usePluginHost()` / `useSelection("<plugin-id>",
+ *     fallback)` — el fallback lo declara el plugin, no el shell.
  */
 
 import { Suspense, useCallback, useMemo, useState } from "react";
 
-import { StatusBar, TitleBar, Toolbar } from "@/shared/ui";
+import { useEventStreamState } from "@/shared/api";
+import { ErrorBoundary, StatusBar, Toolbar } from "@/shared/ui";
 import { IS_DESKTOP, PluginHostProvider } from "@/shared/lib";
 
 import { PLUGINS, PLUGIN_ICONS } from "@/app/plugin-registry.generated";
@@ -71,14 +71,12 @@ export function Dashboard() {
   // clave→id; cada plugin elige su clave vía `useSelection("<plugin-id>")`.
   // Agregar un plugin con selección propia NO toca este archivo.
   //
-  // Los defaults preservan el comportamiento previo del prototipo (orders
-  // abre con "#1247" seleccionado; agents con "sales"). Son SEEDS del estado,
-  // no conocimiento del shell sobre los plugins: un plugin ausente los ignora.
-  const [selection, setSelectionMap] = useState<Record<string, string | null>>({
-    orders: "#1247",
-    agents_admin: "sales",
-    catalog: "",
-  });
+  // El mapa arranca VACÍO: el default de cada selección lo declara el propio
+  // plugin como fallback de `useSelection` (F0.7 — el shell no conoce ids de
+  // dominio; antes sembraba "#1247"/"sales" acá, acople shell→plugin).
+  const [selection, setSelectionMap] = useState<Record<string, string | null>>(
+    {},
+  );
   const setSelection = useCallback((key: string, id: string | null) => {
     setSelectionMap((prev) => (prev[key] === id ? prev : { ...prev, [key]: id }));
   }, []);
@@ -90,12 +88,14 @@ export function Dashboard() {
   // F4 (INV-1): el stream SSE de sesiones era una suscripción del SHELL a la
   // entity de chats — acople shell→dominio. Ahora lo monta el Page de chats
   // (dueño del stream); el shell quedó 100% libre de imports de dominio.
+  // (El estado de CONEXIÓN del stream compartido sí es del shell — es infra
+  // genérica de shared/api, no dominio.)
+  const connection = useEventStreamState();
   const ActivePage = pageByKey.get(section);
 
   return (
     <div className={"stage" + (IS_DESKTOP ? "" : " is-web")}>
       <div className="win">
-        {IS_DESKTOP && <TitleBar />}
         <Toolbar
           sections={sections}
           section={section}
@@ -109,16 +109,44 @@ export function Dashboard() {
 
         <div className="body">
           {ActivePage && (
-            <Suspense key={section} fallback={null}>
-              <PluginHostProvider value={host}>
-                <ActivePage />
-              </PluginHostProvider>
-            </Suspense>
+            // ErrorBoundary FUERA del Suspense: atrapa tanto crashes de render
+            // del plugin como fallos de carga del chunk lazy. `resetKey` lo
+            // resetea al cambiar de sección (el boundary no se remonta — el
+            // key vive en el Suspense interior).
+            <ErrorBoundary scope={section} resetKey={section}>
+              <Suspense key={section} fallback={<SectionLoading />}>
+                <PluginHostProvider value={host}>
+                  <ActivePage />
+                </PluginHostProvider>
+              </Suspense>
+            </ErrorBoundary>
           )}
         </div>
 
-        <StatusBar />
+        <StatusBar connection={connection} />
       </div>
+    </div>
+  );
+}
+
+/**
+ * Fallback del Suspense mientras carga el chunk lazy del plugin. Antes era
+ * `null` → flash en blanco en cada cambio de sección (F2.2). Neutro y
+ * token-based; el skeleton 3-columnas llega con la fase de design system.
+ */
+function SectionLoading() {
+  return (
+    <div
+      style={{
+        flex: 1,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontSize: 12,
+        color: "var(--fg-muted)",
+      }}
+    >
+      Cargando sección…
     </div>
   );
 }

@@ -5,8 +5,9 @@
  * Se prefiere a `useEffect + new EventSource` esparcido en componentes:
  *   - cierra sólo cuando el caller lo decide
  *   - errores se propagan via callback en vez de ser silenciados
- *   - lifecycle compatible con React Query `useQuery({ queryFn: () => ... })`
- *     mediante el patrón "refetch en onMessage" (ver entities/session/api.ts).
+ *   - convive con TanStack Query vía el patrón "push al cache": el handler
+ *     de onMessage hace `setQueryData` (sin refetch) — ver
+ *     `useSessionsStream` en chats/entities/session/api.ts.
  */
 
 import { env } from "../config/env";

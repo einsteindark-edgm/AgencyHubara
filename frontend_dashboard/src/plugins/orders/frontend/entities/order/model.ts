@@ -4,9 +4,10 @@
  * necesita un shape específico — este modelo es el contrato canónico
  * que consumen los componentes (`OrdersBoard`, `OrdersInspector`, etc.).
  *
- * Re-exporta tipos del backend (Zod-inferred en `contracts.ts`) + algunas
- * derivaciones puramente UI (overdue, etc.) que el cliente recalcula al
- * leer los datos.
+ * Re-exporta tipos del backend (Zod-inferred en `contracts.ts`). Todo lo
+ * dependiente del reloj (`overdue`) viene calculado del backend; los labels
+ * relativos ("hoy/mañana") se derivan en render, nunca en el mapper
+ * (auditoría 2026-06-10, F0.5).
  */
 
 import type {
@@ -48,7 +49,6 @@ export interface Order {
   payType: PayType;
   items: number;
   total: number;
-  due: string;
   dueIso: string;
   dueTime: string;
   overdue?: boolean;
@@ -67,20 +67,20 @@ export interface OrderStatusMeta {
 }
 
 export const ORDER_STATUS_META: Record<OrderStatus, OrderStatusMeta> = {
-  new:       { label: "Nueva",          color: "#5fa9ff", bg: "rgba(95,169,255,0.18)" },
-  preparing: { label: "En preparación", color: "#ffb44a", bg: "rgba(255,180,74,0.18)" },
-  ready:     { label: "Lista",          color: "#d68aff", bg: "rgba(214,138,255,0.18)" },
-  shipping:  { label: "En camino",      color: "#5fdcff", bg: "rgba(95,220,255,0.18)" },
-  delivered: { label: "Entregada",      color: "#5be07b", bg: "rgba(91,224,123,0.18)" },
-  delayed:   { label: "Retrasada",      color: "#ff7269", bg: "rgba(255,114,105,0.2)"  },
-  cancelled: { label: "Cancelada",      color: "#8e8e93", bg: "rgba(142,142,147,0.18)" },
+  new:       { label: "Nueva",          color: "var(--color-info)", bg: "var(--color-info-soft)" },
+  preparing: { label: "En preparación", color: "var(--color-warn)", bg: "var(--color-warn-soft)" },
+  ready:     { label: "Lista",          color: "var(--color-violet)", bg: "var(--color-violet-soft)" },
+  shipping:  { label: "En camino",      color: "var(--color-cyan)", bg: "var(--color-cyan-soft)" },
+  delivered: { label: "Entregada",      color: "var(--color-ok)", bg: "var(--color-ok-soft)" },
+  delayed:   { label: "Retrasada",      color: "var(--color-danger)", bg: "rgba(255,114,105,0.2)"  },
+  cancelled: { label: "Cancelada",      color: "var(--color-neutral)", bg: "var(--color-neutral-soft)" },
 };
 
 export const PAY_STATUS_META: Record<PayStatus, { label: string; color: string }> = {
-  paid:    { label: "Pagado",      color: "#5be07b" },
-  partial: { label: "Parcial",     color: "#ffb44a" },
-  pending: { label: "Pendiente",   color: "#ff7269" },
-  refund:  { label: "Reembolsado", color: "#8e8e93" },
+  paid:    { label: "Pagado",      color: "var(--color-ok)" },
+  partial: { label: "Parcial",     color: "var(--color-warn)" },
+  pending: { label: "Pendiente",   color: "var(--color-danger)" },
+  refund:  { label: "Reembolsado", color: "var(--color-neutral)" },
 };
 
 // Re-export the backend types for components that need the richer detail.

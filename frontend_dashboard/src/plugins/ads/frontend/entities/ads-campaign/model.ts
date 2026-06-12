@@ -27,13 +27,13 @@ export interface AdsStateMeta {
 }
 
 export const ADS_STATES: Record<AdsState, AdsStateMeta> = {
-  no_reply:   { key: "no_reply",   label: "Sin respuesta",    color: "#8e8e93", bg: "rgba(142,142,147,0.22)" },
-  nuevo:      { key: "nuevo",      label: "Nuevo",            color: "#5fa9ff", bg: "rgba(95,169,255,0.22)" },
-  activo:     { key: "activo",     label: "En conversación",  color: "#5fdcff", bg: "rgba(95,220,255,0.22)" },
-  calificado: { key: "calificado", label: "Calificado",       color: "#d68aff", bg: "rgba(214,138,255,0.22)" },
-  cotizado:   { key: "cotizado",   label: "Cotizado",         color: "#ffb44a", bg: "rgba(255,180,74,0.22)" },
-  ganado:     { key: "ganado",     label: "Ganado",           color: "#5be07b", bg: "rgba(91,224,123,0.22)" },
-  perdido:    { key: "perdido",    label: "Perdido",          color: "#ff7269", bg: "rgba(255,114,105,0.22)" },
+  no_reply:   { key: "no_reply",   label: "Sin respuesta",    color: "var(--color-neutral)", bg: "rgba(142,142,147,0.22)" },
+  nuevo:      { key: "nuevo",      label: "Nuevo",            color: "var(--color-info)", bg: "rgba(95,169,255,0.22)" },
+  activo:     { key: "activo",     label: "En conversación",  color: "var(--color-cyan)", bg: "rgba(95,220,255,0.22)" },
+  calificado: { key: "calificado", label: "Calificado",       color: "var(--color-violet)", bg: "rgba(214,138,255,0.22)" },
+  cotizado:   { key: "cotizado",   label: "Cotizado",         color: "var(--color-warn)", bg: "rgba(255,180,74,0.22)" },
+  ganado:     { key: "ganado",     label: "Ganado",           color: "var(--color-ok)", bg: "rgba(91,224,123,0.22)" },
+  perdido:    { key: "perdido",    label: "Perdido",          color: "var(--color-danger)", bg: "rgba(255,114,105,0.22)" },
 };
 
 export const ADS_STATE_ORDER: AdsState[] = [

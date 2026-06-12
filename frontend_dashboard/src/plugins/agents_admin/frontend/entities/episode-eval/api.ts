@@ -9,9 +9,11 @@ import type { ConversationEvals, EvalTranscript } from "./model";
 async function fetchConversations(
   days: number,
   suite: string,
+  signal?: AbortSignal,
 ): Promise<ConversationEvals> {
   const raw = await apiClient.get<unknown>(
     `/api/agents/evals/conversations?days=${days}&suite=${encodeURIComponent(suite)}`,
+    { signal },
   );
   return conversationEvalsSchema.parse(raw);
 }
@@ -19,6 +21,7 @@ async function fetchConversations(
 async function fetchTranscript(
   sessionId: string,
   episodeId: string,
+  signal?: AbortSignal,
 ): Promise<EvalTranscript> {
   const params = new URLSearchParams({
     session_id: sessionId,
@@ -26,6 +29,7 @@ async function fetchTranscript(
   });
   const raw = await apiClient.get<unknown>(
     `/api/agents/evals/transcript?${params.toString()}`,
+    { signal },
   );
   return evalTranscriptSchema.parse(raw);
 }
@@ -34,7 +38,7 @@ async function fetchTranscript(
 export function useConversationEvals(days = 7, suite = "online") {
   return useQuery({
     queryKey: episodeEvalKeys.list(days, suite),
-    queryFn: () => fetchConversations(days, suite),
+    queryFn: ({ signal }) => fetchConversations(days, suite, signal),
   });
 }
 
@@ -45,7 +49,7 @@ export function useEvalTranscript(
 ) {
   return useQuery({
     queryKey: episodeEvalKeys.transcript(sessionId ?? "", episodeId),
-    queryFn: () => fetchTranscript(sessionId!, episodeId),
+    queryFn: ({ signal }) => fetchTranscript(sessionId!, episodeId, signal),
     enabled: !!sessionId,
   });
 }

@@ -12,7 +12,10 @@ import { useMemo } from "react";
 import { usePluginHost, useSelection } from "@/shared/lib";
 import { Icon } from "@/shared/ui";
 
-import { useTrackedOrders } from "@plugins/eta/frontend/entities/tracked-order";
+import {
+  useTrackedOrders,
+  useTrackedOrdersEvents,
+} from "@plugins/eta/frontend/entities/tracked-order";
 
 import {
   EtaList,
@@ -26,6 +29,7 @@ export function EtaSection() {
   // F7: chrome + selección llegan por el PluginHost (contrato genérico).
   const { showSidebar, showInspector } = usePluginHost();
   const [selectedTrackedId, setSelectedTrackedId] = useSelection("eta");
+  useTrackedOrdersEvents(); // push del stream → invalidaciones (F1)
   // `isError` SE MUESTRA (no se traga): con el default `= []`, un fallo de
   // fetch o de validación Zod vaciaba el tablero en silencio y parecía "no hay
   // pedidos" (L-10 — un evento `cancelled` fuera del enum vació la sección).

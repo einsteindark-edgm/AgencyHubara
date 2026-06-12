@@ -21,4 +21,15 @@ export const env = {
   // apuntar al collector público vía VITE_OTEL_EXPORTER_URL.
   otelExporterUrl:
     import.meta.env.VITE_OTEL_EXPORTER_URL ?? "http://localhost:4318/v1/traces",
+  // F6.6 (auditoría 2026-06-10): el tracing del browser es OPT-IN en dev
+  // (sin collector corriendo, los POST a /v1/traces solo ensucian la Network
+  // tab — parte del síntoma "traces llamándose cada rato") y ON por default
+  // en build de prod. `VITE_OTEL_ENABLED=1|0` fuerza en cualquier modo.
+  otelEnabled:
+    import.meta.env.VITE_OTEL_ENABLED !== undefined
+      ? import.meta.env.VITE_OTEL_ENABLED === "1"
+      : import.meta.env.PROD,
+  // Muestreo de traces en prod (0..1). 1 = todo (default actual); bajarlo
+  // reduce el volumen de POSTs sin tocar código.
+  otelSampleRate: Number(import.meta.env.VITE_OTEL_SAMPLE_RATE ?? "1"),
 } as const;

@@ -87,7 +87,7 @@ export function SyncInspector({ activeId }: Props) {
                   style={{
                     marginTop: 8,
                     fontSize: 11.5,
-                    color: "#ff7269",
+                    color: "var(--color-danger)",
                     lineHeight: 1.4,
                   }}
                 >
@@ -124,7 +124,7 @@ function Row({
   mono?: boolean;
 }) {
   const color =
-    tone === "ok" ? "#5be07b" : tone === "err" ? "#ff7269" : "var(--fg)";
+    tone === "ok" ? "var(--color-ok)" : tone === "err" ? "var(--color-danger)" : "var(--fg)";
   return (
     <div className="form-row">
       <span className="lbl">{label}</span>

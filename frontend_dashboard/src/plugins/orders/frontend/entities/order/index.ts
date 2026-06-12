@@ -14,6 +14,7 @@ export { ORDER_STATUS_META, PAY_STATUS_META } from "./model";
 export { orderKeys } from "./keys";
 export {
   useOrders,
+  useOrdersEvents,
   useOrderDetail,
   useVaultOrders,
   useRetryVaultOrder,

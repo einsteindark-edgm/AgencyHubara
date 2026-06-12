@@ -218,9 +218,10 @@ function windowQuery(p: AdsWindowParams): string {
 export function useAdsCampaigns(params: AdsWindowParams) {
   return useQuery<AdsCampaign[]>({
     queryKey: adsCampaignKeys.list(params),
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const raw = await apiClient.get<unknown>(
         `/api/ads/campaigns${windowQuery(params)}`,
+        { signal },
       );
       const parsed = backendAdsCampaignsResponseSchema.parse(raw);
       return parsed.campaigns.map(mapBackendCampaign);
@@ -240,9 +241,10 @@ export function useAttributedConversations(
 ) {
   return useQuery<AttributedConversation[]>({
     queryKey: adsCampaignKeys.attributed(campaignId, params),
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const raw = await apiClient.get<unknown>(
         `/api/ads/campaigns/${encodeURIComponent(campaignId)}/conversations${windowQuery(params)}`,
+        { signal },
       );
       const parsed =
         backendAttributedConversationsResponseSchema.parse(raw);
@@ -267,9 +269,10 @@ export function useAttributedConversations(
 export function useDailySeries(campaignId: string, params: AdsWindowParams) {
   return useQuery<AdsDailyPoint[]>({
     queryKey: adsCampaignKeys.daily(campaignId, params),
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const raw = await apiClient.get<unknown>(
         `/api/ads/campaigns/${encodeURIComponent(campaignId)}/daily${windowQuery(params)}`,
+        { signal },
       );
       const parsed = backendAdsDailyResponseSchema.parse(raw);
       return parsed.series.map(

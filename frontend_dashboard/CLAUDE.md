@@ -36,6 +36,37 @@ src/plugins/<id>/frontend/  ← capa transversal: pages/features/entities local 
 
 Cada `src/plugins/<id>/frontend/` tiene su propio mini-FSD: `pages/`, `features/`, `entities/`. El plugin reexporta via `src/plugins/<id>/frontend/index.ts` con un `Page` por defecto.
 
+## Política de estado y datos (post-refactor F0-F6, auditoría 2026-06-10)
+
+Seis reglas. Los reviewers las exigen; las 1-2 tienen gate automático
+(`src/test/architecture/test_realtime_policy.arch.test.ts`).
+
+1. **Server state vive SOLO en TanStack Query** — nunca copiado a
+   `useState`/`useEffect`. Los `queryFn` SIEMPRE pasan el `{ signal }` al
+   `apiClient` (cancela requests en vuelo al cambiar de sección).
+2. **Realtime por push, polling solo como fallback.** UNA conexión SSE por
+   app (`EventStreamProvider` → `/api/dashboard/events`); cada plugin se
+   suscribe con `useDashboardEvents("<dominio>", handler)` en su entity y
+   traduce eventos → `invalidateQueries`/`setQueryData` + monta
+   `useInvalidateOnReconnect`. `refetchInterval` permitido únicamente:
+   (a) numérico ≥ 60_000 como red de seguridad, (b) function-form acotado a
+   un run activo (patrón catalog), allowlisteado en el gate. El lado backend
+   publica en `src/platform/events` (bus in-proc del API) o llega solo vía
+   el sampler del vault (`chats/api/dashboard.py`).
+3. **UI state local y colocado** (`useState` en el componente dueño). Flujos
+   multi-paso → `useReducer` + unión discriminada (referencia:
+   `ConfirmPaymentAction`). Errores de mutation se DERIVAN de la mutation
+   (referencia: `ReadyForShip`), no se duplican en `useState`.
+4. **Estado cross-sección SOLO vía PluginHost** — `useSelection(pluginId,
+   fallback)`; el fallback lo declara el plugin, el shell no siembra ids.
+5. **Derivados de reloj se computan en render** con utils puras
+   (`@/shared/lib` dates: `todayIso`/`addDaysIso`) — nunca en mappers ni
+   queryFn (la cache debe ser estable respecto al tiempo; `overdue` viene
+   del backend).
+6. **Cero diálogos JS nativos** (`window.confirm/alert`) — no son confiables
+   en los webviews de Tauri. Confirmaciones: inline de dos pasos (patrón
+   DangerPanel) o modal propio.
+
 ## 14 anti-patterns FSD (los que ya documentamos)
 
 Detalle en `.claude/skills/hubara-architecture-guide/sections/05-frontend-fsd.md`. Los más comunes:

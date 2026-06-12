@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { ChatsComposer } from "./ChatsComposer";
@@ -57,13 +57,14 @@ vi.mock("@plugins/chats/frontend/entities/handoff", () => ({
   }),
 }));
 
+// F5.3: ConfirmPaymentAction usa mutateAsync (flujo encadenado con reducer).
 vi.mock("@plugins/chats/frontend/entities/order-ref", () => ({
   useConfirmOrderPayment: () => ({
-    mutate: confirmPaymentMutate,
+    mutateAsync: confirmPaymentMutate,
     isPending: false,
   }),
   useScheduleOrder: () => ({
-    mutate: scheduleOrderMutate,
+    mutateAsync: scheduleOrderMutate,
     isPending: false,
   }),
 }));
@@ -218,56 +219,55 @@ describe("ChatsComposer", () => {
     expect(confirmPaymentMutate).not.toHaveBeenCalled();
   });
 
-  it("confirmar en el popover agenda primero y luego confirma el pago (mismo order_id)", () => {
+  it("confirmar en el popover agenda primero y luego confirma el pago (mismo order_id)", async () => {
     useSessionMock.mockReturnValue({
       data: {
         active_agent_route: "humano",
         pending_payment_order_id: "order_01KSTZSP8NWZTH2M4Q5GB3XY9Z",
       },
     });
-    // schedule.mutate(vars, { onSuccess }) → simulamos draft→Order OK.
-    scheduleOrderMutate.mockImplementation((_vars, opts) => {
-      opts?.onSuccess?.({ success: true, error_detail: null });
-    });
+    // schedule.mutateAsync(vars) → simulamos draft→Order OK.
+    scheduleOrderMutate.mockResolvedValue({ success: true, error_detail: null });
+    confirmPaymentMutate.mockResolvedValue({ success: true, error_detail: null });
     render(<ChatsComposer chatId="wa_X" />, { wrapper: makeWrapper() });
     fireEvent.click(screen.getByText("💳 Confirmar pago")); // abre popover
     // El botón de acción dentro del popover (label "Confirmar pago").
     const actionBtns = screen.getAllByText(/Confirmar pago/);
     fireEvent.click(actionBtns[actionBtns.length - 1]);
 
+    // Paso 2 (async): al éxito del schedule, confirma el pago del mismo pedido.
+    await waitFor(() => expect(confirmPaymentMutate).toHaveBeenCalledTimes(1));
+    expect(confirmPaymentMutate.mock.calls[0][0]).toEqual({
+      orderId: "order_01KSTZSP8NWZTH2M4Q5GB3XY9Z",
+    });
+
     // Paso 1: agendó con una fecha (draft → Order).
     expect(scheduleOrderMutate).toHaveBeenCalledTimes(1);
     const schedArg = scheduleOrderMutate.mock.calls[0][0];
     expect(schedArg.orderId).toBe("order_01KSTZSP8NWZTH2M4Q5GB3XY9Z");
     expect(schedArg.delivery_iso).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-
-    // Paso 2: al éxito del schedule, confirma el pago del mismo pedido.
-    expect(confirmPaymentMutate).toHaveBeenCalledTimes(1);
-    expect(confirmPaymentMutate.mock.calls[0][0]).toEqual({
-      orderId: "order_01KSTZSP8NWZTH2M4Q5GB3XY9Z",
-    });
   });
 
-  it("si agendar falla, NO confirma el pago y muestra el error", () => {
+  it("si agendar falla, NO confirma el pago y muestra el error", async () => {
     useSessionMock.mockReturnValue({
       data: {
         active_agent_route: "humano",
         pending_payment_order_id: "order_01KSTZSP8NWZTH2M4Q5GB3XY9Z",
       },
     });
-    scheduleOrderMutate.mockImplementation((_vars, opts) => {
-      opts?.onSuccess?.({
-        success: false,
-        error_detail: "medusa_unavailable: 503",
-      });
+    scheduleOrderMutate.mockResolvedValue({
+      success: false,
+      error_detail: "medusa_unavailable: 503",
     });
     render(<ChatsComposer chatId="wa_X" />, { wrapper: makeWrapper() });
     fireEvent.click(screen.getByText("💳 Confirmar pago"));
     const actionBtns = screen.getAllByText(/Confirmar pago/);
     fireEvent.click(actionBtns[actionBtns.length - 1]);
 
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /medusa_unavailable/,
+    );
     expect(scheduleOrderMutate).toHaveBeenCalledTimes(1);
     expect(confirmPaymentMutate).not.toHaveBeenCalled();
-    expect(screen.getByRole("alert")).toHaveTextContent(/medusa_unavailable/);
   });
 });

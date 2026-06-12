@@ -20,7 +20,13 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiClient, ApiError } from "@/shared/api";
+import { useCallback } from "react";
+import {
+  apiClient,
+  ApiError,
+  useDashboardEvents,
+  useInvalidateOnReconnect,
+} from "@/shared/api";
 import {
   customerScoreSchema,
   customerSummarySchema,
@@ -43,6 +49,10 @@ import type { Order, OrderStatus, PayStatus, PayType } from "./model";
 
 /* ── Mapping snake_case backend → camelCase legacy Order interface ─────── */
 
+// Mapper PURO (auditoría 2026-06-10, F0.5): nada de `new Date()` acá — un
+// dato cacheado no puede depender del reloj del momento del fetch. `overdue`
+// viene calculado del backend (única fuente); los labels relativos
+// ("hoy/mañana") se derivan en render (ver `dayChipShort` en OrdersBoard).
 export function toLegacyOrder(s: OrderSummary): Order {
   return {
     id: s.display_id, // "#1247" — la UI espera el formato display
@@ -57,10 +67,9 @@ export function toLegacyOrder(s: OrderSummary): Order {
     payType: s.pay_type as PayType,
     items: s.items,
     total: s.total_cop,
-    due: humanizeDue(s.due_iso),
     dueIso: s.due_iso ?? "",
     dueTime: s.due_time ?? "—",
-    overdue: computeOverdue(s.due_iso),
+    overdue: s.overdue,
     pieces: s.pieces,
     agent: s.agent,
     priority: s.priority,
@@ -71,38 +80,38 @@ export function toLegacyOrder(s: OrderSummary): Order {
   };
 }
 
-function computeOverdue(dueIso: string | null): boolean {
-  if (!dueIso) return false;
-  const today = new Date().toISOString().slice(0, 10);
-  return dueIso < today;
-}
-
-function humanizeDue(dueIso: string | null): string {
-  if (!dueIso) return "—";
-  const today = new Date();
-  const due = new Date(dueIso + "T00:00:00");
-  const diffDays = Math.round(
-    (due.getTime() - new Date(today.toISOString().slice(0, 10)).getTime()) /
-      86_400_000,
-  );
-  if (diffDays === 0) return "hoy";
-  if (diffDays === 1) return "mañana";
-  if (diffDays === -1) return "ayer";
-  if (diffDays > 0 && diffDays <= 7) {
-    const dayNames = ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"];
-    return `${dayNames[due.getDay()]} ${due.getDate()}`;
-  }
-  return dueIso;
-}
-
 /* ── Queries ──────────────────────────────────────────────────────────── */
+
+// Fallback, NO el mecanismo primario: las órdenes se refrescan por el evento
+// `orders.changed` (mutaciones del API + register_order del agente vía el
+// sampler del vault). Antes: poll duro 30s lista + 60s vault (auditoría F1).
+const ORDERS_FALLBACK_REFETCH_MS = 5 * 60_000;
+
+/**
+ * Suscripción del plugin orders al stream del dashboard. Montar UNA vez por
+ * sección (OrdersSection): cualquier `orders.changed` invalida el dominio
+ * entero (lista + vault + detalle + score comparten el prefijo `orderKeys.all`
+ * — el server es la única fuente; refetch targeted llega con keys por id en
+ * el evento si algún día hace falta granularidad).
+ */
+export function useOrdersEvents() {
+  const qc = useQueryClient();
+  const invalidate = useCallback(
+    () => qc.invalidateQueries({ queryKey: orderKeys.all }),
+    [qc],
+  );
+  useDashboardEvents("orders", invalidate);
+  useInvalidateOnReconnect(invalidate);
+}
 
 export function useOrders() {
   return useQuery<{ orders: Order[]; response: OrderListResponse }>({
     queryKey: orderKeys.list(),
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       try {
-        const raw = await apiClient.get<unknown>("/api/orders/orders");
+        const raw = await apiClient.get<unknown>("/api/orders/orders", {
+          signal,
+        });
         const parsed = orderListResponseSchema.parse(raw);
         return {
           orders: parsed.orders.map(toLegacyOrder),
@@ -139,9 +148,9 @@ export function useOrders() {
         throw exc; // Zod parse error u otro — propagar para visibilidad.
       }
     },
-    // Cuando llegan nuevas órdenes desde Sales (vía `register_order`), la
-    // app debería invalidar este key. Por ahora se refresca cada 30s.
-    refetchInterval: 30_000,
+    // Primario: evento `orders.changed` (useOrdersEvents). Esto es solo
+    // la red de seguridad si el stream está caído.
+    refetchInterval: ORDERS_FALLBACK_REFETCH_MS,
     staleTime: 10_000,
     retry: 1, // Premortem C3: 1 retry rápido, luego fallback a empty.
   });
@@ -150,13 +159,14 @@ export function useOrders() {
 export function useOrderDetail(displayId: string | null) {
   return useQuery<OrderDetail>({
     queryKey: orderKeys.detail(displayId ?? "—"),
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       if (!displayId) throw new Error("displayId required");
       // Premortem A1: el backend ya resuelve `display_id` ("#1247") al
       // backend id internamente. Pasamos el display_id directo —
       // funciona para deep-links sin requerir useOrders() poblado antes.
       const raw = await apiClient.get<unknown>(
         `/api/orders/orders/${encodeURIComponent(displayId)}`,
+        { signal },
       );
       return orderDetailSchema.parse(raw);
     },
@@ -303,9 +313,11 @@ export function useCancelOrder() {
 export function useVaultOrders() {
   return useQuery<VaultOrdersResponse>({
     queryKey: orderKeys.vault(),
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       try {
-        const raw = await apiClient.get<unknown>("/api/orders/vault-orders");
+        const raw = await apiClient.get<unknown>("/api/orders/vault-orders", {
+          signal,
+        });
         return vaultOrdersResponseSchema.parse(raw);
       } catch (exc) {
         // Mismo trato C3: si el backend está caído, devolvemos vacío para
@@ -316,7 +328,8 @@ export function useVaultOrders() {
         throw exc;
       }
     },
-    refetchInterval: 60_000, // menos frecuente que el kanban — es operacional.
+    // Primario: evento `orders.changed` (las acciones del banner publican).
+    refetchInterval: ORDERS_FALLBACK_REFETCH_MS,
     staleTime: 30_000,
     retry: 1,
   });
@@ -392,10 +405,11 @@ export function useResolveVaultOrder() {
 export function useCustomerScore(displayId: string | null) {
   return useQuery<CustomerScore>({
     queryKey: orderKeys.customerScore(displayId ?? "—"),
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       if (!displayId) throw new Error("displayId required");
       const raw = await apiClient.get<unknown>(
         `/api/orders/orders/${encodeURIComponent(displayId)}/customer-score`,
+        { signal },
       );
       return customerScoreSchema.parse(raw);
     },
