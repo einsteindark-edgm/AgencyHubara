@@ -4,7 +4,7 @@ import { apiClient } from "@/shared/api/client";
 import {
   useDashboardEvents,
   useInvalidateOnReconnect,
-} from "@/shared/api/events";
+} from "@/shared/api/events-context";
 import { trackedOrderKeys } from "./keys";
 import { trackedOrdersListResponseSchema } from "./contracts";
 import type { TrackedOrder } from "./model";

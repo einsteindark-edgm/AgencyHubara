@@ -16,7 +16,7 @@ import { apiClient } from "@/shared/api/client";
 import {
   useDashboardEvents,
   useInvalidateOnReconnect,
-} from "@/shared/api/events";
+} from "@/shared/api/events-context";
 import { sessionKeys } from "./keys";
 import {
   sessionDetailsSchema,
