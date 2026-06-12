@@ -56,10 +56,24 @@ def _render_report(report, *, verbose_warnings: bool = True) -> str:
     return "\n".join(lines).rstrip()
 
 
+def _resolve_plugin_ids(requested: list[str]) -> list[str]:
+    """Valida ids ANTES de correr nada — typo = error limpio, no traceback."""
+    known = _all_plugin_ids()
+    if not requested:
+        return known
+    unknown = sorted(set(requested) - set(known))
+    if unknown:
+        raise SystemExit(
+            f"error: plugin(s) inexistente(s): {', '.join(unknown)}. "
+            f"Conocidos: {', '.join(known)}"
+        )
+    return requested
+
+
 def cmd_check(args: argparse.Namespace) -> int:
     from src.sdk.testkit import run_conformance
 
-    plugin_ids = args.plugins or _all_plugin_ids()
+    plugin_ids = _resolve_plugin_ids(args.plugins)
     failed_any = False
     for pid in plugin_ids:
         report = run_conformance(pid)
@@ -81,7 +95,10 @@ def cmd_check(args: argparse.Namespace) -> int:
 def cmd_certify(args: argparse.Namespace) -> int:
     from src.sdk.testkit import run_conformance, write_report
 
-    plugin_ids = args.plugins or _all_plugin_ids()
+    if args.all and args.plugins:
+        print("certify: --all es incompatible con una lista de ids", file=sys.stderr)
+        return 2
+    plugin_ids = _resolve_plugin_ids(args.plugins)
     rows: list[tuple[str, str, str, int, int, str]] = []
     worst_fail = False
     for pid in plugin_ids:

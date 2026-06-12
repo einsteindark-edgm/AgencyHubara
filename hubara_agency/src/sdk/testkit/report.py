@@ -20,6 +20,7 @@ import json
 import subprocess
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 
 from src.sdk.testkit.checks import CheckResult, build_context, run_all_checks
@@ -76,7 +77,10 @@ def compute_level(checks: list[CheckResult]) -> str:
     return "C2"
 
 
+@lru_cache(maxsize=8)
 def _git_sha(repo_root: Path) -> str:
+    # lru_cache (premortem F-SDK): el catálogo certifica N plugins por request
+    # — sin cache eran N subprocesos `git rev-parse` por GET del grafo.
     try:
         out = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
