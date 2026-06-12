@@ -45,19 +45,26 @@ export function AgentsPrompts({ agentId }: Props) {
   }
 
   const isSales = agent.id === "sales";
+  // En "Calidad LLM" ocultamos el header del agente (icono + nombre + rol): qué
+  // agente es ya se sabe por la selección de la barra izquierda, y esos ~70px se
+  // los damos a la vista de episodios evaluados, que es densa (chart + lista +
+  // detalle). En "Personalidad" el header se mantiene.
+  const onQuality = isSales && tab === "calidad";
   const HeaderIcon = Icon[agent.icon as IconName] ?? Icon.wand;
 
   return (
     <main className="ag-canvas">
-      <div className="ag-head">
-        <div className={"ag-icon big-icon " + agent.color}>
-          <HeaderIcon />
+      {!onQuality && (
+        <div className="ag-head">
+          <div className={"ag-icon big-icon " + agent.color}>
+            <HeaderIcon />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h1>{agent.name}</h1>
+            <div className="desc">{agent.role}</div>
+          </div>
         </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <h1>{agent.name}</h1>
-          <div className="desc">{agent.role}</div>
-        </div>
-      </div>
+      )}
 
       {isSales && (
         <div className="sub-tabs">
@@ -78,7 +85,7 @@ export function AgentsPrompts({ agentId }: Props) {
         </div>
       )}
 
-      {isSales && tab === "calidad" ? (
+      {onQuality ? (
         <AgentsQuality />
       ) : (
       <div className="ag-form">
