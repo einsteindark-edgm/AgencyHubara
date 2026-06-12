@@ -35,7 +35,12 @@ export function ChatsNotes({ chatId }: Props) {
     if (!v) return;
     setExtras([
       {
-        key: crypto.randomUUID(),
+        // randomUUID requiere secure context (https/localhost/tauri) —
+        // fallback barato por si el dashboard se sirve por IP de LAN.
+        key:
+          typeof crypto !== "undefined" && crypto.randomUUID
+            ? crypto.randomUUID()
+            : `local-${Date.now()}-${extras.length}`,
         author: "Tú",
         role: "Operador",
         time: "Ahora",

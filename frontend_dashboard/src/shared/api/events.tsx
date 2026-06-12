@@ -35,6 +35,9 @@ export function EventStreamProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<EventStreamState>("connecting");
   const [epoch, setEpoch] = useState(0);
   const handlersRef = useRef(new Map<string, Set<DashboardEventHandler>>());
+  // El epoch sube solo en RE-conexiones: el primer open NO debe invalidar
+  // (las queries acaban de fetchear al montar — premortem 2026-06-11).
+  const hasOpenedRef = useRef(false);
 
   const subscribe = useCallback(
     (domain: string, handler: DashboardEventHandler) => {
@@ -59,7 +62,11 @@ export function EventStreamProvider({ children }: { children: ReactNode }) {
     const sub = subscribeSse<unknown>("/api/dashboard/events", {
       onOpen: () => {
         setState("open");
-        setEpoch((e) => e + 1);
+        if (hasOpenedRef.current) {
+          setEpoch((e) => e + 1);
+        } else {
+          hasOpenedRef.current = true;
+        }
       },
       onError: () => {
         // EventSource reintenta solo; nosotros solo reflejamos el estado.

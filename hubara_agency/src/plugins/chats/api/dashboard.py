@@ -101,7 +101,10 @@ def _session_signature(meta_file: Path) -> tuple[str, str]:
     agente Sales, eta_tracking del agente ETA)."""
     try:
         data = json.loads(meta_file.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+        # UnicodeDecodeError NO es JSONDecodeError: una lectura a mitad de
+        # escritura puede cortar un codepoint UTF-8 multibyte (los metadata
+        # traen emojis en motivo/nombres — premortem 2026-06-11).
         return ("", "")
     orders_sig = json.dumps(
         [data.get("registered_order"), data.get("failed_order_registrations")],
@@ -128,17 +131,33 @@ def _sample_vault_state(
             continue
         meta_file = session_path / "metadata.json"
         history_file = session_path / "sessions" / f"{entry}.jsonl"
-        meta_mtime = meta_file.stat().st_mtime if meta_file.exists() else 0.0
-        hist_mtime = history_file.stat().st_mtime if history_file.exists() else 0.0
+        # TOCTOU-safe: stat directo con fallback (la sesión puede borrarse
+        # entre el listdir y acá — premortem 2026-06-11).
+        try:
+            meta_stat = meta_file.stat()
+            meta_mtime, meta_size = meta_stat.st_mtime, meta_stat.st_size
+        except OSError:
+            meta_mtime, meta_size = 0.0, 0
+        try:
+            hist_mtime = history_file.stat().st_mtime
+        except OSError:
+            hist_mtime = 0.0
         cached = prev.get(entry)
-        if cached is not None and cached["meta_mtime"] == meta_mtime:
+        # La clave del cache incluye el size: dos writes dentro del mismo
+        # quantum de mtime del filesystem no se pierden si cambió el tamaño.
+        if (
+            cached is not None
+            and cached["meta_mtime"] == meta_mtime
+            and cached.get("meta_size") == meta_size
+        ):
             orders_sig, eta_sig = cached["orders_sig"], cached["eta_sig"]
-        elif meta_file.exists():
+        elif meta_mtime > 0.0:
             orders_sig, eta_sig = _session_signature(meta_file)
         else:
             orders_sig, eta_sig = ("", "")
         state[entry] = {
             "meta_mtime": meta_mtime,
+            "meta_size": meta_size,
             "hist_mtime": hist_mtime,
             "orders_sig": orders_sig,
             "eta_sig": eta_sig,
@@ -168,13 +187,22 @@ def _diff_to_events(
 
 async def _sampler_loop() -> None:
     bus = get_dashboard_event_bus()
-    prev = await asyncio.to_thread(_sample_vault_state, WORKSPACE_VAULT_DIR, None)
+    # El baseline se toma DENTRO del loop blindado: si el primer sample
+    # lanzara fuera del try, la task moriría en silencio con los generators
+    # SSE vivos mandando heartbeats — "Tiempo real conectado" sin eventos
+    # para siempre (premortem 2026-06-11, MEDIUM).
+    prev: dict[str, dict] | None = None
     while True:
+        # Sleep incondicional: también marca el paso de los REINTENTOS si el
+        # baseline falla (sin esto, un fallo persistente sería un hot-loop).
         await asyncio.sleep(_SAMPLE_INTERVAL_S)
         try:
             curr = await asyncio.to_thread(
                 _sample_vault_state, WORKSPACE_VAULT_DIR, prev
             )
+            if prev is None:
+                prev = curr
+                continue
             changed_ids, orders_changed, eta_changed = _diff_to_events(prev, curr)
             prev = curr
             if not changed_ids:

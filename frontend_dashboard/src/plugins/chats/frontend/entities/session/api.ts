@@ -44,11 +44,15 @@ async function fetchSessionDetail(
   return sessionDetailsSchema.parse(raw);
 }
 
-/** Lista paginada de sesiones. Se actualiza vía `useSessionsStream()`. */
+/** Lista paginada de sesiones. Se actualiza vía `useSessionsStream()`;
+ * el interval es la misma red de seguridad que el resto de dominios
+ * (premortem 2026-06-11: sin esto, un sampler caído con la conexión
+ * nominalmente abierta dejaba la bandeja congelada para siempre). */
 export function useSessions() {
   return useQuery({
     queryKey: sessionKeys.list(),
     queryFn: ({ signal }) => fetchSessions(signal),
+    refetchInterval: SESSION_DETAIL_FALLBACK_REFETCH_MS,
   });
 }
 

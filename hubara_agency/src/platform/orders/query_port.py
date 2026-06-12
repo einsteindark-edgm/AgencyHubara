@@ -95,7 +95,9 @@ class OrderSummaryDTO:
       * `due` / `dueIso` / `dueTime`: NO los tenemos en Medusa todavia.
          Por ahora `dueIso` = `created_at + 1 dia` (estimate operacional)
          y `dueTime` = "—". Se marcaran en `data_completeness=['due_date']`.
-      * `overdue`: derivado client-side de `dueIso < today`.
+      * `overdue`: lo calcula el BACKEND (`due_iso < hoy UTC`, excluyendo
+        delivered/cancelled) — el frontend lo consume verbatim, su mapper es
+        puro respecto al reloj (F0.5 + premortem 2026-06-11).
       * `priority`: derivado de `total > 200000 COP → "alta"`, sino "normal".
       * `agent`: leido de `metadata.agent` (el LLM no lo setea hoy), default "—".
       * `channel`: leido de `metadata.source` ("hubara_whatsapp_sales" → "WhatsApp"),
@@ -120,7 +122,7 @@ class OrderSummaryDTO:
     # Operacional / due date:
     due_iso: str | None    # YYYY-MM-DD — estimate hoy, real cuando llegue eta
     due_time: str | None   # HH:MM — "—" hoy
-    overdue: bool          # derivado client-side (siempre False desde backend)
+    overdue: bool          # calculado por el backend (due_iso < hoy UTC, no terminales)
     priority: Literal["alta", "normal", "baja"]
     agent: str             # "—" si no hay
     created_at_ms: int     # ISO datetime de Medusa → ms epoch

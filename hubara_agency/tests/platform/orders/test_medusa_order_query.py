@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import pytest
 import respx
+from datetime import datetime, timedelta, timezone
+
 from httpx import Response
 
 from src.platform.medusa.client import HttpMedusaClient
@@ -180,10 +182,83 @@ async def test_list_returns_summaries_with_correct_shape(adapter):
     # el frontend pinta "Sin agendar" en el inspector.
     assert o.due_iso is None
     assert o.due_time is None
-    assert o.overdue is False  # derivado client-side
+    assert o.overdue is False  # sin due_iso no hay vencimiento
     assert o.priority == "normal"  # 30k < 124500 < 200k
     assert o.agent == "—"
     assert o.created_at_ms > 0
+
+
+def _with_scheduled(order: dict, due_iso: str) -> dict:
+    order["metadata"]["hubara_scheduled_delivery_iso"] = due_iso
+    return order
+
+
+async def _list_single(order: dict):
+    """Helper: lista con UN pedido mockeado y devuelve su summary."""
+    respx.get(f"{_BASE_URL}/admin/orders").mock(
+        return_value=Response(
+            200,
+            json={"orders": [order], "count": 1, "offset": 0, "limit": 50},
+        )
+    )
+    respx.get(f"{_BASE_URL}/admin/draft-orders").mock(
+        return_value=Response(
+            200,
+            json={"draft_orders": [], "count": 0, "offset": 0, "limit": 50},
+        )
+    )
+    return None
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_overdue_computed_backend_side(adapter):
+    """Premortem 2026-06-11 (HIGH): `overdue` lo calcula el BACKEND.
+
+    Antes era un `False` hardcodeado "derivado client-side"; el refactor F0.5
+    purificó el mapper del frontend (ya no recalcula reloj) → sin este
+    cálculo, el filtro/KPI "Retrasadas" moría en silencio (gotcha #1).
+    """
+    yesterday = (
+        datetime.now(timezone.utc).date() - timedelta(days=1)
+    ).isoformat()
+    await _list_single(_with_scheduled(_sample_order(), yesterday))
+    result = await adapter.list(limit=50, offset=0, include_drafts=True)
+    assert result.orders[0].due_iso == yesterday
+    assert result.orders[0].overdue is True
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_overdue_false_for_today_and_future(adapter):
+    today = datetime.now(timezone.utc).date().isoformat()
+    await _list_single(_with_scheduled(_sample_order(), today))
+    result = await adapter.list(limit=50, offset=0, include_drafts=True)
+    assert result.orders[0].overdue is False
+
+    tomorrow = (
+        datetime.now(timezone.utc).date() + timedelta(days=1)
+    ).isoformat()
+    await _list_single(_with_scheduled(_sample_order(), tomorrow))
+    result = await adapter.list(limit=50, offset=0, include_drafts=True)
+    assert result.orders[0].overdue is False
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_overdue_excludes_terminal_stages(adapter):
+    """Una orden entregada con due vencida NO está "retrasada" — llegó.
+    (Mejora deliberada vs el compute viejo del cliente, que las marcaba.)"""
+    yesterday = (
+        datetime.now(timezone.utc).date() - timedelta(days=1)
+    ).isoformat()
+    delivered = _with_scheduled(
+        _sample_order(status_fulfillment="delivered"), yesterday
+    )
+    await _list_single(delivered)
+    result = await adapter.list(limit=50, offset=0, include_drafts=True)
+    assert result.orders[0].status == "delivered"
+    assert result.orders[0].overdue is False
 
 
 @pytest.mark.asyncio

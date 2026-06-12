@@ -169,7 +169,10 @@ must be updated to declare it, and `spinal-files.yaml` must cover both.
 - Common endpoints:
   - `GET /api/dashboard/sessions` — list
   - `GET /api/dashboard/sessions/:id` — detail
-  - `GET /api/dashboard/stream` — SSE
+  - `GET /api/dashboard/events` — SSE multiplexado por dominio (F1 2026-06;
+    reemplazó a `/stream`). El frontend NO abre EventSource propio: se
+    suscribe con `useDashboardEvents("<dominio>", handler)` de `@/shared/api`
+    (gate: `test_realtime_policy.arch.test.ts`).
 - When a HU adds/changes an endpoint, refer to the backend file in the
   refinement's §6 (Backend contract dependencies). The frontend HU is BLOCKED
   until the backend ships.
