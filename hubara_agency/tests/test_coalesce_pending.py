@@ -26,13 +26,24 @@ def test_coalesce_two_user_messages_concatenates_them() -> None:
     assert result.is_handoff is False
 
 
-def test_coalesce_handoff_only_uses_summary_as_message() -> None:
-    """Sin user msg pero con handoff → Sales saluda proactivamente."""
+def test_coalesce_handoff_only_wraps_summary_with_sales_framing() -> None:
+    """Sin user msg pero con handoff → Sales saluda proactivamente.
+
+    L-12 (run 3607aecc): el summary CRUDO en el rol user era indistinguible
+    del trigger de remarketing — el LLM de ventas se "autotransfería" en vez
+    de retomar la venta. El mensaje principal ahora lleva framing inequívoco:
+    quién es el agente (ventas), que el control ya es suyo, y qué hacer.
+    """
     pending = [
         PendingMessage(message="El cliente volvio a interactuar", is_handoff=True),
     ]
     result = coalesce_pending(pending)
-    assert result.message == "El cliente volvio a interactuar"
+    assert "El cliente volvio a interactuar" in result.message
+    assert "HANDOFF DE REMARKETING A VENTAS" in result.message
+    assert "Eres el agente de ventas" in result.message
+    assert "YA ES TUYO" in result.message
+    # El crudo pelado NO debe ser el mensaje (contrato L-12)
+    assert result.message != "El cliente volvio a interactuar"
     # plugin_context tambien lo lleva como contexto explicito
     assert result.plugin_context == [
         "[HANDOFF_REMARKETING]: El cliente volvio a interactuar"

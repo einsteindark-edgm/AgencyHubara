@@ -243,7 +243,20 @@ def coalesce_pending(pending: list[PendingMessage]) -> PendingMessage:
     if user_msgs:
         combined = "\n".join(p.message for p in user_msgs if p.message)
     elif handoff_msgs:
-        combined = handoff_msgs[-1].message
+        # L-12 (run 3607aecc): el summary del handoff iba CRUDO al rol "user"
+        # ("Cliente respondió 'A sí' al recordatorio..."), indistinguible del
+        # trigger que ve Remarketing — el LLM de ventas patrón-matcheaba "debo
+        # transferir a ventas" y se autotransfería en vez de retomar la venta.
+        # El framing deja inequívoco quién es y qué debe hacer.
+        combined = (
+            "[SISTEMA — HANDOFF DE REMARKETING A VENTAS]: Eres el agente de "
+            "ventas y el control de esta conversación YA ES TUYO; no existe "
+            "ninguna transferencia pendiente y no debes anunciarla. Contexto "
+            f"del handoff: {handoff_msgs[-1].message}\n"
+            "Retoma la venta donde quedó: saluda breve y pide el siguiente "
+            "dato pendiente del pedido. No menciones sistemas ni procesos "
+            "internos."
+        )
     else:
         combined = ""
 

@@ -183,15 +183,42 @@ class HubaraSalesSessionWorkflow:
                     timeout=effective_idle_timeout,
                 )
             except asyncio.TimeoutError:
-                workflow.logger.info(f"Ghosting detectado para sesión {session.session_id}. Inyectando trigger de auto-etiquetado.")
-                ghost_trigger = await workflow.execute_activity(
-                    decide_ghosting_action,
-                    start_to_close_timeout=timedelta(seconds=10),
-                    retry_policy=RetryPolicy(maximum_attempts=2),
-                )
+                # L-12 (run 3607aecc): ANTES de declarar ghosting, chequear si
+                # hay un handoff pendiente en metadata. El handoff NO despierta
+                # el wait_condition (viaja por metadata, no por signal): un
+                # mensaje del cliente que remarketing convirtió en handoff
+                # durante la ventana de transferencia ("Usuario respondió:
+                # Dame 3") quedaba dormido hasta este timeout — y el flujo
+                # viejo lo coalesceaba JUNTO con el trigger de ghosting, con
+                # `_force_shutdown=True` suprimiendo la respuesta. Acá: si hay
+                # handoff (o llegó un signal en la race del timeout), se
+                # procesa como turno normal y NO hay ghosting este ciclo.
+                handled_without_ghosting = False
+                if workflow.patched("ghost-checks-handoff-first-v1"):
+                    late_handoff = await workflow.execute_activity(
+                        read_and_clear_pending_handoff_activity,
+                        session.session_id,
+                        start_to_close_timeout=timedelta(seconds=10),
+                        retry_policy=RetryPolicy(maximum_attempts=2),
+                    )
+                    if late_handoff:
+                        self._pending.append(
+                            PendingMessage(message=late_handoff, is_handoff=True)
+                        )
+                        handled_without_ghosting = True
+                    elif self._pending:
+                        handled_without_ghosting = True
 
-                self._pending.append(PendingMessage(message=ghost_trigger))
-                self._force_shutdown = True
+                if not handled_without_ghosting:
+                    workflow.logger.info(f"Ghosting detectado para sesión {session.session_id}. Inyectando trigger de auto-etiquetado.")
+                    ghost_trigger = await workflow.execute_activity(
+                        decide_ghosting_action,
+                        start_to_close_timeout=timedelta(seconds=10),
+                        retry_policy=RetryPolicy(maximum_attempts=2),
+                    )
+
+                    self._pending.append(PendingMessage(message=ghost_trigger))
+                    self._force_shutdown = True
 
             # Handoff refresh per-iteration (Fix 3, gated): si Sales ya estaba
             # corriendo cuando el dispatcher escribio handoff, el bootstrap NO
@@ -305,17 +332,34 @@ class HubaraSalesSessionWorkflow:
                                 retry_policy=RetryPolicy(maximum_attempts=3),
                             )
                     if result.transfer_decision is not None:
-                        # Sales self-loop (sales workflow asegurándose de estar
-                        # corriendo + escribir handoff metadata). NO cross-agent —
-                        # se queda con el activity legacy. La activity en si fue
-                        # refactorizada en ADR-2026-05-20 para usar get_workflow_name()
-                        # internamente y no importar HubaraSalesSessionWorkflow.
-                        await workflow.execute_activity(
-                            start_or_signal_sales_workflow_activity,
-                            result.transfer_decision,
-                            start_to_close_timeout=timedelta(seconds=30),
-                            retry_policy=RetryPolicy(maximum_attempts=3),
-                        )
+                        # L-12 (run 3607aecc): una transfer_decision DENTRO de
+                        # sales es siempre una AUTOtransferencia (la tool
+                        # transfiere HACIA ventas y este workflow YA es ventas).
+                        # El legacy "self-loop" ejecutaba start_or_signal: pisaba
+                        # `pending_handoff_summary` ajeno (perdió el "Dame 3"
+                        # del cliente, escrito por remarketing 2s antes) y el
+                        # LLM regurgitaba el `message` interno de la tool como
+                        # respuesta final → "El control ha sido transferido al
+                        # agente de ventas." llegó al cliente. La tool ya no
+                        # está registrada en este worker (Fix A); esta rama es
+                        # defensa en profundidad para el window de workflows
+                        # vivos con tool_definitions viejos.
+                        if workflow.patched("sales-self-transfer-noop-v1"):
+                            workflow.logger.warning(
+                                "transfer_decision emitida DENTRO de sales "
+                                "(autotransferencia) — noop: no se escribe "
+                                "handoff ni se envía el texto del turno."
+                            )
+                            result.final_content = ""
+                        else:
+                            # Rama legacy solo para replay de histories
+                            # pre-deploy (R-DET).
+                            await workflow.execute_activity(
+                                start_or_signal_sales_workflow_activity,
+                                result.transfer_decision,
+                                start_to_close_timeout=timedelta(seconds=30),
+                                retry_policy=RetryPolicy(maximum_attempts=3),
+                            )
 
                     # RED DE SEGURIDAD orden↔tag (fix integridad): si el LLM
                     # registró una orden con éxito (`order_registered_decision`),
