@@ -403,7 +403,11 @@ export function EvalTrendChart({
             : "Aún no hay histórico. Se llena con cada eval al cerrar un episodio real."}
         </p>
       ) : (
-        <div>
+        // Tope de alto + scroll interno: con muchas métricas (hoy 9) la lista
+        // crecía ~1290px y empujaba la vista central de episodios fuera de
+        // pantalla. Acotada, el chart queda compacto y los episodios visibles;
+        // las métricas que no entran se alcanzan scrolleando ACÁ.
+        <div className="max-h-[15rem] overflow-y-auto">
           {lines.map((l) => (
             <MetricRow
               key={l.metric}
