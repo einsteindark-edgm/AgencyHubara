@@ -36,3 +36,6 @@ hubara_agency/.hubara/evaluator-calibration/*.yaml  # local calibration outputs
 # Codegraph index local
 .codegraph/cache/
 .codegraph/tmp/
+
+# Reportes de certificación del SDK (derivables — hubara certify los regenera)
+hubara_agency/.hubara/certification/
