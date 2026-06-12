@@ -24,6 +24,27 @@ from src.platform.state import FilesystemMetadataStore
 from src.platform.temporal.client import get_temporal_client
 
 
+def _append_pending_handoff(session_id: str, summary: str) -> None:
+    """Append (NO overwrite) a ``pending_handoff_summary`` in metadata.
+
+    M2/L-13 (runs 3607aecc + 8894825b): cada write pisaba al anterior — si el
+    target aún no leyó, el contexto previo se PERDÍA (el "Dame 3" del cliente
+    murió así). Append con ``\\n`` preserva todos los handoffs hasta la próxima
+    lectura (``read_and_clear`` devuelve el blob completo y limpia). Si el
+    summary exacto ya está contenido, skip — idempotencia ante retries de la
+    activity.
+    """
+    metadata_store = FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
+    data = metadata_store.read(session_id)
+    existing = data.get("pending_handoff_summary") or ""
+    if summary in existing:
+        return
+    data["pending_handoff_summary"] = (
+        f"{existing}\n{summary}" if existing else summary
+    )
+    metadata_store.write(session_id, data)
+
+
 @activity.defn(name="write_pending_handoff")
 async def write_pending_handoff_activity(session_id: str, summary: str) -> None:
     """Persist a handoff summary into the session metadata.
@@ -37,12 +58,10 @@ async def write_pending_handoff_activity(session_id: str, summary: str) -> None:
     string into ``metadata.pending_handoff_summary`` (POSIX-atomic via
     ``FilesystemMetadataStore``). The target workflow's bootstrap reads the
     field on cold start; warm refreshes re-read it per-iteration (see
-    ``read_and_clear_pending_handoff_activity``).
+    ``read_and_clear_pending_handoff_activity``). Append-mode (M2/L-13):
+    múltiples writes antes de una lectura se acumulan, no se pisan.
     """
-    metadata_store = FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
-    data = metadata_store.read(session_id)
-    data["pending_handoff_summary"] = summary
-    metadata_store.write(session_id, data)
+    _append_pending_handoff(session_id, summary)
 
 
 @activity.defn(name="start_or_signal_sales_workflow")
@@ -76,14 +95,11 @@ async def start_or_signal_sales_workflow_activity(decision: TransferDecision) ->
     session_id = decision.session_id
     summary = decision.summary or "El cliente volvió a interactuar"
 
-    # 1. Persistir contexto de handoff en metadata. Reutilizamos la nueva
-    #    activity genérica ``write_pending_handoff_activity`` semánticamente
-    #    (no la invocamos como activity-nested porque este body YA es activity;
-    #    en su lugar replicamos el efecto inline — mismo store, misma key).
-    metadata_store = FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
-    data = metadata_store.read(session_id)
-    data["pending_handoff_summary"] = summary
-    metadata_store.write(session_id, data)
+    # 1. Persistir contexto de handoff en metadata. Mismo helper append-mode
+    #    que ``write_pending_handoff_activity`` (M2/L-13: no pisar handoffs
+    #    que el target aún no leyó; no se invoca como activity-nested porque
+    #    este body YA es activity).
+    _append_pending_handoff(session_id, summary)
 
     # 2. Asegurar Sales workflow RUNNING. No signaleamos nada — el handoff
     #    viaja por metadata, no por signal. Si Sales ya corre, no hace falta

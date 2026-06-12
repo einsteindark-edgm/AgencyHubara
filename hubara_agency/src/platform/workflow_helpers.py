@@ -253,9 +253,13 @@ def coalesce_pending(pending: list[PendingMessage]) -> PendingMessage:
             "ventas y el control de esta conversación YA ES TUYO; no existe "
             "ninguna transferencia pendiente y no debes anunciarla. Contexto "
             f"del handoff: {handoff_msgs[-1].message}\n"
-            "Retoma la venta donde quedó: saluda breve y pide el siguiente "
-            "dato pendiente del pedido. No menciones sistemas ni procesos "
-            "internos."
+            "Retoma la venta EXACTAMENTE donde quedó según el historial: "
+            "repasa qué eligió ya el cliente (producto, aroma, color, "
+            "cantidad) y pide SOLO el siguiente dato pendiente. NO "
+            "re-preguntes nada ya elegido ni preguntas vagas tipo '¿en qué "
+            "estábamos?'. Si el handoff trae la respuesta del cliente "
+            "(ej. una cantidad), procésala como si acabara de escribirla. "
+            "No menciones sistemas ni procesos internos."
         )
     else:
         combined = ""
