@@ -1,5 +1,6 @@
 id: ads
 version: 0.1.0
+archetype: full_stack  # P-29 (frontend completo (entities/features) + api de agregación local)
 display_name: Ads Analytics
 description: |
   Análisis de campañas Meta Ads → WhatsApp (CTWA). KPIs de ROAS/CAC, embudo

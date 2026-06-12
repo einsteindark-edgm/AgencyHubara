@@ -22,6 +22,11 @@ Regla de oro: ningún símbolo entra al SDK sin (a) su check en el TestKit,
 """
 from __future__ import annotations
 
+from src.sdk.diagnostics import (
+    Diagnostic as Diagnostic,
+    format_diagnostic as format_diagnostic,
+    get_diagnostic as get_diagnostic,
+)
 from src.sdk.foundation import (
     ApiModule as ApiModule,
     ConversationRoute as ConversationRoute,
@@ -46,4 +51,13 @@ from src.sdk.foundation import (
     load_manifest as load_manifest,
     resolve_route_workflow_id as resolve_route_workflow_id,
     validate_enabled as validate_enabled,
+)
+from src.sdk.manifest_model import (
+    ARCHETYPES as ARCHETYPES,
+    Archetype as Archetype,
+    ManifestValidationError as ManifestValidationError,
+    PluginManifest as PluginManifest,
+    all_typed_manifests as all_typed_manifests,
+    load_typed_manifest as load_typed_manifest,
+    parse_manifest as parse_manifest,
 )

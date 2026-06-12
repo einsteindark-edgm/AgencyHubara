@@ -41,6 +41,22 @@ properties:
   description:
     type: string
 
+  archetype:
+    type: string
+    description: |
+      Identidad ARQUITECTÓNICA del plugin (ADR-2026-06-12 / F-SDK-1). NO es
+      "el template con que se generó": es el contrato de forma interna que el
+      TestKit audita DE POR VIDA (perfil de conformance P-29 — capas, reglas
+      de import intra-plugin, protocolos requeridos). Obligatorio para
+      plugins nuevos (el CLI lo escribe al scaffoldear); los existentes
+      fueron clasificados en la migración F-SDK-1/2. NO existe "custom": si
+      un plugin no encaja en ningún perfil, se agrega/extiende un arquetipo
+      EN EL SDK (con ADR) — el mecanismo se arregla, el contrato no se
+      perfora. Fuente única de los perfiles:
+      hubara_agency/src/sdk/testkit/archetypes.py (genera el template,
+      audita el código y alimenta el catálogo — INV-5).
+    enum: [api_only, full_stack, agentic, notifier, sync]
+
   depends_on:
     type: array
     description: |
@@ -232,6 +248,35 @@ properties:
                 copia del template en el sistema: el registry la usa para rutear
                 inbounds y P-18 ata a su prefijo los workflow_id_template de
                 las transitions que targetean este worker.
+            dashboard:
+              type: object
+              description: |
+                Presencia del worker como AGENTE visible en la sección Agents
+                del dashboard (la consume agents_admin escaneando TODOS los
+                manifests — cero hardcodes). P-17: `agentic: true` del plugin
+                ⟺ ≥1 worker con este bloque. P-15: `workspace` debe existir
+                en disco (path repo-root-relative). Campo declarado en
+                F-SDK-1: existía en 3 workers reales pero el schema no lo
+                tipaba (drift manifest↔schema).
+              additionalProperties: false
+              properties:
+                display_name: { type: string }
+                role: { type: string }
+                category: { type: string }
+                icon: { type: string }
+                color: { type: string }
+                model: { type: string }
+                workspace:
+                  type: string
+                  description: Path repo-root-relative al workspace de prompts (P-15).
+                capabilities:
+                  type: array
+                  items:
+                    type: object
+                    required: [label]
+                    properties:
+                      label: { type: string }
+                      icon: { type: string }
             task_queue:
               type: string
               description: |
@@ -346,7 +391,8 @@ properties:
                           - start_workflow                # falla si ya existe
                           - start_workflow_with_replace   # termina existente RUNNING, arranca nuevo
                           - ensure_running                # noop si RUNNING; arranca si no
-                          - signal                        # signal a existing handle
+                          - signal                        # signal a existing handle (PROHIBIDO hacia targets de vida finita — L-8)
+                          - signal_with_start             # signal+start atómico; el input_mapping debe cubrir el start input COMPLETO (L-8)
                       target_plugin:
                         type: string
                         description: |

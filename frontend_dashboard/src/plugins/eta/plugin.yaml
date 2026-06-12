@@ -1,5 +1,6 @@
 id: eta
 version: 0.1.0
+archetype: notifier  # P-29 (push puro post-L-4: notifica sin poseer la conversación)
 display_name: ETA Tracker
 description: Notificador de envíos — empuja al cliente cada cambio de estado de sus pedidos por WhatsApp SIN tomar el turno conversacional (las respuestas las atiende Sales) + sección de visualización (tracked orders + chat). Backend self-contained (`/api/eta` + worker `eta`); datos del frontend vía `entities/tracked-order`.
 agentic: true  # worker conversacional ETA con workspace IDENTITY/SOUL/TOOLS/AGENTS/USER
