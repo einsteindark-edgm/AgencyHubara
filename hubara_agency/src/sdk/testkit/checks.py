@@ -345,6 +345,17 @@ def check_p21_selfgate(ctx: CheckContext) -> list[CheckResult]:
 
 
 def check_p27_conformance_file(ctx: CheckContext) -> list[CheckResult]:
+    if not ctx.conformance_dir.exists():
+        # Artefacto de deploy sin tests/ (containers): P-27 se verifica en
+        # CI/repo — skip honesto, jamás un fail falso ni un pass inventado.
+        return [
+            CheckResult(
+                "P-27",
+                "tck-instanciado",
+                "skip",
+                "tests/conformance no presente en este artefacto — P-27 se verifica en CI",
+            )
+        ]
     path = ctx.conformance_dir / f"test_{ctx.plugin_id}_conformance.py"
     if not path.exists():
         return [
