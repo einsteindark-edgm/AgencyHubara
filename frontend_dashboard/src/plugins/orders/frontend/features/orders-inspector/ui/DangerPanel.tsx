@@ -46,7 +46,7 @@ export function DangerPanel({ order }: { order: Order }) {
           ghost
           sm
           onClick={() => setConfirming(true)}
-          style={{ color: "#ff7269" }}
+          style={{ color: "var(--color-danger)" }}
         >
           Cancelar pedido…
         </MacButton>
@@ -80,7 +80,7 @@ export function DangerPanel({ order }: { order: Order }) {
               sm
               onClick={onCancel}
               disabled={cancel.isPending}
-              style={{ background: "#ff7269", borderColor: "#ff7269" }}
+              style={{ background: "var(--color-danger)", borderColor: "var(--color-danger)" }}
             >
               {cancel.isPending ? "Cancelando…" : "Sí, cancelar"}
             </MacButton>
@@ -91,7 +91,7 @@ export function DangerPanel({ order }: { order: Order }) {
                 padding: 8,
                 background: "rgba(255,114,105,0.12)",
                 border: "1px solid rgba(255,114,105,0.3)",
-                color: "#ff7269",
+                color: "var(--color-danger)",
                 fontSize: 11,
                 borderRadius: 4,
               }}

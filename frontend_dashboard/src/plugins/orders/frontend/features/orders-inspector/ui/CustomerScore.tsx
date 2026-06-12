@@ -135,7 +135,7 @@ export function CustomerScoreBreakdown({ score }: { score: CustomerScore }) {
                 style={{
                   padding: "2px 6px",
                   fontWeight: 600,
-                  color: b.points > 0 ? "#5be07b" : b.points < 0 ? "#ff7269" : "var(--fg-muted)",
+                  color: b.points > 0 ? "var(--color-ok)" : b.points < 0 ? "var(--color-danger)" : "var(--fg-muted)",
                   textAlign: "right",
                   width: 50,
                 }}
@@ -171,11 +171,11 @@ function _tagColor(tag: string): string {
     case "VIP":
       return "#ffd166";
     case "Recurrente":
-      return "#5be07b";
+      return "var(--color-ok)";
     case "Nuevo":
       return "#87b4ff";
     case "Frío":
-      return "#ff7269";
+      return "var(--color-danger)";
     default:
       return "var(--fg-soft)";
   }
@@ -184,13 +184,13 @@ function _tagColor(tag: string): string {
 function _letterColor(letter: string): string {
   switch (letter) {
     case "A":
-      return "#5be07b";
+      return "var(--color-ok)";
     case "B":
       return "#87b4ff";
     case "C":
-      return "#ffb44a";
+      return "var(--color-warn)";
     case "D":
-      return "#ff7269";
+      return "var(--color-danger)";
     default:
       return "rgba(255,255,255,0.15)";
   }

@@ -54,7 +54,7 @@ export function VaultOrdersBanner({
           alignItems: "center",
           gap: 8,
           marginBottom: 8,
-          color: "#ffb44a",
+          color: "var(--color-warn)",
           fontWeight: 600,
         }}
       >
@@ -155,9 +155,9 @@ function VaultOrderRow({ r }: { r: VaultOrderRecord }) {
             borderRadius: 3,
             background:
               r.kind === "failed"
-                ? "rgba(255,114,105,0.18)"
-                : "rgba(214,138,255,0.18)",
-            color: r.kind === "failed" ? "#ff7269" : "#d68aff",
+                ? "var(--color-danger-soft)"
+                : "var(--color-violet-soft)",
+            color: r.kind === "failed" ? "var(--color-danger)" : "var(--color-violet)",
             fontSize: 9,
             textTransform: "uppercase",
             fontWeight: 700,
@@ -203,7 +203,7 @@ function VaultOrderRow({ r }: { r: VaultOrderRecord }) {
               onClick={onResolve}
               style={{
                 ...vaultActionBtnStyle(busy),
-                color: "#5be07b",
+                color: "var(--color-ok)",
                 borderColor: "rgba(91,224,123,0.4)",
                 marginRight: 4,
               }}

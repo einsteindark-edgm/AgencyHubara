@@ -114,7 +114,7 @@ export function ReadyForShip({ order }: Props) {
             padding: 8,
             background: "rgba(255,114,105,0.12)",
             border: "1px solid rgba(255,114,105,0.3)",
-            color: "#ff7269",
+            color: "var(--color-danger)",
             fontSize: 11,
             borderRadius: 4,
           }}

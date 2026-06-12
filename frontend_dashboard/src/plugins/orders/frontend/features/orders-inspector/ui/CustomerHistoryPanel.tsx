@@ -65,7 +65,7 @@ export function CustomerHistoryPanel({ order }: { order: Order }) {
             style={{
               marginTop: 6,
               fontSize: 11,
-              color: "#ff7269",
+              color: "var(--color-danger)",
             }}
           >
             No pudimos generar el resumen ahora. Probá de nuevo.
@@ -113,7 +113,7 @@ function CustomerSummaryDisplay({ result }: { result: CustomerSummary }) {
         {result.error_detail && (
           <>
             <span>·</span>
-            <span style={{ color: "#ffb44a" }} title={result.error_detail}>
+            <span style={{ color: "var(--color-warn)" }} title={result.error_detail}>
               fallback (LLM falló)
             </span>
           </>

@@ -43,9 +43,9 @@ export function OrdersFilters({ view, setView, payType, setPayType, orders }: Pr
     icon: React.ReactNode; accent?: boolean; color?: string;
   }[] = [
     { key: "all",         label: "Todas",        count: active.length,                                                       icon: <Icon.box /> },
-    { key: "unscheduled", label: "Sin agendar",  count: active.filter((o) => !o.dueIso).length,                              icon: <Icon.cal />, color: "#ffb44a" },
+    { key: "unscheduled", label: "Sin agendar",  count: active.filter((o) => !o.dueIso).length,                              icon: <Icon.cal />, color: "var(--color-warn)" },
     { key: "today",       label: "Para hoy",     count: active.filter((o) => !!o.dueIso && o.dueIso === today).length,       icon: <Icon.clock />, accent: true },
-    { key: "overdue",     label: "Retrasadas",   count: active.filter((o) => o.overdue).length,                              icon: <Icon.alert />, color: "#ff7269" },
+    { key: "overdue",     label: "Retrasadas",   count: active.filter((o) => o.overdue).length,                              icon: <Icon.alert />, color: "var(--color-danger)" },
     { key: "tomorrow",    label: "Mañana",       count: active.filter((o) => !!o.dueIso && o.dueIso === tomorrow).length,    icon: <Icon.cal /> },
     { key: "week",        label: "Esta semana",  count: weekCount,                                                           icon: <Icon.cal /> },
     { key: "inprocess",   label: "En proceso",   count: active.filter((o) => o.status === "preparing" || o.status === "ready").length, icon: <Icon.pkg /> },
@@ -56,8 +56,8 @@ export function OrdersFilters({ view, setView, payType, setPayType, orders }: Pr
     key: PayTypeFilter; label: string; count: number; dot: string;
   }[] = [
     { key: "all",       label: "Todas las modalidades", count: active.length,                                          dot: "rgba(255,255,255,0.25)" },
-    { key: "confirmed", label: "Anticipado",            count: active.filter((o) => o.payType === "confirmed").length, dot: "#5be07b" },
-    { key: "cod",       label: "Contra entrega",        count: active.filter((o) => o.payType === "cod").length,       dot: "#ffb44a" },
+    { key: "confirmed", label: "Anticipado",            count: active.filter((o) => o.payType === "confirmed").length, dot: "var(--color-ok)" },
+    { key: "cod",       label: "Contra entrega",        count: active.filter((o) => o.payType === "cod").length,       dot: "var(--color-warn)" },
   ];
 
   return (

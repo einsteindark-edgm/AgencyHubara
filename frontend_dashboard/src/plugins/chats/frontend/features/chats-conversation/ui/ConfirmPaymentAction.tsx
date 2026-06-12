@@ -150,7 +150,7 @@ export function ConfirmPaymentAction({ orderId }: Props) {
           <div style={{ fontWeight: 700, fontSize: "0.82rem", marginBottom: 2 }}>
             Confirmar pago del pedido
           </div>
-          <p style={{ margin: 0, fontSize: "0.72rem", color: "var(--fg-faint, #8e8e93)", lineHeight: 1.35 }}>
+          <p style={{ margin: 0, fontSize: "0.72rem", color: "var(--fg-faint, var(--color-neutral))", lineHeight: 1.35 }}>
             El pedido se agenda (queda como pedido en preparación) y se marca el
             pago como recibido, en un solo paso.
           </p>
@@ -248,7 +248,7 @@ const fieldStyle: React.CSSProperties = {
 };
 const lblStyle: React.CSSProperties = {
   fontSize: "0.68rem",
-  color: "var(--fg-faint, #8e8e93)",
+  color: "var(--fg-faint, var(--color-neutral))",
 };
 const inputStyle: React.CSSProperties = {
   padding: "0.35rem 0.5rem",
@@ -263,7 +263,7 @@ const errStyle: React.CSSProperties = {
   borderRadius: 6,
   background: "rgba(255,114,105,0.14)",
   border: "1px solid rgba(255,114,105,0.4)",
-  color: "#ff7269",
+  color: "var(--color-danger)",
   fontSize: "0.7rem",
   lineHeight: 1.3,
 };

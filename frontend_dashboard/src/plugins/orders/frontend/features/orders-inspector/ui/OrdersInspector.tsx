@@ -73,8 +73,8 @@ export function OrdersInspector({ order }: Props) {
                   letterSpacing: 0.5,
                   padding: "2px 6px",
                   borderRadius: 4,
-                  background: "rgba(214,138,255,0.18)",
-                  color: "#d68aff",
+                  background: "var(--color-violet-soft)",
+                  color: "var(--color-violet)",
                   verticalAlign: "middle",
                 }}
               >

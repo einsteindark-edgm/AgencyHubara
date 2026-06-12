@@ -57,7 +57,7 @@ function ItemRow({ item }: { item: OrderItemDetail }) {
               gap: 6,
               fontSize: 11,
               color: item.variant_label_mismatch
-                ? "#ffb44a"  // ámbar warning
+                ? "var(--color-warn)"  // ámbar warning
                 : "var(--fg-soft)",
             }}
           >
@@ -67,7 +67,7 @@ function ItemRow({ item }: { item: OrderItemDetail }) {
                 background: item.variant_label_mismatch
                   ? "rgba(255,180,74,0.12)"
                   : "rgba(214,138,255,0.12)",
-                color: item.variant_label_mismatch ? "#ffb44a" : "#d68aff",
+                color: item.variant_label_mismatch ? "var(--color-warn)" : "var(--color-violet)",
                 borderRadius: 3,
                 fontWeight: 600,
                 letterSpacing: 0.3,
@@ -84,7 +84,7 @@ function ItemRow({ item }: { item: OrderItemDetail }) {
           <div
             style={{
               fontSize: 10,
-              color: "#ffb44a",
+              color: "var(--color-warn)",
               marginTop: 2,
               lineHeight: 1.35,
             }}
