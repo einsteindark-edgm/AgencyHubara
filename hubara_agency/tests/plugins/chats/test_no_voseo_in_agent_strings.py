@@ -61,10 +61,24 @@ _PATTERN = re.compile(
 )
 
 
+# Archivos EXENTOS: contienen vocabulario voseo como DATO de un detector (la
+# rúbrica de evals caza voseo en las respuestas del agente, igual que este
+# guard) — ese vocabulario nunca es texto customer-facing. Cualquier entrada
+# nueva acá requiere la misma justificación: "es denylist de un detector".
+_DETECTOR_VOCABULARY_EXEMPT = {
+    "sales_eval/evals/script_rubric.py",
+}
+
+
 def _iter_agent_py_files():
     assert _AGENT_ROOT.is_dir(), f"no existe el árbol del agente: {_AGENT_ROOT}"
     # workspace/ son .md (no .py); rglob("*.py") ya los excluye.
-    return sorted(_AGENT_ROOT.rglob("*.py"))
+    return sorted(
+        p
+        for p in _AGENT_ROOT.rglob("*.py")
+        if str(p.relative_to(_AGENT_ROOT)).replace("\\", "/")
+        not in _DETECTOR_VOCABULARY_EXEMPT
+    )
 
 
 def test_no_voseo_in_chats_agent_python_strings() -> None:
