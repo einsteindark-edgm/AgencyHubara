@@ -3,7 +3,13 @@ from fastapi.responses import FileResponse, StreamingResponse
 import asyncio
 import json
 import os
+import time
+from pathlib import Path
+
+from loguru import logger
+
 from src.platform.config import WORKSPACE_VAULT_DIR
+from src.platform.events import DashboardEvent, get_dashboard_event_bus
 from src.platform.media import resolve_media_file
 
 router = APIRouter()
@@ -65,17 +71,195 @@ def _compute_pending_payment_order_id(data: dict) -> str | None:
 # here — two probes mean two truths to keep in sync.
 
 
-async def dashboard_event_generator():
-    """Generador asíncrono para enviar eventos con retraso de 2.5s"""
-    while True:
-        data = await list_dashboard_sessions()
-        yield f"data: {json.dumps(data)}\n\n"
-        await asyncio.sleep(2.5)
+# ── Eventos del dashboard — SSE multiplexado (F1, auditoría 2026-06-10) ────
+#
+# Reemplaza al viejo `/stream`, que empujaba el snapshot COMPLETO cada 2.5s
+# POR CLIENTE hubiera o no cambios (polling server-side disfrazado). Ahora:
+#
+#   - UN sampler de fondo (compartido entre todos los clientes) stat-ea los
+#     metadata.json del vault cada 2.5s y solo emite CUANDO ALGO CAMBIÓ.
+#   - `/events` multiplexa dominios en un solo stream:
+#       chats.sessions_snapshot  (payload = lista completa, para setQueryData)
+#       chats.session_updated    (id = sesión que cambió → invalidar detalle)
+#       orders.changed / eta.changed (derivados del diff de metadata — cubre
+#         mutaciones de los WORKERS vía el volumen compartido del vault; las
+#         mutaciones del propio API las publican los routers de orders/catalog
+#         directo al bus, ver src/platform/events)
+#   - heartbeat (`: ping`) cada 25s para que proxies/webviews no corten.
+#
+# El sampler arranca lazy con el primer suscriptor y vive lo que viva el
+# proceso (un solo proceso uvicorn — ver doc del bus).
 
-@router.get("/stream")
-async def stream_dashboard_sessions():
-    """Server-Sent Events endpoint for realtime dashboard updates."""
-    return StreamingResponse(dashboard_event_generator(), media_type="text/event-stream")
+_SAMPLE_INTERVAL_S = 2.5
+_HEARTBEAT_S = 25.0
+_sampler_task: asyncio.Task | None = None
+
+
+def _session_signature(meta_file: Path) -> tuple[str, str]:
+    """(orders_sig, eta_sig) — proyecciones de metadata que disparan eventos
+    de otros dominios cuando las escriben los workers (register_order del
+    agente Sales, eta_tracking del agente ETA)."""
+    try:
+        data = json.loads(meta_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+        # UnicodeDecodeError NO es JSONDecodeError: una lectura a mitad de
+        # escritura puede cortar un codepoint UTF-8 multibyte (los metadata
+        # traen emojis en motivo/nombres — premortem 2026-06-11).
+        return ("", "")
+    orders_sig = json.dumps(
+        [data.get("registered_order"), data.get("failed_order_registrations")],
+        sort_keys=True,
+        default=str,
+    )
+    eta_sig = json.dumps(data.get("eta_tracking"), sort_keys=True, default=str)
+    return (orders_sig, eta_sig)
+
+
+def _sample_vault_state(
+    vault_dir: Path,
+    prev: dict[str, dict] | None = None,
+) -> dict[str, dict]:
+    """Estado observado del vault, por sesión. Barato: stat() siempre; el
+    re-parse del metadata.json solo cuando su mtime cambió (cache en `prev`)."""
+    prev = prev or {}
+    state: dict[str, dict] = {}
+    if not vault_dir.exists():
+        return state
+    for entry in os.listdir(vault_dir):
+        session_path = vault_dir / entry
+        if not (session_path.is_dir() and entry.startswith("wa_")):
+            continue
+        meta_file = session_path / "metadata.json"
+        history_file = session_path / "sessions" / f"{entry}.jsonl"
+        # TOCTOU-safe: stat directo con fallback (la sesión puede borrarse
+        # entre el listdir y acá — premortem 2026-06-11).
+        try:
+            meta_stat = meta_file.stat()
+            meta_mtime, meta_size = meta_stat.st_mtime, meta_stat.st_size
+        except OSError:
+            meta_mtime, meta_size = 0.0, 0
+        try:
+            hist_mtime = history_file.stat().st_mtime
+        except OSError:
+            hist_mtime = 0.0
+        cached = prev.get(entry)
+        # La clave del cache incluye el size: dos writes dentro del mismo
+        # quantum de mtime del filesystem no se pierden si cambió el tamaño.
+        if (
+            cached is not None
+            and cached["meta_mtime"] == meta_mtime
+            and cached.get("meta_size") == meta_size
+        ):
+            orders_sig, eta_sig = cached["orders_sig"], cached["eta_sig"]
+        elif meta_mtime > 0.0:
+            orders_sig, eta_sig = _session_signature(meta_file)
+        else:
+            orders_sig, eta_sig = ("", "")
+        state[entry] = {
+            "meta_mtime": meta_mtime,
+            "meta_size": meta_size,
+            "hist_mtime": hist_mtime,
+            "orders_sig": orders_sig,
+            "eta_sig": eta_sig,
+        }
+    return state
+
+
+def _diff_to_events(
+    prev: dict[str, dict],
+    curr: dict[str, dict],
+) -> tuple[list[str], bool, bool]:
+    """(sesiones cambiadas, orders_changed, eta_changed) entre dos muestras."""
+    changed_ids: list[str] = []
+    orders_changed = False
+    eta_changed = False
+    for sid in set(prev) | set(curr):
+        p, c = prev.get(sid), curr.get(sid)
+        if p == c:
+            continue
+        changed_ids.append(sid)
+        if (p or {}).get("orders_sig") != (c or {}).get("orders_sig"):
+            orders_changed = True
+        if (p or {}).get("eta_sig") != (c or {}).get("eta_sig"):
+            eta_changed = True
+    return (sorted(changed_ids), orders_changed, eta_changed)
+
+
+async def _sampler_loop() -> None:
+    bus = get_dashboard_event_bus()
+    # El baseline se toma DENTRO del loop blindado: si el primer sample
+    # lanzara fuera del try, la task moriría en silencio con los generators
+    # SSE vivos mandando heartbeats — "Tiempo real conectado" sin eventos
+    # para siempre (premortem 2026-06-11, MEDIUM).
+    prev: dict[str, dict] | None = None
+    while True:
+        # Sleep incondicional: también marca el paso de los REINTENTOS si el
+        # baseline falla (sin esto, un fallo persistente sería un hot-loop).
+        await asyncio.sleep(_SAMPLE_INTERVAL_S)
+        try:
+            curr = await asyncio.to_thread(
+                _sample_vault_state, WORKSPACE_VAULT_DIR, prev
+            )
+            if prev is None:
+                prev = curr
+                continue
+            changed_ids, orders_changed, eta_changed = _diff_to_events(prev, curr)
+            prev = curr
+            if not changed_ids:
+                continue
+            snapshot = await list_dashboard_sessions()
+            bus.publish("chats", "sessions_snapshot", payload=snapshot)
+            for sid in changed_ids:
+                bus.publish("chats", "session_updated", id=sid)
+            if orders_changed:
+                bus.publish("orders", "changed")
+            if eta_changed:
+                bus.publish("eta", "changed")
+        except Exception:
+            # El sampler NUNCA muere por un tick malo (vault a medio escribir,
+            # JSON corrupto, etc.) — loguea y sigue.
+            logger.exception("dashboard events sampler: tick failed")
+
+
+def _ensure_sampler() -> None:
+    global _sampler_task
+    if _sampler_task is None or _sampler_task.done():
+        _sampler_task = asyncio.get_running_loop().create_task(_sampler_loop())
+
+
+async def dashboard_events_generator():
+    _ensure_sampler()
+    bus = get_dashboard_event_bus()
+    queue = bus.subscribe()
+    try:
+        # Snapshot inicial: el cliente pinta al conectar (o RE-conectar tras un
+        # corte) sin esperar el primer cambio del vault.
+        snapshot = await list_dashboard_sessions()
+        yield DashboardEvent(
+            domain="chats",
+            type="sessions_snapshot",
+            payload=snapshot,
+            ts_ms=int(time.time() * 1000),
+        ).to_sse()
+        while True:
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=_HEARTBEAT_S)
+            except asyncio.TimeoutError:
+                yield ": ping\n\n"
+                continue
+            yield event.to_sse()
+    finally:
+        bus.unsubscribe(queue)
+
+
+@router.get("/events")
+async def stream_dashboard_events():
+    """SSE multiplexado del dashboard — eventos por dominio, no snapshots ciegos."""
+    return StreamingResponse(
+        dashboard_events_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 @router.get("/sessions")
 async def list_dashboard_sessions():

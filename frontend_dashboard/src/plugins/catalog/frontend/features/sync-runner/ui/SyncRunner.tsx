@@ -99,7 +99,7 @@ export function SyncRunner({ activeId, onSelect }: Props) {
                   background: snap.stale
                     ? "rgba(255,159,10,0.15)"
                     : "rgba(48,209,88,0.15)",
-                  color: snap.stale ? "#ffb44a" : "#5be07b",
+                  color: snap.stale ? "var(--color-warn)" : "var(--color-ok)",
                 }}
               >
                 {snap.stale ? "Desactualizada" : "Fresca"}
@@ -135,7 +135,7 @@ export function SyncRunner({ activeId, onSelect }: Props) {
               alignItems: "center",
               gap: 8,
               fontSize: 12,
-              color: "#ff7269",
+              color: "var(--color-danger)",
               padding: "9px 12px",
               background: "rgba(255,69,58,0.08)",
               border: "0.5px solid rgba(255,69,58,0.25)",
@@ -253,9 +253,9 @@ function StepRow({ step }: { step: SyncStep }) {
 function stepToneColor(status: SyncStepStatus): string {
   switch (status) {
     case "done":
-      return "#5be07b";
+      return "var(--color-ok)";
     case "failed":
-      return "#ff7269";
+      return "var(--color-danger)";
     case "running":
       return "var(--accent-fg, #0a84ff)";
     default:
@@ -266,14 +266,14 @@ function stepToneColor(status: SyncStepStatus): string {
 function StepIndicator({ status }: { status: SyncStepStatus }) {
   if (status === "done") {
     return (
-      <span style={{ color: "#5be07b", display: "inline-flex" }}>
+      <span style={{ color: "var(--color-ok)", display: "inline-flex" }}>
         <Icon.check />
       </span>
     );
   }
   if (status === "failed") {
     return (
-      <span style={{ color: "#ff7269", display: "inline-flex" }}>
+      <span style={{ color: "var(--color-danger)", display: "inline-flex" }}>
         <Icon.alert />
       </span>
     );

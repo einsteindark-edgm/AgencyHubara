@@ -12,6 +12,7 @@
  */
 
 import { Icon, MacButton } from "@/shared/ui";
+import { addDaysIso, nextDaysIsoSet, todayIso } from "@/shared/lib";
 import type { Order } from "@plugins/orders/frontend/entities/order";
 import type { PayTypeFilter, ViewFilter } from "../model/useOrderFilters";
 
@@ -26,13 +27,10 @@ interface Props {
 }
 
 export function OrdersFilters({ view, setView, payType, setPayType, orders }: Props) {
-  const today = new Date().toISOString().slice(0, 10);
-  const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
+  const today = todayIso();
+  const tomorrow = addDaysIso(1);
   // Esta semana = próximos 7 días incluyendo hoy.
-  const weekIsos = new Set<string>();
-  for (let i = 0; i < 7; i++) {
-    weekIsos.add(new Date(Date.now() + i * 86_400_000).toISOString().slice(0, 10));
-  }
+  const weekIsos = nextDaysIsoSet(7);
   // Bug fix 2026-05-26: counters de las vistas excluyen órdenes canceladas.
   // Las canceladas viven en la columna "Cancelada" del kanban pero NO se
   // suman a las métricas operacionales (sería ruido — "5 órdenes para hoy"
@@ -45,9 +43,9 @@ export function OrdersFilters({ view, setView, payType, setPayType, orders }: Pr
     icon: React.ReactNode; accent?: boolean; color?: string;
   }[] = [
     { key: "all",         label: "Todas",        count: active.length,                                                       icon: <Icon.box /> },
-    { key: "unscheduled", label: "Sin agendar",  count: active.filter((o) => !o.dueIso).length,                              icon: <Icon.cal />, color: "#ffb44a" },
+    { key: "unscheduled", label: "Sin agendar",  count: active.filter((o) => !o.dueIso).length,                              icon: <Icon.cal />, color: "var(--color-warn)" },
     { key: "today",       label: "Para hoy",     count: active.filter((o) => !!o.dueIso && o.dueIso === today).length,       icon: <Icon.clock />, accent: true },
-    { key: "overdue",     label: "Retrasadas",   count: active.filter((o) => o.overdue).length,                              icon: <Icon.alert />, color: "#ff7269" },
+    { key: "overdue",     label: "Retrasadas",   count: active.filter((o) => o.overdue).length,                              icon: <Icon.alert />, color: "var(--color-danger)" },
     { key: "tomorrow",    label: "Mañana",       count: active.filter((o) => !!o.dueIso && o.dueIso === tomorrow).length,    icon: <Icon.cal /> },
     { key: "week",        label: "Esta semana",  count: weekCount,                                                           icon: <Icon.cal /> },
     { key: "inprocess",   label: "En proceso",   count: active.filter((o) => o.status === "preparing" || o.status === "ready").length, icon: <Icon.pkg /> },
@@ -58,8 +56,8 @@ export function OrdersFilters({ view, setView, payType, setPayType, orders }: Pr
     key: PayTypeFilter; label: string; count: number; dot: string;
   }[] = [
     { key: "all",       label: "Todas las modalidades", count: active.length,                                          dot: "rgba(255,255,255,0.25)" },
-    { key: "confirmed", label: "Anticipado",            count: active.filter((o) => o.payType === "confirmed").length, dot: "#5be07b" },
-    { key: "cod",       label: "Contra entrega",        count: active.filter((o) => o.payType === "cod").length,       dot: "#ffb44a" },
+    { key: "confirmed", label: "Anticipado",            count: active.filter((o) => o.payType === "confirmed").length, dot: "var(--color-ok)" },
+    { key: "cod",       label: "Contra entrega",        count: active.filter((o) => o.payType === "cod").length,       dot: "var(--color-warn)" },
   ];
 
   return (

@@ -37,6 +37,7 @@ from temporalio.client import Client, WorkflowExecutionStatus
 from temporalio.service import RPCError, RPCStatusCode
 
 from src.platform.catalog.paths import get_max_age_minutes, get_snapshot_dir
+from src.platform.events import get_dashboard_event_bus
 from src.platform.plugin_manifest import get_task_queue
 from src.platform.temporal.client import get_temporal_client
 from src.plugins.catalog.agent.contracts import CatalogSyncInput
@@ -201,6 +202,10 @@ async def trigger_sync() -> dict[str, Any]:
             status_code=502,
             detail=f"No pude arrancar el sync en Temporal: {exc}",
         ) from exc
+
+    # F1 (auditoría frontend): avisa al dashboard que hay un run nuevo — el
+    # frontend invalida history/snapshot por evento en vez de pollear cada 5s.
+    get_dashboard_event_bus().publish("catalog", "changed", id=workflow_id)
 
     return {
         "workflow_id": workflow_id,

@@ -42,6 +42,27 @@
   --color-bubble-out: #2a2a2d;
   --color-bubble-in:  #0a5cd1;
 
+  /* Paleta de ESTADOS de los plugins (F4, auditoría 2026-06-10). Valores
+     EXACTOS de los literales que estaban inline en orders/ads/chats — son
+     tokens nuevos (la paleta base de arriba usa otros tonos; mapear ahí
+     habría cambiado el render). `-soft` = el rgba(…,0.18) recurrente de
+     chips/badges. Alphas atípicas (0.08/0.3/0.35…) siguen literales hasta
+     que el design system las consolide. */
+  --color-ok:           #5be07b;
+  --color-ok-soft:      rgba(91,224,123,0.18);
+  --color-warn:         #ffb44a;
+  --color-warn-soft:    rgba(255,180,74,0.18);
+  --color-danger:       #ff7269;
+  --color-danger-soft:  rgba(255,114,105,0.18);
+  --color-info:         #5fa9ff;
+  --color-info-soft:    rgba(95,169,255,0.18);
+  --color-cyan:         #5fdcff;
+  --color-cyan-soft:    rgba(95,220,255,0.18);
+  --color-violet:       #d68aff;
+  --color-violet-soft:  rgba(214,138,255,0.18);
+  --color-neutral:      #8e8e93;
+  --color-neutral-soft: rgba(142,142,147,0.18);
+
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
 }

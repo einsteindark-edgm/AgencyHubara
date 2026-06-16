@@ -60,8 +60,14 @@ class TransferToSalesAgentTool(ToolBase):
             "resumen": {
                 "type": "string",
                 "description": (
-                    "Resumen de 1 línea de lo que dijo el usuario para que "
-                    "ventas pueda retomar la conversación."
+                    "Briefing para que ventas retome SIN re-preguntar. DEBE "
+                    "incluir, en este orden: (1) el texto LITERAL del último "
+                    "mensaje del cliente entre comillas, (2) qué eligió ya el "
+                    "cliente (producto, aroma, color, cantidad — lo que esté "
+                    "confirmado en el historial), (3) cuál es el SIGUIENTE "
+                    "dato pendiente del pedido. Ejemplo: 'Cliente escribió "
+                    "\"Dame 2\". Ya eligió: Cruz de Vida, aroma Drakar, color "
+                    "Gris, cantidad 2. Siguiente paso: datos de envío.'"
                 ),
                 "minLength": 1,
             },

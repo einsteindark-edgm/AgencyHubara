@@ -1,35 +1,49 @@
 /**
- * Status bar inferior con indicadores de conexión, contadores, breadcrumb,
- * agente activo, latencia y atajos.
+ * Status bar inferior del shell.
+ *
+ * F2.3 (auditoría 2026-06-10): cero métricas fake — el prototipo mostraba
+ * "247 conversaciones · 184 ms" hardcodeados. Hoy muestra SOLO datos reales:
+ * el estado de la conexión del event-stream (se lo pasa el Dashboard por
+ * prop — esta capa no importa de shared/api) + el hint de atajos. Los
+ * contadores operativos llegan con el endpoint platform/health (F2 fase B).
  */
 
-import { Icon } from "../Icon";
+interface StatusBarProps {
+  /** Estado del SSE multiplexado (`useEventStreamState()` en el Dashboard). */
+  connection?: "connecting" | "open" | "reconnecting";
+}
 
-export function StatusBar() {
+const CONNECTION_LABEL: Record<
+  NonNullable<StatusBarProps["connection"]>,
+  string
+> = {
+  connecting: "Conectando…",
+  open: "Tiempo real conectado",
+  reconnecting: "Reconectando…",
+};
+
+export function StatusBar({ connection }: StatusBarProps) {
   return (
-    <div className="statusbar">
+    <div className="statusbar" role="status">
       <span className="st">
-        <span className="d" />
-        Conectado · WhatsApp Cloud API
-      </span>
-      <span className="sep" />
-      <span>247 conversaciones · 38 sin asignar</span>
-      <span className="sep" />
-      <span className="crumb">
-        Bandeja <Icon.chevR /> <b>Hoy</b> <Icon.chevR />{" "}
-        <b>+57 312 567 1604</b>
+        {connection !== undefined && (
+          <span
+            className="d"
+            style={{
+              background:
+                connection === "open"
+                  ? "var(--color-ok)"
+                  : connection === "reconnecting"
+                    ? "var(--color-warn)"
+                    : "var(--color-fg-muted)",
+            }}
+          />
+        )}
+        {connection !== undefined
+          ? CONNECTION_LABEL[connection]
+          : "Hubara Dashboard"}
       </span>
       <span className="right">
-        <span className="ag">
-          <i />
-          Agente: remarketing
-        </span>
-        <span className="sep" />
-        <span>
-          Latencia{" "}
-          <b style={{ color: "var(--fg-soft)", fontWeight: 500 }}>184 ms</b>
-        </span>
-        <span className="sep" />
         <kbd>⌘/</kbd> <span>atajos</span>
       </span>
     </div>

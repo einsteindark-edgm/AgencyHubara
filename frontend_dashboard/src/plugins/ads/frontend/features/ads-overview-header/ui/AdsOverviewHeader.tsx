@@ -330,7 +330,7 @@ function Kpi({ label, value, sub, tone, hero }: KpiProps) {
 function dateInputStyle(active: boolean): CSSProperties {
   return {
     background: "rgba(255,255,255,0.04)",
-    border: active ? "1px solid #5fa9ff" : "1px solid rgba(255,255,255,0.14)",
+    border: active ? "1px solid var(--color-info)" : "1px solid rgba(255,255,255,0.14)",
     borderRadius: 8,
     color: "inherit",
     font: "inherit",

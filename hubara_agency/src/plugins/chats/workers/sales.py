@@ -37,7 +37,6 @@ from src.platform.temporal.dispatcher import (
 )
 from src.platform.tool_extensions import register_tool_extension
 from src.platform.tools.escalation import EscalateToHumanTool
-from src.platform.tools.routing import TransferToSalesAgentTool
 from src.platform.workflow_helpers import CONVERSATIONAL_TURN_ACTIVITIES
 from src.platform.whatsapp.activities import (
     send_typing_indicator_activity,
@@ -96,10 +95,14 @@ setup_analytics()
 # especificas del dominio. `execute_tool` las consume via
 # `apply_tool_extensions`. PR-C movio `ManageConversationTagTool` aqui desde
 # `core/registries.py` (DIP fix: core no debe conocer tools de dominios).
-register_tool_extension(
-    "sales.transfer_to_sales_agent",
-    lambda workspace: TransferToSalesAgentTool(workspace=str(workspace)),
-)
+#
+# L-12 (run 3607aecc): `TransferToSalesAgentTool` NO se registra aqui. Es una
+# tool exclusiva de Remarketing (transfiere DE remarketing HACIA ventas; ver su
+# docstring). Registrada en Sales, el LLM de ventas se "autotransfería" al
+# recibir el handoff de remarketing: gastaba el turno sin responder al cliente,
+# pisaba `pending_handoff_summary` ajeno (perdió el "Dame 3" del cliente) y
+# enviaba la jerga interna "El control ha sido transferido al agente de
+# ventas." como burbuja real.
 register_tool_extension(
     "sales.manage_conversation_tag",
     lambda workspace: ManageConversationTagTool(workspace=str(workspace)),

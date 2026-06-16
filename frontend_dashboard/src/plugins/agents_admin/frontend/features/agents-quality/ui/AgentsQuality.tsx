@@ -85,7 +85,7 @@ export function AgentsQuality() {
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden p-3 text-fg">
+    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3 text-fg">
       <div className="shrink-0">
         <EvalTrendChart
           windowDays={WINDOW_DAYS}
@@ -96,7 +96,7 @@ export function AgentsQuality() {
         />
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-line">
+      <div className="flex min-h-[20rem] flex-1 flex-col overflow-hidden rounded-lg border border-line">
         <nav className="flex shrink-0 items-center gap-1 border-b border-line p-2">
           <button
             type="button"

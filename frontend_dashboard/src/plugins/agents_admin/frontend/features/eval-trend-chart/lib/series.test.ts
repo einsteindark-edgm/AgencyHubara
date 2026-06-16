@@ -3,7 +3,13 @@ import { describe, expect, it } from "vitest";
 import type { ConversationEval } from "@plugins/agents_admin/frontend/entities/episode-eval";
 import type { EvalTrendSeries } from "@plugins/agents_admin/frontend/entities/eval-trend";
 
-import { fmtDate, fmtTime, lineFromAggregate, linesFromEpisode } from "./series";
+import {
+  fmtDate,
+  fmtTime,
+  lineFromAggregate,
+  linesFromClientEpisodes,
+  linesFromEpisode,
+} from "./series";
 
 describe("fmtDate / fmtTime", () => {
   it("formatea fecha es-CO y hora", () => {
@@ -76,6 +82,66 @@ describe("linesFromEpisode", () => {
   it("tolera un episodio con una sola eval (sin evolución todavía)", () => {
     const single = { ...conv, evals: [conv.evals[0]] } as ConversationEval;
     const lines = linesFromEpisode(single);
+    expect(lines[0].points).toHaveLength(1);
+  });
+});
+
+describe("linesFromClientEpisodes", () => {
+  // Tres episodios del mismo cliente, cronológico (viejo → nuevo). Cada uno con
+  // UNA eval (como en prod: event-driven al cerrar). greeting empeora 1→0; el
+  // no_hallucination mejora 0→1.
+  const mk = (
+    episode_id: string,
+    last_date: string,
+    metrics: Record<string, number>,
+    failed: string[],
+  ) =>
+    ({
+      session_id: "wa_cliente",
+      episode_id,
+      last_date,
+      last_ts: `${last_date}T10:00:00+00:00`,
+      last_avg: 0.5,
+      closing_tag: null,
+      evals: [
+        {
+          date: last_date,
+          ts: `${last_date}T10:00:00+00:00`,
+          avg: 0.5,
+          passed: false,
+          is_candidate: false,
+          metrics,
+          failed: failed.map((m) => ({ metric: m, score: metrics[m], reason: "x" })),
+        },
+      ],
+    }) as unknown as ConversationEval;
+
+  const episodes = [
+    mk("ep_001", "2026-06-01", { greeting: 1, no_hallucination: 0 }, ["no_hallucination"]),
+    mk("ep_002", "2026-06-02", { greeting: 0.5, no_hallucination: 0.5 }, ["no_hallucination"]),
+    mk("ep_003", "2026-06-03", { greeting: 0, no_hallucination: 1 }, ["greeting"]),
+  ];
+
+  it("un punto por episodio (no por re-eval), valor = última eval del episodio", () => {
+    const lines = linesFromClientEpisodes(episodes);
+    const byMetric = Object.fromEntries(lines.map((l) => [l.metric, l]));
+    expect(byMetric.greeting.points.map((p) => p.value)).toEqual([1, 0.5, 0]);
+    expect(byMetric.no_hallucination.points.map((p) => p.value)).toEqual([0, 0.5, 1]);
+    // la etiqueta del punto es el episodio (no la fecha)
+    expect(byMetric.greeting.points[0].label).toBe("ep_001");
+  });
+
+  it("below sale del failed POR métrica de cada episodio", () => {
+    const lines = linesFromClientEpisodes(episodes);
+    const byMetric = Object.fromEntries(lines.map((l) => [l.metric, l]));
+    // no_hallucination falló en ep_001 y ep_002, no en ep_003
+    expect(byMetric.no_hallucination.points.map((p) => p.below)).toEqual([true, true, false]);
+    // greeting solo falló en ep_003
+    expect(byMetric.greeting.points.map((p) => p.below)).toEqual([false, false, true]);
+  });
+
+  it("un solo episodio en el rango → inicio == actual (un punto)", () => {
+    const lines = linesFromClientEpisodes([episodes[0]]);
     expect(lines[0].points).toHaveLength(1);
   });
 });

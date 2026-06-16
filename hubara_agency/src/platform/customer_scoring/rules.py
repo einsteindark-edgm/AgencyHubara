@@ -140,7 +140,7 @@ def parse_rules_doc(raw: dict[str, Any]) -> RulesDoc:
     )
     # Ordenamos por min_score DESC — el primero que aplica wins.
     score_letter = tuple(
-        sorted(score_letter, key=lambda l: l.min_score, reverse=True)
+        sorted(score_letter, key=lambda rule: rule.min_score, reverse=True)
     )
 
     hints_raw = raw.get("reason_hints") or []

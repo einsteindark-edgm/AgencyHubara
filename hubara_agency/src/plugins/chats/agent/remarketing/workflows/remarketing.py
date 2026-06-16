@@ -369,9 +369,39 @@ class RemarketingSessionWorkflow:
                         workflow.logger.info(f"Remarketing respondió para sesión {session_id}.")
 
                     if self._force_shutdown:
-                        # Cancel-shutdown si llegaron mensajes nuevos durante
-                        # el procesamiento (Fix 3 / H3, gated). Simetrico al
-                        # de Sales.
+                        # M1/L-13 (run 8894825b): en remarketing,
+                        # `_force_shutdown=True` ⟺ "ya transferí a Sales" (sus
+                        # 2 únicos set-sites son el transfer del LLM y el
+                        # force-handoff determinista). Los mensajes que
+                        # llegaron durante el procesamiento ("Dame 2") NO
+                        # ganan otro turno LLM aquí: ese turno costaba ~9s,
+                        # siempre terminaba en el force-handoff determinista,
+                        # y mientras tanto Sales ya había respondido con
+                        # contexto incompleto. Drenado directo a handoff.
+                        if (
+                            self._pending
+                            and workflow.patched("drain-pending-to-handoff-v1")
+                        ):
+                            drained = [
+                                p.message for p in self._pending if p.message
+                            ]
+                            self._pending.clear()
+                            workflow.logger.info(
+                                f"Drain post-transfer remarketing: "
+                                f"{len(drained)} mensaje(s) → handoff a Sales "
+                                f"sin turno LLM."
+                            )
+                            await self._handoff_to_sales(
+                                session_id=session_id,
+                                summary=(
+                                    "Usuario respondió: "
+                                    + "\n".join(drained)[:500]
+                                ),
+                            )
+                            return
+                        # Cancel-shutdown legacy (Fix 3 / H3, gated): solo
+                        # para replay de histories pre-drain — re-abría el
+                        # loop y procesaba los pendientes con turno LLM.
                         if (
                             self._pending
                             and workflow.patched("cancel-shutdown-on-new-pending-v1")

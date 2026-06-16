@@ -6,9 +6,14 @@ import { evalTrendSchema } from "./contracts";
 import { evalTrendKeys } from "./keys";
 import type { EvalTrend } from "./model";
 
-async function fetchTrend(days: number, suite: string): Promise<EvalTrend> {
+async function fetchTrend(
+  days: number,
+  suite: string,
+  signal?: AbortSignal,
+): Promise<EvalTrend> {
   const raw = await apiClient.get<unknown>(
     `/api/agents/evals/history?days=${days}&suite=${encodeURIComponent(suite)}`,
+    { signal },
   );
   return evalTrendSchema.parse(raw);
 }
@@ -17,6 +22,6 @@ async function fetchTrend(days: number, suite: string): Promise<EvalTrend> {
 export function useEvalTrend(days = 30, suite = "online") {
   return useQuery({
     queryKey: evalTrendKeys.trend(days, suite),
-    queryFn: () => fetchTrend(days, suite),
+    queryFn: ({ signal }) => fetchTrend(days, suite, signal),
   });
 }

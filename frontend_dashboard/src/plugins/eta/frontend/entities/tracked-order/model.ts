@@ -21,11 +21,11 @@ export interface TrackedStageMeta {
 }
 
 export const TRACKED_STAGES: TrackedStageMeta[] = [
-  { key: "preparing", label: "En preparación",   color: "#ffb44a" },
-  { key: "ready",     label: "Lista para envío", color: "#d68aff" },
-  { key: "shipping",  label: "En camino",        color: "#5fdcff" },
-  { key: "out",       label: "En reparto",       color: "#5fa9ff" },
-  { key: "delivered", label: "Entregada",        color: "#5be07b" },
+  { key: "preparing", label: "En preparación",   color: "var(--color-warn)" },
+  { key: "ready",     label: "Lista para envío", color: "var(--color-violet)" },
+  { key: "shipping",  label: "En camino",        color: "var(--color-cyan)" },
+  { key: "out",       label: "En reparto",       color: "var(--color-info)" },
+  { key: "delivered", label: "Entregada",        color: "var(--color-ok)" },
 ];
 
 export interface TrackedEvent {

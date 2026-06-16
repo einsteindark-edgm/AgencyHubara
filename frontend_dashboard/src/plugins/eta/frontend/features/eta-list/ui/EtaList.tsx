@@ -34,12 +34,12 @@ export function EtaList({ orders, filter, setFilter }: Props) {
     label: string;
     color?: string;
   }[] = [
-    { key: "flag",      label: "Necesita atención", color: "#ff7269" },
-    { key: "cod",       label: "Contra entrega",    color: "#ffb44a" },
-    { key: "prep",      label: "En preparación",    color: "#ffb44a" },
-    { key: "ready",     label: "Listas",            color: "#d68aff" },
-    { key: "ship",      label: "En camino",         color: "#5fdcff" },
-    { key: "delivered", label: "Entregadas",        color: "#5be07b" },
+    { key: "flag",      label: "Necesita atención", color: "var(--color-danger)" },
+    { key: "cod",       label: "Contra entrega",    color: "var(--color-warn)" },
+    { key: "prep",      label: "En preparación",    color: "var(--color-warn)" },
+    { key: "ready",     label: "Listas",            color: "var(--color-violet)" },
+    { key: "ship",      label: "En camino",         color: "var(--color-cyan)" },
+    { key: "delivered", label: "Entregadas",        color: "var(--color-ok)" },
   ];
   const countFor = (key: Exclude<EtaFilter, "all">) =>
     orders.filter(FILTER_PREDICATES[key]).length;

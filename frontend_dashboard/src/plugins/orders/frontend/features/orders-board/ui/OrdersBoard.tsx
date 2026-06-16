@@ -15,7 +15,7 @@ import {
   type OrderStatus,
 } from "@plugins/orders/frontend/entities/order";
 import { Avatar, Icon, MacButton } from "@/shared/ui";
-import { dayChipShort, fmtMoney } from "@/shared/lib";
+import { dayChipShort, fmtMoney, todayIso } from "@/shared/lib";
 
 const COLUMNS: OrderStatus[] = ["new", "preparing", "ready", "shipping", "delivered", "cancelled"];
 
@@ -132,7 +132,7 @@ export function OrdersBoard({ orders, selectedId, onSelect }: Props) {
             right: 24,
             background: "rgba(255,114,105,0.15)",
             border: "1px solid rgba(255,114,105,0.4)",
-            color: "#ff7269",
+            color: "var(--color-danger)",
             padding: "10px 14px",
             borderRadius: 8,
             fontSize: 12,
@@ -191,7 +191,7 @@ function Card({ order, selected, onSelect }: CardProps) {
       // (cliente confirmó pero operador no procesó) de orders ya activas.
       style={
         order.isDraft
-          ? { borderLeft: "3px solid #d68aff", cursor: "grab" }
+          ? { borderLeft: "3px solid var(--color-violet)", cursor: "grab" }
           : { cursor: "grab" }
       }
     >
@@ -211,8 +211,8 @@ function Card({ order, selected, onSelect }: CardProps) {
                 letterSpacing: 0.4,
                 padding: "1px 5px",
                 borderRadius: 3,
-                background: "rgba(255,180,74,0.18)",
-                color: "#ffb44a",
+                background: "var(--color-warn-soft)",
+                color: "var(--color-warn)",
                 verticalAlign: "middle",
               }}
               title="Click para agendar la fecha de entrega y avanzar al stage 'En preparación'."
@@ -230,8 +230,8 @@ function Card({ order, selected, onSelect }: CardProps) {
                 letterSpacing: 0.4,
                 padding: "1px 5px",
                 borderRadius: 3,
-                background: "rgba(214,138,255,0.18)",
-                color: "#d68aff",
+                background: "var(--color-violet-soft)",
+                color: "var(--color-violet)",
                 verticalAlign: "middle",
               }}
               title="Draft Order — cliente confirmó la compra pero el operador todavía no la procesó."
@@ -303,7 +303,7 @@ export function OrdersHeader({
   filteredTotal: number;
   title: string;
 }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayIso();
   // YYYY-MM del mes actual — usado para filtrar dueIso del mes corriente.
   const monthPrefix = today.slice(0, 7);
   const k = useMemo(

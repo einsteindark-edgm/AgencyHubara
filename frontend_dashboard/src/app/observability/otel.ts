@@ -25,6 +25,8 @@ import { XMLHttpRequestInstrumentation } from "@opentelemetry/instrumentation-xm
 import { resourceFromAttributes } from "@opentelemetry/resources";
 import {
   BatchSpanProcessor,
+  ParentBasedSampler,
+  TraceIdRatioBasedSampler,
   WebTracerProvider,
 } from "@opentelemetry/sdk-trace-web";
 import { ATTR_SERVICE_NAME } from "@opentelemetry/semantic-conventions";
@@ -45,6 +47,12 @@ export function initWebTracing(): void {
   if (initialized) return;
   initialized = true;
 
+  // F6.6 (auditoría 2026-06-10): opt-in en dev / on en prod (VITE_OTEL_ENABLED
+  // fuerza). Sin esto, cada fetch generaba spans y el exporter posteaba a
+  // /v1/traces cada ~5s aunque NO hubiera collector — el "traces llamándose
+  // cada rato" que se veía en la Network tab.
+  if (!env.otelEnabled) return;
+
   try {
     // El header `traceparent` se propaga SOLO a llamadas al backend — a terceros
     // rompería su CORS. Same-origin se propaga siempre por default.
@@ -53,6 +61,13 @@ export function initWebTracing(): void {
     const provider = new WebTracerProvider({
       resource: resourceFromAttributes({
         [ATTR_SERVICE_NAME]: "dashboard-frontend",
+      }),
+      // Muestreo por trace-id (respeta la decisión del padre): con
+      // VITE_OTEL_SAMPLE_RATE=0.1 solo el 10% de las interacciones exporta.
+      sampler: new ParentBasedSampler({
+        root: new TraceIdRatioBasedSampler(
+          Number.isFinite(env.otelSampleRate) ? env.otelSampleRate : 1,
+        ),
       }),
       spanProcessors: [
         new BatchSpanProcessor(

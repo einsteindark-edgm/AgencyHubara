@@ -9,4 +9,5 @@ export { MacButton } from "./Button";
 export { Panel, InsBlock } from "./Panel";
 export { Avatar } from "./Avatar";
 export { MissingData } from "./MissingData";
-export { TitleBar, Toolbar, StatusBar, type SectionKey } from "./chrome";
+export { ErrorBoundary } from "./ErrorBoundary";
+export { Toolbar, StatusBar, type SectionKey } from "./chrome";

@@ -32,12 +32,12 @@ export function useInboxFilters(chats: ChatInboxItem[]) {
     const byTag = (key: InboxFilter) =>
       chats.filter((c) => TAG_TO_FILTER[c.tag] === key).length;
     return [
-      { key: "Humano",      count: humanCount,         color: "#ff7269",                       priority: true },
+      { key: "Humano",      count: humanCount,         color: "var(--color-danger)",                       priority: true },
       { key: "Todas",       count: chats.length,        color: "var(--fg-soft)" },
-      { key: "Interesado",  count: byTag("Interesado"), color: "#5fa9ff" },
-      { key: "Pendiente",   count: byTag("Pendiente"),  color: "#ffb44a" },
-      { key: "Cliente",     count: byTag("Cliente"),    color: "#5be07b" },
-      { key: "Remarketing", count: byTag("Remarketing"),color: "#d68aff" },
+      { key: "Interesado",  count: byTag("Interesado"), color: "var(--color-info)" },
+      { key: "Pendiente",   count: byTag("Pendiente"),  color: "var(--color-warn)" },
+      { key: "Cliente",     count: byTag("Cliente"),    color: "var(--color-ok)" },
+      { key: "Remarketing", count: byTag("Remarketing"),color: "var(--color-violet)" },
       { key: "Frío",        count: byTag("Frío"),       color: "rgba(235,235,235,0.55)" },
     ];
   }, [chats]);

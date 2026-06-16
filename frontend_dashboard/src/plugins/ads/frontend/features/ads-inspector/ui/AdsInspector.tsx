@@ -177,8 +177,8 @@ export function AdsInspector({ campaign }: Props) {
             <span
               className="ads-tip-ico"
               style={{
-                background: "rgba(91,224,123,0.18)",
-                color: "#5be07b",
+                background: "var(--color-ok-soft)",
+                color: "var(--color-ok)",
               }}
             >
               <AdsIcon.trend />
@@ -195,8 +195,8 @@ export function AdsInspector({ campaign }: Props) {
             <span
               className="ads-tip-ico"
               style={{
-                background: "rgba(255,180,74,0.18)",
-                color: "#ffb44a",
+                background: "var(--color-warn-soft)",
+                color: "var(--color-warn)",
               }}
             >
               <AdsIcon.info />

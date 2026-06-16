@@ -12,17 +12,35 @@ interface Props {
   chatId: string;
 }
 
+/**
+ * `NoteItem` no trae id del backend y las notas nuevas se PREPENDEAN — con
+ * `key={index}` cada agregado desplazaba la key de TODAS las notas previas
+ * (React re-asocia DOM/estado a la nota equivocada). Key estable: uuid local
+ * para las creadas acá; posición-en-servidor para las que vienen del fetch
+ * (esa lista no se reordena entre sí).
+ */
+type KeyedNote = NoteItem & { key: string };
+
 export function ChatsNotes({ chatId }: Props) {
   const { data: initial = [] } = useChatNotes(chatId);
   const [draft, setDraft] = useState("");
-  const [extras, setExtras] = useState<NoteItem[]>([]);
-  const notes = useMemo(() => [...extras, ...initial], [extras, initial]);
+  const [extras, setExtras] = useState<KeyedNote[]>([]);
+  const notes = useMemo<KeyedNote[]>(
+    () => [...extras, ...initial.map((n, i) => ({ ...n, key: `srv-${i}` }))],
+    [extras, initial],
+  );
 
   const add = () => {
     const v = draft.trim();
     if (!v) return;
     setExtras([
       {
+        // randomUUID requiere secure context (https/localhost/tauri) —
+        // fallback barato por si el dashboard se sirve por IP de LAN.
+        key:
+          typeof crypto !== "undefined" && crypto.randomUUID
+            ? crypto.randomUUID()
+            : `local-${Date.now()}-${extras.length}`,
         author: "Tú",
         role: "Operador",
         time: "Ahora",
@@ -55,8 +73,8 @@ export function ChatsNotes({ chatId }: Props) {
         </div>
       </div>
       <div className="notes-list">
-        {notes.map((n, i) => (
-          <div key={i} className="note-card">
+        {notes.map((n) => (
+          <div key={n.key} className="note-card">
             <Avatar
               initials={n.author
                 .split(" ")

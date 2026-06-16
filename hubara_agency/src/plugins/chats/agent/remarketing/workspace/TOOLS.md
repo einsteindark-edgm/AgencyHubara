@@ -14,7 +14,7 @@ Cómo el agente debe pensar sus herramientas. Las **definiciones** viven en `inf
 
 - **Use when**: el cliente respondió a tu gancho y muestra cualquier signo de querer retomar la conversación de compra (preguntó algo, mostró interés, pidió más info, dijo que sí, dijo "más tarde con tiempo concreto", etc.). El sistema también dispara una transferencia determinista de respaldo si el cliente respondió y tú no llamaste esta tool, así que **invocarla cuando corresponde es la vía correcta** (la fallback es solo un salvavidas).
 - **Don't use when**: el cliente no ha respondido aún. Tu trabajo termina con el gancho proactivo; espera la respuesta.
-- **Required context**: un resumen breve de lo que dijo el cliente para que Sales tenga continuidad.
+- **Required context**: el `resumen` es el ÚNICO briefing que ventas lee antes de escribirle al cliente — si es pobre, ventas re-pregunta cosas ya elegidas y el cliente se frustra (caso real run 8894825b: "Parece estar retomando la conversación" → ventas respondió "¿En qué estábamos?"). DEBE incluir: (1) el texto LITERAL del último mensaje del cliente entre comillas, (2) qué eligió ya el cliente según el historial (producto, aroma, color, cantidad), (3) el SIGUIENTE dato pendiente del pedido. Frases vacías tipo "parece estar retomando" están prohibidas.
 - **Side effects**: el sistema inicia (o despierta) el `HubaraSalesSessionWorkflow` y le entrega el control del cliente. Tu workflow se apaga inmediatamente después; cualquier mensaje que generes posteriormente NO será enviado.
 
 ## Lo que NO haces tú (importante)

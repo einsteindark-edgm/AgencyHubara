@@ -14,6 +14,7 @@ de silencio expira.
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -53,6 +54,8 @@ class Tracker:
         self.typing_calls: list[str] = []
         self.persist_calls: list[tuple[str, str]] = []
         self.record_turn_calls: int = 0
+        self.ghosting_calls: int = 0
+        self.start_sales_calls: int = 0
 
 
 def _make_fake_activities(
@@ -60,11 +63,21 @@ def _make_fake_activities(
     *,
     workspace_path: str,
     pending_handoff: str | None = None,
+    handoff_sequence: list[str | None] | None = None,
     llm_responses: list[LLMResponseData] | None = None,
+    tool_results: dict[str, str] | None = None,
 ):
     """Crea las activities fakes con `tracker` cerrado en closure.
 
     Devuelve la lista completa de activities a registrar en el Worker.
+
+    `handoff_sequence` (L-12): valores que `read_and_clear_pending_handoff`
+    devuelve call-por-call (agotada → None). Permite simular un handoff que
+    se escribe DESPUÉS del bootstrap (mensaje del cliente durante la ventana
+    de transferencia). `pending_handoff` es el shorthand legacy de una
+    secuencia de un solo elemento.
+    `tool_results` (L-12): resultado de `execute_tool` por nombre de tool
+    (default "ok") — para simular tools que emiten decision payloads.
     """
 
     @activity.defn(name="bootstrap_sales_session_activity")
@@ -78,14 +91,17 @@ def _make_fake_activities(
             tool_definitions_json="[]",
         )
 
-    # Estado: handoff se entrega solo una vez (one-shot consume)
-    _handoff_state = {"summary": pending_handoff}
+    # Estado: secuencia de handoffs call-por-call (agotada → None). El
+    # shorthand `pending_handoff` equivale a una secuencia de 1 (one-shot).
+    if handoff_sequence is None:
+        handoff_sequence = [pending_handoff] if pending_handoff is not None else []
+    _handoff_state = {"queue": list(handoff_sequence)}
 
     @activity.defn(name="read_and_clear_pending_handoff")
     async def fake_read_handoff(session_id: str) -> str | None:
-        result = _handoff_state["summary"]
-        _handoff_state["summary"] = None
-        return result
+        if _handoff_state["queue"]:
+            return _handoff_state["queue"].pop(0)
+        return None
 
     @activity.defn(name="read_idle_timeout_seconds")
     async def fake_read_idle_timeout(session_id: str) -> int:
@@ -135,6 +151,8 @@ def _make_fake_activities(
 
     @activity.defn(name="execute_tool")
     async def fake_execute_tool(input: ExecuteToolInput) -> str:
+        if tool_results and input.name in tool_results:
+            return tool_results[input.name]
         return "ok"
 
     @activity.defn(name="record_turn")
@@ -146,18 +164,21 @@ def _make_fake_activities(
         tracker.send_whatsapp_calls.append((session_id, message))
 
     @activity.defn(name="persist_assistant_message_activity")
-    async def fake_persist(session_id: str, message: str) -> None:
+    async def fake_persist(
+        session_id: str, message: str, tools_used: list[str] | None = None
+    ) -> None:
         tracker.persist_calls.append((session_id, message))
 
     @activity.defn(name="decide_ghosting_action")
     async def fake_ghosting() -> str:
+        tracker.ghosting_calls += 1
         return "[GHOST] auto-tagging"
 
     # Dispatcher activities — registradas para que el worker las acepte aun
     # cuando el workflow las ignore en este test.
     @activity.defn(name="start_or_signal_sales_workflow")
     async def fake_start_sales(decision) -> None:
-        pass
+        tracker.start_sales_calls += 1
 
     @activity.defn(name="schedule_remarketing_workflow")
     async def fake_schedule_remarketing(decision) -> None:
@@ -426,4 +447,167 @@ async def test_pre_tool_content_is_sent_as_bubble(tmp_path: Path) -> None:
     persisted = [m for (_sid, m) in tracker.persist_calls]
     assert greeting in persisted, (
         f"El saludo no se persistió al dashboard. Persistido: {persisted}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_self_transfer_decision_is_noop_and_sends_nothing(
+    tmp_path: Path,
+) -> None:
+    """L-12 (run 3607aecc): autotransferencia dentro de sales = noop total.
+
+    El LLM de ventas, al recibir el handoff de remarketing, llamó
+    `transfer_to_sales_agent` (transferirse a sí mismo). El workflow legacy
+    ejecutaba el self-loop `start_or_signal_sales_workflow` — que PISABA el
+    `pending_handoff_summary` ajeno (perdió el "Dame 3" del cliente) — y el
+    LLM regurgitaba el `message` interno de la tool como respuesta final:
+    "El control ha sido transferido al agente de ventas." llegó al cliente.
+
+    Contrato L-12: transfer_decision dentro de sales → ni activity ni burbuja.
+    """
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    transfer_payload = json.dumps(
+        {
+            "transfer_decision": {
+                "session_id": "wa_selftx",
+                "target_route": "ventas",
+                "summary": "Cliente retomó remarketing",
+            },
+            "message": (
+                "El control ha sido transferido. NO generes más texto, "
+                "responde vacío o con 'Ok' para finalizar."
+            ),
+        },
+        ensure_ascii=False,
+    )
+    responses = [
+        # Iter 1: el LLM "se transfiere" (tool interna, sin content).
+        LLMResponseData(
+            content="",
+            finish_reason="tool_calls",
+            has_tool_calls=True,
+            tool_calls=[
+                ToolCallData(
+                    id="call_tx",
+                    name="transfer_to_sales_agent",
+                    arguments={"resumen": "Cliente retomó remarketing"},
+                )
+            ],
+        ),
+        # Iter 2: regurgita la jerga interna del tool result (el bug real).
+        LLMResponseData(
+            content="El control ha sido transferido al agente de ventas.",
+            finish_reason="stop",
+            has_tool_calls=False,
+            tool_calls=[],
+        ),
+    ]
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=SALES_QUEUE,
+            workflows=[HubaraSalesSessionWorkflow],
+            activities=_make_fake_activities(
+                tracker,
+                workspace_path=str(workspace),
+                pending_handoff="Cliente respondió 'A sí' al recordatorio",
+                llm_responses=responses,
+                tool_results={"transfer_to_sales_agent": transfer_payload},
+            ),
+        ):
+            handle = await env.client.start_workflow(
+                HubaraSalesSessionWorkflow.run,
+                SalesSessionInput(
+                    session_id="wa_selftx",
+                    runtime_workspace_path=str(workspace),
+                ),
+                id="session-wa_selftx",
+                task_queue=SALES_QUEUE,
+            )
+            await handle.result()
+
+    # 1. El self-loop NO corre: no se pisa el handoff de nadie.
+    assert tracker.start_sales_calls == 0, (
+        "start_or_signal_sales_workflow corrió en una autotransferencia — "
+        "pisa pending_handoff ajeno (L-12)."
+    )
+    # 2. La jerga interna NO viaja al cliente (ni nada de ese turno).
+    sent = [m for (_sid, m) in tracker.send_whatsapp_calls]
+    assert sent == [], (
+        f"La autotransferencia no debe producir burbujas. Enviado: {sent}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_idle_timeout_with_pending_handoff_processes_it_not_ghosting(
+    tmp_path: Path,
+) -> None:
+    """L-12 Fix D (run 3607aecc): handoff dormido se procesa, no se ghostea.
+
+    El handoff viaja por metadata (no despierta el wait_condition). Un mensaje
+    del cliente convertido en handoff durante la ventana de transferencia
+    ("Usuario respondió: Dame 3") quedaba dormido hasta el idle timeout — y el
+    flujo viejo lo coalesceaba JUNTO al trigger de ghosting con
+    `_force_shutdown=True`, suprimiendo la respuesta: el cliente nunca recibía
+    nada y el ciclo re-abría remarketing (loop).
+
+    Contrato: al timeout, PRIMERO se lee el handoff; si hay → turno normal
+    (la respuesta SE ENVÍA, sin ghosting ese ciclo). El ghosting recién corre
+    en el ciclo siguiente, si de verdad no hay nada.
+    """
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=SALES_QUEUE,
+            workflows=[HubaraSalesSessionWorkflow],
+            activities=_make_fake_activities(
+                tracker,
+                workspace_path=str(workspace),
+                # Call 1 (bootstrap): nada. Call 2 (chequeo del timeout): el
+                # handoff escrito mientras el workflow dormía. Resto: None.
+                handoff_sequence=[None, "Usuario respondió: Dame 3"],
+            ),
+        ):
+            handle = await env.client.start_workflow(
+                HubaraSalesSessionWorkflow.run,
+                SalesSessionInput(
+                    session_id="wa_lateh",
+                    runtime_workspace_path=str(workspace),
+                ),
+                id="session-wa_lateh",
+                task_queue=SALES_QUEUE,
+            )
+            # Sin signals: el cliente "ya habló" pero su mensaje quedó en el
+            # handoff de metadata. Solo el idle timeout despierta al workflow.
+            await handle.result()
+
+    # 1. La respuesta al handoff SE ENVIÓ (el flujo viejo la suprimía).
+    #    (El sanitizador anti-prefijo puede strippear "respuesta c..." del
+    #    string del fake — se asertea por sufijo, no por igualdad.)
+    sent = [m for (_sid, m) in tracker.send_whatsapp_calls]
+    assert len(sent) == 1 and "combinada del bot" in sent[0], (
+        f"La respuesta al handoff dormido no llegó al cliente. Enviado: {sent}"
+    )
+    # 2. El turno usó el framing L-12 (no el summary crudo) como user message.
+    handoff_turns = [
+        c for c in tracker.build_prompt_calls if "Dame 3" in c.message
+    ]
+    assert len(handoff_turns) == 1, (
+        f"Esperaba 1 turno del handoff, hubo {len(handoff_turns)}: "
+        f"{[c.message for c in tracker.build_prompt_calls]}"
+    )
+    assert "HANDOFF DE REMARKETING A VENTAS" in handoff_turns[0].message
+    # 3. El ghosting corrió EXACTAMENTE una vez — en el ciclo siguiente
+    #    (handoff ya drenado), no en el ciclo del handoff.
+    assert tracker.ghosting_calls == 1, (
+        f"Ghosting debió correr solo en el 2º ciclo idle. "
+        f"ghosting_calls={tracker.ghosting_calls}"
     )

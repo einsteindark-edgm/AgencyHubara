@@ -14,43 +14,42 @@
 import { useState } from "react";
 import { useScheduleOrder, type Order } from "@plugins/orders/frontend/entities/order";
 import { Icon, MacButton } from "@/shared/ui";
+import { addDaysIso, todayIso } from "@/shared/lib";
 
 interface Props {
   order: Order;
 }
 
 export function ReadyForShip({ order }: Props) {
-  // Default = mañana en formato YYYY-MM-DD
-  const tomorrow = new Date(Date.now() + 86_400_000)
-    .toISOString()
-    .slice(0, 10);
-  const todayIso = new Date().toISOString().slice(0, 10);
+  // Default = mañana; el input no permite fechas pasadas (min = hoy).
+  const minDate = todayIso();
 
-  const [date, setDate] = useState<string>(order.dueIso || tomorrow);
+  const [date, setDate] = useState<string>(order.dueIso || addDaysIso(1));
   const [time, setTime] = useState<string>(
     order.dueTime && order.dueTime !== "—" ? order.dueTime : "",
   );
   const [note, setNote] = useState<string>("");
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const schedule = useScheduleOrder();
+
+  // F5.3 (auditoría 2026-06-10): el error NO se duplica en un useState — se
+  // DERIVA de la mutation (única fuente del estado del flujo). Así no existen
+  // combinaciones imposibles tipo "pending + error viejo en pantalla".
+  const errorMsg = schedule.isPending
+    ? null
+    : schedule.isError
+      ? schedule.error.message
+      : schedule.data && !schedule.data.success
+        ? (schedule.data.error_detail ?? "No se pudo agendar la entrega.")
+        : null;
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setErrorMsg(null);
-    schedule.mutate(
-      {
-        orderId: order.id,
-        delivery_iso: date,
-        delivery_time: time || undefined,
-        note: note || undefined,
-      },
-      {
-        onSuccess: (r) => {
-          if (!r.success && r.error_detail) setErrorMsg(r.error_detail);
-        },
-        onError: (err) => setErrorMsg(err.message),
-      },
-    );
+    schedule.mutate({
+      orderId: order.id,
+      delivery_iso: date,
+      delivery_time: time || undefined,
+      note: note || undefined,
+    });
   };
 
   return (
@@ -73,7 +72,7 @@ export function ReadyForShip({ order }: Props) {
           <input
             type="date"
             value={date}
-            min={todayIso}
+            min={minDate}
             onChange={(e) => setDate(e.target.value)}
             required
           />
@@ -115,7 +114,7 @@ export function ReadyForShip({ order }: Props) {
             padding: 8,
             background: "rgba(255,114,105,0.12)",
             border: "1px solid rgba(255,114,105,0.3)",
-            color: "#ff7269",
+            color: "var(--color-danger)",
             fontSize: 11,
             borderRadius: 4,
           }}
