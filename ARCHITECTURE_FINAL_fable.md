@@ -125,7 +125,100 @@ corre TODO en cada PR y **bloquea merge a main**.
 
 ---
 
+## §3.5 TDD obligatorio — rojo → verde → refactor (cómo se programa acá, SIN excepción)
+
+> Las reglas de §3 dicen QUÉ no romper; ésta dice **CÓMO se escribe cada línea
+> de producción**: detrás de un test que falla primero. No es opcional ni
+> "cuando hay tiempo" — es el método. El panel §8 hace el "verde"
+> determinístico; TDD agrega la única disciplina que el panel no puede
+> imponer solo: **el rojo va primero**.
+
+### Las tres leyes (adherencia máxima — se cumplen las tres, siempre)
+
+1. **No escribís código de producción** hasta tener un test que **falla** y lo
+   exige.
+2. **No escribís más test** del mínimo suficiente para fallar (un error de
+   import/colección NO cuenta como rojo válido — ver abajo).
+3. **No escribís más código de producción** del mínimo suficiente para pasar
+   ese único test rojo.
+
+El ciclo es de **minutos, no de horas**: un comportamiento atómico por vuelta.
+Si te encontrás escribiendo 5 tests antes de una línea de código, o 50 líneas
+de producción para "un" test, parate — rompiste el tamaño de paso.
+
+### El bucle, concreto en este repo
+
+- **ROJO** — escribí el test del **siguiente incremento de comportamiento** y
+  corré SU comando del panel §8; **velo fallar con un assert con sentido**
+  (`AssertionError: esperaba X, vino Y`), no con `ImportError`/`fixture not
+  found`/error de colección. *Un rojo por la razón equivocada es un falso
+  rojo* — el test todavía no prueba nada. El nombre del test ES la spec
+  (`test_<sujeto>_<condición>_<resultado_esperado>`).
+- **VERDE** — el **mínimo** código de producción para que ese test pase.
+  Hardcodear para pasar el primer caso es legítimo: el segundo test
+  (triangulación) te obliga a generalizar. Corré el comando: verde.
+- **REFACTOR** — con el test de red de seguridad, limpiá test Y producción
+  (nombres, duplicación, diseño) y mantené **todo §8 verde**. El test es el
+  primer consumidor de tu API: si es feo de testear, el diseño está mal —
+  arreglá el diseño, no el test.
+
+### Qué harness usa cada capa (dónde nace el test PRIMERO)
+
+| Capa (DEHA / FSD) | Harness del test | Vive en |
+|---|---|---|
+| Dominio / use-case **puro** | pytest directo, sin mocks salvo ports inyectados | `tests/test_<x>.py` |
+| Activity | `ActivityEnvironment().run(activity, ...)` + `monkeypatch`/`tmp_path` | `tests/test_<x>_activity.py` |
+| Workflow | `WorkflowEnvironment.start_time_skipping()` + activities **fake** con tracker (R-DET lo hace 100% determinista) | `tests/test_<x>_workflow*.py` (patrón: `test_sales_workflow_debounce.py`) |
+| Tool del agente | llamar `execute_with_context(ctx, **params)` con fakes; assert sobre el **decision payload** | `tests/test_<tool>_tool.py` |
+| Frontend entity | Zod parsea un fixture del **shape real del backend** | `entities/<e>/contracts.test.ts` |
+| Frontend feature | vitest sobre comportamiento (no implementación) | `features/<f>/...test.tsx` |
+| **Gate / check nuevo** (regla de oro) | el **caso NEGATIVO primero**: fabricá el plugin/estado roto y probá que el gate lo CAZA | `test_testkit_selftest.py` ("el gate que nunca falla es un gate roto") |
+
+### Bug encontrado en producción ⇒ guard ROJO antes del fix (cierra el gap de §9)
+
+Cuando un run real revela un bug (el patrón de §9), el **primer** artefacto es
+un test que **reproduce el incidente y falla** — recién entonces el fix lo pone
+verde. El "Guard:" de cada lección L-# se escribe ANTES que el "Fix:", no
+después. (Honestidad: varios L-# de esta campaña fueron fix-then-test bajo
+presión de producción; la regla del skill es **reproduce-first** — el guard
+rojo es la definición de "entendí el bug".)
+
+### El caveat honesto (y por qué casi todo SÍ es TDD-able acá)
+
+El comportamiento **emergente de un LLM** o una **carrera de workflow** no
+siempre se puede TDD-ear de cero: no conocés el modo de fallo hasta verlo. Pero
+(a) R-DET + `WorkflowEnvironment` (time-skipping) hacen que las secuencias de
+workflow sean **deterministas y testeables** — la carrera de L-13 se reproduce
+en un test; (b) una vez visto el modo de fallo, vale la regla de arriba (guard
+rojo primero). Lo que NO es excusa: el dominio, los use-cases, los contratos
+(Zod/DTOs), las tools y los gates son TDD puro — ahí no hay caveat.
+
+### No es TDD (rechazá esto)
+
+- Escribir el código y "después los tests" (test-after) — invierte la presión
+  de diseño y normaliza el código no-testeable.
+- Asertar sobre **implementación** (llamadas internas, orden de pasos privados)
+  en vez de **comportamiento observable** (output, decision payload, estado).
+- Over-mock: si tenés que mockear medio mundo para testear una unidad, esa
+  unidad hace demasiado — es señal de diseño, no de "test difícil".
+- Un test que **no puede fallar** (sin assert real, o que pasa con el código
+  borrado). Si nunca lo viste rojo, no sabés si prueba algo.
+
+### El atajo mental
+
+Antes de tocar producción: *"¿cuál es el test que falla y exige esto?"* Si no
+podés nombrarlo, todavía no entendés el incremento. La regla de oro de las 3
+patas (campo/símbolo/check ⇒ su test en el MISMO PR) ya es TDD por contrato —
+extendela a TODO cambio.
+
+---
+
 ## §4. Recetas (paso a paso, sin pensar)
+
+> Toda receta se ejecuta **test-first (§3.5)**: el primer archivo que tocás es
+> el test que falla por la razón correcta; el código de producción de los pasos
+> de abajo es lo mínimo para ponerlo verde. La receta dice QUÉ archivos tocar;
+> el bucle rojo→verde→refactor dice EN QUÉ ORDEN y POR QUÉ.
 
 ### 4.1 Crear un plugin nuevo (full-stack)
 
