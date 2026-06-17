@@ -278,24 +278,125 @@ es HMR sobre bind-mount de MAIN (ver CLAUDE.md frontend §verificación visual).
 
 ---
 
-## §8. Verificación (la definition-of-done de CUALQUIER cambio)
+## §8. Verificación determinística — el panel de comandos (definition-of-done)
+
+> **El principio.** Cada gate es un **comando exacto con exit code**, no una
+> receta a interpretar. La programación es determinística porque el "¿está
+> bien?" no se razona: se ejecuta el verbo y se lee el `0`/`1`. Copiá-pegá.
+>
+> **Obligatorio**: el prefijo `cd hubara_agency &&` / `cd frontend_dashboard &&`
+> (lo enforcea el hook pre-bash, incluso si ya estás parado ahí:
+> `cd /abs/repo && cd hubara_agency && uv run ...`).
+>
+> **Los dummies** = el trío literal `MEDUSA_BASE_URL=http://medusa.invalid
+> MEDUSA_ADMIN_TOKEN=ci-dummy OTEL_SDK_DISABLED=true`, **antepuesto a cada**
+> `pytest`/CLI de backend (vale para `tests/architecture`, `tests/plugins`,
+> `tests/conformance`, el CLI — **NUNCA** para `tests/platform/`: cuelga en
+> retries HTTP). Un agente los inline en CADA comando: **el shell no persiste
+> env entre llamadas**, así que un `export` no alcanza. En las tablas de abajo
+> aparecen abreviados como `$DUMMIES` — expandilo SIEMPRE al trío literal.
+>
+> **SDK (`src/sdk/`)**: las acciones §8.3 (certificación) y §8.4 (CLI) llegan a
+> `main` con el **PR #67**; hasta el merge corren en esa rama.
+
+### 8.1 El comando único (definition-of-done de CUALQUIER cambio)
 
 ```bash
+# Backend (corre hoy en main): R-DIP + R-rules + plugin-contract + orquestación + meta-gate + premortem
 cd hubara_agency && uv run lint-imports && \
-  MEDUSA_BASE_URL=http://medusa.invalid MEDUSA_ADMIN_TOKEN=ci-dummy \
-  OTEL_SDK_DISABLED=true uv run pytest tests/architecture tests/plugins -q
+  MEDUSA_BASE_URL=http://medusa.invalid MEDUSA_ADMIN_TOKEN=ci-dummy OTEL_SDK_DISABLED=true \
+  uv run pytest tests/architecture tests/plugins -q
+# Frontend: codegen + type-check composite + FSD/íconos/meta-gate + unit
 cd frontend_dashboard && npm run plugins:sync && npx tsc -b && \
   npm run test:arch && npm test
 ```
 
-- Tocaste PROTECTED ⇒ prefijo `ARCH_CHANGE_APPROVED=1` en los tests + label
-  `architecture-change` en el PR.
-- Los dummies Medusa son para architecture/plugins; NO los uses con
-  `tests/platform/` (cuelga en retries HTTP).
+(Ese bloque backend es el trío literal de dummies expandido — el canónico para
+copiar.) Con el **SDK** en main (PR #67) la DoD suma la certificación TCK:
+`… uv run pytest tests/conformance -q` (§8.3). Verde todo = mergeable por
+arquitectura. Lo que sigue es el **detalle por gate** (qué caza cada uno).
+
+### 8.2 Backend — gates de arquitectura (DEHA + aislamiento de plugins)
+
+| Comando (`cd hubara_agency &&`) | Caza | Exit |
+|---|---|---|
+| `uv run lint-imports` | R-DIP: `platform ↛ plugins`, `plugins ↛ siblings`, `sdk ↛ plugins`, `platform ↛ sdk`, `tools ↛ temporalio` | 0 ok · 1 broken |
+| `$DUMMIES uv run pytest tests/architecture -q` | R-DET/JSON/STATELESS/HEARTBEAT/DIP · plugin-contract P-1..P-31 · orquestación (transitions→workers reales) · **meta-gate** (PROTECTED sin label) | 0 · 1 |
+| `$DUMMIES uv run pytest tests/plugins/test_premortem_invariants.py -q` | drift de `docker-compose.local.yml` vs `render-compose` · paridad worker↔k8s · unicidad de `task_queue` | 0 · 1 |
+
+PROTECTED tocado (`tests/architecture/**`, `.importlinter`, `_schema/`,
+allowlists P-28/P-31, `.archon/workflows/**`) ⇒ prefijo `ARCH_CHANGE_APPROVED=1`
+en local **y** label `architecture-change` en el PR. (Cómo lo ve CI: **L-14** —
+el label viaja en el contexto del evento, no se re-evalúa al re-correr.)
+
+### 8.3 Certificación — el TCK / niveles C0–C2 (SDK, PR #67)
+
+```bash
+# pytest (cada plugin INSTANCIA su TCK en tests/conformance/test_<id>_conformance.py — P-27):
+cd hubara_agency && $DUMMIES uv run pytest tests/conformance -q
+# certificar un plugin → escribe el reporte (gitignored: derivable, no se committea):
+cd hubara_agency && $DUMMIES uv run python -m src.sdk.cli certify eta
+#   → hubara_agency/.hubara/certification/eta.json  (git_sha + generated_at)
+```
+
+| Nivel | Significa | Se computa |
+|---|---|---|
+| `none` | el manifest ni siquiera valida | falla `C0-SCHEMA` / `P-29A` |
+| `C0` Declarado | manifest válido, algo declarado NO existe | falla algún `C1-*` |
+| `C1` Cargable | todo lo declarado existe, una P-rule falla | falla algún `P-*` |
+| `C2` Certificado | TCK completo verde (warnings listados, permitidos) | cero `fail` |
+| `C3` Verificado | conducta (specs + evals + smoke) | reservado (F-SDK-7) |
+
+La certificación **gobierna merge y catálogo, nunca el runtime**. Un reporte
+stale (git_sha viejo) se degrada a "sin certificar" — jamás inventa verde.
+
+### 8.4 El CLI `hubara` — verbos deterministas (SDK, PR #67)
+
+```bash
+cd hubara_agency && uv run python -m src.sdk.cli <verbo>
+```
+
+| Verbo | Qué hace | Exit |
+|---|---|---|
+| `check [<id>...]` | el **compilador rápido**: TCK estático (sin red, segundos), salida estilo rustc (`error[P-x] + fix + ref`). Sin args = los 7 plugins | 0 ok · 1 violaciones |
+| `certify [<id>...]` | `check` + escribe `.hubara/certification/<id>.json` + tabla de niveles | 1 si algún plugin < C2 |
+| `explain <código>` | el diagnóstico completo de una regla (`P-27`, `C1-DEPS`, …) | 2 si el código no existe |
+| `graph [--format=mermaid\|json]` | grafo del sistema desde los manifests (nodos con arquetipo + edges `depends_on`/`event:*`) | 0 |
+| `create plugin <id> --archetype <a>` | scaffold que **nace C2** + corre su TCK + imprime próximos pasos | 1 si no nace C2 · 2 input inválido |
+
+Una fuente (`src/sdk/testkit/checks.py`), tres frontends (pytest · reporte JSON ·
+CLI). El CLI no implementa reglas: delega en el TestKit.
+
+### 8.5 Frontend — gates FSD (`cd frontend_dashboard &&`)
+
+| Comando | Caza | Exit |
+|---|---|---|
+| `npm run plugins:sync` | regenera el plugin registry (codegen requerido por `tsc`) | 0 · 1 |
+| `npx tsc -b` | type-check composite — un import roto entre slices/plugins = fallo | 0 · ≠0 |
+| `npm run test:arch` | dep-cruiser (FSD bottom-up + plugins-no-cross) · íconos de manifest · paridad · meta-gate frontend | 0 · 1 |
+| `npm test` | vitest unit (entities/features/contracts Zod) | 0 · 1 |
+
+### 8.6 Deploy parity (solo si tocás workers o el toggle)
+
+```bash
+cd hubara_agency && ENABLED_PLUGINS=<csv> uv run python scripts/render-compose.py
+#   falla si el set viola depends_on (lista TODO junto); diffeá el artefacto (PM-10)
+docker compose -f docker-compose.local.yml up -d --remove-orphans   # SIEMPRE --remove-orphans
+```
+
+Worker nuevo ⇒ además su `k8s/aws-produccion/worker-<name>.yaml` espejo CON
+`ENABLED_PLUGINS` (P-20 audita la paridad). Backend `.py` ⇒ rebuild del
+container (`--build`); frontend en local es HMR.
+
+### 8.7 Lo que no se negocia
+
 - 3 fallos conocidos PRE-existentes en `tests/plugins/chats` (voseo + 2
-  watchdog) — no son tuyos; cualquier OTRO rojo sí.
-- Cambios de comportamiento visibles ⇒ verificá contra el stack Docker real
-  (puertos en CLAUDE.md raíz §12) — tests verdes ≠ feature viva (gotcha #1).
+  watchdog) — no son tuyos; cualquier OTRO rojo SÍ.
+- Cambio de comportamiento visible ⇒ verificá contra el stack Docker real
+  (puertos en CLAUDE.md raíz §12) — **tests verdes ≠ feature viva** (gotcha #1).
+- Repro local verde + CI rojo en un gate de allowlist/ratchet ⇒ **staleness**
+  (CI testea `refs/pull/NN/merge`): mergeá main + regenerá el ratchet, no edites
+  a mano (**L-15**).
 
 ---
 
