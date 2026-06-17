@@ -211,6 +211,37 @@ muerden: repointar `get_task_queue` self-ref (P-16 lo caza), la convención
 `agent/<worker>/` anidada (PM-7), `dashboard.workspace` (P-15 lo caza),
 `--remove-orphans`, y NO afirmar "100% aislado" si difieres un coupling.
 
+### 4.7 Drenar un import `src.platform.*` grandfatherado al SDK (canal fachada)
+
+Cuando un plugin importa `src.platform.x` directo (entrada congelada en
+`tests/architecture/p28_platform_import_allowlist.txt`), el progreso es
+moverlo a la fachada `src.sdk` y BORRARLO del ratchet. Pasos:
+
+1. **Superficie**: elegí/creá el kit de su ROL en `src/sdk/<kit>.py` (canal de
+   eventos UI ⇒ `dashboardkit`; orquestación ⇒ `eventkit`; etc. — un kit por
+   rol, no God-module). Re-export con **alias idiom** (`from src.platform.x
+   import y as y`), CERO lógica. El `ruff --fix` post-edit poda un re-export
+   sin alias (L-0).
+2. **Migrar** los imports de plugins a `from src.sdk.<kit> import ...`. isort
+   los ordena (orden canónico: `src.platform` < `src.plugins` < `src.sdk`).
+3. **Drenar**: regenerá la allowlist
+   (`cd hubara_agency && MEDUSA_BASE_URL=... uv run python -m
+   tests.architecture.test_p28_sdk_surface`). Las entradas migradas
+   DESAPARECEN. Verificá el diff = SOLO los `-N` esperados (más = otro drift).
+4. **Las 3 patas (regla de oro, MISMO PR)**: (a) **check de IDENTIDAD** en
+   `tests/architecture` — `sdk.<kit>.sym is platform.x.sym` (re-export, NO
+   re-implementación: si la fachada redefine un singleton como
+   `get_*_bus`, los plugins usan un objeto distinto del de platform y el
+   fan-out se parte en silencio); (b) template/CLI si aplica (si no,
+   documentá el N/A y por qué); (c) doc en `docs/_sdk/NN-<kit>.md` + filas en
+   `sdk/__init__` docstring, `sdk/CLAUDE.md` y el índice del README.
+5. **Verificar**: import smoke de los kits + `lint-imports` (`sdk-no-plugins`,
+   `platform-no-sdk` aguantan; `sdk → platform` es la dirección permitida) +
+   `tests/architecture` con `ARCH_CHANGE_APPROVED=1`. PR toca PROTECTED ⇒
+   label `architecture-change` (ver L-14 sobre cómo CI lo ve).
+
+Ejemplo ejecutado: `dashboardkit` (canal 1, bus del dashboard) — `docs/_sdk/09`.
+
 ---
 
 ## §5. Backend esencial (DEHA, en 10 líneas)
@@ -396,6 +427,22 @@ Otras micro-lecciones del refactor: BSD `sed` no soporta `\b` (usar `perl -pi -e
 - **Fix aplicado:** (M1) en remarketing, `_force_shutdown=True` ⟺ "ya transferí" (sus 2 únicos set-sites): los pendientes post-transfer van DIRECTO a `_handoff_to_sales("Usuario respondió: <crudos>")` sin turno LLM — la ventana de carrera baja de ~9s a ~1s (`workflow.patched("drain-pending-to-handoff-v1")`). (M2) `pending_handoff_summary` es APPEND con `\n` + idempotencia ante retries — N writes acumulan, `read_and_clear` entrega el blob completo (helper único `_append_pending_handoff` para la activity y el inline del self-loop). (M3) el schema de la tool + TOOLS.md de remarketing exigen briefing con (texto literal del cliente + elecciones confirmadas + siguiente dato pendiente); el framing del handoff en `coalesce_pending` ordena "NO re-preguntes lo ya elegido, nada de '¿en qué estábamos?'".
 - **Regla para el skill:** en una transferencia entre agentes, el origen NO razona sobre mensajes que lleguen después de transferir — los reenvía deterministas (cada turno LLM del origen es latencia que el destino paga respondiendo con datos viejos). Todo buzón escrito-por-muchos/leído-por-uno (metadata handoff) debe ser append-mode: un campo overwrite es una carrera de pérdida de datos esperando testigos. Y un handoff es un BRIEFING, no una notificación: si el destino no puede actuar sin re-preguntar, el summary falló su contrato.
 - **Guard:** `test_write_pending_handoff_append.py` (4 tests: append, orden, idempotencia, round-trip con read_and_clear) + replay-check de ambos histories reales contra el código nuevo. El drain M1 se valida en vivo (log "Drain post-transfer remarketing"). PENDIENTE candidato: workflow-test harness de remarketing (hoy solo existe para sales) para testear el drain mecánicamente.
+
+### L-14 · Un check de CI condicionado por un label lee el label del CONTEXTO DEL EVENTO, no del estado actual del PR (2026-06-16, validación en vivo, PR #67)
+
+- **Síntoma:** el PR #67 "no pasaba los unit tests" — el run rojo fallaba en el meta-gate (`test_protected_files_unchanged_vs_main`) AUNQUE el PR tenía el label `architecture-change` que debería activar el bypass.
+- **Causa raíz (tres mecanismos que se enmascaran):** el run que falló corrió con `ARCH_CHANGE_APPROVED=''` (vacío) en su contexto. (1) **Re-run reusa el payload del evento original**: el run venía de un `pull_request` previo al label (push sin label todavía); re-correrlo NO re-evalúa el label actual — GitHub reusa `github.event.pull_request.labels` del evento original. (2) **`gh pr edit --add/remove-label` fallaba SILENCIOSO**: abortaba por el error GraphQL de "Projects classic deprecation" (`repository.pullRequest.projectCards`) → el label nunca cambiaba de verdad → ningún evento `labeled`. (3) **Toggle remove+add demasiado rápido del MISMO label se "debounce-a"**: estado neto sin cambio → GitHub no emite webhook.
+- **Fix aplicado:** togglear el label por **REST API** (`gh api -X DELETE .../issues/NN/labels/<name>` y `-X POST .../labels`) con pausa entre los dos → dispara un `labeled` fresco con el label EN el contexto → `ARCH_CHANGE_APPROVED=1` → bypass → verde. La REST evita el path GraphQL roto. Confirmado con el diff de runs: apareció un run nuevo de hoy donde el `unlabeled` quedó cancelado por concurrencia y el `labeled` sobrevivió con el bypass.
+- **Regla para el skill:** un gate de CI que depende de un label se evalúa contra el **payload del evento que lo disparó**, no contra el PR "ahora". Para que un run lo vea: disparar un evento fresco que lo cargue (un push/`synchronize` con el label ya puesto, o un `labeled`). **Re-correr el run viejo no alcanza.** Y si `gh pr edit` parece no hacer nada, sospechá del GraphQL roto → caé a `gh api` (REST) y verificá el estado tras cada llamada.
+- **Guard:** documentado acá. Candidato §10: que el meta-gate, cuando falla por falta de label, imprima "este PR toca PROTECTED y el run no ve el label en su contexto — re-dispará con un push o re-aplicá el label por REST" en lugar del críptico `Meta-gate violation` (un humano/agente pierde 30 min creyendo que el código está mal).
+
+### L-15 · CI testea `refs/pull/NN/merge` (PR ⊕ main actual), no el HEAD del PR — un ratchet congelado en un PR stale diverge del baseline real (2026-06-16, validación en vivo, PR #67)
+
+- **Síntoma:** con el meta-gate ya bypasseado (L-14), el PR #67 igual fallaba en DOS tests P-28 (`test_p28_no_new_platform_imports_in_plugins` + `test_p28_allowlist_has_no_stale_entries`) que mi repro local sobre el HEAD del PR **no mostraba** (119 passed local, rojo en CI).
+- **Causa raíz:** `actions/checkout@v4` en un `pull_request` chequea `refs/pull/NN/merge` = el PR **mergeado con el main ACTUAL**, no el HEAD del PR. El PR estaba 4 días stale y main se movió debajo: (1) main había **drenado** `sales.py -> src.platform.tools.routing` (mi propio L-12) → la allowlist congelada del PR quedó con esa entrada **stale**; (2) main había **agregado** 3 imports legacy `*/api -> src.platform.events` → aparecen como **nuevos** contra la allowlist congelada. Las dos son **contradictorias de arreglar sin traer main**: en la rama del PR sola, el import de routing todavía existe (no se puede borrar de la allowlist) y los de events no existen (no se pueden agregar).
+- **Fix aplicado:** mergear `origin/main` en la rama del PR (limpio, 21 commits, sin conflictos) + **regenerar** el ratchet (`uv run python -m tests.architecture.test_p28_sdk_surface`) → reconcilia la allowlist con el baseline mergeado (drena 1, congela 3). El diff de la allowlist debe ser **exactamente** el delta esperado (lo verifiqué: −1 routing, +3 events) — un diff más grande significa otro drift que hay que mirar.
+- **Regla para el skill:** si tu repro LOCAL pasa pero CI falla en un gate de allowlist/ratchet, sospechá **staleness**: CI testea el merge con main, vos testeás el HEAD. El fix es mergear main y **regenerar el ratchet con su comando canónico**, NUNCA editar la allowlist a mano (te desincronizás del escaneo real). Corolario peligroso: un fix que **drena** un import en main (quita una línea de una allowlist congelada) puede poner en rojo **cualquier PR abierto** que congele esa línea — al drenar algo de un ratchet, revisá los PRs en vuelo que lo tocan.
+- **Guard:** el propio P-28 (igualdad exacta `current == allowed`) caza el drift; el comando de regeneración lo resuelve mecánicamente. Candidato §10: un check que avise en el PR cuando está N commits atrás de main Y toca archivos de ratchet/allowlist (el drift se vuelve visible antes del merge, no en el `refs/pull/merge`).
 
 <!-- AÑADIR NUEVAS LECCIONES ARRIBA DE ESTA LÍNEA, NUMERADAS L-1, L-2, ... -->
 
