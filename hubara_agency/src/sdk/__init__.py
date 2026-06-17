@@ -10,7 +10,8 @@ Organización (importá el kit que necesitás — no hay God-module):
 
 - ``src.sdk`` (este módulo)  → Foundation: manifest, toggle, protocolos.
 - ``src.sdk.runtime``        → estado, vault, Temporal client, heartbeat, logging.
-- ``src.sdk.eventkit``       → eventos declarativos + dispatcher (canal 2).
+- ``src.sdk.eventkit``       → eventos declarativos + dispatcher cross-worker (canal 2).
+- ``src.sdk.dashboardkit``   → push al dashboard vía bus in-process / SSE (canal 1).
 - ``src.sdk.agentkit``       → workers conversacionales (turn loop, tools, registries).
 - ``src.sdk.connectorkit``   → ports de capability hacia vendors externos (F-SDK-4).
 - ``src.sdk.testkit``        → TCK: suite de conformance + certificación (F-SDK-2).

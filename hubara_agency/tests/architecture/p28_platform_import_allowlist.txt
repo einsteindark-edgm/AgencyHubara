@@ -19,7 +19,6 @@ src/plugins/catalog/agent/use_cases/push_meta_catalog.py -> src.platform.meta_ca
 src/plugins/catalog/agent/use_cases/push_meta_catalog.py -> src.platform.meta_catalog.port
 src/plugins/catalog/agent/workflows/sync.py -> src.platform.temporal.retry_policies
 src/plugins/catalog/api/__init__.py -> src.platform.catalog.paths
-src/plugins/catalog/api/__init__.py -> src.platform.events
 src/plugins/catalog/api/__init__.py -> src.platform.plugin_manifest
 src/plugins/catalog/api/__init__.py -> src.platform.temporal.client
 src/plugins/catalog/workers/sync.py -> src.platform.logging
@@ -127,7 +126,6 @@ src/plugins/chats/agent/sales_eval/evals/select.py -> src.platform.constants
 src/plugins/chats/agent/sales_eval/workflows/evaluate_episode.py -> src.platform.temporal.retry_policies
 src/plugins/chats/agent/sales_eval/workflows/sales_eval.py -> src.platform.temporal.retry_policies
 src/plugins/chats/api/dashboard.py -> src.platform.config
-src/plugins/chats/api/dashboard.py -> src.platform.events
 src/plugins/chats/api/dashboard.py -> src.platform.media
 src/plugins/chats/api/dashboard_composition.py -> src.platform.config
 src/plugins/chats/api/dashboard_composition.py -> src.platform.session_history
@@ -209,7 +207,6 @@ src/plugins/orders/agent/activities/reconcile.py -> src.platform.temporal.heartb
 src/plugins/orders/agent/workflows/reconcile.py -> src.platform.temporal.retry_policies
 src/plugins/orders/api/__init__.py -> src.platform.config
 src/plugins/orders/api/__init__.py -> src.platform.customer_scoring.composition
-src/plugins/orders/api/__init__.py -> src.platform.events
 src/plugins/orders/api/__init__.py -> src.platform.medusa.client
 src/plugins/orders/api/__init__.py -> src.platform.medusa.composition
 src/plugins/orders/api/__init__.py -> src.platform.orders.command_port

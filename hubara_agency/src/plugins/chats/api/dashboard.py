@@ -9,8 +9,8 @@ from pathlib import Path
 from loguru import logger
 
 from src.platform.config import WORKSPACE_VAULT_DIR
-from src.platform.events import DashboardEvent, get_dashboard_event_bus
 from src.platform.media import resolve_media_file
+from src.sdk.dashboardkit import DashboardEvent, get_dashboard_event_bus
 
 router = APIRouter()
 

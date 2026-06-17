@@ -50,7 +50,8 @@ cd hubara_agency && MEDUSA_BASE_URL=http://medusa.invalid MEDUSA_ADMIN_TOKEN=ci-
 | `__init__.py` | Foundation: manifest + toggle + protocolos + routing | docs/_sdk/01 |
 | `foundation.py` | la implementación del re-export Foundation | docs/_sdk/01 |
 | `runtime.py` | vault, metadata store, Temporal client, heartbeat, logging | docs/_sdk/01 |
-| `eventkit.py` | canal 2: eventos + dispatcher + transitions | docs/_sdk/01 |
+| `eventkit.py` | canal 2: eventos + dispatcher + transitions (cross-worker, durable) | docs/_sdk/01 |
+| `dashboardkit.py` | canal 1: push al dashboard (bus in-process / SSE, efímero) | docs/_sdk/09 |
 | `agentkit.py` | workers conversacionales: turn loop + tools + registries | docs/_sdk/01 |
 | `manifest_model.py` | `PluginManifest` pydantic (validación C0) | docs/_sdk/02 |
 | `diagnostics.py` | catálogo código→mensaje→fix (`explain`) | docs/_sdk/03 |

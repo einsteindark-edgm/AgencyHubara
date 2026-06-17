@@ -23,6 +23,7 @@
 | [06-cli.md](06-cli.md) | CLI `hubara` (check/certify/explain/create/graph) | F-SDK-3 |
 | [07-connectorkit.md](07-connectorkit.md) | Ports, fakes, atribución y ratchet P-31 | F-SDK-4 |
 | [08-catalogo.md](08-catalogo.md) | Certificación en el system-map (catálogo) | F-SDK-5 |
+| [09-dashboard-bus.md](09-dashboard-bus.md) | `dashboardkit` (canal 1): push SSE al dashboard + drena P-28 | F-SDK-6 |
 
 ## El mapa mental en 30 segundos
 
@@ -34,7 +35,8 @@ plugins  ──importan──▶  src/sdk (fachada pública: Foundation + kits)
 ```
 
 - **Foundation** (`src.sdk`): manifest, toggle, protocolos. Lo que TODO plugin usa.
-- **Kits**: `runtime` (vault/Temporal/logging) · `eventkit` (canal 2) ·
+- **Kits**: `runtime` (vault/Temporal/logging) · `eventkit` (canal 2,
+  orquestación) · `dashboardkit` (canal 1, push SSE) ·
   `agentkit` (workers conversacionales) · `connectorkit` (vendors externos) ·
   `testkit` (el TCK).
 - **El "compilador"**: `cd hubara_agency && uv run python -m src.sdk.cli check`.

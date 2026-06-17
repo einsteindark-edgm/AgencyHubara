@@ -128,6 +128,26 @@ def test_p28_sdk_facade_importable() -> None:
         assert hasattr(sdk, symbol), f"src.sdk no expone {symbol!r}"
 
 
+def test_p28_dashboardkit_reexports_platform_bus() -> None:
+    """`dashboardkit` (canal 1) re-exporta el bus, NO lo re-implementa.
+
+    Regla de oro (3 patas): superficie nueva ⇒ su check. El guard con dientes
+    es la IDENTIDAD: ``get_dashboard_event_bus`` es un singleton del proceso
+    API; si la fachada lo re-implementara en vez de re-exportarlo, los plugins
+    publicarían a un bus DISTINTO del que suscriben los internos de platform y
+    el fan-out SSE se partiría en silencio. Esto exige el mismo objeto.
+    """
+    import src.platform.events as bus_impl
+    import src.sdk.dashboardkit as dashboardkit
+
+    for symbol in ("DashboardEvent", "DashboardEventBus", "get_dashboard_event_bus"):
+        assert hasattr(dashboardkit, symbol), f"dashboardkit no expone {symbol!r}"
+        assert getattr(dashboardkit, symbol) is getattr(bus_impl, symbol), (
+            f"dashboardkit.{symbol} NO es el mismo objeto que platform.events."
+            f"{symbol} — re-exportá con el alias idiom, no re-implementes."
+        )
+
+
 if __name__ == "__main__":
     # Regeneración de la allowlist (solo para DRENAR — el gate impide crecer):
     #   cd hubara_agency && uv run python -m tests.architecture.test_p28_sdk_surface
