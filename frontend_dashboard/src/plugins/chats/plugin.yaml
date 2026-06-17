@@ -1,5 +1,6 @@
 id: chats
 version: 0.1.0
+archetype: agentic  # P-29 (workers conversacionales con workspace (sales/remarketing))
 display_name: Chats
 description: Conversaciones WhatsApp con agente Temporal (sales + remarketing) + dashboard SSE + handoff humano.
 agentic: true  # workers conversacionales con workspace IDENTITY/SOUL/TOOLS/AGENTS/USER

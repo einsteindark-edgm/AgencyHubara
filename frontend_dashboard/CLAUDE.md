@@ -30,6 +30,14 @@ src/plugins/<id>/frontend/  ← capa transversal: pages/features/entities local 
 - **Vitest** (unit) + **Playwright** (e2e en `e2e/`)
 - **dependency-cruiser** + `tsconfig.arch.json` (architecture gates)
 
+## Superficie SDK (post F-SDK-0)
+
+`@/shared/sdk` es la superficie CANÓNICA del shell para plugins (espejo TS de
+`hubara_agency/src/sdk/`): `usePluginHost`/`useSelection`/`PluginHostProvider`,
+`apiClient`/`ApiError`, `subscribeSse`. Código nuevo de plugins importa de ahí
+(el resto de `@/shared/*` sigue disponible, pero lo que está en el SDK tiene
+contrato de estabilidad + check). Docs: `docs/_sdk/01-fachada-sdk.md`.
+
 ## Plugins frontend actuales
 
 `ads`, `agents_admin`, `catalog`, `chats`, `eta`, `orders`, `system_map` (+ `_schema` que es codegen artifact, no editar).

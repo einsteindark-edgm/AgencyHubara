@@ -103,6 +103,29 @@ class Stats:
 
 
 @dataclass(frozen=True)
+class PluginCertification:
+    """Veredicto de certificación del TCK por plugin (F-SDK-5, catálogo).
+
+    Computado EN VIVO por request (los checks del testkit son filesystem-only
+    y baratos) — cero staleness en el catálogo local. El nivel viene de
+    `src.sdk.testkit` (none → C0 → C1 → C2); `failed_checks` alimenta la
+    cuarentena de la UI (código + detalle; el fix se resuelve con
+    `... cli explain <código>`).
+    """
+
+    plugin_id: str
+    archetype: str | None
+    level: str                       # "none" | "C0" | "C1" | "C2"
+    fails: int
+    warns: int
+    failed_checks: list[dict] = field(default_factory=list)   # [{code, detail}]
+    warning_checks: list[dict] = field(default_factory=list)  # [{code, detail}]
+    sdk: str = ""
+    git_sha: str = ""
+    generated_at: str = ""
+
+
+@dataclass(frozen=True)
 class SystemGraph:
     """Snapshot completo del sistema para render."""
 
@@ -113,3 +136,6 @@ class SystemGraph:
     plugins: list[PluginSummary]
     stats: Stats
     warnings: list[str] = field(default_factory=list)  # info no-fatal del builder
+    # Certificación TCK por plugin (F-SDK-5). default [] = compat con
+    # builders/tests previos; la capa API la puebla vía collect_certifications.
+    certifications: list[PluginCertification] = field(default_factory=list)

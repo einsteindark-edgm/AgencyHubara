@@ -37,8 +37,8 @@ from temporalio.client import Client, WorkflowExecutionStatus
 from temporalio.service import RPCError, RPCStatusCode
 
 from src.platform.catalog.paths import get_max_age_minutes, get_snapshot_dir
-from src.platform.events import get_dashboard_event_bus
 from src.platform.plugin_manifest import get_task_queue
+from src.sdk.dashboardkit import get_dashboard_event_bus
 from src.platform.temporal.client import get_temporal_client
 from src.plugins.catalog.agent.contracts import CatalogSyncInput
 

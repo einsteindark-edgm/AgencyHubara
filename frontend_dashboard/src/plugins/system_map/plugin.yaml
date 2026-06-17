@@ -1,5 +1,6 @@
 id: system_map
 version: 0.1.0
+archetype: api_only  # P-29 (backend puro; su UI vive en system_explorer (app aparte))
 display_name: System Map
 description: |
   Plugin meta — expone un endpoint que retorna el grafo del sistema (todos los

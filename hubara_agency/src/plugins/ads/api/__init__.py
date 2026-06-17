@@ -35,7 +35,6 @@ from typing import Any
 
 from fastapi import APIRouter, Path, Query
 
-from src.platform.config import WORKSPACE_VAULT_DIR
 from src.plugins.ads.aggregation import (
     bogota_day_start_ms,
     list_ads_campaigns,
@@ -43,6 +42,7 @@ from src.plugins.ads.aggregation import (
     list_daily_series,
     scan_ad_sessions,
 )
+from src.sdk.runtime import WORKSPACE_VAULT_DIR
 
 router = APIRouter()
 

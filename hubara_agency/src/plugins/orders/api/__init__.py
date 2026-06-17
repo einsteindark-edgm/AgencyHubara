@@ -32,7 +32,6 @@ from typing import Any
 from fastapi import APIRouter, Body, HTTPException, Path, Query
 
 from src.platform.config import WORKSPACE_VAULT_DIR
-from src.platform.events import get_dashboard_event_bus
 from src.platform.customer_scoring.composition import (
     get_customer_scoring_port,
     get_customer_summary_adapter,
@@ -60,6 +59,7 @@ from src.platform.orders.reconciliation import (
 from src.platform.orders.state import STAGE_VALUES
 from src.platform.state import FilesystemMetadataStore
 from src.plugins.orders.vault_scanner import scan_vault_orders
+from src.sdk.dashboardkit import get_dashboard_event_bus
 
 router = APIRouter()
 log = logging.getLogger(__name__)

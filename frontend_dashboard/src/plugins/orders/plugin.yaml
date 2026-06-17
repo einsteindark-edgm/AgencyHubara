@@ -1,5 +1,6 @@
 id: orders
 version: 0.2.0
+archetype: full_stack  # P-29 (frontend completo + api + workers de background (no conversacionales))
 display_name: Orders
 description: Tablero kanban de órdenes (estados + filtros + inspector). Backend conectado a Medusa v2 (`/admin/orders` + `/admin/draft-orders`) via `OrderQueryPort` — los datos vivos del registro de ventas (Sales agent `register_order` tool) se ven aquí.
 

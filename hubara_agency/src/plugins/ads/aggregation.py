@@ -31,7 +31,6 @@ DEHA:
 from __future__ import annotations
 
 import datetime
-import json
 import logging
 import time
 from dataclasses import dataclass
@@ -43,6 +42,7 @@ from src.plugins.ads.classification import (
     classify_episode_state,
     classify_state,
 )
+from src.sdk.connectorkit import FilesystemAttributionStore
 
 logger = logging.getLogger(__name__)
 
@@ -176,29 +176,6 @@ class AdsDailySeriesPoint:
 # =============================================================================
 
 
-def _iter_session_dirs(vault_dir: Path):
-    """Itera los `wa_*` subdirectorios del vault. Tolera vault inexistente."""
-    if not vault_dir.exists() or not vault_dir.is_dir():
-        return
-    for entry in vault_dir.iterdir():
-        if entry.is_dir() and entry.name.startswith("wa_"):
-            yield entry
-
-
-def _read_metadata(session_dir: Path) -> dict[str, Any] | None:
-    """Lee `metadata.json` tolerando corrupción. None si no existe o falla."""
-    path = session_dir / "metadata.json"
-    if not path.exists():
-        return None
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(data, dict):
-        return None
-    return data
-
-
 def _is_meta_campaign_origin(origin: dict[str, Any] | None) -> bool:
     """True si el origin es una campaña Meta atribuible (ad/post/web_referral
     con source_id). Se agrupa por source_id en `list_ads_campaigns`."""
@@ -257,24 +234,6 @@ def _make_line_counter(session_dir: Path) -> Callable[[], int]:
     return get
 
 
-def _session_touched_since(session_dir: Path, since_ms: int) -> bool:
-    """True si la `metadata.json` se escribió en/después de `since_ms`.
-
-    Pre-filtro BARATO (un `stat`, sin parsear) para el filtro por fecha: crear o
-    avanzar un episodio SIEMPRE reescribe la metadata, así que si el archivo no
-    se tocó desde `since_ms`, ningún episodio empezó en la ventana → es seguro
-    saltear la sesión sin leerla (sin falsos negativos). Esto hace que el scan
-    escale con la ventana elegida, no con todo el historial del vault.
-
-    Defensivo: si no se puede statear, devuelve True (no saltear → parsear).
-    """
-    try:
-        mtime_ms = int((session_dir / "metadata.json").stat().st_mtime * 1000)
-    except OSError:
-        return True
-    return mtime_ms >= since_ms
-
-
 def scan_ad_sessions(
     vault_dir: Path, *, since_ms: int | None = None
 ) -> list[tuple[Path, dict[str, Any]]]:
@@ -286,19 +245,20 @@ def scan_ad_sessions(
     page-view en uno solo. Las funciones siguen siendo PURAS: con
     `sessions=None` escanean fresco (los tests no dependen del cache).
 
-    `since_ms`: si se provee, saltea (vía `mtime`, sin parsear) las sesiones sin
-    actividad desde esa fecha — el scan escala con la ventana, no con la historia
-    completa. El filtro PRECISO por episodio lo hace cada use case sobre el
-    resultado (mtime es solo un pre-filtro superset, nunca pierde data).
+    `since_ms`: pre-filtro superset por mtime (nunca pierde data) — el filtro
+    PRECISO por episodio lo hace cada use case sobre el resultado.
+
+    F-SDK-4: el descubrimiento (glob + mtime-prefilter + parse tolerante) es
+    del read model de atribución de PLATAFORMA (`AttributionReadPort` — un
+    writer: el ingest; N readers: ads hoy, CAPI mañana). Este wrapper
+    preserva la firma histórica `(session_dir, metadata)` que consume toda la
+    agregación de este módulo + sus 53K de tests.
     """
-    out: list[tuple[Path, dict[str, Any]]] = []
-    for session_dir in _iter_session_dirs(vault_dir):
-        if since_ms is not None and not _session_touched_since(session_dir, since_ms):
-            continue
-        metadata = _read_metadata(session_dir)
-        if metadata is not None:
-            out.append((session_dir, metadata))
-    return out
+    store = FilesystemAttributionStore(vault_dir)
+    return [
+        (s.session_dir, s.metadata)
+        for s in store.scan_sessions(since_ms=since_ms)
+    ]
 
 
 def _last_msg_at_ms(

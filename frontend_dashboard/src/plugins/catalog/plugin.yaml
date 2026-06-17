@@ -1,5 +1,6 @@
 id: catalog
 version: 0.1.0
+archetype: sync  # P-29 (pipeline source→sink: Medusa → snapshot local → Meta Catalog)
 display_name: Catalog Sync
 description: Sincronización del catálogo de productos (Medusa → snapshot filesystem). Worker Temporal disparado por schedule o manualmente; el frontend muestra jobs + permite disparar syncs.
 

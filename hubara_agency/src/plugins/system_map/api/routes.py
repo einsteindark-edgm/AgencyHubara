@@ -14,13 +14,14 @@ CORS: configurado en `main.py` global (no per-router).
 """
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from typing import Any
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 from src.plugins.system_map.domain.builder import build_system_graph
+from src.plugins.system_map.domain.certification import collect_certifications
 
 router = APIRouter()
 
@@ -46,6 +47,18 @@ def get_system_graph() -> JSONResponse:
     plugins (escenario muy futuro), agregar Cache-Control headers.
     """
     graph = build_system_graph()
+    # F-SDK-5: el catálogo lleva el veredicto TCK por plugin. Se computa EN
+    # VIVO (checks filesystem-only, baratos) — cero staleness; tolerante a
+    # fallas del testkit (un bug del TCK no debe tumbar el mapa: el grafo
+    # sale sin certificación + warning visible).
+    try:
+        certifications = collect_certifications([p.id for p in graph.plugins])
+        graph = replace(graph, certifications=certifications)
+    except Exception as exc:  # pragma: no cover — defensivo deliberado
+        graph = replace(
+            graph,
+            warnings=[*graph.warnings, f"certification_unavailable: {exc}"],
+        )
     return JSONResponse(
         content=_graph_to_json(graph),
         headers={

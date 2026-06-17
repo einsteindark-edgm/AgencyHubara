@@ -68,6 +68,32 @@ modules =
 ; sibling agent module imports another's workflows/, contracts/, or use_cases/.
 ; Adding `ignore_imports` here requires opening a new ADR.
 
+; --- SDK boundary (ADR-2026-06-12 / F-SDK-0) ----------------------------------
+; Dirección de dependencias: plugins → sdk → platform.
+; La mitad "plugins no importan platform" es RATCHET (gate P-28 con allowlist
+; congelada en tests/architecture/ — import-linter no soporta ratchet).
+; Estas dos mitades sí son prohibición dura desde el día 0:
+
+[importlinter:contract:sdk-no-plugins]
+name = SDK: src.sdk must not import any plugin (facade stays below plugins)
+type = forbidden
+source_modules =
+    src.sdk
+forbidden_modules =
+    src.plugins
+; El SDK es la superficie que los plugins consumen; si el SDK importara un
+; plugin, el grafo se invierte y el toggle (INV-2) deja de ser seguro.
+
+[importlinter:contract:platform-no-sdk]
+name = SDK: src.platform must not import src.sdk (no upward dependency)
+type = forbidden
+source_modules =
+    src.platform
+forbidden_modules =
+    src.sdk
+; platform es la implementación PRIVADA; el sdk la re-exporta. La flecha
+; inversa crearía ciclos fachada↔implementación.
+
 ; --- R-DIP #7 — tools/ are pure ----------------------------------------------
 [importlinter:contract:tools-no-temporal]
 name = R-DIP: tools/*.py must not import temporalio (no client, worker, or activity.defn)

@@ -89,6 +89,28 @@ export const StatsSchema = z.object({
 });
 export type Stats = z.infer<typeof StatsSchema>;
 
+// F-SDK-5 — veredicto del TCK por plugin (certificación C0–C2). El backend lo
+// computa EN VIVO por request; `failed_checks` alimenta la futura sección de
+// cuarentena y `warning_checks` las migraciones pendientes. `.default([])`
+// tolera backends previos a F-SDK-5 (campo ausente ≠ parse roto — L-10).
+export const CertCheckSchema = z.object({
+  code: z.string(),
+  detail: z.string(),
+});
+export const PluginCertificationSchema = z.object({
+  plugin_id: z.string(),
+  archetype: z.string().nullable(),
+  level: z.enum(["none", "C0", "C1", "C2", "C3"]),
+  fails: z.number().int().nonnegative(),
+  warns: z.number().int().nonnegative(),
+  failed_checks: z.array(CertCheckSchema),
+  warning_checks: z.array(CertCheckSchema),
+  sdk: z.string(),
+  git_sha: z.string(),
+  generated_at: z.string(),
+});
+export type PluginCertification = z.infer<typeof PluginCertificationSchema>;
+
 export const SystemGraphSchema = z.object({
   version: z.string(),
   generated_at: z.string(),
@@ -97,5 +119,6 @@ export const SystemGraphSchema = z.object({
   plugins: z.array(PluginSummarySchema),
   stats: StatsSchema,
   warnings: z.array(z.string()),
+  certifications: z.array(PluginCertificationSchema).default([]),
 });
 export type SystemGraph = z.infer<typeof SystemGraphSchema>;
