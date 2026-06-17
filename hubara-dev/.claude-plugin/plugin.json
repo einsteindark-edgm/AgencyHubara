@@ -1,0 +1,19 @@
+{
+  "name": "hubara-dev",
+  "version": "0.1.0",
+  "description": "Harness de desarrollo full-stack para el monorepo AgencyHubara (backend DEHA/Temporal + frontend FSD + plugin system + Platform SDK). Bundlea el skill hubara-plugin-developer, subagents especializados (explorer, tdd-author, gate-reviewer), hooks que enforzan TDD y corren los gates determinísticos, y el comando /hubara-gates. La fuente de verdad del conocimiento es ARCHITECTURE_FINAL_fable.md + docs/_sdk/.",
+  "author": {
+    "name": "einsteindark"
+  },
+  "keywords": [
+    "agencyhubara",
+    "tdd",
+    "deha",
+    "temporal",
+    "feature-sliced",
+    "plugin-system",
+    "platform-sdk",
+    "architecture-gates"
+  ],
+  "license": "SEE LICENSE IN README.md"
+}

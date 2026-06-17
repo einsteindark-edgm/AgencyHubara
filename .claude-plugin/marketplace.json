@@ -1,0 +1,17 @@
+{
+  "name": "agencyhubara",
+  "owner": {
+    "name": "einsteindark"
+  },
+  "metadata": {
+    "description": "Marketplace local del monorepo AgencyHubara — plugins de desarrollo que viven con el código que gobiernan.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "hubara-dev",
+      "source": "./hubara-dev",
+      "description": "Harness de desarrollo full-stack: skill hubara-plugin-developer + subagents + hooks TDD + gates determinísticos."
+    }
+  ]
+}
