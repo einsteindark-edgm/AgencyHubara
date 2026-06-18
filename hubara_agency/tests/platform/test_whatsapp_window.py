@@ -162,6 +162,15 @@ class TestWatchdogFireAt:
         metadata = {"service_window_expires_at_ms": exp}
         assert watchdog_fire_at(metadata) == exp - WATCHDOG_PRE_EXPIRY_MS
 
+    def test_respects_pre_expiry_minutes_env(self, monkeypatch):
+        # El lead time del watchdog debe ser configurable por env
+        # (WATCHDOG_PRE_EXPIRY_MINUTES) — así se ajusta vía ConfigMap de AWS
+        # sin redeploy, en vez de quedar fijo en 30 min.
+        monkeypatch.setenv("WATCHDOG_PRE_EXPIRY_MINUTES", "10")
+        exp = NOW_MS + ONE_DAY_MS
+        metadata = {"service_window_expires_at_ms": exp}
+        assert watchdog_fire_at(metadata) == exp - 10 * 60 * 1000
+
     def test_returns_none_when_field_missing(self):
         assert watchdog_fire_at({}) is None
 

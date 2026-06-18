@@ -44,6 +44,13 @@ spec:
           # `worker-sales.yaml`, las llaves privadas se inyectan vía overlay,
           # NO se commitean al repo. Si tu setup las trae de otro lado
           # (e.g. External Secrets Operator), respetalo.
+          # Knobs del watchdog (WATCHDOG_ENABLED / _PRE_EXPIRY_MINUTES /
+          # _QUIET_HOURS_*) desde el ConfigMap — editable sin redeploy; aplican
+          # a cada episodio nuevo tras un rollout restart. Ver
+          # scheduler-config-configmap.yaml.
+          envFrom:
+            - configMapRef:
+                name: hubara-scheduler-config
           env:
             # P-20/P-21 (INV-2): set explícito de plugins de ESTE deployment.
             - name: ENABLED_PLUGINS

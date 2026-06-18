@@ -1,0 +1,57 @@
+# Scheduler timing — la ÚNICA fuente para cambiar CUÁNDO corren los schedulers
+# del proyecto SIN redeploy de la imagen.
+#
+# Cómo cambiar un tiempo en producción (no requiere rebuild ni re-deploy del
+# proyecto — solo reinicia el worker afectado, ~segundos):
+#
+#   1. Editá el valor acá y aplicá:
+#        kubectl apply -f k8s/aws-produccion/scheduler-config-configmap.yaml
+#      (o en caliente: kubectl edit configmap hubara-scheduler-config)
+#   2. Reiniciá SOLO el worker afectado para que tome el valor nuevo:
+#        orders-reconcile : kubectl rollout restart deploy/hubara-worker-orders-reconcile
+#        sales/golden eval: kubectl rollout restart deploy/hubara-worker-sales-eval
+#        watchdog         : kubectl rollout restart deploy/hubara-worker-remarketing
+#
+# Por qué funciona sin tocar código: los 3 Temporal Schedules son objetos
+# server-side de Temporal. Al bootear, cada worker llama `_ensure_schedule`, que
+# ahora NO solo crea el schedule si falta sino que CONVERGE su spec (intervalo /
+# cron) al valor de acá aunque ya exista. Antes hacía create-only y el valor
+# viejo quedaba pegado para siempre. El watchdog NO es un Schedule (es un
+# workflow per-episodio); su lead time (`WATCHDOG_PRE_EXPIRY_MINUTES`) se lee en
+# cada episodio nuevo, así que el restart basta.
+#
+# Los workers referencian este ConfigMap vía `envFrom` (ver los worker-*.yaml);
+# cada uno ignora las claves que no usa. NO repetir estas claves como `env:`
+# inline en los Deployments: un `env:` con el mismo nombre PISA al `envFrom`.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hubara-scheduler-config
+  namespace: default
+data:
+  # --- orders/reconcile (Temporal Schedule, intervalo) ---
+  # Cada cuántos minutos barre las órdenes pendientes. Default de código: 5.
+  ORDER_RECONCILE_INTERVAL_MINUTES: "5"
+
+  # --- sales-eval ONLINE (Temporal Schedule, cron tz America/Bogota) ---
+  # "false" BORRA el schedule (la eval es event-driven al cerrar cada episodio).
+  SALES_EVAL_SCHEDULE_ENABLED: "true"
+  # Default de código: 23:00 todos los días (lookback 24h = "las de ese día").
+  SALES_EVAL_SCHEDULE_CRON: "0 23 * * *"
+
+  # --- golden-eval (Temporal Schedule, cron tz America/Bogota) — OPT-IN ---
+  # OFF por default: el golden vive en el GitHub Action. "true" lo agenda también
+  # en SigNoz vía este worker.
+  GOLDEN_EVAL_SCHEDULE_ENABLED: "false"
+  GOLDEN_EVAL_SCHEDULE_CRON: "0 6 * * *"
+
+  # --- remarketing-watchdog (workflow per-episodio, NO es un Schedule) ---
+  # Feature flag del send (default OFF — Sprint 2 sigue en MOCK).
+  WATCHDOG_ENABLED: "false"
+  # Cuántos minutos ANTES de cerrar la ventana de 24h de WhatsApp dispara el
+  # nudge. Default de código: 30.
+  WATCHDOG_PRE_EXPIRY_MINUTES: "30"
+  # Horario local del cliente en que SÍ se permite disparar (evita sends
+  # nocturnos → quality-rating drop). Allowed: [START, END).
+  WATCHDOG_QUIET_HOURS_START: "8"
+  WATCHDOG_QUIET_HOURS_END: "22"

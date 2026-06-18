@@ -31,6 +31,8 @@ from temporalio.client import (
     ScheduleOverlapPolicy,
     SchedulePolicy,
     ScheduleSpec,
+    ScheduleUpdate,
+    ScheduleUpdateInput,
 )
 from temporalio.worker import Worker
 
@@ -68,8 +70,22 @@ def _interval_minutes() -> int:
 
 
 async def _ensure_schedule(client: Client, task_queue: str) -> None:
-    """Crea el Schedule periódico si no existe (idempotente al re-arrancar)."""
+    """Asegura el Schedule periódico y CONVERGE su spec al valor de config.
+
+    Idempotente al re-arrancar Y al cambiar `ORDER_RECONCILE_INTERVAL_MINUTES`:
+    si el Schedule no existe lo crea; si ya existe (un objeto server-side de
+    Temporal que persiste entre reinicios) ACTUALIZA su spec al intervalo
+    configurado. Así cambiar el env (vía ConfigMap) + reiniciar este worker
+    mueve el intervalo sin redeploy — antes `create_schedule` tragaba
+    `ScheduleAlreadyRunningError` y el valor viejo quedaba pegado para siempre.
+
+    Solo sincroniza el `spec`: preserva el `state` (p.ej. una pausa manual del
+    operador desde la Temporal UI) y el resto del Schedule.
+    """
     minutes = _interval_minutes()
+    desired_spec = ScheduleSpec(
+        intervals=[ScheduleIntervalSpec(every=timedelta(minutes=minutes))],
+    )
     try:
         await client.create_schedule(
             _SCHEDULE_ID,
@@ -80,11 +96,7 @@ async def _ensure_schedule(client: Client, task_queue: str) -> None:
                     id=_WORKFLOW_ID,
                     task_queue=task_queue,
                 ),
-                spec=ScheduleSpec(
-                    intervals=[
-                        ScheduleIntervalSpec(every=timedelta(minutes=minutes))
-                    ],
-                ),
+                spec=desired_spec,
                 policy=SchedulePolicy(overlap=ScheduleOverlapPolicy.SKIP),
             ),
         )
@@ -93,7 +105,16 @@ async def _ensure_schedule(client: Client, task_queue: str) -> None:
             _SCHEDULE_ID, minutes,
         )
     except ScheduleAlreadyRunningError:
-        logger.info("📅 Schedule '{}' ya existe — no se re-crea", _SCHEDULE_ID)
+
+        def _converge(inp: ScheduleUpdateInput) -> ScheduleUpdate:
+            inp.description.schedule.spec = desired_spec
+            return ScheduleUpdate(schedule=inp.description.schedule)
+
+        await client.get_schedule_handle(_SCHEDULE_ID).update(_converge)
+        logger.info(
+            "📅 Schedule '{}' actualizado — reconciliación cada {} min",
+            _SCHEDULE_ID, minutes,
+        )
 
 
 async def main() -> None:

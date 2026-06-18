@@ -42,6 +42,8 @@ from temporalio.client import (
     ScheduleOverlapPolicy,
     SchedulePolicy,
     ScheduleSpec,
+    ScheduleUpdate,
+    ScheduleUpdateInput,
 )
 from temporalio.worker import Worker
 
@@ -121,6 +123,7 @@ async def _ensure_schedule(client: Client, task_queue: str) -> None:
             logger.info("📅 Schedule de evals deshabilitado (no había schedule activo)")
         return
     cron = os.environ.get("SALES_EVAL_SCHEDULE_CRON", "").strip() or _DEFAULT_CRON
+    desired_spec = ScheduleSpec(cron_expressions=[cron], time_zone_name=_DEFAULT_TZ)
     try:
         await client.create_schedule(
             _SCHEDULE_ID,
@@ -131,16 +134,20 @@ async def _ensure_schedule(client: Client, task_queue: str) -> None:
                     id=_WORKFLOW_ID,
                     task_queue=task_queue,
                 ),
-                spec=ScheduleSpec(
-                    cron_expressions=[cron],
-                    time_zone_name=_DEFAULT_TZ,
-                ),
+                spec=desired_spec,
                 policy=SchedulePolicy(overlap=ScheduleOverlapPolicy.SKIP),
             ),
         )
         logger.info("📅 Schedule '{}' creado — eval cron '{}' ({})", _SCHEDULE_ID, cron, _DEFAULT_TZ)
     except ScheduleAlreadyRunningError:
-        logger.info("📅 Schedule '{}' ya existe — no se re-crea", _SCHEDULE_ID)
+        # Converge el cron al valor de config (el Schedule persiste server-side;
+        # create_schedule no actualiza uno ya existente). Preserva state/pausa.
+        def _converge(inp: ScheduleUpdateInput) -> ScheduleUpdate:
+            inp.description.schedule.spec = desired_spec
+            return ScheduleUpdate(schedule=inp.description.schedule)
+
+        await client.get_schedule_handle(_SCHEDULE_ID).update(_converge)
+        logger.info("📅 Schedule '{}' actualizado — eval cron '{}' ({})", _SCHEDULE_ID, cron, _DEFAULT_TZ)
 
 
 def _golden_input_from_env() -> GoldenEvalInput:
@@ -165,6 +172,7 @@ async def _ensure_golden_schedule(client: Client, task_queue: str) -> None:
         logger.info("📅 Golden schedule OFF (opt-in: GOLDEN_EVAL_SCHEDULE_ENABLED=true)")
         return
     cron = os.environ.get("GOLDEN_EVAL_SCHEDULE_CRON", "").strip() or _GOLDEN_DEFAULT_CRON
+    desired_spec = ScheduleSpec(cron_expressions=[cron], time_zone_name=_DEFAULT_TZ)
     try:
         await client.create_schedule(
             _GOLDEN_SCHEDULE_ID,
@@ -175,14 +183,21 @@ async def _ensure_golden_schedule(client: Client, task_queue: str) -> None:
                     id=_GOLDEN_WORKFLOW_ID,
                     task_queue=task_queue,
                 ),
-                spec=ScheduleSpec(cron_expressions=[cron], time_zone_name=_DEFAULT_TZ),
+                spec=desired_spec,
                 policy=SchedulePolicy(overlap=ScheduleOverlapPolicy.SKIP),
             ),
         )
         logger.info("📅 Schedule '{}' creado — golden cron '{}' ({})",
                     _GOLDEN_SCHEDULE_ID, cron, _DEFAULT_TZ)
     except ScheduleAlreadyRunningError:
-        logger.info("📅 Schedule '{}' ya existe — no se re-crea", _GOLDEN_SCHEDULE_ID)
+        # Converge el cron al valor de config (mismo motivo que el online).
+        def _converge(inp: ScheduleUpdateInput) -> ScheduleUpdate:
+            inp.description.schedule.spec = desired_spec
+            return ScheduleUpdate(schedule=inp.description.schedule)
+
+        await client.get_schedule_handle(_GOLDEN_SCHEDULE_ID).update(_converge)
+        logger.info("📅 Schedule '{}' actualizado — golden cron '{}' ({})",
+                    _GOLDEN_SCHEDULE_ID, cron, _DEFAULT_TZ)
 
 
 async def main() -> None:

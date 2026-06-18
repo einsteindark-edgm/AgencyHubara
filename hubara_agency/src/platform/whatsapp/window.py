@@ -6,13 +6,18 @@ el cliente llegó por Click-to-WhatsApp Ads (CTWA), hay además una ventana
 extendida de 72h donde cualquier tipo de mensaje (incluso templates) es
 gratis (`pricing.type=free_entry_point`).
 
-Este módulo es 100% puro (sin I/O, sin Temporal, sin datetime.now()). El
-caller pasa `now_ms` desde una activity (R-DET).
+Los helpers de geometría de ventana son 100% puros (sin Temporal, sin
+datetime.now() — el caller pasa `now_ms` desde una activity, R-DET). La única
+excepción es `watchdog_pre_expiry_ms()`, que lee config del env (lead time del
+watchdog) y por eso NUNCA debe llamarse dentro de un workflow sandbox; hoy solo
+lo consumen el use-case de ingest y la activity de elegibilidad (ambos
+activity-side).
 
 Ver HU-WA24H-001 §3.3 para el contrato completo.
 """
 from __future__ import annotations
 
+import os
 from typing import Any
 
 
@@ -95,14 +100,37 @@ def is_message_billable(now_ms: int, metadata: dict[str, Any]) -> bool:
     )
 
 
+def watchdog_pre_expiry_ms() -> int:
+    """Lead time del watchdog en ms — cuánto antes del cierre de ventana dispara.
+
+    Configurable vía `WATCHDOG_PRE_EXPIRY_MINUTES` (minutos) para poder
+    ajustarlo desde un ConfigMap de AWS sin redeploy. Default
+    `WATCHDOG_PRE_EXPIRY_MS` (30 min). Se lee EN CADA llamada (no se cachea al
+    import) — mismo criterio que `WATCHDOG_ENABLED`/quiet-hours: flippear el
+    env en un worker vivo aplica al próximo episodio, sin reiniciar el pod.
+
+    NOTA: este es el único helper del módulo que lee config (env); los demás
+    (`compute_*`, `is_in_*`) siguen siendo puros — el caller pasa `now_ms`.
+    """
+    raw = os.environ.get("WATCHDOG_PRE_EXPIRY_MINUTES", "").strip()
+    if not raw:
+        return WATCHDOG_PRE_EXPIRY_MS
+    try:
+        minutes = int(raw)
+    except ValueError:
+        return WATCHDOG_PRE_EXPIRY_MS
+    return minutes * 60 * 1000 if minutes > 0 else WATCHDOG_PRE_EXPIRY_MS
+
+
 def watchdog_fire_at(metadata: dict[str, Any]) -> int | None:
     """Devuelve epoch ms en que debe dispararse el watchdog, o None.
 
-    El watchdog se dispara `WATCHDOG_PRE_EXPIRY_MS` antes del cierre de
-    la ventana de servicio. Si `metadata.service_window_expires_at_ms`
-    no existe o no es int, retorna None (no programar watchdog).
+    El watchdog se dispara `watchdog_pre_expiry_ms()` antes del cierre de
+    la ventana de servicio (lead time configurable por env). Si
+    `metadata.service_window_expires_at_ms` no existe o no es int, retorna
+    None (no programar watchdog).
     """
     exp = metadata.get("service_window_expires_at_ms")
     if not isinstance(exp, int):
         return None
-    return exp - WATCHDOG_PRE_EXPIRY_MS
+    return exp - watchdog_pre_expiry_ms()
