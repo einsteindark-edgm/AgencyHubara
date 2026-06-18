@@ -1,0 +1,135 @@
+# Cómo ejecutar una HU con Paperclip (guía paso a paso)
+
+Para vos, que **no manejás Paperclip todavía**. Asume que el server local ya corre
+(`http://localhost:3100`, lo tenés abierto en el board) y que el pod ya está creado.
+
+## El modelo en 3 frases
+
+- **Acktos** es tu "empresa". Adentro hay un **proyecto "AgencyHubara"** y un **pod de 3
+  agentes**: Architect (planifica + aprueba el merge), Implementer (programa con TDD vía
+  hubara-dev), Reviewer (corre los gates + verifica, aprueba o rechaza).
+- Una **HU = un issue**. Lo asignás al Implementer; Paperclip lo despacha solo, el agente
+  programa en un worktree de AgencyHubara, y al terminar **no se auto-aprueba**: pasa a
+  `in_review` y el Reviewer decide.
+- El trabajo queda en la branch **`paperclip-hu`**; vos revisás y la mergeás a `main`.
+
+## Tu setup actual (IDs reales — ya creado)
+
+| Qué | ID / valor |
+|---|---|
+| Company (Acktos) | `b2520631-60d6-4c51-b3a8-f16c587e6e94` |
+| Proyecto AgencyHubara | `f6ce058a-9b7f-4a48-b57b-a35f4aa906b8` |
+| Architect | `d52b6518-7c23-458c-abeb-694944f8d17c` |
+| Implementer | `a1ea9176-c41f-49cc-944e-0f05c0a6e018` |
+| Reviewer | `4ed38c43-8f98-4520-ae90-31f4b45f1eca` |
+| Worktree (cwd de los agentes) | `…/AgencyHubara/.claude/worktrees/paperclip-hu` (branch `paperclip-hu`) |
+
+> Los 3 agentes están **activos**. Apenas creás un issue `todo` asignado a uno, el
+> scheduler lo despacha (gasta tokens). Si querés pausar todo: ver "Frenar" abajo.
+
+---
+
+## Ejecutar una HU — 2 caminos
+
+### Camino A — desde el BOARD (recomendado para vos, es a clicks)
+
+1. En `http://localhost:3100` → entrá a **Acktos** → proyecto **AgencyHubara**.
+2. Click **New Issue**. Completá:
+   - **Title**: la HU en una línea (ej. *"Agregar columna 'última compra' a la tabla de clientes"*).
+   - **Description**: el detalle / criterios de aceptación (qué tiene que pasar, observable).
+   - **Assignee**: **AgencyHubara Implementer**.
+   - **Reviewer** (campo de revisión / approval): **AgencyHubara Reviewer**  ← esto es lo que
+     activa el no-self-review.
+3. **Create**. Listo — Paperclip despacha al Implementer solo. Mirá la actividad del issue.
+
+### Camino B — desde la TERMINAL (un solo bloque copy-paste)
+
+Crea el issue **y** le pone la política no-self-review (review → Reviewer) en un paso:
+
+```bash
+cd ~/Documents/Projects/paperclip
+ACK=b2520631-60d6-4c51-b3a8-f16c587e6e94
+IMPL=a1ea9176-c41f-49cc-944e-0f05c0a6e018
+REV=4ed38c43-8f98-4520-ae90-31f4b45f1eca
+PROJ=f6ce058a-9b7f-4a48-b57b-a35f4aa906b8
+
+# 1) crear el issue (cambiá title/description por tu HU)
+ISSUE=$(pnpm paperclipai issue create -C $ACK \
+  --title "TU HU ACÁ" \
+  --description "Criterios de aceptación, observables." \
+  --assignee-agent-id $IMPL --project-id $PROJ --status todo --json \
+  | grep -oE '"id": *"[0-9a-f-]{36}"' | head -1 | grep -oE '[0-9a-f-]{36}')
+echo "Issue: $ISSUE"
+
+# 2) ponerle el gate no-self-review (review -> Reviewer). Es API (el CLI no tiene flag).
+curl -sS -X PATCH "http://localhost:3100/api/issues/$ISSUE" \
+  -H "Content-Type: application/json" \
+  -d "{\"executionPolicy\":{\"mode\":\"normal\",\"commentRequired\":true,\"stages\":[{\"type\":\"review\",\"approvalsNeeded\":1,\"participants\":[{\"type\":\"agent\",\"agentId\":\"$REV\"}]}]}}" \
+  -o /dev/null -w "policy: HTTP %{http_code}\n"
+```
+
+(Querés que el Architect lo refine/parta primero? Asigná el issue al **Architect**
+(`d52b6518-…`) en vez del Implementer: él lo descompone en child-issues y los reparte.)
+
+---
+
+## Mirar el progreso
+
+- **Board**: la tarjeta del issue se mueve sola **`todo → in_progress → in_review → done`**;
+  hacé click para ver el log del agente en vivo + los comentarios.
+- **Terminal**:
+  ```bash
+  pnpm paperclipai run live -C $ACK          # runs en curso (todo el company)
+  pnpm paperclipai issue get <ISSUE>          # estado actual del issue
+  ```
+- ¿No arranca solo? Forzá un latido del Implementer (stream en vivo):
+  ```bash
+  pnpm paperclipai heartbeat run --agent-id $IMPL --source on_demand --trigger manual --debug
+  ```
+
+## Revisar y mergear a main
+
+1. Cuando el issue llega a **`in_review`**, el **Reviewer** se despierta (o lo forzás con
+   `heartbeat run --agent-id 4ed38c43-…`), corre `/hubara-gates` + verifica, y **comenta el
+   veredicto** y postea la decisión: `approved` → el issue pasa a `done`; `changes_requested`
+   → vuelve al Implementer.
+2. El código quedó en la branch **`paperclip-hu`**. Revisá el diff vs main y mergealo:
+   ```bash
+   cd /Users/edgm/Documents/Projects/AgencyHubara
+   git log --oneline main..paperclip-hu        # qué hizo el agente
+   git diff main..paperclip-hu                  # el cambio completo
+   # si te gusta: PR (recomendado) o merge directo
+   git push origin paperclip-hu                 # luego abrís PR en GitHub
+   #   o local:  git merge --no-ff paperclip-hu
+   ```
+
+## Cosas que tenés que saber (gotchas)
+
+- **Auto-dispatch**: crear un issue `todo` asignado a un agente activo = arranca solo +
+  gasta tokens (~$0.5–2 por run, modelo claude-opus-4-8, contra el budget del agente).
+- **Frenar todo** (pausar el pod): `for id in d52b6518-… a1ea9176-… 4ed38c43-…; do pnpm paperclipai agent pause $id; done`.
+  Reanudar: igual con `agent resume`.
+- **Budget**: cada agente tiene tope mensual (Architect $1500 / Implementer $2500 /
+  Reviewer $1000). Al 100% se auto-pausa. Ajustás con `pnpm paperclipai budget agent:update <id> --payload-json '{"budgetMonthlyCents":N}'`.
+- **Deps en el worktree**: para HUs de código, el worktree `paperclip-hu` necesita deps
+  (`cd hubara_agency && uv sync` / `cd frontend_dashboard && npm ci`) o los gates dan rojo
+  por entorno. El agente puede instalarlas, o las dejás listas una vez.
+- **Una HU a la vez** en este setup (worktree compartido). Para varias en paralelo con
+  aislamiento por-HU, hace falta la estrategia `git_worktree` (avanzado) o el plugin bridge.
+
+## Cheat-sheet
+
+```bash
+cd ~/Documents/Projects/paperclip
+ACK=b2520631-60d6-4c51-b3a8-f16c587e6e94
+ARCH=d52b6518-7c23-458c-abeb-694944f8d17c
+IMPL=a1ea9176-c41f-49cc-944e-0f05c0a6e018
+REV=4ed38c43-8f98-4520-ae90-31f4b45f1eca
+PROJ=f6ce058a-9b7f-4a48-b57b-a35f4aa906b8
+
+pnpm paperclipai issue create -C $ACK --title "..." --assignee-agent-id $IMPL --project-id $PROJ --status todo --json   # crear HU
+pnpm paperclipai run live -C $ACK                  # ver runs
+pnpm paperclipai issue get <ISSUE>                 # estado
+pnpm paperclipai heartbeat run --agent-id $IMPL --debug   # forzar latido
+for id in $ARCH $IMPL $REV; do pnpm paperclipai agent pause $id; done   # frenar
+```
