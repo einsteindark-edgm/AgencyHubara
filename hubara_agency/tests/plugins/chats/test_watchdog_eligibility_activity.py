@@ -216,6 +216,29 @@ async def test_window_not_expiring_soon_returns_skipped(
 
 
 @pytest.mark.asyncio
+async def test_window_timing_check_respects_pre_expiry_env(
+    monkeypatch: pytest.MonkeyPatch,
+    _isolate_vault_dir: Path,
+) -> None:
+    """El gate defensivo de timing usa el lead CONFIGURABLE por env.
+
+    Con `WATCHDOG_PRE_EXPIRY_MINUTES=120`, una ventana que cierra en ~90min
+    NO es 'too early' (con la constante fija de 30min se skipeaba). Solo
+    asertamos el gate de timing — la elegibilidad final depende además de
+    quiet-hours (hora real) y la resolución de template."""
+    monkeypatch.setenv("WATCHDOG_ENABLED", "1")
+    monkeypatch.setenv("WATCHDOG_PRE_EXPIRY_MINUTES", "120")
+    now_ms = int(time.time() * 1000)
+    md = _base_metadata(now_ms=now_ms)
+    md["service_window_expires_at_ms"] = now_ms + 90 * 60 * 1000  # 90min away
+    _write_metadata(_isolate_vault_dir, SESSION_ID, md)
+
+    result = await check_watchdog_eligibility_activity(SESSION_ID, EPISODE_ID)
+
+    assert result.reason != "window_not_expiring_soon"
+
+
+@pytest.mark.asyncio
 async def test_window_missing_returns_skipped(
     monkeypatch: pytest.MonkeyPatch,
     _isolate_vault_dir: Path,

@@ -39,7 +39,7 @@ from src.platform.whatsapp.templates.registry import (
     get_watchdog_template_for_stage,
 )
 from src.platform.whatsapp.composition import get_template_registry
-from src.platform.whatsapp.window import WATCHDOG_PRE_EXPIRY_MS
+from src.platform.whatsapp.window import watchdog_pre_expiry_ms
 from src.plugins.chats.agent.remarketing.watchdog_contracts import (
     WatchdogEligibilityResult,
 )
@@ -310,10 +310,12 @@ async def check_watchdog_eligibility_activity(
             eligible=False, reason="episode_id_mismatch"
         )
 
-    # 3. Window check — only fire if window is within WATCHDOG_PRE_EXPIRY_MS
-    #    of closing. If a fresh inbound extended the window (and the
-    #    reschedule signal got lost / dispatcher hiccup), we should NOT
-    #    nudge — the watchdog would fire too early.
+    # 3. Window check — only fire if window is within the configured lead
+    #    (`watchdog_pre_expiry_ms()`, env WATCHDOG_PRE_EXPIRY_MINUTES) of
+    #    closing. Mismo valor que usó `watchdog_fire_at` al programar el timer,
+    #    así un lead más largo no se auto-skipea como "too early". Si un inbound
+    #    fresco extendió la ventana (y el reschedule signal se perdió), NO
+    #    nudge — el watchdog dispararía demasiado temprano.
     now_ms = _now_ms()
     expires_at = metadata.get("service_window_expires_at_ms")
     if not isinstance(expires_at, int):
@@ -321,7 +323,7 @@ async def check_watchdog_eligibility_activity(
             eligible=False, reason="window_not_expiring_soon"
         )
     ms_until_expiry = expires_at - now_ms
-    if ms_until_expiry > WATCHDOG_PRE_EXPIRY_MS:
+    if ms_until_expiry > watchdog_pre_expiry_ms():
         log.info(
             "watchdog_eligibility_skipped",
             session_id=session_id,

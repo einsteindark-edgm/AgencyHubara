@@ -34,6 +34,11 @@ spec:
           #   - DEEPSEEK_API_KEY  (llamada LLM via litellm — agente + fallback de juez)
           # Convención del proyecto: igual que `worker-sales.yaml` /
           # `worker-eta.yaml`, las llaves privadas se inyectan vía overlay.
+          # Cron/toggle de los Schedules (online + golden) desde el ConfigMap —
+          # editable sin redeploy (ver scheduler-config-configmap.yaml).
+          envFrom:
+            - configMapRef:
+                name: hubara-scheduler-config
           env:
             # P-20/P-21 (INV-2): set explícito de plugins de ESTE deployment.
             - name: ENABLED_PLUGINS
@@ -57,9 +62,10 @@ spec:
             # Candidatos a golden (auto-curación) → path montado durable.
             - name: EVAL_CANDIDATES_DIR
               value: "/app/hubara_vault/_evals/candidates"
-            # Cadencia/ventana del schedule (08/14/20 hora Bogotá por default).
-            - name: SALES_EVAL_SCHEDULE_ENABLED
-              value: "true"
+            # SALES_EVAL_SCHEDULE_ENABLED / _SCHEDULE_CRON y los toggles/cron del
+            # golden viven en el ConfigMap `hubara-scheduler-config` (envFrom
+            # arriba). NO ponerlos acá inline o pisarían al ConfigMap.
+            # Ventana de muestreo de la corrida (no es "cuándo corre"):
             - name: SALES_EVAL_LOOKBACK_HOURS
               value: "8"
             - name: SALES_EVAL_MAX_CONVERSATIONS
