@@ -119,17 +119,19 @@ curl -sS -X PATCH "http://localhost:3100/api/issues/$ISSUE" \
 ## Revisar y mergear a main
 
 1. Cuando el issue llega a **`in_review`**, el **Reviewer** se despierta (o lo forzás con
-   `heartbeat run --agent-id 4ed38c43-…`), corre `/hubara-gates` + verifica, y **comenta el
-   veredicto** y postea la decisión: `approved` → el issue pasa a `done`; `changes_requested`
+   `heartbeat run --agent-id 4ed38c43-…`), corre `/hubara-gates` + verifica, comenta el
+   veredicto y postea la decisión: `approved` → el issue pasa a `done`; `changes_requested`
    → vuelve al Implementer.
-2. El código quedó en la branch **`paperclip-hu`**. Revisá el diff vs main y mergealo:
+2. El agente abre **una branch + PR por HU** en GitHub (ej. ACK-2 → PR **#68**
+   `fix/ack-2-system-explorer-build` → main). Revisás y mergeás el PR **en GitHub**:
    ```bash
-   cd /Users/edgm/Documents/Projects/AgencyHubara
-   git log --oneline main..paperclip-hu        # qué hizo el agente
-   git diff main..paperclip-hu                  # el cambio completo
-   # si te gusta: PR (recomendado) o merge directo
-   git push origin paperclip-hu                 # luego abrís PR en GitHub
-   #   o local:  git merge --no-ff paperclip-hu
+   gh pr list --state open                       # el PR de la HU
+   gh pr view <N> --web                           # revisar el diff
+   gh pr merge <N> --squash --delete-branch       # mergear (o el botón Merge del PR)
+   ```
+3. **Sincronizá tu main local DESPUÉS de mergear** (clave — ver gotcha "Higiene de git"):
+   ```bash
+   cd /Users/edgm/Documents/Projects/AgencyHubara && git checkout main && git pull --rebase
    ```
 
 ## Cosas que tenés que saber (gotchas)
@@ -145,6 +147,15 @@ curl -sS -X PATCH "http://localhost:3100/api/issues/$ISSUE" \
   por entorno. El agente puede instalarlas, o las dejás listas una vez.
 - **Una HU a la vez** en este setup (worktree compartido). Para varias en paralelo con
   aislamiento por-HU, hace falta la estrategia `git_worktree` (avanzado) o el plugin bridge.
+- **Higiene de git (la causa del "conflicto en github" de ACK-2).** El trabajo de la HU va
+  a **origin/main** vía el PR del agente. Si tu `main` LOCAL tiene commits **sin pushear**
+  (p.ej. cambios en `.paperclip/`), local y origin **divergen** y el push se rechaza —
+  parece "conflicto" aunque no haya choque de líneas (fue exactamente esto: mi `.paperclip/`
+  estaba commiteado en main local sin pushear mientras la HU mergeaba en origin). Reglas:
+  (1) **pusheá** lo que commitees a main (no dejes config local sin pushear); (2) tras cada
+  HU mergeada, `git pull --rebase` en main; (3) el pod basa su worktree en **origin/main**
+  (`git fetch && git checkout --detach origin/main`), nunca en un main local desincronizado
+  (CLAUDE.md gotcha #9).
 
 ## Cheat-sheet
 
