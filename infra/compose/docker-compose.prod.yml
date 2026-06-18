@@ -1,0 +1,101 @@
+# docker-compose de PRODUCCIÓN — corre en la caja EC2 de cada tenant.
+#
+# Diferencias vs el local (hubara_agency/docker-compose.local.yml):
+#   • NO hay db/temporal/temporal-ui  → se usa Temporal Cloud (TEMPORAL_* del .env).
+#   • NO hay `include` de SigNoz       → SigNoz vive en su propia caja (OTLP por red).
+#   • Las imágenes son de GHCR (${HUBARA_IMAGE}), no `build:`.
+#   • Todo el env viene de `.env`, renderizado desde SSM por backend-deploy.yml.
+#   • Caddy hace de reverse-proxy con auto-TLS sobre el dominio del tenant.
+#
+# Lo despliega .github/workflows/backend-deploy.yml (scp + docker compose up -d).
+# Mantener los 6 workers en sync con `scripts/render-compose.py` (ver infra/README).
+
+name: hubara-prod
+
+x-app: &app
+  image: ${HUBARA_IMAGE}
+  working_dir: /app/hubara_agency
+  env_file: .env
+  restart: unless-stopped
+  depends_on:
+    litellm:
+      condition: service_healthy
+
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    command: caddy reverse-proxy --from ${CADDY_DOMAIN} --to api:8000
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - api
+
+  litellm:
+    image: ghcr.io/berriai/litellm:v1.86.2
+    restart: unless-stopped
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    volumes:
+      - ./litellm_config.yaml:/app/config.yaml:ro
+    env_file: .env
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  api:
+    <<: *app
+    command: ["python", "run_api.py"]
+    # Sin `ports:` público — Caddy lo fronta. Expuesto solo en la red del compose.
+    expose:
+      - "8000"
+    volumes:
+      - hubara-vault:/app/hubara_vault
+      - ./plugins:/app/frontend_dashboard/src/plugins:ro
+
+  worker-catalog-sync:
+    <<: *app
+    command: ["python", "-m", "src.plugins.catalog.workers.sync"]
+    volumes:
+      - hubara-vault:/app/hubara_vault
+
+  worker-chats-sales:
+    <<: *app
+    command: ["python", "-m", "src.plugins.chats.workers.sales"]
+    volumes:
+      - hubara-vault:/app/hubara_vault
+
+  worker-chats-remarketing:
+    <<: *app
+    command: ["python", "-m", "src.plugins.chats.workers.remarketing"]
+    volumes:
+      - hubara-vault:/app/hubara_vault
+
+  worker-chats-sales_eval:
+    <<: *app
+    command: ["python", "-m", "src.plugins.chats.workers.sales_eval"]
+    volumes:
+      - hubara-vault:/app/hubara_vault
+
+  worker-eta-eta:
+    <<: *app
+    command: ["python", "-m", "src.plugins.eta.workers.eta"]
+    volumes:
+      - hubara-vault:/app/hubara_vault
+
+  worker-orders-reconcile:
+    <<: *app
+    command: ["python", "-m", "src.plugins.orders.workers.reconcile"]
+    volumes:
+      - hubara-vault:/app/hubara_vault
+
+volumes:
+  hubara-vault:   # sesiones + catálogo + evals (doc §3.6). Candidato a EBS dedicado/backup.
+  caddy-data:     # certs de Let's Encrypt — persistir para no re-emitir en cada deploy.
+  caddy-config:

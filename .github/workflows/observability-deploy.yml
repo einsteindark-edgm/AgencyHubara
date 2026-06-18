@@ -1,0 +1,67 @@
+# Despliega el stack SigNoz (vendorizado en hubara_agency/deploy/signoz/) a la
+# caja de observabilidad EC2. Coincide con INFRASTRUCTURE.md §3.10 + §7 item 6.
+#
+# Es su propia caja (off-critical-path): si SigNoz se cae, el negocio sigue.
+# Por eso es un deploy separado del backend.
+name: Observability deploy (SigNoz)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "hubara_agency/deploy/signoz/**"
+      - ".github/workflows/observability-deploy.yml"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_TERRAFORM_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+          terraform_wrapper: false
+
+      - name: Resolver host SigNoz
+        id: host
+        working-directory: infra/terraform/compute
+        run: |
+          terraform init -input=false \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="dynamodb_table=${{ vars.TF_STATE_LOCK_TABLE }}" \
+            -backend-config="key=compute/terraform.tfstate" \
+            -backend-config="region=${{ vars.AWS_REGION }}" \
+            -backend-config="encrypt=true"
+          echo "ip=$(terraform output -json observability_host | jq -r .public_ip)" >> "$GITHUB_OUTPUT"
+
+      - name: Copiar stack SigNoz
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ steps.host.outputs.ip }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: "hubara_agency/deploy/signoz"
+          target: "/opt"
+          strip_components: 2   # → /opt/signoz/docker/...
+
+      - name: Levantar SigNoz
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ steps.host.outputs.ip }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            cd /opt/signoz/docker
+            docker compose up -d
+            docker compose ps

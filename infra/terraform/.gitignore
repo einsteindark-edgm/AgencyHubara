@@ -1,0 +1,20 @@
+# Terraform — nunca commitear state, plans ni backend configs reales.
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+tfplan
+tfplan.*
+crash.log
+crash.*.log
+
+# Override de backend que crea el harness de robotocore (test local).
+backend_override.tf
+
+# Backend configs reales (el .example SÍ se commitea).
+envs/*.s3.tfbackend
+!envs/*.s3.tfbackend.example
+
+# Vars con valores reales (los *.auto.tfvars de ejemplo SÍ se commitean).
+*.local.tfvars
+secret.auto.tfvars

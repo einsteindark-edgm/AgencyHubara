@@ -1,0 +1,27 @@
+#cloud-config
+# Prep base de la caja de app. El DEPLOY de código (compose + .env desde SSM) lo
+# hace backend-deploy.yml en cada push — cloud-init solo deja docker listo.
+package_update: true
+packages:
+  - docker
+
+write_files:
+  # Config NO-secreta que el deploy lee (los secretos vienen de SSM en el deploy).
+  - path: /opt/hubara/box.env
+    permissions: "0644"
+    content: |
+      AWS_REGION=${region}
+      TENANT=${tenant}
+      CADDY_DOMAIN=${domain}
+      ENABLED_PLUGINS=${enabled_plugins}
+      IMAGE_REPO=${image_repo}
+
+runcmd:
+  # Docker compose plugin (AL2023 no lo trae por dnf de forma confiable).
+  - mkdir -p /usr/libexec/docker/cli-plugins
+  - curl -SL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64 -o /usr/libexec/docker/cli-plugins/docker-compose
+  - chmod +x /usr/libexec/docker/cli-plugins/docker-compose
+  - systemctl enable --now docker
+  - usermod -aG docker ec2-user
+  - mkdir -p /opt/hubara
+  - chown -R ec2-user:ec2-user /opt/hubara

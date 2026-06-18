@@ -1,0 +1,20 @@
+# robotocore — réplica local de AWS (digital twin, drop-in tipo LocalStack) en :4566.
+# https://github.com/robotocore/robotocore
+#
+# Levantar:   docker compose -f docker-compose.robotocore.yml up -d
+# Health:     curl -s http://localhost:4566/_robotocore/health | python3 -m json.tool
+# Apagar:     docker compose -f docker-compose.robotocore.yml down
+#
+# Lo usa test-local.sh para correr el MISMO Terraform que va a AWS real, pero
+# apuntado acá → "probar para no equivocarnos en la real".
+services:
+  aws:
+    image: jackdanger/robotocore:latest
+    container_name: robotocore
+    ports:
+      - "4566:4566"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:4566/_robotocore/health', timeout=2)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20

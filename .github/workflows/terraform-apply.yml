@@ -1,0 +1,62 @@
+# `terraform apply` MANUAL de ambos roots contra AWS real. Gateado por el
+# environment `production` (poné required reviewers en Settings → Environments).
+# Mismo OIDC + GH variables que terraform-plan.yml.
+#
+# Orden: platform (S3/Cognito/SSM/OIDC) → compute (EC2). Compute no referencia el
+# state de platform (usa paths SSM determinísticos), pero aplicamos platform 1ro
+# para que los secretos existan antes de que las cajas arranquen.
+name: Terraform apply
+
+on:
+  workflow_dispatch:
+    inputs:
+      root:
+        description: "Qué aplicar"
+        type: choice
+        options: ["both", "platform", "compute"]
+        default: "both"
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    environment: production   # ← required reviewers acá
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_TERRAFORM_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+          terraform_wrapper: false
+
+      - name: Apply platform
+        if: ${{ inputs.root == 'both' || inputs.root == 'platform' }}
+        working-directory: infra/terraform/platform
+        run: |
+          terraform init -input=false \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="dynamodb_table=${{ vars.TF_STATE_LOCK_TABLE }}" \
+            -backend-config="key=platform/terraform.tfstate" \
+            -backend-config="region=${{ vars.AWS_REGION }}" \
+            -backend-config="encrypt=true"
+          terraform apply -input=false -auto-approve
+
+      - name: Apply compute
+        if: ${{ inputs.root == 'both' || inputs.root == 'compute' }}
+        working-directory: infra/terraform/compute
+        run: |
+          terraform init -input=false \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="dynamodb_table=${{ vars.TF_STATE_LOCK_TABLE }}" \
+            -backend-config="key=compute/terraform.tfstate" \
+            -backend-config="region=${{ vars.AWS_REGION }}" \
+            -backend-config="encrypt=true"
+          terraform apply -input=false -auto-approve

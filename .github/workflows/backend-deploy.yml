@@ -1,0 +1,129 @@
+# Backend (API + 6 workers + LiteLLM + Caddy) → GHCR → cajas EC2 por tenant.
+# Coincide con INFRASTRUCTURE.md §3.3-3.8 + la prod compose en infra/compose/.
+#
+# Flujo: build imagen única (Dockerfile raíz) → push a GHCR → por tenant:
+#   resolver IP del host (output de ../terraform/compute) → SSH → render .env
+#   desde SSM (instance profile) → docker compose pull && up -d.
+#
+# Secrets/vars requeridos:
+#   secret EC2_SSH_KEY           clave privada del key pair (var ssh_public_key en compute)
+#   var    AWS_REGION, AWS_TERRAFORM_ROLE_ARN, TF_STATE_BUCKET, TF_STATE_LOCK_TABLE
+name: Backend deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "hubara_agency/**"
+      - "exoclaw-temporal/**"
+      - "Dockerfile"
+      - "infra/compose/**"
+      - ".github/workflows/backend-deploy.yml"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  packages: write   # push a GHCR
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Image ref (lowercase)
+        id: meta
+        run: |
+          OWNER="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          echo "image=ghcr.io/${OWNER}/agencyhubara:${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.image }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        tenant: [hubara, vincenzo]
+    steps:
+      - uses: actions/checkout@v4
+
+      # Resolver IP del host + endpoint OTLP desde el state de compute.
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_TERRAFORM_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+          terraform_wrapper: false
+
+      - name: Resolver host
+        id: host
+        working-directory: infra/terraform/compute
+        run: |
+          terraform init -input=false \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="dynamodb_table=${{ vars.TF_STATE_LOCK_TABLE }}" \
+            -backend-config="key=compute/terraform.tfstate" \
+            -backend-config="region=${{ vars.AWS_REGION }}" \
+            -backend-config="encrypt=true"
+          IP="$(terraform output -json app_hosts | jq -r '.["${{ matrix.tenant }}"].public_ip')"
+          OTLP="$(terraform output -json observability_host | jq -r '.otlp_grpc')"
+          echo "ip=$IP"     >> "$GITHUB_OUTPUT"
+          echo "otlp=http://$OTLP" >> "$GITHUB_OUTPUT"
+
+      # Copiar artefactos de deploy a la caja.
+      - name: Copiar compose + scripts + manifests
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ steps.host.outputs.ip }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: "infra/compose/docker-compose.prod.yml,infra/compose/render-env-from-ssm.sh,exoclaw-temporal/litellm_config.yaml,frontend_dashboard/src/plugins"
+          target: "/tmp/hubara-deploy"
+          strip_components: 0
+
+      - name: Deploy (render .env desde SSM + compose up)
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          HUBARA_IMAGE: ${{ needs.build.outputs.image }}
+          OTEL_ENDPOINT: ${{ steps.host.outputs.otlp }}
+          GHCR_OWNER: ${{ github.repository_owner }}
+        with:
+          host: ${{ steps.host.outputs.ip }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          envs: HUBARA_IMAGE,OTEL_ENDPOINT,GHCR_OWNER
+          script: |
+            set -euo pipefail
+            sudo mkdir -p /opt/hubara
+            sudo chown -R ec2-user:ec2-user /opt/hubara
+            cp /tmp/hubara-deploy/infra/compose/docker-compose.prod.yml /opt/hubara/docker-compose.yml
+            cp /tmp/hubara-deploy/infra/compose/render-env-from-ssm.sh    /opt/hubara/
+            cp /tmp/hubara-deploy/exoclaw-temporal/litellm_config.yaml    /opt/hubara/litellm_config.yaml
+            rm -rf /opt/hubara/plugins && cp -r /tmp/hubara-deploy/frontend_dashboard/src/plugins /opt/hubara/plugins
+            cd /opt/hubara
+            chmod +x render-env-from-ssm.sh
+            HUBARA_IMAGE="$HUBARA_IMAGE" OTEL_ENDPOINT="$OTEL_ENDPOINT" ./render-env-from-ssm.sh
+            GHCR_TOKEN="$(grep '^GHCR_PULL_TOKEN=' .env | cut -d= -f2-)"
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_OWNER" --password-stdin
+            docker compose pull
+            docker compose up -d --remove-orphans
+            docker image prune -f

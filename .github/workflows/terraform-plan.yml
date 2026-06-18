@@ -1,0 +1,65 @@
+# `terraform plan` de ambos roots contra AWS REAL, en cada push a main que toque
+# infra/terraform/. Auth por OIDC (rol amplio) — sin llaves estáticas.
+# El apply es aparte y MANUAL (terraform-apply.yml, gateado por environment).
+#
+# Requiere estas GH *variables* (Settings → Variables), seteadas tras el bootstrap:
+#   AWS_REGION              us-east-1
+#   AWS_TERRAFORM_ROLE_ARN  output github_terraform_role_arn de platform
+#   TF_STATE_BUCKET         bucket del state (bootstrapeado a mano)
+#   TF_STATE_LOCK_TABLE     tabla DynamoDB de lock
+name: Terraform plan
+
+on:
+  push:
+    branches: [main]
+    paths: ["infra/terraform/**", ".github/workflows/terraform-plan.yml"]
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # OIDC
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        root: [platform, compute]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_TERRAFORM_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+
+      - name: Init (${{ matrix.root }})
+        working-directory: infra/terraform/${{ matrix.root }}
+        run: |
+          terraform init -input=false \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="dynamodb_table=${{ vars.TF_STATE_LOCK_TABLE }}" \
+            -backend-config="key=${{ matrix.root }}/terraform.tfstate" \
+            -backend-config="region=${{ vars.AWS_REGION }}" \
+            -backend-config="encrypt=true"
+
+      - name: Format check
+        working-directory: infra/terraform/${{ matrix.root }}
+        run: terraform fmt -check -recursive
+        continue-on-error: true
+
+      - name: Plan (${{ matrix.root }})
+        working-directory: infra/terraform/${{ matrix.root }}
+        run: |
+          set -o pipefail
+          terraform plan -input=false -no-color | tee /tmp/plan.txt
+          {
+            echo "## 📐 terraform plan — ${{ matrix.root }}";
+            echo '```';
+            tail -c 8000 /tmp/plan.txt;
+            echo '```';
+          } >> "$GITHUB_STEP_SUMMARY"
