@@ -20,7 +20,9 @@ from __future__ import annotations
 import asyncio
 import os
 from datetime import timedelta
+from pathlib import Path
 
+import yaml
 from loguru import logger
 from temporalio.client import (
     Client,
@@ -48,14 +50,40 @@ setup_logging()
 
 _SCHEDULE_ID = "order-reconciliation-schedule"
 _WORKFLOW_ID = "order-reconciliation"
+# Fallback si el catálogo falta/está roto. El default REAL vive en
+# config/schedulers.yaml (orders-reconcile.default) — guardado por
+# tests/plugins/orders/test_reconcile_schedule_default.py para que no driftee.
 _DEFAULT_INTERVAL_MIN = 5
+# Catálogo de schedulers (ACK-3): src/plugins/orders/workers/ → hubara_agency/.
+# Cada plugin lo lee de forma independiente (stdlib+yaml) — NO un módulo central
+# compartido (rompería R-DIP / ratchet P-28). Leer config en worker_boot/main es
+# R-DET-safe (no es un workflow).
+_CATALOG_PATH = Path(__file__).resolve().parents[4] / "config" / "schedulers.yaml"
+
+
+def _catalog_default(scheduler_id: str, fallback: str) -> str:
+    """Lee `default` de un scheduler del catálogo; cae al fallback si no se puede."""
+    try:
+        data = yaml.safe_load(_CATALOG_PATH.read_text(encoding="utf-8"))
+        for entry in data["schedulers"]:
+            if entry.get("id") == scheduler_id and entry.get("default") is not None:
+                return str(entry["default"])
+    except Exception:  # noqa: BLE001 — el boot del worker sobrevive un catálogo ausente/roto
+        logger.warning(
+            "No pude leer el default de '{}' del catálogo ({}) — uso fallback {!r}",
+            scheduler_id, _CATALOG_PATH, fallback,
+        )
+    return fallback
 
 
 def _interval_minutes() -> int:
-    """Intervalo del Schedule en minutos (env ORDER_RECONCILE_INTERVAL_MINUTES)."""
+    """Intervalo del Schedule en minutos (env ORDER_RECONCILE_INTERVAL_MINUTES).
+
+    Precedencia: env > catálogo (config/schedulers.yaml) > fallback constante.
+    """
     raw = os.environ.get("ORDER_RECONCILE_INTERVAL_MINUTES", "").strip()
     if not raw:
-        return _DEFAULT_INTERVAL_MIN
+        raw = _catalog_default("orders-reconcile", str(_DEFAULT_INTERVAL_MIN))
     try:
         val = int(raw)
     except ValueError:

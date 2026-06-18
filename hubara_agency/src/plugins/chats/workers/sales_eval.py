@@ -26,6 +26,9 @@ R-DIP: importa `platform/` + el propio plugin `chats`; no plugins siblings.
 """
 import asyncio
 import os
+from pathlib import Path
+
+import yaml
 
 from src.platform.logging import setup_logging
 from src.platform.observability import init_otel, otel_workflow_runner
@@ -78,6 +81,44 @@ _GOLDEN_SCHEDULE_ID = "golden-eval-schedule"
 _GOLDEN_WORKFLOW_ID = "golden-eval"
 _GOLDEN_DEFAULT_CRON = "0 6 * * *"  # 06:00 (solo si se habilita)
 
+# Catálogo de schedulers (ACK-3): src/plugins/chats/workers/ → hubara_agency/.
+# El plugin lee el YAML de forma independiente (stdlib+yaml) — NO un módulo
+# central compartido (rompería R-DIP / ratchet P-28). Leer config en
+# worker_boot/main es R-DET-safe (no es un workflow). Los `_*_DEFAULT_CRON` de
+# arriba quedan como fallback si el catálogo falta/está roto; el default REAL
+# vive en config/schedulers.yaml, guardado por
+# tests/plugins/chats/test_sales_eval_schedule_defaults.py contra drift.
+_CATALOG_PATH = Path(__file__).resolve().parents[4] / "config" / "schedulers.yaml"
+
+
+def _catalog_default(scheduler_id: str, fallback: str) -> str:
+    """Lee `default` de un scheduler del catálogo; cae al fallback si no se puede."""
+    try:
+        data = yaml.safe_load(_CATALOG_PATH.read_text(encoding="utf-8"))
+        for entry in data["schedulers"]:
+            if entry.get("id") == scheduler_id and entry.get("default") is not None:
+                return str(entry["default"])
+    except Exception:  # noqa: BLE001 — el boot del worker sobrevive un catálogo ausente/roto
+        logger.warning(
+            "No pude leer el default de '{}' del catálogo ({}) — uso fallback {!r}",
+            scheduler_id, _CATALOG_PATH, fallback,
+        )
+    return fallback
+
+
+def _online_cron() -> str:
+    """Cron del eval online. Precedencia: env > catálogo > fallback constante."""
+    return os.environ.get("SALES_EVAL_SCHEDULE_CRON", "").strip() or _catalog_default(
+        "sales-eval-online", _DEFAULT_CRON
+    )
+
+
+def _golden_cron() -> str:
+    """Cron del golden eval. Precedencia: env > catálogo > fallback constante."""
+    return os.environ.get("GOLDEN_EVAL_SCHEDULE_CRON", "").strip() or _catalog_default(
+        "golden-eval", _GOLDEN_DEFAULT_CRON
+    )
+
 
 def _env_int(name: str, default: int) -> int:
     raw = os.environ.get(name, "").strip()
@@ -120,7 +161,7 @@ async def _ensure_schedule(client: Client, task_queue: str) -> None:
         except Exception:  # noqa: BLE001 — no existía / ya borrado: idempotente
             logger.info("📅 Schedule de evals deshabilitado (no había schedule activo)")
         return
-    cron = os.environ.get("SALES_EVAL_SCHEDULE_CRON", "").strip() or _DEFAULT_CRON
+    cron = _online_cron()
     try:
         await client.create_schedule(
             _SCHEDULE_ID,
@@ -164,7 +205,7 @@ async def _ensure_golden_schedule(client: Client, task_queue: str) -> None:
     if os.environ.get("GOLDEN_EVAL_SCHEDULE_ENABLED", "false").strip().lower() != "true":
         logger.info("📅 Golden schedule OFF (opt-in: GOLDEN_EVAL_SCHEDULE_ENABLED=true)")
         return
-    cron = os.environ.get("GOLDEN_EVAL_SCHEDULE_CRON", "").strip() or _GOLDEN_DEFAULT_CRON
+    cron = _golden_cron()
     try:
         await client.create_schedule(
             _GOLDEN_SCHEDULE_ID,
