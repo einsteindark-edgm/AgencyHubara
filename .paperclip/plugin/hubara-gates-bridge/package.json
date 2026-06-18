@@ -1,0 +1,19 @@
+{
+  "name": "@agencyhubara/hubara-gates-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Paperclip plugin: runs /hubara-gates on in_review and posts the verdict as a comment (decision stays with the reviewer, per PLUGIN_SPEC §15.2).",
+  "main": "./dist/worker.js",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "esbuild src/worker.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/worker.js"
+  },
+  "dependencies": {
+    "@paperclipai/plugin-sdk": "^1.0.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0",
+    "typescript": "^5.7.0"
+  }
+}
