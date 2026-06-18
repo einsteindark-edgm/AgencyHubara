@@ -1,0 +1,5 @@
+schema: paperclip/v1
+agents:
+  architect:
+    permissions:
+      canCreateAgents: true
