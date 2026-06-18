@@ -16,7 +16,7 @@ Este documento es la **fuente de verdad de dónde se aloja cada componente**. Lo
 | **Autenticación de usuarios** | **AWS Cognito** (1 user pool por compañía) | Managed, client-side PKCE | **~$0** (usuarios internos) |
 | **FastAPI** (HTTP + webhooks) | **VPS** (docker-compose) | Always-on | incluido en VPS |
 | **LiteLLM proxy** | **VPS** (misma caja, 1 réplica) | Always-on | incluido en VPS |
-| **Temporal workers** (sales / remarketing / catalog) | **VPS** (contenedores) | Always-on, pollers | incluido en VPS |
+| **Temporal workers** (6: sales · remarketing · sales_eval · catalog · eta · orders) | **VPS** (contenedores) | Always-on, pollers | incluido en VPS |
 | **Session store** (`hubara_vault`) | **Disco local de la VPS** | Filesystem | **$0** |
 | **Secretos** | **AWS SSM Parameter Store** (tier estándar) | Managed | **$0** |
 | **Temporal Server** | **Temporal Cloud** (1 cuenta, N namespaces, **auth por API key**) | Managed SaaS | **$0** con créditos / **$100** después |
@@ -67,7 +67,9 @@ Este documento es la **fuente de verdad de dónde se aloja cada componente**. Lo
                         │   • worker: chats/sales                           │
                         │   • worker: chats/remarketing                     │
                         │   • worker: catalog/sync                          │
-                        │   • hubara_vault/  (disco local = session store)  │
+                        │   • worker: chats/sales_eval  (RAGAS, scheduled)  │
+                        │   • worker: eta/eta  ·  orders/reconcile          │
+                        │   • hubara_vault/  (sesiones + catálogo + evals)  │
                         └───────────────────────┬───────────────────────────┘
                                                  │ gRPC + API key (TLS 1.3)
                                                  ▼
@@ -114,7 +116,8 @@ Este documento es la **fuente de verdad de dónde se aloja cada componente**. Lo
 - **Pendiente de código:** middleware de validación de JWT en FastAPI (hoy las rutas no exigen auth). Ver §7.
 
 ### 3.3 FastAPI — VPS
-- **Entrypoint:** `hubara_agency/run_api.py` (uvicorn programático, `0.0.0.0:8000`). Auto-discovery de routers de plugins.
+- **Entrypoint:** `hubara_agency/run_api.py` (uvicorn programático, `0.0.0.0:8000`). **Un solo container HTTP**: el loader (`src.main`) auto-discovers y monta los routers de **todos los plugins habilitados** (`api:` de cada `plugin.yaml`) — no hay un container por plugin.
+- **Toggle de plugins:** `ENABLED_PLUGINS` (CSV) decide qué plugins carga el deploy. Hoy: `ads,agents_admin,catalog,chats,eta,orders,system_map` (7). Gobierna tanto los routers de la API como qué workers se generan (§3.5); un tenant puede shippear un subconjunto distinto (§4).
 - **Por qué always-on:** recibe webhooks de **WhatsApp** (`POST /api/chats/inbound`) y **Medusa** + sirve queries del dashboard. Necesita endpoint HTTPS público estable.
 - **TLS:** **Caddy** en la caja con auto-TLS (Let's Encrypt) como reverse proxy → mantiene el stack consolidado sin depender de Cloudflare. (Si en el futuro se quiere DDoS gestionado, se puede poner Cloudflare proxy delante; opcional.)
 
@@ -124,22 +127,38 @@ Este documento es la **fuente de verdad de dónde se aloja cada componente**. Lo
 - **Stateless** — no necesita storage.
 
 ### 3.5 Workers — VPS (contenedores)
-- **Workers:** `chats/sales`, `chats/remarketing`, `catalog/sync`. Pollers async I/O-bound (esperan al LLM, no queman CPU).
+- **6 workers** (1 container cada uno), declarados en el `plugin.yaml` de su plugin y **renderizados** al compose por `scripts/render-compose.py` — NO se escriben a mano (la "infra fija" vive en `docker-compose.base.yml`; los workers se auto-generan). Pollers async I/O-bound (esperan al LLM, no queman CPU):
+
+  | Worker | Plugin | Qué hace |
+  |---|---|---|
+  | `chats/sales` | chats | agente de ventas (**camino crítico** de ingresos) |
+  | `chats/remarketing` | chats | agente de remarketing |
+  | `chats/sales_eval` | chats | scoring de calidad RAGAS, **Scheduled Workflow offline** (§3.10) |
+  | `catalog/sync` | catalog | sync Medusa→snapshot (`CATALOG_SNAPSHOT_DIR`, TTL 30 min) |
+  | `eta/eta` | eta | notifica cambios de estado de pedido (window-aware WhatsApp) |
+  | `orders/reconcile` | orders | red de seguridad idempotente, corre cada `ORDER_RECONCILE_INTERVAL_MINUTES` (5) |
+
+- **Plugins API-only (sin worker):** `ads`, `agents_admin`, `system_map` — solo aportan routers al container de la API (§3.3).
 - **Réplicas:** 1 cada uno en prod inicial (k8s ponía 3 para sales). Escala horizontal = agregar contenedores/cajas; Temporal balancea la cola solo.
 - **Concurrencia:** tunear `max_concurrent_activities` antes de agregar hardware — suele estar sub-utilizado.
 
 ### 3.6 Session store (`hubara_vault`) — disco local
-- **Qué es:** store de metadata de sesión en filesystem (`WORKSPACE_VAULT_DIR`, JSON por conversación `wa_<phone>/metadata.json`). **NO es HashiCorp Vault.**
-- **En VPS single-node:** disco local, $0. No se necesita EFS (que costaría $30+/mo y solo hace falta en multi-nodo).
-- **Migración futura:** si se va a multi-nodo, mover a S3 o a un volumen de red. Por ahora, single-node + backup del directorio.
+- **Qué es:** volumen de filesystem **compartido** (`WORKSPACE_VAULT_DIR`), montado en la API **y en todos los workers**. Hoy guarda **tres** clases de estado, no solo sesiones:
+  - **sesiones** — metadata por conversación (`wa_<phone>/metadata.json`). **NO es HashiCorp Vault.**
+  - **snapshots de catálogo** — `catalog/` (`CATALOG_SNAPSHOT_DIR`), que `catalog/sync` escribe y `chats/sales` lee.
+  - **candidatos de eval** — `_evals/candidates` (`EVAL_CANDIDATES_DIR`), que `chats/sales_eval` escribe y **la API lee** para el dashboard "Calidad LLM" (§3.10). Sin ese path compartido, la API cae al default efímero `tests/_candidates` y la pestaña sale vacía.
+- **En VPS single-node:** disco local, $0. No se necesita EFS (costaría $30+/mo, solo hace falta en multi-nodo). En el compose el volumen está rotulado *"Simulador del EFS de Amazon"* — es exactamente lo que se vuelve EFS/S3 al escalar.
+- **Migración futura:** si se va a multi-nodo, **las tres** clases (sesiones + catálogo + evals) van a S3 o a un volumen de red compartido — no solo las sesiones. Por ahora, single-node + backup del directorio.
 
 ### 3.7 Secretos — AWS SSM Parameter Store
-- **Qué guarda:** `DEEPSEEK_API_KEY`, `GEMINI_API_KEY`, `WHATSAPP_*`, `MEDUSA_*`, `META_*`, `TEMPORAL_API_KEY`.
+- **Qué guarda:** `DEEPSEEK_API_KEY`, `GEMINI_API_KEY`, `WHATSAPP_*`, `MEDUSA_*`, `META_*`, `TEMPORAL_API_KEY` (todos **SecureString**, `/hubara/<tenant>/<KEY>`).
+- **Config de schedulers (no-secreta, PR #69):** los knobs de timing (`ORDER_RECONCILE_INTERVAL_MINUTES`, `SALES_EVAL_*`, `GOLDEN_EVAL_*`, `WATCHDOG_*`) viven como **String** en `/hubara/<tenant>/scheduler/<VAR>`. Son la fuente para cambiar **cuándo** corren los jobs **sin redeploy**: `aws ssm put-parameter --overwrite` → re-render del `.env` en la caja → recreate del worker afectado (converge el Temporal Schedule). Terraform fija el default (`ignore_changes` no pisa el override). Runbook: `hubara_agency/docs/scheduler-config-aws.md` + `infra/terraform/README.md`.
 - **Por qué SSM y no Vault:** tier estándar = **$0**, sin servidor que mantener. Vault server costaría infra extra.
 - **Alternativa simple inicial:** `.env` cifrado en la caja. SSM es el upgrade limpio (lo provisiona el Terraform).
 
 ### 3.8 Temporal — Temporal Cloud con API key
 Ver §5 (multi-tenant) y §6 (conexión). Decisión: **managed Cloud, auth por API key**, gratis durante créditos.
+- **Solo-local:** el `docker-compose.local.yml` levanta Temporal vía `temporalio/auto-setup` + un Postgres (`db`, `:5432`) + la UI (`:8233`). **En prod NO existen esos tres containers** — los reemplaza Temporal Cloud. No se hostea Postgres ni el server de Temporal en la VPS.
 
 ### 3.9 system_explorer — no en prod
 - Herramienta de visualización (React Flow + nginx proxy). Observabilidad opcional, no camino crítico. Se usa **solo en local**. Si se quiere en prod, va estático a Cloudflare Pages apuntando `VITE_API_TARGET` a la FastAPI pública.
@@ -160,6 +179,7 @@ Ver §5 (multi-tenant) y §6 (conexión). Decisión: **managed Cloud, auth por A
   - **Tier 3 — infraestructura:** receiver `hostmetrics` scrapea CPU/mem/disk/net del host (pestaña Infrastructure de SigNoz).
   - **Tier 4 — logs:** puente stdlib `logging` → OTel-logs, correlacionados con su trace por `trace_id`.
 - **Componentes del self-host SigNoz** (5 contenedores + 1 one-shot): **ClickHouse** (telemetry store — el que pesa), **Zookeeper** (coordinación de ClickHouse), **`signoz`** (query service + UI `:8080`), **`signoz-otel-collector`** (recibe OTLP `:4317/:4318` → ClickHouse), **`signoz-telemetrystore-migrator`** (migraciones de schema), + `init-clickhouse`.
+- **Knobs del worker `sales_eval` (RAGAS, prod):** la corrida es un **Scheduled Workflow** gateado por `SALES_EVAL_SCHEDULE_ENABLED` (escanea las últimas `SALES_EVAL_LOOKBACK_HOURS`, hasta `SALES_EVAL_MAX_CONVERSATIONS` conversaciones). El juez corre **vía LiteLLM** (`EVAL_JUDGE_MODEL`, alias del proxy) → sus tokens también caen en el spend tracking de LiteLLM (§4). Escribe candidatos al vault compartido (`EVAL_CANDIDATES_DIR`, §3.6).
 
 #### Dónde alojarlo — la decisión (cheapest, off-critical-path)
 
@@ -184,6 +204,7 @@ Dos clientes: **Hubara** (~100 conversaciones/día ≈ 3.000/mes) y **Vincenzo**
 | Frontend | S3+CloudFront distro A | S3+CloudFront distro B | dominio separado |
 | Cognito | user pool A | user pool B | usuarios separados |
 | VPS | caja 4GB (~$5-8) | caja 8GB (~$8-15) | proceso + datos separados |
+| Plugins | `ENABLED_PLUGINS` subset A | `ENABLED_PLUGINS` subset B | cada deploy shippea solo sus plugins (routers + workers) |
 | LiteLLM | virtual key A | virtual key B | spend tracking separado |
 | Temporal | namespace `hubara` | namespace `vincenzo` | **datos aislados, 1 sola cuenta** |
 | Session store | disco VPS A | disco VPS B | filesystem separado |
@@ -266,9 +287,9 @@ TEMPORAL_API_KEY=<bearer-token>                             # desde SSM
 |---|---|---|
 | 1 | **Migrar Temporal a API key** | §6 — mod en config de conexión + workers. Quitar dependencia de cert paths. |
 | 2 | **Validación de JWT en FastAPI** | Middleware que valide el JWT de Cognito contra el JWKS del pool. Hoy las rutas no exigen auth. |
-| 3 | **docker-compose de producción** | 1 réplica de FastAPI + LiteLLM + 3 workers, env desde SSM, apuntando a Temporal Cloud. Caddy/Cloudflare para TLS. |
+| 3 | **docker-compose de producción** | 1 réplica de FastAPI + LiteLLM + **6 workers** (§3.5), **generado con `scripts/render-compose.py`** (no a mano), env desde SSM, apuntando a Temporal Cloud. Caddy para TLS. SigNoz NO va acá — caja aparte (§3.10). |
 | 4 | **Terraform** (`infra/terraform/`) | Cognito user pools (×2), SSM parameters (secretos), Cloudflare Pages projects (×2), opcional la VPS (Hetzner/Lightsail provider). |
-| 5 | **Backup del session store** | Cron de backup del directorio `hubara_vault/` (a S3 o snapshot de la VPS). |
+| 5 | **Backup del session store** | Cron de backup del directorio `hubara_vault/` (a S3 o snapshot de la VPS). Crítico: **sesiones**; el `catalog/` es regenerable (re-sync de Medusa) y `_evals/candidates` opcional (§3.6). |
 | 6 | **Deploy SigNoz prod (VPS de obs)** | Provisionar la VPS de observabilidad (Hetzner ~8GB); levantar `deploy/signoz/`; workers de ambos tenants exportan OTLP por red privada/WireGuard; UI `:8080` tras Caddy-auth o Tailscale; ClickHouse/Zookeeper nunca públicos. §3.10 |
 | 7 | **Retention + sampling + PII scrubbing** | TTL de ClickHouse 7–15 días; head-sampling (→ tail-on-error al escalar); Collector hashea números/nombres (decisión D3 de HU-003) antes de ClickHouse. Controla el disco = el driver de costo. |
 | 8 | **Alertas en SigNoz** | Alerta de latencia LLM, tasa de `tool_errors`, y caída de worker/host vía `hostmetrics` — reemplaza la "observabilidad mínima" manual (healthcheck `GET /` + caída de VPS). |
