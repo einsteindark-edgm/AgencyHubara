@@ -1,7 +1,36 @@
 # Cómo ejecutar una HU con Paperclip (guía paso a paso)
 
-Para vos, que **no manejás Paperclip todavía**. Asume que el server local ya corre
-(`http://localhost:3100`, lo tenés abierto en el board) y que el pod ya está creado.
+Para vos, que **no manejás Paperclip todavía**. El pod ya está creado; solo necesitás el
+server (dashboard) corriendo.
+
+## 0. Levantar el dashboard (si Paperclip no está corriendo)
+
+El dashboard ES el server de Paperclip; vive en **http://localhost:3100**.
+
+**¿Ya está vivo?** Abrí http://localhost:3100, o en terminal:
+```bash
+curl -s http://localhost:3100/api/health      # {"status":"ok",...} = ya está corriendo
+```
+
+**Si NO está corriendo, levantalo** (un comando, desde el clone):
+```bash
+cd ~/Documents/Projects/paperclip
+pnpm paperclipai run        # onboard + doctor + sirve el dashboard en http://localhost:3100
+```
+Eso queda en primer plano (dejá la terminal abierta). Para que siga vivo aunque cierres la
+terminal, corrélo en background:
+```bash
+cd ~/Documents/Projects/paperclip
+nohup pnpm paperclipai run > ~/paperclip-server.log 2>&1 &
+tail -f ~/paperclip-server.log              # (opcional) ver el arranque; Ctrl-C corta el tail, no el server
+```
+Notas: la **primera vez de todas**, si nunca instalaste deps, `pnpm install` antes.
+Alternativa con hot-reload para desarrollo del propio Paperclip: `pnpm dev`.
+
+**Verificá:** abrí **http://localhost:3100** → ahí está el board de **Acktos**. El health
+dice `local_trusted` (sin login — solo loopback, por eso anda directo).
+
+**Frenar el server:** `lsof -ti :3100 | xargs kill`  (o Ctrl-C en su terminal).
 
 ## El modelo en 3 frases
 
