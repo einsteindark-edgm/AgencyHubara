@@ -275,3 +275,45 @@ async def test_emit_includes_correct_fire_at_ms(
     assert (
         abs(fire_at_ms - (now_ms_at_test + expected_offset_ms)) < 2000
     ), f"fire_at_ms={fire_at_ms} expected≈{now_ms_at_test + expected_offset_ms}"
+
+
+@pytest.mark.asyncio
+async def test_emit_respects_env_tuned_cadences(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ACK-4: el watchdog pre-expiry y la service window son tuneables por env.
+
+    Con `WHATSAPP_SERVICE_WINDOW_MS` (ventana de 12h) y `WATCHDOG_PRE_EXPIRY_MS`
+    (dispara 10min antes) seteados, el `fire_at_ms` emitido refleja AMBOS
+    overrides — `fire_at = (now + service_window) - pre_expiry` — en vez de los
+    defaults hardcoded (24h / 30min).
+    """
+    import time
+
+    twelve_hours_ms = 12 * 60 * 60 * 1000
+    ten_min_ms = 10 * 60 * 1000
+    monkeypatch.setenv("WHATSAPP_SERVICE_WINDOW_MS", str(twelve_hours_ms))
+    monkeypatch.setenv("WATCHDOG_PRE_EXPIRY_MS", str(ten_min_ms))
+
+    recorder = DispatchRecorder()
+    monkeypatch.setattr(
+        ingest_mod, "dispatch_envelope_with_client", recorder.record
+    )
+
+    use_case = IngestInboundMessage(
+        history_store=FakeHistoryStore(),  # type: ignore[arg-type]
+        load_session=FakeLoadOrStart(),  # type: ignore[arg-type]
+        metadata_store=FakeMetadataStore(),  # type: ignore[arg-type]
+        temporal_client_factory=_make_factory,  # type: ignore[arg-type]
+    )
+
+    await use_case.execute(_make_text_message())
+    await _drain_background_tasks()
+
+    assert len(recorder.calls) == 1
+    fire_at_ms = recorder.calls[0].payload["fire_at_ms"]
+    expected_offset_ms = twelve_hours_ms - ten_min_ms
+    now_ms_at_test = int(time.time() * 1000)
+    assert (
+        abs(fire_at_ms - (now_ms_at_test + expected_offset_ms)) < 2000
+    ), f"fire_at_ms={fire_at_ms} expected≈{now_ms_at_test + expected_offset_ms}"

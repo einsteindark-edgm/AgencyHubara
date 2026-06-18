@@ -49,6 +49,15 @@ class TestComputeServiceWindowExpiry:
     def test_exact_24h_offset(self):
         assert compute_service_window_expiry(NOW_MS) == NOW_MS + ONE_DAY_MS
 
+    def test_uses_injected_service_window_ms(self):
+        # ACK-4: el módulo es puro (sin I/O); el caller (activity/use_case)
+        # inyecta el valor tuneado por env como dato. Override de 12h.
+        twelve_hours = 12 * ONE_HOUR_MS
+        assert (
+            compute_service_window_expiry(NOW_MS, service_window_ms=twelve_hours)
+            == NOW_MS + twelve_hours
+        )
+
 
 # =============================================================================
 # compute_ctwa_window_expiry
@@ -161,6 +170,14 @@ class TestWatchdogFireAt:
         exp = NOW_MS + ONE_DAY_MS
         metadata = {"service_window_expires_at_ms": exp}
         assert watchdog_fire_at(metadata) == exp - WATCHDOG_PRE_EXPIRY_MS
+
+    def test_uses_injected_pre_expiry_ms(self):
+        # ACK-4: el caller inyecta el pre_expiry tuneado por env como dato
+        # (R-DET: el módulo puro no puede leer env). Override de 10 min.
+        exp = NOW_MS + ONE_DAY_MS
+        metadata = {"service_window_expires_at_ms": exp}
+        ten_min = 10 * 60 * 1000
+        assert watchdog_fire_at(metadata, pre_expiry_ms=ten_min) == exp - ten_min
 
     def test_returns_none_when_field_missing(self):
         assert watchdog_fire_at({}) is None

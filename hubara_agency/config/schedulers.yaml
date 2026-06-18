@@ -14,10 +14,18 @@
 #   nadie actualiza el catálogo → CI rompe).
 #
 # Cómo cambiar una cadencia en producción:
-#   - source: env       → setear el `env_var` (docker-compose / k8s) + rebuild
-#                         del worker indicado (los schedules se crean en main()).
-#   - source: hardcoded → hoy NO es tuneable por env; ver `notes` y la issue
-#                         de follow-up para extraerlo a env.
+#   - Temporal Schedules (cadence_kind: cron|interval, tienen `schedule_id`):
+#       EN CALIENTE, sin redeploy. El cron/intervalo vive en el server de
+#       Temporal, NO en el pod → se cambia con
+#       `scripts/set_schedule_cadence.py <id> --cron|--every-minutes` (o la
+#       Temporal UI). La `env_var` sólo fija el DEFAULT con que el worker CREA
+#       el schedule al primer boot (después el worker lo skipea si ya existe).
+#   - Knobs de activity/threshold (source: env, layer: activity|workflow):
+#       hoy se cambian seteando la `env_var` + ROLLOUT del pod (en EKS el env
+#       se inyecta al arrancar el pod; leerlo por-call NO lo vuelve hot). Para
+#       hot real (sin rollout) hace falta una fuente mutable en runtime —
+#       AWS SSM Parameter Store o un ConfigMap montado. Decisión pendiente en
+#       ACK-3 (ver issue). Mientras tanto: cambiar env + rollout del worker.
 # =============================================================================
 version: 1
 
@@ -27,6 +35,7 @@ schedulers:
     activates: "OrderReconciliationWorkflow — barrido periódico de pedidos `pending` que se reintentan contra Medusa"
     plugin: orders
     cadence_kind: interval
+    schedule_id: order-reconciliation-schedule   # Temporal Schedule id — cambiable EN CALIENTE (ver hot_reload)
     default: "5"          # minutos
     unit: minutes
     env_var: ORDER_RECONCILE_INTERVAL_MINUTES
@@ -41,6 +50,7 @@ schedulers:
     activates: "SalesEvalWorkflow — eval async de las conversaciones reales del vault (muestreo diario)"
     plugin: chats
     cadence_kind: cron
+    schedule_id: sales-eval-schedule   # Temporal Schedule id — cambiable EN CALIENTE (ver hot_reload)
     default: "0 23 * * *"
     time_zone: America/Bogota
     env_var: SALES_EVAL_SCHEDULE_CRON
@@ -60,6 +70,7 @@ schedulers:
     activates: "GoldenEvalWorkflow — corre el golden set controlado → SigNoz (eval.suite=golden)"
     plugin: chats
     cadence_kind: cron
+    schedule_id: golden-eval-schedule   # Temporal Schedule id — cambiable EN CALIENTE (ver hot_reload)
     default: "0 6 * * *"
     time_zone: America/Bogota
     env_var: GOLDEN_EVAL_SCHEDULE_CRON
@@ -76,22 +87,27 @@ schedulers:
     activates: "RemarketingWatchdog — dispara el nudge ANTES de que cierre la ventana free de 24h de WhatsApp"
     plugin: chats
     cadence_kind: relative_to_window
-    pre_expiry_ms_default: 1800000   # 30 min — code: WATCHDOG_PRE_EXPIRY_MS (HARDCODED)
-    service_window_ms: 86400000      # 24h    — code: SERVICE_WINDOW_MS (HARDCODED)
+    pre_expiry_ms_default: 1800000   # 30 min — default: WATCHDOG_PRE_EXPIRY_MS (window.py)
+    pre_expiry_ms_env_var: WATCHDOG_PRE_EXPIRY_MS
+    service_window_ms_default: 86400000   # 24h — default: SERVICE_WINDOW_MS (window.py)
+    service_window_ms_env_var: WHATSAPP_SERVICE_WINDOW_MS
     enabled_env_var: WATCHDOG_ENABLED
     enabled_default: false
     quiet_hours_start_env_var: WATCHDOG_QUIET_HOURS_START
     quiet_hours_start_default: 8
     quiet_hours_end_env_var: WATCHDOG_QUIET_HOURS_END
     quiet_hours_end_default: 22
-    source: mixed   # enabled + quiet hours = env ; pre_expiry + service_window = hardcoded
+    source: env   # enabled + quiet hours + pre_expiry + service_window = todo env (ACK-4)
     layer: activity
     requires_rebuild: true
-    code_ref: "src/platform/whatsapp/window.py + src/plugins/chats/agent/remarketing/activities/watchdog_activities.py"
+    code_ref: "src/platform/whatsapp/window.py + src/plugins/chats/agent/remarketing/activities/watchdog_activities.py + src/plugins/chats/shared/scheduler_env.py"
     notes: >-
-      `pre_expiry_ms` (cuándo dispara, 30min antes del cierre) y `service_window_ms` (24h)
-      hoy están HARDCODED en window.py (módulo puro, sin I/O). Extraerlos a env cambia la
-      firma del use_case puro (debe recibir el valor como dato, R-DET) → follow-up dedicado.
+      ACK-4: `pre_expiry_ms` (cuándo dispara, default 30min antes del cierre) y
+      `service_window_ms` (default 24h) son tuneables por env. `window.py` sigue PURO
+      (R-DET): los defaults viven ahí como constantes y el caller (el use_case
+      `ingest_inbound_message` que AGENDA + la activity `check_watchdog_eligibility`
+      que RE-CHEQUEA) lee la env var vía `scheduler_env` y la pasa como dato. Ambos
+      call sites comparten la misma env var para no desincronizarse.
 
   # ── Evaluador event-driven (NO es un scheduler temporal) ───────────────────
   - id: evaluate-episode
@@ -99,14 +115,20 @@ schedulers:
     plugin: chats
     cadence_kind: event_driven
     trigger: "EpisodeClosedEvent — manifest transition `sales_episode_close_triggers_eval`"
-    source: hardcoded
+    source: env
     layer: workflow
     requires_rebuild: true
-    code_ref: "src/plugins/chats/agent/sales_eval/workflows/evaluate_episode.py"
+    code_ref: "src/plugins/chats/agent/sales_eval/workflows/evaluate_episode.py + src/plugins/chats/agent/sales_eval/activities/eval_activities.py + src/plugins/chats/shared/scheduler_env.py"
     thresholds:
-      - { name: min_turns, default: 4, source: hardcoded }
-      - { name: candidate_threshold, default: 0.7, source: hardcoded }
-    notes: "Se cataloga porque GOBIERNA cuándo se activa la eval (al cerrar episodio). No tiene cadencia temporal; sus umbrales están hardcoded en el workflow."
+      - { name: min_turns, default: 4, env_var: SALES_EVAL_MIN_TURNS, source: env }
+      - { name: candidate_threshold, default: 0.7, env_var: SALES_EVAL_CANDIDATE_THRESHOLD, source: env }
+    notes: >-
+      ACK-4: `min_turns` (debajo → episodio trivial, skip) y `candidate_threshold`
+      (avg < esto → candidato a golden) son tuneables por env. El workflow ya NO los
+      hardcodea: viajan en `EvaluateEpisodeInput` (default 4 / 0.7) y la eval activity
+      (`evaluate_sales_conversation_activity`) aplica el override de env vía
+      `scheduler_env` antes de consumirlos — el workflow es R-DET (no lee env). Las env
+      vars son la familia `SALES_EVAL_*` (compartidas con el muestreo cron sales-eval-online).
 
   # ── Sync de catálogo (sin scheduler — on-demand) ───────────────────────────
   - id: catalog-sync

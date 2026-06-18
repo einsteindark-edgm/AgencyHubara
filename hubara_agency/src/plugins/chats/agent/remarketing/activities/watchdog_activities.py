@@ -43,6 +43,10 @@ from src.platform.whatsapp.window import WATCHDOG_PRE_EXPIRY_MS
 from src.plugins.chats.agent.remarketing.watchdog_contracts import (
     WatchdogEligibilityResult,
 )
+from src.plugins.chats.shared.scheduler_env import (
+    WATCHDOG_PRE_EXPIRY_MS_ENV,
+    env_int,
+)
 
 
 # =============================================================================
@@ -321,7 +325,12 @@ async def check_watchdog_eligibility_activity(
             eligible=False, reason="window_not_expiring_soon"
         )
     ms_until_expiry = expires_at - now_ms
-    if ms_until_expiry > WATCHDOG_PRE_EXPIRY_MS:
+    # ACK-4: el pre-expiry es tuneable por env. DEBE coincidir con el valor que
+    # usó el use_case al AGENDAR el watchdog (`ingest_inbound_message`), si no
+    # el re-check rechazaría disparos legítimos. Por eso ambos leen la MISMA env
+    # var vía `scheduler_env`.
+    pre_expiry_ms = env_int(WATCHDOG_PRE_EXPIRY_MS_ENV, WATCHDOG_PRE_EXPIRY_MS)
+    if ms_until_expiry > pre_expiry_ms:
         log.info(
             "watchdog_eligibility_skipped",
             session_id=session_id,

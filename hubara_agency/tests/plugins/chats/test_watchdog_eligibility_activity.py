@@ -216,6 +216,34 @@ async def test_window_not_expiring_soon_returns_skipped(
 
 
 @pytest.mark.asyncio
+async def test_window_check_respects_env_tuned_pre_expiry(
+    monkeypatch: pytest.MonkeyPatch,
+    _isolate_vault_dir: Path,
+) -> None:
+    """ACK-4: el pre-expiry del re-check de ventana es tuneable por env.
+
+    Una ventana que cierra en 2h cae fuera del pre-expiry default (30min) →
+    `window_not_expiring_soon`. Con `WATCHDOG_PRE_EXPIRY_MS=3h` esa misma
+    ventana queda DENTRO del pre-expiry → elegible. El agendado (use_case) y
+    este re-check deben usar el MISMO override para no desincronizarse.
+    """
+    monkeypatch.setenv("WATCHDOG_ENABLED", "1")
+    # Neutralizar quiet hours (independiente del reloj de wall-clock del CI).
+    monkeypatch.setenv("WATCHDOG_QUIET_HOURS_START", "0")
+    monkeypatch.setenv("WATCHDOG_QUIET_HOURS_END", "24")
+    monkeypatch.setenv("WATCHDOG_PRE_EXPIRY_MS", str(3 * 60 * 60 * 1000))
+    now_ms = int(time.time() * 1000)
+    md = _base_metadata(now_ms=now_ms)
+    md["service_window_expires_at_ms"] = now_ms + (2 * 60 * 60 * 1000)
+    _write_metadata(_isolate_vault_dir, SESSION_ID, md)
+
+    result = await check_watchdog_eligibility_activity(SESSION_ID, EPISODE_ID)
+
+    assert result.reason != "window_not_expiring_soon"
+    assert result.eligible is True
+
+
+@pytest.mark.asyncio
 async def test_window_missing_returns_skipped(
     monkeypatch: pytest.MonkeyPatch,
     _isolate_vault_dir: Path,

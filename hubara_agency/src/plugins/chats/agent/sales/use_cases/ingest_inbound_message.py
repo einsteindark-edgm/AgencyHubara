@@ -52,9 +52,16 @@ from src.plugins.chats.agent.sales.translate import (
 from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.session_history import FilesystemMessageHistoryStore
 from src.platform.whatsapp.window import (
+    SERVICE_WINDOW_MS,
+    WATCHDOG_PRE_EXPIRY_MS,
     compute_ctwa_window_expiry,
     compute_service_window_expiry,
     watchdog_fire_at,
+)
+from src.plugins.chats.shared.scheduler_env import (
+    SERVICE_WINDOW_MS_ENV,
+    WATCHDOG_PRE_EXPIRY_MS_ENV,
+    env_int,
 )
 from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
     count_session_jsonl_lines,
@@ -221,7 +228,10 @@ class IngestInboundMessage:
         # permite al watchdog (Sprint 2) saber cuándo está por cerrarse y
         # disparar un utility template legítimo.
         metadata["last_inbound_at_ms"] = now_ms
-        metadata["service_window_expires_at_ms"] = compute_service_window_expiry(now_ms)
+        metadata["service_window_expires_at_ms"] = compute_service_window_expiry(
+            now_ms,
+            service_window_ms=env_int(SERVICE_WINDOW_MS_ENV, SERVICE_WINDOW_MS),
+        )
 
         # HU-WA24H-001 F1.3: ventana extendida 72h CTWA. Solo se setea la
         # PRIMERA vez que vemos ctwa_clid — la ventana CTWA NO se renueva
@@ -677,7 +687,10 @@ class IngestInboundMessage:
         if not isinstance(episode_id, str):
             return
 
-        fire_at_ms = watchdog_fire_at(metadata)
+        fire_at_ms = watchdog_fire_at(
+            metadata,
+            pre_expiry_ms=env_int(WATCHDOG_PRE_EXPIRY_MS_ENV, WATCHDOG_PRE_EXPIRY_MS),
+        )
         if fire_at_ms is None:
             return
 

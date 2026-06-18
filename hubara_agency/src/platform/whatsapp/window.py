@@ -35,14 +35,20 @@ WATCHDOG_PRE_EXPIRY_MS: int = 30 * 60 * 1000
 # =============================================================================
 
 
-def compute_service_window_expiry(last_inbound_at_ms: int) -> int:
+def compute_service_window_expiry(
+    last_inbound_at_ms: int, *, service_window_ms: int = SERVICE_WINDOW_MS
+) -> int:
     """Devuelve epoch ms en que cierra la ventana de servicio.
 
     La ventana se reabre con cada inbound del cliente — el caller debe
     invocar este helper en cada `IngestInboundMessage` y persistir el
     resultado en `metadata.service_window_expires_at_ms`.
+
+    `service_window_ms` es la duración de la ventana. Default = `SERVICE_WINDOW_MS`
+    (24h). El módulo es PURO (sin I/O, R-DET): para tunear la duración por env el
+    caller (activity / use_case) lee la env var y la pasa como dato (ACK-4).
     """
-    return last_inbound_at_ms + SERVICE_WINDOW_MS
+    return last_inbound_at_ms + service_window_ms
 
 
 def compute_ctwa_window_expiry(ctwa_first_touch_at_ms: int) -> int:
@@ -95,14 +101,20 @@ def is_message_billable(now_ms: int, metadata: dict[str, Any]) -> bool:
     )
 
 
-def watchdog_fire_at(metadata: dict[str, Any]) -> int | None:
+def watchdog_fire_at(
+    metadata: dict[str, Any], *, pre_expiry_ms: int = WATCHDOG_PRE_EXPIRY_MS
+) -> int | None:
     """Devuelve epoch ms en que debe dispararse el watchdog, o None.
 
-    El watchdog se dispara `WATCHDOG_PRE_EXPIRY_MS` antes del cierre de
-    la ventana de servicio. Si `metadata.service_window_expires_at_ms`
-    no existe o no es int, retorna None (no programar watchdog).
+    El watchdog se dispara `pre_expiry_ms` antes del cierre de la ventana de
+    servicio. Si `metadata.service_window_expires_at_ms` no existe o no es int,
+    retorna None (no programar watchdog).
+
+    `pre_expiry_ms` default = `WATCHDOG_PRE_EXPIRY_MS` (30 min). El módulo es
+    PURO (R-DET): para tunearlo por env el caller (activity / use_case) lee la
+    env var y la pasa como dato (ACK-4).
     """
     exp = metadata.get("service_window_expires_at_ms")
     if not isinstance(exp, int):
         return None
-    return exp - WATCHDOG_PRE_EXPIRY_MS
+    return exp - pre_expiry_ms
