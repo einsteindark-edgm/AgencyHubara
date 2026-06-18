@@ -69,7 +69,7 @@ describe("SystemGraphSchema ↔ backend (F-SDK-5)", () => {
       certifications: [certification],
     });
     expect(parsed.certifications).toHaveLength(1);
-    expect(parsed.certifications[0].level).toBe("C2");
+    expect(parsed.certifications[0]?.level).toBe("C2");
   });
 
   it("tolera backends pre-F-SDK-5 (campo ausente → default [])", () => {
