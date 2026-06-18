@@ -1,0 +1,120 @@
+# =============================================================================
+# Catálogo centralizado de SCHEDULERS — AgencyHubara (ACK-3)
+# =============================================================================
+# Fuente ÚNICA de verdad de TODO lo que ACTIVA funcionalidad por cadencia:
+# el watchdog de remarketing, los evaluadores, la reconciliación de pedidos, etc.
+#
+# Por qué un CATÁLOGO (yaml) y no un módulo central importado por todos:
+#   Los plugins NO pueden importarse entre sí ni importar `src.platform`
+#   (reglas R-DIP / ratchet P-28). Un único módulo de config que conozca a
+#   cada plugin rompería esos límites. El mecanismo de control en runtime
+#   sigue siendo `env` (universal, sin acoplar plugins); este archivo es el
+#   índice operativo + el contrato de defaults, guardado por
+#   `tests/test_scheduler_catalog.py` (si un default del código se mueve y
+#   nadie actualiza el catálogo → CI rompe).
+#
+# Cómo cambiar una cadencia en producción:
+#   - source: env       → setear el `env_var` (docker-compose / k8s) + rebuild
+#                         del worker indicado (los schedules se crean en main()).
+#   - source: hardcoded → hoy NO es tuneable por env; ver `notes` y la issue
+#                         de follow-up para extraerlo a env.
+# =============================================================================
+version: 1
+
+schedulers:
+  # ── Reconciliación de pedidos (Temporal Schedule, interval) ────────────────
+  - id: orders-reconcile
+    activates: "OrderReconciliationWorkflow — barrido periódico de pedidos `pending` que se reintentan contra Medusa"
+    plugin: orders
+    cadence_kind: interval
+    default: "5"          # minutos
+    unit: minutes
+    env_var: ORDER_RECONCILE_INTERVAL_MINUTES
+    source: env
+    layer: worker_boot
+    requires_rebuild: true
+    code_ref: "src/plugins/orders/workers/reconcile.py"
+    notes: "Temporal Schedule 'order-reconciliation-schedule', overlap=SKIP. Default _DEFAULT_INTERVAL_MIN=5."
+
+  # ── Evaluador ONLINE de conversaciones reales (Temporal Schedule, cron) ────
+  - id: sales-eval-online
+    activates: "SalesEvalWorkflow — eval async de las conversaciones reales del vault (muestreo diario)"
+    plugin: chats
+    cadence_kind: cron
+    default: "0 23 * * *"
+    time_zone: America/Bogota
+    env_var: SALES_EVAL_SCHEDULE_CRON
+    enabled_env_var: SALES_EVAL_SCHEDULE_ENABLED
+    enabled_default: true
+    source: env
+    layer: worker_boot
+    requires_rebuild: true
+    code_ref: "src/plugins/chats/workers/sales_eval.py"
+    extra_knobs:
+      - { env_var: SALES_EVAL_LOOKBACK_HOURS, default: "24", activates: "ventana de lookback del muestreo" }
+      - { env_var: SALES_EVAL_MAX_CONVERSATIONS, default: "100", activates: "tope de conversaciones por corrida" }
+    notes: "ENABLED=false NO solo skipea: BORRA el schedule (toggle real, INV-2). La eval primaria es event-driven (ver evaluate-episode); este muestreo es complementario."
+
+  # ── Evaluador GOLDEN suite (Temporal Schedule, cron, OPT-IN) ───────────────
+  - id: golden-eval
+    activates: "GoldenEvalWorkflow — corre el golden set controlado → SigNoz (eval.suite=golden)"
+    plugin: chats
+    cadence_kind: cron
+    default: "0 6 * * *"
+    time_zone: America/Bogota
+    env_var: GOLDEN_EVAL_SCHEDULE_CRON
+    enabled_env_var: GOLDEN_EVAL_SCHEDULE_ENABLED
+    enabled_default: false   # OPT-IN: el golden vive en el GitHub Action (CI); acá apagado por default
+    source: env
+    layer: worker_boot
+    requires_rebuild: true
+    code_ref: "src/plugins/chats/workers/sales_eval.py"
+    notes: "OFF por default. El feed diario de SigNoz es sales-eval-online. Triggers manuales desde Temporal UI siempre funcionan aunque el schedule esté OFF."
+
+  # ── Watchdog de remarketing (relativo a la ventana de 24h de WhatsApp) ─────
+  - id: remarketing-watchdog
+    activates: "RemarketingWatchdog — dispara el nudge ANTES de que cierre la ventana free de 24h de WhatsApp"
+    plugin: chats
+    cadence_kind: relative_to_window
+    pre_expiry_ms_default: 1800000   # 30 min — code: WATCHDOG_PRE_EXPIRY_MS (HARDCODED)
+    service_window_ms: 86400000      # 24h    — code: SERVICE_WINDOW_MS (HARDCODED)
+    enabled_env_var: WATCHDOG_ENABLED
+    enabled_default: false
+    quiet_hours_start_env_var: WATCHDOG_QUIET_HOURS_START
+    quiet_hours_start_default: 8
+    quiet_hours_end_env_var: WATCHDOG_QUIET_HOURS_END
+    quiet_hours_end_default: 22
+    source: mixed   # enabled + quiet hours = env ; pre_expiry + service_window = hardcoded
+    layer: activity
+    requires_rebuild: true
+    code_ref: "src/platform/whatsapp/window.py + src/plugins/chats/agent/remarketing/activities/watchdog_activities.py"
+    notes: >-
+      `pre_expiry_ms` (cuándo dispara, 30min antes del cierre) y `service_window_ms` (24h)
+      hoy están HARDCODED en window.py (módulo puro, sin I/O). Extraerlos a env cambia la
+      firma del use_case puro (debe recibir el valor como dato, R-DET) → follow-up dedicado.
+
+  # ── Evaluador event-driven (NO es un scheduler temporal) ───────────────────
+  - id: evaluate-episode
+    activates: "EvaluateEpisodeWorkflow — evalúa CADA episodio al cerrarse (no por cron)"
+    plugin: chats
+    cadence_kind: event_driven
+    trigger: "EpisodeClosedEvent — manifest transition `sales_episode_close_triggers_eval`"
+    source: hardcoded
+    layer: workflow
+    requires_rebuild: true
+    code_ref: "src/plugins/chats/agent/sales_eval/workflows/evaluate_episode.py"
+    thresholds:
+      - { name: min_turns, default: 4, source: hardcoded }
+      - { name: candidate_threshold, default: 0.7, source: hardcoded }
+    notes: "Se cataloga porque GOBIERNA cuándo se activa la eval (al cerrar episodio). No tiene cadencia temporal; sus umbrales están hardcoded en el workflow."
+
+  # ── Sync de catálogo (sin scheduler — on-demand) ───────────────────────────
+  - id: catalog-sync
+    activates: "CatalogSyncWorkflow — sincroniza el catálogo de productos"
+    plugin: catalog
+    cadence_kind: on_demand
+    source: none
+    layer: workflow
+    requires_rebuild: false
+    code_ref: "src/plugins/catalog/agent/workflows/sync.py"
+    notes: "NO tiene Temporal Schedule periódico (decisión explícita). Disparado por ops vía scripts/trigger_catalog_sync.py o el futuro product_sync_agent. Catalogado para dejar constancia de que la ausencia de cron es deliberada."
