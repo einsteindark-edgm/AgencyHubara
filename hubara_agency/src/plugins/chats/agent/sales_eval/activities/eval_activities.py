@@ -18,6 +18,7 @@ import json
 import os
 import sys
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 
 from temporalio import activity
@@ -43,6 +44,12 @@ from src.plugins.chats.agent.sales_eval.evals.contracts import (
     GoldenSuiteResult,
 )
 from src.plugins.chats.agent.sales_eval.evals.select import select_eval_units
+from src.plugins.chats.shared.scheduler_env import (
+    SALES_EVAL_CANDIDATE_THRESHOLD_ENV,
+    SALES_EVAL_MIN_TURNS_ENV,
+    env_float,
+    env_int,
+)
 
 # hubara_agency/ (raíz del paquete): activities/ -> sales_eval -> agent -> chats ->
 # plugins -> src -> hubara_agency
@@ -56,6 +63,24 @@ _SCENARIO = scenario.BASE_SCENARIO
 
 def _env() -> str:
     return os.getenv("ENVIRONMENT", "dev")
+
+
+def _resolve_eval_window(window: EvalWindowInput) -> EvalWindowInput:
+    """Aplica el override por env de los umbrales de eval (ACK-4).
+
+    `min_turns` y `candidate_threshold` son tuneables por env (familia
+    `SALES_EVAL_*`). El override se aplica ACÁ, en la activity, porque es el
+    único borde que consume estos umbrales y puede leer env sin romper R-DET
+    (el workflow `EvaluateEpisodeWorkflow` los pasa como dato pero NO lee env).
+    Env ausente → la ventana queda igual (los valores que vinieron del input).
+    """
+    return replace(
+        window,
+        min_turns=env_int(SALES_EVAL_MIN_TURNS_ENV, window.min_turns),
+        candidate_threshold=env_float(
+            SALES_EVAL_CANDIDATE_THRESHOLD_ENV, window.candidate_threshold
+        ),
+    )
 
 
 @activity.defn(name="select_conversations_to_eval")
@@ -87,6 +112,10 @@ async def evaluate_sales_conversation_activity(
     métrica). El return es escalar (lo agrega el workflow). Si la conversación es
     candidata a golden y `draft_goldens`, el juez redacta el `expected_outcome`.
     """
+    # ACK-4: aplicar el override por env de los umbrales (min_turns /
+    # candidate_threshold). El workflow los pasa como dato; el ajuste operativo
+    # por env se resuelve acá, en la activity (R-DET-safe).
+    window = _resolve_eval_window(window)
     vault_dir = composition.get_vault_dir()
     session_id, episode_id = reconstruct.parse_eval_unit_id(unit_id)
     wa_number = reconstruct.whatsapp_number_from_session(session_id)

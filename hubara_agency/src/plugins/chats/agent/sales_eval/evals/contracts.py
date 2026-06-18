@@ -127,8 +127,15 @@ class EvaluateEpisodeInput:
     `<session>::<episode>` y delega en la activity de eval.
 
     Inmutable y replay-safe (R-JSON): solo escalares.
+
+    `min_turns` / `candidate_threshold` (ACK-4): umbrales de la eval, antes
+    hardcoded en el workflow. Viajan como input (defaults 4 / 0.7) para que un
+    caller los tune (backfill, tests). El override operativo por env lo aplica
+    la eval activity (R-DET: el workflow no lee env).
     """
 
     session_id: str
     episode_id: str = ""
     closing_tag: str = ""
+    min_turns: int = 4
+    candidate_threshold: float = 0.7

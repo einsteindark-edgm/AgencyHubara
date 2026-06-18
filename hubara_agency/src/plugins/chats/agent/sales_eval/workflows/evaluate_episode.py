@@ -44,9 +44,12 @@ class EvaluateEpisodeWorkflow:
         # candidate_threshold + draft_goldens + redact_pii. draft_goldens=True:
         # si el episodio puntúa bajo, el juez redacta el golden y queda como
         # candidato a curar — el episodio malo se vuelve test de regresión.
+        # ACK-4: min_turns / candidate_threshold ya NO son hardcoded — vienen
+        # del input (default 4 / 0.7). El override por env lo aplica la activity
+        # (R-DET: el workflow no lee env).
         window = EvalWindowInput(
-            min_turns=4,
-            candidate_threshold=0.7,
+            min_turns=inp.min_turns,
+            candidate_threshold=inp.candidate_threshold,
             draft_goldens=True,
             redact_pii=True,
         )

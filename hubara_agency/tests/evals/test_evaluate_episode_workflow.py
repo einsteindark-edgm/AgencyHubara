@@ -71,6 +71,43 @@ async def test_workflow_builds_unit_id_and_delegates():
 
 
 @pytest.mark.asyncio
+async def test_workflow_forwards_thresholds_from_input():
+    """ACK-4: el workflow ya NO hardcodea min_turns/candidate_threshold — los
+    toma de `EvaluateEpisodeInput` y los pasa en el `EvalWindowInput` que delega
+    a la activity. Así un caller (backfill, env) puede tunearlos."""
+    seen: dict[str, object] = {}
+
+    @activity.defn(name="evaluate_sales_conversation")
+    async def fake_eval(unit_id: str, window: dict) -> ConversationEvalResult:
+        seen["min_turns"] = window["min_turns"]
+        seen["candidate_threshold"] = window["candidate_threshold"]
+        sid, _, eid = unit_id.partition("::")
+        return ConversationEvalResult(session_id=sid, episode_id=eid, num_turns=8)
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue="eval-ep-test3",
+            workflows=[EvaluateEpisodeWorkflow],
+            activities=[fake_eval],
+        ):
+            await env.client.execute_workflow(
+                EvaluateEpisodeWorkflow.run,
+                EvaluateEpisodeInput(
+                    session_id="wa_+573001112233",
+                    episode_id="ep_007",
+                    min_turns=7,
+                    candidate_threshold=0.55,
+                ),
+                id="eval-episode-wa_+573001112233-ep_007",
+                task_queue="eval-ep-test3",
+            )
+
+    assert seen["min_turns"] == 7
+    assert seen["candidate_threshold"] == 0.55
+
+
+@pytest.mark.asyncio
 async def test_workflow_legacy_session_without_episode():
     """episode_id vacío → unit_id pelado (sesión entera, compat legacy)."""
     seen: dict[str, str] = {}

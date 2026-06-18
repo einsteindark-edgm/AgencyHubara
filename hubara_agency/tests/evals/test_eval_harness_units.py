@@ -583,3 +583,39 @@ async def test_catalog_ground_truth_degrades_to_empty():
             raise RuntimeError("snapshot ausente")
 
     assert await S.catalog_ground_truth(catalog=_Broken()) == ""
+
+
+# --------------------------------------------------------------------------- #
+# ACK-4: la eval activity aplica el override por env de los umbrales antes de
+# consumirlos. El workflow es R-DET (no lee env); el override vive acá, en la
+# activity, que SÍ puede leer env.
+# --------------------------------------------------------------------------- #
+def test_resolve_eval_window_applies_env_override(monkeypatch):
+    from src.plugins.chats.agent.sales_eval.activities.eval_activities import (
+        _resolve_eval_window,
+    )
+
+    monkeypatch.setenv("SALES_EVAL_MIN_TURNS", "9")
+    monkeypatch.setenv("SALES_EVAL_CANDIDATE_THRESHOLD", "0.42")
+
+    out = _resolve_eval_window(EvalWindowInput(min_turns=4, candidate_threshold=0.7))
+
+    assert out.min_turns == 9
+    assert out.candidate_threshold == 0.42
+    # El resto de la ventana queda intacto (solo los umbrales son tuneables).
+    assert out.draft_goldens is True
+    assert out.redact_pii is True
+
+
+def test_resolve_eval_window_without_env_is_unchanged(monkeypatch):
+    from src.plugins.chats.agent.sales_eval.activities.eval_activities import (
+        _resolve_eval_window,
+    )
+
+    monkeypatch.delenv("SALES_EVAL_MIN_TURNS", raising=False)
+    monkeypatch.delenv("SALES_EVAL_CANDIDATE_THRESHOLD", raising=False)
+
+    out = _resolve_eval_window(EvalWindowInput(min_turns=4, candidate_threshold=0.7))
+
+    assert out.min_turns == 4
+    assert out.candidate_threshold == 0.7
