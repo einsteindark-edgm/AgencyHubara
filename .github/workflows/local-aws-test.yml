@@ -1,0 +1,42 @@
+# Valida TODO el Terraform contra robotocore (réplica local de AWS) en cada PR
+# que toque infra/. NO usa credenciales AWS reales → un fork no puede tocar la
+# nube. Es el gate que nos deja "probar para no equivocarnos en la real".
+name: Local AWS test (robotocore)
+
+on:
+  pull_request:
+    paths: ["infra/**", ".github/workflows/local-aws-test.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  robotocore-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # robotocore como service container (drop-in AWS en :4566).
+    services:
+      robotocore:
+        image: jackdanger/robotocore:latest
+        ports: ["4566:4566"]
+        options: >-
+          --health-cmd "python3 -c \"import urllib.request;urllib.request.urlopen('http://localhost:4566/_robotocore/health')\""
+          --health-interval 5s --health-timeout 5s --health-retries 20
+
+    env:
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-east-1
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+          terraform_wrapper: false
+
+      - name: Correr el harness local contra robotocore
+        run: bash infra/robotocore/test-local.sh

@@ -1,0 +1,12 @@
+# Copiá a `real.s3.tfbackend` y completá. Se usa con:
+#   terraform init -backend-config=envs/real.s3.tfbackend
+#
+# El bucket + la tabla DynamoDB se crean UNA vez en el bootstrap (ver
+# ../../README.md §Bootstrap). Son el state store, así que NO pueden vivir en
+# Terraform que use ese mismo state (huevo-gallina) → se bootstrapean a mano.
+
+bucket         = "agencyhubara-tfstate"
+key            = "platform/terraform.tfstate"
+region         = "us-east-1"
+dynamodb_table = "agencyhubara-tflock"
+encrypt        = true

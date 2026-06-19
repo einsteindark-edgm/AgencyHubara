@@ -1,0 +1,8 @@
+# Copiá a `real.s3.tfbackend`. State separado del platform (otra `key`).
+#   terraform init -backend-config=envs/real.s3.tfbackend
+
+bucket         = "agencyhubara-tfstate"
+key            = "compute/terraform.tfstate"
+region         = "us-east-1"
+dynamodb_table = "agencyhubara-tflock"
+encrypt        = true

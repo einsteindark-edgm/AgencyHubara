@@ -1,0 +1,158 @@
+# Caja de app de un tenant: FastAPI + LiteLLM + 6 workers + Caddy (en la prod
+# compose). Lee sus secretos de SSM vía el instance profile. Coincide con
+# INFRASTRUCTURE.md §3.3-3.8.
+
+variable "tenant" { type = string }
+variable "region" { type = string }
+variable "ami_id" { type = string }
+variable "instance_type" { type = string }
+variable "domain" { type = string }
+variable "enabled_plugins" { type = string }
+variable "root_volume_gb" { type = number }
+variable "key_name" {
+  type    = string
+  default = null
+}
+variable "ssh_ingress_cidrs" { type = list(string) }
+variable "image_repo" { type = string }
+variable "use_local" {
+  description = "true en robotocore: saltea el attach de la managed policy de AWS (el emulador no las siembra)."
+  type        = bool
+  default     = false
+}
+
+data "aws_vpc" "default" {
+  default = true
+}
+
+# ── Security group ──────────────────────────────────────────────────────────
+# 80/443 público (webhooks WhatsApp/Medusa + dashboard). 22 solo desde admin CIDR.
+resource "aws_security_group" "app" {
+  name        = "agencyhubara-${var.tenant}-app"
+  description = "AgencyHubara app box - ${var.tenant}"
+  vpc_id      = data.aws_vpc.default.id
+
+  ingress {
+    description = "HTTP (Caddy ACME + redirect)"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  ingress {
+    description = "HTTPS (webhooks + dashboard API)"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  ingress {
+    description = "SSH (deploy + ops) - restringir a admin CIDR"
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = var.ssh_ingress_cidrs
+  }
+
+  egress {
+    description = "All outbound (Temporal Cloud, Meta, DeepSeek, Medusa, GHCR, SSM, OTLP)"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = { Name = "agencyhubara-${var.tenant}-app" }
+}
+
+# ── IAM: instance profile que lee /hubara/<tenant>/* de SSM ──────────────────
+data "aws_iam_policy_document" "assume" {
+  statement {
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "Service"
+      identifiers = ["ec2.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "app" {
+  name               = "agencyhubara-${var.tenant}-app"
+  assume_role_policy = data.aws_iam_policy_document.assume.json
+}
+
+data "aws_iam_policy_document" "ssm_read" {
+  statement {
+    sid       = "ReadTenantSecrets"
+    actions   = ["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath"]
+    resources = ["arn:aws:ssm:*:*:parameter/hubara/${var.tenant}/*"]
+  }
+  statement {
+    sid       = "DecryptSecureString"
+    actions   = ["kms:Decrypt"]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "ssm_read" {
+  name   = "ssm-read"
+  role   = aws_iam_role.app.id
+  policy = data.aws_iam_policy_document.ssm_read.json
+}
+
+# Session Manager (deploy/ops sin abrir SSH si se prefiere). robotocore no siembra
+# las managed policies de AWS → se saltea en local (es real-only, como el cloud-init).
+resource "aws_iam_role_policy_attachment" "ssm_core" {
+  count      = var.use_local ? 0 : 1
+  role       = aws_iam_role.app.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+resource "aws_iam_instance_profile" "app" {
+  name = "agencyhubara-${var.tenant}-app"
+  role = aws_iam_role.app.name
+}
+
+# ── Instancia + EIP ─────────────────────────────────────────────────────────
+resource "aws_instance" "app" {
+  ami                    = var.ami_id
+  instance_type          = var.instance_type
+  key_name               = var.key_name
+  vpc_security_group_ids = [aws_security_group.app.id]
+  iam_instance_profile   = aws_iam_instance_profile.app.name
+
+  user_data = templatefile("${path.module}/cloud-init.yaml.tftpl", {
+    region          = var.region
+    tenant          = var.tenant
+    domain          = var.domain
+    enabled_plugins = var.enabled_plugins
+    image_repo      = var.image_repo
+  })
+
+  root_block_device {
+    volume_size = var.root_volume_gb
+    volume_type = "gp3"
+    encrypted   = true
+  }
+
+  metadata_options {
+    http_tokens = "required" # IMDSv2 obligatorio
+  }
+
+  tags = {
+    Name   = "agencyhubara-${var.tenant}-app"
+    Tenant = var.tenant
+    Role   = "app"
+  }
+}
+
+resource "aws_eip" "app" {
+  instance = aws_instance.app.id
+  domain   = "vpc"
+  tags     = { Name = "agencyhubara-${var.tenant}-app" }
+}
+
+output "security_group_id" { value = aws_security_group.app.id }
+output "instance_id" { value = aws_instance.app.id }
+output "public_ip" { value = aws_eip.app.public_ip }
+output "domain" { value = var.domain }

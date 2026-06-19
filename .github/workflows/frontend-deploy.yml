@@ -1,0 +1,83 @@
+# Build del dashboard (Vite) por tenant → S3 + invalidación de CloudFront.
+# Coincide con INFRASTRUCTURE.md §3.1.
+#
+# Lee la config de build (bucket, distribution id, api_url) del OUTPUT de Terraform
+# `build_config` (fuente única) usando el rol amplio de solo-lectura del state; el
+# upload usa el rol angosto de deploy. Sin llaves estáticas (OIDC).
+#
+# Agregar un tenant = sumarlo a la matriz Y a tenants.auto.tfvars.
+name: Frontend deploy
+
+on:
+  push:
+    branches: [main]
+    paths: ["frontend_dashboard/**", ".github/workflows/frontend-deploy.yml"]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        tenant: [hubara, vincenzo]
+    steps:
+      - uses: actions/checkout@v4
+
+      # 1) Leer build_config del state (rol amplio, solo lectura acá).
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_TERRAFORM_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+          terraform_wrapper: false
+
+      - name: Resolver config del tenant
+        id: cfg
+        working-directory: infra/terraform/platform
+        run: |
+          terraform init -input=false \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="dynamodb_table=${{ vars.TF_STATE_LOCK_TABLE }}" \
+            -backend-config="key=platform/terraform.tfstate" \
+            -backend-config="region=${{ vars.AWS_REGION }}" \
+            -backend-config="encrypt=true"
+          CFG="$(terraform output -json build_config | jq -r '.["${{ matrix.tenant }}"]')"
+          echo "bucket=$(echo "$CFG" | jq -r .bucket)"       >> "$GITHUB_OUTPUT"
+          echo "dist=$(echo "$CFG" | jq -r .distribution_id)" >> "$GITHUB_OUTPUT"
+          echo "api_url=$(echo "$CFG" | jq -r .api_url)"      >> "$GITHUB_OUTPUT"
+
+      # 2) Build del frontend con el VITE_API_URL del tenant.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend_dashboard/package-lock.json
+
+      - name: Build
+        working-directory: frontend_dashboard
+        env:
+          VITE_API_URL: ${{ steps.cfg.outputs.api_url }}
+          # VITE_OTEL_EXPORTER_URL: opcional — solo si exponés el collector a browsers (ver doc §3.10).
+        run: |
+          npm ci
+          npm run build
+
+      # 3) Subir a S3 + invalidar CloudFront (rol angosto de deploy).
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Sync + invalidate
+        run: |
+          aws s3 sync frontend_dashboard/dist "s3://${{ steps.cfg.outputs.bucket }}" --delete
+          aws cloudfront create-invalidation \
+            --distribution-id "${{ steps.cfg.outputs.dist }}" \
+            --paths "/*"
