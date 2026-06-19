@@ -19,6 +19,7 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from .diagnosis import diagnose
 from .merge import MergeResult
+from .meta_mcp import funnels_from_mcp
 from .metrics import compute_metrics
 from .models import CampaignFunnel, DayMetrics, Diagnosis
 
@@ -258,3 +259,45 @@ def to_dict(result: MergeResult, campaigns: list[CampaignFunnel] | None = None) 
             "sales_only": [d.isoformat() for d in result.sales_only_dates],
         },
     }
+
+
+def render_mcp_markdown(campaigns: list) -> str:
+    """Objective-aware report straight from the official MCP `ads_get_ad_entities`.
+
+    Messaging campaigns get the CTWA funnel; other objectives (sales, traffic) get
+    Meta's own result/cost. Revenue/MER stay account-level (manual sales).
+    """
+    messaging = funnels_from_mcp(campaigns)
+    others = sorted(
+        (c for c in campaigns if not c.is_messaging),
+        key=lambda c: (-c.spend_cop, c.campaign_id),
+    )
+    total_spend = sum(c.spend_cop for c in campaigns)
+
+    lines = ["## Hubara — Ads (Meta · por campaña)", ""]
+    if messaging:
+        lines += _campaign_section(messaging)
+    if others:
+        lines += [
+            "",
+            "### Otras campañas (por objetivo — resultado/costo según Meta)",
+            "",
+            "| Campaña | Objetivo | Spend | Clicks | Resultado | Costo/Resultado |",
+            "|---|---|--:|--:|--:|--:|",
+        ]
+        for c in others:
+            cpr = "—" if c.cost_per_result_cop is None else _fmt_cop(c.cost_per_result_cop)
+            result = f"{c.result_count} {c.result_type}".strip()
+            lines.append(
+                f"| {c.campaign_name} | {c.objective} | {_fmt_cop(c.spend_cop)} | "
+                f"{c.link_clicks} | {result} | {cpr} |"
+            )
+    lines += [
+        "",
+        f"**Gasto total de la cuenta (periodo):** {_fmt_cop(total_spend)}",
+        "",
+        "> Las ventas de WhatsApp se cargan aparte (`ingest-sales`) y NO se atribuyen por "
+        'campaña; las "Meta purchases" subcuentan las ventas reales de WhatsApp. '
+        "MER / CPA global = nivel cuenta.",
+    ]
+    return "\n".join(lines)

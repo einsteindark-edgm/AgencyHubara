@@ -65,6 +65,17 @@ def _cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_mcp_report(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from .meta_mcp import parse_ad_entities
+    from .report import render_mcp_markdown
+
+    payload = json.loads(Path(args.file).read_text(encoding="utf-8"))
+    print(render_mcp_markdown(parse_ad_entities(payload)))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ads-engine",
@@ -92,6 +103,13 @@ def build_parser() -> argparse.ArgumentParser:
     report.add_argument("--until")
     report.add_argument("--format", choices=["md", "json"], default="md")
     report.set_defaults(func=_cmd_report)
+
+    mcp_report = sub.add_parser(
+        "mcp-report",
+        help="objective-aware report from official MCP ads_get_ad_entities JSON (Meta-only view)",
+    )
+    mcp_report.add_argument("file", help="JSON saved from the MCP ads_get_ad_entities tool")
+    mcp_report.set_defaults(func=_cmd_mcp_report)
 
     return parser
 

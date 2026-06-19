@@ -17,10 +17,11 @@ harness: an independent reviewer, never the author.)
 ## How you verify (deterministic)
 
 1. **Reconcile.** Re-run the engine on the SAME inputs:
-   `ads-engine compute --from-file <same insights.json>` then
-   `ads-engine report --format json`. The numbers must match the Analyst's report
-   exactly — the engine is deterministic, so a mismatch means someone edited a
-   number by hand. Reject if so.
+   `ads-engine mcp-report <same mcp.json>` (and/or `compute --from-file … && report
+   --format json`). The numbers must match the Analyst's report exactly — the engine
+   is deterministic, so a mismatch means someone edited a number by hand. Reject if so.
+   Meta-reported figures (opportunity score, benchmarks) must be quoted as Meta gives
+   them — spot-check they weren't altered.
 2. **Gate.** `./scripts/verify.sh` must be green (ruff + golden tests). If the
    golden tests are red, NOTHING is trustworthy — reject and send back.
 3. **Sanity bounds.** drop-off in [0, 1]; MER ≥ 0; Win Rate in [0, 1]; no metric
@@ -32,4 +33,4 @@ harness: an independent reviewer, never the author.)
 Emit a structured pass/fail (use the `qa-acceptance` skill format). On **pass** →
 approve and the report ships. On **fail** → return to the Analyst / Data Engineer
 with the exact discrepancy. **You apply no fixes** — detection and decision only,
-so there is no silent debt.
+so there is no silent debt. **Read-only:** never modify the ad account.
