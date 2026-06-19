@@ -5,7 +5,10 @@ determinista y rápido. El `BaseHTTPRequestHandler` es glue fino sobre esto.
 """
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
+
+import pytest
 
 from viewer.server import api_route, run_agent
 
@@ -57,3 +60,28 @@ def test_run_requires_agent_field():
 def test_unknown_route_is_404():
     status, payload = api_route("GET", "/api/nope", {}, None, ga_root=ROOT)
     assert status == 404
+
+
+def test_run_invalid_runtime_is_400():
+    status, payload = api_route(
+        "POST", "/api/run", {}, {"agent": "greeter", "input": {}, "runtime": "nope"}, ga_root=ROOT
+    )
+    assert status == 400
+
+
+def _has(mod: str) -> bool:
+    return importlib.util.find_spec(mod) is not None
+
+
+@pytest.mark.skipif(_has("langgraph"), reason="con langgraph el path agentspan corre de verdad (ver test_agentspan_runtime)")
+def test_run_agentspan_degrades_gracefully_without_deps():
+    """Sin langgraph/agentspan (el loop local), pedir runtime=agentspan NO crashea:
+    devuelve un error claro (no una excepción) — la UI nunca rompe."""
+    status, payload = api_route(
+        "POST", "/api/run", {},
+        {"agent": "greeter", "input": {"name": "x"}, "runtime": "agentspan"}, ga_root=ROOT,
+    )
+    assert status == 422
+    assert payload["status"] == "failed"
+    assert payload.get("runtime") == "agentspan"
+    assert payload["error"]

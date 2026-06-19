@@ -31,35 +31,76 @@ if str(GA_ROOT) not in sys.path:
     sys.path.insert(0, str(GA_ROOT))
 
 
-def run_agent(ga_root: Path, agent_id: str, input_dict: dict) -> dict:
-    """Corre un agente tool-only por el LocalRuntime (mismo criterio que `cli run`).
-    Los agentes que `consumes:` un port se rechazan: necesitan un vendor inyectado
-    (corren por `tests/integration` con un Fixture, no desde la UI)."""
-    from sdk.loader import build_runnable
+def run_agent(ga_root: Path, agent_id: str, input_dict: dict, runtime: str = "local") -> dict:
+    """Corre un agente tool-only. `runtime`: `'local'` (LocalRuntime in-process) o
+    `'agentspan'` (server durable :6767 — el run aparece en su UI). Los agentes que
+    `consumes:` un port se rechazan: necesitan un vendor inyectado (Fixture en
+    tests/integration, no desde la UI)."""
     from sdk.manifest_model import iter_nodes, load_manifest
-    from sdk.runtime import LocalRuntime
 
     manifests = ga_root / "manifests"
     cand = sorted(manifests.glob(f"{agent_id}.agent.yaml")) + sorted(
         manifests.glob(f"{agent_id}.taskgraph.yaml")
     )
     if not cand:
-        return {"status": "failed", "error": f"no existe el agente '{agent_id}'"}
+        return {"status": "failed", "error": f"no existe el agente '{agent_id}'", "runtime": runtime}
     m = load_manifest(cand[0])
     consumed = sorted({p for n in iter_nodes(m) for p in n.consumes})
     if consumed:
         return {
             "status": "failed",
+            "runtime": runtime,
             "error": (
                 f"'{agent_id}' consume ports {consumed}: necesita vendors inyectados "
                 "(corré por tests/integration con un Fixture, no desde la UI)."
             ),
         }
+    if runtime == "agentspan":
+        return _run_on_agentspan(ga_root, m, input_dict or {})
+    return _run_local(ga_root, m, input_dict or {})
+
+
+def _run_local(ga_root: Path, m, input_dict: dict) -> dict:
+    from sdk.loader import build_runnable
+    from sdk.runtime import LocalRuntime
+
     try:
-        ex = LocalRuntime().run(build_runnable(m, ga_root), input_dict or {})
+        ex = LocalRuntime().run(build_runnable(m, ga_root), input_dict)
     except Exception as e:  # noqa: BLE001
-        return {"status": "failed", "error": str(e)}
-    return {"id": ex.id, "status": ex.status, "output": ex.output, "error": ex.error}
+        return {"status": "failed", "error": str(e), "runtime": "local"}
+    return {"id": ex.id, "status": ex.status, "output": ex.output, "error": ex.error, "runtime": "local"}
+
+
+def _run_on_agentspan(ga_root: Path, m, input_dict: dict) -> dict:
+    """Compila la capability a su `CompiledStateGraph` (`build()`) y la corre sobre el
+    server durable. Degrada con un error claro si falta `build()` real, langgraph o
+    el server — la UI NUNCA crashea."""
+    from sdk.loader import build_agent
+    from sdk.runtime import AgentSpanRuntime
+
+    try:
+        graph = build_agent(m, ga_root)  # CompiledStateGraph — requiere build() real + langgraph
+    except NotImplementedError:
+        return {
+            "status": "failed",
+            "runtime": "agentspan",
+            "error": f"'{m.name}' todavía no tiene build() real (G1+); por ahora solo greeter corre en AgentSpan.",
+        }
+    except Exception as e:  # noqa: BLE001 — langgraph ausente / import roto
+        return {
+            "status": "failed",
+            "runtime": "agentspan",
+            "error": f"no pude compilar el grafo (¿langgraph? corré el explorer en el container): {e}",
+        }
+    try:
+        ex = AgentSpanRuntime().run(graph, input_dict)
+    except Exception as e:  # noqa: BLE001 — server caído / agentspan ausente
+        return {
+            "status": "failed",
+            "runtime": "agentspan",
+            "error": f"el run en AgentSpan falló (¿server :6767 arriba? ¿agentspan instalado?): {e}",
+        }
+    return {"id": ex.id, "status": ex.status, "output": ex.output, "error": ex.error, "runtime": "agentspan"}
 
 
 def api_route(method: str, path: str, params: dict, body: dict | None, ga_root: Path = GA_ROOT):
@@ -75,7 +116,10 @@ def api_route(method: str, path: str, params: dict, body: dict | None, ga_root: 
         agent_id = body.get("agent")
         if not agent_id:
             return 400, {"error": "falta 'agent' en el body"}
-        res = run_agent(ga_root, agent_id, body.get("input") or {})
+        runtime = body.get("runtime", "local")
+        if runtime not in ("local", "agentspan"):
+            return 400, {"error": f"runtime inválido '{runtime}' (usá local|agentspan)"}
+        res = run_agent(ga_root, agent_id, body.get("input") or {}, runtime=runtime)
         return (200 if res.get("status") == "completed" else 422), res
     return 404, {"error": f"no existe la ruta {method} {path}"}
 

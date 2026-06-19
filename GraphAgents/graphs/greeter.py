@@ -14,8 +14,25 @@ def run(input: dict, *, ports: dict | None = None, tools: dict | None = None) ->
 
 
 def build():
-    try:
-        from langgraph.graph import StateGraph  # noqa: F401
-    except Exception as e:  # noqa: BLE001
-        raise RuntimeError("instalá deps: `uv sync` (langgraph).") from e
-    raise NotImplementedError("build(): cablear el StateGraph (G1+); el run puro ya está")
+    """`StateGraph` LangGraph (adapter al runtime real). El único nodo reusa el
+    `run()` puro — la lógica vive UNA sola vez (G-DET). Sin LLM → AgentSpan lo
+    corre por el path passthrough como una task durable. `compile(name=...)` es lo
+    que AgentSpan lee como nombre del agente."""
+    from typing import TypedDict
+
+    from langgraph.graph import END, START, StateGraph
+
+    from tools.hello.impl import run as hello
+
+    class State(TypedDict, total=False):
+        name: str
+        greeting: str
+
+    def greet(state: State) -> dict:
+        return run(dict(state), tools={"hello": hello})
+
+    g = StateGraph(State)
+    g.add_node("greet", greet)
+    g.add_edge(START, "greet")
+    g.add_edge("greet", END)
+    return g.compile(name="greeter")

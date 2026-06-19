@@ -81,18 +81,53 @@ class LocalRuntime:
 
 
 class AgentSpanRuntime:
-    """El runtime real (server Conductor). Mismo port que `LocalRuntime`. G1+: el
-    binding concreto se cierra al integrar (`agentspan server start` +
-    `AgentRuntime().run(agent, input)`)."""
+    """El runtime REAL (server Conductor). Mismo port que `LocalRuntime`. Corre un
+    `CompiledStateGraph` (de `loader.build_agent`) sobre el server de AgentSpan vía
+    `AgentRuntime().run(graph, input)` y mapea su `AgentResult` a `Execution`.
 
-    def __init__(self, server_url: str = "http://localhost:6767") -> None:
+    AgentSpan envuelve el output del passthrough como `{'result': '<json del state
+    final>'}`; lo desempaquetamos para devolver el output real de la capability
+    (ver L-8). `server_url=None` → el SDK usa `AGENTSPAN_SERVER_URL` (o el default
+    `http://localhost:6767/api`)."""
+
+    def __init__(self, server_url: str | None = None) -> None:
         self.server_url = server_url
 
-    def run(self, agent: Agent, input: Any) -> Execution:  # pragma: no cover - integración
-        raise NotImplementedError("G1+: cablear a agentspan.AgentRuntime().run(agent, input)")
+    def _client(self):
+        from agentspan.agents import AgentRuntime
 
-    def get(self, execution_id: str) -> Execution:  # pragma: no cover
-        raise NotImplementedError("G1+")
+        return AgentRuntime(server_url=self.server_url) if self.server_url else AgentRuntime()
 
-    def resume(self, execution_id: str) -> Execution:  # pragma: no cover
-        raise NotImplementedError("G1+")
+    @staticmethod
+    def _unwrap(output: Any) -> Any:
+        """El passthrough devuelve `{'result': '<json del state>'}` → el state."""
+        import json
+
+        if isinstance(output, dict) and list(output) == ["result"] and isinstance(output["result"], str):
+            try:
+                return json.loads(output["result"])
+            except (ValueError, TypeError):
+                return output
+        return output
+
+    def run(self, agent: Any, input: Any) -> Execution:
+        with self._client() as rt:
+            res = rt.run(agent, input)
+        return Execution(
+            id=res.execution_id,
+            status="completed" if res.is_success else "failed",
+            output=self._unwrap(res.output),
+            error=getattr(res, "error", None),
+        )
+
+    def get(self, execution_id: str) -> Execution:
+        with self._client() as rt:
+            st = rt.get_status(execution_id)
+        status = "completed" if getattr(st, "is_complete", False) else "running"
+        return Execution(id=execution_id, status=status, output=self._unwrap(getattr(st, "output", None)))
+
+    def resume(self, execution_id: str) -> Execution:
+        # El re-attach real de AgentSpan necesita re-pasar el grafo
+        # (`AgentRuntime().resume(eid, graph)`); el port `resume(id)` no lo recibe,
+        # así que devolvemos el estado actual. Recovery mid-flight real: G1.x.
+        return self.get(execution_id)

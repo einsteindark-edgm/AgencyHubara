@@ -109,4 +109,60 @@ guard rojo que lo reproduce — el "Guard:" se escribe ANTES que el "Fix:".
 - **Guard:** `tests/integration/test_viewer_api.py` (testea `api_route` sin socket) +
   `tests/architecture/test_system_graph.py` (golden estructural del serializador).
 
+### L-7 · Los tests que necesitan langgraph/agentspan van con `importorskip` (corren en el container) (2026-06-19, G1)
+- **Síntoma:** el golden de `build()` (StateGraph) y el smoke de AgentSpan importan
+  langgraph/agentspan; el python del sistema NO los tiene (L-3) → romperían el loop
+  local (`python3 -m pytest`).
+- **Causa raíz:** langgraph/langchain/agentspan viven en el venv del container
+  (`/opt/venv`), no en el python del sistema. (agentspan en pypi 0.1.x; langgraph
+  NO es dep de agentspan, se instala aparte.)
+- **Fix aplicado:** `pytest.importorskip("langgraph")` / `("agentspan")` al tope del
+  test → local SKIP, container RUN. El loop de grafos/runtime-real corre en el
+  container: `docker compose run --rm --no-deps graphagents /opt/venv/bin/python -m
+  pytest …` (el python del venv DIRECTO — NO `uv run`, lo bloquea el hook, L-3).
+- **Regla para el skill:** todo test que importe langgraph/agentspan empieza con
+  `importorskip`; corrélos en el container con `/opt/venv/bin/python -m pytest`. El
+  smoke de un runtime real se guarda además con `skipif(not _server_up())`.
+- **Guard:** el `importorskip` + `skipif` (local/CI sin deps/server → skip; container
+  con todo → run). 51/51 verde en el container, 48 local.
+
+### L-8 · La API real de AgentSpan: pasás el grafo COMPILADO directo, y el output viene envuelto (2026-06-19, G1)
+- **Síntoma:** el `loader` asumía `Agent(name=, graph=)` + `AgentRuntime().run(agent,
+  input)` con output crudo — todo inventado de la landing.
+- **Causa raíz (L-0 otra vez):** la API real (`sdk/python/` del repo) NO tiene wrapper
+  `Agent` para LangGraph. Se compila el `StateGraph` con `compile(name=...)` y se pasa
+  el grafo compilado **directo** a `AgentRuntime().run(graph, input)` — el SDK lo
+  autodetecta como langgraph. Server URL = `AGENTSPAN_SERVER_URL` (el SDK le agrega
+  `/api`). Sin LLM → path **passthrough** (el grafo entero como UNA task durable). El
+  output llega como `{'result': '<json-string del state final>'}` (hay que parsearlo).
+  Recovery (`resume`) necesita RE-pasar el grafo (`resume(eid, graph)`); el recovery
+  LangGraph-nativo (checkpoints/time-travel) NO está — la durabilidad la da Conductor.
+- **Fix aplicado:** `loader.build_agent` devuelve el `CompiledStateGraph` (sin wrapper);
+  `AgentSpanRuntime.run` llama `AgentRuntime().run(graph, input)` y desempaqueta
+  `output['result']` (JSON) → `Execution`. `greeter` corrió end-to-end: execution-id
+  en `:6767`, `COMPLETED`, `"hola, ada"` (el input atravesó el grafo).
+- **Regla para el skill:** para correr una capability en AgentSpan, pasá el grafo de
+  `build()` (con `compile(name=...)`) DIRECTO al runtime; desempaquetá `output['result']`.
+  NO inventes la API — leé `sdk/python/` del repo de agentspan (L-0).
+- **Guard:** `tests/integration/test_agentspan_runtime.py` (skip sin server) + el golden
+  de `build()` (`tests/graphs/test_greeter_golden.py`).
+
+### L-9 · Editar un `.py` del viewer/sdk en Docker → `up -d --force-recreate`, NO `restart` (2026-06-19, wiring explorer→AgentSpan)
+- **Síntoma:** edité `viewer/server.py`, hice `docker compose restart graphagents`, y el
+  endpoint `/api/run` seguía sirviendo el código VIEJO (sin el param `runtime`; el run
+  caía a LocalRuntime con id `local-000001`). `docker compose exec graphagents grep -c
+  _run_on_agentspan viewer/server.py` → **0** (el container montaba el archivo viejo).
+- **Causa raíz:** (a) Python no hot-reloadea — el proceso `python -m viewer.server` quedó
+  con el módulo viejo en memoria; (b) el bind-mount de Docker Desktop (macOS) no re-sincronizó
+  el cambio en `restart` (cache del overlay sobre el `COPY . .` de la imagen).
+- **Fix aplicado:** `docker compose up -d --force-recreate graphagents` (recrea el container
+  con mount fresco + proceso nuevo). Tras eso, el run en `runtime=agentspan` devolvió un
+  execution-id de Conductor (UUID, visible en `:6767`).
+- **Regla para el skill:** tocaste un `.py` del viewer/sdk y corre en Docker →
+  `docker compose up -d --force-recreate <svc>`. Tocaste SOLO `index.html` → basta refrescar
+  el browser (el server lo lee por-request). Verificá el endpoint servido con `urllib` (L-4),
+  no `curl`.
+- **Guard:** procedimiento (sin gate). El smoke por urllib al endpoint `:8900` confirma que
+  el código nuevo está vivo (`runtime` field + execution-id UUID).
+
 <!-- AÑADIR NUEVAS LECCIONES ARRIBA DE ESTA LÍNEA, NUMERADAS L-1, L-2, ... -->
