@@ -1,0 +1,16 @@
+# Hola mundo: el agente más simple. Usa la tool de catálogo `hello` (binding) y
+# corre por el runtime. Es la plantilla mínima para crear un agente nuevo.
+name: greeter
+description: Hola mundo — saluda usando la tool de catálogo `hello`.
+archetype: reporter
+certification: C2
+
+capability: graphs.greeter:build
+
+# se puede invocar como tool de otro agente.
+exposes_as_tool: true
+
+tools:
+  - uses: hello@1
+    with:
+      name: $state.name

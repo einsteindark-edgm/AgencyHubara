@@ -1,0 +1,29 @@
+[project]
+name = "graphagents"
+version = "0.1.0"
+description = "Agentes de análisis de Meta Ads — LangGraph (task graphs deterministas) sobre el runtime durable AgentSpan, orquestados por manifests YAML."
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.6",
+    "pyyaml>=6",
+    "langchain>=1.0",
+    "langgraph>=1.0",
+    "agentspan>=0.1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+]
+
+# Layout plano (sin src/): no es un paquete instalable, uv solo instala las deps.
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"
+
+# `sdk`, `graphs`, `tools` se importan con pythonpath=["."]. La CLI:
+# `uv run python -m sdk.cli check`. El hola mundo: `uv run python hello_world.py`.

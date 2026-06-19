@@ -12,6 +12,11 @@
       "name": "hubara-dev",
       "source": "./hubara-dev",
       "description": "Harness de desarrollo full-stack: skill hubara-plugin-developer + subagents + hooks TDD + gates determinísticos."
+    },
+    {
+      "name": "graphagents-dev",
+      "source": "./graphagents-dev",
+      "description": "Harness de GraphAgents: agentes de análisis de Meta Ads con LangGraph (task graphs deterministas) sobre AgentSpan. Skill graphagents-developer + subagents (explorer/tdd-author/cert-reviewer) + hooks TDD/cert/arquitectura + /graphagents-gates."
     }
   ]
 }

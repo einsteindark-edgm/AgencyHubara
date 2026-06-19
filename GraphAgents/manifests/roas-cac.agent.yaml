@@ -1,0 +1,19 @@
+# Agente de catálogo (archetype: analyzer). Referenciable por `agent://roas-cac@1`
+# desde cualquier task graph, y exponible como tool de otro agente.
+name: roas-cac
+description: Analiza ROAS/CAC y sugiere realocación de presupuesto.
+archetype: analyzer
+certification: C2
+
+capability: graphs.roas_cac:build
+consumes: [meta_marketing_api]
+
+# el agente puede invocarse como tool de otro agente (agent-as-tool).
+exposes_as_tool: true
+
+tools:
+  # toma la tool agnóstica del catálogo y la bindea al state del agente (G-BIND).
+  - uses: recommend-budget@1
+    with:
+      adsets: $state.adsets
+      total_budget: $state.total_budget

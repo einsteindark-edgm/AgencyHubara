@@ -1,0 +1,23 @@
+# Hola mundo: la tool agnóstica más simple. PURA (sin IO, sin runtime).
+# Copiá esta tool como plantilla para crear una nueva.
+id: hello
+version: 1.0.0
+description: Saluda por nombre (hola mundo). Pura y determinista.
+tags: [demo, pure]
+
+side_effect: pure
+idempotent: true
+approval_required: false
+credentials: []
+
+inputs:
+  name:
+    type: string
+    required: true
+    description: "a quién saludar"
+outputs:
+  greeting:
+    type: string
+    description: "el saludo"
+
+impl: tools.hello.impl:run

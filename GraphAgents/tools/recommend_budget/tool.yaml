@@ -1,0 +1,31 @@
+# Tool agnóstica de referencia. PURA y determinista: reparte un presupuesto
+# total entre adsets proporcional a su ROAS. No aplica nada en Meta (eso sería
+# una tool `outward` aparte) → es ideal para golden-replay y para enchufarla a
+# cualquier agente.
+id: recommend-budget
+version: 1.0.0
+description: Reparte un presupuesto total entre adsets proporcional a su ROAS (sugerencia pura).
+tags: [analysis, ads, pure]
+
+side_effect: pure
+idempotent: true
+approval_required: false
+credentials: []
+
+inputs:
+  adsets:
+    type: array
+    required: true
+    description: "[{id, roas}] por adset"
+  total_budget:
+    type: number
+    required: true
+    description: "Presupuesto total a repartir"
+outputs:
+  allocations:
+    type: array
+    description: "[{id, budget}] sugerido por adset"
+
+# La impl PURA (G-AGNOSTIC: no importa ningún runtime). Los adapters viven en
+# tools/recommend_budget/adapters/.
+impl: tools.recommend_budget.impl:run

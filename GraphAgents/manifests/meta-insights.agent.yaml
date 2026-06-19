@@ -1,0 +1,19 @@
+# Capability agent (archetype: extractor) — extrae y normaliza insights de la
+# Meta Marketing API. Referenciable por `agent://meta-insights@1` y publicable
+# hacia AFUERA (otro sistema lo consume por MCP / execution-id).
+name: meta-insights
+description: Extrae y normaliza insights de campañas de la Meta Marketing API.
+archetype: extractor
+certification: C1
+
+# ext (GraphAgents): el StateGraph que implementa la capability.
+capability: graphs.meta_insights:build
+# ext: datos SOLO por el ConnectorKit (G-PORT).
+consumes: [meta_marketing_api]
+
+# se puede invocar como tool de otro agente, y se publica hacia afuera.
+exposes_as_tool: true
+publish:
+  as: mcp
+
+tools: []

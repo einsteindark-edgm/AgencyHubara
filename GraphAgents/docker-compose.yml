@@ -1,0 +1,67 @@
+# Levanta TODO el stack de GraphAgents:
+#   postgres     — estado durable de AgentSpan (Conductor)
+#   agentspan    — el runtime durable (server, :6767) — imagen oficial
+#   graphagents  — nuestra app (SDK + CLI + capabilities + hola mundo)
+#
+# Quickstart:
+#   cp .env.example .env        # (opcional) poné tu OPENAI/ANTHROPIC/META keys
+#   docker compose up graphagents          # corre el hola mundo (LocalRuntime)
+#   docker compose up -d agentspan         # levanta el runtime real (:6767)
+#   docker compose run --rm graphagents uv run python -m sdk.cli list-tools
+name: graphagents
+
+services:
+  postgres:
+    image: "${POSTGRES_IMAGE:-postgres:16-alpine}"
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER:-agentspan}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-changeme}"
+      POSTGRES_DB: "${POSTGRES_DB:-agentspan}"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER:-agentspan}\" -d \"$${POSTGRES_DB:-agentspan}\""]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  agentspan:
+    image: "${AGENTSPAN_IMAGE:-agentspan/server:latest}"
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${AGENTSPAN_PORT:-6767}:6767"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      AGENTSPAN_MASTER_KEY: "${AGENTSPAN_MASTER_KEY:-}"
+      SPRING_PROFILES_ACTIVE: "postgres"
+      SPRING_DATASOURCE_URL: "jdbc:postgresql://postgres:5432/${POSTGRES_DB:-agentspan}"
+      SPRING_DATASOURCE_USERNAME: "${POSTGRES_USER:-agentspan}"
+      SPRING_DATASOURCE_PASSWORD: "${POSTGRES_PASSWORD:-changeme}"
+      JAVA_TOOL_OPTIONS: "${JAVA_TOOL_OPTIONS:--Xms512m -Xmx1536m -XX:+UseG1GC -XX:MaxGCPauseMillis=200}"
+      LOGGING_LEVEL_ROOT: "${LOGGING_LEVEL_ROOT:-WARN}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+
+  graphagents:
+    build: .
+    depends_on:
+      - agentspan
+    environment:
+      AGENTSPAN_SERVER_URL: "http://agentspan:6767"
+      GRAPHAGENTS_RUNTIME: "${GRAPHAGENTS_RUNTIME:-local}"  # local | agentspan (G1+)
+      META_ACCESS_TOKEN: "${META_ACCESS_TOKEN:-}"
+      META_AD_ACCOUNT_ID: "${META_AD_ACCOUNT_ID:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+    volumes:
+      - ./:/app  # bind-mount de dev: editás el código y re-corrés sin rebuild (el venv vive en /opt/venv)
+    # CMD por defecto (hello_world.py) viene del Dockerfile.
+
+volumes:
+  postgres_data:

@@ -1,0 +1,4 @@
+[
+  {"campaign_id": "c1", "spend": 100.0, "revenue": 300.0},
+  {"campaign_id": "c2", "spend": 50.0, "revenue": 50.0}
+]
