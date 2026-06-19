@@ -42,13 +42,19 @@ La unidad reusable de primera clase. Test-first.
 
 1. **Rojo:** `tests/graphs/test_<x>_golden.py` — fixture en `fixtures/<x>.json`,
    construí el grafo, asertá el output exacto. Velo fallar con assert real.
-2. `graphs/<x>.py` — `def build(): -> CompiledStateGraph`. Esqueleto PURO
-   (extract → transform → analyze). El nodo LLM, si hay, marcado y con
-   `temperature=0` + structured output (G-DET).
-3. Estado: `State` Pydantic con reducers declarados (G-STATE).
+2. `graphs/<x>.py` — DOS entrypoints (convención de capability):
+   - `run(input, *, ports=None, tools=None)` PURO — la lógica (G-RUN-SIG, G-DET).
+   - `def build() -> CompiledStateGraph` — el `StateGraph` cuyo(s) nodo(s) **REUSAN el
+     `run()` puro** (la lógica vive UNA sola vez). `compile(name="<x>")` — AgentSpan lee
+     ese nombre. El nodo LLM, si hay, marcado, `temperature=0` + structured output.
+   - Referencia ya verde: `graphs/greeter.py` (su `build()` real; correrlo en AgentSpan → §2.5d).
+3. Estado: `State` (TypedDict/Pydantic) con reducers declarados si hay writes concurrentes (G-STATE).
 4. Datos externos: SOLO vía un port de `consumes:` (G-PORT) — nunca red cruda.
-5. Verde: `uv run pytest tests/graphs/test_<x>_golden.py -q`.
-6. Declarala en un manifest (2.3) y certificá (2.6).
+5. Verde: el golden del `run()` puro corre local (`python3 -m pytest …`); el del `build()`
+   (StateGraph) importa langgraph → arrancalo con `pytest.importorskip("langgraph")` y corré
+   en el container (`docker compose run --rm --no-deps graphagents /opt/venv/bin/python -m
+   pytest tests/graphs/test_<x>_golden.py -q`) — L-7.
+6. Declarala en un manifest (2.3), corré en AgentSpan (§2.5d) y certificá (2.6).
 
 ## 2.2 Agregar una tool (con aprobación si es outward)
 
@@ -104,7 +110,7 @@ La unidad reusable de primera clase. Test-first.
 ## 2.5c Ejecutar un task graph (runtime port) + probar recovery
 
 1. La capability expone `run(input, *, ports=None, tools=None)` puro (G-RUN-SIG) +
-   `build()` (StateGraph, G1+).
+   `build()` (StateGraph real — §2.1).
 2. Compilá el manifest a un callable: `build_runnable(manifest, ga_root, ports={...})`
    — el loader resuelve refs `agent://`, inyecta los ports (vendor `fixture` para
    tests) y las tools del catálogo bindeadas.
@@ -112,7 +118,35 @@ La unidad reusable de primera clase. Test-first.
    (id, status, output).
 4. **Recovery:** `eid = rt.start_durable(runnable, input)` (arranca, no completa) →
    `rt.resume(eid)` recupera por `execution-id`. Durabilidad sin servidor.
-5. El runtime real es el mismo port: `AgentSpanRuntime` (G1+, `agentspan server start`).
+5. El runtime real es el mismo port: `AgentSpanRuntime` — correrlo sobre el server durable
+   es **§2.5d** (G1 hecho: greeter corre en :6767).
+
+## 2.5d Correr una capability en AgentSpan (el runtime durable real) — G1
+
+Cuando la capability tiene `build()` real (§2.1) y la querés correr de verdad sobre el
+server durable (no el LocalRuntime in-process):
+
+1. Levantá: `docker compose up -d agentspan` (server + UI en **:6767**), o `docker compose up`
+   (toda la suite + el explorer en :8900).
+2. `loader.build_agent(node, ga_root)` → el `CompiledStateGraph` de `build()`. AgentSpan lo
+   toma **DIRECTO**: NO hay wrapper `Agent` (L-8). Supervisor/tools nativos de AgentSpan: G2+.
+3. `AgentSpanRuntime().run(graph, input)` corre `AgentRuntime().run(graph, input)`, mapea el
+   `AgentResult` → `Execution` y **desempaqueta** `output['result']` (el json del state del
+   passthrough). El `execution-id` (UUID de Conductor) aparece en la UI de **:6767**.
+4. Sin LLM → path passthrough (el grafo entero como UNA task durable). El server URL sale de
+   `AGENTSPAN_SERVER_URL` (el SDK le agrega `/api`).
+5. **Rojo de integración:** `tests/integration/test_agentspan_runtime.py` con
+   `importorskip("agentspan")` + `skipif(not _server_up())` → local/CI sin server SKIP,
+   container con server RUN: `docker compose run --rm --no-deps graphagents
+   /opt/venv/bin/python -m pytest tests/integration/test_agentspan_runtime.py -q` (L-7).
+6. **Desde el explorer:** el panel CORRER elige `AgentSpan · durable` → el run cae en :6767
+   (link en el inspector). Si editaste `viewer/server.py` (o cualquier `.py` del viewer),
+   recreá el container: `docker compose up -d --force-recreate graphagents` (NO `restart`, L-9).
+
+Las **tres lentes** son complementarias: el explorer (**:8900**) = el mapa del sistema ·
+AgentSpan (**:6767**) = la ejecución durable · `langgraph dev` (Studio) = el interior de UNA
+capability (G1.x). Recovery mid-flight real necesita re-pasar el grafo
+(`AgentRuntime().resume(eid, graph)`); el port `resume(id)` devuelve el estado actual.
 
 ## 2.6 Certificar
 
