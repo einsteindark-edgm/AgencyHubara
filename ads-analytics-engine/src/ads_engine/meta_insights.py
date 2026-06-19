@@ -39,6 +39,8 @@ def _row_to_insight(row: dict, account_currency: str) -> MetaDailyInsight:
         inline_link_clicks=int(Decimal(str(row.get("inline_link_clicks", 0)))),
         messaging_conversations_started=_conversations_from_actions(row.get("actions")),
         currency=account_currency,
+        campaign_id=row.get("campaign_id"),
+        campaign_name=row.get("campaign_name"),
     )
 
 

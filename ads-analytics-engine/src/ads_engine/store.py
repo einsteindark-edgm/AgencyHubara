@@ -25,11 +25,14 @@ CREATE TABLE IF NOT EXISTS manual_sales (
     currency TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS meta_insights (
-    date TEXT PRIMARY KEY,
+    campaign_id TEXT NOT NULL DEFAULT '',
+    campaign_name TEXT NOT NULL DEFAULT '',
+    date TEXT NOT NULL,
     spend_cop INTEGER NOT NULL,
     inline_link_clicks INTEGER NOT NULL,
     conversations INTEGER NOT NULL,
-    currency TEXT NOT NULL
+    currency TEXT NOT NULL,
+    PRIMARY KEY (campaign_id, date)
 );
 CREATE TABLE IF NOT EXISTS blended_day (
     date TEXT PRIMARY KEY,
@@ -71,9 +74,11 @@ class Store:
     def upsert_insights(self, insights: list[MetaDailyInsight]) -> None:
         with closing(self._conn()) as conn:
             conn.executemany(
-                "INSERT OR REPLACE INTO meta_insights VALUES (?, ?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO meta_insights VALUES (?, ?, ?, ?, ?, ?, ?)",
                 [
                     (
+                        i.campaign_id or "",
+                        i.campaign_name or "",
                         i.date.isoformat(),
                         i.spend_cop,
                         i.inline_link_clicks,
@@ -104,16 +109,18 @@ class Store:
     def load_insights(self) -> list[MetaDailyInsight]:
         with closing(self._conn()) as conn:
             rows = conn.execute(
-                "SELECT date, spend_cop, inline_link_clicks, conversations, currency "
-                "FROM meta_insights ORDER BY date"
+                "SELECT campaign_id, campaign_name, date, spend_cop, inline_link_clicks, "
+                "conversations, currency FROM meta_insights ORDER BY campaign_id, date"
             ).fetchall()
         return [
             MetaDailyInsight(
-                date=date.fromisoformat(r[0]),
-                spend_cop=r[1],
-                inline_link_clicks=r[2],
-                messaging_conversations_started=r[3],
-                currency=r[4],
+                date=date.fromisoformat(r[2]),
+                spend_cop=r[3],
+                inline_link_clicks=r[4],
+                messaging_conversations_started=r[5],
+                currency=r[6],
+                campaign_id=r[0] or None,
+                campaign_name=r[1] or None,
             )
             for r in rows
         ]

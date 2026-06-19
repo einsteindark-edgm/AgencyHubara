@@ -1,8 +1,15 @@
 """Render the blended report — a Markdown table + a JSON-able dict.
 
-Every number rendered here comes straight from the engine's metrics; nothing is
-re-derived ad hoc. Period rows aggregate the RAW totals first and then compute
-the metrics on the totals (the correct blended way — not an average of ratios).
+Two sections when campaign data is present:
+1. **Per campaign** — funnel only (spend, clicks, conversations, drop-off,
+   cost/conversation). Meta-side metrics that ARE attributable per campaign.
+2. **Account (blended)** — MER, Global CPA, win rate, revenue. These can't be
+   split by campaign (manual WhatsApp sales aren't attributable), so they stay
+   account-level.
+
+Every number rendered here comes straight from the engine; nothing is re-derived
+ad hoc. Period rows aggregate RAW totals first, then compute (the correct blended
+way — not an average of ratios).
 """
 
 from __future__ import annotations
@@ -13,7 +20,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from .diagnosis import diagnose
 from .merge import MergeResult
 from .metrics import compute_metrics
-from .models import DayMetrics, Diagnosis
+from .models import CampaignFunnel, DayMetrics, Diagnosis
 
 
 def _q_cop(value: Decimal | int) -> int:
@@ -77,6 +84,11 @@ _HEADER = (
     "|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|---|"
 )
 
+_CAMPAIGN_HEADER = (
+    "| Campaña | Spend | Clicks | Conversaciones | Drop-off | Costo/Conv | Señal |\n"
+    "|---|--:|--:|--:|--:|--:|---|"
+)
+
 
 def _row(label, spend, clicks, conv, drop, cpc, orders, mer_v, cpa, win, rec) -> str:
     return (
@@ -86,8 +98,25 @@ def _row(label, spend, clicks, conv, drop, cpc, orders, mer_v, cpa, win, rec) ->
     )
 
 
-def render_markdown(result: MergeResult) -> str:
-    lines = ["## Hubara — Ads Analytics (CTWA · blended por día)", "", _HEADER]
+def _campaign_section(campaigns: list[CampaignFunnel]) -> list[str]:
+    lines = ["### Por campaña (embudo — métricas Meta, sin ingreso)", "", _CAMPAIGN_HEADER]
+    for c in campaigns:
+        lines.append(
+            f"| {c.campaign_name} | {_fmt_cop(c.spend_cop)} | {c.inline_link_clicks} | "
+            f"{c.messaging_conversations_started} | {_fmt_pct(c.drop_off_rate)} | "
+            f"{_fmt_cop(c.cost_per_conversation_cop)} | {c.recommendation.value} |"
+        )
+    return lines
+
+
+def render_markdown(result: MergeResult, campaigns: list[CampaignFunnel] | None = None) -> str:
+    lines = ["## Hubara — Ads Analytics (CTWA)", ""]
+
+    if campaigns:
+        lines += _campaign_section(campaigns)
+        lines += ["", "### Cuenta (blended por día)", ""]
+
+    lines.append(_HEADER)
     for d in result.days:
         m = d.metrics
         lines.append(
@@ -149,6 +178,15 @@ def render_markdown(result: MergeResult) -> str:
             f"solo-Meta: {meta_only} · solo-Ventas: {sales_only}"
         )
 
+    if campaigns:
+        lines.append("")
+        lines.append(
+            "> Ingreso / MER / CPA global / win-rate son SOLO a nivel cuenta: la venta "
+            "manual de WhatsApp no se atribuye determinísticamente a una campaña. Por "
+            "campaña se mide el embudo (drop-off, costo/conversación) — lo que decide "
+            "qué creativo rotar."
+        )
+
     return "\n".join(lines)
 
 
@@ -170,7 +208,21 @@ def _diagnosis_dict(d: Diagnosis) -> dict:
     }
 
 
-def to_dict(result: MergeResult) -> dict:
+def _campaign_dict(c: CampaignFunnel) -> dict:
+    return {
+        "campaign_id": c.campaign_id,
+        "campaign_name": c.campaign_name,
+        "spend_cop": c.spend_cop,
+        "inline_link_clicks": c.inline_link_clicks,
+        "messaging_conversations_started": c.messaging_conversations_started,
+        "drop_off_rate": _dec_str(c.drop_off_rate),
+        "cost_per_conversation_cop": _dec_str(c.cost_per_conversation_cop),
+        "high_friction": c.high_friction,
+        "recommendation": c.recommendation.value,
+    }
+
+
+def to_dict(result: MergeResult, campaigns: list[CampaignFunnel] | None = None) -> dict:
     """Exact, JSON-able view (Decimals as strings to preserve precision)."""
     days = [
         {
@@ -200,6 +252,7 @@ def to_dict(result: MergeResult) -> dict:
     return {
         "days": days,
         "period": period_dict,
+        "campaigns": [_campaign_dict(c) for c in (campaigns or [])],
         "unmatched": {
             "meta_only": [d.isoformat() for d in result.meta_only_dates],
             "sales_only": [d.isoformat() for d in result.sales_only_dates],

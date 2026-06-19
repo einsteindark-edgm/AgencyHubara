@@ -19,6 +19,11 @@ Call the official Meta Ads MCP `get_insights` for the requested date range:
 `time_increment=1`, fields `spend,inline_link_clicks,actions`. Save the raw
 `{"data":[...]}` response to a JSON file.
 
+Pick the level from the issue: **whole account** → `level=account` (blended);
+**a specific campaign or a per-campaign comparison** → `level=campaign` (resolve a
+campaign name to its id with `get_campaigns` if needed). The engine builds the
+per-campaign funnel table automatically when the rows carry `campaign_id`.
+
 If the official MCP isn't enabled for the account yet, **STOP**: you cannot pull
 data, and you must NOT use a raw Graph API token or a third-party broker — that can
 get the ad account banned. Escalate to the operator and wait for MCP access.

@@ -39,6 +39,13 @@ Undefined → reported as `—`, **never** a guessed number. Diagnosis is a fixe
 drop-off > 40% = high friction, MER < 2.0 = poor profitability → `scale_budget` /
 `rotate_creative` / `review_targeting_or_pricing` / `insufficient_data`.
 
+### Per-campaign vs account
+Fetch insights with `level=campaign` and the report adds a **per-campaign funnel
+table** (spend, clicks, conversations, drop-off, cost/conversation) → it tells you
+**which creative to rotate**. MER / Global CPA / win rate stay **account-level only**:
+manual WhatsApp sales can't be deterministically attributed to a campaign, so we
+don't fake a per-campaign revenue number. `level=account` shows just the account blend.
+
 ## Quickstart
 
 ```bash

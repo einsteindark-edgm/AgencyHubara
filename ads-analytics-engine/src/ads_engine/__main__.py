@@ -18,6 +18,7 @@ import argparse
 import json
 import sys
 
+from .campaigns import campaign_breakdown, collapse_to_daily
 from .ingest import load_manual_sales
 from .merge import merge
 from .meta_insights import load_meta_insights
@@ -40,7 +41,7 @@ def _cmd_compute(args: argparse.Namespace) -> int:
     else:
         insights = store.load_insights()
     sales = store.load_sales()
-    result = merge(insights, sales)
+    result = merge(collapse_to_daily(insights), sales)
     store.replace_blended(result)
     print(f"computed {len(result.days)} blended days into {args.db}", file=sys.stderr)
     if result.meta_only_dates or result.sales_only_dates:
@@ -54,11 +55,13 @@ def _cmd_compute(args: argparse.Namespace) -> int:
 
 
 def _cmd_report(args: argparse.Namespace) -> int:
-    result = Store(args.db).load_blended(since=args.since, until=args.until)
+    store = Store(args.db)
+    result = store.load_blended(since=args.since, until=args.until)
+    campaigns = campaign_breakdown(store.load_insights())
     if args.format == "json":
-        print(json.dumps(to_dict(result), indent=2, ensure_ascii=False))
+        print(json.dumps(to_dict(result, campaigns), indent=2, ensure_ascii=False))
     else:
-        print(render_markdown(result))
+        print(render_markdown(result, campaigns))
     return 0
 
 

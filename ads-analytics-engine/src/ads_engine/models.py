@@ -38,6 +38,9 @@ class MetaDailyInsight:
     inline_link_clicks: int
     messaging_conversations_started: int
     currency: str = CURRENCY
+    # None = account-level (all campaigns blended). Set = one CTWA campaign.
+    campaign_id: str | None = None
+    campaign_name: str | None = None
 
     def __post_init__(self) -> None:
         _check_currency(self.currency)
@@ -78,6 +81,7 @@ class Recommendation(str, Enum):
     SCALE_BUDGET = "scale_budget"
     ROTATE_CREATIVE = "rotate_creative"
     REVIEW_TARGETING_OR_PRICING = "review_targeting_or_pricing"
+    FUNNEL_HEALTHY = "funnel_healthy"  # per-campaign: funnel is fine (profitability is account-level)
     INSUFFICIENT_DATA = "insufficient_data"
 
 
@@ -100,3 +104,22 @@ class BlendedDay:
     total_revenue_cop: int
     metrics: DayMetrics
     diagnosis: Diagnosis
+
+
+@dataclass(frozen=True)
+class CampaignFunnel:
+    """Per-campaign FUNNEL metrics (Meta-side only).
+
+    Revenue/MER/CPA are deliberately absent: manual WhatsApp sales can't be
+    attributed to a campaign, so profitability stays account-level.
+    """
+
+    campaign_id: str
+    campaign_name: str
+    spend_cop: int
+    inline_link_clicks: int
+    messaging_conversations_started: int
+    drop_off_rate: Decimal | None
+    cost_per_conversation_cop: Decimal | None
+    high_friction: bool
+    recommendation: Recommendation

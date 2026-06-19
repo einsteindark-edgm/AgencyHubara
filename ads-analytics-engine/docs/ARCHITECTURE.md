@@ -50,6 +50,22 @@ correct, safe behavior). See [`../mcp/README.md`](../mcp/README.md).
    presentation only). Period rows aggregate raw totals first, then compute — the
    correct blended way, not an average of daily ratios.
 
+## Per-campaign breakdown (what's attributable, what isn't)
+
+When insights are fetched at `level=campaign`, `campaigns.campaign_breakdown` produces
+one funnel row per campaign (spend, clicks, conversations, drop-off, cost/conversation)
+and `campaigns.collapse_to_daily` sums them into account-per-date rows so the blend still
+works. The split is principled:
+
+- **Per campaign:** only the Meta-side funnel (drop-off, cost/conversation). These are
+  attributable, and they drive the "which creative to rotate" decision.
+- **Account-only:** revenue, MER, Global CPA, win rate. Manual WhatsApp sales can't be
+  tied to a campaign (the attribution gap), so splitting revenue per campaign would be a
+  fabricated number — the engine refuses. Profitability is reported blended.
+
+`level=account` data has no `campaign_id`; the breakdown is then empty and only the
+account blend renders. Mixed campaign/account rows raise (malformed → fail loudly).
+
 ## Why COP-only (for now)
 
 Hubara's ad account and sales are both COP, so the MVP needs no FX. The models

@@ -1,0 +1,29 @@
+{
+  "account_currency": "COP",
+  "data": [
+    {
+      "date_start": "2026-06-01", "date_stop": "2026-06-01",
+      "campaign_id": "c_aroma", "campaign_name": "Velas Aroma",
+      "spend": "200000", "inline_link_clicks": "500",
+      "actions": [{ "action_type": "onsite_conversion.messaging_conversation_started_7d", "value": "100" }]
+    },
+    {
+      "date_start": "2026-06-02", "date_stop": "2026-06-02",
+      "campaign_id": "c_aroma", "campaign_name": "Velas Aroma",
+      "spend": "100000", "inline_link_clicks": "300",
+      "actions": [{ "action_type": "onsite_conversion.messaging_conversation_started_7d", "value": "60" }]
+    },
+    {
+      "date_start": "2026-06-01", "date_stop": "2026-06-01",
+      "campaign_id": "c_regalo", "campaign_name": "Velas Regalo",
+      "spend": "100000", "inline_link_clicks": "200",
+      "actions": [{ "action_type": "onsite_conversion.messaging_conversation_started_7d", "value": "160" }]
+    },
+    {
+      "date_start": "2026-06-02", "date_stop": "2026-06-02",
+      "campaign_id": "c_regalo", "campaign_name": "Velas Regalo",
+      "spend": "100000", "inline_link_clicks": "200",
+      "actions": [{ "action_type": "onsite_conversion.messaging_conversation_started_7d", "value": "140" }]
+    }
+  ]
+}

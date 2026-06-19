@@ -41,6 +41,12 @@ The engine reads, from each daily row:
 - `inline_link_clicks` → clicks
 - `actions[]` where `action_type == onsite_conversion.messaging_conversation_started_7d`
   → `messaging_conversations_started`
+- if you fetched `level=campaign`: `campaign_id` + `campaign_name` per row → the report
+  adds a per-campaign funnel table; `level=account` omits them → account blend only.
+
+**Choosing what to analyze:** `level=account` = all CTWA campaigns blended (default).
+`level=campaign` = one row per campaign per day → per-campaign funnel breakdown. To
+target ONE campaign, resolve its id first with the MCP's `get_campaigns` tool and filter.
 
 Save the tool's raw `{"data": [...], "account_currency": "COP"}` response to a file,
 then: `ads-engine compute --from-file <that-file>.json`.
