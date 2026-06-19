@@ -1,0 +1,40 @@
+[project]
+name = "ads-analytics-engine"
+version = "0.1.0"
+description = "Hubara Ads Analytics Engine — deterministic blended unit-economics for Meta CTWA + manual WhatsApp sales"
+requires-python = ">=3.11"
+# The core engine is STDLIB-ONLY on purpose: no runtime deps, nothing to break.
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "ruff>=0.5",
+]
+
+[project.scripts]
+ads-engine = "ads_engine.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ads_engine"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# So tests import `ads_engine` without an install step.
+pythonpath = ["src"]
+markers = [
+    "golden: deterministic golden tests — exact metric values, the anti-hallucination guarantee",
+    "functional: end-to-end CLI evidence",
+]

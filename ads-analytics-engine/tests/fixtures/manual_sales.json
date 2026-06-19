@@ -1,0 +1,5 @@
+[
+  { "date": "2026-06-01", "total_orders": 15, "total_revenue": 450000 },
+  { "date": "2026-06-02", "total_orders": 8, "total_revenue": 240000 },
+  { "date": "2026-06-03", "total_orders": 0, "total_revenue": 0 }
+]

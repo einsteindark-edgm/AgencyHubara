@@ -1,0 +1,9 @@
+{
+  "_comment": "The ONLY supported data path: the official Meta Ads MCP. Add it as a custom connector in Claude (Settings > Connectors) and sign in with Meta (OAuth). The agent then calls the `get_insights` tool. There is NO direct Graph API fallback and NO third-party broker — a raw-token Graph call can get the ad account banned. See README.md.",
+  "mcpServers": {
+    "meta-ads": {
+      "type": "http",
+      "url": "https://mcp.facebook.com/ads"
+    }
+  }
+}

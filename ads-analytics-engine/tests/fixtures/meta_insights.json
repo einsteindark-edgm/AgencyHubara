@@ -1,0 +1,31 @@
+{
+  "account_currency": "COP",
+  "data": [
+    {
+      "date_start": "2026-06-01",
+      "date_stop": "2026-06-01",
+      "spend": "300000",
+      "inline_link_clicks": "500",
+      "actions": [
+        { "action_type": "link_click", "value": "500" },
+        { "action_type": "onsite_conversion.messaging_conversation_started_7d", "value": "100" }
+      ]
+    },
+    {
+      "date_start": "2026-06-02",
+      "date_stop": "2026-06-02",
+      "spend": "200000",
+      "inline_link_clicks": "400",
+      "actions": [
+        { "action_type": "onsite_conversion.messaging_conversation_started_7d", "value": "300" }
+      ]
+    },
+    {
+      "date_start": "2026-06-03",
+      "date_stop": "2026-06-03",
+      "spend": "100000",
+      "inline_link_clicks": "0",
+      "actions": []
+    }
+  ]
+}
