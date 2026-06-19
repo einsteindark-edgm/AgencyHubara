@@ -4,13 +4,14 @@ Toda receta se ejecuta **test-first** (`00-tdd-law.md`): el primer archivo que
 tocás es el test que falla por la razón correcta. Acá va QUÉ archivos tocar; el
 bucle rojo→verde→refactor dice en qué orden.
 
-## §0 · Empezá acá: levantar el stack + el hola mundo
+## §0 · Empezá acá: levantar el stack + el explorer
 
 ```bash
 cd GraphAgents
-docker compose up --build graphagents   # hola mundo sobre el LocalRuntime (sin keys ni server)
-docker compose up -d agentspan          # runtime durable REAL (:6767, imagen oficial)
-uv run python -m sdk.cli run greeter --input '{"name":"mundo"}'
+docker compose up --build               # toda la suite; la app SIRVE el explorer en :8900
+#   solo el explorer:  docker compose up --build --no-deps graphagents
+#   sin Docker:        python3 -m viewer.server      (→ http://localhost:8900)
+#   el hola mundo:     docker compose run --rm graphagents uv run python hello_world.py
 ```
 
 La **plantilla mínima** (patrón tool→agente→runtime, ya verde): copiá
@@ -168,5 +169,8 @@ sdk/graph.py  (build_graph → {nodes,edges} · to_mermaid)   ← ÚNICA fuente
 
 ### Docker
 
-`docker compose up viewer` → el explorer en :8900 (servicio aparte; NO necesita
-postgres ni agentspan; bind-mount → editás `index.html`/un manifest y refrescás).
+`docker compose up` → toda la suite con el explorer en :8900 (lo sirve el servicio
+`graphagents` como su proceso persistente; el CMD de la imagen es `python -m
+viewer.server`). Solo el explorer: `docker compose up --no-deps graphagents`. El
+hola mundo/CLI son on-demand (`docker compose run --rm graphagents uv run …`).
+bind-mount → editás `index.html`/un manifest y refrescás.

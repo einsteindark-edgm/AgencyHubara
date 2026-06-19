@@ -52,27 +52,31 @@ TDD obligatorio (rojo → verde → refactor): el rojo de una capability es un
 golden-replay. Reglas duras `G-*` y método: las `references/` del skill
 `graphagents-developer`. Verificación: `/graphagents-gates [arch|cert|graphs|manifests|all]`.
 
-## Levantar con Docker (hola mundo)
+## Levantar con Docker
+
+La app `graphagents` **sirve el explorer visual** (:8900) como proceso persistente,
+así que toda la suite arranca con un comando:
 
 ```bash
 cd GraphAgents
-cp .env.example .env                  # opcional — el hola mundo no necesita keys
+cp .env.example .env                  # opcional — el explorer no necesita keys
 
-# 1) El hola mundo, sin nada más (corre sobre el LocalRuntime in-process):
-docker compose up --build graphagents
-#    → lista el catálogo de tools/agentes y corre `greeter` (usa la tool `hello`)
-#      + demo de recovery por execution-id. No requiere API key ni el server.
+# Toda la suite (postgres + agentspan + la app con el explorer):
+docker compose up --build             # → el explorer en http://localhost:8900
+#   solo el explorer, sin arrastrar agentspan/postgres:
+docker compose up --build --no-deps graphagents
 
-# 2) El runtime durable REAL (server AgentSpan + postgres):
-docker compose up -d agentspan        # :6767 — imagen oficial agentspan/server
+# El hola mundo y la CLI son on-demand (corren y salen; no levantan server):
+docker compose run --rm graphagents uv run python hello_world.py
+#    → lista el catálogo + corre `greeter` (tool `hello`) + recovery por execution-id
 docker compose run --rm graphagents uv run python -m sdk.cli list-tools
 docker compose run --rm graphagents uv run python -m sdk.cli run greeter --input '{"name":"mundo"}'
 ```
 
 El contenedor `graphagents` monta el código (bind-mount; el venv vive en
-`/opt/venv`), así que editás y re-corrés sin rebuild. El hola mundo es la
-**plantilla mínima**: copiá `tools/hello/` para una tool nueva, y
-`manifests/greeter.agent.yaml` + `graphs/greeter.py` para un agente nuevo.
+`/opt/venv`), así que editás `viewer/index.html` o un manifest y refrescás sin
+rebuild. El hola mundo es la **plantilla mínima**: copiá `tools/hello/` para una
+tool nueva, y `manifests/greeter.agent.yaml` + `graphs/greeter.py` para un agente nuevo.
 
 ## El explorer visual (catálogo + grafo + marketplace)
 
@@ -88,8 +92,9 @@ python3 -m sdk.cli graph                 # el grafo en mermaid (se ve directo en
 python3 -m sdk.cli graph --format json   # el mismo grafo como JSON (lo come cualquier UI)
 
 # el explorer VIVO (backend stdlib + visor Cytoscape, cero build):
-docker compose up viewer                 # → http://localhost:8900
-#   o, sin Docker:  python3 -m viewer.server
+docker compose up                        # toda la suite → http://localhost:8900
+#   solo el explorer:  docker compose up --no-deps graphagents
+#   sin Docker:        python3 -m viewer.server
 ```
 
 Desde la UI podés correr un agente tool-only (ej. `greeter`) por el LocalRuntime y

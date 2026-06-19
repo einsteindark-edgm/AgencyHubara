@@ -20,5 +20,9 @@ RUN uv sync --no-install-project
 COPY . .
 RUN uv sync
 
-# Por defecto: el hola mundo sobre el LocalRuntime (no necesita API key ni server).
-CMD ["uv", "run", "python", "hello_world.py"]
+EXPOSE 8900
+# Por defecto SIRVE el explorer visual (:8900) — la cara persistente de la app en la suite.
+# El hola mundo y la CLI son on-demand (no levantan server):
+#   docker compose run --rm graphagents uv run python hello_world.py
+#   docker compose run --rm graphagents uv run python -m sdk.cli list-tools
+CMD ["uv", "run", "python", "-m", "viewer.server"]
