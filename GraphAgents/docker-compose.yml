@@ -1,12 +1,15 @@
 # Levanta TODO el stack de GraphAgents:
 #   postgres     — estado durable de AgentSpan (Conductor)
 #   agentspan    — el runtime durable (server, :6767) — imagen oficial
-#   graphagents  — nuestra app (SDK + CLI + capabilities + hola mundo)
+#   graphagents  — nuestra app; SIRVE el explorer visual (catálogo + grafo +
+#                  marketplace, estilo n8n) en :8900 como proceso persistente
 #
 # Quickstart:
 #   cp .env.example .env        # (opcional) poné tu OPENAI/ANTHROPIC/META keys
-#   docker compose up graphagents          # corre el hola mundo (LocalRuntime)
-#   docker compose up -d agentspan         # levanta el runtime real (:6767)
+#   docker compose up                      # TODA la suite → el explorer en http://localhost:8900
+#   docker compose up -d agentspan         # (solo) el runtime real (:6767)
+#   # hola mundo / CLI on-demand (no levantan un server):
+#   docker compose run --rm graphagents uv run python hello_world.py
 #   docker compose run --rm graphagents uv run python -m sdk.cli list-tools
 name: graphagents
 
@@ -48,10 +51,18 @@ services:
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
 
+  # La app GraphAgents. En la suite su proceso persistente es el EXPLORER visual
+  # (catálogo + grafo de conexiones + marketplace, estilo n8n) en :8900 — read-only
+  # sobre el registry (proyecta los manifests; no los muta) + corre agentes tool-only
+  # por el LocalRuntime. El CMD del Dockerfile ya es `python -m viewer.server`; el hola
+  # mundo y la CLI son on-demand (`docker compose run --rm graphagents uv run …`).
+  # (Solo el explorer, sin arrastrar agentspan: `docker compose up --no-deps graphagents`.)
   graphagents:
     build: .
     depends_on:
       - agentspan
+    ports:
+      - "${VIEWER_PORT:-8900}:8900"  # el explorer → http://localhost:8900
     environment:
       AGENTSPAN_SERVER_URL: "http://agentspan:6767"
       GRAPHAGENTS_RUNTIME: "${GRAPHAGENTS_RUNTIME:-local}"  # local | agentspan (G1+)
@@ -60,8 +71,7 @@ services:
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
     volumes:
-      - ./:/app  # bind-mount de dev: editás el código y re-corrés sin rebuild (el venv vive en /opt/venv)
-    # CMD por defecto (hello_world.py) viene del Dockerfile.
+      - ./:/app  # bind-mount de dev: editás viewer/index.html o un manifest y refrescás (sin rebuild)
 
 volumes:
   postgres_data:

@@ -62,6 +62,15 @@ loader compila el manifest a un callable con `build_runnable` (resuelve refs,
 inyecta ports + tools del catálogo). Una capability es `run` puro (G-DET, golden)
 + `build` (StateGraph, G1+). Reglas en `01-graph-rules.md` §runtime; receta §2.5c.
 
+**El explorer visual** (`viewer/`): una **proyección read-only** del catálogo —
+NO un editor (los manifests siguen siendo la verdad). El serializador
+`sdk/graph.py` (`build_graph`/`to_mermaid`) es la ÚNICA fuente que alimenta tres
+frontends: el CLI (`graph --format mermaid|json`), el visor Cytoscape
+(`viewer/index.html`, zero-build) y el backend vivo (`viewer/server.py`, stdlib
+`http.server`: `/api/graph` + `/api/run`). `docker compose up viewer` →
+http://localhost:8900. Toda vista nueva LEE de `sdk.graph`, no reparsea manifests.
+Receta §2.8; lecciones L-3 (runner python3), L-4 (curl truncado), L-6 (stdlib).
+
 ## TDD obligatorio (rojo → verde → refactor) — sin excepción
 
 No escribís una línea de producción sin un test que **falla primero** y lo exige.
@@ -83,8 +92,9 @@ en el mismo cambio).
 
 ## Verificación determinística
 
-Corré el panel: **`/graphagents-gates [arch|cert|graphs|manifests|all]`**. Cada
-gate es un comando con exit code. Detalle: `references/03-command-panel.md`.
+Corré el panel: **`/graphagents-gates [arch|cert|graphs|manifests|viewer|all]`**.
+Cada gate es un comando con exit code. Detalle: `references/03-command-panel.md`.
+A mano usá `python3 -m pytest` / `python3 -m sdk.cli`, NO `uv run` (L-3).
 Recordá: tests verdes ≠ feature viva — un cambio de comportamiento se verifica
 corriendo el grafo real sobre AgentSpan (recovery por `execution-id`).
 
@@ -92,7 +102,8 @@ corriendo el grafo real sobre AgentSpan (recovery por `execution-id`).
 
 `references/02-recipes.md`: agregar un manifest · una capability (StateGraph) ·
 una tool (con approval) · un connector a Meta · componer el supervisor ·
-certificar · el puente a la fase B (integración al plugin `ads` del monorepo).
+certificar · el explorer visual (catálogo + grafo + marketplace, §2.8) · el
+puente a la fase B (integración al plugin `ads` del monorepo).
 
 ## Subagents
 

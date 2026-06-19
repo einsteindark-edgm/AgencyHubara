@@ -2,7 +2,13 @@
 
 Cada gate es un comando exacto con exit code. "¿Está bien?" no se razona: se
 ejecuta el verbo y se lee el `0`/`1`. Corré `/graphagents-gates [scope]`, o los
-comandos a mano desde `GraphAgents/` con `uv run`.
+comandos a mano desde `GraphAgents/`.
+
+> **Runner (L-3):** a mano usá **`python3 -m pytest` / `python3 -m sdk.cli`** —
+> NO `uv run` (el pre-bash hook del monorepo lo bloquea fuera de `hubara_agency`,
+> y local no hay `.venv`). El python del sistema tiene pydantic/pyyaml/pytest y las
+> capabilities importan langgraph lazy, así que el camino puro corre igual. El panel
+> `/graphagents-gates` autodetecta el intérprete (python3 local · `uv run` en Docker).
 
 ## El comando único (DoD de cualquier cambio)
 
@@ -12,19 +18,32 @@ comandos a mano desde `GraphAgents/` con `uv run`.
 
 ## Por gate
 
-| Scope | Comando (`cd GraphAgents &&`) | Caza | Exit |
+| Scope | Comando (desde `GraphAgents/`) | Caza | Exit |
 |---|---|---|---|
-| `manifests` | `uv run python -m sdk.cli check` | schema C0 · `archetype`/`strategy` en enum · refs `capability:` (C1) | 0 · 1 |
-| `arch` | `uv run pytest tests/architecture -q` | reglas G-* del TestKit + validez de todos los manifests | 0 · 1 |
-| `cert` | `uv run pytest tests/conformance -q` | TCK por agente (cada agente instancia su check, niveles C0–C3) | 0 · 1 |
-| `tools` | `uv run python -m sdk.cli certify-tool` + `uv run pytest tests/tools -q` | per-tool TCK: T-CONTRACT · T-DUR · G-AGNOSTIC + golden de la impl | 0 · 1 |
-| `graphs` | `uv run pytest tests/graphs -q` | golden-replay (G-DET: fixture → output exacto) | 0 · 1 |
-| `integration` | `uv run pytest tests/integration -q` | el manifest compila a runnable y CORRE sobre el runtime port (+ recovery por execution-id) | 0 · 1 |
+| `manifests` | `python3 -m sdk.cli check` | schema C0 · `archetype`/`strategy` en enum · refs `capability:` (C1) | 0 · 1 |
+| `arch` | `python3 -m pytest tests/architecture -q` | reglas G-* del TestKit + validez de todos los manifests + el serializador `sdk.graph` | 0 · 1 |
+| `cert` | `python3 -m pytest tests/conformance -q` | TCK por agente (cada agente instancia su check, niveles C0–C3) | 0 · 1 |
+| `tools` | `python3 -m sdk.cli certify-tool` + `python3 -m pytest tests/tools -q` | per-tool TCK: T-CONTRACT · T-DUR · G-AGNOSTIC + golden de la impl | 0 · 1 |
+| `graphs` | `python3 -m pytest tests/graphs -q` | golden-replay (G-DET: fixture → output exacto) | 0 · 1 |
+| `integration` | `python3 -m pytest tests/integration -q` | el manifest compila a runnable y CORRE sobre el runtime port (+ recovery + backend del explorer) | 0 · 1 |
+| `viewer` | `python3 -m pytest tests/architecture/test_system_graph.py tests/integration/test_viewer_api.py -q` | el grafo del sistema (`sdk.graph`) + la API del explorer (`api_route` sin socket) | 0 · 1 |
+
+## El explorer visual (catálogo + grafo + marketplace)
+
+```bash
+cd GraphAgents
+python3 -m sdk.cli graph                 # el grafo del sistema en mermaid (se ve en GitHub)
+python3 -m sdk.cli graph --format json   # el mismo grafo como JSON (lo come cualquier UI)
+python3 -m viewer.server                 # el explorer vivo → http://localhost:8900
+```
+
+Read-only: PROYECTA los manifests (no los muta). Corre agentes tool-only por el
+LocalRuntime desde la UI. Verificá el HTTP local con `urllib`/el browser, no `curl` (L-4).
 
 ## Certificar un agente
 
 ```bash
-cd GraphAgents && uv run python -m sdk.cli certify <id>   # exit 1 si < C2
+cd GraphAgents && python3 -m sdk.cli certify <id>   # exit 1 si < C2
 ```
 
 ## Recordatorios
