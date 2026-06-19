@@ -1,0 +1,20 @@
+{
+  "name": "graphagents-dev",
+  "version": "0.1.0",
+  "description": "Harness de desarrollo para GraphAgents — agentes de análisis de datos (Meta Ads) construidos con LangGraph (task graphs deterministas) sobre el runtime durable AgentSpan, orquestados por manifests YAML. Bundlea el skill graphagents-developer, subagents (graph-explorer, graph-tdd-author, graph-cert-reviewer), hooks que enforzan TDD y corren los gates de certificación/arquitectura, y el comando /graphagents-gates. Arquitectura PROPIA, apoyada en los conceptos del monorepo sin fusionarse: el código vive en GraphAgents/. La fuente de verdad del conocimiento es GraphAgents/README.md + las references del skill.",
+  "author": {
+    "name": "einsteindark"
+  },
+  "keywords": [
+    "graphagents",
+    "agentspan",
+    "langgraph",
+    "task-graph",
+    "meta-ads",
+    "tdd",
+    "certification",
+    "architecture-gates",
+    "durable-agents"
+  ],
+  "license": "SEE LICENSE IN README.md"
+}

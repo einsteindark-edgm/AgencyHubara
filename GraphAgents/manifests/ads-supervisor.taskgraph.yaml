@@ -1,0 +1,15 @@
+# El "task graph": orquestación declarativa de un equipo de análisis de Meta Ads.
+# Los agentes NO se redefinen inline: se REFERENCIAN del catálogo por
+# `uses: agent://<id>@<major>` (G-BIND-AGENT verifica que existan). Así el mismo
+# `meta-insights` se reusa desde varios task graphs.
+name: ads-supervisor
+description: Equipo de análisis de campañas Meta Ads (extrae, analiza ROAS/CAC, sugiere presupuesto).
+archetype: supervisor
+strategy: router
+model: openai/gpt-4o
+instructions: Rutea la consulta del operador a la capability de análisis correcta.
+certification: C2
+
+agents:
+  - uses: agent://meta-insights@1
+  - uses: agent://roas-cac@1
