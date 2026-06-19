@@ -8,7 +8,7 @@ varios frontends; este es el CLI. No implementa reglas: delega en
     uv run python -m sdk.cli list-agents            # el catálogo de agentes
     uv run python -m sdk.cli search <term>          # buscar tools en el catálogo
     uv run python -m sdk.cli certify-tool [<id>...] # tools: nivel (exit 1 si < C2)
-    uv run python -m sdk.cli graph                  # G2: render del task graph
+    uv run python -m sdk.cli graph [--format mermaid|json]  # serializa el sistema a grafo
     uv run python -m sdk.cli create <id>            # G2: scaffold que nace C2
 """
 from __future__ import annotations
@@ -169,7 +169,15 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def cmd_graph(args: argparse.Namespace) -> int:
-    print("TODO (G2): grafo del sistema desde los manifests (--format=mermaid|json).")
+    import json
+
+    from sdk.graph import build_graph, to_mermaid
+
+    g = build_graph(ROOT)
+    if args.format == "json":
+        print(json.dumps(g, ensure_ascii=False, indent=2))
+    else:
+        print(to_mermaid(g), end="")
     return 0
 
 
@@ -209,7 +217,8 @@ def main() -> int:
     rn.add_argument("--input", default="", help='input JSON, ej. \'{"name":"mundo"}\'')
     rn.set_defaults(fn=cmd_run)
 
-    g = sub.add_parser("graph", help="render del task graph (G2)")
+    g = sub.add_parser("graph", help="serializa el sistema a grafo (mermaid|json)")
+    g.add_argument("--format", choices=["mermaid", "json"], default="mermaid")
     g.set_defaults(fn=cmd_graph)
 
     cr = sub.add_parser("create", help="scaffold (G2)")

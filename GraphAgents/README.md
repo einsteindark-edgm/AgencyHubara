@@ -35,12 +35,14 @@ GraphAgents/
 ├── sdk/                  # SDK propio (NO importa el monorepo)
 │   ├── manifest_model.py # el modelo Pydantic del manifest (superset de AgentSpan)
 │   ├── loader.py         # manifest → grafo de Agent de AgentSpan (G1)
-│   ├── cli.py            # `python -m sdk.cli check|certify` (compilador rápido)
+│   ├── cli.py            # `python -m sdk.cli check|certify|graph` (compilador rápido)
+│   ├── graph.py          # serializa el sistema a {nodes,edges} (la fuente del explorer)
 │   ├── testkit/checks.py # los checks G-* (única fuente; 3 frontends)
 │   └── connectorkit/     # ports a Meta (vendor: live|fixture|warehouse)
 ├── graphs/               # capabilities LangGraph (StateGraphs deterministas)
 ├── tools/                # @tool (idempotentes; approval_required para outward)
-├── tests/{architecture,conformance,graphs}/   # G-rules · TCK · golden-replay
+├── viewer/               # el EXPLORER visual (backend stdlib http.server + visor Cytoscape)
+├── tests/{architecture,conformance,graphs,integration}/  # G-rules · TCK · golden · runtime+backend
 └── fixtures/             # datasets golden (snapshots de insights de Meta)
 ```
 
@@ -71,6 +73,28 @@ El contenedor `graphagents` monta el código (bind-mount; el venv vive en
 `/opt/venv`), así que editás y re-corrés sin rebuild. El hola mundo es la
 **plantilla mínima**: copiá `tools/hello/` para una tool nueva, y
 `manifests/greeter.agent.yaml` + `graphs/greeter.py` para un agente nuevo.
+
+## El explorer visual (catálogo + grafo + marketplace)
+
+Una interfaz estilo n8n para VER el sistema: el palette de tools y agentes (con su
+nivel de certificación), el grafo de conexiones (`uses` / `agent://` / `consumes`)
+y un inspector por nodo. Es una **proyección read-only** del catálogo — lee los
+manifests, no los muta. El serializador `sdk/graph.py` es la única fuente; la
+alimenta a tres frontends:
+
+```bash
+cd GraphAgents
+python3 -m sdk.cli graph                 # el grafo en mermaid (se ve directo en GitHub)
+python3 -m sdk.cli graph --format json   # el mismo grafo como JSON (lo come cualquier UI)
+
+# el explorer VIVO (backend stdlib + visor Cytoscape, cero build):
+docker compose up viewer                 # → http://localhost:8900
+#   o, sin Docker:  python3 -m viewer.server
+```
+
+Desde la UI podés correr un agente tool-only (ej. `greeter`) por el LocalRuntime y
+ver el resultado. El backend (`viewer/server.py`) es stdlib `http.server` (cero
+deps nuevas): `GET /api/graph`, `POST /api/run`.
 
 ## Levantar (G0)
 

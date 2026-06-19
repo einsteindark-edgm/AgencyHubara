@@ -131,3 +131,42 @@ dashboard: NO importes nada cruzado. Construí en el monorepo un cast del plugin
 `ads` que llame al runtime de AgentSpan por `execution-id` (HTTP) y sirva el
 resultado bajo `/api/ads/*`. Ese adaptador es el ÚNICO punto de contacto entre
 las dos arquitecturas (ver `01-graph-rules.md` §borde).
+
+## 2.8 El explorer visual (catálogo + grafo + marketplace, estilo n8n)
+
+El explorer es una **proyección read-only** del catálogo (NO un editor: los
+manifests siguen siendo la verdad — git + cert + TDD). Una sola fuente, tres
+frontends, como el TestKit:
+
+```
+sdk/graph.py  (build_graph → {nodes,edges} · to_mermaid)   ← ÚNICA fuente
+   ├── sdk/cli.py  graph --format mermaid|json             (terminal / GitHub)
+   ├── viewer/server.py  GET /api/graph                    (backend vivo, stdlib http.server)
+   └── viewer/index.html  Cytoscape vía CDN                (catálogo + canvas + inspector)
+```
+
+- **Levantar:** `python3 -m viewer.server` → http://localhost:8900 (L-3: python3, no `uv run`).
+- **Verificar HTTP local:** `urllib`/el browser del preview, NUNCA `curl` (L-4 lo trunca).
+
+### Agregar un dato al grafo (un atributo de nodo / un tipo de arista)
+
+1. **Rojo:** en `tests/architecture/test_system_graph.py` asertá el atributo/arista
+   nuevo sobre el catálogo real (ej. `_node(g,"agent:x")["nuevo"] == ...`). Velo fallar.
+2. `sdk/graph.py` — agregalo en `_tool_node`/`_agent_node`/`_port_node` o en `_edges_of`.
+   **Regla de oro:** el dato sale del modelo del manifest (`manifest_model`), no se inventa.
+3. Verde. La UI lo lee solo (es genérica sobre `n.*`); si querés mostrarlo, tocá
+   `renderInspector`/`catalogCard` en `viewer/index.html` (zero-build, recargás y listo).
+
+### Agregar un endpoint al backend
+
+1. **Rojo:** en `tests/integration/test_viewer_api.py` llamá `api_route(method, path, …)`
+   SIN socket y asertá `(status, payload)`. Velo fallar.
+2. `viewer/server.py` — sumá la rama en `api_route` (core ruteable, aislado del
+   `BaseHTTPRequestHandler`). Si corre un agente, reusá `run_agent` (rechaza los que
+   `consumes:` un port — necesitan un Fixture, no la UI).
+3. Verde. El handler es glue fino: no metas lógica ahí.
+
+### Docker
+
+`docker compose up viewer` → el explorer en :8900 (servicio aparte; NO necesita
+postgres ni agentspan; bind-mount → editás `index.html`/un manifest y refrescás).

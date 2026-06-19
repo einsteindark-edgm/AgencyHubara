@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>GraphAgents · explorer</title>
+<style>
+  :root {
+    --bg: #fbfbfa; --surface: #fff; --line: #e7e5e0; --ink: #2c2c2a; --muted: #6b6a66;
+    --agent: #6f63d6; --tool: #d8743a; --port: #1d9e8f;
+    --c-ok: #1f9d57; --c-warn: #bd8410; --c-info: #2f7fc0; --c-none: #b14a4a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#1a1a18; --surface:#232320; --line:#36352f; --ink:#ecebe6; --muted:#a3a29b; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+         background:var(--bg); color:var(--ink); font-size:14px; }
+  .app { display:grid; grid-template-columns: 240px 1fr 312px; grid-template-rows:auto 1fr; height:100vh; }
+  header { grid-column:1/-1; display:flex; align-items:center; gap:14px; padding:10px 16px;
+           border-bottom:1px solid var(--line); background:var(--surface); flex-wrap:wrap; }
+  header .brand { font-weight:500; font-size:15px; display:flex; align-items:center; gap:8px; }
+  header .dot { width:10px;height:10px;border-radius:3px;background:var(--agent); }
+  header input { flex:1; min-width:160px; padding:7px 10px; border:1px solid var(--line);
+                 border-radius:8px; background:var(--bg); color:var(--ink); font-size:13px; }
+  .legend { display:flex; gap:10px; align-items:center; font-size:11px; color:var(--muted); flex-wrap:wrap; }
+  .legend b { font-weight:500; }
+  .chip { display:inline-flex; align-items:center; gap:5px; }
+  .sw { width:10px;height:10px;border-radius:3px;display:inline-block; }
+  aside { border-right:1px solid var(--line); background:var(--surface); overflow:auto; padding:12px; }
+  aside.right { border-right:0; border-left:1px solid var(--line); }
+  .sec { font-size:11px; color:var(--muted); margin:4px 2px 8px; letter-spacing:.02em; }
+  .card { display:flex; align-items:center; gap:8px; padding:7px 8px; border:1px solid var(--line);
+          border-radius:8px; margin-bottom:7px; cursor:pointer; background:var(--surface); }
+  .card:hover { border-color:#bbb; }
+  .card.active { border-color:var(--ink); box-shadow:0 0 0 1px var(--ink) inset; }
+  .card .ic { width:9px;height:24px;border-radius:3px;flex:none; }
+  .card .nm { flex:1; min-width:0; }
+  .card .nm b { font-weight:500; display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:12.5px; }
+  .card .nm span { font-size:10.5px; color:var(--muted); }
+  .badge { font-size:10px; padding:1px 6px; border-radius:5px; flex:none; font-weight:500; }
+  #cy { width:100%; height:100%; }
+  main { position:relative; overflow:hidden; }
+  .err { position:absolute; inset:auto 12px 12px; background:#fdecec; color:#8a1f1f; border:1px solid #f3b9b9;
+         padding:8px 12px; border-radius:8px; font-size:12px; display:none; }
+  .insp h2 { font-size:15px; margin:2px 0 2px; font-weight:500; }
+  .insp .meta { font-size:12px; color:var(--muted); margin-bottom:10px; }
+  .insp .row { display:flex; justify-content:space-between; gap:8px; font-size:12px; padding:5px 0; border-top:1px solid var(--line); }
+  .insp .row span:first-child { color:var(--muted); }
+  .insp .k { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:11px; }
+  .pills { display:flex; flex-wrap:wrap; gap:5px; margin:8px 0; }
+  .empty { color:var(--muted); font-size:13px; padding:24px 6px; text-align:center; }
+  button { font:inherit; font-size:12px; padding:6px 12px; border:1px solid var(--line); border-radius:8px;
+           background:var(--bg); color:var(--ink); cursor:pointer; }
+  button:hover { border-color:#999; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .run textarea { width:100%; min-height:46px; font-family:ui-monospace,Menlo,monospace; font-size:11px;
+                  border:1px solid var(--line); border-radius:8px; padding:6px; background:var(--bg); color:var(--ink); }
+  pre.out { background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:8px;
+            font-size:11px; white-space:pre-wrap; word-break:break-word; max-height:200px; overflow:auto; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <span class="brand"><span class="dot"></span> GraphAgents · explorer</span>
+    <input id="q" placeholder="buscar tool, agente, tag…" autocomplete="off" />
+    <div class="legend">
+      <span class="chip"><span class="sw" style="background:var(--agent)"></span>agente</span>
+      <span class="chip"><span class="sw" style="background:var(--tool)"></span>tool</span>
+      <span class="chip"><span class="sw" style="background:var(--port)"></span>port</span>
+      <span style="opacity:.5">·</span>
+      <span class="chip"><span class="sw" style="background:var(--c-ok)"></span>C2/C3</span>
+      <span class="chip"><span class="sw" style="background:var(--c-warn)"></span>C1</span>
+      <span class="chip"><span class="sw" style="background:var(--c-info)"></span>C0</span>
+      <span class="chip"><span class="sw" style="background:var(--c-none)"></span>none</span>
+    </div>
+  </header>
+
+  <aside class="left">
+    <div class="sec">AGENTES</div>
+    <div id="agents"></div>
+    <div class="sec" style="margin-top:12px">TOOLS · palette</div>
+    <div id="tools"></div>
+  </aside>
+
+  <main>
+    <div id="cy"></div>
+    <div class="err" id="err"></div>
+  </main>
+
+  <aside class="right insp" id="insp">
+    <div class="empty">Elegí un nodo del canvas o del catálogo para ver su contrato.</div>
+  </aside>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.30.2/cytoscape.min.js"></script>
+<script>
+const KIND = { agent:'var(--agent)', tool:'var(--tool)', port:'var(--port)' };
+const CERTCOLOR = { C3:'#1f9d57', C2:'#1f9d57', C1:'#bd8410', C0:'#2f7fc0', none:'#b14a4a' };
+const certColor = c => CERTCOLOR[c] || '#9a988f';
+
+let GRAPH = { nodes:[], edges:[] };
+let cy = null;
+let selected = null;
+
+const byId = id => GRAPH.nodes.find(n => n.id === id);
+const usedBy = id => GRAPH.edges.filter(e => e.target === id);
+const usesOf = id => GRAPH.edges.filter(e => e.source === id);
+
+function nodeFill(kind){ return getComputedStyle(document.documentElement).getPropertyValue(
+  kind==='agent'?'--agent':kind==='tool'?'--tool':'--port').trim(); }
+
+function cyStyle(){
+  return [
+    { selector:'node', style:{
+      'label':'data(label)','color':'#fff','font-size':11,'font-weight':500,
+      'text-valign':'center','text-halign':'center','text-wrap':'wrap','text-max-width':130,
+      'width':'label','height':24,'padding':'9px','shape':'round-rectangle',
+      'border-width':3,'border-color':'data(certc)','background-color':'data(fill)' } },
+    { selector:'node[kind="port"]', style:{ 'shape':'barrel','border-color':'#0f7a6e' } },
+    { selector:'edge', style:{
+      'width':1.5,'line-color':'#9aa0a6','target-arrow-color':'#9aa0a6','target-arrow-shape':'triangle',
+      'curve-style':'bezier','arrow-scale':0.9,'label':'data(label)','font-size':9,'color':'#86837c',
+      'text-background-color':'#fbfbfa','text-background-opacity':1,'text-background-padding':2 } },
+    { selector:'edge[kind="consumes"]', style:{ 'line-style':'dashed' } },
+    { selector:'.dim', style:{ 'opacity':0.12,'text-opacity':0.12 } },
+    { selector:'node:selected', style:{ 'overlay-color':'#000','overlay-opacity':0.10,'overlay-padding':7 } },
+  ];
+}
+
+function render(){
+  const els = [];
+  for(const n of GRAPH.nodes)
+    els.push({ data:{ ...n, certc: n.kind==='port' ? '#0f7a6e' : certColor(n.certification), fill: nodeFill(n.kind) } });
+  const ids = new Set(GRAPH.nodes.map(n=>n.id));
+  GRAPH.edges.forEach((e,i)=>{
+    if(!ids.has(e.source) || !ids.has(e.target)) return;
+    const label = e.kind==='agent' ? (e.strategy||'agent') : e.kind==='consumes' ? 'consume' : 'uses';
+    els.push({ data:{ id:'e'+i, source:e.source, target:e.target, kind:e.kind, label } });
+  });
+  cy = cytoscape({
+    container: document.getElementById('cy'),
+    elements: els, style: cyStyle(), wheelSensitivity:0.2,
+    layout:{ name:'breadthfirst', directed:true, spacingFactor:1.25, padding:24 },
+  });
+  cy.on('tap','node', ev => select(ev.target.id()));
+  cy.on('tap', ev => { if(ev.target===cy){ select(null); } });
+  renderCatalog();
+}
+
+function catalogCard(n){
+  const cert = n.kind==='port' ? '' :
+    `<span class="badge" style="background:${certColor(n.certification)}22;color:${certColor(n.certification)}">${n.certification}</span>`;
+  const sub = n.kind==='tool' ? `${n.side_effect}${n.approval_required?' · ⚠':''}`
+            : n.archetype + (n.publish?` · publish:${n.publish}`:'');
+  return `<div class="card" data-id="${n.id}">
+      <span class="ic" style="background:${nodeFill(n.kind)}"></span>
+      <span class="nm"><b>${n.label}</b><span>${sub}</span></span>${cert}</div>`;
+}
+
+function renderCatalog(){
+  const q = (document.getElementById('q').value||'').toLowerCase();
+  const match = n => !q || n.label.toLowerCase().includes(q) ||
+        (n.tags||[]).some(t=>t.toLowerCase().includes(q)) || (n.archetype||'').includes(q);
+  const order = { supervisor:0, extractor:1, analyzer:2, reporter:3 };
+  const agents = GRAPH.nodes.filter(n=>n.kind==='agent').sort((a,b)=>(order[a.archetype]??9)-(order[b.archetype]??9));
+  const tools  = GRAPH.nodes.filter(n=>n.kind==='tool').sort((a,b)=>a.label.localeCompare(b.label));
+  document.getElementById('agents').innerHTML = agents.map(catalogCard).join('');
+  document.getElementById('tools').innerHTML  = tools.map(catalogCard).join('');
+  document.querySelectorAll('.card').forEach(el=>{
+    const n = byId(el.dataset.id);
+    el.classList.toggle('active', el.dataset.id===selected);
+    el.style.display = match(n) ? '' : 'none';
+    el.onclick = ()=>select(el.dataset.id);
+  });
+  if(cy){
+    cy.batch(()=>cy.nodes().forEach(nd=>{
+      nd.toggleClass('dim', !!q && !match(byId(nd.id())));
+    }));
+  }
+}
+
+function pill(text, color){ color=color||'var(--muted)';
+  return `<span class="badge" style="background:${color}1f;color:${color}">${text}</span>`; }
+
+function select(id){
+  selected = id;
+  cy && cy.nodes().unselect();
+  if(id){ cy.getElementById(id).select(); }  // resaltar sin recentrar (no clipear el grafo)
+  document.querySelectorAll('.card').forEach(c=>c.classList.toggle('active', c.dataset.id===id));
+  renderInspector();
+}
+
+function renderInspector(){
+  const box = document.getElementById('insp');
+  const n = selected && byId(selected);
+  if(!n){ box.innerHTML = '<div class="empty">Elegí un nodo del canvas o del catálogo para ver su contrato.</div>'; return; }
+  const head = n.kind==='tool' ? `tool · ${n.side_effect} · v${n.version}`
+             : n.kind==='port' ? `connector port`
+             : `${n.archetype}`;
+  let html = `<h2>${n.label}</h2><div class="meta">${head}</div><div class="pills">`;
+  if(n.kind!=='port') html += pill(n.certification, certColor(n.certification));
+  if(n.declared_cert && n.declared_cert!==n.certification) html += pill('declara '+n.declared_cert);
+  if(n.exposes_as_tool) html += pill('expone como tool','var(--agent)');
+  if(n.publish) html += pill('publish: '+n.publish,'var(--port)');
+  if(n.approval_required) html += pill('approval','#b14a4a');
+  if(n.idempotent===false) html += pill('no idempotente','#b14a4a');
+  html += '</div>';
+  if(n.description) html += `<div class="meta">${n.description}</div>`;
+  if(n.capability) html += `<div class="row"><span>capability</span><span class="k">${n.capability}</span></div>`;
+  if(n.contract) html += `<div class="row"><span>contrato</span><span class="k">${n.contract}</span></div>`;
+  if(n.tags && n.tags.length) html += `<div class="row"><span>tags</span><span>${n.tags.join(', ')}</span></div>`;
+  if(n.consumes && n.consumes.length) html += `<div class="row"><span>consume</span><span class="k">${n.consumes.join(', ')}</span></div>`;
+
+  const fwd = usesOf(n.id).filter(e=>e.kind==='uses').map(e=>e.target.replace(/^\w+:/,''));
+  const rev = usedBy(n.id).map(e=>e.source.replace(/^\w+:/,''));
+  if(fwd.length) html += `<div class="row"><span>usa</span><span>${fwd.join(', ')}</span></div>`;
+  if(rev.length) html += `<div class="row"><span>usado por</span><span>${rev.join(', ')}</span></div>`;
+
+  if(n.kind==='agent'){
+    if(n.consumes && n.consumes.length){
+      html += `<div class="meta" style="margin-top:12px">▸ consume ${n.consumes.join(', ')} — se corre con un vendor <b>fixture</b> en <span class="k">tests/integration</span>, no desde la UI.</div>`;
+    } else {
+      html += `<div class="run" style="margin-top:14px">
+        <div class="sec" style="margin:0 0 6px">CORRER (LocalRuntime)</div>
+        <textarea id="runin">{ "name": "mundo" }</textarea>
+        <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
+          <button id="runbtn">correr ▸</button><span id="runstatus" style="font-size:11px;color:var(--muted)"></span>
+        </div><pre class="out" id="runout" style="display:none"></pre></div>`;
+    }
+  }
+  box.innerHTML = html;
+  const btn = document.getElementById('runbtn');
+  if(btn) btn.onclick = ()=>runAgent(n.label);
+}
+
+async function runAgent(agent){
+  const st = document.getElementById('runstatus'), out = document.getElementById('runout');
+  let input = {};
+  try { input = JSON.parse(document.getElementById('runin').value||'{}'); }
+  catch(e){ st.textContent='input no es JSON válido'; return; }
+  st.textContent='corriendo…';
+  try{
+    const r = await fetch('/api/run',{ method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ agent, input }) });
+    const data = await r.json();
+    st.textContent = `${data.status}${data.id?' · '+data.id:''}`;
+    out.style.display='block';
+    out.textContent = JSON.stringify(data.output ?? data.error, null, 2);
+  }catch(e){ st.textContent = 'error: '+e.message; }
+}
+
+async function load(){
+  try{
+    const r = await fetch('/api/graph'); GRAPH = await r.json(); render();
+  }catch(e){
+    const el = document.getElementById('err'); el.style.display='block';
+    el.textContent = 'No pude leer /api/graph — ¿está corriendo `python -m viewer.server`? ('+e.message+')';
+  }
+}
+document.getElementById('q').addEventListener('input', renderCatalog);
+load();
+</script>
+</body>
+</html>

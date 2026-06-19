@@ -1,6 +1,6 @@
 ---
-description: Corre el panel determinístico de gates de GraphAgents — manifests (cli check), tools (per-tool TCK), arquitectura (G-*), certificación (TCK C0–C3), determinismo (golden-replay) e integración (runtime + recovery). Uso: /graphagents-gates [tools|arch|cert|graphs|integration|manifests|all].
-argument-hint: "[tools|arch|cert|graphs|integration|manifests|all]"
+description: Corre el panel determinístico de gates de GraphAgents — manifests (cli check), tools (per-tool TCK), arquitectura (G-*), certificación (TCK C0–C3), determinismo (golden-replay), integración (runtime + recovery) y el explorer visual (serializador sdk.graph + API del backend). Uso: /graphagents-gates [tools|arch|cert|graphs|integration|manifests|viewer|all].
+argument-hint: "[tools|arch|cert|graphs|integration|manifests|viewer|all]"
 ---
 
 Corré el panel determinístico de verificación de GraphAgents (la
