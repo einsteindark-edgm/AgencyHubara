@@ -18,6 +18,15 @@
 #     · npm run test:arch (vitest): dependency-cruiser (FSD + plugins-no-cross),
 #       íconos de manifest, parity, y el meta-gate frontend.
 #
+# ── PATH-AWARENESS (subsistema GraphAgents) ──────────────────────────────────
+# `GraphAgents/` y `graphagents-dev/` son subsistemas APARTE con su propio CI
+# (graphagents-gates.yml). Este workflow IGUAL dispara en todos los PRs: "Backend"
+# y "Frontend" son required status checks, y un required que se saltea por `paths:`
+# queda Pending y TRABA el merge. La solución: los jobs SIEMPRE corren (reportan
+# verde) pero SALTEAN el trabajo pesado cuando el PR es SOLO de GraphAgents. El job
+# `changes` lo decide; es fail-safe: si el diff toca CUALQUIER cosa fuera de
+# GraphAgents (o no se puede diffear, o es push a main) → corre todo el central.
+#
 # ── OBLIGATORIEDAD ───────────────────────────────────────────────────────────
 # Este workflow CORRE en cada PR, pero para que BLOQUEE el merge hay que marcarlo
 # como "required status check" en la branch protection de `main` (es un setting de
@@ -55,29 +64,68 @@ env:
   ARCH_CHANGE_APPROVED: ${{ contains(github.event.pull_request.labels.*.name, 'architecture-change') && '1' || '' }}
 
 jobs:
+  # ── Decide si el PR toca el proyecto central ──────────────────────────────
+  # Output `central`: 'true' si el diff toca algo fuera de GraphAgents/graphagents-dev
+  # (o es push a main, o no se puede diffear) → corré las gates centrales. 'false'
+  # SOLO si el PR es exclusivamente de GraphAgents → los jobs de abajo se saltean el
+  # trabajo (igual reportan verde, para no trabar el required check).
+  changes:
+    name: ¿el PR toca el central?
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      central: ${{ steps.detect.outputs.central }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Detectar si el diff toca algo fuera de GraphAgents
+        id: detect
+        run: |
+          BASE="${{ github.event.pull_request.base.sha }}"
+          if [ -z "$BASE" ]; then
+            echo "central=true" >> "$GITHUB_OUTPUT"
+            echo "push/sin-PR → central=true (fail-safe)"; exit 0
+          fi
+          CHANGED="$(git diff --name-only "$BASE"...HEAD)"
+          echo "── archivos cambiados ──"; echo "$CHANGED"
+          if [ -z "$CHANGED" ] || echo "$CHANGED" | grep -qvE '^(GraphAgents|graphagents-dev)/'; then
+            echo "central=true" >> "$GITHUB_OUTPUT"
+            echo "→ central=true (toca central/compartido)"
+          else
+            echo "central=false" >> "$GITHUB_OUTPUT"
+            echo "→ central=false (PR solo de GraphAgents → su CI es graphagents-gates.yml)"
+          fi
+
   backend-arch:
     name: Backend — DEHA + aislamiento de plugins
+    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        if: needs.changes.outputs.central == 'true'
         with:
           # El meta-gate diffea vs merge-base(origin/main): necesita historia + el ref de main.
           fetch-depth: 0
 
       - uses: astral-sh/setup-uv@v6
+        if: needs.changes.outputs.central == 'true'
         with:
           python-version: "3.11"
 
       - name: Instalar deps (uv workspace, lock en la raíz)
+        if: needs.changes.outputs.central == 'true'
         working-directory: hubara_agency
         run: uv sync --frozen
 
       - name: R-DIP — import-linter
+        if: needs.changes.outputs.central == 'true'
         working-directory: hubara_agency
         run: uv run lint-imports
 
       - name: Tests de arquitectura (R-rules + plugin-contract + orquestación + meta-gate)
+        if: needs.changes.outputs.central == 'true'
         working-directory: hubara_agency
         env:
           # Dummies: algunos módulos construyen clientes Medusa a nivel de módulo. Los
@@ -95,6 +143,7 @@ jobs:
         # output de render-compose.py → un drift cross-PR se caza en el run
         # post-merge a main (push trigger) en vez de quedar silencioso. También:
         # paridad worker↔k8s y unicidad de task_queues.
+        if: needs.changes.outputs.central == 'true'
         working-directory: hubara_agency
         env:
           MEDUSA_BASE_URL: http://medusa.invalid
@@ -102,36 +151,51 @@ jobs:
           OTEL_SDK_DISABLED: "true"
         run: uv run pytest tests/plugins/test_premortem_invariants.py -q
 
+      - name: PR solo de GraphAgents — central no aplica
+        if: needs.changes.outputs.central != 'true'
+        run: echo "El PR es exclusivamente de GraphAgents/. Las gates del central no aplican; su CI es graphagents-gates.yml."
+
   frontend-arch:
     name: Frontend — FSD + aislamiento de plugins
+    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        if: needs.changes.outputs.central == 'true'
         with:
           fetch-depth: 0
 
       - uses: actions/setup-node@v4
+        if: needs.changes.outputs.central == 'true'
         with:
           node-version: "20"
           cache: npm
           cache-dependency-path: frontend_dashboard/package-lock.json
 
       - name: Instalar deps
+        if: needs.changes.outputs.central == 'true'
         working-directory: frontend_dashboard
         run: npm ci
 
       - name: Generar plugin registry (codegen — requerido por tsc)
+        if: needs.changes.outputs.central == 'true'
         working-directory: frontend_dashboard
         run: npm run plugins:sync
 
       - name: Type-check composite (tsc -b)
+        if: needs.changes.outputs.central == 'true'
         working-directory: frontend_dashboard
         run: npx tsc -b
 
       - name: Tests de arquitectura (dep-cruiser FSD + íconos + meta-gate)
+        if: needs.changes.outputs.central == 'true'
         working-directory: frontend_dashboard
         run: npm run test:arch
+
+      - name: PR solo de GraphAgents — central no aplica
+        if: needs.changes.outputs.central != 'true'
+        run: echo "El PR es exclusivamente de GraphAgents/. Las gates del central no aplican; su CI es graphagents-gates.yml."
 
   # ── F-SDK-6 (ADR-2026-06-12) — el merge gate de la certificación ──────────
   # "Sin TCK no compila": corre los conformance suites instanciados por plugin
@@ -140,22 +204,27 @@ jobs:
   # los required status checks de main (mismo procedimiento que los otros dos).
   plugin-certification:
     name: Plugin certification — TCK + niveles C0–C2
+    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        if: needs.changes.outputs.central == 'true'
         with:
           fetch-depth: 0
 
       - uses: astral-sh/setup-uv@v6
+        if: needs.changes.outputs.central == 'true'
         with:
           python-version: "3.11"
 
       - name: Instalar deps (uv workspace, lock en la raíz)
+        if: needs.changes.outputs.central == 'true'
         working-directory: hubara_agency
         run: uv sync --frozen
 
       - name: TCK por plugin (un plugin sin conformance no mergea — P-27)
+        if: needs.changes.outputs.central == 'true'
         working-directory: hubara_agency
         env:
           MEDUSA_BASE_URL: http://medusa.invalid
@@ -164,6 +233,7 @@ jobs:
         run: uv run pytest tests/conformance -q
 
       - name: Certificar y emitir reportes (CLI hubara — niveles C0–C2)
+        if: needs.changes.outputs.central == 'true'
         working-directory: hubara_agency
         env:
           MEDUSA_BASE_URL: http://medusa.invalid
@@ -172,9 +242,13 @@ jobs:
         run: uv run python -m src.sdk.cli certify
 
       - name: Publicar reportes de certificación (artifact del run)
-        if: always()
+        if: needs.changes.outputs.central == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: certification-reports
           path: hubara_agency/.hubara/certification/
           if-no-files-found: warn
+
+      - name: PR solo de GraphAgents — central no aplica
+        if: needs.changes.outputs.central != 'true'
+        run: echo "El PR es exclusivamente de GraphAgents/. La certificación del central no aplica; su CI es graphagents-gates.yml."
