@@ -52,8 +52,38 @@ def run(input: dict, *, ports: dict | None = None, tools: dict | None = None) ->
 
 
 def build():
+    """`StateGraph` LangGraph (G1) — single-node que REUSA el `run()` puro (compone
+    merge-by-date + blended-unit-economics + diagnose; la lógica vive UNA vez, G-DET). El
+    guard de moneda (MF-5) corre dentro del `run()`. AgentSpan lo corre por passthrough.
+    Durabilidad: el grafo entero como UNA task (ver L-11)."""
     try:
-        from langgraph.graph import StateGraph  # noqa: F401
+        from typing import TypedDict
+
+        from langgraph.graph import END, START, StateGraph
     except Exception as e:  # noqa: BLE001
         raise RuntimeError("instalá deps: `uv sync` (langgraph).") from e
-    raise NotImplementedError("build(): cablear el StateGraph (G1+); el run puro ya está")
+
+    from tools.blended_unit_economics.impl import run as metrics
+    from tools.diagnose.impl import run as diag
+    from tools.merge_by_date.impl import run as merge
+
+    # OJO (L-13): con `from __future__ import annotations`, langgraph hace get_type_hints(State)
+    # en los GLOBALS del módulo → las anotaciones deben ser tipos resolvibles ahí (builtins
+    # list/dict/object/str). `Optional[...]` importado LOCAL truena NameError. `period` puede
+    # ser None: `dict` es solo el hint del schema (langgraph no valida el tipo).
+    class State(TypedDict, total=False):
+        currency: str
+        insights: list      # ctwa-insights (colapsado por día)
+        sales: list         # sales-ledger (parseado)
+        days: list          # ← run()
+        period: dict        # ← run() (None si no hay días en común)
+        unmatched: dict     # ← run()
+
+    def blend(state: State) -> dict:
+        return run(dict(state), tools={"merge-by-date": merge, "blended-unit-economics": metrics, "diagnose": diag})
+
+    g = StateGraph(State)
+    g.add_node("blend", blend)
+    g.add_edge(START, "blend")
+    g.add_edge("blend", END)
+    return g.compile(name="blended-economics")

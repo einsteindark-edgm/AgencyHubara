@@ -235,4 +235,24 @@ guard rojo que lo reproduce — el "Guard:" se escribe ANTES que el "Fix:".
   contrato no certifica · positivo: `with: {payload}` pasa · sin-`with:` no dispara nada) + el check en
   `run_checks`. El header de `sdk/testkit/checks.py` lista G-BIND binding↔contrato (y G-WIRE, que faltaba).
 
+### L-13 · La `State` TypedDict de un `build()` debe anotarse con tipos del MÓDULO (`from __future__ import annotations` + langgraph) (2026-06-20, G1 build() del resto de capabilities)
+- **Síntoma:** `blended_economics.build()` anotaba `period: Optional[dict]` con `Optional` importado DENTRO
+  de `build()`. Al compilar el grafo (`StateGraph(State)`), langgraph reventó con
+  `NameError: name 'Optional' is not defined` — el golden-replay del compilado lo cazó al toque.
+- **Causa raíz:** los módulos de `graphs/` tienen `from __future__ import annotations` → las anotaciones
+  son STRINGS (lazy). langgraph hace `typing.get_type_hints(State)` para armar los channels, y eso evalúa
+  las strings en los **globals del módulo** (+ los del módulo donde se definió la clase). `Optional`
+  importado en el scope LOCAL de `build()` no está en los globals → NameError. Los builtins
+  (`list`/`dict`/`object`/`str`) siempre resuelven; por eso `greeter`/`ctwa_campaign_funnel` (que solo
+  usaban builtins) nunca lo pegaron.
+- **Fix aplicado:** anotar la `State` SOLO con builtins (`period: dict`, no `Optional[dict]`). El tipo es
+  un hint del schema — langgraph NO valida el valor, así que `period=None` con anotación `dict` es legal.
+  Si hiciera falta un tipo no-builtin (`Annotated[list, operator.add]` para un reducer, G-STATE), importarlo
+  a nivel MÓDULO (top del archivo), no dentro de `build()`.
+- **Regla para el skill:** la `State` de un `build()` se anota con tipos resolvibles desde los globals del
+  módulo. Default: builtins. Reducers/tipos especiales → import a nivel módulo. Nunca un tipo importado
+  local. El guard es el golden-replay del compilado (`build().invoke(seed)`): si la anotación no resuelve,
+  falla en `compile()`, no en runtime.
+- **Guard:** `tests/graphs/test_<cap>_build.py` (compila el grafo e invoca) — está para las 5 capabilities.
+
 <!-- AÑADIR NUEVAS LECCIONES ARRIBA DE ESTA LÍNEA, NUMERADAS L-1, L-2, ... -->

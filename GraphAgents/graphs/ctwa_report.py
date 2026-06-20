@@ -67,8 +67,31 @@ def run(input: dict, *, ports: dict | None = None, tools: dict | None = None) ->
 
 
 def build():
+    """`StateGraph` LangGraph (G1) — single-node que REUSA el `run()` puro: el render
+    determinista (tabla + verdict + embudo por-campaña). El nodo LLM narrativo (cita los
+    números, no computa) es **G1.x** — todavía no se cablea. La lógica vive UNA vez (G-DET);
+    AgentSpan lo corre por passthrough. Durabilidad: el grafo entero como UNA task (L-11)."""
     try:
-        from langgraph.graph import StateGraph  # noqa: F401
+        from typing import TypedDict
+
+        from langgraph.graph import END, START, StateGraph
     except Exception as e:  # noqa: BLE001
         raise RuntimeError("instalá deps: `uv sync` (langgraph).") from e
-    raise NotImplementedError("build(): cablear el StateGraph + el nodo LLM (G1+); el run puro ya está")
+
+    class State(TypedDict, total=False):
+        days: list          # blended-economics
+        period: dict        # blended-economics (None si no hay días en común)
+        unmatched: dict     # blended-economics
+        qa_passed: bool     # numbers-qa (gobierna la CONFIANZA del reporte, MF-4)
+        campaigns: list     # ctwa-campaign-funnel (el embudo por-campaña; opcional)
+        markdown: str       # ← run()
+        verdict: str        # ← run()
+
+    def report(state: State) -> dict:
+        return run(dict(state))
+
+    g = StateGraph(State)
+    g.add_node("report", report)
+    g.add_edge(START, "report")
+    g.add_edge("report", END)
+    return g.compile(name="ctwa-report")

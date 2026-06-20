@@ -45,8 +45,29 @@ def run(input: dict, *, ports: dict | None = None, tools: dict | None = None) ->
 
 
 def build():
+    """`StateGraph` LangGraph (G1) — single-node que REUSA el `run()` puro (el gate
+    no-self-review recomputa con la MISMA tool y reconcilia; la lógica vive UNA vez, G-DET).
+    AgentSpan lo corre por passthrough. Durabilidad: el grafo entero como UNA task (L-11)."""
     try:
-        from langgraph.graph import StateGraph  # noqa: F401
+        from typing import TypedDict
+
+        from langgraph.graph import END, START, StateGraph
     except Exception as e:  # noqa: BLE001
         raise RuntimeError("instalá deps: `uv sync` (langgraph).") from e
-    raise NotImplementedError("build(): cablear el StateGraph (G1+); el run puro ya está")
+
+    from tools.blended_unit_economics.impl import run as metrics
+
+    class State(TypedDict, total=False):
+        days: list          # blended-economics
+        period: dict        # blended-economics (None si no hay días en común)
+        passed: bool        # ← run()
+        violations: list    # ← run()
+
+    def qa(state: State) -> dict:
+        return run(dict(state), tools={"blended-unit-economics": metrics})
+
+    g = StateGraph(State)
+    g.add_node("qa", qa)
+    g.add_edge(START, "qa")
+    g.add_edge("qa", END)
+    return g.compile(name="numbers-qa")

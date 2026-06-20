@@ -36,9 +36,29 @@ def run(input: dict, *, ports: dict | None = None, tools: dict | None = None) ->
 
 
 def build():
-    """StateGraph LangGraph (adapter al runtime real). Requiere langgraph (G1+)."""
+    """`StateGraph` LangGraph (G1) — single-node que REUSA el `run()` puro (la lógica vive
+    UNA vez, G-DET). El extractor es un transform lineal (parse + collapse) → un nodo basta;
+    AgentSpan lo corre por passthrough como task durable. `compile(name=...)` = el nombre que
+    lee AgentSpan. Durabilidad: el grafo entero como UNA task (ver L-11)."""
     try:
-        from langgraph.graph import StateGraph  # noqa: F401
+        from typing import TypedDict
+
+        from langgraph.graph import END, START, StateGraph
     except Exception as e:  # noqa: BLE001
         raise RuntimeError("instalá deps: `uv sync` (langgraph).") from e
-    raise NotImplementedError("build(): cablear el StateGraph (G1+); el run puro ya está")
+
+    from tools.meta_ads_insights.impl import run as parse
+
+    class State(TypedDict, total=False):
+        payload: object   # el JSON crudo de Graph /insights (lo deposita el central)
+        currency: str     # ← run()
+        insights: list    # ← run() (colapsado a nivel cuenta por día)
+
+    def extract(state: State) -> dict:
+        return run(dict(state), tools={"meta-ads-insights": parse})
+
+    g = StateGraph(State)
+    g.add_node("extract", extract)
+    g.add_edge(START, "extract")
+    g.add_edge("extract", END)
+    return g.compile(name="ctwa-insights")
