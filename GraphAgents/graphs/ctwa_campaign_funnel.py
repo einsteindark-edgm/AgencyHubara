@@ -32,8 +32,49 @@ def run(input: dict, *, ports: dict | None = None, tools: dict | None = None) ->
 
 
 def build():
+    """`StateGraph` LangGraph — el embudo como task graph EXPLÍCITO: un nodo por tool, en
+    cadena (parse-entities → parse-insights → complement). Los nodos REUSAN las impls puras
+    del catálogo (las mismas que compone el `run()`) — la lógica vive UNA vez (G-DET); el
+    grafo solo las cablea, y es la estructura que se ve en langgraph Studio.
+
+    DURABILIDAD (honesto, ver L-11): sin LLM, AgentSpan corre el grafo por el path
+    passthrough = el grafo ENTERO como UNA task durable (recovery por execution-id del run
+    completo, NO por-nodo). La descomposición por-task (un crash entre nodos no recomputa
+    los anteriores, retry/HUMAN por nodo) es G1.x — pero la estructura ya está acá lista.
+    `compile(name=...)` es el nombre que lee AgentSpan."""
     try:
-        from langgraph.graph import StateGraph  # noqa: F401
+        from typing import TypedDict
+
+        from langgraph.graph import END, START, StateGraph
     except Exception as e:  # noqa: BLE001
         raise RuntimeError("instalá deps: `uv sync` (langgraph).") from e
-    raise NotImplementedError("build(): cablear el StateGraph (G1+); el run puro ya está")
+
+    from tools.complement_funnel.impl import run as complement
+    from tools.meta_ads_insights.impl import run as parse_insights
+    from tools.parse_meta_entities.impl import run as parse_entities
+
+    class State(TypedDict, total=False):
+        entities_payload: object   # envelope crudo de ads_get_ad_entities (lo deposita el central)
+        insights_payload: object   # payload de Graph /insights (lo deposita el central)
+        entities: list             # ← parse-entities
+        insights: list             # ← meta-ads-insights
+        campaigns: list            # ← complement (el embudo final)
+
+    def parse_entities_node(state: State) -> dict:
+        return {"entities": parse_entities(payload=state["entities_payload"])["campaigns"]}
+
+    def parse_insights_node(state: State) -> dict:
+        return {"insights": parse_insights(payload=state["insights_payload"])["insights"]}
+
+    def complement_node(state: State) -> dict:
+        return complement(payload={"entities": state["entities"], "insights": state["insights"]})
+
+    g = StateGraph(State)
+    g.add_node("parse_entities", parse_entities_node)
+    g.add_node("parse_insights", parse_insights_node)
+    g.add_node("complement", complement_node)
+    g.add_edge(START, "parse_entities")
+    g.add_edge("parse_entities", "parse_insights")
+    g.add_edge("parse_insights", "complement")
+    g.add_edge("complement", END)
+    return g.compile(name="ctwa-campaign-funnel")

@@ -54,6 +54,30 @@ def test_greeter_runs_on_agentspan_and_unwraps_output():
     assert ex.output.get("greeting") == "hola, ada"
 
 
+def test_ctwa_campaign_funnel_runs_durable_and_keeps_the_complement():
+    """G1 · el embudo por-campaña corre como StateGraph durable en AgentSpan (build() →
+    AgentRuntime, passthrough = el grafo entero como una task durable con su execution-id
+    de Conductor; ver L-11). Lo que prueba el smoke: el COMPLEMENTO sobrevive el round-trip
+    durable — "Día del padre" (entities=0) recupera 120 conversaciones de /insights actions."""
+    import json
+
+    from graphs.ctwa_campaign_funnel import build
+    from sdk.runtime import AgentSpanRuntime
+
+    entities = json.loads((ROOT_PATH / "fixtures" / "mcp_ad_entities.json").read_text(encoding="utf-8"))
+    insights = json.loads((ROOT_PATH / "fixtures" / "meta_insights_campaigns.json").read_text(encoding="utf-8"))
+
+    ex = AgentSpanRuntime().run(build(), {"entities_payload": entities, "insights_payload": insights})
+
+    assert ex.status == "completed"
+    assert ex.id  # execution-id de Conductor (visible en la UI de :6767)
+    campaigns = {c["campaign_id"]: c for c in ex.output["campaigns"]}
+    padre = campaigns["120243118818600317"]
+    assert padre["conversations"] == 120
+    assert padre["conversation_source"] == "insights"
+    assert padre["is_messaging"] is True
+
+
 def test_explorer_run_endpoint_uses_agentspan():
     """El botón 'correr' del explorer con runtime=agentspan → ejecución durable
     (mismo `/api/run` que dispara la UI de :8900)."""

@@ -189,4 +189,27 @@ guard rojo que lo reproduce — el "Guard:" se escribe ANTES que el "Fix:".
   → reporte terminal; + un seed incompleto falla LOUD) + `tests/architecture/test_taskgraph_wiring.py`
   (G-WIRE: un supervisor que compone sin `inputs:` no certifica). La orquestación ahora es ley del panel.
 
+### L-11 · El path passthrough corre el grafo ENTERO como UNA task — no afirmes durabilidad por-nodo (2026-06-20, G1 ctwa-campaign-funnel)
+- **Síntoma:** implementé `ctwa_campaign_funnel.build()` como StateGraph multi-nodo (un nodo por tool:
+  parse-entities → parse-insights → complement) y, sin verificarlo, escribí en el docstring + el test que
+  "cada nodo es una task durable de Conductor; un crash entre tasks se recupera sin recomputar las
+  anteriores". Los tests (golden-replay del compilado + smoke en AgentSpan) salieron VERDES — pero la
+  AFIRMACIÓN de granularidad de durabilidad era falsa para el path actual.
+- **Causa raíz:** sin un nodo LLM, AgentSpan corre el `CompiledStateGraph` por el **path passthrough** =
+  el grafo entero como UNA sola task durable (recovery por el execution-id del run completo, NO por-nodo;
+  §2.5d línea "Sin LLM → path passthrough"). Los tests asertaban el OUTPUT (el complemento sobrevive el
+  round-trip), que ES correcto — no la granularidad de las tasks. Clásico "tests verdes ≠ feature viva":
+  el output verde no respalda un claim de recovery por-nodo que nadie ejercitó (no hubo crash mid-graph).
+- **Fix aplicado:** corregí el docstring de `build()` y del smoke para decir la verdad — el grafo multi-nodo
+  es la **estructura explícita** (legible en langgraph Studio, lista para cuando AgentSpan compile a
+  tasks por-nodo / haya un nodo HUMAN/LLM que fuerce el path no-passthrough), pero HOY corre como una task
+  passthrough. La descomposición por-task (retry/HUMAN/recovery por nodo) queda marcada **G1.x EXPLÍCITO**.
+- **Regla para el skill:** un claim de DURABILIDAD (recovery por-nodo, retry por task, HUMAN gate) solo
+  vale si hay un test que lo EJERCITA (matá el proceso mid-graph y probá que no recomputa) — no lo
+  inferís de un output verde. Multi-nodo en `build()` se justifica por CLARIDAD/Studio/futuro, no por
+  durabilidad que el passthrough no da aún. Describí el mecanismo real, no el aspiracional.
+- **Guard:** el docstring de `graphs/ctwa_campaign_funnel.py` `build()` + `test_agentspan_runtime.py`
+  ahora citan L-11 y describen el passthrough honestamente. Cuando se implemente la descomposición
+  por-task (G1.x), el guard es un test de crash mid-graph que prueba el recovery por-nodo.
+
 <!-- AÑADIR NUEVAS LECCIONES ARRIBA DE ESTA LÍNEA, NUMERADAS L-1, L-2, ... -->
