@@ -1,0 +1,76 @@
+# GraphAgents Gates — el candado de arquitectura + certificación del subsistema
+# `GraphAgents/` (LangGraph + AgentSpan), APARTE del proyecto central.
+#
+# Corre el panel determinístico de GraphAgents en cada PR que toca `GraphAgents/**`
+# o `graphagents-dev/**` (y en push a main). Es el equivalente de
+# architecture-gates.yml pero para este subsistema — NO comparte deps ni reglas con
+# hubara_agency/frontend_dashboard (son arquitecturas separadas; se unen recién en
+# fase B por un puente HTTP/execution-id).
+#
+# Gates (mismo criterio que `/graphagents-gates all`):
+#   · cli check        — manifests válidos (schema + archetype + capability + binding)
+#   · certify-tool     — per-tool TCK (T-CONTRACT · T-DUR · G-AGNOSTIC) + golden de la impl
+#   · cli certify      — niveles C0–C3 de los agentes (exit 1 si < C2)
+#   · pytest           — architecture (G-*) + conformance (TCK) + graphs (golden-replay)
+#                        + integration (runtime + backend del explorer) + tools
+#
+# Los tests que necesitan un server de AgentSpan (`tests/integration/test_agentspan_*`)
+# se auto-SKIPean en CI (no hay :6767) vía `skipif(not _server_up())`; los de langgraph
+# corren (la dep se instala con `uv sync`). Ver L-7/L-8 del plugin graphagents-dev.
+#
+# OBLIGATORIEDAD: para que BLOQUEE el merge, agregá "GraphAgents — arquitectura +
+# certificación + golden" a los required status checks de `main` (branch protection,
+# lo hace un admin — igual que los gates del central).
+name: GraphAgents Gates
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "GraphAgents/**"
+      - "graphagents-dev/**"
+      - ".github/workflows/graphagents-gates.yml"
+  push:
+    branches: [main]
+    paths:
+      - "GraphAgents/**"
+      - "graphagents-dev/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: graphagents-gates-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  graphagents-gates:
+    name: GraphAgents — arquitectura + certificación + golden
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.11"
+
+      - name: Instalar deps (uv sync — pydantic/pyyaml/langgraph/langchain/agentspan + pytest)
+        working-directory: GraphAgents
+        run: uv sync
+
+      - name: Manifests válidos (cli check — schema + archetype + capability + binding)
+        working-directory: GraphAgents
+        run: uv run python -m sdk.cli check
+
+      - name: Catálogo de tools (certify-tool — T-CONTRACT · T-DUR · G-AGNOSTIC)
+        working-directory: GraphAgents
+        run: uv run python -m sdk.cli certify-tool
+
+      - name: Certificar agentes (CLI — niveles C0–C3, exit 1 si < C2)
+        working-directory: GraphAgents
+        run: uv run python -m sdk.cli certify
+
+      - name: Tests (architecture + conformance + graphs + integration + tools)
+        working-directory: GraphAgents
+        run: uv run pytest -q
