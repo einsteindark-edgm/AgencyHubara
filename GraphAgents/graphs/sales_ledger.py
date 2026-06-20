@@ -19,8 +19,27 @@ def run(input: dict, *, ports: dict | None = None, tools: dict | None = None) ->
 
 
 def build():
+    """`StateGraph` LangGraph (G1) — single-node que REUSA el `run()` puro (la lógica vive
+    UNA vez, G-DET). AgentSpan lo corre por passthrough (single-node = una task; multi-nodo
+    sería por-nodo, L-14). `compile(name=...)` = el nombre que lee AgentSpan."""
     try:
-        from langgraph.graph import StateGraph  # noqa: F401
+        from typing import TypedDict
+
+        from langgraph.graph import END, START, StateGraph
     except Exception as e:  # noqa: BLE001
         raise RuntimeError("instalá deps: `uv sync` (langgraph).") from e
-    raise NotImplementedError("build(): cablear el StateGraph (G1+); el run puro ya está")
+
+    from tools.parse_manual_sales.impl import run as parse
+
+    class State(TypedDict, total=False):
+        payload: object   # el JSON de ventas manuales (lo deposita el central/operador)
+        sales: list       # ← run() (normalizado)
+
+    def extract(state: State) -> dict:
+        return run(dict(state), tools={"parse-manual-sales": parse})
+
+    g = StateGraph(State)
+    g.add_node("extract", extract)
+    g.add_edge(START, "extract")
+    g.add_edge("extract", END)
+    return g.compile(name="sales-ledger")

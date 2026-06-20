@@ -34,6 +34,17 @@ def _seed() -> dict:
     }
 
 
+_SUP_SALES = {"sales": [{"date": "2026-06-15", "total_orders": 12, "total_revenue": 600000}]}
+
+
+def _sup_seed() -> dict:
+    return {
+        "meta_insights": json.loads(INS.read_text(encoding="utf-8")),
+        "manual_sales": _SUP_SALES,
+        "entities_payload": json.loads(ENT.read_text(encoding="utf-8")),
+    }
+
+
 def test_funnel_recupera_por_nodo_sin_recomputar(monkeypatch) -> None:
     from langgraph.checkpoint.memory import MemorySaver
 
@@ -80,3 +91,47 @@ def test_funnel_recupera_por_nodo_sin_recomputar(monkeypatch) -> None:
     padre = {c["campaign_id"]: c for c in out["campaigns"]}["120243118818600317"]
     assert padre["conversations"] == 120
     assert padre["conversation_source"] == "insights"
+
+
+def test_supervisor_compuesto_recupera_por_agente(monkeypatch) -> None:
+    """G2 + L-11/L-14: el supervisor compuesto (build_supervisor_graph) con un checkpointer
+    recupera POR-AGENTE — crasheo blended-economics (agente 4) y pruebo que sales-ledger
+    (agente 2) NO se recomputó al reanudar. Esto EJERCITA el claim de durabilidad del grafo
+    compuesto (sin esto, sería un overclaim — la regla de L-11)."""
+    from langgraph.checkpoint.memory import MemorySaver
+
+    import tools.merge_by_date.impl as mbd
+    import tools.parse_manual_sales.impl as pms
+    from sdk.loader import build_supervisor_graph
+    from sdk.manifest_model import load_manifest
+
+    calls = {"parse_manual_sales": 0, "merge_by_date": 0}
+    real_pms, real_mbd = pms.run, mbd.run
+
+    def counting_pms(*, payload):  # sales-ledger (agente 2)
+        calls["parse_manual_sales"] += 1
+        return real_pms(payload=payload)
+
+    def flaky_mbd(*, payload):  # blended-economics (agente 4) crashea la 1ra vez
+        calls["merge_by_date"] += 1
+        if calls["merge_by_date"] == 1:
+            raise RuntimeError("crash mid-supervisor en blended-economics (agente 4)")
+        return real_mbd(payload=payload)
+
+    monkeypatch.setattr(pms, "run", counting_pms)
+    monkeypatch.setattr(mbd, "run", flaky_mbd)
+
+    manifest = load_manifest(GA / "manifests" / "ads-analytics.taskgraph.yaml")
+    graph = build_supervisor_graph(manifest, GA, checkpointer=MemorySaver())  # build DESPUÉS del patch
+    config = {"configurable": {"thread_id": "sup-crash-recovery-1"}}
+
+    with pytest.raises(Exception):
+        graph.invoke({"acc": _sup_seed()}, config)  # crashea en el agente 4
+
+    out = graph.invoke(None, config)  # reanuda: re-corre SOLO desde el agente 4
+
+    # LA PRUEBA de recovery por-AGENTE: sales-ledger (agente 2) corrió UNA vez (no se
+    # recomputó); merge-by-date (agente 4) corrió dos (falló + éxito).
+    assert calls["parse_manual_sales"] == 1, "sales-ledger se RECOMPUTÓ al reanudar (sin recovery por-agente)"
+    assert calls["merge_by_date"] == 2
+    assert "Embudo por campaña" in out["acc"]["markdown"]  # el pod completa tras el resume

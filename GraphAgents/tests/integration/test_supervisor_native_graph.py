@@ -2,12 +2,15 @@
 AgentSpan corre durable), no solo el threading in-process del LocalRuntime.
 
 `build_agent(<supervisor>)` arma UN `StateGraph` donde cada agente es un nodo (resuelve su
-binding `inputs:` desde el acumulador → corre su capability → mergea el output). Estado =
-un canal `acc` con reducer de merge (acumulador dinámico; los outputs terminales —markdown,
-verdict— sobreviven, que una colección estática de canales dropearía). Con `checkpointer`
-hereda el recovery por-nodo de Phase C (por-AGENTE acá).
+binding `inputs:` desde el acumulador → corre su capability → mergea el output). Estado = un
+canal `acc` LastValue (SIN reducer custom): cada nodo MERGEA EN CÓDIGO y devuelve el `acc`
+completo, así last-write-wins es correcto para una cadena secuencial y es server-safe — un
+reducer de merge custom se ignora server-side (L-14). Acumulador dinámico: los outputs
+terminales (markdown, verdict) sobreviven, que una colección estática de canales dropearía.
 
-Skipea sin langgraph. Corre el grafo compuesto SIN server (solo langgraph) — el smoke en el
+El recovery por-AGENTE (con `checkpointer`) se EJERCITA en `test_durable_recovery.py`
+(`test_supervisor_compuesto_recupera_por_agente`), no acá. Este test solo asierta la
+composición. Skipea sin langgraph; corre el grafo compuesto SIN server — el smoke en el
 server real de AgentSpan vive en test_agentspan_runtime.py.
 """
 from __future__ import annotations

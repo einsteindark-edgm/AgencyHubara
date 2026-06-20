@@ -105,6 +105,9 @@ def build_runnable(node: AgentNode, ga_root: Path, ports: dict | None = None) ->
         # input por su binding `inputs:` (G-WIRE lo exige) y su output se mergea al estado.
         # Así el DAG (varios extractores → un analyzer → qa → reporter) se cablea solo. Es
         # LA forma de orquestar en esta arquitectura — equivale al State de un StateGraph.
+        # NOTA: el LocalRuntime corre `parallel` SECUENCIALMENTE (alias pendiente de canales
+        # por-clave); en AgentSpan `parallel` aún no es server-safe (raise en build_supervisor_graph,
+        # L-14). Hoy inocuo: ningún manifest usa `parallel`. Divergencia local↔server a cerrar en G2.x.
         if node.strategy in ("sequential", "parallel"):
             compiled = [(a, build_runnable(a, ga_root, ports)) for a in node.agents]
 
