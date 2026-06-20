@@ -58,3 +58,13 @@ def test_compiled_graph_es_estable_entre_corridas() -> None:
     a = build().invoke(_seed())
     b = build().invoke(_seed())
     assert a["campaigns"] == b["campaigns"]
+
+
+def test_build_falla_con_error_de_DOMINIO_si_falta_un_payload() -> None:
+    # Paridad run()↔build() (MF-7, igual que ctwa-insights): el seam central→agente que
+    # olvida un payload debe fallar con un error de DOMINIO accionable — NO un KeyError
+    # crudo del nodo. El guard vive UNA vez y corre en AMBOS paths (run y el StateGraph).
+    from graphs.ctwa_campaign_funnel import build
+
+    with pytest.raises(ValueError, match="faltan 'entities_payload'"):
+        build().invoke({})  # sin payloads → error de dominio, no KeyError

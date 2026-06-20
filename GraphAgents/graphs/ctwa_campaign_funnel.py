@@ -15,12 +15,19 @@ Recibe DOS JSONs (los deposita el central): el de `ads_get_ad_entities` y el de
 from __future__ import annotations
 
 
-def run(input: dict, *, ports: dict | None = None, tools: dict | None = None) -> dict:
-    if "entities_payload" not in input or "insights_payload" not in input:
+def _require_payloads(d: dict) -> None:
+    """Guard de DOMINIO del seam central→agente (MF-7, ver L-11): si falta un payload, un
+    error accionable — no un KeyError crudo. Vive UNA vez → corre idéntico en `run()` y en
+    el nodo `validate` del StateGraph (sin drift run↔build)."""
+    if "entities_payload" not in d or "insights_payload" not in d:
         raise ValueError(
             "ctwa-campaign-funnel: faltan 'entities_payload' (ads_get_ad_entities) y/o "
             "'insights_payload' (Graph /insights) — los deposita el central"
         )
+
+
+def run(input: dict, *, ports: dict | None = None, tools: dict | None = None) -> dict:
+    _require_payloads(input)
     tools = tools or {}
     parse_entities = tools["parse-meta-entities"]
     parse_insights = tools["meta-ads-insights"]
@@ -59,6 +66,13 @@ def build():
         entities: list             # ← parse-entities
         insights: list             # ← meta-ads-insights
         campaigns: list            # ← complement (el embudo final)
+    # Nota G-STATE: hoy la cadena es SECUENCIAL y cada nodo escribe una clave distinta
+    # (sin writes concurrentes) → no necesita reducers. Si se paraleliza el fan-out de los
+    # dos parsers (START→parse_entities ∥ START→parse_insights), declarar reducers (G-STATE).
+
+    def validate_node(state: State) -> dict:
+        _require_payloads(state)  # mismo guard de dominio que run() (paridad run↔build, L-11)
+        return {}
 
     def parse_entities_node(state: State) -> dict:
         return {"entities": parse_entities(payload=state["entities_payload"])["campaigns"]}
@@ -70,10 +84,12 @@ def build():
         return complement(payload={"entities": state["entities"], "insights": state["insights"]})
 
     g = StateGraph(State)
+    g.add_node("validate", validate_node)
     g.add_node("parse_entities", parse_entities_node)
     g.add_node("parse_insights", parse_insights_node)
     g.add_node("complement", complement_node)
-    g.add_edge(START, "parse_entities")
+    g.add_edge(START, "validate")
+    g.add_edge("validate", "parse_entities")
     g.add_edge("parse_entities", "parse_insights")
     g.add_edge("parse_insights", "complement")
     g.add_edge("complement", END)
