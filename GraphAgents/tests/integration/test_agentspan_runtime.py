@@ -56,9 +56,9 @@ def test_greeter_runs_on_agentspan_and_unwraps_output():
 
 def test_ctwa_campaign_funnel_runs_durable_and_keeps_the_complement():
     """G1 · el embudo por-campaña corre como StateGraph durable en AgentSpan (build() →
-    AgentRuntime, passthrough = el grafo entero como una task durable con su execution-id
-    de Conductor; ver L-11). Lo que prueba el smoke: el COMPLEMENTO sobrevive el round-trip
-    durable — "Día del padre" (entities=0) recupera 120 conversaciones de /insights actions."""
+    AgentRuntime). En el server, este grafo multi-nodo se descompone en tasks de Conductor
+    por-nodo, con su execution-id (L-14). Lo que prueba el smoke: el COMPLEMENTO sobrevive el
+    round-trip durable — "Día del padre" (entities=0) recupera 120 conversaciones de /insights."""
     import json
 
     from graphs.ctwa_campaign_funnel import build
@@ -76,6 +76,35 @@ def test_ctwa_campaign_funnel_runs_durable_and_keeps_the_complement():
     assert padre["conversations"] == 120
     assert padre["conversation_source"] == "insights"
     assert padre["is_messaging"] is True
+
+
+def test_supervisor_compuesto_corre_en_agentspan():
+    """G2 · el supervisor ads-analytics (los 6 agentes compuestos en UN grafo por
+    build_agent) corre durable en AgentSpan con su execution-id de Conductor. El reporte
+    terminal (markdown + embudo) sale del run del task graph nativo, no del threading
+    in-process del LocalRuntime."""
+    import json
+
+    from sdk.loader import build_agent
+    from sdk.manifest_model import load_manifest
+    from sdk.runtime import AgentSpanRuntime
+
+    manifest = load_manifest(ROOT_PATH / "manifests" / "ads-analytics.taskgraph.yaml")
+    graph = build_agent(manifest, ROOT_PATH)
+    seed = {
+        "meta_insights": json.loads((ROOT_PATH / "fixtures" / "meta_insights_campaigns.json").read_text(encoding="utf-8")),
+        "manual_sales": {"sales": [{"date": "2026-06-15", "total_orders": 12, "total_revenue": 600000}]},
+        "entities_payload": json.loads((ROOT_PATH / "fixtures" / "mcp_ad_entities.json").read_text(encoding="utf-8")),
+    }
+
+    ex = AgentSpanRuntime().run(graph, {"acc": seed})
+
+    assert ex.status == "completed"
+    assert ex.id  # execution-id de Conductor (visible en :6767)
+    state = ex.output["acc"]
+    assert "Embudo por campaña" in state["markdown"]
+    padre = {c["campaign_id"]: c for c in state["campaigns"]}["120243118818600317"]
+    assert padre["conversations"] == 120
 
 
 def test_explorer_run_endpoint_uses_agentspan():

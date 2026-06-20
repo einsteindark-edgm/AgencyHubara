@@ -12,10 +12,18 @@ from __future__ import annotations
 
 import importlib
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, TypedDict
 
 from sdk.manifest_model import AgentNode, TaskGraphManifest
 from sdk.registry import load_agent_by_id
+
+
+class _SupervisorState(TypedDict):
+    # Un único canal acumulador `acc` SIN reducer custom (LastValue). AgentSpan server-side
+    # solo mapea `operator.add` (L-14): un reducer de merge custom se ignora → last-write-wins.
+    # Por eso cada nodo MERGEA EN CÓDIGO y devuelve el acc COMPLETO → last-write-wins es correcto
+    # (secuencial). `acc: dict` (builtin) resuelve en get_type_hints aún con future-annotations (L-13).
+    acc: dict
 
 
 def _resolve_capability(ref: str) -> Any:
@@ -140,10 +148,63 @@ def build_agent(node: AgentNode, ga_root: Path | None = None) -> Any:
     if node.capability:
         return _resolve_capability(node.capability)()  # CompiledStateGraph
 
+    if node.is_supervisor:
+        return build_supervisor_graph(node, ga_root)
+
     raise NotImplementedError(
-        "build_agent: G1 corre capabilities (StateGraph) en AgentSpan; supervisor/"
-        "tools nativos son G2+ (para el LocalRuntime usá build_runnable)."
+        "build_agent: G1 corre capabilities (StateGraph); G2 compone supervisors "
+        "(sequential/parallel) a un grafo nativo. Tools nativos de AgentSpan: G2.x."
     )
+
+
+def build_supervisor_graph(node: AgentNode, ga_root: Path | None, *, checkpointer=None) -> Any:
+    """G2 — compila un supervisor SECUENCIAL que COMPONE a UN `StateGraph` nativo. Cada agente
+    es un NODO: resuelve su binding `inputs:` desde el acumulador → corre su capability (su
+    `run` puro, vía `build_runnable`) → MERGEA EN CÓDIGO y devuelve el `acc` COMPLETO.
+
+    Por qué merge-en-código y no un reducer (L-14): AgentSpan compila el grafo multi-nodo a
+    tasks de Conductor POR-NODO (un worker por nodo) y server-side SOLO mapea `operator.add`
+    como reducer — un reducer de merge custom se ignora → last-write-wins → el acumulador se
+    perdería (cada nodo vería solo el output del anterior). Devolviendo el acc COMPLETO en un
+    canal LastValue, last-write-wins ES correcto para una cadena secuencial. `acc` dinámico:
+    no hay que declarar las claves; los outputs terminales (markdown/verdict) sobreviven.
+
+    Con `checkpointer`, recovery por-nodo cuando LangGraph drive (Phase C/L-11). `parallel`,
+    routing dinámico (router/handoff/swarm) y nesting de los `build()` subgrafos = G2.x."""
+    if ga_root is None:
+        raise RuntimeError("para componer un supervisor pasá ga_root al loader")
+    if node.strategy != "sequential":
+        raise NotImplementedError(
+            f"build_supervisor_graph: strategy '{node.strategy}' = G2.x. Hoy se compone "
+            "`sequential` (single-acc + merge-en-código + last-write-wins, server-safe). "
+            "`parallel` necesita canales por-clave / operator.add server-side (L-14)."
+        )
+    from langgraph.graph import END, START, StateGraph
+
+    compiled = [(a, build_runnable(a, ga_root)) for a in node.agents]
+
+    def _make_node(ref: AgentNode, run: Callable):
+        label = ref.ref_agent_id or ref.name or "?"
+
+        def _node(state: _SupervisorState) -> dict:
+            acc = dict(state["acc"])  # copia del acumulador completo
+            agent_input = _resolve_binding(ref.inputs, acc, label) if ref.inputs else acc
+            out = run(agent_input)
+            acc.update(out if isinstance(out, dict) else {label: out})  # merge EN CÓDIGO
+            return {"acc": acc}  # devolver el acc COMPLETO (LastValue server-safe)
+
+        return _node
+
+    g = StateGraph(_SupervisorState)
+    prev = START
+    for i, (ref, run) in enumerate(compiled):
+        name = f"{(ref.ref_agent_id or ref.name or 'step').replace('-', '_')}_{i}"  # langgraph node id
+        g.add_node(name, _make_node(ref, run))
+        g.add_edge(prev, name)
+        prev = name
+    g.add_edge(prev, END)
+
+    return g.compile(name=node.name or "supervisor", checkpointer=checkpointer)
 
 
 def agent_as_tool(ga_root: Path, agent_id: str) -> Any:

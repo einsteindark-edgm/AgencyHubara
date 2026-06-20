@@ -215,8 +215,11 @@ guard rojo que lo reproduce — el "Guard:" se escribe ANTES que el "Fix:".
   es EL test que L-11 exigía: inyecta un crash en el nodo `complement`, reanuda con el mismo `thread_id`, y
   asierta que `parse-entities` corrió UNA vez (NO se recomputó) + que el resultado correcto sobrevive. Alcance
   honesto: esto prueba el recovery por-nodo cuando **LangGraph drive** la ejecución (durabilidad
-  LocalRuntime/checkpointer); el **passthrough de AgentSpan** sigue corriendo el grafo como UNA task — la
-  compilación a tasks por-nodo NATIVA de AgentSpan (retry/HUMAN por task de Conductor) sigue siendo **G2**.
+  LocalRuntime/checkpointer).
+- **CORRECCIÓN (2026-06-20, ver L-14):** el claim de arriba de que "AgentSpan corre el grafo como UNA task
+  passthrough" es FALSO para grafos MULTI-NODO — firsthand, AgentSpan los descompone en tasks de Conductor
+  POR-NODO (un worker por nodo, con retry). Vale para single-node. Lo que sigue sin probar (y por eso no se
+  afirma) es el recovery por-nodo SIN recomputar a nivel Conductor — falta el crash-test contra el server.
 
 ### L-12 · Un campo del manifest que el loader IGNORA igual necesita su check (regla de oro) (2026-06-20, cleanup post-cert-review)
 - **Síntoma:** el manifest `ctwa-campaign-funnel.agent.yaml` bindeaba `complement-funnel` con
@@ -260,5 +263,34 @@ guard rojo que lo reproduce — el "Guard:" se escribe ANTES que el "Fix:".
   local. El guard es el golden-replay del compilado (`build().invoke(seed)`): si la anotación no resuelve,
   falla en `compile()`, no en runtime.
 - **Guard:** `tests/graphs/test_<cap>_build.py` (compila el grafo e invoca) — está para las 5 capabilities.
+
+### L-14 · AgentSpan compila un grafo multi-nodo a tasks de Conductor POR-NODO, y server-side SOLO mapea `operator.add` (2026-06-20, G2 supervisor compuesto)
+- **Síntoma:** `build_agent(ads-analytics)` compuso los 6 agentes en UN StateGraph con un canal único
+  `acc: Annotated[dict, _merge]` (reducer de merge). Local (`graph.invoke`) andaba; en el **server real de
+  AgentSpan** FALLÓ tras ~68s de retries: `sales-ledger` leía `$state.manual_sales` pero el `acc` solo tenía
+  `{currency, insights}` (el output del nodo anterior) — el seed se había perdido.
+- **Causa raíz (dos hallazgos firsthand del log del server):** (1) AgentSpan **descompone el grafo multi-nodo
+  en tasks de Conductor POR-NODO** — spawneó 6 workers (`ads-analytics_ctwa_insights_0`,
+  `..._sales_ledger_1`, …), cada uno una task durable con su retry (vimos sales-ledger reintentar 3×). NO es
+  "el grafo entero como UNA task passthrough" (eso vale para single-node; corrige el claim de §2.5d/L-11).
+  (2) Server-side **solo se mapea `operator.add`** como reducer: *"custom reducers are not supported
+  server-side… last-write-wins… may cause data loss"*. Mi `_merge` custom se ignoró → el canal `acc`
+  (LastValue) se sobreescribía con el patch de cada nodo → el acumulador se destruía.
+- **Fix aplicado:** SIN reducer custom. Canal `acc: dict` (LastValue) + cada nodo **mergea EN CÓDIGO** y
+  devuelve el `acc` COMPLETO (`acc = {**acc, **out}`) → con una cadena SECUENCIAL, last-write-wins es
+  correcto (cada nodo ve el acumulador completo del anterior). Verificado verde en el server real (2.5s, sin
+  retries). `parallel` (FORK_JOIN con merge concurrente) NO es server-safe así → queda G2.x (necesita canales
+  por-clave o `operator.add`); `build_supervisor_graph` se restringe a `sequential` y raise loud para el resto.
+- **Regla para el skill:** un grafo que anda con `graph.invoke` local NO está probado hasta correrlo en el
+  **server de AgentSpan** — la semántica de reducers/estado difiere (solo `operator.add`; multi-nodo = tasks
+  por-nodo). Para estado compuesto server-safe: o canales por-clave LastValue, o merge-en-código devolviendo
+  el estado completo (secuencial). Nunca un reducer de merge custom para el server.
+- **Honesto sobre durabilidad (no re-caer en L-11):** que AgentSpan corra cada nodo como task de Conductor
+  con retry es FIRSTHAND (el log), pero el **recovery por-nodo SIN recomputar en Conductor** NO está
+  test-probado todavía (lo único probado es el recovery por checkpointer de LangGraph, in-process,
+  `test_durable_recovery.py`). Un crash-test a nivel Conductor es el guard que falta para afirmarlo.
+- **Guard:** `tests/integration/test_supervisor_native_graph.py` (compone local) + en
+  `test_agentspan_runtime.py` el smoke `test_supervisor_compuesto_corre_en_agentspan` (corre en el server real
+  → reporte terminal). `build_supervisor_graph` documenta el porqué del merge-en-código.
 
 <!-- AÑADIR NUEVAS LECCIONES ARRIBA DE ESTA LÍNEA, NUMERADAS L-1, L-2, ... -->

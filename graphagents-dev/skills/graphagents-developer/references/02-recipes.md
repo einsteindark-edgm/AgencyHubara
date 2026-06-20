@@ -149,8 +149,11 @@ server durable (no el LocalRuntime in-process):
 3. `AgentSpanRuntime().run(graph, input)` corre `AgentRuntime().run(graph, input)`, mapea el
    `AgentResult` → `Execution` y **desempaqueta** `output['result']` (el json del state del
    passthrough). El `execution-id` (UUID de Conductor) aparece en la UI de **:6767**.
-4. Sin LLM → path passthrough (el grafo entero como UNA task durable). El server URL sale de
-   `AGENTSPAN_SERVER_URL` (el SDK le agrega `/api`).
+4. Granularidad de tasks (L-14, firsthand): un grafo **single-node** corre como UNA task; un
+   grafo **multi-nodo** AgentSpan lo descompone en tasks de Conductor POR-NODO (un worker por
+   nodo, con retry). Server-side solo se mapea `operator.add` como reducer — para estado
+   compuesto usá canales por-clave LastValue o merge-en-código (NO un reducer custom). El
+   server URL sale de `AGENTSPAN_SERVER_URL` (el SDK le agrega `/api`).
 5. **Rojo de integración:** `tests/integration/test_agentspan_runtime.py` con
    `importorskip("agentspan")` + `skipif(not _server_up())` → local/CI sin server SKIP,
    container con server RUN: `docker compose run --rm --no-deps graphagents

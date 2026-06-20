@@ -44,13 +44,13 @@ def build(*, checkpointer=None):
     del catálogo (las mismas que compone el `run()`) — la lógica vive UNA vez (G-DET); el
     grafo solo las cablea, y es la estructura que se ve en langgraph Studio.
 
-    DURABILIDAD (honesto, ver L-11): pasá un `checkpointer` (LangGraph: MemorySaver / SQLite
-    / Postgres) → recovery POR-NODO real cuando LangGraph drive la ejecución: si un nodo
+    DURABILIDAD (honesto, ver L-11 + L-14): pasá un `checkpointer` (LangGraph: MemorySaver /
+    SQLite / Postgres) → recovery POR-NODO real cuando LangGraph drive la ejecución: si un nodo
     crashea, al reanudar (mismo `thread_id`) re-corre SOLO ese nodo, los previos se cargan del
-    checkpoint (probado en `tests/integration/test_durable_recovery.py`). SIN checkpointer
-    (default), o por el path passthrough de AgentSpan, el grafo corre como UNA task (recovery
-    del run completo). La compilación a tasks por-nodo NATIVA de AgentSpan es G2.
-    `compile(name=...)` es el nombre que lee AgentSpan."""
+    checkpoint (probado en `tests/integration/test_durable_recovery.py`). En el server de
+    AgentSpan, un grafo multi-nodo como éste se descompone en tasks de Conductor POR-NODO (con
+    retry) — NO una sola task passthrough (L-14); el recovery por-nodo SIN recomputar a nivel
+    Conductor aún no está test-probado. `compile(name=...)` es el nombre que lee AgentSpan."""
     try:
         from typing import TypedDict
 
