@@ -129,9 +129,15 @@ def fetch_workflow(execution_id: str, server_url: str | None = None, timeout: fl
     return _get(f"{_base(server_url)}/api/workflow/{eid}?includeTasks=true", timeout)
 
 
-def fetch_runs(server_url: str | None = None, limit: int = 25, timeout: float = 8) -> list[dict]:
-    """Las ejecuciones recientes (el equivalente a los 'threads' de Studio)."""
-    q = urllib.parse.urlencode({"size": limit, "sort": "startTime:DESC"})
+def fetch_runs(server_url: str | None = None, limit: int = 25, timeout: float = 8,
+               running_only: bool = False) -> list[dict]:
+    """Las ejecuciones recientes (el equivalente a los 'threads' de Studio). `running_only`
+    filtra a las ACTIVAS server-side (`status IN (RUNNING)`) — el poll de FLOTA: UNA request
+    cubre N ejecuciones concurrentes sin traerse las históricas (la clave de escala, Fase 2)."""
+    params = {"size": limit, "sort": "startTime:DESC"}
+    if running_only:
+        params["query"] = "status IN (RUNNING)"
+    q = urllib.parse.urlencode(params)
     data = _get(f"{_base(server_url)}/api/workflow/search?{q}", timeout)
     return [
         {"execution_id": x.get("workflowId"), "agent": x.get("workflowType"),

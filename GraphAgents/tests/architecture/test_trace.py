@@ -9,11 +9,13 @@ renombra los nodos, este golden lo caza (igual que test_execution_plan para el o
 from __future__ import annotations
 
 import json
+import urllib.parse
 from pathlib import Path
 
+from sdk import trace as trace_mod
 from sdk.graph import execution_plan
 from sdk.manifest_model import load_manifest
-from sdk.trace import build_trace
+from sdk.trace import build_trace, fetch_runs
 
 ROOT = Path(__file__).resolve().parents[2]  # .../GraphAgents
 MANIFESTS = ROOT / "manifests"
@@ -160,3 +162,29 @@ def test_trace_marks_failed_node():
     }
     trace = build_trace(plan, wf)
     assert trace["steps"][1]["runtime"] == {"status": "failed", "retries": 3, "ms": 7, "task_id": "boom"}
+
+
+# --- fleet poll: filtrar a RUNNING server-side (la clave de escala) --------------------
+
+def test_fetch_runs_running_only_filters_status_server_side(monkeypatch):
+    """El poll de FLOTA debe pedirle a Conductor SOLO las ejecuciones activas
+    (`status IN (RUNNING)`) — así una request cubre N concurrentes sin traerse las 245
+    históricas. Verifica que el filtro va en el query, server-side."""
+    seen = {}
+
+    def fake_get(url, timeout=8):
+        seen["url"] = url
+        return {"results": [{"workflowId": "x", "workflowType": "ads-analytics",
+                             "status": "RUNNING", "startTime": 1}]}
+
+    monkeypatch.setattr(trace_mod, "_get", fake_get)
+    runs = fetch_runs(running_only=True, limit=100)
+    assert "status IN (RUNNING)" in urllib.parse.unquote_plus(seen["url"])
+    assert runs == [{"execution_id": "x", "agent": "ads-analytics", "status": "RUNNING", "startTime": 1}]
+
+
+def test_fetch_runs_without_filter_does_not_constrain_status(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(trace_mod, "_get", lambda url, timeout=8: seen.update(url=url) or {"results": []})
+    fetch_runs(limit=10)
+    assert "status IN" not in urllib.parse.unquote_plus(seen["url"])

@@ -136,8 +136,9 @@ def api_route(method: str, path: str, params: dict, body: dict | None, ga_root: 
             limit = int((params.get("limit") or ["25"])[0])
         except ValueError:
             limit = 25
+        running = (params.get("running") or ["0"])[0] in ("1", "true")  # ?running=1 → poll de flota
         try:
-            return 200, {"runs": fetch_runs(limit=limit)}
+            return 200, {"runs": fetch_runs(limit=limit, running_only=running)}
         except Exception as e:  # noqa: BLE001 — server caído / agentspan ausente
             return 502, {"error": f"no pude listar ejecuciones (¿server :6767 arriba?): {e}", "runs": []}
     if method == "GET" and path == "/api/trace":
