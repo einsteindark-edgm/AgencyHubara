@@ -9,7 +9,7 @@ varios frontends; este es el CLI. No implementa reglas: delega en
     uv run python -m sdk.cli search <term>          # buscar tools en el catálogo
     uv run python -m sdk.cli certify-tool [<id>...] # tools: nivel (exit 1 si < C2)
     uv run python -m sdk.cli graph [--format mermaid|json]  # serializa el sistema a grafo
-    uv run python -m sdk.cli create <id>            # G2: scaffold que nace C2
+    uv run python -m sdk.cli create tool <id>       # scaffold determinista (nace C2 + golden rojo)
 """
 from __future__ import annotations
 
@@ -161,7 +161,10 @@ def cmd_run(args: argparse.Namespace) -> int:
             "con un FixtureXxx (ver tests/integration)."
         )
         return 1
-    inp = json.loads(args.input) if args.input else {}
+    if getattr(args, "input_file", ""):
+        inp = json.loads(Path(args.input_file).read_text(encoding="utf-8"))
+    else:
+        inp = json.loads(args.input) if args.input else {}
     ex = LocalRuntime().run(build_runnable(m, ROOT), inp)
     print(f"execution {ex.id}: {ex.status}")
     print(json.dumps(ex.output, ensure_ascii=False, indent=2))
@@ -182,8 +185,31 @@ def cmd_graph(args: argparse.Namespace) -> int:
 
 
 def cmd_create(args: argparse.Namespace) -> int:
-    print("TODO (G2): scaffold de un manifest/tool que nace C2 y corre su golden.")
-    return 0
+    if args.kind == "tool":
+        from sdk.scaffold import ScaffoldError, create_tool
+
+        try:
+            paths = create_tool(
+                args.id, ROOT, description=args.description, side_effect=args.side_effect
+            )
+        except ScaffoldError as e:  # noqa: BLE001
+            print(f"error: {e}")
+            return 1
+        mod = args.id.replace("-", "_")
+        print(f"creada tool '{args.id}' (contrato C2; su golden nace ROJO):")
+        for p in paths:
+            print(f"  {p}")
+        print(
+            f"\nseguí (TDD): implementá tools/{mod}/impl.py + completá el golden en "
+            f"tests/tools/test_{mod}.py → verificá `python -m sdk.cli certify-tool {args.id}`."
+        )
+        return 0
+    # capability/agent/connector: scaffold pendiente (ver docs/cli-design-guide.md).
+    print(
+        f"create {args.kind}: todavía no implementado (ver docs/cli-design-guide.md). "
+        "Disponible hoy: `create tool <id>`."
+    )
+    return 1
 
 
 def main() -> int:
@@ -212,17 +238,30 @@ def main() -> int:
     ct.add_argument("ids", nargs="*")
     ct.set_defaults(fn=cmd_certify_tool)
 
-    rn = sub.add_parser("run", help="corre un agente tool-only por el LocalRuntime")
+    rn = sub.add_parser("run", help="corre un agente o un TASK GRAPH (supervisor) por el LocalRuntime")
     rn.add_argument("id")
-    rn.add_argument("--input", default="", help='input JSON, ej. \'{"name":"mundo"}\'')
+    rn.add_argument("--input", default="", help='input/seed JSON inline, ej. \'{"name":"mundo"}\'')
+    rn.add_argument(
+        "--input-file", dest="input_file", default="",
+        help="seed JSON desde archivo (para task graphs con payloads grandes, ej. el JSON de Meta)",
+    )
     rn.set_defaults(fn=cmd_run)
 
     g = sub.add_parser("graph", help="serializa el sistema a grafo (mermaid|json)")
     g.add_argument("--format", choices=["mermaid", "json"], default="mermaid")
     g.set_defaults(fn=cmd_graph)
 
-    cr = sub.add_parser("create", help="scaffold (G2)")
-    cr.add_argument("ids", nargs="*")
+    cr = sub.add_parser("create", help="scaffold determinista (tool|capability|agent|connector)")
+    cr.add_argument("kind", choices=["tool", "capability", "agent", "connector"])
+    cr.add_argument("id")
+    cr.add_argument("--description", default="", help="descripción de la unidad")
+    cr.add_argument(
+        "--side-effect",
+        dest="side_effect",
+        default="pure",
+        choices=["pure", "read", "outward"],
+        help="pure | read (lee externo) | outward (muta — nace approval_required)",
+    )
     cr.set_defaults(fn=cmd_create)
 
     args = ap.parse_args()

@@ -27,7 +27,7 @@ CertLevel = Literal["none", "C0", "C1", "C2", "C3"]
 _SLUG = re.compile(r"^[a-z][a-z0-9-]*$")
 
 # Llaves NUESTRAS — se quitan antes de `agentspan deploy` (ver native_subset).
-EXT_KEYS = {"archetype", "capability", "consumes", "certification", "exposes_as_tool", "publish", "uses"}
+EXT_KEYS = {"archetype", "capability", "consumes", "certification", "exposes_as_tool", "publish", "uses", "inputs"}
 
 
 class ToolSpec(BaseModel):
@@ -81,6 +81,11 @@ class AgentNode(BaseModel):
     agents: list["AgentNode"] = Field(default_factory=list)
     tools: list[ToolSpec] = Field(default_factory=list)
     guardrails: list[str] = Field(default_factory=list)
+    # ext (GraphAgents): el binding del TASK GRAPH (state→input de este agente cuando
+    # corre dentro de un supervisor que COMPONE). `{capability_input: $state.<key>}`.
+    # El loader lo consume para threadear el estado; G-WIRE exige que exista en un
+    # supervisor no-router. Es LA forma de orquestar en esta arquitectura.
+    inputs: dict = Field(default_factory=dict)
 
     @field_validator("name")
     @classmethod

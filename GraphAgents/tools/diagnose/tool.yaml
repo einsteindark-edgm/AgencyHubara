@@ -1,0 +1,31 @@
+# Tabla de umbrales determinista (MER<2.0, drop-off>40%) -> recomendacion (scale/rotate/review/insufficient).
+# Tool de catálogo generada por `sdk.cli create tool`. Completá inputs/outputs + la
+# impl, y poné VERDE el golden de tests/tools/test_diagnose.py (nace rojo por construcción).
+id: diagnose
+version: 1.0.0
+description: "Tabla de umbrales determinista (MER<2.0, drop-off>40%) -> recomendacion (scale/rotate/review/insufficient)."
+tags: [analysis, ads, ctwa, diagnosis, pure]
+
+side_effect: pure
+idempotent: true
+approval_required: false
+credentials: []
+
+inputs:
+  payload:
+    type: object
+    required: true
+    description: "{mer, drop_off_rate} (Decimal string o null) — la salida de blended-unit-economics"
+outputs:
+  high_friction:
+    type: boolean
+    description: "drop-off > 0.40"
+  poor_profitability:
+    type: boolean
+    description: "MER < 2.0"
+  recommendation:
+    type: string
+    description: "scale_budget | rotate_creative | review_targeting_or_pricing | no_revenue_recorded | insufficient_data"
+
+# impl PURA (G-AGNOSTIC: no importa runtime). Adapters en tools/diagnose/adapters/.
+impl: tools.diagnose.impl:run

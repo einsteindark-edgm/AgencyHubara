@@ -41,6 +41,25 @@ def _resolve_tools(node: AgentNode, ga_root: Path) -> dict[str, Callable]:
     return out
 
 
+def _resolve_binding(binding: dict, state: dict, label: str) -> dict:
+    """Resuelve el binding `inputs:` de un agente (`{input_key: $state.<path> | literal}`)
+    contra el ESTADO acumulador del task graph. Un `$state.X` ausente es un error de
+    cableado/orden — falla LOUD, no adivina."""
+    out: dict = {}
+    for key, val in binding.items():
+        if isinstance(val, str) and val.startswith("$state."):
+            path = val[len("$state.") :]
+            if path not in state:
+                raise RuntimeError(
+                    f"task graph: el agente '{label}' lee $state.{path} pero no está en el "
+                    "estado todavía (¿orden de los agentes / wiring del binding?)."
+                )
+            out[key] = state[path]
+        else:
+            out[key] = val
+    return out
+
+
 def build_runnable(node: AgentNode, ga_root: Path, ports: dict | None = None) -> Callable[[Any], Any]:
     """Un callable ejecutable por el runtime port. No requiere agentspan/langgraph."""
     ports = ports or {}
@@ -63,14 +82,42 @@ def build_runnable(node: AgentNode, ga_root: Path, ports: dict | None = None) ->
         return runnable
 
     if node.is_supervisor:
-        subs = {(a.ref_agent_id or a.name): a for a in node.agents}
+        # router/manual: rutea a UN agente y le pasa el input crudo (sin wiring).
+        if node.strategy in ("router", "manual", None):
+            subs = {(a.ref_agent_id or a.name): a for a in node.agents}
 
-        def runnable(input: Any) -> Any:
-            key = input.get("route") if isinstance(input, dict) else None
-            target = subs.get(key) or next(iter(subs.values()))
-            return build_runnable(target, ga_root, ports)(input)
+            def runnable(input: Any) -> Any:
+                key = input.get("route") if isinstance(input, dict) else None
+                target = subs.get(key) or next(iter(subs.values()))
+                return build_runnable(target, ga_root, ports)(input)
 
-        return runnable
+            return runnable
+
+        # COMPOSICIÓN — el task graph threadea un ESTADO acumulador: cada agente lee su
+        # input por su binding `inputs:` (G-WIRE lo exige) y su output se mergea al estado.
+        # Así el DAG (varios extractores → un analyzer → qa → reporter) se cablea solo. Es
+        # LA forma de orquestar en esta arquitectura — equivale al State de un StateGraph.
+        if node.strategy in ("sequential", "parallel"):
+            compiled = [(a, build_runnable(a, ga_root, ports)) for a in node.agents]
+
+            def runnable(input: Any) -> Any:
+                state: dict = dict(input) if isinstance(input, dict) else {"input": input}
+                for ref, run in compiled:
+                    label = ref.ref_agent_id or ref.name or "?"
+                    agent_input = _resolve_binding(ref.inputs, state, label) if ref.inputs else state
+                    out = run(agent_input)
+                    if isinstance(out, dict):
+                        state.update(out)  # mergea el patch (modelo reducer del StateGraph)
+                    else:
+                        state[label] = out
+                return state
+
+            return runnable
+
+        raise NotImplementedError(
+            f"strategy '{node.strategy}' (handoff/swarm/round_robin/random) = ruteo DINÁMICO; "
+            "corre en AgentSpan (G1+). El LocalRuntime threadea sequential/parallel (determinista)."
+        )
 
     def runnable(input: Any) -> Any:  # nodo inline sin capability (G2)
         return input

@@ -1,0 +1,15 @@
+# Agente de catálogo (archetype: extractor). Normaliza las ventas manuales de WhatsApp:
+# RECIBE el JSON (el operador / el central lo deposita). Referenciable por agent://sales-ledger@1.
+name: sales-ledger
+description: Normaliza las ventas manuales de WhatsApp (recibe el JSON; valida y mapea total_revenue -> cop).
+archetype: extractor
+certification: C2
+
+capability: graphs.sales_ledger:build
+
+exposes_as_tool: true
+
+tools:
+  - uses: parse-manual-sales@1
+    with:
+      payload: $state.payload

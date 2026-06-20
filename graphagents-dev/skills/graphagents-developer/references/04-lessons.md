@@ -165,4 +165,28 @@ guard rojo que lo reproduce — el "Guard:" se escribe ANTES que el "Fix:".
 - **Guard:** procedimiento (sin gate). El smoke por urllib al endpoint `:8900` confirma que
   el código nuevo está vivo (`runtime` field + execution-id UUID).
 
+### L-10 · Panel verde ≠ supervisor compuesto; correr el grafo por su MANIFEST es parte del DoD del feature (2026-06-20, feature ads-analytics CTWA)
+- **Síntoma:** el panel `/graphagents-gates` salió VERDE con 5 tools + 5 capabilities + supervisor
+  todos C2, pero el pod NO produce el reporte final al correrse por su propio manifest
+  (`build_runnable(ads-analytics.taskgraph.yaml)` devolvía solo el PRIMER agente). El "end-to-end"
+  solo vivía en un test que encadenaba los `run()` A MANO (bypassa el loader).
+- **Causa raíz:** el golden-replay prueba cada capability PURA por separado; el `loader` no
+  implementa la orquestación multi-agente (strategy `sequential`/DAG = G1+/AgentSpan). Un supervisor
+  con 2 extractores que alimentan 1 analyzer es un DAG, no una línea — la composición real corre en
+  AgentSpan, no en el LocalRuntime (el branch supervisor del loader es router-shaped: corre uno). Lo
+  cazó un premortem multi-agente (`graph-cert-reviewer`, no-self-review), NO el panel determinístico.
+- **Fix aplicado (RESUELTO 2026-06-20):** (a) los bugs de correctitud de las capabilities PURAS se
+  arreglaron test-first (actions-as-string→conv muda; QA sin reconciliar el periodo; revenue=0→rotate;
+  currency dropeada; seam KeyError). (b) La ORQUESTACIÓN se implementó como CORE de la arquitectura:
+  binding `inputs:` en los agentes-ref (`manifest_model`) + el `loader` threadea un estado acumulador
+  (`build_runnable`, composing branch) + el check **G-WIRE** lo exige (`testkit/checks.py`) + el CLI
+  `run --input-file` lo corre. El supervisor `ads-analytics` AHORA corre por su manifest y produce el reporte.
+- **Regla para el skill:** el DoD de un FEATURE (no de una unidad) incluye correr el grafo por su
+  MANIFEST, no solo los `run()` sueltos. Antes de declarar un feature terminado: (1) corré un
+  premortem multi-agente — caza lo que el panel verde no; (2) si el supervisor compone un DAG,
+  declaralo deferred-a-G1+ EXPLÍCITO. "tests verdes ≠ feature viva" es literal, no un eslogan.
+- **Guard:** `tests/integration/test_ads_analytics_supervisor.py` (corre el supervisor POR SU MANIFEST
+  → reporte terminal; + un seed incompleto falla LOUD) + `tests/architecture/test_taskgraph_wiring.py`
+  (G-WIRE: un supervisor que compone sin `inputs:` no certifica). La orquestación ahora es ley del panel.
+
 <!-- AÑADIR NUEVAS LECCIONES ARRIBA DE ESTA LÍNEA, NUMERADAS L-1, L-2, ... -->

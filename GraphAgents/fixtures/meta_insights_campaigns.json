@@ -1,0 +1,36 @@
+{
+  "account_currency": "COP",
+  "data": [
+    {
+      "date_start": "2026-06-15", "date_stop": "2026-06-15",
+      "campaign_id": "120238728477970317", "campaign_name": "Duo zodiacal",
+      "spend": "120000", "inline_link_clicks": "80",
+      "actions": [
+        { "action_type": "link_click", "value": "80" },
+        { "action_type": "onsite_conversion.messaging_conversation_started_7d", "value": "40" }
+      ]
+    },
+    {
+      "date_start": "2026-06-16", "date_stop": "2026-06-16",
+      "campaign_id": "120238728477970317", "campaign_name": "Duo zodiacal",
+      "spend": "100000", "inline_link_clicks": "50",
+      "actions": [
+        { "action_type": "onsite_conversion.messaging_conversation_started_7d", "value": "30" }
+      ]
+    },
+    {
+      "date_start": "2026-06-15", "date_stop": "2026-06-15",
+      "campaign_id": "120243118818600317", "campaign_name": "Día del padre 2026",
+      "spend": "176294", "inline_link_clicks": "344",
+      "actions": [
+        { "action_type": "onsite_conversion.messaging_conversation_started_7d", "value": "120" }
+      ]
+    },
+    {
+      "date_start": "2026-06-16", "date_stop": "2026-06-16",
+      "campaign_id": "120243118818600317", "campaign_name": "Día del padre 2026",
+      "spend": "90000", "inline_link_clicks": "60",
+      "actions": []
+    }
+  ]
+}

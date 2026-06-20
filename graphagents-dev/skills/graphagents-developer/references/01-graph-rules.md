@@ -12,9 +12,40 @@ monorepo, pero propias de este subsistema. El gate las hace determinísticas.
 | Tomar datos de Meta por fuera del ConnectorKit (un `requests.get` suelto a la Graph API) | **G-PORT** | un **port** en `sdk/connectorkit` + vendor swappable (`live` / `fixture` / `warehouse`); el grafo `consumes:` el port |
 | Una tool con efecto outward (gasto, cambio en Meta) sin aprobación | **G-DUR** | `approval_required: true` (→ `@human_task` / HUMAN task de Conductor) + tool **idempotente** (fingerprint + pre-check) |
 | Meter al registry / componer un agente `< C2` | **G-CERT** | certificá antes (`uv run python -m sdk.cli certify <id>`); la certificación gobierna el catálogo, nunca el runtime |
+| Un supervisor que COMPONE (sequential/parallel/…) sin `inputs:` en sus agentes-ref | **G-WIRE** | declará el binding `inputs: {cap_input: $state.<key>}` en cada agente — la ORQUESTACIÓN es el task graph; el loader threadea el estado y corre el grafo por su manifest. Router/manual exentos (rutean a uno) |
 | Agregar un campo al manifest sin su check | **regla de oro** | campo en `manifest_model` + el código que lo CONSUME (`loader`) + el check en `testkit/checks.py`, en el MISMO cambio |
 | Referenciar `capability: graphs.x:build` que no existe / no importa | **C1** (cli check / conformance) | creá el factory o corregí la ref |
 | `strategy` o `archetype` fuera del enum | **C0** (schema) | usá un valor válido (`strategy`: handoff/router/parallel/sequential/swarm/round_robin/random/manual · `archetype`: extractor/analyzer/reporter/supervisor) |
+
+## La orquestación ES el task graph (G-WIRE) — no es opcional ni G1+
+
+La forma de orquestar **TODO** en esta arquitectura es el **task graph** (el
+`*.taskgraph.yaml` del supervisor), nunca código imperativo. Un supervisor que
+**compone** (strategy `sequential`/`parallel`/…) declara, en cada agente-ref, el
+binding `inputs:` que mapea el **estado acumulador** del grafo → el input de ese agente:
+
+```yaml
+agents:
+  - uses: agent://ctwa-insights@1
+    inputs: { payload: $state.meta_insights }                    # lee del estado (seed)
+  - uses: agent://blended-economics@1
+    inputs: { insights: $state.insights, sales: $state.sales }   # fan-in del DAG
+```
+
+`loader.build_runnable` threadea: seed → cada agente lee su input por el binding,
+corre, y su output se **mergea** al estado (modelo reducer del StateGraph) → el de
+abajo lo lee. Así un DAG (varios extractores → un analyzer → qa → reporter) se
+cablea SOLO, declarativo.
+
+- **G-WIRE** (cert): un supervisor que compone sin `inputs:` NO certifica — no se
+  puede cablear ni correr por su manifest (correría UN agente en silencio: el bug
+  "panel verde, feature roto", **L-10**).
+- **DoD del FEATURE** (≠ DoD de la unidad): un test que corre el supervisor **por su
+  manifest** — `build_runnable(load_manifest(<taskgraph>), ga_root)(seed)` — y asierta
+  el output TERMINAL. NO encadenar los `run()` a mano (eso prueba las unidades, no la
+  orquestación). El CLI lo corre: `cli run <supervisor> --input-file seed.json`.
+- Strategies de ruteo DINÁMICO (handoff/swarm/round_robin/random) = AgentSpan (G1+);
+  el LocalRuntime threadea sequential/parallel (determinista, golden-replayable).
 
 ## Reglas de las tools del catálogo (la unidad agnóstica)
 

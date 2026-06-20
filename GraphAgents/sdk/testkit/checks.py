@@ -25,6 +25,9 @@ from sdk.registry import discover_agent_ids, discover_tool_ids
 
 _OUTWARD = ("recommend", "apply", "update", "create", "set", "pause", "spend", "budget", "delete")
 
+# Estrategias que NO componen: rutean a UN agente y le pasan el input crudo (sin wiring).
+_NO_WIRE_STRATEGIES = ("router", "manual")
+
 
 def _accepts_injection(fn) -> bool:
     """True si `fn` acepta los kwargs `ports` y `tools` (o **kwargs). El loader los
@@ -93,6 +96,28 @@ def check_supervisor_coherent(root: AgentNode) -> list[str]:
     return errs
 
 
+def check_taskgraph_wireable(root: AgentNode) -> list[str]:
+    """G-WIRE: en un supervisor que COMPONE (no router/manual), CADA agente referenciado
+    debe declarar `inputs:` (el binding state→input del task graph), para que el loader
+    pueda CABLEAR el grafo y correrlo por su manifest. La orquestación en esta arquitectura
+    ES el task graph: un supervisor que compone sin wiring no orquesta — correría UN agente
+    en silencio (el caso 'panel verde, feature roto', L-10). Por eso es parte de la cert."""
+    errs: list[str] = []
+    for n in iter_nodes(root):
+        if n.archetype != "supervisor" or not n.agents:
+            continue
+        if n.strategy in _NO_WIRE_STRATEGIES:
+            continue  # router/manual: rutea a UN agente y le pasa el input — sin wiring
+        for a in n.agents:
+            if not a.inputs:
+                errs.append(
+                    f"[G-WIRE] supervisor '{n.name}' (strategy={n.strategy}): el agente "
+                    f"'{a.ref_agent_id or a.name}' no declara `inputs:` — el task graph no se "
+                    "puede cablear ni correr por su manifest (la orquestación ES el task graph)."
+                )
+    return errs
+
+
 def check_tool_refs(root: AgentNode, ga_root: Path | None) -> list[str]:
     """G-BIND: toda tool `uses: <id>` resuelve a una tool del catálogo."""
     if ga_root is None:
@@ -145,6 +170,7 @@ def run_checks(root: AgentNode, ga_root: Path | None = None) -> dict:
         check_capability_refs(root)
         + check_capability_run_signature(root)
         + check_supervisor_coherent(root)
+        + check_taskgraph_wireable(root)
         + check_tool_refs(root, ga_root)
         + check_agent_refs(root, ga_root)
     )

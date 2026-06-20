@@ -85,15 +85,22 @@ La unidad reusable de primera clase. Test-first.
 3. Dimensioná el timeout por la cadena real de Meta (no por el hop local).
 4. El grafo lo usa por `consumes: [<port>]` — nunca instancia el vendor a mano.
 
-## 2.5 Componer el supervisor (la orquestación en YAML)
+## 2.5 Componer el supervisor (la orquestación ES el task graph)
 
-1. `manifests/<team>.taskgraph.yaml` con `archetype: supervisor`, `strategy:`
-   (handoff/router/parallel/...) y `agents: [<ids o inline>]`.
-2. El `loader` mapea `strategy` → estrategia de AgentSpan y `agents` → los
-   sub-`Agent` (cada capability via su `capability:`).
-3. **Rojo de integración:** un test que arme el team desde el manifest y asierte
-   el ruteo esperado para un input dado (con vendors `fixture`).
-4. Verde + `cli certify <team>` (no compongas algo `< C2`, G-CERT).
+La orquestación NO es código imperativo — es el `*.taskgraph.yaml`. Test-first:
+
+1. `manifests/<team>.taskgraph.yaml`: `archetype: supervisor`, `strategy:`
+   (sequential/parallel/router/...), `agents: [{uses: agent://<id>@1, inputs: {...}}]`.
+2. **El wiring (G-WIRE):** para strategies que COMPONEN, cada agente-ref declara
+   `inputs: {cap_input: $state.<key>}` — el binding state→input del task graph. El
+   seed del supervisor son las claves externas; cada output se mergea al estado y
+   alimenta a los de abajo (DAG fan-in). Sin `inputs:` no certifica (G-WIRE). Ver
+   `01-graph-rules.md` §"La orquestación ES el task graph".
+3. **Rojo de integración — el DoD del FEATURE:** un test que corra el supervisor
+   POR SU MANIFEST: `build_runnable(load_manifest(<taskgraph>), ga_root)(seed)` y
+   asierte el output TERMINAL (el reporte) + que un seed incompleto falle LOUD. NO
+   encadenes los `run()` a mano — eso prueba las unidades, no la orquestación (L-10).
+4. Verde + `cli certify <team>` (C2; G-WIRE + G-CERT). Corrélo: `cli run <team> --input-file seed.json`.
 
 ## 2.5b Agente reusable: referenciar por id, agent-as-tool, publish
 
