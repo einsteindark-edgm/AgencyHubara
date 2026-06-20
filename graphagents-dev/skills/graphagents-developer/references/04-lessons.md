@@ -388,4 +388,26 @@ guard rojo que lo reproduce — el "Guard:" se escribe ANTES que el "Fix:".
 - **Guard:** `test_consumes_edge_to_unknown_port_is_red` + `test_consumes_edge_is_guaranteed_by_real_port_resolution`
   + `test_port_node_checks_resolve_in_registry` (tests/architecture/test_inspect.py).
 
+### L-20 · el guard anti-alucinación del nodo LLM compara VALORES, no dígitos — normalizar por-dígito colisiona números de distinto concepto (2026-06-20, nodo LLM narrativo del reporter)
+- **Síntoma:** el nodo LLM narrativo (cita los números del analyzer, no computa) trae un guard
+  `invented_numbers` que debe cazar cualquier cifra que el LLM inventa. La 1ra versión normalizaba
+  por dígitos (`_norm_num` = quitar todo lo no-dígito) → `5.0` (MER) y `0.40` (drop-off) colapsaban
+  a `50`/`040`. Eso (a) **dejaba pasar** un inventado `50%` o `50 órdenes` (colisiona con la forma
+  sin-punto de MER `5.0`), y (b) **falso-positiveaba** un reformateo legítimo `0.40→40%` o el
+  formato europeo `120.000,00`. El test vivo contra DeepSeek quedaba **flaky por diseño** (rojeaba
+  si el LLM escribía `40%` en vez de `0.40`).
+- **Causa:** comparar la concatenación de dígitos ignora el separador decimal y el concepto del
+  número. `5.0` (un MER) y `50` (un %/órdenes) son números DISTINTOS pero misma cadena de dígitos.
+- **Fix:** parsear cada token a su VALOR (`_to_value`, resolviendo miles-vs-decimal es/us) y comparar
+  valores con tolerancia, ampliando la fuente con las formas ratio↔% (`v*100`, `v/100`). Así
+  `0.40↔40%` y `120000↔$120.000↔120.000,00` son el MISMO número, pero `50%` inventado NO matchea
+  MER `5.0`. Tolerar `|v|<10` (ruido de prosa: '5 días').
+- **Regla para el skill:** un guard que compara números (anti-alucinación, reconciliación, dedup)
+  compara VALORES PARSEADOS, nunca strings de dígitos — y contempla las transformaciones que un
+  narrador hace (separador de miles, coma decimal, ratio↔porcentaje). Si no, miente justo donde
+  promete confianza. Y un guard sobre la salida de un LLM debe tolerar el reformateo legítimo, o el
+  test vivo flakea.
+- **Guard:** `test_guard_catches_collision_invention` + `test_guard_allows_percentage_reformat_of_a_ratio`
+  + `test_guard_allows_european_thousands_format` (tests/graphs/test_ctwa_report_narrate.py).
+
 <!-- AÑADIR NUEVAS LECCIONES ARRIBA DE ESTA LÍNEA, NUMERADAS L-1, L-2, ... -->
