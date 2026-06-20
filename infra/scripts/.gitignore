@@ -1,0 +1,3 @@
+# Archivos de secretos reales — NUNCA commitear. El .example SÍ se commitea.
+secrets.*.env
+!secrets.example.env

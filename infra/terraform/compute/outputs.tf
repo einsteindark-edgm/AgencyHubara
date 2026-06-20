@@ -20,3 +20,13 @@ output "observability_host" {
     otlp_http   = "${module.observability.private_ip}:4318"
   }
 }
+
+output "graphagents_host" {
+  description = "Caja GraphAgents. graphagents-deploy SSHea acá; el puente fase-B llama agentspan en la IP privada."
+  value = {
+    public_ip     = module.graphagents.public_ip
+    instance_id   = module.graphagents.instance_id
+    agentspan_url = "http://${module.graphagents.private_ip}:6767"
+    explorer      = "http://${module.graphagents.public_ip}:8900"
+  }
+}

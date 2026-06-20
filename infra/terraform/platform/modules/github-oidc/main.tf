@@ -128,6 +128,17 @@ data "aws_iam_policy_document" "deploy_perms" {
     actions   = ["ec2:DescribeInstances", "ec2:DescribeInstanceStatus"]
     resources = ["*"]
   }
+  # GraphAgents pay-per-use: prender/apagar la caja ocasional (scoped por tag).
+  statement {
+    sid       = "GraphAgentsPower"
+    actions   = ["ec2:StartInstances", "ec2:StopInstances"]
+    resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "ec2:ResourceTag/Role"
+      values   = ["graphagents"]
+    }
+  }
   # Read de config no-secreta si el deploy la necesita (los SECRETOS los lee el box).
   statement {
     sid       = "SsmRead"

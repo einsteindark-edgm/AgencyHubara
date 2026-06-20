@@ -62,12 +62,14 @@ assert "Cognito pool agencyhubara-hubara existe"     "a cognito-idp list-user-po
 assert "Bucket S3 agencyhubara-hubara-frontend existe" "a s3api head-bucket --bucket agencyhubara-hubara-frontend"
 assert "IAM rol de deploy OIDC existe"               "a iam get-role --role-name agencyhubara-gha-deploy"
 assert "SSM scheduler knob (PR #69) existe"          "a ssm get-parameter --name /hubara/hubara/scheduler/ORDER_RECONCILE_INTERVAL_MINUTES"
+assert "SSM /graphagents/AGENTSPAN_MASTER_KEY existe" "a ssm get-parameter --name /graphagents/AGENTSPAN_MASTER_KEY"
 
 # ── compute ─────────────────────────────────────────────────────────────────
 run_root "$COMPUTE" "$HERE/local.compute.tfvars"
 echo "  — asserts compute —"
 assert "EC2 instance(s) AgencyHubara creada(s)" "a ec2 describe-instances --filters Name=tag:Project,Values=AgencyHubara --query 'Reservations[].Instances[].InstanceId' --output text | grep -q i-"
 assert "IAM instance profile de app existe"     "a iam get-instance-profile --instance-profile-name agencyhubara-hubara-app"
+assert "IAM instance profile de graphagents existe" "a iam get-instance-profile --instance-profile-name agencyhubara-graphagents"
 
 echo ""
 if [ "$FAIL" = 0 ]; then echo "🎉 LOCAL OK — el grafo aplica y los servicios core existen en robotocore"; else echo "💥 hubo asserts en rojo (ver arriba)"; exit 1; fi

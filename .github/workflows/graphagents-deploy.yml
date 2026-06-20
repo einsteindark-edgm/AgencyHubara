@@ -1,0 +1,108 @@
+# GraphAgents (subsistema separado) → GHCR → su caja EC2 dedicada.
+# Full durable: postgres + agentspan + la app. Coincide con INFRASTRUCTURE.md §3.11.
+#
+# Solo la imagen de la APP se buildea (agentspan/postgres son oficiales). El build
+# context es GraphAgents/ (vive en main). Off-critical-path → deploy separado.
+#
+# Requiere: secret EC2_SSH_KEY + vars AWS_REGION/AWS_TERRAFORM_ROLE_ARN/TF_STATE_*.
+name: GraphAgents deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "GraphAgents/**"
+      - "infra/compose/graphagents/**"
+      - ".github/workflows/graphagents-deploy.yml"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Image ref (lowercase)
+        id: meta
+        run: |
+          OWNER="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          echo "image=ghcr.io/${OWNER}/graphagents:${{ github.sha }}" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./GraphAgents
+          file: ./GraphAgents/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.image }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      # La caja está APAGADA por default (pay-per-use) y sin EIP → IP dinámica.
+      # Resolvemos por tag, la prendemos, esperamos que esté lista, y tomamos la IP.
+      - name: Prender la caja + resolver IP
+        id: host
+        run: |
+          IID=$(aws ec2 describe-instances \
+            --filters "Name=tag:Role,Values=graphagents" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+            --query 'Reservations[].Instances[].InstanceId' --output text | head -1)
+          [ -n "$IID" ] || { echo "no encontré la caja graphagents (¿aplicaste compute?)"; exit 1; }
+          echo "Prendiendo $IID…"
+          aws ec2 start-instances --instance-ids "$IID" >/dev/null
+          aws ec2 wait instance-status-ok --instance-ids "$IID"
+          IP=$(aws ec2 describe-instances --instance-ids "$IID" \
+            --query 'Reservations[].Instances[].PublicIpAddress' --output text)
+          echo "ip=$IP" >> "$GITHUB_OUTPUT"
+
+      - name: Copiar compose + render script
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ steps.host.outputs.ip }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: "infra/compose/graphagents/docker-compose.prod.yml,infra/compose/graphagents/render-env-from-ssm.sh"
+          target: "/tmp/ga-deploy"
+
+      - name: Deploy (render .env + compose up)
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          GRAPHAGENTS_IMAGE: ${{ needs.build.outputs.image }}
+          GHCR_OWNER: ${{ github.repository_owner }}
+        with:
+          host: ${{ steps.host.outputs.ip }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          envs: GRAPHAGENTS_IMAGE,GHCR_OWNER
+          script: |
+            set -euo pipefail
+            sudo mkdir -p /opt/graphagents && sudo chown -R ec2-user:ec2-user /opt/graphagents
+            cp /tmp/ga-deploy/infra/compose/graphagents/docker-compose.prod.yml /opt/graphagents/docker-compose.yml
+            cp /tmp/ga-deploy/infra/compose/graphagents/render-env-from-ssm.sh   /opt/graphagents/
+            cd /opt/graphagents
+            chmod +x render-env-from-ssm.sh
+            GRAPHAGENTS_IMAGE="$GRAPHAGENTS_IMAGE" ./render-env-from-ssm.sh
+            GHCR_TOKEN="$(grep '^GHCR_PULL_TOKEN=' .env | cut -d= -f2-)"
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_OWNER" --password-stdin
+            docker compose pull
+            docker compose up -d --remove-orphans
+            docker image prune -f

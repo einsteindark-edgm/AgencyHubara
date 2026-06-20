@@ -52,7 +52,13 @@ local (no hay VM). Es exactamente el mismo gate que corre en cada PR
 
 ## Bootstrap (una vez)
 
-1. **State store** (huevo-gallina: el backend de TF no puede vivir en TF):
+> **Atajo:** todo este bootstrap está automatizado en
+> [`../scripts/aws_bootstrap.py`](../scripts/aws_bootstrap.py) y narrado paso a paso
+> (con qué hace cada uno) en [`../DEPLOY_RUNBOOK.md`](../DEPLOY_RUNBOOK.md). Abajo
+> quedan los comandos manuales equivalentes por si preferís hacerlo a mano.
+
+1. **State store** (huevo-gallina: el backend de TF no puede vivir en TF) —
+   equivale a `python3 ../scripts/aws_bootstrap.py state`:
    ```bash
    aws s3api create-bucket --bucket agencyhubara-tfstate --region us-east-1
    aws s3api put-bucket-versioning --bucket agencyhubara-tfstate \
