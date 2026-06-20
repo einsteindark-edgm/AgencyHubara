@@ -279,8 +279,10 @@ guard rojo que lo reproduce — el "Guard:" se escribe ANTES que el "Fix:".
 - **Fix aplicado:** SIN reducer custom. Canal `acc: dict` (LastValue) + cada nodo **mergea EN CÓDIGO** y
   devuelve el `acc` COMPLETO (`acc = {**acc, **out}`) → con una cadena SECUENCIAL, last-write-wins es
   correcto (cada nodo ve el acumulador completo del anterior). Verificado verde en el server real (2.5s, sin
-  retries). `parallel` (FORK_JOIN con merge concurrente) NO es server-safe así → queda G2.x (necesita canales
-  por-clave o `operator.add`); `build_supervisor_graph` se restringe a `sequential` y raise loud para el resto.
+  retries). **`parallel` (RESUELTO 2026-06-20):** un canal `patches: Annotated[list, operator.add]` (el ÚNICO
+  reducer server-safe) + fan-out a agentes independientes que APPENDEAN `[out]` + un `join` que foldea →
+  corre verde en el server (FORK_JOIN, 5.3s). Solo para agentes que escriben claves DISJUNTAS.
+  `build_supervisor_graph` compone `sequential`/`router`/`parallel`; `handoff`/`swarm` raisean loud.
 - **Regla para el skill:** un grafo que anda con `graph.invoke` local NO está probado hasta correrlo en el
   **server de AgentSpan** — la semántica de reducers/estado difiere (solo `operator.add`; multi-nodo = tasks
   por-nodo). Para estado compuesto server-safe: o canales por-clave LastValue, o merge-en-código devolviendo

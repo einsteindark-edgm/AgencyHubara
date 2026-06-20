@@ -58,6 +58,24 @@ def test_supervisor_compila_a_grafo_nativo_y_produce_el_reporte() -> None:
     assert padre["conversations"] == 120 and padre["conversation_source"] == "insights"
 
 
+def test_parallel_compuesto_corre_los_independientes() -> None:
+    # G2.x · un supervisor `strategy: parallel` compila a fan-out (START→a,b) + join. Los dos
+    # extractores son INDEPENDIENTES (leen claves distintas del seed, escriben disjuntas) →
+    # corren concurrentes y el join (operator.add sobre patches, server-safe L-14) los une.
+    from sdk.loader import build_agent
+    from sdk.manifest_model import load_manifest
+
+    manifest = load_manifest(GA / "manifests" / "ads-extractors-parallel.taskgraph.yaml")
+    graph = build_agent(manifest, GA)
+
+    state = graph.invoke({"acc": _seed(), "patches": []})["acc"]
+
+    # ambos extractores corrieron y sus outputs DISJUNTOS están en el acc:
+    assert state["currency"] == "COP"  # ← ctwa-insights
+    assert [d["date"] for d in state["insights"]] == ["2026-06-15", "2026-06-16"]  # ← ctwa-insights
+    assert len(state["sales"]) == 2  # ← sales-ledger
+
+
 def test_router_compuesto_rutea_al_agente_elegido() -> None:
     # G2.x · un supervisor `strategy: router` compila a un grafo con conditional edges: el
     # `route` del input elige UN agente. ads-supervisor rutea a meta-insights (1ro, default)

@@ -155,6 +155,31 @@ def test_supervisor_compuesto_corre_en_agentspan():
     assert padre["conversations"] == 120
 
 
+def test_parallel_compuesto_corre_en_agentspan():
+    """G2.x · un supervisor `parallel` (fan-out + join con reducer operator.add) corre en el
+    SERVER real de AgentSpan — verifica el FORK_JOIN server-side (L-14: solo operator.add es
+    server-safe). Los dos extractores independientes corren concurrentes y el join los une."""
+    import json
+
+    from sdk.loader import build_agent
+    from sdk.manifest_model import load_manifest
+    from sdk.runtime import AgentSpanRuntime
+
+    manifest = load_manifest(ROOT_PATH / "manifests" / "ads-extractors-parallel.taskgraph.yaml")
+    graph = build_agent(manifest, ROOT_PATH)
+    seed = {
+        "meta_insights": json.loads((ROOT_PATH / "fixtures" / "meta_insights_campaigns.json").read_text(encoding="utf-8")),
+        "manual_sales": {"sales": [{"date": "2026-06-15", "total_orders": 12, "total_revenue": 600000}]},
+    }
+
+    ex = AgentSpanRuntime().run(graph, {"acc": seed, "patches": []})
+
+    assert ex.status == "completed", f"el parallel no corrió en el server: {ex.error}"
+    state = ex.output["acc"]
+    assert state["currency"] == "COP"  # ← ctwa-insights (concurrente)
+    assert len(state["sales"]) == 1  # ← sales-ledger (concurrente)
+
+
 def test_router_compuesto_corre_en_agentspan():
     """G2.x · un supervisor `router` (conditional edges) corre en el SERVER real de AgentSpan
     — verifica que el conditional edge compila a Conductor (L-14: local ≠ server). Rutea a

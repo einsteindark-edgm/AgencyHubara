@@ -11,8 +11,9 @@
 from __future__ import annotations
 
 import importlib
+import operator
 from pathlib import Path
-from typing import Any, Callable, TypedDict
+from typing import Annotated, Any, Callable, TypedDict
 
 from sdk.manifest_model import AgentNode, TaskGraphManifest
 from sdk.registry import load_agent_by_id
@@ -24,6 +25,15 @@ class _SupervisorState(TypedDict):
     # Por eso cada nodo MERGEA EN CÓDIGO y devuelve el acc COMPLETO → last-write-wins es correcto
     # (secuencial). `acc: dict` (builtin) resuelve en get_type_hints aún con future-annotations (L-13).
     acc: dict
+
+
+class _ParallelSupervisorState(TypedDict):
+    # Para `parallel`: `acc` LastValue (el seed, READ-ONLY durante el fan-out) + `patches` con
+    # reducer `operator.add` (el ÚNICO server-safe, L-14) → cada agente concurrente APPENDEA su
+    # output `[out]` sin pelear por un canal; un nodo `join` foldea los patches al acc. Tipos a
+    # nivel módulo para que get_type_hints resuelva `operator.add`/`Annotated` (L-13).
+    acc: dict
+    patches: Annotated[list, operator.add]
 
 
 def _resolve_capability(ref: str) -> Any:
@@ -175,20 +185,25 @@ def build_supervisor_graph(node: AgentNode, ga_root: Path | None, *, checkpointe
     en un canal LastValue, last-write-wins ES correcto (cadena secuencial / 1 agente ruteado).
     `acc` dinámico: no hay que declarar las claves; los outputs terminales sobreviven.
 
-    Con `checkpointer`, recovery por-nodo cuando LangGraph drive (Phase C/L-11). `parallel`
-    (canales por-clave), `handoff`/`swarm` (routing dinámico multi-vuelta) y nesting de los
-    `build()` subgrafos = G2.x."""
+    `parallel`: fan-out de START a agentes INDEPENDIENTES + un `join`; cada uno appendea su
+    output a `patches` (reducer `operator.add`, server-safe) y el join los foldea al acc.
+
+    Con `checkpointer`, recovery por-nodo cuando LangGraph drive (Phase C/L-11). `handoff`/
+    `swarm` (routing dinámico multi-vuelta) y nesting de los `build()` subgrafos = G2.x."""
     if ga_root is None:
         raise RuntimeError("para componer un supervisor pasá ga_root al loader")
-    if node.strategy not in ("sequential", "router"):
+    if node.strategy not in ("sequential", "router", "parallel"):
         raise NotImplementedError(
             f"build_supervisor_graph: strategy '{node.strategy}' = G2.x. Hoy se componen "
-            "`sequential` y `router`. `parallel` necesita canales por-clave / operator.add "
-            "server-side; `handoff`/`swarm` son routing dinámico multi-vuelta (L-14)."
+            "`sequential`, `router` y `parallel`. `handoff`/`swarm` son routing dinámico "
+            "multi-vuelta (necesitan la orquestación multi-agente nativa de AgentSpan)."
         )
     from langgraph.graph import END, START, StateGraph
 
     compiled = [(a, build_runnable(a, ga_root)) for a in node.agents]
+
+    if node.strategy == "parallel":
+        return _build_parallel_graph(node, compiled, checkpointer)
 
     def _make_node(ref: AgentNode, run: Callable):
         label = ref.ref_agent_id or ref.name or "?"
@@ -228,6 +243,42 @@ def build_supervisor_graph(node: AgentNode, ga_root: Path | None, *, checkpointe
         g.add_edge(START, "router")
         g.add_edge("router", END)
 
+    return g.compile(name=node.name or "supervisor", checkpointer=checkpointer)
+
+
+def _build_parallel_graph(node: AgentNode, compiled: list, checkpointer) -> Any:
+    """G2.x `parallel` — fan-out de START a agentes INDEPENDIENTES + un `join`. Cada agente lee
+    el seed (`acc`, LastValue read-only) por su binding, corre, y APPENDEA su output a `patches`
+    (reducer `operator.add` — el único server-safe, L-14): así dos agentes concurrentes no pelean
+    por un canal. El `join` foldea los patches al acc. SOLO para agentes que escriben claves
+    DISJUNTAS; si dependen entre sí, su binding falla LOUD (faltaría la clave en el seed)."""
+    from langgraph.graph import END, START, StateGraph
+
+    def _make_par_node(ref: AgentNode, run: Callable):
+        label = ref.ref_agent_id or ref.name or "?"
+
+        def _node(state: _ParallelSupervisorState) -> dict:
+            acc = state["acc"]  # el seed, read-only durante el fan-out
+            agent_input = _resolve_binding(ref.inputs, acc, label) if ref.inputs else acc
+            out = run(agent_input)
+            return {"patches": [out if isinstance(out, dict) else {label: out}]}  # operator.add
+
+        return _node
+
+    def _join(state: _ParallelSupervisorState) -> dict:
+        acc = dict(state["acc"])
+        for patch in state["patches"]:  # foldea los outputs concurrentes (claves disjuntas)
+            acc.update(patch)
+        return {"acc": acc}
+
+    g = StateGraph(_ParallelSupervisorState)
+    g.add_node("join", _join)
+    for i, (ref, run) in enumerate(compiled):
+        name = f"{(ref.ref_agent_id or ref.name or 'step').replace('-', '_')}_{i}"
+        g.add_node(name, _make_par_node(ref, run))
+        g.add_edge(START, name)  # fan-out
+        g.add_edge(name, "join")  # fan-in
+    g.add_edge("join", END)
     return g.compile(name=node.name or "supervisor", checkpointer=checkpointer)
 
 
