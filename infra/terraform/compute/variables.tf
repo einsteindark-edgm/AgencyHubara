@@ -54,3 +54,16 @@ variable "observability" {
   })
   default = {}
 }
+
+# ── GraphAgents (caja compartida, full durable: postgres + agentspan + app) ──
+# off-critical-path (analiza Meta Ads). AgentSpan es la columna vertebral (task
+# graph durable) → corre el motor real, no LocalRuntime. self-host (OSS/MIT).
+variable "graphagents" {
+  description = "Caja única de GraphAgents. t3.large por la JVM de AgentSpan (heap 1536m) + postgres + app; t3.medium es el mínimo justo."
+  type = object({
+    instance_type  = optional(string, "t3.large")                              # 8GB cómodo; t3.medium (4GB) = budget, tight para la JVM
+    root_volume_gb = optional(number, 40)                                      # datos de postgres (estado durable de Conductor)
+    image_repo     = optional(string, "ghcr.io/einsteindark-edgm/graphagents") # imagen de la app (≠ la de hubara); agentspan/postgres son oficiales
+  })
+  default = {}
+}

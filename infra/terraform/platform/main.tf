@@ -41,6 +41,12 @@ module "scheduler_config" {
   config = var.scheduler_config
 }
 
+# ── GraphAgents (subsistema separado): secretos SSM en /graphagents/ ─────────
+module "graphagents_secrets" {
+  source      = "./modules/graphagents-secrets"
+  secret_keys = var.graphagents_secret_keys
+}
+
 # ── CI/CD: OIDC provider de GitHub + roles de deploy (compartido) ───────────
 # Se crea también en local: IAM lo emula bien robotocore, así el test valida las
 # trust policies del OIDC. GOTCHA real: el OIDC provider de GitHub es global por

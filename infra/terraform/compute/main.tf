@@ -60,3 +60,20 @@ module "observability" {
   app_security_group_ids = [for m in module.app : m.security_group_id]
   use_local              = local.use_local
 }
+
+# ── Caja de GraphAgents (full durable, compartida) ──────────────────────────
+# postgres + agentspan + app. :6767 abierto a las SGs de app (puente fase-B);
+# :8900/:6767 admin; postgres nunca expuesto.
+module "graphagents" {
+  source = "./modules/graphagents-instance"
+
+  region                 = var.region
+  ami_id                 = local.ami_id
+  instance_type          = var.graphagents.instance_type
+  root_volume_gb         = var.graphagents.root_volume_gb
+  key_name               = local.key_name
+  ssh_ingress_cidrs      = var.ssh_ingress_cidrs
+  app_security_group_ids = [for m in module.app : m.security_group_id]
+  image_repo             = var.graphagents.image_repo
+  use_local              = local.use_local
+}

@@ -91,3 +91,18 @@ variable "scheduler_config" {
     WATCHDOG_QUIET_HOURS_END         = "22"
   }
 }
+
+# ── GraphAgents (subsistema separado) — secretos en SSM /graphagents/ ────────
+variable "graphagents_secret_keys" {
+  description = "Claves SecureString a crear en /graphagents/ (valor = placeholder; el real se setea fuera de banda)."
+  type        = list(string)
+  default = [
+    "AGENTSPAN_MASTER_KEY", # base64 32 bytes (openssl rand -base64 32)
+    "POSTGRES_PASSWORD",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "META_ACCESS_TOKEN",
+    "META_AD_ACCOUNT_ID",
+    "GHCR_PULL_TOKEN", # para bajar la imagen de la app desde GHCR
+  ]
+}

@@ -1,0 +1,57 @@
+#cloud-config
+# Prep base de la caja GraphAgents + AUTO-APAGADO por idle (pay-per-use).
+# El deploy del stack lo hace graphagents-deploy.yml. Los contenedores tienen
+# `restart: unless-stopped` y docker arranca en boot → al PRENDER la caja el stack
+# vuelve solo (sin re-deploy). Al quedar idle, se apaga sola.
+package_update: true
+packages:
+  - docker
+  - cronie
+
+write_files:
+  - path: /opt/graphagents/box.env
+    permissions: "0644"
+    content: |
+      AWS_REGION=${region}
+      IMAGE_REPO=${image_repo}
+
+  # Auto-apagado: si la CPU está idle (<10%) durante ~${autostop_minutes} min
+  # seguidos, la caja se apaga sola (no podés olvidarla prendida). Vars de bash
+  # SIN llaves a propósito (las llaves son interpolación de Terraform).
+  - path: /opt/graphagents/autostop.sh
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      IDLE_MIN=${autostop_minutes}
+      [ "$IDLE_MIN" -le 0 ] && exit 0
+      NEED=$(( IDLE_MIN / 5 )); [ "$NEED" -lt 1 ] && NEED=1
+      USAGE=$(vmstat 1 2 | tail -1 | awk '{print 100 - $15}')
+      if [ "$USAGE" -lt 10 ]; then
+        C=$(( $(cat /tmp/ga_idle_count 2>/dev/null || echo 0) + 1 ))
+        echo "$C" > /tmp/ga_idle_count
+        if [ "$C" -ge "$NEED" ]; then
+          TOK=$(curl -sX PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
+          IID=$(curl -s -H "X-aws-ec2-metadata-token: $TOK" http://169.254.169.254/latest/meta-data/instance-id)
+          REG=$(curl -s -H "X-aws-ec2-metadata-token: $TOK" http://169.254.169.254/latest/meta-data/placement/region)
+          logger "graphagents autostop: idle $IDLE_MIN min -> stopping $IID"
+          aws ec2 stop-instances --region "$REG" --instance-ids "$IID"
+        fi
+      else
+        rm -f /tmp/ga_idle_count
+      fi
+
+  - path: /etc/cron.d/graphagents-autostop
+    permissions: "0644"
+    content: |
+      */5 * * * * root /opt/graphagents/autostop.sh >/dev/null 2>&1
+
+runcmd:
+  - mkdir -p /usr/libexec/docker/cli-plugins
+  - curl -SL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64 -o /usr/libexec/docker/cli-plugins/docker-compose
+  - chmod +x /usr/libexec/docker/cli-plugins/docker-compose
+  - systemctl enable --now docker
+  - systemctl enable --now crond
+  - usermod -aG docker ec2-user
+  - mkdir -p /opt/graphagents
+  - chown -R ec2-user:ec2-user /opt/graphagents

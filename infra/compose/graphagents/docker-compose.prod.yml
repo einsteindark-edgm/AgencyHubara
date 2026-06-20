@@ -1,0 +1,60 @@
+# docker-compose de PRODUCCIÓN de GraphAgents — corre en su caja EC2 dedicada.
+#
+# Diferencias vs el GraphAgents/docker-compose.yml de dev:
+#   • La app usa imagen de GHCR (${GRAPHAGENTS_IMAGE}), no `build:`.
+#   • SIN bind-mount `./:/app` (eso es solo dev).
+#   • `GRAPHAGENTS_RUNTIME=agentspan` (durable real, no LocalRuntime).
+#   • Secretos desde `.env` (renderizado desde SSM /graphagents/ por el deploy).
+#   • postgres NO publica puerto (solo red interna); agentspan/explorer los fronta la SG.
+#
+# Lo despliega .github/workflows/graphagents-deploy.yml.
+name: graphagents-prod
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: agentspan
+      POSTGRES_DB: agentspan
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}   # de .env (SSM)
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentspan -d agentspan"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  agentspan:
+    image: agentspan/server:latest
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "6767:6767"          # SG: solo SGs de app (puente fase-B) + admin CIDR
+    env_file: .env           # AGENTSPAN_MASTER_KEY, OPENAI/ANTHROPIC
+    environment:
+      SPRING_PROFILES_ACTIVE: postgres
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/agentspan
+      SPRING_DATASOURCE_USERNAME: agentspan
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+      JAVA_TOOL_OPTIONS: ${JAVA_TOOL_OPTIONS:--Xms512m -Xmx1536m -XX:+UseG1GC -XX:MaxGCPauseMillis=200}
+      LOGGING_LEVEL_ROOT: WARN
+
+  graphagents:
+    image: ${GRAPHAGENTS_IMAGE}
+    restart: unless-stopped
+    depends_on:
+      - agentspan
+    ports:
+      - "8900:8900"          # SG: solo admin CIDR / túnel (explorer interno)
+    env_file: .env           # META_*, OPENAI/ANTHROPIC
+    environment:
+      AGENTSPAN_SERVER_URL: http://agentspan:6767
+      GRAPHAGENTS_RUNTIME: agentspan
+
+volumes:
+  postgres_data:   # estado durable de AgentSpan/Conductor. Candidato a EBS dedicado + snapshot.
