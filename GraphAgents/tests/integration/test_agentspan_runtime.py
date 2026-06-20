@@ -41,6 +41,54 @@ def _server_up() -> bool:
 
 pytestmark = pytest.mark.skipif(not _server_up(), reason="no hay server AgentSpan alcanzable")
 
+# --- sonda de recovery por-nodo a nivel CONDUCTOR (L-14) -----------------------------------
+# AgentSpan corre cada nodo del grafo como una task de Conductor con retry. Esta sonda lo
+# prueba a nivel SERVER (no el checkpointer in-process de LangGraph): un nodo del medio
+# crashea la 1ra vez y tiene éxito al reintentar. Los workers son PROCESOS separados (fork) →
+# la prueba de "no recomputó" es un LOG en archivo (cross-process), no un contador in-process.
+_PROBE_LOG = os.path.join(os.environ.get("TMPDIR", "/tmp"), "ga_conductor_probe_log")
+_PROBE_SENTINEL = os.path.join(os.environ.get("TMPDIR", "/tmp"), "ga_conductor_probe_sentinel")
+
+
+def _build_conductor_probe_graph():
+    """Grafo de PRUEBA (no producción) a→flaky_b→c. Cada nodo loguea su nombre a un archivo;
+    flaky_b crashea la 1ra vez (sin sentinel) y pasa al reintentar. Si Conductor reintenta SOLO
+    el nodo fallido, el LOG muestra A y C una vez y B dos."""
+    from typing import TypedDict
+
+    from langgraph.graph import END, START, StateGraph
+
+    class S(TypedDict, total=False):
+        x: int
+
+    def a(s: S) -> dict:
+        with open(_PROBE_LOG, "a") as f:
+            f.write("A\n")
+        return {"x": s.get("x", 0) + 1}
+
+    def flaky_b(s: S) -> dict:
+        with open(_PROBE_LOG, "a") as f:
+            f.write("B\n")
+        if not os.path.exists(_PROBE_SENTINEL):
+            open(_PROBE_SENTINEL, "w").close()
+            raise RuntimeError("crash B (1er intento) — Conductor debe reintentar SOLO B")
+        return {"x": s["x"] + 10}
+
+    def c(s: S) -> dict:
+        with open(_PROBE_LOG, "a") as f:
+            f.write("C\n")
+        return {"x": s["x"] + 100}
+
+    g = StateGraph(S)
+    g.add_node("a", a)
+    g.add_node("flaky_b", flaky_b)
+    g.add_node("c", c)
+    g.add_edge(START, "a")
+    g.add_edge("a", "flaky_b")
+    g.add_edge("flaky_b", "c")
+    g.add_edge("c", END)
+    return g.compile(name="conductor-recovery-probe")
+
 
 def test_greeter_runs_on_agentspan_and_unwraps_output():
     from graphs.greeter import build
@@ -105,6 +153,29 @@ def test_supervisor_compuesto_corre_en_agentspan():
     assert "Embudo por campaña" in state["markdown"]
     padre = {c["campaign_id"]: c for c in state["campaigns"]}["120243118818600317"]
     assert padre["conversations"] == 120
+
+
+def test_conductor_reintenta_el_nodo_fallido_sin_recomputar_los_previos():
+    """G2.x · recovery por-nodo a nivel CONDUCTOR (cierra el guard que L-14 dejó abierto).
+    Un grafo multi-nodo corre como tasks de Conductor por-nodo; cuando flaky_b crashea, el
+    server REINTENTA esa task y completa. La prueba de que NO recomputó los previos: el LOG
+    (cross-process, los workers son procesos separados) muestra A y C UNA vez, B dos."""
+    from sdk.runtime import AgentSpanRuntime
+
+    for p in (_PROBE_LOG, _PROBE_SENTINEL):
+        if os.path.exists(p):
+            os.remove(p)
+
+    ex = AgentSpanRuntime().run(_build_conductor_probe_graph(), {"x": 0})
+
+    assert ex.status == "completed", f"el server no recuperó del crash: {ex.error}"
+    assert ex.output.get("x") == 111  # 1 + 10 + 100 (idempotente; el LOG es la prueba real)
+
+    with open(_PROBE_LOG) as f:
+        log = f.read().split()
+    assert log.count("B") >= 2, f"flaky_b no reintentó en Conductor: {log}"
+    assert log.count("A") == 1, f"el nodo A se RECOMPUTÓ en el retry de B (no hubo recovery por-nodo): {log}"
+    assert log.count("C") == 1, f"el nodo C corrió de más: {log}"
 
 
 def test_explorer_run_endpoint_uses_agentspan():

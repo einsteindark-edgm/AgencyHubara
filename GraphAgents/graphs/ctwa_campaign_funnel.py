@@ -50,7 +50,8 @@ def build(*, checkpointer=None):
     checkpoint (probado en `tests/integration/test_durable_recovery.py`). En el server de
     AgentSpan, un grafo multi-nodo como éste se descompone en tasks de Conductor POR-NODO (con
     retry) — NO una sola task passthrough (L-14); el recovery por-nodo SIN recomputar a nivel
-    Conductor aún no está test-probado. `compile(name=...)` es el nombre que lee AgentSpan."""
+    Conductor está PROBADO (`test_conductor_reintenta_el_nodo_fallido_...`, log `A B B C`).
+    `compile(name=...)` es el nombre que lee AgentSpan."""
     try:
         from typing import TypedDict
 

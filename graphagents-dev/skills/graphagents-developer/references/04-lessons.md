@@ -218,8 +218,8 @@ guard rojo que lo reproduce — el "Guard:" se escribe ANTES que el "Fix:".
   LocalRuntime/checkpointer).
 - **CORRECCIÓN (2026-06-20, ver L-14):** el claim de arriba de que "AgentSpan corre el grafo como UNA task
   passthrough" es FALSO para grafos MULTI-NODO — firsthand, AgentSpan los descompone en tasks de Conductor
-  POR-NODO (un worker por nodo, con retry). Vale para single-node. Lo que sigue sin probar (y por eso no se
-  afirma) es el recovery por-nodo SIN recomputar a nivel Conductor — falta el crash-test contra el server.
+  POR-NODO (un worker por nodo, con retry). Vale para single-node. El recovery por-nodo SIN recomputar a nivel
+  Conductor quedó luego PROBADO (L-14, `test_conductor_reintenta_el_nodo_fallido_...`, log `A B B C`).
 
 ### L-12 · Un campo del manifest que el loader IGNORA igual necesita su check (regla de oro) (2026-06-20, cleanup post-cert-review)
 - **Síntoma:** el manifest `ctwa-campaign-funnel.agent.yaml` bindeaba `complement-funnel` con
@@ -285,12 +285,15 @@ guard rojo que lo reproduce — el "Guard:" se escribe ANTES que el "Fix:".
   **server de AgentSpan** — la semántica de reducers/estado difiere (solo `operator.add`; multi-nodo = tasks
   por-nodo). Para estado compuesto server-safe: o canales por-clave LastValue, o merge-en-código devolviendo
   el estado completo (secuencial). Nunca un reducer de merge custom para el server.
-- **Honesto sobre durabilidad (no re-caer en L-11):** que AgentSpan corra cada nodo como task de Conductor
-  con retry es FIRSTHAND (el log), pero el **recovery por-nodo SIN recomputar en Conductor** NO está
-  test-probado todavía (lo único probado es el recovery por checkpointer de LangGraph, in-process,
-  `test_durable_recovery.py`). Un crash-test a nivel Conductor es el guard que falta para afirmarlo.
-- **Guard:** `tests/integration/test_supervisor_native_graph.py` (compone local) + en
-  `test_agentspan_runtime.py` el smoke `test_supervisor_compuesto_corre_en_agentspan` (corre en el server real
-  → reporte terminal). `build_supervisor_graph` documenta el porqué del merge-en-código.
+- **Durabilidad por-nodo en Conductor — AHORA PROBADA (2026-06-20):** que AgentSpan corra cada nodo como
+  task de Conductor con retry, Y que un retry NO recompute los nodos previos, es firsthand Y test-probado:
+  `test_conductor_reintenta_el_nodo_fallido_sin_recomputar_los_previos` (en `test_agentspan_runtime.py`) corre
+  un grafo sonda a→flaky_b→c en el server real; flaky_b crashea la 1ra vez y Conductor REINTENTA SOLO esa task
+  → el LOG cross-process (los workers son procesos forkeados, no sirve un contador in-process) sale `A B B C`:
+  A y C UNA vez, B dos. Hay DOS niveles de recovery por-nodo probados: checkpointer de LangGraph in-process
+  (`test_durable_recovery.py`) Y Conductor server-side (este). Ya NO es un claim sin guard.
+- **Guard:** `test_supervisor_native_graph.py` (compone local) + `test_agentspan_runtime.py` (smokes en el
+  server real: el supervisor compuesto + la sonda de recovery por-nodo de Conductor). `build_supervisor_graph`
+  documenta el porqué del merge-en-código.
 
 <!-- AÑADIR NUEVAS LECCIONES ARRIBA DE ESTA LÍNEA, NUMERADAS L-1, L-2, ... -->
