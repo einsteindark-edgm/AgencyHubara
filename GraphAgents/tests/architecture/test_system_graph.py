@@ -86,7 +86,9 @@ def test_edges_agent_consumes_port():
     g = build_graph(ROOT)
     e = _edge(g, "agent:meta-insights", "port:meta_marketing_api")
     assert e is not None and e["kind"] == "consumes"
-    assert _edge(g, "agent:roas-cac", "port:meta_marketing_api") is not None
+    # roas-cac NO consume el port: su análisis sale de la tool recommend-budget, no de Meta
+    # (declarar `consumes: meta_marketing_api` era stale e inexacto — cert-review).
+    assert _edge(g, "agent:roas-cac", "port:meta_marketing_api") is None
 
 
 def test_mermaid_render_smoke():

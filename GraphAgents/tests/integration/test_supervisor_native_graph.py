@@ -92,10 +92,32 @@ def test_handoff_y_swarm_raisean_loud_pertenecen_al_LLM() -> None:
             build_agent(node, GA)
 
 
+def test_parallel_con_claves_solapadas_falla_loud() -> None:
+    # `parallel` asume outputs DISJUNTOS. Si dos agentes concurrentes escriben la MISMA clave,
+    # el join NO puede elegir cuál gana sin perder datos en SILENCIO → debe fallar LOUD (regla
+    # de oro: la precondición dura de parallel tiene su guard). Dos ctwa-insights en paralelo
+    # escriben ambos `currency`/`insights` → colisión.
+    from sdk.loader import build_agent
+    from sdk.manifest_model import TaskGraphManifest
+
+    manifest = TaskGraphManifest.model_validate({
+        "name": "t-par-collision", "archetype": "supervisor", "strategy": "parallel",
+        "agents": [
+            {"uses": "agent://ctwa-insights@1", "inputs": {"payload": "$state.meta_insights"}},
+            {"uses": "agent://ctwa-insights@1", "inputs": {"payload": "$state.meta_insights"}},
+        ],
+    })
+    graph = build_agent(manifest, GA)
+    seed = {"meta_insights": json.loads(META_FIX.read_text(encoding="utf-8"))}
+    with pytest.raises(Exception, match="(?i)disjun"):
+        graph.invoke({"acc": seed, "patches": []})
+
+
 def test_router_compuesto_rutea_al_agente_elegido() -> None:
-    # G2.x · un supervisor `strategy: router` compila a un grafo con conditional edges: el
-    # `route` del input elige UN agente. ads-supervisor rutea a meta-insights (1ro, default)
-    # o roas-cac (2do). Ruteamos a roas-cac (el NO-default): si el routing funciona corre
+    # G2.x · un supervisor `strategy: router` compila a UN nodo dispatcher (NO conditional
+    # edges — cuelgan en Conductor, L-15): el `route` del input elige UN agente. ads-supervisor
+    # rutea a meta-insights (1ro, default) o roas-cac (2do). Ruteamos a roas-cac (el NO-default):
+    # si el routing funciona corre
     # roas-cac; si cayera al default (meta-insights) reventaría por el port ausente → el éxito
     # PRUEBA la selección, no que "corra el primero".
     from sdk.loader import build_agent
@@ -109,3 +131,15 @@ def test_router_compuesto_rutea_al_agente_elegido() -> None:
 
     assert state["analyzed_adsets"] == 2
     assert state["allocations"] == [{"id": "a", "budget": 200.0}, {"id": "b", "budget": 100.0}]
+
+
+def test_router_con_ruta_desconocida_falla_loud() -> None:
+    # un `route` presente pero DESCONOCIDO (typo) NO debe degradar en SILENCIO al 1er agente
+    # (correría el agente equivocado y devolvería un resultado plausible-pero-incorrecto) → raise.
+    from sdk.loader import build_agent
+    from sdk.manifest_model import load_manifest
+
+    manifest = load_manifest(GA / "manifests" / "ads-supervisor.taskgraph.yaml")
+    graph = build_agent(manifest, GA)
+    with pytest.raises(Exception, match="(?i)ruta"):
+        graph.invoke({"acc": {"route": "no-existe", "adsets": [], "total_budget": 0.0}})

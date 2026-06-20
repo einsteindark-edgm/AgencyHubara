@@ -234,7 +234,16 @@ def build_supervisor_graph(node: AgentNode, ga_root: Path | None, *, checkpointe
 
         def _router_node(state: _SupervisorState) -> dict:
             acc = dict(state["acc"])
-            ref, run = by_id.get(acc.get("route"), compiled[0])  # default: el 1ro
+            route = acc.get("route")
+            if route is None:
+                ref, run = compiled[0]  # sin `route` → default documentado: el 1er agente
+            elif route in by_id:
+                ref, run = by_id[route]
+            else:  # `route` presente pero typo/desconocido → NO degradar en silencio al 1ro
+                raise ValueError(
+                    f"router: la ruta '{route}' no existe entre {sorted(by_id)}. Sin `route` "
+                    "corre el default (el 1ro); una ruta presente debe ser una clave válida."
+                )
             label = ref.ref_agent_id or ref.name or "?"
             agent_input = _resolve_binding(ref.inputs, acc, label) if ref.inputs else acc
             acc.update(run(agent_input))
@@ -260,7 +269,9 @@ def _build_parallel_graph(node: AgentNode, compiled: list, checkpointer) -> Any:
 
         def _node(state: _ParallelSupervisorState) -> dict:
             acc = state["acc"]  # el seed, read-only durante el fan-out
-            agent_input = _resolve_binding(ref.inputs, acc, label) if ref.inputs else acc
+            # copia al pasar el acc entero (consistente con el nodo secuencial; evita aliasing
+            # del seed compartido si una capability mutara su input):
+            agent_input = _resolve_binding(ref.inputs, acc, label) if ref.inputs else dict(acc)
             out = run(agent_input)
             return {"patches": [out if isinstance(out, dict) else {label: out}]}  # operator.add
 
@@ -268,7 +279,17 @@ def _build_parallel_graph(node: AgentNode, compiled: list, checkpointer) -> Any:
 
     def _join(state: _ParallelSupervisorState) -> dict:
         acc = dict(state["acc"])
-        for patch in state["patches"]:  # foldea los outputs concurrentes (claves disjuntas)
+        written: set = set()
+        for patch in state["patches"]:  # foldea los outputs concurrentes
+            dup = written & set(patch)
+            if dup:  # dos agentes paralelos escriben la misma clave → last-write-wins perdería
+                raise ValueError(  # datos en SILENCIO → fallá LOUD (parallel exige claves disjuntas)
+                    f"parallel: la(s) clave(s) {sorted(dup)} las escribe más de un agente "
+                    "concurrente — el merge perdería un output en silencio. `parallel` exige "
+                    "outputs DISJUNTOS; si los agentes dependen entre sí o comparten salida, usá "
+                    "`sequential`."
+                )
+            written |= set(patch)
             acc.update(patch)
         return {"acc": acc}
 

@@ -46,8 +46,10 @@ pytestmark = pytest.mark.skipif(not _server_up(), reason="no hay server AgentSpa
 # prueba a nivel SERVER (no el checkpointer in-process de LangGraph): un nodo del medio
 # crashea la 1ra vez y tiene éxito al reintentar. Los workers son PROCESOS separados (fork) →
 # la prueba de "no recomputó" es un LOG en archivo (cross-process), no un contador in-process.
-_PROBE_LOG = os.path.join(os.environ.get("TMPDIR", "/tmp"), "ga_conductor_probe_log")
-_PROBE_SENTINEL = os.path.join(os.environ.get("TMPDIR", "/tmp"), "ga_conductor_probe_sentinel")
+# Namespaced por el PID del proceso de test (los workers forkeados HEREDAN el módulo → la
+# misma ruta), así dos corridas concurrentes no comparten sentinel/log (cert-review).
+_PROBE_LOG = os.path.join(os.environ.get("TMPDIR", "/tmp"), f"ga_conductor_probe_log_{os.getpid()}")
+_PROBE_SENTINEL = os.path.join(os.environ.get("TMPDIR", "/tmp"), f"ga_conductor_probe_sentinel_{os.getpid()}")
 
 
 def _build_conductor_probe_graph():
@@ -181,9 +183,9 @@ def test_parallel_compuesto_corre_en_agentspan():
 
 
 def test_router_compuesto_corre_en_agentspan():
-    """G2.x · un supervisor `router` (conditional edges) corre en el SERVER real de AgentSpan
-    — verifica que el conditional edge compila a Conductor (L-14: local ≠ server). Rutea a
-    roas-cac (el NO-default) → si el routing server-side funciona, llegan las allocations."""
+    """G2.x · un supervisor `router` (UN nodo dispatcher — NO conditional edges, que cuelgan en
+    Conductor, L-15) corre en el SERVER real de AgentSpan. Rutea a roas-cac (el NO-default) → si
+    el routing server-side funciona, llegan las allocations."""
     from sdk.loader import build_agent
     from sdk.manifest_model import load_manifest
     from sdk.runtime import AgentSpanRuntime
@@ -208,17 +210,21 @@ def test_conductor_reintenta_el_nodo_fallido_sin_recomputar_los_previos():
     for p in (_PROBE_LOG, _PROBE_SENTINEL):
         if os.path.exists(p):
             os.remove(p)
+    try:
+        ex = AgentSpanRuntime().run(_build_conductor_probe_graph(), {"x": 0})
 
-    ex = AgentSpanRuntime().run(_build_conductor_probe_graph(), {"x": 0})
+        assert ex.status == "completed", f"el server no recuperó del crash: {ex.error}"
+        assert ex.output.get("x") == 111  # 1 + 10 + 100 (idempotente; el LOG es la prueba real)
 
-    assert ex.status == "completed", f"el server no recuperó del crash: {ex.error}"
-    assert ex.output.get("x") == 111  # 1 + 10 + 100 (idempotente; el LOG es la prueba real)
-
-    with open(_PROBE_LOG) as f:
-        log = f.read().split()
-    assert log.count("B") >= 2, f"flaky_b no reintentó en Conductor: {log}"
-    assert log.count("A") == 1, f"el nodo A se RECOMPUTÓ en el retry de B (no hubo recovery por-nodo): {log}"
-    assert log.count("C") == 1, f"el nodo C corrió de más: {log}"
+        with open(_PROBE_LOG) as f:
+            log = f.read().split()
+        assert log.count("B") >= 2, f"flaky_b no reintentó en Conductor: {log}"
+        assert log.count("A") == 1, f"el nodo A se RECOMPUTÓ en el retry de B (no hubo recovery por-nodo): {log}"
+        assert log.count("C") == 1, f"el nodo C corrió de más: {log}"
+    finally:  # limpiar el residuo aunque el test falle
+        for p in (_PROBE_LOG, _PROBE_SENTINEL):
+            if os.path.exists(p):
+                os.remove(p)
 
 
 def test_explorer_run_endpoint_uses_agentspan():
