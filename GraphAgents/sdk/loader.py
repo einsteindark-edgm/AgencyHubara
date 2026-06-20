@@ -81,35 +81,21 @@ def build_runnable(node: AgentNode, ga_root: Path, ports: dict | None = None) ->
 # --------------------------------------------------- AgentSpan (runtime real, G1+)
 
 def build_agent(node: AgentNode, ga_root: Path | None = None) -> Any:
-    """Devuelve un `agentspan.agents.Agent`. Requiere `agentspan` instalado."""
-    try:
-        from agentspan.agents import Agent  # type: ignore
-    except Exception as e:  # noqa: BLE001
-        raise RuntimeError("instalá deps: `uv sync` (agentspan).") from e
-
+    """El artefacto que corre `AgentSpanRuntime`: para una capability, el
+    `CompiledStateGraph` de LangGraph (`build()` con `compile(name=...)`). AgentSpan
+    lo toma DIRECTO — lo autodetecta como langgraph, SIN wrapper `Agent` (ver L-8).
+    Supervisor / tools nativos de AgentSpan: G2+."""
     if node.is_reference:
         if ga_root is None:
             raise RuntimeError("para resolver `uses: agent://...` pasá ga_root al loader")
         return build_agent(load_agent_by_id(ga_root, node.ref_agent_id), ga_root)
 
     if node.capability:
-        graph = _resolve_capability(node.capability)()  # CompiledStateGraph
-        return Agent(name=node.name, graph=graph)  # type: ignore[call-arg]
+        return _resolve_capability(node.capability)()  # CompiledStateGraph
 
-    if node.is_supervisor:
-        return Agent(  # type: ignore[call-arg]
-            name=node.name,
-            model=node.model,
-            instructions=node.instructions or "",
-            agents=[build_agent(a, ga_root) for a in node.agents],
-            strategy=node.strategy or "handoff",
-        )
-
-    return Agent(  # type: ignore[call-arg]
-        name=node.name,
-        model=node.model,
-        instructions=node.instructions or "",
-        tools=[(t.name or t.ref_id) for t in node.tools],
+    raise NotImplementedError(
+        "build_agent: G1 corre capabilities (StateGraph) en AgentSpan; supervisor/"
+        "tools nativos son G2+ (para el LocalRuntime usá build_runnable)."
     )
 
 

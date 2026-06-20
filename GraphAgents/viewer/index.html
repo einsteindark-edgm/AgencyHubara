@@ -223,11 +223,18 @@ function renderInspector(){
       html += `<div class="meta" style="margin-top:12px">▸ consume ${n.consumes.join(', ')} — se corre con un vendor <b>fixture</b> en <span class="k">tests/integration</span>, no desde la UI.</div>`;
     } else {
       html += `<div class="run" style="margin-top:14px">
-        <div class="sec" style="margin:0 0 6px">CORRER (LocalRuntime)</div>
+        <div class="sec" style="margin:0 0 6px">CORRER</div>
         <textarea id="runin">{ "name": "mundo" }</textarea>
-        <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
-          <button id="runbtn">correr ▸</button><span id="runstatus" style="font-size:11px;color:var(--muted)"></span>
-        </div><pre class="out" id="runout" style="display:none"></pre></div>`;
+        <div style="display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap">
+          <select id="runtime" style="font-size:12px;padding:5px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)">
+            <option value="local">LocalRuntime</option>
+            <option value="agentspan">AgentSpan · durable</option>
+          </select>
+          <button id="runbtn">correr ▸</button>
+          <span id="runstatus" style="font-size:11px;color:var(--muted)"></span>
+        </div>
+        <pre class="out" id="runout" style="display:none"></pre>
+        <div id="runlink" style="display:none;font-size:11px;margin-top:6px"></div></div>`;
     }
   }
   box.innerHTML = html;
@@ -237,17 +244,25 @@ function renderInspector(){
 
 async function runAgent(agent){
   const st = document.getElementById('runstatus'), out = document.getElementById('runout');
+  const link = document.getElementById('runlink');
+  const runtime = (document.getElementById('runtime')||{}).value || 'local';
   let input = {};
   try { input = JSON.parse(document.getElementById('runin').value||'{}'); }
   catch(e){ st.textContent='input no es JSON válido'; return; }
-  st.textContent='corriendo…';
+  st.textContent = runtime==='agentspan' ? 'corriendo en AgentSpan…' : 'corriendo…';
+  if(link) link.style.display='none';
   try{
     const r = await fetch('/api/run',{ method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ agent, input }) });
+      body: JSON.stringify({ agent, input, runtime }) });
     const data = await r.json();
-    st.textContent = `${data.status}${data.id?' · '+data.id:''}`;
+    const where = data.runtime==='agentspan' ? ' · AgentSpan' : '';
+    st.textContent = `${data.status}${data.id?' · '+data.id:''}${where}`;
     out.style.display='block';
     out.textContent = JSON.stringify(data.output ?? data.error, null, 2);
+    if(link && data.runtime==='agentspan' && data.id && data.status==='completed'){
+      link.style.display='block';
+      link.innerHTML = `<i class="ti ti-external-link" aria-hidden="true"></i> ejecución durable <a href="http://localhost:6767" target="_blank" style="color:var(--port)">en el visor de AgentSpan (:6767)</a> · <span class="k">${data.id}</span>`;
+    }
   }catch(e){ st.textContent = 'error: '+e.message; }
 }
 

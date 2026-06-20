@@ -49,9 +49,14 @@ cd GraphAgents && python3 -m sdk.cli certify <id>   # exit 1 si < C2
 ## Recordatorios
 
 - **Tests verdes ≠ feature viva.** Un cambio de comportamiento se verifica
-  corriendo el grafo real sobre AgentSpan: `agentspan server start`, `runtime.run`,
-  y probá recovery (matás el proceso, recuperás por `execution-id`) + las HUMAN
-  tasks de las acciones con `approval_required`.
+  corriendo el grafo real sobre AgentSpan: `docker compose up -d agentspan` (server +
+  UI en :6767), `AgentSpanRuntime().run(build_agent(node), input)`, y mirá la ejecución
+  en **:6767** (receta §2.5d) + probá recovery + las HUMAN tasks (`approval_required`).
+- **Tests de langgraph/agentspan → en el container.** Importan deps pesadas (no están en
+  el python del sistema): arrancan con `pytest.importorskip` (local SKIP) y corren con
+  `docker compose run --rm --no-deps graphagents /opt/venv/bin/python -m pytest …` (L-7).
+- **Editaste un `.py` del viewer/sdk en Docker?** `docker compose up -d --force-recreate
+  graphagents` (NO `restart` — el bind-mount no re-sincroniza + Python no hot-reloadea, L-9).
 - **Hook Stop:** si tocaste `manifests/`, `sdk/`, `graphs/` o `tools/`, los gates
   de cert+arquitectura corren SOLOS al cerrar. Para que un rojo **bloquee** el
   cierre: `export GRAPHAGENTS_STOP_GATE_BLOCK=1`.
