@@ -127,6 +127,52 @@ def api_route(method: str, path: str, params: dict, body: dict | None, ga_root: 
         if not cand:
             return 404, {"error": f"no existe el agente '{agent_id}'"}
         return 200, execution_plan(load_manifest(cand[0]), ga_root)
+    if method == "GET" and path == "/api/runs":
+        # las ejecuciones recientes de AgentSpan (los 'threads' de Studio). Degrada limpio
+        # si el server :6767 no está — la UI nunca crashea.
+        from sdk.trace import fetch_runs
+
+        try:
+            limit = int((params.get("limit") or ["25"])[0])
+        except ValueError:
+            limit = 25
+        try:
+            return 200, {"runs": fetch_runs(limit=limit)}
+        except Exception as e:  # noqa: BLE001 — server caído / agentspan ausente
+            return 502, {"error": f"no pude listar ejecuciones (¿server :6767 arriba?): {e}", "runs": []}
+    if method == "GET" and path == "/api/trace":
+        # el TRACE en vivo: el execution_plan anotado con el estado por-nodo de Conductor.
+        from sdk.graph import execution_plan
+        from sdk.manifest_model import load_manifest
+        from sdk.trace import build_trace, fetch_workflow
+
+        eid = (params.get("execution_id") or [None])[0]
+        if not eid:
+            return 400, {"error": "falta 'execution_id' en el query (?execution_id=<id>)"}
+        try:
+            wf = fetch_workflow(eid)
+        except Exception as e:  # noqa: BLE001
+            return 502, {"error": f"no pude leer la ejecución (¿server :6767 arriba?): {e}"}
+        agent_id = wf.get("workflowName")
+        manifests = ga_root / "manifests"
+        cand = sorted(manifests.glob(f"{agent_id}.agent.yaml")) + sorted(
+            manifests.glob(f"{agent_id}.taskgraph.yaml")
+        )
+        if not cand:
+            return 404, {"error": f"la ejecución es del agente '{agent_id}', ausente del catálogo"}
+        return 200, build_trace(execution_plan(load_manifest(cand[0]), ga_root), wf)
+    if method == "GET" and path == "/api/node-state":
+        # lazy: el acc (estado acumulador) DESPUÉS de un nodo — el 'ver por dentro', al click.
+        from sdk.trace import fetch_node_state
+
+        eid = (params.get("execution_id") or [None])[0]
+        tid = (params.get("task_id") or [None])[0]
+        if not eid or not tid:
+            return 400, {"error": "faltan 'execution_id' y 'task_id' en el query"}
+        try:
+            return 200, {"acc": fetch_node_state(eid, tid)}
+        except Exception as e:  # noqa: BLE001
+            return 502, {"error": f"no pude leer el estado del nodo: {e}"}
     if method == "POST" and path == "/api/run":
         body = body or {}
         agent_id = body.get("agent")

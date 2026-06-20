@@ -69,6 +69,9 @@
   ol.flowsteps .bnd { font-family:ui-monospace,Menlo,monospace; font-size:10.5px; color:var(--port); margin-top:2px; }
   ol.flowsteps li.joinli { color:var(--muted); }
   ol.flowsteps li.joinli .ord { background:var(--muted); }
+  ol.flowsteps .stbadge { font-size:10px; padding:1px 6px; border-radius:5px; font-weight:500; white-space:nowrap; }
+  ol.flowsteps li.clk { cursor:pointer; border-radius:6px; }
+  ol.flowsteps li.clk:hover { background:var(--bg); }
 </style>
 </head>
 <body>
@@ -115,6 +118,9 @@ let GRAPH = { nodes:[], edges:[] };
 let cy = null;
 let selected = null;
 let PLAN = null;  // el plan de ejecución del supervisor seleccionado (/api/plan)
+let TRACE = null; // el trace en vivo cargado (/api/trace) — { execution_id, steps[], ... }
+let TRACE_TIMER = null; // poll mientras la ejecución está RUNNING (AgentSpan no tiene SSE)
+const ST_COLOR = { done:'#1f9d57', running:'#6f63d6', failed:'#c0392b', pending:'#b8b6ae', other:'#9a988f' };
 
 const byId = id => GRAPH.nodes.find(n => n.id === id);
 const usedBy = id => GRAPH.edges.filter(e => e.target === id);
@@ -139,6 +145,11 @@ function cyStyle(){
     { selector:'.dim', style:{ 'opacity':0.12,'text-opacity':0.12 } },
     { selector:'.flow-dim', style:{ 'opacity':0.10,'text-opacity':0 } },
     { selector:'node.flow-on', style:{ 'border-color':'#6f63d6','border-width':4 } },
+    // estado VIVO por-nodo (trace de Conductor) — gana sobre flow-on (va después).
+    { selector:'node.st-pending', style:{ 'border-color':'#b8b6ae','border-width':3 } },
+    { selector:'node.st-running', style:{ 'border-color':'#6f63d6','border-width':7 } },
+    { selector:'node.st-done',    style:{ 'border-color':'#1f9d57','border-width':4 } },
+    { selector:'node.st-failed',  style:{ 'border-color':'#c0392b','border-width':6 } },
     // overlay del flujo: la arista supervisor→agente lleva el nº de paso (cerca del agente)
     // y el binding $state (al medio); la cadena secuencial se dibuja con aristas seqflow.
     { selector:'edge.flow', style:{
@@ -216,11 +227,60 @@ function bindShort(inputs){
 }
 
 function clearFlow(){
+  if(TRACE_TIMER){ clearTimeout(TRACE_TIMER); TRACE_TIMER = null; }
+  TRACE = null;
   if(!cy) return;
   cy.batch(()=>{
     cy.remove('edge[id ^= "seq-"]');
-    cy.elements().removeClass('flow flow-dim flow-on');
+    cy.elements().removeClass('flow flow-dim flow-on st-pending st-running st-done st-failed');
   });
+}
+
+// --- trace EN VIVO: pinta el estado por-nodo de Conductor sobre el overlay del plan ----
+async function loadTrace(eid){
+  try { TRACE = await fetch('/api/trace?execution_id='+encodeURIComponent(eid)).then(r=>r.json()); }
+  catch(e){ TRACE = null; return; }
+  if(!TRACE || !TRACE.steps){ TRACE = null; return; }
+  applyLiveStatus(TRACE);
+  renderInspector();
+  // AgentSpan no tiene push → poll mientras la ejecución sigue corriendo
+  if(TRACE_TIMER){ clearTimeout(TRACE_TIMER); TRACE_TIMER = null; }
+  if(String(TRACE.workflow_status).toUpperCase() === 'RUNNING')
+    TRACE_TIMER = setTimeout(()=>loadTrace(eid), 700);
+}
+
+function applyLiveStatus(trace){
+  if(!cy) return;
+  cy.batch(()=>{
+    cy.nodes().removeClass('st-pending st-running st-done st-failed');
+    trace.steps.forEach(s=>{
+      if(!s.agent) return;
+      const nd = cy.getElementById('agent:'+s.agent);
+      if(nd) nd.addClass('st-'+(s.runtime?.status || 'pending'));
+    });
+  });
+}
+
+async function showNodeState(eid, taskId, btn){
+  const pre = document.getElementById('nodestate');
+  if(!pre) return;
+  pre.style.display='block'; pre.textContent = 'cargando estado…';
+  try {
+    const d = await fetch('/api/node-state?execution_id='+encodeURIComponent(eid)+'&task_id='+encodeURIComponent(taskId)).then(r=>r.json());
+    pre.textContent = JSON.stringify(d.acc ?? d.error ?? '(sin estado)', null, 2);
+  } catch(e){ pre.textContent = 'error: '+e.message; }
+}
+
+async function loadLatestRun(agentLabel){
+  const st = document.getElementById('tracestatus');
+  if(st) st.textContent = 'buscando ejecuciones…';
+  let runs = [];
+  try { runs = (await fetch('/api/runs?limit=50').then(r=>r.json())).runs || []; }
+  catch(e){ if(st) st.textContent = 'no pude listar (¿:6767 arriba?)'; return; }
+  const mine = runs.filter(r=>r.agent===agentLabel);
+  if(!mine.length){ if(st) st.textContent = 'sin ejecuciones de este agente todavía'; return; }
+  if(st) st.textContent = '';
+  loadTrace(mine[0].execution_id);
 }
 
 // Pinta sobre el canvas el ORDEN de ejecución del supervisor: numera la arista
@@ -299,19 +359,42 @@ function renderInspector(){
 
   if(isSupervisor(n) && PLAN && PLAN.steps && PLAN.steps.length){
     const strat = { sequential:'cadena en orden', router:'rutea a UNO (default = el 1º)', parallel:'fan-out concurrente + join' }[PLAN.strategy] || PLAN.strategy;
-    html += `<div class="sec" style="margin-top:14px">FLUJO DE EJECUCIÓN · ${PLAN.strategy}</div>`;
-    html += `<div class="meta" style="margin:-2px 0 8px">${strat} — el nº es el orden con que corre, ← su binding de estado.</div>`;
+    const live = (TRACE && TRACE.steps) ? TRACE : null;
+    const wfc = live ? (ST_COLOR[String(live.workflow_status).toLowerCase()] || 'var(--muted)') : null;
+    html += `<div class="sec" style="margin-top:14px">FLUJO DE EJECUCIÓN · ${PLAN.strategy}`
+          + (live ? ` · <span style="color:${wfc}">▶ ${live.workflow_status}</span>` : '') + `</div>`;
+    html += `<div class="meta" style="margin:-2px 0 8px">${live
+        ? 'estado por-nodo de Conductor — click en un paso para ver su acc.'
+        : strat + ' — el nº es el orden con que corre, ← su binding de estado.'}</div>`;
     html += '<ol class="flowsteps">';
-    PLAN.steps.forEach(s=>{
-      if(!s.agent){ html += `<li class="joinli"><span class="ord">⋈</span> join — funde los outputs concurrentes</li>`; return; }
+    PLAN.steps.forEach((s,i)=>{
+      const rt = live && live.steps[i] ? live.steps[i].runtime : null;
+      const oc = rt ? ST_COLOR[rt.status] : '';
+      if(!s.agent){
+        const jb = rt ? ` <span class="stbadge" style="background:${oc}22;color:${oc}">${rt.status}</span>` : '';
+        html += `<li class="joinli"><span class="ord"${oc?` style="background:${oc}"`:''}>⋈</span> join — funde los outputs concurrentes${jb}</li>`; return;
+      }
       const b = bindShort(s.inputs);
       const tag = s.role==='default_branch'?'default':s.role==='branch'?'branch':s.role==='fan_out'?'concurrente':'';
       const ord = (ROLE_SYM[s.role]||'') + (s.role==='step'? s.order : '');
-      html += `<li><span class="ord">${ord||'•'}</span><span class="ag" data-go="agent:${s.agent}">${s.agent}</span>`+
-              ` <span class="amut">${s.archetype||''}${tag?' · '+tag:''}</span>`+
-              `${b?`<div class="bnd">← ${b}</div>`:''}</li>`;
+      let liveHtml = '';
+      if(rt){
+        const extra = [rt.ms!=null?rt.ms+' ms':'', rt.retries?('↻'+rt.retries):''].filter(Boolean).join(' · ');
+        liveHtml = ` <span class="stbadge" style="background:${oc}22;color:${oc}">${rt.status}</span>`
+                 + (extra?` <span class="amut">${extra}</span>`:'');
+      }
+      const clk = (rt && rt.task_id) ? ` class="clk" data-ts="${rt.task_id}"` : '';
+      const go = live ? '' : ` data-go="agent:${s.agent}"`;
+      html += `<li${clk}><span class="ord"${oc?` style="background:${oc}"`:''}>${ord||'•'}</span>`
+            + `<span class="ag"${go}>${s.agent}</span>`
+            + ` <span class="amut">${s.archetype||''}${tag?' · '+tag:''}</span>${liveHtml}`
+            + `${(b && !live)?`<div class="bnd">← ${b}</div>`:''}</li>`;
     });
     html += '</ol>';
+    html += `<div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">`
+          + `<button id="tracebtn">${live?'recargar':'trace en vivo'} ▸</button>`
+          + `<span id="tracestatus" style="font-size:11px;color:var(--muted)"></span></div>`;
+    html += `<pre class="out" id="nodestate" style="display:none;margin-top:8px"></pre>`;
   }
 
   if(n.kind==='agent'){
@@ -335,6 +418,12 @@ function renderInspector(){
   }
   box.innerHTML = html;
   box.querySelectorAll('.flowsteps .ag[data-go]').forEach(el=> el.onclick = ()=> select(el.dataset.go));
+  const tbtn = document.getElementById('tracebtn');
+  if(tbtn) tbtn.onclick = ()=> loadLatestRun(n.label);
+  if(TRACE && TRACE.execution_id){
+    box.querySelectorAll('.flowsteps li.clk[data-ts]').forEach(el=>
+      el.onclick = ()=> showNodeState(TRACE.execution_id, el.dataset.ts));
+  }
   const btn = document.getElementById('runbtn');
   if(btn) btn.onclick = ()=>runAgent(n.label);
 }
@@ -360,6 +449,8 @@ async function runAgent(agent){
       link.style.display='block';
       link.innerHTML = `<i class="ti ti-external-link" aria-hidden="true"></i> ejecución durable <a href="http://localhost:6767" target="_blank" style="color:var(--port)">en el visor de AgentSpan (:6767)</a> · <span class="k">${data.id}</span>`;
     }
+    // corrió durable → traé el trace y pintá el estado por-nodo en vivo (solo supervisores)
+    if(data.runtime==='agentspan' && data.id && isSupervisor(byId('agent:'+agent))) loadTrace(data.id);
   }catch(e){ st.textContent = 'error: '+e.message; }
 }
 

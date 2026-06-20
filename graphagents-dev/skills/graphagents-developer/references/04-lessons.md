@@ -337,4 +337,35 @@ guard rojo que lo reproduce — el "Guard:" se escribe ANTES que el "Fix:".
 - **Guard:** `test_handoff_y_swarm_raisean_loud_pertenecen_al_LLM` (asierta el raise con ref a L-16) + el
   mensaje de `build_supervisor_graph`.
 
+### L-17 · el trace de runtime debe anclar el match al prefijo del workflow — Conductor emite system-tasks `_fork`/`_join` (2026-06-20, trace en vivo Fase 1)
+- **Síntoma:** al leer el estado por-nodo de una ejecución `parallel` desde la REST API de Conductor, el paso
+  `join` del plan mostraba el `ms`/`task_id`/acc de la task EQUIVOCADA → click→"ver por dentro" del join mentía.
+- **Causa:** un grafo FORK_JOIN en Conductor tiene DOS tasks que terminan en `join`: la system-task del framework
+  (`_join`, taskType JOIN) **y** el nodo real del loader (`<wf>_join`, loader.py:297). El matcher hacía
+  `endswith("join")` → `next(...)` agarraba la system-task `_join`. El golden sintético pasaba porque NO incluía
+  las system-tasks `_fork`/`_join`/`_fork_merge` que el shape REAL trae. Patrón gotcha #1 (tests verdes, feature
+  rota) — solo visible contra el server vivo.
+- **Fix:** anclar el match al prefijo del workflow (`endswith(f"{workflowName}_{token}")` / `f"{wf}_join"`). El
+  `_join` framework no lleva el prefijo `<wf>_` → cae a `unmatched_tasks`. El mismo anclaje mata los falsos
+  positivos por sufijo (un sibling cuyo nombre underscored termine en el token de otro).
+- **Regla para el skill:** el dato de runtime viene de Conductor con su naming REAL (system-tasks incluidas);
+  espejá el naming del loader ANCLADO al `workflowName`, nunca por sufijo suelto. Validá el trace contra una
+  ejecución VIVA, no solo un fixture sintético — el fixture no tiene las system-tasks del framework.
+- **Guard:** `test_trace_join_binds_the_loader_node_not_the_framework_join_task` (fixture con `_fork`/`_join` +
+  el `<wf>_join` real; asierta que bindea el real y las system-tasks van a unmatched).
+
+### L-18 · un nodo con retry reporta su intento TERMINAL, no el primero — Conductor escribe un registro por intento (2026-06-20, trace en vivo Fase 1)
+- **Síntoma:** un nodo que falló-y-se-recuperó (lo que prueba el recovery de L-14) se pintaba `failed`/retries=0
+  — lo OPUESTO a la verdad (`done`/retries=1). Pintaba verde-vivo como rojo y ocultaba el recovery, contradiciendo
+  la razón de ser del runtime durable.
+- **Causa:** Conductor devuelve UN task por INTENTO con el mismo `referenceTaskName` (flaky_b: FAILED retryCount=0
+  + COMPLETED retryCount=1). El matcher tomaba `next(...)` = el primero = el intento fallido.
+- **Fix:** entre tasks homónimos, elegir el intento terminal (`max` por `retryCount`, desempate por `startTime`)
+  y derivar `retries` de ese. Marcar TODOS los intentos como matched (el fallido no debe ensuciar `unmatched`).
+- **Regla para el skill:** el shape de Conductor es multi-registro por retry; cualquier lectura de estado por-nodo
+  debe colapsar los intentos al terminal. Un solo `next()`/`find` sobre `referenceTaskName` es un bug latente de
+  recovery — la observabilidad mentiría justo en el caso que el runtime durable existe para resolver.
+- **Guard:** `test_trace_retried_node_reports_terminal_attempt_not_first` (flaky con FAILED+COMPLETED → asierta
+  done/retries=1/task terminal, unmatched vacío).
+
 <!-- AÑADIR NUEVAS LECCIONES ARRIBA DE ESTA LÍNEA, NUMERADAS L-1, L-2, ... -->

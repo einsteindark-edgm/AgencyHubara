@@ -1,0 +1,105 @@
+{
+  "workflowId": "df6131db-c550-4d4c-b864-4a53edb2a95e",
+  "workflowName": "ads-analytics",
+  "status": "COMPLETED",
+  "startTime": 1781981336436,
+  "endTime": 1781981337163,
+  "tasks": [
+    {
+      "referenceTaskName": "ads-analytics_ctwa_insights_0",
+      "taskType": "ads-analytics_ctwa_insights_0",
+      "status": "COMPLETED",
+      "retryCount": 0,
+      "startTime": 1781981336542,
+      "endTime": 1781981336574,
+      "taskId": "701db7b3-d7ec-4e94-9173-06f017ec56c1",
+      "outputData": {
+        "state": {
+          "acc": {
+            "_trimmed": true
+          }
+        }
+      }
+    },
+    {
+      "referenceTaskName": "ads-analytics_sales_ledger_1",
+      "taskType": "ads-analytics_sales_ledger_1",
+      "status": "COMPLETED",
+      "retryCount": 0,
+      "startTime": 1781981336646,
+      "endTime": 1781981336676,
+      "taskId": "02f1f34b-6424-4922-83d1-07378d17502b",
+      "outputData": {
+        "state": {
+          "acc": {
+            "_trimmed": true
+          }
+        }
+      }
+    },
+    {
+      "referenceTaskName": "ads-analytics_ctwa_campaign_funnel_2",
+      "taskType": "ads-analytics_ctwa_campaign_funnel_2",
+      "status": "COMPLETED",
+      "retryCount": 0,
+      "startTime": 1781981336753,
+      "endTime": 1781981336782,
+      "taskId": "8b3ac5ed-2836-4a59-8a47-cd88b588ffb4",
+      "outputData": {
+        "state": {
+          "acc": {
+            "_trimmed": true
+          }
+        }
+      }
+    },
+    {
+      "referenceTaskName": "ads-analytics_blended_economics_3",
+      "taskType": "ads-analytics_blended_economics_3",
+      "status": "COMPLETED",
+      "retryCount": 0,
+      "startTime": 1781981336868,
+      "endTime": 1781981336898,
+      "taskId": "93cc97d1-e0bd-4880-ad89-2e79a9796f56",
+      "outputData": {
+        "state": {
+          "acc": {
+            "_trimmed": true
+          }
+        }
+      }
+    },
+    {
+      "referenceTaskName": "ads-analytics_numbers_qa_4",
+      "taskType": "ads-analytics_numbers_qa_4",
+      "status": "COMPLETED",
+      "retryCount": 0,
+      "startTime": 1781981336987,
+      "endTime": 1781981337016,
+      "taskId": "b857f784-eed2-4216-ac7e-f986aec69801",
+      "outputData": {
+        "state": {
+          "acc": {
+            "_trimmed": true
+          }
+        }
+      }
+    },
+    {
+      "referenceTaskName": "ads-analytics_ctwa_report_5",
+      "taskType": "ads-analytics_ctwa_report_5",
+      "status": "COMPLETED",
+      "retryCount": 0,
+      "startTime": 1781981337112,
+      "endTime": 1781981337142,
+      "taskId": "75ffaee2-230f-4ff9-91f1-b709a53f9a66",
+      "outputData": {
+        "state": {
+          "acc": {
+            "_trimmed": true
+          }
+        }
+      }
+    }
+  ]
+}

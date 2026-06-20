@@ -51,6 +51,17 @@ def test_api_plan_requires_agent_param():
     assert status == 400
 
 
+def test_api_trace_requires_execution_id():
+    status, payload = api_route("GET", "/api/trace", {}, None, ga_root=ROOT)
+    assert status == 400
+    assert "execution_id" in payload["error"]
+
+
+def test_api_node_state_requires_params():
+    status, payload = api_route("GET", "/api/node-state", {}, None, ga_root=ROOT)
+    assert status == 400
+
+
 def test_run_tool_only_agent_greeter():
     res = run_agent(ROOT, "greeter", {"name": "mundo"})
     assert res["status"] == "completed"
