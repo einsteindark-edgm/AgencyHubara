@@ -212,4 +212,27 @@ guard rojo que lo reproduce — el "Guard:" se escribe ANTES que el "Fix:".
   ahora citan L-11 y describen el passthrough honestamente. Cuando se implemente la descomposición
   por-task (G1.x), el guard es un test de crash mid-graph que prueba el recovery por-nodo.
 
+### L-12 · Un campo del manifest que el loader IGNORA igual necesita su check (regla de oro) (2026-06-20, cleanup post-cert-review)
+- **Síntoma:** el manifest `ctwa-campaign-funnel.agent.yaml` bindeaba `complement-funnel` con
+  `with: {entities, insights}`, pero el `tool.yaml` de esa tool declara `inputs: {payload}`. El binding
+  era INERTE (el loader inyecta la impl por `ref_id`, ignora el `with:`) **y** contradecía el contrato.
+  El panel verde no lo cazó — lo encontró un cert-review (graph-cert-reviewer) leyendo el diff a mano.
+- **Causa raíz:** `with:` (modelado como `ToolSpec.binding`) se parseaba pero NINGÚN check lo validaba
+  contra el contrato de la tool → un campo del manifest **sin su check** (viola la regla de oro). Que el
+  loader lo ignore a propósito (la capability que COMPONE cablea sus tools por dentro del StateGraph, no
+  por binding declarativo) no exime al campo: si se puede escribir, se puede escribir MAL, y mintió.
+- **Fix aplicado:** check `check_tool_bindings_match_contract` (G-BIND binding↔contrato, test negativo-
+  primero contra `run_checks`): cada clave del `with:` debe ser un input declarado del `tool.yaml`. Se
+  removió el `with:` de `complement-funnel` (su `payload` lo construye la capability desde estado
+  intermedio — los outputs de las otras dos tools —, no es un binding a `$state`). Las otras dos tools
+  (`with: {payload: $state.X}`) SÍ matchean el contrato y quedan. El check cazó SOLO ese manifest (los
+  demás `with:` del catálogo —greeter `hello`, etc.— ya eran fieles).
+- **Regla para el skill:** si agregás o ya parseás un campo del manifest, dale su check en el MISMO
+  cambio — incluso si el runtime lo ignora hoy (la regla de oro no tiene excepción "pero es inerte").
+  Un `with:` solo se justifica si nombra inputs del contrato Y hay un `$state` que los provee; si la
+  capability arma el payload por dentro, NO declares `with:` (doc inerte que miente > sin doc).
+- **Guard:** `tests/architecture/test_tool_binding_contract.py` (negativo: `with:` que contradice el
+  contrato no certifica · positivo: `with: {payload}` pasa · sin-`with:` no dispara nada) + el check en
+  `run_checks`. El header de `sdk/testkit/checks.py` lista G-BIND binding↔contrato (y G-WIRE, que faltaba).
+
 <!-- AÑADIR NUEVAS LECCIONES ARRIBA DE ESTA LÍNEA, NUMERADAS L-1, L-2, ... -->

@@ -8,7 +8,10 @@ Reglas (manifest):
 - G-RUN-SIG     — la capability expone `run(input, *, ports, tools)` (firma uniforme
                   que inyecta el loader; ver L-2).
 - supervisor    — coherente (agents + strategy).
-- G-BIND        — toda tool `uses: <id>` resuelve a una tool del catálogo.
+- G-WIRE        — un supervisor que COMPONE declara `inputs:` en cada agente (el task
+                  graph se cablea y corre por su manifest; ver L-10).
+- G-BIND        — toda tool `uses: <id>` resuelve a una tool del catálogo, y su `with:`
+                  nombra SOLO inputs del contrato de esa tool (binding↔contrato).
 - G-BIND-AGENT  — toda referencia `uses: agent://<id>` resuelve a un agente del catálogo.
 - G-DUR (warn)  — tool INLINE cuyo nombre sugiere acción outward.
 
@@ -134,6 +137,36 @@ def check_tool_refs(root: AgentNode, ga_root: Path | None) -> list[str]:
     return errs
 
 
+def check_tool_bindings_match_contract(root: AgentNode, ga_root: Path | None) -> list[str]:
+    """G-BIND (binding↔contrato): cada clave del `with:` de una tool `uses:` debe ser un
+    input DECLARADO en el contrato de esa tool (`tool.yaml` `inputs`). Un `with:` que nombra
+    claves que el contrato no tiene es documentación que MIENTE: inerte (el loader inyecta la
+    impl, no aplica el binding) pero engañosa para un lector. Regla de oro del plugin-protocol:
+    ningún campo del manifest sin su check — `with:` (modelado `ToolSpec.binding`) ahora tiene el suyo."""
+    if ga_root is None:
+        return []
+    from sdk.registry import discover_tools  # local: evita que ruff borre el import entre edits
+
+    catalog = {t.id: t for t in discover_tools(ga_root)}
+    errs: list[str] = []
+    for n in iter_nodes(root):
+        for t in n.tools:
+            rid = t.ref_id
+            if not rid or not t.binding:
+                continue
+            contract = catalog.get(rid)
+            if contract is None:
+                continue  # tool ausente del catálogo: ya lo reporta check_tool_refs
+            declared = set(contract.inputs)
+            unknown = sorted(k for k in t.binding if k not in declared)
+            if unknown:
+                errs.append(
+                    f"[G-BIND] agente '{n.name}': el `with:` de la tool '{rid}' nombra {unknown} "
+                    f"que no son inputs del contrato (tool.yaml inputs: {sorted(declared)})"
+                )
+    return errs
+
+
 def check_agent_refs(root: AgentNode, ga_root: Path | None) -> list[str]:
     """G-BIND-AGENT: toda referencia `uses: agent://<id>` resuelve al catálogo."""
     if ga_root is None:
@@ -172,6 +205,7 @@ def run_checks(root: AgentNode, ga_root: Path | None = None) -> dict:
         + check_supervisor_coherent(root)
         + check_taskgraph_wireable(root)
         + check_tool_refs(root, ga_root)
+        + check_tool_bindings_match_contract(root, ga_root)
         + check_agent_refs(root, ga_root)
     )
     warnings = check_outward_tools_need_approval(root)

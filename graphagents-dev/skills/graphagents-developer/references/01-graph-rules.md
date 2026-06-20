@@ -60,6 +60,7 @@ Se enchufa a cualquier agente por `uses:` (no se reimplementa).
 | Una tool `side_effect: outward` sin `approval_required` | **T-DUR** | `approval_required: true` (→ HUMAN task durable) + idempotencia |
 | `version` no semver / `id` no kebab | **C0** (schema) | corregí |
 | Un agente `uses: <id>` que no está en el catálogo | **G-BIND** | creá la tool o corregí la ref; el binding (`with:`) mapea state→input |
+| Un `with:` que nombra claves que NO son inputs del `tool.yaml` de esa tool | **G-BIND** (binding↔contrato) | el `with:` debe nombrar SOLO inputs del contrato; si la capability construye el payload por dentro (StateGraph), no declares `with:` — sería doc que miente (inerte pero engañosa). Regla de oro: el campo `with:` ahora tiene su check (L-12) |
 | Componer/meter al palette una tool `< C2` | **G-CERT** (tool) | `cli certify-tool <id>` antes |
 
 **Catálogo vs inline:** una tool de catálogo paga el costo (contrato + adapters +
