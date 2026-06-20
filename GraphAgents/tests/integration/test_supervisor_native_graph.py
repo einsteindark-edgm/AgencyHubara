@@ -56,3 +56,22 @@ def test_supervisor_compila_a_grafo_nativo_y_produce_el_reporte() -> None:
     # el complemento llegó por el task graph nativo: "Día del padre" recupera 120.
     padre = {c["campaign_id"]: c for c in state["campaigns"]}["120243118818600317"]
     assert padre["conversations"] == 120 and padre["conversation_source"] == "insights"
+
+
+def test_router_compuesto_rutea_al_agente_elegido() -> None:
+    # G2.x · un supervisor `strategy: router` compila a un grafo con conditional edges: el
+    # `route` del input elige UN agente. ads-supervisor rutea a meta-insights (1ro, default)
+    # o roas-cac (2do). Ruteamos a roas-cac (el NO-default): si el routing funciona corre
+    # roas-cac; si cayera al default (meta-insights) reventaría por el port ausente → el éxito
+    # PRUEBA la selección, no que "corra el primero".
+    from sdk.loader import build_agent
+    from sdk.manifest_model import load_manifest
+
+    manifest = load_manifest(GA / "manifests" / "ads-supervisor.taskgraph.yaml")
+    graph = build_agent(manifest, GA)
+
+    seed = {"route": "roas-cac", "adsets": [{"id": "a", "roas": 2.0}, {"id": "b", "roas": 1.0}], "total_budget": 300.0}
+    state = graph.invoke({"acc": seed})["acc"]
+
+    assert state["analyzed_adsets"] == 2
+    assert state["allocations"] == [{"id": "a", "budget": 200.0}, {"id": "b", "budget": 100.0}]

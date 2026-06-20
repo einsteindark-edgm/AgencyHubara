@@ -296,4 +296,21 @@ guard rojo que lo reproduce — el "Guard:" se escribe ANTES que el "Fix:".
   server real: el supervisor compuesto + la sonda de recovery por-nodo de Conductor). `build_supervisor_graph`
   documenta el porqué del merge-en-código.
 
+### L-15 · Los conditional edges de langgraph CUELGAN en el server de AgentSpan — routing = un nodo dispatcher (2026-06-20, G2.x router)
+- **Síntoma:** implementé `router` en `build_supervisor_graph` con `add_conditional_edges(START, _route, ...)`.
+  Local (`graph.invoke`) ruteó perfecto; en el **server de AgentSpan** la ejecución COLGÓ → read timeout de 30s
+  → FAILED. El server SÍ creó un worker `ads-supervisor___start___router` (reconoció el conditional edge) pero
+  la ejecución nunca resolvió.
+- **Causa raíz:** AgentSpan compila el conditional edge de langgraph a un task "router" de Conductor que no
+  resuelve / se cuelga — la integración langgraph→Conductor de conditional edges es incompleta en esta versión.
+  Mismo patrón que L-14: lo que anda con `graph.invoke` local NO está probado hasta el server.
+- **Fix aplicado:** router como UN nodo dispatcher — un solo `_router_node` que elige el agente por
+  `acc['route']` (default: el 1ro) y lo corre EN CÓDIGO, sin conditional edges. Una sola task de Conductor →
+  server-safe. Misma semántica que el router del LocalRuntime (`build_runnable`). Verde local + server (2.2s).
+- **Regla para el skill:** para routing en un `StateGraph` que va a AgentSpan, NO uses `add_conditional_edges`
+  (cuelga en Conductor) — un nodo dispatcher que decide en código. Y SIEMPRE verificá el routing en el SERVER,
+  no solo con `graph.invoke` local (L-14/L-15 son la misma lección: la semántica de control-flow difiere).
+- **Guard:** `test_router_compuesto_rutea_al_agente_elegido` (local, rutea al NO-default) +
+  `test_router_compuesto_corre_en_agentspan` (server real). El docstring de `build_supervisor_graph` lo explica.
+
 <!-- AÑADIR NUEVAS LECCIONES ARRIBA DE ESTA LÍNEA, NUMERADAS L-1, L-2, ... -->

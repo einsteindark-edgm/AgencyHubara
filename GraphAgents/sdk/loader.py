@@ -161,26 +161,30 @@ def build_agent(node: AgentNode, ga_root: Path | None = None) -> Any:
 
 
 def build_supervisor_graph(node: AgentNode, ga_root: Path | None, *, checkpointer=None) -> Any:
-    """G2 — compila un supervisor SECUENCIAL que COMPONE a UN `StateGraph` nativo. Cada agente
-    es un NODO: resuelve su binding `inputs:` desde el acumulador → corre su capability (su
-    `run` puro, vía `build_runnable`) → MERGEA EN CÓDIGO y devuelve el `acc` COMPLETO.
+    """G2 — compila un supervisor que COMPONE a UN `StateGraph` nativo. Cada agente es un NODO:
+    resuelve su binding `inputs:` desde el acumulador → corre su capability (su `run` puro, vía
+    `build_runnable`) → MERGEA EN CÓDIGO y devuelve el `acc` COMPLETO. Dos topologías hoy:
+    - `sequential`: cadena START→a→b→…→END (cada nodo ve el acc del anterior).
+    - `router`: UN nodo dispatcher que elige UN agente por `acc['route']` (default: el 1ro) y lo
+      corre. Los agentes router no declaran `inputs:` (G-WIRE los exime) → reciben el acc crudo.
+      (El conditional edge NATIVO de langgraph cuelga en Conductor — por eso un nodo, L-15.)
 
     Por qué merge-en-código y no un reducer (L-14): AgentSpan compila el grafo multi-nodo a
-    tasks de Conductor POR-NODO (un worker por nodo) y server-side SOLO mapea `operator.add`
-    como reducer — un reducer de merge custom se ignora → last-write-wins → el acumulador se
-    perdería (cada nodo vería solo el output del anterior). Devolviendo el acc COMPLETO en un
-    canal LastValue, last-write-wins ES correcto para una cadena secuencial. `acc` dinámico:
-    no hay que declarar las claves; los outputs terminales (markdown/verdict) sobreviven.
+    tasks de Conductor POR-NODO y server-side SOLO mapea `operator.add` — un reducer de merge
+    custom se ignora → last-write-wins → el acumulador se perdería. Devolviendo el acc COMPLETO
+    en un canal LastValue, last-write-wins ES correcto (cadena secuencial / 1 agente ruteado).
+    `acc` dinámico: no hay que declarar las claves; los outputs terminales sobreviven.
 
-    Con `checkpointer`, recovery por-nodo cuando LangGraph drive (Phase C/L-11). `parallel`,
-    routing dinámico (router/handoff/swarm) y nesting de los `build()` subgrafos = G2.x."""
+    Con `checkpointer`, recovery por-nodo cuando LangGraph drive (Phase C/L-11). `parallel`
+    (canales por-clave), `handoff`/`swarm` (routing dinámico multi-vuelta) y nesting de los
+    `build()` subgrafos = G2.x."""
     if ga_root is None:
         raise RuntimeError("para componer un supervisor pasá ga_root al loader")
-    if node.strategy != "sequential":
+    if node.strategy not in ("sequential", "router"):
         raise NotImplementedError(
-            f"build_supervisor_graph: strategy '{node.strategy}' = G2.x. Hoy se compone "
-            "`sequential` (single-acc + merge-en-código + last-write-wins, server-safe). "
-            "`parallel` necesita canales por-clave / operator.add server-side (L-14)."
+            f"build_supervisor_graph: strategy '{node.strategy}' = G2.x. Hoy se componen "
+            "`sequential` y `router`. `parallel` necesita canales por-clave / operator.add "
+            "server-side; `handoff`/`swarm` son routing dinámico multi-vuelta (L-14)."
         )
     from langgraph.graph import END, START, StateGraph
 
@@ -199,13 +203,30 @@ def build_supervisor_graph(node: AgentNode, ga_root: Path | None, *, checkpointe
         return _node
 
     g = StateGraph(_SupervisorState)
-    prev = START
-    for i, (ref, run) in enumerate(compiled):
-        name = f"{(ref.ref_agent_id or ref.name or 'step').replace('-', '_')}_{i}"  # langgraph node id
-        g.add_node(name, _make_node(ref, run))
-        g.add_edge(prev, name)
-        prev = name
-    g.add_edge(prev, END)
+    if node.strategy == "sequential":
+        prev = START
+        for i, (ref, run) in enumerate(compiled):
+            name = f"{(ref.ref_agent_id or ref.name or 'step').replace('-', '_')}_{i}"  # langgraph node id
+            g.add_node(name, _make_node(ref, run))
+            g.add_edge(prev, name)
+            prev = name
+        g.add_edge(prev, END)
+    else:  # router: UN nodo que despacha por `route` (server-safe). El conditional edge de
+        # langgraph genera un task `__start__router` que CUELGA en Conductor (L-15); en su lugar
+        # un solo nodo elige y corre el agente. Misma semántica que el router del LocalRuntime.
+        by_id = {(ref.ref_agent_id or ref.name): (ref, run) for ref, run in compiled}
+
+        def _router_node(state: _SupervisorState) -> dict:
+            acc = dict(state["acc"])
+            ref, run = by_id.get(acc.get("route"), compiled[0])  # default: el 1ro
+            label = ref.ref_agent_id or ref.name or "?"
+            agent_input = _resolve_binding(ref.inputs, acc, label) if ref.inputs else acc
+            acc.update(run(agent_input))
+            return {"acc": acc}
+
+        g.add_node("router", _router_node)
+        g.add_edge(START, "router")
+        g.add_edge("router", END)
 
     return g.compile(name=node.name or "supervisor", checkpointer=checkpointer)
 

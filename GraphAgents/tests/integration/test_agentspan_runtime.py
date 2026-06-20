@@ -155,6 +155,24 @@ def test_supervisor_compuesto_corre_en_agentspan():
     assert padre["conversations"] == 120
 
 
+def test_router_compuesto_corre_en_agentspan():
+    """G2.x · un supervisor `router` (conditional edges) corre en el SERVER real de AgentSpan
+    — verifica que el conditional edge compila a Conductor (L-14: local ≠ server). Rutea a
+    roas-cac (el NO-default) → si el routing server-side funciona, llegan las allocations."""
+    from sdk.loader import build_agent
+    from sdk.manifest_model import load_manifest
+    from sdk.runtime import AgentSpanRuntime
+
+    manifest = load_manifest(ROOT_PATH / "manifests" / "ads-supervisor.taskgraph.yaml")
+    graph = build_agent(manifest, ROOT_PATH)
+    seed = {"route": "roas-cac", "adsets": [{"id": "a", "roas": 2.0}, {"id": "b", "roas": 1.0}], "total_budget": 300.0}
+
+    ex = AgentSpanRuntime().run(graph, {"acc": seed})
+
+    assert ex.status == "completed", f"el router no corrió en el server: {ex.error}"
+    assert ex.output["acc"]["allocations"] == [{"id": "a", "budget": 200.0}, {"id": "b", "budget": 100.0}]
+
+
 def test_conductor_reintenta_el_nodo_fallido_sin_recomputar_los_previos():
     """G2.x · recovery por-nodo a nivel CONDUCTOR (cierra el guard que L-14 dejó abierto).
     Un grafo multi-nodo corre como tasks de Conductor por-nodo; cuando flaky_b crashea, el
