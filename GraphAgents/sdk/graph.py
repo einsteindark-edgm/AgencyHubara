@@ -75,6 +75,7 @@ def _agent_node(m: AgentNode, ga_root: Path) -> dict:
         "exposes_as_tool": m.exposes_as_tool,
         "publish": m.publish.as_ if m.publish else None,
         "consumes": list(m.consumes),
+        "group": m.group,  # None=producción · "demo" · "variant" (badge del explorer)
         "description": m.description,
     }
 
@@ -162,6 +163,71 @@ def build_graph(ga_root: Path | str) -> dict:
         "nodes": list(nodes.values()),
         "edges": edges,
     }
+
+
+# ------------------------------------------------------------- execution plan
+# El ORDEN DE EJECUCIÓN de un supervisor — la MISMA semántica que compone el loader
+# (`build_supervisor_graph` / el threading del LocalRuntime), proyectada sin importar
+# langgraph. Es lo que el explorer dibuja como "flujo": pasos numerados + el binding
+# `$state.<x>` de cada agente + el rol según la strategy (cadena / fan-out / dispatch).
+
+
+def _archetype_map(ga_root: Path) -> dict[str, str | None]:
+    """name -> archetype del catálogo (los miembros de un supervisor son REFERENCIAS
+    `uses: agent://...` con archetype None; se resuelve contra el agente real)."""
+    return {a.name: a.archetype for a in discover_agents(ga_root)}
+
+
+def execution_plan(node: AgentNode, ga_root: Path | str) -> dict:
+    """Proyecta el ORDEN DE EJECUCIÓN de un supervisor (o un agente hoja) — la misma
+    semántica que el `loader` compone, SIN importar langgraph. Cada paso lleva su `order`,
+    el `agent`, su `archetype`, el binding `inputs` (`$state.<x>`) y un `role` según la
+    strategy. Los `order` repetidos = pasos CONCURRENTES (fan-out parallel / branches router).
+
+    - `sequential`: pasos 1..N en el orden del manifest (`role: step`).
+    - `router`/`manual`: UN dispatch; el 1er agente es el `default_branch`, el resto
+      `branch` (mismo `order` 1 — solo UNO corre por ejecución, según `$state.route`).
+      (`None` cae acá por robustez del visor — espeja el LocalRuntime — pero un supervisor
+      CERTIFICADO siempre declara `strategy` explícita: `check_supervisor_coherent` lo deja
+      en C1 si falta, y el path SERVER `build_supervisor_graph` rechaza `None`.)
+    - `parallel`: todos los agentes con `order` 1 (`role: fan_out`, concurrentes) + un paso
+      terminal `join` (`order` 2).
+    - agente hoja (capability, no-supervisor): un único `step` `single`, él mismo.
+    """
+    ga_root = Path(ga_root)
+    arch = _archetype_map(ga_root)
+
+    def _member(a: AgentNode) -> tuple[str | None, str | None, dict]:
+        name = a.ref_agent_id or a.name
+        return name, arch.get(name, a.archetype), dict(a.inputs)
+
+    if not node.is_supervisor:
+        return {
+            "agent": node.name,
+            "strategy": node.strategy,
+            "steps": [{"order": 1, "agent": node.name, "archetype": node.archetype,
+                       "inputs": {}, "role": "single"}],
+        }
+
+    steps: list[dict] = []
+    if node.strategy in ("router", "manual", None):
+        for i, a in enumerate(node.agents):
+            name, archetype, inputs = _member(a)
+            steps.append({"order": 1, "agent": name, "archetype": archetype,
+                          "inputs": inputs, "role": "default_branch" if i == 0 else "branch"})
+    elif node.strategy == "parallel":
+        for a in node.agents:
+            name, archetype, inputs = _member(a)
+            steps.append({"order": 1, "agent": name, "archetype": archetype,
+                          "inputs": inputs, "role": "fan_out"})
+        steps.append({"order": 2, "agent": None, "archetype": None, "inputs": {}, "role": "join"})
+    else:  # sequential — la cadena
+        for i, a in enumerate(node.agents, 1):
+            name, archetype, inputs = _member(a)
+            steps.append({"order": i, "agent": name, "archetype": archetype,
+                          "inputs": inputs, "role": "step"})
+
+    return {"agent": node.name, "strategy": node.strategy, "steps": steps}
 
 
 # --------------------------------------------------------------------- mermaid

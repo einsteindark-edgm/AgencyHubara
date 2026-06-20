@@ -111,6 +111,22 @@ def api_route(method: str, path: str, params: dict, body: dict | None, ga_root: 
         return 200, {"ok": True}
     if method == "GET" and path == "/api/graph":
         return 200, build_graph(ga_root)
+    if method == "GET" and path == "/api/plan":
+        # El ORDEN DE EJECUCIÓN de un supervisor (o agente): lo que el explorer dibuja como
+        # "flujo". `params` viene de parse_qs → valores en lista (?agent=ads-analytics).
+        from sdk.graph import execution_plan
+        from sdk.manifest_model import load_manifest
+
+        agent_id = (params.get("agent") or [None])[0]
+        if not agent_id:
+            return 400, {"error": "falta 'agent' en el query (?agent=<id>)"}
+        manifests = ga_root / "manifests"
+        cand = sorted(manifests.glob(f"{agent_id}.agent.yaml")) + sorted(
+            manifests.glob(f"{agent_id}.taskgraph.yaml")
+        )
+        if not cand:
+            return 404, {"error": f"no existe el agente '{agent_id}'"}
+        return 200, execution_plan(load_manifest(cand[0]), ga_root)
     if method == "POST" and path == "/api/run":
         body = body or {}
         agent_id = body.get("agent")

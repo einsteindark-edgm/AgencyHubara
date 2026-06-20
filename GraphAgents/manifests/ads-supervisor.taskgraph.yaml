@@ -9,6 +9,7 @@ strategy: router
 model: openai/gpt-4o
 instructions: Rutea la consulta del operador a la capability de análisis correcta.
 certification: C2
+group: demo  # ejemplo de `router` (proving-ground) — el pod de producción es ads-analytics.
 
 agents:
   - uses: agent://meta-insights@1

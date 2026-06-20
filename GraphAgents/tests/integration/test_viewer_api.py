@@ -29,6 +29,28 @@ def test_api_health_ok():
     assert payload["ok"] is True
 
 
+def test_api_plan_returns_execution_order():
+    # parse_qs entrega listas: {"agent": ["ads-analytics"]}
+    status, payload = api_route("GET", "/api/plan", {"agent": ["ads-analytics"]}, None, ga_root=ROOT)
+    assert status == 200
+    assert payload["strategy"] == "sequential"
+    assert [s["agent"] for s in payload["steps"]] == [
+        "ctwa-insights", "sales-ledger", "ctwa-campaign-funnel",
+        "blended-economics", "numbers-qa", "ctwa-report",
+    ]
+    assert payload["steps"][2]["inputs"]["insights_payload"] == "$state.meta_insights"
+
+
+def test_api_plan_unknown_agent_is_404():
+    status, payload = api_route("GET", "/api/plan", {"agent": ["nope"]}, None, ga_root=ROOT)
+    assert status == 404
+
+
+def test_api_plan_requires_agent_param():
+    status, payload = api_route("GET", "/api/plan", {}, None, ga_root=ROOT)
+    assert status == 400
+
+
 def test_run_tool_only_agent_greeter():
     res = run_agent(ROOT, "greeter", {"name": "mundo"})
     assert res["status"] == "completed"

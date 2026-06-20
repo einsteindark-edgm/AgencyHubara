@@ -58,6 +58,17 @@
                   border:1px solid var(--line); border-radius:8px; padding:6px; background:var(--bg); color:var(--ink); }
   pre.out { background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:8px;
             font-size:11px; white-space:pre-wrap; word-break:break-word; max-height:200px; overflow:auto; }
+  ol.flowsteps { list-style:none; margin:0; padding:0; }
+  ol.flowsteps li { position:relative; padding:6px 0 6px 28px; border-top:1px solid var(--line); font-size:12.5px; }
+  ol.flowsteps li:first-child { border-top:0; }
+  ol.flowsteps .ord { position:absolute; left:0; top:6px; width:19px; height:19px; border-radius:50%;
+    background:var(--agent); color:#fff; font-size:11px; font-weight:500; display:flex; align-items:center; justify-content:center; }
+  ol.flowsteps .ag { font-weight:500; cursor:pointer; border-bottom:1px dotted var(--muted); }
+  ol.flowsteps .ag:hover { color:var(--agent); }
+  ol.flowsteps .amut { font-size:10.5px; color:var(--muted); }
+  ol.flowsteps .bnd { font-family:ui-monospace,Menlo,monospace; font-size:10.5px; color:var(--port); margin-top:2px; }
+  ol.flowsteps li.joinli { color:var(--muted); }
+  ol.flowsteps li.joinli .ord { background:var(--muted); }
 </style>
 </head>
 <body>
@@ -103,6 +114,7 @@ const certColor = c => CERTCOLOR[c] || '#9a988f';
 let GRAPH = { nodes:[], edges:[] };
 let cy = null;
 let selected = null;
+let PLAN = null;  // el plan de ejecución del supervisor seleccionado (/api/plan)
 
 const byId = id => GRAPH.nodes.find(n => n.id === id);
 const usedBy = id => GRAPH.edges.filter(e => e.target === id);
@@ -125,6 +137,19 @@ function cyStyle(){
       'text-background-color':'#fbfbfa','text-background-opacity':1,'text-background-padding':2 } },
     { selector:'edge[kind="consumes"]', style:{ 'line-style':'dashed' } },
     { selector:'.dim', style:{ 'opacity':0.12,'text-opacity':0.12 } },
+    { selector:'.flow-dim', style:{ 'opacity':0.10,'text-opacity':0 } },
+    { selector:'node.flow-on', style:{ 'border-color':'#6f63d6','border-width':4 } },
+    // overlay del flujo: la arista supervisor→agente lleva el nº de paso (cerca del agente)
+    // y el binding $state (al medio); la cadena secuencial se dibuja con aristas seqflow.
+    { selector:'edge.flow', style:{
+        'line-color':'#6f63d6','target-arrow-color':'#6f63d6','width':2.5,'opacity':1,
+        'label':'data(flowLabel)','color':'#6f63d6','font-size':9.5,'font-weight':500,'z-index':20,
+        'target-label':'data(flowOrder)','target-text-offset':22,
+        'text-background-color':'var(--bg)','text-background-opacity':1,'text-background-padding':2 } },
+    { selector:'edge.seqflow', style:{
+        'line-color':'#6f63d6','line-style':'dashed','width':2,'curve-style':'bezier',
+        'target-arrow-color':'#6f63d6','target-arrow-shape':'triangle','arrow-scale':0.9,
+        'opacity':0.85,'z-index':18 } },
     { selector:'node:selected', style:{ 'overlay-color':'#000','overlay-opacity':0.10,'overlay-padding':7 } },
   ];
 }
@@ -153,7 +178,7 @@ function catalogCard(n){
   const cert = n.kind==='port' ? '' :
     `<span class="badge" style="background:${certColor(n.certification)}22;color:${certColor(n.certification)}">${n.certification}</span>`;
   const sub = n.kind==='tool' ? `${n.side_effect}${n.approval_required?' · ⚠':''}`
-            : n.archetype + (n.publish?` · publish:${n.publish}`:'');
+            : n.archetype + (n.group?` · ${n.group==='demo'?'demo':'variante'}`:'') + (n.publish?` · publish:${n.publish}`:'');
   return `<div class="card" data-id="${n.id}">
       <span class="ic" style="background:${nodeFill(n.kind)}"></span>
       <span class="nm"><b>${n.label}</b><span>${sub}</span></span>${cert}</div>`;
@@ -184,11 +209,63 @@ function renderCatalog(){
 function pill(text, color){ color=color||'var(--muted)';
   return `<span class="badge" style="background:${color}1f;color:${color}">${text}</span>`; }
 
-function select(id){
+const isSupervisor = n => !!n && n.kind==='agent' && n.archetype==='supervisor';
+const ROLE_SYM = { default_branch:'▶', branch:'○', fan_out:'∥', step:'', single:'' };
+function bindShort(inputs){
+  return Object.values(inputs||{}).map(v=>String(v).replace('$state.','')).join(', ');
+}
+
+function clearFlow(){
+  if(!cy) return;
+  cy.batch(()=>{
+    cy.remove('edge[id ^= "seq-"]');
+    cy.elements().removeClass('flow flow-dim flow-on');
+  });
+}
+
+// Pinta sobre el canvas el ORDEN de ejecución del supervisor: numera la arista
+// supervisor→agente, muestra su binding $state, dibuja la cadena secuencial (1→2→3)
+// y atenúa todo lo que no participa. Misma fuente que el panel (PLAN de /api/plan).
+function applyFlowFromPlan(supLabel, plan){
+  clearFlow();
+  if(!plan || !plan.steps) return;
+  const supId = 'agent:'+supLabel;
+  const steps = plan.steps.filter(s=>s.agent);
+  const inPlan = new Set([supId, ...steps.map(s=>'agent:'+s.agent)]);
+  const meta = {};
+  steps.forEach(s=>{ meta['agent:'+s.agent] = {
+    order: (ROLE_SYM[s.role]||'') + (s.role==='step' ? s.order : ''),
+    bind: bindShort(s.inputs) }; });
+  cy.batch(()=>{
+    cy.nodes().forEach(nd=> nd.addClass(inPlan.has(nd.id()) ? 'flow-on' : 'flow-dim'));
+    cy.edges().forEach(e=>{
+      if(e.data('source')===supId && inPlan.has(e.data('target'))){
+        const m = meta[e.data('target')] || {};
+        e.data('flowOrder', m.order||''); e.data('flowLabel', m.bind||'');
+        e.addClass('flow');
+      } else { e.addClass('flow-dim'); }
+    });
+    if(plan.strategy==='sequential'){   // la cadena real agente_i → agente_{i+1}
+      for(let i=0;i<steps.length-1;i++)
+        cy.add({ group:'edges', classes:'seqflow',
+          data:{ id:'seq-'+i, source:'agent:'+steps[i].agent, target:'agent:'+steps[i+1].agent } });
+    }
+  });
+}
+
+async function select(id){
   selected = id;
   cy && cy.nodes().unselect();
   if(id){ cy.getElementById(id).select(); }  // resaltar sin recentrar (no clipear el grafo)
   document.querySelectorAll('.card').forEach(c=>c.classList.toggle('active', c.dataset.id===id));
+  const n = id && byId(id);
+  PLAN = null;
+  clearFlow();
+  if(isSupervisor(n)){
+    try { PLAN = await fetch('/api/plan?agent='+encodeURIComponent(n.label)).then(r=>r.json()); }
+    catch(e){ PLAN = null; }
+    if(selected===id){ applyFlowFromPlan(n.label, PLAN); }  // el usuario no cambió de nodo mientras cargaba
+  }
   renderInspector();
 }
 
@@ -198,12 +275,14 @@ function renderInspector(){
   if(!n){ box.innerHTML = '<div class="empty">Elegí un nodo del canvas o del catálogo para ver su contrato.</div>'; return; }
   const head = n.kind==='tool' ? `tool · ${n.side_effect} · v${n.version}`
              : n.kind==='port' ? `connector port`
+             : isSupervisor(n) ? `${n.archetype} · ${n.strategy}`
              : `${n.archetype}`;
   let html = `<h2>${n.label}</h2><div class="meta">${head}</div><div class="pills">`;
   if(n.kind!=='port') html += pill(n.certification, certColor(n.certification));
   if(n.declared_cert && n.declared_cert!==n.certification) html += pill('declara '+n.declared_cert);
   if(n.exposes_as_tool) html += pill('expone como tool','var(--agent)');
   if(n.publish) html += pill('publish: '+n.publish,'var(--port)');
+  if(n.group) html += pill(n.group==='demo'?'demo':'variante','#9b9994');
   if(n.approval_required) html += pill('approval','#b14a4a');
   if(n.idempotent===false) html += pill('no idempotente','#b14a4a');
   html += '</div>';
@@ -217,6 +296,23 @@ function renderInspector(){
   const rev = usedBy(n.id).map(e=>e.source.replace(/^\w+:/,''));
   if(fwd.length) html += `<div class="row"><span>usa</span><span>${fwd.join(', ')}</span></div>`;
   if(rev.length) html += `<div class="row"><span>usado por</span><span>${rev.join(', ')}</span></div>`;
+
+  if(isSupervisor(n) && PLAN && PLAN.steps && PLAN.steps.length){
+    const strat = { sequential:'cadena en orden', router:'rutea a UNO (default = el 1º)', parallel:'fan-out concurrente + join' }[PLAN.strategy] || PLAN.strategy;
+    html += `<div class="sec" style="margin-top:14px">FLUJO DE EJECUCIÓN · ${PLAN.strategy}</div>`;
+    html += `<div class="meta" style="margin:-2px 0 8px">${strat} — el nº es el orden con que corre, ← su binding de estado.</div>`;
+    html += '<ol class="flowsteps">';
+    PLAN.steps.forEach(s=>{
+      if(!s.agent){ html += `<li class="joinli"><span class="ord">⋈</span> join — funde los outputs concurrentes</li>`; return; }
+      const b = bindShort(s.inputs);
+      const tag = s.role==='default_branch'?'default':s.role==='branch'?'branch':s.role==='fan_out'?'concurrente':'';
+      const ord = (ROLE_SYM[s.role]||'') + (s.role==='step'? s.order : '');
+      html += `<li><span class="ord">${ord||'•'}</span><span class="ag" data-go="agent:${s.agent}">${s.agent}</span>`+
+              ` <span class="amut">${s.archetype||''}${tag?' · '+tag:''}</span>`+
+              `${b?`<div class="bnd">← ${b}</div>`:''}</li>`;
+    });
+    html += '</ol>';
+  }
 
   if(n.kind==='agent'){
     if(n.consumes && n.consumes.length){
@@ -238,6 +334,7 @@ function renderInspector(){
     }
   }
   box.innerHTML = html;
+  box.querySelectorAll('.flowsteps .ag[data-go]').forEach(el=> el.onclick = ()=> select(el.dataset.go));
   const btn = document.getElementById('runbtn');
   if(btn) btn.onclick = ()=>runAgent(n.label);
 }

@@ -27,7 +27,7 @@ CertLevel = Literal["none", "C0", "C1", "C2", "C3"]
 _SLUG = re.compile(r"^[a-z][a-z0-9-]*$")
 
 # Llaves NUESTRAS — se quitan antes de `agentspan deploy` (ver native_subset).
-EXT_KEYS = {"archetype", "capability", "consumes", "certification", "exposes_as_tool", "publish", "uses", "inputs"}
+EXT_KEYS = {"archetype", "capability", "consumes", "certification", "exposes_as_tool", "publish", "uses", "inputs", "group"}
 
 
 class ToolSpec(BaseModel):
@@ -76,6 +76,10 @@ class AgentNode(BaseModel):
     certification: CertLevel = "none"
     exposes_as_tool: bool = False  # el agente puede invocarse como tool de otro agente
     publish: Optional[PublishSpec] = None  # exponer hacia afuera (mcp/http)
+    # Estatus de catálogo para el explorer (badge). Ausente = producción (el pod real).
+    # `demo` = ejemplo/proving-ground (greeter, ads-supervisor); `variant` = variante de
+    # verificación (ads-extractors-parallel). Metadata pura: no afecta la ejecución.
+    group: Optional[Literal["demo", "variant"]] = None
     # --- composición ---
     strategy: Optional[Strategy] = None
     agents: list["AgentNode"] = Field(default_factory=list)

@@ -9,6 +9,7 @@ strategy: parallel
 model: openai/gpt-4o
 instructions: Extraé insights CTWA (Meta) y las ventas manuales en paralelo; son independientes.
 certification: C2
+group: variant  # variante de verificación del FORK_JOIN parallel (L-14) — no es el pod de producción.
 
 agents:
   - uses: agent://ctwa-insights@1
