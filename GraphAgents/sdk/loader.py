@@ -194,9 +194,10 @@ def build_supervisor_graph(node: AgentNode, ga_root: Path | None, *, checkpointe
         raise RuntimeError("para componer un supervisor pasá ga_root al loader")
     if node.strategy not in ("sequential", "router", "parallel"):
         raise NotImplementedError(
-            f"build_supervisor_graph: strategy '{node.strategy}' = G2.x. Hoy se componen "
-            "`sequential`, `router` y `parallel`. `handoff`/`swarm` son routing dinámico "
-            "multi-vuelta (necesitan la orquestación multi-agente nativa de AgentSpan)."
+            f"build_supervisor_graph: strategy '{node.strategy}' no se compone como StateGraph "
+            "determinista. `sequential`/`router`/`parallel` sí. `handoff`/`swarm` son NATIVOS de "
+            "AgentSpan y LLM-driven (Agent(strategy='swarm', handoffs=[OnToolResult/OnTextMention])) "
+            "→ van con el nodo LLM, no acá (L-16)."
         )
     from langgraph.graph import END, START, StateGraph
 

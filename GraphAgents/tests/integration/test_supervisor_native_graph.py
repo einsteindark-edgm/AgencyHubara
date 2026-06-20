@@ -76,6 +76,22 @@ def test_parallel_compuesto_corre_los_independientes() -> None:
     assert len(state["sales"]) == 2  # ← sales-ledger
 
 
+def test_handoff_y_swarm_raisean_loud_pertenecen_al_LLM() -> None:
+    # L-16: handoff/swarm son NATIVOS de AgentSpan y LLM-driven (handoffs por OnToolResult/
+    # OnTextMention sobre el texto/tools del LLM) — NO se componen como StateGraph determinista.
+    # build_supervisor_graph raisea loud para no shippear algo que cuelga/no aplica en el server.
+    from sdk.loader import build_agent
+    from sdk.manifest_model import TaskGraphManifest
+
+    for strat in ("handoff", "swarm"):
+        node = TaskGraphManifest.model_validate({
+            "name": f"t-{strat}", "archetype": "supervisor", "strategy": strat,
+            "agents": [{"uses": "agent://ctwa-insights@1", "inputs": {"payload": "$state.x"}}],
+        })
+        with pytest.raises(NotImplementedError, match="L-16"):
+            build_agent(node, GA)
+
+
 def test_router_compuesto_rutea_al_agente_elegido() -> None:
     # G2.x · un supervisor `strategy: router` compila a un grafo con conditional edges: el
     # `route` del input elige UN agente. ads-supervisor rutea a meta-insights (1ro, default)

@@ -315,4 +315,26 @@ guard rojo que lo reproduce — el "Guard:" se escribe ANTES que el "Fix:".
 - **Guard:** `test_router_compuesto_rutea_al_agente_elegido` (local, rutea al NO-default) +
   `test_router_compuesto_corre_en_agentspan` (server real). El docstring de `build_supervisor_graph` lo explica.
 
+### L-16 · handoff/swarm son NATIVOS de AgentSpan y LLM-driven — no se componen como StateGraph determinista (2026-06-20, cierre G2.x)
+- **Hallazgo:** al cerrar la lista de strategies (sequential/router/parallel ya server-verified), faltaban
+  `handoff`/`swarm`. Antes de construirlas como un StateGraph dinámico (Command/cycles), inspeccioné la API
+  real de AgentSpan: son primitivas NATIVAS (`agentspan.agents.handoff`, `HandoffCondition`) y **LLM-driven**.
+- **Detalle (de la API):** el patrón es `Agent(name=, model="openai/gpt-4o", agents=[...], strategy="swarm",
+  handoffs=[OnToolResult(tool_name=, target=), OnTextMention(text=, target=), OnCondition(...), OnFail(...)])`.
+  Los handoffs disparan sobre las **tool-calls y el TEXTO de un agente LLM** durante la conversación → son
+  inseparables del LLM. Las capabilities de este catálogo son G-DET (sin LLM) → no hay texto/tools del LLM
+  sobre los que un `OnTextMention`/`OnToolResult` pueda disparar. Además, los conditional edges de langgraph
+  ya cuelgan en Conductor (L-15) → una versión langgraph local-only de handoff sería un fake que no corre en
+  el server.
+- **Decisión:** handoff/swarm pertenecen al **workstream del nodo LLM** (el reporter narrativo y los agentes
+  conversacionales), no a la composición determinista. `build_supervisor_graph` compone las TRES deterministas
+  (sequential/router/parallel — todas verdes en el server real) y **raisea loud** para handoff/swarm citando
+  L-16. Cuando se implemente el LLM, handoff/swarm se hacen con `agentspan.agents.handoff` nativo, no con un
+  StateGraph.
+- **Regla para el skill:** distinguí orquestación DETERMINISTA (sequential/router/parallel → un `StateGraph`
+  componible por el loader) de LLM-DRIVEN (handoff/swarm → `Agent` nativo de AgentSpan con `handoffs=`). No
+  fuerces las segundas a un StateGraph determinista; van con el LLM.
+- **Guard:** `test_handoff_y_swarm_raisean_loud_pertenecen_al_LLM` (asierta el raise con ref a L-16) + el
+  mensaje de `build_supervisor_graph`.
+
 <!-- AÑADIR NUEVAS LECCIONES ARRIBA DE ESTA LÍNEA, NUMERADAS L-1, L-2, ... -->
