@@ -368,4 +368,24 @@ guard rojo que lo reproduce — el "Guard:" se escribe ANTES que el "Fix:".
 - **Guard:** `test_trace_retried_node_reports_terminal_attempt_not_first` (flaky con FAILED+COMPLETED → asierta
   done/retries=1/task terminal, unmatched vacío).
 
+### L-19 · ninguna etiqueta de check VERDE sin un check real detrás — el overlay de cert no puede dar falsa confianza (2026-06-20, inspect en el viewer)
+- **Síntoma:** el explorer ganó un overlay "verificar certs" que pinta cada nodo/relación verde=garantizado/rojo=roto
+  (la promesa: confiar a solo visual, sin leer código). La arista `consumes` (agente→port) se pintaba SIEMPRE verde
+  con la etiqueta "G-PORT · port declarado" — pero el `_rule` tenía `[]` hardcodeado (no corría NADA), y ni siquiera
+  existe un check G-PORT en el TestKit (`run_checks` corre 7, ninguno valida ports). Un `consumes` a un port
+  inexistente daba `ok:True`: el operador "confiaría" en una garantía inexistente.
+- **Causa:** se etiquetó una relación con el nombre de una regla sin implementar el check que esa regla representa.
+  Peor: "G-PORT" en el plugin (`01-graph-rules.md`) es una propiedad AST de la *capability* (no `requests.get`
+  suelto), NO la existencia de una línea `consumes:`. Etiqueta decorativa + nombre equivocado = doble mentira.
+- **Fix:** correr un check REAL y honesto (`tgt in PORTS` del ConnectorKit) + renombrar la regla a lo que de verdad
+  prueba ("port resuelve en el registry", NO "G-PORT"). El nodo `port` también ganó su rule de resolución (antes
+  `rules:[]`). Guard del negativo: un `consumes`/port a un id ausente da rojo.
+- **Regla para el skill:** en una feature de "confiar sin leer código", CADA badge verde debe tener un check
+  determinista detrás que de verdad lo pruebe — y el check debe correr la lógica REAL (idealmente delegando en el
+  TestKit, fuente única), nunca un `[]` ni un nombre de regla prestado. Si una relación no tiene check, pintala
+  NEUTRA (gris), nunca verde. Es la regla de oro del plugin-protocol llevada al overlay: ninguna etiqueta de check
+  sin su check. Y el agregado global (el botón) debe reflejar si TODO pasó, no si el overlay cargó.
+- **Guard:** `test_consumes_edge_to_unknown_port_is_red` + `test_consumes_edge_is_guaranteed_by_real_port_resolution`
+  + `test_port_node_checks_resolve_in_registry` (tests/architecture/test_inspect.py).
+
 <!-- AÑADIR NUEVAS LECCIONES ARRIBA DE ESTA LÍNEA, NUMERADAS L-1, L-2, ... -->

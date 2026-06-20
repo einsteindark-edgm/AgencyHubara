@@ -174,6 +174,34 @@ def api_route(method: str, path: str, params: dict, body: dict | None, ga_root: 
             return 200, {"acc": fetch_node_state(eid, tid)}
         except Exception as e:  # noqa: BLE001
             return 502, {"error": f"no pude leer el estado del nodo: {e}"}
+    if method == "GET" and path == "/api/inspect":
+        # los FILES + los CHECKS de un nodo o de una RELACIÓN (la línea entre nodos).
+        from sdk.graph import build_graph
+        from sdk.inspect import inspect_edge, inspect_node
+
+        g = build_graph(ga_root)
+        node_id = (params.get("node") or [None])[0]
+        if node_id:
+            n = next((x for x in g["nodes"] if x["id"] == node_id), None)
+            if n is None:
+                return 404, {"error": f"no existe el nodo '{node_id}'"}
+            return 200, inspect_node(n, ga_root)
+        src = (params.get("source") or [None])[0]
+        tgt = (params.get("target") or [None])[0]
+        if src and tgt:
+            kind = (params.get("kind") or [None])[0]
+            e = next((x for x in g["edges"] if x["source"] == src and x["target"] == tgt
+                      and (not kind or x["kind"] == kind)), None)
+            if e is None:
+                return 404, {"error": f"no existe la arista {src} → {tgt}"}
+            return 200, inspect_edge(e, ga_root)
+        return 400, {"error": "falta 'node' o ('source' y 'target') en el query"}
+    if method == "GET" and path == "/api/checks":
+        # 'correr las certs en el viewer': veredicto por nodo y por arista para el overlay.
+        from sdk.graph import build_graph
+        from sdk.inspect import system_checks
+
+        return 200, system_checks(build_graph(ga_root), ga_root)
     if method == "POST" and path == "/api/run":
         body = body or {}
         agent_id = body.get("agent")

@@ -125,19 +125,22 @@ function layoutGraph(nodes, edges){
 
 // --- nodo custom: muestra kind, cert, y el ESTADO VIVO (borde + ms) cuando hay trace --------
 function FlowNode({ data, selected }){
-  const n = data.n, rt = data.runtime;
+  const n = data.n, rt = data.runtime, check = data.check;
   const accent = KIND_COLOR[n.kind] || '#999';
-  const border = rt ? ST_HEX[rt.status] : (n.kind==='port' ? '#0f7a6e' : certColor(n.certification));
+  const border = check ? (check.ok ? ST_HEX.done : ST_HEX.failed)
+               : rt ? ST_HEX[rt.status]
+               : (n.kind==='port' ? '#0f7a6e' : certColor(n.certification));
   const sub = n.kind === 'tool' ? `tool · ${n.side_effect||''}`
             : n.kind === 'port' ? 'port'
             : (n.archetype || 'agente') + (n.strategy ? ' · ' + n.strategy : '');
   return html`
     <div class=${'rfnode' + (selected ? ' sel' : '')}
-         style=${{ borderColor: border, borderWidth: rt && rt.status==='running' ? 3 : 2 }}>
+         style=${{ borderColor: border, borderWidth: (check && !check.ok) || (rt && rt.status==='running') ? 3 : 2 }}>
       <${Handle} type="target" position=${Position.Top} className="rf-handle" />
       <div class="nlabel" style=${{ color: accent }}>${n.label}</div>
       <div class="nsub">
         <span>${sub}</span>
+        ${check && html`<span class="nms" style=${{ color: check.ok?ST_HEX.done:ST_HEX.failed }}>${check.ok?('✓'+(check.level&&check.level!=='none'?' '+check.level:'')):'✗ roto'}</span>`}
         ${rt && rt.ms != null && html`<span class="nms" style=${{ color: ST_HEX[rt.status] }}>${rt.ms}ms</span>`}
         ${rt && rt.retries ? html`<span class="nms" style=${{ color:'#c0392b' }}>↻${rt.retries}</span>` : null}
         ${n.group ? html`<span class="acc-l" style=${{ background:'#9b9994' }} title=${n.group}></span>` : null}
@@ -148,7 +151,7 @@ function FlowNode({ data, selected }){
 const NODE_TYPES = { ga: FlowNode };
 
 // --- el grafo (React Flow) -----------------------------------------------------------------
-function Graph({ graph, selected, onSelect, trace, plan }){
+function Graph({ graph, selected, selEdge, onSelect, onSelectEdge, trace, plan, checks }){
   const pos = useMemo(() => layoutGraph(graph.nodes, graph.edges), [graph]);
   const runtimeByAgent = useMemo(() => {
     const m = {};
@@ -165,28 +168,33 @@ function Graph({ graph, selected, onSelect, trace, plan }){
 
   const rfNodes = useMemo(() => graph.nodes.map(n => ({
     id: n.id, type:'ga', position: pos[n.id] || { x:0, y:0 },
-    data: { n, runtime: runtimeByAgent[n.id] || null }, selected: n.id === selected,
+    data: { n, runtime: runtimeByAgent[n.id] || null, check: checks ? (checks.nodes[n.id]||null) : null },
+    selected: n.id === selected,
     style: participants && !participants.has(n.id) ? { opacity:0.16 } : undefined,
-  })), [graph, pos, runtimeByAgent, selected, participants]);
+  })), [graph, pos, runtimeByAgent, selected, participants, checks]);
 
   const ids = useMemo(() => new Set(graph.nodes.map(n => n.id)), [graph]);
   const rfEdges = useMemo(() => graph.edges
     .filter(e => ids.has(e.source) && ids.has(e.target))
     .map((e,i) => {
       const dim = participants && !participants.has(e.source);
+      const ec = checks ? checks.edges[`${e.source}|${e.target}|${e.kind}`] : null;
+      const isSel = selEdge && selEdge.source===e.source && selEdge.target===e.target && selEdge.kind===e.kind;
+      const stroke = ec ? (ec.ok ? ST_HEX.done : ST_HEX.failed) : isSel ? '#6f63d6' : '#9aa0a6';
       return {
-        id:'e'+i, source:e.source, target:e.target,
+        id:'e'+i, source:e.source, target:e.target, data:{ kind:e.kind },
         label: e.kind==='agent' ? (e.strategy||'agent') : e.kind==='consumes' ? 'consume' : 'uses',
         animated: !!runtimeByAgent[e.target] && runtimeByAgent[e.target].status==='running',
-        style: { stroke:'#9aa0a6', strokeWidth:1.4, opacity: dim ? 0.12 : 1 },
+        style: { stroke, strokeWidth: isSel||ec ? 2.4 : 1.4, opacity: dim ? 0.12 : 1 },
         labelStyle: { fontSize:9, fill:'#86837c' }, labelBgStyle:{ fill:'var(--bg)' },
-        markerEnd: { type:'arrowclosed', width:14, height:14, color:'#9aa0a6' },
+        markerEnd: { type:'arrowclosed', width:14, height:14, color:stroke },
       };
-    }), [graph, ids, runtimeByAgent, participants]);
+    }), [graph, ids, runtimeByAgent, participants, checks, selEdge]);
 
   return html`<${ReactFlow}
       nodes=${rfNodes} edges=${rfEdges} nodeTypes=${NODE_TYPES}
       onNodeClick=${(_, node) => onSelect(node.id)}
+      onEdgeClick=${(_, edge) => onSelectEdge({ source:edge.source, target:edge.target, kind:edge.data.kind })}
       onPaneClick=${() => onSelect(null)}
       fitView minZoom=${0.05} onlyRenderVisibleElements=${true} nodesDraggable=${false}
       proOptions=${{ hideAttribution:false }}>
@@ -253,9 +261,52 @@ function Fleet({ onPick }){
   </div>`;
 }
 
-// --- inspector (der): contrato + plan + trace vivo + correr ---------------------------------
-function Inspector({ graph, node, plan, trace, onSelect, onRun, onLoadTrace, nodeState, onNodeState }){
-  if(!node) return html`<aside class="right insp"><div class="empty">Elegí un nodo del canvas, del catálogo o de la flota.</div></aside>`;
+// --- bloques reusables: FILES (abrir en IDE) y CHECKS (garantías de cert) -------------------
+function FilesBlock({ files }){
+  if(!files || !files.length) return null;
+  return html`<div>
+    <div class="sec" style=${{ marginTop:'14px' }}>FILES · click abre en VS Code</div>
+    ${files.map((f,i) => html`<div key=${i} class="frow" style=${{ cursor:'default' }}>
+      <span class="fdot" style=${{ background:'var(--port)' }}></span>
+      <a href=${'vscode://file/'+f.abspath} class="fname k" style=${{ color:'var(--ink)', textDecoration:'none' }}
+         title=${'abrir en VS Code · '+f.path}>${f.path}</a>
+      <span style=${{ fontSize:'10px', color:'var(--muted)', whiteSpace:'nowrap' }}>${f.role}</span>
+    </div>`)}
+  </div>`;
+}
+
+function ChecksBlock({ checks, title }){
+  if(!checks || !checks.rules || !checks.rules.length) return null;
+  return html`<div>
+    <div class="sec" style=${{ marginTop:'14px' }}>${title||'CERTIFICACIÓN'}
+      ${checks.level ? html`· <span style=${{ color:certColor(checks.level) }}>${checks.level}</span>` : ''}</div>
+    ${checks.rules.map((r,i) => html`<div key=${i} class="row" style=${{ borderTop: i?'1px solid var(--line)':'none' }}>
+      <span style=${{ color: r.ok?ST_HEX.done:ST_HEX.failed, fontWeight:500 }}>${r.ok?'✓':'✗'} ${r.rule}</span>
+      ${!r.ok && r.detail ? html`<span style=${{ fontSize:'10.5px', color:ST_HEX.failed, textAlign:'right' }}>${r.detail}</span>` : null}
+    </div>`)}
+  </div>`;
+}
+
+function EdgeInspector({ graph, selEdge, inspect, onSelect }){
+  const sN = graph.nodes.find(n => n.id===selEdge.source), tN = graph.nodes.find(n => n.id===selEdge.target);
+  const kindTxt = { uses:'usa la tool', agent:'compone al agente', consumes:'consume el port' }[selEdge.kind] || selEdge.kind;
+  return html`<aside class="right insp">
+    <h2 style=${{ fontSize:'14px' }}>${sN?sN.label:selEdge.source} <span style=${{ color:'var(--muted)' }}>→</span> ${tN?tN.label:selEdge.target}</h2>
+    <div class="meta">relación · ${kindTxt}</div>
+    <div style=${{ display:'flex', gap:'6px', marginBottom:'4px', flexWrap:'wrap' }}>
+      <button onClick=${()=>onSelect(selEdge.source)}>← ${sN?sN.label:'origen'}</button>
+      <button onClick=${()=>onSelect(selEdge.target)}>${tN?tN.label:'destino'} →</button>
+    </div>
+    <div class="meta">qué reglas garantizan esta línea (a solo visual, sin leer código) y dónde está escrita:</div>
+    ${inspect ? html`<${ChecksBlock} checks=${inspect.checks} title="GARANTÍAS DE LA RELACIÓN" />` : null}
+    ${inspect ? html`<${FilesBlock} files=${inspect.files} />` : null}
+  </aside>`;
+}
+
+// --- inspector (der): contrato + files + cert + plan + trace vivo + correr -------------------
+function Inspector({ graph, node, selEdge, inspect, plan, trace, onSelect, onRun, onLoadTrace, nodeState, onNodeState }){
+  if(selEdge) return html`<${EdgeInspector} graph=${graph} selEdge=${selEdge} inspect=${inspect} onSelect=${onSelect} />`;
+  if(!node) return html`<aside class="right insp"><div class="empty">Elegí un nodo o una línea del canvas, del catálogo o de la flota.</div></aside>`;
   const isSup = node.kind==='agent' && node.archetype==='supervisor';
   const head = node.kind==='tool' ? `tool · ${node.side_effect} · v${node.version}`
     : node.kind==='port' ? 'connector port' : isSup ? `${node.archetype} · ${node.strategy}` : `${node.archetype}`;
@@ -283,6 +334,9 @@ function Inspector({ graph, node, plan, trace, onSelect, onRun, onLoadTrace, nod
     ${node.consumes && node.consumes.length>0 && html`<div class="row"><span>consume</span><span class="k">${node.consumes.join(', ')}</span></div>`}
     ${fwd.length>0 && html`<div class="row"><span>usa</span><span>${fwd.join(', ')}</span></div>`}
     ${rev.length>0 && html`<div class="row"><span>usado por</span><span>${rev.join(', ')}</span></div>`}
+
+    ${inspect ? html`<${ChecksBlock} checks=${inspect.checks} title="CERTIFICACIÓN · qué garantiza el nodo" />` : null}
+    ${inspect ? html`<${FilesBlock} files=${inspect.files} />` : null}
 
     ${isSup && plan && plan.steps && plan.steps.length>0 && html`
       <div class="sec" style=${{ marginTop:'14px' }}>FLUJO DE EJECUCIÓN · ${plan.strategy}
@@ -357,9 +411,13 @@ function App(){
   const [graph, setGraph] = useState({ nodes:[], edges:[] });
   const [q, setQ] = useState('');
   const [selected, setSelected] = useState(null);
+  const [selEdge, setSelEdge] = useState(null);
   const [plan, setPlan] = useState(null);
   const [trace, setTrace] = useState(null);
   const [nodeState, setNodeState] = useState(null);
+  const [inspect, setInspect] = useState(null);  // {files, checks} del nodo/arista elegido
+  const [checks, setChecks] = useState(null);     // overlay de certs del sistema (/api/checks)
+  const [checking, setChecking] = useState(false);  // 1er /api/checks importa las capabilities → lento
   const [err, setErr] = useState('');
   const traceTimer = useRef(null);
   const byId = id => graph.nodes.find(n => n.id === id);
@@ -371,10 +429,24 @@ function App(){
   const isSup = n => n && n.kind==='agent' && n.archetype==='supervisor';
 
   const select = useCallback(async (id) => {
-    setSelected(id); setPlan(null); setTrace(null); setNodeState(null); stopPoll();
+    setSelected(id); setSelEdge(null); setPlan(null); setTrace(null); setNodeState(null); setInspect(null); stopPoll();
     const n = id ? graph.nodes.find(x => x.id === id) : null;
+    if(n) api('/api/inspect?node='+encodeURIComponent(id)).then(setInspect).catch(()=>{});
     if(isSup(n)){ try { setPlan(await api('/api/plan?agent='+encodeURIComponent(n.label))); } catch(e){} }
   }, [graph]);
+
+  const selectEdge = useCallback((edge) => {
+    setSelected(null); setSelEdge(edge); setPlan(null); setTrace(null); setNodeState(null); setInspect(null); stopPoll();
+    api(`/api/inspect?source=${encodeURIComponent(edge.source)}&target=${encodeURIComponent(edge.target)}&kind=${encodeURIComponent(edge.kind)}`)
+      .then(setInspect).catch(()=>{});
+  }, []);
+
+  const runChecks = useCallback(async () => {
+    if(checks){ setChecks(null); return; }            // toggle: apaga el overlay
+    setChecking(true);
+    try { setChecks(await api('/api/checks')); } catch(e){}
+    setChecking(false);
+  }, [checks]);
 
   const loadTrace = useCallback(async (eid, supLabel) => {
     stopPoll();
@@ -410,10 +482,22 @@ function App(){
 
   useEffect(() => () => stopPoll(), []);
 
+  // resumen del overlay: NO basta con que cargó — el botón refleja si TODO pasó o hay rotos.
+  const checkSummary = useMemo(() => {
+    if(!checks) return null;
+    const vals = [...Object.values(checks.nodes||{}), ...Object.values(checks.edges||{})];
+    const broken = vals.filter(v => !v.ok).length;
+    return { ok: broken===0, broken, total: vals.length };
+  }, [checks]);
+
   return html`<div class="app">
     <header>
       <span class="brand"><span class="dot"></span> GraphAgents · explorer</span>
       <input placeholder="buscar tool, agente, tag…" value=${q} onInput=${e=>setQ(e.target.value)} />
+      <button onClick=${runChecks} disabled=${checking} title="corre los checks G-*/cert y pinta nodos y relaciones"
+        style=${{ borderColor: !checks?'var(--line)':checkSummary.ok?'var(--st-done)':'var(--st-failed)',
+          color: !checks?'var(--ink)':checkSummary.ok?'var(--st-done)':'var(--st-failed)', fontWeight:500 }}>
+        ${checking?'verificando…':!checks?'verificar certs':checkSummary.ok?`✓ ${checkSummary.total} ok`:`✗ ${checkSummary.broken} rotos`}</button>
       <div class="legend">
         <span class="chip"><span class="sw" style=${{ background:'var(--agent)' }}></span>agente</span>
         <span class="chip"><span class="sw" style=${{ background:'var(--tool)' }}></span>tool</span>
@@ -427,13 +511,14 @@ function App(){
     <${Catalog} graph=${graph} q=${q} selected=${selected} onSelect=${select} />
     <main>
       ${graph.nodes.length===0 && html`<div class="loading">${err ? 'no pude leer /api/graph — ¿corre el server?' : 'cargando grafo…'}</div>`}
-      <div id="flow">${graph.nodes.length>0 && html`<${Graph} graph=${graph} selected=${selected} onSelect=${select} trace=${trace} plan=${plan} />`}</div>
+      <div id="flow">${graph.nodes.length>0 && html`<${Graph} graph=${graph} selected=${selected} selEdge=${selEdge}
+        onSelect=${select} onSelectEdge=${selectEdge} trace=${trace} plan=${plan} checks=${checks} />`}</div>
     </main>
     <div style=${{ display:'flex', flexDirection:'column', overflow:'hidden', borderLeft:'1px solid var(--line)' }}>
       <aside class="right" style=${{ borderLeft:0, borderBottom:'1px solid var(--line)', maxHeight:'34%', flex:'none' }}>
         <${Fleet} onPick=${onPickRun} />
       </aside>
-      <${Inspector} graph=${graph} node=${node} plan=${plan} trace=${trace}
+      <${Inspector} graph=${graph} node=${node} selEdge=${selEdge} inspect=${inspect} plan=${plan} trace=${trace}
         onSelect=${select} onRun=${onRun} onLoadTrace=${onLoadTrace} nodeState=${nodeState} onNodeState=${onNodeState} />
     </div>
   </div>`;

@@ -62,6 +62,34 @@ def test_api_node_state_requires_params():
     assert status == 400
 
 
+def test_api_inspect_node_returns_files_and_checks():
+    status, payload = api_route("GET", "/api/inspect", {"node": ["agent:ctwa-insights"]}, None, ga_root=ROOT)
+    assert status == 200
+    assert any(f["path"] == "graphs/ctwa_insights.py" for f in payload["files"])
+    assert payload["checks"]["level"] == "C2"
+
+
+def test_api_inspect_edge_returns_relationship_guarantees():
+    status, payload = api_route(
+        "GET", "/api/inspect",
+        {"source": ["agent:ads-analytics"], "target": ["agent:ctwa-insights"], "kind": ["agent"]},
+        None, ga_root=ROOT)
+    assert status == 200
+    assert any("G-WIRE" in r["rule"] for r in payload["checks"]["rules"])
+
+
+def test_api_inspect_requires_node_or_edge():
+    status, payload = api_route("GET", "/api/inspect", {}, None, ga_root=ROOT)
+    assert status == 400
+
+
+def test_api_checks_paints_system_green():
+    status, payload = api_route("GET", "/api/checks", {}, None, ga_root=ROOT)
+    assert status == 200
+    assert all(v["ok"] for v in payload["nodes"].values())
+    assert all(v["ok"] for v in payload["edges"].values())
+
+
 def test_run_tool_only_agent_greeter():
     res = run_agent(ROOT, "greeter", {"name": "mundo"})
     assert res["status"] == "completed"
