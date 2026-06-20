@@ -38,16 +38,18 @@ def run(input: dict, *, ports: dict | None = None, tools: dict | None = None) ->
     return complement(payload={"entities": entities, "insights": insights})
 
 
-def build():
+def build(*, checkpointer=None):
     """`StateGraph` LangGraph — el embudo como task graph EXPLÍCITO: un nodo por tool, en
     cadena (parse-entities → parse-insights → complement). Los nodos REUSAN las impls puras
     del catálogo (las mismas que compone el `run()`) — la lógica vive UNA vez (G-DET); el
     grafo solo las cablea, y es la estructura que se ve en langgraph Studio.
 
-    DURABILIDAD (honesto, ver L-11): sin LLM, AgentSpan corre el grafo por el path
-    passthrough = el grafo ENTERO como UNA task durable (recovery por execution-id del run
-    completo, NO por-nodo). La descomposición por-task (un crash entre nodos no recomputa
-    los anteriores, retry/HUMAN por nodo) es G1.x — pero la estructura ya está acá lista.
+    DURABILIDAD (honesto, ver L-11): pasá un `checkpointer` (LangGraph: MemorySaver / SQLite
+    / Postgres) → recovery POR-NODO real cuando LangGraph drive la ejecución: si un nodo
+    crashea, al reanudar (mismo `thread_id`) re-corre SOLO ese nodo, los previos se cargan del
+    checkpoint (probado en `tests/integration/test_durable_recovery.py`). SIN checkpointer
+    (default), o por el path passthrough de AgentSpan, el grafo corre como UNA task (recovery
+    del run completo). La compilación a tasks por-nodo NATIVA de AgentSpan es G2.
     `compile(name=...)` es el nombre que lee AgentSpan."""
     try:
         from typing import TypedDict
@@ -93,4 +95,4 @@ def build():
     g.add_edge("parse_entities", "parse_insights")
     g.add_edge("parse_insights", "complement")
     g.add_edge("complement", END)
-    return g.compile(name="ctwa-campaign-funnel")
+    return g.compile(name="ctwa-campaign-funnel", checkpointer=checkpointer)

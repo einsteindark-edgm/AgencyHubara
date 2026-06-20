@@ -209,8 +209,14 @@ guard rojo que lo reproduce — el "Guard:" se escribe ANTES que el "Fix:".
   inferís de un output verde. Multi-nodo en `build()` se justifica por CLARIDAD/Studio/futuro, no por
   durabilidad que el passthrough no da aún. Describí el mecanismo real, no el aspiracional.
 - **Guard:** el docstring de `graphs/ctwa_campaign_funnel.py` `build()` + `test_agentspan_runtime.py`
-  ahora citan L-11 y describen el passthrough honestamente. Cuando se implemente la descomposición
-  por-task (G1.x), el guard es un test de crash mid-graph que prueba el recovery por-nodo.
+  ahora citan L-11 y describen el passthrough honestamente.
+- **RESUELTO (2026-06-20) — el recovery por-nodo ahora está PROBADO, no afirmado:** `build(*, checkpointer=)`
+  acepta un checkpointer de LangGraph (MemorySaver/SQLite/Postgres); `tests/integration/test_durable_recovery.py`
+  es EL test que L-11 exigía: inyecta un crash en el nodo `complement`, reanuda con el mismo `thread_id`, y
+  asierta que `parse-entities` corrió UNA vez (NO se recomputó) + que el resultado correcto sobrevive. Alcance
+  honesto: esto prueba el recovery por-nodo cuando **LangGraph drive** la ejecución (durabilidad
+  LocalRuntime/checkpointer); el **passthrough de AgentSpan** sigue corriendo el grafo como UNA task — la
+  compilación a tasks por-nodo NATIVA de AgentSpan (retry/HUMAN por task de Conductor) sigue siendo **G2**.
 
 ### L-12 · Un campo del manifest que el loader IGNORA igual necesita su check (regla de oro) (2026-06-20, cleanup post-cert-review)
 - **Síntoma:** el manifest `ctwa-campaign-funnel.agent.yaml` bindeaba `complement-funnel` con
