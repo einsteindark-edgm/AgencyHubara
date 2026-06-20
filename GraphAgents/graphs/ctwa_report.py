@@ -21,6 +21,7 @@ def run(input: dict, *, ports: dict | None = None, tools: dict | None = None) ->
     period = input.get("period")
     unmatched = input.get("unmatched", {"meta_only": [], "sales_only": []})
     qa_passed = input.get("qa_passed")  # MF-4: el verdict del no-self-review gobierna la CONFIANZA
+    campaigns = input.get("campaigns", [])  # el embudo por-campaña (complementado); opcional
 
     lines = ["## Hubara — Ads Analytics (CTWA)", ""]
     if qa_passed is False:  # el QA detectó que los números no reconcilian → marcar el reporte
@@ -46,6 +47,19 @@ def run(input: dict, *, ports: dict | None = None, tools: dict | None = None) ->
     if unmatched["meta_only"] or unmatched["sales_only"]:
         lines += ["", f"**Fechas sin match (excluidas del blend):** "
                   f"solo-Meta {unmatched['meta_only']} · solo-Ventas {unmatched['sales_only']}"]
+
+    if campaigns:  # el embudo por-campaña: cada fila con su FUENTE auditable (no oculta el complemento)
+        lines += ["", "## Embudo por campaña (CTWA)", "",
+                  "| Campaña | Objetivo | Spend | Clicks | Conversaciones | Fuente |",
+                  "|---|---|--:|--:|--:|---|"]
+        for c in campaigns:
+            src = c.get("conversation_source", "none")
+            flag = "" if src in ("insights", "entities") else " ⚠ sin señal"
+            lines.append(
+                f"| {c.get('campaign_name', '')} | {c.get('objective', '')} | "
+                f"{c.get('spend_cop', 0)} | {c.get('link_clicks', 0)} | "
+                f"{c.get('conversations', 0)} | {src}{flag} |"
+            )
 
     if qa_passed is not None:
         lines += ["", f"**QA (no-self-review):** {'reconcilia' if qa_passed else 'NO reconcilia — revisar'}"]

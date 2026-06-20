@@ -47,3 +47,37 @@ def test_qa_ok_surface_en_el_reporte() -> None:
     out = run({**BLENDED, "qa_passed": True})
     assert "QA (no-self-review)" in out["markdown"]
     assert out["qa_passed"] is True
+
+
+CAMPAIGNS = [
+    {"campaign_id": "120238728477970317", "campaign_name": "Duo zodiacal",
+     "objective": "OUTCOME_ENGAGEMENT", "spend_cop": 896823, "link_clicks": 571,
+     "conversations": 70, "conversation_source": "insights", "is_messaging": True},
+    {"campaign_id": "120243118818600317", "campaign_name": "Día del padre 2026 - mundia",
+     "objective": "OUTCOME_SALES", "spend_cop": 239433, "link_clicks": 446,
+     "conversations": 120, "conversation_source": "insights", "is_messaging": True},
+    {"campaign_id": "120240351877200317", "campaign_name": "Dia de la madre",
+     "objective": "OUTCOME_ENGAGEMENT", "spend_cop": 0, "link_clicks": 0,
+     "conversations": 0, "conversation_source": "entities", "is_messaging": True},
+]
+
+
+def test_render_embudo_por_campana_con_fuente_auditable() -> None:
+    # El reporte SURFACEA el embudo por-campaña cuando el pod lo computa (campaigns): una
+    # fila por campaña con la conversación complementada y su FUENTE visible (insights /
+    # entities / none) — el humano ve de dónde salió cada número, no un valor opaco.
+    out = run({**BLENDED, "campaigns": CAMPAIGNS})
+    md = out["markdown"]
+    assert "Embudo por campaña" in md
+    # "Día del padre" (entities=0) muestra su conversación recuperada + la fuente:
+    assert "Día del padre 2026 - mundia" in md
+    assert "120" in md
+    assert "insights" in md   # la fuente auditable del complemento, visible en el reporte
+    # las 3 campañas aparecen:
+    assert "Duo zodiacal" in md and "Dia de la madre" in md
+
+
+def test_sin_campaigns_no_hay_seccion_de_embudo() -> None:
+    # Backward-compatible: sin `campaigns` el reporte es el de siempre (no sección vacía).
+    out = run(BLENDED)
+    assert "Embudo por campaña" not in out["markdown"]

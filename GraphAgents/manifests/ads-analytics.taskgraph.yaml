@@ -1,9 +1,10 @@
 # El task graph del pod de análisis CTWA. Los agentes NO se redefinen inline: se
 # REFERENCIAN del catálogo por `uses: agent://<id>@1` (G-BIND-AGENT). Estrategia
-# `sequential`: extraer (Meta + ventas) → blendear unit-economics → QA reconcilia →
-# reportar. El mismo `blended-economics` / `ctwa-insights` se reusa desde otros graphs.
+# `sequential`: extraer (Meta + ventas) → embudo por-campaña (complementado) →
+# blendear unit-economics → QA reconcilia → reportar. El mismo `blended-economics` /
+# `ctwa-insights` / `ctwa-campaign-funnel` se reusa desde otros graphs.
 name: ads-analytics
-description: Pod de análisis CTWA — extrae (Meta + ventas), blendea las unit-economics, QA no-self-review, reporta.
+description: Pod de análisis CTWA — extrae (Meta + ventas), arma el embudo por-campaña complementado, blendea las unit-economics, QA no-self-review, reporta.
 archetype: supervisor
 strategy: sequential
 model: openai/gpt-4o
@@ -23,6 +24,14 @@ agents:
   - uses: agent://sales-ledger@1
     inputs:
       payload: $state.manual_sales
+  # El embudo POR CAMPAÑA: el MCP entities clasifica por objetivo pero da la conversación
+  # en 0 para purchase-conversion (Día del padre) → se complementa con Graph /insights actions.
+  # Reusa `meta_insights` (la misma data Graph /insights del seed) + `entities_payload` (el
+  # envelope crudo de ads_get_ad_entities). Emite `campaigns` al estado.
+  - uses: agent://ctwa-campaign-funnel@1
+    inputs:
+      entities_payload: $state.entities_payload
+      insights_payload: $state.meta_insights
   - uses: agent://blended-economics@1
     inputs:
       currency: $state.currency
@@ -38,3 +47,4 @@ agents:
       period: $state.period
       unmatched: $state.unmatched
       qa_passed: $state.passed
+      campaigns: $state.campaigns
