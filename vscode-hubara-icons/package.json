@@ -1,0 +1,35 @@
+{
+  "name": "hubara-architecture-icons",
+  "displayName": "Hubara Architecture Icons",
+  "description": "Íconos de archivo y carpeta para la arquitectura de AgencyHubara — workers, plugins, tools, connectors, CLI, tests, capas DEHA/FSD, manifests, capabilities.",
+  "version": "0.1.0",
+  "publisher": "agencyhubara",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/einsteindark-edgm/AgencyHubara.git",
+    "directory": "vscode-hubara-icons"
+  },
+  "engines": {
+    "vscode": "^1.70.0"
+  },
+  "categories": [
+    "Themes"
+  ],
+  "keywords": [
+    "icon-theme",
+    "icons",
+    "agencyhubara",
+    "deha",
+    "feature-sliced"
+  ],
+  "contributes": {
+    "iconThemes": [
+      {
+        "id": "hubara-icons",
+        "label": "Hubara Architecture Icons",
+        "path": "./fileicons/hubara-icon-theme.json"
+      }
+    ]
+  }
+}
