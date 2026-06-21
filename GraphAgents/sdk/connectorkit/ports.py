@@ -87,3 +87,12 @@ PORTS: dict[str, str] = {
     "llm": "LLMPort",  # el nodo narrativo del reporter (deepseek-v4-flash vía el proxy del central)
     # "ctwa_vault": "...",  # G3
 }
+
+# Cómo armar el VENDOR FIXTURE de cada port a partir de la data de un caso (la clase ES el
+# builder: su ctor toma la data). Es la contraparte de replay de PORTS — un caso que inyecta un
+# port lo construye determinista (filas para Meta, la respuesta fija para el LLM). Sin red.
+# Regla de oro: ningún port replayeable desde un caso sin su entrada acá (lo chequea CASE-PORT).
+FIXTURE_VENDORS: dict[str, Callable] = {
+    "meta_marketing_api": FixtureMetaInsights,  # FixtureMetaInsights(rows)
+    "llm": FixtureLLM,                          # FixtureLLM(reply)
+}

@@ -1,0 +1,18 @@
+# CASO de un FLUJO completo (el supervisor ads-analytics): el seed es lo que el central
+# deposita — Graph /insights de la campaña "Día del padre", las ventas manuales, y el envelope
+# crudo de ads_get_ad_entities. El replay corre el task graph POR SU MANIFEST (5 agentes: 2
+# extractores → embudo → analyzer → QA → reporter) y produce el reporte. El golden es un
+# snapshot PINEADO del estado final (composición: orden + bindings), generado una vez y
+# verificado contra las aserciones de test_ads_analytics_supervisor (conv 160, currency COP).
+# Sin ports ni LLM: el flujo es 100% determinista (la narrativa LLM es opt-in, no va acá).
+id: dia-del-padre-flujo
+title: flujo ads-analytics · Día del padre
+target: flow:ads-analytics
+seed:
+  meta_insights: { $ref: fixtures/meta_insights_campaigns.json }
+  manual_sales:
+    sales:
+      - { date: "2026-06-15", total_orders: 12, total_revenue: 600000 }
+      - { date: "2026-06-16", total_orders: 4, total_revenue: 150000 }
+  entities_payload: { $ref: fixtures/mcp_ad_entities.json }
+golden: { $ref: fixtures/cases/dia-del-padre-flujo.golden.json }

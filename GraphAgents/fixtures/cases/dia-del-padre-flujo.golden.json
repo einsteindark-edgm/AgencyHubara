@@ -1,0 +1,211 @@
+{
+  "campaigns": [
+    {
+      "campaign_id": "120238728477970317",
+      "campaign_name": "Duo zodiacal",
+      "conversation_source": "insights",
+      "conversations": 70,
+      "is_messaging": true,
+      "link_clicks": 571,
+      "objective": "OUTCOME_ENGAGEMENT",
+      "spend_cop": 896823
+    },
+    {
+      "campaign_id": "120243118818600317",
+      "campaign_name": "Día del padre 2026 - mundia",
+      "conversation_source": "insights",
+      "conversations": 120,
+      "is_messaging": true,
+      "link_clicks": 446,
+      "objective": "OUTCOME_SALES",
+      "spend_cop": 239433
+    },
+    {
+      "campaign_id": "120240351877200317",
+      "campaign_name": "Dia de la madre",
+      "conversation_source": "entities",
+      "conversations": 0,
+      "is_messaging": true,
+      "link_clicks": 0,
+      "objective": "OUTCOME_ENGAGEMENT",
+      "spend_cop": 0
+    }
+  ],
+  "currency": "COP",
+  "days": [
+    {
+      "conversations_started": 160,
+      "date": "2026-06-15",
+      "diagnosis": {
+        "high_friction": true,
+        "poor_profitability": false,
+        "recommendation": "scale_budget"
+      },
+      "inline_link_clicks": 424,
+      "metrics": {
+        "cost_per_conversation_cop": "1851.8375",
+        "drop_off_rate": "0.6226415094339622641509433962",
+        "global_cpa_cop": "24691.16666666666666666666667",
+        "global_win_rate": "0.075",
+        "mer": "2.025015693871627505113164627"
+      },
+      "spend_cop": 296294,
+      "total_orders": 12,
+      "total_revenue_cop": 600000
+    },
+    {
+      "conversations_started": 30,
+      "date": "2026-06-16",
+      "diagnosis": {
+        "high_friction": true,
+        "poor_profitability": true,
+        "recommendation": "rotate_creative"
+      },
+      "inline_link_clicks": 110,
+      "metrics": {
+        "cost_per_conversation_cop": "6333.333333333333333333333333",
+        "drop_off_rate": "0.7272727272727272727272727273",
+        "global_cpa_cop": "47500",
+        "global_win_rate": "0.1333333333333333333333333333",
+        "mer": "0.7894736842105263157894736842"
+      },
+      "spend_cop": 190000,
+      "total_orders": 4,
+      "total_revenue_cop": 150000
+    }
+  ],
+  "entities_payload": {
+    "ad_entities": "[{\"id\":\"120238728477970317\",\"name\":\"Duo zodiacal\",\"objective\":\"OUTCOME_ENGAGEMENT\",\"amount_spent\":\"$\\u00a0896.823\\u00a0COP\",\"results\":{\"value\":\"205 (Messaging conversations started)\"},\"cost_per_result\":{\"value\":\"$\\u00a04.375\\u00a0COP (Messaging conversations started)\"},\"date_start\":\"20 de mayo de 2026\",\"date_stop\":\"18 de junio de 2026\",\"actions:link_click\":\"571\"},{\"id\":\"120243118818600317\",\"name\":\"D\\u00eda del padre 2026 - mundia\",\"objective\":\"OUTCOME_SALES\",\"amount_spent\":\"$\\u00a0239.433\\u00a0COP\",\"results\":{\"value\":\"0 (Meta purchases)\"},\"cost_per_result\":{\"value\":\"$\\u00a00\\u00a0COP (Meta purchases)\"},\"date_start\":\"20 de mayo de 2026\",\"date_stop\":\"18 de junio de 2026\",\"actions:link_click\":\"446\"},{\"id\":\"120240351877200317\",\"name\":\"Dia de la madre\",\"objective\":\"OUTCOME_ENGAGEMENT\",\"amount_spent\":\"$\\u00a00\\u00a0COP\",\"results\":{\"value\":\"0 (Messaging conversations started)\"},\"cost_per_result\":{\"value\":\"$\\u00a00\\u00a0COP (Messaging conversations started)\"},\"date_start\":\"20 de mayo de 2026\",\"date_stop\":\"18 de junio de 2026\",\"actions:link_click\":\"Not available\"}]",
+    "summary": {
+      "total_count": 3
+    }
+  },
+  "insights": [
+    {
+      "conversations_started": 160,
+      "date": "2026-06-15",
+      "inline_link_clicks": 424,
+      "spend_cop": 296294
+    },
+    {
+      "conversations_started": 30,
+      "date": "2026-06-16",
+      "inline_link_clicks": 110,
+      "spend_cop": 190000
+    }
+  ],
+  "manual_sales": {
+    "sales": [
+      {
+        "date": "2026-06-15",
+        "total_orders": 12,
+        "total_revenue": 600000
+      },
+      {
+        "date": "2026-06-16",
+        "total_orders": 4,
+        "total_revenue": 150000
+      }
+    ]
+  },
+  "markdown": "## Hubara — Ads Analytics (CTWA)\n\n| Fecha | Spend | Conv | Drop-off | MER | Órdenes | Recomendación |\n|---|--:|--:|--:|--:|--:|---|\n| 2026-06-15 | 296294 | 160 | 0.6226415094339622641509433962 | 2.025015693871627505113164627 | 12 | scale_budget |\n| 2026-06-16 | 190000 | 30 | 0.7272727272727272727272727273 | 0.7894736842105263157894736842 | 4 | rotate_creative |\n\n**Diagnóstico del periodo:** rotate_creative (MER 1.542276894224481486508161729, drop-off 0.6441947565543071161048689139)\n\n## Embudo por campaña (CTWA)\n\n| Campaña | Objetivo | Spend | Clicks | Conversaciones | Fuente |\n|---|---|--:|--:|--:|---|\n| Duo zodiacal | OUTCOME_ENGAGEMENT | 896823 | 571 | 70 | insights |\n| Día del padre 2026 - mundia | OUTCOME_SALES | 239433 | 446 | 120 | insights |\n| Dia de la madre | OUTCOME_ENGAGEMENT | 0 | 0 | 0 | entities |\n\n**QA (no-self-review):** reconcilia",
+  "meta_insights": {
+    "account_currency": "COP",
+    "data": [
+      {
+        "actions": [
+          {
+            "action_type": "link_click",
+            "value": "80"
+          },
+          {
+            "action_type": "onsite_conversion.messaging_conversation_started_7d",
+            "value": "40"
+          }
+        ],
+        "campaign_id": "120238728477970317",
+        "campaign_name": "Duo zodiacal",
+        "date_start": "2026-06-15",
+        "date_stop": "2026-06-15",
+        "inline_link_clicks": "80",
+        "spend": "120000"
+      },
+      {
+        "actions": [
+          {
+            "action_type": "onsite_conversion.messaging_conversation_started_7d",
+            "value": "30"
+          }
+        ],
+        "campaign_id": "120238728477970317",
+        "campaign_name": "Duo zodiacal",
+        "date_start": "2026-06-16",
+        "date_stop": "2026-06-16",
+        "inline_link_clicks": "50",
+        "spend": "100000"
+      },
+      {
+        "actions": [
+          {
+            "action_type": "onsite_conversion.messaging_conversation_started_7d",
+            "value": "120"
+          }
+        ],
+        "campaign_id": "120243118818600317",
+        "campaign_name": "Día del padre 2026",
+        "date_start": "2026-06-15",
+        "date_stop": "2026-06-15",
+        "inline_link_clicks": "344",
+        "spend": "176294"
+      },
+      {
+        "actions": [],
+        "campaign_id": "120243118818600317",
+        "campaign_name": "Día del padre 2026",
+        "date_start": "2026-06-16",
+        "date_stop": "2026-06-16",
+        "inline_link_clicks": "60",
+        "spend": "90000"
+      }
+    ]
+  },
+  "passed": true,
+  "period": {
+    "conversations_started": 190,
+    "diagnosis": {
+      "high_friction": true,
+      "poor_profitability": true,
+      "recommendation": "rotate_creative"
+    },
+    "inline_link_clicks": 534,
+    "metrics": {
+      "cost_per_conversation_cop": "2559.442105263157894736842105",
+      "drop_off_rate": "0.6441947565543071161048689139",
+      "global_cpa_cop": "30393.375",
+      "global_win_rate": "0.08421052631578947368421052632",
+      "mer": "1.542276894224481486508161729"
+    },
+    "spend_cop": 486294,
+    "total_orders": 16,
+    "total_revenue_cop": 750000
+  },
+  "qa_passed": true,
+  "sales": [
+    {
+      "date": "2026-06-15",
+      "total_orders": 12,
+      "total_revenue_cop": 600000
+    },
+    {
+      "date": "2026-06-16",
+      "total_orders": 4,
+      "total_revenue_cop": 150000
+    }
+  ],
+  "unmatched": {
+    "meta_only": [],
+    "sales_only": []
+  },
+  "verdict": "rotate_creative",
+  "violations": []
+}

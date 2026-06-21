@@ -9,6 +9,7 @@ varios frontends; este es el CLI. No implementa reglas: delega en
     uv run python -m sdk.cli search <term>          # buscar tools en el catálogo
     uv run python -m sdk.cli certify-tool [<id>...] # tools: nivel (exit 1 si < C2)
     uv run python -m sdk.cli graph [--format mermaid|json]  # serializa el sistema a grafo
+    uv run python -m sdk.cli cases [--check]         # los casos replayables (el catálogo del viewer)
     uv run python -m sdk.cli create tool <id>       # scaffold determinista (nace C2 + golden rojo)
 """
 from __future__ import annotations
@@ -171,6 +172,34 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 0 if ex.status == "completed" else 1
 
 
+def cmd_cases(args: argparse.Namespace) -> int:
+    from sdk.case_model import discover_cases
+
+    cases = discover_cases(ROOT)
+    if not cases:
+        print("no hay casos en fixtures/cases/ (*.case.yaml).")
+        return 0
+    if args.check:  # replayea cada caso y verifica su golden (el guard del catálogo)
+        from sdk.testkit.case_checks import run_case_checks
+
+        failed = 0
+        for c in cases:
+            res = run_case_checks(c, ROOT)
+            mark = "✓" if not res["errors"] else "✗"
+            print(f"{mark} {c.id}  [{c.target}]")
+            for e in res["errors"]:
+                print(f"    {e}")
+                failed = 1
+        if failed:
+            print("\nAlgún caso no replayea a su golden (CASE-*) — el catálogo no es confiable.")
+        return failed
+    print("# casos de prueba — el triple input fijo (seed + ports + golden) que el viewer lista")
+    for c in cases:
+        title = f"  — {c.title}" if c.title else ""
+        print(f"  {c.id}  [{c.target}]{title}")
+    return 0
+
+
 def cmd_graph(args: argparse.Namespace) -> int:
     import json
 
@@ -246,6 +275,10 @@ def main() -> int:
         help="seed JSON desde archivo (para task graphs con payloads grandes, ej. el JSON de Meta)",
     )
     rn.set_defaults(fn=cmd_run)
+
+    cs = sub.add_parser("cases", help="lista los casos de prueba replayables (el catálogo del viewer)")
+    cs.add_argument("--check", action="store_true", help="además, replayea cada caso y verifica su golden")
+    cs.set_defaults(fn=cmd_cases)
 
     g = sub.add_parser("graph", help="serializa el sistema a grafo (mermaid|json)")
     g.add_argument("--format", choices=["mermaid", "json"], default="mermaid")
