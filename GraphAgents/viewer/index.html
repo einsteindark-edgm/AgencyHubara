@@ -335,7 +335,7 @@ function ReplayResult({ res }){
   </div>`;
 }
 
-function ProbarBox({ nodeId }){
+function ProbarBox({ nodeId, onDurable }){
   const [cases, setCases] = useState(null);  // null = cargando · [] = sin casos
   const [sel, setSel] = useState(''); const [status, setStatus] = useState(''); const [res, setRes] = useState(null);
   useEffect(() => {
@@ -345,6 +345,8 @@ function ProbarBox({ nodeId }){
       .catch(() => setCases([]));
   }, [nodeId]);
   if(cases===null) return null;  // cargando — el fetch es rápido, no parpadeamos
+  const selCase = cases.find(c => c.id===sel);
+  const durableable = selCase && (selCase.target.startsWith('flow:') || selCase.target.startsWith('agent:'));
   const probar = async () => {
     if(!sel) return;
     setStatus('replayeando…'); setRes(null);
@@ -354,15 +356,23 @@ function ProbarBox({ nodeId }){
       setRes(r); setStatus('');
     } catch(e){ setStatus('error: '+e); }
   };
+  const durable = async () => {
+    if(!sel) return;
+    setStatus('corriendo en AgentSpan (durable)…'); setRes(null);
+    const r = await onDurable(sel);
+    setStatus(r.execution_id ? `▶ trace abajo · ${r.execution_id.slice(0,8)}` : ('✗ '+(r.error||'falló')));
+  };
   return html`<div class="run" style=${{ marginTop:'14px' }}>
-    <div class="sec" style=${{ margin:'0 0 6px' }}>PROBAR · caso conocido → output vs golden</div>
+    <div class="sec" style=${{ margin:'0 0 6px' }}>PROBAR · en proceso (golden) o durable (AgentSpan, nodo-por-nodo)</div>
     ${cases.length===0
       ? html`<div class="meta">sin casos todavía — sembrá uno en <span class="k">fixtures/cases/</span> (lo lista <span class="k">cli cases</span>).</div>`
       : html`<div style=${{ display:'flex', gap:'8px', alignItems:'center', flexWrap:'wrap' }}>
           <select value=${sel} onChange=${e=>setSel(e.target.value)} style=${{ fontSize:'12px', padding:'5px 8px', maxWidth:'230px' }}>
             ${cases.map(c => html`<option key=${c.id} value=${c.id}>${c.title||c.id}</option>`)}
           </select>
-          <button onClick=${probar}>probar ▸</button>
+          <button onClick=${probar} title="replay determinista en proceso — compara con el golden">probar ▸</button>
+          ${durableable && html`<button onClick=${durable}
+            title="corre en AgentSpan (durable) y seguí el trace nodo-por-nodo abajo">durable ▸</button>`}
           <span style=${{ fontSize:'11px', color:'var(--muted)' }}>${status}</span>
         </div>`}
     ${res && html`<${ReplayResult} res=${res} />`}
@@ -370,7 +380,7 @@ function ProbarBox({ nodeId }){
 }
 
 // --- inspector (der): contrato + files + cert + plan + trace vivo + correr -------------------
-function Inspector({ graph, node, selEdge, inspect, plan, trace, onSelect, onRun, onLoadTrace, nodeState, onNodeState }){
+function Inspector({ graph, node, selEdge, inspect, plan, trace, onSelect, onRun, onLoadTrace, nodeState, onNodeState, onOpenNode, onDurable }){
   if(selEdge) return html`<${EdgeInspector} graph=${graph} selEdge=${selEdge} inspect=${inspect} onSelect=${onSelect} />`;
   if(!node) return html`<aside class="right insp"><div class="empty">Elegí un nodo o una línea del canvas, del catálogo o de la flota.</div></aside>`;
   const isSup = node.kind==='agent' && node.archetype==='supervisor';
@@ -408,7 +418,7 @@ function Inspector({ graph, node, selEdge, inspect, plan, trace, onSelect, onRun
       <div class="sec" style=${{ marginTop:'14px' }}>FLUJO DE EJECUCIÓN · ${plan.strategy}
         ${live && html`<span style=${{ color:wfc }}>▶ ${live.workflow_status}</span>`}</div>
       <div class="meta" style=${{ margin:'-2px 0 8px' }}>
-        ${live ? 'estado por-nodo de Conductor — click en un paso para ver su acc.'
+        ${live ? 'estado por-nodo de Conductor — click en un paso → modal con lo que ENTRÓ y SALIÓ.'
                : (stratTxt[plan.strategy]||plan.strategy)+' — nº = orden, ← binding de estado.'}</div>
       <ol class="flowsteps">
         ${plan.steps.map((s,i) => {
@@ -421,7 +431,7 @@ function Inspector({ graph, node, selEdge, inspect, plan, trace, onSelect, onRun
           const tag = s.role==='default_branch'?'default':s.role==='branch'?'branch':s.role==='fan_out'?'concurrente':'';
           const extra = rt ? [rt.ms!=null?rt.ms+' ms':'', rt.retries?('↻'+rt.retries):''].filter(Boolean).join(' · ') : '';
           const clickable = !!(rt && rt.task_id);
-          return html`<li key=${i} class=${clickable?'clk':''} onClick=${clickable ? (()=>onNodeState(s.agent, rt.task_id)) : null}>
+          return html`<li key=${i} class=${clickable?'clk':''} onClick=${clickable ? (()=>onOpenNode(i)) : null}>
             <span class="ord" style=${{ background: oc||undefined }}>${ord||'•'}</span>
             <span class="ag" style=${{ cursor: live?'default':'pointer', borderBottom: live?'none':'1px dotted var(--muted)' }}
               onClick=${live ? null : ((ev)=>{ ev.stopPropagation(); onSelect('agent:'+s.agent); })}>${s.agent}</span>
@@ -437,7 +447,7 @@ function Inspector({ graph, node, selEdge, inspect, plan, trace, onSelect, onRun
       ${nodeState!=null && html`<pre class="out" style=${{ marginTop:'8px' }}>${
         typeof nodeState==='string' ? nodeState : JSON.stringify(nodeState, null, 2)}</pre>`}`}
 
-    ${node.kind!=='port' && html`<${ProbarBox} nodeId=${node.id} />`}
+    ${node.kind!=='port' && html`<${ProbarBox} nodeId=${node.id} onDurable=${onDurable} />`}
     ${node.kind==='agent' && !isSup && (!node.consumes || node.consumes.length===0) && html`
       <${RunBox} agent=${node.label} onRun=${onRun} />`}
   </aside>`;
@@ -490,6 +500,40 @@ function Glossary({ onClose }){
   </div>`;
 }
 
+// --- modal por-nodo de una ejecución durable: qué ENTRÓ y qué SALIÓ de ese nodo -------------
+function TraceNodeModal({ trace, stepIndex, onClose }){
+  const [io, setIo] = useState(null);
+  const step = trace.steps[stepIndex] || {}; const rt = step.runtime || {};
+  useEffect(() => {
+    setIo(null);
+    const prev = stepIndex>0 ? trace.steps[stepIndex-1] : null;
+    const accOf = (s) => (s && s.runtime && s.runtime.task_id)
+      ? api('/api/node-state?execution_id='+encodeURIComponent(trace.execution_id)+'&task_id='+encodeURIComponent(s.runtime.task_id))
+          .then(d => d.acc).catch(() => null)
+      : Promise.resolve(null);
+    Promise.all([accOf(prev), accOf(step)]).then(([i,o]) => setIo({ in:i, out:o }));
+  }, [stepIndex, trace]);
+  const c = ST_HEX[rt.status] || 'var(--muted)';
+  const fmt = (v) => v==null ? '' : (typeof v==='string' ? v : JSON.stringify(v, null, 2));
+  return html`<div class="gloss-bd" onClick=${onClose}>
+    <div class="gloss" onClick=${e=>e.stopPropagation()}>
+      <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'baseline', gap:'12px' }}>
+        <h3>${step.agent||'nodo'} ${rt.status ? html`<span class="stbadge" style=${{ background:c+'22', color:c }}>${rt.status}</span>` : ''}</h3>
+        <button onClick=${onClose}>cerrar ✕</button></div>
+      <div style=${{ fontSize:'12px', color:'var(--muted)', margin:'2px 0 6px' }}>
+        ${step.archetype||''}${rt.ms!=null?` · ${rt.ms} ms`:''}${rt.retries?` · ↻${rt.retries}`:''} — qué entró y qué salió de este nodo (el acumulador durable).</div>
+      ${!io ? html`<div class="empty">leyendo el estado del nodo…</div>` : html`<div>
+        <div class="sec" style=${{ marginTop:'8px' }}>ENTRÓ · ${stepIndex===0?'el seed inicial del flujo':'el acc del nodo anterior'}</div>
+        ${io.in==null
+          ? html`<div class="meta">${stepIndex===0?'(el seed de entrada — ver el panel Probar)':'(sin estado previo)'}</div>`
+          : html`<pre class="out">${fmt(io.in)}</pre>`}
+        <div class="sec" style=${{ marginTop:'10px' }}>SALIÓ · el acc después de este nodo</div>
+        <pre class="out">${fmt(io.out) || '(sin estado — ¿el nodo todavía no corrió?)'}</pre>
+      </div>`}
+    </div>
+  </div>`;
+}
+
 // --- App -----------------------------------------------------------------------------------
 function App(){
   const [graph, setGraph] = useState({ nodes:[], edges:[] });
@@ -503,6 +547,7 @@ function App(){
   const [checks, setChecks] = useState(null);     // overlay de certs del sistema (/api/checks)
   const [checking, setChecking] = useState(false);  // 1er /api/checks importa las capabilities → lento
   const [showGloss, setShowGloss] = useState(false);  // overlay del glosario de convenciones
+  const [traceModal, setTraceModal] = useState(null);  // índice de paso → modal entró/salió del nodo
   const [err, setErr] = useState('');
   const traceTimer = useRef(null);
   const byId = id => graph.nodes.find(n => n.id === id);
@@ -514,7 +559,7 @@ function App(){
   const isSup = n => n && n.kind==='agent' && n.archetype==='supervisor';
 
   const select = useCallback(async (id) => {
-    setSelected(id); setSelEdge(null); setPlan(null); setTrace(null); setNodeState(null); setInspect(null); stopPoll();
+    setSelected(id); setSelEdge(null); setPlan(null); setTrace(null); setNodeState(null); setInspect(null); setTraceModal(null); stopPoll();
     const n = id ? graph.nodes.find(x => x.id === id) : null;
     if(n) api('/api/inspect?node='+encodeURIComponent(id)).then(setInspect).catch(()=>{});
     if(isSup(n)){ try { setPlan(await api('/api/plan?agent='+encodeURIComponent(n.label))); } catch(e){} }
@@ -565,6 +610,16 @@ function App(){
       setNodeState(d.acc ?? d.error ?? '(sin estado)'); } catch(e){ setNodeState('error: '+e.message); }
   }, [trace]);
 
+  // probar DURABLE: submitea el caso a AgentSpan y engancha el trace nodo-por-nodo (loadTrace).
+  const onDurable = useCallback(async (caseId) => {
+    const r = await fetch('/api/run-durable', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ case: caseId }) }).then(x => x.json());
+    if(r.execution_id) loadTrace(r.execution_id, r.agent);
+    return r;
+  }, [loadTrace]);
+
+  const onOpenNode = useCallback((stepIndex) => setTraceModal(stepIndex), []);  // modal entró/salió
+
   useEffect(() => () => stopPoll(), []);
 
   // resumen del overlay: NO basta con que cargó — el botón refleja si TODO pasó o hay rotos.
@@ -605,9 +660,11 @@ function App(){
         <${Fleet} onPick=${onPickRun} />
       </aside>
       <${Inspector} graph=${graph} node=${node} selEdge=${selEdge} inspect=${inspect} plan=${plan} trace=${trace}
-        onSelect=${select} onRun=${onRun} onLoadTrace=${onLoadTrace} nodeState=${nodeState} onNodeState=${onNodeState} />
+        onSelect=${select} onRun=${onRun} onLoadTrace=${onLoadTrace} nodeState=${nodeState} onNodeState=${onNodeState}
+        onOpenNode=${onOpenNode} onDurable=${onDurable} />
     </div>
     ${showGloss && html`<${Glossary} onClose=${()=>setShowGloss(false)} />`}
+    ${traceModal!=null && trace && html`<${TraceNodeModal} trace=${trace} stepIndex=${traceModal} onClose=${()=>setTraceModal(null)} />`}
   </div>`;
 }
 

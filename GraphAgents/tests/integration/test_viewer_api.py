@@ -189,6 +189,49 @@ def test_api_replay_roto_es_422_sin_badge(monkeypatch):
     assert "error" in payload and "matches" not in payload
 
 
+def test_durable_input_envuelve_el_seed_de_un_supervisor():
+    # el bug: un supervisor en AgentSpan usa _SupervisorState{acc} → el seed va envuelto.
+    # Pasarlo crudo (como hacía _run_on_agentspan) → el nodo hace dict(string) y revienta.
+    from sdk.manifest_model import load_manifest
+    from viewer.server import _durable_input
+
+    m = load_manifest(ROOT / "manifests" / "ads-analytics.taskgraph.yaml")
+    assert _durable_input(m, {"meta_insights": 1}) == {"acc": {"meta_insights": 1}}
+
+
+def test_durable_input_crudo_para_una_capability():
+    from sdk.manifest_model import load_manifest
+    from viewer.server import _durable_input
+
+    m = load_manifest(ROOT / "manifests" / "greeter.agent.yaml")  # no es supervisor
+    assert _durable_input(m, {"name": "ada"}) == {"name": "ada"}
+
+
+def test_durable_output_desenvuelve_el_acc_de_un_supervisor():
+    from sdk.manifest_model import load_manifest
+    from viewer.server import _durable_output
+
+    m = load_manifest(ROOT / "manifests" / "ads-analytics.taskgraph.yaml")
+    assert _durable_output(m, {"acc": {"verdict": "scale_budget"}}) == {"verdict": "scale_budget"}
+
+
+def test_api_run_durable_requiere_case():
+    status, payload = api_route("POST", "/api/run-durable", {}, {}, ga_root=ROOT)
+    assert status == 400
+
+
+def test_api_run_durable_rechaza_un_tool():
+    # un tool no es un agente de AgentSpan → no corre en el runtime durable (usá 'probar').
+    status, payload = api_route("POST", "/api/run-durable", {}, {"case": "diagnose-scale"}, ga_root=ROOT)
+    assert status == 422
+    assert "durable" in payload["error"].lower()
+
+
+def test_api_run_durable_caso_inexistente_es_404():
+    status, payload = api_route("POST", "/api/run-durable", {}, {"case": "no-existe"}, ga_root=ROOT)
+    assert status == 404
+
+
 def _has(mod: str) -> bool:
     return importlib.util.find_spec(mod) is not None
 

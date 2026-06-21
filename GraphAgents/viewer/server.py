@@ -11,6 +11,8 @@ en vivo (cada request re-proyecta el sistema; editás un manifest y refrescás):
     POST /api/replay         -> corre un caso (seed+ports-fixture) y compara con el golden
                                body: {"case": "diagnose-scale"} -> {output, golden, matches, inputs}
     GET  /api/legend         -> el glosario de convenciones (niveles + reglas G-*/T-*/CASE-*)
+    POST /api/run-durable    -> corre el caso en AgentSpan (durable) -> {execution_id} para el trace
+                               body: {"case": "dia-del-padre-flujo"}  (a diferencia de /api/replay)
 
 Por qué stdlib y no FastAPI: el explorer es read-mostly + un endpoint de run; con
 la stdlib corre en la imagen slim sin sincronizar deps pesadas, igual que el
@@ -97,14 +99,37 @@ def _run_on_agentspan(ga_root: Path, m, input_dict: dict) -> dict:
             "error": f"no pude compilar el grafo (¿langgraph? corré el explorer en el container): {e}",
         }
     try:
-        ex = AgentSpanRuntime().run(graph, input_dict)
+        ex = AgentSpanRuntime().run(graph, _durable_input(m, input_dict))  # supervisor → {acc: seed}
     except Exception as e:  # noqa: BLE001 — server caído / agentspan ausente
         return {
             "status": "failed",
             "runtime": "agentspan",
             "error": f"el run en AgentSpan falló (¿server :6767 arriba? ¿agentspan instalado?): {e}",
         }
-    return {"id": ex.id, "status": ex.status, "output": ex.output, "error": ex.error, "runtime": "agentspan"}
+    return {"id": ex.id, "status": ex.status, "output": _durable_output(m, ex.output),
+            "error": ex.error, "runtime": "agentspan"}
+
+
+def _durable_input(m, seed: dict) -> dict:
+    """La forma del estado inicial para AgentSpan según el grafo. Un SUPERVISOR compila a
+    `_SupervisorState{acc}` (+ `patches` en parallel) → el seed va ENVUELTO en `acc`; pasarlo
+    crudo hace que el 1er nodo reciba `acc` como string y reviente con `dict(<string>)` (el bug
+    que tumbaba 'probar durable' del flujo). Una capability sola (greeter) toma el seed crudo —
+    su State tiene las claves directo."""
+    if not getattr(m, "is_supervisor", False):
+        return seed
+    state = {"acc": seed}
+    if m.strategy == "parallel":
+        state["patches"] = []  # el canal operator.add del fan-out (L-14)
+    return state
+
+
+def _durable_output(m, out):
+    """El estado final de un supervisor viene como `{acc: <state>}` → devolvemos el state (lo que
+    el resto del sistema y el panel esperan). Una capability sola ya devuelve su output."""
+    if getattr(m, "is_supervisor", False) and isinstance(out, dict) and "acc" in out:
+        return out["acc"]
+    return out
 
 
 def _case_node_id(case) -> str:
@@ -135,6 +160,29 @@ def replay_case_route(ga_root: Path, case_id: str) -> tuple[int, dict]:
         "case": case.id, "target": case.target, "title": case.title,
         "matches": out == golden, "output": out, "golden": golden, "inputs": inputs,
     }
+
+
+def run_durable_route(ga_root: Path, case_id: str) -> tuple[int, dict]:
+    """Corre el TARGET de un caso en el runtime DURABLE (AgentSpan) con el seed del caso, y
+    devuelve el execution-id para que el viewer siga el trace nodo-por-nodo. A diferencia de
+    /api/replay (en proceso, determinista), esto SÍ submitea a Conductor (:6767). Un tool no es
+    un agente durable; un agente que consume un port lo rechaza `run_agent` (el durable necesita
+    el vendor real, no el fixture del caso)."""
+    from sdk.case_model import discover_cases, resolve
+
+    case = next((c for c in discover_cases(ga_root) if c.id == case_id), None)
+    if case is None:
+        return 404, {"error": f"no existe el caso '{case_id}'"}
+    if case.kind == "tool":
+        return 422, {"error": f"'{case.target}' es un tool — no corre en el runtime DURABLE "
+                     "(no es un agente de AgentSpan). Usá 'probar' (en proceso)."}
+    seed = resolve(case.seed, ga_root)
+    res = run_agent(ga_root, case.target_id, seed, runtime="agentspan")
+    if res.get("status") != "completed":
+        return 422, {"error": res.get("error", "el run durable falló"), "runtime": "agentspan",
+                     "execution_id": res.get("id"), "agent": case.target_id}
+    return 200, {"execution_id": res["id"], "agent": case.target_id,
+                 "status": res["status"], "output": res.get("output")}
 
 
 def api_route(method: str, path: str, params: dict, body: dict | None, ga_root: Path = GA_ROOT):
@@ -270,6 +318,13 @@ def api_route(method: str, path: str, params: dict, body: dict | None, ga_root: 
         if not case_id:
             return 400, {"error": "falta 'case' en el body"}
         return replay_case_route(ga_root, case_id)
+    if method == "POST" and path == "/api/run-durable":
+        # corre el caso en el runtime DURABLE (AgentSpan) → execution-id para seguir el trace
+        # nodo-por-nodo. A diferencia de /api/replay (en proceso), submitea a Conductor (:6767).
+        case_id = (body or {}).get("case")
+        if not case_id:
+            return 400, {"error": "falta 'case' en el body"}
+        return run_durable_route(ga_root, case_id)
     return 404, {"error": f"no existe la ruta {method} {path}"}
 
 
