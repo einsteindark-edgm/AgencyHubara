@@ -10,6 +10,7 @@ en vivo (cada request re-proyecta el sistema; editás un manifest y refrescás):
     GET  /api/cases[?node=]  -> los casos replayables del catálogo (el select del panel "Probar")
     POST /api/replay         -> corre un caso (seed+ports-fixture) y compara con el golden
                                body: {"case": "diagnose-scale"} -> {output, golden, matches, inputs}
+    GET  /api/legend         -> el glosario de convenciones (niveles + reglas G-*/T-*/CASE-*)
 
 Por qué stdlib y no FastAPI: el explorer es read-mostly + un endpoint de run; con
 la stdlib corre en la imagen slim sin sincronizar deps pesadas, igual que el
@@ -245,6 +246,12 @@ def api_route(method: str, path: str, params: dict, body: dict | None, ga_root: 
         if node:
             cases = [c for c in cases if _case_node_id(c) == node]
         return 200, {"cases": [{"id": c.id, "target": c.target, "title": c.title} for c in cases]}
+    if method == "GET" and path == "/api/legend":
+        # el glosario de convenciones (niveles C0–C3 + reglas G-*/T-*/CASE-*) — el botón
+        # "convenciones". Fuente única en sdk.glossary; la UI no reimplementa el vocabulario.
+        from sdk.glossary import glossary
+
+        return 200, glossary()
     if method == "POST" and path == "/api/run":
         body = body or {}
         agent_id = body.get("agent")
