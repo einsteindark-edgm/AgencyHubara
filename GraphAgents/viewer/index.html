@@ -380,7 +380,7 @@ function ProbarBox({ nodeId, onDurable }){
 }
 
 // --- inspector (der): contrato + files + cert + plan + trace vivo + correr -------------------
-function Inspector({ graph, node, selEdge, inspect, plan, trace, onSelect, onRun, onLoadTrace, nodeState, onNodeState, onOpenNode, onDurable }){
+function Inspector({ graph, node, selEdge, inspect, plan, trace, onSelect, onRun, onLoadTrace, onOpenNode, onDurable }){
   if(selEdge) return html`<${EdgeInspector} graph=${graph} selEdge=${selEdge} inspect=${inspect} onSelect=${onSelect} />`;
   if(!node) return html`<aside class="right insp"><div class="empty">Elegí un nodo o una línea del canvas, del catálogo o de la flota.</div></aside>`;
   const isSup = node.kind==='agent' && node.archetype==='supervisor';
@@ -443,9 +443,7 @@ function Inspector({ graph, node, selEdge, inspect, plan, trace, onSelect, onRun
         })}
       </ol>
       <div style=${{ display:'flex', gap:'8px', alignItems:'center', marginTop:'8px', flexWrap:'wrap' }}>
-        <button onClick=${()=>onLoadTrace(node.label)}>${live?'recargar':'trace en vivo'} ▸</button></div>
-      ${nodeState!=null && html`<pre class="out" style=${{ marginTop:'8px' }}>${
-        typeof nodeState==='string' ? nodeState : JSON.stringify(nodeState, null, 2)}</pre>`}`}
+        <button onClick=${()=>onLoadTrace(node.label)}>${live?'recargar':'trace en vivo'} ▸</button></div>`}
 
     ${node.kind!=='port' && html`<${ProbarBox} nodeId=${node.id} onDurable=${onDurable} />`}
     ${node.kind==='agent' && !isSup && (!node.consumes || node.consumes.length===0) && html`
@@ -515,6 +513,8 @@ function TraceNodeModal({ trace, stepIndex, onClose }){
   }, [stepIndex, trace]);
   const c = ST_HEX[rt.status] || 'var(--muted)';
   const fmt = (v) => v==null ? '' : (typeof v==='string' ? v : JSON.stringify(v, null, 2));
+  const emptyMsg = rt.status==='failed' ? '(el nodo falló — sin acc)'
+    : rt.status==='pending' ? '(todavía no corrió)' : '(sin estado)';
   return html`<div class="gloss-bd" onClick=${onClose}>
     <div class="gloss" onClick=${e=>e.stopPropagation()}>
       <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'baseline', gap:'12px' }}>
@@ -528,7 +528,7 @@ function TraceNodeModal({ trace, stepIndex, onClose }){
           ? html`<div class="meta">${stepIndex===0?'(el seed de entrada — ver el panel Probar)':'(sin estado previo)'}</div>`
           : html`<pre class="out">${fmt(io.in)}</pre>`}
         <div class="sec" style=${{ marginTop:'10px' }}>SALIÓ · el acc después de este nodo</div>
-        <pre class="out">${fmt(io.out) || '(sin estado — ¿el nodo todavía no corrió?)'}</pre>
+        <pre class="out">${fmt(io.out) || emptyMsg}</pre>
       </div>`}
     </div>
   </div>`;
@@ -542,7 +542,6 @@ function App(){
   const [selEdge, setSelEdge] = useState(null);
   const [plan, setPlan] = useState(null);
   const [trace, setTrace] = useState(null);
-  const [nodeState, setNodeState] = useState(null);
   const [inspect, setInspect] = useState(null);  // {files, checks} del nodo/arista elegido
   const [checks, setChecks] = useState(null);     // overlay de certs del sistema (/api/checks)
   const [checking, setChecking] = useState(false);  // 1er /api/checks importa las capabilities → lento
@@ -559,14 +558,14 @@ function App(){
   const isSup = n => n && n.kind==='agent' && n.archetype==='supervisor';
 
   const select = useCallback(async (id) => {
-    setSelected(id); setSelEdge(null); setPlan(null); setTrace(null); setNodeState(null); setInspect(null); setTraceModal(null); stopPoll();
+    setSelected(id); setSelEdge(null); setPlan(null); setTrace(null); setInspect(null); setTraceModal(null); stopPoll();
     const n = id ? graph.nodes.find(x => x.id === id) : null;
     if(n) api('/api/inspect?node='+encodeURIComponent(id)).then(setInspect).catch(()=>{});
     if(isSup(n)){ try { setPlan(await api('/api/plan?agent='+encodeURIComponent(n.label))); } catch(e){} }
   }, [graph]);
 
   const selectEdge = useCallback((edge) => {
-    setSelected(null); setSelEdge(edge); setPlan(null); setTrace(null); setNodeState(null); setInspect(null); stopPoll();
+    setSelected(null); setSelEdge(edge); setPlan(null); setTrace(null); setInspect(null); stopPoll();
     api(`/api/inspect?source=${encodeURIComponent(edge.source)}&target=${encodeURIComponent(edge.target)}&kind=${encodeURIComponent(edge.kind)}`)
       .then(setInspect).catch(()=>{});
   }, []);
@@ -580,7 +579,7 @@ function App(){
 
   const loadTrace = useCallback(async (eid, supLabel) => {
     stopPoll();
-    if(supLabel){ const id = 'agent:'+supLabel; setSelected(id); setNodeState(null);
+    if(supLabel){ const id = 'agent:'+supLabel; setSelected(id); setTraceModal(null);
       try { setPlan(await api('/api/plan?agent='+encodeURIComponent(supLabel))); } catch(e){} }
     let t; try { t = await api('/api/trace?execution_id='+encodeURIComponent(eid)); } catch(e){ return; }
     if(!t || !t.steps) return;
@@ -603,12 +602,6 @@ function App(){
     if(r.runtime==='agentspan' && r.id && isSup(graph.nodes.find(n=>n.id==='agent:'+agent))) loadTrace(r.id, agent);
     return r;
   }, [graph, loadTrace]);
-
-  const onNodeState = useCallback(async (agent, taskId) => {
-    if(!trace) return; setNodeState('cargando estado…');
-    try { const d = await api('/api/node-state?execution_id='+encodeURIComponent(trace.execution_id)+'&task_id='+encodeURIComponent(taskId));
-      setNodeState(d.acc ?? d.error ?? '(sin estado)'); } catch(e){ setNodeState('error: '+e.message); }
-  }, [trace]);
 
   // probar DURABLE: submitea el caso a AgentSpan y engancha el trace nodo-por-nodo (loadTrace).
   const onDurable = useCallback(async (caseId) => {
@@ -660,8 +653,7 @@ function App(){
         <${Fleet} onPick=${onPickRun} />
       </aside>
       <${Inspector} graph=${graph} node=${node} selEdge=${selEdge} inspect=${inspect} plan=${plan} trace=${trace}
-        onSelect=${select} onRun=${onRun} onLoadTrace=${onLoadTrace} nodeState=${nodeState} onNodeState=${onNodeState}
-        onOpenNode=${onOpenNode} onDurable=${onDurable} />
+        onSelect=${select} onRun=${onRun} onLoadTrace=${onLoadTrace} onOpenNode=${onOpenNode} onDurable=${onDurable} />
     </div>
     ${showGloss && html`<${Glossary} onClose=${()=>setShowGloss(false)} />`}
     ${traceModal!=null && trace && html`<${TraceNodeModal} trace=${trace} stepIndex=${traceModal} onClose=${()=>setTraceModal(null)} />`}

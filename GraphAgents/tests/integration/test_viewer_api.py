@@ -199,6 +199,17 @@ def test_durable_input_envuelve_el_seed_de_un_supervisor():
     assert _durable_input(m, {"meta_insights": 1}) == {"acc": {"meta_insights": 1}}
 
 
+def test_durable_input_parallel_agrega_patches():
+    # parallel compila a _ParallelSupervisorState{acc, patches} (patches = reducer operator.add,
+    # L-14) → el estado inicial necesita patches:[] o el fan-out no arranca.
+    from sdk.manifest_model import load_manifest
+    from viewer.server import _durable_input
+
+    m = load_manifest(ROOT / "manifests" / "ads-extractors-parallel.taskgraph.yaml")
+    assert m.strategy == "parallel"
+    assert _durable_input(m, {"x": 1}) == {"acc": {"x": 1}, "patches": []}
+
+
 def test_durable_input_crudo_para_una_capability():
     from sdk.manifest_model import load_manifest
     from viewer.server import _durable_input

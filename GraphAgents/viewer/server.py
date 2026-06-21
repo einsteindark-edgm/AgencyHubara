@@ -166,8 +166,10 @@ def run_durable_route(ga_root: Path, case_id: str) -> tuple[int, dict]:
     """Corre el TARGET de un caso en el runtime DURABLE (AgentSpan) con el seed del caso, y
     devuelve el execution-id para que el viewer siga el trace nodo-por-nodo. A diferencia de
     /api/replay (en proceso, determinista), esto SÍ submitea a Conductor (:6767). Un tool no es
-    un agente durable; un agente que consume un port lo rechaza `run_agent` (el durable necesita
-    el vendor real, no el fixture del caso)."""
+    un agente durable. Un agente DIRECTO que consume un port lo rechaza `run_agent` (no hay
+    fixture en el durable). Un supervisor que REFERENCIA un agente-con-port (ninguno hoy: ningún
+    caso apunta a eso) NO lo caza el guard estructural — pero falla CERRADO en runtime: el nodo
+    corre con `ports={}` → KeyError ANTES de tocar el vendor → task FAILED, sin llamada a Meta."""
     from sdk.case_model import discover_cases, resolve
 
     case = next((c for c in discover_cases(ga_root) if c.id == case_id), None)

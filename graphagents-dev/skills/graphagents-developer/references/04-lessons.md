@@ -410,4 +410,26 @@ guard rojo que lo reproduce — el "Guard:" se escribe ANTES que el "Fix:".
 - **Guard:** `test_guard_catches_collision_invention` + `test_guard_allows_percentage_reformat_of_a_ratio`
   + `test_guard_allows_european_thousands_format` (tests/graphs/test_ctwa_report_narrate.py).
 
+### L-21 · al submitear a AgentSpan, el caller debe ESPEJAR la forma del estado compilado — un supervisor toma `{acc: seed}`, no el seed crudo (2026-06-21, "probar durable" del viewer)
+- **Síntoma:** correr el flujo `ads-analytics` en el runtime durable desde el viewer fallaba: el
+  1er nodo (`ctwa-insights`) reventaba con `dictionary update sequence element #0 has length 1; 2
+  is required`, los demás quedaban `pending`. Un run real lo reveló (no lo cazaba ningún test —
+  los tests de supervisor-en-server ya pasaban la forma correcta a mano).
+- **Causa:** un supervisor compila a un `StateGraph(_SupervisorState{acc})` (o `_ParallelSupervisorState
+  {acc, patches}`); cada nodo hace `acc = dict(state["acc"])`. El viewer (`_run_on_agentspan`) pasaba
+  el seed CRUDO (`{meta_insights, manual_sales, ...}`) en vez de `{acc: seed}`. Sin la clave `acc`, el
+  framework langgraph de AgentSpan serializaba el seed como STRING en el canal `acc` → `dict(<string>)`
+  itera caracteres → el error. Una capability SOLA (greeter) sí toma el seed crudo (su State tiene las
+  claves directo) — por eso greeter durable andaba y enmascaró el bug del supervisor.
+- **Fix:** `_durable_input(m, seed)` envuelve `{acc: seed}` para un supervisor (+ `patches: []` si es
+  `parallel`, el canal `operator.add` del fan-out, L-14) y deja el seed crudo para una capability;
+  `_durable_output(m, out)` desenvuelve `out["acc"]`. La forma del estado inicial DEBE espejar lo que
+  `build_supervisor_graph` declara por strategy (sequential/router = `{acc}`; parallel = `{acc, patches}`).
+- **Regla para el skill:** la frontera viewer→runtime (o cualquier caller de `AgentSpanRuntime().run`)
+  no pasa el seed crudo a un grafo compuesto: lo envuelve en la MISMA forma que el loader compiló. Si
+  agregás una strategy nueva con otro State, agregá su forma a `_durable_input`. (No confundir con L-13/
+  L-14, que son del lado del grafo; esto es del lado del que lo invoca.)
+- **Guard:** `test_durable_input_envuelve_el_seed_de_un_supervisor` + `test_durable_input_parallel_agrega_patches`
+  + `test_durable_output_desenvuelve_el_acc_de_un_supervisor` (tests/integration/test_viewer_api.py).
+
 <!-- AÑADIR NUEVAS LECCIONES ARRIBA DE ESTA LÍNEA, NUMERADAS L-1, L-2, ... -->
