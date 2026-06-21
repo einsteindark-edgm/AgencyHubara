@@ -243,6 +243,38 @@ def test_api_run_durable_caso_inexistente_es_404():
     assert status == 404
 
 
+def _server_up() -> bool:
+    import urllib.request
+    try:
+        urllib.request.urlopen("http://localhost:6767/api/workflow/search?query=status+IN+(RUNNING)&size=1", timeout=3)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+@pytest.mark.skipif(not _server_up(), reason="necesita el server AgentSpan en :6767")
+def test_run_durable_es_async_devuelve_running_y_completa_en_background():
+    # la MEJOR solución: /api/run-durable NO bloquea hasta completar — submitea con start(),
+    # devuelve el execution-id con status 'running' al instante, y los workers completan en
+    # background (el viewer pollea el trace y ve los nodos activarse en vivo).
+    import time
+
+    status, payload = api_route("POST", "/api/run-durable", {}, {"case": "dia-del-padre-flujo"}, ga_root=ROOT)
+    assert status == 200, payload
+    assert payload["execution_id"]
+    assert payload["status"] == "running"  # NO 'completed' — no esperó (la versión sync devolvía completed)
+
+    # y EVENTUALMENTE completa solo (los workers corren en background tras el return):
+    from sdk.trace import fetch_workflow
+    wf = {}
+    for _ in range(40):
+        wf = fetch_workflow(payload["execution_id"])
+        if str(wf.get("status", "")).upper() in ("COMPLETED", "FAILED"):
+            break
+        time.sleep(0.5)
+    assert str(wf.get("status", "")).upper() == "COMPLETED", wf.get("status")
+
+
 def _has(mod: str) -> bool:
     return importlib.util.find_spec(mod) is not None
 

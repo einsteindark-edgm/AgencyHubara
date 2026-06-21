@@ -370,7 +370,7 @@ function ProbarBox({ nodeId, onDurable }){
     if(!sel) return;
     setStatus('corriendo en AgentSpan (durable)…'); setRes(null);
     const r = await onDurable(sel);
-    setStatus(r.execution_id ? `▶ trace abajo · ${r.execution_id.slice(0,8)}` : ('✗ '+(r.error||'falló')));
+    setStatus(r.execution_id ? `▶ corriendo en vivo · ${r.execution_id.slice(0,8)}` : ('✗ '+(r.error||'falló')));
   };
   return html`<div class="run" style=${{ marginTop:'14px' }}>
     <div class="sec" style=${{ margin:'0 0 6px' }}>PROBAR · en proceso (golden) o durable (AgentSpan, nodo-por-nodo)</div>

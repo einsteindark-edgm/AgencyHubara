@@ -120,6 +120,37 @@ class AgentSpanRuntime:
             error=getattr(res, "error", None),
         )
 
+    def start(self, agent: Any, input: Any) -> str:
+        """Submit NO-BLOQUEANTE: `AgentRuntime.start()` devuelve un handle con el execution-id en
+        ~0.4s (NO espera a que el workflow complete); los workers corren en background. Un thread
+        daemon mantiene el runtime vivo (los workers polleando Conductor) hasta que el workflow
+        termina, y ahí lo cierra. Es lo que deja al viewer ver los nodos activarse EN VIVO
+        (pending→running→done): el caller pollea el trace/`get_status` mientras corre. Devuelve el
+        execution-id. NO uses esto para tests que necesitan el output — para eso está `run()`."""
+        import threading
+        import time as _time
+
+        rt = self._client()  # SIN context manager: vive hasta que el drain lo cierre
+        handle = rt.start(agent, input)
+        eid = handle.execution_id
+
+        def _drain() -> None:
+            try:  # los workers corren solos; este loop solo sabe CUÁNDO cerrar el runtime
+                for _ in range(1200):  # techo ~600s (el pod real tarda ~1.4s); evita fugar si cuelga
+                    if getattr(rt.get_status(eid), "is_complete", False):
+                        break
+                    _time.sleep(0.5)
+            except Exception:  # noqa: BLE001 — el drain NUNCA debe tumbar el server
+                pass
+            finally:
+                try:
+                    rt.shutdown()  # reap de los worker processes
+                except Exception:  # noqa: BLE001
+                    pass
+
+        threading.Thread(target=_drain, daemon=True).start()
+        return eid
+
     def get(self, execution_id: str) -> Execution:
         with self._client() as rt:
             st = rt.get_status(execution_id)

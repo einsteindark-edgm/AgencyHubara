@@ -162,15 +162,27 @@ def replay_case_route(ga_root: Path, case_id: str) -> tuple[int, dict]:
     }
 
 
+def _start_durable(ga_root: Path, m, input_dict: dict) -> str:
+    """Compila el agente y lo submitea ASÍNCRONO a AgentSpan (`start`, no `run`) → execution-id
+    al instante (~0.4s), los workers completan en background. El supervisor va envuelto en
+    `{acc: seed}` (`_durable_input`). Devuelve el execution-id."""
+    from sdk.loader import build_agent
+    from sdk.runtime import AgentSpanRuntime
+
+    graph = build_agent(m, ga_root)
+    return AgentSpanRuntime().start(graph, _durable_input(m, input_dict))
+
+
 def run_durable_route(ga_root: Path, case_id: str) -> tuple[int, dict]:
-    """Corre el TARGET de un caso en el runtime DURABLE (AgentSpan) con el seed del caso, y
-    devuelve el execution-id para que el viewer siga el trace nodo-por-nodo. A diferencia de
-    /api/replay (en proceso, determinista), esto SÍ submitea a Conductor (:6767). Un tool no es
-    un agente durable. Un agente DIRECTO que consume un port lo rechaza `run_agent` (no hay
-    fixture en el durable). Un supervisor que REFERENCIA un agente-con-port (ninguno hoy: ningún
-    caso apunta a eso) NO lo caza el guard estructural — pero falla CERRADO en runtime: el nodo
-    corre con `ports={}` → KeyError ANTES de tocar el vendor → task FAILED, sin llamada a Meta."""
+    """Submitea el TARGET de un caso al runtime DURABLE (AgentSpan) y devuelve el execution-id AL
+    INSTANTE (status 'running', NO espera a que complete) — así el viewer pollea el trace y ve los
+    nodos activarse EN VIVO (pending→running→done). A diferencia de /api/replay (en proceso), SÍ
+    submitea a Conductor (:6767). Un tool no es un agente durable. Un agente DIRECTO con port se
+    rechaza (no hay fixture en el durable). Un supervisor que REFERENCIA un agente-con-port (ninguno
+    hoy) NO lo caza el guard estructural, pero falla CERRADO en runtime (`ports={}`→KeyError antes
+    del vendor → task FAILED, sin llamada a Meta)."""
     from sdk.case_model import discover_cases, resolve
+    from sdk.manifest_model import iter_nodes, load_manifest
 
     case = next((c for c in discover_cases(ga_root) if c.id == case_id), None)
     if case is None:
@@ -178,13 +190,22 @@ def run_durable_route(ga_root: Path, case_id: str) -> tuple[int, dict]:
     if case.kind == "tool":
         return 422, {"error": f"'{case.target}' es un tool — no corre en el runtime DURABLE "
                      "(no es un agente de AgentSpan). Usá 'probar' (en proceso)."}
-    seed = resolve(case.seed, ga_root)
-    res = run_agent(ga_root, case.target_id, seed, runtime="agentspan")
-    if res.get("status") != "completed":
-        return 422, {"error": res.get("error", "el run durable falló"), "runtime": "agentspan",
-                     "execution_id": res.get("id"), "agent": case.target_id}
-    return 200, {"execution_id": res["id"], "agent": case.target_id,
-                 "status": res["status"], "output": res.get("output")}
+    manifests = ga_root / "manifests"
+    cand = sorted(manifests.glob(f"{case.target_id}.agent.yaml")) + sorted(
+        manifests.glob(f"{case.target_id}.taskgraph.yaml"))
+    if not cand:
+        return 404, {"error": f"no existe el agente '{case.target_id}' en manifests/"}
+    m = load_manifest(cand[0])
+    consumed = sorted({p for n in iter_nodes(m) for p in n.consumes})
+    if consumed:
+        return 422, {"error": f"'{case.target_id}' consume ports {consumed}: el durable necesita el "
+                     "vendor real, no el fixture del caso (corré por tests/integration)."}
+    try:
+        eid = _start_durable(ga_root, m, resolve(case.seed, ga_root))
+    except Exception as e:  # noqa: BLE001 — :6767 caído / agentspan ausente / build fallido
+        return 422, {"error": f"no pude submitear a AgentSpan (¿server :6767 arriba? ¿langgraph/agentspan?): {e}",
+                     "agent": case.target_id, "runtime": "agentspan"}
+    return 200, {"execution_id": eid, "agent": case.target_id, "status": "running", "runtime": "agentspan"}
 
 
 def api_route(method: str, path: str, params: dict, body: dict | None, ga_root: Path = GA_ROOT):
