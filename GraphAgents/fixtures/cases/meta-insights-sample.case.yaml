@@ -1,0 +1,17 @@
+# CASO de un AGENTE que CONSUME un port (meta_marketing_api): el caso trae la data del port
+# por $ref (las filas que devolvería Meta), el replay arma el FixtureMetaInsights y la inyecta.
+# Esto es justo lo que el viewer NO puede correr hoy (/api/run rechaza agentes con ports). El
+# golden sale del golden-replay ya revisado (test_meta_insights_golden.py).
+id: meta-insights-sample
+title: meta-insights · 2 campañas (sample)
+target: agent:meta-insights
+seed: { account_id: act_1, since: "2026-06-01", until: "2026-06-18" }
+ports:
+  meta_marketing_api: { $ref: fixtures/meta_insights_sample.json }
+golden:
+  campaigns:
+    - { campaign_id: c1, spend: 100.0, revenue: 300.0, roas: 3.0 }
+    - { campaign_id: c2, spend: 50.0, revenue: 50.0, roas: 1.0 }
+  total_spend: 150.0
+  total_revenue: 350.0
+  blended_roas: 2.3333

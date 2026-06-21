@@ -1,0 +1,21 @@
+# Agente de catálogo (archetype: analyzer) — el corazón. Compone 3 tools agnósticas:
+# merge por fecha + las 5 métricas + el diagnóstico. Sin LLM (eso es el reporter).
+name: blended-economics
+description: Analiza el blend CTWA — merge por fecha + las 5 unit-economics + el diagnóstico determinista.
+archetype: analyzer
+certification: C2
+
+capability: graphs.blended_economics:build
+
+exposes_as_tool: true
+
+tools:
+  - uses: merge-by-date@1
+    with:
+      payload: $state.feeds
+  - uses: blended-unit-economics@1
+    with:
+      payload: $state.totals
+  - uses: diagnose@1
+    with:
+      payload: $state.metrics

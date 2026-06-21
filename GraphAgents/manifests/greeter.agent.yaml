@@ -4,6 +4,7 @@ name: greeter
 description: Hola mundo — saluda usando la tool de catálogo `hello`.
 archetype: reporter
 certification: C2
+group: demo  # scaffold hello-world — no es parte del pod de producción (badge del explorer).
 
 capability: graphs.greeter:build
 

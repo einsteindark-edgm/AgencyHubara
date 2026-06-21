@@ -7,6 +7,9 @@ en vivo (cada request re-proyecta el sistema; editás un manifest y refrescás):
     GET  /api/health         -> {ok: true}
     POST /api/run            -> corre un agente tool-only por el LocalRuntime
                                body: {"agent": "greeter", "input": {"name": "..."}}
+    GET  /api/cases[?node=]  -> los casos replayables del catálogo (el select del panel "Probar")
+    POST /api/replay         -> corre un caso (seed+ports-fixture) y compara con el golden
+                               body: {"case": "diagnose-scale"} -> {output, golden, matches, inputs}
 
 Por qué stdlib y no FastAPI: el explorer es read-mostly + un endpoint de run; con
 la stdlib corre en la imagen slim sin sincronizar deps pesadas, igual que el
@@ -103,6 +106,36 @@ def _run_on_agentspan(ga_root: Path, m, input_dict: dict) -> dict:
     return {"id": ex.id, "status": ex.status, "output": ex.output, "error": ex.error, "runtime": "agentspan"}
 
 
+def _case_node_id(case) -> str:
+    """El id del NODO del grafo al que pertenece un caso (para filtrar el select por nodo).
+    `tool:<id>`→`tool:<id>` · `agent:<id>`→`agent:<id>` · `flow:<id>`→`agent:<id>` (un
+    supervisor es un nodo `agent:` en el grafo)."""
+    kind, cid = case.target.split(":", 1)
+    return f"{'agent' if kind in ('agent', 'flow') else 'tool'}:{cid}"
+
+
+def replay_case_route(ga_root: Path, case_id: str) -> tuple[int, dict]:
+    """Replayea un caso del catálogo y compara con su golden. Es lo que /api/run NO puede:
+    inyecta los Fixtures del caso (ports + llm). Degrada limpio — la UI nunca crashea."""
+    from sdk.case_model import discover_cases, resolve
+    from sdk.replay import replay_case
+
+    case = next((c for c in discover_cases(ga_root) if c.id == case_id), None)
+    if case is None:
+        return 404, {"error": f"no existe el caso '{case_id}'"}
+    try:
+        out = replay_case(case, ga_root)
+        golden = resolve(case.golden, ga_root)
+        # el TRIPLE expandido (lo que el panel "Probar" muestra como input que entró):
+        inputs = {"seed": resolve(case.seed, ga_root), "ports": resolve(case.ports, ga_root)}
+    except Exception as e:  # noqa: BLE001 — capability/loader roto = no confiable, no crash
+        return 422, {"error": f"el replay del caso '{case_id}' falló: {e}", "case": case_id}
+    return 200, {
+        "case": case.id, "target": case.target, "title": case.title,
+        "matches": out == golden, "output": out, "golden": golden, "inputs": inputs,
+    }
+
+
 def api_route(method: str, path: str, params: dict, body: dict | None, ga_root: Path = GA_ROOT):
     """Core ruteable y testeable (sin socket). Devuelve `(status:int, payload:dict)`."""
     from sdk.graph import build_graph
@@ -111,6 +144,107 @@ def api_route(method: str, path: str, params: dict, body: dict | None, ga_root: 
         return 200, {"ok": True}
     if method == "GET" and path == "/api/graph":
         return 200, build_graph(ga_root)
+    if method == "GET" and path == "/api/plan":
+        # El ORDEN DE EJECUCIÓN de un supervisor (o agente): lo que el explorer dibuja como
+        # "flujo". `params` viene de parse_qs → valores en lista (?agent=ads-analytics).
+        from sdk.graph import execution_plan
+        from sdk.manifest_model import load_manifest
+
+        agent_id = (params.get("agent") or [None])[0]
+        if not agent_id:
+            return 400, {"error": "falta 'agent' en el query (?agent=<id>)"}
+        manifests = ga_root / "manifests"
+        cand = sorted(manifests.glob(f"{agent_id}.agent.yaml")) + sorted(
+            manifests.glob(f"{agent_id}.taskgraph.yaml")
+        )
+        if not cand:
+            return 404, {"error": f"no existe el agente '{agent_id}'"}
+        return 200, execution_plan(load_manifest(cand[0]), ga_root)
+    if method == "GET" and path == "/api/runs":
+        # las ejecuciones recientes de AgentSpan (los 'threads' de Studio). Degrada limpio
+        # si el server :6767 no está — la UI nunca crashea.
+        from sdk.trace import fetch_runs
+
+        try:
+            limit = int((params.get("limit") or ["25"])[0])
+        except ValueError:
+            limit = 25
+        running = (params.get("running") or ["0"])[0] in ("1", "true")  # ?running=1 → poll de flota
+        try:
+            return 200, {"runs": fetch_runs(limit=limit, running_only=running)}
+        except Exception as e:  # noqa: BLE001 — server caído / agentspan ausente
+            return 502, {"error": f"no pude listar ejecuciones (¿server :6767 arriba?): {e}", "runs": []}
+    if method == "GET" and path == "/api/trace":
+        # el TRACE en vivo: el execution_plan anotado con el estado por-nodo de Conductor.
+        from sdk.graph import execution_plan
+        from sdk.manifest_model import load_manifest
+        from sdk.trace import build_trace, fetch_workflow
+
+        eid = (params.get("execution_id") or [None])[0]
+        if not eid:
+            return 400, {"error": "falta 'execution_id' en el query (?execution_id=<id>)"}
+        try:
+            wf = fetch_workflow(eid)
+        except Exception as e:  # noqa: BLE001
+            return 502, {"error": f"no pude leer la ejecución (¿server :6767 arriba?): {e}"}
+        agent_id = wf.get("workflowName")
+        manifests = ga_root / "manifests"
+        cand = sorted(manifests.glob(f"{agent_id}.agent.yaml")) + sorted(
+            manifests.glob(f"{agent_id}.taskgraph.yaml")
+        )
+        if not cand:
+            return 404, {"error": f"la ejecución es del agente '{agent_id}', ausente del catálogo"}
+        return 200, build_trace(execution_plan(load_manifest(cand[0]), ga_root), wf)
+    if method == "GET" and path == "/api/node-state":
+        # lazy: el acc (estado acumulador) DESPUÉS de un nodo — el 'ver por dentro', al click.
+        from sdk.trace import fetch_node_state
+
+        eid = (params.get("execution_id") or [None])[0]
+        tid = (params.get("task_id") or [None])[0]
+        if not eid or not tid:
+            return 400, {"error": "faltan 'execution_id' y 'task_id' en el query"}
+        try:
+            return 200, {"acc": fetch_node_state(eid, tid)}
+        except Exception as e:  # noqa: BLE001
+            return 502, {"error": f"no pude leer el estado del nodo: {e}"}
+    if method == "GET" and path == "/api/inspect":
+        # los FILES + los CHECKS de un nodo o de una RELACIÓN (la línea entre nodos).
+        from sdk.graph import build_graph
+        from sdk.inspect import inspect_edge, inspect_node
+
+        g = build_graph(ga_root)
+        node_id = (params.get("node") or [None])[0]
+        if node_id:
+            n = next((x for x in g["nodes"] if x["id"] == node_id), None)
+            if n is None:
+                return 404, {"error": f"no existe el nodo '{node_id}'"}
+            return 200, inspect_node(n, ga_root)
+        src = (params.get("source") or [None])[0]
+        tgt = (params.get("target") or [None])[0]
+        if src and tgt:
+            kind = (params.get("kind") or [None])[0]
+            e = next((x for x in g["edges"] if x["source"] == src and x["target"] == tgt
+                      and (not kind or x["kind"] == kind)), None)
+            if e is None:
+                return 404, {"error": f"no existe la arista {src} → {tgt}"}
+            return 200, inspect_edge(e, ga_root)
+        return 400, {"error": "falta 'node' o ('source' y 'target') en el query"}
+    if method == "GET" and path == "/api/checks":
+        # 'correr las certs en el viewer': veredicto por nodo y por arista para el overlay.
+        from sdk.graph import build_graph
+        from sdk.inspect import system_checks
+
+        return 200, system_checks(build_graph(ga_root), ga_root)
+    if method == "GET" and path == "/api/cases":
+        # el catálogo de CASOS replayables (lo que el panel "Probar" lista en un select). Con
+        # `?node=<id>` filtra a los del nodo enfocado (un caso flow:X pertenece al nodo agent:X).
+        from sdk.case_model import discover_cases
+
+        cases = discover_cases(ga_root)
+        node = (params.get("node") or [None])[0]
+        if node:
+            cases = [c for c in cases if _case_node_id(c) == node]
+        return 200, {"cases": [{"id": c.id, "target": c.target, "title": c.title} for c in cases]}
     if method == "POST" and path == "/api/run":
         body = body or {}
         agent_id = body.get("agent")
@@ -121,6 +255,14 @@ def api_route(method: str, path: str, params: dict, body: dict | None, ga_root: 
             return 400, {"error": f"runtime inválido '{runtime}' (usá local|agentspan)"}
         res = run_agent(ga_root, agent_id, body.get("input") or {}, runtime=runtime)
         return (200 if res.get("status") == "completed" else 422), res
+    if method == "POST" and path == "/api/replay":
+        # corre un CASO del catálogo (seed + ports-fixture + golden) — el determinismo hecho
+        # botón. A diferencia de /api/run, inyecta los Fixtures del caso (ports con $ref).
+        body = body or {}
+        case_id = body.get("case")
+        if not case_id:
+            return 400, {"error": "falta 'case' en el body"}
+        return replay_case_route(ga_root, case_id)
     return 404, {"error": f"no existe la ruta {method} {path}"}
 
 
@@ -178,5 +320,9 @@ def serve(host: str = "0.0.0.0", port: int = 8900) -> None:
 
 if __name__ == "__main__":
     import os
+    import sys
 
-    serve(port=int(os.environ.get("PORT", "8900")))
+    # puerto por argv (1er arg) o env PORT o 8900 — el argv permite un server de preview
+    # en otro puerto sin chocar con el :8900 del container vivo.
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else int(os.environ.get("PORT", "8900"))
+    serve(port=port)

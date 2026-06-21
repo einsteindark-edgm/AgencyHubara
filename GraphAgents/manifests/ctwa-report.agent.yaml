@@ -1,0 +1,13 @@
+# Agente de catálogo (archetype: reporter). Render determinista del blend + verdict
+# (nodo PURO); la narrativa interpretativa es un nodo LLM aislado (G1+, temperature=0,
+# NUNCA computa — cita los números del analyzer).
+name: ctwa-report
+description: Reporter CTWA — render determinista (tabla + verdict) + narrativa LLM aislada (G1+).
+archetype: reporter
+certification: C2
+
+capability: graphs.ctwa_report:build
+
+exposes_as_tool: true
+
+tools: []

@@ -1,0 +1,12 @@
+# CASO de un TOOL puro (el más chico): input único → output determinista. El golden sale
+# del TCK ya revisado de diagnose (test_diagnose.py), no se regenera. El viewer lo lista en
+# el select de la tool `diagnose`.
+id: diagnose-scale
+title: diagnose · MER 3.0 → scale_budget
+target: tool:diagnose
+seed:
+  payload: { mer: "3.0", drop_off_rate: "0.2" }
+golden:
+  high_friction: false
+  poor_profitability: false
+  recommendation: scale_budget

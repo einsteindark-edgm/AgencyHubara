@@ -1,0 +1,50 @@
+# El task graph del pod de análisis CTWA. Los agentes NO se redefinen inline: se
+# REFERENCIAN del catálogo por `uses: agent://<id>@1` (G-BIND-AGENT). Estrategia
+# `sequential`: extraer (Meta + ventas) → embudo por-campaña (complementado) →
+# blendear unit-economics → QA reconcilia → reportar. El mismo `blended-economics` /
+# `ctwa-insights` / `ctwa-campaign-funnel` se reusa desde otros graphs.
+name: ads-analytics
+description: Pod de análisis CTWA — extrae (Meta + ventas), arma el embudo por-campaña complementado, blendea las unit-economics, QA no-self-review, reporta.
+archetype: supervisor
+strategy: sequential
+model: openai/gpt-4o
+instructions: >-
+  Corré el pod en orden: extraé insights CTWA de Meta y las ventas manuales, blendeá las
+  unit-economics por día y periodo, dejá que numbers-qa reconcilie los números, y reportá.
+certification: C2
+
+# El wiring del task graph (G-WIRE): `inputs:` mapea el ESTADO acumulador → el input de
+# cada agente. El seed del supervisor es {meta_insights, manual_sales}; cada output se
+# mergea al estado y alimenta a los de abajo. Esto cablea el DAG: 2 extractores → analyzer
+# → qa → reporter. Es la orquestación, declarada y certificada (no código imperativo).
+agents:
+  - uses: agent://ctwa-insights@1
+    inputs:
+      payload: $state.meta_insights
+  - uses: agent://sales-ledger@1
+    inputs:
+      payload: $state.manual_sales
+  # El embudo POR CAMPAÑA: el MCP entities clasifica por objetivo pero da la conversación
+  # en 0 para purchase-conversion (Día del padre) → se complementa con Graph /insights actions.
+  # Reusa `meta_insights` (la misma data Graph /insights del seed) + `entities_payload` (el
+  # envelope crudo de ads_get_ad_entities). Emite `campaigns` al estado.
+  - uses: agent://ctwa-campaign-funnel@1
+    inputs:
+      entities_payload: $state.entities_payload
+      insights_payload: $state.meta_insights
+  - uses: agent://blended-economics@1
+    inputs:
+      currency: $state.currency
+      insights: $state.insights
+      sales: $state.sales
+  - uses: agent://numbers-qa@1
+    inputs:
+      days: $state.days
+      period: $state.period
+  - uses: agent://ctwa-report@1
+    inputs:
+      days: $state.days
+      period: $state.period
+      unmatched: $state.unmatched
+      qa_passed: $state.passed
+      campaigns: $state.campaigns

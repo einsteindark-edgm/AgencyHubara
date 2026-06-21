@@ -1,0 +1,25 @@
+# Parsea ads_get_ad_entities (MCP entities, strings formateados) a filas por-campana objetivo-aware (objetivo, spend, clicks, result_type, is_messaging).
+# Tool de catálogo generada por `sdk.cli create tool`. Completá inputs/outputs + la
+# impl, y poné VERDE el golden de tests/tools/test_parse_meta_entities.py (nace rojo por construcción).
+id: parse-meta-entities
+version: 1.0.0
+description: "Parsea ads_get_ad_entities (MCP entities, strings formateados) a filas por-campana objetivo-aware (objetivo, spend, clicks, result_type, is_messaging)."
+tags: [analysis, ads, ctwa, meta-mcp, pure]
+
+side_effect: pure
+idempotent: true
+approval_required: false
+credentials: []
+
+inputs:
+  payload:
+    type: object
+    required: true
+    description: "El envelope crudo de ads_get_ad_entities ({ad_entities: '<json>', summary}) o su JSON string"
+outputs:
+  campaigns:
+    type: array
+    description: "Filas por-campaña: {campaign_id, campaign_name, objective, spend_cop, link_clicks, result_count, result_type, cost_per_result_cop, is_messaging}"
+
+# impl PURA (G-AGNOSTIC: no importa runtime). Adapters en tools/parse_meta_entities/adapters/.
+impl: tools.parse_meta_entities.impl:run

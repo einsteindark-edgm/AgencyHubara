@@ -1,0 +1,17 @@
+# Agente de catálogo (archetype: extractor). Extrae insights CTWA de Graph /insights:
+# RECIBE el JSON (lo deposita el central; el agente no llama a Meta → inbaneable) y lo
+# colapsa a nivel cuenta por día. Referenciable por agent://ctwa-insights@1.
+name: ctwa-insights
+description: Extrae y normaliza insights CTWA de Graph /insights (recibe el JSON; colapsa a cuenta por día).
+archetype: extractor
+certification: C2
+
+capability: graphs.ctwa_insights:build
+
+exposes_as_tool: true
+
+tools:
+  # la tool agnóstica del catálogo, bindeada al state del agente (G-BIND).
+  - uses: meta-ads-insights@1
+    with:
+      payload: $state.payload

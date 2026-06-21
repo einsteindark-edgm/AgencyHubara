@@ -1,0 +1,37 @@
+# Las 5 metricas CTWA puras (drop-off, costo/conversacion, MER, CPA global, win-rate) desde totales crudos; denominador 0 -> null, nunca un numero inventado.
+# Tool de catálogo generada por `sdk.cli create tool`. Completá inputs/outputs + la
+# impl, y poné VERDE el golden de tests/tools/test_blended_unit_economics.py (nace rojo por construcción).
+id: blended-unit-economics
+version: 1.0.0
+description: "Las 5 metricas CTWA puras (drop-off, costo/conversacion, MER, CPA global, win-rate) desde totales crudos; denominador 0 -> null, nunca un numero inventado."
+tags: [analysis, ads, ctwa, metrics, pure]
+
+side_effect: pure
+idempotent: true
+approval_required: false
+credentials: []
+
+inputs:
+  payload:
+    type: object
+    required: true
+    description: "Totales crudos: {spend_cop, inline_link_clicks, conversations_started, total_orders, total_revenue_cop}"
+outputs:
+  drop_off_rate:
+    type: string
+    description: "1 - conversaciones/clicks (Decimal string) o null si no hubo clicks"
+  cost_per_conversation_cop:
+    type: string
+    description: "spend/conversaciones (Decimal string) o null"
+  mer:
+    type: string
+    description: "revenue/spend (Decimal string) o null"
+  global_cpa_cop:
+    type: string
+    description: "spend/órdenes (Decimal string) o null"
+  global_win_rate:
+    type: string
+    description: "órdenes/conversaciones (Decimal string) o null"
+
+# impl PURA (G-AGNOSTIC: no importa runtime). Adapters en tools/blended_unit_economics/adapters/.
+impl: tools.blended_unit_economics.impl:run

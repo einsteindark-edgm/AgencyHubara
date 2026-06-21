@@ -6,7 +6,8 @@ archetype: analyzer
 certification: C2
 
 capability: graphs.roas_cac:build
-consumes: [meta_marketing_api]
+# (sin `consumes`: roas-cac NO usa un port — su análisis sale de la tool recommend-budget;
+# declarar meta_marketing_api era stale e inexacto, cert-review.)
 
 # el agente puede invocarse como tool de otro agente (agent-as-tool).
 exposes_as_tool: true

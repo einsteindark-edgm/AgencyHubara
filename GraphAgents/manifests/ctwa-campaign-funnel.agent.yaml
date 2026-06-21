@@ -1,0 +1,24 @@
+# Agente de catálogo (archetype: analyzer) — el embudo CTWA POR CAMPAÑA, con la
+# conversación complementada. Compone 3 tools: clasifica con el MCP entities + trae la
+# conversación de /insights actions + las une (recupera la conv que el entities da en 0
+# para purchase-conversion). Referenciable por agent://ctwa-campaign-funnel@1.
+name: ctwa-campaign-funnel
+description: Embudo CTWA por campaña con la conversación complementada (MCP entities + Graph /insights actions).
+archetype: analyzer
+certification: C2
+
+capability: graphs.ctwa_campaign_funnel:build
+
+exposes_as_tool: true
+
+tools:
+  - uses: parse-meta-entities@1
+    with:
+      payload: $state.entities_payload
+  - uses: meta-ads-insights@1
+    with:
+      payload: $state.insights_payload
+  # complement-funnel NO declara `with:`: su `payload` ({entities, insights}) lo CONSTRUYE
+  # la capability desde estado intermedio (los outputs de las dos tools de arriba), no es un
+  # binding directo a $state. La capability lo cablea por dentro (graphs/ctwa_campaign_funnel).
+  - uses: complement-funnel@1

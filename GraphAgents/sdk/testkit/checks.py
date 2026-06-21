@@ -8,7 +8,10 @@ Reglas (manifest):
 - G-RUN-SIG     — la capability expone `run(input, *, ports, tools)` (firma uniforme
                   que inyecta el loader; ver L-2).
 - supervisor    — coherente (agents + strategy).
-- G-BIND        — toda tool `uses: <id>` resuelve a una tool del catálogo.
+- G-WIRE        — un supervisor que COMPONE declara `inputs:` en cada agente (el task
+                  graph se cablea y corre por su manifest; ver L-10).
+- G-BIND        — toda tool `uses: <id>` resuelve a una tool del catálogo, y su `with:`
+                  nombra SOLO inputs del contrato de esa tool (binding↔contrato).
 - G-BIND-AGENT  — toda referencia `uses: agent://<id>` resuelve a un agente del catálogo.
 - G-DUR (warn)  — tool INLINE cuyo nombre sugiere acción outward.
 
@@ -24,6 +27,9 @@ from sdk.manifest_model import AgentNode, iter_nodes
 from sdk.registry import discover_agent_ids, discover_tool_ids
 
 _OUTWARD = ("recommend", "apply", "update", "create", "set", "pause", "spend", "budget", "delete")
+
+# Estrategias que NO componen: rutean a UN agente y le pasan el input crudo (sin wiring).
+_NO_WIRE_STRATEGIES = ("router", "manual")
 
 
 def _accepts_injection(fn) -> bool:
@@ -93,6 +99,28 @@ def check_supervisor_coherent(root: AgentNode) -> list[str]:
     return errs
 
 
+def check_taskgraph_wireable(root: AgentNode) -> list[str]:
+    """G-WIRE: en un supervisor que COMPONE (no router/manual), CADA agente referenciado
+    debe declarar `inputs:` (el binding state→input del task graph), para que el loader
+    pueda CABLEAR el grafo y correrlo por su manifest. La orquestación en esta arquitectura
+    ES el task graph: un supervisor que compone sin wiring no orquesta — correría UN agente
+    en silencio (el caso 'panel verde, feature roto', L-10). Por eso es parte de la cert."""
+    errs: list[str] = []
+    for n in iter_nodes(root):
+        if n.archetype != "supervisor" or not n.agents:
+            continue
+        if n.strategy in _NO_WIRE_STRATEGIES:
+            continue  # router/manual: rutea a UN agente y le pasa el input — sin wiring
+        for a in n.agents:
+            if not a.inputs:
+                errs.append(
+                    f"[G-WIRE] supervisor '{n.name}' (strategy={n.strategy}): el agente "
+                    f"'{a.ref_agent_id or a.name}' no declara `inputs:` — el task graph no se "
+                    "puede cablear ni correr por su manifest (la orquestación ES el task graph)."
+                )
+    return errs
+
+
 def check_tool_refs(root: AgentNode, ga_root: Path | None) -> list[str]:
     """G-BIND: toda tool `uses: <id>` resuelve a una tool del catálogo."""
     if ga_root is None:
@@ -105,6 +133,36 @@ def check_tool_refs(root: AgentNode, ga_root: Path | None) -> list[str]:
             if rid and rid not in available:
                 errs.append(
                     f"[G-BIND] agente '{n.name}' usa tool '{t.uses}' que no está en el catálogo (tools/)"
+                )
+    return errs
+
+
+def check_tool_bindings_match_contract(root: AgentNode, ga_root: Path | None) -> list[str]:
+    """G-BIND (binding↔contrato): cada clave del `with:` de una tool `uses:` debe ser un
+    input DECLARADO en el contrato de esa tool (`tool.yaml` `inputs`). Un `with:` que nombra
+    claves que el contrato no tiene es documentación que MIENTE: inerte (el loader inyecta la
+    impl, no aplica el binding) pero engañosa para un lector. Regla de oro del plugin-protocol:
+    ningún campo del manifest sin su check — `with:` (modelado `ToolSpec.binding`) ahora tiene el suyo."""
+    if ga_root is None:
+        return []
+    from sdk.registry import discover_tools  # local: evita que ruff borre el import entre edits
+
+    catalog = {t.id: t for t in discover_tools(ga_root)}
+    errs: list[str] = []
+    for n in iter_nodes(root):
+        for t in n.tools:
+            rid = t.ref_id
+            if not rid or not t.binding:
+                continue
+            contract = catalog.get(rid)
+            if contract is None:
+                continue  # tool ausente del catálogo: ya lo reporta check_tool_refs
+            declared = set(contract.inputs)
+            unknown = sorted(k for k in t.binding if k not in declared)
+            if unknown:
+                errs.append(
+                    f"[G-BIND] agente '{n.name}': el `with:` de la tool '{rid}' nombra {unknown} "
+                    f"que no son inputs del contrato (tool.yaml inputs: {sorted(declared)})"
                 )
     return errs
 
@@ -145,7 +203,9 @@ def run_checks(root: AgentNode, ga_root: Path | None = None) -> dict:
         check_capability_refs(root)
         + check_capability_run_signature(root)
         + check_supervisor_coherent(root)
+        + check_taskgraph_wireable(root)
         + check_tool_refs(root, ga_root)
+        + check_tool_bindings_match_contract(root, ga_root)
         + check_agent_refs(root, ga_root)
     )
     warnings = check_outward_tools_need_approval(root)

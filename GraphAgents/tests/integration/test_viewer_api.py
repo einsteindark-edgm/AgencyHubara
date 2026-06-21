@@ -29,6 +29,67 @@ def test_api_health_ok():
     assert payload["ok"] is True
 
 
+def test_api_plan_returns_execution_order():
+    # parse_qs entrega listas: {"agent": ["ads-analytics"]}
+    status, payload = api_route("GET", "/api/plan", {"agent": ["ads-analytics"]}, None, ga_root=ROOT)
+    assert status == 200
+    assert payload["strategy"] == "sequential"
+    assert [s["agent"] for s in payload["steps"]] == [
+        "ctwa-insights", "sales-ledger", "ctwa-campaign-funnel",
+        "blended-economics", "numbers-qa", "ctwa-report",
+    ]
+    assert payload["steps"][2]["inputs"]["insights_payload"] == "$state.meta_insights"
+
+
+def test_api_plan_unknown_agent_is_404():
+    status, payload = api_route("GET", "/api/plan", {"agent": ["nope"]}, None, ga_root=ROOT)
+    assert status == 404
+
+
+def test_api_plan_requires_agent_param():
+    status, payload = api_route("GET", "/api/plan", {}, None, ga_root=ROOT)
+    assert status == 400
+
+
+def test_api_trace_requires_execution_id():
+    status, payload = api_route("GET", "/api/trace", {}, None, ga_root=ROOT)
+    assert status == 400
+    assert "execution_id" in payload["error"]
+
+
+def test_api_node_state_requires_params():
+    status, payload = api_route("GET", "/api/node-state", {}, None, ga_root=ROOT)
+    assert status == 400
+
+
+def test_api_inspect_node_returns_files_and_checks():
+    status, payload = api_route("GET", "/api/inspect", {"node": ["agent:ctwa-insights"]}, None, ga_root=ROOT)
+    assert status == 200
+    assert any(f["path"] == "graphs/ctwa_insights.py" for f in payload["files"])
+    assert payload["checks"]["level"] == "C2"
+
+
+def test_api_inspect_edge_returns_relationship_guarantees():
+    status, payload = api_route(
+        "GET", "/api/inspect",
+        {"source": ["agent:ads-analytics"], "target": ["agent:ctwa-insights"], "kind": ["agent"]},
+        None, ga_root=ROOT)
+    assert status == 200
+    assert any("G-WIRE" in r["rule"] for r in payload["checks"]["rules"])
+
+
+def test_api_inspect_requires_node_or_edge():
+    status, payload = api_route("GET", "/api/inspect", {}, None, ga_root=ROOT)
+    assert status == 400
+
+
+def test_api_checks_paints_system_green():
+    status, payload = api_route("GET", "/api/checks", {}, None, ga_root=ROOT)
+    assert status == 200
+    assert all(v["ok"] for v in payload["nodes"].values())
+    assert all(v["ok"] for v in payload["edges"].values())
+
+
 def test_run_tool_only_agent_greeter():
     res = run_agent(ROOT, "greeter", {"name": "mundo"})
     assert res["status"] == "completed"
@@ -67,6 +128,65 @@ def test_run_invalid_runtime_is_400():
         "POST", "/api/run", {}, {"agent": "greeter", "input": {}, "runtime": "nope"}, ga_root=ROOT
     )
     assert status == 400
+
+
+def test_api_cases_lista_el_catalogo():
+    status, payload = api_route("GET", "/api/cases", {}, None, ga_root=ROOT)
+    assert status == 200
+    ids = {c["id"] for c in payload["cases"]}
+    assert {"diagnose-scale", "meta-insights-sample", "dia-del-padre-flujo"} <= ids
+    d = next(c for c in payload["cases"] if c["id"] == "diagnose-scale")
+    assert d["target"] == "tool:diagnose" and d["title"]  # liviano para el select
+
+
+def test_api_cases_filtra_por_nodo():
+    # un tool node → su caso exacto
+    status, payload = api_route("GET", "/api/cases", {"node": ["tool:diagnose"]}, None, ga_root=ROOT)
+    assert status == 200
+    assert [c["id"] for c in payload["cases"]] == ["diagnose-scale"]
+    # un supervisor (node agent:ads-analytics) ← el caso flow:ads-analytics (flow mapea a agent)
+    status, payload = api_route("GET", "/api/cases", {"node": ["agent:ads-analytics"]}, None, ga_root=ROOT)
+    assert [c["id"] for c in payload["cases"]] == ["dia-del-padre-flujo"]
+
+
+def test_api_replay_corre_un_caso_y_compara_el_golden():
+    status, payload = api_route("POST", "/api/replay", {}, {"case": "diagnose-scale"}, ga_root=ROOT)
+    assert status == 200
+    assert payload["matches"] is True
+    assert payload["output"] == payload["golden"]
+    assert payload["output"]["recommendation"] == "scale_budget"
+    assert payload["target"] == "tool:diagnose"
+
+
+def test_api_replay_expande_el_triple():
+    # el panel "Probar" muestra el INPUT que entró: el seed resuelto + los ports inyectados.
+    status, payload = api_route("POST", "/api/replay", {}, {"case": "meta-insights-sample"}, ga_root=ROOT)
+    assert status == 200
+    assert payload["inputs"]["seed"]["account_id"] == "act_1"
+    assert payload["inputs"]["ports"]["meta_marketing_api"]  # el $ref se expandió a las filas
+    assert payload["matches"] is True
+
+
+def test_api_replay_caso_inexistente_es_404():
+    status, payload = api_route("POST", "/api/replay", {}, {"case": "no-existe"}, ga_root=ROOT)
+    assert status == 404
+
+
+def test_api_replay_requiere_case():
+    status, payload = api_route("POST", "/api/replay", {}, {}, ga_root=ROOT)
+    assert status == 400
+
+
+def test_api_replay_roto_es_422_sin_badge(monkeypatch):
+    # la red de L-19: si el replay revienta (capability/loader roto), el endpoint da 422 con
+    # un error y SIN 'matches' — así la UI nunca puede pintar ✓ sobre un replay que no corrió.
+    def boom(case, ga_root):
+        raise RuntimeError("capability rota")
+
+    monkeypatch.setattr("sdk.replay.replay_case", boom)  # el import es local en replay_case_route
+    status, payload = api_route("POST", "/api/replay", {}, {"case": "diagnose-scale"}, ga_root=ROOT)
+    assert status == 422
+    assert "error" in payload and "matches" not in payload
 
 
 def _has(mod: str) -> bool:

@@ -1,0 +1,28 @@
+# Parsea la respuesta de Graph /insights (con actions) a filas CTWA normalizadas; recibe el JSON, no llama a Meta.
+# Tool de catálogo generada por `sdk.cli create tool`. Completá inputs/outputs + la
+# impl, y poné VERDE el golden de tests/tools/test_meta_ads_insights.py (nace rojo por construcción).
+id: meta-ads-insights
+version: 1.0.0
+description: "Parsea la respuesta de Graph /insights (con actions) a filas CTWA normalizadas; recibe el JSON, no llama a Meta."
+tags: [analysis, ads, ctwa, pure]
+
+side_effect: pure
+idempotent: true
+approval_required: false
+credentials: []
+
+inputs:
+  payload:
+    type: object
+    required: true
+    description: "Respuesta cruda de Graph /insights ({account_currency, data:[...]}) o su JSON string"
+outputs:
+  currency:
+    type: string
+    description: "Moneda de la cuenta (COP)"
+  insights:
+    type: array
+    description: "Filas normalizadas: {date, spend_cop, inline_link_clicks, messaging_conversations_started, campaign_id, campaign_name}"
+
+# impl PURA (G-AGNOSTIC: no importa runtime). Adapters en tools/meta_ads_insights/adapters/.
+impl: tools.meta_ads_insights.impl:run

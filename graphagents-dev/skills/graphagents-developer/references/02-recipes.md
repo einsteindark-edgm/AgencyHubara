@@ -44,10 +44,19 @@ La unidad reusable de primera clase. Test-first.
    construí el grafo, asertá el output exacto. Velo fallar con assert real.
 2. `graphs/<x>.py` — DOS entrypoints (convención de capability):
    - `run(input, *, ports=None, tools=None)` PURO — la lógica (G-RUN-SIG, G-DET).
-   - `def build() -> CompiledStateGraph` — el `StateGraph` cuyo(s) nodo(s) **REUSAN el
-     `run()` puro** (la lógica vive UNA sola vez). `compile(name="<x>")` — AgentSpan lee
-     ese nombre. El nodo LLM, si hay, marcado, `temperature=0` + structured output.
-   - Referencia ya verde: `graphs/greeter.py` (su `build()` real; correrlo en AgentSpan → §2.5d).
+   - `def build() -> CompiledStateGraph` — el `StateGraph` cuyo(s) nodo(s) **REUSAN la
+     lógica pura** (vive UNA sola vez). `compile(name="<x>")` — AgentSpan lee ese nombre. El
+     nodo LLM, si hay, marcado, `temperature=0` + structured output.
+   - **Single-node** (greeter): el único nodo llama al `run()` puro. **Multi-nodo** (una
+     capability que COMPONE tools, p.ej. `graphs/ctwa_campaign_funnel.py`): un nodo por tool
+     (`parse-entities → parse-insights → complement`), cada uno reusa la **impl de la tool**
+     (la misma que compone el `run()`) — el grafo es la estructura explícita, visible en Studio.
+   - **Durabilidad — no la sobre-afirmes (L-11):** sin nodo LLM, AgentSpan corre el grafo por
+     passthrough = el grafo ENTERO como UNA task (recovery del run completo, NO por-nodo). El
+     multi-nodo se justifica por claridad/Studio/futuro, no por durabilidad por-task (eso es
+     G1.x). Un claim de recovery-por-nodo exige un test que mate el proceso mid-graph.
+   - Referencias ya verdes: `graphs/greeter.py` (single-node) · `graphs/ctwa_campaign_funnel.py`
+     (multi-nodo, su golden-replay del compilado + smoke en AgentSpan → §2.5d).
 3. Estado: `State` (TypedDict/Pydantic) con reducers declarados si hay writes concurrentes (G-STATE).
 4. Datos externos: SOLO vía un port de `consumes:` (G-PORT) — nunca red cruda.
 5. Verde: el golden del `run()` puro corre local (`python3 -m pytest …`); el del `build()`
@@ -85,15 +94,22 @@ La unidad reusable de primera clase. Test-first.
 3. Dimensioná el timeout por la cadena real de Meta (no por el hop local).
 4. El grafo lo usa por `consumes: [<port>]` — nunca instancia el vendor a mano.
 
-## 2.5 Componer el supervisor (la orquestación en YAML)
+## 2.5 Componer el supervisor (la orquestación ES el task graph)
 
-1. `manifests/<team>.taskgraph.yaml` con `archetype: supervisor`, `strategy:`
-   (handoff/router/parallel/...) y `agents: [<ids o inline>]`.
-2. El `loader` mapea `strategy` → estrategia de AgentSpan y `agents` → los
-   sub-`Agent` (cada capability via su `capability:`).
-3. **Rojo de integración:** un test que arme el team desde el manifest y asierte
-   el ruteo esperado para un input dado (con vendors `fixture`).
-4. Verde + `cli certify <team>` (no compongas algo `< C2`, G-CERT).
+La orquestación NO es código imperativo — es el `*.taskgraph.yaml`. Test-first:
+
+1. `manifests/<team>.taskgraph.yaml`: `archetype: supervisor`, `strategy:`
+   (sequential/parallel/router/...), `agents: [{uses: agent://<id>@1, inputs: {...}}]`.
+2. **El wiring (G-WIRE):** para strategies que COMPONEN, cada agente-ref declara
+   `inputs: {cap_input: $state.<key>}` — el binding state→input del task graph. El
+   seed del supervisor son las claves externas; cada output se mergea al estado y
+   alimenta a los de abajo (DAG fan-in). Sin `inputs:` no certifica (G-WIRE). Ver
+   `01-graph-rules.md` §"La orquestación ES el task graph".
+3. **Rojo de integración — el DoD del FEATURE:** un test que corra el supervisor
+   POR SU MANIFEST: `build_runnable(load_manifest(<taskgraph>), ga_root)(seed)` y
+   asierte el output TERMINAL (el reporte) + que un seed incompleto falle LOUD. NO
+   encadenes los `run()` a mano — eso prueba las unidades, no la orquestación (L-10).
+4. Verde + `cli certify <team>` (C2; G-WIRE + G-CERT). Corrélo: `cli run <team> --input-file seed.json`.
 
 ## 2.5b Agente reusable: referenciar por id, agent-as-tool, publish
 
@@ -133,8 +149,11 @@ server durable (no el LocalRuntime in-process):
 3. `AgentSpanRuntime().run(graph, input)` corre `AgentRuntime().run(graph, input)`, mapea el
    `AgentResult` → `Execution` y **desempaqueta** `output['result']` (el json del state del
    passthrough). El `execution-id` (UUID de Conductor) aparece en la UI de **:6767**.
-4. Sin LLM → path passthrough (el grafo entero como UNA task durable). El server URL sale de
-   `AGENTSPAN_SERVER_URL` (el SDK le agrega `/api`).
+4. Granularidad de tasks (L-14, firsthand): un grafo **single-node** corre como UNA task; un
+   grafo **multi-nodo** AgentSpan lo descompone en tasks de Conductor POR-NODO (un worker por
+   nodo, con retry). Server-side solo se mapea `operator.add` como reducer — para estado
+   compuesto usá canales por-clave LastValue o merge-en-código (NO un reducer custom). El
+   server URL sale de `AGENTSPAN_SERVER_URL` (el SDK le agrega `/api`).
 5. **Rojo de integración:** `tests/integration/test_agentspan_runtime.py` con
    `importorskip("agentspan")` + `skipif(not _server_up())` → local/CI sin server SKIP,
    container con server RUN: `docker compose run --rm --no-deps graphagents

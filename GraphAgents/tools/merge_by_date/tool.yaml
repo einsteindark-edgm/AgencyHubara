@@ -1,0 +1,31 @@
+# Inner-join de dos feeds diarios (insights + ventas) por fecha; las fechas sin match se SURFACEAN (no se dropean en silencio); fecha duplicada = error.
+# Tool de catálogo generada por `sdk.cli create tool`. Completá inputs/outputs + la
+# impl, y poné VERDE el golden de tests/tools/test_merge_by_date.py (nace rojo por construcción).
+id: merge-by-date
+version: 1.0.0
+description: "Inner-join de dos feeds diarios (insights + ventas) por fecha; las fechas sin match se SURFACEAN (no se dropean en silencio); fecha duplicada = error."
+tags: [analysis, ads, ctwa, join, pure]
+
+side_effect: pure
+idempotent: true
+approval_required: false
+credentials: []
+
+inputs:
+  payload:
+    type: object
+    required: true
+    description: "{insights:[{date, spend_cop, inline_link_clicks, conversations_started}], sales:[{date, total_orders, total_revenue_cop}]}"
+outputs:
+  days:
+    type: array
+    description: "Días en común (join), con totales crudos de ambos feeds"
+  meta_only:
+    type: array
+    description: "Fechas presentes solo en insights (surface, no se dropean)"
+  sales_only:
+    type: array
+    description: "Fechas presentes solo en ventas (surface, no se dropean)"
+
+# impl PURA (G-AGNOSTIC: no importa runtime). Adapters en tools/merge_by_date/adapters/.
+impl: tools.merge_by_date.impl:run

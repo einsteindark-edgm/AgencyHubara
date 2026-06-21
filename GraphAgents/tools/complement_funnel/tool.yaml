@@ -1,0 +1,25 @@
+# Complementa las campanas del MCP entities con la conversacion de Graph /insights actions (por campaign_id) — recupera la conversacion que el entities da en 0 (purchase-conversion).
+# Tool de catálogo generada por `sdk.cli create tool`. Completá inputs/outputs + la
+# impl, y poné VERDE el golden de tests/tools/test_complement_funnel.py (nace rojo por construcción).
+id: complement-funnel
+version: 1.0.0
+description: "Complementa las campanas del MCP entities con la conversacion de Graph /insights actions (por campaign_id) — recupera la conversacion que el entities da en 0 (purchase-conversion)."
+tags: [analysis, ads, ctwa, complement, pure]
+
+side_effect: pure
+idempotent: true
+approval_required: false
+credentials: []
+
+inputs:
+  payload:
+    type: object
+    required: true
+    description: "{entities: [<parse-meta-entities>], insights: [<meta-ads-insights por campaña/día>]}"
+outputs:
+  campaigns:
+    type: array
+    description: "Por-campaña con la conversación complementada: {..., conversations, conversation_source: insights|entities|none, is_messaging}"
+
+# impl PURA (G-AGNOSTIC: no importa runtime). Adapters en tools/complement_funnel/adapters/.
+impl: tools.complement_funnel.impl:run

@@ -1,0 +1,15 @@
+# Agente de catálogo (archetype: analyzer) — el gate NO-self-review. Recomputa las
+# métricas con la misma tool y reconcilia byte-for-byte + chequea bounds. No aplica fixes.
+name: numbers-qa
+description: Gate no-self-review — recomputa y reconcilia las métricas + bounds (drop-off/win-rate ∈ [0,1], MER ≥ 0).
+archetype: analyzer
+certification: C2
+
+capability: graphs.numbers_qa:build
+
+exposes_as_tool: true
+
+tools:
+  - uses: blended-unit-economics@1
+    with:
+      payload: $state.totals

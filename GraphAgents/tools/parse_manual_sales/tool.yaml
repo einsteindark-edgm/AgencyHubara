@@ -1,0 +1,25 @@
+# Normaliza filas de ventas manuales de WhatsApp; valida y mapea el alias total_revenue -> total_revenue_cop.
+# Tool de catálogo generada por `sdk.cli create tool`. Completá inputs/outputs + la
+# impl, y poné VERDE el golden de tests/tools/test_parse_manual_sales.py (nace rojo por construcción).
+id: parse-manual-sales
+version: 1.0.0
+description: "Normaliza filas de ventas manuales de WhatsApp; valida y mapea el alias total_revenue -> total_revenue_cop."
+tags: [analysis, ads, sales, ingest, pure]
+
+side_effect: pure
+idempotent: true
+approval_required: false
+credentials: []
+
+inputs:
+  payload:
+    type: object
+    required: true
+    description: "{sales:[{date, total_orders, total_revenue|total_revenue_cop}]} | lista de filas | JSON string"
+outputs:
+  sales:
+    type: array
+    description: "Ventas normalizadas: {date, total_orders, total_revenue_cop}"
+
+# impl PURA (G-AGNOSTIC: no importa runtime). Adapters en tools/parse_manual_sales/adapters/.
+impl: tools.parse_manual_sales.impl:run

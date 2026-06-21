@@ -1,0 +1,20 @@
+# Demo de composición PARALLEL (G2.x): los DOS extractores corren CONCURRENTES porque son
+# independientes — ctwa-insights lee $state.meta_insights, sales-ledger lee $state.manual_sales,
+# y escriben claves DISJUNTAS (currency/insights vs sales). El loader los compone con fan-out
+# desde START + un join (reducer operator.add sobre los patches — el único server-safe, L-14).
+name: ads-extractors-parallel
+description: Extrae insights CTWA y ventas manuales EN PARALELO (extractores independientes) y joina.
+archetype: supervisor
+strategy: parallel
+model: openai/gpt-4o
+instructions: Extraé insights CTWA (Meta) y las ventas manuales en paralelo; son independientes.
+certification: C2
+group: variant  # variante de verificación del FORK_JOIN parallel (L-14) — no es el pod de producción.
+
+agents:
+  - uses: agent://ctwa-insights@1
+    inputs:
+      payload: $state.meta_insights
+  - uses: agent://sales-ledger@1
+    inputs:
+      payload: $state.manual_sales
