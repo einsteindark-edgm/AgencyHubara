@@ -303,6 +303,59 @@ function EdgeInspector({ graph, selEdge, inspect, onSelect }){
   </aside>`;
 }
 
+// --- probar (der): elegí un CASO conocido → replay determinista → output vs golden ----------
+function ReplayResult({ res }){
+  if(res.error) return html`<pre class="out" style=${{ marginTop:'8px', color:ST_HEX.failed }}>${res.error}</pre>`;
+  const ok = res.matches, c = ok?ST_HEX.done:ST_HEX.failed;
+  return html`<div style=${{ marginTop:'8px' }}>
+    <div style=${{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'2px', flexWrap:'wrap' }}>
+      <span class="stbadge" style=${{ background:c+'22', color:c, fontWeight:600 }}>
+        ${ok?'✓ matchea el golden':'✗ NO matchea el golden'}</span>
+      <span style=${{ fontSize:'10.5px', color:'var(--muted)' }} class="k">${res.target}</span>
+    </div>
+    <div class="sec" style=${{ margin:'10px 0 4px' }}>INPUT · el triple que entró (seed + ports)</div>
+    <pre class="out">${JSON.stringify(res.inputs, null, 2)}</pre>
+    <div class="sec" style=${{ margin:'10px 0 4px' }}>OUTPUT</div>
+    <pre class="out">${JSON.stringify(res.output, null, 2)}</pre>
+    ${!ok && html`<div class="sec" style=${{ margin:'10px 0 4px', color:ST_HEX.failed }}>GOLDEN ESPERADO</div>
+      <pre class="out">${JSON.stringify(res.golden, null, 2)}</pre>`}
+  </div>`;
+}
+
+function ProbarBox({ nodeId }){
+  const [cases, setCases] = useState(null);  // null = cargando · [] = sin casos
+  const [sel, setSel] = useState(''); const [status, setStatus] = useState(''); const [res, setRes] = useState(null);
+  useEffect(() => {
+    setCases(null); setSel(''); setStatus(''); setRes(null);
+    api('/api/cases?node='+encodeURIComponent(nodeId))
+      .then(d => { setCases(d.cases); if(d.cases.length) setSel(d.cases[0].id); })
+      .catch(() => setCases([]));
+  }, [nodeId]);
+  if(cases===null) return null;  // cargando — el fetch es rápido, no parpadeamos
+  const probar = async () => {
+    if(!sel) return;
+    setStatus('replayeando…'); setRes(null);
+    try {
+      const r = await fetch('/api/replay', { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ case: sel }) }).then(x=>x.json());
+      setRes(r); setStatus('');
+    } catch(e){ setStatus('error: '+e); }
+  };
+  return html`<div class="run" style=${{ marginTop:'14px' }}>
+    <div class="sec" style=${{ margin:'0 0 6px' }}>PROBAR · caso conocido → output vs golden</div>
+    ${cases.length===0
+      ? html`<div class="meta">sin casos todavía — sembrá uno en <span class="k">fixtures/cases/</span> (lo lista <span class="k">cli cases</span>).</div>`
+      : html`<div style=${{ display:'flex', gap:'8px', alignItems:'center', flexWrap:'wrap' }}>
+          <select value=${sel} onChange=${e=>setSel(e.target.value)} style=${{ fontSize:'12px', padding:'5px 8px', maxWidth:'230px' }}>
+            ${cases.map(c => html`<option key=${c.id} value=${c.id}>${c.title||c.id}</option>`)}
+          </select>
+          <button onClick=${probar}>probar ▸</button>
+          <span style=${{ fontSize:'11px', color:'var(--muted)' }}>${status}</span>
+        </div>`}
+    ${res && html`<${ReplayResult} res=${res} />`}
+  </div>`;
+}
+
 // --- inspector (der): contrato + files + cert + plan + trace vivo + correr -------------------
 function Inspector({ graph, node, selEdge, inspect, plan, trace, onSelect, onRun, onLoadTrace, nodeState, onNodeState }){
   if(selEdge) return html`<${EdgeInspector} graph=${graph} selEdge=${selEdge} inspect=${inspect} onSelect=${onSelect} />`;
@@ -371,10 +424,9 @@ function Inspector({ graph, node, selEdge, inspect, plan, trace, onSelect, onRun
       ${nodeState!=null && html`<pre class="out" style=${{ marginTop:'8px' }}>${
         typeof nodeState==='string' ? nodeState : JSON.stringify(nodeState, null, 2)}</pre>`}`}
 
+    ${node.kind!=='port' && html`<${ProbarBox} nodeId=${node.id} />`}
     ${node.kind==='agent' && !isSup && (!node.consumes || node.consumes.length===0) && html`
       <${RunBox} agent=${node.label} onRun=${onRun} />`}
-    ${node.kind==='agent' && node.consumes && node.consumes.length>0 && html`
-      <div class="meta" style=${{ marginTop:'12px' }}>▸ consume ${node.consumes.join(', ')} — corré con vendor fixture en tests/integration.</div>`}
   </aside>`;
 }
 

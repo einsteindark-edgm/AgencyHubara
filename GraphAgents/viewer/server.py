@@ -7,6 +7,9 @@ en vivo (cada request re-proyecta el sistema; editás un manifest y refrescás):
     GET  /api/health         -> {ok: true}
     POST /api/run            -> corre un agente tool-only por el LocalRuntime
                                body: {"agent": "greeter", "input": {"name": "..."}}
+    GET  /api/cases[?node=]  -> los casos replayables del catálogo (el select del panel "Probar")
+    POST /api/replay         -> corre un caso (seed+ports-fixture) y compara con el golden
+                               body: {"case": "diagnose-scale"} -> {output, golden, matches, inputs}
 
 Por qué stdlib y no FastAPI: el explorer es read-mostly + un endpoint de run; con
 la stdlib corre en la imagen slim sin sincronizar deps pesadas, igual que el
@@ -101,6 +104,36 @@ def _run_on_agentspan(ga_root: Path, m, input_dict: dict) -> dict:
             "error": f"el run en AgentSpan falló (¿server :6767 arriba? ¿agentspan instalado?): {e}",
         }
     return {"id": ex.id, "status": ex.status, "output": ex.output, "error": ex.error, "runtime": "agentspan"}
+
+
+def _case_node_id(case) -> str:
+    """El id del NODO del grafo al que pertenece un caso (para filtrar el select por nodo).
+    `tool:<id>`→`tool:<id>` · `agent:<id>`→`agent:<id>` · `flow:<id>`→`agent:<id>` (un
+    supervisor es un nodo `agent:` en el grafo)."""
+    kind, cid = case.target.split(":", 1)
+    return f"{'agent' if kind in ('agent', 'flow') else 'tool'}:{cid}"
+
+
+def replay_case_route(ga_root: Path, case_id: str) -> tuple[int, dict]:
+    """Replayea un caso del catálogo y compara con su golden. Es lo que /api/run NO puede:
+    inyecta los Fixtures del caso (ports + llm). Degrada limpio — la UI nunca crashea."""
+    from sdk.case_model import discover_cases, resolve
+    from sdk.replay import replay_case
+
+    case = next((c for c in discover_cases(ga_root) if c.id == case_id), None)
+    if case is None:
+        return 404, {"error": f"no existe el caso '{case_id}'"}
+    try:
+        out = replay_case(case, ga_root)
+        golden = resolve(case.golden, ga_root)
+        # el TRIPLE expandido (lo que el panel "Probar" muestra como input que entró):
+        inputs = {"seed": resolve(case.seed, ga_root), "ports": resolve(case.ports, ga_root)}
+    except Exception as e:  # noqa: BLE001 — capability/loader roto = no confiable, no crash
+        return 422, {"error": f"el replay del caso '{case_id}' falló: {e}", "case": case_id}
+    return 200, {
+        "case": case.id, "target": case.target, "title": case.title,
+        "matches": out == golden, "output": out, "golden": golden, "inputs": inputs,
+    }
 
 
 def api_route(method: str, path: str, params: dict, body: dict | None, ga_root: Path = GA_ROOT):
@@ -202,6 +235,16 @@ def api_route(method: str, path: str, params: dict, body: dict | None, ga_root: 
         from sdk.inspect import system_checks
 
         return 200, system_checks(build_graph(ga_root), ga_root)
+    if method == "GET" and path == "/api/cases":
+        # el catálogo de CASOS replayables (lo que el panel "Probar" lista en un select). Con
+        # `?node=<id>` filtra a los del nodo enfocado (un caso flow:X pertenece al nodo agent:X).
+        from sdk.case_model import discover_cases
+
+        cases = discover_cases(ga_root)
+        node = (params.get("node") or [None])[0]
+        if node:
+            cases = [c for c in cases if _case_node_id(c) == node]
+        return 200, {"cases": [{"id": c.id, "target": c.target, "title": c.title} for c in cases]}
     if method == "POST" and path == "/api/run":
         body = body or {}
         agent_id = body.get("agent")
@@ -212,6 +255,14 @@ def api_route(method: str, path: str, params: dict, body: dict | None, ga_root: 
             return 400, {"error": f"runtime inválido '{runtime}' (usá local|agentspan)"}
         res = run_agent(ga_root, agent_id, body.get("input") or {}, runtime=runtime)
         return (200 if res.get("status") == "completed" else 422), res
+    if method == "POST" and path == "/api/replay":
+        # corre un CASO del catálogo (seed + ports-fixture + golden) — el determinismo hecho
+        # botón. A diferencia de /api/run, inyecta los Fixtures del caso (ports con $ref).
+        body = body or {}
+        case_id = body.get("case")
+        if not case_id:
+            return 400, {"error": "falta 'case' en el body"}
+        return replay_case_route(ga_root, case_id)
     return 404, {"error": f"no existe la ruta {method} {path}"}
 
 
@@ -269,5 +320,9 @@ def serve(host: str = "0.0.0.0", port: int = 8900) -> None:
 
 if __name__ == "__main__":
     import os
+    import sys
 
-    serve(port=int(os.environ.get("PORT", "8900")))
+    # puerto por argv (1er arg) o env PORT o 8900 — el argv permite un server de preview
+    # en otro puerto sin chocar con el :8900 del container vivo.
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else int(os.environ.get("PORT", "8900"))
+    serve(port=port)
