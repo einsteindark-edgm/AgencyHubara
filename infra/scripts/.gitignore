@@ -1,3 +1,4 @@
-# Archivos de secretos reales — NUNCA commitear. El .example SÍ se commitea.
-secrets.*.env
+# Archivos de secretos reales — NUNCA commitear. Solo el .example se commitea.
+# Caza cualquier nombre con "secret" (secrets.hubara.env, graphagents.secrets.env, etc.).
+*secret*.env
 !secrets.example.env
