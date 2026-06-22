@@ -477,4 +477,34 @@ guard rojo que lo reproduce — el "Guard:" se escribe ANTES que el "Fix:".
   (recorder sobre las impls), porque el explorer lo pinta como "orden de ejecución" — si una capability reordena
   sus tool-calls vs el manifest, el viewer mentiría → rojo (mutación verificada).
 
+### L-24 · el I/O por-tool se RECONSTRUYE (replay determinista), no se persiste — y el `tools` inyectado es el seam que lo hace posible para TODA capability (2026-06-22, protocolo Capability + tracing)
+- **Síntoma/necesidad:** el viewer quería mostrar qué entró/salió de cada tool ADENTRO de un nodo,
+  pero Conductor registra 1 task por sub-agente (las tools corren adentro, opacas) y persistir el
+  trace tocaría el contrato de `run()`, el `acc` y los goldens (G-DET).
+- **Causa raíz (la que reformó el diseño):** `run(input, *, ports, tools)` llama sus tools por el
+  **mapping `tools` INYECTADO**; pero `build()` las **importa directo** (`from tools.X.impl import
+  run`). Envolver el mapping instrumenta `run()`, NO `build()`. CLAVE: el supervisor durable NO corre
+  el `build()` de sus miembros — `build_supervisor_graph` los corre vía `build_runnable` → `run()`
+  (loader.py:204). Así que el camino durable que importa SÍ pasa por el mapping.
+- **Fix (elegante, cero blast radius):** no persistir nada. Como `run()` es PURO/DETERMINISTA,
+  RECONSTRUIR el I/O por-tool replayeando el `run()` del nodo con tools trazadas (`sdk.tooltrace`:
+  `traced`/`replay_with_trace`/`replay_flow_with_trace`) sobre su input (que sale del seed,
+  threadeado igual que `build_runnable`). Fiel por G-DET; el endpoint `/api/flow-trace` lo expone
+  lazy. NADA cambia en la ejecución/acc/goldens — observabilidad puramente aditiva. El protocolo
+  `Capability` (`sdk/capability.py`) formaliza el contrato; `G-PROTO` (en `run_checks`) lo certifica;
+  un conformance behavioral (replay del pod → tools invocadas == declaradas) lo AMARRA.
+- **Hallazgo bonus (honestidad):** el trace reconstruido es MÁS rico que el manifest — revela LOOPS.
+  `blended-economics` llama `blended-unit-economics`+`diagnose` POR-DÍA (y 1× para el período) → 7
+  llamadas reales, aunque el manifest declara cada tool 1 vez. El conformance compara
+  **distinct-in-order(real) == declarado** (ningún tool sin declarar, mismo orden), NO la secuencia
+  cruda. El viewer muestra ambas: panel = composición declarada, modal = ejecución reconstruida.
+- **Regla para el skill:** toda preocupación transversal por-tool (tracing, costo, métricas, gates)
+  cuelga del seam `tools` inyectado + reconstrucción determinista — NO de instrumentar/persistir la
+  ejecución durable. Una capability NUNCA importa la impl de una tool en `run()`; va por `tools[id]`.
+  Si emitís un código de cert nuevo desde fuera del TestKit (ej. `[G-PROTO]` en `sdk/capability.py`),
+  agregá ese archivo al scan del guard `test_glossary` y glosá el código.
+- **Guard:** `tests/architecture/test_capability_conformance.py` (el amarre: pod replay declared==real
+  + el loop), `test_tooltrace.py`, `test_capability_protocol.py`,
+  `test_viewer_api.py::test_api_flow_trace_*`. Doc: `references/05-tracing-y-protocolo.md`.
+
 <!-- AÑADIR NUEVAS LECCIONES ARRIBA DE ESTA LÍNEA, NUMERADAS L-1, L-2, ... -->

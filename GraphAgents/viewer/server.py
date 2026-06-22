@@ -280,6 +280,38 @@ def api_route(method: str, path: str, params: dict, body: dict | None, ga_root: 
             return 200, {"acc": fetch_node_state(eid, tid)}
         except Exception as e:  # noqa: BLE001
             return 502, {"error": f"no pude leer el estado del nodo: {e}"}
+    if method == "GET" and path == "/api/flow-trace":
+        # RECONSTRUYE el I/O por-tool de un run durable replayeando el pod desde su seed (G-DET) —
+        # SIN tocar la ejecución ni persistir nada en Conductor. El supervisor durable corre el
+        # MISMO `run()` por nodo (build_runnable), así que replayear con tools trazadas reproduce
+        # exactamente lo que pasó. Es la honestidad amarrada por la cert (conformance declared==real).
+        from sdk.manifest_model import load_manifest
+        from sdk.tooltrace import replay_flow_with_trace
+        from sdk.trace import _root_seed, fetch_workflow
+
+        eid = (params.get("execution_id") or [None])[0]
+        if not eid:
+            return 400, {"error": "falta 'execution_id' en el query (?execution_id=<id>)"}
+        try:
+            wf = fetch_workflow(eid)
+        except Exception as e:  # noqa: BLE001
+            return 502, {"error": f"no pude leer la ejecución (¿server :6767 arriba?): {e}"}
+        agent_id = wf.get("workflowName")
+        manifests = ga_root / "manifests"
+        cand = sorted(manifests.glob(f"{agent_id}.agent.yaml")) + sorted(
+            manifests.glob(f"{agent_id}.taskgraph.yaml"))
+        if not cand:
+            return 404, {"error": f"la ejecución es del agente '{agent_id}', ausente del catálogo"}
+        seed = _root_seed(wf)
+        if seed is None:  # sin seed recuperable (fixture trimmeado / run viejo) → no inventa, degrada
+            return 200, {"node_traces": {}, "reconstructed": False,
+                         "reason": "el seed no viajó en este run — no se puede reconstruir"}
+        try:
+            res = replay_flow_with_trace(load_manifest(cand[0]), ga_root, seed)
+        except Exception as e:  # noqa: BLE001 — capability/binding roto: degradá, la UI nunca crashea
+            return 422, {"error": f"no pude reconstruir el trace por-tool: {e}",
+                         "node_traces": {}, "reconstructed": False}
+        return 200, {"node_traces": res["node_traces"], "reconstructed": True}
     if method == "GET" and path == "/api/inspect":
         # los FILES + los CHECKS de un nodo o de una RELACIÓN (la línea entre nodos).
         from sdk.graph import build_graph

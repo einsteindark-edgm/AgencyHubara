@@ -16,9 +16,11 @@ TESTKIT = GA / "sdk" / "testkit"
 
 
 def _emitted_codes() -> set[str]:
-    """Los códigos `[X]` que emiten los checks del TestKit (la fuente de verdad de las reglas)."""
+    """Los códigos `[X]` que emiten los checks (la fuente de verdad de las reglas): el TestKit +
+    `sdk/capability.py` (emite `[G-PROTO]`, surface del protocolo que la cert corre vía run_checks)."""
     codes: set[str] = set()
-    for p in TESTKIT.glob("*.py"):
+    sources = list(TESTKIT.glob("*.py")) + [GA / "sdk" / "capability.py"]
+    for p in sources:
         codes |= set(re.findall(r"\[([A-Z][A-Z0-9-]{2,})\]", p.read_text(encoding="utf-8")))
     return codes
 

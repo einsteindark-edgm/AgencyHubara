@@ -197,11 +197,37 @@ def check_outward_tools_need_approval(root: AgentNode) -> list[str]:
     return warns
 
 
+def check_capability_conforms_protocol(root: AgentNode) -> list[str]:
+    """G-PROTO: cada capability satisface el protocolo del kit (`sdk.capability`) — `run` con la
+    firma de inyección y `build` keyword-only si existe. Es el contrato que hace a TODAS las
+    capabilities uniformes y, por el seam `tools`, TRAZABLES. Delega en `assert_capability` (la
+    fuente única del contrato); la parte BEHAVIORAL (declared==real, vía replay) la prueba el
+    conformance. Importamos `assert_capability` por-llamada (la cert puede monkeypatchearla)."""
+    from sdk.capability import assert_capability
+
+    errs: list[str] = []
+    seen: set[str] = set()
+    for n in iter_nodes(root):
+        if not n.capability:
+            continue
+        mod_name = n.capability.split(":", 1)[0]
+        if mod_name in seen:
+            continue
+        seen.add(mod_name)
+        try:
+            mod = importlib.import_module(mod_name)
+        except Exception:  # noqa: BLE001 — ya lo reporta check_capability_refs
+            continue
+        errs.extend(assert_capability(mod))
+    return errs
+
+
 def run_checks(root: AgentNode, ga_root: Path | None = None) -> dict:
     """{'errors': [...], 'warnings': [...]} — el reporte que consumen los 3 frontends."""
     errors = (
         check_capability_refs(root)
         + check_capability_run_signature(root)
+        + check_capability_conforms_protocol(root)
         + check_supervisor_coherent(root)
         + check_taskgraph_wireable(root)
         + check_tool_refs(root, ga_root)

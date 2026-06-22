@@ -495,7 +495,8 @@ function Inspector({ graph, node, selEdge, inspect, plan, trace, locked, onSelec
             ${s.tools && s.tools.length>0 && html`<ul class="subtools">
               ${s.tools.map((tid,ti) => { const tn = graph.nodes.find(n=>n.id==='tool:'+tid);
                 return html`<li key=${tid} class=${live?'clk':''}
-                  onClick=${live ? ((ev)=>{ ev.stopPropagation(); onOpenNode('tool:'+tid); }) : null}>
+                  title=${live?'abre el nodo y su sub-ejecución (I/O reconstruido)':''}
+                  onClick=${live ? ((ev)=>{ ev.stopPropagation(); onOpenNode('agent:'+s.agent); }) : null}>
                   <span class="tnum" style=${{ background: oc||'var(--tool)' }}>${ti+1}</span>
                   <span class="tnm">${tid}</span>${tn?html`<span class="tse">· ${tn.side_effect}</span>`:''}</li>`; })}
             </ul>`}
@@ -565,7 +566,7 @@ function Glossary({ onClose }){
 
 // --- modal por-nodo con pestañas (resumen · input · output). Generic sobre un PASO del flujo,
 // --- el SUPERVISOR (nodo principal) o una TOOL. Lazy: cada pestaña trae su dato al abrirse. ----
-function NodeModal({ trace, graph, nodeId, onClose }){
+function NodeModal({ trace, graph, nodeId, flowTrace, onClose }){
   const node = graph.nodes.find(n => n.id === nodeId) || { label: nodeId, kind: null };
   const steps = trace.steps || [];
   const stepIndex = steps.findIndex(s => s.agent && ('agent:'+s.agent) === nodeId);
@@ -576,15 +577,18 @@ function NodeModal({ trace, graph, nodeId, onClose }){
   const rt = step ? (step.runtime || {}) : {};
   const status = isSup ? String(trace.workflow_status||'').toLowerCase() : (isStep ? rt.status : null);
   const c = RUN_HEX[status] || 'var(--muted)';
+  // el I/O por-tool RECONSTRUIDO de este nodo (replay determinista) — si el run lo tiene:
+  const nodeLedger = (isStep && flowTrace && step) ? (flowTrace[step.agent] || null) : null;
 
   const [tab, setTab] = useState('resumen');
   const [files, setFiles] = useState(null);
   const [io, setIo] = useState({});  // cache por pestaña → el acc/seed (acc pesado, L-14: lazy)
+  const [openIO, setOpenIO] = useState({});  // qué entradas de la sub-ejecución están expandidas (por seq)
   const fmt = (v) => v==null ? '' : (typeof v==='string' ? v : JSON.stringify(v, null, 2));
 
   // RESUMEN: descripción + files del nodo (de /api/inspect) — una vez por nodo.
   useEffect(() => {
-    setTab('resumen'); setFiles(null); setIo({});
+    setTab('resumen'); setFiles(null); setIo({}); setOpenIO({});
     if(node.kind) api('/api/inspect?node='+encodeURIComponent(nodeId)).then(d=>setFiles(d.files||[])).catch(()=>setFiles([]));
     else setFiles([]);
   }, [nodeId]);
@@ -619,7 +623,7 @@ function NodeModal({ trace, graph, nodeId, onClose }){
   const loadingTab = !(tab in io);
 
   const bodyIO = (which) => {
-    if(isTool) return html`<div class="mnote">El <b class="k">I/O por-tool</b> no lo captura el runtime durable: esta tool corre <b class="k">adentro</b> del nodo ${parents.length?html`«<b class="k">${parents.join(' · ')}</b>»`:''} (Conductor registra 1 task por sub-agente, no por tool). Para ver qué entró/salió, abrí ese nodo.</div>`;
+    if(isTool) return html`<div class="mnote">El <b class="k">I/O por-tool</b> se <b class="k">reconstruye</b> dentro de cada nodo que la compone (replay determinista del nodo, G-DET) — Conductor no lo persiste (1 task = 1 sub-agente). Abrí el nodo ${parents.length?html`«<b class="k">${parents.join(' · ')}</b>»`:''} y mirá su sub-ejecución para ver qué entró/salió en este flujo.</div>`;
     if(loadingTab) return html`<div class="empty">leyendo el estado del nodo…</div>`;
     const v = io[tab];
     if(v==null){
@@ -646,8 +650,23 @@ function NodeModal({ trace, graph, nodeId, onClose }){
 
       ${tab==='resumen' && html`<div>
         ${node.description && html`<div class="meta" style=${{ marginTop:'2px' }}>${node.description}</div>`}
-        ${isStep && step.tools && step.tools.length>0 && html`<div>
-          <div class="sec" style=${{ marginTop:'10px' }}>TOOLS QUE COMPONE · sub-ejecución (orden de ejecución)</div>
+        ${isStep && nodeLedger && nodeLedger.length>0 && html`<div>
+          <div class="sec" style=${{ marginTop:'10px' }}>SUB-EJECUCIÓN · I/O por-tool reconstruido (replay determinista, G-DET)</div>
+          <ul class="subtools">
+            ${nodeLedger.map((e,i) => { const tn = toolNode(e.tool); const open = openIO[e.seq];
+              return html`<li key=${i} class="clk" onClick=${()=>setOpenIO(p=>({ ...p, [e.seq]: !p[e.seq] }))}
+                  style=${{ flexWrap:'wrap', alignItems:'flex-start' }}>
+                <span class="tnum" style=${{ background:'var(--tool)' }}>${e.seq+1}</span>
+                <span class="tnm">${e.tool}</span>${tn?html`<span class="tse">· ${tn.side_effect}</span>`:''}
+                <span class="tse" style=${{ marginLeft:'auto' }}>${open?'▾ I/O':'▸ I/O'}</span>
+                ${open && html`<div style=${{ flexBasis:'100%', marginTop:'5px' }}>
+                  <div class="sec" style=${{ margin:'2px 0' }}>entró</div><pre class="out">${fmt(e.input)}</pre>
+                  <div class="sec" style=${{ margin:'5px 0 2px' }}>salió</div><pre class="out">${fmt(e.output)}</pre>
+                </div>`}</li>`; })}
+          </ul>
+          <div class="meta" style=${{ fontSize:'10.5px', marginTop:'2px' }}>${nodeLedger.length} llamada(s) reales — un loop repite la misma tool, cada una con su I/O.</div></div>`}
+        ${isStep && !nodeLedger && step.tools && step.tools.length>0 && html`<div>
+          <div class="sec" style=${{ marginTop:'10px' }}>TOOLS QUE COMPONE · declarado (corré el caso en durable para ver el I/O real)</div>
           <ul class="subtools">
             ${step.tools.map((tid,i) => { const tn = toolNode(tid); return html`<li key=${tid}>
               <span class="tnum" style=${{ background:'var(--tool)' }}>${i+1}</span>
@@ -687,6 +706,7 @@ function App(){
   const [checking, setChecking] = useState(false);  // 1er /api/checks importa las capabilities → lento
   const [showGloss, setShowGloss] = useState(false);  // overlay del glosario de convenciones
   const [modalNode, setModalNode] = useState(null);   // nodeId del modal por-nodo (resumen/input/output/tools)
+  const [flowTrace, setFlowTrace] = useState(null);   // node_traces reconstruido (I/O por-tool, /api/flow-trace)
   const [err, setErr] = useState('');
   const traceTimer = useRef(null);
   const byId = id => graph.nodes.find(n => n.id === id);
@@ -714,7 +734,7 @@ function App(){
     select(id);
   }, [locked, select]);
 
-  const exitTrace = useCallback(() => { stopPoll(); setTrace(null); setModalNode(null); }, []);  // ⟲ desbloquea
+  const exitTrace = useCallback(() => { stopPoll(); setTrace(null); setModalNode(null); setFlowTrace(null); }, []);  // ⟲ desbloquea
 
   const selectEdge = useCallback((edge) => {
     setSelected(null); setSelEdge(edge); setPlan(null); setTrace(null); setInspect(null); stopPoll();
@@ -731,8 +751,11 @@ function App(){
 
   const loadTrace = useCallback(async (eid, supLabel) => {
     stopPoll();
-    if(supLabel){ const id = 'agent:'+supLabel; setSelected(id); setModalNode(null);
-      try { setPlan(await api('/api/plan?agent='+encodeURIComponent(supLabel))); } catch(e){} }
+    if(supLabel){ const id = 'agent:'+supLabel; setSelected(id); setModalNode(null); setFlowTrace(null);
+      try { setPlan(await api('/api/plan?agent='+encodeURIComponent(supLabel))); } catch(e){}
+      // reconstruí el I/O por-tool del pod (replay determinista del seed) — una vez por run.
+      api('/api/flow-trace?execution_id='+encodeURIComponent(eid))
+        .then(d => setFlowTrace(d.reconstructed ? d.node_traces : null)).catch(() => setFlowTrace(null)); }
     let t; try { t = await api('/api/trace?execution_id='+encodeURIComponent(eid)); } catch(e){ return; }
     if(!t || !t.steps) return;
     setTrace(t);
@@ -812,7 +835,7 @@ function App(){
         onDurable=${onDurable} onExitTrace=${exitTrace} />
     </div>
     ${showGloss && html`<${Glossary} onClose=${()=>setShowGloss(false)} />`}
-    ${modalNode && trace && html`<${NodeModal} trace=${trace} graph=${graph} nodeId=${modalNode} onClose=${()=>setModalNode(null)} />`}
+    ${modalNode && trace && html`<${NodeModal} trace=${trace} graph=${graph} nodeId=${modalNode} flowTrace=${flowTrace} onClose=${()=>setModalNode(null)} />`}
   </div>`;
 }
 

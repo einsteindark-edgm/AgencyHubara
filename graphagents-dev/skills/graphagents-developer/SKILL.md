@@ -105,6 +105,11 @@ una tool (con approval) · un connector a Meta · componer el supervisor ·
 certificar · el explorer visual (catálogo + grafo + marketplace, §2.8) · el
 puente a la fase B (integración al plugin `ads` del monorepo).
 
+El **protocolo `Capability`** (el contrato uniforme de toda capability) y el **tracing
+por-tool** (cómo el viewer muestra el I/O real de cada tool reconstruyéndolo, sin
+persistir): mejores prácticas + cómo extenderlo a otras preocupaciones transversales en
+`references/05-tracing-y-protocolo.md`.
+
 ## Subagents
 
 - `graph-explorer` — mapea una zona de GraphAgents antes de editar (read-only).

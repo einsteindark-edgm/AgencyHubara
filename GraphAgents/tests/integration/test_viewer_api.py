@@ -235,6 +235,45 @@ def test_durable_output_desenvuelve_el_acc_de_un_supervisor():
     assert _durable_output(m, {"acc": {"verdict": "scale_budget"}}) == {"verdict": "scale_budget"}
 
 
+def test_api_flow_trace_reconstructs_real_per_tool_io(monkeypatch):
+    """/api/flow-trace reconstruye el I/O por-tool de un run durable replayeando el pod desde su
+    seed (G-DET) — SIN tocar la ejecución ni Conductor. Monkeypatch de fetch_workflow → un wf
+    mínimo con el seed; el endpoint replaya y devuelve node_traces con el I/O REAL por tool."""
+    from sdk.case_model import discover_cases, resolve
+
+    seed = resolve(next(c for c in discover_cases(ROOT) if c.id == "dia-del-padre-flujo").seed, ROOT)
+    monkeypatch.setattr(
+        "sdk.trace.fetch_workflow",
+        lambda eid, *a, **k: {"workflowId": eid, "workflowName": "ads-analytics",
+                              "input": {"acc": seed}, "tasks": []},
+    )
+    status, payload = api_route("GET", "/api/flow-trace", {"execution_id": ["e1"]}, None, ga_root=ROOT)
+    assert status == 200
+    assert payload["reconstructed"] is True
+    nt = payload["node_traces"]
+    assert [e["tool"] for e in nt["ctwa-campaign-funnel"]] == [
+        "parse-meta-entities", "meta-ads-insights", "complement-funnel"]
+    assert nt["ctwa-campaign-funnel"][0]["output"]  # I/O real, no placeholder
+    assert any(e["tool"] == "blended-unit-economics" for e in nt["blended-economics"])  # el loop
+
+
+def test_api_flow_trace_requires_execution_id():
+    status, payload = api_route("GET", "/api/flow-trace", {}, None, ga_root=ROOT)
+    assert status == 400
+
+
+def test_api_flow_trace_without_seed_degrades(monkeypatch):
+    # un run sin seed recuperable (fixture trimmeado) → no reconstruye, pero NO crashea.
+    monkeypatch.setattr(
+        "sdk.trace.fetch_workflow",
+        lambda eid, *a, **k: {"workflowId": eid, "workflowName": "ads-analytics", "tasks": []},
+    )
+    status, payload = api_route("GET", "/api/flow-trace", {"execution_id": ["e1"]}, None, ga_root=ROOT)
+    assert status == 200
+    assert payload["reconstructed"] is False
+    assert payload["node_traces"] == {}
+
+
 def test_api_run_durable_requiere_case():
     status, payload = api_route("POST", "/api/run-durable", {}, {}, ga_root=ROOT)
     assert status == 400
