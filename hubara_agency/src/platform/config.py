@@ -10,6 +10,12 @@ TEMPORAL_URL = os.getenv("TEMPORAL_URL", "localhost:7233")
 TEMPORAL_NAMESPACE = os.getenv("TEMPORAL_NAMESPACE", "default")
 TEMPORAL_TLS_CERT_PATH = os.getenv("TEMPORAL_TLS_CERT_PATH", "")
 TEMPORAL_TLS_KEY_PATH = os.getenv("TEMPORAL_TLS_KEY_PATH", "")
+# Temporal Cloud — auth por API key (preferida sobre mTLS; INFRASTRUCTURE.md §6,
+# sin certs que rotar). TEMPORAL_ADDRESS = endpoint regional
+# (<region>.<provider>.api.temporal.io:7233); cae a TEMPORAL_URL para dev local.
+# Si TEMPORAL_API_KEY está seteada, gana sobre mTLS.
+TEMPORAL_ADDRESS = os.getenv("TEMPORAL_ADDRESS", TEMPORAL_URL)
+TEMPORAL_API_KEY = os.getenv("TEMPORAL_API_KEY", "")
 
 # Modelos y Proveedores Base
 DEFAULT_LLM_MODEL = os.getenv("DEFAULT_LLM_MODEL", "deepseek/deepseek-v4-flash")
