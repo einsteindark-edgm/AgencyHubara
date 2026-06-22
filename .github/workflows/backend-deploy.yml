@@ -63,7 +63,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        tenant: [hubara, vincenzo]
+        tenant: [hubara]   # sumá vincenzo cuando tenga su caja + secretos
     steps:
       - uses: actions/checkout@v4
 
@@ -88,9 +88,12 @@ jobs:
             -backend-config="region=${{ vars.AWS_REGION }}" \
             -backend-config="encrypt=true"
           IP="$(terraform output -json app_hosts | jq -r '.["${{ matrix.tenant }}"].public_ip')"
-          OTLP="$(terraform output -json observability_host | jq -r '.otlp_grpc')"
-          echo "ip=$IP"     >> "$GITHUB_OUTPUT"
-          echo "otlp=http://$OTLP" >> "$GITHUB_OUTPUT"
+          echo "ip=$IP" >> "$GITHUB_OUTPUT"
+          # OTLP es OPCIONAL: si no desplegaste SigNoz, ese output no existe → queda
+          # vacío (el render cae a ConsoleSpanExporter). El `|| true` evita que el
+          # `set -e` de Actions aborte el step y deje la IP sin setear.
+          OTLP="$(terraform output -json observability_host 2>/dev/null | jq -r '.otlp_grpc // empty' 2>/dev/null || true)"
+          echo "otlp=${OTLP:+http://$OTLP}" >> "$GITHUB_OUTPUT"
 
       # Copiar artefactos de deploy a la caja.
       - name: Copiar compose + scripts + manifests
