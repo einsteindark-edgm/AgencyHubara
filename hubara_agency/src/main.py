@@ -31,10 +31,11 @@ from pathlib import Path
 from types import ModuleType
 
 import yaml
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
+from src.platform.auth import require_auth
 from src.platform.observability.otel import init_otel, instrument_fastapi_app
 from src.platform.plugin_loader import validate_enabled
 from src.platform.plugin_manifest import enabled_plugins
@@ -143,12 +144,24 @@ def _register_router_from_module(
             f"plugin {plugin_id!r}: module {module_path!r}.router no es APIRouter "
             f"(got {type(router).__name__})"
         )
-    target_app.include_router(router, prefix=prefix, tags=tags)
+    # Auth (workstream JWT/Cognito): por DEFAULT toda ruta de plugin exige un
+    # JWT de Cognito (fail-closed — una ruta nueva nace protegida). Un router se
+    # declara PÚBLICO marcando ``PUBLIC_ROUTER = True`` a nivel módulo — sólo el
+    # webhook de Meta, que trae su propia auth (hub.verify_token + HMAC). La
+    # dependency ``require_auth`` es NO-OP si Cognito no está configurado (dev/tests).
+    public = bool(getattr(mod, "PUBLIC_ROUTER", False))
+    target_app.include_router(
+        router,
+        prefix=prefix,
+        tags=tags,
+        dependencies=[] if public else [Depends(require_auth)],
+    )
     logger.info(
-        "[loader] registered {} → prefix={!r} tags={!r}",
+        "[loader] registered {} → prefix={!r} tags={!r} auth={}",
         module_path,
         prefix,
         tags,
+        "PUBLIC" if public else "required",
     )
 
 

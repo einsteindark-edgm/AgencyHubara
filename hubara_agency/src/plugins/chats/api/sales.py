@@ -30,6 +30,12 @@ logger = structlog.get_logger()
 
 router = APIRouter()
 
+# Router PÚBLICO (sin JWT de Cognito): lo llama Meta, no el dashboard. Trae su
+# propia auth — `hub.verify_token` (GET) + HMAC `X-Hub-Signature-256` (POST, via
+# verify_meta_signature). `main.py` lee este marcador y NO le cuelga `require_auth`
+# (que rompería la recepción de mensajes). El default de todo router es PROTEGIDO.
+PUBLIC_ROUTER = True
+
 
 @router.get("/webhook")
 async def verify_webhook(request: Request):
