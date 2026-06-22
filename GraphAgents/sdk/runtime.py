@@ -136,7 +136,10 @@ class AgentSpanRuntime:
 
         def _drain() -> None:
             try:  # los workers corren solos; este loop solo sabe CUÁNDO cerrar el runtime
-                for _ in range(1200):  # techo ~600s (el pod real tarda ~1.4s); evita fugar si cuelga
+                # techo ~600s (el pod real tarda ~1.4s): reapa los workers LOCALES si el workflow
+                # cuelga — el workflow server-side quedaría stalled, pero no fuga procesos (hoy
+                # teórico: el catálogo es grafos puros de ~1.4s).
+                for _ in range(1200):
                     if getattr(rt.get_status(eid), "is_complete", False):
                         break
                     _time.sleep(0.5)

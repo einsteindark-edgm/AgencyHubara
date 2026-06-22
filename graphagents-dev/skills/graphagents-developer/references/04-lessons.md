@@ -432,4 +432,25 @@ guard rojo que lo reproduce — el "Guard:" se escribe ANTES que el "Fix:".
 - **Guard:** `test_durable_input_envuelve_el_seed_de_un_supervisor` + `test_durable_input_parallel_agrega_patches`
   + `test_durable_output_desenvuelve_el_acc_de_un_supervisor` (tests/integration/test_viewer_api.py).
 
+### L-22 · submit durable ASÍNCRONO = `start()` (handle no-bloqueante) + un daemon que mantiene el runtime vivo hasta `is_complete`, recién ahí `shutdown()` (2026-06-21, "probar durable" en vivo del viewer)
+- **Síntoma:** el durable sincrónico (`AgentSpanRuntime.run()`) BLOQUEA hasta que el workflow completa
+  (~1.4s un pod puro, ~60s si un nodo falla por los retries de Conductor) → el viewer recién veía el
+  trace ya terminado (todo `done`, SIN animación nodo-por-nodo); peor, una falla colgaba el request 60s.
+- **Causa:** `run()` corre los workers in-process y espera el resultado. Para ver los nodos activarse hay
+  que devolver el execution-id ANTES de completar y pollear el trace. `AgentRuntime` expone
+  `start(agent, input) -> AgentHandle` (devuelve `handle.execution_id` en ~0.4s, los workers siguen).
+- **Fix:** `AgentSpanRuntime.start()` abre el runtime SIN context manager, `start()`-ea, toma el eid, y
+  lanza un **thread daemon** que pollea `get_status(eid)` hasta `is_complete` (techo ~600s) y AHÍ
+  `shutdown()` (reap de los worker processes). Clave: si cerrás el runtime apenas submitea, los workers
+  forkeados MUEREN y el workflow stallea → el daemon es lo que los mantiene vivos. El frontend ya pollea
+  el trace (loadTrace 700ms) → los nodos animan `pending→running→done`. Reap verificado en vivo
+  (`mp.active_children → 0`, 0 huérfanos).
+- **Regla para el skill:** un submit durable "fire-and-watch" = `start()` + un drain daemon que vive
+  hasta `is_complete`; NUNCA cierres el runtime entre el submit y la complettitud (mata los workers). Y
+  el guard `except Exception` NO alcanza: `AgentRuntime.__init__` levanta **`SystemExit`** (deriva de
+  `BaseException`) si `:6767` cae con `auto_start_server=false` → capturá `(Exception, SystemExit)` o la
+  UI muere el request thread en vez de degradar a 422.
+- **Guard:** `test_run_durable_es_async_devuelve_running_y_completa_en_background` (server-gated) +
+  `test_run_durable_degrada_systemexit_a_422` (el caso negativo del SystemExit, puro) (tests/integration/test_viewer_api.py).
+
 <!-- AÑADIR NUEVAS LECCIONES ARRIBA DE ESTA LÍNEA, NUMERADAS L-1, L-2, ... -->

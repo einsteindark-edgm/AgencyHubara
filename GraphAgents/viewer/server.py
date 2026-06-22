@@ -100,7 +100,7 @@ def _run_on_agentspan(ga_root: Path, m, input_dict: dict) -> dict:
         }
     try:
         ex = AgentSpanRuntime().run(graph, _durable_input(m, input_dict))  # supervisor → {acc: seed}
-    except Exception as e:  # noqa: BLE001 — server caído / agentspan ausente
+    except (Exception, SystemExit) as e:  # noqa: BLE001 — AgentRuntime levanta SystemExit si :6767 cae (auto_start=false)
         return {
             "status": "failed",
             "runtime": "agentspan",
@@ -202,7 +202,8 @@ def run_durable_route(ga_root: Path, case_id: str) -> tuple[int, dict]:
                      "vendor real, no el fixture del caso (corré por tests/integration)."}
     try:
         eid = _start_durable(ga_root, m, resolve(case.seed, ga_root))
-    except Exception as e:  # noqa: BLE001 — :6767 caído / agentspan ausente / build fallido
+    except (Exception, SystemExit) as e:  # noqa: BLE001 — AgentRuntime levanta SystemExit (no Exception)
+        # si :6767 cae con auto_start_server=false → la UI degrada a 422, no muere el request thread.
         return 422, {"error": f"no pude submitear a AgentSpan (¿server :6767 arriba? ¿langgraph/agentspan?): {e}",
                      "agent": case.target_id, "runtime": "agentspan"}
     return 200, {"execution_id": eid, "agent": case.target_id, "status": "running", "runtime": "agentspan"}

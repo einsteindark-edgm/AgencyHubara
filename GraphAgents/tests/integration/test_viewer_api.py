@@ -243,6 +243,21 @@ def test_api_run_durable_caso_inexistente_es_404():
     assert status == 404
 
 
+def test_run_durable_degrada_systemexit_a_422(monkeypatch):
+    # AgentRuntime.__init__ levanta SystemExit (deriva de BaseException, NO de Exception) si :6767
+    # cae con AGENTSPAN_AUTO_START_SERVER=false. El guard DEBE degradar a 422, no dejar morir el
+    # request thread (el contrato "la UI nunca crashea"). Sin server: monkeypatch del submit.
+    import viewer.server as srv
+
+    def boom(ga_root, m, seed):
+        raise SystemExit(1)
+
+    monkeypatch.setattr(srv, "_start_durable", boom)
+    status, payload = api_route("POST", "/api/run-durable", {}, {"case": "dia-del-padre-flujo"}, ga_root=ROOT)
+    assert status == 422
+    assert "error" in payload
+
+
 def _server_up() -> bool:
     import urllib.request
     try:
