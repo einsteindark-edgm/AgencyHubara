@@ -106,9 +106,13 @@ resource "aws_iam_role" "graphagents" {
 
 data "aws_iam_policy_document" "ssm_read" {
   statement {
-    sid       = "ReadGraphAgentsSecrets"
-    actions   = ["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath"]
-    resources = ["arn:aws:ssm:*:*:parameter/graphagents/*"]
+    sid     = "ReadGraphAgentsSecrets"
+    actions = ["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath"]
+    # GetParametersByPath chequea el permiso contra el ARN del PATH (sin /*).
+    resources = [
+      "arn:aws:ssm:*:*:parameter/graphagents",
+      "arn:aws:ssm:*:*:parameter/graphagents/*",
+    ]
   }
   statement {
     sid       = "DecryptSecureString"

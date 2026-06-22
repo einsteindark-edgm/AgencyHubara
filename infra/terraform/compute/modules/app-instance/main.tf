@@ -83,9 +83,14 @@ resource "aws_iam_role" "app" {
 
 data "aws_iam_policy_document" "ssm_read" {
   statement {
-    sid       = "ReadTenantSecrets"
-    actions   = ["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath"]
-    resources = ["arn:aws:ssm:*:*:parameter/hubara/${var.tenant}/*"]
+    sid     = "ReadTenantSecrets"
+    actions = ["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath"]
+    # GetParametersByPath chequea el permiso contra el ARN del PATH (sin /*); el /*
+    # cubre los parámetros. Hacen falta los DOS, sino el get-by-path da AccessDenied.
+    resources = [
+      "arn:aws:ssm:*:*:parameter/hubara/${var.tenant}",
+      "arn:aws:ssm:*:*:parameter/hubara/${var.tenant}/*",
+    ]
   }
   statement {
     sid       = "DecryptSecureString"
