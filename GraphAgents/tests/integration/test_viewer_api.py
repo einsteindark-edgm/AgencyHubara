@@ -41,6 +41,15 @@ def test_api_plan_returns_execution_order():
     assert payload["steps"][2]["inputs"]["insights_payload"] == "$state.meta_insights"
 
 
+def test_api_plan_carries_composed_tools_per_step():
+    # el panel "flujo de ejecución" dibuja, bajo cada nodo, las tools que compone (sub-ejecución).
+    status, payload = api_route("GET", "/api/plan", {"agent": ["ads-analytics"]}, None, ga_root=ROOT)
+    assert status == 200
+    funnel = next(s for s in payload["steps"] if s["agent"] == "ctwa-campaign-funnel")
+    assert funnel["tools"] == ["parse-meta-entities", "meta-ads-insights", "complement-funnel"]
+    assert next(s for s in payload["steps"] if s["agent"] == "ctwa-report")["tools"] == []
+
+
 def test_api_plan_unknown_agent_is_404():
     status, payload = api_route("GET", "/api/plan", {"agent": ["nope"]}, None, ga_root=ROOT)
     assert status == 404

@@ -178,6 +178,21 @@ def _archetype_map(ga_root: Path) -> dict[str, str | None]:
     return {a.name: a.archetype for a in discover_agents(ga_root)}
 
 
+def _tool_ids(m: AgentNode) -> list[str]:
+    """Los ids de tool que un agente COMPONE, en orden DECLARADO del manifest (G-BIND). En
+    un pod determinista (G-DET) ese orden de composición ES el orden en que el grafo los corre
+    — no hay LLM eligiendo (verificado: `run()` y el `StateGraph` los encadenan idéntico). Es
+    la verdad ESTÁTICA: Conductor NO captura el runtime por-tool (1 task = 1 sub-agente; las
+    tools corren ADENTRO del nodo, opacas al runtime durable)."""
+    return [t.ref_id for t in m.tools if t.ref_id]
+
+
+def _tools_map(ga_root: Path) -> dict[str, list[str]]:
+    """name -> [tool_id...] del catálogo (los miembros de un supervisor son referencias; sus
+    tools viven en el agente real, no en la línea `uses: agent://...`)."""
+    return {a.name: _tool_ids(a) for a in discover_agents(ga_root)}
+
+
 def execution_plan(node: AgentNode, ga_root: Path | str) -> dict:
     """Proyecta el ORDEN DE EJECUCIÓN de un supervisor (o un agente hoja) — la misma
     semántica que el `loader` compone, SIN importar langgraph. Cada paso lleva su `order`,
@@ -196,6 +211,7 @@ def execution_plan(node: AgentNode, ga_root: Path | str) -> dict:
     """
     ga_root = Path(ga_root)
     arch = _archetype_map(ga_root)
+    tmap = _tools_map(ga_root)  # name -> [tool_id...] (las tools que cada nodo compone, sub-ejecución)
 
     def _member(a: AgentNode) -> tuple[str | None, str | None, dict]:
         name = a.ref_agent_id or a.name
@@ -206,26 +222,26 @@ def execution_plan(node: AgentNode, ga_root: Path | str) -> dict:
             "agent": node.name,
             "strategy": node.strategy,
             "steps": [{"order": 1, "agent": node.name, "archetype": node.archetype,
-                       "inputs": {}, "role": "single"}],
+                       "inputs": {}, "role": "single", "tools": _tool_ids(node)}],
         }
 
     steps: list[dict] = []
     if node.strategy in ("router", "manual", None):
         for i, a in enumerate(node.agents):
             name, archetype, inputs = _member(a)
-            steps.append({"order": 1, "agent": name, "archetype": archetype,
-                          "inputs": inputs, "role": "default_branch" if i == 0 else "branch"})
+            steps.append({"order": 1, "agent": name, "archetype": archetype, "inputs": inputs,
+                          "role": "default_branch" if i == 0 else "branch", "tools": tmap.get(name, [])})
     elif node.strategy == "parallel":
         for a in node.agents:
             name, archetype, inputs = _member(a)
             steps.append({"order": 1, "agent": name, "archetype": archetype,
-                          "inputs": inputs, "role": "fan_out"})
-        steps.append({"order": 2, "agent": None, "archetype": None, "inputs": {}, "role": "join"})
+                          "inputs": inputs, "role": "fan_out", "tools": tmap.get(name, [])})
+        steps.append({"order": 2, "agent": None, "archetype": None, "inputs": {}, "role": "join", "tools": []})
     else:  # sequential — la cadena
         for i, a in enumerate(node.agents, 1):
             name, archetype, inputs = _member(a)
             steps.append({"order": i, "agent": name, "archetype": archetype,
-                          "inputs": inputs, "role": "step"})
+                          "inputs": inputs, "role": "step", "tools": tmap.get(name, [])})
 
     return {"agent": node.name, "strategy": node.strategy, "steps": steps}
 

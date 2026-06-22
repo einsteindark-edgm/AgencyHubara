@@ -453,4 +453,28 @@ guard rojo que lo reproduce — el "Guard:" se escribe ANTES que el "Fix:".
 - **Guard:** `test_run_durable_es_async_devuelve_running_y_completa_en_background` (server-gated) +
   `test_run_durable_degrada_systemexit_a_422` (el caso negativo del SystemExit, puro) (tests/integration/test_viewer_api.py).
 
+### L-23 · el `input` del workflow que persiste AgentSpan NO es `{acc: seed}` sino `{'prompt': '<repr Python>'}` — la pestaña INPUT del modal mostraba el envelope crudo (2026-06-22, modal por-nodo del viewer)
+- **Síntoma:** tests verdes (un fixture sintético `input={'acc': {...}}` desenvolvía bien) pero EN VIVO la
+  pestaña INPUT del modal del supervisor mostraba `{"prompt": "{'acc': {'meta_insights': {...}}}"}` crudo —
+  el seed envuelto y stringificado, no el seed limpio. El caso paradigmático de "tests verdes ≠ feature viva".
+- **Causa:** asumí que Conductor guarda el workflow input con la forma que el loader le pasa (`{acc: seed}`,
+  `_durable_input`). Pero AgentSpan RE-SERIALIZA el input al persistirlo: lo guarda como
+  `{'prompt': '<repr Python del estado>'}` (comillas simples, no JSON). El runtime SÍ recibió `{acc: seed}`
+  (por eso el pod corrió bien); lo que se ve en `workflow.input` es el registro de AgentSpan, no lo que pasé.
+- **Fix:** `_root_seed(workflow)` pela TRES capas en orden: (1) el `{'prompt': '<repr>'}` de AgentSpan con
+  `ast.literal_eval` (seguro: solo literales; si no parsea, devolvé el envelope CRUDO, no inventes un seed),
+  (2) el `{acc: seed}` del loader, (3) input crudo de una capability hoja, si no → None. Verificado en vivo:
+  la pestaña INPUT ahora muestra `{meta_insights, manual_sales, entities_payload}` limpio.
+- **Regla para el skill:** cuando leas un campo del runtime durable que vos mismo escribiste (input, output,
+  state), NO asumas que vuelve con la forma que mandaste — AgentSpan/Conductor re-serializan. Verificá la
+  forma REAL con un run vivo (`fetch_workflow` → mirá `input`/`outputData` crudos) ANTES de codear el unwrap;
+  un fixture sintético que vos armás con la forma "esperada" NO prueba nada. Y al desenvolver, degradá honesto
+  (envelope crudo) si no matchea, nunca fabriques el valor "limpio".
+- **Guard:** `test_trace_seed_unwraps_agentspan_prompt_envelope` (la forma real `{'prompt': "..."}` + el caso
+  no-parseable que devuelve crudo) + `test_trace_seed_falls_back_to_raw_input_then_none` (tests/architecture/test_trace.py).
+  Además, la honestidad de la sub-ejecución de tools la pinea `test_composed_tool_order_is_the_real_call_order`
+  (tests/architecture/test_execution_plan.py): el orden DECLARADO en el manifest == el orden REAL de invocación
+  (recorder sobre las impls), porque el explorer lo pinta como "orden de ejecución" — si una capability reordena
+  sus tool-calls vs el manifest, el viewer mentiría → rojo (mutación verificada).
+
 <!-- AÑADIR NUEVAS LECCIONES ARRIBA DE ESTA LÍNEA, NUMERADAS L-1, L-2, ... -->

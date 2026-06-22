@@ -101,6 +101,30 @@
   .gloss .grow:first-of-type { border-top:0; }
   .gloss .gterm { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11.5px; font-weight:600; color:var(--ink); }
   .gloss .gmean { color:var(--muted); }
+  /* modal por-nodo con pestañas (resumen · input · output) */
+  .mtabs { display:flex; gap:2px; margin:12px 0 8px; border-bottom:1px solid var(--line); }
+  .mtab { font-size:12px; padding:6px 13px; border:0; border-bottom:2px solid transparent; background:none;
+    color:var(--muted); border-radius:0; cursor:pointer; }
+  .mtab:hover { color:var(--ink); }
+  .mtab.on { color:var(--ink); border-bottom-color:var(--agent); font-weight:500; }
+  .mnote { font-size:12px; color:var(--muted); line-height:1.55; padding:11px 12px; background:var(--bg);
+    border:1px dashed var(--line); border-radius:8px; }
+  .mnote b.k { color:var(--ink); font-weight:600; }
+  .mfiles a { color:var(--ink); text-decoration:none; }
+  .mfiles a:hover { text-decoration:underline; }
+  /* sub-ejecución de tools bajo un paso del flujo de ejecución */
+  ul.subtools { list-style:none; margin:4px 0 2px; padding:0 0 2px 28px; }
+  ul.subtools li { display:flex; align-items:center; gap:6px; padding:2.5px 0; font-size:11px; color:var(--muted); }
+  ul.subtools li.clk { cursor:pointer; border-radius:5px; }
+  ul.subtools li.clk:hover { color:var(--ink); }
+  ul.subtools .tnum { width:13px; height:13px; border-radius:3px; flex:none; font-size:9px; font-weight:600;
+    display:flex; align-items:center; justify-content:center; color:#fff; }
+  ul.subtools .tnm { font-family:ui-monospace,Menlo,monospace; font-size:10.5px; }
+  ul.subtools .tse { font-size:9.5px; color:var(--muted); }
+  /* indicador de trace bloqueado (header) */
+  .lockpill { display:inline-flex; align-items:center; gap:6px; font-size:11.5px; padding:4px 9px;
+    border-radius:7px; background:rgba(10,132,255,0.12); color:#0a6fd6; font-weight:500; white-space:nowrap; }
+  @media (prefers-color-scheme: dark){ .lockpill { color:#5aa9ff; background:rgba(10,132,255,0.18); } }
 </style>
 </head>
 <body>
@@ -155,10 +179,13 @@ function FlowNode({ data, selected }){
   const sub = n.kind === 'tool' ? `tool · ${n.side_effect||''}`
             : n.kind === 'port' ? 'port'
             : (n.archetype || 'agente') + (n.strategy ? ' · ' + n.strategy : '');
+  // un TOOL hereda el estado del nodo que lo compone (azul=corrió) pero NO pulsa ni engorda:
+  // Conductor no captura su timing por-tool (corre adentro del nodo) — no fabricamos esa señal.
+  const liveNode = rt && n.kind !== 'tool';
   return html`
-    <div class=${'rfnode' + (selected ? ' sel' : '') + (rt && rt.status==='running' ? ' running' : '')}
+    <div class=${'rfnode' + (selected ? ' sel' : '') + (liveNode && rt.status==='running' ? ' running' : '')}
          style=${{ borderColor: border, background: fill || undefined,
-                   borderWidth: (check && !check.ok) || (rt && (rt.status==='running' || rt.status==='failed')) ? 3 : 2 }}>
+                   borderWidth: (check && !check.ok) || (liveNode && (rt.status==='running' || rt.status==='failed')) ? 3 : 2 }}>
       <${Handle} type="target" position=${Position.Top} className="rf-handle" />
       <div class="nlabel" style=${{ color: accent }}>${n.label}</div>
       <div class="nsub">
@@ -181,6 +208,21 @@ function Graph({ graph, selected, selEdge, onSelect, onSelectEdge, trace, plan, 
     if(trace && trace.steps) trace.steps.forEach(s => { if(s.agent) m['agent:'+s.agent] = s.runtime; });
     return m;
   }, [trace]);
+  // TOOLS usadas en este flujo → azul. Una tool hereda el estado del nodo (agente) que la
+  // compone: si el nodo corrió, la tool corrió (pod determinista). Conductor NO da runtime
+  // por-tool (1 task = 1 sub-agente) → status solamente, sin ms. max sobre nodos que comparten
+  // la tool (running > done > failed). Pending no pinta (el nodo todavía no corrió).
+  const toolRuntimeById = useMemo(() => {
+    const m = {}; if(!trace || !trace.steps) return m;
+    const rank = { running:3, done:2, failed:1 };
+    graph.edges.forEach(e => {
+      if(e.kind !== 'uses') return;
+      const prt = runtimeByAgent[e.source];
+      if(!prt || prt.status==='pending') return;
+      if(!m[e.target] || (rank[prt.status]||0) > (rank[m[e.target].status]||0)) m[e.target] = { status: prt.status };
+    });
+    return m;
+  }, [graph, trace, runtimeByAgent]);
   // FOCO: al elegir un supervisor, atenuar lo que NO participa de su plan (clave a escala).
   const participants = useMemo(() => {
     if(!plan || !plan.steps) return null;
@@ -191,10 +233,11 @@ function Graph({ graph, selected, selEdge, onSelect, onSelectEdge, trace, plan, 
 
   const rfNodes = useMemo(() => graph.nodes.map(n => ({
     id: n.id, type:'ga', position: pos[n.id] || { x:0, y:0 },
-    data: { n, runtime: runtimeByAgent[n.id] || null, check: checks ? (checks.nodes[n.id]||null) : null },
+    data: { n, runtime: runtimeByAgent[n.id] || toolRuntimeById[n.id] || null,
+            check: checks ? (checks.nodes[n.id]||null) : null },
     selected: n.id === selected,
     style: participants && !participants.has(n.id) ? { opacity:0.16 } : undefined,
-  })), [graph, pos, runtimeByAgent, selected, participants, checks]);
+  })), [graph, pos, runtimeByAgent, toolRuntimeById, selected, participants, checks]);
 
   const ids = useMemo(() => new Set(graph.nodes.map(n => n.id)), [graph]);
   const rfEdges = useMemo(() => graph.edges
@@ -390,7 +433,7 @@ function ProbarBox({ nodeId, onDurable }){
 }
 
 // --- inspector (der): contrato + files + cert + plan + trace vivo + correr -------------------
-function Inspector({ graph, node, selEdge, inspect, plan, trace, onSelect, onRun, onLoadTrace, onOpenNode, onDurable }){
+function Inspector({ graph, node, selEdge, inspect, plan, trace, locked, onSelect, onRun, onLoadTrace, onOpenNode, onDurable, onExitTrace }){
   if(selEdge) return html`<${EdgeInspector} graph=${graph} selEdge=${selEdge} inspect=${inspect} onSelect=${onSelect} />`;
   if(!node) return html`<aside class="right insp"><div class="empty">Elegí un nodo o una línea del canvas, del catálogo o de la flota.</div></aside>`;
   const isSup = node.kind==='agent' && node.archetype==='supervisor';
@@ -440,8 +483,8 @@ function Inspector({ graph, node, selEdge, inspect, plan, trace, onSelect, onRun
           const ord = (ROLE_SYM[s.role]||'') + (s.role==='step'? s.order : '');
           const tag = s.role==='default_branch'?'default':s.role==='branch'?'branch':s.role==='fan_out'?'concurrente':'';
           const extra = rt ? [rt.ms!=null?rt.ms+' ms':'', rt.retries?('↻'+rt.retries):''].filter(Boolean).join(' · ') : '';
-          const clickable = !!(rt && rt.task_id);
-          return html`<li key=${i} class=${clickable?'clk':''} onClick=${clickable ? (()=>onOpenNode(i)) : null}>
+          const clickable = !!live;  // con trace: todo el paso abre el modal (entró/salió de ese nodo)
+          return html`<li key=${i} class=${clickable?'clk':''} onClick=${clickable ? (()=>onOpenNode('agent:'+s.agent)) : null}>
             <span class="ord" style=${{ background: oc||undefined }}>${ord||'•'}</span>
             <span class="ag" style=${{ cursor: live?'default':'pointer', borderBottom: live?'none':'1px dotted var(--muted)' }}
               onClick=${live ? null : ((ev)=>{ ev.stopPropagation(); onSelect('agent:'+s.agent); })}>${s.agent}</span>
@@ -449,14 +492,26 @@ function Inspector({ graph, node, selEdge, inspect, plan, trace, onSelect, onRun
             ${rt && html`<span class="stbadge" style=${{ background:oc+'22', color:oc }}>${rt.status}</span>`}
             ${extra && html`<span class="amut"> ${extra}</span>`}
             ${(bindShort(s.inputs) && !live) && html`<div class="bnd">← ${bindShort(s.inputs)}</div>`}
+            ${s.tools && s.tools.length>0 && html`<ul class="subtools">
+              ${s.tools.map((tid,ti) => { const tn = graph.nodes.find(n=>n.id==='tool:'+tid);
+                return html`<li key=${tid} class=${live?'clk':''}
+                  onClick=${live ? ((ev)=>{ ev.stopPropagation(); onOpenNode('tool:'+tid); }) : null}>
+                  <span class="tnum" style=${{ background: oc||'var(--tool)' }}>${ti+1}</span>
+                  <span class="tnm">${tid}</span>${tn?html`<span class="tse">· ${tn.side_effect}</span>`:''}</li>`; })}
+            </ul>`}
           </li>`;
         })}
       </ol>
+      ${live && html`<div class="meta" style=${{ margin:'6px 0 0', fontSize:'10.5px' }}>
+        las tools que compone cada nodo son su sub-ejecución (orden = orden real, pod determinista).</div>`}
       <div style=${{ display:'flex', gap:'8px', alignItems:'center', marginTop:'8px', flexWrap:'wrap' }}>
-        <button onClick=${()=>onLoadTrace(node.label)}>${live?'recargar':'trace en vivo'} ▸</button></div>`}
+        <button onClick=${()=>onLoadTrace(node.label)}>${live?'recargar':'trace en vivo'} ▸</button>
+        ${live && html`<button onClick=${onExitTrace} title="salí del trace y desbloqueá el explorer">⟲ salir del trace</button>`}
+        ${live && html`<span style=${{ fontSize:'10.5px', color:'var(--muted)' }}>bloqueado — solo click + modal hasta resetear</span>`}
+      </div>`}
 
-    ${node.kind!=='port' && html`<${ProbarBox} nodeId=${node.id} onDurable=${onDurable} />`}
-    ${node.kind==='agent' && !isSup && (!node.consumes || node.consumes.length===0) && html`
+    ${!locked && node.kind!=='port' && html`<${ProbarBox} nodeId=${node.id} onDurable=${onDurable} />`}
+    ${!locked && node.kind==='agent' && !isSup && (!node.consumes || node.consumes.length===0) && html`
       <${RunBox} agent=${node.label} onRun=${onRun} />`}
   </aside>`;
 }
@@ -508,38 +563,113 @@ function Glossary({ onClose }){
   </div>`;
 }
 
-// --- modal por-nodo de una ejecución durable: qué ENTRÓ y qué SALIÓ de ese nodo -------------
-function TraceNodeModal({ trace, stepIndex, onClose }){
-  const [io, setIo] = useState(null);
-  const step = trace.steps[stepIndex] || {}; const rt = step.runtime || {};
-  useEffect(() => {
-    setIo(null);
-    const prev = stepIndex>0 ? trace.steps[stepIndex-1] : null;
-    const accOf = (s) => (s && s.runtime && s.runtime.task_id)
-      ? api('/api/node-state?execution_id='+encodeURIComponent(trace.execution_id)+'&task_id='+encodeURIComponent(s.runtime.task_id))
-          .then(d => d.acc).catch(() => null)
-      : Promise.resolve(null);
-    Promise.all([accOf(prev), accOf(step)]).then(([i,o]) => setIo({ in:i, out:o }));
-  }, [stepIndex, trace]);
-  const c = RUN_HEX[rt.status] || 'var(--muted)';
+// --- modal por-nodo con pestañas (resumen · input · output). Generic sobre un PASO del flujo,
+// --- el SUPERVISOR (nodo principal) o una TOOL. Lazy: cada pestaña trae su dato al abrirse. ----
+function NodeModal({ trace, graph, nodeId, onClose }){
+  const node = graph.nodes.find(n => n.id === nodeId) || { label: nodeId, kind: null };
+  const steps = trace.steps || [];
+  const stepIndex = steps.findIndex(s => s.agent && ('agent:'+s.agent) === nodeId);
+  const isStep = stepIndex >= 0;
+  const isTool = node.kind === 'tool';
+  const isSup  = !isStep && !isTool && ('agent:'+trace.agent) === nodeId;
+  const step = isStep ? steps[stepIndex] : null;
+  const rt = step ? (step.runtime || {}) : {};
+  const status = isSup ? String(trace.workflow_status||'').toLowerCase() : (isStep ? rt.status : null);
+  const c = RUN_HEX[status] || 'var(--muted)';
+
+  const [tab, setTab] = useState('resumen');
+  const [files, setFiles] = useState(null);
+  const [io, setIo] = useState({});  // cache por pestaña → el acc/seed (acc pesado, L-14: lazy)
   const fmt = (v) => v==null ? '' : (typeof v==='string' ? v : JSON.stringify(v, null, 2));
-  const emptyMsg = rt.status==='failed' ? '(el nodo falló — sin acc)'
-    : rt.status==='pending' ? '(todavía no corrió)' : '(sin estado)';
+
+  // RESUMEN: descripción + files del nodo (de /api/inspect) — una vez por nodo.
+  useEffect(() => {
+    setTab('resumen'); setFiles(null); setIo({});
+    if(node.kind) api('/api/inspect?node='+encodeURIComponent(nodeId)).then(d=>setFiles(d.files||[])).catch(()=>setFiles([]));
+    else setFiles([]);
+  }, [nodeId]);
+
+  // INPUT/OUTPUT: el acc del nodo (lazy, al abrir la pestaña). Una tool no tiene acc propio
+  // (corre adentro del nodo) → su pestaña I/O muestra la nota honesta, sin fetch.
+  const accByTask = (tid) => tid
+    ? api('/api/node-state?execution_id='+encodeURIComponent(trace.execution_id)+'&task_id='+encodeURIComponent(tid)).then(d=>d.acc).catch(()=>null)
+    : Promise.resolve(null);
+  useEffect(() => {
+    if(tab==='resumen' || isTool || (tab in io)) return;
+    let live = true;
+    (async () => {
+      let v = null;
+      if(isSup){
+        if(tab==='input') v = trace.seed;  // el seed con que arrancó el pod
+        else { const done = steps.filter(s => s.runtime && s.runtime.task_id);
+               v = await accByTask(done.length ? done[done.length-1].runtime.task_id : null); }  // estado final
+      } else if(isStep){
+        if(tab==='input') v = stepIndex===0 ? trace.seed : await accByTask((steps[stepIndex-1].runtime||{}).task_id);
+        else v = await accByTask(rt.task_id);
+      }
+      if(live) setIo(p => ({ ...p, [tab]: v }));
+    })();
+    return () => { live = false; };
+  }, [tab, nodeId]);
+
+  const kindTxt = isSup ? `${node.archetype||'supervisor'} · ${trace.strategy||''}`
+    : isTool ? `tool · ${node.side_effect||''}` : isStep ? (step.archetype||'') : 'fuera de este flujo';
+  const parents = isTool ? graph.edges.filter(e=>e.kind==='uses' && e.target===nodeId).map(e=>e.source.replace(/^\w+:/,'')) : [];
+  const toolNode = id => graph.nodes.find(n => n.id === 'tool:'+id);
+  const loadingTab = !(tab in io);
+
+  const bodyIO = (which) => {
+    if(isTool) return html`<div class="mnote">El <b class="k">I/O por-tool</b> no lo captura el runtime durable: esta tool corre <b class="k">adentro</b> del nodo ${parents.length?html`«<b class="k">${parents.join(' · ')}</b>»`:''} (Conductor registra 1 task por sub-agente, no por tool). Para ver qué entró/salió, abrí ese nodo.</div>`;
+    if(loadingTab) return html`<div class="empty">leyendo el estado del nodo…</div>`;
+    const v = io[tab];
+    if(v==null){
+      const msg = isStep && status==='failed' ? '(el nodo falló — sin acc)'
+        : isStep && status==='pending' ? '(todavía no corrió)'
+        : which==='input' ? '(el seed no viajó en este trace — vé el panel Probar)' : '(sin estado)';
+      return html`<div class="mnote">${msg}</div>`;
+    }
+    return html`<pre class="out">${fmt(v)}</pre>`;
+  };
+
+  const TABS = ['resumen','input','output'];
   return html`<div class="gloss-bd" onClick=${onClose}>
     <div class="gloss" onClick=${e=>e.stopPropagation()}>
       <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'baseline', gap:'12px' }}>
-        <h3>${step.agent||'nodo'} ${rt.status ? html`<span class="stbadge" style=${{ background:c+'22', color:c }}>${rt.status}</span>` : ''}</h3>
+        <h3>${node.label} ${status ? html`<span class="stbadge" style=${{ background:c+'22', color:c }}>${status}</span>` : ''}</h3>
         <button onClick=${onClose}>cerrar ✕</button></div>
-      <div style=${{ fontSize:'12px', color:'var(--muted)', margin:'2px 0 6px' }}>
-        ${step.archetype||''}${rt.ms!=null?` · ${rt.ms} ms`:''}${rt.retries?` · ↻${rt.retries}`:''} — qué entró y qué salió de este nodo (el acumulador durable).</div>
-      ${!io ? html`<div class="empty">leyendo el estado del nodo…</div>` : html`<div>
-        <div class="sec" style=${{ marginTop:'8px' }}>ENTRÓ · ${stepIndex===0?'el seed inicial del flujo':'el acc del nodo anterior'}</div>
-        ${io.in==null
-          ? html`<div class="meta">${stepIndex===0?'(el seed de entrada — ver el panel Probar)':'(sin estado previo)'}</div>`
-          : html`<pre class="out">${fmt(io.in)}</pre>`}
-        <div class="sec" style=${{ marginTop:'10px' }}>SALIÓ · el acc después de este nodo</div>
-        <pre class="out">${fmt(io.out) || emptyMsg}</pre>
+      <div style=${{ fontSize:'12px', color:'var(--muted)', margin:'2px 0 0' }}>
+        ${kindTxt}${isStep && rt.ms!=null?` · ${rt.ms} ms`:''}${isStep && rt.retries?` · ↻${rt.retries}`:''}${isSup?' · el nodo principal del pod':''}</div>
+
+      <div class="mtabs">
+        ${TABS.map(k => html`<button key=${k} class=${'mtab'+(tab===k?' on':'')} onClick=${()=>setTab(k)}>${k}</button>`)}
+      </div>
+
+      ${tab==='resumen' && html`<div>
+        ${node.description && html`<div class="meta" style=${{ marginTop:'2px' }}>${node.description}</div>`}
+        ${isStep && step.tools && step.tools.length>0 && html`<div>
+          <div class="sec" style=${{ marginTop:'10px' }}>TOOLS QUE COMPONE · sub-ejecución (orden de ejecución)</div>
+          <ul class="subtools">
+            ${step.tools.map((tid,i) => { const tn = toolNode(tid); return html`<li key=${tid}>
+              <span class="tnum" style=${{ background:'var(--tool)' }}>${i+1}</span>
+              <span class="tnm">${tid}</span>${tn?html`<span class="tse">· ${tn.side_effect}${tn.approval_required?' · ⚠ approval':''}</span>`:''}</li>`; })}
+          </ul></div>`}
+        ${isSup && html`<div class="meta" style=${{ marginTop:'8px' }}>Pod <b class="k">${trace.strategy}</b> · ${steps.filter(s=>s.agent).length} nodos. Tocá un nodo del canvas para ver su entró/salió.</div>`}
+        <div class="sec" style=${{ marginTop:'12px' }}>FILES · click abre en VS Code</div>
+        ${files===null ? html`<div class="empty">…</div>`
+          : files.length===0 ? html`<div class="meta">(sin files)</div>`
+          : html`<div class="mfiles">${files.map((f,i)=>html`<div key=${i} class="frow" style=${{ cursor:'default' }}>
+              <span class="fdot" style=${{ background:'var(--port)' }}></span>
+              <a href=${'vscode://file/'+f.abspath} class="fname k" title=${f.path}>${f.path}</a>
+              <span style=${{ fontSize:'10px', color:'var(--muted)', whiteSpace:'nowrap' }}>${f.role}</span></div>`)}</div>`}
       </div>`}
+
+      ${tab==='input' && html`<div>
+        <div class="sec" style=${{ margin:'2px 0 6px' }}>INPUT · ${isSup?'el seed con que arrancó el pod':isStep?(stepIndex===0?'el seed inicial del flujo':'el acc del nodo anterior'):''}</div>
+        ${bodyIO('input')}</div>`}
+
+      ${tab==='output' && html`<div>
+        <div class="sec" style=${{ margin:'2px 0 6px' }}>OUTPUT · ${isSup?'el estado final del pod':isStep?'el acc después de este nodo':''}</div>
+        ${bodyIO('output')}</div>`}
     </div>
   </div>`;
 }
@@ -556,11 +686,14 @@ function App(){
   const [checks, setChecks] = useState(null);     // overlay de certs del sistema (/api/checks)
   const [checking, setChecking] = useState(false);  // 1er /api/checks importa las capabilities → lento
   const [showGloss, setShowGloss] = useState(false);  // overlay del glosario de convenciones
-  const [traceModal, setTraceModal] = useState(null);  // índice de paso → modal entró/salió del nodo
+  const [modalNode, setModalNode] = useState(null);   // nodeId del modal por-nodo (resumen/input/output/tools)
   const [err, setErr] = useState('');
   const traceTimer = useRef(null);
   const byId = id => graph.nodes.find(n => n.id === id);
   const node = selected ? byId(selected) : null;
+  // BLOQUEO: con un trace activo el explorer queda en modo "solo lectura" — un click no navega
+  // ni edita; abre el modal del nodo. Hasta "salir del trace" no se hace nada más (lo pidió el usuario).
+  const locked = !!(trace && trace.steps && trace.steps.length);
 
   useEffect(() => { api('/api/graph').then(setGraph).catch(e => setErr(String(e.message||e))); }, []);
 
@@ -568,11 +701,20 @@ function App(){
   const isSup = n => n && n.kind==='agent' && n.archetype==='supervisor';
 
   const select = useCallback(async (id) => {
-    setSelected(id); setSelEdge(null); setPlan(null); setTrace(null); setInspect(null); setTraceModal(null); stopPoll();
+    setSelected(id); setSelEdge(null); setPlan(null); setTrace(null); setInspect(null); setModalNode(null); stopPoll();
     const n = id ? graph.nodes.find(x => x.id === id) : null;
     if(n) api('/api/inspect?node='+encodeURIComponent(id)).then(setInspect).catch(()=>{});
     if(isSup(n)){ try { setPlan(await api('/api/plan?agent='+encodeURIComponent(n.label))); } catch(e){} }
   }, [graph]);
+
+  // el ENRUTADOR de clicks de nodo: bloqueado → abre modal; en edición → select normal. El pane
+  // click (id null) NO resetea estando bloqueado (no perdés el trace por tocar el fondo).
+  const onNodeActivate = useCallback((id) => {
+    if(locked){ if(id) setModalNode(id); return; }
+    select(id);
+  }, [locked, select]);
+
+  const exitTrace = useCallback(() => { stopPoll(); setTrace(null); setModalNode(null); }, []);  // ⟲ desbloquea
 
   const selectEdge = useCallback((edge) => {
     setSelected(null); setSelEdge(edge); setPlan(null); setTrace(null); setInspect(null); stopPoll();
@@ -589,7 +731,7 @@ function App(){
 
   const loadTrace = useCallback(async (eid, supLabel) => {
     stopPoll();
-    if(supLabel){ const id = 'agent:'+supLabel; setSelected(id); setTraceModal(null);
+    if(supLabel){ const id = 'agent:'+supLabel; setSelected(id); setModalNode(null);
       try { setPlan(await api('/api/plan?agent='+encodeURIComponent(supLabel))); } catch(e){} }
     let t; try { t = await api('/api/trace?execution_id='+encodeURIComponent(eid)); } catch(e){ return; }
     if(!t || !t.steps) return;
@@ -621,7 +763,7 @@ function App(){
     return r;
   }, [loadTrace]);
 
-  const onOpenNode = useCallback((stepIndex) => setTraceModal(stepIndex), []);  // modal entró/salió
+  const onOpenNode = useCallback((nodeId) => setModalNode(nodeId), []);  // abre el modal por-nodo
 
   useEffect(() => () => stopPoll(), []);
 
@@ -642,6 +784,9 @@ function App(){
           color: !checks?'var(--ink)':checkSummary.ok?'var(--st-done)':'var(--st-failed)', fontWeight:500 }}>
         ${checking?'verificando…':!checks?'verificar certs':checkSummary.ok?`✓ ${checkSummary.total} ok`:`✗ ${checkSummary.broken} rotos`}</button>
       <button onClick=${()=>setShowGloss(true)} title="qué significan C2, G-RUN-SIG, SUP, etc.">convenciones</button>
+      ${locked && html`<span class="lockpill" title="el explorer está bloqueado en este trace — solo click + modal">
+        ▶ trace · ${String(trace.workflow_status||'').toLowerCase()}
+        <button onClick=${exitTrace} style=${{ padding:'2px 8px', fontSize:'11px' }}>⟲ salir</button></span>`}
       <div class="legend">
         <span class="chip"><span class="sw" style=${{ background:'var(--agent)' }}></span>agente</span>
         <span class="chip"><span class="sw" style=${{ background:'var(--tool)' }}></span>tool</span>
@@ -652,21 +797,22 @@ function App(){
         <span class="chip"><span class="sw" style=${{ background:'var(--st-failed)' }}></span>failed</span>
       </div>
     </header>
-    <${Catalog} graph=${graph} q=${q} selected=${selected} onSelect=${select} />
+    <${Catalog} graph=${graph} q=${q} selected=${selected} onSelect=${onNodeActivate} />
     <main>
       ${graph.nodes.length===0 && html`<div class="loading">${err ? 'no pude leer /api/graph — ¿corre el server?' : 'cargando grafo…'}</div>`}
       <div id="flow">${graph.nodes.length>0 && html`<${Graph} graph=${graph} selected=${selected} selEdge=${selEdge}
-        onSelect=${select} onSelectEdge=${selectEdge} trace=${trace} plan=${plan} checks=${checks} />`}</div>
+        onSelect=${onNodeActivate} onSelectEdge=${locked ? (()=>{}) : selectEdge} trace=${trace} plan=${plan} checks=${checks} />`}</div>
     </main>
     <div style=${{ display:'flex', flexDirection:'column', overflow:'hidden', borderLeft:'1px solid var(--line)' }}>
       <aside class="right" style=${{ borderLeft:0, borderBottom:'1px solid var(--line)', maxHeight:'34%', flex:'none' }}>
         <${Fleet} onPick=${onPickRun} />
       </aside>
       <${Inspector} graph=${graph} node=${node} selEdge=${selEdge} inspect=${inspect} plan=${plan} trace=${trace}
-        onSelect=${select} onRun=${onRun} onLoadTrace=${onLoadTrace} onOpenNode=${onOpenNode} onDurable=${onDurable} />
+        locked=${locked} onSelect=${select} onRun=${onRun} onLoadTrace=${onLoadTrace} onOpenNode=${onOpenNode}
+        onDurable=${onDurable} onExitTrace=${exitTrace} />
     </div>
     ${showGloss && html`<${Glossary} onClose=${()=>setShowGloss(false)} />`}
-    ${traceModal!=null && trace && html`<${TraceNodeModal} trace=${trace} stepIndex=${traceModal} onClose=${()=>setTraceModal(null)} />`}
+    ${modalNode && trace && html`<${NodeModal} trace=${trace} graph=${graph} nodeId=${modalNode} onClose=${()=>setModalNode(null)} />`}
   </div>`;
 }
 
