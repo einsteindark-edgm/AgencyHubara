@@ -10,6 +10,9 @@ en vivo (cada request re-proyecta el sistema; editás un manifest y refrescás):
     GET  /api/cases[?node=]  -> los casos replayables del catálogo (el select del panel "Probar")
     POST /api/replay         -> corre un caso (seed+ports-fixture) y compara con el golden
                                body: {"case": "diagnose-scale"} -> {output, golden, matches, inputs}
+    GET  /api/legend         -> el glosario de convenciones (niveles + reglas G-*/T-*/CASE-*)
+    POST /api/run-durable    -> corre el caso en AgentSpan (durable) -> {execution_id} para el trace
+                               body: {"case": "dia-del-padre-flujo"}  (a diferencia de /api/replay)
 
 Por qué stdlib y no FastAPI: el explorer es read-mostly + un endpoint de run; con
 la stdlib corre en la imagen slim sin sincronizar deps pesadas, igual que el
@@ -96,14 +99,37 @@ def _run_on_agentspan(ga_root: Path, m, input_dict: dict) -> dict:
             "error": f"no pude compilar el grafo (¿langgraph? corré el explorer en el container): {e}",
         }
     try:
-        ex = AgentSpanRuntime().run(graph, input_dict)
-    except Exception as e:  # noqa: BLE001 — server caído / agentspan ausente
+        ex = AgentSpanRuntime().run(graph, _durable_input(m, input_dict))  # supervisor → {acc: seed}
+    except (Exception, SystemExit) as e:  # noqa: BLE001 — AgentRuntime levanta SystemExit si :6767 cae (auto_start=false)
         return {
             "status": "failed",
             "runtime": "agentspan",
             "error": f"el run en AgentSpan falló (¿server :6767 arriba? ¿agentspan instalado?): {e}",
         }
-    return {"id": ex.id, "status": ex.status, "output": ex.output, "error": ex.error, "runtime": "agentspan"}
+    return {"id": ex.id, "status": ex.status, "output": _durable_output(m, ex.output),
+            "error": ex.error, "runtime": "agentspan"}
+
+
+def _durable_input(m, seed: dict) -> dict:
+    """La forma del estado inicial para AgentSpan según el grafo. Un SUPERVISOR compila a
+    `_SupervisorState{acc}` (+ `patches` en parallel) → el seed va ENVUELTO en `acc`; pasarlo
+    crudo hace que el 1er nodo reciba `acc` como string y reviente con `dict(<string>)` (el bug
+    que tumbaba 'probar durable' del flujo). Una capability sola (greeter) toma el seed crudo —
+    su State tiene las claves directo."""
+    if not getattr(m, "is_supervisor", False):
+        return seed
+    state = {"acc": seed}
+    if m.strategy == "parallel":
+        state["patches"] = []  # el canal operator.add del fan-out (L-14)
+    return state
+
+
+def _durable_output(m, out):
+    """El estado final de un supervisor viene como `{acc: <state>}` → devolvemos el state (lo que
+    el resto del sistema y el panel esperan). Una capability sola ya devuelve su output."""
+    if getattr(m, "is_supervisor", False) and isinstance(out, dict) and "acc" in out:
+        return out["acc"]
+    return out
 
 
 def _case_node_id(case) -> str:
@@ -134,6 +160,53 @@ def replay_case_route(ga_root: Path, case_id: str) -> tuple[int, dict]:
         "case": case.id, "target": case.target, "title": case.title,
         "matches": out == golden, "output": out, "golden": golden, "inputs": inputs,
     }
+
+
+def _start_durable(ga_root: Path, m, input_dict: dict) -> str:
+    """Compila el agente y lo submitea ASÍNCRONO a AgentSpan (`start`, no `run`) → execution-id
+    al instante (~0.4s), los workers completan en background. El supervisor va envuelto en
+    `{acc: seed}` (`_durable_input`). Devuelve el execution-id."""
+    from sdk.loader import build_agent
+    from sdk.runtime import AgentSpanRuntime
+
+    graph = build_agent(m, ga_root)
+    return AgentSpanRuntime().start(graph, _durable_input(m, input_dict))
+
+
+def run_durable_route(ga_root: Path, case_id: str) -> tuple[int, dict]:
+    """Submitea el TARGET de un caso al runtime DURABLE (AgentSpan) y devuelve el execution-id AL
+    INSTANTE (status 'running', NO espera a que complete) — así el viewer pollea el trace y ve los
+    nodos activarse EN VIVO (pending→running→done). A diferencia de /api/replay (en proceso), SÍ
+    submitea a Conductor (:6767). Un tool no es un agente durable. Un agente DIRECTO con port se
+    rechaza (no hay fixture en el durable). Un supervisor que REFERENCIA un agente-con-port (ninguno
+    hoy) NO lo caza el guard estructural, pero falla CERRADO en runtime (`ports={}`→KeyError antes
+    del vendor → task FAILED, sin llamada a Meta)."""
+    from sdk.case_model import discover_cases, resolve
+    from sdk.manifest_model import iter_nodes, load_manifest
+
+    case = next((c for c in discover_cases(ga_root) if c.id == case_id), None)
+    if case is None:
+        return 404, {"error": f"no existe el caso '{case_id}'"}
+    if case.kind == "tool":
+        return 422, {"error": f"'{case.target}' es un tool — no corre en el runtime DURABLE "
+                     "(no es un agente de AgentSpan). Usá 'probar' (en proceso)."}
+    manifests = ga_root / "manifests"
+    cand = sorted(manifests.glob(f"{case.target_id}.agent.yaml")) + sorted(
+        manifests.glob(f"{case.target_id}.taskgraph.yaml"))
+    if not cand:
+        return 404, {"error": f"no existe el agente '{case.target_id}' en manifests/"}
+    m = load_manifest(cand[0])
+    consumed = sorted({p for n in iter_nodes(m) for p in n.consumes})
+    if consumed:
+        return 422, {"error": f"'{case.target_id}' consume ports {consumed}: el durable necesita el "
+                     "vendor real, no el fixture del caso (corré por tests/integration)."}
+    try:
+        eid = _start_durable(ga_root, m, resolve(case.seed, ga_root))
+    except (Exception, SystemExit) as e:  # noqa: BLE001 — AgentRuntime levanta SystemExit (no Exception)
+        # si :6767 cae con auto_start_server=false → la UI degrada a 422, no muere el request thread.
+        return 422, {"error": f"no pude submitear a AgentSpan (¿server :6767 arriba? ¿langgraph/agentspan?): {e}",
+                     "agent": case.target_id, "runtime": "agentspan"}
+    return 200, {"execution_id": eid, "agent": case.target_id, "status": "running", "runtime": "agentspan"}
 
 
 def api_route(method: str, path: str, params: dict, body: dict | None, ga_root: Path = GA_ROOT):
@@ -245,6 +318,12 @@ def api_route(method: str, path: str, params: dict, body: dict | None, ga_root: 
         if node:
             cases = [c for c in cases if _case_node_id(c) == node]
         return 200, {"cases": [{"id": c.id, "target": c.target, "title": c.title} for c in cases]}
+    if method == "GET" and path == "/api/legend":
+        # el glosario de convenciones (niveles C0–C3 + reglas G-*/T-*/CASE-*) — el botón
+        # "convenciones". Fuente única en sdk.glossary; la UI no reimplementa el vocabulario.
+        from sdk.glossary import glossary
+
+        return 200, glossary()
     if method == "POST" and path == "/api/run":
         body = body or {}
         agent_id = body.get("agent")
@@ -263,6 +342,13 @@ def api_route(method: str, path: str, params: dict, body: dict | None, ga_root: 
         if not case_id:
             return 400, {"error": "falta 'case' en el body"}
         return replay_case_route(ga_root, case_id)
+    if method == "POST" and path == "/api/run-durable":
+        # corre el caso en el runtime DURABLE (AgentSpan) → execution-id para seguir el trace
+        # nodo-por-nodo. A diferencia de /api/replay (en proceso), submitea a Conductor (:6767).
+        case_id = (body or {}).get("case")
+        if not case_id:
+            return 400, {"error": "falta 'case' en el body"}
+        return run_durable_route(ga_root, case_id)
     return 404, {"error": f"no existe la ruta {method} {path}"}
 
 

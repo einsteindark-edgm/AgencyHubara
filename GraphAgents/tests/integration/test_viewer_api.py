@@ -189,6 +189,107 @@ def test_api_replay_roto_es_422_sin_badge(monkeypatch):
     assert "error" in payload and "matches" not in payload
 
 
+def test_durable_input_envuelve_el_seed_de_un_supervisor():
+    # el bug: un supervisor en AgentSpan usa _SupervisorState{acc} → el seed va envuelto.
+    # Pasarlo crudo (como hacía _run_on_agentspan) → el nodo hace dict(string) y revienta.
+    from sdk.manifest_model import load_manifest
+    from viewer.server import _durable_input
+
+    m = load_manifest(ROOT / "manifests" / "ads-analytics.taskgraph.yaml")
+    assert _durable_input(m, {"meta_insights": 1}) == {"acc": {"meta_insights": 1}}
+
+
+def test_durable_input_parallel_agrega_patches():
+    # parallel compila a _ParallelSupervisorState{acc, patches} (patches = reducer operator.add,
+    # L-14) → el estado inicial necesita patches:[] o el fan-out no arranca.
+    from sdk.manifest_model import load_manifest
+    from viewer.server import _durable_input
+
+    m = load_manifest(ROOT / "manifests" / "ads-extractors-parallel.taskgraph.yaml")
+    assert m.strategy == "parallel"
+    assert _durable_input(m, {"x": 1}) == {"acc": {"x": 1}, "patches": []}
+
+
+def test_durable_input_crudo_para_una_capability():
+    from sdk.manifest_model import load_manifest
+    from viewer.server import _durable_input
+
+    m = load_manifest(ROOT / "manifests" / "greeter.agent.yaml")  # no es supervisor
+    assert _durable_input(m, {"name": "ada"}) == {"name": "ada"}
+
+
+def test_durable_output_desenvuelve_el_acc_de_un_supervisor():
+    from sdk.manifest_model import load_manifest
+    from viewer.server import _durable_output
+
+    m = load_manifest(ROOT / "manifests" / "ads-analytics.taskgraph.yaml")
+    assert _durable_output(m, {"acc": {"verdict": "scale_budget"}}) == {"verdict": "scale_budget"}
+
+
+def test_api_run_durable_requiere_case():
+    status, payload = api_route("POST", "/api/run-durable", {}, {}, ga_root=ROOT)
+    assert status == 400
+
+
+def test_api_run_durable_rechaza_un_tool():
+    # un tool no es un agente de AgentSpan → no corre en el runtime durable (usá 'probar').
+    status, payload = api_route("POST", "/api/run-durable", {}, {"case": "diagnose-scale"}, ga_root=ROOT)
+    assert status == 422
+    assert "durable" in payload["error"].lower()
+
+
+def test_api_run_durable_caso_inexistente_es_404():
+    status, payload = api_route("POST", "/api/run-durable", {}, {"case": "no-existe"}, ga_root=ROOT)
+    assert status == 404
+
+
+def test_run_durable_degrada_systemexit_a_422(monkeypatch):
+    # AgentRuntime.__init__ levanta SystemExit (deriva de BaseException, NO de Exception) si :6767
+    # cae con AGENTSPAN_AUTO_START_SERVER=false. El guard DEBE degradar a 422, no dejar morir el
+    # request thread (el contrato "la UI nunca crashea"). Sin server: monkeypatch del submit.
+    import viewer.server as srv
+
+    def boom(ga_root, m, seed):
+        raise SystemExit(1)
+
+    monkeypatch.setattr(srv, "_start_durable", boom)
+    status, payload = api_route("POST", "/api/run-durable", {}, {"case": "dia-del-padre-flujo"}, ga_root=ROOT)
+    assert status == 422
+    assert "error" in payload
+
+
+def _server_up() -> bool:
+    import urllib.request
+    try:
+        urllib.request.urlopen("http://localhost:6767/api/workflow/search?query=status+IN+(RUNNING)&size=1", timeout=3)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+@pytest.mark.skipif(not _server_up(), reason="necesita el server AgentSpan en :6767")
+def test_run_durable_es_async_devuelve_running_y_completa_en_background():
+    # la MEJOR solución: /api/run-durable NO bloquea hasta completar — submitea con start(),
+    # devuelve el execution-id con status 'running' al instante, y los workers completan en
+    # background (el viewer pollea el trace y ve los nodos activarse en vivo).
+    import time
+
+    status, payload = api_route("POST", "/api/run-durable", {}, {"case": "dia-del-padre-flujo"}, ga_root=ROOT)
+    assert status == 200, payload
+    assert payload["execution_id"]
+    assert payload["status"] == "running"  # NO 'completed' — no esperó (la versión sync devolvía completed)
+
+    # y EVENTUALMENTE completa solo (los workers corren en background tras el return):
+    from sdk.trace import fetch_workflow
+    wf = {}
+    for _ in range(40):
+        wf = fetch_workflow(payload["execution_id"])
+        if str(wf.get("status", "")).upper() in ("COMPLETED", "FAILED"):
+            break
+        time.sleep(0.5)
+    assert str(wf.get("status", "")).upper() == "COMPLETED", wf.get("status")
+
+
 def _has(mod: str) -> bool:
     return importlib.util.find_spec(mod) is not None
 
