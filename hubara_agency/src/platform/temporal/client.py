@@ -2,10 +2,12 @@ import os
 from temporalio.client import Client, TLSConfig
 from temporalio.contrib.opentelemetry import TracingInterceptor
 from src.platform.config import (
-    TEMPORAL_URL, 
+    TEMPORAL_URL,
+    TEMPORAL_ADDRESS,
     TEMPORAL_NAMESPACE,
+    TEMPORAL_API_KEY,
     TEMPORAL_TLS_CERT_PATH,
-    TEMPORAL_TLS_KEY_PATH
+    TEMPORAL_TLS_KEY_PATH,
 )
 import structlog
 
@@ -14,8 +16,20 @@ logger = structlog.get_logger()
 async def get_temporal_client() -> Client:
     """
     Construye y retorna el conector de Temporal Client.
-    Soporta conexiones limpias (HTTP local) y seguras mTLS (Temporal Cloud).
+    Soporta API key (Temporal Cloud, preferida), mTLS (Temporal Cloud) y HTTP local.
     """
+    # API key auth (Temporal Cloud): endpoint regional + tls=True (bool, no TLSConfig).
+    # Preferida sobre mTLS — sin certs que generar/rotar (INFRASTRUCTURE.md §6).
+    if TEMPORAL_API_KEY:
+        logger.info("Connecting to Temporal Cloud via API key", namespace=TEMPORAL_NAMESPACE)
+        return await Client.connect(
+            TEMPORAL_ADDRESS,
+            namespace=TEMPORAL_NAMESPACE,
+            api_key=TEMPORAL_API_KEY,
+            tls=True,
+            interceptors=[TracingInterceptor()],
+        )
+
     tls_config = False
 
     if TEMPORAL_TLS_CERT_PATH and TEMPORAL_TLS_KEY_PATH:
