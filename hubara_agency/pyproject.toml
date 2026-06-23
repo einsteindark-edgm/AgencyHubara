@@ -19,6 +19,7 @@ dependencies = [
     "opentelemetry-exporter-otlp-proto-grpc>=1.27.0",
     # GenAI instrumentation → gen_ai.* semantic conventions estándar + métricas
     "openlit>=1.0",
+    "pyjwt[crypto]>=2.12.1",
 ]
 
 [project.optional-dependencies]

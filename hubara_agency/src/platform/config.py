@@ -70,3 +70,14 @@ META_CAPI_DATASET_ID = os.getenv("META_CAPI_DATASET_ID", "")
 META_CAPI_ACCESS_TOKEN = os.getenv("META_CAPI_ACCESS_TOKEN", "")
 META_CAPI_TEST_EVENT_CODE = os.getenv("META_CAPI_TEST_EVENT_CODE", "")
 WHATSAPP_BUSINESS_ACCOUNT_ID = os.getenv("WHATSAPP_BUSINESS_ACCOUNT_ID", "")
+
+# Dashboard auth — Cognito JWT (workstream JWT/Cognito, PENDING_IMPLEMENTATION §2).
+# Si AMBOS (pool + app client) están seteados, la API valida el Bearer access-token
+# de Cognito en TODAS las rutas del dashboard (los webhooks de Meta quedan fuera —
+# tienen su propia auth). Vacíos → auth NO-OP (dev local / tests existentes que
+# pegan rutas dashboard sin token siguen andando). En prod vienen de SSM
+# /hubara/<tenant>/ (no son secretos: son ids públicos del pool/app client).
+COGNITO_USER_POOL_ID = os.getenv("COGNITO_USER_POOL_ID", "")
+COGNITO_APP_CLIENT_ID = os.getenv("COGNITO_APP_CLIENT_ID", "")
+# Región del pool de Cognito (arma el issuer + el JWKS uri). Cae a la región de deploy.
+AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
