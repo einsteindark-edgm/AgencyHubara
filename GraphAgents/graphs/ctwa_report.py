@@ -154,7 +154,18 @@ def run(input: dict, *, ports: dict | None = None, tools: dict | None = None) ->
     # vive UNA vez acá → `build()` la corre por el mismo `run()` (sin drift run↔build, L-25).
     llm = (ports or {}).get("llm")
     if llm is not None:
-        narrative = narrate(input, llm=llm)["narrative"]
+        try:
+            narrative = narrate(input, llm=llm)["narrative"]
+        except Exception as e:  # noqa: BLE001 — la narrativa es OPCIONAL y best-effort: una falla del
+            # LLM (proxy inalcanzable, timeout, respuesta malformada) NO debe tumbar el reporte
+            # determinista (G-DET: el render de arriba es PURO, no toca red). Degradamos VISIBLE: un
+            # marcador para el cliente + el error COMPLETO en `narrative_error` (trace/observabilidad).
+            # No se traga — se reubica de fatal a diagnóstico, igual que `narrative_invented` reubica una
+            # alucinación. Run real en AWS: `[Errno 99]` porque el proxy LiteLLM vive en otra caja EC2 y
+            # `localhost:4000` no resuelve desde la de GraphAgents (L-26).
+            out["narrative"] = "[narrativa no disponible — el modelo no respondió (ver narrative_error)]"
+            out["narrative_error"] = f"{type(e).__name__}: {e}"
+            return out
         invented = invented_numbers(narrative, _narrate_user(input))
         out["narrative"] = (
             narrative if not invented

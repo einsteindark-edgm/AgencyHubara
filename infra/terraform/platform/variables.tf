@@ -104,5 +104,11 @@ variable "graphagents_secret_keys" {
     "META_ACCESS_TOKEN",
     "META_AD_ACCOUNT_ID",
     "GHCR_PULL_TOKEN", # para bajar la imagen de la app desde GHCR
+    # Nodo narrativo del reporter CTWA (opción D: DeepSeek DIRECTO, sin proxy LiteLLM). El vendor
+    # `LiteLLMProxy` manda Bearer = GRAPHAGENTS_LLM_API_KEY y pega a LITELLM_PROXY_URL (base
+    # OpenAI-compatible). GRAPHAGENTS_LLM_MODEL queda en el default `deepseek-v4-flash` (no hace
+    # falta declararla). Si la narrativa falla, el reporte degrada visible — no crashea (L-26).
+    "GRAPHAGENTS_LLM_API_KEY", # valor real = tu DEEPSEEK_API_KEY (fuera de banda)
+    "LITELLM_PROXY_URL",       # valor = https://api.deepseek.com (no es secreto; va acá por uniformidad)
   ]
 }

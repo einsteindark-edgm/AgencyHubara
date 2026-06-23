@@ -164,10 +164,14 @@ def replay_case_route(ga_root: Path, case_id: str) -> tuple[int, dict]:
 
 def _durable_ports() -> dict:
     """Los vendors REALES que el durable inyecta a los miembros que `consumes:` un port. Hoy: el
-    `llm` → `LiteLLMProxy` (deepseek-v4-flash vía el proxy LiteLLM del central, :4000). Es LAZY —
-    solo pega cuando un nodo lo invoca, y `build_runnable` filtra por `consumes` (un miembro que no
-    declara el port no lo recibe). Si el proxy está caído, el nodo LLM falla VISIBLE en el trace
-    (honesto), no degrada en silencio. (Meta sigue sin vendor real — G2 — así que su port se rechaza.)"""
+    `llm` → `LiteLLMProxy` (deepseek-v4-flash vía el proxy LiteLLM del central). Es LAZY — solo pega
+    cuando un nodo lo invoca, y `build_runnable` filtra por `consumes` (un miembro que no declara el
+    port no lo recibe). Config del endpoint por `LITELLM_PROXY_URL` (default `localhost:4000`, SOLO
+    dev): en un deploy multi-caja (el proxy vive en OTRA EC2) hay que setearla al endpoint alcanzable,
+    si no el nodo pega a localhost y revienta con `[Errno 99]` (L-26). Si el proxy está caído/mal
+    configurado, el reporte se emite IGUAL (G-DET) y la narrativa degrada VISIBLE (marcador + el error
+    en el trace) — honesto, no silencioso, no crashea el nodo. (Meta sigue sin vendor real — G2 — su
+    port se rechaza.)"""
     from sdk.connectorkit.ports import LiteLLMProxy
 
     return {"llm": LiteLLMProxy()}

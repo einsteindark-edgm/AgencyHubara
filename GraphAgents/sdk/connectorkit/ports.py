@@ -30,9 +30,10 @@ class FixtureMetaInsights:
 # --------------------------------------------------------------------------- LLM
 # El LLM es un PORT como cualquier otro: el contrato es `complete(...)`, el vendor la
 # implementación intercambiable. Para el golden-replay se inyecta `FixtureLLM` (determinista,
-# sin red) → G-DET se sostiene aunque el nodo narrativo use un LLM. El vendor real le pega al
-# proxy LiteLLM del proyecto central (:4000, deepseek-v4-flash con failover a gemini-flash-lite);
-# el proxy tiene las keys (DEEPSEEK_API_KEY/GEMINI_API_KEY) — GraphAgents nunca las toca.
+# sin red) → G-DET se sostiene aunque el nodo narrativo use un LLM. El vendor real (`LiteLLMProxy`)
+# tiene DOS modos (ver su docstring): un proxy LiteLLM ABIERTO (dev local :4000, las keys las tiene el
+# proxy, con failover deepseek→gemini) o DIRECTO al proveedor autenticado (opción D, prod: DeepSeek con
+# la key como Bearer — acá GraphAgents SÍ porta la DEEPSEEK_API_KEY, vía GRAPHAGENTS_LLM_API_KEY).
 
 @runtime_checkable
 class LLMPort(Protocol):
@@ -53,14 +54,23 @@ class FixtureLLM:
 
 
 class LiteLLMProxy:
-    """Vendor real: POST OpenAI-compatible al proxy LiteLLM del central (sin auth — el proxy es
-    abierto en local). Reusa su key management + el failover deepseek→gemini. Config por env:
-    `LITELLM_PROXY_URL` (default http://localhost:4000) · `GRAPHAGENTS_LLM_MODEL` (default
-    deepseek-v4-flash). No es G-DET: va SOLO en el nodo marcado, nunca en el esqueleto."""
+    """Vendor real: POST OpenAI-compatible a un endpoint LLM. Dos modos, según haya `api_key`:
+      • SIN key  → un proxy LiteLLM ABIERTO (dev local `:4000`): reusa su key-management + el
+                   failover deepseek→gemini. Es lo que corre el loop local / `test_llm_narrative`.
+      • CON key  → el proveedor OpenAI-compatible DIRECTO y autenticado (opción D, prod AWS:
+                   DeepSeek `https://api.deepseek.com`, model `deepseek-v4-flash`, Bearer = la
+                   DEEPSEEK_API_KEY). Sin proxy, sin contenedor — el modelo es pura config. NO hay
+                   failover (un solo proveedor); ok porque la narrativa degrada sola si falla (L-26).
+    Config por env: `LITELLM_PROXY_URL` (base OpenAI-compatible; default http://localhost:4000) ·
+    `GRAPHAGENTS_LLM_MODEL` (default deepseek-v4-flash — sirve igual como id real de DeepSeek) ·
+    `GRAPHAGENTS_LLM_API_KEY` (Bearer; vacío = sin auth). No es G-DET: va SOLO en el nodo marcado.
+    Cambiar de modelo/proveedor = un env/SSM, sin tocar código (api.deepseek.com↔api.stepfun.ai↔proxy)."""
 
-    def __init__(self, base_url: str | None = None, model: str | None = None, timeout: float = 45) -> None:
+    def __init__(self, base_url: str | None = None, model: str | None = None,
+                 api_key: str | None = None, timeout: float = 45) -> None:
         self._base = (base_url or os.environ.get("LITELLM_PROXY_URL", "http://localhost:4000")).rstrip("/")
         self._model = model or os.environ.get("GRAPHAGENTS_LLM_MODEL", "deepseek-v4-flash")
+        self._api_key = api_key or os.environ.get("GRAPHAGENTS_LLM_API_KEY")
         self._timeout = timeout
 
     def complete(self, *, system: str, user: str, temperature: float = 0.0) -> str:
@@ -68,9 +78,11 @@ class LiteLLMProxy:
             "model": self._model, "temperature": temperature,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
         }).encode("utf-8")
+        headers = {"Content-Type": "application/json"}
+        if self._api_key:  # opción D: Bearer → proveedor directo autenticado (DeepSeek). Sin key → proxy abierto.
+            headers["Authorization"] = f"Bearer {self._api_key}"
         req = urllib.request.Request(
-            f"{self._base}/v1/chat/completions", data=body,
-            headers={"Content-Type": "application/json"}, method="POST")
+            f"{self._base}/v1/chat/completions", data=body, headers=headers, method="POST")
         with urllib.request.urlopen(req, timeout=self._timeout) as r:
             data = json.loads(r.read().decode("utf-8", "replace"))
         return data["choices"][0]["message"]["content"]
