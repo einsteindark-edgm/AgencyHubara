@@ -257,6 +257,26 @@ def test_api_flow_trace_reconstructs_real_per_tool_io(monkeypatch):
     assert any(e["tool"] == "blended-unit-economics" for e in nt["blended-economics"])  # el loop
 
 
+def test_start_durable_injects_the_real_llm_vendor(monkeypatch):
+    """El durable inyecta el vendor REAL del port `llm` (LiteLLMProxy → deepseek vía el proxy) a
+    build_agent → el reporter teje la narrativa en el flujo durable. Verificamos que el port LLEGA
+    a build_agent (sin :6767 ni :4000): monkeypatch de build_agent + del submit."""
+    import sdk.loader
+    import sdk.runtime
+    from sdk.connectorkit.ports import LLMPort
+    from sdk.manifest_model import load_manifest
+    from viewer.server import _start_durable
+
+    captured = {}
+    monkeypatch.setattr(sdk.loader, "build_agent",
+                        lambda m, ga_root, ports=None: captured.update(ports=ports) or "GRAPH")
+    monkeypatch.setattr(sdk.runtime.AgentSpanRuntime, "start", lambda self, g, i: "eid-x")
+    m = load_manifest(ROOT / "manifests" / "ads-analytics.taskgraph.yaml")
+    eid = _start_durable(ROOT, m, {"meta_insights": {}})
+    assert eid == "eid-x"
+    assert "llm" in captured["ports"] and isinstance(captured["ports"]["llm"], LLMPort)  # vendor real, lazy
+
+
 def test_api_flow_trace_requires_execution_id():
     status, payload = api_route("GET", "/api/flow-trace", {}, None, ga_root=ROOT)
     assert status == 400

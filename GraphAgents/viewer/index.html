@@ -181,7 +181,7 @@ function FlowNode({ data, selected }){
             : (n.archetype || 'agente') + (n.strategy ? ' · ' + n.strategy : '');
   // un TOOL hereda el estado del nodo que lo compone (azul=corrió) pero NO pulsa ni engorda:
   // Conductor no captura su timing por-tool (corre adentro del nodo) — no fabricamos esa señal.
-  const liveNode = rt && n.kind !== 'tool';
+  const liveNode = rt && n.kind !== 'tool' && n.kind !== 'port';
   return html`
     <div class=${'rfnode' + (selected ? ' sel' : '') + (liveNode && rt.status==='running' ? ' running' : '')}
          style=${{ borderColor: border, background: fill || undefined,
@@ -208,15 +208,16 @@ function Graph({ graph, selected, selEdge, onSelect, onSelectEdge, trace, plan, 
     if(trace && trace.steps) trace.steps.forEach(s => { if(s.agent) m['agent:'+s.agent] = s.runtime; });
     return m;
   }, [trace]);
-  // TOOLS usadas en este flujo → azul. Una tool hereda el estado del nodo (agente) que la
-  // compone: si el nodo corrió, la tool corrió (pod determinista). Conductor NO da runtime
-  // por-tool (1 task = 1 sub-agente) → status solamente, sin ms. max sobre nodos que comparten
-  // la tool (running > done > failed). Pending no pinta (el nodo todavía no corrió).
+  // TOOLS y PORTS usados en este flujo → azul. Una tool/port hereda el estado del nodo (agente)
+  // que la compone (`uses`) o que consume el port (`consumes`): si el nodo corrió, la tool/port
+  // se ejecutó (pod determinista). Así el port `llm` (la narrativa del reporter) se PINTA cuando
+  // su agente corre — se VE en el flujo. Conductor no da runtime por-tool/port (1 task = 1
+  // sub-agente) → status solamente, sin ms. max sobre nodos que comparten (running>done>failed).
   const toolRuntimeById = useMemo(() => {
     const m = {}; if(!trace || !trace.steps) return m;
     const rank = { running:3, done:2, failed:1 };
     graph.edges.forEach(e => {
-      if(e.kind !== 'uses') return;
+      if(e.kind !== 'uses' && e.kind !== 'consumes') return;
       const prt = runtimeByAgent[e.source];
       if(!prt || prt.status==='pending') return;
       if(!m[e.target] || (rank[prt.status]||0) > (rank[m[e.target].status]||0)) m[e.target] = { status: prt.status };
@@ -687,7 +688,10 @@ function NodeModal({ trace, graph, nodeId, flowTrace, onClose }){
         ${bodyIO('input')}</div>`}
 
       ${tab==='output' && html`<div>
-        <div class="sec" style=${{ margin:'2px 0 6px' }}>OUTPUT · ${isSup?'el estado final del pod':isStep?'el acc después de este nodo':''}</div>
+        ${(io.output && typeof io.output==='object' && io.output.narrative) && html`<div>
+          <div class="sec" style=${{ margin:'2px 0 4px', color:'var(--agent)' }}>NARRATIVA · LLM (deepseek, por el port llm)${(io.output.narrative_invented&&io.output.narrative_invented.length)?' · ⚠ cifras inventadas descartadas':' · ✓ sin cifras inventadas'}</div>
+          <div class="mnote" style=${{ color:'var(--ink)', borderStyle:'solid', borderColor:'var(--agent)', lineHeight:'1.6' }}>${io.output.narrative}</div></div>`}
+        <div class="sec" style=${{ margin:'10px 0 6px' }}>OUTPUT · ${isSup?'el estado final del pod':isStep?'el acc después de este nodo':''}</div>
         ${bodyIO('output')}</div>`}
     </div>
   </div>`;

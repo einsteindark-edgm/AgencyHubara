@@ -162,14 +162,25 @@ def replay_case_route(ga_root: Path, case_id: str) -> tuple[int, dict]:
     }
 
 
+def _durable_ports() -> dict:
+    """Los vendors REALES que el durable inyecta a los miembros que `consumes:` un port. Hoy: el
+    `llm` → `LiteLLMProxy` (deepseek-v4-flash vía el proxy LiteLLM del central, :4000). Es LAZY —
+    solo pega cuando un nodo lo invoca, y `build_runnable` filtra por `consumes` (un miembro que no
+    declara el port no lo recibe). Si el proxy está caído, el nodo LLM falla VISIBLE en el trace
+    (honesto), no degrada en silencio. (Meta sigue sin vendor real — G2 — así que su port se rechaza.)"""
+    from sdk.connectorkit.ports import LiteLLMProxy
+
+    return {"llm": LiteLLMProxy()}
+
+
 def _start_durable(ga_root: Path, m, input_dict: dict) -> str:
-    """Compila el agente y lo submitea ASÍNCRONO a AgentSpan (`start`, no `run`) → execution-id
-    al instante (~0.4s), los workers completan en background. El supervisor va envuelto en
-    `{acc: seed}` (`_durable_input`). Devuelve el execution-id."""
+    """Compila el agente (inyectando los vendors reales de los ports que consume, `_durable_ports`)
+    y lo submitea ASÍNCRONO a AgentSpan (`start`, no `run`) → execution-id al instante (~0.4s), los
+    workers completan en background. El supervisor va envuelto en `{acc: seed}`. Devuelve el eid."""
     from sdk.loader import build_agent
     from sdk.runtime import AgentSpanRuntime
 
-    graph = build_agent(m, ga_root)
+    graph = build_agent(m, ga_root, ports=_durable_ports())
     return AgentSpanRuntime().start(graph, _durable_input(m, input_dict))
 
 
@@ -197,9 +208,10 @@ def run_durable_route(ga_root: Path, case_id: str) -> tuple[int, dict]:
         return 404, {"error": f"no existe el agente '{case.target_id}' en manifests/"}
     m = load_manifest(cand[0])
     consumed = sorted({p for n in iter_nodes(m) for p in n.consumes})
-    if consumed:
-        return 422, {"error": f"'{case.target_id}' consume ports {consumed}: el durable necesita el "
-                     "vendor real, no el fixture del caso (corré por tests/integration)."}
+    unprovidable = [p for p in consumed if p not in _durable_ports()]  # llm SÍ tiene vendor real ahora
+    if unprovidable:
+        return 422, {"error": f"'{case.target_id}' consume ports {unprovidable} sin vendor real en el "
+                     "durable (ej. Meta — G2): corré por tests/integration con un Fixture."}
     try:
         eid = _start_durable(ga_root, m, resolve(case.seed, ga_root))
     except (Exception, SystemExit) as e:  # noqa: BLE001 — AgentRuntime levanta SystemExit (no Exception)

@@ -1,8 +1,8 @@
-# Agente de catálogo (archetype: reporter). Render determinista del blend + verdict
-# (nodo PURO); la narrativa interpretativa es un nodo LLM aislado (G1+, temperature=0,
-# NUNCA computa — cita los números del analyzer).
+# Agente de catálogo (archetype: reporter). Render determinista del blend + verdict (nodo PURO);
+# la narrativa interpretativa la teje el LLM por el port `llm` (temperature=0, NUNCA computa —
+# cita los números del analyzer; el guard descarta una cifra inventada).
 name: ctwa-report
-description: Reporter CTWA — render determinista (tabla + verdict) + narrativa LLM aislada (G1+).
+description: Reporter CTWA — render determinista (tabla + verdict) + narrativa por el LLM (port llm).
 archetype: reporter
 certification: C2
 
@@ -11,3 +11,10 @@ capability: graphs.ctwa_report:build
 exposes_as_tool: true
 
 tools: []
+
+# G-PORT: el dato externo (la completion del LLM) entra SOLO por un port del ConnectorKit. El loader
+# inyecta el vendor — FixtureLLM en golden/replay (determinista), LiteLLMProxy (deepseek vía el proxy
+# del central) en el durable real. run() lo usa si está presente (opt-in → el render puro sigue siendo
+# el piso). Es lo que pone el nodo LLM EN el flujo del pod (port:llm deja de ser huérfano).
+consumes:
+  - llm
