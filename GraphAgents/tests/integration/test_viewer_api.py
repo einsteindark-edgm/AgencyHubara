@@ -41,6 +41,15 @@ def test_api_plan_returns_execution_order():
     assert payload["steps"][2]["inputs"]["insights_payload"] == "$state.meta_insights"
 
 
+def test_api_plan_carries_composed_tools_per_step():
+    # el panel "flujo de ejecución" dibuja, bajo cada nodo, las tools que compone (sub-ejecución).
+    status, payload = api_route("GET", "/api/plan", {"agent": ["ads-analytics"]}, None, ga_root=ROOT)
+    assert status == 200
+    funnel = next(s for s in payload["steps"] if s["agent"] == "ctwa-campaign-funnel")
+    assert funnel["tools"] == ["parse-meta-entities", "meta-ads-insights", "complement-funnel"]
+    assert next(s for s in payload["steps"] if s["agent"] == "ctwa-report")["tools"] == []
+
+
 def test_api_plan_unknown_agent_is_404():
     status, payload = api_route("GET", "/api/plan", {"agent": ["nope"]}, None, ga_root=ROOT)
     assert status == 404
@@ -224,6 +233,65 @@ def test_durable_output_desenvuelve_el_acc_de_un_supervisor():
 
     m = load_manifest(ROOT / "manifests" / "ads-analytics.taskgraph.yaml")
     assert _durable_output(m, {"acc": {"verdict": "scale_budget"}}) == {"verdict": "scale_budget"}
+
+
+def test_api_flow_trace_reconstructs_real_per_tool_io(monkeypatch):
+    """/api/flow-trace reconstruye el I/O por-tool de un run durable replayeando el pod desde su
+    seed (G-DET) — SIN tocar la ejecución ni Conductor. Monkeypatch de fetch_workflow → un wf
+    mínimo con el seed; el endpoint replaya y devuelve node_traces con el I/O REAL por tool."""
+    from sdk.case_model import discover_cases, resolve
+
+    seed = resolve(next(c for c in discover_cases(ROOT) if c.id == "dia-del-padre-flujo").seed, ROOT)
+    monkeypatch.setattr(
+        "sdk.trace.fetch_workflow",
+        lambda eid, *a, **k: {"workflowId": eid, "workflowName": "ads-analytics",
+                              "input": {"acc": seed}, "tasks": []},
+    )
+    status, payload = api_route("GET", "/api/flow-trace", {"execution_id": ["e1"]}, None, ga_root=ROOT)
+    assert status == 200
+    assert payload["reconstructed"] is True
+    nt = payload["node_traces"]
+    assert [e["tool"] for e in nt["ctwa-campaign-funnel"]] == [
+        "parse-meta-entities", "meta-ads-insights", "complement-funnel"]
+    assert nt["ctwa-campaign-funnel"][0]["output"]  # I/O real, no placeholder
+    assert any(e["tool"] == "blended-unit-economics" for e in nt["blended-economics"])  # el loop
+
+
+def test_start_durable_injects_the_real_llm_vendor(monkeypatch):
+    """El durable inyecta el vendor REAL del port `llm` (LiteLLMProxy → deepseek vía el proxy) a
+    build_agent → el reporter teje la narrativa en el flujo durable. Verificamos que el port LLEGA
+    a build_agent (sin :6767 ni :4000): monkeypatch de build_agent + del submit."""
+    import sdk.loader
+    import sdk.runtime
+    from sdk.connectorkit.ports import LLMPort
+    from sdk.manifest_model import load_manifest
+    from viewer.server import _start_durable
+
+    captured = {}
+    monkeypatch.setattr(sdk.loader, "build_agent",
+                        lambda m, ga_root, ports=None: captured.update(ports=ports) or "GRAPH")
+    monkeypatch.setattr(sdk.runtime.AgentSpanRuntime, "start", lambda self, g, i: "eid-x")
+    m = load_manifest(ROOT / "manifests" / "ads-analytics.taskgraph.yaml")
+    eid = _start_durable(ROOT, m, {"meta_insights": {}})
+    assert eid == "eid-x"
+    assert "llm" in captured["ports"] and isinstance(captured["ports"]["llm"], LLMPort)  # vendor real, lazy
+
+
+def test_api_flow_trace_requires_execution_id():
+    status, payload = api_route("GET", "/api/flow-trace", {}, None, ga_root=ROOT)
+    assert status == 400
+
+
+def test_api_flow_trace_without_seed_degrades(monkeypatch):
+    # un run sin seed recuperable (fixture trimmeado) → no reconstruye, pero NO crashea.
+    monkeypatch.setattr(
+        "sdk.trace.fetch_workflow",
+        lambda eid, *a, **k: {"workflowId": eid, "workflowName": "ads-analytics", "tasks": []},
+    )
+    status, payload = api_route("GET", "/api/flow-trace", {"execution_id": ["e1"]}, None, ga_root=ROOT)
+    assert status == 200
+    assert payload["reconstructed"] is False
+    assert payload["node_traces"] == {}
 
 
 def test_api_run_durable_requiere_case():

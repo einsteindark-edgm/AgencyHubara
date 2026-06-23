@@ -46,6 +46,55 @@ def test_trace_annotates_real_sequential_run_in_order():
     assert trace["unmatched_tasks"] == []
 
 
+# --- el trace lleva, además del runtime: las tools que compone cada nodo + el seed raíz ---
+
+def test_trace_carries_composed_tools_and_supervisor_root_seed():
+    """El trace propaga (a) las `tools` que compone cada nodo — la sub-ejecución que dibuja
+    el explorer, disponible ANTES de que el nodo corra (es estática, del manifest) — y (b) el
+    `agent` raíz + el `seed` con que arrancó el supervisor (el `input` del workflow desenvuelto
+    de `{acc: seed}`, lo que el loader envuelve). Eso alimenta el modal del agente principal."""
+    plan = _plan("ads-analytics.taskgraph.yaml")
+    wf = {
+        "workflowId": "wf-s", "workflowName": "ads-analytics", "status": "RUNNING",
+        "input": {"acc": {"currency": "COP", "days": [{"d": 1}]}},
+        "tasks": [
+            {"referenceTaskName": "ads-analytics_ctwa_campaign_funnel_2", "status": "COMPLETED",
+             "retryCount": 0, "startTime": 1, "endTime": 2, "taskId": "t2"},
+        ],
+    }
+    trace = build_trace(plan, wf)
+    assert trace["agent"] == "ads-analytics"
+    assert trace["seed"] == {"currency": "COP", "days": [{"d": 1}]}  # desenvuelto de {acc: ...}
+    funnel = next(s for s in trace["steps"] if s["agent"] == "ctwa-campaign-funnel")
+    # las tools viajan aunque el nodo esté pending o done — son la verdad estática del nodo
+    assert funnel["tools"] == ["parse-meta-entities", "meta-ads-insights", "complement-funnel"]
+    assert next(s for s in trace["steps"] if s["agent"] == "ctwa-insights")["runtime"]["status"] == "pending"
+
+
+def test_trace_seed_unwraps_agentspan_prompt_envelope():
+    """Caso REAL (visto en vivo): AgentSpan NO persiste el workflow input como `{acc: seed}` sino
+    envuelto en `{'prompt': '<repr Python del estado>'}`. El modal del supervisor debe mostrar el
+    SEED limpio igual → se pela el `prompt` con `ast.literal_eval` (seguro: solo literales) y se
+    desenvuelve el `acc`. Sin esto la pestaña input mostraba `{'prompt': "{'acc': {...}}"}` crudo."""
+    plan = _plan("ads-analytics.taskgraph.yaml")
+    wf = {"workflowId": "w", "workflowName": "ads-analytics",
+          "input": {"prompt": "{'acc': {'currency': 'COP', 'days': [1, 2]}}"}, "tasks": []}
+    assert build_trace(plan, wf)["seed"] == {"currency": "COP", "days": [1, 2]}
+    # un prompt no parseable NO miente: devuelve el envelope crudo (no inventa un seed)
+    bad = {"workflowId": "w", "input": {"prompt": "<no-parseable>"}, "tasks": []}
+    assert build_trace(plan, bad)["seed"] == {"prompt": "<no-parseable>"}
+
+
+def test_trace_seed_falls_back_to_raw_input_then_none():
+    """`seed`: una capability hoja manda el input CRUDO (sin envoltorio `acc`) → se devuelve tal
+    cual. Sin `input` (fixture trimmeado) → None: el modal del supervisor degrada a 'ver Probar'."""
+    plan = _plan("ads-analytics.taskgraph.yaml")
+    raw = build_trace(plan, {"workflowId": "w", "input": {"name": "ada"}, "tasks": []})
+    assert raw["seed"] == {"name": "ada"}  # no es {acc:...} → crudo
+    absent = build_trace(plan, {"workflowId": "w", "tasks": []})
+    assert absent["seed"] is None
+
+
 # --- estados: done(+retries+ms) · running · pending (sin task todavía) -----------------
 
 def test_trace_maps_states_and_marks_steps_without_task_pending():

@@ -144,16 +144,36 @@ def run(input: dict, *, ports: dict | None = None, tools: dict | None = None) ->
 
     if qa_passed is not None:
         lines += ["", f"**QA (no-self-review):** {'reconcilia' if qa_passed else 'NO reconcilia — revisar'}"]
-    return {"markdown": "\n".join(lines), "verdict": verdict, "qa_passed": qa_passed}
+    out = {"markdown": "\n".join(lines), "verdict": verdict, "qa_passed": qa_passed}
+
+    # Nodo LLM por el PORT (G-PORT, mismo patrón que meta-insights.run()→ports['meta_marketing_api']):
+    # si el loader inyecta el port `llm` (porque el manifest lo `consumes:`), tejemos la narrativa
+    # interpretativa. El LLM NO computa — cita los números del analyzer; el guard `invented_numbers`
+    # DESCARTA la prosa si inventa una cifra financiera ausente (seguridad del LLM real: el cliente
+    # nunca ve un número alucinado). Sin port → render puro (G-DET; el port es opt-in). La lógica
+    # vive UNA vez acá → `build()` la corre por el mismo `run()` (sin drift run↔build, L-25).
+    llm = (ports or {}).get("llm")
+    if llm is not None:
+        narrative = narrate(input, llm=llm)["narrative"]
+        invented = invented_numbers(narrative, _narrate_user(input))
+        out["narrative"] = (
+            narrative if not invented
+            # NO echamos las cifras inventadas al cliente (las veía como si fueran reales); el detalle
+            # va al guard/observabilidad. El cliente solo ve que la narrativa no es confiable.
+            else "[narrativa interpretativa descartada — el modelo citó cifras ausentes del análisis]"
+        )
+        out["narrative_invented"] = invented  # diagnóstico (qué inventó) — para el trace, no para el cliente
+    return out
 
 
 def build(*, llm=None):
-    """`StateGraph` LangGraph. El nodo `report` REUSA el `run()` PURO (render determinista: tabla
-    + verdict + embudo). Si se inyecta un `llm` (port), agrega el nodo MARCADO `narrative` después
-    — el único no-determinista, temperature=0, que cita los números y NO computa (G-DET intacto: el
-    esqueleto es puro, el LLM está aislado en su nodo). **Opt-in**: sin `llm` el grafo es single-node
-    (idéntico al previo) → el supervisor compuesto y el golden del render no cambian. El vendor real
-    (`LiteLLMProxy`, deepseek-v4-flash vía el proxy del central) se instancia lazy si no se inyecta."""
+    """`StateGraph` LangGraph. El nodo `report` corre el `run()` — render determinista (tabla +
+    verdict + embudo) y, si se le pasa el port `llm`, la narrativa interpretativa (el nodo LLM por
+    el PORT, temperature=0, que cita los números y NO computa; el guard `invented_numbers` la
+    descarta si inventa una cifra). La lógica del LLM vive UNA vez en `run()` (sin drift run↔build,
+    L-24): `build()` solo THREAD-ea el port. **Opt-in**: sin `llm` el grafo es el render puro
+    (G-DET; el supervisor compuesto y el golden del render no cambian). El vendor real
+    (`LiteLLMProxy`, deepseek-v4-flash vía el proxy del central) lo inyecta el runtime durable."""
     try:
         from typing import TypedDict
 
@@ -169,20 +189,13 @@ def build(*, llm=None):
         campaigns: list     # ctwa-campaign-funnel (el embudo por-campaña; opcional)
         markdown: str       # ← run()
         verdict: str        # ← run()
-        narrative: str      # ← narrate() (nodo LLM; solo si se inyecta `llm`)
+        narrative: str      # ← run() vía el port llm (solo si se inyecta)
 
     def report(state: State) -> dict:
-        return run(dict(state))
+        return run(dict(state), ports={"llm": llm} if llm is not None else None)
 
     g = StateGraph(State)
     g.add_node("report", report)
     g.add_edge(START, "report")
-    if llm is not None:
-        def narrative_node(state: State) -> dict:
-            return narrate(dict(state), llm=llm)
-        g.add_node("narrative", narrative_node)
-        g.add_edge("report", "narrative")
-        g.add_edge("narrative", END)
-    else:
-        g.add_edge("report", END)
+    g.add_edge("report", END)
     return g.compile(name="ctwa-report")

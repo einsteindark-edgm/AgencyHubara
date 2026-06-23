@@ -21,6 +21,7 @@ def glossary() -> dict:
         {"title": "Reglas de agente / supervisor", "blurb": "lo que garantiza un nodo agente (sección CERTIFICACIÓN).", "items": [
             {"term": "C1-CAP", "meaning": "la capability (módulo:función) del agente importa y existe."},
             {"term": "G-RUN-SIG", "meaning": "la capability expone run(input, *, ports, tools) — la firma uniforme que inyecta el loader."},
+            {"term": "G-PROTO", "meaning": "la capability satisface el protocolo del kit (sdk.capability): run con la firma de inyección + build keyword-only si existe. Hace a TODAS las capabilities uniformes y, por el mapping tools, TRAZABLES (sdk.tooltrace)."},
             {"term": "G-BIND", "meaning": "toda tool uses: resuelve al catálogo y su with: nombra SOLO inputs del contrato de esa tool."},
             {"term": "SUP", "meaning": "el supervisor es coherente: declara agents y strategy."},
             {"term": "G-WIRE", "meaning": "un supervisor que COMPONE declara inputs: en cada agente — así el task graph se cablea y corre."},
@@ -44,6 +45,7 @@ def glossary() -> dict:
         ]},
         {"title": "Reglas transversales (el porqué)", "blurb": "propiedades de todo el sistema, no un check único.", "items": [
             {"term": "G-DET", "meaning": "el esqueleto del StateGraph es PURO; el LLM/IO va en nodos marcados. Es lo que hace replayable a un agente."},
+            {"term": "sub-ejecución reconstruida", "meaning": "el I/O por-tool que muestra el modal de un nodo NO se persiste en el durable: se RECONSTRUYE replayeando el run() del nodo con tools trazadas sobre su input (sdk.tooltrace). Es fiel por G-DET; revela hasta los loops. Lo amarra la cert (conformance: tools declaradas == realmente invocadas)."},
             {"term": "G-CERT", "meaning": "un agente o tool < C2 no es mergeable ni componible."},
             {"term": "C0-SCHEMA", "meaning": "el manifest no parsea (YAML/schema inválido) — el piso de C0."},
         ]},

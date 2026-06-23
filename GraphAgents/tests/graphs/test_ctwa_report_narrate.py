@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from graphs.ctwa_report import invented_numbers, narrate
+from graphs.ctwa_report import invented_numbers, narrate, run  # noqa: F401  (run usado en los tests del flujo)
 from sdk.connectorkit.ports import FixtureLLM
 
 REPORT = {
@@ -67,6 +67,33 @@ def test_guard_allows_european_thousands_format():
     """120000 citado como '120.000,00' (formato europeo) es el mismo valor — no inventado."""
     src = _narrate_source(REPORT)
     assert invented_numbers("Gastaste 120.000,00 en total.", src) == []
+
+
+# --- run() cablea el LLM por el PORT (patrón meta-insights) — la narrativa entra al FLUJO ----
+
+def test_run_adds_the_narrative_when_the_llm_port_is_injected():
+    """El cable al flujo: con el port `llm` inyectado (lo hace el loader vía consumes:), run()
+    produce la narrativa ADEMÁS del render determinista. Es lo que el supervisor del pod corre
+    (build_runnable→run), así el nodo LLM por fin se ejecuta en el flujo."""
+    out = run(REPORT, ports={"llm": FixtureLLM("El periodo recomienda scale con MER 5.0.")})
+    assert out["narrative"] == "El periodo recomienda scale con MER 5.0."
+    assert "Embudo por campaña" in out["markdown"]  # el render determinista sigue intacto
+
+
+def test_run_stays_pure_without_the_llm_port():
+    """Sin port → sin narrativa: el golden determinista del render NO cambia (G-DET; el port es
+    opt-in, igual que el build() previo). El narrative aparece solo cuando se inyecta el LLM."""
+    out = run(REPORT)
+    assert "narrative" not in out
+
+
+def test_run_drops_a_hallucinated_narrative():
+    """SEGURIDAD del LLM real: si la narrativa cita una cifra financiera ausente de los números
+    del analyzer, run() la DESCARTA (no la sirve como si fuera confiable) — el guard invented_numbers
+    gobierna. El cliente nunca ve un número inventado por el LLM."""
+    out = run(REPORT, ports={"llm": FixtureLLM("Gastaste 120000 y generaste 999999 en ventas.")})
+    assert "999999" not in out["narrative"]
+    assert "descart" in out["narrative"].lower()  # marca que la narrativa no es confiable
 
 
 def test_build_adds_the_narrative_node_after_the_render():

@@ -17,6 +17,7 @@ por L-14) NO viaja en el trace: se trae lazy por `fetch_node_state` al click en 
 """
 from __future__ import annotations
 
+import ast
 import json
 import os
 import urllib.parse
@@ -47,6 +48,26 @@ def _dur_ms(task: dict) -> int | None:
     if isinstance(s, (int, float)) and isinstance(e, (int, float)) and e > s:
         return int(e - s)
     return None
+
+
+def _root_seed(workflow: dict) -> Any:
+    """El seed con que arrancó el supervisor — el `input` del workflow de Conductor, DESENVUELTO
+    para mostrarlo limpio en la pestaña INPUT del modal del agente principal. Tres capas de
+    envoltorio que la realidad nos enseñó (la última, EN VIVO):
+    1. AgentSpan persiste el input como `{'prompt': '<repr Python del estado>'}` — lo pelamos con
+       `ast.literal_eval` (seguro: solo literales). Si no parsea, devolvemos el envelope crudo
+       (no inventamos un seed — honestidad sobre prolijidad).
+    2. El loader envuelve un supervisor en `{acc: seed}` (`_durable_input`) — desenvolvemos `acc`.
+    3. Una capability hoja manda el input crudo → tal cual. Sin `input` (fixture trimmeado) → None."""
+    inp = workflow.get("input")
+    if isinstance(inp, dict) and isinstance(inp.get("prompt"), str):
+        try:
+            inp = ast.literal_eval(inp["prompt"])  # {'prompt': "{'acc': {...}}"} → {'acc': {...}}
+        except (ValueError, SyntaxError):
+            return workflow.get("input")
+    if isinstance(inp, dict) and isinstance(inp.get("acc"), dict):
+        return inp["acc"]
+    return inp if inp else None
 
 
 def _terminal_attempt(cands: list[dict]) -> dict:
@@ -104,9 +125,11 @@ def build_trace(plan: dict, workflow: dict) -> dict:
     ]
     return {
         "execution_id": workflow.get("workflowId"),
+        "agent": workflow.get("workflowName"),  # el supervisor raíz — para el modal del nodo principal
         "workflow_status": workflow.get("status"),
         "strategy": plan.get("strategy"),
-        "steps": steps_out,
+        "seed": _root_seed(workflow),  # el input con que arrancó (desenvuelto de {acc: seed})
+        "steps": steps_out,  # cada paso ya lleva sus `tools` (vienen del execution_plan vía {**step})
         "unmatched_tasks": unmatched,
     }
 

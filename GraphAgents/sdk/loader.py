@@ -148,21 +148,22 @@ def build_runnable(node: AgentNode, ga_root: Path, ports: dict | None = None) ->
 
 # --------------------------------------------------- AgentSpan (runtime real, G1+)
 
-def build_agent(node: AgentNode, ga_root: Path | None = None) -> Any:
+def build_agent(node: AgentNode, ga_root: Path | None = None, ports: dict | None = None) -> Any:
     """El artefacto que corre `AgentSpanRuntime`: para una capability, el
     `CompiledStateGraph` de LangGraph (`build()` con `compile(name=...)`). AgentSpan
     lo toma DIRECTO — lo autodetecta como langgraph, SIN wrapper `Agent` (ver L-8).
-    Supervisor / tools nativos de AgentSpan: G2+."""
+    `ports`: los vendors (ConnectorKit) que el durable inyecta a los miembros que `consumes:`
+    (ej. el port `llm` del reporter → LiteLLMProxy/FixtureLLM). Supervisor / tools nativos: G2+."""
     if node.is_reference:
         if ga_root is None:
             raise RuntimeError("para resolver `uses: agent://...` pasá ga_root al loader")
-        return build_agent(load_agent_by_id(ga_root, node.ref_agent_id), ga_root)
+        return build_agent(load_agent_by_id(ga_root, node.ref_agent_id), ga_root, ports)
 
     if node.capability:
         return _resolve_capability(node.capability)()  # CompiledStateGraph
 
     if node.is_supervisor:
-        return build_supervisor_graph(node, ga_root)
+        return build_supervisor_graph(node, ga_root, ports=ports)
 
     raise NotImplementedError(
         "build_agent: G1 corre capabilities (StateGraph); G2 compone supervisors "
@@ -170,7 +171,7 @@ def build_agent(node: AgentNode, ga_root: Path | None = None) -> Any:
     )
 
 
-def build_supervisor_graph(node: AgentNode, ga_root: Path | None, *, checkpointer=None) -> Any:
+def build_supervisor_graph(node: AgentNode, ga_root: Path | None, *, checkpointer=None, ports: dict | None = None) -> Any:
     """G2 — compila un supervisor que COMPONE a UN `StateGraph` nativo. Cada agente es un NODO:
     resuelve su binding `inputs:` desde el acumulador → corre su capability (su `run` puro, vía
     `build_runnable`) → MERGEA EN CÓDIGO y devuelve el `acc` COMPLETO. Dos topologías hoy:
@@ -201,7 +202,10 @@ def build_supervisor_graph(node: AgentNode, ga_root: Path | None, *, checkpointe
         )
     from langgraph.graph import END, START, StateGraph
 
-    compiled = [(a, build_runnable(a, ga_root)) for a in node.agents]
+    # THREAD los ports a cada miembro (mismo que el LocalRuntime): un miembro que `consumes:` un
+    # port (ej. el reporter → `llm`) recibe su vendor en el durable. `build_runnable` filtra por
+    # `consumes` (bound_ports) → solo le llega lo que declaró.
+    compiled = [(a, build_runnable(a, ga_root, ports or {})) for a in node.agents]
 
     if node.strategy == "parallel":
         return _build_parallel_graph(node, compiled, checkpointer)

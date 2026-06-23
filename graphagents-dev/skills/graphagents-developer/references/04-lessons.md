@@ -453,4 +453,65 @@ guard rojo que lo reproduce — el "Guard:" se escribe ANTES que el "Fix:".
 - **Guard:** `test_run_durable_es_async_devuelve_running_y_completa_en_background` (server-gated) +
   `test_run_durable_degrada_systemexit_a_422` (el caso negativo del SystemExit, puro) (tests/integration/test_viewer_api.py).
 
+### L-23 · el `input` del workflow que persiste AgentSpan NO es `{acc: seed}` sino `{'prompt': '<repr Python>'}` — la pestaña INPUT del modal mostraba el envelope crudo (2026-06-22, modal por-nodo del viewer)
+- **Síntoma:** tests verdes (un fixture sintético `input={'acc': {...}}` desenvolvía bien) pero EN VIVO la
+  pestaña INPUT del modal del supervisor mostraba `{"prompt": "{'acc': {'meta_insights': {...}}}"}` crudo —
+  el seed envuelto y stringificado, no el seed limpio. El caso paradigmático de "tests verdes ≠ feature viva".
+- **Causa:** asumí que Conductor guarda el workflow input con la forma que el loader le pasa (`{acc: seed}`,
+  `_durable_input`). Pero AgentSpan RE-SERIALIZA el input al persistirlo: lo guarda como
+  `{'prompt': '<repr Python del estado>'}` (comillas simples, no JSON). El runtime SÍ recibió `{acc: seed}`
+  (por eso el pod corrió bien); lo que se ve en `workflow.input` es el registro de AgentSpan, no lo que pasé.
+- **Fix:** `_root_seed(workflow)` pela TRES capas en orden: (1) el `{'prompt': '<repr>'}` de AgentSpan con
+  `ast.literal_eval` (seguro: solo literales; si no parsea, devolvé el envelope CRUDO, no inventes un seed),
+  (2) el `{acc: seed}` del loader, (3) input crudo de una capability hoja, si no → None. Verificado en vivo:
+  la pestaña INPUT ahora muestra `{meta_insights, manual_sales, entities_payload}` limpio.
+- **Regla para el skill:** cuando leas un campo del runtime durable que vos mismo escribiste (input, output,
+  state), NO asumas que vuelve con la forma que mandaste — AgentSpan/Conductor re-serializan. Verificá la
+  forma REAL con un run vivo (`fetch_workflow` → mirá `input`/`outputData` crudos) ANTES de codear el unwrap;
+  un fixture sintético que vos armás con la forma "esperada" NO prueba nada. Y al desenvolver, degradá honesto
+  (envelope crudo) si no matchea, nunca fabriques el valor "limpio".
+- **Guard:** `test_trace_seed_unwraps_agentspan_prompt_envelope` (la forma real `{'prompt': "..."}` + el caso
+  no-parseable que devuelve crudo) + `test_trace_seed_falls_back_to_raw_input_then_none` (tests/architecture/test_trace.py).
+  Además, la honestidad de la sub-ejecución de tools la pinea `test_composed_tool_order_is_the_real_call_order`
+  (tests/architecture/test_execution_plan.py): el orden DECLARADO en el manifest == el orden REAL de invocación
+  (recorder sobre las impls), porque el explorer lo pinta como "orden de ejecución" — si una capability reordena
+  sus tool-calls vs el manifest, el viewer mentiría → rojo (mutación verificada).
+
+### L-24 · el I/O por-tool se RECONSTRUYE (replay determinista), no se persiste — y el `tools` inyectado es el seam que lo hace posible para TODA capability (2026-06-22, protocolo Capability + tracing)
+- **Síntoma/necesidad:** el viewer quería mostrar qué entró/salió de cada tool ADENTRO de un nodo,
+  pero Conductor registra 1 task por sub-agente (las tools corren adentro, opacas) y persistir el
+  trace tocaría el contrato de `run()`, el `acc` y los goldens (G-DET).
+- **Causa raíz (la que reformó el diseño):** `run(input, *, ports, tools)` llama sus tools por el
+  **mapping `tools` INYECTADO**; pero `build()` las **importa directo** (`from tools.X.impl import
+  run`). Envolver el mapping instrumenta `run()`, NO `build()`. CLAVE: el supervisor durable NO corre
+  el `build()` de sus miembros — `build_supervisor_graph` los corre vía `build_runnable` → `run()`
+  (loader.py:204). Así que el camino durable que importa SÍ pasa por el mapping.
+- **Fix (elegante, cero blast radius):** no persistir nada. Como `run()` es PURO/DETERMINISTA,
+  RECONSTRUIR el I/O por-tool replayeando el `run()` del nodo con tools trazadas (`sdk.tooltrace`:
+  `traced`/`replay_with_trace`/`replay_flow_with_trace`) sobre su input (que sale del seed,
+  threadeado igual que `build_runnable`). Fiel por G-DET; el endpoint `/api/flow-trace` lo expone
+  lazy. NADA cambia en la ejecución/acc/goldens — observabilidad puramente aditiva. El protocolo
+  `Capability` (`sdk/capability.py`) formaliza el contrato; `G-PROTO` (en `run_checks`) lo certifica;
+  un conformance behavioral (replay del pod → tools invocadas == declaradas) lo AMARRA.
+- **Hallazgo bonus (honestidad):** el trace reconstruido es MÁS rico que el manifest — revela LOOPS.
+  `blended-economics` llama `blended-unit-economics`+`diagnose` POR-DÍA (y 1× para el período) → 7
+  llamadas reales, aunque el manifest declara cada tool 1 vez. El conformance compara
+  **distinct-in-order(real) == declarado** (ningún tool sin declarar, mismo orden), NO la secuencia
+  cruda. El viewer muestra ambas: panel = composición declarada, modal = ejecución reconstruida.
+- **Regla para el skill:** toda preocupación transversal por-tool (tracing, costo, métricas, gates)
+  cuelga del seam `tools` inyectado + reconstrucción determinista — NO de instrumentar/persistir la
+  ejecución durable. Una capability NUNCA importa la impl de una tool en `run()`; va por `tools[id]`.
+  Si emitís un código de cert nuevo desde fuera del TestKit (ej. `[G-PROTO]` en `sdk/capability.py`),
+  agregá ese archivo al scan del guard `test_glossary` y glosá el código.
+- **Guard:** `tests/architecture/test_capability_conformance.py` (el amarre: pod replay declared==real
+  + el loop), `test_tooltrace.py`, `test_capability_protocol.py`,
+  `test_viewer_api.py::test_api_flow_trace_*`. Doc: `references/05-tracing-y-protocolo.md`.
+
+### L-25 · un nodo scaffolded NO está en el flujo hasta que el CABLE existe — el LLM del reporter tenía port + vendor + nodo + guard + tests, pero `consumes:` faltaba, `run()` no lo llamaba y `build()` corría con `llm=None` (2026-06-22, "el módulo del LLM no se ejecuta")
+- **Síntoma:** el operador vio en el explorer el nodo `port:llm` DESCONECTADO (0 edges) y "no se ejecuta". Estaba TODO construido — el port en el registry, los vendors (FixtureLLM + LiteLLMProxy→deepseek), el nodo `narrate`, el guard anti-alucinación, y hasta tests verdes (`test_ctwa_report_narrate`, `test_llm_narrative`) — pero NUNCA cableado al pod. El gotcha #1 textual: schema/scaffold presente, comportamiento ausente.
+- **Causa (TRES cables faltantes):** (1) `ctwa-report.agent.yaml` no declaraba `consumes: llm` → el port quedaba huérfano y el loader nunca lo inyectaba; (2) `run()` (lo que corre el supervisor vía `build_runnable`) hacía solo el render determinista — nunca llamaba al LLM; (3) `build()` se invocaba con `llm=None` (build_agent), y aunque tuviera el nodo, el supervisor corre `run()`, no `build()`. Triple bypass.
+- **Fix:** (a) `consumes: [llm]` en el manifest (G-PORT — el port deja de ser huérfano, se VE el edge). (b) `run()` llama `ports["llm"].complete(...)` para tejer la narrativa, opt-in (sin port → render puro, golden intacto) — el MISMO patrón que `meta-insights.run()→ports["meta_marketing_api"]`; el guard `invented_numbers` DESCARTA la prosa si el LLM cita una cifra ausente (el cliente nunca ve un número alucinado). (c) Unifiqué `build()`: su nodo `report` corre `run(state, ports={"llm": llm})` y eliminé el nodo `narrative` separado → la lógica del LLM vive UNA vez en `run()` (mata el drift run↔build). (d) Threadié `ports` por el supervisor DURABLE (`build_supervisor_graph`/`build_agent` — el LocalRuntime ya lo hacía). (e) El runtime durable inyecta el vendor REAL (`_durable_ports → LiteLLMProxy`, lazy); el replay/golden/reconstrucción del viewer usan FixtureLLM (la reconstrucción `/api/flow-trace` corre `ports=None` → NUNCA pega al LLM real).
+- **Regla para el skill:** "tests verdes ≠ feature viva" tiene una cara estructural: un nodo/port puede tener TODO (contrato, vendor, guard, tests unitarios) y NO estar en el flujo. Verificá el CABLE: ¿el manifest lo `consumes:`/`uses:`? ¿el `run()` que corre el supervisor lo invoca (no solo `build()`, que el pod NO usa)? ¿el runtime inyecta el vendor? Un nodo en `build()` que el supervisor no nestea (G2.x) está muerto en el pod — poné el LLM/IO en `run()` por su port (patrón meta-insights), no en un nodo de `build()` aislado.
+- **Guard:** `tests/architecture/test_pod_llm_wiring.py` (el edge en el grafo + el pod teje la narrativa por LocalRuntime + el supervisor DURABLE threadea el port), `test_ctwa_report_narrate.py` (run con/sin port + el guard descarta una alucinación), `test_viewer_api.py::test_start_durable_injects_the_real_llm_vendor`. Verificado EN VIVO con deepseek real (:4000): narrativa real, `narrative_invented:[]`.
+
 <!-- AÑADIR NUEVAS LECCIONES ARRIBA DE ESTA LÍNEA, NUMERADAS L-1, L-2, ... -->

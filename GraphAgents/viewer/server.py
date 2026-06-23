@@ -162,14 +162,25 @@ def replay_case_route(ga_root: Path, case_id: str) -> tuple[int, dict]:
     }
 
 
+def _durable_ports() -> dict:
+    """Los vendors REALES que el durable inyecta a los miembros que `consumes:` un port. Hoy: el
+    `llm` → `LiteLLMProxy` (deepseek-v4-flash vía el proxy LiteLLM del central, :4000). Es LAZY —
+    solo pega cuando un nodo lo invoca, y `build_runnable` filtra por `consumes` (un miembro que no
+    declara el port no lo recibe). Si el proxy está caído, el nodo LLM falla VISIBLE en el trace
+    (honesto), no degrada en silencio. (Meta sigue sin vendor real — G2 — así que su port se rechaza.)"""
+    from sdk.connectorkit.ports import LiteLLMProxy
+
+    return {"llm": LiteLLMProxy()}
+
+
 def _start_durable(ga_root: Path, m, input_dict: dict) -> str:
-    """Compila el agente y lo submitea ASÍNCRONO a AgentSpan (`start`, no `run`) → execution-id
-    al instante (~0.4s), los workers completan en background. El supervisor va envuelto en
-    `{acc: seed}` (`_durable_input`). Devuelve el execution-id."""
+    """Compila el agente (inyectando los vendors reales de los ports que consume, `_durable_ports`)
+    y lo submitea ASÍNCRONO a AgentSpan (`start`, no `run`) → execution-id al instante (~0.4s), los
+    workers completan en background. El supervisor va envuelto en `{acc: seed}`. Devuelve el eid."""
     from sdk.loader import build_agent
     from sdk.runtime import AgentSpanRuntime
 
-    graph = build_agent(m, ga_root)
+    graph = build_agent(m, ga_root, ports=_durable_ports())
     return AgentSpanRuntime().start(graph, _durable_input(m, input_dict))
 
 
@@ -197,9 +208,10 @@ def run_durable_route(ga_root: Path, case_id: str) -> tuple[int, dict]:
         return 404, {"error": f"no existe el agente '{case.target_id}' en manifests/"}
     m = load_manifest(cand[0])
     consumed = sorted({p for n in iter_nodes(m) for p in n.consumes})
-    if consumed:
-        return 422, {"error": f"'{case.target_id}' consume ports {consumed}: el durable necesita el "
-                     "vendor real, no el fixture del caso (corré por tests/integration)."}
+    unprovidable = [p for p in consumed if p not in _durable_ports()]  # llm SÍ tiene vendor real ahora
+    if unprovidable:
+        return 422, {"error": f"'{case.target_id}' consume ports {unprovidable} sin vendor real en el "
+                     "durable (ej. Meta — G2): corré por tests/integration con un Fixture."}
     try:
         eid = _start_durable(ga_root, m, resolve(case.seed, ga_root))
     except (Exception, SystemExit) as e:  # noqa: BLE001 — AgentRuntime levanta SystemExit (no Exception)
@@ -280,6 +292,38 @@ def api_route(method: str, path: str, params: dict, body: dict | None, ga_root: 
             return 200, {"acc": fetch_node_state(eid, tid)}
         except Exception as e:  # noqa: BLE001
             return 502, {"error": f"no pude leer el estado del nodo: {e}"}
+    if method == "GET" and path == "/api/flow-trace":
+        # RECONSTRUYE el I/O por-tool de un run durable replayeando el pod desde su seed (G-DET) —
+        # SIN tocar la ejecución ni persistir nada en Conductor. El supervisor durable corre el
+        # MISMO `run()` por nodo (build_runnable), así que replayear con tools trazadas reproduce
+        # exactamente lo que pasó. Es la honestidad amarrada por la cert (conformance declared==real).
+        from sdk.manifest_model import load_manifest
+        from sdk.tooltrace import replay_flow_with_trace
+        from sdk.trace import _root_seed, fetch_workflow
+
+        eid = (params.get("execution_id") or [None])[0]
+        if not eid:
+            return 400, {"error": "falta 'execution_id' en el query (?execution_id=<id>)"}
+        try:
+            wf = fetch_workflow(eid)
+        except Exception as e:  # noqa: BLE001
+            return 502, {"error": f"no pude leer la ejecución (¿server :6767 arriba?): {e}"}
+        agent_id = wf.get("workflowName")
+        manifests = ga_root / "manifests"
+        cand = sorted(manifests.glob(f"{agent_id}.agent.yaml")) + sorted(
+            manifests.glob(f"{agent_id}.taskgraph.yaml"))
+        if not cand:
+            return 404, {"error": f"la ejecución es del agente '{agent_id}', ausente del catálogo"}
+        seed = _root_seed(wf)
+        if seed is None:  # sin seed recuperable (fixture trimmeado / run viejo) → no inventa, degrada
+            return 200, {"node_traces": {}, "reconstructed": False,
+                         "reason": "el seed no viajó en este run — no se puede reconstruir"}
+        try:
+            res = replay_flow_with_trace(load_manifest(cand[0]), ga_root, seed)
+        except Exception as e:  # noqa: BLE001 — capability/binding roto: degradá, la UI nunca crashea
+            return 422, {"error": f"no pude reconstruir el trace por-tool: {e}",
+                         "node_traces": {}, "reconstructed": False}
+        return 200, {"node_traces": res["node_traces"], "reconstructed": True}
     if method == "GET" and path == "/api/inspect":
         # los FILES + los CHECKS de un nodo o de una RELACIÓN (la línea entre nodos).
         from sdk.graph import build_graph

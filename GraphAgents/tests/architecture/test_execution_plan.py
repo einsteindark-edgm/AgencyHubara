@@ -30,23 +30,33 @@ def _plan(name: str) -> dict:
 
 # --- sequential: el pod real, 6 pasos EN ORDEN con sus bindings -------------------------
 
+# Cada paso lleva además las `tools` que ese nodo COMPONE, en orden DECLARADO del manifest.
+# En un pod determinista (G-DET) ese orden de composición ES el orden en que el grafo las
+# corre — verificado: `ctwa_campaign_funnel.run()` llama parse-entities→insights→complement
+# y `blended_economics.run()` merge→metrics→diagnose, idéntico a su StateGraph (sin drift).
 EXPECTED_ADS_ANALYTICS = [
     {"order": 1, "agent": "ctwa-insights", "archetype": "extractor",
-     "inputs": {"payload": "$state.meta_insights"}, "role": "step"},
+     "inputs": {"payload": "$state.meta_insights"}, "role": "step",
+     "tools": ["meta-ads-insights"]},
     {"order": 2, "agent": "sales-ledger", "archetype": "extractor",
-     "inputs": {"payload": "$state.manual_sales"}, "role": "step"},
+     "inputs": {"payload": "$state.manual_sales"}, "role": "step",
+     "tools": ["parse-manual-sales"]},
     {"order": 3, "agent": "ctwa-campaign-funnel", "archetype": "analyzer",
      "inputs": {"entities_payload": "$state.entities_payload",
-                "insights_payload": "$state.meta_insights"}, "role": "step"},
+                "insights_payload": "$state.meta_insights"}, "role": "step",
+     "tools": ["parse-meta-entities", "meta-ads-insights", "complement-funnel"]},
     {"order": 4, "agent": "blended-economics", "archetype": "analyzer",
      "inputs": {"currency": "$state.currency", "insights": "$state.insights",
-                "sales": "$state.sales"}, "role": "step"},
+                "sales": "$state.sales"}, "role": "step",
+     "tools": ["merge-by-date", "blended-unit-economics", "diagnose"]},
     {"order": 5, "agent": "numbers-qa", "archetype": "analyzer",
-     "inputs": {"days": "$state.days", "period": "$state.period"}, "role": "step"},
+     "inputs": {"days": "$state.days", "period": "$state.period"}, "role": "step",
+     "tools": ["blended-unit-economics"]},
     {"order": 6, "agent": "ctwa-report", "archetype": "reporter",
      "inputs": {"days": "$state.days", "period": "$state.period",
                 "unmatched": "$state.unmatched", "qa_passed": "$state.passed",
-                "campaigns": "$state.campaigns"}, "role": "step"},
+                "campaigns": "$state.campaigns"}, "role": "step",
+     "tools": []},
 ]
 
 
@@ -57,6 +67,44 @@ def test_sequential_plan_is_the_six_steps_in_order():
     assert plan["steps"] == EXPECTED_ADS_ANALYTICS
 
 
+def test_composed_tool_order_is_the_real_call_order():
+    """La AFIRMACIÓN DE HONESTIDAD del explorer: el orden DECLARADO de tools en el manifest (lo
+    que `execution_plan` proyecta y el panel pinta como 'orden de ejecución') == el orden REAL en
+    que la capability las INVOCA. Hoy se cumple porque el pod es determinista (sin LLM eligiendo);
+    este guard lo PINNEA — si una capability reordena sus tool-calls vs el manifest (o el manifest
+    se reordena vs el código), el explorer estaría MINTIENDO → rojo acá. Un recorder envuelve las
+    impls reales del catálogo y registra el orden de llamada real."""
+    import importlib
+
+    from sdk.case_model import discover_cases, resolve
+    from sdk.graph import _tool_ids
+    from sdk.loader import _resolve_tools
+
+    seed = resolve(next(c for c in discover_cases(ROOT) if c.id == "dia-del-padre-flujo").seed, ROOT)
+    m = load_manifest(MANIFESTS / "ctwa-campaign-funnel.agent.yaml")
+    declared = _tool_ids(m)
+    assert declared == ["parse-meta-entities", "meta-ads-insights", "complement-funnel"]
+
+    called: list[str] = []
+    recording = {tid: (lambda *a, _t=tid, _f=fn, **k: (called.append(_t), _f(*a, **k))[1])
+                 for tid, fn in _resolve_tools(m, ROOT).items()}
+    run = importlib.import_module("graphs.ctwa_campaign_funnel").run
+    run({"entities_payload": seed["entities_payload"], "insights_payload": seed["meta_insights"]}, tools=recording)
+    assert called == declared  # el orden REAL de invocación == el orden declarado que pinta el explorer
+
+
+def test_multitool_node_lists_its_tools_in_declared_run_order():
+    """El nodo que compone VARIAS tools las expone en orden — lo que el explorer dibuja
+    como sub-ejecución. `ctwa-campaign-funnel` compone 3 (la verdad estática del manifest;
+    Conductor NO captura el runtime por-tool: 1 task = 1 sub-agente, las tools corren adentro)."""
+    steps = {s["agent"]: s for s in _plan("ads-analytics.taskgraph.yaml")["steps"]}
+    assert steps["ctwa-campaign-funnel"]["tools"] == [
+        "parse-meta-entities", "meta-ads-insights", "complement-funnel"]
+    assert steps["blended-economics"]["tools"] == [
+        "merge-by-date", "blended-unit-economics", "diagnose"]
+    assert steps["ctwa-report"]["tools"] == []  # un nodo sin tools propias
+
+
 # --- router: UN dispatch; el 1er agente es el default, los demás branches --------------
 
 def test_router_plan_marks_default_and_branches():
@@ -64,9 +112,9 @@ def test_router_plan_marks_default_and_branches():
     assert plan["strategy"] == "router"
     assert plan["steps"] == [
         {"order": 1, "agent": "meta-insights", "archetype": "extractor",
-         "inputs": {}, "role": "default_branch"},
+         "inputs": {}, "role": "default_branch", "tools": []},
         {"order": 1, "agent": "roas-cac", "archetype": "analyzer",
-         "inputs": {}, "role": "branch"},
+         "inputs": {}, "role": "branch", "tools": ["recommend-budget"]},
     ]
 
 
@@ -77,10 +125,12 @@ def test_parallel_plan_fans_out_then_joins():
     assert plan["strategy"] == "parallel"
     assert plan["steps"] == [
         {"order": 1, "agent": "ctwa-insights", "archetype": "extractor",
-         "inputs": {"payload": "$state.meta_insights"}, "role": "fan_out"},
+         "inputs": {"payload": "$state.meta_insights"}, "role": "fan_out",
+         "tools": ["meta-ads-insights"]},
         {"order": 1, "agent": "sales-ledger", "archetype": "extractor",
-         "inputs": {"payload": "$state.manual_sales"}, "role": "fan_out"},
-        {"order": 2, "agent": None, "archetype": None, "inputs": {}, "role": "join"},
+         "inputs": {"payload": "$state.manual_sales"}, "role": "fan_out",
+         "tools": ["parse-manual-sales"]},
+        {"order": 2, "agent": None, "archetype": None, "inputs": {}, "role": "join", "tools": []},
     ]
 
 
@@ -90,7 +140,8 @@ def test_leaf_agent_plan_is_a_single_step():
     m = load_manifest(MANIFESTS / "greeter.agent.yaml")
     plan = execution_plan(m, ROOT)
     assert plan["steps"] == [
-        {"order": 1, "agent": "greeter", "archetype": "reporter", "inputs": {}, "role": "single"},
+        {"order": 1, "agent": "greeter", "archetype": "reporter", "inputs": {}, "role": "single",
+         "tools": ["hello"]},
     ]
 
 
