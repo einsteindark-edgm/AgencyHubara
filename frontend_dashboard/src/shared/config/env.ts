@@ -32,4 +32,17 @@ export const env = {
   // Muestreo de traces en prod (0..1). 1 = todo (default actual); bajarlo
   // reduce el volumen de POSTs sin tocar código.
   otelSampleRate: Number(import.meta.env.VITE_OTEL_SAMPLE_RATE ?? "1"),
+  // Cognito (OIDC) — login del dashboard (Authorization Code + PKCE). `authority`
+  // = issuer del user pool. OPCIONALES: si faltan (dev local), `cognitoEnabled`
+  // queda false → la app no exige login (espeja al backend, que es no-op sin
+  // COGNITO_*: enforce-only-when-configured). En prod el build los inyecta.
+  cognitoAuthority: import.meta.env.VITE_COGNITO_AUTHORITY ?? "",
+  cognitoClientId: import.meta.env.VITE_COGNITO_CLIENT_ID ?? "",
+  cognitoRedirectUri:
+    import.meta.env.VITE_COGNITO_REDIRECT_URI ??
+    `${window.location.origin}/callback`,
+  cognitoEnabled: Boolean(
+    import.meta.env.VITE_COGNITO_AUTHORITY &&
+      import.meta.env.VITE_COGNITO_CLIENT_ID,
+  ),
 } as const;

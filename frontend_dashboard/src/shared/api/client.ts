@@ -3,11 +3,13 @@
  *   - base URL desde `env.apiUrl`
  *   - JSON parsing
  *   - errores tipados (`ApiError`) con status + body
+ *   - `Authorization: Bearer <access-token>` de Cognito cuando hay sesión
+ *     (lo empuja el AuthProvider al token-store; no-op en dev local sin login).
  *
  * No abstrae métodos custom (DELETE, PATCH) hasta que se necesiten.
- * No agrega auth headers todavía (no hay auth en el backend).
  */
 
+import { getAccessToken } from "../config/auth-token";
 import { env } from "../config/env";
 
 export class ApiError extends Error {
@@ -33,6 +35,13 @@ async function request<T>(path: string, init: ApiRequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.body !== undefined && !headers.has("content-type")) {
     headers.set("content-type", "application/json");
+  }
+  // Auth centralizada: adjuntá el access-token de Cognito una sola vez. El
+  // token-store lo alimenta el AuthProvider (app/providers). Sin sesión (dev
+  // local / API abierta) es null → no se manda header.
+  const token = getAccessToken();
+  if (token && !headers.has("authorization")) {
+    headers.set("authorization", `Bearer ${token}`);
   }
 
   const res = await fetch(url, {

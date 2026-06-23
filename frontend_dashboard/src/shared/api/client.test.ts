@@ -3,11 +3,13 @@
  *   - construye la URL con la base de env
  *   - parsea JSON cuando el content-type es application/json
  *   - tira `ApiError` con status + body en respuestas !ok
+ *   - adjunta `Authorization: Bearer <token>` cuando hay sesión (token-store)
  *
  * No probamos `request()` directamente (no exportado): testeamos la fachada `apiClient`.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { setAccessToken } from "../config/auth-token";
 import { apiClient, ApiError } from "./client";
 
 const fetchMock = vi.fn();
@@ -19,6 +21,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   fetchMock.mockReset();
+  setAccessToken(null); // no filtrar el token entre tests
 });
 
 describe("apiClient", () => {
@@ -72,5 +75,37 @@ describe("apiClient", () => {
     expect((init.headers as Headers).get("content-type")).toBe(
       "application/json",
     );
+  });
+
+  it("attaches Authorization: Bearer when a session token is set", async () => {
+    setAccessToken("fake-access-token");
+    fetchMock.mockResolvedValueOnce(
+      new Response("{}", {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    await apiClient.get("/secure");
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect((init.headers as Headers).get("authorization")).toBe(
+      "Bearer fake-access-token",
+    );
+  });
+
+  it("omits Authorization when there is no session token", async () => {
+    setAccessToken(null);
+    fetchMock.mockResolvedValueOnce(
+      new Response("{}", {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    await apiClient.get("/public");
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect((init.headers as Headers).get("authorization")).toBeNull();
   });
 });
