@@ -125,6 +125,27 @@ def test_run_survives_an_unreachable_llm_proxy():
     assert "narrative_invented" not in out
 
 
+def test_narrative_error_never_leaks_the_api_key(monkeypatch):
+    """SEGURIDAD (regresión, opción D): cuando el LLM DIRECTO autenticado (Bearer) falla, el
+    `narrative_error` que viaja al trace/explorer NO debe contener la API key. Hoy es seguro por
+    construcción (urllib no echa los request headers al str del error); este guard lo BLINDA si
+    alguien algún día cambia la lib HTTP por una que sí los eche. Usa el vendor REAL + el error
+    realista de L-26 (Errno 99)."""
+    import urllib.error
+
+    from sdk.connectorkit.ports import LiteLLMProxy
+
+    def boom(req, timeout=None):
+        raise urllib.error.URLError(OSError(99, "Cannot assign requested address"))
+
+    monkeypatch.setattr("urllib.request.urlopen", boom)
+    out = run(REPORT, ports={"llm": LiteLLMProxy(
+        base_url="https://api.deepseek.com", api_key="sk-CANARY-LEAK")})
+    assert "no disponible" in out["narrative"].lower()       # degradó visible (PR #89)
+    assert "sk-CANARY-LEAK" not in out["narrative_error"]    # la key NO viaja al trace
+    assert "sk-CANARY-LEAK" not in out["narrative"]          # ni al cliente
+
+
 def test_build_adds_the_narrative_node_after_the_render():
     pytest.importorskip("langgraph")
     from graphs.ctwa_report import build
