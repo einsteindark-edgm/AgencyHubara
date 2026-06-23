@@ -52,6 +52,11 @@ jobs:
           echo "bucket=$(echo "$CFG" | jq -r .bucket)"       >> "$GITHUB_OUTPUT"
           echo "dist=$(echo "$CFG" | jq -r .distribution_id)" >> "$GITHUB_OUTPUT"
           echo "api_url=$(echo "$CFG" | jq -r .api_url)"      >> "$GITHUB_OUTPUT"
+          # Cognito (OIDC): el frontend exige login si VITE_COGNITO_* están seteadas.
+          # authority = issuer del pool (region + user_pool_id). SIN esto el build
+          # sale sin auth → el dashboard rompe contra la API (que sí exige JWT).
+          echo "cognito_authority=https://cognito-idp.$(echo "$CFG" | jq -r .region).amazonaws.com/$(echo "$CFG" | jq -r .user_pool_id)" >> "$GITHUB_OUTPUT"
+          echo "cognito_client_id=$(echo "$CFG" | jq -r .app_client_id)" >> "$GITHUB_OUTPUT"
 
       # 2) Build del frontend con el VITE_API_URL del tenant.
       - uses: actions/setup-node@v4
@@ -64,6 +69,10 @@ jobs:
         working-directory: frontend_dashboard
         env:
           VITE_API_URL: ${{ steps.cfg.outputs.api_url }}
+          VITE_COGNITO_AUTHORITY: ${{ steps.cfg.outputs.cognito_authority }}
+          VITE_COGNITO_CLIENT_ID: ${{ steps.cfg.outputs.cognito_client_id }}
+          # VITE_COGNITO_REDIRECT_URI: opcional — default a `${window.location.origin}/callback`
+          #   en runtime (= la URL de CloudFront). Registrar ese callback en el app client.
           # VITE_OTEL_EXPORTER_URL: opcional — solo si exponés el collector a browsers (ver doc §3.10).
         run: |
           npm ci

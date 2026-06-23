@@ -75,6 +75,23 @@ def test_dashboard_route_accepts_valid_token(
     assert resp.status_code != 401
 
 
+def test_dashboard_route_accepts_token_via_query_param(
+    enforced: TestClient, monkeypatch
+) -> None:
+    """SSE: el `EventSource` del browser no manda header Authorization, así que el
+    token viaja por query param `access_token`. require_auth debe aceptarlo."""
+    monkeypatch.setattr(
+        "src.platform.auth._verify_token",
+        lambda _token: {
+            "sub": "u1",
+            "client_id": "test-app-client",
+            "token_use": "access",
+        },
+    )
+    resp = enforced.get("/api/dashboard/sessions", params={"access_token": "good"})
+    assert resp.status_code != 401
+
+
 def test_meta_webhook_stays_public_even_when_enforced(enforced: TestClient) -> None:
     """El webhook de Meta tiene su propia auth; NO debe exigir JWT de Cognito."""
     resp = enforced.get(

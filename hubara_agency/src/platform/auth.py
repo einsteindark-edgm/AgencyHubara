@@ -73,19 +73,32 @@ def _verify_token(token: str) -> dict[str, Any]:
     return claims
 
 
+def _extract_token(request: Request) -> str:
+    """Bearer del header ``Authorization``, o ``access_token`` de query (para SSE).
+
+    El ``EventSource`` del browser no puede setear headers custom, así que el
+    stream (``/api/dashboard/events``) manda el access-token por query param. El
+    resto de la API usa el header. Header tiene precedencia.
+    """
+    authz = request.headers.get("Authorization", "")
+    scheme, _, header_token = authz.partition(" ")
+    if scheme.lower() == "bearer" and header_token.strip():
+        return header_token.strip()
+    return (request.query_params.get("access_token") or "").strip()
+
+
 def require_auth(request: Request) -> None:
-    """Dependency: exige un Bearer access-token válido de Cognito.
+    """Dependency: exige un access-token válido de Cognito (header o query).
 
     No-op si Cognito no está configurado (dev/tests). Sin/invalid token → 401.
     """
     if not _cognito_configured():
         return
-    authz = request.headers.get("Authorization", "")
-    scheme, _, token = authz.partition(" ")
-    if scheme.lower() != "bearer" or not token.strip():
+    token = _extract_token(request)
+    if not token:
         raise HTTPException(status_code=401, detail="Falta el bearer token")
     try:
-        _verify_token(token.strip())
+        _verify_token(token)
     except HTTPException:
         raise
     except Exception as exc:  # firma / exp / issuer / claims inválidos
