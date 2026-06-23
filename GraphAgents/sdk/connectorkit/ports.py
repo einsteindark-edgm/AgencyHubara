@@ -56,7 +56,11 @@ class LiteLLMProxy:
     """Vendor real: POST OpenAI-compatible al proxy LiteLLM del central (sin auth — el proxy es
     abierto en local). Reusa su key management + el failover deepseek→gemini. Config por env:
     `LITELLM_PROXY_URL` (default http://localhost:4000) · `GRAPHAGENTS_LLM_MODEL` (default
-    deepseek-v4-flash). No es G-DET: va SOLO en el nodo marcado, nunca en el esqueleto."""
+    deepseek-v4-flash). No es G-DET: va SOLO en el nodo marcado, nunca en el esqueleto.
+    OJO multi-caja: el default `localhost:4000` SOLO sirve en dev (proxy en el mismo host). Si el
+    proxy vive en OTRA caja (prod AWS: GraphAgents y el proxy son EC2 distintas), seteá
+    `LITELLM_PROXY_URL` al endpoint alcanzable, si no `urlopen` revienta con `[Errno 99] Cannot
+    assign requested address` — el caller (run del reporter) degrada visible, pero no hay narrativa (L-26)."""
 
     def __init__(self, base_url: str | None = None, model: str | None = None, timeout: float = 45) -> None:
         self._base = (base_url or os.environ.get("LITELLM_PROXY_URL", "http://localhost:4000")).rstrip("/")

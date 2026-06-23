@@ -96,6 +96,35 @@ def test_run_drops_a_hallucinated_narrative():
     assert "descart" in out["narrative"].lower()  # marca que la narrativa no es confiable
 
 
+class _UnreachableLLM:
+    """Simula el proxy LiteLLM inalcanzable del run real en AWS: vive en OTRA caja EC2, así que
+    `localhost:4000` desde la caja de GraphAgents revienta con `[Errno 99] Cannot assign requested
+    address`. El port levanta la MISMA excepción que `urllib` (URLError envolviendo el OSError)."""
+
+    def complete(self, *, system: str, user: str, temperature: float = 0.0) -> str:
+        import urllib.error
+
+        raise urllib.error.URLError(OSError(99, "Cannot assign requested address"))
+
+
+def test_run_survives_an_unreachable_llm_proxy():
+    """Run real en AWS (PR #81): el proxy LiteLLM está en otra caja → el nodo narrativo pegó a
+    localhost:4000 y reventó con [Errno 99], tumbando el `ctwa_report` ENTERO. Una narrativa
+    OPCIONAL no debe matar el reporte determinista (G-DET: el render es PURO, no toca red). run()
+    emite el reporte igual, con un marcador VISIBLE de narrativa no disponible + el error en
+    `narrative_error` (trace/observabilidad). El workflow COMPLETA en vez de FALLAR (L-26)."""
+    out = run(REPORT, ports={"llm": _UnreachableLLM()})
+    # el deliverable determinista sigue intacto (no se perdió por la falla de un nodo IO opcional)
+    assert "Embudo por campaña" in out["markdown"]
+    assert out["verdict"] == "scale"
+    # la narrativa degrada VISIBLE — no crash, no silencio
+    assert "no disponible" in out["narrative"].lower()
+    # el error queda en el trace como diagnóstico (no se traga: se reubica de fatal a observable)
+    assert "99" in out["narrative_error"]
+    # no hay narrative_invented: no se produjo prosa que chequear (distingue 'inalcanzable' de 'alucinó')
+    assert "narrative_invented" not in out
+
+
 def test_build_adds_the_narrative_node_after_the_render():
     pytest.importorskip("langgraph")
     from graphs.ctwa_report import build
