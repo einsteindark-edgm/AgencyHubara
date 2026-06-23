@@ -43,8 +43,9 @@ from __future__ import annotations
 import os
 from typing import Any
 
-import httpx
-from fastapi import APIRouter, Body, HTTPException, Path
+from fastapi import APIRouter, Body, Path, Request
+
+from src.sdk import castkit
 
 router = APIRouter()
 
@@ -62,53 +63,35 @@ def _orders_base() -> str:
     return os.environ.get("ORDERS_API_BASE", "http://127.0.0.1:8000").rstrip("/")
 
 
-async def _forward_patch(path: str, body: dict[str, Any]) -> dict[str, Any]:
-    """PATCH al contrato publicado de orders; errores → HTTP claros del cast."""
-    url = f"{_orders_base()}{path}"
-    try:
-        async with httpx.AsyncClient(timeout=_timeout_s()) as client:
-            resp = await client.patch(url, json=body)
-    except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
-        # Nunca conectó → garantizado que el comando NO se aplicó.
-        raise HTTPException(
-            status_code=502,
-            detail=(
-                f"cast chats→orders: provider no disponible ({exc.__class__.__name__}); "
-                f"el comando NO se aplicó. ¿`orders` está habilitado y sirviendo? "
-                f"(depends_on lo exige al boot)"
-            ),
-        ) from exc
-    except httpx.TimeoutException as exc:
-        # Conectó pero no respondió a tiempo → resultado DESCONOCIDO: el
-        # request interno pudo completar server-side (L-1). No afirmar fallo.
-        raise HTTPException(
-            status_code=504,
-            detail=(
-                f"cast chats→orders: el provider no respondió a tiempo "
-                f"({exc.__class__.__name__}). El comando PUEDE haberse aplicado — "
-                f"refrescá el estado del pedido antes de reintentar."
-            ),
-        ) from exc
-    except httpx.HTTPError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=(
-                f"cast chats→orders: fallo de transporte ({exc.__class__.__name__})."
-            ),
-        ) from exc
-    if resp.status_code >= 400:
-        # Passthrough del error del provider (422 de validación, etc.).
-        raise HTTPException(status_code=resp.status_code, detail=resp.text)
-    data = resp.json()
-    if not isinstance(data, dict):
-        raise HTTPException(
-            status_code=502, detail="cast chats→orders: respuesta no-dict del provider"
-        )
-    return data
+_CAST_LABEL = "chats→orders"
+
+
+async def _forward_patch(
+    request: Request, path: str, body: dict[str, Any]
+) -> dict[str, Any]:
+    """PATCH al contrato publicado de orders, portando la identidad del edge.
+
+    La mecánica del cast la centraliza ``src.sdk.castkit`` (Canal 3):
+    propagación del ``Authorization`` (sin esto, el 2º hop bajo ``require_auth``
+    daba 401) + semántica honesta de fallos — connect → 502 "NO se aplicó",
+    timeout → 504 "PUEDE haberse aplicado" (L-1) — + ``detail`` desanidado. El
+    timeout se dimensiona por el UPSTREAM del provider (Medusa cloud), no por el
+    hop local (L-1); por eso lo pasamos explícito.
+    """
+    return await castkit.forward(
+        request,
+        "PATCH",
+        path,
+        base_url=_orders_base(),
+        timeout=_timeout_s(),
+        cast_label=_CAST_LABEL,
+        body=body,
+    )
 
 
 @router.patch("/order-actions/{order_id}/schedule")
 async def schedule_order_for_chat(
+    request: Request,
     order_id: str = Path(..., min_length=1, max_length=200),
     body: dict[str, Any] = Body(default_factory=dict),
 ) -> dict[str, Any]:
@@ -118,15 +101,18 @@ async def schedule_order_for_chat(
     Response: el `OrderCommandResult` plano del provider
     (`{success, order_id, current_stage, error_detail, audit_id}`).
     """
-    return await _forward_patch(f"/api/orders/orders/{order_id}/schedule", body)
+    return await _forward_patch(
+        request, f"/api/orders/orders/{order_id}/schedule", body
+    )
 
 
 @router.patch("/order-actions/{order_id}/confirm-payment")
 async def confirm_order_payment_for_chat(
+    request: Request,
     order_id: str = Path(..., min_length=1, max_length=200),
     body: dict[str, Any] = Body(default_factory=dict),
 ) -> dict[str, Any]:
     """Confirmar pago del pedido vía el contrato order@v1 (idempotente)."""
     return await _forward_patch(
-        f"/api/orders/orders/{order_id}/confirm-payment", body
+        request, f"/api/orders/orders/{order_id}/confirm-payment", body
     )

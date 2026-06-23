@@ -24,6 +24,7 @@
 | [07-connectorkit.md](07-connectorkit.md) | Ports, fakes, atribución y ratchet P-31 | F-SDK-4 |
 | [08-catalogo.md](08-catalogo.md) | Certificación en el system-map (catálogo) | F-SDK-5 |
 | [09-dashboard-bus.md](09-dashboard-bus.md) | `dashboardkit` (canal 1): push SSE al dashboard + drena P-28 | F-SDK-6 |
+| [10-castkit.md](10-castkit.md) | `castkit` (canal 3): cast HTTP cross-plugin con identidad (auth) | hardening 2026-06-23 |
 
 ## El mapa mental en 30 segundos
 
