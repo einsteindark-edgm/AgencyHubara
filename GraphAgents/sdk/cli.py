@@ -187,6 +187,37 @@ def cmd_resume(args: argparse.Namespace) -> int:
     return 0 if ex.status != "failed" else 1
 
 
+def cmd_start(args: argparse.Namespace) -> int:
+    """DISPATCH durable: submitea un agente a AgentSpan NO-bloqueante y devuelve el
+    execution-id (para pollearlo). Lo corre el buzón de hubara por SSM en la caja:
+    `python -m sdk.cli start <agent> --input '...' --runtime agentspan`. Gemelo del `resume`."""
+    import json
+
+    if args.runtime != "agentspan":
+        print("start es SOLO para el dispatch durable: usá --runtime agentspan")
+        return 1
+
+    from sdk.loader import build_agent
+    from sdk.runtime import AgentSpanRuntime
+
+    cand = sorted(MANIFESTS.glob(f"{args.id}.agent.yaml")) + sorted(MANIFESTS.glob(f"{args.id}.taskgraph.yaml"))
+    if not cand:
+        print(f"no encontré el agente '{args.id}' en manifests/")
+        return 1
+    m = load_manifest(cand[0])
+    seed = json.loads(args.input) if args.input else {}
+    # input wrapping (paridad con el viewer `_durable_input`): un SUPERVISOR espera {acc: seed}
+    # (sino el 1er nodo recibe `acc` como string y revienta); +patches si es parallel. Una
+    # capability: input crudo.
+    if getattr(m, "is_supervisor", False):
+        inp = {"acc": seed, "patches": []} if getattr(m, "strategy", None) == "parallel" else {"acc": seed}
+    else:
+        inp = seed
+    eid = AgentSpanRuntime().start(build_agent(m, ROOT), inp)
+    print(f"execution {eid}: started")
+    return 0
+
+
 def cmd_cases(args: argparse.Namespace) -> int:
     from sdk.case_model import discover_cases
 
@@ -295,6 +326,12 @@ def main() -> int:
     rs.add_argument("execution_id")
     rs.add_argument("--decision", default="", help='decisión JSON inline, ej. \'{"approved": true, "by": "ed"}\'')
     rs.set_defaults(fn=cmd_resume)
+
+    st = sub.add_parser("start", help="DISPATCH durable: submitea un agente a AgentSpan → execution-id (lo corre el buzón)")
+    st.add_argument("id")
+    st.add_argument("--input", default="", help="input/seed JSON inline")
+    st.add_argument("--runtime", default="agentspan", choices=["agentspan"], help="solo agentspan (el dispatch durable)")
+    st.set_defaults(fn=cmd_start)
 
     cs = sub.add_parser("cases", help="lista los casos de prueba replayables (el catálogo del viewer)")
     cs.add_argument("--check", action="store_true", help="además, replayea cada caso y verifica su golden")
