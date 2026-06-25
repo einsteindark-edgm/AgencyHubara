@@ -72,20 +72,31 @@ def _module_path_to_dotted(path: Path) -> str:
     return ".".join(parts)
 
 
+#: Módulos que EXPONEN `WORKSPACE_VAULT_DIR` como global re-bindeable. Post-SDK
+#: (P-28, ADR-2026-06-12) los plugins importan el símbolo desde la fachada
+#: `src.sdk.runtime` (que lo re-exporta de `src.platform.config`) en vez de
+#: platform directo — ambos orígenes deben descubrirse o el re-bind del fixture
+#: se saltea el módulo y el test escribe al vault REAL (caso visto: graphagents).
+_VAULT_DIR_SOURCE_MODULES: frozenset[str] = frozenset(
+    {"src.platform.config", "src.sdk.runtime"}
+)
+
+
 def _discover_vault_capturing_modules() -> tuple[str, ...]:
-    """AST scan: módulos que importan `WORKSPACE_VAULT_DIR` desde `src.platform.config`.
+    """AST scan: módulos que importan `WORKSPACE_VAULT_DIR` desde un origen sancionado.
 
-    Detecta dos patrones:
-      1. `from src.platform.config import WORKSPACE_VAULT_DIR` (más común)
-      2. `from src.platform.config import (..., WORKSPACE_VAULT_DIR, ...)`
+    Orígenes (`_VAULT_DIR_SOURCE_MODULES`): `src.platform.config` (el real) y
+    `src.sdk.runtime` (la fachada SDK que lo re-exporta — P-28). Detecta:
+      1. `from <origen> import WORKSPACE_VAULT_DIR` (más común)
+      2. `from <origen> import (..., WORKSPACE_VAULT_DIR, ...)`
 
-    NO detecta `import src.platform.config` + acceso por atributo — pero ese
-    patrón no se usa en el repo (verificado al introducir el scan).
+    NO detecta `import <origen> as x` + acceso por atributo — pero ese patrón no
+    se usa en el repo (verificado al introducir el scan).
     """
-    # Siempre incluir el origen — otros módulos pueden hacer
+    # Siempre incluir los orígenes — otros módulos pueden hacer
     # `import src.platform.config as cfg; cfg.WORKSPACE_VAULT_DIR` y consultar
     # el valor en runtime, no por capture al import.
-    found: list[str] = ["src.platform.config"]
+    found: list[str] = list(_VAULT_DIR_SOURCE_MODULES)
     try:
         for py_file in _SRC_ROOT.rglob("*.py"):
             if "__pycache__" in py_file.parts:
@@ -97,7 +108,7 @@ def _discover_vault_capturing_modules() -> tuple[str, ...]:
             for node in ast.walk(tree):
                 if not isinstance(node, ast.ImportFrom):
                     continue
-                if node.module != "src.platform.config":
+                if node.module not in _VAULT_DIR_SOURCE_MODULES:
                     continue
                 if any(alias.name == "WORKSPACE_VAULT_DIR" for alias in node.names):
                     found.append(_module_path_to_dotted(py_file))
