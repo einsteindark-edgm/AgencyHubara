@@ -20,7 +20,7 @@ dependencies = [
     # GenAI instrumentation → gen_ai.* semantic conventions estándar + métricas
     "openlit>=1.0",
     "pyjwt[crypto]>=2.12.1",
-    # AWS SDK — el Boto3Launcher del buzón graphagents (ec2:StartInstances + ssm:SendCommand
+    # AWS SDK — el Boto3Launcher del buzón de análisis de ads (ec2:StartInstances + ssm:SendCommand
     # scoped al tag Role=graphagents). Import perezoso: solo se carga al despachar un run real.
     "boto3>=1.34",
 ]

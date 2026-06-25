@@ -1,0 +1,223 @@
+"""Sub-router `/api/ads/analysis/*` — el buzón de análisis con IA del plugin `ads`.
+
+Dispara el agente `ads-analytics` (pod CTWA de GraphAgents) desde el dashboard de Ads,
+relaya su progreso EN VIVO por SSE y resume el HITL. El agente real vive en la caja
+GraphAgents (fuera del monorepo); este buzón solo lo despierta (Launcher port), pollea
+Conductor (`runs/orchestrator.poll_loop`) y republica al `DashboardEventBus` (dominio
+`ads`). Self-contained dentro de `ads`: importa `src.sdk.*` + sus propios `runs/*`, NO
+otro plugin.
+
+Se monta bajo el router de `ads` con prefix `/analysis` (`api/__init__.py`), así las
+rutas quedan `/api/ads/analysis/...` sin colisionar con `/api/ads/campaigns`:
+- `GET  /api/ads/analysis/agents`            — el catálogo (agente + JSON de ejemplo del viewer)
+- `POST /api/ads/analysis/runs`              — dispara un run (record + despierta caja + despacha + poller)
+- `GET  /api/ads/analysis/runs/{id}`         — snapshot del record (refresh)
+- `GET  /api/ads/analysis/runs/{id}/events`  — SSE en vivo (reusa el bus, filtrado por run-id)
+- `POST /api/ads/analysis/runs/{id}/approve` — resume el HITL con la decisión
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import uuid
+
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+
+from src.plugins.ads.runs import orchestrator, record
+from src.sdk.dashboardkit import get_dashboard_event_bus
+
+router = APIRouter()
+
+#: El envelope crudo de `ads_get_ad_entities` (MCP) — lo que la tool de Meta devuelve. El
+#: agente lee `ad_entities` como STRING JSON (así viaja por el MCP), por eso lo armamos con
+#: `json.dumps`. Es el mismo payload del caso `dia-del-padre-flujo` del viewer de GraphAgents.
+_AD_ENTITIES = [
+    {
+        "id": "120238728477970317", "name": "Duo zodiacal", "objective": "OUTCOME_ENGAGEMENT",
+        "amount_spent": "$ 896.823 COP",
+        "results": {"value": "205 (Messaging conversations started)"},
+        "cost_per_result": {"value": "$ 4.375 COP (Messaging conversations started)"},
+        "date_start": "20 de mayo de 2026", "date_stop": "18 de junio de 2026",
+        "actions:link_click": "571",
+    },
+    {
+        "id": "120243118818600317", "name": "Día del padre 2026 - mundia", "objective": "OUTCOME_SALES",
+        "amount_spent": "$ 239.433 COP",
+        "results": {"value": "0 (Meta purchases)"},
+        "cost_per_result": {"value": "$ 0 COP (Meta purchases)"},
+        "date_start": "20 de mayo de 2026", "date_stop": "18 de junio de 2026",
+        "actions:link_click": "446",
+    },
+    {
+        "id": "120240351877200317", "name": "Dia de la madre", "objective": "OUTCOME_ENGAGEMENT",
+        "amount_spent": "$ 0 COP",
+        "results": {"value": "0 (Messaging conversations started)"},
+        "cost_per_result": {"value": "$ 0 COP (Messaging conversations started)"},
+        "date_start": "20 de mayo de 2026", "date_stop": "18 de junio de 2026",
+        "actions:link_click": "Not available",
+    },
+]
+
+#: El seed REAL del pod `ads-analytics` (el mismo del caso `dia-del-padre-flujo`): Graph
+#: /insights de las campañas + ventas manuales + el envelope crudo de entities. El CLI de la
+#: caja lo envuelve en `{acc: seed}` para el supervisor secuencial.
+_ADS_ANALYTICS_INPUT = {
+    "meta_insights": {
+        "account_currency": "COP",
+        "data": [
+            {
+                "date_start": "2026-06-15", "date_stop": "2026-06-15",
+                "campaign_id": "120238728477970317", "campaign_name": "Duo zodiacal",
+                "spend": "120000", "inline_link_clicks": "80",
+                "actions": [
+                    {"action_type": "link_click", "value": "80"},
+                    {"action_type": "onsite_conversion.messaging_conversation_started_7d", "value": "40"},
+                ],
+            },
+            {
+                "date_start": "2026-06-16", "date_stop": "2026-06-16",
+                "campaign_id": "120238728477970317", "campaign_name": "Duo zodiacal",
+                "spend": "100000", "inline_link_clicks": "50",
+                "actions": [
+                    {"action_type": "onsite_conversion.messaging_conversation_started_7d", "value": "30"},
+                ],
+            },
+            {
+                "date_start": "2026-06-15", "date_stop": "2026-06-15",
+                "campaign_id": "120243118818600317", "campaign_name": "Día del padre 2026",
+                "spend": "176294", "inline_link_clicks": "344",
+                "actions": [
+                    {"action_type": "onsite_conversion.messaging_conversation_started_7d", "value": "120"},
+                ],
+            },
+            {
+                "date_start": "2026-06-16", "date_stop": "2026-06-16",
+                "campaign_id": "120243118818600317", "campaign_name": "Día del padre 2026",
+                "spend": "90000", "inline_link_clicks": "60",
+                "actions": [],
+            },
+        ],
+    },
+    "manual_sales": {
+        "sales": [
+            {"date": "2026-06-15", "total_orders": 12, "total_revenue": 600000},
+            {"date": "2026-06-16", "total_orders": 4, "total_revenue": 150000},
+        ],
+    },
+    "entities_payload": {
+        "ad_entities": json.dumps(_AD_ENTITIES, ensure_ascii=False),
+        "summary": {"total_count": 3},
+    },
+}
+
+#: El catálogo del botón "Analizar con IA". UN agente: el pod `ads-analytics` (supervisor
+#: secuencial de 5 nodos: 2 extractores → embudo CTWA → blended-economics → numbers-QA →
+#: reporter). El `example_input` pre-carga el textarea con el seed real del viewer.
+_AGENTS = [
+    {
+        "id": "ads-analytics",
+        "label": "Análisis CTWA por campaña (Día del padre)",
+        "example_input": _ADS_ANALYTICS_INPUT,
+    },
+]
+
+
+class TriggerBody(BaseModel):
+    agent: str
+    input: dict
+
+
+class ApproveBody(BaseModel):
+    decision: dict
+
+
+def _new_run_id() -> str:
+    return f"run-{uuid.uuid4().hex[:12]}"
+
+
+def _conductor_base_url() -> str:
+    """La REST de Conductor de la caja GraphAgents. En prod el Boto3Launcher resuelve la IP
+    privada por tag; acá el default sirve para dev/local."""
+    return os.getenv("GRAPHAGENTS_CONDUCTOR_URL", "http://localhost:6767")
+
+
+def _get_launcher():
+    """El Launcher real (boto3). Import perezoso: tests lo monkeypatchean con un fake, y boto3
+    no se importa si no hace falta (NO-OP sin config AWS)."""
+    from src.plugins.ads.runs.boto3_launcher import Boto3Launcher
+
+    return Boto3Launcher()
+
+
+def _spawn_poller(run_id: str, execution_id: str) -> None:
+    """Arranca el poll_loop en background (un asyncio task en el mismo proceso uvicorn que
+    sirve el SSE → el publish llega al subscriber). Tests lo monkeypatchean a no-op."""
+    asyncio.create_task(
+        orchestrator.poll_loop(
+            run_id, execution_id, base_url=_conductor_base_url(), bus=get_dashboard_event_bus()
+        )
+    )
+
+
+@router.get("/agents")
+def list_agents() -> list[dict]:
+    return _AGENTS
+
+
+@router.post("/runs")
+async def create_run(body: TriggerBody) -> dict:
+    run_id = _new_run_id()
+    rec = orchestrator.start_run(run_id, body.agent, body.input, launcher=_get_launcher())
+    _spawn_poller(run_id, rec["execution_id"])
+    return {"run_id": run_id}
+
+
+@router.get("/runs/{run_id}")
+def get_run(run_id: str) -> dict:
+    rec = record.read_run(run_id)
+    if rec is None:
+        raise HTTPException(status_code=404, detail="run no existe")
+    return rec
+
+
+@router.post("/runs/{run_id}/approve")
+def approve(run_id: str, body: ApproveBody) -> dict:
+    rec = record.read_run(run_id)
+    if rec is None:
+        raise HTTPException(status_code=404, detail="run no existe")
+    _get_launcher().resume(rec["execution_id"], body.decision)
+    return {"status": "resumed"}
+
+
+@router.get("/runs/{run_id}/events")
+async def run_events(run_id: str, request: Request) -> StreamingResponse:
+    """SSE en vivo del run: snapshot inicial (el record) + cada evento del bus filtrado por
+    run-id. Reusa el `DashboardEventBus` (dominio `ads`) — el poll_loop publica acá."""
+    bus = get_dashboard_event_bus()
+    queue = bus.subscribe()
+
+    async def gen():
+        try:
+            rec = record.read_run(run_id)
+            if rec is not None:
+                yield f"data: {json.dumps({'type': 'snapshot', 'run': rec}, ensure_ascii=False)}\n\n"
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=15)
+                    if getattr(event, "payload", {}).get("run_id") == run_id:
+                        yield event.to_sse()
+                except asyncio.TimeoutError:
+                    yield ": ping\n\n"  # keep-alive
+        finally:
+            bus.unsubscribe(queue)
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

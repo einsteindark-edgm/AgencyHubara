@@ -18,3 +18,9 @@ export {
   type AttributedStateFilter,
 } from "@plugins/ads/frontend/features/ads-attributed-table";
 export { AdsInspector } from "@plugins/ads/frontend/features/ads-inspector";
+
+// Buzón de análisis con IA — la Page lo compone en un modal.
+// Re-exportadas para tests (mismo patrón que el resto de features del plugin).
+export { TriggerRun } from "@plugins/ads/frontend/features/trigger-run";
+export { RunResult } from "@plugins/ads/frontend/features/run-result";
+export { HitlDecision } from "@plugins/ads/frontend/features/hitl-decision";
