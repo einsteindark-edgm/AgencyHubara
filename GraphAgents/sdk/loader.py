@@ -94,8 +94,12 @@ def build_runnable(node: AgentNode, ga_root: Path, ports: dict | None = None) ->
         bound_ports = {p: ports[p] for p in node.consumes if p in ports}
         tools = _resolve_tools(node, ga_root)
 
-        def runnable(input: Any) -> Any:
-            return run_fn(input, ports=bound_ports, tools=tools)
+        def runnable(input: Any, *, decision: Any = None) -> Any:
+            # HITL: el LocalRuntime reinyecta la `decision` en el resume; la
+            # threadeamos a run() SOLO si vino (un run() no-HITL no la acepta).
+            if decision is None:
+                return run_fn(input, ports=bound_ports, tools=tools)
+            return run_fn(input, ports=bound_ports, tools=tools, decision=decision)
 
         return runnable
 

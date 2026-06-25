@@ -28,6 +28,9 @@ _DONE = {"COMPLETED", "COMPLETED_WITH_ERRORS"}
 _RUNNING = {"IN_PROGRESS"}
 _PENDING = {"SCHEDULED"}
 _FAILED = {"FAILED", "FAILED_WITH_TERMINAL_ERROR", "TIMED_OUT", "CANCELED"}
+# Tipos de task que se completan por una acción EXTERNA (HITL): una de éstas
+# IN_PROGRESS = `awaiting` (espera un humano), no `running` (ver _node_status).
+_HUMAN_TASK = {"HUMAN", "WAIT"}
 
 
 def _map_status(s: str | None) -> str:
@@ -40,6 +43,18 @@ def _map_status(s: str | None) -> str:
     if s in _FAILED:
         return "failed"
     return "other"
+
+
+def _node_status(task: dict) -> str:
+    """Estado del nodo en el vocabulario del explorer, con awareness de HITL.
+
+    Una HUMAN/WAIT task IN_PROGRESS es una PAUSA esperando una decisión externa
+    (humano) → `awaiting`, NO `running`: el nodo no computa, está esperando. El
+    resto delega en `_map_status`. El chequeo vive acá (no en `_map_status`)
+    porque necesita el `taskType`, no sólo el string de status."""
+    if task.get("taskType") in _HUMAN_TASK and task.get("status") in _RUNNING:
+        return "awaiting"
+    return _map_status(task.get("status"))
 
 
 def _dur_ms(task: dict) -> int | None:
@@ -89,7 +104,7 @@ def build_trace(plan: dict, workflow: dict) -> dict:
 
         if task is not None:
             runtime = {
-                "status": _map_status(task.get("status")),
+                "status": _node_status(task),
                 "retries": task.get("retryCount") or 0,
                 "ms": _dur_ms(task),
                 "task_id": task.get("taskId"),

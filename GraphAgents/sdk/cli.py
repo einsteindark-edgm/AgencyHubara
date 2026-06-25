@@ -172,6 +172,21 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 0 if ex.status == "completed" else 1
 
 
+def cmd_resume(args: argparse.Namespace) -> int:
+    """HITL: completa la HUMAN task de un execution-id con la decisión (vía
+    `AgentSpanRuntime.resume` → `respond`). Lo corre el buzón por SSM en la caja:
+    `python -m sdk.cli resume <eid> --decision '{"approved": true, "by": "ed"}'`."""
+    import json
+
+    from sdk.runtime import AgentSpanRuntime
+
+    decision = json.loads(args.decision) if args.decision else None
+    ex = AgentSpanRuntime().resume(args.execution_id, decision=decision)
+    print(f"execution {ex.id}: {ex.status}")
+    print(json.dumps(ex.output, ensure_ascii=False, indent=2))
+    return 0 if ex.status != "failed" else 1
+
+
 def cmd_cases(args: argparse.Namespace) -> int:
     from sdk.case_model import discover_cases
 
@@ -275,6 +290,11 @@ def main() -> int:
         help="seed JSON desde archivo (para task graphs con payloads grandes, ej. el JSON de Meta)",
     )
     rn.set_defaults(fn=cmd_run)
+
+    rs = sub.add_parser("resume", help="HITL: completa la HUMAN task de un execution-id con la decisión (AgentSpan)")
+    rs.add_argument("execution_id")
+    rs.add_argument("--decision", default="", help='decisión JSON inline, ej. \'{"approved": true, "by": "ed"}\'')
+    rs.set_defaults(fn=cmd_resume)
 
     cs = sub.add_parser("cases", help="lista los casos de prueba replayables (el catálogo del viewer)")
     cs.add_argument("--check", action="store_true", help="además, replayea cada caso y verifica su golden")
