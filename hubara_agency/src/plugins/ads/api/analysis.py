@@ -124,6 +124,14 @@ _AGENTS = [
     },
 ]
 
+#: ids válidos del catálogo — el dispatch SOLO acepta agentes conocidos (defensa: `agent` se
+#: interpola en el comando SSM de la caja). Un agente fuera del catálogo → 400, nunca llega al box.
+_AGENT_IDS = frozenset(a["id"] for a in _AGENTS)
+
+#: Referencias VIVAS a los tasks de launch en vuelo. `asyncio.create_task` no retiene el task
+#: (L-7: el GC lo recolecta mid-run y mata el poll en silencio) → lo guardamos y lo soltamos al fin.
+_launch_tasks: set[asyncio.Task] = set()
+
 
 class TriggerBody(BaseModel):
     agent: str
@@ -138,10 +146,10 @@ def _new_run_id() -> str:
     return f"run-{uuid.uuid4().hex[:12]}"
 
 
-def _conductor_base_url() -> str:
-    """La REST de Conductor de la caja GraphAgents. En prod el Boto3Launcher resuelve la IP
-    privada por tag; acá el default sirve para dev/local."""
-    return os.getenv("GRAPHAGENTS_CONDUCTOR_URL", "http://localhost:6767")
+def _conductor_override() -> str | None:
+    """Override de la URL de Conductor para dev/local (`GRAPHAGENTS_CONDUCTOR_URL`). En prod NO se
+    setea: la IP de la caja es DINÁMICA (autostop) y la resuelve el launcher fresca por tag."""
+    return os.getenv("GRAPHAGENTS_CONDUCTOR_URL") or None
 
 
 def _get_launcher():
@@ -152,14 +160,34 @@ def _get_launcher():
     return Boto3Launcher()
 
 
-def _spawn_poller(run_id: str, execution_id: str) -> None:
-    """Arranca el poll_loop en background (un asyncio task en el mismo proceso uvicorn que
-    sirve el SSE → el publish llega al subscriber). Tests lo monkeypatchean a no-op."""
-    asyncio.create_task(
-        orchestrator.poll_loop(
-            run_id, execution_id, base_url=_conductor_base_url(), bus=get_dashboard_event_bus()
+def _spawn_launch(run_id: str, agent: str, input: dict) -> None:
+    """Arranca el ciclo `launch_and_poll` en BACKGROUND (asyncio task en el proceso uvicorn que
+    sirve el SSE → el publish llega al subscriber). El endpoint NO espera: despertar la caja puede
+    tardar minutos y el IO bloqueante corre en threads. GUARDA la referencia del task (L-7). Tests
+    lo monkeypatchean a no-op."""
+    task = asyncio.create_task(
+        orchestrator.launch_and_poll(
+            run_id,
+            agent,
+            input,
+            launcher=_get_launcher(),
+            bus=get_dashboard_event_bus(),
+            base_url=_conductor_override(),
         )
     )
+    _launch_tasks.add(task)
+    task.add_done_callback(_launch_tasks.discard)
+
+
+def _spawn_resume(run_id: str, execution_id: str, decision: dict) -> None:
+    """Manda el resume del HITL en background (mismo patrón que `_spawn_launch`): el endpoint NO
+    espera a que la caja despierte (puede tardar minutos tras una espera humana larga). GUARDA la
+    referencia del task (L-7)."""
+    task = asyncio.create_task(
+        orchestrator.resume_run(run_id, execution_id, decision, launcher=_get_launcher())
+    )
+    _launch_tasks.add(task)
+    task.add_done_callback(_launch_tasks.discard)
 
 
 @router.get("/agents")
@@ -169,9 +197,13 @@ def list_agents() -> list[dict]:
 
 @router.post("/runs")
 async def create_run(body: TriggerBody) -> dict:
+    if body.agent not in _AGENT_IDS:
+        raise HTTPException(status_code=400, detail=f"agente desconocido: {body.agent!r}")
     run_id = _new_run_id()
-    rec = orchestrator.start_run(run_id, body.agent, body.input, launcher=_get_launcher())
-    _spawn_poller(run_id, rec["execution_id"])
+    # Nace `pending` (write de vault rápido); el launch (despertar caja + despachar + pollear)
+    # corre en background para no bloquear el request — el progreso llega por el SSE.
+    record.create_run(run_id, agent=body.agent, input=body.input)
+    _spawn_launch(run_id, body.agent, body.input)
     return {"run_id": run_id}
 
 
@@ -184,12 +216,18 @@ def get_run(run_id: str) -> dict:
 
 
 @router.post("/runs/{run_id}/approve")
-def approve(run_id: str, body: ApproveBody) -> dict:
+async def approve(run_id: str, body: ApproveBody) -> dict:
     rec = record.read_run(run_id)
     if rec is None:
         raise HTTPException(status_code=404, detail="run no existe")
-    _get_launcher().resume(rec["execution_id"], body.decision)
-    return {"status": "resumed"}
+    execution_id = rec.get("execution_id")
+    if not execution_id:
+        # El run aún no se despachó (la caja está despertando) → no hay HUMAN task que resumir.
+        raise HTTPException(status_code=409, detail="el run todavía no fue despachado")
+    # El resume despierta la caja (puede tardar minutos tras una espera humana larga) → background,
+    # NO bloquea el request (evita el timeout del proxy). El poller relaya la transición.
+    _spawn_resume(run_id, execution_id, body.decision)
+    return {"status": "resuming"}
 
 
 @router.get("/runs/{run_id}/events")

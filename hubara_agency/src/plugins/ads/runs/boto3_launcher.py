@@ -147,6 +147,19 @@ class Boto3Launcher:
             f"Boto3Launcher: AgentSpan no respondió en {url} tras {timeout:.0f}s ({last_err})."
         )
 
+    def conductor_base_url(self) -> str:
+        """`http://<ip-privada-actual>:6767` — resuelto FRESCO por tag (la IP cambia con el
+        autostop). El poller del buzón pollea esta URL; por eso NO se hardcodea ni se cachea."""
+        ec2, _ = self._clients()
+        instance = self._describe(ec2)
+        private_ip = instance.get("PrivateIpAddress")
+        if not private_ip:
+            raise RuntimeError(
+                f"Boto3Launcher: la instancia {instance['InstanceId']} no tiene IP privada "
+                "para alcanzar Conductor."
+            )
+        return f"http://{private_ip}:{_AGENTSPAN_PORT}"
+
     # ------------------------------------------------------------ SSM / run
 
     def _run_cli(self, ssm, instance_id: str, cli_args: str) -> str:
@@ -198,7 +211,7 @@ class Boto3Launcher:
         instance = self._describe(ec2)
         instance_id = instance["InstanceId"]
         payload = _shell_quote(json.dumps(input, ensure_ascii=False))
-        cli_args = f"start {agent} --input {payload} --runtime agentspan"
+        cli_args = f"start {_shell_quote(agent)} --input {payload} --runtime agentspan"
         stdout = self._run_cli(ssm, instance_id, cli_args)
         match = _EID_RE.search(stdout)
         if not match:
@@ -216,5 +229,5 @@ class Boto3Launcher:
         instance = self._describe(ec2)
         instance_id = instance["InstanceId"]
         payload = _shell_quote(json.dumps(decision, ensure_ascii=False))
-        cli_args = f"resume {execution_id} --decision {payload}"
+        cli_args = f"resume {_shell_quote(execution_id)} --decision {payload}"
         self._run_cli(ssm, instance_id, cli_args)

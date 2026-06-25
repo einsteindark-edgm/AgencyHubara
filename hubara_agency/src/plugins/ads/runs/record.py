@@ -85,6 +85,8 @@ def append_event(run_id: str, event: dict) -> dict:
         record["awaiting"] = None  # ya resuelto
     elif etype == "run.result":
         record["result"] = payload.get("output")
+    elif etype == "run.failed":
+        record["error"] = payload.get("error")  # hoist del error al record → la UI lo muestra
 
     _write(record)
     return record

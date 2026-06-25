@@ -46,3 +46,14 @@ def test_append_event_a_run_inexistente_falla_loud() -> None:
 
     with pytest.raises(KeyError):
         record.append_event("no-existe", {"event_id": "x", "type": "run.started"})
+
+
+def test_run_failed_guarda_el_error_en_el_record() -> None:
+    """`run.failed` hoistea el `error` del payload al record (la UI lee `record.error`)."""
+    record.create_run("rf", agent="ads-analytics", input={})
+    r = record.append_event(
+        "rf", {"event_id": "rf:1", "type": "run.failed", "payload": {"error": "boom en el nodo X"}}
+    )
+    assert r["status"] == "failed"
+    assert r["error"] == "boom en el nodo X"
+    assert record.read_run("rf")["error"] == "boom en el nodo X"  # persiste

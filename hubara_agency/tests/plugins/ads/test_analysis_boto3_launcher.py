@@ -159,7 +159,7 @@ def test_dispatch_manda_el_comando_correcto_y_parsea_el_eid(fake_clients) -> Non
     assert cmd["DocumentName"] == "AWS-RunShellScript"
     assert cmd["InstanceIds"] == ["i-abc"]
     script = " ".join(cmd["Parameters"]["commands"])
-    assert "sdk.cli start ads-analytics" in script
+    assert "sdk.cli start 'ads-analytics'" in script
     assert "--runtime agentspan" in script
     # El input viaja como JSON.
     assert json.dumps({"name": "ada"}) in script
@@ -193,7 +193,7 @@ def test_resume_despierta_la_caja_y_manda_el_comando(fake_clients) -> None:
     assert ec2.described  # start_box() corrió (despertó la caja)
     assert len(ssm.sent) == 1
     script = " ".join(ssm.sent[0]["Parameters"]["commands"])
-    assert "sdk.cli resume exec-42" in script
+    assert "sdk.cli resume 'exec-42'" in script
     assert "--decision" in script
     assert json.dumps({"approved": True}) in script
 
@@ -206,3 +206,23 @@ def test_sin_region_falla_claro_no_en_import(monkeypatch) -> None:
     lz = boto3_launcher.Boto3Launcher()  # construir NO debe romper
     with pytest.raises(RuntimeError, match="AWS_REGION"):
         lz.start_box()
+
+
+# ------------------------------------------------------- conductor url / seguridad
+
+def test_conductor_base_url_resuelve_por_tag(fake_clients) -> None:
+    """La URL de Conductor se resuelve FRESCA por tag (IP dinámica de la caja), no se hardcodea."""
+    ec2 = _FakeEC2(state="running", private_ip="10.0.0.7")
+    lz = _make(fake_clients, ec2=ec2)
+    assert lz.conductor_base_url() == "http://10.0.0.7:6767"
+
+
+def test_dispatch_quotea_el_agente_contra_inyeccion(fake_clients) -> None:
+    """El `agent` va SINGLE-QUOTED en el comando SSM → un `;` no corta el comando en la caja."""
+    ec2 = _FakeEC2(state="running")
+    ssm = _FakeSSM(stdout="execution exec-1: RUNNING")
+    lz = _make(fake_clients, ec2=ec2, ssm=ssm)
+    lz.dispatch("ads-analytics; rm -rf /", {}, run_id="run-x")
+    script = " ".join(ssm.sent[0]["Parameters"]["commands"])
+    assert "'ads-analytics; rm -rf /'" in script  # quoteado entero
+    assert "start ads-analytics; rm -rf /" not in script  # NO inyectado crudo

@@ -27,3 +27,9 @@ class Launcher(Protocol):
         """Completa la HUMAN task pendiente con la decisión (SSM `sdk.cli resume <eid>
         --decision ...`). Despierta la caja si está dormida."""
         ...
+
+    def conductor_base_url(self) -> str:
+        """La URL REST de Conductor de la caja (su IP privada ACTUAL + `:6767`). Se resuelve
+        FRESCA cada vez — la IP es DINÁMICA (autostop) — y el poller del buzón la usa para
+        relayar el progreso. NUNCA hardcodear ni cachear."""
+        ...
