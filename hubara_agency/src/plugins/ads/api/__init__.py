@@ -42,9 +42,15 @@ from src.plugins.ads.aggregation import (
     list_daily_series,
     scan_ad_sessions,
 )
+from src.plugins.ads.api.analysis import router as _analysis_router
 from src.sdk.runtime import WORKSPACE_VAULT_DIR
 
 router = APIRouter()
+
+# Buzón de análisis con IA (`/api/ads/analysis/*`): dispara el pod `ads-analytics` de
+# GraphAgents y relaya el progreso por SSE. Sub-router aparte (runs/orchestrator), montado
+# bajo `/analysis` para no colisionar con los endpoints de campañas de abajo.
+router.include_router(_analysis_router, prefix="/analysis")
 
 # TTL del scan cacheado del vault. 15s es invisible para un dashboard de
 # analytics (la data de ventas/chats no cambia segundo a segundo) y colapsa los

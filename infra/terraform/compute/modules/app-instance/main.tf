@@ -105,6 +105,44 @@ resource "aws_iam_role_policy" "ssm_read" {
   policy = data.aws_iam_policy_document.ssm_read.json
 }
 
+# Despertar+despachar a la caja graphagents (pay-per-use, autostop). El bouncer
+# del buzón (`src.plugins.graphagents.runs.boto3_launcher`) corriendo en ESTA caja
+# arranca la box dormida y le manda el run vía SSM. Espeja el `self_stop` de
+# graphagents-instance (scoped al tag Role=graphagents) pero para Start, no Stop.
+data "aws_iam_policy_document" "wake_graphagents" {
+  statement {
+    sid       = "StartGraphAgentsBox"
+    actions   = ["ec2:StartInstances"]
+    resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "ec2:ResourceTag/Role"
+      values   = ["graphagents"]
+    }
+  }
+  statement {
+    # ec2:DescribeInstances NO soporta condiciones de tag a nivel recurso (AWS lo
+    # rechaza); se deja resources=["*"] sin condición — es read-only (resolver la
+    # IP/estado de la box por tag en tiempo real).
+    sid       = "DescribeForTagResolve"
+    actions   = ["ec2:DescribeInstances"]
+    resources = ["*"]
+  }
+  statement {
+    # SSM SendCommand/GetCommandInvocation: despachar el run a la box y leer el
+    # resultado de la invocación. Sin tag-scope a nivel ARN del documento.
+    sid       = "DispatchViaSSM"
+    actions   = ["ssm:SendCommand", "ssm:GetCommandInvocation"]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "wake_graphagents" {
+  name   = "wake-graphagents"
+  role   = aws_iam_role.app.id
+  policy = data.aws_iam_policy_document.wake_graphagents.json
+}
+
 # Session Manager (deploy/ops sin abrir SSH si se prefiere). robotocore no siembra
 # las managed policies de AWS → se saltea en local (es real-only, como el cloud-init).
 resource "aws_iam_role_policy_attachment" "ssm_core" {

@@ -81,3 +81,8 @@ COGNITO_USER_POOL_ID = os.getenv("COGNITO_USER_POOL_ID", "")
 COGNITO_APP_CLIENT_ID = os.getenv("COGNITO_APP_CLIENT_ID", "")
 # Región del pool de Cognito (arma el issuer + el JWKS uri). Cae a la región de deploy.
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
+
+# Valor del tag `Role` que identifica la caja GraphAgents (EC2 dedicada, pay-per-use con
+# autostop + IP dinámica). El `Boto3Launcher` del buzón de análisis (plugin ads) resuelve la instancia por
+# ESTE tag (nunca por IP) para despertarla (ec2:StartInstances) y despachar runs (ssm:SendCommand).
+GRAPHAGENTS_INSTANCE_TAG = os.getenv("GRAPHAGENTS_INSTANCE_TAG", "graphagents")

@@ -26,6 +26,8 @@ Notas de diseño:
 from __future__ import annotations
 
 from src.platform.config import (
+    AWS_REGION as AWS_REGION,
+    GRAPHAGENTS_INSTANCE_TAG as GRAPHAGENTS_INSTANCE_TAG,
     WORKSPACE_VAULT_DIR as WORKSPACE_VAULT_DIR,
 )
 from src.platform.logging import (
