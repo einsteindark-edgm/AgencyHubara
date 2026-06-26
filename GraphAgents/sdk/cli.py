@@ -218,6 +218,24 @@ def cmd_start(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_status(args: argparse.Namespace) -> int:
+    """POLL durable del progreso: imprime a stdout el workflow JSON CRUDO de Conductor (con
+    `tasks[]`) de un execution-id. Lo corre el buzón de hubara por SSM en la caja:
+    `python -m sdk.cli status <eid> --runtime agentspan`. Consulta el Conductor LOCAL de la caja
+    (`AGENTSPAN_SERVER_URL` o `localhost:6767`) → el buzón NO se conecta directo a la caja: solo lee
+    este stdout y lo `interpret`a del lado hubara. Gemelo del start/resume."""
+    import json
+
+    if args.runtime != "agentspan":
+        print("status es SOLO para el poll durable: usá --runtime agentspan")
+        return 1
+
+    from sdk.trace import fetch_workflow
+
+    print(json.dumps(fetch_workflow(args.execution_id), ensure_ascii=False))
+    return 0
+
+
 def cmd_cases(args: argparse.Namespace) -> int:
     from sdk.case_model import discover_cases
 
@@ -332,6 +350,11 @@ def main() -> int:
     st.add_argument("--input", default="", help="input/seed JSON inline")
     st.add_argument("--runtime", default="agentspan", choices=["agentspan"], help="solo agentspan (el dispatch durable)")
     st.set_defaults(fn=cmd_start)
+
+    sg = sub.add_parser("status", help="POLL durable: imprime el workflow JSON de un execution-id (lo pollea el buzón)")
+    sg.add_argument("execution_id")
+    sg.add_argument("--runtime", default="agentspan", choices=["agentspan"], help="solo agentspan (el poll durable)")
+    sg.set_defaults(fn=cmd_status)
 
     cs = sub.add_parser("cases", help="lista los casos de prueba replayables (el catálogo del viewer)")
     cs.add_argument("--check", action="store_true", help="además, replayea cada caso y verifica su golden")
