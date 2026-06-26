@@ -62,7 +62,6 @@ async def launch_and_poll(
     *,
     launcher,
     bus,
-    base_url: str | None = None,
     fetch=None,
     interval: float = 2.0,
     max_polls: int = 900,
@@ -73,9 +72,8 @@ async def launch_and_poll(
     1. Despierta la caja (`start_box`) y despacha (`dispatch`) — AMBOS bloqueantes → a un thread.
     2. Si la caja no despierta / el dispatch falla → `run.failed` (NO deja el record en `pending`
        para siempre; la UI muestra el error).
-    3. Resuelve la URL de Conductor de la caja (IP privada DINÁMICA por autostop) vía el launcher,
-       salvo override (`base_url`, p.ej. dev local con `GRAPHAGENTS_CONDUCTOR_URL`).
-    4. Pollea hasta terminal (`poll_loop`).
+    3. Pollea hasta terminal (`poll_loop`); el fetch del estado va por SSM (`launcher.fetch_status`),
+       SIN conexión directa a la caja.
     """
     try:
         await asyncio.to_thread(launcher.start_box)
@@ -87,14 +85,13 @@ async def launch_and_poll(
         }
         record.append_event(run_id, started)
         _emit(bus, run_id, started)
-        if base_url is None:
-            base_url = await asyncio.to_thread(launcher.conductor_base_url)
         await poll_loop(
-            run_id, execution_id, base_url=base_url, bus=bus, interval=interval, fetch=fetch, max_polls=max_polls
+            run_id, execution_id, bus=bus, fetch=fetch or launcher.fetch_status,
+            interval=interval, max_polls=max_polls,
         )
     except Exception as exc:  # noqa: BLE001 — CUALQUIER fallo del ciclo (caja, dispatch, resolver IP, poll) → failed
-        # Sin este wrap, una excepción tras `run.started` (p.ej. la caja autostopeó y `conductor_base_url`
-        # no encuentra IP, o Conductor devolvió algo no-dict) moriría en silencio en el task de background
+        # Sin este wrap, una excepción tras `run.started` (p.ej. el fetch del estado por SSM falla, o
+        # Conductor devolvió algo no-dict) moriría en silencio en el task de background
         # (el GC reapea el task) → el run quedaría en `running` PARA SIEMPRE, sin evento terminal.
         ev = {"event_id": f"{run_id}:failed", "type": "run.failed", "payload": {"error": str(exc)}}
         record.append_event(run_id, ev)
@@ -113,18 +110,18 @@ async def resume_run(run_id: str, execution_id: str, decision: dict, *, launcher
         _log.exception("resume del run %s (execution %s) falló", run_id, execution_id)
 
 
-async def poll_loop(run_id, execution_id, *, base_url, bus, interval=2.0, fetch=None, max_polls=900) -> None:
-    """Pollea Conductor hasta que el run termina (relay): cada poll interpreta el workflow,
-    deriva el evento (`apply_state`) y lo publica al bus SSE. El `fetch` (urllib, BLOQUEANTE) va a
-    un thread (`asyncio.to_thread`) — no congela el loop. Un poll fallido reintenta (la caja puede
+async def poll_loop(run_id, execution_id, *, bus, fetch, interval=2.0, max_polls=900) -> None:
+    """Pollea Conductor hasta que el run termina (relay): cada poll trae el workflow vía `fetch`
+    (`launcher.fetch_status`, por SSM — SIN conexión directa a la caja), `interpret`a el estado,
+    deriva el evento (`apply_state`) y lo publica al bus SSE. El `fetch` (SSM, BLOQUEANTE) va a un
+    thread (`asyncio.to_thread`) — no congela el loop. Un poll fallido reintenta (la caja puede
     estar arrancando fría) sin tumbar el loop. Si se agota `max_polls` SIN llegar a terminal, emite
     `run.failed` (timeout) para NO dejar la UI colgada en `running` para siempre."""
     from src.plugins.ads.runs import conductor
 
-    fetch = fetch or conductor.fetch_workflow
     for _ in range(max_polls):
         try:
-            wf = await asyncio.to_thread(fetch, execution_id, base_url)
+            wf = await asyncio.to_thread(fetch, execution_id)
             state = conductor.interpret(wf)
         except Exception:  # noqa: BLE001 — poll/interpret fallido (caja fría, respuesta no-dict, blip) → reintenta
             await asyncio.sleep(interval)

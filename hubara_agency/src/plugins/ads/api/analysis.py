@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import uuid
 
 from fastapi import APIRouter, HTTPException, Request
@@ -146,12 +145,6 @@ def _new_run_id() -> str:
     return f"run-{uuid.uuid4().hex[:12]}"
 
 
-def _conductor_override() -> str | None:
-    """Override de la URL de Conductor para dev/local (`GRAPHAGENTS_CONDUCTOR_URL`). En prod NO se
-    setea: la IP de la caja es DINÁMICA (autostop) y la resuelve el launcher fresca por tag."""
-    return os.getenv("GRAPHAGENTS_CONDUCTOR_URL") or None
-
-
 def _get_launcher():
     """El Launcher real (boto3). Import perezoso: tests lo monkeypatchean con un fake, y boto3
     no se importa si no hace falta (NO-OP sin config AWS)."""
@@ -167,12 +160,7 @@ def _spawn_launch(run_id: str, agent: str, input: dict) -> None:
     lo monkeypatchean a no-op."""
     task = asyncio.create_task(
         orchestrator.launch_and_poll(
-            run_id,
-            agent,
-            input,
-            launcher=_get_launcher(),
-            bus=get_dashboard_event_bus(),
-            base_url=_conductor_override(),
+            run_id, agent, input, launcher=_get_launcher(), bus=get_dashboard_event_bus()
         )
     )
     _launch_tasks.add(task)

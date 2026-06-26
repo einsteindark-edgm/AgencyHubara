@@ -24,8 +24,8 @@ class _FakeLauncher:
     def resume(self, execution_id: str, decision: dict) -> None:
         self.resumed = (execution_id, decision)
 
-    def conductor_base_url(self) -> str:
-        return "http://box-ip:6767"
+    def fetch_status(self, execution_id: str) -> dict:
+        return {"status": "COMPLETED", "tasks": []}
 
 
 @pytest.fixture()

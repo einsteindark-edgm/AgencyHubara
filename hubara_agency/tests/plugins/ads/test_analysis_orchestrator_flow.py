@@ -1,10 +1,10 @@
 """El flujo del buzón: `launch_and_poll` (despierta la caja por el Launcher port + despacha →
-execution-id + resuelve la URL de Conductor + pollea) y `poll_loop` (deriva eventos vía
-apply_state, los publica al bus, y para en terminal o emite `failed` por timeout). Con un
-Launcher fake y un fetch fake — sin AWS ni red.
+execution-id + pollea) y `poll_loop` (deriva eventos vía apply_state, los publica al bus, y para en
+terminal o emite `failed` por timeout). Con un Launcher fake y un fetch fake — sin AWS ni red.
 
-El ciclo corre en BACKGROUND y el IO bloqueante (start_box/dispatch/fetch) se delega a
-`asyncio.to_thread` para no congelar el event loop; acá lo corremos con `asyncio.run`.
+El POLL del estado va por `launcher.fetch_status` (en prod, SSM `sdk.cli status` DENTRO de la caja):
+el backend NUNCA se conecta directo a la caja. El ciclo corre en background y el IO bloqueante se
+delega a `asyncio.to_thread`; acá lo corremos con `asyncio.run`.
 """
 import asyncio
 
@@ -12,11 +12,12 @@ from src.plugins.ads.runs import orchestrator, record
 
 
 class _FakeLauncher:
-    def __init__(self, *, start_raises: Exception | None = None) -> None:
+    def __init__(self, *, start_raises: Exception | None = None, status_workflow: dict | None = None) -> None:
         self.started = False
         self.dispatched: list = []
         self.resumed: list = []
         self._start_raises = start_raises
+        self._status_workflow = status_workflow or {"status": "COMPLETED", "output": {"result": "{}"}, "tasks": []}
 
     def start_box(self) -> None:
         if self._start_raises is not None:
@@ -30,8 +31,9 @@ class _FakeLauncher:
     def resume(self, execution_id: str, decision: dict) -> None:
         self.resumed.append((execution_id, decision))
 
-    def conductor_base_url(self) -> str:
-        return "http://box-ip:6767"
+    def fetch_status(self, execution_id: str) -> dict:
+        # El poll por SSM (en prod corre `sdk.cli status` DENTRO de la caja); acá un workflow fijo.
+        return self._status_workflow
 
 
 class _FakeBus:
@@ -45,7 +47,7 @@ class _FakeBus:
 def _seq_fetch(items):
     it = iter(items)
 
-    def _fetch(eid: str, base_url: str, timeout: float = 8) -> dict:
+    def _fetch(execution_id: str) -> dict:  # firma del fetch: SOLO el execution-id (la URL/SSM la maneja el launcher)
         return next(it)
 
     return _fetch
@@ -75,38 +77,23 @@ def test_launch_and_poll_despierta_despacha_y_relaya() -> None:
     assert rec["result"] == {"n": 5}
 
 
-def test_launch_and_poll_resuelve_la_url_de_conductor_por_el_launcher() -> None:
-    # base_url=None → el ciclo pide la URL FRESCA al launcher (la IP de la caja es dinámica).
+def test_launch_and_poll_pollea_por_el_launcher_sin_fetch_inyectado() -> None:
+    # Sin `fetch` inyectado, el ciclo pollea vía `launcher.fetch_status` (por SSM, sin conexión directa).
     record.create_run("r2", agent="ads-analytics", input={})
-    seen: dict = {}
-
-    class _LZ(_FakeLauncher):
-        def conductor_base_url(self) -> str:
-            seen["asked"] = True
-            return "http://box-ip:6767"
-
-    def _fetch(eid: str, base_url: str, timeout: float = 8) -> dict:
-        seen["base_url"] = base_url
-        return {"status": "COMPLETED", "output": {"result": "{}"}, "tasks": []}
-
-    asyncio.run(orchestrator.launch_and_poll(
-        "r2", "ads-analytics", {}, launcher=_LZ(), bus=_FakeBus(), fetch=_fetch, interval=0.0,
-    ))
-
-    assert seen.get("asked") is True
-    # el poll usó la URL resuelta por el launcher, NO un localhost estático.
-    assert seen.get("base_url") == "http://box-ip:6767"
+    lz = _FakeLauncher(status_workflow={"status": "COMPLETED", "output": {"result": "{'ok': 1}"}, "tasks": []})
+    asyncio.run(orchestrator.launch_and_poll("r2", "ads-analytics", {}, launcher=lz, bus=_FakeBus(), interval=0.0))
+    rec = record.read_run("r2")
+    assert rec["status"] == "completed"
+    assert rec["result"] == {"ok": 1}  # vino de launcher.fetch_status, no de un fetch HTTP
 
 
 def test_launch_and_poll_marca_failed_si_la_caja_no_despierta() -> None:
     record.create_run("r3", agent="ads-analytics", input={})
     lz = _FakeLauncher(start_raises=RuntimeError("AgentSpan no respondió"))
     bus = _FakeBus()
-
     asyncio.run(orchestrator.launch_and_poll(
         "r3", "ads-analytics", {}, launcher=lz, bus=bus, fetch=_seq_fetch([]), interval=0.0,
     ))
-
     assert lz.dispatched == []  # nunca despachó
     rec = record.read_run("r3")
     assert rec["status"] == "failed"
@@ -115,44 +102,36 @@ def test_launch_and_poll_marca_failed_si_la_caja_no_despierta() -> None:
 
 
 def test_poll_loop_timeout_marca_failed() -> None:
-    # La caja nunca llega a terminal (siempre RUNNING) → al agotar max_polls, failed (no colgado).
     record.create_run("r4", agent="ads-analytics", input={})
-    record.append_event(
-        "r4", {"event_id": "r4:started", "type": "run.started", "payload": {"execution_id": "e"}}
-    )
+    record.append_event("r4", {"event_id": "r4:started", "type": "run.started", "payload": {"execution_id": "e"}})
     bus = _FakeBus()
 
-    def _always_running(eid: str, base_url: str, timeout: float = 8) -> dict:
+    def _always_running(execution_id: str) -> dict:
         return {"status": "RUNNING", "tasks": []}
 
-    asyncio.run(orchestrator.poll_loop(
-        "r4", "e", base_url="http://x:6767", bus=bus, interval=0.0, fetch=_always_running, max_polls=3,
-    ))
-
+    asyncio.run(orchestrator.poll_loop("r4", "e", bus=bus, interval=0.0, fetch=_always_running, max_polls=3))
     rec = record.read_run("r4")
     assert rec["status"] == "failed"
     assert "timeout" in str(rec["error"])
     assert [t for (_, t, _, _) in bus.published] == ["run.failed"]
 
 
-def test_launch_and_poll_marca_failed_si_algo_falla_tras_started() -> None:
-    # B-1: si algo explota DESPUÉS de run.started (p.ej. resolver la IP de Conductor porque la caja
-    # autostopeó), el ciclo NO debe morir en silencio dejando el run en `running` — emite run.failed.
+def test_launch_and_poll_no_deja_el_run_colgado_si_el_poll_siempre_falla() -> None:
+    # B-1: tras run.started, si el fetch (SSM) falla SIEMPRE, el poll reintenta y al agotar max_polls
+    # marca failed — el run NUNCA queda colgado en `running`.
     record.create_run("r5", agent="ads-analytics", input={})
 
-    class _LZ(_FakeLauncher):
-        def conductor_base_url(self) -> str:
-            raise RuntimeError("la caja autostopeó, sin IP")
+    def _boom(execution_id: str) -> dict:
+        raise RuntimeError("fetch_status (SSM) reventó")
 
     bus = _FakeBus()
     asyncio.run(orchestrator.launch_and_poll(
-        "r5", "ads-analytics", {}, launcher=_LZ(), bus=bus, fetch=_seq_fetch([]), interval=0.0,
+        "r5", "ads-analytics", {}, launcher=_FakeLauncher(), bus=bus, fetch=_boom, interval=0.0, max_polls=3,
     ))
-
     rec = record.read_run("r5")
-    assert rec["status"] == "failed"  # NO quedó colgado en running
-    assert "autostopeó" in str(rec["error"])
-    assert [t for (_, t, _, _) in bus.published] == ["run.started", "run.failed"]
+    assert rec["status"] == "failed"
+    types = [t for (_, t, _, _) in bus.published]
+    assert types[0] == "run.started" and types[-1] == "run.failed"
 
 
 def test_poll_loop_tolera_una_respuesta_no_dict_de_conductor() -> None:
@@ -162,13 +141,10 @@ def test_poll_loop_tolera_una_respuesta_no_dict_de_conductor() -> None:
     record.append_event("r6", {"event_id": "r6:s", "type": "run.started", "payload": {"execution_id": "e"}})
     bus = _FakeBus()
 
-    def _non_dict(eid: str, base_url: str, timeout: float = 8):
+    def _non_dict(execution_id: str):
         return ["not", "a", "dict"]  # interpret().get(...) → AttributeError → transient
 
-    asyncio.run(orchestrator.poll_loop(
-        "r6", "e", base_url="http://x:6767", bus=bus, interval=0.0, fetch=_non_dict, max_polls=2,
-    ))
-
+    asyncio.run(orchestrator.poll_loop("r6", "e", bus=bus, interval=0.0, fetch=_non_dict, max_polls=2))
     rec = record.read_run("r6")
     assert rec["status"] == "failed"  # agotó max_polls sin terminal → timeout failed (no crash)
     assert "timeout" in str(rec["error"])
@@ -191,8 +167,7 @@ def test_apply_state_captura_un_segundo_awaiting_distinto() -> None:
 
 
 def test_resume_run_manda_el_resume_a_la_caja() -> None:
-    # M-1: el resume corre en background (no bloquea /approve); solo manda el comando — el poller
-    # (único escritor) relaya la transición. Acá verificamos que el comando llega al launcher.
+    # M-1: el resume corre en background (no bloquea /approve); solo manda el comando — el poller relaya.
     lz = _FakeLauncher()
     asyncio.run(orchestrator.resume_run("r8", "exec-9", {"approved": True, "by": "ed"}, launcher=lz))
     assert lz.resumed == [("exec-9", {"approved": True, "by": "ed"})]

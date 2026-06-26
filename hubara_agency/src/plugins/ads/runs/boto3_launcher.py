@@ -1,18 +1,25 @@
 """`Boto3Launcher` — el vendor REAL del `Launcher` port (ver `launcher.py`): habla con la caja
-GraphAgents (EC2 dedicada, tag `Role=graphagents`) vía boto3 (ec2 + ssm).
+GraphAgents (EC2 dedicada, tag `Role=graphagents`) vía boto3 (ec2 + ssm). **TODO va por el plano de
+control de AWS (instance-id / SSM)** — el backend NUNCA abre una conexión de red directa a la caja
+(ni a su IP privada ni a `:6767`). Así no hace falta abrir el SG entre las cajas ni depender de la
+IP dinámica del autostop: el único canal es SSM `send_command` contra el instance-id (resuelto por
+tag).
 
-Tres operaciones del port:
-- `start_box()`  — resuelve el instance-id por tag, la arranca si está `stopped`, y espera a que
-  AgentSpan responda en `:6767` (la IP privada). Idempotente (si ya corre, no-op de start).
-- `dispatch()`   — SSM `send_command` (`AWS-RunShellScript`) que corre `sdk.cli start <agent>
-  --input <json> --runtime agentspan` DENTRO del container `graphagents` de la caja; pollea
-  `get_command_invocation` hasta `Success` y parsea el execution-id del stdout.
-- `resume()`     — despierta la caja + SSM `send_command` `sdk.cli resume <eid> --decision <json>`.
+Operaciones del port:
+- `start_box()`    — resuelve el instance-id por tag, la arranca si está `stopped`, y espera a que
+  AgentSpan esté listo. El readiness corre DENTRO de la caja por SSM (curl a su propio
+  `localhost:6767`), no desde el backend. Idempotente.
+- `dispatch()`     — SSM `sdk.cli start <agent> --input <json> --runtime agentspan` DENTRO del
+  container `graphagents`; parsea el execution-id del stdout.
+- `fetch_status()` — SSM `sdk.cli status <eid> --runtime agentspan` → el workflow JSON crudo de
+  Conductor (la caja consulta su Conductor LOCAL). Es el POLL del progreso, por SSM.
+- `resume()`       — despierta la caja + SSM `sdk.cli resume <eid> --decision <json>`.
 
 Reglas que este adapter respeta (gotchas conocidos del subsistema):
 - **Import perezoso de boto3** (dentro de `_clients`, NO al top) → en tests sin AWS el import del
-  módulo NO rompe; el `api/__init__.py` lo importa perezoso a su vez.
-- **IP dinámica + autostop** → SIEMPRE se resuelve la instancia por tag, NUNCA se hardcodea IP.
+  módulo NO rompe; el `api/analysis.py` lo importa perezoso a su vez.
+- **Cero conexión directa a la caja** → ec2/ssm (instance-id por tag) para TODO; ni la IP ni el
+  puerto `:6767` se tocan desde el backend (el readiness curlea `localhost` DENTRO de la caja).
 - **Graceful sin config** → sin `AWS_REGION` falla con un `RuntimeError` claro AL USARSE (no en el
   import); construir el objeto nunca rompe.
 """
@@ -21,13 +28,12 @@ from __future__ import annotations
 import json
 import re
 import time
-import urllib.error
-import urllib.request
 
 from src.sdk.runtime import AWS_REGION as AWS_REGION
 from src.sdk.runtime import GRAPHAGENTS_INSTANCE_TAG as GRAPHAGENTS_INSTANCE_TAG
 
-#: Puerto de AgentSpan/Conductor en la caja (ver infra/compose/graphagents + compute outputs).
+#: Puerto de AgentSpan/Conductor en la caja — usado SOLO por el chequeo de readiness, que corre
+#: DENTRO de la caja (curl a su `localhost`), nunca desde el backend.
 _AGENTSPAN_PORT = 6767
 
 #: Compose project + service de la caja graphagents (infra/compose/graphagents/docker-compose.prod.yml:
@@ -107,10 +113,14 @@ class Boto3Launcher:
             f"Boto3Launcher: no encontré ninguna instancia con tag Role={self._resolved_tag()}."
         )
 
+    def _instance_id(self, ec2) -> str:
+        return self._describe(ec2)["InstanceId"]
+
     def start_box(self) -> None:
-        """Despierta la caja y espera a que AgentSpan esté healthy. Idempotente: si ya corre,
-        solo verifica healthy; si está `stopped`, la arranca y espera `running` antes del poll."""
-        ec2, _ = self._clients()
+        """Despierta la caja y espera a que AgentSpan esté listo. Idempotente: si ya corre, solo
+        verifica readiness; si está `stopped`, la arranca y espera `running` antes del readiness.
+        El readiness corre DENTRO de la caja por SSM — NO hay conexión directa desde el backend."""
+        ec2, ssm = self._clients()
         instance = self._describe(ec2)
         instance_id = instance["InstanceId"]
         state = (instance.get("State") or {}).get("Name")
@@ -118,61 +128,37 @@ class Boto3Launcher:
         if state in ("stopped", "stopping"):
             ec2.start_instances(InstanceIds=[instance_id])
             ec2.get_waiter("instance_running").wait(InstanceIds=[instance_id])
-            # Re-describe: la IP privada puede haber cambiado al re-arrancar (autostop + IP dinámica).
-            instance = self._describe(ec2)
 
-        private_ip = instance.get("PrivateIpAddress")
-        if not private_ip:
-            raise RuntimeError(
-                f"Boto3Launcher: la instancia {instance_id} no tiene IP privada todavía."
-            )
-        self._wait_healthy(private_ip)
+        self._wait_ready(ssm, instance_id)
 
-    def _wait_healthy(self, private_ip: str, *, timeout: float = 180.0, interval: float = 3.0) -> None:
-        """Pollea AgentSpan (`http://<private_ip>:6767`) hasta que responde, o `RuntimeError` al
-        timeout. AgentSpan tarda en levantar la JVM tras un arranque frío."""
-        url = f"http://{private_ip}:{_AGENTSPAN_PORT}/"
-        deadline = time.monotonic() + timeout
-        last_err: Exception | None = None
-        while time.monotonic() < deadline:
-            try:
-                with urllib.request.urlopen(url, timeout=5):  # noqa: S310 — host interno por tag
-                    return
-            except urllib.error.HTTPError:
-                return  # respondió HTTP (incluso 4xx) → el server está vivo
-            except Exception as exc:  # noqa: BLE001 — connection refused / DNS mientras levanta
-                last_err = exc
-                time.sleep(interval)
-        raise RuntimeError(
-            f"Boto3Launcher: AgentSpan no respondió en {url} tras {timeout:.0f}s ({last_err})."
+    def _wait_ready(self, ssm, instance_id: str) -> None:
+        """Espera a que AgentSpan responda — por SSM, corriendo el chequeo DENTRO de la caja (curl a
+        su propio `localhost:6767`), NUNCA conectándose desde el backend. AgentSpan tarda en levantar
+        la JVM tras un arranque frío; el loop reintenta ~3 min y falla LOUD (`exit 1`) si no levanta."""
+        loop = (
+            f"for i in $(seq 1 60); do "
+            f"curl -fsS -o /dev/null http://localhost:{_AGENTSPAN_PORT}/ && {{ echo READY; exit 0; }}; "
+            f"sleep 3; done; echo NOTREADY; exit 1"
         )
-
-    def conductor_base_url(self) -> str:
-        """`http://<ip-privada-actual>:6767` — resuelto FRESCO por tag (la IP cambia con el
-        autostop). El poller del buzón pollea esta URL; por eso NO se hardcodea ni se cachea."""
-        ec2, _ = self._clients()
-        instance = self._describe(ec2)
-        private_ip = instance.get("PrivateIpAddress")
-        if not private_ip:
-            raise RuntimeError(
-                f"Boto3Launcher: la instancia {instance['InstanceId']} no tiene IP privada "
-                "para alcanzar Conductor."
-            )
-        return f"http://{private_ip}:{_AGENTSPAN_PORT}"
+        # `_send` falla LOUD si el comando SSM no termina en Success (NOTREADY → exit 1 → Failed).
+        self._send(ssm, instance_id, loop)
 
     # ------------------------------------------------------------ SSM / run
 
-    def _run_cli(self, ssm, instance_id: str, cli_args: str) -> str:
-        """Manda `<docker exec> <cli_args>` por SSM, pollea hasta terminal y devuelve el stdout.
-        Falla LOUD si el comando no termina en `Success`."""
-        command = f"{_DOCKER_EXEC} {cli_args}"
+    def _send(self, ssm, instance_id: str, command: str) -> str:
+        """Manda un comando shell por SSM (`AWS-RunShellScript`), pollea hasta terminal y devuelve el
+        stdout. Falla LOUD si no termina en `Success`. Es el ÚNICO canal hacia la caja (instance-id),
+        nunca una conexión de red directa."""
         resp = ssm.send_command(
             InstanceIds=[instance_id],
             DocumentName="AWS-RunShellScript",
             Parameters={"commands": [command]},
         )
-        command_id = resp["Command"]["CommandId"]
-        return self._await_invocation(ssm, command_id, instance_id)
+        return self._await_invocation(ssm, resp["Command"]["CommandId"], instance_id)
+
+    def _run_cli(self, ssm, instance_id: str, cli_args: str) -> str:
+        """`sdk.cli <cli_args>` DENTRO del container graphagents, por SSM."""
+        return self._send(ssm, instance_id, f"{_DOCKER_EXEC} {cli_args}")
 
     def _await_invocation(
         self, ssm, command_id: str, instance_id: str, *, timeout: float = 300.0, interval: float = 2.0
@@ -208,8 +194,7 @@ class Boto3Launcher:
         """Despacha un run a AgentSpan y devuelve el execution-id de Conductor. El `run_id` viaja
         como metadata para correlación; el id que pollea el bridge es el de Conductor."""
         ec2, ssm = self._clients()
-        instance = self._describe(ec2)
-        instance_id = instance["InstanceId"]
+        instance_id = self._instance_id(ec2)
         payload = _shell_quote(json.dumps(input, ensure_ascii=False))
         cli_args = f"start {_shell_quote(agent)} --input {payload} --runtime agentspan"
         stdout = self._run_cli(ssm, instance_id, cli_args)
@@ -221,13 +206,27 @@ class Boto3Launcher:
             )
         return match.group(1)
 
+    def fetch_status(self, execution_id: str) -> dict:
+        """El workflow JSON crudo de Conductor (con `tasks[]`) — leído por SSM corriendo
+        `sdk.cli status <eid>` DENTRO de la caja (que consulta su Conductor LOCAL). Es el POLL del
+        progreso: va por SSM/instance-id como el dispatch, SIN ninguna conexión directa a la caja."""
+        ec2, ssm = self._clients()
+        instance_id = self._instance_id(ec2)
+        cli_args = f"status {_shell_quote(execution_id)} --runtime agentspan"
+        stdout = self._run_cli(ssm, instance_id, cli_args)
+        try:
+            return json.loads(stdout.strip())
+        except (ValueError, TypeError) as exc:
+            raise RuntimeError(
+                f"Boto3Launcher: el stdout de `sdk.cli status` no es JSON parseable: {stdout!r}"
+            ) from exc
+
     def resume(self, execution_id: str, decision: dict) -> None:
         """Completa la HUMAN task: despierta la caja (puede estar dormida por autostop) y manda el
         `sdk.cli resume`."""
         self.start_box()
         ec2, ssm = self._clients()
-        instance = self._describe(ec2)
-        instance_id = instance["InstanceId"]
+        instance_id = self._instance_id(ec2)
         payload = _shell_quote(json.dumps(decision, ensure_ascii=False))
         cli_args = f"resume {_shell_quote(execution_id)} --decision {payload}"
         self._run_cli(ssm, instance_id, cli_args)

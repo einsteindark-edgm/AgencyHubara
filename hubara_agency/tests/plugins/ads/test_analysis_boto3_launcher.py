@@ -97,10 +97,7 @@ def fake_clients(monkeypatch):
         return state["ec2"], state["ssm"]
 
     monkeypatch.setattr(boto3_launcher.Boto3Launcher, "_clients", _factory, raising=True)
-    # Healthy check siempre OK (no red en tests).
-    monkeypatch.setattr(
-        boto3_launcher.Boto3Launcher, "_wait_healthy", lambda self, ip: None, raising=True
-    )
+    # El readiness (`_wait_ready`) corre por SSM contra el FakeSSM (Success) — sin red, sin patch HTTP.
     return state
 
 
@@ -190,9 +187,10 @@ def test_resume_despierta_la_caja_y_manda_el_comando(fake_clients) -> None:
 
     lz.resume("exec-42", {"approved": True})
 
-    assert ec2.described  # start_box() corrió (despertó la caja)
-    assert len(ssm.sent) == 1
-    script = " ".join(ssm.sent[0]["Parameters"]["commands"])
+    assert ec2.described  # start_box() corrió (despertó la caja, readiness por SSM)
+    # 2 comandos SSM: el readiness (de start_box) + el resume. El resume es el último.
+    assert len(ssm.sent) == 2
+    script = " ".join(ssm.sent[-1]["Parameters"]["commands"])
     assert "sdk.cli resume 'exec-42'" in script
     assert "--decision" in script
     assert json.dumps({"approved": True}) in script
@@ -208,13 +206,39 @@ def test_sin_region_falla_claro_no_en_import(monkeypatch) -> None:
         lz.start_box()
 
 
-# ------------------------------------------------------- conductor url / seguridad
+# --------------------------------------- status (poll por SSM) / readiness / seguridad
 
-def test_conductor_base_url_resuelve_por_tag(fake_clients) -> None:
-    """La URL de Conductor se resuelve FRESCA por tag (IP dinámica de la caja), no se hardcodea."""
-    ec2 = _FakeEC2(state="running", private_ip="10.0.0.7")
-    lz = _make(fake_clients, ec2=ec2)
-    assert lz.conductor_base_url() == "http://10.0.0.7:6767"
+def test_fetch_status_lee_el_workflow_por_ssm(fake_clients) -> None:
+    """El POLL del progreso va por SSM (`sdk.cli status`), NO una conexión directa a la caja: corre el
+    comando DENTRO de la caja (por instance-id) y parsea el workflow JSON del stdout."""
+    import json as _json
+
+    ec2 = _FakeEC2(state="running")
+    wf = {"workflowId": "w1", "status": "RUNNING", "tasks": [{"taskType": "HUMAN", "status": "IN_PROGRESS"}]}
+    ssm = _FakeSSM(status="Success", stdout=_json.dumps(wf))
+    lz = _make(fake_clients, ec2=ec2, ssm=ssm)
+
+    got = lz.fetch_status("exec-42")
+
+    assert got == wf  # parseó el JSON del stdout de `sdk.cli status`
+    script = " ".join(ssm.sent[0]["Parameters"]["commands"])
+    assert "sdk.cli status 'exec-42'" in script  # por SSM, quoteado
+    assert ssm.sent[0]["InstanceIds"] == ["i-abc"]  # por instance-id (no IP)
+
+
+def test_start_box_readiness_corre_dentro_de_la_caja_por_ssm(fake_clients) -> None:
+    """El readiness NO es un curl directo desde el backend: es un comando SSM que curlea el
+    `localhost:6767` DE LA CAJA (cero conexión directa, cero dependencia de la IP privada)."""
+    ec2 = _FakeEC2(state="running")
+    ssm = _FakeSSM(status="Success", stdout="READY")
+    lz = _make(fake_clients, ec2=ec2, ssm=ssm)
+
+    lz.start_box()
+
+    assert len(ssm.sent) == 1  # un solo comando SSM (el readiness)
+    script = " ".join(ssm.sent[0]["Parameters"]["commands"])
+    assert f"localhost:{boto3_launcher._AGENTSPAN_PORT}" in script  # curlea SU PROPIO localhost
+    assert ssm.sent[0]["InstanceIds"] == ["i-abc"]
 
 
 def test_dispatch_quotea_el_agente_contra_inyeccion(fake_clients) -> None:

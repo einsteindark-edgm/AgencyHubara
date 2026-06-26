@@ -28,8 +28,8 @@ class Launcher(Protocol):
         --decision ...`). Despierta la caja si está dormida."""
         ...
 
-    def conductor_base_url(self) -> str:
-        """La URL REST de Conductor de la caja (su IP privada ACTUAL + `:6767`). Se resuelve
-        FRESCA cada vez — la IP es DINÁMICA (autostop) — y el poller del buzón la usa para
-        relayar el progreso. NUNCA hardcodear ni cachear."""
+    def fetch_status(self, execution_id: str) -> dict:
+        """El workflow JSON crudo de Conductor (con `tasks[]`) de una ejecución — el POLL del
+        progreso. Lo lee corriendo `sdk.cli status <eid>` DENTRO de la caja por SSM/instance-id (la
+        caja consulta su Conductor LOCAL); el backend NUNCA se conecta directo a la caja."""
         ...

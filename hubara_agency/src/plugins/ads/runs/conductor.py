@@ -1,19 +1,19 @@
-"""Cliente fino de Conductor (`:6767/api`) — el relay POLL-based del bridge.
+"""Interpretación del estado de Conductor — la capa PURA del relay POLL-based del bridge.
 
-Dos capas (port + IO, como el resto): `interpret(workflow)` PURA (deriva el estado lógico
-del run del JSON de una ejecución) + `fetch_workflow` IO (urllib). El backend hubara NO
-importa GraphAgents — re-implementa el contrato REST estable de Conductor (la misma API que
-pinta la UI de `:6767`). Ese es el borde del bridge: HTTP/execution-id, no código compartido.
+`interpret(workflow)` deriva el estado lógico del run (running / awaiting_approval / completed /
+failed) del JSON crudo de una ejecución de Conductor. El backend hubara NO importa GraphAgents:
+re-implementa el contrato del JSON de Conductor (la misma forma que pinta la UI de `:6767`).
 
-POLL, no push: AgentSpan es poll-based y una HUMAN task es PASIVA (no corre código que
-pueda pushear el `awaiting`) → solo se detecta polleando + leyendo `taskType==HUMAN`.
+El FETCH del workflow NO vive acá: lo hace el `Launcher` por SSM (`fetch_status`, corriendo
+`sdk.cli status` DENTRO de la caja) — el backend nunca se conecta directo a la caja. Acá solo la
+lógica pura, replayeable con un fixture.
+
+POLL, no push: AgentSpan es poll-based y una HUMAN task es PASIVA (no corre código que pueda
+pushear el `awaiting`) → solo se detecta polleando + leyendo `taskType==HUMAN`.
 """
 from __future__ import annotations
 
 import ast
-import json
-import urllib.parse
-import urllib.request
 from typing import Any
 
 #: status de Conductor que cuentan como fallo terminal.
@@ -56,14 +56,3 @@ def interpret(workflow: dict) -> dict:
     if status in _FAILED:
         return {"status": "failed", "awaiting": None, "result": None, "error": workflow.get("reasonForIncompletion")}
     return {"status": "running", "awaiting": None, "result": None, "error": None}
-
-
-# ------------------------------------------------------------------------ IO
-
-def fetch_workflow(execution_id: str, base_url: str, timeout: float = 8) -> dict:
-    """El JSON completo (con `tasks[]`) de una ejecución, desde Conductor."""
-    eid = urllib.parse.quote(execution_id, safe="")
-    root = base_url.rstrip("/").removesuffix("/api")
-    url = f"{root}/api/workflow/{eid}?includeTasks=true"
-    with urllib.request.urlopen(url, timeout=timeout) as r:  # noqa: S310 — URL interna controlada
-        return json.loads(r.read().decode("utf-8", "replace"))
