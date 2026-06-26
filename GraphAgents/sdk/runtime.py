@@ -14,8 +14,21 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Literal, Protocol, runtime_checkable
 
-Status = Literal["running", "completed", "failed"]
+Status = Literal["running", "completed", "failed", "paused"]
 Agent = Callable[[Any], Any]
+
+
+@dataclass
+class AwaitingHuman:
+    """Sentinel que un agente puro DEVUELVE para pedir una decisión humana.
+
+    El runtime lo mapea a `Execution(status="paused", awaiting=context)`. En el
+    grafo real, `AgentSpanRuntime` mapea el `interrupt()` de LangGraph al MISMO
+    contrato — el primitivo HITL es el contrato del port, no el mecanismo de
+    cada vendor.
+    """
+
+    context: Any
 
 
 @dataclass
@@ -24,13 +37,14 @@ class Execution:
     status: Status
     output: Any = None
     error: str | None = None
+    awaiting: Any = None  # contexto de la decisión pendiente (sólo si status=="paused")
 
 
 @runtime_checkable
 class Runtime(Protocol):
     def run(self, agent: Agent, input: Any) -> Execution: ...
     def get(self, execution_id: str) -> Execution: ...
-    def resume(self, execution_id: str) -> Execution: ...
+    def resume(self, execution_id: str, decision: Any = None) -> Execution: ...
 
 
 class LocalRuntime:
@@ -53,22 +67,27 @@ class LocalRuntime:
         self._pending[eid] = (agent, input)
         return self._advance(eid)
 
-    def _advance(self, eid: str) -> Execution:
+    def _advance(self, eid: str, decision: Any = None) -> Execution:
         agent, input = self._pending[eid]
         try:
-            out = agent(input)
-            self._store[eid] = Execution(id=eid, status="completed", output=out)
+            out = agent(input, decision=decision) if decision is not None else agent(input)
         except Exception as e:  # noqa: BLE001
             self._store[eid] = Execution(id=eid, status="failed", error=str(e))
+            self._pending.pop(eid, None)
+            return self._store[eid]
+        if isinstance(out, AwaitingHuman):  # pide humano -> pausa durable (sigue pendiente)
+            self._store[eid] = Execution(id=eid, status="paused", awaiting=out.context)
+            return self._store[eid]
+        self._store[eid] = Execution(id=eid, status="completed", output=out)
         self._pending.pop(eid, None)
         return self._store[eid]
 
     def get(self, execution_id: str) -> Execution:
         return self._store[execution_id]
 
-    def resume(self, execution_id: str) -> Execution:
-        if execution_id in self._pending:  # quedó a medias -> recupera del input persistido
-            return self._advance(execution_id)
+    def resume(self, execution_id: str, decision: Any = None) -> Execution:
+        if execution_id in self._pending:  # a medias (crash) o en pausa HITL -> retoma
+            return self._advance(execution_id, decision=decision)
         return self._store[execution_id]
 
     def start_durable(self, agent: Agent, input: Any) -> str:
@@ -157,11 +176,20 @@ class AgentSpanRuntime:
     def get(self, execution_id: str) -> Execution:
         with self._client() as rt:
             st = rt.get_status(execution_id)
-        status = "completed" if getattr(st, "is_complete", False) else "running"
+        if getattr(st, "is_complete", False):
+            status: Status = "completed"
+        elif getattr(st, "is_waiting", False):  # HUMAN task pendiente (HITL) → pausa durable
+            status = "paused"
+        else:
+            status = "running"
         return Execution(id=execution_id, status=status, output=self._unwrap(getattr(st, "output", None)))
 
-    def resume(self, execution_id: str) -> Execution:
-        # El re-attach real de AgentSpan necesita re-pasar el grafo
-        # (`AgentRuntime().resume(eid, graph)`); el port `resume(id)` no lo recibe,
-        # así que devolvemos el estado actual. Recovery mid-flight real: G1.x.
+    def resume(self, execution_id: str, decision: Any = None) -> Execution:
+        """HITL: completa la HUMAN task pendiente con la decisión (vía `respond`),
+        que fluye al state como `{"decision": ...}` (la key del nodo `await_approval`)
+        → el grafo corre `apply` y termina. Sin decisión = no-op (devuelve el estado
+        actual). Validado en vivo contra Conductor (`:6767`)."""
+        if decision is not None:
+            with self._client() as rt:
+                rt.respond(execution_id, {"decision": decision})
         return self.get(execution_id)
