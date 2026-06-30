@@ -159,9 +159,17 @@ def map_products_batch(
 # =============================================================================
 
 
-def _first_price_meta_format(product: CatalogProductDTO) -> Optional[str]:
+def _first_price_meta_format(
+    product: CatalogProductDTO, *, preferred_currency: str = "COP"
+) -> Optional[str]:
     """Meta espera el precio como string 'AMOUNT CURRENCY', sin separadores
     de miles. Ej: '23000 COP', '46500 COP'.
+
+    PREFIERE el precio en `preferred_currency` (Hubara=COP). Medusa devuelve
+    varios precios por variante (ej. `usd` + `cop` con el mismo amount) y tomar
+    `prices[0]` a ciegas publicaba USD en la card de WhatsApp (prod 2026-06-30:
+    "35000 USD" en vez de "35000 COP"). Fallback al primer precio disponible si
+    no hay match en la moneda preferida (edge case).
 
     Si el amount viene con decimales (raro en COP), los preservamos.
     """
@@ -170,7 +178,11 @@ def _first_price_meta_format(product: CatalogProductDTO) -> Optional[str]:
     v = product.variants[0]
     if not v.prices:
         return None
-    p = v.prices[0]
+    pref = preferred_currency.lower()
+    p = next(
+        (pr for pr in v.prices if (pr.currency_code or "").lower() == pref),
+        v.prices[0],
+    )
     if not p.amount or not p.currency_code:
         return None
     # Normaliza: si amount viene como "23000.00" o "23,000", limpiamos
