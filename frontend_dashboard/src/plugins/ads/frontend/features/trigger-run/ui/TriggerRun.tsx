@@ -15,8 +15,12 @@ import {
   useAgents,
   useTriggerRun,
 } from "@plugins/ads/frontend/entities/ad-analysis-run";
+import {
+  useMetaAnalysisInput,
+  useMetaConnection,
+} from "@plugins/ads/frontend/entities/meta-connection";
 
-import { useTriggerRunForm } from "../model/useTriggerRunForm";
+import { formatExampleInput, useTriggerRunForm } from "../model/useTriggerRunForm";
 
 interface Props {
   onRunStarted: (runId: string) => void;
@@ -26,6 +30,11 @@ export function TriggerRun({ onRunStarted }: Props) {
   const { data: agents, isLoading, isError } = useAgents();
   const form = useTriggerRunForm(agents);
   const trigger = useTriggerRun();
+
+  // Datos REALES de Meta para pre-cargar el análisis (solo si conectado y no expirado).
+  const { data: conn } = useMetaConnection();
+  const metaReady = Boolean(conn?.connected && !conn.expired);
+  const liveInput = useMetaAnalysisInput(metaReady);
 
   const onRun = () => {
     if (!form.canRun || !form.agentId) return;
@@ -71,16 +80,29 @@ export function TriggerRun({ onRunStarted }: Props) {
       </label>
 
       <label className="flex flex-col gap-1.5">
-        <span className="flex items-center justify-between text-xs font-medium text-fg-muted">
+        <span className="flex items-center justify-between gap-3 text-xs font-medium text-fg-muted">
           Entrada (JSON)
-          <button
-            type="button"
-            className="text-xs text-accent hover:underline disabled:opacity-50"
-            onClick={form.resetToExample}
-            disabled={!form.agentId}
-          >
-            Restaurar ejemplo
-          </button>
+          <span className="flex items-center gap-3">
+            {metaReady ? (
+              <button
+                type="button"
+                className="text-xs font-semibold text-accent hover:underline disabled:opacity-50"
+                onClick={() => form.setDraft(formatExampleInput(liveInput.data))}
+                disabled={liveInput.isLoading || liveInput.data == null}
+                title="Carga tus campañas reales de Meta (datos de Graph) como entrada del análisis"
+              >
+                {liveInput.isLoading ? "Cargando Meta…" : "Cargar datos reales de Meta"}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="text-xs text-accent hover:underline disabled:opacity-50"
+              onClick={form.resetToExample}
+              disabled={!form.agentId}
+            >
+              Restaurar ejemplo
+            </button>
+          </span>
         </span>
         <textarea
           className="min-h-[16rem] rounded-md border border-line bg-canvas px-3 py-2 font-mono text-xs text-fg outline-none focus:border-accent"

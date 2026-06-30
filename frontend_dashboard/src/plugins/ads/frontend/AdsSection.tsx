@@ -42,6 +42,8 @@ import { AdsStateDistribution } from "@plugins/ads/frontend/features/ads-state-d
 import { AdsDailyTrend } from "@plugins/ads/frontend/features/ads-daily-trend";
 import { AdsAttributedTable } from "@plugins/ads/frontend/features/ads-attributed-table";
 import { AdsInspector } from "@plugins/ads/frontend/features/ads-inspector";
+import { ConnectMeta } from "@plugins/ads/frontend/features/connect-meta";
+import { MetaInsightsPanel } from "@plugins/ads/frontend/features/ads-meta-insights";
 // Las 3 features del buzón de análisis con IA. FSD: la Page es el único punto que
 // las compone — `trigger-run` no importa a `run-result` ni a `hitl-decision`
 // (cross-feature prohibido).
@@ -128,7 +130,10 @@ export function AdsSection() {
       <main className="ads-canvas">
         {/* Acción del canvas: abre el buzón de análisis con IA (modal propio,
             no diálogo nativo — regla #6). Visible arriba de todo. */}
-        <div className="flex items-center justify-end gap-2 px-4 pt-3">
+        <div className="flex items-center justify-between gap-2 px-4 pt-3">
+          {/* Conexión a Meta (Marketing API vía app propia): botón de login +
+              estado. Lo que esto autentica llena los KPIs de spend/clicks. */}
+          <ConnectMeta />
           <button
             type="button"
             className="inline-flex items-center gap-2 rounded-md bg-accent px-3 py-2 text-sm font-semibold text-accent-fg hover:opacity-90"
@@ -143,6 +148,10 @@ export function AdsSection() {
           selection={selection}
           onSelectionChange={setSelection}
         />
+        {/* Métricas REALES de Meta (Marketing API) + gestión pausar/activar.
+            Solo se muestra con conexión; alimenta lo que el embudo derivado del
+            vault no puede (spend/clicks/impresiones). */}
+        <MetaInsightsPanel />
         <div className="ads-body">
           <AdsFunnel campaign={campaign} />
           <AdsStateDistribution campaign={campaign} />

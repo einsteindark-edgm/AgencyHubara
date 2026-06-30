@@ -23,9 +23,27 @@ frontend:
 # importa de ningún plugin sibling. Agregación en `src.plugins.ads.aggregation`,
 # clasificación de estado en `src.plugins.ads.classification`.
 api:
+  # `python_module` queda como ancla simbólica; con `legacy_routers` presente el
+  # loader lo ignora y registra cada router explícito (src/main.py §_bootstrap_routers).
   python_module: src.plugins.ads.api
   prefix: /api/ads
   tags: [Ads]
+  legacy_routers:
+    # Router agregado del plugin (campañas del vault + análisis IA + /meta protegido:
+    # status/insights/disconnect/gestión). PROTEGIDO con require_auth.
+    - { module: src.plugins.ads.api, prefix: /api/ads, tags: [Ads] }
+    # OAuth login + callback — PÚBLICO: el browser/Meta los invocan SIN bearer de
+    # Cognito; la seguridad del callback es el `state` HMAC (PUBLIC_ROUTER=True).
+    - { module: src.plugins.ads.api.meta_public, prefix: /api/ads/meta, tags: [Ads] }
 
 wiring_intents:
-  env_vars_required: []
+  # OAuth + Marketing API de Meta (botón "Conectar con Meta"). El token vive
+  # server-side en SSM SecureString (`/hubara/<tenant>/meta/oauth`); el App Secret
+  # NUNCA se loguea. Sin estas vars, `/api/ads/meta/login` responde 503 y el
+  # dashboard degrada limpio (insights → {connected:false}).
+  env_vars_required:
+    - META_APP_ID            # ID de la Meta App propia (Facebook Login + Marketing API)
+    - META_APP_SECRET        # App Secret (solo backend; rotar si se expone)
+    - META_OAUTH_REDIRECT_URI  # https://<backend>/api/ads/meta/callback (whitelistear en FB Login)
+    # Opcionales (con default): META_OAUTH_SCOPES (default "ads_read"),
+    # META_ADS_TENANT (default "hubara"), AWS_REGION (para SSM).
