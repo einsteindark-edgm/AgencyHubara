@@ -43,6 +43,7 @@ export function SyncRunner({ activeId, onSelect }: Props) {
   const status = useSyncStatus(activeId);
   const trigger = useTriggerSync();
   const [error, setError] = useState<string | null>(null);
+  const [force, setForce] = useState(false);
 
   const detail = status.data;
   const isRunning = detail?.status === "running";
@@ -50,7 +51,7 @@ export function SyncRunner({ activeId, onSelect }: Props) {
 
   const onSync = () => {
     setError(null);
-    trigger.mutate(undefined, {
+    trigger.mutate(force, {
       onSuccess: (res) => onSelect(res.workflow_id),
       onError: (e) => setError(e.message),
     });
@@ -79,7 +80,30 @@ export function SyncRunner({ activeId, onSelect }: Props) {
               traer los últimos productos de Medusa.
             </div>
           </div>
-          <div className="actions">
+          <div
+            className="actions"
+            style={{ display: "flex", alignItems: "center", gap: 12 }}
+          >
+            <label
+              title="Re-envía TODOS los productos a Meta ignorando el delta. Usalo si una imagen no aparece en el catálogo de WhatsApp (Meta a veces no la baja aunque el producto no cambió)."
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                fontSize: 12,
+                color: "var(--fg-mute)",
+                cursor: busy ? "default" : "pointer",
+                userSelect: "none",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={force}
+                disabled={busy}
+                onChange={(e) => setForce(e.target.checked)}
+              />
+              Forzar re-sync completo
+            </label>
             <MacButton primary onClick={onSync} disabled={busy}>
               <Icon.refresh /> {busy ? "Sincronizando…" : "Sincronizar"}
             </MacButton>

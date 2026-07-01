@@ -143,9 +143,13 @@ export function useSyncStatus(workflowId: string | null) {
 
 export function useTriggerSync() {
   const qc = useQueryClient();
-  return useMutation<TriggerSyncResponse, Error, void>({
-    mutationFn: async () => {
-      const raw = await apiClient.post<unknown>("/api/catalog/sync", {});
+  return useMutation<TriggerSyncResponse, Error, boolean | void>({
+    // `force` (default false): re-push completo a Meta ignorando el delta por
+    // hash — recupera imágenes que Meta no fetcheó sin cambio de datos.
+    mutationFn: async (force) => {
+      const raw = await apiClient.post<unknown>("/api/catalog/sync", {
+        force: force === true,
+      });
       return triggerSyncResponseSchema.parse(raw);
     },
     onSuccess: () => {
