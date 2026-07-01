@@ -14,11 +14,14 @@ unitarios de los builders no necesiten ni httpx ni un token mock.
 from __future__ import annotations
 
 from dataclasses import asdict
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.platform.whatsapp import dtos as wa_dtos
 from src.platform.whatsapp import limits
 from src.platform.whatsapp.media_url import normalize_image_url
+
+if TYPE_CHECKING:
+    from src.platform.whatsapp.templates.registry import TemplateSpec
 
 
 # =============================================================================
@@ -581,7 +584,7 @@ def build_reaction(to: str, p: wa_dtos.ReactionOutbound) -> dict[str, Any]:
 
 def build_template_message(
     to: str,
-    spec: "TemplateSpec",  # forward ref para no romper import cycles
+    spec: TemplateSpec,
     variables: dict[str, str],
 ) -> dict[str, Any]:
     """Construye el payload Meta para enviar un template aprobado.
