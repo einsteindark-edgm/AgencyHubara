@@ -98,6 +98,13 @@ async def push_meta_catalog_activity(
                 e,
             )
 
+    # force_full_refresh: ignorar los hashes previos → todos los items van como
+    # CREATE (re-push completo). Recupera fetches de imagen que Meta falló sin
+    # que cambien los datos (el delta por hash los saltearía). Mantenemos
+    # `last_meta_count` para que el guard soft-delete (regla B.8) siga activo.
+    if input.force_full_refresh:
+        previous_hashes_json = "{}"
+
     activity.logger.info(
         "push_meta_catalog start tenant=%s catalog_id=%s token_len=%d "
         "snapshot_dir=%s prev_hashes=%d last_count=%d",

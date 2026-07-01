@@ -38,7 +38,9 @@ with workflow.unsafe.imports_passed_through():
     from src.plugins.chats.agent.remarketing.activities.watchdog_activities import (
         check_watchdog_eligibility_activity,
         persist_watchdog_outcome_activity,
-        send_watchdog_template_activity,
+    )
+    from src.platform.whatsapp.activities import (
+        send_whatsapp_template_activity,
     )
     from src.plugins.chats.agent.remarketing.watchdog_contracts import (
         WatchdogInput,
@@ -57,7 +59,7 @@ class ServiceWindowWatchdogWorkflow:
       3. eligibility check (defense-in-depth re-validation):
          * not eligible → persist `skipped` + reason, return.
          * eligible     → continue to send.
-      4. send template (MOCK in Sprint 2).
+      4. send template — REAL vía send_whatsapp_template_activity (Sprint 3).
          * fail   → persist `failed` + error, re-raise so Temporal records it.
          * ok     → persist `fired` + wa_message_id, return.
 
@@ -181,10 +183,14 @@ class ServiceWindowWatchdogWorkflow:
             )
             return
 
-        # 3. Fire the template. MOCK in Sprint 2 (no real Meta call yet).
+        # 3. Fire the template — REAL send (Sprint 3). Delega en la activity
+        # productiva `send_whatsapp_template_activity` (platform/whatsapp):
+        # resuelve el TemplateSpec, POSTea a la Cloud API, persiste el
+        # OutboundLogEntry con pricing pendiente e idempotencia. Gated aguas
+        # arriba por `WATCHDOG_ENABLED` (check_watchdog_eligibility_activity).
         try:
             result = await workflow.execute_activity(
-                send_watchdog_template_activity,
+                send_whatsapp_template_activity,
                 args=[
                     input.session_id,
                     eligibility.resolved_template_name,
@@ -207,7 +213,7 @@ class ServiceWindowWatchdogWorkflow:
             )
             raise
 
-        # 4. Persist `fired` outcome with the wa_message_id (mock or real).
+        # 4. Persist `fired` outcome with the real Meta wa_message_id.
         await workflow.execute_activity(
             persist_watchdog_outcome_activity,
             args=[input.session_id, "fired", result.wa_message_id or ""],

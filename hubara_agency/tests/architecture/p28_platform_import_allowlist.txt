@@ -31,7 +31,6 @@ src/plugins/chats/agent/remarketing/activities/watchdog_activities.py -> src.pla
 src/plugins/chats/agent/remarketing/activities/watchdog_activities.py -> src.platform.constants
 src/plugins/chats/agent/remarketing/activities/watchdog_activities.py -> src.platform.state
 src/plugins/chats/agent/remarketing/activities/watchdog_activities.py -> src.platform.whatsapp.composition
-src/plugins/chats/agent/remarketing/activities/watchdog_activities.py -> src.platform.whatsapp.dtos
 src/plugins/chats/agent/remarketing/activities/watchdog_activities.py -> src.platform.whatsapp.templates.registry
 src/plugins/chats/agent/remarketing/activities/watchdog_activities.py -> src.platform.whatsapp.window
 src/plugins/chats/agent/remarketing/workflows/remarketing.py -> src.platform.constants
@@ -43,6 +42,7 @@ src/plugins/chats/agent/remarketing/workflows/remarketing.py -> src.platform.tem
 src/plugins/chats/agent/remarketing/workflows/remarketing.py -> src.platform.temporal.retry_policies
 src/plugins/chats/agent/remarketing/workflows/remarketing.py -> src.platform.whatsapp.activities
 src/plugins/chats/agent/remarketing/workflows/remarketing.py -> src.platform.workflow_helpers
+src/plugins/chats/agent/remarketing/workflows/watchdog.py -> src.platform.whatsapp.activities
 src/plugins/chats/agent/sales/activities/bootstrap_session.py -> src.platform.config
 src/plugins/chats/agent/sales/activities/bootstrap_session.py -> src.platform.registries
 src/plugins/chats/agent/sales/activities/bootstrap_session.py -> src.platform.state

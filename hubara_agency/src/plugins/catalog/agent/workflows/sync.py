@@ -194,6 +194,7 @@ class CatalogSyncWorkflow:
             tenant_id=input.tenant_id,
             products_json=pull_result.products_json,
             snapshot_dir=write_input.snapshot_dir,
+            force_full_refresh=input.force_full_refresh,
         )
         push_result = await workflow.execute_activity(
             push_meta_catalog_activity,

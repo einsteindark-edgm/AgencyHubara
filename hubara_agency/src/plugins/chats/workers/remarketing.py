@@ -32,6 +32,7 @@ from src.platform.temporal.dispatcher import (
 from src.platform.whatsapp.activities import (
     send_typing_indicator_activity,
     send_whatsapp_message_activity,
+    send_whatsapp_template_activity,
 )
 from src.platform.temporal.client import get_temporal_client
 from src.platform.tool_extensions import register_tool_extension
@@ -41,7 +42,6 @@ from src.plugins.chats.agent.remarketing.activities import (
     build_remarketing_trigger_activity,
     check_watchdog_eligibility_activity,
     persist_watchdog_outcome_activity,
-    send_watchdog_template_activity,
 )
 from src.platform.session_history.activities import persist_assistant_message_activity
 from src.plugins.chats.agent.remarketing.workflows.remarketing import (
@@ -99,9 +99,10 @@ async def main() -> None:
             # ADR-2026-05-20: declarative orchestration activities.
             write_pending_handoff_activity,
             dispatch_event_activity,
-            # HU-WA24H-001 Sprint 2: watchdog activities.
+            # HU-WA24H-001 watchdog activities (Sprint 3: send REAL vía
+            # send_whatsapp_template_activity de platform/whatsapp).
             check_watchdog_eligibility_activity,
-            send_watchdog_template_activity,
+            send_whatsapp_template_activity,
             persist_watchdog_outcome_activity,
         ],
         # OTel obs: passthrough opentelemetry en el sandbox del workflow

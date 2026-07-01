@@ -1,0 +1,3 @@
+# Configs reales por tenant — NUNCA commitear (tienen ids/secretos del cliente)
+tenants/*.env
+!tenants/*.env.example
