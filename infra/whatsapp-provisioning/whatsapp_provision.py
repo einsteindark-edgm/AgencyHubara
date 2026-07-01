@@ -406,6 +406,42 @@ def step_templates_update(cfg: dict) -> None:
               f"(vuelve a PENDING) {json.dumps(body, ensure_ascii=False)[:200]}")
 
 
+# ── CAPI dataset (atribución CTWA) ──────────────────────────────────────────
+
+def actual_capi_dataset(cfg: dict) -> str | None:
+    """dataset_id CAPI linkeado al WABA, o None si no hay."""
+    _, body = _api("GET", f"{cfg['WABA_ID']}/dataset", cfg["SYSTEM_USER_TOKEN"])
+    data = body.get("data") or []
+    if data and isinstance(data[0], dict) and data[0].get("id"):
+        return data[0]["id"]
+    return None
+
+
+def step_capi(cfg: dict) -> str | None:
+    """Crea (si falta) el dataset de Conversions API linkeado al WABA.
+
+    `POST /{WABA_ID}/dataset` crea Y linkea en un solo paso (reemplaza los
+    clicks de Events Manager §13+§15 del runbook). Idempotente: si el WABA
+    ya tiene dataset, lo reusa. El dataset es la caja donde aterrizan los
+    eventos LeadSubmitted/Purchase de atribución CTWA (action_source
+    business_messaging) — sin él, los CTWA ads son ciegos.
+
+    OJO: el dataset es WABA-scoped — al migrar de WABA se crea uno nuevo y
+    hay que re-pushear META_CAPI_DATASET_ID a SSM.
+    """
+    ds = actual_capi_dataset(cfg)
+    if ds:
+        print(f"  = dataset CAPI ya existe y está linkeado: {ds}")
+        return ds
+    st, body = _api("POST", f"{cfg['WABA_ID']}/dataset", cfg["SYSTEM_USER_TOKEN"])
+    ds = body.get("id")
+    ok = st == 200 and ds
+    mark = "+" if ok else "!"
+    print(f"  {mark} dataset CAPI create+link → {st} "
+          f"{json.dumps(body, ensure_ascii=False)[:200]}")
+    return ds if ok else None
+
+
 # ── Comandos ─────────────────────────────────────────────────────────────────
 
 def cmd_discover(cfg, _):
@@ -500,6 +536,9 @@ def cmd_ssm_block(cfg, _):
     print("WHATSAPP_ACCESS_TOKEN=<= META_SYSTEM_USER_TOKEN>")
     print(f"WHATSAPP_VERIFY_TOKEN={cfg['VERIFY_TOKEN']}")
     print("WHATSAPP_APP_SECRET=<App Secret>")
+    ds = actual_capi_dataset(cfg)
+    print(f"META_CAPI_DATASET_ID={ds or '<correr: whatsapp_provision.py capi>'}")
+    print("META_CAPI_ACCESS_TOKEN=<= META_SYSTEM_USER_TOKEN (ads_management)>")
     flows = actual_flows(cfg)
     for d in _load_defs("flows"):
         if not d.get("ssm_key"):
@@ -519,6 +558,15 @@ def cmd_templates_update(cfg, _):
     step_templates_update(cfg)
 
 
+def cmd_capi(cfg, _):
+    print("CAPI (dataset de atribución CTWA, create+link idempotente):")
+    ds = step_capi(cfg)
+    if ds:
+        print(f"  META_CAPI_DATASET_ID={ds}")
+        print("  META_CAPI_ACCESS_TOKEN=<= token con ads_management; el "
+              "META_SYSTEM_USER_TOKEN sirve si el system user ve el dataset>")
+
+
 def cmd_flows(cfg, _):
     print("FLOWS (create/upload/publish idempotente):")
     resolved = step_flows(cfg)
@@ -533,6 +581,7 @@ COMMANDS = {
     "templates": cmd_templates,
     "templates-update": cmd_templates_update,
     "flows": cmd_flows,
+    "capi": cmd_capi,
     "ssm-block": cmd_ssm_block,
 }
 

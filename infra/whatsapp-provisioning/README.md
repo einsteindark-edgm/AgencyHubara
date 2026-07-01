@@ -146,6 +146,7 @@ CLI lo hace idempotente desde `definitions/`:
 python3 whatsapp_provision.py flows            --config tenants/hubara.env   # create + upload JSON + publish
 python3 whatsapp_provision.py templates        --config tenants/hubara.env   # CREATE los que faltan (submit a review)
 python3 whatsapp_provision.py templates-update --config tenants/hubara.env   # EDITA la copy que cambió (→ PENDING)
+python3 whatsapp_provision.py capi             --config tenants/hubara.env   # dataset CAPI (atribución CTWA), create+link
 ```
 
 - **`flows`** lee `definitions/flows.json` (nombre + categorías + path al JSON del
@@ -201,11 +202,29 @@ python3 whatsapp_provision.py discover --config tenants/hubara.env   # app suscr
 | **Flows nativos** (create + upload + publish) | ✅ `flows` (desde `definitions/flows.json`) |
 | **Templates** (create a Meta) | ✅ `templates` (desde `definitions/templates.json`) |
 | **Templates** (editar copy que cambió) | ✅ `templates-update` (idempotente, → PENDING) |
+| **Dataset CAPI** (atribución CTWA, create+link al WABA) | ✅ `capi` (idempotente; `POST /{WABA_ID}/dataset` reemplaza Events Manager §13+§15) |
 | SSM + render + recreate | ✅ scripts (`aws_bootstrap` + `render-env-from-ssm.sh`) |
 | Catálogo Medusa→Meta | ✅ `trigger_catalog_sync.py` |
 | Redacción del copy de templates | ❌ humano (define quality rating) |
 | **Aprobación** de templates | ❌ Meta-side (1–24h review) |
 | Display name approval | ❌ Meta-side |
+
+## 5.6 CAPI — atribución CTWA (dataset WABA-scoped)
+
+El comando `capi` crea (si falta) el **dataset de Conversions API** linkeado al
+WABA — la caja donde aterrizan los eventos `LeadSubmitted`/`Purchase` de
+atribución CTWA (`action_source: business_messaging`). Sin esto, los
+Click-to-WhatsApp ads son ciegos: Meta ve el click pero no la venta.
+
+- Es **WABA-scoped**: al migrar de WABA se crea dataset nuevo → re-pushear
+  `META_CAPI_DATASET_ID` a SSM.
+- El `META_SYSTEM_USER_TOKEN` sirve como `META_CAPI_ACCESS_TOKEN` (necesita
+  `ads_management`, que ya pide este toolkit).
+- Los nombres de evento válidos son **`LeadSubmitted`** y **`Purchase`** —
+  `Lead` (nombre del CAPI web clásico) es RECHAZADO con error 2804066.
+- El backend consume ambas vars vía `src/platform/config.py`
+  (`send_capi_event_activity` — dispara al cierre de episodio en sales).
+- Runbook humano con el detalle completo: `hubara_agency/.hubara/runbooks/meta_template_approval.md` §11–§22.
 
 ## Multi-tenant
 

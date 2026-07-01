@@ -19,9 +19,9 @@ el patrón puerto/adaptador puro — sin Temporal, sin requests directos.
 Sinks soportados (configurable via env):
   1. `FilesystemAnalyticsSink` — JSONL en `WORKSPACE_VAULT_DIR/_analytics/`.
      Default siempre activo. Útil para post-mortem y debugging.
-  2. `MetaConversionsAPISink` — POSTea a `graph.facebook.com/{pixel_id}/events`
-     para attribution Meta. Activable por env. Requiere `META_PIXEL_ID` +
-     `META_CAPI_ACCESS_TOKEN`.
+  2. (ELIMINADO 2026-07-01) el sink Meta CAPI vivió acá como stub;
+     el camino real de atribución es `send_capi_event_activity`
+     (platform/whatsapp/capi_activity.py) — evita doble-Lead.
   3. (Futuro) `PrometheusSink`, `PostgresSink`, etc.
 
 Composition root en `composition.py` (sibling). Las activities y use cases

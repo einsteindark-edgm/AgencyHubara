@@ -20,7 +20,7 @@ Activity ID: ``send_capi_event_activity`` — name preservado en el decorator
 para no romper history de workflows en vuelo.
 
 Flujo del activity:
-  1. Validar event_name (Lead | Purchase). Fail-fast si otro.
+  1. Normalizar legacy "Lead"->"LeadSubmitted" + validar (LeadSubmitted | Purchase).
   2. Validar config (DATASET_ID + ACCESS_TOKEN + WABA_ID). Si falta → skip
      ``skipped_no_config`` (no levanta excepción — pre-launch siempre
      vacío, no queremos bloquear deploys).
@@ -52,7 +52,7 @@ Flujo del activity:
 Triggers (en workflow ``HubaraSalesSessionWorkflow``):
   * ``closing_tag == "COMPRA_EXITOSA"`` → schedule con ``event_name="Purchase"``
   * ``closing_tag in {"CONFIRMADO_PAGO_PENDIENTE", "CONFIRMADO_SIN_DATOS"}``
-    → schedule con ``event_name="Lead"``
+    → schedule con ``event_name="LeadSubmitted"``
   * Otros (RECHAZO / GHOSTED / TIMEOUT) → no schedule
 
 Runbook humano operacional: ``.hubara/runbooks/meta_template_approval.md``
@@ -78,6 +78,8 @@ from src.platform.config import (
     WORKSPACE_VAULT_DIR,
 )
 from src.platform.whatsapp.capi import (
+    LEAD_EVENT_NAME,
+    LEGACY_LEAD_EVENT_NAME,
     META_CAPI_API_URL,
     CapiEvent,
     CapiEventResult,
@@ -289,7 +291,7 @@ async def send_capi_event_activity(
         session_id: ``wa_<phone>`` del chat — usado para leer metadata.
         episode_id: id del episodio (``ep_NNN``) — usado en event_id de Lead
             y para futura observability (no en el payload de Meta).
-        event_name: ``"Lead"`` o ``"Purchase"`` — qué evento mandar.
+        event_name: ``"LeadSubmitted"`` o ``"Purchase"`` (acepta el\n            legacy ``"Lead"`` de workflows en vuelo y lo normaliza).
 
     Returns:
         ``CapiEventResult`` describiendo el outcome. ``status`` empieza con
@@ -306,7 +308,13 @@ async def send_capi_event_activity(
         Escribe ``metadata["capi_events_sent"][]`` con el outcome y, si
         Purchase exitoso, settea ``metadata["capi_terminal_event"]``.
     """
-    # ----- 1. Validate event_name (fail-fast) -----
+    # ----- 1. Normalize legacy + validate event_name (fail-fast) -----
+    # Workflows en vuelo (pre-fix 2026-07-01) agendaron la activity con
+    # "Lead"; Meta solo acepta "LeadSubmitted" para business_messaging
+    # (error_subcode 2804066). Normalizamos en el boundary para no romper
+    # replays ni re-schedules.
+    if event_name == LEGACY_LEAD_EVENT_NAME:
+        event_name = LEAD_EVENT_NAME
     validate_event_name(event_name)  # raises ValueError
 
     # ----- 2. Validate config (skip-not-raise: pre-launch tolerante) -----
@@ -386,7 +394,7 @@ async def send_capi_event_activity(
         # posterior es ruido — Meta lo descarta por dedup y desperdiciamos
         # HTTP call. Purchase nuevo igual lo dejamos pasar (Meta dedupea
         # por event_id estable, así que la re-emisión es benigna).
-        if event_name == "Lead":
+        if event_name == LEAD_EVENT_NAME:
             log.info(
                 "capi_skipped_terminal_event_reached",
                 session_id=session_id,
@@ -400,7 +408,7 @@ async def send_capi_event_activity(
 
     # ----- 7. Build event_id + payload -----
     event: CapiEvent
-    if event_name == "Lead":
+    if event_name == LEAD_EVENT_NAME:
         event_id = make_event_id_for_lead(
             session_id=session_id, episode_id=episode_id
         )

@@ -13,8 +13,10 @@ References:
     https://developers.facebook.com/docs/marketing-api/conversions-api/business-messaging/
 
 Hard rules from Meta (encoded as constants below):
-  * Only ``Lead`` and ``Purchase`` events are supported for
-    ``action_source: business_messaging``. Anything else is silently ignored.
+  * Only ``LeadSubmitted`` and ``Purchase`` events are supported for
+    ``action_source: business_messaging``. ``Lead`` (el nombre del CAPI web
+    clásico) es RECHAZADO con error_subcode 2804066. Anything else is
+    rejected or silently ignored.
   * 1 CAPI event counts per ad click; the strongest event wins (Purchase >
     Lead). Once we've sent Purchase, sending Lead afterwards is wasted call.
   * ``ctwa_clid`` is the attribution key. Without it, CAPI does nothing — the
@@ -61,10 +63,21 @@ MESSAGING_CHANNEL: str = "whatsapp"
 #: purchase).
 DEFAULT_CURRENCY: str = "COP"
 
+#: Nombre del evento de lead para business_messaging. OJO: NO es "Lead" —
+#: Meta lo rechaza con error_subcode 2804066 ("provide a valid value such as
+#: 'Purchase' or 'LeadSubmitted'"). Bug real cazado por smoke test 2026-07-01
+#: contra el dataset vivo; los ~40 unit tests eran verdes con "Lead" (gotcha
+#: #1: schema permite ≠ Meta acepta).
+LEAD_EVENT_NAME: str = "LeadSubmitted"
+
+#: Nombre legacy que usábamos pre-fix. Workflows en vuelo pueden re-agendar
+#: la activity con este valor — la activity lo normaliza en el boundary.
+LEGACY_LEAD_EVENT_NAME: str = "Lead"
+
 #: Allowed event names for CAPI Business Messaging. Anything outside this set
 #: is rejected at the builder layer to fail-fast instead of having Meta
 #: silently ignore it.
-ALLOWED_EVENT_NAMES: frozenset[str] = frozenset({"Lead", "Purchase"})
+ALLOWED_EVENT_NAMES: frozenset[str] = frozenset({LEAD_EVENT_NAME, "Purchase"})
 
 
 # =============================================================================
@@ -124,7 +137,7 @@ class CapiEvent:
     event lands twice if Temporal retries.
     """
 
-    event_name: str  # "Lead" | "Purchase"
+    event_name: str  # "LeadSubmitted" | "Purchase"
     event_time: int  # unix seconds (NOT millis — Meta uses seconds here)
     event_id: str
     user_data: CapiUserData
@@ -177,10 +190,10 @@ def build_lead_event(
     waba_id: str,
     ctwa_clid: str,
 ) -> CapiEvent:
-    """Build a Lead event. No monetary data — Meta accepts it as a soft
-    conversion signal."""
+    """Build a LeadSubmitted event. No monetary data — Meta accepts it as a
+    soft conversion signal."""
     return CapiEvent(
-        event_name="Lead",
+        event_name=LEAD_EVENT_NAME,
         event_time=event_time,
         event_id=event_id,
         user_data=CapiUserData(
@@ -295,6 +308,8 @@ __all__ = [
     "ACTION_SOURCE",
     "MESSAGING_CHANNEL",
     "DEFAULT_CURRENCY",
+    "LEAD_EVENT_NAME",
+    "LEGACY_LEAD_EVENT_NAME",
     "ALLOWED_EVENT_NAMES",
     # DTOs
     "CapiUserData",
