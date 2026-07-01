@@ -13,9 +13,17 @@ diff contra el estado real (vía Graph API) y `apply` converge idempotente.
 ```
 infra/whatsapp-provisioning/
   whatsapp_provision.py     # el CLI (solo stdlib; corre con cualquier python3)
-  tenants/<tenant>.env      # config declarativa (gitignoreá los reales)
+  tenants/<tenant>.env      # config declarativa por tenant (gitignoreá los reales)
+  definitions/              # definiciones declarativas TENANT-AGNÓSTICAS (versionadas)
+    flows.json              #   flows nativos a crear+publicar (shipping, etc.)
+    templates.json          #   message templates a submitear a Meta (copy + samples)
   README.md                 # esta guía
 ```
+
+> **Dos niveles de config a propósito:** `tenants/<tenant>.env` = lo que cambia
+> por tenant (IDs, número, token). `definitions/*.json` = lo que se comparte
+> entre tenants (los flows y el copy de los templates). Un tenant nuevo reusa las
+> `definitions/` tal cual; solo escribe su `.env`.
 
 ---
 
@@ -77,7 +85,7 @@ python3 whatsapp_provision.py apply --config tenants/hubara.env --code 123456
 
 `apply` es idempotente y hace, en orden seguro:
 `add-number → request-code → [código humano] → verify-code → register →
-commerce-settings → subscribe-app → webhook`.
+commerce-settings → subscribe-app → webhook → flows → templates`.
 
 > Si Meta rechaza `add-number` por API (apps que no son Tech Provider), agregá
 > el número en **WhatsApp Manager → Add phone number** (UI, ~2 min), poné su
@@ -126,6 +134,40 @@ El pull sube solo productos `published`, **sin collection**, con **imagen** y
 
 ---
 
+## 5.5 Flows y templates (WABA-scoped — se re-crean al migrar de WABA)
+
+Tanto los **WhatsApp Flows** (formularios nativos) como los **message templates**
+(único modo legal de escribir fuera de la ventana de 24h) **viven dentro de un
+WABA**. Si migrás de WABA (número nuevo / app nueva), el `flow_id` y los templates
+del WABA viejo **no sirven** — hay que re-crearlos/re-someterlos en el nuevo. El
+CLI lo hace idempotente desde `definitions/`:
+
+```bash
+python3 whatsapp_provision.py flows     --config tenants/hubara.env   # create + upload JSON + publish
+python3 whatsapp_provision.py templates --config tenants/hubara.env   # submit a Meta (entra a review)
+```
+
+- **`flows`** lee `definitions/flows.json` (nombre + categorías + path al JSON del
+  flow en el repo). Si ya hay un flow `PUBLISHED` con ese nombre lo reusa; si no,
+  lo crea, sube el `FLOW_JSON` y lo publica. El `flow_id` resuelto sale en
+  `ssm-block` como `META_FLOW_ID_SHIPPING`.
+- **`templates`** lee `definitions/templates.json` (name, category, language, body,
+  samples). Si el template ya existe (name+language) **no** re-submitea: reporta su
+  status (`PENDING`/`APPROVED`/`REJECTED`). Si no existe, lo crea → entra a review
+  de Meta (**1–24h**, a veces 72h).
+
+> **Copy de templates = quality rating de por vida.** El `body` de cada template
+> lo redacta un humano (no LLM). Los `UTILITY` **no** pueden tener promo/ofertas
+> (Meta los recategoriza a marketing). El único `MARKETING` del set es
+> `cart_recovery`. Fuente del copy: `hubara_agency/.hubara/runbooks/meta_template_approval.md`.
+
+> **Sync con el código:** los `name` de `definitions/templates.json` deben matchear
+> exactamente el `waba_template_name` de
+> `hubara_agency/src/platform/whatsapp/templates/catalog.yaml`. Cuando Meta apruebe,
+> seteás `WATCHDOG_ENABLED=true` en SSM y redeployás (ver runbook §7).
+
+---
+
 ## 6. Verificación E2E
 
 ```bash
@@ -148,8 +190,12 @@ python3 whatsapp_provision.py discover --config tenants/hubara.env   # app suscr
 | Alta del número (`add-number`) | ✅ API (fallback UI si no-Tech-Provider) |
 | request/verify code, register/PIN | ✅ API (código relevado por humano) |
 | subscribe-app, commerce-settings, webhook | ✅ API |
+| **Flows nativos** (create + upload + publish) | ✅ `flows` (desde `definitions/flows.json`) |
+| **Templates** (submit a Meta) | ✅ `templates` (desde `definitions/templates.json`) |
 | SSM + render + recreate | ✅ scripts (`aws_bootstrap` + `render-env-from-ssm.sh`) |
 | Catálogo Medusa→Meta | ✅ `trigger_catalog_sync.py` |
+| Redacción del copy de templates | ❌ humano (define quality rating) |
+| **Aprobación** de templates | ❌ Meta-side (1–24h review) |
 | Display name approval | ❌ Meta-side |
 
 ## Multi-tenant

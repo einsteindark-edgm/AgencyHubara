@@ -104,6 +104,60 @@ def _digits(s: str) -> str:
     return re.sub(r"\D", "", s or "")
 
 
+def _script_dir() -> str:
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def _repo_root() -> str:
+    # infra/whatsapp-provisioning/ → raíz del repo (para resolver paths de flow json)
+    return os.path.abspath(os.path.join(_script_dir(), "..", ".."))
+
+
+def _load_defs(name: str) -> list:
+    """Lee definitions/<name>.json — definiciones declarativas tenant-agnósticas
+    (templates, flows). Se versionan en git; los IDs resueltos van al ssm-block."""
+    path = os.path.join(_script_dir(), "definitions", f"{name}.json")
+    if not os.path.exists(path):
+        return []
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _post_multipart(path: str, token: str, fields: dict, files: dict):
+    """POST multipart/form-data con solo stdlib. files = {campo: (filename, bytes, ctype)}.
+    Necesario para subir el FLOW_JSON como asset (Meta exige multipart)."""
+    boundary = "----whatsappprovisionboundaryZ7xQ2mKp"
+    body = b""
+    for k, v in fields.items():
+        body += (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'
+        ).encode()
+    for k, (fn, content, ctype) in files.items():
+        body += (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="{k}"; filename="{fn}"\r\n'
+            f"Content-Type: {ctype}\r\n\r\n"
+        ).encode()
+        body += content + b"\r\n"
+    body += f"--{boundary}--\r\n".encode()
+    req = urllib.request.Request(
+        f"{GRAPH}/{API}/{path}", data=body, method="POST",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return r.status, json.loads(r.read().decode() or "{}")
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.loads(e.read().decode() or "{}")
+        except Exception:
+            return e.code, {"error": "non-json"}
+
+
 # ── Estado real ──────────────────────────────────────────────────────────────
 
 def actual_state(cfg: dict) -> dict:
@@ -203,6 +257,100 @@ def step_webhook(cfg):
     return st == 200 and body.get("success")
 
 
+# ── Flows (formularios nativos) ──────────────────────────────────────────────
+
+def actual_flows(cfg: dict) -> list:
+    _, body = _api("GET", f"{cfg['WABA_ID']}/flows", cfg["SYSTEM_USER_TOKEN"],
+                   fields="id,name,status,categories")
+    return body.get("data") or []
+
+
+def step_flows(cfg: dict) -> dict:
+    """Crea/sube/publica los flows de definitions/flows.json. Idempotente: si ya
+    hay un flow PUBLISHED con el mismo nombre lo reusa (los flows son WABA-scoped
+    — al migrar de WABA hay que re-publicar). Devuelve {ssm_key: flow_id}."""
+    defs = _load_defs("flows")
+    if not defs:
+        return {}
+    existing = {f.get("name"): f for f in actual_flows(cfg)}
+    resolved: dict = {}
+    for d in defs:
+        name = d["name"]
+        cur = existing.get(name)
+        if cur and cur.get("status") == "PUBLISHED":
+            print(f"  = flow ya publicado: {name} (id {cur['id']})")
+            if d.get("ssm_key"):
+                resolved[d["ssm_key"]] = cur["id"]
+            continue
+        flow_id = cur.get("id") if cur else None
+        if not flow_id:
+            st, body = _api("POST", f"{cfg['WABA_ID']}/flows", cfg["SYSTEM_USER_TOKEN"],
+                            name=name, categories=json.dumps(d.get("categories", [])))
+            flow_id = body.get("id")
+            print(f"  + flow create: {name} → {st} id={flow_id}")
+            if not flow_id:
+                print(f"  ! no se pudo crear el flow: {json.dumps(body, ensure_ascii=False)[:200]}")
+                continue
+        jpath = os.path.join(_repo_root(), d["json"])
+        if not os.path.exists(jpath):
+            print(f"  ! flow json no existe: {jpath} — SKIP")
+            continue
+        content = open(jpath, "rb").read()
+        st, body = _post_multipart(
+            f"{flow_id}/assets", cfg["SYSTEM_USER_TOKEN"],
+            {"name": "flow.json", "asset_type": "FLOW_JSON"},
+            {"file": ("flow.json", content, "application/json")},
+        )
+        errs = body.get("validation_errors") if isinstance(body, dict) else None
+        print(f"  + flow asset upload: {name} → {st} validation_errors={errs}")
+        if d.get("publish"):
+            st, body = _api("POST", f"{flow_id}/publish", cfg["SYSTEM_USER_TOKEN"])
+            print(f"  + flow publish: {name} → {st} {json.dumps(body, ensure_ascii=False)}")
+        if d.get("ssm_key"):
+            resolved[d["ssm_key"]] = flow_id
+    return resolved
+
+
+# ── Message templates ────────────────────────────────────────────────────────
+
+def actual_templates(cfg: dict) -> list:
+    _, body = _api("GET", f"{cfg['WABA_ID']}/message_templates", cfg["SYSTEM_USER_TOKEN"],
+                   fields="name,status,category,language", limit="200")
+    return body.get("data") or []
+
+
+def step_templates(cfg: dict) -> None:
+    """Crea/submitea a Meta los templates de definitions/templates.json. Idempotente:
+    si ya existe (name+language) NO re-submitea, solo reporta su status de aprobación.
+    Los templates son WABA-scoped — al migrar de WABA hay que re-someterlos."""
+    defs = _load_defs("templates")
+    if not defs:
+        print("  ! definitions/templates.json vacío o ausente — SKIP")
+        return
+    existing = {(t.get("name"), t.get("language")): t for t in actual_templates(cfg)}
+    for d in defs:
+        cur = existing.get((d["name"], d["language"]))
+        if cur:
+            print(f"  = template existe: {d['name']} [{d['language']}] status={cur.get('status')}")
+            continue
+        payload = {
+            "name": d["name"],
+            "language": d["language"],
+            "category": d["category"],
+            "components": [{
+                "type": "BODY",
+                "text": d["body"],
+                "example": {"body_text": [d["example"]]},
+            }],
+        }
+        st, body = _api("POST", f"{cfg['WABA_ID']}/message_templates",
+                        cfg["SYSTEM_USER_TOKEN"], json_body=payload)
+        ok = st == 200 and body.get("id")
+        mark = "+" if ok else "!"
+        print(f"  {mark} template submit: {d['name']} [{d['language']}] → {st} "
+              f"{json.dumps(body, ensure_ascii=False)[:220]}")
+
+
 # ── Comandos ─────────────────────────────────────────────────────────────────
 
 def cmd_discover(cfg, _):
@@ -217,6 +365,12 @@ def cmd_discover(cfg, _):
         print("  número:", json.dumps(n, ensure_ascii=False))
     if "catalog" in s:
         print("  catálogo:", json.dumps(s["catalog"], ensure_ascii=False))
+    tmpls = actual_templates(cfg)
+    print("  templates:", ", ".join(
+        f"{t.get('name')}[{t.get('status')}]" for t in tmpls) or "(ninguno)")
+    flows = actual_flows(cfg)
+    print("  flows:", ", ".join(
+        f"{f.get('name')}[{f.get('status')}]" for f in flows) or "(ninguno)")
 
 
 def cmd_plan(cfg, _):
@@ -231,6 +385,15 @@ def cmd_plan(cfg, _):
           else "  [+]   suscribir app al WABA")
     print("  [~]   commerce-settings (catálogo visible + carrito)")
     print("  [~]   webhook callback" + ("" if cfg.get("APP_SECRET") else "  (falta APP_SECRET)"))
+    existing_t = {(t.get("name"), t.get("language")) for t in actual_templates(cfg)}
+    for d in _load_defs("templates"):
+        tag = "[ok] " if (d["name"], d["language"]) in existing_t else "[+]  "
+        print(f"  {tag} template {d['name']} [{d['language']}] ({d['category']})")
+    existing_f = {f.get("name"): f for f in actual_flows(cfg)}
+    for d in _load_defs("flows"):
+        f = existing_f.get(d["name"])
+        tag = "[ok] " if f and f.get("status") == "PUBLISHED" else "[+]  "
+        print(f"  {tag} flow {d['name']}")
     print("\n  Manual / human-in-the-loop: conseguir la línea, código de verificación, "
           "App Secret, Business Verification + display name (Meta-side).")
     print("  Env: tras apply, correr `ssm-block` y subir a SSM + render + recreate (ver README).")
@@ -263,6 +426,10 @@ def cmd_apply(cfg, args):
         step_commerce_settings(cfg, phone_id)
     step_subscribe_app(cfg, s)
     step_webhook(cfg)
+    print("  -- flows --")
+    step_flows(cfg)
+    print("  -- templates --")
+    step_templates(cfg)
     print("\n  Hecho. Resolved phone_number_id:", phone_id or "(usar UI)")
     print("  Siguiente: `ssm-block` → subir a SSM → render-env-from-ssm.sh → recreate workers.")
 
@@ -278,12 +445,33 @@ def cmd_ssm_block(cfg, _):
     print("WHATSAPP_ACCESS_TOKEN=<= META_SYSTEM_USER_TOKEN>")
     print(f"WHATSAPP_VERIFY_TOKEN={cfg['VERIFY_TOKEN']}")
     print("WHATSAPP_APP_SECRET=<App Secret>")
+    flows = actual_flows(cfg)
+    for d in _load_defs("flows"):
+        if not d.get("ssm_key"):
+            continue
+        f = next((x for x in flows
+                  if x.get("name") == d["name"] and x.get("status") == "PUBLISHED"), None)
+        print(f"{d['ssm_key']}={(f or {}).get('id', '<pending publish>')}")
+
+
+def cmd_templates(cfg, _):
+    print("TEMPLATES (submit idempotente a Meta):")
+    step_templates(cfg)
+
+
+def cmd_flows(cfg, _):
+    print("FLOWS (create/upload/publish idempotente):")
+    resolved = step_flows(cfg)
+    if resolved:
+        print("  resolved:", json.dumps(resolved, ensure_ascii=False))
 
 
 COMMANDS = {
     "discover": cmd_discover,
     "plan": cmd_plan,
     "apply": cmd_apply,
+    "templates": cmd_templates,
+    "flows": cmd_flows,
     "ssm-block": cmd_ssm_block,
 }
 
