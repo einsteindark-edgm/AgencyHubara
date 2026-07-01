@@ -42,6 +42,7 @@ from typing import Awaitable, Callable
 
 import structlog
 from temporalio.client import Client, WorkflowExecutionStatus
+from temporalio.common import WorkflowIDConflictPolicy
 from temporalio.service import RPCError
 
 from exoclaw_temporal.config import WorkspaceConfig
@@ -286,34 +287,46 @@ class LoadOrStartSalesSession:
             # cache miss mínimo, vale la corrección del saludo.
             plugin_context = [build_bogota_context_string(), *(extra_context or [])]
 
-            try:
-                handle = client.get_workflow_handle(workflow_id)
-                desc = await handle.describe()
-                if desc.status != WorkflowExecutionStatus.RUNNING:
-                    raise RuntimeError("Workflow is no longer running")
-            except (RPCError, RuntimeError):
-                logger.info(
-                    "Creando HubaraSalesSessionWorkflow", workflow_id=workflow_id
-                )
-                # F7: el caller ya no construye SessionInput. El workflow lo arma
-                # via `bootstrap_sales_session_activity` como primera activity.
-                # PR-A/PR-B: `runtime_workspace_path` se inyecta para que el
-                # bootstrap activity instancie `WorkspaceConfig(path=...)` desde
-                # el workspace canonico del agente.
-                runtime_path = (
-                    self._sales_runtime_workspace.path
-                    if self._sales_runtime_workspace is not None
-                    else None
-                )
-                handle = await client.start_workflow(
-                    HubaraSalesSessionWorkflow.run,
-                    SalesSessionInput(
-                        session_id=session_id,
-                        runtime_workspace_path=runtime_path,
-                    ),
-                    id=workflow_id,
-                    task_queue=get_task_queue("chats", "sales"),
-                )
+            # F7: el caller ya no construye SessionInput. El workflow lo arma
+            # via `bootstrap_sales_session_activity` como primera activity.
+            # PR-A/PR-B: `runtime_workspace_path` se inyecta para que el
+            # bootstrap activity instancie `WorkspaceConfig(path=...)` desde
+            # el workspace canonico del agente.
+            runtime_path = (
+                self._sales_runtime_workspace.path
+                if self._sales_runtime_workspace is not None
+                else None
+            )
+            # signal_with_start ATÓMICO (fix race run 019f1b65 / sesión
+            # wa_573125671604): arranca-si-no-existe Y entrega el mensaje en un
+            # SOLO comando. Reemplaza la ventana get_handle→describe→start→signal
+            # donde 2 inbounds concurrentes (ráfaga del cliente sobre un workflow
+            # aún inexistente) chocaban: el 2º `start_workflow` lanzaba
+            # `WorkflowAlreadyStartedError` y su signal se perdía → el LLM sólo
+            # veía UN mensaje. `id_conflict_policy=USE_EXISTING`: si el workflow ya
+            # corre, entrega el signal al vivo (no arranca otro); si terminó / no
+            # existe, arranca uno nuevo (re-engagement) — el id_reuse_policy
+            # default permite el duplicado terminal. Precedente en repo:
+            # `eta_session` + `orchestration/dispatcher.py` ya usan signal_with_start.
+            logger.info(
+                "signal_with_start HubaraSalesSessionWorkflow",
+                workflow_id=workflow_id,
+            )
+            await client.start_workflow(
+                HubaraSalesSessionWorkflow.run,
+                SalesSessionInput(
+                    session_id=session_id,
+                    runtime_workspace_path=runtime_path,
+                ),
+                id=workflow_id,
+                task_queue=get_task_queue("chats", "sales"),
+                start_signal="send_message",
+                start_signal_args=[message, None, plugin_context],
+                id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
+            )
+            # El mensaje ya viajó DENTRO del start_workflow (start_signal) — no
+            # re-signalear en el bloque compartido de abajo.
+            return
 
         # 5. Signal del mensaje al workflow seleccionado.
         #

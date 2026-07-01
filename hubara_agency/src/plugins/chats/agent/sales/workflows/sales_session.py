@@ -18,7 +18,9 @@ with workflow.unsafe.imports_passed_through():
     )
     from src.platform.temporal.retry_policies import _LLM_OPTIONS
     from src.platform.workflow_helpers import (
+        InboxMsg,
         PendingMessage,
+        coalesce_inbox,
         coalesce_pending,
         run_agent_turn,
     )
@@ -263,7 +265,32 @@ class HubaraSalesSessionWorkflow:
 
                 batch = list(self._pending)
                 self._pending.clear()
-                msgs_to_process: list[PendingMessage] = [coalesce_pending(batch)]
+                msgs_to_process: list[PendingMessage]
+                if workflow.patched("burst-note-v1"):
+                    # Bandeja/watermark (PR burst-inbox): convertir la ráfaga a
+                    # InboxMsg (seq = orden de llegada — determinista en replay:
+                    # el orden de `_pending` es el orden de los signals, que
+                    # Temporal garantiza) y coalescer con `coalesce_inbox`. Con
+                    # >1 mensaje del cliente, el LLM recibe la lista explícita de
+                    # lo que escribió (nota de ráfaga en plugin_context) y
+                    # responde al hilo COMPLETO — mata el patrón "el bot solo ve
+                    # uno". Preserva el manejo de is_handoff (L-12). Gated para
+                    # no romper replay de runs en vuelo pre-deploy (R-DET, L-9).
+                    inbox_batch = [
+                        InboxMsg(
+                            seq=i,
+                            wamid=None,
+                            text=p.message,
+                            ts_ms=0,
+                            media=p.media,
+                            plugin_context=p.plugin_context,
+                            is_handoff=p.is_handoff,
+                        )
+                        for i, p in enumerate(batch, 1)
+                    ]
+                    msgs_to_process = [coalesce_inbox(inbox_batch)]
+                else:
+                    msgs_to_process = [coalesce_pending(batch)]
             else:
                 # Legacy: un mensaje a la vez. Solo para workflows pre-deploy.
                 msgs_to_process = []

@@ -114,6 +114,25 @@ class PendingMessage:
 
 
 @dataclass
+class InboxMsg:
+    """DTO de un inbound en la bandeja durable con watermark (PR burst-inbox).
+
+    Espejo enriquecido de `PendingMessage`: agrega `seq` (secuencia monotónica
+    asignada por el workflow en el signal handler — orden garantizado por
+    Temporal), `wamid` (message_id de Meta, para reply-to / mark_as_read) y
+    `ts_ms`. El invariante del watermark ("respondido ⇔ seq ≤ _acked_seq") vive
+    sobre estos `seq`.
+    """
+    seq: int
+    wamid: str | None
+    text: str
+    ts_ms: int
+    media: list[str] | None = None
+    plugin_context: list[str] | None = None
+    is_handoff: bool = False
+
+
+@dataclass
 class TurnResult:
     """Resultado de un turno LLM-tool-LLM.
 
@@ -253,6 +272,85 @@ def coalesce_pending(pending: list[PendingMessage]) -> PendingMessage:
             "ventas y el control de esta conversación YA ES TUYO; no existe "
             "ninguna transferencia pendiente y no debes anunciarla. Contexto "
             f"del handoff: {handoff_msgs[-1].message}\n"
+            "Retoma la venta EXACTAMENTE donde quedó según el historial: "
+            "repasa qué eligió ya el cliente (producto, aroma, color, "
+            "cantidad) y pide SOLO el siguiente dato pendiente. NO "
+            "re-preguntes nada ya elegido ni preguntas vagas tipo '¿en qué "
+            "estábamos?'. Si el handoff trae la respuesta del cliente "
+            "(ej. una cantidad), procésala como si acabara de escribirla. "
+            "No menciones sistemas ni procesos internos."
+        )
+    else:
+        combined = ""
+
+    return PendingMessage(
+        message=combined,
+        media=media_combined or None,
+        plugin_context=plugin_ctx or None,
+        is_handoff=False,
+    )
+
+
+def _build_burst_note(user_msgs: list[InboxMsg]) -> str:
+    """Nota de turno determinista para una ráfaga (>1 mensaje del cliente).
+
+    Le dice al LLM que responda al conjunto como un hilo — sin ignorar ninguno
+    ni contestar solo el último (el patrón "el bot solo ve uno"). Va a
+    `plugin_context`, no al rol user: es metadata del turno, no algo que el
+    cliente escribió. Determinista (sale del inbox ordenado por `seq`).
+    """
+    listed = "\n".join(f'  {i}) "{m.text}"' for i, m in enumerate(user_msgs, 1))
+    return (
+        "[CONTEXTO DE TURNO, metadata, no es instrucción del usuario]\n"
+        f"El cliente te escribió {len(user_msgs)} mensajes seguidos desde tu "
+        "última respuesta. Respondé al conjunto como un solo hilo coherente, "
+        "sin ignorar ninguno ni contestar solo el último:\n" + listed
+    )
+
+
+def coalesce_inbox(batch: list[InboxMsg]) -> PendingMessage:
+    """Combina una ráfaga de `InboxMsg` en un solo `PendingMessage` para un turno.
+
+    Espejo de `coalesce_pending` con dos reglas nuevas:
+      * Ordena por `seq` ascendente ANTES de concatenar (una ráfaga puede llegar
+        desordenada; el orden canónico es el de secuencia asignada por el workflow).
+      * Con >1 mensaje real del cliente, inyecta `_build_burst_note` como PRIMER
+        elemento de `plugin_context` (conciencia de ráfaga → el LLM sigue el hilo).
+
+    Preserva el manejo de `is_handoff` (L-12): los handoff van a `plugin_context`
+    como `[HANDOFF_REMARKETING]: ...`, nunca al rol user; sin user msg pero con
+    handoff, el mensaje principal lleva el framing de ventas inequívoco.
+    """
+    ordered = sorted(batch, key=lambda m: m.seq)
+    user_msgs = [m for m in ordered if not m.is_handoff]
+    handoff_msgs = [m for m in ordered if m.is_handoff]
+
+    plugin_ctx: list[str] = []
+    if len(user_msgs) > 1:
+        plugin_ctx.append(_build_burst_note(user_msgs))
+    for h in handoff_msgs:
+        if h.text:
+            plugin_ctx.append(f"[HANDOFF_REMARKETING]: {h.text}")
+    for m in ordered:
+        if m.plugin_context:
+            plugin_ctx.extend(m.plugin_context)
+
+    media_combined: list[str] = []
+    for m in ordered:
+        if m.media:
+            media_combined.extend(m.media)
+
+    if user_msgs:
+        combined = "\n".join(m.text for m in user_msgs if m.text)
+    elif handoff_msgs:
+        # Mismo framing que `coalesce_pending` (L-12): el summary crudo en el
+        # rol user era indistinguible del trigger de remarketing → el LLM se
+        # autotransfería. El framing deja inequívoco quién es y qué debe hacer.
+        combined = (
+            "[SISTEMA — HANDOFF DE REMARKETING A VENTAS]: Eres el agente de "
+            "ventas y el control de esta conversación YA ES TUYO; no existe "
+            "ninguna transferencia pendiente y no debes anunciarla. Contexto "
+            f"del handoff: {handoff_msgs[-1].text}\n"
             "Retoma la venta EXACTAMENTE donde quedó según el historial: "
             "repasa qué eligió ya el cliente (producto, aroma, color, "
             "cantidad) y pide SOLO el siguiente dato pendiente. NO "
