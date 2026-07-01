@@ -1,0 +1,34 @@
+[
+  {
+    "name": "quote_ready_utility",
+    "category": "UTILITY",
+    "language": "es_CO",
+    "body": "Hola {{1}}, tu cotización para {{2}} ya está lista. ¿Querés que te la pase ahora?",
+    "example": ["Andrea", "kit aroma rosas (cotización #42)"],
+    "semantics": "Notificar al cliente que su cotización está lista (watchdog: awaiting_quote)."
+  },
+  {
+    "name": "payment_pending_utility",
+    "category": "UTILITY",
+    "language": "es_CO",
+    "body": "Hola {{1}}, tu pago de la orden {{2}} por {{3}} está pendiente. ¿Te ayudo a completarlo?",
+    "example": ["Juan", "#1042", "$120.000 COP"],
+    "semantics": "Recordar pago pendiente de una orden creada (watchdog: awaiting_payment)."
+  },
+  {
+    "name": "order_status_utility",
+    "category": "UTILITY",
+    "language": "es_CO",
+    "body": "Hola {{1}}, tu pedido {{2}} está {{3}}. Si querés más info contame por acá.",
+    "example": ["Carlos", "#1042", "en camino con entrega estimada mañana"],
+    "semantics": "Update objetivo de estado de orden post-compra (watchdog: post_purchase; también agente ETA)."
+  },
+  {
+    "name": "cart_recovery_marketing",
+    "category": "MARKETING",
+    "language": "es_CO",
+    "body": "Hola {{1}}, dejaste {{2}} en tu carrito. Si te animás a volver, tenés {{3}} disponible. ¿Lo retomamos?",
+    "example": ["Andrea", "vela aromática Patchouli", "envío gratis"],
+    "semantics": "Recovery de carrito fuera de ventana con incentivo. NUNCA por watchdog — solo LLM/cadencia."
+  }
+]
