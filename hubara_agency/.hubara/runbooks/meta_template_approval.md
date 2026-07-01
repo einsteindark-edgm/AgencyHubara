@@ -359,11 +359,13 @@ Meta apretó tornillos de atribución desde fines de 2025:
 
 ### §11.4 Los 2 únicos eventos que CAPI Business Messaging soporta
 
+> ⚠️ **El nombre del evento de lead es `LeadSubmitted`, NO `Lead`.** Meta rechaza `Lead` para `action_source: business_messaging` con error_subcode 2804066 (verificado contra el dataset vivo, 2026-07-01). `Lead` es el nombre del CAPI web clásico.
+
 Meta limitó CAPI for Business Messaging (WhatsApp) a **2 eventos**:
 
 | Evento | Cuándo mandarlo | Requiere |
 |---|---|---|
-| **Lead** | Cliente mostró intención cualificada (pidió cotización, dijo "quiero comprar", entregó datos) | `ctwa_clid` |
+| **LeadSubmitted** | Cliente mostró intención cualificada (pidió cotización, dijo "quiero comprar", entregó datos) | `ctwa_clid` |
 | **Purchase** | Orden CONFIRMADA con pago | `ctwa_clid`, `value`, `currency` |
 
 > ⚠️ **Otros eventos clásicos NO aplican aquí.** `AddToCart`, `InitiateCheckout`, `CompleteRegistration` etc. funcionan en el CAPI estándar (websites), pero **NO** en `action_source: business_messaging`. Si los mandás, Meta los ignora silenciosamente.
@@ -490,7 +492,7 @@ curl -X POST "https://graph.facebook.com/v18.0/${META_CAPI_DATASET_ID}/events?ac
   -H "Content-Type: application/json" \
   -d '{
     "data": [{
-      "event_name": "Lead",
+      "event_name": "LeadSubmitted",
       "event_time": '$(date +%s)',
       "event_id": "smoke_test_'$(date +%s)'",
       "action_source": "business_messaging",
@@ -508,7 +510,7 @@ curl -X POST "https://graph.facebook.com/v18.0/${META_CAPI_DATASET_ID}/events?ac
 
 1. Refresh el tab **"Test events"** del Dataset.
 2. Tu event debería aparecer en la lista con:
-   - **Event name**: Lead
+   - **Event name**: LeadSubmitted
    - **Action source**: business_messaging
    - **Status**: ✅ Received
 3. Si NO aparece:

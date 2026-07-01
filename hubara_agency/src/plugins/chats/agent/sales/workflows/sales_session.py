@@ -60,7 +60,9 @@ def _map_closing_tag_to_capi_event(closing_tag: str) -> str | None:
     if closing_tag in PURCHASE_CLOSING_TAGS:
         return "Purchase"
     if closing_tag in LEAD_CLOSING_TAGS:
-        return "Lead"
+        # "LeadSubmitted", NO "Lead" — Meta rechaza "Lead" para
+        # business_messaging (error 2804066; smoke test 2026-07-01).
+        return "LeadSubmitted"
     return None
 
 
