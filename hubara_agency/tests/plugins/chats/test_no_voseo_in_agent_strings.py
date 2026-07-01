@@ -27,7 +27,16 @@ from pathlib import Path
 
 # Raíz del árbol del agente chats. Este archivo vive en
 # tests/plugins/chats/ → parents[3] == hubara_agency/.
-_AGENT_ROOT = Path(__file__).resolve().parents[3] / "src" / "plugins" / "chats" / "agent"
+_HUBARA_ROOT = Path(__file__).resolve().parents[3]
+_AGENT_ROOT = _HUBARA_ROOT / "src" / "plugins" / "chats" / "agent"
+
+# Archivos LLM-facing FUERA del árbol del agente que también inyectan texto al
+# system prompt (nota de ráfaga, framing de handoff en los coalesce del
+# platform). Gap real PR #100: `_build_burst_note` decía "Respondé al conjunto"
+# (voseo) y este guard no lo veía porque solo escaneaba el árbol del agente.
+_EXTRA_LLM_FACING_FILES = [
+    _HUBARA_ROOT / "src" / "platform" / "workflow_helpers.py",
+]
 
 # Formas voseo INEQUÍVOCAS (sin homógrafo legítimo en tuteo/3ª/infinitivo).
 # Excluimos deliberadamente formas ambiguas con 1ª persona pretérito
@@ -44,7 +53,7 @@ _VOSEO_DENYLIST = [
     "esperá", "mirá", "mandá", "llamá", "usá", "empezá", "cerrá", "informá",
     "avisá", "invitá", "continuá", "reasoná", "considerá", "tocá", "recordá",
     "aguantá", "volvé", "poné", "hacé", "andá", "contá", "dejá", "recortá",
-    "fijá", "tomá",
+    "fijá", "tomá", "respondé", "contestá",
     # Imperativos con enclítico (voseo)
     "decime", "contame", "mirame", "mostrame", "avisame", "pedile", "mandale",
     "decile", "contale", "preguntale", "fijate", "acordate", "llevate",
@@ -73,12 +82,15 @@ _DETECTOR_VOCABULARY_EXEMPT = {
 def _iter_agent_py_files():
     assert _AGENT_ROOT.is_dir(), f"no existe el árbol del agente: {_AGENT_ROOT}"
     # workspace/ son .md (no .py); rglob("*.py") ya los excluye.
-    return sorted(
+    agent_files = sorted(
         p
         for p in _AGENT_ROOT.rglob("*.py")
         if str(p.relative_to(_AGENT_ROOT)).replace("\\", "/")
         not in _DETECTOR_VOCABULARY_EXEMPT
     )
+    for extra in _EXTRA_LLM_FACING_FILES:
+        assert extra.is_file(), f"archivo LLM-facing listado no existe: {extra}"
+    return agent_files + _EXTRA_LLM_FACING_FILES
 
 
 def test_no_voseo_in_chats_agent_python_strings() -> None:
