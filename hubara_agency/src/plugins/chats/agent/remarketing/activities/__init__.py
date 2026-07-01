@@ -5,8 +5,9 @@ PR-E (ADR-2026-05-06-11): ``activities.py`` (file) se convirtio en
 permitir que cada activity viva en su propio modulo cuando crezcan.
 Modulos actuales:
   * ``bootstrap_session.py``     — bootstrap + trigger prompt builder.
-  * ``watchdog_activities.py``   — HU-WA24H-001 Sprint 2: eligibility,
-    MOCK send, outcome persistence.
+  * ``watchdog_activities.py``   — HU-WA24H-001: eligibility + outcome
+    persistence. El send lo hace `send_whatsapp_template_activity`
+    (platform/whatsapp) desde Sprint 3 — no vive acá.
 
 Los re-exports preservan el import path publico
 ``from src.plugins.chats.agent.remarketing.activities import ...``.
@@ -20,7 +21,6 @@ from src.plugins.chats.agent.remarketing.activities.bootstrap_session import (
 from src.plugins.chats.agent.remarketing.activities.watchdog_activities import (
     check_watchdog_eligibility_activity,
     persist_watchdog_outcome_activity,
-    send_watchdog_template_activity,
 )
 
 __all__ = [
@@ -28,5 +28,4 @@ __all__ = [
     "build_remarketing_trigger_activity",
     "check_watchdog_eligibility_activity",
     "persist_watchdog_outcome_activity",
-    "send_watchdog_template_activity",
 ]

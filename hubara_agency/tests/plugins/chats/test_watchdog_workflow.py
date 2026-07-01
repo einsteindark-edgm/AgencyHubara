@@ -70,7 +70,11 @@ def _make_fake_activities(log: _CallLog) -> list:
         log.eligibility_calls.append((session_id, episode_id))
         return log.eligibility_result
 
-    @activity.defn(name="send_watchdog_template_activity")
+    # Sprint 3 swap: el watchdog dispara el envío REAL de template
+    # (`send_whatsapp_template_activity` de platform/whatsapp/activities.py),
+    # NO el mock de Sprint 2. El fake se registra bajo ese nombre para que
+    # el workflow lo resuelva.
+    @activity.defn(name="send_whatsapp_template_activity")
     async def fake_send(
         session_id: str, template_name: str, variables: dict
     ) -> OutboundResult:
@@ -78,7 +82,7 @@ def _make_fake_activities(log: _CallLog) -> list:
         if log.send_should_raise:
             raise RuntimeError("simulated meta 500")
         return OutboundResult(
-            wa_message_id=f"MOCK_TEST_{uuid.uuid4().hex[:8]}",
+            wa_message_id=f"wamid.TEST_{uuid.uuid4().hex[:8]}",
             ok=True,
             error=None,
         )
