@@ -315,8 +315,17 @@ def step_flows(cfg: dict) -> dict:
 
 def actual_templates(cfg: dict) -> list:
     _, body = _api("GET", f"{cfg['WABA_ID']}/message_templates", cfg["SYSTEM_USER_TOKEN"],
-                   fields="name,status,category,language", limit="200")
+                   fields="id,name,status,category,language,components", limit="200")
     return body.get("data") or []
+
+
+def _current_body_text(tmpl: dict) -> str:
+    """Extrae el texto del componente BODY de un template ya en Meta (para
+    comparar contra la definición y decidir si hay que editar)."""
+    for c in tmpl.get("components") or []:
+        if (c.get("type") or "").upper() == "BODY":
+            return c.get("text") or ""
+    return ""
 
 
 def step_templates(cfg: dict) -> None:
@@ -349,6 +358,52 @@ def step_templates(cfg: dict) -> None:
         mark = "+" if ok else "!"
         print(f"  {mark} template submit: {d['name']} [{d['language']}] → {st} "
               f"{json.dumps(body, ensure_ascii=False)[:220]}")
+
+
+def step_templates_update(cfg: dict) -> None:
+    """Edita EN META los templates cuya copy (o categoría) difiere de
+    definitions/templates.json. Idempotente: si el body ya matchea, NO edita.
+
+    Meta permite editar templates APPROVED/REJECTED/PAUSED (no PENDING) vía
+    POST /{template_id} con `components`. Al editar, el template vuelve a
+    PENDING hasta re-aprobación — por eso solo tocamos los que realmente
+    cambiaron. Name/language son inmutables en la edición (para eso hay que
+    borrar+recrear, con cooldown de 30 días); esto solo cambia copy/categoría.
+    """
+    defs = _load_defs("templates")
+    if not defs:
+        print("  ! definitions/templates.json vacío o ausente — SKIP")
+        return
+    existing = {(t.get("name"), t.get("language")): t for t in actual_templates(cfg)}
+    for d in defs:
+        cur = existing.get((d["name"], d["language"]))
+        if not cur:
+            print(f"  ! no existe en Meta: {d['name']} [{d['language']}] — "
+                  f"correr `templates` (create) primero. SKIP")
+            continue
+        body_same = _current_body_text(cur).strip() == d["body"].strip()
+        cat_same = (cur.get("category") or "").upper() == d["category"].upper()
+        if body_same and cat_same:
+            print(f"  = sin cambios: {d['name']} [{d['language']}] status={cur.get('status')}")
+            continue
+        status = (cur.get("status") or "").upper()
+        if status == "PENDING":
+            print(f"  ! {d['name']} está PENDING — no editable hasta que Meta "
+                  f"resuelva. SKIP (reintentar luego)")
+            continue
+        payload = {
+            "category": d["category"],
+            "components": [{
+                "type": "BODY",
+                "text": d["body"],
+                "example": {"body_text": [d["example"]]},
+            }],
+        }
+        st, body = _api("POST", cur["id"], cfg["SYSTEM_USER_TOKEN"], json_body=payload)
+        ok = st == 200 and body.get("success", True) and not body.get("error")
+        mark = "~" if ok else "!"
+        print(f"  {mark} template EDIT: {d['name']} [{d['language']}] → {st} "
+              f"(vuelve a PENDING) {json.dumps(body, ensure_ascii=False)[:200]}")
 
 
 # ── Comandos ─────────────────────────────────────────────────────────────────
@@ -459,6 +514,11 @@ def cmd_templates(cfg, _):
     step_templates(cfg)
 
 
+def cmd_templates_update(cfg, _):
+    print("TEMPLATES UPDATE (edita en Meta solo los que cambiaron → PENDING):")
+    step_templates_update(cfg)
+
+
 def cmd_flows(cfg, _):
     print("FLOWS (create/upload/publish idempotente):")
     resolved = step_flows(cfg)
@@ -471,6 +531,7 @@ COMMANDS = {
     "plan": cmd_plan,
     "apply": cmd_apply,
     "templates": cmd_templates,
+    "templates-update": cmd_templates_update,
     "flows": cmd_flows,
     "ssm-block": cmd_ssm_block,
 }

@@ -143,23 +143,31 @@ del WABA viejo **no sirven** — hay que re-crearlos/re-someterlos en el nuevo. 
 CLI lo hace idempotente desde `definitions/`:
 
 ```bash
-python3 whatsapp_provision.py flows     --config tenants/hubara.env   # create + upload JSON + publish
-python3 whatsapp_provision.py templates --config tenants/hubara.env   # submit a Meta (entra a review)
+python3 whatsapp_provision.py flows            --config tenants/hubara.env   # create + upload JSON + publish
+python3 whatsapp_provision.py templates        --config tenants/hubara.env   # CREATE los que faltan (submit a review)
+python3 whatsapp_provision.py templates-update --config tenants/hubara.env   # EDITA la copy que cambió (→ PENDING)
 ```
 
 - **`flows`** lee `definitions/flows.json` (nombre + categorías + path al JSON del
   flow en el repo). Si ya hay un flow `PUBLISHED` con ese nombre lo reusa; si no,
   lo crea, sube el `FLOW_JSON` y lo publica. El `flow_id` resuelto sale en
   `ssm-block` como `META_FLOW_ID_SHIPPING`.
-- **`templates`** lee `definitions/templates.json` (name, category, language, body,
-  samples). Si el template ya existe (name+language) **no** re-submitea: reporta su
-  status (`PENDING`/`APPROVED`/`REJECTED`). Si no existe, lo crea → entra a review
-  de Meta (**1–24h**, a veces 72h).
+- **`templates`** (create) lee `definitions/templates.json` (name, category, language,
+  body, samples). Si el template ya existe (name+language) **no** re-submitea: reporta
+  su status. Si no existe, lo crea → entra a review de Meta (**1–24h**, a veces 72h).
+- **`templates-update`** (edit) compara el `body`/categoría de cada definición contra
+  lo que vive en Meta y **edita SOLO los que cambiaron** (`POST /{template_id}`). Es
+  idempotente (si el body ya matchea, no toca nada) y salta los `PENDING` (no
+  editables). Al editar, el template **vuelve a PENDING** hasta re-aprobación —
+  `name`/`language` son inmutables (para eso: borrar+recrear, cooldown 30 días).
 
 > **Copy de templates = quality rating de por vida.** El `body` de cada template
 > lo redacta un humano (no LLM). Los `UTILITY` **no** pueden tener promo/ofertas
 > (Meta los recategoriza a marketing). El único `MARKETING` del set es
-> `cart_recovery`. Fuente del copy: `hubara_agency/.hubara/runbooks/meta_template_approval.md`.
+> `cart_recovery` — y **tampoco** menciona promoción ni envío gratis: es
+> re-engagement puro con opt-out (política 2026-07 + guía de mensajes de marketing
+> de Meta). Acento **tuteado**, no voseo. Fuente del copy:
+> `hubara_agency/.hubara/runbooks/meta_template_approval.md`.
 
 > **Sync con el código:** los `name` de `definitions/templates.json` deben matchear
 > exactamente el `waba_template_name` de
@@ -191,7 +199,8 @@ python3 whatsapp_provision.py discover --config tenants/hubara.env   # app suscr
 | request/verify code, register/PIN | ✅ API (código relevado por humano) |
 | subscribe-app, commerce-settings, webhook | ✅ API |
 | **Flows nativos** (create + upload + publish) | ✅ `flows` (desde `definitions/flows.json`) |
-| **Templates** (submit a Meta) | ✅ `templates` (desde `definitions/templates.json`) |
+| **Templates** (create a Meta) | ✅ `templates` (desde `definitions/templates.json`) |
+| **Templates** (editar copy que cambió) | ✅ `templates-update` (idempotente, → PENDING) |
 | SSM + render + recreate | ✅ scripts (`aws_bootstrap` + `render-env-from-ssm.sh`) |
 | Catálogo Medusa→Meta | ✅ `trigger_catalog_sync.py` |
 | Redacción del copy de templates | ❌ humano (define quality rating) |

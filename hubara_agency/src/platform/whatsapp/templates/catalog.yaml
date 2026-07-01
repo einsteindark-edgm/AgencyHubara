@@ -86,7 +86,9 @@ templates:
     category: marketing
     language: es_CO
     waba_template_name: cart_recovery_marketing   # MOCK
-    semantics: "Recovery de carrito abandonado fuera de ventana, con incentivo"
+    # Copy 2026-07 (guía de mensajes de marketing de Meta): re-engagement
+    # SIN promoción ni envío gratis; el body incluye opt-out. Tuteo, no voseo.
+    semantics: "Recovery de carrito abandonado fuera de ventana (re-engagement sin incentivo; body con opt-out)"
     triggers_when_window_expiring: false   # MARKETING nunca por watchdog
     requires_episode_stage: any
     variables:
@@ -96,7 +98,3 @@ templates:
       - name: product_label
         type: string
         max_length: 120
-      - name: discount_label
-        type: string
-        max_length: 40
-        description: "Etiqueta del descuento (e.g., '10% off', 'envío gratis')"
