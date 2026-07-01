@@ -51,7 +51,7 @@ class TestBuildLeadEvent:
             ctwa_clid="CLID_X",
         )
         payload = event.to_dict()
-        assert payload["event_name"] == "Lead"
+        assert payload["event_name"] == "LeadSubmitted"
         assert payload["event_time"] == 1700000000
         assert payload["event_id"] == "lead_wa_+57_ep_1"
         assert payload["action_source"] == ACTION_SOURCE == "business_messaging"
@@ -165,7 +165,7 @@ class TestBuildCapiRequestBody:
         assert "data" in body
         assert isinstance(body["data"], list)
         assert len(body["data"]) == 1
-        assert body["data"][0]["event_name"] == "Lead"
+        assert body["data"][0]["event_name"] == "LeadSubmitted"
 
     def test_test_event_code_at_root_not_in_data(self) -> None:
         # Critical gotcha: Meta expects test_event_code at body root, NOT
@@ -215,7 +215,7 @@ class TestAttributionWindow:
 
 class TestValidateEventName:
     def test_accepts_lead(self) -> None:
-        validate_event_name("Lead")  # no raise
+        validate_event_name("LeadSubmitted")  # no raise
 
     def test_accepts_purchase(self) -> None:
         validate_event_name("Purchase")
@@ -235,7 +235,15 @@ class TestValidateEventName:
             validate_event_name("lead")
 
     def test_allowed_set_locked(self) -> None:
-        assert ALLOWED_EVENT_NAMES == frozenset({"Lead", "Purchase"})
+        assert ALLOWED_EVENT_NAMES == frozenset({"LeadSubmitted", "Purchase"})
+
+    def test_rejects_legacy_lead_name(self) -> None:
+        # Bug real cazado por smoke test 2026-07-01 (error_subcode 2804066):
+        # Meta rechaza "Lead" para action_source=business_messaging — el
+        # nombre valido es "LeadSubmitted". La capa pura es estricta; la
+        # normalizacion legacy vive en la activity (workflows en vuelo).
+        with pytest.raises(ValueError, match="not supported"):
+            validate_event_name("Lead")
 
 
 class TestMetaCapiApiUrl:
@@ -306,9 +314,32 @@ class TestActivityShortCircuits:
             WORKSPACE_VAULT_DIR=vault_dir,
         ):
             result = await capi_activity.send_capi_event_activity(
+                session_id, "ep_1", "LeadSubmitted"
+            )
+        assert result.status == "skipped_no_config"
+
+    @pytest.mark.asyncio
+    async def test_legacy_lead_name_normalized_to_lead_submitted(
+        self, vault_session: tuple[Path, str]
+    ) -> None:
+        """Workflows en vuelo agendaron la activity con "Lead" (pre-fix).
+        La activity normaliza el nombre legacy en el boundary — no crashea
+        y el resultado reporta el nombre nuevo."""
+        vault_dir, session_id = vault_session
+        from src.platform.whatsapp import capi_activity
+
+        with patch.multiple(
+            capi_activity,
+            META_CAPI_DATASET_ID="",
+            META_CAPI_ACCESS_TOKEN="",
+            WHATSAPP_BUSINESS_ACCOUNT_ID="WABA",
+            WORKSPACE_VAULT_DIR=vault_dir,
+        ):
+            result = await capi_activity.send_capi_event_activity(
                 session_id, "ep_1", "Lead"
             )
         assert result.status == "skipped_no_config"
+        assert result.event_name == "LeadSubmitted"
 
     @pytest.mark.asyncio
     async def test_skipped_no_config_when_token_missing(
@@ -325,7 +356,7 @@ class TestActivityShortCircuits:
             WORKSPACE_VAULT_DIR=vault_dir,
         ):
             result = await capi_activity.send_capi_event_activity(
-                session_id, "ep_1", "Lead"
+                session_id, "ep_1", "LeadSubmitted"
             )
         assert result.status == "skipped_no_config"
 
@@ -344,7 +375,7 @@ class TestActivityShortCircuits:
             WORKSPACE_VAULT_DIR=vault_dir,
         ):
             result = await capi_activity.send_capi_event_activity(
-                session_id, "ep_1", "Lead"
+                session_id, "ep_1", "LeadSubmitted"
             )
         assert result.status == "skipped_no_waba_id"
 
@@ -363,7 +394,7 @@ class TestActivityShortCircuits:
             WORKSPACE_VAULT_DIR=tmp_path,
         ):
             result = await capi_activity.send_capi_event_activity(
-                "wa_+57missing", "ep_1", "Lead"
+                "wa_+57missing", "ep_1", "LeadSubmitted"
             )
         assert result.status == "skipped_no_metadata"
 
@@ -383,7 +414,7 @@ class TestActivityShortCircuits:
             WORKSPACE_VAULT_DIR=vault_dir,
         ):
             result = await capi_activity.send_capi_event_activity(
-                session_id, "ep_1", "Lead"
+                session_id, "ep_1", "LeadSubmitted"
             )
         assert result.status == "skipped_no_ctwa_clid"
 
@@ -413,7 +444,7 @@ class TestActivityShortCircuits:
             WORKSPACE_VAULT_DIR=vault_dir,
         ):
             result = await capi_activity.send_capi_event_activity(
-                session_id, "ep_1", "Lead"
+                session_id, "ep_1", "LeadSubmitted"
             )
         assert result.status == "skipped_attribution_expired"
 
@@ -440,7 +471,7 @@ class TestActivityShortCircuits:
             WORKSPACE_VAULT_DIR=vault_dir,
         ):
             result = await capi_activity.send_capi_event_activity(
-                session_id, "ep_1", "Lead"
+                session_id, "ep_1", "LeadSubmitted"
             )
         assert result.status == "skipped_terminal_event_reached"
 
@@ -483,7 +514,7 @@ class TestActivityShortCircuits:
             capi_events_sent=[
                 {
                     "event_id": "lead_wa_+573001234567_ep_1",
-                    "event_name": "Lead",
+                    "event_name": "LeadSubmitted",
                     "status": "sent",
                 }
             ],
@@ -498,7 +529,7 @@ class TestActivityShortCircuits:
             WORKSPACE_VAULT_DIR=vault_dir,
         ):
             result = await capi_activity.send_capi_event_activity(
-                session_id, "ep_1", "Lead"
+                session_id, "ep_1", "LeadSubmitted"
             )
         assert result.status == "skipped_already_sent"
 
@@ -535,12 +566,12 @@ class TestActivityHappyPath:
             WORKSPACE_VAULT_DIR=vault_dir,
         ), patch.object(httpx, "AsyncClient", return_value=mock_client):
             result = await capi_activity.send_capi_event_activity(
-                session_id, "ep_1", "Lead"
+                session_id, "ep_1", "LeadSubmitted"
             )
 
         assert result.status == "sent"
         assert result.event_id == "lead_wa_+573001234567_ep_1"
-        assert result.event_name == "Lead"
+        assert result.event_name == "LeadSubmitted"
         assert result.fbtrace_id == "TRACE_X"
 
         # Verify metadata was updated
@@ -548,7 +579,7 @@ class TestActivityHappyPath:
         assert "capi_events_sent" in md
         assert len(md["capi_events_sent"]) == 1
         assert md["capi_events_sent"][0]["status"] == "sent"
-        assert md["capi_events_sent"][0]["event_name"] == "Lead"
+        assert md["capi_events_sent"][0]["event_name"] == "LeadSubmitted"
         # Lead does NOT lock terminal_event (only Purchase does)
         assert "capi_terminal_event" not in md
 
@@ -686,7 +717,7 @@ class TestActivityErrors:
         ), patch.object(httpx, "AsyncClient", return_value=mock_client):
             with pytest.raises(ApplicationError) as exc_info:
                 await capi_activity.send_capi_event_activity(
-                    session_id, "ep_1", "Lead"
+                    session_id, "ep_1", "LeadSubmitted"
                 )
 
         assert exc_info.value.non_retryable is True
@@ -725,7 +756,7 @@ class TestActivityErrors:
         ), patch.object(httpx, "AsyncClient", return_value=mock_client):
             with pytest.raises(ApplicationError) as exc_info:
                 await capi_activity.send_capi_event_activity(
-                    session_id, "ep_1", "Lead"
+                    session_id, "ep_1", "LeadSubmitted"
                 )
 
         assert exc_info.value.non_retryable is False
@@ -761,7 +792,7 @@ class TestActivityErrors:
         ), patch.object(httpx, "AsyncClient", return_value=mock_client):
             with pytest.raises(ApplicationError) as exc_info:
                 await capi_activity.send_capi_event_activity(
-                    session_id, "ep_1", "Lead"
+                    session_id, "ep_1", "LeadSubmitted"
                 )
 
         # Transport errors are retryable
@@ -786,14 +817,14 @@ class TestWorkflowMapper:
             _map_closing_tag_to_capi_event,
         )
 
-        assert _map_closing_tag_to_capi_event("CONFIRMADO_PAGO_PENDIENTE") == "Lead"
+        assert _map_closing_tag_to_capi_event("CONFIRMADO_PAGO_PENDIENTE") == "LeadSubmitted"
 
     def test_confirmado_sin_datos_maps_to_lead(self) -> None:
         from src.plugins.chats.agent.sales.workflows.sales_session import (
             _map_closing_tag_to_capi_event,
         )
 
-        assert _map_closing_tag_to_capi_event("CONFIRMADO_SIN_DATOS") == "Lead"
+        assert _map_closing_tag_to_capi_event("CONFIRMADO_SIN_DATOS") == "LeadSubmitted"
 
     def test_rechazo_maps_to_none(self) -> None:
         from src.plugins.chats.agent.sales.workflows.sales_session import (
