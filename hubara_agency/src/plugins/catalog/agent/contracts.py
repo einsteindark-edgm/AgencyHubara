@@ -120,6 +120,12 @@ class PushMetaActivityInput:
 
     `snapshot_dir`: para leer `.meta_state.json` (previous_hashes,
     last_meta_count) y persistir el state nuevo después del push exitoso.
+
+    `force_full_refresh`: si True, ignora los `previous_hashes` del state file
+    → todos los items se re-pushean como CREATE (Meta re-encola el fetch de
+    imágenes). Recuperación cuando Meta falla el fetch async de una imagen sin
+    que cambien los datos del producto (el delta por hash lo saltearía como
+    "sin cambios"). El botón "Sincronizar" del dashboard lo manda en True.
     """
 
     tenant_id: str
@@ -127,6 +133,7 @@ class PushMetaActivityInput:
     snapshot_dir: str
     site_base_url: str = "https://hubara.com.co"
     brand: str = "Hubara"
+    force_full_refresh: bool = False
 
 
 @dataclass(frozen=True)
