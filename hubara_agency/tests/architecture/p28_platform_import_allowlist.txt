@@ -42,6 +42,7 @@ src/plugins/chats/agent/remarketing/workflows/remarketing.py -> src.platform.tem
 src/plugins/chats/agent/remarketing/workflows/remarketing.py -> src.platform.temporal.retry_policies
 src/plugins/chats/agent/remarketing/workflows/remarketing.py -> src.platform.whatsapp.activities
 src/plugins/chats/agent/remarketing/workflows/remarketing.py -> src.platform.workflow_helpers
+src/plugins/chats/agent/remarketing/workflows/watchdog.py -> src.platform.whatsapp.activities
 src/plugins/chats/agent/sales/activities/bootstrap_session.py -> src.platform.config
 src/plugins/chats/agent/sales/activities/bootstrap_session.py -> src.platform.registries
 src/plugins/chats/agent/sales/activities/bootstrap_session.py -> src.platform.state
