@@ -68,3 +68,66 @@ def test_coalesce_inbox_combines_media_in_seq_order() -> None:
     batch = [_msg(2, "otra", media=["img-2"]), _msg(1, "foto", media=["img-1"])]
     result = coalesce_inbox(batch)
     assert result.media == ["img-1", "img-2"]
+
+
+# --- version=2 (burst-note-v2): fixes post-review del PR #100 -----------------
+#
+# v1 queda congelada porque ya corre en prod (deploy 2026-07-01): el workflow
+# la elige vía `workflow.patched("burst-note-v1")` para replays de histories
+# viejas. v2 es la que toman ejecuciones nuevas (gate "burst-note-v2").
+
+
+def test_coalesce_inbox_v2_media_only_does_not_inflate_burst_note() -> None:
+    """Un mensaje solo-media (text vacío) NO cuenta ni se lista en la nota.
+
+    Bug v1: cliente manda foto + "cuánto vale?" → la nota decía "2 mensajes
+    seguidos" y listaba `1) ""` — una entrada vacía que confunde al LLM.
+    Con un solo mensaje CON texto, no hay hilo que seguir → sin nota.
+    """
+    batch = [_msg(1, "", media=["img-1"]), _msg(2, "cuánto vale?")]
+    result = coalesce_inbox(batch, version=2)
+    assert result.message == "cuánto vale?"
+    assert result.media == ["img-1"]
+    assert result.plugin_context is None  # sin nota: solo 1 mensaje con texto
+
+
+def test_coalesce_inbox_v2_burst_note_counts_only_texted_messages() -> None:
+    """Con 3 mensajes donde 1 es solo-media, la nota dice 2 y no lista `""`."""
+    batch = [_msg(1, "Hola"), _msg(2, "", media=["img-1"]), _msg(3, "el difusor")]
+    result = coalesce_inbox(batch, version=2)
+    assert result.plugin_context is not None
+    note = result.plugin_context[0]
+    assert "2 mensajes seguidos" in note
+    assert '"Hola"' in note
+    assert '"el difusor"' in note
+    assert '""' not in note
+
+
+def test_coalesce_inbox_v2_dedupes_repeated_plugin_context() -> None:
+    """Ráfaga de N mensajes con el mismo plugin_context → 1 sola copia.
+
+    Bug v1: cada inbound Sales trae `build_bogota_context_string()` en su
+    plugin_context; una ráfaga de 3 metía 3 bloques "Hora actual en Colombia"
+    casi idénticos al system prompt. v2 dedupea duplicados EXACTOS preservando
+    el orden de primera aparición.
+    """
+    bogota = "[CONTEXTO DE TURNO] Hora actual en Colombia: 14:30"
+    batch = [
+        _msg(1, "Hola", plugin_context=[bogota]),
+        _msg(2, "quiero el difusor", plugin_context=[bogota]),
+        _msg(3, "de lavanda", plugin_context=[bogota, "extra"]),
+    ]
+    result = coalesce_inbox(batch, version=2)
+    assert result.plugin_context is not None
+    assert result.plugin_context.count(bogota) == 1
+    assert "extra" in result.plugin_context
+    # La nota de ráfaga sigue primera (metadata del turno antes del contexto).
+    assert "3 mensajes seguidos" in result.plugin_context[0]
+
+
+def test_coalesce_inbox_v1_default_preserves_deployed_behavior() -> None:
+    """Sin `version=2`, el comportamiento es el v1 congelado (replay prod)."""
+    batch = [_msg(1, "", media=["img-1"]), _msg(2, "cuánto vale?")]
+    result = coalesce_inbox(batch)
+    assert result.plugin_context is not None  # v1 SÍ inyecta la nota (2 msgs)
+    assert "2 mensajes seguidos" in result.plugin_context[0]
