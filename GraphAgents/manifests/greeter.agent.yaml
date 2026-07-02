@@ -18,7 +18,4 @@ contract:
 # se puede invocar como tool de otro agente.
 exposes_as_tool: true
 
-tools:
-  - uses: hello@1
-    with:
-      name: $state.name
+tools: []
