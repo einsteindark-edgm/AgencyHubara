@@ -11,6 +11,7 @@ export type {
   AvatarColor,
   CampaignStatus,
   CampaignTendency,
+  CapiEvent,
 } from "./model";
 export {
   ADS_DATE_RANGES,

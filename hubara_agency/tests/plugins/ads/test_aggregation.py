@@ -37,6 +37,7 @@ def _write_session(
     ctwa_referrals: list[dict] | None = None,
     active_route: str | None = None,
     history_lines: list[str] | None = None,
+    extra: dict | None = None,
 ) -> Path:
     """Crea un wa_<phone>/metadata.json (+ sessions/<sid>.jsonl si hay
     history_lines). Devuelve el path del session dir.
@@ -54,6 +55,8 @@ def _write_session(
         metadata["ctwa_referrals"] = ctwa_referrals
     if active_route is not None:
         metadata["active_route"] = active_route
+    if extra is not None:
+        metadata.update(extra)
 
     (session_dir / "metadata.json").write_text(
         json.dumps(metadata, indent=2), encoding="utf-8"
@@ -1562,3 +1565,106 @@ def test_bogota_day_start_ms_roundtrips_with_bogota_date(_isolate_vault_dir: Pat
     assert _bogota_date(ms) == dt.date(2026, 5, 15)
     assert _bogota_date(ms - 1) == dt.date(2026, 5, 14)  # 1ms antes = día anterior
     assert bogota_day_start_ms("not-a-date") is None
+
+
+# --- CAPI en tableros (fix 2026-07-01) --------------------------------------
+
+
+_AD_ORIGIN_CAPI = {
+    "channel": "ad",
+    "source_id": "AD_CAPI",
+    "headline": "Chatea con nosotros",
+    "first_seen_ms": 1_714_000_000_000,
+}
+
+
+def _capi_session_extra() -> dict:
+    """Sesión con 2 episodios: ep_001 compró (Purchase sent), ep_002 tuvo
+    LeadSubmitted fallido. Un LeadSubmitted sent para ep_001 también (fue
+    superado por el Purchase — ambos cuentan como enviados)."""
+    return {
+        "episodes": [
+            {
+                "episode_id": "ep_001",
+                "started_at_ms": 1_714_000_000_000,
+                "closed_at_ms": 1_714_000_100_000,
+                "closing_tag": "COMPRA_EXITOSA",
+                "order_id": "order_A1",
+                "order_total_cop": 80000,
+                "referral_snapshot": {"channel": "ad", "source_id": "AD_CAPI"},
+            },
+            {
+                "episode_id": "ep_002",
+                "started_at_ms": 1_714_100_000_000,
+                "closed_at_ms": 1_714_100_100_000,
+                "closing_tag": "CONFIRMADO_PAGO_PENDIENTE",
+                "order_id": None,
+                "referral_snapshot": {"channel": "ad", "source_id": "AD_CAPI"},
+            },
+        ],
+        "capi_events_sent": [
+            {
+                "event_id": "lead_wa_573001_ep_001",
+                "event_name": "LeadSubmitted",
+                "status": "sent",
+            },
+            {
+                "event_id": "purchase_order_A1",
+                "event_name": "Purchase",
+                "status": "sent",
+            },
+            {
+                "event_id": "lead_wa_573001_ep_002",
+                "event_name": "LeadSubmitted",
+                "status": "failed_4xx",
+            },
+        ],
+    }
+
+
+def test_campaign_aggregates_capi_counters(_isolate_vault_dir: Path):
+    """Los eventos CAPI del metadata suman al bucket de la campaña:
+    sent LeadSubmitted → capi_leads_sent, sent Purchase →
+    capi_purchases_sent, failed_* → capi_failed."""
+    _write_session(
+        _isolate_vault_dir,
+        phone="573001",
+        origin=_AD_ORIGIN_CAPI,
+        extra=_capi_session_extra(),
+    )
+    campaigns = list_ads_campaigns(_isolate_vault_dir)
+    camp = next(c for c in campaigns if c.id == "AD_CAPI")
+    assert camp.capi_leads_sent == 1
+    assert camp.capi_purchases_sent == 1
+    assert camp.capi_failed == 1
+
+
+def test_campaign_capi_counters_default_zero(_isolate_vault_dir: Path):
+    """Campaña sin eventos CAPI → counters en 0 (no None): el frontend
+    los muestra siempre y distingue 'sin señal' de 'pendiente'."""
+    _write_session(
+        _isolate_vault_dir,
+        phone="573002",
+        origin=_AD_ORIGIN_CAPI,
+    )
+    campaigns = list_ads_campaigns(_isolate_vault_dir)
+    camp = next(c for c in campaigns if c.id == "AD_CAPI")
+    assert camp.capi_leads_sent == 0
+    assert camp.capi_purchases_sent == 0
+    assert camp.capi_failed == 0
+
+
+def test_conversation_carries_capi_event(_isolate_vault_dir: Path):
+    """Cada conversación (episodio) expone su evento CAPI reportado:
+    Purchase pisa a LeadSubmitted (terminal); fallidos no cuentan."""
+    _write_session(
+        _isolate_vault_dir,
+        phone="573001",
+        origin=_AD_ORIGIN_CAPI,
+        extra=_capi_session_extra(),
+    )
+    convs = list_attributed_conversations(_isolate_vault_dir, "AD_CAPI")
+    by_ep = {c.episode_id: c for c in convs}
+    assert by_ep["ep_001"].capi_event == "Purchase"
+    # ep_002: su LeadSubmitted falló → no se reportó nada a Meta
+    assert by_ep["ep_002"].capi_event is None

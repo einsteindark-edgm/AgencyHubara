@@ -12,6 +12,7 @@
 import {
   ADS_STATES,
   type AttributedConversation,
+  type CapiEvent,
 } from "@plugins/ads/frontend/entities/ads-campaign";
 import { Avatar } from "@/shared/ui";
 
@@ -22,6 +23,14 @@ import {
   ATTRIBUTED_STATE_FILTERS,
   useStateFilter,
 } from "../model/useStateFilter";
+
+/** Colores del badge CAPI — reusa los tokens de estado del design system:
+ *  `Purchase` = success (mismo par que "ganado"), `LeadSubmitted` = info
+ *  (mismo par que "nuevo"). */
+const CAPI_EVENT_META: Record<CapiEvent, { color: string; bg: string }> = {
+  Purchase: { color: "var(--color-ok)", bg: "rgba(91,224,123,0.22)" },
+  LeadSubmitted: { color: "var(--color-info)", bg: "rgba(95,169,255,0.22)" },
+};
 
 interface Props {
   rows: AttributedConversation[];
@@ -69,6 +78,7 @@ export function AdsAttributedTable({ rows }: Props) {
               <th className="num">Msgs</th>
               <th>Agente</th>
               <th>Estado</th>
+              <th>CAPI</th>
               <th className="num">Valor</th>
               <th className="num">Costo LLM</th>
             </tr>
@@ -110,6 +120,23 @@ export function AdsAttributedTable({ rows }: Props) {
                       <MissingField withIcon />
                     )}
                   </td>
+                  <td>
+                    {/* Evento CAPI reportado a Meta para este episodio.
+                        null = no reportado → celda vacía (sin marker: no es
+                        un dato pendiente, simplemente no hubo evento). */}
+                    {c.capiEvent ? (
+                      <span
+                        className="att-state"
+                        title={`Evento ${c.capiEvent} reportado a Meta (CAPI)`}
+                        style={{
+                          background: CAPI_EVENT_META[c.capiEvent].bg,
+                          color: CAPI_EVENT_META[c.capiEvent].color,
+                        }}
+                      >
+                        {c.capiEvent}
+                      </span>
+                    ) : null}
+                  </td>
                   <td className="num">
                     {c.value !== null && c.value > 0 ? (
                       fmtMoney(c.value)
@@ -140,7 +167,7 @@ export function AdsAttributedTable({ rows }: Props) {
             })}
             {list.length === 0 && (
               <tr>
-                <td colSpan={9} className="att-empty">
+                <td colSpan={10} className="att-empty">
                   Sin chats que coincidan con el filtro.
                 </td>
               </tr>

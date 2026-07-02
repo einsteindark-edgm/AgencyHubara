@@ -207,9 +207,39 @@ function CampaignRow({ campaign, selected, onSelect }: RowProps) {
             )}
           </span>
         </div>
+        <div className="crs">
+          <span className="crs-l">CAPI</span>
+          <CapiSignal campaign={campaign} />
+        </div>
       </div>
       <StateMicroBar conversations={campaign.conversations} total={total} />
     </button>
+  );
+}
+
+/**
+ * Señal CAPI compacta de la campaña: `↑ N` = eventos server-side enviados a
+ * Meta (LeadSubmitted + Purchase), con el desglose en el tooltip nativo.
+ * `capiFailed > 0` → clase `neg` (rojo del design system, misma que ROAS<1).
+ * Todo en 0 → "—" discreto (mismo lenguaje que los campos pendientes).
+ */
+function CapiSignal({ campaign }: { campaign: AdsCampaign }) {
+  const sent = campaign.capiLeadsSent + campaign.capiPurchasesSent;
+  if (sent === 0 && campaign.capiFailed === 0) {
+    return (
+      <span className="crs-v">
+        <MissingField title="Sin eventos CAPI reportados a Meta" />
+      </span>
+    );
+  }
+  const breakdown = `${campaign.capiLeadsSent} LeadSubmitted · ${campaign.capiPurchasesSent} Purchase · ${campaign.capiFailed} fallos`;
+  return (
+    <span
+      className={"crs-v" + (campaign.capiFailed > 0 ? " neg" : "")}
+      title={breakdown}
+    >
+      ↑ {fmtN(sent)}
+    </span>
   );
 }
 

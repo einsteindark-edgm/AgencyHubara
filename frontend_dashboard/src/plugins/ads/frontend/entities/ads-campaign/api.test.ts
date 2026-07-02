@@ -7,8 +7,9 @@
 
 import { describe, expect, it } from "vitest";
 
-import { mapBackendConversation } from "./api";
+import { mapBackendCampaign, mapBackendConversation } from "./api";
 import {
+  backendAdsCampaignSchema,
   backendAdsDailyResponseSchema,
   backendAttributedConversationSchema,
   type BackendAttributedConversation,
@@ -30,6 +31,39 @@ const sample: BackendAttributedConversation = {
   duration_ms: 4200000,
   llm_cost_usd: 0.0042,
   llm_tokens: 1930,
+  capi_event: null,
+};
+
+/** Campaña backend mínima válida — todos los nullable en null. Sin los campos
+ *  CAPI a propósito: el schema debe defaultearlos a 0 (backend viejo). */
+const campaignSample = {
+  id: "AD_X",
+  name: "Velas artesanales",
+  source_type: "ad",
+  started: 12,
+  first_seen_ms: 1779800400000,
+  last_seen_ms: 1779900400000,
+  conversations: null,
+  revenue: null,
+  avg_ticket: null,
+  llm_cost_usd: null,
+  llm_tokens: null,
+  avg_episode_duration_ms: null,
+  spend: null,
+  impressions: null,
+  reach: null,
+  clicks: null,
+  status: null,
+  objective: null,
+  placement: null,
+  audience: null,
+  ad_set: null,
+  creative_title: null,
+  template: null,
+  meta_campaign_id: null,
+  first_resp: null,
+  tendency: null,
+  days_run: null,
 };
 
 describe("mapBackendConversation — costo LLM", () => {
@@ -82,6 +116,79 @@ describe("mapBackendConversation — value + duración", () => {
     });
     expect(c.value).toBeNull();
     expect(c.durationMs).toBeNull();
+  });
+});
+
+describe("backendAdsCampaignSchema — counters CAPI", () => {
+  it("defaultea los counters a 0 cuando el backend aún no los serializa", () => {
+    const parsed = backendAdsCampaignSchema.parse(campaignSample);
+    expect(parsed.capi_leads_sent).toBe(0);
+    expect(parsed.capi_purchases_sent).toBe(0);
+    expect(parsed.capi_failed).toBe(0);
+  });
+
+  it("parsea los counters cuando vienen poblados", () => {
+    const parsed = backendAdsCampaignSchema.parse({
+      ...campaignSample,
+      capi_leads_sent: 3,
+      capi_purchases_sent: 1,
+      capi_failed: 2,
+    });
+    expect(parsed.capi_leads_sent).toBe(3);
+    expect(parsed.capi_purchases_sent).toBe(1);
+    expect(parsed.capi_failed).toBe(2);
+  });
+
+  it("rechaza un counter string (contract drift)", () => {
+    expect(() =>
+      backendAdsCampaignSchema.parse({
+        ...campaignSample,
+        capi_leads_sent: "3",
+      }),
+    ).toThrow();
+  });
+});
+
+describe("mapBackendCampaign — counters CAPI", () => {
+  it("mapea capi_* (snake) → capi* (camel) del dominio", () => {
+    const c = mapBackendCampaign(
+      backendAdsCampaignSchema.parse({
+        ...campaignSample,
+        capi_leads_sent: 3,
+        capi_purchases_sent: 1,
+        capi_failed: 2,
+      }),
+    );
+    expect(c.capiLeadsSent).toBe(3);
+    expect(c.capiPurchasesSent).toBe(1);
+    expect(c.capiFailed).toBe(2);
+  });
+});
+
+describe("capi_event — schema + mapper", () => {
+  it("defaultea capi_event a null si el backend aún no lo serializa", () => {
+    const { capi_event: _omit, ...rest } = sample;
+    void _omit;
+    expect(backendAttributedConversationSchema.parse(rest).capi_event).toBeNull();
+  });
+
+  it("mapea capi_event → capiEvent ('Purchase' | 'LeadSubmitted')", () => {
+    expect(
+      mapBackendConversation({ ...sample, capi_event: "Purchase" }).capiEvent,
+    ).toBe("Purchase");
+    expect(
+      mapBackendConversation({ ...sample, capi_event: "LeadSubmitted" })
+        .capiEvent,
+    ).toBe("LeadSubmitted");
+  });
+
+  it("null y valores desconocidos → capiEvent null (narrowing defensivo)", () => {
+    expect(
+      mapBackendConversation({ ...sample, capi_event: null }).capiEvent,
+    ).toBeNull();
+    expect(
+      mapBackendConversation({ ...sample, capi_event: "Lead" }).capiEvent,
+    ).toBeNull();
   });
 });
 

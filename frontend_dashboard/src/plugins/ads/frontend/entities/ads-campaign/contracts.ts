@@ -66,6 +66,13 @@ export const backendAdsCampaignSchema = z.object({
   first_resp: z.string().nullable(),
   tendency: z.string().nullable(),
   days_run: z.number().nullable(),
+
+  // CAPI (Conversions API de Meta) — counters de eventos server-side
+  // reportados por bucket. El backend los serializa SIEMPRE (0 si nada);
+  // `.default(0)` tolera un backend viejo que aún no emite los campos.
+  capi_leads_sent: z.number().int().default(0),
+  capi_purchases_sent: z.number().int().default(0),
+  capi_failed: z.number().int().default(0),
 });
 
 export type BackendAdsCampaign = z.infer<typeof backendAdsCampaignSchema>;
@@ -109,6 +116,11 @@ export const backendAttributedConversationSchema = z.object({
   // no acumuló uso (sesión legacy / episodio sin turnos LLM).
   llm_cost_usd: z.number().nullable(),
   llm_tokens: z.number().int().nullable(),
+
+  // Evento CAPI reportado a Meta para este episodio: "LeadSubmitted" |
+  // "Purchase" | null (no reportado). `.default(null)` tolera un backend
+  // viejo que aún no emite el campo.
+  capi_event: z.string().nullable().default(null),
 });
 
 export type BackendAttributedConversation = z.infer<

@@ -213,6 +213,76 @@ def test_ensure_captures_referral_snapshot_at_episode_start():
     assert ep["referral_snapshot"] == referral
 
 
+def test_ensure_upgrades_snapshot_when_ad_referral_arrives_mid_episode():
+    """Last-ad-touch (fix 2026-07-01): un cliente con episodio ACTIVO que
+    clickea un ad debe re-atribuir el episodio a esa campaña. Antes el
+    referral nuevo se descartaba (`return last` sin tocar) → la campaña
+    era invisible en el dashboard mientras CAPI (ctwa_referrals[-1]) SÍ
+    la atribuía — tableros y Meta contaban historias distintas."""
+    metadata: dict = {}
+    ensure_active_episode(
+        metadata,
+        now_ms=_NOW_MS,
+        inbound_message_id="wamid.A",
+        referral_snapshot={"channel": "direct"},
+    )
+    ad_snap = {
+        "ctwa_clid": "CLID_DAD",
+        "source_id": "AD_DIA_DEL_PADRE",
+        "headline": "Chatea con nosotros",
+        "channel": "ad",
+    }
+    ep = ensure_active_episode(
+        metadata,
+        now_ms=_LATER_MS,
+        inbound_message_id="wamid.B",
+        referral_snapshot=ad_snap,
+    )
+    assert len(metadata["episodes"]) == 1  # NO abre episodio nuevo
+    assert ep["referral_snapshot"] == ad_snap
+    # started_at_ms NO cambia — la re-atribución no reinicia el episodio
+    assert ep["started_at_ms"] == _NOW_MS
+
+
+def test_ensure_last_ad_touch_wins_between_two_ads():
+    """Dos clicks de ads distintos en el mismo episodio → gana el último
+    (consistente con CAPI, que usa ctwa_referrals[-1])."""
+    metadata: dict = {}
+    ensure_active_episode(
+        metadata,
+        now_ms=_NOW_MS,
+        inbound_message_id="wamid.A",
+        referral_snapshot={"channel": "ad", "source_id": "AD_A", "ctwa_clid": "C1"},
+    )
+    ep = ensure_active_episode(
+        metadata,
+        now_ms=_LATER_MS,
+        inbound_message_id="wamid.B",
+        referral_snapshot={"channel": "ad", "source_id": "AD_B", "ctwa_clid": "C2"},
+    )
+    assert ep["referral_snapshot"]["source_id"] == "AD_B"
+
+
+def test_ensure_direct_inbound_never_downgrades_ad_snapshot():
+    """Un inbound direct (sin source_id) NO borra la atribución de ad del
+    episodio activo — solo un touch real de campaña puede reemplazarla."""
+    metadata: dict = {}
+    ad_snap = {"channel": "ad", "source_id": "AD_A", "ctwa_clid": "C1"}
+    ensure_active_episode(
+        metadata,
+        now_ms=_NOW_MS,
+        inbound_message_id="wamid.A",
+        referral_snapshot=ad_snap,
+    )
+    ep = ensure_active_episode(
+        metadata,
+        now_ms=_LATER_MS,
+        inbound_message_id="wamid.B",
+        referral_snapshot={"channel": "direct"},
+    )
+    assert ep["referral_snapshot"] == ad_snap
+
+
 def test_ensure_resets_metadata_tag_on_reengagement():
     """Cuando se abre un episodio nuevo después de uno cerrado, `metadata.tag`
     se resetea a NO_ETIQUETADO. Sino el classifier del nuevo episodio
