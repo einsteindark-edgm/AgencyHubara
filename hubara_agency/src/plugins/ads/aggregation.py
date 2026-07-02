@@ -31,6 +31,7 @@ DEHA:
 from __future__ import annotations
 
 import datetime
+import json
 import logging
 import time
 from dataclasses import dataclass
@@ -246,6 +247,99 @@ def _make_line_counter(session_dir: Path) -> Callable[[], int]:
         return cache[0]
 
     return get
+
+
+def _make_history_reader(
+    session_dir: Path,
+) -> Callable[[], list[tuple[str, int]]]:
+    """Getter MEMOIZADO del historial parseado: lista de `(role, ts_ms)`.
+
+    Mismo patrón lazy que `_make_line_counter` — el JSONL solo se abre si
+    algún consumidor lo pide (hoy: `first_resp`), una vez por request.
+    Líneas corruptas o sin timestamp parseable se saltean (best-effort).
+    """
+    cache: list[list[tuple[str, int]] | None] = [None]
+
+    def get() -> list[tuple[str, int]]:
+        if cache[0] is None:
+            parsed: list[tuple[str, int]] = []
+            jsonl = _history_jsonl_path(session_dir)
+            if jsonl.exists():
+                try:
+                    with jsonl.open("r", encoding="utf-8") as f:
+                        for line in f:
+                            line = line.strip()
+                            if not line:
+                                continue
+                            try:
+                                evt = json.loads(line)
+                                ts = datetime.datetime.fromisoformat(
+                                    evt["timestamp"]
+                                )
+                                parsed.append(
+                                    (
+                                        evt.get("role") or "",
+                                        int(ts.timestamp() * 1000),
+                                    )
+                                )
+                            except (ValueError, KeyError, TypeError):
+                                continue
+                except OSError:
+                    pass
+            cache[0] = parsed
+        return cache[0]
+
+    return get
+
+
+def _episode_first_response_ms(
+    lines: list[tuple[str, int]], start_idx: int
+) -> int | None:
+    """(1er assistant − 1er user) del episodio, en ms — o None.
+
+    `start_idx` es el `msgs_count_at_start` del episodio (offset de línea
+    donde arranca su historial; 0 para legacy/sin snapshot).
+    """
+    first_user_ms: int | None = None
+    for role, ts_ms in lines[max(start_idx, 0):]:
+        if first_user_ms is None:
+            if role == "user":
+                first_user_ms = ts_ms
+        elif role == "assistant":
+            delta = ts_ms - first_user_ms
+            return delta if delta >= 0 else None
+    return None
+
+
+def _format_duration_label(ms: float) -> str:
+    """`"45 s"` / `"5 min"` / `"2,3 h"` — el wire de `first_resp` es un
+    label legible (contrato del frontend: string, no número)."""
+    seconds = ms / 1000
+    if seconds < 60:
+        return f"{round(seconds)} s"
+    minutes = seconds / 60
+    if minutes < 60:
+        return f"{round(minutes)} min"
+    hours = minutes / 60
+    return f"{hours:.1f}".replace(".", ",") + " h"
+
+
+_TENDENCY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
+
+
+def _tendency_label(last7: int, prev7: int) -> str | None:
+    """Tendencia de chats: últimos 7 días vs los 7 anteriores.
+
+    ±20% de margen para no marcar "up/down" por ruido de 1 chat. Sin
+    actividad en las 2 semanas → None (no hay señal, no "flat").
+    """
+    if last7 == 0 and prev7 == 0:
+        return None
+    if last7 >= prev7 * 1.2:
+        return "up"
+    if last7 <= prev7 * 0.8:
+        return "down"
+    return "flat"
 
 
 def scan_ad_sessions(
@@ -625,6 +719,7 @@ def list_ads_campaigns(
         count_fn = _make_line_counter(session_dir)
         order_totals = _session_order_totals(metadata)
         capi_idx = _session_capi_by_episode(metadata, session_dir.name)
+        history_fn = _make_history_reader(session_dir)
 
         for ep, state in _iter_episodes(
             metadata,
@@ -679,6 +774,10 @@ def list_ads_campaigns(
                     "capi_leads": 0,
                     "capi_purchases": 0,
                     "capi_failed": 0,
+                    "fr_sum": 0,
+                    "fr_count": 0,
+                    "t_last7": 0,
+                    "t_prev7": 0,
                 },
             )
             bucket["started"] += 1
@@ -709,6 +808,24 @@ def list_ads_campaigns(
                 bucket["capi_leads"] += capi_slot["lead_sent"]
                 bucket["capi_purchases"] += capi_slot["purchase_sent"]
                 bucket["capi_failed"] += capi_slot["failed"]
+            # first_resp del episodio (lee el JSONL lazy, 1 vez por sesión)
+            _start_idx = (
+                ep.get("msgs_count_at_start") if isinstance(ep, dict) else None
+            )
+            fr = _episode_first_response_ms(
+                history_fn(),
+                _start_idx if isinstance(_start_idx, int) else 0,
+            )
+            if fr is not None:
+                bucket["fr_sum"] += fr
+                bucket["fr_count"] += 1
+            # tendencia: episodios iniciados últimos 7d vs 7d previos
+            if isinstance(ep_started_ms, int):
+                age = now_ms - ep_started_ms
+                if 0 <= age < _TENDENCY_WINDOW_MS:
+                    bucket["t_last7"] += 1
+                elif _TENDENCY_WINDOW_MS <= age < 2 * _TENDENCY_WINDOW_MS:
+                    bucket["t_prev7"] += 1
 
             if isinstance(ep_started_ms, int):
                 if (
@@ -776,6 +893,16 @@ def list_ads_campaigns(
                 capi_leads_sent=bucket["capi_leads"],
                 capi_purchases_sent=bucket["capi_purchases"],
                 capi_failed=bucket["capi_failed"],
+                first_resp=(
+                    _format_duration_label(
+                        bucket["fr_sum"] / bucket["fr_count"]
+                    )
+                    if bucket["fr_count"] > 0
+                    else None
+                ),
+                tendency=_tendency_label(
+                    bucket["t_last7"], bucket["t_prev7"]
+                ),
             )
         )
 

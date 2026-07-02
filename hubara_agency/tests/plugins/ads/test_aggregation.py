@@ -1668,3 +1668,126 @@ def test_conversation_carries_capi_event(_isolate_vault_dir: Path):
     assert by_ep["ep_001"].capi_event == "Purchase"
     # ep_002: su LeadSubmitted falló → no se reportó nada a Meta
     assert by_ep["ep_002"].capi_event is None
+
+
+# --- Métricas derivadas del vault: first_resp + tendency (2026-07-01) -------
+
+
+def test_campaign_first_resp_from_history(_isolate_vault_dir: Path):
+    """`first_resp` = promedio (1er assistant − 1er user) de los episodios
+    del bucket, leyendo el history JSONL desde el snapshot
+    `msgs_count_at_start` del episodio. Formateado legible ("5 min")."""
+    sd = _write_session(
+        _isolate_vault_dir,
+        phone="573900",
+        origin=_AD_ORIGIN_CAPI,
+        extra={
+            "episodes": [
+                {
+                    "episode_id": "ep_001",
+                    "started_at_ms": 1_714_000_000_000,
+                    "closed_at_ms": 1_714_000_900_000,
+                    "closing_tag": "COMPRA_EXITOSA",
+                    "msgs_count_at_start": 0,
+                    "referral_snapshot": {"channel": "ad", "source_id": "AD_CAPI"},
+                },
+            ],
+        },
+    )
+    sessions_dir = sd / "sessions"
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    (sessions_dir / f"{sd.name}.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "role": "user",
+                        "content": "hola",
+                        "timestamp": "2026-05-01T10:00:00+00:00",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "role": "assistant",
+                        "content": "Hola!",
+                        "timestamp": "2026-05-01T10:05:00+00:00",
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    campaigns = list_ads_campaigns(_isolate_vault_dir)
+    camp = next(c for c in campaigns if c.id == "AD_CAPI")
+    assert camp.first_resp == "5 min"
+
+
+def test_campaign_first_resp_none_without_history(_isolate_vault_dir: Path):
+    _write_session(_isolate_vault_dir, phone="573901", origin=_AD_ORIGIN_CAPI)
+    campaigns = list_ads_campaigns(_isolate_vault_dir)
+    camp = next(c for c in campaigns if c.id == "AD_CAPI")
+    assert camp.first_resp is None
+
+
+def _episodes_at(days_ago_list: list[float]) -> dict:
+    """Episodios cerrados iniciados hace N días (relativo al reloj real —
+    list_ads_campaigns computa now internamente)."""
+    import time as _time
+
+    now_ms = int(_time.time() * 1000)
+    day_ms = 24 * 60 * 60 * 1000
+    return {
+        "episodes": [
+            {
+                "episode_id": f"ep_{i:03d}",
+                "started_at_ms": int(now_ms - d * day_ms),
+                "closed_at_ms": int(now_ms - d * day_ms) + 1000,
+                "closing_tag": "RECHAZO",
+                "referral_snapshot": {"channel": "ad", "source_id": "AD_CAPI"},
+            }
+            for i, d in enumerate(days_ago_list, start=1)
+        ]
+    }
+
+
+def test_campaign_tendency_up(_isolate_vault_dir: Path):
+    """3 episodios en los últimos 7d vs 1 en los 7d previos → "up"."""
+    _write_session(
+        _isolate_vault_dir,
+        phone="573902",
+        origin=_AD_ORIGIN_CAPI,
+        extra=_episodes_at([1, 2, 3, 10]),
+    )
+    camp = next(
+        c for c in list_ads_campaigns(_isolate_vault_dir) if c.id == "AD_CAPI"
+    )
+    assert camp.tendency == "up"
+
+
+def test_campaign_tendency_down(_isolate_vault_dir: Path):
+    """1 episodio reciente vs 3 en los 7d previos → "down"."""
+    _write_session(
+        _isolate_vault_dir,
+        phone="573903",
+        origin=_AD_ORIGIN_CAPI,
+        extra=_episodes_at([1, 8, 9, 10]),
+    )
+    camp = next(
+        c for c in list_ads_campaigns(_isolate_vault_dir) if c.id == "AD_CAPI"
+    )
+    assert camp.tendency == "down"
+
+
+def test_campaign_tendency_none_without_recent_activity(_isolate_vault_dir: Path):
+    """Sin episodios en las últimas 2 semanas → None (no hay señal)."""
+    _write_session(
+        _isolate_vault_dir,
+        phone="573904",
+        origin=_AD_ORIGIN_CAPI,
+        extra=_episodes_at([30, 40]),
+    )
+    camp = next(
+        c for c in list_ads_campaigns(_isolate_vault_dir) if c.id == "AD_CAPI"
+    )
+    assert camp.tendency is None
