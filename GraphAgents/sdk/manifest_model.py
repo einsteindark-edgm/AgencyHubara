@@ -18,6 +18,8 @@ from typing import Literal, Optional
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from sdk.tool_model import FieldSpec
+
 Archetype = Literal["extractor", "analyzer", "reporter", "supervisor"]
 Strategy = Literal[
     "handoff", "router", "parallel", "sequential", "swarm", "round_robin", "random", "manual"
@@ -27,7 +29,17 @@ CertLevel = Literal["none", "C0", "C1", "C2", "C3"]
 _SLUG = re.compile(r"^[a-z][a-z0-9-]*$")
 
 # Llaves NUESTRAS — se quitan antes de `agentspan deploy` (ver native_subset).
-EXT_KEYS = {"archetype", "capability", "consumes", "certification", "exposes_as_tool", "publish", "uses", "inputs", "group"}
+EXT_KEYS = {"archetype", "capability", "consumes", "certification", "exposes_as_tool", "publish", "uses", "inputs", "group", "contract"}
+
+
+class AgentContract(BaseModel):
+    """El contrato I/O DECLARADO de un agente de catálogo — espejo del de una tool
+    (`tool.yaml` inputs/outputs, mismos `FieldSpec`). Es lo que hace a un agente
+    conectable con validación: el wiring de un supervisor se chequea contra
+    `inputs` (G-CONTRACT) y la compatibilidad agente→agente contra `outputs`."""
+
+    inputs: dict[str, FieldSpec] = Field(default_factory=dict)
+    outputs: dict[str, FieldSpec] = Field(default_factory=dict)
 
 
 class ToolSpec(BaseModel):
@@ -76,6 +88,8 @@ class AgentNode(BaseModel):
     certification: CertLevel = "none"
     exposes_as_tool: bool = False  # el agente puede invocarse como tool de otro agente
     publish: Optional[PublishSpec] = None  # exponer hacia afuera (mcp/http)
+    # ext (GraphAgents): el contrato I/O declarado (habilita conectar con validación).
+    contract: Optional[AgentContract] = None
     # Estatus de catálogo para el explorer (badge). Ausente = producción (el pod real).
     # `demo` = ejemplo/proving-ground (greeter, ads-supervisor); `variant` = variante de
     # verificación (ads-extractors-parallel). Metadata pura: no afecta la ejecución.

@@ -2,7 +2,7 @@
 # Lo escribe el botón 'guardar producción' (POST /api/save) tras pasar TODOS los
 # checks. No es un manifest (los globs no lo levantan); el fingerprint detecta
 # drift: si el grafo actual no matchea, el explorer marca 'cambios sin guardar'.
-saved_at: '2026-07-02T02:15:52+00:00'
+saved_at: '2026-07-02T04:02:49+00:00'
 fingerprint: 1c3d09e52d7df3b082d554a7c3ea285cb87a3300876f3b9b499f592423c56998
 nodes: 23
 edges: 23
