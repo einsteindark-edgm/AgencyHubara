@@ -198,7 +198,6 @@ def _resolve_template_variables(
         "el monto del pedido" placeholder.
       * `status_label` → "en proceso" placeholder.
       * `product_label` → tag motivo, falling back to "el producto".
-      * `discount_label` → "una promo especial" placeholder.
 
     Any variable not in the heuristics gets the literal string "—".
     """
@@ -219,7 +218,6 @@ def _resolve_template_variables(
         "amount_currency": "el monto del pedido",
         "status_label": "en proceso",
         "product_label": motivo,
-        "discount_label": "una promo especial",
     }
 
     out: dict[str, str] = {}

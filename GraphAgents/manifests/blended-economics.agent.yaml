@@ -7,6 +7,18 @@ certification: C2
 
 capability: graphs.blended_economics:build
 
+# ext (GraphAgents): el contrato I/O declarado (G-CONTRACT) — ver graphs/blended_economics.py.
+contract:
+  inputs:
+    currency: {type: string, required: true, description: "la moneda de los insights (guard COP-only)"}
+    insights: {type: array, required: true, description: "insights CTWA por dia (de ctwa-insights)"}
+    sales: {type: array, required: true, description: "ventas normalizadas por dia (de sales-ledger)"}
+  outputs:
+    currency: {type: string}
+    days: {type: array, description: "el blend por dia con metrics + diagnosis"}
+    period: {type: object, description: "el agregado del periodo (o null sin dias en comun)"}
+    unmatched: {type: object, description: "{meta_only, sales_only} — fechas sin match"}
+
 exposes_as_tool: true
 
 tools:

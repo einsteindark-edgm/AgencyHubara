@@ -13,6 +13,17 @@ en vivo (cada request re-proyecta el sistema; editás un manifest y refrescás):
     GET  /api/legend         -> el glosario de convenciones (niveles + reglas G-*/T-*/CASE-*)
     POST /api/run-durable    -> corre el caso en AgentSpan (durable) -> {execution_id} para el trace
                                body: {"case": "dia-del-padre-flujo"}  (a diferencia de /api/replay)
+    POST /api/validate-connection -> el gate PURO de compatibilidad de una conexión (contratos)
+                               body: {"source": "agent:x", "target": "tool:y"|"agent:z",
+                                      "binding"|"inputs": {...}?}  (sin binding = modo informativo)
+    POST /api/connect        -> valida Y persiste la conexión en el manifest YAML (con rollback)
+    POST /api/disconnect     -> remueve la relación del manifest  body: {source, target, kind}
+    GET  /api/production-status -> {saved, dirty, snapshot} — ¿el wiring matchea lo bendecido?
+    POST /api/save           -> 'guardar producción': checks de TODO el sistema + snapshot
+                               (production.yaml, raíz del subsistema); 422 si algo está roto
+    POST /api/publish        -> 'publicar': despliegue del wiring bendecido — commit quirúrgico
+                               (manifests/ + production.yaml) + push + PR (gh); exige save al día
+                               body: {"push": bool?, "pr": bool?} (default true)
 
 Por qué stdlib y no FastAPI: el explorer es read-mostly + un endpoint de run; con
 la stdlib corre en la imagen slim sin sincronizar deps pesadas, igual que el
@@ -397,6 +408,64 @@ def api_route(method: str, path: str, params: dict, body: dict | None, ga_root: 
         if not case_id:
             return 400, {"error": "falta 'case' en el body"}
         return run_durable_route(ga_root, case_id)
+    if method == "GET" and path == "/api/production-status":
+        # ¿el wiring actual matchea el snapshot bendecido? — el header pinta ✓ / ● sin guardar.
+        from sdk.production import production_status
+
+        return 200, production_status(ga_root)
+    if method == "POST" and path == "/api/save":
+        # 'guardar producción': corre TODOS los checks y bendice el wiring actual como final
+        # (production.yaml, raíz del subsistema). Se rehúsa 422 si algo está roto — no se bendice
+        # producción rota. Los manifests siguen siendo la verdad; esto solo registra el hito.
+        from sdk.production import save_production
+
+        try:
+            res = save_production(ga_root)
+        except Exception as e:  # noqa: BLE001 — manifest ilegible / IO: degradá, la UI nunca crashea
+            return 422, {"ok": False, "errors": [f"el save falló: {e}"], "snapshot": None}
+        return (200 if res["ok"] else 422), res
+    if method == "POST" and path == "/api/publish":
+        # 'publicar producción': el DESPLIEGUE del wiring bendecido — commit quirúrgico
+        # (manifests/ + production.yaml) → push → PR con `gh`. Exige snapshot al día
+        # (save previo = checks verdes). body: {"push": bool?, "pr": bool?} (default true).
+        # Degrada honesto si no hay git/gh en el runtime (p. ej. el container slim).
+        from sdk.production import publish_production
+
+        body = body or {}
+        try:
+            res = publish_production(ga_root, push=body.get("push", True), pr=body.get("pr", True))
+        except Exception as e:  # noqa: BLE001 — IO/git inesperado: degradá, la UI nunca crashea
+            return 422, {"ok": False, "errors": [f"publicar falló: {e}"], "steps": [],
+                         "branch": None, "commit": None, "pr_url": None}
+        return (200 if res["ok"] else 422), res
+    if method == "POST" and path in ("/api/validate-connection", "/api/connect", "/api/disconnect"):
+        # el MODO EDICIÓN del explorer (estilo n8n): validar/conectar/desconectar relaciones
+        # editando los manifests (sdk.manifest_edit). La verdad sigue siendo el YAML: validate
+        # es PURO (el gate de compatibilidad por contrato); connect/disconnect editan quirúrgico
+        # (comentarios intactos) con recarga + checks + ROLLBACK si algo rompe. 200=ok · 422=el
+        # gate rechazó (errors visibles) · 400=request malformado. La UI nunca crashea.
+        from sdk.manifest_edit import connect, disconnect, validate_connection
+
+        body = body or {}
+        source, target = body.get("source"), body.get("target")
+        if not source or not target:
+            return 400, {"error": "faltan 'source' y/o 'target' en el body (ids 'kind:id')"}
+        try:
+            if path == "/api/validate-connection":
+                res = validate_connection(ga_root, source, target,
+                                          binding=body.get("binding"), inputs=body.get("inputs"))
+                return 200, res  # el veredicto (ok true/false) ES el payload — no es un error HTTP
+            if path == "/api/connect":
+                res = connect(ga_root, source, target,
+                              binding=body.get("binding"), inputs=body.get("inputs"))
+            else:
+                kind = body.get("kind")
+                if not kind:
+                    return 400, {"error": "falta 'kind' en el body (uses|agent|consumes)"}
+                res = disconnect(ga_root, source, target, kind=kind)
+        except Exception as e:  # noqa: BLE001 — manifest ilegible / IO: degradá, la UI nunca crashea
+            return 422, {"ok": False, "errors": [f"la edición falló: {e}"], "warnings": []}
+        return (200 if res.get("ok") else 422), res
     return 404, {"error": f"no existe la ruta {method} {path}"}
 
 

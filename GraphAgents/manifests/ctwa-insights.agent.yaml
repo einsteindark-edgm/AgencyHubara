@@ -8,6 +8,16 @@ certification: C2
 
 capability: graphs.ctwa_insights:build
 
+# ext (GraphAgents): el contrato I/O DECLARADO (G-CONTRACT) — hace al agente conectable
+# con validación desde el explorer. inputs = lo que run() exige del estado; outputs =
+# las claves que emite al acc (verificado contra graphs/ctwa_insights.py + su golden).
+contract:
+  inputs:
+    payload: {type: object, required: true, description: "el envelope crudo de Graph /insights (lo deposita el central)"}
+  outputs:
+    currency: {type: string, description: "la moneda de la cuenta (COP)"}
+    insights: {type: array, description: "insights CTWA colapsados a cuenta por dia"}
+
 exposes_as_tool: true
 
 tools:

@@ -9,6 +9,14 @@ certification: C2
 
 capability: graphs.ctwa_campaign_funnel:build
 
+# ext (GraphAgents): el contrato I/O declarado (G-CONTRACT) — ver graphs/ctwa_campaign_funnel.py.
+contract:
+  inputs:
+    entities_payload: {type: object, required: true, description: "el envelope crudo de ads_get_ad_entities (MCP)"}
+    insights_payload: {type: object, required: true, description: "la misma data Graph /insights del seed"}
+  outputs:
+    campaigns: {type: array, description: "embudo por campana con la conversacion complementada"}
+
 exposes_as_tool: true
 
 tools:

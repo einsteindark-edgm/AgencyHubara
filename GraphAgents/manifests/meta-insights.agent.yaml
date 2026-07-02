@@ -11,6 +11,18 @@ capability: graphs.meta_insights:build
 # ext: datos SOLO por el ConnectorKit (G-PORT).
 consumes: [meta_marketing_api]
 
+# ext (GraphAgents): el contrato I/O declarado (G-CONTRACT) — ver graphs/meta_insights.py.
+contract:
+  inputs:
+    account_id: {type: string, required: true}
+    since: {type: string, required: true}
+    until: {type: string, required: true}
+  outputs:
+    campaigns: {type: array, description: "spend/revenue/roas por campana"}
+    total_spend: {type: number}
+    total_revenue: {type: number}
+    blended_roas: {type: number}
+
 # se puede invocar como tool de otro agente, y se publica hacia afuera.
 exposes_as_tool: true
 publish:

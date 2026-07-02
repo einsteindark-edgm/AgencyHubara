@@ -8,6 +8,21 @@ certification: C2
 
 capability: graphs.ctwa_report:build
 
+# ext (GraphAgents): el contrato I/O declarado (G-CONTRACT) — ver graphs/ctwa_report.py
+# (run usa .get en todos los inputs -> required: false; narrative solo si el port llm esta).
+contract:
+  inputs:
+    days: {type: array, required: false, description: "el blend por dia"}
+    period: {type: object, required: false, description: "el agregado del periodo"}
+    unmatched: {type: object, required: false, description: "fechas sin match"}
+    qa_passed: {type: boolean, required: false, description: "el verdict del no-self-review (MF-4)"}
+    campaigns: {type: array, required: false, description: "el embudo por campana"}
+  outputs:
+    markdown: {type: string, description: "el reporte renderizado (tabla + verdict)"}
+    verdict: {type: string, description: "la recomendacion del periodo"}
+    qa_passed: {type: boolean, required: false}
+    narrative: {type: string, required: false, description: "la narrativa del LLM (solo con el port llm)"}
+
 exposes_as_tool: true
 
 tools: []

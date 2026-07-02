@@ -8,6 +8,7 @@
 #   cp .env.example .env        # (opcional) poné tu OPENAI/ANTHROPIC/META keys
 #   docker compose up                      # TODA la suite → el explorer en http://localhost:8900
 #   docker compose up -d agentspan         # (solo) el runtime real (:6767)
+#   GH_TOKEN=$(gh auth token) docker compose up   # con 'publicar ▸' habilitado (commit+push+PR)
 #   # hola mundo / CLI on-demand (no levantan un server):
 #   docker compose run --rm graphagents uv run python hello_world.py
 #   docker compose run --rm graphagents uv run python -m sdk.cli list-tools
@@ -52,11 +53,18 @@ services:
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
 
   # La app GraphAgents. En la suite su proceso persistente es el EXPLORER visual
-  # (catálogo + grafo de conexiones + marketplace, estilo n8n) en :8900 — read-only
-  # sobre el registry (proyecta los manifests; no los muta) + corre agentes tool-only
-  # por el LocalRuntime. El CMD del Dockerfile ya es `python -m viewer.server`; el hola
-  # mundo y la CLI son on-demand (`docker compose run --rm graphagents uv run …`).
+  # (catálogo + grafo + marketplace, estilo n8n) en :8900 — con MODO EDICIÓN: conectar/
+  # desconectar con contratos, guardar producción y PUBLICAR (commit quirúrgico → push →
+  # PR con gh). El CMD del Dockerfile ya es `python -m viewer.server`; el hola mundo y
+  # la CLI son on-demand (`docker compose run --rm graphagents uv run …`).
   # (Solo el explorer, sin arrastrar agentspan: `docker compose up --no-deps graphagents`.)
+  #
+  # PUBLICAR desde el container necesita:
+  #   1. el bind-mount de la RAÍZ del monorepo (abajo) — ahí vive el .git; montar solo
+  #      GraphAgents/ deja al publish sin repo. ⚠ Requiere un checkout NORMAL: en un git
+  #      worktree el .git es un archivo con path absoluto del host y no resuelve adentro.
+  #   2. GH_TOKEN — en local: `GH_TOKEN=$(gh auth token) docker compose up` (o en .env).
+  #      Sin token, el explorer anda igual; el botón publicar degrada con error legible.
   graphagents:
     build: .
     depends_on:
@@ -70,8 +78,17 @@ services:
       META_AD_ACCOUNT_ID: "${META_AD_ACCOUNT_ID:-}"
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      # --- publicar desde el explorer (commit + push + PR) ---
+      GH_TOKEN: "${GH_TOKEN:-}"  # gh lo toma solo; el entrypoint lo registra como credential helper de git
+      GIT_AUTHOR_NAME: "${GIT_AUTHOR_NAME:-hubara-explorer}"
+      GIT_AUTHOR_EMAIL: "${GIT_AUTHOR_EMAIL:-explorer@hubara.local}"
+      GIT_COMMITTER_NAME: "${GIT_COMMITTER_NAME:-hubara-explorer}"
+      GIT_COMMITTER_EMAIL: "${GIT_COMMITTER_EMAIL:-explorer@hubara.local}"
     volumes:
-      - ./:/app  # bind-mount de dev: editás viewer/index.html o un manifest y refrescás (sin rebuild)
+      # la RAÍZ del monorepo (no solo GraphAgents/): el .git que el publish necesita.
+      # Sigue siendo bind-mount de dev: editás viewer/index.html o un manifest y refrescás.
+      - ..:/workspace
+    working_dir: /workspace/GraphAgents
 
 volumes:
   postgres_data:

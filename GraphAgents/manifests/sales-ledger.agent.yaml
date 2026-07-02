@@ -7,6 +7,13 @@ certification: C2
 
 capability: graphs.sales_ledger:build
 
+# ext (GraphAgents): el contrato I/O declarado (G-CONTRACT) — ver graphs/sales_ledger.py.
+contract:
+  inputs:
+    payload: {type: object, required: true, description: "el JSON de ventas manuales de WhatsApp"}
+  outputs:
+    sales: {type: array, description: "ventas normalizadas (total_revenue -> cop)"}
+
 exposes_as_tool: true
 
 tools:

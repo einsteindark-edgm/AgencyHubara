@@ -61,6 +61,18 @@ class TestLoadCatalogReal:
         assert cart.category == "marketing"
         assert cart.triggers_when_window_expiring is False
 
+    def test_cart_recovery_has_no_promo_variable(self):
+        """Política de copy (2026-07, guía de mensajes de marketing de Meta):
+        el template de recuperación NO ofrece descuento/promoción ni envío
+        gratis — solo re-engagement + opt-out. Debe tener exactamente 2 vars
+        (nombre + producto), sin `discount_label`.
+        """
+        registry = load_template_registry_from_yaml()
+        cart = registry["cart_recovery_marketing_v1"]
+        var_names = [v.name for v in cart.variables]
+        assert var_names == ["customer_first_name", "product_label"]
+        assert "discount_label" not in var_names
+
 
 # =============================================================================
 # Constructor desde dict (unit con fixtures inline)
