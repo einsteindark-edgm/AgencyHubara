@@ -25,10 +25,16 @@ from __future__ import annotations
 import os
 from functools import cache
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 import yaml
+
+if TYPE_CHECKING:
+    # Solo para anotaciones: en runtime orchestration importa plugin_manifest,
+    # el import top-level en la otra dirección crearía un ciclo.
+    from src.platform.orchestration.events import EventEnvelope
+    from src.platform.orchestration.transitions import Transition
 
 _pm_logger = structlog.get_logger()
 

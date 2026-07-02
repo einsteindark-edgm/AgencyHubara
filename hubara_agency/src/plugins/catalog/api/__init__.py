@@ -33,6 +33,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Path
+from pydantic import BaseModel
 from temporalio.client import Client, WorkflowExecutionStatus
 from temporalio.service import RPCError, RPCStatusCode
 
@@ -153,14 +154,28 @@ async def _failure_message(handle: Any) -> str | None:
 # ─── Endpoints ───────────────────────────────────────────────────────────────
 
 
+class _SyncBody(BaseModel):
+    """Body opcional de `POST /sync`.
+
+    `force`: si True, el push a Meta ignora el delta por hash y re-pushea TODOS
+    los items (recupera imágenes que Meta no fetcheó sin cambio de datos). El
+    checkbox "Forzar re-sync completo" del dashboard lo manda. Default False →
+    sync delta normal (barato).
+    """
+
+    force: bool = False
+
+
 @router.post("/sync")
-async def trigger_sync() -> dict[str, Any]:
+async def trigger_sync(body: _SyncBody | None = None) -> dict[str, Any]:
     """Dispara un catalog sync on-demand (Medusa → copia local → Meta).
 
     Idempotente por diseño: si ya hay un `CatalogSyncWorkflow` corriendo,
     NO arranca otro (el worker es single-writer — dos writes concurrentes
     correrían carrera en `os.replace`). Devuelve el run existente con
     `already_running=true` para que el dashboard simplemente lo poll-ee.
+
+    `body.force=True` → push completo (recuperación de imágenes trabadas).
 
     Response:
       {
@@ -183,6 +198,7 @@ async def trigger_sync() -> dict[str, Any]:
             "already_running": True,
         }
 
+    force = bool(body.force) if body is not None else False
     snapshot_dir = str(get_snapshot_dir())
     workflow_id = f"catalog-sync-on-demand-dashboard-{int(time.time())}"
     try:
@@ -190,7 +206,7 @@ async def trigger_sync() -> dict[str, Any]:
             _WORKFLOW_NAME,
             CatalogSyncInput(
                 tenant_id="default",
-                force_full_refresh=True,
+                force_full_refresh=force,
                 snapshot_dir=snapshot_dir,
             ),
             id=workflow_id,

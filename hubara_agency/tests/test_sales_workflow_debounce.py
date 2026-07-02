@@ -611,3 +611,101 @@ async def test_idle_timeout_with_pending_handoff_processes_it_not_ghosting(
         f"Ghosting debió correr solo en el 2º ciclo idle. "
         f"ghosting_calls={tracker.ghosting_calls}"
     )
+
+
+@pytest.mark.asyncio
+async def test_burst_injects_thread_awareness_note(tmp_path: Path) -> None:
+    """Ráfaga de 3 mensajes → el turno lleva una nota de ráfaga determinista en
+    `plugin_context` para que el LLM responda al hilo COMPLETO (el patrón "el
+    bot solo ve uno"). Los 3 se coalescen en un turno (como el debounce) pero
+    además el LLM recibe la lista explícita de lo que el cliente escribió."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=SALES_QUEUE,
+            workflows=[HubaraSalesSessionWorkflow],
+            activities=_make_fake_activities(tracker, workspace_path=str(workspace)),
+        ):
+            handle = await env.client.start_workflow(
+                HubaraSalesSessionWorkflow.run,
+                SalesSessionInput(
+                    session_id="wa_burst",
+                    runtime_workspace_path=str(workspace),
+                ),
+                id="session-wa_burst",
+                task_queue=SALES_QUEUE,
+            )
+            for text in ("Hola", "quiero el difusor", "de lavanda"):
+                await handle.signal(
+                    HubaraSalesSessionWorkflow.send_message,
+                    args=[text, None, None],
+                )
+            await handle.result()
+
+    user_calls = [c for c in tracker.build_prompt_calls if "GHOST" not in c.message]
+    assert len(user_calls) == 1, (
+        f"Esperaba 1 turno user coalescido, hubo {len(user_calls)}"
+    )
+    bp = user_calls[0]
+    # Los 3 mensajes concatenados en el rol user (coalesce por seq).
+    assert "Hola" in bp.message
+    assert "quiero el difusor" in bp.message
+    assert "de lavanda" in bp.message
+    # Nota de ráfaga determinista en plugin_context (conciencia de hilo).
+    assert bp.plugin_context is not None, (
+        "Falta la nota de ráfaga: el LLM no sabe que fueron 3 mensajes seguidos"
+    )
+    assert any("3 mensajes seguidos" in c for c in bp.plugin_context), (
+        f"La nota de ráfaga no lista los mensajes. plugin_context={bp.plugin_context}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_burst_dedupes_repeated_plugin_context(tmp_path: Path) -> None:
+    """Ráfaga donde cada inbound trae el MISMO plugin_context (el caso real:
+    `LoadOrStartSalesSession` inyecta el bloque bogota-context en cada signal)
+    → el turno lleva UNA sola copia, no N (burst-note-v2). Con v1, una ráfaga
+    de 3 metía 3 bloques "Hora actual en Colombia" al system prompt."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    bogota = "[CONTEXTO DE TURNO] Hora actual en Colombia: 14:30"
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=SALES_QUEUE,
+            workflows=[HubaraSalesSessionWorkflow],
+            activities=_make_fake_activities(tracker, workspace_path=str(workspace)),
+        ):
+            handle = await env.client.start_workflow(
+                HubaraSalesSessionWorkflow.run,
+                SalesSessionInput(
+                    session_id="wa_burstctx",
+                    runtime_workspace_path=str(workspace),
+                ),
+                id="session-wa_burstctx",
+                task_queue=SALES_QUEUE,
+            )
+            for text in ("Hola", "quiero el difusor", "de lavanda"):
+                await handle.signal(
+                    HubaraSalesSessionWorkflow.send_message,
+                    args=[text, None, [bogota]],
+                )
+            await handle.result()
+
+    user_calls = [c for c in tracker.build_prompt_calls if "GHOST" not in c.message]
+    assert len(user_calls) == 1
+    bp = user_calls[0]
+    assert bp.plugin_context is not None
+    copies = bp.plugin_context.count(bogota)
+    assert copies == 1, (
+        f"El bloque bogota-context debe deduplicarse en ráfaga (v2): "
+        f"esperaba 1 copia, hay {copies}. plugin_context={bp.plugin_context}"
+    )
+    # La conciencia de ráfaga se preserva junto con el dedupe.
+    assert any("3 mensajes seguidos" in c for c in bp.plugin_context)

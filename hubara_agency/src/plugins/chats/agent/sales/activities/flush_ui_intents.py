@@ -295,23 +295,47 @@ async def _dispatch_intent(
                 )
                 mpm_total += len(items)
             if product_sections:
-                return await wa_client.send_product_list(
-                    phone_number_id,
-                    to_number,
-                    wa_dtos.InteractiveProductListOutbound(
-                        catalog_id=catalog_id,
-                        header_text=wa_limits.truncate(
-                            params.get("header_text") or "Nuestro catálogo",
-                            wa_limits.MAX_PRODUCT_LIST_HEADER,
+                try:
+                    native_result = await wa_client.send_product_list(
+                        phone_number_id,
+                        to_number,
+                        wa_dtos.InteractiveProductListOutbound(
+                            catalog_id=catalog_id,
+                            header_text=wa_limits.truncate(
+                                params.get("header_text") or "Nuestro catálogo",
+                                wa_limits.MAX_PRODUCT_LIST_HEADER,
+                            ),
+                            body=wa_limits.truncate(
+                                params.get("intro_text")
+                                or "Toca un producto para ver más:",
+                                wa_limits.MAX_PRODUCT_LIST_BODY,
+                            ),
+                            sections=product_sections,
+                            footer="Hubara",
                         ),
-                        body=wa_limits.truncate(
-                            params.get("intro_text")
-                            or "Toca un producto para ver más:",
-                            wa_limits.MAX_PRODUCT_LIST_BODY,
+                    )
+                except Exception as e:  # noqa: BLE001 — recuperar a la lista
+                    native_result = None
+                    activity.logger.warning(
+                        "products_list.native_exception_fallback_list",
+                        extra={"error": str(e)},
+                    )
+                if native_result is not None and native_result.ok:
+                    return native_result
+                # Native rechazado (ej. (#131009) "product not found": items aún
+                # no shoppables tras conectar el catálogo al WABA, o gap de
+                # catálogo). NO retornamos el fallo — caemos a interactive.list
+                # (browse del catálogo LOCAL, sin Meta Catalog). Mismo patrón que
+                # shipping_flow. Prod 2026-07-01 run 019f1b52.
+                activity.logger.warning(
+                    "products_list.native_send_failed_fallback_list",
+                    extra={
+                        "error": (
+                            native_result.error
+                            if native_result is not None
+                            else "exception"
                         ),
-                        sections=product_sections,
-                        footer="Hubara",
-                    ),
+                    },
                 )
 
         # Fallback: interactive.list (sin Meta Catalog — cap 10 total).

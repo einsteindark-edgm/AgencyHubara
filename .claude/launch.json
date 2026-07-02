@@ -6,6 +6,12 @@
       "runtimeExecutable": "python3",
       "runtimeArgs": ["-m", "http.server", "8791", "--directory", "docs/archon-workflows-hubara"],
       "port": 8791
+    },
+    {
+      "name": "graphagents-viewer",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["GraphAgents/viewer/server.py", "8901"],
+      "port": 8901
     }
   ]
 }

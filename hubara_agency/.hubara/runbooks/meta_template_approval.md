@@ -77,7 +77,7 @@ Vas a ver 4 secciones: Header (optional), **Body (required)**, Footer (optional)
 - **Body**: pegar este texto EXACTO (con los `{{1}}` y `{{2}}`):
 
   ```
-  Hola {{1}}, tu cotización para {{2}} ya está lista. ¿Querés que te la pase ahora?
+  Hola {{1}}, tu cotización para {{2}} ya está lista. ¿Quieres que te la comparta ahora?
   ```
 
 - Abajo del campo Body vas a ver **"Add sample content"**. Click ahí — Meta exige samples para aprobar.
@@ -151,7 +151,7 @@ Volver a **"Message templates" → "Create template"**.
 
 **Step 3 — Body**:
 ```
-Hola {{1}}, tu pedido {{2}} está {{3}}. Si querés más info contame por acá.
+Hola {{1}}, tu pedido {{2}} está {{3}}. Si quieres más información, cuéntame por aquí.
 ```
 
 Samples:
@@ -167,10 +167,10 @@ Footer y Buttons vacíos.
 
 ## §5 Template #4 — `cart_recovery_marketing` (MARKETING)
 
-> **Lo que hace:** recuperar carrito abandonado fuera de ventana, con incentivo.
+> **Lo que hace:** recuperar carrito abandonado fuera de ventana (re-engagement, SIN promoción ni envío gratis; el body incluye opt-out).
 > **Cuándo se manda:** decisión consciente del LLM o cadencia (NUNCA por watchdog).
 > **Costo:** $0.0125 USD siempre (es marketing).
-> ⚠️ Este es el ÚNICO marketing del set inicial. Ser conservador con el copy — Meta es estricto con promos.
+> ⚠️ Este es el ÚNICO marketing del set inicial. Copy conservador: NO mencionar promociones ni envío gratis (política 2026-07 + guía de mensajes de marketing de Meta). Acento tuteado, no voseo.
 
 ### §5.1 Repetir el wizard
 
@@ -185,17 +185,16 @@ Volver a **"Message templates" → "Create template"**.
 
 **Step 3 — Body**:
 ```
-Hola {{1}}, dejaste {{2}} en tu carrito. Si te animás a volver, tenés {{3}} disponible. ¿Lo retomamos?
+Hola {{1}}, vi que quedó {{2}} en tu carrito. ¿Quieres que te ayude a completar tu pedido? Si no deseas recibir más mensajes, respóndeme y te doy de baja.
 ```
 
 Samples:
 - `{{1}}`: `Andrea`
-- `{{2}}`: `vela aromática Patchouli`
-- `{{3}}`: `envío gratis`
+- `{{2}}`: `una vela aromática Patchouli`
 
 Footer y Buttons vacíos.
 
-> ⚠️ **No prometer descuentos específicos en el copy si no es siempre cierto.** El sample dice "envío gratis" pero el agente puede después rellenar con "10% off" o lo que aplique. Meta evalúa el copy aprobado, no el sample.
+> ⚠️ **Sin promociones ni envío gratis.** El template es re-engagement puro (solo 2 variables: nombre + producto). No mencionar descuentos, promos ni "envío gratis" en el copy ni en los samples. Incluye opt-out en el body ("respóndeme y te doy de baja") por requisito de la guía de mensajes de marketing de Meta.
 
 **Step 4 — Submit**.
 
@@ -360,11 +359,13 @@ Meta apretó tornillos de atribución desde fines de 2025:
 
 ### §11.4 Los 2 únicos eventos que CAPI Business Messaging soporta
 
+> ⚠️ **El nombre del evento de lead es `LeadSubmitted`, NO `Lead`.** Meta rechaza `Lead` para `action_source: business_messaging` con error_subcode 2804066 (verificado contra el dataset vivo, 2026-07-01). `Lead` es el nombre del CAPI web clásico.
+
 Meta limitó CAPI for Business Messaging (WhatsApp) a **2 eventos**:
 
 | Evento | Cuándo mandarlo | Requiere |
 |---|---|---|
-| **Lead** | Cliente mostró intención cualificada (pidió cotización, dijo "quiero comprar", entregó datos) | `ctwa_clid` |
+| **LeadSubmitted** | Cliente mostró intención cualificada (pidió cotización, dijo "quiero comprar", entregó datos) | `ctwa_clid` |
 | **Purchase** | Orden CONFIRMADA con pago | `ctwa_clid`, `value`, `currency` |
 
 > ⚠️ **Otros eventos clásicos NO aplican aquí.** `AddToCart`, `InitiateCheckout`, `CompleteRegistration` etc. funcionan en el CAPI estándar (websites), pero **NO** en `action_source: business_messaging`. Si los mandás, Meta los ignora silenciosamente.
@@ -491,7 +492,7 @@ curl -X POST "https://graph.facebook.com/v18.0/${META_CAPI_DATASET_ID}/events?ac
   -H "Content-Type: application/json" \
   -d '{
     "data": [{
-      "event_name": "Lead",
+      "event_name": "LeadSubmitted",
       "event_time": '$(date +%s)',
       "event_id": "smoke_test_'$(date +%s)'",
       "action_source": "business_messaging",
@@ -509,7 +510,7 @@ curl -X POST "https://graph.facebook.com/v18.0/${META_CAPI_DATASET_ID}/events?ac
 
 1. Refresh el tab **"Test events"** del Dataset.
 2. Tu event debería aparecer en la lista con:
-   - **Event name**: Lead
+   - **Event name**: LeadSubmitted
    - **Action source**: business_messaging
    - **Status**: ✅ Received
 3. Si NO aparece:

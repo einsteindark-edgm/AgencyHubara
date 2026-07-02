@@ -1,0 +1,10 @@
+[
+  {
+    "name": "Hubara — Datos de envío v1",
+    "categories": ["SIGN_UP"],
+    "json": "hubara_agency/docs/whatsapp_flows/shipping_v1.json",
+    "ssm_key": "META_FLOW_ID_SHIPPING",
+    "publish": true,
+    "semantics": "Formulario nativo de datos de envío (ciudad/barrio/dirección/teléfono/pago). Endpoint-less v7.2."
+  }
+]

@@ -9,6 +9,15 @@ capability: graphs.roas_cac:build
 # (sin `consumes`: roas-cac NO usa un port — su análisis sale de la tool recommend-budget;
 # declarar meta_marketing_api era stale e inexacto, cert-review.)
 
+# ext (GraphAgents): el contrato I/O declarado (G-CONTRACT) — ver graphs/roas_cac.py.
+contract:
+  inputs:
+    adsets: {type: array, required: true, description: "[{id, roas}] por adset"}
+    total_budget: {type: number, required: true, description: "presupuesto total a repartir"}
+  outputs:
+    allocations: {type: array, description: "[{id, budget}] sugerido"}
+    analyzed_adsets: {type: integer}
+
 # el agente puede invocarse como tool de otro agente (agent-as-tool).
 exposes_as_tool: true
 

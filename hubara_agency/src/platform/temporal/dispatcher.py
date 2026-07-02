@@ -10,6 +10,7 @@ Temporal aplica retry y replay sobre la activity, no sobre la tool.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import timedelta
 
 from temporalio import activity

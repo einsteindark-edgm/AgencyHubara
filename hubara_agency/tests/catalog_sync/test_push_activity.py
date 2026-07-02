@@ -270,6 +270,67 @@ async def test_corrupt_state_file_falls_back_to_full_push(
     assert state["last_meta_count"] == 1
 
 
+async def _run_push(isolated_snapshot_dir, fake_port, *, force: bool = False):
+    """Helper: corre la activity con env OK + el port fake dado."""
+    with patch.dict(
+        "os.environ",
+        {"META_CATALOG_ID": "1234567890", "META_SYSTEM_USER_TOKEN": "EAAtoken"},
+        clear=False,
+    ):
+        with patch(
+            "src.plugins.catalog.agent.activities.push.get_push_meta_catalog_use_case"
+        ) as mock_factory:
+            from src.plugins.catalog.agent.use_cases.push_meta_catalog import (
+                PushMetaCatalogUseCase,
+            )
+
+            mock_factory.return_value = PushMetaCatalogUseCase(
+                meta_port=fake_port
+            )
+            return await push_meta_catalog_activity(
+                PushMetaActivityInput(
+                    tenant_id="default",
+                    products_json=_sample_products_json(),
+                    snapshot_dir=str(isolated_snapshot_dir),
+                    force_full_refresh=force,
+                )
+            )
+
+
+@pytest.mark.asyncio
+async def test_second_sync_without_force_is_noop(isolated_snapshot_dir):
+    """CONTROL: sin force, el segundo sync de datos IDÉNTICOS es no-op —
+    el hash matchea → NO se re-pushea (delta). Documenta el comportamiento
+    que hacía irrecuperable un fetch de imagen fallido en Meta."""
+    port1 = _FakeMetaPort(ok=True, handle="h1")
+    r1 = await _run_push(isolated_snapshot_dir, port1)
+    assert r1.creates == 1  # primer push crea
+
+    port2 = _FakeMetaPort(ok=True, handle="h2")
+    r2 = await _run_push(isolated_snapshot_dir, port2)
+    assert r2.creates == 0 and r2.updates == 0  # delta no-op
+    assert len(port2.batches) == 0  # el port NO se llama
+
+
+@pytest.mark.asyncio
+async def test_force_full_refresh_repushes_unchanged_items(
+    isolated_snapshot_dir,
+):
+    """FIX: con force_full_refresh=True, un segundo sync de datos idénticos
+    RE-PUSHEA todos los items como CREATE (ignora previous_hashes) — así el
+    dashboard puede recuperar imágenes que Meta no fetcheó. Este es el flag
+    que el botón 'Sincronizar' manda pero que hoy el push ignora."""
+    port1 = _FakeMetaPort(ok=True, handle="h1")
+    r1 = await _run_push(isolated_snapshot_dir, port1)
+    assert r1.creates == 1
+
+    port2 = _FakeMetaPort(ok=True, handle="h2")
+    r2 = await _run_push(isolated_snapshot_dir, port2, force=True)
+    assert r2.creates == 1, "force_full_refresh debe re-pushear items sin cambios"
+    assert len(port2.batches) == 1
+    assert port2.batches[0].creates[0].retailer_id == "HUB-VEL-LAV-250"
+
+
 @pytest.mark.asyncio
 async def test_push_error_does_not_overwrite_state(
     isolated_snapshot_dir,

@@ -18,7 +18,9 @@ with workflow.unsafe.imports_passed_through():
     )
     from src.platform.temporal.retry_policies import _LLM_OPTIONS
     from src.platform.workflow_helpers import (
+        InboxMsg,
         PendingMessage,
+        coalesce_inbox,
         coalesce_pending,
         run_agent_turn,
     )
@@ -58,7 +60,9 @@ def _map_closing_tag_to_capi_event(closing_tag: str) -> str | None:
     if closing_tag in PURCHASE_CLOSING_TAGS:
         return "Purchase"
     if closing_tag in LEAD_CLOSING_TAGS:
-        return "Lead"
+        # "LeadSubmitted", NO "Lead" — Meta rechaza "Lead" para
+        # business_messaging (error 2804066; smoke test 2026-07-01).
+        return "LeadSubmitted"
     return None
 
 
@@ -263,7 +267,43 @@ class HubaraSalesSessionWorkflow:
 
                 batch = list(self._pending)
                 self._pending.clear()
-                msgs_to_process: list[PendingMessage] = [coalesce_pending(batch)]
+                msgs_to_process: list[PendingMessage]
+                # Bandeja/watermark (PR burst-inbox): convertir la ráfaga a
+                # InboxMsg (seq = orden de llegada — determinista en replay:
+                # el orden de `_pending` es el orden de los signals, que
+                # Temporal garantiza) y coalescer con `coalesce_inbox`. Con
+                # >1 mensaje del cliente, el LLM recibe la lista explícita de
+                # lo que escribió (nota de ráfaga en plugin_context) y
+                # responde al hilo COMPLETO — mata el patrón "el bot solo ve
+                # uno". Preserva el manejo de is_handoff (L-12). Gated para
+                # no romper replay de runs en vuelo pre-deploy (R-DET, L-9).
+                # Construir la lista es puro (sin patched) — fuera de los gates.
+                inbox_batch = [
+                    InboxMsg(
+                        seq=i,
+                        wamid=None,
+                        text=p.message,
+                        ts_ms=0,
+                        media=p.media,
+                        plugin_context=p.plugin_context,
+                        is_handoff=p.is_handoff,
+                    )
+                    for i, p in enumerate(batch, 1)
+                ]
+                # Cadena de gates (más nuevo primero — patrón patched/deprecate
+                # de Temporal): ejecuciones nuevas graban y toman v2; histories
+                # con el marker v1 (deploy 2026-07-01) replayean v1; histories
+                # pre-PR#100 replayean coalesce_pending.
+                if workflow.patched("burst-note-v2"):
+                    # v2: la nota de ráfaga cuenta/lista solo mensajes CON
+                    # texto (un solo-media no mete `""` ni infla el conteo) y
+                    # el plugin_context dedupea duplicados exactos (una ráfaga
+                    # de N inbounds traía N copias del bloque bogota-context).
+                    msgs_to_process = [coalesce_inbox(inbox_batch, version=2)]
+                elif workflow.patched("burst-note-v1"):
+                    msgs_to_process = [coalesce_inbox(inbox_batch)]
+                else:
+                    msgs_to_process = [coalesce_pending(batch)]
             else:
                 # Legacy: un mensaje a la vez. Solo para workflows pre-deploy.
                 msgs_to_process = []

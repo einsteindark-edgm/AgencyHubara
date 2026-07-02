@@ -19,8 +19,11 @@ la forma de ese bloque, no el contenido literal (depende de `datetime.now`).
 """
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from temporalio.client import WorkflowExecutionStatus
+from temporalio.exceptions import WorkflowAlreadyStartedError
 
 from src.platform.constants import (
     ROUTE_HUMANO,
@@ -114,19 +117,40 @@ class FakeClient:
             raise_describe=RuntimeError("workflow does not exist"),
         )
 
-    async def start_workflow(self, workflow_run, payload, *, id, task_queue):
+    async def start_workflow(
+        self,
+        workflow_run,
+        payload,
+        *,
+        id,
+        task_queue,
+        start_signal=None,
+        start_signal_args=None,
+        id_conflict_policy=None,
+    ):
         self.start_calls.append(
             {
                 "workflow": workflow_run,
                 "payload": payload,
                 "id": id,
                 "task_queue": task_queue,
+                "start_signal": start_signal,
+                "start_signal_args": start_signal_args,
+                "id_conflict_policy": id_conflict_policy,
             }
         )
-        new_handle = FakeHandle(status=WorkflowExecutionStatus.RUNNING)
-        new_handle.id = id
-        self.started_handles[id] = new_handle
-        return new_handle
+        # signal_with_start: si el workflow ya corre (id_conflict_policy
+        # USE_EXISTING) entrega el signal al handle vivo y NO crea uno nuevo;
+        # si no existe, arranca uno nuevo. Modela la semántica atómica real.
+        if id in self.existing_handles:
+            handle = self.existing_handles[id]
+        else:
+            handle = FakeHandle(status=WorkflowExecutionStatus.RUNNING)
+            handle.id = id
+            self.started_handles[id] = handle
+        if start_signal is not None:
+            handle.signals.append((start_signal, list(start_signal_args or [])))
+        return handle
 
 
 # --- Helpers ---------------------------------------------------------------
@@ -200,10 +224,13 @@ async def test_reuses_running_sales_handle_without_starting_again():
 
     # Sin phone_number_id no se escribe metadata.
     assert metadata.writes == []
-    # No se arranco workflow nuevo.
-    assert client.start_calls == []
-    # El handle existente recibe el signal. Ruta Sales → plugin_context trae
-    # el bloque de contexto Bogotá; validamos la forma.
+    # signal_with_start reusa el workflow vivo: NO crea una ejecución nueva
+    # (started_handles vacío) aunque el call a start_workflow sí ocurre con
+    # id_conflict_policy=USE_EXISTING.
+    assert client.started_handles == {}
+    assert len(client.start_calls) == 1
+    # El handle existente recibe el mensaje (entregado por el start_signal).
+    # Ruta Sales → plugin_context trae el bloque de contexto Bogotá.
     assert len(existing.signals) == 1
     fn, args = existing.signals[0]
     # ADR-2026-05-20: signal dispatch is by NAME (string), not class method ref.
@@ -418,6 +445,111 @@ async def test_no_override_when_flow_awaiting_flag_expired():
     # Flag vencido → ruteo normal a remarketing (no override)
     assert client.start_calls == []
     assert len(rem_handle.signals) == 1
+
+
+# ============================================================================
+# Race de arranque (run 019f1b65 / sesión wa_573125671604): dos inbounds
+# concurrentes sobre un workflow inexistente NO deben perder ningún signal.
+# ============================================================================
+
+
+class _RacingHandle:
+    """Handle que acumula los signals entregados (start_signal o signal)."""
+
+    def __init__(self, workflow_id: str) -> None:
+        self.id = workflow_id
+        self.signals: list[tuple[str, list]] = []
+
+    async def describe(self):
+        # Sólo se llama sobre handles YA arrancados en este fake.
+        return _Desc(WorkflowExecutionStatus.RUNNING)
+
+    async def signal(self, name, *, args) -> None:
+        self.signals.append((name, args))
+
+
+class RacingFakeClient:
+    """Modela la semántica REAL de Temporal para el arranque de workflows.
+
+    * `get_workflow_handle` sobre un id inexistente → `describe()` lanza (el
+      workflow no existe todavía).
+    * `start_workflow` **sin** `start_signal` sobre un id ya arrancado →
+      `WorkflowAlreadyStartedError` (reproduce la race: el 2º ingest
+      concurrente pierde su signal con el arranque manual).
+    * `start_workflow` **con** `start_signal` + `id_conflict_policy=USE_EXISTING`
+      → atómico: si no existe lo crea y entrega el `start_signal`; si ya existe,
+      entrega el signal al handle vivo. Ningún mensaje se pierde.
+
+    Los `await asyncio.sleep(0)` fuerzan el interleaving determinista de los
+    dos ingests (ambos pasan `describe` antes de que cualquiera arranque).
+    """
+
+    def __init__(self) -> None:
+        self.started: dict[str, _RacingHandle] = {}
+
+    def get_workflow_handle(self, workflow_id: str):
+        if workflow_id in self.started:
+            return self.started[workflow_id]
+
+        async def _raise_describe():
+            await asyncio.sleep(0)
+            raise RuntimeError("workflow not found")
+
+        h = _RacingHandle(workflow_id)
+        h.describe = _raise_describe  # type: ignore[method-assign]
+        return h
+
+    async def start_workflow(
+        self,
+        workflow_run,
+        payload,
+        *,
+        id,
+        task_queue,
+        start_signal=None,
+        start_signal_args=None,
+        id_conflict_policy=None,
+    ):
+        await asyncio.sleep(0)
+        if start_signal is None:
+            # Camino manual (código actual): choca si el id ya existe.
+            if id in self.started:
+                raise WorkflowAlreadyStartedError(id, "HubaraSalesSessionWorkflow")
+            h = _RacingHandle(id)
+            self.started[id] = h
+            return h
+        # signal_with_start atómico: crear-o-reusar + entregar el signal.
+        h = self.started.get(id) or _RacingHandle(id)
+        self.started[id] = h
+        h.signals.append((start_signal, list(start_signal_args or [])))
+        return h
+
+
+@pytest.mark.asyncio
+async def test_concurrent_first_contact_delivers_both_messages():
+    """RED (race run 019f1b65): el cliente manda 2 mensajes seguidos cuando
+    NO hay workflow vivo. Los dos ingests corren concurrentes; ambos ven
+    'workflow inexistente' y ambos intentan arrancarlo. Con el arranque manual
+    (get→describe→start→signal), el 2º `start_workflow` choca con
+    `WorkflowAlreadyStartedError` y su mensaje NUNCA llega al workflow (el LLM
+    sólo ve uno). El fix (`signal_with_start` atómico) garantiza que los DOS
+    mensajes lleguen a la cola de signals."""
+    metadata = FakeMetadataStore(initial={})
+    client = RacingFakeClient()
+    use_case = _make_use_case(metadata, client)
+
+    await asyncio.gather(
+        use_case.execute(session_id="wa_race", message="Hola", phone_number_id="PID"),
+        use_case.execute(
+            session_id="wa_race", message="quiero el difusor", phone_number_id="PID"
+        ),
+    )
+
+    handle = client.started["session-wa_race"]
+    delivered = {args[0] for _name, args in handle.signals}
+    assert delivered == {"Hola", "quiero el difusor"}, (
+        f"se perdió un mensaje en la ráfaga: llegaron {delivered}"
+    )
 
 
 @pytest.mark.asyncio

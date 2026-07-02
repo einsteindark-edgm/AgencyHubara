@@ -16,7 +16,6 @@ import structlog
 
 from src.platform.analytics.bus import EventBus, get_event_bus
 from src.platform.analytics.filesystem_sink import FilesystemAnalyticsSink
-from src.platform.analytics.meta_capi_sink import MetaConversionsAPISink
 from src.platform.config import WORKSPACE_VAULT_DIR
 
 logger = structlog.get_logger()
@@ -31,15 +30,11 @@ def setup_analytics() -> EventBus:
     bus.add_sink(FilesystemAnalyticsSink(fs_dir))
     logger.info("analytics.fs_sink_registered", dir=str(fs_dir))
 
-    # Meta Conversions API sink (opt-in via env)
-    capi = MetaConversionsAPISink.from_env()
-    if capi is not None:
-        bus.add_sink(capi)
-        logger.info("analytics.meta_capi_sink_registered", pixel_id=capi._pixel_id)
-    else:
-        logger.info(
-            "analytics.meta_capi_skipped",
-            reason="META_PIXEL_ID or META_CAPI_ACCESS_TOKEN missing",
-        )
-
+    # NOTA (2026-07-01): el `MetaConversionsAPISink` fue ELIMINADO. Era un
+    # stub divergente del camino CAPI real (`send_capi_event_activity` en
+    # platform/whatsapp/capi_activity.py): mandaba Lead al primer touch (la
+    # activity manda LeadSubmitted al cierre), event_id random (sin dedup),
+    # sin ventana de 7 días. Tener ambos activos inflaba Leads (doble-Lead).
+    # El ÚNICO camino a Meta CAPI es la activity; este bus queda para
+    # auditoría local (filesystem).
     return bus

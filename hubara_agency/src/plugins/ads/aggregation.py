@@ -94,6 +94,15 @@ class AdsCampaignSummary:
     # del embudo. None si no hay episodios cerrados con timestamps válidos.
     avg_episode_duration_ms: int | None = None
 
+    # --- Señal CAPI (Conversions API) reportada a Meta (fix 2026-07-01) ---
+    # Eventos de atribución CTWA que este bucket le reportó a Meta. Los
+    # counters arrancan en 0 (no None): "sin señal" es un cero real, no un
+    # dato pendiente. Fuente: metadata["capi_events_sent"] (escrito por
+    # send_capi_event_activity al cierre de cada episodio).
+    capi_leads_sent: int = 0
+    capi_purchases_sent: int = 0
+    capi_failed: int = 0
+
     # --- Faltantes (queda None — frontend marca visual) ---
     spend: float | None = None
     impressions: int | None = None
@@ -148,6 +157,11 @@ class AdsAttributedConversation:
     # no acumuló uso (sesión legacy / episodio sin turnos LLM).
     llm_cost_usd: float | None = None
     llm_tokens: int | None = None
+
+    # Evento CAPI reportado a Meta para este episodio (fix 2026-07-01):
+    # "Purchase" | "LeadSubmitted" | None (nada reportado / falló). Purchase
+    # pisa a LeadSubmitted (evento terminal — espejo de capi_terminal_event).
+    capi_event: str | None = None
 
 
 @dataclass(frozen=True)
@@ -436,6 +450,59 @@ def _episode_msgs_count(
     return total_msgs_fn()
 
 
+def _session_capi_by_episode(
+    metadata: dict[str, Any], session_id: str
+) -> dict[str | None, dict[str, int]]:
+    """Indexa `metadata["capi_events_sent"]` por episodio.
+
+    Los event_ids son estables y llevan la atribución adentro:
+      * LeadSubmitted → `lead_{session_id}_{episode_id}` (el episodio va en
+        el id; también matchea los "Lead" legacy pre-fix 2026-07-01).
+      * Purchase → `purchase_{order_id}` → se resuelve al episodio cuyo
+        `order_id` coincide.
+
+    Eventos no mapeables a un episodio caen bajo la key ``None`` — que es
+    exactamente la key del pseudo-episodio de las sesiones legacy sin
+    `episodes[]`, así sus counters no se pierden.
+
+    Cada slot: `{"lead_sent": n, "purchase_sent": n, "failed": n}`. Los
+    `skipped_*` NO cuentan (no fueron intentos de envío).
+    """
+    events = metadata.get("capi_events_sent")
+    out: dict[str | None, dict[str, int]] = {}
+    if not isinstance(events, list) or not events:
+        return out
+
+    order_to_ep: dict[str, str | None] = {}
+    for ep in metadata.get("episodes") or []:
+        if isinstance(ep, dict) and isinstance(ep.get("order_id"), str):
+            order_to_ep[ep["order_id"]] = ep.get("episode_id")
+
+    lead_prefix = f"lead_{session_id}_"
+    for e in events:
+        if not isinstance(e, dict):
+            continue
+        event_id = e.get("event_id") or ""
+        name = e.get("event_name")
+        status = e.get("status") or ""
+        ep_id: str | None = None
+        if event_id.startswith(lead_prefix):
+            ep_id = event_id[len(lead_prefix):]
+        elif event_id.startswith("purchase_"):
+            ep_id = order_to_ep.get(event_id[len("purchase_"):])
+        slot = out.setdefault(
+            ep_id, {"lead_sent": 0, "purchase_sent": 0, "failed": 0}
+        )
+        if status == "sent":
+            if name == "Purchase":
+                slot["purchase_sent"] += 1
+            elif name in ("LeadSubmitted", "Lead"):
+                slot["lead_sent"] += 1
+        elif status.startswith("failed"):
+            slot["failed"] += 1
+    return out
+
+
 def _session_order_totals(metadata: dict[str, Any]) -> dict[str, int]:
     """Map `order_id → total_cop` recuperable del metadata de la sesión.
 
@@ -557,6 +624,7 @@ def list_ads_campaigns(
         last_msg_ms = _last_msg_at_ms(session_dir, last_touch, origin)
         count_fn = _make_line_counter(session_dir)
         order_totals = _session_order_totals(metadata)
+        capi_idx = _session_capi_by_episode(metadata, session_dir.name)
 
         for ep, state in _iter_episodes(
             metadata,
@@ -608,6 +676,9 @@ def list_ads_campaigns(
                     "has_llm": False,
                     "dur_sum": 0,
                     "dur_count": 0,
+                    "capi_leads": 0,
+                    "capi_purchases": 0,
+                    "capi_failed": 0,
                 },
             )
             bucket["started"] += 1
@@ -630,6 +701,14 @@ def list_ads_campaigns(
             if dur is not None:
                 bucket["dur_sum"] += dur
                 bucket["dur_count"] += 1
+            # Señal CAPI del episodio (key None = pseudo-episodio legacy).
+            capi_slot = capi_idx.get(
+                ep.get("episode_id") if ep is not None else None
+            )
+            if capi_slot:
+                bucket["capi_leads"] += capi_slot["lead_sent"]
+                bucket["capi_purchases"] += capi_slot["purchase_sent"]
+                bucket["capi_failed"] += capi_slot["failed"]
 
             if isinstance(ep_started_ms, int):
                 if (
@@ -694,6 +773,9 @@ def list_ads_campaigns(
                 llm_cost_usd=llm_cost_usd,
                 llm_tokens=llm_tokens,
                 avg_episode_duration_ms=avg_episode_duration_ms,
+                capi_leads_sent=bucket["capi_leads"],
+                capi_purchases_sent=bucket["capi_purchases"],
+                capi_failed=bucket["capi_failed"],
             )
         )
 
@@ -740,6 +822,7 @@ def list_attributed_conversations(
         last_msg_ms = _last_msg_at_ms(session_dir, last_touch, origin)
         count_fn = _make_line_counter(session_dir)
         order_totals = _session_order_totals(metadata)
+        capi_idx = _session_capi_by_episode(metadata, session_id)
 
         for ep, state in _iter_episodes(
             metadata,
@@ -784,6 +867,13 @@ def list_attributed_conversations(
                 continue
 
             _usage = ep.get("llm_usage") if isinstance(ep, dict) else None
+            _capi_slot = capi_idx.get(ep_id) or {}
+            if _capi_slot.get("purchase_sent"):
+                _capi_event = "Purchase"  # terminal — pisa a LeadSubmitted
+            elif _capi_slot.get("lead_sent"):
+                _capi_event = "LeadSubmitted"
+            else:
+                _capi_event = None
             convs.append(
                 AdsAttributedConversation(
                     id=conv_id,
@@ -807,6 +897,7 @@ def list_attributed_conversations(
                         if isinstance(_usage, dict)
                         else None
                     ),
+                    capi_event=_capi_event,
                 )
             )
 

@@ -36,6 +36,7 @@ from typing import Any
 from fastapi import APIRouter, Path, Query
 
 from src.plugins.ads.aggregation import (
+    DIRECT_CAMPAIGN_ID,
     bogota_day_start_ms,
     list_ads_campaigns,
     list_attributed_conversations,
@@ -44,6 +45,7 @@ from src.plugins.ads.aggregation import (
 )
 from src.plugins.ads.api.analysis import router as _analysis_router
 from src.plugins.ads.api.meta_oauth import router as _meta_router
+from src.plugins.ads.meta_names import enrich_campaign_names, fetch_meta_ad_names
 from src.sdk.runtime import WORKSPACE_VAULT_DIR
 
 router = APIRouter()
@@ -65,6 +67,45 @@ router.include_router(_meta_router, prefix="/meta")
 _SCAN_TTL_S = 15.0
 _DAY_MS = 24 * 60 * 60 * 1000
 _scan_cache: dict[str, tuple[float, list[tuple[FsPath, dict[str, Any]]]]] = {}
+
+# Cache del enrichment de nombres Meta (fix 2026-07-01). Los nombres de
+# ads/campañas cambian casi nunca — TTL largo (10 min) para no pegarle a
+# Graph API en cada page-view. Key = set de ad_ids pedidos; el fetch es
+# best-effort ({} en error) y un {} también se cachea (evita martillar a
+# Graph cuando está caído — se reintenta recién al expirar el TTL).
+_META_NAMES_TTL_S = 600.0
+_meta_names_cache: dict[str, tuple[float, dict[str, dict[str, str | None]]]] = {}
+
+
+def _meta_names_token() -> str:
+    """Token para Marketing API (`ads_read`). El System User token del
+    tenant ya trae el scope (infra/whatsapp-provisioning/README.md §0).
+    Vacío → enrichment off (best-effort, headlines intactos)."""
+    import os
+
+    return (
+        os.environ.get("META_SYSTEM_USER_TOKEN")
+        or os.environ.get("WHATSAPP_ACCESS_TOKEN")
+        or ""
+    )
+
+
+def _cached_meta_names(ad_ids: list[str]) -> dict[str, dict[str, str | None]]:
+    """`fetch_meta_ad_names` con cache TTL en proceso (capa API, igual que
+    el scan del vault — el use case sigue puro)."""
+    if not ad_ids:
+        return {}
+    token = _meta_names_token()
+    if not token:
+        return {}
+    key = ",".join(sorted(ad_ids))
+    now = time.monotonic()
+    hit = _meta_names_cache.get(key)
+    if hit is not None and (now - hit[0]) < _META_NAMES_TTL_S:
+        return hit[1]
+    names = fetch_meta_ad_names(ad_ids, token=token)
+    _meta_names_cache[key] = (now, names)
+    return names
 
 
 def _since_ms(days: int | None) -> int | None:
@@ -170,6 +211,14 @@ def get_ads_campaigns(
         since_ms=since_ms,
         until_ms=until_ms,
     )
+    # Enrichment de nombres reales (fix 2026-07-01): el headline del
+    # referral es el CTA del ad ("Chatea con nosotros"), no el nombre de
+    # la campaña de Ads Manager. Resolvemos los nombres reales vía
+    # Marketing API (batch + cache TTL); best-effort — sin token o Graph
+    # caído, los headlines quedan tal cual.
+    ad_ids = [c.id for c in campaigns if c.id != DIRECT_CAMPAIGN_ID]
+    if ad_ids:
+        campaigns = enrich_campaign_names(campaigns, _cached_meta_names(ad_ids))
     return {"campaigns": [asdict(c) for c in campaigns]}
 
 

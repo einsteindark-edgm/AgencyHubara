@@ -15,6 +15,7 @@ errores estructurados — el caller decide qué reintentar.
 """
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import httpx
@@ -56,19 +57,17 @@ class MetaCatalogClient:
         for item in request.creates:
             requests_payload.append({
                 "method": "CREATE",
-                "retailer_id": item.retailer_id,
                 "data": _item_to_meta_data(item),
             })
         for item in request.updates:
             requests_payload.append({
                 "method": "UPDATE",
-                "retailer_id": item.retailer_id,
                 "data": _item_to_meta_data(item),
             })
         for retailer_id in request.deletes:
             requests_payload.append({
                 "method": "DELETE",
-                "retailer_id": retailer_id,
+                "data": {"id": retailer_id},
             })
 
         if not requests_payload:
@@ -126,7 +125,29 @@ class MetaCatalogClient:
                 error="bad_json",
             )
 
-        handle = data.get("handles", [None])[0] if "handles" in data else data.get("handle")
+        # `/items_batch` devuelve {"handles":[...]} en éxito. Un 200 SIN handles
+        # significa que Meta rechazó los items en validación (el body trae
+        # `validation_status` con los errores por-item) — NO es éxito. Antes esto
+        # se reportaba ok=True → rechazo silencioso (prod 2026-06-30: "Can not
+        # find required field id" con 0 productos creados pero pushed=True).
+        handles = data.get("handles") or (
+            [data["handle"]] if data.get("handle") else None
+        )
+        if not handles:
+            detail = json.dumps(data.get("validation_status") or data)[:400]
+            logger.warning(
+                "meta_catalog.upsert_batch.validation_failed",
+                detail=detail,
+                submitted=len(requests_payload),
+            )
+            return MetaBatchResult(
+                handle=None,
+                ok=False,
+                submitted=len(requests_payload),
+                error=f"validation_failed: {detail}",
+            )
+
+        handle = handles[0]
         logger.info(
             "meta_catalog.upsert_batch.ok",
             handle=handle,
@@ -223,19 +244,27 @@ class MetaCatalogClient:
 
 
 def _item_to_meta_data(item: MetaCatalogItem) -> dict[str, Any]:
-    """Serializa MetaCatalogItem al shape JSON que /items_batch espera."""
+    """Serializa MetaCatalogItem al shape que `/items_batch` espera.
+
+    `/items_batch` usa los nombres de campo del *feed spec* y exige el retailer
+    id DENTRO de `data` como `id` (NO `retailer_id` a nivel del request — Meta lo
+    ignora y devuelve `validation_status` "Can not find required field id").
+    Mapeo: retailer_id→id, name→title, url→link, image_url→image_link,
+    additional_image_urls→additional_image_link (CSV). Prod 2026-06-30.
+    """
     data: dict[str, Any] = {
-        "name": item.name,
+        "id": item.retailer_id,
+        "title": item.name,
         "description": item.description,
-        "url": item.url,
-        "image_url": item.image_url,
+        "link": item.url,
+        "image_link": item.image_url,
         "price": item.price,
         "availability": item.availability,
         "condition": item.condition,
         "brand": item.brand,
     }
     if item.additional_image_urls:
-        data["additional_image_urls"] = item.additional_image_urls
+        data["additional_image_link"] = ",".join(item.additional_image_urls)
     if item.gtin:
         data["gtin"] = item.gtin
     if item.google_product_category:
@@ -251,6 +280,6 @@ def _item_to_meta_data(item: MetaCatalogItem) -> dict[str, Any]:
             data[f"custom_label_{i}"] = label
     if item.sale_price:
         data["sale_price"] = item.sale_price
-    if item.custom_data_tags:
-        data["custom_data"] = {"tags": item.custom_data_tags}
+    # NOTA: `custom_data`/tags NO es un campo válido de `/items_batch` (solo del
+    # feed CSV) — se omite a propósito para no re-disparar validation_status.
     return data

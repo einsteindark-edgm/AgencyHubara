@@ -18,7 +18,6 @@ string annotations of locally-defined types like `WatchdogEligibilityResult`.
 """
 import os
 import time
-import uuid
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -33,7 +32,6 @@ from src.platform.constants import (
     WHATSAPP_SESSION_PREFIX,
 )
 from src.platform.state import FilesystemMetadataStore
-from src.platform.whatsapp.dtos import OutboundResult
 from src.platform.whatsapp.templates.registry import (
     TemplateSpec,
     get_watchdog_template_for_stage,
@@ -200,7 +198,6 @@ def _resolve_template_variables(
         "el monto del pedido" placeholder.
       * `status_label` → "en proceso" placeholder.
       * `product_label` → tag motivo, falling back to "el producto".
-      * `discount_label` → "una promo especial" placeholder.
 
     Any variable not in the heuristics gets the literal string "—".
     """
@@ -221,7 +218,6 @@ def _resolve_template_variables(
         "amount_currency": "el monto del pedido",
         "status_label": "en proceso",
         "product_label": motivo,
-        "discount_label": "una promo especial",
     }
 
     out: dict[str, str] = {}
@@ -378,46 +374,6 @@ async def check_watchdog_eligibility_activity(
         resolved_template_name=spec.name,
         resolved_template_variables=variables,
     )
-
-
-# =============================================================================
-# Send template (MOCK — Sprint 2)
-# =============================================================================
-
-
-@activity.defn(name="send_watchdog_template_activity")
-async def send_watchdog_template_activity(
-    session_id: str,
-    template_name: str,
-    variables: dict,
-) -> OutboundResult:
-    """MOCK send: log the would-be template send, NEVER call Meta.
-
-    Sprint 2 deliberately mocks the real send while Sprint 0 (operational —
-    Meta template approval, copywriter, runbook) is pending. The OutboundResult
-    shape matches `send_whatsapp_template_activity` so the workflow code path
-    is identical; swapping to the real activity is one-line change in
-    `remarketing.py` (register the real activity instead of this one) +
-    workflow `args=...` pointer.
-
-    `wa_message_id` carries a `MOCK_WATCHDOG_<uuid>` prefix so downstream
-    log inspection / dashboards can filter mock fires out of cost reporting
-    without confusing them with real Meta-issued message ids.
-    """
-    mock_id = f"MOCK_WATCHDOG_{uuid.uuid4().hex[:12]}"
-    log.info(
-        "watchdog_template_send_MOCK",
-        session_id=session_id,
-        template_name=template_name,
-        variables=variables,
-        mock_wa_message_id=mock_id,
-        note=(
-            "Sprint 2 MOCK — not actually calling WhatsApp. Replace with "
-            "send_whatsapp_template_activity once Sprint 0 template approval "
-            "completes."
-        ),
-    )
-    return OutboundResult(wa_message_id=mock_id, ok=True, error=None)
 
 
 # =============================================================================

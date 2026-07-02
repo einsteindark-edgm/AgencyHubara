@@ -124,3 +124,18 @@ lo reproduce — el "Guard" se escribe ANTES que el "Fix" (ley TDD, `00-tdd-law.
 - **MF-1/MF-4 (RESUELTO 2026-06-20 — la orquestación es CORE, no G1+):** se implementó el threading del task graph — binding `inputs:` en los agentes-ref (`manifest_model`) + el `loader` threadea un estado acumulador (`build_runnable` composing branch) + el check **G-WIRE** (un supervisor que compone sin wiring NO certifica) + el CLI `run --input-file`. El supervisor corre por su manifest: `tests/integration/test_ads_analytics_supervisor.py` (reporte terminal + seed incompleto falla loud). El QA gobierna la confianza: `ctwa-report` marca `[ALERTA]` si `qa_passed=false`. → **L-10 RESUELTO** + regla G-WIRE en el plugin.
 - **MF-8/10/11/12/14 (HARDENING, follow-up):** double-encode defensivo; timezone off-by-one Bogotá↔UTC (lo normaliza el central); fecha duplicada granular; `with: $state.*` letra-muerta (convención pre-existente, se consume con StateGraph G1+); fixture huérfano `meta_insights_sample.json`. No bloquean.
 - Panel re-corrido tras los fixes: **VERDE**.
+
+### 2026-07-01 · Explorer modo edición (connect/disconnect estilo n8n) — 2 bugs cazados en la verificación viva
+- **React #31 (port contract string vs agent contract objeto):** el inspector ya renderizaba `node.contract`
+  (string, el protocolo de un PORT). Al agregar `contract: {inputs, outputs}` a los AGENTES, el mismo campo
+  llegó como OBJETO → crash de React (#31) al seleccionar un agente. Fix: la fila solo renderiza
+  `typeof node.contract === 'string'`; el objeto va al `ContractBlock` tipado. LECCIÓN: reusar un nombre de
+  campo del grafo con otro TIPO según el kind del nodo es una colisión silenciosa — el schema del nodo es
+  por-kind, revisar TODOS los consumidores del campo antes de sobrecargarlo.
+- **Newline final comido al desconectar el último item:** la edición textual removía el item con la cola del
+  archivo → diff de git sucio (`\ No newline at end of file`). Guard: `test_connect_disconnect_roundtrip_byte_identico`.
+- Verificación viva en el preview headless: el viewport nace 0×0 (medí `innerWidth==0`) → React Flow culls
+  edges y `fitView` no-opea; `preview_resize` explícito + reload. El drag sintético de handles NO inicia la
+  conexión (fidelidad de eventos), pero el **click-connect** de React Flow (click handle origen → click handle
+  destino) SÍ dispara `onConnect` — es la vía repetible para e2e del modal en headless. Los `mousemove`/`mouseup`
+  sintéticos deben despacharse en `document` (los listeners de d3/XYHandle viven ahí; en `window` no llegan).

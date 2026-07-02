@@ -64,9 +64,9 @@ def build_ingest_use_case() -> IngestInboundMessage:
     request para reaprovechar el patron actual de `get_temporal_client`.
 
     HU-002: arma también el `EventBus` analytics y lo inyecta para que el
-    ingest emita eventos de referral CTWA + click tracking. Si las env
-    `META_PIXEL_ID`/`META_CAPI_ACCESS_TOKEN` no están seteadas, solo se
-    activa el sink filesystem (auditoría local) — Meta CAPI queda OFF.
+    ingest emita eventos de referral CTWA + click tracking al sink
+    filesystem (auditoría local). El envío a Meta CAPI NO pasa por este
+    bus — vive en `send_capi_event_activity` (cierre de episodio).
     """
     global _INGEST_USE_CASE
     if _INGEST_USE_CASE is not None:

@@ -139,3 +139,57 @@ def test_daily_endpoint_custom_range_length_matches_series(ads_client):
     assert len(body["series"]) == 7
     assert body["series"][0]["d"] == "1 may"
     assert body["series"][-1]["d"] == "7 may"
+
+
+# --- enrichment de nombres Meta (fix 2026-07-01) ----------------------------
+
+
+def test_campaigns_endpoint_enriches_names_from_meta(ads_client, monkeypatch):
+    """El endpoint resuelve el nombre REAL del ad/campaña vía Marketing API
+    (batch + cache TTL) y lo usa como `name`; el headline del referral
+    queda en `creative_title`. Sin token / API caída → headlines intactos
+    (best-effort, cubierto por el caso else)."""
+    client, vault = ads_client
+    _seed_two_episodes(vault)
+
+    calls: list[list[str]] = []
+
+    def fake_fetch(ad_ids, *, token, transport=None):
+        calls.append(sorted(ad_ids))
+        return {
+            "AD_X": {
+                "ad_name": "Ad velas premium",
+                "campaign_name": "Día del Padre 2026",
+                "campaign_id": "CAMP_1",
+            }
+        }
+
+    monkeypatch.setattr(ads_mod, "fetch_meta_ad_names", fake_fetch)
+    monkeypatch.setattr(ads_mod, "_meta_names_token", lambda: "TOK")
+    ads_mod._meta_names_cache.clear()
+
+    resp = client.get("/api/ads/campaigns")
+    assert resp.status_code == 200
+    camp = next(c for c in resp.json()["campaigns"] if c["id"] == "AD_X")
+    assert camp["name"] == "Día del Padre 2026 · Ad velas premium"
+    assert camp["creative_title"] == "Velas"
+    assert camp["meta_campaign_id"] == "CAMP_1"
+
+    # 2do request: cache TTL — no re-fetchea
+    client.get("/api/ads/campaigns")
+    assert len(calls) == 1
+
+    ads_mod._meta_names_cache.clear()
+
+
+def test_campaigns_endpoint_without_token_keeps_headlines(ads_client, monkeypatch):
+    """Sin token configurado, no se llama a Meta y el name queda el headline."""
+    client, vault = ads_client
+    _seed_two_episodes(vault)
+    monkeypatch.setattr(ads_mod, "_meta_names_token", lambda: "")
+    ads_mod._meta_names_cache.clear()
+
+    resp = client.get("/api/ads/campaigns")
+    camp = next(c for c in resp.json()["campaigns"] if c["id"] == "AD_X")
+    assert camp["name"] == "Velas"
+    assert camp["creative_title"] is None
