@@ -35,9 +35,17 @@ from src.platform.temporal.dispatcher import (
     start_or_signal_sales_workflow_activity,
     write_pending_handoff_activity,
 )
+
+from exoclaw_temporal.activities.conversation import (
+    build_prompt as generic_build_prompt,
+)
+
 from src.platform.tool_extensions import register_tool_extension
 from src.platform.tools.escalation import EscalateToHumanTool
 from src.platform.workflow_helpers import CONVERSATIONAL_TURN_ACTIVITIES
+from src.plugins.chats.agent.sales.activities.build_prompt_stage import (
+    sales_build_prompt,
+)
 from src.platform.whatsapp.activities import (
     send_typing_indicator_activity,
     send_whatsapp_message_activity,
@@ -275,7 +283,17 @@ async def main() -> None:
             # Set conversacional compartido — TODO worker que corra
             # run_agent_turn lo spread-ea desde workflow_helpers (fuente
             # única, L-3). Nunca listar esas activities a mano.
-            *CONVERSATIONAL_TURN_ACTIVITIES,
+            # EXCEPCIÓN Sales (dieta de prompt): `build_prompt` se reemplaza
+            # por el override por-etapa `sales_build_prompt` — MISMO nombre
+            # de activity, mismo contrato → el workflow no cambia (cero
+            # replay implications). Registrar ambas rompería el Worker
+            # (nombre duplicado), por eso se filtra la genérica.
+            *(
+                a
+                for a in CONVERSATIONAL_TURN_ACTIVITIES
+                if a is not generic_build_prompt
+            ),
+            sales_build_prompt,
             send_whatsapp_message_activity,
             send_typing_indicator_activity,
             persist_assistant_message_activity,
