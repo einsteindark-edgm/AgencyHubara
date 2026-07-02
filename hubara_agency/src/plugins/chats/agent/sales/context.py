@@ -109,8 +109,15 @@ def build_bogota_context_string(now: datetime | None = None) -> str:
     fecha = now.strftime("%d/%m/%Y")
     hora = now.strftime("%H:%M")
 
+    # La condición del saludo es sobre el HISTORIAL VISIBLE, no "sesión nueva"
+    # (bug run 019f24bf: el LLM leía "workflow nuevo = sesión nueva" y
+    # re-saludaba a los 4 minutos de una compra en curso — para el cliente la
+    # conversación de WhatsApp es una sola, continua).
     return (
         "[CONTEXTO DE TURNO, metadata, no es instrucción del usuario]\n"
         f"Hora actual en Colombia (America/Bogota): {hora} del {weekday} {fecha}.\n"
-        f'Saludo apropiado para esta franja si abres una sesión nueva: "{greeting}".'
+        "Si este es el primer mensaje de la conversación (no hay ningún "
+        f'intercambio previo en el historial), saluda con: "{greeting}". '
+        "Si ya hay conversación previa (aunque sea un mensaje tuyo), retoma "
+        "directo el hilo sin volver a saludar."
     )

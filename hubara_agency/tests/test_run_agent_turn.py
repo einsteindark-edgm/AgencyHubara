@@ -203,3 +203,50 @@ def test_turn_ending_tools_are_presentational() -> None:
     from src.platform.workflow_helpers import PRESENTATIONAL_TOOLS, TURN_ENDING_TOOLS
 
     assert TURN_ENDING_TOOLS <= PRESENTATIONAL_TOOLS
+
+
+# ── Redundancia catálogo (run eda8d460): present_products corta el turno ────
+
+
+def test_present_products_ends_turn_in_v2() -> None:
+    """v2: `present_products` corta el turno como los pickers (L-11).
+
+    Bug run eda8d460: el LLM mandó el catálogo (con intro_text completo) y en
+    la iteración siguiente emitió OTRO texto diciendo lo mismo → el cliente
+    vio dos burbujas redundantes. El catálogo también deja la conversación
+    esperando al cliente → corta. v1 se congela para replay."""
+    from src.platform.workflow_helpers import _ends_turn
+
+    assert _ends_turn(["present_products"], version=2) is True
+    assert _ends_turn(["search_products", "present_products"], version=2) is True
+    # v1 (default) preserva el comportamiento deployado.
+    assert _ends_turn(["present_products"]) is False
+    # Las demás siguen cortando en v2.
+    assert _ends_turn(["present_variant_picker"], version=2) is True
+    assert _ends_turn(["set_order_slot"], version=2) is False
+
+
+# ── Interrupción de turno (Fase 1, "corrientazo" — run eda8d460) ────────────
+
+
+def test_turn_result_interrupted_field_serializable() -> None:
+    """`interrupted` viaja en TurnResult (R-JSON) con default False."""
+    tr = TurnResult(final_content="hi", tools_used=[])
+    assert asdict(tr)["interrupted"] is False
+    tr2 = TurnResult(final_content="", tools_used=[], interrupted=True)
+    assert asdict(tr2)["interrupted"] is True
+
+
+def test_starts_outbound_detects_client_visible_tools() -> None:
+    """`_starts_outbound`: qué batch marca que el turno YA tocó al cliente
+    (encoló UI intent o envió) — después de eso no hay restart limpio."""
+    from src.platform.workflow_helpers import _starts_outbound
+
+    assert _starts_outbound(["present_product_detail"]) is True
+    assert _starts_outbound(["present_products"]) is True
+    assert _starts_outbound(["send_quick_replies"]) is True
+    assert _starts_outbound(["request_shipping_details"]) is True
+    # Internas: no tocan al cliente.
+    assert _starts_outbound(["set_order_slot", "search_products"]) is False
+    assert _starts_outbound(["verify_order_for_checkout"]) is False
+    assert _starts_outbound([]) is False

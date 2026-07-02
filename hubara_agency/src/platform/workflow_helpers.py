@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from temporalio import workflow
 
@@ -167,6 +167,11 @@ class TurnResult:
     # safety net — guaranteeing the "pago pendiente" tag + escalation land
     # even if the LLM never emits the follow-up tool calls.
     order_registered_decision: OrderRegisteredDecision | None = None
+    # Fase 1 interrupción ("corrientazo", run eda8d460): True cuando el turno
+    # se abortó ANTES de tocar al cliente porque llegó un mensaje nuevo. El
+    # caller debe recomponer el batch (viejo + pendientes) y relanzar el turno
+    # — nada se envió, nada se registró en el historial (record_turn skipped).
+    interrupted: bool = False
 
 
 def _try_parse_decision_payload(raw: str) -> dict[str, Any] | None:
@@ -203,6 +208,15 @@ TURN_ENDING_TOOLS: frozenset[str] = frozenset({
     "send_quick_replies",
 })
 
+# v2 (run eda8d460): el catálogo también deja la conversación esperando al
+# cliente ("Escoge la que más te guste..."). Sin el corte, el LLM emitía OTRO
+# texto en la iteración siguiente repitiendo el intro_text del catálogo → dos
+# burbujas redundantes. Elegida por `workflow.patched("turn-ending-present-
+# products-v1")` — v1 congelada para replay de histories deployadas.
+TURN_ENDING_TOOLS_V2: frozenset[str] = TURN_ENDING_TOOLS | frozenset(
+    {"present_products"}
+)
+
 # Tools cuyo render ES un mensaje al cliente: el `content` que las acompaña es
 # una intro legítima (ej. el saludo junto a `send_quick_replies` — run
 # ddd0d472, la razón de ser de `pre_tool_messages`). Junto a tools INTERNAS
@@ -214,10 +228,22 @@ PRESENTATIONAL_TOOLS: frozenset[str] = TURN_ENDING_TOOLS | frozenset(
     {"present_products"}
 )
 
+# Prefijos de tools que tocan al cliente (envían o encolan un UI intent que el
+# flush entregará). Una vez que un batch con alguna de estas corrió, el turno
+# ya NO admite restart limpio (Fase 1 interrupción): el cliente vio (o verá)
+# algo de este turno.
+_OUTBOUND_TOOL_PREFIXES: tuple[str, ...] = ("present_", "send_", "request_")
 
-def _ends_turn(tool_names: list[str]) -> bool:
+
+def _ends_turn(tool_names: list[str], *, version: int = 1) -> bool:
     """¿Este batch de tool calls deja la conversación esperando al cliente?"""
-    return any(name in TURN_ENDING_TOOLS for name in tool_names)
+    ending = TURN_ENDING_TOOLS_V2 if version >= 2 else TURN_ENDING_TOOLS
+    return any(name in ending for name in tool_names)
+
+
+def _starts_outbound(tool_names: list[str]) -> bool:
+    """¿Este batch produce contenido client-visible (send directo o UI intent)?"""
+    return any(name.startswith(_OUTBOUND_TOOL_PREFIXES) for name in tool_names)
 
 
 def _keeps_pre_tool_content(tool_names: list[str]) -> bool:
@@ -387,6 +413,7 @@ async def run_agent_turn(
     msg: PendingMessage,
     fallback_plugin_context: list[str] | None = None,
     episode_id: str | None = None,
+    has_new_input: Callable[[], bool] | None = None,
 ) -> TurnResult:
     """Wrapper de atribución de costos (HU-003) sobre `_run_agent_turn_impl`.
 
@@ -433,6 +460,7 @@ async def run_agent_turn(
         fallback_plugin_context,
         baggage=baggage,
         episode_id=episode_id,
+        has_new_input=has_new_input,
     )
 
 
@@ -442,6 +470,7 @@ async def _run_agent_turn_impl(
     fallback_plugin_context: list[str] | None = None,
     baggage: dict[str, str] | None = None,
     episode_id: str | None = None,
+    has_new_input: Callable[[], bool] | None = None,
 ) -> TurnResult:
     """Ejecuta un turno completo de LLM con tool-loop. Es invocado desde `@workflow.run`.
 
@@ -489,6 +518,23 @@ async def _run_agent_turn_impl(
     # cantidad de commands del turno (menos llm_chat/execute_tool; menos sends
     # del caller) — histories pre-deploy toman la rama vieja (L-9).
     turn_cut_v1 = workflow.patched("turn-ending-tools-v1")
+    # Redundancia catálogo (run eda8d460): present_products también corta.
+    # Gate propio: cambia el shape del turno (menos llm_chat) — v1 congelada
+    # para replay de histories deployadas.
+    ends_turn_version = (
+        2 if workflow.patched("turn-ending-present-products-v1") else 1
+    )
+    # Fase 1 interrupción ("corrientazo", run eda8d460): el caller pasa
+    # `has_new_input` (lectura determinista de su bandeja de signals). Gated:
+    # el abort/supresión cambia la cantidad de commands. El short-circuit
+    # evita grabar el marker en workflows cuyo caller no participa (ej.
+    # remarketing pasa None).
+    interrupts_enabled = has_new_input is not None and workflow.patched(
+        "turn-interrupt-v1"
+    )
+    # True apenas un batch tocó al cliente (send directo o UI intent
+    # encolado): desde ahí no hay restart limpio — solo supresión del cierre.
+    outbound_started = False
     transfer_decision: TransferDecision | None = None
     schedule_remarketing: ScheduleRemarketingDecision | None = None
     escalation_decision: EscalationDecision | None = None
@@ -521,8 +567,35 @@ async def _run_agent_turn_impl(
                 response.usage.get("completion_tokens", 0) or 0
             )
 
+        # Checkpoint A — restart limpio (Fase 1, caso contra-entrega del run
+        # eda8d460): el cliente escribió MIENTRAS el LLM pensaba y este turno
+        # todavía no tocó al cliente (ni sends, ni UI intents, ni decisiones
+        # capturadas). Abortamos ANTES de ejecutar el batch: el caller
+        # recompone (batch viejo + pendientes) y relanza — el cliente recibe
+        # UNA respuesta que considera todo, no dos cruzadas. No se registra
+        # nada en el historial (record_turn skipped): el turno "nunca pasó".
+        if (
+            interrupts_enabled
+            and not outbound_started
+            and transfer_decision is None
+            and schedule_remarketing is None
+            and escalation_decision is None
+            and episode_closed_decision is None
+            and order_registered_decision is None
+            and has_new_input()
+        ):
+            workflow.logger.info(
+                "turno interrumpido pre-outbound (corrientazo): llegó mensaje "
+                "nuevo del cliente; el caller recompone el batch y relanza"
+            )
+            return TurnResult(
+                final_content="", tools_used=tools_used, interrupted=True
+            )
+
         if response.has_tool_calls:
             batch_tool_names = [tc.name for tc in response.tool_calls]
+            if _starts_outbound(batch_tool_names):
+                outbound_started = True
             # Capturar el texto client-facing que acompaña la(s) tool call(s)
             # ANTES de descartarlo. El LLM legítimamente emite "content +
             # tool_call" (ej. saluda y a la vez encola un quick_replies). Sin
@@ -629,7 +702,7 @@ async def _run_agent_turn_impl(
             # explícito: el fallback "se me cortó un segundito" es para fallas
             # del modelo, no para este corte deliberado (el guard falsy del
             # caller no envía burbuja vacía).
-            if turn_cut_v1 and _ends_turn(batch_tool_names):
+            if turn_cut_v1 and _ends_turn(batch_tool_names, version=ends_turn_version):
                 workflow.logger.info(
                     f"turno cortado: {batch_tool_names} espera respuesta del cliente"
                 )
@@ -722,6 +795,24 @@ async def _run_agent_turn_impl(
                     },
                 )
                 final_content = "¡Perdón! Justo se me cortó un segundito. ¿Me repites lo que necesitabas?"
+
+            # Checkpoint B — supresión del cierre stale (Fase 1, caso "Solo
+            # plegaria de luz" del run eda8d460): el turno YA tocó al cliente
+            # (cards/quick-replies en vuelo) — no hay restart limpio — pero el
+            # cliente escribió mientras el LLM componía este texto de cierre.
+            # Enviarlo se cruzaría con lo que acaba de decir (el bot "no
+            # escucha"). Lo suprimimos y NO lo registramos en el historial
+            # (el LLM no debe recordar haber dicho algo que nunca salió); el
+            # mensaje nuevo se procesa en el turno siguiente con los tool
+            # results de este turno ya en memoria.
+            if interrupts_enabled and outbound_started and has_new_input():
+                workflow.logger.info(
+                    "cierre de turno suprimido: el cliente escribió mientras "
+                    "el LLM componía el texto final (se procesa en el "
+                    "siguiente turno)"
+                )
+                final_content = ""
+                break
 
             msg_dict: dict[str, Any] = {"role": "assistant", "content": final_content}
             if response.reasoning_content is not None:
