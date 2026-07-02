@@ -37,6 +37,7 @@ import {
   type AvatarColor,
   type CampaignStatus,
   type CampaignTendency,
+  type CapiEvent,
 } from "./model";
 
 const AVATAR_COLORS: AvatarColor[] = ["a", "b", "c", "d", "e", "f"];
@@ -131,7 +132,14 @@ function asAdsState(s: string | null): AdsState | null {
   return null;
 }
 
-function mapBackendCampaign(b: BackendAdsCampaign): AdsCampaign {
+/** Backend `capi_event` string → enum del dominio. Narrowing defensivo:
+ *  cualquier valor fuera de LeadSubmitted/Purchase (drift) cae a null. */
+function asCapiEvent(s: string | null): CapiEvent | null {
+  if (s === "LeadSubmitted" || s === "Purchase") return s;
+  return null;
+}
+
+export function mapBackendCampaign(b: BackendAdsCampaign): AdsCampaign {
   return {
     id: b.id,
     name: b.name,
@@ -161,6 +169,9 @@ function mapBackendCampaign(b: BackendAdsCampaign): AdsCampaign {
     avgEpisodeDurationMs: b.avg_episode_duration_ms,
     firstResp: b.first_resp,
     tendency: asCampaignTendency(b.tendency),
+    capiLeadsSent: b.capi_leads_sent,
+    capiPurchasesSent: b.capi_purchases_sent,
+    capiFailed: b.capi_failed,
   };
 }
 
@@ -184,6 +195,7 @@ export function mapBackendConversation(
     durationMs: b.duration_ms,
     llmCostUsd: b.llm_cost_usd,
     llmTokens: b.llm_tokens,
+    capiEvent: asCapiEvent(b.capi_event),
   };
 }
 

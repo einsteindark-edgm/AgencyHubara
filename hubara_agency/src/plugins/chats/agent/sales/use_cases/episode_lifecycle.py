@@ -178,8 +178,12 @@ def ensure_active_episode(
 
     - Sin `episodes[]` o vacío → crea ep_001.
     - Último episode con `closed_at_ms != null` → crea ep_NNN+1.
-    - Último episode activo → lo devuelve sin tocar (started_at_ms NO
-      cambia — sigue siendo el primer inbound del episodio).
+    - Último episode activo → lo devuelve (started_at_ms NO cambia — sigue
+      siendo el primer inbound del episodio). ÚNICA mutación permitida:
+      si `referral_snapshot` trae un touch real de campaña (source_id),
+      reemplaza el `referral_snapshot` del episodio (last-ad-touch,
+      consistente con CAPI que atribuye por `ctwa_referrals[-1]`). Un
+      inbound direct nunca downgradea la atribución.
 
     Si crea un episodio NUEVO después de uno cerrado (re-engagement del
     mismo cliente), **resetea `metadata.tag` a "NO_ETIQUETADO"** y limpia
@@ -216,7 +220,17 @@ def ensure_active_episode(
                 )
                 # Fall through: crearemos un nuevo episodio abajo
             else:
-                return last  # activo + reciente — no tocar
+                # Last-ad-touch (fix 2026-07-01): si el inbound trae un
+                # referral de campaña REAL (source_id presente), re-atribuir
+                # el episodio activo a esa campaña. Antes el snapshot nuevo
+                # se descartaba → el dashboard seguía mostrando la campaña
+                # vieja mientras CAPI (que usa ctwa_referrals[-1]) atribuía
+                # a la nueva — tableros y Meta contaban historias distintas.
+                # Un inbound direct (sin source_id) nunca downgradea la
+                # atribución existente.
+                if referral_snapshot and referral_snapshot.get("source_id"):
+                    last["referral_snapshot"] = referral_snapshot
+                return last  # activo + reciente — no abrir episodio nuevo
 
     is_reengagement = bool(episodes)  # había uno anterior cerrado
     new_ep = _make_empty_episode(

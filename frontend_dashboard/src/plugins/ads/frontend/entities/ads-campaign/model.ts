@@ -51,6 +51,11 @@ export const ADS_STATE_ORDER: AdsState[] = [
 export type CampaignStatus = "active" | "paused";
 export type CampaignTendency = "up" | "flat" | "down";
 
+/** Evento CAPI (Conversions API de Meta) reportado server-side al cierre de
+ *  un episodio: `LeadSubmitted` (lead calificado) o `Purchase` (venta, con
+ *  value COP). ⚠️ El nombre exacto importa — Meta rechaza "Lead". */
+export type CapiEvent = "LeadSubmitted" | "Purchase";
+
 /* ── Rango temporal del dashboard (filtro por fecha) ─────────────────────── */
 
 /**
@@ -165,6 +170,14 @@ export interface AdsCampaign {
   /** Tiempo a 1ª respuesta del bot (texto formateado tipo "2m 14s"). */
   firstResp: string | null;
   tendency: CampaignTendency | null;
+
+  // --- Señal CAPI (Conversions API de Meta) ---
+  /** Eventos `LeadSubmitted` enviados a Meta (señal server-side CTWA). */
+  capiLeadsSent: number;
+  /** Eventos `Purchase` enviados a Meta (con value en COP). */
+  capiPurchasesSent: number;
+  /** Envíos CAPI fallidos (Meta rechazó el evento / error de red). */
+  capiFailed: number;
 }
 
 /* ── Conversaciones atribuidas (WhatsApp chats originados por un anuncio) ── */
@@ -221,6 +234,11 @@ export interface AttributedConversation {
   llmCostUsd?: number | null;
   /** Tokens totales (prompt+completion) del episodio. */
   llmTokens?: number | null;
+
+  /** Evento CAPI reportado a Meta para este episodio (`LeadSubmitted` |
+   *  `Purchase`). `null` si no se reportó. Opcional para tolerar el mock
+   *  histórico. */
+  capiEvent?: CapiEvent | null;
 }
 
 /* ── Serie diaria — conversaciones iniciadas por día/estado final ────────── */
