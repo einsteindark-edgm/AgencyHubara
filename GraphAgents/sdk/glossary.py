@@ -26,6 +26,7 @@ def glossary() -> dict:
             {"term": "SUP", "meaning": "el supervisor es coherente: declara agents y strategy."},
             {"term": "G-WIRE", "meaning": "un supervisor que COMPONE declara inputs: en cada agente — así el task graph se cablea y corre."},
             {"term": "G-BIND-AGENT", "meaning": "toda referencia uses: agent://<id> resuelve a un agente del catálogo."},
+            {"term": "G-CONTRACT", "meaning": "si el agente referenciado declara contract: {inputs, outputs}, el wiring inputs: del miembro solo nombra inputs declarados y cablea todos los required — es lo que valida conectar agente↔agente en el explorer."},
             {"term": "G-DUR", "meaning": "una tool inline que parece outward (muta afuera) debería pedir approval (warning)."},
         ]},
         {"title": "Reglas de tool", "blurb": "lo que garantiza un nodo tool del palette.", "items": [

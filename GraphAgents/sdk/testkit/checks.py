@@ -167,6 +167,44 @@ def check_tool_bindings_match_contract(root: AgentNode, ga_root: Path | None) ->
     return errs
 
 
+def check_agent_contract_wiring(root: AgentNode, ga_root: Path | None) -> list[str]:
+    """G-CONTRACT (wiring↔contrato de agente): espejo de G-BIND para agentes. Si el agente
+    referenciado por un miembro DECLARA `contract.inputs`, el `inputs:` del wiring (a) solo
+    puede nombrar inputs declarados y (b) debe cablear todos los `required`. Un agente sin
+    `contract:` queda fuera (backwards-compat) — declarar el contrato es lo que lo hace
+    conectable con validación desde el explorer."""
+    if ga_root is None:
+        return []
+    from sdk.registry import discover_agents  # local: evita que ruff borre el import entre edits
+
+    catalog = {a.name: a for a in discover_agents(ga_root)}
+    errs: list[str] = []
+    for n in iter_nodes(root):
+        # router/manual despachan el input CRUDO a UN miembro (sin wiring, como G-WIRE):
+        # no hay `inputs:` que validar contra el contrato.
+        if n.strategy in _NO_WIRE_STRATEGIES:
+            continue
+        for a in n.agents:
+            rid = a.ref_agent_id
+            ref = catalog.get(rid) if rid else None
+            if ref is None or ref.contract is None:
+                continue
+            declared = ref.contract.inputs
+            unknown = sorted(k for k in a.inputs if k not in declared)
+            if unknown:
+                errs.append(
+                    f"[G-CONTRACT] supervisor '{n.name}': el wiring de '{rid}' nombra {unknown} "
+                    f"que no son inputs del contrato del agente (declara: {sorted(declared)})"
+                )
+            missing = sorted(k for k, spec in declared.items() if spec.required and k not in a.inputs)
+            if missing:
+                errs.append(
+                    f"[G-CONTRACT] supervisor '{n.name}': el wiring de '{rid}' no cablea los "
+                    f"inputs required {missing} del contrato del agente"
+                )
+    return errs
+
+
 def check_agent_refs(root: AgentNode, ga_root: Path | None) -> list[str]:
     """G-BIND-AGENT: toda referencia `uses: agent://<id>` resuelve al catálogo."""
     if ga_root is None:
@@ -233,6 +271,7 @@ def run_checks(root: AgentNode, ga_root: Path | None = None) -> dict:
         + check_tool_refs(root, ga_root)
         + check_tool_bindings_match_contract(root, ga_root)
         + check_agent_refs(root, ga_root)
+        + check_agent_contract_wiring(root, ga_root)
     )
     warnings = check_outward_tools_need_approval(root)
     return {"errors": errors, "warnings": warnings}

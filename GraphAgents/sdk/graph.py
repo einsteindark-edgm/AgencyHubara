@@ -46,6 +46,11 @@ def _safe_agent_cert(manifest, ga_root: Path) -> CertLevel:
         return "none"
 
 
+def _specs(d: dict) -> dict:
+    """dict[str, FieldSpec] -> dict serializable (lo que la UI usa para validar/mapear)."""
+    return {k: v.model_dump() for k, v in d.items()}
+
+
 def _tool_node(contract, ga_root: Path) -> dict:
     return {
         "id": f"tool:{contract.id}",
@@ -59,6 +64,8 @@ def _tool_node(contract, ga_root: Path) -> dict:
         "tags": list(contract.tags),
         "certification": _safe_tool_cert(contract, ga_root),
         "description": contract.description,
+        "inputs": _specs(contract.inputs),
+        "outputs": _specs(contract.outputs),
     }
 
 
@@ -77,6 +84,9 @@ def _agent_node(m: AgentNode, ga_root: Path) -> dict:
         "consumes": list(m.consumes),
         "group": m.group,  # None=producción · "demo" · "variant" (badge del explorer)
         "description": m.description,
+        # el contrato I/O declarado (G-CONTRACT) — None honesto si el agente no declara.
+        "contract": ({"inputs": _specs(m.contract.inputs), "outputs": _specs(m.contract.outputs)}
+                     if m.contract else None),
     }
 
 

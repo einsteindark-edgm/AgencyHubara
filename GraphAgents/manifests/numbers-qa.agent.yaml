@@ -7,6 +7,16 @@ certification: C2
 
 capability: graphs.numbers_qa:build
 
+# ext (GraphAgents): el contrato I/O declarado (G-CONTRACT) — ver graphs/numbers_qa.py
+# (run usa .get: degrada sin dias/period -> required: false, honesto con el codigo).
+contract:
+  inputs:
+    days: {type: array, required: false, description: "el blend por dia (de blended-economics)"}
+    period: {type: object, required: false, description: "el agregado del periodo"}
+  outputs:
+    passed: {type: boolean, description: "true si TODO reconcilia (no-self-review)"}
+    violations: {type: array, description: "las violaciones encontradas (vacio si passed)"}
+
 exposes_as_tool: true
 
 tools:

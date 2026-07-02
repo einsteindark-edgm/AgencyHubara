@@ -8,6 +8,13 @@ group: demo  # scaffold hello-world — no es parte del pod de producción (badg
 
 capability: graphs.greeter:build
 
+# ext (GraphAgents): el contrato I/O declarado (G-CONTRACT) — ver graphs/greeter.py.
+contract:
+  inputs:
+    name: {type: string, required: false, description: "a quien saludar (default: mundo)"}
+  outputs:
+    greeting: {type: string}
+
 # se puede invocar como tool de otro agente.
 exposes_as_tool: true
 
