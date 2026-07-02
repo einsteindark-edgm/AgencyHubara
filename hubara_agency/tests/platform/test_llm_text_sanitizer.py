@@ -222,6 +222,47 @@ def test_message_starting_with_colon_phrase_not_stripped():
     assert result.text == raw
 
 
+def test_aqui_tienes_as_sentence_start_not_stripped():
+    """Bug run eda8d460 (cliente real): 'Aquí tienes todas nuestras velas...'
+    es una FRASE legítima, no un meta-prefijo — el cliente recibió
+    'todas nuestras velas. Míralas...' arrancando en minúscula (texto roto).
+    El prefijo español solo es meta cuando lo delimita ':' o un salto de
+    línea ('Aquí tienes:\\n¡Hola!')."""
+    raw = (
+        "Aquí tienes todas nuestras velas. Míralas con calma y dime cuál "
+        "te llama la atención para contarte más detalles 🤍"
+    )
+    result = sanitize_llm_text(raw)
+    assert result.text == raw
+    assert "meta_prefix_stripped" not in result.actions
+
+
+def test_voy_a_as_sentence_start_not_stripped():
+    """'Voy a confirmar tu pedido con el equipo.' es una promesa legítima
+    de vendedor — no un meta-prefijo."""
+    raw = "Voy a confirmar tu pedido con el equipo y te aviso enseguida."
+    result = sanitize_llm_text(raw)
+    assert result.text == raw
+    assert "meta_prefix_stripped" not in result.actions
+
+
+def test_aca_esta_as_sentence_start_not_stripped():
+    raw = "Acá está tu resumen del pedido, revísalo con calma."
+    result = sanitize_llm_text(raw)
+    assert result.text == raw
+    assert "meta_prefix_stripped" not in result.actions
+
+
+def test_lowercase_remainder_guard_blocks_overstrip():
+    """Guard universal: si tras strippear el resto arranca en minúscula,
+    cortamos a mitad de frase — NO strippear. (Un mensaje real después de
+    un meta-prefijo empieza con mayúscula, ¡/¿ o emoji.)"""
+    raw = "Mi respuesta es que sí tenemos contra entrega en Bogotá."
+    result = sanitize_llm_text(raw)
+    assert result.text == raw
+    assert "meta_prefix_stripped" not in result.actions
+
+
 def test_legitimate_quoted_inner_content():
     """Si el cliente dijo X, el LLM puede citar al cliente — no debemos
     romper esa cita. (El em dash sí se normaliza a coma; la cita queda intacta.)"""

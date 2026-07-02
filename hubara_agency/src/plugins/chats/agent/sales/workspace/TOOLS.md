@@ -97,7 +97,7 @@ Estas tools NO devuelven texto al LLM, emiten **intents de UI** que el workflow 
 - **Don't use when**: son 1-3 productos (descríbelos en texto), o ya estás cerrando una venta.
 - **Input**: `handles` (lista de handles del snapshot), `intro_text` (texto corto que acompaña), `group_by` ("categories" default).
 - **Side effects**: encola una list message nativa (A.3) o product_list si todos están en Meta Catalog (A.11). El cliente la ve como menú tappable.
-- **Tu próximo texto**: presenta brevemente la lista. "Estas son las opciones, escoge la que más te guste."
+- **Tu turno TERMINA aquí** (igual que los pickers): el catálogo deja al cliente eligiendo. Pon TODO lo que quieras decirle en `intro_text` (saludo de contexto + invitación a elegir) — cualquier texto que emitas después NO se envía. Nada de "Aquí tienes todas nuestras velas..." como mensaje aparte: eso duplicaba el intro y el cliente veía dos burbujas idénticas (run eda8d460).
 
 ### `request_shipping_details`
 

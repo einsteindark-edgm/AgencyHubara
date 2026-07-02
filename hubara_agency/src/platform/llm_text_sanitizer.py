@@ -43,33 +43,56 @@ from dataclasses import dataclass, field
 # Prefijos meta más comunes que vemos en outputs LLM. Match al inicio de
 # todo el texto (posiblemente seguido por newlines y la respuesta real).
 # Insensible a case y tildes.
-_META_PREFIX_PATTERNS: tuple[str, ...] = (
+#
+# DOS TIERS (bug run eda8d460 — cliente real vio "todas nuestras velas.
+# Míralas..." porque "Aquí tienes " se strippeó de una frase legítima):
+#
+#   * STRONG — frases que casi nunca abren una oración legítima al cliente
+#     ("Here's my attempt", "Final answer", "Output"). Delimitador laxo
+#     (espacio/coma/da igual).
+#   * WEAK — frases que SÍ pueden abrir una oración legítima ("Aquí tienes
+#     todas nuestras velas", "Voy a confirmar tu pedido", "Okay, perfecto").
+#     Solo son meta cuando las delimita ':' o terminan la línea
+#     ("Aquí tienes:\n¡Hola!" / "Okay,\n\n¡Hola!").
+#
+# Además, `_strip_meta_prefix` aplica un guard universal: si el resto tras
+# strippear arranca en minúscula, se cortó a mitad de frase → no strippear.
+_META_PREFIX_STRONG_PATTERNS: tuple[str, ...] = (
     # Inglés
     r"^here'?s\s+my\s+(attempt|response|answer|reply|message|take)[\s:.,—!?-]+",
     r"^here'?s\s+(the|a|my)?\s*(message|response|reply|answer|attempt|take)[\s:.,—!?-]+",
-    r"^here\s+(it|you)\s+(is|go)[\s:.,—!?-]+",
     r"^my\s+(response|attempt|message|answer|reply)[\s:.,—!?-]+",
     r"^response[\s:.,—!?-]+",
     r"^(let\s+me|i['']?ll)\s+(try|craft|write|send)[\s:.,—!?-]+",
-    r"^okay[\s:.,—!?-]+",
-    r"^sure[\s:.,—!?-]+",
     r"^(short\s+and\s+)?warm\s+(message|gancho|attempt)[\s:.,—!?-]+",
-    # Español
-    r"^aqu[ií]\s+(va|est[áa]|tienes|te\s+dejo)[\s:.,—!?-]+",
-    r"^ac[áa]\s+(va|est[áa]|tienes)[\s:.,—!?-]+",
+    # Español (sustantivos meta — no abren oración de venta natural)
     r"^mi\s+(respuesta|mensaje|intento)[\s:.,—!?-]+",
     r"^te\s+respondo[\s:.,—!?-]+",
     r"^respuesta[\s:.,—!?-]+",
     r"^intento[\s:.,—!?-]+",
-    r"^voy\s+a[\s:.,—!?-]+",
     # Variantes con marcadores estilo agentic ("Final answer:", "Output:")
     r"^final\s+(answer|response|message|output)[\s:.,—!?-]+",
     r"^output[\s:.,—!?-]+",
     r"^assistant[\s:.,—!?-]+",
 )
 
+# Delimitador WEAK: ':' (con espacios), o puntuación opcional seguida de
+# fin de línea. "Aquí tienes:" / "Sure!\n" / "Okay,\n" matchean;
+# "Aquí tienes todas..." / "Voy a confirmar..." NO.
+_WEAK_DELIM = r"(?:\s*:\s*|\s*[.,—!?-]*\s*\n\s*)"
+
+_META_PREFIX_WEAK_PATTERNS: tuple[str, ...] = (
+    r"^here\s+(it|you)\s+(is|go)" + _WEAK_DELIM,
+    r"^okay" + _WEAK_DELIM,
+    r"^sure" + _WEAK_DELIM,
+    r"^aqu[ií]\s+(va|est[áa]|tienes|te\s+dejo)" + _WEAK_DELIM,
+    r"^ac[áa]\s+(va|est[áa]|tienes)" + _WEAK_DELIM,
+    r"^voy\s+a" + _WEAK_DELIM,
+)
+
 _META_PREFIX_RE = re.compile(
-    "|".join(_META_PREFIX_PATTERNS), flags=re.IGNORECASE
+    "|".join(_META_PREFIX_STRONG_PATTERNS + _META_PREFIX_WEAK_PATTERNS),
+    flags=re.IGNORECASE,
 )
 
 # Comillas envolventes — el modelo a veces wrappea la respuesta entera
@@ -189,6 +212,12 @@ def _strip_meta_prefix(text: str) -> tuple[str, bool]:
     if not stripped:
         # El "mensaje" entero era el meta-prefijo — preferimos no
         # devolver vacío (downstream tiene fallback humano para vacío).
+        return text, False
+    if stripped[0].islower():
+        # Guard anti-overstrip (bug run eda8d460): el mensaje real tras un
+        # meta-prefijo empieza con mayúscula, ¡/¿, comilla o emoji. Si el
+        # resto arranca en minúscula, cortamos a mitad de una frase
+        # legítima ("Mi respuesta es que sí...") — no strippear.
         return text, False
     return stripped, True
 

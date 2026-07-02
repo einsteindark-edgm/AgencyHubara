@@ -56,6 +56,7 @@ class Tracker:
         self.record_turn_calls: int = 0
         self.ghosting_calls: int = 0
         self.start_sales_calls: int = 0
+        self.execute_tool_calls: list[str] = []
 
 
 def _make_fake_activities(
@@ -66,6 +67,7 @@ def _make_fake_activities(
     handoff_sequence: list[str | None] | None = None,
     llm_responses: list[LLMResponseData] | None = None,
     tool_results: dict[str, str] | None = None,
+    llm_call_hooks: dict[int, object] | None = None,
 ):
     """Crea las activities fakes con `tracker` cerrado en closure.
 
@@ -131,6 +133,14 @@ def _make_fake_activities(
     @activity.defn(name="llm_chat")
     async def fake_llm(input: LLMChatInput) -> LLMResponseData:
         tracker.llm_calls += 1
+        # Hook por número de llamada (1-based): permite al test inyectar un
+        # side-effect MIENTRAS el "LLM piensa" (ej. signalear el workflow con
+        # un mensaje nuevo del cliente — Fase 1 interrupción). El hook corre
+        # ANTES de devolver la respuesta → el signal queda en la history antes
+        # de la completion de esta activity.
+        hook = (llm_call_hooks or {}).get(tracker.llm_calls)
+        if hook is not None:
+            await hook()  # type: ignore[operator]
         if llm_responses:
             i = _llm_state["i"]
             if i < len(llm_responses):
@@ -151,6 +161,7 @@ def _make_fake_activities(
 
     @activity.defn(name="execute_tool")
     async def fake_execute_tool(input: ExecuteToolInput) -> str:
+        tracker.execute_tool_calls.append(input.name)
         if tool_results and input.name in tool_results:
             return tool_results[input.name]
         return "ok"
@@ -709,3 +720,197 @@ async def test_burst_dedupes_repeated_plugin_context(tmp_path: Path) -> None:
     )
     # La conciencia de ráfaga se preserva junto con el dedupe.
     assert any("3 mensajes seguidos" in c for c in bp.plugin_context)
+
+
+def _tool_resp(*names: str) -> LLMResponseData:
+    return LLMResponseData(
+        content="",
+        finish_reason="tool_calls",
+        has_tool_calls=True,
+        tool_calls=[
+            ToolCallData(id=f"t{i}", name=n, arguments={})
+            for i, n in enumerate(names, 1)
+        ],
+    )
+
+
+def _final_resp(text: str) -> LLMResponseData:
+    return LLMResponseData(
+        content=text, finish_reason="stop", has_tool_calls=False, tool_calls=[]
+    )
+
+
+@pytest.mark.asyncio
+async def test_present_products_turn_sends_single_bubble(tmp_path: Path) -> None:
+    """Redundancia catálogo (run eda8d460): tras `present_products` el turno
+    CORTA — el intro_text del catálogo ES el mensaje. Sin el corte, el LLM
+    emitía otro texto ("Aquí tienes todas nuestras velas...") repitiendo el
+    intro → el cliente veía dos burbujas diciendo lo mismo."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=SALES_QUEUE,
+            workflows=[HubaraSalesSessionWorkflow],
+            activities=_make_fake_activities(
+                tracker,
+                workspace_path=str(workspace),
+                llm_responses=[
+                    _tool_resp("search_products"),
+                    _tool_resp("present_products"),
+                    _final_resp("NO DEBE SALIR: texto redundante post-catálogo"),
+                ],
+            ),
+        ):
+            handle = await env.client.start_workflow(
+                HubaraSalesSessionWorkflow.run,
+                SalesSessionInput(
+                    session_id="wa_catalogo",
+                    runtime_workspace_path=str(workspace),
+                ),
+                id="session-wa_catalogo",
+                task_queue=SALES_QUEUE,
+            )
+            await handle.signal(
+                HubaraSalesSessionWorkflow.send_message,
+                args=["[el cliente tocó el botón: Ver catálogo]", None, None],
+            )
+            await handle.result()
+
+    assert "present_products" in tracker.execute_tool_calls
+    redundant = [m for (_s, m) in tracker.send_whatsapp_calls if "NO DEBE SALIR" in m]
+    assert not redundant, (
+        "El turno debió cortar en present_products (el catálogo ya es el "
+        f"mensaje); salió una burbuja redundante: {tracker.send_whatsapp_calls}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_new_message_mid_llm_restarts_turn(tmp_path: Path) -> None:
+    """Fase 1 "corrientazo" (run eda8d460, caso contra-entrega): si el cliente
+    escribe MIENTRAS el LLM piensa y el turno aún no tocó al cliente, el turno
+    se aborta limpio y se recompone con TODO (viejo + nuevo). El cliente recibe
+    UNA respuesta que considera ambos mensajes — no dos respuestas cruzadas."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    handle_box: dict = {}
+
+    async def _signal_mid_llm() -> None:
+        await handle_box["handle"].signal(
+            HubaraSalesSessionWorkflow.send_message,
+            args=["Quiero el pago contra entrega", None, None],
+        )
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=SALES_QUEUE,
+            workflows=[HubaraSalesSessionWorkflow],
+            activities=_make_fake_activities(
+                tracker,
+                workspace_path=str(workspace),
+                llm_responses=[
+                    _final_resp("Respuesta uno: solo considera el primer mensaje"),
+                    _final_resp("Respuesta final: considera ambos"),
+                ],
+                llm_call_hooks={1: _signal_mid_llm},
+            ),
+        ):
+            handle = await env.client.start_workflow(
+                HubaraSalesSessionWorkflow.run,
+                SalesSessionInput(
+                    session_id="wa_corrientazo",
+                    runtime_workspace_path=str(workspace),
+                ),
+                id="session-wa_corrientazo",
+                task_queue=SALES_QUEUE,
+            )
+            handle_box["handle"] = handle
+            await handle.signal(
+                HubaraSalesSessionWorkflow.send_message,
+                args=["[datos de envío recibidos] pago=transferencia", None, None],
+            )
+            await handle.result()
+
+    # El turno abortado NO llegó al cliente.
+    texts = [m for (_s, m) in tracker.send_whatsapp_calls]
+    assert all("Respuesta uno" not in t for t in texts), (
+        f"La respuesta stale del turno abortado llegó al cliente: {texts}"
+    )
+    assert any("Respuesta final" in t for t in texts), (
+        f"La respuesta recompuesta no llegó: {texts}"
+    )
+    # El turno recompuesto vio AMBOS mensajes.
+    user_calls = [c for c in tracker.build_prompt_calls if "GHOST" not in c.message]
+    assert len(user_calls) == 2, (
+        f"Esperaba 2 build_prompt de usuario (abortado + recompuesto), "
+        f"hubo {len(user_calls)}"
+    )
+    recomposed = user_calls[-1]
+    assert "datos de envío recibidos" in recomposed.message
+    assert "contra entrega" in recomposed.message
+
+
+@pytest.mark.asyncio
+async def test_stale_final_text_suppressed_after_outbound(tmp_path: Path) -> None:
+    """Fase 1, mitad B (run eda8d460, caso "Solo plegaria de luz"): si el turno
+    YA tocó al cliente (encoló cards) no hay restart limpio — pero el TEXTO de
+    cierre stale se suprime cuando el cliente escribió en el interín. El
+    mensaje nuevo se procesa en el turno siguiente."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    handle_box: dict = {}
+
+    async def _signal_mid_llm() -> None:
+        await handle_box["handle"].signal(
+            HubaraSalesSessionWorkflow.send_message,
+            args=["Solo plegaria de luz", None, None],
+        )
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=SALES_QUEUE,
+            workflows=[HubaraSalesSessionWorkflow],
+            activities=_make_fake_activities(
+                tracker,
+                workspace_path=str(workspace),
+                llm_responses=[
+                    _tool_resp("present_product_detail"),
+                    _final_resp("NO DEBE SALIR: ¿cuál de las dos te gusta más?"),
+                    _final_resp("Perfecto, solo la Plegaria de Luz entonces"),
+                ],
+                # El signal llega mientras el LLM compone el cierre (llamada 2).
+                llm_call_hooks={2: _signal_mid_llm},
+            ),
+        ):
+            handle = await env.client.start_workflow(
+                HubaraSalesSessionWorkflow.run,
+                SalesSessionInput(
+                    session_id="wa_stale",
+                    runtime_workspace_path=str(workspace),
+                ),
+                id="session-wa_stale",
+                task_queue=SALES_QUEUE,
+            )
+            handle_box["handle"] = handle
+            await handle.signal(
+                HubaraSalesSessionWorkflow.send_message,
+                args=["?", None, None],
+            )
+            await handle.result()
+
+    texts = [m for (_s, m) in tracker.send_whatsapp_calls]
+    assert all("NO DEBE SALIR" not in t for t in texts), (
+        f"El cierre stale salió igual después de que el cliente escribió: {texts}"
+    )
+    assert any("Perfecto, solo la Plegaria" in t for t in texts), (
+        f"El turno del mensaje nuevo no respondió: {texts}"
+    )
+    # Las cards del turno interrumpido SÍ salieron (ya habían tocado al cliente).
+    assert "present_product_detail" in tracker.execute_tool_calls

@@ -96,6 +96,10 @@ _IDLE_TIMEOUT = timedelta(minutes=1)
 # procesamiento. Replay-safe: `workflow.wait_condition` + timeouts deterministicos.
 _DEBOUNCE_SILENCE = timedelta(seconds=1.5)
 _DEBOUNCE_MAX_WAIT = timedelta(seconds=12)
+# Fase 1 interrupción: máximo de restarts limpios de un turno cuando el
+# cliente escribe mientras el LLM piensa (D3 del refinamiento burst-inbox).
+# Tras el cap, el turno corre hasta el final y lo pendiente va al siguiente.
+_MAX_TURN_RESTARTS = 2
 
 
 @workflow.defn(name="HubaraSalesSessionWorkflow")
@@ -126,6 +130,43 @@ class HubaraSalesSessionWorkflow:
     @workflow.query
     def is_processing(self) -> bool:
         return self._processing
+
+    def _coalesce_batch(self, batch: list[PendingMessage]) -> PendingMessage:
+        """Coalescea una ráfaga en un solo turno (nota de ráfaga incluida).
+
+        Convertir a InboxMsg es puro (seq = orden de llegada — determinista en
+        replay: el orden de `_pending` es el orden de los signals, garantizado
+        por Temporal). Con >1 mensaje del cliente, el LLM recibe la lista
+        explícita de lo que escribió (nota en plugin_context) y responde al
+        hilo COMPLETO. Preserva is_handoff (L-12).
+
+        Cadena de gates (más nuevo primero — patrón patched/deprecate de
+        Temporal, R-DET/L-9): ejecuciones nuevas graban y toman v2 (nota solo
+        con mensajes CON texto + dedupe de plugin_context); histories con el
+        marker v1 (deploy 2026-07-01) replayean v1; histories pre-PR#100
+        replayean coalesce_pending.
+
+        Usada en dos puntos: el coalesce inicial del debounce y la
+        RECOMPOSICIÓN del turno cuando el cliente escribe mientras el LLM
+        piensa (Fase 1 interrupción).
+        """
+        inbox_batch = [
+            InboxMsg(
+                seq=i,
+                wamid=None,
+                text=p.message,
+                ts_ms=0,
+                media=p.media,
+                plugin_context=p.plugin_context,
+                is_handoff=p.is_handoff,
+            )
+            for i, p in enumerate(batch, 1)
+        ]
+        if workflow.patched("burst-note-v2"):
+            return coalesce_inbox(inbox_batch, version=2)
+        if workflow.patched("burst-note-v1"):
+            return coalesce_inbox(inbox_batch)
+        return coalesce_pending(batch)
 
     @workflow.run
     async def run(self, input: SalesSessionInput) -> None:
@@ -268,44 +309,16 @@ class HubaraSalesSessionWorkflow:
                 batch = list(self._pending)
                 self._pending.clear()
                 msgs_to_process: list[PendingMessage]
-                # Bandeja/watermark (PR burst-inbox): convertir la ráfaga a
-                # InboxMsg (seq = orden de llegada — determinista en replay:
-                # el orden de `_pending` es el orden de los signals, que
-                # Temporal garantiza) y coalescer con `coalesce_inbox`. Con
-                # >1 mensaje del cliente, el LLM recibe la lista explícita de
-                # lo que escribió (nota de ráfaga en plugin_context) y
-                # responde al hilo COMPLETO — mata el patrón "el bot solo ve
-                # uno". Preserva el manejo de is_handoff (L-12). Gated para
-                # no romper replay de runs en vuelo pre-deploy (R-DET, L-9).
-                # Construir la lista es puro (sin patched) — fuera de los gates.
-                inbox_batch = [
-                    InboxMsg(
-                        seq=i,
-                        wamid=None,
-                        text=p.message,
-                        ts_ms=0,
-                        media=p.media,
-                        plugin_context=p.plugin_context,
-                        is_handoff=p.is_handoff,
-                    )
-                    for i, p in enumerate(batch, 1)
-                ]
-                # Cadena de gates (más nuevo primero — patrón patched/deprecate
-                # de Temporal): ejecuciones nuevas graban y toman v2; histories
-                # con el marker v1 (deploy 2026-07-01) replayean v1; histories
-                # pre-PR#100 replayean coalesce_pending.
-                if workflow.patched("burst-note-v2"):
-                    # v2: la nota de ráfaga cuenta/lista solo mensajes CON
-                    # texto (un solo-media no mete `""` ni infla el conteo) y
-                    # el plugin_context dedupea duplicados exactos (una ráfaga
-                    # de N inbounds traía N copias del bloque bogota-context).
-                    msgs_to_process = [coalesce_inbox(inbox_batch, version=2)]
-                elif workflow.patched("burst-note-v1"):
-                    msgs_to_process = [coalesce_inbox(inbox_batch)]
-                else:
-                    msgs_to_process = [coalesce_pending(batch)]
+                # Bandeja/watermark (PR burst-inbox): la ráfaga se convierte a
+                # InboxMsg y se coalescea en `_coalesce_batch` (nota de ráfaga
+                # incluida). `raw_batch` se conserva para poder RECOMPONER el
+                # turno si el cliente escribe mientras el LLM piensa (Fase 1
+                # interrupción, ver el loop de restart más abajo).
+                raw_batch = batch
+                msgs_to_process = [self._coalesce_batch(batch)]
             else:
                 # Legacy: un mensaje a la vez. Solo para workflows pre-deploy.
+                raw_batch = None
                 msgs_to_process = []
                 while self._pending:
                     msgs_to_process.append(self._pending.pop(0))
@@ -328,7 +341,36 @@ class HubaraSalesSessionWorkflow:
                         except Exception:
                             pass
 
-                    result = await run_agent_turn(session, msg)
+                    # Fase 1 interrupción ("corrientazo", run eda8d460): si el
+                    # cliente escribe MIENTRAS el LLM piensa y el turno aún no
+                    # tocó al cliente, `run_agent_turn` aborta (interrupted) y
+                    # acá recomponemos: batch viejo + pendientes → un solo
+                    # turno que considera TODO. Cap de restarts para no morir
+                    # de inanición si el cliente tipea sin parar (tras el cap,
+                    # has_new_input=None desactiva los checkpoints y el turno
+                    # corre hasta el final; lo pendiente va al ciclo próximo).
+                    # `workflow.patched`: histories pre-deploy → hni None →
+                    # shape idéntico al viejo (R-DET/L-9).
+                    restarts = 0
+                    while True:
+                        hni = None
+                        if (
+                            raw_batch is not None
+                            and restarts < _MAX_TURN_RESTARTS
+                            and workflow.patched("turn-interrupt-v1")
+                        ):
+                            hni = lambda: bool(self._pending)  # noqa: E731
+                        result = await run_agent_turn(
+                            session, msg, has_new_input=hni
+                        )
+                        if result.interrupted:
+                            restarts += 1
+                            drained = list(self._pending)
+                            self._pending.clear()
+                            raw_batch = [*(raw_batch or []), *drained]
+                            msg = self._coalesce_batch(raw_batch)
+                            continue
+                        break
                     self._last_response = result.final_content
                     turn_count += 1
 
