@@ -1,0 +1,45 @@
+# WhatsApp Cloud API rate card — Colombia Q4 2026 v1
+#
+# EFECTIVO: 1-oct-2026. El acantilado de pricing de non-template messages
+# (ver WHATSAPP_WINDOW_STRATEGY.md §1). Cambios vs co_2026q2_v1:
+#   - service: 0 → 800   (los service messages free-form dentro de la ventana
+#                         24h dejan de ser gratis el 1-oct-2026; rate = "igual
+#                         que utility/auth", a publicarse por Meta ~1-sep-2026).
+#   - utility: sigue 800 pero YA NO es gratis dentro de la CSW (antes free
+#              hasta el 1-oct). El "free" no lo modela el rate card sino el
+#              pricing_type del webhook / la ventana — ver el guard del
+#              short-circuit en test_whatsapp_cost_oct_cliff.py.
+#
+# ⚠️ El valor 800 de `service` es PROVISIONAL — Meta publica el rate real de
+# service ~1-sep-2026. Cuando salga, actualizar este archivo ANTES de flippear
+# WHATSAPP_RATE_CARD_VERSION=co_2026q4_v1 en el deploy del 1-oct.
+#
+# Reglas (idénticas a co_2026q2_v1, ver cost.py):
+#   - pricing.billable == false                        → 0
+#   - pricing.pricing_type == "free_customer_service" → 0 (🔴 short-circuit,
+#                                                          riesgo de subconteo
+#                                                          si Meta lo manda
+#                                                          mientras cobra —
+#                                                          verificar webhook)
+#   - pricing.pricing_type == "free_entry_point"      → 0 (dentro de 72h CTWA)
+#   - pricing.pricing_type == "regular"               → rates[category]
+#
+# UNIDAD: USD micros (10^-6 USD). $0.0008 = 800; $0.0125 = 12500.
+# INMUTABLE una vez en producción — si Meta cambia tarifas, crear versión nueva.
+
+version: co_2026q4_v1
+effective_from_ms: 1759276800000   # 2026-10-01T00:00:00Z
+country: CO
+currency: USD
+
+rates:
+  marketing:
+    usd_micros_per_message: 12500       # $0.0125 USD
+  utility:
+    usd_micros_per_message: 800         # $0.0008 USD (ya no free en CSW)
+  authentication:
+    usd_micros_per_message: 800         # $0.0008 USD
+  authentication_international:
+    usd_micros_per_message: null        # NO listado para Colombia
+  service:
+    usd_micros_per_message: 800         # $0.0008 USD (era 0 — cobrado desde 1-oct)
