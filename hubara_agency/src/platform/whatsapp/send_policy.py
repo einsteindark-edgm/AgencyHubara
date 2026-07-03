@@ -1,0 +1,182 @@
+"""Central de decisión de envío WhatsApp — la ÚNICA fuente de verdad de
+SI / CÓMO / CON-QUÉ-COSTO mandar un outbound al cliente.
+
+Todo subsistema que manda un mensaje (sales, remarketing, watchdog, eta) DEBE
+consultar esta central ANTES de invocar la activity de envío. Ningún subsistema
+decide por su cuenta canal/category/costo — el choke point es único (ver
+`WHATSAPP_WINDOW_STRATEGY.md` §6, enforced por gate de arquitectura).
+
+`evaluate_send` encode la matriz de costo por envío (`WHATSAPP_WINDOW_STRATEGY.md`
+§3), que cruza geometría de ventana (`window.py`) × category × rate card
+(`cost.py`) → una `SendDecision` explicable.
+
+Puro (R-DET): sin Temporal, sin `datetime.now()`, sin I/O. El caller pasa
+`now_ms` desde una activity y el `RateCard` desde el composition root. Se consume
+activity-side; la `SendDecision` puede volver al workflow (R-JSON).
+
+Determinismo gotcha: NO `from __future__ import annotations` — `SendDecision`
+puede cruzar el boundary workflow↔activity y Temporal DataConverter la
+reconstruye vía `get_type_hints`; PEP 563 (string annotations) rompe eso dentro
+del sandbox. Mismo criterio que `remarketing/watchdog_contracts.py`.
+"""
+from dataclasses import dataclass
+from typing import Any
+
+from src.platform.whatsapp.cost import RateCard
+from src.platform.whatsapp.window import (
+    is_in_ctwa_window,
+    is_in_service_window,
+)
+
+
+# =============================================================================
+# Vocabulario (canales + categorías)
+# =============================================================================
+
+#: El mensaje viaja como texto free-form (non-template). Solo permitido dentro
+#: de la ventana de servicio 24h.
+CHANNEL_FREE_FORM: str = "free_form"
+
+#: El mensaje viaja como template aprobado. Permitido en cualquier momento.
+CHANNEL_TEMPLATE: str = "template"
+
+#: No se puede/no se debe mandar (ver `SendDecision.suppress_reason`).
+CHANNEL_BLOCKED: str = "blocked"
+
+CATEGORY_SERVICE: str = "service"
+CATEGORY_UTILITY: str = "utility"
+CATEGORY_MARKETING: str = "marketing"
+CATEGORY_AUTHENTICATION: str = "authentication"
+
+
+# =============================================================================
+# DTO (R-JSON, frozen — cruza workflow↔activity)
+# =============================================================================
+
+
+@dataclass(frozen=True)
+class SendDecision:
+    """Veredicto de la central para UN outbound.
+
+    * `allowed`               — False ⇒ no mandar (mirar `suppress_reason`).
+    * `channel`               — free_form / template / blocked.
+    * `recommended_category`  — service / utility / marketing / authentication.
+    * `is_free`               — True ⇒ Meta NO cobra (dentro de 72h CTWA, o
+                                service gratis pre-1-oct).
+    * `expected_cost_micros`  — costo estimado PRE-envío en USD micros. La verdad
+                                autoritativa la trae el `pricing` del webhook.
+    * `rationale`             — por qué esta decisión (observabilidad).
+    * `suppress_reason`       — si `allowed=False`, el motivo canónico.
+    """
+
+    allowed: bool
+    channel: str
+    recommended_category: str
+    is_free: bool
+    expected_cost_micros: int
+    rationale: str
+    suppress_reason: str | None = None
+
+
+# =============================================================================
+# API pública
+# =============================================================================
+
+
+def _rate_micros(rate_card: RateCard, category: str) -> int:
+    """Rate de `category` en el card, o 0 si falta / está sin precio.
+
+    Mismo criterio defensivo que `cost.compute_message_cost_micros` (category
+    ausente o `usd_micros_per_message=None` ⇒ 0). El pre-check nunca revienta
+    por un card incompleto — subcotiza a 0 (la verdad la trae el webhook).
+    """
+    entry = rate_card.rates.get(category)
+    if entry is None or entry.usd_micros_per_message is None:
+        return 0
+    return entry.usd_micros_per_message
+
+
+def evaluate_send(
+    now_ms: int,
+    metadata: dict[str, Any],
+    channel: str,
+    category: str,
+    rate_card: RateCard,
+) -> SendDecision:
+    """Devuelve la `SendDecision` para mandar `channel`/`category` en `now_ms`.
+
+    Encode la matriz de `WHATSAPP_WINDOW_STRATEGY.md` §3:
+
+      * Dentro de 72h CTWA → TODO gratis (incluso marketing template).
+      * free_form (service) → solo permitido dentro de la 24h CSW; su costo lo
+        fija el rate card (`service`: 0 pre-1-oct, >0 post-1-oct).
+      * template → permitido siempre; gratis solo dentro de 72h CTWA, si no
+        cobra `rate_card[category]`.
+
+    La ventana CTWA es ortogonal a la CSW: si CTWA está abierta el costo es 0
+    aunque la CSW haya cerrado (pero free_form igual necesita la CSW abierta
+    para poder mandarse).
+    """
+    in_ctwa = is_in_ctwa_window(now_ms, metadata)
+    in_csw = is_in_service_window(now_ms, metadata)
+
+    if channel == CHANNEL_FREE_FORM:
+        if not in_csw:
+            # No hay ventana de servicio abierta → free-form imposible. El
+            # caller debe caer a un template (o suprimir).
+            return SendDecision(
+                allowed=False,
+                channel=CHANNEL_BLOCKED,
+                recommended_category=CATEGORY_SERVICE,
+                is_free=False,
+                expected_cost_micros=0,
+                rationale="free_form bloqueado: ventana de servicio 24h cerrada",
+                suppress_reason="csw_closed",
+            )
+        # Free-form siempre es category `service`, sin importar lo que pida el
+        # caller.
+        cost = 0 if in_ctwa else _rate_micros(rate_card, CATEGORY_SERVICE)
+        is_free = cost == 0
+        if in_ctwa:
+            why = "free_form dentro de 72h CTWA (free entry point)"
+        elif is_free:
+            why = "free_form service gratis en CSW (rate 0, pre-1-oct)"
+        else:
+            why = "free_form service cobrado en CSW (post-1-oct)"
+        return SendDecision(
+            allowed=True,
+            channel=CHANNEL_FREE_FORM,
+            recommended_category=CATEGORY_SERVICE,
+            is_free=is_free,
+            expected_cost_micros=cost,
+            rationale=why,
+        )
+
+    if channel == CHANNEL_TEMPLATE:
+        cost = 0 if in_ctwa else _rate_micros(rate_card, category)
+        is_free = cost == 0
+        if in_ctwa:
+            why = f"template {category} dentro de 72h CTWA (gratis, incl. marketing)"
+        elif is_free:
+            why = f"template {category} sin precio en el rate card → 0"
+        else:
+            why = f"template {category} cobrado (fuera de 72h CTWA)"
+        return SendDecision(
+            allowed=True,
+            channel=CHANNEL_TEMPLATE,
+            recommended_category=category,
+            is_free=is_free,
+            expected_cost_micros=cost,
+            rationale=why,
+        )
+
+    # Canal desconocido → no mandar. Defensa: el caller pasó basura.
+    return SendDecision(
+        allowed=False,
+        channel=CHANNEL_BLOCKED,
+        recommended_category=category,
+        is_free=False,
+        expected_cost_micros=0,
+        rationale=f"canal desconocido: {channel!r}",
+        suppress_reason="unknown_channel",
+    )
