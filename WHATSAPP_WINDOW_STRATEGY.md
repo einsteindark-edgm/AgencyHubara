@@ -172,6 +172,29 @@ con conversión: **costo-de-servir por lead vs valor generado**, segmentado por
 lane (72h-gratis / paga / suprimido). Ese número calibra, semana a semana, el
 umbral de la Fase B. Conecta con el motor de unit-economics CTWA.
 
+## 9-bis. Estado real + runbook (honestidad post-premortem 2026-07-03)
+
+**Qué está cableado hoy vs qué es capa lista:**
+- ✅ `evaluate_send` consultado en el path de gasto (`send_template_to_session`)
+  → estampa `last_outbound_policy` en cada template send.
+- ⏳ `decide_reengagement`/`LeadState` = **capa funnel lista, SIN caller de
+  producción**. Wiring en vivo = fase siguiente (agente GraphAgents / remarketing).
+  NO afirmar "choke point único enforced" hasta ese wiring.
+- ⏳ `last_outbound_policy` se ESCRIBE pero **nadie lo lee todavía** — la data de
+  lane está capturada; el consumidor (dashboard/aggregation) es follow-up. NO
+  reclamar "medición implementada".
+
+**🔴 RUNBOOK #1 — el flip del rate card el 1-oct (premortem M1, el fallo más caro):**
+El default de `get_current_rate_card()` sigue siendo `co_2026q2_v1` (service=0).
+`co_2026q4_v1` (service=800) **solo entra si se setea
+`WHATSAPP_RATE_CARD_VERSION=co_2026q4_v1`** en el deploy del 1-oct. **No hay
+guard automático** que lo fuerce ni que compare `now_ms` contra el
+`effective_from_ms` del card. Si nadie flippea el env el 1-oct → **subconteo
+silencioso de TODO el gasto de service**. Fix propio (follow-up): selección de
+rate card date-aware por `effective_from_ms`. Mientras tanto, es item de deploy
+obligatorio + (idealmente) una alerta si el card activo tiene service=0 después
+del 1-oct.
+
 ## 10. Incógnitas a verificar (contra webhook real, no doc)
 
 - 🔴 **Trigger de las 72h** — nuestro `window.py` computa desde

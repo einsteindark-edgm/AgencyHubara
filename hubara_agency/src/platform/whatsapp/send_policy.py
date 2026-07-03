@@ -1,10 +1,18 @@
 """Central de decisión de envío WhatsApp — la ÚNICA fuente de verdad de
 SI / CÓMO / CON-QUÉ-COSTO mandar un outbound al cliente.
 
-Todo subsistema que manda un mensaje (sales, remarketing, watchdog, eta) DEBE
-consultar esta central ANTES de invocar la activity de envío. Ningún subsistema
-decide por su cuenta canal/category/costo — el choke point es único (ver
-`WHATSAPP_WINDOW_STRATEGY.md` §6, enforced por gate de arquitectura).
+Objetivo (visión): todo subsistema que manda un mensaje consulta esta central
+ANTES de invocar la activity de envío. Ver `WHATSAPP_WINDOW_STRATEGY.md` §6.
+
+ESTADO REAL (2026-07-03, sé honesto — premortem A1):
+  * `evaluate_send` YA está cableado en el path de gasto (`send_template_to_session`
+    lo consulta y estampa `last_outbound_policy`). El test-gate
+    `test_send_policy_chokepoint.py` verifica ese wiring (grep sobre el source —
+    smoke, no un enforcement duro sobre TODOS los paths de envío).
+  * `decide_reengagement` + `LeadState` son la **capa funnel LISTA pero SIN
+    caller de producción todavía**. Su wiring en vivo (remarketing/watchdog o el
+    agente GraphAgents autónomo) es la fase siguiente. NO afirmar "choke point
+    único enforced" hasta que ese wiring exista.
 
 `evaluate_send` encode la matriz de costo por envío (`WHATSAPP_WINDOW_STRATEGY.md`
 §3), que cruza geometría de ventana (`window.py`) × category × rate card

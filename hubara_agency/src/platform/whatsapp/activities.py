@@ -448,7 +448,12 @@ async def send_template_to_session(
         )
         annotate_last_outbound_policy(metadata, _decision)
     except Exception:  # noqa: BLE001 — el estampado nunca debe tumbar el send
-        log.warning("send_policy_annotate_failed", session_id=session_id)
+        # exc_info=True: sin la causa, un fallo del estimador (ej. shape de
+        # rate card cambia) queda invisible — doblemente, porque hoy nadie
+        # consume last_outbound_policy (premortem A2/M2).
+        log.warning(
+            "send_policy_annotate_failed", session_id=session_id, exc_info=True
+        )
     _write_metadata(session_id, metadata)
 
     # HU-WA24H-001 pre-mortem F2.2: el dashboard del operador lee el JSONL
