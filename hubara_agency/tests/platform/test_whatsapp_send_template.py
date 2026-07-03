@@ -543,3 +543,60 @@ class TestSendTemplateIdempotency:
         )
 
         assert mock_send.call_count == 2
+
+
+class TestSendTemplateStampsSendPolicy:
+    """WS2 — el send de template consulta la central y estampa la estimación
+    de costo/lane en `last_outbound_policy`. Este test EJECUTA el send (no
+    grep) — así el import roto (ruff --fix borra imports entre edits, L-6) se
+    caza como NameError en runtime, no en prod.
+    """
+
+    @pytest.mark.asyncio
+    async def test_stamps_last_outbound_policy_from_central(
+        self, isolated_vault, monkeypatch
+    ):
+        session_id = "wa_5492222222222"
+        _write_metadata(
+            isolated_vault,
+            session_id,
+            {
+                "phone_number_id": "PHONE_TEST",
+                # Sin ventanas abiertas → template utility cobrado (no free).
+                "episodes": [
+                    {
+                        "episode_id": "ep_pol",
+                        "started_at_ms": 1_700_000_000_000,
+                        "closed_at_ms": None,
+                        "closing_tag": None,
+                        "closing_motivo": None,
+                        "order_id": None,
+                        "referral_snapshot": None,
+                        "msgs_count_at_start": 0,
+                        "msgs_count_at_close": None,
+                    }
+                ],
+            },
+        )
+        mock_send = AsyncMock(
+            return_value=OutboundResult(wa_message_id="wamid.POL", ok=True)
+        )
+        monkeypatch.setattr(
+            "src.platform.whatsapp.activities.whatsapp_client.send_template",
+            mock_send,
+        )
+
+        await send_template_to_session(
+            session_id,
+            "quote_ready_utility_v1",
+            {"customer_first_name": "Ana", "product_or_quote_label": "vela"},
+        )
+
+        metadata = _read_metadata(isolated_vault, session_id)
+        policy = metadata["last_outbound_policy"]
+        assert policy["channel"] == "template"
+        assert policy["category"] == "utility"
+        assert policy["allowed"] is True
+        assert policy["is_free"] is False  # sin ventanas abiertas
+        # utility = 800 micros (estable entre co_2026q2 y q4).
+        assert policy["expected_cost_micros"] == 800

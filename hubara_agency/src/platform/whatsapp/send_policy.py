@@ -83,6 +83,25 @@ class SendDecision:
 # =============================================================================
 
 
+def annotate_last_outbound_policy(
+    metadata: dict[str, Any], decision: SendDecision
+) -> None:
+    """Estampa la estimación de la central en `metadata['last_outbound_policy']`.
+
+    La info de costo/lane de CADA outbound sale de la central (choke point).
+    JSON-serializable — se persiste con el outbound para el bucle de medición
+    (lane free vs paga vs suprimido, `WHATSAPP_WINDOW_STRATEGY.md` §9).
+    """
+    metadata["last_outbound_policy"] = {
+        "channel": decision.channel,
+        "category": decision.recommended_category,
+        "is_free": decision.is_free,
+        "expected_cost_micros": decision.expected_cost_micros,
+        "allowed": decision.allowed,
+        "rationale": decision.rationale,
+    }
+
+
 def _rate_micros(rate_card: RateCard, category: str) -> int:
     """Rate de `category` en el card, o 0 si falta / está sin precio.
 
@@ -179,4 +198,117 @@ def evaluate_send(
         expected_cost_micros=0,
         rationale=f"canal desconocido: {channel!r}",
         suppress_reason="unknown_channel",
+    )
+
+
+# =============================================================================
+# Capa funnel — decisión de REACTIVACIÓN (Free-First Funnel)
+# =============================================================================
+
+
+TAG_HUMAN: str = "HUMANO"
+TAG_CONVERTED: str = "COMPRA_EXITOSA"
+TAG_PAYMENT_PENDING: str = "CONFIRMADO_PAGO_PENDIENTE"
+
+
+@dataclass(frozen=True)
+class LeadState:
+    """Estado del lead relevante para decidir reactivación.
+
+    `tag` es el tag de conversación (INTERESADO / COMPRA_EXITOSA /
+    CONFIRMADO_PAGO_PENDIENTE / HUMANO / NO_ETIQUETADO). Los flags derivan de
+    metadata del episodio (ver mapa de warmth en `WHATSAPP_WINDOW_STRATEGY.md`).
+
+    `transactional_hook` = hay un motivo transaccional genuino para un utility
+    (pedido a medias, pedido colocado, pago pendiente) — la ÚNICA justificación
+    legítima de un utility template (promo en utility = recategorización a
+    marketing, ver §5).
+    """
+
+    tag: str | None = None
+    has_order_draft: bool = False
+    has_registered_order: bool = False
+    is_ctwa_lead: bool = False
+    engaged: bool = False
+    #: Opt-in explícito para gastar UN marketing pago (lead de alto valor). Off
+    #: por default — el instinto conservador: no pagar si no se calentó en 72h.
+    allow_paid_marketing: bool = False
+
+    @property
+    def transactional_hook(self) -> bool:
+        return (
+            self.has_order_draft
+            or self.has_registered_order
+            or self.tag == TAG_PAYMENT_PENDING
+        )
+
+
+def _suppress(reason: str, why: str) -> SendDecision:
+    return SendDecision(
+        allowed=False,
+        channel=CHANNEL_BLOCKED,
+        recommended_category=CATEGORY_MARKETING,
+        is_free=False,
+        expected_cost_micros=0,
+        rationale=why,
+        suppress_reason=reason,
+    )
+
+
+def decide_reengagement(
+    now_ms: int,
+    metadata: dict[str, Any],
+    lead: LeadState,
+    rate_card: RateCard,
+) -> SendDecision:
+    """Decide CÓMO (o si) reactivar un lead — el Free-First Funnel (§4).
+
+    Precedencia:
+      1. Estados terminales (HUMANO / COMPRA_EXITOSA) → suprimir. Ningún bot
+         interviene si hay humano en el caso o ya convirtió.
+      2. Fase A — CSW abierta (cliente activo) → free-form.
+      3. Fase A — 72h CTWA abierta (CSW cerrada) → template GRATIS. Utility si
+         hay gancho transaccional; si no, marketing (también gratis en 72h).
+      4. Fase B — ambas cerradas:
+         * gancho transaccional → utility barata (legítima).
+         * `allow_paid_marketing` opt-in → UN marketing pago.
+         * si no → suprimir (no pagar por un lead que no se calentó en 72h).
+
+    Delega el cálculo de costo/allowed en `evaluate_send` (fuente única de la
+    matriz) — esta capa solo elige canal + category según warmth × ventana.
+    """
+    # 1. Terminales.
+    if lead.tag == TAG_HUMAN:
+        return _suppress("human_owned", "caso con humano — ningún bot interviene")
+    if lead.tag == TAG_CONVERTED:
+        return _suppress("already_converted", "ya convirtió — no reactivar")
+
+    in_ctwa = is_in_ctwa_window(now_ms, metadata)
+    in_csw = is_in_service_window(now_ms, metadata)
+
+    # 2. Fase A — cliente activo (CSW abierta) → free-form.
+    if in_csw:
+        return evaluate_send(
+            now_ms, metadata, CHANNEL_FREE_FORM, CATEGORY_SERVICE, rate_card
+        )
+
+    # 3. Fase A — 72h CTWA abierta, CSW cerrada → template gratis.
+    if in_ctwa:
+        category = CATEGORY_UTILITY if lead.transactional_hook else CATEGORY_MARKETING
+        return evaluate_send(
+            now_ms, metadata, CHANNEL_TEMPLATE, category, rate_card
+        )
+
+    # 4. Fase B — ambas cerradas.
+    if lead.transactional_hook:
+        return evaluate_send(
+            now_ms, metadata, CHANNEL_TEMPLATE, CATEGORY_UTILITY, rate_card
+        )
+    if lead.allow_paid_marketing:
+        return evaluate_send(
+            now_ms, metadata, CHANNEL_TEMPLATE, CATEGORY_MARKETING, rate_card
+        )
+    return _suppress(
+        "fase_b_cold_suppressed",
+        "fase B: lead frío fuera de ventanas, sin gancho transaccional — no pagar",
     )

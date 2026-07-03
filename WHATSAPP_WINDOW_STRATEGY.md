@@ -126,26 +126,28 @@ send_policy(now_ms, metadata, lead_state, intended) -> SendDecision
 **Enforcement:** gate de arquitectura — ninguna activity de send se invoca sin
 una `SendDecision` previa (choke point único, sin bypass).
 
-## 7. GraphAgents: el "Window Strategist" agent
+## 7. GraphAgents: el "Window Strategist" agent (AUTÓNOMO, sin HITL)
 
-Subsistema aparte (LangGraph + AgentSpan + manifests). Un agente que:
+Subsistema aparte (LangGraph + AgentSpan + manifests). Se desarrolla en su
+propia rama; acá solo el plan → **`GRAPHAGENTS_WINDOW_STRATEGIST_PLAN.md`**.
 
-1. **Inspecciona** las conversaciones/mensajes (vía tool read).
-2. **Clasifica** cada lead: estado de ventana (dentro 72h / dentro 24h /
-   expirado), warmth, gancho transaccional.
-3. **Propone un plan de reactivación:** a quién tocar, cuándo, por qué canal,
-   gratis vs pago.
-4. **Decide cuándo un utility legítimo vale la pena FUERA de ventana** — si
-   realmente necesitamos una confirmación/reminder porque el pedido quedó casi
-   listo, el pago quedó pendiente, etc. El catálogo de utilities legítimos del
-   negocio, usados bien.
+Un agente **autónomo** que se activa por conversación, clasifica cada lead
+(ventana 72h/24h/expirado + warmth + gancho transaccional) y **despacha
+reactivaciones a remarketing (hubara) cuando las ventanas lo hacen rentable** —
+exprime el carril gratis de 72h, usa utility barata cuando hay motivo
+transaccional real (confirmación/reminder de pedido casi listo, pago pendiente),
+y **suprime** los fríos fuera de ventana.
 
-**G-DUR (crítico):** dispatchar un toque pago o un utility = gasto outward →
-`approval_required` / `@human_task`. **El agente PROPONE; hubara EJECUTA** de
-forma idempotente vía el puente HITL. El agente nunca gasta solo.
+**Sin HITL** (decisión del operador). No hay gate humano. La seguridad del gasto
+es doble: (1) el agente solo despacha lo que su política ventana×warmth×cadencia×
+presupuesto marca rentable; (2) **hubara re-valida cada envío con la central
+`send_policy` al ejecutar** → ningún gasto no autorizado por la central, aunque
+el agente se equivoque. **G-DUR** se cumple porque el agente nunca gasta directo:
+emite *intents de dispatch*; el "approval" es programático (central + guardrail
+de presupuesto/cadencia del nodo `plan`), no humano.
 
-**G-DET:** golden-replay — dado un fixture de conversaciones, el agente produce
-EXACTAMENTE este plan. El LLM aislado en nodos marcados.
+**G-DET:** golden-replay — `now` entra por payload, no `datetime.now()`. El
+grafo `ingest → classify → plan → dispatch → END` es puro.
 
 ## 8. Plan de implementación (workstreams)
 

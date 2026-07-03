@@ -31,13 +31,21 @@ from src.platform.config import (
 from src.platform.constants import WHATSAPP_SESSION_PREFIX
 from src.platform.temporal.heartbeat import with_heartbeat
 from src.platform.whatsapp import client as whatsapp_client
-from src.platform.whatsapp.composition import get_template_registry
+from src.platform.whatsapp.composition import (
+    get_current_rate_card,
+    get_template_registry,
+)
 from src.platform.whatsapp.cost import (
     OutboundLogEntry,
     add_outbound_to_summary,
     empty_episode_cost_summary,
 )
 from src.platform.whatsapp.dtos import OutboundResult
+from src.platform.whatsapp.send_policy import (
+    CHANNEL_TEMPLATE,
+    annotate_last_outbound_policy,
+    evaluate_send,
+)
 
 log = structlog.get_logger()
 
@@ -431,6 +439,16 @@ async def send_template_to_session(
     _record_template_send(
         metadata, fingerprint, result.wa_message_id or "", now_ms
     )
+    # WS2: la info de costo/lane del outbound SALE de la central (choke point,
+    # WHATSAPP_WINDOW_STRATEGY.md §6). Estimación pre-envío (la verdad
+    # autoritativa la trae después el `pricing` del webhook message_status).
+    try:
+        _decision = evaluate_send(
+            now_ms, metadata, CHANNEL_TEMPLATE, spec.category, get_current_rate_card()
+        )
+        annotate_last_outbound_policy(metadata, _decision)
+    except Exception:  # noqa: BLE001 — el estampado nunca debe tumbar el send
+        log.warning("send_policy_annotate_failed", session_id=session_id)
     _write_metadata(session_id, metadata)
 
     # HU-WA24H-001 pre-mortem F2.2: el dashboard del operador lee el JSONL
