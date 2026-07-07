@@ -78,6 +78,17 @@ describe("message filters", () => {
     expect(getMessageSender(msg({ ui_type: "human_message" }))).toBe("human");
   });
 
+  it("ui_component_sent (envío no-textual del bot) es visible en el panel central", () => {
+    const note = msg({
+      ui_type: "ui_component_sent",
+      role: "assistant",
+      content: "📋 El bot pidió los datos de envío (formulario)",
+    });
+    expect(isTechnicalEvent(note)).toBe(false);
+    expect(isVisibleChatMessage(note)).toBe(true);
+    expect(getMessageSender(note)).toBe("agent");
+  });
+
   it("human_message passes isVisibleChatMessage", () => {
     expect(
       isVisibleChatMessage(
