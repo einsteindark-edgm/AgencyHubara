@@ -72,6 +72,7 @@ from src.plugins.chats.agent.sales.tools.order_status import CheckOrderStatusToo
 from src.plugins.chats.agent.sales.tools.order_registration import (
     RegisterOrderTool,
 )
+from src.plugins.chats.agent.sales.tools.skills import LoadSkillTool
 from src.plugins.chats.agent.sales.tools.tags import ManageConversationTagTool
 from src.plugins.chats.agent.sales.tools.ui_intents import (
     PresentOrderConfirmationTool,
@@ -147,6 +148,16 @@ register_tool_extension(
 register_tool_extension(
     "sales.check_order_status",
     lambda workspace: CheckOrderStatusTool(workspace=str(workspace)),
+)
+
+# Caso 573229041190 (2026-07-07): TOOLS.md instruye `load_skill("hubara_catalog")`
+# para políticas estables (envíos/garantía/contra entrega/descuentos) pero la
+# tool nunca estuvo registrada — el LLM quemaba una iteración con "Tool not
+# found" y las políticas eran inalcanzables (terminó inventando el costo de
+# envío en una orden real). Closed-list sobre workspace/skills/<name>/SKILL.md.
+register_tool_extension(
+    "sales.load_skill",
+    lambda workspace: LoadSkillTool(workspace=str(workspace)),
 )
 
 # Verificacion LIVE de precio/stock al checkout: el snapshot es la verdad

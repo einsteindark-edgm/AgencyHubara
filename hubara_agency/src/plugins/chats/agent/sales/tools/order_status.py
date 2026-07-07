@@ -59,8 +59,8 @@ class CheckOrderStatusTool(ToolBase):
         "conversación (los que están en seguimiento de entrega). Úsala "
         "cuando el cliente pregunte por su pedido: cuándo llega, en qué "
         "estado está, si ya salió. Si el cliente tiene varios pedidos, la "
-        "respuesta los lista todos — mencioná el número de pedido al "
-        "responder. Si no hay pedidos en seguimiento, decílo y ofrecé "
+        "respuesta los lista todos — menciona el número de pedido al "
+        "responder. Si no hay pedidos en seguimiento, dilo y ofrece "
         "ayuda para comprar."
     )
     parameters: dict[str, Any] = {
