@@ -32,7 +32,8 @@ from temporalio import activity
 from exoclaw_temporal.activities.conversation import _build_conversation
 from exoclaw_temporal.config import BuildPromptInput
 
-from src.platform.state import FilesystemMetadataStore
+# P-28: los plugins importan la fachada `src.sdk`, no `src.platform` directo.
+from src.sdk.runtime import FilesystemMetadataStore
 from src.plugins.chats.agent.sales.use_cases.funnel_stage import (
     resolve_funnel_stage,
 )
@@ -43,8 +44,9 @@ async def sales_build_prompt(input: BuildPromptInput) -> list[dict[str, Any]]:
     """`build_prompt` con guion por etapa (determinista desde metadata)."""
     # Import local (mismo patrón que flush_ui_intents): el valor se resuelve
     # al CALL time, así el fixture `_isolate_vault_dir` de tests puede
-    # re-bindear el módulo config sin que este módulo capture el path viejo.
-    from src.platform.config import WORKSPACE_VAULT_DIR
+    # re-bindear el módulo (`src.sdk.runtime` está en la lista de módulos
+    # vault-capturing del conftest) sin que este capture el path viejo.
+    from src.sdk.runtime import WORKSPACE_VAULT_DIR
 
     metadata = FilesystemMetadataStore(WORKSPACE_VAULT_DIR).read(input.session_id)
     stage = resolve_funnel_stage(metadata)
