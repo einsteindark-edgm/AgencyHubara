@@ -29,8 +29,11 @@ import json
 import re
 import time
 
-from src.sdk.runtime import AWS_REGION as AWS_REGION
-from src.sdk.runtime import GRAPHAGENTS_INSTANCE_TAG as GRAPHAGENTS_INSTANCE_TAG
+# platform NO importa src.sdk (import-linter `platform-no-sdk`) — el config
+# viene directo de platform.config; el SDK re-exporta este vendor en
+# `src.sdk.graphagentskit`.
+from src.platform.config import AWS_REGION as AWS_REGION
+from src.platform.config import GRAPHAGENTS_INSTANCE_TAG as GRAPHAGENTS_INSTANCE_TAG
 
 #: Puerto de AgentSpan/Conductor en la caja — usado SOLO por el chequeo de readiness, que corre
 #: DENTRO de la caja (curl a su `localhost`), nunca desde el backend.

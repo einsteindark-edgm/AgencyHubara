@@ -1,0 +1,27 @@
+# parse-conversations: clasifica el snapshot de conversaciones WhatsApp por
+# ventana (72h CTWA / 24h CSW / expirado) × warmth × gancho transaccional.
+# Espejo de la matriz de decide_reengagement (hubara) — paridad garantizada por
+# fixtures/reengagement_matrix_golden.json (checksum en ambos repos). El
+# LeadState llega PRE-DIGERIDO por hubara; la autoridad del costo es hubara.
+id: parse-conversations
+version: 1.0.0
+description: "Clasifica conversaciones del snapshot hubara por ventana (ctwa_free/csw_open/expired) + warmth + gancho transaccional; espejo puro de la matriz Free-First de send_policy"
+tags: [whatsapp, reengagement, window-strategist]
+
+side_effect: pure
+idempotent: true
+approval_required: false
+credentials: []
+
+inputs:
+  payload:
+    type: object
+    required: true
+    description: "{now_ms: int (reloj por seed, G-DET), conversations: [{session_id, service_window_expires_at_ms, ctwa_window_expires_at_ms, lead: {tag, has_order_draft, has_registered_order, is_ctwa_lead, engaged, allow_paid_marketing}, recent_touches?, tz?}]}"
+outputs:
+  result:
+    type: object
+    description: "{now_ms, conversations: [{session_id, action: dispatch|suppress, reason: csw_free_form|ctwa_72h_free|transactional_hook|phase_b_high_value|human_owned|already_converted|fase_b_cold_suppressed, recommended_channel?, recommended_category?, window_phase?}]}"
+
+# impl PURA (G-AGNOSTIC: no importa runtime). Adapters en tools/parse_conversations/adapters/.
+impl: tools.parse_conversations.impl:run

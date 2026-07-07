@@ -17,7 +17,10 @@ with workflow.unsafe.imports_passed_through():
         claim_conversation_routing,
         read_workspace_memory_activity,
     )
-    from src.platform.whatsapp.activities import send_whatsapp_message_activity
+    from src.platform.whatsapp.activities import (
+        check_reengagement_policy_activity,
+        send_whatsapp_message_activity,
+    )
     from src.platform.temporal.dispatcher import (
         start_or_signal_sales_workflow_activity,
         write_pending_handoff_activity,
@@ -175,6 +178,32 @@ class RemarketingSessionWorkflow:
                 # NO contaminamos history con turns falsos. El workflow completa
                 # cleanly y libera el workflow_id para futuras reactivaciones
                 # (si el humano devuelve el control via dashboard).
+                return
+
+        # ── Policy gate (WS-B2, plan Window Strategist) ──
+        # Re-validación con la CENTRAL antes de tocar al cliente: el intent
+        # que disparó este workflow (agente GraphAgents / dashboard /
+        # transition INTERESADO) es solo un hint — la autoridad de SI/CÓMO
+        # tocar es `decide_reengagement` con el estado REAL del vault
+        # (ventanas, tag, ganchos, quiet hours). Suprime → return early sin
+        # side-effects, mismo contrato que el eligibility gate de arriba.
+        #
+        # workflow.patched: histories en vuelo (duermen hasta 24h, L-9) no
+        # ejecutan este branch. Tras drain, deprecate_patch.
+        if workflow.patched("reengagement-policy-gate-v1"):
+            policy = await workflow.execute_activity(
+                check_reengagement_policy_activity,
+                args=[session_id],
+                start_to_close_timeout=timedelta(seconds=15),
+            )
+            if not policy.allowed:
+                workflow.logger.warning(
+                    "RemarketingWorkflow suprimido por la central send_policy "
+                    "(session_id=%s, reason=%s): %s",
+                    session_id,
+                    policy.suppress_reason,
+                    policy.rationale,
+                )
                 return
 
         # Bootstrap: construye SessionInput fuera del workflow (R-DET).

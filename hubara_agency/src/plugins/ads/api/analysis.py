@@ -148,7 +148,7 @@ def _new_run_id() -> str:
 def _get_launcher():
     """El Launcher real (boto3). Import perezoso: tests lo monkeypatchean con un fake, y boto3
     no se importa si no hace falta (NO-OP sin config AWS)."""
-    from src.plugins.ads.runs.boto3_launcher import Boto3Launcher
+    from src.sdk.graphagentskit import Boto3Launcher
 
     return Boto3Launcher()
 

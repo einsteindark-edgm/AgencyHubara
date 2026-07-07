@@ -41,10 +41,15 @@ from src.platform.whatsapp.cost import (
     empty_episode_cost_summary,
 )
 from src.platform.whatsapp.dtos import OutboundResult
+from src.platform.whatsapp.quiet_hours import is_quiet_hours_for_session
 from src.platform.whatsapp.send_policy import (
+    CHANNEL_BLOCKED,
     CHANNEL_TEMPLATE,
+    SendDecision,
     annotate_last_outbound_policy,
+    decide_reengagement,
     evaluate_send,
+    lead_state_from_metadata,
 )
 
 log = structlog.get_logger()
@@ -72,6 +77,59 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
+@activity.defn(name="check_reengagement_policy")
+async def check_reengagement_policy_activity(session_id: str) -> SendDecision:
+    """Gate de re-validación del remarketing (WS-B2, plan Window Strategist).
+
+    ANTES de que el RemarketingWorkflow toque al cliente, la central
+    `decide_reengagement` re-decide con el estado REAL del vault. Cubre a
+    TODOS los dispatchers (agente GraphAgents, dashboard handoff, transition
+    INTERESADO) — el intent del agente es un hint; la autoridad es esta
+    decisión al ejecutar.
+
+    Orden de precedencia:
+      1. metadata ausente → fail-safe suprimir (`metadata_missing`) — mismo
+         instinto que `check_remarketing_eligibility`: mejor un remarketing
+         perdido que tocar un caso desconocido.
+      2. quiet hours (hora local del cliente, helpers compartidos con el
+         watchdog) → suprimir (`quiet_hours`). El caller decide si re-agenda.
+      3. `decide_reengagement(now, metadata, LeadState, rate_card)` — el
+         Free-First Funnel (terminales / Fase A gratis / Fase B quirúrgica).
+    """
+    metadata_file = WORKSPACE_VAULT_DIR / session_id / "metadata.json"
+    if not metadata_file.exists():
+        return SendDecision(
+            allowed=False,
+            channel=CHANNEL_BLOCKED,
+            recommended_category="service",
+            is_free=False,
+            expected_cost_micros=0,
+            rationale="fail-safe: sin metadata no se re-valida — no tocar",
+            suppress_reason="metadata_missing",
+        )
+
+    from datetime import datetime, timezone
+
+    if is_quiet_hours_for_session(session_id, datetime.now(timezone.utc)):
+        return SendDecision(
+            allowed=False,
+            channel=CHANNEL_BLOCKED,
+            recommended_category="service",
+            is_free=False,
+            expected_cost_micros=0,
+            rationale="fuera del horario local permitido del cliente",
+            suppress_reason="quiet_hours",
+        )
+
+    metadata = _read_metadata(session_id)
+    return decide_reengagement(
+        _now_ms(),
+        metadata,
+        lead_state_from_metadata(metadata),
+        get_current_rate_card(),
+    )
+
+
 async def send_message_to_session(session_id: str, message: str) -> None:
     """Envia `message` al cliente cuyo `session_id` mapea a un numero de WhatsApp.
 
@@ -79,6 +137,13 @@ async def send_message_to_session(session_id: str, message: str) -> None:
     desde `WHATSAPP_PHONE_NUMBER_ID` env var (fallback). Fragmenta el mensaje en
     burbujas separadas por `\\n\\n` con una pausa de 1.5s entre chunks (igual que
     la activity, para preservar UX en WhatsApp).
+
+    WS-B3 (Window Strategist): fingerprint anti doble-toque simétrico al de
+    templates — un free-form idéntico dentro de la ventana corta se dedupea
+    (retry de Temporal / doble barrido del agente; post 1-oct-2026 es plata).
+    Además persiste el `OutboundLogEntry` (kind=text) + `last_outbound` que el
+    path free-form nunca escribía — sin eso ni `engaged` (lead_state) ni el
+    cost tracking ven los free-form del bot.
 
     Reutilizada por:
       * `send_whatsapp_message_activity` (worker, dentro de workflows).
@@ -90,18 +155,43 @@ async def send_message_to_session(session_id: str, message: str) -> None:
     if not phone_number_id:
         raise RuntimeError("WHATSAPP_PHONE_NUMBER_ID not configured")
 
-    try:
-        metadata_file = WORKSPACE_VAULT_DIR / session_id / "metadata.json"
-        if metadata_file.exists():
-            data = json.loads(metadata_file.read_text(encoding="utf-8"))
-            phone_number_id = data.get("phone_number_id", phone_number_id)
-    except (OSError, json.JSONDecodeError):
-        pass
+    metadata = _read_metadata(session_id)
+    phone_number_id = metadata.get("phone_number_id", phone_number_id)
+
+    # Idempotencia: ¿ya mandamos este mismo free-form hace segundos?
+    fingerprint = _freeform_fingerprint(message)
+    now_ms = _now_ms()
+    if _find_recent_freeform_send(metadata, fingerprint, now_ms):
+        log.warning(
+            "freeform_send_idempotency_hit",
+            session_id=session_id,
+            note="skipping duplicate free-form send (retry / double-touch)",
+        )
+        return
 
     chunks = [chunk.strip() for chunk in message.split("\n\n") if chunk.strip()]
     for chunk in chunks:
         await whatsapp_client.send_message(phone_number_id, from_number, chunk)
         await asyncio.sleep(1.5)
+
+    if not chunks:
+        return
+
+    # Persistir outbound + marca de idempotencia en la MISMA escritura (mismo
+    # patrón que el template path). El pricing llega después por webhook.
+    log_entry = OutboundLogEntry(
+        sent_at_ms=now_ms,
+        wa_message_id="",
+        kind="text",
+        template_name=None,
+        pricing=None,
+        cost_usd_micros=None,
+        rate_card_version=None,
+    )
+    _append_outbound_to_active_episode(metadata, log_entry)
+    metadata["last_outbound"] = asdict(log_entry)
+    _record_freeform_send(metadata, fingerprint, now_ms)
+    _write_metadata(session_id, metadata)
 
 
 @activity.defn(name="send_whatsapp_message_activity")
@@ -300,6 +390,43 @@ def _append_outbound_to_active_episode(
 # existe) o un check a nivel workflow (ej. `watchdog.fired_at_ms`).
 _TEMPLATE_DEDUP_WINDOW_MS = 120_000  # 2 min
 _RECENT_TEMPLATE_SENDS_CAP = 20
+
+
+#: Ventana de dedup free-form (WS-B3). Igual que la de templates: cubre el
+#: retry de Temporal y el doble-toque de dos barridos del agente en corto,
+#: sin bloquear reenvíos legítimos posteriores.
+_FREEFORM_DEDUP_WINDOW_MS = 120_000  # 2 min
+_RECENT_FREEFORM_SENDS_CAP = 20
+
+
+def _freeform_fingerprint(message: str) -> str:
+    """Hash estable del contenido de un free-form send."""
+    return hashlib.sha256(("free_form|" + message).encode("utf-8")).hexdigest()[:16]
+
+
+def _find_recent_freeform_send(
+    metadata: dict[str, Any], fingerprint: str, now_ms: int
+) -> bool:
+    """True si hay un envío free-form idéntico dentro de la ventana de dedup."""
+    for entry in reversed(metadata.get("recent_freeform_sends") or []):
+        sent_at = entry.get("sent_at_ms")
+        if (
+            entry.get("fingerprint") == fingerprint
+            and isinstance(sent_at, int)
+            and 0 <= now_ms - sent_at < _FREEFORM_DEDUP_WINDOW_MS
+        ):
+            return True
+    return False
+
+
+def _record_freeform_send(
+    metadata: dict[str, Any], fingerprint: str, now_ms: int
+) -> None:
+    """Registra (muta `metadata`) el free-form send para dedup de retries."""
+    sends = metadata.setdefault("recent_freeform_sends", [])
+    sends.append({"fingerprint": fingerprint, "sent_at_ms": now_ms})
+    if len(sends) > _RECENT_FREEFORM_SENDS_CAP:
+        metadata["recent_freeform_sends"] = sends[-_RECENT_FREEFORM_SENDS_CAP:]
 
 
 def _template_fingerprint(template_name: str, variables: dict[str, str]) -> str:

@@ -30,6 +30,7 @@ from src.platform.temporal.dispatcher import (
     write_pending_handoff_activity,
 )
 from src.platform.whatsapp.activities import (
+    check_reengagement_policy_activity,
     send_typing_indicator_activity,
     send_whatsapp_message_activity,
     send_whatsapp_template_activity,
@@ -81,6 +82,9 @@ async def main() -> None:
             # única, L-3). Nunca listar esas activities a mano.
             *CONVERSATIONAL_TURN_ACTIVITIES,
             check_remarketing_eligibility,
+            # WS-B2 (Window Strategist): gate de re-validación con la central
+            # send_policy antes de cada reactivación.
+            check_reengagement_policy_activity,
             claim_conversation_routing,
             send_whatsapp_message_activity,
             send_typing_indicator_activity,

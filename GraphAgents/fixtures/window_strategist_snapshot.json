@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "now_ms": 1716700000000,
+  "policy": {
+    "max_touches_per_24h": 2,
+    "max_paid_dispatches_per_cycle": 1
+  },
+  "conversations": [
+    {
+      "session_id": "wa_csw_active",
+      "service_window_expires_at_ms": 1716703600000,
+      "ctwa_window_expires_at_ms": 1716696400000,
+      "lead": {"tag": "INTERESADO", "engaged": true},
+      "recent_touches": [],
+      "tz": "America/Bogota"
+    },
+    {
+      "session_id": "wa_ctwa_hook",
+      "service_window_expires_at_ms": 1716696400000,
+      "ctwa_window_expires_at_ms": 1716703600000,
+      "lead": {"tag": "INTERESADO", "has_order_draft": true, "is_ctwa_lead": true},
+      "recent_touches": [{"at_ms": 1716500000000, "kind": "sales"}],
+      "tz": "America/Bogota"
+    },
+    {
+      "session_id": "wa_phase_b_hook",
+      "service_window_expires_at_ms": 1716696400000,
+      "ctwa_window_expires_at_ms": 1716696400000,
+      "lead": {"tag": "CONFIRMADO_PAGO_PENDIENTE", "has_registered_order": true},
+      "recent_touches": [],
+      "tz": "America/Bogota"
+    },
+    {
+      "session_id": "wa_phase_b_optin",
+      "service_window_expires_at_ms": 1716696400000,
+      "ctwa_window_expires_at_ms": 1716696400000,
+      "lead": {"tag": "INTERESADO", "engaged": true, "allow_paid_marketing": true},
+      "recent_touches": [],
+      "tz": "America/Bogota"
+    },
+    {
+      "session_id": "wa_cold",
+      "service_window_expires_at_ms": 1716696400000,
+      "ctwa_window_expires_at_ms": 1716696400000,
+      "lead": {"tag": "NO_ETIQUETADO"},
+      "recent_touches": [],
+      "tz": "America/Bogota"
+    },
+    {
+      "session_id": "wa_cadence_capped",
+      "service_window_expires_at_ms": 1716703600000,
+      "ctwa_window_expires_at_ms": 1716696400000,
+      "lead": {"tag": "INTERESADO", "engaged": true},
+      "recent_touches": [
+        {"at_ms": 1716696400000, "kind": "remarketing"},
+        {"at_ms": 1716692800000, "kind": "watchdog"}
+      ],
+      "tz": "America/Bogota"
+    },
+    {
+      "session_id": "wa_human",
+      "service_window_expires_at_ms": 1716703600000,
+      "ctwa_window_expires_at_ms": 1716703600000,
+      "lead": {"tag": "HUMANO"},
+      "recent_touches": [],
+      "tz": "America/Bogota"
+    }
+  ]
+}

@@ -20,7 +20,7 @@ import os
 import time
 from datetime import datetime
 from pathlib import Path
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from zoneinfo import ZoneInfo
 
 import structlog
 from temporalio import activity
@@ -29,7 +29,6 @@ from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.constants import (
     ROUTE_REMARKETING,
     ROUTE_VENTAS,
-    WHATSAPP_SESSION_PREFIX,
 )
 from src.platform.state import FilesystemMetadataStore
 from src.platform.whatsapp.templates.registry import (
@@ -37,6 +36,10 @@ from src.platform.whatsapp.templates.registry import (
     get_watchdog_template_for_stage,
 )
 from src.platform.whatsapp.composition import get_template_registry
+from src.sdk.messagingkit import (
+    is_quiet_hours_for_session,
+    resolve_local_timezone,
+)
 from src.platform.whatsapp.window import watchdog_pre_expiry_ms
 from src.plugins.chats.agent.remarketing.watchdog_contracts import (
     WatchdogEligibilityResult,
@@ -53,6 +56,8 @@ _DEFAULT_QUIET_HOURS_START: int = 8
 
 #: Hora de fin del horario permitido (exclusive).
 #: Override via WATCHDOG_QUIET_HOURS_END env var.
+#: NOTA WS-B2: la fuente única vive en `src/platform/whatsapp/quiet_hours.py`
+#: (la comparte el gate del remarketing). Estos wrappers delegan allá.
 _DEFAULT_QUIET_HOURS_END: int = 22
 
 #: Mapping country code (sin +) → IANA timezone. Cubre los mercados objetivo
@@ -71,42 +76,13 @@ _COUNTRY_CODE_TO_TZ: dict[str, str] = {
 
 
 def _resolve_local_timezone(session_id: str) -> ZoneInfo:
-    """Mapea el session_id (`wa_<+code><phone>`) a su IANA timezone.
-
-    Heurística: el primer 1-3 dígitos del número de teléfono (post-`+`) son
-    el country code. Hacemos longest-match contra `_COUNTRY_CODE_TO_TZ`.
-    Si no matchea ningún prefijo conocido → UTC (no asumimos horario local
-    erróneo).
-
-    NOTA: country codes ambiguos (e.g. +1 cubre USA + Canada + varios
-    pequeños) usan un TZ representativo. Para precisión sub-país se
-    requeriría DI de un servicio de phone → timezone lookup (out of scope).
-    """
-    if not session_id.startswith(WHATSAPP_SESSION_PREFIX):
-        return ZoneInfo("UTC")
-    phone = session_id[len(WHATSAPP_SESSION_PREFIX):].lstrip("+")
-    # Longest-match en country codes (1 dígito vs 2 vs 3).
-    for code_len in (3, 2, 1):
-        prefix = phone[:code_len]
-        tz_name = _COUNTRY_CODE_TO_TZ.get(prefix)
-        if tz_name:
-            try:
-                return ZoneInfo(tz_name)
-            except ZoneInfoNotFoundError:
-                continue
-    return ZoneInfo("UTC")
+    """Wrapper de compat — la lógica vive en platform (quiet_hours.py)."""
+    return resolve_local_timezone(session_id)
 
 
 def _is_quiet_hours_for_session(session_id: str, now_utc: datetime) -> bool:
-    """True si la hora LOCAL del cliente está fuera del horario permitido
-    (08:00 - 22:00 default, override por env var)."""
-    tz = _resolve_local_timezone(session_id)
-    local_dt = now_utc.astimezone(tz)
-    local_hour = local_dt.hour
-    start = int(os.environ.get("WATCHDOG_QUIET_HOURS_START", _DEFAULT_QUIET_HOURS_START))
-    end = int(os.environ.get("WATCHDOG_QUIET_HOURS_END", _DEFAULT_QUIET_HOURS_END))
-    # Quiet hours: hora < start O hora >= end. Allowed: start <= hora < end.
-    return not (start <= local_hour < end)
+    """Wrapper de compat — la lógica vive en platform (quiet_hours.py)."""
+    return is_quiet_hours_for_session(session_id, now_utc)
 
 
 log = structlog.get_logger()

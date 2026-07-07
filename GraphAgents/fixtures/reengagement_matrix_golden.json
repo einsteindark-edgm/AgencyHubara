@@ -1,0 +1,183 @@
+{
+  "schema_version": 1,
+  "description": "Matriz de precedencia de decide_reengagement (Free-First Funnel). FUENTE DE VERDAD: hubara (test_reengagement_matrix_golden.py corre estos casos contra decide_reengagement real). GraphAgents/fixtures/ tiene una COPIA byte-a-byte con guard de checksum — si editas este archivo, re-sincroniza la copia y ambos checksums.",
+  "now_ms": 1716700000000,
+  "rate_card": {
+    "version": "co_2026q4_v1",
+    "effective_from_ms": 1759276800000,
+    "country": "CO",
+    "currency": "USD",
+    "rates": {
+      "marketing": 12500,
+      "utility": 800,
+      "service": 800,
+      "authentication": 800
+    }
+  },
+  "cases": [
+    {
+      "name": "human_owned_suppressed",
+      "metadata": {
+        "service_window_expires_at_ms": 1716703600000,
+        "ctwa_window_expires_at_ms": 1716703600000
+      },
+      "lead": {"tag": "HUMANO"},
+      "expect": {
+        "allowed": false,
+        "channel": "blocked",
+        "recommended_category": "marketing",
+        "is_free": false,
+        "expected_cost_micros": 0,
+        "suppress_reason": "human_owned"
+      }
+    },
+    {
+      "name": "already_converted_suppressed",
+      "metadata": {
+        "service_window_expires_at_ms": 1716703600000,
+        "ctwa_window_expires_at_ms": 1716703600000
+      },
+      "lead": {"tag": "COMPRA_EXITOSA"},
+      "expect": {
+        "allowed": false,
+        "channel": "blocked",
+        "recommended_category": "marketing",
+        "is_free": false,
+        "expected_cost_micros": 0,
+        "suppress_reason": "already_converted"
+      }
+    },
+    {
+      "name": "csw_open_free_form_charged_post_oct",
+      "metadata": {
+        "service_window_expires_at_ms": 1716703600000,
+        "ctwa_window_expires_at_ms": 1716696400000
+      },
+      "lead": {"tag": "INTERESADO"},
+      "expect": {
+        "allowed": true,
+        "channel": "free_form",
+        "recommended_category": "service",
+        "is_free": false,
+        "expected_cost_micros": 800,
+        "suppress_reason": null
+      }
+    },
+    {
+      "name": "csw_and_ctwa_open_free_form_free",
+      "metadata": {
+        "service_window_expires_at_ms": 1716703600000,
+        "ctwa_window_expires_at_ms": 1716703600000
+      },
+      "lead": {"tag": "INTERESADO", "engaged": true},
+      "expect": {
+        "allowed": true,
+        "channel": "free_form",
+        "recommended_category": "service",
+        "is_free": true,
+        "expected_cost_micros": 0,
+        "suppress_reason": null
+      }
+    },
+    {
+      "name": "ctwa_open_cold_marketing_template_free",
+      "metadata": {
+        "service_window_expires_at_ms": 1716696400000,
+        "ctwa_window_expires_at_ms": 1716703600000
+      },
+      "lead": {"tag": "NO_ETIQUETADO", "is_ctwa_lead": true},
+      "expect": {
+        "allowed": true,
+        "channel": "template",
+        "recommended_category": "marketing",
+        "is_free": true,
+        "expected_cost_micros": 0,
+        "suppress_reason": null
+      }
+    },
+    {
+      "name": "ctwa_open_hook_utility_template_free",
+      "metadata": {
+        "service_window_expires_at_ms": 1716696400000,
+        "ctwa_window_expires_at_ms": 1716703600000
+      },
+      "lead": {"tag": "INTERESADO", "has_order_draft": true, "is_ctwa_lead": true},
+      "expect": {
+        "allowed": true,
+        "channel": "template",
+        "recommended_category": "utility",
+        "is_free": true,
+        "expected_cost_micros": 0,
+        "suppress_reason": null
+      }
+    },
+    {
+      "name": "phase_b_hook_utility_cheap",
+      "metadata": {
+        "service_window_expires_at_ms": 1716696400000,
+        "ctwa_window_expires_at_ms": 1716696400000
+      },
+      "lead": {"tag": "CONFIRMADO_PAGO_PENDIENTE", "has_registered_order": true},
+      "expect": {
+        "allowed": true,
+        "channel": "template",
+        "recommended_category": "utility",
+        "is_free": false,
+        "expected_cost_micros": 800,
+        "suppress_reason": null
+      }
+    },
+    {
+      "name": "phase_b_payment_pending_tag_alone_is_hook",
+      "metadata": {
+        "service_window_expires_at_ms": 1716696400000,
+        "ctwa_window_expires_at_ms": 1716696400000
+      },
+      "lead": {"tag": "CONFIRMADO_PAGO_PENDIENTE"},
+      "expect": {
+        "allowed": true,
+        "channel": "template",
+        "recommended_category": "utility",
+        "is_free": false,
+        "expected_cost_micros": 800,
+        "suppress_reason": null
+      }
+    },
+    {
+      "name": "phase_b_cold_suppressed",
+      "metadata": {
+        "service_window_expires_at_ms": 1716696400000,
+        "ctwa_window_expires_at_ms": 1716696400000
+      },
+      "lead": {"tag": "NO_ETIQUETADO"},
+      "expect": {
+        "allowed": false,
+        "channel": "blocked",
+        "recommended_category": "marketing",
+        "is_free": false,
+        "expected_cost_micros": 0,
+        "suppress_reason": "fase_b_cold_suppressed"
+      }
+    },
+    {
+      "name": "phase_b_optin_one_paid_marketing",
+      "metadata": {
+        "service_window_expires_at_ms": 1716696400000,
+        "ctwa_window_expires_at_ms": 1716696400000
+      },
+      "lead": {
+        "tag": "INTERESADO",
+        "engaged": true,
+        "allow_paid_marketing": true
+      },
+      "expect": {
+        "allowed": true,
+        "channel": "template",
+        "recommended_category": "marketing",
+        "is_free": false,
+        "expected_cost_micros": 12500,
+        "suppress_reason": null
+      }
+    }
+  ]
+}
