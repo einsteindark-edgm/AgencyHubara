@@ -67,9 +67,39 @@ def test_shared_tuple_covers_every_helper_invocation() -> None:
 def test_conversational_workers_spread_the_shared_tuple() -> None:
     for worker_path in _CONVERSATIONAL_WORKERS:
         source = worker_path.read_text(encoding="utf-8")
-        assert "*CONVERSATIONAL_TURN_ACTIVITIES" in source, (
+        if "*CONVERSATIONAL_TURN_ACTIVITIES" in source:
+            continue
+        # Excepción BLESSED (dieta de prompt, Sales): spread FILTRADO de la
+        # misma tupla que reemplaza `build_prompt` por un override del MISMO
+        # nombre de activity (`sales_build_prompt`, guion por etapa). Sigue
+        # siendo la tupla como fuente (nada listado a mano) — solo se permite
+        # sustituir UNA activity por otra homónima. Cualquier otro desvío
+        # reabre la clase L-3.
+        assert (
+            "for a in CONVERSATIONAL_TURN_ACTIVITIES" in source
+            and "generic_build_prompt" in source
+            and "sales_build_prompt" in source
+        ), (
             f"{worker_path.name} no spread-ea CONVERSATIONAL_TURN_ACTIVITIES "
-            f"en su activities=[...] — listar el set conversacional a mano "
-            f"reabre la clase de error L-3 (activity faltante = NotFoundError "
-            f"en runtime, no en boot)."
+            f"en su activities=[...] (ni usa el patrón blessed de override de "
+            f"build_prompt) — listar el set conversacional a mano reabre la "
+            f"clase de error L-3 (activity faltante = NotFoundError en "
+            f"runtime, no en boot)."
         )
+
+
+def test_sales_build_prompt_override_keeps_activity_name() -> None:
+    """El override de Sales DEBE registrarse con el nombre 'build_prompt'.
+
+    Si el nombre difiere, el workflow (que invoca por la referencia genérica
+    → nombre "build_prompt") muere en runtime con NotFoundError — la misma
+    clase L-3 que este archivo protege."""
+    override = (
+        _HUBARA_ROOT
+        / "src/plugins/chats/agent/sales/activities/build_prompt_stage.py"
+    )
+    source = override.read_text(encoding="utf-8")
+    assert '@activity.defn(name="build_prompt")' in source, (
+        "sales_build_prompt debe declararse @activity.defn(name=\"build_prompt\") "
+        "— con otro nombre el workflow no la encuentra (NotFoundError runtime)."
+    )
