@@ -33,7 +33,6 @@ from dataclasses import dataclass
 
 import pytest
 from temporalio import workflow
-from temporalio.exceptions import ApplicationError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
@@ -129,6 +128,14 @@ async def test_dict_missing_required_field_fails_loudly():
             env.client,
             task_queue="strict-q",
             workflows=[_StrictWorkflow],
+            # Sin esto el decode error es un workflow TASK failure y Temporal
+            # lo REINTENTA para siempre (non_retryable=false) → execute_workflow
+            # nunca retorna y el test cuelga la suite entera (caso 2026-07-06:
+            # "regresiones locales corriendo horas"). Con RuntimeError listado,
+            # el "Failed decoding arguments" falla el WORKFLOW y el cliente
+            # recibe la excepción — que es exactamente el contrato "falla
+            # ruidoso en el boundary" que este test asierta.
+            workflow_failure_exception_types=[RuntimeError],
         ):
             # Omit required_field — Temporal must reject this.
             with pytest.raises(Exception) as exc_info:
@@ -138,10 +145,18 @@ async def test_dict_missing_required_field_fails_loudly():
                     id="strict-1",
                     task_queue="strict-q",
                 )
-            # Temporal wraps the TypeError in a WorkflowFailureError /
-            # ApplicationError. The message must mention the missing field
-            # — not a silent failure mode.
-            error_msg = str(exc_info.value)
+            # Temporal wraps the TypeError as WorkflowFailureError →
+            # ApplicationError("Failed decoding arguments") → ApplicationError
+            # con el TypeError original. El detalle del campo faltante vive en
+            # la CADENA de causas (str(top-level) es solo "Workflow execution
+            # failed") — recorremos __cause__ para asertar que el fallo es
+            # ruidoso y nombra el problema, no un modo de falla silencioso.
+            chain: list[str] = []
+            err: BaseException | None = exc_info.value
+            while err is not None:
+                chain.append(str(err))
+                err = err.__cause__
+            error_msg = " | ".join(chain)
             assert (
                 "required_field" in error_msg
                 or "missing" in error_msg.lower()

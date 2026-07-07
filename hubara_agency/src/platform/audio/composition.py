@@ -1,7 +1,8 @@
 """Composition root del transcription layer.
 
-Default: **Gemini Flash-Lite via litellm**. Cambiar el modelo es un toggle
-de env (`AUDIO_TRANSCRIPTION_MODEL=gemini/gemini-3-flash-lite` cuando salga).
+Default: **alias `gemini-multimodal` del proxy litellm** (hoy resuelve a
+Gemini Flash-Lite en `exoclaw-temporal/litellm_config.yaml`). Cambiar el
+modelo es editar ese alias en el config del proxy — sin tocar código.
 
 El proyecto ya usa litellm como proxy unificado (`API_BASE_LLMLITE` en
 `src/platform/config.py`) — esta capa de transcripción enchufa al MISMO
@@ -9,14 +10,18 @@ proxy. Consistencia con el resto del agente.
 
 Modos:
 
-  AUDIO_TRANSCRIPTION_PROVIDER=auto      # default — usa litellm (Gemini Flash-Lite)
+  AUDIO_TRANSCRIPTION_PROVIDER=auto      # default — usa el proxy litellm
   AUDIO_TRANSCRIPTION_PROVIDER=litellm   # idem
   AUDIO_TRANSCRIPTION_PROVIDER=fake      # adapter de tests, devuelve texto sintético
 
 Modelo configurable:
-  AUDIO_TRANSCRIPTION_MODEL=gemini/gemini-2.5-flash-lite  # default
-  AUDIO_TRANSCRIPTION_MODEL=gemini/gemini-2.5-flash       # más caro pero más capaz
-  AUDIO_TRANSCRIPTION_MODEL=openai/whisper-1              # fallback si Gemini falla mucho
+  AUDIO_TRANSCRIPTION_MODEL=litellm_proxy/gemini-multimodal  # default (alias del proxy)
+  AUDIO_TRANSCRIPTION_MODEL=gemini/gemini-2.5-flash          # SOLO con API_BASE="" (directo)
+
+  GOTCHA (bug prod 2026-07): contra el proxy el prefijo `litellm_proxy/` es
+  obligatorio — un prefijo nativo (`gemini/...`) postea al endpoint nativo de
+  Google sobre el proxy y muere con 404. Guard:
+  tests/platform/test_multimodal_via_proxy.py.
 
 API base override (opcional — por default usa el proxy del proyecto):
   AUDIO_TRANSCRIPTION_API_BASE=""                         # vacío = bypass proxy, llamada directa
@@ -89,8 +94,9 @@ class _FakeTranscriptionAdapter:
 def get_audio_transcription_port() -> AudioTranscriptionPort:
     """Devuelve el port singleton según env.
 
-    Default: `LiteLLMTranscriptionAdapter` apuntando a `gemini/gemini-2.5-flash-lite`
-    via el proxy `API_BASE_LLMLITE` ya configurado en el proyecto.
+    Default: `LiteLLMTranscriptionAdapter` apuntando al alias
+    `litellm_proxy/gemini-multimodal` via el proxy `API_BASE_LLMLITE` ya
+    configurado en el proyecto.
     """
     provider = (os.getenv("AUDIO_TRANSCRIPTION_PROVIDER") or "auto").lower()
 

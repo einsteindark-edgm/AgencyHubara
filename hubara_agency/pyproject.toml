@@ -37,6 +37,7 @@ exoclaw-temporal = { workspace = true }
 dev-dependencies = [
     "pytest>=8",
     "pytest-asyncio>=0.23",
+    "pytest-timeout>=2.3",
     "respx>=0.21",
     "pytest-archon>=0.0.6",
     "import-linter>=2.0",
@@ -45,6 +46,14 @@ dev-dependencies = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# Timeout duro per-test (pytest-timeout): un test colgado se vuelve un fallo
+# RUIDOSO con stack dump en vez de una espera infinita ("regresiones locales
+# corriendo horas", caso 2026-07-06: WorkflowEnvironment.start_time_skipping
+# bloqueado por test-servers zombis — ver tests/_reaper.py). 300s cubre con
+# margen el cold-download del temporal-test-server (>2 min documentado en
+# tests/platform/orchestration/test_dict_to_dataclass_contract.py).
+timeout = 300
+timeout_method = "thread"
 markers = [
     "architecture: tests de arquitectura DEHA — bloquean merge a main",
     "functional: tests funcionales end-to-end — evidencia del feature, adjunta al PR comment",

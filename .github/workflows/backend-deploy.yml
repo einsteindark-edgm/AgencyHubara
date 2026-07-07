@@ -131,5 +131,12 @@ jobs:
             GHCR_TOKEN="$(grep '^GHCR_PULL_TOKEN=' .env | cut -d= -f2-)"
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_OWNER" --password-stdin
             docker compose pull
+            # litellm: force-recreate SIEMPRE — su config es un bind-mount y
+            # `up -d` no recrea el container cuando solo cambió el CONTENIDO
+            # del archivo (imagen/definición idénticas) → seguiría sirviendo
+            # el config viejo en memoria. El resto del stack espera su
+            # healthcheck (depends_on: service_healthy), así que el orden es
+            # seguro. Caso: alias gemini-multimodal (fix multimodal sales).
+            docker compose up -d --force-recreate litellm
             docker compose up -d --remove-orphans
             docker image prune -f

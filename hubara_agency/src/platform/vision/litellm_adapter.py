@@ -2,18 +2,20 @@
 
 Espejo de ``platform/audio/litellm_adapter.py``. El proyecto ya usa litellm
 como proxy unificado (``API_BASE_LLMLITE`` en ``src/platform/config.py``);
-este adapter enchufa al MISMO proxy con un modelo Gemini multimodal (default
-``gemini/gemini-2.5-flash-lite``, configurable via ``IMAGE_VISION_MODEL``).
+este adapter enchufa al MISMO proxy con el alias multimodal registrado en su
+``model_list`` (default ``litellm_proxy/gemini-multimodal``, configurable via
+``IMAGE_VISION_MODEL``).
 
 Por qué Gemini y no DeepSeek: el agente conversacional (DeepSeek V4) es
 text-only. Gemini "ve" la imagen y devuelve texto; ese texto se reinyecta a
 la conversación y DeepSeek sigue vendiendo. Mismo patrón que el de audio
 (transcripción → reinyección de texto).
 
-Patrón litellm para image input multimodal:
+Patrón litellm para image input multimodal (via el PROXY del proyecto):
 
     response = await litellm.acompletion(
-        model="gemini/gemini-2.5-flash-lite",
+        model="litellm_proxy/gemini-multimodal",
+        api_base=API_BASE_LLMLITE,
         messages=[{
             "role": "user",
             "content": [
@@ -99,7 +101,7 @@ class LiteLLMVisionAdapter:
 
     def __init__(
         self,
-        model: str = "gemini/gemini-2.5-flash-lite",
+        model: str = "litellm_proxy/gemini-multimodal",
         api_base: str | None = None,
         api_key: str | None = None,
         cost_per_image_usd: float = _GEMINI_FLASH_LITE_COST_PER_IMAGE,
@@ -115,13 +117,18 @@ class LiteLLMVisionAdapter:
         """Construye desde env vars.
 
         Variables:
-          * ``IMAGE_VISION_MODEL`` (default: ``gemini/gemini-2.5-flash-lite``)
+          * ``IMAGE_VISION_MODEL`` (default: ``litellm_proxy/gemini-multimodal``
+            — alias del model_list del proxy; usar prefijo ``litellm_proxy/``
+            siempre que el api_base sea el proxy. GOTCHA bug prod 2026-07: un
+            prefijo nativo (``gemini/...``) contra el proxy postea al endpoint
+            nativo de Google → 404. Guard:
+            tests/platform/test_multimodal_via_proxy.py)
           * ``IMAGE_VISION_API_BASE`` (default: ``API_BASE_LLMLITE`` — el proxy
             litellm ya configurado. Vaciá la var para pegarle directo a Gemini)
           * ``IMAGE_VISION_API_KEY`` (opcional si el proxy maneja auth; si no,
             cae a ``GEMINI_API_KEY`` / ``LITELLM_API_KEY``)
         """
-        model = os.getenv("IMAGE_VISION_MODEL") or "gemini/gemini-2.5-flash-lite"
+        model = os.getenv("IMAGE_VISION_MODEL") or "litellm_proxy/gemini-multimodal"
         api_base = (
             os.getenv("IMAGE_VISION_API_BASE")
             if os.getenv("IMAGE_VISION_API_BASE") is not None
@@ -132,6 +139,13 @@ class LiteLLMVisionAdapter:
             or os.getenv("GEMINI_API_KEY")
             or os.getenv("LITELLM_API_KEY")
         )
+        # El provider `litellm_proxy/` (cliente OpenAI) exige una api_key
+        # aunque el proxy no tenga auth (sin master_key configurada) — el
+        # container hubara-api no recibe ninguna key de LLM. Placeholder SOLO
+        # en el path proxy: un modelo directo (p.ej. `gemini/...` con
+        # API_BASE="") debe seguir resolviendo su key desde el env.
+        if not api_key and model.startswith("litellm_proxy/"):
+            api_key = "no-key"
         return cls(model=model, api_base=api_base or None, api_key=api_key or None)
 
     async def describe(self, request: VisionRequest) -> VisionResult:

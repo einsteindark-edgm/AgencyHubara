@@ -20,6 +20,14 @@ data:
           override_raw_request_params:
           api_key: "os.environ/GEMINI_API_KEY"
 
+      # Multimodal de soporte del chat de sales (audio + visión) — paridad
+      # con exoclaw-temporal/litellm_config.yaml. Consumido como
+      # `litellm_proxy/gemini-multimodal` por platform/{audio,vision}.
+      - model_name: gemini-multimodal
+        litellm_params:
+          model: gemini/gemini-2.5-flash-lite
+          api_key: "os.environ/GEMINI_API_KEY"
+
     router_settings:
       routing_strategy: simple-shuffle
       num_retries: 1
