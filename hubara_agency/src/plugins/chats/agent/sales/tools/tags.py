@@ -39,6 +39,14 @@ from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
     count_session_jsonl_lines,
 )
 
+# 60→300 (caso 573229041190, 2026-07-07): con 60s el ciclo de remarketing le
+# ganaba la carrera al cliente que estaba ESCRIBIENDO su respuesta (una
+# dirección multilínea tarda >60s) — el mensaje caía en el workflow de
+# remarketing (sin tools de pedido) y se perdía; el bot re-preguntaba y el
+# cliente respondía "Ya te los di". Stopgap mientras PR #113 (Window
+# Strategist) trae el re-engagement definitivo.
+_REMARKETING_DELAY_SECONDS = 300
+
 
 # Sesión c4e3416f: `CONFIRMADO_SIN_DATOS` es para el caso donde el cliente
 # confirmó el pedido (apretó "Confirmar" en `present_order_confirmation`) pero
@@ -229,7 +237,7 @@ class ManageConversationTagTool(ToolBase):
             response["schedule_remarketing"] = {
                 "session_id": ctx.session_key,
                 "motivo": motivo,
-                "delay_seconds": 60,
+                "delay_seconds": _REMARKETING_DELAY_SECONDS,
             }
             response[
                 "message"

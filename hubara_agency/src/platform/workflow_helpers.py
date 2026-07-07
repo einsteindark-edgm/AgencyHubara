@@ -503,7 +503,15 @@ async def _run_agent_turn_impl(
         ),
         **_CONV_OPTIONS,  # type: ignore[arg-type]
     )
+    # Off-by-one vs upstream (caso 573229041190, 2026-07-07): exoclaw `loop.py`
+    # graba `all_msgs[len(initial) - 1:]` — el -1 INCLUYE el mensaje del usuario
+    # en el historial durable. Sin él, el LLM nunca ve lo que el cliente dijo
+    # en turnos pasados (solo sus propios mensajes + tool results; verificado
+    # en el history real: 82 mensajes, user:1) y re-pregunta datos ya dados
+    # ("Ya te los di"). Solo cambia el payload de `record_turn` → replay-safe.
     initial_len = len(messages)
+    if messages and messages[-1].get("role") == "user":
+        initial_len -= 1
 
     iteration = 0
     final_content: str | None = None
