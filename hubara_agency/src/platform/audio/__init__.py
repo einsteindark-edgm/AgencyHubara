@@ -20,12 +20,20 @@ Decisión arquitectónica (mayo 2026):
 
 Default por env:
 
-  AUDIO_TRANSCRIPTION_PROVIDER=auto                       # default
-  AUDIO_TRANSCRIPTION_MODEL=gemini/gemini-2.5-flash-lite  # default
-  AUDIO_TRANSCRIPTION_API_BASE=$API_BASE_LLMLITE          # default (proxy)
-  AUDIO_TRANSCRIPTION_API_KEY=                            # opcional si el proxy maneja auth
-  GEMINI_API_KEY=...                                      # required si bypass proxy
-  WHATSAPP_ACCESS_TOKEN=...                               # required para fetch media
+  AUDIO_TRANSCRIPTION_PROVIDER=auto                           # default
+  AUDIO_TRANSCRIPTION_MODEL=litellm_proxy/gemini-multimodal   # default — alias
+                          # registrado en el model_list del proxy
+                          # (exoclaw-temporal/litellm_config.yaml)
+  AUDIO_TRANSCRIPTION_API_BASE=$API_BASE_LLMLITE              # default (proxy)
+  AUDIO_TRANSCRIPTION_API_KEY=                                # opcional si el proxy maneja auth
+  GEMINI_API_KEY=...                                          # required si bypass proxy
+  WHATSAPP_ACCESS_TOKEN=...                                   # required para fetch media
+
+  GOTCHA (bug prod 2026-07): con `api_base` apuntando al PROXY, el modelo
+  DEBE llevar prefijo `litellm_proxy/` — un prefijo de provider nativo
+  (`gemini/...`) hace que el SDK postee al endpoint nativo de Google sobre
+  el proxy (404) y el fallback multimodal muere. Guard:
+  tests/platform/test_multimodal_via_proxy.py.
 
 Costo estimado para Hubara (audio español, voice notes WA típicos ≤30s):
 

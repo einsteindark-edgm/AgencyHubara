@@ -21,6 +21,17 @@ model_list:
       model: gemini/gemini-3.1-pro-preview
       api_key: "os.environ/GEMINI_API_KEY"
 
+  # Multimodal de soporte del chat de sales (audio + visión): transcribe
+  # notas de voz y describe/clasifica imágenes inbound; el texto se reinyecta
+  # al agente text-only (DeepSeek). Consumido por
+  # hubara_agency/src/platform/{audio,vision}/litellm_adapter.py como
+  # `litellm_proxy/gemini-multimodal`. Flash-Lite estable (no preview): barato
+  # y suficiente para STT + clasificación de comprobantes.
+  - model_name: gemini-multimodal
+    litellm_params:
+      model: gemini/gemini-2.5-flash-lite
+      api_key: "os.environ/GEMINI_API_KEY"
+
 router_settings:
   # 'simple-shuffle' es la estrategia estándar. 
   # Como cada model_name tiene solo un proveedor, siempre elegirá ese.
