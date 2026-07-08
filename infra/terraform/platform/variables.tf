@@ -67,6 +67,14 @@ variable "secret_keys" {
     "TEMPORAL_NAMESPACE",
     "TEMPORAL_API_KEY",
     "GHCR_PULL_TOKEN",
+    # OAuth + Marketing API de Meta (plugin `ads`). El backend-deploy los rinde al
+    # `.env`; el plugin degrada limpio (/api/ads/meta/login = 503) si están vacíos.
+    # El token OAuth NO va acá: lo escribe el backend en runtime en
+    # /hubara/<tenant>/meta/oauth (ver el statement WriteMetaToken del app-instance).
+    "META_APP_ID",
+    "META_APP_SECRET",
+    "META_OAUTH_REDIRECT_URI",
+    "META_OAUTH_SCOPES",
   ]
 }
 

@@ -97,6 +97,20 @@ data "aws_iam_policy_document" "ssm_read" {
     actions   = ["kms:Decrypt"]
     resources = ["*"]
   }
+  # El plugin `ads` guarda el token OAuth de Meta EN RUNTIME como SecureString en
+  # /hubara/<tenant>/meta/oauth (MetaTokenStorePort → SsmTokenStore). El instance
+  # profile por default SOLO lee SSM; estas statements le dan WRITE scopeado a
+  # `meta/*` (no a los demás secretos del tenant) + el Encrypt del SecureString.
+  statement {
+    sid       = "WriteMetaToken"
+    actions   = ["ssm:PutParameter", "ssm:DeleteParameter"]
+    resources = ["arn:aws:ssm:*:*:parameter/hubara/${var.tenant}/meta/*"]
+  }
+  statement {
+    sid       = "EncryptMetaToken"
+    actions   = ["kms:Encrypt", "kms:GenerateDataKey"]
+    resources = ["*"]
+  }
 }
 
 resource "aws_iam_role_policy" "ssm_read" {
