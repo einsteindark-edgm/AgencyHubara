@@ -686,3 +686,69 @@ body {
   padding: 3px 8px;
   cursor: pointer;
 }
+
+/* ---- Orden de ejecución (badge sobre cada cajita, §F9) ---- */
+
+.flow-node {
+  position: relative;
+}
+.flow-node-order {
+  position: absolute;
+  top: -10px;
+  left: -10px;
+  z-index: 5;
+  min-width: 18px;
+  height: 18px;
+  line-height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 700;
+  background: var(--vscode-charts-blue, #3794ff);
+  color: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  white-space: nowrap;
+}
+.flow-node.kind-tool .flow-node-order {
+  background: var(--vscode-charts-purple, #b180d7);
+  font-weight: 600;
+}
+
+/* ---- Diff entró/salió (vista confrontada, §F9) ---- */
+
+.diff-pre {
+  padding: 6px 8px;
+}
+.diff-line {
+  display: block;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-radius: 2px;
+  padding: 0 4px;
+}
+.diff-line.diff-add {
+  background: rgba(35, 134, 54, 0.22);
+  color: var(--vscode-charts-green, #89d185);
+}
+.diff-line.diff-del {
+  background: rgba(241, 76, 76, 0.16);
+  color: var(--vscode-errorForeground, #f14c4c);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+  text-decoration-color: rgba(241, 76, 76, 0.55);
+}
+.diff-line.diff-ctx {
+  color: var(--vscode-descriptionForeground);
+}
+.diff-legend {
+  display: flex;
+  gap: 10px;
+  margin: 2px 0 4px;
+  font-size: 10.5px;
+}
+.diff-legend .diff-line {
+  display: inline-block;
+  padding: 0 6px;
+  text-decoration: none;
+}

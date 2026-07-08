@@ -161,7 +161,8 @@ export function activate(ctx: vscode.ExtensionContext): void {
         nodeAccs: (payload.node_accs ?? {}) as Record<string, unknown>,
       };
       GraphPanel.showLocalRun(ctx, hub!, result);
-      runsTree!.noteLocalRun({ caseId, title, agent: result.agent });
+      // la cascada del árbol de Runs viaja ya resuelta (steps + ledgers)
+      runsTree!.noteLocalRun({ caseId, title, agent: result.agent, steps: result.steps, nodeTraces: result.nodeTraces });
       return true;
     }),
     // AgentSpan (:6767) es OPCIONAL — este botón lo levanta en una terminal

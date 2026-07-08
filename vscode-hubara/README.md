@@ -91,7 +91,22 @@ runtime durable (AgentSpan `:6767`) es **opcional** para probar un flujo:
   puente — `AGENTSPAN_SERVER_URL`/`LITELLM_PROXY_URL` apuntando a AWS sin
   tocar código.
 
-Todas las fases del plan (F0–F8) están implementadas.
+**F9 — visualización del orden de ejecución (hecho, post-feedback).**
+- **Badges de orden en el canvas**: con un trace activo, cada cajita muestra
+  su número — agentes `1, 2, 3…` (posición en el plan) y tools `2.1 · 3.2`
+  (orden real dentro de cada agente que la invocó, del ledger reconstruido).
+- **Runs en cascada** (estilo test navigator de Xcode): cada run se despliega
+  en sus agentes en orden de ejecución (con estado/ms/retries) y cada agente
+  en sus tools en orden — locales al instante (la cascada viaja con el
+  resultado), durables lazy al expandir (`/api/trace` + `/api/flow-trace`).
+  Click en cualquier nivel enfoca ese nodo en el grafo.
+- **Entró/salió confrontado**: una sola vista con el diff estructural del
+  acc — verde = agregado/cambiado por este nodo, rojo = removido; claves
+  idénticas en gris. Si los dos lados no comparten estructura, se muestran
+  planos (el diff no aporta). En el nodo raíz confronta seed → respuesta
+  final del workflow.
+
+Todas las fases del plan (F0–F9) están implementadas.
 
 ## Arquitectura (sin servidor)
 

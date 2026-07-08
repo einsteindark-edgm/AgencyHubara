@@ -13,6 +13,8 @@ export interface FlowNodeData extends Record<string, unknown> {
   runtimeStatus?: "idle" | "running" | "done" | "failed" | "awaiting";
   runtimeMs?: number;
   runtimeRetries?: number;
+  /** orden de ejecución con un trace activo: "2" (agente) o "2.1 · 3.2" (tool). */
+  orderBadge?: string;
 }
 
 export type FlowNodeType = Node<FlowNodeData, "hubara">;
@@ -42,6 +44,11 @@ export function FlowNode({ data, selected }: NodeProps<FlowNodeType>): React.Rea
   return (
     <div className={`flow-node kind-${data.kind} ${certClass} ${statusClass} ${selected ? "selected" : ""}`}>
       <Handle type="target" position={Position.Top} />
+      {data.orderBadge && (
+        <span className="flow-node-order" title={`Orden de ejecución: ${data.orderBadge}`}>
+          {data.orderBadge}
+        </span>
+      )}
       <div className="flow-node-header">
         <span className="flow-node-kind">{KIND_LABEL[data.kind] ?? data.kind}</span>
         {data.certification && <span className={`flow-node-cert ${certClass}`}>{data.certification}</span>}

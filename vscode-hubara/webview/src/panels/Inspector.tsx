@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { GraphNode, PROVIDER_LABEL, Provider } from "../../../src/bridge/endpoints";
 import { InspectFile, ToolCall, TraceInfo } from "../../../src/graph/messages";
+import { JsonDiff } from "./JsonDiff";
 
 export interface SelectedNode {
   system: Provider;
@@ -36,7 +37,7 @@ export interface InspectorProps {
   onFocus: () => void;
 }
 
-type Tab = "resumen" | "input" | "output";
+type Tab = "resumen" | "io";
 
 function fmt(v: unknown): string {
   if (v == null) {
@@ -101,13 +102,21 @@ export function Inspector({
     return { kind: "task", taskId: isSup ? lastDoneTask : rt?.task_id };
   };
 
-  const spec = tab === "resumen" ? null : ioSpec(tab);
-  const specKey = spec?.kind === "task" && spec.taskId && trace ? `${trace.executionId}:${spec.taskId}` : null;
+  // La vista confrontada necesita AMBOS lados: pide los dos accs juntos.
+  const inSpec = tab === "io" ? ioSpec("input") : null;
+  const outSpec = tab === "io" ? ioSpec("output") : null;
+  const keysToFetch = [inSpec, outSpec]
+    .map((s) => (s?.kind === "task" && s.taskId && trace ? `${trace.executionId}:${s.taskId}` : null))
+    .filter((k): k is string => k !== null)
+    .join("|");
   useEffect(() => {
-    if (specKey && trace) {
-      onRequestNodeState(specKey, trace.executionId, specKey.slice(trace.executionId.length + 1));
+    if (!keysToFetch || !trace) {
+      return;
     }
-  }, [specKey, trace, onRequestNodeState]);
+    for (const key of keysToFetch.split("|")) {
+      onRequestNodeState(key, trace.executionId, key.slice(trace.executionId.length + 1));
+    }
+  }, [keysToFetch, trace, onRequestNodeState]);
 
   if (!node || !raw) {
     return (
@@ -144,25 +153,15 @@ export function Inspector({
       ? (flowTrace.nodeTraces[step.agent] ?? null)
       : null;
 
-  const ioBody = (which: "input" | "output"): React.ReactElement => {
-    if (isTool) {
-      return (
-        <p className="meta">
-          El I/O por-tool se reconstruye DENTRO de cada nodo que la compone (Conductor no lo persiste) — abrí el
-          agente que la usa y mirá su sub-ejecución en la pestaña resumen.
-        </p>
-      );
-    }
-    const s = ioSpec(which);
+  /** Resuelve el valor de un lado de la vista confrontada. */
+  const sideOf = (s: ReturnType<typeof ioSpec>): { pending: boolean; value?: unknown; message?: string } => {
     if (!s) {
-      return <p className="meta">Este nodo no participa de la ejecución mirada.</p>;
+      return { pending: false, message: "este nodo no participa de la ejecución mirada" };
     }
     if (s.kind === "seed") {
-      return trace?.seed != null ? (
-        <pre className="io-pre">{fmt(trace.seed)}</pre>
-      ) : (
-        <p className="meta">(el seed no viajó en este run — corré el caso de nuevo para verlo)</p>
-      );
+      return trace?.seed != null
+        ? { pending: false, value: trace.seed }
+        : { pending: false, message: "(el seed no viajó en este run)" };
     }
     if (!s.taskId) {
       const msg =
@@ -171,21 +170,37 @@ export function Inspector({
           : isStep && rt?.status === "pending"
             ? "(todavía no corrió)"
             : "(sin estado registrado)";
-      return <p className="meta">{msg}</p>;
+      return { pending: false, message: msg };
     }
     const entry = trace ? ioStates[`${trace.executionId}:${s.taskId}`] : undefined;
     if (!entry || entry.loading) {
-      return <p className="meta">leyendo el estado del nodo…</p>;
+      return { pending: true };
     }
     if (entry.error) {
-      return <p className="error">⚠ {entry.error}</p>;
+      return { pending: false, message: `⚠ ${entry.error}` };
     }
-    if (entry.value == null) {
-      return <p className="meta">(sin estado)</p>;
+    return { pending: false, value: entry.value };
+  };
+
+  /** La vista CONFRONTADA (§F9): entró y salió en un solo diff estructural —
+   * lo que este nodo agregó/cambió al acc, en verde/rojo. */
+  const ioBody = (): React.ReactElement => {
+    if (isTool) {
+      return (
+        <p className="meta">
+          El I/O por-tool se reconstruye DENTRO de cada nodo que la compone (Conductor no lo persiste) — abrí el
+          agente que la usa y mirá su sub-ejecución en la pestaña resumen.
+        </p>
+      );
+    }
+    const input = sideOf(inSpec);
+    const output = sideOf(outSpec);
+    if (input.pending || output.pending) {
+      return <p className="meta">leyendo el estado del nodo…</p>;
     }
     const narrative =
-      which === "output" && isRecord(entry.value) && typeof entry.value.narrative === "string"
-        ? (entry.value as { narrative: string; narrative_invented?: unknown[] })
+      isRecord(output.value) && typeof output.value.narrative === "string"
+        ? (output.value as { narrative: string; narrative_invented?: unknown[] })
         : null;
     return (
       <div>
@@ -200,7 +215,16 @@ export function Inspector({
             {narrative.narrative}
           </div>
         )}
-        <pre className="io-pre">{fmt(entry.value)}</pre>
+        {input.value !== undefined && output.value !== undefined ? (
+          <JsonDiff before={input.value} after={output.value} />
+        ) : (
+          <div>
+            <div className="subtool-sec">entró</div>
+            {input.value !== undefined ? <pre className="io-pre">{fmt(input.value)}</pre> : <p className="meta">{input.message}</p>}
+            <div className="subtool-sec">salió</div>
+            {output.value !== undefined ? <pre className="io-pre">{fmt(output.value)}</pre> : <p className="meta">{output.message}</p>}
+          </div>
+        )}
       </div>
     );
   };
@@ -227,24 +251,22 @@ export function Inspector({
 
       {traceRelevant && (
         <div className="io-tabs">
-          {(["resumen", "input", "output"] as Tab[]).map((t) => (
+          {(["resumen", "io"] as Tab[]).map((t) => (
             <button key={t} type="button" className={`io-tab${tab === t ? " on" : ""}`} onClick={() => setTab(t)}>
-              {t === "input" ? "entró" : t === "output" ? "salió" : t}
+              {t === "io" ? "entró / salió" : t}
             </button>
           ))}
         </div>
       )}
 
-      {tab === "input" && traceRelevant && (
+      {tab === "io" && traceRelevant && (
         <div className="inspector-section">
-          <h3>ENTRÓ · {isSup ? "el seed con que arrancó el pod" : stepIndex === 0 ? "el seed inicial del flujo" : "el acc del nodo anterior"}</h3>
-          {ioBody("input")}
-        </div>
-      )}
-      {tab === "output" && traceRelevant && (
-        <div className="inspector-section">
-          <h3>SALIÓ · {isSup ? "el estado FINAL del pod (la respuesta del workflow)" : "el acc después de este nodo"}</h3>
-          {ioBody("output")}
+          <h3>
+            {isSup
+              ? "SEED DEL POD → RESPUESTA FINAL del workflow"
+              : `ENTRÓ (${stepIndex === 0 ? "seed inicial" : "acc del nodo anterior"}) → SALIÓ (acc tras este nodo)`}
+          </h3>
+          {ioBody()}
         </div>
       )}
 
@@ -316,8 +338,8 @@ export function Inspector({
           )}
           {isSup && (
             <p className="meta">
-              Pod de {steps.filter((s) => s.agent).length} nodos — tocá un nodo del canvas para ver su entró/salió; la
-              pestaña «salió» de ESTE nodo es la respuesta final del workflow.
+              Pod de {steps.filter((s) => s.agent).length} nodos — tocá un nodo del canvas para ver su entró/salió;
+              la pestaña «entró / salió» de ESTE nodo confronta el seed con la respuesta final del workflow.
             </p>
           )}
 

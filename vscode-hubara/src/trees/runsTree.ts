@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { BridgeHub } from "../bridge/pythonBridge";
+import { ToolCall, TraceStep } from "../graph/messages";
 
 interface RunSummary {
   execution_id: string;
@@ -12,11 +13,30 @@ interface LocalRunSummary {
   caseId: string;
   title: string;
   agent: string;
+  /** steps + ledgers de la corrida — alimentan la cascada sin re-ejecutar. */
+  steps: TraceStep[];
+  nodeTraces: Record<string, ToolCall[]>;
+}
+
+/** Un agente de la cascada de ejecución (§F9 — estilo test navigator de Xcode). */
+interface StepEntry {
+  order: number;
+  agent: string;
+  status: string;
+  ms?: number;
+  retries?: number;
+  tools: Array<{ order: string; tool: string }>;
+}
+
+interface RunDetail {
+  steps: StepEntry[];
 }
 
 export type RunNode =
   | { kind: "run"; run: RunSummary }
   | { kind: "localRun"; run: LocalRunSummary; index: number }
+  | { kind: "step"; runKey: string; step: StepEntry }
+  | { kind: "toolCall"; id: string; order: string; tool: string }
   | { kind: "info"; message: string };
 
 const POLL_MS = 8000;
@@ -38,11 +58,36 @@ function statusIcon(status: string): string {
   return "circle-outline";
 }
 
-/** TreeView "Runs" — las ejecuciones recientes de AgentSpan (poll a
- * `/api/runs`, degradación limpia si `:6767` está caído). Click abre/enfoca
- * el canvas con el trace en vivo (F4). */
+/** Proyecta steps de trace + ledgers a la cascada ordenada (agentes 1,2,3…;
+ * tools `n.i` — el MISMO esquema de numeración que los badges del canvas). */
+function toStepEntries(steps: TraceStep[], nodeTraces: Record<string, ToolCall[]>): StepEntry[] {
+  const out: StepEntry[] = [];
+  let n = 0;
+  for (const step of steps) {
+    if (!step.agent) {
+      continue;
+    }
+    n++;
+    const ledger = nodeTraces[step.agent];
+    const tools = ledger ? ledger.map((c) => c.tool) : (step.tools ?? []);
+    out.push({
+      order: n,
+      agent: step.agent,
+      status: step.runtime?.status ?? "done",
+      ms: step.runtime?.ms,
+      retries: step.runtime?.retries,
+      tools: tools.map((tool, i) => ({ order: `${n}.${i + 1}`, tool })),
+    });
+  }
+  return out;
+}
+
+/** TreeView "Runs" — las ejecuciones de ESTA sesión (⚡ locales + ▶ durables
+ * lanzados acá; toggle ⟲ para el histórico completo de AgentSpan). Cada run
+ * se DESPLIEGA en su cascada de ejecución: agentes en orden, y dentro de cada
+ * agente sus tools en orden — como el test navigator de Xcode (§F9). */
 export class RunsTreeProvider implements vscode.TreeDataProvider<RunNode>, vscode.Disposable {
-  private readonly _onDidChangeTreeData = new vscode.EventEmitter<void>();
+  private readonly _onDidChangeTreeData = new vscode.EventEmitter<RunNode | undefined | void>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
   private runs: RunSummary[] = [];
   private lastError: string | null = null;
@@ -52,6 +97,8 @@ export class RunsTreeProvider implements vscode.TreeDataProvider<RunNode>, vscod
   private readonly sessionEids = new Set<string>();
   private localRuns: LocalRunSummary[] = [];
   private showAll = false;
+  /** cascada por run (lazy: se resuelve al expandir; los locales llegan ya resueltos). */
+  private readonly details = new Map<string, RunDetail | "loading" | { error: string }>();
 
   constructor(private readonly bridges: BridgeHub) {
     // Sin poll eager: arrancarlo acá spawnearía el bridge Python en la
@@ -83,12 +130,15 @@ export class RunsTreeProvider implements vscode.TreeDataProvider<RunNode>, vscod
   /** Registrar un run durable lanzado desde ESTA sesión (▶ Run Durable). */
   noteDurableLaunched(executionId: string): void {
     this.sessionEids.add(executionId);
+    this.details.delete(executionId); // la cascada se resuelve fresca al expandir
     this._onDidChangeTreeData.fire();
   }
 
-  /** Registrar una ejecución local (⚡ — en proceso, sin AgentSpan). */
+  /** Registrar una ejecución local (⚡ — en proceso, sin AgentSpan) con su
+   * cascada YA resuelta (steps + ledgers vienen de /api/run-local). */
   noteLocalRun(run: LocalRunSummary): void {
     this.localRuns = [run, ...this.localRuns.filter((r) => r.caseId !== run.caseId)];
+    this.details.set(`local:${run.caseId}`, { steps: toStepEntries(run.steps, run.nodeTraces) });
     this._onDidChangeTreeData.fire();
   }
 
@@ -118,17 +168,78 @@ export class RunsTreeProvider implements vscode.TreeDataProvider<RunNode>, vscod
     this._onDidChangeTreeData.fire();
   }
 
+  /** La cascada de un run DURABLE: /api/trace (orden + estado) + /api/flow-trace
+   * (tools reales por agente; si no se puede reconstruir, las declaradas). */
+  private async loadDurableDetail(executionId: string): Promise<void> {
+    try {
+      const traceRes = await this.bridges
+        .get("graphagents")
+        .request({ method: "GET", path: "/api/trace", params: { execution_id: executionId } });
+      if (traceRes.status !== 200) {
+        const payload = traceRes.payload as { error?: string };
+        this.details.set(executionId, { error: payload.error ?? `status ${traceRes.status}` });
+        this._onDidChangeTreeData.fire();
+        return;
+      }
+      const steps = ((traceRes.payload as { steps?: TraceStep[] }).steps ?? []);
+      let nodeTraces: Record<string, ToolCall[]> = {};
+      try {
+        const ftRes = await this.bridges
+          .get("graphagents")
+          .request({ method: "GET", path: "/api/flow-trace", params: { execution_id: executionId } });
+        if (ftRes.status === 200) {
+          nodeTraces = (ftRes.payload as { node_traces?: Record<string, ToolCall[]> }).node_traces ?? {};
+        }
+      } catch {
+        // sin flow-trace la cascada usa las tools DECLARADAS del plan — honesto igual
+      }
+      this.details.set(executionId, { steps: toStepEntries(steps, nodeTraces) });
+    } catch (e) {
+      this.details.set(executionId, { error: e instanceof Error ? e.message : String(e) });
+    }
+    this._onDidChangeTreeData.fire();
+  }
+
   getTreeItem(element: RunNode): vscode.TreeItem {
     if (element.kind === "info") {
       const item = new vscode.TreeItem(element.message, vscode.TreeItemCollapsibleState.None);
       item.iconPath = new vscode.ThemeIcon("info");
       return item;
     }
+    if (element.kind === "step") {
+      const { step } = element;
+      const item = new vscode.TreeItem(
+        `${step.order}. ${step.agent}`,
+        step.tools.length > 0 ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None,
+      );
+      item.description = [step.status, step.ms != null ? `${step.ms}ms` : null, step.retries ? `↻${step.retries}` : null]
+        .filter(Boolean)
+        .join(" · ");
+      item.iconPath = new vscode.ThemeIcon(statusIcon(step.status));
+      item.tooltip = `Orden ${step.order} — click abre el nodo en el grafo`;
+      item.command = {
+        command: "acktos.focusNode",
+        title: "Ver en grafo",
+        arguments: ["graphagents", `agent:${step.agent}`],
+      };
+      return item;
+    }
+    if (element.kind === "toolCall") {
+      const item = new vscode.TreeItem(`${element.order}  ${element.tool}`, vscode.TreeItemCollapsibleState.None);
+      item.iconPath = new vscode.ThemeIcon("tools");
+      item.command = {
+        command: "acktos.focusNode",
+        title: "Ver en grafo",
+        arguments: ["graphagents", `tool:${element.tool}`],
+      };
+      return item;
+    }
     if (element.kind === "localRun") {
-      const item = new vscode.TreeItem(`⚡ ${element.run.title}`, vscode.TreeItemCollapsibleState.None);
+      const item = new vscode.TreeItem(`⚡ ${element.run.title}`, vscode.TreeItemCollapsibleState.Collapsed);
       item.description = "local · determinista";
       item.iconPath = new vscode.ThemeIcon("zap");
-      item.tooltip = "Ejecución en proceso (fixtures del caso, sin AgentSpan) — click re-ejecuta y muestra el detalle";
+      item.tooltip =
+        "Ejecución en proceso (fixtures del caso, sin AgentSpan) — expandí para la cascada; click re-ejecuta y muestra el detalle";
       item.command = {
         command: "acktos.runLocalCase",
         title: "Ejecutar local",
@@ -137,9 +248,10 @@ export class RunsTreeProvider implements vscode.TreeDataProvider<RunNode>, vscod
       return item;
     }
     const { run } = element;
-    const item = new vscode.TreeItem(`${run.agent} — ${run.execution_id.slice(0, 8)}`, vscode.TreeItemCollapsibleState.None);
+    const item = new vscode.TreeItem(`${run.agent} — ${run.execution_id.slice(0, 8)}`, vscode.TreeItemCollapsibleState.Collapsed);
     item.description = run.status;
     item.iconPath = new vscode.ThemeIcon(statusIcon(run.status));
+    item.tooltip = "Expandí para la cascada de ejecución; click abre el trace en el canvas";
     item.command = {
       command: "acktos.viewTrace",
       title: "Ver trace",
@@ -149,6 +261,30 @@ export class RunsTreeProvider implements vscode.TreeDataProvider<RunNode>, vscod
   }
 
   getChildren(element?: RunNode): vscode.ProviderResult<RunNode[]> {
+    if (element?.kind === "run" || element?.kind === "localRun") {
+      const key = element.kind === "run" ? element.run.execution_id : `local:${element.run.caseId}`;
+      const detail = this.details.get(key);
+      if (!detail) {
+        // durable: lazy — se resuelve al primer expand (los locales ya vienen)
+        this.details.set(key, "loading");
+        if (element.kind === "run") {
+          void this.loadDurableDetail(key);
+        }
+        return [{ kind: "info", message: "cargando la cascada…" }];
+      }
+      if (detail === "loading") {
+        return [{ kind: "info", message: "cargando la cascada…" }];
+      }
+      if ("error" in detail) {
+        return [{ kind: "info", message: `sin detalle: ${detail.error}` }];
+      }
+      return detail.steps.map((step): RunNode => ({ kind: "step", runKey: key, step }));
+    }
+    if (element?.kind === "step") {
+      return element.step.tools.map(
+        (t): RunNode => ({ kind: "toolCall", id: `${element.runKey}:${t.order}:${t.tool}`, order: t.order, tool: t.tool }),
+      );
+    }
     if (element) {
       return [];
     }
@@ -161,7 +297,13 @@ export class RunsTreeProvider implements vscode.TreeDataProvider<RunNode>, vscod
     // AgentSpan caído solo es noticia si el usuario está usando el durable
     // (lanzó runs en la sesión o pidió el histórico) — el flujo local no lo necesita.
     if (this.lastError && (this.showAll || this.sessionEids.size > 0)) {
-      return [...locals, { kind: "info", message: `AgentSpan no disponible: ${this.lastError} — usá "Iniciar AgentSpan" (⚙) o corré los cases en local (⚡)` }];
+      return [
+        ...locals,
+        {
+          kind: "info",
+          message: `AgentSpan no disponible: ${this.lastError} — usá "Iniciar AgentSpan" (⚙) o corré los cases en local (⚡)`,
+        },
+      ];
     }
     if (locals.length === 0 && durableNodes.length === 0) {
       return [

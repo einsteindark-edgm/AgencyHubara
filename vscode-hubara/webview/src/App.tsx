@@ -243,6 +243,37 @@ export function App(): React.ReactElement {
     return m;
   }, [trace]);
 
+  // El ORDEN de ejecución sobre cada cajita (§F9): agentes 1, 2, 3… (posición
+  // en el plan) y tools `2.1, 2.2` (orden real dentro de su agente — del
+  // ledger del flow-trace; si aún no llegó, el orden declarado del plan).
+  const orderByNsId = useMemo(() => {
+    const m = new Map<string, string>();
+    if (!trace) {
+      return m;
+    }
+    const toolOrders = new Map<string, string[]>();
+    let n = 0;
+    for (const step of trace.steps) {
+      if (!step.agent) {
+        continue;
+      }
+      n++;
+      m.set(`${NS_PREFIX.graphagents}:agent:${step.agent}`, String(n));
+      const ledger = flowTrace && flowTrace.executionId === trace.executionId ? flowTrace.nodeTraces[step.agent] : undefined;
+      const tools = ledger ? ledger.map((c) => c.tool) : (step.tools ?? []);
+      tools.forEach((tool, i) => {
+        const key = `${NS_PREFIX.graphagents}:tool:${tool}`;
+        const orders = toolOrders.get(key) ?? [];
+        orders.push(`${n}.${i + 1}`);
+        toolOrders.set(key, orders);
+      });
+    }
+    for (const [key, orders] of toolOrders) {
+      m.set(key, orders.slice(0, 3).join(" · ") + (orders.length > 3 ? " …" : ""));
+    }
+    return m;
+  }, [trace, flowTrace]);
+
   const flowNodes: FlowNodeType[] = useMemo(
     () =>
       graph.nodes.map((n) => {
@@ -256,6 +287,7 @@ export function App(): React.ReactElement {
             label: (n.label as string | undefined) ?? n.rawId,
             kind: n.kind as string,
             system: n.system,
+            orderBadge: orderByNsId.get(n.nsId),
             certification: typeof n.certification === "string" ? (n.certification as string) : undefined,
             archetype: typeof n.archetype === "string" ? (n.archetype as string) : undefined,
             sideEffect: typeof n.side_effect === "string" ? (n.side_effect as string) : undefined,
@@ -270,7 +302,7 @@ export function App(): React.ReactElement {
         };
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [graph.nodes, savedPositions, layoutPositions, runtimeByNsId],
+    [graph.nodes, savedPositions, layoutPositions, runtimeByNsId, orderByNsId],
   );
 
   const flowEdges: Edge[] = useMemo(() => {
