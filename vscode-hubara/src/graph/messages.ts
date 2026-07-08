@@ -43,6 +43,8 @@ export interface TraceStep {
   agent: string;
   archetype?: string;
   role?: string;
+  /** tools que el paso declara componer (del execution_plan). */
+  tools?: string[];
   runtime?: {
     status: "done" | "running" | "pending" | "failed" | "other" | "awaiting";
     retries?: number;
@@ -54,7 +56,21 @@ export interface TraceStep {
 export interface TraceInfo {
   executionId: string;
   workflowStatus: string;
+  /** id del agente raíz (el supervisor del pod). */
+  agent?: string;
+  strategy?: string;
+  /** el input con que arrancó el pod (desenvuelto de {acc: seed}). */
+  seed?: unknown;
   steps: TraceStep[];
+}
+
+/** Una llamada real a una tool dentro de un nodo — I/O reconstruido por
+ * replay determinista (`/api/flow-trace`, G-DET). */
+export interface ToolCall {
+  seq: number;
+  tool: string;
+  input: unknown;
+  output: unknown;
 }
 
 /** Webview → extensión. */
@@ -66,7 +82,11 @@ export type InboundMessage =
   | { type: "inspectNode"; system: Provider; nodeId: string }
   | { type: "stopTrace" }
   | { type: "connectRequest"; source: string; target: string }
-  | { type: "disconnectRequest"; source: string; target: string; kind: string };
+  | { type: "disconnectRequest"; source: string; target: string; kind: string }
+  /** el acc (estado acumulador) tras un nodo — lazy, al abrir la pestaña
+   * input/output del Inspector. `key` la genera la webview y viaja de vuelta
+   * para matchear la respuesta con la pestaña que la pidió. */
+  | { type: "nodeStateRequest"; key: string; executionId: string; taskId: string };
 
 /** Extensión → webview. */
 export type OutboundMessage =
@@ -84,4 +104,15 @@ export type OutboundMessage =
   | { type: "inspectError"; system: Provider; nodeId: string; message: string }
   | { type: "trace"; info: TraceInfo }
   | { type: "traceError"; message: string }
-  | { type: "traceCleared" };
+  | { type: "traceCleared" }
+  | { type: "nodeStateResult"; key: string; acc: unknown }
+  | { type: "nodeStateError"; key: string; message: string }
+  /** I/O por-tool reconstruido de un run (`/api/flow-trace`) — llega una vez
+   * por ejecución; `reason` explica una reconstrucción vacía (run viejo). */
+  | {
+      type: "flowTrace";
+      executionId: string;
+      nodeTraces: Record<string, ToolCall[]>;
+      reconstructed: boolean;
+      reason?: string;
+    };

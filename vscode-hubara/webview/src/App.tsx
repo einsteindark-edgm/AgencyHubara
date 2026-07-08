@@ -9,14 +9,16 @@ import {
   NamespacedEdge,
   NamespacedNode,
   NS_PREFIX,
+  reachableGraph,
   Seam,
 } from "../../src/graph/graphOps";
 import { InspectFile, OutboundMessage, PersistedViewState, ProviderState, TraceInfo } from "../../src/graph/messages";
 import { DEFAULT_FOCUS_DEPTH, focusOf, scopeKey, Scope, WORKSPACE_SCOPE } from "../../src/graph/scope";
-import { Canvas } from "./canvas/Canvas";
+import { Canvas, PaletteDragItem } from "./canvas/Canvas";
 import { FlowNodeType } from "./canvas/FlowNode";
 import { computeLayout, Positioned } from "./layout/computeLayout";
-import { Inspector, SelectedNode } from "./panels/Inspector";
+import { FlowTraceState, Inspector, IoEntry, SelectedNode } from "./panels/Inspector";
+import { Palette } from "./panels/Palette";
 import { Toolbar } from "./panels/Toolbar";
 import { send } from "./vscodeApi";
 
@@ -65,6 +67,12 @@ function graphForScope(
   if (scope.kind === "system") {
     return { nodes: ns.nodes, edges: ns.edges, seamEdges: [], brokenSeams: [] };
   }
+  if (scope.kind === "workflow") {
+    // el workflow COMPLETO que cuelga de la raíz: clausura dirigida, no ego-graph.
+    const rootNsId = `${NS_PREFIX[scope.system]}:${scope.rootId}`;
+    const result = reachableGraph(ns.nodes, ns.edges, rootNsId);
+    return { nodes: result.nodes, edges: result.edges, seamEdges: [], brokenSeams: [] };
+  }
 
   // focus: ego-graph — namespaceGraph ya normalizó id/source/target al
   // espacio namespaced, así que se usa tal cual.
@@ -89,7 +97,23 @@ export function App(): React.ReactElement {
   const [layoutPositions, setLayoutPositions] = useState<Map<string, Positioned>>(new Map());
   const [trace, setTrace] = useState<TraceInfo | null>(null);
   const [traceError, setTraceError] = useState<string | null>(null);
+  const [flowTrace, setFlowTrace] = useState<FlowTraceState | null>(null);
+  /** cache del acc por nodo (key = `${executionId}:${taskId}`) — lazy. */
+  const [ioStates, setIoStates] = useState<Record<string, IoEntry>>({});
+  const requestedIo = useRef(new Set<string>());
+  const lastTraceEid = useRef<string | null>(null);
+  const [selectedEdge, setSelectedEdge] = useState<Edge | null>(null);
+  const [hint, setHint] = useState<string | null>(null);
+  const hintTimer = useRef<ReturnType<typeof setTimeout>>();
   const colorMode = useVsCodeColorMode();
+
+  const showHint = useCallback((msg: string) => {
+    setHint(msg);
+    if (hintTimer.current) {
+      clearTimeout(hintTimer.current);
+    }
+    hintTimer.current = setTimeout(() => setHint(null), 4000);
+  }, []);
 
   // Bootstrap único al montar.
   useEffect(() => {
@@ -129,6 +153,13 @@ export function App(): React.ReactElement {
           setInspectLoading((cur) => (cur === inspectKey(msg.system, msg.nodeId) ? null : cur));
           return;
         case "trace":
+          // Cambió la ejecución mirada → el detalle viejo (acc/flow-trace) no aplica.
+          if (lastTraceEid.current && lastTraceEid.current !== msg.info.executionId) {
+            setIoStates({});
+            requestedIo.current.clear();
+            setFlowTrace(null);
+          }
+          lastTraceEid.current = msg.info.executionId;
           // Identidad estable: el poll de 2s manda un objeto nuevo aunque nada
           // cambió — sin esta guarda, TODOS los nodos de React Flow se
           // reconstruyen en cada tick.
@@ -141,6 +172,23 @@ export function App(): React.ReactElement {
         case "traceCleared":
           setTrace(null);
           setTraceError(null);
+          setFlowTrace(null);
+          setIoStates({});
+          requestedIo.current.clear();
+          return;
+        case "flowTrace":
+          setFlowTrace({
+            executionId: msg.executionId,
+            nodeTraces: msg.nodeTraces,
+            reconstructed: msg.reconstructed,
+            reason: msg.reason,
+          });
+          return;
+        case "nodeStateResult":
+          setIoStates((prev) => ({ ...prev, [msg.key]: { loading: false, value: msg.acc } }));
+          return;
+        case "nodeStateError":
+          setIoStates((prev) => ({ ...prev, [msg.key]: { loading: false, error: msg.message } }));
           return;
       }
     };
@@ -232,6 +280,9 @@ export function App(): React.ReactElement {
       target: e.nsTarget,
       label: e.kind,
       className: `edge-${e.kind}`,
+      // hit-area generosa: el path SVG es de 1-2px — sin esto, clickear una
+      // arista para seleccionarla/desconectarla es una lotería.
+      interactionWidth: 24,
       data: { kind: e.kind },
     }));
     const seamsList: Edge[] = graph.seamEdges.map((e) => ({
@@ -270,18 +321,24 @@ export function App(): React.ReactElement {
     persist(positionsByScopeKey, collapsedClusters, scope);
   }, [hydrated, positionsByScopeKey, collapsedClusters, scope, persist]);
 
-  const handleNodesChange = useCallback(
-    (nextNodes: FlowNodeType[]) => {
-      setPositionsByScopeKey((prev) => {
-        const next = { ...prev, [sKey]: { ...prev[sKey] } };
-        for (const n of nextNodes) {
-          next[sKey][n.id] = n.position;
-        }
-        return next;
-      });
+  // UNA escritura por gesto de drag (dragStop) — no por frame; el canvas
+  // maneja el movimiento en su estado local (ver Canvas.tsx, fix del parpadeo).
+  const handlePositionsCommit = useCallback(
+    (positions: Record<string, Positioned>) => {
+      setPositionsByScopeKey((prev) => ({ ...prev, [sKey]: { ...prev[sKey], ...positions } }));
     },
     [sKey],
   );
+
+  /** Pide el acc de un nodo a la extensión (lazy, dedupe por key). */
+  const requestNodeState = useCallback((key: string, executionId: string, taskId: string) => {
+    if (requestedIo.current.has(key)) {
+      return;
+    }
+    requestedIo.current.add(key);
+    setIoStates((prev) => ({ ...prev, [key]: { loading: true } }));
+    send({ type: "nodeStateRequest", key, executionId, taskId });
+  }, []);
 
   const setScope = useCallback((next: Scope) => {
     setScopeState(next);
@@ -353,26 +410,77 @@ export function App(): React.ReactElement {
   const handleConnect = useCallback((source: string, target: string) => {
     send({ type: "connectRequest", source, target });
   }, []);
-  const handleEdgeDisconnect = useCallback((edge: Edge) => {
-    const kind = (edge.data as { kind?: string } | undefined)?.kind;
-    if ((kind === "uses" || kind === "agent") && edge.source && edge.target) {
-      send({ type: "disconnectRequest", source: edge.source, target: edge.target, kind });
-    }
-  }, []);
+  const handleEdgeDisconnect = useCallback(
+    (edge: Edge) => {
+      const kind = (edge.data as { kind?: string } | undefined)?.kind;
+      if ((kind === "uses" || kind === "agent") && edge.source && edge.target) {
+        send({ type: "disconnectRequest", source: edge.source, target: edge.target, kind });
+        setSelectedEdge(null);
+      } else {
+        showHint(`la relación "${kind ?? "seam"}" no es editable — solo uses/agent se pueden desconectar`);
+      }
+    },
+    [showHint],
+  );
+
+  // Drop de la palette: soltar un tool/agente SOBRE un agente lo conecta
+  // (agente uses tool · supervisor uses agente) — misma secuencia
+  // validate→confirm→mutate que el drag-connect.
+  const handlePaletteDrop = useCallback(
+    (item: PaletteDragItem, targetNsId: string | null) => {
+      if (!targetNsId) {
+        showHint("soltá el elemento SOBRE un agente para conectarlo al flujo");
+        return;
+      }
+      const target = graph.nodes.find((n) => n.nsId === targetNsId);
+      if (!target || target.system !== "graphagents" || target.kind !== "agent") {
+        showHint("solo se puede conectar sobre un AGENTE de GraphAgents");
+        return;
+      }
+      if (`${NS_PREFIX.graphagents}:${item.id}` === target.nsId) {
+        showHint("un nodo no se conecta consigo mismo");
+        return;
+      }
+      send({ type: "connectRequest", source: target.nsId, target: `${NS_PREFIX.graphagents}:${item.id}` });
+    },
+    [graph.nodes, showHint],
+  );
 
   const selectedNode: SelectedNode | null = useMemo(() => {
     const found = graph.nodes.find((n) => n.nsId === selectedId);
     return found ? { system: found.system, raw: found as unknown as GraphNode } : null;
   }, [graph.nodes, selectedId]);
 
-  // El tercer crumb es el CENTRO del focus, no el último nodo clickeado.
+  // El tercer crumb es el CENTRO del focus / la RAÍZ del workflow — no el
+  // último nodo clickeado.
   const focusCenterLabel = useMemo(() => {
-    if (scope.kind !== "focus") {
-      return undefined;
+    if (scope.kind === "focus") {
+      const center = graph.nodes.find((n) => n.system === scope.system && n.rawId === scope.nodeId);
+      return ((center?.label as string | undefined) ?? scope.nodeId);
     }
-    const center = graph.nodes.find((n) => n.system === scope.system && n.rawId === scope.nodeId);
-    return ((center?.label as string | undefined) ?? scope.nodeId);
+    if (scope.kind === "workflow") {
+      const root = graph.nodes.find((n) => n.system === scope.system && n.rawId === scope.rootId);
+      return ((root?.label as string | undefined) ?? scope.rootId);
+    }
+    return undefined;
   }, [scope, graph.nodes]);
+
+  // Catálogo completo de GraphAgents para la palette (agentes + tools),
+  // marcando cuáles ya están en el scope actual.
+  const paletteItems = useMemo(() => {
+    if (!editable || !graphagents.payload) {
+      return [];
+    }
+    const visible = new Set(graph.nodes.map((n) => n.rawId));
+    return graphagents.payload.nodes
+      .filter((n) => n.kind === "agent" || n.kind === "tool")
+      .map((n) => ({
+        id: n.id,
+        kind: n.kind as string,
+        label: (n.label as string | undefined) ?? n.id,
+        inScope: visible.has(n.id),
+      }));
+  }, [editable, graphagents.payload, graph.nodes]);
 
   const selectedInspectKey = selectedNode ? inspectKey(selectedNode.system, (selectedNode.raw as NamespacedNode).rawId) : null;
 
@@ -401,24 +509,44 @@ export function App(): React.ReactElement {
         <div className="trace-banner">
           <span className="trace-dot" />
           Trace {trace.executionId.slice(0, 8)} — {trace.workflowStatus}
+          {trace.strategy && <span className="trace-meta"> · {trace.strategy}</span>}
+          <span className="trace-meta"> · tocá un nodo para ver su entró/salió</span>
           <button type="button" className="trace-stop" onClick={() => send({ type: "stopTrace" })}>
-            ✕ detener
+            ✕ cerrar trace
           </button>
         </div>
       )}
       {traceError && <div className="global-error">⚠ trace: {traceError}</div>}
+      {editable && selectedEdge && (
+        <div className="edge-action-bar">
+          <span className="edge-action-label">
+            arista: {selectedEdge.source.replace(/^ga:/, "")} → {selectedEdge.target.replace(/^ga:/, "")}
+            {" "}({((selectedEdge.data as { kind?: string } | undefined)?.kind) ?? "?"})
+          </span>
+          <button type="button" className="edge-disconnect-btn" onClick={() => handleEdgeDisconnect(selectedEdge)}>
+            ✕ desconectar
+          </button>
+          <button type="button" className="trace-stop" onClick={() => setSelectedEdge(null)}>
+            cerrar
+          </button>
+        </div>
+      )}
+      {hint && <div className="hint-toast">{hint}</div>}
       <div className="body">
+        {editable && <Palette items={paletteItems} />}
         <div className="canvas-wrap">
           <Canvas
             nodes={flowNodes}
             edges={flowEdges}
             colorMode={colorMode}
             editable={editable}
-            onNodesChange={handleNodesChange}
+            onPositionsCommit={handlePositionsCommit}
             onNodeClick={handleNodeClick}
             onNodeDoubleClick={handleNodeDoubleClick}
             onConnect={handleConnect}
+            onEdgeSelect={setSelectedEdge}
             onEdgeDisconnect={handleEdgeDisconnect}
+            onPaletteDrop={handlePaletteDrop}
           />
         </div>
         <Inspector
@@ -426,6 +554,10 @@ export function App(): React.ReactElement {
           files={selectedInspectKey ? (inspectFiles[selectedInspectKey] ?? null) : null}
           filesLoading={inspectLoading !== null && inspectLoading === selectedInspectKey}
           filesError={selectedInspectKey ? (inspectError[selectedInspectKey] ?? null) : null}
+          trace={trace}
+          flowTrace={flowTrace}
+          ioStates={ioStates}
+          onRequestNodeState={requestNodeState}
           onOpenFile={(path) => send({ type: "openFile", path })}
           onFocus={() => {
             if (selectedNode) {

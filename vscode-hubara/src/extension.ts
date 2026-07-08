@@ -8,7 +8,7 @@ import { ManifestDiagnostics } from "./diagnostics/manifestDiagnostics";
 import { connectWithConfirmation } from "./graph/editOps";
 import { GraphPanel } from "./graph/graphPanel";
 import { ProductionStatusBar } from "./graph/productionStatusBar";
-import { DEFAULT_FOCUS_DEPTH, focusOf, systemOf } from "./graph/scope";
+import { DEFAULT_FOCUS_DEPTH, focusOf, systemOf, workflowOf } from "./graph/scope";
 import { registerYamlSchemas } from "./schemas/yamlSchemas";
 import { HubaraTestController } from "./testing/controller";
 import { PlanStatusBar } from "./testing/planStatusBar";
@@ -101,6 +101,14 @@ export function activate(ctx: vscode.ExtensionContext): void {
         return; // solo invocable con args (codelens/inspector) — guard defensivo
       }
       GraphPanel.show(ctx, hub!, focusOf(system, nodeId, DEFAULT_FOCUS_DEPTH));
+    }),
+    // Un workflow COMPLETO en el canvas: todo lo alcanzable desde su raíz
+    // (la vista "target" — desde el grupo Workflows del catálogo).
+    vscode.commands.registerCommand("acktos.openWorkflow", (rootId?: string) => {
+      if (!rootId) {
+        return; // solo invocable desde el árbol (manda la raíz)
+      }
+      GraphPanel.show(ctx, hub!, workflowOf("graphagents", rootId));
     }),
     vscode.commands.registerCommand("acktos.restartBridges", () => {
       hub!.rebuild();

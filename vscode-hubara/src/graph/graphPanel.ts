@@ -15,7 +15,7 @@ import {
   TraceStep,
 } from "./messages";
 import { loadSeams } from "./seams";
-import { focusOf, Scope } from "./scope";
+import { Scope, workflowOf } from "./scope";
 
 const VIEW_STATE_KEY = "acktos.studio.viewState";
 const TRACE_POLL_MS = 2000;
@@ -60,10 +60,11 @@ export class GraphPanel {
     void GraphPanel.current?.refresh();
   }
 
-  /** Abre/enfoca el panel en el agente de una ejecución y arranca el poll de
-   * trace (§F4 — "ver en el canvas por dónde va y dónde falla"). */
+  /** Abre/enfoca el panel en el WORKFLOW de una ejecución (todo lo alcanzable
+   * desde su raíz) y arranca el poll de trace (§F4 — "ver en el canvas por
+   * dónde va y dónde falla"). */
   static showTrace(ctx: vscode.ExtensionContext, bridges: BridgeHub, executionId: string, agent: string): void {
-    GraphPanel.show(ctx, bridges, focusOf("graphagents", `agent:${agent}`, 2));
+    GraphPanel.show(ctx, bridges, workflowOf("graphagents", `agent:${agent}`));
     // el panel puede tardar un tick en existir si se acaba de crear (bootstrap
     // async) — encolamos el arranque del trace al próximo microtask, momento
     // en que `GraphPanel.current` ya está asignado por `show()`.
@@ -72,6 +73,10 @@ export class GraphPanel {
 
   private traceTimer?: NodeJS.Timeout;
   private traceExecutionId?: string;
+  /** última ejecución mostrada (queda seteada tras un stop terminal — el
+   * flow-trace de un run COMPLETED sigue siendo relevante). */
+  private lastTraceId?: string;
+  private flowTraceFetched?: string;
   private readonly traceDiagnostics = vscode.languages.createDiagnosticCollection("acktosStudioTrace");
   /** clave del último set de steps failed anotado — si no cambió entre ticks
    * del poll, no se re-consulta /api/inspect ni se reescribe la colección. */
@@ -119,6 +124,60 @@ export class GraphPanel {
       case "disconnectRequest":
         await this.handleDisconnect(msg.source, msg.target, msg.kind);
         return;
+      case "nodeStateRequest":
+        await this.fetchNodeState(msg.key, msg.executionId, msg.taskId);
+        return;
+    }
+  }
+
+  /** El acc (estado acumulador) tras un nodo — `/api/node-state`, lazy desde
+   * las pestañas input/output del Inspector. */
+  private async fetchNodeState(key: string, executionId: string, taskId: string): Promise<void> {
+    try {
+      const res = await this.bridges
+        .get("graphagents")
+        .request({ method: "GET", path: "/api/node-state", params: { execution_id: executionId, task_id: taskId } });
+      if (res.status !== 200) {
+        this.post({ type: "nodeStateError", key, message: errorDetail(res) });
+        return;
+      }
+      this.post({ type: "nodeStateResult", key, acc: (res.payload as { acc?: unknown }).acc ?? null });
+    } catch (e) {
+      this.post({ type: "nodeStateError", key, message: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  /** El I/O por-tool reconstruido (`/api/flow-trace`) — UNA vez por ejecución
+   * (replay determinista: costoso, y el resultado no cambia). */
+  private async fetchFlowTrace(executionId: string): Promise<void> {
+    if (this.flowTraceFetched === executionId) {
+      return;
+    }
+    this.flowTraceFetched = executionId;
+    try {
+      const res = await this.bridges
+        .get("graphagents")
+        .request({ method: "GET", path: "/api/flow-trace", params: { execution_id: executionId } });
+      const payload = res.payload as {
+        node_traces?: Record<string, Array<{ seq: number; tool: string; input: unknown; output: unknown }>>;
+        reconstructed?: boolean;
+        reason?: string;
+        error?: string;
+      };
+      if (this.traceExecutionId !== executionId && this.lastTraceId !== executionId) {
+        return; // llegó tarde — el usuario ya está mirando otra ejecución
+      }
+      this.post({
+        type: "flowTrace",
+        executionId,
+        nodeTraces: payload.node_traces ?? {},
+        reconstructed: payload.reconstructed === true,
+        reason: payload.reason ?? payload.error,
+      });
+    } catch {
+      // sin flow-trace el Inspector degrada al listado declarado de tools —
+      // el resto del detalle (acc por nodo) sigue funcionando.
+      this.flowTraceFetched = undefined; // reintenta si el usuario re-abre el trace
     }
   }
 
@@ -159,6 +218,7 @@ export class GraphPanel {
   startTrace(executionId: string): void {
     this.stopTrace();
     this.traceExecutionId = executionId;
+    this.lastTraceId = executionId;
     this.lastFailedKey = "";
     this.inspectPathCache.clear();
     const poll = async () => {
@@ -176,13 +236,25 @@ export class GraphPanel {
           this.post({ type: "traceError", message: errorDetail(res) });
           return; // se sigue pollenado — puede ser un 502 transitorio (:6767 reiniciando)
         }
-        const payload = res.payload as { workflow_status?: string; steps?: TraceStep[] };
+        const payload = res.payload as {
+          workflow_status?: string;
+          agent?: string;
+          strategy?: string;
+          seed?: unknown;
+          steps?: TraceStep[];
+        };
         const info: TraceInfo = {
           executionId,
           workflowStatus: payload.workflow_status ?? "UNKNOWN",
+          agent: payload.agent,
+          strategy: payload.strategy,
+          seed: payload.seed,
           steps: payload.steps ?? [],
         };
         this.post({ type: "trace", info });
+        // El I/O por-tool reconstruido se pide UNA vez, en paralelo al poll —
+        // para un run ya COMPLETED llega junto con el primer trace.
+        void this.fetchFlowTrace(executionId);
         await this.annotateFailures(info.steps);
         if (TERMINAL_STATUSES.includes(info.workflowStatus)) {
           this.stopTrace(false);
