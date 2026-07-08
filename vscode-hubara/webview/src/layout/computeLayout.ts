@@ -25,6 +25,29 @@ function heightOf(kind?: string): number {
   return kind === "cluster" ? 96 : NODE_H;
 }
 
+/** Geometría del cluster COLAPSADO con sub-cajas (endpoints de costuras):
+ * grilla de 2 columnas dentro del contenedor. Única fuente — la usan el
+ * layout (tamaño del contenedor) y App (posición RELATIVA de cada hijo,
+ * subflow de React Flow). */
+export function clusterGrid(childCount: number): {
+  width: number;
+  height: number;
+  childPos: (index: number) => Positioned;
+} {
+  const PAD = 16;
+  const HEADER = 46; // header del contenedor (kind + label)
+  const GAP = 12;
+  const cols = childCount > 1 ? 2 : 1;
+  const rows = Math.max(1, Math.ceil(childCount / cols));
+  const width = Math.max(240, PAD * 2 + cols * NODE_W + (cols - 1) * GAP);
+  const height = childCount === 0 ? 96 : HEADER + PAD + rows * NODE_H + (rows - 1) * GAP;
+  return {
+    width,
+    height,
+    childPos: (i) => ({ x: PAD + (i % cols) * (NODE_W + GAP), y: HEADER + Math.floor(i / cols) * (NODE_H + GAP) }),
+  };
+}
+
 /** Layout de UN sistema: dagre (TB) para GraphAgents, ELK (layered RIGHT)
  * para System Map — el mismo algoritmo que usaba cada viewer original. */
 async function layoutSingleSystem<N extends MinimalNode, E extends MinimalEdge>(
@@ -63,22 +86,38 @@ export async function computeLayout(
   if (scope.kind !== "workspace") {
     return layoutSingleSystem(scope.system, nodes, edges);
   }
-  const gaNodes = nodes.filter((n) => n.system === "graphagents");
-  const hubNodes = nodes.filter((n) => n.system === "systemmap");
-  const gaIds = new Set(gaNodes.map((n) => n.id));
-  const hubIds = new Set(hubNodes.map((n) => n.id));
-  const gaEdges = edges.filter((e) => gaIds.has(e.source) && gaIds.has(e.target));
-  const hubEdges = edges.filter((e) => hubIds.has(e.source) && hubIds.has(e.target));
-
-  const [gaPositions, hubPositionsRaw] = await Promise.all([
-    layoutSingleSystem("graphagents", gaNodes, gaEdges),
-    layoutSingleSystem("systemmap", hubNodes, hubEdges),
+  const [ga, hub] = await Promise.all([
+    layoutSide("graphagents", nodes, edges),
+    layoutSide("systemmap", nodes, edges),
   ]);
-
-  const offsetX = gaNodes.length > 0 ? boundingMaxX(gaPositions, gaNodes) + CLUSTER_GAP : 0;
-  const hubPositions = new Map<string, Positioned>();
-  for (const [id, pos] of hubPositionsRaw) {
-    hubPositions.set(id, { x: pos.x + offsetX, y: pos.y });
+  const offsetX = ga.width > 0 ? ga.width + CLUSTER_GAP : 0;
+  const merged = new Map(ga.positions);
+  for (const [id, pos] of hub.positions) {
+    merged.set(id, { x: pos.x + offsetX, y: pos.y });
   }
-  return new Map([...gaPositions, ...hubPositions]);
+  return merged;
+}
+
+/** Layout de UN lado del workspace. Si el sistema está COLAPSADO (hay un
+ * nodo-cluster), el único nodo top-level es el contenedor — su tamaño sale de
+ * clusterGrid y los hijos NO se posicionan acá (App les da la posición
+ * relativa con la misma grilla). */
+async function layoutSide(
+  system: "graphagents" | "systemmap",
+  nodes: NamespacedNode[],
+  edges: NamespacedEdge[],
+): Promise<{ positions: Map<string, Positioned>; width: number }> {
+  const sideNodes = nodes.filter((n) => n.system === system);
+  if (sideNodes.length === 0) {
+    return { positions: new Map(), width: 0 };
+  }
+  const cluster = sideNodes.find((n) => n.kind === "cluster");
+  if (cluster) {
+    const childCount = sideNodes.filter((n) => n.parentCluster === cluster.id).length;
+    return { positions: new Map([[cluster.id, { x: 0, y: 0 }]]), width: clusterGrid(childCount).width };
+  }
+  const ids = new Set(sideNodes.map((n) => n.id));
+  const sideEdges = edges.filter((e) => ids.has(e.source) && ids.has(e.target));
+  const positions = await layoutSingleSystem(system, sideNodes, sideEdges);
+  return { positions, width: boundingMaxX(positions, sideNodes) };
 }
