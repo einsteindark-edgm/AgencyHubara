@@ -8,6 +8,7 @@ import {
   MiniMap,
   NodeChange,
   ReactFlow,
+  ReactFlowInstance,
   ReactFlowProvider,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
@@ -40,6 +41,10 @@ export interface CanvasProps {
   /** un item de la palette soltado sobre el canvas; `targetNodeId` es el nodo
    * bajo el cursor (null = zona vacía). */
   onPaletteDrop: (item: PaletteDragItem, targetNodeId: string | null) => void;
+  /** re-encuadra el viewport cuando cambia (scope nuevo con su layout YA
+   * resuelto). Sin esto, cambiar de scope deja la cámara donde estaba y el
+   * grafo nuevo puede quedar completamente fuera de pantalla. */
+  fitToken: number;
 }
 
 /**
@@ -62,11 +67,13 @@ export function Canvas({
   onEdgeSelect,
   onEdgeDisconnect,
   onPaletteDrop,
+  fitToken,
 }: CanvasProps): React.ReactElement {
   const [localNodes, setLocalNodes] = useState<FlowNodeType[]>(nodes);
   const dragging = useRef(false);
   const latestNodes = useRef(localNodes);
   latestNodes.current = localNodes;
+  const instance = useRef<ReactFlowInstance<FlowNodeType, Edge> | null>(null);
 
   // Re-sync desde el padre cuando el grafo/layout/overlay cambian — pero NUNCA
   // a mitad de un drag (pisaría la posición bajo el mouse).
@@ -76,18 +83,43 @@ export function Canvas({
     }
   }, [nodes]);
 
+  // fitToken cambia cuando el layout del scope NUEVO ya resolvió — el timeout
+  // deja que el re-sync de localNodes llegue al store de React Flow antes de
+  // medir el bounding box (efectos + setState del mismo commit).
+  useEffect(() => {
+    if (fitToken === 0) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      void instance.current?.fitView({ padding: 0.15, duration: 250 });
+    }, 60);
+    return () => clearTimeout(timer);
+  }, [fitToken]);
+
   const handleChange = useCallback((changes: NodeChange<FlowNodeType>[]) => {
     setLocalNodes((nds) => applyNodeChanges(changes, nds));
   }, []);
 
-  const commitPositions = useCallback(() => {
-    dragging.current = false;
-    const positions: Record<string, { x: number; y: number }> = {};
-    for (const n of latestNodes.current) {
-      positions[n.id] = n.position;
-    }
-    onPositionsCommit(positions);
-  }, [onPositionsCommit]);
+  // Solo los nodos ARRASTRADOS se persisten. Commitear todos era un veneno:
+  // si el layout async aún no había resuelto, los demás quedaban guardados en
+  // (0,0) para siempre (workspaceState) — el grafo entero apilado en el origen.
+  const commitPositions = useCallback(
+    (moved: FlowNodeType[]) => {
+      dragging.current = false;
+      const byId = new Map(latestNodes.current.map((n) => [n.id, n] as const));
+      const positions: Record<string, { x: number; y: number }> = {};
+      for (const m of moved) {
+        const n = byId.get(m.id);
+        if (n) {
+          positions[n.id] = n.position;
+        }
+      }
+      if (Object.keys(positions).length > 0) {
+        onPositionsCommit(positions);
+      }
+    },
+    [onPositionsCommit],
+  );
 
   const handleConnect = useCallback(
     (connection: Connection) => {
@@ -125,11 +157,14 @@ export function Canvas({
         edges={edges}
         nodeTypes={NODE_TYPES}
         colorMode={colorMode}
+        onInit={(inst) => {
+          instance.current = inst;
+        }}
         onNodesChange={handleChange}
         onNodeDragStart={() => {
           dragging.current = true;
         }}
-        onNodeDragStop={commitPositions}
+        onNodeDragStop={(_ev, node, draggedNodes) => commitPositions(draggedNodes?.length ? draggedNodes : [node])}
         onNodeClick={(_ev, node) => onNodeClick(node.id)}
         onNodeDoubleClick={(_ev, node) => onNodeDoubleClick(node.id)}
         onConnect={editable ? handleConnect : undefined}

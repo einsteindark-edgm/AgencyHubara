@@ -116,12 +116,13 @@ export function activate(ctx: vscode.ExtensionContext): void {
       GraphPanel.show(ctx, hub!, focusOf(system, nodeId, DEFAULT_FOCUS_DEPTH));
     }),
     // Un workflow COMPLETO en el canvas: todo lo alcanzable desde su raíz
-    // (la vista "target" — desde el grupo Workflows del catálogo).
-    vscode.commands.registerCommand("acktos.openWorkflow", (rootId?: string) => {
+    // (la vista "target" — desde Workflows de GraphAgents O un plugin del
+    // System Map; ambos árboles mandan [rootId, label, system]).
+    vscode.commands.registerCommand("acktos.openWorkflow", (rootId?: string, _label?: string, system?: Provider) => {
       if (!rootId) {
         return; // solo invocable desde el árbol (manda la raíz)
       }
-      GraphPanel.show(ctx, hub!, workflowOf("graphagents", rootId));
+      GraphPanel.show(ctx, hub!, workflowOf(system ?? "graphagents", rootId));
     }),
     vscode.commands.registerCommand("acktos.restartBridges", () => {
       hub!.rebuild();
