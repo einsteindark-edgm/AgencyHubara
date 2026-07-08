@@ -8,7 +8,16 @@ interface RunSummary {
   startTime?: number;
 }
 
-export type RunNode = { kind: "run"; run: RunSummary } | { kind: "info"; message: string };
+interface LocalRunSummary {
+  caseId: string;
+  title: string;
+  agent: string;
+}
+
+export type RunNode =
+  | { kind: "run"; run: RunSummary }
+  | { kind: "localRun"; run: LocalRunSummary; index: number }
+  | { kind: "info"; message: string };
 
 const POLL_MS = 8000;
 
@@ -38,6 +47,11 @@ export class RunsTreeProvider implements vscode.TreeDataProvider<RunNode>, vscod
   private runs: RunSummary[] = [];
   private lastError: string | null = null;
   private pollTimer?: NodeJS.Timeout;
+  /** ejecuciones durables LANZADAS EN ESTA SESIÓN — la vista default; el
+   * histórico completo de AgentSpan se abre con el toggle (⟲). */
+  private readonly sessionEids = new Set<string>();
+  private localRuns: LocalRunSummary[] = [];
+  private showAll = false;
 
   constructor(private readonly bridges: BridgeHub) {
     // Sin poll eager: arrancarlo acá spawnearía el bridge Python en la
@@ -66,6 +80,25 @@ export class RunsTreeProvider implements vscode.TreeDataProvider<RunNode>, vscod
     void this.poll();
   }
 
+  /** Registrar un run durable lanzado desde ESTA sesión (▶ Run Durable). */
+  noteDurableLaunched(executionId: string): void {
+    this.sessionEids.add(executionId);
+    this._onDidChangeTreeData.fire();
+  }
+
+  /** Registrar una ejecución local (⚡ — en proceso, sin AgentSpan). */
+  noteLocalRun(run: LocalRunSummary): void {
+    this.localRuns = [run, ...this.localRuns.filter((r) => r.caseId !== run.caseId)];
+    this._onDidChangeTreeData.fire();
+  }
+
+  /** Alterna entre "solo esta sesión" (default) y el histórico completo. */
+  toggleShowAll(): boolean {
+    this.showAll = !this.showAll;
+    this._onDidChangeTreeData.fire();
+    return this.showAll;
+  }
+
   private async poll(): Promise<void> {
     try {
       const res = await this.bridges.get("graphagents").request({ method: "GET", path: "/api/runs", params: { limit: "25" } });
@@ -91,6 +124,18 @@ export class RunsTreeProvider implements vscode.TreeDataProvider<RunNode>, vscod
       item.iconPath = new vscode.ThemeIcon("info");
       return item;
     }
+    if (element.kind === "localRun") {
+      const item = new vscode.TreeItem(`⚡ ${element.run.title}`, vscode.TreeItemCollapsibleState.None);
+      item.description = "local · determinista";
+      item.iconPath = new vscode.ThemeIcon("zap");
+      item.tooltip = "Ejecución en proceso (fixtures del caso, sin AgentSpan) — click re-ejecuta y muestra el detalle";
+      item.command = {
+        command: "acktos.runLocalCase",
+        title: "Ejecutar local",
+        arguments: [element.run.caseId, element.run.title],
+      };
+      return item;
+    }
     const { run } = element;
     const item = new vscode.TreeItem(`${run.agent} — ${run.execution_id.slice(0, 8)}`, vscode.TreeItemCollapsibleState.None);
     item.description = run.status;
@@ -107,13 +152,28 @@ export class RunsTreeProvider implements vscode.TreeDataProvider<RunNode>, vscod
     if (element) {
       return [];
     }
-    if (this.lastError) {
-      return [{ kind: "info", message: `AgentSpan no disponible: ${this.lastError}` }];
+    const locals: RunNode[] = this.localRuns.map((run, index) => ({ kind: "localRun" as const, run, index }));
+    // default: SOLO lo lanzado en esta sesión — el histórico completo de
+    // AgentSpan no suma para el loop de desarrollo (toggle ⟲ para verlo).
+    const durables = this.showAll ? this.runs : this.runs.filter((r) => this.sessionEids.has(r.execution_id));
+    const durableNodes: RunNode[] = durables.map((run) => ({ kind: "run" as const, run }));
+
+    // AgentSpan caído solo es noticia si el usuario está usando el durable
+    // (lanzó runs en la sesión o pidió el histórico) — el flujo local no lo necesita.
+    if (this.lastError && (this.showAll || this.sessionEids.size > 0)) {
+      return [...locals, { kind: "info", message: `AgentSpan no disponible: ${this.lastError} — usá "Iniciar AgentSpan" (⚙) o corré los cases en local (⚡)` }];
     }
-    if (this.runs.length === 0) {
-      return [{ kind: "info", message: "Sin ejecuciones recientes." }];
+    if (locals.length === 0 && durableNodes.length === 0) {
+      return [
+        {
+          kind: "info",
+          message: this.showAll
+            ? "Sin ejecuciones recientes."
+            : "Sin ejecuciones en esta sesión — click en un case (⚡ local) o ⟲ para el histórico.",
+        },
+      ];
     }
-    return this.runs.map((run) => ({ kind: "run" as const, run }));
+    return [...locals, ...durableNodes];
   }
 
   dispose(): void {

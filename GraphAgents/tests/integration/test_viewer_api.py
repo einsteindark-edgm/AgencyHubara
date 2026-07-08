@@ -374,3 +374,43 @@ def test_run_agentspan_degrades_gracefully_without_deps():
     assert payload["status"] == "failed"
     assert payload.get("runtime") == "agentspan"
     assert payload["error"]
+
+
+def test_api_run_local_ejecuta_un_flow_sin_infraestructura():
+    """La ejecución SENCILLA (§F8): corre el caso EN PROCESO con sus fixtures —
+    cero AgentSpan/Conductor — y devuelve todo lo que el detalle necesita:
+    steps del plan, I/O por-tool, acc por nodo y el output final del pod."""
+    status, payload = api_route("POST", "/api/run-local", {}, {"case": "dia-del-padre-flujo"}, ga_root=ROOT)
+    assert status == 200
+    assert payload["agent"] == "ads-analytics"
+    assert payload["strategy"] == "sequential"
+    assert payload["seed"]  # el input con que arrancó
+    assert payload["output"]  # la respuesta final del workflow
+    steps = [s for s in payload["steps"] if s.get("agent")]
+    assert steps, "los steps vienen del execution_plan"
+    assert payload["node_traces"], "I/O por-tool reconstruido"
+    assert payload["node_accs"], "acc por nodo (el «salió» local)"
+    # coherencia: cada step-agente tiene su ledger y su acc
+    for s in steps:
+        assert s["agent"] in payload["node_traces"]
+        assert s["agent"] in payload["node_accs"]
+
+
+def test_api_run_local_caso_inexistente_es_404():
+    status, payload = api_route("POST", "/api/run-local", {}, {"case": "no-existe"}, ga_root=ROOT)
+    assert status == 404
+
+
+def test_api_run_local_requiere_case():
+    status, payload = api_route("POST", "/api/run-local", {}, {}, ga_root=ROOT)
+    assert status == 400
+
+
+def test_api_run_local_roto_es_422(monkeypatch):
+    def boom(node, ga_root, input, ports=None):
+        raise RuntimeError("capability rota")
+
+    monkeypatch.setattr("sdk.tooltrace.replay_flow_with_trace", boom)
+    status, payload = api_route("POST", "/api/run-local", {}, {"case": "dia-del-padre-flujo"}, ga_root=ROOT)
+    assert status == 422
+    assert "error" in payload

@@ -11,9 +11,22 @@ import {
   OutboundMessage,
   PersistedViewState,
   ProviderState,
+  ToolCall,
   TraceInfo,
   TraceStep,
 } from "./messages";
+
+/** El payload de `/api/run-local` ya normalizado (extension.ts lo arma). */
+export interface LocalRunResult {
+  case: string;
+  agent: string;
+  strategy?: string;
+  seed?: unknown;
+  /** steps del execution_plan (sin runtime — acá se sintetiza como done). */
+  steps: TraceStep[];
+  nodeTraces: Record<string, ToolCall[]>;
+  nodeAccs: Record<string, unknown>;
+}
 import { loadSeams } from "./seams";
 import { Scope, workflowOf } from "./scope";
 
@@ -71,12 +84,59 @@ export class GraphPanel {
     void Promise.resolve().then(() => GraphPanel.current?.startTrace(executionId));
   }
 
+  /** El resultado de una ejecución LOCAL (`/api/run-local` — en proceso, sin
+   * AgentSpan): mismo detalle que un trace durable, sin poll. Los accs por
+   * nodo vienen YA calculados (replay determinista) — se sirven con task_ids
+   * sintéticos `local:<label>` que fetchNodeState responde desde memoria, así
+   * el Inspector reusa TODO el flujo entró/salió sin un camino aparte. */
+  static showLocalRun(ctx: vscode.ExtensionContext, bridges: BridgeHub, result: LocalRunResult): void {
+    GraphPanel.show(ctx, bridges, workflowOf("graphagents", `agent:${result.agent}`));
+    void Promise.resolve().then(() => GraphPanel.current?.presentLocalRun(result));
+  }
+
+  presentLocalRun(result: LocalRunResult): void {
+    this.stopTrace(); // un trace durable en curso se corta — una vista a la vez
+    const executionId = `local:${result.case}:${++GraphPanel.localSeq}`;
+    this.lastTraceId = executionId;
+    this.localAccs.clear();
+    for (const [label, acc] of Object.entries(result.nodeAccs)) {
+      this.localAccs.set(`local:${label}`, acc);
+    }
+    const steps: TraceStep[] = result.steps.map((s) => ({
+      ...s,
+      runtime: s.agent
+        ? {
+            status: "done" as const,
+            retries: 0,
+            ms: undefined,
+            // el acc local del nodo — resuelto en memoria por fetchNodeState
+            task_id: result.nodeAccs[s.agent] !== undefined ? `local:${s.agent}` : undefined,
+          }
+        : undefined,
+    }));
+    this.post({
+      type: "trace",
+      info: {
+        executionId,
+        workflowStatus: "COMPLETED",
+        agent: result.agent,
+        strategy: `${result.strategy ?? "pod"} · local`,
+        seed: result.seed,
+        steps,
+      },
+    });
+    this.post({ type: "flowTrace", executionId, nodeTraces: result.nodeTraces, reconstructed: true });
+  }
+
   private traceTimer?: NodeJS.Timeout;
   private traceExecutionId?: string;
   /** última ejecución mostrada (queda seteada tras un stop terminal — el
    * flow-trace de un run COMPLETED sigue siendo relevante). */
   private lastTraceId?: string;
   private flowTraceFetched?: string;
+  /** accs de la última ejecución LOCAL (task_id sintético → acc). */
+  private readonly localAccs = new Map<string, unknown>();
+  private static localSeq = 0;
   private readonly traceDiagnostics = vscode.languages.createDiagnosticCollection("acktosStudioTrace");
   /** clave del último set de steps failed anotado — si no cambió entre ticks
    * del poll, no se re-consulta /api/inspect ni se reescribe la colección. */
@@ -133,6 +193,11 @@ export class GraphPanel {
   /** El acc (estado acumulador) tras un nodo — `/api/node-state`, lazy desde
    * las pestañas input/output del Inspector. */
   private async fetchNodeState(key: string, executionId: string, taskId: string): Promise<void> {
+    if (taskId.startsWith("local:")) {
+      // ejecución local: el acc ya está en memoria (replay determinista)
+      this.post({ type: "nodeStateResult", key, acc: this.localAccs.get(taskId) ?? null });
+      return;
+    }
     try {
       const res = await this.bridges
         .get("graphagents")

@@ -94,10 +94,28 @@
         "icon": "$(play)"
       },
       {
+        "command": "acktos.runLocalCase",
+        "title": "⚡ Ejecutar (local)",
+        "category": "Acktos Studio",
+        "icon": "$(zap)"
+      },
+      {
         "command": "acktos.runDurableCase",
         "title": "▶ Run Durable (AgentSpan)",
         "category": "Acktos Studio",
         "icon": "$(debug-start)"
+      },
+      {
+        "command": "acktos.startInfra",
+        "title": "Acktos: Iniciar AgentSpan (infra del runtime durable)",
+        "category": "Acktos Studio",
+        "icon": "$(server-process)"
+      },
+      {
+        "command": "acktos.toggleAllRuns",
+        "title": "Acktos: Runs — alternar histórico completo",
+        "category": "Acktos Studio",
+        "icon": "$(history)"
       },
       {
         "command": "acktos.connectFromPicker",
@@ -135,28 +153,43 @@
             "id": "scopes",
             "title": "Abrí el grafo — scopes estilo Xcode",
             "description": "Workspace / System / Focus — el equivalente project/target aplicado al canvas.\n[Abrir grafo](command:acktos.openStudio)",
-            "media": { "markdown": "walkthrough/scopes.md" },
-            "completionEvents": ["onCommand:acktos.openStudio"]
+            "media": {
+              "markdown": "walkthrough/scopes.md"
+            },
+            "completionEvents": [
+              "onCommand:acktos.openStudio"
+            ]
           },
           {
             "id": "testPlans",
             "title": "Corré un test plan — bundles estilo Xcode",
             "description": "Las mismas suites que `/hubara-gates`, agrupadas en bundles seleccionables.\n[Elegir un plan](command:acktos.selectPlan)",
-            "media": { "markdown": "walkthrough/test-plans.md" },
-            "completionEvents": ["onCommand:acktos.selectPlan", "onCommand:acktos.runActivePlan"]
+            "media": {
+              "markdown": "walkthrough/test-plans.md"
+            },
+            "completionEvents": [
+              "onCommand:acktos.selectPlan",
+              "onCommand:acktos.runActivePlan"
+            ]
           },
           {
             "id": "certifications",
             "title": "Certificaciones — el compilador en el editor",
             "description": "Badges C0–C3, CodeLens, Problems panel — todo desde guardar un manifest.\n[Ver el catálogo](command:workbench.view.extension.acktosStudio)",
-            "media": { "markdown": "walkthrough/certifications.md" },
-            "completionEvents": ["onView:acktos.catalogTree"]
+            "media": {
+              "markdown": "walkthrough/certifications.md"
+            },
+            "completionEvents": [
+              "onView:acktos.catalogTree"
+            ]
           },
           {
             "id": "editMode",
             "title": "Edit mode — conectar sin salir del IDE",
             "description": "Drag-connect, disconnect, y publicar el wiring con un PR real.",
-            "media": { "markdown": "walkthrough/edit-mode.md" }
+            "media": {
+              "markdown": "walkthrough/edit-mode.md"
+            }
           }
         ]
       }
@@ -204,6 +237,14 @@
         {
           "command": "acktos.connectFromPicker",
           "when": "false"
+        },
+        {
+          "command": "acktos.runLocalCase",
+          "when": "false"
+        },
+        {
+          "command": "acktos.toggleAllRuns",
+          "when": "false"
         }
       ],
       "view/title": [
@@ -216,9 +257,24 @@
           "command": "acktos.refreshRuns",
           "when": "view == acktos.runsTree",
           "group": "navigation"
+        },
+        {
+          "command": "acktos.startInfra",
+          "when": "view == acktos.runsTree",
+          "group": "navigation@1"
+        },
+        {
+          "command": "acktos.toggleAllRuns",
+          "when": "view == acktos.runsTree",
+          "group": "navigation@2"
         }
       ],
       "view/item/context": [
+        {
+          "command": "acktos.runLocalCase",
+          "when": "view == acktos.catalogTree && viewItem == acktosCase",
+          "group": "inline@0"
+        },
         {
           "command": "acktos.replayCase",
           "when": "view == acktos.catalogTree && viewItem == acktosCase",
@@ -296,6 +352,19 @@
             "MEDUSA_ADMIN_TOKEN": "dev-token"
           },
           "markdownDescription": "Env vars dummy que las suites de arquitectura del backend necesitan a nivel de import (`MEDUSA_*` — el sales worker construye clientes Medusa a nivel de módulo). Nunca pega a Medusa real."
+        },
+        "acktos.graphagents.env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "markdownDescription": "Env extra para el puente de GraphAgents — la palanca de infra remota: p. ej. `AGENTSPAN_SERVER_URL` (default `http://localhost:6767`) y `LITELLM_PROXY_URL` apuntando a AWS, sin tocar código."
+        },
+        "acktos.graphagents.agentspanStart": {
+          "type": "string",
+          "default": "agentspan server start",
+          "markdownDescription": "Comando que levanta AgentSpan (:6767) — lo corre el botón *Iniciar AgentSpan* en una terminal visible. Cambialo si tu infra durable arranca distinto (docker compose, script, etc.)."
         }
       }
     }

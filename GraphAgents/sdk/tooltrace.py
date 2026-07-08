@@ -88,11 +88,13 @@ def replay_flow_with_trace(node, ga_root, input, ports: dict | None = None) -> d
 
     if node.capability:  # capability hoja: un solo nodo
         r = replay_with_trace(node, ga_root, input, ports)
-        return {"output": r["output"], "node_traces": {node.name: r["tool_trace"]}}
+        return {"output": r["output"], "node_traces": {node.name: r["tool_trace"]},
+                "node_accs": {node.name: r["output"]}}
 
     if node.is_supervisor and node.strategy in ("sequential", None):
         state: dict = dict(input) if isinstance(input, dict) else {"input": input}
         node_traces: dict[str, list] = {}
+        node_accs: dict[str, dict] = {}  # snapshot del acc DESPUÉS de cada nodo (el «salió» local)
         for a in node.agents:
             label = a.ref_agent_id or a.name or "?"
             agent_input = _resolve_binding(a.inputs, state, label) if a.inputs else state
@@ -100,6 +102,8 @@ def replay_flow_with_trace(node, ga_root, input, ports: dict | None = None) -> d
             node_traces[label] = r["tool_trace"]
             out = r["output"]
             state.update(out if isinstance(out, dict) else {label: out})  # mismo merge que build_runnable
-        return {"output": state, "node_traces": node_traces}
+            node_accs[label] = dict(state)
+        return {"output": state, "node_traces": node_traces, "node_accs": node_accs}
 
-    return {"output": None, "node_traces": {}}  # router/parallel: el trace por-tool no aplica hoy
+    # router/parallel: el trace por-tool no aplica hoy
+    return {"output": None, "node_traces": {}, "node_accs": {}}

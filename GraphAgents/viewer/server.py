@@ -173,6 +173,41 @@ def replay_case_route(ga_root: Path, case_id: str) -> tuple[int, dict]:
     }
 
 
+def run_local_route(ga_root: Path, case_id: str) -> tuple[int, dict]:
+    """La ejecución SENCILLA: corre el caso EN PROCESO con sus fixtures (ports del caso, cero
+    AgentSpan/Conductor) y devuelve TODO lo que el detalle de ejecución necesita — los steps del
+    plan, el I/O por-tool reconstruido, el acc después de cada nodo y el output final del pod.
+    Determinista (G-DET): mismo `run()` por nodo que el durable, con los vendors reemplazados por
+    los Fixtures del caso. Es el camino sin infraestructura (local hoy, AWS mañana: el durable es
+    OPCIONAL para probar un flujo)."""
+    from sdk.case_model import discover_cases, resolve
+    from sdk.graph import execution_plan
+    from sdk.replay import _target_node, build_ports
+
+    case = next((c for c in discover_cases(ga_root) if c.id == case_id), None)
+    if case is None:
+        return 404, {"error": f"no existe el caso '{case_id}'"}
+    if case.kind == "tool":
+        return 422, {"error": f"'{case.target}' es un tool — corré '▶ Replay' (compara contra su golden); "
+                     "la ejecución local es para agentes/flows."}
+    try:
+        import sdk.tooltrace as tooltrace  # via módulo: monkeypatcheable en tests (L-19)
+
+        node = _target_node(case, ga_root)
+        seed = resolve(case.seed, ga_root)
+        res = tooltrace.replay_flow_with_trace(node, ga_root, seed, ports=build_ports(case, ga_root))
+        plan = execution_plan(node, ga_root)
+    except Exception as e:  # noqa: BLE001 — capability/loader roto: degradá, la UI nunca crashea
+        return 422, {"error": f"la ejecución local del caso '{case_id}' falló: {e}", "case": case_id}
+    return 200, {
+        "case": case.id, "target": case.target, "title": case.title,
+        "agent": case.target_id, "strategy": plan.get("strategy"), "seed": seed,
+        "steps": plan.get("steps", []), "output": res["output"],
+        "node_traces": res["node_traces"], "node_accs": res.get("node_accs", {}),
+        "runtime": "local",
+    }
+
+
 def _durable_ports() -> dict:
     """Los vendors REALES que el durable inyecta a los miembros que `consumes:` un port. Hoy: el
     `llm` → `LiteLLMProxy` (deepseek-v4-flash vía el proxy LiteLLM del central). Es LAZY — solo pega
@@ -401,6 +436,13 @@ def api_route(method: str, path: str, params: dict, body: dict | None, ga_root: 
         if not case_id:
             return 400, {"error": "falta 'case' en el body"}
         return replay_case_route(ga_root, case_id)
+    if method == "POST" and path == "/api/run-local":
+        # la ejecución SENCILLA en proceso (fixtures del caso, sin AgentSpan) — ver run_local_route.
+        body = body or {}
+        case_id = body.get("case")
+        if not case_id:
+            return 400, {"error": "falta 'case' en el body"}
+        return run_local_route(ga_root, case_id)
     if method == "POST" and path == "/api/run-durable":
         # corre el caso en el runtime DURABLE (AgentSpan) → execution-id para seguir el trace
         # nodo-por-nodo. A diferencia de /api/replay (en proceso), submitea a Conductor (:6767).

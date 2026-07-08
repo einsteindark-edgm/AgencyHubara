@@ -12,6 +12,11 @@ export interface HubaraConfig {
   gaPython: string;
   /** ya resuelto (sin ${workspaceFolder}) */
   gaCwd: string;
+  /** env extra del puente GraphAgents — la palanca de infra remota:
+   * AGENTSPAN_SERVER_URL / LITELLM_PROXY_URL apuntan a AWS sin tocar código. */
+  gaEnv: Record<string, string>;
+  /** comando que levanta AgentSpan (:6767) — botón "Iniciar infraestructura". */
+  agentspanStart: string;
   backendCommand: string[];
   /** ya resuelto */
   backendCwd: string;
@@ -29,6 +34,8 @@ export function readHubaraConfig(repoRoot: string): HubaraConfig {
   return {
     gaPython: cfg.get<string>("graphagents.python", "python3"),
     gaCwd: resolvePath(cfg.get<string>("graphagents.cwd", "${workspaceFolder}/GraphAgents"), repoRoot),
+    gaEnv: cfg.get<Record<string, string>>("graphagents.env", {}),
+    agentspanStart: cfg.get<string>("graphagents.agentspanStart", "agentspan server start"),
     backendCommand: cfg.get<string[]>("backend.command", ["uv", "run", "python"]),
     backendCwd: resolvePath(cfg.get<string>("backend.cwd", "${workspaceFolder}/hubara_agency"), repoRoot),
     // Gotcha documentado (project-context.md): sin estas dos vars, el sales
