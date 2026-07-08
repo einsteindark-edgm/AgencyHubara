@@ -58,7 +58,7 @@ export function FlowNode({ data, selected }: NodeProps<FlowNodeType>): React.Rea
         <div className="flow-node-meta">{data.archetype ?? data.sideEffect}</div>
       )}
       {typeof data.collapsedCount === "number" && (
-        <div className="flow-node-meta">{data.collapsedCount} nodos</div>
+        <div className="flow-node-meta">{data.collapsedCount} ocultos · doble-click expande</div>
       )}
       {data.runtimeStatus && data.runtimeStatus !== "idle" && (
         <div className="flow-node-meta">

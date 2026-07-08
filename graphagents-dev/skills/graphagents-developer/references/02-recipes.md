@@ -186,6 +186,27 @@ dashboard: NO importes nada cruzado. Construí en el monorepo un cast del plugin
 resultado bajo `/api/ads/*`. Ese adaptador es el ÚNICO punto de contacto entre
 las dos arquitecturas (ver `01-graph-rules.md` §borde).
 
+**Declarar la costura en `vscode-hubara/seams.yaml` (obligatorio al cerrar la
+integración).** Las conexiones cross-sistema NO se auto-detectan: Acktos
+Studio (la extensión de VS Code) dibuja el workspace con las costuras de ese
+archivo — sin la entrada, tu integración es invisible en el mapa (y en la
+vista colapsada, donde cada costura aparece como sub-caja dentro del sistema).
+Formato — ids NAMESPACED tal cual los produce cada grafo (`hub:` = System Map
+del monorepo, `ga:` = GraphAgents):
+
+```yaml
+seams:
+  - id: ads-analytics-pod
+    from: hub:plugin:ads            # nodo del system map (plugin:/api:/worker:…)
+    to: ga:agent:ads-analytics      # nodo del catálogo GA (agent:/tool:…)
+    label: "pod CTWA (runs/conductor.py)"   # CITÁ el código vivo que la implementa
+    kind: launches
+```
+
+Regla: cada costura debe ser VERIFICABLE en código vivo, no aspiracional —
+el label nombra el archivo que la implementa. Una costura cuyo from/to no
+resuelve se reporta como "rota" en el canvas (no rompe nada, pero te delata).
+
 ## 2.8 El explorer visual (catálogo + grafo + marketplace, estilo n8n)
 
 El explorer es una **proyección read-only** del catálogo (NO un editor: los
