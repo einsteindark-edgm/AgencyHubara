@@ -85,6 +85,24 @@ La unidad reusable de primera clase. Test-first.
    `loader` (lo consume) + `testkit/checks.py` (lo chequea), mismo cambio.
 4. `uv run python -m sdk.cli check` → verde.
 
+## 2.3b Crear el CASO de ejecución (cierre OBLIGATORIO de 2.0/2.1/2.3/2.5)
+
+> Toda tool/agente/flujo nuevo cierra con su `.case.yaml` — la prueba E2E
+> determinista del CABLE completo (L-25 hecho artefacto). Sin caso, el
+> desarrollo NO está terminado. Detalle: `00-tdd-law.md` §"El caso de
+> ejecución".
+
+1. `fixtures/cases/<id>.case.yaml`: `target: tool:<id>|agent:<id>|flow:<id>`
+   + `seed:` (lo que el central/hubara deposita; grande → `$ref`) + `ports:`
+   (solo si `consumes`) + `golden: {$ref: fixtures/cases/<id>.golden.json}`.
+2. El seed cubre las RAMAS del dominio en un solo replay (no solo happy
+   path). Molde flujo: `dia-del-padre-flujo` · agente:
+   `window-strategist-ciclo` · tool: `parse-conversations-fases`.
+3. Generá el golden UNA vez con `sdk.replay.replay_case`, revisalo a mano,
+   pinealo.
+4. Verde: `python3 -m sdk.cli cases --check` + (si la composición importa)
+   test nominal en `tests/architecture/test_cases.py`.
+
 ## 2.4 Agregar un connector a Meta (ConnectorKit)
 
 1. **Rojo:** unit del port con sus 4 paths (éxito · error del vendor · timeout ·

@@ -1,0 +1,41 @@
+# CASO de la TOOL parse-conversations (pura): tres conversaciones, una por fase del
+# funnel — CSW abierta (free_form), 72h CTWA con gancho (utility gratis), fase B fría
+# (suppress). Espejo de la matriz compartida con hubara (reengagement_matrix_golden.json,
+# guard de checksum en ambos repos). impl(**seed), sin ports.
+id: parse-conversations-fases
+title: parse-conversations · una conversación por fase
+target: tool:parse-conversations
+seed:
+  payload:
+    now_ms: 1716700000000
+    conversations:
+      - session_id: wa_csw
+        service_window_expires_at_ms: 1716703600000
+        ctwa_window_expires_at_ms: 1716696400000
+        lead: { tag: INTERESADO, engaged: true }
+      - session_id: wa_ctwa_hook
+        service_window_expires_at_ms: 1716696400000
+        ctwa_window_expires_at_ms: 1716703600000
+        lead: { tag: INTERESADO, has_order_draft: true, is_ctwa_lead: true }
+      - session_id: wa_cold
+        service_window_expires_at_ms: 1716696400000
+        ctwa_window_expires_at_ms: 1716696400000
+        lead: { tag: NO_ETIQUETADO }
+golden:
+  now_ms: 1716700000000
+  conversations:
+    - session_id: wa_csw
+      action: dispatch
+      recommended_channel: free_form
+      recommended_category: service
+      reason: csw_free_form
+      window_phase: csw_open
+    - session_id: wa_ctwa_hook
+      action: dispatch
+      recommended_channel: template
+      recommended_category: utility
+      reason: ctwa_72h_free
+      window_phase: ctwa_free
+    - session_id: wa_cold
+      action: suppress
+      reason: fase_b_cold_suppressed

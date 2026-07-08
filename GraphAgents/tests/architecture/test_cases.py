@@ -58,6 +58,19 @@ def test_replay_flow_case_matchea_su_golden_exacto() -> None:
     assert replay_case(c, GA) == resolve(c.golden, GA)
 
 
+def test_replay_agent_case_window_strategist_matchea_su_golden() -> None:
+    # el ciclo COMPLETO del window-strategist por su manifest (build_runnable resuelve
+    # parse-conversations del catálogo, G-BIND): snapshot de 7 conversaciones → la lista
+    # exacta de intents (orden por valor) + supresiones + truncado de presupuesto visible.
+    c = load_case(CASES / "window-strategist-ciclo.case.yaml")
+    out = replay_case(c, GA)
+    assert out == resolve(c.golden, GA)
+    assert [d["session_id"] for d in out["dispatch"]] == [
+        "wa_phase_b_hook", "wa_ctwa_hook", "wa_csw_active",
+    ]
+    assert out["truncated_by_budget"] == 1
+
+
 def test_check_caza_un_golden_desactualizado() -> None:
     # NEGATIVO primero: un caso cuyo golden NO matchea el replay → el check lo caza.
     bad = Case(

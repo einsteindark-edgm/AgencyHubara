@@ -22,6 +22,36 @@ Ciclo de minutos, un comportamiento por vuelta.
 | **Tool** (`tools/<x>.py`) | `tests/<...>/test_<x>.py` | el **decision payload** / efecto declarado (no la implementación) |
 | **Connector** (`sdk/connectorkit`) | `tests/architecture/` o unit | los 4 paths del port: éxito · error del vendor · timeout · no-disponible |
 | **SDK / manifest check** (`sdk/testkit/checks.py`) | `tests/architecture/` | el **caso NEGATIVO primero**: fabricá el manifest roto y probá que el check lo CAZA ("el gate que nunca falla es un gate roto") |
+| **CASO de ejecución** (`fixtures/cases/<x>.case.yaml`) | el propio `.case.yaml` + `sdk.cli cases --check` | el target ENTERO **por su manifest** (seed inyectado → golden pineado). Ver §"El caso de ejecución" abajo — **obligatorio al cerrar tool/agente/flujo nuevo** |
+
+## El caso de ejecución (`.case.yaml`) — la definición de HECHO
+
+Ninguna tool, agente o flujo nuevo se declara terminado sin su **caso de
+ejecución** en `fixtures/cases/<id>.case.yaml`. El golden unitario prueba la
+función; el CASO prueba el **CABLE completo** (manifest + bindings G-BIND +
+tools del catálogo + ports fixture) replayeando el target por
+`build_runnable` — el mismo camino que corre el viewer y el runtime. Es lo
+que L-25 exige, hecho artefacto verificable.
+
+1. `id` + `target:` (`tool:<id>` | `agent:<id>` | `flow:<id>`).
+2. `seed:` — lo que el central/hubara deposita (payload grande → `{$ref:
+   fixtures/x.json}`, no duplicar). Cubrí las RAMAS del dominio, no solo el
+   happy path (ej. window-strategist: las 3 fases del funnel + cadencia +
+   truncado de presupuesto en UN seed).
+3. `ports:` — solo si el target `consumes` ports (fixture vendors); `llm:`
+   = respuesta fija.
+4. `golden:` — el output COMPLETO pineado (`{$ref:
+   fixtures/cases/<id>.golden.json}`); generalo con `replay_case` UNA vez y
+   revisalo a mano antes de pinearlo (un golden mentiroso certifica basura).
+5. Verificá: `python3 -m sdk.cli cases --check` (el TCK del catálogo caza
+   golden desactualizado / $ref roto / target inexistente / port sin vendor)
+   + un test nominal en `tests/architecture/test_cases.py` si el caso guarda
+   una composición importante (patrón `dia-del-padre-flujo`).
+
+El caso queda listado en el viewer/Studio (select de casos) — es también el
+"botón de probar" del operador. Caso paradigmático de la regla:
+`window-strategist-ciclo.case.yaml` (2026-07-07 — el desarrollo se cerró sin
+caso y hubo que agregarlo post-facto; no repetir).
 
 ## El golden-replay, concreto
 
