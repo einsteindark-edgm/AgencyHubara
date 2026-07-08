@@ -66,3 +66,11 @@ export const PROVIDER_LABEL: Record<Provider, string> = {
   graphagents: "GraphAgents",
   systemmap: "System Map",
 };
+
+/** Detalle legible del error de una respuesta del bridge (payload.error si
+ * existe; si no, el status) — compartido por el canvas y el panel Ejecución. */
+export function errorDetail(res: BridgeResponse): string {
+  return typeof res.payload === "object" && res.payload && "error" in res.payload
+    ? String((res.payload as { error: unknown }).error)
+    : `status ${res.status}`;
+}

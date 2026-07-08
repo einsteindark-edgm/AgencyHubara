@@ -15,6 +15,7 @@ import { HubaraTestController } from "./testing/controller";
 import { PlanStatusBar } from "./testing/planStatusBar";
 import { CatalogTreeProvider } from "./trees/catalogTree";
 import { RunsTreeProvider } from "./trees/runsTree";
+import { ExecutionViewProvider } from "./views/executionView";
 
 let hub: Hub | undefined;
 let testController: HubaraTestController | undefined;
@@ -38,6 +39,17 @@ export function activate(ctx: vscode.ExtensionContext): void {
   runsTree = new RunsTreeProvider(hub);
   const runsView = vscode.window.createTreeView("acktos.runsTree", { treeDataProvider: runsTree });
   ctx.subscriptions.push(runsTree, runsView, runsTree.attach(runsView));
+
+  // El panel nativo "Ejecución" (F10) — abajo, junto a Terminal: la cascada
+  // del run + el detalle del nodo seleccionado. El GraphPanel le empuja los
+  // traces; el canvas le manda las selecciones.
+  const executionView = new ExecutionViewProvider(ctx, hub);
+  GraphPanel.executionSink = executionView;
+  ctx.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(ExecutionViewProvider.viewType, executionView, {
+      webviewOptions: { retainContextWhenHidden: true },
+    }),
+  );
 
   productionStatusBar = new ProductionStatusBar(hub);
   ctx.subscriptions.push(productionStatusBar);

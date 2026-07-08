@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { BridgeHub } from "../bridge/pythonBridge";
+import { StepEntry, toStepEntries } from "../graph/cascade";
 import { ToolCall, TraceStep } from "../graph/messages";
 
 interface RunSummary {
@@ -16,16 +17,6 @@ interface LocalRunSummary {
   /** steps + ledgers de la corrida — alimentan la cascada sin re-ejecutar. */
   steps: TraceStep[];
   nodeTraces: Record<string, ToolCall[]>;
-}
-
-/** Un agente de la cascada de ejecución (§F9 — estilo test navigator de Xcode). */
-interface StepEntry {
-  order: number;
-  agent: string;
-  status: string;
-  ms?: number;
-  retries?: number;
-  tools: Array<{ order: string; tool: string }>;
 }
 
 interface RunDetail {
@@ -56,30 +47,6 @@ function statusIcon(status: string): string {
     return "debug-pause";
   }
   return "circle-outline";
-}
-
-/** Proyecta steps de trace + ledgers a la cascada ordenada (agentes 1,2,3…;
- * tools `n.i` — el MISMO esquema de numeración que los badges del canvas). */
-function toStepEntries(steps: TraceStep[], nodeTraces: Record<string, ToolCall[]>): StepEntry[] {
-  const out: StepEntry[] = [];
-  let n = 0;
-  for (const step of steps) {
-    if (!step.agent) {
-      continue;
-    }
-    n++;
-    const ledger = nodeTraces[step.agent];
-    const tools = ledger ? ledger.map((c) => c.tool) : (step.tools ?? []);
-    out.push({
-      order: n,
-      agent: step.agent,
-      status: step.runtime?.status ?? "done",
-      ms: step.runtime?.ms,
-      retries: step.runtime?.retries,
-      tools: tools.map((tool, i) => ({ order: `${n}.${i + 1}`, tool })),
-    });
-  }
-  return out;
 }
 
 /** TreeView "Runs" — las ejecuciones de ESTA sesión (⚡ locales + ▶ durables

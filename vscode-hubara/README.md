@@ -106,7 +106,21 @@ runtime durable (AgentSpan `:6767`) es **opcional** para probar un flujo:
   planos (el diff no aporta). En el nodo raíz confronta seed → respuesta
   final del workflow.
 
-Todas las fases del plan (F0–F9) están implementadas.
+**F10 — panel nativo "Ejecución" + canvas a pantalla completa (hecho,
+post-feedback).**
+- **Panel "Ejecución"** (abajo, junto a Terminal — arrastrable al sidebar
+  derecho, VS Code lo recuerda): la CASCADA del run (agentes en orden →
+  tools en orden, colapsables) + el detalle del nodo seleccionado (resumen,
+  files, entró/salió confrontado). Se puebla al ejecutar un case (⚡/▶) y al
+  tocar cualquier nodo del canvas; click en la cascada selecciona el nodo;
+  «⌂ enfocar» lo abre en el grafo.
+- **El canvas usa toda la pantalla**: el Inspector embebido se mudó al panel
+  y la palette arranca colapsada (➕ la abre, solo en edit mode).
+- Restricción honesta: la palette NO puede vivir en un panel nativo — el
+  drag HTML5 no cruza webviews (iframes aislados). La alternativa nativa
+  sigue siendo "+ Conectar desde…" en el Catálogo.
+
+Todas las fases del plan (F0–F10) están implementadas.
 
 ## Arquitectura (sin servidor)
 

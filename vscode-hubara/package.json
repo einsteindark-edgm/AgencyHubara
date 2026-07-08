@@ -141,6 +141,13 @@
           "title": "Acktos Studio",
           "icon": "$(type-hierarchy-sub)"
         }
+      ],
+      "panel": [
+        {
+          "id": "acktosExecution",
+          "title": "Acktos Ejecución",
+          "icon": "$(pulse)"
+        }
       ]
     },
     "walkthroughs": [
@@ -205,6 +212,13 @@
           "id": "acktos.runsTree",
           "name": "Runs",
           "icon": "$(pulse)"
+        }
+      ],
+      "acktosExecution": [
+        {
+          "type": "webview",
+          "id": "acktos.executionView",
+          "name": "Ejecución"
         }
       ]
     },
