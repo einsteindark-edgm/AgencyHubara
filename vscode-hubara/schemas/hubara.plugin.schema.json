@@ -1,0 +1,1161 @@
+{
+  "$defs": {
+    "AgentBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "python_module": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Python Module"
+        },
+        "worker_module": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Worker Module"
+        },
+        "workers": {
+          "items": {
+            "$ref": "#/$defs/WorkerSpec"
+          },
+          "title": "Workers",
+          "type": "array"
+        },
+        "task_queue": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Task Queue"
+        },
+        "mode": {
+          "anyOf": [
+            {
+              "enum": [
+                "session_based",
+                "turn_based"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mode"
+        },
+        "graph_spec": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Graph Spec"
+        }
+      },
+      "title": "AgentBlock",
+      "type": "object"
+    },
+    "ApiBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "python_module": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Python Module"
+        },
+        "prefix": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prefix"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tags",
+          "type": "array"
+        },
+        "legacy_routers": {
+          "items": {
+            "$ref": "#/$defs/LegacyRouter"
+          },
+          "title": "Legacy Routers",
+          "type": "array"
+        },
+        "migrations": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Migrations"
+        }
+      },
+      "title": "ApiBlock",
+      "type": "object"
+    },
+    "CapabilityEntry": {
+      "additionalProperties": true,
+      "properties": {
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "icon": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Icon"
+        }
+      },
+      "required": [
+        "label"
+      ],
+      "title": "CapabilityEntry",
+      "type": "object"
+    },
+    "ComposeBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Env",
+          "type": "object"
+        },
+        "volumes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Volumes",
+          "type": "array"
+        },
+        "depends_on": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Depends On",
+          "type": "array"
+        }
+      },
+      "title": "ComposeBlock",
+      "type": "object"
+    },
+    "ConsumeEntry": {
+      "additionalProperties": true,
+      "properties": {
+        "provider": {
+          "title": "Provider",
+          "type": "string"
+        },
+        "contract": {
+          "title": "Contract",
+          "type": "string"
+        },
+        "into": {
+          "title": "Into",
+          "type": "string"
+        },
+        "cast": {
+          "title": "Cast",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "contract",
+        "into",
+        "cast"
+      ],
+      "title": "ConsumeEntry",
+      "type": "object"
+    },
+    "DashboardWidget": {
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "position": {
+          "title": "Position",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "position"
+      ],
+      "title": "DashboardWidget",
+      "type": "object"
+    },
+    "DeploymentBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "replicas": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Replicas"
+        },
+        "cpu_request": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cpu Request"
+        },
+        "cpu_limit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cpu Limit"
+        },
+        "memory_request": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Memory Request"
+        },
+        "memory_limit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Memory Limit"
+        },
+        "strategy": {
+          "anyOf": [
+            {
+              "enum": [
+                "RollingUpdate",
+                "Recreate"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Strategy"
+        },
+        "env_secrets": {
+          "items": {
+            "$ref": "#/$defs/EnvSecret"
+          },
+          "title": "Env Secrets",
+          "type": "array"
+        }
+      },
+      "title": "DeploymentBlock",
+      "type": "object"
+    },
+    "EnvSecret": {
+      "additionalProperties": true,
+      "properties": {
+        "var": {
+          "title": "Var",
+          "type": "string"
+        },
+        "secret": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Secret"
+        },
+        "key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Key"
+        }
+      },
+      "required": [
+        "var"
+      ],
+      "title": "EnvSecret",
+      "type": "object"
+    },
+    "FrontendBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "entry": {
+          "default": "./frontend",
+          "title": "Entry",
+          "type": "string"
+        },
+        "contributes": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FrontendContributes"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "FrontendBlock",
+      "type": "object"
+    },
+    "FrontendContributes": {
+      "additionalProperties": false,
+      "properties": {
+        "sidebar": {
+          "items": {
+            "$ref": "#/$defs/SidebarEntry"
+          },
+          "title": "Sidebar",
+          "type": "array"
+        },
+        "sections": {
+          "items": {
+            "$ref": "#/$defs/SectionEntry"
+          },
+          "title": "Sections",
+          "type": "array"
+        },
+        "dashboard_widgets": {
+          "items": {
+            "$ref": "#/$defs/DashboardWidget"
+          },
+          "title": "Dashboard Widgets",
+          "type": "array"
+        }
+      },
+      "title": "FrontendContributes",
+      "type": "object"
+    },
+    "JobEntry": {
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "schedule": {
+          "title": "Schedule",
+          "type": "string"
+        },
+        "handler": {
+          "title": "Handler",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "schedule",
+        "handler"
+      ],
+      "title": "JobEntry",
+      "type": "object"
+    },
+    "LegacyInvoke": {
+      "additionalProperties": false,
+      "properties": {
+        "worker": {
+          "title": "Worker",
+          "type": "string"
+        },
+        "plugin": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Plugin"
+        },
+        "via": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Via"
+        },
+        "when": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "When"
+        }
+      },
+      "required": [
+        "worker"
+      ],
+      "title": "LegacyInvoke",
+      "type": "object"
+    },
+    "LegacyRouter": {
+      "additionalProperties": true,
+      "properties": {
+        "module": {
+          "title": "Module",
+          "type": "string"
+        },
+        "prefix": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prefix"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tags",
+          "type": "array"
+        }
+      },
+      "required": [
+        "module"
+      ],
+      "title": "LegacyRouter",
+      "type": "object"
+    },
+    "PermissionsBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "reads": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Reads",
+          "type": "array"
+        },
+        "writes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Writes",
+          "type": "array"
+        }
+      },
+      "title": "PermissionsBlock",
+      "type": "object"
+    },
+    "SectionEntry": {
+      "additionalProperties": true,
+      "properties": {
+        "key": {
+          "title": "Key",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "order": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Order"
+        },
+        "icon": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Icon"
+        }
+      },
+      "required": [
+        "key",
+        "label"
+      ],
+      "title": "SectionEntry",
+      "type": "object"
+    },
+    "SidebarEntry": {
+      "additionalProperties": true,
+      "properties": {
+        "route": {
+          "title": "Route",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "icon": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Icon"
+        },
+        "badge_query": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Badge Query"
+        }
+      },
+      "required": [
+        "route",
+        "label"
+      ],
+      "title": "SidebarEntry",
+      "type": "object"
+    },
+    "TransitionActionModel": {
+      "additionalProperties": false,
+      "properties": {
+        "via": {
+          "enum": [
+            "start_workflow",
+            "start_workflow_with_replace",
+            "ensure_running",
+            "signal",
+            "signal_with_start"
+          ],
+          "title": "Via",
+          "type": "string"
+        },
+        "target_workflow": {
+          "pattern": "^[A-Z][A-Za-z0-9]*$",
+          "title": "Target Workflow",
+          "type": "string"
+        },
+        "target_plugin": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Plugin"
+        },
+        "target_worker": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Worker"
+        },
+        "signal_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Signal Name"
+        },
+        "workflow_id_template": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Workflow Id Template"
+        },
+        "input_mapping": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Input Mapping",
+          "type": "object"
+        },
+        "start_delay_field": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Start Delay Field"
+        }
+      },
+      "required": [
+        "via",
+        "target_workflow"
+      ],
+      "title": "TransitionActionModel",
+      "type": "object"
+    },
+    "TransitionModel": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "on_event": {
+          "pattern": "^[A-Z][A-Za-z0-9]*Event$",
+          "title": "On Event",
+          "type": "string"
+        },
+        "action": {
+          "$ref": "#/$defs/TransitionActionModel"
+        },
+        "when": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": "When",
+          "type": "object"
+        }
+      },
+      "required": [
+        "id",
+        "on_event",
+        "action"
+      ],
+      "title": "TransitionModel",
+      "type": "object"
+    },
+    "WiringIntents": {
+      "additionalProperties": true,
+      "properties": {
+        "db_tables": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Db Tables",
+          "type": "array"
+        },
+        "s3_buckets": {
+          "items": {
+            "type": "string"
+          },
+          "title": "S3 Buckets",
+          "type": "array"
+        },
+        "filesystem_volumes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Filesystem Volumes",
+          "type": "array"
+        },
+        "env_vars_required": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Env Vars Required",
+          "type": "array"
+        }
+      },
+      "title": "WiringIntents",
+      "type": "object"
+    },
+    "WorkerDashboard": {
+      "additionalProperties": false,
+      "properties": {
+        "display_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Display Name"
+        },
+        "role": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Role"
+        },
+        "category": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Category"
+        },
+        "icon": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Icon"
+        },
+        "color": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Color"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model"
+        },
+        "workspace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Workspace"
+        },
+        "capabilities": {
+          "items": {
+            "$ref": "#/$defs/CapabilityEntry"
+          },
+          "title": "Capabilities",
+          "type": "array"
+        }
+      },
+      "title": "WorkerDashboard",
+      "type": "object"
+    },
+    "WorkerSpec": {
+      "additionalProperties": true,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "module": {
+          "title": "Module",
+          "type": "string"
+        },
+        "task_queue": {
+          "pattern": "^[a-z][a-z0-9-]*$",
+          "title": "Task Queue",
+          "type": "string"
+        },
+        "owns_route": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Owns Route"
+        },
+        "route_workflow_id_template": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Route Workflow Id Template"
+        },
+        "dashboard": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkerDashboard"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "workflow_classes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Workflow Classes",
+          "type": "array"
+        },
+        "emits": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Emits",
+          "type": "array"
+        },
+        "transitions": {
+          "items": {
+            "$ref": "#/$defs/TransitionModel"
+          },
+          "title": "Transitions",
+          "type": "array"
+        },
+        "invokes": {
+          "items": {
+            "$ref": "#/$defs/LegacyInvoke"
+          },
+          "title": "Invokes",
+          "type": "array"
+        },
+        "deployment": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DeploymentBlock"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "compose": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ComposeBlock"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "name",
+        "module",
+        "task_queue"
+      ],
+      "title": "WorkerSpec",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "El manifest completo, tipado. ``extra=\"forbid\"`` = top-level estricto.",
+  "properties": {
+    "id": {
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "title": "Id",
+      "type": "string"
+    },
+    "version": {
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(-[a-z0-9.]+)?$",
+      "title": "Version",
+      "type": "string"
+    },
+    "display_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Display Name"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "archetype": {
+      "anyOf": [
+        {
+          "enum": [
+            "api_only",
+            "full_stack",
+            "agentic",
+            "notifier",
+            "sync"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Archetype"
+    },
+    "agentic": {
+      "default": false,
+      "title": "Agentic",
+      "type": "boolean"
+    },
+    "depends_on": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Depends On",
+      "type": "array"
+    },
+    "consumes": {
+      "items": {
+        "$ref": "#/$defs/ConsumeEntry"
+      },
+      "title": "Consumes",
+      "type": "array"
+    },
+    "frontend": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/FrontendBlock"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "api": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ApiBlock"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "agent": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AgentBlock"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "jobs": {
+      "items": {
+        "$ref": "#/$defs/JobEntry"
+      },
+      "title": "Jobs",
+      "type": "array"
+    },
+    "wiring_intents": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WiringIntents"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "permissions": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PermissionsBlock"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "id",
+    "version"
+  ],
+  "title": "PluginManifest",
+  "type": "object"
+}
