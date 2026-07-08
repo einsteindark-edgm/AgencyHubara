@@ -104,8 +104,10 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<TreeNode> {
       const item = new vscode.TreeItem(element.title, vscode.TreeItemCollapsibleState.None);
       item.description = element.target;
       item.iconPath = new vscode.ThemeIcon("play-circle");
-      item.contextValue = "acktosCase"; // habilita "▶ Replay"/"▶ Run durable" (package.json view/item/context)
-      item.command = { command: "acktos.replayCase", title: "Replay", arguments: [element.caseId, element.title] };
+      item.contextValue = "acktosCase"; // habilita ⚡/▶ Replay/▶ Run durable (package.json view/item/context)
+      // default = ejecución LOCAL (en proceso, sin infraestructura) con el
+      // detalle completo en el canvas; replay (golden) y durable van por menú.
+      item.command = { command: "acktos.runLocalCase", title: "Ejecutar (local)", arguments: [element.caseId, element.title] };
       return item;
     }
     const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.None);

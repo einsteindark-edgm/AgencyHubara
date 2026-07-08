@@ -62,3 +62,27 @@ def test_replay_with_trace_on_a_reference_resolves_the_real_agent():
     assert ref.is_reference  # `uses: agent://ctwa-insights@1` — no es una capability leaf
     res = replay_with_trace(ref, ROOT, {"payload": seed["meta_insights"]})
     assert [e["tool"] for e in res["tool_trace"]] == ["meta-ads-insights"]
+
+
+def test_replay_flow_with_trace_expone_el_acc_por_nodo():
+    """`node_accs`: el snapshot del acumulador DESPUÉS de cada nodo del pod —
+    lo que el Inspector muestra como «salió» de un nodo en una ejecución LOCAL
+    (sin Conductor no hay /api/node-state; el replay determinista lo repone).
+    El acc del último nodo ES el output final del pod."""
+    from sdk.tooltrace import replay_flow_with_trace
+
+    case = next(c for c in discover_cases(ROOT) if c.id == "dia-del-padre-flujo")
+    seed = resolve(case.seed, ROOT)
+    sup = load_manifest(MANIFESTS / "ads-analytics.taskgraph.yaml")
+    from sdk.replay import build_ports
+
+    res = replay_flow_with_trace(sup, ROOT, seed, ports=build_ports(case, ROOT))
+    assert res["node_traces"], "el pod secuencial debe traer ledger por nodo"
+    accs = res["node_accs"]
+    # un acc por miembro del pod, con las MISMAS claves que node_traces
+    assert set(accs.keys()) == set(res["node_traces"].keys())
+    # el acc se ACUMULA: el del último nodo es exactamente el output final
+    labels = [a.ref_agent_id or a.name for a in sup.agents]
+    assert accs[labels[-1]] == res["output"]
+    # y el de un nodo intermedio ya contiene lo sembrado + lo suyo, pero no el final
+    assert isinstance(accs[labels[0]], dict)

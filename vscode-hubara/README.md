@@ -72,7 +72,26 @@ Del pase visual real salieron 3 fixes y 2 features:
   frame ni re-monta los labels de las aristas; las posiciones se persisten
   UNA vez al soltar.
 
-Todas las fases del plan (F0–F7) están implementadas.
+**F8 — ejecución local sin infraestructura (hecho, post-feedback).** El
+runtime durable (AgentSpan `:6767`) es **opcional** para probar un flujo:
+- **⚡ Ejecutar (local)** — el click default en un case: corre el flow EN
+  PROCESO con los fixtures del caso (`POST /api/run-local`, nuevo — mismo
+  `run()` por nodo que el durable, determinista G-DET) y muestra el detalle
+  completo en el canvas: nodos, entró/salió por nodo (accs pre-calculados),
+  sub-ejecución por-tool y output final. ~600ms, cero infraestructura —
+  local hoy, AWS mañana.
+- **Runs = solo esta sesión**: la vista default lista lo que ejecutaste acá
+  (⚡ locales + ▶ durables lanzados); el histórico completo de AgentSpan se
+  abre con el toggle ⟲. AgentSpan caído ya no es un error si trabajás local.
+- **▶ Iniciar AgentSpan** (ícono en Runs, o desde la paleta): levanta la
+  infra durable en una terminal visible (`agentspan server start`,
+  configurable vía `acktos.graphagents.agentspanStart`). Si un Run Durable
+  falla, el toast ofrece "Iniciar AgentSpan" y "Ejecutar local".
+- **Infra remota por settings**: `acktos.graphagents.env` inyecta env al
+  puente — `AGENTSPAN_SERVER_URL`/`LITELLM_PROXY_URL` apuntando a AWS sin
+  tocar código.
+
+Todas las fases del plan (F0–F8) están implementadas.
 
 ## Arquitectura (sin servidor)
 

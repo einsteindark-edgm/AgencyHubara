@@ -6,7 +6,8 @@ import { ManifestCodeLensProvider } from "./codelens/manifestCodeLens";
 import { CertDecorationProvider } from "./decorations/certDecorations";
 import { ManifestDiagnostics } from "./diagnostics/manifestDiagnostics";
 import { connectWithConfirmation } from "./graph/editOps";
-import { GraphPanel } from "./graph/graphPanel";
+import { GraphPanel, LocalRunResult } from "./graph/graphPanel";
+import { ToolCall, TraceStep } from "./graph/messages";
 import { ProductionStatusBar } from "./graph/productionStatusBar";
 import { DEFAULT_FOCUS_DEPTH, focusOf, systemOf, workflowOf } from "./graph/scope";
 import { registerYamlSchemas } from "./schemas/yamlSchemas";
@@ -142,6 +143,52 @@ export function activate(ctx: vscode.ExtensionContext): void {
       }
       GraphPanel.showTrace(ctx, hub!, executionId, agent ?? "");
     }),
+    // La ejecución SENCILLA (⚡): corre el caso EN PROCESO con sus fixtures —
+    // cero AgentSpan/Conductor — y muestra el detalle completo en el canvas.
+    // Es el camino default (click en un case); el durable queda para probar
+    // la infraestructura real.
+    registerCaseCommand("acktos.runLocalCase", "/api/run-local", "ejecución local", (res, payload, caseId, title) => {
+      if (res.status !== 200) {
+        return false;
+      }
+      const result: LocalRunResult = {
+        case: caseId,
+        agent: typeof payload.agent === "string" ? payload.agent : caseId,
+        strategy: typeof payload.strategy === "string" ? payload.strategy : undefined,
+        seed: payload.seed,
+        steps: Array.isArray(payload.steps) ? (payload.steps as TraceStep[]) : [],
+        nodeTraces: (payload.node_traces ?? {}) as Record<string, ToolCall[]>,
+        nodeAccs: (payload.node_accs ?? {}) as Record<string, unknown>,
+      };
+      GraphPanel.showLocalRun(ctx, hub!, result);
+      runsTree!.noteLocalRun({ caseId, title, agent: result.agent });
+      return true;
+    }),
+    // AgentSpan (:6767) es OPCIONAL — este botón lo levanta en una terminal
+    // visible cuando se quiere probar el runtime durable de verdad.
+    vscode.commands.registerCommand("acktos.startInfra", () => {
+      const cfg = readHubaraConfig(repoRoot());
+      const existing = vscode.window.terminals.find((t) => t.name === "AgentSpan");
+      if (existing) {
+        existing.show();
+        void vscode.window.showInformationMessage(
+          `Acktos Studio: la terminal AgentSpan ya existe — si el server no corre, ejecutá ahí: ${cfg.agentspanStart}`,
+        );
+        return;
+      }
+      const term = vscode.window.createTerminal({ name: "AgentSpan", cwd: cfg.gaCwd });
+      term.show();
+      term.sendText(cfg.agentspanStart);
+      void vscode.window.showInformationMessage(
+        "Acktos Studio: levantando AgentSpan (:6767) — la primera vez descarga el server (~50MB). Los ▶ Run Durable quedan disponibles cuando el log diga que escucha.",
+      );
+    }),
+    vscode.commands.registerCommand("acktos.toggleAllRuns", () => {
+      const showAll = runsTree!.toggleShowAll();
+      void vscode.window.showInformationMessage(
+        showAll ? "Acktos Studio: Runs muestra el histórico completo de AgentSpan." : "Acktos Studio: Runs muestra solo esta sesión.",
+      );
+    }),
     // Los dos comandos por-caso comparten el esqueleto (normalización de
     // args del árbol, POST al bridge, toasts de error) vía registerCaseCommand.
     registerCaseCommand("acktos.replayCase", "/api/replay", "replay", (res, payload, caseId, title) => {
@@ -163,12 +210,28 @@ export function activate(ctx: vscode.ExtensionContext): void {
       }
       return true;
     }),
-    registerCaseCommand("acktos.runDurableCase", "/api/run-durable", "run durable", (res, payload, _caseId, title) => {
+    registerCaseCommand("acktos.runDurableCase", "/api/run-durable", "run durable", (res, payload, caseId, title) => {
       const executionId = typeof payload.execution_id === "string" ? payload.execution_id : undefined;
       if (res.status !== 200 || !executionId) {
-        return false;
+        // Camino de rescate explícito: el fallo típico es AgentSpan caído —
+        // ofrecer levantar la infra o correr el MISMO caso en local (sin infra).
+        void vscode.window
+          .showErrorMessage(
+            `Acktos Studio: run durable '${title}' — ${(payload.error as string | undefined) ?? `status ${res.status}`}`,
+            "▶ Iniciar AgentSpan",
+            "⚡ Ejecutar local",
+          )
+          .then((action) => {
+            if (action === "▶ Iniciar AgentSpan") {
+              void vscode.commands.executeCommand("acktos.startInfra");
+            } else if (action === "⚡ Ejecutar local") {
+              void vscode.commands.executeCommand("acktos.runLocalCase", caseId, title);
+            }
+          });
+        return true; // error ya presentado (con acciones) — sin toast genérico
       }
       void vscode.window.showInformationMessage(`Acktos Studio: '${title}' corriendo (${executionId.slice(0, 8)}…)`);
+      runsTree!.noteDurableLaunched(executionId);
       runsTree!.refresh();
       GraphPanel.showTrace(ctx, hub!, executionId, typeof payload.agent === "string" ? payload.agent : title);
       return true;
@@ -326,6 +389,8 @@ function buildBridges(out: vscode.OutputChannel): Record<Provider, PythonBridge>
     label: "GraphAgents",
     command: [cfg.gaPython, "-m", "viewer.bridge"],
     cwd: cfg.gaCwd,
+    // AGENTSPAN_SERVER_URL / LITELLM_PROXY_URL etc — infra local o AWS por settings.
+    env: cfg.gaEnv,
   };
   const systemmap: BridgeSpec = {
     label: "System Map",
