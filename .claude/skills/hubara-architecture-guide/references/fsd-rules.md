@@ -268,9 +268,9 @@ rompe la pasada de import-analysis de Vite con un error críptico:
 [plugin:vite:import-analysis] Failed to resolve import "@plugins/<id>/frontend"
 ```
 
-Caso paradigmático: `system_map` expone `/api/system-map/graph` y su UI es
-Acktos Studio (la extensión de VS Code en `vscode-hubara/`). Su manifest
-declara explícitamente "NO frontend block".
+Caso paradigmático: `system_map` expone `/api/system-map/graph` y su UI vive
+en `system_explorer/` (container Vite separado). Su manifest declara
+explícitamente "NO frontend block".
 
 ```yaml
 # ❌ Plugin backend-only con frontend block fake — el directorio no existe
