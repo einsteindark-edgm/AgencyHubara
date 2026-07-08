@@ -55,6 +55,11 @@
         "category": "Acktos Studio"
       },
       {
+        "command": "acktos.openWorkflow",
+        "title": "Acktos: Ver workflow completo",
+        "category": "Acktos Studio"
+      },
+      {
         "command": "acktos.selectPlan",
         "title": "Acktos: Select & Run Test Plan…",
         "category": "Acktos Studio",
@@ -174,6 +179,10 @@
       "commandPalette": [
         {
           "command": "acktos.focusNode",
+          "when": "false"
+        },
+        {
+          "command": "acktos.openWorkflow",
           "when": "false"
         },
         {

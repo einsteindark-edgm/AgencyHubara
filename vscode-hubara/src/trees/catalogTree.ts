@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { GRAPH_PATH, GraphNode, isGraphPayload, Provider } from "../bridge/endpoints";
+import { GRAPH_PATH, GraphNode, GraphPayload, isGraphPayload, Provider } from "../bridge/endpoints";
 import { BridgeHub } from "../bridge/pythonBridge";
 
 interface GroupNode {
@@ -13,6 +13,17 @@ interface GroupNode {
 interface CasesGroupNode {
   kind: "casesGroup";
   id: "cases";
+}
+interface WorkflowsGroupNode {
+  kind: "workflowsGroup";
+  id: "workflows";
+}
+interface WorkflowLeafNode {
+  kind: "workflowLeaf";
+  id: string;
+  rootId: string;
+  label: string;
+  nodeCount: number;
 }
 interface LeafNode {
   kind: "leaf";
@@ -29,7 +40,7 @@ interface CaseLeafNode {
   title: string;
   target: string;
 }
-type TreeNode = GroupNode | CasesGroupNode | LeafNode | CaseLeafNode;
+type TreeNode = GroupNode | CasesGroupNode | WorkflowsGroupNode | LeafNode | CaseLeafNode | WorkflowLeafNode;
 
 interface CaseSummary {
   id: string;
@@ -50,13 +61,13 @@ const GROUPS: Array<Omit<GroupNode, "kind">> = [
 export class CatalogTreeProvider implements vscode.TreeDataProvider<TreeNode> {
   private readonly _onDidChangeTreeData = new vscode.EventEmitter<TreeNode | undefined>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
-  private nodeCache = new Map<Provider, GraphNode[]>();
+  private payloadCache = new Map<Provider, GraphPayload>();
   private caseCache: CaseSummary[] | null = null;
 
   constructor(private readonly bridges: BridgeHub) {}
 
   refresh(): void {
-    this.nodeCache.clear();
+    this.payloadCache.clear();
     this.caseCache = null;
     this._onDidChangeTreeData.fire(undefined);
   }
@@ -70,6 +81,23 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<TreeNode> {
     if (element.kind === "casesGroup") {
       const item = new vscode.TreeItem("Cases", vscode.TreeItemCollapsibleState.Collapsed);
       item.iconPath = new vscode.ThemeIcon("beaker");
+      return item;
+    }
+    if (element.kind === "workflowsGroup") {
+      const item = new vscode.TreeItem("Workflows", vscode.TreeItemCollapsibleState.Expanded);
+      item.iconPath = new vscode.ThemeIcon("type-hierarchy");
+      return item;
+    }
+    if (element.kind === "workflowLeaf") {
+      const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.None);
+      item.description = `${element.nodeCount} nodos`;
+      item.iconPath = new vscode.ThemeIcon("rocket");
+      item.tooltip = `Dibujar SOLO este workflow (todo lo conectado a ${element.rootId})`;
+      item.command = {
+        command: "acktos.openWorkflow",
+        title: "Ver workflow",
+        arguments: [element.rootId, element.label],
+      };
       return item;
     }
     if (element.kind === "caseLeaf") {
@@ -97,7 +125,14 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 
   async getChildren(element?: TreeNode): Promise<TreeNode[]> {
     if (!element) {
-      return [...GROUPS.map((g): GroupNode => ({ kind: "group", ...g })), { kind: "casesGroup", id: "cases" }];
+      return [
+        { kind: "workflowsGroup", id: "workflows" },
+        ...GROUPS.map((g): GroupNode => ({ kind: "group", ...g })),
+        { kind: "casesGroup", id: "cases" },
+      ];
+    }
+    if (element.kind === "workflowsGroup") {
+      return this.workflows();
     }
     if (element.kind === "group") {
       const nodes = await this.nodesFor(element.system);
@@ -125,18 +160,71 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<TreeNode> {
   }
 
   private async nodesFor(system: Provider): Promise<GraphNode[]> {
-    const cached = this.nodeCache.get(system);
+    return (await this.payloadFor(system))?.nodes ?? [];
+  }
+
+  private async payloadFor(system: Provider): Promise<GraphPayload | null> {
+    const cached = this.payloadCache.get(system);
     if (cached) {
       return cached;
     }
     try {
       const res = await this.bridges.get(system).request({ method: "GET", path: GRAPH_PATH });
-      const nodes = res.status === 200 && isGraphPayload(res.payload) ? res.payload.nodes : [];
-      this.nodeCache.set(system, nodes);
-      return nodes;
+      const payload = res.status === 200 && isGraphPayload(res.payload) ? res.payload : null;
+      if (payload) {
+        this.payloadCache.set(system, payload);
+      }
+      return payload;
     } catch {
+      return null;
+    }
+  }
+
+  /** Las RAÍCES de los flujos conectados: agentes con sub-agentes (aristas
+   * `agent` salientes) que ningún otro supervisor referencia. Cada una nombra
+   * a su workflow completo — el "nombre del inicio". */
+  private async workflows(): Promise<WorkflowLeafNode[]> {
+    const payload = await this.payloadFor("graphagents");
+    if (!payload) {
       return [];
     }
+    const agentEdges = payload.edges.filter((e) => e.kind === "agent");
+    const supervised = new Set(agentEdges.map((e) => e.target));
+    const roots = payload.nodes.filter(
+      (n) => n.kind === "agent" && agentEdges.some((e) => e.source === n.id) && !supervised.has(n.id),
+    );
+    // tamaño del flujo: clausura dirigida desde la raíz (misma semántica que
+    // el scope "workflow" del canvas — reachableGraph en graphOps.ts).
+    const out = new Map<string, string[]>();
+    for (const e of payload.edges) {
+      const list = out.get(e.source);
+      if (list) {
+        list.push(e.target);
+      } else {
+        out.set(e.source, [e.target]);
+      }
+    }
+    return roots
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .map((root): WorkflowLeafNode => {
+        const visited = new Set<string>([root.id]);
+        const stack = [root.id];
+        while (stack.length > 0) {
+          for (const next of out.get(stack.pop()!) ?? []) {
+            if (!visited.has(next)) {
+              visited.add(next);
+              stack.push(next);
+            }
+          }
+        }
+        return {
+          kind: "workflowLeaf",
+          id: `workflow:${root.id}`,
+          rootId: root.id,
+          label: (root.label as string | undefined) ?? root.id,
+          nodeCount: visited.size,
+        };
+      });
   }
 
   private async cases(): Promise<CaseSummary[]> {

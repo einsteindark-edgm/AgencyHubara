@@ -52,7 +52,27 @@ explícita (commit+push+PR).
 (scopes, test plans, certificaciones, edit mode); `repository` apuntando al
 monorepo con `directory: vscode-hubara`.
 
-Todas las fases del plan (F0–F6) están implementadas.
+**F7 — detalle de ejecución + workflows + palette (hecho, post-feedback).**
+Del pase visual real salieron 3 fixes y 2 features:
+- **Detalle de ejecución completo**: con un trace activo (click en un run de
+  Runs, o "▶ Run Durable"), el Inspector gana pestañas **entró/salió** por
+  nodo (el `acc` real de Conductor vía `/api/node-state`, lazy), la
+  **sub-ejecución por-tool** reconstruida (`/api/flow-trace`, replay
+  determinista G-DET) con I/O expandible por llamada, y la pestaña «salió»
+  del nodo raíz = **la respuesta final del workflow** (narrativa destacada).
+- **Scope `workflow`**: grupo **Workflows** en el catálogo (las raíces de los
+  flujos conectados); al elegir uno el canvas dibuja SOLO ese workflow
+  (clausura dirigida desde la raíz). Los runs abren directo en este scope.
+- **Palette drag-and-drop** (edit mode): catálogo arrastrable — soltar un
+  tool/agente SOBRE un agente lo conecta (mismo gate validate→confirm→mutate).
+- **Desconectar por click**: seleccionar una arista muestra la barra
+  "✕ desconectar" (el context-menu sigue funcionando; hit-area de 24px).
+- **Fix del parpadeo**: los nodos viven en estado local del canvas (patrón
+  uncontrolled de React Flow) — un drag ya no reconstruye todos los nodos por
+  frame ni re-monta los labels de las aristas; las posiciones se persisten
+  UNA vez al soltar.
+
+Todas las fases del plan (F0–F7) están implementadas.
 
 ## Arquitectura (sin servidor)
 
