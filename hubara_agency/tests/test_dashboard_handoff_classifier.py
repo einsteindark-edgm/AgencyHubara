@@ -7,7 +7,6 @@ diferenciado del agent_message.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -61,6 +60,39 @@ def test_assistant_message_without_sender_stays_agent_message(client_with_temp_v
     msgs = body["messages"]
     assert len(msgs) == 1
     assert msgs[0]["ui_type"] == "agent_message"
+
+
+def test_ui_component_marker_classified_as_ui_component_sent(
+    client_with_temp_vault,
+):
+    """Los markers de envíos no-textuales (`kind: ui_component`, escritos por
+    `flush_pending_ui_intents_activity`) se proyectan como
+    `ui_type: ui_component_sent` para que el frontend los pinte como nota
+    de sistema — no como burbuja normal del bot."""
+    client, vault = client_with_temp_vault
+    history = vault / "wa_W" / "sessions" / "wa_W.jsonl"
+    history.parent.mkdir(parents=True)
+    history.write_text(
+        json.dumps(
+            {
+                "role": "assistant",
+                "kind": "ui_component",
+                "component_kind": "quick_replies",
+                "content": "🔘 El bot envió botones: Ver catálogo",
+                "timestamp": "2026-07-07T12:00:00+00:00",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    res = client.get("/api/dashboard/sessions/wa_W")
+    assert res.status_code == 200
+    msgs = res.json()["messages"]
+    assert len(msgs) == 1
+    assert msgs[0]["ui_type"] == "ui_component_sent"
+    assert msgs[0]["content"] == "🔘 El bot envió botones: Ver catálogo"
 
 
 def test_assistant_with_tool_calls_still_classified_as_tool_call_even_if_unknown_extra(

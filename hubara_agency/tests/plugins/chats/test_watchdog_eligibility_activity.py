@@ -260,6 +260,24 @@ async def test_window_missing_returns_skipped(
 # ---------------------------------------------------------------------------
 
 
+def _pin_clock_at_10am_bogota(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Congela el reloj de la activity a las 10:00 America/Bogota (15:00 UTC).
+
+    Anti-flakiness: los happy paths NO controlaban la hora y el gate de
+    quiet hours usa wall-clock — corrida la suite antes de las 08:00 o
+    después de las 22:00 hora Colombia, fallaban con
+    `reason='outside_quiet_hours'` (visto 2026-07-07 a las 07:03).
+    """
+    from datetime import datetime, timezone
+
+    from src.plugins.chats.agent.remarketing.activities import (
+        watchdog_activities,
+    )
+
+    fixed = datetime(2026, 7, 7, 15, 0, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(watchdog_activities, "_utc_now", lambda: fixed)
+
+
 @pytest.mark.asyncio
 async def test_eligible_resolves_awaiting_quote_template(
     monkeypatch: pytest.MonkeyPatch,
@@ -268,6 +286,7 @@ async def test_eligible_resolves_awaiting_quote_template(
     """tag=INTERESADO + no registered_order → awaiting_quote stage → resolves
     `quote_ready_utility_v1`."""
     monkeypatch.setenv("WATCHDOG_ENABLED", "1")
+    _pin_clock_at_10am_bogota(monkeypatch)
     now_ms = int(time.time() * 1000)
     md = _base_metadata(now_ms=now_ms)
     # window in 25min — within WATCHDOG_PRE_EXPIRY_MS (30min)
@@ -293,6 +312,7 @@ async def test_eligible_resolves_awaiting_payment_with_registered_order(
     """registered_order present + episode NOT closed COMPRA_EXITOSA →
     awaiting_payment stage → resolves `payment_pending_utility_v1`."""
     monkeypatch.setenv("WATCHDOG_ENABLED", "1")
+    _pin_clock_at_10am_bogota(monkeypatch)
     now_ms = int(time.time() * 1000)
     md = _base_metadata(now_ms=now_ms)
     md["service_window_expires_at_ms"] = now_ms + 20 * 60 * 1000
@@ -307,6 +327,34 @@ async def test_eligible_resolves_awaiting_payment_with_registered_order(
         result.resolved_template_variables is not None
         and result.resolved_template_variables.get("order_reference") == "ORD-1042"
     )
+
+
+@pytest.mark.asyncio
+async def test_quiet_hours_gate_skips_at_3am_bogota_deterministic(
+    monkeypatch: pytest.MonkeyPatch,
+    _isolate_vault_dir: Path,
+) -> None:
+    """Contraparte determinista del gate: con el reloj congelado a las
+    03:00 Bogotá (08:00 UTC), una sesión por-lo-demás elegible se skipea
+    con `outside_quiet_hours` — sin depender de la hora real de la corrida."""
+    from datetime import datetime, timezone
+
+    from src.plugins.chats.agent.remarketing.activities import (
+        watchdog_activities,
+    )
+
+    monkeypatch.setenv("WATCHDOG_ENABLED", "1")
+    fixed = datetime(2026, 7, 7, 8, 0, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(watchdog_activities, "_utc_now", lambda: fixed)
+    now_ms = int(time.time() * 1000)
+    md = _base_metadata(now_ms=now_ms)
+    md["service_window_expires_at_ms"] = now_ms + 25 * 60 * 1000
+    _write_metadata(_isolate_vault_dir, SESSION_ID, md)
+
+    result = await check_watchdog_eligibility_activity(SESSION_ID, EPISODE_ID)
+
+    assert result.eligible is False
+    assert result.reason == "outside_quiet_hours"
 
 
 @pytest.mark.asyncio

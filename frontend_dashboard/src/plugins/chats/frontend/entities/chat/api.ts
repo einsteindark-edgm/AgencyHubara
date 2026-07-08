@@ -164,6 +164,22 @@ function toMediaUrl(ref: string): string {
 }
 
 function adaptMessage(m: ChatMessage): ChatMessageItem {
+  // Envío no-textual del bot (catálogo, flow, botones, galería…): el backend
+  // persiste un marker human-readable y acá se pinta como nota de sistema —
+  // sin esto el operador ve huecos y no puede seguir la conversación.
+  if (m.ui_type === "ui_component_sent") {
+    return {
+      kind: "system",
+      text: m.content ?? "",
+      time:
+        typeof m.timestamp === "string"
+          ? new Date(m.timestamp).toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            })
+          : undefined,
+    };
+  }
   const sender = getMessageSender(m);
   // sender: "user"|"agent"|"human"
   //   user   → bubble inbound (cliente)

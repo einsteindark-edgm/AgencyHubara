@@ -18,7 +18,7 @@ string annotations of locally-defined types like `WatchdogEligibilityResult`.
 """
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -95,6 +95,13 @@ def _resolve_local_timezone(session_id: str) -> ZoneInfo:
             except ZoneInfoNotFoundError:
                 continue
     return ZoneInfo("UTC")
+
+
+def _utc_now() -> datetime:
+    """Reloj inyectable del gate de quiet hours. Los tests lo monkeypatchean
+    para congelar la hora — sin este seam, los happy paths de elegibilidad
+    fallaban cuando la suite corría fuera de 08:00-22:00 hora Colombia."""
+    return datetime.now(timezone.utc)
 
 
 def _is_quiet_hours_for_session(session_id: str, now_utc: datetime) -> bool:
@@ -334,7 +341,7 @@ async def check_watchdog_eligibility_activity(
     # 4. Quiet hours check (HU-WA24H-001 pre-mortem F4.1) — no disparar en
     #    horario nocturno hora local del cliente (3am Colombia = quality
     #    rating drop garantizado).
-    if _is_quiet_hours_for_session(session_id, datetime.utcnow().replace(tzinfo=ZoneInfo("UTC"))):
+    if _is_quiet_hours_for_session(session_id, _utc_now()):
         log.info(
             "watchdog_eligibility_skipped",
             session_id=session_id,

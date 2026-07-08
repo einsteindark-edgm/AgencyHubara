@@ -165,6 +165,38 @@ control al bot (`return-to-bot`).
 - THEN `active_route=auto` se restaura
 - AND el próximo inbound del cliente arranca/signala workflow normal
 
+### Requirement: Visibilidad de envíos no-textuales en el histórico
+
+Todo envío no-textual exitoso del bot (catálogo, foto de producto, galería,
+formulario/flow de datos de envío, botones quick-reply, confirmación de
+pedido, reacción, tarjeta de contacto, CTA URL) SHALL quedar registrado en
+el session history JSONL que consume el dashboard, de modo que el operador
+pueda seguir la conversación sin huecos. Un envío fallido MUST NOT dejar
+marker (el histórico no puede afirmar que el cliente recibió algo que no
+recibió). El registro es best-effort: un fallo de I/O al persistir el
+marker MUST NOT bloquear ni duplicar el envío al cliente.
+
+#### Scenario: Marker de componente UI enviado
+
+- GIVEN un intent `quick_replies` pendiente en `metadata.json[pending_ui_intents]`
+- WHEN `flush_pending_ui_intents_activity` lo envía con éxito
+- THEN se appendea al JSONL `{role: assistant, kind: ui_component, component_kind: quick_replies, content: <nota human-readable con body y botones>, timestamp}`
+- AND `GET /api/dashboard/sessions/{id}` lo proyecta como `ui_type: ui_component_sent`
+- AND el frontend lo pinta como nota de sistema visible en el panel central
+
+#### Scenario: Variant picker persiste el texto real
+
+- GIVEN un intent `variant_picker` (que envía TEXTO renderizado al cliente y el workflow suprime el final_content del LLM)
+- WHEN el flush lo envía con éxito
+- THEN se persiste el texto renderizado como assistant message normal (sin `kind`)
+- AND el operador ve exactamente lo que vio el cliente
+
+#### Scenario: Envío fallido no deja marker
+
+- GIVEN un intent cuyo `send_*` devuelve `ok=false`
+- WHEN el flush lo procesa
+- THEN NO se appendea ningún evento al session history
+
 ### Requirement: Ads campaigns endpoint
 
 El sistema SHALL exponer endpoints bajo `/api/ads/*` para consumir Meta
