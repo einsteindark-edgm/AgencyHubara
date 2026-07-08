@@ -36,7 +36,7 @@ export async function runSuite(
   let argv = resolved.argv;
   let junitPath: string | undefined;
   if (suite.junit) {
-    junitPath = path.join(os.tmpdir(), `hubara-junit-${Date.now()}-${Math.random().toString(36).slice(2)}.xml`);
+    junitPath = path.join(os.tmpdir(), `acktos-junit-${Date.now()}-${Math.random().toString(36).slice(2)}.xml`);
     const hasPlaceholder = argv.some((a) => a.includes("${junit}"));
     argv = argv.map((a) => a.replace("${junit}", junitPath!));
     if (!hasPlaceholder) {

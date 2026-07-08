@@ -30,7 +30,7 @@ export async function connectWithConfirmation(bridges: BridgeHub, source: string
     const infoPayload = info.payload as ValidateResponse;
     if (info.status !== 200 || !infoPayload.ok) {
       void vscode.window.showErrorMessage(
-        `Hubara Studio: ${source} → ${target} no es conectable — ${(infoPayload.errors ?? []).join("; ") || `status ${info.status}`}`,
+        `Acktos Studio: ${source} → ${target} no es conectable — ${(infoPayload.errors ?? []).join("; ") || `status ${info.status}`}`,
       );
       return false;
     }
@@ -48,13 +48,13 @@ export async function connectWithConfirmation(bridges: BridgeHub, source: string
       .request({ method: "POST", path: "/api/connect", body: { source, target, binding: suggested } });
     const payload = res.payload as MutateResponse;
     if (!payload.ok) {
-      void vscode.window.showErrorMessage(`Hubara Studio: conexión rechazada — ${(payload.errors ?? []).join("; ")}`);
+      void vscode.window.showErrorMessage(`Acktos Studio: conexión rechazada — ${(payload.errors ?? []).join("; ")}`);
       return false;
     }
-    void vscode.window.showInformationMessage(`Hubara Studio: ${source} → ${target} conectado (${payload.file ?? ""}).`);
+    void vscode.window.showInformationMessage(`Acktos Studio: ${source} → ${target} conectado (${payload.file ?? ""}).`);
     return true;
   } catch (e) {
-    void vscode.window.showErrorMessage(`Hubara Studio: conectar falló: ${e}`);
+    void vscode.window.showErrorMessage(`Acktos Studio: conectar falló: ${e}`);
     return false;
   }
 }
@@ -71,13 +71,13 @@ export async function disconnectWithConfirmation(bridges: BridgeHub, source: str
     const res = await bridges.get("graphagents").request({ method: "POST", path: "/api/disconnect", body: { source, target, kind } });
     const payload = res.payload as MutateResponse;
     if (!payload.ok) {
-      void vscode.window.showErrorMessage(`Hubara Studio: desconexión rechazada — ${(payload.errors ?? []).join("; ")}`);
+      void vscode.window.showErrorMessage(`Acktos Studio: desconexión rechazada — ${(payload.errors ?? []).join("; ")}`);
       return false;
     }
-    void vscode.window.showInformationMessage(`Hubara Studio: ${source} → ${target} desconectado.`);
+    void vscode.window.showInformationMessage(`Acktos Studio: ${source} → ${target} desconectado.`);
     return true;
   } catch (e) {
-    void vscode.window.showErrorMessage(`Hubara Studio: desconectar falló: ${e}`);
+    void vscode.window.showErrorMessage(`Acktos Studio: desconectar falló: ${e}`);
     return false;
   }
 }

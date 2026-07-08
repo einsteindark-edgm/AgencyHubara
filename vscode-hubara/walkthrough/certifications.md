@@ -14,4 +14,4 @@ Los manifests (`plugin.yaml`, `*.agent.yaml`, `tool.yaml`) tienen
 autocomplete + validación inline si tenés instalada la extensión
 `redhat.vscode-yaml` (opcional).
 
-[Ver el catálogo](command:workbench.view.extension.hubaraStudio)
+[Ver el catálogo](command:workbench.view.extension.acktosStudio)

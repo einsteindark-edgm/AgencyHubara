@@ -3,7 +3,7 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 
 /**
- * Lectura ÚNICA de las settings `hubara.*` (defaults incluidos). Puentes,
+ * Lectura ÚNICA de las settings `acktos.*` (defaults incluidos). Puentes,
  * Test Explorer, diagnostics y el canvas consumen ESTE módulo — un default
  * que cambie acá cambia en todos los consumidores a la vez (antes cada uno
  * re-tipeaba sus defaults y podían driftear en silencio).
@@ -25,7 +25,7 @@ export interface HubaraConfig {
 }
 
 export function readHubaraConfig(repoRoot: string): HubaraConfig {
-  const cfg = vscode.workspace.getConfiguration("hubara");
+  const cfg = vscode.workspace.getConfiguration("acktos");
   return {
     gaPython: cfg.get<string>("graphagents.python", "python3"),
     gaCwd: resolvePath(cfg.get<string>("graphagents.cwd", "${workspaceFolder}/GraphAgents"), repoRoot),
@@ -72,7 +72,7 @@ export function resolvePath(value: string, root: string): string {
 /**
  * seams.yaml describe la topología del REPO del usuario, no de la extensión:
  * instalada como VSIX, el install dir es read-only y compartido entre
- * workspaces. Orden: setting `hubara.seamsPath` → `<repoRoot>/seams.yaml` →
+ * workspaces. Orden: setting `acktos.seamsPath` → `<repoRoot>/seams.yaml` →
  * el archivo bundled con la extensión (fallback de fábrica).
  */
 export function seamsFilePath(extensionRoot: string): string {

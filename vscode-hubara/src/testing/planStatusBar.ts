@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { HubaraTestController } from "./controller";
 
-const ACTIVE_PLAN_KEY = "hubara.studio.activePlanId";
+const ACTIVE_PLAN_KEY = "acktos.studio.activePlanId";
 
 /** Selector de plan en la status bar — el equivalente al scheme picker de
  * Xcode (§2.5). Muestra el plan activo; click abre un QuickPick y CORRE el
@@ -16,7 +16,7 @@ export class PlanStatusBar implements vscode.Disposable {
     private readonly ctx: vscode.ExtensionContext,
   ) {
     this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-    this.item.command = "hubara.selectPlan";
+    this.item.command = "acktos.selectPlan";
     this.disposables.push(this.item, this.controller.onPlansChanged(() => this.render()));
     this.activePlanId = ctx.workspaceState.get<string>(ACTIVE_PLAN_KEY);
     this.render();
@@ -28,12 +28,12 @@ export class PlanStatusBar implements vscode.Disposable {
     this.item.text = plan ? `$(beaker) Plan: ${plan.name}` : "$(beaker) Plan: (elegir)";
     this.item.tooltip = plan
       ? `${plan.description ?? ""}\n\nClick para cambiar de plan o volver a correrlo.`
-      : "Click para elegir un test plan de Hubara Studio.";
+      : "Click para elegir un test plan de Acktos Studio.";
   }
 
   async selectAndRun(): Promise<void> {
     if (this.controller.plans.length === 0) {
-      void vscode.window.showWarningMessage("Hubara Studio: no encontré ningún *.hubaraplan.yaml en test-plans/.");
+      void vscode.window.showWarningMessage("Acktos Studio: no encontré ningún *.hubaraplan.yaml en test-plans/.");
       return;
     }
     const picks = this.controller.plans.map((p) => ({ label: p.name, description: p.description, id: p.id }));
