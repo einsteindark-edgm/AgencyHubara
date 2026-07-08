@@ -24,6 +24,7 @@ interface WorkflowLeafNode {
   rootId: string;
   label: string;
   nodeCount: number;
+  system: Provider;
 }
 interface LeafNode {
   kind: "leaf";
@@ -91,12 +92,12 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<TreeNode> {
     if (element.kind === "workflowLeaf") {
       const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.None);
       item.description = `${element.nodeCount} nodos`;
-      item.iconPath = new vscode.ThemeIcon("rocket");
-      item.tooltip = `Dibujar SOLO este workflow (todo lo conectado a ${element.rootId})`;
+      item.iconPath = new vscode.ThemeIcon(element.system === "graphagents" ? "rocket" : "package");
+      item.tooltip = `Dibujar SOLO este flujo (todo lo conectado a ${element.rootId})`;
       item.command = {
         command: "acktos.openWorkflow",
         title: "Ver workflow",
-        arguments: [element.rootId, element.label],
+        arguments: [element.rootId, element.label, element.system],
       };
       return item;
     }
@@ -137,6 +138,12 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<TreeNode> {
       return this.workflows();
     }
     if (element.kind === "group") {
+      // Los PLUGINS se listan como workflows (§F11): click dibuja la clausura
+      // dirigida completa del plugin (frontend → routers → workers → queues +
+      // depends_on), no un ego-graph de 1 salto — "la relación completa".
+      if (element.nodeKind === "plugin") {
+        return this.pluginWorkflows();
+      }
       const nodes = await this.nodesFor(element.system);
       return nodes
         .filter((n) => n.kind === element.nodeKind)
@@ -195,38 +202,19 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<TreeNode> {
     const roots = payload.nodes.filter(
       (n) => n.kind === "agent" && agentEdges.some((e) => e.source === n.id) && !supervised.has(n.id),
     );
-    // tamaño del flujo: clausura dirigida desde la raíz (misma semántica que
-    // el scope "workflow" del canvas — reachableGraph en graphOps.ts).
-    const out = new Map<string, string[]>();
-    for (const e of payload.edges) {
-      const list = out.get(e.source);
-      if (list) {
-        list.push(e.target);
-      } else {
-        out.set(e.source, [e.target]);
-      }
+    return toWorkflowLeaves(roots, payload, "graphagents");
+  }
+
+  /** Cada plugin como un workflow: la raíz es `plugin:<id>` y el flujo es su
+   * clausura dirigida (belongs_to → uses_api/invokes_worker → consumes_queue,
+   * más los plugins de los que depende). Misma semántica que Workflows. */
+  private async pluginWorkflows(): Promise<WorkflowLeafNode[]> {
+    const payload = await this.payloadFor("systemmap");
+    if (!payload) {
+      return [];
     }
-    return roots
-      .sort((a, b) => a.id.localeCompare(b.id))
-      .map((root): WorkflowLeafNode => {
-        const visited = new Set<string>([root.id]);
-        const stack = [root.id];
-        while (stack.length > 0) {
-          for (const next of out.get(stack.pop()!) ?? []) {
-            if (!visited.has(next)) {
-              visited.add(next);
-              stack.push(next);
-            }
-          }
-        }
-        return {
-          kind: "workflowLeaf",
-          id: `workflow:${root.id}`,
-          rootId: root.id,
-          label: (root.label as string | undefined) ?? root.id,
-          nodeCount: visited.size,
-        };
-      });
+    const roots = payload.nodes.filter((n) => n.kind === "plugin");
+    return toWorkflowLeaves(roots, payload, "systemmap");
   }
 
   private async cases(): Promise<CaseSummary[]> {
@@ -243,6 +231,42 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<TreeNode> {
       return [];
     }
   }
+}
+
+/** tamaño del flujo: clausura dirigida desde cada raíz (misma semántica que
+ * el scope "workflow" del canvas — reachableGraph en graphOps.ts). */
+function toWorkflowLeaves(roots: GraphNode[], payload: GraphPayload, system: Provider): WorkflowLeafNode[] {
+  const out = new Map<string, string[]>();
+  for (const e of payload.edges) {
+    const list = out.get(e.source);
+    if (list) {
+      list.push(e.target);
+    } else {
+      out.set(e.source, [e.target]);
+    }
+  }
+  return [...roots]
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map((root): WorkflowLeafNode => {
+      const visited = new Set<string>([root.id]);
+      const stack = [root.id];
+      while (stack.length > 0) {
+        for (const next of out.get(stack.pop()!) ?? []) {
+          if (!visited.has(next)) {
+            visited.add(next);
+            stack.push(next);
+          }
+        }
+      }
+      return {
+        kind: "workflowLeaf",
+        id: `workflow:${system}:${root.id}`,
+        rootId: root.id,
+        label: (root.label as string | undefined) ?? root.id,
+        nodeCount: visited.size,
+        system,
+      };
+    });
 }
 
 function describeExtra(n: GraphNode): string | undefined {

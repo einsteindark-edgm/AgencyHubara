@@ -631,6 +631,10 @@ def build_system_graph(
     #
     # Skipea el self-plugin `system_map` (su propio código contiene el regex
     # literal en docstrings — causaría falsos positivos en warnings).
+    # Un mismo par (source, target) puede aparecer en N call sites (dos rutas
+    # de la API que arrancan el mismo worker) — se emite UNA sola vez o los
+    # ids de edges salen duplicados (React Flow los dropea).
+    emitted_scan_pairs: set[tuple[str, str]] = set()
     for plugin_id in plugin_contributions:
         if plugin_id == "system_map":
             continue
@@ -713,6 +717,8 @@ def build_system_graph(
                 # — para sources tipo api_router, son siempre del scan (no del
                 # manifest, que es worker→worker).
                 code_pair = (source_id, target_id)
+                if code_pair in emitted_scan_pairs:
+                    continue  # otro call site del mismo par ya emitió el edge
                 if source_id.startswith("worker:") and code_pair in declared_invocations:
                     continue  # ya declarado en manifest, evita duplicado
 
@@ -725,6 +731,7 @@ def build_system_graph(
                         f"`workers[].invokes` — agregalo para SSoT"
                     )
 
+                emitted_scan_pairs.add(code_pair)
                 all_edges.append(
                     Edge(
                         id=f"e:{source_id}->scan->{target_id}",

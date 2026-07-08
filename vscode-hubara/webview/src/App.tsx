@@ -179,26 +179,57 @@ export function App(): React.ReactElement {
     [scope, graphagents, systemmap, seams, collapsedClusters],
   );
 
+  const sKey = scopeKey(scope);
+
   // Layout: recalcula cuando cambia el SET de nodos/edges del scope (no en
-  // cada drag — eso lo maneja React Flow localmente vía onNodesChange).
+  // cada drag — eso lo maneja React Flow localmente vía onNodesChange). Al
+  // resolver el layout de un scope NUEVO se bumpea fitToken → el canvas
+  // re-encuadra el viewport (sin esto la cámara queda donde estaba y el grafo
+  // nuevo puede caer completamente fuera de pantalla — el "System Map vacío").
   const layoutSignature = useMemo(() => graph.nodes.map((n) => n.nsId).sort().join(","), [graph.nodes]);
+  const [fitToken, setFitToken] = useState(0);
+  const lastFitKey = useRef("");
   useEffect(() => {
     let cancelled = false;
     void computeLayout(scope, graph.nodes, graph.edges).then((positions) => {
-      if (!cancelled) {
-        setLayoutPositions(positions);
+      if (cancelled) {
+        return;
+      }
+      setLayoutPositions(positions);
+      if (lastFitKey.current !== sKey) {
+        lastFitKey.current = sKey;
+        setFitToken((t) => t + 1);
       }
     });
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layoutSignature, scope.kind]);
+  }, [layoutSignature, sKey]);
 
-  const sKey = scopeKey(scope);
   // EMPTY_POSITIONS (identidad estable) evita que un scope sin posiciones
-  // guardadas invalide flowNodes en cada render.
-  const savedPositions = positionsByScopeKey[sKey] ?? EMPTY_POSITIONS;
+  // guardadas invalide flowNodes en cada render. Las posiciones DEGENERADAS
+  // se descartan: builds viejos commiteaban TODOS los nodos al soltar un drag,
+  // y si el layout async no había resuelto quedaban persistidos apilados en
+  // (0,0) — un drag real no puede dejar 3+ nodos en la coordenada exacta.
+  const savedPositions = useMemo(() => {
+    const raw = positionsByScopeKey[sKey] ?? EMPTY_POSITIONS;
+    const freq = new Map<string, number>();
+    for (const p of Object.values(raw)) {
+      const c = `${p.x}|${p.y}`;
+      freq.set(c, (freq.get(c) ?? 0) + 1);
+    }
+    if (![...freq.values()].some((n) => n >= 3)) {
+      return raw;
+    }
+    const clean: Record<string, Positioned> = {};
+    for (const [id, p] of Object.entries(raw)) {
+      if ((freq.get(`${p.x}|${p.y}`) ?? 0) < 3) {
+        clean[id] = p;
+      }
+    }
+    return clean;
+  }, [positionsByScopeKey, sKey]);
 
   // El trace overlay matchea por nsId: `step.agent` (id crudo del sub-nodo,
   // p. ej. "ctwa-report") → "ga:agent:ctwa-report", el MISMO namespace que
@@ -283,17 +314,25 @@ export function App(): React.ReactElement {
   );
 
   const flowEdges: Edge[] = useMemo(() => {
-    const internal: Edge[] = [...graph.edges].map((e) => ({
-      id: `${e.nsSource}->${e.nsTarget}:${e.kind}`,
-      source: e.nsSource,
-      target: e.nsTarget,
-      label: e.kind,
-      className: `edge-${e.kind}`,
-      // hit-area generosa: el path SVG es de 1-2px — sin esto, clickear una
-      // arista para seleccionarla/desconectarla es una lotería.
-      interactionWidth: 24,
-      data: { kind: e.kind },
-    }));
+    // ids únicos aunque el bridge repita una arista (p. ej. dos call sites que
+    // invocan el mismo worker) — React Flow con ids duplicados dropea edges.
+    const seen = new Map<string, number>();
+    const internal: Edge[] = [...graph.edges].map((e) => {
+      const base = `${e.nsSource}->${e.nsTarget}:${e.kind}`;
+      const n = seen.get(base) ?? 0;
+      seen.set(base, n + 1);
+      return {
+        id: n === 0 ? base : `${base}#${n}`,
+        source: e.nsSource,
+        target: e.nsTarget,
+        label: e.kind,
+        className: `edge-${e.kind}`,
+        // hit-area generosa: el path SVG es de 1-2px — sin esto, clickear una
+        // arista para seleccionarla/desconectarla es una lotería.
+        interactionWidth: 24,
+        data: { kind: e.kind },
+      };
+    });
     const seamsList: Edge[] = graph.seamEdges.map((e) => ({
       id: `seam:${e.nsSource}->${e.nsTarget}`,
       source: e.nsSource,
@@ -400,6 +439,20 @@ export function App(): React.ReactElement {
     send({ type: "refresh" });
   }, []);
 
+  // Descarta las posiciones guardadas del scope actual y re-encuadra — la
+  // salida manual si un layout viejo/arrastres dejaron el grafo ilegible.
+  const handleRelayout = useCallback(() => {
+    setPositionsByScopeKey((prev) => {
+      if (!prev[sKey]) {
+        return prev;
+      }
+      const next = { ...prev };
+      delete next[sKey];
+      return next;
+    });
+    setFitToken((t) => t + 1);
+  }, [sKey]);
+
   // Edit mode (§F5): drag-connect / right-click-disconnect. Solo tiene
   // sentido DENTRO de GraphAgents (System Map es read-only; workspace mezcla
   // namespaces) — la confirmación SIEMPRE la muestra la extensión (los
@@ -489,6 +542,7 @@ export function App(): React.ReactElement {
         onScopeChange={setScope}
         onDepthChange={handleDepthChange}
         onRefresh={handleRefresh}
+        onRelayout={handleRelayout}
       />
       {globalError && <div className="global-error">⚠ {globalError}</div>}
       {graph.brokenSeams.length > 0 && (
@@ -538,6 +592,7 @@ export function App(): React.ReactElement {
             onEdgeSelect={setSelectedEdge}
             onEdgeDisconnect={handleEdgeDisconnect}
             onPaletteDrop={handlePaletteDrop}
+            fitToken={fitToken}
           />
         </div>
       </div>
