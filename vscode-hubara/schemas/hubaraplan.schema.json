@@ -1,0 +1,77 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Hubara Studio test plan",
+  "description": "Bundle de suites de test (§2.5 del plan) — el equivalente a un .xctestplan de Xcode. Ver vscode-hubara/src/testing/suites.ts para el catálogo de tags/suites válidos.",
+  "type": "object",
+  "required": ["name", "include"],
+  "additionalProperties": false,
+  "properties": {
+    "name": { "type": "string", "description": "Nombre mostrado en el Test Explorer y el selector de la status bar." },
+    "description": { "type": "string" },
+    "include": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/selector" },
+      "description": "Suites incluidas en el bundle — por tag (lado o tipo) o por id exacto."
+    },
+    "exclude": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/selector" },
+      "description": "Suites excluidas del bundle, evaluado DESPUÉS de include."
+    },
+    "options": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "failFast": { "type": "boolean", "default": false, "description": "Detener el plan en la primera suite que falla." },
+        "parallel": { "type": "boolean", "default": true, "description": "Correr las suites de cwd distinto en paralelo." }
+      }
+    }
+  },
+  "definitions": {
+    "selector": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "maxProperties": 1,
+      "properties": {
+        "tag": {
+          "type": "string",
+          "enum": [
+            "graphagents",
+            "backend",
+            "frontend",
+            "compiler",
+            "cert",
+            "arch",
+            "golden",
+            "tools",
+            "integration",
+            "unit",
+            "build"
+          ]
+        },
+        "suite": {
+          "type": "string",
+          "enum": [
+            "graphagents/compiler",
+            "graphagents/cert",
+            "graphagents/tools",
+            "graphagents/arch",
+            "graphagents/graphs",
+            "graphagents/integration",
+            "backend/compiler",
+            "backend/cert",
+            "backend/arch",
+            "backend/lint-imports",
+            "backend/plugins",
+            "frontend/arch",
+            "frontend/types",
+            "frontend/unit",
+            "frontend/build"
+          ]
+        }
+      }
+    }
+  }
+}

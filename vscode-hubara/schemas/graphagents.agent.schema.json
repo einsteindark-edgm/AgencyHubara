@@ -1,0 +1,339 @@
+{
+  "$defs": {
+    "AgentContract": {
+      "description": "El contrato I/O DECLARADO de un agente de catálogo — espejo del de una tool\n(`tool.yaml` inputs/outputs, mismos `FieldSpec`). Es lo que hace a un agente\nconectable con validación: el wiring de un supervisor se chequea contra\n`inputs` (G-CONTRACT) y la compatibilidad agente→agente contra `outputs`.",
+      "properties": {
+        "inputs": {
+          "additionalProperties": {
+            "$ref": "#/$defs/FieldSpec"
+          },
+          "title": "Inputs",
+          "type": "object"
+        },
+        "outputs": {
+          "additionalProperties": {
+            "$ref": "#/$defs/FieldSpec"
+          },
+          "title": "Outputs",
+          "type": "object"
+        }
+      },
+      "title": "AgentContract",
+      "type": "object"
+    },
+    "AgentNode": {
+      "properties": {
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "uses": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Uses"
+        },
+        "archetype": {
+          "anyOf": [
+            {
+              "enum": [
+                "extractor",
+                "analyzer",
+                "reporter",
+                "supervisor"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Archetype"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model"
+        },
+        "instructions": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Instructions"
+        },
+        "capability": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Capability"
+        },
+        "consumes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Consumes",
+          "type": "array"
+        },
+        "certification": {
+          "default": "none",
+          "enum": [
+            "none",
+            "C0",
+            "C1",
+            "C2",
+            "C3"
+          ],
+          "title": "Certification",
+          "type": "string"
+        },
+        "exposes_as_tool": {
+          "default": false,
+          "title": "Exposes As Tool",
+          "type": "boolean"
+        },
+        "publish": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PublishSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "contract": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentContract"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "group": {
+          "anyOf": [
+            {
+              "enum": [
+                "demo",
+                "variant"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Group"
+        },
+        "strategy": {
+          "anyOf": [
+            {
+              "enum": [
+                "handoff",
+                "router",
+                "parallel",
+                "sequential",
+                "swarm",
+                "round_robin",
+                "random",
+                "manual"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Strategy"
+        },
+        "agents": {
+          "items": {
+            "$ref": "#/$defs/AgentNode"
+          },
+          "title": "Agents",
+          "type": "array"
+        },
+        "tools": {
+          "items": {
+            "$ref": "#/$defs/ToolSpec"
+          },
+          "title": "Tools",
+          "type": "array"
+        },
+        "guardrails": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Guardrails",
+          "type": "array"
+        },
+        "inputs": {
+          "additionalProperties": true,
+          "title": "Inputs",
+          "type": "object"
+        }
+      },
+      "title": "AgentNode",
+      "type": "object"
+    },
+    "FieldSpec": {
+      "properties": {
+        "type": {
+          "enum": [
+            "string",
+            "number",
+            "integer",
+            "boolean",
+            "object",
+            "array"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "required": {
+          "default": true,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "FieldSpec",
+      "type": "object"
+    },
+    "PublishSpec": {
+      "description": "Cómo se expone un agente hacia AFUERA (cross-system).",
+      "properties": {
+        "as": {
+          "enum": [
+            "mcp",
+            "http"
+          ],
+          "title": "As",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        }
+      },
+      "required": [
+        "as"
+      ],
+      "title": "PublishSpec",
+      "type": "object"
+    },
+    "ToolSpec": {
+      "description": "Una tool de un agente: inline (`name`) o tomada del catálogo (`uses`).",
+      "properties": {
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "uses": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Uses"
+        },
+        "type": {
+          "default": "worker",
+          "enum": [
+            "worker",
+            "http",
+            "mcp",
+            "api"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "approval_required": {
+          "default": false,
+          "title": "Approval Required",
+          "type": "boolean"
+        },
+        "with": {
+          "additionalProperties": true,
+          "title": "With",
+          "type": "object"
+        }
+      },
+      "title": "ToolSpec",
+      "type": "object"
+    }
+  },
+  "$ref": "#/$defs/AgentNode",
+  "title": "GraphAgents agent/taskgraph manifest"
+}

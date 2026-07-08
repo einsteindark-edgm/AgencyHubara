@@ -1,0 +1,9 @@
+# yaml-language-server: $schema=../schemas/hubaraplan.schema.json
+name: Certificación C2
+description: TCK completo — GraphAgents (agentes/tools) + Hubara backend (plugins).
+include:
+  - tag: cert
+  - suite: graphagents/tools
+options:
+  failFast: false
+  parallel: true
