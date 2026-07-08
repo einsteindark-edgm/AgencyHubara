@@ -1,14 +1,14 @@
 # Levanta TODO el stack de GraphAgents:
 #   postgres     — estado durable de AgentSpan (Conductor)
 #   agentspan    — el runtime durable (server, :6767) — imagen oficial
-#   graphagents  — nuestra app; SIRVE el explorer visual (catálogo + grafo +
-#                  marketplace, estilo n8n) en :8900 como proceso persistente
+#   graphagents  — nuestra app; SIRVE la API del viewer en :8900 (la UI visual
+#                  es Acktos Studio, la extensión de VS Code en vscode-hubara/)
 #
 # Quickstart:
 #   cp .env.example .env        # (opcional) poné tu OPENAI/ANTHROPIC/META keys
-#   docker compose up                      # TODA la suite → el explorer en http://localhost:8900
+#   docker compose up                      # TODA la suite → la API en http://localhost:8900/api/*
 #   docker compose up -d agentspan         # (solo) el runtime real (:6767)
-#   GH_TOKEN=$(gh auth token) docker compose up   # con 'publicar ▸' habilitado (commit+push+PR)
+#   GH_TOKEN=$(gh auth token) docker compose up   # con 'publicar' habilitado (commit+push+PR)
 #   # hola mundo / CLI on-demand (no levantan un server):
 #   docker compose run --rm graphagents uv run python hello_world.py
 #   docker compose run --rm graphagents uv run python -m sdk.cli list-tools
@@ -52,25 +52,27 @@ services:
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
 
-  # La app GraphAgents. En la suite su proceso persistente es el EXPLORER visual
-  # (catálogo + grafo + marketplace, estilo n8n) en :8900 — con MODO EDICIÓN: conectar/
-  # desconectar con contratos, guardar producción y PUBLICAR (commit quirúrgico → push →
-  # PR con gh). El CMD del Dockerfile ya es `python -m viewer.server`; el hola mundo y
-  # la CLI son on-demand (`docker compose run --rm graphagents uv run …`).
-  # (Solo el explorer, sin arrastrar agentspan: `docker compose up --no-deps graphagents`.)
+  # La app GraphAgents. En la suite su proceso persistente es la API del viewer
+  # en :8900 (`viewer/server.py::api_route`) — la MISMA lógica que Acktos Studio
+  # consume por stdio (`viewer/bridge.py`): grafo, cases, run-local, trace,
+  # conectar/desconectar con contratos, guardar producción y PUBLICAR (commit
+  # quirúrgico → push → PR con gh). El CMD del Dockerfile ya es `python -m
+  # viewer.server`; el hola mundo y la CLI son on-demand (`docker compose run
+  # --rm graphagents uv run …`).
+  # (Solo la API, sin arrastrar agentspan: `docker compose up --no-deps graphagents`.)
   #
   # PUBLICAR desde el container necesita:
   #   1. el bind-mount de la RAÍZ del monorepo (abajo) — ahí vive el .git; montar solo
   #      GraphAgents/ deja al publish sin repo. ⚠ Requiere un checkout NORMAL: en un git
   #      worktree el .git es un archivo con path absoluto del host y no resuelve adentro.
   #   2. GH_TOKEN — en local: `GH_TOKEN=$(gh auth token) docker compose up` (o en .env).
-  #      Sin token, el explorer anda igual; el botón publicar degrada con error legible.
+  #      Sin token, la API anda igual; publicar degrada con error legible.
   graphagents:
     build: .
     depends_on:
       - agentspan
     ports:
-      - "${VIEWER_PORT:-8900}:8900"  # el explorer → http://localhost:8900
+      - "${VIEWER_PORT:-8900}:8900"  # la API del viewer → http://localhost:8900/api/*
     environment:
       AGENTSPAN_SERVER_URL: "http://agentspan:6767"
       GRAPHAGENTS_RUNTIME: "${GRAPHAGENTS_RUNTIME:-local}"  # local | agentspan (G1+)
@@ -86,7 +88,7 @@ services:
       GIT_COMMITTER_EMAIL: "${GIT_COMMITTER_EMAIL:-explorer@hubara.local}"
     volumes:
       # la RAÍZ del monorepo (no solo GraphAgents/): el .git que el publish necesita.
-      # Sigue siendo bind-mount de dev: editás viewer/index.html o un manifest y refrescás.
+      # Sigue siendo bind-mount de dev: editás un manifest y el catálogo se refleja.
       - ..:/workspace
     working_dir: /workspace/GraphAgents
 

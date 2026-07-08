@@ -150,26 +150,10 @@ services:
     depends_on:
       - hubara-api
 
-  # ── 6. System Explorer (visualizador tipo n8n) ──────────────────────
-  # Lee /api/system-map/graph del hubara-api y renderiza el sistema con
-  # React Flow. Container nginx multi-stage — build con Node, sirve
-  # estático en :80. Host port 5175 (5173/5174 ya tomados).
-  # Ver `system_explorer/README.md` para detalle.
-  system-explorer:
-    build:
-      context: ../system_explorer
-      dockerfile: Dockerfile
-    container_name: local-system-explorer
-    ports:
-      - "5175:80"
-    depends_on:
-      - hubara-api
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/healthz"]
-      interval: 30s
-      timeout: 3s
-      retries: 3
-      start_period: 5s
+  # (El visualizador web `system_explorer` se eliminó — la visualización del
+  #  sistema vive en Acktos Studio, la extensión de VS Code en `vscode-hubara/`,
+  #  que lee el grafo directo del dominio vía `scripts/system_map_bridge.py`.
+  #  El endpoint /api/system-map/graph del hubara-api sigue vivo.)
 
 # Simulador del EFS de Amazon
 volumes:
