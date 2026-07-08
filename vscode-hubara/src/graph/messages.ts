@@ -1,4 +1,4 @@
-import { GraphPayload, Provider } from "../bridge/endpoints";
+import { GraphNode, GraphPayload, Provider } from "../bridge/endpoints";
 import { Seam } from "./graphOps";
 import { Scope } from "./scope";
 
@@ -73,22 +73,22 @@ export interface ToolCall {
   output: unknown;
 }
 
-/** Webview → extensión. */
+/** El nodo tal como viaja del canvas al panel Ejecución (raw + system). */
+export type SelectedNodePayload = GraphNode & { rawId: string };
+
+/** Webview del CANVAS → extensión. */
 export type InboundMessage =
   | { type: "ready" }
   | { type: "openFile"; path: string }
   | { type: "refresh" }
   | { type: "persistState"; state: PersistedViewState }
-  | { type: "inspectNode"; system: Provider; nodeId: string }
+  /** click en un nodo — el detalle vive en el panel nativo "Ejecución" (F10). */
+  | { type: "nodeSelected"; system: Provider; node: SelectedNodePayload }
   | { type: "stopTrace" }
   | { type: "connectRequest"; source: string; target: string }
-  | { type: "disconnectRequest"; source: string; target: string; kind: string }
-  /** el acc (estado acumulador) tras un nodo — lazy, al abrir la pestaña
-   * input/output del Inspector. `key` la genera la webview y viaja de vuelta
-   * para matchear la respuesta con la pestaña que la pidió. */
-  | { type: "nodeStateRequest"; key: string; executionId: string; taskId: string };
+  | { type: "disconnectRequest"; source: string; target: string; kind: string };
 
-/** Extensión → webview. */
+/** Extensión → webview del CANVAS. */
 export type OutboundMessage =
   | {
       type: "bootstrap";
@@ -100,15 +100,11 @@ export type OutboundMessage =
   | { type: "providerUpdate"; provider: Provider; state: ProviderState }
   | { type: "refreshing" }
   | { type: "jumpScope"; scope: Scope }
-  | { type: "inspectResult"; system: Provider; nodeId: string; files: InspectFile[] }
-  | { type: "inspectError"; system: Provider; nodeId: string; message: string }
   | { type: "trace"; info: TraceInfo }
   | { type: "traceError"; message: string }
   | { type: "traceCleared" }
-  | { type: "nodeStateResult"; key: string; acc: unknown }
-  | { type: "nodeStateError"; key: string; message: string }
-  /** I/O por-tool reconstruido de un run (`/api/flow-trace`) — llega una vez
-   * por ejecución; `reason` explica una reconstrucción vacía (run viejo). */
+  /** I/O por-tool reconstruido de un run (`/api/flow-trace`) — el canvas lo
+   * usa para el ORDEN real de las tools en los badges. */
   | {
       type: "flowTrace";
       executionId: string;
@@ -116,3 +112,30 @@ export type OutboundMessage =
       reconstructed: boolean;
       reason?: string;
     };
+
+/** Webview del panel EJECUCIÓN → extensión. */
+export type ExecInbound =
+  | { type: "ready" }
+  | { type: "openFile"; path: string }
+  /** enfocar un nodo en el canvas (⌂ del Inspector / click en la cascada). */
+  | { type: "focusNode"; system: Provider; nodeId: string }
+  | { type: "inspectNode"; system: Provider; nodeId: string }
+  /** el acc (estado acumulador) tras un nodo — lazy, al abrir entró/salió.
+   * `key` la genera la webview y viaja de vuelta para matchear la respuesta. */
+  | { type: "nodeStateRequest"; key: string; executionId: string; taskId: string };
+
+/** Extensión → webview del panel EJECUCIÓN. */
+export type ExecOutbound =
+  | { type: "execTrace"; info: TraceInfo | null }
+  | {
+      type: "execNodeTraces";
+      executionId: string;
+      nodeTraces: Record<string, ToolCall[]>;
+      reconstructed: boolean;
+      reason?: string;
+    }
+  | { type: "selectNode"; system: Provider; node: SelectedNodePayload }
+  | { type: "nodeStateResult"; key: string; acc: unknown }
+  | { type: "nodeStateError"; key: string; message: string }
+  | { type: "inspectResult"; system: Provider; nodeId: string; files: InspectFile[] }
+  | { type: "inspectError"; system: Provider; nodeId: string; message: string };

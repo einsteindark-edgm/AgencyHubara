@@ -20,7 +20,10 @@ export interface PaletteProps {
  * primero — son los candidatos naturales a "traer al flujo".
  */
 export function Palette({ items }: PaletteProps): React.ReactElement {
-  const [open, setOpen] = useState(true);
+  // Cerrada por default (F10): el canvas usa todo el ancho; ➕ la abre.
+  // Vive DENTRO del canvas a propósito — el drag HTML5 no cruza webviews
+  // (iframes aislados), así que un panel nativo no puede ser drag-source.
+  const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState("");
 
   const shown = useMemo(() => {

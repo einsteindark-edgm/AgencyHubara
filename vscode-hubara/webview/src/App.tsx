@@ -1,6 +1,6 @@
 import { ColorMode, Edge } from "@xyflow/react";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { GraphNode, Provider } from "../../src/bridge/endpoints";
+import { Provider } from "../../src/bridge/endpoints";
 import {
   collapseCluster,
   egoGraph,
@@ -12,12 +12,12 @@ import {
   reachableGraph,
   Seam,
 } from "../../src/graph/graphOps";
-import { InspectFile, OutboundMessage, PersistedViewState, ProviderState, TraceInfo } from "../../src/graph/messages";
+import { OutboundMessage, PersistedViewState, ProviderState, TraceInfo } from "../../src/graph/messages";
 import { DEFAULT_FOCUS_DEPTH, focusOf, scopeKey, Scope, WORKSPACE_SCOPE } from "../../src/graph/scope";
 import { Canvas, PaletteDragItem } from "./canvas/Canvas";
 import { FlowNodeType } from "./canvas/FlowNode";
 import { computeLayout, Positioned } from "./layout/computeLayout";
-import { FlowTraceState, Inspector, IoEntry, SelectedNode } from "./panels/Inspector";
+import { FlowTraceState } from "./panels/Inspector";
 import { Palette } from "./panels/Palette";
 import { Toolbar } from "./panels/Toolbar";
 import { send } from "./vscodeApi";
@@ -90,17 +90,12 @@ export function App(): React.ReactElement {
   const [positionsByScopeKey, setPositionsByScopeKey] = useState<Record<string, Record<string, Positioned>>>({});
   const [collapsedClusters, setCollapsedClusters] = useState<Set<Provider>>(new Set());
   const [loading, setLoading] = useState(true);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [inspectFiles, setInspectFiles] = useState<Record<string, InspectFile[]>>({});
-  const [inspectLoading, setInspectLoading] = useState<string | null>(null);
-  const [inspectError, setInspectError] = useState<Record<string, string>>({});
   const [layoutPositions, setLayoutPositions] = useState<Map<string, Positioned>>(new Map());
   const [trace, setTrace] = useState<TraceInfo | null>(null);
   const [traceError, setTraceError] = useState<string | null>(null);
+  // flowTrace alimenta el ORDEN real de las tools en los badges; el detalle
+  // entró/salió vive en el panel nativo "Ejecución" (F10), no acá.
   const [flowTrace, setFlowTrace] = useState<FlowTraceState | null>(null);
-  /** cache del acc por nodo (key = `${executionId}:${taskId}`) — lazy. */
-  const [ioStates, setIoStates] = useState<Record<string, IoEntry>>({});
-  const requestedIo = useRef(new Set<string>());
   const lastTraceEid = useRef<string | null>(null);
   const [selectedEdge, setSelectedEdge] = useState<Edge | null>(null);
   const [hint, setHint] = useState<string | null>(null);
@@ -144,19 +139,9 @@ export function App(): React.ReactElement {
         case "jumpScope":
           setScopeState(msg.scope);
           return;
-        case "inspectResult":
-          setInspectFiles((prev) => ({ ...prev, [inspectKey(msg.system, msg.nodeId)]: msg.files }));
-          setInspectLoading((cur) => (cur === inspectKey(msg.system, msg.nodeId) ? null : cur));
-          return;
-        case "inspectError":
-          setInspectError((prev) => ({ ...prev, [inspectKey(msg.system, msg.nodeId)]: msg.message }));
-          setInspectLoading((cur) => (cur === inspectKey(msg.system, msg.nodeId) ? null : cur));
-          return;
         case "trace":
-          // Cambió la ejecución mirada → el detalle viejo (acc/flow-trace) no aplica.
+          // Cambió la ejecución mirada → el flow-trace viejo no aplica.
           if (lastTraceEid.current && lastTraceEid.current !== msg.info.executionId) {
-            setIoStates({});
-            requestedIo.current.clear();
             setFlowTrace(null);
           }
           lastTraceEid.current = msg.info.executionId;
@@ -173,8 +158,6 @@ export function App(): React.ReactElement {
           setTrace(null);
           setTraceError(null);
           setFlowTrace(null);
-          setIoStates({});
-          requestedIo.current.clear();
           return;
         case "flowTrace":
           setFlowTrace({
@@ -183,12 +166,6 @@ export function App(): React.ReactElement {
             reconstructed: msg.reconstructed,
             reason: msg.reason,
           });
-          return;
-        case "nodeStateResult":
-          setIoStates((prev) => ({ ...prev, [msg.key]: { loading: false, value: msg.acc } }));
-          return;
-        case "nodeStateError":
-          setIoStates((prev) => ({ ...prev, [msg.key]: { loading: false, error: msg.message } }));
           return;
       }
     };
@@ -362,19 +339,9 @@ export function App(): React.ReactElement {
     [sKey],
   );
 
-  /** Pide el acc de un nodo a la extensión (lazy, dedupe por key). */
-  const requestNodeState = useCallback((key: string, executionId: string, taskId: string) => {
-    if (requestedIo.current.has(key)) {
-      return;
-    }
-    requestedIo.current.add(key);
-    setIoStates((prev) => ({ ...prev, [key]: { loading: true } }));
-    send({ type: "nodeStateRequest", key, executionId, taskId });
-  }, []);
 
   const setScope = useCallback((next: Scope) => {
     setScopeState(next);
-    setSelectedId(null);
   }, []);
 
   const handleNodeClick = useCallback(
@@ -382,12 +349,11 @@ export function App(): React.ReactElement {
       if (id.startsWith("cluster:")) {
         return; // el click en un cluster colapsado no selecciona, solo lo doble-click expande
       }
-      setSelectedId(id);
       const found = graph.nodes.find((n) => n.nsId === id);
-      if (found && found.system === "graphagents") {
-        const key = inspectKey(found.system, found.rawId);
-        setInspectLoading(key);
-        send({ type: "inspectNode", system: found.system, nodeId: found.rawId });
+      if (found) {
+        // el detalle vive en el panel nativo "Ejecución" (F10) — se le manda
+        // el nodo completo para que no dependa del payload del grafo.
+        send({ type: "nodeSelected", system: found.system, node: found });
       }
     },
     [graph.nodes],
@@ -478,11 +444,6 @@ export function App(): React.ReactElement {
     [graph.nodes, showHint],
   );
 
-  const selectedNode: SelectedNode | null = useMemo(() => {
-    const found = graph.nodes.find((n) => n.nsId === selectedId);
-    return found ? { system: found.system, raw: found as unknown as GraphNode } : null;
-  }, [graph.nodes, selectedId]);
-
   // El tercer crumb es el CENTRO del focus / la RAÍZ del workflow — no el
   // último nodo clickeado.
   const focusCenterLabel = useMemo(() => {
@@ -514,8 +475,6 @@ export function App(): React.ReactElement {
       }));
   }, [editable, graphagents.payload, graph.nodes]);
 
-  const selectedInspectKey = selectedNode ? inspectKey(selectedNode.system, (selectedNode.raw as NamespacedNode).rawId) : null;
-
   const globalError = graphagents.error && systemmap.error ? `${graphagents.error} · ${systemmap.error}` : null;
 
   return (
@@ -542,7 +501,7 @@ export function App(): React.ReactElement {
           <span className="trace-dot" />
           Trace {trace.executionId.slice(0, 8)} — {trace.workflowStatus}
           {trace.strategy && <span className="trace-meta"> · {trace.strategy}</span>}
-          <span className="trace-meta"> · tocá un nodo para ver su entró/salió</span>
+          <span className="trace-meta"> · el detalle vive en el panel Ejecución (abajo)</span>
           <button type="button" className="trace-stop" onClick={() => send({ type: "stopTrace" })}>
             ✕ cerrar trace
           </button>
@@ -581,27 +540,7 @@ export function App(): React.ReactElement {
             onPaletteDrop={handlePaletteDrop}
           />
         </div>
-        <Inspector
-          node={selectedNode}
-          files={selectedInspectKey ? (inspectFiles[selectedInspectKey] ?? null) : null}
-          filesLoading={inspectLoading !== null && inspectLoading === selectedInspectKey}
-          filesError={selectedInspectKey ? (inspectError[selectedInspectKey] ?? null) : null}
-          trace={trace}
-          flowTrace={flowTrace}
-          ioStates={ioStates}
-          onRequestNodeState={requestNodeState}
-          onOpenFile={(path) => send({ type: "openFile", path })}
-          onFocus={() => {
-            if (selectedNode) {
-              setScope(focusOf(selectedNode.system, (selectedNode.raw as NamespacedNode).rawId, DEFAULT_FOCUS_DEPTH));
-            }
-          }}
-        />
       </div>
     </div>
   );
-}
-
-function inspectKey(system: Provider, nodeId: string): string {
-  return `${system}:${nodeId}`;
 }
