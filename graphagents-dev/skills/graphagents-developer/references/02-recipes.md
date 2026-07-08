@@ -4,15 +4,21 @@ Toda receta se ejecuta **test-first** (`00-tdd-law.md`): el primer archivo que
 tocás es el test que falla por la razón correcta. Acá va QUÉ archivos tocar; el
 bucle rojo→verde→refactor dice en qué orden.
 
-## §0 · Empezá acá: levantar el stack + el explorer
+## §0 · Empezá acá: levantar el stack
 
 ```bash
 cd GraphAgents
-docker compose up --build               # toda la suite; la app SIRVE el explorer en :8900
-#   solo el explorer:  docker compose up --build --no-deps graphagents
-#   sin Docker:        python3 -m viewer.server      (→ http://localhost:8900)
+docker compose up --build               # toda la suite; la app SIRVE la API del viewer en :8900
+#   solo la API:       docker compose up --build --no-deps graphagents
+#   sin Docker:        python3 -m viewer.server      (→ http://localhost:8900/api/*)
 #   el hola mundo:     docker compose run --rm graphagents uv run python hello_world.py
 ```
+
+La UI visual es **Acktos Studio** (extensión de VS Code, `vscode-hubara/` en la
+raíz del monorepo — su README lista los backends). El viejo explorer web
+(`viewer/index.html`) se eliminó; `viewer/server.py::api_route` es el backend
+que ambos transportes comparten (HTTP :8900 y el puente stdio `viewer/bridge.py`
+que spawnea la extensión).
 
 La **plantilla mínima** (patrón tool→agente→runtime, ya verde): copiá
 `tools/hello/` para una tool nueva y `manifests/greeter.agent.yaml` +
@@ -207,21 +213,22 @@ Regla: cada costura debe ser VERIFICABLE en código vivo, no aspiracional —
 el label nombra el archivo que la implementa. Una costura cuyo from/to no
 resuelve se reporta como "rota" en el canvas (no rompe nada, pero te delata).
 
-## 2.8 El explorer visual (catálogo + grafo + marketplace, estilo n8n)
+## 2.8 La API del viewer (el backend de Acktos Studio)
 
-El explorer es una **proyección read-only** del catálogo (NO un editor: los
-manifests siguen siendo la verdad — git + cert + TDD). Una sola fuente, tres
-frontends, como el TestKit:
+La UI visual es **Acktos Studio** (extensión de VS Code, `vscode-hubara/`); acá
+vive su backend. El grafo es una **proyección read-only** del catálogo (NO un
+editor: los manifests siguen siendo la verdad — git + cert + TDD). Una sola
+fuente, tres consumidores, como el TestKit:
 
 ```
 sdk/graph.py  (build_graph → {nodes,edges} · to_mermaid)   ← ÚNICA fuente
    ├── sdk/cli.py  graph --format mermaid|json             (terminal / GitHub)
-   ├── viewer/server.py  GET /api/graph                    (backend vivo, stdlib http.server)
-   └── viewer/index.html  Cytoscape vía CDN                (catálogo + canvas + inspector)
+   ├── viewer/server.py  api_route()                       (el core ruteable, stdlib http.server en :8900)
+   └── viewer/bridge.py  stdio JSON-lines                  (el MISMO api_route — lo spawnea Acktos Studio)
 ```
 
-- **Levantar:** `python3 -m viewer.server` → http://localhost:8900 (L-3: python3, no `uv run`).
-- **Verificar HTTP local:** `urllib`/el browser del preview, NUNCA `curl` (L-4 lo trunca).
+- **Levantar standalone:** `python3 -m viewer.server` → http://localhost:8900/api/* (L-3: python3, no `uv run`).
+- **Verificar HTTP local:** `urllib`, NUNCA `curl` (L-4 lo trunca).
 
 ### Agregar un dato al grafo (un atributo de nodo / un tipo de arista)
 
@@ -229,8 +236,8 @@ sdk/graph.py  (build_graph → {nodes,edges} · to_mermaid)   ← ÚNICA fuente
    nuevo sobre el catálogo real (ej. `_node(g,"agent:x")["nuevo"] == ...`). Velo fallar.
 2. `sdk/graph.py` — agregalo en `_tool_node`/`_agent_node`/`_port_node` o en `_edges_of`.
    **Regla de oro:** el dato sale del modelo del manifest (`manifest_model`), no se inventa.
-3. Verde. La UI lo lee solo (es genérica sobre `n.*`); si querés mostrarlo, tocá
-   `renderInspector`/`catalogCard` en `viewer/index.html` (zero-build, recargás y listo).
+3. Verde. Acktos Studio lo recibe solo por el bridge; si hay que RENDERIZARLO,
+   el canvas vive en `vscode-hubara/webview/src/` (FlowNode/Inspector).
 
 ### Agregar un endpoint al backend
 
@@ -239,12 +246,12 @@ sdk/graph.py  (build_graph → {nodes,edges} · to_mermaid)   ← ÚNICA fuente
 2. `viewer/server.py` — sumá la rama en `api_route` (core ruteable, aislado del
    `BaseHTTPRequestHandler`). Si corre un agente, reusá `run_agent` (rechaza los que
    `consumes:` un port — necesitan un Fixture, no la UI).
-3. Verde. El handler es glue fino: no metas lógica ahí.
+3. Verde. Ambos transportes (HTTP y el bridge stdio) lo sirven sin tocar nada más.
 
 ### Docker
 
-`docker compose up` → toda la suite con el explorer en :8900 (lo sirve el servicio
-`graphagents` como su proceso persistente; el CMD de la imagen es `python -m
-viewer.server`). Solo el explorer: `docker compose up --no-deps graphagents`. El
-hola mundo/CLI son on-demand (`docker compose run --rm graphagents uv run …`).
-bind-mount → editás `index.html`/un manifest y refrescás.
+`docker compose up` → toda la suite con la API del viewer en :8900 (la sirve el
+servicio `graphagents` como su proceso persistente; el CMD de la imagen es
+`python -m viewer.server`). Solo la API: `docker compose up --no-deps graphagents`.
+El hola mundo/CLI son on-demand (`docker compose run --rm graphagents uv run …`).
+bind-mount → editás un manifest y el catálogo se refleja.

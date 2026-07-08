@@ -8,9 +8,9 @@
  * consumed by `pages/Dashboard.tsx`. Every entry in that array carries a
  * `Page: lazy(() => import("@plugins/<id>/frontend"))`. If a plugin without a
  * `frontend:` block (backend-only — e.g. `system_map` exposes only
- * `/api/system-map/graph` and its UI lives in a separate Vite container at
- * `system_explorer/`) leaks into the registry, the Vite import-analysis pass
- * fails with a cryptic:
+ * `/api/system-map/graph` and its UI is Acktos Studio, the VS Code
+ * extension in `vscode-hubara/`) leaks into the registry, the Vite
+ * import-analysis pass fails with a cryptic:
  *
  *   `Failed to resolve import "@plugins/<id>/frontend"`
  *

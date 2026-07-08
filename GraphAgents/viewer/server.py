@@ -1,7 +1,10 @@
-"""Backend VIVO del explorer — **stdlib `http.server`, cero deps nuevas**.
+"""La API del viewer — **stdlib `http.server`, cero deps nuevas**.
 
-Sirve el visor estático (`index.html`) y una API JSON mínima que lee el registry
-en vivo (cada request re-proyecta el sistema; editás un manifest y refrescás):
+El consumidor es **Acktos Studio** (la extensión de VS Code en `vscode-hubara/`),
+que habla con `api_route()` vía el puente stdio `viewer/bridge.py`; este server
+HTTP expone la MISMA función para uso standalone/Docker. (El viejo visor web
+`index.html` se eliminó — la extensión lo reemplaza.) La API lee el registry
+en vivo — cada request re-proyecta el sistema; editás un manifest y se refleja:
 
     GET  /api/graph          -> el grafo del sistema {nodes, edges} (sdk.graph)
     GET  /api/health         -> {ok: true}
@@ -25,7 +28,7 @@ en vivo (cada request re-proyecta el sistema; editás un manifest y refrescás):
                                (manifests/ + production.yaml) + push + PR (gh); exige save al día
                                body: {"push": bool?, "pr": bool?} (default true)
 
-Por qué stdlib y no FastAPI: el explorer es read-mostly + un endpoint de run; con
+Por qué stdlib y no FastAPI: la API es read-mostly + un endpoint de run; con
 la stdlib corre en la imagen slim sin sincronizar deps pesadas, igual que el
 `LocalRuntime`. Si crece (auth, websockets) se hace el swap — el core ruteable
 (`api_route`) ya está aislado del transporte.
@@ -41,7 +44,6 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 GA_ROOT = Path(__file__).resolve().parent.parent
-VIEWER = Path(__file__).resolve().parent
 
 # que `import sdk` resuelva tanto con `-m viewer.server` como con `python viewer/server.py`
 if str(GA_ROOT) not in sys.path:
@@ -511,9 +513,6 @@ def api_route(method: str, path: str, params: dict, body: dict | None, ga_root: 
     return 404, {"error": f"no existe la ruta {method} {path}"}
 
 
-_STATIC = {"/": "index.html", "/index.html": "index.html"}
-
-
 class Handler(BaseHTTPRequestHandler):
     server_version = "GraphAgentsExplorer/0.1"
 
@@ -532,12 +531,9 @@ class Handler(BaseHTTPRequestHandler):
         if u.path.startswith("/api/"):
             status, payload = api_route("GET", u.path, parse_qs(u.query), None)
             return self._send(status, payload)
-        fname = _STATIC.get(u.path)
-        if fname:
-            f = VIEWER / fname
-            if f.exists():
-                return self._send(200, f.read_bytes(), "text/html; charset=utf-8")
-        self._send(404, {"error": f"no existe {u.path}"})
+        # sin visor estático: la UI es Acktos Studio (vscode-hubara/) — este
+        # server expone SOLO la API JSON.
+        self._send(404, {"error": f"no existe {u.path} — la UI es Acktos Studio; la API vive bajo /api/*"})
 
     def do_POST(self) -> None:
         u = urlparse(self.path)

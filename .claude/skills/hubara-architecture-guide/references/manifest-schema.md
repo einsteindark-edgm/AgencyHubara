@@ -100,8 +100,8 @@ switch para decidir si el plugin entra en `src/app/plugin-registry.generated.ts`
 
 1. **Sin bloque `frontend:`** → plugin backend-only. El sync emite
    `[plugins-sync] skip <id>: backend-only` y NO lo agrega al registry.
-   Caso canónico: `system_map` expone `/api/system-map/graph` y su UI vive
-   en `system_explorer/` (container Vite separado).
+   Caso canónico: `system_map` expone `/api/system-map/graph` y su UI es
+   Acktos Studio (la extensión de VS Code en `vscode-hubara/`).
 
 2. **Con `frontend:` + entry inexistente en disco** → el sync emite
    `[plugins-sync] skip <id>: frontend.entry "..." does not exist` y aborta
