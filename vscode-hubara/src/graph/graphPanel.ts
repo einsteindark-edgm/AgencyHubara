@@ -17,7 +17,7 @@ import {
 import { loadSeams } from "./seams";
 import { focusOf, Scope } from "./scope";
 
-const VIEW_STATE_KEY = "hubara.studio.viewState";
+const VIEW_STATE_KEY = "acktos.studio.viewState";
 const TRACE_POLL_MS = 2000;
 const TERMINAL_STATUSES = ["COMPLETED", "FAILED", "TERMINATED", "TIMED_OUT"];
 
@@ -32,7 +32,7 @@ const TERMINAL_STATUSES = ["COMPLETED", "FAILED", "TERMINATED", "TIMED_OUT"];
  * webview solo refleja lo que llega y emite `persistState` en cada cambio.
  */
 export class GraphPanel {
-  public static readonly viewType = "hubara.graphPanel";
+  public static readonly viewType = "acktos.graphPanel";
   private static current?: GraphPanel;
 
   private readonly panel: vscode.WebviewPanel;
@@ -47,7 +47,7 @@ export class GraphPanel {
       }
       return;
     }
-    const panel = vscode.window.createWebviewPanel(GraphPanel.viewType, "Hubara Studio", column, {
+    const panel = vscode.window.createWebviewPanel(GraphPanel.viewType, "Acktos Studio", column, {
       enableScripts: true,
       retainContextWhenHidden: true,
       localResourceRoots: [vscode.Uri.joinPath(ctx.extensionUri, "dist")],
@@ -55,7 +55,7 @@ export class GraphPanel {
     GraphPanel.current = new GraphPanel(panel, ctx, bridges, jumpTo);
   }
 
-  /** Fuerza un refresh del panel abierto (comando "Hubara: Refresh Graphs"). No-op si no hay panel. */
+  /** Fuerza un refresh del panel abierto (comando "Acktos: Refresh Graphs"). No-op si no hay panel. */
   static refreshActive(): void {
     void GraphPanel.current?.refresh();
   }
@@ -72,7 +72,7 @@ export class GraphPanel {
 
   private traceTimer?: NodeJS.Timeout;
   private traceExecutionId?: string;
-  private readonly traceDiagnostics = vscode.languages.createDiagnosticCollection("hubaraStudioTrace");
+  private readonly traceDiagnostics = vscode.languages.createDiagnosticCollection("acktosStudioTrace");
   /** clave del último set de steps failed anotado — si no cambió entre ticks
    * del poll, no se re-consulta /api/inspect ni se reescribe la colección. */
   private lastFailedKey = "";
@@ -234,7 +234,7 @@ export class GraphPanel {
           `agent:${step.agent} falló en la ejecución en curso (task ${step.runtime?.task_id ?? "?"}, ${step.runtime?.retries ?? 0} retries)`,
           vscode.DiagnosticSeverity.Error,
         );
-        diag.source = "Hubara Studio (trace)";
+        diag.source = "Acktos Studio (trace)";
         this.traceDiagnostics.set(vscode.Uri.file(abspath), [diag]);
       } catch {
         // sin inspect no hay dónde anclar el diagnostic — el overlay del canvas
@@ -356,7 +356,7 @@ export class GraphPanel {
   <meta http-equiv="Content-Security-Policy" content="${csp}" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="stylesheet" href="${styleUri}" />
-  <title>Hubara Studio</title>
+  <title>Acktos Studio</title>
 </head>
 <body>
   <div id="root"></div>

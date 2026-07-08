@@ -42,7 +42,7 @@ export interface CheckSummary {
  * Test Explorer.
  */
 export class ManifestDiagnostics implements vscode.Disposable {
-  private readonly collection = vscode.languages.createDiagnosticCollection("hubaraStudio");
+  private readonly collection = vscode.languages.createDiagnosticCollection("acktosStudio");
   private resolveCommand: ReturnType<typeof makeSuiteResolver>;
   /** Un timer POR LADO: un "Save All" que toca manifests de ambos lados no
    * debe cancelar el check del otro. */
@@ -130,7 +130,7 @@ export class ManifestDiagnostics implements vscode.Disposable {
         message,
         d.severity === "error" ? vscode.DiagnosticSeverity.Error : vscode.DiagnosticSeverity.Warning,
       );
-      diag.source = "Hubara Studio";
+      diag.source = "Acktos Studio";
       diag.code = d.code;
       const list = byFile.get(fsPath) ?? [];
       list.push(diag);

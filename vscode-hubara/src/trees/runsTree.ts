@@ -96,7 +96,7 @@ export class RunsTreeProvider implements vscode.TreeDataProvider<RunNode>, vscod
     item.description = run.status;
     item.iconPath = new vscode.ThemeIcon(statusIcon(run.status));
     item.command = {
-      command: "hubara.viewTrace",
+      command: "acktos.viewTrace",
       title: "Ver trace",
       arguments: [run.execution_id, run.agent],
     };

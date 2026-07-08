@@ -44,9 +44,9 @@ const GROUPS: Array<Omit<GroupNode, "kind">> = [
   { id: "plugins", label: "Plugins", system: "systemmap", nodeKind: "plugin", icon: "package" },
 ];
 
-/** TreeView "Hubara Studio" — Plugins / Agentes / Tools / Ports / Cases del
+/** TreeView "Acktos Studio" — Plugins / Agentes / Tools / Ports / Cases del
  * catálogo. Click en una hoja enfoca el canvas en ese nodo (comando
- * `hubara.focusNode`, registrado en extension.ts). */
+ * `acktos.focusNode`, registrado en extension.ts). */
 export class CatalogTreeProvider implements vscode.TreeDataProvider<TreeNode> {
   private readonly _onDidChangeTreeData = new vscode.EventEmitter<TreeNode | undefined>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
@@ -76,21 +76,21 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<TreeNode> {
       const item = new vscode.TreeItem(element.title, vscode.TreeItemCollapsibleState.None);
       item.description = element.target;
       item.iconPath = new vscode.ThemeIcon("play-circle");
-      item.contextValue = "hubaraCase"; // habilita "▶ Replay"/"▶ Run durable" (package.json view/item/context)
-      item.command = { command: "hubara.replayCase", title: "Replay", arguments: [element.caseId, element.title] };
+      item.contextValue = "acktosCase"; // habilita "▶ Replay"/"▶ Run durable" (package.json view/item/context)
+      item.command = { command: "acktos.replayCase", title: "Replay", arguments: [element.caseId, element.title] };
       return item;
     }
     const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.None);
     item.description = element.description;
     item.command = {
-      command: "hubara.focusNode",
+      command: "acktos.focusNode",
       title: "Ver en grafo",
       arguments: [element.system, element.nodeId, element.label],
     };
     // "+ Conectar desde…" (§F5, marketplace-por-picker) solo tiene sentido
     // para agent:/tool: de GraphAgents — plugins/ports no son destino de `uses`/`agent`.
     if (element.system === "graphagents" && (element.nodeId.startsWith("agent:") || element.nodeId.startsWith("tool:"))) {
-      item.contextValue = "hubaraConnectable";
+      item.contextValue = "acktosConnectable";
     }
     return item;
   }

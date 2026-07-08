@@ -14,4 +14,4 @@ Test Explorer.
 Agregar un plan propio es un YAML nuevo en `test-plans/` con `include`/
 `exclude` por tag o por id exacto de suite.
 
-[Elegir y correr un plan](command:hubara.selectPlan)
+[Elegir y correr un plan](command:acktos.selectPlan)

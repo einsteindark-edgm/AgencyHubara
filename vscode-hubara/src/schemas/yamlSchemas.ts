@@ -35,7 +35,7 @@ const ASSOCIATIONS: Association[] = [
  * contributor — SIN tocar `yaml.schemas` en settings.json ni los manifests
  * ajenos con comentarios `# yaml-language-server:`. Degrada limpio: si la
  * extensión YAML no está instalada, simplemente no hay validación inline
- * (el resto de Hubara Studio funciona igual).
+ * (el resto de Acktos Studio funciona igual).
  */
 export async function registerYamlSchemas(ctx: vscode.ExtensionContext, out: vscode.OutputChannel): Promise<void> {
   const yamlExt = vscode.extensions.getExtension<YamlExtensionApi>("redhat.vscode-yaml");

@@ -1,4 +1,4 @@
-# Hubara Studio — extensión de VS Code
+# Acktos Studio — extensión de VS Code
 
 Convierte VS Code en la central de desarrollo de AgencyHubara + GraphAgents:
 grafos de arquitectura, certificaciones (TCK C0–C3) como tests nativos,
@@ -43,7 +43,7 @@ en el canvas (solo GraphAgents, scope system/focus) + picker "+ Conectar
 desde…" en el CatalogTree — misma secuencia validate→confirm→mutate en
 `editOps.ts`, gate + rollback en `sdk/manifest_edit.py`, confirmación
 SIEMPRE por diálogo nativo (los webviews de VS Code no soportan
-`window.confirm`). `hubara.saveProduction`/`publishProduction` + status bar
+`window.confirm`). `acktos.saveProduction`/`publishProduction` + status bar
 `dirty`/`saved` (`/api/production-status`); publish pide confirmación
 explícita (commit+push+PR).
 
@@ -77,9 +77,9 @@ npm install
 npm run build          # o: npm run watch
 ```
 
-Luego F5 en VS Code (config "Run Hubara Studio (Extension)") — abre un
+Luego F5 en VS Code (config "Run Acktos Studio (Extension)") — abre un
 Extension Development Host con el monorepo como workspace. Corré el comando
-**Hubara: Open Graph** desde la paleta.
+**Acktos: Open Graph** desde la paleta.
 
 ### Requisitos del runtime
 
@@ -87,20 +87,20 @@ Extension Development Host con el monorepo como workspace. Corré el comando
 - `uv` disponible para el backend Hubara (`uv run python`).
 - Extensión `redhat.vscode-yaml` instalada (opcional — sin ella, los
   manifests siguen funcionando, solo sin autocomplete/validación inline).
-- Ambos configurables en Settings → Hubara Studio si tu setup difiere.
+- Ambos configurables en Settings → Acktos Studio si tu setup difiere.
 
 ### Config
 
 | Setting | Default | Qué es |
 |---|---|---|
-| `hubara.graphagents.python` | `python3` | Python del puente GraphAgents |
-| `hubara.graphagents.cwd` | `${workspaceFolder}/GraphAgents` | raíz de GraphAgents |
-| `hubara.backend.command` | `["uv","run","python"]` | comando Python del backend |
-| `hubara.backend.cwd` | `${workspaceFolder}/hubara_agency` | raíz del backend |
-| `hubara.backend.env` | `{MEDUSA_BASE_URL,MEDUSA_ADMIN_TOKEN}` dummy | env que necesita `pytest -m architecture` a nivel de import |
-| `hubara.frontend.cwd` | `${workspaceFolder}/frontend_dashboard` | raíz del dashboard |
-| `hubara.frontend.npm` / `.npx` | `npm` / `npx` | ejecutables del lado frontend |
-| `hubara.seamsPath` | `""` | override de `seams.yaml`; vacío = `<repoRoot>/seams.yaml` si existe, o el bundled |
+| `acktos.graphagents.python` | `python3` | Python del puente GraphAgents |
+| `acktos.graphagents.cwd` | `${workspaceFolder}/GraphAgents` | raíz de GraphAgents |
+| `acktos.backend.command` | `["uv","run","python"]` | comando Python del backend |
+| `acktos.backend.cwd` | `${workspaceFolder}/hubara_agency` | raíz del backend |
+| `acktos.backend.env` | `{MEDUSA_BASE_URL,MEDUSA_ADMIN_TOKEN}` dummy | env que necesita `pytest -m architecture` a nivel de import |
+| `acktos.frontend.cwd` | `${workspaceFolder}/frontend_dashboard` | raíz del dashboard |
+| `acktos.frontend.npm` / `.npx` | `npm` / `npx` | ejecutables del lado frontend |
+| `acktos.seamsPath` | `""` | override de `seams.yaml`; vacío = `<repoRoot>/seams.yaml` si existe, o el bundled |
 
 Todas las settings se leen desde un único módulo (`src/config.ts`) — puentes,
 Test Explorer y diagnostics no pueden driftear entre sí.
@@ -129,7 +129,7 @@ profiles del Test Explorer. Agregar un plan propio = un YAML nuevo en
 ## Empaquetar (VSIX)
 
 ```bash
-npm run vsix   # vsce package --no-dependencies → hubara-studio-0.0.1.vsix
+npm run vsix   # vsce package --no-dependencies → acktos-studio-0.0.1.vsix
 ```
 
 `--no-dependencies` es correcto acá: esbuild ya bundlea TODO lo runtime
@@ -137,7 +137,7 @@ npm run vsix   # vsce package --no-dependencies → hubara-studio-0.0.1.vsix
 `node_modules` en el paquete. El VSIX incluye `dist/`, `schemas/`,
 `test-plans/`, `seams.yaml`, `walkthrough/`, `package.json`, `readme.md` —
 nada de `src/`/`webview/` fuente ni `scripts/` (dev-only). Instalar:
-`code --install-extension hubara-studio-0.0.1.vsix` (o "Install from
+`code --install-extension acktos-studio-0.0.1.vsix` (o "Install from
 VSIX…" en la UI de Extensions).
 
 ## Export
