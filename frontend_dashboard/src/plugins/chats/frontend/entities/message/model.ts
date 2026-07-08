@@ -9,7 +9,9 @@ export type MessageUiType =
   | "human_message"
   | "system_event"
   | "tool_execution_result"
-  | "agent_tool_call";
+  | "agent_tool_call"
+  /** Envío no-textual del bot (catálogo, flow, botones…) — nota de sistema. */
+  | "ui_component_sent";
 
 /** "human" = operador humano via dashboard handoff (no es el bot ni el cliente). */
 export type MessageSender = "user" | "agent" | "human";

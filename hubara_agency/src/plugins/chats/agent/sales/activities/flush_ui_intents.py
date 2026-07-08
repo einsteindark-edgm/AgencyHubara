@@ -29,6 +29,7 @@ import asyncio
 import json
 import os
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 from temporalio import activity
@@ -184,6 +185,15 @@ async def flush_pending_ui_intents_activity(session_id: str) -> int:
         intents_pending.pop(0)
         _safe_write_metadata(metadata_file, data)
         sent_count += 1
+
+        # Marker al histórico del dashboard (post-pop, post-write —
+        # best-effort: si crashea, el intent NO se reenvía y el flush sigue).
+        try:
+            history_event = _build_history_event(kind, params)
+            if history_event is not None:
+                _append_history_event(session_id, history_event)
+        except Exception:  # noqa: BLE001 - observability nunca bloquea
+            pass
 
         # Analytics outbound (post-pop, post-write — si esto crashea, el
         # intent NO se reenvía).
@@ -640,42 +650,7 @@ async def _dispatch_intent(
         )
 
     if kind == "variant_picker":
-        # Aromas/colores/tamaños como **texto plano con emojis curados**.
-        # Antes (sesión adc6400c) usábamos `interactive.list` — visualmente
-        # se sentía robótico y obligaba al cliente a tap-tap para ver más
-        # de 10 opciones. Ahora render de texto: el cliente escribe la
-        # opción ("lavanda") y seguimos la conversación naturalmente.
-        # El emoji por opción YA viene curado dentro de row.title desde
-        # `present_variant_picker` (closed-list, no inventado por LLM).
-        sections_payload = params.get("sections") or []
-        if not sections_payload:
-            return None
-
-        intro = (params.get("intro_text") or "Estas son las opciones:").strip()
-        text_lines: list[str] = [intro, ""]
-        for sec in sections_payload:
-            sec_title = (sec.get("title") or "").strip()
-            rows = sec.get("rows") or []
-            if not rows:
-                continue
-            if sec_title and sec_title != "Opciones":
-                text_lines.append(f"*{sec_title}*")
-            for r in rows:
-                row_title = (r.get("title") or "").strip()
-                if row_title:
-                    text_lines.append(row_title)
-            text_lines.append("")  # separador entre sections
-
-        # Pie pidiendo respuesta libre. Sin botones — esperamos texto.
-        variant_type = params.get("variant_type") or ""
-        tail = {
-            "scent": "Dime cuál te gusta y seguimos 🤍",
-            "color": "Cuéntame qué color prefieres y seguimos 🤍",
-            "size": "Dime qué tamaño quieres y seguimos 🤍",
-        }.get(variant_type, "Dime cuál prefieres y seguimos 🤍")
-        text_lines.append(tail)
-
-        text = "\n".join(line for line in text_lines if line is not None).strip()
+        text = _render_variant_picker_text(params)
         if not text:
             return None
         return await wa_client.send_text(
@@ -686,6 +661,159 @@ async def _dispatch_intent(
 
     # Unknown kind — sin dispatch
     return None
+
+
+def _render_variant_picker_text(params: dict[str, Any]) -> str | None:
+    """Aromas/colores/tamaños como **texto plano con emojis curados**.
+
+    Antes (sesión adc6400c) usábamos `interactive.list` — visualmente
+    se sentía robótico y obligaba al cliente a tap-tap para ver más
+    de 10 opciones. Ahora render de texto: el cliente escribe la
+    opción ("lavanda") y seguimos la conversación naturalmente.
+    El emoji por opción YA viene curado dentro de row.title desde
+    `present_variant_picker` (closed-list, no inventado por LLM).
+
+    Compartido entre el dispatch (lo que se envía al cliente) y el marker
+    del session_history (lo que ve el operador) — mismo texto por diseño.
+    """
+    sections_payload = params.get("sections") or []
+    if not sections_payload:
+        return None
+
+    intro = (params.get("intro_text") or "Estas son las opciones:").strip()
+    text_lines: list[str] = [intro, ""]
+    for sec in sections_payload:
+        sec_title = (sec.get("title") or "").strip()
+        rows = sec.get("rows") or []
+        if not rows:
+            continue
+        if sec_title and sec_title != "Opciones":
+            text_lines.append(f"*{sec_title}*")
+        for r in rows:
+            row_title = (r.get("title") or "").strip()
+            if row_title:
+                text_lines.append(row_title)
+        text_lines.append("")  # separador entre sections
+
+    # Pie pidiendo respuesta libre. Sin botones — esperamos texto.
+    variant_type = params.get("variant_type") or ""
+    tail = {
+        "scent": "Dime cuál te gusta y seguimos 🤍",
+        "color": "Cuéntame qué color prefieres y seguimos 🤍",
+        "size": "Dime qué tamaño quieres y seguimos 🤍",
+    }.get(variant_type, "Dime cuál prefieres y seguimos 🤍")
+    text_lines.append(tail)
+
+    text = "\n".join(line for line in text_lines if line is not None).strip()
+    return text or None
+
+
+_NOTE_TEXT_LIMIT = 160
+
+
+def _trunc(text: str, limit: int = _NOTE_TEXT_LIMIT) -> str:
+    text = text.strip()
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _build_history_event(
+    kind: str | None, params: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Marker human-readable del intent enviado, para el JSONL del dashboard.
+
+    El dashboard del operador lee el JSONL del session_history; sin este
+    marker los envíos no-textuales (catálogo, flows, botones, galerías…)
+    quedan invisibles y la conversación se vuelve imposible de seguir
+    (mismo problema que resolvió `_append_template_to_session_history`
+    para los templates — HU-WA24H-001 pre-mortem F2.2).
+
+    Dos shapes:
+      * `variant_picker` envía TEXTO real al cliente (y el workflow suprime
+        el final_content del LLM) → se persiste el texto renderizado como
+        assistant message normal, exactamente lo que vio el cliente.
+      * El resto → `{"role": "assistant", "kind": "ui_component",
+        "component_kind": <kind>, "content": <nota>}`, que el clasificador
+        del dashboard proyecta como `ui_type: ui_component_sent` y el
+        frontend pinta como nota de sistema.
+    """
+    if kind == "variant_picker":
+        text = _render_variant_picker_text(params)
+        if not text:
+            return None
+        return {"role": "assistant", "content": text}
+
+    if kind == "product_detail":
+        caption = (params.get("caption") or "").strip()
+        content = "📷 El bot envió una foto del producto"
+        if caption:
+            content += f": «{_trunc(caption)}»"
+    elif kind == "products_list":
+        total = sum(
+            len(s.get("rows") or []) for s in (params.get("sections") or [])
+        )
+        content = f"🛍️ El bot envió el catálogo con {total} productos"
+    elif kind == "shipping_flow":
+        content = "📋 El bot pidió los datos de envío (formulario)"
+    elif kind == "order_confirmation":
+        content = "🧾 El bot envió el resumen del pedido con botones para confirmar"
+    elif kind == "reaction":
+        content = f"El bot reaccionó con {params.get('emoji', '🤍')} a un mensaje del cliente"
+    elif kind == "contact_card":
+        content = "👤 El bot envió la tarjeta de contacto del asesor"
+    elif kind == "cta_url":
+        button = _trunc(str(params.get("button_text") or ""), 60)
+        content = f"🔗 El bot envió un botón «{button}» → {params.get('url', '')}"
+    elif kind == "product_gallery":
+        n = min(len(params.get("image_urls") or []), _GALLERY_MAX_IMAGES)
+        lead = (params.get("lead_caption") or "").strip()
+        content = f"🖼️ El bot envió {n} fotos del producto"
+        if lead:
+            content += f" — «{_trunc(lead)}»"
+    elif kind == "quick_replies":
+        titles = " · ".join(
+            str(b.get("title"))
+            for b in (params.get("buttons") or [])
+            if b.get("title")
+        )
+        content = f"🔘 El bot envió botones: {titles}"
+        body = _trunc(str(params.get("body") or ""))
+        if body:
+            content += f" — con el mensaje: «{body}»"
+    else:
+        # Kind futuro sin descripción específica: nota genérica — si se
+        # envió con éxito, el operador merece saber que ALGO salió.
+        content = f"📤 El bot envió un mensaje interactivo ({kind})"
+
+    return {
+        "role": "assistant",
+        "kind": "ui_component",
+        "component_kind": kind,
+        "content": content,
+    }
+
+
+def _append_history_event(session_id: str, event: dict[str, Any]) -> None:
+    """Appendea el marker al JSONL que lee el dashboard. Best-effort: el
+    envío al cliente YA ocurrió; un fallo de I/O acá se loguea y no
+    bloquea el flush (precedente: `_append_template_to_session_history`)."""
+    from src.platform.config import WORKSPACE_VAULT_DIR
+
+    history_path = (
+        WORKSPACE_VAULT_DIR / session_id / "sessions" / f"{session_id}.jsonl"
+    )
+    try:
+        history_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            **event,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        with history_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except OSError:
+        activity.logger.warning(
+            "flush_ui_intents.history_append_failed",
+            extra={"session_id": session_id},
+        )
 
 
 def _safe_write_metadata(path, data: dict) -> None:

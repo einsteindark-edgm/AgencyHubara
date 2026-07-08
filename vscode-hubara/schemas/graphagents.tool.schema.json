@@ -1,0 +1,109 @@
+{
+  "$defs": {
+    "FieldSpec": {
+      "properties": {
+        "type": {
+          "enum": [
+            "string",
+            "number",
+            "integer",
+            "boolean",
+            "object",
+            "array"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "required": {
+          "default": true,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "FieldSpec",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "version": {
+      "title": "Version",
+      "type": "string"
+    },
+    "description": {
+      "default": "",
+      "title": "Description",
+      "type": "string"
+    },
+    "tags": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Tags",
+      "type": "array"
+    },
+    "side_effect": {
+      "default": "pure",
+      "enum": [
+        "pure",
+        "read",
+        "outward"
+      ],
+      "title": "Side Effect",
+      "type": "string"
+    },
+    "idempotent": {
+      "default": true,
+      "title": "Idempotent",
+      "type": "boolean"
+    },
+    "approval_required": {
+      "default": false,
+      "title": "Approval Required",
+      "type": "boolean"
+    },
+    "credentials": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Credentials",
+      "type": "array"
+    },
+    "inputs": {
+      "additionalProperties": {
+        "$ref": "#/$defs/FieldSpec"
+      },
+      "title": "Inputs",
+      "type": "object"
+    },
+    "outputs": {
+      "additionalProperties": {
+        "$ref": "#/$defs/FieldSpec"
+      },
+      "title": "Outputs",
+      "type": "object"
+    },
+    "impl": {
+      "title": "Impl",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "version",
+    "impl"
+  ],
+  "title": "ToolContract",
+  "type": "object"
+}

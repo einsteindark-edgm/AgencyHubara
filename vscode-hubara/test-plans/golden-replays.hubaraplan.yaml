@@ -1,0 +1,8 @@
+# yaml-language-server: $schema=../schemas/hubaraplan.schema.json
+name: Golden replays
+description: Determinismo (G-DET) — replay de cada capability contra su fixture exacto.
+include:
+  - suite: graphagents/graphs
+options:
+  failFast: false
+  parallel: false

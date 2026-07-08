@@ -20,11 +20,19 @@ agente.
 
 Default por env:
 
-  IMAGE_VISION_PROVIDER=auto                       # default (litellm/Gemini)
-  IMAGE_VISION_MODEL=gemini/gemini-2.5-flash-lite  # default
-  IMAGE_VISION_API_BASE=$API_BASE_LLMLITE          # default (proxy)
-  IMAGE_VISION_API_KEY=                            # opcional si el proxy maneja auth
-  WHATSAPP_ACCESS_TOKEN=...                        # required para fetch media
+  IMAGE_VISION_PROVIDER=auto                           # default (litellm/Gemini)
+  IMAGE_VISION_MODEL=litellm_proxy/gemini-multimodal   # default — alias registrado
+                          # en el model_list del proxy
+                          # (exoclaw-temporal/litellm_config.yaml)
+  IMAGE_VISION_API_BASE=$API_BASE_LLMLITE              # default (proxy)
+  IMAGE_VISION_API_KEY=                                # opcional si el proxy maneja auth
+  WHATSAPP_ACCESS_TOKEN=...                            # required para fetch media
+
+  GOTCHA (bug prod 2026-07): con `api_base` apuntando al PROXY, el modelo
+  DEBE llevar prefijo `litellm_proxy/` — un prefijo de provider nativo
+  (`gemini/...`) hace que el SDK postee al endpoint nativo de Google sobre
+  el proxy (404) y el fallback multimodal muere. Guard:
+  tests/platform/test_multimodal_via_proxy.py.
 
 Kill-switch: ``IMAGE_VISION_PROVIDER=off`` → el ingest cae al placeholder
 "[el cliente envió una imagen]" (comportamiento previo a esta feature).

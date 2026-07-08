@@ -13,6 +13,11 @@ export const messageUiTypeSchema = z.enum([
   "system_event",
   "tool_execution_result",
   "agent_tool_call",
+  /** Marker de envío no-textual del bot (catálogo, flow, botones, galería…)
+   *  escrito por el flush de ui_intents del backend. Se pinta como nota de
+   *  sistema en el panel central para que el operador pueda seguir la
+   *  conversación. */
+  "ui_component_sent",
 ]);
 
 export const chatMessageSchema = z.object({

@@ -54,6 +54,7 @@ class Tracker:
         self.typing_calls: list[str] = []
         self.persist_calls: list[tuple[str, str]] = []
         self.record_turn_calls: int = 0
+        self.record_turn_new_messages: list[list[dict]] = []
         self.ghosting_calls: int = 0
         self.start_sales_calls: int = 0
         self.execute_tool_calls: list[str] = []
@@ -169,6 +170,7 @@ def _make_fake_activities(
     @activity.defn(name="record_turn")
     async def fake_record_turn(input: RecordTurnInput) -> None:
         tracker.record_turn_calls += 1
+        tracker.record_turn_new_messages.append(list(input.new_messages))
 
     @activity.defn(name="send_whatsapp_message_activity")
     async def fake_send_whatsapp(session_id: str, message: str) -> None:
@@ -914,3 +916,61 @@ async def test_stale_final_text_suppressed_after_outbound(tmp_path: Path) -> Non
     )
     # Las cards del turno interrumpido SÍ salieron (ya habían tocado al cliente).
     assert "present_product_detail" in tracker.execute_tool_calls
+
+
+@pytest.mark.asyncio
+async def test_record_turn_persists_the_user_message(tmp_path: Path) -> None:
+    """Off-by-one contra upstream (caso 573229041190, 2026-07-07): exoclaw
+    `loop.py` graba `all_msgs[len(initial) - 1:]` — el -1 INCLUYE el mensaje
+    del usuario. El adapter usaba `messages[initial_len:]` (sin -1) y desde
+    abril NINGÚN mensaje del cliente entraba al historial durable del LLM:
+    el bot solo veía sus propios mensajes + tool results (verificado en el
+    history real: 82 mensajes, user:1). Consecuencia: "Ya te los di" — el
+    cliente repitiendo datos que el bot no podía recordar."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=SALES_QUEUE,
+            workflows=[HubaraSalesSessionWorkflow],
+            activities=_make_fake_activities(
+                tracker, workspace_path=str(workspace)
+            ),
+        ):
+            handle = await env.client.start_workflow(
+                HubaraSalesSessionWorkflow.run,
+                SalesSessionInput(
+                    session_id="wa_recorduser",
+                    runtime_workspace_path=str(workspace),
+                ),
+                id="session-wa_recorduser",
+                task_queue=SALES_QUEUE,
+            )
+            await handle.signal(
+                HubaraSalesSessionWorkflow.send_message,
+                args=["Arborizadora, calle 59b sur 38", None, None],
+            )
+            await handle.result()
+
+    # El turno del usuario (no el ghost) debe persistir PRIMERO el user msg.
+    user_turns = [
+        msgs
+        for msgs in tracker.record_turn_new_messages
+        if any(
+            m.get("role") == "user"
+            and "Arborizadora" in str(m.get("content", ""))
+            for m in msgs
+        )
+    ]
+    assert user_turns, (
+        "record_turn nunca recibió el mensaje del cliente — el historial del "
+        f"LLM queda sin turnos user. Capturado: {tracker.record_turn_new_messages}"
+    )
+    first = user_turns[0][0]
+    assert first.get("role") == "user", (
+        f"El user msg debe ir PRIMERO en new_messages (orden del turno), "
+        f"vino: {user_turns[0]}"
+    )

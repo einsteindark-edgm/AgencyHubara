@@ -53,11 +53,11 @@ _VOSEO_DENYLIST = [
     "esperá", "mirá", "mandá", "llamá", "usá", "empezá", "cerrá", "informá",
     "avisá", "invitá", "continuá", "reasoná", "considerá", "tocá", "recordá",
     "aguantá", "volvé", "poné", "hacé", "andá", "contá", "dejá", "recortá",
-    "fijá", "tomá", "respondé", "contestá",
+    "fijá", "tomá", "respondé", "contestá", "mencioná", "ofrecé",
     # Imperativos con enclítico (voseo)
     "decime", "contame", "mirame", "mostrame", "avisame", "pedile", "mandale",
     "decile", "contale", "preguntale", "fijate", "acordate", "llevate",
-    "sentate", "pegale", "invitalo", "describílos",
+    "sentate", "pegale", "invitalo", "describílos", "decílo",
 ]
 
 # Fronteras unicode-aware: el token no puede estar pegado a otra letra

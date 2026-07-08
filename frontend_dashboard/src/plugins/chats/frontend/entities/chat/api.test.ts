@@ -188,6 +188,40 @@ async function runMessages(messages: RawMsg[]) {
   return result.current.data;
 }
 
+describe("useChatMessages — envíos no-textuales del bot (ui_component_sent)", () => {
+  it("marker de envío no-textual → nota de sistema (kind system) visible", async () => {
+    const data = await runMessages([
+      { ui_type: "user_message", role: "user", content: "quiero ver velas" },
+      {
+        ui_type: "ui_component_sent",
+        role: "assistant",
+        content: "🛍️ El bot envió el catálogo con 6 productos",
+        timestamp: "2026-07-07T12:00:00+00:00",
+      },
+    ]);
+    const note = data?.find((m) => m.kind === "system");
+    expect(note).toBeDefined();
+    expect(note?.text).toBe("🛍️ El bot envió el catálogo con 6 productos");
+    // El mensaje del cliente sigue presente — la nota no rompe el parse
+    // de la conversación completa (Zod enum cerrado).
+    expect(data?.some((m) => m.kind === "in")).toBe(true);
+  });
+
+  it("formulario de datos (flow) → nota de sistema, no burbuja del bot", async () => {
+    const data = await runMessages([
+      {
+        ui_type: "ui_component_sent",
+        role: "assistant",
+        content: "📋 El bot pidió los datos de envío (formulario)",
+      },
+    ]);
+    expect(data?.find((m) => m.kind === "out")).toBeUndefined();
+    expect(data?.find((m) => m.kind === "system")?.text).toContain(
+      "datos de envío",
+    );
+  });
+});
+
 describe("useChatMessages — imagen inbound (comprobantes de pago)", () => {
   it("mapea image_url relativa del backend → imageUrl absoluta en el bubble", async () => {
     const data = await runMessages([

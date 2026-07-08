@@ -1,8 +1,9 @@
 """Composition root del vision layer.
 
-Default: **Gemini Flash-Lite via litellm** (mismo proxy ``API_BASE_LLMLITE``
-que usa el agente y el layer de audio). Cambiar el modelo es un toggle de env
-(``IMAGE_VISION_MODEL=gemini/gemini-2.5-flash`` para imágenes ruidosas).
+Default: **alias `gemini-multimodal` del proxy litellm** (mismo proxy
+``API_BASE_LLMLITE`` que usa el agente y el layer de audio; el alias vive en
+``exoclaw-temporal/litellm_config.yaml`` y hoy resuelve a Gemini Flash-Lite).
+Cambiar el modelo es editar ese alias en el config del proxy.
 
 Modos (``IMAGE_VISION_PROVIDER``):
 
@@ -12,8 +13,13 @@ Modos (``IMAGE_VISION_PROVIDER``):
                    # "[el cliente envió una imagen]" (comportamiento previo)
 
 Modelo configurable:
-  IMAGE_VISION_MODEL=gemini/gemini-2.5-flash-lite   # default
-  IMAGE_VISION_MODEL=gemini/gemini-2.5-flash        # más caro, más capaz
+  IMAGE_VISION_MODEL=litellm_proxy/gemini-multimodal  # default (alias del proxy)
+  IMAGE_VISION_MODEL=gemini/gemini-2.5-flash          # SOLO con API_BASE="" (directo)
+
+  GOTCHA (bug prod 2026-07): contra el proxy el prefijo ``litellm_proxy/`` es
+  obligatorio — un prefijo nativo (``gemini/...``) postea al endpoint nativo
+  de Google sobre el proxy y muere con 404. Guard:
+  tests/platform/test_multimodal_via_proxy.py.
 
 API base / key: ver ``litellm_adapter.LiteLLMVisionAdapter.from_env``.
 ``WHATSAPP_ACCESS_TOKEN`` es required para descargar el media de Meta.
@@ -100,8 +106,8 @@ class _FakeVisionAdapter:
 def get_image_vision_port() -> ImageVisionPort:
     """Devuelve el port singleton según env.
 
-    Default: ``LiteLLMVisionAdapter`` apuntando a
-    ``gemini/gemini-2.5-flash-lite`` via el proxy ``API_BASE_LLMLITE``.
+    Default: ``LiteLLMVisionAdapter`` apuntando al alias
+    ``litellm_proxy/gemini-multimodal`` via el proxy ``API_BASE_LLMLITE``.
     """
     provider = (os.getenv("IMAGE_VISION_PROVIDER") or "auto").lower()
 

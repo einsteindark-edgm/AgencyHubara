@@ -1,0 +1,23 @@
+# Costuras cross-sistema (§2.6 del plan): hoy ningún builder emite edges
+# entre System Map y GraphAgents, así que arrancan DECLARADAS acá — una
+# fuente explícita y honesta, no auto-detectada (F7 candidato: escanear usos
+# de `graphagentskit`/execution-ids como hace el system map con
+# `get_task_queue(...)`).
+#
+# Formato: from/to son ids NAMESPACED (`hub:` = System Map, `ga:` = GraphAgents),
+# tal cual namespaceGraph() los produce (prefijo + id crudo del nodo, p. ej.
+# `hub:plugin:ads`, `ga:agent:ads-analytics`). Una costura cuyo from/to no
+# resuelve contra el grafo actual se reporta como "rota" — NUNCA rompe el
+# merge del workspace.
+#
+# Cada entrada acá debe ser VERIFICABLE en el código vivo, no aspiracional.
+# Verificado 2026-07-07: hubara_agency/src/plugins/ads/runs/{conductor,
+# orchestrator,launcher,boto3_launcher}.py lanza y trackea el pod CTWA en
+# GraphAgents (agent:ads-analytics, taskgraph ads-analytics.taskgraph.yaml).
+
+seams:
+  - id: ads-analytics-pod
+    from: hub:plugin:ads
+    to: ga:agent:ads-analytics
+    label: "pod CTWA (runs/conductor.py)"
+    kind: launches

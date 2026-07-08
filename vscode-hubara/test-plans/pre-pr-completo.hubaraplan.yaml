@@ -1,0 +1,20 @@
+# yaml-language-server: $schema=../schemas/hubaraplan.schema.json
+name: Pre-PR completo
+description: >-
+  Equivalente IDE de `/hubara-gates all` + `/graphagents-gates all` — todo lo
+  que corre antes de abrir un PR. Es el plan más lento; usalo antes de publicar,
+  no en cada guardado.
+include:
+  - tag: compiler
+  - tag: cert
+  - tag: arch
+  - tag: tools
+  - suite: graphagents/graphs
+  - suite: graphagents/integration
+  - suite: backend/plugins
+  - suite: frontend/build
+exclude:
+  - suite: frontend/unit # demasiado lento para este plan — correlo aparte
+options:
+  failFast: false
+  parallel: true

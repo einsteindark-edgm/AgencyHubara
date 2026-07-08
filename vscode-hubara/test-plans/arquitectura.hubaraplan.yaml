@@ -1,0 +1,8 @@
+# yaml-language-server: $schema=../schemas/hubaraplan.schema.json
+name: Arquitectura
+description: Reglas duras (G-*/R-*/P-*) + lint-imports + FSD del frontend.
+include:
+  - tag: arch
+options:
+  failFast: false
+  parallel: true

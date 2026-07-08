@@ -107,7 +107,12 @@ async def test_tags_tool_emits_schedule_remarketing_for_interesado(tmp_path: Pat
 
     assert payload["schedule_remarketing"]["session_id"] == "wa_5492222222222"
     assert payload["schedule_remarketing"]["motivo"] == "cliente dudo del precio"
-    assert payload["schedule_remarketing"]["delay_seconds"] == 60
+    # 60→300 (caso 573229041190, 2026-07-07): con 60s el gancho de remarketing
+    # le ganaba la carrera al cliente que estaba ESCRIBIENDO su dirección
+    # (>60s para un mensaje multilínea) — el mensaje caía en remarketing y se
+    # perdía. Stopgap mientras PR #113 (Window Strategist) madura el
+    # re-engagement definitivo.
+    assert payload["schedule_remarketing"]["delay_seconds"] == 300
 
 
 async def test_tags_tool_no_decision_for_rechazo(tmp_path: Path) -> None:

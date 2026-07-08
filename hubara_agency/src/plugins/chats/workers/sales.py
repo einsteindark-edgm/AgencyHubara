@@ -35,9 +35,17 @@ from src.platform.temporal.dispatcher import (
     start_or_signal_sales_workflow_activity,
     write_pending_handoff_activity,
 )
+
+from exoclaw_temporal.activities.conversation import (
+    build_prompt as generic_build_prompt,
+)
+
 from src.platform.tool_extensions import register_tool_extension
 from src.platform.tools.escalation import EscalateToHumanTool
 from src.platform.workflow_helpers import CONVERSATIONAL_TURN_ACTIVITIES
+from src.plugins.chats.agent.sales.activities.build_prompt_stage import (
+    sales_build_prompt,
+)
 from src.platform.whatsapp.activities import (
     send_typing_indicator_activity,
     send_whatsapp_message_activity,
@@ -64,6 +72,7 @@ from src.plugins.chats.agent.sales.tools.order_status import CheckOrderStatusToo
 from src.plugins.chats.agent.sales.tools.order_registration import (
     RegisterOrderTool,
 )
+from src.plugins.chats.agent.sales.tools.skills import LoadSkillTool
 from src.plugins.chats.agent.sales.tools.tags import ManageConversationTagTool
 from src.plugins.chats.agent.sales.tools.ui_intents import (
     PresentOrderConfirmationTool,
@@ -139,6 +148,16 @@ register_tool_extension(
 register_tool_extension(
     "sales.check_order_status",
     lambda workspace: CheckOrderStatusTool(workspace=str(workspace)),
+)
+
+# Caso 573229041190 (2026-07-07): TOOLS.md instruye `load_skill("hubara_catalog")`
+# para políticas estables (envíos/garantía/contra entrega/descuentos) pero la
+# tool nunca estuvo registrada — el LLM quemaba una iteración con "Tool not
+# found" y las políticas eran inalcanzables (terminó inventando el costo de
+# envío en una orden real). Closed-list sobre workspace/skills/<name>/SKILL.md.
+register_tool_extension(
+    "sales.load_skill",
+    lambda workspace: LoadSkillTool(workspace=str(workspace)),
 )
 
 # Verificacion LIVE de precio/stock al checkout: el snapshot es la verdad
@@ -275,7 +294,17 @@ async def main() -> None:
             # Set conversacional compartido — TODO worker que corra
             # run_agent_turn lo spread-ea desde workflow_helpers (fuente
             # única, L-3). Nunca listar esas activities a mano.
-            *CONVERSATIONAL_TURN_ACTIVITIES,
+            # EXCEPCIÓN Sales (dieta de prompt): `build_prompt` se reemplaza
+            # por el override por-etapa `sales_build_prompt` — MISMO nombre
+            # de activity, mismo contrato → el workflow no cambia (cero
+            # replay implications). Registrar ambas rompería el Worker
+            # (nombre duplicado), por eso se filtra la genérica.
+            *(
+                a
+                for a in CONVERSATIONAL_TURN_ACTIVITIES
+                if a is not generic_build_prompt
+            ),
+            sales_build_prompt,
             send_whatsapp_message_activity,
             send_typing_indicator_activity,
             persist_assistant_message_activity,

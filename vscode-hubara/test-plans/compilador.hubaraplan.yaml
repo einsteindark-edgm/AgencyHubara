@@ -1,0 +1,8 @@
+# yaml-language-server: $schema=../schemas/hubaraplan.schema.json
+name: Compilador
+description: Checks estáticos de manifests/plugins de ambos lados. El smoke — segundos, no minutos.
+include:
+  - tag: compiler
+options:
+  failFast: false
+  parallel: true

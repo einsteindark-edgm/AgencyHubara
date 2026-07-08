@@ -1,0 +1,412 @@
+{
+  "name": "acktos-studio",
+  "displayName": "Acktos Studio",
+  "description": "Grafos, certificaciones y ejecuciones de AgencyHubara + GraphAgents dentro de VS Code.",
+  "version": "0.0.1",
+  "publisher": "acktos",
+  "private": true,
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/einsteindark-edgm/AgencyHubara.git",
+    "directory": "vscode-hubara"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Visualization",
+    "Testing",
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {
+        "command": "acktos.openStudio",
+        "title": "Acktos: Open Graph",
+        "category": "Acktos Studio"
+      },
+      {
+        "command": "acktos.openGraphAgents",
+        "title": "Acktos: Open GraphAgents Graph",
+        "category": "Acktos Studio"
+      },
+      {
+        "command": "acktos.openSystemMap",
+        "title": "Acktos: Open System Map",
+        "category": "Acktos Studio"
+      },
+      {
+        "command": "acktos.restartBridges",
+        "title": "Acktos: Restart Python Bridges",
+        "category": "Acktos Studio"
+      },
+      {
+        "command": "acktos.refreshGraphs",
+        "title": "Acktos: Refresh Graphs",
+        "category": "Acktos Studio",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "acktos.focusNode",
+        "title": "Acktos: Ver en grafo",
+        "category": "Acktos Studio"
+      },
+      {
+        "command": "acktos.openWorkflow",
+        "title": "Acktos: Ver workflow completo",
+        "category": "Acktos Studio"
+      },
+      {
+        "command": "acktos.selectPlan",
+        "title": "Acktos: Select & Run Test Plan…",
+        "category": "Acktos Studio",
+        "icon": "$(beaker)"
+      },
+      {
+        "command": "acktos.runActivePlan",
+        "title": "Acktos: Run Active Test Plan",
+        "category": "Acktos Studio"
+      },
+      {
+        "command": "acktos.checkManifest",
+        "title": "Acktos: Check Manifests",
+        "category": "Acktos Studio",
+        "icon": "$(check)"
+      },
+      {
+        "command": "acktos.refreshRuns",
+        "title": "Acktos: Refresh Runs",
+        "category": "Acktos Studio",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "acktos.viewTrace",
+        "title": "Acktos: Ver trace",
+        "category": "Acktos Studio"
+      },
+      {
+        "command": "acktos.replayCase",
+        "title": "▶ Replay",
+        "category": "Acktos Studio",
+        "icon": "$(play)"
+      },
+      {
+        "command": "acktos.runLocalCase",
+        "title": "⚡ Ejecutar (local)",
+        "category": "Acktos Studio",
+        "icon": "$(zap)"
+      },
+      {
+        "command": "acktos.runDurableCase",
+        "title": "▶ Run Durable (AgentSpan)",
+        "category": "Acktos Studio",
+        "icon": "$(debug-start)"
+      },
+      {
+        "command": "acktos.startInfra",
+        "title": "Acktos: Iniciar AgentSpan (infra del runtime durable)",
+        "category": "Acktos Studio",
+        "icon": "$(server-process)"
+      },
+      {
+        "command": "acktos.toggleAllRuns",
+        "title": "Acktos: Runs — alternar histórico completo",
+        "category": "Acktos Studio",
+        "icon": "$(history)"
+      },
+      {
+        "command": "acktos.connectFromPicker",
+        "title": "+ Conectar desde…",
+        "category": "Acktos Studio",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "acktos.saveProduction",
+        "title": "Acktos: Save Production (GraphAgents)",
+        "category": "Acktos Studio"
+      },
+      {
+        "command": "acktos.publishProduction",
+        "title": "Acktos: Publish Production (GraphAgents)",
+        "category": "Acktos Studio"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "acktosStudio",
+          "title": "Acktos Studio",
+          "icon": "$(type-hierarchy-sub)"
+        }
+      ],
+      "panel": [
+        {
+          "id": "acktosExecution",
+          "title": "Acktos Ejecución",
+          "icon": "$(pulse)"
+        }
+      ]
+    },
+    "walkthroughs": [
+      {
+        "id": "acktosStudio.gettingStarted",
+        "title": "Acktos Studio: primeros pasos",
+        "description": "Grafos, certificaciones y ejecuciones de AgencyHubara + GraphAgents — todo sin salir de VS Code.",
+        "steps": [
+          {
+            "id": "scopes",
+            "title": "Abrí el grafo — scopes estilo Xcode",
+            "description": "Workspace / System / Focus — el equivalente project/target aplicado al canvas.\n[Abrir grafo](command:acktos.openStudio)",
+            "media": {
+              "markdown": "walkthrough/scopes.md"
+            },
+            "completionEvents": [
+              "onCommand:acktos.openStudio"
+            ]
+          },
+          {
+            "id": "testPlans",
+            "title": "Corré un test plan — bundles estilo Xcode",
+            "description": "Las mismas suites que `/hubara-gates`, agrupadas en bundles seleccionables.\n[Elegir un plan](command:acktos.selectPlan)",
+            "media": {
+              "markdown": "walkthrough/test-plans.md"
+            },
+            "completionEvents": [
+              "onCommand:acktos.selectPlan",
+              "onCommand:acktos.runActivePlan"
+            ]
+          },
+          {
+            "id": "certifications",
+            "title": "Certificaciones — el compilador en el editor",
+            "description": "Badges C0–C3, CodeLens, Problems panel — todo desde guardar un manifest.\n[Ver el catálogo](command:workbench.view.extension.acktosStudio)",
+            "media": {
+              "markdown": "walkthrough/certifications.md"
+            },
+            "completionEvents": [
+              "onView:acktos.catalogTree"
+            ]
+          },
+          {
+            "id": "editMode",
+            "title": "Edit mode — conectar sin salir del IDE",
+            "description": "Drag-connect, disconnect, y publicar el wiring con un PR real.",
+            "media": {
+              "markdown": "walkthrough/edit-mode.md"
+            }
+          }
+        ]
+      }
+    ],
+    "views": {
+      "acktosStudio": [
+        {
+          "id": "acktos.catalogTree",
+          "name": "Catálogo",
+          "icon": "$(type-hierarchy-sub)"
+        },
+        {
+          "id": "acktos.runsTree",
+          "name": "Runs",
+          "icon": "$(pulse)"
+        }
+      ],
+      "acktosExecution": [
+        {
+          "type": "webview",
+          "id": "acktos.executionView",
+          "name": "Ejecución"
+        }
+      ]
+    },
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "acktos.focusNode",
+          "when": "false"
+        },
+        {
+          "command": "acktos.openWorkflow",
+          "when": "false"
+        },
+        {
+          "command": "acktos.checkManifest",
+          "when": "false"
+        },
+        {
+          "command": "acktos.viewTrace",
+          "when": "false"
+        },
+        {
+          "command": "acktos.replayCase",
+          "when": "false"
+        },
+        {
+          "command": "acktos.runDurableCase",
+          "when": "false"
+        },
+        {
+          "command": "acktos.connectFromPicker",
+          "when": "false"
+        },
+        {
+          "command": "acktos.runLocalCase",
+          "when": "false"
+        },
+        {
+          "command": "acktos.toggleAllRuns",
+          "when": "false"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "acktos.refreshGraphs",
+          "when": "view == acktos.catalogTree",
+          "group": "navigation"
+        },
+        {
+          "command": "acktos.refreshRuns",
+          "when": "view == acktos.runsTree",
+          "group": "navigation"
+        },
+        {
+          "command": "acktos.startInfra",
+          "when": "view == acktos.runsTree",
+          "group": "navigation@1"
+        },
+        {
+          "command": "acktos.toggleAllRuns",
+          "when": "view == acktos.runsTree",
+          "group": "navigation@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "acktos.runLocalCase",
+          "when": "view == acktos.catalogTree && viewItem == acktosCase",
+          "group": "inline@0"
+        },
+        {
+          "command": "acktos.replayCase",
+          "when": "view == acktos.catalogTree && viewItem == acktosCase",
+          "group": "inline@1"
+        },
+        {
+          "command": "acktos.runDurableCase",
+          "when": "view == acktos.catalogTree && viewItem == acktosCase",
+          "group": "inline@2"
+        },
+        {
+          "command": "acktos.connectFromPicker",
+          "when": "view == acktos.catalogTree && viewItem == acktosConnectable",
+          "group": "inline"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Acktos Studio",
+      "properties": {
+        "acktos.graphagents.python": {
+          "type": "string",
+          "default": "python3",
+          "markdownDescription": "Ejecutable de Python para el puente de GraphAgents (subsistema aislado, NO usa `uv`)."
+        },
+        "acktos.graphagents.cwd": {
+          "type": "string",
+          "default": "${workspaceFolder}/GraphAgents",
+          "description": "Directorio raíz de GraphAgents (donde vive `viewer/bridge.py`)."
+        },
+        "acktos.backend.command": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "uv",
+            "run",
+            "python"
+          ],
+          "markdownDescription": "Comando + args para correr Python en el backend Hubara (por convención `uv run python`)."
+        },
+        "acktos.backend.cwd": {
+          "type": "string",
+          "default": "${workspaceFolder}/hubara_agency",
+          "description": "Directorio raíz del backend (donde vive `scripts/system_map_bridge.py`)."
+        },
+        "acktos.frontend.cwd": {
+          "type": "string",
+          "default": "${workspaceFolder}/frontend_dashboard",
+          "description": "Directorio raíz del dashboard React/TS."
+        },
+        "acktos.frontend.npm": {
+          "type": "string",
+          "default": "npm",
+          "description": "Ejecutable de npm para las suites del frontend."
+        },
+        "acktos.frontend.npx": {
+          "type": "string",
+          "default": "npx",
+          "description": "Ejecutable de npx (usado por la suite de tipos: `tsc -b --noEmit`)."
+        },
+        "acktos.seamsPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Ruta a `seams.yaml` (costuras cross-sistema del canvas workspace). Vacío = usa `<repoRoot>/seams.yaml` si existe, o el archivo bundled con la extensión."
+        },
+        "acktos.backend.env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {
+            "MEDUSA_BASE_URL": "http://localhost:9000",
+            "MEDUSA_ADMIN_TOKEN": "dev-token"
+          },
+          "markdownDescription": "Env vars dummy que las suites de arquitectura del backend necesitan a nivel de import (`MEDUSA_*` — el sales worker construye clientes Medusa a nivel de módulo). Nunca pega a Medusa real."
+        },
+        "acktos.graphagents.env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "markdownDescription": "Env extra para el puente de GraphAgents — la palanca de infra remota: p. ej. `AGENTSPAN_SERVER_URL` (default `http://localhost:6767`) y `LITELLM_PROXY_URL` apuntando a AWS, sin tocar código."
+        },
+        "acktos.graphagents.agentspanStart": {
+          "type": "string",
+          "default": "agentspan server start",
+          "markdownDescription": "Comando que levanta AgentSpan (:6767) — lo corre el botón *Iniciar AgentSpan* en una terminal visible. Cambialo si tu infra durable arranca distinto (docker compose, script, etc.)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "package": "node esbuild.mjs --production",
+    "typecheck": "tsc --noEmit",
+    "vscode:prepublish": "node esbuild.mjs --production",
+    "vsix": "vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/dagre": "^0.7.54",
+    "@types/node": "^20.14.0",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.23.0",
+    "typescript": "^5.5.0"
+  },
+  "dependencies": {
+    "@xyflow/react": "^12.11.2",
+    "dagre": "^0.8.5",
+    "elkjs": "^0.9.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "yaml": "^2.9.0"
+  }
+}

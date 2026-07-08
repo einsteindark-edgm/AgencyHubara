@@ -5,17 +5,18 @@ Por qué litellm:
     `src/platform/config.py`, consumido en `registries.build_default_llm_config`).
     El motor de conversación (`exoclaw_temporal.activities.llm.llm_chat`)
     ya enruta a través de litellm.
-  * Cambiar el modelo de STT (ej. `gemini/gemini-2.5-flash-lite` → `gemini/gemini-3-flash-lite`
-    cuando salga) es un toggle de env var, sin tocar código ni redeploy.
+  * Cambiar el modelo de STT es editar el alias `gemini-multimodal` en el
+    config del proxy (o el env `AUDIO_TRANSCRIPTION_MODEL`), sin tocar código.
   * litellm soporta Gemini multimodal audio nativo desde 2025 — el modelo
     recibe el audio en base64 dentro del mensaje y devuelve texto.
   * Más adelante, cuando habilitemos TTS outbound (no en esta HU), se puede
     agregar `litellm_tts_adapter.py` simétrico que apunta al MISMO proxy.
 
-Patrón litellm para audio input multimodal:
+Patrón litellm para audio input multimodal (via el PROXY del proyecto):
 
     response = await litellm.acompletion(
-        model="gemini/gemini-2.5-flash-lite",
+        model="litellm_proxy/gemini-multimodal",
+        api_base=API_BASE_LLMLITE,
         messages=[{
             "role": "user",
             "content": [
@@ -25,8 +26,17 @@ Patrón litellm para audio input multimodal:
         }],
     )
 
-Modelo por default: `gemini/gemini-2.5-flash-lite`. Configurable via env
-`AUDIO_TRANSCRIPTION_MODEL`. Cuando salga 3.0 / 3.1, basta cambiar el env.
+Modelo por default: `litellm_proxy/gemini-multimodal` — un ALIAS registrado en
+el `model_list` del proxy (exoclaw-temporal/litellm_config.yaml), que hoy
+resuelve a Gemini Flash-Lite. Configurable via env `AUDIO_TRANSCRIPTION_MODEL`;
+para upgradear el modelo basta cambiar el alias en el config del proxy.
+
+GOTCHA (bug prod 2026-07): el prefijo `litellm_proxy/` es OBLIGATORIO cuando
+`api_base` apunta al proxy. Con un prefijo de provider nativo (`gemini/...`)
+el SDK rutea por el provider de Google AI Studio y postea
+`{api_base}/models/...:generateContent` — ruta que el proxy NO sirve (404) —
+y toda transcripción falla con provider_error. Guard:
+tests/platform/test_multimodal_via_proxy.py.
 
 DEHA:
   * R-JSON: input/output JSON-safe (request/result dataclasses).
@@ -95,7 +105,7 @@ class LiteLLMTranscriptionAdapter:
 
     def __init__(
         self,
-        model: str = "gemini/gemini-2.5-flash-lite",
+        model: str = "litellm_proxy/gemini-multimodal",
         api_base: str | None = None,
         api_key: str | None = None,
         cost_per_second_usd: float = _GEMINI_FLASH_LITE_COST_PER_SECOND,
@@ -112,7 +122,9 @@ class LiteLLMTranscriptionAdapter:
         """Construye desde env vars.
 
         Variables:
-          * `AUDIO_TRANSCRIPTION_MODEL` (default: `gemini/gemini-2.5-flash-lite`)
+          * `AUDIO_TRANSCRIPTION_MODEL` (default: `litellm_proxy/gemini-multimodal`
+            — alias del model_list del proxy; usar prefijo `litellm_proxy/`
+            siempre que el api_base sea el proxy)
           * `AUDIO_TRANSCRIPTION_API_BASE` (default: `API_BASE_LLMLITE` del
             proyecto — el proxy litellm ya configurado)
           * `AUDIO_TRANSCRIPTION_API_KEY` (opcional; si el proxy maneja auth,
@@ -120,7 +132,7 @@ class LiteLLMTranscriptionAdapter:
             `GEMINI_API_KEY`)
         """
         model = (
-            os.getenv("AUDIO_TRANSCRIPTION_MODEL") or "gemini/gemini-2.5-flash-lite"
+            os.getenv("AUDIO_TRANSCRIPTION_MODEL") or "litellm_proxy/gemini-multimodal"
         )
         # api_base: si el proxy litellm del proyecto está disponible (en local
         # development corre en localhost:4000), lo usamos. Si querés bypasear
@@ -135,6 +147,13 @@ class LiteLLMTranscriptionAdapter:
             or os.getenv("GEMINI_API_KEY")
             or os.getenv("LITELLM_API_KEY")
         )
+        # El provider `litellm_proxy/` (cliente OpenAI) exige una api_key
+        # aunque el proxy no tenga auth (sin master_key configurada) — el
+        # container hubara-api no recibe ninguna key de LLM. Placeholder SOLO
+        # en el path proxy: un modelo directo (p.ej. `gemini/...` con
+        # API_BASE="") debe seguir resolviendo su key desde el env.
+        if not api_key and model.startswith("litellm_proxy/"):
+            api_key = "no-key"
         return cls(model=model, api_base=api_base or None, api_key=api_key or None)
 
     async def transcribe(

@@ -20,6 +20,30 @@ import pytest
 import pytest_asyncio
 from temporalio.testing import WorkflowEnvironment
 
+from tests._reaper import reap_stale_test_servers
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _reap_stale_temporal_test_servers() -> Iterator[None]:
+    """Mata temporal-test-server zombis ANTES de correr la sesión.
+
+    Sin esto, un pytest matado a mitad (harness timeout, Ctrl-C doble,
+    SIGKILL al wrapper `uv run`) deja vivo su test-server, y el siguiente
+    `WorkflowEnvironment.start_time_skipping()` de CUALQUIER corrida se
+    cuelga para siempre — el clásico "las regresiones locales llevan horas".
+    Best-effort y quirúrgico: solo procesos `temporal-test-server-sdk-python-*`
+    huérfanos o con >20 min de vida (un env legítimo vive segundos).
+    Escape hatch: `HUBARA_KEEP_TEST_SERVERS=1` lo desactiva.
+    Detalle y guard: tests/test_temporal_test_server_reaper.py.
+    """
+    import os
+
+    if not os.environ.get("HUBARA_KEEP_TEST_SERVERS"):
+        killed = reap_stale_test_servers()
+        if killed:
+            print(f"[reaper] temporal-test-server zombis matados: {killed}")
+    yield
+
 
 @pytest_asyncio.fixture
 async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
