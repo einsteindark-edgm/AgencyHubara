@@ -49,6 +49,20 @@ setup_logging()
 _PAGE = 100
 
 
+async def _patch_metadata(client, order_id: str, patch: dict) -> None:
+    """Draft primero; si la orden ya fue CONVERTIDA (draft→order, 404 en
+    /admin/draft-orders) cae a `patch_order_metadata` (/admin/orders) — caso
+    real de la primera corrida: las 13 históricas eran órdenes consumadas."""
+    from src.platform.medusa.client import MedusaAPIError
+
+    try:
+        await client.patch_draft_order_metadata(order_id, patch)
+    except MedusaAPIError as exc:
+        if exc.status_code != 404:
+            raise
+        await client.patch_order_metadata(order_id, patch)
+
+
 async def _list_all_orders(client) -> list[dict]:
     orders: list[dict] = []
     offset = 0
@@ -127,7 +141,7 @@ async def main() -> None:
         if p["action"] not in ("real", "seeded"):
             continue
         try:
-            await client.patch_draft_order_metadata(p["order_id"], p["patch"])
+            await _patch_metadata(client, p["order_id"], p["patch"])
             ok += 1
         except Exception as exc:  # noqa: BLE001 — reportar y seguir con el resto
             failed += 1
