@@ -522,6 +522,32 @@ export function App(): React.ReactElement {
     [showHint],
   );
 
+  // "⤴ Guardar & certificar": la extensión confirma, corre la suite en vivo
+  // (panel Ejecución) y publica si todo pasa.
+  const handleCertify = useCallback(() => {
+    send({ type: "certifyRequest" });
+  }, []);
+
+  // Click derecho en un nodo → borrar. Solo agentes/tools de GraphAgents (un
+  // cluster/port/seam no se borra desde acá); la confirmación + cascade la
+  // maneja la extensión (needs_confirmation → modal de blast radius).
+  const handleNodeDelete = useCallback(
+    (nsId: string) => {
+      const found = graph.nodes.find((n) => n.nsId === nsId);
+      if (!found || found.system !== "graphagents" || (found.kind !== "agent" && found.kind !== "tool")) {
+        showHint("solo se pueden borrar agentes o tools de GraphAgents");
+        return;
+      }
+      send({
+        type: "deleteNodeRequest",
+        nodeId: found.nsId,
+        kind: found.kind,
+        label: (found.label as string | undefined) ?? found.rawId,
+      });
+    },
+    [graph.nodes, showHint],
+  );
+
   // Drop de la palette: soltar un tool/agente SOBRE un agente lo conecta
   // (agente uses tool · supervisor uses agente) — misma secuencia
   // validate→confirm→mutate que el drag-connect.
@@ -591,6 +617,7 @@ export function App(): React.ReactElement {
         onDepthChange={handleDepthChange}
         onRefresh={handleRefresh}
         onRelayout={handleRelayout}
+        onCertify={handleCertify}
       />
       {globalError && <div className="global-error">⚠ {globalError}</div>}
       {graph.brokenSeams.length > 0 && (
@@ -639,6 +666,7 @@ export function App(): React.ReactElement {
             onConnect={handleConnect}
             onEdgeSelect={setSelectedEdge}
             onEdgeDisconnect={handleEdgeDisconnect}
+            onNodeDelete={handleNodeDelete}
             onPaletteDrop={handlePaletteDrop}
             fitToken={fitToken}
           />

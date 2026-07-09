@@ -2,7 +2,7 @@ import * as crypto from "node:crypto";
 import * as vscode from "vscode";
 import { errorDetail, Provider } from "../bridge/endpoints";
 import { BridgeHub } from "../bridge/pythonBridge";
-import { ExecInbound, ExecOutbound, SelectedNodePayload, ToolCall, TraceInfo } from "../graph/messages";
+import { CertState, CertStatus, CertSuiteInfo, ExecInbound, ExecOutbound, SelectedNodePayload, ToolCall, TraceInfo } from "../graph/messages";
 
 /**
  * El panel nativo "Ejecución" (abajo, junto a Terminal — §F10): la cascada de
@@ -30,6 +30,9 @@ export class ExecutionViewProvider implements vscode.WebviewViewProvider {
   private lastSelected: { system: Provider; node: SelectedNodePayload } | null = null;
   /** accs de la última ejecución LOCAL (task_id sintético `local:<label>` → acc). */
   private readonly localAccs = new Map<string, unknown>();
+  /** estado de la última corrida "Guardar & certificar" (F14) — se re-emite al
+   * re-abrir la vista (la webview se recarga al ocultarse). */
+  private cert: CertState | null = null;
 
   constructor(
     private readonly ctx: vscode.ExtensionContext,
@@ -86,6 +89,45 @@ export class ExecutionViewProvider implements vscode.WebviewViewProvider {
     this.post({ type: "execTrace", info: null });
   }
 
+  // ---- consola de certificación en vivo (F14, CertSink) ----
+
+  certStart(suites: CertSuiteInfo[]): void {
+    this.cert = { suites: suites.map((s) => ({ ...s })), logs: {}, phase: null, done: null };
+    this.post({ type: "certStart", suites });
+    this.reveal();
+  }
+
+  certLog(suiteId: string, chunk: string): void {
+    if (this.cert) {
+      this.cert.logs[suiteId] = (this.cert.logs[suiteId] ?? "") + chunk;
+    }
+    this.post({ type: "certLog", suiteId, chunk });
+  }
+
+  certSuite(suiteId: string, status: CertStatus, detail?: string): void {
+    const s = this.cert?.suites.find((x) => x.id === suiteId);
+    if (s) {
+      s.status = status;
+      s.detail = detail;
+    }
+    this.post({ type: "certSuite", suiteId, status, detail });
+  }
+
+  certPhase(phase: string): void {
+    if (this.cert) {
+      this.cert.phase = phase;
+    }
+    this.post({ type: "certPhase", phase });
+  }
+
+  certDone(ok: boolean, branch: string | undefined, prUrl: string | undefined, errors: string[]): void {
+    if (this.cert) {
+      this.cert.done = { ok, branch, prUrl, errors };
+    }
+    this.post({ type: "certDone", ok, branch, prUrl, errors });
+    this.reveal();
+  }
+
   selectNode(system: Provider, node: SelectedNodePayload): void {
     this.lastSelected = { system, node };
     this.post({ type: "selectNode", system, node });
@@ -117,6 +159,12 @@ export class ExecutionViewProvider implements vscode.WebviewViewProvider {
         if (this.lastSelected) {
           this.post({ type: "selectNode", ...this.lastSelected });
         }
+        if (this.cert) {
+          this.post({ type: "certRestore", cert: this.cert });
+        }
+        return;
+      case "openExternal":
+        void vscode.env.openExternal(vscode.Uri.parse(msg.url));
         return;
       case "openFile":
         try {

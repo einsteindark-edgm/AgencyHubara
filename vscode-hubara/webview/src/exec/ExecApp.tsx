@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GraphNode } from "../../../src/bridge/endpoints";
 import { StepEntry, toStepEntries } from "../../../src/graph/cascade";
-import { ExecOutbound, InspectFile, SelectedNodePayload, TraceInfo } from "../../../src/graph/messages";
+import { CertState, ExecOutbound, InspectFile, SelectedNodePayload, TraceInfo } from "../../../src/graph/messages";
 import { FlowTraceState, Inspector, IoEntry, SelectedNode } from "../panels/Inspector";
 import { send } from "./vscodeApi";
 
@@ -20,6 +20,9 @@ export function ExecApp(): React.ReactElement {
   const [files, setFiles] = useState<InspectFile[] | null>(null);
   const [filesError, setFilesError] = useState<string | null>(null);
   const lastEid = useRef<string | null>(null);
+  // Consola de certificación en vivo (F14). `dismissed` la oculta sin perderla.
+  const [cert, setCert] = useState<CertState | null>(null);
+  const [certDismissed, setCertDismissed] = useState(false);
 
   useEffect(() => {
     const onMessage = (ev: MessageEvent<ExecOutbound>) => {
@@ -62,6 +65,32 @@ export function ExecApp(): React.ReactElement {
         case "inspectError":
           setFilesError(msg.message);
           setFiles([]);
+          return;
+        case "certStart":
+          setCertDismissed(false);
+          setCert({ suites: msg.suites, logs: {}, phase: null, done: null });
+          return;
+        case "certLog":
+          setCert((prev) =>
+            prev ? { ...prev, logs: { ...prev.logs, [msg.suiteId]: (prev.logs[msg.suiteId] ?? "") + msg.chunk } } : prev,
+          );
+          return;
+        case "certSuite":
+          setCert((prev) =>
+            prev
+              ? { ...prev, suites: prev.suites.map((s) => (s.id === msg.suiteId ? { ...s, status: msg.status, detail: msg.detail } : s)) }
+              : prev,
+          );
+          return;
+        case "certPhase":
+          setCert((prev) => (prev ? { ...prev, phase: msg.phase } : prev));
+          return;
+        case "certDone":
+          setCert((prev) => (prev ? { ...prev, done: { ok: msg.ok, branch: msg.branch, prUrl: msg.prUrl, errors: msg.errors } } : prev));
+          return;
+        case "certRestore":
+          setCertDismissed(false);
+          setCert(msg.cert);
           return;
       }
     };
@@ -106,6 +135,12 @@ export function ExecApp(): React.ReactElement {
   }, []);
 
   const selectedRawId = selected ? ((selected.raw as { rawId?: string }).rawId ?? selected.raw.id) : null;
+
+  // La certificación en vivo toma el panel: es el foco mientras corre "Guardar &
+  // certificar" (el usuario quiere ver exactamente qué se ejecutó y el veredicto).
+  if (cert && !certDismissed) {
+    return <CertConsole cert={cert} onOpenPr={(url) => send({ type: "openExternal", url })} onClose={() => setCertDismissed(true)} />;
+  }
 
   if (!trace && !selected) {
     return (
@@ -159,6 +194,101 @@ export function ExecApp(): React.ReactElement {
           }}
         />
       </div>
+    </div>
+  );
+}
+
+const CERT_ICON: Record<string, string> = {
+  pending: "○",
+  running: "◍",
+  pass: "✓",
+  fail: "✗",
+  skip: "⊘",
+};
+
+/** La consola en vivo de "Guardar & certificar" (F14): una fila por suite con su
+ * estado + log streameado colapsable, la fase post-suites, y el veredicto final
+ * (rama + PR si verde). Es el foco del panel Ejecución mientras corre. */
+function CertConsole({
+  cert,
+  onOpenPr,
+  onClose,
+}: {
+  cert: CertState;
+  onOpenPr: (url: string) => void;
+  onClose: () => void;
+}): React.ReactElement {
+  const running = cert.suites.find((s) => s.status === "running");
+  const [openId, setOpenId] = useState<string | null>(null);
+  // Auto-abre el log de la suite en curso (o de la primera que falló).
+  const failed = cert.suites.find((s) => s.status === "fail");
+  const autoOpen = running?.id ?? failed?.id ?? null;
+  const effectiveOpen = openId ?? autoOpen;
+  const logRef = useRef<HTMLPreElement | null>(null);
+  const activeLog = effectiveOpen ? (cert.logs[effectiveOpen] ?? "") : "";
+  useEffect(() => {
+    if (logRef.current) {
+      logRef.current.scrollTop = logRef.current.scrollHeight;
+    }
+  }, [activeLog, effectiveOpen]);
+
+  const done = cert.done;
+  const doneCount = cert.suites.filter((s) => s.status === "pass" || s.status === "fail" || s.status === "skip").length;
+
+  return (
+    <div className="cert-root">
+      <div className="cert-header">
+        <span className="cert-title">
+          {done ? (done.ok ? "✓ Certificado y publicado" : "✗ Certificación con fallos") : `◍ Certificando… (${doneCount}/${cert.suites.length})`}
+        </span>
+        <button type="button" className="trace-stop" onClick={onClose}>
+          {done ? "cerrar" : "ocultar"}
+        </button>
+      </div>
+
+      <ul className="cert-suites">
+        {cert.suites.map((s) => (
+          <li key={s.id}>
+            <button
+              type="button"
+              className={`cert-suite-row cert-${s.status}${effectiveOpen === s.id ? " on" : ""}`}
+              onClick={() => setOpenId(effectiveOpen === s.id ? "" : s.id)}
+            >
+              <span className={`cert-icon cert-icon-${s.status}`}>{CERT_ICON[s.status] ?? "•"}</span>
+              <span className="cert-suite-label">{s.label}</span>
+              {s.detail && <span className="cert-suite-detail">{s.detail}</span>}
+            </button>
+            {effectiveOpen === s.id && (
+              <pre className="cert-log" ref={s.id === effectiveOpen ? logRef : undefined}>
+                {cert.logs[s.id] ? cert.logs[s.id] : "— sin salida todavía —"}
+              </pre>
+            )}
+          </li>
+        ))}
+      </ul>
+
+      {cert.phase && !done && <div className="cert-phase">◍ {cert.phase}</div>}
+
+      {done && (
+        <div className={`cert-verdict ${done.ok ? "ok" : "bad"}`}>
+          {done.ok ? (
+            <>
+              <span>Wiring bendecido y desplegado{done.branch ? ` en ${done.branch}` : ""}.</span>
+              {done.prUrl && (
+                <button type="button" className="cert-pr-btn" onClick={() => onOpenPr(done.prUrl!)}>
+                  Abrir PR ↗
+                </button>
+              )}
+            </>
+          ) : (
+            <ul className="cert-errors">
+              {done.errors.map((e, i) => (
+                <li key={i}>{e}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
     </div>
   );
 }

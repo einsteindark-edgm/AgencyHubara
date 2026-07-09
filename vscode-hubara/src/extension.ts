@@ -327,6 +327,11 @@ export function activate(ctx: vscode.ExtensionContext): void {
         productionStatusBar!.refresh();
       }
     }),
+    vscode.commands.registerCommand("acktos.certifyAndPublish", () => {
+      // Corre la suite COMPLETA de GraphAgents en vivo (panel Ejecución) y, si todo
+      // pasa, crea rama + commit + push + PR. La confirmación la muestra el propio flujo.
+      GraphPanel.certifyActive();
+    }),
   );
 
   output.appendLine("[extension] Acktos Studio activo");

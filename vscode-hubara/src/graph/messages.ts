@@ -76,6 +76,29 @@ export interface ToolCall {
 /** El nodo tal como viaja del canvas al panel Ejecución (raw + system). */
 export type SelectedNodePayload = GraphNode & { rawId: string };
 
+/** Estado de una suite dentro de la corrida de certificación (F14). */
+export type CertStatus = "pending" | "running" | "pass" | "fail" | "skip";
+
+export interface CertSuiteInfo {
+  id: string;
+  label: string;
+  status: CertStatus;
+  /** resumen corto tras terminar: "ok" · "exit 1" · "requiere :6767". */
+  detail?: string;
+}
+
+/** El estado COMPLETO de una corrida "Guardar & certificar" — la consola en vivo del
+ * panel Ejecución lo renderiza; se re-emite entero (`certRestore`) al re-abrir la vista. */
+export interface CertState {
+  suites: CertSuiteInfo[];
+  /** stdout+stderr streameado por suite (id → texto acumulado). */
+  logs: Record<string, string>;
+  /** narración de la fase post-suites (bendecir / publicar). */
+  phase: string | null;
+  /** veredicto final; null mientras corre. */
+  done: { ok: boolean; branch?: string; prUrl?: string; errors: string[] } | null;
+}
+
 /** Webview del CANVAS → extensión. */
 export type InboundMessage =
   | { type: "ready" }
@@ -86,7 +109,11 @@ export type InboundMessage =
   | { type: "nodeSelected"; system: Provider; node: SelectedNodePayload }
   | { type: "stopTrace" }
   | { type: "connectRequest"; source: string; target: string }
-  | { type: "disconnectRequest"; source: string; target: string; kind: string };
+  | { type: "disconnectRequest"; source: string; target: string; kind: string }
+  /** botón "⤴ Guardar & certificar" — corre la suite en vivo → rama+commit+PR si verde. */
+  | { type: "certifyRequest" }
+  /** click derecho en un nodo agente/tool → borrarlo (cascade-desconecta + borra manifest). */
+  | { type: "deleteNodeRequest"; nodeId: string; kind: string; label: string };
 
 /** Extensión → webview del CANVAS. */
 export type OutboundMessage =
@@ -122,7 +149,9 @@ export type ExecInbound =
   | { type: "inspectNode"; system: Provider; nodeId: string }
   /** el acc (estado acumulador) tras un nodo — lazy, al abrir entró/salió.
    * `key` la genera la webview y viaja de vuelta para matchear la respuesta. */
-  | { type: "nodeStateRequest"; key: string; executionId: string; taskId: string };
+  | { type: "nodeStateRequest"; key: string; executionId: string; taskId: string }
+  /** abrir el PR generado por la certificación en el navegador. */
+  | { type: "openExternal"; url: string };
 
 /** Extensión → webview del panel EJECUCIÓN. */
 export type ExecOutbound =
@@ -138,4 +167,12 @@ export type ExecOutbound =
   | { type: "nodeStateResult"; key: string; acc: unknown }
   | { type: "nodeStateError"; key: string; message: string }
   | { type: "inspectResult"; system: Provider; nodeId: string; files: InspectFile[] }
-  | { type: "inspectError"; system: Provider; nodeId: string; message: string };
+  | { type: "inspectError"; system: Provider; nodeId: string; message: string }
+  /** ---- certificación en vivo (F14) ---- */
+  | { type: "certStart"; suites: CertSuiteInfo[] }
+  | { type: "certLog"; suiteId: string; chunk: string }
+  | { type: "certSuite"; suiteId: string; status: CertStatus; detail?: string }
+  | { type: "certPhase"; phase: string }
+  | { type: "certDone"; ok: boolean; branch?: string; prUrl?: string; errors: string[] }
+  /** re-emite el estado completo al re-abrir la vista (la webview se recarga al ocultarse). */
+  | { type: "certRestore"; cert: CertState };

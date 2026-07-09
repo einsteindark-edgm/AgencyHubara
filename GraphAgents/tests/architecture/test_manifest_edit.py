@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from sdk.manifest_edit import connect, disconnect, validate_connection
+from sdk.manifest_edit import connect, delete_node, disconnect, validate_connection
 from sdk.manifest_model import load_manifest
 
 GA_ROOT = Path(__file__).resolve().parents[2]
@@ -246,3 +246,72 @@ def test_connect_tipos_incompatibles_no_escribe(ga):
     res = connect(ga, "agent:pod-tipado", "agent:consumidor", inputs={"x": "$state.sales"})
     assert not res["ok"]
     assert _text(ga, "pod-tipado.taskgraph.yaml") == before
+
+
+# ------------------------------------------------------------- delete_node (borrar nodo)
+
+def test_delete_tool_con_dependientes_pide_confirmacion_sin_tocar_nada(ga):
+    """Borrar una tool que agentes USAN, sin cascade, NO borra: pide confirmación y
+    enumera los dependientes (blast radius) para que la UI lo muestre."""
+    res = delete_node(ga, "tool:meta-ads-insights")
+    assert res["ok"] is False
+    assert res["needs_confirmation"] is True
+    assert set(res["dependents"]) == {"ctwa-insights", "ctwa-campaign-funnel"}
+    assert res["deleted"] == [] and res["disconnected"] == []
+    # nada se tocó: el dir de la tool y los manifests siguen intactos
+    assert (ga / "tools" / "meta_ads_insights").is_dir()
+    assert any(t.ref_id == "meta-ads-insights"
+               for t in load_manifest(ga / "manifests" / "ctwa-insights.agent.yaml").tools)
+
+
+def test_delete_tool_cascade_desconecta_dependientes_y_borra_el_dir(ga):
+    res = delete_node(ga, "tool:meta-ads-insights", cascade=True)
+    assert res["ok"] is True, res
+    assert set(res["disconnected"]) == {"ctwa-insights", "ctwa-campaign-funnel"}
+    # el directorio de la tool ya no existe → sale del catálogo
+    assert not (ga / "tools" / "meta_ads_insights").exists()
+    from sdk.registry import discover_tool_ids
+    assert "meta-ads-insights" not in discover_tool_ids(ga)
+    # ningún agente la referencia ya
+    for a in ("ctwa-insights", "ctwa-campaign-funnel"):
+        assert all(t.ref_id != "meta-ads-insights"
+                   for t in load_manifest(ga / "manifests" / f"{a}.agent.yaml").tools)
+
+
+def test_delete_agent_cascade_borra_manifest_y_desconecta_supervisores(ga):
+    """greeter lo componen los fixtures sup-b y solo → cascade lo saca de ambos y
+    borra su manifest del catálogo."""
+    res = delete_node(ga, "agent:greeter", cascade=True)
+    assert res["ok"] is True, res
+    assert set(res["disconnected"]) == {"sup-b", "solo"}
+    assert not (ga / "manifests" / "greeter.agent.yaml").exists()
+    from sdk.registry import discover_agent_ids
+    assert "greeter" not in discover_agent_ids(ga)
+
+
+def test_delete_tool_sin_dependientes_borra_directo(ga):
+    """Una tool que NO usa ningún agente → borra sin pedir confirmación (todas las tools
+    del catálogo real tienen ≥1 dependiente, así que sembramos una huérfana)."""
+    orphan = ga / "tools" / "orphan_tool"
+    orphan.mkdir()
+    (orphan / "tool.yaml").write_text(
+        "id: orphan-tool\nversion: 1.0.0\ndescription: huérfana\nside_effect: pure\n"
+        "idempotent: true\napproval_required: false\ncredentials: []\n"
+        "inputs: {}\noutputs: {}\nimpl: tools.orphan_tool.impl:run\n",
+        encoding="utf-8")
+    res = delete_node(ga, "tool:orphan-tool")
+    assert res["ok"] is True, res
+    assert res["dependents"] == [] and res["disconnected"] == []
+    assert not orphan.exists()
+
+
+def test_delete_node_inexistente_reporta_error(ga):
+    res = delete_node(ga, "tool:no-existe")
+    assert res["ok"] is False and res["needs_confirmation"] is False
+    assert any("no-existe" in e for e in res["errors"]), res
+
+
+def test_delete_node_id_malformado_reporta_error(ga):
+    res = delete_node(ga, "basura")
+    assert res["ok"] is False
+    assert res["errors"], res

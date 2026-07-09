@@ -38,6 +38,8 @@ export interface CanvasProps {
   /** click en una arista (edit mode) — App muestra el botón "✕ desconectar". */
   onEdgeSelect: (edge: Edge | null) => void;
   onEdgeDisconnect: (edge: Edge) => void;
+  /** click derecho en un nodo (edit mode) — App confirma y borra el agente/tool. */
+  onNodeDelete: (nodeId: string) => void;
   /** un item de la palette soltado sobre el canvas; `targetNodeId` es el nodo
    * bajo el cursor (null = zona vacía). */
   onPaletteDrop: (item: PaletteDragItem, targetNodeId: string | null) => void;
@@ -66,6 +68,7 @@ export function Canvas({
   onConnect,
   onEdgeSelect,
   onEdgeDisconnect,
+  onNodeDelete,
   onPaletteDrop,
   fitToken,
 }: CanvasProps): React.ReactElement {
@@ -167,6 +170,16 @@ export function Canvas({
         onNodeDragStop={(_ev, node, draggedNodes) => commitPositions(draggedNodes?.length ? draggedNodes : [node])}
         onNodeClick={(_ev, node) => onNodeClick(node.id)}
         onNodeDoubleClick={(_ev, node) => onNodeDoubleClick(node.id)}
+        onNodeContextMenu={
+          editable
+            ? (ev, node) => {
+                ev.preventDefault();
+                if (!node.id.startsWith("cluster:")) {
+                  onNodeDelete(node.id);
+                }
+              }
+            : undefined
+        }
         onConnect={editable ? handleConnect : undefined}
         onEdgeClick={
           editable
