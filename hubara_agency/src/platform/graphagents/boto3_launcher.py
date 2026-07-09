@@ -46,8 +46,15 @@ _COMPOSE_SERVICE = "graphagents"
 
 #: `python3 -m sdk.cli ...` ejecutado en el container graphagents vía docker compose exec (-T:
 #: sin TTY, requerido bajo SSM). El compose vive en /opt/graphagents en la caja (cloud-init).
+#: Python del VENV del container, explícito (incidente 2026-07-09, rollout del
+#: Window Strategist): la imagen instala deps en /opt/venv (UV_PROJECT_ENVIRONMENT)
+#: pero NO exporta ese bin en PATH → el `python3` pelado es el del sistema y
+#: `python3 -m sdk.cli` muere con ModuleNotFoundError: yaml. Verificado contra la
+#: caja real por SSM (`which python3` → /usr/local/bin/python3).
+_VENV_PYTHON = "/opt/venv/bin/python"
+
 _DOCKER_EXEC = (
-    f"docker compose -p {_COMPOSE_PROJECT} exec -T {_COMPOSE_SERVICE} python3 -m sdk.cli"
+    f"docker compose -p {_COMPOSE_PROJECT} exec -T {_COMPOSE_SERVICE} {_VENV_PYTHON} -m sdk.cli"
 )
 
 #: Parsea el execution-id del stdout de Conductor: `execution <id>: <status>`.
