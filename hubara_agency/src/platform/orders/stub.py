@@ -40,6 +40,7 @@ class StubOrderRegistration:
         shipping_cop: int,
         total_cop: int,
         currency: str = "COP",
+        attribution: dict | None = None,
     ) -> OrderRegistrationResult:
         order_id = f"HUB-{session_key}-{int(time.time())}-{uuid.uuid4().hex[:6]}"
         log.warning(

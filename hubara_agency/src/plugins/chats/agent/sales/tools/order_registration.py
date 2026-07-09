@@ -177,6 +177,23 @@ class RegisterOrderTool(ToolBase):
         # mockear Medusa, y permite dev sin Medusa configurado.
         self._port: OrderRegistrationPort = port or StubOrderRegistration()
 
+    def _session_attribution(self, session_key: str) -> dict[str, Any] | None:
+        """Atribución CTWA de la sesión (`origin` de metadata.json): el
+        `source_id` del referral es el AD ID de Meta. Best-effort: sesión
+        directa / metadata ausente o rota → None (la orden se registra igual)."""
+        metadata_file = self._vault_dir / session_key / "metadata.json"
+        try:
+            origin = json.loads(metadata_file.read_text(encoding="utf-8")).get("origin") or {}
+        except (OSError, json.JSONDecodeError):
+            return None
+        source_id = origin.get("source_id")
+        if not source_id:
+            return None
+        return {
+            "meta_ad_id": str(source_id),
+            "attribution_channel": origin.get("channel"),
+        }
+
     async def execute_with_context(
         self,
         ctx: ToolContext,
@@ -206,7 +223,9 @@ class RegisterOrderTool(ToolBase):
             phone=str(shipping["phone"]),
         )
 
-        # Delegar al port (Medusa adapter o stub).
+        # Delegar al port (Medusa adapter o stub). La atribución CTWA viaja a
+        # la metadata de la orden Medusa — es el join venta↔campaña del
+        # dashboard (2026-07-09; sin esto Medusa no sabe de qué ad vino la venta).
         result: OrderRegistrationResult = await self._port.register_order(
             session_key=ctx.session_key,
             items=order_items,
@@ -216,6 +235,7 @@ class RegisterOrderTool(ToolBase):
             shipping_cop=shipping_cop,
             total_cop=total_cop,
             currency=currency,
+            attribution=self._session_attribution(ctx.session_key),
         )
 
         # Generar un fallback order_id si el port no devolvio uno (no

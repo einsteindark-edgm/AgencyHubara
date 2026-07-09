@@ -67,6 +67,7 @@ class FakeOrderRegistrationPort:
         shipping_cop: int,
         total_cop: int,
         currency: str = "COP",
+        attribution: dict[str, Any] | None = None,
     ) -> OrderRegistrationResult:
         self.calls.append({
             "session_key": session_key,
@@ -77,6 +78,7 @@ class FakeOrderRegistrationPort:
             "shipping_cop": shipping_cop,
             "total_cop": total_cop,
             "currency": currency,
+            "attribution": attribution,
         })
         if self.return_success:
             return OrderRegistrationResult(
@@ -623,3 +625,44 @@ def test_register_order_port_protocol_runtime_check():
     Protocol (verificado por `runtime_checkable`)."""
     assert isinstance(FakeOrderRegistrationPort(), OrderRegistrationPort)
     assert isinstance(StubOrderRegistration(), OrderRegistrationPort)
+
+
+# ----------------------------------------------------------------------
+# Atribución CTWA → Medusa (pedido 2026-07-09: vincular ventas a campañas)
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_attribution_from_session_origin_travels_to_port(ctx, vault):
+    """La sesión nació de un ad CTWA (origin.source_id = ad id del referral):
+    el ad id DEBE viajar al port para quedar en la metadata de la orden Medusa
+    — es el join venta↔campaña del dashboard."""
+    meta = {"origin": {"channel": "ad", "source_id": "120210000000000001",
+                       "headline": "Chatea con nosotros"}}
+    (vault / ctx.session_key / "metadata.json").write_text(
+        json.dumps(meta), encoding="utf-8"
+    )
+    fake = FakeOrderRegistrationPort()
+    tool = RegisterOrderTool(workspace=str(vault), vault_dir=vault, port=fake)
+    await tool.execute_with_context(
+        ctx, items=_SAMPLE_ITEMS, shipping=_SAMPLE_SHIPPING,
+        payment_method="transfer", subtotal_cop=17000, shipping_cop=0,
+        total_cop=17000,
+    )
+    assert fake.calls[0]["attribution"] == {
+        "meta_ad_id": "120210000000000001",
+        "attribution_channel": "ad",
+    }
+
+
+@pytest.mark.asyncio
+async def test_attribution_none_when_session_has_no_origin(ctx, vault):
+    """Sesión directa (sin referral) → attribution None; el port no inventa."""
+    fake = FakeOrderRegistrationPort()
+    tool = RegisterOrderTool(workspace=str(vault), vault_dir=vault, port=fake)
+    await tool.execute_with_context(
+        ctx, items=_SAMPLE_ITEMS, shipping=_SAMPLE_SHIPPING,
+        payment_method="transfer", subtotal_cop=17000, shipping_cop=0,
+        total_cop=17000,
+    )
+    assert fake.calls[0]["attribution"] is None
