@@ -63,15 +63,41 @@ class _FakeEC2:
 
 class _FakeSSM:
     """ssm fake: send_command devuelve un command-id; get_command_invocation devuelve un
-    output configurable (status + stdout). Registra cada comando enviado."""
+    output configurable (status + stdout). Registra cada comando enviado.
+
+    `ping_sequence` simula el registro del agente SSM tras un arranque frío (la secuencia
+    de PingStatus que devuelve `describe_instance_information`; el último valor se repite).
+    `send_failures` simula el race real (run fe86d4e4 / reporte 2026-07-09): send_command
+    rechaza con InvalidInstanceId las primeras N veces aunque EC2 ya reporte `running`.
+    `self.calls` es el log ORDENADO de interacciones (para asertar ping-antes-de-send)."""
 
     def __init__(self, *, stdout: str = "execution exec-42: RUNNING",
-                 status: str = "Success") -> None:
+                 status: str = "Success", ping_sequence: list[str] | None = None,
+                 send_failures: int = 0) -> None:
         self._stdout = stdout
         self._status = status
+        self._pings = list(ping_sequence) if ping_sequence else ["Online"]
+        self._send_failures = send_failures
         self.sent: list = []
+        self.calls: list[str] = []
+
+    def describe_instance_information(self, *, Filters):  # noqa: N803
+        ping = self._pings.pop(0) if len(self._pings) > 1 else self._pings[0]
+        self.calls.append(f"ping:{ping}")
+        if ping == "Absent":  # el agente ni registrado aún → lista vacía
+            return {"InstanceInformationList": []}
+        iid = Filters[0]["Values"][0]
+        return {"InstanceInformationList": [{"InstanceId": iid, "PingStatus": ping}]}
 
     def send_command(self, *, InstanceIds, DocumentName, Parameters):  # noqa: N803
+        if self._send_failures > 0:
+            self._send_failures -= 1
+            self.calls.append("send:rejected")
+            raise Exception(  # noqa: TRY002 — mismo texto del ClientError real de botocore
+                "An error occurred (InvalidInstanceId) when calling the SendCommand "
+                "operation: Instances not in a valid state for account"
+            )
+        self.calls.append("send:ok")
         self.sent.append({
             "InstanceIds": InstanceIds,
             "DocumentName": DocumentName,
@@ -139,6 +165,52 @@ def test_start_box_arranca_y_espera_si_stopped(fake_clients) -> None:
     lz.start_box()
     assert ec2.started == [["i-xyz"]]  # arrancó la instancia stopped
     assert any(name == "instance_running" for (name, _) in ec2.waited)  # esperó running
+
+
+def test_start_box_espera_ssm_online_antes_de_mandar_comandos(fake_clients, monkeypatch) -> None:
+    """EC2 `running` ≠ agente SSM `Online`: tras un arranque frío (autostop) el agente tarda
+    en registrarse y `send_command` rechaza con InvalidInstanceId (caso real 2026-07-09, la
+    caja lanzó 22:05 UTC y el comando salió antes del registro). `start_box` debe POLLEAR
+    `describe_instance_information` hasta PingStatus=Online ANTES del primer send_command."""
+    monkeypatch.setattr("time.sleep", lambda _s: None)
+    ec2 = _FakeEC2(instance_id="i-xyz", state="stopped")
+    ssm = _FakeSSM(status="Success", stdout="READY",
+                   ping_sequence=["Absent", "ConnectionLost", "Online"])
+    lz = _make(fake_clients, ec2=ec2, ssm=ssm)
+
+    lz.start_box()
+
+    assert "ping:Online" in ssm.calls  # esperó el registro del agente SSM
+    first_send = ssm.calls.index("send:ok")
+    assert first_send > ssm.calls.index("ping:Online")  # ningún comando antes de Online
+
+
+def test_send_command_reintenta_invalid_instance_id_transitorio(fake_clients, monkeypatch) -> None:
+    """Cinturón y tiradores: si aún así send_command rechaza con InvalidInstanceId (el agente
+    se registró y el API de SSM todavía propaga), se REINTENTA en vez de tumbar el run."""
+    monkeypatch.setattr("time.sleep", lambda _s: None)
+    ec2 = _FakeEC2(state="running")
+    ssm = _FakeSSM(status="Success", stdout="READY", send_failures=2)
+    lz = _make(fake_clients, ec2=ec2, ssm=ssm)
+
+    lz.start_box()  # no revienta: reintenta hasta que SSM acepta
+
+    assert ssm.calls.count("send:rejected") == 2
+    assert "send:ok" in ssm.calls
+
+
+def test_start_box_espera_stopped_antes_de_arrancar_si_stopping(fake_clients) -> None:
+    """`start_instances` sobre una caja `stopping` (autostop a mitad de camino) es
+    IncorrectInstanceState: hay que esperar `instance_stopped` ANTES de arrancarla."""
+    ec2 = _FakeEC2(instance_id="i-xyz", state="stopping")
+    lz = _make(fake_clients, ec2=ec2)
+
+    lz.start_box()
+
+    names = [name for (name, _) in ec2.waited]
+    assert "instance_stopped" in names  # esperó el fin del stop
+    assert names.index("instance_stopped") < names.index("instance_running")
+    assert ec2.started == [["i-xyz"]]
 
 
 # ------------------------------------------------------------------ dispatch

@@ -125,6 +125,10 @@ def test_get_agents_trae_el_catalogo_con_input_de_ejemplo(client) -> None:
         "manual_sales",
         "entities_payload",
     }
+    # El selector necesita DECIR qué análisis hace cada agente (feedback operador
+    # 2026-07-09: "hace falta una descripción de qué tipo de análisis va a hacer").
+    assert isinstance(ads_analytics.get("description"), str)
+    assert len(ads_analytics["description"]) > 30  # una descripción real, no un stub
 
 
 def test_list_runs_endpoint_devuelve_historial_versionado(client):

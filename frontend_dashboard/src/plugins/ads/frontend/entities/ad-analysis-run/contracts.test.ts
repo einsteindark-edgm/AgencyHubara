@@ -8,11 +8,12 @@ import {
 } from "./contracts";
 
 describe("ad-analysis-run contracts", () => {
-  it("agentsListResponseSchema mapea example_input → exampleInput", () => {
+  it("agentsListResponseSchema mapea example_input → exampleInput y description", () => {
     const parsed = agentsListResponseSchema.parse([
       {
         id: "ads-analytics",
         label: "Análisis CTWA por campaña",
+        description: "Cruza gasto de Meta con ventas y arma el embudo.",
         example_input: { meta_insights: {} },
       },
       { id: "numbers-qa", label: "Numbers QA", example_input: {} },
@@ -21,10 +22,14 @@ describe("ad-analysis-run contracts", () => {
     expect(parsed[0]).toEqual({
       id: "ads-analytics",
       label: "Análisis CTWA por campaña",
+      // El selector la muestra bajo el combo: QUÉ análisis hace este agente.
+      description: "Cruza gasto de Meta con ventas y arma el embudo.",
       exampleInput: { meta_insights: {} },
     });
     // `example_input` puede ser cualquier JSON, incluido `{}` o arrays.
     expect(parsed[1].exampleInput).toEqual({});
+    // Catálogo legacy sin description → null (tolerante en rollout).
+    expect(parsed[1].description).toBeNull();
   });
 
   it("runRecordSchema mapea snake_case → camelCase y default events=[]", () => {

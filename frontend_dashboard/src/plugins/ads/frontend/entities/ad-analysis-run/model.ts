@@ -19,7 +19,9 @@ export type RunStatus =
 export interface AgentOption {
   id: string;
   label: string;
-  /** JSON de ejemplo que se inyecta en el textarea al elegir el agente. */
+  /** Qué análisis hace este agente — se muestra bajo el selector. */
+  description: string | null;
+  /** JSON de ejemplo (fallback del textarea cuando Meta no está conectado). */
   exampleInput: unknown;
 }
 

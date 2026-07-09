@@ -25,11 +25,15 @@ export const agentOptionSchema = z
   .object({
     id: z.string(),
     label: z.string(),
+    // Qué análisis hace el agente (el selector la muestra bajo el combo).
+    // `.default(null)` tolera catálogos legacy sin descripción.
+    description: z.string().nullable().default(null),
     example_input: z.unknown(),
   })
   .transform((a) => ({
     id: a.id,
     label: a.label,
+    description: a.description,
     exampleInput: a.example_input,
   }));
 

@@ -118,7 +118,15 @@ _ADS_ANALYTICS_INPUT = {
 _AGENTS = [
     {
         "id": "ads-analytics",
-        "label": "Análisis CTWA por campaña (Día del padre)",
+        "label": "Unit-economics CTWA por campaña",
+        "description": (
+            "Analiza tus campañas de Meta que llevan a WhatsApp: cruza el gasto y los "
+            "clicks de Meta con las ventas, arma el embudo click → conversación → venta "
+            "por campaña, calcula CAC / ROAS / costo por conversación, verifica que los "
+            "números cierren y redacta un reporte con sugerencias accionables (qué "
+            "campaña escalar, cuál pausar). Corre en el pod GraphAgents; puede pedirte "
+            "aprobación antes de sugerir cambios."
+        ),
         "example_input": _ADS_ANALYTICS_INPUT,
     },
 ]

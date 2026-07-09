@@ -119,17 +119,50 @@ class Boto3Launcher:
     def start_box(self) -> None:
         """Despierta la caja y espera a que AgentSpan esté listo. Idempotente: si ya corre, solo
         verifica readiness; si está `stopped`, la arranca y espera `running` antes del readiness.
-        El readiness corre DENTRO de la caja por SSM — NO hay conexión directa desde el backend."""
+        El readiness corre DENTRO de la caja por SSM — NO hay conexión directa desde el backend.
+
+        Dos esperas que NO son opcionales (caso real 2026-07-09, arranque frío post-autostop):
+        - `stopping` → esperar `instance_stopped` antes de `start_instances` (si no,
+          IncorrectInstanceState).
+        - EC2 `running` ≠ agente SSM registrado: `send_command` contra una caja recién arrancada
+          rechaza con InvalidInstanceId hasta que el agente pinguea `Online` → se pollea
+          `describe_instance_information` antes del primer comando."""
         ec2, ssm = self._clients()
         instance = self._describe(ec2)
         instance_id = instance["InstanceId"]
         state = (instance.get("State") or {}).get("Name")
 
-        if state in ("stopped", "stopping"):
+        if state == "stopping":
+            ec2.get_waiter("instance_stopped").wait(InstanceIds=[instance_id])
+            state = "stopped"
+        if state == "stopped":
             ec2.start_instances(InstanceIds=[instance_id])
             ec2.get_waiter("instance_running").wait(InstanceIds=[instance_id])
 
+        self._wait_ssm_online(ssm, instance_id)
         self._wait_ready(ssm, instance_id)
+
+    def _wait_ssm_online(
+        self, ssm, instance_id: str, *, timeout: float = 240.0, interval: float = 3.0
+    ) -> None:
+        """Espera a que el AGENTE SSM de la caja esté `Online` (registrado en el plano de
+        control). EC2 `running` no alcanza: tras un arranque frío el agente tarda ~decenas de
+        segundos en registrarse y todo `send_command` previo muere con InvalidInstanceId."""
+        deadline = time.monotonic() + timeout
+        while True:
+            resp = ssm.describe_instance_information(
+                Filters=[{"Key": "InstanceIds", "Values": [instance_id]}]
+            )
+            infos = resp.get("InstanceInformationList", [])
+            if any(info.get("PingStatus") == "Online" for info in infos):
+                return
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    f"Boto3Launcher: el agente SSM de {instance_id} no llegó a Online tras "
+                    f"{timeout:.0f}s — la caja corre pero SSM no puede hablarle (revisar el "
+                    f"agente SSM / el instance profile de la caja graphagents)."
+                )
+            time.sleep(interval)
 
     def _wait_ready(self, ssm, instance_id: str) -> None:
         """Espera a que AgentSpan responda — por SSM, corriendo el chequeo DENTRO de la caja (curl a
@@ -145,15 +178,36 @@ class Boto3Launcher:
 
     # ------------------------------------------------------------ SSM / run
 
-    def _send(self, ssm, instance_id: str, command: str) -> str:
+    def _send(
+        self, ssm, instance_id: str, command: str, *, send_timeout: float = 90.0,
+        send_interval: float = 3.0,
+    ) -> str:
         """Manda un comando shell por SSM (`AWS-RunShellScript`), pollea hasta terminal y devuelve el
         stdout. Falla LOUD si no termina en `Success`. Es el ÚNICO canal hacia la caja (instance-id),
-        nunca una conexión de red directa."""
-        resp = ssm.send_command(
-            InstanceIds=[instance_id],
-            DocumentName="AWS-RunShellScript",
-            Parameters={"commands": [command]},
-        )
+        nunca una conexión de red directa.
+
+        Un `InvalidInstanceId` transitorio (el agente SSM recién registrado, el API aún
+        propagando) se REINTENTA hasta `send_timeout` — cinturón además del `_wait_ssm_online`
+        de `start_box` (caso real 2026-07-09). Cualquier otro error propaga intacto."""
+        deadline = time.monotonic() + send_timeout
+        while True:
+            try:
+                resp = ssm.send_command(
+                    InstanceIds=[instance_id],
+                    DocumentName="AWS-RunShellScript",
+                    Parameters={"commands": [command]},
+                )
+                break
+            except Exception as exc:  # noqa: BLE001 — filtramos por código; el resto propaga
+                if "InvalidInstanceId" not in str(exc):
+                    raise
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(
+                        f"Boto3Launcher: SSM siguió rechazando send_command con InvalidInstanceId "
+                        f"tras {send_timeout:.0f}s — el agente SSM de {instance_id} no está "
+                        f"disponible (¿caja recién arrancada o agente caído?)."
+                    ) from exc
+                time.sleep(send_interval)
         return self._await_invocation(ssm, resp["Command"]["CommandId"], instance_id)
 
     def _run_cli(self, ssm, instance_id: str, cli_args: str) -> str:
