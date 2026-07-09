@@ -111,3 +111,14 @@ def test_plan_without_seeds_leaves_unknown_orders_untouched() -> None:
     orders = [{"id": "draft_X", "metadata": {}}]
     plan = plan_order_patches(orders, {}, {}, [])
     assert plan == [{"order_id": "draft_X", "action": "unmatched", "patch": {}}]
+
+
+def test_plan_skips_canceled_orders() -> None:
+    # Una orden CANCELADA no es una venta: no recibe atribución (además Medusa
+    # rechaza updates sobre canceladas — caso real: order #1 de prueba, 2026-07-09).
+    orders = [
+        {"id": "draft_dead", "metadata": {}, "status": "canceled"},
+        {"id": "draft_ok", "metadata": {}, "status": "completed"},
+    ]
+    plan = plan_order_patches(orders, {}, {}, ["c-1"])
+    assert [p["action"] for p in plan] == ["skip", "seeded"]

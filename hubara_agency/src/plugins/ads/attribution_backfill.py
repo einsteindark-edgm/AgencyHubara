@@ -72,6 +72,11 @@ def plan_order_patches(
     for order in orders:
         oid = str(order.get("id"))
         metadata = order.get("metadata") or {}
+        # Cancelada ≠ venta: no recibe atribución (y Medusa rechaza updates
+        # sobre canceladas — caso real 2026-07-09, orden #1 de prueba).
+        if order.get("status") == "canceled":
+            plan.append({"order_id": oid, "action": "skip", "patch": {}})
+            continue
         if metadata.get("meta_ad_id") or metadata.get("meta_campaign_id"):
             plan.append({"order_id": oid, "action": "skip", "patch": {}})
             continue
