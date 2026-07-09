@@ -144,9 +144,12 @@ data "aws_iam_policy_document" "wake_graphagents" {
   }
   statement {
     # SSM SendCommand/GetCommandInvocation: despachar el run a la box y leer el
-    # resultado de la invocación. Sin tag-scope a nivel ARN del documento.
+    # resultado de la invocación. DescribeInstanceInformation: esperar a que el
+    # AGENTE SSM de la box esté Online tras el arranque frío del autostop —
+    # EC2 `running` no alcanza y el send_command prematuro muere con
+    # InvalidInstanceId (PR #141). Es read-only y NO soporta resource-scope.
     sid       = "DispatchViaSSM"
-    actions   = ["ssm:SendCommand", "ssm:GetCommandInvocation"]
+    actions   = ["ssm:SendCommand", "ssm:GetCommandInvocation", "ssm:DescribeInstanceInformation"]
     resources = ["*"]
   }
 }
