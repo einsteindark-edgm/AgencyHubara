@@ -66,6 +66,7 @@ def meta_login() -> RedirectResponse:
         redirect_uri=settings.redirect_uri,
         scopes=settings.scopes,
         state=state,
+        config_id=settings.config_id,
     )
     return RedirectResponse(url)
 

@@ -46,4 +46,6 @@ wiring_intents:
     - META_APP_SECRET        # App Secret (solo backend; rotar si se expone)
     - META_OAUTH_REDIRECT_URI  # https://<backend>/api/ads/meta/callback (whitelistear en FB Login)
     # Opcionales (con default): META_OAUTH_SCOPES (default "ads_read"),
-    # META_ADS_TENANT (default "hubara"), AWS_REGION (para SSM).
+    # META_ADS_TENANT (default "hubara"), AWS_REGION (para SSM),
+    # META_OAUTH_CONFIG_ID (apps business-type: config de Facebook Login for
+    # Business — con esto seteado el diálogo usa config_id y omite scope).

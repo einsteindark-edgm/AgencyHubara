@@ -72,6 +72,20 @@ def test_login_redirects_to_facebook_dialog(monkeypatch) -> None:
     assert "client_id=123" in resp.headers["location"]
 
 
+def test_login_uses_config_id_when_configured(monkeypatch) -> None:
+    """Con META_OAUTH_CONFIG_ID seteado (app business-type, Facebook Login for
+    Business), el redirect al diálogo lleva config_id y NO scope."""
+    import dataclasses
+
+    settings = dataclasses.replace(_SETTINGS, config_id="777888999")
+    client = _client(monkeypatch, settings=settings)
+    resp = client.get("/api/ads/meta/login", follow_redirects=False)
+    assert resp.status_code in (302, 307)
+    location = resp.headers["location"]
+    assert "config_id=777888999" in location
+    assert "scope=" not in location
+
+
 def test_login_503_when_unconfigured(monkeypatch) -> None:
     unconf = MetaSettings("", "", "", ("ads_read",), "hubara", None)
     client = _client(monkeypatch, settings=unconf)

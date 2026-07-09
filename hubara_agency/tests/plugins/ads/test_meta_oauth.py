@@ -37,3 +37,23 @@ def test_authorize_url_carries_required_oauth_params() -> None:
     assert q["state"] == ["xyz"]
     # scopes como lista separada por comas (formato del diálogo de FB)
     assert set(q["scope"][0].split(",")) == {"ads_read", "ads_management"}
+    # sin config_id NO viaja el parámetro (apps clásicas siguen scope-based)
+    assert "config_id" not in q
+
+
+def test_authorize_url_with_config_id_replaces_scope() -> None:
+    """Facebook Login for Business: las apps business-type autorizan vía una
+    "configuración" (config_id) que YA define los permisos — el diálogo exige
+    `config_id` y el `scope` suelto se ignora/rechaza (caso login 2026-07-09)."""
+    url = build_authorize_url(
+        app_id="123",
+        redirect_uri="https://app/cb",
+        scopes=("ads_read", "ads_management"),
+        state="xyz",
+        config_id="777",
+    )
+    q = parse_qs(urlparse(url).query)
+    assert q["config_id"] == ["777"]
+    assert "scope" not in q
+    assert q["response_type"] == ["code"]
+    assert q["state"] == ["xyz"]

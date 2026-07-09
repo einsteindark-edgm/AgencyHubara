@@ -13,23 +13,32 @@ _TIMEOUT_S = 20.0
 
 
 def build_authorize_url(
-    *, app_id: str, redirect_uri: str, scopes: tuple[str, ...], state: str
+    *,
+    app_id: str,
+    redirect_uri: str,
+    scopes: tuple[str, ...],
+    state: str,
+    config_id: str | None = None,
 ) -> str:
     """Arma la URL del diálogo de OAuth de Meta (Facebook Login, authorization code).
 
     `state` es el anti-CSRF que el callback debe verificar. Los scopes van en lista
-    separada por comas (formato del diálogo de FB).
+    separada por comas (formato del diálogo de FB) — SALVO con `config_id`
+    (Facebook Login for Business, apps business-type): la configuración del
+    dashboard ya define los permisos, el diálogo exige config_id y el scope
+    suelto se omite (caso login 2026-07-09).
     """
-    query = urlencode(
-        {
-            "client_id": app_id,
-            "redirect_uri": redirect_uri,
-            "response_type": "code",
-            "state": state,
-            "scope": ",".join(scopes),
-        }
-    )
-    return f"https://www.facebook.com/{GRAPH_VERSION}/dialog/oauth?{query}"
+    params = {
+        "client_id": app_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "state": state,
+    }
+    if config_id:
+        params["config_id"] = config_id
+    else:
+        params["scope"] = ",".join(scopes)
+    return f"https://www.facebook.com/{GRAPH_VERSION}/dialog/oauth?{urlencode(params)}"
 
 
 def _token_endpoint(base_url: str) -> str:

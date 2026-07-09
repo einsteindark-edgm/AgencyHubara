@@ -20,6 +20,10 @@ class MetaSettings:
     scopes: tuple[str, ...]
     tenant: str
     region: str | None
+    # Facebook Login for Business: las apps business-type autorizan vía una
+    # "configuración" del dashboard (config_id) que ya define los permisos;
+    # con esto seteado el diálogo usa config_id y omite scope (caso 2026-07-09).
+    config_id: str | None = None
 
     @property
     def ssm_parameter(self) -> str:
@@ -41,4 +45,5 @@ def meta_settings() -> MetaSettings:
         scopes=scopes or ("ads_read",),
         tenant=os.getenv("META_ADS_TENANT", "hubara"),
         region=os.getenv("AWS_REGION") or None,
+        config_id=os.getenv("META_OAUTH_CONFIG_ID") or None,
     )
