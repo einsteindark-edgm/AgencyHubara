@@ -196,6 +196,23 @@ resource "aws_instance" "app" {
     http_tokens = "required" # IMDSv2 obligatorio
   }
 
+  # Incidente 2026-07-08: un AMI nuevo en el data source `most_recent` hizo que
+  # un apply rutinario REEMPLAZARA la caja — y el vault (root EBS) se destruyó
+  # con ella. Cinturón además del pin en tfvars: aunque el AMI resuelto cambie,
+  # Terraform NO propone replacement. Upgrade de AMI = `-replace` explícito.
+  lifecycle {
+    ignore_changes = [ami]
+  }
+
+  # Volume tags: el DLM (backup.tf del root) snapshotea diario por este tag —
+  # acá vive el vault (sesiones WhatsApp + catálogo), el único estado de
+  # negocio que no se puede reconstruir de una fuente externa.
+  volume_tags = {
+    Name   = "agencyhubara-${var.tenant}-app-root"
+    Tenant = var.tenant
+    Backup = "daily"
+  }
+
   tags = {
     Name   = "agencyhubara-${var.tenant}-app"
     Tenant = var.tenant
