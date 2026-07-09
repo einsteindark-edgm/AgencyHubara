@@ -5,6 +5,7 @@ import { CertStatus, CertSuiteInfo } from "../graph/messages";
 import { makeSuiteResolver } from "../testing/resolve";
 import { runSuite } from "../testing/runner";
 import { SUITES } from "../testing/suites";
+import { publishNatively, PublishPlan } from "./publisher";
 
 /**
  * El sink al que el orquestador empuja la corrida — lo implementa el panel
@@ -91,12 +92,28 @@ export async function runCertifyAndPublish(
       return;
     }
 
-    sink.certPhase("Publicando: rama + commit + push + PR…");
-    const pub = await bridges
-      .get("graphagents")
-      .request({ method: "POST", path: "/api/publish", body: { push: true, pr: true } });
-    const p = pub.payload as PublishResponse;
-    sink.certDone(p.ok === true, p.branch, p.pr_url, p.ok ? [] : (p.errors ?? [`publish falló (status ${pub.status})`]));
+    // Publicar con las APIs NATIVAS de VS Code (git + GitHub, sin `gh`): pedimos el PLAN
+    // sin efectos a Python y lo ejecutamos acá. Si el git nativo no está disponible,
+    // caemos al camino headless `/api/publish` (gh) — nunca se regresa.
+    sink.certPhase("Preparando el plan de publicación…");
+    const planRes = await bridges.get("graphagents").request({ method: "GET", path: "/api/publish-plan" });
+    const plan = planRes.payload as PublishPlan;
+    if (!plan.ok) {
+      sink.certDone(false, undefined, undefined, plan.errors?.length ? plan.errors : [`no pude armar el plan (status ${planRes.status})`]);
+      return;
+    }
+    sink.certPhase("Publicando con VS Code (rama + commit + push + PR)…");
+    const outcome = await publishNatively(plan, (line) => sink.certPhase(line));
+    if (outcome.unavailable) {
+      sink.certPhase("Git nativo no disponible — usando gh (headless)…");
+      const pub = await bridges
+        .get("graphagents")
+        .request({ method: "POST", path: "/api/publish", body: { push: true, pr: true } });
+      const p = pub.payload as PublishResponse;
+      sink.certDone(p.ok === true, p.branch, p.pr_url, p.ok ? [] : (p.errors ?? [`publish falló (status ${pub.status})`]));
+      return;
+    }
+    sink.certDone(outcome.ok, outcome.branch, outcome.prUrl, outcome.errors);
   } catch (e) {
     sink.certDone(false, undefined, undefined, [`el despliegue falló: ${e instanceof Error ? e.message : String(e)}`]);
   }

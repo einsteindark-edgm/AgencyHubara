@@ -83,6 +83,70 @@ def _run(cmd: list[str], cwd: Path | None = None) -> tuple[int, str]:
     return p.returncode, (p.stdout + p.stderr).strip()
 
 
+def plan_publication(ga_root: Path) -> dict:
+    """El PLAN de publicación SIN efectos: qué rama, qué paths, qué mensaje/PR — para que un
+    frontend (Acktos Studio) lo EJECUTE con las APIs nativas de VS Code (git + GitHub) en vez
+    de shellear `gh`. No muta: NO crea rama ni commitea (eso lo hace quien ejecuta el plan).
+
+    `publish_production` sigue siendo el camino headless (git/gh por subprocess) — la verdad
+    de QUÉ se publica (guard del snapshot, paths quirúrgicos, mensaje) vive una sola vez acá.
+    """
+    ga_root = Path(ga_root)
+    out: dict = {"ok": False, "errors": [], "repo_root": None, "on_default": False,
+                 "branch": None, "base": "main", "paths": [], "title": None, "body": None,
+                 "fingerprint": None, "has_changes": False}
+
+    st = production_status(ga_root)
+    if not st["saved"] or st["dirty"]:
+        out["errors"].append("guardá producción primero (el snapshot no está al día) — "
+                             "publicar despliega SOLO lo bendecido")
+        return out
+    snap = st["snapshot"]
+    fp = str(snap.get("fingerprint", ""))
+    fp8 = fp[:8]
+    out["fingerprint"] = fp
+
+    code, top = _run(["git", "-C", str(ga_root), "rev-parse", "--show-toplevel"])
+    if code != 0:
+        out["errors"].append(f"no estoy dentro de un repo git — publicá desde el checkout local ({top})")
+        return out
+    repo = Path(top)
+    out["repo_root"] = str(repo)
+    git = lambda *a: _run(["git", "-C", str(repo), *a])  # noqa: E731
+
+    code, branch = git("rev-parse", "--abbrev-ref", "HEAD")
+    if code != 0:
+        out["errors"].append(f"no pude leer la rama actual: {branch}")
+        return out
+    on_default = branch in ("main", "master")
+    out["on_default"] = on_default
+    out["branch"] = f"graphagents/production-{fp8}" if on_default else branch
+
+    # base del PR = la rama default del remoto (origin/HEAD); sin remoto, la actual/main
+    code, origin_head = git("rev-parse", "--abbrev-ref", "origin/HEAD")
+    if code == 0 and origin_head.startswith("origin/"):
+        out["base"] = origin_head.split("/", 1)[1]
+    else:
+        out["base"] = branch if on_default else "main"
+
+    ga_rel = ga_root.resolve().relative_to(repo.resolve())
+    manifests_rel = str(ga_rel / "manifests")
+    snap_rel = str(ga_rel / SNAPSHOT_NAME)
+    out["paths"] = [manifests_rel, snap_rel]
+    _, porcelain = git("status", "--porcelain", "--", manifests_rel, snap_rel)
+    out["has_changes"] = bool(porcelain.strip())
+
+    out["title"] = (f"feat(graphagents): producción {fp8} — {len(snap.get('pods', []))} pod(s), "
+                    f"{snap.get('edges', 0)} relaciones")
+    out["body"] = (f"Despliegue del wiring bendecido desde Acktos Studio (GraphAgents).\n\n"
+                   f"- pods: {', '.join(snap.get('pods', []))}\n"
+                   f"- nodos: {snap.get('nodes')} · relaciones: {snap.get('edges')}\n"
+                   f"- fingerprint: `{fp}`\n"
+                   f"- bendecido: {snap.get('saved_at')} (checks del sistema en verde)\n")
+    out["ok"] = True
+    return out
+
+
 def publish_production(ga_root: Path, *, push: bool = True, pr: bool = True) -> dict:
     """El DESPLIEGUE del wiring bendecido: commit quirúrgico (+push +PR con `gh`).
 

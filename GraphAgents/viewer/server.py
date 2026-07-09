@@ -471,6 +471,18 @@ def api_route(method: str, path: str, params: dict, body: dict | None, ga_root: 
         except Exception as e:  # noqa: BLE001 — manifest ilegible / IO: degradá, la UI nunca crashea
             return 422, {"ok": False, "errors": [f"el save falló: {e}"], "snapshot": None}
         return (200 if res["ok"] else 422), res
+    if method == "GET" and path == "/api/publish-plan":
+        # el PLAN de publicación SIN efectos: rama/paths/mensaje/PR para que Acktos Studio lo
+        # ejecute con las APIs nativas de VS Code (git + GitHub, sin gh). No muta nada.
+        from sdk.production import plan_publication
+
+        try:
+            res = plan_publication(ga_root)
+        except Exception as e:  # noqa: BLE001 — IO/git inesperado: degradá, la UI nunca crashea
+            return 422, {"ok": False, "errors": [f"el plan falló: {e}"], "repo_root": None,
+                         "on_default": False, "branch": None, "base": "main", "paths": [],
+                         "title": None, "body": None, "fingerprint": None, "has_changes": False}
+        return (200 if res["ok"] else 422), res
     if method == "POST" and path == "/api/publish":
         # 'publicar producción': el DESPLIEGUE del wiring bendecido — commit quirúrgico
         # (manifests/ + production.yaml) → push → PR con `gh`. Exige snapshot al día

@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from sdk.production import publish_production, save_production
+from sdk.production import plan_publication, production_status, publish_production, save_production
 from viewer.server import api_route
 
 GA_ROOT = Path(__file__).resolve().parents[2]
@@ -91,6 +91,43 @@ def test_publish_fuera_de_git_degrada_honesto(tmp_path):
     res = publish_production(tmp_path, push=False, pr=False)
     assert res["ok"] is False
     assert any("git" in e for e in res["errors"]), res
+
+
+# ----------------------------------------- plan_publication (F15: ejecución nativa VS Code)
+
+def test_plan_publication_da_el_plan_sin_mutar(ga_repo):
+    """El PLAN de publicación no crea rama ni commitea — solo describe qué hacer, para que
+    la extensión lo ejecute con las APIs nativas de VS Code (git + GitHub, sin gh)."""
+    assert save_production(ga_repo)["ok"]
+    fp8 = production_status(ga_repo)["snapshot"]["fingerprint"][:8]
+    head_before = _git(ga_repo, "rev-parse", "--abbrev-ref", "HEAD")
+    plan = plan_publication(ga_repo)
+    assert plan["ok"] is True, plan
+    assert plan["on_default"] is True  # estamos en main
+    assert plan["branch"] == f"graphagents/production-{fp8}"
+    assert plan["base"] == "main"
+    assert set(plan["paths"]) == {"manifests", "production.yaml"}  # ga_root == repo root en el fixture
+    assert fp8 in plan["title"]
+    assert plan["has_changes"] is True  # production.yaml recién bendecido, sin commitear
+    # NO mutó: sigue en main, sin rama nueva, production.yaml sin commitear
+    assert _git(ga_repo, "rev-parse", "--abbrev-ref", "HEAD") == head_before == "main"
+    assert "production.yaml" in _git(ga_repo, "status", "--porcelain")
+
+
+def test_plan_publication_requiere_snapshot_al_dia(ga_repo):
+    plan = plan_publication(ga_repo)  # sin save previo
+    assert plan["ok"] is False
+    assert any("guard" in e for e in plan["errors"]), plan
+
+
+def test_endpoint_publish_plan(ga_repo):
+    # sin save previo → 422 (el snapshot no está al día)
+    status, _ = api_route("GET", "/api/publish-plan", {}, None, ga_root=ga_repo)
+    assert status == 422
+    assert save_production(ga_repo)["ok"]
+    status, payload = api_route("GET", "/api/publish-plan", {}, None, ga_root=ga_repo)
+    assert status == 200, payload
+    assert payload["ok"] is True and payload["branch"] and payload["paths"]
 
 
 def test_endpoint_publish(ga_repo):
