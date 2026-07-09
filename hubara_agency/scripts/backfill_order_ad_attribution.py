@@ -6,10 +6,11 @@ llevan atribución en metadata. Este script converge el histórico:
   * Orden cuya venta el VAULT conoce (episodio/registro con ese order_id en una
     sesión CTWA) → atribución REAL: `meta_ad_id` del referral + campaña resuelta
     vía Graph (`attribution_backfilled="real"`).
-  * Orden sin rastro CTWA → `meta_campaign_id` SEMBRADO round-robin sobre las
-    campañas reales de la cuenta (`attribution_backfilled="seeded"`) — histórico
-    de PRUEBA para ejercitar los cálculos del dashboard; el marker "seeded"
-    permite identificarlas / revertirlas después.
+  * Orden sin rastro CTWA → SOLO si pasás `--campaign-ids`: `meta_campaign_id`
+    sembrado round-robin sobre ESAS campañas (`attribution_backfilled="seeded"`)
+    — histórico de PRUEBA identificable/reversible por el marker. Sin el flag,
+    quedan INTACTAS (sembrar es explícito; no contaminamos campañas por default
+    — caso 2026-07-09: seeds solo a Día del padre, Duo zodiacal limpia).
   * Orden que ya tiene atribución → skip. IDEMPOTENTE: re-correr es seguro.
 
 USO (dentro del container del API en la caja, que tiene vault + SSM + Medusa):
@@ -20,8 +21,8 @@ USO (dentro del container del API en la caja, que tiene vault + SSM + Medusa):
     # aplicar de verdad
     cd hubara_agency && uv run python scripts/backfill_order_ad_attribution.py --apply
 
-    # campañas seed explícitas (si no: se listan en vivo de la cuenta conectada)
-    ... --campaign-ids 120243118818600317,120240351877200317
+    # sembrar las órdenes sin rastro CTWA en UNA campaña (Día del padre 2026)
+    ... --apply --campaign-ids 120243118818600317
 
 No imprime tokens. Requiere Medusa configurado + la conexión Meta sembrada
 (token store /hubara/<tenant>/meta/oauth) o META_SYSTEM_USER_TOKEN en env.
@@ -75,20 +76,10 @@ def _meta_token() -> str:
     return os.environ.get("META_SYSTEM_USER_TOKEN", "")
 
 
-def _seed_campaigns(campaign_ids_arg: str, token: str) -> list[str]:
-    if campaign_ids_arg:
-        return [c.strip() for c in campaign_ids_arg.split(",") if c.strip()]
-    from src.plugins.ads.meta.composition import get_ads_port, get_token_store
-
-    stored = get_token_store().load()
-    if not (token and stored and stored.account_id):
-        raise SystemExit(
-            "sin --campaign-ids y sin conexión Meta sembrada — no hay campañas seed"
-        )
-    campaigns = get_ads_port().list_campaigns(token, stored.account_id)
-    if not campaigns:
-        raise SystemExit("la cuenta no tiene campañas — pasá --campaign-ids")
-    return [c.campaign_id for c in campaigns]
+def _seed_campaigns(campaign_ids_arg: str) -> list[str]:
+    """Campañas seed SOLO explícitas (--campaign-ids). Vacío = no sembrar:
+    las órdenes sin rastro CTWA quedan intactas (solo atribución real)."""
+    return [c.strip() for c in campaign_ids_arg.split(",") if c.strip()]
 
 
 async def main() -> None:
@@ -111,17 +102,21 @@ async def main() -> None:
         ad: info["campaign_id"] for ad, info in names.items() if info.get("campaign_id")
     }
 
-    seeds = _seed_campaigns(args.campaign_ids, token)
-    logger.info("campañas seed (round-robin): {}", seeds)
+    seeds = _seed_campaigns(args.campaign_ids)
+    logger.info(
+        "campañas seed (round-robin): {}",
+        seeds or "(ninguna — solo atribución real; --campaign-ids para sembrar)",
+    )
 
     plan = plan_order_patches(orders, vault_index, ad_to_campaign, seeds)
-    by_action = {"real": 0, "seeded": 0, "skip": 0}
+    by_action = {"real": 0, "seeded": 0, "skip": 0, "unmatched": 0}
     for p in plan:
         by_action[p["action"]] += 1
-        if p["action"] != "skip":
+        if p["action"] in ("real", "seeded"):
             logger.info("  {} {} → {}", p["action"].upper(), p["order_id"], p["patch"])
-    logger.info("plan: {} real · {} seeded · {} skip", by_action["real"],
-                by_action["seeded"], by_action["skip"])
+    logger.info("plan: {} real · {} seeded · {} skip · {} unmatched (intactas)",
+                by_action["real"], by_action["seeded"], by_action["skip"],
+                by_action["unmatched"])
 
     if not args.apply:
         logger.info("DRY-RUN — nada escrito. Re-correr con --apply para aplicar.")
@@ -129,7 +124,7 @@ async def main() -> None:
 
     ok = failed = 0
     for p in plan:
-        if p["action"] == "skip":
+        if p["action"] not in ("real", "seeded"):
             continue
         try:
             await client.patch_draft_order_metadata(p["order_id"], p["patch"])

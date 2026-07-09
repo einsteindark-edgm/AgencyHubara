@@ -102,3 +102,12 @@ def test_plan_real_without_campaign_resolution_keeps_ad_id() -> None:
     assert patch["meta_ad_id"] == "AD_1"
     assert "meta_campaign_id" not in patch
     assert patch["attribution_backfilled"] == "real"
+
+
+def test_plan_without_seeds_leaves_unknown_orders_untouched() -> None:
+    # Sin campañas seed (el operador no pasó --campaign-ids): las órdenes sin
+    # rastro CTWA quedan INTACTAS (unmatched, patch vacío) — sembrar es una
+    # decisión explícita, no un default que contamina campañas.
+    orders = [{"id": "draft_X", "metadata": {}}]
+    plan = plan_order_patches(orders, {}, {}, [])
+    assert plan == [{"order_id": "draft_X", "action": "unmatched", "patch": {}}]

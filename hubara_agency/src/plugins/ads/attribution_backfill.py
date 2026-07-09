@@ -7,9 +7,11 @@ su metadata. Este módulo arma el plan de parcheo (PURO — el IO vive en
 - Órdenes cuya venta el vault CONOCE (episode/registro con ese order_id en una
   sesión con `origin.source_id`) → atribución REAL (`meta_ad_id` + campaña
   resuelta vía Graph) con `attribution_backfilled="real"`.
-- El resto → `meta_campaign_id` sembrado round-robin sobre las campañas reales
-  con `attribution_backfilled="seeded"` — histórico de PRUEBA para ejercitar
-  los cálculos del dashboard; el marker permite identificarlas/limpiarlas.
+- El resto → SOLO con seeds explícitos (`--campaign-ids`): `meta_campaign_id`
+  round-robin con `attribution_backfilled="seeded"` — histórico de PRUEBA
+  identificable/limpiable por el marker. Sin seeds quedan intactas (unmatched):
+  sembrar por default contaminaría campañas (2026-07-09: seeds solo a Día del
+  padre; Duo zodiacal queda limpia).
 - Órdenes que ya tienen atribución → skip (idempotente).
 """
 from __future__ import annotations
@@ -57,9 +59,12 @@ def plan_order_patches(
     ad_to_campaign: dict[str, str],
     seed_campaign_ids: list[str],
 ) -> list[dict[str, Any]]:
-    """Plan de parcheo por orden: `{order_id, action: real|seeded|skip, patch}`.
+    """Plan de parcheo por orden: `{order_id, action: real|seeded|skip|unmatched, patch}`.
 
     Idempotente: órdenes que ya tienen `meta_ad_id`/`meta_campaign_id` → skip.
+    Sembrar es EXPLÍCITO: sin `seed_campaign_ids` las órdenes sin rastro CTWA
+    quedan intactas (`unmatched`) — un default que siembra contamina campañas
+    (caso 2026-07-09: solo Día del padre recibe seeds; Duo zodiacal queda limpia).
     El round-robin de seeds es determinista en el orden de entrada.
     """
     plan: list[dict[str, Any]] = []
@@ -78,6 +83,9 @@ def plan_order_patches(
                 patch["meta_campaign_id"] = campaign
             patch["attribution_backfilled"] = "real"
             plan.append({"order_id": oid, "action": "real", "patch": patch})
+            continue
+        if not seed_campaign_ids:
+            plan.append({"order_id": oid, "action": "unmatched", "patch": {}})
             continue
         campaign = seed_campaign_ids[seed_i % len(seed_campaign_ids)]
         seed_i += 1
