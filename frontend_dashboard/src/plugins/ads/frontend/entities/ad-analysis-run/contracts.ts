@@ -25,11 +25,15 @@ export const agentOptionSchema = z
   .object({
     id: z.string(),
     label: z.string(),
+    // Qué análisis hace el agente (el selector la muestra bajo el combo).
+    // `.default(null)` tolera catálogos legacy sin descripción.
+    description: z.string().nullable().default(null),
     example_input: z.unknown(),
   })
   .transform((a) => ({
     id: a.id,
     label: a.label,
+    description: a.description,
     exampleInput: a.example_input,
   }));
 
@@ -62,6 +66,9 @@ export const runRecordSchema = z
     // Historial versionado (2026-07-09): cada análisis queda fechado.
     // `.default(null)` tolera records legacy pre-timestamp.
     created_at_ms: z.number().int().nullable().default(null),
+    // La campaña ACTIVA al disparar — el historial del inspector filtra por
+    // ella. `.default(null)` tolera records legacy pre-campaña.
+    campaign_id: z.string().nullable().default(null),
   })
   .transform((r) => ({
     runId: r.run_id,
@@ -74,6 +81,7 @@ export const runRecordSchema = z
     error: r.error,
     executionId: r.execution_id ?? undefined,
     createdAtMs: r.created_at_ms,
+    campaignId: r.campaign_id,
   }));
 
 /** El historial — `GET /api/ads/analysis/runs` (sin `events`, más nuevo primero). */

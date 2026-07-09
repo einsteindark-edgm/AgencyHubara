@@ -11,9 +11,13 @@ import { render } from "@testing-library/react";
 
 const mockRuns = vi.hoisted(() => ({ current: [] as object[] }));
 const mockConn = vi.hoisted(() => ({ current: {} as object }));
+const mockUseRunsArgs = vi.hoisted(() => ({ current: [] as unknown[] }));
 
 vi.mock("@plugins/ads/frontend/entities/ad-analysis-run", () => ({
-  useRuns: () => ({ data: mockRuns.current, isLoading: false }),
+  useRuns: (...args: unknown[]) => {
+    mockUseRunsArgs.current = args;
+    return { data: mockRuns.current, isLoading: false };
+  },
 }));
 
 vi.mock("@plugins/ads/frontend/entities/meta-connection", () => ({
@@ -70,7 +74,7 @@ describe("AdsInspector — historial de análisis versionado", () => {
       <AdsInspector campaign={campaign({})} />,
     );
     expect(queryByText(/ROAS sobre 3×/)).toBeNull(); // el mock murió
-    expect(getByText(/sin análisis todavía/i)).toBeTruthy();
+    expect(getByText(/sin análisis de esta campaña todavía/i)).toBeTruthy();
   });
 
   it("lista las corridas con fecha y estado (más nueva primero)", () => {
@@ -97,6 +101,17 @@ describe("AdsInspector — historial de análisis versionado", () => {
     expect(getByText(/completado/i)).toBeTruthy();
     expect(getAllByText(/falló/i).length).toBeGreaterThan(0);
     expect(getByText(/Subí presupuesto 20%/)).toBeTruthy();
+  });
+});
+
+describe("AdsInspector — historial POR CAMPAÑA", () => {
+  it("pide el historial filtrado por la campaña seleccionada (no el global)", () => {
+    // Feedback operador 2026-07-09: "al cambiar de campaña sigue apareciendo
+    // el historial de otras campañas".
+    mockRuns.current = [];
+    mockConn.current = { data: { connected: true, accountName: "Hubara" } };
+    render(<AdsInspector campaign={campaign({ id: "AD_padre" })} />);
+    expect(mockUseRunsArgs.current[0]).toBe("AD_padre");
   });
 });
 

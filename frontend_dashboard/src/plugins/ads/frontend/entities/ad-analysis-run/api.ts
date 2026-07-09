@@ -62,15 +62,23 @@ async function fetchRun(runId: string, signal?: AbortSignal): Promise<RunRecord>
 
 /**
  * Historial de análisis (el versionado del inspector): cada corrida con fecha,
- * estado, snapshot de entrada y resultado — más nueva primero. El refetch de
- * red de seguridad respeta el gate R-REALTIME (≥60s); al disparar un run nuevo
- * `useTriggerRun` invalida la lista.
+ * estado, snapshot de entrada y resultado — más nueva primero. Con
+ * `campaignId`, SOLO las corridas disparadas mirando esa campaña (el historial
+ * es por campaña — sin id, el historial completo). El refetch de red de
+ * seguridad respeta el gate R-REALTIME (≥60s); al disparar un run nuevo
+ * `useTriggerRun` invalida todas las listas.
  */
-export function useRuns() {
+export function useRuns(campaignId?: string) {
   return useQuery({
-    queryKey: adAnalysisRunKeys.list(),
+    queryKey: adAnalysisRunKeys.list(campaignId),
     queryFn: async ({ signal }) => {
-      const raw = await apiClient.get<unknown>("/api/ads/analysis/runs", { signal });
+      const qs = campaignId
+        ? `?campaign_id=${encodeURIComponent(campaignId)}`
+        : "";
+      const raw = await apiClient.get<unknown>(
+        `/api/ads/analysis/runs${qs}`,
+        { signal },
+      );
       return runsListResponseSchema.parse(raw).runs;
     },
     refetchInterval: RUN_FALLBACK_REFETCH_MS,
@@ -106,16 +114,23 @@ export function useRun(runId: string | null) {
 export function useTriggerRun() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (vars: { agent: string; input: unknown }) => {
+    mutationFn: async (vars: {
+      agent: string;
+      input: unknown;
+      /** La campaña activa al disparar — el historial del inspector filtra por ella. */
+      campaignId?: string;
+    }) => {
       const raw = await apiClient.post<unknown>("/api/ads/analysis/runs", {
         agent: vars.agent,
         input: vars.input,
+        campaign_id: vars.campaignId ?? null,
       });
       return triggerRunResponseSchema.parse(raw).run_id;
     },
     onSuccess: () => {
       // el historial del inspector muestra la corrida nueva de inmediato
-      void qc.invalidateQueries({ queryKey: adAnalysisRunKeys.list() });
+      // (prefix: invalida la lista global Y las filtradas por campaña)
+      void qc.invalidateQueries({ queryKey: adAnalysisRunKeys.lists() });
     },
   });
 }
