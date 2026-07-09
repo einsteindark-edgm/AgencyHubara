@@ -44,10 +44,14 @@ _AGENTSPAN_PORT = 6767
 _COMPOSE_PROJECT = "graphagents-prod"
 _COMPOSE_SERVICE = "graphagents"
 
-#: `python3 -m sdk.cli ...` ejecutado en el container graphagents vía docker compose exec (-T:
-#: sin TTY, requerido bajo SSM). El compose vive en /opt/graphagents en la caja (cloud-init).
+#: `sdk.cli` ejecutado en el container graphagents vía docker compose exec (-T: sin TTY,
+#: requerido bajo SSM). El compose vive en /opt/graphagents en la caja (cloud-init).
+#: OJO: el intérprete es el del VENV (/opt/venv — UV_PROJECT_ENVIRONMENT del Dockerfile,
+#: vive fuera de /app para que el bind-mount de dev no lo tape). El `python3` del sistema
+#: NO tiene las deps (ModuleNotFoundError: yaml — caso real 2026-07-09).
 _DOCKER_EXEC = (
-    f"docker compose -p {_COMPOSE_PROJECT} exec -T {_COMPOSE_SERVICE} python3 -m sdk.cli"
+    f"docker compose -p {_COMPOSE_PROJECT} exec -T {_COMPOSE_SERVICE} "
+    f"/opt/venv/bin/python -m sdk.cli"
 )
 
 #: Parsea el execution-id del stdout de Conductor: `execution <id>: <status>`.
