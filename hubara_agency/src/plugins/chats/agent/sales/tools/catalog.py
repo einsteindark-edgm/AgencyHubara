@@ -25,6 +25,7 @@ from src.platform.catalog import (
     SearchResult,
     parse_variant_tags,
 )
+from src.plugins.chats.shared.image_labels import derive_image_label
 
 
 class SearchProductsTool(ToolBase):
@@ -223,6 +224,10 @@ def _product_summary(p: CatalogProductDTO) -> dict[str, Any]:
         # aromas/colores que existen — cualquier otro es invento.
         "aromas": attrs.aromas,
         "colors": attrs.colors,
+        # Diseños nombrados en los filenames de las fotos (caso wa_573125671604:
+        # el LLM negó tener "leo" cuando la foto leo-*.webp existía). Lista
+        # cerrada: cualquier diseño fuera de esta lista es invento.
+        "designs": _designs_for(p),
     }
 
 
@@ -237,6 +242,7 @@ def _product_full(p: CatalogProductDTO) -> dict[str, Any]:
         "thumbnail": p.thumbnail,
         "aromas": attrs.aromas,
         "colors": attrs.colors,
+        "designs": _designs_for(p),
         "variants": [
             {
                 "id": v.id,
@@ -247,10 +253,24 @@ def _product_full(p: CatalogProductDTO) -> dict[str, Any]:
             }
             for v in p.variants
         ],
-        "images": [{"url": i.url, "rank": i.rank} for i in p.images],
+        "images": [
+            {"url": i.url, "rank": i.rank, "label": derive_image_label(i.url)}
+            for i in p.images
+        ],
         "tags": p.tags,
         "categories": p.categories,
     }
+
+
+def _designs_for(p: CatalogProductDTO) -> list[str]:
+    """Diseños únicos derivados de los filenames de las fotos, en orden de
+    rank. Un producto con fotos genéricas (img1.webp) devuelve lista vacía."""
+    designs: list[str] = []
+    for img in p.images:
+        label = derive_image_label(img.url)
+        if label and label not in designs:
+            designs.append(label)
+    return designs
 
 
 def _first_price(p: CatalogProductDTO) -> tuple[str | None, str | None]:
@@ -259,4 +279,10 @@ def _first_price(p: CatalogProductDTO) -> tuple[str | None, str | None]:
     v = p.variants[0]
     if not v.prices:
         return (None, None)
+    # La tienda vende en COP — si el producto también tiene precio en otra
+    # moneda (Medusa multi-currency), COP gana (caso wa_573125671604: la
+    # caption salió "$35.000 usd" por agarrar prices[0] ciego).
+    for price in v.prices:
+        if price.currency_code.lower() == "cop":
+            return (price.amount, price.currency_code)
     return (v.prices[0].amount, v.prices[0].currency_code)
