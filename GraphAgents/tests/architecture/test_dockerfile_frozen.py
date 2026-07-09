@@ -15,6 +15,32 @@ from pathlib import Path
 GA = Path(__file__).resolve().parents[2]
 
 
+def test_el_lock_esta_commiteado() -> None:
+    # Incidente 2 del mismo día (deploy 29057054647): uv.lock estaba en
+    # .gitignore — el checkout de CI no lo tenía y el COPY del Dockerfile
+    # murió con "not found". Un lock que no viaja en git no pinea nada.
+    assert (GA / "uv.lock").exists(), (
+        "falta GraphAgents/uv.lock en el checkout — ¿volvió a .gitignore?"
+    )
+
+
+def test_dockerignore_no_excluye_el_lock() -> None:
+    # El COPY del lock falla silencioso... en CI (checksum not found) si
+    # .dockerignore lo excluye — el guard del Dockerfile solo no alcanza
+    # (deploy 29057054647).
+    dockerignore = GA / ".dockerignore"
+    if dockerignore.exists():
+        lines = [
+            l.strip()
+            for l in dockerignore.read_text(encoding="utf-8").splitlines()
+            if l.strip() and not l.strip().startswith("#")
+        ]
+        assert not any("uv.lock" in l for l in lines), (
+            ".dockerignore excluye uv.lock — el COPY del Dockerfile no puede "
+            f"verlo y el build muere: {lines}"
+        )
+
+
 def test_dockerfile_copia_el_lock_y_sincroniza_frozen() -> None:
     dockerfile = (GA / "Dockerfile").read_text(encoding="utf-8")
     assert "uv.lock" in dockerfile, (
