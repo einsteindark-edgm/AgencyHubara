@@ -55,3 +55,45 @@ def test_seed_timestamps_fall_in_recent_window() -> None:
     for s in specs:
         started = s["metadata"]["episodes"][-1]["started_at_ms"]
         assert _NOW_MS - seven_days_ms <= started <= _NOW_MS
+
+
+def test_won_sessions_mirror_medusa_orders() -> None:
+    """Las compras de Medusa se espejan como conversaciones GANADAS del vault
+    (pedido 2026-07-09): episodio cerrado con el order_id REAL + total real →
+    el funnel suma ganado y el revenue del tablero coincide con Medusa."""
+    from src.plugins.ads.synthetic_seed import build_won_sessions
+
+    orders = [
+        {"id": "order_B", "created_at": "2026-06-16T10:00:00.000Z",
+         "metadata": {"total_cop": 150000}},
+        {"id": "order_A", "created_at": "2026-06-15T14:30:00.000Z",
+         "metadata": {"total_cop": 600000}},
+    ]
+    specs = build_won_sessions(orders, "AD_7")
+    assert len(specs) == 2
+    # deterministas: orden estable por id → mismas keys en re-runs (idempotente)
+    assert [s["session_key"] for s in specs] == ["wa_573000000910", "wa_573000000911"]
+    for s, (oid, total) in zip(specs, [("order_A", 600000), ("order_B", 150000)]):
+        ep = s["metadata"]["episodes"][-1]
+        assert ep["order_id"] == oid  # el order id REAL de Medusa (join coherente)
+        assert ep["order_total_cop"] == total  # revenue del tablero = Medusa
+        assert ep["closing_tag"] == "COMPRA_EXITOSA"
+        assert ep["closed_at_ms"] is not None
+        assert s["metadata"]["seeded_test"] is True
+        assert s["metadata"]["origin"]["source_id"] == "AD_7"
+        assert _classify(s) == "ganado"
+    # las fechas salen del created_at de la orden (el filtro de fecha las respeta)
+    assert specs[0]["metadata"]["episodes"][-1]["started_at_ms"] == 1781533800000
+
+
+def test_won_sessions_skip_canceled_and_missing_total() -> None:
+    from src.plugins.ads.synthetic_seed import build_won_sessions
+
+    orders = [
+        {"id": "order_dead", "status": "canceled", "created_at": "2026-06-01T00:00:00Z",
+         "metadata": {"total_cop": 99}},
+        {"id": "order_ok", "created_at": "2026-06-02T00:00:00Z",
+         "metadata": {"total_cop": 17000}},
+    ]
+    specs = build_won_sessions(orders, "AD_7")
+    assert [s["metadata"]["episodes"][-1]["order_id"] for s in specs] == ["order_ok"]
