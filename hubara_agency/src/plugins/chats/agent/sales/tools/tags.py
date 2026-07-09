@@ -44,7 +44,15 @@ from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
 # dirección multilínea tarda >60s) — el mensaje caía en el workflow de
 # remarketing (sin tools de pedido) y se perdía; el bot re-preguntaba y el
 # cliente respondía "Ya te los di". Stopgap mientras PR #113 (Window
-# Strategist) trae el re-engagement definitivo.
+# Strategist) traía el re-engagement definitivo.
+#
+# PR #113 ATERRIZÓ: la transition `sales_to_remarketing_on_interested` se
+# eliminó del manifest, así que este delay quedó INERTE — el
+# SalesSessionCompletionEvent que lo lleva ya no arranca remarketing (el
+# dispatcher lo no-op-ea sin consumidor). La reactivación es del ciclo del
+# agente window-strategist (plugin reengagement) con el gate central. El
+# campo viaja por compat del contrato del evento. Guard:
+# tests/plugins/chats/test_manifest_no_immediate_remarketing.py.
 _REMARKETING_DELAY_SECONDS = 300
 
 

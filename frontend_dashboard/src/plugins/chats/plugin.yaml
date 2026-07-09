@@ -110,20 +110,16 @@ agent:
         # CLOSING_TAG). Cancela el watchdog del episodio cerrado.
         - EpisodeClosedEvent
       transitions:
-        - id: sales_to_remarketing_on_interested
-          on_event: SalesSessionCompletionEvent
-          when:
-            tag: INTERESADO
-          action:
-            via: start_workflow_with_replace
-            target_plugin: chats
-            target_worker: remarketing
-            target_workflow: RemarketingWorkflow
-            workflow_id_template: "remarketing-{event.session_id}"
-            input_mapping:
-              session_id: "$.session_id"
-              motivo: "$.motivo"
-            start_delay_field: delay_seconds
+        # ── PR #113 (Window Strategist): `sales_to_remarketing_on_interested`
+        # (INTERESADO → RemarketingWorkflow a los 300s, stopgap) se ELIMINÓ.
+        # La reactivación ahora la decide el ciclo del agente window-strategist
+        # (ventana × warmth × cadencia × presupuesto) y la dispara la
+        # transition del plugin `reengagement`; el gate central re-valida al
+        # ejecutar. El SalesSessionCompletionEvent se SIGUE emitiendo (sin
+        # consumidor el dispatcher lo no-op-ea) — queda para observabilidad y
+        # futuros consumidores. Guard anti-regresión:
+        # tests/plugins/chats/test_manifest_no_immediate_remarketing.py.
+        # NO re-agregar el disparo directo sin ADR.
         # ── HU-WA24H-001 Sprint 2 — watchdog wiring ──────────────────────
         # ServiceWindowOpenedEvent → arranca (o reemplaza) un watchdog por
         # episodio. `start_workflow_with_replace` mata cualquier watchdog
