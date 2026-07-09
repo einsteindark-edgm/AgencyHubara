@@ -13,7 +13,7 @@ Monorepo con backend Python (Temporal + DEHA hexagonal architecture) + frontend 
 - `frontend_dashboard/` — frontend React/TS dashboard. FSD strict. Detalle en `frontend_dashboard/CLAUDE.md`.
 - `exoclaw-temporal/` — librería base (DEHA reference). Plugin del pipeline; rara vez se modifica.
 - `agent_coordination/` — utilidades cross-worker.
-- `system_explorer/` — auditoría del repo.
+- `vscode-hubara/` — **Acktos Studio**, la extensión de VS Code que visualiza y opera ambos sistemas (grafos, tests, ejecuciones). Su README lista los backends exactos que necesita. (Reemplazó a los viewers web `system_explorer/` y `GraphAgents/viewer/index.html`, eliminados 2026-07-08.)
 - `.archon/workflows/` — pipeline definitions. **PROTECTED** (ver `hubara_agency/.hubara/spinal-files.yaml`).
 - `.claude/skills/` — skills del pipeline (`hubara-*-archon`). **PROTECTED**.
 - `.codegraph/` — knowledge graph del codebase. Usá `codegraph_*` tools antes de `grep`.

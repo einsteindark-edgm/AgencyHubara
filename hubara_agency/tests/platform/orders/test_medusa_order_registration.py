@@ -1071,3 +1071,99 @@ async def test_idempotency_distinct_content_creates_new_draft(adapter):
         _ITEMS, 22000, "transfer"
     )
     assert body["metadata"]["idempotency_key"].startswith("wa_111:")
+
+
+# ----------------------------------------------------------------------
+# Atribución CTWA en metadata (join venta↔campaña, pedido 2026-07-09)
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_register_order_embeds_attribution_in_metadata(adapter):
+    """`attribution` (ad id del referral de la sesión) DEBE quedar en la
+    metadata del draft order — es lo que permite atribuir la venta a la
+    campaña Meta sin depender del vault."""
+    respx.get(f"{_BASE_URL}/admin/products").mock(
+        return_value=Response(200, json=_product_payload_for_handle("cruz-de-vida"))
+    )
+    respx.get(f"{_BASE_URL}/admin/customers").mock(
+        return_value=Response(200, json={"customers": [], "count": 0, "offset": 0, "limit": 1})
+    )
+    respx.post(f"{_BASE_URL}/admin/customers").mock(
+        return_value=Response(
+            200, json={"customer": {"id": "cus_attr_1", "email": "wa+wa_attr@hubara.local"}}
+        )
+    )
+    respx.get(f"{_BASE_URL}/admin/shipping-options").mock(
+        return_value=Response(
+            200,
+            json={"shipping_options": [{"id": "so_std_01", "name": "Envío estándar"}],
+                  "count": 1, "offset": 0, "limit": 50},
+        )
+    )
+    draft_route = respx.post(f"{_BASE_URL}/admin/draft-orders").mock(
+        return_value=Response(200, json={"draft_order": {"id": "draft_attr_1", "status": "draft"}})
+    )
+
+    result = await adapter.register_order(
+        session_key="wa_attr",
+        items=_ITEMS,
+        shipping=_SHIPPING,
+        payment_method="transfer",
+        subtotal_cop=17000,
+        shipping_cop=0,
+        total_cop=17000,
+        attribution={"meta_ad_id": "120210000000000001", "attribution_channel": "ad"},
+    )
+
+    assert result.success is True
+    import json as _json
+
+    body = _json.loads(draft_route.calls[0].request.content)
+    assert body["metadata"]["meta_ad_id"] == "120210000000000001"
+    assert body["metadata"]["attribution_channel"] == "ad"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_register_order_without_attribution_omits_keys(adapter):
+    """Venta directa (attribution=None): la metadata NO lleva keys de
+    atribución (ausente ≠ null — el backfill/joins distinguen por presencia)."""
+    respx.get(f"{_BASE_URL}/admin/products").mock(
+        return_value=Response(200, json=_product_payload_for_handle("cruz-de-vida"))
+    )
+    respx.get(f"{_BASE_URL}/admin/customers").mock(
+        return_value=Response(200, json={"customers": [], "count": 0, "offset": 0, "limit": 1})
+    )
+    respx.post(f"{_BASE_URL}/admin/customers").mock(
+        return_value=Response(
+            200, json={"customer": {"id": "cus_attr_2", "email": "wa+wa_dir@hubara.local"}}
+        )
+    )
+    respx.get(f"{_BASE_URL}/admin/shipping-options").mock(
+        return_value=Response(
+            200,
+            json={"shipping_options": [{"id": "so_std_01", "name": "Envío estándar"}],
+                  "count": 1, "offset": 0, "limit": 50},
+        )
+    )
+    draft_route = respx.post(f"{_BASE_URL}/admin/draft-orders").mock(
+        return_value=Response(200, json={"draft_order": {"id": "draft_dir_1", "status": "draft"}})
+    )
+
+    await adapter.register_order(
+        session_key="wa_dir",
+        items=_ITEMS,
+        shipping=_SHIPPING,
+        payment_method="transfer",
+        subtotal_cop=17000,
+        shipping_cop=0,
+        total_cop=17000,
+    )
+
+    import json as _json
+
+    body = _json.loads(draft_route.calls[0].request.content)
+    assert "meta_ad_id" not in body["metadata"]
+    assert "attribution_channel" not in body["metadata"]

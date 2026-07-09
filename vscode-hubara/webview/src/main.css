@@ -371,7 +371,12 @@ body {
   border-style: dashed;
   border-width: 2px;
   min-width: 220px;
-  text-align: center;
+  /* contenedor de subflow: llena el tamaño que le da el layout (clusterGrid)
+   * y deja ver las sub-cajas (endpoints de costuras) que renderizan encima. */
+  width: 100%;
+  height: 100%;
+  text-align: left;
+  background: color-mix(in srgb, var(--vscode-editorWidget-background, var(--vscode-editor-background)) 55%, transparent);
 }
 .flow-node.kind-agent {
   border-color: color-mix(in srgb, var(--vscode-charts-purple, #b180d7) 60%, var(--vscode-panel-border));
@@ -884,4 +889,140 @@ body {
   max-width: none;
   border-left: none;
   height: auto;
+}
+
+/* ---- F14: botón "Guardar & certificar" + consola de certificación en vivo ---- */
+.certify-btn {
+  font: inherit;
+  cursor: pointer;
+  border: none;
+  border-radius: 3px;
+  padding: 3px 10px;
+  font-weight: 600;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+.certify-btn:hover {
+  background: var(--vscode-button-hoverBackground, var(--vscode-button-background));
+}
+
+.cert-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: auto;
+  font-size: 12px;
+}
+.cert-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  position: sticky;
+  top: 0;
+  background: var(--vscode-editor-background);
+}
+.cert-title {
+  font-weight: 600;
+}
+.cert-suites {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+}
+.cert-suite-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  background: none;
+  border: none;
+  color: var(--vscode-foreground);
+  padding: 4px 12px;
+}
+.cert-suite-row:hover,
+.cert-suite-row.on {
+  background: var(--vscode-list-hoverBackground);
+}
+.cert-icon {
+  width: 1.2em;
+  text-align: center;
+  flex: 0 0 auto;
+}
+.cert-icon-pass {
+  color: var(--vscode-testing-iconPassed, var(--vscode-charts-green, #3fb950));
+}
+.cert-icon-fail {
+  color: var(--vscode-testing-iconFailed, var(--vscode-errorForeground, #f85149));
+}
+.cert-icon-running {
+  color: var(--vscode-charts-blue, #58a6ff);
+}
+.cert-icon-skip,
+.cert-icon-pending {
+  color: var(--vscode-descriptionForeground);
+}
+.cert-suite-label {
+  flex: 1 1 auto;
+}
+.cert-suite-detail {
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+  flex: 0 0 auto;
+}
+.cert-log {
+  margin: 2px 12px 8px 32px;
+  padding: 8px 10px;
+  max-height: 40vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 11px;
+  line-height: 1.45;
+  background: var(--vscode-textCodeBlock-background, var(--vscode-editor-background));
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 3px;
+}
+.cert-phase {
+  padding: 6px 12px;
+  color: var(--vscode-descriptionForeground);
+  border-top: 1px solid var(--vscode-panel-border);
+}
+.cert-verdict {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 8px 12px;
+  padding: 8px 12px;
+  border-radius: 4px;
+  border-left: 3px solid transparent;
+}
+.cert-verdict.ok {
+  background: var(--vscode-inputValidation-infoBackground, transparent);
+  border-left-color: var(--vscode-charts-green, #3fb950);
+}
+.cert-verdict.bad {
+  background: var(--vscode-inputValidation-errorBackground, transparent);
+  border-left-color: var(--vscode-errorForeground, #f85149);
+}
+.cert-errors {
+  margin: 0;
+  padding-left: 18px;
+}
+.cert-pr-btn {
+  font: inherit;
+  cursor: pointer;
+  border: none;
+  border-radius: 3px;
+  padding: 3px 10px;
+  font-weight: 600;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
 }

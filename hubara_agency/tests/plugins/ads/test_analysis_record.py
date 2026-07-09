@@ -57,3 +57,48 @@ def test_run_failed_guarda_el_error_en_el_record() -> None:
     assert r["status"] == "failed"
     assert r["error"] == "boom en el nodo X"
     assert record.read_run("rf")["error"] == "boom en el nodo X"  # persiste
+
+
+def test_create_run_estampa_created_at_ms() -> None:
+    # Historial versionado (2026-07-09): cada análisis queda fechado.
+    rec = record.create_run("run-ts", agent="ads-analytics", input={"x": 1})
+    assert isinstance(rec["created_at_ms"], int) and rec["created_at_ms"] > 0
+
+
+def test_list_runs_ordena_por_fecha_desc_y_limita() -> None:
+    """El historial del inspector: los análisis versionados, más nuevo primero,
+    cada uno con su fecha, estado, snapshot de entrada y resultado."""
+    for i, rid in enumerate(["run-old", "run-mid", "run-new"]):
+        record.create_run(rid, agent="ads-analytics", input={"n": i})
+        rec = record.read_run(rid)
+        rec["created_at_ms"] = 1_000 + i  # fechas deterministas
+        record._write(rec)
+    record.append_event(
+        "run-new",
+        {"event_id": "e1", "type": "run.result", "payload": {"output": {"reporte": "ok"}}},
+    )
+
+    runs = record.list_runs(limit=2)
+    assert [r["run_id"] for r in runs] == ["run-new", "run-mid"]
+    assert runs[0]["status"] == "completed"
+    assert runs[0]["result"] == {"reporte": "ok"}
+    assert runs[0]["input"] == {"n": 2}  # el snapshot de los números de esa corrida
+    assert runs[1]["result"] is None
+
+
+def test_runs_se_etiquetan_y_filtran_por_campania() -> None:
+    """Feedback operador 2026-07-09: 'al cambiar de campaña sigue apareciendo el
+    historial de otras campañas'. El run guarda la campaña activa al dispararse
+    y `list_runs(campaign_id=...)` devuelve SOLO las corridas de esa campaña
+    (los legacy sin campaña quedan fuera del filtro, visibles solo sin filtro)."""
+    r = record.create_run("run-c1", agent="a", input={}, campaign_id="AD_1")
+    assert r["campaign_id"] == "AD_1"
+    record.create_run("run-c2", agent="a", input={}, campaign_id="AD_2")
+    record.create_run("run-legacy", agent="a", input={})  # sin campaña → None
+
+    only_1 = record.list_runs(campaign_id="AD_1")
+    assert [x["run_id"] for x in only_1] == ["run-c1"]
+
+    todos = record.list_runs()  # sin filtro: el historial completo, legacy incluido
+    assert {x["run_id"] for x in todos} == {"run-c1", "run-c2", "run-legacy"}
+    assert next(x for x in todos if x["run_id"] == "run-legacy")["campaign_id"] is None

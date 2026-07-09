@@ -16,7 +16,7 @@ import { OutboundMessage, PersistedViewState, ProviderState, TraceInfo } from ".
 import { DEFAULT_FOCUS_DEPTH, focusOf, scopeKey, Scope, WORKSPACE_SCOPE } from "../../src/graph/scope";
 import { Canvas, PaletteDragItem } from "./canvas/Canvas";
 import { FlowNodeType } from "./canvas/FlowNode";
-import { computeLayout, Positioned } from "./layout/computeLayout";
+import { clusterGrid, computeLayout, Positioned } from "./layout/computeLayout";
 import { FlowTraceState } from "./panels/Inspector";
 import { Palette } from "./panels/Palette";
 import { Toolbar } from "./panels/Toolbar";
@@ -282,36 +282,76 @@ export function App(): React.ReactElement {
     return m;
   }, [trace, flowTrace]);
 
-  const flowNodes: FlowNodeType[] = useMemo(
-    () =>
-      graph.nodes.map((n) => {
-        const pos = savedPositions[n.nsId] ?? layoutPositions.get(n.nsId) ?? { x: 0, y: 0 };
-        const runtime = runtimeByNsId.get(n.nsId);
+  // Sub-cajas de clusters colapsados (endpoints de costuras): índice ordenado
+  // por cluster — posición RELATIVA determinista dentro del contenedor (la
+  // misma grilla que dimensiona el cluster en computeLayout).
+  const clusterChildren = useMemo(() => {
+    const m = new Map<string, string[]>();
+    for (const n of graph.nodes) {
+      if (n.parentCluster) {
+        const list = m.get(n.parentCluster) ?? [];
+        list.push(n.nsId);
+        m.set(n.parentCluster, list);
+      }
+    }
+    for (const list of m.values()) {
+      list.sort();
+    }
+    return m;
+  }, [graph.nodes]);
+
+  const flowNodes: FlowNodeType[] = useMemo(() => {
+    const mapped = graph.nodes.map((n): FlowNodeType => {
+      const runtime = runtimeByNsId.get(n.nsId);
+      const data = {
+        label: (n.label as string | undefined) ?? n.rawId,
+        kind: n.kind as string,
+        system: n.system,
+        orderBadge: orderByNsId.get(n.nsId),
+        certification: typeof n.certification === "string" ? (n.certification as string) : undefined,
+        archetype: typeof n.archetype === "string" ? (n.archetype as string) : undefined,
+        sideEffect: typeof n.side_effect === "string" ? (n.side_effect as string) : undefined,
+        collapsedCount: typeof n.collapsedCount === "number" ? (n.collapsedCount as number) : undefined,
+        runtimeStatus:
+          !runtime || runtime.status === "pending" || runtime.status === "other"
+            ? ("idle" as const)
+            : (runtime.status as "running" | "done" | "failed" | "awaiting"),
+        runtimeMs: runtime?.ms,
+        runtimeRetries: runtime?.retries,
+      };
+      if (n.parentCluster) {
+        const siblings = clusterChildren.get(n.parentCluster) ?? [];
+        const grid = clusterGrid(siblings.length);
         return {
           id: n.nsId,
           type: "hubara",
-          position: pos,
-          data: {
-            label: (n.label as string | undefined) ?? n.rawId,
-            kind: n.kind as string,
-            system: n.system,
-            orderBadge: orderByNsId.get(n.nsId),
-            certification: typeof n.certification === "string" ? (n.certification as string) : undefined,
-            archetype: typeof n.archetype === "string" ? (n.archetype as string) : undefined,
-            sideEffect: typeof n.side_effect === "string" ? (n.side_effect as string) : undefined,
-            collapsedCount: typeof n.collapsedCount === "number" ? (n.collapsedCount as number) : undefined,
-            runtimeStatus:
-              !runtime || runtime.status === "pending" || runtime.status === "other"
-                ? "idle"
-                : (runtime.status as "running" | "done" | "failed" | "awaiting"),
-            runtimeMs: runtime?.ms,
-            runtimeRetries: runtime?.retries,
-          },
+          position: grid.childPos(Math.max(0, siblings.indexOf(n.nsId))),
+          parentId: n.parentCluster,
+          extent: "parent",
+          data,
         };
-      }),
+      }
+      if (n.kind === "cluster") {
+        const grid = clusterGrid((clusterChildren.get(n.nsId) ?? []).length);
+        return {
+          id: n.nsId,
+          type: "hubara",
+          position: savedPositions[n.nsId] ?? layoutPositions.get(n.nsId) ?? { x: 0, y: 0 },
+          style: { width: grid.width, height: grid.height },
+          data,
+        };
+      }
+      return {
+        id: n.nsId,
+        type: "hubara",
+        position: savedPositions[n.nsId] ?? layoutPositions.get(n.nsId) ?? { x: 0, y: 0 },
+        data,
+      };
+    });
+    // React Flow exige que el padre aparezca ANTES que sus hijos en el array.
+    return [...mapped.filter((n) => n.data.kind === "cluster"), ...mapped.filter((n) => n.data.kind !== "cluster")];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [graph.nodes, savedPositions, layoutPositions, runtimeByNsId, orderByNsId],
-  );
+  }, [graph.nodes, clusterChildren, savedPositions, layoutPositions, runtimeByNsId, orderByNsId]);
 
   const flowEdges: Edge[] = useMemo(() => {
     // ids únicos aunque el bridge repita una arista (p. ej. dos call sites que
@@ -371,11 +411,19 @@ export function App(): React.ReactElement {
 
   // UNA escritura por gesto de drag (dragStop) — no por frame; el canvas
   // maneja el movimiento en su estado local (ver Canvas.tsx, fix del parpadeo).
+  // Las sub-cajas de un cluster NO se persisten: su posición es RELATIVA al
+  // contenedor — guardarla contaminaría el espacio absoluto que ese mismo
+  // nsId usa en los demás scopes.
   const handlePositionsCommit = useCallback(
     (positions: Record<string, Positioned>) => {
-      setPositionsByScopeKey((prev) => ({ ...prev, [sKey]: { ...prev[sKey], ...positions } }));
+      const childIds = new Set([...clusterChildren.values()].flat());
+      const absolute = Object.fromEntries(Object.entries(positions).filter(([id]) => !childIds.has(id)));
+      if (Object.keys(absolute).length === 0) {
+        return;
+      }
+      setPositionsByScopeKey((prev) => ({ ...prev, [sKey]: { ...prev[sKey], ...absolute } }));
     },
-    [sKey],
+    [sKey, clusterChildren],
   );
 
 
@@ -474,6 +522,32 @@ export function App(): React.ReactElement {
     [showHint],
   );
 
+  // "⤴ Guardar & certificar": la extensión confirma, corre la suite en vivo
+  // (panel Ejecución) y publica si todo pasa.
+  const handleCertify = useCallback(() => {
+    send({ type: "certifyRequest" });
+  }, []);
+
+  // Click derecho en un nodo → borrar. Solo agentes/tools de GraphAgents (un
+  // cluster/port/seam no se borra desde acá); la confirmación + cascade la
+  // maneja la extensión (needs_confirmation → modal de blast radius).
+  const handleNodeDelete = useCallback(
+    (nsId: string) => {
+      const found = graph.nodes.find((n) => n.nsId === nsId);
+      if (!found || found.system !== "graphagents" || (found.kind !== "agent" && found.kind !== "tool")) {
+        showHint("solo se pueden borrar agentes o tools de GraphAgents");
+        return;
+      }
+      send({
+        type: "deleteNodeRequest",
+        nodeId: found.nsId,
+        kind: found.kind,
+        label: (found.label as string | undefined) ?? found.rawId,
+      });
+    },
+    [graph.nodes, showHint],
+  );
+
   // Drop de la palette: soltar un tool/agente SOBRE un agente lo conecta
   // (agente uses tool · supervisor uses agente) — misma secuencia
   // validate→confirm→mutate que el drag-connect.
@@ -543,6 +617,7 @@ export function App(): React.ReactElement {
         onDepthChange={handleDepthChange}
         onRefresh={handleRefresh}
         onRelayout={handleRelayout}
+        onCertify={handleCertify}
       />
       {globalError && <div className="global-error">⚠ {globalError}</div>}
       {graph.brokenSeams.length > 0 && (
@@ -591,6 +666,7 @@ export function App(): React.ReactElement {
             onConnect={handleConnect}
             onEdgeSelect={setSelectedEdge}
             onEdgeDisconnect={handleEdgeDisconnect}
+            onNodeDelete={handleNodeDelete}
             onPaletteDrop={handlePaletteDrop}
             fitToken={fitToken}
           />

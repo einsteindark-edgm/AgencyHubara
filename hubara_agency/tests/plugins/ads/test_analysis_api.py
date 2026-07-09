@@ -125,3 +125,51 @@ def test_get_agents_trae_el_catalogo_con_input_de_ejemplo(client) -> None:
         "manual_sales",
         "entities_payload",
     }
+    # El selector necesita DECIR qué análisis hace cada agente (feedback operador
+    # 2026-07-09: "hace falta una descripción de qué tipo de análisis va a hacer").
+    assert isinstance(ads_analytics.get("description"), str)
+    assert len(ads_analytics["description"]) > 30  # una descripción real, no un stub
+
+
+def test_list_runs_endpoint_devuelve_historial_versionado(client):
+    """GET /api/ads/analysis/runs — el historial del inspector: cada análisis
+    con fecha, estado, snapshot de entrada y resultado, más nuevo primero."""
+    c = client
+    r1 = c.post("/api/ads/analysis/runs", json={"agent": "ads-analytics", "input": {"v": 1}})
+    r2 = c.post("/api/ads/analysis/runs", json={"agent": "ads-analytics", "input": {"v": 2}})
+    rid1, rid2 = r1.json()["run_id"], r2.json()["run_id"]
+    # fechas deterministas para el orden (create_run estampa el reloj real)
+    for rid, ts in ((rid1, 1000), (rid2, 2000)):
+        rec = record.read_run(rid)
+        rec["created_at_ms"] = ts
+        record._write(rec)
+
+    body = c.get("/api/ads/analysis/runs").json()
+    runs = body["runs"]
+    assert [r["run_id"] for r in runs] == [rid2, rid1]
+    assert runs[0]["created_at_ms"] == 2000
+    assert runs[0]["input"] == {"v": 2}
+    assert "events" not in runs[0]  # el log en vivo no viaja en el historial
+
+
+def test_runs_por_campania_end_to_end(client):
+    """El disparo lleva la campaña activa (`campaign_id`) y el historial del
+    inspector filtra por ella — cambiar de campaña NO muestra análisis ajenos."""
+    c = client
+    ra = c.post(
+        "/api/ads/analysis/runs",
+        json={"agent": "ads-analytics", "input": {}, "campaign_id": "AD_padre"},
+    )
+    c.post(
+        "/api/ads/analysis/runs",
+        json={"agent": "ads-analytics", "input": {}, "campaign_id": "AD_zodiacal"},
+    )
+    rid_a = ra.json()["run_id"]
+
+    assert c.get(f"/api/ads/analysis/runs/{rid_a}").json()["campaign_id"] == "AD_padre"
+
+    filtrado = c.get("/api/ads/analysis/runs", params={"campaign_id": "AD_padre"}).json()
+    assert [r["run_id"] for r in filtrado["runs"]] == [rid_a]
+
+    todos = c.get("/api/ads/analysis/runs").json()["runs"]
+    assert len(todos) == 2  # sin filtro sigue siendo el historial completo

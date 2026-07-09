@@ -105,6 +105,9 @@ services:
     - WHATSAPP_PHONE_NUMBER_ID=${WHATSAPP_PHONE_NUMBER_ID}
     - WHATSAPP_ACCESS_TOKEN=${WHATSAPP_ACCESS_TOKEN}
     - WHATSAPP_VERIFY_TOKEN=${WHATSAPP_VERIFY_TOKEN}
+    - META_APP_ID=${META_APP_ID}
+    - META_APP_SECRET=${META_APP_SECRET}
+    - META_OAUTH_REDIRECT_URI=${META_OAUTH_REDIRECT_URI}
     - ENABLED_PLUGINS=ads,agents_admin,catalog,chats,eta,orders,reengagement,system_map
     volumes:
     - hubara-vault-local:/app/hubara_vault
@@ -128,27 +131,6 @@ services:
     - hubara-api
     environment:
     - ENABLED_PLUGINS=ads,agents_admin,catalog,chats,eta,orders,reengagement,system_map
-  system-explorer:
-    build:
-      context: ../system_explorer
-      dockerfile: Dockerfile
-    container_name: local-system-explorer
-    ports:
-    - 5175:80
-    depends_on:
-    - hubara-api
-    healthcheck:
-      test:
-      - CMD
-      - wget
-      - --no-verbose
-      - --tries=1
-      - --spider
-      - http://localhost/healthz
-      interval: 30s
-      timeout: 3s
-      retries: 3
-      start_period: 5s
   hubara-worker-catalog-sync:
     build:
       context: ../

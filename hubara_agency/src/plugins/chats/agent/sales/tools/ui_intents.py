@@ -48,6 +48,34 @@ from src.platform.catalog import CatalogPort, ProductNotFoundError
 from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.state import FilesystemMetadataStore
 from src.platform.whatsapp import limits as wa_limits
+from src.plugins.chats.shared.image_labels import derive_image_label
+
+
+def _product_designs(product) -> list[str]:
+    """Diseños únicos derivados de los filenames de las fotos (rank order)."""
+    designs: list[str] = []
+    for img in product.images or []:
+        label = derive_image_label(img.url)
+        if label and label not in designs:
+            designs.append(label)
+    return designs
+
+
+def _image_for_design(product, design: str) -> tuple[str | None, str | None]:
+    """Resuelve `design` (case-insensitive) contra los labels de las fotos.
+
+    Devuelve `(url, label_canonico)` de la primera foto cuyo label matchea,
+    o `(None, None)` si el diseño no existe — el caller responde con la
+    lista cerrada, NUNCA adivina.
+    """
+    wanted = design.strip().lower()
+    if not wanted:
+        return (None, None)
+    for img in product.images or []:
+        label = derive_image_label(img.url)
+        if label and label.lower() == wanted:
+            return (img.url, label)
+    return (None, None)
 
 
 def _append_intent(session_key: str, intent: dict[str, Any]) -> None:
@@ -81,6 +109,11 @@ def _first_price(product) -> tuple[str | None, str | None]:
     v = product.variants[0]
     if not v.prices:
         return (None, None)
+    # COP gana sobre otras monedas (misma regla que tools/catalog.py — caso
+    # wa_573125671604: caption "$35.000 usd" por agarrar prices[0] ciego).
+    for price in v.prices:
+        if price.currency_code.lower() == "cop":
+            return (price.amount, price.currency_code)
     return (v.prices[0].amount, v.prices[0].currency_code)
 
 
@@ -132,6 +165,17 @@ class PresentProductDetailTool(ToolBase):
                 ),
                 "maxLength": 400,
             },
+            "design": {
+                "type": "string",
+                "description": (
+                    "Diseño específico a mostrar (closed-list: SOLO valores "
+                    "de `designs` del producto en search_products / "
+                    "get_product_by_handle). Manda LA foto de ese diseño en "
+                    "vez de la portada. Ej: cliente pide 'una de leo' y "
+                    "'Leo' está en designs → design='Leo'."
+                ),
+                "maxLength": 80,
+            },
         },
         "required": ["handle"],
     }
@@ -145,10 +189,11 @@ class PresentProductDetailTool(ToolBase):
         ctx: ToolContext,
         handle: str,
         caption_suffix: str | None = None,
+        design: str | None = None,
     ) -> str:
         logger.info(
-            "🖼️ [TOOL present_product_detail] session={} handle={!r}",
-            ctx.session_key, handle,
+            "🖼️ [TOOL present_product_detail] session={} handle={!r} design={!r}",
+            ctx.session_key, handle, design,
         )
         try:
             product = await self._catalog.get_by_handle(handle)
@@ -170,9 +215,27 @@ class PresentProductDetailTool(ToolBase):
             }, ensure_ascii=False)
 
         price, currency = _first_price(product)
-        thumbnail = product.thumbnail or (
-            product.images[0].url if product.images else None
-        )
+        design_label: str | None = None
+        if design:
+            design_url, design_label = _image_for_design(product, design)
+            if not design_url:
+                available = _product_designs(product)
+                return json.dumps({
+                    "queued": False,
+                    "error": "design_not_found",
+                    "available_designs": available,
+                    "message": (
+                        f"El diseño '{design}' no existe en las fotos de "
+                        f"{product.title}. Diseños disponibles (closed-list): "
+                        f"{', '.join(available) if available else 'ninguno'}. "
+                        "NO inventes diseños fuera de esa lista."
+                    ),
+                }, ensure_ascii=False)
+            thumbnail = design_url
+        else:
+            thumbnail = product.thumbnail or (
+                product.images[0].url if product.images else None
+            )
         if not thumbnail:
             logger.warning("present_product_detail: no thumbnail for {!r}", handle)
             return json.dumps({
@@ -194,6 +257,8 @@ class PresentProductDetailTool(ToolBase):
                 caption = f"{product.title} · {price} {currency}"
         else:
             caption = product.title
+        if design_label:
+            caption = f"{caption} · {design_label}"
         if caption_suffix:
             caption = f"{caption}\n{caption_suffix}"
         # Recorta al límite Meta defensivamente
@@ -209,6 +274,10 @@ class PresentProductDetailTool(ToolBase):
                 "price": price,
                 "currency": currency,
                 "product_id": product.id,
+                # Label del diseño mostrado (o derivado del filename de la
+                # portada) — el dispatch lo persiste en outbound_media_index
+                # para resolver replies que citan esta foto.
+                "design": design_label or derive_image_label(thumbnail),
             },
             "analytics": {
                 "component_id": "product_detail",
@@ -229,8 +298,11 @@ class PresentProductDetailTool(ToolBase):
             "kind": "product_detail",
             "handle": handle,
             "title": product.title,
+            "design": design_label,
             "summary": (
-                f"Producto enviado al cliente: {product.title} ({price} {currency}). "
+                f"Producto enviado al cliente: {product.title}"
+                + (f" (diseño {design_label})" if design_label else "")
+                + f" ({price} {currency}). "
                 f"NO repitas el precio en tu próximo mensaje (ya se mostró en la "
                 f"imagen). Continúa con una pregunta natural sobre la compra."
             ),
@@ -1140,6 +1212,14 @@ class PresentProductGalleryTool(ToolBase):
             }, ensure_ascii=False)
         # Cap defensivo
         additional = additional[:max(1, min(max_images, 4))]
+        # Label por foto derivado del filename (diseño/signo/motivo). El
+        # dispatch lo usa como caption y lo persiste en outbound_media_index
+        # para resolver replies del cliente que citan una foto específica.
+        labeled = [
+            {"url": url, "label": derive_image_label(url)}
+            for url in additional
+        ]
+        sent_designs = [img["label"] for img in labeled if img["label"]]
 
         # Encolamos UN intent product_gallery con todas las URLs. El
         # dispatch las manda en secuencia. Esto vs N intents separados:
@@ -1151,6 +1231,7 @@ class PresentProductGalleryTool(ToolBase):
                 "handle": handle,
                 "title": product.title,
                 "image_urls": additional,
+                "images": labeled,
                 # Caption solo en la primera de la serie — el resto va
                 # sin caption para no romper la idea de "secuencia".
                 "lead_caption": product.title,
@@ -1163,14 +1244,22 @@ class PresentProductGalleryTool(ToolBase):
             },
         }
         _append_intent(ctx.session_key, intent)
+        designs_note = (
+            f" Diseños enviados en orden: {', '.join(sent_designs)}."
+            if sent_designs
+            else ""
+        )
         return json.dumps({
             "queued": True,
             "kind": "product_gallery",
             "handle": handle,
             "count": len(additional),
+            "sent_designs": sent_designs,
             "summary": (
                 f"{len(additional)} foto(s) adicionales de {product.title} "
-                "enviadas en secuencia. NO le mandes el link a la web — el "
+                "enviadas en secuencia."
+                + designs_note
+                + " NO le mandes el link a la web — el "
                 "cliente ya las está viendo en el chat. Tu próximo "
                 "mensaje: invítalo a elegir aroma/color o cerrar la compra."
             ),

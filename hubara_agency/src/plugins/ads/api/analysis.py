@@ -118,7 +118,15 @@ _ADS_ANALYTICS_INPUT = {
 _AGENTS = [
     {
         "id": "ads-analytics",
-        "label": "Análisis CTWA por campaña (Día del padre)",
+        "label": "Unit-economics CTWA por campaña",
+        "description": (
+            "Analiza tus campañas de Meta que llevan a WhatsApp: cruza el gasto y los "
+            "clicks de Meta con las ventas, arma el embudo click → conversación → venta "
+            "por campaña, calcula CAC / ROAS / costo por conversación, verifica que los "
+            "números cierren y redacta un reporte con sugerencias accionables (qué "
+            "campaña escalar, cuál pausar). Corre en el pod GraphAgents; puede pedirte "
+            "aprobación antes de sugerir cambios."
+        ),
         "example_input": _ADS_ANALYTICS_INPUT,
     },
 ]
@@ -135,6 +143,8 @@ _launch_tasks: set[asyncio.Task] = set()
 class TriggerBody(BaseModel):
     agent: str
     input: dict
+    #: la campaña ACTIVA al disparar — el historial del inspector filtra por ella.
+    campaign_id: str | None = None
 
 
 class ApproveBody(BaseModel):
@@ -183,6 +193,17 @@ def list_agents() -> list[dict]:
     return _AGENTS
 
 
+@router.get("/runs")
+def list_runs(limit: int = 20, campaign_id: str | None = None) -> dict:
+    """Historial de análisis (el versionado del inspector): cada corrida con su
+    fecha, estado, snapshot de entrada (los números que había) y resultado (las
+    sugerencias de esa versión), más nueva primero. Con `campaign_id`, SOLO las
+    corridas disparadas mirando esa campaña (el historial es por campaña)."""
+    return {
+        "runs": record.list_runs(limit=max(1, min(limit, 100)), campaign_id=campaign_id)
+    }
+
+
 @router.post("/runs")
 async def create_run(body: TriggerBody) -> dict:
     if body.agent not in _AGENT_IDS:
@@ -190,7 +211,9 @@ async def create_run(body: TriggerBody) -> dict:
     run_id = _new_run_id()
     # Nace `pending` (write de vault rápido); el launch (despertar caja + despachar + pollear)
     # corre en background para no bloquear el request — el progreso llega por el SSE.
-    record.create_run(run_id, agent=body.agent, input=body.input)
+    record.create_run(
+        run_id, agent=body.agent, input=body.input, campaign_id=body.campaign_id
+    )
     _spawn_launch(run_id, body.agent, body.input)
     return {"run_id": run_id}
 

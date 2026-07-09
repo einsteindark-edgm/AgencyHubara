@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from sdk.production import publish_production, save_production
+from sdk.production import plan_publication, production_status, publish_production, save_production
 from viewer.server import api_route
 
 GA_ROOT = Path(__file__).resolve().parents[2]
@@ -91,6 +91,85 @@ def test_publish_fuera_de_git_degrada_honesto(tmp_path):
     res = publish_production(tmp_path, push=False, pr=False)
     assert res["ok"] is False
     assert any("git" in e for e in res["errors"]), res
+
+
+# ----------------------------------------- plan_publication (F15: ejecución nativa VS Code)
+
+def test_plan_publication_da_el_plan_sin_mutar(ga_repo):
+    """El PLAN de publicación no crea rama ni commitea — solo describe qué hacer, para que
+    la extensión lo ejecute con las APIs nativas de VS Code (git + GitHub, sin gh)."""
+    assert save_production(ga_repo)["ok"]
+    fp8 = production_status(ga_repo)["snapshot"]["fingerprint"][:8]
+    head_before = _git(ga_repo, "rev-parse", "--abbrev-ref", "HEAD")
+    plan = plan_publication(ga_repo)
+    assert plan["ok"] is True, plan
+    assert plan["on_default"] is True  # estamos en main
+    assert plan["branch"] == f"graphagents/production-{fp8}"
+    assert plan["base"] == "main"
+    assert set(plan["paths"]) == {"manifests", "production.yaml"}  # ga_root == repo root en el fixture
+    assert fp8 in plan["title"]
+    assert plan["has_changes"] is True  # production.yaml recién bendecido, sin commitear
+    # NO mutó: sigue en main, sin rama nueva, production.yaml sin commitear
+    assert _git(ga_repo, "rev-parse", "--abbrev-ref", "HEAD") == head_before == "main"
+    assert "production.yaml" in _git(ga_repo, "status", "--porcelain")
+
+
+def test_plan_publication_requiere_snapshot_al_dia(ga_repo):
+    plan = plan_publication(ga_repo)  # sin save previo
+    assert plan["ok"] is False
+    assert any("guard" in e for e in plan["errors"]), plan
+
+
+def test_plan_en_rama_de_trabajo_reusa_la_rama(ga_repo):
+    """En una rama de trabajo NO se crea rama nueva: el plan apunta a la actual, base main."""
+    _git(ga_repo, "checkout", "-b", "feat/mi-trabajo")
+    assert save_production(ga_repo)["ok"]
+    plan = plan_publication(ga_repo)
+    assert plan["ok"] is True, plan
+    assert plan["on_default"] is False
+    assert plan["branch"] == "feat/mi-trabajo"
+    assert plan["base"] == "main"
+
+
+def test_plan_en_detached_head_se_rehusa(ga_repo):
+    """Detached HEAD (patrón estándar de los worktrees del pipeline): `rev-parse
+    --abbrev-ref HEAD` devuelve el literal 'HEAD' con exit 0 — publicar ahí commitearía
+    a un HEAD inalcanzable / pushearía una rama llamada 'HEAD'. El plan corta con error."""
+    sha = _git(ga_repo, "rev-parse", "HEAD")
+    _git(ga_repo, "checkout", "--detach", sha)
+    assert save_production(ga_repo)["ok"]
+    plan = plan_publication(ga_repo)
+    assert plan["ok"] is False
+    assert any("detached" in e.lower() for e in plan["errors"]), plan
+
+
+def test_plan_default_branch_distinta_de_main(ga_repo):
+    """Si la rama default del remoto es otra (p. ej. 'develop'), estar parado en ella
+    cuenta como on_default → rama nueva graphagents/production-<fp8> y base develop.
+    Sin esto el plan producía head==base (commit directo a la default, PR imposible)."""
+    # simular un remoto cuyo HEAD apunta a develop
+    _git(ga_repo, "branch", "-m", "main", "develop")
+    remote = ga_repo.parent / "remote.git"
+    _git(ga_repo, "init", "--bare", str(remote))
+    _git(ga_repo, "remote", "add", "origin", str(remote))
+    _git(ga_repo, "push", "-u", "origin", "develop")
+    _git(ga_repo, "remote", "set-head", "origin", "develop")
+    assert save_production(ga_repo)["ok"]
+    plan = plan_publication(ga_repo)
+    assert plan["ok"] is True, plan
+    assert plan["on_default"] is True
+    assert plan["branch"].startswith("graphagents/production-")
+    assert plan["base"] == "develop"
+
+
+def test_endpoint_publish_plan(ga_repo):
+    # sin save previo → 422 (el snapshot no está al día)
+    status, _ = api_route("GET", "/api/publish-plan", {}, None, ga_root=ga_repo)
+    assert status == 422
+    assert save_production(ga_repo)["ok"]
+    status, payload = api_route("GET", "/api/publish-plan", {}, None, ga_root=ga_repo)
+    assert status == 200, payload
+    assert payload["ok"] is True and payload["branch"] and payload["paths"]
 
 
 def test_endpoint_publish(ga_repo):

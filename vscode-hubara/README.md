@@ -122,20 +122,41 @@ post-feedback).**
 
 Todas las fases del plan (F0–F10) están implementadas.
 
-## Arquitectura (sin servidor)
+## Backends que usa la extensión (qué necesita correr y dónde vive)
 
-- La extensión corre en el extension host de VS Code (Node ya provisto).
-- La webview se sirve estática desde `dist/` (`asWebviewUri`) — sin puertos.
-- Los datos llegan por un **puente stdio JSON-lines** a Python, que reusa el
-  MISMO código que los viewers web:
-  - GraphAgents → [`GraphAgents/viewer/bridge.py`](../GraphAgents/viewer/bridge.py) → `api_route()` (todos los endpoints del explorer).
-  - System Map → [`hubara_agency/scripts/system_map_bridge.py`](../hubara_agency/scripts/system_map_bridge.py) → `build_system_graph()` + `collect_certifications()`.
-- Única dependencia externa dura: AgentSpan/Conductor (`:6767`) para runs
-  durables — degrada limpio si está caído.
+Acktos Studio es **la única UI** de los dos sistemas (los viewers web
+`system_explorer/` y `GraphAgents/viewer/index.html` se eliminaron el
+2026-07-08 — esta extensión los reemplaza). No levanta servidores HTTP para
+funcionar: spawnea dos procesos Python por **stdio JSON-lines** y solo habla
+HTTP con AgentSpan cuando ejecutás durable.
+
+| # | Proceso | Quién lo levanta | Archivo exacto | Qué reusa | Para qué |
+|---|---|---|---|---|---|
+| 1 | **Puente GraphAgents** | la extensión, automático (`python3 -m viewer.bridge`, cwd `GraphAgents/`) | [`GraphAgents/viewer/bridge.py`](../GraphAgents/viewer/bridge.py) | `viewer/server.py::api_route()` — grafo, cases, ⚡ run-local, replay, trace, flow-trace, connect/disconnect, delete-node, save/publish, publish-plan | TODO lo de GraphAgents en la extensión |
+| 2 | **Puente System Map** | la extensión, automático (`uv run python scripts/system_map_bridge.py`, cwd `hubara_agency/`) | [`hubara_agency/scripts/system_map_bridge.py`](../hubara_agency/scripts/system_map_bridge.py) | `src/plugins/system_map/domain/` (`builder.py` + `serialize.py`) — directo al dominio, SIN pasar por FastAPI | el grafo del System Map + certificaciones |
+| 3 | **AgentSpan/Conductor** `:6767` | **vos, solo si ejecutás durable** — botón "▶ Iniciar AgentSpan" (terminal con `agentspan server start`) o `cd GraphAgents && docker compose up` | imagen oficial (servicio `agentspan` de [`GraphAgents/docker-compose.yml`](../GraphAgents/docker-compose.yml)) | — | ▶ Run Durable, trace en vivo, histórico ⟲ de Runs. **Opcional**: ⚡ Ejecutar (local) no lo necesita; todo degrada limpio si está caído |
+
+Lo que **NO** necesita: el `hubara-api` (:8000), el dashboard (:5174), ni
+ningún contenedor del stack — los puentes leen manifests y código del disco.
+El server HTTP `python3 -m viewer.server` (:8900) expone el mismo `api_route`
+del puente #1 para uso standalone/Docker, pero la extensión no lo usa.
 
 **Ningún endpoint/gate/regla se reimplementa en TypeScript**: la fuente de
-verdad vive en Python y el puente la reusa. La extensión es presentación +
-orquestación.
+verdad vive en Python y los puentes la reusan. La extensión es presentación +
+orquestación. La webview se sirve estática desde `dist/` (`asWebviewUri`) —
+sin puertos.
+
+**Guardar & certificar (F14) y publicar nativo (F15)**: el botón "⤴ Guardar &
+certificar" corre TODAS las suites de GraphAgents de `src/testing/suites.ts`
+salvo las excluidas con motivo (hoy solo `integration`, que exige `:6767`) —
+streameadas en vivo al panel Ejecución — y, solo si todo pasa, bendice
+(`/api/save`) y publica. La DECISIÓN de qué publicar (rama, base, paths,
+título, body del PR) viene de `GET /api/publish-plan`
+(`sdk/production.py::plan_publication`); la EJECUCIÓN usa las APIs nativas de
+VS Code (`vscode.git` + `vscode.authentication` → PR por REST, sin `gh`), con
+fallback a `POST /api/publish` (gh, headless) si el git nativo no está. El
+click derecho sobre un agente/tool borra el nodo vía `POST /api/delete-node`
+(siempre con confirmación; cascade con blast-radius).
 
 ## Desarrollo
 

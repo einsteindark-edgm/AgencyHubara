@@ -31,6 +31,7 @@ from src.platform.config import (
 from src.platform.constants import WHATSAPP_SESSION_PREFIX
 from src.platform.temporal.heartbeat import with_heartbeat
 from src.platform.whatsapp import client as whatsapp_client
+from src.platform.whatsapp.formatting import to_whatsapp_text
 from src.platform.whatsapp.composition import (
     get_current_rate_card,
     get_template_registry,
@@ -168,6 +169,11 @@ async def send_message_to_session(session_id: str, message: str) -> None:
             note="skipping duplicate free-form send (retry / double-touch)",
         )
         return
+
+    # Sanitizar markdown del LLM (`**bold**` → `*bold*`): WhatsApp no
+    # renderiza markdown y el cliente ve los asteriscos crudos (caso
+    # wa_573125671604). Determinista e idempotente.
+    message = to_whatsapp_text(message)
 
     chunks = [chunk.strip() for chunk in message.split("\n\n") if chunk.strip()]
     for chunk in chunks:

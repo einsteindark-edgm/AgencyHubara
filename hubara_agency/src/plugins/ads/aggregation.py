@@ -108,12 +108,18 @@ class AdsCampaignSummary:
     impressions: int | None = None
     reach: int | None = None
     clicks: int | None = None
+    # Conversaciones iniciadas reportadas por Meta (insights) — KPI "conv" +
+    # costo/conv del canvas. Distinto de `started` (episodios del vault).
+    messaging_conversations_started: int | None = None
     status: str | None = None
     objective: str | None = None
     placement: str | None = None
     audience: str | None = None
     ad_set: str | None = None
     creative_title: str | None = None
+    # Thumbnail real del creativo (Graph creative{thumbnail_url}) — el preview
+    # del inspector. None hasta que el enrichment lo resuelva.
+    creative_thumbnail_url: str | None = None
     template: str | None = None
     meta_campaign_id: str | None = None
     first_resp: str | None = None

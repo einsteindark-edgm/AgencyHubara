@@ -23,9 +23,24 @@ frontend:
 # importa de ningún plugin sibling. Agregación en `src.plugins.ads.aggregation`,
 # clasificación de estado en `src.plugins.ads.classification`.
 api:
+  # `python_module` queda como ancla simbólica; con `legacy_routers` presente el
+  # loader lo ignora y registra cada router explícito (src/main.py §_bootstrap_routers).
   python_module: src.plugins.ads.api
   prefix: /api/ads
   tags: [Ads]
+  legacy_routers:
+    # Router agregado del plugin (campañas del vault + análisis IA + /meta protegido:
+    # status/insights/gestión). PROTEGIDO con require_auth. Single-tenant
+    # (2026-07-09): NO hay rutas públicas de OAuth — el token Meta es un
+    # system-user provisionado en SSM (runbook infra/whatsapp-provisioning).
+    - { module: src.plugins.ads.api, prefix: /api/ads, tags: [Ads] }
 
 wiring_intents:
+  # Marketing API de Meta, single-tenant (2026-07-09): el token es un system-user
+  # PROVISIONADO por el operador en SSM SecureString `/hubara/<tenant>/meta/oauth`
+  # (runbook infra/whatsapp-provisioning/README.md — comando `ads-token`). No hay
+  # OAuth ni env vars requeridas: sin el parámetro sembrado, el dashboard degrada
+  # limpio (status/insights → {connected:false}).
   env_vars_required: []
+    # Opcionales (con default): META_ADS_TENANT (default "hubara"),
+    # AWS_REGION (para resolver SSM).

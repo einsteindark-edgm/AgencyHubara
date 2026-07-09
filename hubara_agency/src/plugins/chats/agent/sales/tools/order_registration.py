@@ -177,6 +177,23 @@ class RegisterOrderTool(ToolBase):
         # mockear Medusa, y permite dev sin Medusa configurado.
         self._port: OrderRegistrationPort = port or StubOrderRegistration()
 
+    def _session_attribution(self, session_key: str) -> dict[str, Any] | None:
+        """Atribución CTWA de la sesión (`origin` de metadata.json): el
+        `source_id` del referral es el AD ID de Meta. Best-effort: sesión
+        directa / metadata ausente o rota → None (la orden se registra igual)."""
+        metadata_file = self._vault_dir / session_key / "metadata.json"
+        try:
+            origin = json.loads(metadata_file.read_text(encoding="utf-8")).get("origin") or {}
+        except (OSError, json.JSONDecodeError):
+            return None
+        source_id = origin.get("source_id")
+        if not source_id:
+            return None
+        return {
+            "meta_ad_id": str(source_id),
+            "attribution_channel": origin.get("channel"),
+        }
+
     async def execute_with_context(
         self,
         ctx: ToolContext,
@@ -206,7 +223,9 @@ class RegisterOrderTool(ToolBase):
             phone=str(shipping["phone"]),
         )
 
-        # Delegar al port (Medusa adapter o stub).
+        # Delegar al port (Medusa adapter o stub). La atribución CTWA viaja a
+        # la metadata de la orden Medusa — es el join venta↔campaña del
+        # dashboard (2026-07-09; sin esto Medusa no sabe de qué ad vino la venta).
         result: OrderRegistrationResult = await self._port.register_order(
             session_key=ctx.session_key,
             items=order_items,
@@ -216,6 +235,7 @@ class RegisterOrderTool(ToolBase):
             shipping_cop=shipping_cop,
             total_cop=total_cop,
             currency=currency,
+            attribution=self._session_attribution(ctx.session_key),
         )
 
         # Generar un fallback order_id si el port no devolvio uno (no
@@ -283,6 +303,28 @@ class RegisterOrderTool(ToolBase):
                 order_total_cop=total_cop,
                 currency=currency,
             )
+            # Pago por transferencia → el SISTEMA manda los datos bancarios,
+            # no el LLM (caso wa_573125671604: el LLM alucinó cuenta y NIT).
+            # Encolamos el intent acá — determinista, pasa aunque el LLM no
+            # emita ninguna tool más. El flush renderiza la plantilla fija
+            # desde env (PAYMENT_TRANSFER_*); los params NO llevan datos
+            # bancarios (nunca pasan por el LLM ni por metadata).
+            if payment_method == "transfer":
+                intents = data.setdefault("pending_ui_intents", [])
+                intents.append({
+                    "id": f"payinstr-{registered_record['order_id']}",
+                    "kind": "payment_instructions",
+                    "params": {
+                        "order_id": registered_record["order_id"],
+                        "total_cop": total_cop,
+                        "currency": currency,
+                    },
+                    "analytics": {
+                        "component_id": "payment_instructions",
+                        "component_kind": "text",
+                    },
+                    "queued_at_ms": registered_record["registered_at_ms"],
+                })
         else:
             # Falla: NO sobrescribimos `registered_order` (preserva exitosos
             # previos) pero apendiamos a `failed_order_registrations[]` para
@@ -337,7 +379,17 @@ class RegisterOrderTool(ToolBase):
                 },
                 "summary": (
                     f"Pedido registrado en Medusa con ID {result.order_id}. "
-                    f"Total: ${total_cop:,} {currency}. Llama ahora "
+                    f"Total: ${total_cop:,} {currency}. ".replace(",", ".")
+                    + (
+                        "El SISTEMA ya le envía al cliente los datos "
+                        "bancarios para la transferencia — NO escribas "
+                        "números de cuenta ni banco ni NIT ni ningún dato "
+                        "de pago en tu mensaje (cualquier dato que escribas "
+                        "tú es inventado). "
+                        if payment_method == "transfer"
+                        else ""
+                    )
+                    + "Llama ahora "
                     "`manage_conversation_tag(tag='CONFIRMADO_PAGO_PENDIENTE', "
                     "motivo=...)` y luego `escalate_to_human(reason_category="
                     "'PAYMENT_VERIFICATION_PENDING', summary=...)` para que un "
@@ -347,7 +399,7 @@ class RegisterOrderTool(ToolBase):
                     "detrás). NO uses "
                     "`COMPRA_EXITOSA` — esa tag la pone el humano tras verificar "
                     "el pago."
-                ).replace(",", "."),
+                ),
             }
         else:
             envelope = {

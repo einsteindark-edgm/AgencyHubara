@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from pathlib import Path
 
 import yaml
@@ -46,6 +47,38 @@ def _manifest_path(ga_root: Path, agent_id: str) -> Path | None:
     cand = sorted(manifests.glob(f"{agent_id}.agent.yaml")) + sorted(
         manifests.glob(f"{agent_id}.taskgraph.yaml"))
     return cand[0] if cand else None
+
+
+def _tool_dir(ga_root: Path, tool_id: str) -> Path | None:
+    """El directorio `tools/<dir>/` cuya `tool.yaml` declara `id: <tool_id>` (el id usa
+    guiones, el dir suele usar guiones bajos — se resuelve por el id, no por el nombre)."""
+    for p in sorted((ga_root / "tools").glob("*/tool.yaml")):
+        try:
+            data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+        except Exception:  # noqa: BLE001 — tool.yaml ilegible: no matchea, no crashea
+            continue
+        if isinstance(data, dict) and data.get("id") == tool_id:
+            return p.parent
+    return None
+
+
+def _dependents(ga_root: Path, kind: str, ident: str) -> list[tuple[str, Path]]:
+    """Los nodos que REFERENCIAN a `kind:ident` — `(name, path)` de cada uno, escaneando
+    TODOS los manifests (`*.agent.yaml` + `*.taskgraph.yaml` — un taskgraph también
+    compone/usa). Se devuelve el PATH junto al name porque nada garantiza que el `name:`
+    del YAML coincida con el stem del archivo — editar por path elimina esa clase de bug."""
+    manifests = ga_root / "manifests"
+    out: list[tuple[str, Path]] = []
+    for p in sorted(manifests.glob("*.agent.yaml")) + sorted(manifests.glob("*.taskgraph.yaml")):
+        try:
+            m = load_manifest(p)
+        except Exception:  # noqa: BLE001 — manifest roto: lo caza la cert, acá no bloquea el borrado
+            continue
+        if kind == "tool" and any(t.ref_id == ident for t in m.tools):
+            out.append((m.name, p))
+        elif kind == "agent" and any(a.ref_agent_id == ident for a in m.agents):
+            out.append((m.name, p))
+    return out
 
 
 def _state_key(value) -> str | None:
@@ -369,6 +402,105 @@ def connect(ga_root: Path, source: str, target: str, binding: dict | None = None
     return out
 
 
+def delete_node(ga_root: Path, node_id: str, *, cascade: bool = False) -> dict:
+    """Borra un nodo ENTERO del catálogo (una tool o un agente), no solo una relación.
+
+    - `node_id` = 'tool:<id>' | 'agent:<id>'. Un port no se borra desde la UI (G-PORT).
+    - Los DEPENDIENTES (agentes que usan la tool / supervisores que componen el agente) se
+      escanean sobre TODOS los manifests (`*.agent.yaml` + `*.taskgraph.yaml`). Si hay
+      dependientes y `cascade=False`, NO se toca nada: se devuelve `needs_confirmation` con
+      la lista (la UI muestra el blast radius y pide confirmar).
+    - Con `cascade=True` (o sin dependientes) se borra PRIMERO el archivo/dir del nodo y
+      DESPUÉS se remueven las referencias de los dependientes (todas las entradas, incluso
+      duplicadas a mano). El orden importa: si el borrado físico falla, ningún manifest fue
+      tocado (nada de estado a medias sin rollback); si una desconexión posterior falla,
+      queda como warning y la certificación COMPLETA del botón "Guardar & certificar" es el
+      gate real que caza el huérfano antes de publicar. Todo lo COMMITEADO es reversible por
+      git — por eso la UI confirma SIEMPRE antes de llamar (archivos sin commitear no vuelven).
+    """
+    ga_root = Path(ga_root)
+    out: dict = {"ok": False, "needs_confirmation": False, "dependents": [],
+                 "disconnected": [], "deleted": [], "warnings": [], "errors": []}
+    try:
+        kind, ident = _split(node_id)
+    except ValueError as e:
+        out["errors"].append(str(e))
+        return out
+    if kind not in ("tool", "agent"):
+        out["errors"].append(f"solo se borran nodos 'tool' o 'agent' desde la UI (llegó '{kind}')")
+        return out
+
+    if kind == "tool":
+        target = _tool_dir(ga_root, ident)
+        if target is None:
+            out["errors"].append(f"la tool '{ident}' no está en el catálogo (tools/)")
+            return out
+    else:
+        target = _manifest_path(ga_root, ident)
+        if target is None:
+            out["errors"].append(f"el agente '{ident}' no está en manifests/")
+            return out
+
+    deps = _dependents(ga_root, kind, ident)
+    out["dependents"] = [name for name, _ in deps]
+    if deps and not cascade:
+        # una PREGUNTA, no un error: `dependents` ya trae el blast radius para el modal.
+        out["needs_confirmation"] = True
+        return out
+
+    # 1) el nodo se va PRIMERO — si esto falla, ningún manifest fue tocado.
+    try:
+        if kind == "tool":
+            shutil.rmtree(target)
+        else:
+            target.unlink()
+        out["deleted"].append(str(Path(target).resolve().relative_to(ga_root.resolve())))
+    except Exception as e:  # noqa: BLE001 — IO inesperado al borrar: reportá, no crashees
+        out["errors"].append(f"no pude borrar '{node_id}': {e}")
+        return out
+
+    # 2) desconectar los dependientes — por PATH (el name: puede no coincidir con el stem
+    #    del archivo) y removiendo TODAS las entradas que matcheen (duplicados a mano).
+    edge_key = "tools" if kind == "tool" else "agents"
+    edge_kind = "uses" if kind == "tool" else "agent"
+    for name, dpath in deps:
+        text, err = _remove_edge_lines(dpath.read_text(encoding="utf-8"), edge_key, edge_kind, ident)
+        if err:
+            out["warnings"].append(f"'{name}': {err}")
+            continue
+        while True:  # entradas repetidas de la misma referencia — remover todas
+            nxt, err2 = _remove_edge_lines(text, edge_key, edge_kind, ident)
+            if err2:
+                break
+            text = nxt
+        dpath.write_text(text, encoding="utf-8")
+        out["disconnected"].append(name)
+
+    out["ok"] = True
+    return out
+
+
+def _remove_edge_lines(original: str, key: str, kind: str, t_id: str) -> tuple[str | None, str | None]:
+    """La remoción TEXTUAL de un item `- uses: …` del bloque `key:` — compartida por
+    `disconnect` (con rollback posterior) y `delete_node` (cascade, sin rollback).
+    Devuelve `(nuevo_texto, None)` o `(None, error)` si no encontró el bloque/item."""
+    lines = original.split("\n")
+    blk = _block(lines, key)
+    if blk is None:
+        return None, f"no tiene `{key}:`"
+    items = _items(lines, *blk)
+    hit = next(((a, b) for a, b, parsed in items if _ref_matches(parsed, kind, t_id)), None)
+    if hit is None:
+        return None, f"no referencia '{t_id}'"
+    new_lines = lines[:hit[0]] + lines[hit[1]:]
+    if len(items) == 1:  # quedó vacío → forma explícita `key: []` (parseable; SUP decide si es válido)
+        new_lines[blk[0]] = f"{key}: []"
+    text = "\n".join(new_lines)
+    if original.endswith("\n") and not text.endswith("\n"):
+        text += "\n"  # el item era la cola del archivo — no comerse el newline final (diff limpio)
+    return text, None
+
+
 def disconnect(ga_root: Path, source: str, target: str, kind: str) -> dict:
     """Remueve la conexión (el item de `tools:`/`agents:`) del manifest del ORIGEN."""
     ga_root = Path(ga_root)
@@ -389,23 +521,11 @@ def disconnect(ga_root: Path, source: str, target: str, kind: str) -> dict:
         return {"ok": False, "errors": [f"no existe el manifest del agente '{s_id}'"],
                 "warnings": [], "file": None}
     original = path.read_text(encoding="utf-8")
-    lines = original.split("\n")
     key = "tools" if kind == "uses" else "agents"
-    blk = _block(lines, key)
-    if blk is None:
-        return {"ok": False, "errors": [f"'{s_id}' no tiene `{key}:` — no están conectados"],
+    text, err = _remove_edge_lines(original, key, kind, t_id)
+    if err:
+        return {"ok": False, "errors": [f"'{s_id}' {err} — nada que desconectar"],
                 "warnings": [], "file": None}
-    items = _items(lines, *blk)
-    hit = next(((a, b) for a, b, parsed in items if _ref_matches(parsed, kind, t_id)), None)
-    if hit is None:
-        return {"ok": False, "errors": [f"'{s_id}' no está conectado a '{t_id}' — nada que desconectar"],
-                "warnings": [], "file": None}
-    new_lines = lines[:hit[0]] + lines[hit[1]:]
-    if len(items) == 1:  # quedó vacío → forma explícita `key: []` (parseable; SUP decide si es válido)
-        new_lines[blk[0]] = f"{key}: []"
-    text = "\n".join(new_lines)
-    if original.endswith("\n") and not text.endswith("\n"):
-        text += "\n"  # el item era la cola del archivo — no comerse el newline final (diff limpio)
     path.write_text(text, encoding="utf-8")
     if kind == "uses":
         absent = lambda m: all(t.ref_id != t_id for t in m.tools)  # noqa: E731
