@@ -1,0 +1,75 @@
+id: reengagement
+version: 0.1.0
+archetype: sync  # P-29 (pipeline source→sink: vault snapshot → agente GraphAgents → intents a remarketing)
+display_name: Reengagement (Window Strategist)
+description: |
+  Ciclo autónomo del Window Strategist (WHATSAPP_WINDOW_STRATEGY.md §7, sin
+  HITL): arma el snapshot de conversaciones desde el vault (LeadState
+  pre-digerido vía sdk.messagingkit), lo despacha al agente GraphAgents
+  `window-strategist` por el bridge poll-based (sdk.graphagentskit), y por
+  cada intent del run.result emite ReengagementDispatchIntentEvent — la
+  transition declarativa arranca el RemarketingWorkflow de chats, que
+  RE-VALIDA cada envío con la central send_policy (el gate
+  check_reengagement_policy). Este plugin nunca manda mensajes ni toma el
+  turno conversacional.
+
+# Dep DURA: los intents arrancan el RemarketingWorkflow (worker remarketing de
+# chats) — sin chats habilitado, el dispatch no tiene target (P-6).
+depends_on: [chats]
+
+# NO frontend block: plugin backend-only (la observabilidad del funnel de
+# ventanas llega por el dashboard existente; follow-up si se necesita UI).
+
+# ── Agente Temporal ────────────────────────────────────────────────────
+# Worker único `cycle` — corre ReengagementCycleWorkflow (un ciclo por
+# invocación; la cadencia la da un Temporal Schedule creado en deploy, ver
+# scripts/create_reengagement_schedule.py). Cadencia recomendada: 30-60 min
+# (cada ciclo paga el cold start EC2 de la caja GraphAgents, 1-3 min).
+agent:
+  python_module: src.plugins.reengagement.agent
+  workers:
+    - name: cycle
+      module: src.plugins.reengagement.workers.cycle
+      task_queue: queue-reengagement-cycle
+      # SIN `owns_route`: este plugin no recibe inbounds ni toma el turno.
+      workflow_classes:
+        - ReengagementCycleWorkflow
+      emits:
+        - ReengagementDispatchIntentEvent
+      transitions:
+        # Cada intent del agente arranca el remarketing de esa conversación.
+        # `via: start_workflow` (NO _with_replace): si ya hay un remarketing
+        # vivo para la sesión, el intent NO lo mata — la conversación en
+        # curso gana. El RemarketingWorkflow re-valida con la central
+        # (check_reengagement_policy) antes de tocar al cliente.
+        - id: dispatch_intent_starts_remarketing
+          on_event: ReengagementDispatchIntentEvent
+          action:
+            via: start_workflow
+            target_plugin: chats
+            target_worker: remarketing
+            target_workflow: RemarketingWorkflow
+            workflow_id_template: "remarketing-{event.session_id}"
+            input_mapping:
+              session_id: "$.session_id"
+              motivo: "$.motivo"
+      deployment:
+        replicas: 1                       # un solo ciclo a la vez (snapshot global)
+        strategy: Recreate
+        cpu_request: 100m
+        memory_request: 256Mi
+        env_secrets: []
+      compose:
+        env:
+          TEMPORAL_URL: temporal:7233
+          WORKSPACE_VAULT_DIR: /app/hubara_vault
+          # Bridge GraphAgents (boto3/SSM). Sin AWS_REGION el launcher falla
+          # claro AL USARSE (graceful sin config, no en el import/boot).
+          AWS_REGION: ${AWS_REGION}
+        volumes:
+          - hubara-vault-local:/app/hubara_vault
+        depends_on:
+          - temporal
+
+wiring_intents:
+  env_vars_required: []

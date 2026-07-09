@@ -158,8 +158,10 @@ grafo `ingest → classify → plan → dispatch → END` es puro.
   consultar la central antes de cada envío + gate de arquitectura (no send sin
   `SendDecision`). Watchdog window-aware + idempotencia dura (duplicado ahora
   pago).
-- **WS3 — Agente GraphAgents "Window Strategist"** — consume el contrato de
-  decisión, propone plan, dispatch vía HITL con approval.
+- **WS3 — Agente GraphAgents "Window Strategist"** — autónomo, SIN HITL (ver
+  §7): emite intents de dispatch; hubara re-valida cada envío con la central
+  (gate `decide_reengagement` en el remarketing workflow). Plan refinado:
+  `GRAPHAGENTS_WINDOW_STRATEGIST_PLAN.md`.
 - **WS4 — Bucle de medición** — costo-de-servir por lane vs conversión; calibra
   el umbral de la Fase B.
 

@@ -17,7 +17,7 @@ import json
 
 import pytest
 
-from src.plugins.ads.runs import boto3_launcher
+from src.platform.graphagents import boto3_launcher
 
 
 # ---------------------------------------------------------------- fakes de AWS

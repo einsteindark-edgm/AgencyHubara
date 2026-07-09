@@ -117,7 +117,7 @@ async def poll_loop(run_id, execution_id, *, bus, fetch, interval=2.0, max_polls
     thread (`asyncio.to_thread`) — no congela el loop. Un poll fallido reintenta (la caja puede
     estar arrancando fría) sin tumbar el loop. Si se agota `max_polls` SIN llegar a terminal, emite
     `run.failed` (timeout) para NO dejar la UI colgada en `running` para siempre."""
-    from src.plugins.ads.runs import conductor
+    from src.sdk import graphagentskit as conductor  # bridge promovido (WS-B0)
 
     for _ in range(max_polls):
         try:

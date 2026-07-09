@@ -77,6 +77,12 @@ services:
     volumes:
       - hubara-vault:/app/hubara_vault
 
+  worker-reengagement-cycle:
+    <<: *app
+    command: ["python", "-m", "src.plugins.reengagement.workers.cycle"]
+    volumes:
+      - hubara-vault:/app/hubara_vault
+
   worker-chats-sales_eval:
     <<: *app
     command: ["python", "-m", "src.plugins.chats.workers.sales_eval"]

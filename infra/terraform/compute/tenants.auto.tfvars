@@ -11,7 +11,7 @@ tenants = {
   hubara = {
     instance_type   = "t3.medium"
     domain          = "98-88-237-207.sslip.io" # ← poné tu dominio REAL si lo tenés; sino lo dejamos y arreglamos DNS al final
-    enabled_plugins = "ads,agents_admin,catalog,chats,eta,orders,system_map"
+    enabled_plugins = "ads,agents_admin,catalog,chats,eta,orders,reengagement,system_map"
     root_volume_gb  = 30
   }
 }
