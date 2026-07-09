@@ -4,7 +4,7 @@ import { errorDetail, GRAPH_PATH, isGraphPayload, PROVIDER_LABEL, Provider } fro
 import { BridgeHub } from "../bridge/pythonBridge";
 import { CertSink, runCertifyAndPublish } from "../certify/certifyRunner";
 import { seamsFilePath } from "../config";
-import { connectWithConfirmation, disconnectWithConfirmation } from "./editOps";
+import { connectWithConfirmation, deleteNodeWithConfirmation, disconnectWithConfirmation } from "./editOps";
 import { Seam, stripNs } from "./graphOps";
 import {
   EMPTY_VIEW_STATE,
@@ -214,6 +214,10 @@ export class GraphPanel {
     }
   }
 
+  /** una sola certificación viva a la vez — dos corridas concurrentes interleavearían
+   * la consola (mismos suite ids) y RACEARÍAN el publish sobre el mismo working tree. */
+  private static certifyRunning = false;
+
   /** El botón "⤴ Guardar & certificar": corre la suite COMPLETA en vivo (streameada
    * al panel Ejecución) y, si todo pasa, bendice + publica (rama + commit + push + PR).
    * Confirmación up-front por los efectos reales fuera del editor (push/PR). */
@@ -223,75 +227,45 @@ export class GraphPanel {
       void vscode.window.showErrorMessage("Acktos Studio: el panel Ejecución no está disponible.");
       return;
     }
+    if (GraphPanel.certifyRunning) {
+      void vscode.window.showInformationMessage("Acktos Studio: ya hay una certificación en curso — mirá el panel Ejecución.");
+      return;
+    }
     const choice = await vscode.window.showWarningMessage(
       "¿Guardar & certificar? Corre la suite completa de GraphAgents y, si TODO pasa, crea rama + commit + push + PR. Si algo falla, no se publica.",
       { modal: true },
       "Certificar y publicar",
     );
-    if (choice !== "Certificar y publicar") {
-      return;
+    if (choice !== "Certificar y publicar" || GraphPanel.certifyRunning) {
+      return; // re-chequeo post-modal: el diálogo pudo quedar abierto mientras otra corrida arrancaba
     }
+    GraphPanel.certifyRunning = true;
     const cts = new vscode.CancellationTokenSource();
     try {
       await runCertifyAndPublish(this.bridges, sink, cts.token);
     } catch (e) {
       sink.certDone(false, undefined, undefined, [`la certificación crasheó: ${e instanceof Error ? e.message : String(e)}`]);
     } finally {
+      GraphPanel.certifyRunning = false;
       cts.dispose();
     }
   }
 
-  /** Click derecho en un nodo agente/tool → borrarlo. Un solo `/api/delete-node`:
-   * sin cascade primero (si hay dependientes devuelve `needs_confirmation` + la lista
-   * → modal de blast radius → reintento con cascade). Refresca el grafo si borró. */
+  /** Click derecho en un nodo agente/tool → borrarlo. La secuencia confirm→cascade→toast
+   * vive en `editOps.ts` (misma regla que connect/disconnect: idéntica sin importar quién
+   * la dispara). El grafo se refresca SIEMPRE tras el intento — incluso si falló, el
+   * backend pudo haber mutado parcialmente y el canvas no debe mentir. */
   private async handleDeleteNode(nsId: string, label: string): Promise<void> {
     const nodeId = stripNs("graphagents", nsId);
     if (!nodeId) {
       return; // edit mode es SOLO GraphAgents
     }
-    const del = async (cascade: boolean) => {
-      const res = await this.bridges
-        .get("graphagents")
-        .request({ method: "POST", path: "/api/delete-node", body: { node_id: nodeId, cascade } });
-      return res.payload as {
-        ok?: boolean;
-        needs_confirmation?: boolean;
-        dependents?: string[];
-        disconnected?: string[];
-        deleted?: string[];
-        warnings?: string[];
-        errors?: string[];
-      };
-    };
-    try {
-      let payload = await del(false);
-      if (payload.needs_confirmation) {
-        const deps = payload.dependents ?? [];
-        const choice = await vscode.window.showWarningMessage(
-          `¿Borrar ${label}? Lo usan ${deps.length} nodo(s): ${deps.join(", ")}. Se van a desconectar también.`,
-          { modal: true },
-          "Borrar en cascada",
-        );
-        if (choice !== "Borrar en cascada") {
-          return;
-        }
-        payload = await del(true);
-      }
-      if (payload.ok) {
-        const bits = [
-          `Acktos Studio: ${label} borrado`,
-          (payload.disconnected ?? []).length ? `· desconectado de ${(payload.disconnected ?? []).join(", ")}` : "",
-          (payload.warnings ?? []).length ? `· ⚠ ${(payload.warnings ?? []).join("; ")}` : "",
-        ].filter(Boolean).join(" ");
-        void vscode.window.showInformationMessage(bits);
-        const fresh = await this.fetchProvider("graphagents");
-        this.post({ type: "providerUpdate", provider: "graphagents", state: fresh });
-      } else {
-        void vscode.window.showErrorMessage(`Acktos Studio: no se borró ${label} — ${(payload.errors ?? []).join("; ")}`);
-      }
-    } catch (e) {
-      void vscode.window.showErrorMessage(`Acktos Studio: borrar ${label} falló: ${e}`);
+    const outcome = await deleteNodeWithConfirmation(this.bridges, nodeId, label);
+    if (outcome === "cancelled") {
+      return; // no se tocó nada
     }
+    const fresh = await this.fetchProvider("graphagents");
+    this.post({ type: "providerUpdate", provider: "graphagents", state: fresh });
   }
 
   /** El I/O por-tool reconstruido (`/api/flow-trace`) — UNA vez por ejecución

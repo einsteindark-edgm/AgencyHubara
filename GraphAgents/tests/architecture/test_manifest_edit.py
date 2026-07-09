@@ -305,6 +305,76 @@ def test_delete_tool_sin_dependientes_borra_directo(ga):
     assert not orphan.exists()
 
 
+def test_delete_confirmacion_no_es_un_error(ga):
+    """needs_confirmation es una PREGUNTA, no un error: errors queda vacío (la UI ya
+    tiene `dependents` para armar el modal; un errors poblado confunde a los callers)."""
+    res = delete_node(ga, "tool:meta-ads-insights")
+    assert res["needs_confirmation"] is True
+    assert res["errors"] == [], res
+
+
+def test_delete_cascade_remueve_referencias_duplicadas(ga):
+    """Un manifest editado a mano puede listar la MISMA tool dos veces — el cascade
+    remueve TODAS las entradas, no solo la primera (si quedara una, apuntaría a una
+    tool borrada: dangler silencioso)."""
+    path = ga / "manifests" / "ctwa-insights.agent.yaml"
+    text = path.read_text(encoding="utf-8")
+    # duplicar la entrada existente de meta-ads-insights al final del bloque tools:
+    text += "  - uses: meta-ads-insights@1\n    with:\n      payload: $state.payload\n"
+    path.write_text(text, encoding="utf-8")
+    res = delete_node(ga, "tool:meta-ads-insights", cascade=True)
+    assert res["ok"] is True, res
+    assert "meta-ads-insights" not in path.read_text(encoding="utf-8")
+
+
+def test_delete_cascade_dependiente_con_name_distinto_del_archivo(ga):
+    """El `name:` del YAML no tiene por qué coincidir con el stem del archivo — el
+    cascade edita por PATH (no re-resuelve por name), así que igual desconecta."""
+    (ga / "manifests" / "sup_raro.taskgraph.yaml").write_text(
+        "name: sup-con-otro-nombre\narchetype: supervisor\nstrategy: router\n"
+        "agents:\n  - uses: agent://greeter@1\n  - uses: agent://sales-ledger@1\n",
+        encoding="utf-8")
+    res = delete_node(ga, "agent:greeter", cascade=True)
+    assert res["ok"] is True, res
+    assert "sup-con-otro-nombre" in res["disconnected"]
+    assert "greeter" not in (ga / "manifests" / "sup_raro.taskgraph.yaml").read_text(encoding="utf-8")
+
+
+def test_delete_falla_el_borrado_no_toca_los_dependientes(ga):
+    """El nodo se borra ANTES de desconectar: si el borrado físico falla, los manifests
+    de los dependientes quedan intactos (nada de estado a medias sin rollback)."""
+
+    before = {a: _text(ga, f"{a}.agent.yaml") for a in ("ctwa-insights", "ctwa-campaign-funnel")}
+    (ga / "tools").chmod(0o555)  # sin permiso de escritura en el padre → rmtree falla
+    try:
+        res = delete_node(ga, "tool:meta-ads-insights", cascade=True)
+    finally:
+        (ga / "tools").chmod(0o755)
+    assert res["ok"] is False
+    assert any("no pude borrar" in e for e in res["errors"]), res
+    assert (ga / "tools" / "meta_ads_insights").is_dir()  # el dir sobrevive
+    for a, text in before.items():  # y NINGÚN dependiente fue tocado
+        assert _text(ga, f"{a}.agent.yaml") == text
+
+
+def test_endpoint_delete_node(ga):
+    """La ruta POST /api/delete-node: 400 malformado · 200+needs_confirmation (pregunta,
+    no error HTTP) · 200 ok con cascade · 422 inexistente."""
+    from viewer.server import api_route
+
+    status, payload = api_route("POST", "/api/delete-node", {}, {}, ga_root=ga)
+    assert status == 400
+    status, payload = api_route("POST", "/api/delete-node", {}, {"node_id": "tool:meta-ads-insights"}, ga_root=ga)
+    assert status == 200 and payload["needs_confirmation"] is True
+    assert (ga / "tools" / "meta_ads_insights").is_dir()  # preguntar no muta
+    status, payload = api_route("POST", "/api/delete-node", {},
+                                {"node_id": "tool:meta-ads-insights", "cascade": True}, ga_root=ga)
+    assert status == 200 and payload["ok"] is True
+    assert not (ga / "tools" / "meta_ads_insights").exists()
+    status, payload = api_route("POST", "/api/delete-node", {}, {"node_id": "tool:no-existe"}, ga_root=ga)
+    assert status == 422 and payload["ok"] is False
+
+
 def test_delete_node_inexistente_reporta_error(ga):
     res = delete_node(ga, "tool:no-existe")
     assert res["ok"] is False and res["needs_confirmation"] is False

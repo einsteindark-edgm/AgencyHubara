@@ -27,6 +27,9 @@ en vivo — cada request re-proyecta el sistema; editás un manifest y se reflej
     GET  /api/production-status -> {saved, dirty, snapshot} — ¿el wiring matchea lo bendecido?
     POST /api/save           -> 'guardar producción': checks de TODO el sistema + snapshot
                                (production.yaml, raíz del subsistema); 422 si algo está roto
+    GET  /api/publish-plan   -> el PLAN de publicación SIN efectos (rama, base, paths, título,
+                               body del PR) — Acktos Studio lo ejecuta con las APIs nativas de
+                               VS Code (git + GitHub); 422 si el snapshot no está al día
     POST /api/publish        -> 'publicar': despliegue del wiring bendecido — commit quirúrgico
                                (manifests/ + production.yaml) + push + PR (gh); exige save al día
                                body: {"push": bool?, "pr": bool?} (default true)

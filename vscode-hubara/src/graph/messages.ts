@@ -151,7 +151,10 @@ export type ExecInbound =
    * `key` la genera la webview y viaja de vuelta para matchear la respuesta. */
   | { type: "nodeStateRequest"; key: string; executionId: string; taskId: string }
   /** abrir el PR generado por la certificación en el navegador. */
-  | { type: "openExternal"; url: string };
+  | { type: "openExternal"; url: string }
+  /** el usuario cerró la consola de cert — el provider deja de restaurarla en cada
+   * re-apertura (el estado de la webview muere al ocultarse; el flag vive allá). */
+  | { type: "certDismiss" };
 
 /** Extensión → webview del panel EJECUCIÓN. */
 export type ExecOutbound =

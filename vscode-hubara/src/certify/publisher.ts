@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { BridgeHub } from "../bridge/pythonBridge";
 
 /**
  * Ejecuta la publicación con las APIs NATIVAS de VS Code — `vscode.git` (branch/
@@ -20,7 +21,6 @@ export interface PublishPlan {
   paths: string[];
   title: string | null;
   body: string | null;
-  fingerprint: string | null;
   has_changes: boolean;
 }
 
@@ -33,24 +33,23 @@ export interface PublishOutcome {
   unavailable?: boolean;
 }
 
-// --- tipos estructurales MÍNIMOS de la Git Extension API (vscode.git) — evita vendorar
-//     el git.d.ts entero; el objeto real en runtime expone estos miembros. ---
+// --- tipos estructurales MÍNIMOS de la Git Extension API (vscode.git) — SOLO los
+//     miembros que este archivo usa en runtime (evita vendorar el git.d.ts entero). ---
 interface GitRemote {
   name: string;
   fetchUrl?: string;
   pushUrl?: string;
 }
 interface GitRepositoryState {
-  HEAD?: { name?: string };
   remotes: GitRemote[];
 }
 interface GitRepository {
   rootUri: vscode.Uri;
   state: GitRepositoryState;
   createBranch(name: string, checkout: boolean, ref?: string): Promise<void>;
-  checkout(treeish: string): Promise<void>;
+  deleteBranch(name: string, force?: boolean): Promise<void>;
   add(resources: string[]): Promise<void>;
-  commit(message: string, opts?: { all?: boolean }): Promise<void>;
+  commit(message: string): Promise<void>;
   push(remoteName?: string, branchName?: string, setUpstream?: boolean): Promise<void>;
 }
 interface GitAPI {
@@ -96,7 +95,12 @@ export async function publishNatively(plan: PublishPlan, log: (line: string) => 
       try {
         await repo.createBranch(plan.branch, true);
       } catch {
-        await repo.checkout(plan.branch); // ya existía → cambiarse a ella
+        // ya existía (de un publish anterior) → paridad con `git checkout -B` del camino
+        // headless: la rama se RESETEA al HEAD actual (la default), no se reusa su tip
+        // stale (un checkout plano commitearía encima de un commit abandonado, o git lo
+        // rechazaría por el production.yaml recién escrito).
+        await repo.deleteBranch(plan.branch, true);
+        await repo.createBranch(plan.branch, true);
       }
     }
 
@@ -119,25 +123,31 @@ export async function publishNatively(plan: PublishPlan, log: (line: string) => 
     log(`◍ push origin ${plan.branch}…`);
     await repo.push("origin", plan.branch, true);
 
-    const prUrl = await ensurePullRequest(repo, plan, log);
-    return { ok: true, branch: plan.branch, prUrl, errors: [] };
+    // El PR es parte del contrato ("crea rama + commit + push + PR") — si falla, el
+    // resultado es un ERROR visible, no un verde engañoso. La rama ya quedó pusheada;
+    // el error lo dice para que el operador pueda abrir el PR a mano.
+    const pr = await ensurePullRequest(repo, plan, log);
+    if (pr.error) {
+      return { ok: false, branch: plan.branch, errors: [pr.error] };
+    }
+    return { ok: true, branch: plan.branch, prUrl: pr.url, errors: [] };
   } catch (e) {
     return { ok: false, branch: plan.branch, errors: [e instanceof Error ? e.message : String(e)] };
   }
 }
 
-/** Crea (o encuentra) el PR usando el token de la sesión de GitHub de VS Code — sin `gh`. */
+/** Crea (o encuentra) el PR usando el token de la sesión de GitHub de VS Code — sin `gh`.
+ * Devuelve `{url}` o `{error}` — nunca falla en silencio. */
 async function ensurePullRequest(
   repo: GitRepository,
   plan: PublishPlan,
   log: (line: string) => void,
-): Promise<string | undefined> {
+): Promise<{ url?: string; error?: string }> {
   const origin = repo.state.remotes.find((r) => r.name === "origin") ?? repo.state.remotes[0];
   const remoteUrl = origin?.pushUrl ?? origin?.fetchUrl;
   const slug = remoteUrl ? parseGithubSlug(remoteUrl) : null;
   if (!slug) {
-    log("  ⚠ no pude derivar owner/repo del remoto — PR omitido (la rama quedó pusheada)");
-    return undefined;
+    return { error: `no pude derivar owner/repo del remoto (${remoteUrl ?? "sin remoto"}) — la rama quedó pusheada; abrí el PR a mano` };
   }
   const session = await vscode.authentication.getSession("github", ["repo"], { createIfNone: true });
   const headers: Record<string, string> = {
@@ -153,7 +163,7 @@ async function ensurePullRequest(
     body: JSON.stringify({ title: plan.title, head: plan.branch, base: plan.base, body: plan.body }),
   });
   if (res.status === 201) {
-    return ((await res.json()) as { html_url: string }).html_url;
+    return { url: ((await res.json()) as { html_url: string }).html_url };
   }
   // ya existía un PR para esa rama → devolvé el existente
   const existing = await fetch(
@@ -163,15 +173,48 @@ async function ensurePullRequest(
   if (existing.ok) {
     const arr = (await existing.json()) as { html_url: string }[];
     if (arr.length > 0) {
-      return arr[0].html_url;
+      return { url: arr[0].html_url };
     }
   }
-  log(`  ⚠ no se pudo crear el PR (status ${res.status}) — la rama quedó pusheada, abrilo a mano`);
-  return undefined;
+  const detail = await res.text().then((t) => t.slice(0, 200)).catch(() => "");
+  return { error: `el PR no se pudo crear (HTTP ${res.status}${detail ? ` — ${detail}` : ""}) — la rama ${plan.branch} quedó pusheada; abrí el PR a mano` };
 }
 
 function parseGithubSlug(remoteUrl: string): { owner: string; repo: string } | null {
   // git@github.com:owner/repo.git  ·  https://github.com/owner/repo(.git)
   const m = remoteUrl.match(/github\.com[:/]([^/]+)\/(.+?)(?:\.git)?\/?$/);
   return m ? { owner: m[1], repo: m[2] } : null;
+}
+
+/**
+ * El flujo COMPLETO de publicación, compartido por "Guardar & certificar" y el comando
+ * "Publish Production": pide el plan sin efectos a Python, lo ejecuta con las APIs
+ * nativas de VS Code y, SOLO si el git nativo no está disponible, cae al camino
+ * headless `/api/publish` (gh). Una sola definición para que ambos disparadores
+ * publiquen idéntico.
+ */
+export async function publishWithFallback(
+  bridges: BridgeHub,
+  onPhase: (line: string) => void,
+): Promise<PublishOutcome> {
+  const planRes = await bridges.get("graphagents").request({ method: "GET", path: "/api/publish-plan" });
+  const plan = planRes.payload as PublishPlan;
+  if (!plan.ok) {
+    return { ok: false, errors: plan.errors?.length ? plan.errors : [`no pude armar el plan (status ${planRes.status})`] };
+  }
+  const outcome = await publishNatively(plan, onPhase);
+  if (!outcome.unavailable) {
+    return outcome;
+  }
+  onPhase("Git nativo no disponible — usando gh (headless)…");
+  const pub = await bridges
+    .get("graphagents")
+    .request({ method: "POST", path: "/api/publish", body: { push: true, pr: true } });
+  const p = pub.payload as { ok?: boolean; errors?: string[]; branch?: string; pr_url?: string };
+  return {
+    ok: p.ok === true,
+    branch: p.branch,
+    prUrl: p.pr_url,
+    errors: p.ok ? [] : (p.errors ?? [`publish falló (status ${pub.status})`]),
+  };
 }

@@ -86,6 +86,9 @@ export function ExecApp(): React.ReactElement {
           setCert((prev) => (prev ? { ...prev, phase: msg.phase } : prev));
           return;
         case "certDone":
+          // el veredicto SIEMPRE se muestra, aunque el usuario haya ocultado la consola
+          // a mitad de corrida — una falla (o el link del PR) no puede quedar invisible.
+          setCertDismissed(false);
           setCert((prev) => (prev ? { ...prev, done: { ok: msg.ok, branch: msg.branch, prUrl: msg.prUrl, errors: msg.errors } } : prev));
           return;
         case "certRestore":
@@ -139,7 +142,18 @@ export function ExecApp(): React.ReactElement {
   // La certificación en vivo toma el panel: es el foco mientras corre "Guardar &
   // certificar" (el usuario quiere ver exactamente qué se ejecutó y el veredicto).
   if (cert && !certDismissed) {
-    return <CertConsole cert={cert} onOpenPr={(url) => send({ type: "openExternal", url })} onClose={() => setCertDismissed(true)} />;
+    return (
+      <CertConsole
+        cert={cert}
+        onOpenPr={(url) => send({ type: "openExternal", url })}
+        onClose={() => {
+          setCertDismissed(true);
+          // el provider deja de restaurarla en cada re-apertura del panel — sin este
+          // aviso, una corrida vieja resucitaba sobre el trace por el resto de la sesión.
+          send({ type: "certDismiss" });
+        }}
+      />
+    );
   }
 
   if (!trace && !selected) {
@@ -259,7 +273,7 @@ function CertConsole({
               {s.detail && <span className="cert-suite-detail">{s.detail}</span>}
             </button>
             {effectiveOpen === s.id && (
-              <pre className="cert-log" ref={s.id === effectiveOpen ? logRef : undefined}>
+              <pre className="cert-log" ref={logRef}>
                 {cert.logs[s.id] ? cert.logs[s.id] : "— sin salida todavía —"}
               </pre>
             )}

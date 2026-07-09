@@ -120,6 +120,48 @@ def test_plan_publication_requiere_snapshot_al_dia(ga_repo):
     assert any("guard" in e for e in plan["errors"]), plan
 
 
+def test_plan_en_rama_de_trabajo_reusa_la_rama(ga_repo):
+    """En una rama de trabajo NO se crea rama nueva: el plan apunta a la actual, base main."""
+    _git(ga_repo, "checkout", "-b", "feat/mi-trabajo")
+    assert save_production(ga_repo)["ok"]
+    plan = plan_publication(ga_repo)
+    assert plan["ok"] is True, plan
+    assert plan["on_default"] is False
+    assert plan["branch"] == "feat/mi-trabajo"
+    assert plan["base"] == "main"
+
+
+def test_plan_en_detached_head_se_rehusa(ga_repo):
+    """Detached HEAD (patrón estándar de los worktrees del pipeline): `rev-parse
+    --abbrev-ref HEAD` devuelve el literal 'HEAD' con exit 0 — publicar ahí commitearía
+    a un HEAD inalcanzable / pushearía una rama llamada 'HEAD'. El plan corta con error."""
+    sha = _git(ga_repo, "rev-parse", "HEAD")
+    _git(ga_repo, "checkout", "--detach", sha)
+    assert save_production(ga_repo)["ok"]
+    plan = plan_publication(ga_repo)
+    assert plan["ok"] is False
+    assert any("detached" in e.lower() for e in plan["errors"]), plan
+
+
+def test_plan_default_branch_distinta_de_main(ga_repo):
+    """Si la rama default del remoto es otra (p. ej. 'develop'), estar parado en ella
+    cuenta como on_default → rama nueva graphagents/production-<fp8> y base develop.
+    Sin esto el plan producía head==base (commit directo a la default, PR imposible)."""
+    # simular un remoto cuyo HEAD apunta a develop
+    _git(ga_repo, "branch", "-m", "main", "develop")
+    remote = ga_repo.parent / "remote.git"
+    _git(ga_repo, "init", "--bare", str(remote))
+    _git(ga_repo, "remote", "add", "origin", str(remote))
+    _git(ga_repo, "push", "-u", "origin", "develop")
+    _git(ga_repo, "remote", "set-head", "origin", "develop")
+    assert save_production(ga_repo)["ok"]
+    plan = plan_publication(ga_repo)
+    assert plan["ok"] is True, plan
+    assert plan["on_default"] is True
+    assert plan["branch"].startswith("graphagents/production-")
+    assert plan["base"] == "develop"
+
+
 def test_endpoint_publish_plan(ga_repo):
     # sin save previo → 422 (el snapshot no está al día)
     status, _ = api_route("GET", "/api/publish-plan", {}, None, ga_root=ga_repo)

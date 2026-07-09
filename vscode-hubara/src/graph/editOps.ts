@@ -59,6 +59,72 @@ export async function connectWithConfirmation(bridges: BridgeHub, source: string
   }
 }
 
+interface DeleteResponse {
+  ok?: boolean;
+  needs_confirmation?: boolean;
+  dependents?: string[];
+  disconnected?: string[];
+  warnings?: string[];
+  errors?: string[];
+}
+
+/** Desenlace del borrado: `cancelled` = no se tocó nada (no refrescar); `deleted` /
+ * `failed` = hubo (o pudo haber) mutación — el caller refresca el grafo. */
+export type DeleteOutcome = "deleted" | "cancelled" | "failed";
+
+/**
+ * Borrar un nodo (agente/tool) con confirmación — SIEMPRE confirma antes de la primera
+ * request (el backend borra al toque cuando no hay dependientes: sin este modal, un click
+ * derecho accidental hace `rmtree` de un directorio con código posiblemente sin commitear).
+ * Si hay dependientes, el backend devuelve `needs_confirmation` + la lista → segundo modal
+ * con el blast radius → reintento con cascade.
+ */
+export async function deleteNodeWithConfirmation(bridges: BridgeHub, nodeId: string, label: string): Promise<DeleteOutcome> {
+  const first = await vscode.window.showWarningMessage(
+    `¿Borrar ${label}? Se elimina su manifest/directorio del catálogo (si tiene código sin commitear, no se recupera).`,
+    { modal: true },
+    "Borrar",
+  );
+  if (first !== "Borrar") {
+    return "cancelled";
+  }
+  const del = async (cascade: boolean): Promise<DeleteResponse> => {
+    const res = await bridges
+      .get("graphagents")
+      .request({ method: "POST", path: "/api/delete-node", body: { node_id: nodeId, cascade } });
+    return res.payload as DeleteResponse;
+  };
+  try {
+    let payload = await del(false);
+    if (payload.needs_confirmation) {
+      const deps = payload.dependents ?? [];
+      const choice = await vscode.window.showWarningMessage(
+        `${label} lo usan ${deps.length} nodo(s): ${deps.join(", ")}. Se van a desconectar también.`,
+        { modal: true },
+        "Borrar en cascada",
+      );
+      if (choice !== "Borrar en cascada") {
+        return "cancelled"; // preguntar no muta — nada que refrescar
+      }
+      payload = await del(true);
+    }
+    if (payload.ok) {
+      const bits = [
+        `Acktos Studio: ${label} borrado`,
+        (payload.disconnected ?? []).length ? `· desconectado de ${(payload.disconnected ?? []).join(", ")}` : "",
+        (payload.warnings ?? []).length ? `· ⚠ ${(payload.warnings ?? []).join("; ")}` : "",
+      ].filter(Boolean).join(" ");
+      void vscode.window.showInformationMessage(bits);
+      return "deleted";
+    }
+    void vscode.window.showErrorMessage(`Acktos Studio: no se borró ${label} — ${(payload.errors ?? []).join("; ")}`);
+    return "failed";
+  } catch (e) {
+    void vscode.window.showErrorMessage(`Acktos Studio: borrar ${label} falló: ${e}`);
+    return "failed";
+  }
+}
+
 export async function disconnectWithConfirmation(bridges: BridgeHub, source: string, target: string, kind: string): Promise<boolean> {
   if (kind !== "uses" && kind !== "agent") {
     return false; // consumes/seam no son editables (G-PORT)

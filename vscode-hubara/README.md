@@ -132,7 +132,7 @@ HTTP con AgentSpan cuando ejecutás durable.
 
 | # | Proceso | Quién lo levanta | Archivo exacto | Qué reusa | Para qué |
 |---|---|---|---|---|---|
-| 1 | **Puente GraphAgents** | la extensión, automático (`python3 -m viewer.bridge`, cwd `GraphAgents/`) | [`GraphAgents/viewer/bridge.py`](../GraphAgents/viewer/bridge.py) | `viewer/server.py::api_route()` — grafo, cases, ⚡ run-local, replay, trace, flow-trace, connect/disconnect, save/publish | TODO lo de GraphAgents en la extensión |
+| 1 | **Puente GraphAgents** | la extensión, automático (`python3 -m viewer.bridge`, cwd `GraphAgents/`) | [`GraphAgents/viewer/bridge.py`](../GraphAgents/viewer/bridge.py) | `viewer/server.py::api_route()` — grafo, cases, ⚡ run-local, replay, trace, flow-trace, connect/disconnect, delete-node, save/publish, publish-plan | TODO lo de GraphAgents en la extensión |
 | 2 | **Puente System Map** | la extensión, automático (`uv run python scripts/system_map_bridge.py`, cwd `hubara_agency/`) | [`hubara_agency/scripts/system_map_bridge.py`](../hubara_agency/scripts/system_map_bridge.py) | `src/plugins/system_map/domain/` (`builder.py` + `serialize.py`) — directo al dominio, SIN pasar por FastAPI | el grafo del System Map + certificaciones |
 | 3 | **AgentSpan/Conductor** `:6767` | **vos, solo si ejecutás durable** — botón "▶ Iniciar AgentSpan" (terminal con `agentspan server start`) o `cd GraphAgents && docker compose up` | imagen oficial (servicio `agentspan` de [`GraphAgents/docker-compose.yml`](../GraphAgents/docker-compose.yml)) | — | ▶ Run Durable, trace en vivo, histórico ⟲ de Runs. **Opcional**: ⚡ Ejecutar (local) no lo necesita; todo degrada limpio si está caído |
 
@@ -145,6 +145,18 @@ del puente #1 para uso standalone/Docker, pero la extensión no lo usa.
 verdad vive en Python y los puentes la reusan. La extensión es presentación +
 orquestación. La webview se sirve estática desde `dist/` (`asWebviewUri`) —
 sin puertos.
+
+**Guardar & certificar (F14) y publicar nativo (F15)**: el botón "⤴ Guardar &
+certificar" corre TODAS las suites de GraphAgents de `src/testing/suites.ts`
+salvo las excluidas con motivo (hoy solo `integration`, que exige `:6767`) —
+streameadas en vivo al panel Ejecución — y, solo si todo pasa, bendice
+(`/api/save`) y publica. La DECISIÓN de qué publicar (rama, base, paths,
+título, body del PR) viene de `GET /api/publish-plan`
+(`sdk/production.py::plan_publication`); la EJECUCIÓN usa las APIs nativas de
+VS Code (`vscode.git` + `vscode.authentication` → PR por REST, sin `gh`), con
+fallback a `POST /api/publish` (gh, headless) si el git nativo no está. El
+click derecho sobre un agente/tool borra el nodo vía `POST /api/delete-node`
+(siempre con confirmación; cascade con blast-radius).
 
 ## Desarrollo
 

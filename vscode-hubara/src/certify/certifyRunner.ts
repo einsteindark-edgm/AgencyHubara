@@ -5,7 +5,7 @@ import { CertStatus, CertSuiteInfo } from "../graph/messages";
 import { makeSuiteResolver } from "../testing/resolve";
 import { runSuite } from "../testing/runner";
 import { SUITES } from "../testing/suites";
-import { publishNatively, PublishPlan } from "./publisher";
+import { publishWithFallback } from "./publisher";
 
 /**
  * El sink al que el orquestador empuja la corrida — lo implementa el panel
@@ -20,16 +20,13 @@ export interface CertSink {
   certDone(ok: boolean, branch: string | undefined, prUrl: string | undefined, errors: string[]): void;
 }
 
-/** Las suites de GraphAgents que forman el GATE del PR (deterministas, sin infra).
- * `integration` NO entra: exige el runtime durable (:6767) — se muestra como `skip`. */
-const GATE_TIPOS = new Set(["compiler", "cert", "tools", "arch", "golden"]);
-
-interface PublishResponse {
-  ok?: boolean;
-  errors?: string[];
-  branch?: string;
-  pr_url?: string;
-}
+/** Tipos de suite EXCLUIDOS del gate del PR, con el motivo que ve el usuario.
+ * Exclusión (no inclusión) a propósito: una suite NUEVA de GraphAgents entra al gate
+ * por defecto — el modo de fallo seguro es correr de más, nunca publicar sin correrla
+ * (la "etiqueta verde sin check" que este gate existe para prevenir, L-19). */
+const GATE_EXCLUDED: Record<string, string> = {
+  integration: "requiere runtime durable (:6767) — no bloquea el PR",
+};
 
 /**
  * "Guardar & certificar": corre la suite COMPLETA de GraphAgents en vivo
@@ -46,17 +43,16 @@ export async function runCertifyAndPublish(
 ): Promise<void> {
   const resolve = makeSuiteResolver(repoRoot(), resolvePath);
   const ga = SUITES.filter((s) => s.lado === "graphagents");
-  const gate = ga.filter((s) => GATE_TIPOS.has(s.tipo));
-  const skipped = ga.filter((s) => !GATE_TIPOS.has(s.tipo));
+  const gate = ga.filter((s) => !(s.tipo in GATE_EXCLUDED));
+  const skipped = ga.filter((s) => s.tipo in GATE_EXCLUDED);
 
+  // certStart YA lleva el estado skip con su motivo — una sola señal (el provider y la
+  // webview acumulan el mismo estado; señalizarlo dos veces era una costura de drift).
   const suiteInfos: CertSuiteInfo[] = [
     ...gate.map((s) => ({ id: s.id, label: s.label, status: "pending" as CertStatus })),
-    ...skipped.map((s) => ({ id: s.id, label: s.label, status: "skip" as CertStatus, detail: "requiere runtime durable (:6767) — no bloquea el PR" })),
+    ...skipped.map((s) => ({ id: s.id, label: s.label, status: "skip" as CertStatus, detail: GATE_EXCLUDED[s.tipo] })),
   ];
   sink.certStart(suiteInfos);
-  for (const s of skipped) {
-    sink.certSuite(s.id, "skip", "requiere runtime durable (:6767) — no bloquea el PR");
-  }
 
   let allPass = true;
   for (const suite of gate) {
@@ -92,27 +88,11 @@ export async function runCertifyAndPublish(
       return;
     }
 
-    // Publicar con las APIs NATIVAS de VS Code (git + GitHub, sin `gh`): pedimos el PLAN
-    // sin efectos a Python y lo ejecutamos acá. Si el git nativo no está disponible,
-    // caemos al camino headless `/api/publish` (gh) — nunca se regresa.
-    sink.certPhase("Preparando el plan de publicación…");
-    const planRes = await bridges.get("graphagents").request({ method: "GET", path: "/api/publish-plan" });
-    const plan = planRes.payload as PublishPlan;
-    if (!plan.ok) {
-      sink.certDone(false, undefined, undefined, plan.errors?.length ? plan.errors : [`no pude armar el plan (status ${planRes.status})`]);
-      return;
-    }
-    sink.certPhase("Publicando con VS Code (rama + commit + push + PR)…");
-    const outcome = await publishNatively(plan, (line) => sink.certPhase(line));
-    if (outcome.unavailable) {
-      sink.certPhase("Git nativo no disponible — usando gh (headless)…");
-      const pub = await bridges
-        .get("graphagents")
-        .request({ method: "POST", path: "/api/publish", body: { push: true, pr: true } });
-      const p = pub.payload as PublishResponse;
-      sink.certDone(p.ok === true, p.branch, p.pr_url, p.ok ? [] : (p.errors ?? [`publish falló (status ${pub.status})`]));
-      return;
-    }
+    // Publicar con las APIs NATIVAS de VS Code (git + GitHub, sin `gh`), con fallback
+    // headless — el flujo completo vive en publisher.ts (compartido con el comando
+    // "Publish Production", para que ambos disparadores publiquen idéntico).
+    sink.certPhase("Publicando (rama + commit + push + PR)…");
+    const outcome = await publishWithFallback(bridges, (line) => sink.certPhase(line));
     sink.certDone(outcome.ok, outcome.branch, outcome.prUrl, outcome.errors);
   } catch (e) {
     sink.certDone(false, undefined, undefined, [`el despliegue falló: ${e instanceof Error ? e.message : String(e)}`]);

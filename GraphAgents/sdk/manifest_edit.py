@@ -62,21 +62,22 @@ def _tool_dir(ga_root: Path, tool_id: str) -> Path | None:
     return None
 
 
-def _dependents(ga_root: Path, kind: str, ident: str) -> list[str]:
-    """Los nodos que REFERENCIAN a `kind:ident`, escaneando TODOS los manifests
-    (`*.agent.yaml` + `*.taskgraph.yaml` — un taskgraph también compone/usa). Para una tool:
-    agentes cuyo `tools:` la nombra; para un agente: supervisores cuyo `agents:` lo compone."""
+def _dependents(ga_root: Path, kind: str, ident: str) -> list[tuple[str, Path]]:
+    """Los nodos que REFERENCIAN a `kind:ident` — `(name, path)` de cada uno, escaneando
+    TODOS los manifests (`*.agent.yaml` + `*.taskgraph.yaml` — un taskgraph también
+    compone/usa). Se devuelve el PATH junto al name porque nada garantiza que el `name:`
+    del YAML coincida con el stem del archivo — editar por path elimina esa clase de bug."""
     manifests = ga_root / "manifests"
-    out: list[str] = []
+    out: list[tuple[str, Path]] = []
     for p in sorted(manifests.glob("*.agent.yaml")) + sorted(manifests.glob("*.taskgraph.yaml")):
         try:
             m = load_manifest(p)
         except Exception:  # noqa: BLE001 — manifest roto: lo caza la cert, acá no bloquea el borrado
             continue
         if kind == "tool" and any(t.ref_id == ident for t in m.tools):
-            out.append(m.name)
+            out.append((m.name, p))
         elif kind == "agent" and any(a.ref_agent_id == ident for a in m.agents):
-            out.append(m.name)
+            out.append((m.name, p))
     return out
 
 
@@ -409,11 +410,13 @@ def delete_node(ga_root: Path, node_id: str, *, cascade: bool = False) -> dict:
       escanean sobre TODOS los manifests (`*.agent.yaml` + `*.taskgraph.yaml`). Si hay
       dependientes y `cascade=False`, NO se toca nada: se devuelve `needs_confirmation` con
       la lista (la UI muestra el blast radius y pide confirmar).
-    - Con `cascade=True` (o sin dependientes) se remueven las referencias (edición textual,
-      SIN el rollback-por-edge de `disconnect` — el nodo se va, los estados intermedios rotos
-      son esperados) y se borra el archivo/dir del nodo. La certificación COMPLETA que corre el
-      botón "Guardar & certificar" es el gate real: si el borrado dejó algo huérfano, la suite
-      se pone roja y no se publica. Todo vive en git → 100% reversible.
+    - Con `cascade=True` (o sin dependientes) se borra PRIMERO el archivo/dir del nodo y
+      DESPUÉS se remueven las referencias de los dependientes (todas las entradas, incluso
+      duplicadas a mano). El orden importa: si el borrado físico falla, ningún manifest fue
+      tocado (nada de estado a medias sin rollback); si una desconexión posterior falla,
+      queda como warning y la certificación COMPLETA del botón "Guardar & certificar" es el
+      gate real que caza el huérfano antes de publicar. Todo lo COMMITEADO es reversible por
+      git — por eso la UI confirma SIEMPRE antes de llamar (archivos sin commitear no vuelven).
     """
     ga_root = Path(ga_root)
     out: dict = {"ok": False, "needs_confirmation": False, "dependents": [],
@@ -439,27 +442,13 @@ def delete_node(ga_root: Path, node_id: str, *, cascade: bool = False) -> dict:
             return out
 
     deps = _dependents(ga_root, kind, ident)
-    out["dependents"] = deps
+    out["dependents"] = [name for name, _ in deps]
     if deps and not cascade:
+        # una PREGUNTA, no un error: `dependents` ya trae el blast radius para el modal.
         out["needs_confirmation"] = True
-        out["errors"].append(f"'{node_id}' lo usan {len(deps)} nodo(s): {', '.join(deps)} — "
-                             "confirmá el borrado en cascada")
         return out
 
-    edge_key = "tools" if kind == "tool" else "agents"
-    edge_kind = "uses" if kind == "tool" else "agent"
-    for dep in deps:
-        dpath = _manifest_path(ga_root, dep)
-        if dpath is None:
-            out["warnings"].append(f"no encontré el manifest de '{dep}' para desconectar")
-            continue
-        text, err = _remove_edge_lines(dpath.read_text(encoding="utf-8"), edge_key, edge_kind, ident)
-        if err:
-            out["warnings"].append(f"'{dep}': {err}")
-            continue
-        dpath.write_text(text, encoding="utf-8")
-        out["disconnected"].append(dep)
-
+    # 1) el nodo se va PRIMERO — si esto falla, ningún manifest fue tocado.
     try:
         if kind == "tool":
             shutil.rmtree(target)
@@ -470,14 +459,22 @@ def delete_node(ga_root: Path, node_id: str, *, cascade: bool = False) -> dict:
         out["errors"].append(f"no pude borrar '{node_id}': {e}")
         return out
 
-    # sanity no-fatal: ¿el catálogo restante sigue cargando? (la cert completa es el gate real)
-    try:
-        from sdk.graph import build_graph
-
-        build_graph(ga_root)
-    except Exception as e:  # noqa: BLE001
-        out["warnings"].append(f"el catálogo quedó con un problema tras el borrado "
-                               f"(la certificación lo detalla): {e}")
+    # 2) desconectar los dependientes — por PATH (el name: puede no coincidir con el stem
+    #    del archivo) y removiendo TODAS las entradas que matcheen (duplicados a mano).
+    edge_key = "tools" if kind == "tool" else "agents"
+    edge_kind = "uses" if kind == "tool" else "agent"
+    for name, dpath in deps:
+        text, err = _remove_edge_lines(dpath.read_text(encoding="utf-8"), edge_key, edge_kind, ident)
+        if err:
+            out["warnings"].append(f"'{name}': {err}")
+            continue
+        while True:  # entradas repetidas de la misma referencia — remover todas
+            nxt, err2 = _remove_edge_lines(text, edge_key, edge_kind, ident)
+            if err2:
+                break
+            text = nxt
+        dpath.write_text(text, encoding="utf-8")
+        out["disconnected"].append(name)
 
     out["ok"] = True
     return out
