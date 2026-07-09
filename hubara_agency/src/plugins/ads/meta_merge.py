@@ -46,6 +46,9 @@ def merge_meta_campaigns(
             "impressions": m.impressions if m else None,
             "reach": m.reach if m else None,
             "clicks": m.clicks if m else None,
+            "messaging_conversations_started": (
+                m.messaging_conversations_started if m else None
+            ),
             # el contract de la UI usa status en minúscula ("active"/"paused")
             "status": meta.status.lower() if meta and meta.status else None,
             "objective": meta.objective if meta else None,
@@ -54,6 +57,11 @@ def merge_meta_campaigns(
         idxs = buckets_by_campaign.get(cid, [])
         if len(idxs) == 1:
             out[idxs[0]] = dataclasses.replace(out[idxs[0]], **fields)
+        elif not (m and m.spend):
+            # Standalone sin gasto en la ventana = ruido (pedido UI 2026-07-09:
+            # "activas pero sin presupuesto no las traigas"). Los buckets del
+            # vault matcheados sí se enriquecen arriba — tienen conversaciones.
+            continue
         else:
             name = (meta.name if meta else None) or (m.campaign_name if m else None) or cid
             out.append(

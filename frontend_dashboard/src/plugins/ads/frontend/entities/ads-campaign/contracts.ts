@@ -55,6 +55,9 @@ export const backendAdsCampaignSchema = z.object({
   impressions: z.number().nullable(),
   reach: z.number().nullable(),
   clicks: z.number().nullable(),
+  // Conversaciones iniciadas según Meta (insights) — `.default(null)` tolera
+  // un backend viejo que aún no emite el campo (mismo criterio que capi_*).
+  messaging_conversations_started: z.number().int().nullable().default(null),
   status: z.string().nullable(), // "active" | "paused"
   objective: z.string().nullable(),
   placement: z.string().nullable(),

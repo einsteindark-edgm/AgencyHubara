@@ -158,6 +158,7 @@ export function mapBackendCampaign(b: BackendAdsCampaign): AdsCampaign {
     impressions: b.impressions,
     reach: b.reach,
     clicks: b.clicks,
+    conversationsStarted: b.messaging_conversations_started,
     // Counts por estado conversacional — backend devuelve dict con 7 keys
     // (clasificador heurístico via `classify_state`). Habilita
     // `AdsStateDistribution` y partial `AdsFunnel`.

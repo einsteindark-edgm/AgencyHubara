@@ -31,6 +31,7 @@ function makeCampaign(over: Partial<AdsCampaign> = {}): AdsCampaign {
     impressions: null,
     reach: null,
     clicks: null,
+    conversationsStarted: null,
     conversations: null,
     revenue: null,
     avgTicket: null,

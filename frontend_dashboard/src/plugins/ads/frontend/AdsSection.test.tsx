@@ -5,8 +5,8 @@
  * Meta no depende de que haya campañas derivadas del vault — es al revés:
  * conectar es lo que llena los KPIs y muestra las campañas reales de Meta.
  *
- * Contrato observable: la sección monta `ConnectMeta` y `MetaInsightsPanel`
- * SIEMPRE, haya o no campañas. Las features se stubean (acá se testea la
+ * Contrato observable: la sección monta `ConnectMeta` SIEMPRE, haya o no
+ * campañas (los KPIs Meta por campaña viven en `CampaignMetaKpis`). Las features se stubean (acá se testea la
  * composición de la Page, no sus internals).
  */
 
@@ -34,18 +34,17 @@ vi.mock("@plugins/ads/frontend/features/connect-meta", () => ({
   ConnectMeta: () => <div data-testid="connect-meta" />,
 }));
 
-vi.mock("@plugins/ads/frontend/features/ads-meta-insights", () => ({
-  MetaInsightsPanel: () => <div data-testid="meta-insights" />,
+vi.mock("@plugins/ads/frontend/features/campaign-meta-kpis", () => ({
+  CampaignMetaKpis: () => <div data-testid="campaign-meta-kpis" />,
 }));
 
 import { AdsSection } from "./AdsSection";
 
 describe("AdsSection — empty-state (vault sin campañas)", () => {
-  it("monta ConnectMeta y MetaInsightsPanel aunque no haya campañas", () => {
+  it("monta ConnectMeta aunque no haya campañas", () => {
     const { getByTestId, getByText } = render(<AdsSection />);
 
     expect(getByTestId("connect-meta")).toBeTruthy();
-    expect(getByTestId("meta-insights")).toBeTruthy();
     // El empty-state sigue comunicando que no hay campañas derivadas del vault.
     expect(getByText(/sin campañas/i)).toBeTruthy();
   });

@@ -131,3 +131,35 @@ def test_campaigns_endpoint_unchanged_without_connection(monkeypatch, tmp_path) 
     client = _client(monkeypatch, tmp_path, store=InMemoryTokenStore(), ads=ads)
     body = client.get("/api/ads/campaigns?days=30").json()
     assert body == {"campaigns": []}  # vault vacío y sin conexión → sin invento
+
+
+def test_merge_fills_conversions_started() -> None:
+    # KPI "conversaciones" (y costo/conv) por campaña en el canvas: el merge
+    # lleva messaging_conversations_started al summary.
+    merged = merge_meta_campaigns([_bucket("AD_1", "c-1")], _META, _METRICS)
+    assert merged[0].messaging_conversations_started == 205
+    standalone = merge_meta_campaigns([], _META, _METRICS)
+    assert standalone[0].messaging_conversations_started == 205
+
+
+def test_standalone_without_spend_is_filtered_out() -> None:
+    # Pedido UI 2026-07-09: campañas activas SIN gasto en la ventana no entran
+    # (ruido). Un bucket del vault matcheado se enriquece igual (tiene
+    # conversaciones reales) aunque el spend de la ventana sea 0.
+    meta = [
+        MetaCampaignMeta("c-1", "Con gasto", "ACTIVE", "OUTCOME_SALES"),
+        MetaCampaignMeta("c-2", "Sin gasto", "ACTIVE", "OUTCOME_ENGAGEMENT"),
+    ]
+    metrics = [
+        MetaCampaignMetrics("c-1", "Con gasto", 100.0, 10, 8, 5, 2),
+        MetaCampaignMetrics("c-2", "Sin gasto", 0.0, 0, 0, 0, 0),
+    ]
+    # c-2 NO tiene bucket → sería standalone, pero sin gasto queda fuera.
+    merged = merge_meta_campaigns([], meta, metrics)
+    ids = [c.id for c in merged]
+    assert "c-1" in ids  # standalone con gasto entra
+    assert "c-2" not in ids  # standalone sin gasto NO entra (ruido)
+    # …y un bucket del vault matcheado a la sin-gasto se enriquece IGUAL
+    # (tiene conversaciones reales que mostrar).
+    merged2 = merge_meta_campaigns([_bucket("AD_9", "c-2")], meta, metrics)
+    assert next(c for c in merged2 if c.id == "AD_9").status == "active"

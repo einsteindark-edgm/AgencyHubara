@@ -43,7 +43,7 @@ import { AdsDailyTrend } from "@plugins/ads/frontend/features/ads-daily-trend";
 import { AdsAttributedTable } from "@plugins/ads/frontend/features/ads-attributed-table";
 import { AdsInspector } from "@plugins/ads/frontend/features/ads-inspector";
 import { ConnectMeta } from "@plugins/ads/frontend/features/connect-meta";
-import { MetaInsightsPanel } from "@plugins/ads/frontend/features/ads-meta-insights";
+import { CampaignMetaKpis } from "@plugins/ads/frontend/features/campaign-meta-kpis";
 // Las 3 features del buzón de análisis con IA. FSD: la Page es el único punto que
 // las compone — `trigger-run` no importa a `run-result` ni a `hitl-decision`
 // (cross-feature prohibido).
@@ -121,7 +121,6 @@ export function AdsSection() {
         <div className="flex items-center justify-between gap-2 px-4 pt-3">
           <ConnectMeta />
         </div>
-        <MetaInsightsPanel />
         <div className="ads-empty">Sin campañas para mostrar.</div>
       </main>
     );
@@ -157,10 +156,10 @@ export function AdsSection() {
           selection={selection}
           onSelectionChange={setSelection}
         />
-        {/* Métricas REALES de Meta (Marketing API) + gestión pausar/activar.
-            Solo se muestra con conexión; alimenta lo que el embudo derivado del
-            vault no puede (spend/clicks/impresiones). */}
-        <MetaInsightsPanel />
+        {/* KPIs Meta de LA CAMPAÑA SELECCIONADA (gasto/imp/clicks/conv/CPC/
+            costo-conv) — vienen del merge del endpoint de campañas, así que
+            respetan la ventana de fecha del header. Incluye pausar/activar. */}
+        <CampaignMetaKpis campaign={campaign} />
         <div className="ads-body">
           <AdsFunnel campaign={campaign} />
           <AdsStateDistribution campaign={campaign} />

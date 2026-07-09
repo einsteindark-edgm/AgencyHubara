@@ -108,6 +108,9 @@ class AdsCampaignSummary:
     impressions: int | None = None
     reach: int | None = None
     clicks: int | None = None
+    # Conversaciones iniciadas reportadas por Meta (insights) — KPI "conv" +
+    # costo/conv del canvas. Distinto de `started` (episodios del vault).
+    messaging_conversations_started: int | None = None
     status: str | None = None
     objective: str | None = None
     placement: str | None = None
