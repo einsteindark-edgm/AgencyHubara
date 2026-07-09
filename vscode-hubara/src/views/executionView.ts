@@ -2,7 +2,7 @@ import * as crypto from "node:crypto";
 import * as vscode from "vscode";
 import { errorDetail, Provider } from "../bridge/endpoints";
 import { BridgeHub } from "../bridge/pythonBridge";
-import { ExecInbound, ExecOutbound, SelectedNodePayload, ToolCall, TraceInfo } from "../graph/messages";
+import { CertState, CertStatus, CertSuiteInfo, ExecInbound, ExecOutbound, SelectedNodePayload, ToolCall, TraceInfo } from "../graph/messages";
 
 /**
  * El panel nativo "Ejecución" (abajo, junto a Terminal — §F10): la cascada de
@@ -30,6 +30,20 @@ export class ExecutionViewProvider implements vscode.WebviewViewProvider {
   private lastSelected: { system: Provider; node: SelectedNodePayload } | null = null;
   /** accs de la última ejecución LOCAL (task_id sintético `local:<label>` → acc). */
   private readonly localAccs = new Map<string, unknown>();
+  /** estado de la última corrida "Guardar & certificar" (F14) — se re-emite al
+   * re-abrir la vista (la webview se recarga al ocultarse). */
+  private cert: CertState | null = null;
+  /** el usuario cerró la consola de cert — vive ACÁ (la webview pierde su estado al
+   * ocultarse; sin esto, cada re-apertura resucitaba una corrida vieja sobre el trace). */
+  private certDismissed = false;
+  /** buffer de certLog por suite + timer de flush (~10 mensajes/s máx en vez de uno por
+   * chunk de stdout — pytest emite cientos; cada postMessage re-renderiza la consola). */
+  private readonly certLogBuffer = new Map<string, string>();
+  private certLogTimer: NodeJS.Timeout | undefined;
+  /** tope de log retenido por suite — la consola es para el TAIL del fallo, no el log
+   * entero (sin cap, una corrida verborrágica queda viva en el extension host y viaja
+   * completa en CADA certRestore al re-abrir el panel). */
+  private static readonly CERT_LOG_CAP = 256 * 1024;
 
   constructor(
     private readonly ctx: vscode.ExtensionContext,
@@ -86,6 +100,70 @@ export class ExecutionViewProvider implements vscode.WebviewViewProvider {
     this.post({ type: "execTrace", info: null });
   }
 
+  // ---- consola de certificación en vivo (F14, CertSink) ----
+
+  certStart(suites: CertSuiteInfo[]): void {
+    this.cert = { suites: suites.map((s) => ({ ...s })), logs: {}, phase: null, done: null };
+    this.certDismissed = false;
+    this.certLogBuffer.clear();
+    this.post({ type: "certStart", suites });
+    this.reveal();
+  }
+
+  /** stdout streameado — se COALESCEA (~100ms) en vez de un postMessage por chunk:
+   * pytest emite cientos de chunks y cada mensaje re-renderiza la consola entera. */
+  certLog(suiteId: string, chunk: string): void {
+    this.certLogBuffer.set(suiteId, (this.certLogBuffer.get(suiteId) ?? "") + chunk);
+    if (!this.certLogTimer) {
+      this.certLogTimer = setTimeout(() => this.flushCertLogs(), 100);
+    }
+  }
+
+  private flushCertLogs(): void {
+    this.certLogTimer = undefined;
+    for (const [suiteId, chunk] of this.certLogBuffer) {
+      if (this.cert) {
+        const grown = (this.cert.logs[suiteId] ?? "") + chunk;
+        this.cert.logs[suiteId] =
+          grown.length > ExecutionViewProvider.CERT_LOG_CAP
+            ? `… (recortado — quedan los últimos ${ExecutionViewProvider.CERT_LOG_CAP / 1024}KB)\n` +
+              grown.slice(-ExecutionViewProvider.CERT_LOG_CAP)
+            : grown;
+      }
+      this.post({ type: "certLog", suiteId, chunk });
+    }
+    this.certLogBuffer.clear();
+  }
+
+  certSuite(suiteId: string, status: CertStatus, detail?: string): void {
+    this.flushCertLogs(); // el log de la suite viaja ANTES que su veredicto (orden causal)
+    const s = this.cert?.suites.find((x) => x.id === suiteId);
+    if (s) {
+      s.status = status;
+      s.detail = detail;
+    }
+    this.post({ type: "certSuite", suiteId, status, detail });
+  }
+
+  certPhase(phase: string): void {
+    if (this.cert) {
+      this.cert.phase = phase;
+    }
+    this.post({ type: "certPhase", phase });
+  }
+
+  certDone(ok: boolean, branch: string | undefined, prUrl: string | undefined, errors: string[]): void {
+    this.flushCertLogs();
+    if (this.cert) {
+      this.cert.done = { ok, branch, prUrl, errors };
+    }
+    // el veredicto SIEMPRE se muestra — aunque el usuario haya ocultado la consola a
+    // mitad de corrida (sin esto, una falla o el link del PR quedaban invisibles).
+    this.certDismissed = false;
+    this.post({ type: "certDone", ok, branch, prUrl, errors });
+    this.reveal();
+  }
+
   selectNode(system: Provider, node: SelectedNodePayload): void {
     this.lastSelected = { system, node };
     this.post({ type: "selectNode", system, node });
@@ -117,6 +195,17 @@ export class ExecutionViewProvider implements vscode.WebviewViewProvider {
         if (this.lastSelected) {
           this.post({ type: "selectNode", ...this.lastSelected });
         }
+        if (this.cert && !this.certDismissed) {
+          // una corrida cerrada por el usuario NO se resucita en cada re-apertura del
+          // panel (la webview pierde su estado al ocultarse; el flag vive acá).
+          this.post({ type: "certRestore", cert: this.cert });
+        }
+        return;
+      case "certDismiss":
+        this.certDismissed = true;
+        return;
+      case "openExternal":
+        void vscode.env.openExternal(vscode.Uri.parse(msg.url));
         return;
       case "openFile":
         try {

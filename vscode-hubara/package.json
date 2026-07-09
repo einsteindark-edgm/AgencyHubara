@@ -132,6 +132,11 @@
         "command": "acktos.publishProduction",
         "title": "Acktos: Publish Production (GraphAgents)",
         "category": "Acktos Studio"
+      },
+      {
+        "command": "acktos.certifyAndPublish",
+        "title": "Acktos: Guardar & certificar (suite completa → rama + PR)",
+        "category": "Acktos Studio"
       }
     ],
     "viewsContainers": {

@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import { BridgeResponse, Provider, PROVIDER_LABEL } from "./bridge/endpoints";
 import { readHubaraConfig, repoRoot, resolvePath } from "./config";
 import { BridgeHub, BridgeSpec, PythonBridge } from "./bridge/pythonBridge";
+import { publishWithFallback } from "./certify/publisher";
 import { ManifestCodeLensProvider } from "./codelens/manifestCodeLens";
 import { CertDecorationProvider } from "./decorations/certDecorations";
 import { ManifestDiagnostics } from "./diagnostics/manifestDiagnostics";
@@ -300,8 +301,9 @@ export function activate(ctx: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand("acktos.publishProduction", async () => {
       // git commit + push + PR — acción con efectos reales fuera del editor,
-      // SIEMPRE confirmada antes de disparar (misma regla que cualquier
-      // acción de blast-radius compartido).
+      // SIEMPRE confirmada antes de disparar. El flujo (plan → APIs nativas de
+      // VS Code → fallback gh) es el MISMO que usa "Guardar & certificar"
+      // (publisher.ts:publishWithFallback) — ambos disparadores publican idéntico.
       const choice = await vscode.window.showWarningMessage(
         "¿Publicar producción? Esto hace commit + push + abre un PR (manifests/ + production.yaml).",
         { modal: true },
@@ -311,21 +313,27 @@ export function activate(ctx: vscode.ExtensionContext): void {
         return;
       }
       try {
-        const res = await hub!.get("graphagents").request({ method: "POST", path: "/api/publish", body: { push: true, pr: true } });
-        const payload = res.payload as { ok?: boolean; errors?: string[]; pr_url?: string; branch?: string };
-        if (payload.ok) {
-          const action = payload.pr_url ? await vscode.window.showInformationMessage(`Acktos Studio: publicado (${payload.branch}).`, "Abrir PR") : undefined;
-          if (action === "Abrir PR" && payload.pr_url) {
-            void vscode.env.openExternal(vscode.Uri.parse(payload.pr_url));
+        const outcome = await publishWithFallback(hub!, (line) => output.appendLine(`[publish] ${line}`));
+        if (outcome.ok) {
+          const action = outcome.prUrl
+            ? await vscode.window.showInformationMessage(`Acktos Studio: publicado (${outcome.branch}).`, "Abrir PR")
+            : undefined;
+          if (action === "Abrir PR" && outcome.prUrl) {
+            void vscode.env.openExternal(vscode.Uri.parse(outcome.prUrl));
           }
         } else {
-          void vscode.window.showErrorMessage(`Acktos Studio: publish falló — ${(payload.errors ?? []).join("; ")}`);
+          void vscode.window.showErrorMessage(`Acktos Studio: publish falló — ${outcome.errors.join("; ")}`);
         }
       } catch (e) {
         void vscode.window.showErrorMessage(`Acktos Studio: publish falló: ${e}`);
       } finally {
         productionStatusBar!.refresh();
       }
+    }),
+    vscode.commands.registerCommand("acktos.certifyAndPublish", () => {
+      // Corre la suite COMPLETA de GraphAgents en vivo (panel Ejecución) y, si todo
+      // pasa, crea rama + commit + push + PR. La confirmación la muestra el propio flujo.
+      GraphPanel.certifyActive();
     }),
   );
 

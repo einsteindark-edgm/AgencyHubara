@@ -21,9 +21,15 @@ en vivo — cada request re-proyecta el sistema; editás un manifest y se reflej
                                       "binding"|"inputs": {...}?}  (sin binding = modo informativo)
     POST /api/connect        -> valida Y persiste la conexión en el manifest YAML (con rollback)
     POST /api/disconnect     -> remueve la relación del manifest  body: {source, target, kind}
+    POST /api/delete-node    -> borra un nodo ENTERO (tool o agente) + cascade-desconecta a
+                               quienes lo usan  body: {"node_id": "tool:x"|"agent:y", "cascade": bool?}
+                               (sin cascade y con dependientes: 200 + needs_confirmation + lista)
     GET  /api/production-status -> {saved, dirty, snapshot} — ¿el wiring matchea lo bendecido?
     POST /api/save           -> 'guardar producción': checks de TODO el sistema + snapshot
                                (production.yaml, raíz del subsistema); 422 si algo está roto
+    GET  /api/publish-plan   -> el PLAN de publicación SIN efectos (rama, base, paths, título,
+                               body del PR) — Acktos Studio lo ejecuta con las APIs nativas de
+                               VS Code (git + GitHub); 422 si el snapshot no está al día
     POST /api/publish        -> 'publicar': despliegue del wiring bendecido — commit quirúrgico
                                (manifests/ + production.yaml) + push + PR (gh); exige save al día
                                body: {"push": bool?, "pr": bool?} (default true)
@@ -468,6 +474,18 @@ def api_route(method: str, path: str, params: dict, body: dict | None, ga_root: 
         except Exception as e:  # noqa: BLE001 — manifest ilegible / IO: degradá, la UI nunca crashea
             return 422, {"ok": False, "errors": [f"el save falló: {e}"], "snapshot": None}
         return (200 if res["ok"] else 422), res
+    if method == "GET" and path == "/api/publish-plan":
+        # el PLAN de publicación SIN efectos: rama/paths/mensaje/PR para que Acktos Studio lo
+        # ejecute con las APIs nativas de VS Code (git + GitHub, sin gh). No muta nada.
+        from sdk.production import plan_publication
+
+        try:
+            res = plan_publication(ga_root)
+        except Exception as e:  # noqa: BLE001 — IO/git inesperado: degradá, la UI nunca crashea
+            return 422, {"ok": False, "errors": [f"el plan falló: {e}"], "repo_root": None,
+                         "on_default": False, "branch": None, "base": "main", "paths": [],
+                         "title": None, "body": None, "fingerprint": None, "has_changes": False}
+        return (200 if res["ok"] else 422), res
     if method == "POST" and path == "/api/publish":
         # 'publicar producción': el DESPLIEGUE del wiring bendecido — commit quirúrgico
         # (manifests/ + production.yaml) → push → PR con `gh`. Exige snapshot al día
@@ -482,6 +500,26 @@ def api_route(method: str, path: str, params: dict, body: dict | None, ga_root: 
             return 422, {"ok": False, "errors": [f"publicar falló: {e}"], "steps": [],
                          "branch": None, "commit": None, "pr_url": None}
         return (200 if res["ok"] else 422), res
+    if method == "POST" and path == "/api/delete-node":
+        # borrar un nodo ENTERO del catálogo (tool o agente), no solo una relación:
+        # cascade-desconecta a quienes lo usan + borra el archivo/dir. Sin cascade y con
+        # dependientes devuelve 200 + needs_confirmation (la UI pide confirmar el blast radius).
+        # La certificación completa que corre "Guardar & certificar" es el gate real del PR.
+        from sdk.manifest_edit import delete_node
+
+        body = body or {}
+        node_id = body.get("node_id")
+        if not node_id:
+            return 400, {"error": "falta 'node_id' en el body (ids 'kind:id')"}
+        try:
+            res = delete_node(ga_root, node_id, cascade=bool(body.get("cascade", False)))
+        except Exception as e:  # noqa: BLE001 — IO/manifest inesperado: degradá, la UI nunca crashea
+            return 422, {"ok": False, "needs_confirmation": False, "dependents": [],
+                         "disconnected": [], "deleted": [], "warnings": [],
+                         "errors": [f"el borrado falló: {e}"]}
+        if res.get("ok") or res.get("needs_confirmation"):
+            return 200, res  # needs_confirmation NO es un error HTTP — es la lista para confirmar
+        return 422, res
     if method == "POST" and path in ("/api/validate-connection", "/api/connect", "/api/disconnect"):
         # el MODO EDICIÓN del explorer (estilo n8n): validar/conectar/desconectar relaciones
         # editando los manifests (sdk.manifest_edit). La verdad sigue siendo el YAML: validate

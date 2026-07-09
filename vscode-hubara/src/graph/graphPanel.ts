@@ -2,8 +2,9 @@ import * as crypto from "node:crypto";
 import * as vscode from "vscode";
 import { errorDetail, GRAPH_PATH, isGraphPayload, PROVIDER_LABEL, Provider } from "../bridge/endpoints";
 import { BridgeHub } from "../bridge/pythonBridge";
+import { CertSink, runCertifyAndPublish } from "../certify/certifyRunner";
 import { seamsFilePath } from "../config";
-import { connectWithConfirmation, disconnectWithConfirmation } from "./editOps";
+import { connectWithConfirmation, deleteNodeWithConfirmation, disconnectWithConfirmation } from "./editOps";
 import { Seam, stripNs } from "./graphOps";
 import {
   EMPTY_VIEW_STATE,
@@ -33,7 +34,7 @@ export interface LocalRunResult {
 
 /** El panel nativo "Ejecución" (F10) visto desde el GraphPanel — quien pollea
  * el trace le empuja las novedades; el canvas le manda las selecciones. */
-export interface ExecutionSink {
+export interface ExecutionSink extends CertSink {
   updateTrace(info: TraceInfo): void;
   updateNodeTraces(executionId: string, nodeTraces: Record<string, ToolCall[]>, reconstructed: boolean, reason?: string): void;
   updateLocal(info: TraceInfo, nodeTraces: Record<string, ToolCall[]>, accs: Map<string, unknown>): void;
@@ -195,7 +196,76 @@ export class GraphPanel {
       case "disconnectRequest":
         await this.handleDisconnect(msg.source, msg.target, msg.kind);
         return;
+      case "certifyRequest":
+        await this.handleCertify();
+        return;
+      case "deleteNodeRequest":
+        await this.handleDeleteNode(msg.nodeId, msg.label);
+        return;
     }
+  }
+
+  /** Dispara "Guardar & certificar" sobre el panel abierto (comando homónimo). */
+  static certifyActive(): void {
+    if (GraphPanel.current) {
+      void GraphPanel.current.handleCertify();
+    } else {
+      void vscode.window.showInformationMessage("Acktos Studio: abrí el canvas primero (Acktos: Abrir Studio).");
+    }
+  }
+
+  /** una sola certificación viva a la vez — dos corridas concurrentes interleavearían
+   * la consola (mismos suite ids) y RACEARÍAN el publish sobre el mismo working tree. */
+  private static certifyRunning = false;
+
+  /** El botón "⤴ Guardar & certificar": corre la suite COMPLETA en vivo (streameada
+   * al panel Ejecución) y, si todo pasa, bendice + publica (rama + commit + push + PR).
+   * Confirmación up-front por los efectos reales fuera del editor (push/PR). */
+  private async handleCertify(): Promise<void> {
+    const sink = GraphPanel.executionSink;
+    if (!sink) {
+      void vscode.window.showErrorMessage("Acktos Studio: el panel Ejecución no está disponible.");
+      return;
+    }
+    if (GraphPanel.certifyRunning) {
+      void vscode.window.showInformationMessage("Acktos Studio: ya hay una certificación en curso — mirá el panel Ejecución.");
+      return;
+    }
+    const choice = await vscode.window.showWarningMessage(
+      "¿Guardar & certificar? Corre la suite completa de GraphAgents y, si TODO pasa, crea rama + commit + push + PR. Si algo falla, no se publica.",
+      { modal: true },
+      "Certificar y publicar",
+    );
+    if (choice !== "Certificar y publicar" || GraphPanel.certifyRunning) {
+      return; // re-chequeo post-modal: el diálogo pudo quedar abierto mientras otra corrida arrancaba
+    }
+    GraphPanel.certifyRunning = true;
+    const cts = new vscode.CancellationTokenSource();
+    try {
+      await runCertifyAndPublish(this.bridges, sink, cts.token);
+    } catch (e) {
+      sink.certDone(false, undefined, undefined, [`la certificación crasheó: ${e instanceof Error ? e.message : String(e)}`]);
+    } finally {
+      GraphPanel.certifyRunning = false;
+      cts.dispose();
+    }
+  }
+
+  /** Click derecho en un nodo agente/tool → borrarlo. La secuencia confirm→cascade→toast
+   * vive en `editOps.ts` (misma regla que connect/disconnect: idéntica sin importar quién
+   * la dispara). El grafo se refresca SIEMPRE tras el intento — incluso si falló, el
+   * backend pudo haber mutado parcialmente y el canvas no debe mentir. */
+  private async handleDeleteNode(nsId: string, label: string): Promise<void> {
+    const nodeId = stripNs("graphagents", nsId);
+    if (!nodeId) {
+      return; // edit mode es SOLO GraphAgents
+    }
+    const outcome = await deleteNodeWithConfirmation(this.bridges, nodeId, label);
+    if (outcome === "cancelled") {
+      return; // no se tocó nada
+    }
+    const fresh = await this.fetchProvider("graphagents");
+    this.post({ type: "providerUpdate", provider: "graphagents", state: fresh });
   }
 
   /** El I/O por-tool reconstruido (`/api/flow-trace`) — UNA vez por ejecución
