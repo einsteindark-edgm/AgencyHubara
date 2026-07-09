@@ -110,9 +110,18 @@ export function AdsSection() {
     ) : undefined;
 
   if (!campaign) {
-    // Empty-state: aún sin campañas cargadas. Idéntico al patrón de eta-chat.
+    // Empty-state: aún sin campañas derivadas del vault. OJO: la conexión a
+    // Meta NO depende de que haya campañas — conectar es lo que llena los
+    // KPIs y muestra las campañas reales (incidente 2026-07-08: con el vault
+    // vacío, el early-return escondía el botón de login). El header con
+    // ConnectMeta + el panel de insights (se auto-oculta sin conexión) se
+    // montan igual; solo el cuerpo dependiente de campaña se reemplaza.
     return (
       <main className="ads-canvas">
+        <div className="flex items-center justify-between gap-2 px-4 pt-3">
+          <ConnectMeta />
+        </div>
+        <MetaInsightsPanel />
         <div className="ads-empty">Sin campañas para mostrar.</div>
       </main>
     );
