@@ -338,3 +338,19 @@ def test_dispatch_usa_el_python_del_venv_del_container(fake_clients) -> None:
     script = " ".join(ssm.sent[0]["Parameters"]["commands"])
     assert "/opt/venv/bin/python -m sdk.cli" in script
     assert " python3 -m sdk.cli" not in script  # el del sistema no tiene las deps
+
+
+def test_dispatch_fuerza_fork_para_los_workers_de_conductor(fake_clients) -> None:
+    """conductor-python >= al del deploy 2026-07-09 defaultea a multiprocessing
+    'spawn' en TODAS las plataformas, pero agentspan registra los workers del
+    grafo como CLOSURES locales (make_node_worker.<locals>.worker) → spawn no
+    puede picklearlos y el start muere. El escape hatch documentado de la lib
+    es CONDUCTOR_MP_START_METHOD=fork — el exec lo pasa siempre."""
+    ec2 = _FakeEC2(state="running")
+    ssm = _FakeSSM(stdout="execution exec-8: RUNNING")
+    lz = _make(fake_clients, ec2=ec2, ssm=ssm)
+
+    lz.dispatch("ads-analytics", {}, run_id="run-fork")
+
+    script = " ".join(ssm.sent[0]["Parameters"]["commands"])
+    assert "-e CONDUCTOR_MP_START_METHOD=fork" in script
