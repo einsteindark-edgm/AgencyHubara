@@ -26,6 +26,7 @@ function makeCampaign(over: Partial<AdsCampaign> = {}): AdsCampaign {
     metaCampaignId: null,
     adSet: null,
     creativeTitle: null,
+    creativeThumbnailUrl: null,
     template: null,
     spend: null,
     impressions: null,

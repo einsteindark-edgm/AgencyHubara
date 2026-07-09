@@ -6,6 +6,7 @@
 export const adAnalysisRunKeys = {
   all: ["ad-analysis-run"] as const,
   agents: () => [...adAnalysisRunKeys.all, "agents"] as const,
+  list: () => [...adAnalysisRunKeys.all, "list"] as const,
   detail: (runId: string) =>
     [...adAnalysisRunKeys.all, "detail", runId] as const,
 } as const;

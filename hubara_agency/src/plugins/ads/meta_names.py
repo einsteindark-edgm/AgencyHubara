@@ -37,7 +37,7 @@ from src.plugins.ads.aggregation import DIRECT_CAMPAIGN_ID, AdsCampaignSummary
 logger = logging.getLogger(__name__)
 
 _GRAPH_URL = "https://graph.facebook.com/v23.0/"
-_FIELDS = "name,campaign{id,name}"
+_FIELDS = "name,campaign{id,name},creative{thumbnail_url}"
 _TIMEOUT_S = 4.0
 
 
@@ -85,10 +85,12 @@ def fetch_meta_ad_names(
         if not isinstance(node, dict):
             continue
         campaign = node.get("campaign") or {}
+        creative = node.get("creative") or {}
         out[ad_id] = {
             "ad_name": node.get("name"),
             "campaign_name": campaign.get("name"),
             "campaign_id": campaign.get("id"),
+            "thumbnail_url": creative.get("thumbnail_url"),
         }
     return out
 
@@ -127,6 +129,7 @@ def enrich_campaign_names(
                 camp,
                 name=display,
                 creative_title=camp.name,
+                creative_thumbnail_url=info.get("thumbnail_url") if info else None,
                 meta_campaign_id=info.get("campaign_id") if info else None,
             )
         )

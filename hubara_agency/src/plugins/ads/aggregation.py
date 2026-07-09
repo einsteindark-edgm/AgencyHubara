@@ -117,6 +117,9 @@ class AdsCampaignSummary:
     audience: str | None = None
     ad_set: str | None = None
     creative_title: str | None = None
+    # Thumbnail real del creativo (Graph creative{thumbnail_url}) — el preview
+    # del inspector. None hasta que el enrichment lo resuelva.
+    creative_thumbnail_url: str | None = None
     template: str | None = None
     meta_campaign_id: str | None = None
     first_resp: str | None = None

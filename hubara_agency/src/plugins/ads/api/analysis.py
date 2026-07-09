@@ -183,6 +183,14 @@ def list_agents() -> list[dict]:
     return _AGENTS
 
 
+@router.get("/runs")
+def list_runs(limit: int = 20) -> dict:
+    """Historial de análisis (el versionado del inspector): cada corrida con su
+    fecha, estado, snapshot de entrada (los números que había) y resultado (las
+    sugerencias de esa versión), más nueva primero."""
+    return {"runs": record.list_runs(limit=max(1, min(limit, 100)))}
+
+
 @router.post("/runs")
 async def create_run(body: TriggerBody) -> dict:
     if body.agent not in _AGENT_IDS:

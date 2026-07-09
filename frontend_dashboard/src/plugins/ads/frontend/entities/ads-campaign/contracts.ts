@@ -64,6 +64,8 @@ export const backendAdsCampaignSchema = z.object({
   audience: z.string().nullable(),
   ad_set: z.string().nullable(),
   creative_title: z.string().nullable(),
+  // Thumbnail real del creativo (Graph) — `.default(null)` tolera backend viejo.
+  creative_thumbnail_url: z.string().nullable().default(null),
   template: z.string().nullable(),
   meta_campaign_id: z.string().nullable(),
   first_resp: z.string().nullable(),
