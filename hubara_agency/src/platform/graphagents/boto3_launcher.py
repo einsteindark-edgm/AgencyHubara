@@ -44,17 +44,22 @@ _AGENTSPAN_PORT = 6767
 _COMPOSE_PROJECT = "graphagents-prod"
 _COMPOSE_SERVICE = "graphagents"
 
-#: `python3 -m sdk.cli ...` ejecutado en el container graphagents vía docker compose exec (-T:
-#: sin TTY, requerido bajo SSM). El compose vive en /opt/graphagents en la caja (cloud-init).
-#: Python del VENV del container, explícito (incidente 2026-07-09, rollout del
-#: Window Strategist): la imagen instala deps en /opt/venv (UV_PROJECT_ENVIRONMENT)
-#: pero NO exporta ese bin en PATH → el `python3` pelado es el del sistema y
-#: `python3 -m sdk.cli` muere con ModuleNotFoundError: yaml. Verificado contra la
-#: caja real por SSM (`which python3` → /usr/local/bin/python3).
+#: `sdk.cli` ejecutado en el container graphagents vía docker compose exec (-T: sin TTY,
+#: requerido bajo SSM). El compose vive en /opt/graphagents en la caja (cloud-init).
+#: Dos trampas reales (2026-07-09, primer dispatch e2e en prod — memoria
+#: graphagents-dispatch-prod-chain):
+#: - El intérprete es el del VENV (/opt/venv — UV_PROJECT_ENVIRONMENT del Dockerfile,
+#:   fuera de /app para que el bind-mount de dev no lo tape). El `python3` del sistema
+#:   NO tiene las deps (ModuleNotFoundError: yaml).
+#: - conductor-python defaultea multiprocessing 'spawn' en toda plataforma, pero agentspan
+#:   registra los workers del grafo como closures (make_node_worker.<locals>.worker) →
+#:   spawn no picklea. Escape hatch documentado de la lib: CONDUCTOR_MP_START_METHOD=fork
+#:   (también fijado en el compose prod; acá va además por si el container es pre-cambio).
 _VENV_PYTHON = "/opt/venv/bin/python"
 
 _DOCKER_EXEC = (
-    f"docker compose -p {_COMPOSE_PROJECT} exec -T {_COMPOSE_SERVICE} {_VENV_PYTHON} -m sdk.cli"
+    f"docker compose -p {_COMPOSE_PROJECT} exec -T -e CONDUCTOR_MP_START_METHOD=fork "
+    f"{_COMPOSE_SERVICE} {_VENV_PYTHON} -m sdk.cli"
 )
 
 #: Parsea el execution-id del stdout de Conductor: `execution <id>: <status>`.

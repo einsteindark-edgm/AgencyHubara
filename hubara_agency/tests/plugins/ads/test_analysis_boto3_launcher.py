@@ -327,3 +327,35 @@ def test_dispatch_quotea_el_agente_contra_inyeccion(fake_clients) -> None:
     script = " ".join(ssm.sent[0]["Parameters"]["commands"])
     assert "'ads-analytics; rm -rf /'" in script  # quoteado entero
     assert "start ads-analytics; rm -rf /" not in script  # NO inyectado crudo
+
+
+def test_dispatch_usa_el_python_del_venv_del_container(fake_clients) -> None:
+    """La imagen GraphAgents instala las deps en /opt/venv (UV_PROJECT_ENVIRONMENT,
+    fuera de /app para que el bind-mount de dev no lo tape) — el `python3` del
+    sistema NO tiene yaml y `sdk.cli` muere con ModuleNotFoundError (caso real
+    2026-07-09, primer dispatch e2e en prod). El exec debe usar el venv."""
+    ec2 = _FakeEC2(state="running")
+    ssm = _FakeSSM(stdout="execution exec-9: RUNNING")
+    lz = _make(fake_clients, ec2=ec2, ssm=ssm)
+
+    lz.dispatch("ads-analytics", {}, run_id="run-venv")
+
+    script = " ".join(ssm.sent[0]["Parameters"]["commands"])
+    assert "/opt/venv/bin/python -m sdk.cli" in script
+    assert " python3 -m sdk.cli" not in script  # el del sistema no tiene las deps
+
+
+def test_dispatch_fuerza_fork_para_los_workers_de_conductor(fake_clients) -> None:
+    """conductor-python >= al del deploy 2026-07-09 defaultea a multiprocessing
+    'spawn' en TODAS las plataformas, pero agentspan registra los workers del
+    grafo como CLOSURES locales (make_node_worker.<locals>.worker) → spawn no
+    puede picklearlos y el start muere. El escape hatch documentado de la lib
+    es CONDUCTOR_MP_START_METHOD=fork — el exec lo pasa siempre."""
+    ec2 = _FakeEC2(state="running")
+    ssm = _FakeSSM(stdout="execution exec-8: RUNNING")
+    lz = _make(fake_clients, ec2=ec2, ssm=ssm)
+
+    lz.dispatch("ads-analytics", {}, run_id="run-fork")
+
+    script = " ".join(ssm.sent[0]["Parameters"]["commands"])
+    assert "-e CONDUCTOR_MP_START_METHOD=fork" in script

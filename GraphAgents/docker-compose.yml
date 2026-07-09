@@ -76,6 +76,9 @@ services:
     environment:
       AGENTSPAN_SERVER_URL: "http://agentspan:6767"
       GRAPHAGENTS_RUNTIME: "${GRAPHAGENTS_RUNTIME:-local}"  # local | agentspan (G1+)
+      # agentspan registra workers como closures → el default 'spawn' de
+      # conductor-python no picklea; fork es el modo que la lib asume (paridad prod).
+      CONDUCTOR_MP_START_METHOD: fork
       META_ACCESS_TOKEN: "${META_ACCESS_TOKEN:-}"
       META_AD_ACCOUNT_ID: "${META_AD_ACCOUNT_ID:-}"
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
