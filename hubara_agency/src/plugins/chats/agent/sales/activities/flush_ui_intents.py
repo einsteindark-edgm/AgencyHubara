@@ -47,6 +47,74 @@ _GALLERY_INTER_IMAGE_DELAY_S = float(
 _GALLERY_MAX_IMAGES = 4
 
 
+# Cap del índice wamid→foto en metadata.json — suficiente para resolver
+# replies sobre las últimas galerías sin crecer sin límite.
+_MEDIA_INDEX_MAX = 50
+
+
+def _render_payment_instructions_text(params: dict[str, Any]) -> str | None:
+    """Plantilla FIJA de datos bancarios para pago por transferencia.
+
+    Los datos salen EXCLUSIVAMENTE de env (`PAYMENT_TRANSFER_*`) — jamás del
+    LLM ni de los params del intent (caso wa_573125671604: el LLM alucinó
+    número de cuenta y NIT). Si la config mínima (banco + cuenta + titular)
+    no está completa devuelve None y NO se envía nada: el sistema nunca
+    inventa datos de pago, ni parciales.
+
+    Formato WhatsApp: bold con UN asterisco (`*Banco*`), nunca markdown
+    doble (`**`).
+    """
+    bank = (os.getenv("PAYMENT_TRANSFER_BANK") or "").strip()
+    account_number = (
+        os.getenv("PAYMENT_TRANSFER_ACCOUNT_NUMBER") or ""
+    ).strip()
+    holder = (os.getenv("PAYMENT_TRANSFER_HOLDER") or "").strip()
+    if not (bank and account_number and holder):
+        return None
+    account_type = (
+        os.getenv("PAYMENT_TRANSFER_ACCOUNT_TYPE") or "Cuenta"
+    ).strip()
+    holder_id = (os.getenv("PAYMENT_TRANSFER_HOLDER_ID") or "").strip()
+
+    lines = [
+        "Aquí tienes los datos para tu transferencia 🤍",
+        "",
+        f"*Banco*: {bank}",
+        f"*{account_type}*: {account_number}",
+        f"*Titular*: {holder}",
+    ]
+    if holder_id:
+        lines.append(f"*Documento*: {holder_id}")
+    total_cop = params.get("total_cop")
+    if isinstance(total_cop, int) and total_cop > 0:
+        currency = params.get("currency") or "COP"
+        total_formatted = f"${total_cop:,}".replace(",", ".")
+        lines.append(f"*Valor*: {total_formatted} {currency}")
+    order_id = params.get("order_id")
+    if order_id:
+        lines.append(f"Pedido: {order_id}")
+    lines.append("")
+    lines.append("Cuando la hagas, envíanos el comprobante por este chat.")
+    return "\n".join(lines)
+
+
+def _merge_media_index(
+    data: dict[str, Any], media_log: list[dict[str, Any]]
+) -> None:
+    """Mergea las fotos enviadas al `outbound_media_index` (wamid → foto),
+    evictando las entradas más viejas por encima de `_MEDIA_INDEX_MAX`.
+    El dict preserva insertion order (JSON round-trip incluido)."""
+    index = dict(data.get("outbound_media_index") or {})
+    for entry in media_log:
+        wamid = entry.get("wa_message_id")
+        if not wamid:
+            continue
+        index[wamid] = {k: v for k, v in entry.items() if k != "wa_message_id"}
+    if len(index) > _MEDIA_INDEX_MAX:
+        index = dict(list(index.items())[-_MEDIA_INDEX_MAX:])
+    data["outbound_media_index"] = index
+
+
 async def _gallery_inter_delay() -> None:
     """Wrapper aislado para que ruff vea `asyncio` como usado y no lo elimine.
 
@@ -131,6 +199,10 @@ async def flush_pending_ui_intents_activity(session_id: str) -> int:
         kind = intent.get("kind")
         params = intent.get("params") or {}
         analytics_meta = intent.get("analytics") or {}
+        # Fotos enviadas en ESTE intent (wamid → producto/diseño). Se
+        # persiste en `outbound_media_index` aunque el envelope global
+        # falle a medias — cada foto que SÍ llegó es citable.
+        media_log: list[dict[str, Any]] = []
         try:
             result = await _dispatch_intent(
                 wa_client=wa_client,
@@ -141,6 +213,7 @@ async def flush_pending_ui_intents_activity(session_id: str) -> int:
                 phone_number_id=phone_number_id,
                 to_number=to_number,
                 last_inbound_message_id=last_inbound_msg_id,
+                media_log=media_log,
             )
         except Exception as e:  # noqa: BLE001
             activity.logger.warning(
@@ -183,6 +256,8 @@ async def flush_pending_ui_intents_activity(session_id: str) -> int:
         # cualquier otra operación (analytics es best-effort y NO debe
         # bloquear la idempotencia).
         intents_pending.pop(0)
+        if media_log:
+            _merge_media_index(data, media_log)
         _safe_write_metadata(metadata_file, data)
         sent_count += 1
 
@@ -234,12 +309,19 @@ async def _dispatch_intent(
     phone_number_id: str,
     to_number: str,
     last_inbound_message_id: str | None,
+    media_log: list[dict[str, Any]] | None = None,
 ):
     """Mapea `kind` a la función `send_*` correspondiente.
 
     `fallback`: hints opcionales del tool al dispatcher (ej.
     `prefer_native_product_list: bool` para `products_list`). Vacío si la
     tool no lo encoló.
+
+    `media_log`: lista mutable donde los kinds que mandan FOTOS
+    (`product_detail`, `product_gallery`) appendean una entrada por cada
+    send exitoso — `{wa_message_id, handle, title, image_url, label}` — para
+    que el caller persista `outbound_media_index` (resolver replies del
+    cliente que citan una foto; caso wa_573125671604).
 
     Devuelve `OutboundResult` o None si el kind es desconocido / intent
     invalido sin posibilidad de envío.
@@ -248,7 +330,7 @@ async def _dispatch_intent(
         link = params.get("image_url")
         if not link:
             return None
-        return await wa_client.send_image(
+        result = await wa_client.send_image(
             phone_number_id,
             to_number,
             wa_dtos.ImageOutbound(
@@ -256,6 +338,28 @@ async def _dispatch_intent(
                 caption=params.get("caption"),
             ),
         )
+        if media_log is not None and result and result.ok and result.wa_message_id:
+            media_log.append({
+                "wa_message_id": result.wa_message_id,
+                "handle": params.get("handle"),
+                "title": params.get("title"),
+                "image_url": link,
+                "label": params.get("design"),
+            })
+        return result
+
+    if kind == "payment_instructions":
+        # Datos bancarios para transferencia — plantilla fija desde env,
+        # encolada por register_order (NO por el LLM). Sin config completa
+        # no se manda nada: jamás inventamos datos de pago.
+        text = _render_payment_instructions_text(params)
+        if not text:
+            activity.logger.warning(
+                "flush_ui_intents.payment_instructions_unconfigured",
+                extra={"params": params},
+            )
+            return None
+        return await wa_client.send_text(phone_number_id, to_number, text)
 
     if kind == "products_list":
         from src.platform.whatsapp import limits as wa_limits
@@ -586,29 +690,60 @@ async def _dispatch_intent(
 
     if kind == "product_gallery":
         # Múltiples fotos del MISMO producto como secuencia.
-        # Estrategia: send_image en loop con pausas pequeñas. La primera
-        # imagen lleva caption (título); las siguientes van limpias para
-        # que la conversación luzca como "toma, mira también esta… y esta".
-        urls = list(params.get("image_urls") or [])
-        urls = urls[:_GALLERY_MAX_IMAGES]
-        if not urls:
+        # Estrategia: send_image en loop con pausas pequeñas. Cada imagen
+        # lleva su label de diseño como caption (la primera con el título
+        # delante) — el cliente ve QUÉ es cada foto y puede nombrarla.
+        # Compat: intents encolados pre-deploy traen solo `image_urls`
+        # (sin `images` etiquetadas) — se mandan sin label.
+        labeled_images = params.get("images")
+        if labeled_images:
+            gallery = [
+                (img.get("url"), img.get("label"))
+                for img in labeled_images
+                if img.get("url")
+            ]
+        else:
+            gallery = [(url, None) for url in (params.get("image_urls") or [])]
+        gallery = gallery[:_GALLERY_MAX_IMAGES]
+        if not gallery:
             return None
         lead_caption = params.get("lead_caption")
         last_result = None
         all_ok = True
-        for idx, url in enumerate(urls):
+        for idx, (url, label) in enumerate(gallery):
             if idx > 0:
                 # Pausa para que no se vea robótico (burst de imágenes).
                 # El @with_heartbeat sigue dando keepalive aunque haya sleep.
                 await _gallery_inter_delay()
+            if idx == 0:
+                caption = (
+                    f"{lead_caption} · {label}"
+                    if lead_caption and label
+                    else (lead_caption or label)
+                )
+            else:
+                caption = label
             result = await wa_client.send_image(
                 phone_number_id,
                 to_number,
                 wa_dtos.ImageOutbound(
                     link=url,
-                    caption=lead_caption if idx == 0 else None,
+                    caption=caption,
                 ),
             )
+            if (
+                media_log is not None
+                and result
+                and result.ok
+                and result.wa_message_id
+            ):
+                media_log.append({
+                    "wa_message_id": result.wa_message_id,
+                    "handle": params.get("handle"),
+                    "title": params.get("title"),
+                    "image_url": url,
+                    "label": label,
+                })
             last_result = result
             if not result or not result.ok:
                 all_ok = False
@@ -738,6 +873,14 @@ def _build_history_event(
     """
     if kind == "variant_picker":
         text = _render_variant_picker_text(params)
+        if not text:
+            return None
+        return {"role": "assistant", "content": text}
+
+    if kind == "payment_instructions":
+        # Igual que variant_picker: el cliente recibió TEXTO real — el
+        # operador ve exactamente los datos bancarios que se enviaron.
+        text = _render_payment_instructions_text(params)
         if not text:
             return None
         return {"role": "assistant", "content": text}

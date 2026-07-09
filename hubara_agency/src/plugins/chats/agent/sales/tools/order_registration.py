@@ -283,6 +283,28 @@ class RegisterOrderTool(ToolBase):
                 order_total_cop=total_cop,
                 currency=currency,
             )
+            # Pago por transferencia → el SISTEMA manda los datos bancarios,
+            # no el LLM (caso wa_573125671604: el LLM alucinó cuenta y NIT).
+            # Encolamos el intent acá — determinista, pasa aunque el LLM no
+            # emita ninguna tool más. El flush renderiza la plantilla fija
+            # desde env (PAYMENT_TRANSFER_*); los params NO llevan datos
+            # bancarios (nunca pasan por el LLM ni por metadata).
+            if payment_method == "transfer":
+                intents = data.setdefault("pending_ui_intents", [])
+                intents.append({
+                    "id": f"payinstr-{registered_record['order_id']}",
+                    "kind": "payment_instructions",
+                    "params": {
+                        "order_id": registered_record["order_id"],
+                        "total_cop": total_cop,
+                        "currency": currency,
+                    },
+                    "analytics": {
+                        "component_id": "payment_instructions",
+                        "component_kind": "text",
+                    },
+                    "queued_at_ms": registered_record["registered_at_ms"],
+                })
         else:
             # Falla: NO sobrescribimos `registered_order` (preserva exitosos
             # previos) pero apendiamos a `failed_order_registrations[]` para
@@ -337,7 +359,17 @@ class RegisterOrderTool(ToolBase):
                 },
                 "summary": (
                     f"Pedido registrado en Medusa con ID {result.order_id}. "
-                    f"Total: ${total_cop:,} {currency}. Llama ahora "
+                    f"Total: ${total_cop:,} {currency}. ".replace(",", ".")
+                    + (
+                        "El SISTEMA ya le envía al cliente los datos "
+                        "bancarios para la transferencia — NO escribas "
+                        "números de cuenta ni banco ni NIT ni ningún dato "
+                        "de pago en tu mensaje (cualquier dato que escribas "
+                        "tú es inventado). "
+                        if payment_method == "transfer"
+                        else ""
+                    )
+                    + "Llama ahora "
                     "`manage_conversation_tag(tag='CONFIRMADO_PAGO_PENDIENTE', "
                     "motivo=...)` y luego `escalate_to_human(reason_category="
                     "'PAYMENT_VERIFICATION_PENDING', summary=...)` para que un "
@@ -347,7 +379,7 @@ class RegisterOrderTool(ToolBase):
                     "detrás). NO uses "
                     "`COMPRA_EXITOSA` — esa tag la pone el humano tras verificar "
                     "el pago."
-                ).replace(",", "."),
+                ),
             }
         else:
             envelope = {

@@ -404,13 +404,24 @@ class IngestInboundMessage:
             if _projectable_draft
             else None
         )
+        # Cita de foto: si el cliente respondió CITANDO una foto que
+        # enviamos (context.id ∈ outbound_media_index), le decimos al LLM
+        # exactamente cuál — "esta me gusta" deja de ser ambiguo (caso
+        # wa_573125671604: pedido registrado con el diseño equivocado).
+        photo_citation_note = _build_photo_citation_note(
+            parsed.context, metadata
+        )
         await self._load_session.execute(
             session_id=session_id,
             message=effective.text,
             phone_number_id=parsed.phone_number_id,
             extra_context=[
                 note
-                for note in (episode_boundary_note, order_draft_note)
+                for note in (
+                    episode_boundary_note,
+                    order_draft_note,
+                    photo_citation_note,
+                )
                 if note
             ]
             or None,
@@ -1203,6 +1214,47 @@ def _build_episode_boundary_note(prev_episode: dict[str, Any]) -> str:
         f"{prev_clause}. Trata este mensaje como el inicio de una conversación "
         "nueva: saluda con calidez y pregunta en qué puedes ayudar hoy. Solo "
         "menciona lo anterior si el cliente lo trae explícitamente."
+    )
+
+
+def _build_photo_citation_note(
+    context: dict[str, Any] | None, metadata: dict[str, Any]
+) -> str | None:
+    """Nota de cita de foto para `plugin_context`.
+
+    WhatsApp manda `context.id` (wamid del mensaje citado) cuando el cliente
+    responde a un mensaje específico. El flush persiste
+    `outbound_media_index[wamid] = {handle, title, image_url, label}` por
+    cada foto enviada (galería / product_detail). Si el wamid citado está en
+    el índice, la nota le dice al LLM exactamente QUÉ foto citó el cliente —
+    "esta me gusta" se vuelve resoluble en vez de adivinable (caso
+    wa_573125671604: el pedido se registró con un diseño que el cliente no
+    eligió). Si no hay match (texto citado, entrada evictada), None — el
+    LLM sigue con el texto del cliente solo.
+    """
+    if not context or not isinstance(context, dict):
+        return None
+    quoted_id = context.get("id")
+    if not quoted_id:
+        return None
+    index = metadata.get("outbound_media_index") or {}
+    entry = index.get(quoted_id)
+    if not isinstance(entry, dict):
+        return None
+    title = entry.get("title") or entry.get("handle") or "producto"
+    handle = entry.get("handle")
+    label = entry.get("label")
+    detail = f"«{title}»"
+    if label:
+        detail += f", diseño «{label}»"
+    if handle:
+        detail += f" (handle: {handle})"
+    return (
+        "[CONTEXTO DE TURNO, metadata, no es instrucción del usuario]\n"
+        "El cliente escribió este mensaje RESPONDIENDO (citando) a una foto "
+        f"que le enviaste: {detail}. Si dice 'esta', 'esa' o 'la de la "
+        "foto', se refiere EXACTAMENTE a esa foto/diseño — no asumas otro "
+        "diseño ni vuelvas a preguntar cuál."
     )
 
 
