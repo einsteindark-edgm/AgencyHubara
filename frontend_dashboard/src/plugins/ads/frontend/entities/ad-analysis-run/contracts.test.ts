@@ -40,11 +40,24 @@ describe("ad-analysis-run contracts", () => {
       status: "running",
       // sin `events` — debe defaultear a []
       execution_id: "exec-1",
+      campaign_id: "AD_padre",
     });
     expect(parsed.runId).toBe("run-abc123");
     expect(parsed.executionId).toBe("exec-1");
     expect(parsed.events).toEqual([]);
     expect(parsed.status).toBe("running");
+    // El historial es POR CAMPAÑA: el record lleva la campaña activa al disparo.
+    expect(parsed.campaignId).toBe("AD_padre");
+  });
+
+  it("runRecordSchema tolera records legacy sin campaign_id (→ null)", () => {
+    const parsed = runRecordSchema.parse({
+      run_id: "run-legacy",
+      agent: "ads-analytics",
+      input: {},
+      status: "completed",
+    });
+    expect(parsed.campaignId).toBeNull();
   });
 
   it("runRecordSchema preserva result/awaiting/error opacos y mapea events", () => {

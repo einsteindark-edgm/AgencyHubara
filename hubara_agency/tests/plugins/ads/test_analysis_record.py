@@ -84,3 +84,21 @@ def test_list_runs_ordena_por_fecha_desc_y_limita() -> None:
     assert runs[0]["result"] == {"reporte": "ok"}
     assert runs[0]["input"] == {"n": 2}  # el snapshot de los números de esa corrida
     assert runs[1]["result"] is None
+
+
+def test_runs_se_etiquetan_y_filtran_por_campania() -> None:
+    """Feedback operador 2026-07-09: 'al cambiar de campaña sigue apareciendo el
+    historial de otras campañas'. El run guarda la campaña activa al dispararse
+    y `list_runs(campaign_id=...)` devuelve SOLO las corridas de esa campaña
+    (los legacy sin campaña quedan fuera del filtro, visibles solo sin filtro)."""
+    r = record.create_run("run-c1", agent="a", input={}, campaign_id="AD_1")
+    assert r["campaign_id"] == "AD_1"
+    record.create_run("run-c2", agent="a", input={}, campaign_id="AD_2")
+    record.create_run("run-legacy", agent="a", input={})  # sin campaña → None
+
+    only_1 = record.list_runs(campaign_id="AD_1")
+    assert [x["run_id"] for x in only_1] == ["run-c1"]
+
+    todos = record.list_runs()  # sin filtro: el historial completo, legacy incluido
+    assert {x["run_id"] for x in todos} == {"run-c1", "run-c2", "run-legacy"}
+    assert next(x for x in todos if x["run_id"] == "run-legacy")["campaign_id"] is None

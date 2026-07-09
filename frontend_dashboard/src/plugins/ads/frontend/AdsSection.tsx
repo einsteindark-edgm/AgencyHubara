@@ -175,7 +175,9 @@ export function AdsSection() {
               derecha. El page es el único que une las 3 features (cross-feature
               prohibido). */}
           <div className="flex min-h-0 shrink-0 overflow-y-auto border-r border-line">
-            <TriggerRun onRunStarted={setActiveRunId} />
+            {/* El run queda etiquetado con la campaña activa — el historial
+                del inspector es por campaña. */}
+            <TriggerRun onRunStarted={setActiveRunId} campaignId={campaign.id} />
           </div>
           <div className="flex min-h-0 flex-1 overflow-hidden">
             <RunResult runId={activeRunId} decisionSlot={decision} />

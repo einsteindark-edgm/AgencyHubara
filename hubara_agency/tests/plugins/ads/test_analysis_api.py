@@ -150,3 +150,26 @@ def test_list_runs_endpoint_devuelve_historial_versionado(client):
     assert runs[0]["created_at_ms"] == 2000
     assert runs[0]["input"] == {"v": 2}
     assert "events" not in runs[0]  # el log en vivo no viaja en el historial
+
+
+def test_runs_por_campania_end_to_end(client):
+    """El disparo lleva la campaña activa (`campaign_id`) y el historial del
+    inspector filtra por ella — cambiar de campaña NO muestra análisis ajenos."""
+    c = client
+    ra = c.post(
+        "/api/ads/analysis/runs",
+        json={"agent": "ads-analytics", "input": {}, "campaign_id": "AD_padre"},
+    )
+    c.post(
+        "/api/ads/analysis/runs",
+        json={"agent": "ads-analytics", "input": {}, "campaign_id": "AD_zodiacal"},
+    )
+    rid_a = ra.json()["run_id"]
+
+    assert c.get(f"/api/ads/analysis/runs/{rid_a}").json()["campaign_id"] == "AD_padre"
+
+    filtrado = c.get("/api/ads/analysis/runs", params={"campaign_id": "AD_padre"}).json()
+    assert [r["run_id"] for r in filtrado["runs"]] == [rid_a]
+
+    todos = c.get("/api/ads/analysis/runs").json()["runs"]
+    assert len(todos) == 2  # sin filtro sigue siendo el historial completo

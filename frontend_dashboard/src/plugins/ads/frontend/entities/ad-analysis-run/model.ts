@@ -50,6 +50,8 @@ export interface RunRecord {
   input: unknown;
   /** Fecha del análisis (historial versionado) — null en records legacy. */
   createdAtMs: number | null;
+  /** Campaña activa al disparar (el historial es por campaña) — null legacy. */
+  campaignId: string | null;
   status: RunStatus;
   events: RunEvent[];
   result?: unknown;

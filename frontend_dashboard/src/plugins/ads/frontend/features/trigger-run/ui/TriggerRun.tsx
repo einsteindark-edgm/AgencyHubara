@@ -25,9 +25,12 @@ import { useTriggerRunForm } from "../model/useTriggerRunForm";
 
 interface Props {
   onRunStarted: (runId: string) => void;
+  /** La campaña activa al abrir el modal — el run queda etiquetado con ella
+   *  y el historial del inspector filtra por campaña. */
+  campaignId?: string;
 }
 
-export function TriggerRun({ onRunStarted }: Props) {
+export function TriggerRun({ onRunStarted, campaignId }: Props) {
   const { data: agents, isLoading, isError } = useAgents();
   const trigger = useTriggerRun();
 
@@ -44,7 +47,7 @@ export function TriggerRun({ onRunStarted }: Props) {
   const onRun = () => {
     if (!form.canRun || !form.agentId) return;
     trigger.mutate(
-      { agent: form.agentId, input: form.parsed.value },
+      { agent: form.agentId, input: form.parsed.value, campaignId },
       { onSuccess: (runId) => onRunStarted(runId) },
     );
   };

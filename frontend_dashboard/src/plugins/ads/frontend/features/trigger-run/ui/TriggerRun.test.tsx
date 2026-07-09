@@ -35,7 +35,7 @@ const AGENT = {
 
 const LIVE = { meta_insights: { data: [{ spend: "120000" }] } };
 
-function setup(opts: { connected: boolean; live?: unknown }) {
+function setup(opts: { connected: boolean; live?: unknown; campaignId?: string }) {
   mockAgents.current = [AGENT];
   mockConn.current = {
     data: opts.connected
@@ -44,7 +44,9 @@ function setup(opts: { connected: boolean; live?: unknown }) {
   };
   mockLive.current = { data: opts.live, isLoading: false };
   mockMutate.mockClear();
-  return render(<TriggerRun onRunStarted={() => {}} />);
+  return render(
+    <TriggerRun onRunStarted={() => {}} campaignId={opts.campaignId} />,
+  );
 }
 
 describe("TriggerRun — selector con descripción", () => {
@@ -76,5 +78,21 @@ describe("TriggerRun — datos reales por default", () => {
   it("sin Meta conectado: avisa que va el ejemplo (fallback honesto)", () => {
     const { getByText } = setup({ connected: false });
     expect(getByText(/se enviará un JSON de ejemplo/i)).toBeTruthy();
+  });
+});
+
+describe("TriggerRun — historial por campaña", () => {
+  it("el disparo lleva la campaña activa (el historial del inspector filtra por ella)", () => {
+    const { getByRole } = setup({
+      connected: true,
+      live: LIVE,
+      campaignId: "AD_padre",
+    });
+    fireEvent.click(getByRole("button", { name: /analizar/i }));
+    expect(mockMutate.mock.calls[0][0]).toEqual({
+      agent: "ads-analytics",
+      input: LIVE,
+      campaignId: "AD_padre",
+    });
   });
 });

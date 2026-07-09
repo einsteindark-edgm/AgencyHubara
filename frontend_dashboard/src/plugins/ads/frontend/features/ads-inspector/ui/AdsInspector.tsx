@@ -188,7 +188,9 @@ export function AdsInspector({ campaign }: Props) {
         </StaticPanel>
 
         <StaticPanel title="Análisis IA · historial">
-          <AnalysisHistory />
+          {/* Historial POR CAMPAÑA: solo las corridas disparadas mirando ESTA
+              campaña (feedback operador 2026-07-09). */}
+          <AnalysisHistory campaignId={c.id} />
         </StaticPanel>
       </div>
     </aside>
@@ -250,8 +252,8 @@ function _resultText(result: unknown): string | null {
   }
 }
 
-function AnalysisHistory() {
-  const { data: runs = [], isLoading } = useRuns();
+function AnalysisHistory({ campaignId }: { campaignId: string }) {
+  const { data: runs = [], isLoading } = useRuns(campaignId);
 
   if (isLoading) {
     return (
@@ -263,8 +265,8 @@ function AnalysisHistory() {
   if (runs.length === 0) {
     return (
       <div style={{ fontSize: 12, color: "var(--fg-mute)", padding: "6px 0" }}>
-        Sin análisis todavía — corré uno con «Analizar con IA» y quedará
-        guardado acá con fecha, números y sugerencias.
+        Sin análisis de esta campaña todavía — corré uno con «Analizar con IA»
+        y quedará guardado acá con fecha, números y sugerencias.
       </div>
     );
   }
