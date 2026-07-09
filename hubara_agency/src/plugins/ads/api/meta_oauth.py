@@ -1,13 +1,16 @@
-"""Sub-router PROTEGIDO `/api/ads/meta/*` (sin login/callback) — datos + gestión.
+"""Sub-router PROTEGIDO `/api/ads/meta/*` — datos + gestión (single-tenant).
 
 - `GET  /api/ads/meta/status`     → estado de conexión (cuenta, scopes, expiración).
 - `GET  /api/ads/meta/insights`   → métricas reales por campaña (Marketing API).
-- `POST /api/ads/meta/disconnect` → borra el token.
 - `POST /api/ads/meta/campaigns/{id}/status` → pausa/activa (gestión, requiere ads_management).
 
+Single-tenant (decisión 2026-07-09): el token es un system-user PROVISIONADO por
+el operador en SSM `/hubara/<tenant>/meta/oauth` (runbook
+`infra/whatsapp-provisioning/README.md`). No hay login/callback OAuth ni
+disconnect — conectar/rotar es una operación de infra, no un endpoint.
+
 Estas rutas las dispara el dashboard (con bearer de Cognito en prod) → quedan
-protegidas por `require_auth`. El login/callback (que Meta/el browser invocan SIN
-bearer) viven en `meta_public.py` (PUBLIC_ROUTER). Token server-side, nunca logueado.
+protegidas por `require_auth`. Token server-side, nunca logueado.
 
 Providers `_settings/_store/_ads` a nivel módulo para que los tests los monkeypatcheen.
 """
@@ -56,12 +59,6 @@ def meta_status() -> dict:
         "expired": expired,
         "can_manage": "ads_management" in token.scopes,
     }
-
-
-@router.post("/disconnect")
-def meta_disconnect() -> dict:
-    _store().clear()
-    return {"connected": False}
 
 
 @router.get("/insights")

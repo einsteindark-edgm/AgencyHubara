@@ -203,6 +203,7 @@ python3 whatsapp_provision.py discover --config tenants/hubara.env   # app suscr
 | **Templates** (create a Meta) | ✅ `templates` (desde `definitions/templates.json`) |
 | **Templates** (editar copy que cambió) | ✅ `templates-update` (idempotente, → PENDING) |
 | **Dataset CAPI** (atribución CTWA, create+link al WABA) | ✅ `capi` (idempotente; `POST /{WABA_ID}/dataset` reemplaza Events Manager §13+§15) |
+| **Token store de Ads** (conexión Meta del dashboard, single-tenant sin OAuth) | ✅ `ads-token` (verifica scopes + cuenta, imprime el put a SSM; ver §5.7) |
 | SSM + render + recreate | ✅ scripts (`aws_bootstrap` + `render-env-from-ssm.sh`) |
 | Catálogo Medusa→Meta | ✅ `trigger_catalog_sync.py` |
 | Redacción del copy de templates | ❌ humano (define quality rating) |
@@ -225,6 +226,32 @@ Click-to-WhatsApp ads son ciegos: Meta ve el click pero no la venta.
 - El backend consume ambas vars vía `src/platform/config.py`
   (`send_capi_event_activity` — dispara al cierre de episodio en sales).
 - Runbook humano con el detalle completo: `hubara_agency/.hubara/runbooks/meta_template_approval.md` §11–§22.
+
+## 5.7 Ads — token store del plugin (single-tenant, SIN OAuth)
+
+Decisión 2026-07-09: la sección Ads del dashboard se autentica contra la
+Marketing API con el **system user token provisionado** — NO hay diálogo OAuth,
+botón de login ni App Review. Los system users operan las cuentas publicitarias
+**propias** del business con Standard Access; el review de Meta solo hace falta
+para conectar cuentas de terceros (que no vamos a tener).
+
+```bash
+python3 whatsapp_provision.py ads-token --config tenants/hubara.env
+```
+
+El comando verifica EN VIVO que el token tenga `ads_read`+`ads_management` y
+vea la cuenta publicitaria, e imprime el `aws ssm put-parameter` listo para
+correr (el CLI no toca SSM). El parámetro `/hubara/<tenant>/meta/oauth` es lo
+que el backend lee en cada request (sin deploy) — sembrarlo ES "conectar Meta".
+Re-correr tras rotar el system user token.
+
+Gotchas:
+- El backend/dashboard NO tienen "Desconectar" ni login: la conexión es esta
+  operación de infra. Si el chip dice "Meta no conectado", falta este seed.
+- Para verificar el parámetro a mano: `rtk proxy aws ssm get-parameter ...`
+  (la lectura sin `rtk proxy` reformatea el JSON y parece corrupto).
+- El token debe tener la cuenta publicitaria asignada al system user en el
+  Business Manager (Assets → Ad accounts) — sin eso `me/adaccounts` viene vacío.
 
 ## Multi-tenant
 
