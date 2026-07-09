@@ -203,6 +203,7 @@ python3 whatsapp_provision.py discover --config tenants/hubara.env   # app suscr
 | **Templates** (create a Meta) | ✅ `templates` (desde `definitions/templates.json`) |
 | **Templates** (editar copy que cambió) | ✅ `templates-update` (idempotente, → PENDING) |
 | **Dataset CAPI** (atribución CTWA, create+link al WABA) | ✅ `capi` (idempotente; `POST /{WABA_ID}/dataset` reemplaza Events Manager §13+§15) |
+| **App domains** (dominios OAuth de la app, login Meta del dashboard) | ✅ `app-domains` (aditivo + verificación post-POST; requiere toggle "API access to app settings", ver §5.7) |
 | SSM + render + recreate | ✅ scripts (`aws_bootstrap` + `render-env-from-ssm.sh`) |
 | Catálogo Medusa→Meta | ✅ `trigger_catalog_sync.py` |
 | Redacción del copy de templates | ❌ humano (define quality rating) |
@@ -225,6 +226,36 @@ Click-to-WhatsApp ads son ciegos: Meta ve el click pero no la venta.
 - El backend consume ambas vars vía `src/platform/config.py`
   (`send_capi_event_activity` — dispara al cierre de episodio en sales).
 - Runbook humano con el detalle completo: `hubara_agency/.hubara/runbooks/meta_template_approval.md` §11–§22.
+
+## 5.7 App domains — dominios OAuth de la app (login Meta del dashboard)
+
+El comando `app-domains` converge `app_domains` + `website_url` de la **app**
+(no del WABA) vía `POST /{APP_ID}` con el app token (`id|secret`). Sin el
+dominio del `redirect_uri` en esa lista, el diálogo OAuth del dashboard (plugin
+ads, "Conectar con Meta") rebota con **"El dominio de esta URL no está incluido
+en los dominios de la app"** — caso 2026-07-09.
+
+```bash
+python3 whatsapp_provision.py app-domains --config tenants/hubara.env
+```
+
+Config: `APP_DOMAINS` (coma-separado) + `WEBSITE_URL` en el `.env` del tenant;
+requiere `APP_SECRET`. Es **aditivo** (no borra dominios existentes) e
+idempotente, y después del POST **re-lee** para verificar qué persistió de verdad.
+
+Gotchas que motivaron automatizarlo:
+
+- **El form del dashboard pierde ediciones en silencio**: el campo "Dominios de
+  la app" exige Enter para commitear el chip ANTES de "Guardar cambios"; si no,
+  guarda sin el dominio y no avisa. La API es la vía autoritativa.
+- **Error `(#10)` "Changing app settings through API calls has been disabled"**:
+  toggle en el dashboard de la app → Configuración → Avanzada → Seguridad →
+  **"Permitir el acceso de la API a la configuración de la app"** → Sí (una vez
+  por app). El comando lo detecta y te imprime este fix.
+- **Dominios de DNS compartido** (`sslip.io`, `ngrok`): Meta puede aceptar el
+  POST con `success:true` y **descartar el dominio en silencio** — por eso el
+  re-GET de verificación. Si lo descarta, la salida es usar un dominio propio
+  (p.ej. `hubara.com.co`) para el redirect OAuth.
 
 ## Multi-tenant
 

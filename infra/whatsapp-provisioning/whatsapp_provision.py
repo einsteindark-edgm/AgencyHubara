@@ -12,6 +12,7 @@ Solo stdlib (urllib) — corre con cualquier `python3`, sin dependencias.
   python3 whatsapp_provision.py plan     --config tenants/hubara.env
   python3 whatsapp_provision.py apply    --config tenants/hubara.env
   python3 whatsapp_provision.py apply    --config tenants/hubara.env --code 123456
+  python3 whatsapp_provision.py app-domains --config tenants/hubara.env
   python3 whatsapp_provision.py ssm-block --config tenants/hubara.env
 
 Pasos con human-in-the-loop (no automatizables): conseguir la línea, recibir el
@@ -41,7 +42,7 @@ CONFIG_KEYS = (
     "TENANT", "BUSINESS_ID", "APP_ID", "APP_SECRET", "WABA_ID",
     "SYSTEM_USER_TOKEN", "CATALOG_ID", "CALLBACK_URL", "VERIFY_TOKEN",
     "NEW_NUMBER_CC", "NEW_NUMBER", "DISPLAY_NAME", "PIN", "CODE_METHOD",
-    "LANGUAGE", "API_VERSION",
+    "LANGUAGE", "API_VERSION", "APP_DOMAINS", "WEBSITE_URL",
 )
 
 
@@ -406,6 +407,92 @@ def step_templates_update(cfg: dict) -> None:
               f"(vuelve a PENDING) {json.dumps(body, ensure_ascii=False)[:200]}")
 
 
+# ── App settings: dominios OAuth (login Meta del dashboard) ─────────────────
+
+def _app_token(cfg: dict) -> str | None:
+    """App access token (`id|secret`) — el que autoriza settings de LA APP
+    (dominios, webhook subscriptions), a diferencia del system-user token
+    (que autoriza assets del business: WABA, catálogo, dataset)."""
+    if not cfg.get("APP_SECRET"):
+        return None
+    return f"{cfg['APP_ID']}|{cfg['APP_SECRET']}"
+
+
+def actual_app_settings(cfg: dict) -> dict:
+    tok = _app_token(cfg)
+    if not tok:
+        return {}
+    _, body = _api("GET", cfg["APP_ID"], tok, fields="app_domains,website_url")
+    return body if isinstance(body, dict) else {}
+
+
+def step_app_domains(cfg: dict) -> bool:
+    """Converge `app_domains` + `website_url` de la app Meta vía API.
+
+    Sin el dominio del redirect_uri en `app_domains`, el diálogo OAuth rebota
+    con "El dominio de esta URL no está incluido en los dominios de la app"
+    (caso login Meta del plugin ads, 2026-07-09). Editarlo a mano en el
+    dashboard es frágil: el campo exige Enter para commitear el chip antes de
+    "Guardar cambios" y descarta silenciosamente lo demás. La API es la vía
+    autoritativa — y GET después del POST verifica lo que REALMENTE quedó.
+
+    Idempotente y ADITIVO: agrega los APP_DOMAINS que falten sin borrar los
+    existentes. Dos gotchas conocidas:
+      - error (#10): la app tiene deshabilitado "Allow API Access to App
+        Settings" → toggle en Configuración → Avanzada → Seguridad.
+      - dominios DNS compartidos (sslip.io, ngrok): Meta puede aceptarlos y
+        descartarlos en silencio → el re-GET los delata.
+    """
+    tok = _app_token(cfg)
+    if not tok:
+        print("  ! app-domains: falta APP_SECRET (config o env WHATSAPP_APP_SECRET) — SKIP")
+        return False
+    desired = [d.strip() for d in (cfg.get("APP_DOMAINS") or "").split(",") if d.strip()]
+    website = (cfg.get("WEBSITE_URL") or "").strip()
+    if not desired and not website:
+        print("  ! app-domains: APP_DOMAINS/WEBSITE_URL no seteados en la config — SKIP")
+        return False
+    cur = actual_app_settings(cfg)
+    cur_domains = cur.get("app_domains") or []
+    cur_website = cur.get("website_url") or ""
+    missing = [d for d in desired if d not in cur_domains]
+    website_diff = bool(website) and website != cur_website
+    if not missing and not website_diff:
+        print(f"  = app_domains ya converge: {cur_domains} website_url={cur_website or '(none)'}")
+        return True
+    fields: dict = {}
+    if missing:
+        fields["app_domains"] = json.dumps(cur_domains + missing)
+    if website_diff:
+        fields["website_url"] = website
+    st, body = _api("POST", cfg["APP_ID"], tok, **fields)
+    err = (body.get("error") or {}) if isinstance(body, dict) else {}
+    if err.get("code") == 10:
+        print(f"  ! app-domains: la app tiene BLOQUEADO el cambio de settings por API ({st}).")
+        print("    Fix (una vez, en el dashboard de la app): Configuración → Avanzada →")
+        print("    Seguridad → 'Permitir el acceso de la API a la configuración de la app'")
+        print("    → Sí → Guardar cambios. Después re-correr este comando.")
+        return False
+    ok = st == 200 and body.get("success")
+    mark = "+" if ok else "!"
+    print(f"  {mark} app-domains POST (+{missing}"
+          f"{' website_url' if website_diff else ''}): {st} "
+          f"{json.dumps(body, ensure_ascii=False)[:200]}")
+    if not ok:
+        return False
+    # Verificar lo que REALMENTE persistió — Meta descarta en silencio dominios
+    # de DNS compartido (sslip.io, ngrok) aunque el POST diga success.
+    after = actual_app_settings(cfg)
+    dropped = [d for d in desired if d not in (after.get("app_domains") or [])]
+    if dropped:
+        print(f"  ! Meta DESCARTÓ en silencio: {dropped} (típico con DNS compartido "
+              f"tipo sslip.io/ngrok). Usar un dominio propio para el OAuth.")
+        return False
+    print(f"  = verificado: app_domains={after.get('app_domains')} "
+          f"website_url={after.get('website_url') or '(none)'}")
+    return True
+
+
 # ── CAPI dataset (atribución CTWA) ──────────────────────────────────────────
 
 def actual_capi_dataset(cfg: dict) -> str | None:
@@ -462,6 +549,11 @@ def cmd_discover(cfg, _):
     flows = actual_flows(cfg)
     print("  flows:", ", ".join(
         f"{f.get('name')}[{f.get('status')}]" for f in flows) or "(ninguno)")
+    if cfg.get("APP_SECRET"):
+        app = actual_app_settings(cfg)
+        print("  app_domains:", app.get("app_domains"), "website_url:", app.get("website_url"))
+    else:
+        print("  app_domains: (falta APP_SECRET para leerlos)")
 
 
 def cmd_plan(cfg, _):
@@ -485,6 +577,12 @@ def cmd_plan(cfg, _):
         f = existing_f.get(d["name"])
         tag = "[ok] " if f and f.get("status") == "PUBLISHED" else "[+]  "
         print(f"  {tag} flow {d['name']}")
+    desired_domains = [d.strip() for d in (cfg.get("APP_DOMAINS") or "").split(",") if d.strip()]
+    if desired_domains:
+        cur_domains = actual_app_settings(cfg).get("app_domains") or []
+        missing = [d for d in desired_domains if d not in cur_domains]
+        print("  [ok]  app_domains (OAuth) converge" if not missing
+              else f"  [+]   app_domains (OAuth): agregar {missing}")
     print("\n  Manual / human-in-the-loop: conseguir la línea, código de verificación, "
           "App Secret, Business Verification + display name (Meta-side).")
     print("  Env: tras apply, correr `ssm-block` y subir a SSM + render + recreate (ver README).")
@@ -517,6 +615,9 @@ def cmd_apply(cfg, args):
         step_commerce_settings(cfg, phone_id)
     step_subscribe_app(cfg, s)
     step_webhook(cfg)
+    if cfg.get("APP_DOMAINS") or cfg.get("WEBSITE_URL"):
+        print("  -- app-domains (OAuth) --")
+        step_app_domains(cfg)
     print("  -- flows --")
     step_flows(cfg)
     print("  -- templates --")
@@ -574,6 +675,11 @@ def cmd_flows(cfg, _):
         print("  resolved:", json.dumps(resolved, ensure_ascii=False))
 
 
+def cmd_app_domains(cfg, _):
+    print("APP-DOMAINS (dominios OAuth de la app, converge aditivo + verifica):")
+    step_app_domains(cfg)
+
+
 COMMANDS = {
     "discover": cmd_discover,
     "plan": cmd_plan,
@@ -582,6 +688,7 @@ COMMANDS = {
     "templates-update": cmd_templates_update,
     "flows": cmd_flows,
     "capi": cmd_capi,
+    "app-domains": cmd_app_domains,
     "ssm-block": cmd_ssm_block,
 }
 
