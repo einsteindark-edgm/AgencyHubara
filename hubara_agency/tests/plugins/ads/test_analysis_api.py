@@ -125,3 +125,24 @@ def test_get_agents_trae_el_catalogo_con_input_de_ejemplo(client) -> None:
         "manual_sales",
         "entities_payload",
     }
+
+
+def test_list_runs_endpoint_devuelve_historial_versionado(client):
+    """GET /api/ads/analysis/runs — el historial del inspector: cada análisis
+    con fecha, estado, snapshot de entrada y resultado, más nuevo primero."""
+    c = client
+    r1 = c.post("/api/ads/analysis/runs", json={"agent": "ads-analytics", "input": {"v": 1}})
+    r2 = c.post("/api/ads/analysis/runs", json={"agent": "ads-analytics", "input": {"v": 2}})
+    rid1, rid2 = r1.json()["run_id"], r2.json()["run_id"]
+    # fechas deterministas para el orden (create_run estampa el reloj real)
+    for rid, ts in ((rid1, 1000), (rid2, 2000)):
+        rec = record.read_run(rid)
+        rec["created_at_ms"] = ts
+        record._write(rec)
+
+    body = c.get("/api/ads/analysis/runs").json()
+    runs = body["runs"]
+    assert [r["run_id"] for r in runs] == [rid2, rid1]
+    assert runs[0]["created_at_ms"] == 2000
+    assert runs[0]["input"] == {"v": 2}
+    assert "events" not in runs[0]  # el log en vivo no viaja en el historial

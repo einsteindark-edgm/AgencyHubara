@@ -146,6 +146,8 @@ export interface AdsCampaign {
   metaCampaignId: string | null;
   adSet: string | null;
   creativeTitle: string | null;
+  /** Thumbnail real del creativo del ad (Graph `creative{thumbnail_url}`). */
+  creativeThumbnailUrl: string | null;
   template: string | null;
   /** Inversión en COP. */
   spend: number | null;

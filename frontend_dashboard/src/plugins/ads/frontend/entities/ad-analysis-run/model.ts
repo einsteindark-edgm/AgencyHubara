@@ -46,6 +46,8 @@ export interface RunRecord {
   runId: string;
   agent: string;
   input: unknown;
+  /** Fecha del análisis (historial versionado) — null en records legacy. */
+  createdAtMs: number | null;
   status: RunStatus;
   events: RunEvent[];
   result?: unknown;

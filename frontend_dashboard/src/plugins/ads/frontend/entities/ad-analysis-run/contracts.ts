@@ -59,6 +59,9 @@ export const runRecordSchema = z
     awaiting: z.unknown().optional(),
     error: z.unknown().optional(),
     execution_id: z.string().nullable().optional(),
+    // Historial versionado (2026-07-09): cada análisis queda fechado.
+    // `.default(null)` tolera records legacy pre-timestamp.
+    created_at_ms: z.number().int().nullable().default(null),
   })
   .transform((r) => ({
     runId: r.run_id,
@@ -70,7 +73,13 @@ export const runRecordSchema = z
     awaiting: r.awaiting,
     error: r.error,
     executionId: r.execution_id ?? undefined,
+    createdAtMs: r.created_at_ms,
   }));
+
+/** El historial — `GET /api/ads/analysis/runs` (sin `events`, más nuevo primero). */
+export const runsListResponseSchema = z.object({
+  runs: z.array(runRecordSchema),
+});
 
 /** Respuesta del disparo — `POST /api/ads/analysis/runs` → `{ run_id }`. */
 export const triggerRunResponseSchema = z.object({

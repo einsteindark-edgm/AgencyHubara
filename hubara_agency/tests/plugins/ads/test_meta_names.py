@@ -67,6 +67,7 @@ class TestFetchMetaAdNames:
                 "ad_name": "Ad camiseta mundialista",
                 "campaign_name": "Día del Padre 2026",
                 "campaign_id": "CAMP_9",
+                "thumbnail_url": None,
             }
         }
 
@@ -107,6 +108,7 @@ class TestEnrichCampaignNames:
                 "ad_name": "Ad camiseta mundialista",
                 "campaign_name": "Día del Padre 2026",
                 "campaign_id": "CAMP_9",
+                "thumbnail_url": None,
             }
         }
         out = enrich_campaign_names([camp], names)
@@ -140,3 +142,35 @@ class TestEnrichCampaignNames:
         }
         out = enrich_campaign_names([camp], names)
         assert out[0].name == "Día del Padre 2026"
+
+
+def test_fetch_carries_creative_thumbnail(respx_or_transport=None):
+    """El creativo real del inspector (2026-07-09): el batch trae
+    creative{thumbnail_url} y el enrichment lo baja al summary."""
+    import httpx
+
+    from src.plugins.ads.aggregation import AdsCampaignSummary
+    from src.plugins.ads.meta_names import enrich_campaign_names, fetch_meta_ad_names
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert "creative{thumbnail_url}" in request.url.params["fields"]
+        return httpx.Response(200, json={
+            "AD_1": {
+                "id": "AD_1",
+                "name": "Ad Padre",
+                "campaign": {"id": "c-1", "name": "Día del padre"},
+                "creative": {"thumbnail_url": "https://cdn.fb/thumb.jpg"},
+            }
+        })
+
+    names = fetch_meta_ad_names(
+        ["AD_1"], token="T", transport=httpx.MockTransport(handler)
+    )
+    assert names["AD_1"]["thumbnail_url"] == "https://cdn.fb/thumb.jpg"
+
+    camp = AdsCampaignSummary(
+        id="AD_1", name="Chatea", source_type="ad", started=1,
+        first_seen_ms=1, last_seen_ms=2,
+    )
+    enriched = enrich_campaign_names([camp], names)[0]
+    assert enriched.creative_thumbnail_url == "https://cdn.fb/thumb.jpg"

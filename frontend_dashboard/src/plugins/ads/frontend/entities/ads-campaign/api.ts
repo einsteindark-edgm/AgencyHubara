@@ -153,6 +153,7 @@ export function mapBackendCampaign(b: BackendAdsCampaign): AdsCampaign {
     metaCampaignId: b.meta_campaign_id,
     adSet: b.ad_set,
     creativeTitle: b.creative_title,
+    creativeThumbnailUrl: b.creative_thumbnail_url,
     template: b.template,
     spend: b.spend,
     impressions: b.impressions,

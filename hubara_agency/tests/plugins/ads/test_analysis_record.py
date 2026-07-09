@@ -57,3 +57,30 @@ def test_run_failed_guarda_el_error_en_el_record() -> None:
     assert r["status"] == "failed"
     assert r["error"] == "boom en el nodo X"
     assert record.read_run("rf")["error"] == "boom en el nodo X"  # persiste
+
+
+def test_create_run_estampa_created_at_ms() -> None:
+    # Historial versionado (2026-07-09): cada análisis queda fechado.
+    rec = record.create_run("run-ts", agent="ads-analytics", input={"x": 1})
+    assert isinstance(rec["created_at_ms"], int) and rec["created_at_ms"] > 0
+
+
+def test_list_runs_ordena_por_fecha_desc_y_limita() -> None:
+    """El historial del inspector: los análisis versionados, más nuevo primero,
+    cada uno con su fecha, estado, snapshot de entrada y resultado."""
+    for i, rid in enumerate(["run-old", "run-mid", "run-new"]):
+        record.create_run(rid, agent="ads-analytics", input={"n": i})
+        rec = record.read_run(rid)
+        rec["created_at_ms"] = 1_000 + i  # fechas deterministas
+        record._write(rec)
+    record.append_event(
+        "run-new",
+        {"event_id": "e1", "type": "run.result", "payload": {"output": {"reporte": "ok"}}},
+    )
+
+    runs = record.list_runs(limit=2)
+    assert [r["run_id"] for r in runs] == ["run-new", "run-mid"]
+    assert runs[0]["status"] == "completed"
+    assert runs[0]["result"] == {"reporte": "ok"}
+    assert runs[0]["input"] == {"n": 2}  # el snapshot de los números de esa corrida
+    assert runs[1]["result"] is None

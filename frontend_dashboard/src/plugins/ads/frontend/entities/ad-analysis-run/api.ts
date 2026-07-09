@@ -36,6 +36,7 @@ import {
   agentsListResponseSchema,
   approveResponseSchema,
   runRecordSchema,
+  runsListResponseSchema,
   triggerRunResponseSchema,
 } from "./contracts";
 import { adAnalysisRunKeys } from "./keys";
@@ -57,6 +58,23 @@ async function fetchRun(runId: string, signal?: AbortSignal): Promise<RunRecord>
     { signal },
   );
   return runRecordSchema.parse(raw);
+}
+
+/**
+ * Historial de análisis (el versionado del inspector): cada corrida con fecha,
+ * estado, snapshot de entrada y resultado — más nueva primero. El refetch de
+ * red de seguridad respeta el gate R-REALTIME (≥60s); al disparar un run nuevo
+ * `useTriggerRun` invalida la lista.
+ */
+export function useRuns() {
+  return useQuery({
+    queryKey: adAnalysisRunKeys.list(),
+    queryFn: async ({ signal }) => {
+      const raw = await apiClient.get<unknown>("/api/ads/analysis/runs", { signal });
+      return runsListResponseSchema.parse(raw).runs;
+    },
+    refetchInterval: RUN_FALLBACK_REFETCH_MS,
+  });
 }
 
 /** Catálogo de agentes del selector. Estático del lado del backend → sin polling. */
@@ -86,6 +104,7 @@ export function useRun(runId: string | null) {
  * (el caller lo guarda como selección activa para montar `useRun`).
  */
 export function useTriggerRun() {
+  const qc = useQueryClient();
   return useMutation({
     mutationFn: async (vars: { agent: string; input: unknown }) => {
       const raw = await apiClient.post<unknown>("/api/ads/analysis/runs", {
@@ -93,6 +112,10 @@ export function useTriggerRun() {
         input: vars.input,
       });
       return triggerRunResponseSchema.parse(raw).run_id;
+    },
+    onSuccess: () => {
+      // el historial del inspector muestra la corrida nueva de inmediato
+      void qc.invalidateQueries({ queryKey: adAnalysisRunKeys.list() });
     },
   });
 }
