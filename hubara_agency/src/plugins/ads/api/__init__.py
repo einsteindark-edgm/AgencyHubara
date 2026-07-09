@@ -45,6 +45,7 @@ from src.plugins.ads.aggregation import (
 )
 from src.plugins.ads.api.analysis import router as _analysis_router
 from src.plugins.ads.api.meta_oauth import router as _meta_router
+from src.plugins.ads.meta_merge import merge_meta_campaigns
 from src.plugins.ads.meta_names import enrich_campaign_names, fetch_meta_ad_names
 from src.sdk.runtime import WORKSPACE_VAULT_DIR
 
@@ -106,6 +107,69 @@ def _cached_meta_names(ad_ids: list[str]) -> dict[str, dict[str, str | None]]:
     names = fetch_meta_ad_names(ad_ids, token=token)
     _meta_names_cache[key] = (now, names)
     return names
+
+
+#: Campañas Meta (Marketing API) para el merge del listado — cache TTL por ventana.
+#: 60s: el spend/estado no cambia más rápido y el listado se pide en cada page-view.
+_META_CAMPAIGN_TTL_S = 60.0
+_meta_campaign_cache: dict[str, tuple[float, tuple[list, list]]] = {}
+
+
+def _meta_store():
+    """Token store de la conexión Meta (provisionada por infra). Provider a nivel
+    módulo para que los tests lo monkeypatcheen (patrón meta_oauth)."""
+    from src.plugins.ads.meta.composition import get_token_store
+
+    return get_token_store()
+
+
+def _meta_ads():
+    from src.plugins.ads.meta.composition import get_ads_port
+
+    return get_ads_port()
+
+
+def _cached_meta_campaigns(
+    since_ms: int | None, until_ms: int | None
+) -> tuple[list, list]:
+    """`(meta_campaigns, metrics)` del Marketing API para la ventana del listado.
+
+    Best-effort como el resto de la capa Meta: sin conexión, Graph caído o
+    cualquier excepción → `([], [])` y el listado queda solo-vault (nunca 500).
+    Sin ventana ("Total") las métricas se acotan a 90 días — insights necesita
+    un rango y el spend histórico completo no aporta al operador.
+    """
+    from datetime import date, timedelta
+
+    try:
+        token = _meta_store().load()
+    except Exception:  # noqa: BLE001 — best-effort (SSM caído ≠ dashboard caído)
+        return [], []
+    if token is None or not token.account_id:
+        return [], []
+
+    until_d = date.fromtimestamp(until_ms / 1000) if until_ms else date.today()
+    since_d = (
+        date.fromtimestamp(since_ms / 1000) if since_ms else until_d - timedelta(days=90)
+    )
+    key = f"{since_d}|{until_d}"
+    now = time.monotonic()
+    hit = _meta_campaign_cache.get(key)
+    if hit is not None and (now - hit[0]) < _META_CAMPAIGN_TTL_S:
+        return hit[1]
+    try:
+        ads = _meta_ads()
+        metas = ads.list_campaigns(token.access_token, token.account_id)
+        metrics = ads.fetch_campaign_metrics(
+            token.access_token,
+            token.account_id,
+            since=since_d.isoformat(),
+            until=until_d.isoformat(),
+        )
+    except Exception:  # noqa: BLE001
+        return [], []
+    _meta_campaign_cache[key] = (now, (metas, metrics))
+    return metas, metrics
 
 
 def _since_ms(days: int | None) -> int | None:
@@ -219,6 +283,12 @@ def get_ads_campaigns(
     ad_ids = [c.id for c in campaigns if c.id != DIRECT_CAMPAIGN_ID]
     if ad_ids:
         campaigns = enrich_campaign_names(campaigns, _cached_meta_names(ad_ids))
+    # Merge de campañas Meta (pedido 2026-07-09): las campañas del Marketing API
+    # entran a ESTA lista (seleccionables como las del vault, canvas central
+    # incluido) — bucket único matcheado se enriquece; el resto entra standalone.
+    metas, metrics = _cached_meta_campaigns(since_ms, until_ms)
+    if metas or metrics:
+        campaigns = merge_meta_campaigns(campaigns, metas, metrics)
     return {"campaigns": [asdict(c) for c in campaigns]}
 
 
