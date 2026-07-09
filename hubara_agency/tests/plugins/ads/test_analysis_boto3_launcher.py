@@ -230,6 +230,11 @@ def test_dispatch_manda_el_comando_correcto_y_parsea_el_eid(fake_clients) -> Non
     script = " ".join(cmd["Parameters"]["commands"])
     assert "sdk.cli start 'ads-analytics'" in script
     assert "--runtime agentspan" in script
+    # Incidente rollout Window Strategist (2026-07-09): dentro del container
+    # `python3` es el del SISTEMA (la imagen no exporta /opt/venv en PATH) →
+    # `python3 -m sdk.cli` muere con ModuleNotFoundError: yaml. El exec DEBE
+    # usar el python del venv, explícito.
+    assert "/opt/venv/bin/python -m sdk.cli" in script, script
     # El input viaja como JSON.
     assert json.dumps({"name": "ada"}) in script
 
