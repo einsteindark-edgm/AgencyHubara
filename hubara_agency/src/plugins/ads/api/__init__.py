@@ -44,6 +44,7 @@ from src.plugins.ads.aggregation import (
     scan_ad_sessions,
 )
 from src.plugins.ads.api.analysis import router as _analysis_router
+from src.plugins.ads.api.meta_oauth import router as _meta_router
 from src.plugins.ads.meta_names import enrich_campaign_names, fetch_meta_ad_names
 from src.sdk.runtime import WORKSPACE_VAULT_DIR
 
@@ -53,6 +54,11 @@ router = APIRouter()
 # GraphAgents y relaya el progreso por SSE. Sub-router aparte (runs/orchestrator), montado
 # bajo `/analysis` para no colisionar con los endpoints de campañas de abajo.
 router.include_router(_analysis_router, prefix="/analysis")
+
+# OAuth + datos de Meta (`/api/ads/meta/*`): botón "Conectar con Meta" (Facebook Login),
+# callback, estado de conexión. El cliente Graph que esto autentica alimenta el merge de
+# métricas en `/api/ads/campaigns` (abajo).
+router.include_router(_meta_router, prefix="/meta")
 
 # TTL del scan cacheado del vault. 15s es invisible para un dashboard de
 # analytics (la data de ventas/chats no cambia segundo a segundo) y colapsa los

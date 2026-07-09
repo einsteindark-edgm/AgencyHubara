@@ -122,6 +122,12 @@ services:
       - WHATSAPP_PHONE_NUMBER_ID=${WHATSAPP_PHONE_NUMBER_ID}
       - WHATSAPP_ACCESS_TOKEN=${WHATSAPP_ACCESS_TOKEN}
       - WHATSAPP_VERIFY_TOKEN=${WHATSAPP_VERIFY_TOKEN}
+      # OAuth + Marketing API de Meta (plugin `ads`, wiring_intents.env_vars_required).
+      # Sin valor → el plugin degrada limpio (/api/ads/meta/login = 503). El token OAuth
+      # NO es una env var: vive server-side en SSM SecureString.
+      - META_APP_ID=${META_APP_ID}
+      - META_APP_SECRET=${META_APP_SECRET}
+      - META_OAUTH_REDIRECT_URI=${META_OAUTH_REDIRECT_URI}
     volumes:
       - hubara-vault-local:/app/hubara_vault
       # SSoT post-PR11: manifests viven en frontend_dashboard/. El loader
