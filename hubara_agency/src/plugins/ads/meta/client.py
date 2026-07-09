@@ -11,9 +11,10 @@ import json
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from src.plugins.ads.meta.oauth import GRAPH_BASE, GRAPH_VERSION
 from src.plugins.ads.meta.parse import MetaCampaignMetrics, parse_campaign_insights
 
+GRAPH_VERSION = "v25.0"
+GRAPH_BASE = "https://graph.facebook.com"
 _TIMEOUT_S = 30.0
 
 

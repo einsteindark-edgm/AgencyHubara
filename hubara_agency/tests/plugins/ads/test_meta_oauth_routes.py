@@ -1,6 +1,7 @@
-"""Rutas PROTEGIDAS `/api/ads/meta/*` — status, insights, disconnect, gestión.
+"""Rutas PROTEGIDAS `/api/ads/meta/*` — status, insights, gestión.
 
-(login/callback viven en test_meta_public_routes.py — son públicas.)
+(Single-tenant: no hay login/callback/disconnect — el token se provisiona en SSM;
+los guards de esa superficie viven en test_meta_single_tenant.py.)
 """
 from __future__ import annotations
 
@@ -13,14 +14,7 @@ from src.plugins.ads.meta.parse import MetaCampaignMetrics
 from src.plugins.ads.meta.settings import MetaSettings
 from src.plugins.ads.meta.token_store import InMemoryTokenStore, MetaToken
 
-_SETTINGS = MetaSettings(
-    app_id="123",
-    app_secret="sec",
-    redirect_uri="https://app/api/ads/meta/callback",
-    scopes=("ads_read",),
-    tenant="hubara",
-    region=None,
-)
+_SETTINGS = MetaSettings(tenant="hubara", region=None)
 
 
 def _client(monkeypatch, *, store=None, ads=None, settings=_SETTINGS) -> TestClient:
@@ -139,13 +133,6 @@ def test_set_campaign_status_requires_ads_management_scope(monkeypatch) -> None:
     )
     assert resp.status_code == 422
     assert ads.status_changes == []
-
-
-def test_disconnect_clears_token(monkeypatch) -> None:
-    store = _connected_store()
-    client = _client(monkeypatch, store=store)
-    assert client.post("/api/ads/meta/disconnect").json() == {"connected": False}
-    assert store.load() is None
 
 
 # ── analysis-input (seed REAL para el pod ads-analytics) ──────────────────────

@@ -12,6 +12,7 @@ Solo stdlib (urllib) — corre con cualquier `python3`, sin dependencias.
   python3 whatsapp_provision.py plan     --config tenants/hubara.env
   python3 whatsapp_provision.py apply    --config tenants/hubara.env
   python3 whatsapp_provision.py apply    --config tenants/hubara.env --code 123456
+  python3 whatsapp_provision.py ads-token --config tenants/hubara.env
   python3 whatsapp_provision.py ssm-block --config tenants/hubara.env
 
 Pasos con human-in-the-loop (no automatizables): conseguir la línea, recibir el
@@ -442,6 +443,57 @@ def step_capi(cfg: dict) -> str | None:
     return ds if ok else None
 
 
+# ── Ads: token store del plugin (single-tenant, sin OAuth) ───────────────────
+
+def cmd_ads_token(cfg, _):
+    """Prepara el seed del token store del plugin ads (decisión single-tenant
+    2026-07-09: el token de la Marketing API es el SYSTEM USER TOKEN provisionado
+    — no hay diálogo OAuth ni App Review; los system users operan las cuentas
+    publicitarias PROPIAS del business con Standard Access).
+
+    Verifica EN VIVO que el token tenga los scopes de ads y resuelve la cuenta
+    publicitaria, e imprime el `aws ssm put-parameter` listo para correr (el CLI
+    no toca SSM — misma filosofía que `ssm-block`). Re-correr tras rotar el token.
+    """
+    t = cfg["SYSTEM_USER_TOKEN"]
+    print("ADS-TOKEN (seed del token store /hubara/<tenant>/meta/oauth):")
+    _, dbg = _api("GET", "debug_token", t, input_token=t)
+    data = dbg.get("data") or {}
+    scopes = data.get("scopes") or []
+    needed = {"ads_read", "ads_management"}
+    missing = sorted(needed - set(scopes))
+    if not data.get("is_valid"):
+        print(f"  ! token inválido: {json.dumps(dbg, ensure_ascii=False)[:200]}")
+        return
+    if missing:
+        print(f"  ! al token le faltan scopes de ads: {missing} — regenerarlo en el "
+              f"Business Manager (System users) con esos permisos y reintentar.")
+        return
+    print(f"  = token válido, scopes ads OK (expira: {data.get('expires_at') or 'nunca'})")
+    _, accts = _api("GET", "me/adaccounts", t, fields="id,name,account_status,currency", limit="5")
+    accounts = accts.get("data") or []
+    if not accounts:
+        print("  ! el token no ve ninguna cuenta publicitaria — asignar la cuenta al "
+              "system user en el Business Manager (Assets → Ad accounts).")
+        return
+    acct = accounts[0]
+    print(f"  = cuenta: {acct['id']} '{acct.get('name')}' ({acct.get('currency')})")
+    tenant = (cfg.get("TENANT") or "hubara").strip() or "hubara"
+    seed = json.dumps(
+        {
+            "access_token": t,
+            "expires_at": None,
+            "scopes": sorted(set(scopes) & {"ads_read", "ads_management", "business_management"}),
+            "account_id": acct["id"],
+            "account_name": acct.get("name"),
+        }
+    )
+    print("\n  Correr (escribe el SecureString que el backend lee en cada request,")
+    print("  sin deploy; OJO: 'Desconectar' no existe en la UI — esto ES la conexión):")
+    print(f"  aws ssm put-parameter --name /hubara/{tenant}/meta/oauth "
+          f"--type SecureString --overwrite --value '{seed}'")
+
+
 # ── Comandos ─────────────────────────────────────────────────────────────────
 
 def cmd_discover(cfg, _):
@@ -582,6 +634,7 @@ COMMANDS = {
     "templates-update": cmd_templates_update,
     "flows": cmd_flows,
     "capi": cmd_capi,
+    "ads-token": cmd_ads_token,
     "ssm-block": cmd_ssm_block,
 }
 

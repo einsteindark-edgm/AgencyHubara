@@ -10,8 +10,6 @@ export {
 } from "./contracts";
 export { metaConnectionKeys } from "./keys";
 export {
-  metaLoginUrl,
-  useDisconnectMeta,
   useMetaAnalysisInput,
   useMetaConnection,
   useMetaInsights,

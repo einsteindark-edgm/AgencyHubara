@@ -1,15 +1,14 @@
 /**
- * Hooks de la conexión a Meta — estado del OAuth + insights reales + disconnect.
+ * Hooks de la conexión a Meta — estado de la conexión provisionada + insights reales.
  *
- * Server state SOLO en TanStack Query (regla 1). El botón de login no es un
- * fetch: navega el browser a `/api/ads/meta/login` (el backend hace 307 al
- * diálogo de Meta), por eso `metaLoginUrl()` arma la URL absoluta.
+ * Server state SOLO en TanStack Query (regla 1). Single-tenant (2026-07-09): el
+ * token se provisiona server-side (SSM) — no hay login URL ni disconnect; la UI
+ * solo LEE el estado y consume datos.
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiClient } from "@/shared/api";
-import { env } from "@/shared/config/env";
 
 import {
   backendMetaAnalysisInputSchema,
@@ -28,11 +27,6 @@ const DISCONNECTED: MetaConnection = {
   expired: false,
   canManage: false,
 };
-
-/** URL absoluta del login — destino del botón "Conectar con Meta". */
-export function metaLoginUrl(): string {
-  return `${env.apiUrl}/api/ads/meta/login`;
-}
 
 export function useMetaConnection() {
   return useQuery<MetaConnection>({
@@ -114,16 +108,6 @@ export function useMetaAnalysisInput(enabled = true) {
     },
     staleTime: 30_000,
     enabled,
-  });
-}
-
-export function useDisconnectMeta() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: () => apiClient.post<unknown>("/api/ads/meta/disconnect"),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: metaConnectionKeys.all });
-    },
   });
 }
 
