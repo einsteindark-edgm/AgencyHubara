@@ -119,3 +119,66 @@ def build_seed_sessions(ad_id: str, *, now_ms: int) -> list[dict[str, Any]]:
     add(7, days_ago=6, history_msgs=5, last_inbound_hours_ago=50)
 
     return specs
+
+
+def build_won_sessions(
+    orders: list[dict[str, Any]], ad_id: str
+) -> list[dict[str, Any]]:
+    """Espeja compras de Medusa como conversaciones GANADAS del vault.
+
+    Pedido 2026-07-09: el tablero deriva `ganado`/`revenue`/`avg_ticket` de los
+    episodios del vault — sin estas sesiones, las ventas de Medusa no suman.
+    Cada spec lleva el `order_id` REAL y el `total_cop` real de la orden (el
+    revenue del tablero coincide con Medusa peso por peso, y el join
+    orden↔episodio queda coherente). Fechas del `created_at` de la orden —
+    el filtro de fecha las respeta.
+
+    Determinista: orden estable por id → mismas session keys en re-runs
+    (idempotente: re-escribe, no duplica). Canceladas y sin total se saltean.
+    """
+    from datetime import datetime
+
+    specs: list[dict[str, Any]] = []
+    idx = 0
+    for order in sorted(orders, key=lambda o: str(o.get("id"))):
+        if order.get("status") == "canceled":
+            continue
+        total = (order.get("metadata") or {}).get("total_cop")
+        created = order.get("created_at")
+        if not total or not created:
+            continue
+        started_ms = int(
+            datetime.fromisoformat(str(created).replace("Z", "+00:00")).timestamp() * 1000
+        )
+        episode = _episode(
+            started_ms,
+            closed_at_ms=started_ms + 2 * _HOUR_MS,
+            closing_tag="COMPRA_EXITOSA",
+        )
+        episode["order_id"] = str(order["id"])
+        episode["order_total_cop"] = total
+        specs.append(
+            {
+                "session_key": f"wa_5730000009{10 + idx}",
+                "metadata": {
+                    "seeded_test": True,
+                    "tag": "COMPRA_EXITOSA",
+                    "origin": {
+                        "channel": "ad",
+                        "source_id": ad_id,
+                        "headline": "[seed] Chatea con nosotros",
+                        "first_seen_ms": started_ms,
+                    },
+                    "last_touch": {
+                        "channel": "ad",
+                        "source_id": ad_id,
+                        "seen_at_ms": started_ms,
+                    },
+                    "episodes": [episode],
+                },
+                "history_msgs": 0,
+                "last_inbound_ms": started_ms,
+            }
+        )
+        idx += 1
+    return specs

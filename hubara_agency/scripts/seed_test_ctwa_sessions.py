@@ -21,6 +21,10 @@ USO (container del API en la caja — el vault vive ahí):
     # o con un ad explícito:
     python -m scripts.seed_test_ctwa_sessions --ad-id <AD_ID> --apply
 
+    # espejar las COMPRAS de Medusa como conversaciones GANADAS (revenue del
+    # tablero = Medusa; usa el order_id y total_cop reales de cada orden):
+    python -m scripts.seed_test_ctwa_sessions --campaign-id 120243118818600317 --won-from-medusa --apply
+
     # limpiar TODO lo sembrado (borra sesiones con seeded_test=true):
     python -m scripts.seed_test_ctwa_sessions --clean --apply
 """
@@ -36,7 +40,7 @@ from loguru import logger
 
 from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.logging import setup_logging
-from src.plugins.ads.synthetic_seed import build_seed_sessions
+from src.plugins.ads.synthetic_seed import build_seed_sessions, build_won_sessions
 
 setup_logging()
 
@@ -63,6 +67,35 @@ def _resolve_ad_id(campaign_id: str) -> str:
     return str(data[0]["id"])
 
 
+def _fetch_campaign_orders(campaign_id: str) -> list[dict]:
+    """Órdenes de Medusa atribuidas a la campaña (metadata.meta_campaign_id) —
+    las que el backfill sembró/las reales. Paginado completo."""
+    import asyncio
+
+    from src.platform.medusa.composition import get_medusa_client
+
+    async def _run() -> list[dict]:
+        client = get_medusa_client()
+        orders: list[dict] = []
+        offset = 0
+        while True:
+            page = await client.list_orders(
+                limit=100, offset=offset,
+                fields="id,display_id,status,metadata,created_at",
+            )
+            batch = page.get("orders") or []
+            orders.extend(batch)
+            if len(batch) < 100:
+                break
+            offset += 100
+        return [
+            o for o in orders
+            if (o.get("metadata") or {}).get("meta_campaign_id") == campaign_id
+        ]
+
+    return asyncio.run(_run())
+
+
 def _clean(apply: bool) -> None:
     removed = 0
     for meta_file in sorted(WORKSPACE_VAULT_DIR.glob("*/metadata.json")):
@@ -86,6 +119,10 @@ def main() -> None:
     parser.add_argument("--campaign-id", default="", help="resuelve el primer ad de esta campaña")
     parser.add_argument("--apply", action="store_true", help="escribir (default: dry-run)")
     parser.add_argument("--clean", action="store_true", help="borrar sesiones seeded_test")
+    parser.add_argument(
+        "--won-from-medusa", action="store_true",
+        help="espejar las compras de Medusa de la campaña como conversaciones GANADAS",
+    )
     args = parser.parse_args()
 
     if args.clean:
@@ -96,8 +133,15 @@ def main() -> None:
     if not ad_id:
         raise SystemExit("falta --ad-id o --campaign-id")
 
-    now_ms = int(time.time() * 1000)
-    specs = build_seed_sessions(ad_id, now_ms=now_ms)
+    if args.won_from_medusa:
+        if not args.campaign_id:
+            raise SystemExit("--won-from-medusa requiere --campaign-id")
+        orders = _fetch_campaign_orders(args.campaign_id)
+        logger.info("órdenes de Medusa atribuidas a la campaña: {}", len(orders))
+        specs = build_won_sessions(orders, ad_id)
+    else:
+        now_ms = int(time.time() * 1000)
+        specs = build_seed_sessions(ad_id, now_ms=now_ms)
     for spec in specs:
         key = spec["session_key"]
         exists = (WORKSPACE_VAULT_DIR / key / "metadata.json").exists()
