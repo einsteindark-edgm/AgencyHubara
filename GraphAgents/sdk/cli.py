@@ -285,7 +285,13 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+#: presupuesto del stdout compact — margen holgado bajo el techo ~24.000 chars de SSM.
+_COMPACT_BUDGET = 18_000
+
+
 def _compact_workflow(wf: dict) -> dict:
+    import json
+
     def slim(t: dict) -> dict:
         out = {"taskType": t.get("taskType"), "status": t.get("status")}
         if t.get("taskType") == "HUMAN":
@@ -294,13 +300,63 @@ def _compact_workflow(wf: dict) -> dict:
             out["reasonForIncompletion"] = t.get("reasonForIncompletion")
         return out
 
-    return {
+    compact = {
         "workflowId": wf.get("workflowId"),
         "status": wf.get("status"),
         "reasonForIncompletion": wf.get("reasonForIncompletion"),
         "output": wf.get("output"),
         "tasks": [slim(t) for t in wf.get("tasks") or []],
     }
+    # 2º techo (run real bd3c2d4e, 2026-07-10): el output.result de un COMPLETED
+    # echoea el ESTADO ENTERO del grafo (input de Meta incluido) y por sí solo
+    # rompe los 24KB → SSM trunca → el buzón no parsea y el poller queda ciego.
+    # Se podan las keys más pesadas del state hasta caber (lo liviano — el
+    # reporte/verdict — sobrevive) y lo podado queda declarado en _pruned_keys.
+    if len(json.dumps(compact, ensure_ascii=False)) > _COMPACT_BUDGET:
+        overhead = len(json.dumps({**compact, "output": None}, ensure_ascii=False))
+        compact["output"] = _prune_output(compact.get("output"), budget=_COMPACT_BUDGET - overhead)
+    return compact
+
+
+def _prune_output(output, *, budget: int):
+    """`{'result': '<json/repr del state>'}` → mismo shape con las keys más pesadas
+    del state podadas hasta que la serialización quepa en `budget`. Forma
+    desconocida o no parseable → `{'result': None, '_truncated': True}` (el buzón
+    parsea SIEMPRE; perder el detalle es mejor que un JSON cortado a la mitad)."""
+    import ast
+    import json
+
+    def _fits(state: dict) -> bool:
+        wrapped = {"result": json.dumps(state, ensure_ascii=False, default=str)}
+        return len(json.dumps(wrapped, ensure_ascii=False)) <= budget
+
+    if not (isinstance(output, dict) and isinstance(output.get("result"), str)):
+        return {"result": None, "_truncated": True}
+    raw = output["result"]
+    try:
+        state = json.loads(raw)
+    except ValueError:
+        try:
+            state = ast.literal_eval(raw)
+        except (ValueError, SyntaxError):
+            return {"result": None, "_truncated": True}
+    if not isinstance(state, dict):
+        return {"result": None, "_truncated": True}
+
+    pruned: list[str] = []
+    state = dict(state)
+    state["_pruned_keys"] = pruned
+    by_size = sorted(
+        (k for k in state if k != "_pruned_keys"),
+        key=lambda k: len(json.dumps(state[k], ensure_ascii=False, default=str)),
+        reverse=True,
+    )
+    for key in by_size:
+        if _fits(state):
+            break
+        pruned.append(key)
+        state.pop(key)
+    return {"result": json.dumps(state, ensure_ascii=False, default=str)}
 
 
 def cmd_cases(args: argparse.Namespace) -> int:

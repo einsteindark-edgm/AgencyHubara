@@ -289,8 +289,12 @@ class Boto3Launcher:
         try:
             return json.loads(stdout.strip())
         except (ValueError, TypeError) as exc:
+            # El stdout truncado por SSM puede medir 24-30KB — al mensaje va solo el
+            # inicio (los logs/records no cargan con el payload entero).
+            head = stdout[:600]
             raise RuntimeError(
-                f"Boto3Launcher: el stdout de `sdk.cli status` no es JSON parseable: {stdout!r}"
+                f"Boto3Launcher: el stdout de `sdk.cli status` no es JSON parseable "
+                f"({len(stdout)} chars; ¿truncado por SSM?): {head!r}…"
             ) from exc
 
     def resume(self, execution_id: str, decision: dict) -> None:

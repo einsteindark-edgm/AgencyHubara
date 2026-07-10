@@ -86,3 +86,37 @@ def test_cmd_status_compact_reduce_el_json_para_ssm(monkeypatch, capsys) -> None
         "status": "COMPLETED",
     }
     assert d["tasks"][1]["inputData"] == {"context": {"monto": 5}}
+
+
+def test_cmd_status_compact_poda_el_output_gigante_de_un_completed(monkeypatch, capsys) -> None:
+    """Run real bd3c2d4e (2026-07-10, primer análisis con datos reales): el
+    output.result de un COMPLETED echoea el ESTADO ENTERO del grafo (input de
+    Meta incluido) → ~30KB → SSM trunca a 24KB → el buzón no parsea y el poller
+    queda CIEGO reintentando en silencio para siempre. --compact debe podar las
+    keys más pesadas del result hasta caber, preservando las livianas (el
+    reporte/verdict que el operador ve) y declarando lo podado."""
+    state = {
+        "meta_insights": {"data": ["x" * 100] * 400},  # el eco gigante (~40KB)
+        "markdown": "## Hubara — Ads Analytics",
+        "verdict": "ok",
+    }
+    fat = {
+        "workflowId": "wf-2",
+        "status": "COMPLETED",
+        "reasonForIncompletion": None,
+        "output": {"result": json.dumps(state)},
+        "tasks": [],
+    }
+    monkeypatch.setattr("sdk.trace.fetch_workflow", lambda eid: fat)
+    args = argparse.Namespace(execution_id="wf-2", runtime="agentspan", compact=True)
+
+    assert cli.cmd_status(args) == 0
+    out = capsys.readouterr().out
+    assert len(out) < 20000, f"debe caber bajo el techo de SSM: {len(out)}"
+    d = json.loads(out)
+    assert d["status"] == "COMPLETED"
+    inner = json.loads(d["output"]["result"])
+    assert inner["markdown"] == "## Hubara — Ads Analytics"  # lo liviano sobrevive
+    assert inner["verdict"] == "ok"
+    assert "meta_insights" not in inner  # el eco gigante se poda
+    assert "meta_insights" in inner["_pruned_keys"]  # y queda declarado

@@ -216,3 +216,62 @@ def test_reconcile_in_flight_ignora_los_terminales() -> None:
 
     assert bus.published == []  # nada que re-armar ni re-emitir
     assert record.read_run("rr3")["status"] == "failed"
+
+
+def test_poll_loop_despierta_la_caja_tras_fallos_consecutivos() -> None:
+    """Race del autostop (run bd3c2d4e, 2026-07-10): la caja se apaga sola antes
+    de que el poller coseche el resultado — cada fetch falla (InvalidInstanceId)
+    y el run queda ciego para siempre. Tras K fallos consecutivos el poll
+    DESPIERTA la caja (start_box, idempotente) y recién ahí cosecha."""
+    record.create_run("rw1", agent="ads-analytics", input={})
+    record.append_event("rw1", {"event_id": "rw1:s", "type": "run.started", "payload": {"execution_id": "e"}})
+
+    class _SleepingBoxLauncher:
+        def __init__(self) -> None:
+            self.awake = False
+            self.wakes = 0
+
+        def start_box(self) -> None:
+            self.wakes += 1
+            self.awake = True
+
+        def fetch_status(self, execution_id: str) -> dict:
+            if not self.awake:
+                raise RuntimeError("InvalidInstanceId: la caja está dormida (autostop)")
+            return {"status": "COMPLETED", "output": {"result": "{'ok': 1}"}, "tasks": []}
+
+    lz = _SleepingBoxLauncher()
+    bus = _FakeBus()
+    asyncio.run(orchestrator.poll_loop(
+        "rw1", "e", bus=bus, fetch=lz.fetch_status, launcher=lz, interval=0.0, max_polls=20,
+    ))
+
+    assert lz.wakes >= 1  # despertó la caja en vez de reintentar ciego
+    rec = record.read_run("rw1")
+    assert rec["status"] == "completed"  # y cosechó el resultado
+    assert "run.result" in [t for (_, t, _, _) in bus.published]
+
+
+def test_poll_loop_loguea_los_fetch_fallidos(caplog) -> None:
+    """Horas de debugging a CIEGAS (bd3c2d4e): el poll tragaba el error real sin
+    loguear nada — imposible diagnosticar desde los logs del API. El fallo queda
+    en el log con la causa."""
+    import logging as _logging
+
+    record.create_run("rl1", agent="ads-analytics", input={})
+    record.append_event("rl1", {"event_id": "rl1:s", "type": "run.started", "payload": {"execution_id": "e"}})
+
+    calls = {"n": 0}
+
+    def _flaky(execution_id: str) -> dict:
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise RuntimeError("el stdout de `sdk.cli status` no es JSON parseable: '{trunc")
+        return {"status": "COMPLETED", "output": {"result": "{}"}, "tasks": []}
+
+    with caplog.at_level(_logging.WARNING):
+        asyncio.run(orchestrator.poll_loop(
+            "rl1", "e", bus=_FakeBus(), fetch=_flaky, interval=0.0, max_polls=10,
+        ))
+
+    assert any("JSON parseable" in r.getMessage() for r in caplog.records)
