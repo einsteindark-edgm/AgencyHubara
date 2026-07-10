@@ -63,7 +63,12 @@ async def dispatch_window_strategist_activity(
     Devuelve el execution-id de Conductor para pollearlo."""
     launcher = get_launcher()
     launcher.start_box()
-    return launcher.dispatch("window-strategist", snapshot, run_id=run_id)
+    # El contrato del agente (manifest inputs + case window-strategist-ciclo)
+    # espera el snapshot ENVUELTO: {"payload": snapshot}. Mandarlo crudo hace
+    # fallar el nodo ingest con "falta 'payload'" (run prod ce80f73f).
+    return launcher.dispatch(
+        "window-strategist", {"payload": snapshot}, run_id=run_id
+    )
 
 
 @activity.defn(name="poll_window_strategist")
