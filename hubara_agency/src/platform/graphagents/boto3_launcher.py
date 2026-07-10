@@ -281,7 +281,10 @@ class Boto3Launcher:
         progreso: va por SSM/instance-id como el dispatch, SIN ninguna conexión directa a la caja."""
         ec2, ssm = self._clients()
         instance_id = self._instance_id(ec2)
-        cli_args = f"status {_shell_quote(execution_id)} --runtime agentspan"
+        # --compact: SSM trunca stdout a ~24KB (caso 7efb9fc6) y el JSON crudo
+        # de Conductor echoea el input entero en tasks[] — no cabe. El compact
+        # trae exactamente lo que interpret() consume.
+        cli_args = f"status {_shell_quote(execution_id)} --compact --runtime agentspan"
         stdout = self._run_cli(ssm, instance_id, cli_args)
         try:
             return json.loads(stdout.strip())
