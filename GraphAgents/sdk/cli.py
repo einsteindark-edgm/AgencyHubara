@@ -182,8 +182,11 @@ def cmd_resume(args: argparse.Namespace) -> int:
 
     decision = json.loads(args.decision) if args.decision else None
     ex = AgentSpanRuntime().resume(args.execution_id, decision=decision)
-    print(f"execution {ex.id}: {ex.status}")
-    print(json.dumps(ex.output, ensure_ascii=False, indent=2))
+    print(f"execution {ex.id}: {ex.status}", flush=True)
+    print(json.dumps(ex.output, ensure_ascii=False, indent=2), flush=True)
+    # Mismo eslabón 5 que cmd_start: los workers post-approval viven en ESTE
+    # proceso — sin el wait, las tasks después de la HUMAN task quedan huérfanas.
+    _wait_terminal(ex.id)
     return 0 if ex.status != "failed" else 1
 
 
@@ -214,8 +217,47 @@ def cmd_start(args: argparse.Namespace) -> int:
     else:
         inp = seed
     eid = AgentSpanRuntime().start(build_agent(m, ROOT), inp)
-    print(f"execution {eid}: started")
+    # El eid va PRIMERO y flusheado: el buzón lo parsea aunque el wait toque techo.
+    print(f"execution {eid}: started", flush=True)
+    # Eslabón 5 (runs 5053a533/13622474 RUNNING eternos, 2026-07-10): los task
+    # workers de AgentSpan viven DENTRO de este proceso (thread daemon del
+    # runtime.start). Si el CLI sale ya, los workers mueren y las tasks quedan
+    # huérfanas en Conductor. Esperamos el terminal (o techo < timeout SSM).
+    _wait_terminal(eid)
     return 0
+
+
+#: intervalo del poll del wait (0 en tests). Techo: _WAIT_MAX_POLLS × esto.
+_WAIT_POLL_SECONDS = 1.0
+
+#: ~240s de techo — por DEBAJO del timeout SSM del buzón (300s): si el run
+#: cuelga server-side, el CLI sale limpio y el buzón sigue polleando por status.
+_WAIT_MAX_POLLS = 240
+
+#: estados que liberan al CLI: completed/failed (terminal) y paused (HITL —
+#: nada más que ejecutar localmente hasta el `resume`, que re-hostea workers).
+_WAIT_DONE = {"completed", "failed", "paused"}
+
+
+def _wait_terminal(execution_id: str) -> None:
+    """Mantiene el proceso vivo (⇒ los task workers daemon siguen polleando
+    Conductor) hasta que la ejecución llegue a un estado en `_WAIT_DONE`."""
+    import time
+
+    from sdk.runtime import AgentSpanRuntime
+
+    rt = AgentSpanRuntime()
+    consecutive_errors = 0
+    for _ in range(_WAIT_MAX_POLLS):
+        try:
+            if rt.get(execution_id).status in _WAIT_DONE:
+                return
+            consecutive_errors = 0
+        except Exception:  # noqa: BLE001 — un poll roto no debe matar el wait
+            consecutive_errors += 1
+            if consecutive_errors >= 5:
+                return  # sin status observable no hay wait útil — salir limpio
+        time.sleep(_WAIT_POLL_SECONDS)
 
 
 def cmd_status(args: argparse.Namespace) -> int:
