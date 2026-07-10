@@ -226,8 +226,24 @@ npm run vsix   # vsce package --no-dependencies → acktos-studio-0.0.1.vsix
 `node_modules` en el paquete. El VSIX incluye `dist/`, `schemas/`,
 `test-plans/`, `seams.yaml`, `walkthrough/`, `package.json`, `readme.md` —
 nada de `src/`/`webview/` fuente ni `scripts/` (dev-only). Instalar:
-`code --install-extension acktos-studio-0.0.1.vsix` (o "Install from
+`code --install-extension acktos-studio-<versión>.vsix` (o "Install from
 VSIX…" en la UI de Extensions).
+
+## Self-update (releases)
+
+La extensión es sideloaded — el Auto Update de VS Code solo cubre el
+Marketplace. En su lugar, **se actualiza sola desde el repo**
+(`src/selfUpdate.ts`): al activar compara su versión instalada contra la de
+`vscode-hubara/package.json` del workspace; si el repo trae una más nueva
+(llegó por `git pull`), re-empaqueta el VSIX in-process (esbuild + vsce con
+el node del propio VS Code) y lo instala — el operador solo ve el toast
+"Recargar ahora". Chequeo manual: paleta → "Acktos: Buscar actualización de
+la extensión".
+
+**Protocolo de release**: todo PR que cambie la extensión DEBE bumpear
+`version` en `package.json` — sin bump, las instancias instaladas no se
+enteran del cambio. Requisito en la máquina del operador: `node_modules`
+presente en `vscode-hubara/` (si falta, la extensión lo avisa con un toast).
 
 ## Export
 
