@@ -101,7 +101,13 @@ class FilesystemMessageHistoryStore:
             event["tools_used"] = list(tools_used)
         self._append(session_id, event)
 
-    def append_human_event(self, session_id: str, content: str) -> None:
+    def append_human_event(
+        self,
+        session_id: str,
+        content: str,
+        *,
+        image_url: str | None = None,
+    ) -> None:
         """Mensaje del humano operador via dashboard handoff.
 
         Rol ``assistant`` (no rol nuevo): cuando el bot retome el chat,
@@ -111,13 +117,20 @@ class FilesystemMessageHistoryStore:
         del dashboard lo proyecte como ``ui_type: human_message`` y pinte una
         burbuja distinta, y (2) quede traza histórica de qué fue agente vs
         humano cuando un analista revise el JSONL.
+
+        ``image_url``: ref relativa a una foto que el operador mandó al cliente,
+        ya persistida en el media store outbound (``persist_outbound_image``).
+        Simétrico al ``image_url`` de ``append_user_event`` (inbound). Cuando
+        está presente el dashboard re-renderiza la foto en la burbuja saliente;
+        el texto (``content``) queda como caption. Ausente en mensajes de solo
+        texto — no se persiste el campo para no ensuciar el JSONL con nulls.
         """
-        self._append(
-            session_id,
-            {
-                "role": "assistant",
-                "sender": "human",
-                "content": content,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            },
-        )
+        event: dict[str, Any] = {
+            "role": "assistant",
+            "sender": "human",
+            "content": content,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        if image_url:
+            event["image_url"] = image_url
+        self._append(session_id, event)

@@ -29,11 +29,12 @@ Reusan helpers extraídos en este mismo PR:
 from __future__ import annotations
 
 import time
+import uuid
 from typing import Annotated, Literal
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Path
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, File, HTTPException, Path, UploadFile
+from pydantic import BaseModel, Field, model_validator
 
 from src.plugins.chats.api.dashboard_composition import (
     get_history_store,
@@ -45,13 +46,28 @@ from src.platform.constants import (
     ROUTE_REMARKETING,
     ROUTE_VENTAS,
 )
+from src.platform.media.store import media_url_for, persist_outbound_image
 from src.platform.session_history import FilesystemMessageHistoryStore
 from src.platform.temporal.dispatcher import (
     start_remarketing_for_session,
     terminate_session_workflows,
 )
-from src.platform.whatsapp.activities import send_message_to_session
+from src.platform.whatsapp.activities import (
+    send_image_to_session,
+    send_message_to_session,
+)
+from src.platform.whatsapp.client import MediaUploadError, upload_media
+from src.platform.whatsapp.window import is_service_window_closed
 from src.platform.state import FilesystemMetadataStore
+
+#: Mimes de imagen que WhatsApp renderiza en `type=image`. Otros (gif, webp)
+#: Meta los trata distinto (sticker/animación) — fuera de scope: solo fotos.
+_ALLOWED_IMAGE_MIMES: frozenset[str] = frozenset({"image/jpeg", "image/png"})
+
+#: Límite de tamaño de imagen post-compresión (5 MB — el máximo de Meta para
+#: `type=image`). El frontend comprime antes de subir, así que en la práctica
+#: rara vez se acerca; esto es la red de seguridad server-side.
+_MAX_IMAGE_BYTES: int = 5 * 1024 * 1024
 
 logger = structlog.get_logger()
 
@@ -70,7 +86,31 @@ class InterveneRequest(BaseModel):
 
 
 class SendMessageRequest(BaseModel):
-    text: str = Field(min_length=1, max_length=4096)
+    """Mensaje del operador humano. Al menos uno de `text` / `attachment_id`.
+
+    * `text` solo → mensaje de texto (path legacy, sin cambios).
+    * `attachment_id` → media_id de Meta devuelto por `POST .../media` (fase A);
+      `text` opcional pasa a ser el caption de la foto.
+    * `client_message_id` → UUID del cliente para idempotencia: un retry con el
+      mismo id NO re-envía a WhatsApp (dedup real, no solo de UI).
+    """
+
+    text: str | None = Field(default=None, max_length=4096)
+    attachment_id: str | None = Field(default=None, max_length=256)
+    client_message_id: str | None = Field(default=None, max_length=128)
+
+    @model_validator(mode="after")
+    def _text_or_attachment(self) -> SendMessageRequest:
+        has_text = bool(self.text and self.text.strip())
+        if not has_text and not self.attachment_id:
+            raise ValueError("se requiere `text` o `attachment_id`")
+        return self
+
+
+class MediaUploadResponse(BaseModel):
+    ok: bool
+    attachment_id: str  # media_id de Meta — se referencia en el send
+    media_ref: str  # url servible por el dashboard (GET /api/dashboard/media/...)
 
 
 class ReturnToBotRequest(BaseModel):
@@ -98,6 +138,7 @@ class HumanMessageResponse(BaseModel):
     role: str
     sender: str
     content: str
+    image_url: str | None = None
 
 
 # ---------- Helpers ----------
@@ -240,6 +281,89 @@ async def intervene(
     )
 
 
+def _require_humano_route(data: dict, session_id: str, verb: str) -> None:
+    """409 si la sesión no está en ruta humano (evita respuestas concurrentes)."""
+    active_route = data.get("active_route", ROUTE_VENTAS)
+    if active_route != ROUTE_HUMANO:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"La sesión {session_id} no está en ruta humano "
+                f"(active_route={active_route!r}). Pulsa 'Intervenir' antes "
+                f"de {verb}."
+            ),
+        )
+
+
+@router.post(
+    "/sessions/{session_id}/media",
+    response_model=MediaUploadResponse,
+)
+async def upload_human_media(
+    session_id: Annotated[str, Path()],
+    metadata_store: Annotated[FilesystemMetadataStore, Depends(get_metadata_store)],
+    file: Annotated[UploadFile, File()],
+) -> MediaUploadResponse:
+    """Fase A del envío de foto: el operador sube el archivo.
+
+    Persistimos la foto en el vault (para re-renderizarla en el histórico) y la
+    subimos a Meta (`upload_media`) para obtener un `media_id`. Devolvemos el
+    `attachment_id` (= media_id) + `media_ref` (url servible). El envío al
+    cliente es una llamada SEPARADA (`POST .../messages` con `attachment_id`),
+    para que un retry del send nunca re-suba los bytes.
+    """
+    data = metadata_store.read(session_id)
+    _require_humano_route(data, session_id, "subir fotos")
+
+    mime = (file.content_type or "").split(";")[0].strip().lower()
+    if mime not in _ALLOWED_IMAGE_MIMES:
+        raise HTTPException(
+            status_code=415,
+            detail=f"Tipo no soportado: {mime!r}. Solo JPEG o PNG.",
+        )
+
+    content = await file.read()
+    if len(content) > _MAX_IMAGE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Imagen demasiado grande ({len(content)} bytes; máx {_MAX_IMAGE_BYTES}).",
+        )
+
+    # 1. Persistir en disco (token opaco → filename `out-...`).
+    filename = persist_outbound_image(session_id, content, mime, token=uuid.uuid4().hex)
+    media_ref = media_url_for(session_id, filename)
+
+    # 2. Subir a Meta. Falla → 502 (frontend reintenta SOLO la subida).
+    try:
+        media_id = await upload_media(data.get("phone_number_id") or _env_phone(), content, mime)
+    except MediaUploadError as e:
+        logger.error("dashboard.upload_media failed", session_id=session_id, error=str(e))
+        raise HTTPException(status_code=502, detail=f"WhatsApp media upload falló: {e}")
+
+    # 3. Registrar el mapping media_id → media_ref para que el send (fase B)
+    #    persista la foto en el histórico sin confiar en el frontend.
+    outbound = data.setdefault("outbound_media", {})
+    outbound[media_id] = {"media_ref": media_ref, "filename": filename, "mime": mime}
+    metadata_store.write(session_id, data)
+
+    logger.info(
+        "dashboard.upload_human_media",
+        session_id=session_id,
+        bytes=len(content),
+        media_id=media_id,
+    )
+    return MediaUploadResponse(ok=True, attachment_id=media_id, media_ref=media_ref)
+
+
+def _env_phone() -> str:
+    import os
+
+    phone = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
+    if not phone:
+        raise HTTPException(status_code=500, detail="WHATSAPP_PHONE_NUMBER_ID no configurado")
+    return phone
+
+
 @router.post(
     "/sessions/{session_id}/messages",
     response_model=HumanMessageResponse,
@@ -250,42 +374,81 @@ async def send_human_message(
     metadata_store: Annotated[FilesystemMetadataStore, Depends(get_metadata_store)],
     history_store: Annotated[FilesystemMessageHistoryStore, Depends(get_history_store)],
 ) -> HumanMessageResponse:
-    """El humano manda un mensaje al cliente desde el dashboard.
+    """El humano manda un mensaje (texto y/o foto) al cliente desde el dashboard.
 
-    Guarda: solo permitido si la sesión está en ruta humano. Si la ruta
-    cambió (ej. el humano olvidó pulsar Intervenir o ya devolvió al bot),
-    el endpoint rechaza con 409 para evitar respuestas concurrentes.
+    Guards:
+      * ruta humano (409) — evita respuestas concurrentes humano + bot.
+      * ventana de servicio 24h (409) — si SABEMOS que cerró, cortamos antes de
+        que Meta rechace el free-form en silencio (fix del bug latente). Si la
+        metadata de ventana no está poblada, no bloquea (fail-open).
+      * idempotencia por `client_message_id` — un retry no re-envía.
     """
     data = metadata_store.read(session_id)
-    active_route = data.get("active_route", ROUTE_VENTAS)
-    if active_route != ROUTE_HUMANO:
+    _require_humano_route(data, session_id, "mandar mensajes")
+
+    # Guard de ventana 24h — solo bloquea si sabemos que cerró.
+    if is_service_window_closed(int(time.time() * 1000), data):
         raise HTTPException(
             status_code=409,
             detail=(
-                f"La sesión {session_id} no está en ruta humano "
-                f"(active_route={active_route!r}). Pulsa 'Intervenir' antes "
-                "de mandar mensajes."
+                "La ventana de servicio de 24h de WhatsApp está cerrada: no se "
+                "puede mandar un mensaje libre. El cliente debe escribir primero, "
+                "o hay que usar una plantilla aprobada."
             ),
         )
 
-    # 1. Mandar via WhatsApp Cloud API (puede tardar 1.5s por chunk).
-    await send_message_to_session(session_id, payload.text)
+    # Idempotencia: si este client_message_id ya se procesó, replay sin re-enviar.
+    cmid = payload.client_message_id
+    processed: list[str] = data.get("sent_human_message_ids", [])
+    if cmid and cmid in processed:
+        logger.info(
+            "dashboard.send_human_message replay (idempotent)",
+            session_id=session_id,
+            client_message_id=cmid,
+        )
+        return HumanMessageResponse(
+            ok=True, role="assistant", sender="human", content=payload.text or ""
+        )
 
-    # 2. Persistir en el JSONL con `sender=human` — esto es la memoria del
-    # chat que (a) el dashboard lee para mostrar al humano, (b) el LLM
-    # verá al retomar el chat porque exoclaw construye el prompt desde aquí.
-    history_store.append_human_event(session_id, payload.text)
+    caption = payload.text.strip() if payload.text and payload.text.strip() else None
+    image_ref: str | None = None
+
+    if payload.attachment_id:
+        # Envío de FOTO (fase B). El media_id ya vive en Meta (fase A).
+        image_ref = (data.get("outbound_media", {}).get(payload.attachment_id) or {}).get(
+            "media_ref"
+        )
+        result = await send_image_to_session(
+            session_id, media_id=payload.attachment_id, caption=caption
+        )
+        if not result.ok:
+            raise HTTPException(
+                status_code=502, detail=f"WhatsApp rechazó la foto: {result.error}"
+            )
+        history_store.append_human_event(session_id, caption or "", image_url=image_ref)
+    else:
+        # Envío de TEXTO (path legacy).
+        await send_message_to_session(session_id, payload.text)
+        history_store.append_human_event(session_id, payload.text)
+
+    # Marcar el client_message_id como procesado (idempotencia futura).
+    if cmid:
+        processed.append(cmid)
+        data["sent_human_message_ids"] = processed[-200:]  # cap para no crecer sin límite
+        metadata_store.write(session_id, data)
 
     logger.info(
         "dashboard.send_human_message",
         session_id=session_id,
-        chars=len(payload.text),
+        has_image=bool(payload.attachment_id),
+        chars=len(payload.text or ""),
     )
     return HumanMessageResponse(
         ok=True,
         role="assistant",
         sender="human",
-        content=payload.text,
+        content=caption or (payload.text or ""),
+        image_url=image_ref,
     )
 
 

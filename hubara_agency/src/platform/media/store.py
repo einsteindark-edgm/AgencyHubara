@@ -121,6 +121,32 @@ def persist_inbound_image(
     return filename
 
 
+def persist_outbound_image(
+    session_id: str, data: bytes, mime_type: str | None, *, token: str
+) -> str:
+    """Guarda una foto que el OPERADOR humano manda al cliente.
+
+    Simétrico a :func:`persist_inbound_image` pero en el sentido saliente: el
+    operador sube la foto desde el dashboard/app y la persistimos en el mismo
+    vault para que el histórico del chat la pueda re-renderizar (el endpoint
+    ``GET /api/dashboard/media/...`` la sirve sin cambios).
+
+    A diferencia del inbound (keyed por el ``media_id`` de Meta, idempotente),
+    acá el nombre deriva de un ``token`` opaco que genera el caller (uuid) — no
+    tenemos el ``media_id`` hasta subir a Meta. El prefijo ``out-`` distingue
+    salientes de entrantes en el mismo directorio. Devuelve el ``filename``.
+    """
+    # El token lo generamos nosotros (uuid) pero defendemos igual: a diferencia
+    # de `_sanitize_media_id` (que preserva `.`), acá colapsamos TODO lo que no
+    # sea alfanumérico/`_`/`-` — así ningún `..` sobrevive en el filename.
+    safe_token = re.sub(r"[^A-Za-z0-9_-]", "_", token)[:120] or "img"
+    filename = f"out-{safe_token}{_ext_for_mime(mime_type)}"
+    media_dir = _media_dir(session_id)
+    media_dir.mkdir(parents=True, exist_ok=True)
+    (media_dir / filename).write_bytes(data)
+    return filename
+
+
 def resolve_media_file(session_id: str, filename: str) -> Path | None:
     """Resuelve el archivo a servir, con guardas anti path-traversal.
 

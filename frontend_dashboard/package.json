@@ -15,7 +15,11 @@
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
     "test:arch": "vitest run src/test/architecture",
-    "arch:cruise": "depcruise --config .dependency-cruiser.cjs src"
+    "arch:cruise": "depcruise --config .dependency-cruiser.cjs src",
+    "tauri": "tauri",
+    "tauri:android:init": "tauri android init",
+    "tauri:android:dev": "tauri android dev",
+    "tauri:android:build": "tauri android build"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.1",

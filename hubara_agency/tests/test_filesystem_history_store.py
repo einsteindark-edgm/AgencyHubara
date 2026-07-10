@@ -166,6 +166,37 @@ def test_append_human_event_writes_assistant_role_with_sender_marker(tmp_path):
     assert "T" in parsed["timestamp"]
 
 
+def test_append_human_event_persists_image_url_when_provided(tmp_path):
+    """El operador puede mandar una FOTO desde el dashboard: cuando se pasa
+    `image_url` (ref al media store outbound), se persiste en el evento humano
+    para que el dashboard re-renderice la burbuja con la imagen (simetría con
+    `append_user_event(image_url=...)` que ya existe para inbound)."""
+    store = FilesystemMessageHistoryStore(tmp_path)
+    store.append_human_event(
+        "wa_1",
+        "Mirá el color real 🤍",
+        image_url="/api/dashboard/media/wa_1/out-abc.jpg",
+    )
+
+    log = tmp_path / "wa_1" / "sessions" / "wa_1.jsonl"
+    parsed = json.loads(log.read_text(encoding="utf-8").strip())
+    assert parsed["role"] == "assistant"
+    assert parsed["sender"] == "human"
+    assert parsed["content"] == "Mirá el color real 🤍"
+    assert parsed["image_url"] == "/api/dashboard/media/wa_1/out-abc.jpg"
+
+
+def test_append_human_event_omits_image_url_when_absent(tmp_path):
+    """Sin `image_url` (mensaje de solo texto), el campo NO aparece — no
+    ensuciamos el JSONL con nulls que el clasificador tenga que ignorar."""
+    store = FilesystemMessageHistoryStore(tmp_path)
+    store.append_human_event("wa_1", "solo texto")
+
+    log = tmp_path / "wa_1" / "sessions" / "wa_1.jsonl"
+    parsed = json.loads(log.read_text(encoding="utf-8").strip())
+    assert "image_url" not in parsed
+
+
 def test_append_human_event_preserves_non_ascii(tmp_path):
     store = FilesystemMessageHistoryStore(tmp_path)
     store.append_human_event("wa_1", "Voy a verificar el envío 🤍")

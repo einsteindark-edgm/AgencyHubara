@@ -14,6 +14,7 @@ from src.platform.whatsapp.window import (
     is_in_ctwa_window,
     is_in_service_window,
     is_message_billable,
+    is_service_window_closed,
     watchdog_fire_at,
 )
 
@@ -174,6 +175,8 @@ class TestWatchdogFireAt:
     def test_returns_none_when_field_missing(self):
         assert watchdog_fire_at({}) is None
 
+    # (los tests de is_service_window_closed viven en TestIsServiceWindowClosed)
+
     def test_returns_none_when_field_none(self):
         assert watchdog_fire_at({"service_window_expires_at_ms": None}) is None
 
@@ -189,3 +192,33 @@ class TestWatchdogFireAt:
         result = watchdog_fire_at(metadata)
         assert result is not None
         assert result < NOW_MS  # fire_at quedó en el pasado
+
+
+# =============================================================================
+# is_service_window_closed — guard del operador (fail-open cuando se desconoce)
+# =============================================================================
+
+
+class TestIsServiceWindowClosed:
+    """`is_service_window_closed` es el guard que usa la ruta del operador
+    humano. Distinto de `not is_in_service_window`: solo devuelve True cuando
+    SABEMOS que la ventana cerró (campo presente y vencido). Si el campo no
+    existe (dev, seed data, sesión sin ingest de ventana) devuelve False —
+    fail-open, para no bloquear al operador por metadata incompleta."""
+
+    def test_closed_when_expiry_passed(self):
+        exp = NOW_MS - ONE_HOUR_MS  # venció hace 1h
+        assert is_service_window_closed(NOW_MS, {"service_window_expires_at_ms": exp}) is True
+
+    def test_open_when_expiry_future(self):
+        exp = NOW_MS + ONE_HOUR_MS
+        assert is_service_window_closed(NOW_MS, {"service_window_expires_at_ms": exp}) is False
+
+    def test_not_closed_when_field_missing(self):
+        # Desconocido → NO bloquea (fail-open). Preserva el comportamiento
+        # actual del endpoint del operador en dev/seed.
+        assert is_service_window_closed(NOW_MS, {}) is False
+
+    def test_not_closed_when_field_none_or_non_int(self):
+        assert is_service_window_closed(NOW_MS, {"service_window_expires_at_ms": None}) is False
+        assert is_service_window_closed(NOW_MS, {"service_window_expires_at_ms": "abc"}) is False

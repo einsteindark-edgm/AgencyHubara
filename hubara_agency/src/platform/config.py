@@ -49,6 +49,10 @@ WORKSPACE_VAULT_DIR = Path(os.getenv("WORKSPACE_VAULT_DIR", "./hubara_vault")).r
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "my_secret_verify_token")
 WHATSAPP_ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN", "")
 WHATSAPP_API_URL = "https://graph.facebook.com/v21.0/{phone_number_id}/messages"
+# Endpoint de subida de media (multipart). Devuelve un `media_id` que luego se
+# referencia en un mensaje `type=image`. Lo usa el operador humano para mandar
+# fotos desde el dashboard/app sin exponer el vault (que está detrás de auth).
+WHATSAPP_MEDIA_API_URL = "https://graph.facebook.com/v21.0/{phone_number_id}/media"
 # HU-WA24H-001 pre-mortem F9.2: app secret para verificar HMAC del
 # X-Hub-Signature-256 header de webhook POST. Sin esto, cualquier
 # atacante puede inyectar fake delivery statuses al endpoint y corromper

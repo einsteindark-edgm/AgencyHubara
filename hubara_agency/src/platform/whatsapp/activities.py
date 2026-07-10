@@ -104,6 +104,37 @@ async def send_message_to_session(session_id: str, message: str) -> None:
         await asyncio.sleep(1.5)
 
 
+async def send_image_to_session(
+    session_id: str,
+    media_id: str,
+    caption: str | None = None,
+) -> OutboundResult:
+    """Envía una imagen (ya subida a Meta, referenciada por `media_id`) al
+    cliente de `session_id`.
+
+    Pura (no toca Temporal). Resuelve `phone_number_id` con el mismo criterio
+    que `send_message_to_session` (metadata.json → env fallback). Reutilizada
+    por el dashboard handoff para que el operador humano mande fotos. El
+    `caption` (opcional) es el texto que acompaña la foto en la misma burbuja.
+    """
+    from_number = session_id.replace(WHATSAPP_SESSION_PREFIX, "")
+
+    phone_number_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
+    if not phone_number_id:
+        raise RuntimeError("WHATSAPP_PHONE_NUMBER_ID not configured")
+
+    try:
+        metadata_file = WORKSPACE_VAULT_DIR / session_id / "metadata.json"
+        if metadata_file.exists():
+            data = json.loads(metadata_file.read_text(encoding="utf-8"))
+            phone_number_id = data.get("phone_number_id", phone_number_id)
+    except (OSError, json.JSONDecodeError):
+        pass
+
+    payload = whatsapp_client.wa_dtos.ImageOutbound(media_id=media_id, caption=caption)
+    return await whatsapp_client.send_image(phone_number_id, from_number, payload)
+
+
 @activity.defn(name="send_whatsapp_message_activity")
 @with_heartbeat(every=10)
 async def send_whatsapp_message_activity(session_id: str, message: str) -> None:

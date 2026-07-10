@@ -32,11 +32,25 @@ from typing import Any
 import httpx
 import structlog
 
-from src.platform.config import WHATSAPP_ACCESS_TOKEN, WHATSAPP_API_URL
+from src.platform.config import (
+    WHATSAPP_ACCESS_TOKEN,
+    WHATSAPP_API_URL,
+    WHATSAPP_MEDIA_API_URL,
+)
 from src.platform.whatsapp import dtos as wa_dtos
 from src.platform.whatsapp import outbound as wa_outbound
 
 logger = structlog.get_logger()
+
+
+class MediaUploadError(RuntimeError):
+    """La subida de bytes a `/{phone_id}/media` falló (transporte o 4xx/5xx).
+
+    A diferencia del envío de mensajes (que hace swallow devolviendo
+    ``OutboundResult(ok=False)``), la subida PROPAGA el fallo: el endpoint del
+    dashboard necesita distinguir "subí" de "Meta rechazó" para devolver 502 y
+    que el frontend reintente SOLO la subida, sin re-mandar el mensaje.
+    """
 
 
 # =============================================================================
@@ -126,6 +140,62 @@ async def send_typing_indicator(
                 )
     except Exception as e:  # noqa: BLE001 - best-effort
         logger.info("Typing indicator request failed (ignored)", error=str(e))
+
+
+# =============================================================================
+# Media upload (bytes → media_id) — subida del operador humano
+# =============================================================================
+
+
+async def upload_media(
+    phone_number_id: str,
+    content: bytes,
+    mime_type: str,
+) -> str:
+    """Sube bytes a `/{phone_id}/media` y devuelve el `media_id` de Meta.
+
+    Multipart form: ``messaging_product=whatsapp`` + ``type=<mime>`` + el
+    archivo en ``file``. El ``media_id`` resultante es válido ~30 días y se
+    referencia en un mensaje ``type=image`` vía :func:`send_image`
+    (``ImageOutbound(media_id=...)``).
+
+    A diferencia de los ``send_*`` este método NO hace swallow: cualquier fallo
+    (transporte o status != 200) levanta :class:`MediaUploadError`. Sin token
+    configurado (dev/tests) devuelve un id sintético sin tocar la red.
+    """
+    if not WHATSAPP_ACCESS_TOKEN:
+        logger.warning("FakeUploadMedia (no token configured)", mime=mime_type)
+        return f"fake-media-{abs(hash(content)) % 10_000_000}"
+
+    url = WHATSAPP_MEDIA_API_URL.format(phone_number_id=phone_number_id)
+    headers = {"Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}"}
+    # `type` debe matchear el mime real del archivo; `file` lleva los bytes.
+    files = {"file": ("upload", content, mime_type)}
+    data = {"messaging_product": "whatsapp", "type": mime_type}
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(url, headers=headers, data=data, files=files)
+    except httpx.HTTPError as e:
+        logger.error("WhatsApp media upload transport error", error=str(e))
+        raise MediaUploadError(f"transport: {e}") from e
+
+    if response.status_code != 200:
+        logger.error(
+            "WhatsApp media upload failed",
+            status=response.status_code,
+            body=response.text[:300],
+        )
+        raise MediaUploadError(
+            f"http_{response.status_code}: {response.text[:300]}"
+        )
+
+    body = response.json()
+    media_id = body.get("id")
+    if not media_id:
+        raise MediaUploadError(f"respuesta sin `id`: {body!r}")
+    logger.info("WhatsApp media uploaded", media_id=media_id)
+    return media_id
 
 
 # =============================================================================

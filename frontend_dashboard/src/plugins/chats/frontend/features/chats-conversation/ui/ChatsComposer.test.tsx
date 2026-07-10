@@ -55,6 +55,31 @@ vi.mock("@plugins/chats/frontend/entities/handoff", () => ({
     isError: false,
     error: null,
   }),
+  uploadHumanMedia: vi.fn(),
+}));
+
+// Mock del outbox de fotos: capturamos enqueue y controlamos los items
+// renderizados sin tocar compresión/red.
+const enqueueMock = vi.fn();
+const retryMock = vi.fn();
+const removeMock = vi.fn();
+let outboxItems: Array<{
+  id: string;
+  previewUrl: string;
+  caption: string;
+  status: string;
+  progress: number;
+  attachmentId?: string;
+  error?: string;
+}> = [];
+
+vi.mock("../model/useOutbox", () => ({
+  useOutbox: () => ({
+    items: outboxItems,
+    enqueue: enqueueMock,
+    retry: retryMock,
+    remove: removeMock,
+  }),
 }));
 
 // F5.3: ConfirmPaymentAction usa mutateAsync (flujo encadenado con reducer).
@@ -85,6 +110,10 @@ beforeEach(() => {
   returnMutate.mockReset();
   confirmPaymentMutate.mockReset();
   scheduleOrderMutate.mockReset();
+  enqueueMock.mockReset();
+  retryMock.mockReset();
+  removeMock.mockReset();
+  outboxItems = [];
 });
 
 describe("ChatsComposer", () => {
@@ -269,5 +298,64 @@ describe("ChatsComposer", () => {
     );
     expect(scheduleOrderMutate).toHaveBeenCalledTimes(1);
     expect(confirmPaymentMutate).not.toHaveBeenCalled();
+  });
+
+  // ─── Adjuntar / enviar fotos ───────────────────────────────────────────────
+
+  it("muestra el botón de adjuntar foto en modo humano", () => {
+    useSessionMock.mockReturnValue({ data: { active_agent_route: "humano" } });
+    render(<ChatsComposer chatId="wa_X" />, { wrapper: makeWrapper() });
+    expect(
+      screen.getByRole("button", { name: /adjuntar foto/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("el input de archivo acepta solo JPEG/PNG", () => {
+    useSessionMock.mockReturnValue({ data: { active_agent_route: "humano" } });
+    render(<ChatsComposer chatId="wa_X" />, { wrapper: makeWrapper() });
+    const input = screen.getByTestId("chat-file-input") as HTMLInputElement;
+    expect(input.accept).toBe("image/jpeg,image/png");
+    expect(input.multiple).toBe(true);
+  });
+
+  it("seleccionar una foto la encola en el outbox con el texto como caption", () => {
+    useSessionMock.mockReturnValue({ data: { active_agent_route: "humano" } });
+    render(<ChatsComposer chatId="wa_X" />, { wrapper: makeWrapper() });
+
+    // El operador escribe un caption y luego adjunta.
+    const textarea = screen.getByPlaceholderText(
+      /Escribe un mensaje al cliente/i,
+    );
+    fireEvent.change(textarea, { target: { value: "mirá el color" } });
+
+    const input = screen.getByTestId("chat-file-input") as HTMLInputElement;
+    const file = new File([new Uint8Array([1, 2, 3])], "foto.jpg", {
+      type: "image/jpeg",
+    });
+    fireEvent.change(input, { target: { files: [file] } });
+
+    expect(enqueueMock).toHaveBeenCalledTimes(1);
+    const [files, caption] = enqueueMock.mock.calls[0];
+    expect(files).toHaveLength(1);
+    expect(files[0].name).toBe("foto.jpg");
+    expect(caption).toBe("mirá el color");
+  });
+
+  it("un item fallido del outbox muestra 'Reintentar' y lo cablea a retry", () => {
+    useSessionMock.mockReturnValue({ data: { active_agent_route: "humano" } });
+    outboxItems = [
+      {
+        id: "m1",
+        previewUrl: "blob:x",
+        caption: "",
+        status: "failed",
+        progress: 0,
+        error: "red caída",
+      },
+    ];
+    render(<ChatsComposer chatId="wa_X" />, { wrapper: makeWrapper() });
+    const retryBtn = screen.getByRole("button", { name: /reintentar/i });
+    fireEvent.click(retryBtn);
+    expect(retryMock).toHaveBeenCalledWith("m1");
   });
 });
