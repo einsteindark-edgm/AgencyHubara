@@ -68,7 +68,7 @@ async def test_ciclo_snapshot_agente_executor_de_punta_a_punta(
 ):
     monkeypatch.setenv("HUBARA_API_BASE_URL", BASE)
     _seed_conversacion_pago(_isolate_vault_dir)
-    respx.get(f"{BASE}/api/orders/order_01INT").mock(
+    respx.get(f"{BASE}/api/orders/orders/order_01INT").mock(
         return_value=httpx.Response(
             200,
             json={"summary": {"id": "order_01INT", "status": "preparing", "pay_status": "pending"}},
@@ -117,7 +117,7 @@ async def test_ciclo_snapshot_agente_executor_de_punta_a_punta(
     }
 
     # 3. El executor aplica el intent y cierra el watermark.
-    confirm = respx.patch(f"{BASE}/api/orders/order_01INT/confirm-payment").mock(
+    confirm = respx.patch(f"{BASE}/api/orders/orders/order_01INT/confirm-payment").mock(
         return_value=httpx.Response(
             200,
             json={"success": True, "order_id": "order_01INT", "current_stage": None,
