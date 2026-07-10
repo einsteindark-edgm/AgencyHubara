@@ -110,8 +110,12 @@ async def _fetch_order_state(
     El fallo se LOGUEA (PM-003: tragado en silencio, un base URL roto se veía
     como `skipped_empty` eterno indistinguible de "no hay trabajo")."""
     try:
+        # Ruta REAL: prefix /api/orders del manifest + path /orders del router
+        # → /api/orders/orders/{id} (así la consume el frontend). Con un solo
+        # /orders es 404 DE RUTA para toda orden (incidente prod 2026-07-10:
+        # respx no lo caza porque mockea la URL que el código pida).
         response = await client.get(
-            f"{_api_base()}/api/orders/{quote(order_id, safe='')}"
+            f"{_api_base()}/api/orders/orders/{quote(order_id, safe='')}"
         )
         response.raise_for_status()
         summary = response.json().get("summary") or {}
@@ -227,7 +231,7 @@ async def _execute_intent(client: httpx.AsyncClient, intent: dict[str, Any]) -> 
             first = _sanitize_note(evidence[0]) if evidence else ""
             note = f"order-sentinel: {first}" if first else "order-sentinel"
             response = await client.patch(
-                f"{base}/api/orders/{oid}/stage",
+                f"{base}/api/orders/orders/{oid}/stage",
                 json={
                     "stage": intent.get("to_stage"),
                     "note": note,
@@ -237,7 +241,7 @@ async def _execute_intent(client: httpx.AsyncClient, intent: dict[str, Any]) -> 
             )
         elif action == "confirm_payment":
             response = await client.patch(
-                f"{base}/api/orders/{oid}/confirm-payment",
+                f"{base}/api/orders/orders/{oid}/confirm-payment",
                 json={"by": "order-sentinel"},
             )
         else:
