@@ -60,6 +60,31 @@ export interface RunRecord {
   executionId?: string;
 }
 
+/**
+ * El reporte HUMANO del análisis — el result proyectado al contrato del
+ * reporter (`_projected_from: ctwa-report`): markdown renderizable + verdict.
+ */
+export interface AnalysisReport {
+  markdown: string;
+  verdict: string | null;
+  qaPassed: boolean | null;
+}
+
+/**
+ * Extrae el reporte legible de un `result`. `null` si el result no es la
+ * proyección (records legacy / podados) — la UI cae al JSON crudo.
+ */
+export function analysisReport(result: unknown): AnalysisReport | null {
+  if (typeof result !== "object" || result === null) return null;
+  const r = result as Record<string, unknown>;
+  if (typeof r.markdown !== "string" || r.markdown.trim() === "") return null;
+  return {
+    markdown: r.markdown,
+    verdict: typeof r.verdict === "string" ? r.verdict : null,
+    qaPassed: typeof r.qa_passed === "boolean" ? r.qa_passed : null,
+  };
+}
+
 /** Estados terminales — el stream ya no va a empujar más cambios. */
 export function isTerminalStatus(status: RunStatus): boolean {
   return status === "completed" || status === "failed";
