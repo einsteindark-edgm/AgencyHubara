@@ -260,12 +260,47 @@ def check_capability_conforms_protocol(root: AgentNode) -> list[str]:
     return errs
 
 
+def check_capability_build_accepts_consumed_ports(root: AgentNode) -> list[str]:
+    """G-PORT-BUILD (regla de oro, análogo L-12): una capability con `consumes:`
+    y `build()` debe aceptar un kwarg POR CADA port consumido (o **kwargs) — el
+    loader durable la compila con `build(**bound)` (`build_agent`). Sin este
+    check, el drift carga limpio y revienta con TypeError recién cuando el port
+    gana vendor real en `durable_vendors()` (caso meta-insights)."""
+    import inspect
+
+    errs: list[str] = []
+    for n in iter_nodes(root):
+        if not n.capability or not n.consumes:
+            continue
+        mod_name = n.capability.split(":", 1)[0]
+        try:
+            mod = importlib.import_module(mod_name)
+        except Exception:  # noqa: BLE001 — ya lo reporta check_capability_refs
+            continue
+        build = getattr(mod, "build", None)
+        if not callable(build):
+            continue  # build es opcional (G1+); sin build no hay inyección
+        params = inspect.signature(build).parameters
+        if any(p.kind == p.VAR_KEYWORD for p in params.values()):
+            continue
+        missing = [port for port in n.consumes if port not in params]
+        if missing:
+            errs.append(
+                f"[G-PORT-BUILD] `build` de '{n.name}' no acepta los kwargs "
+                f"{missing} que el manifest `consumes:` — el loader durable lo "
+                "llama build(**ports_consumidos); agregá `*, <port>=None` "
+                "(molde ctwa_report/order_sentinel) o **kwargs"
+            )
+    return errs
+
+
 def run_checks(root: AgentNode, ga_root: Path | None = None) -> dict:
     """{'errors': [...], 'warnings': [...]} — el reporte que consumen los 3 frontends."""
     errors = (
         check_capability_refs(root)
         + check_capability_run_signature(root)
         + check_capability_conforms_protocol(root)
+        + check_capability_build_accepts_consumed_ports(root)
         + check_supervisor_coherent(root)
         + check_taskgraph_wireable(root)
         + check_tool_refs(root, ga_root)

@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "now_ms": 1720500000000,
+  "conversations": [
+    {
+      "session_id": "wa_573001112233",
+      "order_id": "order_01PAGO",
+      "current_stage": "preparing",
+      "payment_confirmed": false,
+      "messages": [
+        {"who": "customer", "text": "ya consigné, te mando el comprobante", "at_ms": 1720490000000, "has_media": true},
+        {"who": "human_operator", "text": "perfecto, ya quedó confirmado tu pago", "at_ms": 1720491000000, "has_media": false}
+      ]
+    },
+    {
+      "session_id": "wa_573002223344",
+      "order_id": "order_01LISTO",
+      "current_stage": "preparing",
+      "payment_confirmed": true,
+      "messages": [
+        {"who": "customer", "text": "hola, ¿cómo va lo mío?", "at_ms": 1720492000000, "has_media": false},
+        {"who": "human_operator", "text": "ya está listo tu pedido, mañana te lo enviamos", "at_ms": 1720493000000, "has_media": false}
+      ]
+    },
+    {
+      "session_id": "wa_573003334455",
+      "order_id": "order_01DOMI",
+      "current_stage": "ready",
+      "payment_confirmed": true,
+      "messages": [
+        {"who": "customer", "text": "¿ya me lo enviaron?", "at_ms": 1720493500000, "has_media": false},
+        {"who": "human_operator", "text": "creo que ya salió el domiciliario con tu pedido, te confirmo", "at_ms": 1720494000000, "has_media": false}
+      ]
+    },
+    {
+      "session_id": "wa_573004445566",
+      "order_id": "order_01CHARLA",
+      "current_stage": "preparing",
+      "payment_confirmed": true,
+      "messages": [
+        {"who": "customer", "text": "una pregunta, ¿los collares vienen en caja de regalo?", "at_ms": 1720495000000, "has_media": false},
+        {"who": "human_operator", "text": "sí, claro, todos van en su caja de regalo", "at_ms": 1720496000000, "has_media": false},
+        {"who": "bot", "text": "Gracias por escribirnos, un asesor te atiende.", "at_ms": 1720489000000, "has_media": false}
+      ]
+    }
+  ]
+}

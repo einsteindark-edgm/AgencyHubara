@@ -225,10 +225,11 @@ def _durable_ports() -> dict:
     si no el nodo pega a localhost y revienta con `[Errno 99]` (L-26). Si el proxy está caído/mal
     configurado, el reporte se emite IGUAL (G-DET) y la narrativa degrada VISIBLE (marcador + el error
     en el trace) — honesto, no silencioso, no crashea el nodo. (Meta sigue sin vendor real — G2 — su
-    port se rechaza.)"""
-    from sdk.connectorkit.ports import LiteLLMProxy
+    port se rechaza.) Fuente ÚNICA: `durable_vendors()` del ConnectorKit (la comparte el CLI
+    `start` — el buzón SSM); dos copias divergirían."""
+    from sdk.connectorkit.ports import durable_vendors
 
-    return {"llm": LiteLLMProxy()}
+    return durable_vendors()
 
 
 def _start_durable(ga_root: Path, m, input_dict: dict) -> str:

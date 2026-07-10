@@ -22,6 +22,7 @@ def glossary() -> dict:
             {"term": "C1-CAP", "meaning": "la capability (módulo:función) del agente importa y existe."},
             {"term": "G-RUN-SIG", "meaning": "la capability expone run(input, *, ports, tools) — la firma uniforme que inyecta el loader."},
             {"term": "G-PROTO", "meaning": "la capability satisface el protocolo del kit (sdk.capability): run con la firma de inyección + build keyword-only si existe. Hace a TODAS las capabilities uniformes y, por el mapping tools, TRAZABLES (sdk.tooltrace)."},
+            {"term": "G-PORT-BUILD", "meaning": "una capability con consumes: y build() acepta un kwarg por port consumido (o **kwargs) — el loader durable la compila con build(**ports); sin esto el drift revienta con TypeError recién cuando el port gana vendor real."},
             {"term": "G-BIND", "meaning": "toda tool uses: resuelve al catálogo y su with: nombra SOLO inputs del contrato de esa tool."},
             {"term": "SUP", "meaning": "el supervisor es coherente: declara agents y strategy."},
             {"term": "G-WIRE", "meaning": "un supervisor que COMPONE declara inputs: en cada agente — así el task graph se cablea y corre."},

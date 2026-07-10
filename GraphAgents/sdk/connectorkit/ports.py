@@ -108,3 +108,15 @@ FIXTURE_VENDORS: dict[str, Callable] = {
     "meta_marketing_api": FixtureMetaInsights,  # FixtureMetaInsights(rows)
     "llm": FixtureLLM,                          # FixtureLLM(reply)
 }
+
+
+def durable_vendors() -> dict:
+    """Los vendors REALES que el runtime DURABLE inyecta a quien `consumes:` un port.
+    Fuente ÚNICA para el CLI (`start`, el buzón SSM) y el viewer (`_durable_ports`) —
+    dos copias divergen y el classify degrada en prod con el proxy bien configurado.
+    Hoy: `llm` → LiteLLMProxy (lazy: solo pega cuando un nodo lo invoca; config por
+    LITELLM_PROXY_URL/GRAPHAGENTS_LLM_MODEL/GRAPHAGENTS_LLM_API_KEY — L-26: en
+    multi-caja la URL default localhost:4000 NO alcanza el proxy). Meta sigue sin
+    vendor real (G2) — un port consumido ausente acá se rechaza LOUD antes de
+    submitear."""
+    return {"llm": LiteLLMProxy()}

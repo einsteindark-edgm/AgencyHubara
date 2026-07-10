@@ -200,7 +200,9 @@ def cmd_start(args: argparse.Namespace) -> int:
         print("start es SOLO para el dispatch durable: usá --runtime agentspan")
         return 1
 
+    from sdk.connectorkit.ports import durable_vendors
     from sdk.loader import build_agent
+    from sdk.manifest_model import iter_nodes
     from sdk.runtime import AgentSpanRuntime
 
     cand = sorted(MANIFESTS.glob(f"{args.id}.agent.yaml")) + sorted(MANIFESTS.glob(f"{args.id}.taskgraph.yaml"))
@@ -208,6 +210,19 @@ def cmd_start(args: argparse.Namespace) -> int:
         print(f"no encontré el agente '{args.id}' en manifests/")
         return 1
     m = load_manifest(cand[0])
+    # Los ports que el agente `consumes:` reciben su VENDOR REAL (durable_vendors —
+    # llm → LiteLLMProxy). Un port consumido SIN vendor real (ej. Meta, G2) se
+    # rechaza LOUD acá, no críptico adentro de Conductor (paridad con el viewer).
+    ports = durable_vendors()
+    unprovidable = sorted(
+        {p for n in iter_nodes(m) for p in n.consumes if p not in ports}
+    )
+    if unprovidable:
+        print(
+            f"'{args.id}' consume ports {unprovidable} sin vendor real en el durable "
+            "(G2): corré por tests/integration con un Fixture."
+        )
+        return 1
     seed = json.loads(args.input) if args.input else {}
     # input wrapping (paridad con el viewer `_durable_input`): un SUPERVISOR espera {acc: seed}
     # (sino el 1er nodo recibe `acc` como string y revienta); +patches si es parallel. Una
@@ -216,7 +231,7 @@ def cmd_start(args: argparse.Namespace) -> int:
         inp = {"acc": seed, "patches": []} if getattr(m, "strategy", None) == "parallel" else {"acc": seed}
     else:
         inp = seed
-    eid = AgentSpanRuntime().start(build_agent(m, ROOT), inp)
+    eid = AgentSpanRuntime().start(build_agent(m, ROOT, ports=ports), inp)
     # El eid va PRIMERO y flusheado: el buzón lo parsea aunque el wait toque techo.
     print(f"execution {eid}: started", flush=True)
     # Eslabón 5 (runs 5053a533/13622474 RUNNING eternos, 2026-07-10): los task

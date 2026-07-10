@@ -1,0 +1,62 @@
+id: order_sentinel
+version: 0.1.0
+archetype: sync  # P-29 (pipeline source→sink: vault snapshot → agente GraphAgents → PATCH a orders)
+display_name: Order Sentinel
+description: |
+  Ciclo autónomo del Order Sentinel (sin HITL): escanea el vault buscando
+  conversaciones en tag HUMANO con orden vinculada y mensajes nuevos desde el
+  watermark, arma el snapshot y lo despacha al agente GraphAgents
+  `order-sentinel` por el bridge poll-based (sdk.graphagentskit). El agente
+  clasifica con LLM bajo guardrails deterministas y emite intents de cambio de
+  estado del pedido; este plugin los EJECUTA contra la API HTTP de orders
+  (validación DAG real + SSE al dashboard) con notify_customer=false — el
+  humano ya avisó al cliente por chat, la cascada ETA duplicaría el mensaje
+  (los movimientos manuales del dashboard siguen notificando, L-6). Este
+  plugin nunca manda mensajes ni toma el turno conversacional.
+
+# Dep DURA: el ejecutor PATCHea /api/orders/{id}/stage y /confirm-payment —
+# sin orders habilitado no hay autoridad que aplique los intents (P-6).
+depends_on: [orders]
+
+# NO frontend block: plugin backend-only (la auditoría queda en el stage
+# history de la orden con by=order-sentinel; follow-up si se necesita UI).
+
+# ── Agente Temporal ────────────────────────────────────────────────────
+# Worker único `cycle` — corre OrderSentinelCycleWorkflow (un ciclo por
+# invocación; la cadencia la da un Temporal Schedule creado en deploy, ver
+# scripts/create_order_sentinel_schedule.py). Cadencia: 1x/DÍA — cada ciclo
+# paga el cold start EC2 de la caja GraphAgents; el watermark por sesión
+# hace que un ciclo diario procese todo lo acumulado.
+agent:
+  python_module: src.plugins.order_sentinel.agent
+  workers:
+    - name: cycle
+      module: src.plugins.order_sentinel.workers.cycle
+      task_queue: queue-order-sentinel-cycle
+      # SIN `owns_route`: este plugin no recibe inbounds ni toma el turno.
+      workflow_classes:
+        - OrderSentinelCycleWorkflow
+      deployment:
+        replicas: 1                       # un solo ciclo a la vez (snapshot global)
+        strategy: Recreate
+        cpu_request: 100m
+        memory_request: 256Mi
+        env_secrets: []
+      compose:
+        env:
+          TEMPORAL_URL: temporal:7233
+          WORKSPACE_VAULT_DIR: /app/hubara_vault
+          # El ejecutor y el enriquecimiento del snapshot hablan con la API
+          # de orders por HTTP (hereda DAG + SSE del dashboard).
+          HUBARA_API_BASE_URL: http://hubara-api:8000
+          # Bridge GraphAgents (boto3/SSM). Sin AWS_REGION el launcher falla
+          # claro AL USARSE (graceful sin config, no en el import/boot).
+          AWS_REGION: ${AWS_REGION}
+        volumes:
+          - hubara-vault-local:/app/hubara_vault
+        depends_on:
+          - temporal
+          - hubara-api
+
+wiring_intents:
+  env_vars_required: []

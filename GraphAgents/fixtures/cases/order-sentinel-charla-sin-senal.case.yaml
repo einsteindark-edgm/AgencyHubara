@@ -1,0 +1,26 @@
+# CASO order-sentinel: charla de soporte SIN señal de estado (pregunta por el empaque)
+# → action `none` = silencio total (ni dispatch ni suppressed). El caso fija que el
+# agente NO inventa transiciones cuando la conversación no las trae.
+id: order-sentinel-charla-sin-senal
+title: order-sentinel · charla sin señal de estado (silencio)
+target: agent:order-sentinel
+seed:
+  payload:
+    schema_version: 1
+    now_ms: 1720500000000
+    conversations:
+      - session_id: wa_573005556677
+        order_id: order_01CHARLA
+        current_stage: preparing
+        payment_confirmed: true
+        messages:
+          - { who: customer, text: "una pregunta, ¿los collares vienen en caja de regalo?", at_ms: 1720495000000, has_media: false }
+          - { who: human_operator, text: "sí, claro, todos van en su caja de regalo", at_ms: 1720496000000, has_media: false }
+ports:
+  llm: '{"action": "none", "evidence": [], "confidence": "low"}'
+golden:
+  schema_version: 1
+  snapshot_now_ms: 1720500000000
+  dispatch: []
+  suppressed: []
+  llm_errors: []

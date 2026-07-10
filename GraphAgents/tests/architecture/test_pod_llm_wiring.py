@@ -43,6 +43,40 @@ def test_pod_stays_pure_without_the_llm_port():
     assert "narrative" not in out
 
 
+def test_durable_direct_capability_receives_the_consumed_port():
+    """El path DURABLE de una capability DIRECTA con `consumes:` (order-sentinel → llm) debe
+    inyectar el port a su `build()`. Hoy `build_agent` lo IGNORA para capabilities directas
+    (solo el supervisor threadea ports) → el classify degradaría a llm_errors con el vendor
+    presente. Este test fija el cable: `build_agent(m, ROOT, ports=...)` → build(**bound)."""
+    import json as _json
+
+    import pytest
+
+    pytest.importorskip("langgraph")
+    from sdk.loader import build_agent
+
+    m = load_manifest(MANIFESTS / "order-sentinel.agent.yaml")
+    verdict = {"action": "transition", "to_stage": "ready",
+               "evidence": ["ya está listo tu pedido"], "confidence": "high"}
+    payload = {
+        "schema_version": 1, "now_ms": 1720500000000,
+        "conversations": [{
+            "session_id": "wa_cable", "order_id": "order_01CABLE",
+            "current_stage": "preparing", "payment_confirmed": True,
+            "messages": [{"who": "human_operator", "text": "ya está listo tu pedido",
+                          "at_ms": 1720490000000, "has_media": False}],
+        }],
+    }
+    g = build_agent(m, ROOT, ports={"llm": FixtureLLM(_json.dumps(verdict, ensure_ascii=False))})
+    out = g.invoke({"payload": payload})
+    assert out["result"]["llm_errors"] == []  # el vendor SÍ llegó al nodo classify
+    assert out["result"]["dispatch"] == [{
+        "kind": "order_stage_intent", "session_id": "wa_cable", "order_id": "order_01CABLE",
+        "action": "transition", "to_stage": "ready",
+        "evidence": ["ya está listo tu pedido"], "confidence": "high",
+    }]
+
+
 def test_durable_supervisor_threads_the_llm_port_to_the_reporter():
     """El path DURABLE (build_supervisor_graph compila el pod a un StateGraph que corre AgentSpan)
     debe THREAD-ear los ports a sus miembros → el reporter teje la narrativa también en el durable.
