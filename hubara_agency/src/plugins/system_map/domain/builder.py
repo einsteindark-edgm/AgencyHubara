@@ -108,14 +108,18 @@ def _load_manifests(manifests_dir: Path) -> tuple[list[tuple[str, dict[str, Any]
     return out, warnings
 
 
-def _worker_schedule(worker: dict[str, Any]) -> dict[str, Any] | None:
-    """El `schedule:` declarado del worker (el Temporal Schedule que lo
-    dispara), normalizado para el canvas: {id, cadence}. Tolerante: toda forma
-    que no sea dict se ignora — el mapa nunca truena por un manifest a medias."""
+def _worker_schedules(worker: dict[str, Any]) -> list[dict[str, Any]]:
+    """Los Temporal Schedules declarados del worker, normalizados para el
+    canvas: [{id, cadence}]. `schedule:` acepta UN objeto o una LISTA (caso
+    sales_eval: eval online + golden suite). Tolerante: toda entrada que no
+    sea dict se ignora — el mapa nunca truena por un manifest a medias."""
     raw = worker.get("schedule")
-    if not isinstance(raw, dict):
-        return None
-    return {"id": raw.get("id"), "cadence": raw.get("cadence")}
+    entries = raw if isinstance(raw, list) else [raw]
+    return [
+        {"id": e.get("id"), "cadence": e.get("cadence")}
+        for e in entries
+        if isinstance(e, dict)
+    ]
 
 
 def _build_plugin_node(plugin_id: str, manifest: dict[str, Any]) -> Node:
@@ -125,7 +129,7 @@ def _build_plugin_node(plugin_id: str, manifest: dict[str, Any]) -> Node:
     has_agent = "agent" in manifest
     workers = (manifest.get("agent") or {}).get("workers") or []
     has_schedule = any(
-        _worker_schedule(w) is not None for w in workers if isinstance(w, dict)
+        _worker_schedules(w) for w in workers if isinstance(w, dict)
     )
     return Node(
         id=f"plugin:{plugin_id}",
@@ -329,7 +333,7 @@ def _build_agent_nodes(plugin_id: str, manifest: dict[str, Any]) -> list[Node]:
                     "transitions": transitions_data,
                     "emits": emits_data,
                     "workflow_classes": workflow_classes_data,
-                    "schedule": _worker_schedule(worker),
+                    "schedules": _worker_schedules(worker),
                 },
             )
         )

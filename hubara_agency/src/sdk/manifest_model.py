@@ -193,11 +193,15 @@ class WorkerDashboard(BaseModel):
 
 
 class WorkerSchedule(BaseModel):
-    """El Temporal Schedule que dispara el ciclo del worker (workflows
-    one-shot tipo ReengagementCycleWorkflow). `id` = el SCHEDULE_ID del script
-    `scripts/create_*_schedule.py` que lo crea (drift guard bidireccional:
-    tests/platform/test_worker_schedule_field.py); `cadence` = texto humano
-    que Acktos Studio muestra junto al reloj de la cajita."""
+    """UN Temporal Schedule que dispara al worker (workflows one-shot tipo
+    ReengagementCycleWorkflow). `id` = el id con que el sitio de creación lo
+    registra en Temporal — `scripts/create_*_schedule.py` (deploy-time) o la
+    constante `*SCHEDULE_ID` del propio worker (boot-time, caso
+    reconcile/sales_eval); drift guard bidireccional:
+    tests/platform/test_worker_schedule_field.py. `cadence` = texto humano
+    que Acktos Studio muestra junto al reloj de la cajita. El campo
+    `schedule:` del worker acepta un objeto o una LISTA (sales_eval crea la
+    eval online diaria + la golden suite opt-in)."""
     model_config = ConfigDict(extra="forbid")
     id: str
     cadence: str | None = None
@@ -220,7 +224,7 @@ class WorkerSpec(BaseModel):
     invokes: list[LegacyInvoke] = Field(default_factory=list)
     deployment: DeploymentBlock | None = None
     compose: ComposeBlock | None = None
-    schedule: WorkerSchedule | None = None
+    schedule: WorkerSchedule | list[WorkerSchedule] | None = None
 
 
 class AgentBlock(BaseModel):

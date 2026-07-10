@@ -44,19 +44,23 @@ interface ClusterGraph {
   brokenSeams: Seam[];
 }
 
-/** El reloj del canvas: presente si al nodo lo dispara un Temporal Schedule.
- * Workers del system map traen `data.schedule: {id, cadence}` (declarado en
- * su plugin.yaml); el contenedor del plugin trae `data.has_schedule`. El
- * valor devuelto es la cadencia humana ("" si no se declaró). */
+/** El reloj del canvas: presente si al nodo lo disparan Temporal Schedules.
+ * Workers del system map traen `data.schedules: [{id, cadence}]` (declarados
+ * en su plugin.yaml — un worker puede crear varios, caso sales_eval); el
+ * contenedor del plugin trae `data.has_schedule`. El valor devuelto es la(s)
+ * cadencia(s) humana(s) unidas (o "" si no se declararon). */
 function scheduleOf(n: NamespacedNode): string | undefined {
   const data = n["data"] as
-    | { schedule?: { cadence?: string | null } | null; has_schedule?: boolean }
+    | { schedules?: Array<{ cadence?: string | null } | null>; has_schedule?: boolean }
     | undefined;
   if (!data || typeof data !== "object") {
     return undefined;
   }
-  if (data.schedule && typeof data.schedule === "object") {
-    return data.schedule.cadence ?? "";
+  if (Array.isArray(data.schedules) && data.schedules.length > 0) {
+    return data.schedules
+      .map((s) => (s && typeof s === "object" ? (s.cadence ?? "") : ""))
+      .filter((c) => c !== "")
+      .join(" · ");
   }
   return data.has_schedule === true ? "" : undefined;
 }

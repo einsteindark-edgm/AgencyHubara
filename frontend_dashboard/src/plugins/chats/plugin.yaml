@@ -416,6 +416,16 @@ agent:
     - name: sales_eval
       module: src.plugins.chats.workers.sales_eval
       task_queue: queue-sales-eval
+      # DOS Temporal Schedules que el propio worker crea al bootear
+      # (*_SCHEDULE_ID en workers/sales_eval.py): la eval online diaria
+      # (toggle SALES_EVAL_SCHEDULE_ENABLED, default on) y la golden suite
+      # (opt-in GOLDEN_EVAL_SCHEDULE_ENABLED, default OFF — vive en CI).
+      # Acktos Studio dibuja el reloj a partir de esta declaración.
+      schedule:
+        - id: sales-eval-schedule
+          cadence: diario 23:00 Bogotá
+        - id: golden-eval-schedule
+          cadence: diario 06:00 (opt-in, OFF por default)
       workflow_classes:
         - SalesEvalWorkflow
         # Eval dirigida de UN episodio al cerrar (event-driven). La dispara la
