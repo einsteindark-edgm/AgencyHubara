@@ -238,6 +238,14 @@ Regla: cada costura debe ser VERIFICABLE en código vivo, no aspiracional —
 el label nombra el archivo que la implementa. Una costura cuyo from/to no
 resuelve se reporta como "rota" en el canvas (no rompe nada, pero te delata).
 
+**Esta regla ya se olvidó DOS veces** (window-strategist y order-sentinel
+llegaron a prod sin su línea en el mapa — L-17 del monorepo), así que ahora
+es LEY con guard: `hubara_agency/tests/platform/test_graphagents_seams.py`
+exige la seam de todo `launcher.dispatch("<agent>")` literal en un plugin, y
+que toda seam declarada resuelva contra manifests reales. Si tu integración
+dispatcha con id dinámico (caso ads), declarás la seam a mano igual — el
+chequeo de resolución la cubre.
+
 ## 2.8 La API del viewer (el backend de Acktos Studio)
 
 La UI visual es **Acktos Studio** (extensión de VS Code, `vscode-hubara/`); acá

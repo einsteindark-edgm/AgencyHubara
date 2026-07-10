@@ -11,6 +11,9 @@
 # merge del workspace.
 #
 # Cada entrada acá debe ser VERIFICABLE en el código vivo, no aspiracional.
+# Guard en CI: hubara_agency/tests/platform/test_graphagents_seams.py — todo
+# `launcher.dispatch("<agent>")` LITERAL en un plugin exige su seam acá, y
+# toda seam debe resolver contra plugin.yaml + manifests de GraphAgents reales.
 # Verificado 2026-07-07: hubara_agency/src/plugins/ads/runs/{conductor,
 # orchestrator,launcher,boto3_launcher}.py lanza y trackea el pod CTWA en
 # GraphAgents (agent:ads-analytics, taskgraph ads-analytics.taskgraph.yaml).
@@ -20,4 +23,20 @@ seams:
     from: hub:plugin:ads
     to: ga:agent:ads-analytics
     label: "pod CTWA (runs/conductor.py)"
+    kind: launches
+  # Verificado 2026-07-10: src/plugins/reengagement/agent/cycle/activities/
+  # __init__.py — dispatch_window_strategist_activity despierta la caja y
+  # despacha el snapshot al agente (ciclo del Temporal Schedule cada 45 min).
+  - id: window-strategist-cycle
+    from: hub:plugin:reengagement
+    to: ga:agent:window-strategist
+    label: "ciclo reactivación (cycle/activities)"
+    kind: launches
+  # Verificado 2026-07-10: src/plugins/order_sentinel/agent/cycle/activities/
+  # __init__.py — dispatch_order_sentinel_activity despacha el snapshot de
+  # conversaciones HUMANO+orden (ciclo diario 01:00 UTC).
+  - id: order-sentinel-cycle
+    from: hub:plugin:order_sentinel
+    to: ga:agent:order-sentinel
+    label: "ciclo estados de pedido (cycle/activities)"
     kind: launches
