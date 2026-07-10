@@ -68,20 +68,29 @@ parse_manifest({"id": "x", "version": "0.1.0"}, source="mi-test")
 
 ## Campo `schedule:` de un worker (2026-07-10)
 
-Un worker cuyo ciclo lo dispara un **Temporal Schedule** (workflows one-shot
-tipo `ReengagementCycleWorkflow`) lo declara en su entry:
+Un worker disparado por **Temporal Schedule(s)** (workflows one-shot tipo
+`ReengagementCycleWorkflow`) los declara en su entry — un objeto o una LISTA:
 
 ```yaml
 workers:
   - name: cycle
     schedule:
-      id: reengagement-cycle-schedule   # el SCHEDULE_ID del script que lo crea
+      id: reengagement-cycle-schedule   # el id del sitio que lo crea
       cadence: cada 45 min              # texto humano — Acktos Studio lo muestra
+  - name: sales_eval                    # un worker puede crear VARIOS
+    schedule:
+      - id: sales-eval-schedule
+        cadence: diario 23:00 Bogotá
+      - id: golden-eval-schedule
+        cadence: diario 06:00 (opt-in, OFF por default)
 ```
 
 Las 3 patas: tipado en `WorkerSchedule` (manifest_model) · schema en
-`plugin.schema.yaml` · check en `tests/platform/test_worker_schedule_field.py`
-(drift guard bidireccional contra `scripts/create_*schedule*.py` — ni
-schedules fantasma declarados, ni schedules reales invisibles). Consumidor:
-el system map lo proyecta al nodo (`data.schedule` / `has_schedule`) y el
-canvas de Acktos Studio dibuja el reloj ⏱ en la cajita.
+`plugin.schema.yaml` (`definitions/worker_schedule`) · check en
+`tests/platform/test_worker_schedule_field.py` — drift guard bidireccional
+contra los DOS sitios de creación: `scripts/create_*schedule*.py`
+(deploy-time) y las constantes `*SCHEDULE_ID` de `src/plugins/*/workers/*.py`
+(boot-time, caso reconcile/sales_eval). Ni schedules fantasma declarados, ni
+schedules reales invisibles. Consumidor: el system map lo proyecta al nodo
+(`data.schedules` / `has_schedule`) y el canvas de Acktos Studio dibuja el
+reloj ⏱ en la cajita.
