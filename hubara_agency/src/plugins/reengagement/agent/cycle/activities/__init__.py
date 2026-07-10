@@ -19,6 +19,12 @@ from temporalio import activity
 
 from src.plugins.reengagement.agent.cycle.composition import get_launcher
 from src.plugins.reengagement.agent.cycle.use_cases import build_snapshot_from_sessions
+from src.sdk.messagingkit import (
+    get_current_rate_card,
+    load_reengagement_index,
+    reengagement_shortlist,
+    update_reengagement_index_entries,
+)
 from src.sdk.runtime import WORKSPACE_VAULT_DIR, with_heartbeat
 
 #: prefijo de sesiones WhatsApp en el vault (los demás dirs se saltan).
@@ -35,13 +41,8 @@ def _read_metadata(session_dir) -> dict[str, Any] | None:
         return None
 
 
-@activity.defn(name="build_reengagement_snapshot")
-async def build_reengagement_snapshot_activity() -> dict[str, Any]:
-    """Escanea el vault y arma el seed del window-strategist (I/O acá; la
-    transformación pura en use_cases.build_snapshot)."""
-    now_ms = int(time.time() * 1000)
+def _full_scan(vault) -> list[tuple[str, dict[str, Any]]]:
     sessions: list[tuple[str, dict[str, Any]]] = []
-    vault = WORKSPACE_VAULT_DIR
     if vault.exists():
         for session_dir in sorted(vault.iterdir()):
             if not session_dir.is_dir():
@@ -51,7 +52,47 @@ async def build_reengagement_snapshot_activity() -> dict[str, Any]:
             metadata = _read_metadata(session_dir)
             if metadata is not None:
                 sessions.append((session_dir.name, metadata))
-    return build_snapshot_from_sessions(now_ms, sessions)
+    return sessions
+
+
+@activity.defn(name="build_reengagement_snapshot")
+async def build_reengagement_snapshot_activity() -> dict[str, Any]:
+    """Arma el seed del window-strategist (I/O acá; la transformación pura en
+    use_cases.build_snapshot).
+
+    Punto 2 (escala): con índice presente, SHORTLIST — solo se abre el
+    metadata de los candidatos (ventana abierta / gancho / entrada joven); el
+    frío+viejo masivo ni se lee. Sin índice: full scan que lo RECONSTRUYE.
+    Toda entrada leída se refresca (staleness auto-sanadora). El índice nunca
+    decide: la decisión es del pre-filtro sobre metadata real + el gate.
+    """
+    now_ms = int(time.time() * 1000)
+    vault = WORKSPACE_VAULT_DIR
+
+    index = load_reengagement_index(vault)
+    if index is None:
+        sessions = _full_scan(vault)
+        index_size = len(sessions)
+    else:
+        candidates = sorted(reengagement_shortlist(index, now_ms=now_ms))
+        sessions = []
+        for session_id in candidates:
+            metadata = _read_metadata(vault / session_id)
+            if metadata is not None:
+                sessions.append((session_id, metadata))
+        index_size = len(index)
+
+    # Refresh/rebuild: lo que se leyó queda al día en UN write atómico.
+    update_reengagement_index_entries(
+        vault, dict(sessions), now_ms=now_ms
+    )
+
+    snapshot = build_snapshot_from_sessions(
+        now_ms, sessions, rate_card=get_current_rate_card()
+    )
+    snapshot["shortlisted"] = len(sessions)
+    snapshot["index_size"] = index_size
+    return snapshot
 
 
 @activity.defn(name="dispatch_window_strategist")

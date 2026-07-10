@@ -50,6 +50,7 @@ from src.plugins.chats.agent.sales.translate import (
     translate_to_effective_text,
 )
 from src.platform.config import WORKSPACE_VAULT_DIR
+from src.sdk.messagingkit import update_reengagement_index_entry
 from src.platform.session_history import FilesystemMessageHistoryStore
 from src.platform.whatsapp.window import (
     compute_ctwa_window_expiry,
@@ -236,6 +237,19 @@ class IngestInboundMessage:
             metadata["ctwa_window_expires_at_ms"] = compute_ctwa_window_expiry(now_ms)
 
         self._safe_write_metadata(session_id, metadata)
+
+        # Punto 2 (escala Window Strategist): mantener el índice liviano de
+        # reactivación en el mismo momento del estampado — el snapshot builder
+        # shortlistea sin escanear el vault. Best-effort: un índice roto JAMÁS
+        # tumba el ingest (el fallback del builder es full scan).
+        try:
+            update_reengagement_index_entry(
+                WORKSPACE_VAULT_DIR, session_id, metadata, now_ms=now_ms
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "reengagement_index_update_failed", session_id=session_id
+            )
 
         # --- 2d. HU-WA24H-001 Sprint 2: watchdog wiring ---
         # Después de persistir el timestamp, emitir los eventos que el
