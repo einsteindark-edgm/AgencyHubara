@@ -30,3 +30,28 @@ def test_interpret_completed_unwraps_agentspan_result():
     state = interpret(wf)
     assert state["status"] == "completed"
     assert state["result"] == {"dispatch": [], "truncated_by_budget": 0}
+
+
+def test_interpret_completed_unwraps_json_state_with_booleans():
+    """PM-001 (premortem order-sentinel): el runtime de la caja documenta el wrap
+    como '<json del state final>' (GraphAgents sdk/runtime.py::_unwrap usa
+    json.loads) — un state con true/false/null NO es literal Python y
+    `ast.literal_eval` lo escupe → interpret devolvía el wrapper crudo y el
+    consumer veía cero dispatch con run completed (pérdida silenciosa)."""
+    from src.sdk.graphagentskit import interpret
+
+    wf = {
+        "status": "COMPLETED",
+        "tasks": [],
+        "output": {
+            "result": '{"payload": {"has_media": true}, "classified": null, '
+            '"result": {"dispatch": [], "suppressed": []}}'
+        },
+    }
+    state = interpret(wf)
+    assert state["status"] == "completed"
+    assert state["result"] == {
+        "payload": {"has_media": True},
+        "classified": None,
+        "result": {"dispatch": [], "suppressed": []},
+    }

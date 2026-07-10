@@ -44,6 +44,20 @@ _INTENTS = [
 _RESULT = {
     "schema_version": 1,
     "dispatch": _INTENTS,
+    # wa_b cayó en llm_errors (proxy caído para ESA conversación): su watermark
+    # NO debe avanzar — el próximo ciclo la re-analiza (PM-006: un intent
+    # fallido ≠ una conversación jamás analizada).
+    "llm_errors": [{"session_id": "wa_b", "error": "URLError: [Errno 99]"}],
+    "suppressed": [],
+}
+
+#: La forma REAL del poll de un agente DIRECTO (PM-001): el output compact de
+#: Conductor es el STATE COMPLETO del grafo ({payload, classified, result}) —
+#: el contrato del agente vive un nivel ADENTRO. El workflow debe descender.
+_FULL_GRAPH_STATE = {
+    "payload": {"schema_version": 1, "conversations": [{"session_id": "wa_a"}]},
+    "classified": [{"session_id": "wa_a", "verdict": None, "error": None}],
+    "result": _RESULT,
 }
 
 _WATERMARKS = {"wa_a": 1_400, "wa_b": 2_000}
@@ -61,6 +75,7 @@ def _fakes(
     *,
     conversations: list | None = None,
     final_status: str = "completed",
+    poll_result: dict | None = None,
 ):
     convos = (
         conversations
@@ -89,7 +104,8 @@ def _fakes(
             return {
                 "status": "running", "awaiting": None, "result": None, "error": None
             }
-        result = _RESULT if final_status == "completed" else None
+        default = _FULL_GRAPH_STATE if final_status == "completed" else None
+        result = poll_result if poll_result is not None else default
         error = "node exploded" if final_status == "failed" else None
         return {
             "status": final_status,
@@ -130,12 +146,46 @@ async def test_ciclo_completo_ejecuta_intents_con_los_watermarks_del_snapshot():
     assert tracker.polls >= 2, "re-pollea mientras el run está running"
     assert tracker.executed is not None, "run completed → ejecuta los intents"
     intents, watermarks = tracker.executed
-    assert intents == _INTENTS
-    assert watermarks == _WATERMARKS, (
-        "los watermarks viajan del snapshot al execute (hasta dónde analicé)"
+    assert intents == _INTENTS, (
+        "PM-001: el poll trae el STATE COMPLETO del grafo — el workflow debe "
+        "descender al contrato (state['result']) para extraer el dispatch"
+    )
+    assert watermarks == {"wa_a": 1_400}, (
+        "PM-006: las sesiones en llm_errors (wa_b) NO cierran watermark — "
+        "el próximo ciclo las re-analiza; las demás sí avanzan"
     )
     assert summary["applied"] == 1
     assert summary["run_status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_result_ya_desenvuelto_tambien_se_extrae():
+    """Tolerancia de forma: si el compact/proyección algún día entrega el
+    contrato DIRECTO (sin el state alrededor), el descenso no debe romperlo."""
+    tracker = Tracker()
+    summary = await _run(tracker, poll_result=_RESULT)
+
+    assert tracker.executed is not None
+    intents, watermarks = tracker.executed
+    assert intents == _INTENTS
+    assert watermarks == {"wa_a": 1_400}
+    assert summary["run_status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_result_sin_dispatch_no_ejecuta_ni_avanza_watermarks():
+    """PM-005: si el compact PODÓ el result (o cambió la forma y no hay clave
+    `dispatch` en ningún nivel), tratarlo como fallo VISIBLE — sin execute y
+    sin watermarks (re-analiza el próximo ciclo), nunca 'completed applied=0'
+    que finge que no había trabajo."""
+    tracker = Tracker()
+    summary = await _run(
+        tracker, poll_result={"_pruned_keys": ["result"], "payload": {}}
+    )
+
+    assert tracker.executed is None, "sin dispatch extraíble NO se ejecuta nada"
+    assert summary["applied"] == 0
+    assert summary["run_status"] == "result_missing_dispatch"
 
 
 @pytest.mark.asyncio

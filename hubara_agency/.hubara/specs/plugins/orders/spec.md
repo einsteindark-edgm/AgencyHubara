@@ -149,6 +149,24 @@ transiciones manuales validando el DAG permitido entre stages.
 - WHEN se invoca
 - THEN se devuelve HTTP 422 con la lista de stages válidos en el detail
 
+#### Scenario: Transición sin notificación ETA (agente order-sentinel)
+
+- GIVEN una transición inferida de la conversación humana (el cliente YA fue
+  avisado por chat)
+- WHEN se invoca con `{stage: "ready", by: "order-sentinel", notify_customer: false}`
+- THEN la transición se aplica y el SSE del dashboard se publica igual
+- AND la cascada ETA (`EmitOrderStageWorkflow` → mensaje WhatsApp al cliente)
+  NO se dispara — evita duplicar lo que el humano ya dijo
+- AND con `notify_customer` omitido o `true` el comportamiento actual queda
+  intacto (ETA notifica). La supresión es POR TRANSICIÓN, nunca por tag
+  HUMANO (L-6: toda venta exitosa termina en HUMANO)
+
+#### Scenario: Atribución del actor en el stage history
+
+- GIVEN body con `{stage: "ready", by: "order-sentinel"}`
+- WHEN se aplica la transición
+- THEN el stage history registra `by: "order-sentinel"` (omitido → `"human"`)
+
 ### Requirement: Confirmación manual de pago
 
 El sistema SHALL exponer `PATCH /api/orders/orders/{id}/confirm-payment`

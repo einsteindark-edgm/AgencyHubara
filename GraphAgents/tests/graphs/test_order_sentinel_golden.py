@@ -368,6 +368,70 @@ def test_llm_inalcanzable_registra_error_visible_y_no_crashea() -> None:
     assert "99" in err["error"]  # el diagnóstico viaja al trace, no se traga
 
 
+def test_evidencia_que_no_matchea_la_conversacion_se_suprime() -> None:
+    """PM-008 (anti-alucinación determinista): la evidencia debe ser cita
+    TEXTUAL de la conversación — un verdict cuya evidencia no aparece en
+    ningún mensaje se suprime `evidence_not_found` (el LLM inventó la cita)."""
+    payload = _payload_one(order_id="order_01FANTASMA")
+    llm = FixtureLLM(json.dumps({
+        "action": "transition", "to_stage": "ready",
+        "evidence": ["el pedido quedó empacado y facturado"],  # NO está en los mensajes
+        "confidence": "high",
+    }, ensure_ascii=False))
+    out = _run({"payload": payload}, ports={"llm": llm})
+    assert out["dispatch"] == []
+    assert out["suppressed"] == [
+        {
+            "session_id": "wa_573009998877",
+            "order_id": "order_01FANTASMA",
+            "reason": "evidence_not_found",
+        }
+    ]
+
+
+def test_verdict_con_mayusculas_se_normaliza() -> None:
+    """PM-018: `Transition`/`Ready`/`High` (capitalización del LLM real) NO
+    deben caer en unparseable/suppressed — se normalizan a lowercase."""
+    payload = _payload_one(order_id="order_01CAPS")
+    llm = FixtureLLM(json.dumps({
+        "action": " Transition ", "to_stage": "Ready",
+        "evidence": ["ya está listo tu pedido"], "confidence": "High",
+    }, ensure_ascii=False))
+    out = _run({"payload": payload}, ports={"llm": llm})
+    assert out["suppressed"] == []
+    assert out["dispatch"] == [{
+        "kind": "order_stage_intent",
+        "session_id": "wa_573009998877",
+        "order_id": "order_01CAPS",
+        "action": "transition",
+        "to_stage": "ready",
+        "evidence": ["ya está listo tu pedido"],
+        "confidence": "high",
+    }]
+
+
+def test_confirm_payment_sobre_orden_cancelada_se_suprime() -> None:
+    """PM-012: confirmar el pago de una orden CANCELADA crearía el estado
+    contradictorio pagada+cancelada — guardrail determinista `order_cancelled`."""
+    payload = _payload_one(
+        order_id="order_01MUERTA", current_stage="cancelled",
+        payment_confirmed=False, text="listo, tu pago quedó confirmado",
+    )
+    llm = FixtureLLM(json.dumps({
+        "action": "confirm_payment",
+        "evidence": ["listo, tu pago quedó confirmado"], "confidence": "high",
+    }, ensure_ascii=False))
+    out = _run({"payload": payload}, ports={"llm": llm})
+    assert out["dispatch"] == []
+    assert out["suppressed"] == [
+        {
+            "session_id": "wa_573009998877",
+            "order_id": "order_01MUERTA",
+            "reason": "order_cancelled",
+        }
+    ]
+
+
 def test_sin_vendor_llm_degrada_visible_a_llm_errors() -> None:
     """La rama `llm_port_missing` (run sin ports / build(llm=None)): cada
     conversación degrada VISIBLE a llm_errors — es exactamente el modo de fallo

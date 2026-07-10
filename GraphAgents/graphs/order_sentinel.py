@@ -89,6 +89,11 @@ def _parse_verdict(text: str) -> dict | None:
         return None
     if not isinstance(verdict, dict):
         return None
+    # Normalización (PM-018): el LLM real capitaliza ("Transition"/"High") —
+    # eso no es un verdict inválido, es ruido de superficie.
+    for key in ("action", "to_stage", "confidence"):
+        if isinstance(verdict.get(key), str):
+            verdict[key] = verdict[key].strip().lower()
     if verdict.get("action") not in ("transition", "confirm_payment", "none"):
         return None
     return verdict
@@ -147,6 +152,15 @@ def _plan(payload: dict, classified: list[dict]) -> dict:
         def _suppress(reason: str) -> None:
             suppressed.append({"session_id": sid, "order_id": oid, "reason": reason})
 
+        # Anti-alucinación determinista (PM-008): la evidencia debe ser cita
+        # TEXTUAL de la conversación — si ninguna cita aparece en un mensaje,
+        # el verdict se descarta (el LLM inventó la prueba).
+        texts = [m.get("text") or "" for m in convo.get("messages") or []]
+        evidence = [e for e in (verdict.get("evidence") or []) if isinstance(e, str)]
+        if not any(e and any(e in t for t in texts) for e in evidence):
+            _suppress("evidence_not_found")
+            continue
+
         confidence = verdict.get("confidence")
         if action == "transition":
             to_stage = verdict.get("to_stage")
@@ -177,6 +191,10 @@ def _plan(payload: dict, classified: list[dict]) -> dict:
         else:  # confirm_payment
             if confidence != "high":
                 _suppress("low_confidence")
+                continue
+            if convo.get("current_stage") == "cancelled":
+                # PM-012: pagada+cancelada es un estado contradictorio.
+                _suppress("order_cancelled")
                 continue
             if convo.get("payment_confirmed") is not False:
                 _suppress("payment_already_confirmed")

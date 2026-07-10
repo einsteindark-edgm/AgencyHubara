@@ -15,6 +15,7 @@ varios frontends; este es el CLI. No implementa reglas: delega en
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 from sdk.manifest_model import load_manifest
@@ -218,9 +219,12 @@ def cmd_start(args: argparse.Namespace) -> int:
         {p for n in iter_nodes(m) for p in n.consumes if p not in ports}
     )
     if unprovidable:
+        # A STDERR (gotcha #8): el buzón SSM parsea stdout esperando
+        # `execution <eid>:` — un diagnóstico en stdout se entierra.
         print(
             f"'{args.id}' consume ports {unprovidable} sin vendor real en el durable "
-            "(G2): corré por tests/integration con un Fixture."
+            "(G2): corré por tests/integration con un Fixture.",
+            file=sys.stderr,
         )
         return 1
     seed = json.loads(args.input) if args.input else {}

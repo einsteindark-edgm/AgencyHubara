@@ -196,3 +196,37 @@ def test_watermark_none_significa_todos_nuevos():
     (convo,) = snapshot["conversations"]
     assert [m["at_ms"] for m in convo["messages"]] == [7_000]
     assert snapshot["watermarks"] == {"wa_virgen": 7_000}
+
+
+def test_cap_de_mensajes_nuevos_por_conversacion():
+    """PM-004 (bomba de backlog): una sesión virgen con historia larga NO mete
+    toda la historia al prompt — solo los ÚLTIMOS 30 nuevos (los más recientes
+    son la señal de estado actual). El watermark igual cierra en el max at_ms:
+    lo más viejo que quedó afuera no se re-analiza (es historia, no señal)."""
+    events = [_msg("user", f"m{i}", i * 100) for i in range(1, 81)]  # 80 nuevos
+    snapshot = build_snapshot_from_sessions(
+        NOW_MS, [("wa_larga", _METADATA_HUMANO_CON_ORDEN, events, None)]
+    )
+    (convo,) = snapshot["conversations"]
+    at_ms = [m["at_ms"] for m in convo["messages"]]
+    assert len(at_ms) == 30
+    assert at_ms == [i * 100 for i in range(51, 81)]  # los últimos 30, cronológico
+    assert snapshot["watermarks"] == {"wa_larga": 8_000}
+
+
+def test_cap_de_conversaciones_por_ciclo_deja_el_resto_para_manana():
+    """PM-004: máx 20 conversaciones por ciclo (cada una es una llamada LLM).
+    Las excedentes quedan FUERA sin watermark → el próximo ciclo las agarra
+    (el backlog drena en días, sin livelock). El recorte se reporta en
+    `truncated_sessions` (no silent caps)."""
+    sessions = [
+        (f"wa_{i:03d}", _METADATA_HUMANO_CON_ORDEN, [_msg("user", "hola", 5_000)], None)
+        for i in range(25)
+    ]
+    snapshot = build_snapshot_from_sessions(NOW_MS, sessions)
+    assert len(snapshot["conversations"]) == 20
+    assert len(snapshot["watermarks"]) == 20
+    assert snapshot["truncated_sessions"] == 5
+    # deterministas: entran las primeras 20 en el orden de entrada
+    assert snapshot["conversations"][0]["session_id"] == "wa_000"
+    assert "wa_020" not in snapshot["watermarks"]

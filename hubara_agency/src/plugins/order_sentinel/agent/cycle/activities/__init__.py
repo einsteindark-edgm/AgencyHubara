@@ -16,11 +16,14 @@ P-29) — el plan puro vive en `agent/cycle/use_cases/`. Cuatro seams:
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 from temporalio import activity
@@ -92,16 +95,34 @@ def _write_watermark(session_dir: Path, at_ms: int) -> None:
     os.replace(tmp, session_dir / _WATERMARK_FILE)
 
 
+def _sanitize_note(evidence: Any) -> str:
+    """La evidencia es texto arbitrario del cliente/LLM (PM-020): a la note de
+    auditoría de la orden va como str, whitespace colapsado y truncada."""
+    text = re.sub(r"\s+", " ", str(evidence)).strip()
+    return text[:200]
+
+
 async def _fetch_order_state(
     client: httpx.AsyncClient, order_id: str
 ) -> tuple[str, bool] | None:
     """`GET /api/orders/{id}` → (current_stage, payment_confirmed). None si la
-    orden no se pudo leer — mejor excluir que analizar con estado inventado."""
+    orden no se pudo leer — mejor excluir que analizar con estado inventado.
+    El fallo se LOGUEA (PM-003: tragado en silencio, un base URL roto se veía
+    como `skipped_empty` eterno indistinguible de "no hay trabajo")."""
     try:
-        response = await client.get(f"{_api_base()}/api/orders/{order_id}")
+        response = await client.get(
+            f"{_api_base()}/api/orders/{quote(order_id, safe='')}"
+        )
         response.raise_for_status()
         summary = response.json().get("summary") or {}
-    except (httpx.HTTPError, ValueError):
+    except (httpx.HTTPError, ValueError) as e:
+        activity.logger.warning(
+            "order-sentinel: GET /orders/%s falló (%s: %s) — conversación "
+            "EXCLUIDA del snapshot (¿HUBARA_API_BASE_URL correcto?).",
+            order_id,
+            type(e).__name__,
+            e,
+        )
         return None
     stage = summary.get("status")
     if not isinstance(stage, str):
@@ -139,15 +160,27 @@ async def build_order_sentinel_snapshot_activity() -> dict[str, Any]:
     # Enriquecimiento: el stage/pago REAL por orden. Un GET fallido EXCLUYE la
     # conversación (y su watermark: no la analizamos — el próximo ciclo reintenta).
     enriched: list[dict[str, Any]] = []
+    excluded = 0
     async with httpx.AsyncClient(timeout=15) as client:
         for convo in snapshot["conversations"]:
             state = await _fetch_order_state(client, convo["order_id"])
             if state is None:
                 snapshot["watermarks"].pop(convo["session_id"], None)
+                excluded += 1
                 continue
             convo["current_stage"], convo["payment_confirmed"] = state
             enriched.append(convo)
     snapshot["conversations"] = enriched
+    # PM-009: los recortes viajan en el snapshot (nada de silent caps) — el
+    # workflow los loguea y quedan visibles en el history de Temporal.
+    snapshot["excluded_orders"] = excluded
+    if excluded or snapshot.get("truncated_sessions"):
+        activity.logger.warning(
+            "order-sentinel snapshot: %s conversaciones excluidas por orden "
+            "ilegible, %s sesiones truncadas por el cap del ciclo.",
+            excluded,
+            snapshot.get("truncated_sessions", 0),
+        )
     return snapshot
 
 
@@ -159,11 +192,16 @@ async def dispatch_order_sentinel_activity(
     """Despierta la caja (cold start EC2 1-3 min) y despacha el run.
     Devuelve el execution-id de Conductor para pollearlo."""
     launcher = get_launcher()
-    launcher.start_box()
+    # PM-007: el launcher es boto3 SYNC (waiters + sleep) — en el event loop
+    # bloquearía el heartbeat asyncio y el cold start (1-3 min) moriría por
+    # HEARTBEAT_TIMEOUT. A thread.
+    await asyncio.to_thread(launcher.start_box)
     # El contrato del agente (manifest inputs + golden order-sentinel) espera
     # el snapshot ENVUELTO: {"payload": snapshot}. Mandarlo crudo hace fallar
     # el nodo ingest con "falta 'payload'" (gotcha PR #148, run prod ce80f73f).
-    return launcher.dispatch("order-sentinel", {"payload": snapshot}, run_id=run_id)
+    return await asyncio.to_thread(
+        launcher.dispatch, "order-sentinel", {"payload": snapshot}, run_id=run_id
+    )
 
 
 @activity.defn(name="poll_order_sentinel")
@@ -172,21 +210,24 @@ async def poll_order_sentinel_activity(execution_id: str) -> dict[str, Any]:
     from src.sdk.graphagentskit import interpret
 
     launcher = get_launcher()
-    return interpret(launcher.fetch_status(execution_id))
+    # boto3 sync → thread (PM-007): no bloquear el event loop del worker.
+    return interpret(await asyncio.to_thread(launcher.fetch_status, execution_id))
 
 
 async def _execute_intent(client: httpx.AsyncClient, intent: dict[str, Any]) -> str:
     """UN intent → 'applied' | 'skipped' | 'failed'. `invalid_transition` es la
     carrera BENIGNA con el humano (ya movió la tarjeta) — skipped, no failed."""
-    order_id = intent.get("order_id")
+    order_id = str(intent.get("order_id") or "")
     action = intent.get("action")
     base = _api_base()
+    oid = quote(order_id, safe="")  # PM-023: un id raro no rompe la ruta
     try:
         if action == "transition":
             evidence = intent.get("evidence") or []
-            note = f"order-sentinel: {evidence[0]}" if evidence else "order-sentinel"
+            first = _sanitize_note(evidence[0]) if evidence else ""
+            note = f"order-sentinel: {first}" if first else "order-sentinel"
             response = await client.patch(
-                f"{base}/api/orders/{order_id}/stage",
+                f"{base}/api/orders/{oid}/stage",
                 json={
                     "stage": intent.get("to_stage"),
                     "note": note,
@@ -196,7 +237,7 @@ async def _execute_intent(client: httpx.AsyncClient, intent: dict[str, Any]) -> 
             )
         elif action == "confirm_payment":
             response = await client.patch(
-                f"{base}/api/orders/{order_id}/confirm-payment",
+                f"{base}/api/orders/{oid}/confirm-payment",
                 json={"by": "order-sentinel"},
             )
         else:
@@ -216,7 +257,10 @@ async def _execute_intent(client: httpx.AsyncClient, intent: dict[str, Any]) -> 
     if result.get("success"):
         return "applied"
     detail = str(result.get("error_detail") or "")
-    if detail.startswith("invalid_transition"):
+    # invalid_transition: el humano ya movió la tarjeta (carrera benigna).
+    # invalid_state: la orden es un draft aún no agendado (PM-011) — también
+    # benigno, el humano agenda y el próximo ciclo (si hay señal nueva) aplica.
+    if detail.startswith(("invalid_transition", "invalid_state")):
         return "skipped"
     activity.logger.warning(
         "order-sentinel: intent %s/%s rechazado: %s", action, order_id, detail

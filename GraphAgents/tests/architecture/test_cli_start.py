@@ -56,14 +56,18 @@ def test_cmd_start_inyecta_vendors_reales_para_los_ports_consumidos(monkeypatch)
 def test_cmd_start_rechaza_port_consumido_sin_vendor_real(monkeypatch, capsys) -> None:
     """Paridad con el viewer: un agente que consume un port SIN vendor real en el
     durable (ej. meta_marketing_api — G2) se rechaza LOUD antes de submitear,
-    no falla críptico adentro de Conductor."""
+    no falla críptico adentro de Conductor. El error va a STDERR (gotcha #8 /
+    PM-021): el buzón parsea stdout esperando `execution <eid>:` — un error en
+    stdout se entierra como 'no pude parsear el execution-id'."""
     monkeypatch.setattr(
         "sdk.loader.build_agent",
         lambda m, root, ports=None: (_ for _ in ()).throw(AssertionError("no debe compilar")),
     )
     args = argparse.Namespace(id="meta-insights", input="{}", runtime="agentspan")
     assert cli.cmd_start(args) == 1
-    assert "meta_marketing_api" in capsys.readouterr().out
+    captured = capsys.readouterr()
+    assert "meta_marketing_api" in captured.err
+    assert "meta_marketing_api" not in captured.out
 
 
 def test_cmd_start_rechaza_runtime_no_agentspan() -> None:

@@ -14,6 +14,7 @@ pushear el `awaiting`) → solo se detecta polleando + leyendo `taskType==HUMAN`
 from __future__ import annotations
 
 import ast
+import json
 from typing import Any
 
 #: status de Conductor que cuentan como fallo terminal.
@@ -21,12 +22,21 @@ _FAILED = {"FAILED", "FAILED_WITH_TERMINAL_ERROR", "TERMINATED", "TIMED_OUT"}
 
 
 def _unwrap_output(output: Any) -> Any:
-    """AgentSpan envuelve el output como `{'result': '<repr Python del state>'}` (L-8) →
-    el state real. `ast.literal_eval` es seguro (solo literales). Si no parsea, crudo."""
+    """AgentSpan envuelve el output como `{'result': '<state serializado>'}` (L-8) →
+    el state real. La serialización varió entre runs: repr Python (comillas
+    simples, True/None) Y json (true/null — es lo que documenta el runtime de
+    la caja, sdk/runtime.py::_unwrap). `ast.literal_eval` primero (seguro),
+    json como fallback (PM-001: un state con `true` no es literal Python y el
+    consumer veía cero dispatch con run completed). Si nada parsea, crudo."""
     if isinstance(output, dict) and list(output) == ["result"] and isinstance(output["result"], str):
+        raw = output["result"]
         try:
-            return ast.literal_eval(output["result"])
+            return ast.literal_eval(raw)
         except (ValueError, SyntaxError):
+            pass
+        try:
+            return json.loads(raw)
+        except (ValueError, json.JSONDecodeError):
             return output
     return output
 

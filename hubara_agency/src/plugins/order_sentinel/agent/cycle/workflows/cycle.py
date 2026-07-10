@@ -33,6 +33,22 @@ _POLL_INTERVAL = timedelta(seconds=15)
 _MAX_POLLS = 60
 
 
+def _extract_agent_result(raw: object) -> dict | None:
+    """El contrato del agente desde el result del poll, tolerante a la forma
+    (PM-001): para un agente DIRECTO el output compact de Conductor es el
+    STATE COMPLETO del grafo ({payload, classified, result}) — el contrato
+    vive un nivel adentro; si algún día la proyección entrega el contrato
+    directo, también sirve. `None` = no hay `dispatch` extraíble (podado)."""
+    if not isinstance(raw, dict):
+        return None
+    if "dispatch" in raw:
+        return raw
+    inner = raw.get("result")
+    if isinstance(inner, dict) and "dispatch" in inner:
+        return inner
+    return None
+
+
 @workflow.defn(name="OrderSentinelCycleWorkflow")
 class OrderSentinelCycleWorkflow:
     @workflow.run
@@ -91,11 +107,41 @@ class OrderSentinelCycleWorkflow:
                 "execution_id": execution_id,
             }
 
-        result = state.get("result") or {}
+        result = _extract_agent_result(state.get("result"))
+        if result is None:
+            # PM-005: el compact pudo PODAR el result (o cambió la forma) —
+            # fallo VISIBLE, sin execute ni watermarks (re-analiza el próximo
+            # ciclo). Nunca "completed applied=0" fingiendo que no había trabajo.
+            workflow.logger.error(
+                "OrderSentinelCycle: run %s completed pero el result no trae "
+                "`dispatch` en ningún nivel (¿podado por el compact? keys=%s) "
+                "— sin execute ni watermarks.",
+                execution_id,
+                sorted((state.get("result") or {}))
+                if isinstance(state.get("result"), dict)
+                else type(state.get("result")).__name__,
+            )
+            return {
+                "applied": 0,
+                "skipped": 0,
+                "failed": 0,
+                "run_status": "result_missing_dispatch",
+                "execution_id": execution_id,
+            }
         intents = result.get("dispatch") or []
+        # PM-006: una sesión en llm_errors NO fue analizada (proxy caído para
+        # ella) — su watermark no cierra; el próximo ciclo la re-analiza.
+        unanalyzed = {
+            e.get("session_id") for e in (result.get("llm_errors") or [])
+        }
+        watermarks = {
+            sid: at_ms
+            for sid, at_ms in (snapshot.get("watermarks") or {}).items()
+            if sid not in unanalyzed
+        }
         summary = await workflow.execute_activity(
             execute_order_intents_activity,
-            args=[intents, snapshot.get("watermarks") or {}],
+            args=[intents, watermarks],
             start_to_close_timeout=timedelta(minutes=5),
             # Un retry re-corre TODOS los intents: lo ya aplicado cae en
             # invalid_transition → skipped (benigno, idempotente).

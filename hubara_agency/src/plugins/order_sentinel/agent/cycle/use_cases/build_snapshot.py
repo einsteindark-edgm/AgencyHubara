@@ -27,6 +27,16 @@ _VALID_ORDER_PREFIXES = ("order_", "draft_")
 #: cuántos mensajes PREVIOS al watermark viajan como contexto.
 _CONTEXT_MESSAGES = 10
 
+#: tope de mensajes NUEVOS por conversación (PM-004): una sesión virgen con
+#: historia larga solo mete los más recientes (la señal de estado actual);
+#: el watermark igual cierra en el max — lo viejo es historia, no señal.
+_MAX_NEW_MESSAGES = 30
+
+#: tope de conversaciones por ciclo (PM-004): cada una es una llamada LLM +
+#: un GET a la API. Las excedentes quedan SIN watermark → el próximo ciclo
+#: las agarra (el backlog drena en días, sin livelock ni payload gigante).
+_MAX_CONVERSATIONS = 20
+
 
 def _linked_order_id(metadata: dict[str, Any]) -> str | None:
     """El order_id vinculado: el ÚLTIMO episodio que tenga uno (un episodio
@@ -98,7 +108,7 @@ def conversation_entry(
     if not new:
         return None
     context = [(at, e) for at, e in timed if watermark_ms is not None and at <= watermark_ms]
-    window = context[-_CONTEXT_MESSAGES:] + new
+    window = context[-_CONTEXT_MESSAGES:] + new[-_MAX_NEW_MESSAGES:]
 
     entry = {
         "session_id": session_id,
@@ -114,9 +124,13 @@ def build_snapshot_from_sessions(
 ) -> dict[str, Any]:
     conversations: list[dict[str, Any]] = []
     watermarks: dict[str, int] = {}
+    truncated = 0
     for session_id, metadata, history_events, watermark_ms in sessions:
         result = conversation_entry(session_id, metadata, history_events, watermark_ms)
         if result is None:
+            continue
+        if len(conversations) >= _MAX_CONVERSATIONS:
+            truncated += 1  # sin watermark: el próximo ciclo la agarra
             continue
         entry, new_watermark = result
         conversations.append(entry)
@@ -126,4 +140,5 @@ def build_snapshot_from_sessions(
         "now_ms": now_ms,
         "conversations": conversations,
         "watermarks": watermarks,
+        "truncated_sessions": truncated,
     }
