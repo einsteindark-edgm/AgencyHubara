@@ -11,7 +11,12 @@ import json
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from src.plugins.ads.meta.parse import MetaCampaignMetrics, parse_campaign_insights
+from src.plugins.ads.meta.parse import (
+    MetaAdsetMetrics,
+    MetaCampaignMetrics,
+    parse_adset_insights,
+    parse_campaign_insights,
+)
 
 GRAPH_VERSION = "v25.0"
 GRAPH_BASE = "https://graph.facebook.com"
@@ -40,6 +45,9 @@ class MetaAdsPort(Protocol):
     def fetch_campaign_metrics(
         self, token: str, account_id: str, *, since: str, until: str
     ) -> list[MetaCampaignMetrics]: ...
+    def fetch_adset_metrics(
+        self, token: str, account_id: str, *, since: str, until: str
+    ) -> list[MetaAdsetMetrics]: ...
     def list_campaigns(self, token: str, account_id: str) -> list[MetaCampaignMeta]: ...
     def update_campaign_status(self, token: str, campaign_id: str, status: str) -> bool: ...
     def fetch_raw_insights(
@@ -96,6 +104,19 @@ class GraphMetaAds:
         data = self._get(token, f"{account_id}/insights", params)
         return parse_campaign_insights(data)
 
+    def fetch_adset_metrics(
+        self, token: str, account_id: str, *, since: str, until: str
+    ) -> list[MetaAdsetMetrics]:
+        """Insights level=adset — métricas por segmento (drill-down de campaña)."""
+        params = {
+            "level": "adset",
+            "fields": "adset_id,adset_name,campaign_id,spend,impressions,reach,clicks,actions",
+            "time_range": json.dumps({"since": since, "until": until}),
+            "limit": "500",
+        }
+        data = self._get(token, f"{account_id}/insights", params)
+        return parse_adset_insights(data)
+
     def list_campaigns(self, token: str, account_id: str) -> list[MetaCampaignMeta]:
         data = self._get(
             token, f"{account_id}/campaigns", {"fields": "id,name,status,objective", "limit": "500"}
@@ -146,11 +167,13 @@ class FakeMetaAds:
         metrics: list[MetaCampaignMetrics] | None = None,
         campaigns: list[MetaCampaignMeta] | None = None,
         raw_insights: dict | None = None,
+        adset_metrics: list[MetaAdsetMetrics] | None = None,
     ) -> None:
         self._accounts = accounts or []
         self._metrics = metrics or []
         self._campaigns = campaigns or []
         self._raw_insights = raw_insights or {"account_currency": "COP", "data": []}
+        self._adset_metrics = adset_metrics or []
         self.status_changes: list[tuple[str, str]] = []
 
     def list_ad_accounts(self, token: str) -> list[MetaAdAccount]:
@@ -160,6 +183,11 @@ class FakeMetaAds:
         self, token: str, account_id: str, *, since: str, until: str
     ) -> list[MetaCampaignMetrics]:
         return list(self._metrics)
+
+    def fetch_adset_metrics(
+        self, token: str, account_id: str, *, since: str, until: str
+    ) -> list[MetaAdsetMetrics]:
+        return list(self._adset_metrics)
 
     def list_campaigns(self, token: str, account_id: str) -> list[MetaCampaignMeta]:
         return list(self._campaigns)

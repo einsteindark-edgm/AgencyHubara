@@ -192,6 +192,45 @@ describe("capi_event — schema + mapper", () => {
   });
 });
 
+describe("segmentación — meta_adset_id + response de /adsets", () => {
+  it("defaultea meta_adset_id a null si el backend aún no lo serializa", () => {
+    const parsed = backendAdsCampaignSchema.parse(campaignSample);
+    expect(parsed.meta_adset_id).toBeNull();
+  });
+
+  it("mapea meta_adset_id → metaAdsetId del dominio", () => {
+    const c = mapBackendCampaign(
+      backendAdsCampaignSchema.parse({
+        ...campaignSample,
+        ad_set: "Hombres 25-45 Bogotá",
+        meta_adset_id: "ADSET_3",
+      }),
+    );
+    expect(c.metaAdsetId).toBe("ADSET_3");
+    expect(c.adSet).toBe("Hombres 25-45 Bogotá");
+  });
+
+  it("parsea el response de GET /campaigns/{id}/adsets (mismo shape de campaña por fila)", async () => {
+    const { backendAdsAdsetsResponseSchema } = await import("./contracts");
+    const parsed = backendAdsAdsetsResponseSchema.parse({
+      campaign_id: "CAMP_9",
+      ad_sets: [
+        {
+          ...campaignSample,
+          id: "ADSET_3",
+          name: "Hombres 25-45 Bogotá",
+          ad_set: "Hombres 25-45 Bogotá",
+          meta_adset_id: "ADSET_3",
+          meta_campaign_id: "CAMP_9",
+          spend: 320500,
+        },
+      ],
+    });
+    expect(parsed.ad_sets[0].meta_adset_id).toBe("ADSET_3");
+    expect(parsed.ad_sets[0].spend).toBe(320500);
+  });
+});
+
 describe("backendAdsDailyResponseSchema — serie diaria", () => {
   const okPoint = {
     d: "21 may",

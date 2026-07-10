@@ -141,6 +141,153 @@ def test_daily_endpoint_custom_range_length_matches_series(ads_client):
     assert body["series"][-1]["d"] == "7 may"
 
 
+# --- segmentación: agrupación por campaña + drill-down por adset ------------
+
+
+def _seed_ad_session(vault: Path, phone: str, source_id: str, started_ms: int) -> None:
+    sd = vault / f"wa_{phone}"
+    sd.mkdir(parents=True, exist_ok=True)
+    (sd / "metadata.json").write_text(
+        json.dumps(
+            {
+                "origin": {
+                    "channel": "ad",
+                    "first_seen_ms": started_ms,
+                    "headline": "Chatea",
+                    "source_id": source_id,
+                },
+                "active_route": "ventas",
+                "episodes": [
+                    {
+                        "episode_id": "ep_001",
+                        "started_at_ms": started_ms,
+                        "closed_at_ms": started_ms + 1000,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+_SEG_NAMES = {
+    "AD_1": {
+        "ad_name": "Ad uno", "campaign_name": "Día del Padre",
+        "campaign_id": "CAMP_9", "adset_id": "ADSET_A",
+        "adset_name": "Hombres 25-45", "thumbnail_url": None,
+    },
+    "AD_2": {
+        "ad_name": "Ad dos", "campaign_name": "Día del Padre",
+        "campaign_id": "CAMP_9", "adset_id": "ADSET_B",
+        "adset_name": "Mujeres 30-50", "thumbnail_url": None,
+    },
+}
+
+
+@pytest.fixture
+def segmented_client(ads_client, monkeypatch):
+    """Dos ads de la MISMA campaña (segmentos distintos) + resolver fake."""
+    client, vault = ads_client
+    base = bogota_day_start_ms("2026-05-15") + 12 * 60 * 60 * 1000
+    _seed_ad_session(vault, "111", "AD_1", base)
+    _seed_ad_session(vault, "222", "AD_2", base + 1000)
+    monkeypatch.setattr(
+        ads_mod, "fetch_meta_ad_names", lambda ad_ids, *, token, transport=None: _SEG_NAMES
+    )
+    monkeypatch.setattr(ads_mod, "_meta_names_token", lambda: "TOK")
+    ads_mod._meta_names_cache.clear()
+    yield client, vault
+    ads_mod._meta_names_cache.clear()
+
+
+def test_campaigns_endpoint_groups_ads_of_same_campaign(segmented_client):
+    """Segmentación (2026-07-10): dos ads de la misma campaña Meta → UNA
+    fila con id = campaign_id y agregados sumados (antes: una fila por ad)."""
+    client, _ = segmented_client
+    resp = client.get("/api/ads/campaigns")
+    assert resp.status_code == 200
+    rows = resp.json()["campaigns"]
+    ids = [c["id"] for c in rows]
+    assert "CAMP_9" in ids
+    assert "AD_1" not in ids and "AD_2" not in ids
+    camp = next(c for c in rows if c["id"] == "CAMP_9")
+    assert camp["started"] == 2
+    assert camp["name"] == "Día del Padre"
+    assert camp["meta_campaign_id"] == "CAMP_9"
+
+
+def test_adsets_endpoint_returns_segment_rows(segmented_client, monkeypatch):
+    """GET /campaigns/{id}/adsets → una fila por segmento con agregados del
+    vault + métricas Meta level=adset cuando hay conexión."""
+    from src.plugins.ads.meta.parse import MetaAdsetMetrics
+
+    client, _ = segmented_client
+    monkeypatch.setattr(
+        ads_mod,
+        "_cached_meta_adsets",
+        lambda since_ms, until_ms: [
+            MetaAdsetMetrics(
+                adset_id="ADSET_A", adset_name="Hombres 25-45",
+                campaign_id="CAMP_9", spend=320500.0, impressions=15000,
+                reach=12100, clicks=210, messaging_conversations_started=44,
+            )
+        ],
+        raising=False,
+    )
+    resp = client.get("/api/ads/campaigns/CAMP_9/adsets")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["campaign_id"] == "CAMP_9"
+    by_id = {r["id"]: r for r in body["ad_sets"]}
+    assert set(by_id) == {"ADSET_A", "ADSET_B"}
+    assert by_id["ADSET_A"]["name"] == "Hombres 25-45"
+    assert by_id["ADSET_A"]["started"] == 1
+    assert by_id["ADSET_A"]["spend"] == 320500.0
+    assert by_id["ADSET_B"]["spend"] is None  # sin métrica → None honesto
+
+
+def test_conversations_endpoint_accepts_campaign_and_adset_scope(
+    segmented_client,
+):
+    """El drill-down funciona con el id AGRUPADO: /CAMP_9/conversations trae
+    los chats de todos sus ads; ?adset_id= acota al segmento."""
+    client, _ = segmented_client
+
+    all_convs = client.get("/api/ads/campaigns/CAMP_9/conversations").json()
+    assert {c["phone_number"] for c in all_convs["conversations"]} == {
+        "111", "222",
+    }
+
+    seg = client.get(
+        "/api/ads/campaigns/CAMP_9/conversations",
+        params={"adset_id": "ADSET_B"},
+    ).json()
+    assert {c["phone_number"] for c in seg["conversations"]} == {"222"}
+
+
+def test_daily_endpoint_accepts_adset_scope(segmented_client):
+    client, _ = segmented_client
+    resp = client.get(
+        "/api/ads/campaigns/CAMP_9/daily",
+        params={"from": "2026-05-14", "to": "2026-05-16", "adset_id": "ADSET_A"},
+    )
+    assert resp.status_code == 200
+    total = sum(
+        sum(v for k, v in p.items() if k != "d") for p in resp.json()["series"]
+    )
+    assert total == 1  # solo el episodio de AD_1 (segmento A)
+
+
+def test_legacy_raw_source_id_still_works(ads_client):
+    """Back-compat: sin resolver (Graph caído / sin token) el id crudo
+    (source_id) sigue sirviendo el drill-down como antes."""
+    client, vault = ads_client
+    _seed_two_episodes(vault)
+    resp = client.get("/api/ads/campaigns/AD_X/conversations")
+    assert resp.status_code == 200
+    assert len(resp.json()["conversations"]) == 2
+
+
 # --- enrichment de nombres Meta (fix 2026-07-01) ----------------------------
 
 
@@ -170,7 +317,9 @@ def test_campaigns_endpoint_enriches_names_from_meta(ads_client, monkeypatch):
 
     resp = client.get("/api/ads/campaigns")
     assert resp.status_code == 200
-    camp = next(c for c in resp.json()["campaigns"] if c["id"] == "AD_X")
+    # Segmentación (2026-07-10): la fila resuelta se agrupa por campaña —
+    # su id pasa a ser el campaign_id de Meta (estable para el drill-down).
+    camp = next(c for c in resp.json()["campaigns"] if c["id"] == "CAMP_1")
     assert camp["name"] == "Día del Padre 2026 · Ad velas premium"
     assert camp["creative_title"] == "Velas"
     assert camp["meta_campaign_id"] == "CAMP_1"

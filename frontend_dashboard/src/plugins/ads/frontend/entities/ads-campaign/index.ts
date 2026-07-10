@@ -26,5 +26,6 @@ export { adsCampaignKeys } from "./keys";
 export {
   useAdsCampaigns,
   useAttributedConversations,
+  useCampaignAdsets,
   useDailySeries,
 } from "./api";

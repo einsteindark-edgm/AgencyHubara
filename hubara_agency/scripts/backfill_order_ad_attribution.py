@@ -110,10 +110,36 @@ async def main() -> None:
     logger.info("órdenes con atribución REAL en el vault: {}", len(vault_index))
 
     token = _meta_token()
-    real_ad_ids = sorted({v["meta_ad_id"] for v in vault_index.values()})
+    # Ads a resolver: los del vault + los ya estampados en órdenes (para el
+    # upgrade de segmento sobre órdenes atribuidas antes de la segmentación).
+    real_ad_ids = sorted(
+        {v["meta_ad_id"] for v in vault_index.values()}
+        | {
+            str((o.get("metadata") or {}).get("meta_ad_id"))
+            for o in orders
+            if (o.get("metadata") or {}).get("meta_ad_id")
+        }
+    )
     names = fetch_meta_ad_names(real_ad_ids, token=token) if real_ad_ids and token else {}
+    if real_ad_ids and token and not names:
+        # El batch `?ids=` de Graph devuelve 400 si UN solo id es inválido
+        # (ad borrado / metadata operator-writable con basura) → names={} y el
+        # plan degrada silenciosamente (0 upgrades, patches sin campaña/adset).
+        # Hacerlo VISIBLE: el operador decide si depura ids o corre igual.
+        logger.warning(
+            "Graph no resolvió NINGÚN ad ({} ids) — probable id inválido en el "
+            "batch. El plan seguirá sin campañas/segmentos resueltos.",
+            len(real_ad_ids),
+        )
     ad_to_campaign = {
         ad: info["campaign_id"] for ad, info in names.items() if info.get("campaign_id")
+    }
+    # Segmentación (2026-07-10): ad → (adset_id, adset_name) para estampar el
+    # segmento en las órdenes (nuevas y upgrade de las ya atribuidas).
+    ad_to_adset = {
+        ad: (info["adset_id"], info.get("adset_name") or "")
+        for ad, info in names.items()
+        if info.get("adset_id")
     }
 
     seeds = _seed_campaigns(args.campaign_ids)
@@ -122,15 +148,19 @@ async def main() -> None:
         seeds or "(ninguna — solo atribución real; --campaign-ids para sembrar)",
     )
 
-    plan = plan_order_patches(orders, vault_index, ad_to_campaign, seeds)
-    by_action = {"real": 0, "seeded": 0, "skip": 0, "unmatched": 0}
+    plan = plan_order_patches(
+        orders, vault_index, ad_to_campaign, seeds, ad_to_adset=ad_to_adset
+    )
+    by_action = {"real": 0, "seeded": 0, "adset_upgrade": 0, "skip": 0, "unmatched": 0}
     for p in plan:
         by_action[p["action"]] += 1
-        if p["action"] in ("real", "seeded"):
+        if p["action"] in ("real", "seeded", "adset_upgrade"):
             logger.info("  {} {} → {}", p["action"].upper(), p["order_id"], p["patch"])
-    logger.info("plan: {} real · {} seeded · {} skip · {} unmatched (intactas)",
-                by_action["real"], by_action["seeded"], by_action["skip"],
-                by_action["unmatched"])
+    logger.info(
+        "plan: {} real · {} seeded · {} adset_upgrade · {} skip · {} unmatched (intactas)",
+        by_action["real"], by_action["seeded"], by_action["adset_upgrade"],
+        by_action["skip"], by_action["unmatched"],
+    )
 
     if not args.apply:
         logger.info("DRY-RUN — nada escrito. Re-correr con --apply para aplicar.")
@@ -138,7 +168,7 @@ async def main() -> None:
 
     ok = failed = 0
     for p in plan:
-        if p["action"] not in ("real", "seeded"):
+        if p["action"] not in ("real", "seeded", "adset_upgrade"):
             continue
         try:
             await _patch_metadata(client, p["order_id"], p["patch"])

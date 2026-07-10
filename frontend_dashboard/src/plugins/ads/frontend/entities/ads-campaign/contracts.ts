@@ -68,6 +68,9 @@ export const backendAdsCampaignSchema = z.object({
   creative_thumbnail_url: z.string().nullable().default(null),
   template: z.string().nullable(),
   meta_campaign_id: z.string().nullable(),
+  // Segmento (ad set) del bucket — resuelto vía Graph. `.default(null)`
+  // tolera un backend viejo que aún no emite el campo.
+  meta_adset_id: z.string().nullable().default(null),
   first_resp: z.string().nullable(),
   tendency: z.string().nullable(),
   days_run: z.number().nullable(),
@@ -84,6 +87,16 @@ export type BackendAdsCampaign = z.infer<typeof backendAdsCampaignSchema>;
 
 export const backendAdsCampaignsResponseSchema = z.object({
   campaigns: z.array(backendAdsCampaignSchema),
+});
+
+/* ── Segmentos (response de GET /api/ads/campaigns/{id}/adsets) ──────────── */
+
+/** Cada fila de segmento reusa el shape de campaña (el backend serializa el
+ *  mismo DTO): `id` = adset_id, `name` = nombre del segmento, agregados del
+ *  vault + métricas Meta level=adset. */
+export const backendAdsAdsetsResponseSchema = z.object({
+  campaign_id: z.string(),
+  ad_sets: z.array(backendAdsCampaignSchema),
 });
 
 /* ── Conversación atribuida (response del endpoint /conversations) ───────── */

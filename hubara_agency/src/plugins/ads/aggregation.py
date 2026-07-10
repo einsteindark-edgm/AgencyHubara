@@ -93,6 +93,11 @@ class AdsCampaignSummary:
     # Duración media de los episodios CERRADOS del bucket (ms) — el "tiempo"
     # del embudo. None si no hay episodios cerrados con timestamps válidos.
     avg_episode_duration_ms: int | None = None
+    # Cardinalidad de los promedios de arriba — sin ellas, agrupar buckets
+    # (por campaña / por adset) no puede recomponer avg_ticket ni
+    # avg_episode_duration_ms exactos (promediar promedios miente).
+    revenue_count: int = 0
+    duration_count: int = 0
 
     # --- Señal CAPI (Conversions API) reportada a Meta (fix 2026-07-01) ---
     # Eventos de atribución CTWA que este bucket le reportó a Meta. Los
@@ -122,6 +127,9 @@ class AdsCampaignSummary:
     creative_thumbnail_url: str | None = None
     template: str | None = None
     meta_campaign_id: str | None = None
+    # Segmento (ad set) de Meta al que pertenece el ad de este bucket —
+    # resuelto vía Graph (enrich_campaign_names). None hasta resolver.
+    meta_adset_id: str | None = None
     first_resp: str | None = None
     tendency: str | None = None
     days_run: int | None = None
@@ -779,6 +787,8 @@ def list_ads_campaigns(
                 llm_cost_usd=llm_cost_usd,
                 llm_tokens=llm_tokens,
                 avg_episode_duration_ms=avg_episode_duration_ms,
+                revenue_count=bucket["revenue_count"],
+                duration_count=bucket["dur_count"],
                 capi_leads_sent=bucket["capi_leads"],
                 capi_purchases_sent=bucket["capi_purchases"],
                 capi_failed=bucket["capi_failed"],
@@ -799,6 +809,7 @@ def list_attributed_conversations(
     sessions: list[tuple[Path, dict[str, Any]]] | None = None,
     since_ms: int | None = None,
     until_ms: int | None = None,
+    source_ids: frozenset[str] | None = None,
 ) -> list[AdsAttributedConversation]:
     """Conversaciones WhatsApp atribuidas a una campaña.
 
@@ -840,8 +851,14 @@ def list_attributed_conversations(
             now_ms=now_ms,
         ):
             # Filtrado por episodio (no por sesión) — re-atribución FU2.
+            # Con `source_ids` (fila agrupada por campaña/adset = N ads), el
+            # episodio matchea si su bucket cae en el set; sin él, igualdad
+            # exacta con `campaign_id` (comportamiento pre-segmentación).
             ep_campaign_id = _episode_to_campaign_id(ep, origin)
-            if ep_campaign_id != campaign_id:
+            if source_ids is not None:
+                if ep_campaign_id not in source_ids:
+                    continue
+            elif ep_campaign_id != campaign_id:
                 continue
 
             if ep is not None:
@@ -974,6 +991,7 @@ def list_daily_series(
     since_ms: int | None = None,
     until_ms: int | None = None,
     sessions: list[tuple[Path, dict[str, Any]]] | None = None,
+    source_ids: frozenset[str] | None = None,
 ) -> list[AdsDailySeriesPoint]:
     """Serie diaria de una campaña: chats iniciados por día, por estado actual.
 
@@ -1046,7 +1064,11 @@ def list_daily_series(
             last_msg_ms=last_msg_ms,
             now_ms=now_ms,
         ):
-            if _episode_to_campaign_id(ep, origin) != campaign_id:
+            ep_bucket = _episode_to_campaign_id(ep, origin)
+            if source_ids is not None:
+                if ep_bucket not in source_ids:
+                    continue
+            elif ep_bucket != campaign_id:
                 continue
             ep_started_ms = (
                 ep.get("started_at_ms") if ep is not None else origin.get("first_seen_ms")

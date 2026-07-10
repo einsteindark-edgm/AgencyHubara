@@ -17,6 +17,21 @@ class MetaCampaignMetrics:
     messaging_conversations_started: int
 
 
+@dataclass(frozen=True)
+class MetaAdsetMetrics:
+    """Métricas de un ad set (segmento) Meta. `campaign_id` cuelga el segmento
+    de su campaña para el drill-down del dashboard. Frozen + JSON-safe (R-JSON)."""
+
+    adset_id: str
+    adset_name: str
+    campaign_id: str
+    spend: float
+    impressions: int
+    reach: int
+    clicks: int
+    messaging_conversations_started: int
+
+
 # La conversación CTWA (click-to-WhatsApp) vive en este action_type del Graph.
 # SUPUESTO (premortem #7): ventana de atribución de 7 días — el default razonable
 # para CTWA. Si una cuenta reportara solo `_1d`/`_28d`, las conversaciones saldrían
@@ -55,6 +70,29 @@ def parse_campaign_insights(payload: dict) -> list[MetaCampaignMetrics]:
             MetaCampaignMetrics(
                 campaign_id=str(row.get("campaign_id", "")),
                 campaign_name=str(row.get("campaign_name", "")),
+                spend=_num(row.get("spend")),
+                impressions=int(_num(row.get("impressions"))),
+                reach=int(_num(row.get("reach"))),
+                clicks=int(_num(row.get("clicks"))),
+                messaging_conversations_started=_conversations(row.get("actions", [])),
+            )
+        )
+    return rows
+
+
+def parse_adset_insights(payload: dict) -> list[MetaAdsetMetrics]:
+    """Graph `/insights` (level=adset) → métricas tipadas por segmento.
+
+    Mismas normalizaciones que el nivel campaña; `campaign_id` viene en cada
+    fila del propio insights (Graph lo incluye al pedirlo en fields).
+    """
+    rows: list[MetaAdsetMetrics] = []
+    for row in payload.get("data", []):
+        rows.append(
+            MetaAdsetMetrics(
+                adset_id=str(row.get("adset_id", "")),
+                adset_name=str(row.get("adset_name", "")),
+                campaign_id=str(row.get("campaign_id", "")),
                 spend=_num(row.get("spend")),
                 impressions=int(_num(row.get("impressions"))),
                 reach=int(_num(row.get("reach"))),
