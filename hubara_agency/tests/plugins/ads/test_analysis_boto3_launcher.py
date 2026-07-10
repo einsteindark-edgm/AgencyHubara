@@ -300,6 +300,9 @@ def test_fetch_status_lee_el_workflow_por_ssm(fake_clients) -> None:
     assert got == wf  # parseó el JSON del stdout de `sdk.cli status`
     script = " ".join(ssm.sent[0]["Parameters"]["commands"])
     assert "sdk.cli status 'exec-42'" in script  # por SSM, quoteado
+    # SSM trunca stdout a ~24KB (caso 7efb9fc6): el JSON crudo con el snapshot
+    # echoeado en tasks[] no cabe → el poll DEBE pedir el modo compact.
+    assert "--compact" in script, script
     assert ssm.sent[0]["InstanceIds"] == ["i-abc"]  # por instance-id (no IP)
 
 

@@ -272,10 +272,35 @@ def cmd_status(args: argparse.Namespace) -> int:
         print("status es SOLO para el poll durable: usá --runtime agentspan")
         return 1
 
-    from sdk.trace import fetch_workflow
+    import sdk.trace as trace
 
-    print(json.dumps(fetch_workflow(args.execution_id), ensure_ascii=False))
+    wf = trace.fetch_workflow(args.execution_id)
+    if getattr(args, "compact", False):
+        # SSM trunca stdout a ~24KB (caso 7efb9fc6, 2026-07-10): el JSON crudo
+        # echoea el input ENTERO dentro de tasks[] y no cabe. Compact = SOLO lo
+        # que interpret() consume del lado hubara (status/reason/output + el
+        # tipo+status de cada task, y el context de la HUMAN para el HITL).
+        wf = _compact_workflow(wf)
+    print(json.dumps(wf, ensure_ascii=False))
     return 0
+
+
+def _compact_workflow(wf: dict) -> dict:
+    def slim(t: dict) -> dict:
+        out = {"taskType": t.get("taskType"), "status": t.get("status")}
+        if t.get("taskType") == "HUMAN":
+            out["inputData"] = {"context": (t.get("inputData") or {}).get("context")}
+        if t.get("reasonForIncompletion") is not None:
+            out["reasonForIncompletion"] = t.get("reasonForIncompletion")
+        return out
+
+    return {
+        "workflowId": wf.get("workflowId"),
+        "status": wf.get("status"),
+        "reasonForIncompletion": wf.get("reasonForIncompletion"),
+        "output": wf.get("output"),
+        "tasks": [slim(t) for t in wf.get("tasks") or []],
+    }
 
 
 def cmd_cases(args: argparse.Namespace) -> int:
@@ -394,6 +419,7 @@ def main() -> int:
     st.set_defaults(fn=cmd_start)
 
     sg = sub.add_parser("status", help="POLL durable: imprime el workflow JSON de un execution-id (lo pollea el buzón)")
+    sg.add_argument("--compact", action="store_true", help="JSON reducido (cabe en el límite de 24KB de SSM): status/reason/output + tasks slim")
     sg.add_argument("execution_id")
     sg.add_argument("--runtime", default="agentspan", choices=["agentspan"], help="solo agentspan (el poll durable)")
     sg.set_defaults(fn=cmd_status)

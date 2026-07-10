@@ -44,3 +44,45 @@ def test_cmd_status_exige_runtime_agentspan(monkeypatch) -> None:
     args = argparse.Namespace(execution_id="e", runtime="local")
     assert cli.cmd_status(args) == 1
     assert called["n"] == 0
+
+
+def test_cmd_status_compact_reduce_el_json_para_ssm(monkeypatch, capsys) -> None:
+    # Run prod ce80f73f→7efb9fc6 (2026-07-10): SSM get_command_invocation trunca
+    # stdout a ~24KB; el workflow JSON crudo de Conductor echoea el snapshot
+    # ENTERO dentro de tasks[].inputData/outputData y no cabe → el buzón no
+    # parsea. --compact emite SOLO lo que interpret() consume.
+    import json
+
+    fat = {
+        "workflowId": "wf-1",
+        "status": "COMPLETED",
+        "reasonForIncompletion": None,
+        "output": {"result": "{'dispatch': []}"},
+        "input": {"payload": {"x": "y" * 5000}},
+        "tasks": [
+            {
+                "taskType": "window-strategist_ingest",
+                "status": "COMPLETED",
+                "inputData": {"state": "z" * 9000},
+                "outputData": {"state": "z" * 9000},
+            },
+            {
+                "taskType": "HUMAN",
+                "status": "IN_PROGRESS",
+                "inputData": {"context": {"monto": 5}, "otro": "w" * 5000},
+            },
+        ],
+    }
+    monkeypatch.setattr("sdk.trace.fetch_workflow", lambda eid: fat)
+    args = argparse.Namespace(execution_id="wf-1", runtime="agentspan", compact=True)
+    assert cli.cmd_status(args) == 0
+    out = capsys.readouterr().out
+    assert len(out) < 2000, f"compact debe caber holgado en SSM: {len(out)}"
+    d = json.loads(out)
+    assert d["status"] == "COMPLETED"
+    assert d["output"] == {"result": "{'dispatch': []}"}
+    assert d["tasks"][0] == {
+        "taskType": "window-strategist_ingest",
+        "status": "COMPLETED",
+    }
+    assert d["tasks"][1]["inputData"] == {"context": {"monto": 5}}
