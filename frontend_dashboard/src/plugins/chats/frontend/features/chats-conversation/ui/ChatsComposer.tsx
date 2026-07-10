@@ -23,6 +23,7 @@ import {
   type TargetRoute,
 } from "@plugins/chats/frontend/entities/handoff";
 import { ConfirmPaymentAction } from "./ConfirmPaymentAction";
+import { ScheduleDeliveryAction } from "./ScheduleDeliveryAction";
 
 interface Props {
   chatId: string | null;
@@ -103,6 +104,12 @@ function InterveneActiveComposer({
 }: InterveneActiveProps) {
   const [text, setText] = useState("");
   const [showReturnPicker, setShowReturnPicker] = useState(false);
+  // PM-007: un solo popover de acción de pedido abierto a la vez — con los
+  // dos abiertos se superponían (mismo anclaje right:0) y el operador podía
+  // disparar schedule desde ambos en paralelo.
+  const [openAction, setOpenAction] = useState<"schedule" | "confirm" | null>(
+    null,
+  );
 
   const sendMessage = useSendHumanMessageMutation(chatId);
 
@@ -124,7 +131,18 @@ function InterveneActiveComposer({
         </span>
         <span className="right">
           {pendingPaymentOrderId && (
-            <ConfirmPaymentAction orderId={pendingPaymentOrderId} />
+            <>
+              <ScheduleDeliveryAction
+                orderId={pendingPaymentOrderId}
+                open={openAction === "schedule"}
+                onOpenChange={(v) => setOpenAction(v ? "schedule" : null)}
+              />
+              <ConfirmPaymentAction
+                orderId={pendingPaymentOrderId}
+                open={openAction === "confirm"}
+                onOpenChange={(v) => setOpenAction(v ? "confirm" : null)}
+              />
+            </>
           )}
           <button
             className="interv-off"

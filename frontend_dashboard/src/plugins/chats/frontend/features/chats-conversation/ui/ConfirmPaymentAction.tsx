@@ -2,14 +2,18 @@ import { useReducer, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   useConfirmOrderPayment,
+  useOrderRefDetail,
   useScheduleOrder,
 } from "@plugins/chats/frontend/entities/order-ref";
 import { sessionKeys } from "@plugins/chats/frontend/entities/session";
-import { addDaysIso, todayIso } from "@/shared/lib";
+import { addDaysIso, formatIsoDateEs, todayIso } from "@/shared/lib";
 
 interface Props {
   /** Id backend (Medusa) del pedido a confirmar — `session.pending_payment_order_id`. */
   orderId: string;
+  /** Popover abierto — estado elevado al composer (PM-007: un popover a la vez). */
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }
 
 /**
@@ -34,9 +38,13 @@ interface Props {
  *      desmonta solo (vía SSE; además invalidamos `sessionKeys` para que sea
  *      inmediato).
  *
- * Si el pedido YA es una Order real (no draft), igual agendamos primero: el
- * backend es idempotente (`schedule` sobre algo ya agendado devuelve success
- * sin reconvertir), así garantizamos el pre-requisito sin chequear estado acá.
+ * Si el pedido YA tiene fecha de entrega asignada (`summary.due_iso` del
+ * read-side del cast — puesta por "Asignar fecha" en el chat o por el tablero
+ * de orders), el paso 1 se SALTA: re-agendar acá pisaría la fecha del operador
+ * con el default del popover. En ese caso el popover muestra la fecha agendada
+ * y el submit hace solo confirm-payment (el pedido ya fue convertido a Order
+ * real al agendarse). Sin fecha asignada — o si el read-side no responde — se
+ * mantiene el flujo de 2 pasos (schedule es idempotente sobre stage).
  */
 /**
  * F5.3 (auditoría 2026-06-10): el flujo de 2 pasos se modela con una unión
@@ -76,36 +84,52 @@ const FLOW_LABEL: Record<FlowState["phase"], string> = {
   error: "Confirmar pago",
 };
 
-export function ConfirmPaymentAction({ orderId }: Props) {
+export function ConfirmPaymentAction({ orderId, open, onOpenChange }: Props) {
   const qc = useQueryClient();
   const schedule = useScheduleOrder();
   const confirm = useConfirmOrderPayment();
-  const [open, setOpen] = useState(false);
+  // Lazy: fetch al ABRIR el popover, no al montar el composer (PM-006) — y
+  // cada apertura re-valida si la fecha apareció mientras tanto (PM-003).
+  const detail = useOrderRefDetail(orderId, { enabled: open });
   // Lazy init: "mañana" se calcula al montar, no al cargar el módulo — un
   // module-const quedaba stale si el dashboard pasaba la medianoche abierto.
   const [date, setDate] = useState(() => addDaysIso(1));
   const [time, setTime] = useState("");
   const [flow, dispatch] = useReducer(flowReducer, { phase: "idle" });
 
+  // Fecha YA asignada por el operador ("Asignar fecha" / tablero orders):
+  // null = sin agendar (o read-side caído → fallback al flujo de 2 pasos).
+  const scheduledIso = detail.data?.summary?.due_iso ?? null;
+  const scheduledTime = detail.data?.summary?.due_time ?? null;
+
   const busy = flow.phase === "scheduling" || flow.phase === "confirming";
+  // PM-001: mientras el read-side verifica si hay fecha, NO dejamos confirmar
+  // — el snapshot viejo (due_iso=null) re-agendaría pisando la fecha real.
+  const verifying = detail.isFetching;
   const err = flow.phase === "error" ? flow.message : null;
 
   const submit = async () => {
-    if (busy || !date) return;
+    if (busy || verifying || (!scheduledIso && !date)) return;
     dispatch({ type: "submit" });
     try {
-      // Paso 1: agendar (convierte draft → Order real).
-      const sr = await schedule.mutateAsync({
-        orderId,
-        delivery_iso: date,
-        delivery_time: time || undefined,
-      });
-      if (!sr.success) {
-        dispatch({
-          type: "fail",
-          message: sr.error_detail ?? "No se pudo agendar la entrega.",
+      if (!scheduledIso) {
+        // Paso 1: agendar (convierte draft → Order real). Se salta si la
+        // entrega ya tiene fecha — re-agendar pisaría la fecha del operador.
+        // El note deja rastro en el history del pedido de que este agendado
+        // fue implícito (PM-010: distinguible de un "Asignar fecha" a mano).
+        const sr = await schedule.mutateAsync({
+          orderId,
+          delivery_iso: date,
+          delivery_time: time || undefined,
+          note: "Agendado al confirmar pago desde el chat",
         });
-        return;
+        if (!sr.success) {
+          dispatch({
+            type: "fail",
+            message: sr.error_detail ?? "No se pudo agendar la entrega.",
+          });
+          return;
+        }
       }
       // Paso 2: confirmar el pago sobre la Order ya convertida.
       dispatch({ type: "advance" });
@@ -119,7 +143,7 @@ export function ConfirmPaymentAction({ orderId }: Props) {
       }
       qc.invalidateQueries({ queryKey: sessionKeys.all });
       dispatch({ type: "settle" });
-      setOpen(false);
+      onOpenChange(false);
     } catch (e) {
       dispatch({
         type: "fail",
@@ -133,7 +157,7 @@ export function ConfirmPaymentAction({ orderId }: Props) {
       <button
         type="button"
         className="confirm-pago-btn"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => onOpenChange(!open)}
         title="Agendar la entrega y confirmar el pago de este pedido"
         style={confirmBtnStyle}
       >
@@ -150,30 +174,49 @@ export function ConfirmPaymentAction({ orderId }: Props) {
           <div style={{ fontWeight: 700, fontSize: "0.82rem", marginBottom: 2 }}>
             Confirmar pago del pedido
           </div>
-          <p style={{ margin: 0, fontSize: "0.72rem", color: "var(--fg-faint, var(--color-neutral))", lineHeight: 1.35 }}>
-            El pedido se agenda (queda como pedido en preparación) y se marca el
-            pago como recibido, en un solo paso.
-          </p>
+          {detail.isError && (
+            <div role="alert" style={warnStyle}>
+              No se pudo verificar si ya hay fecha asignada — confirmar acá
+              (re)agenda la entrega con la fecha de abajo.
+            </div>
+          )}
+          {scheduledIso ? (
+            <p style={{ margin: 0, fontSize: "0.72rem", color: "var(--fg-faint, var(--color-neutral))", lineHeight: 1.35 }}>
+              Entrega ya agendada para{" "}
+              <b>
+                {formatIsoDateEs(scheduledIso)}
+                {scheduledTime ? ` ${scheduledTime}` : ""}
+              </b>
+              . Solo se marca el pago como recibido — la fecha no se toca.
+            </p>
+          ) : (
+            <>
+              <p style={{ margin: 0, fontSize: "0.72rem", color: "var(--fg-faint, var(--color-neutral))", lineHeight: 1.35 }}>
+                El pedido se agenda (queda como pedido en preparación) y se marca el
+                pago como recibido, en un solo paso.
+              </p>
 
-          <label style={fieldStyle}>
-            <span style={lblStyle}>Fecha de entrega</span>
-            <input
-              type="date"
-              value={date}
-              min={todayIso()}
-              onChange={(e) => setDate(e.target.value)}
-              style={inputStyle}
-            />
-          </label>
-          <label style={fieldStyle}>
-            <span style={lblStyle}>Hora (opcional)</span>
-            <input
-              type="time"
-              value={time}
-              onChange={(e) => setTime(e.target.value)}
-              style={inputStyle}
-            />
-          </label>
+              <label style={fieldStyle}>
+                <span style={lblStyle}>Fecha de entrega</span>
+                <input
+                  type="date"
+                  value={date}
+                  min={todayIso()}
+                  onChange={(e) => setDate(e.target.value)}
+                  style={inputStyle}
+                />
+              </label>
+              <label style={fieldStyle}>
+                <span style={lblStyle}>Hora (opcional)</span>
+                <input
+                  type="time"
+                  value={time}
+                  onChange={(e) => setTime(e.target.value)}
+                  style={inputStyle}
+                />
+              </label>
+            </>
+          )}
 
           {err && (
             <div role="alert" style={errStyle}>
@@ -184,7 +227,7 @@ export function ConfirmPaymentAction({ orderId }: Props) {
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
             <button
               type="button"
-              onClick={() => setOpen(false)}
+              onClick={() => onOpenChange(false)}
               disabled={busy}
               style={cancelStyle}
             >
@@ -193,10 +236,10 @@ export function ConfirmPaymentAction({ orderId }: Props) {
             <button
               type="button"
               onClick={submit}
-              disabled={busy || !date}
-              style={{ ...confirmBtnStyle, marginRight: 0, opacity: busy || !date ? 0.65 : 1 }}
+              disabled={busy || verifying || (!scheduledIso && !date)}
+              style={{ ...confirmBtnStyle, marginRight: 0, opacity: busy || verifying || (!scheduledIso && !date) ? 0.65 : 1 }}
             >
-              {FLOW_LABEL[flow.phase]}
+              {verifying ? "Verificando pedido…" : FLOW_LABEL[flow.phase]}
             </button>
           </div>
         </div>
@@ -257,6 +300,15 @@ const inputStyle: React.CSSProperties = {
   background: "var(--bg, #2c2c2e)",
   color: "inherit",
   fontSize: "0.78rem",
+};
+const warnStyle: React.CSSProperties = {
+  padding: "0.4rem 0.55rem",
+  borderRadius: 6,
+  background: "rgba(255,180,60,0.14)",
+  border: "1px solid rgba(255,180,60,0.4)",
+  color: "var(--color-warning, #d97706)",
+  fontSize: "0.7rem",
+  lineHeight: 1.3,
 };
 const errStyle: React.CSSProperties = {
   padding: "0.4rem 0.55rem",

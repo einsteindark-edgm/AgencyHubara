@@ -6,6 +6,8 @@
  *  - `active_agent_route === "humano"` → textarea + botón Devolver al bot.
  *  - humano + `pending_payment_order_id` → además "💳 Confirmar pago" (y NO
  *    aparece cuando ese campo es null). Clic → confirm-payment mutation con el id.
+ *  - humano + `pending_payment_order_id` → además "📅 Asignar fecha": agenda la
+ *    entrega (mismo schedule que orders/ReadyForShip) SIN confirmar el pago.
  *
  * Mockeamos `useSession` (entities/session), las mutaciones de handoff
  * (entities/handoff) y `useConfirmOrderPayment` (entities/order-ref local) para aislar
@@ -35,6 +37,7 @@ const sendMutate = vi.fn();
 const returnMutate = vi.fn();
 const confirmPaymentMutate = vi.fn();
 const scheduleOrderMutate = vi.fn();
+const orderDetailMock = vi.fn();
 
 vi.mock("@plugins/chats/frontend/entities/handoff", () => ({
   useInterveneMutation: () => ({
@@ -67,6 +70,8 @@ vi.mock("@plugins/chats/frontend/entities/order-ref", () => ({
     mutateAsync: scheduleOrderMutate,
     isPending: false,
   }),
+  useOrderRefDetail: (orderId: string | null, opts?: { enabled?: boolean }) =>
+    orderDetailMock(orderId, opts),
 }));
 
 function makeWrapper() {
@@ -85,6 +90,13 @@ beforeEach(() => {
   returnMutate.mockReset();
   confirmPaymentMutate.mockReset();
   scheduleOrderMutate.mockReset();
+  // Default: el pedido NO tiene fecha asignada aún (flujo 2 pasos vigente).
+  orderDetailMock.mockReset().mockReturnValue({
+    data: undefined,
+    isLoading: false,
+    isFetching: false,
+    isError: false,
+  });
 });
 
 describe("ChatsComposer", () => {
@@ -269,5 +281,253 @@ describe("ChatsComposer", () => {
     );
     expect(scheduleOrderMutate).toHaveBeenCalledTimes(1);
     expect(confirmPaymentMutate).not.toHaveBeenCalled();
+  });
+
+  // ─── Botón "Asignar fecha" (solo agenda la entrega, NO confirma pago) ──────
+
+  it("NO muestra 'Asignar fecha' si la sesión no tiene pedido pendiente", () => {
+    useSessionMock.mockReturnValue({
+      data: { active_agent_route: "humano", pending_payment_order_id: null },
+    });
+    render(<ChatsComposer chatId="wa_X" />, { wrapper: makeWrapper() });
+    expect(screen.queryByText(/Asignar fecha/)).not.toBeInTheDocument();
+  });
+
+  it("muestra 'Asignar fecha' junto a 'Confirmar pago' cuando hay pedido pendiente", () => {
+    useSessionMock.mockReturnValue({
+      data: {
+        active_agent_route: "humano",
+        pending_payment_order_id: "order_01KSTZSP8NWZTH2M4Q5GB3XY9Z",
+      },
+    });
+    render(<ChatsComposer chatId="wa_X" />, { wrapper: makeWrapper() });
+    expect(screen.getByText("📅 Asignar fecha")).toBeInTheDocument();
+    expect(screen.getByText("💳 Confirmar pago")).toBeInTheDocument();
+    // Ambos popovers arrancan cerrados: no hay form de fecha visible.
+    expect(screen.queryByText(/Fecha de entrega/i)).not.toBeInTheDocument();
+  });
+
+  it("abre el popover de asignar fecha sin disparar mutaciones", () => {
+    useSessionMock.mockReturnValue({
+      data: {
+        active_agent_route: "humano",
+        pending_payment_order_id: "order_01KSTZSP8NWZTH2M4Q5GB3XY9Z",
+      },
+    });
+    render(<ChatsComposer chatId="wa_X" />, { wrapper: makeWrapper() });
+    fireEvent.click(screen.getByText("📅 Asignar fecha"));
+    expect(screen.getByText(/Fecha de entrega/i)).toBeInTheDocument();
+    expect(scheduleOrderMutate).not.toHaveBeenCalled();
+    expect(confirmPaymentMutate).not.toHaveBeenCalled();
+  });
+
+  it("asignar fecha agenda el pedido con el order_id y NUNCA confirma el pago", async () => {
+    useSessionMock.mockReturnValue({
+      data: {
+        active_agent_route: "humano",
+        pending_payment_order_id: "order_01KSTZSP8NWZTH2M4Q5GB3XY9Z",
+      },
+    });
+    scheduleOrderMutate.mockResolvedValue({ success: true, error_detail: null });
+    render(<ChatsComposer chatId="wa_X" />, { wrapper: makeWrapper() });
+    fireEvent.click(screen.getByText("📅 Asignar fecha")); // abre popover
+    // El botón de acción dentro del popover (label "Asignar fecha").
+    const actionBtns = screen.getAllByText(/Asignar fecha/);
+    fireEvent.click(actionBtns[actionBtns.length - 1]);
+
+    await waitFor(() => expect(scheduleOrderMutate).toHaveBeenCalledTimes(1));
+    const arg = scheduleOrderMutate.mock.calls[0][0];
+    expect(arg.orderId).toBe("order_01KSTZSP8NWZTH2M4Q5GB3XY9Z");
+    expect(arg.delivery_iso).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+
+    // Al éxito el popover se cierra…
+    await waitFor(() =>
+      expect(screen.queryByText(/Fecha de entrega/i)).not.toBeInTheDocument(),
+    );
+    // …y el pago queda intacto (esa es la diferencia con "Confirmar pago").
+    expect(confirmPaymentMutate).not.toHaveBeenCalled();
+  });
+
+  it("si asignar fecha falla, muestra el error y no toca el pago", async () => {
+    useSessionMock.mockReturnValue({
+      data: {
+        active_agent_route: "humano",
+        pending_payment_order_id: "order_01KSTZSP8NWZTH2M4Q5GB3XY9Z",
+      },
+    });
+    scheduleOrderMutate.mockResolvedValue({
+      success: false,
+      error_detail: "medusa_unavailable: 503",
+    });
+    render(<ChatsComposer chatId="wa_X" />, { wrapper: makeWrapper() });
+    fireEvent.click(screen.getByText("📅 Asignar fecha"));
+    const actionBtns = screen.getAllByText(/Asignar fecha/);
+    fireEvent.click(actionBtns[actionBtns.length - 1]);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /medusa_unavailable/,
+    );
+    expect(scheduleOrderMutate).toHaveBeenCalledTimes(1);
+    expect(confirmPaymentMutate).not.toHaveBeenCalled();
+  });
+
+  // ─── Confirmar pago con fecha YA asignada: no re-agendar ──────────────────
+
+  it("si el pedido YA tiene fecha asignada, Confirmar pago NO agenda — solo confirma", async () => {
+    useSessionMock.mockReturnValue({
+      data: {
+        active_agent_route: "humano",
+        pending_payment_order_id: "order_01KSTZSP8NWZTH2M4Q5GB3XY9Z",
+      },
+    });
+    orderDetailMock.mockReturnValue({
+      data: { summary: { due_iso: "2026-07-15", due_time: null } },
+      isLoading: false,
+      isFetching: false,
+      isError: false,
+    });
+    confirmPaymentMutate.mockResolvedValue({ success: true, error_detail: null });
+    render(<ChatsComposer chatId="wa_X" />, { wrapper: makeWrapper() });
+    fireEvent.click(screen.getByText("💳 Confirmar pago"));
+
+    // El popover muestra la fecha ya agendada (formateada es-CO, PM-009) y
+    // NO pide una nueva.
+    expect(screen.getByText(/15 de julio de 2026/)).toBeInTheDocument();
+    expect(screen.queryByText(/Fecha de entrega/i)).not.toBeInTheDocument();
+
+    const actionBtns = screen.getAllByText(/Confirmar pago/);
+    fireEvent.click(actionBtns[actionBtns.length - 1]);
+
+    await waitFor(() => expect(confirmPaymentMutate).toHaveBeenCalledTimes(1));
+    expect(confirmPaymentMutate.mock.calls[0][0]).toEqual({
+      orderId: "order_01KSTZSP8NWZTH2M4Q5GB3XY9Z",
+    });
+    // La clave del fix: NO pisa la fecha que el operador ya asignó.
+    expect(scheduleOrderMutate).not.toHaveBeenCalled();
+  });
+
+  it("sin fecha asignada (detail sin due_iso), Confirmar pago mantiene el flujo de 2 pasos", async () => {
+    useSessionMock.mockReturnValue({
+      data: {
+        active_agent_route: "humano",
+        pending_payment_order_id: "order_01KSTZSP8NWZTH2M4Q5GB3XY9Z",
+      },
+    });
+    orderDetailMock.mockReturnValue({
+      data: { summary: { due_iso: null, due_time: null } },
+      isLoading: false,
+      isFetching: false,
+      isError: false,
+    });
+    scheduleOrderMutate.mockResolvedValue({ success: true, error_detail: null });
+    confirmPaymentMutate.mockResolvedValue({ success: true, error_detail: null });
+    render(<ChatsComposer chatId="wa_X" />, { wrapper: makeWrapper() });
+    fireEvent.click(screen.getByText("💳 Confirmar pago"));
+    expect(screen.getByText(/Fecha de entrega/i)).toBeInTheDocument();
+    const actionBtns = screen.getAllByText(/Confirmar pago/);
+    fireEvent.click(actionBtns[actionBtns.length - 1]);
+
+    await waitFor(() => expect(confirmPaymentMutate).toHaveBeenCalledTimes(1));
+    expect(scheduleOrderMutate).toHaveBeenCalledTimes(1);
+  });
+
+  // ─── Fixes del premortem (PM-001/002/007/008/010) ──────────────────────────
+
+  it("PM-001: mientras verifica el pedido (isFetching), el submit está bloqueado", () => {
+    useSessionMock.mockReturnValue({
+      data: {
+        active_agent_route: "humano",
+        pending_payment_order_id: "order_01KSTZSP8NWZTH2M4Q5GB3XY9Z",
+      },
+    });
+    orderDetailMock.mockReturnValue({
+      data: undefined,
+      isLoading: true,
+      isFetching: true,
+      isError: false,
+    });
+    render(<ChatsComposer chatId="wa_X" />, { wrapper: makeWrapper() });
+    fireEvent.click(screen.getByText("💳 Confirmar pago"));
+    const submitBtn = screen.getByText(/Verificando pedido/) as HTMLButtonElement;
+    expect(submitBtn.disabled).toBe(true);
+    fireEvent.click(submitBtn);
+    expect(scheduleOrderMutate).not.toHaveBeenCalled();
+    expect(confirmPaymentMutate).not.toHaveBeenCalled();
+  });
+
+  it("PM-002: si no se pudo verificar la fecha (detail error), el popover lo avisa", () => {
+    useSessionMock.mockReturnValue({
+      data: {
+        active_agent_route: "humano",
+        pending_payment_order_id: "order_01KSTZSP8NWZTH2M4Q5GB3XY9Z",
+      },
+    });
+    orderDetailMock.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isFetching: false,
+      isError: true,
+    });
+    render(<ChatsComposer chatId="wa_X" />, { wrapper: makeWrapper() });
+    fireEvent.click(screen.getByText("💳 Confirmar pago"));
+    // Warning honesto: la protección "no re-agendar" está apagada.
+    expect(
+      screen.getByText(/No se pudo verificar si ya hay fecha asignada/i),
+    ).toBeInTheDocument();
+    // El fallback de 2 pasos sigue disponible (con fecha editable).
+    expect(screen.getByText(/Fecha de entrega/i)).toBeInTheDocument();
+  });
+
+  it("PM-007: abrir un popover cierra el otro — solo un dialog a la vez", () => {
+    useSessionMock.mockReturnValue({
+      data: {
+        active_agent_route: "humano",
+        pending_payment_order_id: "order_01KSTZSP8NWZTH2M4Q5GB3XY9Z",
+      },
+    });
+    render(<ChatsComposer chatId="wa_X" />, { wrapper: makeWrapper() });
+    fireEvent.click(screen.getByText("📅 Asignar fecha"));
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    fireEvent.click(screen.getByText("💳 Confirmar pago"));
+    const dialogs = screen.getAllByRole("dialog");
+    expect(dialogs).toHaveLength(1);
+    expect(dialogs[0]).toHaveAccessibleName("Confirmar pago");
+  });
+
+  it("PM-008: Asignar fecha muestra la fecha actualmente agendada si existe", () => {
+    useSessionMock.mockReturnValue({
+      data: {
+        active_agent_route: "humano",
+        pending_payment_order_id: "order_01KSTZSP8NWZTH2M4Q5GB3XY9Z",
+      },
+    });
+    orderDetailMock.mockReturnValue({
+      data: { summary: { due_iso: "2026-07-15", due_time: null } },
+      isLoading: false,
+      isFetching: false,
+      isError: false,
+    });
+    render(<ChatsComposer chatId="wa_X" />, { wrapper: makeWrapper() });
+    fireEvent.click(screen.getByText("📅 Asignar fecha"));
+    expect(screen.getByText(/Actualmente agendada/i)).toBeInTheDocument();
+    expect(screen.getByText(/15 de julio de 2026/)).toBeInTheDocument();
+  });
+
+  it("PM-010: el agendado implícito de Confirmar pago deja rastro en el note", async () => {
+    useSessionMock.mockReturnValue({
+      data: {
+        active_agent_route: "humano",
+        pending_payment_order_id: "order_01KSTZSP8NWZTH2M4Q5GB3XY9Z",
+      },
+    });
+    scheduleOrderMutate.mockResolvedValue({ success: true, error_detail: null });
+    confirmPaymentMutate.mockResolvedValue({ success: true, error_detail: null });
+    render(<ChatsComposer chatId="wa_X" />, { wrapper: makeWrapper() });
+    fireEvent.click(screen.getByText("💳 Confirmar pago"));
+    const actionBtns = screen.getAllByText(/Confirmar pago/);
+    fireEvent.click(actionBtns[actionBtns.length - 1]);
+
+    await waitFor(() => expect(scheduleOrderMutate).toHaveBeenCalledTimes(1));
+    expect(scheduleOrderMutate.mock.calls[0][0].note).toMatch(/confirmar pago/i);
   });
 });
