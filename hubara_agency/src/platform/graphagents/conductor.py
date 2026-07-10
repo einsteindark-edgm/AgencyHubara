@@ -14,6 +14,7 @@ pushear el `awaiting`) → solo se detecta polleando + leyendo `taskType==HUMAN`
 from __future__ import annotations
 
 import ast
+import json
 from typing import Any
 
 #: status de Conductor que cuentan como fallo terminal.
@@ -21,14 +22,42 @@ _FAILED = {"FAILED", "FAILED_WITH_TERMINAL_ERROR", "TERMINATED", "TIMED_OUT"}
 
 
 def _unwrap_output(output: Any) -> Any:
-    """AgentSpan envuelve el output como `{'result': '<repr Python del state>'}` (L-8) →
-    el state real. `ast.literal_eval` es seguro (solo literales). Si no parsea, crudo."""
+    """AgentSpan envuelve el output como `{'result': '<state serializado>'}` (L-8) →
+    el state real. La serialización varió entre runs: repr Python (comillas
+    simples, True/None) Y json (true/null — es lo que documenta el runtime de
+    la caja, sdk/runtime.py::_unwrap). `ast.literal_eval` primero (seguro),
+    json como fallback (PM-001: un state con `true` no es literal Python y el
+    consumer veía cero dispatch con run completed). Si nada parsea, crudo."""
     if isinstance(output, dict) and list(output) == ["result"] and isinstance(output["result"], str):
+        raw = output["result"]
         try:
-            return ast.literal_eval(output["result"])
+            return ast.literal_eval(raw)
         except (ValueError, SyntaxError):
+            pass
+        try:
+            return json.loads(raw)
+        except (ValueError, json.JSONDecodeError):
             return output
     return output
+
+
+def extract_agent_result(raw: Any) -> dict | None:
+    """El CONTRATO del agente desde el `result` de un poll completed, tolerante
+    a la forma (PM-001, premortem order-sentinel): para un agente DIRECTO el
+    output compact de Conductor es el STATE COMPLETO del grafo
+    ({payload, classified, result}) — el contrato vive un nivel adentro; si la
+    proyección por contrato algún día entrega el contrato directo, también
+    sirve. `None` = no hay `dispatch` extraíble (p.ej. podado por --compact):
+    el workflow consumidor DEBE tratarlo como fallo VISIBLE, nunca como
+    "completed con cero trabajo" (pérdida silenciosa + watermarks avanzados)."""
+    if not isinstance(raw, dict):
+        return None
+    if "dispatch" in raw:
+        return raw
+    inner = raw.get("result")
+    if isinstance(inner, dict) and "dispatch" in inner:
+        return inner
+    return None
 
 
 def _human_context(task: dict) -> Any:

@@ -164,7 +164,12 @@ def build_agent(node: AgentNode, ga_root: Path | None = None, ports: dict | None
         return build_agent(load_agent_by_id(ga_root, node.ref_agent_id), ga_root, ports)
 
     if node.capability:
-        return _resolve_capability(node.capability)()  # CompiledStateGraph
+        # Una capability DIRECTA con `consumes:` recibe sus ports como kwargs de
+        # build() (ej. ctwa_report/order_sentinel: `build(*, llm=None)`) — mismo
+        # filtrado por `consumes` que el LocalRuntime (bound_ports). Sin consumes
+        # → build() sin args (window-strategist et al., intactos).
+        bound = {p: (ports or {})[p] for p in node.consumes if p in (ports or {})}
+        return _resolve_capability(node.capability)(**bound)  # CompiledStateGraph
 
     if node.is_supervisor:
         return build_supervisor_graph(node, ga_root, ports=ports)

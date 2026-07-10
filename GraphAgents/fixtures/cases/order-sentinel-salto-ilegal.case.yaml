@@ -1,0 +1,28 @@
+# CASO order-sentinel: el LLM propone new→delivered (saltear el DAG). El guardrail
+# determinista del nodo plan lo SUPRIME con razón visible `invalid_transition` —
+# el LLM propone, el código dispone (forward-only ADYACENTE).
+id: order-sentinel-salto-ilegal
+title: order-sentinel · salto ilegal del DAG (suprimido)
+target: agent:order-sentinel
+seed:
+  payload:
+    schema_version: 1
+    now_ms: 1720500000000
+    conversations:
+      - session_id: wa_573006667788
+        order_id: order_01SALTO
+        current_stage: new
+        payment_confirmed: true
+        messages:
+          - { who: human_operator, text: "listo, entregado tu pedido, gracias por comprar", at_ms: 1720497000000, has_media: false }
+ports:
+  llm: '{"action": "transition", "to_stage": "delivered", "evidence": ["listo, entregado tu pedido"], "confidence": "high"}'
+golden:
+  schema_version: 1
+  snapshot_now_ms: 1720500000000
+  dispatch: []
+  suppressed:
+    - session_id: wa_573006667788
+      order_id: order_01SALTO
+      reason: invalid_transition
+  llm_errors: []

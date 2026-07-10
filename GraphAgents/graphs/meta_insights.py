@@ -40,8 +40,13 @@ def run(input: dict, *, ports: dict | None = None, tools: dict | None = None) ->
     return _normalize(rows)
 
 
-def build():
-    """StateGraph LangGraph (adapter al runtime real). Requiere langgraph."""
+def build(*, meta_marketing_api=None):
+    """StateGraph LangGraph (adapter al runtime real). Requiere langgraph.
+
+    Acepta el port `meta_marketing_api` por kwarg (G-PORT-BUILD: el manifest lo
+    `consumes:` y el loader durable compila con `build(**ports)` — sin el kwarg
+    reventaría con TypeError apenas Meta gane vendor real en durable_vendors).
+    El cableado del grafo que lo threadee al nodo extract sigue pendiente (G1+)."""
     try:
         from langgraph.graph import END, START, StateGraph  # noqa: F401
     except Exception as e:  # noqa: BLE001

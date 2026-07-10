@@ -108,7 +108,7 @@ services:
     - META_APP_ID=${META_APP_ID}
     - META_APP_SECRET=${META_APP_SECRET}
     - META_OAUTH_REDIRECT_URI=${META_OAUTH_REDIRECT_URI}
-    - ENABLED_PLUGINS=ads,agents_admin,catalog,chats,eta,orders,reengagement,system_map
+    - ENABLED_PLUGINS=ads,agents_admin,catalog,chats,eta,order_sentinel,orders,reengagement,system_map
     volumes:
     - hubara-vault-local:/app/hubara_vault
     - ../frontend_dashboard/src/plugins:/app/frontend_dashboard/src/plugins:ro
@@ -130,7 +130,7 @@ services:
     depends_on:
     - hubara-api
     environment:
-    - ENABLED_PLUGINS=ads,agents_admin,catalog,chats,eta,orders,reengagement,system_map
+    - ENABLED_PLUGINS=ads,agents_admin,catalog,chats,eta,order_sentinel,orders,reengagement,system_map
   hubara-worker-catalog-sync:
     build:
       context: ../
@@ -150,7 +150,7 @@ services:
     - MEDUSA_ADMIN_TOKEN=${MEDUSA_ADMIN_TOKEN}
     - META_CATALOG_ID=${META_CATALOG_ID}
     - META_SYSTEM_USER_TOKEN=${META_SYSTEM_USER_TOKEN}
-    - ENABLED_PLUGINS=ads,agents_admin,catalog,chats,eta,orders,reengagement,system_map
+    - ENABLED_PLUGINS=ads,agents_admin,catalog,chats,eta,order_sentinel,orders,reengagement,system_map
     volumes:
     - hubara-vault-local:/app/hubara_vault
     depends_on:
@@ -188,7 +188,7 @@ services:
     - MEDUSA_DEFAULT_SHIPPING_OPTION_ID=${MEDUSA_DEFAULT_SHIPPING_OPTION_ID}
     - MEDUSA_DEFAULT_CURRENCY=${MEDUSA_DEFAULT_CURRENCY:-cop}
     - MEDUSA_DEFAULT_COUNTRY=${MEDUSA_DEFAULT_COUNTRY:-co}
-    - ENABLED_PLUGINS=ads,agents_admin,catalog,chats,eta,orders,reengagement,system_map
+    - ENABLED_PLUGINS=ads,agents_admin,catalog,chats,eta,order_sentinel,orders,reengagement,system_map
     volumes:
     - hubara-vault-local:/app/hubara_vault
     depends_on:
@@ -217,7 +217,7 @@ services:
     - WHATSAPP_PHONE_NUMBER_ID=${WHATSAPP_PHONE_NUMBER_ID}
     - WHATSAPP_ACCESS_TOKEN=${WHATSAPP_ACCESS_TOKEN}
     - WHATSAPP_VERIFY_TOKEN=${WHATSAPP_VERIFY_TOKEN}
-    - ENABLED_PLUGINS=ads,agents_admin,catalog,chats,eta,orders,reengagement,system_map
+    - ENABLED_PLUGINS=ads,agents_admin,catalog,chats,eta,order_sentinel,orders,reengagement,system_map
     volumes:
     - hubara-vault-local:/app/hubara_vault
     depends_on:
@@ -248,7 +248,7 @@ services:
     - SALES_EVAL_LOOKBACK_HOURS=8
     - SALES_EVAL_MAX_CONVERSATIONS=50
     - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
-    - ENABLED_PLUGINS=ads,agents_admin,catalog,chats,eta,orders,reengagement,system_map
+    - ENABLED_PLUGINS=ads,agents_admin,catalog,chats,eta,order_sentinel,orders,reengagement,system_map
     volumes:
     - hubara-vault-local:/app/hubara_vault
     depends_on:
@@ -279,13 +279,36 @@ services:
     - WHATSAPP_VERIFY_TOKEN=${WHATSAPP_VERIFY_TOKEN}
     - MEDUSA_BASE_URL=${MEDUSA_BASE_URL}
     - MEDUSA_ADMIN_TOKEN=${MEDUSA_ADMIN_TOKEN}
-    - ENABLED_PLUGINS=ads,agents_admin,catalog,chats,eta,orders,reengagement,system_map
+    - ENABLED_PLUGINS=ads,agents_admin,catalog,chats,eta,order_sentinel,orders,reengagement,system_map
     volumes:
     - hubara-vault-local:/app/hubara_vault
     depends_on:
       temporal:
         condition: service_healthy
       litellm:
+        condition: service_healthy
+  hubara-worker-order_sentinel-cycle:
+    build:
+      context: ../
+      dockerfile: Dockerfile
+    container_name: local-hubara-worker-order_sentinel-cycle
+    working_dir: /app/hubara_agency
+    command:
+    - python
+    - -m
+    - src.plugins.order_sentinel.workers.cycle
+    environment:
+    - TEMPORAL_URL=temporal:7233
+    - WORKSPACE_VAULT_DIR=/app/hubara_vault
+    - HUBARA_API_BASE_URL=http://hubara-api:8000
+    - AWS_REGION=${AWS_REGION}
+    - ENABLED_PLUGINS=ads,agents_admin,catalog,chats,eta,order_sentinel,orders,reengagement,system_map
+    volumes:
+    - hubara-vault-local:/app/hubara_vault
+    depends_on:
+      temporal:
+        condition: service_healthy
+      hubara-api:
         condition: service_healthy
   hubara-worker-orders-reconcile:
     build:
@@ -305,7 +328,7 @@ services:
     - MEDUSA_ADMIN_TOKEN=${MEDUSA_ADMIN_TOKEN}
     - MEDUSA_REGION_ID=${MEDUSA_REGION_ID}
     - MEDUSA_SALES_CHANNEL_ID=${MEDUSA_SALES_CHANNEL_ID}
-    - ENABLED_PLUGINS=ads,agents_admin,catalog,chats,eta,orders,reengagement,system_map
+    - ENABLED_PLUGINS=ads,agents_admin,catalog,chats,eta,order_sentinel,orders,reengagement,system_map
     volumes:
     - hubara-vault-local:/app/hubara_vault
     depends_on:
@@ -325,7 +348,7 @@ services:
     - TEMPORAL_URL=temporal:7233
     - WORKSPACE_VAULT_DIR=/app/hubara_vault
     - AWS_REGION=${AWS_REGION}
-    - ENABLED_PLUGINS=ads,agents_admin,catalog,chats,eta,orders,reengagement,system_map
+    - ENABLED_PLUGINS=ads,agents_admin,catalog,chats,eta,order_sentinel,orders,reengagement,system_map
     volumes:
     - hubara-vault-local:/app/hubara_vault
     depends_on:

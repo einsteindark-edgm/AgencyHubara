@@ -1,0 +1,34 @@
+# CASO order-sentinel: conversación MULTI-MENSAJE — el anuncio a futuro ("mañana te lo
+# envío") NO dispara nada; recién cuando el operador confirma que YA salió el domiciliario
+# el agente emite ready→shipping. El LLM ve la ventana completa y cita el mensaje decisivo.
+id: order-sentinel-en-camino
+title: order-sentinel · en camino (multi-mensaje, ready→shipping)
+target: agent:order-sentinel
+seed:
+  payload:
+    schema_version: 1
+    now_ms: 1720500000000
+    conversations:
+      - session_id: wa_573003334455
+        order_id: order_01CAMINO
+        current_stage: ready
+        payment_confirmed: true
+        messages:
+          - { who: human_operator, text: "mañana te lo envío sin falta", at_ms: 1720480000000, has_media: false }
+          - { who: customer, text: "listo, quedo pendiente", at_ms: 1720481000000, has_media: false }
+          - { who: human_operator, text: "ya salió el domiciliario con tu pedido", at_ms: 1720494000000, has_media: false }
+ports:
+  llm: '{"action": "transition", "to_stage": "shipping", "evidence": ["ya salió el domiciliario con tu pedido"], "confidence": "high"}'
+golden:
+  schema_version: 1
+  snapshot_now_ms: 1720500000000
+  dispatch:
+    - kind: order_stage_intent
+      session_id: wa_573003334455
+      order_id: order_01CAMINO
+      action: transition
+      to_stage: shipping
+      evidence: ["ya salió el domiciliario con tu pedido"]
+      confidence: high
+  suppressed: []
+  llm_errors: []

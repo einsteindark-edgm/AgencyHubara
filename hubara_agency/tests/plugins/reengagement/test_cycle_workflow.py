@@ -45,6 +45,17 @@ _RESULT = {
     "truncated_by_budget": 0,
 }
 
+#: La forma REAL del poll de un agente DIRECTO (PM-001, premortem
+#: order-sentinel): el output compact de Conductor es el STATE COMPLETO del
+#: grafo del window-strategist ({payload, classified, result}) — el contrato
+#: vive un nivel ADENTRO. Con la extracción vieja (`state["result"]["dispatch"]`)
+#: esto daba dispatched=0 con run completed: feature muerta en silencio.
+_FULL_GRAPH_STATE = {
+    "payload": {"schema_version": 1, "conversations": [{"session_id": "wa_a"}]},
+    "classified": [{"session_id": "wa_a", "action": "reactivate"}],
+    "result": _RESULT,
+}
+
 
 class Tracker:
     def __init__(self) -> None:
@@ -53,12 +64,18 @@ class Tracker:
         self.envelopes: list[EventEnvelope] = []
 
 
-def _fakes(tracker: Tracker, *, conversations: list | None = None):
+def _fakes(
+    tracker: Tracker,
+    *,
+    conversations: list | None = None,
+    poll_result: dict | None = None,
+):
     convos = (
         conversations
         if conversations is not None
         else [{"session_id": "wa_a"}, {"session_id": "wa_b"}, {"session_id": "wa_c"}]
     )
+    completed_result = poll_result if poll_result is not None else _FULL_GRAPH_STATE
 
     @activity.defn(name="build_reengagement_snapshot")
     async def fake_snapshot() -> dict:
@@ -74,7 +91,7 @@ def _fakes(tracker: Tracker, *, conversations: list | None = None):
         tracker.polls += 1
         if tracker.polls < 2:  # primer poll: running → el workflow re-pollea
             return {"status": "running", "awaiting": None, "result": None, "error": None}
-        return {"status": "completed", "awaiting": None, "result": _RESULT, "error": None}
+        return {"status": "completed", "awaiting": None, "result": completed_result, "error": None}
 
     @activity.defn(name="orchestration.dispatch_event")
     async def fake_dispatch_event(envelope: EventEnvelope) -> None:
@@ -113,6 +130,32 @@ async def test_ciclo_emite_un_evento_por_intent() -> None:
     assert tracker.envelopes[0].payload["motivo"]
     assert summary["dispatched"] == 2
     assert summary["suppressed"] == 1
+
+
+@pytest.mark.asyncio
+async def test_result_ya_desenvuelto_tambien_emite() -> None:
+    """Tolerancia de forma: si la proyección algún día entrega el contrato
+    DIRECTO (sin el state alrededor), la extracción no debe romperse."""
+    tracker = Tracker()
+    summary = await _run(tracker, poll_result=_RESULT)
+
+    assert summary["dispatched"] == 2
+    assert len(tracker.envelopes) == 2
+
+
+@pytest.mark.asyncio
+async def test_result_sin_dispatch_termina_visible_sin_emitir() -> None:
+    """PM-005: si el compact PODÓ el result (o cambió la forma), el ciclo
+    termina `result_missing_dispatch` VISIBLE — nunca 'completed dispatched=0'
+    que finge que no había leads."""
+    tracker = Tracker()
+    summary = await _run(
+        tracker, poll_result={"_pruned_keys": ["result"], "payload": {}}
+    )
+
+    assert tracker.envelopes == [], "sin dispatch extraíble NO se emite nada"
+    assert summary["dispatched"] == 0
+    assert summary["run_status"] == "result_missing_dispatch"
 
 
 @pytest.mark.asyncio

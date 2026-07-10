@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hubara-worker-order-sentinel-cycle
+  namespace: default
+spec:
+  # Un solo ciclo a la vez (snapshot global del vault). NO escalar.
+  replicas: 1
+  strategy:
+    # Recreate evita dos ciclos concurrentes durante rollout.
+    type: Recreate
+  selector:
+    matchLabels:
+      app: hubara-worker-order-sentinel-cycle
+  template:
+    metadata:
+      labels:
+        app: hubara-worker-order-sentinel-cycle
+    spec:
+      containers:
+        - name: worker
+          image: hubara-agency-prod:latest
+          imagePullPolicy: Always
+          command: ["python", "-m", "hubara_agency.src.plugins.order_sentinel.workers.cycle"]
+          env:
+            # P-20/P-21 (INV-2): set explícito de plugins de ESTE deployment.
+            # order_sentinel depende de orders (autoridad de los intents).
+            - name: ENABLED_PLUGINS
+              value: "ads,agents_admin,catalog,chats,eta,order_sentinel,orders,reengagement,system_map"
+            - name: TEMPORAL_URL
+              value: "temporal-frontend.temporal.svc.cluster.local:7233"
+            - name: TEMPORAL_NAMESPACE
+              value: "default"
+            - name: TEMPORAL_TLS_CERT_PATH
+              value: "/etc/temporal-certs/temporal.pem"
+            - name: TEMPORAL_TLS_KEY_PATH
+              value: "/etc/temporal-certs/temporal.key"
+            # SIN esto el default es ./hubara_vault (cwd) y el ciclo escanearía
+            # un dir vacío → skipped_empty diario SILENCIOSO (hallazgo del
+            # gate-reviewer; el mount de abajo va en el MISMO path).
+            - name: WORKSPACE_VAULT_DIR
+              value: "/var/lib/hubara/vault"
+            # El ejecutor y el enriquecimiento hablan con la API de orders por
+            # HTTP (hereda validación DAG + SSE del dashboard).
+            - name: HUBARA_API_BASE_URL
+              value: "http://hubara-api.default.svc.cluster.local:8000"
+            # Bridge GraphAgents (boto3/SSM): la caja se resuelve por tag
+            # Role=graphagents. Sin AWS_REGION el launcher falla claro al
+            # usarse (el worker igual bootea).
+            - name: AWS_REGION
+              value: "us-east-1"
+          volumeMounts:
+            - name: hubara-vault
+              # Vault de sesiones COMPLETO (el snapshot escanea wa_*/).
+              mountPath: /var/lib/hubara/vault
+            - name: temporal-certs
+              mountPath: "/etc/temporal-certs"
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: hubara-vault
+          persistentVolumeClaim:
+            claimName: hubara-vault-efs
+        - name: temporal-certs
+          secret:
+            secretName: temporal-cloud-certs
