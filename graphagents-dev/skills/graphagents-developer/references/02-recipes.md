@@ -89,7 +89,14 @@ La unidad reusable de primera clase. Test-first.
    `capability`, `consumes`, `certification`, `approval_required`).
 3. **Regla de oro** si el campo es nuevo: `manifest_model` (lo modela) +
    `loader` (lo consume) + `testkit/checks.py` (lo chequea), mismo cambio.
-4. `uv run python -m sdk.cli check` → verde.
+4. **Declarar el ROL del agente** (L-27): ¿componente o pod? Componente (otro
+   agente lo compone) → `exposes_as_tool: true` + la referencia
+   `uses: agent://<id>@1` en su taskgraph, mismo incremento. Entry-point (lo
+   dispatcha un sistema externo — hubara, un cron) → `exposes_as_tool: false`
+   (el default). Acktos Studio lista como Workflows a los supervisores raíz y
+   a los entry-points standalone — un agente de producción que no es ninguno
+   queda INVISIBLE (guard: `tests/architecture/test_workflow_visibility.py`).
+5. `uv run python -m sdk.cli check` → verde.
 
 ## 2.3b Crear el CASO de ejecución (cierre OBLIGATORIO de 2.0/2.1/2.3/2.5)
 

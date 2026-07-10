@@ -189,9 +189,12 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<TreeNode> {
     }
   }
 
-  /** Las RAÍCES de los flujos conectados: agentes con sub-agentes (aristas
-   * `agent` salientes) que ningún otro supervisor referencia. Cada una nombra
-   * a su workflow completo — el "nombre del inicio". */
+  /** Las RAÍCES de los flujos operables: (a) supervisores con sub-agentes
+   * (aristas `agent` salientes) que ningún otro supervisor referencia, y
+   * (b) agentes standalone ENTRY-POINT — `exposes_as_tool: false` y sin
+   * supervisor (los dispatcha un sistema externo, p.ej. hubara vía SSM).
+   * Un agente con `exposes_as_tool: true` es un COMPONENTE: vive bajo el
+   * workflow del supervisor que lo compone, no como flujo propio. */
   private async workflows(): Promise<WorkflowLeafNode[]> {
     const payload = await this.payloadFor("graphagents");
     if (!payload) {
@@ -200,7 +203,10 @@ export class CatalogTreeProvider implements vscode.TreeDataProvider<TreeNode> {
     const agentEdges = payload.edges.filter((e) => e.kind === "agent");
     const supervised = new Set(agentEdges.map((e) => e.target));
     const roots = payload.nodes.filter(
-      (n) => n.kind === "agent" && agentEdges.some((e) => e.source === n.id) && !supervised.has(n.id),
+      (n) =>
+        n.kind === "agent" &&
+        !supervised.has(n.id) &&
+        (agentEdges.some((e) => e.source === n.id) || n["exposes_as_tool"] === false),
     );
     return toWorkflowLeaves(roots, payload, "graphagents");
   }
