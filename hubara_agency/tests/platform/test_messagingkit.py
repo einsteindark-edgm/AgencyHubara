@@ -26,6 +26,18 @@ def test_messagingkit_reexports_quiet_hours():
     assert kit.resolve_local_timezone is impl.resolve_local_timezone
 
 
+def test_messagingkit_reexports_reengagement_index():
+    # Punto 2 (escala): el ingest (chats) y el snapshot builder (reengagement)
+    # usan el índice vía SDK — P-28 les prohíbe platform directo.
+    import src.platform.whatsapp.reengagement_index as impl
+    import src.sdk.messagingkit as kit
+
+    assert kit.load_reengagement_index is impl.load_index
+    assert kit.update_reengagement_index_entry is impl.update_index_entry
+    assert kit.update_reengagement_index_entries is impl.update_index_entries
+    assert kit.reengagement_shortlist is impl.shortlist_session_ids
+
+
 def test_messagingkit_reexports_rate_card_accessor():
     import src.platform.whatsapp.composition as impl
     import src.sdk.messagingkit as kit

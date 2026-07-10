@@ -29,6 +29,16 @@ from src.platform.whatsapp.quiet_hours import (
     is_quiet_hours_for_session as is_quiet_hours_for_session,
     resolve_local_timezone as resolve_local_timezone,
 )
+from src.platform.whatsapp import reengagement_index as _reengagement_index
+
+# Índice incremental de reactivación (Punto 2, escala): shortlist para el
+# snapshot builder + update en el ingest. Asignaciones (no import-as) para
+# que ruff no las pode como unused — son la superficie pública del kit.
+load_reengagement_index = _reengagement_index.load_index
+update_reengagement_index_entry = _reengagement_index.update_index_entry
+update_reengagement_index_entries = _reengagement_index.update_index_entries
+reengagement_shortlist = _reengagement_index.shortlist_session_ids
+
 from src.platform.whatsapp.send_policy import (
     LeadState as LeadState,
     SendDecision as SendDecision,

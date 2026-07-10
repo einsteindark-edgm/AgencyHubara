@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.sdk.messagingkit import lead_state_from_metadata
+from src.sdk.messagingkit import decide_reengagement, lead_state_from_metadata
 
 #: máximo de toques recientes reportados por conversación (el nodo `plan` del
 #: agente solo necesita la ventana de 24h; capamos para no inflar el seed).
@@ -69,12 +69,39 @@ def conversation_entry(
 
 
 def build_snapshot_from_sessions(
-    now_ms: int, sessions: list[tuple[str, dict[str, Any]]]
+    now_ms: int,
+    sessions: list[tuple[str, dict[str, Any]]],
+    rate_card: Any = None,
 ) -> dict[str, Any]:
-    """(now_ms, [(session_id, metadata)]) → el seed completo del agente."""
-    conversations = [
-        entry
-        for session_id, metadata in sessions
-        if (entry := conversation_entry(session_id, metadata)) is not None
-    ]
-    return {"schema_version": 1, "now_ms": now_ms, "conversations": conversations}
+    """(now_ms, [(session_id, metadata)]) → el seed completo del agente.
+
+    Pre-filtro de escala (Punto 1): con `rate_card`, corre la CENTRAL
+    (`decide_reengagement` — la misma autoridad del gate, no un espejo) por
+    sesión y EXCLUYE del seed lo que ella suprime (terminales, fase B fría).
+    Clasificar millones de fríos en la caja es pagar cómputo por un "no" que
+    hubara ya sabe; el seed sigue al conjunto ACCIONABLE, no al vault.
+    `prefiltered` cuenta lo excluido por razón — nunca un cap silencioso.
+    El agente igual suprime en classify (defensa en profundidad) y el gate
+    re-valida al ejecutar.
+    """
+    conversations: list[dict[str, Any]] = []
+    prefiltered: dict[str, int] = {}
+    for session_id, metadata in sessions:
+        entry = conversation_entry(session_id, metadata)
+        if entry is None:
+            continue
+        if rate_card is not None:
+            decision = decide_reengagement(
+                now_ms, metadata, lead_state_from_metadata(metadata), rate_card
+            )
+            if not decision.allowed:
+                reason = decision.suppress_reason or "suppressed"
+                prefiltered[reason] = prefiltered.get(reason, 0) + 1
+                continue
+        conversations.append(entry)
+    return {
+        "schema_version": 1,
+        "now_ms": now_ms,
+        "conversations": conversations,
+        "prefiltered": prefiltered,
+    }
