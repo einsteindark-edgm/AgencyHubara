@@ -50,6 +50,16 @@ def _api_base() -> str:
     return os.environ.get("HUBARA_API_BASE_URL", "http://hubara-api:8000").rstrip("/")
 
 
+def _api_client(**kwargs: Any) -> httpx.AsyncClient:
+    """Cliente hacia la API interna. Con Cognito activo en prod, el worker se
+    autentica con HUBARA_SERVICE_TOKEN (bearer de servicio machine-to-machine
+    — incidente 401 del run 019f4d63; require_auth lo acepta en tiempo
+    constante). Sin el env → sin header (dev local sin auth)."""
+    token = os.environ.get("HUBARA_SERVICE_TOKEN", "")
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    return httpx.AsyncClient(headers=headers, **kwargs)
+
+
 def _read_json(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
@@ -165,7 +175,7 @@ async def build_order_sentinel_snapshot_activity() -> dict[str, Any]:
     # conversación (y su watermark: no la analizamos — el próximo ciclo reintenta).
     enriched: list[dict[str, Any]] = []
     excluded = 0
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with _api_client(timeout=15) as client:
         for convo in snapshot["conversations"]:
             state = await _fetch_order_state(client, convo["order_id"])
             if state is None:
@@ -280,7 +290,7 @@ async def execute_order_intents_activity(
     TODAS las sesiones analizadas (con o sin intents, aplicados o no: el
     watermark es "hasta dónde analicé", no "hasta dónde apliqué")."""
     summary = {"applied": 0, "skipped": 0, "failed": 0}
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with _api_client(timeout=15) as client:
         for intent in intents:
             summary[await _execute_intent(client, intent)] += 1
 

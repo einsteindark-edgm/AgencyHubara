@@ -97,6 +97,17 @@ def require_auth(request: Request) -> None:
     token = _extract_token(request)
     if not token:
         raise HTTPException(status_code=401, detail="Falta el bearer token")
+    # Service token interno (machine-to-machine: workers → API, ej. el
+    # executor de order-sentinel — un worker no tiene request entrante del
+    # cual portar identidad, castkit no aplica). Solo si está CONFIGURADO
+    # (env vacío = camino Cognito intacto, fail-closed) y en tiempo
+    # constante. Un service token errado cae al camino Cognito normal.
+    import secrets
+
+    if config.HUBARA_SERVICE_TOKEN and secrets.compare_digest(
+        token, config.HUBARA_SERVICE_TOKEN
+    ):
+        return
     try:
         _verify_token(token)
     except HTTPException:
