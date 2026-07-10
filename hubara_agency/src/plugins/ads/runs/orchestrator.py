@@ -98,6 +98,44 @@ async def launch_and_poll(
         _emit(bus, run_id, ev)
 
 
+async def reconcile_in_flight(*, launcher, bus, interval: float = 2.0, max_polls: int = 900) -> None:
+    """Re-arma los pollers de los runs EN VUELO tras un boot del backend.
+
+    El poller de cada run es un task asyncio EN MEMORIA: un deploy/restart lo mata
+    y el record queda `running`/`pending` para siempre aunque Conductor complete —
+    el front nunca recibe el SSE (caso real 424d6647, 2026-07-10). Al bootear:
+    - no-terminal CON execution_id → re-spawn del `poll_loop` (el completed llega
+      tarde pero llega; los eventos duplicados los dedupea `apply_state`).
+    - `pending` SIN execution_id → el restart lo agarró antes de despachar; no hay
+      nada que pollear → `run.failed` honesto (la UI no queda colgada).
+    Los pollers re-armados corren CONCURRENTES (gather); errores individuales no
+    tumban la reconciliación de los demás.
+    """
+    pollers = []
+    for rec in record.list_runs(limit=100):
+        status = rec.get("status")
+        if status in ("completed", "failed"):
+            continue
+        run_id = rec["run_id"]
+        execution_id = rec.get("execution_id")
+        if execution_id:
+            _log.info("reconcile: re-armo el poller del run %s (execution %s)", run_id, execution_id)
+            pollers.append(poll_loop(
+                run_id, execution_id, bus=bus, fetch=launcher.fetch_status,
+                interval=interval, max_polls=max_polls,
+            ))
+        else:
+            ev = {
+                "event_id": f"{run_id}:failed",
+                "type": "run.failed",
+                "payload": {"error": "el backend se reinició durante el dispatch — reintentá el análisis"},
+            }
+            record.append_event(run_id, ev)
+            _emit(bus, run_id, ev)
+    if pollers:
+        await asyncio.gather(*pollers, return_exceptions=True)
+
+
 async def resume_run(run_id: str, execution_id: str, decision: dict, *, launcher) -> None:
     """Manda el resume del HITL en BACKGROUND (no bloquea el request `/approve`): la caja puede haber
     autostopeado durante la espera humana → `resume` la despierta (bloqueante) en un thread. El
