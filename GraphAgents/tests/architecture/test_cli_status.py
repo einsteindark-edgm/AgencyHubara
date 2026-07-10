@@ -156,3 +156,63 @@ def test_cmd_status_compact_poda_ADENTRO_del_acumulador_del_supervisor(monkeypat
     assert "meta_insights" not in inner["acc"]  # los ecos gigantes sí se podan
     # lo podado queda declarado con su ruta
     assert "acc.meta_insights" in inner["_pruned_keys"]
+
+
+def test_cmd_status_compact_proyecta_al_contrato_del_ultimo_nodo(monkeypatch, capsys) -> None:
+    """Feedback operador 2026-07-10: 'que el agente devuelva el nodo del análisis
+    y no hacer poda'. Para un supervisor SECUENCIAL el resultado ES lo que declara
+    el contrato del ÚLTIMO nodo (G-CONTRACT: ctwa-report.outputs → markdown /
+    verdict / qa_passed / narrative). --compact PROYECTA el estado a esas keys —
+    determinista, garantizado, sin heurística de tamaño. La poda queda de
+    fallback para workflows sin manifest resoluble."""
+    acc = {
+        "meta_insights": {"data": ["x" * 100] * 400},  # eco gigante
+        "campaigns": [{"id": 1}, {"id": 2}],           # intermedio (no es del reporter)
+        "markdown": "## Hubara — Ads Analytics",
+        "verdict": "ok",
+        "qa_passed": True,
+    }
+    fat = {
+        "workflowId": "wf-4",
+        "workflowName": "ads-analytics",  # el manifest REAL del repo
+        "status": "COMPLETED",
+        "reasonForIncompletion": None,
+        "output": {"result": json.dumps({"acc": acc})},
+        "tasks": [],
+    }
+    monkeypatch.setattr("sdk.trace.fetch_workflow", lambda eid: fat)
+    args = argparse.Namespace(execution_id="wf-4", runtime="agentspan", compact=True)
+
+    assert cli.cmd_status(args) == 0
+    out = capsys.readouterr().out
+    assert len(out) < 20000
+    inner = json.loads(json.loads(out)["output"]["result"])
+    # EXACTAMENTE el contrato del reporter — plano, sin wrapper acc ni intermedios
+    assert inner["markdown"] == "## Hubara — Ads Analytics"
+    assert inner["verdict"] == "ok"
+    assert inner["qa_passed"] is True
+    assert "meta_insights" not in inner
+    assert "campaigns" not in inner
+    assert "acc" not in inner
+    assert inner["_projected_from"] == "ctwa-report"
+
+
+def test_cmd_status_compact_proyeccion_resuelve_por_prefijo_de_task(monkeypatch, capsys) -> None:
+    """Si Conductor no expone workflowName, el graph se resuelve por el PREFIJO de
+    los taskTypes (`ads-analytics_ctwa_insights_0` → manifest ads-analytics)."""
+    acc = {"meta_insights": {"data": ["x" * 100] * 300}, "markdown": "## R", "verdict": "ok"}
+    fat = {
+        "workflowId": "wf-5",
+        "status": "COMPLETED",
+        "reasonForIncompletion": None,
+        "output": {"result": json.dumps({"acc": acc})},
+        "tasks": [{"taskType": "ads-analytics_ctwa_insights_0", "status": "COMPLETED"}],
+    }
+    monkeypatch.setattr("sdk.trace.fetch_workflow", lambda eid: fat)
+    args = argparse.Namespace(execution_id="wf-5", runtime="agentspan", compact=True)
+
+    assert cli.cmd_status(args) == 0
+    inner = json.loads(json.loads(capsys.readouterr().out)["output"]["result"])
+    assert inner["markdown"] == "## R"
+    assert inner["_projected_from"] == "ctwa-report"
+    assert "meta_insights" not in inner

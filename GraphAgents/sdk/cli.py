@@ -307,6 +307,15 @@ def _compact_workflow(wf: dict) -> dict:
         "output": wf.get("output"),
         "tasks": [slim(t) for t in wf.get("tasks") or []],
     }
+    # PROYECCIÓN por contrato (feedback operador 2026-07-10): para un supervisor
+    # secuencial el resultado ES lo que declara el contrato del ÚLTIMO nodo
+    # (G-CONTRACT — p.ej. ctwa-report.outputs = markdown/verdict/qa_passed).
+    # Determinista y garantizado: el operador recibe el reporte, no "lo que
+    # sobrevivió a la poda". Solo si el manifest no es resoluble se cae al
+    # fallback de poda por tamaño.
+    projection = _output_projection(wf)
+    if projection is not None and wf.get("status") == "COMPLETED":
+        compact["output"] = _project_output(compact.get("output"), projection)
     # 2º techo (run real bd3c2d4e, 2026-07-10): el output.result de un COMPLETED
     # echoea el ESTADO ENTERO del grafo (input de Meta incluido) y por sí solo
     # rompe los 24KB → SSM trunca → el buzón no parsea y el poller queda ciego.
@@ -318,20 +327,80 @@ def _compact_workflow(wf: dict) -> dict:
     return compact
 
 
-def _prune_output(output, *, budget: int):
-    """`{'result': '<json/repr del state>'}` → mismo shape con las keys más pesadas
-    del state podadas hasta que la serialización quepa en `budget`. Forma
-    desconocida o no parseable → `{'result': None, '_truncated': True}` (el buzón
-    parsea SIEMPRE; perder el detalle es mejor que un JSON cortado a la mitad)."""
+def _output_projection(wf: dict) -> tuple[str, list[str]] | None:
+    """`(agent_id, keys)` del contrato del ÚLTIMO nodo del supervisor, o None.
+
+    Resuelve el taskgraph por `workflowName` (o el prefijo de los taskTypes —
+    `ads-analytics_ctwa_insights_0` → `ads-analytics`) contra `manifests/`.
+    SOLO supervisores con nodos referenciados: un agente suelto (p.ej. el
+    window-strategist, cuyo consumer lee el state entero) NO se proyecta."""
+    from sdk.manifest_model import load_manifest
+
+    name = wf.get("workflowName") or (wf.get("workflowDefinition") or {}).get("name")
+    if not name:
+        ttypes = [t.get("taskType") or "" for t in wf.get("tasks") or []]
+        for p in sorted(MANIFESTS.glob("*.taskgraph.yaml")):
+            cand = p.name.removesuffix(".taskgraph.yaml")
+            if any(tt.startswith(cand + "_") for tt in ttypes):
+                name = cand
+                break
+    if not name:
+        return None
+    graph_paths = sorted(MANIFESTS.glob(f"{name}.taskgraph.yaml"))
+    if not graph_paths:
+        return None
+    try:
+        graph = load_manifest(graph_paths[0])
+    except Exception:  # noqa: BLE001 — manifest roto: mejor la poda que reventar el poll
+        return None
+    if not (graph.is_supervisor and graph.agents):
+        return None
+    last = graph.agents[-1]
+    agent_id = last.ref_agent_id or last.name
+    contract = last.contract
+    if contract is None and agent_id:
+        agent_paths = sorted(MANIFESTS.glob(f"{agent_id}.agent.yaml"))
+        if agent_paths:
+            try:
+                contract = load_manifest(agent_paths[0]).contract
+            except Exception:  # noqa: BLE001
+                return None
+    if not (agent_id and contract and contract.outputs):
+        return None
+    return agent_id, list(contract.outputs.keys())
+
+
+def _project_output(output, projection: tuple[str, list[str]]):
+    """Proyecta el state final al contrato del reporter: `{k: state[k]}` PLANO
+    (desciende el wrapper `acc` del supervisor), con `_projected_from` para
+    trazabilidad. Forma no parseable → se devuelve intacto (la poda decide)."""
+    import json
+
+    agent_id, keys = projection
+    state = _parse_result_state(output)
+    if state is None:
+        return output
+    # descender el/los contenedores únicos ({"acc": {...}}) hasta el state real
+    target = state
+    while True:
+        inner_keys = list(target)
+        if len(inner_keys) == 1 and isinstance(target[inner_keys[0]], dict) and target[inner_keys[0]]:
+            target = target[inner_keys[0]]
+        else:
+            break
+    projected = {k: target[k] for k in keys if k in target}
+    projected["_projected_from"] = agent_id
+    return {"result": json.dumps(projected, ensure_ascii=False, default=str)}
+
+
+def _parse_result_state(output) -> dict | None:
+    """`{'result': '<json/repr del state>'}` → el state dict, o None si la forma
+    no es la esperada (el caller decide el fallback)."""
     import ast
     import json
 
-    def _fits(state: dict) -> bool:
-        wrapped = {"result": json.dumps(state, ensure_ascii=False, default=str)}
-        return len(json.dumps(wrapped, ensure_ascii=False)) <= budget
-
     if not (isinstance(output, dict) and isinstance(output.get("result"), str)):
-        return {"result": None, "_truncated": True}
+        return None
     raw = output["result"]
     try:
         state = json.loads(raw)
@@ -339,8 +408,23 @@ def _prune_output(output, *, budget: int):
         try:
             state = ast.literal_eval(raw)
         except (ValueError, SyntaxError):
-            return {"result": None, "_truncated": True}
-    if not isinstance(state, dict):
+            return None
+    return state if isinstance(state, dict) else None
+
+
+def _prune_output(output, *, budget: int):
+    """`{'result': '<json/repr del state>'}` → mismo shape con las keys más pesadas
+    del state podadas hasta que la serialización quepa en `budget`. Forma
+    desconocida o no parseable → `{'result': None, '_truncated': True}` (el buzón
+    parsea SIEMPRE; perder el detalle es mejor que un JSON cortado a la mitad)."""
+    import json
+
+    def _fits(state: dict) -> bool:
+        wrapped = {"result": json.dumps(state, ensure_ascii=False, default=str)}
+        return len(json.dumps(wrapped, ensure_ascii=False)) <= budget
+
+    state = _parse_result_state(output)
+    if state is None:
         return {"result": None, "_truncated": True}
 
     pruned: list[str] = []
