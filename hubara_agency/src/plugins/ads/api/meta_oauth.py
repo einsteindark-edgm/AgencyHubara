@@ -16,6 +16,7 @@ Providers `_settings/_store/_ads` a nivel módulo para que los tests los monkeyp
 """
 from __future__ import annotations
 
+import logging
 import time
 from datetime import date, timedelta
 
@@ -29,6 +30,8 @@ from src.plugins.ads.meta.token_store import MetaTokenStorePort
 
 router = APIRouter()
 
+_log = logging.getLogger(__name__)
+
 
 def _settings() -> MetaSettings:
     return meta_settings()
@@ -40,6 +43,38 @@ def _store() -> MetaTokenStorePort:
 
 def _ads() -> MetaAdsPort:
     return get_ads_port()
+
+
+def _orders():
+    """OrderQueryPort (Medusa = la verdad del pago) — superficie del SDK
+    (connectorkit, import perezoso: no carga el vendor si nadie analiza).
+    Provider a nivel módulo para que los tests lo monkeypatcheen."""
+    from src.sdk.connectorkit import get_order_query_port
+
+    return get_order_query_port()
+
+
+async def _fetch_paid_sales(since: str, until: str) -> dict:
+    """`manual_sales` REAL para el pod: órdenes pagadas de Medusa agregadas por
+    día (`sales_join`). Pagina el port completo (cap defensivo). Medusa caída →
+    `{"sales": []}` — el análisis degrada honesto, nunca 500 al operador."""
+    from src.plugins.ads.sales_join import manual_sales_from_orders
+
+    try:
+        port = _orders()
+        orders: list = []
+        offset = 0
+        for _ in range(20):  # cap: 20 páginas × 100 = 2000 órdenes por análisis
+            page = await port.list(limit=100, offset=offset, include_drafts=False)
+            batch = list(page.orders or [])
+            orders.extend(batch)
+            if len(batch) < 100:
+                break
+            offset += 100
+        return manual_sales_from_orders(orders, since=since, until=until)
+    except Exception:  # noqa: BLE001 — degradar, no tumbar el análisis
+        _log.exception("analysis-input: no pude traer las ventas de Medusa — degrado a []")
+        return {"sales": []}
 
 
 @router.get("/status")
@@ -108,14 +143,15 @@ def meta_insights(days: int = 30, since: str = "", until: str = "") -> dict:
 
 
 @router.get("/analysis-input")
-def meta_analysis_input(days: int = 14) -> dict:
+async def meta_analysis_input(days: int = 14) -> dict:
     """Arma el JSON que el pod `ads-analytics` de GraphAgents consume, con datos REALES
     de Graph (lo que el botón "Analizar con IA" usa en vez del seed de ejemplo). El pod
     YA parsea este shape — no requiere cambios en GraphAgents.
 
-    `manual_sales` queda vacío (lo completa el operador: ventas WhatsApp no trackeadas
-    por Meta). `entities_payload` va vacío (las entities del MCP están gateadas; la señal
-    CTWA real vive en `meta_insights.actions`)."""
+    `manual_sales` = las órdenes PAGADAS de Medusa agregadas por día (la verdad del
+    pago; sin esto el pod no puede blendear y reporta `insufficient_data` — caso
+    424d6647). `entities_payload` va vacío (las entities del MCP están gateadas; la
+    señal CTWA real vive en `meta_insights.actions`)."""
     token = _store().load()
     if token is None or not token.account_id:
         raise HTTPException(status_code=409, detail="Meta no conectado")
@@ -139,7 +175,7 @@ def meta_analysis_input(days: int = 14) -> dict:
     )
     return {
         "meta_insights": meta_insights,
-        "manual_sales": {"sales": []},
+        "manual_sales": await _fetch_paid_sales(since_d.isoformat(), until_d.isoformat()),
         "entities_payload": {"ad_entities": "[]", "summary": {"total_count": 0}},
     }
 
