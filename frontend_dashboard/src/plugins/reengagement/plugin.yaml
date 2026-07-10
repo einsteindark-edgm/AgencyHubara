@@ -32,6 +32,11 @@ agent:
       module: src.plugins.reengagement.workers.cycle
       task_queue: queue-reengagement-cycle
       # SIN `owns_route`: este plugin no recibe inbounds ni toma el turno.
+      # El ciclo lo dispara un Temporal Schedule (scripts/create_reengagement_schedule.py);
+      # Acktos Studio dibuja el reloj en la cajita a partir de esta declaración.
+      schedule:
+        id: reengagement-cycle-schedule
+        cadence: cada 45 min
       workflow_classes:
         - ReengagementCycleWorkflow
       emits:

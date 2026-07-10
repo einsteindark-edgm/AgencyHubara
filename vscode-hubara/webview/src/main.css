@@ -356,6 +356,12 @@ body {
 .flow-node-cert.cert-c2 {
   background: var(--vscode-testing-iconPassed, #2ea043);
 }
+/* reloj = el ciclo lo dispara un Temporal Schedule (el tooltip trae la cadencia) */
+.flow-node-clock {
+  font-size: 10px;
+  line-height: 1;
+  cursor: help;
+}
 .flow-node-label {
   font-size: 12.5px;
   font-weight: 600;

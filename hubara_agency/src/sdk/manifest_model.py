@@ -192,6 +192,17 @@ class WorkerDashboard(BaseModel):
     capabilities: list[CapabilityEntry] = Field(default_factory=list)
 
 
+class WorkerSchedule(BaseModel):
+    """El Temporal Schedule que dispara el ciclo del worker (workflows
+    one-shot tipo ReengagementCycleWorkflow). `id` = el SCHEDULE_ID del script
+    `scripts/create_*_schedule.py` que lo crea (drift guard bidireccional:
+    tests/platform/test_worker_schedule_field.py); `cadence` = texto humano
+    que Acktos Studio muestra junto al reloj de la cajita."""
+    model_config = ConfigDict(extra="forbid")
+    id: str
+    cadence: str | None = None
+
+
 class WorkerSpec(BaseModel):
     # Worker items NO llevan additionalProperties:false en el schema —
     # espejamos la tolerancia (campos nuevos aparecen acá primero; la regla
@@ -209,6 +220,7 @@ class WorkerSpec(BaseModel):
     invokes: list[LegacyInvoke] = Field(default_factory=list)
     deployment: DeploymentBlock | None = None
     compose: ComposeBlock | None = None
+    schedule: WorkerSchedule | None = None
 
 
 class AgentBlock(BaseModel):

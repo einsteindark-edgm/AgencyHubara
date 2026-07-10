@@ -44,6 +44,23 @@ interface ClusterGraph {
   brokenSeams: Seam[];
 }
 
+/** El reloj del canvas: presente si al nodo lo dispara un Temporal Schedule.
+ * Workers del system map traen `data.schedule: {id, cadence}` (declarado en
+ * su plugin.yaml); el contenedor del plugin trae `data.has_schedule`. El
+ * valor devuelto es la cadencia humana ("" si no se declaró). */
+function scheduleOf(n: NamespacedNode): string | undefined {
+  const data = n["data"] as
+    | { schedule?: { cadence?: string | null } | null; has_schedule?: boolean }
+    | undefined;
+  if (!data || typeof data !== "object") {
+    return undefined;
+  }
+  if (data.schedule && typeof data.schedule === "object") {
+    return data.schedule.cadence ?? "";
+  }
+  return data.has_schedule === true ? "" : undefined;
+}
+
 function graphForScope(
   scope: Scope,
   graphagents: ProviderState,
@@ -308,6 +325,7 @@ export function App(): React.ReactElement {
         kind: n.kind as string,
         system: n.system,
         orderBadge: orderByNsId.get(n.nsId),
+        schedule: scheduleOf(n),
         certification: typeof n.certification === "string" ? (n.certification as string) : undefined,
         archetype: typeof n.archetype === "string" ? (n.archetype as string) : undefined,
         sideEffect: typeof n.side_effect === "string" ? (n.side_effect as string) : undefined,

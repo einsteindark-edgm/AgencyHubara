@@ -48,6 +48,7 @@ typed = load_typed_manifest("eta")        # ManifestValidationError si C0 falla
 typed.archetype                            # "notifier"
 typed.agent.workers[0].task_queue          # "queue-eta-agent" (pattern validado)
 typed.agent.workers[0].transitions[0].action.via   # Literal tipado
+typed.agent.workers[0].schedule            # WorkerSchedule {id, cadence} | None
 
 # Para validar un dict arbitrario (tests, CLI, scaffolder):
 parse_manifest({"id": "x", "version": "0.1.0"}, source="mi-test")
@@ -64,3 +65,23 @@ parse_manifest({"id": "x", "version": "0.1.0"}, source="mi-test")
 3. Si un manifest real usa algo que el modelo rechaza, NO aflojes el modelo
    por reflejo: primero decidí si el manifest está mal (fix al manifest) o el
    contrato quedó viejo (fix a las 3 patas).
+
+## Campo `schedule:` de un worker (2026-07-10)
+
+Un worker cuyo ciclo lo dispara un **Temporal Schedule** (workflows one-shot
+tipo `ReengagementCycleWorkflow`) lo declara en su entry:
+
+```yaml
+workers:
+  - name: cycle
+    schedule:
+      id: reengagement-cycle-schedule   # el SCHEDULE_ID del script que lo crea
+      cadence: cada 45 min              # texto humano — Acktos Studio lo muestra
+```
+
+Las 3 patas: tipado en `WorkerSchedule` (manifest_model) · schema en
+`plugin.schema.yaml` · check en `tests/platform/test_worker_schedule_field.py`
+(drift guard bidireccional contra `scripts/create_*schedule*.py` — ni
+schedules fantasma declarados, ni schedules reales invisibles). Consumidor:
+el system map lo proyecta al nodo (`data.schedule` / `has_schedule`) y el
+canvas de Acktos Studio dibuja el reloj ⏱ en la cajita.

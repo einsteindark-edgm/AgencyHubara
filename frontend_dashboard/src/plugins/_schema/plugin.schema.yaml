@@ -285,6 +285,20 @@ properties:
                 queue la leen del manifest via `src.platform.plugin_manifest.get_task_queue`.
                 Convención: prefijo "queue-" + nombre descriptivo.
               pattern: "^[a-z][a-z0-9-]*$"
+            schedule:
+              type: object
+              description: |
+                El Temporal Schedule que dispara el ciclo del worker (workflows
+                one-shot tipo ReengagementCycleWorkflow). `id` = el SCHEDULE_ID
+                del script `scripts/create_*_schedule.py` que lo crea — drift
+                guard bidireccional en tests/platform/test_worker_schedule_field.py.
+                `cadence` = texto humano ("cada 45 min") que Acktos Studio
+                muestra junto al reloj de la cajita en el canvas.
+              additionalProperties: false
+              required: [id]
+              properties:
+                id: { type: string }
+                cadence: { type: string }
             workflow_classes:
               type: array
               description: |
