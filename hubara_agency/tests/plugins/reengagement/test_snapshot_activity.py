@@ -76,3 +76,32 @@ async def test_snapshot_ignora_sesiones_sin_actividad_whatsapp(
         build_reengagement_snapshot_activity
     )
     assert snapshot["conversations"] == []
+
+
+@pytest.mark.asyncio
+async def test_dispatch_envuelve_el_snapshot_en_payload(monkeypatch):
+    # Run prod ce80f73f (2026-07-10): el nodo ingest falló con "falta 'payload'"
+    # — la activity mandaba el snapshot CRUDO, pero el contrato del manifest
+    # (inputs: payload) y el case window-strategist-ciclo esperan
+    # {"payload": snapshot}. El seam debe envolver.
+    from src.plugins.reengagement.agent.cycle import activities as acts
+
+    seen: dict = {}
+
+    class FakeLauncher:
+        def start_box(self):
+            seen["box"] = True
+
+        def dispatch(self, agent, input, *, run_id):
+            seen["agent"] = agent
+            seen["input"] = input
+            return "eid-1"
+
+    monkeypatch.setattr(acts, "get_launcher", lambda: FakeLauncher())
+    snapshot = {"schema_version": 1, "now_ms": 5, "conversations": []}
+    eid = await ActivityEnvironment().run(
+        acts.dispatch_window_strategist_activity, snapshot, "run-x"
+    )
+    assert eid == "eid-1"
+    assert seen["agent"] == "window-strategist"
+    assert seen["input"] == {"payload": snapshot}, seen["input"]
