@@ -26,6 +26,11 @@ with workflow.unsafe.imports_passed_through():
         poll_order_sentinel_activity,
     )
 
+    # OJO L-0: este import lo PODÓ ruff --fix una vez (el hook corrió entre el
+    # edit del import y el del uso) → NameError en runtime del workflow task,
+    # que Temporal reintenta INFINITO. El canario del test lo vigila.
+    from src.sdk.graphagentskit import extract_agent_result
+
 #: intervalo entre polls del run (la caja tarda segundos-minutos por ciclo).
 _POLL_INTERVAL = timedelta(seconds=15)
 

@@ -26,6 +26,12 @@ with workflow.unsafe.imports_passed_through():
     )
     from src.sdk.eventkit import dispatch_event_activity, envelope_for
 
+    # OJO L-0: este import lo PODÓ ruff --fix una vez (el hook corrió entre el
+    # edit del import y el del uso) → NameError en runtime del workflow task,
+    # que Temporal reintenta INFINITO (run colgado en prod, 2026-07-10). El
+    # canario test_workflow_module_importa_extract_agent_result lo vigila.
+    from src.sdk.graphagentskit import extract_agent_result
+
 #: intervalo entre polls del run (la caja tarda segundos-minutos por ciclo).
 _POLL_INTERVAL = timedelta(seconds=15)
 

@@ -115,6 +115,20 @@ async def _run(tracker: Tracker, **kw) -> dict:
             )
 
 
+def test_workflow_module_importa_extract_agent_result() -> None:
+    """Canario anti-L-0 (incidente prod 2026-07-10): ruff --fix podó el import
+    de `extract_agent_result` (el hook corrió entre el edit del import y el del
+    uso) → NameError en el workflow task, que Temporal reintenta INFINITO — el
+    run de prod quedó colgado y el test de ciclo solo lo cazaba por timeout de
+    300s. Este canario falla en milisegundos si el import vuelve a desaparecer."""
+    import src.plugins.reengagement.agent.cycle.workflows.cycle as wf_module
+
+    assert hasattr(wf_module, "extract_agent_result"), (
+        "falta `from src.sdk.graphagentskit import extract_agent_result` en el "
+        "bloque imports_passed_through (¿ruff lo podó? L-0)"
+    )
+
+
 @pytest.mark.asyncio
 async def test_ciclo_emite_un_evento_por_intent() -> None:
     tracker = Tracker()
