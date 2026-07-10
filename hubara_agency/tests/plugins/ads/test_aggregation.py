@@ -1165,6 +1165,77 @@ def test_aggregates_llm_cost_and_tokens_per_campaign(_isolate_vault_dir: Path):
     assert camp.llm_tokens == 1500
 
 
+def test_attributed_conversations_scope_matches_any_source_id(
+    _isolate_vault_dir: Path,
+):
+    """Segmentación (2026-07-10): una fila del listado agrupado (campaña o
+    adset) abarca VARIOS ads — el scope `source_ids` matchea episodios de
+    cualquiera de ellos en una sola llamada."""
+    _write_episodic_session(
+        _isolate_vault_dir, phone="111", source_id="AD_1",
+        episodes=[_ep("ep_001", started_at_ms=100, closed_at_ms=200)],
+    )
+    _write_episodic_session(
+        _isolate_vault_dir, phone="222", source_id="AD_2",
+        episodes=[_ep("ep_001", started_at_ms=300, closed_at_ms=400)],
+    )
+    _write_episodic_session(
+        _isolate_vault_dir, phone="333", source_id="AD_OTRA_CAMPANA",
+        episodes=[_ep("ep_001", started_at_ms=500, closed_at_ms=600)],
+    )
+    convs = list_attributed_conversations(
+        _isolate_vault_dir, "CAMP_9", source_ids=frozenset({"AD_1", "AD_2"})
+    )
+    assert {c.phone_number for c in convs} == {"111", "222"}
+
+
+def test_daily_series_scope_matches_any_source_id(_isolate_vault_dir: Path):
+    day_ms = 24 * 60 * 60 * 1000
+    now_ms = 1_750_000_000_000
+    _write_episodic_session(
+        _isolate_vault_dir, phone="111", source_id="AD_1",
+        episodes=[_ep("ep_001", started_at_ms=now_ms - day_ms, closed_at_ms=now_ms)],
+    )
+    _write_episodic_session(
+        _isolate_vault_dir, phone="222", source_id="AD_2",
+        episodes=[_ep("ep_001", started_at_ms=now_ms - day_ms, closed_at_ms=now_ms)],
+    )
+    points = list_daily_series(
+        _isolate_vault_dir, "CAMP_9", days=3, now_ms=now_ms,
+        source_ids=frozenset({"AD_1", "AD_2"}),
+    )
+    total = sum(
+        p.ganado + p.cotizado + p.calificado + p.activo + p.nuevo
+        + p.no_reply + p.perdido
+        for p in points
+    )
+    assert total == 2
+
+
+def test_campaign_exposes_revenue_and_duration_counts(_isolate_vault_dir: Path):
+    """Segmentación (2026-07-10): el summary expone `revenue_count` y
+    `duration_count` — sin ellos, agrupar buckets por campaña/adset no puede
+    recomponer `avg_ticket` ni `avg_episode_duration_ms` exactos (promediar
+    promedios miente con buckets de tamaño distinto)."""
+    _write_episodic_session(
+        _isolate_vault_dir,
+        phone="111",
+        source_id="AD_X",
+        episodes=[
+            _ep("ep_001", started_at_ms=100, closed_at_ms=200,
+                order_id="o1", order_total_cop=50_000),
+            _ep("ep_002", started_at_ms=300, closed_at_ms=700,
+                order_id="o2", order_total_cop=30_000),
+            _ep("ep_003", started_at_ms=900),  # activo: no aporta a ninguno
+        ],
+    )
+    camp = _only(list_ads_campaigns(_isolate_vault_dir), "AD_X")
+    assert camp.revenue_count == 2
+    assert camp.duration_count == 2
+    # coherencia: avg_ticket == revenue / revenue_count
+    assert camp.avg_ticket == round(camp.revenue / camp.revenue_count)
+
+
 def test_campaign_without_llm_usage_has_none(_isolate_vault_dir: Path):
     """Si ningún episodio acumuló uso LLM → None (distinto de 0)."""
     _write_episodic_session(

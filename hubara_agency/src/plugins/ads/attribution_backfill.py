@@ -58,16 +58,34 @@ def plan_order_patches(
     vault_index: dict[str, dict[str, Any]],
     ad_to_campaign: dict[str, str],
     seed_campaign_ids: list[str],
+    *,
+    ad_to_adset: dict[str, tuple[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Plan de parcheo por orden: `{order_id, action: real|seeded|skip|unmatched, patch}`.
+    """Plan de parcheo por orden:
+    `{order_id, action: real|seeded|adset_upgrade|skip|unmatched, patch}`.
 
-    Idempotente: órdenes que ya tienen `meta_ad_id`/`meta_campaign_id` → skip.
+    Idempotente: órdenes que ya tienen `meta_ad_id`/`meta_campaign_id` → skip,
+    SALVO que les falte el segmento y el resolver lo traiga (`ad_to_adset`,
+    segmentación 2026-07-10) → `adset_upgrade` con SOLO los campos de adset
+    (no re-escribe la atribución existente).
     Sembrar es EXPLÍCITO: sin `seed_campaign_ids` las órdenes sin rastro CTWA
     quedan intactas (`unmatched`) — un default que siembra contamina campañas
     (caso 2026-07-09: solo Día del padre recibe seeds; Duo zodiacal queda limpia).
     El round-robin de seeds es determinista en el orden de entrada.
     """
     plan: list[dict[str, Any]] = []
+    ad_to_adset = ad_to_adset or {}
+
+    def _adset_fields(ad_id: str | None) -> dict[str, str]:
+        entry = ad_to_adset.get(ad_id or "")
+        if not entry:
+            return {}
+        adset_id, adset_name = entry
+        fields = {"meta_adset_id": adset_id}
+        if adset_name:
+            fields["meta_adset_name"] = adset_name
+        return fields
+
     seed_i = 0
     for order in orders:
         oid = str(order.get("id"))
@@ -78,7 +96,16 @@ def plan_order_patches(
             plan.append({"order_id": oid, "action": "skip", "patch": {}})
             continue
         if metadata.get("meta_ad_id") or metadata.get("meta_campaign_id"):
-            plan.append({"order_id": oid, "action": "skip", "patch": {}})
+            upgrade = (
+                {} if metadata.get("meta_adset_id")
+                else _adset_fields(metadata.get("meta_ad_id"))
+            )
+            if upgrade:
+                plan.append(
+                    {"order_id": oid, "action": "adset_upgrade", "patch": upgrade}
+                )
+            else:
+                plan.append({"order_id": oid, "action": "skip", "patch": {}})
             continue
         real = vault_index.get(oid)
         if real:
@@ -86,6 +113,7 @@ def plan_order_patches(
             campaign = ad_to_campaign.get(real["meta_ad_id"])
             if campaign:
                 patch["meta_campaign_id"] = campaign
+            patch.update(_adset_fields(real["meta_ad_id"]))
             patch["attribution_backfilled"] = "real"
             plan.append({"order_id": oid, "action": "real", "patch": patch})
             continue

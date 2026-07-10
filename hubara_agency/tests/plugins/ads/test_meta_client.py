@@ -79,6 +79,54 @@ def test_graph_fetch_campaign_metrics_parses_insights() -> None:
 
 
 @respx.mock
+def test_graph_fetch_adset_metrics_parses_level_adset() -> None:
+    """Segmentación (2026-07-10): insights level=adset → métricas por segmento,
+    con campaign_id para colgarlo de su campaña."""
+    adset_insights = {
+        "data": [
+            {
+                "adset_id": "ADSET_3",
+                "adset_name": "Hombres 25-45 Bogotá",
+                "campaign_id": "120210000111",
+                "spend": "320500",
+                "impressions": "15000",
+                "reach": "12100",
+                "clicks": "210",
+                "actions": [
+                    {
+                        "action_type": "onsite_conversion.messaging_conversation_started_7d",
+                        "value": "44",
+                    }
+                ],
+            }
+        ]
+    }
+    route = respx.get("https://graph.facebook.com/v25.0/act_1010393601284112/insights").mock(
+        return_value=httpx.Response(200, json=adset_insights)
+    )
+    rows = GraphMetaAds().fetch_adset_metrics(
+        "TOK", "act_1010393601284112", since="2026-06-01", until="2026-06-30"
+    )
+    assert rows[0].adset_id == "ADSET_3"
+    assert rows[0].campaign_id == "120210000111"
+    assert rows[0].messaging_conversations_started == 44
+    params = dict(route.calls.last.request.url.params)
+    assert params["level"] == "adset"
+
+
+def test_fake_serves_adset_metrics() -> None:
+    from src.plugins.ads.meta.parse import MetaAdsetMetrics
+
+    fake = FakeMetaAds(
+        adset_metrics=[
+            MetaAdsetMetrics("as1", "Segmento A", "c1", 100.0, 10, 8, 5, 2)
+        ]
+    )
+    rows = fake.fetch_adset_metrics("tok", "act_1", since="a", until="b")
+    assert rows[0].adset_id == "as1"
+
+
+@respx.mock
 def test_graph_list_campaigns_returns_status_and_objective() -> None:
     respx.get("https://graph.facebook.com/v25.0/act_1010393601284112/campaigns").mock(
         return_value=httpx.Response(200, json=_CAMPAIGNS)

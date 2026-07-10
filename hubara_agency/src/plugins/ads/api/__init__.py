@@ -9,9 +9,14 @@ PLUGIN_CONTRACT.md §5.2). Self-contained: no importa de ningún plugin sibling.
 
 Endpoints (prefix `/api/ads` del manifest):
   GET /api/ads/campaigns
-       → lista de campañas detectadas (agrupadas por source_id).
-  GET /api/ads/campaigns/{campaign_id}/conversations
-       → conversaciones WhatsApp atribuidas a esa campaña.
+       → lista de campañas (buckets por ad del vault, agrupados por campaña
+         Meta vía el resolver ad→{campaña, adset} — segmentación 2026-07-10).
+  GET /api/ads/campaigns/{campaign_id}/adsets
+       → segmentos (ad sets) de la campaña — drill-down del desplegable.
+  GET /api/ads/campaigns/{campaign_id}/conversations[?adset_id=]
+       → conversaciones WhatsApp atribuidas a esa campaña (o al segmento).
+  GET /api/ads/campaigns/{campaign_id}/daily[?adset_id=]
+       → serie diaria (scopeable por segmento).
 
 Datos faltantes (spend, revenue, status Meta, etc.) se devuelven como
 `null` — el frontend marca esos slots con un visual marker ("—" + icono
@@ -46,7 +51,14 @@ from src.plugins.ads.aggregation import (
 from src.plugins.ads.api.analysis import router as _analysis_router
 from src.plugins.ads.api.meta_oauth import router as _meta_router
 from src.plugins.ads.meta_merge import merge_meta_campaigns
-from src.plugins.ads.meta_names import enrich_campaign_names, fetch_meta_ad_names
+from src.plugins.ads.meta_names import fetch_meta_ad_names
+from src.plugins.ads.segmentation import (
+    collect_source_ids,
+    group_buckets_by_adset,
+    group_buckets_by_campaign,
+    merge_meta_adsets,
+    scope_source_ids,
+)
 from src.sdk.runtime import WORKSPACE_VAULT_DIR
 
 router = APIRouter()
@@ -172,6 +184,60 @@ def _cached_meta_campaigns(
     return metas, metrics
 
 
+#: Métricas por adset (insights level=adset) para el drill-down — cache TTL por
+#: ventana, mismo criterio que las de campaña (60s).
+_meta_adset_cache: dict[str, tuple[float, list]] = {}
+
+
+def _cached_meta_adsets(since_ms: int | None, until_ms: int | None) -> list:
+    """Insights level=adset del Marketing API para la ventana pedida.
+
+    Best-effort como toda la capa Meta: sin conexión / Graph caído → `[]`
+    y el drill-down queda solo-vault (nunca 500).
+    """
+    from datetime import date, timedelta
+
+    try:
+        token = _meta_store().load()
+    except Exception:  # noqa: BLE001 — best-effort (SSM caído ≠ dashboard caído)
+        return []
+    if token is None or not token.account_id:
+        return []
+
+    until_d = date.fromtimestamp(until_ms / 1000) if until_ms else date.today()
+    since_d = (
+        date.fromtimestamp(since_ms / 1000) if since_ms else until_d - timedelta(days=90)
+    )
+    key = f"{since_d}|{until_d}"
+    now = time.monotonic()
+    hit = _meta_adset_cache.get(key)
+    if hit is not None and (now - hit[0]) < _META_CAMPAIGN_TTL_S:
+        return hit[1]
+    try:
+        rows = _meta_ads().fetch_adset_metrics(
+            token.access_token,
+            token.account_id,
+            since=since_d.isoformat(),
+            until=until_d.isoformat(),
+        )
+    except Exception:  # noqa: BLE001
+        return []
+    _meta_adset_cache[key] = (now, rows)
+    return rows
+
+
+def _scope_names(
+    sessions: list[tuple[FsPath, dict[str, Any]]],
+) -> dict[str, dict[str, str | None]]:
+    """Resolver ad→{campaña, adset} para los ads presentes en el scan.
+
+    Reusa el batch + cache de nombres (`_cached_meta_names`): los endpoints de
+    drill-down traducen el id agrupado (campaña/adset) al set de source_ids
+    sin re-agregar campañas.
+    """
+    return _cached_meta_names(sorted(collect_source_ids(sessions)))
+
+
 def _since_ms(days: int | None) -> int | None:
     """Epoch ms del inicio de la ventana (`now - days`), o None para 'todo'.
 
@@ -275,14 +341,17 @@ def get_ads_campaigns(
         since_ms=since_ms,
         until_ms=until_ms,
     )
-    # Enrichment de nombres reales (fix 2026-07-01): el headline del
-    # referral es el CTA del ad ("Chatea con nosotros"), no el nombre de
-    # la campaña de Ads Manager. Resolvemos los nombres reales vía
-    # Marketing API (batch + cache TTL); best-effort — sin token o Graph
-    # caído, los headlines quedan tal cual.
+    # Agrupación jerárquica (segmentación 2026-07-10): los buckets del vault
+    # son por AD (source_id del referral); el resolver ad→{campaña, adset}
+    # (batch + cache TTL) los agrupa en filas por CAMPAÑA con agregados
+    # exactos — incluye el enrichment de nombres reales (fix 2026-07-01).
+    # Best-effort: sin token o Graph caído, names={} y cada bucket pasa
+    # intacto (una fila por ad con headline, como antes).
     ad_ids = [c.id for c in campaigns if c.id != DIRECT_CAMPAIGN_ID]
     if ad_ids:
-        campaigns = enrich_campaign_names(campaigns, _cached_meta_names(ad_ids))
+        campaigns = group_buckets_by_campaign(
+            campaigns, _cached_meta_names(ad_ids)
+        )
     # Merge de campañas Meta (pedido 2026-07-09): las campañas del Marketing API
     # entran a ESTA lista (seleccionables como las del vault, canvas central
     # incluido) — bucket único matcheado se enriquece; el resto entra standalone.
@@ -306,11 +375,16 @@ def get_ads_campaign_conversations(
     to: str | None = Query(
         None, description="YYYY-MM-DD fin (inclusive); requiere `from`"
     ),
+    adset_id: str | None = Query(
+        None, description="acota el drill-down a un segmento (ad set) de la campaña"
+    ),
 ) -> dict:
-    """Conversaciones WhatsApp atribuidas a una campaña.
+    """Conversaciones WhatsApp atribuidas a una campaña (o a un segmento).
 
-    Filtra sesiones cuyo `origin.source_id == campaign_id`. Ordenadas
-    por `started_at_ms` descendente (más recientes primero).
+    `campaign_id` acepta el id AGRUPADO (campaña Meta) — se traduce al set
+    de ads de esa campaña vía el resolver — o un source_id crudo (legacy /
+    bucket `direct`). Con `adset_id` el scope se acota al segmento.
+    Ordenadas por `started_at_ms` descendente (más recientes primero).
 
     Response shape:
       {
@@ -339,12 +413,18 @@ def get_ads_campaign_conversations(
     frontend muestra el empty state existente.
     """
     since_ms, until_ms = _window(days, frm, to)
+    sessions = _cached_sessions(since_ms)
+    scope = scope_source_ids(
+        _scope_names(sessions), campaign_id=campaign_id, adset_id=adset_id
+    )
     convs = list_attributed_conversations(
         WORKSPACE_VAULT_DIR,
         campaign_id,
-        sessions=_cached_sessions(since_ms),
+        sessions=sessions,
         since_ms=since_ms,
         until_ms=until_ms,
+        # scope vacío = id sin resolver → id crudo (source_id legacy / direct)
+        source_ids=scope or None,
     )
     return {
         "campaign_id": campaign_id,
@@ -363,6 +443,9 @@ def get_ads_campaign_daily(
     ),
     to: str | None = Query(
         None, description="YYYY-MM-DD fin (inclusive); requiere `from`"
+    ),
+    adset_id: str | None = Query(
+        None, description="acota la serie a un segmento (ad set) de la campaña"
     ),
 ) -> dict:
     """Serie diaria de conversaciones de una campaña (chats iniciados por día).
@@ -392,16 +475,70 @@ def get_ads_campaign_daily(
     else:
         since_ms = until_ms = None
         scan_since = _since_ms(days)
+    sessions = _cached_sessions(scan_since)
+    scope = scope_source_ids(
+        _scope_names(sessions), campaign_id=campaign_id, adset_id=adset_id
+    )
     points = list_daily_series(
         WORKSPACE_VAULT_DIR,
         campaign_id,
         days=days,
         since_ms=since_ms,
         until_ms=until_ms,
-        sessions=_cached_sessions(scan_since),
+        sessions=sessions,
+        source_ids=scope or None,
     )
     return {
         "campaign_id": campaign_id,
         "days": len(points),
         "series": [asdict(p) for p in points],
     }
+
+
+@router.get("/campaigns/{campaign_id}/adsets")
+def get_ads_campaign_adsets(
+    campaign_id: str = Path(..., description="id de la campaña (fila agrupada)"),
+    days: int | None = Query(
+        None, ge=1, le=365, description="ventana en días; omitir = todo el historial"
+    ),
+    frm: str | None = Query(
+        None,
+        alias="from",
+        description="YYYY-MM-DD inicio (inclusive); con `to` activa rango custom y anula `days`",
+    ),
+    to: str | None = Query(
+        None, description="YYYY-MM-DD fin (inclusive); requiere `from`"
+    ),
+) -> dict:
+    """Segmentos (ad sets) de una campaña — el drill-down del desplegable.
+
+    Cada fila reusa el shape de campaña (mismo contrato en el frontend):
+    agregados del vault (chats/estados/revenue/LLM/CAPI) agrupando los ads
+    del segmento + métricas Meta level=adset (spend/impressions/clicks/conv)
+    cuando hay conexión. Segmentos con gasto pero sin chats entran con
+    `started=0` (visibilidad de gasto sin resultados). Campaña sin resolver
+    (`direct`, legacy) → `ad_sets: []`.
+
+    Response shape: `{"campaign_id": ..., "ad_sets": [<campaign shape>...]}`.
+    """
+    since_ms, until_ms = _window(days, frm, to)
+    sessions = _cached_sessions(since_ms)
+    names = _scope_names(sessions)
+    scope = scope_source_ids(names, campaign_id=campaign_id)
+    rows = []
+    if scope:
+        buckets = list_ads_campaigns(
+            WORKSPACE_VAULT_DIR,
+            sessions=sessions,
+            since_ms=since_ms,
+            until_ms=until_ms,
+        )
+        members = [b for b in buckets if b.id in scope]
+        rows = group_buckets_by_adset(members, names)
+    metrics = [
+        m for m in _cached_meta_adsets(since_ms, until_ms)
+        if m.campaign_id == campaign_id
+    ]
+    if metrics:
+        rows = merge_meta_adsets(rows, metrics)
+    return {"campaign_id": campaign_id, "ad_sets": [asdict(r) for r in rows]}

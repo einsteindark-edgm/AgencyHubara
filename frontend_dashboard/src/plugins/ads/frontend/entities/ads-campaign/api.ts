@@ -21,6 +21,7 @@ import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "@/shared/api";
 
 import {
+  backendAdsAdsetsResponseSchema,
   backendAdsCampaignsResponseSchema,
   backendAdsDailyResponseSchema,
   backendAttributedConversationsResponseSchema,
@@ -151,6 +152,7 @@ export function mapBackendCampaign(b: BackendAdsCampaign): AdsCampaign {
     audience: b.audience,
     daysRun: b.days_run,
     metaCampaignId: b.meta_campaign_id,
+    metaAdsetId: b.meta_adset_id,
     adSet: b.ad_set,
     creativeTitle: b.creative_title,
     creativeThumbnailUrl: b.creative_thumbnail_url,
@@ -208,7 +210,7 @@ export function mapBackendConversation(
  * para un preset acotado; "" para `total` (sin filtro). El backend prioriza
  * `from`/`to` sobre `days`.
  */
-function windowQuery(p: AdsWindowParams): string {
+function windowQuery(p: AdsWindowParams, adsetId?: string | null): string {
   const q = new URLSearchParams();
   if (p.from && p.to) {
     q.set("from", p.from);
@@ -216,6 +218,7 @@ function windowQuery(p: AdsWindowParams): string {
   } else if (p.days != null) {
     q.set("days", String(p.days));
   }
+  if (adsetId) q.set("adset_id", adsetId);
   const s = q.toString();
   return s ? `?${s}` : "";
 }
@@ -245,19 +248,20 @@ export function useAdsCampaigns(params: AdsWindowParams) {
 }
 
 /**
- * Conversaciones atribuidas a una campaña específica. El backend filtra
- * por `origin.source_id == campaignId`. Si la campaña no existe →
- * `conversations: []`. `days` acota la ventana (igual que `useAdsCampaigns`).
+ * Conversaciones atribuidas a una campaña (o a un segmento con `adsetId`).
+ * El backend traduce el id agrupado al set de ads correspondiente. Si la
+ * campaña no existe → `conversations: []`. `days` acota la ventana.
  */
 export function useAttributedConversations(
   campaignId: string,
   params: AdsWindowParams,
+  adsetId: string | null = null,
 ) {
   return useQuery<AttributedConversation[]>({
-    queryKey: adsCampaignKeys.attributed(campaignId, params),
+    queryKey: adsCampaignKeys.attributed(campaignId, params, adsetId),
     queryFn: async ({ signal }) => {
       const raw = await apiClient.get<unknown>(
-        `/api/ads/campaigns/${encodeURIComponent(campaignId)}/conversations${windowQuery(params)}`,
+        `/api/ads/campaigns/${encodeURIComponent(campaignId)}/conversations${windowQuery(params, adsetId)}`,
         { signal },
       );
       const parsed =
@@ -266,6 +270,33 @@ export function useAttributedConversations(
     },
     staleTime: 30_000,
     enabled: Boolean(campaignId),
+  });
+}
+
+/**
+ * Segmentos (ad sets) de una campaña — el drill-down del desplegable del
+ * sidebar. Cada fila reusa el shape/mapper de campaña (`id` = adset_id,
+ * `name` = nombre del segmento). Campaña sin resolver (direct/legacy) →
+ * `[]` y el desplegable no se muestra. `enabled` lo controla el caller
+ * (fetch lazy al expandir).
+ */
+export function useCampaignAdsets(
+  campaignId: string,
+  params: AdsWindowParams,
+  enabled = true,
+) {
+  return useQuery<AdsCampaign[]>({
+    queryKey: adsCampaignKeys.adsets(campaignId, params),
+    queryFn: async ({ signal }) => {
+      const raw = await apiClient.get<unknown>(
+        `/api/ads/campaigns/${encodeURIComponent(campaignId)}/adsets${windowQuery(params)}`,
+        { signal },
+      );
+      const parsed = backendAdsAdsetsResponseSchema.parse(raw);
+      return parsed.ad_sets.map(mapBackendCampaign);
+    },
+    staleTime: 30_000,
+    enabled: enabled && Boolean(campaignId),
   });
 }
 
@@ -280,12 +311,16 @@ export function useAttributedConversations(
  * para un preset (el caller mapea "total" al cap de 90 días — un gráfico no puede
  * tener infinitas columnas). El backend clampa el rango custom a 90 columnas.
  */
-export function useDailySeries(campaignId: string, params: AdsWindowParams) {
+export function useDailySeries(
+  campaignId: string,
+  params: AdsWindowParams,
+  adsetId: string | null = null,
+) {
   return useQuery<AdsDailyPoint[]>({
-    queryKey: adsCampaignKeys.daily(campaignId, params),
+    queryKey: adsCampaignKeys.daily(campaignId, params, adsetId),
     queryFn: async ({ signal }) => {
       const raw = await apiClient.get<unknown>(
-        `/api/ads/campaigns/${encodeURIComponent(campaignId)}/daily${windowQuery(params)}`,
+        `/api/ads/campaigns/${encodeURIComponent(campaignId)}/daily${windowQuery(params, adsetId)}`,
         { signal },
       );
       const parsed = backendAdsDailyResponseSchema.parse(raw);

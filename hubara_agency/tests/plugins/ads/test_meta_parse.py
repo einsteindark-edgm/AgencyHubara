@@ -65,6 +65,45 @@ def test_empty_data_yields_empty_list() -> None:
     assert parse_campaign_insights({"data": []}) == []
 
 
+def test_parses_adset_insights_row() -> None:
+    """Segmentación (2026-07-10): level=adset trae adset_id/adset_name +
+    campaign_id (para colgar el segmento de su campaña) y las mismas métricas."""
+    from src.plugins.ads.meta.parse import parse_adset_insights
+
+    payload = {
+        "data": [
+            {
+                "adset_id": "ADSET_3",
+                "adset_name": "Hombres 25-45 Bogotá",
+                "campaign_id": "120210000111",
+                "spend": "320500",
+                "impressions": "15000",
+                "reach": "12100",
+                "clicks": "210",
+                "actions": [
+                    {
+                        "action_type": "onsite_conversion.messaging_conversation_started_7d",
+                        "value": "44",
+                    }
+                ],
+                "date_start": "2026-06-01",
+                "date_stop": "2026-06-30",
+            }
+        ]
+    }
+    rows = parse_adset_insights(payload)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.adset_id == "ADSET_3"
+    assert row.adset_name == "Hombres 25-45 Bogotá"
+    assert row.campaign_id == "120210000111"
+    assert row.spend == 320500.0
+    assert row.impressions == 15000
+    assert row.reach == 12100
+    assert row.clicks == 210
+    assert row.messaging_conversations_started == 44
+
+
 def test_non_numeric_field_degrades_to_zero_not_crash() -> None:
     # Un valor inesperado del boundary externo NO debe tumbar el parseo (premortem #6).
     payload = {"data": [{"campaign_id": "1", "campaign_name": "n", "spend": "N/A",
