@@ -105,3 +105,26 @@ async def test_dispatch_envuelve_el_snapshot_en_payload(monkeypatch):
     assert eid == "eid-1"
     assert seen["agent"] == "window-strategist"
     assert seen["input"] == {"payload": snapshot}, seen["input"]
+
+
+@pytest.mark.asyncio
+async def test_poll_fallido_despierta_la_caja_y_reintenta(monkeypatch):
+    """Eslabón 9 de la cadena dispatch (PR #153, memoria graphagents-dispatch-
+    prod-chain): el autostop puede apagar la caja con el resultado sin
+    cosechar — un fetch_status fallido debe DESPERTARLA (start_box) antes de
+    dejar que Temporal reintente, o el run queda inalcanzable para siempre."""
+    from src.plugins.reengagement.agent.cycle import activities as acts
+
+    calls: dict = {"box": 0}
+
+    class DyingLauncher:
+        def start_box(self):
+            calls["box"] += 1
+
+        def fetch_status(self, execution_id):
+            raise RuntimeError("InvalidInstanceId: la caja está stopped")
+
+    monkeypatch.setattr(acts, "get_launcher", lambda: DyingLauncher())
+    with pytest.raises(RuntimeError):
+        await ActivityEnvironment().run(acts.poll_window_strategist_activity, "eid-9")
+    assert calls["box"] == 1, "el poll fallido debe despertar la caja (eslabón 9)"

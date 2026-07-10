@@ -206,6 +206,28 @@ async def test_order_id_raro_viaja_url_quoted(
 
 @pytest.mark.asyncio
 @respx.mock
+async def test_manda_el_service_token_cuando_esta_configurado(
+    _isolate_vault_dir: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Incidente prod 2026-07-10 (401): con Cognito activo en la API, el worker
+    se autentica con HUBARA_SERVICE_TOKEN (bearer de servicio). Sin el env, no
+    se manda header (dev local sin auth)."""
+    monkeypatch.setenv("HUBARA_API_BASE_URL", BASE)
+    monkeypatch.setenv("HUBARA_SERVICE_TOKEN", "secreto-interno-123")
+    route = respx.patch(f"{BASE}/api/orders/orders/order_A/stage").mock(
+        return_value=_ok("shipping")
+    )
+    await ActivityEnvironment().run(
+        execute_order_intents_activity, [_transition_intent()], {"wa_1": 5_000}
+    )
+    assert (
+        route.calls.last.request.headers.get("Authorization")
+        == "Bearer secreto-interno-123"
+    )
+
+
+@pytest.mark.asyncio
+@respx.mock
 async def test_error_http_cuenta_como_failed(
     _isolate_vault_dir: Path, monkeypatch: pytest.MonkeyPatch
 ):

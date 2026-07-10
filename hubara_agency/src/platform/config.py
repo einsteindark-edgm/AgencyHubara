@@ -79,6 +79,12 @@ WHATSAPP_BUSINESS_ACCOUNT_ID = os.getenv("WHATSAPP_BUSINESS_ACCOUNT_ID", "")
 # /hubara/<tenant>/ (no son secretos: son ids públicos del pool/app client).
 COGNITO_USER_POOL_ID = os.getenv("COGNITO_USER_POOL_ID", "")
 COGNITO_APP_CLIENT_ID = os.getenv("COGNITO_APP_CLIENT_ID", "")
+# Bearer de SERVICIO para llamadas machine-to-machine a la API (workers → API,
+# ej. el executor de order-sentinel — un worker no tiene request entrante del
+# cual portar identidad, castkit no aplica). Vacío = deshabilitado (el camino
+# Cognito queda idéntico). En prod viene de SSM /hubara/<tenant>/ (ESTE sí es
+# secreto: generarlo con `openssl rand -hex 32`).
+HUBARA_SERVICE_TOKEN = os.getenv("HUBARA_SERVICE_TOKEN", "")
 # Región del pool de Cognito (arma el issuer + el JWKS uri). Cae a la región de deploy.
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 
