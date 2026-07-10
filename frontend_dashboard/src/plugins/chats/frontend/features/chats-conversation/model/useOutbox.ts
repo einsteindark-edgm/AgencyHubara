@@ -8,13 +8,21 @@
  * (fase B). Un retry tras un fallo de envío REUSA el `attachmentId` — nunca
  * re-sube los bytes.
  *
- * El reducer (`outboxReducer`) es puro y testeable; el hook (`useOutbox`)
- * orquesta el I/O (compresión, XHR con progreso, mutación de envío) y refresca
- * la query del chat al éxito para que aparezca la burbuja real del servidor.
+ * Post-premortem (PM-F3): el estado vive en un store MODULE-LEVEL keyed por
+ * chatId (no en el hook) — navegar a otro chat o volver al inbox NO pierde los
+ * items en vuelo ni los fallidos; al volver, la tira sigue ahí. El hook se
+ * suscribe con `useSyncExternalStore`.
+ *
+ * Otros fixes del premortem acá: revocación de blob URLs (PM-F1), retry tras
+ * fallo de compresión reusa el File original (PM-F2), el item "sent" se
+ * remueve DESPUÉS del refetch que trae la burbuja real (PM-F7, sin parpadeo),
+ * y las subidas corren con concurrencia acotada (PM-F9, red celular).
+ *
+ * El reducer (`outboxReducer`) es puro y testeable; el resto orquesta I/O.
  */
 
-import { useCallback, useReducer, useRef } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useCallback, useSyncExternalStore } from "react";
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { compressImage } from "@/shared/lib";
 import { sessionKeys } from "@plugins/chats/frontend/entities/session";
 import {
@@ -94,7 +102,8 @@ export function outboxReducer(
         attachmentId: action.attachmentId,
       }));
     case "sent":
-      // Se remueve: la burbuja real (refetch del servidor) lo reemplaza.
+      // Se remueve: la burbuja real del servidor ya está en la lista (el
+      // orquestador espera el refetch antes de despachar esto — PM-F7).
       return { items: state.items.filter((it) => it.id !== action.id) };
     case "failed":
       return patch(state, action.id, (it) => ({
@@ -116,6 +125,159 @@ export function outboxReducer(
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Store module-level por chatId (PM-F3: sobrevive al remount/navegación)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const EMPTY_STATE: OutboxState = { items: [] };
+
+const states = new Map<string, OutboxState>();
+const listeners = new Map<string, Set<() => void>>();
+/** Blob comprimido por item (para reintentar la subida sin recomprimir). */
+const compressedBlobs = new Map<string, { blob: Blob; caption: string }>();
+/** File ORIGINAL por item (PM-F2: si la compresión falló, el retry parte de acá). */
+const originalFiles = new Map<string, { file: File; caption: string }>();
+
+function getState(chatId: string): OutboxState {
+  return states.get(chatId) ?? EMPTY_STATE;
+}
+
+function dispatch(chatId: string, action: OutboxAction): void {
+  const prev = getState(chatId);
+  // PM-F1: revocar el object URL en los estados terminales — sin esto cada
+  // foto enviada deja un Blob retenido de por vida en el webview.
+  if (action.type === "sent" || action.type === "remove") {
+    const item = prev.items.find((it) => it.id === action.id);
+    if (item?.previewUrl) {
+      try {
+        URL.revokeObjectURL(item.previewUrl);
+      } catch {
+        /* jsdom / entornos sin soporte */
+      }
+    }
+    compressedBlobs.delete(action.id);
+    originalFiles.delete(action.id);
+  }
+  states.set(chatId, outboxReducer(prev, action));
+  for (const fn of listeners.get(chatId) ?? []) fn();
+}
+
+function subscribe(chatId: string, fn: () => void): () => void {
+  let set = listeners.get(chatId);
+  if (!set) {
+    set = new Set();
+    listeners.set(chatId, set);
+  }
+  set.add(fn);
+  return () => {
+    set.delete(fn);
+  };
+}
+
+// ── Limitador de concurrencia de subidas (PM-F9) ───────────────────────────
+// En red celular, 20 XHR paralelos saturan el uplink y TODAS las barras se
+// arrastran. Máx 3 subidas en vuelo; el resto espera su turno.
+
+const MAX_CONCURRENT_UPLOADS = 3;
+let activeUploads = 0;
+const uploadQueue: Array<() => void> = [];
+
+async function withUploadSlot<T>(fn: () => Promise<T>): Promise<T> {
+  if (activeUploads >= MAX_CONCURRENT_UPLOADS) {
+    await new Promise<void>((resolve) => uploadQueue.push(resolve));
+  }
+  activeUploads += 1;
+  try {
+    return await fn();
+  } finally {
+    activeUploads -= 1;
+    uploadQueue.shift()?.();
+  }
+}
+
+// ── Orquestación (módulo, no hook: los envíos sobreviven al unmount) ───────
+
+async function runSend(
+  chatId: string,
+  qc: QueryClient,
+  id: string,
+  attachmentId: string,
+  caption: string,
+): Promise<void> {
+  try {
+    const body: SendHumanMessageInput = {
+      attachment_id: attachmentId,
+      text: caption || undefined,
+      client_message_id: id,
+    };
+    await apiClient.post(`/api/dashboard/sessions/${chatId}/messages`, body);
+    // PM-F7: esperar el refetch ANTES de remover el item optimista — así la
+    // burbuja real del servidor ya está pintada cuando la preview desaparece
+    // (sin ventana de "la foto se esfumó").
+    await qc.invalidateQueries({ queryKey: sessionKeys.detail(chatId) });
+    dispatch(chatId, { type: "sent", id });
+  } catch (e) {
+    dispatch(chatId, {
+      type: "failed",
+      id,
+      error: e instanceof Error ? e.message : "no se pudo enviar la foto",
+    });
+  }
+}
+
+async function runUploadAndSend(
+  chatId: string,
+  qc: QueryClient,
+  id: string,
+  blob: Blob,
+  caption: string,
+): Promise<void> {
+  try {
+    dispatch(chatId, { type: "compressed", id });
+    const res = await withUploadSlot(() =>
+      uploadHumanMedia(chatId, blob, `${id}.jpg`, (f) =>
+        dispatch(chatId, { type: "progress", id, fraction: f }),
+      ),
+    );
+    dispatch(chatId, { type: "uploaded", id, attachmentId: res.attachment_id });
+    await runSend(chatId, qc, id, res.attachment_id, caption);
+  } catch (e) {
+    dispatch(chatId, {
+      type: "failed",
+      id,
+      error: e instanceof Error ? e.message : "no se pudo subir la foto",
+    });
+  }
+}
+
+async function compressAndRun(
+  chatId: string,
+  qc: QueryClient,
+  id: string,
+  file: File,
+  caption: string,
+): Promise<void> {
+  try {
+    const { blob, previewUrl } = await compressImage(file);
+    compressedBlobs.set(id, { blob, caption });
+    dispatch(chatId, { type: "enqueue", id, previewUrl, caption });
+    void runUploadAndSend(chatId, qc, id, blob, caption);
+  } catch (e) {
+    // La compresión falló (HEIC renombrado, archivo corrupto). El item queda
+    // visible en failed; el File original quedó cacheado ANTES (PM-F2), así
+    // que Reintentar re-corre la compresión desde ahí.
+    dispatch(chatId, { type: "enqueue", id, previewUrl: "", caption });
+    dispatch(chatId, {
+      type: "failed",
+      id,
+      error:
+        e instanceof Error
+          ? `no se pudo procesar la imagen (${e.message})`
+          : "no se pudo procesar la imagen",
+    });
+  }
+}
+
 /** UUID robusto: `crypto.randomUUID` cuando existe, fallback simple si no. */
 function newId(): string {
   const c = globalThis.crypto;
@@ -124,108 +286,76 @@ function newId(): string {
 }
 
 export function useOutbox(chatId: string | null) {
-  const [state, dispatch] = useReducer(outboxReducer, { items: [] });
   const qc = useQueryClient();
-  // Los blobs comprimidos viven fuera del reducer (no serializables): map por id.
-  const blobs = useRef<Map<string, { blob: Blob; caption: string }>>(new Map());
+  const key = chatId ?? "";
 
-  const invalidate = useCallback(() => {
-    if (chatId) qc.invalidateQueries({ queryKey: sessionKeys.detail(chatId) });
-  }, [chatId, qc]);
-
-  // Envío (fase B): con el attachment ya en Meta, dispara el mensaje.
-  const runSend = useCallback(
-    async (id: string, attachmentId: string, caption: string) => {
-      if (!chatId) return;
-      try {
-        const body: SendHumanMessageInput = {
-          attachment_id: attachmentId,
-          text: caption || undefined,
-          client_message_id: id,
-        };
-        await apiClient.post(
-          `/api/dashboard/sessions/${chatId}/messages`,
-          body,
-        );
-        dispatch({ type: "sent", id });
-        blobs.current.delete(id);
-        invalidate();
-      } catch (e) {
-        dispatch({
-          type: "failed",
-          id,
-          error: e instanceof Error ? e.message : "no se pudo enviar la foto",
-        });
-      }
-    },
-    [chatId, invalidate],
+  const items = useSyncExternalStore(
+    useCallback((fn: () => void) => subscribe(key, fn), [key]),
+    useCallback(() => getState(key).items, [key]),
   );
 
-  // Subida (fase A) + envío.
-  const runUploadAndSend = useCallback(
-    async (id: string, blob: Blob, caption: string) => {
-      if (!chatId) return;
-      try {
-        dispatch({ type: "compressed", id });
-        const res = await uploadHumanMedia(chatId, blob, `${id}.jpg`, (f) =>
-          dispatch({ type: "progress", id, fraction: f }),
-        );
-        dispatch({ type: "uploaded", id, attachmentId: res.attachment_id });
-        await runSend(id, res.attachment_id, caption);
-      } catch (e) {
-        dispatch({
-          type: "failed",
-          id,
-          error: e instanceof Error ? e.message : "no se pudo subir la foto",
-        });
-      }
-    },
-    [chatId, runSend],
-  );
-
-  /** Encola una o más fotos con un caption compartido. No bloquea. */
+  /** Encola una o más fotos. El caption va SOLO en la primera del lote
+   *  (PM-F11: cada foto es un mensaje de WhatsApp separado — repetir el texto
+   *  en las 3 fotos le llega triplicado al cliente). No bloquea. */
   const enqueue = useCallback(
     async (files: File[], caption: string) => {
+      if (!chatId) return;
+      let idx = 0;
       for (const file of files) {
         const id = newId();
-        try {
-          const { blob, previewUrl } = await compressImage(file);
-          blobs.current.set(id, { blob, caption });
-          dispatch({ type: "enqueue", id, previewUrl, caption });
-          void runUploadAndSend(id, blob, caption);
-        } catch (e) {
-          dispatch({ type: "enqueue", id, previewUrl: "", caption });
-          dispatch({
-            type: "failed",
-            id,
-            error: e instanceof Error ? e.message : "no se pudo procesar la foto",
-          });
-        }
+        const itemCaption = idx === 0 ? caption : "";
+        idx += 1;
+        // Cachear el original ANTES de intentar comprimir (PM-F2).
+        originalFiles.set(id, { file, caption: itemCaption });
+        await compressAndRun(chatId, qc, id, file, itemCaption);
       }
     },
-    [runUploadAndSend],
+    [chatId, qc],
   );
 
-  /** Reintenta un item fallido reusando el attachment si ya se había subido. */
+  /** Reintenta un item fallido: con attachment reintenta el send; con blob
+   *  comprimido re-sube; si solo queda el File original, recomprime. */
   const retry = useCallback(
     (id: string) => {
-      const item = state.items.find((it) => it.id === id);
+      if (!chatId) return;
+      const item = getState(key).items.find((it) => it.id === id);
       if (!item) return;
-      dispatch({ type: "retry", id });
+      dispatch(chatId, { type: "retry", id });
       if (item.attachmentId) {
-        void runSend(id, item.attachmentId, item.caption);
-      } else {
-        const cached = blobs.current.get(id);
-        if (cached) void runUploadAndSend(id, cached.blob, cached.caption);
+        void runSend(chatId, qc, id, item.attachmentId, item.caption);
+        return;
       }
+      const cachedBlob = compressedBlobs.get(id);
+      if (cachedBlob) {
+        void runUploadAndSend(chatId, qc, id, cachedBlob.blob, cachedBlob.caption);
+        return;
+      }
+      const original = originalFiles.get(id);
+      if (original) {
+        // Re-corre TODO el pipeline desde el File original. El item ya existe,
+        // así que removemos el placeholder anterior para no duplicar la tira.
+        dispatch(chatId, { type: "remove", id });
+        originalFiles.set(id, original); // remove lo limpió — restaurar
+        void compressAndRun(chatId, qc, id, original.file, original.caption);
+        return;
+      }
+      // Sin nada que reintentar (no debería pasar): marcar como no reintenable.
+      dispatch(chatId, {
+        type: "failed",
+        id,
+        error: "no hay datos para reintentar — descartá y volvé a adjuntar",
+      });
     },
-    [state.items, runSend, runUploadAndSend],
+    [chatId, key, qc],
   );
 
-  const remove = useCallback((id: string) => {
-    dispatch({ type: "remove", id });
-    blobs.current.delete(id);
-  }, []);
+  const remove = useCallback(
+    (id: string) => {
+      if (!chatId) return;
+      dispatch(chatId, { type: "remove", id });
+    },
+    [chatId],
+  );
 
-  return { items: state.items, enqueue, retry, remove };
+  return { items, enqueue, retry, remove };
 }

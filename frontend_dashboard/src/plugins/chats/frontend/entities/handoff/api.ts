@@ -45,6 +45,13 @@ export function uploadHumanMedia(
     const token = getAccessToken();
     if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
 
+    // PM-F5: sin timeout, una red celular que muere sin cerrar el socket deja
+    // el item en "uploading" con la barra congelada PARA SIEMPRE (el estado
+    // failed es el único con botón Reintentar).
+    xhr.timeout = 60_000;
+    xhr.ontimeout = () =>
+      reject(new Error("la subida tardó demasiado — revisá la señal y reintentá"));
+
     xhr.upload.onprogress = (e) => {
       if (onProgress && e.lengthComputable) onProgress(e.loaded / e.total);
     };

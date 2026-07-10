@@ -46,7 +46,11 @@ from src.platform.constants import (
     ROUTE_REMARKETING,
     ROUTE_VENTAS,
 )
-from src.platform.media.store import media_url_for, persist_outbound_image
+from src.platform.media.store import (
+    is_safe_segment,
+    media_url_for,
+    persist_outbound_image,
+)
 from src.platform.session_history import FilesystemMessageHistoryStore
 from src.platform.temporal.dispatcher import (
     start_remarketing_for_session,
@@ -104,6 +108,13 @@ class SendMessageRequest(BaseModel):
         has_text = bool(self.text and self.text.strip())
         if not has_text and not self.attachment_id:
             raise ValueError("se requiere `text` o `attachment_id`")
+        # PM-B4: el texto tiene el fingerprint anti doble-envío en
+        # `send_message_to_session`; la imagen NO tiene ningún backstop server-
+        # side. Sin cmid, un doble-click = dos fotos al cliente. Obligatorio.
+        if self.attachment_id and not self.client_message_id:
+            raise ValueError(
+                "`client_message_id` es requerido cuando se manda `attachment_id`"
+            )
         return self
 
 
@@ -295,6 +306,28 @@ def _require_humano_route(data: dict, session_id: str, verb: str) -> None:
         )
 
 
+def _require_safe_session_id(session_id: str) -> None:
+    """PM-B9: simetría con el GET de media — el session_id de la URL no llega
+    a los stores de filesystem sin pasar el mismo charset anti-traversal."""
+    if not is_safe_segment(session_id):
+        raise HTTPException(status_code=400, detail="session_id inválido")
+
+
+def _sniff_is_image(content: bytes) -> bool:
+    """PM-B7: magic numbers de JPEG (`FF D8 FF`) y PNG. El content-type del
+    multipart lo declara el cliente — sin esto, cualquier byte-stream con
+    header `image/jpeg` se persiste como .jpg y se sube a Meta."""
+    return content.startswith(b"\xff\xd8\xff") or content.startswith(
+        b"\x89PNG\r\n\x1a\n"
+    )
+
+
+#: PM-B6: cap de entradas en `metadata.outbound_media` (mismo espíritu que el
+#: cap de 200 en `sent_human_message_ids`). Los media_id de Meta expiran a los
+#: ~30 días; conservar los últimos 100 sobra para cualquier retry razonable.
+_OUTBOUND_MEDIA_CAP: int = 100
+
+
 @router.post(
     "/sessions/{session_id}/media",
     response_model=MediaUploadResponse,
@@ -312,6 +345,7 @@ async def upload_human_media(
     cliente es una llamada SEPARADA (`POST .../messages` con `attachment_id`),
     para que un retry del send nunca re-suba los bytes.
     """
+    _require_safe_session_id(session_id)
     data = metadata_store.read(session_id)
     _require_humano_route(data, session_id, "subir fotos")
 
@@ -323,10 +357,17 @@ async def upload_human_media(
         )
 
     content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Archivo vacío.")
     if len(content) > _MAX_IMAGE_BYTES:
         raise HTTPException(
             status_code=413,
             detail=f"Imagen demasiado grande ({len(content)} bytes; máx {_MAX_IMAGE_BYTES}).",
+        )
+    if not _sniff_is_image(content):
+        raise HTTPException(
+            status_code=415,
+            detail="Los bytes no son una imagen JPEG/PNG válida.",
         )
 
     # 1. Persistir en disco (token opaco → filename `out-...`).
@@ -342,9 +383,16 @@ async def upload_human_media(
 
     # 3. Registrar el mapping media_id → media_ref para que el send (fase B)
     #    persista la foto en el histórico sin confiar en el frontend.
-    outbound = data.setdefault("outbound_media", {})
+    #    PM-B1: lectura FRESCA antes de escribir — el upload a Meta tarda
+    #    segundos y otro writer (ingest/intervene/bot) pudo tocar metadata en
+    #    el medio; escribir el dict stale de arriba pisaría esos cambios.
+    fresh = metadata_store.read(session_id)
+    outbound = fresh.setdefault("outbound_media", {})
     outbound[media_id] = {"media_ref": media_ref, "filename": filename, "mime": mime}
-    metadata_store.write(session_id, data)
+    if len(outbound) > _OUTBOUND_MEDIA_CAP:
+        # PM-B6: podar por orden de inserción (dict preserva orden en py3.7+).
+        fresh["outbound_media"] = dict(list(outbound.items())[-_OUTBOUND_MEDIA_CAP:])
+    metadata_store.write(session_id, fresh)
 
     logger.info(
         "dashboard.upload_human_media",
@@ -383,10 +431,47 @@ async def send_human_message(
         metadata de ventana no está poblada, no bloquea (fail-open).
       * idempotencia por `client_message_id` — un retry no re-envía.
     """
+    _require_safe_session_id(session_id)
     data = metadata_store.read(session_id)
     _require_humano_route(data, session_id, "mandar mensajes")
 
-    # Guard de ventana 24h — solo bloquea si sabemos que cerró.
+    caption = payload.text.strip() if payload.text and payload.text.strip() else None
+    cmid = payload.client_message_id
+
+    # Resolver el attachment ANTES de cualquier decisión. PM-B3: si el
+    # attachment_id no fue subido para ESTA sesión (fase A), no se reenvía a
+    # Meta — podría ser un media_id inventado o el de otra conversación.
+    image_ref: str | None = None
+    if payload.attachment_id:
+        entry = data.get("outbound_media", {}).get(payload.attachment_id)
+        if entry is None:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"attachment_id {payload.attachment_id!r} desconocido para "
+                    "esta sesión. Subí la foto primero (POST .../media)."
+                ),
+            )
+        image_ref = entry.get("media_ref")
+
+    # PM-B5: idempotencia ANTES del guard de ventana — un retry de algo YA
+    # enviado debe responder replay aunque la ventana haya cerrado entre medio.
+    processed: list[str] = data.get("sent_human_message_ids", [])
+    if cmid and cmid in processed:
+        logger.info(
+            "dashboard.send_human_message replay (idempotent)",
+            session_id=session_id,
+            client_message_id=cmid,
+        )
+        return HumanMessageResponse(
+            ok=True,
+            role="assistant",
+            sender="human",
+            content=caption or (payload.text or ""),
+            image_url=image_ref,
+        )
+
+    # Guard de ventana 24h — solo bloquea envíos NUEVOS, y solo si sabemos que cerró.
     if is_service_window_closed(int(time.time() * 1000), data):
         raise HTTPException(
             status_code=409,
@@ -397,27 +482,8 @@ async def send_human_message(
             ),
         )
 
-    # Idempotencia: si este client_message_id ya se procesó, replay sin re-enviar.
-    cmid = payload.client_message_id
-    processed: list[str] = data.get("sent_human_message_ids", [])
-    if cmid and cmid in processed:
-        logger.info(
-            "dashboard.send_human_message replay (idempotent)",
-            session_id=session_id,
-            client_message_id=cmid,
-        )
-        return HumanMessageResponse(
-            ok=True, role="assistant", sender="human", content=payload.text or ""
-        )
-
-    caption = payload.text.strip() if payload.text and payload.text.strip() else None
-    image_ref: str | None = None
-
     if payload.attachment_id:
         # Envío de FOTO (fase B). El media_id ya vive en Meta (fase A).
-        image_ref = (data.get("outbound_media", {}).get(payload.attachment_id) or {}).get(
-            "media_ref"
-        )
         result = await send_image_to_session(
             session_id, media_id=payload.attachment_id, caption=caption
         )
@@ -425,17 +491,37 @@ async def send_human_message(
             raise HTTPException(
                 status_code=502, detail=f"WhatsApp rechazó la foto: {result.error}"
             )
-        history_store.append_human_event(session_id, caption or "", image_url=image_ref)
     else:
         # Envío de TEXTO (path legacy).
         await send_message_to_session(session_id, payload.text)
-        history_store.append_human_event(session_id, payload.text)
 
-    # Marcar el client_message_id como procesado (idempotencia futura).
+    # PM-B1/B2: el envío YA ocurrió — registrar el cmid sobre una lectura
+    # FRESCA (el send tarda segundos; otro writer pudo tocar metadata) y ANTES
+    # del append al histórico, para que un fallo del append no deje al retry
+    # re-enviando la foto al cliente.
     if cmid:
-        processed.append(cmid)
-        data["sent_human_message_ids"] = processed[-200:]  # cap para no crecer sin límite
-        metadata_store.write(session_id, data)
+        fresh = metadata_store.read(session_id)
+        marked: list[str] = fresh.get("sent_human_message_ids", [])
+        marked.append(cmid)
+        fresh["sent_human_message_ids"] = marked[-200:]  # cap
+        metadata_store.write(session_id, fresh)
+
+    try:
+        if payload.attachment_id:
+            history_store.append_human_event(
+                session_id, caption or "", image_url=image_ref
+            )
+        else:
+            history_store.append_human_event(session_id, payload.text)
+    except OSError as e:
+        # El mensaje SÍ llegó al cliente; perder el rastro en el histórico es
+        # malo, pero 500-ear acá haría que el frontend reintente y (sin la
+        # marca) duplique el envío. Log fuerte y seguimos.
+        logger.error(
+            "dashboard.send_human_message: history append failed POST-send",
+            session_id=session_id,
+            error=str(e),
+        )
 
     logger.info(
         "dashboard.send_human_message",

@@ -84,6 +84,37 @@ Notas:
 - `VITE_API_URL` de build fija a qué backend pega el bundle (envPrefix ya
   expone `VITE_*`/`TAURI_*`).
 
+## Notificaciones de handoff (implementado — fase 1, sin tienda)
+
+**Qué hace:** cuando una conversación pasa a manos del humano (el bot escala
+con `escalate_to_human`, o alguien interviene desde otro dispositivo), la app
+dispara una **notificación del sistema** ("Conversación asignada — {cliente}
+necesita atención humana").
+
+**Cómo funciona:** el inbox ya es tiempo-real por SSE (sampler del vault →
+`session_updated` → refetch). `useHandoffNotifications`
+(`src/plugins/chats/frontend/features/chats-inbox/model/handoff-notify.ts`)
+observa esa misma data y detecta transiciones `bot → humano` (detector puro
+`diffNewHandoffs`, testeado). Al detectar una y si la app NO está en foco,
+notifica vía `tauri-plugin-notification` (Android/desktop) o Web Notification
+(browser). Montado en el shell móvil Y en el desktop.
+
+Reglas anti-ruido: primera carga no notifica (sería una ráfaga de handoffs
+viejos al abrir la app); app visible y enfocada no notifica (la fila ya se
+pintó de HUMANO sola).
+
+**Permisos:** Android 13+ pide `POST_NOTIFICATIONS` en runtime — el primer
+handoff dispara el diálogo del sistema (el plugin lo maneja). Aceptalo en la
+prueba.
+
+**Limitación conocida (aceptada para fase 1):** con la app CERRADA (proceso
+muerto) no hay SSE → no hay notificación. La app en background reciente sí
+suele recibirla (el WebView vive unos minutos). **Fase 2 = FCM** (push real
+con app muerta): Firebase project + token FCM por device + el backend manda
+el push en `_append_status(tag=HUMANO)`; no requiere Play Store (FCM funciona
+en APKs sideloaded), pero sí un plugin Kotlin custom o el plugin FCM de la
+comunidad. Decidir cuando la fase 1 se quede corta en la operación real.
+
 ## Decisión abierta — auth Cognito en Android (F4.3)
 
 `react-oidc-context` con redirect en WebView: el origin de Tauri Android

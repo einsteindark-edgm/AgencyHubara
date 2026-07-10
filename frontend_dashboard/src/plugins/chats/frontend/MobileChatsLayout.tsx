@@ -12,7 +12,7 @@
  * desktop; la vista activa (inbox/chat) es estado local — es navegación pura
  * de UI, no server-state (regla 3 de la política de estado).
  */
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { Icon } from "@/shared/ui";
 import { useSelection } from "@/shared/lib";
@@ -25,7 +25,10 @@ import {
 } from "@plugins/chats/frontend/entities/chat";
 import { sessionKeys } from "@plugins/chats/frontend/entities/session";
 
-import { ChatsInbox } from "@plugins/chats/frontend/features/chats-inbox";
+import {
+  ChatsInbox,
+  useHandoffNotifications,
+} from "@plugins/chats/frontend/features/chats-inbox";
 import { ChatsConversation } from "@plugins/chats/frontend/features/chats-conversation";
 import { ChatsInspector } from "@plugins/chats/frontend/features/chats-inspector";
 
@@ -51,16 +54,42 @@ export function MobileChatsLayout() {
   );
 
   const { data: chats = [] } = useChatInbox();
+  // Notificación del sistema cuando una conversación pasa a manos del humano
+  // (escalada del bot o intervene desde otro dispositivo) y la app no está
+  // en primer plano.
+  useHandoffNotifications(chats);
   const selectedChat = chats.find((c) => c.id === selectedChatId) ?? null;
 
   const openChat = (id: string) => {
     setSelectedChatId(id);
     setView("chat");
+    // PM-F4: empujar una entrada de historial para que el BACK FÍSICO de
+    // Android navegue chat→inbox en vez de cerrar la app (el WebView mapea el
+    // back del sistema a history.back()).
+    window.history.pushState({ mobileChats: "chat" }, "");
   };
   const backToInbox = () => {
     setView("inbox");
     setShowInspector(false);
   };
+  const openInspector = () => {
+    setShowInspector(true);
+    window.history.pushState({ mobileChats: "sheet" }, "");
+  };
+
+  // Back físico / gesto de Android → cerrar primero el sheet, después el chat.
+  // Idempotente: si el botón de la UI ya cerró la vista, el pop es no-op.
+  useEffect(() => {
+    const onPop = () => {
+      setShowInspector((sheetOpen) => {
+        if (sheetOpen) return false;
+        setView("inbox");
+        return sheetOpen;
+      });
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
 
   if (view === "chat" && selectedChatId) {
     return (
@@ -78,7 +107,9 @@ export function MobileChatsLayout() {
           </div>
           <button
             className="mobile-inspector-toggle"
-            onClick={() => setShowInspector((v) => !v)}
+            onClick={() =>
+              showInspector ? setShowInspector(false) : openInspector()
+            }
             aria-label="Detalles del contacto"
           >
             <Icon.info />

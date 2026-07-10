@@ -136,7 +136,7 @@ def test_upload_media_returns_502_when_meta_upload_fails(client_and_vault):
     with patch("src.plugins.chats.api.handoff.upload_media", new=boom):
         res = client.post(
             "/api/dashboard/sessions/wa_5/media",
-            files={"file": ("f.jpg", b"x", "image/jpeg")},
+            files={"file": ("f.jpg", b"\xff\xd8\xff-jpeg", "image/jpeg")},
         )
     assert res.status_code == 502
 
@@ -259,6 +259,180 @@ def test_send_message_requires_text_or_attachment(client_and_vault):
 
     res = client.post("/api/dashboard/sessions/wa_10/messages", json={})
     assert res.status_code in (400, 422)
+
+
+# ---------- Fixes del premortem (auditoría 2026-07-08) ----------
+
+
+def test_send_with_unknown_attachment_id_rejected_422(client_and_vault):
+    """PM-B3: un attachment_id que NUNCA se subió para esta sesión NO se
+    reenvía a Meta (podría ser el media_id de otra sesión → filtración)."""
+    client, vault = client_and_vault
+    _write_metadata(
+        vault,
+        "wa_pm3",
+        {"active_route": "humano", "service_window_expires_at_ms": _FUTURE_MS},
+    )
+
+    send_image_mock = AsyncMock()
+    with patch("src.plugins.chats.api.handoff.send_image_to_session", new=send_image_mock):
+        res = client.post(
+            "/api/dashboard/sessions/wa_pm3/messages",
+            json={"attachment_id": "media-ajena", "client_message_id": "c1"},
+        )
+    assert res.status_code == 422
+    send_image_mock.assert_not_awaited()
+
+
+def test_attachment_requires_client_message_id(client_and_vault):
+    """PM-B4: sin client_message_id no hay NINGÚN dedup para fotos (el texto
+    tiene fingerprint; la imagen no) → lo exigimos en el contrato."""
+    client, vault = client_and_vault
+    _write_metadata(
+        vault,
+        "wa_pm4",
+        {"active_route": "humano", "service_window_expires_at_ms": _FUTURE_MS},
+    )
+    res = client.post(
+        "/api/dashboard/sessions/wa_pm4/messages",
+        json={"attachment_id": "media-1"},
+    )
+    assert res.status_code == 422
+
+
+def test_replay_wins_over_closed_window_and_returns_image_url(client_and_vault):
+    """PM-B5: un retry de algo YA enviado debe responder 200 replay (con su
+    image_url) aunque la ventana 24h haya cerrado entre medio — el guard de
+    ventana aplica a envíos NUEVOS, no a replays."""
+    client, vault = client_and_vault
+    _write_metadata(
+        vault,
+        "wa_pm5",
+        {
+            "active_route": "humano",
+            "service_window_expires_at_ms": 1,  # cerrada
+            "sent_human_message_ids": ["cmid-ya-enviado"],
+            "outbound_media": {
+                "media-9": {"media_ref": "/api/dashboard/media/wa_pm5/out-9.jpg"}
+            },
+        },
+    )
+
+    send_image_mock = AsyncMock()
+    with patch("src.plugins.chats.api.handoff.send_image_to_session", new=send_image_mock):
+        res = client.post(
+            "/api/dashboard/sessions/wa_pm5/messages",
+            json={
+                "attachment_id": "media-9",
+                "client_message_id": "cmid-ya-enviado",
+                "text": "hola",
+            },
+        )
+    assert res.status_code == 200, res.text
+    assert res.json()["image_url"] == "/api/dashboard/media/wa_pm5/out-9.jpg"
+    send_image_mock.assert_not_awaited()
+
+
+def test_upload_media_rejects_spoofed_mime(client_and_vault):
+    """PM-B7: content-type image/jpeg con bytes que NO son JPEG/PNG → 415."""
+    client, vault = client_and_vault
+    _write_metadata(vault, "wa_pm7", {"active_route": "humano"})
+
+    with patch("src.plugins.chats.api.handoff.upload_media", new=AsyncMock()):
+        res = client.post(
+            "/api/dashboard/sessions/wa_pm7/media",
+            files={"file": ("evil.jpg", b"#!/bin/sh\necho pwned", "image/jpeg")},
+        )
+    assert res.status_code == 415
+
+
+def test_upload_media_rejects_empty_file(client_and_vault):
+    client, vault = client_and_vault
+    _write_metadata(vault, "wa_pm11", {"active_route": "humano"})
+
+    with patch("src.plugins.chats.api.handoff.upload_media", new=AsyncMock()):
+        res = client.post(
+            "/api/dashboard/sessions/wa_pm11/media",
+            files={"file": ("nada.jpg", b"", "image/jpeg")},
+        )
+    assert res.status_code == 400
+
+
+def test_unsafe_session_id_rejected_on_media_and_messages(client_and_vault):
+    """PM-B9: session_id con `..` no llega a los stores (simetría con el GET)."""
+    client, vault = client_and_vault
+    _write_metadata(vault, "a..b", {"active_route": "humano"})
+
+    with patch("src.plugins.chats.api.handoff.upload_media", new=AsyncMock()):
+        r1 = client.post(
+            "/api/dashboard/sessions/a..b/media",
+            files={"file": ("f.jpg", b"\xff\xd8\xffx", "image/jpeg")},
+        )
+    r2 = client.post(
+        "/api/dashboard/sessions/a..b/messages",
+        json={"text": "hola"},
+    )
+    assert r1.status_code == 400
+    assert r2.status_code == 400
+
+
+def test_outbound_media_is_pruned_to_cap(client_and_vault):
+    """PM-B6: outbound_media no crece sin límite — se poda a las últimas 100."""
+    client, vault = client_and_vault
+    seeded = {
+        f"old-{i}": {"media_ref": f"/api/dashboard/media/wa_pm6/out-{i}.jpg"}
+        for i in range(100)
+    }
+    _write_metadata(
+        vault, "wa_pm6", {"active_route": "humano", "outbound_media": seeded}
+    )
+
+    with patch(
+        "src.plugins.chats.api.handoff.upload_media",
+        new=AsyncMock(return_value="media-nueva"),
+    ):
+        res = client.post(
+            "/api/dashboard/sessions/wa_pm6/media",
+            files={"file": ("f.jpg", b"\xff\xd8\xff-jpg", "image/jpeg")},
+        )
+    assert res.status_code == 200
+    data = _read_metadata(vault, "wa_pm6")
+    assert len(data["outbound_media"]) == 100
+    assert "media-nueva" in data["outbound_media"]
+    assert "old-0" not in data["outbound_media"]  # el más viejo salió
+
+
+def test_send_does_not_clobber_concurrent_metadata_writes(client_and_vault):
+    """PM-B1 (lost-update): si OTRO writer toca metadata mientras el send está
+    en vuelo (p.ej. el ingest renueva la ventana), esa escritura debe
+    SOBREVIVIR al write final del endpoint (lectura fresca, no dict stale)."""
+    client, vault = client_and_vault
+    _write_metadata(
+        vault,
+        "wa_pm1",
+        {"active_route": "humano", "service_window_expires_at_ms": _FUTURE_MS},
+    )
+
+    async def _concurrent_writer(session_id, text):
+        # Simula al ingest escribiendo DURANTE el send.
+        data = _read_metadata(vault, session_id)
+        data["concurrent_marker"] = "escrito-durante-el-send"
+        _write_metadata(vault, session_id, data)
+
+    with patch(
+        "src.plugins.chats.api.handoff.send_message_to_session",
+        new=AsyncMock(side_effect=_concurrent_writer),
+    ):
+        res = client.post(
+            "/api/dashboard/sessions/wa_pm1/messages",
+            json={"text": "hola", "client_message_id": "cm-pm1"},
+        )
+
+    assert res.status_code == 200
+    data = _read_metadata(vault, "wa_pm1")
+    # La escritura concurrente sobrevivió Y el cmid quedó registrado.
+    assert data.get("concurrent_marker") == "escrito-durante-el-send"
+    assert "cm-pm1" in data.get("sent_human_message_ids", [])
 
 
 def test_send_message_text_only_still_works(client_and_vault):

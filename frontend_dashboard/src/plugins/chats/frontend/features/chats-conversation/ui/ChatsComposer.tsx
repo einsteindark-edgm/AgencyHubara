@@ -287,7 +287,6 @@ function OutboxStrip({ items, onRetry, onRemove }: OutboxStripProps) {
                 type="button"
                 className="outbox-retry"
                 onClick={() => onRetry(it.id)}
-                title={it.error || "Reintentar"}
               >
                 Reintentar
               </button>
@@ -300,6 +299,12 @@ function OutboxStrip({ items, onRetry, onRemove }: OutboxStripProps) {
               >
                 ✕
               </button>
+              {/* PM-F6: el error VISIBLE, no en un tooltip — en touch no hay hover. */}
+              {it.error && (
+                <span className="outbox-err-text" role="alert">
+                  {it.error}
+                </span>
+              )}
             </div>
           )}
         </div>

@@ -21,7 +21,10 @@ import {
   useSessionsStream,
 } from "@plugins/chats/frontend/entities/chat";
 
-import { ChatsInbox } from "@plugins/chats/frontend/features/chats-inbox";
+import {
+  ChatsInbox,
+  useHandoffNotifications,
+} from "@plugins/chats/frontend/features/chats-inbox";
 import { ChatsConversation } from "@plugins/chats/frontend/features/chats-conversation";
 import { ChatsInspector } from "@plugins/chats/frontend/features/chats-inspector";
 import { MobileChatsLayout } from "./MobileChatsLayout";
@@ -40,6 +43,9 @@ function DesktopChatsLayout() {
   const [selectedChatId, setSelectedChatId] = useSelection("chats");
   useSessionsStream();
   const { data: chats = [] } = useChatInbox();
+  // Notificación del sistema al operador cuando el bot escala un chat a
+  // humano y el dashboard no está en foco (mismo hook que usa el móvil).
+  useHandoffNotifications(chats);
   useEffect(() => {
     if (selectedChatId == null && chats.length > 0) {
       setSelectedChatId(chats[0].id);

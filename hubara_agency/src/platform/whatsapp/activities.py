@@ -219,16 +219,31 @@ async def send_image_to_session(
     if not phone_number_id:
         raise RuntimeError("WHATSAPP_PHONE_NUMBER_ID not configured")
 
-    try:
-        metadata_file = WORKSPACE_VAULT_DIR / session_id / "metadata.json"
-        if metadata_file.exists():
-            data = json.loads(metadata_file.read_text(encoding="utf-8"))
-            phone_number_id = data.get("phone_number_id", phone_number_id)
-    except (OSError, json.JSONDecodeError):
-        pass
+    metadata = _read_metadata(session_id)
+    phone_number_id = metadata.get("phone_number_id", phone_number_id)
 
     payload = whatsapp_client.wa_dtos.ImageOutbound(media_id=media_id, caption=caption)
-    return await whatsapp_client.send_image(phone_number_id, from_number, payload)
+    result = await whatsapp_client.send_image(phone_number_id, from_number, payload)
+
+    # PM-B10: registrar el outbound (simetría con el path de texto) — sin esto
+    # las fotos del operador son invisibles para cost-tracking / analytics /
+    # `lead_state.engaged`. Solo si el envío tuvo éxito, sobre lectura fresca.
+    if result.ok:
+        fresh = _read_metadata(session_id)
+        log_entry = OutboundLogEntry(
+            sent_at_ms=_now_ms(),
+            wa_message_id=result.wa_message_id or "",
+            kind="image",
+            template_name=None,
+            pricing=None,
+            cost_usd_micros=None,
+            rate_card_version=None,
+        )
+        _append_outbound_to_active_episode(fresh, log_entry)
+        fresh["last_outbound"] = asdict(log_entry)
+        _write_metadata(session_id, fresh)
+
+    return result
 
 
 @activity.defn(name="send_whatsapp_message_activity")
