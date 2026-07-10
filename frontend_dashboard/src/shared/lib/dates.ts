@@ -30,3 +30,19 @@ export function nextDaysIsoSet(count: number): Set<string> {
   for (let i = 0; i < count; i++) out.add(addDaysIso(i));
   return out;
 }
+
+/**
+ * Formatea un día calendario YYYY-MM-DD para el operador ("15 de julio de
+ * 2026", es-CO). Puro respecto al reloj (no consulta `now`); si el input no
+ * es un ISO date válido, lo devuelve tal cual (mejor crudo que crashear).
+ */
+export function formatIsoDateEs(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  if (!y || !m || !d) return iso;
+  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("es-CO", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}

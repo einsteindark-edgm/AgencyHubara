@@ -159,6 +159,49 @@ async def test_schedule_delivery_converts_draft_and_patches_metadata(
     assert body["metadata"]["session_key"] == "wa_57"
 
 
+@pytest.mark.asyncio
+@respx.mock(base_url=_BASE_URL)
+async def test_schedule_delivery_rejects_advanced_stage(respx_mock, adapter):
+    """Premortem PM-005: agendar sobre ready/shipping/delivered/cancelled se
+    rechaza con `invalid_state` — `build_schedule_patch` documenta que "el
+    caller debe validar antes", pero sin este guard el patch aplicaba la
+    fecha IGUAL (sin transición) sobre una orden ya entregada, pisando
+    `hubara_scheduled_delivery_iso` y disparando la cascada ETA.
+
+    Sin rutas convert/patch mockeadas: si el código intentara escribir,
+    respx falla el test (garantiza cero side effects).
+    """
+    order_id = "order_01DELIVERED"
+    respx_mock.get(f"/admin/orders/{order_id}").mock(
+        return_value=Response(
+            200,
+            json={
+                "order": {
+                    "id": order_id,
+                    "status": "pending",
+                    "metadata": {
+                        "hubara_stage": "delivered",
+                        "hubara_scheduled_delivery_iso": "2026-07-01",
+                    },
+                }
+            },
+        )
+    )
+
+    result = await adapter.schedule_delivery(
+        ScheduleDeliveryCommand(
+            order_id=order_id,
+            delivery_iso="2026-07-20",
+            delivery_time=None,
+            note=None,
+        )
+    )
+
+    assert result.success is False
+    assert "invalid_state" in (result.error_detail or "")
+    assert result.current_stage == "delivered"
+
+
 # ----------------------------------------------------------------------
 # transition_stage
 # ----------------------------------------------------------------------
