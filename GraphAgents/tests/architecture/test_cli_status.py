@@ -120,3 +120,39 @@ def test_cmd_status_compact_poda_el_output_gigante_de_un_completed(monkeypatch, 
     assert inner["verdict"] == "ok"
     assert "meta_insights" not in inner  # el eco gigante se poda
     assert "meta_insights" in inner["_pruned_keys"]  # y queda declarado
+
+
+def test_cmd_status_compact_poda_ADENTRO_del_acumulador_del_supervisor(monkeypatch, capsys) -> None:
+    """Post-#153 en prod: el state de un SUPERVISOR es {"acc": {...todo...}} — UNA
+    sola key contenedora. La poda de primer nivel dropeaba `acc` ENTERO y el
+    operador recibía `{"_pruned_keys": ["acc"]}` sin reporte ni verdict (feedback
+    2026-07-10). La poda debe descender al contenedor y podar SUS keys: los ecos
+    gigantes se caen, el reporte/verdict SOBREVIVEN."""
+    acc = {
+        "meta_insights": {"data": ["x" * 100] * 400},  # eco gigante (~40KB)
+        "manual_sales": {"sales": ["y" * 100] * 200},  # otro eco (~20KB)
+        "markdown": "## Hubara — Ads Analytics (CTWA)",
+        "verdict": "insufficient_data",
+        "qa_passed": True,
+    }
+    fat = {
+        "workflowId": "wf-3",
+        "status": "COMPLETED",
+        "reasonForIncompletion": None,
+        "output": {"result": json.dumps({"acc": acc})},
+        "tasks": [],
+    }
+    monkeypatch.setattr("sdk.trace.fetch_workflow", lambda eid: fat)
+    args = argparse.Namespace(execution_id="wf-3", runtime="agentspan", compact=True)
+
+    assert cli.cmd_status(args) == 0
+    out = capsys.readouterr().out
+    assert len(out) < 20000
+    inner = json.loads(json.loads(out)["output"]["result"])
+    assert "acc" in inner  # el contenedor NO se dropea entero
+    assert inner["acc"]["markdown"] == "## Hubara — Ads Analytics (CTWA)"
+    assert inner["acc"]["verdict"] == "insufficient_data"
+    assert inner["acc"]["qa_passed"] is True
+    assert "meta_insights" not in inner["acc"]  # los ecos gigantes sí se podan
+    # lo podado queda declarado con su ruta
+    assert "acc.meta_insights" in inner["_pruned_keys"]

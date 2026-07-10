@@ -346,16 +346,33 @@ def _prune_output(output, *, budget: int):
     pruned: list[str] = []
     state = dict(state)
     state["_pruned_keys"] = pruned
+
+    # El state de un SUPERVISOR es {"acc": {...todo...}} — una sola key
+    # contenedora. Podar a primer nivel dropearía `acc` ENTERO (feedback
+    # 2026-07-10: el operador recibía {"_pruned_keys": ["acc"]} sin reporte).
+    # Se DESCIENDE mientras haya un único dict contenedor y se poda ADENTRO:
+    # los ecos gigantes se caen, el reporte/verdict sobreviven.
+    target = state
+    prefix = ""
+    while True:
+        keys = [k for k in target if k != "_pruned_keys"]
+        if len(keys) == 1 and isinstance(target[keys[0]], dict) and target[keys[0]]:
+            target[keys[0]] = dict(target[keys[0]])  # copia: no mutar el original
+            prefix += keys[0] + "."
+            target = target[keys[0]]
+        else:
+            break
+
     by_size = sorted(
-        (k for k in state if k != "_pruned_keys"),
-        key=lambda k: len(json.dumps(state[k], ensure_ascii=False, default=str)),
+        (k for k in target if k != "_pruned_keys"),
+        key=lambda k: len(json.dumps(target[k], ensure_ascii=False, default=str)),
         reverse=True,
     )
     for key in by_size:
         if _fits(state):
             break
-        pruned.append(key)
-        state.pop(key)
+        pruned.append(prefix + key)
+        target.pop(key)
     return {"result": json.dumps(state, ensure_ascii=False, default=str)}
 
 
