@@ -2,7 +2,7 @@
   "name": "acktos-studio",
   "displayName": "Acktos Studio",
   "description": "Grafos, certificaciones y ejecuciones de AgencyHubara + GraphAgents dentro de VS Code.",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "acktos",
   "private": true,
   "license": "UNLICENSED",
@@ -41,6 +41,11 @@
       {
         "command": "acktos.restartBridges",
         "title": "Acktos: Restart Python Bridges",
+        "category": "Acktos Studio"
+      },
+      {
+        "command": "acktos.updateExtension",
+        "title": "Acktos: Buscar actualización de la extensión",
         "category": "Acktos Studio"
       },
       {

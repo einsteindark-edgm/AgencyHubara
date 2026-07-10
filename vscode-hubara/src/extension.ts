@@ -12,6 +12,7 @@ import { ToolCall, TraceStep } from "./graph/messages";
 import { ProductionStatusBar } from "./graph/productionStatusBar";
 import { DEFAULT_FOCUS_DEPTH, focusOf, systemOf, workflowOf } from "./graph/scope";
 import { registerYamlSchemas } from "./schemas/yamlSchemas";
+import { selfUpdate } from "./selfUpdate";
 import { HubaraTestController } from "./testing/controller";
 import { PlanStatusBar } from "./testing/planStatusBar";
 import { CatalogTreeProvider } from "./trees/catalogTree";
@@ -130,6 +131,7 @@ export function activate(ctx: vscode.ExtensionContext): void {
       output.appendLine("[extension] puentes reiniciados");
       void vscode.window.showInformationMessage("Acktos Studio: puentes Python reiniciados.");
     }),
+    vscode.commands.registerCommand("acktos.updateExtension", () => selfUpdate(ctx, output, true)),
     vscode.commands.registerCommand("acktos.selectPlan", () => planStatusBar!.selectAndRun()),
     vscode.commands.registerCommand("acktos.runActivePlan", () => planStatusBar!.runActive()),
     vscode.commands.registerCommand("acktos.checkManifest", async (system?: Provider) => {
@@ -338,6 +340,12 @@ export function activate(ctx: vscode.ExtensionContext): void {
   );
 
   output.appendLine("[extension] Acktos Studio activo");
+
+  // Self-update silencioso: si el repo (git pull) trae una versión más nueva
+  // de la extensión, se re-empaqueta e instala sola — el VSIX sideloaded no
+  // recibe el Auto Update del Marketplace. Fire-and-forget: no frena la
+  // activación; los errores van al output channel.
+  void selfUpdate(ctx, output, false).catch((e) => output.appendLine(`[self-update] ${e}`));
 }
 
 export function deactivate(): void {
