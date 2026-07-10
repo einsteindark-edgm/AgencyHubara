@@ -173,3 +173,19 @@ def test_runs_por_campania_end_to_end(client):
 
     todos = c.get("/api/ads/analysis/runs").json()["runs"]
     assert len(todos) == 2  # sin filtro sigue siendo el historial completo
+
+
+def test_startup_rearma_los_pollers_en_vuelo(monkeypatch) -> None:
+    """Un deploy/restart mata los pollers EN MEMORIA y los records quedan
+    `running` eternos aunque Conductor complete (caso real 424d6647): al bootear,
+    el router reconcilia los runs en vuelo (re-arma polls / failea huérfanos)."""
+    reconciled: list = []
+    monkeypatch.setattr(api, "_spawn_reconcile", lambda: reconciled.append(True))
+    monkeypatch.setattr(api, "_reconciled", False)  # estado de módulo: reset por test
+    app = FastAPI()
+    app.include_router(api.router, prefix="/api/ads/analysis")
+    with TestClient(app):  # el context manager dispara los startup events
+        pass
+    # EXACTAMENTE una vez: `on_event` puede dispararse duplicado (router anidado)
+    # y dos reconciles concurrentes duplicarían pollers sobre los mismos runs.
+    assert reconciled == [True]

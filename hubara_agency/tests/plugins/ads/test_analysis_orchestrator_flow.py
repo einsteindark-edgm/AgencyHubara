@@ -171,3 +171,48 @@ def test_resume_run_manda_el_resume_a_la_caja() -> None:
     lz = _FakeLauncher()
     asyncio.run(orchestrator.resume_run("r8", "exec-9", {"approved": True, "by": "ed"}, launcher=lz))
     assert lz.resumed == [("exec-9", {"approved": True, "by": "ed"})]
+
+
+def test_reconcile_in_flight_rearma_el_poller_tras_un_restart() -> None:
+    """Caso real 424d6647 (2026-07-10): el poller es un task asyncio EN MEMORIA —
+    un deploy/restart del backend lo mata y el record queda `running` para
+    siempre aunque Conductor complete (el front nunca recibe el SSE). Al bootear,
+    `reconcile_in_flight` re-arma el poll de todo run no-terminal con
+    execution_id, y el completed llega tarde pero llega."""
+    record.create_run("rr1", agent="ads-analytics", input={})
+    record.append_event("rr1", {"event_id": "rr1:s", "type": "run.started", "payload": {"execution_id": "exec-old"}})
+    assert record.read_run("rr1")["status"] == "running"  # como quedó tras el restart
+
+    lz = _FakeLauncher(status_workflow={"status": "COMPLETED", "output": {"result": "{'ok': 1}"}, "tasks": []})
+    bus = _FakeBus()
+    asyncio.run(orchestrator.reconcile_in_flight(launcher=lz, bus=bus, interval=0.0))
+
+    rec = record.read_run("rr1")
+    assert rec["status"] == "completed"
+    assert rec["result"] == {"ok": 1}
+    assert "run.result" in [t for (_, t, _, _) in bus.published]  # el SSE SÍ salió
+
+
+def test_reconcile_in_flight_marca_failed_los_pending_huerfanos() -> None:
+    """Un `pending` SIN execution_id murió ANTES de despachar (el restart lo agarró
+    en pleno launch) — no hay nada que pollear: failed honesto, no colgado eterno."""
+    record.create_run("rr2", agent="ads-analytics", input={})
+
+    bus = _FakeBus()
+    asyncio.run(orchestrator.reconcile_in_flight(launcher=_FakeLauncher(), bus=bus, interval=0.0))
+
+    rec = record.read_run("rr2")
+    assert rec["status"] == "failed"
+    assert "reinici" in str(rec["error"]).lower()  # el motivo dice que fue el restart
+    assert [t for (_, t, _, _) in bus.published] == ["run.failed"]
+
+
+def test_reconcile_in_flight_ignora_los_terminales() -> None:
+    record.create_run("rr3", agent="ads-analytics", input={})
+    record.append_event("rr3", {"event_id": "rr3:f", "type": "run.failed", "payload": {"error": "x"}})
+
+    bus = _FakeBus()
+    asyncio.run(orchestrator.reconcile_in_flight(launcher=_FakeLauncher(), bus=bus, interval=0.0))
+
+    assert bus.published == []  # nada que re-armar ni re-emitir
+    assert record.read_run("rr3")["status"] == "failed"

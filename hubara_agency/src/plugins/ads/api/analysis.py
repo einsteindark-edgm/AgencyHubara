@@ -188,6 +188,33 @@ def _spawn_resume(run_id: str, execution_id: str, decision: dict) -> None:
     task.add_done_callback(_launch_tasks.discard)
 
 
+def _spawn_reconcile() -> None:
+    """Re-arma en background los pollers de los runs EN VUELO (post-boot). Los pollers son
+    tasks asyncio en memoria: un deploy/restart los mata y los records quedan `running`
+    eternos aunque Conductor complete — el front nunca recibe el SSE (caso 424d6647,
+    2026-07-10). GUARDA la referencia del task (L-7). Tests lo monkeypatchean."""
+    task = asyncio.create_task(
+        orchestrator.reconcile_in_flight(launcher=_get_launcher(), bus=get_dashboard_event_bus())
+    )
+    _launch_tasks.add(task)
+    task.add_done_callback(_launch_tasks.discard)
+
+
+#: guard de idempotencia del reconcile por proceso: `on_event` puede dispararse más de
+#: una vez (router incluido en el router del plugin Y en la app) y dos reconciles
+#: concurrentes duplicarían pollers sobre los mismos runs.
+_reconciled = False
+
+
+@router.on_event("startup")
+async def _reconcile_on_boot() -> None:
+    global _reconciled
+    if _reconciled:
+        return
+    _reconciled = True
+    _spawn_reconcile()
+
+
 @router.get("/agents")
 def list_agents() -> list[dict]:
     return _AGENTS
