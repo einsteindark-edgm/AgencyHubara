@@ -20,6 +20,10 @@ export interface ToolbarProps {
   onScopeChange: (scope: Scope) => void;
   onDepthChange: (depth: number) => void;
   onRefresh: () => void;
+  /** descarta posiciones guardadas del scope actual y re-encuadra. */
+  onRelayout: () => void;
+  /** "⤴ Guardar & certificar" — corre la suite en vivo → rama+commit+PR (solo edit mode). */
+  onCertify: () => void;
 }
 
 /** Breadcrumb clickeable + selector de scope + slider de profundidad (solo en
@@ -34,6 +38,8 @@ export function Toolbar({
   onScopeChange,
   onDepthChange,
   onRefresh,
+  onRelayout,
+  onCertify,
 }: ToolbarProps): React.ReactElement {
   const crumbs = breadcrumb(scope, nodeLabel);
   return (
@@ -65,6 +71,16 @@ export function Toolbar({
         )}
       </div>
       <div className="toolbar-actions">
+        {editable && (
+          <button
+            type="button"
+            className="certify-btn"
+            title="Corre la suite completa de GraphAgents en vivo (panel Ejecución) y, si todo pasa, crea rama + commit + push + PR"
+            onClick={onCertify}
+          >
+            ⤴ Guardar &amp; certificar
+          </button>
+        )}
         {scope.kind === "workspace" &&
           (["graphagents", "systemmap"] as Provider[]).map((sys) => (
             <button
@@ -102,6 +118,14 @@ export function Toolbar({
           <option value="graphagents">{PROVIDER_LABEL.graphagents}</option>
           <option value="systemmap">{PROVIDER_LABEL.systemmap}</option>
         </select>
+        <button
+          type="button"
+          className="refresh-btn"
+          title="Re-organizar: descarta las posiciones guardadas de esta vista y aplica el layout automático"
+          onClick={onRelayout}
+        >
+          ⧉
+        </button>
         <button type="button" className="refresh-btn" title="Refrescar" onClick={onRefresh} disabled={loading}>
           {loading ? "…" : "⟳"}
         </button>

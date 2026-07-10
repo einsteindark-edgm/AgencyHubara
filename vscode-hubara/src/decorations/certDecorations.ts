@@ -43,7 +43,7 @@ export class CertDecorationProvider implements vscode.FileDecorationProvider, vs
     return {
       badge: level === "none" ? "✗" : level.slice(0, 2),
       color: LEVEL_COLOR[level] ?? LEVEL_COLOR.none,
-      tooltip: `Hubara Studio: certificación ${level}`,
+      tooltip: `Acktos Studio: certificación ${level}`,
     };
   }
 
@@ -85,7 +85,7 @@ export class CertDecorationProvider implements vscode.FileDecorationProvider, vs
       if (certWarning && !this.warnedCertUnavailable) {
         // Un TCK roto NO es "plugins sin certificar" — avisarlo una vez.
         this.warnedCertUnavailable = true;
-        void vscode.window.showWarningMessage(`Hubara Studio: certificaciones no disponibles — ${certWarning}`);
+        void vscode.window.showWarningMessage(`Acktos Studio: certificaciones no disponibles — ${certWarning}`);
       }
     } catch {
       // sin bridge/graph disponible: sin decoraciones de este lado, no crash

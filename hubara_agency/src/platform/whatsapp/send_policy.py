@@ -251,6 +251,42 @@ class LeadState:
         )
 
 
+def lead_state_from_metadata(metadata: dict[str, Any]) -> LeadState:
+    """Deriva el `LeadState` desde el `metadata.json` de la sesión.
+
+    La ÚNICA derivación metadata→LeadState del sistema (Decisión #2 del plan
+    Window Strategist): la comparten el gate de re-validación del remarketing
+    y el snapshot que consume el agente GraphAgents — así el "espejo" del
+    agente nunca re-deriva warmth/ganchos, solo lee flags pre-digeridos.
+
+    Pura: no I/O, no reloj. El caller lee el metadata en una activity.
+    """
+    episodes = metadata.get("episodes") or []
+    last_episode: dict[str, Any] = episodes[-1] if episodes else {}
+    draft = last_episode.get("order_draft") or {}
+
+    # engaged = el cliente respondió DESPUÉS del último outbound del bot (o
+    # escribió y el bot aún no respondió). Si nunca escribió, frío.
+    last_inbound_ms = metadata.get("last_inbound_at_ms")
+    last_outbound = metadata.get("last_outbound") or {}
+    last_outbound_ms = last_outbound.get("sent_at_ms")
+    if last_inbound_ms is None:
+        engaged = False
+    elif last_outbound_ms is None:
+        engaged = True
+    else:
+        engaged = last_inbound_ms > last_outbound_ms
+
+    return LeadState(
+        tag=metadata.get("tag"),
+        has_order_draft=bool(draft.get("slots")),
+        has_registered_order=bool(last_episode.get("order_id")),
+        is_ctwa_lead=bool(metadata.get("ctwa_clids_seen")),
+        engaged=engaged,
+        allow_paid_marketing=bool(metadata.get("allow_paid_marketing")),
+    )
+
+
 def _suppress(reason: str, why: str) -> SendDecision:
     return SendDecision(
         allowed=False,

@@ -13,6 +13,11 @@ export interface FlowNodeData extends Record<string, unknown> {
   runtimeStatus?: "idle" | "running" | "done" | "failed" | "awaiting";
   runtimeMs?: number;
   runtimeRetries?: number;
+  /** orden de ejecución con un trace activo: "2" (agente) o "2.1 · 3.2" (tool). */
+  orderBadge?: string;
+  /** presente si al worker/plugin lo dispara un Temporal Schedule; el valor
+   * es la cadencia humana ("cada 45 min") o "" si no se declaró. */
+  schedule?: string;
 }
 
 export type FlowNodeType = Node<FlowNodeData, "hubara">;
@@ -42,8 +47,21 @@ export function FlowNode({ data, selected }: NodeProps<FlowNodeType>): React.Rea
   return (
     <div className={`flow-node kind-${data.kind} ${certClass} ${statusClass} ${selected ? "selected" : ""}`}>
       <Handle type="target" position={Position.Top} />
+      {data.orderBadge && (
+        <span className="flow-node-order" title={`Orden de ejecución: ${data.orderBadge}`}>
+          {data.orderBadge}
+        </span>
+      )}
       <div className="flow-node-header">
         <span className="flow-node-kind">{KIND_LABEL[data.kind] ?? data.kind}</span>
+        {data.schedule !== undefined && (
+          <span
+            className="flow-node-clock"
+            title={`Lo dispara un Temporal Schedule${data.schedule ? ` · ${data.schedule}` : ""}`}
+          >
+            ⏱
+          </span>
+        )}
         {data.certification && <span className={`flow-node-cert ${certClass}`}>{data.certification}</span>}
       </div>
       <div className="flow-node-label">{data.label}</div>
@@ -51,7 +69,7 @@ export function FlowNode({ data, selected }: NodeProps<FlowNodeType>): React.Rea
         <div className="flow-node-meta">{data.archetype ?? data.sideEffect}</div>
       )}
       {typeof data.collapsedCount === "number" && (
-        <div className="flow-node-meta">{data.collapsedCount} nodos</div>
+        <div className="flow-node-meta">{data.collapsedCount} ocultos · doble-click expande</div>
       )}
       {data.runtimeStatus && data.runtimeStatus !== "idle" && (
         <div className="flow-node-meta">

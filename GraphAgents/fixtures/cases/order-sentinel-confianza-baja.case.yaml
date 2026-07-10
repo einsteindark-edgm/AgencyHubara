@@ -1,0 +1,29 @@
+# CASO order-sentinel: señal AMBIGUA/hedged ("de pronto te lo mando hoy") → el LLM
+# clasifica medium y el guardrail determinista suprime con `low_confidence`. Solo
+# confidence high despacha — lo dudoso queda auditable en suppressed, nunca viaja.
+id: order-sentinel-confianza-baja
+title: order-sentinel · señal ambigua (low_confidence, suprimido)
+target: agent:order-sentinel
+seed:
+  payload:
+    schema_version: 1
+    now_ms: 1720500000000
+    conversations:
+      - session_id: wa_573007778899
+        order_id: order_01DUDA
+        current_stage: ready
+        payment_confirmed: true
+        messages:
+          - { who: customer, text: "¿me lo mandas hoy?", at_ms: 1720497000000, has_media: false }
+          - { who: human_operator, text: "de pronto te lo mando hoy, te aviso", at_ms: 1720498000000, has_media: false }
+ports:
+  llm: '{"action": "transition", "to_stage": "shipping", "evidence": ["de pronto te lo mando hoy, te aviso"], "confidence": "medium"}'
+golden:
+  schema_version: 1
+  snapshot_now_ms: 1720500000000
+  dispatch: []
+  suppressed:
+    - session_id: wa_573007778899
+      order_id: order_01DUDA
+      reason: low_confidence
+  llm_errors: []

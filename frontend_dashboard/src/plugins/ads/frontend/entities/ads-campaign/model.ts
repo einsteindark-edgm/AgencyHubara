@@ -146,12 +146,17 @@ export interface AdsCampaign {
   metaCampaignId: string | null;
   adSet: string | null;
   creativeTitle: string | null;
+  /** Thumbnail real del creativo del ad (Graph `creative{thumbnail_url}`). */
+  creativeThumbnailUrl: string | null;
   template: string | null;
   /** Inversión en COP. */
   spend: number | null;
   impressions: number | null;
   reach: number | null;
   clicks: number | null;
+  /** Conversaciones iniciadas según Meta (insights) — distinto de `started`
+   *  (episodios del vault): esta es la señal del lado del ad. */
+  conversationsStarted: number | null;
   /** Counts por estado conversacional — requiere clasificador downstream. */
   conversations: AdsConversationCounts | null;
   /** Ingresos atribuidos en COP — suma de `order_total_cop` de los episodios

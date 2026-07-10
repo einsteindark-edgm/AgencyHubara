@@ -11,7 +11,7 @@
 | `frontend_dashboard/` | Frontend React/TS dashboard (FSD strict) | Cualquier HU que toque UI |
 | `exoclaw-temporal/` | Librería base de patrones Temporal (DEHA reference) | Rara vez. Solo si la HU pide cambiar el framework base |
 | `agent_coordination/` | Utilidades cross-worker (orchestration helpers) | HU multi-worker con coordinación |
-| `system_explorer/` | Tool de auditoría del repo | Debug / health-check del repo |
+| `vscode-hubara/` | Acktos Studio — extensión de VS Code (grafos + tests + ejecuciones de ambos sistemas) | Ver el sistema, correr cases, editar el wiring. Su README lista los backends que usa |
 | `features/` | Tareas HU en curso (work-in-progress, ignored por .gitignore) | NO entrar como referencia — son artefactos |
 | `.archon/workflows/` | Pipeline definitions YAML | **PROTECTED**. Solo modificar vía ADR |
 | `.claude/skills/` | Skills del pipeline (`hubara-*-archon` + `hubara-architecture-guide`) | **PROTECTED**. Solo modificar vía ADR del harness |

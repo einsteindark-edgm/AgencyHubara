@@ -118,7 +118,15 @@ _ADS_ANALYTICS_INPUT = {
 _AGENTS = [
     {
         "id": "ads-analytics",
-        "label": "Análisis CTWA por campaña (Día del padre)",
+        "label": "Unit-economics CTWA por campaña",
+        "description": (
+            "Analiza tus campañas de Meta que llevan a WhatsApp: cruza el gasto y los "
+            "clicks de Meta con las ventas, arma el embudo click → conversación → venta "
+            "por campaña, calcula CAC / ROAS / costo por conversación, verifica que los "
+            "números cierren y redacta un reporte con sugerencias accionables (qué "
+            "campaña escalar, cuál pausar). Corre en el pod GraphAgents; puede pedirte "
+            "aprobación antes de sugerir cambios."
+        ),
         "example_input": _ADS_ANALYTICS_INPUT,
     },
 ]
@@ -135,6 +143,8 @@ _launch_tasks: set[asyncio.Task] = set()
 class TriggerBody(BaseModel):
     agent: str
     input: dict
+    #: la campaña ACTIVA al disparar — el historial del inspector filtra por ella.
+    campaign_id: str | None = None
 
 
 class ApproveBody(BaseModel):
@@ -148,7 +158,7 @@ def _new_run_id() -> str:
 def _get_launcher():
     """El Launcher real (boto3). Import perezoso: tests lo monkeypatchean con un fake, y boto3
     no se importa si no hace falta (NO-OP sin config AWS)."""
-    from src.plugins.ads.runs.boto3_launcher import Boto3Launcher
+    from src.sdk.graphagentskit import Boto3Launcher
 
     return Boto3Launcher()
 
@@ -178,9 +188,47 @@ def _spawn_resume(run_id: str, execution_id: str, decision: dict) -> None:
     task.add_done_callback(_launch_tasks.discard)
 
 
+def _spawn_reconcile() -> None:
+    """Re-arma en background los pollers de los runs EN VUELO (post-boot). Los pollers son
+    tasks asyncio en memoria: un deploy/restart los mata y los records quedan `running`
+    eternos aunque Conductor complete — el front nunca recibe el SSE (caso 424d6647,
+    2026-07-10). GUARDA la referencia del task (L-7). Tests lo monkeypatchean."""
+    task = asyncio.create_task(
+        orchestrator.reconcile_in_flight(launcher=_get_launcher(), bus=get_dashboard_event_bus())
+    )
+    _launch_tasks.add(task)
+    task.add_done_callback(_launch_tasks.discard)
+
+
+#: guard de idempotencia del reconcile por proceso: `on_event` puede dispararse más de
+#: una vez (router incluido en el router del plugin Y en la app) y dos reconciles
+#: concurrentes duplicarían pollers sobre los mismos runs.
+_reconciled = False
+
+
+@router.on_event("startup")
+async def _reconcile_on_boot() -> None:
+    global _reconciled
+    if _reconciled:
+        return
+    _reconciled = True
+    _spawn_reconcile()
+
+
 @router.get("/agents")
 def list_agents() -> list[dict]:
     return _AGENTS
+
+
+@router.get("/runs")
+def list_runs(limit: int = 20, campaign_id: str | None = None) -> dict:
+    """Historial de análisis (el versionado del inspector): cada corrida con su
+    fecha, estado, snapshot de entrada (los números que había) y resultado (las
+    sugerencias de esa versión), más nueva primero. Con `campaign_id`, SOLO las
+    corridas disparadas mirando esa campaña (el historial es por campaña)."""
+    return {
+        "runs": record.list_runs(limit=max(1, min(limit, 100)), campaign_id=campaign_id)
+    }
 
 
 @router.post("/runs")
@@ -190,7 +238,9 @@ async def create_run(body: TriggerBody) -> dict:
     run_id = _new_run_id()
     # Nace `pending` (write de vault rápido); el launch (despertar caja + despachar + pollear)
     # corre en background para no bloquear el request — el progreso llega por el SSE.
-    record.create_run(run_id, agent=body.agent, input=body.input)
+    record.create_run(
+        run_id, agent=body.agent, input=body.input, campaign_id=body.campaign_id
+    )
     _spawn_launch(run_id, body.agent, body.input)
     return {"run_id": run_id}
 

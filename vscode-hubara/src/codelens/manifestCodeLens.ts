@@ -41,12 +41,12 @@ export class ManifestCodeLensProvider implements vscode.CodeLensProvider {
     return [
       new vscode.CodeLens(range, {
         title: "⌂ Ver en grafo",
-        command: "hubara.focusNode",
+        command: "acktos.focusNode",
         arguments: [id.system, id.nodeId],
       }),
       new vscode.CodeLens(range, {
         title: "✓ Check",
-        command: "hubara.checkManifest",
+        command: "acktos.checkManifest",
         arguments: [id.system],
         tooltip: "Corre el compiler check de este lado — Problems panel se actualiza",
       }),

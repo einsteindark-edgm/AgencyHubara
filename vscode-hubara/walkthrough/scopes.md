@@ -17,4 +17,4 @@ volvés al workspace y no perdiste el layout que armaste en un focus.
 Workspace ▸ GraphAgents ▸ agent:ctwa-report
 ```
 
-[Abrir el grafo](command:hubara.openStudio)
+[Abrir el grafo](command:acktos.openStudio)

@@ -21,6 +21,10 @@ def test_cmd_resume_pasa_execution_id_y_decision_parseada(monkeypatch) -> None:
         return Execution(id=execution_id, status="completed", output={"status": "applied"})
 
     monkeypatch.setattr("sdk.runtime.AgentSpanRuntime.resume", fake_resume)
+    class _Done:
+        status = "completed"
+    monkeypatch.setattr("sdk.runtime.AgentSpanRuntime.get", lambda self, eid: _Done())
+    monkeypatch.setattr("sdk.cli._WAIT_POLL_SECONDS", 0)
     args = argparse.Namespace(execution_id="exec-7", decision='{"approved": true, "by": "ed"}')
     rc = cli.cmd_resume(args)
 
@@ -37,6 +41,10 @@ def test_cmd_resume_sin_decision_no_inyecta_nada(monkeypatch) -> None:
         return Execution(id=execution_id, status="paused")
 
     monkeypatch.setattr("sdk.runtime.AgentSpanRuntime.resume", fake_resume)
+    class _Done:
+        status = "completed"
+    monkeypatch.setattr("sdk.runtime.AgentSpanRuntime.get", lambda self, eid: _Done())
+    monkeypatch.setattr("sdk.cli._WAIT_POLL_SECONDS", 0)
     args = argparse.Namespace(execution_id="e", decision="")
     cli.cmd_resume(args)
     assert seen["decision"] is None

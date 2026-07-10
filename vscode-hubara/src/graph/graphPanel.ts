@@ -1,9 +1,10 @@
 import * as crypto from "node:crypto";
 import * as vscode from "vscode";
-import { BridgeResponse, GRAPH_PATH, isGraphPayload, PROVIDER_LABEL, Provider } from "../bridge/endpoints";
+import { errorDetail, GRAPH_PATH, isGraphPayload, PROVIDER_LABEL, Provider } from "../bridge/endpoints";
 import { BridgeHub } from "../bridge/pythonBridge";
+import { CertSink, runCertifyAndPublish } from "../certify/certifyRunner";
 import { seamsFilePath } from "../config";
-import { connectWithConfirmation, disconnectWithConfirmation } from "./editOps";
+import { connectWithConfirmation, deleteNodeWithConfirmation, disconnectWithConfirmation } from "./editOps";
 import { Seam, stripNs } from "./graphOps";
 import {
   EMPTY_VIEW_STATE,
@@ -11,13 +12,37 @@ import {
   OutboundMessage,
   PersistedViewState,
   ProviderState,
+  SelectedNodePayload,
+  ToolCall,
   TraceInfo,
   TraceStep,
 } from "./messages";
 import { loadSeams } from "./seams";
-import { focusOf, Scope } from "./scope";
+import { Scope, workflowOf } from "./scope";
 
-const VIEW_STATE_KEY = "hubara.studio.viewState";
+/** El payload de `/api/run-local` ya normalizado (extension.ts lo arma). */
+export interface LocalRunResult {
+  case: string;
+  agent: string;
+  strategy?: string;
+  seed?: unknown;
+  /** steps del execution_plan (sin runtime — acá se sintetiza como done). */
+  steps: TraceStep[];
+  nodeTraces: Record<string, ToolCall[]>;
+  nodeAccs: Record<string, unknown>;
+}
+
+/** El panel nativo "Ejecución" (F10) visto desde el GraphPanel — quien pollea
+ * el trace le empuja las novedades; el canvas le manda las selecciones. */
+export interface ExecutionSink extends CertSink {
+  updateTrace(info: TraceInfo): void;
+  updateNodeTraces(executionId: string, nodeTraces: Record<string, ToolCall[]>, reconstructed: boolean, reason?: string): void;
+  updateLocal(info: TraceInfo, nodeTraces: Record<string, ToolCall[]>, accs: Map<string, unknown>): void;
+  clearTrace(): void;
+  selectNode(system: Provider, node: SelectedNodePayload): void;
+}
+
+const VIEW_STATE_KEY = "acktos.studio.viewState";
 const TRACE_POLL_MS = 2000;
 const TERMINAL_STATUSES = ["COMPLETED", "FAILED", "TERMINATED", "TIMED_OUT"];
 
@@ -32,8 +57,10 @@ const TERMINAL_STATUSES = ["COMPLETED", "FAILED", "TERMINATED", "TIMED_OUT"];
  * webview solo refleja lo que llega y emite `persistState` en cada cambio.
  */
 export class GraphPanel {
-  public static readonly viewType = "hubara.graphPanel";
+  public static readonly viewType = "acktos.graphPanel";
   private static current?: GraphPanel;
+  /** el panel "Ejecución" (F10) — extension.ts lo setea al activar. */
+  static executionSink?: ExecutionSink;
 
   private readonly panel: vscode.WebviewPanel;
   private readonly disposables: vscode.Disposable[] = [];
@@ -47,7 +74,7 @@ export class GraphPanel {
       }
       return;
     }
-    const panel = vscode.window.createWebviewPanel(GraphPanel.viewType, "Hubara Studio", column, {
+    const panel = vscode.window.createWebviewPanel(GraphPanel.viewType, "Acktos Studio", column, {
       enableScripts: true,
       retainContextWhenHidden: true,
       localResourceRoots: [vscode.Uri.joinPath(ctx.extensionUri, "dist")],
@@ -55,24 +82,73 @@ export class GraphPanel {
     GraphPanel.current = new GraphPanel(panel, ctx, bridges, jumpTo);
   }
 
-  /** Fuerza un refresh del panel abierto (comando "Hubara: Refresh Graphs"). No-op si no hay panel. */
+  /** Fuerza un refresh del panel abierto (comando "Acktos: Refresh Graphs"). No-op si no hay panel. */
   static refreshActive(): void {
     void GraphPanel.current?.refresh();
   }
 
-  /** Abre/enfoca el panel en el agente de una ejecución y arranca el poll de
-   * trace (§F4 — "ver en el canvas por dónde va y dónde falla"). */
+  /** Abre/enfoca el panel en el WORKFLOW de una ejecución (todo lo alcanzable
+   * desde su raíz) y arranca el poll de trace (§F4 — "ver en el canvas por
+   * dónde va y dónde falla"). */
   static showTrace(ctx: vscode.ExtensionContext, bridges: BridgeHub, executionId: string, agent: string): void {
-    GraphPanel.show(ctx, bridges, focusOf("graphagents", `agent:${agent}`, 2));
+    GraphPanel.show(ctx, bridges, workflowOf("graphagents", `agent:${agent}`));
     // el panel puede tardar un tick en existir si se acaba de crear (bootstrap
     // async) — encolamos el arranque del trace al próximo microtask, momento
     // en que `GraphPanel.current` ya está asignado por `show()`.
     void Promise.resolve().then(() => GraphPanel.current?.startTrace(executionId));
   }
 
+  /** El resultado de una ejecución LOCAL (`/api/run-local` — en proceso, sin
+   * AgentSpan): mismo detalle que un trace durable, sin poll. Los accs por
+   * nodo vienen YA calculados (replay determinista) — se sirven con task_ids
+   * sintéticos `local:<label>` que fetchNodeState responde desde memoria, así
+   * el Inspector reusa TODO el flujo entró/salió sin un camino aparte. */
+  static showLocalRun(ctx: vscode.ExtensionContext, bridges: BridgeHub, result: LocalRunResult): void {
+    GraphPanel.show(ctx, bridges, workflowOf("graphagents", `agent:${result.agent}`));
+    void Promise.resolve().then(() => GraphPanel.current?.presentLocalRun(result));
+  }
+
+  presentLocalRun(result: LocalRunResult): void {
+    this.stopTrace(); // un trace durable en curso se corta — una vista a la vez
+    const executionId = `local:${result.case}:${++GraphPanel.localSeq}`;
+    this.lastTraceId = executionId;
+    const accs = new Map<string, unknown>();
+    for (const [label, acc] of Object.entries(result.nodeAccs)) {
+      accs.set(`local:${label}`, acc);
+    }
+    const steps: TraceStep[] = result.steps.map((s) => ({
+      ...s,
+      runtime: s.agent
+        ? {
+            status: "done" as const,
+            retries: 0,
+            ms: undefined,
+            // el acc local del nodo — el panel Ejecución lo resuelve en memoria
+            task_id: result.nodeAccs[s.agent] !== undefined ? `local:${s.agent}` : undefined,
+          }
+        : undefined,
+    }));
+    const info: TraceInfo = {
+      executionId,
+      workflowStatus: "COMPLETED",
+      agent: result.agent,
+      strategy: `${result.strategy ?? "pod"} · local`,
+      seed: result.seed,
+      steps,
+    };
+    this.post({ type: "trace", info });
+    this.post({ type: "flowTrace", executionId, nodeTraces: result.nodeTraces, reconstructed: true });
+    GraphPanel.executionSink?.updateLocal(info, result.nodeTraces, accs);
+  }
+
   private traceTimer?: NodeJS.Timeout;
   private traceExecutionId?: string;
-  private readonly traceDiagnostics = vscode.languages.createDiagnosticCollection("hubaraStudioTrace");
+  /** última ejecución mostrada (queda seteada tras un stop terminal — el
+   * flow-trace de un run COMPLETED sigue siendo relevante). */
+  private lastTraceId?: string;
+  private flowTraceFetched?: string;
+  private static localSeq = 0;
+  private readonly traceDiagnostics = vscode.languages.createDiagnosticCollection("acktosStudioTrace");
   /** clave del último set de steps failed anotado — si no cambió entre ticks
    * del poll, no se re-consulta /api/inspect ni se reescribe la colección. */
   private lastFailedKey = "";
@@ -107,8 +183,9 @@ export class GraphPanel {
       case "persistState":
         this.schedulePersist(msg.state);
         return;
-      case "inspectNode":
-        await this.inspectNode(msg.system, msg.nodeId);
+      case "nodeSelected":
+        // el detalle del nodo vive en el panel nativo "Ejecución" (F10)
+        GraphPanel.executionSink?.selectNode(msg.system, msg.node);
         return;
       case "stopTrace":
         this.stopTrace();
@@ -119,6 +196,115 @@ export class GraphPanel {
       case "disconnectRequest":
         await this.handleDisconnect(msg.source, msg.target, msg.kind);
         return;
+      case "certifyRequest":
+        await this.handleCertify();
+        return;
+      case "deleteNodeRequest":
+        await this.handleDeleteNode(msg.nodeId, msg.label);
+        return;
+    }
+  }
+
+  /** Dispara "Guardar & certificar" sobre el panel abierto (comando homónimo). */
+  static certifyActive(): void {
+    if (GraphPanel.current) {
+      void GraphPanel.current.handleCertify();
+    } else {
+      void vscode.window.showInformationMessage("Acktos Studio: abrí el canvas primero (Acktos: Abrir Studio).");
+    }
+  }
+
+  /** una sola certificación viva a la vez — dos corridas concurrentes interleavearían
+   * la consola (mismos suite ids) y RACEARÍAN el publish sobre el mismo working tree. */
+  private static certifyRunning = false;
+
+  /** El botón "⤴ Guardar & certificar": corre la suite COMPLETA en vivo (streameada
+   * al panel Ejecución) y, si todo pasa, bendice + publica (rama + commit + push + PR).
+   * Confirmación up-front por los efectos reales fuera del editor (push/PR). */
+  private async handleCertify(): Promise<void> {
+    const sink = GraphPanel.executionSink;
+    if (!sink) {
+      void vscode.window.showErrorMessage("Acktos Studio: el panel Ejecución no está disponible.");
+      return;
+    }
+    if (GraphPanel.certifyRunning) {
+      void vscode.window.showInformationMessage("Acktos Studio: ya hay una certificación en curso — mirá el panel Ejecución.");
+      return;
+    }
+    const choice = await vscode.window.showWarningMessage(
+      "¿Guardar & certificar? Corre la suite completa de GraphAgents y, si TODO pasa, crea rama + commit + push + PR. Si algo falla, no se publica.",
+      { modal: true },
+      "Certificar y publicar",
+    );
+    if (choice !== "Certificar y publicar" || GraphPanel.certifyRunning) {
+      return; // re-chequeo post-modal: el diálogo pudo quedar abierto mientras otra corrida arrancaba
+    }
+    GraphPanel.certifyRunning = true;
+    const cts = new vscode.CancellationTokenSource();
+    try {
+      await runCertifyAndPublish(this.bridges, sink, cts.token);
+    } catch (e) {
+      sink.certDone(false, undefined, undefined, [`la certificación crasheó: ${e instanceof Error ? e.message : String(e)}`]);
+    } finally {
+      GraphPanel.certifyRunning = false;
+      cts.dispose();
+    }
+  }
+
+  /** Click derecho en un nodo agente/tool → borrarlo. La secuencia confirm→cascade→toast
+   * vive en `editOps.ts` (misma regla que connect/disconnect: idéntica sin importar quién
+   * la dispara). El grafo se refresca SIEMPRE tras el intento — incluso si falló, el
+   * backend pudo haber mutado parcialmente y el canvas no debe mentir. */
+  private async handleDeleteNode(nsId: string, label: string): Promise<void> {
+    const nodeId = stripNs("graphagents", nsId);
+    if (!nodeId) {
+      return; // edit mode es SOLO GraphAgents
+    }
+    const outcome = await deleteNodeWithConfirmation(this.bridges, nodeId, label);
+    if (outcome === "cancelled") {
+      return; // no se tocó nada
+    }
+    const fresh = await this.fetchProvider("graphagents");
+    this.post({ type: "providerUpdate", provider: "graphagents", state: fresh });
+  }
+
+  /** El I/O por-tool reconstruido (`/api/flow-trace`) — UNA vez por ejecución
+   * (replay determinista: costoso, y el resultado no cambia). */
+  private async fetchFlowTrace(executionId: string): Promise<void> {
+    if (this.flowTraceFetched === executionId) {
+      return;
+    }
+    this.flowTraceFetched = executionId;
+    try {
+      const res = await this.bridges
+        .get("graphagents")
+        .request({ method: "GET", path: "/api/flow-trace", params: { execution_id: executionId } });
+      const payload = res.payload as {
+        node_traces?: Record<string, Array<{ seq: number; tool: string; input: unknown; output: unknown }>>;
+        reconstructed?: boolean;
+        reason?: string;
+        error?: string;
+      };
+      if (this.traceExecutionId !== executionId && this.lastTraceId !== executionId) {
+        return; // llegó tarde — el usuario ya está mirando otra ejecución
+      }
+      this.post({
+        type: "flowTrace",
+        executionId,
+        nodeTraces: payload.node_traces ?? {},
+        reconstructed: payload.reconstructed === true,
+        reason: payload.reason ?? payload.error,
+      });
+      GraphPanel.executionSink?.updateNodeTraces(
+        executionId,
+        payload.node_traces ?? {},
+        payload.reconstructed === true,
+        payload.reason ?? payload.error,
+      );
+    } catch {
+      // sin flow-trace el Inspector degrada al listado declarado de tools —
+      // el resto del detalle (acc por nodo) sigue funcionando.
+      this.flowTraceFetched = undefined; // reintenta si el usuario re-abre el trace
     }
   }
 
@@ -159,6 +345,7 @@ export class GraphPanel {
   startTrace(executionId: string): void {
     this.stopTrace();
     this.traceExecutionId = executionId;
+    this.lastTraceId = executionId;
     this.lastFailedKey = "";
     this.inspectPathCache.clear();
     const poll = async () => {
@@ -176,13 +363,26 @@ export class GraphPanel {
           this.post({ type: "traceError", message: errorDetail(res) });
           return; // se sigue pollenado — puede ser un 502 transitorio (:6767 reiniciando)
         }
-        const payload = res.payload as { workflow_status?: string; steps?: TraceStep[] };
+        const payload = res.payload as {
+          workflow_status?: string;
+          agent?: string;
+          strategy?: string;
+          seed?: unknown;
+          steps?: TraceStep[];
+        };
         const info: TraceInfo = {
           executionId,
           workflowStatus: payload.workflow_status ?? "UNKNOWN",
+          agent: payload.agent,
+          strategy: payload.strategy,
+          seed: payload.seed,
           steps: payload.steps ?? [],
         };
         this.post({ type: "trace", info });
+        GraphPanel.executionSink?.updateTrace(info);
+        // El I/O por-tool reconstruido se pide UNA vez, en paralelo al poll —
+        // para un run ya COMPLETED llega junto con el primer trace.
+        void this.fetchFlowTrace(executionId);
         await this.annotateFailures(info.steps);
         if (TERMINAL_STATUSES.includes(info.workflowStatus)) {
           this.stopTrace(false);
@@ -208,6 +408,7 @@ export class GraphPanel {
     this.traceExecutionId = undefined;
     if (notifyWebview) {
       this.post({ type: "traceCleared" });
+      GraphPanel.executionSink?.clearTrace();
     }
   }
 
@@ -234,7 +435,7 @@ export class GraphPanel {
           `agent:${step.agent} falló en la ejecución en curso (task ${step.runtime?.task_id ?? "?"}, ${step.runtime?.retries ?? 0} retries)`,
           vscode.DiagnosticSeverity.Error,
         );
-        diag.source = "Hubara Studio (trace)";
+        diag.source = "Acktos Studio (trace)";
         this.traceDiagnostics.set(vscode.Uri.file(abspath), [diag]);
       } catch {
         // sin inspect no hay dónde anclar el diagnostic — el overlay del canvas
@@ -258,20 +459,6 @@ export class GraphPanel {
     const abspath = payload.files?.[0]?.abspath ?? null;
     this.inspectPathCache.set(agent, abspath);
     return abspath;
-  }
-
-  private async inspectNode(system: Provider, nodeId: string): Promise<void> {
-    try {
-      const res = await this.bridges.get(system).request({ method: "GET", path: "/api/inspect", params: { node: nodeId } });
-      if (res.status !== 200) {
-        this.post({ type: "inspectError", system, nodeId, message: errorDetail(res) });
-        return;
-      }
-      const payload = res.payload as { files?: Array<{ path: string; role: string; abspath: string }> };
-      this.post({ type: "inspectResult", system, nodeId, files: payload.files ?? [] });
-    } catch (e) {
-      this.post({ type: "inspectError", system, nodeId, message: e instanceof Error ? e.message : String(e) });
-    }
   }
 
   private async fetchProvider(provider: Provider): Promise<ProviderState> {
@@ -356,7 +543,7 @@ export class GraphPanel {
   <meta http-equiv="Content-Security-Policy" content="${csp}" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="stylesheet" href="${styleUri}" />
-  <title>Hubara Studio</title>
+  <title>Acktos Studio</title>
 </head>
 <body>
   <div id="root"></div>
@@ -373,14 +560,6 @@ export class GraphPanel {
       d.dispose();
     }
   }
-}
-
-/** Detalle legible del error de una respuesta del bridge (payload.error si
- * existe; si no, el status) — compartido por trace/inspect/fetchProvider. */
-function errorDetail(res: BridgeResponse): string {
-  return typeof res.payload === "object" && res.payload && "error" in res.payload
-    ? String((res.payload as { error: unknown }).error)
-    : `status ${res.status}`;
 }
 
 // Re-exportado para que otros módulos (TreeViews) no importen `Seam` desde

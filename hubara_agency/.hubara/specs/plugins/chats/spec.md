@@ -165,6 +165,45 @@ control al bot (`return-to-bot`).
 - THEN `active_route=auto` se restaura
 - AND el próximo inbound del cliente arranca/signala workflow normal
 
+### Requirement: Acciones de pedido desde el chat (cast a orders)
+
+El sistema SHALL exponer, bajo `/api/chats/order-actions/*` (cast al
+contrato `order@v1` de orders), las acciones de pedido del composer
+intervenido: agendar entrega (`PATCH {id}/schedule`), confirmar pago
+(`PATCH {id}/confirm-payment`) y leer el detalle (`GET {id}`).
+
+El operador SHALL poder asignar la fecha de entrega SIN confirmar el pago
+("Asignar fecha"), y confirmar el pago SHALL NOT modificar una fecha de
+entrega ya asignada (`summary.due_iso != null`).
+
+#### Scenario: Asignar fecha sin confirmar pago
+
+- GIVEN conversación intervenida con `pending_payment_order_id`
+- WHEN el operador agenda vía "Asignar fecha" (`PATCH /api/chats/order-actions/{id}/schedule`)
+- THEN el pedido queda agendado (draft→Order, `new→preparing`) y el cliente recibe la notificación ETA
+- AND el pago NO se confirma — `pending_payment_order_id` sigue expuesto y ambos botones siguen montados
+
+#### Scenario: Confirmar pago con fecha ya asignada no re-agenda
+
+- GIVEN un pedido con `summary.due_iso` asignado (por "Asignar fecha" o por el tablero de orders)
+- WHEN el operador confirma el pago desde el chat
+- THEN se invoca SOLO `confirm-payment` — ningún `schedule` que pise la fecha
+- AND el popover muestra la fecha agendada en lugar de pedir una nueva
+
+#### Scenario: Read-side no disponible degrada con aviso
+
+- GIVEN el detalle del pedido no se puede leer (Medusa caído / orden stub inexistente)
+- WHEN el operador abre el popover de confirmar pago
+- THEN el flujo de 2 pasos (agendar + confirmar) queda disponible como fallback
+- AND el popover avisa explícitamente que no se pudo verificar si ya hay fecha (la protección está apagada)
+
+#### Scenario: Agendar sobre stage avanzado se rechaza
+
+- GIVEN un pedido en stage `ready`/`shipping`/`delivered`/`cancelled`
+- WHEN llega un `schedule` (desde el chat o el tablero)
+- THEN el comando devuelve `success=false` con `error_detail` `invalid_state`
+- AND NO se modifica `hubara_scheduled_delivery_iso` ni se emite cascada ETA
+
 ### Requirement: Visibilidad de envíos no-textuales en el histórico
 
 Todo envío no-textual exitoso del bot (catálogo, foto de producto, galería,

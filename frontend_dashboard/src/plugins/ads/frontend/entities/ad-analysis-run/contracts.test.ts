@@ -8,11 +8,12 @@ import {
 } from "./contracts";
 
 describe("ad-analysis-run contracts", () => {
-  it("agentsListResponseSchema mapea example_input → exampleInput", () => {
+  it("agentsListResponseSchema mapea example_input → exampleInput y description", () => {
     const parsed = agentsListResponseSchema.parse([
       {
         id: "ads-analytics",
         label: "Análisis CTWA por campaña",
+        description: "Cruza gasto de Meta con ventas y arma el embudo.",
         example_input: { meta_insights: {} },
       },
       { id: "numbers-qa", label: "Numbers QA", example_input: {} },
@@ -21,10 +22,14 @@ describe("ad-analysis-run contracts", () => {
     expect(parsed[0]).toEqual({
       id: "ads-analytics",
       label: "Análisis CTWA por campaña",
+      // El selector la muestra bajo el combo: QUÉ análisis hace este agente.
+      description: "Cruza gasto de Meta con ventas y arma el embudo.",
       exampleInput: { meta_insights: {} },
     });
     // `example_input` puede ser cualquier JSON, incluido `{}` o arrays.
     expect(parsed[1].exampleInput).toEqual({});
+    // Catálogo legacy sin description → null (tolerante en rollout).
+    expect(parsed[1].description).toBeNull();
   });
 
   it("runRecordSchema mapea snake_case → camelCase y default events=[]", () => {
@@ -35,11 +40,24 @@ describe("ad-analysis-run contracts", () => {
       status: "running",
       // sin `events` — debe defaultear a []
       execution_id: "exec-1",
+      campaign_id: "AD_padre",
     });
     expect(parsed.runId).toBe("run-abc123");
     expect(parsed.executionId).toBe("exec-1");
     expect(parsed.events).toEqual([]);
     expect(parsed.status).toBe("running");
+    // El historial es POR CAMPAÑA: el record lleva la campaña activa al disparo.
+    expect(parsed.campaignId).toBe("AD_padre");
+  });
+
+  it("runRecordSchema tolera records legacy sin campaign_id (→ null)", () => {
+    const parsed = runRecordSchema.parse({
+      run_id: "run-legacy",
+      agent: "ads-analytics",
+      input: {},
+      status: "completed",
+    });
+    expect(parsed.campaignId).toBeNull();
   });
 
   it("runRecordSchema preserva result/awaiting/error opacos y mapea events", () => {
@@ -83,5 +101,30 @@ describe("ad-analysis-run contracts", () => {
     expect(approveResponseSchema.parse({ status: "resumed" })).toEqual({
       status: "resumed",
     });
+  });
+});
+
+describe("analysisReport — el reporte proyectado del pod", () => {
+  it("extrae markdown/verdict/qa_passed del result proyectado (_projected_from)", async () => {
+    const { analysisReport } = await import("./model");
+    const rep = analysisReport({
+      markdown: "## Hubara — Ads Analytics",
+      verdict: "ok",
+      qa_passed: true,
+      _projected_from: "ctwa-report",
+    });
+    expect(rep).toEqual({
+      markdown: "## Hubara — Ads Analytics",
+      verdict: "ok",
+      qaPassed: true,
+    });
+  });
+
+  it("result legacy sin markdown → null (la UI cae al JSON crudo)", async () => {
+    const { analysisReport } = await import("./model");
+    expect(analysisReport({ acc: { foo: 1 } })).toBeNull();
+    expect(analysisReport(null)).toBeNull();
+    expect(analysisReport("texto")).toBeNull();
+    expect(analysisReport({ markdown: "" })).toBeNull();
   });
 });

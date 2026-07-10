@@ -17,7 +17,7 @@ import json
 
 import pytest
 
-from src.plugins.ads.runs import boto3_launcher
+from src.platform.graphagents import boto3_launcher
 
 
 # ---------------------------------------------------------------- fakes de AWS
@@ -63,15 +63,41 @@ class _FakeEC2:
 
 class _FakeSSM:
     """ssm fake: send_command devuelve un command-id; get_command_invocation devuelve un
-    output configurable (status + stdout). Registra cada comando enviado."""
+    output configurable (status + stdout). Registra cada comando enviado.
+
+    `ping_sequence` simula el registro del agente SSM tras un arranque frío (la secuencia
+    de PingStatus que devuelve `describe_instance_information`; el último valor se repite).
+    `send_failures` simula el race real (run fe86d4e4 / reporte 2026-07-09): send_command
+    rechaza con InvalidInstanceId las primeras N veces aunque EC2 ya reporte `running`.
+    `self.calls` es el log ORDENADO de interacciones (para asertar ping-antes-de-send)."""
 
     def __init__(self, *, stdout: str = "execution exec-42: RUNNING",
-                 status: str = "Success") -> None:
+                 status: str = "Success", ping_sequence: list[str] | None = None,
+                 send_failures: int = 0) -> None:
         self._stdout = stdout
         self._status = status
+        self._pings = list(ping_sequence) if ping_sequence else ["Online"]
+        self._send_failures = send_failures
         self.sent: list = []
+        self.calls: list[str] = []
+
+    def describe_instance_information(self, *, Filters):  # noqa: N803
+        ping = self._pings.pop(0) if len(self._pings) > 1 else self._pings[0]
+        self.calls.append(f"ping:{ping}")
+        if ping == "Absent":  # el agente ni registrado aún → lista vacía
+            return {"InstanceInformationList": []}
+        iid = Filters[0]["Values"][0]
+        return {"InstanceInformationList": [{"InstanceId": iid, "PingStatus": ping}]}
 
     def send_command(self, *, InstanceIds, DocumentName, Parameters):  # noqa: N803
+        if self._send_failures > 0:
+            self._send_failures -= 1
+            self.calls.append("send:rejected")
+            raise Exception(  # noqa: TRY002 — mismo texto del ClientError real de botocore
+                "An error occurred (InvalidInstanceId) when calling the SendCommand "
+                "operation: Instances not in a valid state for account"
+            )
+        self.calls.append("send:ok")
         self.sent.append({
             "InstanceIds": InstanceIds,
             "DocumentName": DocumentName,
@@ -141,6 +167,52 @@ def test_start_box_arranca_y_espera_si_stopped(fake_clients) -> None:
     assert any(name == "instance_running" for (name, _) in ec2.waited)  # esperó running
 
 
+def test_start_box_espera_ssm_online_antes_de_mandar_comandos(fake_clients, monkeypatch) -> None:
+    """EC2 `running` ≠ agente SSM `Online`: tras un arranque frío (autostop) el agente tarda
+    en registrarse y `send_command` rechaza con InvalidInstanceId (caso real 2026-07-09, la
+    caja lanzó 22:05 UTC y el comando salió antes del registro). `start_box` debe POLLEAR
+    `describe_instance_information` hasta PingStatus=Online ANTES del primer send_command."""
+    monkeypatch.setattr("time.sleep", lambda _s: None)
+    ec2 = _FakeEC2(instance_id="i-xyz", state="stopped")
+    ssm = _FakeSSM(status="Success", stdout="READY",
+                   ping_sequence=["Absent", "ConnectionLost", "Online"])
+    lz = _make(fake_clients, ec2=ec2, ssm=ssm)
+
+    lz.start_box()
+
+    assert "ping:Online" in ssm.calls  # esperó el registro del agente SSM
+    first_send = ssm.calls.index("send:ok")
+    assert first_send > ssm.calls.index("ping:Online")  # ningún comando antes de Online
+
+
+def test_send_command_reintenta_invalid_instance_id_transitorio(fake_clients, monkeypatch) -> None:
+    """Cinturón y tiradores: si aún así send_command rechaza con InvalidInstanceId (el agente
+    se registró y el API de SSM todavía propaga), se REINTENTA en vez de tumbar el run."""
+    monkeypatch.setattr("time.sleep", lambda _s: None)
+    ec2 = _FakeEC2(state="running")
+    ssm = _FakeSSM(status="Success", stdout="READY", send_failures=2)
+    lz = _make(fake_clients, ec2=ec2, ssm=ssm)
+
+    lz.start_box()  # no revienta: reintenta hasta que SSM acepta
+
+    assert ssm.calls.count("send:rejected") == 2
+    assert "send:ok" in ssm.calls
+
+
+def test_start_box_espera_stopped_antes_de_arrancar_si_stopping(fake_clients) -> None:
+    """`start_instances` sobre una caja `stopping` (autostop a mitad de camino) es
+    IncorrectInstanceState: hay que esperar `instance_stopped` ANTES de arrancarla."""
+    ec2 = _FakeEC2(instance_id="i-xyz", state="stopping")
+    lz = _make(fake_clients, ec2=ec2)
+
+    lz.start_box()
+
+    names = [name for (name, _) in ec2.waited]
+    assert "instance_stopped" in names  # esperó el fin del stop
+    assert names.index("instance_stopped") < names.index("instance_running")
+    assert ec2.started == [["i-xyz"]]
+
+
 # ------------------------------------------------------------------ dispatch
 
 def test_dispatch_manda_el_comando_correcto_y_parsea_el_eid(fake_clients) -> None:
@@ -158,6 +230,11 @@ def test_dispatch_manda_el_comando_correcto_y_parsea_el_eid(fake_clients) -> Non
     script = " ".join(cmd["Parameters"]["commands"])
     assert "sdk.cli start 'ads-analytics'" in script
     assert "--runtime agentspan" in script
+    # Incidente rollout Window Strategist (2026-07-09): dentro del container
+    # `python3` es el del SISTEMA (la imagen no exporta /opt/venv en PATH) →
+    # `python3 -m sdk.cli` muere con ModuleNotFoundError: yaml. El exec DEBE
+    # usar el python del venv, explícito.
+    assert "/opt/venv/bin/python -m sdk.cli" in script, script
     # El input viaja como JSON.
     assert json.dumps({"name": "ada"}) in script
 
@@ -223,6 +300,9 @@ def test_fetch_status_lee_el_workflow_por_ssm(fake_clients) -> None:
     assert got == wf  # parseó el JSON del stdout de `sdk.cli status`
     script = " ".join(ssm.sent[0]["Parameters"]["commands"])
     assert "sdk.cli status 'exec-42'" in script  # por SSM, quoteado
+    # SSM trunca stdout a ~24KB (caso 7efb9fc6): el JSON crudo con el snapshot
+    # echoeado en tasks[] no cabe → el poll DEBE pedir el modo compact.
+    assert "--compact" in script, script
     assert ssm.sent[0]["InstanceIds"] == ["i-abc"]  # por instance-id (no IP)
 
 
@@ -250,3 +330,49 @@ def test_dispatch_quotea_el_agente_contra_inyeccion(fake_clients) -> None:
     script = " ".join(ssm.sent[0]["Parameters"]["commands"])
     assert "'ads-analytics; rm -rf /'" in script  # quoteado entero
     assert "start ads-analytics; rm -rf /" not in script  # NO inyectado crudo
+
+
+def test_dispatch_usa_el_python_del_venv_del_container(fake_clients) -> None:
+    """La imagen GraphAgents instala las deps en /opt/venv (UV_PROJECT_ENVIRONMENT,
+    fuera de /app para que el bind-mount de dev no lo tape) — el `python3` del
+    sistema NO tiene yaml y `sdk.cli` muere con ModuleNotFoundError (caso real
+    2026-07-09, primer dispatch e2e en prod). El exec debe usar el venv."""
+    ec2 = _FakeEC2(state="running")
+    ssm = _FakeSSM(stdout="execution exec-9: RUNNING")
+    lz = _make(fake_clients, ec2=ec2, ssm=ssm)
+
+    lz.dispatch("ads-analytics", {}, run_id="run-venv")
+
+    script = " ".join(ssm.sent[0]["Parameters"]["commands"])
+    assert "/opt/venv/bin/python -m sdk.cli" in script
+    assert " python3 -m sdk.cli" not in script  # el del sistema no tiene las deps
+
+
+def test_dispatch_fuerza_fork_para_los_workers_de_conductor(fake_clients) -> None:
+    """conductor-python >= al del deploy 2026-07-09 defaultea a multiprocessing
+    'spawn' en TODAS las plataformas, pero agentspan registra los workers del
+    grafo como CLOSURES locales (make_node_worker.<locals>.worker) → spawn no
+    puede picklearlos y el start muere. El escape hatch documentado de la lib
+    es CONDUCTOR_MP_START_METHOD=fork — el exec lo pasa siempre."""
+    ec2 = _FakeEC2(state="running")
+    ssm = _FakeSSM(stdout="execution exec-8: RUNNING")
+    lz = _make(fake_clients, ec2=ec2, ssm=ssm)
+
+    lz.dispatch("ads-analytics", {}, run_id="run-fork")
+
+    script = " ".join(ssm.sent[0]["Parameters"]["commands"])
+    assert "-e CONDUCTOR_MP_START_METHOD=fork" in script
+
+
+def test_fetch_status_trunca_el_stdout_en_el_mensaje_de_error(fake_clients) -> None:
+    """El stdout truncado por SSM (~24-30KB) explotaba ENTERO dentro de la
+    excepción → records/logs con 30KB de ruido. El mensaje lleva solo el inicio."""
+    ec2 = _FakeEC2(state="running")
+    ssm = _FakeSSM(status="Success", stdout="{" + "x" * 30000)
+    lz = _make(fake_clients, ec2=ec2, ssm=ssm)
+
+    with pytest.raises(RuntimeError) as ei:
+        lz.fetch_status("exec-42")
+
+    assert "no es JSON parseable" in str(ei.value)
+    assert len(str(ei.value)) < 1500  # el stdout va RECORTADO, no los 30KB

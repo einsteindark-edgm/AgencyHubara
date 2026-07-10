@@ -1,0 +1,32 @@
+# CASO order-sentinel: el CLIENTE confirma la recepción ("ya me llegó") — confirmación
+# clara del cliente = señal válida → shipping→delivered.
+id: order-sentinel-entregado
+title: order-sentinel · entregado (shipping→delivered)
+target: agent:order-sentinel
+seed:
+  payload:
+    schema_version: 1
+    now_ms: 1720500000000
+    conversations:
+      - session_id: wa_573004445566
+        order_id: order_01ENTREGA
+        current_stage: shipping
+        payment_confirmed: true
+        messages:
+          - { who: customer, text: "ya me llegó, todo perfecto, gracias", at_ms: 1720495000000, has_media: false }
+          - { who: human_operator, text: "qué alegría, gracias por tu compra", at_ms: 1720496000000, has_media: false }
+ports:
+  llm: '{"action": "transition", "to_stage": "delivered", "evidence": ["ya me llegó, todo perfecto, gracias"], "confidence": "high"}'
+golden:
+  schema_version: 1
+  snapshot_now_ms: 1720500000000
+  dispatch:
+    - kind: order_stage_intent
+      session_id: wa_573004445566
+      order_id: order_01ENTREGA
+      action: transition
+      to_stage: delivered
+      evidence: ["ya me llegó, todo perfecto, gracias"]
+      confidence: high
+  suppressed: []
+  llm_errors: []

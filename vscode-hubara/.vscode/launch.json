@@ -2,7 +2,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Run Hubara Studio (Extension)",
+      "name": "Run Acktos Studio (Extension)",
       "type": "extensionHost",
       "request": "launch",
       "args": [

@@ -25,6 +25,7 @@ import {
 } from "@plugins/chats/frontend/entities/handoff";
 import { useOutbox } from "../model/useOutbox";
 import { ConfirmPaymentAction } from "./ConfirmPaymentAction";
+import { ScheduleDeliveryAction } from "./ScheduleDeliveryAction";
 
 /** Solo JPEG/PNG (lo que WhatsApp renderiza como `type=image`). */
 const ACCEPTED_IMAGE_TYPES = "image/jpeg,image/png";
@@ -110,6 +111,12 @@ function InterveneActiveComposer({
   const [showReturnPicker, setShowReturnPicker] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  // PM-007: un solo popover de acción de pedido abierto a la vez — con los
+  // dos abiertos se superponían (mismo anclaje right:0) y el operador podía
+  // disparar schedule desde ambos en paralelo.
+  const [openAction, setOpenAction] = useState<"schedule" | "confirm" | null>(
+    null,
+  );
 
   const sendMessage = useSendHumanMessageMutation(chatId);
   const outbox = useOutbox(chatId);
@@ -142,7 +149,18 @@ function InterveneActiveComposer({
         </span>
         <span className="right">
           {pendingPaymentOrderId && (
-            <ConfirmPaymentAction orderId={pendingPaymentOrderId} />
+            <>
+              <ScheduleDeliveryAction
+                orderId={pendingPaymentOrderId}
+                open={openAction === "schedule"}
+                onOpenChange={(v) => setOpenAction(v ? "schedule" : null)}
+              />
+              <ConfirmPaymentAction
+                orderId={pendingPaymentOrderId}
+                open={openAction === "confirm"}
+                onOpenChange={(v) => setOpenAction(v ? "confirm" : null)}
+              />
+            </>
           )}
           <button
             className="interv-off"

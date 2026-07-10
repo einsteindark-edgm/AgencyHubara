@@ -3,7 +3,7 @@ import { ResolvedCommand } from "./runner";
 import { SuiteDef } from "./suites";
 
 /**
- * Resuelve el comando concreto de una suite a partir de la config `hubara.*`
+ * Resuelve el comando concreto de una suite a partir de la config `acktos.*`
  * — las MISMAS settings (misma lectura: src/config.ts) que usan los puentes.
  * `${py}`/`${pyRun}`/`${npm}`/`${npx}` se expanden acá; `${junit}` lo
  * resuelve el runner (necesita el tmp path en tiempo de ejecución).

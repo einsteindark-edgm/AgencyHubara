@@ -15,6 +15,7 @@ varios frontends; este es el CLI. No implementa reglas: delega en
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 from sdk.manifest_model import load_manifest
@@ -182,8 +183,11 @@ def cmd_resume(args: argparse.Namespace) -> int:
 
     decision = json.loads(args.decision) if args.decision else None
     ex = AgentSpanRuntime().resume(args.execution_id, decision=decision)
-    print(f"execution {ex.id}: {ex.status}")
-    print(json.dumps(ex.output, ensure_ascii=False, indent=2))
+    print(f"execution {ex.id}: {ex.status}", flush=True)
+    print(json.dumps(ex.output, ensure_ascii=False, indent=2), flush=True)
+    # Mismo eslabón 5 que cmd_start: los workers post-approval viven en ESTE
+    # proceso — sin el wait, las tasks después de la HUMAN task quedan huérfanas.
+    _wait_terminal(ex.id)
     return 0 if ex.status != "failed" else 1
 
 
@@ -197,7 +201,9 @@ def cmd_start(args: argparse.Namespace) -> int:
         print("start es SOLO para el dispatch durable: usá --runtime agentspan")
         return 1
 
+    from sdk.connectorkit.ports import durable_vendors
     from sdk.loader import build_agent
+    from sdk.manifest_model import iter_nodes
     from sdk.runtime import AgentSpanRuntime
 
     cand = sorted(MANIFESTS.glob(f"{args.id}.agent.yaml")) + sorted(MANIFESTS.glob(f"{args.id}.taskgraph.yaml"))
@@ -205,6 +211,22 @@ def cmd_start(args: argparse.Namespace) -> int:
         print(f"no encontré el agente '{args.id}' en manifests/")
         return 1
     m = load_manifest(cand[0])
+    # Los ports que el agente `consumes:` reciben su VENDOR REAL (durable_vendors —
+    # llm → LiteLLMProxy). Un port consumido SIN vendor real (ej. Meta, G2) se
+    # rechaza LOUD acá, no críptico adentro de Conductor (paridad con el viewer).
+    ports = durable_vendors()
+    unprovidable = sorted(
+        {p for n in iter_nodes(m) for p in n.consumes if p not in ports}
+    )
+    if unprovidable:
+        # A STDERR (gotcha #8): el buzón SSM parsea stdout esperando
+        # `execution <eid>:` — un diagnóstico en stdout se entierra.
+        print(
+            f"'{args.id}' consume ports {unprovidable} sin vendor real en el durable "
+            "(G2): corré por tests/integration con un Fixture.",
+            file=sys.stderr,
+        )
+        return 1
     seed = json.loads(args.input) if args.input else {}
     # input wrapping (paridad con el viewer `_durable_input`): un SUPERVISOR espera {acc: seed}
     # (sino el 1er nodo recibe `acc` como string y revienta); +patches si es parallel. Una
@@ -213,9 +235,48 @@ def cmd_start(args: argparse.Namespace) -> int:
         inp = {"acc": seed, "patches": []} if getattr(m, "strategy", None) == "parallel" else {"acc": seed}
     else:
         inp = seed
-    eid = AgentSpanRuntime().start(build_agent(m, ROOT), inp)
-    print(f"execution {eid}: started")
+    eid = AgentSpanRuntime().start(build_agent(m, ROOT, ports=ports), inp)
+    # El eid va PRIMERO y flusheado: el buzón lo parsea aunque el wait toque techo.
+    print(f"execution {eid}: started", flush=True)
+    # Eslabón 5 (runs 5053a533/13622474 RUNNING eternos, 2026-07-10): los task
+    # workers de AgentSpan viven DENTRO de este proceso (thread daemon del
+    # runtime.start). Si el CLI sale ya, los workers mueren y las tasks quedan
+    # huérfanas en Conductor. Esperamos el terminal (o techo < timeout SSM).
+    _wait_terminal(eid)
     return 0
+
+
+#: intervalo del poll del wait (0 en tests). Techo: _WAIT_MAX_POLLS × esto.
+_WAIT_POLL_SECONDS = 1.0
+
+#: ~240s de techo — por DEBAJO del timeout SSM del buzón (300s): si el run
+#: cuelga server-side, el CLI sale limpio y el buzón sigue polleando por status.
+_WAIT_MAX_POLLS = 240
+
+#: estados que liberan al CLI: completed/failed (terminal) y paused (HITL —
+#: nada más que ejecutar localmente hasta el `resume`, que re-hostea workers).
+_WAIT_DONE = {"completed", "failed", "paused"}
+
+
+def _wait_terminal(execution_id: str) -> None:
+    """Mantiene el proceso vivo (⇒ los task workers daemon siguen polleando
+    Conductor) hasta que la ejecución llegue a un estado en `_WAIT_DONE`."""
+    import time
+
+    from sdk.runtime import AgentSpanRuntime
+
+    rt = AgentSpanRuntime()
+    consecutive_errors = 0
+    for _ in range(_WAIT_MAX_POLLS):
+        try:
+            if rt.get(execution_id).status in _WAIT_DONE:
+                return
+            consecutive_errors = 0
+        except Exception:  # noqa: BLE001 — un poll roto no debe matar el wait
+            consecutive_errors += 1
+            if consecutive_errors >= 5:
+                return  # sin status observable no hay wait útil — salir limpio
+        time.sleep(_WAIT_POLL_SECONDS)
 
 
 def cmd_status(args: argparse.Namespace) -> int:
@@ -230,10 +291,192 @@ def cmd_status(args: argparse.Namespace) -> int:
         print("status es SOLO para el poll durable: usá --runtime agentspan")
         return 1
 
-    from sdk.trace import fetch_workflow
+    import sdk.trace as trace
 
-    print(json.dumps(fetch_workflow(args.execution_id), ensure_ascii=False))
+    wf = trace.fetch_workflow(args.execution_id)
+    if getattr(args, "compact", False):
+        # SSM trunca stdout a ~24KB (caso 7efb9fc6, 2026-07-10): el JSON crudo
+        # echoea el input ENTERO dentro de tasks[] y no cabe. Compact = SOLO lo
+        # que interpret() consume del lado hubara (status/reason/output + el
+        # tipo+status de cada task, y el context de la HUMAN para el HITL).
+        wf = _compact_workflow(wf)
+    print(json.dumps(wf, ensure_ascii=False))
     return 0
+
+
+#: presupuesto del stdout compact — margen holgado bajo el techo ~24.000 chars de SSM.
+_COMPACT_BUDGET = 18_000
+
+
+def _compact_workflow(wf: dict) -> dict:
+    import json
+
+    def slim(t: dict) -> dict:
+        out = {"taskType": t.get("taskType"), "status": t.get("status")}
+        if t.get("taskType") == "HUMAN":
+            out["inputData"] = {"context": (t.get("inputData") or {}).get("context")}
+        if t.get("reasonForIncompletion") is not None:
+            out["reasonForIncompletion"] = t.get("reasonForIncompletion")
+        return out
+
+    compact = {
+        "workflowId": wf.get("workflowId"),
+        "status": wf.get("status"),
+        "reasonForIncompletion": wf.get("reasonForIncompletion"),
+        "output": wf.get("output"),
+        "tasks": [slim(t) for t in wf.get("tasks") or []],
+    }
+    # PROYECCIÓN por contrato (feedback operador 2026-07-10): para un supervisor
+    # secuencial el resultado ES lo que declara el contrato del ÚLTIMO nodo
+    # (G-CONTRACT — p.ej. ctwa-report.outputs = markdown/verdict/qa_passed).
+    # Determinista y garantizado: el operador recibe el reporte, no "lo que
+    # sobrevivió a la poda". Solo si el manifest no es resoluble se cae al
+    # fallback de poda por tamaño.
+    projection = _output_projection(wf)
+    if projection is not None and wf.get("status") == "COMPLETED":
+        compact["output"] = _project_output(compact.get("output"), projection)
+    # 2º techo (run real bd3c2d4e, 2026-07-10): el output.result de un COMPLETED
+    # echoea el ESTADO ENTERO del grafo (input de Meta incluido) y por sí solo
+    # rompe los 24KB → SSM trunca → el buzón no parsea y el poller queda ciego.
+    # Se podan las keys más pesadas del state hasta caber (lo liviano — el
+    # reporte/verdict — sobrevive) y lo podado queda declarado en _pruned_keys.
+    if len(json.dumps(compact, ensure_ascii=False)) > _COMPACT_BUDGET:
+        overhead = len(json.dumps({**compact, "output": None}, ensure_ascii=False))
+        compact["output"] = _prune_output(compact.get("output"), budget=_COMPACT_BUDGET - overhead)
+    return compact
+
+
+def _output_projection(wf: dict) -> tuple[str, list[str]] | None:
+    """`(agent_id, keys)` del contrato del ÚLTIMO nodo del supervisor, o None.
+
+    Resuelve el taskgraph por `workflowName` (o el prefijo de los taskTypes —
+    `ads-analytics_ctwa_insights_0` → `ads-analytics`) contra `manifests/`.
+    SOLO supervisores con nodos referenciados: un agente suelto (p.ej. el
+    window-strategist, cuyo consumer lee el state entero) NO se proyecta."""
+    from sdk.manifest_model import load_manifest
+
+    name = wf.get("workflowName") or (wf.get("workflowDefinition") or {}).get("name")
+    if not name:
+        ttypes = [t.get("taskType") or "" for t in wf.get("tasks") or []]
+        for p in sorted(MANIFESTS.glob("*.taskgraph.yaml")):
+            cand = p.name.removesuffix(".taskgraph.yaml")
+            if any(tt.startswith(cand + "_") for tt in ttypes):
+                name = cand
+                break
+    if not name:
+        return None
+    graph_paths = sorted(MANIFESTS.glob(f"{name}.taskgraph.yaml"))
+    if not graph_paths:
+        return None
+    try:
+        graph = load_manifest(graph_paths[0])
+    except Exception:  # noqa: BLE001 — manifest roto: mejor la poda que reventar el poll
+        return None
+    if not (graph.is_supervisor and graph.agents):
+        return None
+    last = graph.agents[-1]
+    agent_id = last.ref_agent_id or last.name
+    contract = last.contract
+    if contract is None and agent_id:
+        agent_paths = sorted(MANIFESTS.glob(f"{agent_id}.agent.yaml"))
+        if agent_paths:
+            try:
+                contract = load_manifest(agent_paths[0]).contract
+            except Exception:  # noqa: BLE001
+                return None
+    if not (agent_id and contract and contract.outputs):
+        return None
+    return agent_id, list(contract.outputs.keys())
+
+
+def _project_output(output, projection: tuple[str, list[str]]):
+    """Proyecta el state final al contrato del reporter: `{k: state[k]}` PLANO
+    (desciende el wrapper `acc` del supervisor), con `_projected_from` para
+    trazabilidad. Forma no parseable → se devuelve intacto (la poda decide)."""
+    import json
+
+    agent_id, keys = projection
+    state = _parse_result_state(output)
+    if state is None:
+        return output
+    # descender el/los contenedores únicos ({"acc": {...}}) hasta el state real
+    target = state
+    while True:
+        inner_keys = list(target)
+        if len(inner_keys) == 1 and isinstance(target[inner_keys[0]], dict) and target[inner_keys[0]]:
+            target = target[inner_keys[0]]
+        else:
+            break
+    projected = {k: target[k] for k in keys if k in target}
+    projected["_projected_from"] = agent_id
+    return {"result": json.dumps(projected, ensure_ascii=False, default=str)}
+
+
+def _parse_result_state(output) -> dict | None:
+    """`{'result': '<json/repr del state>'}` → el state dict, o None si la forma
+    no es la esperada (el caller decide el fallback)."""
+    import ast
+    import json
+
+    if not (isinstance(output, dict) and isinstance(output.get("result"), str)):
+        return None
+    raw = output["result"]
+    try:
+        state = json.loads(raw)
+    except ValueError:
+        try:
+            state = ast.literal_eval(raw)
+        except (ValueError, SyntaxError):
+            return None
+    return state if isinstance(state, dict) else None
+
+
+def _prune_output(output, *, budget: int):
+    """`{'result': '<json/repr del state>'}` → mismo shape con las keys más pesadas
+    del state podadas hasta que la serialización quepa en `budget`. Forma
+    desconocida o no parseable → `{'result': None, '_truncated': True}` (el buzón
+    parsea SIEMPRE; perder el detalle es mejor que un JSON cortado a la mitad)."""
+    import json
+
+    def _fits(state: dict) -> bool:
+        wrapped = {"result": json.dumps(state, ensure_ascii=False, default=str)}
+        return len(json.dumps(wrapped, ensure_ascii=False)) <= budget
+
+    state = _parse_result_state(output)
+    if state is None:
+        return {"result": None, "_truncated": True}
+
+    pruned: list[str] = []
+    state = dict(state)
+    state["_pruned_keys"] = pruned
+
+    # El state de un SUPERVISOR es {"acc": {...todo...}} — una sola key
+    # contenedora. Podar a primer nivel dropearía `acc` ENTERO (feedback
+    # 2026-07-10: el operador recibía {"_pruned_keys": ["acc"]} sin reporte).
+    # Se DESCIENDE mientras haya un único dict contenedor y se poda ADENTRO:
+    # los ecos gigantes se caen, el reporte/verdict sobreviven.
+    target = state
+    prefix = ""
+    while True:
+        keys = [k for k in target if k != "_pruned_keys"]
+        if len(keys) == 1 and isinstance(target[keys[0]], dict) and target[keys[0]]:
+            target[keys[0]] = dict(target[keys[0]])  # copia: no mutar el original
+            prefix += keys[0] + "."
+            target = target[keys[0]]
+        else:
+            break
+
+    by_size = sorted(
+        (k for k in target if k != "_pruned_keys"),
+        key=lambda k: len(json.dumps(target[k], ensure_ascii=False, default=str)),
+        reverse=True,
+    )
+    for key in by_size:
+        if _fits(state):
+            break
+        pruned.append(prefix + key)
+        target.pop(key)
+    return {"result": json.dumps(state, ensure_ascii=False, default=str)}
 
 
 def cmd_cases(args: argparse.Namespace) -> int:
@@ -352,6 +595,7 @@ def main() -> int:
     st.set_defaults(fn=cmd_start)
 
     sg = sub.add_parser("status", help="POLL durable: imprime el workflow JSON de un execution-id (lo pollea el buzón)")
+    sg.add_argument("--compact", action="store_true", help="JSON reducido (cabe en el límite de 24KB de SSM): status/reason/output + tasks slim")
     sg.add_argument("execution_id")
     sg.add_argument("--runtime", default="agentspan", choices=["agentspan"], help="solo agentspan (el poll durable)")
     sg.set_defaults(fn=cmd_status)

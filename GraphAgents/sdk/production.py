@@ -83,6 +83,76 @@ def _run(cmd: list[str], cwd: Path | None = None) -> tuple[int, str]:
     return p.returncode, (p.stdout + p.stderr).strip()
 
 
+def plan_publication(ga_root: Path) -> dict:
+    """El PLAN de publicación SIN efectos: qué rama, qué paths, qué mensaje/PR — para que un
+    frontend (Acktos Studio) lo EJECUTE con las APIs nativas de VS Code (git + GitHub) en vez
+    de shellear `gh`. No muta: NO crea rama ni commitea (eso lo hace quien ejecuta el plan).
+
+    `publish_production` sigue siendo el camino headless (git/gh por subprocess) — la verdad
+    de QUÉ se publica (guard del snapshot, paths quirúrgicos, mensaje) vive una sola vez acá.
+    """
+    ga_root = Path(ga_root)
+    out: dict = {"ok": False, "errors": [], "repo_root": None, "on_default": False,
+                 "branch": None, "base": "main", "paths": [], "title": None, "body": None,
+                 "fingerprint": None, "has_changes": False}
+
+    st = production_status(ga_root)
+    if not st["saved"] or st["dirty"]:
+        out["errors"].append("guardá producción primero (el snapshot no está al día) — "
+                             "publicar despliega SOLO lo bendecido")
+        return out
+    snap = st["snapshot"]
+    fp = str(snap.get("fingerprint", ""))
+    fp8 = fp[:8]
+    out["fingerprint"] = fp
+
+    code, top = _run(["git", "-C", str(ga_root), "rev-parse", "--show-toplevel"])
+    if code != 0:
+        out["errors"].append(f"no estoy dentro de un repo git — publicá desde el checkout local ({top})")
+        return out
+    repo = Path(top)
+    out["repo_root"] = str(repo)
+    git = lambda *a: _run(["git", "-C", str(repo), *a])  # noqa: E731
+
+    code, branch = git("rev-parse", "--abbrev-ref", "HEAD")
+    if code != 0:
+        out["errors"].append(f"no pude leer la rama actual: {branch}")
+        return out
+    if branch == "HEAD":
+        # detached HEAD (patrón estándar de los worktrees del pipeline): `--abbrev-ref`
+        # devuelve el literal 'HEAD' con exit 0 — publicar acá commitearía a un HEAD
+        # inalcanzable o pushearía una rama llamada 'HEAD'. Se corta con error claro.
+        out["errors"].append("estás en detached HEAD — checkout una rama antes de publicar "
+                             "(el commit quedaría inalcanzable)")
+        return out
+
+    # la rama DEFAULT real = origin/HEAD si hay remoto; sin remoto, main/master por convención.
+    code, origin_head = git("rev-parse", "--abbrev-ref", "origin/HEAD")
+    default_branch = origin_head.split("/", 1)[1] if (code == 0 and origin_head.startswith("origin/")) else None
+    on_default = branch == default_branch if default_branch else branch in ("main", "master")
+    out["on_default"] = on_default
+    out["branch"] = f"graphagents/production-{fp8}" if on_default else branch
+    # base del PR: la default del remoto; sin remoto, la actual (si es default) o main.
+    out["base"] = default_branch if default_branch else (branch if on_default else "main")
+
+    ga_rel = ga_root.resolve().relative_to(repo.resolve())
+    manifests_rel = str(ga_rel / "manifests")
+    snap_rel = str(ga_rel / SNAPSHOT_NAME)
+    out["paths"] = [manifests_rel, snap_rel]
+    _, porcelain = git("status", "--porcelain", "--", manifests_rel, snap_rel)
+    out["has_changes"] = bool(porcelain.strip())
+
+    out["title"] = (f"feat(graphagents): producción {fp8} — {len(snap.get('pods', []))} pod(s), "
+                    f"{snap.get('edges', 0)} relaciones")
+    out["body"] = (f"Despliegue del wiring bendecido desde Acktos Studio (GraphAgents).\n\n"
+                   f"- pods: {', '.join(snap.get('pods', []))}\n"
+                   f"- nodos: {snap.get('nodes')} · relaciones: {snap.get('edges')}\n"
+                   f"- fingerprint: `{fp}`\n"
+                   f"- bendecido: {snap.get('saved_at')} (checks del sistema en verde)\n")
+    out["ok"] = True
+    return out
+
+
 def publish_production(ga_root: Path, *, push: bool = True, pr: bool = True) -> dict:
     """El DESPLIEGUE del wiring bendecido: commit quirúrgico (+push +PR con `gh`).
 
@@ -94,34 +164,26 @@ def publish_production(ga_root: Path, *, push: bool = True, pr: bool = True) -> 
       rama de trabajo commitea ahí mismo.
     - Cada capa (commit / push / pr) reporta su paso; una falla posterior no oculta
       lo ya hecho (steps honestos + ok global solo si no hubo errores).
+    - La DECISIÓN (guard, rama, base, paths, título, body) viene de `plan_publication` —
+      una sola fuente para este camino headless y el nativo de Acktos Studio; acá solo
+      viven los side effects (checkout -B, add, commit, push, gh pr).
     """
     ga_root = Path(ga_root)
     out: dict = {"ok": False, "steps": [], "branch": None, "commit": None, "pr_url": None, "errors": []}
 
-    st = production_status(ga_root)
-    if not st["saved"] or st["dirty"]:
-        out["errors"].append("guardá producción primero (el snapshot no está al día) — "
-                             "publicar despliega SOLO lo bendecido")
+    plan = plan_publication(ga_root)
+    if not plan["ok"]:
+        out["errors"].extend(plan["errors"])
         return out
-    snap = st["snapshot"]
-    fp8 = str(snap.get("fingerprint", ""))[:8]
-
-    code, top = _run(["git", "-C", str(ga_root), "rev-parse", "--show-toplevel"])
-    if code != 0:
-        out["errors"].append(f"no estoy dentro de un repo git — publicá desde el checkout local ({top})")
-        return out
-    repo = Path(top)
+    # el plan YA validó saved+no-dirty (build_graph incluido) — el snapshot se lee directo.
+    snap = yaml.safe_load(_snapshot_path(ga_root).read_text(encoding="utf-8")) or {}
+    repo = Path(plan["repo_root"])
     git = lambda *a: _run(["git", "-C", str(repo), *a])  # noqa: E731
+    branch = plan["branch"]
 
-    ga_rel = ga_root.resolve().relative_to(repo.resolve())
-    paths = [str(ga_rel / "manifests"), str(ga_rel / SNAPSHOT_NAME)]
-
-    code, branch = git("rev-parse", "--abbrev-ref", "HEAD")
-    if code != 0:
-        out["errors"].append(f"no pude leer la rama actual: {branch}")
-        return out
-    if branch in ("main", "master"):
-        branch = f"graphagents/production-{fp8}"
+    if plan["on_default"]:
+        # -B y no checkout plano: si la rama quedó de un publish anterior, se RESETEA al
+        # HEAD actual (la default) en vez de commitear sobre su tip stale.
         code, msg = git("checkout", "-B", branch)
         if code != 0:
             out["errors"].append(f"no pude crear la rama '{branch}': {msg}")
@@ -129,17 +191,16 @@ def publish_production(ga_root: Path, *, push: bool = True, pr: bool = True) -> 
         out["steps"].append({"step": "branch", "ok": True, "detail": f"rama nueva '{branch}' (estabas en la default)"})
     out["branch"] = branch
 
-    title = (f"feat(graphagents): producción {fp8} — {len(snap.get('pods', []))} pod(s), "
-             f"{snap.get('edges', 0)} relaciones")
-    code, msg = git("add", "--", *paths)
+    title = plan["title"]
+    code, msg = git("add", "--", *plan["paths"])
     if code != 0:
         out["errors"].append(f"git add falló: {msg}")
         return out
     _, staged = git("diff", "--cached", "--name-only")
     if staged:
         code, msg = git("commit", "-m", title, "-m",
-                        "Wiring bendecido desde el explorer (guardar producción → publicar). "
-                        f"Snapshot: {snap.get('saved_at')} · fingerprint {snap.get('fingerprint')}.")
+                        "Wiring bendecido desde Acktos Studio (guardar producción → publicar). "
+                        f"Snapshot: {snap.get('saved_at')} · fingerprint {plan['fingerprint']}.")
         if code != 0:
             out["errors"].append(f"git commit falló: {msg}")
             return out
@@ -161,12 +222,8 @@ def publish_production(ga_root: Path, *, push: bool = True, pr: bool = True) -> 
             return out
 
     if pr:
-        body = (f"Despliegue del wiring bendecido desde el explorer de GraphAgents.\n\n"
-                f"- pods: {', '.join(snap.get('pods', []))}\n"
-                f"- nodos: {snap.get('nodes')} · relaciones: {snap.get('edges')}\n"
-                f"- fingerprint: `{snap.get('fingerprint')}`\n"
-                f"- bendecido: {snap.get('saved_at')} (checks del sistema en verde)\n")
-        code, msg = _run(["gh", "pr", "create", "--head", branch, "--title", title, "--body", body], cwd=repo)
+        code, msg = _run(["gh", "pr", "create", "--head", branch, "--base", plan["base"],
+                          "--title", title, "--body", plan["body"]], cwd=repo)
         if code == 0:
             url = next((ln for ln in msg.splitlines() if ln.startswith("http")), msg)
             out["pr_url"] = url

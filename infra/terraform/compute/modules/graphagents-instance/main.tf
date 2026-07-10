@@ -182,6 +182,13 @@ resource "aws_instance" "graphagents" {
     http_tokens = "required"
   }
 
+  # Incidente 2026-07-08: AMI drift (data source most_recent) convertía un apply
+  # rutinario en replacement de la caja. El pin en tfvars + este ignore hacen
+  # el upgrade de AMI un acto deliberado (`terraform apply -replace=...`).
+  lifecycle {
+    ignore_changes = [ami]
+  }
+
   tags = {
     Name = "agencyhubara-graphagents"
     Role = "graphagents"

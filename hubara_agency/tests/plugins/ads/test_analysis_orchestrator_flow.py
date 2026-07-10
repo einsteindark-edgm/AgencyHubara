@@ -171,3 +171,107 @@ def test_resume_run_manda_el_resume_a_la_caja() -> None:
     lz = _FakeLauncher()
     asyncio.run(orchestrator.resume_run("r8", "exec-9", {"approved": True, "by": "ed"}, launcher=lz))
     assert lz.resumed == [("exec-9", {"approved": True, "by": "ed"})]
+
+
+def test_reconcile_in_flight_rearma_el_poller_tras_un_restart() -> None:
+    """Caso real 424d6647 (2026-07-10): el poller es un task asyncio EN MEMORIA —
+    un deploy/restart del backend lo mata y el record queda `running` para
+    siempre aunque Conductor complete (el front nunca recibe el SSE). Al bootear,
+    `reconcile_in_flight` re-arma el poll de todo run no-terminal con
+    execution_id, y el completed llega tarde pero llega."""
+    record.create_run("rr1", agent="ads-analytics", input={})
+    record.append_event("rr1", {"event_id": "rr1:s", "type": "run.started", "payload": {"execution_id": "exec-old"}})
+    assert record.read_run("rr1")["status"] == "running"  # como quedó tras el restart
+
+    lz = _FakeLauncher(status_workflow={"status": "COMPLETED", "output": {"result": "{'ok': 1}"}, "tasks": []})
+    bus = _FakeBus()
+    asyncio.run(orchestrator.reconcile_in_flight(launcher=lz, bus=bus, interval=0.0))
+
+    rec = record.read_run("rr1")
+    assert rec["status"] == "completed"
+    assert rec["result"] == {"ok": 1}
+    assert "run.result" in [t for (_, t, _, _) in bus.published]  # el SSE SÍ salió
+
+
+def test_reconcile_in_flight_marca_failed_los_pending_huerfanos() -> None:
+    """Un `pending` SIN execution_id murió ANTES de despachar (el restart lo agarró
+    en pleno launch) — no hay nada que pollear: failed honesto, no colgado eterno."""
+    record.create_run("rr2", agent="ads-analytics", input={})
+
+    bus = _FakeBus()
+    asyncio.run(orchestrator.reconcile_in_flight(launcher=_FakeLauncher(), bus=bus, interval=0.0))
+
+    rec = record.read_run("rr2")
+    assert rec["status"] == "failed"
+    assert "reinici" in str(rec["error"]).lower()  # el motivo dice que fue el restart
+    assert [t for (_, t, _, _) in bus.published] == ["run.failed"]
+
+
+def test_reconcile_in_flight_ignora_los_terminales() -> None:
+    record.create_run("rr3", agent="ads-analytics", input={})
+    record.append_event("rr3", {"event_id": "rr3:f", "type": "run.failed", "payload": {"error": "x"}})
+
+    bus = _FakeBus()
+    asyncio.run(orchestrator.reconcile_in_flight(launcher=_FakeLauncher(), bus=bus, interval=0.0))
+
+    assert bus.published == []  # nada que re-armar ni re-emitir
+    assert record.read_run("rr3")["status"] == "failed"
+
+
+def test_poll_loop_despierta_la_caja_tras_fallos_consecutivos() -> None:
+    """Race del autostop (run bd3c2d4e, 2026-07-10): la caja se apaga sola antes
+    de que el poller coseche el resultado — cada fetch falla (InvalidInstanceId)
+    y el run queda ciego para siempre. Tras K fallos consecutivos el poll
+    DESPIERTA la caja (start_box, idempotente) y recién ahí cosecha."""
+    record.create_run("rw1", agent="ads-analytics", input={})
+    record.append_event("rw1", {"event_id": "rw1:s", "type": "run.started", "payload": {"execution_id": "e"}})
+
+    class _SleepingBoxLauncher:
+        def __init__(self) -> None:
+            self.awake = False
+            self.wakes = 0
+
+        def start_box(self) -> None:
+            self.wakes += 1
+            self.awake = True
+
+        def fetch_status(self, execution_id: str) -> dict:
+            if not self.awake:
+                raise RuntimeError("InvalidInstanceId: la caja está dormida (autostop)")
+            return {"status": "COMPLETED", "output": {"result": "{'ok': 1}"}, "tasks": []}
+
+    lz = _SleepingBoxLauncher()
+    bus = _FakeBus()
+    asyncio.run(orchestrator.poll_loop(
+        "rw1", "e", bus=bus, fetch=lz.fetch_status, launcher=lz, interval=0.0, max_polls=20,
+    ))
+
+    assert lz.wakes >= 1  # despertó la caja en vez de reintentar ciego
+    rec = record.read_run("rw1")
+    assert rec["status"] == "completed"  # y cosechó el resultado
+    assert "run.result" in [t for (_, t, _, _) in bus.published]
+
+
+def test_poll_loop_loguea_los_fetch_fallidos(caplog) -> None:
+    """Horas de debugging a CIEGAS (bd3c2d4e): el poll tragaba el error real sin
+    loguear nada — imposible diagnosticar desde los logs del API. El fallo queda
+    en el log con la causa."""
+    import logging as _logging
+
+    record.create_run("rl1", agent="ads-analytics", input={})
+    record.append_event("rl1", {"event_id": "rl1:s", "type": "run.started", "payload": {"execution_id": "e"}})
+
+    calls = {"n": 0}
+
+    def _flaky(execution_id: str) -> dict:
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise RuntimeError("el stdout de `sdk.cli status` no es JSON parseable: '{trunc")
+        return {"status": "COMPLETED", "output": {"result": "{}"}, "tasks": []}
+
+    with caplog.at_level(_logging.WARNING):
+        asyncio.run(orchestrator.poll_loop(
+            "rl1", "e", bus=_FakeBus(), fetch=_flaky, interval=0.0, max_polls=10,
+        ))
+
+    assert any("JSON parseable" in r.getMessage() for r in caplog.records)

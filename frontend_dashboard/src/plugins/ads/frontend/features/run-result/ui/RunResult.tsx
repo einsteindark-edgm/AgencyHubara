@@ -11,9 +11,10 @@
  */
 import type { ReactNode } from "react";
 
-import { Icon } from "@/shared/ui";
+import { Icon, Markdown } from "@/shared/ui";
 
 import {
+  analysisReport,
   useAdAnalysisRunEvents,
   useRun,
 } from "@plugins/ads/frontend/entities/ad-analysis-run";
@@ -119,16 +120,7 @@ export function RunResult({ runId, decisionSlot }: Props) {
         )}
       </div>
 
-      {run.status === "completed" && (
-        <div className="flex flex-col gap-2">
-          <div className="text-xs font-medium uppercase tracking-wide text-ok">
-            Resultado
-          </div>
-          <pre className="max-h-72 overflow-auto rounded-md border border-line bg-canvas p-2 font-mono text-xs text-fg-soft">
-            {formatJson(run.result)}
-          </pre>
-        </div>
-      )}
+      {run.status === "completed" && <CompletedResult result={run.result} />}
 
       {run.status === "failed" && (
         <div className="flex flex-col gap-2">
@@ -141,6 +133,46 @@ export function RunResult({ runId, decisionSlot }: Props) {
         </div>
       )}
     </section>
+  );
+}
+
+/**
+ * El resultado del run: si es el reporte PROYECTADO del pod (markdown +
+ * verdict), se renderiza FORMATEADO para humanos — títulos, la tabla GFM del
+ * blend, negritas. Un result legacy (sin markdown) cae al JSON crudo.
+ */
+function CompletedResult({ result }: { result: unknown }) {
+  const report = analysisReport(result);
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center gap-3">
+        <span className="text-xs font-medium uppercase tracking-wide text-ok">
+          Resultado
+        </span>
+        {report?.verdict && (
+          <span className="rounded-full border border-line bg-canvas px-2 py-0.5 text-xs font-semibold text-fg-soft">
+            {report.verdict}
+          </span>
+        )}
+        {report?.qaPassed != null && (
+          <span
+            className="text-xs font-medium"
+            style={{ color: report.qaPassed ? "var(--ok, #30a46c)" : "var(--red, #e5484d)" }}
+          >
+            QA {report.qaPassed ? "reconcilia" : "NO reconcilia"}
+          </span>
+        )}
+      </div>
+      {report ? (
+        <div className="max-h-96 overflow-auto rounded-md border border-line bg-canvas p-3 text-sm">
+          <Markdown>{report.markdown}</Markdown>
+        </div>
+      ) : (
+        <pre className="max-h-72 overflow-auto rounded-md border border-line bg-canvas p-2 font-mono text-xs text-fg-soft">
+          {formatJson(result)}
+        </pre>
+      )}
+    </div>
   );
 }
 

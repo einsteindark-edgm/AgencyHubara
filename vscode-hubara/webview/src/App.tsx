@@ -1,6 +1,6 @@
 import { ColorMode, Edge } from "@xyflow/react";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { GraphNode, Provider } from "../../src/bridge/endpoints";
+import { Provider } from "../../src/bridge/endpoints";
 import {
   collapseCluster,
   egoGraph,
@@ -9,14 +9,16 @@ import {
   NamespacedEdge,
   NamespacedNode,
   NS_PREFIX,
+  reachableGraph,
   Seam,
 } from "../../src/graph/graphOps";
-import { InspectFile, OutboundMessage, PersistedViewState, ProviderState, TraceInfo } from "../../src/graph/messages";
+import { OutboundMessage, PersistedViewState, ProviderState, TraceInfo } from "../../src/graph/messages";
 import { DEFAULT_FOCUS_DEPTH, focusOf, scopeKey, Scope, WORKSPACE_SCOPE } from "../../src/graph/scope";
-import { Canvas } from "./canvas/Canvas";
+import { Canvas, PaletteDragItem } from "./canvas/Canvas";
 import { FlowNodeType } from "./canvas/FlowNode";
-import { computeLayout, Positioned } from "./layout/computeLayout";
-import { Inspector, SelectedNode } from "./panels/Inspector";
+import { clusterGrid, computeLayout, Positioned } from "./layout/computeLayout";
+import { FlowTraceState } from "./panels/Inspector";
+import { Palette } from "./panels/Palette";
 import { Toolbar } from "./panels/Toolbar";
 import { send } from "./vscodeApi";
 
@@ -42,6 +44,27 @@ interface ClusterGraph {
   brokenSeams: Seam[];
 }
 
+/** El reloj del canvas: presente si al nodo lo disparan Temporal Schedules.
+ * Workers del system map traen `data.schedules: [{id, cadence}]` (declarados
+ * en su plugin.yaml — un worker puede crear varios, caso sales_eval); el
+ * contenedor del plugin trae `data.has_schedule`. El valor devuelto es la(s)
+ * cadencia(s) humana(s) unidas (o "" si no se declararon). */
+function scheduleOf(n: NamespacedNode): string | undefined {
+  const data = n["data"] as
+    | { schedules?: Array<{ cadence?: string | null } | null>; has_schedule?: boolean }
+    | undefined;
+  if (!data || typeof data !== "object") {
+    return undefined;
+  }
+  if (Array.isArray(data.schedules) && data.schedules.length > 0) {
+    return data.schedules
+      .map((s) => (s && typeof s === "object" ? (s.cadence ?? "") : ""))
+      .filter((c) => c !== "")
+      .join(" · ");
+  }
+  return data.has_schedule === true ? "" : undefined;
+}
+
 function graphForScope(
   scope: Scope,
   graphagents: ProviderState,
@@ -65,6 +88,12 @@ function graphForScope(
   if (scope.kind === "system") {
     return { nodes: ns.nodes, edges: ns.edges, seamEdges: [], brokenSeams: [] };
   }
+  if (scope.kind === "workflow") {
+    // el workflow COMPLETO que cuelga de la raíz: clausura dirigida, no ego-graph.
+    const rootNsId = `${NS_PREFIX[scope.system]}:${scope.rootId}`;
+    const result = reachableGraph(ns.nodes, ns.edges, rootNsId);
+    return { nodes: result.nodes, edges: result.edges, seamEdges: [], brokenSeams: [] };
+  }
 
   // focus: ego-graph — namespaceGraph ya normalizó id/source/target al
   // espacio namespaced, así que se usa tal cual.
@@ -82,14 +111,25 @@ export function App(): React.ReactElement {
   const [positionsByScopeKey, setPositionsByScopeKey] = useState<Record<string, Record<string, Positioned>>>({});
   const [collapsedClusters, setCollapsedClusters] = useState<Set<Provider>>(new Set());
   const [loading, setLoading] = useState(true);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [inspectFiles, setInspectFiles] = useState<Record<string, InspectFile[]>>({});
-  const [inspectLoading, setInspectLoading] = useState<string | null>(null);
-  const [inspectError, setInspectError] = useState<Record<string, string>>({});
   const [layoutPositions, setLayoutPositions] = useState<Map<string, Positioned>>(new Map());
   const [trace, setTrace] = useState<TraceInfo | null>(null);
   const [traceError, setTraceError] = useState<string | null>(null);
+  // flowTrace alimenta el ORDEN real de las tools en los badges; el detalle
+  // entró/salió vive en el panel nativo "Ejecución" (F10), no acá.
+  const [flowTrace, setFlowTrace] = useState<FlowTraceState | null>(null);
+  const lastTraceEid = useRef<string | null>(null);
+  const [selectedEdge, setSelectedEdge] = useState<Edge | null>(null);
+  const [hint, setHint] = useState<string | null>(null);
+  const hintTimer = useRef<ReturnType<typeof setTimeout>>();
   const colorMode = useVsCodeColorMode();
+
+  const showHint = useCallback((msg: string) => {
+    setHint(msg);
+    if (hintTimer.current) {
+      clearTimeout(hintTimer.current);
+    }
+    hintTimer.current = setTimeout(() => setHint(null), 4000);
+  }, []);
 
   // Bootstrap único al montar.
   useEffect(() => {
@@ -120,15 +160,12 @@ export function App(): React.ReactElement {
         case "jumpScope":
           setScopeState(msg.scope);
           return;
-        case "inspectResult":
-          setInspectFiles((prev) => ({ ...prev, [inspectKey(msg.system, msg.nodeId)]: msg.files }));
-          setInspectLoading((cur) => (cur === inspectKey(msg.system, msg.nodeId) ? null : cur));
-          return;
-        case "inspectError":
-          setInspectError((prev) => ({ ...prev, [inspectKey(msg.system, msg.nodeId)]: msg.message }));
-          setInspectLoading((cur) => (cur === inspectKey(msg.system, msg.nodeId) ? null : cur));
-          return;
         case "trace":
+          // Cambió la ejecución mirada → el flow-trace viejo no aplica.
+          if (lastTraceEid.current && lastTraceEid.current !== msg.info.executionId) {
+            setFlowTrace(null);
+          }
+          lastTraceEid.current = msg.info.executionId;
           // Identidad estable: el poll de 2s manda un objeto nuevo aunque nada
           // cambió — sin esta guarda, TODOS los nodos de React Flow se
           // reconstruyen en cada tick.
@@ -141,6 +178,15 @@ export function App(): React.ReactElement {
         case "traceCleared":
           setTrace(null);
           setTraceError(null);
+          setFlowTrace(null);
+          return;
+        case "flowTrace":
+          setFlowTrace({
+            executionId: msg.executionId,
+            nodeTraces: msg.nodeTraces,
+            reconstructed: msg.reconstructed,
+            reason: msg.reason,
+          });
           return;
       }
     };
@@ -154,26 +200,57 @@ export function App(): React.ReactElement {
     [scope, graphagents, systemmap, seams, collapsedClusters],
   );
 
+  const sKey = scopeKey(scope);
+
   // Layout: recalcula cuando cambia el SET de nodos/edges del scope (no en
-  // cada drag — eso lo maneja React Flow localmente vía onNodesChange).
+  // cada drag — eso lo maneja React Flow localmente vía onNodesChange). Al
+  // resolver el layout de un scope NUEVO se bumpea fitToken → el canvas
+  // re-encuadra el viewport (sin esto la cámara queda donde estaba y el grafo
+  // nuevo puede caer completamente fuera de pantalla — el "System Map vacío").
   const layoutSignature = useMemo(() => graph.nodes.map((n) => n.nsId).sort().join(","), [graph.nodes]);
+  const [fitToken, setFitToken] = useState(0);
+  const lastFitKey = useRef("");
   useEffect(() => {
     let cancelled = false;
     void computeLayout(scope, graph.nodes, graph.edges).then((positions) => {
-      if (!cancelled) {
-        setLayoutPositions(positions);
+      if (cancelled) {
+        return;
+      }
+      setLayoutPositions(positions);
+      if (lastFitKey.current !== sKey) {
+        lastFitKey.current = sKey;
+        setFitToken((t) => t + 1);
       }
     });
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layoutSignature, scope.kind]);
+  }, [layoutSignature, sKey]);
 
-  const sKey = scopeKey(scope);
   // EMPTY_POSITIONS (identidad estable) evita que un scope sin posiciones
-  // guardadas invalide flowNodes en cada render.
-  const savedPositions = positionsByScopeKey[sKey] ?? EMPTY_POSITIONS;
+  // guardadas invalide flowNodes en cada render. Las posiciones DEGENERADAS
+  // se descartan: builds viejos commiteaban TODOS los nodos al soltar un drag,
+  // y si el layout async no había resuelto quedaban persistidos apilados en
+  // (0,0) — un drag real no puede dejar 3+ nodos en la coordenada exacta.
+  const savedPositions = useMemo(() => {
+    const raw = positionsByScopeKey[sKey] ?? EMPTY_POSITIONS;
+    const freq = new Map<string, number>();
+    for (const p of Object.values(raw)) {
+      const c = `${p.x}|${p.y}`;
+      freq.set(c, (freq.get(c) ?? 0) + 1);
+    }
+    if (![...freq.values()].some((n) => n >= 3)) {
+      return raw;
+    }
+    const clean: Record<string, Positioned> = {};
+    for (const [id, p] of Object.entries(raw)) {
+      if ((freq.get(`${p.x}|${p.y}`) ?? 0) < 3) {
+        clean[id] = p;
+      }
+    }
+    return clean;
+  }, [positionsByScopeKey, sKey]);
 
   // El trace overlay matchea por nsId: `step.agent` (id crudo del sub-nodo,
   // p. ej. "ctwa-report") → "ga:agent:ctwa-report", el MISMO namespace que
@@ -195,45 +272,129 @@ export function App(): React.ReactElement {
     return m;
   }, [trace]);
 
-  const flowNodes: FlowNodeType[] = useMemo(
-    () =>
-      graph.nodes.map((n) => {
-        const pos = savedPositions[n.nsId] ?? layoutPositions.get(n.nsId) ?? { x: 0, y: 0 };
-        const runtime = runtimeByNsId.get(n.nsId);
+  // El ORDEN de ejecución sobre cada cajita (§F9): agentes 1, 2, 3… (posición
+  // en el plan) y tools `2.1, 2.2` (orden real dentro de su agente — del
+  // ledger del flow-trace; si aún no llegó, el orden declarado del plan).
+  const orderByNsId = useMemo(() => {
+    const m = new Map<string, string>();
+    if (!trace) {
+      return m;
+    }
+    const toolOrders = new Map<string, string[]>();
+    let n = 0;
+    for (const step of trace.steps) {
+      if (!step.agent) {
+        continue;
+      }
+      n++;
+      m.set(`${NS_PREFIX.graphagents}:agent:${step.agent}`, String(n));
+      const ledger = flowTrace && flowTrace.executionId === trace.executionId ? flowTrace.nodeTraces[step.agent] : undefined;
+      const tools = ledger ? ledger.map((c) => c.tool) : (step.tools ?? []);
+      tools.forEach((tool, i) => {
+        const key = `${NS_PREFIX.graphagents}:tool:${tool}`;
+        const orders = toolOrders.get(key) ?? [];
+        orders.push(`${n}.${i + 1}`);
+        toolOrders.set(key, orders);
+      });
+    }
+    for (const [key, orders] of toolOrders) {
+      m.set(key, orders.slice(0, 3).join(" · ") + (orders.length > 3 ? " …" : ""));
+    }
+    return m;
+  }, [trace, flowTrace]);
+
+  // Sub-cajas de clusters colapsados (endpoints de costuras): índice ordenado
+  // por cluster — posición RELATIVA determinista dentro del contenedor (la
+  // misma grilla que dimensiona el cluster en computeLayout).
+  const clusterChildren = useMemo(() => {
+    const m = new Map<string, string[]>();
+    for (const n of graph.nodes) {
+      if (n.parentCluster) {
+        const list = m.get(n.parentCluster) ?? [];
+        list.push(n.nsId);
+        m.set(n.parentCluster, list);
+      }
+    }
+    for (const list of m.values()) {
+      list.sort();
+    }
+    return m;
+  }, [graph.nodes]);
+
+  const flowNodes: FlowNodeType[] = useMemo(() => {
+    const mapped = graph.nodes.map((n): FlowNodeType => {
+      const runtime = runtimeByNsId.get(n.nsId);
+      const data = {
+        label: (n.label as string | undefined) ?? n.rawId,
+        kind: n.kind as string,
+        system: n.system,
+        orderBadge: orderByNsId.get(n.nsId),
+        schedule: scheduleOf(n),
+        certification: typeof n.certification === "string" ? (n.certification as string) : undefined,
+        archetype: typeof n.archetype === "string" ? (n.archetype as string) : undefined,
+        sideEffect: typeof n.side_effect === "string" ? (n.side_effect as string) : undefined,
+        collapsedCount: typeof n.collapsedCount === "number" ? (n.collapsedCount as number) : undefined,
+        runtimeStatus:
+          !runtime || runtime.status === "pending" || runtime.status === "other"
+            ? ("idle" as const)
+            : (runtime.status as "running" | "done" | "failed" | "awaiting"),
+        runtimeMs: runtime?.ms,
+        runtimeRetries: runtime?.retries,
+      };
+      if (n.parentCluster) {
+        const siblings = clusterChildren.get(n.parentCluster) ?? [];
+        const grid = clusterGrid(siblings.length);
         return {
           id: n.nsId,
           type: "hubara",
-          position: pos,
-          data: {
-            label: (n.label as string | undefined) ?? n.rawId,
-            kind: n.kind as string,
-            system: n.system,
-            certification: typeof n.certification === "string" ? (n.certification as string) : undefined,
-            archetype: typeof n.archetype === "string" ? (n.archetype as string) : undefined,
-            sideEffect: typeof n.side_effect === "string" ? (n.side_effect as string) : undefined,
-            collapsedCount: typeof n.collapsedCount === "number" ? (n.collapsedCount as number) : undefined,
-            runtimeStatus:
-              !runtime || runtime.status === "pending" || runtime.status === "other"
-                ? "idle"
-                : (runtime.status as "running" | "done" | "failed" | "awaiting"),
-            runtimeMs: runtime?.ms,
-            runtimeRetries: runtime?.retries,
-          },
+          position: grid.childPos(Math.max(0, siblings.indexOf(n.nsId))),
+          parentId: n.parentCluster,
+          extent: "parent",
+          data,
         };
-      }),
+      }
+      if (n.kind === "cluster") {
+        const grid = clusterGrid((clusterChildren.get(n.nsId) ?? []).length);
+        return {
+          id: n.nsId,
+          type: "hubara",
+          position: savedPositions[n.nsId] ?? layoutPositions.get(n.nsId) ?? { x: 0, y: 0 },
+          style: { width: grid.width, height: grid.height },
+          data,
+        };
+      }
+      return {
+        id: n.nsId,
+        type: "hubara",
+        position: savedPositions[n.nsId] ?? layoutPositions.get(n.nsId) ?? { x: 0, y: 0 },
+        data,
+      };
+    });
+    // React Flow exige que el padre aparezca ANTES que sus hijos en el array.
+    return [...mapped.filter((n) => n.data.kind === "cluster"), ...mapped.filter((n) => n.data.kind !== "cluster")];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [graph.nodes, savedPositions, layoutPositions, runtimeByNsId],
-  );
+  }, [graph.nodes, clusterChildren, savedPositions, layoutPositions, runtimeByNsId, orderByNsId]);
 
   const flowEdges: Edge[] = useMemo(() => {
-    const internal: Edge[] = [...graph.edges].map((e) => ({
-      id: `${e.nsSource}->${e.nsTarget}:${e.kind}`,
-      source: e.nsSource,
-      target: e.nsTarget,
-      label: e.kind,
-      className: `edge-${e.kind}`,
-      data: { kind: e.kind },
-    }));
+    // ids únicos aunque el bridge repita una arista (p. ej. dos call sites que
+    // invocan el mismo worker) — React Flow con ids duplicados dropea edges.
+    const seen = new Map<string, number>();
+    const internal: Edge[] = [...graph.edges].map((e) => {
+      const base = `${e.nsSource}->${e.nsTarget}:${e.kind}`;
+      const n = seen.get(base) ?? 0;
+      seen.set(base, n + 1);
+      return {
+        id: n === 0 ? base : `${base}#${n}`,
+        source: e.nsSource,
+        target: e.nsTarget,
+        label: e.kind,
+        className: `edge-${e.kind}`,
+        // hit-area generosa: el path SVG es de 1-2px — sin esto, clickear una
+        // arista para seleccionarla/desconectarla es una lotería.
+        interactionWidth: 24,
+        data: { kind: e.kind },
+      };
+    });
     const seamsList: Edge[] = graph.seamEdges.map((e) => ({
       id: `seam:${e.nsSource}->${e.nsTarget}`,
       source: e.nsSource,
@@ -270,22 +431,26 @@ export function App(): React.ReactElement {
     persist(positionsByScopeKey, collapsedClusters, scope);
   }, [hydrated, positionsByScopeKey, collapsedClusters, scope, persist]);
 
-  const handleNodesChange = useCallback(
-    (nextNodes: FlowNodeType[]) => {
-      setPositionsByScopeKey((prev) => {
-        const next = { ...prev, [sKey]: { ...prev[sKey] } };
-        for (const n of nextNodes) {
-          next[sKey][n.id] = n.position;
-        }
-        return next;
-      });
+  // UNA escritura por gesto de drag (dragStop) — no por frame; el canvas
+  // maneja el movimiento en su estado local (ver Canvas.tsx, fix del parpadeo).
+  // Las sub-cajas de un cluster NO se persisten: su posición es RELATIVA al
+  // contenedor — guardarla contaminaría el espacio absoluto que ese mismo
+  // nsId usa en los demás scopes.
+  const handlePositionsCommit = useCallback(
+    (positions: Record<string, Positioned>) => {
+      const childIds = new Set([...clusterChildren.values()].flat());
+      const absolute = Object.fromEntries(Object.entries(positions).filter(([id]) => !childIds.has(id)));
+      if (Object.keys(absolute).length === 0) {
+        return;
+      }
+      setPositionsByScopeKey((prev) => ({ ...prev, [sKey]: { ...prev[sKey], ...absolute } }));
     },
-    [sKey],
+    [sKey, clusterChildren],
   );
+
 
   const setScope = useCallback((next: Scope) => {
     setScopeState(next);
-    setSelectedId(null);
   }, []);
 
   const handleNodeClick = useCallback(
@@ -293,12 +458,11 @@ export function App(): React.ReactElement {
       if (id.startsWith("cluster:")) {
         return; // el click en un cluster colapsado no selecciona, solo lo doble-click expande
       }
-      setSelectedId(id);
       const found = graph.nodes.find((n) => n.nsId === id);
-      if (found && found.system === "graphagents") {
-        const key = inspectKey(found.system, found.rawId);
-        setInspectLoading(key);
-        send({ type: "inspectNode", system: found.system, nodeId: found.rawId });
+      if (found) {
+        // el detalle vive en el panel nativo "Ejecución" (F10) — se le manda
+        // el nodo completo para que no dependa del payload del grafo.
+        send({ type: "nodeSelected", system: found.system, node: found });
       }
     },
     [graph.nodes],
@@ -345,6 +509,20 @@ export function App(): React.ReactElement {
     send({ type: "refresh" });
   }, []);
 
+  // Descarta las posiciones guardadas del scope actual y re-encuadra — la
+  // salida manual si un layout viejo/arrastres dejaron el grafo ilegible.
+  const handleRelayout = useCallback(() => {
+    setPositionsByScopeKey((prev) => {
+      if (!prev[sKey]) {
+        return prev;
+      }
+      const next = { ...prev };
+      delete next[sKey];
+      return next;
+    });
+    setFitToken((t) => t + 1);
+  }, [sKey]);
+
   // Edit mode (§F5): drag-connect / right-click-disconnect. Solo tiene
   // sentido DENTRO de GraphAgents (System Map es read-only; workspace mezcla
   // namespaces) — la confirmación SIEMPRE la muestra la extensión (los
@@ -353,28 +531,98 @@ export function App(): React.ReactElement {
   const handleConnect = useCallback((source: string, target: string) => {
     send({ type: "connectRequest", source, target });
   }, []);
-  const handleEdgeDisconnect = useCallback((edge: Edge) => {
-    const kind = (edge.data as { kind?: string } | undefined)?.kind;
-    if ((kind === "uses" || kind === "agent") && edge.source && edge.target) {
-      send({ type: "disconnectRequest", source: edge.source, target: edge.target, kind });
-    }
+  const handleEdgeDisconnect = useCallback(
+    (edge: Edge) => {
+      const kind = (edge.data as { kind?: string } | undefined)?.kind;
+      if ((kind === "uses" || kind === "agent") && edge.source && edge.target) {
+        send({ type: "disconnectRequest", source: edge.source, target: edge.target, kind });
+        setSelectedEdge(null);
+      } else {
+        showHint(`la relación "${kind ?? "seam"}" no es editable — solo uses/agent se pueden desconectar`);
+      }
+    },
+    [showHint],
+  );
+
+  // "⤴ Guardar & certificar": la extensión confirma, corre la suite en vivo
+  // (panel Ejecución) y publica si todo pasa.
+  const handleCertify = useCallback(() => {
+    send({ type: "certifyRequest" });
   }, []);
 
-  const selectedNode: SelectedNode | null = useMemo(() => {
-    const found = graph.nodes.find((n) => n.nsId === selectedId);
-    return found ? { system: found.system, raw: found as unknown as GraphNode } : null;
-  }, [graph.nodes, selectedId]);
+  // Click derecho en un nodo → borrar. Solo agentes/tools de GraphAgents (un
+  // cluster/port/seam no se borra desde acá); la confirmación + cascade la
+  // maneja la extensión (needs_confirmation → modal de blast radius).
+  const handleNodeDelete = useCallback(
+    (nsId: string) => {
+      const found = graph.nodes.find((n) => n.nsId === nsId);
+      if (!found || found.system !== "graphagents" || (found.kind !== "agent" && found.kind !== "tool")) {
+        showHint("solo se pueden borrar agentes o tools de GraphAgents");
+        return;
+      }
+      send({
+        type: "deleteNodeRequest",
+        nodeId: found.nsId,
+        kind: found.kind,
+        label: (found.label as string | undefined) ?? found.rawId,
+      });
+    },
+    [graph.nodes, showHint],
+  );
 
-  // El tercer crumb es el CENTRO del focus, no el último nodo clickeado.
+  // Drop de la palette: soltar un tool/agente SOBRE un agente lo conecta
+  // (agente uses tool · supervisor uses agente) — misma secuencia
+  // validate→confirm→mutate que el drag-connect.
+  const handlePaletteDrop = useCallback(
+    (item: PaletteDragItem, targetNsId: string | null) => {
+      if (!targetNsId) {
+        showHint("soltá el elemento SOBRE un agente para conectarlo al flujo");
+        return;
+      }
+      const target = graph.nodes.find((n) => n.nsId === targetNsId);
+      if (!target || target.system !== "graphagents" || target.kind !== "agent") {
+        showHint("solo se puede conectar sobre un AGENTE de GraphAgents");
+        return;
+      }
+      if (`${NS_PREFIX.graphagents}:${item.id}` === target.nsId) {
+        showHint("un nodo no se conecta consigo mismo");
+        return;
+      }
+      send({ type: "connectRequest", source: target.nsId, target: `${NS_PREFIX.graphagents}:${item.id}` });
+    },
+    [graph.nodes, showHint],
+  );
+
+  // El tercer crumb es el CENTRO del focus / la RAÍZ del workflow — no el
+  // último nodo clickeado.
   const focusCenterLabel = useMemo(() => {
-    if (scope.kind !== "focus") {
-      return undefined;
+    if (scope.kind === "focus") {
+      const center = graph.nodes.find((n) => n.system === scope.system && n.rawId === scope.nodeId);
+      return ((center?.label as string | undefined) ?? scope.nodeId);
     }
-    const center = graph.nodes.find((n) => n.system === scope.system && n.rawId === scope.nodeId);
-    return ((center?.label as string | undefined) ?? scope.nodeId);
+    if (scope.kind === "workflow") {
+      const root = graph.nodes.find((n) => n.system === scope.system && n.rawId === scope.rootId);
+      return ((root?.label as string | undefined) ?? scope.rootId);
+    }
+    return undefined;
   }, [scope, graph.nodes]);
 
-  const selectedInspectKey = selectedNode ? inspectKey(selectedNode.system, (selectedNode.raw as NamespacedNode).rawId) : null;
+  // Catálogo completo de GraphAgents para la palette (agentes + tools),
+  // marcando cuáles ya están en el scope actual.
+  const paletteItems = useMemo(() => {
+    if (!editable || !graphagents.payload) {
+      return [];
+    }
+    const visible = new Set(graph.nodes.map((n) => n.rawId));
+    return graphagents.payload.nodes
+      .filter((n) => n.kind === "agent" || n.kind === "tool")
+      .map((n) => ({
+        id: n.id,
+        kind: n.kind as string,
+        label: (n.label as string | undefined) ?? n.id,
+        inScope: visible.has(n.id),
+      }));
+  }, [editable, graphagents.payload, graph.nodes]);
 
   const globalError = graphagents.error && systemmap.error ? `${graphagents.error} · ${systemmap.error}` : null;
 
@@ -390,6 +638,8 @@ export function App(): React.ReactElement {
         onScopeChange={setScope}
         onDepthChange={handleDepthChange}
         onRefresh={handleRefresh}
+        onRelayout={handleRelayout}
+        onCertify={handleCertify}
       />
       {globalError && <div className="global-error">⚠ {globalError}</div>}
       {graph.brokenSeams.length > 0 && (
@@ -401,43 +651,49 @@ export function App(): React.ReactElement {
         <div className="trace-banner">
           <span className="trace-dot" />
           Trace {trace.executionId.slice(0, 8)} — {trace.workflowStatus}
+          {trace.strategy && <span className="trace-meta"> · {trace.strategy}</span>}
+          <span className="trace-meta"> · el detalle vive en el panel Ejecución (abajo)</span>
           <button type="button" className="trace-stop" onClick={() => send({ type: "stopTrace" })}>
-            ✕ detener
+            ✕ cerrar trace
           </button>
         </div>
       )}
       {traceError && <div className="global-error">⚠ trace: {traceError}</div>}
+      {editable && selectedEdge && (
+        <div className="edge-action-bar">
+          <span className="edge-action-label">
+            arista: {selectedEdge.source.replace(/^ga:/, "")} → {selectedEdge.target.replace(/^ga:/, "")}
+            {" "}({((selectedEdge.data as { kind?: string } | undefined)?.kind) ?? "?"})
+          </span>
+          <button type="button" className="edge-disconnect-btn" onClick={() => handleEdgeDisconnect(selectedEdge)}>
+            ✕ desconectar
+          </button>
+          <button type="button" className="trace-stop" onClick={() => setSelectedEdge(null)}>
+            cerrar
+          </button>
+        </div>
+      )}
+      {hint && <div className="hint-toast">{hint}</div>}
       <div className="body">
+        {editable && <Palette items={paletteItems} />}
         <div className="canvas-wrap">
           <Canvas
             nodes={flowNodes}
             edges={flowEdges}
             colorMode={colorMode}
             editable={editable}
-            onNodesChange={handleNodesChange}
+            onPositionsCommit={handlePositionsCommit}
             onNodeClick={handleNodeClick}
             onNodeDoubleClick={handleNodeDoubleClick}
             onConnect={handleConnect}
+            onEdgeSelect={setSelectedEdge}
             onEdgeDisconnect={handleEdgeDisconnect}
+            onNodeDelete={handleNodeDelete}
+            onPaletteDrop={handlePaletteDrop}
+            fitToken={fitToken}
           />
         </div>
-        <Inspector
-          node={selectedNode}
-          files={selectedInspectKey ? (inspectFiles[selectedInspectKey] ?? null) : null}
-          filesLoading={inspectLoading !== null && inspectLoading === selectedInspectKey}
-          filesError={selectedInspectKey ? (inspectError[selectedInspectKey] ?? null) : null}
-          onOpenFile={(path) => send({ type: "openFile", path })}
-          onFocus={() => {
-            if (selectedNode) {
-              setScope(focusOf(selectedNode.system, (selectedNode.raw as NamespacedNode).rawId, DEFAULT_FOCUS_DEPTH));
-            }
-          }}
-        />
       </div>
     </div>
   );
-}
-
-function inspectKey(system: Provider, nodeId: string): string {
-  return `${system}:${nodeId}`;
 }

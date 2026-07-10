@@ -3,7 +3,7 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 
 /**
- * Lectura ÚNICA de las settings `hubara.*` (defaults incluidos). Puentes,
+ * Lectura ÚNICA de las settings `acktos.*` (defaults incluidos). Puentes,
  * Test Explorer, diagnostics y el canvas consumen ESTE módulo — un default
  * que cambie acá cambia en todos los consumidores a la vez (antes cada uno
  * re-tipeaba sus defaults y podían driftear en silencio).
@@ -12,6 +12,11 @@ export interface HubaraConfig {
   gaPython: string;
   /** ya resuelto (sin ${workspaceFolder}) */
   gaCwd: string;
+  /** env extra del puente GraphAgents — la palanca de infra remota:
+   * AGENTSPAN_SERVER_URL / LITELLM_PROXY_URL apuntan a AWS sin tocar código. */
+  gaEnv: Record<string, string>;
+  /** comando que levanta AgentSpan (:6767) — botón "Iniciar infraestructura". */
+  agentspanStart: string;
   backendCommand: string[];
   /** ya resuelto */
   backendCwd: string;
@@ -25,10 +30,12 @@ export interface HubaraConfig {
 }
 
 export function readHubaraConfig(repoRoot: string): HubaraConfig {
-  const cfg = vscode.workspace.getConfiguration("hubara");
+  const cfg = vscode.workspace.getConfiguration("acktos");
   return {
     gaPython: cfg.get<string>("graphagents.python", "python3"),
     gaCwd: resolvePath(cfg.get<string>("graphagents.cwd", "${workspaceFolder}/GraphAgents"), repoRoot),
+    gaEnv: cfg.get<Record<string, string>>("graphagents.env", {}),
+    agentspanStart: cfg.get<string>("graphagents.agentspanStart", "agentspan server start"),
     backendCommand: cfg.get<string[]>("backend.command", ["uv", "run", "python"]),
     backendCwd: resolvePath(cfg.get<string>("backend.cwd", "${workspaceFolder}/hubara_agency"), repoRoot),
     // Gotcha documentado (project-context.md): sin estas dos vars, el sales
@@ -72,8 +79,10 @@ export function resolvePath(value: string, root: string): string {
 /**
  * seams.yaml describe la topología del REPO del usuario, no de la extensión:
  * instalada como VSIX, el install dir es read-only y compartido entre
- * workspaces. Orden: setting `hubara.seamsPath` → `<repoRoot>/seams.yaml` →
- * el archivo bundled con la extensión (fallback de fábrica).
+ * workspaces. Orden: setting `acktos.seamsPath` → `<repoRoot>/seams.yaml` →
+ * `<repoRoot>/vscode-hubara/seams.yaml` (el archivo VIVO del monorepo — las
+ * costuras nuevas llegan por git pull, sin re-empaquetar el VSIX) → el
+ * bundled con la extensión (fallback de fábrica, congelado al empaquetar).
  */
 export function seamsFilePath(extensionRoot: string): string {
   const root = repoRoot();
@@ -81,9 +90,13 @@ export function seamsFilePath(extensionRoot: string): string {
   if (cfg.seamsPath) {
     return resolvePath(cfg.seamsPath, root);
   }
-  const wsSeams = path.join(root, "seams.yaml");
-  if (fs.existsSync(wsSeams)) {
-    return wsSeams;
+  for (const candidate of [
+    path.join(root, "seams.yaml"),
+    path.join(root, "vscode-hubara", "seams.yaml"),
+  ]) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
   }
   return path.join(extensionRoot, "seams.yaml");
 }

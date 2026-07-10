@@ -7,7 +7,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 import yaml
 
 from src.plugins.system_map.domain.builder import build_system_graph
@@ -636,3 +635,41 @@ def test_code_scan_dedupe_against_declared(tmp_path: Path) -> None:
     # Aquí esperamos 1 (declarado) + 0 o 1 del scan según source heurístico.
     sources = {e.source for e in invokes}
     assert "worker:p:a" in sources  # del manifest
+
+
+def test_code_scan_same_pair_emits_single_edge(tmp_path: Path) -> None:
+    """Dos call sites que invocan el MISMO worker → UN edge, no dos.
+
+    Caso real: catalog invoca `catalog.sync` desde dos puntos de su API y el
+    grafo salía con dos edges idénticos (mismo id `e:...->scan->...`) — ids
+    duplicados que el canvas (React Flow) no tolera.
+    """
+    manifests_dir = tmp_path / "manifests"
+    _write_manifest(
+        manifests_dir,
+        "catalog",
+        {
+            "id": "catalog",
+            "version": "0.1.0",
+            "api": {
+                "legacy_routers": [
+                    {"module": "src.plugins.catalog.api.main", "prefix": "/api/catalog", "tags": ["Catalog"]},
+                ],
+            },
+            "agent": {"workers": [{"name": "sync", "module": "m.sync", "task_queue": "q-sync"}]},
+        },
+    )
+    code_dir = tmp_path / "code"
+    api_dir = code_dir / "catalog" / "api"
+    api_dir.mkdir(parents=True)
+    (api_dir / "main.py").write_text(
+        'get_task_queue("catalog", "sync")\nget_task_queue("catalog", "sync")\n',
+        encoding="utf-8",
+    )
+
+    g = build_system_graph(manifests_dir, code_dir)
+
+    invokes = [e for e in g.edges if e.kind == "invokes_worker"]
+    assert len(invokes) == 1
+    edge_ids = [e.id for e in g.edges]
+    assert len(edge_ids) == len(set(edge_ids)), "ids de edges deben ser únicos"

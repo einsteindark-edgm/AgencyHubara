@@ -9,7 +9,10 @@ import { Provider, PROVIDER_LABEL } from "../bridge/endpoints";
 export type Scope =
   | { kind: "workspace" }
   | { kind: "system"; system: Provider }
-  | { kind: "focus"; system: Provider; nodeId: string; depth: number };
+  | { kind: "focus"; system: Provider; nodeId: string; depth: number }
+  /** UN workflow completo: todo lo alcanzable desde su nodo raíz siguiendo
+   * las aristas dirigidas (uses/agent/consumes). El "target" de Xcode. */
+  | { kind: "workflow"; system: Provider; rootId: string };
 
 export const WORKSPACE_SCOPE: Scope = { kind: "workspace" };
 
@@ -26,6 +29,8 @@ export function scopeKey(scope: Scope): string {
       return `system:${scope.system}`;
     case "focus":
       return `focus:${scope.system}:${scope.nodeId}:${scope.depth}`;
+    case "workflow":
+      return `workflow:${scope.system}:${scope.rootId}`;
   }
 }
 
@@ -35,6 +40,10 @@ export function focusOf(system: Provider, nodeId: string, depth = DEFAULT_FOCUS_
 
 export function systemOf(system: Provider): Scope {
   return { kind: "system", system };
+}
+
+export function workflowOf(system: Provider, rootId: string): Scope {
+  return { kind: "workflow", system, rootId };
 }
 
 export function clampDepth(depth: number): number {
@@ -52,6 +61,9 @@ export function breadcrumb(scope: Scope, nodeLabel?: string): string[] {
   crumbs.push(PROVIDER_LABEL[scope.system]);
   if (scope.kind === "focus") {
     crumbs.push(nodeLabel ?? scope.nodeId);
+  }
+  if (scope.kind === "workflow") {
+    crumbs.push(`⚙ ${nodeLabel ?? scope.rootId}`);
   }
   return crumbs;
 }

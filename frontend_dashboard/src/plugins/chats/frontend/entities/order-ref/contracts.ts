@@ -22,3 +22,25 @@ export const orderRefCommandResultSchema = z
   .passthrough();
 
 export type OrderRefCommandResult = z.infer<typeof orderRefCommandResultSchema>;
+
+/**
+ * Vista mínima del read-side (`GET /api/chats/order-actions/{id}` → detalle
+ * order@v1). Chats solo necesita saber si la entrega YA está agendada
+ * (`summary.due_iso != null` = fecha real asignada por el operador; el
+ * backend NO inventa estimates) para que "Confirmar pago" no re-agende.
+ */
+export const orderRefDetailSchema = z
+  .object({
+    summary: z
+      .object({
+        id: z.string().nullish(),
+        due_iso: z.string().nullish(),
+        due_time: z.string().nullish(),
+        status: z.string().nullish(),
+        is_draft: z.boolean().nullish(),
+      })
+      .passthrough(),
+  })
+  .passthrough();
+
+export type OrderRefDetail = z.infer<typeof orderRefDetailSchema>;

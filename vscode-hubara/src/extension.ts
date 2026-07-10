@@ -2,18 +2,22 @@ import * as vscode from "vscode";
 import { BridgeResponse, Provider, PROVIDER_LABEL } from "./bridge/endpoints";
 import { readHubaraConfig, repoRoot, resolvePath } from "./config";
 import { BridgeHub, BridgeSpec, PythonBridge } from "./bridge/pythonBridge";
+import { publishWithFallback } from "./certify/publisher";
 import { ManifestCodeLensProvider } from "./codelens/manifestCodeLens";
 import { CertDecorationProvider } from "./decorations/certDecorations";
 import { ManifestDiagnostics } from "./diagnostics/manifestDiagnostics";
 import { connectWithConfirmation } from "./graph/editOps";
-import { GraphPanel } from "./graph/graphPanel";
+import { GraphPanel, LocalRunResult } from "./graph/graphPanel";
+import { ToolCall, TraceStep } from "./graph/messages";
 import { ProductionStatusBar } from "./graph/productionStatusBar";
-import { DEFAULT_FOCUS_DEPTH, focusOf, systemOf } from "./graph/scope";
+import { DEFAULT_FOCUS_DEPTH, focusOf, systemOf, workflowOf } from "./graph/scope";
 import { registerYamlSchemas } from "./schemas/yamlSchemas";
+import { selfUpdate } from "./selfUpdate";
 import { HubaraTestController } from "./testing/controller";
 import { PlanStatusBar } from "./testing/planStatusBar";
 import { CatalogTreeProvider } from "./trees/catalogTree";
 import { RunsTreeProvider } from "./trees/runsTree";
+import { ExecutionViewProvider } from "./views/executionView";
 
 let hub: Hub | undefined;
 let testController: HubaraTestController | undefined;
@@ -25,18 +29,29 @@ let productionStatusBar: ProductionStatusBar | undefined;
 let output: vscode.OutputChannel;
 
 export function activate(ctx: vscode.ExtensionContext): void {
-  output = vscode.window.createOutputChannel("Hubara Studio");
+  output = vscode.window.createOutputChannel("Acktos Studio");
   ctx.subscriptions.push(output);
 
   hub = new Hub(output);
   ctx.subscriptions.push(hub);
 
   const catalogTree = new CatalogTreeProvider(hub);
-  ctx.subscriptions.push(vscode.window.registerTreeDataProvider("hubara.catalogTree", catalogTree));
+  ctx.subscriptions.push(vscode.window.registerTreeDataProvider("acktos.catalogTree", catalogTree));
 
   runsTree = new RunsTreeProvider(hub);
-  const runsView = vscode.window.createTreeView("hubara.runsTree", { treeDataProvider: runsTree });
+  const runsView = vscode.window.createTreeView("acktos.runsTree", { treeDataProvider: runsTree });
   ctx.subscriptions.push(runsTree, runsView, runsTree.attach(runsView));
+
+  // El panel nativo "Ejecución" (F10) — abajo, junto a Terminal: la cascada
+  // del run + el detalle del nodo seleccionado. El GraphPanel le empuja los
+  // traces; el canvas le manda las selecciones.
+  const executionView = new ExecutionViewProvider(ctx, hub);
+  GraphPanel.executionSink = executionView;
+  ctx.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(ExecutionViewProvider.viewType, executionView, {
+      webviewOptions: { retainContextWhenHidden: true },
+    }),
+  );
 
   productionStatusBar = new ProductionStatusBar(hub);
   ctx.subscriptions.push(productionStatusBar);
@@ -74,7 +89,7 @@ export function activate(ctx: vscode.ExtensionContext): void {
     // Cambió la config de los puentes → reconstruirlos; los paneles llegan al
     // nuevo a través del hub (no capturan instancias).
     vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration("hubara")) {
+      if (e.affectsConfiguration("acktos")) {
         hub!.rebuild();
         catalogTree.refresh();
         testController!.onConfigChanged(repoRoot());
@@ -82,34 +97,44 @@ export function activate(ctx: vscode.ExtensionContext): void {
         output.appendLine("[extension] settings de hubara cambiaron → puentes/comandos reconstruidos");
       }
     }),
-    vscode.commands.registerCommand("hubara.openStudio", () => {
+    vscode.commands.registerCommand("acktos.openStudio", () => {
       GraphPanel.show(ctx, hub!);
     }),
-    vscode.commands.registerCommand("hubara.openGraphAgents", () => {
+    vscode.commands.registerCommand("acktos.openGraphAgents", () => {
       GraphPanel.show(ctx, hub!, systemOf("graphagents"));
     }),
-    vscode.commands.registerCommand("hubara.openSystemMap", () => {
+    vscode.commands.registerCommand("acktos.openSystemMap", () => {
       GraphPanel.show(ctx, hub!, systemOf("systemmap"));
     }),
-    vscode.commands.registerCommand("hubara.refreshGraphs", () => {
+    vscode.commands.registerCommand("acktos.refreshGraphs", () => {
       GraphPanel.refreshActive();
       catalogTree.refresh();
       refreshDecorations();
     }),
-    vscode.commands.registerCommand("hubara.focusNode", (system?: Provider, nodeId?: string) => {
+    vscode.commands.registerCommand("acktos.focusNode", (system?: Provider, nodeId?: string) => {
       if (!system || !nodeId) {
         return; // solo invocable con args (codelens/inspector) — guard defensivo
       }
       GraphPanel.show(ctx, hub!, focusOf(system, nodeId, DEFAULT_FOCUS_DEPTH));
     }),
-    vscode.commands.registerCommand("hubara.restartBridges", () => {
+    // Un workflow COMPLETO en el canvas: todo lo alcanzable desde su raíz
+    // (la vista "target" — desde Workflows de GraphAgents O un plugin del
+    // System Map; ambos árboles mandan [rootId, label, system]).
+    vscode.commands.registerCommand("acktos.openWorkflow", (rootId?: string, _label?: string, system?: Provider) => {
+      if (!rootId) {
+        return; // solo invocable desde el árbol (manda la raíz)
+      }
+      GraphPanel.show(ctx, hub!, workflowOf(system ?? "graphagents", rootId));
+    }),
+    vscode.commands.registerCommand("acktos.restartBridges", () => {
       hub!.rebuild();
       output.appendLine("[extension] puentes reiniciados");
-      void vscode.window.showInformationMessage("Hubara Studio: puentes Python reiniciados.");
+      void vscode.window.showInformationMessage("Acktos Studio: puentes Python reiniciados.");
     }),
-    vscode.commands.registerCommand("hubara.selectPlan", () => planStatusBar!.selectAndRun()),
-    vscode.commands.registerCommand("hubara.runActivePlan", () => planStatusBar!.runActive()),
-    vscode.commands.registerCommand("hubara.checkManifest", async (system?: Provider) => {
+    vscode.commands.registerCommand("acktos.updateExtension", () => selfUpdate(ctx, output, true)),
+    vscode.commands.registerCommand("acktos.selectPlan", () => planStatusBar!.selectAndRun()),
+    vscode.commands.registerCommand("acktos.runActivePlan", () => planStatusBar!.runActive()),
+    vscode.commands.registerCommand("acktos.checkManifest", async (system?: Provider) => {
       if (system !== "graphagents" && system !== "systemmap") {
         return; // solo invocable desde el codelens (manda el provider)
       }
@@ -117,26 +142,73 @@ export function activate(ctx: vscode.ExtensionContext): void {
       const label = PROVIDER_LABEL[system];
       if (summary.parseFailure) {
         void vscode.window.showErrorMessage(
-          `Hubara Studio: ${label} — el check terminó con error pero no reconocí su salida (¿cambió el formato del CLI?). Ver Output → Hubara Studio.`,
+          `Acktos Studio: ${label} — el check terminó con error pero no reconocí su salida (¿cambió el formato del CLI?). Ver Output → Acktos Studio.`,
         );
       } else if (summary.errors === 0 && summary.warnings === 0) {
-        void vscode.window.showInformationMessage(`Hubara Studio: ${label} — check OK.`);
+        void vscode.window.showInformationMessage(`Acktos Studio: ${label} — check OK.`);
       } else {
         void vscode.window.showWarningMessage(
-          `Hubara Studio: ${label} — ${summary.errors} error(es), ${summary.warnings} warning(s). Ver Problems.`,
+          `Acktos Studio: ${label} — ${summary.errors} error(es), ${summary.warnings} warning(s). Ver Problems.`,
         );
       }
     }),
-    vscode.commands.registerCommand("hubara.refreshRuns", () => runsTree!.refresh()),
-    vscode.commands.registerCommand("hubara.viewTrace", (executionId?: string, agent?: string) => {
+    vscode.commands.registerCommand("acktos.refreshRuns", () => runsTree!.refresh()),
+    vscode.commands.registerCommand("acktos.viewTrace", (executionId?: string, agent?: string) => {
       if (!executionId) {
         return; // solo invocable desde el árbol de Runs (manda los args)
       }
       GraphPanel.showTrace(ctx, hub!, executionId, agent ?? "");
     }),
+    // La ejecución SENCILLA (⚡): corre el caso EN PROCESO con sus fixtures —
+    // cero AgentSpan/Conductor — y muestra el detalle completo en el canvas.
+    // Es el camino default (click en un case); el durable queda para probar
+    // la infraestructura real.
+    registerCaseCommand("acktos.runLocalCase", "/api/run-local", "ejecución local", (res, payload, caseId, title) => {
+      if (res.status !== 200) {
+        return false;
+      }
+      const result: LocalRunResult = {
+        case: caseId,
+        agent: typeof payload.agent === "string" ? payload.agent : caseId,
+        strategy: typeof payload.strategy === "string" ? payload.strategy : undefined,
+        seed: payload.seed,
+        steps: Array.isArray(payload.steps) ? (payload.steps as TraceStep[]) : [],
+        nodeTraces: (payload.node_traces ?? {}) as Record<string, ToolCall[]>,
+        nodeAccs: (payload.node_accs ?? {}) as Record<string, unknown>,
+      };
+      GraphPanel.showLocalRun(ctx, hub!, result);
+      // la cascada del árbol de Runs viaja ya resuelta (steps + ledgers)
+      runsTree!.noteLocalRun({ caseId, title, agent: result.agent, steps: result.steps, nodeTraces: result.nodeTraces });
+      return true;
+    }),
+    // AgentSpan (:6767) es OPCIONAL — este botón lo levanta en una terminal
+    // visible cuando se quiere probar el runtime durable de verdad.
+    vscode.commands.registerCommand("acktos.startInfra", () => {
+      const cfg = readHubaraConfig(repoRoot());
+      const existing = vscode.window.terminals.find((t) => t.name === "AgentSpan");
+      if (existing) {
+        existing.show();
+        void vscode.window.showInformationMessage(
+          `Acktos Studio: la terminal AgentSpan ya existe — si el server no corre, ejecutá ahí: ${cfg.agentspanStart}`,
+        );
+        return;
+      }
+      const term = vscode.window.createTerminal({ name: "AgentSpan", cwd: cfg.gaCwd });
+      term.show();
+      term.sendText(cfg.agentspanStart);
+      void vscode.window.showInformationMessage(
+        "Acktos Studio: levantando AgentSpan (:6767) — la primera vez descarga el server (~50MB). Los ▶ Run Durable quedan disponibles cuando el log diga que escucha.",
+      );
+    }),
+    vscode.commands.registerCommand("acktos.toggleAllRuns", () => {
+      const showAll = runsTree!.toggleShowAll();
+      void vscode.window.showInformationMessage(
+        showAll ? "Acktos Studio: Runs muestra el histórico completo de AgentSpan." : "Acktos Studio: Runs muestra solo esta sesión.",
+      );
+    }),
     // Los dos comandos por-caso comparten el esqueleto (normalización de
     // args del árbol, POST al bridge, toasts de error) vía registerCaseCommand.
-    registerCaseCommand("hubara.replayCase", "/api/replay", "replay", (res, payload, caseId, title) => {
+    registerCaseCommand("acktos.replayCase", "/api/replay", "replay", (res, payload, caseId, title) => {
       if (res.status !== 200 && res.status !== 422) {
         return false;
       }
@@ -149,25 +221,41 @@ export function activate(ctx: vscode.ExtensionContext): void {
         ok ? undefined : "el output no matchea el golden — ver detalle en el panel de tests",
       );
       if (ok) {
-        void vscode.window.showInformationMessage(`Hubara Studio: replay '${title}' → matches golden ✓`);
+        void vscode.window.showInformationMessage(`Acktos Studio: replay '${title}' → matches golden ✓`);
       } else {
-        void vscode.window.showWarningMessage(`Hubara Studio: replay '${title}' → NO matchea el golden.`);
+        void vscode.window.showWarningMessage(`Acktos Studio: replay '${title}' → NO matchea el golden.`);
       }
       return true;
     }),
-    registerCaseCommand("hubara.runDurableCase", "/api/run-durable", "run durable", (res, payload, _caseId, title) => {
+    registerCaseCommand("acktos.runDurableCase", "/api/run-durable", "run durable", (res, payload, caseId, title) => {
       const executionId = typeof payload.execution_id === "string" ? payload.execution_id : undefined;
       if (res.status !== 200 || !executionId) {
-        return false;
+        // Camino de rescate explícito: el fallo típico es AgentSpan caído —
+        // ofrecer levantar la infra o correr el MISMO caso en local (sin infra).
+        void vscode.window
+          .showErrorMessage(
+            `Acktos Studio: run durable '${title}' — ${(payload.error as string | undefined) ?? `status ${res.status}`}`,
+            "▶ Iniciar AgentSpan",
+            "⚡ Ejecutar local",
+          )
+          .then((action) => {
+            if (action === "▶ Iniciar AgentSpan") {
+              void vscode.commands.executeCommand("acktos.startInfra");
+            } else if (action === "⚡ Ejecutar local") {
+              void vscode.commands.executeCommand("acktos.runLocalCase", caseId, title);
+            }
+          });
+        return true; // error ya presentado (con acciones) — sin toast genérico
       }
-      void vscode.window.showInformationMessage(`Hubara Studio: '${title}' corriendo (${executionId.slice(0, 8)}…)`);
+      void vscode.window.showInformationMessage(`Acktos Studio: '${title}' corriendo (${executionId.slice(0, 8)}…)`);
+      runsTree!.noteDurableLaunched(executionId);
       runsTree!.refresh();
       GraphPanel.showTrace(ctx, hub!, executionId, typeof payload.agent === "string" ? payload.agent : title);
       return true;
     }),
     // El menú contextual manda el elemento del árbol como único arg (mismo
     // shape que devuelve CatalogTreeProvider.getChildren): {system, nodeId, label}.
-    vscode.commands.registerCommand("hubara.connectFromPicker", async (item?: { system: Provider; nodeId: string; label: string }) => {
+    vscode.commands.registerCommand("acktos.connectFromPicker", async (item?: { system: Provider; nodeId: string; label: string }) => {
       if (!item) {
         return; // solo invocable desde el menú contextual del catálogo
       }
@@ -180,7 +268,7 @@ export function activate(ctx: vscode.ExtensionContext): void {
         const payload = res.payload as { nodes?: Array<{ id: string; kind: string; label?: string }> };
         const candidates = (payload.nodes ?? []).filter((n) => n.kind === "agent" && n.id !== nodeId);
         if (candidates.length === 0) {
-          void vscode.window.showWarningMessage("Hubara Studio: no hay agentes candidatos para conectar.");
+          void vscode.window.showWarningMessage("Acktos Studio: no hay agentes candidatos para conectar.");
           return;
         }
         const choice = await vscode.window.showQuickPick(
@@ -195,28 +283,29 @@ export function activate(ctx: vscode.ExtensionContext): void {
           catalogTree.refresh();
         }
       } catch (e) {
-        void vscode.window.showErrorMessage(`Hubara Studio: no pude listar candidatos: ${e}`);
+        void vscode.window.showErrorMessage(`Acktos Studio: no pude listar candidatos: ${e}`);
       }
     }),
-    vscode.commands.registerCommand("hubara.saveProduction", async () => {
+    vscode.commands.registerCommand("acktos.saveProduction", async () => {
       try {
         const res = await hub!.get("graphagents").request({ method: "POST", path: "/api/save", body: {} });
         const payload = res.payload as { ok?: boolean; errors?: string[] };
         if (payload.ok) {
-          void vscode.window.showInformationMessage("Hubara Studio: producción guardada (production.yaml).");
+          void vscode.window.showInformationMessage("Acktos Studio: producción guardada (production.yaml).");
         } else {
-          void vscode.window.showWarningMessage(`Hubara Studio: save rechazado — ${(payload.errors ?? []).join("; ")}`);
+          void vscode.window.showWarningMessage(`Acktos Studio: save rechazado — ${(payload.errors ?? []).join("; ")}`);
         }
       } catch (e) {
-        void vscode.window.showErrorMessage(`Hubara Studio: save falló: ${e}`);
+        void vscode.window.showErrorMessage(`Acktos Studio: save falló: ${e}`);
       } finally {
         productionStatusBar!.refresh();
       }
     }),
-    vscode.commands.registerCommand("hubara.publishProduction", async () => {
+    vscode.commands.registerCommand("acktos.publishProduction", async () => {
       // git commit + push + PR — acción con efectos reales fuera del editor,
-      // SIEMPRE confirmada antes de disparar (misma regla que cualquier
-      // acción de blast-radius compartido).
+      // SIEMPRE confirmada antes de disparar. El flujo (plan → APIs nativas de
+      // VS Code → fallback gh) es el MISMO que usa "Guardar & certificar"
+      // (publisher.ts:publishWithFallback) — ambos disparadores publican idéntico.
       const choice = await vscode.window.showWarningMessage(
         "¿Publicar producción? Esto hace commit + push + abre un PR (manifests/ + production.yaml).",
         { modal: true },
@@ -226,25 +315,37 @@ export function activate(ctx: vscode.ExtensionContext): void {
         return;
       }
       try {
-        const res = await hub!.get("graphagents").request({ method: "POST", path: "/api/publish", body: { push: true, pr: true } });
-        const payload = res.payload as { ok?: boolean; errors?: string[]; pr_url?: string; branch?: string };
-        if (payload.ok) {
-          const action = payload.pr_url ? await vscode.window.showInformationMessage(`Hubara Studio: publicado (${payload.branch}).`, "Abrir PR") : undefined;
-          if (action === "Abrir PR" && payload.pr_url) {
-            void vscode.env.openExternal(vscode.Uri.parse(payload.pr_url));
+        const outcome = await publishWithFallback(hub!, (line) => output.appendLine(`[publish] ${line}`));
+        if (outcome.ok) {
+          const action = outcome.prUrl
+            ? await vscode.window.showInformationMessage(`Acktos Studio: publicado (${outcome.branch}).`, "Abrir PR")
+            : undefined;
+          if (action === "Abrir PR" && outcome.prUrl) {
+            void vscode.env.openExternal(vscode.Uri.parse(outcome.prUrl));
           }
         } else {
-          void vscode.window.showErrorMessage(`Hubara Studio: publish falló — ${(payload.errors ?? []).join("; ")}`);
+          void vscode.window.showErrorMessage(`Acktos Studio: publish falló — ${outcome.errors.join("; ")}`);
         }
       } catch (e) {
-        void vscode.window.showErrorMessage(`Hubara Studio: publish falló: ${e}`);
+        void vscode.window.showErrorMessage(`Acktos Studio: publish falló: ${e}`);
       } finally {
         productionStatusBar!.refresh();
       }
     }),
+    vscode.commands.registerCommand("acktos.certifyAndPublish", () => {
+      // Corre la suite COMPLETA de GraphAgents en vivo (panel Ejecución) y, si todo
+      // pasa, crea rama + commit + push + PR. La confirmación la muestra el propio flujo.
+      GraphPanel.certifyActive();
+    }),
   );
 
-  output.appendLine("[extension] Hubara Studio activo");
+  output.appendLine("[extension] Acktos Studio activo");
+
+  // Self-update silencioso: si el repo (git pull) trae una versión más nueva
+  // de la extensión, se re-empaqueta e instala sola — el VSIX sideloaded no
+  // recibe el Auto Update del Marketplace. Fire-and-forget: no frena la
+  // activación; los errores van al output channel.
+  void selfUpdate(ctx, output, false).catch((e) => output.appendLine(`[self-update] ${e}`));
 }
 
 export function deactivate(): void {
@@ -278,10 +379,10 @@ function registerCaseCommand(
       const res = await hub!.get("graphagents").request({ method: "POST", path: apiPath, body: { case: caseId } });
       const payload = res.payload as Record<string, unknown> & { error?: string };
       if (!onResponse(res, payload, caseId, title)) {
-        void vscode.window.showErrorMessage(`Hubara Studio: ${verb} '${title}' — ${payload.error ?? `status ${res.status}`}`);
+        void vscode.window.showErrorMessage(`Acktos Studio: ${verb} '${title}' — ${payload.error ?? `status ${res.status}`}`);
       }
     } catch (e) {
-      void vscode.window.showErrorMessage(`Hubara Studio: ${verb} '${title}' falló: ${e}`);
+      void vscode.window.showErrorMessage(`Acktos Studio: ${verb} '${title}' falló: ${e}`);
     }
   });
 }
@@ -318,6 +419,8 @@ function buildBridges(out: vscode.OutputChannel): Record<Provider, PythonBridge>
     label: "GraphAgents",
     command: [cfg.gaPython, "-m", "viewer.bridge"],
     cwd: cfg.gaCwd,
+    // AGENTSPAN_SERVER_URL / LITELLM_PROXY_URL etc — infra local o AWS por settings.
+    env: cfg.gaEnv,
   };
   const systemmap: BridgeSpec = {
     label: "System Map",

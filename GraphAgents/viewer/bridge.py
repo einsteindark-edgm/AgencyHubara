@@ -1,4 +1,4 @@
-"""Puente stdio JSON-lines para la extensión de VS Code (Hubara Studio).
+"""Puente stdio JSON-lines para la extensión de VS Code (Acktos Studio).
 
 NO levanta un servidor HTTP. Lee requests JSON (una línea = un request) por
 stdin y responde por stdout (una línea = una respuesta), delegando en el MISMO

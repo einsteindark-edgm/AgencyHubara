@@ -238,6 +238,23 @@ class MedusaOrderCommand:
 
         current_metadata: dict[str, Any] = current_data.get("metadata") or {}
 
+        # Guard PM-005: `build_schedule_patch` NO transiciona en stages
+        # avanzados pero SÍ aplicaría la fecha ("el caller debe validar
+        # antes") — sin este check, re-agendar una orden ready/shipping/
+        # delivered/cancelled pisaba `hubara_scheduled_delivery_iso` en
+        # silencio y disparaba la cascada ETA con un stage incoherente.
+        current_stage = read_stage(current_metadata)
+        if current_stage not in ("new", "preparing"):
+            return OrderCommandResult(
+                success=False,
+                order_id=command.order_id,
+                current_stage=current_stage,
+                error_detail=(
+                    f"invalid_state: el pedido está en etapa '{current_stage}' "
+                    "— solo se puede agendar/reagendar en 'new' o 'preparing'."
+                ),
+            )
+
         # Build el patch DESDE la metadata actual.
         try:
             patch = build_schedule_patch(

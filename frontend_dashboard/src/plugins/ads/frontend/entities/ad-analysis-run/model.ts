@@ -19,7 +19,9 @@ export type RunStatus =
 export interface AgentOption {
   id: string;
   label: string;
-  /** JSON de ejemplo que se inyecta en el textarea al elegir el agente. */
+  /** Qué análisis hace este agente — se muestra bajo el selector. */
+  description: string | null;
+  /** JSON de ejemplo (fallback del textarea cuando Meta no está conectado). */
   exampleInput: unknown;
 }
 
@@ -46,12 +48,41 @@ export interface RunRecord {
   runId: string;
   agent: string;
   input: unknown;
+  /** Fecha del análisis (historial versionado) — null en records legacy. */
+  createdAtMs: number | null;
+  /** Campaña activa al disparar (el historial es por campaña) — null legacy. */
+  campaignId: string | null;
   status: RunStatus;
   events: RunEvent[];
   result?: unknown;
   awaiting?: unknown;
   error?: unknown;
   executionId?: string;
+}
+
+/**
+ * El reporte HUMANO del análisis — el result proyectado al contrato del
+ * reporter (`_projected_from: ctwa-report`): markdown renderizable + verdict.
+ */
+export interface AnalysisReport {
+  markdown: string;
+  verdict: string | null;
+  qaPassed: boolean | null;
+}
+
+/**
+ * Extrae el reporte legible de un `result`. `null` si el result no es la
+ * proyección (records legacy / podados) — la UI cae al JSON crudo.
+ */
+export function analysisReport(result: unknown): AnalysisReport | null {
+  if (typeof result !== "object" || result === null) return null;
+  const r = result as Record<string, unknown>;
+  if (typeof r.markdown !== "string" || r.markdown.trim() === "") return null;
+  return {
+    markdown: r.markdown,
+    verdict: typeof r.verdict === "string" ? r.verdict : null,
+    qaPassed: typeof r.qa_passed === "boolean" ? r.qa_passed : null,
+  };
 }
 
 /** Estados terminales — el stream ya no va a empujar más cambios. */

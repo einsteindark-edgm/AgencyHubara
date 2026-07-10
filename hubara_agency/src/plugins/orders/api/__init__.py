@@ -341,6 +341,12 @@ async def transition_order_stage(
       * `note` (optional)
       * `force` (optional bool, default False) — bypassa DAG. Usar solo
         para correcciones explícitas (UI debe pedir confirm dialog).
+      * `by` (optional, default "human") — atribución en el stage history.
+      * `notify_customer` (optional bool, default True) — con `false` NO se
+        dispara la cascada ETA. Lo usa el agente order-sentinel: la transición
+        se infirió de la conversación humana, el cliente YA fue avisado por
+        chat y la notificación ETA duplicaría el mensaje. NO gatear por tag
+        HUMANO (L-6: toda venta exitosa termina en HUMANO — apagaría todo).
 
     Response shape igual que `/schedule`. `success=False` con
     `error_detail` que empieza con `invalid_transition:` cuando el
@@ -362,13 +368,18 @@ async def transition_order_stage(
         if isinstance(body.get("note"), str)
         else None,
         force=bool(body.get("force", False)),
+        by=body.get("by") if isinstance(body.get("by"), str) else "human",
     )
     port = get_order_command_port()
     result = await port.transition_stage(cmd)
     # Cada transición de stage gatilla una notificación del Agente ETA. El
     # dispatcher matchea por `to_stage`; stages sin transición declarada (ej.
     # `new`) caen en no-match → no-op. Dedup vive en el workflow ETA.
-    if result.success and result.current_stage:
+    if (
+        result.success
+        and result.current_stage
+        and body.get("notify_customer", True) is not False
+    ):
         _spawn_emit(order_id, result.current_stage)
     if result.success:
         _publish_orders_changed(order_id)

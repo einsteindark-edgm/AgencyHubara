@@ -114,7 +114,9 @@ export function AdsFunnel({ campaign }: Props) {
         <span className="ads-card-meta">
           {fmtPct(overallConv, hasMeta ? 3 : 1)}{" "}
           {hasMeta ? "conversión total" : "iniciados → ganados"} ·{" "}
-          {fmtN(totalConvos)} chats
+          {fmtN(totalConvos)} chats ·{" "}
+          <span style={{ color: "var(--red, #e5484d)" }}>−N</span> = caen entre
+          etapas
         </span>
       </header>
       <div className="funnel">
@@ -155,9 +157,9 @@ export function AdsFunnel({ campaign }: Props) {
               {next && (
                 <div
                   className="fn-drop"
-                  title={`Caen ${fmtN(s.value - next.value)}`}
+                  title={`${fmtN(s.value - next.value)} de "${s.label}" no pasan a "${next.label}" — la caída entre etapas`}
                 >
-                  <span>−{fmtN(s.value - next.value)}</span>
+                  <span>−{fmtN(s.value - next.value)} caen</span>
                 </div>
               )}
             </div>

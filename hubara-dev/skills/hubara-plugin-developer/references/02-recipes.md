@@ -13,6 +13,7 @@
 | Agregar un campo al manifest | §4.5 | las 3 patas: schema + código que lo consume + check de conformidad |
 | Extraer/mover código entre plugins | §4.6 | checklist PM-1..PM-13 de `PLUGIN_CONTRACT.md` |
 | Drenar un import `src.platform.*` al SDK | §4.7 | superficie por kit + migrar + regenerar ratchet P-28 + las 3 patas (ej. dashboardkit) |
+| Integrar un plugin con GraphAgents (cross-sistema) | §abajo | adaptador HTTP por execution-id + **declarar la costura en `vscode-hubara/seams.yaml`** |
 
 ## El atajo
 
@@ -23,6 +24,35 @@ Para un plugin NUEVO, además existe el scaffolder del SDK que **nace C2**:
 `cd hubara_agency && uv run python -m src.sdk.cli create plugin <id> --archetype <a>`
 (genera manifest + api delgada + dominio puro + el archivo TCK). Ver
 `05-sdk-surface.md`.
+
+## Integración cross-sistema (plugin ↔ GraphAgents)
+
+El contacto entre las dos arquitecturas es SIEMPRE un adaptador HTTP en tu
+plugin que habla con el runtime de AgentSpan por `execution-id` (caso vivo:
+`src/plugins/ads/runs/conductor.py` → pod `agent:ads-analytics`). NUNCA un
+import cruzado.
+
+Al cerrar la integración, **declarás la costura en `vscode-hubara/seams.yaml`**
+(raíz del monorepo). No se auto-detecta: Acktos Studio dibuja el workspace con
+las costuras de ese archivo — sin la entrada, la conexión es invisible en el
+mapa (y en la vista colapsada, donde cada costura aparece como sub-caja del
+sistema conectada al subsistema real del otro lado). Formato — ids NAMESPACED
+(`hub:` = nodos del system map: `plugin:/api:/worker:…`; `ga:` = nodos del
+catálogo GraphAgents: `agent:/tool:…`):
+
+```yaml
+seams:
+  - id: <nombre-de-la-integracion>
+    from: hub:plugin:<tu-plugin>
+    to: ga:agent:<agente>
+    label: "<qué es (archivo que la implementa)>"   # citar código VIVO, no aspiracional
+    kind: launches
+```
+
+Una costura cuyo from/to no resuelve contra los grafos actuales se reporta
+como "rota" en el canvas — no rompe nada, pero delata drift. Verificá que los
+ids existen: el lado hub sale de `GET /api/graph` del system map bridge, el
+lado ga del catálogo (`agent:<id>` del manifest).
 
 ---
 Fuente canónica: `ARCHITECTURE_FINAL_fable.md §4`. Si difiere del código vivo,

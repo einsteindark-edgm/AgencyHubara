@@ -89,6 +89,28 @@ async def _forward_patch(
     )
 
 
+@router.get("/order-actions/{order_id}")
+async def get_order_for_chat(
+    request: Request,
+    order_id: str = Path(..., min_length=1, max_length=200),
+) -> dict[str, Any]:
+    """Detalle del pedido vía el read-side del contrato order@v1.
+
+    El canvas de pago lo usa para saber si el pedido YA tiene fecha de entrega
+    asignada (`summary.due_iso != null`, escrita por "Asignar fecha" o por el
+    tablero de orders) — en ese caso "Confirmar pago" salta el paso de agendar
+    y NO pisa la fecha del operador.
+    """
+    return await castkit.forward(
+        request,
+        "GET",
+        f"/api/orders/orders/{order_id}",
+        base_url=_orders_base(),
+        timeout=_timeout_s(),
+        cast_label=_CAST_LABEL,
+    )
+
+
 @router.patch("/order-actions/{order_id}/schedule")
 async def schedule_order_for_chat(
     request: Request,

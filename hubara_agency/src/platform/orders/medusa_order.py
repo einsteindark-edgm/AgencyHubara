@@ -161,6 +161,7 @@ class MedusaOrderRegistration:
         shipping_cop: int,
         total_cop: int,
         currency: str = "COP",
+        attribution: dict[str, Any] | None = None,
     ) -> OrderRegistrationResult:
         # Premortem C1: wrap ALL the work in a single wait_for to bound the
         # worst-case latency at ~45s. The activity heartbeat (every 10s in
@@ -177,6 +178,7 @@ class MedusaOrderRegistration:
                     shipping_cop=shipping_cop,
                     total_cop=total_cop,
                     currency=currency,
+                    attribution=attribution,
                 ),
                 timeout=_REGISTER_ORDER_TIMEOUT_S,
             )
@@ -207,6 +209,7 @@ class MedusaOrderRegistration:
         shipping_cop: int,
         total_cop: int,
         currency: str = "COP",
+        attribution: dict[str, Any] | None = None,
     ) -> OrderRegistrationResult:
         log.info(
             "MedusaOrderRegistration.register_order start",
@@ -287,6 +290,7 @@ class MedusaOrderRegistration:
                 variant_mismatches=variant_mismatches,
                 idempotency_key=idempotency_key,
                 fingerprint=fingerprint,
+                attribution=attribution,
             )
 
             # 5) POST /admin/draft-orders.
@@ -690,6 +694,7 @@ class MedusaOrderRegistration:
         variant_mismatches: list[dict[str, Any]],
         idempotency_key: str,
         fingerprint: str,
+        attribution: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Build the POST /admin/draft-orders payload per OpenAPI spec."""
         # shipping_address: country_code en lowercase per spec.
@@ -730,6 +735,11 @@ class MedusaOrderRegistration:
         # Medusa metadata. Each entry lists requested label + selected variant.
         if variant_mismatches:
             metadata["variant_mismatches"] = variant_mismatches
+        # Atribución CTWA (join venta↔campaña, 2026-07-09): el ad id del
+        # referral de la sesión. Solo keys con valor — ausencia = venta directa
+        # (los joins/backfill distinguen por presencia, no por null).
+        if attribution:
+            metadata.update({k: v for k, v in attribution.items() if v})
 
         return {
             "sales_channel_id": self._settings.sales_channel_id,

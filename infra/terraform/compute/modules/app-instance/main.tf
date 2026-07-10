@@ -97,6 +97,20 @@ data "aws_iam_policy_document" "ssm_read" {
     actions   = ["kms:Decrypt"]
     resources = ["*"]
   }
+  # El plugin `ads` guarda el token OAuth de Meta EN RUNTIME como SecureString en
+  # /hubara/<tenant>/meta/oauth (MetaTokenStorePort → SsmTokenStore). El instance
+  # profile por default SOLO lee SSM; estas statements le dan WRITE scopeado a
+  # `meta/*` (no a los demás secretos del tenant) + el Encrypt del SecureString.
+  statement {
+    sid       = "WriteMetaToken"
+    actions   = ["ssm:PutParameter", "ssm:DeleteParameter"]
+    resources = ["arn:aws:ssm:*:*:parameter/hubara/${var.tenant}/meta/*"]
+  }
+  statement {
+    sid       = "EncryptMetaToken"
+    actions   = ["kms:Encrypt", "kms:GenerateDataKey"]
+    resources = ["*"]
+  }
 }
 
 resource "aws_iam_role_policy" "ssm_read" {
@@ -130,9 +144,12 @@ data "aws_iam_policy_document" "wake_graphagents" {
   }
   statement {
     # SSM SendCommand/GetCommandInvocation: despachar el run a la box y leer el
-    # resultado de la invocación. Sin tag-scope a nivel ARN del documento.
+    # resultado de la invocación. DescribeInstanceInformation: esperar a que el
+    # AGENTE SSM de la box esté Online tras el arranque frío del autostop —
+    # EC2 `running` no alcanza y el send_command prematuro muere con
+    # InvalidInstanceId (PR #141). Es read-only y NO soporta resource-scope.
     sid       = "DispatchViaSSM"
-    actions   = ["ssm:SendCommand", "ssm:GetCommandInvocation"]
+    actions   = ["ssm:SendCommand", "ssm:GetCommandInvocation", "ssm:DescribeInstanceInformation"]
     resources = ["*"]
   }
 }
@@ -180,6 +197,23 @@ resource "aws_instance" "app" {
 
   metadata_options {
     http_tokens = "required" # IMDSv2 obligatorio
+  }
+
+  # Incidente 2026-07-08: un AMI nuevo en el data source `most_recent` hizo que
+  # un apply rutinario REEMPLAZARA la caja — y el vault (root EBS) se destruyó
+  # con ella. Cinturón además del pin en tfvars: aunque el AMI resuelto cambie,
+  # Terraform NO propone replacement. Upgrade de AMI = `-replace` explícito.
+  lifecycle {
+    ignore_changes = [ami]
+  }
+
+  # Volume tags: el DLM (backup.tf del root) snapshotea diario por este tag —
+  # acá vive el vault (sesiones WhatsApp + catálogo), el único estado de
+  # negocio que no se puede reconstruir de una fuente externa.
+  volume_tags = {
+    Name   = "agencyhubara-${var.tenant}-app-root"
+    Tenant = var.tenant
+    Backup = "daily"
   }
 
   tags = {

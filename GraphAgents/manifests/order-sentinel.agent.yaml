@@ -1,0 +1,36 @@
+# Agente de catálogo (archetype: analyzer). Order Sentinel: lee las conversaciones
+# WhatsApp escaladas a HUMANO con orden vinculada (el snapshot lo deposita hubara —
+# el agente NO pega red, G-PORT) y emite intents de transición de estado del pedido.
+# La clasificación la hace el nodo LLM marcado por el port `llm` (temperature=0,
+# structured output); los guardrails son deterministas (nodo plan puro): stages
+# permitidos sin `cancelled`, forward-only adyacente en el DAG, solo confidence
+# high, idempotencia del pago, dedup por orden. El output del run ES la lista de
+# intents (cero tools outward — G-DUR sin sujeto); hubara la ejecuta re-validando
+# contra el DAG real del API de orders con notify_customer=false (el humano ya
+# avisó por chat — la cascada ETA duplicaría el mensaje).
+# Referenciable por agent://order-sentinel@1.
+name: order-sentinel
+description: Analiza conversaciones en tag HUMANO con orden vinculada y emite intents de cambio de estado del pedido (confirm_payment / transition forward-only) clasificados por LLM bajo guardrails deterministas.
+archetype: analyzer
+certification: C2
+
+capability: graphs.order_sentinel:build
+
+# ext (GraphAgents): el contrato I/O DECLARADO (G-CONTRACT) — inputs = lo que run()
+# exige del estado; outputs = las claves que emite (verificado contra
+# graphs/order_sentinel.py + su golden).
+contract:
+  inputs:
+    payload: {type: object, required: true, description: "snapshot que deposita hubara: {schema_version, now_ms, conversations: [{session_id, order_id, current_stage, payment_confirmed, messages: [{who: customer|human_operator|bot, text, at_ms, has_media}]}]}"}
+  outputs:
+    result: {type: object, description: "{schema_version, snapshot_now_ms, dispatch: [order_stage_intent], suppressed: [{session_id, order_id, reason}], llm_errors: [{session_id, error}]}"}
+
+exposes_as_tool: false
+
+tools: []
+
+# G-PORT: la clasificación (completion del LLM) entra SOLO por el port del
+# ConnectorKit. FixtureLLM en golden/replay (determinista, CASE-PORT), LiteLLMProxy
+# (deepseek vía LITELLM_PROXY_URL) en el durable real.
+consumes:
+  - llm

@@ -1,7 +1,10 @@
-"""Backend VIVO del explorer — **stdlib `http.server`, cero deps nuevas**.
+"""La API del viewer — **stdlib `http.server`, cero deps nuevas**.
 
-Sirve el visor estático (`index.html`) y una API JSON mínima que lee el registry
-en vivo (cada request re-proyecta el sistema; editás un manifest y refrescás):
+El consumidor es **Acktos Studio** (la extensión de VS Code en `vscode-hubara/`),
+que habla con `api_route()` vía el puente stdio `viewer/bridge.py`; este server
+HTTP expone la MISMA función para uso standalone/Docker. (El viejo visor web
+`index.html` se eliminó — la extensión lo reemplaza.) La API lee el registry
+en vivo — cada request re-proyecta el sistema; editás un manifest y se refleja:
 
     GET  /api/graph          -> el grafo del sistema {nodes, edges} (sdk.graph)
     GET  /api/health         -> {ok: true}
@@ -18,14 +21,20 @@ en vivo (cada request re-proyecta el sistema; editás un manifest y refrescás):
                                       "binding"|"inputs": {...}?}  (sin binding = modo informativo)
     POST /api/connect        -> valida Y persiste la conexión en el manifest YAML (con rollback)
     POST /api/disconnect     -> remueve la relación del manifest  body: {source, target, kind}
+    POST /api/delete-node    -> borra un nodo ENTERO (tool o agente) + cascade-desconecta a
+                               quienes lo usan  body: {"node_id": "tool:x"|"agent:y", "cascade": bool?}
+                               (sin cascade y con dependientes: 200 + needs_confirmation + lista)
     GET  /api/production-status -> {saved, dirty, snapshot} — ¿el wiring matchea lo bendecido?
     POST /api/save           -> 'guardar producción': checks de TODO el sistema + snapshot
                                (production.yaml, raíz del subsistema); 422 si algo está roto
+    GET  /api/publish-plan   -> el PLAN de publicación SIN efectos (rama, base, paths, título,
+                               body del PR) — Acktos Studio lo ejecuta con las APIs nativas de
+                               VS Code (git + GitHub); 422 si el snapshot no está al día
     POST /api/publish        -> 'publicar': despliegue del wiring bendecido — commit quirúrgico
                                (manifests/ + production.yaml) + push + PR (gh); exige save al día
                                body: {"push": bool?, "pr": bool?} (default true)
 
-Por qué stdlib y no FastAPI: el explorer es read-mostly + un endpoint de run; con
+Por qué stdlib y no FastAPI: la API es read-mostly + un endpoint de run; con
 la stdlib corre en la imagen slim sin sincronizar deps pesadas, igual que el
 `LocalRuntime`. Si crece (auth, websockets) se hace el swap — el core ruteable
 (`api_route`) ya está aislado del transporte.
@@ -41,7 +50,6 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 GA_ROOT = Path(__file__).resolve().parent.parent
-VIEWER = Path(__file__).resolve().parent
 
 # que `import sdk` resuelva tanto con `-m viewer.server` como con `python viewer/server.py`
 if str(GA_ROOT) not in sys.path:
@@ -173,6 +181,41 @@ def replay_case_route(ga_root: Path, case_id: str) -> tuple[int, dict]:
     }
 
 
+def run_local_route(ga_root: Path, case_id: str) -> tuple[int, dict]:
+    """La ejecución SENCILLA: corre el caso EN PROCESO con sus fixtures (ports del caso, cero
+    AgentSpan/Conductor) y devuelve TODO lo que el detalle de ejecución necesita — los steps del
+    plan, el I/O por-tool reconstruido, el acc después de cada nodo y el output final del pod.
+    Determinista (G-DET): mismo `run()` por nodo que el durable, con los vendors reemplazados por
+    los Fixtures del caso. Es el camino sin infraestructura (local hoy, AWS mañana: el durable es
+    OPCIONAL para probar un flujo)."""
+    from sdk.case_model import discover_cases, resolve
+    from sdk.graph import execution_plan
+    from sdk.replay import _target_node, build_ports
+
+    case = next((c for c in discover_cases(ga_root) if c.id == case_id), None)
+    if case is None:
+        return 404, {"error": f"no existe el caso '{case_id}'"}
+    if case.kind == "tool":
+        return 422, {"error": f"'{case.target}' es un tool — corré '▶ Replay' (compara contra su golden); "
+                     "la ejecución local es para agentes/flows."}
+    try:
+        import sdk.tooltrace as tooltrace  # via módulo: monkeypatcheable en tests (L-19)
+
+        node = _target_node(case, ga_root)
+        seed = resolve(case.seed, ga_root)
+        res = tooltrace.replay_flow_with_trace(node, ga_root, seed, ports=build_ports(case, ga_root))
+        plan = execution_plan(node, ga_root)
+    except Exception as e:  # noqa: BLE001 — capability/loader roto: degradá, la UI nunca crashea
+        return 422, {"error": f"la ejecución local del caso '{case_id}' falló: {e}", "case": case_id}
+    return 200, {
+        "case": case.id, "target": case.target, "title": case.title,
+        "agent": case.target_id, "strategy": plan.get("strategy"), "seed": seed,
+        "steps": plan.get("steps", []), "output": res["output"],
+        "node_traces": res["node_traces"], "node_accs": res.get("node_accs", {}),
+        "runtime": "local",
+    }
+
+
 def _durable_ports() -> dict:
     """Los vendors REALES que el durable inyecta a los miembros que `consumes:` un port. Hoy: el
     `llm` → `LiteLLMProxy` (deepseek-v4-flash vía el proxy LiteLLM del central). Es LAZY — solo pega
@@ -182,10 +225,11 @@ def _durable_ports() -> dict:
     si no el nodo pega a localhost y revienta con `[Errno 99]` (L-26). Si el proxy está caído/mal
     configurado, el reporte se emite IGUAL (G-DET) y la narrativa degrada VISIBLE (marcador + el error
     en el trace) — honesto, no silencioso, no crashea el nodo. (Meta sigue sin vendor real — G2 — su
-    port se rechaza.)"""
-    from sdk.connectorkit.ports import LiteLLMProxy
+    port se rechaza.) Fuente ÚNICA: `durable_vendors()` del ConnectorKit (la comparte el CLI
+    `start` — el buzón SSM); dos copias divergirían."""
+    from sdk.connectorkit.ports import durable_vendors
 
-    return {"llm": LiteLLMProxy()}
+    return durable_vendors()
 
 
 def _start_durable(ga_root: Path, m, input_dict: dict) -> str:
@@ -401,6 +445,13 @@ def api_route(method: str, path: str, params: dict, body: dict | None, ga_root: 
         if not case_id:
             return 400, {"error": "falta 'case' en el body"}
         return replay_case_route(ga_root, case_id)
+    if method == "POST" and path == "/api/run-local":
+        # la ejecución SENCILLA en proceso (fixtures del caso, sin AgentSpan) — ver run_local_route.
+        body = body or {}
+        case_id = body.get("case")
+        if not case_id:
+            return 400, {"error": "falta 'case' en el body"}
+        return run_local_route(ga_root, case_id)
     if method == "POST" and path == "/api/run-durable":
         # corre el caso en el runtime DURABLE (AgentSpan) → execution-id para seguir el trace
         # nodo-por-nodo. A diferencia de /api/replay (en proceso), submitea a Conductor (:6767).
@@ -424,6 +475,18 @@ def api_route(method: str, path: str, params: dict, body: dict | None, ga_root: 
         except Exception as e:  # noqa: BLE001 — manifest ilegible / IO: degradá, la UI nunca crashea
             return 422, {"ok": False, "errors": [f"el save falló: {e}"], "snapshot": None}
         return (200 if res["ok"] else 422), res
+    if method == "GET" and path == "/api/publish-plan":
+        # el PLAN de publicación SIN efectos: rama/paths/mensaje/PR para que Acktos Studio lo
+        # ejecute con las APIs nativas de VS Code (git + GitHub, sin gh). No muta nada.
+        from sdk.production import plan_publication
+
+        try:
+            res = plan_publication(ga_root)
+        except Exception as e:  # noqa: BLE001 — IO/git inesperado: degradá, la UI nunca crashea
+            return 422, {"ok": False, "errors": [f"el plan falló: {e}"], "repo_root": None,
+                         "on_default": False, "branch": None, "base": "main", "paths": [],
+                         "title": None, "body": None, "fingerprint": None, "has_changes": False}
+        return (200 if res["ok"] else 422), res
     if method == "POST" and path == "/api/publish":
         # 'publicar producción': el DESPLIEGUE del wiring bendecido — commit quirúrgico
         # (manifests/ + production.yaml) → push → PR con `gh`. Exige snapshot al día
@@ -438,6 +501,26 @@ def api_route(method: str, path: str, params: dict, body: dict | None, ga_root: 
             return 422, {"ok": False, "errors": [f"publicar falló: {e}"], "steps": [],
                          "branch": None, "commit": None, "pr_url": None}
         return (200 if res["ok"] else 422), res
+    if method == "POST" and path == "/api/delete-node":
+        # borrar un nodo ENTERO del catálogo (tool o agente), no solo una relación:
+        # cascade-desconecta a quienes lo usan + borra el archivo/dir. Sin cascade y con
+        # dependientes devuelve 200 + needs_confirmation (la UI pide confirmar el blast radius).
+        # La certificación completa que corre "Guardar & certificar" es el gate real del PR.
+        from sdk.manifest_edit import delete_node
+
+        body = body or {}
+        node_id = body.get("node_id")
+        if not node_id:
+            return 400, {"error": "falta 'node_id' en el body (ids 'kind:id')"}
+        try:
+            res = delete_node(ga_root, node_id, cascade=bool(body.get("cascade", False)))
+        except Exception as e:  # noqa: BLE001 — IO/manifest inesperado: degradá, la UI nunca crashea
+            return 422, {"ok": False, "needs_confirmation": False, "dependents": [],
+                         "disconnected": [], "deleted": [], "warnings": [],
+                         "errors": [f"el borrado falló: {e}"]}
+        if res.get("ok") or res.get("needs_confirmation"):
+            return 200, res  # needs_confirmation NO es un error HTTP — es la lista para confirmar
+        return 422, res
     if method == "POST" and path in ("/api/validate-connection", "/api/connect", "/api/disconnect"):
         # el MODO EDICIÓN del explorer (estilo n8n): validar/conectar/desconectar relaciones
         # editando los manifests (sdk.manifest_edit). La verdad sigue siendo el YAML: validate
@@ -469,9 +552,6 @@ def api_route(method: str, path: str, params: dict, body: dict | None, ga_root: 
     return 404, {"error": f"no existe la ruta {method} {path}"}
 
 
-_STATIC = {"/": "index.html", "/index.html": "index.html"}
-
-
 class Handler(BaseHTTPRequestHandler):
     server_version = "GraphAgentsExplorer/0.1"
 
@@ -490,12 +570,9 @@ class Handler(BaseHTTPRequestHandler):
         if u.path.startswith("/api/"):
             status, payload = api_route("GET", u.path, parse_qs(u.query), None)
             return self._send(status, payload)
-        fname = _STATIC.get(u.path)
-        if fname:
-            f = VIEWER / fname
-            if f.exists():
-                return self._send(200, f.read_bytes(), "text/html; charset=utf-8")
-        self._send(404, {"error": f"no existe {u.path}"})
+        # sin visor estático: la UI es Acktos Studio (vscode-hubara/) — este
+        # server expone SOLO la API JSON.
+        self._send(404, {"error": f"no existe {u.path} — la UI es Acktos Studio; la API vive bajo /api/*"})
 
     def do_POST(self) -> None:
         u = urlparse(self.path)

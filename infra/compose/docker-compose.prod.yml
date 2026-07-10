@@ -77,6 +77,23 @@ services:
     volumes:
       - hubara-vault:/app/hubara_vault
 
+  worker-reengagement-cycle:
+    <<: *app
+    command: ["python", "-m", "src.plugins.reengagement.workers.cycle"]
+    volumes:
+      - hubara-vault:/app/hubara_vault
+
+  worker-order-sentinel-cycle:
+    <<: *app
+    command: ["python", "-m", "src.plugins.order_sentinel.workers.cycle"]
+    environment:
+      # El ejecutor/enriquecimiento hablan con la API por HTTP — el service
+      # en ESTE compose se llama `api` (el default del código es el nombre
+      # del compose local, PM-003: sin esto el ciclo era skipped_empty eterno).
+      HUBARA_API_BASE_URL: http://api:8000
+    volumes:
+      - hubara-vault:/app/hubara_vault
+
   worker-chats-sales_eval:
     <<: *app
     command: ["python", "-m", "src.plugins.chats.workers.sales_eval"]

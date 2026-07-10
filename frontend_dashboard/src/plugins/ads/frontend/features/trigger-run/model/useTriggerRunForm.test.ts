@@ -10,8 +10,13 @@ import {
 } from "./useTriggerRunForm";
 
 const AGENTS: AgentOption[] = [
-  { id: "greeter", label: "Greeter", exampleInput: { name: "ada" } },
-  { id: "roas-cac", label: "ROAS / CAC", exampleInput: { route: "roas-cac" } },
+  { id: "greeter", label: "Greeter", description: null, exampleInput: { name: "ada" } },
+  {
+    id: "roas-cac",
+    label: "ROAS / CAC",
+    description: null,
+    exampleInput: { route: "roas-cac" },
+  },
 ];
 
 describe("formatExampleInput", () => {
@@ -71,5 +76,52 @@ describe("useTriggerRunForm", () => {
     const { result } = renderHook(() => useTriggerRunForm(undefined));
     expect(result.current.agentId).toBeNull();
     expect(result.current.canRun).toBe(false);
+  });
+});
+
+/**
+ * Feedback operador 2026-07-09: "el JSON de ejemplo no aporta nada, debería
+ * enviarse la información que se trajo de Meta". Con Meta conectado, la entrada
+ * REAL (del endpoint analysis-input) es la que se precarga y se envía — el
+ * ejemplo queda solo como fallback sin conexión. Una edición manual nunca se pisa.
+ */
+describe("useTriggerRunForm — datos reales de Meta", () => {
+  const LIVE = { meta_insights: { data: [{ spend: "120000" }] } };
+
+  it("con datos reales disponibles ⇒ precarga los datos de Meta, no el ejemplo", () => {
+    const { result } = renderHook(() => useTriggerRunForm(AGENTS, LIVE));
+    expect(result.current.source).toBe("meta");
+    expect(result.current.draft).toBe(formatExampleInput(LIVE));
+    expect(result.current.parsed.value).toEqual(LIVE);
+  });
+
+  it("los datos reales llegan DESPUÉS ⇒ reemplazan el ejemplo precargado", () => {
+    const { result, rerender } = renderHook(
+      ({ live }: { live?: unknown }) => useTriggerRunForm(AGENTS, live),
+      { initialProps: { live: undefined as unknown } },
+    );
+    expect(result.current.source).toBe("example");
+    rerender({ live: LIVE });
+    expect(result.current.source).toBe("meta");
+    expect(result.current.draft).toBe(formatExampleInput(LIVE));
+  });
+
+  it("una edición manual NO se pisa cuando llegan los datos reales", () => {
+    const { result, rerender } = renderHook(
+      ({ live }: { live?: unknown }) => useTriggerRunForm(AGENTS, live),
+      { initialProps: { live: undefined as unknown } },
+    );
+    act(() => result.current.setDraft('{"mio":true}'));
+    rerender({ live: LIVE });
+    expect(result.current.source).toBe("edited");
+    expect(result.current.draft).toBe('{"mio":true}');
+  });
+
+  it("resetToLive vuelve a los datos reales tras una edición", () => {
+    const { result } = renderHook(() => useTriggerRunForm(AGENTS, LIVE));
+    act(() => result.current.setDraft('{"mio":true}'));
+    act(() => result.current.resetToLive());
+    expect(result.current.source).toBe("meta");
+    expect(result.current.draft).toBe(formatExampleInput(LIVE));
   });
 });

@@ -14,6 +14,9 @@ export interface NamespacedNode extends GraphNode {
   system: Provider;
   /** id tal cual lo devuelve el bridge, sin namespacing. */
   rawId: string;
+  /** presente cuando el nodo sobrevive DENTRO de un sistema colapsado por ser
+   * endpoint de una costura: sub-caja del nodo-cluster (subflow de React Flow). */
+  parentCluster?: string;
 }
 
 export interface NamespacedEdge extends GraphEdge {
@@ -119,6 +122,41 @@ export function egoGraph<N extends MinimalNode, E extends MinimalEdge>(
   return { nodes: resultNodes, edges: resultEdges };
 }
 
+/** El subgrafo de UN workflow: todo lo ALCANZABLE desde `rootId` siguiendo
+ * las aristas en su dirección (supervisor → agente → tool → port). A
+ * diferencia del ego-graph (BFS no dirigida a N saltos), esto es la clausura
+ * dirigida completa — "el flujo que de verdad cuelga de esta raíz". */
+export function reachableGraph<N extends MinimalNode, E extends MinimalEdge>(
+  nodes: N[],
+  edges: E[],
+  rootId: string,
+): { nodes: N[]; edges: E[] } {
+  const out = new Map<string, string[]>();
+  for (const e of edges) {
+    const list = out.get(e.source);
+    if (list) {
+      list.push(e.target);
+    } else {
+      out.set(e.source, [e.target]);
+    }
+  }
+  const visited = new Set<string>([rootId]);
+  const stack = [rootId];
+  while (stack.length > 0) {
+    const id = stack.pop()!;
+    for (const next of out.get(id) ?? []) {
+      if (!visited.has(next)) {
+        visited.add(next);
+        stack.push(next);
+      }
+    }
+  }
+  return {
+    nodes: nodes.filter((n) => visited.has(n.id)),
+    edges: edges.filter((e) => visited.has(e.source) && visited.has(e.target)),
+  };
+}
+
 export interface WorkspaceGraph {
   nodes: NamespacedNode[];
   /** edges internos de cada sistema (namespaced). */
@@ -174,26 +212,47 @@ export function systemOfNsId(nsId: string): Provider | null {
   return null;
 }
 
-/** Colapsa un cluster: sus nodos internos desaparecen, un único nodo-cluster
- * los reemplaza, y las costuras que apuntaban a un nodo interno se
- * re-enrutan al nodo-cluster (nunca quedan colgando). */
+/** Colapsa un cluster: sus nodos internos desaparecen y un nodo-cluster los
+ * reemplaza — EXCEPTO los endpoints de costuras, que sobreviven como
+ * sub-cajas DENTRO del cluster (`parentCluster`) para que la línea de cada
+ * costura siga apuntando al subsistema REAL que la origina/recibe, no a la
+ * caja grande anónima. Costuras hacia un endpoint que no sobrevivió (no
+ * debería pasar — mergeWorkspaceGraph solo resuelve contra nodos existentes)
+ * se re-enrutan al cluster como red de seguridad. */
 export function collapseCluster(
   graph: WorkspaceGraph,
   system: Provider,
   clusterNodeId: string,
 ): WorkspaceGraph {
-  const kept = graph.nodes.filter((n) => n.system !== system);
-  const collapsedCount = graph.nodes.length - kept.length;
+  const seamTouched = new Set<string>();
+  for (const e of graph.seamEdges) {
+    for (const endpoint of [e.nsSource, e.nsTarget]) {
+      if (systemOfNsId(endpoint) === system) {
+        seamTouched.add(endpoint);
+      }
+    }
+  }
+  const kept: NamespacedNode[] = [];
+  let hidden = 0;
+  for (const n of graph.nodes) {
+    if (n.system !== system) {
+      kept.push(n);
+    } else if (seamTouched.has(n.nsId)) {
+      kept.push({ ...n, parentCluster: clusterNodeId });
+    } else {
+      hidden++;
+    }
+  }
   const clusterNode: NamespacedNode = {
     id: clusterNodeId,
     nsId: clusterNodeId,
     rawId: clusterNodeId,
     system,
     kind: "cluster",
-    label: `${system === "graphagents" ? "GraphAgents" : "System Map"} (${collapsedCount})`,
-    collapsedCount,
+    label: `${system === "graphagents" ? "GraphAgents" : "System Map"} (${hidden + seamTouched.size})`,
+    collapsedCount: hidden,
   };
-  const reroute = (id: string) => (systemOfNsId(id) === system ? clusterNodeId : id);
+  const reroute = (id: string) => (systemOfNsId(id) === system && !seamTouched.has(id) ? clusterNodeId : id);
   const rerouteEdge = <E extends NamespacedEdge>(e: E): E => ({
     ...e,
     source: reroute(e.source),

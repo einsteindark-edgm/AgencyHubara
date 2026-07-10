@@ -55,6 +55,11 @@ services:
     environment:
       AGENTSPAN_SERVER_URL: http://agentspan:6767
       GRAPHAGENTS_RUNTIME: agentspan
+      # conductor-python defaultea multiprocessing 'spawn' (toda plataforma), pero
+      # agentspan registra los workers del grafo como closures → spawn no picklea
+      # (AttributeError: Can't pickle make_node_worker.<locals>.worker — caso real
+      # 2026-07-09, primer dispatch e2e). fork es el modo que la lib asume.
+      CONDUCTOR_MP_START_METHOD: fork
 
 volumes:
   postgres_data:   # estado durable de AgentSpan/Conductor. Candidato a EBS dedicado + snapshot.

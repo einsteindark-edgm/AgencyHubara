@@ -24,13 +24,16 @@ ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
 
 WORKDIR /app
 
-# Deps primero (capa cacheada): solo se reinstala si cambia pyproject.
-COPY pyproject.toml ./
-RUN uv sync --no-install-project
+# Deps primero (capa cacheada): solo se reinstala si cambia pyproject/lock.
+# --frozen: instalar EXACTAMENTE el uv.lock (incidente 2026-07-09: sin esto,
+# cada rebuild resolvía fresco y trajo conductor-python 1.5.0 con la regresión
+# de spawn #264 — el lock era decorativo).
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-install-project
 
 # El código (layout plano: sdk/ graphs/ tools/ manifests/ ...).
 COPY . .
-RUN uv sync
+RUN uv sync --frozen
 
 # El entrypoint vive en / (fuera de /app y /workspace: los bind-mounts no lo tapan).
 COPY docker-entrypoint.sh /docker-entrypoint.sh

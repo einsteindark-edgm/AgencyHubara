@@ -285,6 +285,22 @@ properties:
                 queue la leen del manifest via `src.platform.plugin_manifest.get_task_queue`.
                 Convención: prefijo "queue-" + nombre descriptivo.
               pattern: "^[a-z][a-z0-9-]*$"
+            schedule:
+              description: |
+                El/los Temporal Schedule(s) que disparan al worker (workflows
+                one-shot tipo ReengagementCycleWorkflow). Acepta UN objeto o
+                una LISTA (sales_eval crea dos: eval online + golden suite).
+                `id` = el id con que el sitio de creación lo registra en
+                Temporal — `scripts/create_*_schedule.py` (deploy-time) o la
+                constante `*SCHEDULE_ID` del propio worker (boot-time) —
+                drift guard bidireccional en
+                tests/platform/test_worker_schedule_field.py. `cadence` =
+                texto humano ("cada 45 min") que Acktos Studio muestra junto
+                al reloj de la cajita en el canvas.
+              oneOf:
+                - $ref: "#/definitions/worker_schedule"
+                - type: array
+                  items: { $ref: "#/definitions/worker_schedule" }
             workflow_classes:
               type: array
               description: |
@@ -567,3 +583,14 @@ properties:
       writes:
         type: array
         items: { type: string }
+
+definitions:
+  # Un Temporal Schedule que dispara al worker — ver el campo `schedule:` de
+  # los worker items (acepta un objeto o una lista de estos).
+  worker_schedule:
+    type: object
+    additionalProperties: false
+    required: [id]
+    properties:
+      id: { type: string }
+      cadence: { type: string }

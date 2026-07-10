@@ -108,11 +108,29 @@ def _load_manifests(manifests_dir: Path) -> tuple[list[tuple[str, dict[str, Any]
     return out, warnings
 
 
+def _worker_schedules(worker: dict[str, Any]) -> list[dict[str, Any]]:
+    """Los Temporal Schedules declarados del worker, normalizados para el
+    canvas: [{id, cadence}]. `schedule:` acepta UN objeto o una LISTA (caso
+    sales_eval: eval online + golden suite). Tolerante: toda entrada que no
+    sea dict se ignora — el mapa nunca truena por un manifest a medias."""
+    raw = worker.get("schedule")
+    entries = raw if isinstance(raw, list) else [raw]
+    return [
+        {"id": e.get("id"), "cadence": e.get("cadence")}
+        for e in entries
+        if isinstance(e, dict)
+    ]
+
+
 def _build_plugin_node(plugin_id: str, manifest: dict[str, Any]) -> Node:
     """Container node (grouping para React Flow `parentId`)."""
     has_frontend = "frontend" in manifest
     has_api = "api" in manifest
     has_agent = "agent" in manifest
+    workers = (manifest.get("agent") or {}).get("workers") or []
+    has_schedule = any(
+        _worker_schedules(w) for w in workers if isinstance(w, dict)
+    )
     return Node(
         id=f"plugin:{plugin_id}",
         kind="plugin",
@@ -125,6 +143,7 @@ def _build_plugin_node(plugin_id: str, manifest: dict[str, Any]) -> Node:
             "has_frontend": has_frontend,
             "has_api": has_api,
             "has_agent": has_agent,
+            "has_schedule": has_schedule,
             "completeness": _calculate_completeness(has_frontend, has_api, has_agent),
         },
     )
@@ -314,6 +333,7 @@ def _build_agent_nodes(plugin_id: str, manifest: dict[str, Any]) -> list[Node]:
                     "transitions": transitions_data,
                     "emits": emits_data,
                     "workflow_classes": workflow_classes_data,
+                    "schedules": _worker_schedules(worker),
                 },
             )
         )
@@ -631,6 +651,10 @@ def build_system_graph(
     #
     # Skipea el self-plugin `system_map` (su propio código contiene el regex
     # literal en docstrings — causaría falsos positivos en warnings).
+    # Un mismo par (source, target) puede aparecer en N call sites (dos rutas
+    # de la API que arrancan el mismo worker) — se emite UNA sola vez o los
+    # ids de edges salen duplicados (React Flow los dropea).
+    emitted_scan_pairs: set[tuple[str, str]] = set()
     for plugin_id in plugin_contributions:
         if plugin_id == "system_map":
             continue
@@ -713,6 +737,8 @@ def build_system_graph(
                 # — para sources tipo api_router, son siempre del scan (no del
                 # manifest, que es worker→worker).
                 code_pair = (source_id, target_id)
+                if code_pair in emitted_scan_pairs:
+                    continue  # otro call site del mismo par ya emitió el edge
                 if source_id.startswith("worker:") and code_pair in declared_invocations:
                     continue  # ya declarado en manifest, evita duplicado
 
@@ -725,6 +751,7 @@ def build_system_graph(
                         f"`workers[].invokes` — agregalo para SSoT"
                     )
 
+                emitted_scan_pairs.add(code_pair)
                 all_edges.append(
                     Edge(
                         id=f"e:{source_id}->scan->{target_id}",

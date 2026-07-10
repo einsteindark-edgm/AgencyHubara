@@ -25,6 +25,7 @@ comandos a mano desde `GraphAgents/`.
 | `cert` | `python3 -m pytest tests/conformance -q` | TCK por agente (cada agente instancia su check, niveles C0–C3) | 0 · 1 |
 | `tools` | `python3 -m sdk.cli certify-tool` + `python3 -m pytest tests/tools -q` | per-tool TCK: T-CONTRACT · T-DUR · G-AGNOSTIC + golden de la impl | 0 · 1 |
 | `graphs` | `python3 -m pytest tests/graphs -q` | golden-replay (G-DET: fixture → output exacto) | 0 · 1 |
+| `cases` | `python3 -m sdk.cli cases --check` | el catálogo de CASOS de ejecución (`fixtures/cases/*.case.yaml`): golden desactualizado · `$ref` roto · target inexistente · port sin fixture vendor. **Todo tool/agente/flujo nuevo cierra con su caso** (00-tdd-law §caso de ejecución) | 0 · 1 |
 | `integration` | `python3 -m pytest tests/integration -q` | el manifest compila a runnable y CORRE sobre el runtime port (+ recovery + backend del explorer) | 0 · 1 |
 | `viewer` | `python3 -m pytest tests/architecture/test_system_graph.py tests/integration/test_viewer_api.py -q` | el grafo del sistema (`sdk.graph`) + la API del explorer (`api_route` sin socket) | 0 · 1 |
 

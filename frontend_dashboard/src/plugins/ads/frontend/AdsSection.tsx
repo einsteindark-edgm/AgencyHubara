@@ -42,6 +42,8 @@ import { AdsStateDistribution } from "@plugins/ads/frontend/features/ads-state-d
 import { AdsDailyTrend } from "@plugins/ads/frontend/features/ads-daily-trend";
 import { AdsAttributedTable } from "@plugins/ads/frontend/features/ads-attributed-table";
 import { AdsInspector } from "@plugins/ads/frontend/features/ads-inspector";
+import { ConnectMeta } from "@plugins/ads/frontend/features/connect-meta";
+import { CampaignMetaKpis } from "@plugins/ads/frontend/features/campaign-meta-kpis";
 // Las 3 features del buzón de análisis con IA. FSD: la Page es el único punto que
 // las compone — `trigger-run` no importa a `run-result` ni a `hitl-decision`
 // (cross-feature prohibido).
@@ -108,9 +110,17 @@ export function AdsSection() {
     ) : undefined;
 
   if (!campaign) {
-    // Empty-state: aún sin campañas cargadas. Idéntico al patrón de eta-chat.
+    // Empty-state: aún sin campañas derivadas del vault. OJO: la conexión a
+    // Meta NO depende de que haya campañas — conectar es lo que llena los
+    // KPIs y muestra las campañas reales (incidente 2026-07-08: con el vault
+    // vacío, el early-return escondía el botón de login). El header con
+    // ConnectMeta + el panel de insights (se auto-oculta sin conexión) se
+    // montan igual; solo el cuerpo dependiente de campaña se reemplaza.
     return (
       <main className="ads-canvas">
+        <div className="flex items-center justify-between gap-2 px-4 pt-3">
+          <ConnectMeta />
+        </div>
         <div className="ads-empty">Sin campañas para mostrar.</div>
       </main>
     );
@@ -128,7 +138,10 @@ export function AdsSection() {
       <main className="ads-canvas">
         {/* Acción del canvas: abre el buzón de análisis con IA (modal propio,
             no diálogo nativo — regla #6). Visible arriba de todo. */}
-        <div className="flex items-center justify-end gap-2 px-4 pt-3">
+        <div className="flex items-center justify-between gap-2 px-4 pt-3">
+          {/* Conexión a Meta (Marketing API vía app propia): botón de login +
+              estado. Lo que esto autentica llena los KPIs de spend/clicks. */}
+          <ConnectMeta />
           <button
             type="button"
             className="inline-flex items-center gap-2 rounded-md bg-accent px-3 py-2 text-sm font-semibold text-accent-fg hover:opacity-90"
@@ -143,6 +156,10 @@ export function AdsSection() {
           selection={selection}
           onSelectionChange={setSelection}
         />
+        {/* KPIs Meta de LA CAMPAÑA SELECCIONADA (gasto/imp/clicks/conv/CPC/
+            costo-conv) — vienen del merge del endpoint de campañas, así que
+            respetan la ventana de fecha del header. Incluye pausar/activar. */}
+        <CampaignMetaKpis campaign={campaign} />
         <div className="ads-body">
           <AdsFunnel campaign={campaign} />
           <AdsStateDistribution campaign={campaign} />
@@ -158,7 +175,9 @@ export function AdsSection() {
               derecha. El page es el único que une las 3 features (cross-feature
               prohibido). */}
           <div className="flex min-h-0 shrink-0 overflow-y-auto border-r border-line">
-            <TriggerRun onRunStarted={setActiveRunId} />
+            {/* El run queda etiquetado con la campaña activa — el historial
+                del inspector es por campaña. */}
+            <TriggerRun onRunStarted={setActiveRunId} campaignId={campaign.id} />
           </div>
           <div className="flex min-h-0 flex-1 overflow-hidden">
             <RunResult runId={activeRunId} decisionSlot={decision} />

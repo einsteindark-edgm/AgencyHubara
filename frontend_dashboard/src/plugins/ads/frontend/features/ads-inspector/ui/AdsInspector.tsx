@@ -1,14 +1,12 @@
 /**
  * Inspector derecho de Ads: detalle de la campaña seleccionada — creativo del
- * anuncio (preview WhatsApp CTWA), métricas Meta (CTR/CPM/CPC/CAC), embudo
- * WhatsApp (tasas conversacionales) y sugerencias generadas por el agente IA
- * (mock — eventualmente vendrían de un job que analiza la performance).
+ * anuncio (thumbnail REAL vía Graph, o placeholder honesto), métricas Meta
+ * (CTR/CPM/CPC/CAC), embudo WhatsApp (tasas conversacionales) y el HISTORIAL
+ * VERSIONADO de análisis con IA (2026-07-09): cada corrida de "Analizar con
+ * IA" queda guardada con fecha, estado, snapshot de entrada y resultado —
+ * acá se listan, más nueva primero. Nada de sugerencias quemadas.
  *
- * Casi todos los campos derivados dependen de inputs del backend que aún no
- * se integran (Meta Ads API para impressions/clicks/spend, clasificador para
- * conversations counts, orders para avgTicket). Cuando un input requerido es
- * `null`, la celda muestra `<MissingField />`. Las sugerencias del agente IA
- * siguen siendo mock (no parte del scope inicial).
+ * Cuando un input requerido es `null`, la celda muestra `<MissingField />`.
  */
 
 import type { ReactNode } from "react";
@@ -17,7 +15,9 @@ import {
   totalConversations,
   type AdsCampaign,
 } from "@plugins/ads/frontend/entities/ads-campaign";
-import { Icon } from "@/shared/ui";
+import { analysisReport, useRuns } from "@plugins/ads/frontend/entities/ad-analysis-run";
+import { useMetaConnection } from "@plugins/ads/frontend/entities/meta-connection";
+import { Icon, Markdown } from "@/shared/ui";
 
 import {
   fmtDuration,
@@ -40,6 +40,8 @@ function nv<T>(value: T | null, fmtFn: (v: T) => ReactNode): ReactNode {
 
 export function AdsInspector({ campaign }: Props) {
   const c = campaign;
+  const { data: conn } = useMetaConnection();
+  const brandName = conn?.accountName ?? null;
   const total = totalConversations(c);
   const conv = c.conversations;
   const won = conv?.ganado ?? null;
@@ -99,15 +101,25 @@ export function AdsInspector({ campaign }: Props) {
 
         <StaticPanel title="Creativo del anuncio">
           <div className="ad-preview">
-            <div className="ad-preview-img">
-              <span>Imagen del anuncio</span>
-              <span className="ad-pi-sub">1080 × 1350 · vertical</span>
-            </div>
+            {c.creativeThumbnailUrl ? (
+              <img
+                src={c.creativeThumbnailUrl}
+                alt="Creativo del anuncio"
+                style={{ width: "100%", borderRadius: 8, display: "block" }}
+              />
+            ) : (
+              <div className="ad-preview-img">
+                <span>Vista previa no disponible</span>
+                <span className="ad-pi-sub">Meta no expone el creativo de este ad</span>
+              </div>
+            )}
             <div className="ad-preview-body">
               <div className="ad-pb-brand">
-                <span className="ad-pb-avatar">A</span>
+                <span className="ad-pb-avatar">
+                  {(brandName ?? "?").slice(0, 1).toUpperCase()}
+                </span>
                 <div>
-                  <div className="ad-pb-name">Aromas · Tienda</div>
+                  <div className="ad-pb-name">{brandName ?? <MissingField />}</div>
                   <div className="ad-pb-spons">
                     Patrocinado · <AdsIcon.meta />
                   </div>
@@ -116,10 +128,6 @@ export function AdsInspector({ campaign }: Props) {
               <div className="ad-pb-headline">
                 {c.creativeTitle ?? <MissingField withIcon />}
               </div>
-              <button className="ad-pb-cta">
-                <AdsIcon.wa />
-                Enviar mensaje
-              </button>
             </div>
           </div>
           <Row label="Plantilla apertura" mono>
@@ -129,10 +137,18 @@ export function AdsInspector({ campaign }: Props) {
             {c.metaCampaignId ?? <MissingField />}
           </Row>
           <Row label="Ad set">{c.adSet ?? <MissingField />}</Row>
-          <button className="insp-button full" style={{ marginTop: 8 }}>
-            <AdsIcon.ext />
-            Abrir en Meta Ads Manager
-          </button>
+          {c.metaCampaignId && (
+            <a
+              className="insp-button full"
+              style={{ marginTop: 8 }}
+              href={`https://adsmanager.facebook.com/adsmanager/manage/campaigns?selected_campaign_ids=${c.metaCampaignId}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              <AdsIcon.ext />
+              Abrir en Meta Ads Manager
+            </a>
+          )}
         </StaticPanel>
 
         <StaticPanel title="Métricas de Meta">
@@ -171,44 +187,10 @@ export function AdsInspector({ campaign }: Props) {
           <Row label="Costo LLM (total)">{nv(c.llmCostUsd, fmtUsd)}</Row>
         </StaticPanel>
 
-        <StaticPanel title="Sugerencias del agente IA">
-          {/* Mock — el job que las genera no es parte del scope inicial. */}
-          <div className="ads-tip">
-            <span
-              className="ads-tip-ico"
-              style={{
-                background: "var(--color-ok-soft)",
-                color: "var(--color-ok)",
-              }}
-            >
-              <AdsIcon.trend />
-            </span>
-            <div>
-              <b>ROAS sobre 3×</b>
-              <p>
-                Esta campaña convierte mejor que el promedio. Considera
-                aumentar 20% el presupuesto diario.
-              </p>
-            </div>
-          </div>
-          <div className="ads-tip">
-            <span
-              className="ads-tip-ico"
-              style={{
-                background: "var(--color-warn-soft)",
-                color: "var(--color-warn)",
-              }}
-            >
-              <AdsIcon.info />
-            </span>
-            <div>
-              <b>30% sin respuesta tras clic</b>
-              <p>
-                Prueba una plantilla de apertura más conversacional y reduce
-                el tiempo a 1ª respuesta del bot.
-              </p>
-            </div>
-          </div>
+        <StaticPanel title="Análisis IA · historial">
+          {/* Historial POR CAMPAÑA: solo las corridas disparadas mirando ESTA
+              campaña (feedback operador 2026-07-09). */}
+          <AnalysisHistory campaignId={c.id} />
         </StaticPanel>
       </div>
     </aside>
@@ -232,6 +214,123 @@ function StaticPanel({ title, children }: PanelProps) {
         <span className="ttl">{title}</span>
       </div>
       <div className="panel-c">{children}</div>
+    </div>
+  );
+}
+
+/* ── Historial versionado de análisis (2026-07-09) ─────────────────────────
+ * Cada corrida de "Analizar con IA" queda persistida (record del run) con su
+ * fecha, estado, snapshot de entrada y resultado. Acá se listan como versiones
+ * inmutables — comparar qué sugirió el agente con qué números había.
+ */
+
+const _STATUS_LABEL: Record<string, string> = {
+  pending: "pendiente",
+  running: "corriendo",
+  awaiting_approval: "esperando aprobación",
+  completed: "completado",
+  failed: "falló",
+};
+
+function _fmtRunDate(ms: number | null): string {
+  if (!ms) return "sin fecha";
+  return new Date(ms).toLocaleString("es-CO", {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function _resultText(result: unknown): string | null {
+  if (result == null) return null;
+  if (typeof result === "string") return result;
+  try {
+    return JSON.stringify(result, null, 2);
+  } catch {
+    return String(result);
+  }
+}
+
+function AnalysisHistory({ campaignId }: { campaignId: string }) {
+  const { data: runs = [], isLoading } = useRuns(campaignId);
+
+  if (isLoading) {
+    return (
+      <div style={{ fontSize: 12, color: "var(--fg-mute)", padding: "6px 0" }}>
+        Cargando historial…
+      </div>
+    );
+  }
+  if (runs.length === 0) {
+    return (
+      <div style={{ fontSize: 12, color: "var(--fg-mute)", padding: "6px 0" }}>
+        Sin análisis de esta campaña todavía — corré uno con «Analizar con IA»
+        y quedará guardado acá con fecha, números y sugerencias.
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {runs.map((r) => {
+        // El result proyectado del pod (markdown + verdict) se renderiza
+        // FORMATEADO para humanos; los legacy caen al JSON de siempre.
+        const report = analysisReport(r.result);
+        const text = report ? null : _resultText(r.result);
+        return (
+          <details
+            key={r.runId}
+            style={{
+              border: "1px solid var(--line)",
+              borderRadius: 8,
+              padding: "6px 8px",
+            }}
+          >
+            <summary style={{ cursor: "pointer", fontSize: 12, listStyle: "none" }}>
+              <b>{_fmtRunDate(r.createdAtMs)}</b>
+              {" · "}
+              <span
+                style={{
+                  color:
+                    r.status === "completed"
+                      ? "var(--green)"
+                      : r.status === "failed"
+                        ? "var(--red, #e5484d)"
+                        : "var(--fg-mute)",
+                }}
+              >
+                {_STATUS_LABEL[r.status] ?? r.status}
+              </span>
+              {report?.verdict && (
+                <span style={{ color: "var(--fg-mute)" }}>{" · "}{report.verdict}</span>
+              )}
+            </summary>
+            <div style={{ marginTop: 6, fontSize: 12 }}>
+              {report ? (
+                <div style={{ maxHeight: 320, overflow: "auto" }}>
+                  <Markdown>{report.markdown}</Markdown>
+                </div>
+              ) : text ? (
+                <pre
+                  style={{
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                    maxHeight: 220,
+                    overflow: "auto",
+                    margin: 0,
+                  }}
+                >
+                  {text}
+                </pre>
+              ) : (
+                <span style={{ color: "var(--fg-mute)" }}>
+                  Sin resultado {r.status === "failed" ? "(la corrida falló)" : "todavía"}.
+                </span>
+              )}
+            </div>
+          </details>
+        );
+      })}
     </div>
   );
 }

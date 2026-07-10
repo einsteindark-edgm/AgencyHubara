@@ -103,4 +103,5 @@ class OrderRegistrationPort(Protocol):
         shipping_cop: int,
         total_cop: int,
         currency: str = "COP",
+        attribution: dict[str, Any] | None = None,
     ) -> OrderRegistrationResult: ...

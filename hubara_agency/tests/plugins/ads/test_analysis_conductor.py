@@ -6,7 +6,7 @@ IN_PROGRESS, HITL) · completed (+ output desenvuelto) · failed. PURO (fixture 
 sin red), mismo borde HTTP que GraphAgents pero re-implementado del lado hubara (los
 subsistemas no comparten código — solo el contrato REST de Conductor).
 """
-from src.plugins.ads.runs import conductor
+from src.platform.graphagents import conductor
 
 
 def test_running_sin_human_task() -> None:

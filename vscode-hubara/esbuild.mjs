@@ -37,14 +37,23 @@ const webviewConfig = {
   },
 };
 
+// El panel nativo "Ejecución" (F10) — segundo webview, bundle propio (mucho
+// más chico: sin React Flow), mismo CSS compartido vía import de main.css.
+const execViewConfig = {
+  ...webviewConfig,
+  entryPoints: ["webview/src/exec/main.tsx"],
+  outfile: "dist/execview.js",
+};
+
 if (watch) {
-  const [ext, web] = await Promise.all([
+  const [ext, web, exec] = await Promise.all([
     context(extensionConfig),
     context(webviewConfig),
+    context(execViewConfig),
   ]);
-  await Promise.all([ext.watch(), web.watch()]);
+  await Promise.all([ext.watch(), web.watch(), exec.watch()]);
   console.log("[esbuild] watching…");
 } else {
-  await Promise.all([build(extensionConfig), build(webviewConfig)]);
+  await Promise.all([build(extensionConfig), build(webviewConfig), build(execViewConfig)]);
   console.log("[esbuild] build complete");
 }

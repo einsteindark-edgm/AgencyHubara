@@ -6,7 +6,7 @@ import { ResolvedCommand, runSuite, SuiteRunResult } from "./runner";
 import { LADO_LABEL, Lado, SuiteDef, SUITES } from "./suites";
 
 /**
- * TestController "Hubara Studio" — el panel de ejecución estilo Xcode (§2.5).
+ * TestController "Acktos Studio" — el panel de ejecución estilo Xcode (§2.5).
  * Árbol estático: 3 lados (GraphAgents / Hubara Backend / Frontend) → suites
  * (los "bundles atómicos", espejo 1:1 de los comandos de `/hubara-gates` y
  * `/graphagents-gates`) → casos (poblados lazy tras el primer run vía JUnit).
@@ -31,7 +31,7 @@ export class HubaraTestController implements vscode.Disposable {
     repoRoot: string,
     private readonly resolvePathFn: (value: string, root: string) => string,
   ) {
-    this.controller = vscode.tests.createTestController("hubaraStudio", "Hubara Studio");
+    this.controller = vscode.tests.createTestController("acktosStudio", "Acktos Studio");
     this.controller.refreshHandler = () => this.loadPlans();
     this.disposables.push(this.controller, this._onPlansChanged);
     this.resolveCommand = makeSuiteResolver(repoRoot, resolvePathFn);
@@ -51,7 +51,7 @@ export class HubaraTestController implements vscode.Disposable {
     return this._plans;
   }
 
-  /** La config de `hubara.*` cambió — reconstruir el resolvedor de comandos. */
+  /** La config de `acktos.*` cambió — reconstruir el resolvedor de comandos. */
   onConfigChanged(repoRoot: string): void {
     this.resolveCommand = makeSuiteResolver(repoRoot, this.resolvePathFn);
   }
@@ -99,14 +99,14 @@ export class HubaraTestController implements vscode.Disposable {
   async runPlanById(planId: string): Promise<void> {
     const plan = this._plans.find((p) => p.id === planId);
     if (!plan) {
-      void vscode.window.showWarningMessage(`Hubara Studio: el plan '${planId}' no existe (¿se borró el YAML?).`);
+      void vscode.window.showWarningMessage(`Acktos Studio: el plan '${planId}' no existe (¿se borró el YAML?).`);
       return;
     }
     const targets = suitesForPlan(plan, SUITES)
       .map((s) => this.suiteItems.get(s.id))
       .filter((x): x is vscode.TestItem => x !== undefined);
     if (targets.length === 0) {
-      void vscode.window.showWarningMessage(`Hubara Studio: el plan '${plan.name}' no matchea ninguna suite.`);
+      void vscode.window.showWarningMessage(`Acktos Studio: el plan '${plan.name}' no matchea ninguna suite.`);
       return;
     }
     const request = new vscode.TestRunRequest(targets);

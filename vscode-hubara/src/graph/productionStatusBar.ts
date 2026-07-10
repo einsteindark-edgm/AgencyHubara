@@ -9,7 +9,7 @@ interface ProductionStatus {
 }
 
 /** "¿está guardado?" — status bar item que pollea `/api/production-status`
- * (§F5). Click dispara `hubara.saveProduction`. Solo tiene sentido para
+ * (§F5). Click dispara `acktos.saveProduction`. Solo tiene sentido para
  * GraphAgents (System Map no tiene noción de producción/snapshot). */
 export class ProductionStatusBar implements vscode.Disposable {
   private readonly item: vscode.StatusBarItem;
@@ -17,7 +17,7 @@ export class ProductionStatusBar implements vscode.Disposable {
 
   constructor(private readonly bridges: BridgeHub) {
     this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 90);
-    this.item.command = "hubara.saveProduction";
+    this.item.command = "acktos.saveProduction";
     this.item.text = "$(loading~spin) GraphAgents";
     this.item.show();
     void this.poll();

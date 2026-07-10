@@ -33,6 +33,12 @@ agent:
     - name: reconcile
       module: src.plugins.orders.workers.reconcile
       task_queue: queue-orders-reconcile
+      # El barrido lo dispara un Temporal Schedule que el propio worker crea
+      # al bootear (_SCHEDULE_ID en workers/reconcile.py); Acktos Studio
+      # dibuja el reloj en la cajita a partir de esta declaración.
+      schedule:
+        id: order-reconciliation-schedule
+        cadence: cada 5 min
       # ── Orquestación declarativa (ADR-2026-05-20) — disparo del Agente ETA ──
       # La orders API emite `OrderStageChangedEvent` tras cada transición de
       # stage (PATCH .../schedule → preparing, PATCH .../stage, POST .../cancel).

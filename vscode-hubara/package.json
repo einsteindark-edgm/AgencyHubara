@@ -1,9 +1,9 @@
 {
-  "name": "hubara-studio",
-  "displayName": "Hubara Studio",
+  "name": "acktos-studio",
+  "displayName": "Acktos Studio",
   "description": "Grafos, certificaciones y ejecuciones de AgencyHubara + GraphAgents dentro de VS Code.",
-  "version": "0.0.1",
-  "publisher": "hubara",
+  "version": "0.0.5",
+  "publisher": "acktos",
   "private": true,
   "license": "UNLICENSED",
   "repository": {
@@ -24,223 +24,312 @@
   "contributes": {
     "commands": [
       {
-        "command": "hubara.openStudio",
-        "title": "Hubara: Open Graph",
-        "category": "Hubara Studio"
+        "command": "acktos.openStudio",
+        "title": "Acktos: Open Graph",
+        "category": "Acktos Studio"
       },
       {
-        "command": "hubara.openGraphAgents",
-        "title": "Hubara: Open GraphAgents Graph",
-        "category": "Hubara Studio"
+        "command": "acktos.openGraphAgents",
+        "title": "Acktos: Open GraphAgents Graph",
+        "category": "Acktos Studio"
       },
       {
-        "command": "hubara.openSystemMap",
-        "title": "Hubara: Open System Map",
-        "category": "Hubara Studio"
+        "command": "acktos.openSystemMap",
+        "title": "Acktos: Open System Map",
+        "category": "Acktos Studio"
       },
       {
-        "command": "hubara.restartBridges",
-        "title": "Hubara: Restart Python Bridges",
-        "category": "Hubara Studio"
+        "command": "acktos.restartBridges",
+        "title": "Acktos: Restart Python Bridges",
+        "category": "Acktos Studio"
       },
       {
-        "command": "hubara.refreshGraphs",
-        "title": "Hubara: Refresh Graphs",
-        "category": "Hubara Studio",
+        "command": "acktos.updateExtension",
+        "title": "Acktos: Buscar actualización de la extensión",
+        "category": "Acktos Studio"
+      },
+      {
+        "command": "acktos.refreshGraphs",
+        "title": "Acktos: Refresh Graphs",
+        "category": "Acktos Studio",
         "icon": "$(refresh)"
       },
       {
-        "command": "hubara.focusNode",
-        "title": "Hubara: Ver en grafo",
-        "category": "Hubara Studio"
+        "command": "acktos.focusNode",
+        "title": "Acktos: Ver en grafo",
+        "category": "Acktos Studio"
       },
       {
-        "command": "hubara.selectPlan",
-        "title": "Hubara: Select & Run Test Plan…",
-        "category": "Hubara Studio",
+        "command": "acktos.openWorkflow",
+        "title": "Acktos: Ver workflow completo",
+        "category": "Acktos Studio"
+      },
+      {
+        "command": "acktos.selectPlan",
+        "title": "Acktos: Select & Run Test Plan…",
+        "category": "Acktos Studio",
         "icon": "$(beaker)"
       },
       {
-        "command": "hubara.runActivePlan",
-        "title": "Hubara: Run Active Test Plan",
-        "category": "Hubara Studio"
+        "command": "acktos.runActivePlan",
+        "title": "Acktos: Run Active Test Plan",
+        "category": "Acktos Studio"
       },
       {
-        "command": "hubara.checkManifest",
-        "title": "Hubara: Check Manifests",
-        "category": "Hubara Studio",
+        "command": "acktos.checkManifest",
+        "title": "Acktos: Check Manifests",
+        "category": "Acktos Studio",
         "icon": "$(check)"
       },
       {
-        "command": "hubara.refreshRuns",
-        "title": "Hubara: Refresh Runs",
-        "category": "Hubara Studio",
+        "command": "acktos.refreshRuns",
+        "title": "Acktos: Refresh Runs",
+        "category": "Acktos Studio",
         "icon": "$(refresh)"
       },
       {
-        "command": "hubara.viewTrace",
-        "title": "Hubara: Ver trace",
-        "category": "Hubara Studio"
+        "command": "acktos.viewTrace",
+        "title": "Acktos: Ver trace",
+        "category": "Acktos Studio"
       },
       {
-        "command": "hubara.replayCase",
+        "command": "acktos.replayCase",
         "title": "▶ Replay",
-        "category": "Hubara Studio",
+        "category": "Acktos Studio",
         "icon": "$(play)"
       },
       {
-        "command": "hubara.runDurableCase",
+        "command": "acktos.runLocalCase",
+        "title": "⚡ Ejecutar (local)",
+        "category": "Acktos Studio",
+        "icon": "$(zap)"
+      },
+      {
+        "command": "acktos.runDurableCase",
         "title": "▶ Run Durable (AgentSpan)",
-        "category": "Hubara Studio",
+        "category": "Acktos Studio",
         "icon": "$(debug-start)"
       },
       {
-        "command": "hubara.connectFromPicker",
+        "command": "acktos.startInfra",
+        "title": "Acktos: Iniciar AgentSpan (infra del runtime durable)",
+        "category": "Acktos Studio",
+        "icon": "$(server-process)"
+      },
+      {
+        "command": "acktos.toggleAllRuns",
+        "title": "Acktos: Runs — alternar histórico completo",
+        "category": "Acktos Studio",
+        "icon": "$(history)"
+      },
+      {
+        "command": "acktos.connectFromPicker",
         "title": "+ Conectar desde…",
-        "category": "Hubara Studio",
+        "category": "Acktos Studio",
         "icon": "$(plug)"
       },
       {
-        "command": "hubara.saveProduction",
-        "title": "Hubara: Save Production (GraphAgents)",
-        "category": "Hubara Studio"
+        "command": "acktos.saveProduction",
+        "title": "Acktos: Save Production (GraphAgents)",
+        "category": "Acktos Studio"
       },
       {
-        "command": "hubara.publishProduction",
-        "title": "Hubara: Publish Production (GraphAgents)",
-        "category": "Hubara Studio"
+        "command": "acktos.publishProduction",
+        "title": "Acktos: Publish Production (GraphAgents)",
+        "category": "Acktos Studio"
+      },
+      {
+        "command": "acktos.certifyAndPublish",
+        "title": "Acktos: Guardar & certificar (suite completa → rama + PR)",
+        "category": "Acktos Studio"
       }
     ],
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "hubaraStudio",
-          "title": "Hubara Studio",
+          "id": "acktosStudio",
+          "title": "Acktos Studio",
           "icon": "$(type-hierarchy-sub)"
+        }
+      ],
+      "panel": [
+        {
+          "id": "acktosExecution",
+          "title": "Acktos Ejecución",
+          "icon": "$(pulse)"
         }
       ]
     },
     "walkthroughs": [
       {
-        "id": "hubaraStudio.gettingStarted",
-        "title": "Hubara Studio: primeros pasos",
+        "id": "acktosStudio.gettingStarted",
+        "title": "Acktos Studio: primeros pasos",
         "description": "Grafos, certificaciones y ejecuciones de AgencyHubara + GraphAgents — todo sin salir de VS Code.",
         "steps": [
           {
             "id": "scopes",
             "title": "Abrí el grafo — scopes estilo Xcode",
-            "description": "Workspace / System / Focus — el equivalente project/target aplicado al canvas.\n[Abrir grafo](command:hubara.openStudio)",
-            "media": { "markdown": "walkthrough/scopes.md" },
-            "completionEvents": ["onCommand:hubara.openStudio"]
+            "description": "Workspace / System / Focus — el equivalente project/target aplicado al canvas.\n[Abrir grafo](command:acktos.openStudio)",
+            "media": {
+              "markdown": "walkthrough/scopes.md"
+            },
+            "completionEvents": [
+              "onCommand:acktos.openStudio"
+            ]
           },
           {
             "id": "testPlans",
             "title": "Corré un test plan — bundles estilo Xcode",
-            "description": "Las mismas suites que `/hubara-gates`, agrupadas en bundles seleccionables.\n[Elegir un plan](command:hubara.selectPlan)",
-            "media": { "markdown": "walkthrough/test-plans.md" },
-            "completionEvents": ["onCommand:hubara.selectPlan", "onCommand:hubara.runActivePlan"]
+            "description": "Las mismas suites que `/hubara-gates`, agrupadas en bundles seleccionables.\n[Elegir un plan](command:acktos.selectPlan)",
+            "media": {
+              "markdown": "walkthrough/test-plans.md"
+            },
+            "completionEvents": [
+              "onCommand:acktos.selectPlan",
+              "onCommand:acktos.runActivePlan"
+            ]
           },
           {
             "id": "certifications",
             "title": "Certificaciones — el compilador en el editor",
-            "description": "Badges C0–C3, CodeLens, Problems panel — todo desde guardar un manifest.\n[Ver el catálogo](command:workbench.view.extension.hubaraStudio)",
-            "media": { "markdown": "walkthrough/certifications.md" },
-            "completionEvents": ["onView:hubara.catalogTree"]
+            "description": "Badges C0–C3, CodeLens, Problems panel — todo desde guardar un manifest.\n[Ver el catálogo](command:workbench.view.extension.acktosStudio)",
+            "media": {
+              "markdown": "walkthrough/certifications.md"
+            },
+            "completionEvents": [
+              "onView:acktos.catalogTree"
+            ]
           },
           {
             "id": "editMode",
             "title": "Edit mode — conectar sin salir del IDE",
             "description": "Drag-connect, disconnect, y publicar el wiring con un PR real.",
-            "media": { "markdown": "walkthrough/edit-mode.md" }
+            "media": {
+              "markdown": "walkthrough/edit-mode.md"
+            }
           }
         ]
       }
     ],
     "views": {
-      "hubaraStudio": [
+      "acktosStudio": [
         {
-          "id": "hubara.catalogTree",
+          "id": "acktos.catalogTree",
           "name": "Catálogo",
           "icon": "$(type-hierarchy-sub)"
         },
         {
-          "id": "hubara.runsTree",
+          "id": "acktos.runsTree",
           "name": "Runs",
           "icon": "$(pulse)"
+        }
+      ],
+      "acktosExecution": [
+        {
+          "type": "webview",
+          "id": "acktos.executionView",
+          "name": "Ejecución"
         }
       ]
     },
     "menus": {
       "commandPalette": [
         {
-          "command": "hubara.focusNode",
+          "command": "acktos.focusNode",
           "when": "false"
         },
         {
-          "command": "hubara.checkManifest",
+          "command": "acktos.openWorkflow",
           "when": "false"
         },
         {
-          "command": "hubara.viewTrace",
+          "command": "acktos.checkManifest",
           "when": "false"
         },
         {
-          "command": "hubara.replayCase",
+          "command": "acktos.viewTrace",
           "when": "false"
         },
         {
-          "command": "hubara.runDurableCase",
+          "command": "acktos.replayCase",
           "when": "false"
         },
         {
-          "command": "hubara.connectFromPicker",
+          "command": "acktos.runDurableCase",
+          "when": "false"
+        },
+        {
+          "command": "acktos.connectFromPicker",
+          "when": "false"
+        },
+        {
+          "command": "acktos.runLocalCase",
+          "when": "false"
+        },
+        {
+          "command": "acktos.toggleAllRuns",
           "when": "false"
         }
       ],
       "view/title": [
         {
-          "command": "hubara.refreshGraphs",
-          "when": "view == hubara.catalogTree",
+          "command": "acktos.refreshGraphs",
+          "when": "view == acktos.catalogTree",
           "group": "navigation"
         },
         {
-          "command": "hubara.refreshRuns",
-          "when": "view == hubara.runsTree",
+          "command": "acktos.refreshRuns",
+          "when": "view == acktos.runsTree",
           "group": "navigation"
+        },
+        {
+          "command": "acktos.startInfra",
+          "when": "view == acktos.runsTree",
+          "group": "navigation@1"
+        },
+        {
+          "command": "acktos.toggleAllRuns",
+          "when": "view == acktos.runsTree",
+          "group": "navigation@2"
         }
       ],
       "view/item/context": [
         {
-          "command": "hubara.replayCase",
-          "when": "view == hubara.catalogTree && viewItem == hubaraCase",
+          "command": "acktos.runLocalCase",
+          "when": "view == acktos.catalogTree && viewItem == acktosCase",
+          "group": "inline@0"
+        },
+        {
+          "command": "acktos.replayCase",
+          "when": "view == acktos.catalogTree && viewItem == acktosCase",
           "group": "inline@1"
         },
         {
-          "command": "hubara.runDurableCase",
-          "when": "view == hubara.catalogTree && viewItem == hubaraCase",
+          "command": "acktos.runDurableCase",
+          "when": "view == acktos.catalogTree && viewItem == acktosCase",
           "group": "inline@2"
         },
         {
-          "command": "hubara.connectFromPicker",
-          "when": "view == hubara.catalogTree && viewItem == hubaraConnectable",
+          "command": "acktos.connectFromPicker",
+          "when": "view == acktos.catalogTree && viewItem == acktosConnectable",
           "group": "inline"
         }
       ]
     },
     "configuration": {
-      "title": "Hubara Studio",
+      "title": "Acktos Studio",
       "properties": {
-        "hubara.graphagents.python": {
+        "acktos.graphagents.python": {
           "type": "string",
           "default": "python3",
           "markdownDescription": "Ejecutable de Python para el puente de GraphAgents (subsistema aislado, NO usa `uv`)."
         },
-        "hubara.graphagents.cwd": {
+        "acktos.graphagents.cwd": {
           "type": "string",
           "default": "${workspaceFolder}/GraphAgents",
           "description": "Directorio raíz de GraphAgents (donde vive `viewer/bridge.py`)."
         },
-        "hubara.backend.command": {
+        "acktos.backend.command": {
           "type": "array",
           "items": {
             "type": "string"
@@ -252,32 +341,32 @@
           ],
           "markdownDescription": "Comando + args para correr Python en el backend Hubara (por convención `uv run python`)."
         },
-        "hubara.backend.cwd": {
+        "acktos.backend.cwd": {
           "type": "string",
           "default": "${workspaceFolder}/hubara_agency",
           "description": "Directorio raíz del backend (donde vive `scripts/system_map_bridge.py`)."
         },
-        "hubara.frontend.cwd": {
+        "acktos.frontend.cwd": {
           "type": "string",
           "default": "${workspaceFolder}/frontend_dashboard",
           "description": "Directorio raíz del dashboard React/TS."
         },
-        "hubara.frontend.npm": {
+        "acktos.frontend.npm": {
           "type": "string",
           "default": "npm",
           "description": "Ejecutable de npm para las suites del frontend."
         },
-        "hubara.frontend.npx": {
+        "acktos.frontend.npx": {
           "type": "string",
           "default": "npx",
           "description": "Ejecutable de npx (usado por la suite de tipos: `tsc -b --noEmit`)."
         },
-        "hubara.seamsPath": {
+        "acktos.seamsPath": {
           "type": "string",
           "default": "",
           "markdownDescription": "Ruta a `seams.yaml` (costuras cross-sistema del canvas workspace). Vacío = usa `<repoRoot>/seams.yaml` si existe, o el archivo bundled con la extensión."
         },
-        "hubara.backend.env": {
+        "acktos.backend.env": {
           "type": "object",
           "additionalProperties": {
             "type": "string"
@@ -287,6 +376,19 @@
             "MEDUSA_ADMIN_TOKEN": "dev-token"
           },
           "markdownDescription": "Env vars dummy que las suites de arquitectura del backend necesitan a nivel de import (`MEDUSA_*` — el sales worker construye clientes Medusa a nivel de módulo). Nunca pega a Medusa real."
+        },
+        "acktos.graphagents.env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "markdownDescription": "Env extra para el puente de GraphAgents — la palanca de infra remota: p. ej. `AGENTSPAN_SERVER_URL` (default `http://localhost:6767`) y `LITELLM_PROXY_URL` apuntando a AWS, sin tocar código."
+        },
+        "acktos.graphagents.agentspanStart": {
+          "type": "string",
+          "default": "agentspan server start",
+          "markdownDescription": "Comando que levanta AgentSpan (:6767) — lo corre el botón *Iniciar AgentSpan* en una terminal visible. Cambialo si tu infra durable arranca distinto (docker compose, script, etc.)."
         }
       }
     }

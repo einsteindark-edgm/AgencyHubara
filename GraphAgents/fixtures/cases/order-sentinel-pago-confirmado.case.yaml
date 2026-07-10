@@ -1,0 +1,32 @@
+# CASO order-sentinel: el cliente consigna y manda comprobante; el OPERADOR (autoridad)
+# confirma el pago en el chat → intent `confirm_payment` (payment_confirmed=false en la
+# orden). El replay inyecta FixtureLLM con el veredicto fijo (CASE-PORT) — determinista.
+id: order-sentinel-pago-confirmado
+title: order-sentinel · pago confirmado por el operador
+target: agent:order-sentinel
+seed:
+  payload:
+    schema_version: 1
+    now_ms: 1720500000000
+    conversations:
+      - session_id: wa_573001112233
+        order_id: order_01PAGO
+        current_stage: preparing
+        payment_confirmed: false
+        messages:
+          - { who: customer, text: "ya consigné, te mando el comprobante", at_ms: 1720490000000, has_media: true }
+          - { who: human_operator, text: "perfecto, ya quedó confirmado tu pago", at_ms: 1720491000000, has_media: false }
+ports:
+  llm: '{"action": "confirm_payment", "evidence": ["perfecto, ya quedó confirmado tu pago"], "confidence": "high"}'
+golden:
+  schema_version: 1
+  snapshot_now_ms: 1720500000000
+  dispatch:
+    - kind: order_stage_intent
+      session_id: wa_573001112233
+      order_id: order_01PAGO
+      action: confirm_payment
+      evidence: ["perfecto, ya quedó confirmado tu pago"]
+      confidence: high
+  suppressed: []
+  llm_errors: []

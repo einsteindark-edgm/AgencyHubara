@@ -1,0 +1,30 @@
+# Agente de catálogo (archetype: analyzer). Window Strategist AUTÓNOMO (sin HITL):
+# RECIBE el snapshot de conversaciones WhatsApp (lo deposita hubara — el agente no
+# pega red, G-PORT), clasifica ventana×warmth×gancho y emite la lista de intents de
+# reactivación bajo el guardrail autónomo (cadencia + tope de pagos por ciclo).
+# El output del run ES la lista de dispatch (cero tools outward — G-DUR sin sujeto);
+# hubara la lee del run.result al pollear y RE-VALIDA cada envío con decide_reengagement.
+# Referenciable por agent://window-strategist@1.
+name: window-strategist
+description: Clasifica leads por ventana (72h CTWA / 24h CSW / expirado) + warmth + gancho transaccional y emite intents de reactivación rentables (Free-First Funnel, sin HITL).
+archetype: analyzer
+certification: C2
+
+capability: graphs.window_strategist:build
+
+# ext (GraphAgents): el contrato I/O DECLARADO (G-CONTRACT) — inputs = lo que run()
+# exige del estado; outputs = las claves que emite (verificado contra
+# graphs/window_strategist.py + su golden).
+contract:
+  inputs:
+    payload: {type: object, required: true, description: "snapshot de conversaciones que deposita hubara: {now_ms, policy?, conversations: [{session_id, *_expires_at_ms, lead pre-digerido, recent_touches, tz}]}"}
+  outputs:
+    result: {type: object, description: "{schema_version, snapshot_now_ms, dispatch: [reengagement_dispatch ordenados por valor], suppressed: [{session_id, reason}], truncated_by_budget}"}
+
+exposes_as_tool: false
+
+tools:
+  # la tool agnóstica del catálogo, bindeada al state del agente (G-BIND).
+  - uses: parse-conversations@1
+    with:
+      payload: $state.payload

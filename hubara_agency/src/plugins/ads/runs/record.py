@@ -13,6 +13,7 @@ lo re-bindea a un tmp por test (defensa en profundidad).
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -40,19 +41,56 @@ def _write(record: dict) -> None:
     tmp.replace(p)  # rename atómico → un lector nunca ve un record a medias
 
 
-def create_run(run_id: str, *, agent: str, input: dict) -> dict:
-    """Crea el record de un run nuevo (status `pending`, sin eventos)."""
+def create_run(
+    run_id: str, *, agent: str, input: dict, campaign_id: str | None = None
+) -> dict:
+    """Crea el record de un run nuevo (status `pending`, sin eventos).
+
+    `campaign_id` es la campaña ACTIVA al disparar — el historial del inspector
+    filtra por ella (un análisis corrido mirando "Día del padre" no aparece
+    bajo "Duo zodiacal")."""
     record = {
         "run_id": run_id,
         "agent": agent,
         "input": input,
+        "campaign_id": campaign_id,
         "status": "pending",
+        # Historial versionado (2026-07-09): cada análisis queda fechado — el
+        # inspector lista las corridas con su fecha, snapshot y resultado.
+        "created_at_ms": int(time.time() * 1000),
         "events": [],
         "result": None,
         "awaiting": None,
     }
     _write(record)
     return record
+
+
+def list_runs(*, limit: int = 20, campaign_id: str | None = None) -> list[dict]:
+    """Historial de análisis, más nuevo primero (el versionado del inspector).
+
+    Cada entry es el record COMPLETO (fecha + input = snapshot de los números
+    de esa corrida + result = las sugerencias de esa versión) SIN el log de
+    eventos (pesado y solo útil para el stream en vivo). Records legacy sin
+    `created_at_ms` van al final. Tolerante a JSON roto (se saltea).
+
+    Con `campaign_id`, SOLO las corridas de esa campaña (los legacy sin
+    campaña quedan fuera — solo se ven en el historial sin filtro).
+    """
+    base = Path(WORKSPACE_VAULT_DIR) / "ad-analysis"
+    runs: list[dict] = []
+    for p in base.glob("*/record.json"):
+        try:
+            rec = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if campaign_id is not None and rec.get("campaign_id") != campaign_id:
+            continue
+        rec.pop("events", None)
+        rec.setdefault("campaign_id", None)  # records legacy pre-campaña
+        runs.append(rec)
+    runs.sort(key=lambda r: r.get("created_at_ms") or 0, reverse=True)
+    return runs[:limit]
 
 
 def read_run(run_id: str) -> dict | None:

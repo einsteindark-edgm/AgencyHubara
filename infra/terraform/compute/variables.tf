@@ -40,7 +40,7 @@ variable "tenants" {
   type = map(object({
     instance_type   = string
     domain          = string # dominio público del FastAPI (Caddy auto-TLS)
-    enabled_plugins = optional(string, "ads,agents_admin,catalog,chats,eta,orders,system_map")
+    enabled_plugins = optional(string, "ads,agents_admin,catalog,chats,eta,order_sentinel,orders,reengagement,system_map")
     root_volume_gb  = optional(number, 30)
   }))
 }

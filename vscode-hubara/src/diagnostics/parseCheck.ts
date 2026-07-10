@@ -25,7 +25,7 @@ export interface CheckDiagnostic {
   severity: "error" | "warning";
   code?: string;
   message: string;
-  /** GraphAgents: basename del manifest. Hubara: path absoluto O relativo al
+  /** GraphAgents: basename del manifest. Acktos: path absoluto O relativo al
    * monorepo root (mezclado según qué check lo emitió) — se resuelve en el
    * caller, que conoce las raíces de cada lado. */
   location?: string;
