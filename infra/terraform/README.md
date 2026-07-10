@@ -13,7 +13,7 @@ infra/
 │   ├── compute/       # EC2: caja de app por tenant + caja SigNoz            (robotocore-testable)
 │   └── temporal-cloud/# OPCIONAL: namespaces de Temporal Cloud               (real-only)
 ├── compose/
-│   ├── docker-compose.prod.yml   # lo que corre en cada caja EC2 (imagen GHCR, Temporal Cloud, sin SigNoz)
+│   ├── docker-compose.prod.yml   # lo que corre en cada caja EC2 (el deploy lo copia como /opt/hubara/docker-compose.yml)
 │   └── render-env-from-ssm.sh    # arma el .env desde SSM (corre en la caja)
 └── robotocore/
     ├── docker-compose.robotocore.yml  # el emulador AWS en :4566

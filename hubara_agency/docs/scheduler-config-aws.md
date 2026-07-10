@@ -162,8 +162,8 @@ services:
 ```bash
 # 1. (si usás el .env file) re-hidratá desde SSM:
 ./scripts/load-ssm-env.sh
-# 2. reiniciá SOLO el worker que lee esa variable:
-docker compose -f docker-compose.prod.yml up -d --no-deps --force-recreate worker-orders-reconcile
+# 2. reiniciá SOLO el worker que lee esa variable (en la caja el archivo es docker-compose.yml):
+docker compose -f docker-compose.yml up -d --no-deps --force-recreate worker-orders-reconcile
 ```
 
 El worker arranca, lee la env nueva y **converge** el Temporal Schedule. Listo.

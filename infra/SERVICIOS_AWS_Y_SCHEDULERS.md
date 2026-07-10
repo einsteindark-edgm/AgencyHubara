@@ -90,7 +90,7 @@ aws ssm put-parameter --overwrite --region us-east-1 --type String \
 ssh -i ~/.ssh/hubara_ops ec2-user@98.88.237.207
 cd /opt/hubara
 ./render-env-from-ssm.sh        # baja SSM → .env (reusa la imagen actual; NO redeploya)
-docker compose -f docker-compose.prod.yml up -d --no-deps --force-recreate <WORKER>
+docker compose -f docker-compose.yml up -d --no-deps --force-recreate <WORKER>
 ```
 
 **Mapa variable → worker a reiniciar:**
@@ -249,7 +249,7 @@ aws ssm get-parameters-by-path --region us-east-1 \
 En la caja, confirmá que el worker tomó la env nueva:
 ```bash
 ssh -i ~/.ssh/hubara_ops ec2-user@98.88.237.207 \
-  "cd /opt/hubara && docker compose -f docker-compose.prod.yml logs --tail=20 worker-orders-reconcile"
+  "cd /opt/hubara && docker compose -f docker-compose.yml logs --tail=20 worker-orders-reconcile"
 # Buscá la línea "📅 Schedule '...' actualizado — ..."
 ```
 
