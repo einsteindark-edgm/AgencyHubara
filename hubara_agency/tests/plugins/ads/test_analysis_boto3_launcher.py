@@ -362,3 +362,17 @@ def test_dispatch_fuerza_fork_para_los_workers_de_conductor(fake_clients) -> Non
 
     script = " ".join(ssm.sent[0]["Parameters"]["commands"])
     assert "-e CONDUCTOR_MP_START_METHOD=fork" in script
+
+
+def test_fetch_status_trunca_el_stdout_en_el_mensaje_de_error(fake_clients) -> None:
+    """El stdout truncado por SSM (~24-30KB) explotaba ENTERO dentro de la
+    excepción → records/logs con 30KB de ruido. El mensaje lleva solo el inicio."""
+    ec2 = _FakeEC2(state="running")
+    ssm = _FakeSSM(status="Success", stdout="{" + "x" * 30000)
+    lz = _make(fake_clients, ec2=ec2, ssm=ssm)
+
+    with pytest.raises(RuntimeError) as ei:
+        lz.fetch_status("exec-42")
+
+    assert "no es JSON parseable" in str(ei.value)
+    assert len(str(ei.value)) < 1500  # el stdout va RECORTADO, no los 30KB
