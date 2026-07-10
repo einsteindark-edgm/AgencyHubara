@@ -170,3 +170,66 @@ def test_analysis_input_builds_pod_seed_from_real_insights(monkeypatch) -> None:
 def test_analysis_input_requires_connection(monkeypatch) -> None:
     resp = _client(monkeypatch).get("/api/ads/meta/analysis-input")
     assert resp.status_code == 409
+
+
+def test_analysis_input_junta_las_ventas_reales_de_medusa(monkeypatch) -> None:
+    """El join que faltaba (caso 424d6647 → verdict insufficient_data): el pod
+    recibía `sales: []` y no podía blendear gasto contra revenue. `manual_sales`
+    ahora sale de las órdenes PAGADAS de Medusa (OrderQueryPort del SDK),
+    agregadas por día."""
+    import datetime
+    from types import SimpleNamespace
+
+    def _ms(day: str) -> int:
+        dt = datetime.datetime.fromisoformat(day + "T10:00").replace(tzinfo=datetime.timezone.utc)
+        return int(dt.timestamp() * 1000)
+
+    today = datetime.date.today()
+    d1 = (today - datetime.timedelta(days=2)).isoformat()
+    d2 = (today - datetime.timedelta(days=1)).isoformat()
+    orders = [
+        SimpleNamespace(created_at_ms=_ms(d1), total_cop=600000, pay_status="paid",
+                        status="delivered", is_draft=False),
+        SimpleNamespace(created_at_ms=_ms(d1), total_cop=150000, pay_status="paid",
+                        status="delivered", is_draft=False),
+        SimpleNamespace(created_at_ms=_ms(d2), total_cop=999999, pay_status="pending",
+                        status="new", is_draft=False),  # NO pagada → fuera
+    ]
+
+    class _FakeOrderQuery:
+        async def list(self, *, limit=50, offset=0, include_drafts=True):
+            batch = orders if offset == 0 else []
+            return SimpleNamespace(orders=batch, count=len(orders), offset=offset,
+                                   limit=limit, catalog_available=True, error_detail=None)
+
+    monkeypatch.setattr(meta_oauth, "_orders", lambda: _FakeOrderQuery())
+    ads = FakeMetaAds(
+        accounts=[MetaAdAccount("act_1010393601284112", "Hubara", "COP", 1)],
+        raw_insights={"account_currency": "COP", "data": []},
+    )
+    body = _client(monkeypatch, store=_connected_store(), ads=ads).get(
+        "/api/ads/meta/analysis-input?days=14"
+    ).json()
+
+    assert body["manual_sales"] == {"sales": [
+        {"date": d1, "total_orders": 2, "total_revenue": 750000},
+    ]}
+
+
+def test_analysis_input_degrada_a_sales_vacio_si_medusa_falla(monkeypatch) -> None:
+    """Medusa caída NO puede tumbar el análisis: manual_sales degrada a []
+    (el pod reporta insufficient_data honesto, no un 500 al operador)."""
+
+    class _BrokenOrderQuery:
+        async def list(self, **kw):
+            raise RuntimeError("Medusa no responde")
+
+    monkeypatch.setattr(meta_oauth, "_orders", lambda: _BrokenOrderQuery())
+    ads = FakeMetaAds(
+        accounts=[MetaAdAccount("act_1010393601284112", "Hubara", "COP", 1)],
+        raw_insights={"account_currency": "COP", "data": []},
+    )
+    body = _client(monkeypatch, store=_connected_store(), ads=ads).get(
+        "/api/ads/meta/analysis-input?days=14"
+    ).json()
+    assert body["manual_sales"] == {"sales": []}
