@@ -80,7 +80,9 @@ export function resolvePath(value: string, root: string): string {
  * seams.yaml describe la topología del REPO del usuario, no de la extensión:
  * instalada como VSIX, el install dir es read-only y compartido entre
  * workspaces. Orden: setting `acktos.seamsPath` → `<repoRoot>/seams.yaml` →
- * el archivo bundled con la extensión (fallback de fábrica).
+ * `<repoRoot>/vscode-hubara/seams.yaml` (el archivo VIVO del monorepo — las
+ * costuras nuevas llegan por git pull, sin re-empaquetar el VSIX) → el
+ * bundled con la extensión (fallback de fábrica, congelado al empaquetar).
  */
 export function seamsFilePath(extensionRoot: string): string {
   const root = repoRoot();
@@ -88,9 +90,13 @@ export function seamsFilePath(extensionRoot: string): string {
   if (cfg.seamsPath) {
     return resolvePath(cfg.seamsPath, root);
   }
-  const wsSeams = path.join(root, "seams.yaml");
-  if (fs.existsSync(wsSeams)) {
-    return wsSeams;
+  for (const candidate of [
+    path.join(root, "seams.yaml"),
+    path.join(root, "vscode-hubara", "seams.yaml"),
+  ]) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
   }
   return path.join(extensionRoot, "seams.yaml");
 }
