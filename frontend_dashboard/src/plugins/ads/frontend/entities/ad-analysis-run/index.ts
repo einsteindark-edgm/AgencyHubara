@@ -5,11 +5,12 @@
  */
 export type {
   AgentOption,
+  AnalysisReport,
   RunEvent,
   RunRecord,
   RunStatus,
 } from "./model";
-export { isAwaitingApproval, isTerminalStatus } from "./model";
+export { analysisReport, isAwaitingApproval, isTerminalStatus } from "./model";
 
 export { adAnalysisRunKeys } from "./keys";
 

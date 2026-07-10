@@ -13,7 +13,8 @@ const mockRuns = vi.hoisted(() => ({ current: [] as object[] }));
 const mockConn = vi.hoisted(() => ({ current: {} as object }));
 const mockUseRunsArgs = vi.hoisted(() => ({ current: [] as unknown[] }));
 
-vi.mock("@plugins/ads/frontend/entities/ad-analysis-run", () => ({
+vi.mock("@plugins/ads/frontend/entities/ad-analysis-run", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   useRuns: (...args: unknown[]) => {
     mockUseRunsArgs.current = args;
     return { data: mockRuns.current, isLoading: false };
@@ -101,6 +102,35 @@ describe("AdsInspector — historial de análisis versionado", () => {
     expect(getByText(/completado/i)).toBeTruthy();
     expect(getAllByText(/falló/i).length).toBeGreaterThan(0);
     expect(getByText(/Subí presupuesto 20%/)).toBeTruthy();
+  });
+});
+
+describe("AdsInspector — reporte legible en el historial", () => {
+  it("un run con markdown proyectado se renderiza FORMATEADO, no como JSON", () => {
+    // Feedback operador 2026-07-10: "que el reporte quede en el historial bien
+    // escrito con todo el markdown bien formateado".
+    mockRuns.current = [
+      {
+        runId: "run-md",
+        status: "completed",
+        createdAtMs: Date.UTC(2026, 6, 10, 12, 0),
+        result: {
+          markdown: "## Hubara — Ads Analytics\n\n| Fecha | Spend |\n|---|--:|\n| 2026-07-02 | 17.471 |",
+          verdict: "ok",
+          qa_passed: true,
+          _projected_from: "ctwa-report",
+        },
+        agent: "ads-analytics",
+      },
+    ];
+    mockConn.current = { data: { connected: true, accountName: "Hubara" } };
+    const { getByRole, queryByText } = render(
+      <AdsInspector campaign={campaign({})} />,
+    );
+    expect(getByRole("heading", { name: /Hubara — Ads Analytics/ })).toBeTruthy();
+    expect(queryByText(/## Hubara/)).toBeNull(); // nada de markdown crudo
+    expect(getByRole("columnheader", { name: "Spend" })).toBeTruthy(); // tabla real
+    expect(queryByText(/"markdown"/)).toBeNull(); // ni JSON del result
   });
 });
 

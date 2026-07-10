@@ -15,9 +15,9 @@ import {
   totalConversations,
   type AdsCampaign,
 } from "@plugins/ads/frontend/entities/ads-campaign";
-import { useRuns } from "@plugins/ads/frontend/entities/ad-analysis-run";
+import { analysisReport, useRuns } from "@plugins/ads/frontend/entities/ad-analysis-run";
 import { useMetaConnection } from "@plugins/ads/frontend/entities/meta-connection";
-import { Icon } from "@/shared/ui";
+import { Icon, Markdown } from "@/shared/ui";
 
 import {
   fmtDuration,
@@ -273,7 +273,10 @@ function AnalysisHistory({ campaignId }: { campaignId: string }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       {runs.map((r) => {
-        const text = _resultText(r.result);
+        // El result proyectado del pod (markdown + verdict) se renderiza
+        // FORMATEADO para humanos; los legacy caen al JSON de siempre.
+        const report = analysisReport(r.result);
+        const text = report ? null : _resultText(r.result);
         return (
           <details
             key={r.runId}
@@ -298,9 +301,16 @@ function AnalysisHistory({ campaignId }: { campaignId: string }) {
               >
                 {_STATUS_LABEL[r.status] ?? r.status}
               </span>
+              {report?.verdict && (
+                <span style={{ color: "var(--fg-mute)" }}>{" · "}{report.verdict}</span>
+              )}
             </summary>
             <div style={{ marginTop: 6, fontSize: 12 }}>
-              {text ? (
+              {report ? (
+                <div style={{ maxHeight: 320, overflow: "auto" }}>
+                  <Markdown>{report.markdown}</Markdown>
+                </div>
+              ) : text ? (
                 <pre
                   style={{
                     whiteSpace: "pre-wrap",

@@ -103,3 +103,28 @@ describe("ad-analysis-run contracts", () => {
     });
   });
 });
+
+describe("analysisReport — el reporte proyectado del pod", () => {
+  it("extrae markdown/verdict/qa_passed del result proyectado (_projected_from)", async () => {
+    const { analysisReport } = await import("./model");
+    const rep = analysisReport({
+      markdown: "## Hubara — Ads Analytics",
+      verdict: "ok",
+      qa_passed: true,
+      _projected_from: "ctwa-report",
+    });
+    expect(rep).toEqual({
+      markdown: "## Hubara — Ads Analytics",
+      verdict: "ok",
+      qaPassed: true,
+    });
+  });
+
+  it("result legacy sin markdown → null (la UI cae al JSON crudo)", async () => {
+    const { analysisReport } = await import("./model");
+    expect(analysisReport({ acc: { foo: 1 } })).toBeNull();
+    expect(analysisReport(null)).toBeNull();
+    expect(analysisReport("texto")).toBeNull();
+    expect(analysisReport({ markdown: "" })).toBeNull();
+  });
+});
