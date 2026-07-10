@@ -11,6 +11,7 @@ P-29) — el plan puro vive en `agent/use_cases/`. Tres seams:
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from typing import Any
@@ -103,12 +104,15 @@ async def dispatch_window_strategist_activity(
     """Despierta la caja (cold start EC2 1-3 min) y despacha el run.
     Devuelve el execution-id de Conductor para pollearlo."""
     launcher = get_launcher()
-    launcher.start_box()
+    # PM-007 (premortem order-sentinel): el launcher es boto3 SYNC (waiters +
+    # sleep) — en el event loop bloquearía el heartbeat asyncio y el cold
+    # start (1-3 min) moriría por HEARTBEAT_TIMEOUT. A thread.
+    await asyncio.to_thread(launcher.start_box)
     # El contrato del agente (manifest inputs + case window-strategist-ciclo)
     # espera el snapshot ENVUELTO: {"payload": snapshot}. Mandarlo crudo hace
     # fallar el nodo ingest con "falta 'payload'" (run prod ce80f73f).
-    return launcher.dispatch(
-        "window-strategist", {"payload": snapshot}, run_id=run_id
+    return await asyncio.to_thread(
+        launcher.dispatch, "window-strategist", {"payload": snapshot}, run_id=run_id
     )
 
 
@@ -118,4 +122,5 @@ async def poll_window_strategist_activity(execution_id: str) -> dict[str, Any]:
     from src.sdk.graphagentskit import interpret
 
     launcher = get_launcher()
-    return interpret(launcher.fetch_status(execution_id))
+    # boto3 sync → thread (PM-007): no bloquear el event loop del worker.
+    return interpret(await asyncio.to_thread(launcher.fetch_status, execution_id))

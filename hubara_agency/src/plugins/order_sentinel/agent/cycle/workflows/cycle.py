@@ -33,22 +33,6 @@ _POLL_INTERVAL = timedelta(seconds=15)
 _MAX_POLLS = 60
 
 
-def _extract_agent_result(raw: object) -> dict | None:
-    """El contrato del agente desde el result del poll, tolerante a la forma
-    (PM-001): para un agente DIRECTO el output compact de Conductor es el
-    STATE COMPLETO del grafo ({payload, classified, result}) — el contrato
-    vive un nivel adentro; si algún día la proyección entrega el contrato
-    directo, también sirve. `None` = no hay `dispatch` extraíble (podado)."""
-    if not isinstance(raw, dict):
-        return None
-    if "dispatch" in raw:
-        return raw
-    inner = raw.get("result")
-    if isinstance(inner, dict) and "dispatch" in inner:
-        return inner
-    return None
-
-
 @workflow.defn(name="OrderSentinelCycleWorkflow")
 class OrderSentinelCycleWorkflow:
     @workflow.run
@@ -107,7 +91,9 @@ class OrderSentinelCycleWorkflow:
                 "execution_id": execution_id,
             }
 
-        result = _extract_agent_result(state.get("result"))
+        # PM-001: extracción tolerante compartida (sdk.graphagentskit) — misma
+        # fuente que reengagement, sin drift entre plugins.
+        result = extract_agent_result(state.get("result"))
         if result is None:
             # PM-005: el compact pudo PODAR el result (o cambió la forma) —
             # fallo VISIBLE, sin execute ni watermarks (re-analiza el próximo

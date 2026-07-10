@@ -84,7 +84,23 @@ class ReengagementCycleWorkflow:
                 "execution_id": execution_id,
             }
 
-        result = state.get("result") or {}
+        # PM-001 (premortem order-sentinel): el output de un agente DIRECTO es
+        # el STATE completo del grafo — el contrato vive un nivel adentro. Con
+        # la extracción vieja, dispatched=0 con run completed PARA SIEMPRE.
+        result = extract_agent_result(state.get("result"))
+        if result is None:
+            workflow.logger.error(
+                "ReengagementCycle: run %s completed pero el result no trae "
+                "`dispatch` en ningún nivel (¿podado por --compact?) — sin "
+                "emitir intents.",
+                execution_id,
+            )
+            return {
+                "dispatched": 0,
+                "suppressed": 0,
+                "run_status": "result_missing_dispatch",
+                "execution_id": execution_id,
+            }
         intents = result.get("dispatch") or []
         for intent in intents:
             event = ReengagementDispatchIntentEvent(

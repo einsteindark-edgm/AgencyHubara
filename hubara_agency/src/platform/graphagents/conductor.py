@@ -41,6 +41,25 @@ def _unwrap_output(output: Any) -> Any:
     return output
 
 
+def extract_agent_result(raw: Any) -> dict | None:
+    """El CONTRATO del agente desde el `result` de un poll completed, tolerante
+    a la forma (PM-001, premortem order-sentinel): para un agente DIRECTO el
+    output compact de Conductor es el STATE COMPLETO del grafo
+    ({payload, classified, result}) — el contrato vive un nivel adentro; si la
+    proyección por contrato algún día entrega el contrato directo, también
+    sirve. `None` = no hay `dispatch` extraíble (p.ej. podado por --compact):
+    el workflow consumidor DEBE tratarlo como fallo VISIBLE, nunca como
+    "completed con cero trabajo" (pérdida silenciosa + watermarks avanzados)."""
+    if not isinstance(raw, dict):
+        return None
+    if "dispatch" in raw:
+        return raw
+    inner = raw.get("result")
+    if isinstance(inner, dict) and "dispatch" in inner:
+        return inner
+    return None
+
+
 def _human_context(task: dict) -> Any:
     """El contexto que ve el humano — la HUMAN task lo lleva en su `inputData`."""
     return (task.get("inputData") or {}).get("context")
