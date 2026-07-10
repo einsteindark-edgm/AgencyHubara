@@ -15,6 +15,9 @@ export interface FlowNodeData extends Record<string, unknown> {
   runtimeRetries?: number;
   /** orden de ejecución con un trace activo: "2" (agente) o "2.1 · 3.2" (tool). */
   orderBadge?: string;
+  /** presente si al worker/plugin lo dispara un Temporal Schedule; el valor
+   * es la cadencia humana ("cada 45 min") o "" si no se declaró. */
+  schedule?: string;
 }
 
 export type FlowNodeType = Node<FlowNodeData, "hubara">;
@@ -51,6 +54,14 @@ export function FlowNode({ data, selected }: NodeProps<FlowNodeType>): React.Rea
       )}
       <div className="flow-node-header">
         <span className="flow-node-kind">{KIND_LABEL[data.kind] ?? data.kind}</span>
+        {data.schedule !== undefined && (
+          <span
+            className="flow-node-clock"
+            title={`Lo dispara un Temporal Schedule${data.schedule ? ` · ${data.schedule}` : ""}`}
+          >
+            ⏱
+          </span>
+        )}
         {data.certification && <span className={`flow-node-cert ${certClass}`}>{data.certification}</span>}
       </div>
       <div className="flow-node-label">{data.label}</div>

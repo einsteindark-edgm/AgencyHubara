@@ -34,6 +34,11 @@ agent:
       module: src.plugins.order_sentinel.workers.cycle
       task_queue: queue-order-sentinel-cycle
       # SIN `owns_route`: este plugin no recibe inbounds ni toma el turno.
+      # El ciclo lo dispara un Temporal Schedule (scripts/create_order_sentinel_schedule.py);
+      # Acktos Studio dibuja el reloj en la cajita a partir de esta declaración.
+      schedule:
+        id: order-sentinel-cycle-schedule
+        cadence: diario 01:00 UTC
       workflow_classes:
         - OrderSentinelCycleWorkflow
       deployment:
