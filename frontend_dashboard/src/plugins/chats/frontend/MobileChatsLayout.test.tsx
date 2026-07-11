@@ -28,6 +28,11 @@ vi.mock("@plugins/chats/frontend/features/chats-inspector", () => ({
     <div data-testid="inspector">Inspector de {chatId}</div>
   ),
 }));
+vi.mock("@plugins/chats/frontend/features/chats-orders", () => ({
+  ChatsOrdersPanel: ({ sessionId }: { sessionId: string | null }) => (
+    <div data-testid="orders-panel">Pedidos de {sessionId}</div>
+  ),
+}));
 
 // ── Mocks de datos ─────────────────────────────────────────────────────────
 vi.mock("@plugins/chats/frontend/entities/chat", () => ({
@@ -96,5 +101,29 @@ describe("MobileChatsLayout", () => {
       screen.getByRole("button", { name: /detalles del contacto/i }),
     );
     expect(screen.getByTestId("inspector")).toHaveTextContent("wa_42");
+  });
+
+  it("el botón Pedidos abre el panel de pedidos del cliente", () => {
+    render(<MobileChatsLayout />, { wrapper: Wrapper });
+    fireEvent.click(screen.getByText("Abrir chat wa_42"));
+    expect(screen.queryByTestId("orders-panel")).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: /pedidos del cliente/i }),
+    );
+    expect(screen.getByTestId("orders-panel")).toHaveTextContent("wa_42");
+  });
+
+  it("un solo sheet a la vez: abrir Pedidos cierra el inspector", () => {
+    render(<MobileChatsLayout />, { wrapper: Wrapper });
+    fireEvent.click(screen.getByText("Abrir chat wa_42"));
+    fireEvent.click(
+      screen.getByRole("button", { name: /detalles del contacto/i }),
+    );
+    expect(screen.getByTestId("inspector")).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: /pedidos del cliente/i }),
+    );
+    expect(screen.queryByTestId("inspector")).not.toBeInTheDocument();
+    expect(screen.getByTestId("orders-panel")).toBeInTheDocument();
   });
 });

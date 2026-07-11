@@ -209,3 +209,47 @@ def test_orders_health(app_with_fake_port):
     assert body["port"] == "FakeOrderQueryPort"
     assert body["catalog_available"] is True
     assert body["sample_count"] == 1
+
+
+# ── GET /orders/by-session/{id} — pedidos de un cliente (panel móvil del chat) ──
+
+
+def test_orders_by_session_returns_customer_orders(app_with_fake_port, monkeypatch):
+    """El índice sesión→órdenes vive en el vault (episodes[].order_id); Medusa
+    da el detalle. El endpoint devuelve los summaries de esas órdenes."""
+    app, _ = app_with_fake_port
+    monkeypatch.setattr(
+        "src.plugins.orders.api._collect_order_ids_from_metadata",
+        lambda _md: ["order_01HX"],
+    )
+    resp = TestClient(app).get("/api/orders/orders/by-session/wa_573001")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["count"] == 1
+    assert body["orders"][0]["id"] == "order_01HX"
+    assert body["orders"][0]["status"] == "preparing"
+
+
+def test_orders_by_session_empty_when_client_has_no_orders(app_with_fake_port, monkeypatch):
+    app, _ = app_with_fake_port
+    monkeypatch.setattr(
+        "src.plugins.orders.api._collect_order_ids_from_metadata",
+        lambda _md: [],
+    )
+    resp = TestClient(app).get("/api/orders/orders/by-session/wa_nobody")
+    assert resp.status_code == 200
+    assert resp.json() == {"orders": [], "count": 0}
+
+
+def test_orders_by_session_skips_ids_not_in_medusa(app_with_fake_port, monkeypatch):
+    """Un order_id en el vault que Medusa no encuentra (port.get→None) se
+    omite en vez de romper el listado."""
+    app, fake = app_with_fake_port
+    fake.detail_result = None
+    monkeypatch.setattr(
+        "src.plugins.orders.api._collect_order_ids_from_metadata",
+        lambda _md: ["order_ghost"],
+    )
+    resp = TestClient(app).get("/api/orders/orders/by-session/wa_x")
+    assert resp.status_code == 200
+    assert resp.json() == {"orders": [], "count": 0}

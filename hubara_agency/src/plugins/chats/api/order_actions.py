@@ -138,3 +138,42 @@ async def confirm_order_payment_for_chat(
     return await _forward_patch(
         request, f"/api/orders/orders/{order_id}/confirm-payment", body
     )
+
+
+@router.get("/order-actions/by-session/{session_id}")
+async def list_customer_orders_for_chat(
+    request: Request,
+    session_id: str = Path(..., min_length=1, max_length=200),
+) -> dict[str, Any]:
+    """Pedidos DE ESE cliente — el panel de pedidos del chat móvil.
+
+    GET .../by-session/{id} → GET /api/orders/orders/by-session/{id}. El
+    provider resuelve el vínculo sesión→órdenes desde el vault. Response:
+    `{"orders": [...], "count": int}`.
+    """
+    return await castkit.forward(
+        request,
+        "GET",
+        f"/api/orders/orders/by-session/{session_id}",
+        base_url=_orders_base(),
+        timeout=_timeout_s(),
+        cast_label=_CAST_LABEL,
+    )
+
+
+@router.patch("/order-actions/{order_id}/stage")
+async def transition_order_stage_for_chat(
+    request: Request,
+    order_id: str = Path(..., min_length=1, max_length=200),
+    body: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    """Cambiar el estado de un pedido manualmente desde el chat móvil.
+
+    Body: `{stage: "new|preparing|ready|shipping|delivered|cancelled", note?,
+    force?}`. Reenvía a `PATCH /api/orders/orders/{id}/stage`, que valida la
+    transición contra el DAG y emite la cascada de notificación ETA. Response:
+    el `OrderCommandResult` plano (`{success, current_stage, error_detail}`).
+    """
+    return await _forward_patch(
+        request, f"/api/orders/orders/{order_id}/stage", body
+    )

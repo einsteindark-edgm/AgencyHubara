@@ -16,12 +16,68 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/shared/api/client";
 
 import {
+  customerOrdersSchema,
   orderRefCommandResultSchema,
   orderRefDetailSchema,
+  type CustomerOrders,
   type OrderRefCommandResult,
   type OrderRefDetail,
+  type OrderRefStatus,
 } from "./contracts";
 import { orderRefKeys } from "./keys";
+
+/**
+ * Pedidos DE ESTE cliente (panel del chat móvil) vía el cast
+ * (`GET /api/chats/order-actions/by-session/{sessionId}`). El backend resuelve
+ * el vínculo sesión→órdenes desde el vault. `enabled` = lazy (al abrir el panel).
+ */
+export function useCustomerOrders(
+  sessionId: string | null,
+  opts?: { enabled?: boolean },
+) {
+  return useQuery<CustomerOrders, Error>({
+    queryKey: orderRefKeys.bySession(sessionId ?? "none"),
+    enabled: Boolean(sessionId) && (opts?.enabled ?? true),
+    queryFn: async ({ signal }) => {
+      const raw = await apiClient.get<unknown>(
+        `/api/chats/order-actions/by-session/${encodeURIComponent(sessionId ?? "")}`,
+        { signal },
+      );
+      return customerOrdersSchema.parse(raw);
+    },
+  });
+}
+
+interface TransitionStageVariables {
+  orderId: string;
+  stage: OrderRefStatus;
+  note?: string;
+  force?: boolean;
+}
+
+/**
+ * Cambia el estado de un pedido manualmente (`PATCH .../{id}/stage`). El
+ * backend valida la transición contra el DAG; si es inválida devuelve
+ * `success:false` con `error_detail`. Invalida el listado de la sesión para
+ * repintar el estado nuevo. `sessionId` = la sesión del panel abierto.
+ */
+export function useTransitionOrderStage(sessionId: string | null) {
+  const qc = useQueryClient();
+  return useMutation<OrderRefCommandResult, Error, TransitionStageVariables>({
+    mutationFn: async ({ orderId, ...body }) => {
+      const raw = await apiClient.patch<unknown>(
+        `/api/chats/order-actions/${encodeURIComponent(orderId)}/stage`,
+        body,
+      );
+      return orderRefCommandResultSchema.parse(raw);
+    },
+    onSuccess: () => {
+      if (sessionId) {
+        qc.invalidateQueries({ queryKey: orderRefKeys.bySession(sessionId) });
+      }
+    },
+  });
+}
 
 /**
  * Detalle del pedido vía el read-side del cast (`GET /order-actions/{id}`).

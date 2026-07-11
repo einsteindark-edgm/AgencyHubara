@@ -116,6 +116,34 @@ async def list_orders(
     }
 
 
+@router.get("/orders/by-session/{session_id}")
+async def list_orders_by_session(
+    session_id: str = Path(..., min_length=1, max_length=200),
+) -> dict[str, Any]:
+    """Pedidos de UN cliente/sesión de WhatsApp — para el panel móvil del chat.
+
+    Medusa NO filtra órdenes por cliente/teléfono, así que el índice
+    sesión→órdenes vive en el vault: `metadata.episodes[].order_id` (+ legacy
+    `registered_order.order_id`). Extraemos esos ids y pedimos el detalle a
+    Medusa por cada uno; devolvemos su `summary` (id, estado, total, fecha).
+
+    Shape: `{"orders": [OrderSummaryDTO, ...], "count": int}`. Un id que existe
+    en el vault pero no en Medusa (`port.get→None`) se omite. Sesión sin órdenes
+    → lista vacía (no 404).
+    """
+    metadata_store = FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
+    metadata = metadata_store.read(session_id)
+    order_ids = _collect_order_ids_from_metadata(metadata)
+
+    port = get_order_query_port()
+    orders: list[dict[str, Any]] = []
+    for oid in order_ids:
+        detail = await port.get(oid)
+        if detail is not None:
+            orders.append(asdict(detail.summary))
+    return {"orders": orders, "count": len(orders)}
+
+
 @router.get("/orders/{order_id}")
 async def get_order_detail(
     order_id: str = Path(

@@ -32,13 +32,16 @@ import {
 } from "@plugins/chats/frontend/features/chats-inbox";
 import { ChatsConversation } from "@plugins/chats/frontend/features/chats-conversation";
 import { ChatsInspector } from "@plugins/chats/frontend/features/chats-inspector";
+import { ChatsOrdersPanel } from "@plugins/chats/frontend/features/chats-orders";
 
 type MobileView = "inbox" | "chat";
+/** Un solo bottom-sheet a la vez (inspector o pedidos). */
+type ActiveSheet = "none" | "inspector" | "orders";
 
 export function MobileChatsLayout() {
   const [selectedChatId, setSelectedChatId] = useSelection("chats");
   const [view, setView] = useState<MobileView>("inbox");
-  const [showInspector, setShowInspector] = useState(false);
+  const [activeSheet, setActiveSheet] = useState<ActiveSheet>("none");
   const qc = useQueryClient();
 
   // El stream SSE es del plugin (INV-1). Al volver del background Android suele
@@ -71,21 +74,25 @@ export function MobileChatsLayout() {
   };
   const backToInbox = () => {
     setView("inbox");
-    setShowInspector(false);
+    setActiveSheet("none");
   };
-  const openInspector = () => {
-    setShowInspector(true);
+  const openSheet = (sheet: Exclude<ActiveSheet, "none">) => {
+    setActiveSheet(sheet);
     window.history.pushState({ mobileChats: "sheet" }, "");
   };
+  const toggleSheet = (sheet: Exclude<ActiveSheet, "none">) => {
+    if (activeSheet === sheet) setActiveSheet("none");
+    else openSheet(sheet);
+  };
 
-  // Back físico / gesto de Android → cerrar primero el sheet, después el chat.
-  // Idempotente: si el botón de la UI ya cerró la vista, el pop es no-op.
+  // Back físico / gesto de Android → cerrar primero el sheet abierto, después
+  // el chat. Idempotente: si el botón de la UI ya cerró el sheet, el pop no-op.
   useEffect(() => {
     const onPop = () => {
-      setShowInspector((sheetOpen) => {
-        if (sheetOpen) return false;
+      setActiveSheet((sheet) => {
+        if (sheet !== "none") return "none";
         setView("inbox");
-        return sheetOpen;
+        return sheet;
       });
     };
     window.addEventListener("popstate", onPop);
@@ -107,10 +114,16 @@ export function MobileChatsLayout() {
             {selectedChat?.name ?? "Conversación"}
           </div>
           <button
-            className="mobile-inspector-toggle"
-            onClick={() =>
-              showInspector ? setShowInspector(false) : openInspector()
-            }
+            className="mobile-topbar-btn"
+            onClick={() => toggleSheet("orders")}
+            aria-label="Pedidos del cliente"
+            title="Pedidos"
+          >
+            <Icon.box />
+          </button>
+          <button
+            className="mobile-topbar-btn"
+            onClick={() => toggleSheet("inspector")}
             aria-label="Detalles del contacto"
           >
             <Icon.info />
@@ -119,19 +132,21 @@ export function MobileChatsLayout() {
         <div className="mobile-conversation">
           <ChatsConversation chatId={selectedChatId} />
         </div>
-        {showInspector && (
+        {activeSheet !== "none" && (
           <div
             className="mobile-sheet-backdrop"
-            onClick={() => setShowInspector(false)}
+            onClick={() => setActiveSheet("none")}
             role="dialog"
             aria-modal="true"
           >
-            <div
-              className="mobile-sheet"
-              onClick={(e) => e.stopPropagation()}
-            >
+            <div className="mobile-sheet" onClick={(e) => e.stopPropagation()}>
               <div className="mobile-sheet-handle" />
-              <ChatsInspector chatId={selectedChatId} />
+              {activeSheet === "inspector" && (
+                <ChatsInspector chatId={selectedChatId} />
+              )}
+              {activeSheet === "orders" && (
+                <ChatsOrdersPanel sessionId={selectedChatId} />
+              )}
             </div>
           </div>
         )}
@@ -145,7 +160,7 @@ export function MobileChatsLayout() {
         <div className="mobile-topbar-title">Chats</div>
         {canLogout() && (
           <button
-            className="mobile-inspector-toggle"
+            className="mobile-topbar-btn"
             onClick={logout}
             aria-label="Cerrar sesión"
             title="Cerrar sesión"
