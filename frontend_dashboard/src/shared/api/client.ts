@@ -60,6 +60,31 @@ async function request<T>(path: string, init: ApiRequestInit = {}): Promise<T> {
   return payload as T;
 }
 
+/**
+ * POST crudo a un endpoint EXTERNO que no sigue las convenciones de nuestra API
+ * (ni base `env.apiUrl`, ni Bearer de Cognito, ni el throw-on-error). Devuelve
+ * `{status, data}` con el JSON parseado, sin lanzar por status ≠ 2xx — el caller
+ * decide qué hacer con cada status.
+ *
+ * Existe para que clientes de terceros (p.ej. el IDP de Cognito, protocolo AWS
+ * JSON-1.1) NO tengan que llamar `fetch` por su cuenta: TODO el I/O HTTP sigue
+ * viviendo en este wrapper (R-FETCH). El caller pasa la URL absoluta y los
+ * headers del protocolo externo.
+ */
+async function postExternal(
+  url: string,
+  body: unknown,
+  headers: Record<string, string>,
+): Promise<{ status: number; data: unknown }> {
+  const res = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  return { status: res.status, data };
+}
+
 export const apiClient = {
   get: <T>(path: string, init?: ApiRequestInit) =>
     request<T>(path, { ...init, method: "GET" }),
@@ -71,4 +96,5 @@ export const apiClient = {
     request<T>(path, { ...init, method: "PATCH", body }),
   delete: <T>(path: string, init?: ApiRequestInit) =>
     request<T>(path, { ...init, method: "DELETE" }),
+  postExternal,
 };

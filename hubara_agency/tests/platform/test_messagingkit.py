@@ -43,3 +43,12 @@ def test_messagingkit_reexports_rate_card_accessor():
     import src.sdk.messagingkit as kit
 
     assert kit.get_current_rate_card is impl.get_current_rate_card
+
+
+def test_messagingkit_reexports_service_window_guard():
+    # El endpoint del operador (chats) chequea la ventana 24h vía SDK — P-28 le
+    # prohíbe `src.platform.whatsapp.window` directo.
+    import src.platform.whatsapp.window as impl
+    import src.sdk.messagingkit as kit
+
+    assert kit.is_service_window_closed is impl.is_service_window_closed

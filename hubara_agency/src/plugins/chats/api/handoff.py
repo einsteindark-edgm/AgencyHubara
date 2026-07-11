@@ -46,11 +46,14 @@ from src.platform.constants import (
     ROUTE_REMARKETING,
     ROUTE_VENTAS,
 )
-from src.platform.media.store import (
+from src.sdk.mediakit import (
+    MediaUploadError,
     is_safe_segment,
     media_url_for,
     persist_outbound_image,
+    upload_media,
 )
+from src.sdk.messagingkit import is_service_window_closed
 from src.platform.session_history import FilesystemMessageHistoryStore
 from src.platform.temporal.dispatcher import (
     start_remarketing_for_session,
@@ -60,8 +63,6 @@ from src.platform.whatsapp.activities import (
     send_image_to_session,
     send_message_to_session,
 )
-from src.platform.whatsapp.client import MediaUploadError, upload_media
-from src.platform.whatsapp.window import is_service_window_closed
 from src.platform.state import FilesystemMetadataStore
 
 #: Mimes de imagen que WhatsApp renderiza en `type=image`. Otros (gif, webp)

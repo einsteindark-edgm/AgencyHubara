@@ -10,6 +10,7 @@ from src.platform.media.store import (
     is_safe_segment,
     media_url_for,
     persist_inbound_image,
+    persist_outbound_image,
     resolve_media_file,
     retention_class_for,
 )
@@ -20,6 +21,7 @@ __all__ = [
     "is_safe_segment",
     "media_url_for",
     "persist_inbound_image",
+    "persist_outbound_image",
     "resolve_media_file",
     "retention_class_for",
 ]

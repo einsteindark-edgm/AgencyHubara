@@ -16,6 +16,8 @@
  * try/catch y los errores de red no tumben la pantalla de login.
  */
 
+import { apiClient } from "./client";
+
 const AMZ_JSON = "application/x-amz-json-1.1";
 
 export interface CognitoConfig {
@@ -81,16 +83,14 @@ async function amzPost(
   payload: Record<string, unknown>,
 ): Promise<{ ok: true; body: Record<string, unknown> } | CognitoError> {
   try {
-    const res = await fetch(cfg.idpEndpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": AMZ_JSON,
-        "X-Amz-Target": `AWSCognitoIdentityProviderService.${target}`,
-      },
-      body: JSON.stringify(payload),
+    // Todo el I/O HTTP pasa por el wrapper (R-FETCH) — `postExternal` hace el
+    // POST crudo al IDP de Cognito (protocolo AWS JSON-1.1, sin Bearer).
+    const { status, data } = await apiClient.postExternal(cfg.idpEndpoint, payload, {
+      "Content-Type": AMZ_JSON,
+      "X-Amz-Target": `AWSCognitoIdentityProviderService.${target}`,
     });
-    const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-    if (!res.ok) {
+    const body = (data ?? {}) as Record<string, unknown>;
+    if (status < 200 || status >= 300) {
       const type = String(body.__type ?? "UnknownException");
       return {
         kind: "error",
