@@ -17,9 +17,9 @@ variable "tenants" { type = list(string) }
 variable "region" { type = string }
 
 # El OIDC provider de GitHub es ÚNICO POR CUENTA AWS. El primer proyecto de la
-# cuenta lo crea (true, el default — hubara). Un proyecto clonado por forge en
-# la MISMA cuenta lo referencia como data source (false, vía project.auto.tfvars)
-# — crearlo de nuevo falla con EntityAlreadyExists.
+# cuenta lo crea (true, el default — este repo madre). Un proyecto clonado por
+# forge en la MISMA cuenta lo referencia como data source (false, vía
+# project.auto.tfvars) — crearlo de nuevo falla con EntityAlreadyExists.
 variable "create_provider" {
   type    = bool
   default = true
@@ -35,7 +35,7 @@ resource "aws_iam_openid_connect_provider" "github" {
   ]
 }
 
-# Agregar `count` cambió el address del recurso en el state de hubara
+# Agregar `count` cambió el address del recurso en el state del repo madre
 # (github → github[0]): sin este moved, el plan querría DESTRUIR y recrear el
 # provider vivo (misma clase de incidente que el vault 2026-07-08).
 moved {

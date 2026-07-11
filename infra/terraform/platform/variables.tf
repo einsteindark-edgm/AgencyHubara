@@ -23,7 +23,7 @@ variable "github_branches" {
 }
 
 variable "create_github_oidc_provider" {
-  description = "El OIDC provider de GitHub es 1 por cuenta AWS. true (default) = este proyecto lo crea (hubara). false = referenciarlo como data source — lo setea forge en project.auto.tfvars para proyectos clonados en la misma cuenta."
+  description = "El OIDC provider de GitHub es 1 por cuenta AWS. true (default) = este proyecto lo crea (el repo madre). false = referenciarlo como data source — lo setea forge en project.auto.tfvars para proyectos clonados en la misma cuenta."
   type        = bool
   default     = true
 }
