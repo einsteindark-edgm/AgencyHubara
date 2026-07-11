@@ -15,7 +15,7 @@
 
 import { useRef, useState } from "react";
 import { Icon } from "@/shared/ui";
-import { IS_MOBILE } from "@/shared/lib";
+import { IS_MOBILE_APP } from "@/shared/lib";
 import { useSession } from "@plugins/chats/frontend/entities/session";
 import {
   useInterveneMutation,
@@ -188,7 +188,7 @@ function InterveneActiveComposer({
           onChange={(e) => onPickFiles(e.target.files)}
         />
         {/* `capture=environment` abre la cámara trasera en Android; solo móvil. */}
-        {IS_MOBILE && (
+        {IS_MOBILE_APP && (
           <input
             ref={cameraInputRef}
             type="file"
@@ -209,7 +209,7 @@ function InterveneActiveComposer({
         >
           <Icon.attach />
         </button>
-        {IS_MOBILE && (
+        {IS_MOBILE_APP && (
           <button
             type="button"
             className="camera-btn"

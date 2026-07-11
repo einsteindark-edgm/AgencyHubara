@@ -3,11 +3,11 @@
  * escritorio (toolbar/statusbar/registry completo) — arranque y memoria
  * mínimos. Provee el `PluginHostProvider` (que el Page de chats necesita para
  * `useSelection`) y monta la Page a pantalla completa; la Page detecta
- * `IS_MOBILE` y renderiza su layout de una columna.
+ * `IS_MOBILE_APP` y renderiza su layout de una columna.
  *
  * Deliberadamente NO reusa `Dashboard`: el operador en el teléfono quiere el
  * inbox al instante, no el shell macOS de 3 columnas. `main.tsx` elige entre
- * este shell y `Dashboard` según `IS_MOBILE`.
+ * este shell y `Dashboard` según `IS_MOBILE_APP`.
  */
 import { Suspense, lazy, useCallback, useMemo, useState } from "react";
 

@@ -18,8 +18,8 @@
     "arch:cruise": "depcruise --config .dependency-cruiser.cjs src",
     "tauri": "tauri",
     "tauri:android:init": "tauri android init",
-    "tauri:android:dev": "tauri android dev",
-    "tauri:android:build": "tauri android build"
+    "tauri:android:dev": "VITE_MOBILE_APP=1 tauri android dev",
+    "tauri:android:build": "VITE_MOBILE_APP=1 tauri android build"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.1",

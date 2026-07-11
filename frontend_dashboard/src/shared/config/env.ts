@@ -16,6 +16,12 @@ function required(name: string, value: string | undefined): string {
 
 export const env = {
   apiUrl: required("VITE_API_URL", import.meta.env.VITE_API_URL),
+  // `true` SOLO en el build dedicado de la app móvil (Android/iOS) — lo prende
+  // el script `tauri:android:*` con `VITE_MOBILE_APP=1`. Decide renderizar el
+  // shell de chats (una columna + login nativo) en vez del Dashboard. NO se
+  // deriva del ancho de pantalla: un desktop angosto NO es la app móvil, y la
+  // app móvil en un viewport ancho SIGUE siendo la app de chats.
+  mobileApp: import.meta.env.VITE_MOBILE_APP === "1",
   // OTel web (Tier 2): endpoint OTLP-HTTP del collector al que el browser manda
   // traces. Opcional — default al collector local (puerto 4318 del compose). En prod
   // apuntar al collector público vía VITE_OTEL_EXPORTER_URL.

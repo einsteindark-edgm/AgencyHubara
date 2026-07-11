@@ -14,7 +14,7 @@
  */
 import { useEffect } from "react";
 
-import { IS_MOBILE, usePluginHost, useSelection } from "@/shared/lib";
+import { IS_MOBILE_APP, usePluginHost, useSelection } from "@/shared/lib";
 
 import {
   useChatInbox,
@@ -33,7 +33,7 @@ export function ChatsSection() {
   // En teléfono el layout de 3 columnas es inutilizable: se muestra UNA columna
   // a la vez (inbox → conversación) con navegación propia. El data-layer (SSE,
   // hooks, auth) es idéntico; solo cambia la composición visual.
-  if (IS_MOBILE) return <MobileChatsLayout />;
+  if (IS_MOBILE_APP) return <MobileChatsLayout />;
   return <DesktopChatsLayout />;
 }
 

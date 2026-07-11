@@ -43,13 +43,25 @@ export NDK_HOME="$ANDROID_HOME/ndk/<version>"
 export JAVA_HOME="$(/usr/libexec/java_home -v 17)"   # JDK 17
 ```
 
+## Qué build renderiza la app de chats (NO es por ancho de pantalla)
+
+La app móvil (solo chats, una columna, login nativo) se elige por la flag de
+build **`VITE_MOBILE_APP=1`** — que los scripts `tauri:android:dev|build` ya
+setean. NO se deriva del viewport: un desktop con la ventana angosta conserva el
+Dashboard completo, y la app móvil en un viewport ancho (tablet/landscape) sigue
+siendo la app de chats. La flag vive en `env.mobileApp` → `IS_MOBILE_APP`
+(`src/shared/lib/runtime.ts`).
+
+**Previsualizar el shell móvil en un browser** (sin device): `VITE_MOBILE_APP=1
+npm run dev` y achicá la ventana. Sin la flag, `npm run dev` sirve el Dashboard.
+
 ## F0 — Spike (des-riesga todo lo demás, ~1 día)
 
 ```bash
 cd frontend_dashboard
 npm install
 npm run tauri:android:init      # genera src-tauri/gen/android/  (commitear)
-npm run tauri:android:dev       # compila + instala en emulador/device
+npm run tauri:android:dev       # VITE_MOBILE_APP=1 implícito → compila + instala
 ```
 
 **Checklist de validación empírica (en device/emulador real):**

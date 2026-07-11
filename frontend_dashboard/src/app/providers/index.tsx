@@ -16,7 +16,7 @@ import type { ReactNode } from "react";
 import { AuthProvider } from "react-oidc-context";
 import { EventStreamProvider } from "@/shared/api";
 import { env } from "@/shared/config";
-import { IS_MOBILE } from "@/shared/lib";
+import { IS_MOBILE_APP } from "@/shared/lib";
 import { ErrorBoundary } from "@/shared/ui";
 import { AuthGate } from "./AuthGate";
 import { MobileAuthGate } from "./MobileAuthGate";
@@ -59,7 +59,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
   // hosted UI de Cognito no funciona en el WebView. El gate rehidrata la
   // sesión, muestra la pantalla de login y pone el token en el store que leen
   // el apiClient y el SSE (dentro de Shell).
-  if (IS_MOBILE) {
+  if (IS_MOBILE_APP) {
     return (
       <ErrorBoundary scope="app">
         <MobileAuthGate>
