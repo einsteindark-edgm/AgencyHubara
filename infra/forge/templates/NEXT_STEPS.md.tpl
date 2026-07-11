@@ -44,7 +44,9 @@
 - [ ] Push a main → backend-deploy + frontend-deploy
 - [ ] Registrar webhook en la App Meta (CALLBACK_URL + verify token) y suscribir el WABA
 - [ ] Seed del snapshot de catálogo (sin esto, el primer "Ver catálogo" escala a humano)
-- [ ] Schedules que NO se auto-crean: `python3 -m scripts.create_reengagement_schedule` y `create_order_sentinel_schedule` contra el namespace nuevo
+- [ ] Schedules que NO se auto-crean (contra el namespace nuevo):
+      `cd hubara_agency && uv run python scripts/create_reengagement_schedule.py`
+      y `cd hubara_agency && uv run python scripts/create_order_sentinel_schedule.py`
 
 ## F8 — Verificación E2E
 

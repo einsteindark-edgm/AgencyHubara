@@ -14,6 +14,14 @@ version: 1
 copy_exclude:
   - infra/forge
 
+# Identificadores del MOTOR que contienen "Hubara" con la MISMA capitalización
+# que la marca: se enmascaran durante replacements e init para que ninguna
+# regla los toque. Renombrarlos a medias rompe el dispatch del clon — el
+# dispatcher, los workers, shared/contracts, tests y el plugin.yaml del
+# frontend los referencian FUERA del scope de marca-en-agente.
+preserve_tokens:
+  - "HubaraSalesSessionWorkflow"
+
 # Reemplazos de texto plano, EN ORDEN (los compuestos van antes que los simples
 # para que "/opt/hubara" no lo corrompa la regla de "/hubara/", etc.).
 # files = globs sobre el path relativo del clon. Vars entre {{ }}.
@@ -194,6 +202,8 @@ templates:
   "infra/terraform/compute/tenants.auto.tfvars": compute_tenants.auto.tfvars.tpl
   "infra/whatsapp-provisioning/tenants/{{slug}}.env.example": whatsapp_tenant.env.example.tpl
   "NEXT_STEPS.md": NEXT_STEPS.md.tpl
+  # el vault se scrubbea (deletes) pero el dir debe existir para el boot dev
+  "hubara_agency/hubara_vault/.gitkeep": gitkeep.tpl
 
 # Overlay de personalidad: el workspace del clon se REEMPLAZA COMPLETO por el
 # bundle clients/<slug>/workspace/<agent>/ (el workspace ES del cliente).

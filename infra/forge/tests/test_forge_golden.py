@@ -126,6 +126,17 @@ FIXTURE_FILES = {
     "hubara_agency/src/plugins/chats/agent/sales/tools/skills.py": (
         'CATALOG_SKILL = "hubara_catalog"\n'
     ),
+    # Nombre de workflow del MOTOR referenciado también FUERA del scope de la
+    # regla marca-en-agente (dispatcher, workers, tests): renombrarlo a medias
+    # rompe el dispatch del clon — debe PRESERVARSE aunque contenga "Hubara".
+    "hubara_agency/src/plugins/chats/agent/sales/workflows/sales_session.py": (
+        '@workflow.defn(name="HubaraSalesSessionWorkflow")\n'
+        'class SalesSession:\n'
+        '    GREETING = "Bienvenido a Hubara"\n'
+    ),
+    "hubara_agency/src/platform/temporal/dispatcher.py": (
+        'WORKFLOW = "HubaraSalesSessionWorkflow"  # fuera del scope de marca\n'
+    ),
     f"{SALES_WS}/IDENTITY.md": "Eres el Asesor Exclusivo de Ventas de Hubara.\n",
     f"{SALES_WS}/SOUL.md": "# Soul — Hubara\nUsá el skill hubara_catalog.\n",
     f"{SALES_WS}/TOOLS.md": "# Tools\nhubara_catalog: catálogo.\n",
@@ -271,6 +282,16 @@ def test_apply_renombra_infra_y_deja_clon_limpio(mini_repo, acme_bundle, tmp_pat
     skills_py = (dest / "hubara_agency/src/plugins/chats/agent/sales/tools/skills.py").read_text()
     assert 'CATALOG_SKILL = "acme_catalog"' in skills_py
 
+    # preserve_tokens: el nombre del workflow del motor queda INTACTO aunque la
+    # marca del mismo archivo sí se reemplaza — renombrarlo a medias rompería
+    # el dispatch (dispatcher/workers/tests lo referencian fuera del scope).
+    wf = (
+        dest / "hubara_agency/src/plugins/chats/agent/sales/workflows/sales_session.py"
+    ).read_text()
+    assert 'name="HubaraSalesSessionWorkflow"' in wf
+    assert "AcmeSalesSessionWorkflow" not in wf
+    assert 'GREETING = "Bienvenido a Acme"' in wf
+
     # WhatsApp provisioning
     wp = (dest / "infra/whatsapp-provisioning/whatsapp_provision.py").read_text()
     assert '/acme/{tenant}/meta/oauth' in wp and 'or "acme"' in wp
@@ -279,9 +300,12 @@ def test_apply_renombra_infra_y_deja_clon_limpio(mini_repo, acme_bundle, tmp_pat
     assert (dest / "infra/whatsapp-provisioning/tenants/acme.env.example").exists()
 
     # Scrub: datos de Hubara y docs de otros clientes NO viajan
+    # el vault se scrubbea (las sesiones del cliente Hubara no viajan) pero el
+    # dir queda vacío con .gitkeep — el boot dev lo necesita presente
+    vault = dest / "hubara_agency/hubara_vault"
+    assert sorted(p.name for p in vault.iterdir()) == [".gitkeep"]
     for gone in [
         "infra/whatsapp-provisioning/tenants/hubara.env.example",
-        "hubara_agency/hubara_vault",
         "hubara_agency/scripts/inject_snapshot_products.py",
         "docs/cartagena",
         "MULTI_TENANT_COMMERCE_ARCHITECTURE.md",
@@ -327,6 +351,22 @@ def test_overlay_incompleto_falla_con_lista(mini_repo, acme_bundle, tmp_path):
     (acme_bundle / "workspace/sales/SOUL.md").unlink()
     with pytest.raises(forge.ForgeError, match="SOUL.md"):
         _apply(mini_repo, acme_bundle, tmp_path)
+
+
+def test_init_siembra_bundle_preservando_tokens_del_motor(mini_repo, tmp_path):
+    """run_init reemplaza la marca pero NO los identificadores del motor:
+    el TOOLS.md sembrado debe seguir diciendo HubaraSalesSessionWorkflow."""
+    (mini_repo / SALES_WS / "TOOLS.md").write_text(
+        "# Tools\nEl cierre dispara HubaraSalesSessionWorkflow para Hubara.\n",
+        encoding="utf-8",
+    )
+    clients_dir = tmp_path / "clients"
+    bundle = forge.run_init("acme", forge.load_manifest(), src=mini_repo, clients_dir=clients_dir)
+    tools = (bundle / "workspace" / "sales" / "TOOLS.md").read_text()
+    assert "HubaraSalesSessionWorkflow" in tools
+    assert "AcmeSalesSessionWorkflow" not in tools
+    assert "para Acme" in tools
+    assert "TODO-BRAND" in tools
 
 
 def test_todo_brand_bloquea_salvo_allow_todos(mini_repo, acme_bundle, tmp_path):

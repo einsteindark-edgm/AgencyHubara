@@ -221,8 +221,21 @@ def stage_overlay(
     return {"installed": installed, "todos": todos}
 
 
+def _mask(text: str, tokens: list[str]) -> str:
+    for i, tok in enumerate(tokens):
+        text = text.replace(tok, f"\x00PRESERVE{i}\x00")
+    return text
+
+
+def _unmask(text: str, tokens: list[str]) -> str:
+    for i, tok in enumerate(tokens):
+        text = text.replace(f"\x00PRESERVE{i}\x00", tok)
+    return text
+
+
 def stage_replacements(dest: Path, manifest: dict, vars_: dict) -> dict:
     counts: dict[str, int] = {}
+    preserve = manifest.get("preserve_tokens", [])
     rules = [
         (r["id"], r["files"], _render(r["from"], vars_), _render(r["to"], vars_))
         for r in manifest["replacements"]
@@ -230,6 +243,7 @@ def stage_replacements(dest: Path, manifest: dict, vars_: dict) -> dict:
     for p in _walk_files(dest):
         rel = p.relative_to(dest).as_posix()
         text = None
+        changed = False
         for rid, globs, frm, to in rules:
             if not _match_any(rel, globs):
                 continue
@@ -237,11 +251,13 @@ def stage_replacements(dest: Path, manifest: dict, vars_: dict) -> dict:
                 text = _read_text(p)
                 if text is None:
                     break
+                text = _mask(text, preserve)
             if frm in text:
                 text = text.replace(frm, to)
                 counts[rid] = counts.get(rid, 0) + 1
-        if text is not None:
-            p.write_text(text, encoding="utf-8")
+                changed = True
+        if text is not None and changed:
+            p.write_text(_unmask(text, preserve), encoding="utf-8")
     return counts
 
 
@@ -330,6 +346,15 @@ def run_apply(
         raise ForgeError("--with-gates llega en v2; corré los gates del clon a mano por ahora")
     src, dest, client_dir = Path(src), Path(dest), Path(client_dir)
     vars_ = render_vars(load_client(client_dir))
+    dirty = subprocess.run(
+        ["git", "-C", str(src), "status", "--porcelain"], capture_output=True, text=True
+    ).stdout.strip()
+    if dirty:
+        print(
+            "⚠ el repo madre tiene cambios sin commitear — el clon sale de HEAD "
+            "(git archive), esos cambios NO viajan",
+            file=sys.stderr,
+        )
     vars_["engine_sha"] = stage_export(src, dest)
     report: dict = {"engine_sha": vars_["engine_sha"], "stages": {}}
     report["stages"]["pruned"] = stage_prune(dest, manifest)
@@ -342,8 +367,8 @@ def run_apply(
     if hard:
         raise ForgeError(
             f"el clon NO está limpio ({len(hard)} residuales) — clasificalos en "
-            "manifest.yaml (replace/delete/allow) y reintentá:\n  "
-            + "\n  ".join(hard[:200])
+            f"manifest.yaml (replace/delete/allow). El clon queda en {dest} para "
+            "inspección; borralo antes de reintentar:\n  " + "\n  ".join(hard[:200])
         )
     stage_git_init(dest, src, vars_)
     return report
@@ -393,8 +418,11 @@ TODO_BANNER = (
 )
 
 
-def run_init(slug: str, manifest: dict, src: Path = REPO) -> Path:
-    client_dir = CLIENTS / slug
+INIT_SKIP = {"__pycache__", ".DS_Store"}
+
+
+def run_init(slug: str, manifest: dict, src: Path = REPO, clients_dir: Path = CLIENTS) -> Path:
+    client_dir = Path(clients_dir) / slug
     if client_dir.exists():
         raise ForgeError(f"{client_dir} ya existe — editálo o borralo")
     company = slug.title()
@@ -424,11 +452,14 @@ def run_init(slug: str, manifest: dict, src: Path = REPO) -> Path:
         encoding="utf-8",
     )
     ov = manifest["workspace_overlay"]
+    preserve = manifest.get("preserve_tokens", [])
     for agent, ws_rel in ov["agents"].items():
         src_ws = src / ws_rel
         if not src_ws.is_dir():
             continue
         for f in _walk_files(src_ws):
+            if INIT_SKIP.intersection(f.parts) or f.suffix == ".pyc":
+                continue
             rel = f.relative_to(src_ws).as_posix()
             # el skill de catálogo viaja con nombre genérico `catalog/`
             rel = rel.replace("hubara_catalog/", f"{ov['catalog_skill_dirname']}/")
@@ -438,7 +469,9 @@ def run_init(slug: str, manifest: dict, src: Path = REPO) -> Path:
             if text is None:
                 shutil.copy2(f, target)
                 continue
+            text = _mask(text, preserve)
             text = text.replace("Hubara", company).replace("hubara_catalog", f"{slug}_catalog")
+            text = _unmask(text, preserve)
             target.write_text(TODO_BANNER.format(company=company) + text, encoding="utf-8")
     return client_dir
 

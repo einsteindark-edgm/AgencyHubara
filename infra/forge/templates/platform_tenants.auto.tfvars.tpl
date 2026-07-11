@@ -12,5 +12,7 @@ tenants = {
       "http://localhost:5173/",
       "https://TODO-CLOUDFRONT.cloudfront.net/",
     ]
+    # explícito: el default de la variable puede quedar detrás del compose real
+    enabled_plugins = "{{enabled_plugins}}"
   }
 }

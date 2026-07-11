@@ -1,0 +1,45 @@
+# Gates de forge — el ratchet del clonador de clientes (VINCENZO_SPLIT_PLAN.md §5).
+#
+# Corre en TODO PR: cualquier cambio del repo puede introducir un literal del
+# cliente (un ID de Meta, un teléfono, la marca en un string) que forge tendría
+# que clasificar. El E2E forja el repo entero a un clon de prueba y falla si el
+# scanner encuentra residuales sin clasificar — así el manifest no se
+# desactualiza en silencio.
+name: forge-gates
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths:
+      - "infra/forge/**"
+      - ".github/workflows/forge-gates.yml"
+
+jobs:
+  forge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Deps (PyYAML + pytest — forge es stdlib+yaml a propósito)
+        run: pip install --quiet pyyaml pytest
+
+      - name: Suite de forge (golden sintético + ratchet vs repo real)
+        run: python3 -m pytest infra/forge/tests -q
+
+      - name: E2E — forjar el repo entero a un clon de prueba
+        run: |
+          set -euo pipefail
+          python3 infra/forge/forge.py init ciprobe
+          # --allow-todos: el bundle sembrado trae TODO-BRAND por diseño; lo
+          # que este gate valida es el scanner (forbidden/critical = 0).
+          python3 infra/forge/forge.py apply ciprobe \
+            --dest "$RUNNER_TEMP/clone" --allow-todos
+          echo "clon limpio ✓"

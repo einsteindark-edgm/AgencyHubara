@@ -19,7 +19,15 @@ function toneOf(line: string): LogEntry["tone"] {
   return undefined;
 }
 
-function ClientCard({ client, repoRoot }: { client: FleetClient; repoRoot: string }) {
+function ClientCard({
+  client,
+  repoRoot,
+  busy,
+}: {
+  client: FleetClient;
+  repoRoot: string;
+  busy: boolean;
+}) {
   const pending = client.todoFiles.length + client.missingRequired.length;
   const ready = pending === 0;
   const defaultDest = useMemo(() => {
@@ -103,17 +111,23 @@ function ClientCard({ client, repoRoot }: { client: FleetClient; repoRoot: strin
         <button onClick={() => send({ type: "pickDest", slug: client.slug })}>…</button>
       </div>
       <div className="actions">
-        <button onClick={() => send({ type: "plan", slug: client.slug })}>Plan</button>
+        <button disabled={busy} onClick={() => send({ type: "plan", slug: client.slug })}>
+          Plan
+        </button>
         <button
           className="primary"
-          disabled={!ready && !allowTodos}
+          disabled={busy || (!ready && !allowTodos)}
           title={ready || allowTodos ? "" : "quedan TODO-BRAND / requeridos — o marcá clon de prueba"}
           onClick={() => send({ type: "apply", slug: client.slug, dest, allowTodos })}
         >
           ⚒ Forjar
         </button>
-        <button onClick={() => send({ type: "verify", slug: client.slug, dest })}>Verificar</button>
-        <button onClick={() => send({ type: "publish", slug: client.slug, dest })}>Publicar…</button>
+        <button disabled={busy} onClick={() => send({ type: "verify", slug: client.slug, dest })}>
+          Verificar
+        </button>
+        <button disabled={busy} onClick={() => send({ type: "publish", slug: client.slug, dest })}>
+          Publicar…
+        </button>
         {!ready && (
           <label className="allow-todos">
             <input
@@ -229,7 +243,7 @@ export function ForgeApp() {
       <div className="forge-body">
         <div className="fleet">
           {clients.map((c) => (
-            <ClientCard key={c.slug} client={c} repoRoot={repoRoot} />
+            <ClientCard key={c.slug} client={c} repoRoot={repoRoot} busy={running} />
           ))}
           <NewClientCard />
         </div>
