@@ -123,8 +123,9 @@ function NewPasswordForm({
       setLocalError("Las contraseñas no coinciden.");
       return;
     }
-    if (pw.length < 8) {
-      setLocalError("La contraseña debe tener al menos 8 caracteres.");
+    // La política del user pool exige 12 chars + mayús/minús/número/símbolo.
+    if (pw.length < 12) {
+      setLocalError("La contraseña debe tener al menos 12 caracteres.");
       return;
     }
     setLocalError(null);

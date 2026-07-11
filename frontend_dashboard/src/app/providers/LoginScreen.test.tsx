@@ -67,15 +67,15 @@ describe("LoginScreen", () => {
     const confirmar = screen.getByLabelText(/confirmar/i);
 
     // No coincide → no llama.
-    fireEvent.change(nueva, { target: { value: "Abcdef123!" } });
+    fireEvent.change(nueva, { target: { value: "Abcdef123!xy" } });
     fireEvent.change(confirmar, { target: { value: "otra" } });
     fireEvent.click(screen.getByRole("button", { name: /cambiar contraseña/i }));
     expect(onComplete).not.toHaveBeenCalled();
     expect(screen.getByRole("alert")).toHaveTextContent(/no coinciden/i);
 
     // Coincide → llama.
-    fireEvent.change(confirmar, { target: { value: "Abcdef123!" } });
+    fireEvent.change(confirmar, { target: { value: "Abcdef123!xy" } });
     fireEvent.click(screen.getByRole("button", { name: /cambiar contraseña/i }));
-    expect(onComplete).toHaveBeenCalledWith("Abcdef123!");
+    expect(onComplete).toHaveBeenCalledWith("Abcdef123!xy");
   });
 });
