@@ -232,7 +232,7 @@ jobs:
           OTEL_SDK_DISABLED: "true"
         run: uv run pytest tests/conformance -q
 
-      - name: Certificar y emitir reportes (CLI hubara — niveles C0–C2)
+      - name: Certificar y emitir reportes (CLI del SDK hubara_agency — niveles C0–C2)
         if: needs.changes.outputs.central == 'true'
         working-directory: hubara_agency
         env:
