@@ -2,8 +2,14 @@
 
 > Generado por forge desde el motor hubara (`{{engine_sha}}`). Este runbook
 > reemplaza a los docs de infra del proyecto madre (describían la infra viva
-> de Hubara y no aplican acá). Las fases siguen VINCENZO_SPLIT_PLAN.md del
-> repo madre.
+> de Hubara y no aplican acá).
+>
+> **Orquestador**: estos pasos también existen como STEPS con estado — desde
+> el repo madre: `python3 forge/migrate.py status {{slug}} --dest <esta carpeta>`.
+> Los steps AUTO (Supabase / Railway-Medusa / seed / Temporal) se ejecutan
+> solos contra APIs de terceros; los GUIADOS imprimen los comandos
+> AWS/terraform exactos apuntando a ESTE clon — el orquestador jamás ejecuta
+> comandos AWS, así que no puede tocar hubara.
 
 ## F2 — Bootstrap AWS (una vez, local con creds admin)
 
@@ -53,4 +59,4 @@
 - [ ] HTTPS ok · webhook verificado · conversación real (saluda como {{company}}, NUNCA "Hubara")
 - [ ] Draft order en el Medusa NUEVO · dashboard con Cognito · CAPI acepta LeadSubmitted
 - [ ] 5 schedules vivos en Temporal UI · 8 workers polleando · primer snapshot DLM + restore test
-- [ ] `python3 infra/forge/forge.py verify .` (del repo madre) → sin residuales
+- [ ] `python3 forge/forge.py verify .` (del repo madre) → sin residuales

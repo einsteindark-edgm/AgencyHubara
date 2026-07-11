@@ -10,9 +10,9 @@
 # acá — el scanner (tiers abajo) falla en el clon si queda algo sin clasificar.
 version: 1
 
-# No viaja al clon (se poda post-export).
+# No viaja al clon (se poda post-export). El clonador NO viaja al clon.
 copy_exclude:
-  - infra/forge
+  - forge
 
 # Identificadores del MOTOR que contienen "Hubara" con la MISMA capitalización
 # que la marca: se enmascaran durante replacements e init para que ninguna
@@ -195,7 +195,7 @@ deletes:
   - "infra/SERVICIOS_AWS_Y_SCHEDULERS.md"
   - "infra/PENDING_IMPLEMENTATION.md"
 
-# Archivos REGENERADOS desde infra/forge/templates/ (no editados).
+# Archivos REGENERADOS desde forge/templates/ (no editados).
 templates:
   "infra/terraform/platform/tenants.auto.tfvars": platform_tenants.auto.tfvars.tpl
   "infra/terraform/platform/project.auto.tfvars": project.auto.tfvars.tpl

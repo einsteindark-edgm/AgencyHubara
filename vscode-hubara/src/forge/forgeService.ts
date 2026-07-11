@@ -1,7 +1,7 @@
 // Forge Console — capa de servicio. REGLA DE ORO (VINCENZO_SPLIT_PLAN.md §11):
 // la UI es piel, los CLIs son músculo. Este módulo NO contiene lógica de
-// clonación: lista los bundles de infra/forge/clients/ y spawnea
-// `python3 infra/forge/forge.py <cmd>` streameando su output. Todo lo que la
+// clonación: lista los bundles de forge/clients/ y spawnea
+// `python3 forge/forge.py <cmd>` streameando su output. Todo lo que la
 // consola muestra sale de archivos declarativos o del stdout del CLI.
 //
 // Aislamiento deliberado del resto de Studio: no toca BridgeHub ni los paneles
@@ -48,11 +48,11 @@ export class ForgeService {
   ) {}
 
   get clientsDir(): string {
-    return path.join(this.repoRoot, "infra", "forge", "clients");
+    return path.join(this.repoRoot, "forge", "clients");
   }
 
   get forgePath(): string {
-    return path.join(this.repoRoot, "infra", "forge", "forge.py");
+    return path.join(this.repoRoot, "forge", "forge.py");
   }
 
   /** forge existe en este checkout (la vista se esconde si no). */
@@ -62,7 +62,7 @@ export class ForgeService {
 
   watch(ctx: vscode.ExtensionContext): void {
     const pattern = new vscode.RelativePattern(
-      path.join(this.repoRoot, "infra", "forge"),
+      path.join(this.repoRoot, "forge"),
       "clients/**",
     );
     this.watcher = vscode.workspace.createFileSystemWatcher(pattern);

@@ -233,8 +233,8 @@ Nada de esto toca la caja viva, la EIP, el vault ni los SSM de `/hubara/hubara/*
 la carpeta del repo nuevo, renombrada, limpia de datos de Hubara, con git inicializado
 y gates verdes — repetible para cualquier cliente futuro con solo un YAML nuevo.
 
-**Dónde vive**: `infra/forge/` en ESTE repo (el repo madre es el template; los clones
-no llevan forge). Python 3 stdlib + PyYAML, se corre `python3 infra/forge/forge.py …`
+**Dónde vive**: `forge/` en ESTE repo (el repo madre es el template; los clones
+no llevan forge). Python 3 stdlib + PyYAML, se corre `python3 forge/forge.py …`
 (sin `uv run`, mismo patrón que GraphAgents para no pelear con el hook pre-bash).
 Estilo de UX calcado de `infra/whatsapp-provisioning/`: declarativo, idempotente,
 `plan` antes de `apply`.
@@ -242,17 +242,17 @@ Estilo de UX calcado de `infra/whatsapp-provisioning/`: declarativo, idempotente
 ### Comandos
 
 ```bash
-python3 infra/forge/forge.py init vincenzo        # genera clients/vincenzo.yaml (cuestionario)
-python3 infra/forge/forge.py plan vincenzo        # dry-run: TODO lo que va a copiar/renombrar/editar/borrar + preview del scanner
-python3 infra/forge/forge.py apply vincenzo --dest ~/Documents/Projects/AgencyVincenzo
-python3 infra/forge/forge.py verify ~/Documents/Projects/AgencyVincenzo   # scanner de residuales (re-ejecutable)
-python3 infra/forge/forge.py publish ~/Documents/Projects/AgencyVincenzo  # opcional: gh repo create privado + push (pide confirmación)
+python3 forge/forge.py init vincenzo        # genera clients/vincenzo.yaml (cuestionario)
+python3 forge/forge.py plan vincenzo        # dry-run: TODO lo que va a copiar/renombrar/editar/borrar + preview del scanner
+python3 forge/forge.py apply vincenzo --dest ~/Documents/Projects/AgencyVincenzo
+python3 forge/forge.py verify ~/Documents/Projects/AgencyVincenzo   # scanner de residuales (re-ejecutable)
+python3 forge/forge.py publish ~/Documents/Projects/AgencyVincenzo  # opcional: gh repo create privado + push (pide confirmación)
 ```
 
-### Input: bundle por cliente `infra/forge/clients/<slug>/` (identidad, NUNCA secretos)
+### Input: bundle por cliente `forge/clients/<slug>/` (identidad, NUNCA secretos)
 
 ```
-infra/forge/clients/vincenzo/
+forge/clients/vincenzo/
 ├── client.yaml                    # identidad estructurada (abajo)
 └── workspace/                     # ★ los .md de la PERSONALIDAD del agente,
     │                              #   espejo 1:1 del workspace destino — forge los
@@ -312,7 +312,7 @@ las fases F3-F6, como hoy.
 "hubara" en este repo es dos cosas: **nombre del motor** (se conserva: `hubara_agency/`,
 imports `src.*`, `HubaraSalesSessionWorkflow`, D-7) y **nombre del cliente** (se
 reemplaza). Un find-replace ciego rompe el motor. Por eso el corazón es
-`infra/forge/manifest.yaml`, versionado, donde **cada ocurrencia está clasificada**:
+`forge/manifest.yaml`, versionado, donde **cada ocurrencia está clasificada**:
 
 ```yaml
 version: 1
@@ -385,7 +385,7 @@ imprime los comandos `aws_bootstrap.py github` para las vars/secrets del repo nu
 
 ### TDD de la propia tool
 
-Golden test en `infra/forge/tests/`: forjar un cliente fake `acme` a un tmpdir y
+Golden test en `forge/tests/`: forjar un cliente fake `acme` a un tmpdir y
 asertar (1) scanner limpio, (2) cero `forbidden_residuals`, (3) los YAML de workflows
 y compose parsean, (4) `terraform fmt -check` pasa en el clon, (5) los templates de
 workspace contienen las marcas `TODO-BRAND` esperadas. Ese golden corre en CI del repo
@@ -730,7 +730,7 @@ operar fuera de VS Code): web app local FastAPI+React con el mismo contrato de C
 
 ### Pantallas (5)
 
-1. **Flota** — card por cliente desde `infra/forge/clients/*`: repo, IP/dominio,
+1. **Flota** — card por cliente desde `forge/clients/*`: repo, IP/dominio,
    workers arriba/abajo (SSM), último deploy, schedules vivos.
 2. **Cliente nuevo (wizard)** — el formulario ES el `client.yaml` (incluye la URL del
    repo Medusa de donde jalar + plan Railway). Botones `forge plan` (dry-run completo
@@ -742,6 +742,30 @@ operar fuera de VS Code): web app local FastAPI+React con el mismo contrato de C
    (business verification, código SMS, display name) como checklist con estado.
 5. **Despliegues** — por cliente: disparar workflows, runs recientes, `terraform
    plan` renderizado, diff de lo que sube antes de aprobar.
+
+### Steps de migración (`forge/migrate.py`) — construido 2026-07-10
+
+La migración completa corre como **steps con estado** (`status`/`run`/`done`,
+estado por cliente gitignored en el bundle). La distinción de tipos ES la
+garantía de aislamiento de hubara:
+
+| Step | Tipo | Qué hace |
+|---|---|---|
+| S1 clone | auto | `forge apply` → repo del cliente |
+| S2 supabase | auto | proyecto Supabase NUEVO (no hay namespaces: proyecto por cliente, Management API) → DATABASE_URL |
+| S3 medusa | auto | Railway GraphQL: proyecto + servicio desde la URL del repo Medusa + env + dominio |
+| S4 medusa-seed | auto | Admin API idempotente: región/canal/secret key → imprime los `ssm put` |
+| S5 temporal | guiado | namespace + service account + API key (tcld o comandos impresos) |
+| S6 aws-bootstrap | guiado | imprime `cd <clon> && aws_bootstrap.py state/github` + keygen |
+| S7 platform | guiado | imprime terraform apply + carga de secretos del clon |
+| S8 compute | guiado | imprime compute apply + push + schedules (checklist en NEXT_STEPS.md) |
+
+**Regla de la casa (crítica)**: los steps AUTO solo hablan con APIs de
+terceros (Supabase/Railway/Medusa/Temporal) donde hubara ni existe; TODO lo
+que toca AWS es GUIADO — el runner **jamás ejecuta un comando AWS**, los
+imprime apuntando al clon. Guards duros además: slug/prefijo/ssm de hubara
+rechazados en `render_vars`, y el clon no puede vivir dentro del repo madre.
+Contrato testeado en `forge/tests/test_guards.py` + `test_steps_y_migrate.py`.
 
 ### Orden de construcción (cada fase usable sola)
 

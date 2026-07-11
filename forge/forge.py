@@ -10,11 +10,11 @@ cliente Hubara, verifica residuales (el ratchet) y deja git inicializado.
 Solo stdlib + PyYAML — corre con `python3`, sin uv (misma filosofía que
 infra/whatsapp-provisioning/whatsapp_provision.py).
 
-  python3 infra/forge/forge.py init    <slug>
-  python3 infra/forge/forge.py plan    <slug>
-  python3 infra/forge/forge.py apply   <slug> --dest <path> [--allow-todos]
-  python3 infra/forge/forge.py verify  <dest> --client <slug>
-  python3 infra/forge/forge.py publish <dest> --client <slug>   # imprime comandos, no ejecuta
+  python3 forge/forge.py init    <slug>
+  python3 forge/forge.py plan    <slug>
+  python3 forge/forge.py apply   <slug> --dest <path> [--allow-todos]
+  python3 forge/forge.py verify  <dest> --client <slug>
+  python3 forge/forge.py publish <dest> --client <slug>   # imprime comandos, no ejecuta
 """
 
 from __future__ import annotations
@@ -31,8 +31,8 @@ try:
 except ImportError:  # pragma: no cover
     sys.exit("forge necesita PyYAML: python3 -m pip install pyyaml")
 
-ROOT = Path(__file__).resolve().parent  # infra/forge
-REPO = ROOT.parent.parent  # repo madre
+ROOT = Path(__file__).resolve().parent  # forge/ (raíz del repo madre)
+REPO = ROOT.parent  # repo madre
 CLIENTS = ROOT / "clients"
 
 ENABLED_PLUGINS_DEFAULT = (
@@ -64,23 +64,43 @@ def load_client(client_dir: Path) -> dict:
         return yaml.safe_load(fh)
 
 
+def _guard_not_hubara(kind: str, value: str) -> None:
+    """CRÍTICO: forge clona DESDE hubara, jamás lo apunta. Ningún identificador
+    del cliente puede colisionar con los del proyecto productivo."""
+    v = value.lower().strip("/")
+    if v == "hubara" or "agencyhubara" in v:
+        raise ForgeError(
+            f"{kind} {value!r} apunta al proyecto productivo hubara — prohibido: "
+            "elegí identificadores propios del cliente nuevo"
+        )
+
+
 def render_vars(client: dict) -> dict:
     slug = client["slug"]
     if not re.fullmatch(r"[a-z][a-z0-9_]*", slug):
         raise ForgeError(f"slug inválido {slug!r}: minúsculas/dígitos/_ (va en SSM, tags, tfvars)")
+    _guard_not_hubara("slug", slug)
     repo = client.get("repo") or f"TODO-owner/Agency{slug.title()}"
+    if repo.lower().endswith("/agencyhubara"):
+        raise ForgeError(
+            f"repo {repo!r} es el repo madre AgencyHubara — el clon necesita repo propio"
+        )
     repo_owner, _, repo_name = repo.partition("/")
     aws = client.get("aws") or {}
     business = client.get("business") or {}
     domains = business.get("domains") or []
+    prefix = aws.get("resource_prefix") or f"agency{slug}"
+    ssm_prefix = (aws.get("ssm_prefix") or f"/{slug}").rstrip("/")
+    _guard_not_hubara("aws.resource_prefix", prefix)
+    _guard_not_hubara("aws.ssm_prefix", ssm_prefix)
     return {
         "slug": slug,
         "company": client.get("company") or slug.title(),
         "repo": repo,
         "repo_owner": repo_owner,
         "repo_name": repo_name,
-        "prefix": aws.get("resource_prefix") or f"agency{slug}",
-        "ssm_prefix": (aws.get("ssm_prefix") or f"/{slug}").rstrip("/"),
+        "prefix": prefix,
+        "ssm_prefix": ssm_prefix,
         "region": aws.get("region") or "us-east-1",
         "image": repo_name.lower(),
         "ref_prefix": slug[:3].upper(),
@@ -345,6 +365,11 @@ def run_apply(
     if with_gates:
         raise ForgeError("--with-gates llega en v2; corré los gates del clon a mano por ahora")
     src, dest, client_dir = Path(src), Path(dest), Path(client_dir)
+    if dest.resolve().is_relative_to(src.resolve()):
+        raise ForgeError(
+            f"dest {dest} está DENTRO del repo madre — el clon vive afuera, "
+            "nunca mezclado con hubara"
+        )
     vars_ = render_vars(load_client(client_dir))
     dirty = subprocess.run(
         ["git", "-C", str(src), "status", "--porcelain"], capture_output=True, text=True
@@ -444,6 +469,12 @@ def run_init(slug: str, manifest: dict, src: Path = REPO, clients_dir: Path = CL
                     "product_description": "TODO",
                     "domains": [],
                     "instagram": "",
+                },
+                # consumido por forge/steps/ (supabase_provision + medusa_provision)
+                "medusa": {
+                    "repo": "TODO-owner/medusa-backend",  # de dónde jala Railway el Medusa
+                    "supabase_org": "TODO-org-id",  # Supabase NO tiene namespaces: proyecto nuevo por cliente
+                    "supabase_region": "us-east-1",
                 },
             },
             sort_keys=False,

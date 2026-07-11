@@ -2,7 +2,7 @@
 
 El fixture replica los paths y strings REALES del repo madre (tabla §3 de
 VINCENZO_SPLIT_PLAN.md). Si el manifest pierde una regla o una regla corrompe
-un archivo, este test lo ve. Corre con `python3 -m pytest infra/forge/tests -q`
+un archivo, este test lo ve. Corre con `python3 -m pytest forge/tests -q`
 (sin uv, igual que GraphAgents).
 """
 
@@ -153,7 +153,7 @@ FIXTURE_FILES = {
     "MULTI_TENANT_COMMERCE_ARCHITECTURE.md": "# Diseño viejo\n",
     "VINCENZO_SPLIT_PLAN.md": "# Plan del split\n",
     "CLAUDE.md": "# Engine\nEl backend vive en hubara_agency/. Ver hubara-dev harness.\n",
-    "infra/forge/forge.py": "# forge no viaja al clon\n",
+    "forge/forge.py": "# forge no viaja al clon\n",
 }
 
 
@@ -311,7 +311,7 @@ def test_apply_renombra_infra_y_deja_clon_limpio(mini_repo, acme_bundle, tmp_pat
         "MULTI_TENANT_COMMERCE_ARCHITECTURE.md",
         "VINCENZO_SPLIT_PLAN.md",
         "infra/INFRASTRUCTURE.md",
-        "infra/forge",
+        "forge",
     ]:
         assert not (dest / gone).exists(), f"{gone} debía ser eliminado del clon"
 

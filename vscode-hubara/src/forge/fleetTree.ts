@@ -1,5 +1,5 @@
 // Vista "Flota" del contenedor Forge: un nodo por cliente (bundle en
-// infra/forge/clients/), con su estado de redacción (TODO-BRAND pendientes,
+// forge/clients/), con su estado de redacción (TODO-BRAND pendientes,
 // archivos requeridos faltantes). Read-only: las acciones (plan/apply) viven
 // en los comandos del título/contexto y en la Forge Console.
 

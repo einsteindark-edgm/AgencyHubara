@@ -12,7 +12,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "infra/forge/**"
+      - "forge/**"
       - ".github/workflows/forge-gates.yml"
 
 jobs:
@@ -32,14 +32,14 @@ jobs:
         run: pip install --quiet pyyaml pytest
 
       - name: Suite de forge (golden sintético + ratchet vs repo real)
-        run: python3 -m pytest infra/forge/tests -q
+        run: python3 -m pytest forge/tests -q
 
       - name: E2E — forjar el repo entero a un clon de prueba
         run: |
           set -euo pipefail
-          python3 infra/forge/forge.py init ciprobe
+          python3 forge/forge.py init ciprobe
           # --allow-todos: el bundle sembrado trae TODO-BRAND por diseño; lo
           # que este gate valida es el scanner (forbidden/critical = 0).
-          python3 infra/forge/forge.py apply ciprobe \
+          python3 forge/forge.py apply ciprobe \
             --dest "$RUNNER_TEMP/clone" --allow-todos
           echo "clon limpio ✓"

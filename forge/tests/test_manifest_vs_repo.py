@@ -5,7 +5,7 @@ Si una regla da 0, o bien el literal se movió/renombró (scope drift — actual
 el manifest) o la regla sobra. Y al revés: cuando alguien agregue un literal de
 cliente nuevo, el golden del clon lo atrapa como residual crítico.
 
-Corre con `python3 -m pytest infra/forge/tests -q` desde la raíz del repo.
+Corre con `python3 -m pytest forge/tests -q` desde la raíz del repo.
 """
 
 from __future__ import annotations
