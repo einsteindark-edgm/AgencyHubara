@@ -17,6 +17,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Icon } from "@/shared/ui";
 import { useSelection } from "@/shared/lib";
 import { useInvalidateOnReconnect } from "@/shared/api";
+import { canLogout, logout } from "@/shared/config";
 import { useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -142,6 +143,16 @@ export function MobileChatsLayout() {
     <div className="is-mobile mobile-chats">
       <header className="mobile-topbar">
         <div className="mobile-topbar-title">Chats</div>
+        {canLogout() && (
+          <button
+            className="mobile-inspector-toggle"
+            onClick={logout}
+            aria-label="Cerrar sesión"
+            title="Cerrar sesión"
+          >
+            <Icon.arrow />
+          </button>
+        )}
       </header>
       <div className="mobile-inbox">
         <ChatsInbox selectedId={selectedChatId} onSelect={openChat} />

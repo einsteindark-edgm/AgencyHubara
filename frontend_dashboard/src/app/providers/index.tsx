@@ -16,8 +16,10 @@ import type { ReactNode } from "react";
 import { AuthProvider } from "react-oidc-context";
 import { EventStreamProvider } from "@/shared/api";
 import { env } from "@/shared/config";
+import { IS_MOBILE } from "@/shared/lib";
 import { ErrorBoundary } from "@/shared/ui";
 import { AuthGate } from "./AuthGate";
+import { MobileAuthGate } from "./MobileAuthGate";
 import { QueryProvider } from "./QueryProvider";
 
 // Config OIDC (Authorization Code + PKCE). authority/clientId/redirectUri salen
@@ -45,17 +47,35 @@ function Shell({ children }: { children: ReactNode }) {
 }
 
 export function AppProviders({ children }: { children: ReactNode }) {
+  // Sin Cognito configurado (dev local) → sin login, la API está abierta.
+  if (!env.cognitoEnabled) {
+    return (
+      <ErrorBoundary scope="app">
+        <Shell>{children}</Shell>
+      </ErrorBoundary>
+    );
+  }
+  // Móvil (WebView Android): login NATIVO email+contraseña — el redirect a la
+  // hosted UI de Cognito no funciona en el WebView. El gate rehidrata la
+  // sesión, muestra la pantalla de login y pone el token en el store que leen
+  // el apiClient y el SSE (dentro de Shell).
+  if (IS_MOBILE) {
+    return (
+      <ErrorBoundary scope="app">
+        <MobileAuthGate>
+          <Shell>{children}</Shell>
+        </MobileAuthGate>
+      </ErrorBoundary>
+    );
+  }
+  // Web/desktop: flujo OIDC redirect (Authorization Code + PKCE) a la hosted UI.
   return (
     <ErrorBoundary scope="app">
-      {env.cognitoEnabled ? (
-        <AuthProvider {...oidcConfig}>
-          <AuthGate>
-            <Shell>{children}</Shell>
-          </AuthGate>
-        </AuthProvider>
-      ) : (
-        <Shell>{children}</Shell>
-      )}
+      <AuthProvider {...oidcConfig}>
+        <AuthGate>
+          <Shell>{children}</Shell>
+        </AuthGate>
+      </AuthProvider>
     </ErrorBoundary>
   );
 }

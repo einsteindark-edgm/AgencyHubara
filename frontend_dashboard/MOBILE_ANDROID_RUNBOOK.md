@@ -115,16 +115,50 @@ el push en `_append_status(tag=HUMANO)`; no requiere Play Store (FCM funciona
 en APKs sideloaded), pero sí un plugin Kotlin custom o el plugin FCM de la
 comunidad. Decidir cuando la fase 1 se quede corta en la operación real.
 
-## Decisión abierta — auth Cognito en Android (F4.3)
+## Login (implementado) — pantalla nativa email + contraseña
 
-`react-oidc-context` con redirect en WebView: el origin de Tauri Android
-(`http://tauri.localhost`) no es un callback válido en Cognito por default.
-Opciones (evaluar la A en el spike; el token store ya está desacoplado, así que
-cualquiera encaja sin tocar el data-layer):
+La app móvil NO usa el redirect OIDC del web (no funciona en el WebView: el
+origin `http://tauri.localhost` no es un callback válido en Cognito). Usa un
+**formulario nativo email+contraseña dentro de la app** que autentica contra
+Cognito con el flujo `USER_PASSWORD_AUTH` (`InitiateAuth`), sin navegador ni
+deep links.
 
-- **A** — Hosted UI de Cognito dentro del WebView con callback al origin de la app.
-- **B** — system browser + deep link (`tauri-plugin-deep-link`, callback `hubara://auth`).
-- **C** (interim) — pantalla de login propia contra `InitiateAuth` (solo la app
-  interna de operadores).
+Qué incluye (todo en `src/app/providers/` + `src/shared/api/cognito.ts`):
+- Login, **refresh automático** del access token antes de que venza (para que
+  el chat/SSE no reciban 401), **persistencia de sesión** (localStorage, sandbox
+  de la app → no re-loguea en cada apertura), **cambio de contraseña temporal**
+  (challenge `NEW_PASSWORD_REQUIRED` para usuarios creados por admin), y
+  **logout** (botón en el topbar del inbox).
+- El web/desktop sigue con su redirect OIDC; el token-store es compartido, así
+  que apiClient + SSE funcionan igual en ambos.
 
-En dev local (sin `VITE_COGNITO_*`) la API está abierta y no hace falta login.
+**Requisitos en Cognito (consola):**
+1. El **app client** debe ser **público (sin client secret)** — igual que el
+   del dashboard web (SPA con PKCE). Si tiene secret, este flujo necesitaría
+   `SECRET_HASH` (no se puede calcular seguro en el cliente) → habría que ir al
+   camino deep-link.
+2. Habilitar **`ALLOW_USER_PASSWORD_AUTH`** en el app client:
+   App integration → App client → Authentication flows → tildar
+   "ALLOW_USER_PASSWORD_AUTH". Sin esto, `InitiateAuth` responde
+   `InvalidParameterException`.
+3. Los operadores deben existir como usuarios del pool (email + contraseña).
+   Si el admin los crea con contraseña temporal, el primer ingreso pide cambiarla
+   (la app lo maneja).
+
+**Config de build (envs `VITE_*`):**
+```bash
+VITE_API_URL=https://<tu-api>
+VITE_COGNITO_AUTHORITY=https://cognito-idp.<region>.amazonaws.com/<userPoolId>
+VITE_COGNITO_CLIENT_ID=<appClientId>
+# VITE_COGNITO_REGION es opcional — se deriva del authority.
+npm run tauri:android:build
+```
+La región y el endpoint IDP se derivan del authority. La CSP ya permite
+`https://*.amazonaws.com` (el POST del login).
+
+**MFA:** el pool sin MFA hace login en una sola llamada. Si más adelante
+prenden MFA (SMS/TOTP), `InitiateAuth` devuelve un challenge extra que hoy la
+app no maneja — es un incremento acotado sobre el mismo cliente.
+
+**Dev local:** sin `VITE_COGNITO_*` (`cognitoEnabled=false`) la app abre sin
+login (la API local está abierta) — ideal para el primer spike en device.

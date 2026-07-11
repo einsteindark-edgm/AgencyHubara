@@ -55,6 +55,10 @@ export const TEST_FILE_GLOB = "**/*.test.{ts,tsx}";
 /** Files allowed to call `fetch(...)` directly. */
 export const FETCH_CALL_ALLOWLIST: ReadonlySet<string> = new Set([
   "src/shared/api/client.ts", // the wrapper itself
+  // Cliente Cognito nativo (login móvil): adapter HTTP de bajo nivel, hermano
+  // de client.ts. NO puede ir por apiClient — habla el protocolo AWS JSON-1.1
+  // (X-Amz-Target), con base URL propia y SIN el Bearer que apiClient inyecta.
+  "src/shared/api/cognito.ts",
   // (entities/*/api.ts use apiClient, not fetch directly — they're allowed
   // anyway because they're the only consumers of fetch beyond the wrapper)
 ]);
