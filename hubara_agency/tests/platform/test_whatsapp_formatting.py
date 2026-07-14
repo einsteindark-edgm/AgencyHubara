@@ -41,11 +41,15 @@ async def test_send_message_to_session_sanitizes_bubbles(tmp_path, monkeypatch):
 
     sent: list[str] = []
 
-    async def _fake_send(phone_number_id, to, text):
+    async def _fake_send(phone_number_id, to, text, reply_to_message_id=None):
         sent.append(text)
+        from src.platform.whatsapp.dtos import OutboundResult
 
+        return OutboundResult(wa_message_id="wamid.fake", ok=True)
+
+    # PM2-B3: el path free-form ahora usa `send_text` (devuelve OutboundResult).
     monkeypatch.setattr(
-        wa_activities.whatsapp_client, "send_message", _fake_send
+        wa_activities.whatsapp_client, "send_text", _fake_send
     )
     monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "phone-1")
     monkeypatch.setattr(

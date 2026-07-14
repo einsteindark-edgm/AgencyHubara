@@ -113,6 +113,59 @@ describe("ChatsOrdersPanel", () => {
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 
+  it("PM2-M4: una transición en vuelo en una tarjeta NO habilita/deshabilita a las demás", async () => {
+    let resolveA: (v: unknown) => void = () => {};
+    transitionMutateAsync.mockImplementation(
+      ({ orderId }: { orderId: string }) =>
+        orderId === "order_A"
+          ? new Promise((r) => {
+              resolveA = r;
+            })
+          : Promise.resolve({ success: true, current_stage: "ready" }),
+    );
+    useCustomerOrdersMock.mockReturnValue({
+      isLoading: false,
+      isError: false,
+      data: {
+        orders: [
+          { id: "order_A", status: "preparing" },
+          { id: "order_B", status: "preparing" },
+        ],
+        count: 2,
+      },
+    });
+    render(<ChatsOrdersPanel sessionId="wa_1" />, { wrapper: Wrapper });
+    const buttons = screen.getAllByRole("button", { name: /marcar listo|…/i });
+    // Tap en A: A queda ocupada (spinner "…"), B sigue habilitada.
+    fireEvent.click(buttons[0]);
+    const after = screen.getAllByRole("button", { name: /marcar listo|…/i });
+    expect(after[0]).toBeDisabled();
+    expect(after[1]).toBeEnabled();
+    // Tap en B con A aún en vuelo: B dispara SU mutación.
+    fireEvent.click(after[1]);
+    await waitFor(() =>
+      expect(transitionMutateAsync).toHaveBeenCalledWith({
+        orderId: "order_B",
+        stage: "ready",
+      }),
+    );
+    resolveA({ success: true, current_stage: "ready" });
+  });
+
+  it("PM2-M11: la fecha de entrega se muestra legible, no como ISO crudo", () => {
+    useCustomerOrdersMock.mockReturnValue({
+      isLoading: false,
+      isError: false,
+      data: {
+        orders: [{ id: "order_01HX", status: "preparing", due_iso: "2026-07-15" }],
+        count: 1,
+      },
+    });
+    render(<ChatsOrdersPanel sessionId="wa_1" />, { wrapper: Wrapper });
+    expect(screen.queryByText(/2026-07-15/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Entrega:/)).toHaveTextContent(/15/);
+  });
+
   it("muestra inline el error del backend en una transición inválida", async () => {
     transitionMutateAsync.mockResolvedValue({
       success: false,

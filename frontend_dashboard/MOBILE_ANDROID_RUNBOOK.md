@@ -115,17 +115,29 @@ Reglas anti-ruido: primera carga no notifica (sería una ráfaga de handoffs
 viejos al abrir la app); app visible y enfocada no notifica (la fila ya se
 pintó de HUMANO sola).
 
-**Permisos:** Android 13+ pide `POST_NOTIFICATIONS` en runtime — el primer
-handoff dispara el diálogo del sistema (el plugin lo maneja). Aceptalo en la
+**Permisos:** Android 13+ pide `POST_NOTIFICATIONS` en runtime. El permiso se
+pide **al montar el shell en foreground** (post-login) — NO al notificar
+(premortem 2026-07-14: pedirlo con la app en background hacía que el diálogo
+nunca se mostrara → denied silencioso → cero notificaciones). Aceptalo en la
 prueba.
 
 **Limitación conocida (aceptada para fase 1):** con la app CERRADA (proceso
-muerto) no hay SSE → no hay notificación. La app en background reciente sí
-suele recibirla (el WebView vive unos minutos). **Fase 2 = FCM** (push real
+muerto) no hay SSE → no hay notificación. Y OJO: el caso común es peor que
+"app cerrada" — con la pantalla apagada o la app en background más de unos
+minutos, **Android congela el JS del WebView** (Doze), el SSE no entrega y la
+notificación llega (si acaso) recién al reabrir. La ventana útil real de la
+fase 1 son los primeros minutos de background. **Fase 2 = FCM** (push real
 con app muerta): Firebase project + token FCM por device + el backend manda
 el push en `_append_status(tag=HUMANO)`; no requiere Play Store (FCM funciona
 en APKs sideloaded), pero sí un plugin Kotlin custom o el plugin FCM de la
-comunidad. Decidir cuando la fase 1 se quede corta en la operación real.
+comunidad. **Si la operación depende de enterarse rápido de los handoffs,
+priorizar FCM apenas la fase 1 muestre huecos.**
+
+**Tap en la notificación (spike de device):** en el fallback web, tocar la
+notificación abre el chat que la disparó. En Tauri Android el plugin de
+notificaciones no expone click-callback desde JS — el tap solo trae la app al
+frente. Validar en device si alcanza; si no, va con intent extra en el plugin
+Kotlin de FCM (fase 2).
 
 ## Login (implementado) — pantalla nativa email + contraseña
 
@@ -143,6 +155,15 @@ Qué incluye (todo en `src/app/providers/` + `src/shared/api/cognito.ts`):
   **logout** (botón en el topbar del inbox).
 - El web/desktop sigue con su redirect OIDC; el token-store es compartido, así
   que apiClient + SSE funcionan igual en ambos.
+- **Ciclo de vida robusto** (premortem 2026-07-14): además del timer proactivo
+  (que Android congela en background), hay 3 paths reactivos — al volver a
+  foreground se re-chequea el token (`visibilitychange`), cualquier **401** del
+  apiClient fuerza un refresh, y un fallo de **red** en el refresh conserva la
+  sesión y reintenta con backoff (solo un refresh token realmente
+  revocado/expirado te manda al login).
+- **Decisión consciente:** se persisten también access/id token (no solo el
+  refresh token) — permite abrir la app SIN red con sesión vigente. El
+  endurecimiento futuro sigue siendo Android Keystore (abajo).
 
 **Requisitos en Cognito (consola):**
 1. El **app client** debe ser **público (sin client secret)** — igual que el

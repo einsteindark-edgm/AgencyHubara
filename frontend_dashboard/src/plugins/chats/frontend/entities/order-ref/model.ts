@@ -41,3 +41,22 @@ export const STAGE_ACTION_LABEL: Record<OrderRefStatus, string> = {
   delivered: "Marcar entregado",
   cancelled: "Cancelar",
 };
+
+/**
+ * PM2-M11: fecha de entrega legible ("mar 15 jul") en vez del ISO crudo
+ * ("2026-07-15"). Pura sobre una fecha FIJA (no deriva del reloj — regla 5 de
+ * la política de estado). Un ISO malformado se devuelve tal cual (mejor crudo
+ * que una tarjeta rota).
+ */
+export function formatDueDate(iso: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (!m) return iso;
+  const date = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  if (Number.isNaN(date.getTime())) return iso;
+  return new Intl.DateTimeFormat("es-CO", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    timeZone: "UTC",
+  }).format(date);
+}

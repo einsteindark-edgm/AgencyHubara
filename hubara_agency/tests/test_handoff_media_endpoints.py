@@ -418,6 +418,7 @@ def test_send_does_not_clobber_concurrent_metadata_writes(client_and_vault):
         data = _read_metadata(vault, session_id)
         data["concurrent_marker"] = "escrito-durante-el-send"
         _write_metadata(vault, session_id, data)
+        return True  # PM2-B3: el send ahora devuelve ok=True/False
 
     with patch(
         "src.plugins.chats.api.handoff.send_message_to_session",
@@ -444,7 +445,7 @@ def test_send_message_text_only_still_works(client_and_vault):
         {"active_route": "humano", "service_window_expires_at_ms": _FUTURE_MS},
     )
 
-    send_mock = AsyncMock()
+    send_mock = AsyncMock(return_value=True)
     with patch("src.plugins.chats.api.handoff.send_message_to_session", new=send_mock):
         res = client.post(
             "/api/dashboard/sessions/wa_11/messages",
@@ -452,3 +453,202 @@ def test_send_message_text_only_still_works(client_and_vault):
         )
     assert res.status_code == 200
     send_mock.assert_awaited_once_with("wa_11", "hola equipo")
+
+
+# ---------- Fixes del premortem 2 (2026-07-14) ----------
+
+
+def _outbound_result(ok: bool, error: str | None = None):
+    from src.platform.whatsapp.dtos import OutboundResult
+
+    return OutboundResult(wa_message_id="wamid-x" if ok else None, ok=ok, error=error)
+
+
+def test_text_send_failure_returns_502(client_and_vault):
+    """PM2-B3: si Meta rechaza el TEXTO, el operador ve 502 — no un 'enviado'
+    falso con el cliente sin recibir nada."""
+    client, vault = client_and_vault
+    _write_metadata(
+        vault,
+        "wa_b3",
+        {"active_route": "humano", "service_window_expires_at_ms": _FUTURE_MS},
+    )
+
+    with patch(
+        "src.plugins.chats.api.handoff.send_message_to_session",
+        new=AsyncMock(return_value=False),
+    ):
+        res = client.post(
+            "/api/dashboard/sessions/wa_b3/messages",
+            json={"text": "hola"},
+        )
+    assert res.status_code == 502
+
+
+def test_caption_over_1024_rejected_with_attachment(client_and_vault):
+    """PM2-B9: Meta capea captions de media en 1024 — validado ANTES de gastar
+    el upload (422 temprano, no 502 tardío)."""
+    client, vault = client_and_vault
+    _write_metadata(
+        vault,
+        "wa_b9",
+        {
+            "active_route": "humano",
+            "service_window_expires_at_ms": _FUTURE_MS,
+            "outbound_media": {"media-1": {"media_ref": "/x"}},
+        },
+    )
+    res = client.post(
+        "/api/dashboard/sessions/wa_b9/messages",
+        json={
+            "attachment_id": "media-1",
+            "client_message_id": "c1",
+            "text": "x" * 1025,
+        },
+    )
+    assert res.status_code == 422
+
+
+def test_unsafe_session_id_rejected_on_intervene_and_return(client_and_vault):
+    """PM2-B11: `..` tampoco pasa en intervene / return-to-bot (escribían
+    metadata.json FUERA del vault)."""
+    client, vault = client_and_vault
+    r1 = client.post("/api/dashboard/sessions/a..b/intervene", json={})
+    r2 = client.post(
+        "/api/dashboard/sessions/a..b/return-to-bot",
+        json={"target_route": "ventas"},
+    )
+    assert r1.status_code == 400
+    assert r2.status_code == 400
+
+
+def test_upload_failure_removes_orphan_file(client_and_vault):
+    """PM2-B7: si Meta rechaza la subida, el archivo persistido en fase A se
+    borra — sin esto cada retry deja OTRO archivo huérfano para siempre."""
+    client, vault = client_and_vault
+    _write_metadata(vault, "wa_b7", {"active_route": "humano"})
+
+    from src.platform.whatsapp.client import MediaUploadError
+
+    with patch(
+        "src.plugins.chats.api.handoff.upload_media",
+        new=AsyncMock(side_effect=MediaUploadError("meta down")),
+    ):
+        res = client.post(
+            "/api/dashboard/sessions/wa_b7/media",
+            files={"file": ("f.jpg", b"\xff\xd8\xff-jpeg", "image/jpeg")},
+        )
+    assert res.status_code == 502
+    media_dir = vault / "wa_b7" / "media"
+    leftovers = list(media_dir.glob("out-*")) if media_dir.exists() else []
+    assert leftovers == []
+
+
+def test_inflight_cmid_returns_409_without_resend(client_and_vault):
+    """PM2-B1a: un retry con el MISMO cmid mientras el primero sigue en vuelo
+    (reserva vigente) → 409, sin segundo envío a Meta."""
+    import time as _time
+
+    client, vault = client_and_vault
+    _write_metadata(
+        vault,
+        "wa_b1a",
+        {
+            "active_route": "humano",
+            "service_window_expires_at_ms": _FUTURE_MS,
+            "outbound_media": {"media-1": {"media_ref": "/x"}},
+            "pending_human_sends": {"cmid-vuelo": int(_time.time() * 1000)},
+        },
+    )
+
+    send_image_mock = AsyncMock(return_value=_outbound_result(True))
+    with patch("src.plugins.chats.api.handoff.send_image_to_session", new=send_image_mock):
+        res = client.post(
+            "/api/dashboard/sessions/wa_b1a/messages",
+            json={"attachment_id": "media-1", "client_message_id": "cmid-vuelo"},
+        )
+    assert res.status_code == 409
+    send_image_mock.assert_not_awaited()
+
+
+def test_stale_pending_reservation_does_not_block(client_and_vault):
+    """La reserva vencida (crash/timeout viejo) NO bloquea: se poda y el
+    envío procede."""
+    client, vault = client_and_vault
+    _write_metadata(
+        vault,
+        "wa_b1s",
+        {
+            "active_route": "humano",
+            "service_window_expires_at_ms": _FUTURE_MS,
+            "outbound_media": {"media-1": {"media_ref": "/x"}},
+            "pending_human_sends": {"cmid-viejo": 1},  # epoch 1970 → vencida
+        },
+    )
+
+    send_image_mock = AsyncMock(return_value=_outbound_result(True))
+    with patch("src.plugins.chats.api.handoff.send_image_to_session", new=send_image_mock):
+        res = client.post(
+            "/api/dashboard/sessions/wa_b1s/messages",
+            json={"attachment_id": "media-1", "client_message_id": "cmid-viejo"},
+        )
+    assert res.status_code == 200, res.text
+    send_image_mock.assert_awaited_once()
+    data = _read_metadata(vault, "wa_b1s")
+    assert "cmid-viejo" in data.get("sent_human_message_ids", [])
+    assert "cmid-viejo" not in data.get("pending_human_sends", {})
+
+
+def test_image_send_timeout_returns_504_and_keeps_reservation(client_and_vault):
+    """PM2-B1b: timeout del send ≠ rechazo — Meta PUEDE haber entregado. 504
+    honesto y la reserva queda vigente (bloquea el retry a ciegas)."""
+    client, vault = client_and_vault
+    _write_metadata(
+        vault,
+        "wa_b1t",
+        {
+            "active_route": "humano",
+            "service_window_expires_at_ms": _FUTURE_MS,
+            "outbound_media": {"media-1": {"media_ref": "/x"}},
+        },
+    )
+
+    with patch(
+        "src.plugins.chats.api.handoff.send_image_to_session",
+        new=AsyncMock(return_value=_outbound_result(False, "timeout: read timeout")),
+    ):
+        res = client.post(
+            "/api/dashboard/sessions/wa_b1t/messages",
+            json={"attachment_id": "media-1", "client_message_id": "cmid-t"},
+        )
+    assert res.status_code == 504
+    data = _read_metadata(vault, "wa_b1t")
+    assert "cmid-t" in data.get("pending_human_sends", {})
+    assert "cmid-t" not in data.get("sent_human_message_ids", [])
+
+
+def test_image_send_rejection_clears_reservation_for_retry(client_and_vault):
+    """Un rechazo REAL de Meta (no timeout) → 502 y la reserva se libera para
+    que el retry del operador funcione de inmediato."""
+    client, vault = client_and_vault
+    _write_metadata(
+        vault,
+        "wa_b1r",
+        {
+            "active_route": "humano",
+            "service_window_expires_at_ms": _FUTURE_MS,
+            "outbound_media": {"media-1": {"media_ref": "/x"}},
+        },
+    )
+
+    with patch(
+        "src.plugins.chats.api.handoff.send_image_to_session",
+        new=AsyncMock(return_value=_outbound_result(False, "http_400: bad media")),
+    ):
+        res = client.post(
+            "/api/dashboard/sessions/wa_b1r/messages",
+            json={"attachment_id": "media-1", "client_message_id": "cmid-r"},
+        )
+    assert res.status_code == 502
+    data = _read_metadata(vault, "wa_b1r")
+    assert "cmid-r" not in data.get("pending_human_sends", {})

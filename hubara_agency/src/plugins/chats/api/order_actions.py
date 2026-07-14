@@ -42,12 +42,21 @@ from __future__ import annotations
 
 import os
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import APIRouter, Body, Path, Request
 
 from src.sdk import castkit
 
 router = APIRouter()
+
+
+def _seg(value: str) -> str:
+    """PM2-B10: percent-encode de un path param antes de re-insertarlo en la
+    URL del forward. Uvicorn DECODIFICA `%23`/`%3F` del path entrante; un id
+    con `#`/`?` decodificado interpolado crudo en el f-string se convierte en
+    fragment/query → el provider recibe un id TRUNCADO distinto del ruteado."""
+    return quote(value, safe="")
 
 # Peor caso de UNA llamada Medusa del provider: 30s × 3 retries tenacity
 # (+ backoff) ≈ 95s; `schedule` encadena varias. 15s (el valor original,
@@ -104,7 +113,7 @@ async def get_order_for_chat(
     return await castkit.forward(
         request,
         "GET",
-        f"/api/orders/orders/{order_id}",
+        f"/api/orders/orders/{_seg(order_id)}",
         base_url=_orders_base(),
         timeout=_timeout_s(),
         cast_label=_CAST_LABEL,
@@ -124,7 +133,7 @@ async def schedule_order_for_chat(
     (`{success, order_id, current_stage, error_detail, audit_id}`).
     """
     return await _forward_patch(
-        request, f"/api/orders/orders/{order_id}/schedule", body
+        request, f"/api/orders/orders/{_seg(order_id)}/schedule", body
     )
 
 
@@ -136,7 +145,7 @@ async def confirm_order_payment_for_chat(
 ) -> dict[str, Any]:
     """Confirmar pago del pedido vía el contrato order@v1 (idempotente)."""
     return await _forward_patch(
-        request, f"/api/orders/orders/{order_id}/confirm-payment", body
+        request, f"/api/orders/orders/{_seg(order_id)}/confirm-payment", body
     )
 
 
@@ -154,7 +163,7 @@ async def list_customer_orders_for_chat(
     return await castkit.forward(
         request,
         "GET",
-        f"/api/orders/orders/by-session/{session_id}",
+        f"/api/orders/orders/by-session/{_seg(session_id)}",
         base_url=_orders_base(),
         timeout=_timeout_s(),
         cast_label=_CAST_LABEL,
@@ -175,5 +184,5 @@ async def transition_order_stage_for_chat(
     el `OrderCommandResult` plano (`{success, current_stage, error_detail}`).
     """
     return await _forward_patch(
-        request, f"/api/orders/orders/{order_id}/stage", body
+        request, f"/api/orders/orders/{_seg(order_id)}/stage", body
     )

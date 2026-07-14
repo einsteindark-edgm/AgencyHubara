@@ -12,7 +12,7 @@
  * desktop; la vista activa (inbox/chat) es estado local — es navegación pura
  * de UI, no server-state (regla 3 de la política de estado).
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Icon } from "@/shared/ui";
 import { useSelection } from "@/shared/lib";
@@ -24,6 +24,7 @@ import {
   useChatInbox,
   useSessionsStream,
 } from "@plugins/chats/frontend/entities/chat";
+import { orderRefKeys } from "@plugins/chats/frontend/entities/order-ref";
 import { sessionKeys } from "@plugins/chats/frontend/entities/session";
 
 import {
@@ -54,41 +55,75 @@ export function MobileChatsLayout() {
       if (selectedChatId) {
         qc.invalidateQueries({ queryKey: sessionKeys.detail(selectedChatId) });
       }
+      // PM2-M6: los pedidos del cliente no tienen push SSE propio — tras un
+      // background largo (Android mata el socket) el sheet abierto quedaba
+      // con botones stale si otro dispositivo cambió el estado.
+      qc.invalidateQueries({ queryKey: orderRefKeys.all });
     }, [qc, selectedChatId]),
   );
 
-  const { data: chats = [] } = useChatInbox();
-  // Notificación del sistema cuando una conversación pasa a manos del humano
-  // (escalada del bot o intervene desde otro dispositivo) y la app no está
-  // en primer plano.
-  useHandoffNotifications(chats);
-  const selectedChat = chats.find((c) => c.id === selectedChatId) ?? null;
+  // PM2-M1: contador de entradas de historial NUESTRAS aún vivas. Los cierres
+  // desde la UI hacen `history.back()` (el popstate es la ÚNICA fuente del
+  // cambio de estado) — antes solo pusheaban al abrir y el cierre por UI
+  // dejaba entradas huérfanas: tras N ciclos el back físico necesitaba N taps
+  // muertos para salir, o saltaba vistas. El contador evita hacer back()
+  // más allá de nuestras entradas (p.ej. tras un reload que resetea el estado
+  // pero no el historial del WebView).
+  const ownedHistoryEntries = useRef(0);
 
+  const pushOwnedEntry = (tag: string) => {
+    window.history.pushState({ mobileChats: tag }, "");
+    ownedHistoryEntries.current += 1;
+  };
+
+  /** Cierra la vista superior (sheet, o el chat) consumiendo SU entrada. */
+  const closeTop = useCallback(() => {
+    if (ownedHistoryEntries.current > 0) {
+      window.history.back(); // el popstate aplica el cambio de estado
+      return;
+    }
+    // Fallback (reload perdió nuestro stack): cerrar directo, sin history.
+    setActiveSheet((sheet) => {
+      if (sheet !== "none") return "none";
+      setView("inbox");
+      return sheet;
+    });
+  }, []);
+
+  const { data: chats = [] } = useChatInbox();
   const openChat = (id: string) => {
     setSelectedChatId(id);
     setView("chat");
-    // PM-F4: empujar una entrada de historial para que el BACK FÍSICO de
-    // Android navegue chat→inbox en vez de cerrar la app (el WebView mapea el
-    // back del sistema a history.back()).
-    window.history.pushState({ mobileChats: "chat" }, "");
-  };
-  const backToInbox = () => {
-    setView("inbox");
     setActiveSheet("none");
+    // PM-F4: entrada de historial para que el BACK FÍSICO de Android navegue
+    // chat→inbox en vez de cerrar la app.
+    pushOwnedEntry("chat");
   };
-  const openSheet = (sheet: Exclude<ActiveSheet, "none">) => {
-    setActiveSheet(sheet);
-    window.history.pushState({ mobileChats: "sheet" }, "");
-  };
+  // Notificación del sistema cuando una conversación pasa a manos del humano
+  // (escalada del bot o intervene desde otro dispositivo) y la app no está en
+  // primer plano. Tocar la notificación (web) abre ese chat (PM2-M7).
+  useHandoffNotifications(chats, { onOpenChat: openChat });
+  const selectedChat = chats.find((c) => c.id === selectedChatId) ?? null;
+
   const toggleSheet = (sheet: Exclude<ActiveSheet, "none">) => {
-    if (activeSheet === sheet) setActiveSheet("none");
-    else openSheet(sheet);
+    if (activeSheet === sheet) {
+      closeTop();
+    } else if (activeSheet !== "none") {
+      // Cambiar de sheet NO pushea otra entrada: "algún sheet abierto" es UNA
+      // sola profundidad de navegación (orders↔inspector alternaban 2
+      // entradas por ciclo).
+      setActiveSheet(sheet);
+    } else {
+      setActiveSheet(sheet);
+      pushOwnedEntry("sheet");
+    }
   };
 
-  // Back físico / gesto de Android → cerrar primero el sheet abierto, después
-  // el chat. Idempotente: si el botón de la UI ya cerró el sheet, el pop no-op.
+  // Back físico / gesto de Android (y los back() de closeTop) → cerrar primero
+  // el sheet abierto, después el chat.
   useEffect(() => {
     const onPop = () => {
+      ownedHistoryEntries.current = Math.max(0, ownedHistoryEntries.current - 1);
       setActiveSheet((sheet) => {
         if (sheet !== "none") return "none";
         setView("inbox");
@@ -105,7 +140,7 @@ export function MobileChatsLayout() {
         <header className="mobile-topbar">
           <button
             className="mobile-back"
-            onClick={backToInbox}
+            onClick={closeTop}
             aria-label="Volver a la bandeja"
           >
             <Icon.back />
@@ -135,11 +170,23 @@ export function MobileChatsLayout() {
         {activeSheet !== "none" && (
           <div
             className="mobile-sheet-backdrop"
-            onClick={() => setActiveSheet("none")}
-            role="dialog"
-            aria-modal="true"
+            onClick={closeTop}
+            role="presentation"
           >
-            <div className="mobile-sheet" onClick={(e) => e.stopPropagation()}>
+            {/* PM2-M9: el dialog es el SHEET (con nombre accesible), no el
+                backdrop clickeable — TalkBack anunciaba un dialog sin nombre
+                cuyo tap-para-cerrar era indescubrible. */}
+            <div
+              className="mobile-sheet"
+              role="dialog"
+              aria-modal="true"
+              aria-label={
+                activeSheet === "orders"
+                  ? "Pedidos del cliente"
+                  : "Detalles del contacto"
+              }
+              onClick={(e) => e.stopPropagation()}
+            >
               <div className="mobile-sheet-handle" />
               {activeSheet === "inspector" && (
                 <ChatsInspector chatId={selectedChatId} />

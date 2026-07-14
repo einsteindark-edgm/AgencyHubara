@@ -147,6 +147,34 @@ def persist_outbound_image(
     return filename
 
 
+def delete_outbound_image(session_id: str, filename: str) -> None:
+    """Borra (best-effort) una foto saliente persistida por
+    :func:`persist_outbound_image` que quedó huérfana.
+
+    PM2-B7: la fase A persiste el archivo ANTES de subir a Meta; si la subida
+    falla, cada retry del operador genera OTRO uuid → OTRO archivo, y nadie
+    referencia ni limpia los anteriores (basura permanente en el vault). Solo
+    acepta filenames ``out-*`` (jamás borra media inbound del cliente) y aplica
+    las mismas guardas anti-traversal que el resto del módulo. Nunca lanza.
+    """
+    if not is_safe_segment(session_id) or not is_safe_segment(filename):
+        return
+    if not filename.startswith("out-"):
+        return
+    media_dir = _media_dir(session_id).resolve()
+    path = (media_dir / filename).resolve()
+    if media_dir != path.parent:
+        return
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        logger.warning(
+            "delete_outbound_image failed (best-effort)",
+            session_id=session_id,
+            filename=filename,
+        )
+
+
 def resolve_media_file(session_id: str, filename: str) -> Path | None:
     """Resuelve el archivo a servir, con guardas anti path-traversal.
 

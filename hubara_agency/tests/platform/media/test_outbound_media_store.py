@@ -60,3 +60,38 @@ def test_persist_outbound_token_is_sanitized(vault):
     assert "/" not in filename
     assert ".." not in filename
     assert media_store.resolve_media_file("wa_1", filename) is not None
+
+
+# ── PM2-B7: limpieza de huérfanos cuando el upload a Meta falla ─────────────
+
+
+def test_delete_outbound_image_removes_file(vault):
+    filename = media_store.persist_outbound_image(
+        "wa_1", b"x", "image/jpeg", token="huerfano"
+    )
+    path = vault / "wa_1" / "media" / filename
+    assert path.exists()
+    media_store.delete_outbound_image("wa_1", filename)
+    assert not path.exists()
+
+
+def test_delete_outbound_image_never_touches_inbound(vault):
+    """Solo borra `out-*` — jamás media entrante del cliente."""
+    filename = media_store.persist_inbound_image(
+        "wa_1", "media-123", b"cliente", "image/jpeg"
+    )
+    path = vault / "wa_1" / "media" / filename
+    media_store.delete_outbound_image("wa_1", filename)
+    assert path.exists()
+
+
+def test_delete_outbound_image_rejects_traversal(vault):
+    outside = vault / "fuera.jpg"
+    outside.write_bytes(b"x")
+    media_store.delete_outbound_image("wa_1", "../../fuera.jpg")
+    media_store.delete_outbound_image("..", "fuera.jpg")
+    assert outside.exists()
+
+
+def test_delete_outbound_image_missing_file_is_noop(vault):
+    media_store.delete_outbound_image("wa_1", "out-inexistente.jpg")  # no lanza

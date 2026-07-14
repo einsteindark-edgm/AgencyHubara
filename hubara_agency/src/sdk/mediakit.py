@@ -27,6 +27,7 @@ from __future__ import annotations
 # Storage de media (persistir + resolver URL + guard anti-traversal). Alias
 # idiom (regla 1 SDK): sin el `as x`, ruff --fix poda el re-export.
 from src.platform.media import (
+    delete_outbound_image as delete_outbound_image,
     is_safe_segment as is_safe_segment,
     media_url_for as media_url_for,
     persist_outbound_image as persist_outbound_image,

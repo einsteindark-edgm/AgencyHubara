@@ -18,7 +18,10 @@
 
 import { useEffect, useRef } from "react";
 
-import { sendSystemNotification } from "@/shared/lib";
+import {
+  ensureNotificationPermission,
+  sendSystemNotification,
+} from "@/shared/lib";
 import type { ChatInboxItem } from "@plugins/chats/frontend/entities/chat";
 
 interface HandoffDiff {
@@ -57,8 +60,22 @@ export function diffNewHandoffs(
  */
 export function useHandoffNotifications(
   items: Pick<ChatInboxItem, "id" | "name" | "human">[],
+  opts?: { onOpenChat?: (chatId: string) => void },
 ): void {
   const snapshotRef = useRef<Map<string, boolean>>(new Map());
+  const onOpenChatRef = useRef(opts?.onOpenChat);
+  useEffect(() => {
+    onOpenChatRef.current = opts?.onOpenChat;
+  });
+
+  // PM2-M2: pedir el permiso runtime (Android 13+ POST_NOTIFICATIONS) UNA vez
+  // en FOREGROUND, al montar. Sin esto, el primer `requestPermission` ocurría
+  // recién al notificar — y como solo notificamos con la app en background, el
+  // diálogo del sistema no se puede mostrar → denied → todas las
+  // notificaciones se perdían en silencio.
+  useEffect(() => {
+    void ensureNotificationPermission();
+  }, []);
 
   useEffect(() => {
     const { newlyAssigned, isFirstSnapshot, nextSnapshot } = diffNewHandoffs(
@@ -79,9 +96,12 @@ export function useHandoffNotifications(
     if (appVisible) return;
 
     for (const chat of newlyAssigned) {
+      // PM2-M7: tocar la notificación (fallback web) abre ESE chat — sin esto
+      // el operador tenía que buscar la conversación a mano en la bandeja.
       void sendSystemNotification(
         "Conversación asignada",
         `${chat.name} necesita atención humana`,
+        { onClick: () => onOpenChatRef.current?.(chat.id) },
       );
     }
   }, [items]);

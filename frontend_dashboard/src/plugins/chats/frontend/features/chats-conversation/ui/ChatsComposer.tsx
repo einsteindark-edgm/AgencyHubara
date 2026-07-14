@@ -169,7 +169,8 @@ function InterveneActiveComposer({
           >
             Devolver al bot
           </button>
-          <kbd>⌘↩</kbd>
+          {/* PM2-M10: el atajo de teclado no existe en Android. */}
+          {!IS_MOBILE_APP && <kbd>⌘↩</kbd>}
         </span>
       </div>
 
@@ -224,7 +225,10 @@ function InterveneActiveComposer({
         <textarea
           placeholder="Escribe un mensaje al cliente…"
           rows={1}
-          autoFocus
+          // PM2-M10: en el teléfono, autoFocus abre el TECLADO al entrar a
+          // cualquier chat intervenido — con `resizes-content` eso colapsa
+          // media pantalla de conversación sin que el operador quiera escribir.
+          autoFocus={!IS_MOBILE_APP}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {

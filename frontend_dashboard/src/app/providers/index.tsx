@@ -59,6 +59,11 @@ export function AppProviders({ children }: { children: ReactNode }) {
   // hosted UI de Cognito no funciona en el WebView. El gate rehidrata la
   // sesión, muestra la pantalla de login y pone el token en el store que leen
   // el apiClient y el SSE (dentro de Shell).
+  //
+  // INVARIANTE (PM2-A11): `Shell` (con el QueryProvider) vive ADENTRO del
+  // gate — el logout desmonta el árbol y la cache de TanStack muere con él.
+  // Si alguien mueve Shell afuera, el próximo operador que loguee en el mismo
+  // device vería data cacheada del anterior.
   if (IS_MOBILE_APP) {
     return (
       <ErrorBoundary scope="app">

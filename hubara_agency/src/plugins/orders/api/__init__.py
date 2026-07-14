@@ -127,21 +127,42 @@ async def list_orders_by_session(
     `registered_order.order_id`). Extraemos esos ids y pedimos el detalle a
     Medusa por cada uno; devolvemos su `summary` (id, estado, total, fecha).
 
-    Shape: `{"orders": [OrderSummaryDTO, ...], "count": int}`. Un id que existe
-    en el vault pero no en Medusa (`port.get→None`) se omite. Sesión sin órdenes
-    → lista vacía (no 404).
+    Shape: `{"orders": [OrderSummaryDTO, ...], "count": int, "error_detail":
+    str|null}`. Un id que existe en el vault pero no en Medusa (`port.get→None`)
+    se omite. Sesión sin órdenes → lista vacía (no 404).
+
+    PM2-B4/B5 (premortem 2026-07-14): los `port.get` van EN PARALELO
+    (`asyncio.gather`) — en serie, con Medusa@Railway a 2-30s por GET, un
+    cliente con 3+ pedidos dejaba el panel colgado y reventaba el timeout del
+    cast. Un `MedusaAPIError` en UN id no tumba el endpoint: se omite ese id y
+    se reporta en `error_detail` (los demás pedidos SÍ llegan al operador).
+    Cap de 15 ids (los más recientes) — `episodes[]` no tiene tope.
     """
+    if not re.fullmatch(r"[A-Za-z0-9._+-]+", session_id) or ".." in session_id:
+        raise HTTPException(status_code=400, detail="session_id inválido")
+
     metadata_store = FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
     metadata = metadata_store.read(session_id)
-    order_ids = _collect_order_ids_from_metadata(metadata)
+    order_ids = _collect_order_ids_from_metadata(metadata)[-15:]
 
     port = get_order_query_port()
+    results = await asyncio.gather(
+        *(port.get(oid) for oid in order_ids), return_exceptions=True
+    )
     orders: list[dict[str, Any]] = []
-    for oid in order_ids:
-        detail = await port.get(oid)
-        if detail is not None:
-            orders.append(asdict(detail.summary))
-    return {"orders": orders, "count": len(orders)}
+    error_detail: str | None = None
+    for oid, res in zip(order_ids, results):
+        if isinstance(res, MedusaAPIError):
+            log.warning(
+                "by-session: Medusa falló para %s (%s) — se omite", oid, res
+            )
+            error_detail = "Algunos pedidos no se pudieron cargar desde Medusa."
+            continue
+        if isinstance(res, BaseException):
+            raise res
+        if res is not None:
+            orders.append(asdict(res.summary))
+    return {"orders": orders, "count": len(orders), "error_detail": error_detail}
 
 
 @router.get("/orders/{order_id}")

@@ -9,7 +9,7 @@
  * No abstrae métodos custom (DELETE, PATCH) hasta que se necesiten.
  */
 
-import { getAccessToken } from "../config/auth-token";
+import { getAccessToken, notifyUnauthorized } from "../config/auth-token";
 import { env } from "../config/env";
 
 export class ApiError extends Error {
@@ -55,6 +55,11 @@ async function request<T>(path: string, init: ApiRequestInit = {}): Promise<T> {
   const payload = isJson ? await res.json().catch(() => null) : await res.text();
 
   if (!res.ok) {
+    // PM2-A2: un 401 con sesión activa = access token vencido de facto (timer
+    // congelado en background, reloj corrido, usuario deshabilitado). Avisar
+    // al gate de auth para que refresque/cierre sesión — sin esto la app queda
+    // "autenticada" con todas las requests fallando.
+    if (res.status === 401) notifyUnauthorized();
     throw new ApiError(res.status, payload);
   }
   return payload as T;
@@ -76,10 +81,15 @@ async function postExternal(
   body: unknown,
   headers: Record<string, string>,
 ): Promise<{ status: number; data: unknown }> {
+  // PM2-A8: timeout duro — en red móvil colgada (frecuente en Android) un
+  // fetch sin señal deja "Ingresando…" indefinido y un refresh colgado
+  // bloquea el ciclo de renovación. 15s → cae al catch del caller (error
+  // de red, reintenta).
   const res = await fetch(url, {
     method: "POST",
     headers,
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(15_000),
   });
   const data = await res.json().catch(() => ({}));
   return { status: res.status, data };

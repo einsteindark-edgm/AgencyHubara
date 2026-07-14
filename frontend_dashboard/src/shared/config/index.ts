@@ -1,5 +1,10 @@
 export { env } from "./env";
-export { getAccessToken, setAccessToken } from "./auth-token";
+export {
+  getAccessToken,
+  setAccessToken,
+  setUnauthorizedHandler,
+  notifyUnauthorized,
+} from "./auth-token";
 export {
   saveSession,
   loadSession,

@@ -38,6 +38,12 @@ export function useCustomerOrders(
   return useQuery<CustomerOrders, Error>({
     queryKey: orderRefKeys.bySession(sessionId ?? "none"),
     enabled: Boolean(sessionId) && (opts?.enabled ?? true),
+    // PM2-M6: red de seguridad — el listado no tiene push SSE propio; si otro
+    // dispositivo (desktop) cambia el estado con el sheet abierto, sin esto los
+    // botones quedan stale indefinidamente. ≥60s numérico = permitido por la
+    // política realtime (regla 2a). La query solo está montada con el sheet
+    // abierto, así que el costo es acotado.
+    refetchInterval: 60_000,
     queryFn: async ({ signal }) => {
       const raw = await apiClient.get<unknown>(
         `/api/chats/order-actions/by-session/${encodeURIComponent(sessionId ?? "")}`,
@@ -71,11 +77,19 @@ export function useTransitionOrderStage(sessionId: string | null) {
       );
       return orderRefCommandResultSchema.parse(raw);
     },
-    onSuccess: () => {
-      if (sessionId) {
-        qc.invalidateQueries({ queryKey: orderRefKeys.bySession(sessionId) });
-      }
-    },
+    // PM2-M5: RETORNAR la promise del invalidate — así `mutateAsync` no
+    // resuelve hasta que el refetch termina y la tarjeta ya pinta el estado
+    // NUEVO cuando el botón se re-habilita (sin esto, con Medusa lento, el
+    // botón volvía a decir "Despachar" habilitado durante segundos y el
+    // re-tap daba "transición inválida"). PM2-M8: invalidar también el
+    // detail — ConfirmPayment/ScheduleDelivery deciden con esa foto.
+    onSuccess: (_data, { orderId }) =>
+      Promise.all([
+        sessionId
+          ? qc.invalidateQueries({ queryKey: orderRefKeys.bySession(sessionId) })
+          : Promise.resolve(),
+        qc.invalidateQueries({ queryKey: orderRefKeys.detail(orderId) }),
+      ]),
   });
 }
 

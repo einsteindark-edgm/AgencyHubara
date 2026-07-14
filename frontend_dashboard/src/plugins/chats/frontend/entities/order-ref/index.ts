@@ -19,6 +19,7 @@ export {
   type OrderRefStatus,
 } from "./contracts";
 export {
+  formatDueDate,
   NEXT_STAGES,
   ORDER_REF_STATUS_META,
   STAGE_ACTION_LABEL,

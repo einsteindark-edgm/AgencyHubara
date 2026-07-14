@@ -131,7 +131,7 @@ async def check_reengagement_policy_activity(session_id: str) -> SendDecision:
     )
 
 
-async def send_message_to_session(session_id: str, message: str) -> None:
+async def send_message_to_session(session_id: str, message: str) -> bool:
     """Envia `message` al cliente cuyo `session_id` mapea a un numero de WhatsApp.
 
     Pura (no toca Temporal). Resuelve `phone_number_id` desde `metadata.json` o
@@ -146,9 +146,18 @@ async def send_message_to_session(session_id: str, message: str) -> None:
     path free-form nunca escribía — sin eso ni `engaged` (lead_state) ni el
     cost tracking ven los free-form del bot.
 
+    PM2-B3 (premortem 2026-07-14): devuelve ``True`` si TODOS los chunks
+    salieron OK, ``False`` si Meta rechazó alguno (ventana cerrada sin metadata
+    poblada, número inválido, token vencido). Antes el fallo se tragaba y el
+    operador veía "enviado" con el cliente sin recibir nada. Ante el primer
+    chunk fallido se CORTA (no se mandan los siguientes); si hubo entrega
+    parcial se registra igual el fingerprint para que un retry no re-mande los
+    chunks que sí llegaron. El hit de idempotencia devuelve True (ya enviado).
+
     Reutilizada por:
-      * `send_whatsapp_message_activity` (worker, dentro de workflows).
-      * `dashboard/handoff.py` (HTTP, mensajes del humano operador).
+      * `send_whatsapp_message_activity` (worker, dentro de workflows —
+        ignora el retorno: mismo comportamiento de siempre).
+      * `dashboard/handoff.py` (HTTP — propaga False como 502 al operador).
     """
     from_number = session_id.replace(WHATSAPP_SESSION_PREFIX, "")
 
@@ -168,7 +177,7 @@ async def send_message_to_session(session_id: str, message: str) -> None:
             session_id=session_id,
             note="skipping duplicate free-form send (retry / double-touch)",
         )
-        return
+        return True
 
     # Sanitizar markdown del LLM (`**bold**` → `*bold*`): WhatsApp no
     # renderiza markdown y el cliente ve los asteriscos crudos (caso
@@ -176,28 +185,50 @@ async def send_message_to_session(session_id: str, message: str) -> None:
     message = to_whatsapp_text(message)
 
     chunks = [chunk.strip() for chunk in message.split("\n\n") if chunk.strip()]
+    if not chunks:
+        return True
+
+    # PM2-B3: `send_text` (devuelve OutboundResult) en vez del legacy
+    # `send_message` (swallow). Ante el primer chunk rechazado se corta.
+    delivered = 0
+    failed_error: str | None = None
     for chunk in chunks:
-        await whatsapp_client.send_message(phone_number_id, from_number, chunk)
+        result = await whatsapp_client.send_text(phone_number_id, from_number, chunk)
+        if not result.ok:
+            failed_error = result.error
+            break
+        delivered += 1
         await asyncio.sleep(1.5)
 
-    if not chunks:
-        return
+    if delivered:
+        # Persistir outbound + marca de idempotencia en la MISMA escritura
+        # (mismo patrón que el template path). El pricing llega por webhook.
+        # Se registra TAMBIÉN en entrega parcial: un retry no debe re-mandar
+        # los chunks que sí llegaron (el fingerprint lo dedupea).
+        log_entry = OutboundLogEntry(
+            sent_at_ms=now_ms,
+            wa_message_id="",
+            kind="text",
+            template_name=None,
+            pricing=None,
+            cost_usd_micros=None,
+            rate_card_version=None,
+        )
+        _append_outbound_to_active_episode(metadata, log_entry)
+        metadata["last_outbound"] = asdict(log_entry)
+        _record_freeform_send(metadata, fingerprint, now_ms)
+        _write_metadata(session_id, metadata)
 
-    # Persistir outbound + marca de idempotencia en la MISMA escritura (mismo
-    # patrón que el template path). El pricing llega después por webhook.
-    log_entry = OutboundLogEntry(
-        sent_at_ms=now_ms,
-        wa_message_id="",
-        kind="text",
-        template_name=None,
-        pricing=None,
-        cost_usd_micros=None,
-        rate_card_version=None,
-    )
-    _append_outbound_to_active_episode(metadata, log_entry)
-    metadata["last_outbound"] = asdict(log_entry)
-    _record_freeform_send(metadata, fingerprint, now_ms)
-    _write_metadata(session_id, metadata)
+    if failed_error is not None:
+        log.error(
+            "freeform_send_failed",
+            session_id=session_id,
+            error=failed_error,
+            delivered_chunks=delivered,
+            total_chunks=len(chunks),
+        )
+        return False
+    return True
 
 
 async def send_image_to_session(
@@ -230,6 +261,18 @@ async def send_image_to_session(
     # `lead_state.engaged`. Solo si el envío tuvo éxito, sobre lectura fresca.
     if result.ok:
         fresh = _read_metadata(session_id)
+        if not fresh and metadata:
+            # PM2-B2: la lectura fresca vino vacía (OSError transitorio / JSON
+            # corrupto) para una sesión que 30ms antes TENÍA datos. Escribir el
+            # dict vacío mutado borraría active_route=humano/episodes → el bot
+            # revive en medio de la intervención. El log entry es best-effort:
+            # mejor perderlo que perder la metadata.
+            log.error(
+                "send_image outbound log skipped: fresh metadata read came back "
+                "empty for a session that had data",
+                session_id=session_id,
+            )
+            return result
         log_entry = OutboundLogEntry(
             sent_at_ms=_now_ms(),
             wa_message_id=result.wa_message_id or "",

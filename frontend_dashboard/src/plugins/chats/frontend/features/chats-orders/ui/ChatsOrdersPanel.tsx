@@ -14,6 +14,7 @@
 import { useState } from "react";
 
 import {
+  formatDueDate,
   NEXT_STAGES,
   ORDER_REF_STATUS_META,
   STAGE_ACTION_LABEL,
@@ -38,11 +39,14 @@ function formatCop(n: number): string {
 export function ChatsOrdersPanel({ sessionId }: Props) {
   const orders = useCustomerOrders(sessionId);
   const transition = useTransitionOrderStage(sessionId);
-  const [busyId, setBusyId] = useState<string | null>(null);
+  // PM2-M4: un Set, NO un slot único — con dos transiciones solapadas en
+  // tarjetas distintas (red lenta), un slot único re-habilitaba los botones de
+  // la primera con su PATCH aún en vuelo (doble PATCH posible en ambas).
+  const [busyIds, setBusyIds] = useState<ReadonlySet<string>>(new Set());
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const onTransition = async (orderId: string, stage: OrderRefStatus) => {
-    setBusyId(orderId);
+    setBusyIds((prev) => new Set(prev).add(orderId));
     setErrors((e) => ({ ...e, [orderId]: "" }));
     try {
       const res = await transition.mutateAsync({ orderId, stage });
@@ -58,7 +62,11 @@ export function ChatsOrdersPanel({ sessionId }: Props) {
         [orderId]: err instanceof Error ? err.message : "Error de red.",
       }));
     } finally {
-      setBusyId(null);
+      setBusyIds((prev) => {
+        const next = new Set(prev);
+        next.delete(orderId);
+        return next;
+      });
     }
   };
 
@@ -89,7 +97,7 @@ export function ChatsOrdersPanel({ sessionId }: Props) {
         <OrderCard
           key={o.id}
           order={o}
-          busy={busyId === o.id}
+          busy={busyIds.has(o.id)}
           error={errors[o.id]}
           onTransition={onTransition}
         />
@@ -121,7 +129,7 @@ function OrderCard({ order, busy, error, onTransition }: CardProps) {
       {(order.total_cop != null || order.due_iso) && (
         <div className="order-card-meta">
           {order.total_cop != null && <span>{formatCop(order.total_cop)}</span>}
-          {order.due_iso && <span>Entrega: {order.due_iso}</span>}
+          {order.due_iso && <span>Entrega: {formatDueDate(order.due_iso)}</span>}
         </div>
       )}
 

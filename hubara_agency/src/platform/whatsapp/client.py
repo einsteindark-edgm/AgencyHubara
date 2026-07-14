@@ -427,6 +427,14 @@ async def _post_json(
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.post(url, headers=headers, json=data)
+    except httpx.TimeoutException as e:
+        # Timeout ≠ "no pasó nada": Meta PUEDE haber entregado el mensaje y la
+        # respuesta se perdió (lección L-1). El prefijo `timeout:` permite al
+        # caller (handoff) responder 504 "no reintentar a ciegas" en vez de 502.
+        logger.error("WhatsApp send timeout (ambiguous)", label=label, error=str(e))
+        return wa_dtos.OutboundResult(
+            wa_message_id=None, ok=False, error=f"timeout: {e}"
+        )
     except httpx.HTTPError as e:
         logger.error("WhatsApp send transport error", label=label, error=str(e))
         return wa_dtos.OutboundResult(wa_message_id=None, ok=False, error=str(e))

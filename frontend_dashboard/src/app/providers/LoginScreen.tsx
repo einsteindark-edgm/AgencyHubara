@@ -13,6 +13,9 @@ interface Props {
   submitting: boolean;
   onSignIn: (username: string, password: string) => void;
   onCompleteNewPassword: (newPassword: string) => void;
+  /** PM2-A7: salida manual del challenge (session de Cognito expira en ~3 min
+   *  — sin esto la pantalla de contraseña nueva no tiene escape). */
+  onBackToSignIn?: () => void;
 }
 
 export function LoginScreen({
@@ -20,6 +23,7 @@ export function LoginScreen({
   submitting,
   onSignIn,
   onCompleteNewPassword,
+  onBackToSignIn,
 }: Props) {
   if (state.status === "new_password_required") {
     return (
@@ -27,6 +31,7 @@ export function LoginScreen({
         submitting={submitting}
         serverError={state.error}
         onSubmit={onCompleteNewPassword}
+        onBack={onBackToSignIn}
       />
     );
   }
@@ -107,10 +112,12 @@ function NewPasswordForm({
   submitting,
   serverError,
   onSubmit,
+  onBack,
 }: {
   submitting: boolean;
   serverError?: string;
   onSubmit: (newPassword: string) => void;
+  onBack?: () => void;
 }) {
   const [pw, setPw] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -164,6 +171,16 @@ function NewPasswordForm({
         <button type="submit" className="login-submit" disabled={submitting}>
           {submitting ? "Guardando…" : "Cambiar contraseña"}
         </button>
+        {onBack && (
+          <button
+            type="button"
+            className="login-back"
+            onClick={onBack}
+            disabled={submitting}
+          >
+            Volver al inicio de sesión
+          </button>
+        )}
       </form>
     </Shell>
   );

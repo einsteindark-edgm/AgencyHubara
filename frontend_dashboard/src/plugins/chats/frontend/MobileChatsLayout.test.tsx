@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useCallback, useState, type ReactNode } from "react";
 import { PluginHostProvider } from "@/shared/lib";
@@ -83,14 +83,53 @@ describe("MobileChatsLayout", () => {
     ).toBeInTheDocument();
   });
 
-  it("el botón atrás vuelve a la bandeja", () => {
+  it("el botón atrás vuelve a la bandeja (consumiendo SU entrada de historial)", async () => {
     render(<MobileChatsLayout />, { wrapper: Wrapper });
     fireEvent.click(screen.getByText("Abrir chat wa_42"));
+    // PM2-M1: el cierre por UI hace history.back() — el popstate (async en
+    // jsdom) es la única fuente del cambio de estado. Sin esto, cada ciclo
+    // abrir/cerrar dejaba una entrada huérfana y el back físico acumulaba
+    // taps muertos.
     fireEvent.click(
       screen.getByRole("button", { name: /volver a la bandeja/i }),
     );
+    await waitFor(() =>
+      expect(screen.queryByTestId("conversation")).not.toBeInTheDocument(),
+    );
     expect(screen.getByText("Abrir chat wa_42")).toBeInTheDocument();
-    expect(screen.queryByTestId("conversation")).not.toBeInTheDocument();
+  });
+
+  it("el back físico (popstate) con un sheet abierto cierra el sheet, no el chat", async () => {
+    render(<MobileChatsLayout />, { wrapper: Wrapper });
+    fireEvent.click(screen.getByText("Abrir chat wa_42"));
+    fireEvent.click(
+      screen.getByRole("button", { name: /pedidos del cliente/i }),
+    );
+    expect(screen.getByTestId("orders-panel")).toBeInTheDocument();
+    // Back físico de Android = popstate del WebView.
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    await waitFor(() =>
+      expect(screen.queryByTestId("orders-panel")).not.toBeInTheDocument(),
+    );
+    // El chat sigue abierto; un segundo back vuelve a la bandeja.
+    expect(screen.getByTestId("conversation")).toBeInTheDocument();
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    await waitFor(() =>
+      expect(screen.queryByTestId("conversation")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("cerrar el sheet con el backdrop también consume la entrada de historial", async () => {
+    render(<MobileChatsLayout />, { wrapper: Wrapper });
+    fireEvent.click(screen.getByText("Abrir chat wa_42"));
+    fireEvent.click(
+      screen.getByRole("button", { name: /pedidos del cliente/i }),
+    );
+    fireEvent.click(screen.getByRole("presentation"));
+    await waitFor(() =>
+      expect(screen.queryByTestId("orders-panel")).not.toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("conversation")).toBeInTheDocument();
   });
 
   it("el toggle de detalles abre el inspector como bottom-sheet", () => {
@@ -125,5 +164,16 @@ describe("MobileChatsLayout", () => {
     );
     expect(screen.queryByTestId("inspector")).not.toBeInTheDocument();
     expect(screen.getByTestId("orders-panel")).toBeInTheDocument();
+  });
+
+  it("PM2-M9: el dialog accesible es el sheet, con nombre", () => {
+    render(<MobileChatsLayout />, { wrapper: Wrapper });
+    fireEvent.click(screen.getByText("Abrir chat wa_42"));
+    fireEvent.click(
+      screen.getByRole("button", { name: /pedidos del cliente/i }),
+    );
+    expect(
+      screen.getByRole("dialog", { name: /pedidos del cliente/i }),
+    ).toBeInTheDocument();
   });
 });

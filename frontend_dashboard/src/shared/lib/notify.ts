@@ -30,10 +30,16 @@ export async function ensureNotificationPermission(): Promise<boolean> {
   }
 }
 
-/** Dispara una notificación del sistema. Best-effort: nunca lanza. */
+/** Dispara una notificación del sistema. Best-effort: nunca lanza.
+ *
+ * `opts.onClick` (PM2-M7): en el fallback web, tocar la notificación enfoca la
+ * app Y ejecuta el callback (p.ej. abrir el chat que la disparó). En Tauri
+ * Android el plugin no expone click-callback desde JS — el tap solo trae la
+ * app al frente (documentado en el runbook como parte del spike de device). */
 export async function sendSystemNotification(
   title: string,
   body: string,
+  opts?: { onClick?: () => void },
 ): Promise<void> {
   try {
     if (!(await ensureNotificationPermission())) return;
@@ -42,7 +48,17 @@ export async function sendSystemNotification(
       plugin.sendNotification({ title, body });
       return;
     }
-    new Notification(title, { body });
+    const n = new Notification(title, { body });
+    if (opts?.onClick) {
+      n.onclick = () => {
+        try {
+          window.focus();
+          opts.onClick?.();
+        } catch {
+          /* best-effort */
+        }
+      };
+    }
   } catch {
     // best-effort — sin permiso / entorno sin soporte, no rompemos nada.
   }

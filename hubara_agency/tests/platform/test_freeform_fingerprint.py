@@ -39,10 +39,15 @@ def _fast_env(monkeypatch: pytest.MonkeyPatch):
 def sent(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     calls: list[str] = []
 
-    async def fake_send(phone_number_id: str, to: str, text: str) -> None:
+    async def fake_send(phone_number_id: str, to: str, text: str, reply_to_message_id=None):
         calls.append(text)
+        from src.platform.whatsapp.dtos import OutboundResult
 
-    monkeypatch.setattr(wa_activities.whatsapp_client, "send_message", fake_send)
+        return OutboundResult(wa_message_id="wamid.fake", ok=True)
+
+    # PM2-B3: el path free-form ahora usa `send_text` (devuelve OutboundResult)
+    # en vez del legacy `send_message` (swallow).
+    monkeypatch.setattr(wa_activities.whatsapp_client, "send_text", fake_send)
     return calls
 
 

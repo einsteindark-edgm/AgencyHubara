@@ -831,6 +831,19 @@ h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.02em; margin: 0; }
 .login-submit:disabled {
   opacity: 0.5;
 }
+.login-back {
+  height: 40px;
+  border: 0;
+  background: transparent;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 14px;
+  text-decoration: underline;
+  cursor: default;
+}
+.login-back:disabled {
+  opacity: 0.5;
+}
 
 /* ==========================================================================
    Panel de pedidos del cliente (bottom-sheet, solo app móvil)
