@@ -23,11 +23,17 @@ def test_loader_mounts_no_public_login_nor_callback(monkeypatch) -> None:
     y /status sigue exigiendo bearer (401) — la conexión es infra, no un flujo web."""
     from src.platform import config
 
+    # Importar src.main ANTES de mutar el env: si este es el PRIMER import del
+    # proceso, el `app` global del módulo se construye al importar — con
+    # ENABLED_PLUGINS=ads ya seteado nacía solo-ads y envenenaba a todo test
+    # posterior que use `from src.main import app` (fallo dependiente del
+    # orden). `_bootstrap_routers` lee el env recién al LLAMARSE, así que el
+    # comportamiento del test no cambia.
+    from src.main import _bootstrap_routers
+
     monkeypatch.setattr(config, "COGNITO_USER_POOL_ID", "pool", raising=False)
     monkeypatch.setattr(config, "COGNITO_APP_CLIENT_ID", "client", raising=False)
     monkeypatch.setenv("ENABLED_PLUGINS", "ads")
-
-    from src.main import _bootstrap_routers
 
     app = FastAPI()
     _bootstrap_routers(app)
