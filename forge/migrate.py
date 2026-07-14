@@ -52,6 +52,7 @@ def _guide_platform(vars_: dict, dest: Path) -> str:
     return f"""\
 # S7 — Platform + secretos (DESDE EL CLON; state propio {vars_["prefix"]}-tfstate)
 cd {dest}/infra/terraform/platform
+cp envs/real.s3.tfbackend.example envs/real.s3.tfbackend   # (primera vez; revisar bucket/region)
 terraform init -backend-config=envs/real.s3.tfbackend && terraform apply
 #   (project.auto.tfvars ya trae create_github_oidc_provider=false)
 # Secretos reales → SSM {vars_["ssm_prefix"]}/{vars_["slug"]}/* :
@@ -116,9 +117,10 @@ def auto_done(step: str, bundle: Path, dest: Path | None) -> bool:
 
 
 def guard_dest(dest: Path) -> None:
-    if dest.resolve() == forge.REPO.resolve() or dest.resolve().is_relative_to(forge.REPO.resolve()):
+    protected = forge.main_repo_root(forge.REPO)  # cubre también correr desde un worktree
+    if dest.resolve().is_relative_to(protected.resolve()):
         raise forge.ForgeError(
-            f"dest {dest} es (o está dentro de) el repo madre hubara — el clon vive afuera"
+            f"dest {dest} está dentro del repo madre/productivo ({protected}) — el clon vive afuera"
         )
 
 

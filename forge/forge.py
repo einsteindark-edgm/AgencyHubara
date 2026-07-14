@@ -48,6 +48,15 @@ class ForgeError(RuntimeError):
     """Error de forge con mensaje accionable para el operador."""
 
 
+def main_repo_root(src: Path) -> Path:
+    """El repo a PROTEGER. Si forge corre desde un worktree
+    (<repo>/.claude/worktrees/<x>), el checkout productivo es <repo> — un dest
+    "afuera del worktree" podría seguir estando adentro de hubara."""
+    s = str(Path(src).resolve())
+    marker = "/.claude/worktrees/"
+    return Path(s.split(marker)[0]) if marker in s else Path(s)
+
+
 # ── Carga y vars ──────────────────────────────────────────────────────────────
 
 
@@ -365,10 +374,11 @@ def run_apply(
     if with_gates:
         raise ForgeError("--with-gates llega en v2; corré los gates del clon a mano por ahora")
     src, dest, client_dir = Path(src), Path(dest), Path(client_dir)
-    if dest.resolve().is_relative_to(src.resolve()):
+    protected = main_repo_root(src)
+    if dest.resolve().is_relative_to(protected.resolve()):
         raise ForgeError(
-            f"dest {dest} está DENTRO del repo madre — el clon vive afuera, "
-            "nunca mezclado con hubara"
+            f"dest {dest} está DENTRO del repo madre/productivo ({protected}) — "
+            "el clon vive afuera, nunca mezclado con hubara"
         )
     vars_ = render_vars(load_client(client_dir))
     dirty = subprocess.run(

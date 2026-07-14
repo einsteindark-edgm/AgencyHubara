@@ -56,3 +56,24 @@ def test_apply_rechaza_dest_dentro_del_repo_madre(tmp_path):
             client_dir=tmp_path,  # ni llega a leerse: el guard va primero
             manifest=forge.load_manifest(),
         )
+
+
+def test_main_repo_root_resuelve_worktrees():
+    """Si forge corre desde un worktree (<repo>/.claude/worktrees/<x>), el repo
+    a proteger es <repo> — no el worktree."""
+    wt = Path("/Users/x/Proyectos/AgencyHubara/.claude/worktrees/rama-123")
+    assert forge.main_repo_root(wt) == Path("/Users/x/Proyectos/AgencyHubara")
+    normal = Path("/Users/x/Proyectos/AgencyHubara")
+    assert forge.main_repo_root(normal) == normal
+
+
+def test_apply_desde_worktree_rechaza_dest_dentro_del_repo_principal(tmp_path):
+    """El caso real de la sesión: src = worktree, dest = carpeta dentro del
+    checkout PRINCIPAL de hubara. El guard debe cubrir el repo principal, no
+    solo el worktree."""
+    main = tmp_path / "AgencyHubara"
+    src = main / ".claude" / "worktrees" / "rama-x"
+    src.mkdir(parents=True)
+    dest = main / "AgencyAcme"  # dentro del repo productivo — prohibido
+    with pytest.raises(forge.ForgeError, match="repo madre|productivo"):
+        forge.run_apply(src=src, dest=dest, client_dir=tmp_path, manifest=forge.load_manifest())

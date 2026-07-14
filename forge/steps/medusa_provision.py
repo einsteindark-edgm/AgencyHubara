@@ -152,6 +152,11 @@ def cmd_apply(vars_: dict, bundle: Path, api=gql) -> dict:
     }
     (bundle / ".outputs.medusa.json").write_text(json.dumps(outputs, indent=2))
     print(f"✓ Railway {name}: {base_url} (deploy corre al conectar el repo)")
+    print("⚠ CORS quedó ABIERTO (*) para el arranque — cerrarlo a los dominios")
+    print("  reales del cliente en las variables de Railway antes de producción.")
+    print("⚠ Railway GraphQL no verificado contra API viva: si algo falla, es")
+    print("  ruidoso y sin efectos parciales — crear proyecto/servicio a mano y")
+    print(f"  completar {bundle / '.outputs.medusa.json'} con la base_url.")
     print("→ PASO HUMANO (una vez): crear el primer admin —")
     print(f"  railway run --project {project['id']} npx medusa user -e <email> -p <pass>")
     return outputs

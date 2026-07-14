@@ -32,7 +32,12 @@ function ClientCard({
   const ready = pending === 0;
   const defaultDest = useMemo(() => {
     const repoName = client.repo.split("/")[1] ?? `Agency${client.company}`;
-    const parent = repoRoot.replace(/\/[^/]+$/, "");
+    // Si Studio corre en un worktree (<repo>/.claude/worktrees/<x>), el parent
+    // "natural" quedaría DENTRO del repo de hubara — subir hasta afuera del
+    // checkout productivo (el CLI igual lo rechaza; esto evita sugerirlo).
+    const marker = "/.claude/worktrees/";
+    const base = repoRoot.includes(marker) ? repoRoot.slice(0, repoRoot.indexOf(marker)) : repoRoot;
+    const parent = base.replace(/\/[^/]+$/, "");
     return `${parent}/${repoName}`;
   }, [client, repoRoot]);
   const [dest, setDest] = useState(defaultDest);

@@ -72,6 +72,8 @@ def main(argv: list[str] | None = None) -> int:
             for c in commands:
                 print("  " + " ".join(c))
             print("  # login previo: tcld login  (o TEMPORAL_CLOUD_API_KEY en el env)")
+            print("  # ⚠ sintaxis NO verificada contra tcld vivo — confirmar flags con")
+            print("  #   `tcld namespace create --help` o usar la consola web (cloud.temporal.io)")
         else:
             for c in commands[:2]:
                 print("$ " + " ".join(c))
