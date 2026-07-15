@@ -12,6 +12,34 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { setAccessToken } from "../config/auth-token";
 import { apiClient, ApiError } from "./client";
 
+describe("postExternal en WebViews viejos (Android 11 stock = Chrome 86)", () => {
+  it("funciona sin AbortSignal.timeout (fallback AbortController)", async () => {
+    // Regresión device real 2026-07-15: el System WebView de fábrica de
+    // Android 11 no tiene AbortSignal.timeout (Chrome 103+) — el login moría
+    // con TypeError en el primer tap.
+    const original = AbortSignal.timeout;
+    // @ts-expect-error — simular el WebView viejo
+    delete AbortSignal.timeout;
+    try {
+      fetchMock.mockResolvedValueOnce(
+        new Response(JSON.stringify({ ok: 1 }), { status: 200 }),
+      );
+      const { status, data } = await apiClient.postExternal(
+        "https://idp.example/",
+        { a: 1 },
+        { "Content-Type": "application/json" },
+      );
+      expect(status).toBe(200);
+      expect(data).toEqual({ ok: 1 });
+      // El fetch igual recibió UNA señal abortable (el fallback).
+      const init = fetchMock.mock.calls[0][1] as RequestInit;
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+    } finally {
+      AbortSignal.timeout = original;
+    }
+  });
+});
+
 const fetchMock = vi.fn();
 
 beforeEach(() => {
