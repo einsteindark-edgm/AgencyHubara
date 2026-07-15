@@ -29,6 +29,25 @@ export interface ApiRequestInit extends Omit<RequestInit, "body"> {
   signal?: AbortSignal;
 }
 
+/**
+ * Señal de timeout compatible con WebViews VIEJOS. `AbortSignal.timeout`
+ * existe recién desde Chrome 103 — el System WebView de fábrica de Android 11
+ * (p.ej. Motorola sin actualizar por Play Store) trae Chrome 86: llamarlo
+ * tiraba TypeError y el login moría en el primer tap sin feedback (visto en
+ * device real 2026-07-15). Fallback: AbortController + setTimeout.
+ */
+function timeoutSignal(ms: number): AbortSignal | undefined {
+  if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+    return AbortSignal.timeout(ms);
+  }
+  if (typeof AbortController !== "undefined") {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), ms);
+    return controller.signal;
+  }
+  return undefined;
+}
+
 async function request<T>(path: string, init: ApiRequestInit = {}): Promise<T> {
   const url = path.startsWith("http") ? path : `${env.apiUrl}${path}`;
 
@@ -89,7 +108,7 @@ async function postExternal(
     method: "POST",
     headers,
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(15_000),
+    signal: timeoutSignal(15_000),
   });
   const data = await res.json().catch(() => ({}));
   return { status: res.status, data };
