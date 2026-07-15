@@ -45,7 +45,28 @@ export async function sendSystemNotification(
     if (!(await ensureNotificationPermission())) return;
     if (IS_DESKTOP) {
       const plugin = await import("@tauri-apps/plugin-notification");
-      plugin.sendNotification({ title, body });
+      // Android: sin canal explícito, el plugin postea en su canal "default"
+      // de importancia estándar → notificación SILENCIOSA (sin heads-up, sin
+      // vibración) que el operador no nota (visto en device real 2026-07-15).
+      // Canal de alta importancia = banner + vibración. `createChannel` es
+      // no-op/throw en desktop → try/catch y en ese caso va sin channelId.
+      let channelId: string | undefined;
+      try {
+        if (typeof plugin.createChannel === "function") {
+          await plugin.createChannel({
+            id: "handoffs",
+            name: "Conversaciones asignadas",
+            description: "Un chat pasó a atención humana",
+            importance: plugin.Importance?.High ?? 4,
+            visibility: plugin.Visibility?.Public ?? 1,
+            vibration: true,
+          });
+          channelId = "handoffs";
+        }
+      } catch {
+        /* desktop / plugin sin canales — se envía sin channelId */
+      }
+      plugin.sendNotification({ title, body, channelId });
       return;
     }
     const n = new Notification(title, { body });
