@@ -53,6 +53,10 @@ resource "aws_cognito_user_pool_client" "dashboard" {
   explicit_auth_flows = [
     "ALLOW_USER_SRP_AUTH",
     "ALLOW_REFRESH_TOKEN_AUTH",
+    # Login nativo de la app móvil (email+contraseña, sin navegador): el WebView
+    # Android no puede hacer el redirect OIDC. Cliente público (sin secret) →
+    # no requiere SECRET_HASH. Ver frontend_dashboard/MOBILE_ANDROID_RUNBOOK.md.
+    "ALLOW_USER_PASSWORD_AUTH",
   ]
 
   access_token_validity  = 1  # horas

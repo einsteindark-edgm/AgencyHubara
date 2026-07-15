@@ -36,6 +36,9 @@ def test_aroma_color_closed_list_rule_present():
     text = (_WORKSPACE / "TOOLS.md").read_text(encoding="utf-8").lower()
     assert "aromas" in text and "colores" in text
     assert "tags" in text
-    # Mencion explicita de vainilla/canela como ejemplo de lo que NO se
-    # debe hacer (es el bug que detectamos).
-    assert "vainilla" in text or "completar la lista" in text
+    # La regla vive como "closed-list ... del envelope" (regla 7 de TOOLS.md).
+    # OJO: no asertar literales de EJEMPLO ("vainilla") — el prompt diet
+    # (PR #110) reescribe la redaccion; lo durable es la semantica closed-list
+    # anclada al envelope.
+    assert "closed-list" in text
+    assert "envelope" in text

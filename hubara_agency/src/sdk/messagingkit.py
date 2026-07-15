@@ -46,3 +46,10 @@ from src.platform.whatsapp.send_policy import (
     evaluate_send as evaluate_send,
     lead_state_from_metadata as lead_state_from_metadata,
 )
+
+# Guard de ventana de servicio 24h — lo consume el endpoint del operador
+# (chats `POST /messages`) para cortar un free-form fuera de ventana antes de
+# que Meta lo rechace en silencio. Fail-open cuando la metadata no está poblada.
+from src.platform.whatsapp.window import (
+    is_service_window_closed as is_service_window_closed,
+)

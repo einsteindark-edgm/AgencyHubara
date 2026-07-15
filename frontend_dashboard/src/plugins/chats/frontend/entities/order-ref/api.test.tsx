@@ -21,7 +21,13 @@ vi.mock("@/shared/api/client", () => ({
   },
 }));
 
-import { useOrderRefDetail, useScheduleOrder } from "./api";
+import {
+  useCustomerOrders,
+  useOrderRefDetail,
+  useScheduleOrder,
+  useTransitionOrderStage,
+} from "./api";
+import { orderRefKeys } from "./keys";
 
 function makeWrapper() {
   const client = new QueryClient({
@@ -81,5 +87,68 @@ describe("order-ref api", () => {
     await waitFor(() =>
       expect(result.current.detail.data?.summary.due_iso).toBe("2026-07-20"),
     );
+  });
+
+  // ── Panel de pedidos del cliente (mobile): listar + cambiar estado ────────
+
+  it("useCustomerOrders GETea by-session y parsea la lista", async () => {
+    getMock.mockResolvedValue({
+      orders: [{ id: "order_01HX", status: "preparing", total_cop: 124500 }],
+      count: 1,
+    });
+    const { result } = renderHook(() => useCustomerOrders("wa_573001"), {
+      wrapper: makeWrapper(),
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.orders[0].id).toBe("order_01HX");
+    expect(result.current.data?.orders[0].status).toBe("preparing");
+    expect(String(getMock.mock.calls[0][0])).toBe(
+      "/api/chats/order-actions/by-session/wa_573001",
+    );
+  });
+
+  it("useCustomerOrders no fetchea sin sessionId", async () => {
+    renderHook(() => useCustomerOrders(null), { wrapper: makeWrapper() });
+    await new Promise((r) => setTimeout(r, 25));
+    expect(getMock).not.toHaveBeenCalled();
+  });
+
+  it("useTransitionOrderStage PATCHea /stage y devuelve el resultado", async () => {
+    patchMock.mockResolvedValue({ success: true, current_stage: "ready" });
+    const { result } = renderHook(
+      () => useTransitionOrderStage("wa_573001"),
+      { wrapper: makeWrapper() },
+    );
+    const data = await result.current.mutateAsync({
+      orderId: "order_01HX",
+      stage: "ready",
+    });
+    expect(data.success).toBe(true);
+    expect(String(patchMock.mock.calls[0][0])).toBe(
+      "/api/chats/order-actions/order_01HX/stage",
+    );
+    expect(patchMock.mock.calls[0][1]).toEqual({ stage: "ready" });
+  });
+
+  it("useTransitionOrderStage propaga success:false + error_detail", async () => {
+    patchMock.mockResolvedValue({
+      success: false,
+      error_detail: "invalid_transition: ready→new",
+    });
+    const { result } = renderHook(() => useTransitionOrderStage("wa_1"), {
+      wrapper: makeWrapper(),
+    });
+    const data = await result.current.mutateAsync({ orderId: "o1", stage: "new" });
+    expect(data.success).toBe(false);
+    expect(data.error_detail).toContain("invalid_transition");
+  });
+
+  it("orderRefKeys.bySession genera una key estable por sesión", () => {
+    expect(orderRefKeys.bySession("wa_1")).toEqual([
+      "chats",
+      "order-ref",
+      "by-session",
+      "wa_1",
+    ]);
   });
 });

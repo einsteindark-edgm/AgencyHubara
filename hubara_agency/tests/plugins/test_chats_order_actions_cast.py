@@ -180,3 +180,58 @@ def test_get_order_detail_propagates_authorization(
         headers={"Authorization": "Bearer op-token"},
     )
     assert (cap["headers"] or {}).get("Authorization") == "Bearer op-token"
+
+
+# ── Panel de pedidos del cliente (mobile): listar + cambiar estado ──────────
+
+
+def test_by_session_route_forwards_to_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """El panel móvil lista los pedidos DE ESE cliente: GET .../by-session/{id}
+    → GET /api/orders/orders/by-session/{id} (el vínculo sesión→órdenes lo
+    resuelve orders desde el vault)."""
+    cap: dict[str, object] = {}
+    _install(monkeypatch, capture=cap, result=httpx.Response(
+        200, json={"orders": [{"id": "order_01HX", "status": "preparing"}], "count": 1}))
+    app = FastAPI()
+    app.include_router(order_actions.router, prefix="/api/chats")
+    resp = TestClient(app).get("/api/chats/order-actions/by-session/wa_573001")
+    assert resp.status_code == 200
+    assert resp.json()["count"] == 1
+    assert cap["method"] == "GET"
+    assert str(cap["url"]).endswith("/api/orders/orders/by-session/wa_573001")
+    assert cap["json"] is None  # read puro
+
+
+def test_stage_route_forwards_to_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cambio de estado manual desde el chat: PATCH .../{id}/stage →
+    PATCH /api/orders/orders/{id}/stage (el provider valida la transición DAG)."""
+    cap: dict[str, object] = {}
+    _install(monkeypatch, capture=cap, result=httpx.Response(
+        200, json={"success": True, "current_stage": "ready"}))
+    app = FastAPI()
+    app.include_router(order_actions.router, prefix="/api/chats")
+    resp = TestClient(app).patch(
+        "/api/chats/order-actions/order_01HX/stage", json={"stage": "ready"})
+    assert resp.status_code == 200
+    assert resp.json()["current_stage"] == "ready"
+    assert cap["method"] == "PATCH"
+    assert str(cap["url"]).endswith("/api/orders/orders/order_01HX/stage")
+    assert cap["json"] == {"stage": "ready"}
+
+
+def test_by_session_route_propagates_authorization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cap: dict[str, object] = {}
+    _install(monkeypatch, capture=cap, result=httpx.Response(200, json={"orders": [], "count": 0}))
+    app = FastAPI()
+    app.include_router(order_actions.router, prefix="/api/chats")
+    TestClient(app).get(
+        "/api/chats/order-actions/by-session/wa_1",
+        headers={"Authorization": "Bearer op-token"},
+    )
+    assert (cap["headers"] or {}).get("Authorization") == "Bearer op-token"

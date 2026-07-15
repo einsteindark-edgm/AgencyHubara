@@ -65,7 +65,11 @@ export function ChatsBubble({ message: m }: Props) {
         >
           <img
             src={m.imageUrl}
-            alt="Imagen enviada por el cliente"
+            alt={
+              m.kind === "out"
+                ? "Imagen enviada al cliente"
+                : "Imagen enviada por el cliente"
+            }
             loading="lazy"
           />
         </a>

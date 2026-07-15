@@ -589,6 +589,332 @@ h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.02em; margin: 0; }
 .send-btn:hover { filter: brightness(1.08); }
 .send-btn:disabled { background: rgba(255,255,255,0.1); color: var(--fg-faint); }
 
+/* Adjuntar / cámara — botones planos a la izquierda del textarea */
+.attach-btn, .camera-btn {
+  width: 32px; height: 32px; border-radius: 8px;
+  background: transparent; color: var(--fg-muted); border: 0;
+  display: flex; align-items: center; justify-content: center;
+  cursor: default; flex: 0 0 auto;
+}
+.attach-btn:hover, .camera-btn:hover { background: rgba(255,255,255,0.08); color: var(--fg); }
+.attach-btn:disabled, .camera-btn:disabled { color: var(--fg-faint); opacity: 0.5; }
+.attach-btn svg, .camera-btn svg { width: 18px; height: 18px; }
+
+/* Tira de fotos en vuelo (outbox optimista) sobre el composer-row */
+.outbox-strip {
+  display: flex; gap: 8px; flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.outbox-item {
+  position: relative; width: 64px; height: 64px; border-radius: 8px;
+  overflow: hidden; background: rgba(0,0,0,0.35);
+  border: 0.5px solid var(--line);
+}
+.outbox-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.outbox-item.is-failed img { opacity: 0.4; }
+.outbox-progress {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 3px;
+  background: rgba(255,255,255,0.15);
+}
+.outbox-progress > span {
+  display: block; height: 100%; background: var(--accent);
+  transition: width 0.15s ease;
+}
+.outbox-spinner {
+  position: absolute; top: 50%; left: 50%; width: 18px; height: 18px;
+  margin: -9px 0 0 -9px; border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.25); border-top-color: #fff;
+  animation: outbox-spin 0.7s linear infinite;
+}
+@keyframes outbox-spin { to { transform: rotate(360deg); } }
+.outbox-failed {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 2px;
+  background: rgba(0,0,0,0.55);
+}
+.outbox-retry {
+  background: var(--accent); color: #fff; border: 0; border-radius: 6px;
+  font-size: 10px; padding: 3px 6px; cursor: default;
+}
+.outbox-discard {
+  background: transparent; color: var(--fg-muted); border: 0;
+  font-size: 11px; cursor: default; line-height: 1;
+}
+.outbox-err-text {
+  font-size: 9px; line-height: 1.2; color: #ffb4b4;
+  max-width: 100%; padding: 0 3px; text-align: center;
+  overflow: hidden; display: -webkit-box;
+  -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+}
+
+/* ==========================================================================
+   Shell móvil (app Android / viewport angosto) — UNA columna a la vez.
+   Todo scopeado a `.mobile-app` / `.is-mobile` para no tocar el desktop.
+   ========================================================================== */
+.mobile-app {
+  height: 100dvh;
+  width: 100vw;
+  overflow: hidden;
+  background: var(--canvas);
+}
+.mobile-chats.is-mobile {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  width: 100vw;
+  background: var(--canvas);
+}
+.mobile-topbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 52px;
+  padding: max(8px, env(safe-area-inset-top)) 12px 8px;
+  border-bottom: 0.5px solid var(--line);
+  background: #1c1c1e;
+}
+.mobile-topbar-title {
+  flex: 1;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mobile-back, .mobile-inspector-toggle, .mobile-topbar-btn {
+  width: 40px; height: 40px; border-radius: 8px;
+  background: transparent; color: var(--fg); border: 0;
+  display: flex; align-items: center; justify-content: center;
+  flex: 0 0 auto; cursor: default;
+}
+.mobile-back svg, .mobile-inspector-toggle svg, .mobile-topbar-btn svg {
+  width: 20px; height: 20px;
+}
+.mobile-back:active, .mobile-inspector-toggle:active,
+.mobile-topbar-btn:active { background: rgba(255,255,255,0.08); }
+
+/* La lista de la bandeja ocupa toda la pantalla */
+.mobile-inbox {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+}
+.mobile-inbox .sidebar {
+  width: 100%;
+  flex: 1;
+  border-right: 0;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* La conversación ocupa toda la pantalla; el composer queda pegado abajo */
+.mobile-conversation {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.mobile-conversation .center { flex: 1; min-width: 0; }
+.mobile-conversation .composer {
+  padding-bottom: max(10px, env(safe-area-inset-bottom));
+}
+/* Touch targets cómodos en el composer móvil */
+.is-mobile .attach-btn, .is-mobile .camera-btn,
+.is-mobile .send-btn { width: 40px; height: 40px; }
+
+/* Inspector como bottom-sheet */
+.mobile-sheet-backdrop {
+  position: fixed; inset: 0; z-index: 40;
+  background: rgba(0,0,0,0.5);
+  display: flex; align-items: flex-end;
+}
+.mobile-sheet {
+  width: 100%;
+  max-height: 80dvh;
+  background: var(--canvas);
+  border-radius: 16px 16px 0 0;
+  overflow-y: auto;
+  padding-bottom: env(safe-area-inset-bottom);
+  -webkit-overflow-scrolling: touch;
+}
+.mobile-sheet-handle {
+  width: 40px; height: 4px; border-radius: 2px;
+  background: rgba(255,255,255,0.25);
+  margin: 8px auto;
+}
+.mobile-sheet .inspector { width: 100%; border-left: 0; }
+
+/* ==========================================================================
+   Login nativo (app móvil) — pantalla completa email + contraseña
+   ========================================================================== */
+.login-screen {
+  min-height: 100dvh;
+  width: 100vw;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--canvas);
+  padding: max(24px, env(safe-area-inset-top)) 20px
+    max(24px, env(safe-area-inset-bottom));
+}
+.login-loading {
+  color: var(--fg-muted);
+  font-size: 14px;
+}
+.login-card {
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.login-brand {
+  font-size: 22px;
+  font-weight: 700;
+  text-align: center;
+  color: var(--fg);
+  letter-spacing: -0.01em;
+}
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.login-hint {
+  font-size: 13px;
+  color: var(--fg-muted);
+  margin: 0;
+}
+.login-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.login-field > span {
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+.login-field > input {
+  height: 44px;
+  border-radius: 10px;
+  border: 0.5px solid var(--line);
+  background: rgba(0, 0, 0, 0.3);
+  color: var(--fg);
+  font: inherit;
+  font-size: 15px;
+  padding: 0 12px;
+  outline: none;
+}
+.login-field > input:focus {
+  border-color: var(--accent);
+}
+.login-error {
+  font-size: 13px;
+  color: #ffb4b4;
+  background: rgba(255, 90, 90, 0.1);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.login-submit {
+  height: 46px;
+  border-radius: 10px;
+  border: 0;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: default;
+  margin-top: 4px;
+}
+.login-submit:disabled {
+  opacity: 0.5;
+}
+.login-back {
+  height: 40px;
+  border: 0;
+  background: transparent;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 14px;
+  text-decoration: underline;
+  cursor: default;
+}
+.login-back:disabled {
+  opacity: 0.5;
+}
+
+/* ==========================================================================
+   Panel de pedidos del cliente (bottom-sheet, solo app móvil)
+   ========================================================================== */
+.orders-panel { padding: 4px 14px 8px; }
+.orders-panel-title {
+  font-size: 13px; font-weight: 600; color: var(--fg-muted);
+  margin: 4px 0 12px;
+}
+.orders-panel-state {
+  padding: 28px 16px; text-align: center; color: var(--fg-muted);
+  font-size: 14px; display: flex; flex-direction: column; gap: 12px;
+  align-items: center;
+}
+.orders-retry {
+  background: var(--accent); color: #fff; border: 0; border-radius: 8px;
+  font-size: 13px; padding: 8px 14px; cursor: default;
+}
+.order-card {
+  border: 0.5px solid var(--line); border-radius: 12px;
+  padding: 12px; margin-bottom: 10px; background: rgba(255,255,255,0.02);
+}
+.order-card-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+.order-ref-id { font-size: 13px; font-weight: 600; color: var(--fg); }
+.order-card-meta {
+  display: flex; gap: 12px; flex-wrap: wrap;
+  margin-top: 6px; font-size: 12px; color: var(--fg-muted);
+}
+/* Pill de estado — un color por etapa */
+.ostat {
+  font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 999px;
+  white-space: nowrap;
+}
+.ostat-new       { background: rgba(120,140,255,0.18); color: #b9c4ff; }
+.ostat-preparing { background: rgba(255,190,90,0.18);  color: #ffce8a; }
+.ostat-ready     { background: rgba(90,200,255,0.18);  color: #93ddff; }
+.ostat-shipping  { background: rgba(180,130,255,0.18); color: #d4b4ff; }
+.ostat-delivered { background: rgba(90,220,150,0.18);  color: #9ff0c0; }
+.ostat-cancelled { background: rgba(255,120,120,0.16); color: #ffb4b4; }
+
+.order-card-actions {
+  display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+  margin-top: 12px;
+}
+.order-advance-btn {
+  flex: 1 1 auto; min-height: 40px; border-radius: 9px; border: 0;
+  background: var(--accent); color: #fff; font: inherit; font-size: 13px;
+  font-weight: 600; cursor: default;
+}
+.order-advance-btn:disabled { opacity: 0.5; }
+.order-cancel-btn {
+  min-height: 40px; border-radius: 9px; padding: 0 14px;
+  background: transparent; border: 0.5px solid rgba(255,120,120,0.4);
+  color: #ffb4b4; font: inherit; font-size: 13px; cursor: default;
+}
+.order-ghost-btn {
+  min-height: 40px; border-radius: 9px; padding: 0 14px;
+  background: transparent; border: 0.5px solid var(--line);
+  color: var(--fg-muted); font: inherit; font-size: 13px; cursor: default;
+}
+.order-confirm-q { flex: 1 1 100%; font-size: 13px; color: var(--fg); }
+.order-terminal {
+  margin-top: 10px; font-size: 12px; color: var(--fg-faint); font-style: italic;
+}
+.order-card-err {
+  margin-top: 10px; font-size: 12px; color: #ffb4b4;
+  background: rgba(255,90,90,0.1); border-radius: 8px; padding: 8px 10px;
+}
+
 /* Bot composer (no intervention) */
 .composer-bot {
   padding: 14px 12px;

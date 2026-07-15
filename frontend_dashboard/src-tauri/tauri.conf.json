@@ -23,8 +23,8 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost http://localhost:8000 http://127.0.0.1:8000 http://localhost:4318 http://127.0.0.1:4318; img-src 'self' data: http: https:; font-src 'self' data:",
-      "devCsp": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost ws://127.0.0.1:5173 http://127.0.0.1:5173 http://localhost:8000 http://127.0.0.1:8000 http://localhost:4318 http://127.0.0.1:4318; img-src 'self' data: http: https:; font-src 'self' data:"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost http://localhost:8000 http://127.0.0.1:8000 http://10.0.2.2:8000 https://98-88-237-207.sslip.io https://*.amazonaws.com http://localhost:4318 http://127.0.0.1:4318; img-src 'self' data: http: https:; font-src 'self' data:",
+      "devCsp": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost ws://127.0.0.1:5173 http://127.0.0.1:5173 http://localhost:8000 http://127.0.0.1:8000 http://10.0.2.2:8000 https://98-88-237-207.sslip.io https://*.amazonaws.com http://localhost:4318 http://127.0.0.1:4318; img-src 'self' data: http: https:; font-src 'self' data:"
     }
   },
   "bundle": {
@@ -36,6 +36,9 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "android": {
+      "minSdkVersion": 24
+    }
   }
 }

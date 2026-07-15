@@ -29,11 +29,12 @@ Reusan helpers extraídos en este mismo PR:
 from __future__ import annotations
 
 import time
+import uuid
 from typing import Annotated, Literal
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Path
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, File, HTTPException, Path, UploadFile
+from pydantic import BaseModel, Field, model_validator
 
 from src.plugins.chats.api.dashboard_composition import (
     get_history_store,
@@ -45,13 +46,34 @@ from src.platform.constants import (
     ROUTE_REMARKETING,
     ROUTE_VENTAS,
 )
+from src.sdk.mediakit import (
+    MediaUploadError,
+    delete_outbound_image,
+    is_safe_segment,
+    media_url_for,
+    persist_outbound_image,
+    upload_media,
+)
+from src.sdk.messagingkit import is_service_window_closed
 from src.platform.session_history import FilesystemMessageHistoryStore
 from src.platform.temporal.dispatcher import (
     start_remarketing_for_session,
     terminate_session_workflows,
 )
-from src.platform.whatsapp.activities import send_message_to_session
+from src.platform.whatsapp.activities import (
+    send_image_to_session,
+    send_message_to_session,
+)
 from src.platform.state import FilesystemMetadataStore
+
+#: Mimes de imagen que WhatsApp renderiza en `type=image`. Otros (gif, webp)
+#: Meta los trata distinto (sticker/animación) — fuera de scope: solo fotos.
+_ALLOWED_IMAGE_MIMES: frozenset[str] = frozenset({"image/jpeg", "image/png"})
+
+#: Límite de tamaño de imagen post-compresión (5 MB — el máximo de Meta para
+#: `type=image`). El frontend comprime antes de subir, así que en la práctica
+#: rara vez se acerca; esto es la red de seguridad server-side.
+_MAX_IMAGE_BYTES: int = 5 * 1024 * 1024
 
 logger = structlog.get_logger()
 
@@ -70,7 +92,46 @@ class InterveneRequest(BaseModel):
 
 
 class SendMessageRequest(BaseModel):
-    text: str = Field(min_length=1, max_length=4096)
+    """Mensaje del operador humano. Al menos uno de `text` / `attachment_id`.
+
+    * `text` solo → mensaje de texto (path legacy, sin cambios).
+    * `attachment_id` → media_id de Meta devuelto por `POST .../media` (fase A);
+      `text` opcional pasa a ser el caption de la foto.
+    * `client_message_id` → UUID del cliente para idempotencia: un retry con el
+      mismo id NO re-envía a WhatsApp (dedup real, no solo de UI).
+    """
+
+    text: str | None = Field(default=None, max_length=4096)
+    attachment_id: str | None = Field(default=None, max_length=256)
+    client_message_id: str | None = Field(default=None, max_length=128)
+
+    @model_validator(mode="after")
+    def _text_or_attachment(self) -> SendMessageRequest:
+        has_text = bool(self.text and self.text.strip())
+        if not has_text and not self.attachment_id:
+            raise ValueError("se requiere `text` o `attachment_id`")
+        # PM-B4: el texto tiene el fingerprint anti doble-envío en
+        # `send_message_to_session`; la imagen NO tiene ningún backstop server-
+        # side. Sin cmid, un doble-click = dos fotos al cliente. Obligatorio.
+        if self.attachment_id and not self.client_message_id:
+            raise ValueError(
+                "`client_message_id` es requerido cuando se manda `attachment_id`"
+            )
+        # PM2-B9: Meta capea los CAPTIONS de media en 1024 chars (el límite
+        # 4096 es solo texto libre). Sin esto, la fase A gasta el upload y la
+        # fase B revienta 502 tardío con el error crudo de Meta.
+        if self.attachment_id and has_text and len(self.text or "") > 1024:
+            raise ValueError(
+                "el caption de una foto no puede superar 1024 caracteres "
+                "(límite de WhatsApp para media)"
+            )
+        return self
+
+
+class MediaUploadResponse(BaseModel):
+    ok: bool
+    attachment_id: str  # media_id de Meta — se referencia en el send
+    media_ref: str  # url servible por el dashboard (GET /api/dashboard/media/...)
 
 
 class ReturnToBotRequest(BaseModel):
@@ -98,6 +159,7 @@ class HumanMessageResponse(BaseModel):
     role: str
     sender: str
     content: str
+    image_url: str | None = None
 
 
 # ---------- Helpers ----------
@@ -190,6 +252,7 @@ async def intervene(
     Idempotente: si ya estaba en humano, lo refresca con el nuevo motivo y
     re-intenta terminar workflows zombies.
     """
+    _require_safe_session_id(session_id)
     data = metadata_store.read(session_id)
     motivo = payload.motivo or "Humano tomó el control desde el dashboard"
 
@@ -240,6 +303,173 @@ async def intervene(
     )
 
 
+def _require_humano_route(data: dict, session_id: str, verb: str) -> None:
+    """409 si la sesión no está en ruta humano (evita respuestas concurrentes)."""
+    active_route = data.get("active_route", ROUTE_VENTAS)
+    if active_route != ROUTE_HUMANO:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"La sesión {session_id} no está en ruta humano "
+                f"(active_route={active_route!r}). Pulsa 'Intervenir' antes "
+                f"de {verb}."
+            ),
+        )
+
+
+def _require_safe_session_id(session_id: str) -> None:
+    """PM-B9: simetría con el GET de media — el session_id de la URL no llega
+    a los stores de filesystem sin pasar el mismo charset anti-traversal."""
+    if not is_safe_segment(session_id):
+        raise HTTPException(status_code=400, detail="session_id inválido")
+
+
+def _sniff_is_image(content: bytes) -> bool:
+    """PM-B7: magic numbers de JPEG (`FF D8 FF`) y PNG. El content-type del
+    multipart lo declara el cliente — sin esto, cualquier byte-stream con
+    header `image/jpeg` se persiste como .jpg y se sube a Meta."""
+    return content.startswith(b"\xff\xd8\xff") or content.startswith(
+        b"\x89PNG\r\n\x1a\n"
+    )
+
+
+#: PM-B6: cap de entradas en `metadata.outbound_media` (mismo espíritu que el
+#: cap de 200 en `sent_human_message_ids`). Los media_id de Meta expiran a los
+#: ~30 días; conservar los últimos 100 sobra para cualquier retry razonable.
+_OUTBOUND_MEDIA_CAP: int = 100
+
+#: PM2-B1: TTL de la reserva de un envío en vuelo (`pending_human_sends`).
+#: Cubre el peor caso del send a Meta (timeout httpx 15s) con margen; pasada
+#: la TTL, un retry con el mismo cmid vuelve a intentar (la reserva vieja se
+#: poda). 60s = nunca bloquea a un operador real, sí corta el doble-tap y el
+#: retry agresivo del móvil mientras el primero sigue en vuelo.
+_PENDING_SEND_TTL_MS: int = 60_000
+
+
+class _SendInFlight(Exception):
+    """Otro request con el MISMO cmid está en vuelo (reserva vigente)."""
+
+
+class _SendAlreadyMarked(Exception):
+    """El cmid ya está en `sent_human_message_ids` (el request ganador marcó)."""
+
+
+@router.post(
+    "/sessions/{session_id}/media",
+    response_model=MediaUploadResponse,
+)
+async def upload_human_media(
+    session_id: Annotated[str, Path()],
+    metadata_store: Annotated[FilesystemMetadataStore, Depends(get_metadata_store)],
+    file: Annotated[UploadFile, File()],
+) -> MediaUploadResponse:
+    """Fase A del envío de foto: el operador sube el archivo.
+
+    Persistimos la foto en el vault (para re-renderizarla en el histórico) y la
+    subimos a Meta (`upload_media`) para obtener un `media_id`. Devolvemos el
+    `attachment_id` (= media_id) + `media_ref` (url servible). El envío al
+    cliente es una llamada SEPARADA (`POST .../messages` con `attachment_id`),
+    para que un retry del send nunca re-suba los bytes.
+    """
+    _require_safe_session_id(session_id)
+    data = metadata_store.read(session_id)
+    _require_humano_route(data, session_id, "subir fotos")
+
+    mime = (file.content_type or "").split(";")[0].strip().lower()
+    if mime not in _ALLOWED_IMAGE_MIMES:
+        raise HTTPException(
+            status_code=415,
+            detail=f"Tipo no soportado: {mime!r}. Solo JPEG o PNG.",
+        )
+
+    # PM2-B6: rechazar por tamaño ANTES de materializar los bytes en RAM.
+    # Starlette spoolea el multipart a disco y expone `size`; `file.read()`
+    # de un body gigante (bug del compresor / cliente malicioso autenticado)
+    # inflaría la memoria del contenedor antes del check.
+    if file.size is not None and file.size > _MAX_IMAGE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Imagen demasiado grande ({file.size} bytes; máx {_MAX_IMAGE_BYTES}).",
+        )
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Archivo vacío.")
+    if len(content) > _MAX_IMAGE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Imagen demasiado grande ({len(content)} bytes; máx {_MAX_IMAGE_BYTES}).",
+        )
+    if not _sniff_is_image(content):
+        raise HTTPException(
+            status_code=415,
+            detail="Los bytes no son una imagen JPEG/PNG válida.",
+        )
+
+    # 1. Persistir en disco (token opaco → filename `out-...`).
+    filename = persist_outbound_image(session_id, content, mime, token=uuid.uuid4().hex)
+    media_ref = media_url_for(session_id, filename)
+
+    # 2. Subir a Meta. Falla → 502 (frontend reintenta SOLO la subida).
+    #    PM2-B7: si Meta rechaza, el archivo persistido en (1) quedaría
+    #    huérfano para siempre (cada retry genera OTRO uuid) — se borra.
+    try:
+        media_id = await upload_media(data.get("phone_number_id") or _env_phone(), content, mime)
+    except MediaUploadError as e:
+        logger.error("dashboard.upload_media failed", session_id=session_id, error=str(e))
+        delete_outbound_image(session_id, filename)
+        raise HTTPException(status_code=502, detail=f"WhatsApp media upload falló: {e}")
+
+    # 3. Registrar el mapping media_id → media_ref para que el send (fase B)
+    #    persista la foto en el histórico sin confiar en el frontend.
+    #    PM-B1/PM2-B8: read-modify-write ATOMICO (`update` con flock + lectura
+    #    fresca adentro del lock) — el upload a Meta tarda segundos y otro
+    #    writer (ingest/intervene/bot) pudo tocar metadata en el medio; el
+    #    write plano perdía updates entre requests concurrentes del dashboard.
+    def _register_outbound(fresh: dict) -> dict | None:
+        if not fresh and data:
+            # PM2-B2: lectura fresca vacía para una sesión que tenía datos —
+            # escribir pisaría active_route/episodes. Mejor perder el mapping
+            # (la fase B dará 422 y el operador re-sube) que revivir al bot.
+            logger.error(
+                "dashboard.upload_human_media: fresh metadata empty, skipping "
+                "outbound_media write",
+                session_id=session_id,
+            )
+            return None
+        outbound = fresh.setdefault("outbound_media", {})
+        outbound[media_id] = {
+            "media_ref": media_ref,
+            "filename": filename,
+            "mime": mime,
+        }
+        if len(outbound) > _OUTBOUND_MEDIA_CAP:
+            # PM-B6: podar por orden de inserción (dict preserva orden).
+            fresh["outbound_media"] = dict(
+                list(outbound.items())[-_OUTBOUND_MEDIA_CAP:]
+            )
+        return fresh
+
+    metadata_store.update(session_id, _register_outbound)
+
+    logger.info(
+        "dashboard.upload_human_media",
+        session_id=session_id,
+        bytes=len(content),
+        media_id=media_id,
+    )
+    return MediaUploadResponse(ok=True, attachment_id=media_id, media_ref=media_ref)
+
+
+def _env_phone() -> str:
+    import os
+
+    phone = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
+    if not phone:
+        raise HTTPException(status_code=500, detail="WHATSAPP_PHONE_NUMBER_ID no configurado")
+    return phone
+
+
 @router.post(
     "/sessions/{session_id}/messages",
     response_model=HumanMessageResponse,
@@ -250,42 +480,223 @@ async def send_human_message(
     metadata_store: Annotated[FilesystemMetadataStore, Depends(get_metadata_store)],
     history_store: Annotated[FilesystemMessageHistoryStore, Depends(get_history_store)],
 ) -> HumanMessageResponse:
-    """El humano manda un mensaje al cliente desde el dashboard.
+    """El humano manda un mensaje (texto y/o foto) al cliente desde el dashboard.
 
-    Guarda: solo permitido si la sesión está en ruta humano. Si la ruta
-    cambió (ej. el humano olvidó pulsar Intervenir o ya devolvió al bot),
-    el endpoint rechaza con 409 para evitar respuestas concurrentes.
+    Guards:
+      * ruta humano (409) — evita respuestas concurrentes humano + bot.
+      * ventana de servicio 24h (409) — si SABEMOS que cerró, cortamos antes de
+        que Meta rechace el free-form en silencio (fix del bug latente). Si la
+        metadata de ventana no está poblada, no bloquea (fail-open).
+      * idempotencia por `client_message_id` — un retry no re-envía.
     """
+    _require_safe_session_id(session_id)
     data = metadata_store.read(session_id)
-    active_route = data.get("active_route", ROUTE_VENTAS)
-    if active_route != ROUTE_HUMANO:
+    _require_humano_route(data, session_id, "mandar mensajes")
+
+    caption = payload.text.strip() if payload.text and payload.text.strip() else None
+    cmid = payload.client_message_id
+
+    # Resolver el attachment ANTES de cualquier decisión. PM-B3: si el
+    # attachment_id no fue subido para ESTA sesión (fase A), no se reenvía a
+    # Meta — podría ser un media_id inventado o el de otra conversación.
+    image_ref: str | None = None
+    if payload.attachment_id:
+        entry = data.get("outbound_media", {}).get(payload.attachment_id)
+        if entry is None:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"attachment_id {payload.attachment_id!r} desconocido para "
+                    "esta sesión. Subí la foto primero (POST .../media)."
+                ),
+            )
+        image_ref = entry.get("media_ref")
+
+    # PM-B5: idempotencia ANTES del guard de ventana — un retry de algo YA
+    # enviado debe responder replay aunque la ventana haya cerrado entre medio.
+    processed: list[str] = data.get("sent_human_message_ids", [])
+    if cmid and cmid in processed:
+        logger.info(
+            "dashboard.send_human_message replay (idempotent)",
+            session_id=session_id,
+            client_message_id=cmid,
+        )
+        return HumanMessageResponse(
+            ok=True,
+            role="assistant",
+            sender="human",
+            content=caption or (payload.text or ""),
+            image_url=image_ref,
+        )
+
+    # Guard de ventana 24h — solo bloquea envíos NUEVOS, y solo si sabemos que cerró.
+    if is_service_window_closed(int(time.time() * 1000), data):
         raise HTTPException(
             status_code=409,
             detail=(
-                f"La sesión {session_id} no está en ruta humano "
-                f"(active_route={active_route!r}). Pulsa 'Intervenir' antes "
-                "de mandar mensajes."
+                "La ventana de servicio de 24h de WhatsApp está cerrada: no se "
+                "puede mandar un mensaje libre. El cliente debe escribir primero, "
+                "o hay que usar una plantilla aprobada."
             ),
         )
 
-    # 1. Mandar via WhatsApp Cloud API (puede tardar 1.5s por chunk).
-    await send_message_to_session(session_id, payload.text)
+    # PM2-B1a: RESERVAR el cmid ANTES del send. La marca en `sent_...` recién
+    # se escribe POST-send (el send tarda hasta 15s): dos requests con el mismo
+    # cmid (doble-tap / retry agresivo del móvil con timeout < 15s) pasaban
+    # ambos el replay-check de arriba → dos fotos al cliente. La reserva con
+    # TTL corta al segundo con 409 mientras el primero sigue en vuelo.
+    now_ms = int(time.time() * 1000)
+    if cmid:
 
-    # 2. Persistir en el JSONL con `sender=human` — esto es la memoria del
-    # chat que (a) el dashboard lee para mostrar al humano, (b) el LLM
-    # verá al retomar el chat porque exoclaw construye el prompt desde aquí.
-    history_store.append_human_event(session_id, payload.text)
+        def _reserve(fresh: dict) -> dict | None:
+            if not fresh and data:
+                # PM2-B2: lectura fresca vacía — sin reserva, pero sin clobber.
+                logger.error(
+                    "dashboard.send_human_message: fresh metadata empty, "
+                    "skipping cmid reservation",
+                    session_id=session_id,
+                )
+                return None
+            if cmid in fresh.get("sent_human_message_ids", []):
+                raise _SendAlreadyMarked()
+            pending: dict = fresh.get("pending_human_sends", {})
+            stamp = pending.get(cmid)
+            if (
+                isinstance(stamp, (int, float))
+                and now_ms - stamp < _PENDING_SEND_TTL_MS
+            ):
+                raise _SendInFlight()
+            # Podar reservas vencidas (huérfanas de timeouts/crashes viejos).
+            fresh["pending_human_sends"] = {
+                k: v
+                for k, v in pending.items()
+                if isinstance(v, (int, float))
+                and now_ms - v < _PENDING_SEND_TTL_MS
+            }
+            fresh["pending_human_sends"][cmid] = now_ms
+            return fresh
+
+        try:
+            metadata_store.update(session_id, _reserve)
+        except _SendAlreadyMarked:
+            # El request ganador marcó entre nuestro read y la reserva → replay.
+            return HumanMessageResponse(
+                ok=True,
+                role="assistant",
+                sender="human",
+                content=caption or (payload.text or ""),
+                image_url=image_ref,
+            )
+        except _SendInFlight:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Ese mensaje ya se está enviando (request en vuelo). "
+                    "Esperá unos segundos antes de reintentar."
+                ),
+            )
+
+    def _clear_pending(fresh: dict) -> dict | None:
+        if not fresh:
+            return None
+        pending = fresh.get("pending_human_sends")
+        if not isinstance(pending, dict) or cmid not in pending:
+            return None
+        pending.pop(cmid, None)
+        return fresh
+
+    if payload.attachment_id:
+        # Envío de FOTO (fase B). El media_id ya vive en Meta (fase A).
+        result = await send_image_to_session(
+            session_id, media_id=payload.attachment_id, caption=caption
+        )
+        if not result.ok:
+            if (result.error or "").startswith("timeout"):
+                # PM2-B1b: timeout ≠ rechazo — Meta PUEDE haber entregado la
+                # foto (lección L-1). La reserva queda vigente (bloquea el
+                # retry a ciegas durante la TTL) y respondemos 504 honesto.
+                raise HTTPException(
+                    status_code=504,
+                    detail=(
+                        "WhatsApp no respondió a tiempo: la foto PUEDE haberse "
+                        "entregado. No reintentes de inmediato; verificá en el "
+                        "chat en unos segundos."
+                    ),
+                )
+            if cmid:
+                metadata_store.update(session_id, _clear_pending)
+            raise HTTPException(
+                status_code=502, detail=f"WhatsApp rechazó la foto: {result.error}"
+            )
+    else:
+        # Envío de TEXTO. PM2-B3: propagar el rechazo de Meta — antes se
+        # tragaba y el operador veía "enviado" con el cliente sin recibir nada.
+        delivered = await send_message_to_session(session_id, payload.text)
+        if not delivered:
+            if cmid:
+                metadata_store.update(session_id, _clear_pending)
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "WhatsApp rechazó el mensaje (ventana cerrada, número "
+                    "inválido o token vencido). Revisá y reintentá."
+                ),
+            )
+
+    # PM-B1/B2/PM2-B8: el envío YA ocurrió — mover el cmid de la reserva a la
+    # marca definitiva en un read-modify-write ATOMICO (lock + lectura fresca),
+    # y ANTES del append al histórico, para que un fallo del append no deje al
+    # retry re-enviando la foto al cliente.
+    if cmid:
+
+        def _mark_sent(fresh: dict) -> dict | None:
+            if not fresh and data:
+                logger.error(
+                    "dashboard.send_human_message: fresh metadata empty, "
+                    "skipping cmid mark POST-send",
+                    session_id=session_id,
+                )
+                return None
+            pending = fresh.get("pending_human_sends")
+            if isinstance(pending, dict):
+                pending.pop(cmid, None)
+            marked: list[str] = fresh.get("sent_human_message_ids", [])
+            if cmid not in marked:
+                marked.append(cmid)
+            fresh["sent_human_message_ids"] = marked[-200:]  # cap
+            return fresh
+
+        metadata_store.update(session_id, _mark_sent)
+
+    try:
+        if payload.attachment_id:
+            history_store.append_human_event(
+                session_id, caption or "", image_url=image_ref
+            )
+        else:
+            history_store.append_human_event(session_id, payload.text)
+    except OSError as e:
+        # El mensaje SÍ llegó al cliente; perder el rastro en el histórico es
+        # malo, pero 500-ear acá haría que el frontend reintente y (sin la
+        # marca) duplique el envío. Log fuerte y seguimos.
+        logger.error(
+            "dashboard.send_human_message: history append failed POST-send",
+            session_id=session_id,
+            error=str(e),
+        )
 
     logger.info(
         "dashboard.send_human_message",
         session_id=session_id,
-        chars=len(payload.text),
+        has_image=bool(payload.attachment_id),
+        chars=len(payload.text or ""),
     )
     return HumanMessageResponse(
         ok=True,
         role="assistant",
         sender="human",
-        content=payload.text,
+        content=caption or (payload.text or ""),
+        image_url=image_ref,
     )
 
 
@@ -306,6 +717,7 @@ async def return_to_bot(
       inmediatamente para que el bot envíe un gancho al cliente. Requiere
       `motivo` (el workflow lo usa para construir el prompt del gancho).
     """
+    _require_safe_session_id(session_id)
     data = metadata_store.read(session_id)
     active_route = data.get("active_route", ROUTE_VENTAS)
     if active_route != ROUTE_HUMANO:

@@ -15,6 +15,7 @@ mismo razonamiento (lo necesitan sales, remarketing y el dashboard handoff).
 """
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import tempfile
@@ -90,3 +91,41 @@ class FilesystemMetadataStore:
 
     def write(self, session_id: str, data: dict[str, Any]) -> None:
         atomic_write_json(self._path_for(session_id), data)
+
+    def update(
+        self,
+        session_id: str,
+        mutator: Callable[[dict[str, Any]], dict[str, Any] | None],
+    ) -> dict[str, Any] | None:
+        """Read-modify-write ATOMICO bajo un lock por sesion (fcntl.flock).
+
+        `atomic_write_json` evita torn reads, pero un ciclo read→mutate→write
+        sin lock sigue perdiendo updates entre writers concurrentes (dos
+        requests del dashboard, o dashboard + ingest del webhook): el segundo
+        write pisa lo que el primero agrego. Este metodo toma un flock sobre un
+        sidecar `metadata.json.lock`, lee FRESCO adentro del lock, aplica
+        `mutator` y escribe — dos `update()` concurrentes se serializan.
+
+        `mutator` recibe el dict fresco y devuelve el dict a escribir, o
+        ``None`` para ABORTAR sin escribir (p.ej. si la lectura fresca vino
+        vacia por un error transitorio y escribir el dict mutado pisaria el
+        estado real de la sesion — el modo de fallo "el bot revive en medio de
+        la intervencion humana").
+
+        Solo protege contra otros callers de `update()`; los `write()` planos
+        legacy siguen corriendo carrera (ventana reducida por lectura fresca).
+        Devuelve el dict escrito, o ``None`` si el mutator aborto.
+        """
+        path = self._path_for(session_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lock_path = path.parent / f"{path.name}.lock"
+        with open(lock_path, "w", encoding="utf-8") as lock_fh:
+            fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
+            try:
+                result = mutator(self.read(session_id))
+                if result is None:
+                    return None
+                atomic_write_json(path, result)
+                return result
+            finally:
+                fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
