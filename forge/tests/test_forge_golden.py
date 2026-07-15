@@ -62,6 +62,47 @@ FIXTURE_FILES = {
     "infra/terraform/compute/modules/app-instance/cloud-init.yaml.tftpl": (
         "write_files:\n  - path: /opt/hubara/box.env\nruncmd:\n  - mkdir -p /opt/hubara\n"
     ),
+    # ── GraphAgents: viaja al clon con tag/SSM/imagen PROPIOS (colisión de
+    # cuenta: tag Role=graphagents + /graphagents/* + imagen GHCR son únicos) ──
+    "infra/terraform/compute/modules/graphagents-instance/main.tf": (
+        'resource "aws_instance" "graphagents" {\n'
+        '  tags = {\n    Role = "graphagents"\n  }\n}\n'
+        'data "aws_iam_policy_document" "self_stop" {\n'
+        '  statement {\n    condition {\n      values   = ["graphagents"]\n    }\n'
+        '    resources = [\n'
+        '      "arn:aws:ssm:*:*:parameter/graphagents",\n'
+        '      "arn:aws:ssm:*:*:parameter/graphagents/*",\n    ]\n  }\n}\n'
+    ),
+    "infra/terraform/platform/modules/graphagents-secrets/main.tf": (
+        'locals {\n  prefix = "/graphagents"\n}\n'
+    ),
+    "infra/terraform/compute/variables.tf": (
+        'variable "graphagents" {\n'
+        '  # imagen de la app (≠ la de la app principal)\n'
+        '  image_repo = optional(string, "ghcr.io/einsteindark-edgm/graphagents")\n'
+        "}\n"
+    ),
+    ".github/workflows/graphagents-deploy.yml": (
+        "jobs:\n  build:\n    steps:\n      - run: |\n"
+        '          echo "image=ghcr.io/${OWNER}/graphagents:${{ github.sha }}"\n'
+        "  deploy:\n    steps:\n      - run: |\n"
+        '          --filters "Name=tag:Role,Values=graphagents"\n'
+        "          sudo mkdir -p /opt/graphagents\n"
+        "          cp /tmp/ga-deploy/infra/compose/graphagents/docker-compose.prod.yml /opt/graphagents/docker-compose.yml\n"
+    ),
+    "infra/compose/graphagents/render-env-from-ssm.sh": (
+        "#!/usr/bin/env bash\n"
+        "# instance profile con ssm:GetParametersByPath sobre /graphagents/*\n"
+        "BOX_ENV=/opt/graphagents/box.env\n"
+        'aws ssm get-parameters-by-path --path "/graphagents" --with-decryption\n'
+    ),
+    "infra/scripts/graphagents_ctl.py": (
+        'TAG = "Role=graphagents"\n'
+        'FILTERS = ["Name=tag:Role,Values=graphagents"]\n'
+    ),
+    "hubara_agency/src/platform/config.py": (
+        'GRAPHAGENTS_INSTANCE_TAG = os.getenv("GRAPHAGENTS_INSTANCE_TAG", "graphagents")\n'
+    ),
     "infra/compose/render-env-from-ssm.sh": (
         "#!/usr/bin/env bash\nsource /opt/hubara/box.env\n"
         'aws ssm get-parameters-by-path --path "/hubara/${TENANT}" --with-decryption\n'
@@ -291,6 +332,36 @@ def test_apply_renombra_infra_y_deja_clon_limpio(mini_repo, acme_bundle, tmp_pat
     assert 'name="HubaraSalesSessionWorkflow"' in wf
     assert "AcmeSalesSessionWorkflow" not in wf
     assert 'GREETING = "Bienvenido a Acme"' in wf
+
+    # GraphAgents: viaja al clon con identidad propia (tag/SSM/imagen), sin
+    # tocar los nombres de MÓDULO tf ni los paths /opt de la caja ni los paths
+    # del REPO (infra/compose/graphagents/ es carpeta, no se renombra)
+    ga_tf = (
+        dest / "infra/terraform/compute/modules/graphagents-instance/main.tf"
+    ).read_text()
+    assert 'Role = "graphagents-acme"' in ga_tf
+    assert 'values   = ["graphagents-acme"]' in ga_tf
+    assert "parameter/acme-graphagents" in ga_tf and "parameter/graphagents" not in ga_tf
+    assert 'resource "aws_instance" "graphagents" {' in ga_tf  # nombre tf intacto
+    ga_sec = (
+        dest / "infra/terraform/platform/modules/graphagents-secrets/main.tf"
+    ).read_text()
+    assert 'prefix = "/acme-graphagents"' in ga_sec
+    ga_vars = (dest / "infra/terraform/compute/variables.tf").read_text()
+    assert "ghcr.io/einsteindark-edgm/acme-graphagents" in ga_vars
+    ga_wf = (dest / ".github/workflows/graphagents-deploy.yml").read_text()
+    assert "Values=graphagents-acme" in ga_wf
+    assert "ghcr.io/${OWNER}/acme-graphagents:" in ga_wf
+    assert "/opt/graphagents" in ga_wf  # path de la caja intacto
+    assert "infra/compose/graphagents/docker-compose.prod.yml" in ga_wf  # path del repo intacto
+    ga_render = (dest / "infra/compose/graphagents/render-env-from-ssm.sh").read_text()
+    assert '--path "/acme-graphagents"' in ga_render
+    assert "BOX_ENV=/opt/graphagents/box.env" in ga_render  # /opt intacto
+    ga_ctl = (dest / "infra/scripts/graphagents_ctl.py").read_text()
+    assert 'TAG = "Role=graphagents-acme"' in ga_ctl
+    assert "Values=graphagents-acme" in ga_ctl
+    cfg = (dest / "hubara_agency/src/platform/config.py").read_text()
+    assert '"GRAPHAGENTS_INSTANCE_TAG", "graphagents-acme"' in cfg
 
     # WhatsApp provisioning
     wp = (dest / "infra/whatsapp-provisioning/whatsapp_provision.py").read_text()

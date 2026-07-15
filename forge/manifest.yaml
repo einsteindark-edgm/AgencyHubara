@@ -21,6 +21,9 @@ copy_exclude:
 # frontend los referencian FUERA del scope de marca-en-agente.
 preserve_tokens:
   - "HubaraSalesSessionWorkflow"
+  # path DENTRO de la caja GraphAgents — debe coincidir entre cloud-init,
+  # deploy workflow y render script; las reglas de /graphagents no lo tocan
+  - "/opt/graphagents"
 
 # Reemplazos de texto plano, EN ORDEN (los compuestos van antes que los simples
 # para que "/opt/hubara" no lo corrompa la regla de "/hubara/", etc.).
@@ -139,6 +142,48 @@ replacements:
     files: ["infra/whatsapp-provisioning/*.py"]
     from: "Hubara"
     to: "{{company}}"
+  # ── GraphAgents viaja al clon (decisión 2026-07-10, reemplaza D-4): el tag
+  # EC2, el prefijo SSM y la imagen GHCR son únicos A NIVEL CUENTA — sin esto,
+  # el backend del clon despertaría/deployaría la caja de HUBARA (`head -1`
+  # sobre el filtro por tag). Los nombres de módulo/resource tf y los paths
+  # del repo (infra/compose/graphagents/) NO se tocan. ──────────────────────
+  - id: ga-tag-values                    # policies + self-stop + filtro IAM
+    files: ["infra/terraform/**"]
+    from: 'values   = ["graphagents"]'
+    to: 'values   = ["graphagents-{{slug}}"]'
+  - id: ga-tag-assign
+    files: ["infra/terraform/**"]
+    from: 'Role = "graphagents"'
+    to: 'Role = "graphagents-{{slug}}"'
+  - id: ga-tag-filtro-cli                # workflows + graphagents_ctl + backend
+    files: [".github/workflows/*.yml", "infra/scripts/**"]
+    from: "Values=graphagents"
+    to: "Values=graphagents-{{slug}}"
+  - id: ga-tag-ctl-display
+    files: ["infra/scripts/**"]
+    from: "Role=graphagents"
+    to: "Role=graphagents-{{slug}}"
+  - id: ga-backend-tag-default
+    files: ["hubara_agency/src/platform/config.py"]
+    from: '"GRAPHAGENTS_INSTANCE_TAG", "graphagents"'
+    to: '"GRAPHAGENTS_INSTANCE_TAG", "graphagents-{{slug}}"'
+  - id: ga-imagen-tf
+    files: ["infra/terraform/compute/**"]
+    from: "ghcr.io/einsteindark-edgm/graphagents"
+    to: "ghcr.io/{{repo_owner}}/{{slug}}-graphagents"
+  - id: ga-imagen-workflow
+    files: [".github/workflows/graphagents-deploy.yml"]
+    from: "/graphagents:"
+    to: "/{{slug}}-graphagents:"
+  - id: ga-ssm-prefix                    # /graphagents → /<slug>-graphagents
+    # scope SIN workflows (ahí /graphagents es path del REPO) y con
+    # /opt/graphagents protegido por preserve_tokens
+    files:
+      - "infra/compose/graphagents/render-env-from-ssm.sh"
+      - "infra/terraform/platform/modules/graphagents-secrets/**"
+      - "infra/terraform/compute/modules/graphagents-instance/**"
+    from: "/graphagents"
+    to: "/{{slug}}-graphagents"
   - id: ws-readme-config
     files: ["infra/whatsapp-provisioning/**"]
     from: "tenants/hubara.env"

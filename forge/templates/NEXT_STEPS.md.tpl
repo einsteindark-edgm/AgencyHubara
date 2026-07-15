@@ -38,6 +38,17 @@
 - [ ] `python3 whatsapp_provision.py ads-token` → seed `{{ssm_prefix}}/{{slug}}/meta/oauth` (sin esto el dashboard dice "Meta no conectado")
 - [ ] SSM: WHATSAPP_*, META_CATALOG_ID, META_SYSTEM_USER_TOKEN, META_CAPI_DATASET_ID, META_FLOW_ID_SHIPPING, META_APP_*
 
+## F5b — GraphAgents del cliente (viaja en el clon, identidad propia)
+
+- [ ] La caja nace con el apply de compute (F7) — tag `Role=graphagents-{{slug}}`,
+      pay-per-use/autostop igual que el patrón del motor
+- [ ] Secretos: `python3 infra/scripts/aws_bootstrap.py secrets --tenant {{slug}}-graphagents --prefix "" --file secrets.graphagents.env`
+      → SSM `/{{slug}}-graphagents/*` (AGENTSPAN_MASTER_KEY y POSTGRES_PASSWORD nuevos,
+      META_ACCESS_TOKEN + META_AD_ACCOUNT_ID del BM de {{company}}, GHCR_PULL_TOKEN
+      del package `{{slug}}-graphagents`, GRAPHAGENTS_LLM_API_KEY)
+- [ ] Primer deploy: workflow `graphagents-deploy` del repo (imagen `{{slug}}-graphagents`)
+- [ ] Smoke: `python3 infra/scripts/graphagents_ctl.py status` (filtra por el tag propio)
+
 ## F6 — Temporal Cloud
 
 - [ ] Namespace `{{slug}}` + service account + API key propia

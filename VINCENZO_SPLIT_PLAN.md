@@ -81,7 +81,7 @@ Dos states independientes en la misma cuenta chocan en todo nombre global fijo:
 | S3/DynamoDB | `agencyhubara-tfstate-*` / `agencyhubara-tflock` | Bucket/tabla propios `vincenzo-tfstate-525237381234` / `vincenzo-tflock` |
 | SSM | Prefijo `/hubara/<tenant>/` | Prefijo `/vincenzo/<tenant>/` |
 | EC2 | Key pair `agencyhubara-ops`, SGs, roles, profiles `agencyhubara-*` | Prefijo `vincenzo-*` |
-| EC2 tags | `Role=graphagents` (los workflows hacen `head -1` sobre ese filtro) | Si Vincenzo monta GraphAgents: tag `Role=graphagents-vincenzo` (config ya soporta `GRAPHAGENTS_INSTANCE_TAG`) |
+| EC2 tags | `Role=graphagents` (los workflows hacen `head -1` sobre ese filtro) | forge renombra a `Role=graphagents-<slug>` en tf+workflows+ctl+backend (GraphAgents viaja en todo clon, D-4 revisada) |
 | DLM | Política snapshotea **todo volumen de la cuenta** con tag `Backup=daily` | Vincenzo usa tag `Backup=daily-vincenzo` + política DLM propia (evita doble-snapshot cruzado) |
 | Cognito domain | `agencyhubara-<tenant>` (global en la región) | `vincenzo-<tenant>` |
 | GHCR | `ghcr.io/einsteindark-edgm/agencyhubara` | `ghcr.io/einsteindark-edgm/agencyvincenzo` (sale solo del nombre del repo nuevo) |
@@ -128,10 +128,15 @@ Cuenta AWS 525237381234 (us-east-1)
   arranca **sin OTel** (desde PR #127 el exporter de prod es opt-in explícito) y se
   decide después: caja SigNoz propia (~$65/mes) o apuntar a la de Hubara (acoplamiento
   consciente). Recomendado: sin OTel en F1, caja propia solo si se necesita.
-- **D-4 GraphAgents / ads-analytics-engine**: **NO se duplica en la fase inicial**
-  (es tooling de análisis de ads de Hubara, con `META_AD_ACCOUNT_ID` de Hubara).
-  Cuando Vincenzo lo necesite: caja propia con tag `Role=graphagents-vincenzo` +
-  SSM `/vincenzo-graphagents/*`.
+- **D-4 GraphAgents** *(revisada 2026-07-10)*: **VIAJA en todos los clones** — es
+  esencial por cliente. forge renombra automáticamente los tres identificadores
+  que colisionan a nivel cuenta: tag EC2 `Role=graphagents-<slug>` (terraform +
+  workflows + `graphagents_ctl` + default del backend), SSM
+  `/<slug>-graphagents/*`, e imagen GHCR `<slug>-graphagents`. Los nombres de
+  módulo tf y el path `/opt/graphagents` de la caja quedan intactos
+  (preserve_tokens). Secretos del cliente: `aws_bootstrap.py secrets --tenant
+  <slug>-graphagents --prefix ""` con `META_AD_ACCOUNT_ID` propio. SigNoz sí
+  queda solo en hubara (D-3).
 - **D-5 API keys de LLM (DeepSeek/Gemini)**: **crear keys nuevas para Vincenzo**
   (billing separable por cliente, revocación independiente). Es solo cargar valores
   distintos en `/vincenzo/vincenzo/{DEEPSEEK,GEMINI}_API_KEY`; cero código.
