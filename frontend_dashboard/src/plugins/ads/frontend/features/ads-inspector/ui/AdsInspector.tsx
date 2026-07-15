@@ -306,6 +306,17 @@ function AnalysisHistory({ campaignId }: { campaignId: string }) {
               )}
             </summary>
             <div style={{ marginTop: 6, fontSize: 12 }}>
+              {report?.narrative && (
+                <p
+                  style={{
+                    margin: "0 0 6px",
+                    fontStyle: "italic",
+                    color: "var(--fg-soft)",
+                  }}
+                >
+                  {report.narrative}
+                </p>
+              )}
               {report ? (
                 <div style={{ maxHeight: 320, overflow: "auto" }}>
                   <Markdown>{report.markdown}</Markdown>

@@ -70,6 +70,34 @@ describe("RunResult — reporte legible", () => {
     expect(queryByText(/"markdown"/)).toBeNull();
   });
 
+  it("muestra la narrativa interpretativa del LLM cuando el result la trae", () => {
+    mockRun.current = run({
+      result: {
+        markdown: REPORT_MD,
+        verdict: "ok",
+        qa_passed: true,
+        narrative: "El MER del periodo fue 2.1 — conviene escalar Día del padre.",
+        _projected_from: "ctwa-report",
+      },
+    });
+    const { getByText } = render(<RunResult runId="run-1" />);
+    expect(getByText(/conviene escalar Día del padre/)).toBeTruthy();
+  });
+
+  it("sin narrative (LLM degradado / record viejo) → el reporte sale igual, sin bloque narrativo", () => {
+    mockRun.current = run({
+      result: {
+        markdown: REPORT_MD,
+        verdict: "ok",
+        qa_passed: true,
+        _projected_from: "ctwa-report",
+      },
+    });
+    const { getByRole, queryByText } = render(<RunResult runId="run-1" />);
+    expect(getByRole("table")).toBeTruthy();
+    expect(queryByText(/Lectura del análisis/)).toBeNull();
+  });
+
   it("result legacy sin markdown → cae al JSON crudo de siempre", () => {
     mockRun.current = run({ result: { acc: { foo: 1 } } });
     const { getByText } = render(<RunResult runId="run-1" />);

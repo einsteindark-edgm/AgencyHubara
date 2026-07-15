@@ -37,6 +37,23 @@ def test_narrate_feeds_the_analyzer_numbers_to_the_prompt():
     assert "scale" in prompt and "120000" in prompt and "MER del periodo: 5.0" in prompt
 
 
+def test_narrate_prompt_rounds_long_decimal_tails():
+    """Los ratios del analyzer llegan como Decimal serializado con cola larga (run real prod:
+    MER '0.7860605266605528625704179222'). El prompt del LLM los redondea a 2 decimales — el LLM
+    cita lo que recibe, así que sin esto la prosa repite la cola ilegible al cliente."""
+    report = {
+        **REPORT,
+        "period": {"metrics": {"mer": "0.7860605266605528625704179222",
+                               "drop_off_rate": "0.8035714285714285714285714286"},
+                   "diagnosis": {"recommendation": "rotate_creative"}},
+    }
+    out = narrate(report, llm=FixtureLLM(lambda user: user))
+    prompt = out["narrative"]
+    assert "MER del periodo: 0.79" in prompt
+    assert "drop-off del periodo: 0.8" in prompt
+    assert "0.7860605266605528" not in prompt
+
+
 def test_guard_passes_when_narrative_cites_only_known_numbers():
     src = _narrate_source(REPORT)
     narrative = "El periodo recomienda scale: con spend de 120000 y 120 conversaciones, MER 5.0."
