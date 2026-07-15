@@ -12,11 +12,11 @@
  * se omite — la app corre sin login (la API local está abierta).
  */
 
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { AuthProvider } from "react-oidc-context";
 import { EventStreamProvider } from "@/shared/api";
 import { env } from "@/shared/config";
-import { IS_MOBILE_APP } from "@/shared/lib";
+import { IS_MOBILE_APP, supportsModernCss } from "@/shared/lib";
 import { ErrorBoundary } from "@/shared/ui";
 import { AuthGate } from "./AuthGate";
 import { MobileAuthGate } from "./MobileAuthGate";
@@ -35,6 +35,44 @@ const oidcConfig = {
     window.history.replaceState({}, document.title, "/");
   },
 };
+
+/**
+ * Pantalla "actualizá el WebView" — estilos 100% INLINE a propósito: el motivo
+ * de mostrarla es que el engine descarta el theme de Tailwind v4 (`@layer` es
+ * Chrome 99+, `oklch` 111+), así que ninguna clase/var del theme es confiable
+ * acá. Visto en device real: Android 11 con el System WebView de fábrica
+ * (Chrome 86) renderizaba TODA la app negro-sobre-negro, login inusable.
+ */
+function WebViewTooOld() {
+  const wrap: CSSProperties = {
+    minHeight: "100vh",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    background: "#111114",
+    color: "#f2f2f4",
+    padding: "32px 24px",
+    fontFamily: "system-ui, sans-serif",
+    textAlign: "center",
+  };
+  return (
+    <div style={wrap} role="alert">
+      <div style={{ maxWidth: 420 }}>
+        <div style={{ fontSize: 40, marginBottom: 12 }}>📲</div>
+        <h1 style={{ fontSize: 20, margin: "0 0 12px" }}>
+          Hay que actualizar el WebView de Android
+        </h1>
+        <p style={{ fontSize: 15, lineHeight: 1.5, color: "#c9c9cf", margin: 0 }}>
+          Esta app necesita el componente del sistema{" "}
+          <strong style={{ color: "#f2f2f4" }}>"Android System WebView"</strong>{" "}
+          actualizado. Abrí <strong style={{ color: "#f2f2f4" }}>Play Store</strong>,
+          buscá <em>Android System WebView</em>, tocá <strong>Actualizar</strong> y
+          volvé a abrir esta app.
+        </p>
+      </div>
+    </div>
+  );
+}
 
 function Shell({ children }: { children: ReactNode }) {
   return (
@@ -65,6 +103,9 @@ export function AppProviders({ children }: { children: ReactNode }) {
   // Si alguien mueve Shell afuera, el próximo operador que loguee en el mismo
   // device vería data cacheada del anterior.
   if (IS_MOBILE_APP) {
+    if (!supportsModernCss()) {
+      return <WebViewTooOld />;
+    }
     return (
       <ErrorBoundary scope="app">
         <MobileAuthGate>
