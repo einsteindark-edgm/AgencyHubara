@@ -163,6 +163,14 @@ function CompletedResult({ result }: { result: unknown }) {
           </span>
         )}
       </div>
+      {report?.narrative && (
+        <div className="rounded-md border border-line bg-canvas p-3 text-sm">
+          <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-fg-mute">
+            Lectura del análisis
+          </span>
+          <p className="m-0 italic text-fg-soft">{report.narrative}</p>
+        </div>
+      )}
       {report ? (
         <div className="max-h-96 overflow-auto rounded-md border border-line bg-canvas p-3 text-sm">
           <Markdown>{report.markdown}</Markdown>

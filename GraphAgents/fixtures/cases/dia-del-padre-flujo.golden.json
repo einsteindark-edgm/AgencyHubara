@@ -108,7 +108,7 @@
       }
     ]
   },
-  "markdown": "## Hubara — Ads Analytics (CTWA)\n\n| Fecha | Spend | Conv | Drop-off | MER | Órdenes | Recomendación |\n|---|--:|--:|--:|--:|--:|---|\n| 2026-06-15 | 296294 | 160 | 0.6226415094339622641509433962 | 2.025015693871627505113164627 | 12 | scale_budget |\n| 2026-06-16 | 190000 | 30 | 0.7272727272727272727272727273 | 0.7894736842105263157894736842 | 4 | rotate_creative |\n\n**Diagnóstico del periodo:** rotate_creative (MER 1.542276894224481486508161729, drop-off 0.6441947565543071161048689139)\n\n## Embudo por campaña (CTWA)\n\n| Campaña | Objetivo | Spend | Clicks | Conversaciones | Fuente |\n|---|---|--:|--:|--:|---|\n| Duo zodiacal | OUTCOME_ENGAGEMENT | 896823 | 571 | 70 | insights |\n| Día del padre 2026 - mundia | OUTCOME_SALES | 239433 | 446 | 120 | insights |\n| Dia de la madre | OUTCOME_ENGAGEMENT | 0 | 0 | 0 | entities |\n\n**QA (no-self-review):** reconcilia",
+  "markdown": "## Hubara — Ads Analytics (CTWA)\n\n| Fecha | Spend | Conv | Drop-off | MER | Órdenes | Recomendación |\n|---|--:|--:|--:|--:|--:|---|\n| 2026-06-15 | 296294 | 160 | 0.62 | 2.03 | 12 | scale_budget |\n| 2026-06-16 | 190000 | 30 | 0.73 | 0.79 | 4 | rotate_creative |\n\n**Diagnóstico del periodo:** rotate_creative (MER 1.54, drop-off 0.64)\n\n## Embudo por campaña (CTWA)\n\n| Campaña | Objetivo | Spend | Clicks | Conversaciones | Fuente |\n|---|---|--:|--:|--:|---|\n| Duo zodiacal | OUTCOME_ENGAGEMENT | 896823 | 571 | 70 | insights |\n| Día del padre 2026 - mundia | OUTCOME_SALES | 239433 | 446 | 120 | insights |\n| Dia de la madre | OUTCOME_ENGAGEMENT | 0 | 0 | 0 | entities |\n\n**QA (no-self-review):** reconcilia",
   "meta_insights": {
     "account_currency": "COP",
     "data": [

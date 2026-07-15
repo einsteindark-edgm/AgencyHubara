@@ -30,6 +30,24 @@ def test_render_y_verdict() -> None:
     assert "solo-Meta" in md  # fechas sin match listadas, no ocultas
 
 
+def test_render_redondea_colas_decimales_largas() -> None:
+    # Los ratios llegan como Decimal serializado (run real prod: MER
+    # '0.7860605266605528…'); la tabla y el diagnóstico los muestran a 2 decimales.
+    long_tail = {
+        **BLENDED,
+        "days": [{**BLENDED["days"][0],
+                  "metrics": {**BLENDED["days"][0]["metrics"],
+                              "drop_off_rate": "0.8035714285714285714285714286",
+                              "mer": "0.7860605266605528625704179222"}}],
+        "period": {"metrics": {"drop_off_rate": "0.8035714285714285714285714286",
+                               "mer": "0.7860605266605528625704179222"},
+                   "diagnosis": {"recommendation": "rotate_creative"}},
+    }
+    md = run(long_tail)["markdown"]
+    assert "0.79" in md and "0.8 " in md.replace("|", " ")
+    assert "0.7860605266605528" not in md
+
+
 def test_sin_periodo_es_insufficient() -> None:
     out = run({"days": [], "period": None, "unmatched": {"meta_only": [], "sales_only": []}})
     assert out["verdict"] == "insufficient_data"
