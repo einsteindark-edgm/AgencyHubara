@@ -80,6 +80,10 @@
   --fg: var(--color-fg);
   --fg-soft: var(--color-fg-soft);
   --fg-mute: var(--color-fg-muted);
+  /* Alias: 93 reglas (mobile/login/orders) escriben `--fg-muted`; sin esta
+     línea esa var no existe y el color cae a `unset` (texto invisible según
+     el fondo). El nombre canónico corto (--fg-mute) queda para lo legacy. */
+  --fg-muted: var(--color-fg-muted);
   --fg-faint: var(--color-fg-faint);
 
   --line: var(--color-line);

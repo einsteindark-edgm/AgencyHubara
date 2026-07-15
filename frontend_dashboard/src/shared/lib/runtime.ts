@@ -30,3 +30,30 @@ export const IS_DESKTOP: boolean =
  * de la app puede seguir mirando el viewport, pero la ELECCIÓN de app no.
  */
 export const IS_MOBILE_APP: boolean = env.mobileApp;
+
+/**
+ * ¿El engine soporta el CSS que Tailwind v4 emite (piso oficial: Chrome 111)?
+ *
+ * Visto en device real (2026-07-15, Motorola Android 11 con el System WebView
+ * de FÁBRICA = Chrome 86, nunca actualizado por Play Store): Tailwind v4 mete
+ * los tokens en `@layer` (Chrome 99+) y usa `oklch` (Chrome 111+) — un WebView
+ * viejo descarta el theme COMPLETO y la app queda negro-sobre-negro con el
+ * login inusable, sin ningún error. `oklch` es el proxy del piso: si no lo
+ * soporta, mejor mostrar la pantalla "actualizá Android System WebView" que
+ * una app rota indescifrable.
+ *
+ * `cssSupports` inyectable para test; default el `CSS.supports` real.
+ */
+export function supportsModernCss(
+  cssSupports: ((prop: string, value: string) => boolean) | undefined = typeof CSS !==
+    "undefined" && typeof CSS.supports === "function"
+    ? CSS.supports.bind(CSS)
+    : undefined,
+): boolean {
+  if (!cssSupports) return false;
+  try {
+    return cssSupports("color", "oklch(0.5 0.1 200)");
+  } catch {
+    return false;
+  }
+}
