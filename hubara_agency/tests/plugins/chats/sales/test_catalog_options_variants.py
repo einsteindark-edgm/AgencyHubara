@@ -188,6 +188,23 @@ async def test_designs_filter_ignores_accents(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_search_summary_includes_variant_ids_for_option_products(
+    tmp_path: Path,
+):
+    """El carrito inbound de WhatsApp trae `variant_...` como retailer_id
+    (post per-variante en Meta). El LLM solo puede resolverlo si el envelope
+    del search trae los ids de variante — lista liviana {id, title} SOLO
+    para productos con options (legacy no la necesita y no paga tokens)."""
+    tool = SearchProductsTool(workspace=tmp_path, catalog=_FakeCatalog())
+    payload = json.loads(await tool.execute_with_context(_ctx(), q="duo"))
+    summary = payload["results"][0]
+    assert summary["variants"] == [
+        {"id": "v_leo", "title": "Leo"},
+        {"id": "v_esc", "title": "Escorpion"},
+    ]
+
+
+@pytest.mark.asyncio
 async def test_variant_price_prefers_cop(tmp_path: Path):
     tool = GetProductByHandleTool(workspace=tmp_path, catalog=_FakeCatalog())
     payload = json.loads(

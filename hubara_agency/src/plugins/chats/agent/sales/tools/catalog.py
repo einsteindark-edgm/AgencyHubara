@@ -229,6 +229,14 @@ def _product_summary(p: CatalogProductDTO) -> dict[str, Any]:
         # el LLM negó tener "leo" cuando la foto leo-*.webp existía). Lista
         # cerrada: cualquier diseño fuera de esta lista es invento.
         "designs": _designs_for(p),
+        # Ids de variante SOLO para productos con options: el carrito inbound
+        # de WhatsApp trae `variant_...` como retailer_id (Meta per-variante,
+        # PR #178/#179) y el LLM lo resuelve contra esta lista. Legacy → [].
+        "variants": (
+            [{"id": v.id, "title": v.title} for v in p.variants]
+            if p.options and len(p.variants) > 1
+            else []
+        ),
     }
 
 
