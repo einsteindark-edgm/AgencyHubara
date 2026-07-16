@@ -48,7 +48,7 @@ from src.platform.catalog import CatalogPort, ProductNotFoundError
 from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.state import FilesystemMetadataStore
 from src.platform.whatsapp import limits as wa_limits
-from src.plugins.chats.shared.image_labels import derive_image_label
+from src.sdk.mediakit import derive_image_label
 
 
 def _product_designs(product) -> list[str]:

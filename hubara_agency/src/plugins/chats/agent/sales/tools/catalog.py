@@ -21,11 +21,12 @@ from src.platform.catalog import (
     CatalogPort,
     CatalogProductDTO,
     CatalogUnavailableError,
+    CatalogVariantDTO,
     ProductNotFoundError,
     SearchResult,
     parse_variant_tags,
 )
-from src.plugins.chats.shared.image_labels import derive_image_label
+from src.sdk.mediakit import derive_image_label, fold_for_match
 
 
 class SearchProductsTool(ToolBase):
@@ -243,13 +244,17 @@ def _product_full(p: CatalogProductDTO) -> dict[str, Any]:
         "aromas": attrs.aromas,
         "colors": attrs.colors,
         "designs": _designs_for(p),
+        # Ejes de selección reales (Medusa options). Producto legacy → None.
+        # Cuando existe, ESTA es la closed-list de variantes elegibles.
+        "options": p.options,
         "variants": [
             {
                 "id": v.id,
                 "title": v.title,
                 "sku": v.sku,
-                "price": v.prices[0].amount if v.prices else None,
-                "currency": v.prices[0].currency_code if v.prices else None,
+                "price": _variant_price(v)[0],
+                "currency": _variant_price(v)[1],
+                "options": v.options,
             }
             for v in p.variants
         ],
@@ -264,13 +269,40 @@ def _product_full(p: CatalogProductDTO) -> dict[str, Any]:
 
 def _designs_for(p: CatalogProductDTO) -> list[str]:
     """Diseños únicos derivados de los filenames de las fotos, en orden de
-    rank. Un producto con fotos genéricas (img1.webp) devuelve lista vacía."""
+    rank. Un producto con fotos genéricas (img1.webp) devuelve lista vacía.
+
+    Producto con options reales (Duo Zodiacal v2): solo cuentan los labels
+    que son option values — la portada (`00-portada-*.webp`) y cualquier
+    otra foto decorativa NO son diseños elegibles.
+    """
     designs: list[str] = []
     for img in p.images:
         label = derive_image_label(img.url)
         if label and label not in designs:
             designs.append(label)
+    if p.options and len(p.variants) > 1:
+        # Comparación accent-insensitive (premortem §4.7): option "Géminis"
+        # vs label de filename "Geminis" deben matchear.
+        allowed = {
+            fold_for_match(value)
+            for values in p.options.values()
+            for value in values
+        }
+        filtered = [d for d in designs if fold_for_match(d) in allowed]
+        if filtered:
+            return filtered
     return designs
+
+
+def _variant_price(v: CatalogVariantDTO) -> tuple[str | None, str | None]:
+    """Precio de UNA variante, COP primero en multi-currency (mismo criterio
+    que `_first_price`; run 33a8dd9f mostró `currency: usd` en el detalle)."""
+    for price in v.prices:
+        if price.currency_code.lower() == "cop":
+            return (price.amount, price.currency_code)
+    if v.prices:
+        return (v.prices[0].amount, v.prices[0].currency_code)
+    return (None, None)
 
 
 def _first_price(p: CatalogProductDTO) -> tuple[str | None, str | None]:

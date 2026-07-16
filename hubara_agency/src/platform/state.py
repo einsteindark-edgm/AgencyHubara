@@ -19,6 +19,7 @@ import fcntl
 import json
 import os
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 

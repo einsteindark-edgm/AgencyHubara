@@ -25,3 +25,13 @@ def test_mediakit_reexports_whatsapp_media_upload():
 
     assert kit.upload_media is impl.upload_media
     assert kit.MediaUploadError is impl.MediaUploadError
+
+
+def test_mediakit_reexports_image_label_derivation():
+    """`derive_image_label` vive en platform (2026-07-16, lo usa también el
+    mapper de Meta Catalog); los plugins lo consumen vía este kit (P-28)."""
+    import src.platform.catalog.image_labels as impl
+    import src.sdk.mediakit as kit
+
+    assert kit.derive_image_label is impl.derive_image_label
+    assert kit.fold_for_match is impl.fold_for_match

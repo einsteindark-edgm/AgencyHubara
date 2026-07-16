@@ -213,6 +213,14 @@ def _product_from_raw(raw: dict[str, Any]) -> CatalogProductDTO:
             if raw.get("metadata")
             else None
         ),
+        options=(
+            {
+                str(k): [str(v) for v in vals]
+                for k, vals in raw["options"].items()
+            }
+            if raw.get("options")
+            else None
+        ),
     )
 
 
@@ -230,4 +238,9 @@ def _variant_from_raw(raw: dict[str, Any]) -> CatalogVariantDTO:
             )
             for p in raw.get("prices", [])
         ],
+        options=(
+            {str(k): str(v) for k, v in raw["options"].items()}
+            if raw.get("options")
+            else None
+        ),
     )

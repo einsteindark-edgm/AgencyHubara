@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.plugins.chats.shared.image_labels import derive_image_label
+from src.sdk.mediakit import derive_image_label
 
 
 @pytest.mark.parametrize(
