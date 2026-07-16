@@ -146,6 +146,79 @@ def test_serializer_includes_item_group_id():
     assert data["item_group_id"] == "prod_duo_v2"
 
 
+def test_first_variant_priceless_does_not_kill_product():
+    """Premortem §4.1: si `variants[0]` no tiene precio pero otra variante
+    sí, el producto NO se skipea entero — se publica con las variantes que
+    tienen precio (gate viejo: `variants[0].prices` o nada)."""
+    duo = CatalogProductDTO(
+        id=_DUO_V2.id,
+        handle=_DUO_V2.handle,
+        title=_DUO_V2.title,
+        status=_DUO_V2.status,
+        description=_DUO_V2.description,
+        thumbnail=_DUO_V2.thumbnail,
+        options=_DUO_V2.options,
+        variants=[
+            CatalogVariantDTO(
+                id="v_leo", title="Leo", options={"Signo": "Leo"}, prices=[]
+            ),
+            CatalogVariantDTO(
+                id="v_esc",
+                title="Escorpion",
+                options={"Signo": "Escorpion"},
+                prices=_cop("35000"),
+            ),
+        ],
+        images=_DUO_V2.images,
+    )
+    items, skipped = map_products_batch([duo])
+    assert skipped == []
+    assert [i.retailer_id for i in items] == ["v_esc"]
+    assert items[0].price == "35000 COP"
+
+
+def test_variant_image_match_ignores_accents():
+    """Premortem §4.7: option value con tilde ("Géminis") vs filename sin
+    tilde ("Geminis-*.webp") deben matchear — sino la variante cae a la
+    portada silenciosamente."""
+    duo = CatalogProductDTO(
+        id="prod_duo_v2",
+        handle="duo-zodiacal",
+        title="Duo Zodiacal",
+        status="published",
+        description="desc",
+        thumbnail="https://assets.hubara.com.co/00-portada-01KXM9VC634R9TDA3PQ20T6G10.webp",
+        options={"Signo": ["Géminis", "Leo"]},
+        variants=[
+            CatalogVariantDTO(
+                id="v_gem",
+                title="Géminis",
+                options={"Signo": "Géminis"},
+                prices=_cop("35000"),
+            ),
+            CatalogVariantDTO(
+                id="v_leo",
+                title="Leo",
+                options={"Signo": "Leo"},
+                prices=_cop("35000"),
+            ),
+        ],
+        images=[
+            CatalogImageDTO(
+                url="https://assets.hubara.com.co/00-portada-01KXM9VC634R9TDA3PQ20T6G10.webp",
+                rank=0,
+            ),
+            CatalogImageDTO(
+                url="https://assets.hubara.com.co/Geminis-01KXM9VDDDDDDDDDDDDDDDDDDD.webp",
+                rank=1,
+            ),
+        ],
+    )
+    items, _ = map_products_batch([duo])
+    gem = next(i for i in items if i.retailer_id == "v_gem")
+    assert "Geminis-01KXM9VDDDDDDDDDDDDDDDDDDD" in gem.image_url
+
+
 def test_serializer_omits_item_group_id_when_absent():
     item = MetaCatalogItem(
         retailer_id="p1",

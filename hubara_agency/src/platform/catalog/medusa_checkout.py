@@ -129,24 +129,34 @@ class MedusaCheckoutVerification:
 
 
 def _first_price(p: Any) -> tuple[str | None, str | None]:
-    if not p.variants:
-        return (None, None)
-    v = p.variants[0]
-    if not v.prices:
-        return (None, None)
-    return (v.prices[0].amount, v.prices[0].currency_code)
+    return _pick_price(p, serialize=False)
 
 
 def _first_live_price(p: Any) -> tuple[str | None, str | None]:
-    if not p.variants:
-        return (None, None)
-    v = p.variants[0]
-    if not v.prices:
-        return (None, None)
-    pr = v.prices[0]
     # MedusaPrice.amount es Decimal; serializamos a str para igualar el
     # shape del snapshot (CatalogPriceDTO.amount: str).
-    return (str(pr.amount), pr.currency_code)
+    return _pick_price(p, serialize=True)
+
+
+def _pick_price(p: Any, *, serialize: bool) -> tuple[str | None, str | None]:
+    """Primera variante CON precio, COP primero (premortem PR variantes).
+
+    `variants[0].prices[0]` a ciegas tenía dos trampas: con multi-currency
+    (usd listado primero, caso real Duo Zodiacal v1) el verify reportaba la
+    currency equivocada al LLM; y un producto multi-variante con la primera
+    variante sin precio reportaba None → falsa discrepancia → escalación.
+    """
+    for v in p.variants or []:
+        prices = v.prices or []
+        if not prices:
+            continue
+        pr = next(
+            (x for x in prices if (x.currency_code or "").lower() == "cop"),
+            prices[0],
+        )
+        amount = str(pr.amount) if serialize else pr.amount
+        return (amount, pr.currency_code)
+    return (None, None)
 
 
 def _prices_differ(snap: str | None, live: str | None) -> bool:

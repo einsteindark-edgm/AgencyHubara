@@ -34,14 +34,18 @@ Imágenes (anti-bug sesión 71f479f7 portado a Meta Catalog):
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import replace
 from typing import Optional
 
 from src.platform.catalog.dtos import CatalogPriceDTO, CatalogProductDTO
-from src.platform.catalog.image_labels import derive_image_label
+
+from src.platform.catalog.image_labels import derive_image_label, fold_for_match
 from src.platform.meta_catalog.dtos import MetaCatalogItem
 from src.platform.whatsapp.media_url import normalize_image_url
+
+log = logging.getLogger(__name__)
 
 _GTIN13_RE = re.compile(r"^\d{13}$")
 
@@ -174,21 +178,30 @@ def _variant_items(
     """
     if not product.options or len(product.variants) < 2:
         return []
+    # Llave de matching accent-insensitive (premortem §4.7): option value
+    # "Géminis" vs filename "Geminis-*.webp" deben encontrarse.
     label_to_url: dict[str, str] = {}
     for img in product.images:
         label = derive_image_label(img.url)
-        if label and label.lower() not in label_to_url:
-            label_to_url[label.lower()] = img.url
+        if label and fold_for_match(label) not in label_to_url:
+            label_to_url[fold_for_match(label)] = img.url
 
     items: list[MetaCatalogItem] = []
     for v in product.variants:
         price = _price_meta_format(v.prices)
         if not price:
+            # Premortem §4.8: skip silencioso = "faltan items en Meta" sin
+            # pista. El operador necesita saber QUÉ variante quedó afuera.
+            log.warning(
+                "meta_catalog: variante sin precio queda FUERA del push — "
+                "product=%s variant=%s (%s)",
+                product.handle, v.title, v.id,
+            )
             continue
         raw_img: str | None = None
         for candidate in (v.title, *(v.options or {}).values()):
-            if candidate and candidate.lower() in label_to_url:
-                raw_img = label_to_url[candidate.lower()]
+            if candidate and fold_for_match(candidate) in label_to_url:
+                raw_img = label_to_url[fold_for_match(candidate)]
                 break
         items.append(
             replace(
@@ -232,11 +245,16 @@ def _first_price_meta_format(
 
     Si el amount viene con decimales (raro en COP), los preservamos.
     """
-    if not product.variants:
-        return None
-    return _price_meta_format(
-        product.variants[0].prices, preferred_currency=preferred_currency
-    )
+    # Primera variante CON precio, no `variants[0]` a ciegas (premortem
+    # §4.1): un producto multi-variante con la primera variante sin precio
+    # se skipeaba ENTERO aunque el resto fuera vendible.
+    for v in product.variants:
+        price = _price_meta_format(
+            v.prices, preferred_currency=preferred_currency
+        )
+        if price:
+            return price
+    return None
 
 
 def _price_meta_format(

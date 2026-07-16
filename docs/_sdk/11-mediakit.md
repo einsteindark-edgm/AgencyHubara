@@ -16,6 +16,7 @@ diseño** del filename de una imagen del catálogo.
 | `persist_outbound_image` / `media_url_for` / `is_safe_segment` / `delete_outbound_image` | `platform/media/store` | storage vault + URL + guard anti-traversal |
 | `upload_media` / `MediaUploadError` | `platform/whatsapp/client` | bytes → `media_id` de Meta |
 | `derive_image_label` | `platform/catalog/image_labels` | `Leo-01KX...webp` → `"Leo"` |
+| `fold_for_match` | `platform/catalog/image_labels` | llave de comparación accent-insensitive (`"Géminis"` → `"geminis"`) — para MATCHEAR labels↔option values, nunca para display |
 
 ## `derive_image_label` — por qué vive en platform
 

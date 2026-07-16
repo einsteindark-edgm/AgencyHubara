@@ -44,4 +44,5 @@ from src.platform.whatsapp.client import (
 # Catalog también la usa (item per-variante, 2026-07-16).
 from src.platform.catalog.image_labels import (
     derive_image_label as derive_image_label,
+    fold_for_match as fold_for_match,
 )

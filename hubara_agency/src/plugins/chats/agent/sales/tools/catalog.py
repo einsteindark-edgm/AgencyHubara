@@ -26,7 +26,7 @@ from src.platform.catalog import (
     SearchResult,
     parse_variant_tags,
 )
-from src.sdk.mediakit import derive_image_label
+from src.sdk.mediakit import derive_image_label, fold_for_match
 
 
 class SearchProductsTool(ToolBase):
@@ -281,12 +281,14 @@ def _designs_for(p: CatalogProductDTO) -> list[str]:
         if label and label not in designs:
             designs.append(label)
     if p.options and len(p.variants) > 1:
+        # Comparación accent-insensitive (premortem §4.7): option "Géminis"
+        # vs label de filename "Geminis" deben matchear.
         allowed = {
-            value.lower()
+            fold_for_match(value)
             for values in p.options.values()
             for value in values
         }
-        filtered = [d for d in designs if d.lower() in allowed]
+        filtered = [d for d in designs if fold_for_match(d) in allowed]
         if filtered:
             return filtered
     return designs

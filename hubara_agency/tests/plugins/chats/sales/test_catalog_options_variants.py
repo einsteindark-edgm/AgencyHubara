@@ -132,6 +132,62 @@ async def test_search_summary_designs_filtered_too(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_designs_filter_ignores_accents(tmp_path: Path):
+    """Premortem §4.7: option "Géminis" (con tilde) vs label de filename
+    "Geminis" (sin tilde) deben matchear en el filtro de designs — sino el
+    diseño desaparece de la lista cerrada aunque exista la foto."""
+    duo = CatalogProductDTO(
+        id="p",
+        handle="duo-zodiacal",
+        title="Duo Zodiacal",
+        status="published",
+        options={"Signo": ["Géminis", "Leo"]},
+        variants=[
+            CatalogVariantDTO(
+                id="v1",
+                title="Géminis",
+                options={"Signo": "Géminis"},
+                prices=[CatalogPriceDTO(amount="35000", currency_code="cop")],
+            ),
+            CatalogVariantDTO(
+                id="v2",
+                title="Leo",
+                options={"Signo": "Leo"},
+                prices=[CatalogPriceDTO(amount="35000", currency_code="cop")],
+            ),
+        ],
+        images=[
+            CatalogImageDTO(
+                url="https://assets.hubara.com.co/00-portada-01KXM9VC634R9TDA3PQ20T6G10.webp",
+                rank=0,
+            ),
+            CatalogImageDTO(
+                url="https://assets.hubara.com.co/Geminis-01KXM9VDDDDDDDDDDDDDDDDDDD.webp",
+                rank=1,
+            ),
+            CatalogImageDTO(
+                url="https://assets.hubara.com.co/Leo-01KXM9VDBFR9ZAGZ5JRQA1TN02.webp",
+                rank=2,
+            ),
+        ],
+    )
+
+    class _Cat:
+        async def search(self, q, limit=10):
+            raise NotImplementedError
+
+        async def get_by_handle(self, handle):
+            return duo
+
+    tool = GetProductByHandleTool(workspace=tmp_path, catalog=_Cat())
+    payload = json.loads(
+        await tool.execute_with_context(_ctx(), handle="duo-zodiacal")
+    )
+    # "Geminis" (label del filename) sobrevive el filtro; la portada no.
+    assert payload["product"]["designs"] == ["Geminis", "Leo"]
+
+
+@pytest.mark.asyncio
 async def test_variant_price_prefers_cop(tmp_path: Path):
     tool = GetProductByHandleTool(workspace=tmp_path, catalog=_FakeCatalog())
     payload = json.loads(

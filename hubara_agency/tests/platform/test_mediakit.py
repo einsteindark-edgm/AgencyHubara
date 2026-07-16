@@ -34,3 +34,4 @@ def test_mediakit_reexports_image_label_derivation():
     import src.sdk.mediakit as kit
 
     assert kit.derive_image_label is impl.derive_image_label
+    assert kit.fold_for_match is impl.fold_for_match
