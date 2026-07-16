@@ -35,9 +35,11 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import replace
 from typing import Optional
 
-from src.platform.catalog.dtos import CatalogProductDTO
+from src.platform.catalog.dtos import CatalogPriceDTO, CatalogProductDTO
+from src.platform.catalog.image_labels import derive_image_label
 from src.platform.meta_catalog.dtos import MetaCatalogItem
 from src.platform.whatsapp.media_url import normalize_image_url
 
@@ -149,9 +151,66 @@ def map_products_batch(
         m = map_product_to_meta(p, site_base_url=site_base_url, brand=brand)
         if m is None:
             skipped.append(p.id)
+            continue
+        variant_items = _variant_items(p, m)
+        if variant_items:
+            mapped.extend(variant_items)
         else:
             mapped.append(m)
     return mapped, skipped
+
+
+def _variant_items(
+    product: CatalogProductDTO, base: MetaCatalogItem
+) -> list[MetaCatalogItem]:
+    """Un item por variante cuando el producto tiene variantes REALES.
+
+    Caso Duo Zodiacal v2 (2026-07-15): option "Signo" + 12 variantes con la
+    foto de cada signo nombrada por su valor. Cada variante va a Meta como
+    item propio (`retailer_id = variant_id`) agrupado por `item_group_id =
+    product_id`, con SU imagen (match label↔option value por filename) y su
+    precio. Productos legacy (sin options / variante única) → lista vacía y
+    el caller publica el item único de siempre.
+    """
+    if not product.options or len(product.variants) < 2:
+        return []
+    label_to_url: dict[str, str] = {}
+    for img in product.images:
+        label = derive_image_label(img.url)
+        if label and label.lower() not in label_to_url:
+            label_to_url[label.lower()] = img.url
+
+    items: list[MetaCatalogItem] = []
+    for v in product.variants:
+        price = _price_meta_format(v.prices)
+        if not price:
+            continue
+        raw_img: str | None = None
+        for candidate in (v.title, *(v.options or {}).values()):
+            if candidate and candidate.lower() in label_to_url:
+                raw_img = label_to_url[candidate.lower()]
+                break
+        items.append(
+            replace(
+                base,
+                retailer_id=v.id,
+                item_group_id=product.id,
+                name=f"{product.title} · {v.title}"[:200],
+                price=price,
+                image_url=(
+                    normalize_image_url(raw_img) if raw_img else base.image_url
+                ),
+                # La card de la variante muestra SU diseño; las fotos de los
+                # demás signos confunden como "additional".
+                additional_image_urls=[],
+                gtin=(
+                    v.sku
+                    if v.sku and _GTIN13_RE.match(v.sku)
+                    else None
+                ),
+            )
+        )
+    return items
 
 
 # =============================================================================
@@ -175,13 +234,22 @@ def _first_price_meta_format(
     """
     if not product.variants:
         return None
-    v = product.variants[0]
-    if not v.prices:
+    return _price_meta_format(
+        product.variants[0].prices, preferred_currency=preferred_currency
+    )
+
+
+def _price_meta_format(
+    prices: list[CatalogPriceDTO], *, preferred_currency: str = "COP"
+) -> Optional[str]:
+    """Formato Meta para una lista de precios (COP-first, ver docstring de
+    `_first_price_meta_format`)."""
+    if not prices:
         return None
     pref = preferred_currency.lower()
     p = next(
-        (pr for pr in v.prices if (pr.currency_code or "").lower() == pref),
-        v.prices[0],
+        (pr for pr in prices if (pr.currency_code or "").lower() == pref),
+        prices[0],
     )
     if not p.amount or not p.currency_code:
         return None

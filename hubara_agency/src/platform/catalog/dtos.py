@@ -22,6 +22,9 @@ class CatalogVariantDTO:
     title: str
     sku: str | None = None
     prices: list[CatalogPriceDTO] = field(default_factory=list)
+    # Option values de la variante ({"Signo": "Leo"}). None = producto
+    # legacy sin options reales (variante única "Unico" + tags).
+    options: dict[str, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -43,6 +46,9 @@ class CatalogProductDTO:
     tags: list[str] = field(default_factory=list)
     categories: list[str] = field(default_factory=list)
     metadata: dict[str, str] | None = None
+    # Ejes de selección reales del producto ({"Signo": ["Aries", ...]}).
+    # None = producto sin options en Medusa (snapshots viejos también).
+    options: dict[str, list[str]] | None = None
 
 
 @dataclass(frozen=True)
