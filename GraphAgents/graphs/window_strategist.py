@@ -17,6 +17,13 @@ from __future__ import annotations
 DEFAULT_MAX_TOUCHES_PER_24H = 2
 DEFAULT_MAX_PAID_PER_CYCLE = 5
 
+#: Dormancia mínima: silencio del cliente antes de ser reactivable (post-mortem
+#: run 019f6d0d, 2026-07-16: un chat con inbound hace 3.6 min llegó como
+#: candidato — reengagement es para chats abandonados, no para meterse en una
+#: conversación de ventas en vivo). Espejo del pre-filtro de hubara
+#: (`build_snapshot.MIN_SILENCE_MS`) — defensa en profundidad.
+DEFAULT_MIN_SILENCE_MS = 4 * 60 * 60 * 1000
+
 _DAY_MS = 24 * 60 * 60 * 1000
 
 #: Orden por valor esperado (menor = primero): gancho transaccional y carril
@@ -51,6 +58,7 @@ def _plan(payload: dict, classified: list[dict]) -> dict:
     paid_budget = policy.get(
         "max_paid_dispatches_per_cycle", DEFAULT_MAX_PAID_PER_CYCLE
     )
+    min_silence = policy.get("min_silence_ms", DEFAULT_MIN_SILENCE_MS)
 
     by_session = {c.get("session_id"): c for c in payload.get("conversations") or []}
     suppressed: list[dict] = []
@@ -60,6 +68,12 @@ def _plan(payload: dict, classified: list[dict]) -> dict:
         sid = c["session_id"]
         if c["action"] == "suppress":
             suppressed.append({"session_id": sid, "reason": c["reason"]})
+            continue
+        # Dormancia: inbound más reciente que el umbral = conversación VIVA
+        # (ventas en plena charla) — no reactivar. Sin last_inbound no aplica.
+        last_inbound = (by_session.get(sid) or {}).get("last_inbound_at_ms")
+        if isinstance(last_inbound, int) and now_ms - last_inbound < min_silence:
+            suppressed.append({"session_id": sid, "reason": "conversation_active"})
             continue
         # Cadencia: no martillar al mismo lead aunque la ventana sea gratis.
         if _recent_touch_count(by_session.get(sid) or {}, now_ms) >= max_touches:

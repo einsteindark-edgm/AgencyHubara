@@ -66,6 +66,14 @@ def test_golden_dispatch_list_exacta() -> None:
             {"session_id": "wa_cold", "reason": "fase_b_cold_suppressed"},
             {"session_id": "wa_cadence_capped", "reason": "cadence_cap"},
             {"session_id": "wa_human", "reason": "human_owned"},
+            # Post-mortem run 019f6d0d: inbound hace 5 min = conversación VIVA
+            # (ventas en plena charla) — reengagement no se mete, aunque la
+            # CSW esté abierta. Espejo del pre-filtro de hubara (defensa en
+            # profundidad).
+            {
+                "session_id": "wa_conversation_active",
+                "reason": "conversation_active",
+            },
             {"session_id": "wa_phase_b_optin", "reason": "paid_budget_truncated"},
         ],
         "truncated_by_budget": 1,

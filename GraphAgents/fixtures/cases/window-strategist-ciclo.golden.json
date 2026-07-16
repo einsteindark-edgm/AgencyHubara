@@ -41,6 +41,10 @@
       "reason": "human_owned"
     },
     {
+      "session_id": "wa_conversation_active",
+      "reason": "conversation_active"
+    },
+    {
       "session_id": "wa_phase_b_optin",
       "reason": "paid_budget_truncated"
     }

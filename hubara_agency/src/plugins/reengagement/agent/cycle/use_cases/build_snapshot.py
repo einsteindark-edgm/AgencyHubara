@@ -13,16 +13,41 @@ from src.sdk.messagingkit import decide_reengagement, lead_state_from_metadata
 #: agente solo necesita la ventana de 24h; capamos para no inflar el seed).
 RECENT_TOUCHES_CAP = 10
 
+#: dormancia mínima: silencio del cliente antes de ser candidato a reengagement.
+#: Post-mortem run 019f6d0d (2026-07-16): sin este umbral, un chat con inbound
+#: hace 3.6 min llegaba al agente como candidato — reengagement es para chats
+#: abandonados, no para meterse en una conversación de ventas en vivo. NO va en
+#: la central (`decide_reengagement`): ella también sirve a la transición
+#: INTERESADO (delay 5 min) y al trigger manual del dashboard (delay 0).
+MIN_SILENCE_MS = 4 * 60 * 60 * 1000
+
+#: margen tras el último inbound dentro del cual un outbound es RÉPLICA
+#: conversacional, no un toque proactivo (post-mortem run 019f6d0d: contar
+#: réplicas hacía saltar el cadence_cap para todo lead con conversación real,
+#: dejando `csw_free_form` como código muerto en la práctica).
+PROACTIVE_TOUCH_GAP_MS = 10 * 60 * 1000
+
 
 def _recent_touches(metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    """Toques PROACTIVOS del último episodio: outbounds enviados al silencio
+    (después de `last_inbound + gap`). Un outbound anterior al último inbound
+    fue, por definición, respondido — es conversación, no martilleo. Sin
+    inbound registrado, todo outbound es proactivo (conservador)."""
     episodes = metadata.get("episodes") or []
     if not episodes:
         return []
     outbounds = episodes[-1].get("outbound_messages") or []
+    last_inbound = metadata.get("last_inbound_at_ms")
+    threshold_ms = (
+        last_inbound + PROACTIVE_TOUCH_GAP_MS
+        if isinstance(last_inbound, int)
+        else None
+    )
     touches = [
         {"at_ms": o.get("sent_at_ms"), "kind": o.get("kind")}
         for o in outbounds
         if isinstance(o.get("sent_at_ms"), int)
+        and (threshold_ms is None or o["sent_at_ms"] > threshold_ms)
     ]
     return touches[-RECENT_TOUCHES_CAP:]
 
@@ -72,6 +97,7 @@ def build_snapshot_from_sessions(
     now_ms: int,
     sessions: list[tuple[str, dict[str, Any]]],
     rate_card: Any = None,
+    min_silence_ms: int = MIN_SILENCE_MS,
 ) -> dict[str, Any]:
     """(now_ms, [(session_id, metadata)]) → el seed completo del agente.
 
@@ -83,12 +109,23 @@ def build_snapshot_from_sessions(
     `prefiltered` cuenta lo excluido por razón — nunca un cap silencioso.
     El agente igual suprime en classify (defensa en profundidad) y el gate
     re-valida al ejecutar.
+
+    Pre-filtro de dormancia: una conversación con inbound más reciente que
+    `min_silence_ms` está VIVA (ventas en plena charla) — no es candidata a
+    reengagement. Sin `last_inbound_at_ms` la dormancia no aplica (nunca
+    escribió; decide la central).
     """
     conversations: list[dict[str, Any]] = []
     prefiltered: dict[str, int] = {}
     for session_id, metadata in sessions:
         entry = conversation_entry(session_id, metadata)
         if entry is None:
+            continue
+        last_inbound = metadata.get("last_inbound_at_ms")
+        if isinstance(last_inbound, int) and now_ms - last_inbound < min_silence_ms:
+            prefiltered["conversation_active"] = (
+                prefiltered.get("conversation_active", 0) + 1
+            )
             continue
         if rate_card is not None:
             decision = decide_reengagement(

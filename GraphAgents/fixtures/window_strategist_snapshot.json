@@ -64,6 +64,15 @@
       "lead": {"tag": "HUMANO"},
       "recent_touches": [],
       "tz": "America/Bogota"
+    },
+    {
+      "session_id": "wa_conversation_active",
+      "service_window_expires_at_ms": 1716786100000,
+      "ctwa_window_expires_at_ms": 1716696400000,
+      "last_inbound_at_ms": 1716699700000,
+      "lead": {"tag": "INTERESADO", "engaged": true},
+      "recent_touches": [],
+      "tz": "America/Bogota"
     }
   ]
 }
