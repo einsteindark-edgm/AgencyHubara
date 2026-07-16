@@ -12,8 +12,9 @@
  *   - realtime por push; `refetchInterval` queda SOLO como fallback lento
  *     (≥60s) o function-form acotado a un run activo (patrón catalog) —
  *     gate: test_realtime_policy.arch.test.ts.
- *   - reconexión: la maneja el propio EventSource del browser; acá solo
- *     exponemos `state` (StatusBar) y `epoch` (useInvalidateOnReconnect).
+ *   - reconexión: la maneja `subscribeSse` (manual, con token fresco y
+ *     backoff — el auto-retry nativo moría con 401 al vencer el token); acá
+ *     solo exponemos `state` (StatusBar) y `epoch` (useInvalidateOnReconnect).
  *
  * FSD: shared NO conoce dominios — `domain` es un string opaco que cada
  * plugin elige (espejo del bus backend en src/platform/events). Hooks y
