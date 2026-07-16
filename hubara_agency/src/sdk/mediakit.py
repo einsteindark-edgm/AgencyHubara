@@ -38,3 +38,10 @@ from src.platform.whatsapp.client import (
     MediaUploadError as MediaUploadError,
     upload_media as upload_media,
 )
+
+# Etiqueta de diseño derivada del filename de una imagen del catálogo
+# (`Leo-01KX...webp` → "Leo"). Vive en platform porque el mapper de Meta
+# Catalog también la usa (item per-variante, 2026-07-16).
+from src.platform.catalog.image_labels import (
+    derive_image_label as derive_image_label,
+)

@@ -280,6 +280,8 @@ def _item_to_meta_data(item: MetaCatalogItem) -> dict[str, Any]:
             data[f"custom_label_{i}"] = label
     if item.sale_price:
         data["sale_price"] = item.sale_price
+    if item.item_group_id:
+        data["item_group_id"] = item.item_group_id
     # NOTA: `custom_data`/tags NO es un campo válido de `/items_batch` (solo del
     # feed CSV) — se omite a propósito para no re-disparar validation_status.
     return data
