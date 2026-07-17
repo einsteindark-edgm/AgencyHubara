@@ -60,13 +60,15 @@ def test_replay_flow_case_matchea_su_golden_exacto() -> None:
 
 def test_replay_agent_case_window_strategist_matchea_su_golden() -> None:
     # el ciclo COMPLETO del window-strategist por su manifest (build_runnable resuelve
-    # parse-conversations del catálogo, G-BIND): snapshot de 7 conversaciones → la lista
-    # exacta de intents (orden por valor) + supresiones + truncado de presupuesto visible.
+    # parse-conversations del catálogo, G-BIND): snapshot → la lista exacta de intents
+    # (orden por valor; los dos hot-cart cubren la escalera de dormancia por calor) +
+    # supresiones + truncado de presupuesto visible.
     c = load_case(CASES / "window-strategist-ciclo.case.yaml")
     out = replay_case(c, GA)
     assert out == resolve(c.golden, GA)
     assert [d["session_id"] for d in out["dispatch"]] == [
         "wa_phase_b_hook", "wa_ctwa_hook", "wa_csw_active",
+        "wa_hot_cart", "wa_hot_cart_35m",
     ]
     assert out["truncated_by_budget"] == 1
 

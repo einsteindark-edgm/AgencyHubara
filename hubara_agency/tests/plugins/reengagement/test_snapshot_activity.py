@@ -43,7 +43,9 @@ async def test_snapshot_incluye_ventanas_y_lead_predigerido(
                     "closed_at_ms": None,
                     "order_draft": {"slots": {"producto": "camisa"}},
                     "outbound_messages": [
-                        {"sent_at_ms": 90, "kind": "text"},
+                        # Proactivo: enviado bien después del último inbound
+                        # (100) + gap — las réplicas conversacionales no viajan.
+                        {"sent_at_ms": 700_000, "kind": "text"},
                     ],
                 }
             ],
@@ -61,7 +63,56 @@ async def test_snapshot_incluye_ventanas_y_lead_predigerido(
     assert lead["tag"] == "INTERESADO"
     assert lead["has_order_draft"] is True
     assert lead["is_ctwa_lead"] is True
-    assert convo["recent_touches"] == [{"at_ms": 90, "kind": "text"}]
+    assert convo["recent_touches"] == [{"at_ms": 700_000, "kind": "text"}]
+
+
+@pytest.mark.asyncio
+async def test_recent_touches_solo_cuenta_toques_proactivos(
+    _isolate_vault_dir: Path,
+):
+    """Post-mortem run 019f6d0d (2026-07-16): las réplicas conversacionales del
+    bot contaban como "toques" → cadence_cap suprimía a TODO lead con una
+    conversación real en 24h, justo mientras la ventana gratis estaba abierta
+    (csw_free_form era código muerto en la práctica). Un toque es PROACTIVO
+    solo si fue enviado al silencio: después del último inbound + gap. Los
+    outbounds anteriores al último inbound fueron, por definición, respondidos.
+    """
+    import time
+
+    now_ms = int(time.time() * 1000)
+    hour = 60 * 60 * 1000
+    last_inbound = now_ms - 6 * hour
+    _seed(
+        _isolate_vault_dir,
+        "wa_573003",
+        {
+            "tag": "INTERESADO",
+            "service_window_expires_at_ms": last_inbound + 24 * hour,
+            "last_inbound_at_ms": last_inbound,
+            "episodes": [
+                {
+                    "episode_id": "ep_001",
+                    "closed_at_ms": None,
+                    "outbound_messages": [
+                        # Réplica ANTES del último inbound → conversacional.
+                        {"sent_at_ms": last_inbound - 2 * 60 * 1000, "kind": "text"},
+                        # Réplica 13s después del inbound (dentro del gap) →
+                        # conversacional.
+                        {"sent_at_ms": last_inbound + 13_000, "kind": "text"},
+                        # Nudge 2h después del inbound (silencio) → PROACTIVO.
+                        {"sent_at_ms": last_inbound + 2 * hour, "kind": "text"},
+                    ],
+                }
+            ],
+        },
+    )
+    snapshot = await ActivityEnvironment().run(
+        build_reengagement_snapshot_activity
+    )
+    (convo,) = snapshot["conversations"]
+    assert convo["recent_touches"] == [
+        {"at_ms": last_inbound + 2 * hour, "kind": "text"}
+    ], convo["recent_touches"]
 
 
 @pytest.mark.asyncio

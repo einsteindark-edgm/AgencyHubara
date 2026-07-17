@@ -1,10 +1,12 @@
 # CASO del AGENTE window-strategist (un ciclo completo, sin HITL): el seed es el snapshot
-# que hubara deposita (7 conversaciones cubriendo las 3 fases del funnel + cadencia +
-# presupuesto). El replay corre el agente POR SU MANIFEST (build_runnable resuelve la tool
-# parse-conversations del catálogo vía G-BIND) y produce la lista de intents. El golden
-# pinea el output COMPLETO: orden por valor esperado (hook > 72h-free > csw > opt-in pago),
-# las 4 supresiones con razón, y el truncado de presupuesto VISIBLE (paid budget = 1 →
-# wa_phase_b_optin truncado). Sin ports ni LLM: 100% determinista (G-DET).
+# que hubara deposita (9 conversaciones cubriendo las 3 fases del funnel + cadencia +
+# presupuesto + la escalera de dormancia por calor). El replay corre el agente POR SU
+# MANIFEST (build_runnable resuelve la tool parse-conversations del catálogo vía G-BIND)
+# y produce la lista de intents. El golden pinea el output COMPLETO: orden por valor
+# esperado (hook > 72h-free > csw > opt-in pago), las 5 supresiones con razón (incl.
+# conversation_active: inbound hace 5 min = chat vivo), y el truncado de presupuesto
+# VISIBLE (paid budget = 1 → wa_phase_b_optin truncado). Los dos hot-cart pinean el piso
+# hot de 30 min (1h de silencio y 35 min despachan). Sin ports ni LLM: 100% determinista.
 id: window-strategist-ciclo
 title: ciclo window-strategist · funnel Free-First completo
 target: agent:window-strategist
