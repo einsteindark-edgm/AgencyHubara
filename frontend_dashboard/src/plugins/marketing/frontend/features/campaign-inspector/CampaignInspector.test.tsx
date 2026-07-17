@@ -1,16 +1,47 @@
 /**
  * Comportamiento del inspector: preview del template REAL (greeting +
- * header/body + línea de oferta + opt-out fijo) y tab de validación con
- * checklist + stats reales para campañas enviadas.
+ * header/body + línea de oferta + opt-out fijo), tab de validación con
+ * checklist + stats reales para campañas enviadas, y tab de audiencia con
+ * la audiencia REAL del envío + visor de conversaciones.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render } from "@testing-library/react";
 
+import type {
+  AudienceConversation,
+  CampaignAudience,
+} from "@plugins/marketing/frontend/entities/audience";
+
 const statsMock = { data: undefined as unknown };
+
+const audienceMock = {
+  data: undefined as CampaignAudience | undefined,
+  isPending: false,
+  error: null as Error | null,
+};
+
+const conversationMock = {
+  data: undefined as AudienceConversation | undefined,
+  isPending: false,
+  error: null as Error | null,
+};
+
+const updateMock = {
+  mutate: vi.fn(),
+  isPending: false,
+  error: null as Error | null,
+};
 
 vi.mock("@plugins/marketing/frontend/entities/campaign", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   useCampaignStats: () => statsMock,
+  useUpdateCampaign: () => updateMock,
+}));
+
+vi.mock("@plugins/marketing/frontend/entities/audience", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useCampaignAudience: () => audienceMock,
+  useAudienceConversation: () => conversationMock,
 }));
 
 import { CampaignInspector } from "./ui/CampaignInspector";
@@ -40,13 +71,48 @@ function makeCampaign(over: Partial<Campaign> = {}): Campaign {
     sentAtMs: null,
     sendResult: null,
     testSends: [],
+    excludedSessionIds: [],
+    extraSessionIds: [],
     ...over,
   };
 }
 
 beforeEach(() => {
+  updateMock.mutate.mockClear();
   statsMock.data = undefined;
+  audienceMock.data = undefined;
+  audienceMock.isPending = false;
+  audienceMock.error = null;
+  conversationMock.data = undefined;
+  conversationMock.isPending = false;
+  conversationMock.error = null;
 });
+
+const AUDIENCE: CampaignAudience = {
+  recipients: [
+    {
+      sessionId: "wa_573001234567",
+      phone: "+573001234567",
+      customerName: "Camila",
+      segment: "clientes",
+    },
+    {
+      sessionId: "wa_573007654321",
+      phone: "+573007654321",
+      customerName: null,
+      segment: "interesados",
+    },
+  ],
+  skipped: [
+    { sessionId: "wa_573000000001", phone: "+573000000001", reason: "excluido" },
+    {
+      sessionId: "wa_573000000002",
+      phone: "+573000000002",
+      reason: "campana_reciente",
+    },
+  ],
+  total: 2,
+};
 
 describe("CampaignInspector — preview", () => {
   it("muestra el template real: saludo, mensaje, oferta y opt-out fijo", () => {
@@ -102,5 +168,72 @@ describe("CampaignInspector — validación", () => {
     expect(getByText("9")).toBeTruthy(); // respondieron
     expect(getByText("$364.500")).toBeTruthy(); // revenue COP
     expect(getByText("US$0,5000")).toBeTruthy(); // gastado, micros→US$ 4 dec
+  });
+});
+
+describe("CampaignInspector — audiencia", () => {
+  function openAudienceTab(campaign = makeCampaign()) {
+    const utils = render(<CampaignInspector campaign={campaign} />);
+    fireEvent.click(utils.getByRole("button", { name: /Audiencia/ }));
+    return utils;
+  }
+
+  it("lista los destinatarios con total, nombre (o —), teléfono y chip de segmento", () => {
+    audienceMock.data = AUDIENCE;
+    const { getByText } = openAudienceTab();
+    expect(getByText("2 destinatarios")).toBeTruthy();
+    expect(getByText("Camila")).toBeTruthy();
+    expect(getByText("—")).toBeTruthy(); // sin nombre
+    expect(getByText("+573001234567")).toBeTruthy();
+    expect(getByText("Clientes")).toBeTruthy();
+    expect(getByText("Interesados")).toBeTruthy();
+  });
+
+  it("muestra los que no reciben con razón legible", () => {
+    audienceMock.data = AUDIENCE;
+    const { getByText } = openAudienceTab();
+    expect(getByText("No reciben (2)")).toBeTruthy();
+    expect(getByText("Atendido por humano u opt-out")).toBeTruthy();
+    expect(getByText("Campaña reciente (<48h)")).toBeTruthy();
+  });
+
+  it("los quitados por el operador aparecen en No reciben con su label", () => {
+    audienceMock.data = {
+      ...AUDIENCE,
+      skipped: [
+        ...AUDIENCE.skipped,
+        {
+          sessionId: "wa_573001111111",
+          phone: "+573001111111",
+          reason: "quitado_por_operador",
+        },
+      ],
+    };
+    const { getByText } = openAudienceTab();
+    expect(getByText("No reciben (3)")).toBeTruthy();
+    expect(getByText("Quitado por vos")).toBeTruthy();
+  });
+
+  it("audiencia vacía: invita a elegir segmentos en el paso 4", () => {
+    audienceMock.data = { recipients: [], skipped: [], total: 0 };
+    const { getByText } = openAudienceTab(makeCampaign({ segments: [] }));
+    expect(getByText(/Elegí segmentos en el paso 4/)).toBeTruthy();
+  });
+
+  it("click en una fila abre el visor con esa sesión y Escape lo cierra", () => {
+    audienceMock.data = AUDIENCE;
+    conversationMock.data = {
+      sessionId: "wa_573007654321",
+      messages: [
+        { role: "user", kind: "text", content: "Hola bot", timestamp: null },
+      ],
+    };
+    const { getByRole, getByText, queryByRole } = openAudienceTab();
+    expect(queryByRole("dialog")).toBeNull();
+    fireEvent.click(getByRole("button", { name: /\+573007654321/ }));
+    expect(getByRole("dialog")).toBeTruthy();
+    expect(getByText("Hola bot")).toBeTruthy();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(queryByRole("dialog")).toBeNull();
   });
 });

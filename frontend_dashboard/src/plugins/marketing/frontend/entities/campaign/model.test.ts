@@ -34,6 +34,8 @@ function makeCampaign(over: Partial<Campaign> = {}): Campaign {
     sentAtMs: null,
     sendResult: null,
     testSends: [],
+    excludedSessionIds: [],
+    extraSessionIds: [],
     ...over,
   };
 }

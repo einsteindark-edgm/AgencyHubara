@@ -4,6 +4,7 @@ La lógica vive en ``domain/`` (pura, sin I/O); este módulo traduce
 HTTP ↔ dominio. Auth: la aplica el loader central (`src/main.py`) al montar
 el router (require_auth salvo rutas públicas — acá no hay ninguna pública).
 """
+import json
 import logging
 import re
 import time
@@ -23,6 +24,7 @@ from src.plugins.marketing.domain.campaigns import (
     campaign_template_variables,
     customer_name_from_metadata,
     new_campaign,
+    resolve_campaign_audience,
     segment_for_metadata,
 )
 from src.plugins.marketing.domain.logic import health_payload
@@ -96,6 +98,9 @@ class UpdateCampaignBody(BaseModel):
     product_handle: str | None = None
     segments: list[str] | None = None
     message: MessageBody | None = None
+    # Curaduría manual de la audiencia (replace completo, como el resto del PUT).
+    excluded_session_ids: list[str] | None = Field(default=None, max_length=5000)
+    extra_session_ids: list[str] | None = Field(default=None, max_length=5000)
 
 
 @router.post("/campaigns", status_code=201)
@@ -136,6 +141,31 @@ def update_campaign(campaign_id: str, body: UpdateCampaignBody) -> dict:
             )
     if "coupon_code" in patch:
         patch["coupon_code"] = patch["coupon_code"].upper()
+    for field in ("excluded_session_ids", "extra_session_ids"):
+        if field not in patch:
+            continue
+        bad_format = [s for s in patch[field] if not _SESSION_ID_RE.match(s)]
+        if bad_format:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{field}: session_id inválido: {bad_format[:5]}",
+            )
+    if "extra_session_ids" in patch:
+        # Un agregado manual necesita sesión en el vault (el send resuelve
+        # phone_number_id de su metadata — misma regla que el envío de prueba).
+        missing = [
+            s
+            for s in patch["extra_session_ids"]
+            if not (WORKSPACE_VAULT_DIR / s / "metadata.json").exists()
+        ]
+        if missing:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Sin conversación previa con el bot: {', '.join(missing[:5])} — "
+                    "el número debe haber chateado al menos una vez"
+                ),
+            )
     if "message" in patch:
         patch["message"] = {**campaign["message"], **patch["message"]}
     campaign.update(patch)
@@ -347,6 +377,97 @@ def get_campaign_stats(campaign_id: str) -> dict:
         "spent_usd_micros": send_result.get("spent_usd_micros"),
         **attribution,
     }
+
+
+# --- Audiencia resuelta + vista de conversación (read-only) ----------------
+
+
+@router.get("/campaigns/{campaign_id}/audience")
+def get_campaign_audience(campaign_id: str) -> dict:
+    """La audiencia REAL de la campaña, con la misma lógica del envío.
+
+    Muestra a quién le va a llegar (nombre/teléfono/segmento) y a quién NO
+    con su razón (excluido = humano/opt-out; campana_reciente = cooldown
+    48h). "fuera_de_segmento" no se lista (es todo el resto del vault).
+    Quiet hours NO se evalúa acá a propósito: depende de la hora del
+    DISPARO, no de la de este preview.
+    """
+    campaign = _require_campaign(campaign_id)
+    sessions = [
+        (s.session_id, s.metadata)
+        for s in FilesystemAttributionStore(WORKSPACE_VAULT_DIR).scan_sessions()
+    ]
+    audience = resolve_campaign_audience(campaign, sessions, now_ms=_now_ms())
+    recipients = [
+        {
+            "session_id": r.session_id,
+            "phone": r.session_id.removeprefix("wa_"),
+            "customer_name": r.customer_name,
+            "segment": r.segment,
+        }
+        for r in audience.recipients
+    ]
+    skipped = [
+        {
+            "session_id": s.session_id,
+            "phone": s.session_id.removeprefix("wa_"),
+            "reason": s.reason,
+        }
+        for s in audience.skipped
+        if s.reason != "fuera_de_segmento"
+    ]
+    return {"recipients": recipients, "skipped": skipped, "total": len(recipients)}
+
+
+# Anti path-traversal, no política de formato: solo wa_ + dígitos (con o sin +).
+_SESSION_ID_RE = re.compile(r"^wa_\+?\d{1,20}$")
+
+#: Cap de mensajes que devuelve la vista (las conversaciones largas no
+#: aportan al preview de campaña; el operador tiene Chats para el detalle).
+_CONVERSATION_TAIL = 60
+
+
+@router.get("/audience/{session_id}/conversation")
+def get_audience_conversation(session_id: str) -> dict:
+    """Historial simplificado de UNA sesión, para el visor de audiencia.
+
+    Read-only sobre el JSONL del vault (misma convención de layout que lee
+    la agregación de ads: `<session>/sessions/<session>.jsonl`). Parse
+    tolerante: una línea corrupta se salta, jamás rompe el visor.
+    """
+    if not _SESSION_ID_RE.match(session_id):
+        raise HTTPException(status_code=422, detail="session_id inválido")
+    history_path = (
+        WORKSPACE_VAULT_DIR / session_id / "sessions" / f"{session_id}.jsonl"
+    )
+    messages: list[dict[str, Any]] = []
+    if history_path.exists():
+        try:
+            with history_path.open("r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        event = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(event, dict):
+                        continue
+                    role = event.get("role")
+                    if role not in ("user", "assistant"):
+                        continue
+                    messages.append(
+                        {
+                            "role": role,
+                            "kind": event.get("kind") or "text",
+                            "content": str(event.get("content") or ""),
+                            "timestamp": event.get("timestamp"),
+                        }
+                    )
+        except OSError:
+            messages = []
+    return {"session_id": session_id, "messages": messages[-_CONVERSATION_TAIL:]}
 
 
 @router.get("/segments")

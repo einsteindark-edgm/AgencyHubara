@@ -433,6 +433,156 @@ def test_get_campaign_stats_agrega_respuestas_y_revenue(
     assert stats["attributed_revenue_cop"] == 44000
 
 
+def test_get_campaign_audience_lista_destinatarios_y_excluidos(
+    client: TestClient, _isolate_vault_dir: Path
+) -> None:
+    import time as _time
+
+    vault = _isolate_vault_dir
+    now = int(_time.time() * 1000)
+    _seed_session(
+        vault,
+        "wa_+571",
+        {
+            "tag": "COMPRA_EXITOSA",
+            "registered_order": {"customer_name": "Camila Restrepo"},
+        },
+    )
+    _seed_session(vault, "wa_+572", {"tag": "INTERESADO"})  # fuera del segmento
+    _seed_session(vault, "wa_+573", {"tag": "HUMANO"})
+    _seed_session(
+        vault,
+        "wa_+574",
+        {
+            "tag": "COMPRA_EXITOSA",
+            "campaign_touches": [
+                {"campaign_id": "mkt-otra", "sent_at_ms": now - 3_600_000}
+            ],
+        },
+    )
+    campaign_id = _ready_campaign(client)  # segments=["clientes"]
+
+    res = client.get(f"/api/marketing/campaigns/{campaign_id}/audience")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["recipients"] == [
+        {
+            "session_id": "wa_+571",
+            "phone": "+571",
+            "customer_name": "Camila",
+            "segment": "clientes",
+        }
+    ]
+    skipped = {s["session_id"]: s["reason"] for s in body["skipped"]}
+    # Transparencia: excluidos y en cooldown SÍ; "fuera_de_segmento" es ruido.
+    assert skipped == {"wa_+573": "excluido", "wa_+574": "campana_reciente"}
+    assert body["total"] == 1
+
+
+def test_get_audience_conversation_devuelve_historial_simplificado(
+    client: TestClient, _isolate_vault_dir: Path
+) -> None:
+    import json as _json
+
+    vault = _isolate_vault_dir
+    _seed_session(vault, "wa_+571", {"tag": "INTERESADO"})
+    history_dir = vault / "wa_+571" / "sessions"
+    history_dir.mkdir(parents=True)
+    lines = [
+        {"role": "user", "content": "Hola, vi la promo", "timestamp": "2026-07-17T10:00:00+00:00"},
+        {"role": "assistant", "content": "¡Hola! Te cuento…", "timestamp": "2026-07-17T10:01:00+00:00"},
+        {
+            "role": "assistant",
+            "kind": "template",
+            "template_name": "campaign_promo_marketing_v1",
+            "content": "[Template: campaign_promo_marketing_v1] greeting=Hola",
+            "timestamp": "2026-07-17T10:02:00+00:00",
+        },
+        "linea corrupta no-json",
+    ]
+    with (history_dir / "wa_+571.jsonl").open("w", encoding="utf-8") as f:
+        for line in lines:
+            f.write((line if isinstance(line, str) else _json.dumps(line)) + "\n")
+
+    res = client.get("/api/marketing/audience/wa_+571/conversation")
+    assert res.status_code == 200
+    messages = res.json()["messages"]
+    assert [m["role"] for m in messages] == ["user", "assistant", "assistant"]
+    assert messages[0]["content"] == "Hola, vi la promo"
+    assert messages[2]["kind"] == "template"
+
+
+def test_get_audience_conversation_valida_session_id(client: TestClient) -> None:
+    # Path traversal / ids raros → 422, jamás toca el filesystem.
+    assert (
+        client.get("/api/marketing/audience/..%2F..%2Fetc/conversation").status_code
+        in (404, 422)
+    )
+    assert (
+        client.get("/api/marketing/audience/no-wa-prefix/conversation").status_code
+        == 422
+    )
+
+
+def test_get_audience_conversation_sin_historial_es_lista_vacia(
+    client: TestClient, _isolate_vault_dir: Path
+) -> None:
+    _seed_session(_isolate_vault_dir, "wa_+579", {"tag": "INTERESADO"})
+    res = client.get("/api/marketing/audience/wa_+579/conversation")
+    assert res.status_code == 200
+    assert res.json()["messages"] == []
+
+
+def test_put_cura_la_audiencia_y_el_endpoint_la_refleja(
+    client: TestClient, _isolate_vault_dir: Path
+) -> None:
+    vault = _isolate_vault_dir
+    _seed_session(vault, "wa_+571", {"tag": "COMPRA_EXITOSA"})
+    _seed_session(vault, "wa_+572", {"tag": "COMPRA_EXITOSA"})
+    _seed_session(vault, "wa_+579", {})  # frío — se agrega a mano
+    campaign_id = _ready_campaign(client)  # segments=["clientes"]
+
+    res = client.put(
+        f"/api/marketing/campaigns/{campaign_id}",
+        json={
+            "excluded_session_ids": ["wa_+572"],
+            "extra_session_ids": ["wa_+579"],
+        },
+    )
+    assert res.status_code == 200
+    assert res.json()["extra_session_ids"] == ["wa_+579"]
+
+    audience = client.get(
+        f"/api/marketing/campaigns/{campaign_id}/audience"
+    ).json()
+    by_id = {r["session_id"]: r["segment"] for r in audience["recipients"]}
+    assert by_id == {"wa_+571": "clientes", "wa_+579": "manual"}
+    reasons = {s["session_id"]: s["reason"] for s in audience["skipped"]}
+    assert reasons["wa_+572"] == "quitado_por_operador"
+    assert audience["total"] == 2
+
+
+def test_put_extra_inexistente_en_vault_es_422(
+    client: TestClient, _isolate_vault_dir: Path
+) -> None:
+    campaign_id = _ready_campaign(client)
+    res = client.put(
+        f"/api/marketing/campaigns/{campaign_id}",
+        json={"extra_session_ids": ["wa_+570000000000"]},
+    )
+    assert res.status_code == 422
+    assert "wa_+570000000000" in res.json()["detail"]
+
+
+def test_put_extra_con_formato_invalido_es_422(client: TestClient) -> None:
+    campaign_id = _ready_campaign(client)
+    res = client.put(
+        f"/api/marketing/campaigns/{campaign_id}",
+        json={"extra_session_ids": ["../../etc/passwd"]},
+    )
+    assert res.status_code == 422
+
+
 def test_get_segments_cuenta_contactos_y_expone_costo(
     client: TestClient, _isolate_vault_dir: Path
 ) -> None:
