@@ -15,9 +15,12 @@ Solo imports `src.sdk` (P-28). El plan puro vive en `use_cases.py`. Dos seams:
 from __future__ import annotations
 
 import json
+import os
 import time
 from typing import Any
+from urllib.parse import quote
 
+import httpx
 from temporalio import activity
 from temporalio.client import Client, WorkflowExecutionStatus
 from temporalio.service import RPCError, RPCStatusCode
@@ -38,12 +41,81 @@ _SESSION_PREFIX = "wa_"
 #: mismos valores que escribe el endpoint return-to-bot (rama ventas).
 _RETURN_TAG = "RETOMA_VENTA"
 _ROUTE_VENTAS = "ventas"
-_MOTIVO = "Scheduler post-venta devolvió la conversación a Sales (compra ya cerrada)"
+_MOTIVO = "Scheduler post-venta devolvió la conversación a Sales (pedido entregado)"
 
 #: resultados de la activity per-session (viajan al summary del workflow).
 RESULT_RETURNED = "returned"
 RESULT_SKIPPED_ROBOT_RUNNING = "skipped_robot_running"
 RESULT_SKIPPED_STATE_CHANGED = "skipped_state_changed"
+RESULT_SKIPPED_ORDER_NOT_DELIVERED = "skipped_order_not_delivered"
+RESULT_SKIPPED_ORDER_UNKNOWN = "skipped_order_state_unknown"
+
+#: estados de orden que ya no requieren interacción humana. La regla de
+#: negocio (2026-07-17): devolver SOLO con el pedido ENTREGADO — mientras
+#: esté en proceso el humano sigue moviéndolo de estado. `cancelled` también
+#: es terminal (nada que gestionar), pero exigimos ≥1 entregada.
+_TERMINAL_ORDER_STATUSES = frozenset({"delivered", "cancelled"})
+_DELIVERED = "delivered"
+
+#: cap de órdenes consultadas por sesión (paridad con el endpoint by-session).
+_MAX_ORDERS_CHECKED = 5
+
+
+def _api_base() -> str:
+    # Default = nombre de servicio del compose local (worker→API). El gate
+    # castkit_loopback prohíbe loopback:8000 en plugins; en prod el compose
+    # setea HUBARA_API_BASE_URL=http://api:8000 (patrón order_sentinel).
+    return os.environ.get("HUBARA_API_BASE_URL", "http://hubara-api:8000").rstrip("/")
+
+
+def _api_client() -> httpx.AsyncClient:
+    """Cliente hacia la API interna — con Cognito activo en prod el worker se
+    autentica con HUBARA_SERVICE_TOKEN (bearer machine-to-machine)."""
+    token = os.environ.get("HUBARA_SERVICE_TOKEN", "")
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    return httpx.AsyncClient(headers=headers, timeout=15)
+
+
+def _collect_order_ids(metadata: dict[str, Any]) -> list[str]:
+    """Order ids de la sesión: episodios + registro legacy (dedupe)."""
+    ids: list[str] = []
+    episodes = metadata.get("episodes")
+    if isinstance(episodes, list):
+        for ep in episodes:
+            oid = ep.get("order_id") if isinstance(ep, dict) else None
+            if isinstance(oid, str) and oid and oid not in ids:
+                ids.append(oid)
+    registered = metadata.get("registered_order")
+    if isinstance(registered, dict):
+        oid = registered.get("order_id")
+        if isinstance(oid, str) and oid and oid not in ids:
+            ids.append(oid)
+    return ids
+
+
+async def _fetch_order_status(
+    client: httpx.AsyncClient, order_id: str
+) -> str | None:
+    """`GET /api/orders/orders/{id}` (ruta REAL con doble `orders` — incidente
+    prod 2026-07-10) → `summary.status`. None = ilegible; el caller skipea
+    (mejor dejar en humano que devolver con estado inventado)."""
+    try:
+        response = await client.get(
+            f"{_api_base()}/api/orders/orders/{quote(order_id, safe='')}"
+        )
+        response.raise_for_status()
+        summary = response.json().get("summary") or {}
+    except (httpx.HTTPError, ValueError) as e:
+        activity.logger.warning(
+            "post-sale-return: GET orders/%s falló (%s: %s) — estado "
+            "inverificable, la sesión se queda en humano este ciclo.",
+            order_id,
+            type(e).__name__,
+            e,
+        )
+        return None
+    status = summary.get("status")
+    return status if isinstance(status, str) and status else None
 
 
 @activity.defn(name="scan_post_sale_human_sessions")
@@ -115,6 +187,35 @@ async def return_post_sale_session_to_sales_activity(session_id: str) -> str:
             )
             return RESULT_SKIPPED_ROBOT_RUNNING
 
+    # Gate de ENTREGA (regla de negocio 2026-07-17): mientras el pedido esté
+    # en proceso el humano sigue interactuando para moverlo de estado — la
+    # conversación se queda con él. Devolver SOLO cuando todas las órdenes de
+    # la sesión están terminales y al menos una ENTREGADA. Estado
+    # inverificable (sin order_id / API caída) = skip visible este ciclo.
+    store = FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
+    order_ids = _collect_order_ids(store.read(session_id))
+    if not order_ids:
+        activity.logger.info(
+            "post-sale-return: %s sin órdenes verificables — queda en humano.",
+            session_id,
+        )
+        return RESULT_SKIPPED_ORDER_UNKNOWN
+    statuses: list[str] = []
+    async with _api_client() as api:
+        for order_id in order_ids[:_MAX_ORDERS_CHECKED]:
+            status = await _fetch_order_status(api, order_id)
+            if status is None:
+                return RESULT_SKIPPED_ORDER_UNKNOWN
+            statuses.append(status)
+    all_terminal = all(s in _TERMINAL_ORDER_STATUSES for s in statuses)
+    if not (all_terminal and _DELIVERED in statuses):
+        activity.logger.info(
+            "post-sale-return: %s con pedido en proceso (%s) — queda en humano.",
+            session_id,
+            statuses,
+        )
+        return RESULT_SKIPPED_ORDER_NOT_DELIVERED
+
     def _return_to_sales(data: dict[str, Any]) -> dict[str, Any] | None:
         # Re-check FRESCO bajo el lock con el predicado COMPLETO (incluye pago
         # confirmado): si el estado cambió desde el scan (humano retomó,
@@ -139,7 +240,6 @@ async def return_post_sale_session_to_sales_activity(session_id: str) -> str:
         )
         return data
 
-    store = FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
     written = store.update(session_id, _return_to_sales)
     if written is None:
         activity.logger.info(

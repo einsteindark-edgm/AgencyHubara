@@ -105,7 +105,12 @@ services:
     <<: *app
     command: ["python", "-m", "src.plugins.chats.workers.post_sale_return"]
     # PostSaleReturnWorkflow: schedule diario (21:00 Bogotá) que devuelve al
-    # bot de ventas las COMPRA_EXITOSA con pago confirmado abiertas en humano.
+    # bot de ventas las COMPRA_EXITOSA pagadas Y ENTREGADAS abiertas en humano.
+    environment:
+      # Gate de entrega: consulta el estado real de la orden vía la API —
+      # el service en ESTE compose se llama `api` (el default del código es
+      # el nombre del compose local; mismo patrón que order_sentinel).
+      HUBARA_API_BASE_URL: http://api:8000
     volumes:
       - hubara-vault:/app/hubara_vault
 

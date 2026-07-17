@@ -20,6 +20,8 @@ from temporalio.exceptions import ActivityError
 with workflow.unsafe.imports_passed_through():
     from src.plugins.chats.agent.post_sale_return.activities import (
         RESULT_RETURNED,
+        RESULT_SKIPPED_ORDER_NOT_DELIVERED,
+        RESULT_SKIPPED_ORDER_UNKNOWN,
         RESULT_SKIPPED_ROBOT_RUNNING,
         RESULT_SKIPPED_STATE_CHANGED,
         return_post_sale_session_to_sales_activity,
@@ -41,6 +43,8 @@ class PostSaleReturnWorkflow:
             "returned": 0,
             "skipped_robot_running": 0,
             "skipped_state_changed": 0,
+            "skipped_order_not_delivered": 0,
+            "skipped_order_state_unknown": 0,
             "failed": 0,
             "returned_sessions": [],
         }
@@ -66,6 +70,10 @@ class PostSaleReturnWorkflow:
                 summary["skipped_robot_running"] += 1
             elif result == RESULT_SKIPPED_STATE_CHANGED:
                 summary["skipped_state_changed"] += 1
+            elif result == RESULT_SKIPPED_ORDER_NOT_DELIVERED:
+                summary["skipped_order_not_delivered"] += 1
+            elif result == RESULT_SKIPPED_ORDER_UNKNOWN:
+                summary["skipped_order_state_unknown"] += 1
             else:  # resultado desconocido = bug visible, no silencio
                 workflow.logger.warning(
                     "PostSaleReturn: resultado desconocido %r para %s.",
