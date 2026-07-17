@@ -8,7 +8,8 @@
 #   • Caddy hace de reverse-proxy con auto-TLS sobre el dominio del tenant.
 #
 # Lo despliega .github/workflows/backend-deploy.yml (scp + docker compose up -d).
-# Mantener los 6 workers en sync con `scripts/render-compose.py` (ver infra/README).
+# Mantener los workers en sync con `scripts/render-compose.py` (ver infra/README):
+# este archivo es MANUAL — un worker nuevo en un manifest NO aparece acá solo.
 
 name: hubara-prod
 
@@ -109,6 +110,14 @@ services:
   worker-orders-reconcile:
     <<: *app
     command: ["python", "-m", "src.plugins.orders.workers.reconcile"]
+    volumes:
+      - hubara-vault:/app/hubara_vault
+
+  worker-marketing-campaigns:
+    <<: *app
+    command: ["python", "-m", "src.plugins.marketing.workers.campaigns"]
+    # CampaignSendWorkflow: envíos de campañas directas (sección Marketing).
+    # Vault completo: _campaigns/ (historial) + wa_*/ (audiencia + touches).
     volumes:
       - hubara-vault:/app/hubara_vault
 
