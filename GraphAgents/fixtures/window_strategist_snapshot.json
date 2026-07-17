@@ -82,6 +82,15 @@
       "lead": {"tag": "INTERESADO", "has_order_draft": true},
       "recent_touches": [],
       "tz": "America/Bogota"
+    },
+    {
+      "session_id": "wa_hot_cart_35m",
+      "service_window_expires_at_ms": 1716784300000,
+      "ctwa_window_expires_at_ms": 1716696400000,
+      "last_inbound_at_ms": 1716697900000,
+      "lead": {"tag": "INTERESADO", "has_order_draft": true},
+      "recent_touches": [],
+      "tz": "America/Bogota"
     }
   ]
 }

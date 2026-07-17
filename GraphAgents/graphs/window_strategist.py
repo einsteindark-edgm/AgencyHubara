@@ -27,7 +27,9 @@ DEFAULT_MAX_PAID_PER_CYCLE = 5
 #: profundidad. Overrides por `payload.policy.min_silence_{hot_,warm_,}ms`.
 DEFAULT_MIN_SILENCE_MS = 4 * 60 * 60 * 1000  # ❄️ cold: sin señal de calor
 DEFAULT_MIN_SILENCE_WARM_MS = 2 * 60 * 60 * 1000  # 🌡️ INTERESADO o engaged
-DEFAULT_MIN_SILENCE_HOT_MS = 45 * 60 * 1000  # 🔥 gancho transaccional
+#: 🔥 gancho transaccional: 30 min = borde inferior del rango estudiado
+#: (30-60); con el ciclo de 45 min el toque cae en [30, 75] min de silencio.
+DEFAULT_MIN_SILENCE_HOT_MS = 30 * 60 * 1000
 
 #: Espejo de tags (misma duplicación deliberada que en parse-conversations —
 #: la frontera del monorepo impide el import; los goldens cazan el drift).

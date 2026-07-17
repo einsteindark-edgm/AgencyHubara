@@ -26,7 +26,12 @@ RECENT_TOUCHES_CAP = 10
 #: el ciclo. Con ciclo cada N min, el primer toque cae en [piso, piso+N].
 MIN_SILENCE_MS = 4 * 60 * 60 * 1000  # ❄️ cold: sin señal de calor
 MIN_SILENCE_WARM_MS = 2 * 60 * 60 * 1000  # 🌡️ INTERESADO o engaged
-MIN_SILENCE_HOT_MS = 45 * 60 * 1000  # 🔥 gancho transaccional (carrito)
+#: 🔥 gancho transaccional (carrito): 30 min = borde inferior del rango
+#: estudiado (30-60). Con el ciclo de 45 min el toque cae en [30, 75] min
+#: de silencio. NO bajar de 30: silencios cortos suelen ser el cliente
+#: pagando/consultando/tipeando (caso 573229041190) y cada toque gasta 1
+#: de los 2 del cadence cap diario.
+MIN_SILENCE_HOT_MS = 30 * 60 * 1000
 
 #: espejo del tag (send_policy no exporta INTERESADO como constante; el
 #: golden de paridad + los tests de la escalera cazan el drift).

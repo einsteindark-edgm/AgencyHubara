@@ -135,7 +135,7 @@ async def test_escalera_de_dormancia_por_calor(_isolate_vault_dir: Path):
     """Escalera por calor (mejores prácticas de carrito abandonado: primer
     toque a los 30-60 min convierte 20.3% vs 12.2% a las 24h):
 
-      🔥 hot  (gancho transaccional: carrito/orden/pago pendiente) → 45 min
+      🔥 hot  (gancho transaccional: carrito/orden/pago pendiente) → 30 min
       🌡️ warm (INTERESADO o engaged, sin gancho)                  → 2h
       ❄️ cold (resto)                                             → 4h
 
@@ -162,8 +162,13 @@ async def test_escalera_de_dormancia_por_calor(_isolate_vault_dir: Path):
         "closed_at_ms": None,
         "order_draft": {"slots": {"producto": "vela"}},
     }]
-    # 🔥 carrito abandonado con 1h de silencio → ENTRA (piso 45 min)
-    lead("wa_hot_1h", ONE_HOUR_MS, episodes=draft_ep)
+    # 🔥 carrito abandonado con 35 min de silencio → ENTRA (piso 30 min:
+    # borde inferior del rango estudiado 30-60; con el ciclo de 45 min el
+    # toque cae en [30, 75] min de silencio)
+    lead("wa_hot_35m", 35 * 60 * 1000, episodes=draft_ep)
+    # 🔥 carrito con 20 min de silencio → AFUERA (todavía puede estar
+    # pagando / consultando / tipeando)
+    lead("wa_hot_20m", 20 * 60 * 1000, episodes=draft_ep)
     # 🌡️ INTERESADO sin carrito, 1h de silencio → AFUERA (piso 2h)
     lead("wa_warm_1h", ONE_HOUR_MS)
     # 🌡️ INTERESADO sin carrito, 3h de silencio → ENTRA
@@ -174,7 +179,7 @@ async def test_escalera_de_dormancia_por_calor(_isolate_vault_dir: Path):
     snapshot = await ActivityEnvironment().run(build_reengagement_snapshot_activity)
 
     ids = sorted(c["session_id"] for c in snapshot["conversations"])
-    assert ids == ["wa_hot_1h", "wa_warm_3h"], ids
-    assert snapshot["prefiltered"] == {"conversation_active": 2}, (
+    assert ids == ["wa_hot_35m", "wa_warm_3h"], ids
+    assert snapshot["prefiltered"] == {"conversation_active": 3}, (
         snapshot.get("prefiltered")
     )
