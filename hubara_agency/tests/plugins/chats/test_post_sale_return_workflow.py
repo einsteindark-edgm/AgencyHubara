@@ -64,20 +64,26 @@ async def test_ciclo_devuelve_las_candidatas_y_reporta_summary():
     tracker = Tracker()
     summary = await _run(
         tracker,
-        sessions=["wa_1", "wa_2", "wa_3", "wa_4"],
+        sessions=["wa_1", "wa_2", "wa_3", "wa_4", "wa_5", "wa_6"],
         results={
             "wa_1": "returned",
             "wa_2": "skipped_robot_running",
             "wa_3": "returned",
             "wa_4": "skipped_state_changed",
+            # Pedido aún en proceso / estado inverificable: quedan en humano
+            # y el summary los reporta por separado (nada silencioso).
+            "wa_5": "skipped_order_not_delivered",
+            "wa_6": "skipped_order_state_unknown",
         },
     )
-    assert tracker.returned_calls == ["wa_1", "wa_2", "wa_3", "wa_4"]
+    assert tracker.returned_calls == ["wa_1", "wa_2", "wa_3", "wa_4", "wa_5", "wa_6"]
     assert summary == {
-        "scanned": 4,
+        "scanned": 6,
         "returned": 2,
         "skipped_robot_running": 1,
         "skipped_state_changed": 1,
+        "skipped_order_not_delivered": 1,
+        "skipped_order_state_unknown": 1,
         "failed": 0,
         "returned_sessions": ["wa_1", "wa_3"],
     }

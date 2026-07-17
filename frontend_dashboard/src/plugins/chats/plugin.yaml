@@ -475,11 +475,11 @@ agent:
       task_queue: queue-post-sale-return
       # Temporal Schedule que el propio worker crea/converge al bootear
       # (_SCHEDULE_ID en workers/post_sale_return.py): 1x/día devuelve al bot
-      # de ventas las conversaciones con tag=COMPRA_EXITOSA que quedaron
-      # abiertas en humano SIN robot corriendo — el estado que deja a
-      # propósito la confirmación de pago del dashboard (ver
-      # apply_payment_confirmation_to_chat_metadata). Es el botón "devolver
-      # al robot" en batch. Toggle POST_SALE_RETURN_SCHEDULE_ENABLED (INV-2);
+      # de ventas las conversaciones con tag=COMPRA_EXITOSA + pago confirmado
+      # + pedido ENTREGADO (estado real vía la API de orders — mientras la
+      # orden está en proceso el humano sigue gestionándola) que quedaron
+      # abiertas en humano SIN robot corriendo. Es el botón "devolver al
+      # robot" en batch. Toggle POST_SALE_RETURN_SCHEDULE_ENABLED (INV-2);
       # cron POST_SALE_RETURN_SCHEDULE_CRON. Sin LLM (mutación determinista).
       schedule:
         - id: post-sale-return-schedule

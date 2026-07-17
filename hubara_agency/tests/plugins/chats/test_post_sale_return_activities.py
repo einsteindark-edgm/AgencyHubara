@@ -5,17 +5,23 @@ Dos seams de I/O:
 * `scan_post_sale_human_sessions_activity` — escanea el vault (dirs `wa_*`,
   metadata.json tolerante a corruptos) y aplica el filtro puro.
 * `return_post_sale_session_to_sales_activity` — la mutación del botón
-  "devolver al robot" en batch: chequea que NO haya robot corriendo
-  (`session-{sid}` / `remarketing-{sid}` RUNNING en Temporal) y aplica
-  tag=RETOMA_VENTA + active_route=ventas vía `update()` (lock + re-check del
-  predicado fresco — un cliente pudo escribir entre el scan y el write).
+  "devolver al robot" en batch. Guards en orden:
+  1. Ningún robot corriendo (`session-{sid}` / `remarketing-{sid}` en Temporal).
+  2. **Pedido ENTREGADO** (regla de negocio 2026-07-17): mientras la orden
+     esté en proceso (preparación/envío) el humano sigue interactuando para
+     moverla de estado — la conversación se queda con él. Se consulta el
+     estado REAL vía la API de orders (patrón order_sentinel, respx acá);
+     estado inverificable = skip visible, nunca devolver a ciegas.
+  3. Mutación vía `update()` (lock + re-check del predicado fresco).
 """
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
+import httpx
 import pytest
+import respx
 from temporalio.client import WorkflowExecutionStatus
 from temporalio.service import RPCError, RPCStatusCode
 from temporalio.testing import ActivityEnvironment
@@ -23,6 +29,8 @@ from temporalio.testing import ActivityEnvironment
 import src.plugins.chats.agent.post_sale_return.activities as acts
 
 pytestmark = pytest.mark.asyncio
+
+BASE = "http://hubara-api.invalid"
 
 
 def _seed(vault: Path, session_id: str, metadata: dict | str) -> None:
@@ -32,16 +40,26 @@ def _seed(vault: Path, session_id: str, metadata: dict | str) -> None:
     (d / "metadata.json").write_text(text, encoding="utf-8")
 
 
-def _paid_episodes() -> list[dict]:
+def _paid_episodes(order_id: str | None = "order_A") -> list[dict]:
     """Como los deja la confirmación de pago del dashboard de orders."""
-    return [
-        {
-            "episode_id": "ep-1",
-            "closing_tag": "COMPRA_EXITOSA",
-            "closed_at_ms": 1_752_000_000_000,
-            "payment_confirmed_at_ms": 1_752_000_100_000,
-        }
-    ]
+    ep: dict = {
+        "episode_id": "ep-1",
+        "closing_tag": "COMPRA_EXITOSA",
+        "closed_at_ms": 1_752_000_000_000,
+        "payment_confirmed_at_ms": 1_752_000_100_000,
+    }
+    if order_id:
+        ep["order_id"] = order_id
+    return [ep]
+
+
+def _mock_order(router: respx.MockRouter, order_id: str, status: str) -> None:
+    """`GET /api/orders/orders/{id}` (ruta REAL con doble `orders`)."""
+    router.get(f"{BASE}/api/orders/orders/{order_id}").mock(
+        return_value=httpx.Response(
+            200, json={"summary": {"status": status, "pay_status": "paid"}}
+        )
+    )
 
 
 class _FakeHandle:
@@ -76,6 +94,18 @@ class _FakeClient:
         return _FakeHandle(None)
 
 
+@pytest.fixture
+def _no_robots(monkeypatch: pytest.MonkeyPatch) -> _FakeClient:
+    fake = _FakeClient(running_ids=set())
+
+    async def _fake_client():
+        return fake
+
+    monkeypatch.setattr(acts, "get_temporal_client", _fake_client)
+    monkeypatch.setenv("HUBARA_API_BASE_URL", BASE)
+    return fake
+
+
 async def test_scan_devuelve_solo_compra_exitosa_en_humano(
     _isolate_vault_dir: Path,
 ) -> None:
@@ -106,8 +136,9 @@ async def test_scan_devuelve_solo_compra_exitosa_en_humano(
     assert result == ["wa_111"]
 
 
-async def test_return_aplica_la_mutacion_del_boton_devolver_al_robot(
-    _isolate_vault_dir: Path, monkeypatch: pytest.MonkeyPatch
+@respx.mock
+async def test_return_con_pedido_entregado_aplica_la_mutacion(
+    _isolate_vault_dir: Path, _no_robots: _FakeClient
 ) -> None:
     _seed(
         _isolate_vault_dir,
@@ -117,15 +148,10 @@ async def test_return_aplica_la_mutacion_del_boton_devolver_al_robot(
             "tag": "COMPRA_EXITOSA",
             "motivo": "pago confirmado",
             "status_history": [{"tag": "COMPRA_EXITOSA"}],
-            "episodes": _paid_episodes(),
+            "episodes": _paid_episodes("order_A"),
         },
     )
-    fake = _FakeClient(running_ids=set())
-
-    async def _fake_client():
-        return fake
-
-    monkeypatch.setattr(acts, "get_temporal_client", _fake_client)
+    _mock_order(respx.mock, "order_A", "delivered")
 
     env = ActivityEnvironment()
     result = await env.run(
@@ -133,7 +159,7 @@ async def test_return_aplica_la_mutacion_del_boton_devolver_al_robot(
     )
     assert result == "returned"
     # Consultó los DOS robots canónicos antes de tocar metadata.
-    assert set(fake.described) == {"session-wa_111", "remarketing-wa_111"}
+    assert set(_no_robots.described) == {"session-wa_111", "remarketing-wa_111"}
 
     data = json.loads(
         (_isolate_vault_dir / "wa_111" / "metadata.json").read_text(encoding="utf-8")
@@ -149,13 +175,119 @@ async def test_return_aplica_la_mutacion_del_boton_devolver_al_robot(
     assert last["timestamp"] > 0
 
 
+@respx.mock
+async def test_return_skipea_si_el_pedido_no_esta_entregado(
+    _isolate_vault_dir: Path, _no_robots: _FakeClient
+) -> None:
+    """Compra pagada pero pedido EN PROCESO (shipping): el humano sigue
+    gestionando la entrega — la conversación se queda con él."""
+    original = {
+        "active_route": "humano",
+        "tag": "COMPRA_EXITOSA",
+        "episodes": _paid_episodes("order_A"),
+    }
+    _seed(_isolate_vault_dir, "wa_111", original)
+    _mock_order(respx.mock, "order_A", "shipping")
+
+    env = ActivityEnvironment()
+    result = await env.run(
+        acts.return_post_sale_session_to_sales_activity, "wa_111"
+    )
+    assert result == "skipped_order_not_delivered"
+    data = json.loads(
+        (_isolate_vault_dir / "wa_111" / "metadata.json").read_text(encoding="utf-8")
+    )
+    assert data == original  # intacta
+
+
+@respx.mock
+async def test_return_skipea_si_el_estado_de_la_orden_es_inverificable(
+    _isolate_vault_dir: Path, _no_robots: _FakeClient
+) -> None:
+    """API de orders caída/500: jamás devolver a ciegas — skip visible y el
+    próximo ciclo reintenta."""
+    original = {
+        "active_route": "humano",
+        "tag": "COMPRA_EXITOSA",
+        "episodes": _paid_episodes("order_A"),
+    }
+    _seed(_isolate_vault_dir, "wa_111", original)
+    respx.mock.get(f"{BASE}/api/orders/orders/order_A").mock(
+        return_value=httpx.Response(500)
+    )
+
+    env = ActivityEnvironment()
+    result = await env.run(
+        acts.return_post_sale_session_to_sales_activity, "wa_111"
+    )
+    assert result == "skipped_order_state_unknown"
+    data = json.loads(
+        (_isolate_vault_dir / "wa_111" / "metadata.json").read_text(encoding="utf-8")
+    )
+    assert data == original
+
+
+async def test_return_skipea_si_no_hay_ordenes_verificables(
+    _isolate_vault_dir: Path, _no_robots: _FakeClient
+) -> None:
+    """Sesión pagada pero sin order_id en metadata: sin forma de verificar la
+    entrega → se queda en humano (el botón manual sigue disponible)."""
+    original = {
+        "active_route": "humano",
+        "tag": "COMPRA_EXITOSA",
+        "episodes": _paid_episodes(order_id=None),
+    }
+    _seed(_isolate_vault_dir, "wa_111", original)
+
+    env = ActivityEnvironment()
+    result = await env.run(
+        acts.return_post_sale_session_to_sales_activity, "wa_111"
+    )
+    assert result == "skipped_order_state_unknown"
+    data = json.loads(
+        (_isolate_vault_dir / "wa_111" / "metadata.json").read_text(encoding="utf-8")
+    )
+    assert data == original
+
+
+@respx.mock
+async def test_multi_orden_exige_todas_terminales_y_una_entregada(
+    _isolate_vault_dir: Path, _no_robots: _FakeClient
+) -> None:
+    """Una orden entregada + otra aún en camino = el humano sigue trabajando.
+    Entregada + cancelada = nada pendiente → se devuelve."""
+    meta = {
+        "active_route": "humano",
+        "tag": "COMPRA_EXITOSA",
+        "registered_order": {"order_id": "order_B"},
+        "episodes": _paid_episodes("order_A"),
+    }
+    _seed(_isolate_vault_dir, "wa_111", meta)
+    _mock_order(respx.mock, "order_A", "delivered")
+    _mock_order(respx.mock, "order_B", "shipping")
+
+    env = ActivityEnvironment()
+    result = await env.run(
+        acts.return_post_sale_session_to_sales_activity, "wa_111"
+    )
+    assert result == "skipped_order_not_delivered"
+
+    # Segunda pasada: la orden B ya terminó (cancelada) → devolver.
+    _mock_order(respx.mock, "order_B", "cancelled")
+    result = await env.run(
+        acts.return_post_sale_session_to_sales_activity, "wa_111"
+    )
+    assert result == "returned"
+
+
+@respx.mock
 async def test_return_skipea_si_hay_robot_corriendo_sin_tocar_metadata(
     _isolate_vault_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     original = {
         "active_route": "humano",
         "tag": "COMPRA_EXITOSA",
-        "episodes": _paid_episodes(),
+        "episodes": _paid_episodes("order_A"),
     }
     _seed(_isolate_vault_dir, "wa_111", original)
     fake = _FakeClient(running_ids={"session-wa_111"})
@@ -164,6 +296,7 @@ async def test_return_skipea_si_hay_robot_corriendo_sin_tocar_metadata(
         return fake
 
     monkeypatch.setattr(acts, "get_temporal_client", _fake_client)
+    monkeypatch.setenv("HUBARA_API_BASE_URL", BASE)
 
     env = ActivityEnvironment()
     result = await env.run(
@@ -173,7 +306,7 @@ async def test_return_skipea_si_hay_robot_corriendo_sin_tocar_metadata(
     data = json.loads(
         (_isolate_vault_dir / "wa_111" / "metadata.json").read_text(encoding="utf-8")
     )
-    assert data == original  # intacta
+    assert data == original  # intacta (ni siquiera consultó orders)
 
 
 async def test_return_propaga_rpc_transitorio_sin_tocar_metadata(
@@ -182,7 +315,11 @@ async def test_return_propaga_rpc_transitorio_sin_tocar_metadata(
     """Un UNAVAILABLE/DEADLINE en el describe NO significa "robot no corre":
     absorberlo mutaría una sesión que puede tener el bot vivo. Debe propagar
     (el RetryPolicy del workflow reintenta; peor caso cuenta como failed)."""
-    original = {"active_route": "humano", "tag": "COMPRA_EXITOSA"}
+    original = {
+        "active_route": "humano",
+        "tag": "COMPRA_EXITOSA",
+        "episodes": _paid_episodes("order_A"),
+    }
     _seed(_isolate_vault_dir, "wa_111", original)
 
     class _UnavailableHandle:
@@ -209,18 +346,18 @@ async def test_return_propaga_rpc_transitorio_sin_tocar_metadata(
     assert data == original  # intacta — no se decidió con información rota
 
 
+@respx.mock
 async def test_return_aborta_si_el_estado_cambio_entre_scan_y_lock(
-    _isolate_vault_dir: Path, monkeypatch: pytest.MonkeyPatch
+    _isolate_vault_dir: Path, _no_robots: _FakeClient
 ) -> None:
     # Entre el scan y esta activity, el humano retomó la conversación.
-    original = {"active_route": "humano", "tag": "HUMANO"}
+    original = {
+        "active_route": "humano",
+        "tag": "HUMANO",
+        "episodes": _paid_episodes("order_A"),
+    }
     _seed(_isolate_vault_dir, "wa_111", original)
-    fake = _FakeClient(running_ids=set())
-
-    async def _fake_client():
-        return fake
-
-    monkeypatch.setattr(acts, "get_temporal_client", _fake_client)
+    _mock_order(respx.mock, "order_A", "delivered")
 
     env = ActivityEnvironment()
     result = await env.run(
@@ -233,8 +370,9 @@ async def test_return_aborta_si_el_estado_cambio_entre_scan_y_lock(
     assert data == original  # el mutator abortó: nada escrito
 
 
+@respx.mock
 async def test_return_aborta_si_no_hay_pago_confirmado_en_el_recheck(
-    _isolate_vault_dir: Path, monkeypatch: pytest.MonkeyPatch
+    _isolate_vault_dir: Path, _no_robots: _FakeClient
 ) -> None:
     """El re-check bajo lock usa el predicado COMPLETO (is_returnable): una
     sesión con tag COMPRA_EXITOSA pero SIN pago verificado no se devuelve —
@@ -242,15 +380,16 @@ async def test_return_aborta_si_no_hay_pago_confirmado_en_el_recheck(
     original = {
         "active_route": "humano",
         "tag": "COMPRA_EXITOSA",
-        "episodes": [{"closing_tag": "COMPRA_EXITOSA", "closed_at_ms": 1}],
+        "episodes": [
+            {
+                "closing_tag": "COMPRA_EXITOSA",
+                "closed_at_ms": 1,
+                "order_id": "order_A",
+            }
+        ],
     }
     _seed(_isolate_vault_dir, "wa_111", original)
-    fake = _FakeClient(running_ids=set())
-
-    async def _fake_client():
-        return fake
-
-    monkeypatch.setattr(acts, "get_temporal_client", _fake_client)
+    _mock_order(respx.mock, "order_A", "delivered")
 
     env = ActivityEnvironment()
     result = await env.run(

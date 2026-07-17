@@ -3,7 +3,9 @@
 Al boot (patrón `sales_eval` / `orders/reconcile`):
   1. **Asegura un Temporal Schedule** que dispara `PostSaleReturnWorkflow`
      1x/día — devuelve al bot de ventas las conversaciones con compra cerrada
-     (`COMPRA_EXITOSA`) que quedaron abiertas en humano sin robot corriendo.
+     (`COMPRA_EXITOSA`), pago confirmado y **pedido ENTREGADO** que quedaron
+     abiertas en humano sin robot corriendo (mientras la orden está en
+     proceso, el humano sigue gestionándola — no se toca).
   2. **Corre el worker loop** (workflow + activities del ciclo).
 
 Idempotente: re-arrancar NO duplica el Schedule y CONVERGE el cron a config.
