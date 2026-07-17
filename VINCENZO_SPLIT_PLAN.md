@@ -52,7 +52,9 @@ caja EC2 de vincenzo). No existe nada de vincenzo con datos reales.
   **8 workers** Temporal (catalog-sync, sales, remarketing, sales_eval, eta,
   orders-reconcile + los nuevos **reengagement-cycle** y **order-sentinel-cycle**,
   post-merge 2026-07-10). `enabled_plugins` incluye `order_sentinel,reengagement`.
-  Vault (sesiones WA + snapshot catálogo + evals + índice de reengagement) en volumen
+  Vault (sesiones WA + snapshot catálogo + evals + índice de reengagement +
+  **historial LLM** `agent_state/` — PR #183: la memoria conversacional ya NO
+  vive en la imagen, sobrevive deploys) en volumen
   docker `hubara-prod_hubara-vault` sobre el root EBS, con DLM diario (7 días).
 - **Medusa**: EXTERNO al repo — corre en **Railway**
   (`https://hubarabackend-production.up.railway.app`, leído de SSM). Solo se consume
@@ -572,7 +574,10 @@ idempotente, tenant-agnóstico):
       sin eso el ciclo es `skipped_empty` eterno, gotcha PM-003 ya fijado en el
       compose de prod).
 - [ ] Chip "Meta conectado" en la sección Ads del dashboard (seed `ads-token` de F5.4).
-- [ ] DLM: primer snapshot del volumen de Vincenzo presente; **restore test** (crear
+- [ ] App móvil (Tauri): build con la URL real del clon — `tauri.conf.json` y el
+      runbook Android salen del forge con `TODO-EIP.sslip.io` a reemplazar.
+- [ ] DLM: primer snapshot del volumen de Vincenzo presente (cubre TAMBIÉN el
+      historial LLM post-#183); **restore test** (crear
       volumen del snapshot y montarlo — no repetir el incidente de Hubara).
 - [ ] Aislamiento negativo: el rol `vincenzo-gha-terraform` NO puede leer
       `/hubara/*` ni tocar recursos `agencyhubara-*` (probar un `ssm get` que falle).

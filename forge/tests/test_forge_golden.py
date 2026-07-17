@@ -191,6 +191,14 @@ FIXTURE_FILES = {
     f"{RMKT_WS}/memory/MEMORY.md": "# Memoria remarketing\n",
     f"{RMKT_WS}/skills/hubara_catalog/SKILL.md": "# Catálogo Hubara (remarketing)\n",
     "docs/cartagena/plan.md": "# Vertical hotelero de otro cliente\n",
+    # App móvil Tauri: viaja al clon, pero la EIP de hubara en el CSP no
+    "frontend_dashboard/src-tauri/tauri.conf.json": (
+        '{"csp": "connect-src https://98-88-237-207.sslip.io https://*.amazonaws.com"}\n'
+    ),
+    "frontend_dashboard/MOBILE_ANDROID_RUNBOOK.md": (
+        "VITE_API_URL=https://98-88-237-207.sslip.io npm run tauri:android:build\n"
+    ),
+    "MOBILE_CHATS_PLAN_fable.md": "# Plan móvil de hubara (EIP 98-88-237-207)\n",
     "MULTI_TENANT_COMMERCE_ARCHITECTURE.md": "# Diseño viejo\n",
     "VINCENZO_SPLIT_PLAN.md": "# Plan del split\n",
     "CLAUDE.md": "# Engine\nEl backend vive en hubara_agency/. Ver hubara-dev harness.\n",
@@ -370,6 +378,12 @@ def test_apply_renombra_infra_y_deja_clon_limpio(mini_repo, acme_bundle, tmp_pat
     assert "Acme — Datos de envío" in flows
     assert (dest / "infra/whatsapp-provisioning/tenants/acme.env.example").exists()
 
+    # App móvil: viaja con la EIP de hubara reemplazada por placeholder
+    tauri = (dest / "frontend_dashboard/src-tauri/tauri.conf.json").read_text()
+    assert "TODO-EIP.sslip.io" in tauri and "98-88-237-207" not in tauri
+    runbook = (dest / "frontend_dashboard/MOBILE_ANDROID_RUNBOOK.md").read_text()
+    assert "98-88-237-207" not in runbook
+
     # Scrub: datos de Hubara y docs de otros clientes NO viajan
     # el vault se scrubbea (las sesiones del cliente Hubara no viajan) pero el
     # dir queda vacío con .gitkeep — el boot dev lo necesita presente
@@ -380,6 +394,7 @@ def test_apply_renombra_infra_y_deja_clon_limpio(mini_repo, acme_bundle, tmp_pat
         "hubara_agency/scripts/inject_snapshot_products.py",
         "docs/cartagena",
         "MULTI_TENANT_COMMERCE_ARCHITECTURE.md",
+        "MOBILE_CHATS_PLAN_fable.md",
         "VINCENZO_SPLIT_PLAN.md",
         "infra/INFRASTRUCTURE.md",
         "forge",

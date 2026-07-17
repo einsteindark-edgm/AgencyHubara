@@ -110,6 +110,10 @@ replacements:
     files: ["hubara_agency/src/plugins/chats/agent/**"]
     from: "HUB-hubara-"
     to: "{{ref_prefix}}-{{slug}}-"
+  - id: eip-hubara-en-frontend        # tauri.conf CSP + runbook Android (llegó con la app móvil)
+    files: ["frontend_dashboard/**"]
+    from: "98-88-237-207.sslip.io"
+    to: "TODO-EIP.sslip.io"
   - id: dominio-marca
     # global: el dominio del cliente también vive en platform code (meta_catalog
     # dtos/mapper, media_url), docs y features — lo encontró el ratchet E2E
@@ -233,6 +237,7 @@ deletes:
   - "hubara_agency/scripts/inject_snapshot_products.py"
   - "docs/cartagena"
   - "MULTI_TENANT_COMMERCE_ARCHITECTURE.md"
+  - "MOBILE_CHATS_PLAN_fable.md"
   - "ADR-2026-06-05-multi-tenant-commerce-architecture.md"
   - "VINCENZO_SPLIT_PLAN.md"
   - "infra/INFRASTRUCTURE.md"          # describe la infra VIVA de Hubara (EIP, cuenta, IDs)
