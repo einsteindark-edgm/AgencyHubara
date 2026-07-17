@@ -46,6 +46,12 @@ def test_repo_de_hubara_rechazado():
         forge.render_vars(_client(repo="einsteindark-edgm/AgencyHubara"))
 
 
+def test_api_url_de_hubara_rechazada():
+    for bad in ["https://98-88-237-207.sslip.io", "https://api.hubara.com.co"]:
+        with pytest.raises(forge.ForgeError, match="hubara|98-88"):
+            forge.render_vars(_client(api_url=bad))
+
+
 def test_apply_rechaza_dest_dentro_del_repo_madre(tmp_path):
     """Forjar DENTRO del repo madre mezclaría el clon con hubara — prohibido."""
     inner = forge.REPO / "algo" / "clon"

@@ -12,7 +12,7 @@ SYSTEM_USER_TOKEN=
 CATALOG_ID=
 
 # Webhook (la EIP/dominio sale del primer deploy — NEXT_STEPS.md F7)
-CALLBACK_URL=https://TODO-EIP.sslip.io/api/chats/webhook
+CALLBACK_URL={{api_url}}/api/chats/webhook
 VERIFY_TOKEN=
 
 # Línea nueva (no puede estar registrada en otra WABA)

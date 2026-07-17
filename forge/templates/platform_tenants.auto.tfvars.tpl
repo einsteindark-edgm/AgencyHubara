@@ -3,7 +3,7 @@
 # o con el dominio propio. Ver NEXT_STEPS.md F7.
 tenants = {
   {{slug}} = {
-    api_url = "https://TODO-EIP.sslip.io"
+    api_url = "{{api_url}}"
     callback_urls = [
       "http://localhost:5173/auth/callback",
       "https://TODO-CLOUDFRONT.cloudfront.net/auth/callback",

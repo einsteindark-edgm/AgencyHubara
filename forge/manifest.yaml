@@ -110,10 +110,10 @@ replacements:
     files: ["hubara_agency/src/plugins/chats/agent/**"]
     from: "HUB-hubara-"
     to: "{{ref_prefix}}-{{slug}}-"
-  - id: eip-hubara-en-frontend        # tauri.conf CSP + runbook Android (llegó con la app móvil)
-    files: ["frontend_dashboard/**"]
+  - id: eip-hubara-en-frontend        # tauri.conf CSP + runbook Android: la URL
+    files: ["frontend_dashboard/**"]   # REAL del cliente si client.yaml trae api_url
     from: "98-88-237-207.sslip.io"
-    to: "TODO-EIP.sslip.io"
+    to: "{{api_host}}"
   - id: dominio-marca
     # global: el dominio del cliente también vive en platform code (meta_catalog
     # dtos/mapper, media_url), docs y features — lo encontró el ratchet E2E

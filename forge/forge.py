@@ -102,6 +102,11 @@ def render_vars(client: dict) -> dict:
     ssm_prefix = (aws.get("ssm_prefix") or f"/{slug}").rstrip("/")
     _guard_not_hubara("aws.resource_prefix", prefix)
     _guard_not_hubara("aws.ssm_prefix", ssm_prefix)
+    # URL del backend del cliente (EIP sslip o dominio propio). Si aún no
+    # existe (nace en S8), queda el placeholder y el runbook lo pide después.
+    api_url = (client.get("api_url") or "https://TODO-EIP.sslip.io").rstrip("/")
+    if "hubara" in api_url.lower() or "98-88-237-207" in api_url:
+        raise ForgeError(f"api_url {api_url!r} apunta al backend productivo de hubara — prohibido")
     return {
         "slug": slug,
         "company": client.get("company") or slug.title(),
@@ -110,6 +115,8 @@ def render_vars(client: dict) -> dict:
         "repo_name": repo_name,
         "prefix": prefix,
         "ssm_prefix": ssm_prefix,
+        "api_url": api_url,
+        "api_host": api_url.split("://", 1)[-1],
         "region": aws.get("region") or "us-east-1",
         "image": repo_name.lower(),
         "ref_prefix": slug[:3].upper(),
@@ -468,6 +475,9 @@ def run_init(slug: str, manifest: dict, src: Path = REPO, clients_dir: Path = CL
                 "slug": slug,
                 "company": company,
                 "repo": f"einsteindark-edgm/Agency{company}",
+                # backend del cliente: completar cuando exista (S8) o si ya hay
+                # dominio propio — cablea móvil (CSP), platform tfvars y webhook
+                "api_url": "",
                 "aws": {
                     "region": "us-east-1",
                     "resource_prefix": f"agency{slug}",

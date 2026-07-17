@@ -227,6 +227,7 @@ ACME_CLIENT = {
     "slug": "acme",
     "company": "Acme",
     "repo": "einsteindark-edgm/AgencyAcme",
+    "api_url": "https://api.acme.example.com",
     "aws": {"region": "us-east-1", "resource_prefix": "agencyacme", "ssm_prefix": "/acme"},
     "business": {
         "country": "CO",
@@ -378,11 +379,15 @@ def test_apply_renombra_infra_y_deja_clon_limpio(mini_repo, acme_bundle, tmp_pat
     assert "Acme — Datos de envío" in flows
     assert (dest / "infra/whatsapp-provisioning/tenants/acme.env.example").exists()
 
-    # App móvil: viaja con la EIP de hubara reemplazada por placeholder
+    # App móvil + platform + webhook: la EIP de hubara se reemplaza por la URL
+    # REAL del cliente cuando client.yaml define api_url (placeholder si no)
     tauri = (dest / "frontend_dashboard/src-tauri/tauri.conf.json").read_text()
-    assert "TODO-EIP.sslip.io" in tauri and "98-88-237-207" not in tauri
+    assert "https://api.acme.example.com" in tauri and "98-88-237-207" not in tauri
     runbook = (dest / "frontend_dashboard/MOBILE_ANDROID_RUNBOOK.md").read_text()
     assert "98-88-237-207" not in runbook
+    assert 'api_url = "https://api.acme.example.com"' in plat
+    wa_env = (dest / "infra/whatsapp-provisioning/tenants/acme.env.example").read_text()
+    assert "CALLBACK_URL=https://api.acme.example.com/api/chats/webhook" in wa_env
 
     # Scrub: datos de Hubara y docs de otros clientes NO viajan
     # el vault se scrubbea (las sesiones del cliente Hubara no viajan) pero el
@@ -437,6 +442,22 @@ def test_overlay_incompleto_falla_con_lista(mini_repo, acme_bundle, tmp_path):
     (acme_bundle / "workspace/sales/SOUL.md").unlink()
     with pytest.raises(forge.ForgeError, match="SOUL.md"):
         _apply(mini_repo, acme_bundle, tmp_path)
+
+
+def test_sin_api_url_todo_queda_en_placeholder(mini_repo, acme_bundle, tmp_path):
+    """Sin api_url en client.yaml (la EIP aún no existe), el clon sale con el
+    placeholder TODO-EIP — nunca con la URL de hubara."""
+    import yaml as _yaml
+
+    client = dict(ACME_CLIENT)
+    client.pop("api_url")
+    (acme_bundle / "client.yaml").write_text(_yaml.safe_dump(client), encoding="utf-8")
+    dest = tmp_path / "SinApi"
+    forge.run_apply(src=mini_repo, dest=dest, client_dir=acme_bundle, manifest=forge.load_manifest())
+    tauri = (dest / "frontend_dashboard/src-tauri/tauri.conf.json").read_text()
+    assert "TODO-EIP.sslip.io" in tauri and "98-88-237-207" not in tauri
+    plat = (dest / "infra/terraform/platform/tenants.auto.tfvars").read_text()
+    assert "TODO-EIP.sslip.io" in plat
 
 
 def test_init_siembra_bundle_preservando_tokens_del_motor(mini_repo, tmp_path):
