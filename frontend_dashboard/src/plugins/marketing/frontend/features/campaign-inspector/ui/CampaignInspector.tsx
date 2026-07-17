@@ -1,11 +1,12 @@
 /**
- * Inspector derecho de marketing — tabs Preview / Validación.
+ * Inspector derecho de marketing — tabs Preview / Validación / Audiencia.
  *
  * Preview: mock de teléfono con la burbuja del template MARKETING REAL que
  * va a salir (greeting del sistema + header/body + línea de oferta espejo
  * del backend + opt-out fijo). Validación: checklist de requisitos (espejo
  * del 422 de /send) y, para campañas enviadas, las stats reales de
- * GET /stats (envíos, respuestas, atribución, gasto).
+ * GET /stats (envíos, respuestas, atribución, gasto). Audiencia: la
+ * audiencia REAL del envío (GET /audience) con visor de conversaciones.
  */
 
 import { useState } from "react";
@@ -25,11 +26,13 @@ import {
   fmtUsdMicros,
 } from "@plugins/marketing/frontend/lib/format";
 
+import { AudiencePanel } from "./AudiencePanel";
+
 interface Props {
   campaign: Campaign;
 }
 
-type Tab = "preview" | "validation";
+type Tab = "preview" | "validation" | "audience";
 
 export function CampaignInspector({ campaign }: Props) {
   const [tab, setTab] = useState<Tab>("preview");
@@ -41,6 +44,7 @@ export function CampaignInspector({ campaign }: Props) {
           [
             { key: "preview", label: "Preview" },
             { key: "validation", label: "Validación" },
+            { key: "audience", label: "Audiencia" },
           ] as const
         ).map((t) => (
           <button
@@ -63,8 +67,10 @@ export function CampaignInspector({ campaign }: Props) {
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
         {tab === "preview" ? (
           <TemplatePreview campaign={campaign} />
-        ) : (
+        ) : tab === "validation" ? (
           <ValidationPanel campaign={campaign} />
+        ) : (
+          <AudiencePanel campaign={campaign} />
         )}
       </div>
     </aside>

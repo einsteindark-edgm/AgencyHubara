@@ -63,6 +63,10 @@ export const backendCampaignSchema = z.object({
   sent_at_ms: z.number().int().nullable().default(null),
   send_result: backendSendResultSchema.nullable().default(null),
   test_sends: z.array(backendTestSendRecordSchema).default([]),
+  // Curaduría manual del operador (PUT los REEMPLAZA completos):
+  // quitados a mano del segmento / agregados a mano fuera del segmento.
+  excluded_session_ids: z.array(z.string()).default([]),
+  extra_session_ids: z.array(z.string()).default([]),
 });
 
 export type BackendCampaign = z.infer<typeof backendCampaignSchema>;

@@ -103,6 +103,22 @@ describe("backendCampaignSchema", () => {
     expect(parsed.schedule_at_ms).toBeNull();
   });
 
+  it("parsea la curaduría manual: excluded/extra session ids", () => {
+    const parsed = backendCampaignSchema.parse({
+      ...draftFixture,
+      excluded_session_ids: ["wa_573001112233"],
+      extra_session_ids: ["wa_+573009998877"],
+    });
+    expect(parsed.excluded_session_ids).toEqual(["wa_573001112233"]);
+    expect(parsed.extra_session_ids).toEqual(["wa_+573009998877"]);
+  });
+
+  it("defaultea excluded/extra a [] si el backend no los emite", () => {
+    const parsed = backendCampaignSchema.parse(draftFixture);
+    expect(parsed.excluded_session_ids).toEqual([]);
+    expect(parsed.extra_session_ids).toEqual([]);
+  });
+
   it("rechaza un shape sin id (contract drift visible, no silencioso)", () => {
     const withoutId: Record<string, unknown> = { ...draftFixture };
     delete withoutId.id;

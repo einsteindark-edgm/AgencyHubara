@@ -62,6 +62,10 @@ export interface Campaign {
   sentAtMs: number | null;
   sendResult: CampaignSendResult | null;
   testSends: CampaignTestSend[];
+  /** Curaduría manual: sesiones quitadas a mano de la audiencia. */
+  excludedSessionIds: string[];
+  /** Curaduría manual: sesiones agregadas a mano fuera del segmento. */
+  extraSessionIds: string[];
 }
 
 export interface CampaignStats {
@@ -88,6 +92,9 @@ export interface CampaignPatch {
   productHandle?: string | null;
   segments?: string[];
   message?: CampaignMessage;
+  /** REPLACE completo de las listas de curaduría (no merge). */
+  excludedSessionIds?: string[];
+  extraSessionIds?: string[];
 }
 
 /** Response de POST /send — el workflow Temporal ya arrancó (o quedó

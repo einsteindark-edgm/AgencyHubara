@@ -90,6 +90,8 @@ export function mapBackendCampaign(b: BackendCampaign): Campaign {
       atMs: t.at_ms,
       waMessageId: t.wa_message_id,
     })),
+    excludedSessionIds: b.excluded_session_ids,
+    extraSessionIds: b.extra_session_ids,
   };
 }
 
@@ -120,6 +122,10 @@ export function patchToBody(patch: CampaignPatch): Record<string, unknown> {
   if (patch.productHandle !== undefined) body.product_handle = patch.productHandle;
   if (patch.segments !== undefined) body.segments = patch.segments;
   if (patch.message !== undefined) body.message = patch.message;
+  if (patch.excludedSessionIds !== undefined)
+    body.excluded_session_ids = patch.excludedSessionIds;
+  if (patch.extraSessionIds !== undefined)
+    body.extra_session_ids = patch.extraSessionIds;
   return body;
 }
 

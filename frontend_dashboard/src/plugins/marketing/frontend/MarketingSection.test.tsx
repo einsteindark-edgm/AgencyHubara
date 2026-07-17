@@ -61,6 +61,8 @@ function makeCampaign(id: string) {
     sentAtMs: null,
     sendResult: null,
     testSends: [],
+    excludedSessionIds: [],
+    extraSessionIds: [],
   };
 }
 
