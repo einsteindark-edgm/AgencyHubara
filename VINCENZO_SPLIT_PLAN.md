@@ -769,10 +769,11 @@ garantía de aislamiento de hubara:
 | S2 supabase | auto | proyecto Supabase NUEVO (no hay namespaces: proyecto por cliente, Management API) → DATABASE_URL |
 | S3 medusa | auto | Railway GraphQL: proyecto + servicio desde la URL del repo Medusa + env + dominio |
 | S4 medusa-seed | auto | Admin API idempotente: región/canal/secret key → imprime los `ssm put` |
-| S5 temporal | guiado | namespace + service account + API key (tcld o comandos impresos) |
-| S6 aws-bootstrap | guiado | imprime `cd <clon> && aws_bootstrap.py state/github` + keygen |
-| S7 platform | guiado | imprime terraform apply + carga de secretos del clon |
-| S8 compute | guiado | imprime compute apply + push + schedules (checklist en NEXT_STEPS.md) |
+| S5 whatsapp | guiado | el CLI de aprobaciones desde el clon: número, **templates (aprobación Meta por WABA)**, flows re-publicados, dataset CAPI, ads-token — el camino crítico |
+| S6 temporal | guiado | namespace + service account + API key (tcld o comandos impresos) |
+| S7 aws-bootstrap | guiado | imprime `cd <clon> && aws_bootstrap.py state/github` + keygen |
+| S8 platform | guiado | imprime terraform apply + carga de secretos del clon |
+| S9 compute | guiado | imprime compute apply + push + schedules (checklist en NEXT_STEPS.md) |
 
 **Regla de la casa (crítica)**: los steps AUTO solo hablan con APIs de
 terceros (Supabase/Railway/Medusa/Temporal) donde hubara ni existe; TODO lo

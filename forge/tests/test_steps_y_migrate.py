@@ -180,6 +180,23 @@ def test_migrate_step_guiado_imprime_y_no_ejecuta(bundle, tmp_path, capsys):
     assert "/hubara" not in out
 
 
+def test_migrate_step_whatsapp_imprime_el_ladder_de_aprobaciones(bundle, tmp_path, capsys):
+    """El CLI de aprobaciones WhatsApp (número, templates, flows, CAPI,
+    ads-token) es un step de primera clase — guiado, desde el CLON."""
+    dest = tmp_path / "AgencyAcme"
+
+    def boom(argv):
+        raise AssertionError(f"step guiado ejecutó: {argv}")
+
+    code = migrate.run_step("acme", "whatsapp", bundle, dest, False, runner=boom)
+    out = capsys.readouterr().out
+    assert code == 0
+    for frag in ["whatsapp_provision.py", "tenants/acme.env", "templates", "flows",
+                 "capi", "ads-token", str(dest)]:
+        assert frag in out, f"falta {frag} en la guía"
+    assert "/hubara" not in out and "hubara.env" not in out
+
+
 def test_migrate_rechaza_dest_dentro_del_repo_madre(bundle):
     with pytest.raises(forge.ForgeError, match="repo madre"):
         migrate.run_step("acme", "clone", bundle, forge.REPO / "x", False, runner=lambda a: None)

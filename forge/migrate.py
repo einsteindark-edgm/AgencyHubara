@@ -37,6 +37,23 @@ PY = sys.executable or "python3"
 # ── Definición de steps ───────────────────────────────────────────────────────
 
 
+def _guide_whatsapp(vars_: dict, dest: Path) -> str:
+    return f"""\
+# S5 — WhatsApp/Meta: el CLI de aprobaciones, DESDE EL CLON (camino crítico:
+#      Meta tarda días/semanas — arrancar este step lo antes posible)
+cd {dest}/infra/whatsapp-provisioning
+cp tenants/{vars_["slug"]}.env.example tenants/{vars_["slug"]}.env   # completar con el BM de {vars_["company"]}
+python3 whatsapp_provision.py discover  --config tenants/{vars_["slug"]}.env
+python3 whatsapp_provision.py plan      --config tenants/{vars_["slug"]}.env
+python3 whatsapp_provision.py apply     --config tenants/{vars_["slug"]}.env   # + --code <sms> al registrar la línea
+python3 whatsapp_provision.py templates --config tenants/{vars_["slug"]}.env   # APROBACIÓN Meta por WABA (incluye campaign_promo_marketing)
+python3 whatsapp_provision.py flows     --config tenants/{vars_["slug"]}.env   # re-publica shipping → flow_id NUEVO (WABA-scoped)
+python3 whatsapp_provision.py capi      --config tenants/{vars_["slug"]}.env   # dataset CTWA propio
+python3 whatsapp_provision.py ads-token --config tenants/{vars_["slug"]}.env   # imprime el seed {vars_["ssm_prefix"]}/{vars_["slug"]}/meta/oauth
+# Pasos humanos irreducibles: conseguir la línea, código SMS, Business
+# Verification y aprobación del display name — el CLI los deja marcados."""
+
+
 def _guide_bootstrap(vars_: dict, dest: Path) -> str:
     return f"""\
 # S6 — Bootstrap AWS del cliente (una vez, con TUS creds admin, DESDE EL CLON)
@@ -50,7 +67,7 @@ python3 infra/scripts/aws_bootstrap.py github --repo {vars_["repo"]}
 
 def _guide_platform(vars_: dict, dest: Path) -> str:
     return f"""\
-# S7 — Platform + secretos (DESDE EL CLON; state propio {vars_["prefix"]}-tfstate)
+# S8 — Platform + secretos (DESDE EL CLON; state propio {vars_["prefix"]}-tfstate)
 cd {dest}/infra/terraform/platform
 cp envs/real.s3.tfbackend.example envs/real.s3.tfbackend   # (primera vez; revisar bucket/region)
 terraform init -backend-config=envs/real.s3.tfbackend && terraform apply
@@ -63,7 +80,7 @@ python3 infra/scripts/aws_bootstrap.py secrets --tenant {vars_["slug"]} --file s
 
 def _guide_compute(vars_: dict, dest: Path) -> str:
     return f"""\
-# S8 — Compute + primer deploy + schedules (DESDE EL CLON)
+# S9 — Compute + primer deploy + schedules (DESDE EL CLON)
 cd {dest}/infra/terraform/compute
 terraform init -backend-config=envs/real.s3.tfbackend && terraform apply   # caja + EIP
 #   → poner domain "<ip-con-guiones>.sslip.io" en tenants.auto.tfvars + api_url en platform → re-apply
@@ -76,10 +93,11 @@ STEPS: list[dict] = [
     {"id": "supabase", "title": "S2 Postgres (proyecto Supabase nuevo)", "kind": "auto"},
     {"id": "medusa", "title": "S3 Medusa en Railway (desde la URL del repo)", "kind": "auto"},
     {"id": "medusa-seed", "title": "S4 Seed de Medusa (región/canal/key)", "kind": "auto"},
-    {"id": "temporal", "title": "S5 Temporal Cloud (namespace + API key)", "kind": "guided"},
-    {"id": "aws-bootstrap", "title": "S6 Bootstrap AWS (state/keys/GH)", "kind": "guided", "guide": _guide_bootstrap},
-    {"id": "platform", "title": "S7 Platform + secretos SSM", "kind": "guided", "guide": _guide_platform},
-    {"id": "compute", "title": "S8 Compute + deploy + schedules", "kind": "guided", "guide": _guide_compute},
+    {"id": "whatsapp", "title": "S5 WhatsApp/Meta — aprobaciones (número/templates/flows/CAPI/ads-token)", "kind": "guided", "guide": _guide_whatsapp},
+    {"id": "temporal", "title": "S6 Temporal Cloud (namespace + API key)", "kind": "guided"},
+    {"id": "aws-bootstrap", "title": "S7 Bootstrap AWS (state/keys/GH)", "kind": "guided", "guide": _guide_bootstrap},
+    {"id": "platform", "title": "S8 Platform + secretos SSM", "kind": "guided", "guide": _guide_platform},
+    {"id": "compute", "title": "S9 Compute + deploy + schedules", "kind": "guided", "guide": _guide_compute},
 ]
 STEP_IDS = [s["id"] for s in STEPS]
 
