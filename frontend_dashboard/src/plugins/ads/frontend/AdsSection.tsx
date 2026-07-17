@@ -26,6 +26,7 @@ import {
   selectionToParams,
   useAdsCampaigns,
   useAttributedConversations,
+  useCampaignAdsets,
   useDailySeries,
   type AdsRangeSelection,
   type AdsWindowParams,
@@ -72,6 +73,14 @@ export function AdsSection() {
 
   const { data: campaigns = [] } = useAdsCampaigns(params);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Segmento (ad set) seleccionado, EMPAREJADO a su campaña — scopea el
+  // canvas central. El scope efectivo se deriva en render: si la campaña
+  // activa cambia (click explícito O fallback implícito por ventana), un
+  // segmento de otra campaña no se arrastra (hallazgo review 2026-07-10).
+  const [adsetSel, setAdsetSel] = useState<{
+    campaignId: string;
+    adsetId: string;
+  } | null>(null);
 
   // Default a la primera campaña activa una vez que llegan los datos. Si la
   // campaña seleccionada cae FUERA de la ventana (no está en la lista
@@ -89,11 +98,42 @@ export function AdsSection() {
     [campaigns, fallbackId],
   );
 
+  // Scope efectivo: el segmento solo aplica si pertenece a la campaña activa.
+  const selectedAdsetId =
+    adsetSel !== null && campaign?.id === adsetSel.campaignId
+      ? adsetSel.adsetId
+      : null;
+
+  // Segmentos de la campaña activa — solo se piden cuando hay un segmento
+  // seleccionado (el sidebar hace su propio fetch lazy al expandir; acá se
+  // comparte la query key → TanStack dedupea).
+  const { data: adsets = [] } = useCampaignAdsets(
+    campaign?.id ?? "",
+    params,
+    selectedAdsetId !== null,
+  );
+  // Fila del segmento seleccionado. Si desapareció de la ventana (o aún
+  // carga), el canvas cae a la campaña completa — nunca queda vacío.
+  const adsetRow = useMemo(
+    () =>
+      selectedAdsetId !== null
+        ? (adsets.find((a) => a.id === selectedAdsetId) ?? null)
+        : null,
+    [adsets, selectedAdsetId],
+  );
+  // Lo que pinta el canvas: el segmento scopeado o la campaña completa.
+  const scoped = adsetRow ?? campaign;
+
   const { data: attributed = [] } = useAttributedConversations(
     campaign?.id ?? "",
     params,
+    selectedAdsetId,
   );
-  const { data: daily = [] } = useDailySeries(campaign?.id ?? "", dailyParams);
+  const { data: daily = [] } = useDailySeries(
+    campaign?.id ?? "",
+    dailyParams,
+    selectedAdsetId,
+  );
 
   // ── Buzón de análisis con IA ─────────────────────────────────────────────
   // `activeRunId` es state LOCAL de la Page (orquestación page-level, regla #3):
@@ -132,7 +172,16 @@ export function AdsSection() {
         <AdsCampaignsList
           campaigns={campaigns}
           selected={campaign.id}
-          onSelect={setSelectedId}
+          onSelect={(id) => {
+            setSelectedId(id);
+            setAdsetSel(null);
+          }}
+          params={params}
+          selectedAdsetId={selectedAdsetId}
+          onSelectAdset={(campaignId, adsetId) => {
+            setSelectedId(campaignId);
+            setAdsetSel(adsetId === null ? null : { campaignId, adsetId });
+          }}
         />
       )}
       <main className="ads-canvas">
@@ -151,23 +200,25 @@ export function AdsSection() {
             Analizar con IA
           </button>
         </div>
+        {/* Header + KPIs + embudo + distribución pintan `scoped`: la fila del
+            segmento seleccionado (drill-down) o la campaña completa. La tabla
+            y la serie diaria ya llegan scopeadas desde el backend. */}
         <AdsOverviewHeader
-          campaign={campaign}
+          campaign={scoped ?? campaign}
           selection={selection}
           onSelectionChange={setSelection}
         />
-        {/* KPIs Meta de LA CAMPAÑA SELECCIONADA (gasto/imp/clicks/conv/CPC/
-            costo-conv) — vienen del merge del endpoint de campañas, así que
-            respetan la ventana de fecha del header. Incluye pausar/activar. */}
-        <CampaignMetaKpis campaign={campaign} />
+        {/* KPIs Meta del scope activo (gasto/imp/clicks/conv/CPC/costo-conv):
+            campaña (merge level=campaign) o segmento (level=adset). */}
+        <CampaignMetaKpis campaign={scoped ?? campaign} />
         <div className="ads-body">
-          <AdsFunnel campaign={campaign} />
-          <AdsStateDistribution campaign={campaign} />
+          <AdsFunnel campaign={scoped ?? campaign} />
+          <AdsStateDistribution campaign={scoped ?? campaign} />
           <AdsDailyTrend series={daily} />
           <AdsAttributedTable rows={attributed} />
         </div>
       </main>
-      {showInspector && <AdsInspector campaign={campaign} />}
+      {showInspector && <AdsInspector campaign={scoped ?? campaign} />}
 
       {analysisOpen && (
         <AnalysisModal onClose={() => setAnalysisOpen(false)}>

@@ -122,10 +122,10 @@ async def test_snapshot_enriquece_current_stage_y_payment_desde_orders_api(
         _humano_con_orden("order_PAID"),
         [_user_msg("cuando llega?", "2026-07-09T11:00:00+00:00")],
     )
-    respx.get(f"{BASE}/api/orders/order_PEND").mock(
+    respx.get(f"{BASE}/api/orders/orders/order_PEND").mock(
         return_value=httpx.Response(200, json=_order_detail("preparing", "pending"))
     )
-    respx.get(f"{BASE}/api/orders/order_PAID").mock(
+    respx.get(f"{BASE}/api/orders/orders/order_PAID").mock(
         return_value=httpx.Response(200, json=_order_detail("new", "paid"))
     )
 
@@ -159,7 +159,7 @@ async def test_orden_ilocalizable_excluye_la_conversacion(
         _humano_con_orden("order_404"),
         [_user_msg("hola", "2026-07-09T10:00:00+00:00")],
     )
-    respx.get(f"{BASE}/api/orders/order_404").mock(
+    respx.get(f"{BASE}/api/orders/orders/order_404").mock(
         return_value=httpx.Response(
             404, json={"detail": "Order 'order_404' not found in Medusa."}
         )
@@ -188,7 +188,7 @@ async def test_watermark_del_vault_filtra_sesiones_ya_analizadas(
         [_user_msg("mensaje viejo", "2026-07-09T10:00:00+00:00")],
         watermark_ms=4_000_000_000_000,  # muy en el futuro → nada nuevo
     )
-    route = respx.get(f"{BASE}/api/orders/order_OLD").mock(
+    route = respx.get(f"{BASE}/api/orders/orders/order_OLD").mock(
         return_value=httpx.Response(200, json=_order_detail("new", "pending"))
     )
 
@@ -197,6 +197,29 @@ async def test_watermark_del_vault_filtra_sesiones_ya_analizadas(
     )
     assert snapshot["conversations"] == []
     assert route.called is False
+
+
+@pytest.mark.asyncio
+async def test_poll_fallido_despierta_la_caja_y_reintenta(monkeypatch):
+    """Eslabón 9 de la cadena dispatch (PR #153, memoria graphagents-dispatch-
+    prod-chain): el autostop puede apagar la caja con el resultado sin
+    cosechar — un fetch_status fallido debe DESPERTARLA (start_box) antes de
+    dejar que Temporal reintente, o el run queda inalcanzable para siempre."""
+    from src.plugins.order_sentinel.agent.cycle import activities as acts
+
+    calls: dict = {"box": 0}
+
+    class DyingLauncher:
+        def start_box(self):
+            calls["box"] += 1
+
+        def fetch_status(self, execution_id):
+            raise RuntimeError("InvalidInstanceId: la caja está stopped")
+
+    monkeypatch.setattr(acts, "get_launcher", lambda: DyingLauncher())
+    with pytest.raises(RuntimeError):
+        await ActivityEnvironment().run(acts.poll_order_sentinel_activity, "eid-9")
+    assert calls["box"] == 1, "el poll fallido debe despertar la caja (eslabón 9)"
 
 
 @pytest.mark.asyncio

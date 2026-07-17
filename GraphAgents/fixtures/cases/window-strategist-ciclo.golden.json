@@ -25,6 +25,22 @@
       "recommended_category": "service",
       "reason": "csw_free_form",
       "priority": 3
+    },
+    {
+      "kind": "reengagement_dispatch",
+      "session_id": "wa_hot_cart",
+      "recommended_channel": "free_form",
+      "recommended_category": "service",
+      "reason": "csw_free_form",
+      "priority": 4
+    },
+    {
+      "kind": "reengagement_dispatch",
+      "session_id": "wa_hot_cart_35m",
+      "recommended_channel": "free_form",
+      "recommended_category": "service",
+      "reason": "csw_free_form",
+      "priority": 5
     }
   ],
   "suppressed": [
@@ -39,6 +55,10 @@
     {
       "session_id": "wa_human",
       "reason": "human_owned"
+    },
+    {
+      "session_id": "wa_conversation_active",
+      "reason": "conversation_active"
     },
     {
       "session_id": "wa_phase_b_optin",

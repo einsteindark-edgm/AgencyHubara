@@ -199,7 +199,7 @@ Push a `main` (o **Actions → Terraform plan → Run**) corre el **plan**. Para
 | Workflow | Cuándo | Qué hace (paso a paso) |
 |---|---|---|
 | **frontend-deploy** | push a `frontend_dashboard/**` | (1) asume rol TF, lee `build_config` del state (bucket, dist id, api_url). (2) `npm ci && npm run build` con `VITE_API_URL` del tenant. (3) asume rol deploy, `aws s3 sync dist → bucket`, `cloudfront create-invalidation`. |
-| **backend-deploy** | push a `hubara_agency/**` etc. | (1) build de la imagen (Dockerfile raíz) y **push a GHCR**. (2) por tenant: lee la IP del host del state, **SSHea**, copia el `docker-compose.prod.yml`, **rinde el `.env` desde SSM**, `docker login ghcr.io`, `docker compose pull && up -d`. |
+| **backend-deploy** | push a `hubara_agency/**` etc. | (1) build de la imagen (Dockerfile raíz) y **push a GHCR**. (2) por tenant: lee la IP del host del state, **SSHea**, copia el `docker-compose.prod.yml` (queda en la caja como `/opt/hubara/docker-compose.yml`), **rinde el `.env` desde SSM**, `docker login ghcr.io`, `docker compose pull && up -d`. |
 | **observability-deploy** | push a `deploy/signoz/**` | SSHea a la caja SigNoz, copia el stack vendorizado, `docker compose up -d`. |
 
 Todos usan OIDC (rol angosto de deploy) + el secret `EC2_SSH_KEY`. **Verificás:** el

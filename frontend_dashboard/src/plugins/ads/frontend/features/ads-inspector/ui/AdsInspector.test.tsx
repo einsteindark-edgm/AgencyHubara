@@ -132,6 +132,27 @@ describe("AdsInspector — reporte legible en el historial", () => {
     expect(getByRole("columnheader", { name: "Spend" })).toBeTruthy(); // tabla real
     expect(queryByText(/"markdown"/)).toBeNull(); // ni JSON del result
   });
+
+  it("un run con narrativa del LLM la muestra junto al reporte", () => {
+    mockRuns.current = [
+      {
+        runId: "run-narr",
+        status: "completed",
+        createdAtMs: Date.UTC(2026, 6, 11, 12, 0),
+        result: {
+          markdown: "## Hubara — Ads Analytics\n\ntabla",
+          verdict: "ok",
+          qa_passed: true,
+          narrative: "El MER del periodo fue 2.1 — conviene escalar Día del padre.",
+          _projected_from: "ctwa-report",
+        },
+        agent: "ads-analytics",
+      },
+    ];
+    mockConn.current = { data: { connected: true, accountName: "Hubara" } };
+    const { getByText } = render(<AdsInspector campaign={campaign({})} />);
+    expect(getByText(/conviene escalar Día del padre/)).toBeTruthy();
+  });
 });
 
 describe("AdsInspector — historial POR CAMPAÑA", () => {

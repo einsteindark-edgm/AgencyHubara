@@ -19,10 +19,28 @@ export const humanMessageResponseSchema = z.object({
   role: z.string(),
   sender: z.string(),
   content: z.string(),
+  /** Presente cuando el operador mandó una foto — ref servible por el dashboard. */
+  image_url: z.string().nullable().optional(),
+});
+
+/** Respuesta de la fase A (subida): el media_id de Meta + la url servible. */
+export const mediaUploadResponseSchema = z.object({
+  ok: z.boolean(),
+  attachment_id: z.string(),
+  media_ref: z.string(),
 });
 
 export type HandoffResponse = z.infer<typeof handoffResponseSchema>;
 export type HumanMessageResponse = z.infer<typeof humanMessageResponseSchema>;
+export type MediaUploadResponse = z.infer<typeof mediaUploadResponseSchema>;
+
+/** Variables del envío del operador: al menos uno de `text` / `attachment_id`.
+ *  `client_message_id` da idempotencia (un retry no re-envía). */
+export interface SendHumanMessageInput {
+  text?: string;
+  attachment_id?: string;
+  client_message_id?: string;
+}
 
 export type TargetRoute = "ventas" | "remarketing";
 

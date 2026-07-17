@@ -50,6 +50,16 @@ def _api_base() -> str:
     return os.environ.get("HUBARA_API_BASE_URL", "http://hubara-api:8000").rstrip("/")
 
 
+def _api_client(**kwargs: Any) -> httpx.AsyncClient:
+    """Cliente hacia la API interna. Con Cognito activo en prod, el worker se
+    autentica con HUBARA_SERVICE_TOKEN (bearer de servicio machine-to-machine
+    — incidente 401 del run 019f4d63; require_auth lo acepta en tiempo
+    constante). Sin el env → sin header (dev local sin auth)."""
+    token = os.environ.get("HUBARA_SERVICE_TOKEN", "")
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    return httpx.AsyncClient(headers=headers, **kwargs)
+
+
 def _read_json(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
@@ -110,8 +120,12 @@ async def _fetch_order_state(
     El fallo se LOGUEA (PM-003: tragado en silencio, un base URL roto se veía
     como `skipped_empty` eterno indistinguible de "no hay trabajo")."""
     try:
+        # Ruta REAL: prefix /api/orders del manifest + path /orders del router
+        # → /api/orders/orders/{id} (así la consume el frontend). Con un solo
+        # /orders es 404 DE RUTA para toda orden (incidente prod 2026-07-10:
+        # respx no lo caza porque mockea la URL que el código pida).
         response = await client.get(
-            f"{_api_base()}/api/orders/{quote(order_id, safe='')}"
+            f"{_api_base()}/api/orders/orders/{quote(order_id, safe='')}"
         )
         response.raise_for_status()
         summary = response.json().get("summary") or {}
@@ -161,7 +175,7 @@ async def build_order_sentinel_snapshot_activity() -> dict[str, Any]:
     # conversación (y su watermark: no la analizamos — el próximo ciclo reintenta).
     enriched: list[dict[str, Any]] = []
     excluded = 0
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with _api_client(timeout=15) as client:
         for convo in snapshot["conversations"]:
             state = await _fetch_order_state(client, convo["order_id"])
             if state is None:
@@ -210,8 +224,24 @@ async def poll_order_sentinel_activity(execution_id: str) -> dict[str, Any]:
     from src.sdk.graphagentskit import interpret
 
     launcher = get_launcher()
-    # boto3 sync → thread (PM-007): no bloquear el event loop del worker.
-    return interpret(await asyncio.to_thread(launcher.fetch_status, execution_id))
+    try:
+        # boto3 sync → thread (PM-007): no bloquear el event loop del worker.
+        raw = await asyncio.to_thread(launcher.fetch_status, execution_id)
+    except Exception as e:
+        # Eslabón 9 de la cadena dispatch (PR #153): el autostop puede apagar
+        # la caja con el resultado sin cosechar — la despertamos ANTES de que
+        # Temporal reintente este poll, o el run queda inalcanzable (ciclos de
+        # InvalidInstanceId para siempre).
+        activity.logger.warning(
+            "order-sentinel: poll de %s falló (%s: %s) — despierto la caja "
+            "y dejo que el retry reintente.",
+            execution_id,
+            type(e).__name__,
+            e,
+        )
+        await asyncio.to_thread(launcher.start_box)
+        raise
+    return interpret(raw)
 
 
 async def _execute_intent(client: httpx.AsyncClient, intent: dict[str, Any]) -> str:
@@ -227,7 +257,7 @@ async def _execute_intent(client: httpx.AsyncClient, intent: dict[str, Any]) -> 
             first = _sanitize_note(evidence[0]) if evidence else ""
             note = f"order-sentinel: {first}" if first else "order-sentinel"
             response = await client.patch(
-                f"{base}/api/orders/{oid}/stage",
+                f"{base}/api/orders/orders/{oid}/stage",
                 json={
                     "stage": intent.get("to_stage"),
                     "note": note,
@@ -237,7 +267,7 @@ async def _execute_intent(client: httpx.AsyncClient, intent: dict[str, Any]) -> 
             )
         elif action == "confirm_payment":
             response = await client.patch(
-                f"{base}/api/orders/{oid}/confirm-payment",
+                f"{base}/api/orders/orders/{oid}/confirm-payment",
                 json={"by": "order-sentinel"},
             )
         else:
@@ -276,7 +306,7 @@ async def execute_order_intents_activity(
     TODAS las sesiones analizadas (con o sin intents, aplicados o no: el
     watermark es "hasta dónde analicé", no "hasta dónde apliqué")."""
     summary = {"applied": 0, "skipped": 0, "failed": 0}
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with _api_client(timeout=15) as client:
         for intent in intents:
             summary[await _execute_intent(client, intent)] += 1
 

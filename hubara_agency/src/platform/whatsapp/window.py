@@ -72,6 +72,23 @@ def is_in_service_window(now_ms: int, metadata: dict[str, Any]) -> bool:
     return isinstance(exp, int) and now_ms < exp
 
 
+def is_service_window_closed(now_ms: int, metadata: dict[str, Any]) -> bool:
+    """True SOLO cuando sabemos que la ventana de servicio 24h ya cerró.
+
+    Distinto de ``not is_in_service_window``: este helper es *fail-open* ante lo
+    desconocido. Solo devuelve True cuando ``service_window_expires_at_ms`` está
+    presente, es un entero, y ``now_ms >= exp``. Si el campo falta o es inválido
+    (dev, seed data, sesión sin ingest de ventana) devuelve False — no bloquea.
+
+    Es el guard que consume la ruta del operador humano (``send_human_message``):
+    un free-form del operador fuera de la ventana 24h Meta lo rechaza en
+    silencio, así que lo cortamos con un 409 accionable ANTES de intentarlo —
+    pero sin romper el caso normal donde la metadata de ventana no está poblada.
+    """
+    exp = metadata.get("service_window_expires_at_ms")
+    return isinstance(exp, int) and now_ms >= exp
+
+
 def is_in_ctwa_window(now_ms: int, metadata: dict[str, Any]) -> bool:
     """True si la ventana CTWA (72h) sigue abierta en `now_ms`.
 

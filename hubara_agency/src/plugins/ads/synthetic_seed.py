@@ -121,6 +121,70 @@ def build_seed_sessions(ad_id: str, *, now_ms: int) -> list[dict[str, Any]]:
     return specs
 
 
+def plan_segment_spread(
+    sessions: list[tuple[str, dict[str, Any]]],
+    campaign_ad_ids: frozenset[str],
+    target_ad_ids: list[str],
+) -> list[dict[str, Any]]:
+    """Plan PURO para repartir las sesiones SEEDED de una campaña entre sus
+    segmentos (segmentación 2026-07-10).
+
+    Solo entran sesiones con `seeded_test: true` cuyo `origin.source_id`
+    pertenece a `campaign_ad_ids` — las conversaciones REALES y las de otras
+    campañas quedan intactas (cero contaminación / cero falsificación de
+    atribución real). Round-robin determinista por `session_key` sobre
+    `target_ad_ids` (un ad representativo por segmento).
+
+    Cada entry: `{session_key, new_source_id, metadata, order_ids}` con la
+    metadata YA reescrita (origin + last_touch + referral_snapshot de cada
+    episodio que apuntaba a la campaña) sin mutar la original. `order_ids`
+    lista las ventas del vault afectadas — el IO las usa para re-estampar
+    `meta_ad_id` en Medusa y mantener la coherencia orden↔segmento.
+    """
+    import copy
+
+    eligible = sorted(
+        (
+            (key, meta)
+            for key, meta in sessions
+            if meta.get("seeded_test") is True
+            and (meta.get("origin") or {}).get("source_id") in campaign_ad_ids
+        ),
+        key=lambda kv: kv[0],
+    )
+
+    plan: list[dict[str, Any]] = []
+    for i, (key, meta) in enumerate(eligible):
+        new_ad = target_ad_ids[i % len(target_ad_ids)]
+        new_meta = copy.deepcopy(meta)
+        new_meta["origin"]["source_id"] = new_ad
+        touch = new_meta.get("last_touch")
+        if touch and touch.get("source_id") in campaign_ad_ids:
+            touch["source_id"] = new_ad
+        order_ids: list[str] = []
+        for ep in new_meta.get("episodes") or []:
+            snap = ep.get("referral_snapshot")
+            # Un episodio re-atribuido a OTRA campaña (FU2) queda intacto y su
+            # orden NO se re-estampa — falsificaría la atribución ajena. Sin
+            # snapshot, el episodio hereda el origin de la sesión (que SÍ es de
+            # la campaña — filtro de elegibilidad de arriba).
+            if snap is not None and snap.get("source_id") not in campaign_ad_ids:
+                continue
+            if snap is not None:
+                snap["source_id"] = new_ad
+            if ep.get("order_id"):
+                order_ids.append(ep["order_id"])
+        plan.append(
+            {
+                "session_key": key,
+                "new_source_id": new_ad,
+                "metadata": new_meta,
+                "order_ids": order_ids,
+            }
+        )
+    return plan
+
+
 def build_won_sessions(
     orders: list[dict[str, Any]], ad_id: str
 ) -> list[dict[str, Any]]:

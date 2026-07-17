@@ -69,7 +69,7 @@ async def test_transition_patchea_stage_sin_notificar_al_cliente(
     _isolate_vault_dir: Path, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.setenv("HUBARA_API_BASE_URL", BASE)
-    route = respx.patch(f"{BASE}/api/orders/order_A/stage").mock(
+    route = respx.patch(f"{BASE}/api/orders/orders/order_A/stage").mock(
         return_value=_ok("shipping")
     )
 
@@ -94,7 +94,7 @@ async def test_confirm_payment_patchea_endpoint_dedicado(
     _isolate_vault_dir: Path, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.setenv("HUBARA_API_BASE_URL", BASE)
-    route = respx.patch(f"{BASE}/api/orders/order_A/confirm-payment").mock(
+    route = respx.patch(f"{BASE}/api/orders/orders/order_A/confirm-payment").mock(
         return_value=_ok(None)
     )
 
@@ -115,7 +115,7 @@ async def test_invalid_transition_cuenta_como_skipped_no_failed(
     # Carrera benigna: el humano ya movió la tarjeta más allá. El endpoint
     # responde HTTP 200 con success=False + error_detail "invalid_transition:".
     monkeypatch.setenv("HUBARA_API_BASE_URL", BASE)
-    respx.patch(f"{BASE}/api/orders/order_A/stage").mock(
+    respx.patch(f"{BASE}/api/orders/orders/order_A/stage").mock(
         return_value=httpx.Response(
             200,
             json={
@@ -143,7 +143,7 @@ async def test_invalid_state_de_draft_cuenta_como_skipped(
     invalid_transition) — también es benigno (el humano agenda después), no
     debe contar como failed recurrente."""
     monkeypatch.setenv("HUBARA_API_BASE_URL", BASE)
-    respx.patch(f"{BASE}/api/orders/draft_R1/confirm-payment").mock(
+    respx.patch(f"{BASE}/api/orders/orders/draft_R1/confirm-payment").mock(
         return_value=httpx.Response(
             200,
             json={
@@ -172,7 +172,7 @@ async def test_nota_de_auditoria_se_sanea_y_trunca(
     """PM-020: la evidencia es texto arbitrario del cliente/LLM — a la note de
     la orden va saneada: str(), whitespace colapsado y máx ~200 chars."""
     monkeypatch.setenv("HUBARA_API_BASE_URL", BASE)
-    route = respx.patch(f"{BASE}/api/orders/order_A/stage").mock(
+    route = respx.patch(f"{BASE}/api/orders/orders/order_A/stage").mock(
         return_value=_ok("shipping")
     )
     evil = "ya  salió\nel pedido\t" + "x" * 500
@@ -193,7 +193,7 @@ async def test_order_id_raro_viaja_url_quoted(
 ):
     """PM-023: un order_id con caracteres de ruta no rompe la URL."""
     monkeypatch.setenv("HUBARA_API_BASE_URL", BASE)
-    route = respx.patch(f"{BASE}/api/orders/order_a%2Fb/stage").mock(
+    route = respx.patch(f"{BASE}/api/orders/orders/order_a%2Fb/stage").mock(
         return_value=_ok("shipping")
     )
     intent = _transition_intent(order_id="order_a/b")
@@ -206,11 +206,33 @@ async def test_order_id_raro_viaja_url_quoted(
 
 @pytest.mark.asyncio
 @respx.mock
+async def test_manda_el_service_token_cuando_esta_configurado(
+    _isolate_vault_dir: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Incidente prod 2026-07-10 (401): con Cognito activo en la API, el worker
+    se autentica con HUBARA_SERVICE_TOKEN (bearer de servicio). Sin el env, no
+    se manda header (dev local sin auth)."""
+    monkeypatch.setenv("HUBARA_API_BASE_URL", BASE)
+    monkeypatch.setenv("HUBARA_SERVICE_TOKEN", "secreto-interno-123")
+    route = respx.patch(f"{BASE}/api/orders/orders/order_A/stage").mock(
+        return_value=_ok("shipping")
+    )
+    await ActivityEnvironment().run(
+        execute_order_intents_activity, [_transition_intent()], {"wa_1": 5_000}
+    )
+    assert (
+        route.calls.last.request.headers.get("Authorization")
+        == "Bearer secreto-interno-123"
+    )
+
+
+@pytest.mark.asyncio
+@respx.mock
 async def test_error_http_cuenta_como_failed(
     _isolate_vault_dir: Path, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.setenv("HUBARA_API_BASE_URL", BASE)
-    respx.patch(f"{BASE}/api/orders/order_A/stage").mock(
+    respx.patch(f"{BASE}/api/orders/orders/order_A/stage").mock(
         return_value=httpx.Response(500, json={"detail": "boom"})
     )
 
@@ -231,7 +253,7 @@ async def test_escribe_watermarks_de_todas_las_sesiones_incluso_fallidas(
     monkeypatch.setenv("HUBARA_API_BASE_URL", BASE)
     (_isolate_vault_dir / "wa_a").mkdir(parents=True)
     (_isolate_vault_dir / "wa_b").mkdir(parents=True)
-    respx.patch(f"{BASE}/api/orders/order_A/stage").mock(
+    respx.patch(f"{BASE}/api/orders/orders/order_A/stage").mock(
         return_value=httpx.Response(500, json={"detail": "boom"})
     )
 

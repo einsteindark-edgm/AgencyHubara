@@ -42,12 +42,21 @@ from __future__ import annotations
 
 import os
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import APIRouter, Body, Path, Request
 
 from src.sdk import castkit
 
 router = APIRouter()
+
+
+def _seg(value: str) -> str:
+    """PM2-B10: percent-encode de un path param antes de re-insertarlo en la
+    URL del forward. Uvicorn DECODIFICA `%23`/`%3F` del path entrante; un id
+    con `#`/`?` decodificado interpolado crudo en el f-string se convierte en
+    fragment/query → el provider recibe un id TRUNCADO distinto del ruteado."""
+    return quote(value, safe="")
 
 # Peor caso de UNA llamada Medusa del provider: 30s × 3 retries tenacity
 # (+ backoff) ≈ 95s; `schedule` encadena varias. 15s (el valor original,
@@ -89,6 +98,28 @@ async def _forward_patch(
     )
 
 
+@router.get("/order-actions/{order_id}")
+async def get_order_for_chat(
+    request: Request,
+    order_id: str = Path(..., min_length=1, max_length=200),
+) -> dict[str, Any]:
+    """Detalle del pedido vía el read-side del contrato order@v1.
+
+    El canvas de pago lo usa para saber si el pedido YA tiene fecha de entrega
+    asignada (`summary.due_iso != null`, escrita por "Asignar fecha" o por el
+    tablero de orders) — en ese caso "Confirmar pago" salta el paso de agendar
+    y NO pisa la fecha del operador.
+    """
+    return await castkit.forward(
+        request,
+        "GET",
+        f"/api/orders/orders/{_seg(order_id)}",
+        base_url=_orders_base(),
+        timeout=_timeout_s(),
+        cast_label=_CAST_LABEL,
+    )
+
+
 @router.patch("/order-actions/{order_id}/schedule")
 async def schedule_order_for_chat(
     request: Request,
@@ -102,7 +133,7 @@ async def schedule_order_for_chat(
     (`{success, order_id, current_stage, error_detail, audit_id}`).
     """
     return await _forward_patch(
-        request, f"/api/orders/orders/{order_id}/schedule", body
+        request, f"/api/orders/orders/{_seg(order_id)}/schedule", body
     )
 
 
@@ -114,5 +145,44 @@ async def confirm_order_payment_for_chat(
 ) -> dict[str, Any]:
     """Confirmar pago del pedido vía el contrato order@v1 (idempotente)."""
     return await _forward_patch(
-        request, f"/api/orders/orders/{order_id}/confirm-payment", body
+        request, f"/api/orders/orders/{_seg(order_id)}/confirm-payment", body
+    )
+
+
+@router.get("/order-actions/by-session/{session_id}")
+async def list_customer_orders_for_chat(
+    request: Request,
+    session_id: str = Path(..., min_length=1, max_length=200),
+) -> dict[str, Any]:
+    """Pedidos DE ESE cliente — el panel de pedidos del chat móvil.
+
+    GET .../by-session/{id} → GET /api/orders/orders/by-session/{id}. El
+    provider resuelve el vínculo sesión→órdenes desde el vault. Response:
+    `{"orders": [...], "count": int}`.
+    """
+    return await castkit.forward(
+        request,
+        "GET",
+        f"/api/orders/orders/by-session/{_seg(session_id)}",
+        base_url=_orders_base(),
+        timeout=_timeout_s(),
+        cast_label=_CAST_LABEL,
+    )
+
+
+@router.patch("/order-actions/{order_id}/stage")
+async def transition_order_stage_for_chat(
+    request: Request,
+    order_id: str = Path(..., min_length=1, max_length=200),
+    body: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    """Cambiar el estado de un pedido manualmente desde el chat móvil.
+
+    Body: `{stage: "new|preparing|ready|shipping|delivered|cancelled", note?,
+    force?}`. Reenvía a `PATCH /api/orders/orders/{id}/stage`, que valida la
+    transición contra el DAG y emite la cascada de notificación ETA. Response:
+    el `OrderCommandResult` plano (`{success, current_stage, error_detail}`).
+    """
+    return await _forward_patch(
+        request, f"/api/orders/orders/{_seg(order_id)}/stage", body
     )

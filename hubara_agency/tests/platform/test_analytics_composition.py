@@ -22,10 +22,22 @@ from src.platform.analytics.filesystem_sink import FilesystemAnalyticsSink
 
 
 def _reset_analytics_singletons() -> None:
-    """setup_analytics es lru_cache(1) y el bus es global de módulo —
-    limpiarlos para que cada test parta de cero."""
+    """setup_analytics y get_event_bus son lru_cache(1) — limpiar AMBAS caches
+    para que cada test parta de cero.
+
+    OJO: NO usar `importlib.reload(bus_module)` acá — reload crea una función
+    `get_event_bus` NUEVA (con cache vacía) pero `composition.py` conserva la
+    referencia VIEJA importada por valor, cuya cache (con el bus ya poblado
+    por tests anteriores) sigue viva → `setup_analytics()` agregaba un SEGUNDO
+    sink al bus viejo (assert 2 == 1, dependiente del orden de la corrida).
+    """
+    import src.platform.analytics.composition as comp
+
     setup_analytics.cache_clear()
-    importlib.reload(bus_module)
+    # La referencia que composition realmente usa + la del módulo bus (pueden
+    # divergir si algún test hizo reload antes).
+    comp.get_event_bus.cache_clear()
+    bus_module.get_event_bus.cache_clear()
 
 
 class TestSetupAnalytics:
@@ -40,7 +52,11 @@ class TestSetupAnalytics:
         import src.platform.analytics.composition as comp
 
         monkeypatch.setattr(comp, "WORKSPACE_VAULT_DIR", tmp_path)
-        comp.setup_analytics.cache_clear()
+        # Reset COMPLETO (cache + bus global): con solo cache_clear(), si otro
+        # test de la corrida ya había corrido setup_analytics, el bus global
+        # quedaba con su sink y acá se agregaba un SEGUNDO → assert 2 == 1
+        # (fallo dependiente del orden — pasaba en aislamiento).
+        _reset_analytics_singletons()
 
         bus = comp.setup_analytics()
 

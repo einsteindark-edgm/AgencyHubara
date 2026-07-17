@@ -94,7 +94,16 @@ def narrate(input: dict, *, llm) -> dict:
 
 
 def _fmt(v: str | None) -> str:
-    return _DASH if v is None else str(v)
+    """Presentación de un ratio (MER / drop-off): None → "—"; numérico → redondeado a 2
+    decimales (el analyzer serializa Decimal con cola larga — '0.7860605266605528…' — que
+    ni la tabla ni el prompt del LLM deben repetir; el LLM cita lo que recibe). No numérico
+    → tal cual (no adivinar)."""
+    if v is None:
+        return _DASH
+    try:
+        return str(round(float(v), 2))
+    except (TypeError, ValueError):
+        return str(v)
 
 
 def run(input: dict, *, ports: dict | None = None, tools: dict | None = None) -> dict:

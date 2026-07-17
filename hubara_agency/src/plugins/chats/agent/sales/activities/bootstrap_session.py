@@ -236,3 +236,35 @@ async def read_and_clear_pending_handoff_activity(session_id: str) -> str | None
             session_id,
         )
     return summary if summary else None
+
+
+@activity.defn(name="read_order_draft_note")
+async def read_order_draft_note_activity(session_id: str) -> str | None:
+    """Nota `[DATOS DEL PEDIDO YA CONFIRMADOS]` para el turno de HANDOFF.
+
+    Incidente 2026-07-17 (run 019f6db3): la inyección del draft al prompt
+    solo existía en el path del webhook (`ingest_inbound_message`). El turno
+    de handoff Remarketing→Sales arrancaba SIN el bloque aunque el draft
+    estuviera intacto en el vault — el LLM, ciego y con la orden de "retomar
+    donde quedó", exploró a ciegas y sobrescribió las notas del pedido
+    (destruyendo los signos elegidos) antes de descubrir el draft.
+
+    Mismo gate que el path del webhook (`get_projectable_draft`): episodio
+    activo, sin order_id, slots no vacíos → note; si no, None.
+    """
+    from src.plugins.chats.agent.sales.use_cases.order_draft import (
+        build_order_draft_note,
+        get_projectable_draft,
+    )
+
+    store = FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
+    metadata = store.read(session_id)
+    slots = get_projectable_draft(metadata)
+    if not slots:
+        return None
+    activity.logger.info(
+        "read_order_draft_note: draft proyectado al handoff session=%s slots=%s",
+        session_id,
+        sorted(slots.keys()),
+    )
+    return build_order_draft_note(slots)

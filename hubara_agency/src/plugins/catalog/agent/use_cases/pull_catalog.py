@@ -53,6 +53,25 @@ class PullCatalogUseCase:
 
 
 def _to_dto(mp: MedusaProduct) -> CatalogProductDTO:
+    # optval_id → título de la option dueña. Los option values de cada
+    # variante llegan con id+value pero sin el título del eje; el id-match
+    # contra product.options lo recupera sin tocar los modelos pydantic.
+    optval_to_option: dict[str, str] = {
+        val.id: opt.title for opt in mp.options for val in opt.values
+    }
+    product_options: dict[str, list[str]] | None = (
+        {opt.title: [val.value for val in opt.values] for opt in mp.options}
+        or None
+    )
+
+    def _variant_options(v) -> dict[str, str] | None:
+        mapped = {
+            optval_to_option[ov.id]: ov.value
+            for ov in v.options
+            if ov.id in optval_to_option
+        }
+        return mapped or None
+
     return CatalogProductDTO(
         id=mp.id,
         handle=mp.handle,
@@ -60,6 +79,7 @@ def _to_dto(mp: MedusaProduct) -> CatalogProductDTO:
         status=mp.status,
         description=mp.description,
         thumbnail=mp.thumbnail,
+        options=product_options,
         variants=[
             CatalogVariantDTO(
                 id=v.id,
@@ -74,6 +94,7 @@ def _to_dto(mp: MedusaProduct) -> CatalogProductDTO:
                     )
                     for p in v.prices
                 ],
+                options=_variant_options(v),
             )
             for v in mp.variants
         ],

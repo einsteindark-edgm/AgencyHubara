@@ -210,48 +210,13 @@ def _hash_item(item) -> str:
 def _dto_from_dict(d: dict) -> CatalogProductDTO:
     """Reconstruye CatalogProductDTO desde el dict serializado.
 
-    El JSON ya viene del pipeline (vía `asdict(CatalogProductDTO)`).
+    Delega en el parser CANÓNICO (`product_dto_from_raw`) — este archivo
+    tenía su propia copia que NO mapeaba `options` y el primer sync
+    post-#178 publicó el Duo Zodiacal como un solo item (2026-07-16).
     """
-    from src.platform.catalog.dtos import (
-        CatalogImageDTO,
-        CatalogPriceDTO,
-        CatalogVariantDTO,
-    )
+    from src.platform.catalog.dtos import product_dto_from_raw
 
-    variants = [
-        CatalogVariantDTO(
-            id=v["id"],
-            title=v["title"],
-            sku=v.get("sku"),
-            prices=[
-                CatalogPriceDTO(
-                    amount=p["amount"],
-                    currency_code=p["currency_code"],
-                    min_quantity=p.get("min_quantity"),
-                    max_quantity=p.get("max_quantity"),
-                )
-                for p in v.get("prices", [])
-            ],
-        )
-        for v in d.get("variants", [])
-    ]
-    images = [
-        CatalogImageDTO(url=i["url"], rank=i.get("rank", 0))
-        for i in d.get("images", [])
-    ]
-    return CatalogProductDTO(
-        id=d["id"],
-        handle=d["handle"],
-        title=d["title"],
-        status=d["status"],
-        description=d.get("description"),
-        thumbnail=d.get("thumbnail"),
-        variants=variants,
-        images=images,
-        tags=list(d.get("tags") or []),
-        categories=list(d.get("categories") or []),
-        metadata=d.get("metadata"),
-    )
+    return product_dto_from_raw(d)
 
 
 def _failed(

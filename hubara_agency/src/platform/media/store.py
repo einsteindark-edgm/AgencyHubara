@@ -121,6 +121,60 @@ def persist_inbound_image(
     return filename
 
 
+def persist_outbound_image(
+    session_id: str, data: bytes, mime_type: str | None, *, token: str
+) -> str:
+    """Guarda una foto que el OPERADOR humano manda al cliente.
+
+    Simétrico a :func:`persist_inbound_image` pero en el sentido saliente: el
+    operador sube la foto desde el dashboard/app y la persistimos en el mismo
+    vault para que el histórico del chat la pueda re-renderizar (el endpoint
+    ``GET /api/dashboard/media/...`` la sirve sin cambios).
+
+    A diferencia del inbound (keyed por el ``media_id`` de Meta, idempotente),
+    acá el nombre deriva de un ``token`` opaco que genera el caller (uuid) — no
+    tenemos el ``media_id`` hasta subir a Meta. El prefijo ``out-`` distingue
+    salientes de entrantes en el mismo directorio. Devuelve el ``filename``.
+    """
+    # El token lo generamos nosotros (uuid) pero defendemos igual: a diferencia
+    # de `_sanitize_media_id` (que preserva `.`), acá colapsamos TODO lo que no
+    # sea alfanumérico/`_`/`-` — así ningún `..` sobrevive en el filename.
+    safe_token = re.sub(r"[^A-Za-z0-9_-]", "_", token)[:120] or "img"
+    filename = f"out-{safe_token}{_ext_for_mime(mime_type)}"
+    media_dir = _media_dir(session_id)
+    media_dir.mkdir(parents=True, exist_ok=True)
+    (media_dir / filename).write_bytes(data)
+    return filename
+
+
+def delete_outbound_image(session_id: str, filename: str) -> None:
+    """Borra (best-effort) una foto saliente persistida por
+    :func:`persist_outbound_image` que quedó huérfana.
+
+    PM2-B7: la fase A persiste el archivo ANTES de subir a Meta; si la subida
+    falla, cada retry del operador genera OTRO uuid → OTRO archivo, y nadie
+    referencia ni limpia los anteriores (basura permanente en el vault). Solo
+    acepta filenames ``out-*`` (jamás borra media inbound del cliente) y aplica
+    las mismas guardas anti-traversal que el resto del módulo. Nunca lanza.
+    """
+    if not is_safe_segment(session_id) or not is_safe_segment(filename):
+        return
+    if not filename.startswith("out-"):
+        return
+    media_dir = _media_dir(session_id).resolve()
+    path = (media_dir / filename).resolve()
+    if media_dir != path.parent:
+        return
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        logger.warning(
+            "delete_outbound_image failed (best-effort)",
+            session_id=session_id,
+            filename=filename,
+        )
+
+
 def resolve_media_file(session_id: str, filename: str) -> Path | None:
     """Resuelve el archivo a servir, con guardas anti path-traversal.
 

@@ -139,6 +139,11 @@ def _render_worker_service(
     # P-20/P-21: todo worker corre con el set del artefacto explícito — el
     # self-gate del worker (plugin_runtime.ensure_plugin_enabled) lo lee.
     env_list.append(f"ENABLED_PLUGINS={enabled_csv}")
+    # Historial LLM en el volumen del vault (incidente 2026-07-17 run
+    # 019f6db3: el default <workspace>/sessions vive en la imagen → cada
+    # recreate del container borra la memoria conversacional). Global como
+    # ENABLED_PLUGINS: un worker nuevo jamás nace con amnesia silenciosa.
+    env_list.append("EXOCLAW_STATE_DIR=/app/hubara_vault/agent_state")
 
     depends_on: dict[str, dict[str, str]] = {}
     for dep in compose_hints.get("depends_on") or []:

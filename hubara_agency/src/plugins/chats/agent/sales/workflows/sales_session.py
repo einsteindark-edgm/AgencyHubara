@@ -36,6 +36,7 @@ with workflow.unsafe.imports_passed_through():
         flush_pending_ui_intents_activity,
         read_and_clear_pending_handoff_activity,
         read_idle_timeout_seconds_activity,
+        read_order_draft_note_activity,
     )
     from src.platform.contracts import EpisodeClosedDecision
     from src.plugins.chats.agent.sales.contracts import SalesSessionInput
@@ -131,6 +132,26 @@ class HubaraSalesSessionWorkflow:
     def is_processing(self) -> bool:
         return self._processing
 
+    async def _handoff_draft_context(self, session_id: str) -> list[str] | None:
+        """plugin_context del turno de HANDOFF: la note del draft del pedido.
+
+        Incidente 2026-07-17 (run 019f6db3): el bloque `[DATOS DEL PEDIDO YA
+        CONFIRMADOS]` solo se inyectaba en el path del webhook — el turno de
+        handoff Remarketing→Sales arrancaba ciego aunque el draft estuviera
+        intacto en el vault, y el LLM re-preguntaba (y pisaba) lo ya elegido.
+
+        Gated (R-DET): histories pre-deploy replayean sin la activity nueva.
+        """
+        if not workflow.patched("handoff-draft-note-v1"):
+            return None
+        draft_note = await workflow.execute_activity(
+            read_order_draft_note_activity,
+            session_id,
+            start_to_close_timeout=timedelta(seconds=10),
+            retry_policy=RetryPolicy(maximum_attempts=2),
+        )
+        return [draft_note] if draft_note else None
+
     def _coalesce_batch(self, batch: list[PendingMessage]) -> PendingMessage:
         """Coalescea una ráfaga en un solo turno (nota de ráfaga incluida).
 
@@ -199,7 +220,13 @@ class HubaraSalesSessionWorkflow:
             )
             if initial_handoff:
                 self._pending.append(
-                    PendingMessage(message=initial_handoff, is_handoff=True)
+                    PendingMessage(
+                        message=initial_handoff,
+                        is_handoff=True,
+                        plugin_context=await self._handoff_draft_context(
+                            session.session_id
+                        ),
+                    )
                 )
 
         while True:
@@ -248,7 +275,13 @@ class HubaraSalesSessionWorkflow:
                     )
                     if late_handoff:
                         self._pending.append(
-                            PendingMessage(message=late_handoff, is_handoff=True)
+                            PendingMessage(
+                                message=late_handoff,
+                                is_handoff=True,
+                                plugin_context=await self._handoff_draft_context(
+                                    session.session_id
+                                ),
+                            )
                         )
                         handled_without_ghosting = True
                     elif self._pending:
@@ -377,6 +410,15 @@ class HubaraSalesSessionWorkflow:
                     # ADR-001 + ADR-2026-05-20: si la tool emitio una decision,
                     # convertirla a un completion event y dispatchar por manifest.
                     # NO importar workflow classes de sibling agents (R-DIP #10).
+                    #
+                    # SOLO-REPLAY: desde la limpieza post-PR#113 la tool de tags
+                    # ya NO emite `schedule_remarketing` (la transition que
+                    # consumia el evento se elimino del manifest y el dispatcher
+                    # lo no-op-eaba). Este branch queda para replay de histories
+                    # viejas cuyo output de tool grabado SI trae el envelope
+                    # (el parser de workflow_helpers lo sigue entendiendo).
+                    # Ejecuciones nuevas: siempre None. Removible junto con el
+                    # deprecate_patch de abajo cuando drenen las histories.
                     #
                     # workflow.patched(): pre-deploy histories tienen
                     # `schedule_remarketing_workflow_activity` directo; el patched

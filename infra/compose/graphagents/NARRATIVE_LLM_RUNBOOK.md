@@ -51,7 +51,7 @@ disparando `graphagents-deploy.yml`):
 ```bash
 # en /opt/graphagents/ de la caja GraphAgents:
 sudo ./render-env-from-ssm.sh          # re-pulls /graphagents/* → .env (incluye las 2 nuevas)
-sudo docker compose -f docker-compose.prod.yml up -d graphagents   # toma el nuevo .env
+sudo docker compose -f docker-compose.yml up -d graphagents   # toma el nuevo .env
 ```
 
 > El flujo: `/graphagents/*` (SSM) → `render-env-from-ssm.sh` → `.env` → `env_file:` del servicio

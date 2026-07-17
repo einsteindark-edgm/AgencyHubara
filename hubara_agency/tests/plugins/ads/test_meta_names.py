@@ -67,9 +67,51 @@ class TestFetchMetaAdNames:
                 "ad_name": "Ad camiseta mundialista",
                 "campaign_name": "Día del Padre 2026",
                 "campaign_id": "CAMP_9",
+                "adset_id": None,
+                "adset_name": None,
                 "thumbnail_url": None,
             }
         }
+
+    def test_parses_adset_from_batch_response(self):
+        """Segmentación (2026-07-10): el batch pide adset{id,name} y el
+        resolver lo expone — es el eslabón ad→segmento de toda la feature."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert "adset{id,name}" in request.url.params["fields"]
+            return httpx.Response(
+                200,
+                json={
+                    "AD_1": {
+                        "id": "AD_1",
+                        "name": "Ad camiseta",
+                        "campaign": {"id": "CAMP_9", "name": "Día del Padre"},
+                        "adset": {"id": "ADSET_3", "name": "Hombres 25-45 Bogotá"},
+                    }
+                },
+            )
+
+        names = fetch_meta_ad_names(
+            ["AD_1"], token="TOK", transport=_mock_transport(handler)
+        )
+        assert names["AD_1"]["adset_id"] == "ADSET_3"
+        assert names["AD_1"]["adset_name"] == "Hombres 25-45 Bogotá"
+
+    def test_adset_none_when_absent(self):
+        """Ads sin adset en la respuesta (post orgánico / nodo raro) degradan
+        a None — el caller agrupa como 'sin segmento', nunca explota."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={"AD_1": {"id": "AD_1", "name": "Ad X"}},
+            )
+
+        names = fetch_meta_ad_names(
+            ["AD_1"], token="TOK", transport=_mock_transport(handler)
+        )
+        assert names["AD_1"]["adset_id"] is None
+        assert names["AD_1"]["adset_name"] is None
 
     def test_empty_when_no_token(self):
         assert fetch_meta_ad_names(["1"], token="") == {}
@@ -116,6 +158,25 @@ class TestEnrichCampaignNames:
         # el headline original no se pierde — pasa a creative_title
         assert out[0].creative_title == "Chatea con nosotros"
         assert out[0].meta_campaign_id == "CAMP_9"
+
+    def test_fills_adset_on_summary(self):
+        """Segmentación (2026-07-10): el enrichment baja el segmento al
+        summary — `ad_set` (nombre, para el inspector) + `meta_adset_id`
+        (para agrupar el drill-down por segmento)."""
+        camp = _summary()
+        names = {
+            "120243120899820317": {
+                "ad_name": "Ad camiseta",
+                "campaign_name": "Día del Padre 2026",
+                "campaign_id": "CAMP_9",
+                "adset_id": "ADSET_3",
+                "adset_name": "Hombres 25-45 Bogotá",
+                "thumbnail_url": None,
+            }
+        }
+        out = enrich_campaign_names([camp], names)
+        assert out[0].ad_set == "Hombres 25-45 Bogotá"
+        assert out[0].meta_adset_id == "ADSET_3"
 
     def test_untouched_when_id_not_in_names(self):
         camp = _summary()

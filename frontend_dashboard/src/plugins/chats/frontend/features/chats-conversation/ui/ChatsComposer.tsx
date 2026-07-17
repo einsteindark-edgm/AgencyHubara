@@ -13,8 +13,9 @@
  * solo de vuelta gracias a `invalidateQueries`.
  */
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Icon } from "@/shared/ui";
+import { IS_MOBILE_APP } from "@/shared/lib";
 import { useSession } from "@plugins/chats/frontend/entities/session";
 import {
   useInterveneMutation,
@@ -22,7 +23,12 @@ import {
   useSendHumanMessageMutation,
   type TargetRoute,
 } from "@plugins/chats/frontend/entities/handoff";
+import { useOutbox } from "../model/useOutbox";
 import { ConfirmPaymentAction } from "./ConfirmPaymentAction";
+import { ScheduleDeliveryAction } from "./ScheduleDeliveryAction";
+
+/** Solo JPEG/PNG (lo que WhatsApp renderiza como `type=image`). */
+const ACCEPTED_IMAGE_TYPES = "image/jpeg,image/png";
 
 interface Props {
   chatId: string | null;
@@ -103,16 +109,35 @@ function InterveneActiveComposer({
 }: InterveneActiveProps) {
   const [text, setText] = useState("");
   const [showReturnPicker, setShowReturnPicker] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  // PM-007: un solo popover de acción de pedido abierto a la vez — con los
+  // dos abiertos se superponían (mismo anclaje right:0) y el operador podía
+  // disparar schedule desde ambos en paralelo.
+  const [openAction, setOpenAction] = useState<"schedule" | "confirm" | null>(
+    null,
+  );
 
   const sendMessage = useSendHumanMessageMutation(chatId);
+  const outbox = useOutbox(chatId);
 
   const onSend = () => {
     const value = text.trim();
+    // Enviar la FOTO no bloquea el texto: mandar texto es independiente. Si el
+    // operador escribió algo, lo mandamos como mensaje de texto normal.
     if (!value || !chatId || sendMessage.isPending) return;
-    sendMessage.mutate(
-      { text: value },
-      { onSuccess: () => setText("") },
-    );
+    sendMessage.mutate({ text: value }, { onSuccess: () => setText("") });
+  };
+
+  // Picker nativo → encola cada foto en el outbox (usa el texto actual como
+  // caption y lo limpia). El composer nunca se bloquea; se pueden encolar más.
+  const onPickFiles = (list: FileList | null) => {
+    if (!chatId || !list || list.length === 0) return;
+    const files = Array.from(list);
+    void outbox.enqueue(files, text.trim());
+    setText("");
+    if (fileInputRef.current) fileInputRef.current.value = "";
+    if (cameraInputRef.current) cameraInputRef.current.value = "";
   };
 
   return (
@@ -124,7 +149,18 @@ function InterveneActiveComposer({
         </span>
         <span className="right">
           {pendingPaymentOrderId && (
-            <ConfirmPaymentAction orderId={pendingPaymentOrderId} />
+            <>
+              <ScheduleDeliveryAction
+                orderId={pendingPaymentOrderId}
+                open={openAction === "schedule"}
+                onOpenChange={(v) => setOpenAction(v ? "schedule" : null)}
+              />
+              <ConfirmPaymentAction
+                orderId={pendingPaymentOrderId}
+                open={openAction === "confirm"}
+                onOpenChange={(v) => setOpenAction(v ? "confirm" : null)}
+              />
+            </>
           )}
           <button
             className="interv-off"
@@ -133,22 +169,70 @@ function InterveneActiveComposer({
           >
             Devolver al bot
           </button>
-          <kbd>⌘↩</kbd>
+          {/* PM2-M10: el atajo de teclado no existe en Android. */}
+          {!IS_MOBILE_APP && <kbd>⌘↩</kbd>}
         </span>
       </div>
+
+      {outbox.items.length > 0 && (
+        <OutboxStrip items={outbox.items} onRetry={outbox.retry} onRemove={outbox.remove} />
+      )}
+
       <div className="composer-row">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept={ACCEPTED_IMAGE_TYPES}
+          multiple
+          hidden
+          data-testid="chat-file-input"
+          onChange={(e) => onPickFiles(e.target.files)}
+        />
+        {/* `capture=environment` abre la cámara trasera en Android; solo móvil. */}
+        {IS_MOBILE_APP && (
+          <input
+            ref={cameraInputRef}
+            type="file"
+            accept={ACCEPTED_IMAGE_TYPES}
+            capture="environment"
+            hidden
+            data-testid="chat-camera-input"
+            onChange={(e) => onPickFiles(e.target.files)}
+          />
+        )}
+        <button
+          type="button"
+          className="attach-btn"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={!chatId}
+          title="Adjuntar foto"
+          aria-label="Adjuntar foto"
+        >
+          <Icon.attach />
+        </button>
+        {IS_MOBILE_APP && (
+          <button
+            type="button"
+            className="camera-btn"
+            onClick={() => cameraInputRef.current?.click()}
+            disabled={!chatId}
+            title="Tomar foto"
+            aria-label="Tomar foto"
+          >
+            <Icon.img />
+          </button>
+        )}
         <textarea
           placeholder="Escribe un mensaje al cliente…"
           rows={1}
-          autoFocus
+          // PM2-M10: en el teléfono, autoFocus abre el TECLADO al entrar a
+          // cualquier chat intervenido — con `resizes-content` eso colapsa
+          // media pantalla de conversación sin que el operador quiera escribir.
+          autoFocus={!IS_MOBILE_APP}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
-            if (
-              e.key === "Enter" &&
-              (e.metaKey || e.ctrlKey) &&
-              !e.shiftKey
-            ) {
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
               e.preventDefault();
               onSend();
             }
@@ -175,6 +259,60 @@ function InterveneActiveComposer({
           onClose={() => setShowReturnPicker(false)}
         />
       )}
+    </div>
+  );
+}
+
+// ─── Tira de fotos en vuelo (optimista) ────────────────────────────────────
+
+interface OutboxStripProps {
+  items: ReturnType<typeof useOutbox>["items"];
+  onRetry: (id: string) => void;
+  onRemove: (id: string) => void;
+}
+
+function OutboxStrip({ items, onRetry, onRemove }: OutboxStripProps) {
+  return (
+    <div className="outbox-strip" aria-label="Fotos en envío">
+      {items.map((it) => (
+        <div key={it.id} className={`outbox-item is-${it.status}`}>
+          {it.previewUrl && <img src={it.previewUrl} alt="Foto en envío" />}
+          {it.status === "uploading" && (
+            <div className="outbox-progress" role="progressbar">
+              <span style={{ width: `${Math.round(it.progress * 100)}%` }} />
+            </div>
+          )}
+          {(it.status === "compressing" || it.status === "sending") && (
+            <span className="outbox-spinner" aria-label="Enviando" />
+          )}
+          {it.status === "failed" && (
+            <div className="outbox-failed">
+              <button
+                type="button"
+                className="outbox-retry"
+                onClick={() => onRetry(it.id)}
+              >
+                Reintentar
+              </button>
+              <button
+                type="button"
+                className="outbox-discard"
+                onClick={() => onRemove(it.id)}
+                aria-label="Descartar"
+                title="Descartar"
+              >
+                ✕
+              </button>
+              {/* PM-F6: el error VISIBLE, no en un tooltip — en touch no hay hover. */}
+              {it.error && (
+                <span className="outbox-err-text" role="alert">
+                  {it.error}
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }

@@ -122,5 +122,21 @@ async def poll_window_strategist_activity(execution_id: str) -> dict[str, Any]:
     from src.sdk.graphagentskit import interpret
 
     launcher = get_launcher()
-    # boto3 sync → thread (PM-007): no bloquear el event loop del worker.
-    return interpret(await asyncio.to_thread(launcher.fetch_status, execution_id))
+    try:
+        # boto3 sync → thread (PM-007): no bloquear el event loop del worker.
+        raw = await asyncio.to_thread(launcher.fetch_status, execution_id)
+    except Exception as e:
+        # Eslabón 9 de la cadena dispatch (PR #153): el autostop puede apagar
+        # la caja con el resultado sin cosechar — la despertamos ANTES de que
+        # Temporal reintente este poll, o el run queda inalcanzable (ciclos de
+        # InvalidInstanceId para siempre).
+        activity.logger.warning(
+            "reengagement: poll de %s falló (%s: %s) — despierto la caja "
+            "y dejo que el retry reintente.",
+            execution_id,
+            type(e).__name__,
+            e,
+        )
+        await asyncio.to_thread(launcher.start_box)
+        raise
+    return interpret(raw)

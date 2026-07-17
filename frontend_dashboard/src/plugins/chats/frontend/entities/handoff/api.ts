@@ -9,14 +9,67 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/shared/api/client";
+import { env, getAccessToken } from "@/shared/config";
 import { sessionKeys } from "@plugins/chats/frontend/entities/session";
 import {
   handoffResponseSchema,
   humanMessageResponseSchema,
+  mediaUploadResponseSchema,
   type HandoffResponse,
   type HumanMessageResponse,
+  type MediaUploadResponse,
   type ReturnToBotInput,
+  type SendHumanMessageInput,
 } from "./contracts";
+
+/**
+ * Fase A del envío de foto: sube el blob (ya comprimido) al backend, que lo
+ * persiste + lo sube a Meta, devolviendo el `attachment_id`.
+ *
+ * Usa XHR y NO `apiClient` a propósito: XHR expone `upload.onprogress` (fetch
+ * no lo hace en el WebView), clave para la barra de progreso en red celular.
+ * `onProgress` recibe 0..1. Adjunta el Bearer de Cognito igual que el client.
+ */
+export function uploadHumanMedia(
+  sessionId: string,
+  blob: Blob,
+  filename: string,
+  onProgress?: (fraction: number) => void,
+): Promise<MediaUploadResponse> {
+  return new Promise((resolve, reject) => {
+    const form = new FormData();
+    form.append("file", blob, filename);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${env.apiUrl}/api/dashboard/sessions/${sessionId}/media`);
+    const token = getAccessToken();
+    if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+
+    // PM-F5: sin timeout, una red celular que muere sin cerrar el socket deja
+    // el item en "uploading" con la barra congelada PARA SIEMPRE (el estado
+    // failed es el único con botón Reintentar).
+    xhr.timeout = 60_000;
+    xhr.ontimeout = () =>
+      reject(new Error("la subida tardó demasiado — revisá la señal y reintentá"));
+
+    xhr.upload.onprogress = (e) => {
+      if (onProgress && e.lengthComputable) onProgress(e.loaded / e.total);
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          resolve(mediaUploadResponseSchema.parse(JSON.parse(xhr.responseText)));
+        } catch (err) {
+          reject(err instanceof Error ? err : new Error("respuesta inválida"));
+        }
+      } else {
+        reject(new Error(`upload falló (HTTP ${xhr.status})`));
+      }
+    };
+    xhr.onerror = () => reject(new Error("error de red al subir la imagen"));
+    xhr.send(form);
+  });
+}
 
 /** Toma el control de la conversación. Idempotente desde el servidor. */
 export function useInterveneMutation(sessionId: string | null) {
@@ -47,12 +100,12 @@ export function useInterveneMutation(sessionId: string | null) {
  */
 export function useSendHumanMessageMutation(sessionId: string | null) {
   const qc = useQueryClient();
-  return useMutation<HumanMessageResponse, Error, { text: string }>({
-    mutationFn: async ({ text }) => {
+  return useMutation<HumanMessageResponse, Error, SendHumanMessageInput>({
+    mutationFn: async (input) => {
       if (!sessionId) throw new Error("No session selected");
       const raw = await apiClient.post<unknown>(
         `/api/dashboard/sessions/${sessionId}/messages`,
-        { text },
+        input,
       );
       return humanMessageResponseSchema.parse(raw);
     },

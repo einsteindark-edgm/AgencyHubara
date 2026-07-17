@@ -68,6 +68,8 @@ export interface AnalysisReport {
   markdown: string;
   verdict: string | null;
   qaPassed: boolean | null;
+  /** La narrativa interpretativa del LLM — null si el nodo degradó o el record es viejo. */
+  narrative: string | null;
 }
 
 /**
@@ -82,6 +84,10 @@ export function analysisReport(result: unknown): AnalysisReport | null {
     markdown: r.markdown,
     verdict: typeof r.verdict === "string" ? r.verdict : null,
     qaPassed: typeof r.qa_passed === "boolean" ? r.qa_passed : null,
+    narrative:
+      typeof r.narrative === "string" && r.narrative.trim() !== ""
+        ? r.narrative
+        : null,
   };
 }
 

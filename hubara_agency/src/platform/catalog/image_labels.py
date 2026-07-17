@@ -17,6 +17,7 @@ Heurística (en orden):
 from __future__ import annotations
 
 import re
+import unicodedata
 from urllib.parse import unquote, urlparse
 
 # Sufijo de id opaco: ULIDs de Medusa (26 chars) o hashes largos.
@@ -72,3 +73,20 @@ def derive_image_label(url: str) -> str | None:
     # Capitalizar solo la primera letra; el case interno se respeta
     # ("Acuario" queda igual, "sagrado rostro" → "Sagrado rostro").
     return stem[0].upper() + stem[1:]
+
+
+def fold_for_match(value: str) -> str:
+    """Normaliza un label / option value para COMPARAR (no para mostrar).
+
+    lowercase + sin tildes (NFD, drop combining marks). El operador escribe
+    "Géminis" en la option de Medusa pero el filename del asset va sin tilde
+    ("Geminis-*.webp") — la comparación cruda los trata como distintos y la
+    variante cae silenciosamente a la foto de portada (premortem PR
+    variantes, §4.7). El valor CANÓNICO para display sigue siendo el
+    original; esta función es solo la llave de matching.
+    """
+    decomposed = unicodedata.normalize("NFD", value)
+    stripped = "".join(
+        ch for ch in decomposed if not unicodedata.combining(ch)
+    )
+    return stripped.strip().lower()

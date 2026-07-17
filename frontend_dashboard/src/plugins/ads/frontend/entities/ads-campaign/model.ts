@@ -144,6 +144,9 @@ export interface AdsCampaign {
   audience: string | null;
   daysRun: number | null;
   metaCampaignId: string | null;
+  /** Segmento (ad set) de Meta al que pertenece el bucket. En una fila de
+   *  campaña multi-ad queda null; en una fila de segmento es su propio id. */
+  metaAdsetId: string | null;
   adSet: string | null;
   creativeTitle: string | null;
   /** Thumbnail real del creativo del ad (Graph `creative{thumbnail_url}`). */

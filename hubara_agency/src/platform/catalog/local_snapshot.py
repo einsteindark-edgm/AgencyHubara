@@ -11,15 +11,12 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
 
 from src.platform.catalog.dtos import (
-    CatalogImageDTO,
     CatalogManifestDTO,
-    CatalogPriceDTO,
     CatalogProductDTO,
-    CatalogVariantDTO,
     SearchResult,
+    product_dto_from_raw,
 )
 from src.platform.catalog.errors import (
     CatalogUnavailableError,
@@ -193,41 +190,6 @@ def _matches(p: CatalogProductDTO, q_lower: str) -> bool:
 # ---------- raw → DTO ----------
 
 
-def _product_from_raw(raw: dict[str, Any]) -> CatalogProductDTO:
-    return CatalogProductDTO(
-        id=str(raw["id"]),
-        handle=str(raw["handle"]),
-        title=str(raw["title"]),
-        status=str(raw.get("status", "published")),
-        description=raw.get("description"),
-        thumbnail=raw.get("thumbnail"),
-        variants=[_variant_from_raw(v) for v in raw.get("variants", [])],
-        images=[
-            CatalogImageDTO(url=i["url"], rank=int(i.get("rank", 0)))
-            for i in raw.get("images", [])
-        ],
-        tags=list(raw.get("tags", [])),
-        categories=list(raw.get("categories", [])),
-        metadata=(
-            {k: str(v) for k, v in (raw.get("metadata") or {}).items()}
-            if raw.get("metadata")
-            else None
-        ),
-    )
-
-
-def _variant_from_raw(raw: dict[str, Any]) -> CatalogVariantDTO:
-    return CatalogVariantDTO(
-        id=str(raw["id"]),
-        title=str(raw["title"]),
-        sku=raw.get("sku"),
-        prices=[
-            CatalogPriceDTO(
-                amount=str(p["amount"]),
-                currency_code=str(p["currency_code"]),
-                min_quantity=p.get("min_quantity"),
-                max_quantity=p.get("max_quantity"),
-            )
-            for p in raw.get("prices", [])
-        ],
-    )
+# Parser raw→DTO canónico compartido con el push (lección del primer sync
+# post-#178: dos copias divergieron y el push perdió `options`).
+_product_from_raw = product_dto_from_raw

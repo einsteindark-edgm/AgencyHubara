@@ -48,7 +48,7 @@ from src.platform.catalog import CatalogPort, ProductNotFoundError
 from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.state import FilesystemMetadataStore
 from src.platform.whatsapp import limits as wa_limits
-from src.plugins.chats.shared.image_labels import derive_image_label
+from src.sdk.mediakit import derive_image_label
 
 
 def _product_designs(product) -> list[str]:
@@ -101,6 +101,21 @@ def _append_intent(session_key: str, intent: dict[str, Any]) -> None:
     })
     data["pending_ui_intents"] = intents
     store.write(session_key, data)
+
+
+def _meta_retailer_id(product) -> str:
+    """Retailer id VIGENTE del producto en Meta Catalog.
+
+    Producto con variantes reales (options + 2+ variantes): Meta tiene un
+    item POR variante (`retailer_id = variant_id`, PR #178/#179) y el item
+    a nivel producto YA NO EXISTE — referenciarlo hace que WhatsApp dropee
+    el producto del MPM en silencio (caso Duo Zodiacal, 2026-07-16, sesión
+    wa_573125671604). Usamos la PRIMERA variante (determinista). Producto
+    legacy → product.id como siempre.
+    """
+    if getattr(product, "options", None) and len(product.variants or []) > 1:
+        return product.variants[0].id
+    return product.id
 
 
 def _first_price(product) -> tuple[str | None, str | None]:
@@ -436,7 +451,9 @@ class PresentProductsTool(ToolBase):
                     "id": p.handle,  # closed-list: row id = handle
                     "title": p.title,
                     "description": desc,
-                    "product_retailer_id": p.id,  # para A.11 product_list
+                    # Para A.11 product_list — id del item VIGENTE en Meta
+                    # (variante para productos con options, ver helper).
+                    "product_retailer_id": _meta_retailer_id(p),
                 })
             sections_payload.append({"title": sec_title, "rows": rows})
 
@@ -742,7 +759,7 @@ class PresentOrderConfirmationTool(ToolBase):
             try:
                 product = await self._catalog.get_by_handle(handle)
                 title = product.title
-                retailer_id = product.id
+                retailer_id = _meta_retailer_id(product)
                 # Resolver precio del snapshot para validación
                 sp, _sc = _first_price(product)
                 if sp is not None:

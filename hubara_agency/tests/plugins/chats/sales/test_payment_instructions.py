@@ -55,6 +55,7 @@ class FakePort:
         shipping_cop: int,
         total_cop: int,
         currency: str = "COP",
+        attribution: dict[str, Any] | None = None,
     ) -> OrderRegistrationResult:
         self.calls.append({"payment_method": payment_method})
         if self.return_success:

@@ -3,8 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>frontend_dashboard</title>
+    <!-- interactive-widget=resizes-content: el teclado de Android REDIMENSIONA
+         el viewport en vez de taparlo — sin esto el composer queda detrás del
+         teclado y el operador escribe a ciegas (PM-F8). -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content"
+    />
+    <meta name="theme-color" content="#1c1c1e" />
+    <title>Hubara Chats</title>
   </head>
   <body>
     <div id="root"></div>

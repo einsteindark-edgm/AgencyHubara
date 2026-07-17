@@ -14,23 +14,38 @@
  */
 import { useEffect } from "react";
 
-import { usePluginHost, useSelection } from "@/shared/lib";
+import { IS_MOBILE_APP, usePluginHost, useSelection } from "@/shared/lib";
 
 import {
   useChatInbox,
   useSessionsStream,
 } from "@plugins/chats/frontend/entities/chat";
 
-import { ChatsInbox } from "@plugins/chats/frontend/features/chats-inbox";
+import {
+  ChatsInbox,
+  useHandoffNotifications,
+} from "@plugins/chats/frontend/features/chats-inbox";
 import { ChatsConversation } from "@plugins/chats/frontend/features/chats-conversation";
 import { ChatsInspector } from "@plugins/chats/frontend/features/chats-inspector";
+import { MobileChatsLayout } from "./MobileChatsLayout";
 
 export function ChatsSection() {
+  // En teléfono el layout de 3 columnas es inutilizable: se muestra UNA columna
+  // a la vez (inbox → conversación) con navegación propia. El data-layer (SSE,
+  // hooks, auth) es idéntico; solo cambia la composición visual.
+  if (IS_MOBILE_APP) return <MobileChatsLayout />;
+  return <DesktopChatsLayout />;
+}
+
+function DesktopChatsLayout() {
   // F7: chrome + selección llegan por el PluginHost (contrato genérico).
   const { showSidebar, showInspector } = usePluginHost();
   const [selectedChatId, setSelectedChatId] = useSelection("chats");
   useSessionsStream();
   const { data: chats = [] } = useChatInbox();
+  // Notificación del sistema al operador cuando el bot escala un chat a
+  // humano y el dashboard no está en foco (mismo hook que usa el móvil).
+  useHandoffNotifications(chats);
   useEffect(() => {
     if (selectedChatId == null && chats.length > 0) {
       setSelectedChatId(chats[0].id);

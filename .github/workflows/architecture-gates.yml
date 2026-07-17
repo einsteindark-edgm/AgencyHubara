@@ -112,6 +112,10 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         if: needs.changes.outputs.central == 'true'
         with:
+          # Version pineada: sin esto setup-uv resuelve "latest release" contra
+          # la API de GitHub en cada run — un outage de la API (2026-07-16,
+          # run 29540407054) tumbó los gates de backend en cadena.
+          version: "0.7.20"
           python-version: "3.11"
 
       - name: Instalar deps (uv workspace, lock en la raíz)
@@ -216,6 +220,10 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         if: needs.changes.outputs.central == 'true'
         with:
+          # Version pineada: sin esto setup-uv resuelve "latest release" contra
+          # la API de GitHub en cada run — un outage de la API (2026-07-16,
+          # run 29540407054) tumbó los gates de backend en cadena.
+          version: "0.7.20"
           python-version: "3.11"
 
       - name: Instalar deps (uv workspace, lock en la raíz)

@@ -45,8 +45,20 @@ def ads_app(monkeypatch: pytest.MonkeyPatch) -> tuple[list[str], FastAPI]:
     es un test de comportamiento end-to-end del discovery, no un fixture sintético.
     """
     monkeypatch.setenv("ENABLED_PLUGINS", "ads")
+    saved = sys.modules.get("src.main")
     sys.modules.pop("src.main", None)
     import src.main as mod
+
+    # Restaurar el módulo ORIGINAL en el registry: el re-import de arriba dejó
+    # en sys.modules un src.main cuyo `app` global se construyó con
+    # ENABLED_PLUGINS=ads — cualquier test posterior que haga
+    # `from src.main import app` recibía una app SOLO-ads (404 en rutas de
+    # chats; fallo dependiente del orden). El módulo fresco solo se usa acá
+    # vía la referencia local `mod`.
+    if saved is not None:
+        sys.modules["src.main"] = saved
+    else:
+        sys.modules.pop("src.main", None)
 
     fresh = FastAPI()
     loaded = mod._bootstrap_routers(fresh)

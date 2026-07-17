@@ -1,20 +1,64 @@
 """Conversation activities — build prompts and record turn history.
 
 Uses DefaultConversation from exoclaw-conversation, same as nanobot.
-The conversation JSONL files live on the shared workspace volume so any
-worker pod can read/write them.
+
+DÓNDE VIVE EL HISTORIAL (incidente 2026-07-17, run 019f6db3):
+por default las sessions JSONL van a `<workspace>/sessions/` — pero el
+workspace viaja DENTRO de la imagen del container, así que cada deploy
+borraba la memoria conversacional de todos los clientes activos (2 veces
+en prod). Con `EXOCLAW_STATE_DIR` seteado (prod: un path dentro del volumen
+persistente), el ESTADO (sessions) se muda a
+`$EXOCLAW_STATE_DIR/<slug-del-workspace>/sessions/` — con un subdir por
+workspace porque agentes distintos (sales/remarketing) comparten
+session_ids (`wa_<phone>`) y sin aislamiento se mezclarían.
+
+Los prompts/skills (ContextBuilder) y la memoria consolidada (MemoryStore)
+siguen leyéndose del workspace de CÓDIGO: solo el historial se muda.
+Env var ausente → comportamiento legacy intacto (dev/tests).
 """
 
 from __future__ import annotations
 
+import logging
+import os
+import re
 from pathlib import Path
 from typing import Any
 
-from temporalio import activity
-
 from exoclaw_conversation.conversation import DefaultConversation
 from exoclaw_provider_litellm.provider import LiteLLMProvider
+from temporalio import activity
+
 from exoclaw_temporal.config import BuildPromptInput, LLMConfig, RecordTurnInput, WorkspaceConfig
+
+log = logging.getLogger(__name__)
+
+
+def _state_workspace_for(code_workspace: Path) -> Path | None:
+    """Root de ESTADO para este workspace, o None si no hay override.
+
+    Slug determinista desde el path absoluto del workspace de código —
+    único por agente, estable entre deploys. OJO: mover/renombrar el
+    workspace cambia el slug (el historial viejo queda en disco bajo el
+    slug anterior — migración manual si importa).
+    """
+    state_root_raw = (os.environ.get("EXOCLAW_STATE_DIR") or "").strip()
+    if not state_root_raw:
+        return None
+    state_root = Path(state_root_raw)
+    # Guard anti-amnesia-silenciosa (premortem PR #183 §4.8): si el PADRE
+    # del state root no existe, casi seguro el volumen persistente NO está
+    # montado en este container — ensure_dir crearía el path en el fs
+    # efímero y el historial volvería a morir con cada deploy, sin señal.
+    if not state_root.exists() and not state_root.parent.exists():
+        log.warning(
+            "EXOCLAW_STATE_DIR=%s: ni el dir ni su padre existen — ¿falta el "
+            "mount del volumen persistente en este container? El historial se "
+            "escribirá igual, pero puede ser EFÍMERO.",
+            state_root_raw,
+        )
+    slug = re.sub(r"[^A-Za-z0-9]+", "-", str(code_workspace.resolve())).strip("-")
+    return state_root / slug
 
 
 def _build_conversation(llm: LLMConfig, ws: WorkspaceConfig) -> DefaultConversation:
@@ -24,10 +68,28 @@ def _build_conversation(llm: LLMConfig, ws: WorkspaceConfig) -> DefaultConversat
         default_model=llm.model,
         extra_headers=llm.extra_headers or None,
     )
-    return DefaultConversation.create(
-        workspace=Path(ws.path),
-        provider=provider,
-        model=llm.model,
+    code_workspace = Path(ws.path)
+    state_workspace = _state_workspace_for(code_workspace)
+    if state_workspace is None:
+        return DefaultConversation.create(
+            workspace=code_workspace,
+            provider=provider,
+            model=llm.model,
+            memory_window=llm.memory_window,
+        )
+
+    # Construcción manual espejo de `DefaultConversation.create`, con el
+    # HistoryStore apuntando al state dir persistente. Memory y prompts
+    # quedan en el workspace de código (ver docstring del módulo).
+    from exoclaw_conversation.context import ContextBuilder
+    from exoclaw_conversation.memory import MemoryStore
+    from exoclaw_conversation.session.manager import SessionManager
+
+    memory = MemoryStore(code_workspace, provider, llm.model)
+    return DefaultConversation(
+        history=SessionManager(state_workspace),
+        memory=memory,
+        prompt=ContextBuilder(code_workspace, memory=memory),
         memory_window=llm.memory_window,
     )
 

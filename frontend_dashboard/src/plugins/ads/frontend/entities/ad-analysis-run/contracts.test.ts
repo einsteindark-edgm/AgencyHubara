@@ -105,7 +105,24 @@ describe("ad-analysis-run contracts", () => {
 });
 
 describe("analysisReport — el reporte proyectado del pod", () => {
-  it("extrae markdown/verdict/qa_passed del result proyectado (_projected_from)", async () => {
+  it("extrae markdown/verdict/qa_passed/narrative del result proyectado (_projected_from)", async () => {
+    const { analysisReport } = await import("./model");
+    const rep = analysisReport({
+      markdown: "## Hubara — Ads Analytics",
+      verdict: "ok",
+      qa_passed: true,
+      narrative: "El MER del periodo fue 2.1 — conviene escalar.",
+      _projected_from: "ctwa-report",
+    });
+    expect(rep).toEqual({
+      markdown: "## Hubara — Ads Analytics",
+      verdict: "ok",
+      qaPassed: true,
+      narrative: "El MER del periodo fue 2.1 — conviene escalar.",
+    });
+  });
+
+  it("sin narrative (LLM degradado o record viejo) → narrative: null", async () => {
     const { analysisReport } = await import("./model");
     const rep = analysisReport({
       markdown: "## Hubara — Ads Analytics",
@@ -113,11 +130,7 @@ describe("analysisReport — el reporte proyectado del pod", () => {
       qa_passed: true,
       _projected_from: "ctwa-report",
     });
-    expect(rep).toEqual({
-      markdown: "## Hubara — Ads Analytics",
-      verdict: "ok",
-      qaPassed: true,
-    });
+    expect(rep?.narrative).toBeNull();
   });
 
   it("result legacy sin markdown → null (la UI cae al JSON crudo)", async () => {

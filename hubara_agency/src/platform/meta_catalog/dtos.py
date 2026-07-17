@@ -59,6 +59,11 @@ class MetaCatalogItem:
     # Custom data (libre)
     custom_data_tags: str | None = None  # JSON-encoded tags array
 
+    # Agrupador de variantes (feed spec `item_group_id`): items que son
+    # variantes del MISMO producto (Duo Zodiacal · Leo / · Tauro / ...)
+    # comparten el product id acá. None = producto sin variantes reales.
+    item_group_id: str | None = None
+
 
 @dataclass(frozen=True)
 class MetaBatchRequest:

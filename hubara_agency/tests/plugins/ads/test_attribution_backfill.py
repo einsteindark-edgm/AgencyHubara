@@ -113,6 +113,50 @@ def test_plan_without_seeds_leaves_unknown_orders_untouched() -> None:
     assert plan == [{"order_id": "draft_X", "action": "unmatched", "patch": {}}]
 
 
+def test_plan_real_includes_adset_when_resolvable() -> None:
+    """Segmentación (2026-07-10): el patch real estampa también el segmento
+    (`meta_adset_id`/`meta_adset_name`) cuando el resolver lo trae — así las
+    ventas Medusa quedan relacionadas por ad set, no solo por campaña."""
+    orders = [{"id": "draft_A", "metadata": {}}]
+    idx = {"draft_A": {"meta_ad_id": "AD_1", "attribution_channel": "ad"}}
+    plan = plan_order_patches(
+        orders,
+        idx,
+        {"AD_1": "c-77"},
+        [],
+        ad_to_adset={"AD_1": ("ADSET_A", "Hombres 25-45")},
+    )
+    patch = plan[0]["patch"]
+    assert patch["meta_adset_id"] == "ADSET_A"
+    assert patch["meta_adset_name"] == "Hombres 25-45"
+    assert patch["meta_campaign_id"] == "c-77"
+
+
+def test_plan_upgrades_attributed_order_missing_adset() -> None:
+    """Orden que YA tiene meta_ad_id (forward-stamping / backfill previo)
+    pero sin segmento → action `adset_upgrade` con SOLO los campos de adset
+    (no re-escribe la atribución existente). Idempotente: si ya tiene
+    meta_adset_id → skip como siempre."""
+    orders = [
+        {"id": "draft_old", "metadata": {"meta_ad_id": "AD_1", "meta_campaign_id": "c-77"}},
+        {"id": "draft_done", "metadata": {"meta_ad_id": "AD_1", "meta_adset_id": "ADSET_A"}},
+    ]
+    plan = plan_order_patches(
+        orders,
+        {},
+        {"AD_1": "c-77"},
+        [],
+        ad_to_adset={"AD_1": ("ADSET_A", "Hombres 25-45")},
+    )
+    by_id = {p["order_id"]: p for p in plan}
+    assert by_id["draft_old"]["action"] == "adset_upgrade"
+    assert by_id["draft_old"]["patch"] == {
+        "meta_adset_id": "ADSET_A",
+        "meta_adset_name": "Hombres 25-45",
+    }
+    assert by_id["draft_done"]["action"] == "skip"
+
+
 def test_plan_skips_canceled_orders() -> None:
     # Una orden CANCELADA no es una venta: no recibe atribución (además Medusa
     # rechaza updates sobre canceladas — caso real: order #1 de prueba, 2026-07-09).

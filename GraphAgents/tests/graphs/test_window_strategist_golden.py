@@ -61,11 +61,41 @@ def test_golden_dispatch_list_exacta() -> None:
                 "reason": "csw_free_form",
                 "priority": 3,
             },
+            # 🔥 Escalera por calor: carrito abandonado (has_order_draft) con
+            # 1h de silencio → piso hot, DESPACHA (el piso plano de 4h lo
+            # suprimía — mejores prácticas: primer toque a los 30-60 min).
+            {
+                "kind": "reengagement_dispatch",
+                "session_id": "wa_hot_cart",
+                "recommended_channel": "free_form",
+                "recommended_category": "service",
+                "reason": "csw_free_form",
+                "priority": 4,
+            },
+            # 🔥 Piso hot = 30 min (borde inferior del rango estudiado): un
+            # carrito con 35 min de silencio ya despacha. Con el ciclo de
+            # 45 min el toque cae en [30, 75] min de silencio.
+            {
+                "kind": "reengagement_dispatch",
+                "session_id": "wa_hot_cart_35m",
+                "recommended_channel": "free_form",
+                "recommended_category": "service",
+                "reason": "csw_free_form",
+                "priority": 5,
+            },
         ],
         "suppressed": [
             {"session_id": "wa_cold", "reason": "fase_b_cold_suppressed"},
             {"session_id": "wa_cadence_capped", "reason": "cadence_cap"},
             {"session_id": "wa_human", "reason": "human_owned"},
+            # Post-mortem run 019f6d0d: inbound hace 5 min = conversación VIVA
+            # (ventas en plena charla) — reengagement no se mete, aunque la
+            # CSW esté abierta. Espejo del pre-filtro de hubara (defensa en
+            # profundidad).
+            {
+                "session_id": "wa_conversation_active",
+                "reason": "conversation_active",
+            },
             {"session_id": "wa_phase_b_optin", "reason": "paid_budget_truncated"},
         ],
         "truncated_by_budget": 1,

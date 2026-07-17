@@ -34,10 +34,12 @@ def _seed(vault: Path, session_id: str, data: dict) -> None:
 
 
 def _open_metadata(now_ms: int) -> dict:
+    # Lead dormido (5h de silencio) con CSW aún abierta — pasa el pre-filtro
+    # de dormancia y el de la central.
     return {
         "tag": "INTERESADO",
         "service_window_expires_at_ms": now_ms + HOUR,
-        "last_inbound_at_ms": now_ms - 1000,
+        "last_inbound_at_ms": now_ms - 5 * HOUR,
     }
 
 
