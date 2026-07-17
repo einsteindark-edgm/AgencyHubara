@@ -31,6 +31,39 @@ from typing import Any, Iterator, Protocol, runtime_checkable
 
 _SESSION_PREFIX = "wa_"
 
+#: Ventana de atribución de una campaña interna de marketing (paridad con la
+#: ventana CTWA de Meta): 7 días desde el envío del touch.
+CAMPAIGN_ATTRIBUTION_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
+
+
+def matching_campaign_touch(
+    campaign_touches: list[Any] | None,
+    at_ms: int | None,
+    *,
+    window_ms: int = CAMPAIGN_ATTRIBUTION_WINDOW_MS,
+) -> dict[str, Any] | None:
+    """El `campaign_touch` (plugin marketing) que cubre el instante `at_ms`.
+
+    Writer: la activity `stamp_campaign_touch` del plugin marketing (shape
+    ``{campaign_id, campaign_name, sent_at_ms}``). Readers: ads (agrupar
+    episodios por campaña interna) y marketing (stats de la campaña). Con
+    varios touches en ventana gana el MÁS RECIENTE (last-touch, mismo
+    criterio que ``last_touch`` del ingest). Tolerante a shapes rotos.
+    """
+    if not campaign_touches or not isinstance(at_ms, int):
+        return None
+    best: dict[str, Any] | None = None
+    for touch in campaign_touches:
+        if not isinstance(touch, dict):
+            continue
+        sent = touch.get("sent_at_ms")
+        if not isinstance(sent, int) or not touch.get("campaign_id"):
+            continue
+        if sent <= at_ms <= sent + window_ms:
+            if best is None or sent > best["sent_at_ms"]:
+                best = touch
+    return best
+
 
 @dataclass(frozen=True)
 class AttributionSession:

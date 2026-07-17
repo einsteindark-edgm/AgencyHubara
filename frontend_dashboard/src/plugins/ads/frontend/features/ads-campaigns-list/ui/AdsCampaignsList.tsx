@@ -207,6 +207,22 @@ function CampaignRow({
         <span className="camp-name">
           {campaign.name ?? <MissingField />}
         </span>
+        {campaign.sourceType === "hubara_campaign" && (
+          <span
+            title="Campaña directa de WhatsApp (sección Marketing)"
+            style={{
+              fontSize: 9,
+              fontWeight: 600,
+              padding: "1px 6px",
+              borderRadius: 999,
+              background: "var(--color-ok-soft)",
+              color: "var(--color-ok)",
+              flexShrink: 0,
+            }}
+          >
+            WhatsApp
+          </span>
+        )}
       </div>
       <div className="camp-row-meta">
         <span className="camp-dates">

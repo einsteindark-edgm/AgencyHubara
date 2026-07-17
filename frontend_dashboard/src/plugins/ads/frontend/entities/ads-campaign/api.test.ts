@@ -66,6 +66,19 @@ const campaignSample = {
   days_run: null,
 };
 
+describe("mapBackendCampaign — sourceType (campañas internas de marketing)", () => {
+  it("mapea source_type al dominio — distingue hubara_campaign de Meta", () => {
+    const meta = mapBackendCampaign(campaignSample as never);
+    expect(meta.sourceType).toBe("ad");
+    const interna = mapBackendCampaign({
+      ...campaignSample,
+      id: "mkt-abc",
+      source_type: "hubara_campaign",
+    } as never);
+    expect(interna.sourceType).toBe("hubara_campaign");
+  });
+});
+
 describe("mapBackendConversation — costo LLM", () => {
   it("mapea llm_cost_usd/llm_tokens (snake) → llmCostUsd/llmTokens (camel)", () => {
     const c = mapBackendConversation(sample);

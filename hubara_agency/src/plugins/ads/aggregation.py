@@ -42,7 +42,10 @@ from src.plugins.ads.classification import (
     classify_episode_state,
     classify_state,
 )
-from src.sdk.connectorkit import FilesystemAttributionStore
+from src.sdk.connectorkit import (
+    FilesystemAttributionStore,
+    matching_campaign_touch,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +60,16 @@ _META_CHANNELS: frozenset[str] = frozenset({"ad", "post", "web_referral"})
 # ver todas las conversaciones orgánicas en un solo drill-down.
 DIRECT_CAMPAIGN_ID = "direct"
 DIRECT_CAMPAIGN_NAME = "Clientes directos · sin campaña"
+
+# Campañas internas de marketing (plugin `marketing`): el send estampa
+# `campaign_touches` en el metadata de la sesión (canal de datos del vault —
+# sin imports cross-plugin). Un episodio que arranca dentro de la ventana
+# post-touch y NO vino de un referral Meta se atribuye a esa campaña.
+CAMPAIGN_SOURCE_TYPE = "hubara_campaign"
+
+# El matcher (ventana de 7 días, last-touch) es del read model de atribución
+# de plataforma — lo comparten ads y marketing vía SDK.
+_matching_campaign_touch = matching_campaign_touch
 
 
 @dataclass(frozen=True)
@@ -374,6 +387,7 @@ def _iter_episodes(
 def _episode_to_campaign_id(
     episode: dict[str, Any] | None,
     session_origin: dict[str, Any],
+    campaign_touch: dict[str, Any] | None = None,
 ) -> str | None:
     """Determina a qué campaña pertenece un episodio (FU2: re-atribución).
 
@@ -384,9 +398,12 @@ def _episode_to_campaign_id(
 
     Prioridad:
       1. `episode.referral_snapshot.channel` ∈ meta + `source_id` → ese source_id.
-      2. `episode.referral_snapshot.channel == direct` → DIRECT_CAMPAIGN_ID.
-      3. Fallback: session_origin (sticky first-touch).
-      4. Si ninguno aplica → None (defensivo, no agrupa).
+      2. `campaign_touch` en ventana → esa campaña interna (`hubara_campaign`) —
+         un click fresco a un ad es más específico que nuestro envío; una
+         respuesta "direct" post-campaña es justamente la respuesta a la campaña.
+      3. `episode.referral_snapshot.channel == direct` → DIRECT_CAMPAIGN_ID.
+      4. Fallback: session_origin (sticky first-touch).
+      5. Si ninguno aplica → None (defensivo, no agrupa).
 
     `episode=None` se interpreta como sesión legacy sin `episodes[]` →
     cae directo al fallback de session_origin.
@@ -398,9 +415,13 @@ def _episode_to_campaign_id(
 
         if snap_channel in _META_CHANNELS and snap_source:
             return snap_source
+        if campaign_touch is not None:
+            return campaign_touch["campaign_id"]
         if snap_channel == "direct":
             return DIRECT_CAMPAIGN_ID
 
+    if campaign_touch is not None:
+        return campaign_touch["campaign_id"]
     # Fallback al session origin (legacy sin snapshot, o snapshot ambiguo)
     if _is_meta_campaign_origin(session_origin):
         return session_origin["source_id"]
@@ -410,29 +431,47 @@ def _episode_to_campaign_id(
 
 
 def _episode_source_type(
-    episode: dict[str, Any] | None, session_origin: dict[str, Any]
+    episode: dict[str, Any] | None,
+    session_origin: dict[str, Any],
+    campaign_touch: dict[str, Any] | None = None,
 ) -> str | None:
-    """Devuelve el `source_type` (ad/post/web_referral/direct) que aplica
-    a un episodio para reporting. Mismo orden de prioridad que
-    `_episode_to_campaign_id`: snapshot del episodio sobre origin sticky.
+    """Devuelve el `source_type` (ad/post/web_referral/direct/hubara_campaign)
+    que aplica a un episodio para reporting. Mismo orden de prioridad que
+    `_episode_to_campaign_id`: snapshot meta > touch de campaña > snapshot >
+    origin sticky.
     """
     if episode is not None:
         snap = episode.get("referral_snapshot") or {}
         snap_channel = snap.get("channel")
+        if snap_channel in _META_CHANNELS and snap.get("source_id"):
+            return snap_channel
+        if campaign_touch is not None:
+            return CAMPAIGN_SOURCE_TYPE
         if snap_channel:
             return snap_channel
+    if campaign_touch is not None:
+        return CAMPAIGN_SOURCE_TYPE
     return session_origin.get("channel")
 
 
 def _episode_headline(
-    episode: dict[str, Any] | None, session_origin: dict[str, Any]
+    episode: dict[str, Any] | None,
+    session_origin: dict[str, Any],
+    campaign_touch: dict[str, Any] | None = None,
 ) -> str | None:
-    """Devuelve el headline efectivo del episodio: snapshot del episodio si
-    existe, sino origin de la sesión."""
+    """Devuelve el headline efectivo del episodio: snapshot meta del episodio,
+    después el nombre de la campaña interna, después snapshot/origin."""
     if episode is not None:
         snap = episode.get("referral_snapshot") or {}
+        if snap.get("channel") in _META_CHANNELS and snap.get("source_id"):
+            if snap.get("headline"):
+                return snap["headline"]
+        elif campaign_touch is not None:
+            return campaign_touch.get("campaign_name")
         if snap.get("headline"):
             return snap["headline"]
+    elif campaign_touch is not None:
+        return campaign_touch.get("campaign_name")
     return session_origin.get("headline")
 
 
@@ -649,16 +688,19 @@ def list_ads_campaigns(
             last_msg_ms=last_msg_ms,
             now_ms=now_ms,
         ):
-            campaign_id = _episode_to_campaign_id(ep, origin)
+            ep_started_ms = (
+                ep.get("started_at_ms") if ep is not None else origin.get("first_seen_ms")
+            )
+            touch = _matching_campaign_touch(
+                metadata.get("campaign_touches"), ep_started_ms
+            )
+            campaign_id = _episode_to_campaign_id(ep, origin, touch)
             if campaign_id is None:
                 # Sin origin clasificable — episodio no entra al dashboard
                 continue
 
-            source_type = _episode_source_type(ep, origin)
-            headline = _episode_headline(ep, origin)
-            ep_started_ms = (
-                ep.get("started_at_ms") if ep is not None else origin.get("first_seen_ms")
-            )
+            source_type = _episode_source_type(ep, origin, touch)
+            headline = _episode_headline(ep, origin, touch)
 
             # Filtro por fecha (ventana de la UI). `since_ms` = límite inferior
             # (preset o `from`); `until_ms` = límite superior EXCLUSIVO (rango
@@ -854,7 +896,13 @@ def list_attributed_conversations(
             # Con `source_ids` (fila agrupada por campaña/adset = N ads), el
             # episodio matchea si su bucket cae en el set; sin él, igualdad
             # exacta con `campaign_id` (comportamiento pre-segmentación).
-            ep_campaign_id = _episode_to_campaign_id(ep, origin)
+            _ep_started = (
+                ep.get("started_at_ms") if ep is not None else origin.get("first_seen_ms")
+            )
+            touch = _matching_campaign_touch(
+                metadata.get("campaign_touches"), _ep_started
+            )
+            ep_campaign_id = _episode_to_campaign_id(ep, origin, touch)
             if source_ids is not None:
                 if ep_campaign_id not in source_ids:
                     continue
@@ -873,14 +921,14 @@ def list_attributed_conversations(
                     ep_last_msg = ep["closed_at_ms"]
                 else:
                     ep_last_msg = last_msg_ms
-                ad_headline = _episode_headline(ep, origin)
+                ad_headline = _episode_headline(ep, origin, touch)
             else:
                 # Legacy: una sola "pseudo-conversación" por sesión
                 ep_id = None
                 conv_id = session_id
                 started = origin.get("first_seen_ms") or 0
                 ep_last_msg = last_msg_ms
-                ad_headline = origin.get("headline")
+                ad_headline = _episode_headline(None, origin, touch)
 
             # Filtro por fecha (ventana de la UI): `since_ms` (límite inferior,
             # inclusive) + `until_ms` (límite superior, EXCLUSIVO — rango custom).
@@ -1064,15 +1112,18 @@ def list_daily_series(
             last_msg_ms=last_msg_ms,
             now_ms=now_ms,
         ):
-            ep_bucket = _episode_to_campaign_id(ep, origin)
+            ep_started_ms = (
+                ep.get("started_at_ms") if ep is not None else origin.get("first_seen_ms")
+            )
+            touch = _matching_campaign_touch(
+                metadata.get("campaign_touches"), ep_started_ms
+            )
+            ep_bucket = _episode_to_campaign_id(ep, origin, touch)
             if source_ids is not None:
                 if ep_bucket not in source_ids:
                     continue
             elif ep_bucket != campaign_id:
                 continue
-            ep_started_ms = (
-                ep.get("started_at_ms") if ep is not None else origin.get("first_seen_ms")
-            )
             if not isinstance(ep_started_ms, int):
                 continue
             day = _bogota_date(ep_started_ms)

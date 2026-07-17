@@ -24,6 +24,14 @@
     "semantics": "Update objetivo de estado de orden post-compra (watchdog: post_purchase; también agente ETA)."
   },
   {
+    "name": "campaign_promo_marketing",
+    "category": "MARKETING",
+    "language": "es_CO",
+    "body": "¡{{1}}! 👋\n\n{{2}}\n\n{{3}}\n\nSi prefieres no recibir más promociones, respóndeme \"NO MÁS\" y te doy de baja.",
+    "example": ["Hola Camila", "Por el día de la madre tenemos 15% de descuento en toda la colección de velas artesanales, hasta el viernes.", "Usa el código MAMA15 al pagar — válido hasta el 14 de junio."],
+    "semantics": "Campaña directa del operador (sección Marketing del dashboard): saludo + mensaje + oferta dentro de un marco aprobado con opt-out fijo. NUNCA por watchdog."
+  },
+  {
     "name": "cart_recovery_marketing",
     "category": "MARKETING",
     "language": "es_CO",

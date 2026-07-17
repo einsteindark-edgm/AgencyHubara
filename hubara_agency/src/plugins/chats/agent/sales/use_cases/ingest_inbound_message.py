@@ -50,7 +50,10 @@ from src.plugins.chats.agent.sales.translate import (
     translate_to_effective_text,
 )
 from src.platform.config import WORKSPACE_VAULT_DIR
-from src.sdk.messagingkit import update_reengagement_index_entry
+from src.sdk.messagingkit import (
+    detect_marketing_opt_out,
+    update_reengagement_index_entry,
+)
 from src.platform.session_history import FilesystemMessageHistoryStore
 from src.platform.whatsapp.window import (
     compute_ctwa_window_expiry,
@@ -223,6 +226,24 @@ class IngestInboundMessage:
         # disparar un utility template legítimo.
         metadata["last_inbound_at_ms"] = now_ms
         metadata["service_window_expires_at_ms"] = compute_service_window_expiry(now_ms)
+
+        # Opt-out de marketing (plugin marketing, campañas directas): el
+        # template aprobado promete "respóndeme NO MÁS y te doy de baja" —
+        # este es el punto que la CUMPLE. Determinista (sin LLM): un pedido
+        # de baja no puede depender de interpretación. Sticky: solo lo
+        # revierte el operador editando el metadata.
+        if (
+            not metadata.get("marketing_opt_out")
+            and parsed.text
+            and detect_marketing_opt_out(parsed.text, metadata, now_ms)
+        ):
+            metadata["marketing_opt_out"] = True
+            metadata["marketing_opt_out_at_ms"] = now_ms
+            logger.info(
+                "marketing_opt_out_detected",
+                session_id=session_id,
+                text_preview=parsed.text[:60],
+            )
 
         # HU-WA24H-001 F1.3: ventana extendida 72h CTWA. Solo se setea la
         # PRIMERA vez que vemos ctwa_clid — la ventana CTWA NO se renueva
