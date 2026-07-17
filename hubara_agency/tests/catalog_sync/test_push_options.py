@@ -88,6 +88,38 @@ class _FakeMetaPort(MetaCatalogPort):
         )
 
 
+def test_hash_detects_variant_axis_change():
+    """El delta del push saltea items cuyo hash no cambió. Si el hash NO
+    incluye `additional_variant_attribute` (o `item_group_id`), agregar el
+    eje de variante a items ya publicados da "sin cambios" y el campo jamás
+    llega a Meta (misma clase de bug que el TERCER parser de #179)."""
+    from dataclasses import replace
+
+    from src.platform.meta_catalog.dtos import MetaCatalogItem
+    from src.plugins.catalog.agent.use_cases.push_meta_catalog import (
+        _hash_item,
+    )
+
+    base = MetaCatalogItem(
+        retailer_id="v_leo",
+        name="Duo Zodiacal · Leo",
+        description="desc",
+        url="https://hubara.com.co/products/duo-zodiacal",
+        image_url="https://img.example/leo.jpg",
+        price="35000 COP",
+        availability="in stock",
+    )
+    with_axis = replace(
+        base,
+        item_group_id="prod_duo_v2",
+        additional_variant_attribute="Signo:Leo",
+    )
+    assert _hash_item(base) != _hash_item(with_axis)
+    assert _hash_item(with_axis) != _hash_item(
+        replace(with_axis, additional_variant_attribute="Signo:Tauro")
+    )
+
+
 @pytest.mark.asyncio
 async def test_push_emits_per_variant_items_from_products_json():
     """El camino REAL del sync: products_json (asdict) → push → mapper."""
