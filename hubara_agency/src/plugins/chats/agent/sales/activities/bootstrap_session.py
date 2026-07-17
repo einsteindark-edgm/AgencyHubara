@@ -135,8 +135,8 @@ async def bootstrap_sales_session_activity(input: SalesSessionInput) -> SessionI
 # ---------------------------------------------------------------------------
 # Dynamic idle timeout (sesión c4e3416f)
 #
-# El timeout de ghosting "normal" es 60s (1 minuto sin que el cliente
-# responda nada). Pero cuando acabamos de enviar un WhatsApp Flow nativo
+# El timeout de ghosting "normal" era 60s (hoy: `_DEFAULT_IDLE_TIMEOUT_S`,
+# 5 min). Pero cuando acabamos de enviar un WhatsApp Flow nativo
 # de datos de envío, llenar 5 campos en el formulario toma típicamente
 # 1-3 minutos para un cliente real. A los 60s, el workflow Sales declaraba
 # ghosting prematuramente, disparaba `SalesSessionCompletionEvent` →
@@ -157,9 +157,14 @@ async def bootstrap_sales_session_activity(input: SalesSessionInput) -> SessionI
 # remarketing). 10 min es 4x el peor caso típico para un form de 5 campos.
 _FLOW_PENDING_TIMEOUT_S = 10 * 60
 
-# Default ghosting timeout — alineado con `_IDLE_TIMEOUT = timedelta(minutes=1)`
-# del sales_session.py. Si cambia uno, cambiar el otro.
-_DEFAULT_IDLE_TIMEOUT_S = 60
+# Default ghosting timeout. Subido de 60s a 5 min (run 48ec6df5, caso
+# 573229041190): con 1 min, un cliente que tardaba poco más de un minuto en
+# tocar un quick reply ya caía en la carrera ghost-turn ↔ respuesta real.
+# NOTA: diverge a propósito de `_IDLE_TIMEOUT = timedelta(minutes=1)` en
+# sales_session.py — esa constante es el fallback SOLO-REPLAY para histories
+# pre-patch (`read-idle-timeout-v1`) y no puede cambiar sin romper R-DET.
+# Ejecuciones nuevas siempre usan este valor (via la activity).
+_DEFAULT_IDLE_TIMEOUT_S = 5 * 60
 
 
 @activity.defn(name="read_idle_timeout_seconds")
@@ -168,14 +173,14 @@ async def read_idle_timeout_seconds_activity(session_id: str) -> int:
     `workflow.wait_condition` antes de declarar ghosting.
 
     Política:
-      * 60s default (lo normal — cliente no respondió en ese tiempo).
+      * 5 min default (lo normal — cliente no respondió en ese tiempo).
       * Si hay un `shipping_flow_awaiting_reply_since_ms` reciente
         (< 10 min), devolver el tiempo restante hasta llegar al cap de 10 min.
         El cliente está llenando el Flow nativo, no es ghosting real.
-      * Si el flag está > 10 min, se considera vencido → 60s normal. La flag
-        NO se limpia acá (eso lo hace el ingest al procesar el nfm_reply,
-        para que el siguiente loop iter del workflow vuelva a 60s sin
-        re-llamar la activity).
+      * Si el flag está > 10 min, se considera vencido → default normal. La
+        flag NO se limpia acá (eso lo hace el ingest al procesar el
+        nfm_reply, para que el siguiente loop iter del workflow vuelva al
+        default sin re-llamar la activity).
 
     R-DET safe: I/O en activity, no en workflow. El workflow llama esta
     activity ANTES del `wait_condition` y usa el valor devuelto como timeout
@@ -201,8 +206,8 @@ async def read_idle_timeout_seconds_activity(session_id: str) -> int:
         # Flag inválido (timestamp futuro) o vencido — default normal.
         return _DEFAULT_IDLE_TIMEOUT_S
 
-    # Tiempo restante hasta el cap. Mínimo 60s para no devolver timeouts
-    # absurdamente cortos si llegamos al filo de los 10 min.
+    # Tiempo restante hasta el cap. Mínimo el default para no devolver
+    # timeouts absurdamente cortos si llegamos al filo de los 10 min.
     remaining_s = int(_FLOW_PENDING_TIMEOUT_S - elapsed_s)
     return max(_DEFAULT_IDLE_TIMEOUT_S, remaining_s)
 

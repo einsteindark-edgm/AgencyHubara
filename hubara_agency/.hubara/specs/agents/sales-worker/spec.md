@@ -74,6 +74,15 @@ outbound, y queda esperando el próximo signal.
 - AND si action="schedule_remarketing" → se invoca `schedule_remarketing_workflow_activity` y el sales workflow cierra
 - AND si action="close_silently" → workflow cierra sin más outreach
 
+#### Scenario: Cliente responde durante el turno de ghosting (corrientazo)
+
+- GIVEN el idle timeout disparó y el turno de auto-etiquetado del ghosting está corriendo (`_force_shutdown` programado)
+- WHEN llega un mensaje real del cliente antes de que ese turno toque outbound
+- THEN el turno se interrumpe y se recompone con el mensaje del cliente (corrientazo)
+- AND el shutdown programado por ghosting se CANCELA (el cliente volvió — la premisa del ghosting quedó invalidada)
+- AND `flush_pending_ui_intents_activity` corre normalmente tras el turno recompuesto (los UI intents del turno SÍ llegan a WhatsApp)
+- AND la sesión sigue viva esperando la próxima respuesta
+
 #### Scenario: Idle timeout dinámico por Flow pendiente
 
 - GIVEN un WhatsApp Flow fue enviado (e.g., `RequestShippingDetailsTool`) y el cliente no respondió
