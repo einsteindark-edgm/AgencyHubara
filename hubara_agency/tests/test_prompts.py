@@ -101,3 +101,13 @@ def test_remarketing_trigger_has_anti_leak_rule() -> None:
     assert "NO expliques tu razonamiento" in out
     assert "NO menciones archivos internos" in out
     assert "tercera persona" in out.lower()
+
+
+def test_remarketing_trigger_offers_no_message_abstention() -> None:
+    """Incidente wa_573229041190 (run 019f7234): cuando el gancho ya no
+    corresponde, la respuesta correcta es NO enviar nada — el prompt debe
+    darle al LLM el canal explícito (sentinel NO_MESSAGE) en vez de forzarlo
+    a "escribir SOLO el mensaje final" (imposible de cumplir absteniéndose)."""
+    out = build_remarketing_trigger("cliente pidió tiempo")
+    assert "NO_MESSAGE" in out
+    assert "ya respondió" in out or "ya no corresponde" in out

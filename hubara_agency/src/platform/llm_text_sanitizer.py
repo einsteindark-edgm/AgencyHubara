@@ -322,3 +322,38 @@ def _dedupe_back_to_back(text: str) -> tuple[str, bool]:
             return first, True
 
     return text, False
+
+
+# =============================================================================
+# Abstención explícita (NO_MESSAGE)
+# =============================================================================
+
+#: Sentinel que el prompt de remarketing instruye emitir cuando el toque
+#: proactivo YA NO corresponde (incidente wa_573229041190, run 019f7234: el
+#: LLM decidió "no genero un nuevo mensaje" pero el runtime no tenía canal de
+#: abstención y la deliberación se envió al cliente).
+NO_MESSAGE_SENTINEL: str = "NO_MESSAGE"
+
+#: Variantes aceptadas — DeepSeek code-switchea a español.
+_ABSTENTION_TOKENS: frozenset[str] = frozenset({"NO_MESSAGE", "NO_MENSAJE"})
+
+#: Wrappers que el modelo suele agregar alrededor de un token pedido "solo":
+#: comillas, backticks, asteriscos de bold y puntuación final.
+_ABSTENTION_STRIP_CHARS = "\"'`*“”«»‟„ \t.,:;!¡?¿-—"
+
+
+def is_no_message_abstention(raw: str | None) -> bool:
+    """True si el output del LLM es una abstención explícita (`NO_MESSAGE`).
+
+    Conservador a propósito: solo cuenta el sentinel al INICIO del texto
+    (primera línea), tolerando wrappers cosméticos (comillas, backticks,
+    puntuación) y la traducción obvia al español. Prosa de deliberación SIN
+    el sentinel NO es abstención — el helper no adivina intención; esa
+    responsabilidad es del prompt. Vacío/None tampoco: ya tiene su propio
+    manejo (no-send por falsy) y acá solo reportamos abstención explícita.
+    """
+    if not raw:
+        return False
+    first_line = raw.strip().splitlines()[0]
+    normalized = first_line.strip(_ABSTENTION_STRIP_CHARS).upper()
+    return normalized in _ABSTENTION_TOKENS

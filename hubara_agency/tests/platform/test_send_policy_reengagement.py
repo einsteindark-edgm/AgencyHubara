@@ -115,6 +115,49 @@ class TestTerminalStates:
 
 
 # =============================================================================
+# Conversación viva — inbound reciente: la conversación es de Sales
+# =============================================================================
+
+
+class TestCustomerActive:
+    """Incidente wa_573229041190 (2026-07-17, run 019f7234): el intent de
+    reactivación llegó 2 segundos después de que el cliente escribiera "Hola"
+    espontáneamente (carrera snapshot-viejo → inbound nuevo). El gate pasó
+    PORQUE el cliente estaba activo (CSW abierta) — exactamente cuando un
+    toque proactivo sobra: ese turno le toca a Sales."""
+
+    def test_inbound_reciente_suprime_aunque_csw_este_abierta(self, rate):
+        meta = _meta(csw=True, ctwa=True)
+        meta["last_inbound_at_ms"] = NOW_MS - 2 * 60 * 1000  # hace 2 min
+        d = decide_reengagement(NOW_MS, meta, LeadState(tag="INTERESADO"), rate)
+        assert d.allowed is False
+        assert d.suppress_reason == "customer_active"
+
+    def test_inbound_viejo_no_suprime(self, rate):
+        # El peldaño más corto de la escalera de dormancia es 30 min desde
+        # last_inbound — un inbound de hace 31 min ya no es "conversación viva".
+        meta = _meta(csw=True, ctwa=False)
+        meta["last_inbound_at_ms"] = NOW_MS - 31 * 60 * 1000
+        d = decide_reengagement(NOW_MS, meta, LeadState(tag="INTERESADO"), rate)
+        assert d.allowed is True
+        assert d.channel == CHANNEL_FREE_FORM
+
+    def test_sin_last_inbound_no_suprime(self, rate):
+        # Metadata viejo sin el campo → comportamiento previo intacto.
+        d = decide_reengagement(
+            NOW_MS, _meta(csw=True, ctwa=False), LeadState(tag="INTERESADO"), rate
+        )
+        assert d.allowed is True
+
+    def test_tag_remarketing_explicito_gana_sobre_customer_active(self, rate):
+        # El humano apretó "re-contactar" en el dashboard — su decisión manda.
+        meta = _meta(csw=True, ctwa=True)
+        meta["last_inbound_at_ms"] = NOW_MS - 2 * 60 * 1000
+        d = decide_reengagement(NOW_MS, meta, LeadState(tag="REMARKETING"), rate)
+        assert d.allowed is True
+
+
+# =============================================================================
 # Fase A — dentro de ventanas: reactivar gratis
 # =============================================================================
 

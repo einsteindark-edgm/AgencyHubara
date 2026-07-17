@@ -313,19 +313,35 @@ def _handoff_takeover_framing(summary: str) -> str:
     `coalesce_pending` y `coalesce_inbox` (era un literal duplicado — riesgo
     de drift). Tono en TUTEO colombiano (REGLA #1; guard
     `test_no_voseo_in_agent_strings.py` escanea este archivo).
+
+    Incidente wa_573229041190 (2026-07-17, run 019f7234): el "retoma la
+    venta EXACTAMENTE donde quedó" no tenía rama para cuando NO hay venta
+    pendiente — el cliente ya había comprado y recibido dos pedidos, y el
+    LLM resolvió la instrucción imposible re-presentando un producto ya
+    comprado que nadie pidió. Ahora el framing distingue los dos casos.
     """
     return (
         "[SISTEMA — HANDOFF DE REMARKETING A VENTAS]: Eres el agente de "
         "ventas y el control de esta conversación YA ES TUYO; no existe "
         "ninguna transferencia pendiente y no debes anunciarla. Contexto "
         f"del handoff: {summary}\n"
-        "Retoma la venta EXACTAMENTE donde quedó según el historial: "
-        "repasa qué eligió ya el cliente (producto, aroma, color, "
-        "cantidad) y pide SOLO el siguiente dato pendiente. NO "
-        "re-preguntes nada ya elegido ni preguntas vagas tipo '¿en qué "
-        "estábamos?'. Si el handoff trae la respuesta del cliente "
-        "(ej. una cantidad), procésala como si acabara de escribirla. "
-        "No menciones sistemas ni procesos internos."
+        "Primero mira el historial y decide en cuál de estos DOS casos "
+        "estás:\n"
+        "1) Hay una venta A MEDIO CAMINO (producto, aroma, color, cantidad "
+        "o datos de envío sin completar): retómala EXACTAMENTE donde quedó "
+        "y pide SOLO el siguiente dato pendiente. NO re-preguntes nada ya "
+        "elegido ni hagas preguntas vagas tipo '¿en qué estábamos?'. Si el "
+        "handoff trae la respuesta del cliente (ej. una cantidad), "
+        "procésala como si acabara de escribirla.\n"
+        "2) NO hay venta pendiente (la última compra ya quedó registrada o "
+        "entregada, o no había pedido en curso): NO presentes ni ofrezcas "
+        "productos que el cliente no pidió. Responde a lo que el cliente "
+        "escribió; si solo saludó, saluda breve y pregunta en qué puedes "
+        "ayudar. Y si el handoff NO trae ningún mensaje del cliente que "
+        "responder, responde EXACTAMENTE `NO_MESSAGE` (una sola palabra, "
+        "sin explicación) — eso suprime el envío y el cliente no verá "
+        "nada. NUNCA escribas tu decisión de no responder como texto.\n"
+        "En ambos casos: no menciones sistemas ni procesos internos."
     )
 
 
