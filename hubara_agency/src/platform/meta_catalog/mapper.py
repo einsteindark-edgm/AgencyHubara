@@ -208,6 +208,7 @@ def _variant_items(
                 base,
                 retailer_id=v.id,
                 item_group_id=product.id,
+                additional_variant_attribute=_variant_axis(v.options),
                 name=f"{product.title} · {v.title}"[:200],
                 price=price,
                 image_url=(
@@ -229,6 +230,25 @@ def _variant_items(
 # =============================================================================
 # Helpers
 # =============================================================================
+
+
+def _variant_axis(options: dict[str, str] | None) -> str | None:
+    """Feed spec `additional_variant_attribute`: pares "clave:valor" separados
+    por coma ("Signo:Leo"). "," y ":" son separadores reservados del formato —
+    un value que los traiga corrompería el string entero en silencio, así que
+    se reemplazan por espacio."""
+    if not options:
+        return None
+
+    def _clean(s: str) -> str:
+        return " ".join(s.replace(",", " ").replace(":", " ").split())
+
+    pairs = [
+        f"{_clean(k)}:{_clean(v)}"
+        for k, v in options.items()
+        if _clean(k) and _clean(v)
+    ]
+    return ",".join(pairs) or None
 
 
 def _first_price_meta_format(

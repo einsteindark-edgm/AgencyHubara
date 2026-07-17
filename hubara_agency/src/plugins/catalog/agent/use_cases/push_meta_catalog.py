@@ -203,6 +203,8 @@ def _hash_item(item) -> str:
         "custom_label_2": item.custom_label_2,
         "custom_label_3": item.custom_label_3,
         "custom_label_4": item.custom_label_4,
+        "item_group_id": item.item_group_id,
+        "additional_variant_attribute": item.additional_variant_attribute,
     }, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
