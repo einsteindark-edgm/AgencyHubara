@@ -49,6 +49,27 @@ class TestTransactionalHooks:
         lead = lead_state_from_metadata(meta)
         assert lead.has_order_draft is False
 
+    def test_last_closing_tag_derives_from_last_episode(self):
+        meta = {
+            "tag": "RETOMA_VENTA",
+            "episodes": [
+                {"episode_id": "ep_000", "closing_tag": "RECHAZO"},
+                {
+                    "episode_id": "ep_001",
+                    "closed_at_ms": 1_716_000_000_000,
+                    "closing_tag": "COMPRA_EXITOSA",
+                    "order_id": "order_123",
+                },
+            ],
+        }
+        lead = lead_state_from_metadata(meta)
+        assert lead.last_closing_tag == "COMPRA_EXITOSA"
+
+    def test_last_closing_tag_none_sin_episodios_o_sin_cierre(self):
+        assert lead_state_from_metadata({}).last_closing_tag is None
+        meta = {"episodes": [{"episode_id": "ep_001"}]}  # episodio abierto
+        assert lead_state_from_metadata(meta).last_closing_tag is None
+
     def test_order_id_in_last_episode_sets_registered_order(self):
         # El gancho persiste aunque el episodio haya cerrado (caso
         # CONFIRMADO_PAGO_PENDIENTE: episodio cerrado + orden colocada).

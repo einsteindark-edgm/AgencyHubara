@@ -28,7 +28,7 @@ MATRIX = GA / "fixtures" / "reengagement_matrix_golden.json"
 
 #: MISMO valor que MATRIX_SHA256 en
 #: hubara_agency/tests/platform/test_reengagement_matrix_golden.py.
-MATRIX_SHA256 = "3a56faa53fb38e7d495221bb3015d863289fc51af2d0b4c1b94eb71894452183"
+MATRIX_SHA256 = "15af9d455eaa321af1a44fcc438caf4b24ddd744d6dfd081be2bbe5647cebbbf"
 
 _M = json.loads(MATRIX.read_text(encoding="utf-8"))
 
@@ -42,6 +42,9 @@ _DISPATCH_REASON = {
     "phase_b_hook_utility_cheap": "transactional_hook",
     "phase_b_payment_pending_tag_alone_is_hook": "transactional_hook",
     "phase_b_optin_one_paid_marketing": "phase_b_high_value",
+    # Excepción already_purchased: tag REMARKETING explícito (decisión humana)
+    # con ctwa abierta → template gratis.
+    "remarketing_tag_lifts_purchase_suppression": "ctwa_72h_free",
 }
 
 
