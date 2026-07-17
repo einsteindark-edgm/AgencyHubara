@@ -84,6 +84,15 @@ class SetOrderSlotTool(ToolBase):
                 "type": "string",
                 "description": "Color elegido (ej. 'Blanco').",
             },
+            "diseno": {
+                "type": "string",
+                "description": (
+                    "Diseño/signo elegido para productos con variantes por "
+                    "diseño (ej. 'Leo' o 'Leo, Libra' si lleva varios). "
+                    "Closed-list: solo valores de `options`/`designs` del "
+                    "producto."
+                ),
+            },
             "cantidad": {
                 "type": "string",
                 "description": "Cantidad de unidades (ej. '2').",
@@ -192,6 +201,7 @@ class SetOrderSlotTool(ToolBase):
         producto: str | None = None,
         aroma: str | None = None,
         color: str | None = None,
+        diseno: str | None = None,
         cantidad: str | None = None,
         ciudad: str | None = None,
         barrio: str | None = None,
@@ -209,6 +219,7 @@ class SetOrderSlotTool(ToolBase):
                 "producto": producto,
                 "aroma": aroma,
                 "color": color,
+                "diseno": diseno,
                 "cantidad": cantidad,
                 "ciudad": ciudad,
                 "barrio": barrio,
@@ -242,7 +253,7 @@ class SetOrderSlotTool(ToolBase):
         # le dice al LLM las opciones reales (guion: "el rojo no lo manejo").
         rejected: list[dict[str, Any]] = []
         to_check = [
-            k for k in ("aroma", "color")
+            k for k in ("aroma", "color", "diseno")
             if isinstance(provided.get(k), str) and provided[k].strip()
         ]
         if to_check and self._catalog is not None:
@@ -252,7 +263,20 @@ class SetOrderSlotTool(ToolBase):
             )
             if product is not None:
                 attrs = parse_variant_tags(product.tags)
-                valid_by_kind = {"aroma": attrs.aromas, "color": attrs.colors}
+                # Diseños = option values reales del producto (Duo Zodiacal:
+                # los 12 signos). Producto sin options → lista vacía → el
+                # valor se acepta tal cual (degrada abierto, como aroma/color
+                # sin tags).
+                design_values = [
+                    value
+                    for values in (product.options or {}).values()
+                    for value in values
+                ]
+                valid_by_kind = {
+                    "aroma": attrs.aromas,
+                    "color": attrs.colors,
+                    "diseno": design_values,
+                }
                 for kind in to_check:
                     canonical, rejection = self._validate_choice(
                         kind, provided[kind], valid_by_kind[kind]

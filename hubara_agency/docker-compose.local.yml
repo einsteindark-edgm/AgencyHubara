@@ -151,6 +151,7 @@ services:
     - META_CATALOG_ID=${META_CATALOG_ID}
     - META_SYSTEM_USER_TOKEN=${META_SYSTEM_USER_TOKEN}
     - ENABLED_PLUGINS=ads,agents_admin,catalog,chats,eta,order_sentinel,orders,reengagement,system_map
+    - EXOCLAW_STATE_DIR=/app/hubara_vault/agent_state
     volumes:
     - hubara-vault-local:/app/hubara_vault
     depends_on:
@@ -189,6 +190,7 @@ services:
     - MEDUSA_DEFAULT_CURRENCY=${MEDUSA_DEFAULT_CURRENCY:-cop}
     - MEDUSA_DEFAULT_COUNTRY=${MEDUSA_DEFAULT_COUNTRY:-co}
     - ENABLED_PLUGINS=ads,agents_admin,catalog,chats,eta,order_sentinel,orders,reengagement,system_map
+    - EXOCLAW_STATE_DIR=/app/hubara_vault/agent_state
     volumes:
     - hubara-vault-local:/app/hubara_vault
     depends_on:
@@ -218,6 +220,7 @@ services:
     - WHATSAPP_ACCESS_TOKEN=${WHATSAPP_ACCESS_TOKEN}
     - WHATSAPP_VERIFY_TOKEN=${WHATSAPP_VERIFY_TOKEN}
     - ENABLED_PLUGINS=ads,agents_admin,catalog,chats,eta,order_sentinel,orders,reengagement,system_map
+    - EXOCLAW_STATE_DIR=/app/hubara_vault/agent_state
     volumes:
     - hubara-vault-local:/app/hubara_vault
     depends_on:
@@ -249,6 +252,7 @@ services:
     - SALES_EVAL_MAX_CONVERSATIONS=50
     - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
     - ENABLED_PLUGINS=ads,agents_admin,catalog,chats,eta,order_sentinel,orders,reengagement,system_map
+    - EXOCLAW_STATE_DIR=/app/hubara_vault/agent_state
     volumes:
     - hubara-vault-local:/app/hubara_vault
     depends_on:
@@ -280,6 +284,7 @@ services:
     - MEDUSA_BASE_URL=${MEDUSA_BASE_URL}
     - MEDUSA_ADMIN_TOKEN=${MEDUSA_ADMIN_TOKEN}
     - ENABLED_PLUGINS=ads,agents_admin,catalog,chats,eta,order_sentinel,orders,reengagement,system_map
+    - EXOCLAW_STATE_DIR=/app/hubara_vault/agent_state
     volumes:
     - hubara-vault-local:/app/hubara_vault
     depends_on:
@@ -303,6 +308,7 @@ services:
     - HUBARA_API_BASE_URL=http://hubara-api:8000
     - AWS_REGION=${AWS_REGION}
     - ENABLED_PLUGINS=ads,agents_admin,catalog,chats,eta,order_sentinel,orders,reengagement,system_map
+    - EXOCLAW_STATE_DIR=/app/hubara_vault/agent_state
     volumes:
     - hubara-vault-local:/app/hubara_vault
     depends_on:
@@ -329,6 +335,7 @@ services:
     - MEDUSA_REGION_ID=${MEDUSA_REGION_ID}
     - MEDUSA_SALES_CHANNEL_ID=${MEDUSA_SALES_CHANNEL_ID}
     - ENABLED_PLUGINS=ads,agents_admin,catalog,chats,eta,order_sentinel,orders,reengagement,system_map
+    - EXOCLAW_STATE_DIR=/app/hubara_vault/agent_state
     volumes:
     - hubara-vault-local:/app/hubara_vault
     depends_on:
@@ -349,6 +356,7 @@ services:
     - WORKSPACE_VAULT_DIR=/app/hubara_vault
     - AWS_REGION=${AWS_REGION}
     - ENABLED_PLUGINS=ads,agents_admin,catalog,chats,eta,order_sentinel,orders,reengagement,system_map
+    - EXOCLAW_STATE_DIR=/app/hubara_vault/agent_state
     volumes:
     - hubara-vault-local:/app/hubara_vault
     depends_on:

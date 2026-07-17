@@ -60,6 +60,7 @@ from src.plugins.chats.agent.sales.activities import (
     flush_pending_ui_intents_activity,
     read_and_clear_pending_handoff_activity,
     read_idle_timeout_seconds_activity,
+    read_order_draft_note_activity,
     transcribe_audio_activity,
 )
 from src.plugins.chats.agent.sales.tools.catalog import (
@@ -311,6 +312,9 @@ async def main() -> None:
             decide_ghosting_action,
             bootstrap_sales_session_activity,
             read_and_clear_pending_handoff_activity,
+            # Draft del pedido al turno de handoff (run 019f6db3): sin esto
+            # el LLM arranca ciego y re-pregunta/pisa lo ya elegido.
+            read_order_draft_note_activity,
             # Dynamic ghosting timeout (sesión c4e3416f): extiende el wait
             # cuando hay un WhatsApp Flow pendiente esperando nfm_reply.
             read_idle_timeout_seconds_activity,
