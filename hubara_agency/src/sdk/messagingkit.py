@@ -39,6 +39,23 @@ update_reengagement_index_entry = _reengagement_index.update_index_entry
 update_reengagement_index_entries = _reengagement_index.update_index_entries
 reengagement_shortlist = _reengagement_index.shortlist_session_ids
 
+# Opt-out de marketing: el detector determinista que cumple la promesa del
+# template de campañas ("respóndeme NO MÁS y te doy de baja"). Lo consulta el
+# ingest de chats en cada inbound de texto; la audiencia de campañas excluye
+# `marketing_opt_out`.
+from src.platform.whatsapp.marketing_opt_out import (
+    detect_marketing_opt_out as detect_marketing_opt_out,
+)
+
+# El send de templates aprobados, para plugins que mandan proactivo (marketing:
+# campañas directas). La activity se registra en el worker del plugin; la
+# función pura es la unidad testeable sin Temporal. El template DEBE existir en
+# el catálogo (`platform/whatsapp/templates/catalog.yaml`) y estar aprobado por
+# Meta — la central `evaluate_send` sigue siendo la autoridad del costo.
+from src.platform.whatsapp.activities import (
+    send_template_to_session as send_template_to_session,
+    send_whatsapp_template_activity as send_whatsapp_template_activity,
+)
 from src.platform.whatsapp.send_policy import (
     LeadState as LeadState,
     SendDecision as SendDecision,

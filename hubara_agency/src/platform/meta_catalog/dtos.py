@@ -64,6 +64,13 @@ class MetaCatalogItem:
     # comparten el product id acá. None = producto sin variantes reales.
     item_group_id: str | None = None
 
+    # Eje de variación (feed spec `additional_variant_attribute`, pares
+    # "clave:valor" separados por coma — ej: "Signo:Leo"). Sin esto WhatsApp
+    # colapsa el grupo en una card SIN selector de variantes: solo se ve un
+    # signo (prod 2026-07-17). Meta exige el campo poblado en TODOS los items
+    # del grupo. None = producto sin variantes reales.
+    additional_variant_attribute: str | None = None
+
 
 @dataclass(frozen=True)
 class MetaBatchRequest:

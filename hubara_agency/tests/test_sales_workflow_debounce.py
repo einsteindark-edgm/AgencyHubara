@@ -58,6 +58,7 @@ class Tracker:
         self.ghosting_calls: int = 0
         self.start_sales_calls: int = 0
         self.execute_tool_calls: list[str] = []
+        self.flush_calls: int = 0
 
 
 def _make_fake_activities(
@@ -117,6 +118,7 @@ def _make_fake_activities(
 
     @activity.defn(name="flush_pending_ui_intents_activity")
     async def fake_flush_ui_intents(session_id: str) -> int:
+        tracker.flush_calls += 1
         return 0
 
     @activity.defn(name="send_typing_indicator_activity")
@@ -1032,4 +1034,88 @@ async def test_record_turn_persists_the_user_message(tmp_path: Path) -> None:
     assert first.get("role") == "user", (
         f"El user msg debe ir PRIMERO en new_messages (orden del turno), "
         f"vino: {user_turns[0]}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_ghost_shutdown_cancelled_when_customer_interrupts(
+    tmp_path: Path,
+) -> None:
+    """Run 48ec6df5 (caso 573229041190, 2026-07-17): el cliente clickeó
+    "Ver catálogo" MIENTRAS corría el turno de auto-etiquetado del ghosting.
+    El corrientazo recompuso el batch (consumiendo el mensaje de `_pending`)
+    pero `_force_shutdown` quedó prendido: el turno recompuesto ejecutó
+    `present_products`, el flush de UI intents se salteó (el MPM del catálogo
+    nunca salió a WhatsApp) y la sesión se apagó "por abandono" con el cliente
+    activo. El cliente tuvo que volver a escribir 10 min después.
+
+    Post-fix: el corrientazo invalida la premisa del ghosting → se limpia
+    `_force_shutdown`, el flush corre tras el turno recompuesto y la sesión
+    sigue viva (un SEGUNDO ciclo de ghosting la cierra recién cuando el
+    cliente de verdad abandona)."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    handle_box: dict = {}
+
+    async def _click_mid_ghost_turn() -> None:
+        await handle_box["handle"].signal(
+            HubaraSalesSessionWorkflow.send_message,
+            args=["[el cliente tocó el botón: Ver catálogo]", None, None],
+        )
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=SALES_QUEUE,
+            workflows=[HubaraSalesSessionWorkflow],
+            activities=_make_fake_activities(
+                tracker,
+                workspace_path=str(workspace),
+                llm_responses=[
+                    # Turno 1: saludo (el turno queda esperando respuesta).
+                    _final_resp("¡Hola! ¿Querés ver el catálogo?"),
+                    # Turno ghost (llamada 2, hookeada): el click llega
+                    # mientras este LLM "piensa" → corrientazo, se descarta.
+                    _final_resp("[cierre ghost stale — NO DEBE SALIR]"),
+                    # Turno recompuesto: presenta el catálogo (turno corta).
+                    _tool_resp("present_products"),
+                    # Llamada 4+: segundo ciclo ghost → default "ok".
+                ],
+                llm_call_hooks={2: _click_mid_ghost_turn},
+            ),
+        ):
+            handle = await env.client.start_workflow(
+                HubaraSalesSessionWorkflow.run,
+                SalesSessionInput(
+                    session_id="wa_ghostrace",
+                    runtime_workspace_path=str(workspace),
+                ),
+                id="session-wa_ghostrace",
+                task_queue=SALES_QUEUE,
+            )
+            handle_box["handle"] = handle
+            await handle.signal(
+                HubaraSalesSessionWorkflow.send_message,
+                args=["Hola", None, None],
+            )
+            await handle.result()
+
+    # El click del cliente se procesó (sanity — esto pasaba incluso pre-fix).
+    assert "present_products" in tracker.execute_tool_calls, (
+        f"El turno recompuesto no ejecutó present_products: "
+        f"{tracker.execute_tool_calls}"
+    )
+    # El catálogo SALIÓ: el flush de UI intents corrió tras el turno
+    # recompuesto (flush #1 = turno del saludo, flush #2 = turno del click).
+    # Pre-fix: _force_shutdown seguía prendido → flush salteado → 1.
+    assert tracker.flush_calls == 2, (
+        f"El flush de UI intents no corrió tras el turno recompuesto — el "
+        f"catálogo quedó encolado sin enviar. flush_calls={tracker.flush_calls}"
+    )
+    # La sesión sobrevivió al primer ghosting (el cliente volvió): la cierra
+    # recién un SEGUNDO ciclo de ghosting. Pre-fix: se apagaba en el primero.
+    assert tracker.ghosting_calls == 2, (
+        f"La sesión debió sobrevivir al primer ghosting (cliente activo) y "
+        f"cerrarse en el segundo. ghosting_calls={tracker.ghosting_calls}"
     )

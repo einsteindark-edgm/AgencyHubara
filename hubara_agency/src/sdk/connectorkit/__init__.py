@@ -28,10 +28,12 @@ import importlib
 from typing import Any
 
 from src.platform.attribution import (
+    CAMPAIGN_ATTRIBUTION_WINDOW_MS as CAMPAIGN_ATTRIBUTION_WINDOW_MS,
     AttributionReadPort as AttributionReadPort,
     AttributionSession as AttributionSession,
     FilesystemAttributionStore as FilesystemAttributionStore,
     InMemoryAttributionStore as InMemoryAttributionStore,
+    matching_campaign_touch as matching_campaign_touch,
 )
 
 # Símbolo público → módulo que lo define. La fuente espejo (eager, para quien

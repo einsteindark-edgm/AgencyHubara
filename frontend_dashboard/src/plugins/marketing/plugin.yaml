@@ -1,0 +1,67 @@
+# Manifest de marketing — generado por `hubara create plugin` (F-SDK-3).
+# Contrato: PLUGIN_CONTRACT.md · schema: ../_schema/plugin.schema.yaml
+# Regla de oro: campo nuevo ⇒ schema + modelo tipado + check (mismo PR).
+id: marketing
+version: 0.1.0
+archetype: full_stack  # P-29: el TCK audita esta identidad de por vida
+display_name: Marketing
+description: |
+  Campañas directas de WhatsApp del operador: builder de campaña (objetivo /
+  descuento / producto / mensaje / audiencia por segmentos), envío o
+  programación vía template MARKETING aprobado por Meta (costo explícito por
+  destinatario), historial persistente en el vault (`_campaigns/`) y
+  atribución: cada destinatario queda estampado con `campaign_touches` en su
+  metadata — cuando responde, el panel de Ads agrupa la conversación por la
+  campaña (canal `hubara_campaign`).
+
+depends_on: []
+
+# ── Frontend ───────────────────────────────────────────────────────────
+frontend:
+  entry: ./frontend
+  contributes:
+    sections:
+      - { key: marketing, label: Marketing, order: 7, icon: send }
+    sidebar:
+      - { route: /marketing, label: Marketing, icon: send }
+
+# ── API REST ────────────────────────────────────────────────────────────
+api:
+  python_module: src.plugins.marketing.api
+  prefix: /api/marketing
+  tags: [Marketing]
+
+# ── Agente Temporal ────────────────────────────────────────────────────
+# Worker único `campaigns` — corre CampaignSendWorkflow (un envío de campaña
+# por invocación; "enviar ahora" arranca el workflow ya, "programar" lo
+# arranca con start_delay). SIN `owns_route`: este plugin no recibe inbounds
+# ni toma el turno conversacional — las respuestas del cliente las maneja el
+# agente sales de chats; la atribución viaja por campaign_touches en el vault.
+agent:
+  python_module: src.plugins.marketing.agent
+  workers:
+    - name: campaigns
+      module: src.plugins.marketing.workers.campaigns
+      task_queue: queue-marketing-campaigns
+      workflow_classes:
+        - CampaignSendWorkflow
+      deployment:
+        replicas: 1                     # un envío de campaña a la vez
+        strategy: Recreate
+        cpu_request: 100m
+        memory_request: 256Mi
+        env_secrets:
+          - { var: WHATSAPP_ACCESS_TOKEN, secret: hubara-whatsapp-secret, key: WHATSAPP_ACCESS_TOKEN }
+      compose:
+        env:
+          TEMPORAL_URL: temporal:7233
+          WORKSPACE_VAULT_DIR: /app/hubara_vault
+          WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID}
+          WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN}
+        volumes:
+          - hubara-vault-local:/app/hubara_vault
+        depends_on:
+          - temporal
+
+wiring_intents:
+  env_vars_required: []

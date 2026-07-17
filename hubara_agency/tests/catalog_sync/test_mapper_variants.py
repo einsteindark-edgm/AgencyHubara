@@ -219,6 +219,83 @@ def test_variant_image_match_ignores_accents():
     assert "Geminis-01KXM9VDDDDDDDDDDDDDDDDDDD" in gem.image_url
 
 
+def test_variant_items_declare_variant_axis():
+    """WhatsApp colapsa items con el mismo `item_group_id` en UNA card y solo
+    muestra el selector de variantes si cada item declara EN QUÉ difiere
+    (feed spec `additional_variant_attribute`, pares "clave:valor"). Sin esto,
+    el catálogo muestra un solo signo (prod 2026-07-17)."""
+    items, _ = map_products_batch([_DUO_V2])
+    by_id = {i.retailer_id: i for i in items}
+    assert by_id["v_leo"].additional_variant_attribute == "Signo:Leo"
+    assert by_id["v_esc"].additional_variant_attribute == "Signo:Escorpion"
+
+
+def test_legacy_single_variant_has_no_variant_axis():
+    items, _ = map_products_batch([_LEGACY])
+    assert items[0].additional_variant_attribute is None
+
+
+def test_serializer_includes_additional_variant_attribute():
+    item = MetaCatalogItem(
+        retailer_id="v_leo",
+        name="Duo Zodiacal · Leo",
+        description="desc",
+        url="https://hubara.com.co/products/duo-zodiacal",
+        image_url="https://img.example/leo.jpg",
+        price="35000 COP",
+        availability="in stock",
+        item_group_id="prod_duo_v2",
+        additional_variant_attribute="Signo:Leo",
+    )
+    data = _item_to_meta_data(item)
+    assert data["additional_variant_attribute"] == "Signo:Leo"
+
+
+def test_serializer_omits_variant_attribute_when_absent():
+    item = MetaCatalogItem(
+        retailer_id="p1",
+        name="Vela",
+        description="desc",
+        url="https://hubara.com.co/products/vela",
+        image_url="https://img.example/x.jpg",
+        price="23000 COP",
+        availability="in stock",
+    )
+    assert "additional_variant_attribute" not in _item_to_meta_data(item)
+
+
+def test_variant_axis_sanitizes_reserved_separators():
+    """"," y ":" son separadores del formato — un option value que los
+    contenga corrompería el string entero en silencio."""
+    duo = CatalogProductDTO(
+        id="prod_x",
+        handle="duo-zodiacal",
+        title="Duo Zodiacal",
+        status="published",
+        description="desc",
+        thumbnail=_DUO_V2.thumbnail,
+        options={"Signo": ["Leo, el rey: fuego"]},
+        variants=[
+            CatalogVariantDTO(
+                id="v_raro",
+                title="Leo, el rey: fuego",
+                options={"Signo": "Leo, el rey: fuego"},
+                prices=_cop("35000"),
+            ),
+            CatalogVariantDTO(
+                id="v_esc",
+                title="Escorpion",
+                options={"Signo": "Escorpion"},
+                prices=_cop("35000"),
+            ),
+        ],
+        images=[_DUO_V2.images[0]],
+    )
+    items, _ = map_products_batch([duo])
+    raro = next(i for i in items if i.retailer_id == "v_raro")
+    assert raro.additional_variant_attribute == "Signo:Leo el rey fuego"
+
+
 def test_serializer_omits_item_group_id_when_absent():
     item = MetaCatalogItem(
         retailer_id="p1",
