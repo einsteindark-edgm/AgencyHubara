@@ -208,6 +208,7 @@ def _variant_items(
                 base,
                 retailer_id=v.id,
                 item_group_id=product.id,
+                color=_native_axis_value(v.options),
                 additional_variant_attribute=_variant_axis(v.options),
                 name=f"{product.title} · {v.title}"[:200],
                 price=price,
@@ -230,6 +231,17 @@ def _variant_items(
 # =============================================================================
 # Helpers
 # =============================================================================
+
+
+def _native_axis_value(options: dict[str, str] | None) -> str | None:
+    """Valor del PRIMER eje de opciones para el campo nativo `color` (max 100
+    chars en Meta). WhatsApp renderiza el selector de variantes desde los
+    campos nativos del feed spec — no hay render confirmado del atributo
+    custom. "Signo:Leo" → color="Leo"."""
+    if not options:
+        return None
+    first = next(iter(options.values()), None)
+    return first.strip()[:100] or None if first else None
 
 
 def _variant_axis(options: dict[str, str] | None) -> str | None:

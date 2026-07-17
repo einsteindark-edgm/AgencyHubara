@@ -64,11 +64,15 @@ class MetaCatalogItem:
     # comparten el product id acá. None = producto sin variantes reales.
     item_group_id: str | None = None
 
-    # Eje de variación (feed spec `additional_variant_attribute`, pares
-    # "clave:valor" separados por coma — ej: "Signo:Leo"). Sin esto WhatsApp
-    # colapsa el grupo en una card SIN selector de variantes: solo se ve un
-    # signo (prod 2026-07-17). Meta exige el campo poblado en TODOS los items
+    # Eje de variación. Los canales (WhatsApp incluido) renderizan el selector
+    # de variantes desde los campos NATIVOS del feed spec (color/size/material/
+    # pattern) — `color` recibe el valor del eje del producto ("Leo") aunque
+    # semánticamente no sea un color: es el campo que WhatsApp sí muestra
+    # (prod 2026-07-17: con solo el atributo custom, la card desapareció).
+    # `additional_variant_attribute` ("Signo:Leo") va además como metadata
+    # fiel al nombre real del eje. Meta exige eje poblado en TODOS los items
     # del grupo. None = producto sin variantes reales.
+    color: str | None = None
     additional_variant_attribute: str | None = None
 
 
