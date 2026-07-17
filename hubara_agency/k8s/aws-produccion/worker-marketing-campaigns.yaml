@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hubara-worker-marketing-campaigns
+  namespace: default
+spec:
+  # Un envío de campaña a la vez (el workflow itera destinatarios en serie).
+  replicas: 1
+  strategy:
+    # Recreate evita dos envíos concurrentes durante rollout.
+    type: Recreate
+  selector:
+    matchLabels:
+      app: hubara-worker-marketing-campaigns
+  template:
+    metadata:
+      labels:
+        app: hubara-worker-marketing-campaigns
+    spec:
+      containers:
+        - name: worker
+          image: hubara-agency-prod:latest
+          imagePullPolicy: Always
+          command: ["python", "-m", "hubara_agency.src.plugins.marketing.workers.campaigns"]
+          # El send real (send_whatsapp_template_activity) necesita, vía
+          # overlay (convención del proyecto — igual que worker-remarketing):
+          #   - WHATSAPP_PHONE_NUMBER_ID
+          #   - WHATSAPP_ACCESS_TOKEN
+          # Sin ellas el worker bootea pero el primer send de campaña falla.
+          env:
+            # P-20/P-21 (INV-2): set explícito de plugins de ESTE deployment.
+            - name: ENABLED_PLUGINS
+              value: "ads,agents_admin,catalog,chats,eta,marketing,orders,system_map"
+            - name: TEMPORAL_URL
+              value: "temporal-frontend.temporal.svc.cluster.local:7233"
+            - name: TEMPORAL_NAMESPACE
+              value: "default"
+            - name: TEMPORAL_TLS_CERT_PATH
+              value: "/etc/temporal-certs/temporal.pem"
+            - name: TEMPORAL_TLS_KEY_PATH
+              value: "/etc/temporal-certs/temporal.key"
+          volumeMounts:
+            - name: hubara-vault
+              # Vault completo: `_campaigns/` (historial) + `wa_*/` (audiencia
+              # + campaign_touches de atribución).
+              mountPath: /var/lib/hubara/vault
+            - name: temporal-certs
+              mountPath: "/etc/temporal-certs"
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: hubara-vault
+          persistentVolumeClaim:
+            claimName: hubara-vault-efs
+        - name: temporal-certs
+          secret:
+            secretName: temporal-cloud-certs

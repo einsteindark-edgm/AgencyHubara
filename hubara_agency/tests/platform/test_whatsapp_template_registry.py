@@ -34,12 +34,14 @@ class TestLoadCatalogReal:
     def test_loads_four_initial_templates(self):
         registry = load_template_registry_from_yaml()
 
-        # Los 4 templates iniciales del HU.
+        # Los 4 templates iniciales del HU + el de campañas directas
+        # (sección Marketing del dashboard, 2026-07-17).
         assert "quote_ready_utility_v1" in registry
         assert "payment_pending_utility_v1" in registry
         assert "order_status_utility_v1" in registry
         assert "cart_recovery_marketing_v1" in registry
-        assert len(registry) == 4
+        assert "campaign_promo_marketing_v1" in registry
+        assert len(registry) == 5
 
     def test_quote_ready_has_correct_spec(self):
         registry = load_template_registry_from_yaml()

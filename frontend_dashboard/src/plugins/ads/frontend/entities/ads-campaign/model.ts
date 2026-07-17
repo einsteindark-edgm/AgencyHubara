@@ -136,6 +136,12 @@ export interface AdsCampaign {
   started: number;
   /** Rango formateado ("1 may → 14 may 2026"). "—" si no hay timestamps. */
   dates: string;
+  /**
+   * Origen del bucket: "ad" | "post" | "web_referral" | "direct" |
+   * "hubara_campaign" (campaña interna de WhatsApp del plugin marketing —
+   * la lista la distingue con un badge) | null (backend viejo).
+   */
+  sourceType: string | null;
 
   // --- Faltantes (queda null hasta integración Meta Ads / orders) ---
   status: CampaignStatus | null;

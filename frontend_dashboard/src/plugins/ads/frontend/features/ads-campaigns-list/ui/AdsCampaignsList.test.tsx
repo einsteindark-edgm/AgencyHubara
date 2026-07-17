@@ -23,6 +23,7 @@ function makeCampaign(over: Partial<AdsCampaign> = {}): AdsCampaign {
   return {
     id: "AD_X",
     name: "Velas artesanales",
+    sourceType: "ad",
     started: 10,
     dates: "1 may → 14 may",
     status: null,
@@ -127,6 +128,26 @@ describe("AdsCampaignsList — desplegable de segmentos", () => {
       />,
     );
     expect(queryByLabelText(/segmentos/i)).toBeNull();
+  });
+});
+
+describe("AdsCampaignsList — campañas internas de marketing", () => {
+  it("una campaña hubara_campaign lleva badge WhatsApp que la distingue de Meta", () => {
+    const { getByText, getByTitle } = renderList(
+      makeCampaign({
+        id: "mkt-abc",
+        name: "Promo madre",
+        sourceType: "hubara_campaign",
+      }),
+    );
+    expect(getByText("Promo madre")).toBeTruthy();
+    expect(getByText("WhatsApp")).toBeTruthy();
+    expect(getByTitle(/campaña directa de whatsapp/i)).toBeTruthy();
+  });
+
+  it("una campaña Meta NO lleva el badge", () => {
+    const { queryByText } = renderList(makeCampaign({ sourceType: "ad" }));
+    expect(queryByText("WhatsApp")).toBeNull();
   });
 });
 

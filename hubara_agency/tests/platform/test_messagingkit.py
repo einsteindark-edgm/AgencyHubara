@@ -45,6 +45,17 @@ def test_messagingkit_reexports_rate_card_accessor():
     assert kit.get_current_rate_card is impl.get_current_rate_card
 
 
+def test_messagingkit_reexports_template_send():
+    # El plugin `marketing` (campañas directas) manda templates aprobados vía
+    # SDK — P-28 le prohíbe `src.platform.whatsapp.activities` directo. Expone
+    # la activity (para registrar en su worker) y la función pura (tests).
+    import src.platform.whatsapp.activities as impl
+    import src.sdk.messagingkit as kit
+
+    assert kit.send_whatsapp_template_activity is impl.send_whatsapp_template_activity
+    assert kit.send_template_to_session is impl.send_template_to_session
+
+
 def test_messagingkit_reexports_service_window_guard():
     # El endpoint del operador (chats) chequea la ventana 24h vía SDK — P-28 le
     # prohíbe `src.platform.whatsapp.window` directo.

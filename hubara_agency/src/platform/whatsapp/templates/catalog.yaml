@@ -82,6 +82,32 @@ templates:
 
   # ===== MARKETING templates (cobran $0.0125 USD en Colombia) =================
 
+  - name: campaign_promo_marketing_v1
+    category: marketing
+    language: es_CO
+    waba_template_name: campaign_promo_marketing   # pending Meta approval (provisioning CLI)
+    # Marco aprobado con copy variable por campaña: saludo + mensaje + oferta.
+    # El opt-out va FIJO en el body aprobado (guía de marketing de Meta) — la
+    # sección Marketing del dashboard solo llena las variables, jamás altera
+    # el marco. Tuteo, no voseo.
+    semantics: "Campaña directa del operador (sección Marketing del dashboard): saludo + mensaje + oferta/cupón dentro de un marco aprobado con opt-out fijo"
+    triggers_when_window_expiring: false   # MARKETING nunca por watchdog
+    # SIN requires_episode_stage: fuera de toda auto-resolution por stage —
+    # este template lo dispara SOLO el operador desde la sección Marketing.
+    variables:
+      - name: greeting
+        type: string
+        max_length: 80
+        description: "Saludo con nombre si existe ('Hola Camila') o genérico ('Hola')"
+      - name: campaign_message
+        type: string
+        max_length: 640
+        description: "Mensaje principal de la campaña (header + cuerpo del builder)"
+      - name: campaign_offer
+        type: string
+        max_length: 200
+        description: "Línea de oferta: cupón/porcentaje/CTA — nunca vacía"
+
   - name: cart_recovery_marketing_v1
     category: marketing
     language: es_CO

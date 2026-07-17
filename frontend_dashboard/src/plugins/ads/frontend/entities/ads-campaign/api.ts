@@ -146,6 +146,7 @@ export function mapBackendCampaign(b: BackendAdsCampaign): AdsCampaign {
     name: b.name,
     started: b.started,
     dates: formatDateRange(b.first_seen_ms, b.last_seen_ms),
+    sourceType: b.source_type,
     status: asCampaignStatus(b.status),
     objective: b.objective,
     placement: b.placement,
