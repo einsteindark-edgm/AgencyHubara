@@ -23,7 +23,10 @@ from src.platform.catalog.composition import get_catalog_client
 from src.platform.catalog.medusa_checkout import MedusaCheckoutVerification
 from src.platform.medusa.composition import get_medusa_product_service
 from src.platform.orchestration import dispatch_event_activity
-from src.platform.orders.composition import get_order_registration_port
+from src.platform.orders.composition import (
+    get_order_query_port,
+    get_order_registration_port,
+)
 from src.platform.plugin_manifest import get_task_queue
 from src.platform.plugin_runtime import ensure_plugin_enabled
 from src.platform.session_history.activities import (
@@ -146,9 +149,18 @@ register_tool_extension(
 # Convivencia ETA/Sales (2026-06-10): el agente ETA es notificador puro — las
 # preguntas de entrega ("¿cuándo llega mi pedido?") las responde SALES con
 # esta tool (lee el estado compartido `metadata.eta_tracking` de la sesión).
+# 2026-07-17 (HU scheduler post-venta): híbrida — además de eta_tracking lista
+# los pedidos registrados de la sesión y, con el query port de orders, trae
+# etapa + pay_status EN VIVO (con timeout corto; degrada a local, L-2).
+# OJO gotcha #6: `get_order_query_port` capturado ANTES de la lambda — un
+# símbolo solo-en-lambda carga limpio y explota en runtime de la activity.
+_order_query_port = get_order_query_port()
 register_tool_extension(
     "sales.check_order_status",
-    lambda workspace: CheckOrderStatusTool(workspace=str(workspace)),
+    lambda workspace: CheckOrderStatusTool(
+        workspace=str(workspace),
+        query_port=_order_query_port,
+    ),
 )
 
 # Caso 573229041190 (2026-07-07): TOOLS.md instruye `load_skill("hubara_catalog")`

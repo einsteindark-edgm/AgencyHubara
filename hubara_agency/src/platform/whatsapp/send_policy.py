@@ -217,6 +217,9 @@ def evaluate_send(
 TAG_HUMAN: str = "HUMANO"
 TAG_CONVERTED: str = "COMPRA_EXITOSA"
 TAG_PAYMENT_PENDING: str = "CONFIRMADO_PAGO_PENDIENTE"
+#: El humano devolvió la conversación a remarketing a propósito (botón del
+#: dashboard) — levanta la supresión por compra hecha.
+TAG_REMARKETING: str = "REMARKETING"
 
 
 @dataclass(frozen=True)
@@ -241,6 +244,11 @@ class LeadState:
     #: Opt-in explícito para gastar UN marketing pago (lead de alto valor). Off
     #: por default — el instinto conservador: no pagar si no se calentó en 72h.
     allow_paid_marketing: bool = False
+    #: `closing_tag` del ÚLTIMO episodio (None si no hay o sigue abierto). El
+    #: tag corriente puede flipar (scheduler post-venta: COMPRA_EXITOSA →
+    #: RETOMA_VENTA) — este campo preserva "la compra ya se hizo" para la
+    #: supresión de re-targeting. Default None = backward-compat (golden).
+    last_closing_tag: str | None = None
 
     @property
     def transactional_hook(self) -> bool:
@@ -277,6 +285,7 @@ def lead_state_from_metadata(metadata: dict[str, Any]) -> LeadState:
     else:
         engaged = last_inbound_ms > last_outbound_ms
 
+    closing_tag = last_episode.get("closing_tag")
     return LeadState(
         tag=metadata.get("tag"),
         has_order_draft=bool(draft.get("slots")),
@@ -284,6 +293,7 @@ def lead_state_from_metadata(metadata: dict[str, Any]) -> LeadState:
         is_ctwa_lead=bool(metadata.get("ctwa_clids_seen")),
         engaged=engaged,
         allow_paid_marketing=bool(metadata.get("allow_paid_marketing")),
+        last_closing_tag=closing_tag if isinstance(closing_tag, str) else None,
     )
 
 
@@ -326,6 +336,18 @@ def decide_reengagement(
         return _suppress("human_owned", "caso con humano — ningún bot interviene")
     if lead.tag == TAG_CONVERTED:
         return _suppress("already_converted", "ya convirtió — no reactivar")
+
+    # 1.5. Compra hecha en el último episodio — el tag corriente puede haber
+    # flipado (scheduler post-venta → RETOMA_VENTA) y el `transactional_hook`
+    # (order_id) dispararía un utility a quien YA compró. El cierre manda.
+    # Excepción: tag REMARKETING explícito = decisión humana de re-contactar.
+    # El próximo inbound abre episodio nuevo (closing_tag=None) y la
+    # supresión se auto-levanta.
+    if lead.last_closing_tag == TAG_CONVERTED and lead.tag != TAG_REMARKETING:
+        return _suppress(
+            "already_purchased",
+            "compra ya hecha (cierre del último episodio) — no re-targetear",
+        )
 
     in_ctwa = is_in_ctwa_window(now_ms, metadata)
     in_csw = is_in_service_window(now_ms, metadata)

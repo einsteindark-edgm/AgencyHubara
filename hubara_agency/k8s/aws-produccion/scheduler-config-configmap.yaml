@@ -45,6 +45,14 @@ data:
   GOLDEN_EVAL_SCHEDULE_ENABLED: "false"
   GOLDEN_EVAL_SCHEDULE_CRON: "0 6 * * *"
 
+  # --- post-sale-return (Temporal Schedule, cron tz America/Bogota) ---
+  # 1×/día devuelve al bot de ventas las conversaciones con COMPRA_EXITOSA
+  # abiertas en humano sin robot corriendo. "false" BORRA el schedule.
+  # Restart: kubectl rollout restart deploy/hubara-worker-post-sale-return
+  POST_SALE_RETURN_SCHEDULE_ENABLED: "true"
+  # Default de código: 21:00 (después del cierre del día del operador).
+  POST_SALE_RETURN_SCHEDULE_CRON: "0 21 * * *"
+
   # --- remarketing-watchdog (workflow per-episodio, NO es un Schedule) ---
   # Feature flag del send (default OFF — Sprint 2 sigue en MOCK).
   WATCHDOG_ENABLED: "false"

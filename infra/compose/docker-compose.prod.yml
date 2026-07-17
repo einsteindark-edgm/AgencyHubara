@@ -101,6 +101,14 @@ services:
     volumes:
       - hubara-vault:/app/hubara_vault
 
+  worker-chats-post_sale_return:
+    <<: *app
+    command: ["python", "-m", "src.plugins.chats.workers.post_sale_return"]
+    # PostSaleReturnWorkflow: schedule diario (21:00 Bogotá) que devuelve al
+    # bot de ventas las COMPRA_EXITOSA con pago confirmado abiertas en humano.
+    volumes:
+      - hubara-vault:/app/hubara_vault
+
   worker-eta-eta:
     <<: *app
     command: ["python", "-m", "src.plugins.eta.workers.eta"]

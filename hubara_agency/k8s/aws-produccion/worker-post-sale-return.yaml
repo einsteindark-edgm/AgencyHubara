@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hubara-worker-post-sale-return
+  namespace: default
+spec:
+  # Scheduler post-venta: un Temporal Schedule (1×/día, hora Bogotá) dispara
+  # PostSaleReturnWorkflow → devuelve al bot de ventas las conversaciones con
+  # compra cerrada (tag=COMPRA_EXITOSA) que quedaron abiertas en humano sin
+  # robot corriendo — el botón "devolver al robot" en batch. Sin LLM (mutación
+  # determinista de metadata). Una réplica alcanza (workflow agendado).
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hubara-worker-post-sale-return
+  template:
+    metadata:
+      labels:
+        app: hubara-worker-post-sale-return
+    spec:
+      containers:
+        - name: worker
+          image: hubara-agency-prod:latest
+          imagePullPolicy: Always
+          # Worker del plugin chats — sub-agente post_sale_return. Mantiene
+          # paridad con docker-compose.local.yml (servicio
+          # hubara-worker-chats-post_sale_return) y con el manifest
+          # (chats/plugin.yaml → agent.workers[name=post_sale_return]).
+          command: ["python", "-m", "hubara_agency.src.plugins.chats.workers.post_sale_return"]
+          # Cron/toggle del Schedule desde el ConfigMap — editable sin redeploy
+          # (ver scheduler-config-configmap.yaml): POST_SALE_RETURN_SCHEDULE_ENABLED
+          # / POST_SALE_RETURN_SCHEDULE_CRON. NO ponerlos acá inline o pisarían
+          # al ConfigMap.
+          envFrom:
+            - configMapRef:
+                name: hubara-scheduler-config
+          env:
+            # P-20/P-21 (INV-2): set explícito de plugins de ESTE deployment.
+            - name: ENABLED_PLUGINS
+              value: "ads,agents_admin,catalog,chats,eta,orders,system_map"
+            - name: TEMPORAL_URL
+              value: "temporal-frontend.temporal.svc.cluster.local:7233"
+            - name: TEMPORAL_NAMESPACE
+              value: "default"
+            - name: TEMPORAL_TLS_CERT_PATH
+              value: "/etc/temporal-certs/temporal.pem"
+            - name: TEMPORAL_TLS_KEY_PATH
+              value: "/etc/temporal-certs/temporal.key"
+            - name: WORKSPACE_VAULT_DIR
+              value: "/app/hubara_vault"
+          volumeMounts:
+            - name: hubara-vault
+              mountPath: /app/hubara_vault
+            - name: temporal-certs
+              mountPath: "/etc/temporal-certs"
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 250m
+              memory: 384Mi
+      volumes:
+        - name: hubara-vault
+          persistentVolumeClaim:
+            claimName: hubara-vault-efs
+        - name: temporal-certs
+          secret:
+            secretName: temporal-cloud-certs

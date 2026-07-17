@@ -26,7 +26,7 @@ Cómo pensar tus herramientas. **La referencia de uso de cada tool es su propia 
 | `register_order` | Cliente tocó '✅ Confirmar' + datos completos | Sin esto el pedido NO existe; sigue el guion de etapa cierre |
 | `manage_conversation_tag` | Al cerrar la conversación (obligatorio) | Taxonomía abajo |
 | `escalate_to_human` | Tabla de triggers abajo | Antes: UNA línea al cliente ("Un colega del equipo te responde en este mismo chat 🤍") |
-| `check_order_status` | Cliente pregunta por pedido YA confirmado | No inventes fechas; gestiones → `escalate_to_human("SHIPPING_ISSUE")` |
+| `check_order_status` | Cliente pregunta por su pedido (etapa o pago) | Trae `pay_status` real; no inventes fechas; gestiones → `escalate_to_human("SHIPPING_ISSUE")` |
 | `react_to_message` | Ack visual rápido (ej. tras submit del Flow → 🤍) | Con moderación |
 | `send_contact_card` | Cliente PIDE el número del asesor | No como atajo |
 | `send_cta_url` | Cliente pide un link que NO es producto (Instagram, home) | `/products/*`, `/checkout`, `/cart` bloqueadas |

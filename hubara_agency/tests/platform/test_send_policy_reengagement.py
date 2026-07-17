@@ -72,6 +72,47 @@ class TestTerminalStates:
         assert d.allowed is False
         assert d.suppress_reason == "already_converted"
 
+    def test_compra_hecha_suprime_aunque_el_tag_corriente_cambie(self, rate):
+        """Bug del scheduler post-venta (2026-07-17): al devolver la
+        conversación a sales el tag flipa COMPRA_EXITOSA→RETOMA_VENTA y el
+        terminal por tag corriente deja de ver la compra — con
+        has_registered_order=True el 'gancho transaccional' dispararía un
+        utility a quien YA compró. El cierre del último episodio
+        (last_closing_tag) manda: compra hecha → suprimir."""
+        lead = LeadState(
+            tag="RETOMA_VENTA",
+            has_registered_order=True,
+            last_closing_tag="COMPRA_EXITOSA",
+        )
+        d = decide_reengagement(NOW_MS, _meta(csw=False, ctwa=True), lead, rate)
+        assert d.allowed is False
+        assert d.suppress_reason == "already_purchased"
+
+    def test_tag_remarketing_explicito_levanta_la_supresion_de_compra(self, rate):
+        """Excepción deliberada: el humano devolvió la conversación a
+        REMARKETING a propósito (botón del dashboard escribe tag=REMARKETING
+        antes de arrancar el workflow) — esa decisión humana manda sobre la
+        supresión por compra hecha."""
+        lead = LeadState(
+            tag="REMARKETING",
+            has_registered_order=True,
+            last_closing_tag="COMPRA_EXITOSA",
+        )
+        d = decide_reengagement(NOW_MS, _meta(csw=False, ctwa=True), lead, rate)
+        assert d.allowed is True
+
+    def test_episodio_nuevo_sin_cierre_no_hereda_la_supresion(self, rate):
+        """El próximo inbound abre episodio nuevo (closing_tag=None): la
+        supresión por compra se auto-levanta — cliente activo de nuevo."""
+        lead = LeadState(
+            tag="INTERESADO",
+            has_order_draft=True,
+            last_closing_tag=None,
+        )
+        d = decide_reengagement(NOW_MS, _meta(csw=False, ctwa=True), lead, rate)
+        assert d.allowed is True
+        assert d.recommended_category == CATEGORY_UTILITY
+
 
 # =============================================================================
 # Fase A — dentro de ventanas: reactivar gratis
