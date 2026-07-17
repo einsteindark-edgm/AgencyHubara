@@ -402,6 +402,28 @@ class HubaraSalesSessionWorkflow:
                             self._pending.clear()
                             raw_batch = [*(raw_batch or []), *drained]
                             msg = self._coalesce_batch(raw_batch)
+                            # Run 48ec6df5 (caso 573229041190): un corrientazo
+                            # durante el turno de ghosting invalida su premisa
+                            # — el cliente SÍ volvió. Sin esto, el recompose
+                            # consume el mensaje de `_pending` y la guarda
+                            # cancel-shutdown de abajo (que solo mira
+                            # `_pending` al cierre del turno) no dispara:
+                            # el flush de UI intents se saltea por
+                            # `_force_shutdown` y la sesión se apaga con la
+                            # respuesta encolada sin enviar. Dentro de este
+                            # loop el flag solo puede venir de ghosting (la
+                            # escalation lo setea DESPUÉS de run_agent_turn,
+                            # y un turno con escalation_decision nunca se
+                            # interrumpe), así que limpiarlo es seguro.
+                            if self._force_shutdown and workflow.patched(
+                                "interrupt-cancels-ghost-shutdown-v1"
+                            ):
+                                workflow.logger.info(
+                                    "Corrientazo durante turno de ghosting: "
+                                    "el cliente volvió — cancelando el "
+                                    "shutdown programado."
+                                )
+                                self._force_shutdown = False
                             continue
                         break
                     self._last_response = result.final_content
