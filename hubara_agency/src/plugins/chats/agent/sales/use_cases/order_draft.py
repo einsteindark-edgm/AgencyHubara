@@ -118,10 +118,15 @@ def update_order_draft(
             # Append con separador; valor ya contenido no se duplica.
             # `""`/None arriba sigue limpiando (cambio de idea explícito).
             existing = draft_slots.get(key)
-            if existing and norm not in existing:
-                draft_slots[key] = f"{existing} | {norm}"
-            elif not existing:
+            if not existing:
                 draft_slots[key] = norm
+            else:
+                # Dedupe por segmento EXACTO, no por substring (premortem
+                # PR #183: "factura" ⊂ "factura urgente" dropeaba en
+                # silencio una nota genuinamente nueva).
+                segments = [s.strip() for s in existing.split(" | ")]
+                if norm not in segments:
+                    draft_slots[key] = f"{existing} | {norm}"
         else:
             draft_slots[key] = norm
 

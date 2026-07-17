@@ -90,6 +90,24 @@ async def test_history_survives_new_conversation_instance(tmp_path, monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_missing_state_root_parent_warns(tmp_path, monkeypatch, caplog):
+    """Premortem §4.8: si EXOCLAW_STATE_DIR apunta adentro de un volumen que
+    NO está montado (p. ej. worker sin el mount de hubara-vault), ensure_dir
+    crea el path en el filesystem del container y la amnesia vuelve EN
+    SILENCIO. El guard: si el PADRE del state root no existe, warning."""
+    state = tmp_path / "no-existe-el-vault" / "agent_state"
+    monkeypatch.setenv("EXOCLAW_STATE_DIR", str(state))
+    ws = _workspace(tmp_path, "sales")
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="exoclaw_temporal.activities.conversation"):
+        _build_conversation(_llm(), ws)
+    assert any("EXOCLAW_STATE_DIR" in r.message for r in caplog.records), (
+        "sin warning ante state root cuyo padre no existe (volumen sin montar)"
+    )
+
+
+@pytest.mark.asyncio
 async def test_state_isolated_per_workspace(tmp_path, monkeypatch):
     """Sales y remarketing usan el MISMO session_id (wa_<phone>) — sus
     historiales NO deben mezclarse en el state dir."""

@@ -19,6 +19,7 @@ Env var ausente → comportamiento legacy intacto (dev/tests).
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from pathlib import Path
@@ -30,18 +31,34 @@ from temporalio import activity
 
 from exoclaw_temporal.config import BuildPromptInput, LLMConfig, RecordTurnInput, WorkspaceConfig
 
+log = logging.getLogger(__name__)
+
 
 def _state_workspace_for(code_workspace: Path) -> Path | None:
     """Root de ESTADO para este workspace, o None si no hay override.
 
     Slug determinista desde el path absoluto del workspace de código —
-    único por agente, estable entre deploys.
+    único por agente, estable entre deploys. OJO: mover/renombrar el
+    workspace cambia el slug (el historial viejo queda en disco bajo el
+    slug anterior — migración manual si importa).
     """
-    state_root = (os.environ.get("EXOCLAW_STATE_DIR") or "").strip()
-    if not state_root:
+    state_root_raw = (os.environ.get("EXOCLAW_STATE_DIR") or "").strip()
+    if not state_root_raw:
         return None
+    state_root = Path(state_root_raw)
+    # Guard anti-amnesia-silenciosa (premortem PR #183 §4.8): si el PADRE
+    # del state root no existe, casi seguro el volumen persistente NO está
+    # montado en este container — ensure_dir crearía el path en el fs
+    # efímero y el historial volvería a morir con cada deploy, sin señal.
+    if not state_root.exists() and not state_root.parent.exists():
+        log.warning(
+            "EXOCLAW_STATE_DIR=%s: ni el dir ni su padre existen — ¿falta el "
+            "mount del volumen persistente en este container? El historial se "
+            "escribirá igual, pero puede ser EFÍMERO.",
+            state_root_raw,
+        )
     slug = re.sub(r"[^A-Za-z0-9]+", "-", str(code_workspace.resolve())).strip("-")
-    return Path(state_root) / slug
+    return state_root / slug
 
 
 def _build_conversation(llm: LLMConfig, ws: WorkspaceConfig) -> DefaultConversation:

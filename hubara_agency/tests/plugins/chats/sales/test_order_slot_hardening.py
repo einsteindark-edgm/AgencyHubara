@@ -117,6 +117,19 @@ async def test_notas_empty_string_still_clears(tmp_path):
     assert "notas" not in result["order_draft"]
 
 
+@pytest.mark.asyncio
+async def test_notas_substring_of_existing_still_appends(tmp_path):
+    """Premortem PR #183 §4.1: el no-dup por substring podía DROPEAR en
+    silencio una nota nueva que casualmente está contenida en una vieja
+    (ej. existing "factura urgente para el viernes", new "factura").
+    El skip es solo por segmento EXACTO; substring parcial appendea."""
+    tool = _tool(tmp_path)
+    await _set(tool, notas="factura urgente para el viernes")
+    result = await _set(tool, notas="factura")
+    notas = result["order_draft"]["notas"]
+    assert notas == "factura urgente para el viernes | factura"
+
+
 # ---------- slot diseno ----------
 
 
