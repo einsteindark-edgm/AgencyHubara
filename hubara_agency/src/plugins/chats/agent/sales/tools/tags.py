@@ -12,9 +12,17 @@ That means an invalid tag returns `Error: Invalid parameters ...` to the LLM
 is gone. Same for `motivo`: required, non-empty.
 
 ADR-001: the tool is inert w.r.t. Temporal. It writes the tag to `metadata.json`
-and returns a JSON envelope (`schedule_remarketing` + `message`); the workflow
-parses the envelope and issues the dispatcher activity. No `temporal_client`,
-no `start_workflow`, no workflow imports.
+and returns a JSON envelope (`message` + decisiones); the workflow parses the
+envelope and issues dispatcher activities. No `temporal_client`, no
+`start_workflow`, no workflow imports.
+
+Reactivación post-INTERESADO: NO la dispara esta tool. Desde PR #113 la
+transition `sales_to_remarketing_on_interested` no existe (guard:
+tests/plugins/chats/test_manifest_no_immediate_remarketing.py) — el envelope
+`schedule_remarketing` que emitía acá era un no-op río abajo y el `message`
+le mentía al LLM ("Se programó un ciclo de remarketing automáticamente").
+La reactivación la decide el ciclo del Window Strategist (plugin
+`reengagement`) según silencio × calor del lead.
 
 Episode lifecycle: cuando el tag es un cierre formal (`CLOSING_TAGS` —
 COMPRA_EXITOSA, RECHAZO, CONFIRMADO_SIN_DATOS), se cierra el episodio
@@ -38,23 +46,6 @@ from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
     close_episode,
     count_session_jsonl_lines,
 )
-
-# 60→300 (caso 573229041190, 2026-07-07): con 60s el ciclo de remarketing le
-# ganaba la carrera al cliente que estaba ESCRIBIENDO su respuesta (una
-# dirección multilínea tarda >60s) — el mensaje caía en el workflow de
-# remarketing (sin tools de pedido) y se perdía; el bot re-preguntaba y el
-# cliente respondía "Ya te los di". Stopgap mientras PR #113 (Window
-# Strategist) traía el re-engagement definitivo.
-#
-# PR #113 ATERRIZÓ: la transition `sales_to_remarketing_on_interested` se
-# eliminó del manifest, así que este delay quedó INERTE — el
-# SalesSessionCompletionEvent que lo lleva ya no arranca remarketing (el
-# dispatcher lo no-op-ea sin consumidor). La reactivación es del ciclo del
-# agente window-strategist (plugin reengagement) con el gate central. El
-# campo viaja por compat del contrato del evento. Guard:
-# tests/plugins/chats/test_manifest_no_immediate_remarketing.py.
-_REMARKETING_DELAY_SECONDS = 300
-
 
 # Sesión c4e3416f: `CONFIRMADO_SIN_DATOS` es para el caso donde el cliente
 # confirmó el pedido (apretó "Confirmar" en `present_order_confirmation`) pero
@@ -84,9 +75,10 @@ _TAG_ENUM: list[str] = [
 class ManageConversationTagTool(ToolBase):
     """Register the final commercial tag for a conversation, plus the reason.
 
-    Used at end-of-sale or when the user loses interest. If the tag is
-    `INTERESADO`, the response envelope carries a `schedule_remarketing` decision
-    that the workflow turns into a dispatcher-activity invocation.
+    Used at end-of-sale or when the user loses interest. La reactivación de
+    un INTERESADO NO la dispara esta tool (ver nota en el docstring del
+    módulo): la decide el ciclo del Window Strategist leyendo el tag y el
+    estado que esta tool persiste en metadata.
     """
 
     name = "manage_conversation_tag"
@@ -104,8 +96,9 @@ class ManageConversationTagTool(ToolBase):
                 "enum": _TAG_ENUM,
                 "description": (
                     "Etiqueta final. Una de: INTERESADO (cliente sigue "
-                    "dudando o se enfrió — programa remarketing 1 hora "
-                    "después), RECHAZO (no compra, cierre definitivo), "
+                    "dudando o se enfrió — el sistema decidirá aparte si "
+                    "y cuándo hacer seguimiento), RECHAZO (no compra, "
+                    "cierre definitivo), "
                     "COMPRA_EXITOSA (cierre con venta concretada Y pago "
                     "verificado por un humano — esta tag la pone el "
                     "humano desde el dashboard, NO el LLM), "
@@ -114,7 +107,7 @@ class ManageConversationTagTool(ToolBase):
                     "SIEMPRE en combo con `escalate_to_human"
                     "(reason_category=ORDER_PENDING_SHIPPING_DETAILS)` "
                     "para que un humano cierre la operación pidiendo los "
-                    "datos faltantes; NO programa remarketing), "
+                    "datos faltantes), "
                     "CONFIRMADO_PAGO_PENDIENTE (cliente confirmó el "
                     "pedido + dio todos los datos de envío + `register_order` "
                     "devolvió `registered=true`; el LLM NO sabe si el pago "
@@ -122,9 +115,8 @@ class ManageConversationTagTool(ToolBase):
                     "esta tag SIEMPRE en combo con `escalate_to_human"
                     "(reason_category=PAYMENT_VERIFICATION_PENDING)` para "
                     "que un humano verifique el pago en el dashboard de "
-                    "orders. NO programa remarketing. NO uses "
-                    "COMPRA_EXITOSA para este caso — esa tag la pone el "
-                    "humano cuando confirma el pago)."
+                    "orders. NO uses COMPRA_EXITOSA para este caso — esa "
+                    "tag la pone el humano cuando confirma el pago)."
                 ),
             },
             "motivo": {
@@ -236,20 +228,14 @@ class ManageConversationTagTool(ToolBase):
 
         metadata_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
-        # ADR-001: la tool no abre temporal_client. Si el tag indica seguimiento,
-        # devuelve una decision serializada para que el workflow programe el remarketing.
+        # ADR-001: la tool no abre temporal_client. NO emite decisión de
+        # remarketing: el envelope `schedule_remarketing` era un no-op desde
+        # PR #113 (transition eliminada) y su `message` le mentía al LLM. El
+        # parser del workflow (`workflow_helpers`) sigue entendiendo el
+        # envelope SOLO para replay de histories viejas — acá no se produce.
         response: dict[str, Any] = {
             "message": f"Éxito. Interacción etiquetada como '{tag}'.",
         }
-        if tag == "INTERESADO":
-            response["schedule_remarketing"] = {
-                "session_id": ctx.session_key,
-                "motivo": motivo,
-                "delay_seconds": _REMARKETING_DELAY_SECONDS,
-            }
-            response[
-                "message"
-            ] += " Se programó un ciclo de remarketing automáticamente."
 
         # HU-WA24H-001 Sprint 2: si cerramos episodio activo (closed_ep no
         # None), emitir una decisión `episode_closed` para que el workflow

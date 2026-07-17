@@ -133,8 +133,17 @@ async def test_tag_tool_dispatched_via_registry(tmp_path: Path) -> None:
         _ctx("wa_5499876543210"),
     )
     payload = json.loads(raw)
-    assert payload["schedule_remarketing"]["session_id"] == "wa_5499876543210"
-    assert payload["schedule_remarketing"]["motivo"] == "dudó del precio"
+    # El dispatch vía registry ejecutó la tool real: tag persistido en el
+    # vault per-sesión. (El envelope `schedule_remarketing` ya no existe —
+    # la reactivación es del ciclo del Window Strategist, no de esta tool.)
+    assert "INTERESADO" in payload["message"]
+    metadata = json.loads(
+        (tmp_path / "wa_5499876543210" / "metadata.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert metadata["tag"] == "INTERESADO"
+    assert metadata["motivo"] == "dudó del precio"
 
 
 # ---------------------------------------------------------------------------

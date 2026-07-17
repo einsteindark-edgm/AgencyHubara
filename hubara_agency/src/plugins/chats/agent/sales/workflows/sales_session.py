@@ -378,6 +378,15 @@ class HubaraSalesSessionWorkflow:
                     # convertirla a un completion event y dispatchar por manifest.
                     # NO importar workflow classes de sibling agents (R-DIP #10).
                     #
+                    # SOLO-REPLAY: desde la limpieza post-PR#113 la tool de tags
+                    # ya NO emite `schedule_remarketing` (la transition que
+                    # consumia el evento se elimino del manifest y el dispatcher
+                    # lo no-op-eaba). Este branch queda para replay de histories
+                    # viejas cuyo output de tool grabado SI trae el envelope
+                    # (el parser de workflow_helpers lo sigue entendiendo).
+                    # Ejecuciones nuevas: siempre None. Removible junto con el
+                    # deprecate_patch de abajo cuando drenen las histories.
+                    #
                     # workflow.patched(): pre-deploy histories tienen
                     # `schedule_remarketing_workflow_activity` directo; el patched
                     # gate evita NondeterminismError al replay-arlos. Tras drain,

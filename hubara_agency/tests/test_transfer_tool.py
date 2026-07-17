@@ -96,7 +96,14 @@ async def test_transfer_tool_returns_decision_payload(tmp_path: Path) -> None:
     assert metadata["tag"] == "RETOMA_VENTA"
 
 
-async def test_tags_tool_emits_schedule_remarketing_for_interesado(tmp_path: Path) -> None:
+async def test_tags_tool_interesado_no_promete_remarketing(tmp_path: Path) -> None:
+    """Post PR #113 la transition sales→remarketing directo NO existe: el
+    envelope `schedule_remarketing` era un no-op río abajo (el dispatcher
+    no-op-ea el SalesSessionCompletionEvent sin consumidor) y el `message`
+    le MENTÍA al LLM ("Se programó un ciclo de remarketing automáticamente").
+    La tool ahora dice la verdad: registra el tag; la reactivación la decide
+    el ciclo del Window Strategist (plugin reengagement) según silencio×calor.
+    """
     workspace = tmp_path
     tool = ManageConversationTagTool(workspace=str(workspace), vault_dir=workspace)
 
@@ -105,14 +112,21 @@ async def test_tags_tool_emits_schedule_remarketing_for_interesado(tmp_path: Pat
     )
     payload = json.loads(raw)
 
-    assert payload["schedule_remarketing"]["session_id"] == "wa_5492222222222"
-    assert payload["schedule_remarketing"]["motivo"] == "cliente dudo del precio"
-    # 60→300 (caso 573229041190, 2026-07-07): con 60s el gancho de remarketing
-    # le ganaba la carrera al cliente que estaba ESCRIBIENDO su dirección
-    # (>60s para un mensaje multilínea) — el mensaje caía en remarketing y se
-    # perdía. Stopgap mientras PR #113 (Window Strategist) madura el
-    # re-engagement definitivo.
-    assert payload["schedule_remarketing"]["delay_seconds"] == 300
+    # Sin envelope inerte y sin promesa falsa al LLM.
+    assert "schedule_remarketing" not in payload
+    assert "programó" not in payload["message"].lower()
+    # El tag SÍ se registró (el comportamiento real de la tool).
+    metadata = json.loads(
+        (workspace / "wa_5492222222222" / "metadata.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert metadata["tag"] == "INTERESADO"
+    # La description tampoco promete remarketing inmediato (el LLM decide
+    # con esta info — no puede recibir un contrato falso).
+    schema_text = json.dumps(tool.parameters, ensure_ascii=False)
+    assert "programa remarketing" not in schema_text
+    assert "NO programa remarketing" not in schema_text
 
 
 async def test_tags_tool_no_decision_for_rechazo(tmp_path: Path) -> None:
