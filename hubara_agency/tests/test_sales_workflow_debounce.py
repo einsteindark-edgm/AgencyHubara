@@ -69,6 +69,7 @@ def _make_fake_activities(
     llm_responses: list[LLMResponseData] | None = None,
     tool_results: dict[str, str] | None = None,
     llm_call_hooks: dict[int, object] | None = None,
+    order_draft_note: str | None = None,
 ):
     """Crea las activities fakes con `tracker` cerrado en closure.
 
@@ -105,6 +106,10 @@ def _make_fake_activities(
         if _handoff_state["queue"]:
             return _handoff_state["queue"].pop(0)
         return None
+
+    @activity.defn(name="read_order_draft_note")
+    async def fake_read_order_draft_note(session_id: str) -> str | None:
+        return order_draft_note
 
     @activity.defn(name="read_idle_timeout_seconds")
     async def fake_read_idle_timeout(session_id: str) -> int:
@@ -207,6 +212,7 @@ def _make_fake_activities(
     return [
         fake_bootstrap,
         fake_read_handoff,
+        fake_read_order_draft_note,
         fake_read_idle_timeout,
         fake_flush_ui_intents,
         fake_typing,
@@ -342,6 +348,59 @@ async def test_handoff_from_metadata_goes_to_plugin_context(tmp_path: Path) -> N
     assert any(
         "[HANDOFF_REMARKETING]" in ctx and handoff_summary in ctx
         for ctx in bp.plugin_context
+    )
+
+
+@pytest.mark.asyncio
+async def test_handoff_turn_carries_order_draft_note(tmp_path: Path) -> None:
+    """Incidente 2026-07-17 (run 019f6db3): el turno de handoff arrancaba SIN
+    el bloque `[DATOS DEL PEDIDO YA CONFIRMADOS]` aunque el draft estuviera
+    intacto en el vault — el LLM re-preguntó (y pisó) lo ya elegido. El
+    workflow debe adjuntar la note del draft al plugin_context del handoff."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    handoff_summary = "Usuario respondió: Vamos con esas dos"
+    draft_note = (
+        "[DATOS DEL PEDIDO YA CONFIRMADOS POR EL CLIENTE, metadata]\n"
+        "Notas: 1× Leo café + 1× Libra sándalo"
+    )
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=SALES_QUEUE,
+            workflows=[HubaraSalesSessionWorkflow],
+            activities=_make_fake_activities(
+                tracker,
+                workspace_path=str(workspace),
+                pending_handoff=handoff_summary,
+                order_draft_note=draft_note,
+            ),
+        ):
+            handle = await env.client.start_workflow(
+                HubaraSalesSessionWorkflow.run,
+                SalesSessionInput(
+                    session_id="wa_draftnote",
+                    runtime_workspace_path=str(workspace),
+                ),
+                id="session-wa_draftnote",
+                task_queue=SALES_QUEUE,
+            )
+            await handle.signal(
+                HubaraSalesSessionWorkflow.send_message,
+                args=["Vamos con esas dos", None, None],
+            )
+            await handle.result()
+
+    user_turn_calls = [
+        c for c in tracker.build_prompt_calls if "GHOST" not in c.message
+    ]
+    assert len(user_turn_calls) == 1
+    bp = user_turn_calls[0]
+    assert bp.plugin_context is not None
+    assert any("DATOS DEL PEDIDO YA CONFIRMADOS" in ctx for ctx in bp.plugin_context), (
+        f"draft note ausente del plugin_context: {bp.plugin_context}"
     )
 
 

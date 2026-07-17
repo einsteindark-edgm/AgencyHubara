@@ -59,6 +59,7 @@ KNOWN_SLOTS: tuple[tuple[str, str], ...] = (
     ("producto", "Producto"),
     ("aroma", "Aroma"),
     ("color", "Color"),
+    ("diseno", "Diseño/Signo"),
     ("cantidad", "Cantidad"),
     ("ciudad", "Ciudad"),
     ("barrio", "Barrio"),
@@ -110,6 +111,17 @@ def update_order_draft(
         norm = _normalize(raw)
         if norm is None:
             draft_slots.pop(key, None)
+        elif key == "notas":
+            # Notas es memoria ACUMULATIVA, no un valor puntual (incidente
+            # 2026-07-17 run 019f6db3: un LLM sin historial pisó las notas
+            # que contenían los signos elegidos, destruyendo el pedido).
+            # Append con separador; valor ya contenido no se duplica.
+            # `""`/None arriba sigue limpiando (cambio de idea explícito).
+            existing = draft_slots.get(key)
+            if existing and norm not in existing:
+                draft_slots[key] = f"{existing} | {norm}"
+            elif not existing:
+                draft_slots[key] = norm
         else:
             draft_slots[key] = norm
 

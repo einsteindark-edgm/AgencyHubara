@@ -16,6 +16,7 @@ from src.plugins.chats.agent.sales.activities.bootstrap_session import (
     decide_ghosting_action,
     read_and_clear_pending_handoff_activity,
     read_idle_timeout_seconds_activity,
+    read_order_draft_note_activity,
 )
 from src.plugins.chats.agent.sales.activities.episode_closure import (
     ensure_closing_escalation_activity,
@@ -38,6 +39,7 @@ __all__ = [
     "ensure_closing_escalation_activity",
     "ensure_payment_pending_closure_activity",
     "read_and_clear_pending_handoff_activity",
+    "read_order_draft_note_activity",
     "read_idle_timeout_seconds_activity",
     "flush_pending_ui_intents_activity",
     "transcribe_audio_activity",

@@ -50,6 +50,10 @@ CADDY_DOMAIN=${CADDY_DOMAIN}
 ENABLED_PLUGINS=${ENABLED_PLUGINS}
 API_BASE_LLMLITE=http://litellm:4000
 WORKSPACE_VAULT_DIR=/app/hubara_vault
+# Historial LLM en el volumen persistente (incidente 2026-07-17 run 019f6db3:
+# el default <workspace>/sessions vive en la imagen → cada deploy borraba la
+# memoria conversacional de todos los clientes activos).
+EXOCLAW_STATE_DIR=/app/hubara_vault/agent_state
 CATALOG_SNAPSHOT_DIR=/app/hubara_vault/catalog
 CATALOG_MAX_AGE_MINUTES=30
 EVAL_CANDIDATES_DIR=/app/hubara_vault/_evals/candidates
