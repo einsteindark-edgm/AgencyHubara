@@ -65,6 +65,14 @@
       `cd hubara_agency && uv run python scripts/create_reengagement_schedule.py`
       y `cd hubara_agency && uv run python scripts/create_order_sentinel_schedule.py`
 
+## F7b — Marketing (post-#184, wiring del motor aún parcial)
+
+- [ ] El clon nace con `marketing` en enabled_plugins (panel + API activos).
+- [ ] ⚠ El worker de campañas todavía NO está en el compose de prod del MOTOR
+      (pendiente en hubara): hasta cherry-pickear ese fix, las campañas se
+      crean pero no despachan. Revisar `git log hubara/main -- infra/compose`
+      antes del go-live y portar el commit que agregue worker-marketing.
+
 ## F8 — Verificación E2E
 
 - [ ] HTTPS ok · webhook verificado · conversación real (saluda como {{company}}, NUNCA "Hubara")

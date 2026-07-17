@@ -36,7 +36,7 @@ REPO = ROOT.parent  # repo madre
 CLIENTS = ROOT / "clients"
 
 ENABLED_PLUGINS_DEFAULT = (
-    "ads,agents_admin,catalog,chats,eta,order_sentinel,orders,reengagement,system_map"
+    "ads,agents_admin,catalog,chats,eta,marketing,order_sentinel,orders,reengagement,system_map"
 )
 PHONE_CC = {"CO": "57", "MX": "52", "AR": "54", "US": "1"}
 # Palabra alrededor de un match de "hubara" — incluye '/' y '.' para que los

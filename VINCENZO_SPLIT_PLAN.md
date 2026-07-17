@@ -51,7 +51,11 @@ caja EC2 de vincenzo). No existe nada de vincenzo con datos reales.
   98.88.237.207 → `https://98-88-237-207.sslip.io`): Caddy + FastAPI + LiteLLM +
   **8 workers** Temporal (catalog-sync, sales, remarketing, sales_eval, eta,
   orders-reconcile + los nuevos **reengagement-cycle** y **order-sentinel-cycle**,
-  post-merge 2026-07-10). `enabled_plugins` incluye `order_sentinel,reengagement`.
+  post-merge 2026-07-10). `enabled_plugins` incluye `order_sentinel,reengagement`;
+  post-#184 existe el plugin **marketing** (campañas WhatsApp) — su worker de
+  campañas AÚN no está en el compose de prod (pendiente wiring en el motor);
+  los clones nacen con `marketing` habilitado y heredan el worker por
+  cherry-pick cuando el motor lo sume.
   Vault (sesiones WA + snapshot catálogo + evals + índice de reengagement +
   **historial LLM** `agent_state/` — PR #183: la memoria conversacional ya NO
   vive en la imagen, sobrevive deploys) en volumen
