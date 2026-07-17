@@ -25,6 +25,14 @@
       "recommended_category": "service",
       "reason": "csw_free_form",
       "priority": 3
+    },
+    {
+      "kind": "reengagement_dispatch",
+      "session_id": "wa_hot_cart",
+      "recommended_channel": "free_form",
+      "recommended_category": "service",
+      "reason": "csw_free_form",
+      "priority": 4
     }
   ],
   "suppressed": [

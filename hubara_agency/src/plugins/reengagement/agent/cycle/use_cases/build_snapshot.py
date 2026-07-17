@@ -17,9 +17,34 @@ RECENT_TOUCHES_CAP = 10
 #: Post-mortem run 019f6d0d (2026-07-16): sin este umbral, un chat con inbound
 #: hace 3.6 min llegaba al agente como candidato — reengagement es para chats
 #: abandonados, no para meterse en una conversación de ventas en vivo. NO va en
-#: la central (`decide_reengagement`): ella también sirve a la transición
-#: INTERESADO (delay 5 min) y al trigger manual del dashboard (delay 0).
-MIN_SILENCE_MS = 4 * 60 * 60 * 1000
+#: la central (`decide_reengagement`): ella también sirve al trigger manual
+#: del dashboard (delay 0).
+#:
+#: ESCALERA POR CALOR (mejores prácticas de carrito abandonado: primer toque
+#: a los 30-60 min convierte 20.3% vs 12.2% a las 24h — Rejoiner/Shopify):
+#: el umbral es SILENCIO MÍNIMO desde last_inbound, no depende de cuándo cae
+#: el ciclo. Con ciclo cada N min, el primer toque cae en [piso, piso+N].
+MIN_SILENCE_MS = 4 * 60 * 60 * 1000  # ❄️ cold: sin señal de calor
+MIN_SILENCE_WARM_MS = 2 * 60 * 60 * 1000  # 🌡️ INTERESADO o engaged
+MIN_SILENCE_HOT_MS = 45 * 60 * 1000  # 🔥 gancho transaccional (carrito)
+
+#: espejo del tag (send_policy no exporta INTERESADO como constante; el
+#: golden de paridad + los tests de la escalera cazan el drift).
+_TAG_INTERESADO = "INTERESADO"
+
+
+def _min_silence_ms_for(lead: Any) -> int:
+    """Piso de silencio según el calor del lead (LeadState pre-digerido).
+
+    El calor NO lo re-analiza un LLM: el agente de ventas ya lo dejó en
+    metadata (draft/orden/tag) y `lead_state_from_metadata` lo digiere UNA
+    vez (Decisión #2). Espejo en GraphAgents `window_strategist._plan`.
+    """
+    if lead.transactional_hook:
+        return MIN_SILENCE_HOT_MS
+    if lead.tag == _TAG_INTERESADO or lead.engaged:
+        return MIN_SILENCE_WARM_MS
+    return MIN_SILENCE_MS
 
 #: margen tras el último inbound dentro del cual un outbound es RÉPLICA
 #: conversacional, no un toque proactivo (post-mortem run 019f6d0d: contar
@@ -97,7 +122,6 @@ def build_snapshot_from_sessions(
     now_ms: int,
     sessions: list[tuple[str, dict[str, Any]]],
     rate_card: Any = None,
-    min_silence_ms: int = MIN_SILENCE_MS,
 ) -> dict[str, Any]:
     """(now_ms, [(session_id, metadata)]) → el seed completo del agente.
 
@@ -110,10 +134,11 @@ def build_snapshot_from_sessions(
     El agente igual suprime en classify (defensa en profundidad) y el gate
     re-valida al ejecutar.
 
-    Pre-filtro de dormancia: una conversación con inbound más reciente que
-    `min_silence_ms` está VIVA (ventas en plena charla) — no es candidata a
-    reengagement. Sin `last_inbound_at_ms` la dormancia no aplica (nunca
-    escribió; decide la central).
+    Pre-filtro de dormancia (escalera por calor): una conversación con
+    inbound más reciente que su piso (`_min_silence_ms_for`) está VIVA
+    (ventas en plena charla) — no es candidata a reengagement. Sin
+    `last_inbound_at_ms` la dormancia no aplica (nunca escribió; decide la
+    central).
     """
     conversations: list[dict[str, Any]] = []
     prefiltered: dict[str, int] = {}
@@ -121,16 +146,18 @@ def build_snapshot_from_sessions(
         entry = conversation_entry(session_id, metadata)
         if entry is None:
             continue
+        lead = lead_state_from_metadata(metadata)
         last_inbound = metadata.get("last_inbound_at_ms")
-        if isinstance(last_inbound, int) and now_ms - last_inbound < min_silence_ms:
+        if (
+            isinstance(last_inbound, int)
+            and now_ms - last_inbound < _min_silence_ms_for(lead)
+        ):
             prefiltered["conversation_active"] = (
                 prefiltered.get("conversation_active", 0) + 1
             )
             continue
         if rate_card is not None:
-            decision = decide_reengagement(
-                now_ms, metadata, lead_state_from_metadata(metadata), rate_card
-            )
+            decision = decide_reengagement(now_ms, metadata, lead, rate_card)
             if not decision.allowed:
                 reason = decision.suppress_reason or "suppressed"
                 prefiltered[reason] = prefiltered.get(reason, 0) + 1

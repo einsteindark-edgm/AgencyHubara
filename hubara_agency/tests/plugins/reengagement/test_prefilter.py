@@ -128,3 +128,53 @@ async def test_prefiltra_conversacion_activa(_isolate_vault_dir: Path):
     assert snapshot["prefiltered"] == {"conversation_active": 1}, (
         snapshot.get("prefiltered")
     )
+
+
+@pytest.mark.asyncio
+async def test_escalera_de_dormancia_por_calor(_isolate_vault_dir: Path):
+    """Escalera por calor (mejores prácticas de carrito abandonado: primer
+    toque a los 30-60 min convierte 20.3% vs 12.2% a las 24h):
+
+      🔥 hot  (gancho transaccional: carrito/orden/pago pendiente) → 45 min
+      🌡️ warm (INTERESADO o engaged, sin gancho)                  → 2h
+      ❄️ cold (resto)                                             → 4h
+
+    El umbral es SILENCIO MÍNIMO desde last_inbound — no depende de cuándo
+    cae el ciclo: si el cliente calló hace 2 min, ningún tier lo toca.
+    """
+    now_ms = int(time.time() * 1000)
+    on = now_ms + 20 * ONE_HOUR_MS
+
+    def lead(session_id: str, silence_ms: int, **extra) -> None:
+        li = now_ms - silence_ms
+        _seed(_isolate_vault_dir, session_id, {
+            "tag": extra.pop("tag", "INTERESADO"),
+            "service_window_expires_at_ms": on,
+            "last_inbound_at_ms": li,
+            # El bot respondió después del inbound → engaged=False (si un
+            # caso quiere engaged=True, no seedear last_outbound).
+            "last_outbound": {"sent_at_ms": li + 10_000},
+            **extra,
+        })
+
+    draft_ep = [{
+        "episode_id": "ep_001",
+        "closed_at_ms": None,
+        "order_draft": {"slots": {"producto": "vela"}},
+    }]
+    # 🔥 carrito abandonado con 1h de silencio → ENTRA (piso 45 min)
+    lead("wa_hot_1h", ONE_HOUR_MS, episodes=draft_ep)
+    # 🌡️ INTERESADO sin carrito, 1h de silencio → AFUERA (piso 2h)
+    lead("wa_warm_1h", ONE_HOUR_MS)
+    # 🌡️ INTERESADO sin carrito, 3h de silencio → ENTRA
+    lead("wa_warm_3h", 3 * ONE_HOUR_MS)
+    # ❄️ sin tag ni gancho ni engaged, 3h de silencio → AFUERA (piso 4h)
+    lead("wa_cold_3h", 3 * ONE_HOUR_MS, tag="NO_ETIQUETADO")
+
+    snapshot = await ActivityEnvironment().run(build_reengagement_snapshot_activity)
+
+    ids = sorted(c["session_id"] for c in snapshot["conversations"])
+    assert ids == ["wa_hot_1h", "wa_warm_3h"], ids
+    assert snapshot["prefiltered"] == {"conversation_active": 2}, (
+        snapshot.get("prefiltered")
+    )

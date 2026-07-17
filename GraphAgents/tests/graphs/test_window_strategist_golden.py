@@ -61,6 +61,17 @@ def test_golden_dispatch_list_exacta() -> None:
                 "reason": "csw_free_form",
                 "priority": 3,
             },
+            # 🔥 Escalera por calor: carrito abandonado (has_order_draft) con
+            # 1h de silencio → piso hot 45 min, DESPACHA (el piso plano de 4h
+            # lo suprimía — mejores prácticas: primer toque a los 30-60 min).
+            {
+                "kind": "reengagement_dispatch",
+                "session_id": "wa_hot_cart",
+                "recommended_channel": "free_form",
+                "recommended_category": "service",
+                "reason": "csw_free_form",
+                "priority": 4,
+            },
         ],
         "suppressed": [
             {"session_id": "wa_cold", "reason": "fase_b_cold_suppressed"},

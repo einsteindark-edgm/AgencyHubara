@@ -20,9 +20,35 @@ DEFAULT_MAX_PAID_PER_CYCLE = 5
 #: Dormancia mínima: silencio del cliente antes de ser reactivable (post-mortem
 #: run 019f6d0d, 2026-07-16: un chat con inbound hace 3.6 min llegó como
 #: candidato — reengagement es para chats abandonados, no para meterse en una
-#: conversación de ventas en vivo). Espejo del pre-filtro de hubara
-#: (`build_snapshot.MIN_SILENCE_MS`) — defensa en profundidad.
-DEFAULT_MIN_SILENCE_MS = 4 * 60 * 60 * 1000
+#: conversación de ventas en vivo). ESCALERA POR CALOR (carrito abandonado:
+#: primer toque 30-60 min convierte 20.3% vs 12.2% a las 24h). El umbral es
+#: silencio desde last_inbound — no depende de cuándo cae el ciclo. Espejo del
+#: pre-filtro de hubara (`build_snapshot._min_silence_ms_for`) — defensa en
+#: profundidad. Overrides por `payload.policy.min_silence_{hot_,warm_,}ms`.
+DEFAULT_MIN_SILENCE_MS = 4 * 60 * 60 * 1000  # ❄️ cold: sin señal de calor
+DEFAULT_MIN_SILENCE_WARM_MS = 2 * 60 * 60 * 1000  # 🌡️ INTERESADO o engaged
+DEFAULT_MIN_SILENCE_HOT_MS = 45 * 60 * 1000  # 🔥 gancho transaccional
+
+#: Espejo de tags (misma duplicación deliberada que en parse-conversations —
+#: la frontera del monorepo impide el import; los goldens cazan el drift).
+_TAG_INTERESADO = "INTERESADO"
+_TAG_PAYMENT_PENDING = "CONFIRMADO_PAGO_PENDIENTE"
+
+
+def _min_silence_ms(convo: dict, policy: dict) -> int:
+    """Piso de silencio según el calor del lead (flags PRE-DIGERIDOS por
+    hubara — acá no se re-deriva warmth, Decisión #2)."""
+    lead = convo.get("lead") or {}
+    hook = (
+        bool(lead.get("has_order_draft"))
+        or bool(lead.get("has_registered_order"))
+        or lead.get("tag") == _TAG_PAYMENT_PENDING
+    )
+    if hook:
+        return policy.get("min_silence_hot_ms", DEFAULT_MIN_SILENCE_HOT_MS)
+    if lead.get("tag") == _TAG_INTERESADO or lead.get("engaged"):
+        return policy.get("min_silence_warm_ms", DEFAULT_MIN_SILENCE_WARM_MS)
+    return policy.get("min_silence_ms", DEFAULT_MIN_SILENCE_MS)
 
 _DAY_MS = 24 * 60 * 60 * 1000
 
@@ -58,7 +84,6 @@ def _plan(payload: dict, classified: list[dict]) -> dict:
     paid_budget = policy.get(
         "max_paid_dispatches_per_cycle", DEFAULT_MAX_PAID_PER_CYCLE
     )
-    min_silence = policy.get("min_silence_ms", DEFAULT_MIN_SILENCE_MS)
 
     by_session = {c.get("session_id"): c for c in payload.get("conversations") or []}
     suppressed: list[dict] = []
@@ -69,10 +94,15 @@ def _plan(payload: dict, classified: list[dict]) -> dict:
         if c["action"] == "suppress":
             suppressed.append({"session_id": sid, "reason": c["reason"]})
             continue
-        # Dormancia: inbound más reciente que el umbral = conversación VIVA
-        # (ventas en plena charla) — no reactivar. Sin last_inbound no aplica.
-        last_inbound = (by_session.get(sid) or {}).get("last_inbound_at_ms")
-        if isinstance(last_inbound, int) and now_ms - last_inbound < min_silence:
+        # Dormancia (escalera por calor): inbound más reciente que el piso
+        # del tier = conversación VIVA (ventas en plena charla) — no
+        # reactivar. Sin last_inbound no aplica.
+        convo = by_session.get(sid) or {}
+        last_inbound = convo.get("last_inbound_at_ms")
+        if (
+            isinstance(last_inbound, int)
+            and now_ms - last_inbound < _min_silence_ms(convo, policy)
+        ):
             suppressed.append({"session_id": sid, "reason": "conversation_active"})
             continue
         # Cadencia: no martillar al mismo lead aunque la ventana sea gratis.
