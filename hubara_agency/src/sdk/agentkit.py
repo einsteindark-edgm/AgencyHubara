@@ -43,6 +43,15 @@ from src.platform.tool_extensions import (
     clear_tool_extensions as clear_tool_extensions,
     register_tool_extension as register_tool_extension,
 )
+
+# Canal de abstención de un turno proactivo (incidente wa_573229041190, run
+# 019f7234): el prompt ofrece el sentinel NO_MESSAGE y el workflow lo detecta
+# con este helper — sin él, "decidir no enviar" terminaba enviado al cliente
+# como deliberación. Puro, stdlib-only (importable en workflow sandbox).
+from src.platform.llm_text_sanitizer import (
+    NO_MESSAGE_SENTINEL as NO_MESSAGE_SENTINEL,
+    is_no_message_abstention as is_no_message_abstention,
+)
 from src.platform.workflow_helpers import (
     CONVERSATIONAL_TURN_ACTIVITIES as CONVERSATIONAL_TURN_ACTIVITIES,
     PRESENTATIONAL_TOOLS as PRESENTATIONAL_TOOLS,

@@ -66,7 +66,9 @@ async def test_csw_open_allows_free_form(_isolate_vault_dir: Path):
             "tag": "INTERESADO",
             "service_window_expires_at_ms": now_ms + ONE_HOUR_MS,
             "ctwa_window_expires_at_ms": now_ms - ONE_HOUR_MS,
-            "last_inbound_at_ms": now_ms - 1000,
+            # >30 min: fuera de la ventana customer_active (incidente
+            # wa_573229041190) pero con CSW abierta — el caso free-form legítimo.
+            "last_inbound_at_ms": now_ms - 31 * 60 * 1000,
         },
     )
     decision = await ActivityEnvironment().run(
@@ -74,6 +76,28 @@ async def test_csw_open_allows_free_form(_isolate_vault_dir: Path):
     )
     assert decision.allowed is True
     assert decision.channel == "free_form"
+
+
+@pytest.mark.asyncio
+async def test_inbound_reciente_suprime_customer_active(_isolate_vault_dir: Path):
+    # Carrera del incidente wa_573229041190: el cliente escribió segundos
+    # antes de que el gate corriera — la conversación es de Sales.
+    now_ms = int(time.time() * 1000)
+    _write_metadata(
+        _isolate_vault_dir,
+        "wa_573000000005",
+        {
+            "tag": "INTERESADO",
+            "service_window_expires_at_ms": now_ms + ONE_HOUR_MS,
+            "ctwa_window_expires_at_ms": now_ms + ONE_HOUR_MS,
+            "last_inbound_at_ms": now_ms - 2000,
+        },
+    )
+    decision = await ActivityEnvironment().run(
+        check_reengagement_policy_activity, "wa_573000000005"
+    )
+    assert decision.allowed is False
+    assert decision.suppress_reason == "customer_active"
 
 
 @pytest.mark.asyncio

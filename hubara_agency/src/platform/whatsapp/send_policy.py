@@ -221,6 +221,13 @@ TAG_PAYMENT_PENDING: str = "CONFIRMADO_PAGO_PENDIENTE"
 #: dashboard) — levanta la supresión por compra hecha.
 TAG_REMARKETING: str = "REMARKETING"
 
+#: Ventana de "conversación viva": si el último inbound del cliente es más
+#: reciente que esto, un toque proactivo se mete en el turno de Sales.
+#: 30 min = el peldaño más corto de la escalera de dormancia (PR #182) — un
+#: intent legítimo nunca llega antes (y los intents llegan TARDE: snapshot +
+#: cold start de la caja + polls).
+CUSTOMER_ACTIVE_WINDOW_MS: int = 30 * 60 * 1000
+
 
 @dataclass(frozen=True)
 class LeadState:
@@ -347,6 +354,24 @@ def decide_reengagement(
         return _suppress(
             "already_purchased",
             "compra ya hecha (cierre del último episodio) — no re-targetear",
+        )
+
+    # 1.6. Conversación viva — el cliente escribió hace minutos. Un toque
+    # proactivo acá se mete en el turno de Sales (incidente wa_573229041190,
+    # 2026-07-17, run 019f7234: el intent del Window Strategist se calculó
+    # sobre un snapshot viejo y aterrizó 2 segundos después del "Hola"
+    # espontáneo del cliente — el gate pasó PORQUE la CSW estaba abierta,
+    # exactamente cuando el bot proactivo sobra). Excepción: tag REMARKETING
+    # explícito = decisión humana de re-contactar ya.
+    last_inbound_ms = metadata.get("last_inbound_at_ms")
+    if (
+        lead.tag != TAG_REMARKETING
+        and last_inbound_ms is not None
+        and now_ms - int(last_inbound_ms) < CUSTOMER_ACTIVE_WINDOW_MS
+    ):
+        return _suppress(
+            "customer_active",
+            "el cliente escribió hace minutos — la conversación es de Sales",
         )
 
     in_ctwa = is_in_ctwa_window(now_ms, metadata)

@@ -120,3 +120,40 @@ def test_coalesce_multiple_handoffs_all_go_to_plugin_context() -> None:
         "[HANDOFF_REMARKETING]: primer handoff",
         "[HANDOFF_REMARKETING]: segundo handoff",
     ]
+
+
+def test_handoff_framing_tiene_rama_sin_venta_pendiente() -> None:
+    """Incidente wa_573229041190 (2026-07-17, run 019f7234): el framing
+    ordenaba "retoma la venta EXACTAMENTE donde quedó" sin rama para cuando
+    NO hay venta pendiente — el cliente ya había comprado y recibido dos
+    pedidos, y Sales resolvió la instrucción imposible re-presentando un
+    producto ya comprado que nadie pidió. El framing debe distinguir los dos
+    casos y, sin venta pendiente, prohibir ofrecer productos no solicitados.
+    """
+    pending = [
+        PendingMessage(message="Usuario respondió: Hola", is_handoff=True),
+    ]
+    result = coalesce_pending(pending)
+    # Contrato L-12 intacto
+    assert "HANDOFF DE REMARKETING A VENTAS" in result.message
+    assert "YA ES TUYO" in result.message
+    # Rama 1: venta a medio camino → retomar donde quedó
+    assert "MEDIO CAMINO" in result.message
+    assert "siguiente dato pendiente" in result.message
+    # Rama 2: sin venta pendiente → NO ofrecer productos no pedidos
+    assert "NO hay venta pendiente" in result.message
+    assert "NO presentes ni ofrezcas productos" in result.message
+
+
+def test_handoff_framing_ofrece_abstencion_no_message() -> None:
+    """Incidente wa_573125671604 (2026-07-17, 23:15 UTC): en un turno de
+    handoff SIN mensaje del cliente y sin venta pendiente (pedido ya
+    registrado), la respuesta correcta es NO enviar nada. El LLM de Sales
+    declinó en prosa ("No hay mensaje nuevo del cliente... No genero
+    respuesta") y esa deliberación se envió al cliente. El framing debe
+    ofrecer el sentinel NO_MESSAGE como canal explícito de abstención."""
+    pending = [
+        PendingMessage(message="Usuario respondió: (sin mensaje)", is_handoff=True),
+    ]
+    result = coalesce_pending(pending)
+    assert "NO_MESSAGE" in result.message

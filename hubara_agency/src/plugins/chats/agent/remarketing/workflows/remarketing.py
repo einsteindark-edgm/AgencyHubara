@@ -26,6 +26,7 @@ with workflow.unsafe.imports_passed_through():
         write_pending_handoff_activity,
     )
     from src.platform.temporal.retry_policies import _LLM_OPTIONS
+    from src.sdk.agentkit import is_no_message_abstention
     from src.platform.workflow_helpers import (
         PendingMessage,
         coalesce_pending,
@@ -323,6 +324,20 @@ class RemarketingSessionWorkflow:
                     )
                     self._last_response = result.final_content
 
+                    # Abstención explícita (incidente wa_573229041190, run
+                    # 019f7234): el prompt ofrece el sentinel NO_MESSAGE para
+                    # cuando el gancho ya no corresponde (cliente ya respondió
+                    # / ya compró / conversación viva). Sin este canal, la
+                    # deliberación del LLM ("no genero un nuevo mensaje…") se
+                    # enviaba al cliente como mensaje. workflow.patched():
+                    # histories en vuelo no tienen la rama.
+                    abstained = False
+                    if workflow.patched("no-message-abstention-v1"):
+                        abstained = (
+                            result.transfer_decision is None
+                            and is_no_message_abstention(result.final_content)
+                        )
+
                     # ADR-001 + ADR-2026-05-20: si la tool emitio una decision
                     # de transferir a Sales, convertirla a un CompletionEvent y
                     # dispatchar por manifest. NO importar workflow classes de
@@ -359,6 +374,7 @@ class RemarketingSessionWorkflow:
                     if (
                         result.pre_tool_messages
                         and not self._force_shutdown
+                        and not abstained
                         and workflow.patched("send-pre-tool-messages-v1")
                     ):
                         for pre_msg in result.pre_tool_messages:
@@ -376,7 +392,11 @@ class RemarketingSessionWorkflow:
                                     retry_policy=RetryPolicy(maximum_attempts=2),
                                 )
 
-                    if result.final_content and not self._force_shutdown:
+                    if (
+                        result.final_content
+                        and not self._force_shutdown
+                        and not abstained
+                    ):
                         await workflow.execute_activity(
                             send_whatsapp_message_activity,
                             args=[session_id, result.final_content],
@@ -396,6 +416,34 @@ class RemarketingSessionWorkflow:
                                 retry_policy=RetryPolicy(maximum_attempts=2),
                             )
                         workflow.logger.info(f"Remarketing respondió para sesión {session_id}.")
+
+                    if abstained and not self._force_shutdown:
+                        # El toque sobra: no enviar, no persistir (nada que
+                        # contamine el turno siguiente de Sales), devolver el
+                        # routing a ventas y terminar. Si el cliente escribió
+                        # durante el turno, sus mensajes van a Sales via
+                        # handoff (mismo patrón que el drain post-transfer).
+                        drained = [p.message for p in self._pending if p.message]
+                        self._pending.clear()
+                        workflow.logger.info(
+                            "Remarketing abstuvo (NO_MESSAGE): toque suprimido; "
+                            f"{len(drained)} pendiente(s) para handoff."
+                        )
+                        if drained:
+                            await self._handoff_to_sales(
+                                session_id=session_id,
+                                summary=(
+                                    "Usuario respondió: "
+                                    + "\n".join(drained)[:500]
+                                ),
+                            )
+                        else:
+                            await workflow.execute_activity(
+                                claim_conversation_routing,
+                                args=[session_id, ROUTE_VENTAS],
+                                start_to_close_timeout=timedelta(seconds=15),
+                            )
+                        return
 
                     if self._force_shutdown:
                         # M1/L-13 (run 8894825b): en remarketing,

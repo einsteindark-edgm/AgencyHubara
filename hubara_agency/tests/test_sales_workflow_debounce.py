@@ -1119,3 +1119,60 @@ async def test_ghost_shutdown_cancelled_when_customer_interrupts(
         f"La sesión debió sobrevivir al primer ghosting (cliente activo) y "
         f"cerrarse en el segundo. ghosting_calls={tracker.ghosting_calls}"
     )
+
+
+@pytest.mark.asyncio
+async def test_handoff_turn_no_message_sentinel_suppresses_send(
+    tmp_path: Path,
+) -> None:
+    """Incidente wa_573125671604 (2026-07-17, 23:15 UTC): remarketing
+    transfirió a Sales sin mensaje nuevo del cliente y con la venta ya
+    cerrada (pedido registrado). El LLM de Sales declinó en prosa ("No hay
+    mensaje nuevo del cliente... No genero respuesta") y esa deliberación
+    se envió al cliente por WhatsApp y quedó en el historial.
+
+    Contrato nuevo (gated `no-message-abstention-v1`, mismo canal que
+    remarketing): si el LLM responde el sentinel NO_MESSAGE, el turno NO
+    envía y NO persiste — Sales sigue siendo dueño de la conversación y el
+    workflow continúa normal (ghost cierra después como siempre)."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=SALES_QUEUE,
+            workflows=[HubaraSalesSessionWorkflow],
+            activities=_make_fake_activities(
+                tracker,
+                workspace_path=str(workspace),
+                pending_handoff="Usuario respondió: (sin mensaje nuevo)",
+                llm_responses=[
+                    LLMResponseData(
+                        content="NO_MESSAGE",
+                        finish_reason="stop",
+                        has_tool_calls=False,
+                        tool_calls=[],
+                    ),
+                ],
+            ),
+        ):
+            handle = await env.client.start_workflow(
+                HubaraSalesSessionWorkflow.run,
+                SalesSessionInput(
+                    session_id="wa_abstention_sales",
+                    runtime_workspace_path=str(workspace),
+                ),
+                id="session-wa_abstention_sales",
+                task_queue=SALES_QUEUE,
+            )
+            await handle.result()
+
+    assert tracker.llm_calls >= 1, "el turno de handoff debe correr"
+    assert tracker.send_whatsapp_calls == [], (
+        "abstención → NINGÚN mensaje al cliente"
+    )
+    assert tracker.persist_calls == [], (
+        "abstención → nada en el historial del dashboard"
+    )
