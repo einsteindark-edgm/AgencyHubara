@@ -235,6 +235,63 @@ def test_install_overwrite_reemplaza_el_dir_completo(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# premortem 2026-07-18 — fixes exigidos
+# ---------------------------------------------------------------------------
+
+def test_plan_export_valida_el_manifest_tipado(tmp_path: Path) -> None:
+    """Exportar un plugin con manifest ROTO debe fallar acá, no en el destino."""
+    root = _mini_repo(tmp_path)
+    manifest_path = root / "frontend_dashboard" / "src" / "plugins" / "beta" / "plugin.yaml"
+    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    manifest["agent"] = {"workers": "esto-no-es-una-lista"}
+    manifest_path.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+    try:
+        plan_export(["beta"], repo_root=root)
+    except Exception as exc:  # noqa: BLE001
+        assert "beta" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("manifest inválido debe frenar el export (fail-fast)")
+
+
+def test_plan_export_env_ref_con_default_compose(tmp_path: Path) -> None:
+    """Sintaxis ${VAR:-default} del compose también es requirement."""
+    root = _mini_repo(tmp_path)
+    manifest_path = root / "frontend_dashboard" / "src" / "plugins" / "beta" / "plugin.yaml"
+    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    manifest["agent"]["workers"][0]["compose"]["env"]["EXTRA"] = "${CON_DEFAULT:-fallback}"
+    manifest_path.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+    plan = plan_export(["beta"], repo_root=root)
+    beta = next(u for u in plan.units if u.plugin_id == "beta")
+    assert "CON_DEFAULT" in beta.env_vars
+
+
+def test_plan_install_reporta_versiones_y_downgrade(tmp_path: Path) -> None:
+    """El operador tiene que VER '0.1.0 → 0.2.0' antes de pisar un plugin."""
+    origen = _mini_repo(tmp_path)
+    out = tmp_path / "beta.acktospkg"
+    build_package(plan_export(["beta"], repo_root=origen), repo_root=origen, out_path=out)
+
+    destino = _target_repo(tmp_path, "versionado")
+    create_plugin("beta", "full_stack", repo_root=destino)
+    target_manifest = (
+        destino / "frontend_dashboard" / "src" / "plugins" / "beta" / "plugin.yaml"
+    )
+    raw = yaml.safe_load(target_manifest.read_text(encoding="utf-8"))
+    raw["version"] = "0.2.0"
+    target_manifest.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+
+    plan = plan_install(out, repo_root=destino)
+    beta = next(u for u in plan.units if u.unit_id == "beta")
+    assert beta.action == "overwrite"
+    assert beta.version == "0.1.0", "la versión que trae el paquete"
+    assert beta.target_version == "0.2.0", "la versión que YA está en el destino"
+    assert beta.downgrade is True, "0.1.0 pisando 0.2.0 = downgrade visible"
+
+    alpha = next(u for u in plan.units if u.unit_id == "alpha")
+    assert alpha.target_version is None and alpha.downgrade is False
+
+
+# ---------------------------------------------------------------------------
 # smoke contra el repo real
 # ---------------------------------------------------------------------------
 

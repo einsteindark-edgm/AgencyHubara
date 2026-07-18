@@ -169,6 +169,51 @@ def test_build_e_install_roundtrip(tmp_path: Path) -> None:
     assert vecino.exists(), "install file-level: los dirs compartidos no se arrasan"
 
 
+def test_plan_export_incluye_cases_del_viewer(tmp_path: Path) -> None:
+    """Los ⚡ cases replayables (fixtures/cases/) viajan con su agente — sin
+    ellos el agente instalado queda mudo en el catálogo de Studio."""
+    root = _mini_ga(tmp_path)
+    (root / "fixtures" / "cases").mkdir()
+    (root / "fixtures" / "cases" / "scout-basico.case.yaml").write_text(
+        textwrap.dedent(
+            """\
+            id: scout-basico
+            title: scout básico
+            target: agent:scout
+            seed:
+              payload: { $ref: fixtures/scout_snapshot.json }
+            golden: { $ref: fixtures/cases/scout-basico.golden.json }
+            """
+        ),
+        encoding="utf-8",
+    )
+    (root / "fixtures" / "cases" / "scout-basico.golden.json").write_text(
+        "{}\n", encoding="utf-8"
+    )
+    (root / "fixtures" / "cases" / "de-otro.case.yaml").write_text(
+        "id: de-otro\ntarget: agent:otro\n", encoding="utf-8"
+    )
+
+    plan = plan_export(["scout"], ga_root=root)
+    (unit,) = plan.units
+    rels = {f.as_posix() for f in unit.files}
+    assert "fixtures/cases/scout-basico.case.yaml" in rels
+    assert "fixtures/cases/scout-basico.golden.json" in rels, "$ref del golden"
+    assert "fixtures/scout_snapshot.json" in rels, "$ref del seed"
+    assert "fixtures/cases/de-otro.case.yaml" not in rels, "cases ajenos NO viajan"
+
+
+def test_plan_export_taskgraph_incluye_cases_flow(tmp_path: Path) -> None:
+    root = _mini_ga(tmp_path)
+    (root / "fixtures" / "cases").mkdir()
+    (root / "fixtures" / "cases" / "team-flujo.case.yaml").write_text(
+        "id: team-flujo\ntarget: flow:team\nseed: {}\n", encoding="utf-8"
+    )
+    plan = plan_export(["team"], ga_root=root)
+    team = next(u for u in plan.units if u.agent_id == "team")
+    assert "fixtures/cases/team-flujo.case.yaml" in {f.as_posix() for f in team.files}
+
+
 def test_plan_export_order_sentinel_repo_real() -> None:
     plan = plan_export(["order-sentinel"], ga_root=REAL_GA_ROOT)
     (unit,) = plan.units
@@ -176,4 +221,7 @@ def test_plan_export_order_sentinel_repo_real() -> None:
     assert "manifests/order-sentinel.agent.yaml" in rels
     assert "graphs/order_sentinel.py" in rels
     assert "fixtures/order_sentinel_snapshot.json" in rels
+    assert "fixtures/cases/order-sentinel-en-camino.case.yaml" in rels, (
+        "los cases reales del viewer viajan"
+    )
     assert unit.ports == ("llm",)

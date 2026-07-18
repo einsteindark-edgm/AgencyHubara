@@ -32,6 +32,9 @@ interface PlanInstallUnit {
   id: string;
   kind: string;
   action: string; // new | overwrite | foreign
+  version?: string;
+  target_version?: string | null;
+  downgrade?: boolean;
 }
 
 interface HubaraInstallPlan {
@@ -286,6 +289,56 @@ export async function exportPackage(output: vscode.OutputChannel): Promise<void>
 // Instalar
 // ---------------------------------------------------------------------------
 
+/** El start point de la rama de install: la default LOCAL si existe, si no
+ * origin/<default>, si no el HEAD actual (con nota en el log). */
+async function resolveStartPoint(root: string, base: string, log: (l: string) => void): Promise<string> {
+  if ((await git(["rev-parse", "--verify", base], root, () => void 0)).code === 0) {
+    return base;
+  }
+  if ((await git(["rev-parse", "--verify", `origin/${base}`], root, () => void 0)).code === 0) {
+    return `origin/${base}`;
+  }
+  log(`  ! sin ref local ni origin/ para '${base}' — forkeo desde HEAD`);
+  return "HEAD";
+}
+
+/** El flujo falló a mitad de camino. El working tree estaba LIMPIO (tracked)
+ * al arrancar, así que volver al estado previo es seguro: reset --hard
+ * restaura lo tracked, checkout -f vuelve a la ref previa y se borra la rama
+ * de install. Archivos NUEVOS del install quedan untracked (visibles en git
+ * status) — se avisa en vez de correr un clean -fd que podría llevarse
+ * untracked del operador. */
+async function offerRollback(
+  root: string,
+  prevRef: string,
+  branch: string,
+  log: (l: string) => void,
+  err: string,
+): Promise<void> {
+  if (!branch || !prevRef) {
+    void vscode.window.showErrorMessage(`Acktos Studio: install falló — ${err}`);
+    return;
+  }
+  const choice = await vscode.window.showErrorMessage(
+    `Acktos Studio: install falló — ${err}`,
+    "Rollback al estado previo",
+    "Dejar como está",
+  );
+  if (choice !== "Rollback al estado previo") {
+    return;
+  }
+  try {
+    await gitOrThrow(["reset", "--hard"], root, log);
+    await gitOrThrow(["checkout", "-f", prevRef], root, log);
+    await git(["branch", "-D", branch], root, log);
+    void vscode.window.showInformationMessage(
+      `Acktos Studio: rollback listo — de vuelta en ${prevRef}. Si el install llegó a escribir archivos nuevos, quedaron untracked (git status los muestra).`,
+    );
+  } catch (e) {
+    void vscode.window.showErrorMessage(`Acktos Studio: el rollback falló — ${e instanceof Error ? e.message : e}. Revisá git status.`);
+  }
+}
+
 async function defaultBranch(root: string, log: (l: string) => void): Promise<string> {
   const head = await git(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], root, log);
   if (head.code === 0 && head.stdout.trim()) {
@@ -347,8 +400,13 @@ export async function installPackage(output: vscode.OutputChannel): Promise<void
   }
   const agentUnits = (gaPlan?.units ?? []).filter((u) => u.kind === "graphagent");
 
+  const pluginLine = (u: PlanInstallUnit) => {
+    const versions = u.target_version ? ` (${u.target_version} → ${u.version ?? "?"})` : "";
+    const flag = u.downgrade ? "  ⚠ DOWNGRADE" : "";
+    return `${u.action === "overwrite" ? "~ actualiza" : "+ instala"} plugin ${u.id}${versions}${flag}`;
+  };
   const detail: string[] = [
-    ...pluginUnits.map((u) => `${u.action === "overwrite" ? "~ actualiza" : "+ instala"} plugin ${u.id}`),
+    ...pluginUnits.map(pluginLine),
     ...agentUnits.map((u) => `${u.action === "overwrite" ? "~ actualiza" : "+ instala"} graphagent ${u.id}`),
   ];
   const missing = [...hubaraPlan.missing_plugins, ...(gaPlan?.missing_agents ?? [])];
@@ -367,22 +425,33 @@ export async function installPackage(output: vscode.OutputChannel): Promise<void
   }
 
   const certifyProblems: string[] = [];
+  const base = await defaultBranch(root, log);
   let branch = "";
+  let prevRef = "";
   try {
     await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: `Acktos: instalando '${pkgName}'…` },
       async (progress) => {
-        // 1. working tree limpio — el install es un commit atómico, no se mezcla
-        const status = await gitOrThrow(["status", "--porcelain"], root, log);
+        // 1. working tree limpio (solo TRACKED: un .acktospkg descargado u
+        //    otro untracked no bloquea el install ni entra al commit — los
+        //    paths del paquete quedan ignorados por .gitignore)
+        const status = await gitOrThrow(["status", "--porcelain", "--untracked-files=no"], root, log);
         if (status) {
           throw new Error("el working tree tiene cambios sin commitear — commiteá o stasheá antes de instalar");
         }
+        prevRef = await gitOrThrow(["rev-parse", "--abbrev-ref", "HEAD"], root, () => void 0);
+        if (prevRef === "HEAD") {
+          prevRef = await gitOrThrow(["rev-parse", "HEAD"], root, () => void 0); // detached
+        }
 
-        // 2. rama de instalación
+        // 2. rama de instalación — SIEMPRE forkea de la default. Si forkeara
+        //    del HEAD del operador (una feature branch), el merge final
+        //    arrastraría esa rama entera a la default.
+        const startPoint = await resolveStartPoint(root, base, log);
         const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 12);
         branch = `acktos/install-${pkgName.replace(/[^a-zA-Z0-9._-]/g, "-")}-${stamp}`;
-        progress.report({ message: `creando rama ${branch}…` });
-        await gitOrThrow(["checkout", "-B", branch], root, log);
+        progress.report({ message: `creando rama ${branch} desde ${startPoint}…` });
+        await gitOrThrow(["checkout", "-B", branch, startPoint], root, log);
 
         // 3. instalar (cada CLI su kind)
         if (pluginUnits.length > 0) {
@@ -446,12 +515,11 @@ export async function installPackage(output: vscode.OutputChannel): Promise<void
       },
     );
   } catch (e) {
-    void vscode.window.showErrorMessage(`Acktos Studio: install falló — ${e instanceof Error ? e.message : e}`);
+    await offerRollback(root, prevRef, branch, log, e instanceof Error ? e.message : String(e));
     return;
   }
 
   // 7. merge a la default — la decisión final es del operador
-  const base = await defaultBranch(root, log);
   if (certifyProblems.length > 0) {
     void vscode.window.showWarningMessage(
       `Acktos Studio: instalado y commiteado en ${branch}, pero la certificación reportó problemas (${certifyProblems.join(" · ")}). La rama queda SIN mergear para diagnóstico.`,
@@ -471,7 +539,13 @@ export async function installPackage(output: vscode.OutputChannel): Promise<void
     await gitOrThrow(["checkout", base], root, () => void 0);
     await gitOrThrow(["merge", "--no-ff", branch, "-m", `merge ${branch}: instala paquete ${pkgName}`], root, log);
   } catch (e) {
-    void vscode.window.showErrorMessage(`Acktos Studio: merge falló — ${e instanceof Error ? e.message : e}. La rama ${branch} quedó intacta.`);
+    // no dejar el árbol a mitad de merge (markers + MERGE_HEAD): abortar y
+    // volver a la rama del install, que queda intacta para resolver a mano
+    await git(["merge", "--abort"], root, log);
+    await git(["checkout", branch], root, log);
+    void vscode.window.showErrorMessage(
+      `Acktos Studio: merge falló — ${e instanceof Error ? e.message : e}. Aborté el merge; la rama ${branch} queda intacta (probablemente conflicto con cambios locales de ${base} — resolvé a mano).`,
+    );
     return;
   }
   const push = await vscode.window.showInformationMessage(

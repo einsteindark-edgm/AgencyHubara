@@ -40,7 +40,8 @@ import yaml
 
 PACKAGE_FORMAT = "acktospkg/1"
 _ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
-_ENV_REF_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+# admite ${VAR} y ${VAR:-default} (sintaxis compose)
+_ENV_REF_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-[^}]*)?\}")
 _STAGE_IGNORE = shutil.ignore_patterns(
     "__pycache__", "*.pyc", ".DS_Store", "node_modules", ".pytest_cache"
 )
@@ -110,6 +111,9 @@ class UnitInstallStatus:
     unit_id: str
     kind: str
     action: str  # "new" | "overwrite" | "foreign"
+    version: str = "0.0.0"  # la que trae el paquete
+    target_version: str | None = None  # la que YA está en el destino (overwrite)
+    downgrade: bool = False  # pkg < destino (solo si ambas son semver)
 
 
 @dataclass(frozen=True)
@@ -175,6 +179,16 @@ def _load_raw_manifest(repo_root: Path, plugin_id: str) -> dict:
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict) or raw.get("id") != plugin_id:
         raise PackagingError(f"manifest inválido en {path}: id != {plugin_id!r}")
+    # Fail-fast: un manifest que no pasa el modelo tipado NO se exporta — el
+    # error aparece acá (con el plugin a la vista), no en el certify del destino.
+    from src.sdk.manifest_model import ManifestValidationError, parse_manifest
+
+    try:
+        parse_manifest(raw, source=plugin_id)
+    except ManifestValidationError as exc:
+        raise PackagingError(
+            f"manifest de {plugin_id!r} no pasa la validación tipada: {exc}"
+        ) from exc
     return raw
 
 
@@ -469,6 +483,23 @@ def _plugin_exists(repo_root: Path, plugin_id: str) -> bool:
     )
 
 
+def _target_plugin_version(repo_root: Path, plugin_id: str) -> str | None:
+    """Versión del plugin YA instalado en el destino (best-effort)."""
+    path = _manifest_dir(repo_root, plugin_id) / "plugin.yaml"
+    if not path.is_file():
+        return None
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError:
+        return None
+    return str(raw.get("version")) if isinstance(raw, dict) and raw.get("version") else None
+
+
+def _semver_tuple(version: str) -> tuple[int, int, int] | None:
+    match = re.match(r"^(\d+)\.(\d+)\.(\d+)$", version)
+    return (int(match[1]), int(match[2]), int(match[3])) if match else None
+
+
 def plan_install(pkg_path: Path, *, repo_root: Path) -> InstallPlan:
     repo_root = Path(repo_root)
     info = read_package(pkg_path)
@@ -477,10 +508,24 @@ def plan_install(pkg_path: Path, *, repo_root: Path) -> InstallPlan:
     missing: set[str] = set()
     for unit in info.units:
         if unit.kind != "plugin":
-            statuses.append(UnitInstallStatus(unit.unit_id, unit.kind, "foreign"))
+            statuses.append(
+                UnitInstallStatus(unit.unit_id, unit.kind, "foreign", version=unit.version)
+            )
             continue
-        action = "overwrite" if _plugin_exists(repo_root, unit.unit_id) else "new"
-        statuses.append(UnitInstallStatus(unit.unit_id, "plugin", action))
+        exists = _plugin_exists(repo_root, unit.unit_id)
+        target_version = _target_plugin_version(repo_root, unit.unit_id) if exists else None
+        pkg_sem = _semver_tuple(unit.version)
+        dst_sem = _semver_tuple(target_version) if target_version else None
+        statuses.append(
+            UnitInstallStatus(
+                unit.unit_id,
+                "plugin",
+                "overwrite" if exists else "new",
+                version=unit.version,
+                target_version=target_version,
+                downgrade=bool(pkg_sem and dst_sem and pkg_sem < dst_sem),
+            )
+        )
         for dep in unit.requires_plugins:
             if dep not in packaged_ids and not _plugin_exists(repo_root, dep):
                 missing.add(dep)

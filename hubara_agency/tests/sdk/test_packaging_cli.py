@@ -59,6 +59,9 @@ def test_package_plan_install_e_install(
         "alpha": "new",
         "beta": "new",
     }
+    beta = next(u for u in payload["units"] if u["id"] == "beta")
+    assert beta["version"] == "0.1.0", "Studio muestra pkg → destino"
+    assert beta["target_version"] is None and beta["downgrade"] is False
     assert payload["missing_plugins"] == []
     assert payload["post_steps"], "Studio muestra los pasos post-install"
 

@@ -340,7 +340,14 @@ def cmd_package_plan_install(args: argparse.Namespace) -> int:
             json.dumps(
                 {
                     "units": [
-                        {"id": u.unit_id, "kind": u.kind, "action": u.action}
+                        {
+                            "id": u.unit_id,
+                            "kind": u.kind,
+                            "action": u.action,
+                            "version": u.version,
+                            "target_version": u.target_version,
+                            "downgrade": u.downgrade,
+                        }
                         for u in plan.units
                     ],
                     "missing_plugins": list(plan.missing_plugins),
@@ -352,7 +359,9 @@ def cmd_package_plan_install(args: argparse.Namespace) -> int:
         )
         return 0
     for u in plan.units:
-        print(f"  {u.action:<9} {u.kind}:{u.unit_id}")
+        upgrade = f"  ({u.target_version} → {u.version})" if u.target_version else ""
+        flag = "  ⚠ DOWNGRADE" if u.downgrade else ""
+        print(f"  {u.action:<9} {u.kind}:{u.unit_id}{upgrade}{flag}")
     if plan.missing_plugins:
         print(f"  ⚠ dependencias faltantes en el destino: {', '.join(plan.missing_plugins)}")
     print("pasos post-install:")

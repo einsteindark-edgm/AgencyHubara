@@ -148,6 +148,45 @@ def _capability_files(ga_root: Path, capability: str) -> list[Path]:
     )
 
 
+def _refs_in(node: object) -> list[str]:
+    """Todos los `$ref:` (recursivo) de un case yaml — seed + golden."""
+    found: list[str] = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key == "$ref" and isinstance(value, str):
+                found.append(value)
+            else:
+                found.extend(_refs_in(value))
+    elif isinstance(node, list):
+        for item in node:
+            found.extend(_refs_in(item))
+    return found
+
+
+def _cases_for(ga_root: Path, agent_id: str, kind_file: str) -> list[Path]:
+    """Los ⚡ cases del viewer (fixtures/cases/) cuyo target es este agente,
+    más los fixtures que referencian por `$ref` — sin ellos el agente
+    instalado queda sin casos replayables en el catálogo de Studio."""
+    cases_dir = ga_root / "fixtures" / "cases"
+    if not cases_dir.is_dir():
+        return []
+    target = f"{'flow' if kind_file == 'taskgraph' else 'agent'}:{agent_id}"
+    found: list[Path] = []
+    for case_path in sorted(cases_dir.glob("*.case.yaml")):
+        try:
+            raw = yaml.safe_load(case_path.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError:
+            continue
+        if raw.get("target") != target:
+            continue
+        found.append(case_path.relative_to(ga_root))
+        for ref in _refs_in(raw):
+            ref_path = Path(ref)
+            if ".." not in ref_path.parts and (ga_root / ref_path).is_file():
+                found.append(ref_path)
+    return found
+
+
 def _fixtures_referenced(ga_root: Path, test_files: list[Path]) -> list[Path]:
     found: set[Path] = set()
     for rel in test_files:
@@ -219,6 +258,7 @@ def _unit_for(ga_root: Path, agent_id: str) -> GraphAgentUnit:
 
     files.extend(tests)
     files.extend(_fixtures_referenced(ga_root, tests))
+    files.extend(_cases_for(ga_root, agent_id, kind_file))
     return GraphAgentUnit(
         agent_id=agent_id,
         kind_file=kind_file,

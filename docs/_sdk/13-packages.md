@@ -36,8 +36,13 @@ Reglas del formato:
 - **k8s no viaja** (decisión 2026-07-18 — no se usa).
 - **La clausura es automática**: `depends_on` (plugins) y `agent://` refs
   (taskgraphs) entran solos, deps primero. La capability, las tools
-  (`uses: <id>@<major>` → `tools/<id>/`), los tests golden/build/tool y los
-  fixtures que esos tests referencian viajan con el agente.
+  (`uses: <id>@<major>` → `tools/<id>/`), los tests golden/build/tool, los
+  fixtures que esos tests referencian **y los ⚡ cases del viewer**
+  (`fixtures/cases/*.case.yaml` con `target: agent:<id>`/`flow:<id>` + sus
+  `$ref`) viajan con el agente.
+- **Export fail-fast**: un manifest que no pasa el modelo tipado
+  (`parse_manifest`) no se exporta — el error aparece en el origen, no en el
+  certify del destino.
 - **Requirements explícitos**: env vars (`${...}` del compose +
   `wiring_intents.env_vars_required`), secrets (`env_secrets[].var`), ports
   (`consumes:`) quedan declarados en el paquete — el instalador los muestra
@@ -72,11 +77,17 @@ Exit codes: 0 ok · 2 input inválido/paquete corrupto.
   agents del repo abierto) → plan con clausura y requirements → confirmación
   → `.acktospkg` (save dialog; default `dist/`).
 - **`Acktos: Instalar paquete`** — elegís el archivo → plan-install de ambos
-  CLIs (new/overwrite/deps faltantes) → confirmación → **rama
-  `acktos/install-<pkg>-<ts>` → install → codegen (`plugins:sync` +
-  `render-compose`) → certify (TCK hubara + check GraphAgents) → commit →
-  merge a la default u opción de dejar la rama** (+ push opcional). Si la
-  certificación falla, la rama queda sin mergear para diagnóstico.
+  CLIs (new/overwrite con **versiones destino → paquete y ⚠ DOWNGRADE**, deps
+  faltantes) → confirmación → **rama `acktos/install-<pkg>-<ts>` (forkeada
+  SIEMPRE de la default, no del HEAD del operador) → install → codegen
+  (`plugins:sync` + `render-compose`) → certify (TCK hubara + check
+  GraphAgents) → commit → merge a la default u opción de dejar la rama**
+  (+ push opcional). Si la certificación falla, la rama queda sin mergear
+  para diagnóstico; si el flujo falla a mitad de camino, Studio ofrece
+  **rollback al estado previo**; si el merge conflictúa, se aborta solo
+  (nada queda a medio merge). El chequeo de working-tree limpio es solo
+  sobre tracked (un `.acktospkg` descargado no bloquea; además está
+  gitignoreado y nunca entra al commit).
 
 La UI es piel, los CLIs son músculo (D-10): Studio solo orquesta los verbos
 de arriba (`src/packages/packageService.ts`).
