@@ -8,6 +8,10 @@ dist/
 .env
 mise.local.toml
 
+# paquetes Acktos exportados (docs/_sdk/13-packages.md) — nunca al repo:
+# el `git add -A` del instalador de Studio no debe arrastrarlos al commit
+*.acktospkg
+
 # import-linter cache — STALE cache can hide cross-module violations.
 # The architecture test_r_dip removes this before invoking lint-imports.
 .import_linter_cache/

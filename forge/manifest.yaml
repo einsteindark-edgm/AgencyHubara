@@ -126,6 +126,14 @@ replacements:
     files: ["**"]
     from: "wa_573125671604"
     to: "wa_573000000000"
+  - id: telefono-ejemplo-2
+    # segundo número REAL que entró al motor con el fix del leak de
+    # deliberación (#192: sanitizer, send_policy, workflow_helpers, agentkit,
+    # remarketing + sus tests y docs) — se normaliza a OTRO sintético para
+    # que los tests que distinguen dos clientes sigan distinguiéndolos
+    files: ["**"]
+    from: "wa_573229041190"
+    to: "wa_573000000001"
   - id: catalog-skill
     files: ["hubara_agency/src/plugins/chats/agent/**"]
     from: "hubara_catalog"
@@ -296,7 +304,11 @@ scan:
   # de tests/fixtures del motor) — clasificados explícitamente, no un bypass
   forbidden_pattern_allow:
     - "wa_573000000000"       # el normalizado por telefono-ejemplo
-    - "wa_573000000001"
+    - "wa_573000000001"       # el normalizado por telefono-ejemplo-2
+    - "wa_573000000005"       # sintéticos de tests (reengagement + marketing #190)
+    - "wa_573001111111"
+    - "wa_573007654321"
+    - "wa_573009990000"
     - "wa_573000000002"
     - "wa_573000000003"
     - "wa_573000000004"
