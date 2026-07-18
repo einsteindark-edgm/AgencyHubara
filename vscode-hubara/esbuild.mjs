@@ -45,15 +45,29 @@ const execViewConfig = {
   outfile: "dist/execview.js",
 };
 
+// Forge Console — tercer webview, concepto APARTE (migración de clientes, no
+// desarrollo de agentes/plugins): bundle y CSS propios, cero imports del canvas.
+const forgeViewConfig = {
+  ...webviewConfig,
+  entryPoints: ["webview/src/forge/main.tsx"],
+  outfile: "dist/forgeview.js",
+};
+
 if (watch) {
-  const [ext, web, exec] = await Promise.all([
+  const [ext, web, exec, forge] = await Promise.all([
     context(extensionConfig),
     context(webviewConfig),
     context(execViewConfig),
+    context(forgeViewConfig),
   ]);
-  await Promise.all([ext.watch(), web.watch(), exec.watch()]);
+  await Promise.all([ext.watch(), web.watch(), exec.watch(), forge.watch()]);
   console.log("[esbuild] watching…");
 } else {
-  await Promise.all([build(extensionConfig), build(webviewConfig), build(execViewConfig)]);
+  await Promise.all([
+    build(extensionConfig),
+    build(webviewConfig),
+    build(execViewConfig),
+    build(forgeViewConfig),
+  ]);
   console.log("[esbuild] build complete");
 }

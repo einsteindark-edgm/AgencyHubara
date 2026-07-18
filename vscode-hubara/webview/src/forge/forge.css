@@ -1,0 +1,322 @@
+/* Forge Console — tema-aware vía variables de VS Code. Aislado del css del
+   canvas (main.css) a propósito: otro concepto, otra hoja. */
+
+:root {
+  --forge-accent: #e8590c;
+  --forge-accent-soft: rgba(232, 89, 12, 0.14);
+  --forge-ok: var(--vscode-testing-iconPassed, #2ea043);
+  --forge-warn: var(--vscode-list-warningForeground, #d29922);
+  --forge-err: var(--vscode-testing-iconFailed, #f85149);
+  --forge-card: var(--vscode-editorWidget-background, rgba(128, 128, 128, 0.08));
+  --forge-border: var(--vscode-widget-border, rgba(128, 128, 128, 0.25));
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  color: var(--vscode-foreground);
+  background: var(--vscode-editor-background);
+  font-family: var(--vscode-font-family);
+  font-size: 13px;
+}
+
+.forge-app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* ── Header ── */
+.forge-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 14px 18px 10px;
+  border-bottom: 1px solid var(--forge-border);
+  background: linear-gradient(180deg, var(--forge-accent-soft), transparent);
+}
+
+.forge-header h1 {
+  font-size: 16px;
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+
+.forge-header .flame {
+  font-size: 18px;
+}
+
+.forge-header .sub {
+  opacity: 0.65;
+  font-size: 12px;
+}
+
+.forge-header .spacer {
+  flex: 1;
+}
+
+/* ── Cuerpo: cards + consola ── */
+.forge-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.fleet {
+  flex: 1.2;
+  overflow-y: auto;
+  padding: 16px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 14px;
+  align-content: start;
+}
+
+.card {
+  border: 1px solid var(--forge-border);
+  border-radius: 10px;
+  background: var(--forge-card);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  position: relative;
+  overflow: hidden;
+}
+
+.card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--forge-accent), transparent 70%);
+}
+
+.card.ready::before {
+  background: linear-gradient(90deg, var(--forge-ok), transparent 70%);
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 14px;
+  color: #fff;
+  background: linear-gradient(135deg, var(--forge-accent), #9a3412);
+  flex: none;
+}
+
+.card.ready .avatar {
+  background: linear-gradient(135deg, #2ea043, #1a7f37);
+}
+
+.card-title {
+  min-width: 0;
+}
+
+.card-title .company {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.card-title .repo {
+  opacity: 0.6;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.chip {
+  font-size: 10.5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--forge-border);
+  opacity: 0.85;
+  font-family: var(--vscode-editor-font-family, monospace);
+}
+
+.chip.ok {
+  color: var(--forge-ok);
+  border-color: var(--forge-ok);
+}
+
+.chip.warn {
+  color: var(--forge-warn);
+  border-color: var(--forge-warn);
+}
+
+.chip.err {
+  color: var(--forge-err);
+  border-color: var(--forge-err);
+}
+
+.chip.link {
+  cursor: pointer;
+}
+
+.chip.link:hover {
+  background: var(--forge-accent-soft);
+}
+
+.dest-row {
+  display: flex;
+  gap: 6px;
+}
+
+.dest-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+input[type="text"] {
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, var(--forge-border));
+  border-radius: 5px;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: var(--vscode-editor-font-family, monospace);
+}
+
+input[type="text"]:focus {
+  outline: 1px solid var(--forge-accent);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+button {
+  background: var(--vscode-button-secondaryBackground, rgba(128, 128, 128, 0.2));
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  border: none;
+  border-radius: 5px;
+  padding: 5px 11px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+button:hover {
+  filter: brightness(1.15);
+}
+
+button.primary {
+  background: var(--forge-accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+label.allow-todos {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  opacity: 0.75;
+  cursor: pointer;
+}
+
+/* card "nuevo cliente" */
+.card.new {
+  border-style: dashed;
+  justify-content: center;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.card.new .hint {
+  font-size: 11.5px;
+  opacity: 0.6;
+  line-height: 1.5;
+}
+
+/* ── Consola de runs ── */
+.console {
+  flex: 1;
+  min-width: 380px;
+  max-width: 46%;
+  border-left: 1px solid var(--forge-border);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.console-head {
+  padding: 8px 14px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  opacity: 0.6;
+  border-bottom: 1px solid var(--forge-border);
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.console-log {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 14px;
+  font-family: var(--vscode-editor-font-family, "SF Mono", monospace);
+  font-size: 11.5px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.log-cmd {
+  color: var(--forge-accent);
+  font-weight: 700;
+  margin-top: 8px;
+}
+
+.log-ok {
+  color: var(--forge-ok);
+}
+
+.log-warn {
+  color: var(--forge-warn);
+}
+
+.log-err {
+  color: var(--forge-err);
+}
+
+.log-end {
+  opacity: 0.55;
+  font-style: italic;
+}
+
+.empty {
+  opacity: 0.5;
+  padding: 24px;
+  text-align: center;
+  line-height: 1.7;
+}

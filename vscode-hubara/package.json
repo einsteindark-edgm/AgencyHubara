@@ -24,6 +24,29 @@
   "contributes": {
     "commands": [
       {
+        "command": "forge.openConsole",
+        "title": "Forge: Abrir consola",
+        "category": "Forge",
+        "icon": "$(flame)"
+      },
+      {
+        "command": "forge.refreshFleet",
+        "title": "Forge: Refrescar flota",
+        "category": "Forge",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "forge.initClient",
+        "title": "Forge: Sembrar cliente nuevo (init)",
+        "category": "Forge",
+        "icon": "$(add)"
+      },
+      {
+        "command": "forge.planClient",
+        "title": "Forge: Plan (dry-run del manifest)",
+        "category": "Forge"
+      },
+      {
         "command": "acktos.openStudio",
         "title": "Acktos: Open Graph",
         "category": "Acktos Studio"
@@ -150,6 +173,11 @@
           "id": "acktosStudio",
           "title": "Acktos Studio",
           "icon": "$(type-hierarchy-sub)"
+        },
+        {
+          "id": "forgeConsole",
+          "title": "Forge",
+          "icon": "$(flame)"
         }
       ],
       "panel": [
@@ -230,8 +258,21 @@
           "id": "acktos.executionView",
           "name": "Ejecución"
         }
+      ],
+      "forgeConsole": [
+        {
+          "id": "forge.fleetTree",
+          "name": "Flota de clientes",
+          "icon": "$(flame)"
+        }
       ]
     },
+    "viewsWelcome": [
+      {
+        "view": "forge.fleetTree",
+        "contents": "Migración de clientes (silo + forge): cada cliente vive en su propio repo, infra y Medusa — acá se administra la flota.\n[Abrir Forge Console](command:forge.openConsole)\n[Sembrar un cliente nuevo](command:forge.initClient)\nConcepto separado del desarrollo de agentes/plugins (eso vive en Acktos Studio)."
+      }
+    ],
     "menus": {
       "commandPalette": [
         {
@@ -273,6 +314,21 @@
       ],
       "view/title": [
         {
+          "command": "forge.openConsole",
+          "when": "view == forge.fleetTree",
+          "group": "navigation@0"
+        },
+        {
+          "command": "forge.initClient",
+          "when": "view == forge.fleetTree",
+          "group": "navigation@1"
+        },
+        {
+          "command": "forge.refreshFleet",
+          "when": "view == forge.fleetTree",
+          "group": "navigation@2"
+        },
+        {
           "command": "acktos.refreshGraphs",
           "when": "view == acktos.catalogTree",
           "group": "navigation"
@@ -294,6 +350,11 @@
         }
       ],
       "view/item/context": [
+        {
+          "command": "forge.planClient",
+          "when": "view == forge.fleetTree && viewItem == forgeClient",
+          "group": "inline@0"
+        },
         {
           "command": "acktos.runLocalCase",
           "when": "view == acktos.catalogTree && viewItem == acktosCase",

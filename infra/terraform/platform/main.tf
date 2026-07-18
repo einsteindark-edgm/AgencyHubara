@@ -50,8 +50,9 @@ module "graphagents_secrets" {
 # ── CI/CD: OIDC provider de GitHub + roles de deploy (compartido) ───────────
 # Se crea también en local: IAM lo emula bien robotocore, así el test valida las
 # trust policies del OIDC. GOTCHA real: el OIDC provider de GitHub es global por
-# cuenta — si ya lo tenés creado a mano, importalo (terraform import) o quitá el
-# módulo, sino el apply real falla con EntityAlreadyExists. Ver ../README.md.
+# cuenta — si ya existe (creado a mano, o por OTRO proyecto forjado en la misma
+# cuenta), seteá create_github_oidc_provider = false para referenciarlo como
+# data source, sino el apply real falla con EntityAlreadyExists. Ver ../README.md.
 module "github_oidc" {
   source = "./modules/github-oidc"
 
@@ -59,4 +60,5 @@ module "github_oidc" {
   github_branches = var.github_branches
   tenants         = keys(var.tenants)
   region          = var.region
+  create_provider = var.create_github_oidc_provider
 }

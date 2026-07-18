@@ -1,0 +1,343 @@
+# Manifest de forge — clasificación EXHAUSTIVA de cada literal "hubara" del repo.
+#
+# Regla de oro (VINCENZO_SPLIT_PLAN.md §5): "hubara" es DOS cosas —
+#   · nombre del MOTOR  (hubara_agency/, HubaraSalesSessionWorkflow, HUBARA_*):
+#     se CONSERVA (allow_tokens) para que el cherry-pick de fixes entre repos
+#     siga siendo mecánico.
+#   · nombre del CLIENTE (prefijos AWS, SSM, marca del agente, IDs de Meta):
+#     se REEMPLAZA / BORRA / TEMPLA.
+# Todo literal nuevo del cliente que aparezca en el repo madre DEBE clasificarse
+# acá — el scanner (tiers abajo) falla en el clon si queda algo sin clasificar.
+version: 1
+
+# No viaja al clon (se poda post-export). El clonador NO viaja al clon.
+copy_exclude:
+  - forge
+
+# Identificadores del MOTOR que contienen "Hubara" con la MISMA capitalización
+# que la marca: se enmascaran durante replacements e init para que ninguna
+# regla los toque. Renombrarlos a medias rompe el dispatch del clon — el
+# dispatcher, los workers, shared/contracts, tests y el plugin.yaml del
+# frontend los referencian FUERA del scope de marca-en-agente.
+preserve_tokens:
+  - "HubaraSalesSessionWorkflow"
+  # path DENTRO de la caja GraphAgents — debe coincidir entre cloud-init,
+  # deploy workflow y render script; las reglas de /graphagents no lo tocan
+  - "/opt/graphagents"
+
+# Reemplazos de texto plano, EN ORDEN (los compuestos van antes que los simples
+# para que "/opt/hubara" no lo corrompa la regla de "/hubara/", etc.).
+# files = globs sobre el path relativo del clon. Vars entre {{ }}.
+replacements:
+  # ── compuestos primero ──────────────────────────────────────────────────
+  - id: matrix-backend-con-comentario
+    files: [".github/workflows/*.yml"]
+    from: "tenant: [hubara]   # sumá vincenzo cuando tenga su caja + secretos"
+    to: "tenant: [{{slug}}]"
+  - id: matrix-multi
+    files: [".github/workflows/*.yml"]
+    from: "tenant: [hubara, vincenzo]"
+    to: "tenant: [{{slug}}]"
+  - id: matrix-single
+    files: [".github/workflows/*.yml"]
+    from: "tenant: [hubara]"
+    to: "tenant: [{{slug}}]"
+  - id: prefijo-y-tenant-juntos          # agencyhubara-hubara (verify/robotocore/comments tf)
+    files: ["infra/robotocore/**", "infra/scripts/**", "infra/terraform/**"]
+    from: "agencyhubara-hubara"
+    to: "{{prefix}}-{{slug}}"
+  - id: bootstrap-tenant-flag            # ejemplos de uso en aws_bootstrap
+    files: ["infra/scripts/**"]
+    from: "--tenant hubara "
+    to: "--tenant {{slug}} "
+  - id: secrets-env-file
+    files: ["infra/scripts/**", "infra/whatsapp-provisioning/**"]
+    from: "secrets.hubara.env"
+    to: "secrets.{{slug}}.env"
+  - id: ssh-key-file
+    files: ["infra/scripts/**"]
+    from: ".ssh/hubara_ops"
+    to: ".ssh/{{slug}}_ops"
+  - id: sizing-comment
+    files: ["infra/terraform/compute/**"]
+    from: "Hubara ~4GB → t3.medium ; Vincenzo ~8GB → t3.large (mapeo del doc §4)."
+    to: "sizing por cliente — t3.large por defecto."
+  - id: graphagents-image-comment
+    files: ["infra/terraform/compute/**"]
+    from: "(≠ la de hubara)"
+    to: "(≠ la de la app)"
+  - id: temporal-ns-comment
+    files: ["infra/terraform/temporal-cloud/**"]
+    from: "(hubara, vincenzo)"
+    to: "({{slug}})"
+  - id: temporal-ns-default
+    files: ["infra/terraform/temporal-cloud/**"]
+    from: '["hubara", "vincenzo"]'
+    to: '["{{slug}}"]'
+  - id: cognito-domain-comment
+    files: ["infra/terraform/platform/modules/auth/**"]
+    from: "<tenant>-hubara.auth."
+    to: "{{prefix}}-<tenant>.auth."
+  - id: ssm-doble-hubara                 # /hubara/hubara/... (verify hardcodeado)
+    files: ["infra/robotocore/**", "infra/scripts/**"]
+    from: "/hubara/hubara/"
+    to: "{{ssm_prefix}}/{{slug}}/"
+  - id: opt-hubara
+    files: ["infra/compose/**", "infra/terraform/compute/**", ".github/workflows/*.yml"]
+    from: "/opt/hubara"
+    to: "/opt/{{slug}}"
+  - id: tmp-deploy
+    files: [".github/workflows/*.yml"]
+    from: "/tmp/hubara-deploy"
+    to: "/tmp/{{slug}}-deploy"
+  - id: compose-project
+    files: ["infra/compose/**", "infra/terraform/compute/**"]
+    from: "hubara-prod"
+    to: "{{slug}}-prod"
+  - id: vault-volume
+    files: ["infra/compose/**", "infra/terraform/compute/**"]
+    from: "hubara-vault"
+    to: "{{slug}}-vault"
+  - id: gh-repo
+    files: ["infra/terraform/**", "infra/scripts/**"]
+    from: "einsteindark-edgm/AgencyHubara"
+    to: "{{repo}}"
+  - id: dlm-tag
+    files: ["infra/terraform/compute/**"]
+    from: 'Backup = "daily"'
+    to: 'Backup = "daily-{{slug}}"'
+  - id: reference-id
+    files: ["hubara_agency/src/plugins/chats/agent/**"]
+    from: "HUB-hubara-"
+    to: "{{ref_prefix}}-{{slug}}-"
+  - id: eip-hubara-en-frontend        # tauri.conf CSP + runbook Android: la URL
+    files: ["frontend_dashboard/**"]   # REAL del cliente si client.yaml trae api_url
+    from: "98-88-237-207.sslip.io"
+    to: "{{api_host}}"
+  - id: dominio-marca
+    # global: el dominio del cliente también vive en platform code (meta_catalog
+    # dtos/mapper, media_url), docs y features — lo encontró el ratchet E2E
+    files: ["**"]
+    from: "hubara.com.co"
+    to: "{{primary_domain}}"
+  - id: telefono-ejemplo
+    # número de ejemplo recurrente en docstrings/prompts del motor (línea de
+    # prueba real de hubara) — se normaliza a uno sintético en el clon
+    files: ["**"]
+    from: "wa_573125671604"
+    to: "wa_573000000000"
+  - id: catalog-skill
+    files: ["hubara_agency/src/plugins/chats/agent/**"]
+    from: "hubara_catalog"
+    to: "{{slug}}_catalog"
+  - id: flow-name
+    files: ["infra/whatsapp-provisioning/definitions/*.json"]
+    from: "Hubara — Datos de envío"
+    to: "{{company}} — Datos de envío"
+  - id: ws-default-tenant
+    files: ["infra/whatsapp-provisioning/*.py"]
+    from: 'or "hubara"'
+    to: 'or "{{slug}}"'
+  - id: marca-en-agente                  # "Hubara" en strings/comments de tools,
+    files: ["hubara_agency/src/plugins/chats/agent/**"]   # prompts, translate
+    from: "Hubara"
+    to: "{{company}}"
+  - id: marca-en-provisioning            # docstring + DISPLAY_NAME default
+    files: ["infra/whatsapp-provisioning/*.py"]
+    from: "Hubara"
+    to: "{{company}}"
+  # ── GraphAgents viaja al clon (decisión 2026-07-10, reemplaza D-4): el tag
+  # EC2, el prefijo SSM y la imagen GHCR son únicos A NIVEL CUENTA — sin esto,
+  # el backend del clon despertaría/deployaría la caja de HUBARA (`head -1`
+  # sobre el filtro por tag). Los nombres de módulo/resource tf y los paths
+  # del repo (infra/compose/graphagents/) NO se tocan. ──────────────────────
+  - id: ga-tag-values                    # policies + self-stop + filtro IAM
+    files: ["infra/terraform/**"]
+    from: 'values   = ["graphagents"]'
+    to: 'values   = ["graphagents-{{slug}}"]'
+  - id: ga-tag-assign
+    files: ["infra/terraform/**"]
+    from: 'Role = "graphagents"'
+    to: 'Role = "graphagents-{{slug}}"'
+  - id: ga-tag-filtro-cli                # workflows + graphagents_ctl + backend
+    files: [".github/workflows/*.yml", "infra/scripts/**"]
+    from: "Values=graphagents"
+    to: "Values=graphagents-{{slug}}"
+  - id: ga-tag-ctl-display
+    files: ["infra/scripts/**"]
+    from: "Role=graphagents"
+    to: "Role=graphagents-{{slug}}"
+  - id: ga-backend-tag-default
+    files: ["hubara_agency/src/platform/config.py"]
+    from: '"GRAPHAGENTS_INSTANCE_TAG", "graphagents"'
+    to: '"GRAPHAGENTS_INSTANCE_TAG", "graphagents-{{slug}}"'
+  - id: ga-imagen-tf
+    files: ["infra/terraform/compute/**"]
+    from: "ghcr.io/einsteindark-edgm/graphagents"
+    to: "ghcr.io/{{repo_owner}}/{{slug}}-graphagents"
+  - id: ga-imagen-workflow
+    files: [".github/workflows/graphagents-deploy.yml"]
+    from: "/graphagents:"
+    to: "/{{slug}}-graphagents:"
+  - id: ga-ssm-prefix                    # /graphagents → /<slug>-graphagents
+    # scope SIN workflows (ahí /graphagents es path del REPO) y con
+    # /opt/graphagents protegido por preserve_tokens
+    files:
+      - "infra/compose/graphagents/render-env-from-ssm.sh"
+      - "infra/terraform/platform/modules/graphagents-secrets/**"
+      - "infra/terraform/compute/modules/graphagents-instance/**"
+    from: "/graphagents"
+    to: "/{{slug}}-graphagents"
+  - id: ws-readme-config
+    files: ["infra/whatsapp-provisioning/**"]
+    from: "tenants/hubara.env"
+    to: "tenants/{{slug}}.env"
+  # ── genéricos al final ──────────────────────────────────────────────────
+  - id: ssm-prefix
+    files:
+      - "infra/terraform/**"
+      - "infra/compose/render-env-from-ssm.sh"
+      - "infra/scripts/**"
+      - "infra/robotocore/**"
+      - "infra/whatsapp-provisioning/**"
+    from: "/hubara/"
+    to: "{{ssm_prefix}}/"
+  - id: ssm-prefix-sin-slash            # DEFAULT_PREFIX = "/hubara"
+    files: ["infra/scripts/**"]
+    from: '"/hubara"'
+    to: '"{{ssm_prefix}}"'
+  - id: image-ghcr                      # ghcr.io/.../agencyhubara:sha
+    files: [".github/workflows/*.yml", "infra/terraform/compute/**"]
+    from: "agencyhubara:"
+    to: "{{image}}:"
+  - id: image-repo-default
+    files: ["infra/terraform/compute/**"]
+    from: "ghcr.io/einsteindark-edgm/agencyhubara"
+    to: "ghcr.io/{{repo_owner}}/{{image}}"
+  - id: prefijo-recursos                # agencyhubara-* y dlm-agencyhubara
+    files: ["infra/terraform/**", "infra/scripts/**", "infra/robotocore/**", "infra/compose/**"]
+    from: "agencyhubara"
+    to: "{{prefix}}"
+  - id: nombre-proyecto-titulo          # descripciones/comentarios en tf/scripts
+    files: ["infra/terraform/**", "infra/scripts/**", "infra/robotocore/**"]
+    from: "AgencyHubara"
+    to: "{{repo_name}}"
+
+# Renames de paths (dirs o archivos), post-replacements.
+renames:
+  - from: "hubara_agency/src/plugins/chats/agent/sales/workspace/skills/hubara_catalog"
+    to: "hubara_agency/src/plugins/chats/agent/sales/workspace/skills/{{slug}}_catalog"
+  - from: "hubara_agency/src/plugins/chats/agent/remarketing/workspace/skills/hubara_catalog"
+    to: "hubara_agency/src/plugins/chats/agent/remarketing/workspace/skills/{{slug}}_catalog"
+
+# Datos del cliente Hubara / docs de otros clientes — NO viajan a terceros.
+deletes:
+  - "infra/whatsapp-provisioning/tenants/hubara.env.example"
+  - "hubara_agency/hubara_vault"
+  - "hubara_agency/scripts/inject_snapshot_products.py"
+  - "docs/cartagena"
+  - "MULTI_TENANT_COMMERCE_ARCHITECTURE.md"
+  - "MOBILE_CHATS_PLAN_fable.md"
+  - "ADR-2026-06-05-multi-tenant-commerce-architecture.md"
+  - "VINCENZO_SPLIT_PLAN.md"
+  - "infra/INFRASTRUCTURE.md"          # describe la infra VIVA de Hubara (EIP, cuenta, IDs)
+  - "infra/DEPLOY_RUNBOOK.md"          # ídem — NEXT_STEPS.md del clon lo reemplaza
+  - "infra/SERVICIOS_AWS_Y_SCHEDULERS.md"
+  - "infra/PENDING_IMPLEMENTATION.md"
+
+# Archivos REGENERADOS desde forge/templates/ (no editados).
+templates:
+  "infra/terraform/platform/tenants.auto.tfvars": platform_tenants.auto.tfvars.tpl
+  "infra/terraform/platform/project.auto.tfvars": project.auto.tfvars.tpl
+  "infra/terraform/compute/tenants.auto.tfvars": compute_tenants.auto.tfvars.tpl
+  "infra/whatsapp-provisioning/tenants/{{slug}}.env.example": whatsapp_tenant.env.example.tpl
+  "NEXT_STEPS.md": NEXT_STEPS.md.tpl
+  # el vault se scrubbea (deletes) pero el dir debe existir para el boot dev
+  "hubara_agency/hubara_vault/.gitkeep": gitkeep.tpl
+
+# Overlay de personalidad: el workspace del clon se REEMPLAZA COMPLETO por el
+# bundle clients/<slug>/workspace/<agent>/ (el workspace ES del cliente).
+# skills/catalog/ del bundle se instala como skills/<slug>_catalog/.
+workspace_overlay:
+  agents:
+    sales: "hubara_agency/src/plugins/chats/agent/sales/workspace"
+    remarketing: "hubara_agency/src/plugins/chats/agent/remarketing/workspace"
+  catalog_skill_dirname: catalog
+  required:
+    - IDENTITY.md
+    - SOUL.md
+    - TOOLS.md
+    - memory/MEMORY.md
+    - skills/catalog/SKILL.md
+
+# ── Scanner de residuales (el ratchet) ─────────────────────────────────────
+scan:
+  # Tier 1 — FORBIDDEN (global, cualquier archivo): IDs reales del cliente
+  # Hubara. Cero tolerancia.
+  forbidden:
+    - "3018148735027036"      # WABA hubara (viejo)
+    - "1763803271643573"      # WABA hubara (post-migración)
+    - "868785339159351"       # catálogo Meta
+    - "1873134773439557"      # business id (Lily Pulido)
+    - "36625019197144622"     # app Meta "Hubara"
+    - "1369134491793466"      # flow shipping
+    - "1704018554189395"      # dataset CAPI
+    - "98.88.237.207"         # EIP
+    - "98-88-237-207"         # dominio sslip.io
+    - "hubara.com.co"
+    - "hubarabackend-production"   # Medusa Railway de hubara
+    - "eipalloc-03724215c63c8e1aa"
+    - "i-07ebe6296b9e50865"
+    - "us-east-1_tj9egBufy"   # Cognito pool hubara
+    - "d1hvhzkh01tri0"        # CloudFront hubara
+  forbidden_patterns:
+    - 'wa_57\d{10}'           # teléfonos colombianos reales en fixtures/seeds
+  # matches de forbidden_patterns que NO son datos reales (ejemplos sintéticos
+  # de tests/fixtures del motor) — clasificados explícitamente, no un bypass
+  forbidden_pattern_allow:
+    - "wa_573000000000"       # el normalizado por telefono-ejemplo
+    - "wa_573000000001"
+    - "wa_573000000002"
+    - "wa_573000000003"
+    - "wa_573000000004"
+    - "wa_573000000099"
+    - "wa_573000000910"
+    - "wa_573000000911"
+    - "wa_573001110000"
+    - "wa_573001112233"
+    - "wa_573001234567"
+    - "wa_573002223344"
+    - "wa_573003334455"
+    - "wa_573004445566"
+    - "wa_573005556677"
+    - "wa_573006667788"
+    - "wa_573007778899"
+    - "wa_573009876543"
+    - "wa_573009998877"
+
+  # Tier 2 — CRITICAL: "hubara" sin clasificar en scopes de config/código
+  # tenant-sensibles. Los .md de infra/.github son tier WARN (docs), pero el
+  # workspace del agente es crítico completo (es la voz del cliente).
+  critical_globs:
+    - "infra/**"
+    - ".github/**"
+    - "hubara_agency/src/plugins/chats/agent/*/workspace/**"
+    - "hubara_agency/src/plugins/chats/agent/sales/tools/*.py"
+    - "hubara_agency/src/plugins/chats/agent/remarketing/tools/*.py"
+  critical_exclude_globs:
+    - "infra/**/*.md"
+    - ".github/**/*.md"
+
+  # Nombres del MOTOR — un match de "hubara" cuya palabra contenga uno de
+  # estos tokens NO es violación (decisión D-7 del plan).
+  allow_tokens:
+    - "hubara_agency"
+    - "hubara_vault"
+    - "HUBARA_"
+    - "HubaraSalesSessionWorkflow"
+    - "hubara-dev"
+    - "hubara-api"
+
+  # Marcas de redacción pendiente en el workspace: bloquean apply salvo
+  # --allow-todos (para forjar clones de prueba).
+  todo_marker: "TODO-BRAND"

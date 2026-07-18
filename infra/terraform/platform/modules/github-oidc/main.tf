@@ -16,14 +16,40 @@ variable "github_branches" { type = list(string) }
 variable "tenants" { type = list(string) }
 variable "region" { type = string }
 
-# El OIDC provider de GitHub. Único por cuenta.
+# El OIDC provider de GitHub es ÚNICO POR CUENTA AWS. El primer proyecto de la
+# cuenta lo crea (true, el default — este repo madre). Un proyecto clonado por
+# forge en la MISMA cuenta lo referencia como data source (false, vía
+# project.auto.tfvars) — crearlo de nuevo falla con EntityAlreadyExists.
+variable "create_provider" {
+  type    = bool
+  default = true
+}
+
 resource "aws_iam_openid_connect_provider" "github" {
+  count          = var.create_provider ? 1 : 0
   url            = "https://token.actions.githubusercontent.com"
   client_id_list = ["sts.amazonaws.com"]
   thumbprint_list = [
     "6938fd4d98bab03faadb97b34396831e3780aea1",
     "1c58a3a8518e8759bf075b76b750d4f2df264fce",
   ]
+}
+
+# Agregar `count` cambió el address del recurso en el state del repo madre
+# (github → github[0]): sin este moved, el plan querría DESTRUIR y recrear el
+# provider vivo (misma clase de incidente que el vault 2026-07-08).
+moved {
+  from = aws_iam_openid_connect_provider.github
+  to   = aws_iam_openid_connect_provider.github[0]
+}
+
+data "aws_iam_openid_connect_provider" "github" {
+  count = var.create_provider ? 0 : 1
+  url   = "https://token.actions.githubusercontent.com"
+}
+
+locals {
+  oidc_provider_arn = var.create_provider ? aws_iam_openid_connect_provider.github[0].arn : data.aws_iam_openid_connect_provider.github[0].arn
 }
 
 locals {
@@ -41,7 +67,7 @@ data "aws_iam_policy_document" "tf_trust" {
     actions = ["sts:AssumeRoleWithWebIdentity"]
     principals {
       type        = "Federated"
-      identifiers = [aws_iam_openid_connect_provider.github.arn]
+      identifiers = [local.oidc_provider_arn]
     }
     condition {
       test     = "StringEquals"
@@ -86,7 +112,7 @@ data "aws_iam_policy_document" "deploy_trust" {
     actions = ["sts:AssumeRoleWithWebIdentity"]
     principals {
       type        = "Federated"
-      identifiers = [aws_iam_openid_connect_provider.github.arn]
+      identifiers = [local.oidc_provider_arn]
     }
     condition {
       test     = "StringEquals"
@@ -155,4 +181,4 @@ resource "aws_iam_role_policy" "deploy" {
 
 output "deploy_role_arn" { value = aws_iam_role.deploy.arn }
 output "terraform_role_arn" { value = aws_iam_role.terraform.arn }
-output "oidc_provider_arn" { value = aws_iam_openid_connect_provider.github.arn }
+output "oidc_provider_arn" { value = local.oidc_provider_arn }

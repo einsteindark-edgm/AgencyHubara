@@ -1,0 +1,6 @@
+# Estado local de migraciones en curso + outputs/secrets de los steps.
+# NUNCA se commitean: contienen refs de proyectos, URLs con credenciales, etc.
+clients/*/.migration-state.json
+clients/*/.outputs.*.json
+clients/*/.secrets.*.json
+__pycache__/

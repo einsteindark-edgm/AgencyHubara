@@ -6,6 +6,9 @@ import { publishWithFallback } from "./certify/publisher";
 import { ManifestCodeLensProvider } from "./codelens/manifestCodeLens";
 import { CertDecorationProvider } from "./decorations/certDecorations";
 import { ManifestDiagnostics } from "./diagnostics/manifestDiagnostics";
+import { ForgeConsolePanel } from "./forge/consolePanel";
+import { FleetTreeProvider } from "./forge/fleetTree";
+import { ForgeService } from "./forge/forgeService";
 import { connectWithConfirmation } from "./graph/editOps";
 import { GraphPanel, LocalRunResult } from "./graph/graphPanel";
 import { ToolCall, TraceStep } from "./graph/messages";
@@ -55,6 +58,46 @@ export function activate(ctx: vscode.ExtensionContext): void {
 
   productionStatusBar = new ProductionStatusBar(hub);
   ctx.subscriptions.push(productionStatusBar);
+
+  // ── Forge Console — migración/clonación de CLIENTES (silo + forge). Concepto
+  // deliberadamente SEPARADO del desarrollo de agentes/plugins: contenedor
+  // propio en la activity bar, webview propio, cero acoplamiento con BridgeHub
+  // ni con los paneles de arriba. Piel sobre infra/forge/forge.py.
+  const forgeService = new ForgeService(repoRoot(), output);
+  ctx.subscriptions.push(forgeService);
+  forgeService.watch(ctx);
+  const fleetTree = new FleetTreeProvider(forgeService);
+  ctx.subscriptions.push(
+    fleetTree,
+    vscode.window.registerTreeDataProvider("forge.fleetTree", fleetTree),
+    vscode.commands.registerCommand("forge.openConsole", () =>
+      ForgeConsolePanel.open(ctx, forgeService),
+    ),
+    vscode.commands.registerCommand("forge.refreshFleet", () => fleetTree.refresh()),
+    vscode.commands.registerCommand("forge.initClient", async () => {
+      const slug = await vscode.window.showInputBox({
+        prompt: "Slug del cliente nuevo (ej. vincenzo)",
+        validateInput: (v) =>
+          /^[a-z][a-z0-9_]*$/.test(v) ? undefined : "minúsculas, dígitos y _ solamente",
+      });
+      if (slug) {
+        ForgeConsolePanel.open(ctx, forgeService);
+        await forgeService.run("init", [slug]);
+      }
+    }),
+    vscode.commands.registerCommand(
+      "forge.planClient",
+      async (node?: { client?: { slug: string } }) => {
+        const slug =
+          node?.client?.slug ??
+          (await vscode.window.showInputBox({ prompt: "Slug del cliente a planear" }));
+        if (slug) {
+          ForgeConsolePanel.open(ctx, forgeService);
+          await forgeService.run("plan", [slug]);
+        }
+      },
+    ),
+  );
 
   testController = new HubaraTestController(ctx, repoRoot(), resolvePath);
   ctx.subscriptions.push(testController);

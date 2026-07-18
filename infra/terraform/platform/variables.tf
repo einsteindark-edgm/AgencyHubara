@@ -22,6 +22,12 @@ variable "github_branches" {
   default     = ["main"]
 }
 
+variable "create_github_oidc_provider" {
+  description = "El OIDC provider de GitHub es 1 por cuenta AWS. true (default) = este proyecto lo crea (el repo madre). false = referenciarlo como data source — lo setea forge en project.auto.tfvars para proyectos clonados en la misma cuenta."
+  type        = bool
+  default     = true
+}
+
 # ── Multi-tenant ────────────────────────────────────────────────────────────
 # Un módulo reusable instanciado por tenant. Single-tenant = un solo entry.
 # El detalle de cada tenant vive en tenants.auto.tfvars.
