@@ -73,6 +73,11 @@ Exit codes: 0 ok · 2 input inválido/paquete corrupto.
 
 ## Acktos Studio
 
+Los dos comandos son **botones en el title bar del panel "Catálogo"** (el
+ícono `type-hierarchy` de la activity bar → vista Catálogo, donde se listan
+plugins y graph agents): `⬆ Exportar` y `⬇ Instalar`. También por Command
+Palette (`Acktos: Exportar paquete` / `Acktos: Instalar paquete`).
+
 - **`Acktos: Exportar paquete`** — picker multi-select (plugins + graph
   agents del repo abierto) → plan con clausura y requirements → confirmación
   → `.acktospkg` (save dialog; default `dist/`).
