@@ -654,6 +654,15 @@ Otras micro-lecciones del refactor: BSD `sed` no soporta `\b` (usar `perl -pi -e
 - **Regla para el skill:** al integrar un plugin con GraphAgents (o cualquier sistema externo visible en el Studio), la definición de HECHO incluye la seam declarada en `vscode-hubara/seams.yaml` con label citando el código vivo. Meta-regla: una obligación de proceso que solo vive en prosa de un skill SE VA A OLVIDAR — si el olvido es detectable estáticamente, escribí el guard en el mismo PR que la regla. Y todo archivo de configuración que la extensión bundlea es una COPIA CONGELADA: si describe el repo, la resolución debe preferir el archivo del repo.
 - **Guard:** `tests/platform/test_graphagents_seams.py` (bidireccional: dispatch literal sin seam = rojo; seam que no resuelve = rojo).
 
+### L-18 · Un plugin que escribe en conversaciones sin `depends_on: [chats]` es una isla en el System Map — y la dependencia funcional queda sin enforcement (2026-07-18, marketing invisible en Acktos Studio)
+
+- **Síntoma:** el operador abrió Acktos Studio y el plugin `marketing` — vivo en prod, enviando campañas reales — no aparecía dibujado/conectado en el System Map. El plugin certificaba C2, todos los gates verdes, el payload del bridge lo traía… como componente AISLADO: cero edges hacia el resto del sistema.
+- **Causa raíz:** el edge plugin→plugin del builder del System Map sale EXCLUSIVAMENTE de `depends_on:` del manifest. Marketing declaró `depends_on: []` pese a tener dependencia funcional DURA con chats: (1) escribe templates en las sesiones de conversación que chats posee, (2) su promesa de opt-out ("respóndeme NO MÁS y te doy de baja", exigida por Meta en el copy aprobado) la cumple el INGEST de chats (`detect_marketing_opt_out`). eta y reengagement sí lo declaraban — la regla era prosa/patrón, no ley (misma meta-regla de L-17: lo que vive en prosa se olvida).
+- **Consecuencias más allá del dibujo:** con `ENABLED_PLUGINS` sin chats, marketing bootea y ENVÍA — pero nadie procesa respuestas ni bajas: sanción de Meta en potencia, y P-6 no lo caza porque solo protege lo declarado.
+- **Fix aplicado:** (a) `depends_on: [chats]` en el manifest de marketing con el porqué comentado; (b) guard `tests/platform/test_session_plugins_depend_on_chats.py` — todo plugin cuyo código backend referencie los símbolos de envío a sesiones (`send_whatsapp_template_activity` / `send_template_to_session` / `send_whatsapp_message_activity`) DEBE declarar `depends_on: [chats]`; con self-test del detector (chats+eta+marketing deben aparecer en el scan, o el guard está roto).
+- **Regla para el skill:** al crear un plugin, la definición de HECHO incluye (1) declarar TODA dependencia funcional en `depends_on:` — la pregunta gatillo: "¿escribo en conversaciones? ¿otro plugin cumple promesas mías?" — y (2) verificar el dibujo: `build_system_graph()` debe mostrar el plugin CONECTADO (edges hacia afuera), no como isla, antes de cerrar. El manifest no es solo config de deploy: es la fuente del mapa.
+- **Guard:** `tests/platform/test_session_plugins_depend_on_chats.py`.
+
 <!-- AÑADIR NUEVAS LECCIONES ARRIBA DE ESTA LÍNEA, NUMERADAS L-1, L-2, ... -->
 
 ---

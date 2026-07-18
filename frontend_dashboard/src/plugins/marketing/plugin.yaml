@@ -14,7 +14,14 @@ description: |
   metadata — cuando responde, el panel de Ads agrupa la conversación por la
   campaña (canal `hubara_campaign`).
 
-depends_on: []
+# Dep DURA (guard test_session_plugins_depend_on_chats, patrón eta/reengagement):
+# marketing ESCRIBE en conversaciones (template de campaña a la sesión del
+# cliente) y su promesa de opt-out ("respóndeme NO MÁS") la CUMPLE el ingest
+# de chats (detect_marketing_opt_out). Sin chats habilitado, las respuestas a
+# campañas no tienen handler y la baja jamás se procesa. Además el edge
+# plugin→plugin del System Map sale de esta declaración — sin ella, Acktos
+# Studio dibuja a marketing como isla (integración invisible, clase L-17).
+depends_on: [chats]
 
 # ── Frontend ───────────────────────────────────────────────────────────
 frontend:

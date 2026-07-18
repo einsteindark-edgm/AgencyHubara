@@ -6,7 +6,7 @@
 
 | Querés… | Receta | Resumen |
 |---|---|---|
-| Crear un plugin nuevo (full-stack) | §4.1 | manifest `plugin.yaml` (id==dir) → backend `api/` + workers + eventos → frontend `index.ts` + entities → `plugins:sync` → `render-compose.py` + k8s |
+| Crear un plugin nuevo (full-stack) | §4.1 | manifest `plugin.yaml` (id==dir) → backend `api/` + workers + eventos → frontend `index.ts` + entities → `plugins:sync` → `render-compose.py` + k8s → **cierre L-18: declarar `depends_on:` funcionales + verificar en el mapa (abajo)** |
 | Consumir datos de otro plugin (cast) | §4.2 | `depends_on` + `consumes` + router que reenvía al contrato HTTP del provider bajo `/api/<tu-id>/` |
 | Agente conversacional con ruta propia | §4.3 | `owns_route` + `route_workflow_id_template` en tu worker; leé tu ruta de TU manifest |
 | Toggle por deployment | §4.4 | editar `ENABLED_PLUGINS` en el artefacto → `render-compose.py` → `up -d --remove-orphans` → re-build frontend |
@@ -24,6 +24,26 @@ Para un plugin NUEVO, además existe el scaffolder del SDK que **nace C2**:
 `cd hubara_agency && uv run python -m src.sdk.cli create plugin <id> --archetype <a>`
 (genera manifest + api delgada + dominio puro + el archivo TCK). Ver
 `05-sdk-surface.md`.
+
+## Cierre de un plugin nuevo: depends_on + el dibujo en Acktos Studio (L-18)
+
+El edge plugin→plugin del System Map sale EXCLUSIVAMENTE de `depends_on:` del
+manifest — y P-6 solo protege en deploy lo que está declarado. Antes de cerrar
+un plugin nuevo, dos pasos NO opcionales:
+
+1. **Declarar toda dependencia funcional** en `depends_on:`. Preguntas gatillo:
+   ¿escribís en conversaciones de clientes (templates/free-form → sesiones)?
+   → `[chats]` (las respuestas y el opt-out los maneja SU ingest; guard
+   `tests/platform/test_session_plugins_depend_on_chats.py` lo exige).
+   ¿Otro plugin cumple una promesa tuya o es target de tus transitions? →
+   declaralo. Comentá el porqué en el manifest (patrón: eta, reengagement,
+   marketing).
+2. **Verificar el dibujo**: `cd hubara_agency && uv run python -c
+   "from src.plugins.system_map.domain.builder import build_system_graph;
+   g=build_system_graph(); print([(e.source,e.target,e.kind) for e in g.edges
+   if 'plugin:<id>' in (e.source,e.target)])"` — tu plugin debe tener edges
+   HACIA AFUERA (no solo `belongs_to` internos). Una isla en el mapa =
+   integración invisible para el operador (clase L-17/L-18).
 
 ## Integración cross-sistema (plugin ↔ GraphAgents)
 
