@@ -25,6 +25,7 @@
 | [08-catalogo.md](08-catalogo.md) | Certificación en el system-map (catálogo) | F-SDK-5 |
 | [09-dashboard-bus.md](09-dashboard-bus.md) | `dashboardkit` (canal 1): push SSE al dashboard + drena P-28 | F-SDK-6 |
 | [10-castkit.md](10-castkit.md) | `castkit` (canal 3): cast HTTP cross-plugin con identidad (auth) | hardening 2026-06-23 |
+| [13-packages.md](13-packages.md) | Paquetes Acktos (`.acktospkg`): export/install de plugins + graph agents entre repos (Studio + CLI) | 2026-07-18 |
 
 ## El mapa mental en 30 segundos
 

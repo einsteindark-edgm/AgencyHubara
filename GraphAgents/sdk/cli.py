@@ -11,6 +11,9 @@ varios frontends; este es el CLI. No implementa reglas: delega en
     uv run python -m sdk.cli graph [--format mermaid|json]  # serializa el sistema a grafo
     uv run python -m sdk.cli cases [--check]         # los casos replayables (el catálogo del viewer)
     uv run python -m sdk.cli create tool <id>       # scaffold determinista (nace C2 + golden rojo)
+    uv run python -m sdk.cli package plan|stage|build|plan-install|install
+                                                    # export/install de graph agents entre repos
+                                                    # (formato acktospkg/1 — docs/_sdk/13-packages.md)
 """
 from __future__ import annotations
 
@@ -548,6 +551,165 @@ def cmd_create(args: argparse.Namespace) -> int:
     return 1
 
 
+def cmd_package_plan(args: argparse.Namespace) -> int:
+    import json
+
+    from sdk.packaging import PackagingError, plan_export
+
+    try:
+        plan = plan_export(args.agents, ga_root=Path(args.root))
+    except PackagingError as exc:
+        print(f"package plan: {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "requested": list(plan.requested),
+                    "units": [
+                        {
+                            "kind": "graphagent",
+                            "id": u.agent_id,
+                            "manifest_kind": u.kind_file,
+                            "archetype": u.archetype,
+                            "files": [f.as_posix() for f in u.files],
+                            "tool_dirs": list(u.tool_dirs),
+                            "requires": {
+                                "agents": list(u.agents),
+                                "ports": list(u.ports),
+                            },
+                        }
+                        for u in plan.units
+                    ],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+    print(f"plan de export ({', '.join(plan.requested)}):")
+    for u in plan.units:
+        extra = " (agent:// ref)" if u.agent_id not in plan.requested else ""
+        print(f"  + {u.agent_id} [{u.kind_file}/{u.archetype}]{extra}")
+        for f in u.files:
+            print(f"      {f.as_posix()}")
+        for d in u.tool_dirs:
+            print(f"      {d}/ (dir)")
+    return 0
+
+
+def cmd_package_stage(args: argparse.Namespace) -> int:
+    from sdk.packaging import PackagingError, plan_export, stage_units
+
+    try:
+        plan = plan_export(args.agents, ga_root=Path(args.root))
+        staged = stage_units(
+            plan, ga_root=Path(args.root), staging_dir=Path(args.staging)
+        )
+    except PackagingError as exc:
+        print(f"package stage: {exc}", file=sys.stderr)
+        return 2
+    for unit_dir in staged:
+        print(f"  staged {unit_dir}")
+    return 0
+
+
+def cmd_package_build(args: argparse.Namespace) -> int:
+    from sdk.packaging import PackagingError, build_package, plan_export
+
+    try:
+        plan = plan_export(args.agents, ga_root=Path(args.root))
+        if args.units:
+            plan = plan.only([s.strip() for s in args.units.split(",") if s.strip()])
+        pkg = build_package(
+            plan,
+            ga_root=Path(args.root),
+            out_path=Path(args.out),
+            name=args.name,
+            staging_dir=Path(args.staging) if args.staging else None,
+        )
+    except PackagingError as exc:
+        print(f"package build: {exc}", file=sys.stderr)
+        return 2
+    print(f"package build: {pkg} ({len(plan.units)} unidad/es graphagent)")
+    return 0
+
+
+def cmd_package_plan_install(args: argparse.Namespace) -> int:
+    import json
+
+    from sdk.packaging import PackagingError, plan_install
+
+    try:
+        plan = plan_install(Path(args.package), ga_root=Path(args.root))
+    except PackagingError as exc:
+        print(f"package plan-install: {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "units": [
+                        {"id": u.unit_id, "kind": u.kind, "action": u.action}
+                        for u in plan.units
+                    ],
+                    "missing_agents": list(plan.missing_agents),
+                    "post_steps": list(plan.post_steps),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+    for u in plan.units:
+        print(f"  {u.action:<9} {u.kind}:{u.unit_id}")
+    if plan.missing_agents:
+        print(f"  ⚠ agentes faltantes en el destino: {', '.join(plan.missing_agents)}")
+    print("pasos post-install:")
+    for step in plan.post_steps:
+        print(f"  · {step}")
+    return 0
+
+
+def cmd_package_install(args: argparse.Namespace) -> int:
+    import json
+
+    from sdk.packaging import PackagingError, install_package
+
+    only = (
+        [s.strip() for s in args.units.split(",") if s.strip()] if args.units else None
+    )
+    try:
+        result = install_package(
+            Path(args.package), ga_root=Path(args.root), units=only
+        )
+    except PackagingError as exc:
+        print(f"package install: {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "installed": list(result.installed),
+                    "replaced": list(result.replaced),
+                    "skipped": list(result.skipped),
+                    "written": len(result.written),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+    for aid in result.installed:
+        print(f"  + instalado {aid}")
+    for aid in result.replaced:
+        print(f"  ~ reemplazado {aid}")
+    for aid in result.skipped:
+        print(f"  - salteado {aid}")
+    print(f"package install: OK ({len(result.written)} archivos)")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(prog="graphagents", description="CLI del SDK de GraphAgents")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -620,6 +782,52 @@ def main() -> int:
         help="pure | read (lee externo) | outward (muta — nace approval_required)",
     )
     cr.set_defaults(fn=cmd_create)
+
+    pk = sub.add_parser(
+        "package", help="export/install de graph agents entre repos (acktospkg/1)"
+    )
+    pk_sub = pk.add_subparsers(dest="pkg_command", required=True)
+
+    def _add_root(p: argparse.ArgumentParser) -> None:
+        p.add_argument(
+            "--root", default=".", help="GraphAgents root (default: cwd)"
+        )
+
+    pk_plan = pk_sub.add_parser("plan", help="clausura del agente (capability+tools+tests+fixtures)")
+    pk_plan.add_argument("agents", nargs="+", help="ids de agentes/taskgraphs")
+    pk_plan.add_argument("--json", action="store_true")
+    _add_root(pk_plan)
+    pk_plan.set_defaults(fn=cmd_package_plan)
+
+    pk_stage = pk_sub.add_parser(
+        "stage", help="stagea unidades graphagent en un staging compartido (paquete combinado)"
+    )
+    pk_stage.add_argument("agents", nargs="+")
+    pk_stage.add_argument("--staging", required=True, help="staging dir compartido")
+    _add_root(pk_stage)
+    pk_stage.set_defaults(fn=cmd_package_stage)
+
+    pk_build = pk_sub.add_parser("build", help="stagea la clausura y sella el .acktospkg")
+    pk_build.add_argument("agents", nargs="+")
+    pk_build.add_argument("-o", "--out", required=True, help="path del .acktospkg")
+    pk_build.add_argument("--name", default=None)
+    pk_build.add_argument("--units", default=None, help="recorte de la clausura (ids por coma)")
+    pk_build.add_argument("--staging", default=None, help="staging persistente (conserva unidades foráneas)")
+    _add_root(pk_build)
+    pk_build.set_defaults(fn=cmd_package_build)
+
+    pk_pi = pk_sub.add_parser("plan-install", help="clasifica unidades contra el destino")
+    pk_pi.add_argument("package")
+    pk_pi.add_argument("--json", action="store_true")
+    _add_root(pk_pi)
+    pk_pi.set_defaults(fn=cmd_package_plan_install)
+
+    pk_in = pk_sub.add_parser("install", help="instala las unidades graphagent (file-level)")
+    pk_in.add_argument("package")
+    pk_in.add_argument("--units", default=None, help="instalar solo estos ids (por coma)")
+    pk_in.add_argument("--json", action="store_true")
+    _add_root(pk_in)
+    pk_in.set_defaults(fn=cmd_package_install)
 
     args = ap.parse_args()
     return args.fn(args)

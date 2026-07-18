@@ -17,6 +17,8 @@ Verbos:
   (deps + transitions), en mermaid o JSON.
 - ``create plugin <id> --archetype <a>`` — scaffold completo que NACE C2
   (genera desde los perfiles — INV-5).
+- ``package plan|build|inspect|plan-install|install`` — export/install de
+  plugins entre repos Hubara-shaped (formato acktospkg/1 — docs/_sdk/13).
 
 Diseñado para humanos Y para los skills del pipeline (salida estable,
 exit codes claros: 0 ok · 1 violaciones · 2 uso inválido).
@@ -211,6 +213,192 @@ def cmd_create_plugin(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# package — export/install de plugins entre repos Hubara-shaped (acktospkg/1)
+# ---------------------------------------------------------------------------
+
+def _unit_requires_json(unit) -> dict:
+    return {
+        "plugins": list(unit.depends_on),
+        "env_vars": list(unit.env_vars),
+        "secrets": list(unit.secrets),
+    }
+
+
+def cmd_package_plan(args: argparse.Namespace) -> int:
+    from src.sdk.packaging import PackagingError, plan_export
+
+    try:
+        plan = plan_export(args.plugins, repo_root=Path(args.repo))
+    except PackagingError as exc:
+        print(f"package plan: {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "requested": list(plan.requested),
+                    "units": [
+                        {
+                            "kind": "plugin",
+                            "id": u.plugin_id,
+                            "version": u.version,
+                            "archetype": u.archetype,
+                            "requires": _unit_requires_json(u),
+                        }
+                        for u in plan.units
+                    ],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+    print(f"plan de export ({', '.join(plan.requested)}):")
+    for u in plan.units:
+        extra = " (dependencia)" if u.plugin_id not in plan.requested else ""
+        print(f"  + {u.plugin_id} [{u.archetype}] v{u.version}{extra}")
+        if u.env_vars:
+            print(f"      env vars: {', '.join(u.env_vars)}")
+        if u.secrets:
+            print(f"      secrets:  {', '.join(u.secrets)}")
+    return 0
+
+
+def cmd_package_build(args: argparse.Namespace) -> int:
+    from src.sdk.packaging import PackagingError, build_package, plan_export
+
+    try:
+        plan = plan_export(args.plugins, repo_root=Path(args.repo))
+        if args.units:
+            plan = plan.only([s.strip() for s in args.units.split(",") if s.strip()])
+        pkg = build_package(
+            plan,
+            repo_root=Path(args.repo),
+            out_path=Path(args.out),
+            name=args.name,
+            staging_dir=Path(args.staging) if args.staging else None,
+        )
+    except PackagingError as exc:
+        print(f"package build: {exc}", file=sys.stderr)
+        return 2
+    print(f"package build: {pkg} ({len(plan.units)} unidad/es plugin)")
+    return 0
+
+
+def cmd_package_inspect(args: argparse.Namespace) -> int:
+    from src.sdk.packaging import PackagingError, read_package
+
+    try:
+        info = read_package(Path(args.package))
+    except PackagingError as exc:
+        print(f"package inspect: {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "format": info.format,
+                    "name": info.name,
+                    "source": info.source,
+                    "units": [
+                        {
+                            "kind": u.kind,
+                            "id": u.unit_id,
+                            "version": u.version,
+                            "archetype": u.archetype,
+                            "dir": u.dir,
+                            "requires": {
+                                "plugins": list(u.requires_plugins),
+                                "env_vars": list(u.requires_env_vars),
+                                "secrets": list(u.requires_secrets),
+                            },
+                        }
+                        for u in info.units
+                    ],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+    print(f"{info.name} [{info.format}] — commit {info.source.get('commit') or '?'}")
+    for u in info.units:
+        print(f"  {u.kind}:{u.unit_id} v{u.version} [{u.archetype}]")
+    return 0
+
+
+def cmd_package_plan_install(args: argparse.Namespace) -> int:
+    from src.sdk.packaging import PackagingError, plan_install
+
+    try:
+        plan = plan_install(Path(args.package), repo_root=Path(args.repo))
+    except PackagingError as exc:
+        print(f"package plan-install: {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "units": [
+                        {"id": u.unit_id, "kind": u.kind, "action": u.action}
+                        for u in plan.units
+                    ],
+                    "missing_plugins": list(plan.missing_plugins),
+                    "post_steps": list(plan.post_steps),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+    for u in plan.units:
+        print(f"  {u.action:<9} {u.kind}:{u.unit_id}")
+    if plan.missing_plugins:
+        print(f"  ⚠ dependencias faltantes en el destino: {', '.join(plan.missing_plugins)}")
+    print("pasos post-install:")
+    for step in plan.post_steps:
+        print(f"  · {step}")
+    return 0
+
+
+def cmd_package_install(args: argparse.Namespace) -> int:
+    from src.sdk.packaging import PackagingError, install_package
+
+    only = (
+        [s.strip() for s in args.units.split(",") if s.strip()] if args.units else None
+    )
+    try:
+        result = install_package(
+            Path(args.package), repo_root=Path(args.repo), units=only
+        )
+    except PackagingError as exc:
+        print(f"package install: {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "installed": list(result.installed),
+                    "replaced": list(result.replaced),
+                    "skipped": list(result.skipped),
+                    "written": len(result.written),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+    for pid in result.installed:
+        print(f"  + instalado {pid}")
+    for pid in result.replaced:
+        print(f"  ~ reemplazado {pid}")
+    for pid in result.skipped:
+        print(f"  - salteado {pid}")
+    print(f"package install: OK ({len(result.written)} archivos)")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # entry point
 # ---------------------------------------------------------------------------
 
@@ -252,6 +440,64 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_cp.add_argument("--display-name", default=None)
     p_cp.set_defaults(fn=cmd_create_plugin)
+
+    p_pkg = sub.add_parser(
+        "package", help="export/install de plugins entre repos (acktospkg/1)"
+    )
+    pkg_sub = p_pkg.add_subparsers(dest="pkg_command", required=True)
+
+    def _add_repo(p: argparse.ArgumentParser) -> None:
+        p.add_argument(
+            "--repo",
+            default=str(_repo_root()),
+            help="repo root Hubara-shaped (default: este repo)",
+        )
+
+    p_pp = pkg_sub.add_parser("plan", help="clausura depends_on + requirements")
+    p_pp.add_argument("plugins", nargs="+", help="ids a exportar")
+    p_pp.add_argument("--json", action="store_true")
+    _add_repo(p_pp)
+    p_pp.set_defaults(fn=cmd_package_plan)
+
+    p_pb = pkg_sub.add_parser("build", help="stagea la clausura y sella el .acktospkg")
+    p_pb.add_argument("plugins", nargs="+", help="ids a exportar")
+    p_pb.add_argument("-o", "--out", required=True, help="path del .acktospkg")
+    p_pb.add_argument("--name", default=None, help="nombre del paquete")
+    p_pb.add_argument(
+        "--units", default=None, help="recorte de la clausura (ids separados por coma)"
+    )
+    p_pb.add_argument(
+        "--staging",
+        default=None,
+        help="staging dir persistente — conserva unidades foráneas pre-stageadas "
+        "(p.ej. graphagent-* del CLI de GraphAgents) y las sella en el paquete",
+    )
+    _add_repo(p_pb)
+    p_pb.set_defaults(fn=cmd_package_build)
+
+    p_pi = pkg_sub.add_parser("inspect", help="package.yaml + verificación de integridad")
+    p_pi.add_argument("package", help="path al .acktospkg")
+    p_pi.add_argument("--json", action="store_true")
+    p_pi.set_defaults(fn=cmd_package_inspect)
+
+    p_ppi = pkg_sub.add_parser(
+        "plan-install", help="clasifica unidades contra el destino (new/overwrite)"
+    )
+    p_ppi.add_argument("package", help="path al .acktospkg")
+    p_ppi.add_argument("--json", action="store_true")
+    _add_repo(p_ppi)
+    p_ppi.set_defaults(fn=cmd_package_plan_install)
+
+    p_pin = pkg_sub.add_parser(
+        "install", help="escribe las unidades plugin en sus paths single-owner"
+    )
+    p_pin.add_argument("package", help="path al .acktospkg")
+    p_pin.add_argument(
+        "--units", default=None, help="instalar solo estos ids (separados por coma)"
+    )
+    p_pin.add_argument("--json", action="store_true")
+    _add_repo(p_pin)
+    p_pin.set_defaults(fn=cmd_package_install)
 
     args = parser.parse_args(argv)
     return args.fn(args)

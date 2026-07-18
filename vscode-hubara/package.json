@@ -2,7 +2,7 @@
   "name": "acktos-studio",
   "displayName": "Acktos Studio",
   "description": "Grafos, certificaciones y ejecuciones de AgencyHubara + GraphAgents dentro de VS Code.",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "publisher": "acktos",
   "private": true,
   "license": "UNLICENSED",
@@ -141,6 +141,16 @@
       {
         "command": "acktos.certifyAndPublish",
         "title": "Acktos: Guardar & certificar (suite completa → rama + PR)",
+        "category": "Acktos Studio"
+      },
+      {
+        "command": "acktos.exportPackage",
+        "title": "Acktos: Exportar paquete (.acktospkg) — plugins / graph agents",
+        "category": "Acktos Studio"
+      },
+      {
+        "command": "acktos.installPackage",
+        "title": "Acktos: Instalar paquete (.acktospkg) en este repo",
         "category": "Acktos Studio"
       }
     ],

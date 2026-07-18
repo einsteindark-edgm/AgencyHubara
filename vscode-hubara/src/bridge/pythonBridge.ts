@@ -252,8 +252,9 @@ function sleep(ms: number): Promise<void> {
 
 /** VS Code lanzado desde el Dock (macOS) hereda el PATH de launchd, sin los
  * dirs donde viven `uv`/`python3` de brew o instaladores de usuario — el
- * mismo comando que funciona en la terminal daría ENOENT acá. */
-function augmentedPath(): string {
+ * mismo comando que funciona en la terminal daría ENOENT acá.
+ * Exportado: packageService spawnea los MISMOS CLIs one-shot. */
+export function augmentedPath(): string {
   const home = os.homedir();
   const extras = [
     "/opt/homebrew/bin",

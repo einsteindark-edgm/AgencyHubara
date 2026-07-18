@@ -79,6 +79,7 @@ Detalle en `.claude/skills/hubara-architecture-guide/references/deha-rules.md`.
 | **CLI del SDK (compilador)** | `cd hubara_agency && uv run python -m src.sdk.cli check` |
 | Certificar plugins (C0–C2) | `cd hubara_agency && uv run python -m src.sdk.cli certify` |
 | Plugin nuevo (nace C2) | `cd hubara_agency && uv run python -m src.sdk.cli create plugin <id> --archetype <a>` |
+| Export/install de plugins entre repos | `cd hubara_agency && uv run python -m src.sdk.cli package plan\|build\|plan-install\|install` (docs/_sdk/13-packages.md) |
 | TCK por plugin | `cd hubara_agency && uv run pytest tests/conformance -q` |
 
 Tabla completa con vault, k8s, env vars: `hubara_agency/.hubara/project-context.md` §2.
