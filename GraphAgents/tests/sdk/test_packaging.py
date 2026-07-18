@@ -157,14 +157,18 @@ def test_build_e_install_roundtrip(tmp_path: Path) -> None:
     assert (destino / "fixtures" / "scout_snapshot.json").exists()
     assert sorted(result.installed) == ["scout", "team"]
 
-    # overwrite: NO borra a los vecinos de los dirs compartidos
+    # re-plan tras instalar: contenido idéntico = unchanged (idempotencia)
     vecino = destino / "graphs" / "otro.py"
     vecino.write_text("# de otro agente\n", encoding="utf-8")
     iplan2 = plan_install(out, ga_root=destino)
     assert {u.unit_id: u.action for u in iplan2.units} == {
-        "scout": "overwrite",
-        "team": "overwrite",
+        "scout": "unchanged",
+        "team": "unchanged",
     }
+    # divergir el graph instalado → overwrite real, que NO arrasa vecinos
+    (destino / "graphs" / "scout.py").write_text("# divergido\n", encoding="utf-8")
+    iplan3 = plan_install(out, ga_root=destino)
+    assert {u.unit_id: u.action for u in iplan3.units}["scout"] == "overwrite"
     install_package(out, ga_root=destino)
     assert vecino.exists(), "install file-level: los dirs compartidos no se arrasan"
 
@@ -212,6 +216,59 @@ def test_plan_export_taskgraph_incluye_cases_flow(tmp_path: Path) -> None:
     plan = plan_export(["team"], ga_root=root)
     team = next(u for u in plan.units if u.agent_id == "team")
     assert "fixtures/cases/team-flujo.case.yaml" in {f.as_posix() for f in team.files}
+
+
+def test_version_del_manifest_viaja(tmp_path: Path) -> None:
+    """`version:` opcional del manifest = la versión de release del agente."""
+    root = _mini_ga(tmp_path)
+    manifest = root / "manifests" / "scout.agent.yaml"
+    manifest.write_text(
+        manifest.read_text(encoding="utf-8") + "version: 1.2.0\n", encoding="utf-8"
+    )
+    out = tmp_path / "scout.acktospkg"
+    build_package(plan_export(["scout"], ga_root=root), ga_root=root, out_path=out)
+    unit = next(u for u in read_package(out).units if u.unit_id == "scout")
+    assert unit.version == "1.2.0"
+    assert unit.fingerprint and len(unit.fingerprint) >= 12
+
+
+def test_unchanged_bump_pending_y_ledger(tmp_path: Path) -> None:
+    origen = _mini_ga(tmp_path)
+    out1 = tmp_path / "r1.acktospkg"
+    build_package(
+        plan_export(["scout"], ga_root=origen),
+        ga_root=origen,
+        out_path=out1,
+        name="scout-pack",
+    )
+    destino = _target_ga(tmp_path)
+    r1 = install_package(out1, ga_root=destino)
+    assert r1.installed == ("scout",)
+
+    # ledger del destino con la entrada del install
+    import yaml
+
+    ledger_path = destino / "installed-packages.yaml"
+    ledger = yaml.safe_load(ledger_path.read_text(encoding="utf-8"))
+    (entry,) = ledger["installs"]
+    assert entry["unit"] == "scout" and entry["kind"] == "graphagent"
+    assert entry["package"] == "scout-pack" and entry["fingerprint"]
+
+    # reinstalar lo MISMO = no-op declarado, sin duplicar ledger
+    plan = plan_install(out1, ga_root=destino)
+    assert {u.unit_id: u.action for u in plan.units} == {"scout": "unchanged"}
+    r2 = install_package(out1, ga_root=destino)
+    assert r2.skipped_unchanged == ("scout",) and r2.installed == ()
+    assert len(yaml.safe_load(ledger_path.read_text(encoding="utf-8"))["installs"]) == 1
+
+    # mejora en el origen SIN bump de versión → overwrite + bump_pending
+    graph = origen / "graphs" / "scout.py"
+    graph.write_text(graph.read_text(encoding="utf-8") + "# mejora\n", encoding="utf-8")
+    out2 = tmp_path / "r2.acktospkg"
+    build_package(plan_export(["scout"], ga_root=origen), ga_root=origen, out_path=out2)
+    plan2 = plan_install(out2, ga_root=destino)
+    (scout,) = plan2.units
+    assert scout.action == "overwrite" and scout.bump_pending is True
 
 
 def test_plan_export_order_sentinel_repo_real() -> None:

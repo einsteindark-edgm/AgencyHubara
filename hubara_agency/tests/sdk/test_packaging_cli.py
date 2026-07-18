@@ -62,6 +62,7 @@ def test_package_plan_install_e_install(
     beta = next(u for u in payload["units"] if u["id"] == "beta")
     assert beta["version"] == "0.1.0", "Studio muestra pkg → destino"
     assert beta["target_version"] is None and beta["downgrade"] is False
+    assert beta["bump_pending"] is False, "campo presente para Studio"
     assert payload["missing_plugins"] == []
     assert payload["post_steps"], "Studio muestra los pasos post-install"
 
@@ -70,6 +71,15 @@ def test_package_plan_install_e_install(
     assert (
         destino / "hubara_agency/tests/conformance/test_beta_conformance.py"
     ).exists()
+    capsys.readouterr()
+
+    # reinstalar lo mismo: idempotente, y el JSON lo dice (Studio hace no-op)
+    assert (
+        main(["package", "install", str(out), "--repo", str(destino), "--json"]) == 0
+    )
+    rpayload = json.loads(capsys.readouterr().out)
+    assert sorted(rpayload["skipped_unchanged"]) == ["alpha", "beta"]
+    assert rpayload["installed"] == [] and rpayload["replaced"] == []
 
 
 def test_package_plan_plugin_inexistente_exit_2(

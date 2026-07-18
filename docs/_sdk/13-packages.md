@@ -92,6 +92,29 @@ Exit codes: 0 ok · 2 input inválido/paquete corrupto.
 La UI es piel, los CLIs son músculo (D-10): Studio solo orquesta los verbos
 de arriba (`src/packages/packageService.ts`).
 
+## Versionamiento (tres capas)
+
+| Capa | Quién la mueve | Qué pregunta responde |
+|---|---|---|
+| **Fingerprint de contenido** (`sha256[:16]` del payload, en `unit.yaml` y `package.yaml`) | automática al sellar | "¿Es EXACTAMENTE esto lo que está instalado?" |
+| **Versión semver** (`version:` del `plugin.yaml`; opcional en manifests de GraphAgents) | humana (major = rompe contrato) | "¿Qué iteración es y qué tan grande fue el cambio?" |
+| **Ledger del destino** (`hubara_agency/.hubara/installed-packages.yaml` · `GraphAgents/installed-packages.yaml`) | el install (viaja en su commit) | "¿Qué recibió este repo, cuándo y de qué commit del central?" |
+
+Consecuencias operativas:
+
+- **Idempotencia**: reinstalar contenido idéntico = `unchanged` — el CLI no
+  escribe, no appendea ledger, y Studio ni siquiera crea la rama ("ya está al
+  día"). El histórico registra solo cambios reales.
+- **Disciplina asistida**: misma versión declarada + contenido distinto =
+  `bump_pending` (⚠ en CLI y en el modal de Studio) — la mejora incremental
+  te pide el bump en el ORIGEN antes de confundir al destino.
+- **Downgrade visible**: `0.2.0 → 0.1.0` se marca ⚠ DOWNGRADE (solo informativo).
+- **Trazabilidad**: cada entrada del ledger lleva `source_commit` — en el
+  central, `git diff <commitA> <commitB> -- src/plugins/<id>` muestra
+  exactamente qué cambió entre dos versiones instaladas en un aliado. El
+  histórico de DESARROLLO vive en el git del central; el de DESPLIEGUES, en
+  el ledger de cada aliado.
+
 ## Post-install (manual, lo lista el plan)
 
 1. `ENABLED_PLUGINS` += ids instalados (simetría INV-2).

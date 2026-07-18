@@ -45,6 +45,14 @@ _ENV_REF_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-[^}]*)?\}")
 _STAGE_IGNORE = shutil.ignore_patterns(
     "__pycache__", "*.pyc", ".DS_Store", "node_modules", ".pytest_cache"
 )
+_IGNORE_DIR_NAMES = {"__pycache__", ".DS_Store", "node_modules", ".pytest_cache"}
+
+# payload key del unit.yaml → dónde vive en un repo Hubara-shaped
+_PAYLOAD_TARGETS = {
+    "backend": "_backend_dir",
+    "frontend": "_manifest_dir",
+    "tests": "_tests_dir",
+}
 
 
 class PackagingError(ValueError):
@@ -96,6 +104,7 @@ class PackagedUnit:
     requires_plugins: tuple[str, ...]
     requires_env_vars: tuple[str, ...]
     requires_secrets: tuple[str, ...]
+    fingerprint: str = ""  # identidad de CONTENIDO del payload (sha256[:16])
 
 
 @dataclass(frozen=True)
@@ -110,10 +119,11 @@ class PackageInfo:
 class UnitInstallStatus:
     unit_id: str
     kind: str
-    action: str  # "new" | "overwrite" | "foreign"
+    action: str  # "new" | "overwrite" | "unchanged" | "foreign"
     version: str = "0.0.0"  # la que trae el paquete
     target_version: str | None = None  # la que YA está en el destino (overwrite)
     downgrade: bool = False  # pkg < destino (solo si ambas son semver)
+    bump_pending: bool = False  # misma versión declarada, contenido DISTINTO
 
 
 @dataclass(frozen=True)
@@ -129,6 +139,7 @@ class InstallResult:
     installed: tuple[str, ...]
     replaced: tuple[str, ...]
     skipped: tuple[str, ...] = field(default_factory=tuple)
+    skipped_unchanged: tuple[str, ...] = field(default_factory=tuple)
 
 
 # ---------------------------------------------------------------------------
@@ -250,6 +261,50 @@ def plan_export(plugin_ids: list[str] | tuple[str, ...], *, repo_root: Path) -> 
 
 
 # ---------------------------------------------------------------------------
+# fingerprint de contenido — identidad del payload, independiente del string
+# de versión. Se computa igual del lado paquete (staged) y del lado destino,
+# con el MISMO filtro de ignorados, así "unchanged" compara manzanas con
+# manzanas.
+# ---------------------------------------------------------------------------
+
+def _payload_files(base: Path) -> list[Path]:
+    if not base.is_dir():
+        return []
+    out = []
+    for path in sorted(base.rglob("*")):
+        if not path.is_file() or path.suffix == ".pyc":
+            continue
+        rel = path.relative_to(base)
+        if any(part in _IGNORE_DIR_NAMES for part in rel.parts):
+            continue
+        out.append(path)
+    return out
+
+
+def _fingerprint_dirs(dirs: dict[str, Path]) -> str:
+    digest = hashlib.sha256()
+    for key in sorted(dirs):
+        base = dirs[key]
+        for path in _payload_files(base):
+            rel = path.relative_to(base).as_posix()
+            digest.update(f"{key}/{rel}\0".encode())
+            digest.update(path.read_bytes())
+            digest.update(b"\0")
+    return digest.hexdigest()[:16]
+
+
+def _target_payload_dirs(
+    repo_root: Path, plugin_id: str, payload_keys: list[str]
+) -> dict[str, Path]:
+    mapping = {
+        "backend": _backend_dir(repo_root, plugin_id),
+        "frontend": _manifest_dir(repo_root, plugin_id),
+        "tests": _tests_dir(repo_root, plugin_id),
+    }
+    return {k: mapping[k] for k in payload_keys if k in mapping}
+
+
+# ---------------------------------------------------------------------------
 # stage + build
 # ---------------------------------------------------------------------------
 
@@ -269,6 +324,7 @@ def stage_units(plan: ExportPlan, *, staging_dir: Path) -> list[Path]:
         if unit.tests_dir is not None:
             shutil.copytree(unit.tests_dir, unit_dir / "tests", ignore=_STAGE_IGNORE)
             payload["tests"] = "tests"
+        fingerprint = _fingerprint_dirs({k: unit_dir / v for k, v in payload.items()})
         (unit_dir / "unit.yaml").write_text(
             yaml.safe_dump(
                 {
@@ -276,6 +332,7 @@ def stage_units(plan: ExportPlan, *, staging_dir: Path) -> list[Path]:
                     "id": unit.plugin_id,
                     "version": unit.version,
                     "archetype": unit.archetype,
+                    "fingerprint": fingerprint,
                     "payload": payload,
                     "requires": {
                         "plugins": list(unit.depends_on),
@@ -325,6 +382,7 @@ def _collect_unit_manifests(staging_dir: Path) -> list[dict]:
                 "id": raw.get("id", unit_yaml.parent.name),
                 "version": raw.get("version", "0.0.0"),
                 "archetype": raw.get("archetype", ""),
+                "fingerprint": raw.get("fingerprint", ""),
                 "dir": f"units/{unit_yaml.parent.name}",
                 "requires": raw.get("requires") or {},
             }
@@ -446,6 +504,7 @@ def _info_from_extracted(extracted: Path) -> PackageInfo:
                 requires_plugins=tuple(requires.get("plugins") or []),
                 requires_env_vars=tuple(requires.get("env_vars") or []),
                 requires_secrets=tuple(requires.get("secrets") or []),
+                fingerprint=str(entry.get("fingerprint") or ""),
             )
         )
     return PackageInfo(
@@ -500,35 +559,67 @@ def _semver_tuple(version: str) -> tuple[int, int, int] | None:
     return (int(match[1]), int(match[2]), int(match[3])) if match else None
 
 
+def _unit_payload_keys(extracted: Path, unit: PackagedUnit) -> list[str]:
+    unit_yaml = extracted / unit.dir / "unit.yaml"
+    raw = yaml.safe_load(unit_yaml.read_text(encoding="utf-8")) or {}
+    return sorted((raw.get("payload") or {}).keys())
+
+
+def _target_fingerprint(repo_root: Path, unit_id: str, payload_keys: list[str]) -> str:
+    return _fingerprint_dirs(_target_payload_dirs(repo_root, unit_id, payload_keys))
+
+
 def plan_install(pkg_path: Path, *, repo_root: Path) -> InstallPlan:
     repo_root = Path(repo_root)
-    info = read_package(pkg_path)
     statuses: list[UnitInstallStatus] = []
-    packaged_ids = {u.unit_id for u in info.units if u.kind == "plugin"}
     missing: set[str] = set()
-    for unit in info.units:
-        if unit.kind != "plugin":
+    with tempfile.TemporaryDirectory(prefix="acktospkg-plan-") as tmp:
+        tmp_path = Path(tmp)
+        _safe_extract(Path(pkg_path), tmp_path)
+        _verify_checksums(tmp_path)
+        info = _info_from_extracted(tmp_path)
+        packaged_ids = {u.unit_id for u in info.units if u.kind == "plugin"}
+        for unit in info.units:
+            if unit.kind != "plugin":
+                statuses.append(
+                    UnitInstallStatus(unit.unit_id, unit.kind, "foreign", version=unit.version)
+                )
+                continue
+            exists = _plugin_exists(repo_root, unit.unit_id)
+            target_version = (
+                _target_plugin_version(repo_root, unit.unit_id) if exists else None
+            )
+            unchanged = False
+            if exists and unit.fingerprint:
+                keys = _unit_payload_keys(tmp_path, unit)
+                unchanged = (
+                    _target_fingerprint(repo_root, unit.unit_id, keys) == unit.fingerprint
+                )
+            pkg_sem = _semver_tuple(unit.version)
+            dst_sem = _semver_tuple(target_version) if target_version else None
+            action = "unchanged" if unchanged else ("overwrite" if exists else "new")
             statuses.append(
-                UnitInstallStatus(unit.unit_id, unit.kind, "foreign", version=unit.version)
+                UnitInstallStatus(
+                    unit.unit_id,
+                    "plugin",
+                    action,
+                    version=unit.version,
+                    target_version=target_version,
+                    downgrade=bool(
+                        not unchanged and pkg_sem and dst_sem and pkg_sem < dst_sem
+                    ),
+                    # sin `version:` en el manifest destino, la efectiva es
+                    # 0.0.0 — un plugin nunca versionado también avisa el bump
+                    bump_pending=bool(
+                        not unchanged
+                        and exists
+                        and unit.version == (target_version or "0.0.0")
+                    ),
+                )
             )
-            continue
-        exists = _plugin_exists(repo_root, unit.unit_id)
-        target_version = _target_plugin_version(repo_root, unit.unit_id) if exists else None
-        pkg_sem = _semver_tuple(unit.version)
-        dst_sem = _semver_tuple(target_version) if target_version else None
-        statuses.append(
-            UnitInstallStatus(
-                unit.unit_id,
-                "plugin",
-                "overwrite" if exists else "new",
-                version=unit.version,
-                target_version=target_version,
-                downgrade=bool(pkg_sem and dst_sem and pkg_sem < dst_sem),
-            )
-        )
-        for dep in unit.requires_plugins:
-            if dep not in packaged_ids and not _plugin_exists(repo_root, dep):
-                missing.add(dep)
+            for dep in unit.requires_plugins:
+                if dep not in packaged_ids and not _plugin_exists(repo_root, dep):
+                    missing.add(dep)
     return InstallPlan(
         units=tuple(statuses),
         missing_plugins=tuple(sorted(missing)),
@@ -547,13 +638,46 @@ def _replace_tree(src: Path, dest: Path, written: list[Path]) -> bool:
     return True
 
 
+def _ledger_path(repo_root: Path) -> Path:
+    return repo_root / "hubara_agency" / ".hubara" / "installed-packages.yaml"
+
+
+def _append_ledger(repo_root: Path, entries: list[dict]) -> Path | None:
+    """El libro de instalaciones del DESTINO — viaja en el commit del install.
+
+    Histórico de despliegues (qué versión/fingerprint llegó, de qué commit del
+    central, cuándo); el histórico de DESARROLLO sigue viviendo en el git del
+    repo central.
+    """
+    if not entries:
+        return None
+    path = _ledger_path(repo_root)
+    ledger = {"version": 1, "installs": []}
+    if path.is_file():
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if isinstance(raw, dict) and isinstance(raw.get("installs"), list):
+            ledger = raw
+    ledger["installs"].extend(entries)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        yaml.safe_dump(ledger, allow_unicode=True, sort_keys=False), encoding="utf-8"
+    )
+    return path
+
+
 def install_package(
     pkg_path: Path,
     *,
     repo_root: Path,
     units: list[str] | tuple[str, ...] | None = None,
 ) -> InstallResult:
-    """Extrae las unidades kind=plugin en sus 4 paths single-owner (INV-1)."""
+    """Extrae las unidades kind=plugin en sus 4 paths single-owner (INV-1).
+
+    Idempotente: una unidad cuyo contenido YA está en el destino (mismo
+    fingerprint) se saltea sin escribir ni appendear al ledger.
+    """
+    from datetime import datetime, timezone
+
     from src.sdk.cli.scaffold import _conformance
 
     repo_root = Path(repo_root)
@@ -561,6 +685,8 @@ def install_package(
     installed: list[str] = []
     replaced: list[str] = []
     skipped: list[str] = []
+    skipped_unchanged: list[str] = []
+    ledger_entries: list[dict] = []
     with tempfile.TemporaryDirectory(prefix="acktospkg-install-") as tmp:
         tmp_path = Path(tmp)
         _safe_extract(Path(pkg_path), tmp_path)
@@ -576,6 +702,11 @@ def install_package(
             if not str(unit_dir).startswith(str(tmp_path.resolve())):
                 raise PackagingError(f"dir de unidad fuera del paquete: {unit.dir!r}")
             was_present = _plugin_exists(repo_root, unit.unit_id)
+            if was_present and unit.fingerprint:
+                keys = _unit_payload_keys(tmp_path, unit)
+                if _target_fingerprint(repo_root, unit.unit_id, keys) == unit.fingerprint:
+                    skipped_unchanged.append(unit.unit_id)
+                    continue
             if not _replace_tree(
                 unit_dir / "frontend", _manifest_dir(repo_root, unit.unit_id), written
             ):
@@ -589,9 +720,26 @@ def install_package(
             conformance.write_text(_conformance(unit.unit_id), encoding="utf-8")
             written.append(conformance)
             (replaced if was_present else installed).append(unit.unit_id)
+            ledger_entries.append(
+                {
+                    "unit": unit.unit_id,
+                    "kind": "plugin",
+                    "version": unit.version,
+                    "fingerprint": unit.fingerprint,
+                    "package": info.name,
+                    "source_commit": info.source.get("commit"),
+                    "installed_at": datetime.now(timezone.utc).isoformat(
+                        timespec="seconds"
+                    ),
+                }
+            )
+        ledger = _append_ledger(repo_root, ledger_entries)
+        if ledger is not None:
+            written.append(ledger)
     return InstallResult(
         written=tuple(written),
         installed=tuple(installed),
         replaced=tuple(replaced),
         skipped=tuple(skipped),
+        skipped_unchanged=tuple(skipped_unchanged),
     )

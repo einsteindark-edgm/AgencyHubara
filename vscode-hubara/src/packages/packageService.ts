@@ -35,6 +35,7 @@ interface PlanInstallUnit {
   version?: string;
   target_version?: string | null;
   downgrade?: boolean;
+  bump_pending?: boolean;
 }
 
 interface HubaraInstallPlan {
@@ -400,18 +401,33 @@ export async function installPackage(output: vscode.OutputChannel): Promise<void
   }
   const agentUnits = (gaPlan?.units ?? []).filter((u) => u.kind === "graphagent");
 
-  const pluginLine = (u: PlanInstallUnit) => {
+  const unitLine = (u: PlanInstallUnit, kind: string) => {
+    if (u.action === "unchanged") {
+      return `= ${kind} ${u.id} sin cambios (ya al día)`;
+    }
     const versions = u.target_version ? ` (${u.target_version} → ${u.version ?? "?"})` : "";
-    const flag = u.downgrade ? "  ⚠ DOWNGRADE" : "";
-    return `${u.action === "overwrite" ? "~ actualiza" : "+ instala"} plugin ${u.id}${versions}${flag}`;
+    const flags =
+      (u.downgrade ? "  ⚠ DOWNGRADE" : "") +
+      (u.bump_pending ? "  ⚠ misma versión, contenido distinto (bump pendiente en el origen)" : "");
+    return `${u.action === "overwrite" ? "~ actualiza" : "+ instala"} ${kind} ${u.id}${versions}${flags}`;
   };
   const detail: string[] = [
-    ...pluginUnits.map(pluginLine),
-    ...agentUnits.map((u) => `${u.action === "overwrite" ? "~ actualiza" : "+ instala"} graphagent ${u.id}`),
+    ...pluginUnits.map((u) => unitLine(u, "plugin")),
+    ...agentUnits.map((u) => unitLine(u, "graphagent")),
   ];
   const missing = [...hubaraPlan.missing_plugins, ...(gaPlan?.missing_agents ?? [])];
   if (missing.length > 0) {
     detail.push("", `⚠ dependencias que faltan en este repo: ${missing.join(", ")}`);
+  }
+
+  // idempotencia: si TODO ya está al día, no hay rama ni commit que hacer
+  const actionablePlugins = pluginUnits.filter((u) => u.action !== "unchanged");
+  const actionableAgents = agentUnits.filter((u) => u.action !== "unchanged");
+  if (actionablePlugins.length === 0 && actionableAgents.length === 0) {
+    void vscode.window.showInformationMessage(
+      `Acktos Studio: '${pkgName}' ya está al día en este repo — nada que instalar.`,
+    );
+    return;
   }
   detail.push("", "Flujo: rama nueva → instalar → codegen → certificar → commit → merge (elegís al final).");
 
@@ -453,15 +469,15 @@ export async function installPackage(output: vscode.OutputChannel): Promise<void
         progress.report({ message: `creando rama ${branch} desde ${startPoint}…` });
         await gitOrThrow(["checkout", "-B", branch, startPoint], root, log);
 
-        // 3. instalar (cada CLI su kind)
-        if (pluginUnits.length > 0) {
+        // 3. instalar (cada CLI su kind; los unchanged se saltean solos)
+        if (actionablePlugins.length > 0) {
           progress.report({ message: "instalando plugins…" });
           const res = await hubaraCli(cfg, ["package", "install", pkg, "--json", "--repo", root], log);
           if (res.code !== 0) {
             throw new Error(`package install (hubara) falló: ${res.stderr.trim()}`);
           }
         }
-        if (agentUnits.length > 0) {
+        if (actionableAgents.length > 0) {
           progress.report({ message: "instalando graph agents…" });
           const res = await gaCli(cfg, ["package", "install", pkg, "--json", "--root", cfg.gaCwd], log);
           if (res.code !== 0) {
@@ -470,7 +486,7 @@ export async function installPackage(output: vscode.OutputChannel): Promise<void
         }
 
         // 4. codegen — lo compartido se REGENERA, nunca se edita a mano
-        if (pluginUnits.length > 0) {
+        if (actionablePlugins.length > 0) {
           progress.report({ message: "regenerando registry + compose…" });
           const sync = await run(cfg.frontendNpm, ["run", "plugins:sync"], cfg.frontendCwd, {}, log);
           if (sync.code !== 0) {
@@ -487,16 +503,16 @@ export async function installPackage(output: vscode.OutputChannel): Promise<void
         //    completas corren después como siempre). No frena el commit: un
         //    fallo deja la rama para diagnóstico, sin merge.
         progress.report({ message: "certificando…" });
-        if (pluginUnits.length > 0) {
-          const ids = pluginUnits.map((u) => u.id);
+        if (actionablePlugins.length > 0) {
+          const ids = actionablePlugins.map((u) => u.id);
           const cert = await hubaraCli(cfg, ["certify", ...ids], log);
           if (cert.code !== 0) {
             certifyProblems.push(`certify hubara (${ids.join(", ")}) — ver Output`);
             log(cert.stdout);
           }
         }
-        if (agentUnits.length > 0) {
-          const check = await gaCli(cfg, ["check", ...agentUnits.map((u) => u.id)], log);
+        if (actionableAgents.length > 0) {
+          const check = await gaCli(cfg, ["check", ...actionableAgents.map((u) => u.id)], log);
           if (check.code !== 0) {
             certifyProblems.push("check GraphAgents — ver Output");
             log(check.stdout);
@@ -506,7 +522,10 @@ export async function installPackage(output: vscode.OutputChannel): Promise<void
         // 6. commit
         progress.report({ message: "commiteando…" });
         await gitOrThrow(["add", "-A"], root, log);
-        const unitList = [...pluginUnits.map((u) => `plugin:${u.id}`), ...agentUnits.map((u) => `graphagent:${u.id}`)];
+        const unitList = [
+          ...actionablePlugins.map((u) => `plugin:${u.id}@${u.version ?? "?"}`),
+          ...actionableAgents.map((u) => `graphagent:${u.id}@${u.version ?? "?"}`),
+        ];
         await gitOrThrow(
           ["commit", "-m", `feat(acktos): instala paquete ${pkgName} (${unitList.join(", ")})`],
           root,

@@ -162,6 +162,10 @@ def test_plan_install_clasifica_new_y_overwrite(tmp_path: Path) -> None:
 
     con_alpha = _target_repo(tmp_path, "con_alpha")
     create_plugin("alpha", "api_only", repo_root=con_alpha)
+    # el alpha del destino DIVERGIÓ del que trae el paquete → overwrite real
+    (con_alpha / "hubara_agency/src/plugins/alpha/domain/logic.py").write_text(
+        "# divergido en el destino\n", encoding="utf-8"
+    )
     plan2 = plan_install(out, repo_root=con_alpha)
     actions = {u.unit_id: u.action for u in plan2.units}
     assert actions == {"alpha": "overwrite", "beta": "new"}
@@ -213,6 +217,9 @@ def test_install_escribe_solo_paths_del_plugin(tmp_path: Path) -> None:
         "hubara_agency/src/plugins/",
         "hubara_agency/tests/conformance/test_",
         "hubara_agency/tests/plugins/",
+        # el libro de instalaciones del destino — registro deliberado del
+        # install (versionamiento), no un archivo central del código
+        "hubara_agency/.hubara/installed-packages.yaml",
     )
     for path in result.written:
         rel = path.relative_to(destino).as_posix()
@@ -289,6 +296,106 @@ def test_plan_install_reporta_versiones_y_downgrade(tmp_path: Path) -> None:
 
     alpha = next(u for u in plan.units if u.unit_id == "alpha")
     assert alpha.target_version is None and alpha.downgrade is False
+
+
+# ---------------------------------------------------------------------------
+# versionamiento (2026-07-18): fingerprint + idempotencia + bump + ledger
+# ---------------------------------------------------------------------------
+
+def test_build_estampa_fingerprint_de_contenido(tmp_path: Path) -> None:
+    """El fingerprint es identidad de CONTENIDO: estable si nada cambió,
+    distinto si cambió un archivo — sin depender del string de versión."""
+    root = _mini_repo(tmp_path)
+    out1 = tmp_path / "v1.acktospkg"
+    out2 = tmp_path / "v2.acktospkg"
+    build_package(plan_export(["beta"], repo_root=root), repo_root=root, out_path=out1)
+    build_package(plan_export(["beta"], repo_root=root), repo_root=root, out_path=out2)
+    beta1 = next(u for u in read_package(out1).units if u.unit_id == "beta")
+    beta2 = next(u for u in read_package(out2).units if u.unit_id == "beta")
+    assert beta1.fingerprint and len(beta1.fingerprint) >= 12
+    assert beta1.fingerprint == beta2.fingerprint, "mismo contenido = mismo fingerprint"
+
+    logic = root / "hubara_agency" / "src" / "plugins" / "beta" / "domain" / "logic.py"
+    logic.write_text(logic.read_text(encoding="utf-8") + "\n# cambio\n", encoding="utf-8")
+    out3 = tmp_path / "v3.acktospkg"
+    build_package(plan_export(["beta"], repo_root=root), repo_root=root, out_path=out3)
+    beta3 = next(u for u in read_package(out3).units if u.unit_id == "beta")
+    assert beta3.fingerprint != beta1.fingerprint, "contenido distinto = fingerprint distinto"
+
+
+def test_plan_install_detecta_unchanged(tmp_path: Path) -> None:
+    """Reinstalar lo MISMO es un no-op declarado: action == unchanged."""
+    origen = _mini_repo(tmp_path)
+    out = tmp_path / "beta.acktospkg"
+    build_package(plan_export(["beta"], repo_root=origen), repo_root=origen, out_path=out)
+
+    destino = _target_repo(tmp_path, "idem")
+    install_package(out, repo_root=destino)
+
+    plan = plan_install(out, repo_root=destino)
+    assert {u.unit_id: u.action for u in plan.units} == {
+        "alpha": "unchanged",
+        "beta": "unchanged",
+    }
+
+    # tocar el contenido instalado lo vuelve overwrite
+    (destino / "hubara_agency/src/plugins/beta/domain/logic.py").write_text(
+        "# editado a mano\n", encoding="utf-8"
+    )
+    plan2 = plan_install(out, repo_root=destino)
+    actions = {u.unit_id: u.action for u in plan2.units}
+    assert actions["beta"] == "overwrite" and actions["alpha"] == "unchanged"
+
+
+def test_install_saltea_unchanged_y_escribe_ledger(tmp_path: Path) -> None:
+    origen = _mini_repo(tmp_path)
+    out = tmp_path / "beta.acktospkg"
+    build_package(
+        plan_export(["beta"], repo_root=origen),
+        repo_root=origen,
+        out_path=out,
+        name="beta-bundle",
+    )
+
+    destino = _target_repo(tmp_path, "ledger")
+    r1 = install_package(out, repo_root=destino)
+    assert sorted(r1.installed) == ["alpha", "beta"]
+
+    ledger_path = destino / "hubara_agency" / ".hubara" / "installed-packages.yaml"
+    ledger = yaml.safe_load(ledger_path.read_text(encoding="utf-8"))
+    entries = {e["unit"]: e for e in ledger["installs"]}
+    assert entries["beta"]["version"] == "0.1.0"
+    assert entries["beta"]["package"] == "beta-bundle"
+    assert entries["beta"]["fingerprint"] and entries["beta"]["installed_at"]
+
+    # reinstalar lo mismo: no escribe, no duplica el ledger
+    r2 = install_package(out, repo_root=destino)
+    assert sorted(r2.skipped_unchanged) == ["alpha", "beta"]
+    assert r2.installed == () and r2.replaced == ()
+    ledger2 = yaml.safe_load(ledger_path.read_text(encoding="utf-8"))
+    assert len(ledger2["installs"]) == len(ledger["installs"]), "no-op no appendea"
+
+
+def test_plan_install_flaggea_bump_pendiente(tmp_path: Path) -> None:
+    """Misma versión declarada + contenido distinto = bump_pending visible."""
+    origen = _mini_repo(tmp_path)
+    out1 = tmp_path / "r1.acktospkg"
+    build_package(plan_export(["beta"], repo_root=origen), repo_root=origen, out_path=out1)
+    destino = _target_repo(tmp_path, "bump")
+    install_package(out1, repo_root=destino)
+
+    logic = origen / "hubara_agency" / "src" / "plugins" / "beta" / "domain" / "logic.py"
+    logic.write_text(logic.read_text(encoding="utf-8") + "\n# mejora sin bump\n", encoding="utf-8")
+    out2 = tmp_path / "r2.acktospkg"
+    build_package(plan_export(["beta"], repo_root=origen), repo_root=origen, out_path=out2)
+
+    plan = plan_install(out2, repo_root=destino)
+    beta = next(u for u in plan.units if u.unit_id == "beta")
+    assert beta.action == "overwrite"
+    assert beta.bump_pending is True, "0.1.0 → 0.1.0 con contenido distinto"
+
+    alpha = next(u for u in plan.units if u.unit_id == "alpha")
+    assert alpha.action == "unchanged" and alpha.bump_pending is False
 
 
 # ---------------------------------------------------------------------------

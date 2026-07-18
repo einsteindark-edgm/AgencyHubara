@@ -23,6 +23,7 @@ import subprocess
 import tarfile
 import tempfile
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
@@ -54,6 +55,7 @@ class GraphAgentUnit:
     tool_dirs: tuple[str, ...]  # relpaths dir-level (tools/<id>/)
     agents: tuple[str, ...]  # agent:// refs (taskgraph)
     ports: tuple[str, ...]  # consumes
+    version: str = "0.0.0"  # `version:` opcional del manifest (release)
 
 
 @dataclass(frozen=True)
@@ -78,6 +80,7 @@ class PackagedUnit:
     dir: str
     requires_agents: tuple[str, ...]
     requires_ports: tuple[str, ...]
+    fingerprint: str = ""  # identidad de CONTENIDO del payload (sha256[:16])
 
 
 @dataclass(frozen=True)
@@ -92,7 +95,11 @@ class PackageInfo:
 class UnitInstallStatus:
     unit_id: str
     kind: str
-    action: str  # "new" | "overwrite" | "foreign"
+    action: str  # "new" | "overwrite" | "unchanged" | "foreign"
+    version: str = "0.0.0"
+    target_version: str | None = None
+    downgrade: bool = False
+    bump_pending: bool = False  # misma versión declarada, contenido DISTINTO
 
 
 @dataclass(frozen=True)
@@ -108,6 +115,7 @@ class InstallResult:
     installed: tuple[str, ...]
     replaced: tuple[str, ...]
     skipped: tuple[str, ...] = ()
+    skipped_unchanged: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -267,6 +275,7 @@ def _unit_for(ga_root: Path, agent_id: str) -> GraphAgentUnit:
         tool_dirs=tuple(dict.fromkeys(tool_dirs)),
         agents=tuple(agents),
         ports=tuple(raw.get("consumes") or []),
+        version=str(raw.get("version") or "0.0.0"),
     )
 
 
@@ -292,6 +301,49 @@ def plan_export(agent_ids: list[str] | tuple[str, ...], *, ga_root: Path) -> Exp
 
 
 # ---------------------------------------------------------------------------
+# fingerprint de contenido — mismo criterio de ambos lados (staged y destino)
+# ---------------------------------------------------------------------------
+
+_IGNORE_DIR_NAMES = {"__pycache__", ".DS_Store", "node_modules", ".pytest_cache"}
+
+
+def _dir_files(base: Path) -> list[Path]:
+    if not base.is_dir():
+        return []
+    out = []
+    for path in sorted(base.rglob("*")):
+        if not path.is_file() or path.suffix == ".pyc":
+            continue
+        rel = path.relative_to(base)
+        if any(part in _IGNORE_DIR_NAMES for part in rel.parts):
+            continue
+        out.append(path)
+    return out
+
+
+def _fingerprint_payload(base: Path, files: list[str], dirs: list[str]) -> str:
+    """sha256[:16] del payload — `base` es el unit dir staged O el ga_root."""
+    digest = hashlib.sha256()
+    for rel in sorted(files):
+        path = base / rel
+        digest.update(f"{rel}\0".encode())
+        digest.update(path.read_bytes() if path.is_file() else b"<missing>")
+        digest.update(b"\0")
+    for rel in sorted(dirs):
+        for path in _dir_files(base / rel):
+            file_rel = f"{rel}/{path.relative_to(base / rel).as_posix()}"
+            digest.update(f"{file_rel}\0".encode())
+            digest.update(path.read_bytes())
+            digest.update(b"\0")
+    return digest.hexdigest()[:16]
+
+
+def _semver_tuple(version: str) -> tuple[int, int, int] | None:
+    match = re.match(r"^(\d+)\.(\d+)\.(\d+)$", version)
+    return (int(match[1]), int(match[2]), int(match[3])) if match else None
+
+
+# ---------------------------------------------------------------------------
 # stage + seal (formato compartido con el CLI hubara)
 # ---------------------------------------------------------------------------
 
@@ -312,15 +364,18 @@ def stage_units(plan: ExportPlan, *, ga_root: Path, staging_dir: Path) -> list[P
                 unit_dir / rel,
                 ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".DS_Store"),
             )
+        payload_files = [f.as_posix() for f in unit.files]
+        fingerprint = _fingerprint_payload(unit_dir, payload_files, list(unit.tool_dirs))
         (unit_dir / "unit.yaml").write_text(
             yaml.safe_dump(
                 {
                     "kind": "graphagent",
                     "id": unit.agent_id,
-                    "version": "0.0.0",
+                    "version": unit.version,
                     "archetype": unit.archetype,
+                    "fingerprint": fingerprint,
                     "payload": {
-                        "files": [f.as_posix() for f in unit.files],
+                        "files": payload_files,
                         "dirs": list(unit.tool_dirs),
                     },
                     "requires": {
@@ -377,6 +432,7 @@ def _collect_unit_manifests(staging_dir: Path) -> list[dict]:
                 "id": raw.get("id", unit_yaml.parent.name),
                 "version": raw.get("version", "0.0.0"),
                 "archetype": raw.get("archetype", ""),
+                "fingerprint": raw.get("fingerprint", ""),
                 "dir": f"units/{unit_yaml.parent.name}",
                 "requires": raw.get("requires") or {},
             }
@@ -475,6 +531,7 @@ def _info_from_extracted(extracted: Path) -> PackageInfo:
                 dir=str(entry.get("dir", "")),
                 requires_agents=tuple(requires.get("agents") or []),
                 requires_ports=tuple(requires.get("ports") or []),
+                fingerprint=str(entry.get("fingerprint") or ""),
             )
         )
     return PackageInfo(
@@ -512,6 +569,16 @@ POST_STEPS: tuple[str, ...] = (
 )
 
 
+def _target_manifest_version(ga_root: Path, manifest_rel: str | None) -> str | None:
+    if not manifest_rel or not (ga_root / manifest_rel).is_file():
+        return None
+    try:
+        raw = yaml.safe_load((ga_root / manifest_rel).read_text(encoding="utf-8"))
+    except yaml.YAMLError:
+        return None
+    return str(raw.get("version")) if isinstance(raw, dict) and raw.get("version") else None
+
+
 def plan_install(pkg_path: Path, *, ga_root: Path) -> InstallPlan:
     ga_root = Path(ga_root)
     statuses: list[UnitInstallStatus] = []
@@ -524,13 +591,39 @@ def plan_install(pkg_path: Path, *, ga_root: Path) -> InstallPlan:
         packaged = {u.unit_id for u in info.units if u.kind == "graphagent"}
         for unit in info.units:
             if unit.kind != "graphagent":
-                statuses.append(UnitInstallStatus(unit.unit_id, unit.kind, "foreign"))
+                statuses.append(
+                    UnitInstallStatus(unit.unit_id, unit.kind, "foreign", version=unit.version)
+                )
                 continue
-            files, _dirs = _unit_payload(tmp_path, unit)
+            files, dirs = _unit_payload(tmp_path, unit)
             manifest_rel = next((f for f in files if f.startswith("manifests/")), None)
             exists = bool(manifest_rel) and (ga_root / manifest_rel).is_file()
+            unchanged = bool(
+                exists
+                and unit.fingerprint
+                and _fingerprint_payload(ga_root, files, dirs) == unit.fingerprint
+            )
+            target_version = _target_manifest_version(ga_root, manifest_rel) if exists else None
+            pkg_sem = _semver_tuple(unit.version)
+            dst_sem = _semver_tuple(target_version) if target_version else None
             statuses.append(
-                UnitInstallStatus(unit.unit_id, "graphagent", "overwrite" if exists else "new")
+                UnitInstallStatus(
+                    unit.unit_id,
+                    "graphagent",
+                    "unchanged" if unchanged else ("overwrite" if exists else "new"),
+                    version=unit.version,
+                    target_version=target_version,
+                    downgrade=bool(
+                        not unchanged and pkg_sem and dst_sem and pkg_sem < dst_sem
+                    ),
+                    # sin `version:` declarada, la efectiva es 0.0.0 — así un
+                    # agente nunca versionado también avisa que falta el bump
+                    bump_pending=bool(
+                        not unchanged
+                        and exists
+                        and unit.version == (target_version or "0.0.0")
+                    ),
+                )
             )
             for dep in unit.requires_agents:
                 if dep not in packaged and not _agent_exists(ga_root, dep):
@@ -549,18 +642,46 @@ def _agent_exists(ga_root: Path, agent_id: str) -> bool:
     ).is_file()
 
 
+def _ledger_path(ga_root: Path) -> Path:
+    return ga_root / "installed-packages.yaml"
+
+
+def _append_ledger(ga_root: Path, entries: list[dict]) -> Path | None:
+    """Libro de instalaciones del GA root destino (histórico de despliegues)."""
+    if not entries:
+        return None
+    path = _ledger_path(ga_root)
+    ledger = {"version": 1, "installs": []}
+    if path.is_file():
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if isinstance(raw, dict) and isinstance(raw.get("installs"), list):
+            ledger = raw
+    ledger["installs"].extend(entries)
+    path.write_text(
+        yaml.safe_dump(ledger, allow_unicode=True, sort_keys=False), encoding="utf-8"
+    )
+    return path
+
+
 def install_package(
     pkg_path: Path,
     *,
     ga_root: Path,
     units: list[str] | tuple[str, ...] | None = None,
 ) -> InstallResult:
-    """Copia file-level en los dirs compartidos; ``tools/<id>/`` dir-level."""
+    """Copia file-level en los dirs compartidos; ``tools/<id>/`` dir-level.
+
+    Idempotente: una unidad cuyo contenido YA está en el destino (mismo
+    fingerprint) se saltea sin escribir ni appendear al ledger.
+    """
+
     ga_root = Path(ga_root)
     written: list[Path] = []
     installed: list[str] = []
     replaced: list[str] = []
     skipped: list[str] = []
+    skipped_unchanged: list[str] = []
+    ledger_entries: list[dict] = []
     with tempfile.TemporaryDirectory(prefix="acktospkg-ga-install-") as tmp:
         tmp_path = Path(tmp)
         _safe_extract(Path(pkg_path), tmp_path)
@@ -573,6 +694,13 @@ def install_package(
             files, dirs = _unit_payload(tmp_path, unit)
             manifest_rel = next((f for f in files if f.startswith("manifests/")), None)
             was_present = bool(manifest_rel) and (ga_root / manifest_rel).is_file()
+            if (
+                was_present
+                and unit.fingerprint
+                and _fingerprint_payload(ga_root, files, dirs) == unit.fingerprint
+            ):
+                skipped_unchanged.append(unit.unit_id)
+                continue
             unit_dir = tmp_path / unit.dir
             for rel in files:
                 src = unit_dir / rel
@@ -592,9 +720,26 @@ def install_package(
                 shutil.copytree(src, dest)
                 written.extend(p for p in dest.rglob("*") if p.is_file())
             (replaced if was_present else installed).append(unit.unit_id)
+            ledger_entries.append(
+                {
+                    "unit": unit.unit_id,
+                    "kind": "graphagent",
+                    "version": unit.version,
+                    "fingerprint": unit.fingerprint,
+                    "package": info.name,
+                    "source_commit": info.source.get("commit"),
+                    "installed_at": datetime.now(timezone.utc).isoformat(
+                        timespec="seconds"
+                    ),
+                }
+            )
+        ledger = _append_ledger(ga_root, ledger_entries)
+        if ledger is not None:
+            written.append(ledger)
     return InstallResult(
         written=tuple(written),
         installed=tuple(installed),
         replaced=tuple(replaced),
         skipped=tuple(skipped),
+        skipped_unchanged=tuple(skipped_unchanged),
     )

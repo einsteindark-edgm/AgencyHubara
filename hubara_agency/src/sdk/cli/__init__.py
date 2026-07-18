@@ -347,6 +347,7 @@ def cmd_package_plan_install(args: argparse.Namespace) -> int:
                             "version": u.version,
                             "target_version": u.target_version,
                             "downgrade": u.downgrade,
+                            "bump_pending": u.bump_pending,
                         }
                         for u in plan.units
                     ],
@@ -361,7 +362,8 @@ def cmd_package_plan_install(args: argparse.Namespace) -> int:
     for u in plan.units:
         upgrade = f"  ({u.target_version} → {u.version})" if u.target_version else ""
         flag = "  ⚠ DOWNGRADE" if u.downgrade else ""
-        print(f"  {u.action:<9} {u.kind}:{u.unit_id}{upgrade}{flag}")
+        bump = "  ⚠ misma versión, contenido distinto (bump pendiente)" if u.bump_pending else ""
+        print(f"  {u.action:<9} {u.kind}:{u.unit_id}{upgrade}{flag}{bump}")
     if plan.missing_plugins:
         print(f"  ⚠ dependencias faltantes en el destino: {', '.join(plan.missing_plugins)}")
     print("pasos post-install:")
@@ -390,6 +392,7 @@ def cmd_package_install(args: argparse.Namespace) -> int:
                     "installed": list(result.installed),
                     "replaced": list(result.replaced),
                     "skipped": list(result.skipped),
+                    "skipped_unchanged": list(result.skipped_unchanged),
                     "written": len(result.written),
                 },
                 ensure_ascii=False,
@@ -401,6 +404,8 @@ def cmd_package_install(args: argparse.Namespace) -> int:
         print(f"  + instalado {pid}")
     for pid in result.replaced:
         print(f"  ~ reemplazado {pid}")
+    for pid in result.skipped_unchanged:
+        print(f"  = {pid} sin cambios (ya al día)")
     for pid in result.skipped:
         print(f"  - salteado {pid}")
     print(f"package install: OK ({len(result.written)} archivos)")

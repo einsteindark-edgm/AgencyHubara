@@ -650,7 +650,15 @@ def cmd_package_plan_install(args: argparse.Namespace) -> int:
             json.dumps(
                 {
                     "units": [
-                        {"id": u.unit_id, "kind": u.kind, "action": u.action}
+                        {
+                            "id": u.unit_id,
+                            "kind": u.kind,
+                            "action": u.action,
+                            "version": u.version,
+                            "target_version": u.target_version,
+                            "downgrade": u.downgrade,
+                            "bump_pending": u.bump_pending,
+                        }
                         for u in plan.units
                     ],
                     "missing_agents": list(plan.missing_agents),
@@ -662,7 +670,11 @@ def cmd_package_plan_install(args: argparse.Namespace) -> int:
         )
         return 0
     for u in plan.units:
-        print(f"  {u.action:<9} {u.kind}:{u.unit_id}")
+        upgrade = f"  ({u.target_version} → {u.version})" if u.target_version else ""
+        flags = ("  ⚠ DOWNGRADE" if u.downgrade else "") + (
+            "  ⚠ misma versión, contenido distinto (bump pendiente)" if u.bump_pending else ""
+        )
+        print(f"  {u.action:<9} {u.kind}:{u.unit_id}{upgrade}{flags}")
     if plan.missing_agents:
         print(f"  ⚠ agentes faltantes en el destino: {', '.join(plan.missing_agents)}")
     print("pasos post-install:")
@@ -693,6 +705,7 @@ def cmd_package_install(args: argparse.Namespace) -> int:
                     "installed": list(result.installed),
                     "replaced": list(result.replaced),
                     "skipped": list(result.skipped),
+                    "skipped_unchanged": list(result.skipped_unchanged),
                     "written": len(result.written),
                 },
                 ensure_ascii=False,
@@ -704,6 +717,8 @@ def cmd_package_install(args: argparse.Namespace) -> int:
         print(f"  + instalado {aid}")
     for aid in result.replaced:
         print(f"  ~ reemplazado {aid}")
+    for aid in result.skipped_unchanged:
+        print(f"  = {aid} sin cambios (ya al día)")
     for aid in result.skipped:
         print(f"  - salteado {aid}")
     print(f"package install: OK ({len(result.written)} archivos)")
