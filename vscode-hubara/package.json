@@ -2,7 +2,7 @@
   "name": "acktos-studio",
   "displayName": "Acktos Studio",
   "description": "Grafos, certificaciones y ejecuciones de AgencyHubara + GraphAgents dentro de VS Code.",
-  "version": "0.0.5",
+  "version": "0.0.7",
   "publisher": "acktos",
   "private": true,
   "license": "UNLICENSED",
@@ -20,7 +20,9 @@
     "Other"
   ],
   "main": "./dist/extension.js",
-  "activationEvents": [],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "contributes": {
     "commands": [
       {
@@ -235,6 +237,17 @@
             "media": {
               "markdown": "walkthrough/edit-mode.md"
             }
+          },
+          {
+            "id": "forge",
+            "title": "Forge — migrar a un cliente nuevo",
+            "description": "Silo por cliente: nuevo repo + infra + Medusa. Vive en su PROPIO ícono 🔥 en la barra de actividad (separado de Studio).\n[Abrir Forge Console](command:forge.openConsole)",
+            "media": {
+              "markdown": "walkthrough/forge.md"
+            },
+            "completionEvents": [
+              "onCommand:forge.openConsole"
+            ]
           }
         ]
       }
