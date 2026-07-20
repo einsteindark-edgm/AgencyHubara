@@ -1,4 +1,4 @@
-# 04 · Lecciones (qué NO repetir — índice de §9, L-0..L-17)
+# 04 · Lecciones (qué NO repetir — índice de §9, L-0..L-18)
 
 > Índice scannable de `ARCHITECTURE_FINAL_fable.md §9`. Cada lección allá tiene
 > Síntoma → Causa → Fix → Regla-para-el-skill → Guard. Acá, la regla en una
@@ -24,6 +24,7 @@
 | L-15 | ratchet stale | CI testea `refs/pull/NN/merge`; un ratchet congelado en un PR stale diverge → mergeá main + regenerá, no edites a mano |
 | L-16 | cast sin identidad | todo cast loopback PORTA el `Authorization` entrante (castkit) — el hop interno no hereda la identidad del edge gratis |
 | L-17 | seam olvidada | integrar un plugin con GraphAgents incluye la seam en `vscode-hubara/seams.yaml` (guard `test_graphagents_seams.py`); una regla solo-de-prosa se olvida — guard en el mismo PR |
+| L-18 | depends_on omitido | plugin que escribe en sesiones ⇒ `depends_on: [chats]` (guard `test_session_plugins_depend_on_chats.py`); sin declarar, Acktos Studio lo dibuja como ISLA y P-6 no protege el deploy — al crear un plugin, verificá con `build_system_graph()` que queda CONECTADO |
 
 ## El patrón que las genera (y cómo contribuís)
 

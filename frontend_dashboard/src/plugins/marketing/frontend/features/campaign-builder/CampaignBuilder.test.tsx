@@ -65,6 +65,21 @@ vi.mock("@plugins/marketing/frontend/entities/product", async (importOriginal) =
   useProducts: () => ({ data: [], isPending: false }),
 }));
 
+/** Audiencia REAL del endpoint — undefined = cargando (fallback a la
+ *  estimación por segmento). */
+const audienceMock = {
+  data: undefined as
+    | { recipients: never[]; skipped: never[]; total: number }
+    | undefined,
+  isPending: false,
+  error: null as Error | null,
+};
+
+vi.mock("@plugins/marketing/frontend/entities/audience", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useCampaignAudience: () => audienceMock,
+}));
+
 import { CampaignBuilder } from "./ui/CampaignBuilder";
 import type { Campaign } from "@plugins/marketing/frontend/entities/campaign";
 
@@ -92,6 +107,8 @@ function makeCampaign(over: Partial<Campaign> = {}): Campaign {
     sentAtMs: null,
     sendResult: null,
     testSends: [],
+    excludedSessionIds: [],
+    extraSessionIds: [],
     ...over,
   };
 }
@@ -103,6 +120,7 @@ beforeEach(() => {
   cancelMock.mutate.mockClear();
   testMock.error = null;
   sendMock.error = null;
+  audienceMock.data = undefined;
 });
 
 describe("CampaignBuilder — campaña programada", () => {
@@ -152,12 +170,25 @@ describe("CampaignBuilder — audiencia", () => {
     const { getAllByText, getByText } = render(
       <CampaignBuilder campaign={makeCampaign()} />,
     );
+    // Sin data del endpoint: fallback a la estimación por segmento.
     // 18 + 24 = 42 destinatarios × 12.500 micros = US$0,53 ≈ $2.100 COP.
     // El total aparece en la barra de audiencia Y en el resumen de envío.
     expect(getAllByText(/42 destinatarios/).length).toBeGreaterThanOrEqual(2);
     expect(getAllByText(/US\$0,53/).length).toBeGreaterThanOrEqual(1);
     expect(getAllByText(/\$2\.100/).length).toBeGreaterThanOrEqual(1);
     expect(getByText(/6 contactos excluidos/)).toBeTruthy();
+  });
+
+  it("usa el total REAL del endpoint de audiencia cuando hay data", () => {
+    // La curaduría manual (quitados/agregados) hace que el total real
+    // difiera de la suma por segmento: 40 × 12.500 micros = US$0,50.
+    audienceMock.data = { recipients: [], skipped: [], total: 40 };
+    const { getAllByText, queryAllByText } = render(
+      <CampaignBuilder campaign={makeCampaign()} />,
+    );
+    expect(getAllByText(/40 destinatarios/).length).toBeGreaterThanOrEqual(2);
+    expect(getAllByText(/US\$0,50/).length).toBeGreaterThanOrEqual(1);
+    expect(queryAllByText(/42 destinatarios/)).toHaveLength(0);
   });
 });
 

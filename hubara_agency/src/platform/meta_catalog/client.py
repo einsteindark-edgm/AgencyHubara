@@ -282,6 +282,8 @@ def _item_to_meta_data(item: MetaCatalogItem) -> dict[str, Any]:
         data["sale_price"] = item.sale_price
     if item.item_group_id:
         data["item_group_id"] = item.item_group_id
+    if item.color:
+        data["color"] = item.color
     if item.additional_variant_attribute:
         data["additional_variant_attribute"] = item.additional_variant_attribute
     # NOTA: `custom_data`/tags NO es un campo válido de `/items_batch` (solo del

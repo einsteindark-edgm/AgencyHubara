@@ -21,6 +21,7 @@ from __future__ import annotations
 _TAG_HUMAN = "HUMANO"
 _TAG_CONVERTED = "COMPRA_EXITOSA"
 _TAG_PAYMENT_PENDING = "CONFIRMADO_PAGO_PENDIENTE"
+_TAG_REMARKETING = "REMARKETING"
 
 
 def _in_window(now_ms: int, expires_at_ms: object) -> bool:
@@ -38,6 +39,15 @@ def _classify(now_ms: int, convo: dict) -> dict:
         return {**base, "action": "suppress", "reason": "human_owned"}
     if tag == _TAG_CONVERTED:
         return {**base, "action": "suppress", "reason": "already_converted"}
+
+    # 1.5. Compra hecha en el último episodio (espejo de send_policy):
+    # el tag corriente puede flipar (scheduler post-venta → RETOMA_VENTA);
+    # el cierre manda. Excepción: tag REMARKETING = decisión humana.
+    if (
+        lead.get("last_closing_tag") == _TAG_CONVERTED
+        and tag != _TAG_REMARKETING
+    ):
+        return {**base, "action": "suppress", "reason": "already_purchased"}
 
     in_csw = _in_window(now_ms, convo.get("service_window_expires_at_ms"))
     in_ctwa = _in_window(now_ms, convo.get("ctwa_window_expires_at_ms"))

@@ -12,6 +12,7 @@
 
 import { useRef, useState } from "react";
 
+import { useCampaignAudience } from "@plugins/marketing/frontend/entities/audience";
 import {
   CAMPAIGN_STATUS_META,
   goalNeedsProduct,
@@ -84,7 +85,15 @@ export function CampaignBuilder({ campaign }: Props) {
   const done6 = campaign.status !== "draft" && campaign.status !== "failed";
   const canSend = done1 && done2 && done3 && done4;
 
-  const recipients = recipientsForSelection(segmentsInfo, draft.segments);
+  // Total REAL del endpoint de audiencia (incluye la curaduría manual:
+  // quitados/agregados a mano); mientras carga, fallback a la estimación
+  // por segmento. El costo sigue al mismo número.
+  const { data: audience } = useCampaignAudience(
+    campaign.id,
+    campaign.updatedAtMs,
+  );
+  const recipients =
+    audience?.total ?? recipientsForSelection(segmentsInfo, draft.segments);
   const totalCostMicros = (segmentsInfo?.unitCostUsdMicros ?? 0) * recipients;
 
   return (

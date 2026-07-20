@@ -210,6 +210,13 @@ export function App(): React.ReactElement {
   const layoutSignature = useMemo(() => graph.nodes.map((n) => n.nsId).sort().join(","), [graph.nodes]);
   const [fitToken, setFitToken] = useState(0);
   const lastFitKey = useRef("");
+  // nsIds ya vistos EN este scope — para detectar nodos NUEVOS tras un
+  // refresh (plugin recién mergeado, nodo agregado). Sin re-fit, un nodo
+  // nuevo nace donde lo puso el layout por defecto mientras el resto queda
+  // en sus posiciones arrastradas persistidas: puede caer completamente
+  // FUERA del viewport y el operador concluye "no se dibuja" (caso visto
+  // 2026-07-18: plugin marketing invisible con payload correcto).
+  const knownNsIds = useRef<Set<string>>(new Set());
   useEffect(() => {
     let cancelled = false;
     void computeLayout(scope, graph.nodes, graph.edges).then((positions) => {
@@ -217,7 +224,11 @@ export function App(): React.ReactElement {
         return;
       }
       setLayoutPositions(positions);
-      if (lastFitKey.current !== sKey) {
+      const ids = new Set(graph.nodes.map((n) => n.nsId));
+      const scopeChanged = lastFitKey.current !== sKey;
+      const hasNewNodes = !scopeChanged && [...ids].some((id) => !knownNsIds.current.has(id));
+      knownNsIds.current = ids;
+      if (scopeChanged || hasNewNodes) {
         lastFitKey.current = sKey;
         setFitToken((t) => t + 1);
       }

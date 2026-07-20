@@ -118,6 +118,7 @@ def test_hash_detects_variant_axis_change():
     assert _hash_item(with_axis) != _hash_item(
         replace(with_axis, additional_variant_attribute="Signo:Tauro")
     )
+    assert _hash_item(with_axis) != _hash_item(replace(with_axis, color="Leo"))
 
 
 @pytest.mark.asyncio

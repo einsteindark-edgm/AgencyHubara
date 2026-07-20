@@ -63,6 +63,10 @@ async def test_snapshot_incluye_ventanas_y_lead_predigerido(
     assert lead["tag"] == "INTERESADO"
     assert lead["has_order_draft"] is True
     assert lead["is_ctwa_lead"] is True
+    # El cierre del último episodio viaja pre-digerido (supresión
+    # already_purchased — el espejo de la caja no re-deriva). Episodio
+    # abierto → None.
+    assert lead["last_closing_tag"] is None
     assert convo["recent_touches"] == [{"at_ms": 700_000, "kind": "text"}]
 
 

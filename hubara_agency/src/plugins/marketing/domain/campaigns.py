@@ -12,6 +12,9 @@ SEGMENT_CLIENTES = "clientes"
 SEGMENT_INTERESADOS = "interesados"
 SEGMENT_FRIOS = "frios"
 
+#: Contacto agregado a mano por el operador (fuera de los segmentos elegidos).
+SEGMENT_MANUAL = "manual"
+
 ALL_SEGMENTS: tuple[str, ...] = (
     SEGMENT_CLIENTES,
     SEGMENT_INTERESADOS,
@@ -109,26 +112,42 @@ def resolve_campaign_audience(
     el operador ve a quién NO le llegó y por qué.
     """
     wanted = set(campaign.get("segments") or [])
+    removed_ids = set(campaign.get("excluded_session_ids") or [])
+    extra_ids = set(campaign.get("extra_session_ids") or [])
     recipients: list[CampaignRecipient] = []
     skipped: list[SkippedRecipient] = []
     for session_id, metadata in sessions:
         segment = segment_for_metadata(metadata)
         if segment is None:
+            # Humano / opt-out: absoluto — ni el agregado manual lo pisa.
             skipped.append(SkippedRecipient(session_id, "excluido"))
             continue
-        if segment not in wanted:
+        if session_id in removed_ids:
+            skipped.append(SkippedRecipient(session_id, "quitado_por_operador"))
+            continue
+        is_manual = session_id in extra_ids
+        if not is_manual and segment not in wanted:
             skipped.append(SkippedRecipient(session_id, "fuera_de_segmento"))
             continue
         if is_quiet_hours is not None and is_quiet_hours(session_id):
+            # Quiet hours protege SIEMPRE (es la hora del cliente, no un filtro).
             skipped.append(SkippedRecipient(session_id, "quiet_hours"))
             continue
-        if now_ms is not None and _has_recent_campaign_touch(metadata, now_ms):
+        if (
+            not is_manual
+            and now_ms is not None
+            and _has_recent_campaign_touch(metadata, now_ms)
+        ):
+            # El cooldown de 48h sí lo puede saltar un agregado manual
+            # (decisión consciente del operador sobre UN contacto).
             skipped.append(SkippedRecipient(session_id, "campana_reciente"))
             continue
         recipients.append(
             CampaignRecipient(
                 session_id=session_id,
-                segment=segment,
+                segment=SEGMENT_MANUAL
+                if is_manual and segment not in wanted
+                else segment,
                 customer_name=customer_name_from_metadata(metadata),
             )
         )
@@ -335,6 +354,9 @@ def new_campaign(
         "valid_until": valid_until,
         "product_handle": product_handle,
         "segments": list(segments or []),
+        # Curaduría manual de la audiencia (sección Ver audiencia):
+        "excluded_session_ids": [],
+        "extra_session_ids": [],
         "message": {"header": header, "body": body, "footer": footer, "cta": cta},
         "template_name": CAMPAIGN_TEMPLATE_NAME,
         "schedule_at_ms": None,

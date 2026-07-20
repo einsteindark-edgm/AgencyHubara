@@ -221,13 +221,47 @@ def test_variant_image_match_ignores_accents():
 
 def test_variant_items_declare_variant_axis():
     """WhatsApp colapsa items con el mismo `item_group_id` en UNA card y solo
-    muestra el selector de variantes si cada item declara EN QUÉ difiere
-    (feed spec `additional_variant_attribute`, pares "clave:valor"). Sin esto,
-    el catálogo muestra un solo signo (prod 2026-07-17)."""
+    muestra el selector de variantes si cada item declara EN QUÉ difiere.
+    Los canales renderizan los campos de variante NATIVOS (color/size/
+    material/pattern) — el custom `additional_variant_attribute` no tiene
+    render confirmado en WhatsApp (prod 2026-07-17: con solo el custom, la
+    card desapareció del catálogo). El eje del producto va al campo nativo
+    `color` + el custom como metadata."""
     items, _ = map_products_batch([_DUO_V2])
     by_id = {i.retailer_id: i for i in items}
+    assert by_id["v_leo"].color == "Leo"
+    assert by_id["v_esc"].color == "Escorpion"
     assert by_id["v_leo"].additional_variant_attribute == "Signo:Leo"
     assert by_id["v_esc"].additional_variant_attribute == "Signo:Escorpion"
+
+
+def test_legacy_single_variant_has_no_color():
+    items, _ = map_products_batch([_LEGACY])
+    assert items[0].color is None
+
+
+def test_serializer_emits_color_only_when_present():
+    item = MetaCatalogItem(
+        retailer_id="v_leo",
+        name="Duo Zodiacal · Leo",
+        description="desc",
+        url="https://hubara.com.co/products/duo-zodiacal",
+        image_url="https://img.example/leo.jpg",
+        price="35000 COP",
+        availability="in stock",
+        color="Leo",
+    )
+    assert _item_to_meta_data(item)["color"] == "Leo"
+    no_color = MetaCatalogItem(
+        retailer_id="p1",
+        name="Vela",
+        description="desc",
+        url="https://hubara.com.co/products/vela",
+        image_url="https://img.example/x.jpg",
+        price="23000 COP",
+        availability="in stock",
+    )
+    assert "color" not in _item_to_meta_data(no_color)
 
 
 def test_legacy_single_variant_has_no_variant_axis():

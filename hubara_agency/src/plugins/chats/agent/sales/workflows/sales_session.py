@@ -17,6 +17,7 @@ with workflow.unsafe.imports_passed_through():
         start_or_signal_sales_workflow_activity,
     )
     from src.platform.temporal.retry_policies import _LLM_OPTIONS
+    from src.sdk.agentkit import is_no_message_abstention
     from src.platform.workflow_helpers import (
         InboxMsg,
         PendingMessage,
@@ -429,6 +430,22 @@ class HubaraSalesSessionWorkflow:
                     self._last_response = result.final_content
                     turn_count += 1
 
+                    # Abstención explícita (incidente wa_573125671604,
+                    # 2026-07-17 23:15 UTC): en un turno de handoff sin
+                    # mensaje del cliente y sin venta pendiente, el LLM
+                    # declinaba en prosa ("No hay mensaje nuevo del
+                    # cliente… No genero respuesta") y esa deliberación se
+                    # enviaba al cliente. El framing de handoff ahora ofrece
+                    # el sentinel NO_MESSAGE; acá lo honramos: no enviar,
+                    # no persistir — Sales sigue dueño y el loop continúa
+                    # (el ghost cierra después como siempre).
+                    # workflow.patched(): histories en vuelo no tienen la rama.
+                    abstained = False
+                    if workflow.patched("no-message-abstention-v1"):
+                        abstained = is_no_message_abstention(
+                            result.final_content
+                        )
+
                     # ADR-001 + ADR-2026-05-20: si la tool emitio una decision,
                     # convertirla a un completion event y dispatchar por manifest.
                     # NO importar workflow classes de sibling agents (R-DIP #10).
@@ -678,6 +695,7 @@ class HubaraSalesSessionWorkflow:
                     if (
                         result.pre_tool_messages
                         and not self._force_shutdown
+                        and not abstained
                         and workflow.patched("send-pre-tool-messages-v1")
                     ):
                         for pre_msg in result.pre_tool_messages:
@@ -709,7 +727,11 @@ class HubaraSalesSessionWorkflow:
                         workflow.patched("suppress-text-when-variant-picker-v1")
                         and "present_variant_picker" in result.tools_used
                     )
-                    if result.final_content and not self._force_shutdown:
+                    if (
+                        result.final_content
+                        and not self._force_shutdown
+                        and not abstained
+                    ):
                         # Evitamos enviar respuestas vacías o alucinar respuestas internas durante auto-cierres
                         if not suppress_text_for_picker:
                             await workflow.execute_activity(

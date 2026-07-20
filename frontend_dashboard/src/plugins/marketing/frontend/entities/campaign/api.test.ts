@@ -32,6 +32,8 @@ const backendSent: BackendCampaign = {
     spent_usd_micros: 500_000,
   },
   test_sends: [{ phone: "573001234567", at_ms: 5, wa_message_id: null }],
+  excluded_session_ids: ["wa_573009990000"],
+  extra_session_ids: ["wa_+573008881122"],
 };
 
 describe("mapBackendCampaign", () => {
@@ -44,6 +46,8 @@ describe("mapBackendCampaign", () => {
     expect(c.sendResult?.unitCostUsdMicros).toBe(12_500);
     expect(c.sendResult?.skipped[0]?.sessionId).toBe("wa_2");
     expect(c.testSends[0]?.atMs).toBe(5);
+    expect(c.excludedSessionIds).toEqual(["wa_573009990000"]);
+    expect(c.extraSessionIds).toEqual(["wa_+573008881122"]);
   });
 
   it("status/goal fuera del vocabulario caen a un default seguro", () => {
@@ -83,6 +87,18 @@ describe("patchToBody", () => {
     expect(patchToBody({ couponCode: "papa20", percent: 20 })).toEqual({
       coupon_code: "papa20",
       percent: 20,
+    });
+  });
+
+  it("mapea la curaduría manual como REPLACE completo en snake_case", () => {
+    expect(
+      patchToBody({
+        excludedSessionIds: ["wa_573009990000"],
+        extraSessionIds: ["wa_+573008881122"],
+      }),
+    ).toEqual({
+      excluded_session_ids: ["wa_573009990000"],
+      extra_session_ids: ["wa_+573008881122"],
     });
   });
 

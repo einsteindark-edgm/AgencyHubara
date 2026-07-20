@@ -118,6 +118,9 @@ def conversation_entry(
             "is_ctwa_lead": lead.is_ctwa_lead,
             "engaged": lead.engaged,
             "allow_paid_marketing": lead.allow_paid_marketing,
+            # Cierre del último episodio: la supresión already_purchased del
+            # espejo (parse-conversations) lo necesita pre-digerido.
+            "last_closing_tag": lead.last_closing_tag,
         },
         "recent_touches": _recent_touches(metadata),
     }

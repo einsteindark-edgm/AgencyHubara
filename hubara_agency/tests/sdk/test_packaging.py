@@ -1,0 +1,410 @@
+"""Comportamiento del empaquetador de plugins (acktospkg/1 — F1).
+
+El contrato que estos tests exigen:
+
+- ``plan_export`` resuelve la CLAUSURA por ``depends_on`` y deriva los
+  requirements del manifest (env vars ``${...}`` del compose, env_secrets,
+  wiring_intents) — sin tocar k8s.
+- ``build_package`` produce un tar.gz con ``package.yaml`` + ``units/`` +
+  ``checksums.sha256`` y ``read_package`` verifica integridad.
+- ``plan_install`` clasifica cada unidad contra el repo destino
+  (new / overwrite) y detecta dependencias faltantes.
+- ``install_package`` escribe SOLO paths single-owner del plugin (INV-1),
+  regenera el TCK instanciado, y el overwrite REEMPLAZA el dir completo
+  (los archivos borrados en origen desaparecen en destino).
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+import yaml
+
+from src.sdk.cli.scaffold import create_plugin
+from src.sdk.packaging import (
+    build_package,
+    install_package,
+    plan_export,
+    plan_install,
+    read_package,
+)
+
+REAL_REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _mini_repo(tmp_path: Path) -> Path:
+    """Repo origen sintético: alpha (api_only) + beta (full_stack → alpha).
+
+    beta lleva además un worker Temporal con compose env interpolada y un
+    secret — el material del que ``plan_export`` deriva requirements.
+    """
+    root = tmp_path / "origen"
+    root.mkdir()
+    create_plugin("alpha", "api_only", repo_root=root)
+    create_plugin("beta", "full_stack", repo_root=root)
+
+    manifest_path = root / "frontend_dashboard" / "src" / "plugins" / "beta" / "plugin.yaml"
+    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    manifest["depends_on"] = ["alpha"]
+    manifest["agent"] = {
+        "python_module": "src.plugins.beta.agent",
+        "workers": [
+            {
+                "name": "campaigns",
+                "module": "src.plugins.beta.workers.campaigns",
+                "task_queue": "queue-beta-campaigns",
+                "workflow_classes": ["BetaSendWorkflow"],
+                "deployment": {
+                    "replicas": 1,
+                    "env_secrets": [
+                        {
+                            "var": "WHATSAPP_ACCESS_TOKEN",
+                            "secret": "hubara-whatsapp-secret",
+                            "key": "WHATSAPP_ACCESS_TOKEN",
+                        }
+                    ],
+                },
+                "compose": {
+                    "env": {
+                        "TEMPORAL_URL": "temporal:7233",
+                        "WHATSAPP_PHONE_NUMBER_ID": "${WHATSAPP_PHONE_NUMBER_ID}",
+                    },
+                    "depends_on": ["temporal"],
+                },
+            }
+        ],
+    }
+    manifest["wiring_intents"] = {"env_vars_required": ["BETA_FLAG"]}
+    manifest_path.write_text(
+        yaml.safe_dump(manifest, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    return root
+
+
+def _target_repo(tmp_path: Path, name: str = "destino") -> Path:
+    """Repo destino con el skeleton (sin plugins todavía)."""
+    root = tmp_path / name
+    for rel in (
+        "frontend_dashboard/src/plugins",
+        "hubara_agency/src/plugins",
+        "hubara_agency/tests/conformance",
+        "hubara_agency/tests/plugins",
+    ):
+        (root / rel).mkdir(parents=True)
+    return root
+
+
+# ---------------------------------------------------------------------------
+# plan_export
+# ---------------------------------------------------------------------------
+
+def test_plan_export_resuelve_clausura_y_requirements(tmp_path: Path) -> None:
+    root = _mini_repo(tmp_path)
+    plan = plan_export(["beta"], repo_root=root)
+
+    ids = [u.plugin_id for u in plan.units]
+    assert ids == ["alpha", "beta"], "deps primero, orden determinista"
+
+    beta = plan.units[-1]
+    assert beta.archetype == "full_stack"
+    assert beta.depends_on == ("alpha",)
+    assert "WHATSAPP_PHONE_NUMBER_ID" in beta.env_vars, "interpolación ${} del compose"
+    assert "BETA_FLAG" in beta.env_vars, "wiring_intents.env_vars_required"
+    assert "TEMPORAL_URL" not in beta.env_vars, "env literal NO es requirement"
+    assert beta.secrets == ("WHATSAPP_ACCESS_TOKEN",)
+
+
+def test_plan_export_id_inexistente_falla_limpio(tmp_path: Path) -> None:
+    root = _mini_repo(tmp_path)
+    try:
+        plan_export(["nope"], repo_root=root)
+    except Exception as exc:  # noqa: BLE001 — el tipo exacto lo fija la impl
+        assert "nope" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("plugin inexistente debe fallar con mensaje claro")
+
+
+# ---------------------------------------------------------------------------
+# build + inspect
+# ---------------------------------------------------------------------------
+
+def test_build_e_inspect_roundtrip(tmp_path: Path) -> None:
+    root = _mini_repo(tmp_path)
+    out = tmp_path / "dist" / "beta.acktospkg"
+    plan = plan_export(["beta"], repo_root=root)
+    pkg_path = build_package(plan, repo_root=root, out_path=out, name="beta-bundle")
+
+    assert pkg_path == out and out.exists()
+    info = read_package(out)  # verifica checksums — mismatch levanta error
+    assert info.format == "acktospkg/1"
+    assert info.name == "beta-bundle"
+    unit_ids = sorted(u.unit_id for u in info.units)
+    assert unit_ids == ["alpha", "beta"]
+    assert all(u.kind == "plugin" for u in info.units)
+    beta = next(u for u in info.units if u.unit_id == "beta")
+    assert "alpha" in beta.requires_plugins
+    assert "WHATSAPP_ACCESS_TOKEN" in beta.requires_secrets
+
+
+# ---------------------------------------------------------------------------
+# plan_install
+# ---------------------------------------------------------------------------
+
+def test_plan_install_clasifica_new_y_overwrite(tmp_path: Path) -> None:
+    origen = _mini_repo(tmp_path)
+    out = tmp_path / "beta.acktospkg"
+    build_package(plan_export(["beta"], repo_root=origen), repo_root=origen, out_path=out)
+
+    fresco = _target_repo(tmp_path, "fresco")
+    plan = plan_install(out, repo_root=fresco)
+    assert {u.unit_id: u.action for u in plan.units} == {"alpha": "new", "beta": "new"}
+    assert plan.missing_plugins == ()
+
+    con_alpha = _target_repo(tmp_path, "con_alpha")
+    create_plugin("alpha", "api_only", repo_root=con_alpha)
+    # el alpha del destino DIVERGIÓ del que trae el paquete → overwrite real
+    (con_alpha / "hubara_agency/src/plugins/alpha/domain/logic.py").write_text(
+        "# divergido en el destino\n", encoding="utf-8"
+    )
+    plan2 = plan_install(out, repo_root=con_alpha)
+    actions = {u.unit_id: u.action for u in plan2.units}
+    assert actions == {"alpha": "overwrite", "beta": "new"}
+
+
+def test_plan_install_detecta_dependencia_faltante(tmp_path: Path) -> None:
+    origen = _mini_repo(tmp_path)
+    out = tmp_path / "solo-beta.acktospkg"
+    # exportar beta SIN su dependencia (clausura recortada a mano)
+    plan = plan_export(["beta"], repo_root=origen)
+    solo_beta = plan.only(["beta"])
+    build_package(solo_beta, repo_root=origen, out_path=out)
+
+    fresco = _target_repo(tmp_path, "fresco2")
+    iplan = plan_install(out, repo_root=fresco)
+    assert iplan.missing_plugins == ("alpha",), (
+        "alpha no está ni en el paquete ni en el destino → warning explícito"
+    )
+
+
+# ---------------------------------------------------------------------------
+# install
+# ---------------------------------------------------------------------------
+
+def test_install_escribe_solo_paths_del_plugin(tmp_path: Path) -> None:
+    origen = _mini_repo(tmp_path)
+    out = tmp_path / "beta.acktospkg"
+    build_package(plan_export(["beta"], repo_root=origen), repo_root=origen, out_path=out)
+
+    destino = _target_repo(tmp_path, "instalado")
+    marcador = destino / "hubara_agency" / "src" / "main.py"
+    marcador.parent.mkdir(parents=True, exist_ok=True)
+    marcador.write_text("# central intocable\n", encoding="utf-8")
+
+    result = install_package(out, repo_root=destino)
+
+    # el payload aterrizó en los 4 paths single-owner
+    assert (destino / "hubara_agency/src/plugins/beta/domain/logic.py").exists()
+    assert (destino / "frontend_dashboard/src/plugins/beta/plugin.yaml").exists()
+    assert (destino / "frontend_dashboard/src/plugins/beta/frontend/index.ts").exists()
+    assert (destino / "hubara_agency/tests/plugins/beta/test_domain.py").exists()
+    conformance = destino / "hubara_agency/tests/conformance/test_beta_conformance.py"
+    assert 'conformance_suite("beta")' in conformance.read_text(encoding="utf-8")
+
+    # INV-1: nada fuera de los paths del plugin fue tocado
+    assert marcador.read_text(encoding="utf-8") == "# central intocable\n"
+    owned_roots = (
+        "frontend_dashboard/src/plugins/",
+        "hubara_agency/src/plugins/",
+        "hubara_agency/tests/conformance/test_",
+        "hubara_agency/tests/plugins/",
+        # el libro de instalaciones del destino — registro deliberado del
+        # install (versionamiento), no un archivo central del código
+        "hubara_agency/.hubara/installed-packages.yaml",
+    )
+    for path in result.written:
+        rel = path.relative_to(destino).as_posix()
+        assert rel.startswith(owned_roots), f"escritura fuera de INV-1: {rel}"
+
+
+def test_install_overwrite_reemplaza_el_dir_completo(tmp_path: Path) -> None:
+    origen = _mini_repo(tmp_path)
+    out = tmp_path / "beta.acktospkg"
+    build_package(plan_export(["beta"], repo_root=origen), repo_root=origen, out_path=out)
+
+    destino = _target_repo(tmp_path, "upgrade")
+    create_plugin("beta", "full_stack", repo_root=destino)
+    stale = destino / "hubara_agency/src/plugins/beta/domain/obsoleto.py"
+    stale.write_text("# borrado en origen\n", encoding="utf-8")
+
+    install_package(out, repo_root=destino)
+    assert not stale.exists(), "overwrite = reemplazo del dir (propaga deletions)"
+    assert (destino / "hubara_agency/src/plugins/beta/domain/logic.py").exists()
+
+
+# ---------------------------------------------------------------------------
+# premortem 2026-07-18 — fixes exigidos
+# ---------------------------------------------------------------------------
+
+def test_plan_export_valida_el_manifest_tipado(tmp_path: Path) -> None:
+    """Exportar un plugin con manifest ROTO debe fallar acá, no en el destino."""
+    root = _mini_repo(tmp_path)
+    manifest_path = root / "frontend_dashboard" / "src" / "plugins" / "beta" / "plugin.yaml"
+    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    manifest["agent"] = {"workers": "esto-no-es-una-lista"}
+    manifest_path.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+    try:
+        plan_export(["beta"], repo_root=root)
+    except Exception as exc:  # noqa: BLE001
+        assert "beta" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("manifest inválido debe frenar el export (fail-fast)")
+
+
+def test_plan_export_env_ref_con_default_compose(tmp_path: Path) -> None:
+    """Sintaxis ${VAR:-default} del compose también es requirement."""
+    root = _mini_repo(tmp_path)
+    manifest_path = root / "frontend_dashboard" / "src" / "plugins" / "beta" / "plugin.yaml"
+    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    manifest["agent"]["workers"][0]["compose"]["env"]["EXTRA"] = "${CON_DEFAULT:-fallback}"
+    manifest_path.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+    plan = plan_export(["beta"], repo_root=root)
+    beta = next(u for u in plan.units if u.plugin_id == "beta")
+    assert "CON_DEFAULT" in beta.env_vars
+
+
+def test_plan_install_reporta_versiones_y_downgrade(tmp_path: Path) -> None:
+    """El operador tiene que VER '0.1.0 → 0.2.0' antes de pisar un plugin."""
+    origen = _mini_repo(tmp_path)
+    out = tmp_path / "beta.acktospkg"
+    build_package(plan_export(["beta"], repo_root=origen), repo_root=origen, out_path=out)
+
+    destino = _target_repo(tmp_path, "versionado")
+    create_plugin("beta", "full_stack", repo_root=destino)
+    target_manifest = (
+        destino / "frontend_dashboard" / "src" / "plugins" / "beta" / "plugin.yaml"
+    )
+    raw = yaml.safe_load(target_manifest.read_text(encoding="utf-8"))
+    raw["version"] = "0.2.0"
+    target_manifest.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+
+    plan = plan_install(out, repo_root=destino)
+    beta = next(u for u in plan.units if u.unit_id == "beta")
+    assert beta.action == "overwrite"
+    assert beta.version == "0.1.0", "la versión que trae el paquete"
+    assert beta.target_version == "0.2.0", "la versión que YA está en el destino"
+    assert beta.downgrade is True, "0.1.0 pisando 0.2.0 = downgrade visible"
+
+    alpha = next(u for u in plan.units if u.unit_id == "alpha")
+    assert alpha.target_version is None and alpha.downgrade is False
+
+
+# ---------------------------------------------------------------------------
+# versionamiento (2026-07-18): fingerprint + idempotencia + bump + ledger
+# ---------------------------------------------------------------------------
+
+def test_build_estampa_fingerprint_de_contenido(tmp_path: Path) -> None:
+    """El fingerprint es identidad de CONTENIDO: estable si nada cambió,
+    distinto si cambió un archivo — sin depender del string de versión."""
+    root = _mini_repo(tmp_path)
+    out1 = tmp_path / "v1.acktospkg"
+    out2 = tmp_path / "v2.acktospkg"
+    build_package(plan_export(["beta"], repo_root=root), repo_root=root, out_path=out1)
+    build_package(plan_export(["beta"], repo_root=root), repo_root=root, out_path=out2)
+    beta1 = next(u for u in read_package(out1).units if u.unit_id == "beta")
+    beta2 = next(u for u in read_package(out2).units if u.unit_id == "beta")
+    assert beta1.fingerprint and len(beta1.fingerprint) >= 12
+    assert beta1.fingerprint == beta2.fingerprint, "mismo contenido = mismo fingerprint"
+
+    logic = root / "hubara_agency" / "src" / "plugins" / "beta" / "domain" / "logic.py"
+    logic.write_text(logic.read_text(encoding="utf-8") + "\n# cambio\n", encoding="utf-8")
+    out3 = tmp_path / "v3.acktospkg"
+    build_package(plan_export(["beta"], repo_root=root), repo_root=root, out_path=out3)
+    beta3 = next(u for u in read_package(out3).units if u.unit_id == "beta")
+    assert beta3.fingerprint != beta1.fingerprint, "contenido distinto = fingerprint distinto"
+
+
+def test_plan_install_detecta_unchanged(tmp_path: Path) -> None:
+    """Reinstalar lo MISMO es un no-op declarado: action == unchanged."""
+    origen = _mini_repo(tmp_path)
+    out = tmp_path / "beta.acktospkg"
+    build_package(plan_export(["beta"], repo_root=origen), repo_root=origen, out_path=out)
+
+    destino = _target_repo(tmp_path, "idem")
+    install_package(out, repo_root=destino)
+
+    plan = plan_install(out, repo_root=destino)
+    assert {u.unit_id: u.action for u in plan.units} == {
+        "alpha": "unchanged",
+        "beta": "unchanged",
+    }
+
+    # tocar el contenido instalado lo vuelve overwrite
+    (destino / "hubara_agency/src/plugins/beta/domain/logic.py").write_text(
+        "# editado a mano\n", encoding="utf-8"
+    )
+    plan2 = plan_install(out, repo_root=destino)
+    actions = {u.unit_id: u.action for u in plan2.units}
+    assert actions["beta"] == "overwrite" and actions["alpha"] == "unchanged"
+
+
+def test_install_saltea_unchanged_y_escribe_ledger(tmp_path: Path) -> None:
+    origen = _mini_repo(tmp_path)
+    out = tmp_path / "beta.acktospkg"
+    build_package(
+        plan_export(["beta"], repo_root=origen),
+        repo_root=origen,
+        out_path=out,
+        name="beta-bundle",
+    )
+
+    destino = _target_repo(tmp_path, "ledger")
+    r1 = install_package(out, repo_root=destino)
+    assert sorted(r1.installed) == ["alpha", "beta"]
+
+    ledger_path = destino / "hubara_agency" / ".hubara" / "installed-packages.yaml"
+    ledger = yaml.safe_load(ledger_path.read_text(encoding="utf-8"))
+    entries = {e["unit"]: e for e in ledger["installs"]}
+    assert entries["beta"]["version"] == "0.1.0"
+    assert entries["beta"]["package"] == "beta-bundle"
+    assert entries["beta"]["fingerprint"] and entries["beta"]["installed_at"]
+
+    # reinstalar lo mismo: no escribe, no duplica el ledger
+    r2 = install_package(out, repo_root=destino)
+    assert sorted(r2.skipped_unchanged) == ["alpha", "beta"]
+    assert r2.installed == () and r2.replaced == ()
+    ledger2 = yaml.safe_load(ledger_path.read_text(encoding="utf-8"))
+    assert len(ledger2["installs"]) == len(ledger["installs"]), "no-op no appendea"
+
+
+def test_plan_install_flaggea_bump_pendiente(tmp_path: Path) -> None:
+    """Misma versión declarada + contenido distinto = bump_pending visible."""
+    origen = _mini_repo(tmp_path)
+    out1 = tmp_path / "r1.acktospkg"
+    build_package(plan_export(["beta"], repo_root=origen), repo_root=origen, out_path=out1)
+    destino = _target_repo(tmp_path, "bump")
+    install_package(out1, repo_root=destino)
+
+    logic = origen / "hubara_agency" / "src" / "plugins" / "beta" / "domain" / "logic.py"
+    logic.write_text(logic.read_text(encoding="utf-8") + "\n# mejora sin bump\n", encoding="utf-8")
+    out2 = tmp_path / "r2.acktospkg"
+    build_package(plan_export(["beta"], repo_root=origen), repo_root=origen, out_path=out2)
+
+    plan = plan_install(out2, repo_root=destino)
+    beta = next(u for u in plan.units if u.unit_id == "beta")
+    assert beta.action == "overwrite"
+    assert beta.bump_pending is True, "0.1.0 → 0.1.0 con contenido distinto"
+
+    alpha = next(u for u in plan.units if u.unit_id == "alpha")
+    assert alpha.action == "unchanged" and alpha.bump_pending is False
+
+
+# ---------------------------------------------------------------------------
+# smoke contra el repo real
+# ---------------------------------------------------------------------------
+
+def test_plan_export_marketing_repo_real() -> None:
+    plan = plan_export(["marketing"], repo_root=REAL_REPO_ROOT)
+    (unit,) = [u for u in plan.units if u.plugin_id == "marketing"]
+    assert unit.archetype == "full_stack"
+    assert "WHATSAPP_ACCESS_TOKEN" in unit.secrets
+    assert "WHATSAPP_PHONE_NUMBER_ID" in unit.env_vars
