@@ -68,7 +68,6 @@ with workflow.unsafe.imports_passed_through():
     )
     from src.plugins.eta.agent.eta.contracts import EtaSessionInput
     from src.plugins.eta.agent.eta.prompts import (
-        STAGE_LABELS,
         render_stage_notification,
     )
 
@@ -84,9 +83,10 @@ _ORDER = {"start_to_close_timeout": timedelta(seconds=30), "retry_policy": Retry
 
 # Template de utilidad aprobado (catalog.yaml) para notificaciones de estado
 # FUERA de la ventana de servicio 24h — la única vía que Meta permite para un
-# mensaje proactivo fuera de ventana. Requiere aprobación en Meta Business
-# Manager (runbook operacional, igual que los templates del watchdog).
-_ORDER_STATUS_TEMPLATE = "order_status_utility_v1"
+# mensaje proactivo fuera de ventana. v2 = sin saludo por nombre (incidente
+# 2026-07-21: el slot de nombre llegaba vacío por el placeholder Medusa y Meta
+# rechazaba el envío con 131008 → notificación perdida).
+_ORDER_STATUS_TEMPLATE = "order_status_utility_v2"
 
 
 @workflow.defn(name="HubaraEtaSessionWorkflow")
@@ -219,7 +219,7 @@ class HubaraEtaSessionWorkflow:
           el mensaje con plantilla determinista y lo enviamos como texto libre.
         - FUERA de ventana (caso común — un pedido tarda días): Meta SOLO permite
           un template de utilidad aprobado, así que enviamos
-          ``order_status_utility_v1`` con los slots. Sin esto, Meta rechaza la
+          ``order_status_utility_v2`` con los slots. Sin esto, Meta rechaza la
           notificación con error 131047 (mensaje fuera de ventana).
         """
         facts = await workflow.execute_activity(
@@ -280,24 +280,17 @@ class HubaraEtaSessionWorkflow:
     ) -> None:
         """Notificación FUERA de ventana: template de utilidad aprobado.
 
-        ``send_whatsapp_template_activity`` ya maneja idempotencia + los errores
-        Meta non-retryable (131008 = template no aprobado → ApplicationError que
-        el wrapper del loop captura y loguea). Hasta que el operador apruebe
-        ``order_status_utility_v1`` en Meta Business Manager, este envío fallará
-        con 131008 — estado conocido y observable, NO un crash.
+        Las variables las arma ``build_status_template_variables`` (pura):
+        sin nombre del cliente, nunca vacías, dentro de max_length — los tres
+        invariantes que Meta exige de un param de template. ``facts`` NO trae
+        el nombre al slot: el template v2 saluda "Hola," a secas.
+
+        ``send_whatsapp_template_activity`` ya maneja idempotencia + los
+        errores Meta non-retryable (p.ej. 131008 = param vacío/faltante,
+        132001 = template inexistente en la WABA) → ApplicationError que el
+        wrapper del loop captura y loguea como no-fatal.
         """
-        status_label = STAGE_LABELS.get(stage, stage)
-        reference = facts.get("order_display_id") or "tu pedido"
-        items_label = facts.get("items_label") or ""
-        if items_label:
-            # El cliente no sabe qué es "#6" — nombramos los productos en el
-            # slot de referencia (texto libre del template, truncado corto).
-            reference = f"{reference} ({items_label})"[:120]
-        variables = {
-            "customer_first_name": facts.get("customer_name") or "",
-            "order_reference": reference,
-            "status_label": status_label,
-        }
+        variables = build_status_template_variables(stage, facts)
         await workflow.execute_activity(
             send_whatsapp_template_activity,
             args=[session_id, _ORDER_STATUS_TEMPLATE, variables],
@@ -310,7 +303,8 @@ class HubaraEtaSessionWorkflow:
                 session_id,
                 order_id,
                 stage,
-                f"[Notificación de estado enviada por template: {status_label}]",
+                "[Notificación de estado enviada por template: "
+                f"{variables['status_label']}]",
             ],
             **_FAST,
         )

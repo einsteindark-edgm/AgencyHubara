@@ -34,46 +34,62 @@ class TestLoadCatalogReal:
     def test_loads_four_initial_templates(self):
         registry = load_template_registry_from_yaml()
 
-        # Los 4 templates iniciales del HU + el de campañas directas
-        # (sección Marketing del dashboard, 2026-07-17).
-        assert "quote_ready_utility_v1" in registry
-        assert "payment_pending_utility_v1" in registry
-        assert "order_status_utility_v1" in registry
-        assert "cart_recovery_marketing_v1" in registry
+        # Los 4 templates iniciales del HU (v2 sin saludo por nombre,
+        # 2026-07-21) + el de campañas directas (sección Marketing, 2026-07-17).
+        assert "quote_ready_utility_v2" in registry
+        assert "payment_pending_utility_v2" in registry
+        assert "order_status_utility_v2" in registry
+        assert "cart_recovery_marketing_v2" in registry
         assert "campaign_promo_marketing_v1" in registry
         assert len(registry) == 5
 
     def test_quote_ready_has_correct_spec(self):
         registry = load_template_registry_from_yaml()
-        spec = registry["quote_ready_utility_v1"]
+        spec = registry["quote_ready_utility_v2"]
 
         assert spec.category == "utility"
         assert spec.language == "es_CO"
-        assert spec.waba_template_name == "quote_ready_utility"
+        assert spec.waba_template_name == "quote_ready_utility_v2"
         assert spec.triggers_when_window_expiring is True
         assert spec.requires_episode_stage == "awaiting_quote"
-        assert len(spec.variables) == 2
-        assert spec.variables[0].name == "customer_first_name"
-        assert spec.variables[1].name == "product_or_quote_label"
+        assert len(spec.variables) == 1
+        assert spec.variables[0].name == "product_or_quote_label"
 
     def test_marketing_template_never_triggers_on_window_expiring(self):
         """Regla dura: marketing nunca por watchdog."""
         registry = load_template_registry_from_yaml()
-        cart = registry["cart_recovery_marketing_v1"]
+        cart = registry["cart_recovery_marketing_v2"]
         assert cart.category == "marketing"
         assert cart.triggers_when_window_expiring is False
 
     def test_cart_recovery_has_no_promo_variable(self):
         """Política de copy (2026-07, guía de mensajes de marketing de Meta):
         el template de recuperación NO ofrece descuento/promoción ni envío
-        gratis — solo re-engagement + opt-out. Debe tener exactamente 2 vars
-        (nombre + producto), sin `discount_label`.
+        gratis — solo re-engagement + opt-out. Una sola var (producto), sin
+        `discount_label`.
         """
         registry = load_template_registry_from_yaml()
-        cart = registry["cart_recovery_marketing_v1"]
+        cart = registry["cart_recovery_marketing_v2"]
         var_names = [v.name for v in cart.variables]
-        assert var_names == ["customer_first_name", "product_label"]
+        assert var_names == ["product_label"]
         assert "discount_label" not in var_names
+
+    def test_no_template_greets_by_customer_name(self):
+        """Incidente 2026-07-21 (order #22, wa_573229041190): el nombre del
+        cliente casi nunca existe (Medusa lo crea como placeholder "Cliente
+        WhatsApp") y un slot vacío hace que Meta rechace el envío con 131008.
+        Decisión del operador: NINGÚN template saluda por nombre — los saludos
+        son "Hola," a secas. `campaign_promo_marketing_v1` es la excepción
+        deliberada: su slot `greeting` es el saludo COMPLETO que arma el código
+        de campañas con fallback no-vacío ("Hola"), no un nombre suelto.
+        """
+        registry = load_template_registry_from_yaml()
+        for spec in registry.values():
+            var_names = [v.name for v in spec.variables]
+            assert "customer_first_name" not in var_names, (
+                f"{spec.name} declara customer_first_name — los templates no "
+                "saludan por nombre (slot vacío = Meta 131008)"
+            )
 
 
 # =============================================================================
@@ -254,6 +270,26 @@ class TestValidateVariables:
         )
         assert any("exceeds max" in e for e in errors)
 
+    def test_reports_empty_string_value(self):
+        """Meta rechaza params de template con texto vacío (131008 "Parameter
+        of type text is missing text value" — incidente 2026-07-21). El
+        registry lo ataja LOCAL y fail-fast, antes del POST a Meta.
+        """
+        spec = self._spec()
+        errors = validate_variables(
+            spec, {"customer_first_name": "", "product_label": "vela"}
+        )
+        assert any("empty" in e for e in errors)
+        assert any("customer_first_name" in e for e in errors)
+
+    def test_reports_whitespace_only_value(self):
+        """Un valor solo-espacios es vacío para Meta — mismo rechazo 131008."""
+        spec = self._spec()
+        errors = validate_variables(
+            spec, {"customer_first_name": "   ", "product_label": "vela"}
+        )
+        assert any("empty" in e for e in errors)
+
     def test_no_max_length_means_no_limit(self):
         spec = self._spec(
             variables=(
@@ -279,8 +315,8 @@ class TestStageResolution:
         registry = load_template_registry_from_yaml()
         matches = get_templates_for_stage(registry, "awaiting_quote")
         names = {s.name for s in matches}
-        assert "quote_ready_utility_v1" in names
-        assert "payment_pending_utility_v1" not in names
+        assert "quote_ready_utility_v2" in names
+        assert "payment_pending_utility_v2" not in names
 
     def test_get_templates_for_stage_any(self):
         """`requires_episode_stage: any` matchea cualquier stage."""
@@ -288,21 +324,21 @@ class TestStageResolution:
         matches = get_templates_for_stage(registry, "awaiting_quote")
         names = {s.name for s in matches}
         # cart_recovery tiene requires_episode_stage: any
-        assert "cart_recovery_marketing_v1" in names
+        assert "cart_recovery_marketing_v2" in names
 
     def test_get_templates_for_stage_no_match(self):
         registry = load_template_registry_from_yaml()
         matches = get_templates_for_stage(registry, "stage_inexistente")
         # Solo el "any" matchea (cart_recovery).
         names = {s.name for s in matches}
-        assert names == {"cart_recovery_marketing_v1"}
+        assert names == {"cart_recovery_marketing_v2"}
 
     def test_get_watchdog_template_only_utility_with_window_flag(self):
         """El watchdog NUNCA selecciona marketing (triggers_when_window_expiring=false)."""
         registry = load_template_registry_from_yaml()
         result = get_watchdog_template_for_stage(registry, "awaiting_quote")
         assert result is not None
-        assert result.name == "quote_ready_utility_v1"
+        assert result.name == "quote_ready_utility_v2"
         assert result.category == "utility"
 
     def test_get_watchdog_template_returns_none_when_no_utility_for_stage(self):
@@ -315,13 +351,13 @@ class TestStageResolution:
         registry = load_template_registry_from_yaml()
         result = get_watchdog_template_for_stage(registry, "awaiting_payment")
         assert result is not None
-        assert result.name == "payment_pending_utility_v1"
+        assert result.name == "payment_pending_utility_v2"
 
     def test_get_watchdog_template_post_purchase(self):
         registry = load_template_registry_from_yaml()
         result = get_watchdog_template_for_stage(registry, "post_purchase")
         assert result is not None
-        assert result.name == "order_status_utility_v1"
+        assert result.name == "order_status_utility_v2"
 
 
 # =============================================================================

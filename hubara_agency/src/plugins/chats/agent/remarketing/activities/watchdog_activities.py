@@ -173,8 +173,6 @@ def _resolve_template_variables(
     the workflow at fire time — the watchdog is best-effort.
 
     Sources per variable name (matched literally against `var.name`):
-      * `customer_first_name` → `metadata.profile.name` or first inbound's
-        sender name, falling back to "amigo/a".
       * `product_or_quote_label` → tag motivo, falling back to "tu consulta".
       * `order_reference` → `metadata.registered_order.order_id` or "tu pedido".
       * `amount_currency` → not derivable from current metadata shape; uses
@@ -182,20 +180,17 @@ def _resolve_template_variables(
       * `status_label` → "en proceso" placeholder.
       * `product_label` → tag motivo, falling back to "el producto".
 
+    NOTE: `customer_first_name` ya no existe — los templates v2 no saludan por
+    nombre (incidente 2026-07-21: slot vacío → Meta 131008; y el fallback
+    "amigo/a" que se usaba acá era el saludo genérico que el operador vetó).
+
     Any variable not in the heuristics gets the literal string "—".
     """
-    profile = metadata.get("profile") or {}
-    customer_name = (
-        profile.get("name")
-        or (metadata.get("origin") or {}).get("first_inbound_name")
-        or "amigo/a"
-    )
     motivo = (metadata.get("motivo") or "").strip() or "tu consulta"
     registered = metadata.get("registered_order") or {}
     order_id = registered.get("order_id") or "tu pedido"
 
     defaults: dict[str, str] = {
-        "customer_first_name": customer_name,
         "product_or_quote_label": motivo,
         "order_reference": str(order_id),
         "amount_currency": "el monto del pedido",

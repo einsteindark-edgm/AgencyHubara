@@ -217,7 +217,7 @@ async def claim_eta_notification_activity(
     # libre (LLM); FUERA → Meta SOLO permite un template de utilidad aprobado.
     # Un pedido suele tardar días entre preparación y entrega, así que la ventana
     # casi siempre está cerrada cuando llega la notificación → el workflow usará
-    # el template `order_status_utility_v1`. La decisión la toma el workflow con
+    # el template `order_status_utility_v2`. La decisión la toma el workflow con
     # este flag (no podemos leer metadata en el workflow — R-DET).
     in_window = is_in_service_window(int(time.time() * 1000), data)
 

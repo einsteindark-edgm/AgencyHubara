@@ -284,7 +284,7 @@ async def test_eligible_resolves_awaiting_quote_template(
     _isolate_vault_dir: Path,
 ) -> None:
     """tag=INTERESADO + no registered_order → awaiting_quote stage → resolves
-    `quote_ready_utility_v1`."""
+    `quote_ready_utility_v2`."""
     monkeypatch.setenv("WATCHDOG_ENABLED", "1")
     _pin_clock_at_10am_bogota(monkeypatch)
     now_ms = int(time.time() * 1000)
@@ -297,11 +297,13 @@ async def test_eligible_resolves_awaiting_quote_template(
 
     assert result.eligible is True
     assert result.reason is None
-    assert result.resolved_template_name == "quote_ready_utility_v1"
+    assert result.resolved_template_name == "quote_ready_utility_v2"
     assert result.resolved_template_variables is not None
-    # Variables should include the declared ones from the template spec.
-    assert "customer_first_name" in result.resolved_template_variables
+    # Variables should include the declared ones from the template spec —
+    # y NUNCA el nombre: los templates v2 no saludan por nombre (incidente
+    # 2026-07-21: slot vacío → Meta 131008).
     assert "product_or_quote_label" in result.resolved_template_variables
+    assert "customer_first_name" not in result.resolved_template_variables
 
 
 @pytest.mark.asyncio
@@ -310,7 +312,7 @@ async def test_eligible_resolves_awaiting_payment_with_registered_order(
     _isolate_vault_dir: Path,
 ) -> None:
     """registered_order present + episode NOT closed COMPRA_EXITOSA →
-    awaiting_payment stage → resolves `payment_pending_utility_v1`."""
+    awaiting_payment stage → resolves `payment_pending_utility_v2`."""
     monkeypatch.setenv("WATCHDOG_ENABLED", "1")
     _pin_clock_at_10am_bogota(monkeypatch)
     now_ms = int(time.time() * 1000)
@@ -322,7 +324,7 @@ async def test_eligible_resolves_awaiting_payment_with_registered_order(
     result = await check_watchdog_eligibility_activity(SESSION_ID, EPISODE_ID)
 
     assert result.eligible is True
-    assert result.resolved_template_name == "payment_pending_utility_v1"
+    assert result.resolved_template_name == "payment_pending_utility_v2"
     assert (
         result.resolved_template_variables is not None
         and result.resolved_template_variables.get("order_reference") == "ORD-1042"

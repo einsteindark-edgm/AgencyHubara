@@ -33,6 +33,38 @@ STAGE_LABELS: dict[str, str] = {
 }
 
 
+# max_length del slot `order_reference` en el spec `order_status_utility_v2`
+# (catalog.yaml). El test cross-checkea contra el registry para detectar drift.
+_ORDER_REFERENCE_MAX_LEN = 60
+
+
+def build_status_template_variables(stage: str, facts: dict) -> dict[str, str]:
+    """Variables del template fuera-de-ventana (``order_status_utility_v2``).
+
+    Pura y determinista — el workflow la llama tal cual (R-DET OK). Garantiza
+    los invariantes que Meta exige de un template param:
+
+      * **Sin nombre**: el template v2 no saluda por nombre (incidente
+        2026-07-21: el placeholder Medusa dejaba el slot vacío y Meta rechaza
+        params "" con 131008 → notificación perdida).
+      * **Nunca vacío**: ``order_reference`` cae a "tu pedido" sin datos del
+        pedido; ``status_label`` cae al stage crudo si no está en la matriz.
+      * **Dentro de max_length**: el spec limita ``order_reference`` a 60.
+
+    Los nombres/orden matchean el spec del catálogo (params posicionales).
+    """
+    reference = facts.get("order_display_id") or "tu pedido"
+    items_label = facts.get("items_label") or ""
+    if items_label:
+        # El cliente no sabe qué es "#6" — nombramos los productos en el
+        # slot de referencia.
+        reference = f"{reference} ({items_label})"
+    return {
+        "order_reference": reference[:_ORDER_REFERENCE_MAX_LEN],
+        "status_label": STAGE_LABELS.get(stage, stage),
+    }
+
+
 def _hola(name: str) -> str:
     """Saludo con nombre o "¡Hola!" a secas. Sin nombre real NUNCA "Hola cliente"."""
     return f"¡Hola {name}!" if name else "¡Hola!"
