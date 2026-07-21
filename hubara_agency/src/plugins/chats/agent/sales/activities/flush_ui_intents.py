@@ -90,9 +90,12 @@ def _render_payment_instructions_text(params: dict[str, Any]) -> str | None:
         currency = params.get("currency") or "COP"
         total_formatted = f"${total_cop:,}".replace(",", ".")
         lines.append(f"*Valor*: {total_formatted} {currency}")
-    order_id = params.get("order_id")
-    if order_id:
-        lines.append(f"Pedido: {order_id}")
+    # Referencia humana ("#22 (Plegaria de Luz)") si el intent la trae;
+    # fallback al order_id crudo para intents encolados pre-deploy o
+    # providers sin display_id (stub).
+    reference = params.get("order_reference") or params.get("order_id")
+    if reference:
+        lines.append(f"Pedido: {reference}")
     lines.append("")
     lines.append("Cuando la hagas, envíanos el comprobante por este chat.")
     return "\n".join(lines)
