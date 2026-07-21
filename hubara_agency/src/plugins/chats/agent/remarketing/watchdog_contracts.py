@@ -62,7 +62,7 @@ class WatchdogEligibilityResult:
             `"episode_closed"`, `"window_not_expiring_soon"`,
             `"no_template_for_stage"`.  None when `eligible=True`.
         resolved_template_name: the registry key of the template to send
-            (e.g. `"quote_ready_utility_v1"`). None when `eligible=False`.
+            (e.g. `"quote_ready_utility_v2"`). None when `eligible=False`.
         resolved_template_variables: dict of variable name → value to
             interpolate into the template. None when `eligible=False`.
             Mapped to `dict[str, str]` to keep R-JSON simple — if a

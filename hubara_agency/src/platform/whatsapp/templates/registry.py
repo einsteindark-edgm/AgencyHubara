@@ -195,6 +195,9 @@ def validate_variables(
       * Toda variable declarada en spec.variables debe estar en `variables`.
       * No puede haber variables extra en `variables` que no estén en spec.
       * Cada valor debe ser str (Meta exige string en el payload).
+      * Ningún valor puede ser vacío o solo-espacios: Meta rechaza params ""
+        con 131008 "Parameter of type text is missing text value" (incidente
+        2026-07-21, order #22) — mejor fallar acá, local y con nombre.
       * Si la variable tiene `max_length`, el valor no puede excederlo.
     """
     errors: list[str] = []
@@ -215,6 +218,12 @@ def validate_variables(
         if not isinstance(value, str):
             errors.append(
                 f"Variable {var_spec.name!r}: must be str, got {type(value).__name__}"
+            )
+            continue
+        if not value.strip():
+            errors.append(
+                f"Variable {var_spec.name!r}: must not be empty (Meta rejects "
+                "empty template params with error 131008)"
             )
             continue
         if var_spec.max_length is not None and len(value) > var_spec.max_length:

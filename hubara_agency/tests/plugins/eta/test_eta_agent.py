@@ -27,11 +27,62 @@ from src.plugins.eta.agent.eta.activities import (
     start_eta_tracking_activity,
 )
 from src.plugins.eta.agent.eta.contracts import EtaSessionInput
-from src.plugins.eta.agent.eta.prompts import render_stage_notification
+from src.plugins.eta.agent.eta.prompts import (
+    build_status_template_variables,
+    render_stage_notification,
+)
 
 
 SID = "wa_573001112233"
 ORDER = "order_01TESTETA"
+
+
+# ════════════════════════════════════════════════════════════════════════
+# Variables del template fuera-de-ventana — puras, sin nombre, nunca vacías
+# ════════════════════════════════════════════════════════════════════════
+def test_template_variables_match_v2_spec_and_omit_name():
+    """Incidente 2026-07-21 (order #22, wa_573229041190): el workflow enviaba
+    `customer_first_name: ""` (placeholder Medusa filtrado) y Meta rechazó el
+    template con 131008 → notificación perdida en silencio. Decisión: el
+    template v2 NO saluda por nombre — las variables son exactamente las que
+    declara el spec `order_status_utility_v2` del catálogo, en su orden."""
+    from src.platform.whatsapp.composition import get_template_registry
+
+    facts = {
+        "order_display_id": "#22",
+        "items_label": "Plegaria de Luz",
+    }
+    variables = build_status_template_variables("preparing", facts)
+
+    spec = get_template_registry()["order_status_utility_v2"]
+    assert list(variables) == [v.name for v in spec.variables]
+    assert "customer_first_name" not in variables
+    assert variables["order_reference"] == "#22 (Plegaria de Luz)"
+    assert variables["status_label"] == "En preparación"
+
+
+def test_template_variables_never_empty_and_respect_max_length():
+    """Meta rechaza slots vacíos (131008) y el spec limita order_reference a
+    60 chars (el código viejo truncaba a 120 — hubiera fallado la validación
+    local del builder). Con facts mínimos (Medusa caído) los slots igual van
+    llenos."""
+    from src.platform.whatsapp.composition import get_template_registry
+
+    spec = get_template_registry()["order_status_utility_v2"]
+    max_ref = next(v.max_length for v in spec.variables if v.name == "order_reference")
+
+    empty = build_status_template_variables("shipping", {})
+    assert empty["order_reference"] == "tu pedido"
+    assert empty["status_label"] == "En camino"
+    assert all(v.strip() for v in empty.values())
+
+    long_facts = {"order_display_id": "#1042", "items_label": "x" * 200}
+    longv = build_status_template_variables("shipping", long_facts)
+    assert len(longv["order_reference"]) <= max_ref
+
+    # Stage desconocido: el label cae al string crudo — nunca vacío.
+    unknown = build_status_template_variables("weird_stage", {})
+    assert unknown["status_label"] == "weird_stage"
 
 
 def _write_meta(vault: Path, sid: str, data: dict) -> None:

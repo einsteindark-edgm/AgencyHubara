@@ -174,23 +174,23 @@ class TestBuildTemplateMessageValidation:
 
 class TestBuildTemplateIntegrationWithRealRegistry:
     def test_quote_ready_real_template(self):
-        """E2E: cargar registry real + construir payload del quote_ready_utility_v1."""
+        """E2E: cargar registry real + construir payload del quote_ready_utility_v2
+        (sin saludo por nombre — incidente 2026-07-21)."""
         from src.platform.whatsapp.composition import get_template_registry
 
         registry = get_template_registry()
-        spec = registry["quote_ready_utility_v1"]
+        spec = registry["quote_ready_utility_v2"]
 
         payload = build_template_message(
             to="+573009999999",
             spec=spec,
             variables={
-                "customer_first_name": "Andrea",
                 "product_or_quote_label": "kit aroma rosas (cotización #42)",
             },
         )
 
-        assert payload["template"]["name"] == "quote_ready_utility"
+        assert payload["template"]["name"] == "quote_ready_utility_v2"
         assert payload["template"]["language"] == {"code": "es_CO"}
         params = payload["template"]["components"][0]["parameters"]
-        assert params[0]["text"] == "Andrea"
-        assert "kit aroma rosas" in params[1]["text"]
+        assert len(params) == 1
+        assert "kit aroma rosas" in params[0]["text"]

@@ -1,9 +1,17 @@
 # WhatsApp template catalog — HU-WA24H-001
 #
 # Cada entrada describe un template pre-aprobado por Meta para esta WABA.
-# La aprobación real de Meta es Sprint 0 operacional (F0.1, F0.2) — los
-# `waba_template_name` aquí están como MOCK hasta que el operador termine
-# el approval cycle (24-72h por template) en Business Manager.
+# Los templates viven en Meta Business Manager y se crean/versionan con
+# `infra/whatsapp-provisioning/whatsapp_provision.py` (definitions/templates.json).
+#
+# REGLA (incidente 2026-07-21, order #22 / wa_573229041190): NINGÚN template
+# saluda por nombre. El customer de ventas WhatsApp es el placeholder Medusa
+# "Cliente WhatsApp" → el slot llegaba vacío y Meta rechaza params "" con
+# 131008 ("Parameter of type text is missing text value") → notificación
+# perdida. Los `_v2` (sin `customer_first_name`) reemplazan a los `_v1`; los
+# v1 siguen aprobados en la WABA pero ya no se usan. Excepción deliberada:
+# `campaign_promo_marketing_v1` — su slot `greeting` es el saludo COMPLETO
+# que arma el código de campañas con fallback no-vacío ("Hola").
 #
 # Convención:
 #   * `name` — id interno (incluye sufijo _vN para versionar copy/semantics
@@ -24,34 +32,27 @@
 templates:
   # ===== UTILITY templates (gratis dentro de ventana 24h) =====================
 
-  - name: quote_ready_utility_v1
+  - name: quote_ready_utility_v2
     category: utility
     language: es_CO
-    waba_template_name: quote_ready_utility   # MOCK — pending Meta approval
+    waba_template_name: quote_ready_utility_v2
     semantics: "Notificar al cliente que su cotización está lista"
     triggers_when_window_expiring: true
     requires_episode_stage: awaiting_quote
     variables:
-      - name: customer_first_name
-        type: string
-        max_length: 60
-        description: "Nombre del cliente (de metadata.profile.name o primer turno)"
       - name: product_or_quote_label
         type: string
         max_length: 120
         description: "Descripción corta del producto cotizado"
 
-  - name: payment_pending_utility_v1
+  - name: payment_pending_utility_v2
     category: utility
     language: es_CO
-    waba_template_name: payment_pending_utility   # MOCK
+    waba_template_name: payment_pending_utility_v2
     semantics: "Recordar pago pendiente de orden creada"
     triggers_when_window_expiring: true
     requires_episode_stage: awaiting_payment
     variables:
-      - name: customer_first_name
-        type: string
-        max_length: 60
       - name: order_reference
         type: string
         max_length: 60
@@ -61,20 +62,18 @@ templates:
         max_length: 40
         description: "Monto formateado con moneda (e.g., '$120.000 COP')"
 
-  - name: order_status_utility_v1
+  - name: order_status_utility_v2
     category: utility
     language: es_CO
-    waba_template_name: order_status_utility   # MOCK
+    waba_template_name: order_status_utility_v2
     semantics: "Update post-compra del estado de la orden (despachado / en camino / demorado / entregado)"
     triggers_when_window_expiring: true
     requires_episode_stage: post_purchase
     variables:
-      - name: customer_first_name
-        type: string
-        max_length: 60
       - name: order_reference
         type: string
         max_length: 60
+        description: "ID legible de la orden + productos (e.g., '#22 (Plegaria de Luz)')"
       - name: status_label
         type: string
         max_length: 60
@@ -108,19 +107,16 @@ templates:
         max_length: 200
         description: "Línea de oferta: cupón/porcentaje/CTA — nunca vacía"
 
-  - name: cart_recovery_marketing_v1
+  - name: cart_recovery_marketing_v2
     category: marketing
     language: es_CO
-    waba_template_name: cart_recovery_marketing   # MOCK
+    waba_template_name: cart_recovery_marketing_v2
     # Copy 2026-07 (guía de mensajes de marketing de Meta): re-engagement
     # SIN promoción ni envío gratis; el body incluye opt-out. Tuteo, no voseo.
     semantics: "Recovery de carrito abandonado fuera de ventana (re-engagement sin incentivo; body con opt-out)"
     triggers_when_window_expiring: false   # MARKETING nunca por watchdog
     requires_episode_stage: any
     variables:
-      - name: customer_first_name
-        type: string
-        max_length: 60
       - name: product_label
         type: string
         max_length: 120

@@ -132,8 +132,8 @@ class TestSendTemplateHappyPath:
 
         result = await send_template_to_session(
             session_id,
-            "quote_ready_utility_v1",
-            {"customer_first_name": "Juan", "product_or_quote_label": "vela"},
+            "quote_ready_utility_v2",
+            {"product_or_quote_label": "vela"},
         )
 
         assert result.ok is True
@@ -145,7 +145,7 @@ class TestSendTemplateHappyPath:
         assert call_args.args[0] == "PHONE_TEST"
         assert call_args.args[1] == "5491111111111"
         spec = call_args.args[2]
-        assert spec.waba_template_name == "quote_ready_utility"
+        assert spec.waba_template_name == "quote_ready_utility_v2"
 
         # Verify persistence
         metadata = _read_metadata(isolated_vault, session_id)
@@ -154,7 +154,7 @@ class TestSendTemplateHappyPath:
         assert len(episode["outbound_messages"]) == 1
         log_entry = episode["outbound_messages"][0]
         assert log_entry["wa_message_id"] == "wamid.NEW"
-        assert log_entry["template_name"] == "quote_ready_utility_v1"
+        assert log_entry["template_name"] == "quote_ready_utility_v2"
         assert log_entry["kind"] == "template"
         assert log_entry["pricing"] is None
         assert log_entry["cost_usd_micros"] is None
@@ -180,14 +180,13 @@ class TestSendTemplateHappyPath:
         history_event = json.loads(lines[0])
         assert history_event["role"] == "assistant"
         assert history_event["kind"] == "template"
-        assert history_event["template_name"] == "quote_ready_utility_v1"
-        assert history_event["waba_template_name"] == "quote_ready_utility"
+        assert history_event["template_name"] == "quote_ready_utility_v2"
+        assert history_event["waba_template_name"] == "quote_ready_utility_v2"
         assert history_event["variables"] == {
-            "customer_first_name": "Juan",
             "product_or_quote_label": "vela",
         }
-        assert "[Template: quote_ready_utility_v1]" in history_event["content"]
-        assert "customer_first_name=Juan" in history_event["content"]
+        assert "[Template: quote_ready_utility_v2]" in history_event["content"]
+        assert "product_or_quote_label=vela" in history_event["content"]
         assert "T" in history_event["timestamp"]
 
     @pytest.mark.asyncio
@@ -207,8 +206,8 @@ class TestSendTemplateHappyPath:
 
         await send_template_to_session(
             session_id,
-            "quote_ready_utility_v1",
-            {"customer_first_name": "x", "product_or_quote_label": "y"},
+            "quote_ready_utility_v2",
+            {"product_or_quote_label": "y"},
         )
 
         assert mock_send.call_args.args[0] == "PHONE_FROM_ENV"
@@ -258,8 +257,8 @@ class TestSendTemplateErrors:
         with pytest.raises(ApplicationError) as exc_info:
             await send_template_to_session(
                 session_id,
-                "quote_ready_utility_v1",
-                {"customer_first_name": "x", "product_or_quote_label": "y"},
+                "quote_ready_utility_v2",
+                {"product_or_quote_label": "y"},
             )
 
         assert exc_info.value.non_retryable is True
@@ -288,8 +287,8 @@ class TestSendTemplateErrors:
         with pytest.raises(ApplicationError) as exc_info:
             await send_template_to_session(
                 session_id,
-                "quote_ready_utility_v1",
-                {"customer_first_name": "x", "product_or_quote_label": "y"},
+                "quote_ready_utility_v2",
+                {"product_or_quote_label": "y"},
             )
 
         assert exc_info.value.non_retryable is True
@@ -318,8 +317,8 @@ class TestSendTemplateErrors:
         with pytest.raises(ApplicationError) as exc_info:
             await send_template_to_session(
                 session_id,
-                "quote_ready_utility_v1",
-                {"customer_first_name": "x", "product_or_quote_label": "y"},
+                "quote_ready_utility_v2",
+                {"product_or_quote_label": "y"},
             )
 
         assert exc_info.value.non_retryable is True
@@ -346,8 +345,8 @@ class TestSendTemplateErrors:
         with pytest.raises(ApplicationError) as exc_info:
             await send_template_to_session(
                 session_id,
-                "quote_ready_utility_v1",
-                {"customer_first_name": "x", "product_or_quote_label": "y"},
+                "quote_ready_utility_v2",
+                {"product_or_quote_label": "y"},
             )
 
         # Retryable: NO non_retryable
@@ -364,8 +363,8 @@ class TestSendTemplateErrors:
         with pytest.raises(ApplicationError) as exc_info:
             await send_template_to_session(
                 session_id,
-                "quote_ready_utility_v1",
-                {"customer_first_name": "x", "product_or_quote_label": "y"},
+                "quote_ready_utility_v2",
+                {"product_or_quote_label": "y"},
             )
 
         assert exc_info.value.non_retryable is True
@@ -396,8 +395,8 @@ class TestSendTemplateEpisodeEdgeCases:
 
         result = await send_template_to_session(
             session_id,
-            "quote_ready_utility_v1",
-            {"customer_first_name": "x", "product_or_quote_label": "y"},
+            "quote_ready_utility_v2",
+            {"product_or_quote_label": "y"},
         )
 
         assert result.ok is True
@@ -441,8 +440,8 @@ class TestSendTemplateEpisodeEdgeCases:
 
         await send_template_to_session(
             session_id,
-            "quote_ready_utility_v1",
-            {"customer_first_name": "x", "product_or_quote_label": "y"},
+            "quote_ready_utility_v2",
+            {"product_or_quote_label": "y"},
         )
 
         metadata = _read_metadata(isolated_vault, session_id)
@@ -497,7 +496,7 @@ class TestSendTemplateIdempotency:
         )
         args = (
             session_id,
-            "quote_ready_utility_v1",
+            "quote_ready_utility_v2",
             {"customer_first_name": "Ana", "product_or_quote_label": "vela"},
         )
 
@@ -533,12 +532,12 @@ class TestSendTemplateIdempotency:
         )
 
         await send_template_to_session(
-            session_id, "quote_ready_utility_v1",
+            session_id, "quote_ready_utility_v2",
             {"customer_first_name": "Ana", "product_or_quote_label": "vela"},
         )
         # Variables DISTINTAS → es un mensaje distinto, debe enviarse.
         await send_template_to_session(
-            session_id, "quote_ready_utility_v1",
+            session_id, "quote_ready_utility_v2",
             {"customer_first_name": "Beto", "product_or_quote_label": "difusor"},
         )
 
@@ -588,7 +587,7 @@ class TestSendTemplateStampsSendPolicy:
 
         await send_template_to_session(
             session_id,
-            "quote_ready_utility_v1",
+            "quote_ready_utility_v2",
             {"customer_first_name": "Ana", "product_or_quote_label": "vela"},
         )
 

@@ -54,9 +54,8 @@ class _CallLog:
         self.send_should_raise: bool = False
         self.eligibility_result: WatchdogEligibilityResult = WatchdogEligibilityResult(
             eligible=True,
-            resolved_template_name="quote_ready_utility_v1",
+            resolved_template_name="quote_ready_utility_v2",
             resolved_template_variables={
-                "customer_first_name": "Camilo",
                 "product_or_quote_label": "tu camisa",
             },
         )
@@ -155,7 +154,7 @@ async def test_fires_after_timer_when_eligible(env: WorkflowEnvironment) -> None
     assert log.eligibility_calls == [("wa_+57300test", "ep_001")]
     assert len(log.send_calls) == 1
     assert log.send_calls[0][0] == "wa_+57300test"
-    assert log.send_calls[0][1] == "quote_ready_utility_v1"
+    assert log.send_calls[0][1] == "quote_ready_utility_v2"
     # Persist called exactly once with outcome="fired"
     fired = [c for c in log.persist_calls if c[1] == "fired"]
     assert len(fired) == 1
