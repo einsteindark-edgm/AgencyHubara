@@ -72,6 +72,36 @@ from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
 )
 
 
+def _order_reference(raw_payload: dict[str, Any] | None) -> str | None:
+    """Referencia humana del pedido para mensajes al cliente: "#22 (Plegaria
+    de Luz)" — mismo estilo que la notificación ETA. El cliente no sabe qué
+    es `order_01KXV...`.
+
+    Medusa asigna `display_id` AL CREAR el draft (POST /admin/draft-orders),
+    así que existe desde el registro — no depende de que el humano agende la
+    entrega. `None` si el provider no lo trae (stub) → el renderer cae al
+    order_id crudo.
+    """
+    raw = raw_payload or {}
+    display_id = raw.get("display_id")
+    if display_id is None:
+        return None
+    items = raw.get("items") or []
+    parts: list[str] = []
+    for it in items[:3]:
+        title = (it.get("title") or "").strip()
+        qty = it.get("quantity") or 0
+        if title:
+            parts.append(f"{qty}× {title}" if qty > 1 else title)
+    if len(items) > 3:
+        parts.append(f"y {len(items) - 3} más")
+    label = ", ".join(parts)
+    reference = f"#{display_id}"
+    if label:
+        reference = f"{reference} ({label})"
+    return reference[:120]
+
+
 class RegisterOrderTool(ToolBase):
     """Registra un pedido al cierre exitoso de la venta vía OrderRegistrationPort.
 
@@ -311,14 +341,21 @@ class RegisterOrderTool(ToolBase):
             # bancarios (nunca pasan por el LLM ni por metadata).
             if payment_method == "transfer":
                 intents = data.setdefault("pending_ui_intents", [])
+                # Referencia humana ("#22 (Plegaria de Luz)") — el display_id
+                # ya existe acá: Medusa lo asigna al crear el draft. El
+                # order_id interno sigue viajando (idempotency key + audit).
+                params: dict[str, Any] = {
+                    "order_id": registered_record["order_id"],
+                    "total_cop": total_cop,
+                    "currency": currency,
+                }
+                reference = _order_reference(result.raw_payload)
+                if reference:
+                    params["order_reference"] = reference
                 intents.append({
                     "id": f"payinstr-{registered_record['order_id']}",
                     "kind": "payment_instructions",
-                    "params": {
-                        "order_id": registered_record["order_id"],
-                        "total_cop": total_cop,
-                        "currency": currency,
-                    },
+                    "params": params,
                     "analytics": {
                         "component_id": "payment_instructions",
                         "component_kind": "text",

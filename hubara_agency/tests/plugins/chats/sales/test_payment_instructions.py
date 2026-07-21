@@ -42,6 +42,7 @@ from src.platform.whatsapp import dtos as wa_dtos
 @dataclass
 class FakePort:
     return_success: bool = True
+    raw_payload: dict[str, Any] = field(default_factory=dict)
     calls: list[dict[str, Any]] = field(default_factory=list)
 
     async def register_order(
@@ -64,7 +65,7 @@ class FakePort:
                 order_id="order_test_001",
                 provider="medusa",
                 customer_id="cus_test",
-                raw_payload={},
+                raw_payload=self.raw_payload,
             )
         return OrderRegistrationResult(
             success=False, order_id=None, provider="medusa",
@@ -141,6 +142,45 @@ async def test_register_transfer_success_queues_payment_instructions(ctx, vault)
     assert "banco" not in serialized.lower()
 
 
+# El shape real del draft que devuelve POST /admin/draft-orders (verificado
+# en prod, order #22 / wa_573229041190): Medusa asigna `display_id` AL CREAR
+# el draft — existe desde el registro, no depende de agendar la entrega.
+_DRAFT_RAW = {
+    "id": "order_test_001",
+    "display_id": 22,
+    "items": [
+        {"title": "Plegaria de Luz", "product_title": "Plegaria de Luz",
+         "variant_title": "Unico", "quantity": 1},
+    ],
+}
+
+
+@pytest.mark.asyncio
+async def test_register_transfer_intent_carries_order_reference(ctx, vault):
+    """El mensaje de transferencia referencia el pedido como lo ve el cliente
+    ("#22 (Plegaria de Luz)" — mismo estilo que la notificación ETA), no el
+    id interno `order_01...` que no le dice nada."""
+    await _register(
+        ctx, vault, payment_method="transfer",
+        port=FakePort(raw_payload=_DRAFT_RAW),
+    )
+    data = _read_metadata(vault, ctx.session_key)
+    (intent,) = data["pending_ui_intents"]
+    assert intent["params"]["order_reference"] == "#22 (Plegaria de Luz)"
+    # El id interno sigue viajando para auditoría/idempotencia del intent.
+    assert intent["params"]["order_id"] == "order_test_001"
+
+
+@pytest.mark.asyncio
+async def test_register_transfer_without_display_id_omits_reference(ctx, vault):
+    """Provider sin display_id (stub / raw_payload vacío) → el param no viaja
+    y el renderer cae al order_id crudo."""
+    await _register(ctx, vault, payment_method="transfer")
+    data = _read_metadata(vault, ctx.session_key)
+    (intent,) = data["pending_ui_intents"]
+    assert "order_reference" not in intent["params"]
+
+
 @pytest.mark.asyncio
 async def test_register_cash_on_delivery_queues_nothing(ctx, vault):
     await _register(ctx, vault, payment_method="cash_on_delivery")
@@ -210,6 +250,61 @@ async def test_dispatch_renders_exact_bank_details_from_env(monkeypatch):
     # Formato WhatsApp: bold con UN asterisco, jamás markdown doble
     assert "**" not in text
     assert "*Banco*" in text
+
+
+@pytest.mark.asyncio
+async def test_dispatch_prefers_order_reference_over_raw_id(monkeypatch):
+    """Con `order_reference` presente, el mensaje muestra "#22 (Plegaria de
+    Luz)" y el id interno `order_...` NO aparece por ningún lado."""
+    _set_env(monkeypatch, _ENV)
+    wa_client = SimpleNamespace(
+        send_text=AsyncMock(
+            return_value=SimpleNamespace(ok=True, wa_message_id="wamid.pay.2")
+        )
+    )
+    result = await _dispatch_intent(
+        wa_client=wa_client,
+        wa_dtos=wa_dtos,
+        kind="payment_instructions",
+        params={
+            "order_id": "order_test_001",
+            "order_reference": "#22 (Plegaria de Luz)",
+            "total_cop": 47000,
+            "currency": "COP",
+        },
+        fallback={},
+        phone_number_id="phone-1",
+        to_number="573000000000",
+        last_inbound_message_id=None,
+    )
+    assert result is not None and result.ok is True
+    text = wa_client.send_text.await_args.args[2]
+    assert "Pedido: #22 (Plegaria de Luz)" in text
+    assert "order_test_001" not in text
+
+
+@pytest.mark.asyncio
+async def test_dispatch_falls_back_to_raw_order_id(monkeypatch):
+    """Intents encolados antes del deploy (o providers sin display_id) traen
+    solo `order_id` — el mensaje no pierde la referencia."""
+    _set_env(monkeypatch, _ENV)
+    wa_client = SimpleNamespace(
+        send_text=AsyncMock(
+            return_value=SimpleNamespace(ok=True, wa_message_id="wamid.pay.3")
+        )
+    )
+    await _dispatch_intent(
+        wa_client=wa_client,
+        wa_dtos=wa_dtos,
+        kind="payment_instructions",
+        params={"order_id": "order_test_001", "total_cop": 47000, "currency": "COP"},
+        fallback={},
+        phone_number_id="phone-1",
+        to_number="573000000000",
+        last_inbound_message_id=None,
+    )
+    text = wa_client.send_text.await_args.args[2]
+    assert "Pedido: order_test_001" in text
 
 
 @pytest.mark.asyncio
