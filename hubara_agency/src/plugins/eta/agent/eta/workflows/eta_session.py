@@ -68,6 +68,7 @@ with workflow.unsafe.imports_passed_through():
     )
     from src.plugins.eta.agent.eta.contracts import EtaSessionInput
     from src.plugins.eta.agent.eta.prompts import (
+        build_status_template_variables,
         render_stage_notification,
     )
 

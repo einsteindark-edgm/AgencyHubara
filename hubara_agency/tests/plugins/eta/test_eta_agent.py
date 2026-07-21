@@ -40,6 +40,16 @@ ORDER = "order_01TESTETA"
 # ════════════════════════════════════════════════════════════════════════
 # Variables del template fuera-de-ventana — puras, sin nombre, nunca vacías
 # ════════════════════════════════════════════════════════════════════════
+def test_eta_workflow_module_has_template_variables_builder():
+    """Canario anti-poda de ruff (memoria ruff-hook-import-poda, recaída
+    2026-07-21 run 019f851b): el hook post-edit podó el import de
+    `build_status_template_variables` en eta_session.py porque el uso llegó
+    en un Edit posterior → el módulo importa limpio pero el workflow explota
+    con NameError EN RUNTIME al notificar (ningún otro test ejercita el path
+    template del workflow). Este hasattr lo caza en CI."""
+    from src.plugins.eta.agent.eta.workflows import eta_session
+
+    assert hasattr(eta_session, "build_status_template_variables")
 def test_template_variables_match_v2_spec_and_omit_name():
     """Incidente 2026-07-21 (order #22, wa_573229041190): el workflow enviaba
     `customer_first_name: ""` (placeholder Medusa filtrado) y Meta rechazó el
