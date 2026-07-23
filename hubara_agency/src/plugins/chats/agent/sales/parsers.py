@@ -29,8 +29,14 @@ queda como bridge mínimo del payload Meta hacia el ingestor).
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
+
+# SEC-12: `from_number` de Meta es un teléfono E.164 (solo dígitos, sin `+`).
+# Se convierte en `session_id = wa_<from>` que llega al filesystem del vault, así
+# que exigimos este shape para bloquear path traversal / injection en el id.
+_PHONE_RE = re.compile(r"^\d{6,15}$")
 
 
 @dataclass(frozen=True)
@@ -125,6 +131,11 @@ def parse_whatsapp_inbound(body: dict) -> WhatsAppMessage | None:
         raise ValueError("missing 'id' on message")
     if not isinstance(from_number, str):
         raise ValueError("missing 'from' on message")
+    # SEC-12: `from_number` se convierte en `session_id = wa_<from>` que llega al
+    # filesystem del vault (metadata + media). Exigir un teléfono E.164 (solo
+    # dígitos, 6-15) evita path traversal (`../`) y command-injection en el id.
+    if not _PHONE_RE.match(from_number):
+        raise ValueError("'from' no es un número de teléfono válido (E.164)")
     if not isinstance(timestamp, str):
         raise ValueError("missing 'timestamp' on message")
     if not isinstance(msg_type, str):
