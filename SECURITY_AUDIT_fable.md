@@ -18,6 +18,26 @@ Todo lo demás es secundario a esos dos. **Lo bueno:** no hay secretos hardcodea
 
 ---
 
+## Estado de remediación (commits en `claude/security-analysis-mitigation-1a5ead`)
+
+| ID | Sev | Estado | Commit / nota |
+|----|-----|--------|---------------|
+| SEC-01 | 🔴 | ✅ Resuelto (código) — falta provisioning + deploy del operador | `0983fc4` |
+| SEC-02 | 🔴 | ✅ Resuelto (código) — falta provisioning + deploy | `0983fc4` |
+| SEC-12 | 🟡 | ✅ Resuelto | `f864ad0` |
+| SEC-14 | 🟢 | ✅ Mecanismo listo — operador setea el origen en SSM | `2864ee6` |
+| SEC-15 | 🟢 | ✅ Resuelto (verify-token) | `d04987b` |
+| SEC-04 | 🟠 | ⚠️ Parcial — UIs admin cerradas; SSH sigue abierto (CI usa SSH) | `eaee5e4` |
+| SEC-08 | 🟡 | ✅ Resuelto | `503ca22` |
+| SEC-05 | 🟠 | ✅ Cubierto por SEC-01 (los endpoints ya exigen auth); falta rol-operador (→SEC-11) | — |
+| SEC-03 | 🟠 | ⏳ Pendiente — split de rol OIDC + mover deploys al rol angosto (riesgo: rompe CI, no testeable acá) | — |
+| SEC-06 | 🟠 | ⏳ Pendiente — ticket SSE de un solo uso (backend + frontend) | — |
+| SEC-07 | 🟡 | ⏳ Pendiente — re-check de precios vs catálogo (riesgo de false-reject; definir descuentos) | — |
+| SEC-09 | 🟡 | ⏳ Pendiente — vault a EBS dedicado + prevent_destroy (migración de datos, riesgo) | — |
+| SEC-10 | 🟡 | ⏳ Pendiente — CSP + build estático + Keystore (frontend, multi-archivo) | — |
+| SEC-11 | 🟡 | ⏳ Pendiente — authZ / ownership de objetos (modelo de roles) | — |
+| SEC-13 | 🟢 | ⏳ Pendiente — rate limiting (dependencia slowapi) | — |
+
 ## Tabla de hallazgos
 
 | ID | Sev | Título | Superficie |
