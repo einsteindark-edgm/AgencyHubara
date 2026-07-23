@@ -36,7 +36,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
 from src.platform import config
-from src.platform.auth import require_auth
+from src.platform.auth import mint_sse_ticket, require_auth
 from src.platform.rate_limit import (
     SlidingWindowRateLimiter,
     install_rate_limit_middleware,
@@ -290,3 +290,11 @@ def health_check() -> dict:
         "temporal_connection": "delegated_to_routes",
         "plugins_loaded": _LOADED_PLUGINS,
     }
+
+
+@app.post("/api/dashboard/sse-ticket", dependencies=[Depends(require_auth)])
+def sse_ticket_endpoint() -> dict:
+    """SEC-06: emite un ticket SSE de corta vida. El caller se autentica por
+    HEADER (require_auth); el ticket devuelto lo usa el `EventSource` de
+    `/api/dashboard/events` por query — así el access-token nunca va en la URL."""
+    return {"ticket": mint_sse_ticket()}

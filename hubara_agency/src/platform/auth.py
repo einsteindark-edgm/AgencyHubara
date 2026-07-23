@@ -16,15 +16,36 @@ Sin token / token inválido → ``401``.
 """
 from __future__ import annotations
 
+import time
 from functools import lru_cache
 from typing import Any
 
 import structlog
 from fastapi import HTTPException, Request
 
-from src.platform import config
+from src.platform import config, sse_ticket
 
 logger = structlog.get_logger()
+
+
+def _sse_ticket_secret() -> str:
+    """Secreto para firmar/verificar tickets SSE. Reusa el service token M2M
+    (compartido entre workers, garantizado en prod por el preflight de SEC-01).
+    En dev cae a un valor fijo (la auth es no-op igual)."""
+    if not config.is_placeholder(config.HUBARA_SERVICE_TOKEN):
+        return config.HUBARA_SERVICE_TOKEN
+    return "dev-sse-ticket-secret"
+
+
+#: Vida de un ticket SSE (segundos). Corto: solo tiene que sobrevivir el
+#: round-trip mint→abrir EventSource. No es un bearer reutilizable.
+SSE_TICKET_TTL_SECONDS = 30
+
+
+def mint_sse_ticket(ttl_seconds: int = SSE_TICKET_TTL_SECONDS) -> str:
+    """Emite un ticket SSE firmado. Lo llama el endpoint POST (autenticado por
+    header) para que el frontend abra `/events` sin poner el token en la URL."""
+    return sse_ticket.mint(_sse_ticket_secret(), ttl_seconds, time.time())
 
 
 def _cognito_configured() -> bool:
@@ -140,6 +161,14 @@ def require_auth(request: Request) -> None:
         and secrets.compare_digest(header_token, service_token)
     ):
         return
+
+    # 1b. Ticket SSE (SEC-06): el stream `/events` no puede mandar header, así
+    #     que el frontend pasa un ticket firmado de corta vida por query — nunca
+    #     el access-token. Solo válido para el path del stream.
+    if request.url.path.endswith("/events"):
+        ticket = request.query_params.get("ticket", "")
+        if ticket and sse_ticket.verify(_sse_ticket_secret(), ticket, time.time()):
+            return
 
     # 2. Cognito no configurado → fail-closed en prod, no-op en dev/tests.
     if not _cognito_configured():

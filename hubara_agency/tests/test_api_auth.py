@@ -92,6 +92,33 @@ def test_dashboard_route_accepts_token_via_query_param(
     assert resp.status_code != 401
 
 
+def test_sse_ticket_endpoint_mints_valid_ticket(
+    enforced: TestClient, monkeypatch
+) -> None:
+    """SEC-06: POST /sse-ticket (autenticado por header) emite un ticket firmado
+    que el stream puede verificar — el frontend lo usa en vez del access-token."""
+    import time
+
+    monkeypatch.setattr(
+        "src.platform.auth._verify_token",
+        lambda _t: {"sub": "u1", "client_id": "test-app-client", "token_use": "access"},
+    )
+    resp = enforced.post(
+        "/api/dashboard/sse-ticket", headers={"Authorization": "Bearer good"}
+    )
+    assert resp.status_code == 200
+    ticket = resp.json()["ticket"]
+
+    from src.platform import auth, sse_ticket
+
+    assert sse_ticket.verify(auth._sse_ticket_secret(), ticket, time.time()) is True
+
+
+def test_sse_ticket_endpoint_requires_auth(enforced: TestClient) -> None:
+    """Sin token válido, no se puede emitir un ticket (401)."""
+    assert enforced.post("/api/dashboard/sse-ticket").status_code == 401
+
+
 def test_meta_webhook_stays_public_even_when_enforced(enforced: TestClient) -> None:
     """El webhook de Meta tiene su propia auth; NO debe exigir JWT de Cognito."""
     resp = enforced.get(
