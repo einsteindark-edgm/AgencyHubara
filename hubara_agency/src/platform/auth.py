@@ -19,14 +19,23 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Any
 
+import structlog
 from fastapi import HTTPException, Request
 
 from src.platform import config
 
+logger = structlog.get_logger()
+
 
 def _cognito_configured() -> bool:
-    """True si hay pool + app client → la auth se enforcea (prod)."""
-    return bool(config.COGNITO_USER_POOL_ID and config.COGNITO_APP_CLIENT_ID)
+    """True si hay pool + app client REALES → la auth se enforcea (prod).
+
+    El placeholder de Terraform (`SSM_PLACEHOLDER`) cuenta como NO configurado:
+    validar tokens contra un pool placeholder solo produce 401s confusos.
+    """
+    return not config.is_placeholder(
+        config.COGNITO_USER_POOL_ID
+    ) and not config.is_placeholder(config.COGNITO_APP_CLIENT_ID)
 
 
 def _issuer() -> str:
@@ -73,6 +82,22 @@ def _verify_token(token: str) -> dict[str, Any]:
     return claims
 
 
+def _extract_header_token(request: Request) -> str:
+    """Bearer SOLO del header ``Authorization`` ("" si no hay).
+
+    Es la única fuente aceptada para el **service token** M2M: un secreto de
+    larga vida NUNCA debe viajar por query string (queda en access logs /
+    proxies / referrer). El JWT de Cognito del SSE sí puede venir por query
+    (`_extract_token`), porque es de corta vida y el `EventSource` no puede
+    mandar headers.
+    """
+    authz = request.headers.get("Authorization", "")
+    scheme, _, header_token = authz.partition(" ")
+    if scheme.lower() == "bearer" and header_token.strip():
+        return header_token.strip()
+    return ""
+
+
 def _extract_token(request: Request) -> str:
     """Bearer del header ``Authorization``, o ``access_token`` de query (para SSE).
 
@@ -80,34 +105,60 @@ def _extract_token(request: Request) -> str:
     stream (``/api/dashboard/events``) manda el access-token por query param. El
     resto de la API usa el header. Header tiene precedencia.
     """
-    authz = request.headers.get("Authorization", "")
-    scheme, _, header_token = authz.partition(" ")
-    if scheme.lower() == "bearer" and header_token.strip():
-        return header_token.strip()
-    return (request.query_params.get("access_token") or "").strip()
+    return _extract_header_token(request) or (
+        request.query_params.get("access_token") or ""
+    ).strip()
 
 
 def require_auth(request: Request) -> None:
-    """Dependency: exige un access-token válido de Cognito (header o query).
+    """Dependency: exige auth válida para las rutas del dashboard.
 
-    No-op si Cognito no está configurado (dev/tests). Sin/invalid token → 401.
+    Orden de resolución:
+
+    1. **Service token** (machine-to-machine: workers → API, ej. el executor
+       de order-sentinel — un worker no tiene request entrante del cual portar
+       identidad, castkit no aplica). Si está CONFIGURADO y el bearer matchea
+       (tiempo constante), pasa — independiente de Cognito.
+    2. **Cognito no configurado**:
+         - en producción → **FAIL-CLOSED** con ``503`` (SEC-01): faltar
+           ``COGNITO_*`` NO degrada a no-op; la API rehúsa servir en vez de
+           exponer PII sin auth (incidente "API SIN auth").
+         - en dev/tests → no-op (local sin Cognito sigue andando).
+    3. **Cognito configurado** → exige y valida el access-token (header o
+       query). Sin/invalid token → ``401``.
     """
-    if not _cognito_configured():
+    import secrets
+
+    # 1. Service token interno — SOLO por header (nunca query: es un secreto de
+    #    larga vida que no debe quedar en logs/URLs). El placeholder de Terraform
+    #    NO cuenta como token (bearer adivinable = bypass). Env vacío tampoco.
+    header_token = _extract_header_token(request)
+    service_token = config.HUBARA_SERVICE_TOKEN
+    if (
+        not config.is_placeholder(service_token)
+        and header_token
+        and secrets.compare_digest(header_token, service_token)
+    ):
         return
+
+    # 2. Cognito no configurado → fail-closed en prod, no-op en dev/tests.
+    if not _cognito_configured():
+        if config.is_production():
+            logger.error(
+                "auth_misconfigured_in_prod",
+                reason="COGNITO_* ausente/placeholder en producción — 503 fail-closed",
+                path=request.url.path,
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="Auth no configurada: COGNITO_* ausente en producción",
+            )
+        return
+
+    # 3. Cognito configurado → validar el access-token (header o query para SSE).
     token = _extract_token(request)
     if not token:
         raise HTTPException(status_code=401, detail="Falta el bearer token")
-    # Service token interno (machine-to-machine: workers → API, ej. el
-    # executor de order-sentinel — un worker no tiene request entrante del
-    # cual portar identidad, castkit no aplica). Solo si está CONFIGURADO
-    # (env vacío = camino Cognito intacto, fail-closed) y en tiempo
-    # constante. Un service token errado cae al camino Cognito normal.
-    import secrets
-
-    if config.HUBARA_SERVICE_TOKEN and secrets.compare_digest(
-        token, config.HUBARA_SERVICE_TOKEN
-    ):
-        return
     try:
         _verify_token(token)
     except HTTPException:

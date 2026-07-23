@@ -171,6 +171,40 @@ python3 aws_bootstrap.py secrets --tenant hubara --file secrets.hubara.env
 > creó con defaults en `/hubara/<tenant>/scheduler/`. Cambiarlos = `put-parameter
 > --overwrite` (ver §Operar).
 
+### FASE 2.1 — Auth fail-closed (SEC-01 / SEC-02) — provisioná ANTES de deployar
+
+Prod corre en **modo fail-closed** (`HUBARA_ENV=production`, lo pone el
+`render-env-from-ssm.sh`): faltar la config de auth hace que la API **rehúse**
+servir en vez de degradar a no-op. Es el candado contra el incidente "API SIN
+auth". Consecuencia: si estos parámetros no están, **la API da 503 y el webhook
+403** — el sistema queda cerrado, no abierto. Por eso el ORDEN importa:
+
+1. **`terraform apply` de `platform`** — crea automáticamente, con el valor REAL
+   del pool, los ids de Cognito (NO-secretos, type `String`):
+   `/hubara/<tenant>/COGNITO_USER_POOL_ID` y `COGNITO_APP_CLIENT_ID`. Sin acción
+   manual. (También crea los placeholders de los 2 secretos de abajo.)
+
+2. **Seteá los 2 secretos reales** (out-of-band, no van a git ni al state):
+   ```bash
+   # App Secret de Meta: Meta App Dashboard → Settings → Basic → App Secret.
+   aws ssm put-parameter --overwrite --type SecureString \
+     --name /hubara/<tenant>/WHATSAPP_APP_SECRET --value '<app-secret-real>'
+   # Bearer de servicio M2M (workers → API). Generalo:
+   aws ssm put-parameter --overwrite --type SecureString \
+     --name /hubara/<tenant>/HUBARA_SERVICE_TOKEN --value "$(openssl rand -hex 32)"
+   ```
+
+3. **Recién ahí, `backend-deploy`** (rinde el `.env` con `HUBARA_ENV=production`
+   + barre los 4 parámetros de SSM). Si deployás con esto armado pero sin los
+   secretos seteados, la recepción de WhatsApp se corta (webhook 403) hasta que
+   los pongas — es a propósito.
+
+**Verificás (debe dar 401, NO 200):**
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" https://<api-host>/api/dashboard/sessions
+# 401 = auth enforced ✓   ·   200 sin token = TODAVÍA abierto ✗ (revisá COGNITO_* en SSM)
+```
+
 ---
 
 ## FASE 3 — Aplicar la infra desde GitHub

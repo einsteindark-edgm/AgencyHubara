@@ -65,6 +65,14 @@ variable "secret_keys" {
     "WHATSAPP_PHONE_NUMBER_ID",
     "WHATSAPP_ACCESS_TOKEN",
     "WHATSAPP_VERIFY_TOKEN",
+    # App Secret de Meta para verificar el HMAC X-Hub-Signature-256 del webhook.
+    # Sin valor real, el webhook RECHAZA en prod (fail-closed) — SEC-02. El
+    # operador setea el valor con `aws ssm put-parameter --overwrite`.
+    "WHATSAPP_APP_SECRET",
+    # Bearer de SERVICIO M2M (workers → API). Necesario cuando la auth de
+    # Cognito está enforced, sino los workers (ej. order-sentinel) caen 401.
+    # Generar con `openssl rand -hex 32` y setear out-of-band.
+    "HUBARA_SERVICE_TOKEN",
     "MEDUSA_BASE_URL",
     "MEDUSA_ADMIN_TOKEN",
     "META_CATALOG_ID",

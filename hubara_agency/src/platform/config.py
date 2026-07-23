@@ -5,6 +5,40 @@ from dotenv import load_dotenv
 # Carga variables de entorno, por ejemplo desde un archivo .env si usas local
 load_dotenv()
 
+# Entorno de ejecución. `production`/`prod` activa el modo FAIL-CLOSED de
+# seguridad: faltar la config de auth (Cognito) o del webhook
+# (`WHATSAPP_APP_SECRET`) hace que la API REHÚSE servir (503/403) en vez de
+# degradar a no-op. Es el candado contra el incidente "API SIN auth"
+# (deployment_live_aws / SECURITY_AUDIT_fable SEC-01/SEC-02): un deploy que
+# olvide provisionar el secreto falla ruidoso, no abre la puerta en silencio.
+# Default `dev`: local y tests siguen siendo no-op sin config. Prod lo setea
+# en `infra/compose/render-env-from-ssm.sh` (bloque estático no-secreto).
+HUBARA_ENV = os.getenv("HUBARA_ENV", "dev")
+
+
+def is_production() -> bool:
+    """True si corremos en producción → modo fail-closed de seguridad.
+
+    Lee el global del módulo en cada llamada (no lo cachea) para que los tests
+    puedan `monkeypatch.setattr(config, "HUBARA_ENV", ...)` y para permitir
+    override sin reimportar.
+    """
+    return HUBARA_ENV.strip().lower() in {"production", "prod"}
+
+
+# Valor que Terraform escribe en cada SSM SecureString hasta que el operador
+# setea el real (`infra/terraform/platform/modules/secrets/main.tf`). Es un
+# string CONOCIDO en el repo → NUNCA es una credencial válida. Tratarlo como
+# AUSENTE evita dos agujeros: (a) un `HUBARA_SERVICE_TOKEN` placeholder sería un
+# bearer adivinable = bypass de Cognito; (b) verificar el HMAC del webhook
+# contra un `WHATSAPP_APP_SECRET` placeholder. Ver SECURITY_AUDIT_fable §premortem.
+SSM_PLACEHOLDER = "PLACEHOLDER_set_out_of_band"
+
+
+def is_placeholder(value: str | None) -> bool:
+    """True si `value` es el placeholder de SSM (o vacío) → NO es config real."""
+    return not value or value.strip() == SSM_PLACEHOLDER
+
 # Temporal Cluster
 TEMPORAL_URL = os.getenv("TEMPORAL_URL", "localhost:7233")
 TEMPORAL_NAMESPACE = os.getenv("TEMPORAL_NAMESPACE", "default")
