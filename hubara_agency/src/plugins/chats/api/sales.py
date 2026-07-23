@@ -9,6 +9,7 @@ preservar el import path que usa `src/main.py`. Mover a
 """
 from __future__ import annotations
 
+import hmac
 import json
 
 import structlog
@@ -44,7 +45,15 @@ async def verify_webhook(request: Request):
     token = request.query_params.get("hub.verify_token")
     challenge = request.query_params.get("hub.challenge")
 
-    if mode == "subscribe" and token == cfg.WHATSAPP_VERIFY_TOKEN:
+    # SEC-15: comparación en tiempo constante + guarda de vacío (un verify token
+    # vacío nunca matchea → `"" == ""` no bypasea).
+    verify_token = cfg.WHATSAPP_VERIFY_TOKEN
+    if (
+        mode == "subscribe"
+        and token
+        and verify_token
+        and hmac.compare_digest(token, verify_token)
+    ):
         logger.info("WhatsApp Webhook Verified")
         return int(challenge)
     raise HTTPException(status_code=403, detail="Forbidden")

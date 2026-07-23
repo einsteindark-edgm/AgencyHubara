@@ -74,6 +74,41 @@ def test_placeholder_app_secret_treated_as_unconfigured_in_dev(
     assert resp.status_code != 403
 
 
+def test_get_verify_empty_token_does_not_bypass(main_app, monkeypatch) -> None:
+    """SEC-15: el GET de suscripción compara `hub.verify_token`. Con `==`, un
+    verify token vacío + `hub.verify_token=""` pasaba (`"" == ""`). Debe rechazar.
+    """
+    from src.platform import config
+
+    monkeypatch.setattr(config, "WHATSAPP_VERIFY_TOKEN", "")
+    client = TestClient(main_app)
+    resp = client.get(
+        "/api/webhook",
+        params={"hub.mode": "subscribe", "hub.verify_token": "", "hub.challenge": "123"},
+    )
+    assert resp.status_code == 403
+
+
+def test_get_verify_returns_challenge_on_correct_token(
+    main_app, monkeypatch
+) -> None:
+    """Token correcto → devuelve el challenge (comportamiento preservado)."""
+    from src.platform import config
+
+    monkeypatch.setattr(config, "WHATSAPP_VERIFY_TOKEN", "el-verify-token")
+    client = TestClient(main_app)
+    resp = client.get(
+        "/api/webhook",
+        params={
+            "hub.mode": "subscribe",
+            "hub.verify_token": "el-verify-token",
+            "hub.challenge": "424242",
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json() == 424242
+
+
 def test_webhook_rejects_bad_signature_when_secret_present(
     main_app, monkeypatch
 ) -> None:
