@@ -39,6 +39,21 @@ def is_placeholder(value: str | None) -> bool:
     """True si `value` es el placeholder de SSM (o vacío) → NO es config real."""
     return not value or value.strip() == SSM_PLACEHOLDER
 
+
+# CORS: orígenes permitidos para la API (CSV). Default "*" (dev). En prod el
+# render script lo setea al origen del dashboard (CloudFront) — con auth por
+# Bearer no hace falta `allow_credentials`, pero restringir el origen corta el
+# drive-by cross-site desde cualquier web (SEC-14).
+CORS_ALLOWED_ORIGINS = os.getenv("CORS_ALLOWED_ORIGINS", "*")
+
+
+def cors_allowed_origins() -> list[str]:
+    """Lista de orígenes CORS. "*"/vacío → ["*"]; sino split por coma (trim)."""
+    raw = CORS_ALLOWED_ORIGINS.strip()
+    if raw == "*" or not raw:
+        return ["*"]
+    return [o.strip() for o in raw.split(",") if o.strip()]
+
 # Temporal Cluster
 TEMPORAL_URL = os.getenv("TEMPORAL_URL", "localhost:7233")
 TEMPORAL_NAMESPACE = os.getenv("TEMPORAL_NAMESPACE", "default")

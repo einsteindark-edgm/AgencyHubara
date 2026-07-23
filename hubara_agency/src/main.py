@@ -35,6 +35,7 @@ from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
+from src.platform import config
 from src.platform.auth import require_auth
 from src.platform.observability.otel import init_otel, instrument_fastapi_app
 from src.platform.plugin_loader import validate_enabled
@@ -55,7 +56,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=config.cors_allowed_origins(),
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
