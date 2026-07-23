@@ -54,6 +54,19 @@ def cors_allowed_origins() -> list[str]:
         return ["*"]
     return [o.strip() for o in raw.split(",") if o.strip()]
 
+
+# SEC-13: rate limit por IP (requests/minuto). 0 = DESACTIVADO (default dev/tests
+# — no rompe nada). Prod lo setea en SSM/render a un valor generoso (ej. 300).
+# El webhook de Meta queda exento (ráfagas legítimas + ya protegido por HMAC).
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
+RATE_LIMIT_PER_MINUTE = _int_env("RATE_LIMIT_PER_MINUTE", 0)
+
 # Temporal Cluster
 TEMPORAL_URL = os.getenv("TEMPORAL_URL", "localhost:7233")
 TEMPORAL_NAMESPACE = os.getenv("TEMPORAL_NAMESPACE", "default")

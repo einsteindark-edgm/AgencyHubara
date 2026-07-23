@@ -37,6 +37,10 @@ from loguru import logger
 
 from src.platform import config
 from src.platform.auth import require_auth
+from src.platform.rate_limit import (
+    SlidingWindowRateLimiter,
+    install_rate_limit_middleware,
+)
 from src.platform.observability.otel import init_otel, instrument_fastapi_app
 from src.platform.plugin_loader import validate_enabled
 from src.platform.plugin_manifest import enabled_plugins
@@ -60,6 +64,15 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+
+# SEC-13: rate limit por IP (defensa en profundidad contra flooding). Opt-in vía
+# RATE_LIMIT_PER_MINUTE (0 = off). El webhook de Meta queda exento (ráfagas
+# legítimas + HMAC). In-memory por proceso — ver src/platform/rate_limit.py.
+install_rate_limit_middleware(
+    app,
+    SlidingWindowRateLimiter(config.RATE_LIMIT_PER_MINUTE, 60),
+    is_exempt=lambda path: path.endswith("/webhook"),
 )
 
 # Cada request HTTP (webhook WhatsApp, endpoints del dashboard) genera un span
