@@ -11,6 +11,10 @@ variable "key_name" {
   default = null
 }
 variable "ssh_ingress_cidrs" { type = list(string) }
+variable "admin_ui_ingress_cidrs" {
+  type    = list(string)
+  default = []
+}
 variable "app_security_group_ids" { type = list(string) }
 variable "use_local" {
   description = "true en robotocore: saltea el attach de la managed policy de AWS."
@@ -42,13 +46,18 @@ resource "aws_security_group" "signoz" {
     protocol        = "tcp"
     security_groups = var.app_security_group_ids
   }
-  # UI de SigNoz: NO pública. Solo admin CIDR (o túnel SSM/SSH).
-  ingress {
-    description = "SigNoz UI (restringir / tunelizar)"
-    from_port   = 8080
-    to_port     = 8080
-    protocol    = "tcp"
-    cidr_blocks = var.ssh_ingress_cidrs
+  # UI de SigNoz: NO pública. Default cerrado (admin_ui_ingress_cidrs=[]) → NO se
+  # crea la regla (solo túnel SSM/SSH). SEC-04: no cuelga más de ssh_ingress_cidrs
+  # (amplio por CI). El dynamic evita una regla con cidr vacío (inválida en AWS).
+  dynamic "ingress" {
+    for_each = length(var.admin_ui_ingress_cidrs) > 0 ? [1] : []
+    content {
+      description = "SigNoz UI (restringir / tunelizar)"
+      from_port   = 8080
+      to_port     = 8080
+      protocol    = "tcp"
+      cidr_blocks = var.admin_ui_ingress_cidrs
+    }
   }
   ingress {
     description = "SSH (deploy SigNoz + ops)"
