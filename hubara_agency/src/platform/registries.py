@@ -29,17 +29,25 @@ def build_default_llm_config() -> LLMConfig:
     en litellm_config.yaml): priorizamos LATENCIA y costo manteniendo la
     calidad conversacional.
 
-    - reasoning_effort="high": si el modelo expone thinking, litellm 1.82.6
-      colapsa cualquier valor graduado a `thinking:{"type":"enabled"}`
-      (DeepSeekChatConfig.map_openai_params). Flash es un modelo rápido — si
-      NO expone thinking, litellm dropea el param (`drop_params: True`), así
-      que dejarlo acá es inocuo. El round-trip de `reasoning_content` (que
-      algunos modelos DeepSeek exigen en multi-turn) lo maneja exoclaw via
-      LLMResponseData.to_assistant_message().
+    - SIN reasoning_effort (2026-08-05): el thinking se apaga en el PROXY, no
+      acá. Este parámetro no puede lograrlo — `DeepSeekChatConfig` sólo sabe
+      emitir `thinking:{"type":"enabled"}` y descarta cualquier otro valor, y
+      omitirlo tampoco alcanza porque el default del servidor es RAZONAR. El
+      interruptor real es `extra_body.thinking.type: disabled` en el alias
+      `deepseek-v4-flash` de `exoclaw-temporal/litellm_config.yaml`, que además
+      GANA sobre cualquier reasoning_effort que mande un caller. Motivo del
+      apagado y evidencia: comentario del alias en ese archivo. Guard:
+      `tests/platform/test_llm_thinking_disabled.py`.
+      Para volver a razonar NO se toca este archivo:
+      `DEFAULT_LLM_MODEL=deepseek/deepseek-v4-flash-thinking`.
+      (El round-trip de `reasoning_content` que DeepSeek exige en multi-turn con
+      tools lo sigue manejando exoclaw via LLMResponseData.to_assistant_message()
+      — con thinking apagado simplemente viene vacío.)
     - max_tokens=32768: es un CAP del output, no un target — el texto final a
       WhatsApp lo gobierna el prompt, no este valor.
-    - temperature=0.1: respuestas estables; el fallback `gemini-backup` la
-      respeta.
+    - temperature=0.1: respuestas estables. Con thinking encendido DeepSeek
+      IGNORABA este valor; apagado vuelve a respetarse (era otra razón para
+      apagarlo). El fallback `gemini-backup` siempre lo respetó.
     """
     return LLMConfig(
         model=DEFAULT_LLM_MODEL,
@@ -47,7 +55,6 @@ def build_default_llm_config() -> LLMConfig:
         api_base=API_BASE_LLMLITE,
         temperature=0.1,
         max_tokens=32768,
-        reasoning_effort="high",
         max_iterations=10 # Cap the iterations for general tasks
     )
 
