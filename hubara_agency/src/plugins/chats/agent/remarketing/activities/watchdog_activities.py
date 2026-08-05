@@ -50,15 +50,10 @@ from src.plugins.chats.agent.remarketing.watchdog_contracts import (
 # Quiet hours (HU-WA24H-001 pre-mortem F4.1)
 # =============================================================================
 
-#: Hora de inicio del horario permitido (hora local del cliente, 24h format).
-#: Override via WATCHDOG_QUIET_HOURS_START env var.
-_DEFAULT_QUIET_HOURS_START: int = 8
-
-#: Hora de fin del horario permitido (exclusive).
-#: Override via WATCHDOG_QUIET_HOURS_END env var.
-#: NOTA WS-B2: la fuente única vive en `src/platform/whatsapp/quiet_hours.py`
-#: (la comparte el gate del remarketing). Estos wrappers delegan allá.
-_DEFAULT_QUIET_HOURS_END: int = 22
+#: NOTA WS-B2: la política (defaults 08:00-21:30, override via
+#: WATCHDOG_QUIET_HOURS_START/END, formato `HH` o `HH:MM`) vive ÚNICA en
+#: `src/platform/whatsapp/quiet_hours.py` — la comparte el gate del
+#: remarketing. Los wrappers de abajo delegan allá.
 
 #: Mapping country code (sin +) → IANA timezone. Cubre los mercados objetivo
 #: de AgencyHubara (LATAM core). Extensible: agregar entries cuando se

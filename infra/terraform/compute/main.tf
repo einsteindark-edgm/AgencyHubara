@@ -76,4 +76,12 @@ module "graphagents" {
   app_security_group_ids = [for m in module.app : m.security_group_id]
   image_repo             = var.graphagents.image_repo
   use_local              = local.use_local
+  # 10 min de idle (no el default 20): el ciclo de reengagement despierta la
+  # caja cada 45 min y el agente trabaja segundos-minutos — la cola idle era
+  # ~80% del costo (ahorro 2026-08-04). OJO: esto viaja por user_data →
+  # cloud-init SOLO corre en el primer boot: la caja VIVA se ajusta editando
+  # IDLE_MIN en /opt/graphagents/autostop.sh vía SSM (ya hecho). El próximo
+  # apply querrá sincronizar user_data (stop/start in-place, NO replacement)
+  # — hacerlo con la caja apagada.
+  autostop_idle_minutes = 10
 }
