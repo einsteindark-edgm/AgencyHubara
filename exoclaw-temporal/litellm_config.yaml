@@ -1,11 +1,44 @@
 model_list:
+  # Alias del AGENTE (sales + remarketing) — DEFAULT_LLM_MODEL apunta acá.
+  #
+  # THINKING APAGADO A PROPÓSITO (2026-08-05). Para un chat de ventas con
+  # restricciones duras (no vosear, no inventar productos fuera del catálogo,
+  # guion por etapa) el razonamiento explícito DEGRADA el seguimiento de
+  # instrucciones: "When Thinking Fails" (NeurIPS 2025) mide que 13 de 14
+  # modelos empeoran en IFEval con CoT porque el razonamiento desvía la
+  # atención de los tokens de la restricción. Los números propios de DeepSeek
+  # dicen lo mismo para nuestro perfil: Non-Think→Think High compra +33 en
+  # LiveCodeBench pero sólo +3.4 en MMLU-Pro. No vendemos código.
+  #
+  # POR QUÉ ACÁ Y NO EN registries.py — medido contra la API real:
+  #   thinking ausente             → DeepSeek razona IGUAL (default del server)
+  #   thinking {"type":"enabled"}  → razona
+  #   thinking {"type":"disabled"} → NO razona (reasoning_tokens=None)
+  # y litellm sólo sabe emitir "enabled": su DeepSeekChatConfig.map_openai_params
+  # tiene una whitelist que descarta cualquier otro valor de thinking /
+  # reasoning_effort. `extra_body` es el ÚNICO canal que llega crudo al upstream
+  # (no pasa por el mapper) — y GANA sobre el reasoning_effort del caller.
+  # Sacar `reasoning_effort` del código SIN esto habría sido un PLACEBO.
+  #
+  # Guard: hubara_agency/tests/platform/test_llm_thinking_disabled.py asierta el
+  # BODY que sale (no el YAML) montando este model_list en un litellm.Router.
   - model_name: deepseek-v4-flash
     litellm_params:
       model: deepseek/deepseek-v4-flash
       api_key: "os.environ/DEEPSEEK_API_KEY"
-      override_raw_request_params:
+      extra_body:
+        thinking:
+          type: disabled
+
+  # Mismo modelo CON thinking (el default del servidor, sin extra_body). Existe
+  # para dos cosas: el brazo B del golden eval (`scripts/golden_eval.py` con
+  # DEFAULT_LLM_MODEL=deepseek/deepseek-v4-flash-thinking) y rollback por env
+  # sin tocar el proxy ni redeployar.
+  - model_name: deepseek-v4-flash-thinking
+    litellm_params:
+      model: deepseek/deepseek-v4-flash
       api_key: "os.environ/DEEPSEEK_API_KEY"
-    
+
   - model_name: gemini-backup
     litellm_params:
       model: gemini/gemini-3.1-flash-lite-preview
@@ -38,5 +71,5 @@ router_settings:
   routing_strategy: simple-shuffle
   num_retries: 1
   # El failover se activa aquí: si falla 'deepseek-v4-flash', salta a 'gemini-backup'
-  fallbacks: [{"deepseek-v4-flash": ["gemini-backup"]}]
+  fallbacks: [{"deepseek-v4-flash": ["gemini-backup"]}, {"deepseek-v4-flash-thinking": ["gemini-backup"]}]
   drop_params: True
