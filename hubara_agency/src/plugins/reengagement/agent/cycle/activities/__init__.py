@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 from temporalio import activity
@@ -22,6 +23,7 @@ from src.plugins.reengagement.agent.cycle.composition import get_launcher
 from src.plugins.reengagement.agent.cycle.use_cases import build_snapshot_from_sessions
 from src.sdk.messagingkit import (
     get_current_rate_card,
+    is_quiet_hours_for_session,
     load_reengagement_index,
     reengagement_shortlist,
     update_reengagement_index_entries,
@@ -88,8 +90,14 @@ async def build_reengagement_snapshot_activity() -> dict[str, Any]:
         vault, dict(sessions), now_ms=now_ms
     )
 
+    # Quiet hours (hora LOCAL del cliente): de noche el seed sale vacío y el
+    # ciclo no despierta la caja EC2. El gate re-valida al enviar igual.
+    now_utc = datetime.fromtimestamp(now_ms / 1000, tz=timezone.utc)
     snapshot = build_snapshot_from_sessions(
-        now_ms, sessions, rate_card=get_current_rate_card()
+        now_ms,
+        sessions,
+        rate_card=get_current_rate_card(),
+        quiet_checker=lambda sid: is_quiet_hours_for_session(sid, now_utc),
     )
     snapshot["shortlisted"] = len(sessions)
     snapshot["index_size"] = index_size

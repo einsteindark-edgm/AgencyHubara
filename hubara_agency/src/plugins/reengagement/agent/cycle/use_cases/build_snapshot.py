@@ -5,7 +5,7 @@ activity (`agent/activities/`); acá solo la transformación.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 from src.sdk.messagingkit import decide_reengagement, lead_state_from_metadata
 
@@ -130,6 +130,7 @@ def build_snapshot_from_sessions(
     now_ms: int,
     sessions: list[tuple[str, dict[str, Any]]],
     rate_card: Any = None,
+    quiet_checker: Callable[[str], bool] | None = None,
 ) -> dict[str, Any]:
     """(now_ms, [(session_id, metadata)]) → el seed completo del agente.
 
@@ -147,12 +148,21 @@ def build_snapshot_from_sessions(
     (ventas en plena charla) — no es candidata a reengagement. Sin
     `last_inbound_at_ms` la dormancia no aplica (nunca escribió; decide la
     central).
+
+    Pre-filtro de quiet hours (política 2026-08-04): de noche (hora LOCAL
+    del cliente) el gate suprimiría el envío de todos modos — excluirlos acá
+    hace que el seed nocturno salga vacío y el ciclo NO despierte la caja
+    EC2. `quiet_checker` viene inyectado por la activity (este módulo es
+    puro: sin reloj ni env); None = sin filtro.
     """
     conversations: list[dict[str, Any]] = []
     prefiltered: dict[str, int] = {}
     for session_id, metadata in sessions:
         entry = conversation_entry(session_id, metadata)
         if entry is None:
+            continue
+        if quiet_checker is not None and quiet_checker(session_id):
+            prefiltered["quiet_hours"] = prefiltered.get("quiet_hours", 0) + 1
             continue
         lead = lead_state_from_metadata(metadata)
         last_inbound = metadata.get("last_inbound_at_ms")
