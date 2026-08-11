@@ -52,6 +52,11 @@ output "github_deploy_role_arn" {
 }
 
 output "github_terraform_role_arn" {
-  description = "ARN del rol amplio (terraform plan/apply). Copiar a la GH variable AWS_TERRAFORM_ROLE_ARN."
+  description = "ARN del rol amplio WRITE (solo terraform-apply, environment production). Copiar a la GH variable AWS_TERRAFORM_ROLE_ARN."
   value       = module.github_oidc.terraform_role_arn
+}
+
+output "github_terraform_readonly_role_arn" {
+  description = "ARN del rol READ-ONLY (terraform-plan + deploys). Copiar a la GH variable AWS_TF_READONLY_ROLE_ARN."
+  value       = module.github_oidc.terraform_readonly_role_arn
 }
