@@ -53,11 +53,11 @@ locals {
 }
 
 locals {
-  # subs autorizados a asumir el rol amplio: cada branch + el environment production.
-  tf_subs = concat(
-    [for b in var.github_branches : "repo:${var.github_repo}:ref:refs/heads/${b}"],
-    ["repo:${var.github_repo}:environment:production"],
-  )
+  # SEC-03: el rol WRITE (iam:*, ec2:*, ...) SOLO se asume desde el environment
+  # `production` (con required reviewers). Ya NO desde un push a una branch — un
+  # commit a main o una action comprometida no puede escalar a admin. El plan y
+  # los deploys (que solo hacen `terraform output`) usan el rol READ-ONLY.
+  tf_subs     = ["repo:${var.github_repo}:environment:production"]
   deploy_subs = [for b in var.github_branches : "repo:${var.github_repo}:ref:refs/heads/${b}"]
 }
 
@@ -107,6 +107,63 @@ resource "aws_iam_role_policy" "terraform" {
   name   = "manage-infra"
   role   = aws_iam_role.terraform.id
   policy = data.aws_iam_policy_document.tf_perms.json
+}
+
+# ── Rol READ-ONLY (SEC-03) ──────────────────────────────────────────────────
+# Lo asumen terraform-plan + los deploys (backend/frontend/observability, que
+# solo hacen `terraform output`). Trust: branch refs (push a main) — pero SIN
+# capacidad de escribir/escalar. Reemplaza el uso del rol amplio en esos flujos.
+data "aws_iam_policy_document" "tf_readonly_trust" {
+  statement {
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+    principals {
+      type        = "Federated"
+      identifiers = [local.oidc_provider_arn]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+    condition {
+      test     = "StringLike"
+      variable = "token.actions.githubusercontent.com:sub"
+      values   = local.deploy_subs
+    }
+  }
+}
+
+resource "aws_iam_role" "terraform_readonly" {
+  name               = "agencyhubara-gha-terraform-readonly"
+  assume_role_policy = data.aws_iam_policy_document.tf_readonly_trust.json
+}
+
+# Read comprensivo (refresca cualquier recurso en el plan) vía la policy managed
+# de AWS — cubre Describe/Get/List de todos los servicios que la infra toca.
+resource "aws_iam_role_policy_attachment" "readonly_managed" {
+  role       = aws_iam_role.terraform_readonly.name
+  policy_arn = "arn:aws:iam::aws:policy/ReadOnlyAccess"
+}
+
+# Lo que ReadOnlyAccess NO da y terraform necesita: el lock de DynamoDB
+# (init/plan acquieren lock) + kms:Decrypt (refrescar los SSM SecureString).
+data "aws_iam_policy_document" "tf_readonly_extra" {
+  statement {
+    sid       = "StateLock"
+    actions   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:DeleteItem"]
+    resources = ["*"]
+  }
+  statement {
+    sid       = "DecryptSecureStrings"
+    actions   = ["kms:Decrypt"]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "terraform_readonly" {
+  name   = "readonly-extra"
+  role   = aws_iam_role.terraform_readonly.id
+  policy = data.aws_iam_policy_document.tf_readonly_extra.json
 }
 
 # ── Rol de deploy (angosto) ─────────────────────────────────────────────────
@@ -184,4 +241,5 @@ resource "aws_iam_role_policy" "deploy" {
 
 output "deploy_role_arn" { value = aws_iam_role.deploy.arn }
 output "terraform_role_arn" { value = aws_iam_role.terraform.arn }
+output "terraform_readonly_role_arn" { value = aws_iam_role.terraform_readonly.arn }
 output "oidc_provider_arn" { value = local.oidc_provider_arn }
