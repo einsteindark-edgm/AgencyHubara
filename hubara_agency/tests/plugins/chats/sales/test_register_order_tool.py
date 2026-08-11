@@ -193,6 +193,49 @@ async def test_register_order_persists_to_metadata(ctx, vault):
 
 
 @pytest.mark.asyncio
+async def test_register_order_rejects_inconsistent_total(ctx, vault):
+    """SEC-07: un total inventado (que no cuadra con subtotal+envío) NO crea el
+    draft order — el port ni se llama; se le pide al LLM recalcular."""
+    fake = FakeOrderRegistrationPort()
+    tool = RegisterOrderTool(workspace=str(vault), vault_dir=vault, port=fake)
+    result = json.loads(
+        await tool.execute_with_context(
+            ctx,
+            items=_SAMPLE_ITEMS,  # 1 × 17000 → subtotal 17000
+            shipping=_SAMPLE_SHIPPING,
+            payment_method="transfer",
+            subtotal_cop=17000,
+            shipping_cop=0,
+            total_cop=1000,  # ← inventado, no cuadra
+        )
+    )
+    assert result["registered"] is False
+    assert result["error_detail"] == "amount_mismatch"
+    assert fake.calls == []  # el port NO fue invocado → sin draft order
+
+
+@pytest.mark.asyncio
+async def test_register_order_rejects_subtotal_not_matching_items(ctx, vault):
+    """El subtotal debe cuadrar con la suma de los line items (unit × qty)."""
+    fake = FakeOrderRegistrationPort()
+    tool = RegisterOrderTool(workspace=str(vault), vault_dir=vault, port=fake)
+    result = json.loads(
+        await tool.execute_with_context(
+            ctx,
+            items=_SAMPLE_ITEMS,  # suma 17000
+            shipping=_SAMPLE_SHIPPING,
+            payment_method="transfer",
+            subtotal_cop=5000,  # ← no es 1 × 17000
+            shipping_cop=0,
+            total_cop=5000,
+        )
+    )
+    assert result["registered"] is False
+    assert result["error_detail"] == "amount_mismatch"
+    assert fake.calls == []
+
+
+@pytest.mark.asyncio
 async def test_register_order_attaches_order_id_to_active_episode(ctx, vault):
     """FU4 wiring: cuando register_order tiene success=True, anota el
     order_id en `episodes[-1].order_id` (sin cerrar el episodio — eso lo

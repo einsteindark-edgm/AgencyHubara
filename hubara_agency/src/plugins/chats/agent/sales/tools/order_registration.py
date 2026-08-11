@@ -223,6 +223,45 @@ class RegisterOrderTool(ToolBase):
             phone=str(shipping["phone"]),
         )
 
+        # SEC-07: consistencia de montos server-side. El LLM manda los precios;
+        # recomputamos el subtotal desde los line items para que un total
+        # inventado (o manipulado por el cliente vía prompt injection) NO cree un
+        # draft order. NO depende del catálogo — coupon-ready: cuando lleguen
+        # cupones, `discount_cop` deja de ser 0. NOTA: esto caza el total
+        # desconectado de los ítems, NO un unit_price bajado proporcionalmente
+        # (eso requiere comparar contra catálogo); el gate humano de pago sigue
+        # siendo el control primario de integridad de precio.
+        computed_subtotal = sum(it.unit_price_cop * it.quantity for it in order_items)
+        discount_cop = 0  # placeholder coupon-ready (hoy sin descuentos)
+        expected_total = computed_subtotal + shipping_cop - discount_cop
+        if subtotal_cop != computed_subtotal or total_cop != expected_total:
+            logger.warning(
+                "🧾 [TOOL register_order] AMOUNT_MISMATCH session={} "
+                "subtotal_recibido={} subtotal_computado={} total_recibido={} total_esperado={}",
+                ctx.session_key,
+                subtotal_cop,
+                computed_subtotal,
+                total_cop,
+                expected_total,
+            )
+            return json.dumps(
+                {
+                    "registered": False,
+                    "order_id": None,
+                    "error_detail": "amount_mismatch",
+                    "summary": (
+                        "Los montos NO cuadran con los ítems del pedido: "
+                        f"subtotal esperado={computed_subtotal} (recibido {subtotal_cop}), "
+                        f"total esperado={expected_total} (recibido {total_cop}). "
+                        "Recalcula el pedido con los precios REALES del catálogo "
+                        "(subtotal = suma de unit_price×cantidad; total = subtotal "
+                        "+ envío) y llama de nuevo `register_order` con los montos "
+                        "correctos. No inventes precios ni totales."
+                    ),
+                },
+                ensure_ascii=False,
+            )
+
         # Delegar al port (Medusa adapter o stub). La atribución CTWA viaja a
         # la metadata de la orden Medusa — es el join venta↔campaña del
         # dashboard (2026-07-09; sin esto Medusa no sabe de qué ad vino la venta).
