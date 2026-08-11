@@ -95,6 +95,9 @@ data "aws_iam_policy_document" "tf_perms" {
     actions = [
       "s3:*", "cloudfront:*", "cognito-idp:*", "ssm:*",
       "iam:*", "ec2:*", "acm:*", "dynamodb:*", "logs:*",
+      # dlm: la política de backup del vault (compute/backup.tf) — sin esto el
+      # apply de compute falla al leer/gestionar el DLM Lifecycle Policy.
+      "dlm:*",
     ]
     resources = ["*"]
   }

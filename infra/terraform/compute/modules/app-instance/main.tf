@@ -203,8 +203,14 @@ resource "aws_instance" "app" {
   # un apply rutinario REEMPLAZARA la caja — y el vault (root EBS) se destruyó
   # con ella. Cinturón además del pin en tfvars: aunque el AMI resuelto cambie,
   # Terraform NO propone replacement. Upgrade de AMI = `-replace` explícito.
+  #
+  # `user_data`: la caja es de larga vida y se patchea por SSM (autostop, quiet
+  # hours, etc.), NO re-lanzándola. user_data solo corre al launch, así que un
+  # cambio del template en una caja viva es ruido — y modificarlo requeriría
+  # PARARLA (AWS IncorrectInstanceState). Lo ignoramos: un box nuevo (replacement
+  # explícito) igual toma el template vigente.
   lifecycle {
-    ignore_changes = [ami]
+    ignore_changes = [ami, user_data]
   }
 
   # Volume tags: el DLM (backup.tf del root) snapshotea diario por este tag —
