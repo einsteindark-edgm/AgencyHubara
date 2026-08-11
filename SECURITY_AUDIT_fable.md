@@ -33,10 +33,10 @@ Todo lo demás es secundario a esos dos. **Lo bueno:** no hay secretos hardcodea
 | SEC-06 | 🟠 | ✅ Resuelto — ticket SSE firmado (backend + frontend) | `acda8cb` |
 | SEC-13 | 🟢 | ✅ Resuelto — rate limiting opt-in (sin dependencias) | `82c13e1` |
 | SEC-10 | 🟡 | ⚠️ Parcial — security headers/CSP en CloudFront; refresh token→Keystore pendiente (Android) | `d29223a` |
-| SEC-03 | 🟠 | ⏳ Pendiente — split de rol OIDC + mover deploys al rol angosto (riesgo: rompe CI, no testeable acá) | — |
-| SEC-07 | 🟡 | ⏳ Pendiente — re-check de precios vs catálogo (riesgo de false-reject; definir descuentos) | — |
-| SEC-09 | 🟡 | ⏳ Pendiente — vault a EBS dedicado + prevent_destroy (migración de datos, riesgo) | — |
-| SEC-11 | 🟡 | ⏳ Pendiente — authZ / ownership de objetos (modelo de roles) | — |
+| SEC-07 | 🟡 | ✅ Resuelto (consistencia interna, coupon-ready; comparación vs catálogo diferida) | `4102760` |
+| SEC-11 | 🟡 | ✅ Base — grupos Cognito `admin`/`operarios` (mismos permisos por ahora; split de rutas después) | `66e1f04` |
+| SEC-03 | 🟠 | ⏳ Diferido — split de rol OIDC + mover deploys al rol angosto (riesgo: rompe CI, no testeable acá; deploy coordinado) | — |
+| SEC-09 | 🟡 | ⏳ Diferido — vault a EBS dedicado + prevent_destroy (migración de datos, riesgo; hoy hay backup DLM diario) | — |
 
 ## Tabla de hallazgos
 
