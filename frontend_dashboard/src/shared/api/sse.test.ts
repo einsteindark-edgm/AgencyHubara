@@ -13,7 +13,8 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { setAccessToken } from "../config/auth-token";
+import { getAccessToken, setAccessToken } from "../config/auth-token";
+import { apiClient } from "./client";
 import { subscribeSse } from "./sse";
 
 class FakeEventSource {
@@ -34,21 +35,7 @@ class FakeEventSource {
   }
 }
 
-// El mint devuelve un ticket que ENCODEA el token usado, así el `?ticket=` de la
-// URL prueba con qué credencial se reconectó (sin exponer el token real).
-function fakeFetch() {
-  return vi.fn(async (_url: string, opts?: RequestInit) => {
-    const auth = (opts?.headers as Record<string, string> | undefined)
-      ?.Authorization;
-    const token = auth ? auth.replace("Bearer ", "") : "sin-token";
-    return {
-      ok: true,
-      json: async () => ({ ticket: `tkt-${token}` }),
-    } as Response;
-  });
-}
-
-// Vacía la cola de microtasks (fetch + json del mint) bajo fake timers.
+// Vacía la cola de microtasks (el `await apiClient.post` del mint) bajo fake timers.
 async function flush(): Promise<void> {
   for (let i = 0; i < 6; i++) await Promise.resolve();
 }
@@ -57,11 +44,18 @@ beforeEach(() => {
   vi.useFakeTimers();
   FakeEventSource.instances = [];
   vi.stubGlobal("EventSource", FakeEventSource);
-  vi.stubGlobal("fetch", fakeFetch());
+  // El mint va por apiClient.post; lo mockeamos para devolver un ticket que
+  // ENCODEA el token VIGENTE del store — así el `?ticket=` de la URL prueba con
+  // qué credencial se reconectó (sin exponer el token real).
+  vi.spyOn(apiClient, "post").mockImplementation(async () => {
+    const token = getAccessToken() ?? "sin-token";
+    return { ticket: `tkt-${token}` } as never;
+  });
 });
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   vi.useRealTimers();
   setAccessToken(null);
 });

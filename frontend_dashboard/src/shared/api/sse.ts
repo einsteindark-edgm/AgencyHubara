@@ -24,8 +24,8 @@
  *     `useSessionsStream` en chats/entities/session/api.ts.
  */
 
-import { getAccessToken } from "../config/auth-token";
 import { env } from "../config/env";
+import { apiClient } from "./client";
 
 export interface SseSubscription {
   close: () => void;
@@ -56,16 +56,17 @@ export function subscribeSse<T>(
   // Devuelve null si no se pudo emitir (sin sesión / backend caído) → el caller
   // decide reintentar con backoff.
   const mintTicket = async (): Promise<string | null> => {
-    const token = getAccessToken();
     try {
-      const res = await fetch(`${env.apiUrl}/api/dashboard/sse-ticket`, {
-        method: "POST",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      if (!res.ok) return null;
-      const data = (await res.json()) as { ticket?: string };
-      return data.ticket ?? null;
+      // apiClient adjunta el Bearer vigente del store solo (R-FETCH: todo el I/O
+      // HTTP vive en el wrapper). Lanza ApiError en non-2xx (y en 401 avisa al
+      // gate de auth para refrescar el token).
+      const { ticket } = await apiClient.post<{ ticket?: string }>(
+        "/api/dashboard/sse-ticket",
+      );
+      return ticket ?? null;
     } catch {
+      // Sin sesión / red / 401: null → el caller reintenta con backoff (el
+      // próximo intento mintea con el token ya refrescado).
       return null;
     }
   };
