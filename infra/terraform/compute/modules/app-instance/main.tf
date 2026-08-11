@@ -211,6 +211,12 @@ resource "aws_instance" "app" {
   # explícito) igual toma el template vigente.
   lifecycle {
     ignore_changes = [ami, user_data]
+    # SEC-09: candado DURO contra el reemplazo accidental de la caja (el vault
+    # vive en su root EBS — incidente 2026-07-08). Terraform SE NIEGA a
+    # destruir/reemplazar esta instancia; un reemplazo intencional (ej. upgrade
+    # de AMI) exige quitar esta línea a mano primero. Complementa el backup DLM
+    # diario. La migración del vault a un EBS dedicado queda como op aparte.
+    prevent_destroy = true
   }
 
   # Volume tags: el DLM (backup.tf del root) snapshotea diario por este tag —
