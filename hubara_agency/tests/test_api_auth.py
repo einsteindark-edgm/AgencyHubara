@@ -92,6 +92,33 @@ def test_dashboard_route_accepts_token_via_query_param(
     assert resp.status_code != 401
 
 
+def test_sse_ticket_endpoint_mints_valid_ticket(
+    enforced: TestClient, monkeypatch
+) -> None:
+    """SEC-06: POST /sse-ticket (autenticado por header) emite un ticket firmado
+    que el stream puede verificar — el frontend lo usa en vez del access-token."""
+    import time
+
+    monkeypatch.setattr(
+        "src.platform.auth._verify_token",
+        lambda _t: {"sub": "u1", "client_id": "test-app-client", "token_use": "access"},
+    )
+    resp = enforced.post(
+        "/api/dashboard/sse-ticket", headers={"Authorization": "Bearer good"}
+    )
+    assert resp.status_code == 200
+    ticket = resp.json()["ticket"]
+
+    from src.platform import auth, sse_ticket
+
+    assert sse_ticket.verify(auth._sse_ticket_secret(), ticket, time.time()) is True
+
+
+def test_sse_ticket_endpoint_requires_auth(enforced: TestClient) -> None:
+    """Sin token válido, no se puede emitir un ticket (401)."""
+    assert enforced.post("/api/dashboard/sse-ticket").status_code == 401
+
+
 def test_meta_webhook_stays_public_even_when_enforced(enforced: TestClient) -> None:
     """El webhook de Meta tiene su propia auth; NO debe exigir JWT de Cognito."""
     resp = enforced.get(
@@ -114,3 +141,82 @@ def test_no_cognito_config_is_noop(main_app) -> None:
     """Sin Cognito configurado → auth no-op (dev local / tests existentes ok)."""
     client = TestClient(main_app)
     assert client.get("/api/dashboard/sessions").status_code != 401
+
+
+@pytest.fixture
+def prod_no_cognito(monkeypatch, main_app) -> TestClient:
+    """Producción SIN Cognito configurado → debe FAIL-CLOSED, no no-op."""
+    from src.platform import config
+
+    monkeypatch.setattr(config, "COGNITO_USER_POOL_ID", "")
+    monkeypatch.setattr(config, "COGNITO_APP_CLIENT_ID", "")
+    monkeypatch.setattr(config, "HUBARA_ENV", "production")
+    return TestClient(main_app)
+
+
+def test_missing_cognito_in_production_fails_closed(
+    prod_no_cognito: TestClient,
+) -> None:
+    """SEC-01: en prod, faltar COGNITO_* NO puede degradar a no-op.
+
+    El incidente (deployment_live_aws: "API SIN auth") fue exactamente esto:
+    la API sirvió PII de clientes sin token porque las vars nunca se
+    provisionaron. En prod, config de auth ausente → la ruta del dashboard
+    REHÚSA servir (503), no abre la puerta.
+    """
+    resp = prod_no_cognito.get("/api/dashboard/sessions")
+    assert resp.status_code == 503
+
+
+def test_placeholder_service_token_does_not_bypass(
+    prod_no_cognito: TestClient, monkeypatch
+) -> None:
+    """El placeholder de Terraform (`PLACEHOLDER_set_out_of_band`, valor CONOCIDO
+    en el repo) NO puede funcionar como service token — sería un bypass total de
+    Cognito con una credencial pública. Debe tratarse como AUSENTE → fail-closed.
+    """
+    from src.platform import config
+
+    monkeypatch.setattr(config, "HUBARA_SERVICE_TOKEN", config.SSM_PLACEHOLDER)
+    resp = prod_no_cognito.get(
+        "/api/dashboard/sessions",
+        headers={"Authorization": f"Bearer {config.SSM_PLACEHOLDER}"},
+    )
+    assert resp.status_code == 503  # fail-closed, NO bypass
+
+
+def test_service_token_via_query_string_is_rejected(
+    prod_no_cognito: TestClient, monkeypatch
+) -> None:
+    """Secreto-en-URL: el service token (credencial M2M de larga vida) NO se
+    acepta por query string — quedaría en access logs / proxies / referrer.
+    Solo por header ``Authorization: Bearer`` (los callers reales —
+    order_sentinel, post_sale_return — usan header). El ``?access_token=`` sigue
+    siendo válido SOLO para el JWT de Cognito del SSE (otro camino).
+    """
+    from src.platform import config
+
+    monkeypatch.setattr(config, "HUBARA_SERVICE_TOKEN", "svc-secret-123")
+    resp = prod_no_cognito.get(
+        "/api/dashboard/sessions", params={"access_token": "svc-secret-123"}
+    )
+    assert resp.status_code == 503  # el query token NO autentica al servicio
+
+
+def test_service_token_still_works_in_production(
+    prod_no_cognito: TestClient, monkeypatch
+) -> None:
+    """El fail-closed NO debe romper el service-token M2M (workers → API).
+
+    Si HUBARA_SERVICE_TOKEN está configurado, un caller con ese bearer pasa
+    aunque Cognito no esté configurado — el worker no porta identidad Cognito.
+    """
+    from src.platform import config
+
+    monkeypatch.setattr(config, "HUBARA_SERVICE_TOKEN", "svc-secret-123")
+    resp = prod_no_cognito.get(
+        "/api/dashboard/sessions",
+        headers={"Authorization": "Bearer svc-secret-123"},
+    )
+    assert resp.status_code != 503
+    assert resp.status_code != 401

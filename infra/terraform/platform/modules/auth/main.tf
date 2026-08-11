@@ -71,6 +71,25 @@ resource "aws_cognito_user_pool_client" "dashboard" {
   prevent_user_existence_errors = "ENABLED"
 }
 
+# SEC-11: grupos de operadores. Cognito agrega el claim `cognito:groups` a los
+# tokens de los usuarios asignados. Por AHORA ambos grupos tienen los MISMOS
+# permisos — la API todavía no diferencia por grupo. El split (ej. solo `admin`
+# confirma pagos) queda para más adelante; tener los grupos ya deja asignar
+# usuarios y prepara el terreno sin cambiar comportamiento.
+resource "aws_cognito_user_group" "admin" {
+  name         = "admin"
+  user_pool_id = aws_cognito_user_pool.this.id
+  description  = "Administradores (permisos = operarios por ahora)"
+  precedence   = 1
+}
+
+resource "aws_cognito_user_group" "operarios" {
+  name         = "operarios"
+  user_pool_id = aws_cognito_user_pool.this.id
+  description  = "Operarios: atención de conversaciones y pedidos"
+  precedence   = 10
+}
+
 # Dominio hosted-UI de Cognito (sin cert custom): <tenant>-hubara.auth.<region>.amazoncognito.com
 resource "aws_cognito_user_pool_domain" "this" {
   domain       = "agencyhubara-${var.tenant}"

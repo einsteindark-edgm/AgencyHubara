@@ -18,6 +18,10 @@ variable "key_name" {
   default = null
 }
 variable "ssh_ingress_cidrs" { type = list(string) }
+variable "admin_ui_ingress_cidrs" {
+  type    = list(string)
+  default = []
+}
 variable "app_security_group_ids" { type = list(string) }
 variable "image_repo" { type = string }
 variable "use_local" {
@@ -54,21 +58,29 @@ resource "aws_security_group" "graphagents" {
     protocol        = "tcp"
     security_groups = var.app_security_group_ids
   }
-  # Explorer visual (:8900): NO público. Solo admin CIDR / túnel.
-  ingress {
-    description = "Explorer visual (restringir / tunelizar)"
-    from_port   = 8900
-    to_port     = 8900
-    protocol    = "tcp"
-    cidr_blocks = var.ssh_ingress_cidrs
+  # Explorer visual (:8900): NO público. Default cerrado (admin_ui_ingress_cidrs=[])
+  # → NO se crea la regla (solo túnel). SEC-04: ya no cuelga de ssh_ingress_cidrs.
+  dynamic "ingress" {
+    for_each = length(var.admin_ui_ingress_cidrs) > 0 ? [1] : []
+    content {
+      description = "Explorer visual (restringir / tunelizar)"
+      from_port   = 8900
+      to_port     = 8900
+      protocol    = "tcp"
+      cidr_blocks = var.admin_ui_ingress_cidrs
+    }
   }
-  # AgentSpan también accesible desde admin (dashboard de Conductor / debugging).
-  ingress {
-    description = "AgentSpan UI/API desde admin"
-    from_port   = 6767
-    to_port     = 6767
-    protocol    = "tcp"
-    cidr_blocks = var.ssh_ingress_cidrs
+  # AgentSpan admin (:6767): NO público. Default cerrado. (El :6767 del puente
+  # fase-B viene de las SGs de app por source_security_group, no de este CIDR.)
+  dynamic "ingress" {
+    for_each = length(var.admin_ui_ingress_cidrs) > 0 ? [1] : []
+    content {
+      description = "AgentSpan UI/API desde admin"
+      from_port   = 6767
+      to_port     = 6767
+      protocol    = "tcp"
+      cidr_blocks = var.admin_ui_ingress_cidrs
+    }
   }
   ingress {
     description = "SSH (deploy + ops)"

@@ -5,6 +5,68 @@ from dotenv import load_dotenv
 # Carga variables de entorno, por ejemplo desde un archivo .env si usas local
 load_dotenv()
 
+# Entorno de ejecución. `production`/`prod` activa el modo FAIL-CLOSED de
+# seguridad: faltar la config de auth (Cognito) o del webhook
+# (`WHATSAPP_APP_SECRET`) hace que la API REHÚSE servir (503/403) en vez de
+# degradar a no-op. Es el candado contra el incidente "API SIN auth"
+# (deployment_live_aws / SECURITY_AUDIT_fable SEC-01/SEC-02): un deploy que
+# olvide provisionar el secreto falla ruidoso, no abre la puerta en silencio.
+# Default `dev`: local y tests siguen siendo no-op sin config. Prod lo setea
+# en `infra/compose/render-env-from-ssm.sh` (bloque estático no-secreto).
+HUBARA_ENV = os.getenv("HUBARA_ENV", "dev")
+
+
+def is_production() -> bool:
+    """True si corremos en producción → modo fail-closed de seguridad.
+
+    Lee el global del módulo en cada llamada (no lo cachea) para que los tests
+    puedan `monkeypatch.setattr(config, "HUBARA_ENV", ...)` y para permitir
+    override sin reimportar.
+    """
+    return HUBARA_ENV.strip().lower() in {"production", "prod"}
+
+
+# Valor que Terraform escribe en cada SSM SecureString hasta que el operador
+# setea el real (`infra/terraform/platform/modules/secrets/main.tf`). Es un
+# string CONOCIDO en el repo → NUNCA es una credencial válida. Tratarlo como
+# AUSENTE evita dos agujeros: (a) un `HUBARA_SERVICE_TOKEN` placeholder sería un
+# bearer adivinable = bypass de Cognito; (b) verificar el HMAC del webhook
+# contra un `WHATSAPP_APP_SECRET` placeholder. Ver SECURITY_AUDIT_fable §premortem.
+SSM_PLACEHOLDER = "PLACEHOLDER_set_out_of_band"
+
+
+def is_placeholder(value: str | None) -> bool:
+    """True si `value` es el placeholder de SSM (o vacío) → NO es config real."""
+    return not value or value.strip() == SSM_PLACEHOLDER
+
+
+# CORS: orígenes permitidos para la API (CSV). Default "*" (dev). En prod el
+# render script lo setea al origen del dashboard (CloudFront) — con auth por
+# Bearer no hace falta `allow_credentials`, pero restringir el origen corta el
+# drive-by cross-site desde cualquier web (SEC-14).
+CORS_ALLOWED_ORIGINS = os.getenv("CORS_ALLOWED_ORIGINS", "*")
+
+
+def cors_allowed_origins() -> list[str]:
+    """Lista de orígenes CORS. "*"/vacío → ["*"]; sino split por coma (trim)."""
+    raw = CORS_ALLOWED_ORIGINS.strip()
+    if raw == "*" or not raw:
+        return ["*"]
+    return [o.strip() for o in raw.split(",") if o.strip()]
+
+
+# SEC-13: rate limit por IP (requests/minuto). 0 = DESACTIVADO (default dev/tests
+# — no rompe nada). Prod lo setea en SSM/render a un valor generoso (ej. 300).
+# El webhook de Meta queda exento (ráfagas legítimas + ya protegido por HMAC).
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
+RATE_LIMIT_PER_MINUTE = _int_env("RATE_LIMIT_PER_MINUTE", 0)
+
 # Temporal Cluster
 TEMPORAL_URL = os.getenv("TEMPORAL_URL", "localhost:7233")
 TEMPORAL_NAMESPACE = os.getenv("TEMPORAL_NAMESPACE", "default")

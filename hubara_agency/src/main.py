@@ -35,7 +35,12 @@ from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
-from src.platform.auth import require_auth
+from src.platform import config
+from src.platform.auth import mint_sse_ticket, require_auth
+from src.platform.rate_limit import (
+    SlidingWindowRateLimiter,
+    install_rate_limit_middleware,
+)
 from src.platform.observability.otel import init_otel, instrument_fastapi_app
 from src.platform.plugin_loader import validate_enabled
 from src.platform.plugin_manifest import enabled_plugins
@@ -55,10 +60,19 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=config.cors_allowed_origins(),
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+
+# SEC-13: rate limit por IP (defensa en profundidad contra flooding). Opt-in vía
+# RATE_LIMIT_PER_MINUTE (0 = off). El webhook de Meta queda exento (ráfagas
+# legítimas + HMAC). In-memory por proceso — ver src/platform/rate_limit.py.
+install_rate_limit_middleware(
+    app,
+    SlidingWindowRateLimiter(config.RATE_LIMIT_PER_MINUTE, 60),
+    is_exempt=lambda path: path.endswith("/webhook"),
 )
 
 # Cada request HTTP (webhook WhatsApp, endpoints del dashboard) genera un span
@@ -148,7 +162,9 @@ def _register_router_from_module(
     # JWT de Cognito (fail-closed — una ruta nueva nace protegida). Un router se
     # declara PÚBLICO marcando ``PUBLIC_ROUTER = True`` a nivel módulo — sólo el
     # webhook de Meta, que trae su propia auth (hub.verify_token + HMAC). La
-    # dependency ``require_auth`` es NO-OP si Cognito no está configurado (dev/tests).
+    # dependency ``require_auth`` es NO-OP si Cognito no está configurado en
+    # dev/tests; en producción (``HUBARA_ENV=production``) es FAIL-CLOSED: falta
+    # de config de auth → 503, nunca acceso abierto (SEC-01).
     public = bool(getattr(mod, "PUBLIC_ROUTER", False))
     target_app.include_router(
         router,
@@ -274,3 +290,11 @@ def health_check() -> dict:
         "temporal_connection": "delegated_to_routes",
         "plugins_loaded": _LOADED_PLUGINS,
     }
+
+
+@app.post("/api/dashboard/sse-ticket", dependencies=[Depends(require_auth)])
+def sse_ticket_endpoint() -> dict:
+    """SEC-06: emite un ticket SSE de corta vida. El caller se autentica por
+    HEADER (require_auth); el ticket devuelto lo usa el `EventSource` de
+    `/api/dashboard/events` por query — así el access-token nunca va en la URL."""
+    return {"ticket": mint_sse_ticket()}

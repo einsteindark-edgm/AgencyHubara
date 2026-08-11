@@ -22,9 +22,15 @@ variable "ssh_public_key" {
 }
 
 variable "ssh_ingress_cidrs" {
-  description = "CIDRs que pueden entrar por SSH (22) y a la UI de SigNoz (8080). RESTRINGIR a tu IP. 0.0.0.0/0 confía solo en la auth por key — preferí SSM Session Manager."
+  description = "CIDRs que pueden entrar por SSH (22). Los deploys por CI (appleboy/ssh-action) entran desde runners de GitHub con IPs dinámicas, por eso el default es amplio — la auth es por key. Migrar a SSM SendCommand para poder cerrarlo (ver DEPLOY_RUNBOOK)."
   type        = list(string)
   default     = ["0.0.0.0/0"]
+}
+
+variable "admin_ui_ingress_cidrs" {
+  description = "SEC-04: CIDRs que pueden llegar a las UIs admin internas (SigNoz :8080, Explorer :8900, AgentSpan :6767). Default [] = CERRADO (solo túnel SSM/SSH). Poné tu IP/VPN admin para acceso directo. NUNCA 0.0.0.0/0: estas UIs tienen auth débil o nula."
+  type        = list(string)
+  default     = []
 }
 
 variable "image_repo" {

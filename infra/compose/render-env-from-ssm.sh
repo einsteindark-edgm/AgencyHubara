@@ -40,6 +40,30 @@ aws ssm get-parameters-by-path \
   --query "Parameters[].[Name,Value]" --output text \
   | awk -F'\t' '{ n=$1; sub(/.*\//,"",n); print n "=" $2 }' >> "$tmp"
 
+# (a.1) PREFLIGHT fail-closed (SECURITY_AUDIT_fable SEC-01/SEC-02). El bloque (b)
+#   arma HUBARA_ENV=production → faltar los params de auth tumba la API (503) y la
+#   recepción de WhatsApp (403). En vez de rendir un .env que causa ese outage en
+#   SILENCIO, ABORTAMOS acá: `docker compose up` no corre, el contenedor viejo
+#   sigue vivo, y el operador ve qué provisionar. Decoplar del `terraform apply`
+#   (que crea COGNITO_* y es manual) es lo que evita el outage-en-el-merge.
+_ssm_val() { grep -m1 "^$1=" "$tmp" | cut -d= -f2-; }
+_require_real_auth_param() {
+  local key="$1" val; val="$(_ssm_val "$key")"
+  if [ -z "$val" ] || [ "$val" = "PLACEHOLDER_set_out_of_band" ]; then
+    {
+      echo "ABORT deploy: /hubara/${TENANT}/${key} falta o es placeholder en SSM."
+      echo "  HUBARA_ENV=production exige los 4 params de auth provisionados:"
+      echo "  COGNITO_* (via 'terraform apply' de platform) + WHATSAPP_APP_SECRET"
+      echo "  y HUBARA_SERVICE_TOKEN (via 'aws ssm put-parameter --overwrite')."
+      echo "  Detalle y orden: infra/DEPLOY_RUNBOOK.md FASE 2.1."
+    } >&2
+    exit 1
+  fi
+}
+for _k in COGNITO_USER_POOL_ID COGNITO_APP_CLIENT_ID WHATSAPP_APP_SECRET HUBARA_SERVICE_TOKEN; do
+  _require_real_auth_param "$_k"
+done
+
 # (b) Config operacional NO-secreta y ESTÁTICA (paths, endpoints internos). Los
 #     knobs de scheduler (ORDER_RECONCILE_INTERVAL_MINUTES, SALES_EVAL_*, GOLDEN_EVAL_*,
 #     WATCHDOG_*) NO van acá a propósito: vienen de SSM /scheduler/ (a) para poder
@@ -48,6 +72,11 @@ cat >> "$tmp" <<EOF
 HUBARA_IMAGE=${HUBARA_IMAGE}
 CADDY_DOMAIN=${CADDY_DOMAIN}
 ENABLED_PLUGINS=${ENABLED_PLUGINS}
+# FAIL-CLOSED de seguridad (SECURITY_AUDIT_fable SEC-01/SEC-02): en prod, faltar
+# la config de auth (COGNITO_*) o del webhook (WHATSAPP_APP_SECRET) hace que la
+# API rehúse servir (503/403) en vez de degradar a no-op. Provisioná esos
+# parámetros en SSM ANTES de deployar con esto armado (ver DEPLOY_RUNBOOK.md).
+HUBARA_ENV=production
 API_BASE_LLMLITE=http://litellm:4000
 WORKSPACE_VAULT_DIR=/app/hubara_vault
 # Historial LLM en el volumen persistente (incidente 2026-07-17 run 019f6db3:

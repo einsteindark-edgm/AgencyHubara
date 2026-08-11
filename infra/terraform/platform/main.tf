@@ -23,6 +23,30 @@ module "auth" {
   logout_urls   = each.value.logout_urls
 }
 
+# ── Auth ids (NO-secretos) a SSM — el backend los lee para enforcar Cognito ──
+# COGNITO_USER_POOL_ID / COGNITO_APP_CLIENT_ID son ids PÚBLICOS del pool/app
+# client, con el valor REAL del output del módulo `auth`. Van como SSM `String`
+# (no SecureString: no son secretos; el valor lo gobierna Terraform, sin
+# ignore_changes). El `render-env-from-ssm.sh` los barre (get-parameters-by-path
+# recursivo) a /opt/hubara/.env → `require_auth` ve ambos → la API enforca el
+# JWT de Cognito. Sin esto la auth degradaba a NO-OP en prod (la API servía PII
+# sin token) — SECURITY_AUDIT_fable SEC-01.
+resource "aws_ssm_parameter" "cognito_user_pool_id" {
+  for_each = var.tenants
+
+  name  = "/hubara/${each.key}/COGNITO_USER_POOL_ID"
+  type  = "String"
+  value = module.auth[each.key].user_pool_id
+}
+
+resource "aws_ssm_parameter" "cognito_app_client_id" {
+  for_each = var.tenants
+
+  name  = "/hubara/${each.key}/COGNITO_APP_CLIENT_ID"
+  type  = "String"
+  value = module.auth[each.key].app_client_id
+}
+
 # ── Secretos: parámetros SSM SecureString por tenant ────────────────────────
 module "secrets" {
   source   = "./modules/secrets"

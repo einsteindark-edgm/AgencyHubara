@@ -9,12 +9,13 @@ preservar el import path que usa `src/main.py`. Mover a
 """
 from __future__ import annotations
 
+import hmac
 import json
 
 import structlog
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
-from src.platform.config import WHATSAPP_APP_SECRET, WHATSAPP_VERIFY_TOKEN
+import src.platform.config as cfg
 from src.platform.observability.tracing import add_traced_background_task
 from src.platform.whatsapp.webhook_security import verify_meta_signature
 from src.plugins.chats.agent.sales.composition import (
@@ -44,7 +45,15 @@ async def verify_webhook(request: Request):
     token = request.query_params.get("hub.verify_token")
     challenge = request.query_params.get("hub.challenge")
 
-    if mode == "subscribe" and token == WHATSAPP_VERIFY_TOKEN:
+    # SEC-15: comparación en tiempo constante + guarda de vacío (un verify token
+    # vacío nunca matchea → `"" == ""` no bypasea).
+    verify_token = cfg.WHATSAPP_VERIFY_TOKEN
+    if (
+        mode == "subscribe"
+        and token
+        and verify_token
+        and hmac.compare_digest(token, verify_token)
+    ):
         logger.info("WhatsApp Webhook Verified")
         return int(challenge)
     raise HTTPException(status_code=403, detail="Forbidden")
@@ -80,13 +89,27 @@ async def handle_whatsapp_webhook(request: Request, background_tasks: Background
     raw_body = await request.body()
     signature_header = request.headers.get("X-Hub-Signature-256")
 
-    if WHATSAPP_APP_SECRET:
-        if not verify_meta_signature(raw_body, signature_header, WHATSAPP_APP_SECRET):
+    app_secret = cfg.WHATSAPP_APP_SECRET
+    # El placeholder de Terraform NO es un secreto real → tratarlo como ausente
+    # (sino verificaríamos el HMAC de Meta contra el placeholder = 403 en TODO
+    # webhook real, y el fail-closed `elif` quedaría inalcanzable).
+    if app_secret and not cfg.is_placeholder(app_secret):
+        if not verify_meta_signature(raw_body, signature_header, app_secret):
             logger.warning(
                 "webhook_signature_rejected",
                 signature_header=signature_header[:30] if signature_header else None,
             )
             raise HTTPException(status_code=403, detail="invalid signature")
+    elif cfg.is_production():
+        # FAIL-CLOSED (SEC-02): en prod, faltar WHATSAPP_APP_SECRET NO se
+        # bypasea — el webhook RECHAZA en vez de procesar payloads sin verificar
+        # (inyección de mensajes/statuses falsos que corromperían cost metrics
+        # o arrancarían workflows fantasma).
+        logger.error(
+            "webhook_signature_secret_missing_in_prod",
+            reason="WHATSAPP_APP_SECRET no configurado en producción",
+        )
+        raise HTTPException(status_code=403, detail="webhook secret not configured")
     else:
         logger.warning(
             "webhook_signature_verification_disabled",

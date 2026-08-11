@@ -109,7 +109,7 @@ jobs:
           # El meta-gate diffea vs merge-base(origin/main): necesita historia + el ref de main.
           fetch-depth: 0
 
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         if: needs.changes.outputs.central == 'true'
         with:
           # Version pineada: sin esto setup-uv resuelve "latest release" contra
@@ -217,7 +217,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         if: needs.changes.outputs.central == 'true'
         with:
           # Version pineada: sin esto setup-uv resuelve "latest release" contra

@@ -62,6 +62,39 @@ def test_parse_media_message_populates_media_field() -> None:
     assert parsed.media["id"] == "media-id-xyz"
 
 
+@pytest.mark.parametrize(
+    "evil_from",
+    [
+        "../../../../tmp/evil",
+        "wa/../../etc",
+        "573000000000/../..",
+        "12345$(whoami)",
+        "abc def",  # espacios
+        "",  # vacío
+    ],
+)
+def test_parse_rejects_non_phone_from_number(evil_from: str) -> None:
+    """SEC-12: `from_number` se convierte en `session_id = wa_<from>` que llega al
+    filesystem del vault. Un `from` que no sea un teléfono E.164 (dígitos) podría
+    hacer path traversal fuera del vault → se rechaza en el parse."""
+    body = _envelope(
+        {
+            "metadata": {"phone_number_id": "PHONE_123"},
+            "messages": [
+                {
+                    "id": "wamid.ABC",
+                    "from": evil_from,
+                    "timestamp": "1714312345",
+                    "type": "text",
+                    "text": {"body": "hola"},
+                }
+            ],
+        }
+    )
+    with pytest.raises(ValueError):
+        parse_whatsapp_inbound(body)
+
+
 def test_parse_status_update_returns_none() -> None:
     body = _envelope(
         {

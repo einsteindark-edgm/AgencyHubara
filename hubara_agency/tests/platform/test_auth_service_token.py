@@ -26,7 +26,12 @@ from src.platform import auth, config
 
 def _request(bearer: str | None = None) -> SimpleNamespace:
     headers = {"Authorization": f"Bearer {bearer}"} if bearer else {}
-    return SimpleNamespace(headers=headers, query_params={})
+    # `url.path` lo lee require_auth (log del 503 + gate del ticket SSE de /events).
+    return SimpleNamespace(
+        headers=headers,
+        query_params={},
+        url=SimpleNamespace(path="/api/dashboard/sessions"),
+    )
 
 
 @pytest.fixture

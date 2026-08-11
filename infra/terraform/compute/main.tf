@@ -57,6 +57,7 @@ module "observability" {
   root_volume_gb         = var.observability.root_volume_gb
   key_name               = local.key_name
   ssh_ingress_cidrs      = var.ssh_ingress_cidrs
+  admin_ui_ingress_cidrs = var.admin_ui_ingress_cidrs
   app_security_group_ids = [for m in module.app : m.security_group_id]
   use_local              = local.use_local
 }
@@ -73,6 +74,7 @@ module "graphagents" {
   root_volume_gb         = var.graphagents.root_volume_gb
   key_name               = local.key_name
   ssh_ingress_cidrs      = var.ssh_ingress_cidrs
+  admin_ui_ingress_cidrs = var.admin_ui_ingress_cidrs
   app_security_group_ids = [for m in module.app : m.security_group_id]
   image_repo             = var.graphagents.image_repo
   use_local              = local.use_local
