@@ -5,6 +5,14 @@ package_update: true
 packages:
   - docker
 
+# Vault (EBS dedicado, SEC-09-full) montado por LABEL — estable entre
+# replacements y renombres de device NVMe. En la caja viva este cambio es
+# ruido ignorado (ignore_changes=[user_data]); una caja NUEVA lo toma al
+# launch. nofail: un boot sin el volumen no cuelga — el runbook exige
+# `findmnt /mnt/hubara-vault` antes de `docker compose up` post-replacement.
+mounts:
+  - ["LABEL=hubara-vault", "/mnt/hubara-vault", "ext4", "defaults,nofail", "0", "2"]
+
 write_files:
   # Config NO-secreta que el deploy lee (los secretos vienen de SSM en el deploy).
   - path: /opt/hubara/box.env

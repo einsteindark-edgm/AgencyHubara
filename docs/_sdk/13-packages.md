@@ -71,11 +71,32 @@ cd GraphAgents   && python3 -m sdk.cli package install combo.acktospkg --root .
 por default operan sobre el repo actual. Salida `--json` estable para Studio.
 Exit codes: 0 ok · 2 input inválido/paquete corrupto.
 
+## Clausura cross-system (el seam plugin↔graphagent)
+
+Los CLIs resuelven la clausura DENTRO de su sistema (plugin `depends_on` ·
+graph agent `agent://`), pero un plugin del monorepo suele lanzar un graph
+agent por el puente execution-id (`ads` → `ads-analytics`, `order_sentinel` →
+`order-sentinel`, `reengagement` → `window-strategist`). Esa relación
+**cross-system** vive en `vscode-hubara/seams.yaml` (verificada en CI por
+`test_graphagents_seams.py`) y la cruza **Studio**, no los CLIs: al exportar
+un plugin, arrastra su graph agent (y la clausura de ése). Sin esto el paquete
+"no funciona" — el plugin instalado quedaría sin el agente que necesita.
+
 ## Acktos Studio
 
-- **`Acktos: Exportar paquete`** — picker multi-select (plugins + graph
-  agents del repo abierto) → plan con clausura y requirements → confirmación
-  → `.acktospkg` (save dialog; default `dist/`).
+Los comandos son **botones en el title bar del panel "Catálogo"** (`⬆ Exportar`
+/ `⬇ Instalar`) además de la Command Palette.
+
+- **`Acktos: Exportar paquete`** — **dos pantallas**:
+  1. *Punto de partida* (quick-pick): elegís el/los plugin(s) o graph agent(s).
+  2. *Relaciones* (**grafo visual** — webview `exportview`, React Flow): muestra
+     toda la clausura como cajas (plugin azul / graph agent violeta) + aristas
+     (`depends_on` · `⚡ seam` · `agent://`), con **un checkbox por unidad**,
+     todo pre-marcado. Destildás lo que no quieras. Si destilás un graph agent
+     `requerido` (seam) de un plugin incluido, el nodo y su arista se pintan en
+     alerta y una barra avisa "el plugin quedará sin funcionar". Al confirmar,
+     un modal re-confirma esa incoherencia si quedó.
+  3. Save dialog → `.acktospkg` (default `dist/`).
 - **`Acktos: Instalar paquete`** — elegís el archivo → plan-install de ambos
   CLIs (new/overwrite con **versiones destino → paquete y ⚠ DOWNGRADE**, deps
   faltantes) → confirmación → **rama `acktos/install-<pkg>-<ts>` (forkeada
