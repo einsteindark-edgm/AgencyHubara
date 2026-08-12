@@ -291,6 +291,16 @@ ssh -i ~/.ssh/hubara_ops ec2-user@<ip> \
 ```
 **Rotar un secreto:** `aws_bootstrap.py secrets ...` (o un `put-parameter`) + re-render + recreate del worker/api afectado.
 
+**Vault (EBS dedicado, SEC-09-full):** el vault vive en un EBS propio montado
+en `/mnt/hubara-vault` (bind mount en el compose), NO en el disco root. Tras
+**cualquier replacement/reboot de la caja**, verificar el mount ANTES de
+levantar containers — con `nofail`, un mount ausente NO frena el boot y los
+workers escribirían a un directorio vacío del root sin quejarse:
+```bash
+findmnt /mnt/hubara-vault   # debe mostrar el device NVMe del EBS, no estar vacío
+```
+Detalle completo: [`VAULT_EBS_MIGRATION_PLAN.md`](VAULT_EBS_MIGRATION_PLAN.md).
+
 ---
 
 ## Los pendientes — setup OPERATIVO (el código va en [`PENDING_IMPLEMENTATION.md`](PENDING_IMPLEMENTATION.md))

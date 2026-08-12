@@ -3,6 +3,8 @@
 > Estado: **PENDIENTE de ejecución.** Este doc es el plan — no toca código de infra.
 > Contexto de seguridad completo: `SECURITY_AUDIT_fable.md` (SEC-09).
 > Runbook operacional hermano: `infra/DEPLOY_RUNBOOK.md`.
+> Revisado 2026-08-12 contra el código vivo (compose, módulo app-instance,
+> backup.tf, backend-deploy.yml): paths, conteos y tags verificados.
 
 ## 1. Por qué
 
@@ -10,7 +12,9 @@ El vault (`hubara-vault`) es el único estado de negocio que no se puede
 reconstruir de ninguna fuente externa: sesiones de WhatsApp, catálogo,
 historial LLM por cliente. Hoy es un **volumen Docker nombrado sin
 `driver_opts`**, que Docker crea en
-`/var/lib/docker/volumes/hubara-vault/_data` — físicamente el **disco root**
+`/var/lib/docker/volumes/hubara-prod_hubara-vault/_data` (el compose declara
+`name: hubara-prod`; el prefijo es el nombre del proyecto) — físicamente el
+**disco root**
 de la instancia EC2 (`infra/compose/docker-compose.prod.yml:137-138`, el
 propio comentario dice *"Candidato a EBS dedicado/backup"*).
 
@@ -42,11 +46,36 @@ sea independiente de la instancia — eso es este plan.
 
 ## 2. Costo
 
-gp3 en `us-east-1`: `$0.08/GB-mes`. Un volumen de 20 GB (holgado para el
-vault real) cuesta **~$1.60/mes** + snapshots incrementales del mismo tag
-`Backup=daily` que ya usa el DLM existente (~$0.50-1/mes extra). Total
-realista: **~$2-3/mes**. El costo no es el motivo del delay — es el riesgo
-operacional de migrar datos en vivo.
+gp3 en `us-east-1`: `$0.08/GB-mes`. Un volumen de **10 GB** cuesta
+**~$0.80/mes** + snapshots incrementales del mismo tag `Backup=daily` que ya
+usa el DLM existente (~$0.50/mes extra). Total realista: **~$1-1.5/mes**.
+
+Empezar chico a propósito: un EBS **se agranda online en un comando**
+(`aws ec2 modify-volume` + `resize2fs`, sin downtime) pero **no se puede
+achicar nunca** — la asimetría dice arrancar en 10 GB, no en 20. Guard: si
+el `du -sh` del volumen actual (Paso 3) muestra >5 GB, subir
+`vault_volume_gb` antes del apply. El costo no es el motivo del delay — es
+el riesgo operacional de migrar datos en vivo.
+
+### 2.1 Qué ahorra y qué NO ahorra esta migración
+
+- **NO libera plata del disco root.** Los 30 GB del root se pagan igual
+  (~$2.40/mes) estén llenos o vacíos, y un EBS no se puede achicar — reducir
+  el root exigiría un swap de root device (reconstruir la caja, contra
+  `prevent_destroy`) para ahorrar <$2/mes. No vale el riesgo, y el root
+  sigue necesitando espacio para SO + imágenes Docker + logs.
+- **NO habilita bajar la instancia.** El tamaño de la caja (t3.medium) lo
+  dictan RAM/CPU de los 13 containers (api + 10 workers + LiteLLM + Caddy),
+  no dónde vive el vault. Bajar a t3.small (2 GB RAM) con esa flota es
+  riesgo de OOM — si se quiere explorar, es un experimento aparte midiendo
+  primero (`free -m`, `docker stats --no-stream`), sin relación con este
+  plan.
+- **SÍ ahorra (chico): dejar de snapshotear el root post-burn-in.** Una vez
+  el vault esté fuera del root y el burn-in cerrado, el root ya no tiene
+  dato irremplazable → quitarle el tag `Backup=daily`
+  (`root_block_device.tags`, ver §4.1) y el DLM deja de snapshotearlo
+  (~$0.50-1/mes menos, y el backup pasa a cubrir exactamente el dato que
+  importa). Ver checklist §8.
 
 ## 3. Qué NO cambia
 
@@ -68,7 +97,7 @@ En `infra/terraform/compute/modules/app-instance/main.tf`, agregar junto al
 ```hcl
 variable "vault_volume_gb" {
   type    = number
-  default = 20
+  default = 10 # agrandar es online y trivial; achicar es imposible (§2)
 }
 
 resource "aws_ebs_volume" "vault" {
@@ -99,7 +128,44 @@ resource "aws_volume_attachment" "vault" {
 ```
 
 Propagar `vault_volume_gb` desde `variables.tf` → `tenants` map (mismo
-patrón que `root_volume_gb`) y desde `main.tf` (root de compute) al módulo.
+patrón que `root_volume_gb`, `optional(number, 10)`) y desde `main.tf` (root
+de compute) al módulo.
+
+**Cambio OBLIGATORIO en el mismo PR — mover `volume_tags` a
+`root_block_device.tags`.** `aws_instance.app` hoy taggea sus volúmenes vía
+`volume_tags` (main.tf:225). El provider de AWS documenta explícitamente que
+`volume_tags` NO se puede combinar con volúmenes atacheados que manejan sus
+propios tags (`aws_ebs_volume` + `aws_volume_attachment`): `volume_tags`
+aplica a TODOS los volúmenes atacheados, así que tras el attach cada plan
+querría re-taggear el vault con los tags del root (`Name=...-app-root`,
+pisando `Name` y `Backup`) y `aws_ebs_volume.vault` pelearía de vuelta en
+cada apply — *resource cycling* perpetuo. El fix es mover los tags al bloque
+del root, que es su único destinatario real:
+
+```hcl
+resource "aws_instance" "app" {
+  # ...
+  # volume_tags = { ... }   ← ELIMINAR (taggea TODOS los volúmenes
+  #                            atacheados; pisaría los tags del vault)
+
+  root_block_device {
+    volume_size = var.root_volume_gb
+    volume_type = "gp3"
+    encrypted   = true
+    tags = {
+      Name   = "agencyhubara-${var.tenant}-app-root"
+      Tenant = var.tenant
+      # Quitar post-burn-in (§2.1): migrado el vault, el root ya no tiene
+      # dato irremplazable y el DLM deja de snapshotearlo.
+      Backup = "daily"
+    }
+  }
+  # ...
+}
+```
+
+Es un cambio **in-place** (solo tags) — no dispara `prevent_destroy` ni
+replacement.
 
 **Gotcha AL2023 + Nitro (t3.medium ES Nitro):** el `device_name =
 "/dev/xvdf"` que pedís en la API **no** es el nombre que ve el SO. En
@@ -107,9 +173,11 @@ instancias Nitro los EBS aparecen como NVMe — normalmente `/dev/nvme1n1`
 (el root ya es `/dev/nvme0n1`). Confirmar con `lsblk` o `sudo nvme list` en
 la caja después del `apply`, **no asumir el device_name de Terraform**.
 
-**Impacto en el plan de Terraform:** solo 2 recursos `add` (volumen +
-attachment). **Cero cambios a `aws_instance.app`** — no dispara
-`prevent_destroy`, no hay riesgo de replacement.
+**Impacto en el plan de Terraform:** 2 recursos `add` (volumen +
+attachment) + **1 `change` in-place** sobre `aws_instance.app` (el move de
+tags de arriba — solo tags, sin replacement). Si el plan muestra CUALQUIER
+otra cosa (un `destroy`, un `replace`, un change que no sea de tags) —
+**parar y revisar**.
 
 ### 4.2 Docker Compose — bind mount, no `driver_opts`
 
@@ -134,9 +202,36 @@ es un volumen Docker-managed).
 `hubara-vault` sigue siendo un objeto Docker — un rollback requeriría
 `docker volume rm` (que borra los datos del path viejo) antes de poder
 recrearlo apuntando de nuevo al root. Con bind mount directo, el volumen
-Docker-managed original (`/var/lib/docker/volumes/hubara-vault/_data`)
+Docker-managed original (`/var/lib/docker/volumes/hubara-prod_hubara-vault/_data`)
 **nunca se toca** — ni se lee para escribir, ni se borra. Revertir el commit
 del compose alcanza para volver exactamente al estado anterior.
+
+### 4.3 Caja de reemplazo — cloud-init + etiqueta del filesystem
+
+Hoy `cloud-init.yaml.tftpl` no sabe nada del vault. Si algún día la caja se
+reemplaza (`-replace` explícito quitando el `prevent_destroy`), la instancia
+nueva NO tendría `/mnt/hubara-vault` montado: Docker crearía el directorio
+vacío en el root y los workers arrancarían con vault vacío **en silencio**
+(el dato seguiría a salvo en el EBS, pero desmontado — la misma clase de bug
+silencioso que ya nos mordió con el catálogo).
+
+Cierre barato, en el mismo PR:
+
+1. Formatear con etiqueta (`mkfs.ext4 -L hubara-vault`, ver Paso 2) y montar
+   por `LABEL=` en fstab — la etiqueta es estable entre reboots,
+   replacements y renombres de device NVMe.
+2. Agregar al template de cloud-init el mount equivalente (mkdir + entrada
+   fstab `LABEL=hubara-vault /mnt/hubara-vault ext4 defaults,nofail 0 2`).
+   En la caja viva es inocuo — `ignore_changes = [user_data]` ya ignora el
+   drift y user_data solo corre al launch; una caja nueva sí lo toma.
+3. Nota en `infra/DEPLOY_RUNBOOK.md`: tras un replacement, verificar
+   `findmnt /mnt/hubara-vault` ANTES de `docker compose up`.
+
+**Riesgo residual conocido (aceptado):** `nofail` + docker en autostart
+significa que si el mount falla en un boot, los containers escriben al
+directorio vacío del root sin quejarse. El `findmnt` del runbook es la
+guarda; blindarlo de verdad (unidad systemd con `RequiresMountsFor` sobre
+docker.service) queda fuera de este plan.
 
 ## 5. Runbook de ejecución (dos pasadas — minimiza downtime real)
 
@@ -177,24 +272,29 @@ lsblk
 # Verificar que está VACÍO antes de formatear (debe decir "data", no un fs conocido)
 sudo file -s /dev/nvme1n1
 
-sudo mkfs.ext4 /dev/nvme1n1
+# -L: etiqueta estable — fstab y cloud-init (§4.3) montan por LABEL, que
+# sobrevive reboots, replacements y renombres de device NVMe
+sudo mkfs.ext4 -L hubara-vault /dev/nvme1n1
 sudo mkdir -p /mnt/hubara-vault
-sudo mount /dev/nvme1n1 /mnt/hubara-vault
+sudo mount LABEL=hubara-vault /mnt/hubara-vault
 sudo chown ec2-user:ec2-user /mnt/hubara-vault
 
-# Persistir en fstab por UUID (no por device name — puede correrse si se
+# Persistir en fstab por LABEL (no por device name — puede correrse si se
 # agregan más volúmenes) + nofail (que un boot no cuelgue si el volumen no
-# está disponible)
-UUID=$(sudo blkid -s UUID -o value /dev/nvme1n1)
-echo "UUID=$UUID /mnt/hubara-vault ext4 defaults,nofail 0 2" | sudo tee -a /etc/fstab
+# está disponible; el riesgo residual de nofail está en §4.3)
+echo "LABEL=hubara-vault /mnt/hubara-vault ext4 defaults,nofail 0 2" | sudo tee -a /etc/fstab
 sudo mount -a   # valida el fstab sin reiniciar
 ```
 
 ### Paso 3 — pasada 1: copia en caliente (app sigue corriendo, sin downtime)
 
 ```bash
-sudo rsync -aHAX --info=progress2 \
-  /var/lib/docker/volumes/hubara-vault/_data/ /mnt/hubara-vault/
+# El volumen se llama hubara-prod_hubara-vault (prefijo = `name: hubara-prod`
+# del compose) — derivar el path real en vez de hardcodearlo:
+SRC=$(docker volume inspect hubara-prod_hubara-vault --format '{{.Mountpoint}}')
+echo "$SRC"   # esperado: /var/lib/docker/volumes/hubara-prod_hubara-vault/_data
+
+sudo rsync -aHAX --info=progress2 "$SRC/" /mnt/hubara-vault/
 ```
 
 Esto puede tardar según el tamaño real del vault — la app sigue sirviendo
@@ -203,9 +303,13 @@ tráfico normal todo este tiempo, no hay corte.
 ### Paso 4 — verificación previa al corte
 
 ```bash
-diff <(cd /var/lib/docker/volumes/hubara-vault/_data && find . | sort) \
+# Única diferencia esperada: `./lost+found` (lo crea mkfs en el destino; el
+# rsync --delete de la pasada 2 lo borra — inofensivo)
+diff <(cd "$SRC" && find . | sort) \
      <(cd /mnt/hubara-vault && find . | sort)
-du -sh /var/lib/docker/volumes/hubara-vault/_data /mnt/hubara-vault  # deben coincidir
+# Aproximados (metadata/bloques de ext4 difieren un poco): mismo orden de
+# magnitud alcanza — el check real es el diff de arriba
+du -sh "$SRC" /mnt/hubara-vault
 ```
 
 ### Paso 5 — cutover (downtime real: minutos, solo esto)
@@ -219,20 +323,24 @@ docker compose stop api worker-catalog-sync worker-chats-sales \
   worker-orders-reconcile worker-marketing-campaigns
 
 # Pasada 2: delta rsync (solo lo escrito entre el paso 3 y ahora)
-sudo rsync -aHAX --delete /var/lib/docker/volumes/hubara-vault/_data/ /mnt/hubara-vault/
+sudo rsync -aHAX --delete "$SRC/" /mnt/hubara-vault/
 ```
 
-Mientras los workers están parados: mergear el PR con el diff del §4.2
-(`docker-compose.prod.yml`) a `main` — dispara `backend-deploy.yml`, que
-hace `scp` del compose nuevo + `docker compose up -d --remove-orphans`. Ese
-mismo deploy hace el cutover (los containers arrancan ya con el bind mount
-nuevo).
+**Cutover manual primero, merge después (default).** Con los workers
+parados, aplicar el diff del §4.2 directamente sobre
+`/opt/hubara/docker-compose.yml` en la caja y levantar:
 
-Si se prefiere no depender del CI para el timing exacto, aplicar el cambio
-a mano primero (`docker compose up -d --remove-orphans` con el compose ya
-editado localmente en la caja) y mergear el PR después para que quede como
-fuente de verdad — pero AMBAS copias del compose (repo y caja) tienen que
-terminar iguales antes de cerrar la ventana.
+```bash
+docker compose up -d --remove-orphans
+```
+
+**Por qué NO cortar vía CI:** mergear el PR dispara `backend-deploy.yml`,
+que primero hace el **build de la imagen** (varios minutos) antes de tocar
+la caja — los workers quedarían parados todo ese build, no solo el delta
+rsync. El merge del PR va DESPUÉS, con el servicio ya arriba, para que el
+repo quede como fuente de verdad (ese deploy re-aplica el mismo compose:
+no-op funcional). AMBAS copias del compose (repo y caja) tienen que terminar
+iguales antes de cerrar la ventana.
 
 ### Paso 6 — verificación funcional
 
@@ -254,7 +362,7 @@ Funcional (no solo que el container prenda):
 ### Paso 7 — burn-in antes de considerar la copia vieja descartable
 
 Dejar corriendo 24-48h bajo tráfico real. **No borrar**
-`/var/lib/docker/volumes/hubara-vault/_data` en este paso — queda como red
+`/var/lib/docker/volumes/hubara-prod_hubara-vault/_data` en este paso — queda como red
 de seguridad extra sin costo (es el mismo disco root que ya pagás). Limpieza
 es un paso aparte, opcional, más adelante — no forma parte de este plan.
 
@@ -269,7 +377,7 @@ git revert <sha-del-cambio-de-compose>
 git push origin main   # dispara backend-deploy, redeploya
 ```
 
-Como el volumen Docker `hubara-vault` **nunca se tocó** (no se le hizo
+Como el volumen Docker `hubara-prod_hubara-vault` **nunca se tocó** (no se le hizo
 `docker volume rm`, nunca se escribió en él durante la migración — solo se
 leyó vía rsync), Docker lo reconoce como ya existente al hacer
 `docker compose up -d` y los containers vuelven a leer exactamente los
@@ -293,9 +401,10 @@ resource "aws_instance" "app" {
 
   root_block_device {
     volume_size           = var.root_volume_gb
-    volume_type            = "gp3"
-    encrypted              = true
-    delete_on_termination  = false
+    volume_type           = "gp3"
+    encrypted             = true
+    delete_on_termination = false
+    # (post §4.1, los tags del root también viven acá — no en volume_tags)
   }
   # ...
 }
@@ -308,12 +417,14 @@ independiente de este plan, sin esperar a la ventana de migración.
 
 ## 8. Checklist de la sesión de ejecución
 
-- [ ] PR de Terraform (§4.1) + PR de compose (§4.2) — pueden ir en el mismo PR.
-- [ ] `terraform plan` confirma 2 add / 0 change / 0 destroy antes de aplicar.
+- [ ] PR de Terraform (§4.1: volumen + attachment + move `volume_tags`→`root_block_device.tags`; §4.3: cloud-init) + PR de compose (§4.2) — pueden ir en el mismo PR.
+- [ ] `terraform plan` confirma 2 add / 1 change (in-place, SOLO tags de `aws_instance.app`) / 0 destroy antes de aplicar.
 - [ ] Snapshot manual (§ Paso 0) antes de tocar nada.
 - [ ] Pasada 1 (copia en caliente) completa y verificada (§ Paso 3-4).
 - [ ] Ventana de corte comunicada/agendada (madrugada Bogotá, sin otros deploys en curso).
-- [ ] Cutover (§ Paso 5) + verificación funcional (§ Paso 6).
+- [ ] Cutover manual en la caja (§ Paso 5) + verificación funcional (§ Paso 6) + merge del PR de compose DESPUÉS.
 - [ ] Burn-in 24-48h antes de dar por cerrado SEC-09-full.
+- [ ] Post-burn-in: quitar `Backup=daily` de `root_block_device.tags` — el DLM deja de snapshotear el root (§2.1); el vault queda como único volumen respaldado.
 - [ ] Actualizar `SECURITY_AUDIT_fable.md` — mover SEC-09 de "guard" a "resuelto completo".
+- [ ] Nota post-replacement (`findmnt /mnt/hubara-vault`) agregada a `infra/DEPLOY_RUNBOOK.md` (§4.3).
 - [ ] (Opcional, fix aparte) §7 — `disable_api_termination` + `delete_on_termination=false`.

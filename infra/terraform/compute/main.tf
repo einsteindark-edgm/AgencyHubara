@@ -40,6 +40,7 @@ module "app" {
   domain            = each.value.domain
   enabled_plugins   = each.value.enabled_plugins
   root_volume_gb    = each.value.root_volume_gb
+  vault_volume_gb   = each.value.vault_volume_gb
   key_name          = local.key_name
   ssh_ingress_cidrs = var.ssh_ingress_cidrs
   image_repo        = var.image_repo

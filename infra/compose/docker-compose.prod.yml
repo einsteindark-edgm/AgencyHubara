@@ -57,32 +57,32 @@ services:
     expose:
       - "8000"
     volumes:
-      - hubara-vault:/app/hubara_vault
+      - /mnt/hubara-vault:/app/hubara_vault
       - ./plugins:/app/frontend_dashboard/src/plugins:ro
 
   worker-catalog-sync:
     <<: *app
     command: ["python", "-m", "src.plugins.catalog.workers.sync"]
     volumes:
-      - hubara-vault:/app/hubara_vault
+      - /mnt/hubara-vault:/app/hubara_vault
 
   worker-chats-sales:
     <<: *app
     command: ["python", "-m", "src.plugins.chats.workers.sales"]
     volumes:
-      - hubara-vault:/app/hubara_vault
+      - /mnt/hubara-vault:/app/hubara_vault
 
   worker-chats-remarketing:
     <<: *app
     command: ["python", "-m", "src.plugins.chats.workers.remarketing"]
     volumes:
-      - hubara-vault:/app/hubara_vault
+      - /mnt/hubara-vault:/app/hubara_vault
 
   worker-reengagement-cycle:
     <<: *app
     command: ["python", "-m", "src.plugins.reengagement.workers.cycle"]
     volumes:
-      - hubara-vault:/app/hubara_vault
+      - /mnt/hubara-vault:/app/hubara_vault
 
   worker-order-sentinel-cycle:
     <<: *app
@@ -93,13 +93,13 @@ services:
       # del compose local, PM-003: sin esto el ciclo era skipped_empty eterno).
       HUBARA_API_BASE_URL: http://api:8000
     volumes:
-      - hubara-vault:/app/hubara_vault
+      - /mnt/hubara-vault:/app/hubara_vault
 
   worker-chats-sales_eval:
     <<: *app
     command: ["python", "-m", "src.plugins.chats.workers.sales_eval"]
     volumes:
-      - hubara-vault:/app/hubara_vault
+      - /mnt/hubara-vault:/app/hubara_vault
 
   worker-chats-post_sale_return:
     <<: *app
@@ -112,19 +112,19 @@ services:
       # el nombre del compose local; mismo patrón que order_sentinel).
       HUBARA_API_BASE_URL: http://api:8000
     volumes:
-      - hubara-vault:/app/hubara_vault
+      - /mnt/hubara-vault:/app/hubara_vault
 
   worker-eta-eta:
     <<: *app
     command: ["python", "-m", "src.plugins.eta.workers.eta"]
     volumes:
-      - hubara-vault:/app/hubara_vault
+      - /mnt/hubara-vault:/app/hubara_vault
 
   worker-orders-reconcile:
     <<: *app
     command: ["python", "-m", "src.plugins.orders.workers.reconcile"]
     volumes:
-      - hubara-vault:/app/hubara_vault
+      - /mnt/hubara-vault:/app/hubara_vault
 
   worker-marketing-campaigns:
     <<: *app
@@ -132,9 +132,12 @@ services:
     # CampaignSendWorkflow: envíos de campañas directas (sección Marketing).
     # Vault completo: _campaigns/ (historial) + wa_*/ (audiencia + touches).
     volumes:
-      - hubara-vault:/app/hubara_vault
+      - /mnt/hubara-vault:/app/hubara_vault
 
 volumes:
-  hubara-vault:   # sesiones + catálogo + evals (doc §3.6). Candidato a EBS dedicado/backup.
-  caddy-data:     # certs de Let's Encrypt — persistir para no re-emitir en cada deploy.
+  # hubara-vault ya NO es un volumen Docker: vive en el EBS dedicado montado en
+  # /mnt/hubara-vault (bind mount por servicio, SEC-09-full). El volumen viejo
+  # (hubara-prod_hubara-vault) queda intacto como red de seguridad del rollback
+  # — ver infra/VAULT_EBS_MIGRATION_PLAN.md §6.
+  caddy-data:   # certs de Let's Encrypt — persistir para no re-emitir en cada deploy.
   caddy-config:

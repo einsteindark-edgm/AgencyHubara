@@ -197,8 +197,15 @@ resource "aws_instance" "graphagents" {
   # Incidente 2026-07-08: AMI drift (data source most_recent) convertía un apply
   # rutinario en replacement de la caja. El pin en tfvars + este ignore hacen
   # el upgrade de AMI un acto deliberado (`terraform apply -replace=...`).
+  #
+  # `user_data`: mismo racional que app-instance — la caja viva se patchea por
+  # SSM (PR #200: autostop/quiet hours), NO re-lanzándola; user_data solo corre
+  # al launch y modificarlo exige la caja PARADA (IncorrectInstanceState). Sin
+  # este ignore, el drift del template contaminaba CUALQUIER plan de compute
+  # (visto 2026-08-12 durante la migración del vault). Una caja nueva igual
+  # toma el template vigente.
   lifecycle {
-    ignore_changes = [ami]
+    ignore_changes = [ami, user_data]
   }
 
   tags = {
