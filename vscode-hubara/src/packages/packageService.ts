@@ -5,6 +5,9 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import { augmentedPath } from "../bridge/pythonBridge";
 import { HubaraConfig, readHubaraConfig, repoRoot } from "../config";
+import { ExportPanel } from "../export/exportPanel";
+import { loadSeams } from "../graph/seams";
+import { brokenCrossLinks, buildExportGraph, crossAgentsForPlugins, CrossLink, parseNodeId } from "./closure";
 
 /**
  * Export/Install de paquetes Acktos (.acktospkg) desde Studio.
@@ -150,7 +153,23 @@ function listGraphAgents(gaCwd: string): Array<{ id: string; kind: "agent" | "ta
 // Exportar
 // ---------------------------------------------------------------------------
 
-export async function exportPackage(output: vscode.OutputChannel): Promise<void> {
+interface PluginPlanUnit {
+  id: string;
+  archetype: string;
+  requires: { plugins: string[]; env_vars: string[]; secrets: string[] };
+}
+interface AgentPlanUnit {
+  id: string;
+  archetype: string;
+  files: string[];
+  requires: { agents: string[]; ports: string[] };
+}
+
+export async function exportPackage(
+  output: vscode.OutputChannel,
+  seamsPath: string,
+  ctx: vscode.ExtensionContext,
+): Promise<void> {
   const root = repoRoot();
   const cfg = readHubaraConfig(root);
   const log = (l: string) => output.appendLine(`[package] ${l}`);
@@ -162,65 +181,99 @@ export async function exportPackage(output: vscode.OutputChannel): Promise<void>
     return;
   }
 
-  type Item = vscode.QuickPickItem & { unitKind: "plugin" | "graphagent"; id: string };
-  const items: Item[] = [
-    ...plugins.map<Item>((id) => ({ label: `$(package) ${id}`, description: "plugin hubara", unitKind: "plugin", id })),
-    ...agents.map<Item>((a) => ({
+  // ── Pantalla 1/2 — el punto de partida (arrastro sus relaciones) ──────────
+  type RootItem = vscode.QuickPickItem & { unitKind: "plugin" | "graphagent"; id: string };
+  const rootItems: RootItem[] = [
+    ...plugins.map<RootItem>((id) => ({ label: `$(package) ${id}`, description: "plugin hubara", unitKind: "plugin", id })),
+    ...agents.map<RootItem>((a) => ({
       label: `$(type-hierarchy) ${a.id}`,
       description: a.kind === "taskgraph" ? "graph agent (taskgraph)" : "graph agent",
       unitKind: "graphagent",
       id: a.id,
     })),
   ];
-  const picked = await vscode.window.showQuickPick(items, {
+  const rootPick = await vscode.window.showQuickPick(rootItems, {
     canPickMany: true,
-    placeHolder: "¿Qué exportar al paquete? (la clausura de dependencias se agrega sola)",
-    title: "Acktos: exportar paquete",
+    placeHolder: "¿Qué querés exportar? Arrastro sus dependencias y el graph agent que necesita.",
+    title: "Acktos: exportar — 1/2 · punto de partida",
   });
-  if (!picked || picked.length === 0) {
+  if (!rootPick || rootPick.length === 0) {
     return;
   }
-  const pluginIds = picked.filter((i) => i.unitKind === "plugin").map((i) => i.id);
-  const agentIds = picked.filter((i) => i.unitKind === "graphagent").map((i) => i.id);
+  const rootPlugins = rootPick.filter((i) => i.unitKind === "plugin").map((i) => i.id);
+  const rootAgents = rootPick.filter((i) => i.unitKind === "graphagent").map((i) => i.id);
+  const rootSet = new Set([...rootPlugins, ...rootAgents]);
 
-  // planes (sin efectos) — muestran la clausura + requirements antes de sellar
-  const detail: string[] = [];
+  // ── Resolver la clausura: intra-sistema por los CLIs + cross por seams.yaml ─
+  let pluginUnits: PluginPlanUnit[] = [];
+  let agentUnits: AgentPlanUnit[] = [];
+  let crossLinks: CrossLink[] = [];
   try {
-    if (pluginIds.length > 0) {
-      const plan = parseJson<{
-        units: Array<{ id: string; archetype: string; requires: { plugins: string[]; env_vars: string[]; secrets: string[] } }>;
-      }>(await hubaraCli(cfg, ["package", "plan", ...pluginIds, "--json"], log), "package plan (hubara)");
-      for (const u of plan.units) {
-        const extras = [
-          u.requires.env_vars.length ? `env: ${u.requires.env_vars.join(", ")}` : "",
-          u.requires.secrets.length ? `secrets: ${u.requires.secrets.join(", ")}` : "",
-        ]
-          .filter(Boolean)
-          .join(" · ");
-        detail.push(`plugin ${u.id} [${u.archetype}]${extras ? ` — ${extras}` : ""}`);
-      }
-    }
-    if (agentIds.length > 0) {
-      const plan = parseJson<{
-        units: Array<{ id: string; archetype: string; files: string[]; requires: { ports: string[] } }>;
-      }>(await gaCli(cfg, ["package", "plan", ...agentIds, "--json"], log), "package plan (GraphAgents)");
-      for (const u of plan.units) {
-        const ports = u.requires.ports.length ? ` — ports: ${u.requires.ports.join(", ")}` : "";
-        detail.push(`graphagent ${u.id} [${u.archetype}] (${u.files.length} archivos)${ports}`);
-      }
-    }
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: "Acktos: resolviendo relaciones…" },
+      async () => {
+        if (rootPlugins.length > 0) {
+          const plan = parseJson<{ units: PluginPlanUnit[] }>(
+            await hubaraCli(cfg, ["package", "plan", ...rootPlugins, "--json"], log),
+            "package plan (hubara)",
+          );
+          pluginUnits = plan.units;
+        }
+        // el seam plugin→graphagent lo cruza Studio (los CLIs no se conocen)
+        const seams = await loadSeams(seamsPath);
+        crossLinks = crossAgentsForPlugins(pluginUnits.map((u) => u.id), seams);
+        const agentSeeds = [...new Set([...rootAgents, ...crossLinks.map((c) => c.agent)])];
+        if (agentSeeds.length > 0) {
+          const plan = parseJson<{ units: AgentPlanUnit[] }>(
+            await gaCli(cfg, ["package", "plan", ...agentSeeds, "--json"], log),
+            "package plan (GraphAgents)",
+          );
+          agentUnits = plan.units;
+        }
+      },
+    );
   } catch (e) {
     void vscode.window.showErrorMessage(`Acktos Studio: no pude armar el plan de export — ${e instanceof Error ? e.message : e}`);
     return;
   }
 
-  const confirm = await vscode.window.showInformationMessage(
-    `¿Exportar ${detail.length} unidad(es) al paquete?`,
-    { modal: true, detail: detail.join("\n") },
-    "Exportar",
-  );
-  if (confirm !== "Exportar") {
+  // ── Pantalla 2/2 — la telaraña de relaciones en un grafo visual ──────────
+  const packageName = [...rootPlugins, ...rootAgents].join("+") || "export";
+  const graph = buildExportGraph(pluginUnits, agentUnits, crossLinks, [...rootSet], packageName);
+  const selectedNodeIds = await ExportPanel.open(ctx, graph);
+  if (!selectedNodeIds) {
+    return; // cerró el panel sin confirmar
+  }
+  const pluginIds: string[] = [];
+  const agentIds: string[] = [];
+  for (const nid of selectedNodeIds) {
+    const parsed = parseNodeId(nid);
+    if (parsed?.unitKind === "plugin") {
+      pluginIds.push(parsed.rawId);
+    } else if (parsed?.unitKind === "graphagent") {
+      agentIds.push(parsed.rawId);
+    }
+  }
+  if (pluginIds.length === 0 && agentIds.length === 0) {
+    void vscode.window.showWarningMessage("Acktos Studio: no seleccionaste nada para exportar.");
     return;
+  }
+
+  // ── Coherencia — avisar si quedó un plugin sin el graph agent que necesita ─
+  const broken = brokenCrossLinks(pluginIds, agentIds, crossLinks);
+  if (broken.length > 0) {
+    const list = broken.map((c) => `• plugin ${c.fromPlugin} → falta graph agent ${c.agent}`).join("\n");
+    const go = await vscode.window.showWarningMessage(
+      "Vas a exportar un plugin SIN el graph agent que necesita para funcionar.",
+      {
+        modal: true,
+        detail: `${list}\n\nEl plugin se instalará, pero su funcionalidad queda rota hasta que ese graph agent exista en el destino.`,
+      },
+      "Exportar igual",
+    );
+    if (go !== "Exportar igual") {
+      return;
+    }
   }
 
   const defaultName = [...pluginIds, ...agentIds].join("+");

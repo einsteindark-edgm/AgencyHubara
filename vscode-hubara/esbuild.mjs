@@ -53,14 +53,23 @@ const forgeViewConfig = {
   outfile: "dist/forgeview.js",
 };
 
+// Export view — la pantalla visual de relaciones del export (grafo React Flow
+// con checkboxes). Reusa el layout dagre; bundle propio con su CSS.
+const exportViewConfig = {
+  ...webviewConfig,
+  entryPoints: ["webview/src/export/main.tsx"],
+  outfile: "dist/exportview.js",
+};
+
 if (watch) {
-  const [ext, web, exec, forge] = await Promise.all([
+  const [ext, web, exec, forge, exp] = await Promise.all([
     context(extensionConfig),
     context(webviewConfig),
     context(execViewConfig),
     context(forgeViewConfig),
+    context(exportViewConfig),
   ]);
-  await Promise.all([ext.watch(), web.watch(), exec.watch(), forge.watch()]);
+  await Promise.all([ext.watch(), web.watch(), exec.watch(), forge.watch(), exp.watch()]);
   console.log("[esbuild] watching…");
 } else {
   await Promise.all([
@@ -68,6 +77,7 @@ if (watch) {
     build(webviewConfig),
     build(execViewConfig),
     build(forgeViewConfig),
+    build(exportViewConfig),
   ]);
   console.log("[esbuild] build complete");
 }

@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { BridgeResponse, Provider, PROVIDER_LABEL } from "./bridge/endpoints";
-import { readHubaraConfig, repoRoot, resolvePath } from "./config";
+import { readHubaraConfig, repoRoot, resolvePath, seamsFilePath } from "./config";
 import { BridgeHub, BridgeSpec, PythonBridge } from "./bridge/pythonBridge";
 import { publishWithFallback } from "./certify/publisher";
 import { exportPackage, installPackage } from "./packages/packageService";
@@ -384,7 +384,7 @@ export function activate(ctx: vscode.ExtensionContext): void {
     // Paquetes Acktos (.acktospkg): exportar plugins/graph agents de ESTE repo
     // e instalarlos en el repo abierto (rama → install → codegen → certify →
     // merge). Los CLIs son el músculo (packageService).
-    vscode.commands.registerCommand("acktos.exportPackage", () => exportPackage(output)),
+    vscode.commands.registerCommand("acktos.exportPackage", () => exportPackage(output, seamsFilePath(ctx.extensionPath), ctx)),
     vscode.commands.registerCommand("acktos.installPackage", () => installPackage(output)),
   );
 
