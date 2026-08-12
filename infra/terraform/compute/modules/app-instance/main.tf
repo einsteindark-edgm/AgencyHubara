@@ -9,6 +9,10 @@ variable "instance_type" { type = string }
 variable "domain" { type = string }
 variable "enabled_plugins" { type = string }
 variable "root_volume_gb" { type = number }
+variable "vault_volume_gb" {
+  description = "EBS dedicado del vault (SEC-09-full). Agrandar es online y trivial; achicar es imposible — arrancar chico."
+  type        = number
+}
 variable "key_name" {
   type    = string
   default = null
@@ -193,6 +197,16 @@ resource "aws_instance" "app" {
     volume_size = var.root_volume_gb
     volume_type = "gp3"
     encrypted   = true
+    # Tags ACÁ y no en volume_tags: volume_tags taggea TODOS los volúmenes
+    # atacheados, y pelearía con los tags propios de aws_ebs_volume.vault en
+    # cada apply (resource cycling — warning documentado del provider AWS).
+    tags = {
+      Name   = "agencyhubara-${var.tenant}-app-root"
+      Tenant = var.tenant
+      # Quitar post-burn-in de la migración del vault (plan §2.1): migrado el
+      # vault, el root deja de tener dato irremplazable y no amerita snapshot.
+      Backup = "daily"
+    }
   }
 
   metadata_options {
@@ -219,20 +233,46 @@ resource "aws_instance" "app" {
     prevent_destroy = true
   }
 
-  # Volume tags: el DLM (backup.tf del root) snapshotea diario por este tag —
-  # acá vive el vault (sesiones WhatsApp + catálogo), el único estado de
-  # negocio que no se puede reconstruir de una fuente externa.
-  volume_tags = {
-    Name   = "agencyhubara-${var.tenant}-app-root"
-    Tenant = var.tenant
-    Backup = "daily"
-  }
-
   tags = {
     Name   = "agencyhubara-${var.tenant}-app"
     Tenant = var.tenant
     Role   = "app"
   }
+}
+
+# ── EBS dedicado del vault (SEC-09-full) ────────────────────────────────────
+# El único estado de negocio irreconstruible (sesiones WhatsApp + catálogo +
+# historial LLM por cliente) vive acá, con ciclo de vida INDEPENDIENTE de la
+# instancia: terminar/reemplazar la caja ya no puede llevarse los datos
+# (incidente 2026-07-08). En la caja se monta por LABEL=hubara-vault (ver
+# cloud-init) y el compose lo bind-mountea por servicio. Runbook completo:
+# infra/VAULT_EBS_MIGRATION_PLAN.md.
+resource "aws_ebs_volume" "vault" {
+  availability_zone = aws_instance.app.availability_zone
+  size              = var.vault_volume_gb
+  type              = "gp3"
+  encrypted         = true
+
+  tags = {
+    Name   = "agencyhubara-${var.tenant}-vault"
+    Tenant = var.tenant
+    # Mismo tag que ya usa el DLM (backup.tf del root) — snapshot diario
+    # automático, sin tocar backup.tf.
+    Backup = "daily"
+  }
+
+  # Esto SÍ es el dato real — más justificado aún que el guard del root.
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "aws_volume_attachment" "vault" {
+  # En Nitro el SO lo ve como NVMe (normalmente /dev/nvme1n1) — este nombre es
+  # solo el handle de la API. Confirmar device real con lsblk en la caja.
+  device_name = "/dev/xvdf"
+  volume_id   = aws_ebs_volume.vault.id
+  instance_id = aws_instance.app.id
 }
 
 resource "aws_eip" "app" {
