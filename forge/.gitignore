@@ -1,6 +1,7 @@
-# Estado local de migraciones en curso + outputs/secrets de los steps.
-# NUNCA se commitean: contienen refs de proyectos, URLs con credenciales, etc.
-clients/*/.migration-state.json
-clients/*/.outputs.*.json
-clients/*/.secrets.*.json
+# Bundles de cliente (clients/<slug>/): client.yaml + workspace de personalidad +
+# estado/outputs/secrets de la migración. NADA del cliente se commitea al repo de
+# Hubara — su hogar permanente es el repo del CLON: `apply` mete el workspace vía
+# workspace_overlay y `copy_exclude: [forge]` evita que forge/ viaje. clients/ es
+# solo staging local. (Aislamiento total cliente↔Hubara — decisión del operador.)
+clients/
 __pycache__/
