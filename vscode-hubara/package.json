@@ -2,7 +2,7 @@
   "name": "acktos-studio",
   "displayName": "Acktos Studio",
   "description": "Grafos, certificaciones y ejecuciones de AgencyHubara + GraphAgents dentro de VS Code.",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "publisher": "acktos",
   "private": true,
   "license": "UNLICENSED",
