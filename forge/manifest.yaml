@@ -154,6 +154,101 @@ replacements:
     files: ["infra/whatsapp-provisioning/*.py"]
     from: "Hubara"
     to: "{{company}}"
+  # ── Ejemplos de DOMINIO (velas) hardcodeados en strings LLM-facing del motor
+  # (descripciones de tools + prompts de remarketing) → texto AGNÓSTICO de
+  # dominio. NO son la marca ni slots-contrato (aroma/color como keys se
+  # conservan): son EJEMPLOS que el LLM lee y que sesgarían al clon hacia velas
+  # (gotcha #1: verificar comportamiento, no schema). Neutralizarlos beneficia a
+  # todo clon. Scoped por archivo; Hubara no se muta (forge lee Hubara, escribe
+  # al clon). ──────────────────────────────────────────────────────────────
+  - id: ej-catalog-search
+    files: ["hubara_agency/src/plugins/chats/agent/sales/tools/catalog.py"]
+    from: "filtrar (ej: 'lavanda', 'religiosa', 'cera de palma')"
+    to: "filtrar (ej: por nombre o categoría)"
+  - id: ej-order-draft-aroma-desc
+    files: ["hubara_agency/src/plugins/chats/agent/sales/tools/order_draft.py"]
+    from: "Aroma elegido (ej. 'Lavanda')."
+    to: "Atributo/variante elegido según el catálogo."
+  - id: ej-order-draft-freetext
+    files: ["hubara_agency/src/plugins/chats/agent/sales/tools/order_draft.py"]
+    from: "pedido: 2x Luz Serena lavanda/blanco + 1x Cruz de Vida"
+    to: "pedido: 2x <producto> <variante> + 1x <producto>"
+  - id: ej-order-reg-variant-label
+    files: ["hubara_agency/src/plugins/chats/agent/sales/tools/order_registration.py"]
+    from: "variant_label (ej. 'Lavanda', 'Azul')."
+    to: "variant_label (ej. la etiqueta de la variante: talla o color)."
+  - id: ej-uiintents-caption
+    files: ["hubara_agency/src/plugins/chats/agent/sales/tools/ui_intents.py"]
+    from: "Ej: 'aroma lavanda · 40 horas de duración'."
+    to: "Ej: 'detalle breve del producto'."
+  - id: ej-uiintents-pregunta-variante
+    files: ["hubara_agency/src/plugins/chats/agent/sales/tools/ui_intents.py"]
+    from: "pregúntale al cliente por aroma/color."
+    to: "pregúntale al cliente por la variante que prefiere."
+  - id: ej-uiintents-invita-variante
+    files: ["hubara_agency/src/plugins/chats/agent/sales/tools/ui_intents.py"]
+    from: "invítalo a elegir aroma/color o cerrar la compra."
+    to: "invítalo a elegir la variante o cerrar la compra."
+  - id: ej-uiintents-picker-a
+    files: ["hubara_agency/src/plugins/chats/agent/sales/tools/ui_intents.py"]
+    from: "variante (aromas / colores / tamaños), con un emoji"
+    to: "variante (según el catálogo), con un emoji"
+  - id: ej-uiintents-picker-b
+    files: ["hubara_agency/src/plugins/chats/agent/sales/tools/ui_intents.py"]
+    from: "la que prefiere (ej: 'lavanda', 'el morado')."
+    to: "la que prefiere (ej: la opción que quiera)."
+  - id: ej-uiintents-picker-c
+    files: ["hubara_agency/src/plugins/chats/agent/sales/tools/ui_intents.py"]
+    from: "4 o más opciones de aroma/color de un"
+    to: "4 o más opciones de variante de un"
+  - id: ej-uiintents-picker-caption
+    files: ["hubara_agency/src/plugins/chats/agent/sales/tools/ui_intents.py"]
+    from: "estos aromas:' o 'Estos son los colores disponibles:'."
+    to: "estas opciones:' o 'Estas son las variantes disponibles:'."
+  - id: ej-remarketing-anclaje-a
+    files: ["hubara_agency/src/plugins/chats/agent/remarketing/prompts.py"]
+    from: "motivo (ej. 'el Velón de Cristo', 'los "
+    to: "motivo (ej. 'el producto que vio', 'lo "
+  - id: ej-remarketing-anclaje-b
+    files: ["hubara_agency/src/plugins/chats/agent/remarketing/prompts.py"]
+    from: "aromas que viste') para que el cliente reconozca"
+    to: "que viste') para que el cliente reconozca"
+  - id: ej-remarketing-hook-a
+    files: ["hubara_agency/src/plugins/chats/agent/remarketing/prompts.py"]
+    from: "¡Hola de nuevo! 🌿 Quedó pendiente lo del Velón de Cristo "
+    to: "¡Hola de nuevo! ✨ Quedó pendiente lo que viste "
+  - id: ej-remarketing-hook-b
+    files: ["hubara_agency/src/plugins/chats/agent/remarketing/prompts.py"]
+    from: "y los aromas — ¿lograste decidirte?"
+    to: "¿lograste decidirte?"
+  - id: ej-remarketing-hook-c
+    files: ["hubara_agency/src/plugins/chats/agent/remarketing/prompts.py"]
+    from: "retomar lo de la *Cruz de Vida* ✨"
+    to: "retomar lo que te gustó ✨"
+  - id: ej-uiintents-header-productos
+    files: ["hubara_agency/src/plugins/chats/agent/sales/tools/ui_intents.py"]
+    from: "nuestras velas religiosas:'."
+    to: "nuestros productos:'."
+  - id: ej-uiintents-flow-ej
+    files: ["hubara_agency/src/plugins/chats/agent/sales/tools/ui_intents.py"]
+    from: "Flow. Ej: '2× Vela Cruz de Vida'."
+    to: "Flow. Ej: '2× <producto>'."
+  - id: ej-uiintents-impuestos
+    files: ["hubara_agency/src/plugins/chats/agent/sales/tools/ui_intents.py"]
+    from: "Impuestos en COP. Velas artesanales suelen ser 0."
+    to: "Impuestos en COP (suelen ser 0)."
+  - id: ej-uiintents-continuas
+    files: ["hubara_agency/src/plugins/chats/agent/sales/tools/ui_intents.py"]
+    from: "¿continúas con el aroma lavanda o cambias?"
+    to: "¿continúas con la variante elegida o cambias?"
+  - id: ej-uiintents-envelope-ej
+    files: ["hubara_agency/src/plugins/chats/agent/sales/tools/ui_intents.py"]
+    from: "Nombre LITERAL del envelope (ej 'Lavanda', "
+    to: "Nombre LITERAL del envelope (ej 'la variante', "
+  - id: ej-uiintents-cliente-ej
+    files: ["hubara_agency/src/plugins/chats/agent/sales/tools/ui_intents.py"]
+    from: "cliente (ej: 'lavanda', 'el morado')."
+    to: "cliente (ej: la opción que quiera)."
   # ── GraphAgents viaja al clon (decisión 2026-07-10, reemplaza D-4): el tag
   # EC2, el prefijo SSM y la imagen GHCR son únicos A NIVEL CUENTA — sin esto,
   # el backend del clon despertaría/deployaría la caja de HUBARA (`head -1`
