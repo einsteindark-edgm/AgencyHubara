@@ -252,6 +252,8 @@ deletes:
   - "infra/DEPLOY_RUNBOOK.md"          # ídem — NEXT_STEPS.md del clon lo reemplaza
   - "infra/SERVICIOS_AWS_Y_SCHEDULERS.md"
   - "infra/PENDING_IMPLEMENTATION.md"
+  - "infra/VAULT_EBS_MIGRATION_PLAN.md"  # plan de migración del vault VIVO de Hubara (vol/EBS IDs, pasos op)
+  - "SECURITY_AUDIT_fable.md"          # auditoría interna de Hubara con hallazgos ancla archivo:línea
 
 # Archivos REGENERADOS desde forge/templates/ (no editados).
 templates:

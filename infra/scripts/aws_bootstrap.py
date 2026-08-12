@@ -166,6 +166,11 @@ def cmd_github(a):
     print(f"▶ Seteando GH variables en {a.repo}", file=sys.stderr)
     gh_var(a.repo, "AWS_REGION", a.region)
     gh_var(a.repo, "AWS_TERRAFORM_ROLE_ARN", val("github_terraform_role_arn"))
+    # SEC-03: el rol READ-ONLY que asumen terraform-plan + los deploys
+    # (backend/frontend/observability solo hacen `terraform output`). Los 4
+    # workflows lo referencian como `vars.AWS_TF_READONLY_ROLE_ARN`; sin setearlo,
+    # el paso configure-aws-credentials falla al asumir rol.
+    gh_var(a.repo, "AWS_TF_READONLY_ROLE_ARN", val("github_terraform_readonly_role_arn"))
     gh_var(a.repo, "AWS_DEPLOY_ROLE_ARN", val("github_deploy_role_arn"))
     gh_var(a.repo, "TF_STATE_BUCKET", a.bucket)
     gh_var(a.repo, "TF_STATE_LOCK_TABLE", a.table)
