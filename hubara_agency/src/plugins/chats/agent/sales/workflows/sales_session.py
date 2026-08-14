@@ -613,6 +613,14 @@ class HubaraSalesSessionWorkflow:
                     # (idle 1min en Sales), `deprecate_patch`.
                     episode_closed_decision = result.episode_closed_decision
                     safety_net_escalated = False
+                    # Premortem C3 (run 5f43bcd0): las redes de seguridad NO
+                    # setean `_force_shutdown` directo — eso suprimía el
+                    # final_content legítimo del turno ("tu pedido quedó
+                    # registrado...") porque los bloques de send de abajo
+                    # guardan con `not self._force_shutdown`. El shutdown se
+                    # difiere y se aplica DESPUÉS del send/persist/flush,
+                    # espejo del path de escalación del LLM.
+                    shutdown_after_send = False
                     if (
                         result.order_registered_decision is not None
                         and workflow.patched("ensure-order-closure-v1")
@@ -642,8 +650,19 @@ class HubaraSalesSessionWorkflow:
                             # La red escaló a humano → cerrar el workflow como
                             # cualquier escalation (cliente queda en cola
                             # humana; `active_route=humano` bloquea dispatch
-                            # de mensajes futuros).
-                            self._force_shutdown = True
+                            # de mensajes futuros). Shutdown DIFERIDO (C3):
+                            # primero sale la despedida del turno, después se
+                            # apaga — igual que la escalación del LLM.
+                            #
+                            # workflow.patched(): histories en vuelo pre-fix
+                            # suprimieron los sends de este turno; el gate las
+                            # replayea con el shape viejo (flag inmediato).
+                            if workflow.patched(
+                                "safety-net-shutdown-after-send-v1"
+                            ):
+                                shutdown_after_send = True
+                            else:
+                                self._force_shutdown = True
                             safety_net_escalated = True
 
                     # HU-WA24H-001 Sprint 2: el episodio cerró con un
@@ -747,7 +766,15 @@ class HubaraSalesSessionWorkflow:
                                 retry_policy=RetryPolicy(maximum_attempts=3),
                             )
                             if _escalated:
-                                self._force_shutdown = True
+                                # Shutdown DIFERIDO (C3) — ver la rama de la
+                                # red orden↔tag de arriba: mismo patch, misma
+                                # razón (la despedida sale antes de apagar).
+                                if workflow.patched(
+                                    "safety-net-shutdown-after-send-v1"
+                                ):
+                                    shutdown_after_send = True
+                                else:
+                                    self._force_shutdown = True
                                 safety_net_escalated = True
 
                     # SALUDO DESCARTADO (bug run ddd0d472 / session-wa_573125671604):
@@ -931,6 +958,13 @@ class HubaraSalesSessionWorkflow:
                             f"(reason={result.escalation_decision.reason_category}). "
                             "Cerrando workflow."
                         )
+                        self._force_shutdown = True
+
+                    # Aplicación del shutdown DIFERIDO de las redes de
+                    # seguridad (C3): la despedida/persist/flush de arriba ya
+                    # corrieron; recién ahora se apaga el workflow. Solo puede
+                    # ser True bajo `safety-net-shutdown-after-send-v1`.
+                    if shutdown_after_send:
                         self._force_shutdown = True
 
                     if self._force_shutdown:
