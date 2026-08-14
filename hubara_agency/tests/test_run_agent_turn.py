@@ -81,6 +81,9 @@ def test_pending_message_is_dataclass_serializable() -> None:
         "media": None,
         "plugin_context": ["ctx"],
         "is_handoff": False,
+        # run 5f43bcd0: marker estructural del trigger de ghosting. Default
+        # False → mensajes pre-deploy deserializan igual (R-JSON).
+        "is_ghost_trigger": False,
     }
 
 

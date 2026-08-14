@@ -202,3 +202,43 @@ async def test_normal_hook_still_sends(tmp_path) -> None:
     tracker = Tracker()
     await _run_workflow(tracker, "¡Hola! ¿Seguimos con tu pedido? 🤍", tmp_path)
     assert tracker.send_whatsapp_calls == ["¡Hola! ¿Seguimos con tu pedido? 🤍"]
+
+
+@pytest.mark.asyncio
+async def test_deliberation_without_sentinel_is_blocked(tmp_path) -> None:
+    """Clase del incidente 019f7234 SIN el sentinel: el LLM delibera en prosa
+    ("no genero un nuevo mensaje") en vez de emitir NO_MESSAGE. El sentinel no
+    salva este caso (documentado en test_no_message_abstention) — la última
+    línea determinista (`looks_like_admin_leak`) sí: texto administrativo en
+    el gancho equivale a abstención (no enviar, no persistir, devolver el
+    routing a ventas)."""
+    tracker = Tracker()
+    await _run_workflow(
+        tracker,
+        "El cliente ya compró su Plegaria de Luz la semana pasada, así que "
+        "no genero un nuevo mensaje de remarketing.",
+        tmp_path,
+    )
+    assert tracker.send_whatsapp_calls == [], (
+        "deliberación administrativa → NINGÚN mensaje al cliente"
+    )
+    assert tracker.persist_calls == []
+    assert tracker.claim_calls == ["remarketing", "ventas"], (
+        "gancho bloqueado → devolver el routing a ventas como la abstención"
+    )
+
+
+@pytest.mark.asyncio
+async def test_empty_llm_content_does_not_fabricate_apology(tmp_path) -> None:
+    """Premortem A4 (run 5f43bcd0): `run_agent_turn` fabrica "¡Perdón! Justo
+    se me cortó un segundito. ¿Me repites lo que necesitabas?" cuando el LLM
+    devuelve content vacío. En un turno PROACTIVO de remarketing eso le llega
+    de la nada a un cliente que no escribe hace horas — y encima simula la
+    marca de "interrupción técnica" que el cierre de ghosting busca. Turno
+    proactivo con content vacío = abstención, no disculpa fabricada."""
+    tracker = Tracker()
+    await _run_workflow(tracker, "", tmp_path)
+    assert tracker.send_whatsapp_calls == [], (
+        "content vacío en turno proactivo → NINGÚN mensaje fabricado"
+    )
+    assert tracker.persist_calls == []

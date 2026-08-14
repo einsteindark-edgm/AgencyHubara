@@ -29,6 +29,7 @@ from src.platform.config import (
     WORKSPACE_VAULT_DIR,
 )
 from src.platform.constants import WHATSAPP_SESSION_PREFIX
+from src.platform.llm_text_sanitizer import looks_like_admin_leak
 from src.platform.temporal.heartbeat import with_heartbeat
 from src.platform.whatsapp import client as whatsapp_client
 from src.platform.whatsapp.formatting import to_whatsapp_text
@@ -292,6 +293,18 @@ async def send_image_to_session(
 @activity.defn(name="send_whatsapp_message_activity")
 @with_heartbeat(every=10)
 async def send_whatsapp_message_activity(session_id: str, message: str) -> None:
+    # Tripwire B9 (premortem run 5f43bcd0): este es el ÚNICO camino por el
+    # que texto generado por LLM llega a WhatsApp desde workflows. Si todos
+    # los guards del workflow fallan (confluencia de flags nueva, workflow
+    # futuro sin guards), el texto administrativo muere acá. El path humano
+    # (dashboard → send_message_to_session directo) no pasa por esta activity.
+    if looks_like_admin_leak(message):
+        log.error(
+            "admin_text_blocked_at_choke_point",
+            session_id=session_id,
+            preview=message[:120],
+        )
+        return
     await send_message_to_session(session_id, message)
 
 

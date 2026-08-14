@@ -17,7 +17,7 @@ with workflow.unsafe.imports_passed_through():
         start_or_signal_sales_workflow_activity,
     )
     from src.platform.temporal.retry_policies import _LLM_OPTIONS
-    from src.sdk.agentkit import is_no_message_abstention
+    from src.sdk.agentkit import is_no_message_abstention, looks_like_admin_leak
     from src.platform.workflow_helpers import (
         InboxMsg,
         PendingMessage,
@@ -296,7 +296,11 @@ class HubaraSalesSessionWorkflow:
                         retry_policy=RetryPolicy(maximum_attempts=2),
                     )
 
-                    self._pending.append(PendingMessage(message=ghost_trigger))
+                    self._pending.append(
+                        PendingMessage(
+                            message=ghost_trigger, is_ghost_trigger=True
+                        )
+                    )
                     self._force_shutdown = True
 
             # Handoff refresh per-iteration (Fix 3, gated): si Sales ya estaba
@@ -357,14 +361,57 @@ class HubaraSalesSessionWorkflow:
                 while self._pending:
                     msgs_to_process.append(self._pending.pop(0))
 
+            # Turno ADMIN estructural (run 5f43bcd0): si el batch contiene el
+            # trigger de ghosting, el texto del turno es reporte interno y
+            # JAMÁS se enruta al cliente (send/persist/typing/flush). Antes la
+            # supresión dependía SOLO de `_force_shutdown`, y el corrientazo
+            # (que legítimamente lo limpia — el cliente volvió) dejaba pasar
+            # el resumen administrativo al canal. La propiedad es del batch,
+            # no del lifecycle de la sesión. patched(): histories en vuelo
+            # (incl. la del incidente, que SÍ envió) replayean sin la rama.
+            turn_is_admin = any(
+                p.is_ghost_trigger for p in (raw_batch or [])
+            )
+
+            # Invalidación de premisa PRE-turno (premortem C2, simétrico
+            # inverso del run 5f43bcd0): si junto al trigger de ghosting hay
+            # un mensaje REAL (el cliente escribió en la ventana entre el
+            # timeout y el turno), el ghosting quedó invalidado ANTES de
+            # arrancar — dropeamos el trigger, limpiamos el shutdown y el
+            # turno responde normal. Sin esto, la respuesta se suprimía por
+            # `_force_shutdown` y la sesión se apagaba tragándose el mensaje
+            # (el cancel-shutdown del cierre solo mira `_pending`, ya vacío).
+            if (
+                turn_is_admin
+                and any(not p.is_ghost_trigger for p in raw_batch)
+                and workflow.patched("ghost-premise-invalidated-pre-turn-v1")
+            ):
+                workflow.logger.info(
+                    "Mensaje del cliente en la ventana de ghosting: premisa "
+                    "invalidada pre-turno — trigger dropeado, shutdown "
+                    "cancelado, turno normal."
+                )
+                raw_batch = [
+                    p for p in raw_batch if not p.is_ghost_trigger
+                ]
+                msgs_to_process = [self._coalesce_batch(raw_batch)]
+                self._force_shutdown = False
+                turn_is_admin = False
+
+            admin_no_send = turn_is_admin and workflow.patched(
+                "admin-turn-no-send-v1"
+            )
+
             for msg in msgs_to_process:
                 self._processing = True
 
                 try:
                     # Typing indicator outbound (Fix 5, gated): mostrar
                     # "escribiendo..." al cliente. Best-effort, no bloquea
-                    # el turno si la API de WhatsApp falla.
-                    if workflow.patched("typing-indicator-v1"):
+                    # el turno si la API de WhatsApp falla. Turno admin: no
+                    # mostramos "escribiendo..." de un turno que jamás va a
+                    # escribir (el cliente veía typing y después silencio).
+                    if workflow.patched("typing-indicator-v1") and not admin_no_send:
                         try:
                             await workflow.execute_activity(
                                 send_typing_indicator_activity,
@@ -425,6 +472,32 @@ class HubaraSalesSessionWorkflow:
                                     "shutdown programado."
                                 )
                                 self._force_shutdown = False
+                                # Run 5f43bcd0: cancelar el shutdown no basta.
+                                # El batch recompuesto conservaba el trigger
+                                # [SISTEMA] de ghosting → el re-run era un
+                                # híbrido admin+cliente: el LLM etiquetaba
+                                # INTERESADO y su resumen administrativo (con
+                                # el flag ya limpio) salía al cliente, mientras
+                                # el mensaje real ("Caballero") quedaba sin
+                                # respuesta. La premisa del ghosting quedó
+                                # invalidada → DROPEAMOS el trigger y el re-run
+                                # es un turno normal sobre lo que el cliente
+                                # escribió. (Si el filtro dejara el batch
+                                # vacío — no debería: el corrientazo implica
+                                # al menos un mensaje real — conservamos el
+                                # batch original por defensividad.)
+                                if workflow.patched(
+                                    "ghost-trigger-drop-on-recompose-v1"
+                                ):
+                                    non_admin = [
+                                        p
+                                        for p in raw_batch
+                                        if not p.is_ghost_trigger
+                                    ]
+                                    if non_admin:
+                                        raw_batch = non_admin
+                                        msg = self._coalesce_batch(raw_batch)
+                                        admin_no_send = False
                             continue
                         break
                     self._last_response = result.final_content
@@ -696,9 +769,20 @@ class HubaraSalesSessionWorkflow:
                         result.pre_tool_messages
                         and not self._force_shutdown
                         and not abstained
+                        and not admin_no_send
                         and workflow.patched("send-pre-tool-messages-v1")
                     ):
                         for pre_msg in result.pre_tool_messages:
+                            # Misma última línea que el final_content: burbuja
+                            # pre-tool con olor administrativo no sale.
+                            if workflow.patched(
+                                "admin-text-guard-v1"
+                            ) and looks_like_admin_leak(pre_msg):
+                                workflow.logger.warning(
+                                    "admin-text-guard: pre_tool bloqueado: "
+                                    f"{pre_msg[:120]!r}"
+                                )
+                                continue
                             await workflow.execute_activity(
                                 send_whatsapp_message_activity,
                                 args=[session.session_id, pre_msg],
@@ -727,10 +811,35 @@ class HubaraSalesSessionWorkflow:
                         workflow.patched("suppress-text-when-variant-picker-v1")
                         and "present_variant_picker" in result.tools_used
                     )
+                    if admin_no_send and result.final_content:
+                        # Observabilidad del turno admin: el LLM produjo texto
+                        # pese a la instrucción de silencio — lo suprimimos y
+                        # dejamos rastro (el texto vive en record_turn igual).
+                        workflow.logger.warning(
+                            "turno admin: final_content suprimido (no va al "
+                            f"cliente): {result.final_content[:120]!r}"
+                        )
+                    # Última línea determinista (run 5f43bcd0 + premortem D1):
+                    # aunque el turno sea normal, texto que huele a reporte
+                    # administrativo ("etiquetada como `INTERESADO`", envelope
+                    # de tool regurgitado) NO sale al cliente. patched():
+                    # histories en vuelo que SÍ enviaron replayean sin la rama.
+                    leak_blocked = (
+                        bool(result.final_content)
+                        and workflow.patched("admin-text-guard-v1")
+                        and looks_like_admin_leak(result.final_content)
+                    )
+                    if leak_blocked:
+                        workflow.logger.warning(
+                            "admin-text-guard: final_content bloqueado (texto "
+                            f"administrativo): {result.final_content[:120]!r}"
+                        )
                     if (
                         result.final_content
                         and not self._force_shutdown
                         and not abstained
+                        and not admin_no_send
+                        and not leak_blocked
                     ):
                         # Evitamos enviar respuestas vacías o alucinar respuestas internas durante auto-cierres
                         if not suppress_text_for_picker:
@@ -784,6 +893,7 @@ class HubaraSalesSessionWorkflow:
                     # replay-ar workflows en vuelo del deploy anterior.
                     if (
                         not self._force_shutdown
+                        and not admin_no_send
                         and workflow.patched("flush-ui-intents-v1")
                     ):
                         await workflow.execute_activity(

@@ -106,11 +106,21 @@ class PendingMessage:
     el bootstrap (o el refresh per-iteration) lee `pending_handoff_summary`
     de metadata.json y seedea `_pending` con un marker. Default False
     mantiene replay-safety (mensajes pre-deploy deserializan al default).
+
+    `is_ghost_trigger` (run 5f43bcd0): marca el trigger administrativo de
+    ghosting que el workflow inyecta al detectar abandono. Un batch que lo
+    contiene produce un turno ADMIN: su texto es reporte interno (etiqueta +
+    resumen) y NUNCA debe enrutarse al canal del cliente. El tipo de turno
+    es asi una propiedad ESTRUCTURAL del batch — no una confluencia de
+    flags (`_force_shutdown`) que otra rama puede desarmar (el corrientazo
+    de run 48ec6df5 limpiaba el flag y el resumen admin llego al cliente).
+    Default False mantiene replay-safety.
     """
     message: str
     media: list[str] | None = None
     plugin_context: list[str] | None = None
     is_handoff: bool = False
+    is_ghost_trigger: bool = False
 
 
 @dataclass
@@ -430,6 +440,7 @@ async def run_agent_turn(
     fallback_plugin_context: list[str] | None = None,
     episode_id: str | None = None,
     has_new_input: Callable[[], bool] | None = None,
+    fabricate_fallback_on_empty: bool = True,
 ) -> TurnResult:
     """Wrapper de atribución de costos (HU-003) sobre `_run_agent_turn_impl`.
 
@@ -477,6 +488,7 @@ async def run_agent_turn(
         baggage=baggage,
         episode_id=episode_id,
         has_new_input=has_new_input,
+        fabricate_fallback_on_empty=fabricate_fallback_on_empty,
     )
 
 
@@ -487,6 +499,7 @@ async def _run_agent_turn_impl(
     baggage: dict[str, str] | None = None,
     episode_id: str | None = None,
     has_new_input: Callable[[], bool] | None = None,
+    fabricate_fallback_on_empty: bool = True,
 ) -> TurnResult:
     """Ejecuta un turno completo de LLM con tool-loop. Es invocado desde `@workflow.run`.
 
@@ -805,20 +818,33 @@ async def _run_agent_turn_impl(
             # when something hiccups. Critical: do NOT mention "bot", "system",
             # "error", "AI" — preserve the human persona.
             if not final_content:
-                workflow.logger.error(
-                    "LLM final response remained empty after recovery attempt — "
-                    "using human-sounding fallback line",
-                    extra={
-                        "session_id": session.session_id,
-                        "reasoning_len": (
-                            len(response.reasoning_content)
-                            if response.reasoning_content
-                            else 0
-                        ),
-                        "iteration": iteration,
-                    },
-                )
-                final_content = "¡Perdón! Justo se me cortó un segundito. ¿Me repites lo que necesitabas?"
+                # Premortem A4 (run 5f43bcd0): la disculpa fabricada solo tiene
+                # sentido en un turno REACTIVO (el cliente espera respuesta).
+                # En turnos proactivos/administrativos (gancho de remarketing,
+                # cierre de ghosting) el caller pasa
+                # `fabricate_fallback_on_empty=False`: vacío = abstención — un
+                # cliente frío no debe recibir "¿Me repites lo que
+                # necesitabas?" de la nada.
+                if fabricate_fallback_on_empty:
+                    workflow.logger.error(
+                        "LLM final response remained empty after recovery attempt — "
+                        "using human-sounding fallback line",
+                        extra={
+                            "session_id": session.session_id,
+                            "reasoning_len": (
+                                len(response.reasoning_content)
+                                if response.reasoning_content
+                                else 0
+                            ),
+                            "iteration": iteration,
+                        },
+                    )
+                    final_content = "¡Perdón! Justo se me cortó un segundito. ¿Me repites lo que necesitabas?"
+                else:
+                    workflow.logger.info(
+                        "LLM final response vacío en turno proactivo — se "
+                        "trata como abstención (sin fallback fabricado)"
+                    )
 
             # Checkpoint B — supresión del cierre stale (Fase 1, caso "Solo
             # plegaria de luz" del run eda8d460): el turno YA tocó al cliente
@@ -847,7 +873,11 @@ async def _run_agent_turn_impl(
             break
 
     if final_content is None:
-        final_content = "¡Perdón! Justo se me cortó un segundito. ¿Me repites lo que necesitabas?"
+        final_content = (
+            "¡Perdón! Justo se me cortó un segundito. ¿Me repites lo que necesitabas?"
+            if fabricate_fallback_on_empty
+            else ""
+        )
 
     await workflow.execute_activity(
         record_turn,
