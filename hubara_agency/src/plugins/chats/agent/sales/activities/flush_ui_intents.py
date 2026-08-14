@@ -51,6 +51,18 @@ _GALLERY_MAX_IMAGES = 4
 # replies sobre las últimas galerías sin crecer sin límite.
 _MEDIA_INDEX_MAX = 50
 
+# TTL de un intent encolado (premortem C4, run 5f43bcd0): un turno suprimido
+# (ghosting / _force_shutdown / turno admin) puede dejar intents en
+# `pending_ui_intents` sin flushear. Sin TTL, la PRÓXIMA sesión del cliente
+# (horas o días después) los flushea en su primer turno → catálogo/picker
+# fantasma fuera de contexto. Todo intent más viejo que esto se descarta con
+# warning. Los intents SIN `queued_at_ms` también se descartan: todos los
+# enqueue paths vivos lo stampean, así que un intent sin stamp solo puede ser
+# un remanente pre-deploy — imposible de envejecer, imposible de confiar.
+_UI_INTENT_TTL_MS = int(
+    float(os.getenv("WHATSAPP_UI_INTENT_TTL_S", "600")) * 1000
+)
+
 
 def _render_payment_instructions_text(params: dict[str, Any]) -> str | None:
     """Plantilla FIJA de datos bancarios para pago por transferencia.
@@ -157,6 +169,45 @@ async def flush_pending_ui_intents_activity(session_id: str) -> int:
         return 0
 
     intents = list(data.get("pending_ui_intents") or [])
+    if not intents:
+        return 0
+
+    # PREMORTEM C4: descartar intents vencidos ANTES de resolver teléfono o
+    # dispatch — un turno suprimido no puede convertirse en un mensaje
+    # fantasma en la sesión siguiente. Persistimos el descarte de inmediato
+    # para que un retry de Temporal tampoco los resucite.
+    now_ms = int(time.time() * 1000)
+    fresh_intents: list[dict[str, Any]] = []
+    stale_intents: list[dict[str, Any]] = []
+    for intent in intents:
+        queued_at_ms = intent.get("queued_at_ms")
+        if (
+            isinstance(queued_at_ms, (int, float))
+            and not isinstance(queued_at_ms, bool)
+            and now_ms - queued_at_ms <= _UI_INTENT_TTL_MS
+        ):
+            fresh_intents.append(intent)
+        else:
+            stale_intents.append(intent)
+    if stale_intents:
+        activity.logger.warning(
+            "flush_ui_intents.stale_intents_discarded",
+            extra={
+                "session_id": session_id,
+                "ttl_ms": _UI_INTENT_TTL_MS,
+                "discarded": [
+                    {
+                        "id": it.get("id"),
+                        "kind": it.get("kind"),
+                        "queued_at_ms": it.get("queued_at_ms"),
+                    }
+                    for it in stale_intents
+                ],
+            },
+        )
+        data["pending_ui_intents"] = fresh_intents
+        _safe_write_metadata(metadata_file, data)
+    intents = fresh_intents
     if not intents:
         return 0
 

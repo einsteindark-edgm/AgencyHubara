@@ -19,6 +19,7 @@ Contrato nuevo:
 from __future__ import annotations
 
 import json
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -36,6 +37,10 @@ _SESSION_ID = "wa_573000000000"
 def _seed_metadata(vault, intents: list[dict]) -> None:
     session_dir = vault / _SESSION_ID
     session_dir.mkdir(parents=True, exist_ok=True)
+    # Stamp fresco por default — igual que los enqueue paths vivos. Sin él,
+    # el flush descarta el intent como remanente pre-deploy (premortem C4).
+    now_ms = int(time.time() * 1000)
+    intents = [{"queued_at_ms": now_ms, **i} for i in intents]
     (session_dir / "metadata.json").write_text(
         json.dumps(
             {

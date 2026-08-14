@@ -734,3 +734,182 @@ async def test_shipping_flow_falls_back_to_text_when_send_flow_raises_exception(
     assert "contra entrega" not in text_sent.lower()
     assert result is not None
     assert result.ok is True
+
+
+# =============================================================================
+# TTL de pending_ui_intents — premortem C4 (run 5f43bcd0, 2026-08-13).
+# Un turno suprimido (ghosting / _force_shutdown / turno admin) puede dejar
+# intents encolados SIN flushear. La próxima sesión del cliente (horas o días
+# después) los flushearía en su primer turno → catálogo/picker fantasma fuera
+# de contexto. Contrato: el flush descarta (con warning) todo intent cuyo
+# `queued_at_ms` supere el TTL — y también los que NO traen stamp (solo pueden
+# ser remanentes pre-deploy: todos los enqueue paths vivos lo stampean).
+# =============================================================================
+
+
+_TTL_SESSION_ID = "wa_573000000099"
+
+
+def _seed_ttl_metadata(vault, intents: list[dict]) -> None:
+    session_dir = vault / _TTL_SESSION_ID
+    session_dir.mkdir(parents=True, exist_ok=True)
+    import json as _json
+
+    (session_dir / "metadata.json").write_text(
+        _json.dumps(
+            {"phone_number_id": "phone-1", "pending_ui_intents": intents},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _read_ttl_metadata(vault) -> dict:
+    import json as _json
+
+    return _json.loads(
+        (vault / _TTL_SESSION_ID / "metadata.json").read_text(encoding="utf-8")
+    )
+
+
+def _cta_intent(intent_id: str, queued_at_ms: int | None) -> dict:
+    intent: dict = {
+        "id": intent_id,
+        "kind": "cta_url",
+        "params": {
+            "url": "https://hubara.com.co/catalogo",
+            "button_text": "Ver catálogo",
+            "body_text": "Mira nuestro catálogo completo:",
+        },
+    }
+    if queued_at_ms is not None:
+        intent["queued_at_ms"] = queued_at_ms
+    return intent
+
+
+@pytest.fixture
+def ttl_vault(tmp_path, monkeypatch):
+    monkeypatch.setattr("src.platform.config.WORKSPACE_VAULT_DIR", tmp_path)
+    import src.platform.whatsapp.client as wa_client_mod
+
+    monkeypatch.setattr(
+        wa_client_mod,
+        "send_cta_url",
+        AsyncMock(
+            return_value=SimpleNamespace(
+                ok=True, wa_message_id="wamid.cta.1", error=None
+            )
+        ),
+    )
+    return tmp_path
+
+
+@pytest.mark.asyncio
+async def test_flush_discards_stale_intent_past_ttl_and_logs_warning(
+    ttl_vault, caplog,
+):
+    """Intent encolado hace más del TTL (~10 min) → NO se envía al cliente,
+    se limpia de metadata y queda un warning con rastro."""
+    import logging
+    import time
+
+    from temporalio.testing import ActivityEnvironment
+
+    from src.plugins.chats.agent.sales.activities import (
+        flush_ui_intents as flush_mod,
+    )
+    from src.plugins.chats.agent.sales.activities.flush_ui_intents import (
+        flush_pending_ui_intents_activity,
+    )
+    import src.platform.whatsapp.client as wa_client_mod
+
+    stale_ms = int(time.time() * 1000) - flush_mod._UI_INTENT_TTL_MS - 60_000
+    _seed_ttl_metadata(ttl_vault, [_cta_intent("i-stale", stale_ms)])
+
+    caplog.set_level(logging.WARNING)
+    env = ActivityEnvironment()
+    sent = await env.run(flush_pending_ui_intents_activity, _TTL_SESSION_ID)
+
+    assert sent == 0
+    wa_client_mod.send_cta_url.assert_not_awaited()
+    assert _read_ttl_metadata(ttl_vault)["pending_ui_intents"] == []
+    assert "stale" in caplog.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_flush_dispatches_fresh_intent_normally(ttl_vault):
+    """Intent fresco (dentro del TTL) → se dispatchea normal y se limpia."""
+    import time
+
+    from temporalio.testing import ActivityEnvironment
+
+    from src.plugins.chats.agent.sales.activities.flush_ui_intents import (
+        flush_pending_ui_intents_activity,
+    )
+    import src.platform.whatsapp.client as wa_client_mod
+
+    fresh_ms = int(time.time() * 1000) - 30_000
+    _seed_ttl_metadata(ttl_vault, [_cta_intent("i-fresh", fresh_ms)])
+
+    env = ActivityEnvironment()
+    sent = await env.run(flush_pending_ui_intents_activity, _TTL_SESSION_ID)
+
+    assert sent == 1
+    wa_client_mod.send_cta_url.assert_awaited_once()
+    assert _read_ttl_metadata(ttl_vault)["pending_ui_intents"] == []
+
+
+@pytest.mark.asyncio
+async def test_flush_mixed_queue_only_dispatches_fresh(ttl_vault):
+    """Cola mixta (stale + fresh): el stale se descarta, el fresh sale."""
+    import time
+
+    from temporalio.testing import ActivityEnvironment
+
+    from src.plugins.chats.agent.sales.activities import (
+        flush_ui_intents as flush_mod,
+    )
+    from src.plugins.chats.agent.sales.activities.flush_ui_intents import (
+        flush_pending_ui_intents_activity,
+    )
+    import src.platform.whatsapp.client as wa_client_mod
+
+    now_ms = int(time.time() * 1000)
+    stale_ms = now_ms - flush_mod._UI_INTENT_TTL_MS - 60_000
+    _seed_ttl_metadata(
+        ttl_vault,
+        [_cta_intent("i-stale", stale_ms), _cta_intent("i-fresh", now_ms)],
+    )
+
+    env = ActivityEnvironment()
+    sent = await env.run(flush_pending_ui_intents_activity, _TTL_SESSION_ID)
+
+    assert sent == 1
+    wa_client_mod.send_cta_url.assert_awaited_once()
+    assert _read_ttl_metadata(ttl_vault)["pending_ui_intents"] == []
+
+
+@pytest.mark.asyncio
+async def test_flush_discards_intent_without_queued_at_ms(ttl_vault, caplog):
+    """Intent SIN `queued_at_ms` = remanente pre-deploy (todos los enqueue
+    paths vivos lo stampean) → no se puede envejecer → se descarta con
+    warning, nunca se envía."""
+    import logging
+
+    from temporalio.testing import ActivityEnvironment
+
+    from src.plugins.chats.agent.sales.activities.flush_ui_intents import (
+        flush_pending_ui_intents_activity,
+    )
+    import src.platform.whatsapp.client as wa_client_mod
+
+    _seed_ttl_metadata(ttl_vault, [_cta_intent("i-legacy", None)])
+
+    caplog.set_level(logging.WARNING)
+    env = ActivityEnvironment()
+    sent = await env.run(flush_pending_ui_intents_activity, _TTL_SESSION_ID)
+
+    assert sent == 0
+    wa_client_mod.send_cta_url.assert_not_awaited()
+    assert _read_ttl_metadata(ttl_vault)["pending_ui_intents"] == []
+    assert "stale" in caplog.text.lower()
