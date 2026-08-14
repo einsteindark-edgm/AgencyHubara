@@ -70,6 +70,7 @@ def _make_fake_activities(
     llm_responses: list[LLMResponseData] | None = None,
     tool_results: dict[str, str] | None = None,
     llm_call_hooks: dict[int, object] | None = None,
+    ghosting_call_hooks: dict[int, object] | None = None,
     order_draft_note: str | None = None,
 ):
     """Crea las activities fakes con `tracker` cerrado en closure.
@@ -192,6 +193,14 @@ def _make_fake_activities(
     @activity.defn(name="decide_ghosting_action")
     async def fake_ghosting() -> str:
         tracker.ghosting_calls += 1
+        # Hook por número de ciclo ghost (1-based): permite signalear el
+        # workflow MIENTRAS corre esta activity — el mensaje queda en
+        # `_pending` ANTES de que el workflow appendée el trigger (orden
+        # determinista: signal < trigger). Simula al cliente escribiendo en
+        # la ventana entre el timeout y el turno de cierre (premortem C2).
+        hook = (ghosting_call_hooks or {}).get(tracker.ghosting_calls)
+        if hook is not None:
+            await hook()  # type: ignore[operator]
         return "[GHOST] auto-tagging"
 
     # Dispatcher activities — registradas para que el worker las acepte aun
@@ -1175,4 +1184,203 @@ async def test_handoff_turn_no_message_sentinel_suppresses_send(
     )
     assert tracker.persist_calls == [], (
         "abstención → nada en el historial del dashboard"
+    )
+
+
+# Resumen administrativo real del incidente (run 5f43bcd0, evento 783) — el
+# texto que el cliente NUNCA debió ver.
+_ADMIN_SUMMARY = (
+    "La conversación queda etiquetada como `INTERESADO`. El cliente eligió "
+    "su *Duo Zodiacal Leo* en *Amarillo* y estaba por escoger el aroma "
+    "cuando se retiró. Remarketing automático activado. 🤍"
+)
+
+
+@pytest.mark.asyncio
+async def test_admin_close_summary_never_reaches_customer_after_corrientazo(
+    tmp_path: Path,
+) -> None:
+    """Run 5f43bcd0 (caso 573229041190, 2026-08-13, evento 783): el cliente
+    escribió "Caballero" MIENTRAS corría el turno de auto-etiquetado del
+    ghosting. El corrientazo recompuso el batch y (fix run 48ec6df5) limpió
+    `_force_shutdown` — pero el batch recompuesto CONSERVÓ el trigger
+    [SISTEMA] de ghosting. El LLM, con ese prompt híbrido, etiquetó
+    INTERESADO y emitió el resumen administrativo como texto final. Con
+    `_force_shutdown` ya apagado, el guard del send lo dejó pasar: el
+    cliente recibió "La conversación queda etiquetada como `INTERESADO`...".
+
+    Contrato nuevo: el texto de un turno administrativo NUNCA llega al
+    canal del cliente, sin importar en qué quedó `_force_shutdown`. La
+    supresión es estructural (el batch contiene el trigger de ghosting →
+    turno admin → no se envía ni persiste), no una confluencia de flags."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    handle_box: dict = {}
+
+    async def _customer_writes_mid_ghost_turn() -> None:
+        await handle_box["handle"].signal(
+            HubaraSalesSessionWorkflow.send_message,
+            args=["Caballero", None, None],
+        )
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=SALES_QUEUE,
+            workflows=[HubaraSalesSessionWorkflow],
+            activities=_make_fake_activities(
+                tracker,
+                workspace_path=str(workspace),
+                llm_responses=[
+                    # Turno 1: saludo normal.
+                    _final_resp("¡Hola! ¿Qué aroma te gustaría?"),
+                    # Turno ghost (llamada 2, hookeada): "Caballero" llega
+                    # mientras este LLM piensa → corrientazo, se descarta.
+                    _final_resp("[cierre ghost stale — NO DEBE SALIR]"),
+                    # Turno recompuesto: el LLM replica el incidente —
+                    # etiqueta y después "reporta" el cierre en prosa.
+                    _tool_resp("manage_conversation_tag"),
+                    _final_resp(_ADMIN_SUMMARY),
+                    # Llamadas 5+: segundo ciclo ghost → default "ok".
+                ],
+                llm_call_hooks={2: _customer_writes_mid_ghost_turn},
+            ),
+        ):
+            handle = await env.client.start_workflow(
+                HubaraSalesSessionWorkflow.run,
+                SalesSessionInput(
+                    session_id="wa_adminleak",
+                    runtime_workspace_path=str(workspace),
+                ),
+                id="session-wa_adminleak",
+                task_queue=SALES_QUEUE,
+            )
+            handle_box["handle"] = handle
+            await handle.signal(
+                HubaraSalesSessionWorkflow.send_message,
+                args=["Hola", None, None],
+            )
+            await handle.result()
+
+    # Sanity del wiring: el saludo del turno 1 SÍ salió.
+    assert any(
+        "aroma" in m for (_s, m) in tracker.send_whatsapp_calls
+    ), f"el turno normal debió enviar el saludo: {tracker.send_whatsapp_calls}"
+    # EL BUG: el resumen administrativo del cierre jamás va al cliente.
+    leaked = [
+        m
+        for (_s, m) in tracker.send_whatsapp_calls
+        if "etiquetada" in m.lower() or "remarketing" in m.lower()
+    ]
+    assert not leaked, (
+        f"texto administrativo enviado al cliente por WhatsApp: {leaked}"
+    )
+    # Tampoco al historial del dashboard.
+    persisted = [
+        m
+        for (_s, m) in tracker.persist_calls
+        if "etiquetada" in m.lower() or "remarketing" in m.lower()
+    ]
+    assert not persisted, (
+        f"texto administrativo persistido al historial: {persisted}"
+    )
+    # Fix 1 (drop del trigger): el corrientazo invalida la premisa del
+    # ghosting → el turno recompuesto corre sobre lo que el cliente escribió,
+    # SIN el trigger [SISTEMA] coalesceado (el prompt híbrido fue la raíz
+    # del incidente).
+    recomposed = [
+        b.message
+        for b in tracker.build_prompt_calls
+        if "Caballero" in b.message
+    ]
+    assert recomposed, (
+        "el turno recompuesto debió correr sobre el mensaje real del cliente"
+    )
+    assert all("[GHOST]" not in m for m in recomposed), (
+        f"el trigger de ghosting no debe viajar en el prompt recompuesto: "
+        f"{recomposed}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_message_during_ghost_window_gets_answered_not_swallowed(
+    tmp_path: Path,
+) -> None:
+    """Premortem C2 (simétrico inverso del run 5f43bcd0): el cliente escribe
+    justo cuando el timer de ghosting acaba de disparar — el mensaje cae en
+    la ventana entre la inyección del trigger y el turno de cierre, y se
+    coalescea CON el trigger bajo `_force_shutdown=True`. Resultado viejo:
+    la respuesta del turno se suprime, el cancel-shutdown del cierre no ve
+    nada pendiente, y la sesión se apaga con el mensaje del cliente tragado.
+
+    Contrato nuevo: un mensaje real del cliente en el batch invalida la
+    premisa del ghosting ANTES del turno — el trigger se dropea, el flag se
+    limpia, y el turno responde normal. La sesión la cierra recién un
+    SEGUNDO ciclo de ghosting."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    handle_box: dict = {}
+
+    async def _writes_as_ghost_timer_fires() -> None:
+        await handle_box["handle"].signal(
+            HubaraSalesSessionWorkflow.send_message,
+            args=["Perdona, me llamaron. ¿Seguimos?", None, None],
+        )
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=SALES_QUEUE,
+            workflows=[HubaraSalesSessionWorkflow],
+            activities=_make_fake_activities(
+                tracker,
+                workspace_path=str(workspace),
+                llm_responses=[
+                    # Turno 1: saludo normal.
+                    _final_resp("¡Hola! ¿Qué aroma te gustaría?"),
+                    # Turno post-invalidación: respuesta normal al cliente.
+                    _final_resp("¡Acá sigo! Tenemos lavanda y vainilla."),
+                    # Llamadas 3+: segundo ciclo ghost → default "ok".
+                ],
+                ghosting_call_hooks={1: _writes_as_ghost_timer_fires},
+            ),
+        ):
+            handle = await env.client.start_workflow(
+                HubaraSalesSessionWorkflow.run,
+                SalesSessionInput(
+                    session_id="wa_ghostwindow",
+                    runtime_workspace_path=str(workspace),
+                ),
+                id="session-wa_ghostwindow",
+                task_queue=SALES_QUEUE,
+            )
+            handle_box["handle"] = handle
+            await handle.signal(
+                HubaraSalesSessionWorkflow.send_message,
+                args=["Hola", None, None],
+            )
+            await handle.result()
+
+    # El mensaje del cliente recibió respuesta REAL (no fue tragado).
+    assert any(
+        "Acá sigo" in m for (_s, m) in tracker.send_whatsapp_calls
+    ), (
+        f"el mensaje que cayó en la ventana ghost quedó sin respuesta: "
+        f"{tracker.send_whatsapp_calls}"
+    )
+    # El turno corrió sobre el mensaje real, sin el trigger coalesceado.
+    answered = [
+        b.message
+        for b in tracker.build_prompt_calls
+        if "Seguimos" in b.message
+    ]
+    assert answered and all("[GHOST]" not in m for m in answered), (
+        f"el trigger no debe viajar en el prompt del turno: {answered}"
+    )
+    # La sesión sobrevivió al primer ciclo (cliente activo) y cerró en el 2º.
+    assert tracker.ghosting_calls == 2, (
+        f"la sesión debió cerrar recién en el segundo ciclo de ghosting: "
+        f"ghosting_calls={tracker.ghosting_calls}"
     )

@@ -26,7 +26,7 @@ with workflow.unsafe.imports_passed_through():
         write_pending_handoff_activity,
     )
     from src.platform.temporal.retry_policies import _LLM_OPTIONS
-    from src.sdk.agentkit import is_no_message_abstention
+    from src.sdk.agentkit import is_no_message_abstention, looks_like_admin_leak
     from src.platform.workflow_helpers import (
         PendingMessage,
         coalesce_pending,
@@ -317,10 +317,20 @@ class RemarketingSessionWorkflow:
                     # `ContextBuilder` desde `workspace/*.md` durante
                     # `build_prompt`, no por este parametro. El path Sales
                     # ya pasaba `None`; Remarketing se alinea aqui.
+                    # Premortem A4 (run 5f43bcd0): los turnos de remarketing
+                    # son proactivos — content vacío = abstención. NUNCA la
+                    # disculpa fabricada "¡Perdón! Justo se me cortó..." (le
+                    # llegaba de la nada a un cliente frío y encima simula la
+                    # marca de "interrupción técnica" que el cierre de
+                    # ghosting de sales busca). patched(): histories en vuelo
+                    # replayean con la fabricación original.
                     result = await run_agent_turn(
                         input_data,
                         msg,
                         fallback_plugin_context=None,
+                        fabricate_fallback_on_empty=not workflow.patched(
+                            "remarketing-no-fabricated-fallback-v1"
+                        ),
                     )
                     self._last_response = result.final_content
 
@@ -337,6 +347,25 @@ class RemarketingSessionWorkflow:
                             result.transfer_decision is None
                             and is_no_message_abstention(result.final_content)
                         )
+                    # Última línea determinista (run 5f43bcd0 + premortem D1):
+                    # deliberación/reporte administrativo en el gancho, SIN el
+                    # sentinel, equivale a abstención — el texto jamás va al
+                    # cliente y el routing vuelve a ventas por la rama de
+                    # abstención de abajo. patched(): histories en vuelo que
+                    # SÍ enviaron esa prosa replayean sin la rama.
+                    if (
+                        not abstained
+                        and result.transfer_decision is None
+                        and result.final_content
+                        and workflow.patched("admin-text-guard-v1")
+                        and looks_like_admin_leak(result.final_content)
+                    ):
+                        workflow.logger.warning(
+                            "admin-text-guard: gancho con texto administrativo "
+                            f"bloqueado (≈abstención): "
+                            f"{result.final_content[:120]!r}"
+                        )
+                        abstained = True
 
                     # ADR-001 + ADR-2026-05-20: si la tool emitio una decision
                     # de transferir a Sales, convertirla a un CompletionEvent y

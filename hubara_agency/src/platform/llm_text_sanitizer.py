@@ -342,6 +342,66 @@ _ABSTENTION_TOKENS: frozenset[str] = frozenset({"NO_MESSAGE", "NO_MENSAJE"})
 _ABSTENTION_STRIP_CHARS = "\"'`*“”«»‟„ \t.,:;!¡?¿-—"
 
 
+# Patrones de texto administrativo. Cada entrada nace de un leak REAL o de
+# un envelope interno vivo en el código — NO de especulación. El costo de un
+# falso positivo es un cliente sin respuesta, así que cada patrón debe ser
+# vocabulario que un mensaje de venta esencialmente nunca usa. Al agregar
+# uno nuevo: sumá el caso real a test_admin_leak_detector.py primero.
+_ADMIN_LEAK_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # Marker de sistema tal cual ("[SISTEMA]: ...").
+    re.compile(r"\[SISTEMA", re.IGNORECASE),
+    # Reporte de etiquetado: "La conversación queda etiquetada como
+    # `INTERESADO`" / "Interacción etiquetada como 'INTERESADO'". Exigimos
+    # el sustantivo administrativo O un tag token en mayúsculas — "lo
+    # dejamos etiquetado como regalo" (legítimo) NO matchea.
+    re.compile(
+        r"(conversaci[oó]n|interacci[oó]n)\s+(queda\s+)?etiquetad",
+        re.IGNORECASE,
+    ),
+    re.compile(r"etiquetad[ao]s?\s+como\s+[`'\"“]?[A-ZÁÉÍÓÚ_]{4,}"),
+    # Tag token interno: ALL_CAPS con underscore (COMPRA_EXITOSA,
+    # CONFIRMADO_PAGO_PENDIENTE, NO_MESSAGE...).
+    re.compile(r"\b[A-ZÁÉÍÓÚ]{2,}(?:_[A-ZÁÉÍÓÚ0-9]{2,})+\b"),
+    # Token interno en backticks (`INTERESADO`, `RECHAZO`).
+    re.compile(r"`[A-ZÁÉÍÓÚ_]{3,}`"),
+    # Envelopes de tools regurgitados (routing L-12, escalación).
+    re.compile(r"el\s+control\s+ha\s+sido\s+transferido", re.IGNORECASE),
+    re.compile(r"escalaci[oó]n\s+registrada", re.IGNORECASE),
+    # Deliberación de declinación (incidente wa_573125671604).
+    re.compile(
+        r"no\s+genero\s+(un[a]?\s+)?(nuevo\s+|nueva\s+)?(mensaje|respuesta)",
+        re.IGNORECASE,
+    ),
+    # Reporte en tercera persona sobre el propio cliente, al inicio del
+    # texto ("El cliente eligió su...", "La conversación queda...").
+    re.compile(r"^(el\s+cliente|la\s+clienta|la\s+conversaci[oó]n)\b", re.IGNORECASE),
+    # Vocabulario de infraestructura que jamás va en un mensaje de venta.
+    re.compile(r"\bremarketing\b", re.IGNORECASE),
+    re.compile(r"\bghost", re.IGNORECASE),
+    re.compile(r"\bhandoff\b", re.IGNORECASE),
+    re.compile(r"\bworkflow\b", re.IGNORECASE),
+)
+
+
+def looks_like_admin_leak(raw: str | None) -> bool:
+    """True si el texto huele a reporte administrativo interno, no a mensaje
+    para el cliente (incidente 5f43bcd0: "La conversación queda etiquetada
+    como `INTERESADO`..." enviado por WhatsApp).
+
+    Última línea de defensa DETERMINISTA en el path de send — complementa la
+    supresión estructural de turnos admin (que cubre los turnos de cierre)
+    cubriendo los turnos NORMALES donde el LLM regurgita envelopes de tools
+    o narra su proceso. Conservador: solo patrones que un mensaje legítimo
+    de venta esencialmente nunca contiene.
+    """
+    if not raw:
+        return False
+    text = raw.strip()
+    if not text:
+        return False
+    return any(p.search(text) for p in _ADMIN_LEAK_PATTERNS)
+
+
 def is_no_message_abstention(raw: str | None) -> bool:
     """True si el output del LLM es una abstención explícita (`NO_MESSAGE`).
 
