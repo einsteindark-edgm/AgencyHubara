@@ -6,6 +6,10 @@ de HU-03 retornan estos DTOs cruzando workflow boundary sin violar R-JSON.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # evita el ciclo dtos ↔ categories en runtime
+    from src.platform.catalog.categories import CategoryResolution
 
 
 @dataclass(frozen=True)
@@ -45,6 +49,10 @@ class CatalogProductDTO:
     images: list[CatalogImageDTO] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
     categories: list[str] = field(default_factory=list)
+    # slug → nombre real de la categoría en Medusa ("velas-religiosas" →
+    # "Velas Religiosas"). None = snapshot viejo (pre filtro por categoría);
+    # el resolver cae al deslugify del slug.
+    category_labels: dict[str, str] | None = None
     metadata: dict[str, str] | None = None
     # Ejes de selección reales del producto ({"Signo": ["Aries", ...]}).
     # None = producto sin options en Medusa (snapshots viejos también).
@@ -68,6 +76,9 @@ class SearchResult:
     stale: bool
     manifest: CatalogManifestDTO
     results: list[CatalogProductDTO] = field(default_factory=list)
+    # Presente solo cuando el caller pidió filtrar por categoría. Dice QUÉ
+    # categoría se resolvió (o por qué no) para que el agente no invente.
+    category: "CategoryResolution | None" = None
 
 
 def product_dto_from_raw(raw: dict) -> CatalogProductDTO:
@@ -94,6 +105,11 @@ def product_dto_from_raw(raw: dict) -> CatalogProductDTO:
         ],
         tags=list(raw.get("tags") or []),
         categories=list(raw.get("categories") or []),
+        category_labels=(
+            {str(k): str(v) for k, v in raw["category_labels"].items()}
+            if raw.get("category_labels")
+            else None
+        ),
         metadata=(
             {k: str(v) for k, v in (raw.get("metadata") or {}).items()}
             if raw.get("metadata")

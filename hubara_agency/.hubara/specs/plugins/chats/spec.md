@@ -98,7 +98,7 @@ registran cross-worker.
 
 - GIVEN el módulo `workers/sales.py` cargado
 - WHEN se ejecutan los `register_tool_extension(...)` de top-level
-- THEN al menos las siguientes tools quedan registradas: `sales.transfer_to_sales_agent`, `sales.manage_conversation_tag`, `sales.search_products`, `sales.get_product_by_handle`, `sales.escalate_to_human`, `sales.verify_order_for_checkout`, `sales.register_order`, `sales.present_*` + `sales.send_*` + `sales.react_*` + `sales.request_*` (10 decision tools de UI total)
+- THEN al menos las siguientes tools quedan registradas: `sales.transfer_to_sales_agent`, `sales.manage_conversation_tag`, `sales.search_products`, `sales.get_product_by_handle`, `sales.list_categories`, `sales.escalate_to_human`, `sales.verify_order_for_checkout`, `sales.register_order`, `sales.present_*` + `sales.send_*` + `sales.react_*` + `sales.request_*` (10 decision tools de UI total)
 - AND el sales worker puede invocar cualquiera via `execute_tool` activity
 
 #### Scenario: Remarketing worker SOLO registra `transfer_to_sales_agent`

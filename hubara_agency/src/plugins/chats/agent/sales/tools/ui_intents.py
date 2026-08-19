@@ -44,7 +44,7 @@ from typing import Any
 from exoclaw.agent.tools import ToolBase, ToolContext
 from loguru import logger
 
-from src.platform.catalog import CatalogPort, ProductNotFoundError
+from src.platform.catalog import CatalogPort, ProductNotFoundError, deslugify
 from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.state import FilesystemMetadataStore
 from src.platform.whatsapp import limits as wa_limits
@@ -425,7 +425,13 @@ class PresentProductsTool(ToolBase):
         groups: dict[str, list[Any]] = {}
         if group_by == "categories":
             for p in products:
-                key = (p.categories[0] if p.categories else "Otros")
+                # Nombre real de la categoría — el título de sección lo LEE el
+                # cliente; el slug ("velas-religiosas") no es texto de venta.
+                key = (
+                    _category_label(p, p.categories[0])
+                    if p.categories
+                    else "Otros"
+                )
                 groups.setdefault(key, []).append(p)
         elif group_by == "tags":
             for p in products:
@@ -1764,3 +1770,10 @@ def _slug(label: str) -> str:
     nfkd = unicodedata.normalize("NFD", label.lower())
     cleaned = "".join(c for c in nfkd if not unicodedata.combining(c))
     return "".join(c if c.isalnum() else "_" for c in cleaned).strip("_")
+
+
+def _category_label(product: Any, slug: str) -> str:
+    """slug → nombre real de la categoría; snapshots viejos → deslugify."""
+    return (getattr(product, "category_labels", None) or {}).get(
+        slug
+    ) or deslugify(slug)

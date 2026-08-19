@@ -103,6 +103,23 @@ Medusa live durante la conversación (latency + cuota).
 - THEN se devuelve lista de productos matching (handle, title, price, variant_summary, thumbnail_url)
 - AND la búsqueda es fuzzy + lemmatizada (matchea "velas de soya", "vela de cera de soja", etc.)
 
+#### Scenario: filtro por categoría (determinista, typo-tolerante)
+
+- GIVEN el snapshot con categorías `velas-religiosas` ("Velas Religiosas") y `velas-aromaticas` ("Velas Aromáticas")
+- WHEN el cliente pide una categoría y el LLM invoca `search_products(q="", category="velas religosas")`
+- THEN el resolver determinista (`platform/catalog/categories.py`) resuelve a `velas-religiosas` tolerando typo, plural y nombre parcial
+- AND se devuelven SOLO los productos que pertenecen a esa categoría (pertenencia real, NO substring contra description)
+- AND el envelope trae `category.matched` con el NOMBRE real de la categoría
+- AND si la query es ambigua (ej. "velas") `matched` es null y `candidates` trae las categorías empatadas
+- AND si no resuelve, `available` trae la lista CERRADA de categorías existentes — el agente NUNCA niega una categoría sin mirarla
+
+#### Scenario: list_categories
+
+- GIVEN el snapshot del catálogo cargado
+- WHEN el LLM invoca `list_categories()`
+- THEN se devuelve la lista cerrada de categorías con su nombre real y `product_count`
+- AND el orden es estable (alfabético por nombre) entre turnos
+
 #### Scenario: get_product_by_handle
 
 - GIVEN un handle válido `wax-soja-vainilla`
