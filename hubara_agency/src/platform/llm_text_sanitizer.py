@@ -375,6 +375,19 @@ _ADMIN_LEAK_PATTERNS: tuple[re.Pattern[str], ...] = (
     # Reporte en tercera persona sobre el propio cliente, al inicio del
     # texto ("El cliente eligió su...", "La conversación queda...").
     re.compile(r"^(el\s+cliente|la\s+clienta|la\s+conversaci[oó]n)\b", re.IGNORECASE),
+    # Tercera persona en CUALQUIER posición (run 1c9ef231: "Encontré 10
+    # velas religiosas. Las muestro al cliente." — el ancla ^ no la veía).
+    # El agente le habla al cliente de tú; "al/del cliente" solo aparece en
+    # narración interna. Excepciones fijas: las colocaciones comerciales
+    # "servicio al cliente" / "atención al cliente" sí son voz de venta.
+    re.compile(
+        r"(?<!servicio\s)(?<!atenci[oó]n\s)\b(al|del)\s+client[ea]\b",
+        re.IGNORECASE,
+    ),
+    # Etiquetado en primera persona del pretérito ("Etiqueté como
+    # INTERESADO") — run 1c9ef231, cierre por ghosting. El gift-tagging
+    # legítimo usa otras formas ("etiquetado", "etiquetemos") que NO caen.
+    re.compile(r"\betiquet[eé]\s+como\b", re.IGNORECASE),
     # Vocabulario de infraestructura que jamás va en un mensaje de venta.
     re.compile(r"\bremarketing\b", re.IGNORECASE),
     re.compile(r"\bghost", re.IGNORECASE),

@@ -227,13 +227,15 @@ TURN_ENDING_TOOLS_V2: frozenset[str] = TURN_ENDING_TOOLS | frozenset(
     {"present_products"}
 )
 
-# Tools cuyo render ES un mensaje al cliente: el `content` que las acompaña es
-# una intro legítima (ej. el saludo junto a `send_quick_replies` — run
-# ddd0d472, la razón de ser de `pre_tool_messages`). Junto a tools INTERNAS
-# (verify_order_for_checkout / set_order_slot / load_skill / register_order...)
-# el content es narración de proceso ("Todo está verificado y los precios
-# coinciden. Déjame revisar la info de envío.") y NO debe llegar al cliente —
-# el prompt anti-narración demostró no bastar (reincidencia en b730c006).
+# LEGACY — solo para replay de histories pre "no-pre-tool-forward-v1".
+# La whitelist intentaba clasificar el content junto a tool calls POR EL
+# BATCH ("junto a una tool presentacional es intro legítima") — pero el batch
+# no determina la naturaleza del texto: en el run 1c9ef231 "Encontré 10 velas
+# religiosas. Las muestro al cliente." salió como burbuja junto a
+# present_products. El contrato vivo es default-deny (ver run_agent_turn): el
+# content junto a tools NUNCA se forwardea; el texto del cliente viaja en los
+# params de la tool (`intro_text`, `body`). Eliminar este set + la rama vieja
+# al deprecar el patch (drain: idle 1min en Sales).
 PRESENTATIONAL_TOOLS: frozenset[str] = TURN_ENDING_TOOLS | frozenset(
     {"present_products"}
 )
@@ -633,19 +635,27 @@ async def _run_agent_turn_impl(
             batch_tool_names = [tc.name for tc in response.tool_calls]
             if _starts_outbound(batch_tool_names):
                 outbound_started = True
-            # Capturar el texto client-facing que acompaña la(s) tool call(s)
-            # ANTES de descartarlo. El LLM legítimamente emite "content +
-            # tool_call" (ej. saluda y a la vez encola un quick_replies). Sin
-            # esto, ese content nunca llegaba al cliente (solo `final_content`,
-            # el del último mensaje sin tools). Sanitizamos igual que el final
-            # (em dash, comillas envolventes, meta-prefijos, duplicación).
-            # L-11: el content solo se conserva si el batch incluye una tool
-            # PRESENTACIONAL — junto a tools internas es narración de proceso
-            # ("Todo está verificado...") y se descarta.
+            # DEFAULT-DENY (run 1c9ef231): el content que acompaña una tool
+            # call es narración interna SIEMPRE — se descarta y se loguea. El
+            # texto para el cliente viaja en los params de la tool
+            # (`intro_text`, `body`), que toda tool presentacional exige. La
+            # whitelist vieja (PRESENTATIONAL_TOOLS) clasificaba el texto por
+            # el batch de tools, pero el batch no determina la naturaleza del
+            # texto: "Encontré 10 velas religiosas. Las muestro al cliente."
+            # salió como burbuja junto a present_products. patched(): histories
+            # en vuelo que SÍ forwardearon replayean con la rama whitelist;
+            # tras el drain, eliminar la rama vieja + PRESENTATIONAL_TOOLS +
+            # `workflow.deprecate_patch("no-pre-tool-forward-v1")`.
             if response.content:
                 sanitized_pre = sanitize_llm_text(response.content)
                 if sanitized_pre.text:
-                    if not turn_cut_v1 or _keeps_pre_tool_content(batch_tool_names):
+                    if workflow.patched("no-pre-tool-forward-v1"):
+                        workflow.logger.info(
+                            "pre-tool content descartado (default-deny: el texto "
+                            "junto a tool calls nunca va al cliente; batch="
+                            f"{batch_tool_names}): {sanitized_pre.text[:120]!r}"
+                        )
+                    elif not turn_cut_v1 or _keeps_pre_tool_content(batch_tool_names):
                         pre_tool_messages.append(sanitized_pre.text)
                     else:
                         workflow.logger.info(

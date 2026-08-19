@@ -64,6 +64,52 @@ _UI_INTENT_TTL_MS = int(
 )
 
 
+# Params de texto client-facing que escribe el LLM en las tools de UI intent
+# (run 1c9ef231): viajan verbatim al cliente sin pasar por
+# `send_whatsapp_message_activity`, así que este es SU choke point. Si el
+# texto huele a reporte administrativo se reemplaza por el neutro — el intent
+# (menú, botones, picker) sigue saliendo; solo muere el texto envenenado. Un
+# falso positivo degrada a un intro genérico, no deja al cliente mudo.
+_INTENT_TEXT_NEUTRAL: dict[str, str | None] = {
+    "intro_text": "Aquí tienes las opciones:",
+    "body": "¿Cuál de estas opciones prefieres?",
+    "caption": None,
+    "header_text": None,
+    "footer": None,
+}
+
+
+def _sanitize_intent_client_text(
+    kind: str, params: dict[str, Any]
+) -> dict[str, Any]:
+    """Limpia los params de texto de un intent y neutraliza olor a admin.
+
+    Import tardío del sanitizer (mismo patrón que el resto del módulo: no
+    tocar imports pesados en module load del worker).
+    """
+    from src.sdk.agentkit import looks_like_admin_leak, sanitize_llm_text
+
+    out = dict(params)
+    for key, neutral in _INTENT_TEXT_NEUTRAL.items():
+        value = out.get(key)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        cleaned = sanitize_llm_text(value).text or value
+        if looks_like_admin_leak(cleaned):
+            activity.logger.warning(
+                "flush_ui_intents.admin_text_neutralized",
+                extra={
+                    "kind": kind,
+                    "param": key,
+                    "preview": cleaned[:120],
+                },
+            )
+            out[key] = neutral
+        else:
+            out[key] = cleaned
+    return out
+
+
 def _render_payment_instructions_text(params: dict[str, Any]) -> str | None:
     """Plantilla FIJA de datos bancarios para pago por transferencia.
 
@@ -380,6 +426,9 @@ async def _dispatch_intent(
     Devuelve `OutboundResult` o None si el kind es desconocido / intent
     invalido sin posibilidad de envío.
     """
+    # Choke point de texto LLM en intents (run 1c9ef231): limpiar/neutralizar
+    # ANTES de cualquier rama — todos los kinds leen de `params`.
+    params = _sanitize_intent_client_text(kind or "", params)
     if kind == "product_detail":
         link = params.get("image_url")
         if not link:

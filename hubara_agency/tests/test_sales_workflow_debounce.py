@@ -453,27 +453,109 @@ async def test_typing_indicator_fires_before_llm(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_pre_tool_content_is_sent_as_bubble(tmp_path: Path) -> None:
-    """Bug saludo descartado (run ddd0d472) + corte de turno L-11 (run b730c006).
+async def test_pre_tool_content_is_never_sent(tmp_path: Path) -> None:
+    """Default-deny del content junto a tool calls (run 1c9ef231, 2026-08-19).
 
-    Cuando el LLM emite texto client-facing JUNTO con una tool call (el saludo
-    de apertura "Buenos días. Bienvenido a Hubara..." encolando send_quick_replies),
-    ese texto DEBE llegar al cliente como burbuja — antes se perdía porque el
-    loop solo enviaba `final_content` (el content del último mensaje SIN tools).
+    En ese run el LLM emitió "Encontré 10 velas religiosas. Las muestro al
+    cliente." JUNTO a `present_products` — y la whitelist PRESENTATIONAL_TOOLS
+    lo forwardeó como burbuja al cliente (la narración salió a las 17:22:00,
+    el menú a las 17:22:04). La whitelist clasificaba el texto POR EL BATCH de
+    tools, pero el batch no determina la naturaleza del texto.
 
-    Contrato L-11: `send_quick_replies` es TURN-ENDING — tras ejecutarla el
-    loop corta SIN volver a llamar al LLM (los botones ya invitan a responder;
-    un follow-up sería redundante y abría la puerta a que el modelo "siguiera
-    solo", como en b730c006). El cliente recibe el saludo y nada más.
+    Contrato nuevo (erradica la clase): el texto que acompaña una tool call es
+    narración interna SIEMPRE — se descarta y se loguea. El texto para el
+    cliente viaja en los params de la tool (`intro_text`, `body`), que toda
+    tool presentacional ya exige. Ni el caso "saludo + send_quick_replies"
+    (run ddd0d472) forwardea: el saludo va en el `body` de la tool.
+
+    Contrato L-11 (se preserva): `send_quick_replies` sigue siendo TURN-ENDING.
     """
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    # El texto LITERAL del run ("Encontré 10 velas religiosas. Las muestro al
+    # cliente.") ya lo caza el tripwire `looks_like_admin_leak` (ver
+    # tests/platform/test_admin_leak_detector.py). Acá usamos una narración
+    # que el detector NO huele, para exigir el default-deny ESTRUCTURAL: sin
+    # él, esta burbuja saldría aunque todos los detectores estén verdes.
+    narration = "Perfecto, encontré 10 opciones en el catálogo. Armo el menú."
+    responses = [
+        # Turno user: narración de proceso + present_products (el run real).
+        LLMResponseData(
+            content=narration,
+            finish_reason="tool_calls",
+            has_tool_calls=True,
+            tool_calls=[
+                ToolCallData(
+                    id="call_1",
+                    name="present_products",
+                    arguments={
+                        "handles": ["vela-1"],
+                        "intro_text": "Estas son nuestras velas religiosas:",
+                    },
+                )
+            ],
+        ),
+    ]
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=SALES_QUEUE,
+            workflows=[HubaraSalesSessionWorkflow],
+            activities=_make_fake_activities(
+                tracker, workspace_path=str(workspace), llm_responses=responses
+            ),
+        ):
+            handle = await env.client.start_workflow(
+                HubaraSalesSessionWorkflow.run,
+                SalesSessionInput(
+                    session_id="wa_catalogo",
+                    runtime_workspace_path=str(workspace),
+                ),
+                id="session-wa_catalogo",
+                task_queue=SALES_QUEUE,
+            )
+            await handle.signal(
+                HubaraSalesSessionWorkflow.send_message,
+                args=["hola quiero ver los productos religiosos", None, None],
+            )
+            await handle.result()
+
+    sent = [m for (_sid, m) in tracker.send_whatsapp_calls]
+    # La narración NO llega al cliente como burbuja.
+    assert narration not in sent, (
+        f"La narración de proceso llegó al cliente: {sent}"
+    )
+    # Tampoco se persiste al dashboard como mensaje del agente.
+    persisted = [m for (_sid, m) in tracker.persist_calls]
+    assert narration not in persisted, (
+        f"Narración interna persistida como mensaje del agente: {persisted}"
+    )
+    # El flush de UI intents sí corrió — el menú (canal legítimo, via
+    # `intro_text`) sigue saliendo.
+    assert tracker.flush_calls >= 1
+    # L-11 se preserva: present_products corta el turno (1 user + 1 ghost).
+    assert tracker.llm_calls == 2, (
+        f"El turno debió cortar tras present_products "
+        f"(1 user + 1 ghost). llm_calls={tracker.llm_calls}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_greeting_next_to_quick_replies_travels_in_body_param(
+    tmp_path: Path,
+) -> None:
+    """El caso que motivó el forward viejo (saludo + send_quick_replies, run
+    ddd0d472) tampoco forwardea: el canal del saludo es el param `body` de la
+    tool — el content suelto se descarta como narración (default-deny)."""
     tracker = Tracker()
     workspace = tmp_path / "ws"
     workspace.mkdir()
 
     greeting = "Buenos dias. Bienvenido a Hubara, velas artesanales hechas a mano."
     responses = [
-        # Turno user, iter única: saludo + tool call terminal (send_quick_replies).
-        # L-11: NO hay iter 2 — el corte de turno evita la segunda llamada LLM.
         LLMResponseData(
             content=greeting,
             finish_reason="tool_calls",
@@ -482,7 +564,7 @@ async def test_pre_tool_content_is_sent_as_bubble(tmp_path: Path) -> None:
                 ToolCallData(
                     id="call_1",
                     name="send_quick_replies",
-                    arguments={"body": "¿En qué te ayudo?", "buttons": []},
+                    arguments={"body": greeting, "buttons": []},
                 )
             ],
         ),
@@ -513,23 +595,18 @@ async def test_pre_tool_content_is_sent_as_bubble(tmp_path: Path) -> None:
             await handle.result()
 
     sent = [m for (_sid, m) in tracker.send_whatsapp_calls]
-    # El saludo (content que acompañaba la tool call) debe haber llegado, y
-    # PRIMERO (es la burbuja del turno del usuario).
-    assert sent and sent[0] == greeting, (
-        f"El saludo de apertura se perdió o no fue primero. Enviado: {sent}"
+    assert greeting not in sent, (
+        f"El content junto a send_quick_replies se forwardeó (el saludo "
+        f"viaja en el param `body`, no como burbuja suelta): {sent}"
     )
-    # L-11: send_quick_replies TERMINA el turno — el tool-loop del turno del
-    # usuario hace UNA sola llamada LLM (sin iteración 2). La segunda llamada
-    # que cuenta el tracker es el ghost turn del watchdog (time-skipping),
-    # igual que en test_debounce (ver "1 user turn + 1 ghost" arriba).
-    assert tracker.llm_calls == 2, (
-        f"El turno del usuario debió cortar tras send_quick_replies "
-        f"(1 user + 1 ghost). llm_calls={tracker.llm_calls}"
-    )
-    # Y se persistió al store del dashboard (igual que final_content).
     persisted = [m for (_sid, m) in tracker.persist_calls]
-    assert greeting in persisted, (
-        f"El saludo no se persistió al dashboard. Persistido: {persisted}"
+    assert greeting not in persisted
+    # Los botones (canal legítimo) sí se flushean.
+    assert tracker.flush_calls >= 1
+    # L-11 se preserva: send_quick_replies corta el turno (1 user + 1 ghost).
+    assert tracker.llm_calls == 2, (
+        f"El turno debió cortar tras send_quick_replies "
+        f"(1 user + 1 ghost). llm_calls={tracker.llm_calls}"
     )
 
 
