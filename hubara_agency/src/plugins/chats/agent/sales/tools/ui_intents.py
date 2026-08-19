@@ -369,8 +369,8 @@ class PresentProductsTool(ToolBase):
                 "description": (
                     "Texto corto que acompaña la lista — es lo ÚNICO que "
                     "el cliente leerá con el menú (el content fuera de la "
-                    "tool no se envía). Ej: 'Estas son nuestras velas "
-                    "religiosas:'. Máx 1024 chars Meta."
+                    "tool no se envía). Ej: 'Estas son "
+                    "nuestras velas religiosas:'. Máx 1024 chars Meta."
                 ),
             },
             "group_by": {
