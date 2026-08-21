@@ -53,6 +53,19 @@ LEAKS = [
     "El workflow de remarketing queda programado para mañana.",
     "Detecté ghosting, aplico el cierre automático.",
     "Handoff a ventas completado, retomo la conversación.",
+    # Run 1c9ef231 (2026-08-19) — narración de proceso junto a
+    # present_products, enviada al cliente como burbuja. "al cliente" en
+    # posición NO inicial: el ancla ^ del patrón de tercera persona no la
+    # veía.
+    "Encontré 10 velas religiosas. Las muestro al cliente.",
+    # Misma clase: referencia al cliente en tercera persona a mitad de texto.
+    "Le muestro al cliente las opciones disponibles del catálogo.",
+    # Deliberación de cierre del mismo run (llm 17:27) — "Etiqueté como"
+    # primera persona + tag single-word CAPS (sin underscore ni backticks,
+    # los patrones de token no la matchean).
+    "El cliente pidió ver los productos y dejó de responder. Etiqueté "
+    "como INTERESADO y programé el seguimiento.",
+    "Etiqueté como INTERESADO.",
 ]
 
 
@@ -75,6 +88,17 @@ LEGIT = [
     "Va perfecto para quien cumple el 3 de agosto: Leo. 🤍",
     "Ok",
     "",
+    # Segunda persona legítima — la voz de venta correcta para el mismo caso
+    # del run 1c9ef231. NO debe confundirse con la tercera persona.
+    "Te muestro nuestras velas religiosas 🤍 ¿Cuál te llama la atención?",
+    # Colocaciones comerciales legítimas de "cliente" que NO son reporte
+    # interno en tercera persona.
+    "Nuestro equipo de atención al cliente está pendiente de tu pedido.",
+    "Ofrecemos servicio al cliente todos los días de la semana.",
+    "Es una de las favoritas de nuestros clientes. 🕯️",
+    # Gift-tagging legítimo (ya cubierto arriba con "etiquetado"): la forma
+    # conjugada de cortesía tampoco debe caer.
+    "¿Quieres que lo etiquetemos como regalo?",
 ]
 
 

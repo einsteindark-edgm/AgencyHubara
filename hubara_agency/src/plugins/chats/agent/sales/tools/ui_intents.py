@@ -367,7 +367,9 @@ class PresentProductsTool(ToolBase):
                 "type": "string",
                 "maxLength": 400,
                 "description": (
-                    "Texto corto que acompaña la lista. Ej: 'Estas son "
+                    "Texto corto que acompaña la lista — es lo ÚNICO que "
+                    "el cliente leerá con el menú (el content fuera de la "
+                    "tool no se envía). Ej: 'Estas son "
                     "nuestras velas religiosas:'. Máx 1024 chars Meta."
                 ),
             },
@@ -1312,9 +1314,10 @@ class SendQuickRepliesTool(ToolBase):
         "Envía 1-3 botones de respuesta rápida al cliente. Úsala en el "
         "SALUDO inicial cuando la intención del cliente no está clara "
         "(ej: 'hola', 'buenas'), Y en decisiones binarias durante la "
-        "conversación. Tu texto previo debe contextualizar la pregunta, "
-        "y los botones presentan las opciones. NO repitas las opciones "
-        "en texto — el cliente las ve como botones tappables."
+        "conversación. TODO el texto que el cliente debe leer (saludo "
+        "incluido) va en `body` — lo que escribas fuera de la tool NO se "
+        "envía. NO repitas las opciones en texto — el cliente las ve "
+        "como botones tappables."
     )
     parameters: dict[str, Any] = {
         "type": "object",
@@ -1324,9 +1327,10 @@ class SendQuickRepliesTool(ToolBase):
                 "minLength": 1,
                 "maxLength": 1024,
                 "description": (
-                    "Texto que acompaña los botones. Breve y claro — "
-                    "el cliente ya recibió tu mensaje principal en el "
-                    "send_whatsapp_message_activity previo."
+                    "TODO el texto que el cliente debe leer junto a los "
+                    "botones (saludo incluido). Es lo único que verá en "
+                    "esta burbuja — el content fuera de la tool no se "
+                    "envía."
                 ),
             },
             "buttons": {
