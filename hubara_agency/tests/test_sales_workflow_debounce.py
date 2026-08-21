@@ -34,6 +34,7 @@ from exoclaw_temporal.config import (
     WorkspaceConfig,
 )
 
+from src.platform.contracts import PaymentPendingClosureResult
 from src.platform.plugin_manifest import get_task_queue
 from src.plugins.chats.agent.sales.contracts import SalesSessionInput
 
@@ -59,6 +60,8 @@ class Tracker:
         self.start_sales_calls: int = 0
         self.execute_tool_calls: list[str] = []
         self.flush_calls: int = 0
+        self.ensure_closure_calls: list[tuple[str, str, str]] = []
+        self.closing_escalation_calls: list[tuple[str, str, str]] = []
 
 
 def _make_fake_activities(
@@ -72,6 +75,8 @@ def _make_fake_activities(
     llm_call_hooks: dict[int, object] | None = None,
     ghosting_call_hooks: dict[int, object] | None = None,
     order_draft_note: str | None = None,
+    payment_closure_result: PaymentPendingClosureResult | None = None,
+    closing_escalation_result: bool = False,
 ):
     """Crea las activities fakes con `tracker` cerrado en closure.
 
@@ -203,6 +208,27 @@ def _make_fake_activities(
             await hook()  # type: ignore[operator]
         return "[GHOST] auto-tagging"
 
+    # Red de seguridad orden↔tag (premortem C3, run 5f43bcd0): el resultado
+    # es inyectable para simular la rama `escalated=True` sin vault real.
+    @activity.defn(name="ensure_payment_pending_closure")
+    async def fake_ensure_payment_pending_closure(
+        session_id: str, order_id: str, motivo: str
+    ) -> PaymentPendingClosureResult:
+        tracker.ensure_closure_calls.append((session_id, order_id, motivo))
+        if payment_closure_result is not None:
+            return payment_closure_result
+        return PaymentPendingClosureResult(acted=False, escalated=False)
+
+    # Red de seguridad patrón A (closing tags que exigen escalación).
+    @activity.defn(name="ensure_closing_escalation")
+    async def fake_ensure_closing_escalation(
+        session_id: str, reason_category: str, motivo: str
+    ) -> bool:
+        tracker.closing_escalation_calls.append(
+            (session_id, reason_category, motivo)
+        )
+        return closing_escalation_result
+
     # Dispatcher activities — registradas para que el worker las acepte aun
     # cuando el workflow las ignore en este test.
     @activity.defn(name="start_or_signal_sales_workflow")
@@ -234,6 +260,8 @@ def _make_fake_activities(
         fake_send_whatsapp,
         fake_persist,
         fake_ghosting,
+        fake_ensure_payment_pending_closure,
+        fake_ensure_closing_escalation,
         fake_start_sales,
         fake_schedule_remarketing,
         fake_get_active_episode_id,
@@ -1383,4 +1411,253 @@ async def test_message_during_ghost_window_gets_answered_not_swallowed(
     assert tracker.ghosting_calls == 2, (
         f"la sesión debió cerrar recién en el segundo ciclo de ghosting: "
         f"ghosting_calls={tracker.ghosting_calls}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_safety_net_escalation_sends_final_content_before_shutdown(
+    tmp_path: Path,
+) -> None:
+    """Premortem C3 (run 5f43bcd0): la RED DE SEGURIDAD orden↔tag escala
+    (`closure.escalated=True`) cuando el LLM registró la orden pero no emitió
+    las tools de cierre. El bug: la red seteaba `_force_shutdown=True` ANTES
+    de los bloques de send → el final_content legítimo del turno ("tu pedido
+    quedó registrado...") se suprimía y el cliente, tras dar todos sus datos,
+    recibía silencio. El path de escalación del LLM en cambio setea el flag
+    DESPUÉS de los sends y sí manda la despedida.
+
+    Contrato (gated `safety-net-shutdown-after-send-v1`): la escalación de la
+    red difiere el shutdown hasta después del send/persist/flush — el cliente
+    recibe la despedida Y el workflow igual escala/termina sin ghosting."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    order_motivo = (
+        "Cliente confirmó pedido order_123 por $85000 COP, método transfer; "
+        "falta verificación humana del pago."
+    )
+    register_payload = json.dumps(
+        {
+            "registered": True,
+            "order_id": "order_123",
+            "provider": "medusa",
+            "order_registered": {
+                "session_id": "wa_pmnet",
+                "order_id": "order_123",
+                "payment_method": "transfer",
+                "total_cop": 85000,
+                "currency": "COP",
+                "motivo": order_motivo,
+            },
+            "summary": "Pedido registrado en Medusa con ID order_123.",
+        },
+        ensure_ascii=False,
+    )
+    responses = [
+        # Iter 1: el LLM registra la orden (tool interna, sin content).
+        LLMResponseData(
+            content="",
+            finish_reason="tool_calls",
+            has_tool_calls=True,
+            tool_calls=[
+                ToolCallData(
+                    id="call_reg",
+                    name="register_order",
+                    arguments={"confirmado": True},
+                )
+            ],
+        ),
+        # Iter 2: la despedida legítima — pero SIN las tools de cierre
+        # (ni manage_conversation_tag ni escalate_to_human): el caso que
+        # dispara la red de seguridad.
+        LLMResponseData(
+            content="¡Listo! Tu pedido quedó registrado. Gracias por tu compra.",
+            finish_reason="stop",
+            has_tool_calls=False,
+            tool_calls=[],
+        ),
+    ]
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=SALES_QUEUE,
+            workflows=[HubaraSalesSessionWorkflow],
+            activities=_make_fake_activities(
+                tracker,
+                workspace_path=str(workspace),
+                llm_responses=responses,
+                tool_results={"register_order": register_payload},
+                payment_closure_result=PaymentPendingClosureResult(
+                    acted=False, escalated=True
+                ),
+            ),
+        ):
+            handle = await env.client.start_workflow(
+                HubaraSalesSessionWorkflow.run,
+                SalesSessionInput(
+                    session_id="wa_pmnet",
+                    runtime_workspace_path=str(workspace),
+                ),
+                id="session-wa_pmnet",
+                task_queue=SALES_QUEUE,
+            )
+            await handle.signal(
+                HubaraSalesSessionWorkflow.send_message,
+                args=["Sí, confirmo. Mis datos: Calle 12 #3-45, Bogotá", None, None],
+            )
+            await handle.result()
+
+    # 1. Sanity: la red de seguridad corrió con la decisión de la orden.
+    assert tracker.ensure_closure_calls == [
+        ("wa_pmnet", "order_123", order_motivo)
+    ], (
+        f"La red de seguridad no corrió como esperado: "
+        f"{tracker.ensure_closure_calls}"
+    )
+    # 2. EL BUG: la despedida del turno DEBE llegar al cliente aunque la red
+    #    haya escalado. (Sufijo, no igualdad — el sanitizador anti-prefijo
+    #    puede strippear el inicio del string.)
+    sent = [m for (_sid, m) in tracker.send_whatsapp_calls]
+    assert any("pedido quedó registrado" in m for m in sent), (
+        f"La escalación de la red de seguridad suprimió el final_content — "
+        f"el cliente dio sus datos y recibió silencio. Enviado: {sent}"
+    )
+    # 3. La despedida también se persistió al historial del dashboard.
+    assert any("pedido quedó registrado" in m for (_sid, m) in tracker.persist_calls), (
+        f"El final_content no se persistió: {tracker.persist_calls}"
+    )
+    # 4. El workflow IGUAL escaló y terminó: sin ciclo de ghosting (el
+    #    shutdown por escalación cierra el workflow antes del idle timeout).
+    assert tracker.ghosting_calls == 0, (
+        f"El shutdown por escalación de la red no cerró el workflow — corrió "
+        f"ghosting ({tracker.ghosting_calls} veces)."
+    )
+
+
+@pytest.mark.asyncio
+async def test_closing_escalation_safety_net_sends_final_content_before_shutdown(
+    tmp_path: Path,
+) -> None:
+    """Espejo del premortem C3 en la red patrón A: el LLM cierra el episodio
+    con un tag que EXIGE escalación (CONFIRMADO_SIN_DATOS) pero NO llama
+    `escalate_to_human` — `ensure_closing_escalation_activity` escala por él.
+    El bug era el mismo: `_force_shutdown=True` antes de los sends suprimía
+    la despedida legítima del turno. Contrato: mismo shutdown diferido
+    (`safety-net-shutdown-after-send-v1`) — la despedida sale, el workflow
+    igual escala/termina."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    tag_payload = json.dumps(
+        {
+            "ok": True,
+            "episode_closed": {
+                "session_id": "wa_patrona",
+                "episode_id": "ep_007",
+                "closing_tag": "CONFIRMADO_SIN_DATOS",
+            },
+            "message": "Tag CONFIRMADO_SIN_DATOS aplicada; episodio cerrado.",
+        },
+        ensure_ascii=False,
+    )
+    responses = [
+        # Iter 1: el LLM cierra con el tag (tool interna, sin content) — y NO
+        # llama escalate_to_human: el caso que dispara la red patrón A.
+        LLMResponseData(
+            content="",
+            finish_reason="tool_calls",
+            has_tool_calls=True,
+            tool_calls=[
+                ToolCallData(
+                    id="call_tag",
+                    name="manage_conversation_tag",
+                    arguments={"tag": "CONFIRMADO_SIN_DATOS", "motivo": "cierre"},
+                )
+            ],
+        ),
+        # Iter 2: la despedida legítima del turno.
+        LLMResponseData(
+            content="Quedó confirmado tu pedido, un asesor te escribe pronto.",
+            finish_reason="stop",
+            has_tool_calls=False,
+            tool_calls=[],
+        ),
+    ]
+
+    # El cierre de episodio también dispara el EpisodeClosedEvent (watchdog)
+    # + CAPI — fakes locales con el mismo shape que usa
+    # tests/plugins/chats/test_sales_capi_trigger.py (no viven en el harness
+    # compartido: ese archivo registra los suyos y colisionarían por nombre).
+    @activity.defn(name="send_capi_event_activity")
+    async def fake_send_capi(
+        session_id: str, episode_id: str, event_name: str
+    ) -> dict:
+        # Shape de CapiEventResult (dict → dataclass via payload converter).
+        return {
+            "status": "sent",
+            "event_id": f"close_{episode_id}",
+            "event_name": event_name,
+        }
+
+    @activity.defn(name="orchestration.dispatch_event")
+    async def fake_dispatch_event(envelope) -> dict:
+        # Shape mínimo de DispatchResult.
+        return {
+            "source_plugin": "chats",
+            "source_worker": "sales",
+            "event_type": "chats.episode_closed",
+        }
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=SALES_QUEUE,
+            workflows=[HubaraSalesSessionWorkflow],
+            activities=[
+                *_make_fake_activities(
+                    tracker,
+                    workspace_path=str(workspace),
+                    llm_responses=responses,
+                    tool_results={"manage_conversation_tag": tag_payload},
+                    closing_escalation_result=True,
+                ),
+                fake_send_capi,
+                fake_dispatch_event,
+            ],
+        ):
+            handle = await env.client.start_workflow(
+                HubaraSalesSessionWorkflow.run,
+                SalesSessionInput(
+                    session_id="wa_patrona",
+                    runtime_workspace_path=str(workspace),
+                ),
+                id="session-wa_patrona",
+                task_queue=SALES_QUEUE,
+            )
+            await handle.signal(
+                HubaraSalesSessionWorkflow.send_message,
+                args=["Sí, ese mismo. Confirmado.", None, None],
+            )
+            await handle.result()
+
+    # 1. Sanity: la red patrón A escaló con la reason del mapa.
+    assert [
+        (sid, reason) for (sid, reason, _m) in tracker.closing_escalation_calls
+    ] == [("wa_patrona", "ORDER_PENDING_SHIPPING_DETAILS")], (
+        f"La red patrón A no corrió como esperado: "
+        f"{tracker.closing_escalation_calls}"
+    )
+    # 2. EL BUG: la despedida DEBE llegar al cliente aunque la red escale.
+    sent = [m for (_sid, m) in tracker.send_whatsapp_calls]
+    assert any("un asesor te escribe pronto" in m for m in sent), (
+        f"La escalación de la red patrón A suprimió el final_content. "
+        f"Enviado: {sent}"
+    )
+    # 3. El workflow igual escaló y terminó sin ciclo de ghosting.
+    assert tracker.ghosting_calls == 0, (
+        f"El shutdown por escalación patrón A no cerró el workflow — corrió "
+        f"ghosting ({tracker.ghosting_calls} veces)."
     )
