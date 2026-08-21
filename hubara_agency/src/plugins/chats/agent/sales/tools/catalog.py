@@ -24,6 +24,7 @@ from src.platform.catalog import (
     CatalogVariantDTO,
     ProductNotFoundError,
     SearchResult,
+    deslugify,
     parse_variant_tags,
 )
 from src.sdk.mediakit import derive_image_label, fold_for_match
@@ -63,6 +64,19 @@ class SearchProductsTool(ToolBase):
                 "maximum": 30,
                 "default": 10,
             },
+            "category": {
+                "type": "string",
+                "description": (
+                    "Categoría pedida por el cliente, TAL CUAL la escribió "
+                    "(ej: 'religiosas', 'velas religosas', 'difusor'). El "
+                    "sistema la resuelve contra las categorías reales "
+                    "tolerando typos, plurales y nombres parciales, y filtra "
+                    "SOLO los productos que pertenecen a ella. Úsalo SIEMPRE "
+                    "que el cliente pida 'las X' o 'productos de X' en vez de "
+                    "meter la categoría en `q`."
+                ),
+                "maxLength": 100,
+            },
         },
         "required": ["q"],
     }
@@ -74,14 +88,20 @@ class SearchProductsTool(ToolBase):
         self._catalog = catalog
 
     async def execute_with_context(
-        self, ctx: ToolContext, q: str, limit: int = 10
+        self, ctx: ToolContext, q: str, limit: int = 10,
+        category: str | None = None,
     ) -> str:
         logger.info(
-            "🔍 [TOOL search_products] session={} q={!r} limit={}",
-            ctx.session_key, q, limit,
+            "🔍 [TOOL search_products] session={} q={!r} limit={} category={!r}",
+            ctx.session_key, q, limit, category,
         )
         try:
-            result: SearchResult = await self._catalog.search(q=q, limit=limit)
+            # `category` solo viaja cuando el cliente pidió una: mantiene
+            # compatible cualquier CatalogPort que no implemente el filtro.
+            extra = {"category": category} if category is not None else {}
+            result: SearchResult = await self._catalog.search(
+                q=q, limit=limit, **extra
+            )
         except CatalogUnavailableError as e:
             logger.error(
                 "🔍 [TOOL search_products] catalog_unavailable: {}", e
@@ -100,18 +120,105 @@ class SearchProductsTool(ToolBase):
 
         logger.info(
             "🔍 [TOOL search_products] → count={} truncated={} stale={} "
-            "handles={}",
+            "category={} handles={}",
             result.count, result.truncated, result.stale,
+            (result.category.matched.slug
+             if result.category and result.category.matched else None),
             [p.handle for p in result.results],
+        )
+        envelope: dict[str, Any] = {
+            "query": result.query,
+            "count": result.count,
+            "truncated": result.truncated,
+            "stale": result.stale,
+            "manifest": asdict(result.manifest),
+            "results": [_product_summary(p) for p in result.results],
+        }
+        if result.category is not None:
+            envelope["category"] = await self._category_block(result)
+        return json.dumps(envelope, ensure_ascii=False)
+
+    async def _category_block(self, result: SearchResult) -> dict[str, Any]:
+        """Qué categoría se resolvió — y si no, cuáles existen.
+
+        Sin `available` el LLM negaba categorías que SÍ existen cuando el
+        cliente las escribía distinto (misma forma que el caso "leo").
+        """
+        resolution = result.category
+        assert resolution is not None
+        block: dict[str, Any] = {
+            "query": resolution.query,
+            "matched": (
+                resolution.matched.label if resolution.matched else None
+            ),
+            "confidence": resolution.confidence,
+        }
+        if resolution.confidence == "no_categories":
+            # El catálogo no tiene categorías cargadas: ya se buscó el término
+            # como texto. Ofrecer una lista vacía sería peor que no ofrecer.
+            block["message"] = (
+                "Este catálogo no tiene categorías cargadas — busqué ese "
+                "término como texto. Muestra estos resultados o refina con `q`."
+            )
+            return block
+        if resolution.matched is None:
+            block["candidates"] = [c.label for c in resolution.candidates]
+            block["available"] = [
+                c.label for c in await self._catalog.list_categories()
+            ]
+            block["message"] = (
+                "No reconocí esa categoría. Ofrécele al cliente SOLO las de "
+                "`candidates` (si hay) o las de `available` — nunca digas que "
+                "no manejamos algo sin mirar esa lista."
+            )
+        return block
+
+
+class ListCategoriesTool(ToolBase):
+    """Closed-list de categorías reales del catálogo."""
+
+    name = "list_categories"
+    description = (
+        "Devuelve las categorías REALES del catálogo con cuántos productos "
+        "tiene cada una. Úsala cuando el cliente pregunta '¿qué categorías "
+        "tienen?' o cuando `search_products` no reconoció la categoría que "
+        "pidió. Es una lista CERRADA: cualquier categoría fuera de ella no "
+        "existe, y ninguna de ella puede negarse."
+    )
+    parameters: dict[str, Any] = {"type": "object", "properties": {}}
+
+    def __init__(self, workspace: str | Path, catalog: CatalogPort) -> None:
+        self._workspace = Path(workspace)
+        self._catalog = catalog
+
+    async def execute_with_context(self, ctx: ToolContext) -> str:
+        logger.info("🗂️ [TOOL list_categories] session={}", ctx.session_key)
+        try:
+            categories = await self._catalog.list_categories()
+        except CatalogUnavailableError as e:
+            logger.error("🗂️ [TOOL list_categories] catalog_unavailable: {}", e)
+            return json.dumps(
+                {
+                    "error": "catalog_unavailable",
+                    "message": (
+                        "El catálogo no está disponible en este momento. "
+                        "Pídele al cliente unos minutos y reintenta."
+                    ),
+                    "detail": str(e),
+                },
+                ensure_ascii=False,
+            )
+        logger.info(
+            "🗂️ [TOOL list_categories] → {}",
+            [c.slug for c in categories],
         )
         return json.dumps(
             {
-                "query": result.query,
-                "count": result.count,
-                "truncated": result.truncated,
-                "stale": result.stale,
-                "manifest": asdict(result.manifest),
-                "results": [_product_summary(p) for p in result.results],
+                "count": len(categories),
+                "categories": [
+                    {"name": c.label, "product_count": c.product_count}
+                    for c in categories
+                ],
             },
             ensure_ascii=False,
         )
@@ -220,6 +327,9 @@ def _product_summary(p: CatalogProductDTO) -> dict[str, Any]:
         "in_stock": True,  # v1: asumimos True. Stock real-time es follow-up.
         "thumbnail_url": p.thumbnail,
         "tags": p.tags,
+        # Nombres reales de las categorías del producto (no los slugs): el
+        # LLM los cita al cliente y los usa para "muéstrame más de estas".
+        "categories": _category_labels(p),
         # Listas CERRADAS ya parseadas de los tags (caso ep_010: el LLM recitaba
         # "14 aromas y 10 colores" parseando mal los prefijos). Estos son LOS
         # aromas/colores que existen — cualquier otro es invento.
@@ -271,8 +381,14 @@ def _product_full(p: CatalogProductDTO) -> dict[str, Any]:
             for i in p.images
         ],
         "tags": p.tags,
-        "categories": p.categories,
+        "categories": _category_labels(p),
     }
+
+
+def _category_labels(p: CatalogProductDTO) -> list[str]:
+    """slug → nombre real; snapshots viejos (sin labels) → deslugify."""
+    labels = p.category_labels or {}
+    return [labels.get(slug) or deslugify(slug) for slug in p.categories]
 
 
 def _designs_for(p: CatalogProductDTO) -> list[str]:

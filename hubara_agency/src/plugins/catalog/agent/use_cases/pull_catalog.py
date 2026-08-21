@@ -101,6 +101,11 @@ def _to_dto(mp: MedusaProduct) -> CatalogProductDTO:
         images=[CatalogImageDTO(url=i.url, rank=i.rank) for i in mp.images],
         tags=[t.value for t in mp.tags],
         categories=[c.handle or c.name for c in mp.categories],
+        # slug → nombre real. El slug es lo que matchea el resolver; el nombre
+        # es lo que se le muestra al cliente ("Velas Aromáticas", con tilde).
+        category_labels=(
+            {(c.handle or c.name): c.name for c in mp.categories} or None
+        ),
         metadata=(
             {
                 k: (json.dumps(v) if not isinstance(v, str) else v)

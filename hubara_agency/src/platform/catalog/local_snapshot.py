@@ -12,6 +12,13 @@ import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from src.platform.catalog.categories import (
+    CatalogCategoryDTO,
+    CategoryResolution,
+    collect_categories,
+    resolve_category,
+    text_matches_loosely,
+)
 from src.platform.catalog.dtos import (
     CatalogManifestDTO,
     CatalogProductDTO,
@@ -48,7 +55,15 @@ class LocalSnapshotCatalogClient:
 
     # ---------- public ----------
 
-    async def search(self, q: str, *, limit: int = 10) -> SearchResult:
+    async def list_categories(self) -> list[CatalogCategoryDTO]:
+        """Closed-list de categorías del snapshot (con conteo por categoría)."""
+        self._ensure_loaded()
+        assert self._cached_products is not None  # ensured by _ensure_loaded
+        return collect_categories(self._cached_products)
+
+    async def search(
+        self, q: str, *, limit: int = 10, category: str | None = None
+    ) -> SearchResult:
         """Substring search case-insensitive sobre titulo, handle, tags,
         categorias y description del producto.
 
@@ -62,12 +77,39 @@ class LocalSnapshotCatalogClient:
         assert self._cached_products is not None  # ensured by _ensure_loaded
         q_lower = q.lower().strip()
 
+        universe = self._cached_products
+        resolution: CategoryResolution | None = None
+        if category is not None:
+            known = collect_categories(self._cached_products)
+            if not known:
+                # El catálogo no tiene categorías cargadas en Medusa. Dejar al
+                # cliente sin respuesta sería peor que buscar su término como
+                # texto — degradación explícita, no silenciosa.
+                resolution = CategoryResolution(
+                    query=category, confidence="no_categories"
+                )
+                term = q.strip() or category.strip()
+                universe = [
+                    p for p in universe if text_matches_loosely(term, _haystack(p))
+                ]
+                q_lower = ""
+            else:
+                # Filtro de PERTENENCIA (product.categories), no de texto: el
+                # substring search también pegaba contra description y devolvía
+                # productos de otra categoría.
+                resolution = resolve_category(category, known)
+                if resolution.matched is None:
+                    universe = []
+                else:
+                    slug = resolution.matched.slug
+                    universe = [p for p in universe if slug in p.categories]
+
         if not q_lower:
-            # Empty query → todo el catalogo (sin filtro). Util para
+            # Empty query → todo el universo (sin filtro de texto). Util para
             # "que tienen?" / "muestrame todo".
-            matches = list(self._cached_products)
+            matches = list(universe)
         else:
-            matches = [p for p in self._cached_products if _matches(p, q_lower)]
+            matches = [p for p in universe if _matches(p, q_lower)]
 
         truncated = len(matches) > limit
         return SearchResult(
@@ -77,6 +119,7 @@ class LocalSnapshotCatalogClient:
             stale=self._is_stale(),
             manifest=self._cached_manifest,
             results=matches[:limit],
+            category=resolution,
         )
 
     async def get_by_handle(self, handle: str) -> CatalogProductDTO:
@@ -160,6 +203,13 @@ class LocalSnapshotCatalogClient:
 
 
 # ---------- search matcher ----------
+
+
+def _haystack(p: CatalogProductDTO) -> str:
+    """Todo el texto searchable del producto, en un solo string."""
+    return " ".join(
+        [p.title, p.handle, *p.tags, *p.categories, p.description or ""]
+    )
 
 
 def _matches(p: CatalogProductDTO, q_lower: str) -> bool:

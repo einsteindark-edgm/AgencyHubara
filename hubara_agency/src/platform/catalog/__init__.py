@@ -7,6 +7,13 @@ Cross-agent infrastructure. Consumed by:
 R-DIP: este paquete NO importa de ningun agente, ni de temporalio, ni de
 exoclaw. Solo stdlib y los DTOs internos.
 """
+from src.platform.catalog.categories import (
+    CatalogCategoryDTO,
+    CategoryResolution,
+    collect_categories,
+    deslugify,
+    resolve_category,
+)
 from src.platform.catalog.composition import get_catalog_client
 from src.platform.catalog.dtos import (
     CatalogImageDTO,
@@ -33,6 +40,7 @@ from src.platform.catalog.variant_attrs import (
 )
 
 __all__ = [
+    "CatalogCategoryDTO",
     "CatalogError",
     "CatalogImageDTO",
     "CatalogManifestDTO",
@@ -41,15 +49,19 @@ __all__ = [
     "CatalogProductDTO",
     "CatalogUnavailableError",
     "CatalogVariantDTO",
+    "CategoryResolution",
     "LocalSnapshotCatalogClient",
     "ProductNotFoundError",
     "SearchResult",
     "VariantAttrs",
+    "collect_categories",
+    "deslugify",
     "get_catalog_client",
     "get_max_age_minutes",
     "get_snapshot_dir",
     "match_option",
     "normalize_label",
     "parse_variant_tags",
+    "resolve_category",
     "split_multi_label",
 ]

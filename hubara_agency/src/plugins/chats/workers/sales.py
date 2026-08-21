@@ -68,6 +68,7 @@ from src.plugins.chats.agent.sales.activities import (
 )
 from src.plugins.chats.agent.sales.tools.catalog import (
     GetProductByHandleTool,
+    ListCategoriesTool,
     SearchProductsTool,
 )
 from src.plugins.chats.agent.sales.tools.checkout import VerifyOrderForCheckoutTool
@@ -133,6 +134,10 @@ register_tool_extension(
 register_tool_extension(
     "sales.get_product_by_handle",
     lambda workspace: GetProductByHandleTool(workspace=str(workspace), catalog=_catalog),
+)
+register_tool_extension(
+    "sales.list_categories",
+    lambda workspace: ListCategoriesTool(workspace=str(workspace), catalog=_catalog),
 )
 
 # Escalation a humano: tool inerte, escribe metadata.json[tag=HUMANO,
