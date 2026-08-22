@@ -6,7 +6,8 @@ deltas (CREATE / UPDATE / DELETE) comparando hashes contra el último push
 exitoso, y delega al `MetaCatalogPort` para el batch.
 
 Reglas de negocio Hubara aplicadas:
-  * `collection != None` ya se filtró en pull — no llega acá. Tracking opcional.
+  * `collection` ya se filtró en pull (allowlist `home_banner` /
+    `home_new_arrivals`) — acá no llega nada que descartar. Tracking opcional.
   * `image_url` ausente → skip + log (mapper devuelve None).
   * Soft-delete protection: si `len(current) < threshold_ratio * last_count`,
     se aborta sin borrar nada (regla B.8 del PLAN). Loguea warning.

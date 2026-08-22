@@ -25,6 +25,29 @@ class _FakeService:
         self.client = _FakeClient(products)
 
 
+def _collection(handle: str, title: str) -> dict:
+    return {"id": f"pcol_{handle}", "title": title, "handle": handle}
+
+
+def _product(
+    pid: str, handle: str, title: str, *, collection: dict | None = None
+) -> dict:
+    raw = {
+        "id": pid,
+        "title": title,
+        "handle": handle,
+        "status": "published",
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z",
+        "variants": [],
+        "images": [],
+    }
+    if collection is not None:
+        raw["collection"] = collection
+    return raw
+
+
+
 @pytest.mark.asyncio
 async def test_pull_one_product_with_decimal_as_str():
     svc = _FakeService(
@@ -76,58 +99,97 @@ async def test_pull_empty_catalog():
 
 
 @pytest.mark.asyncio
-async def test_products_with_collection_are_filtered_out():
-    """Regla de negocio Hubara: solo se exponen al agente productos sin collection."""
+async def test_products_in_allowed_collections_are_included():
+    """`home_banner` y `home_new_arrivals` son merchandising, no data sucia.
+
+    Los productos destacados en el home del storefront son productos reales y
+    vendibles — aparecer en la vitrina NO puede sacarlos del catálogo
+    conversacional. Guard del incidente 2026-08-21: `Duo Zodiacal`, `Ángel`,
+    `Velón Cisne`, `Velón Pinguino`... quedaban invisibles para el agente.
+    """
     svc = _FakeService(
         [
-            # Sin collection — DEBE aparecer
-            {
-                "id": "p1",
-                "title": "Vela Lavanda",
-                "handle": "vela-lavanda",
-                "status": "published",
-                "created_at": "2026-01-01T00:00:00Z",
-                "updated_at": "2026-01-01T00:00:00Z",
-                "variants": [],
-                "images": [],
-            },
-            # CON collection — debe filtrarse (data sucia: producto de prueba)
-            {
-                "id": "p2",
-                "title": "Vela Test",
-                "handle": "vela-test",
-                "status": "published",
-                "created_at": "2026-01-01T00:00:00Z",
-                "updated_at": "2026-01-01T00:00:00Z",
-                "collection": {
-                    "id": "pcol_test",
-                    "title": "Test Collection",
-                    "handle": "test",
-                },
-                "variants": [],
-                "images": [],
-            },
-            # Sin collection — DEBE aparecer
-            {
-                "id": "p3",
-                "title": "Vela Coco",
-                "handle": "vela-coco",
-                "status": "published",
-                "created_at": "2026-01-01T00:00:00Z",
-                "updated_at": "2026-01-01T00:00:00Z",
-                "variants": [],
-                "images": [],
-            },
+            _product("p1", "vela-lavanda", "Vela Lavanda"),
+            _product(
+                "p2",
+                "duo-zodiacal",
+                "Duo Zodiacal",
+                collection=_collection("home_new_arrivals", "Los más vendidos"),
+            ),
+            _product(
+                "p3",
+                "velon-pinguino",
+                "Velón Pinguino",
+                collection=_collection("home_banner", "Home Banner"),
+            ),
+        ]
+    )
+    use_case = PullCatalogUseCase(medusa_service=svc)
+    result = await use_case.execute(CatalogSyncInput())
+
+    assert result.count == 3
+    handles = {p["handle"] for p in json.loads(result.products_json)}
+    assert handles == {"vela-lavanda", "duo-zodiacal", "velon-pinguino"}
+
+
+@pytest.mark.asyncio
+async def test_products_in_other_collections_stay_filtered_out():
+    """El resto de las collections sigue fuera del catálogo conversacional.
+
+    `Story showcase` y `Promociones` agrupan contenido del storefront (bloques
+    del home, promos armadas) que no son productos que el agente deba vender.
+    El allowlist es explícito: collection desconocida → fuera.
+    """
+    svc = _FakeService(
+        [
+            _product("p1", "vela-lavanda", "Vela Lavanda"),
+            _product(
+                "p2",
+                "vela-natural",
+                "Vela Natural",
+                collection=_collection("home_showcase", "Story showcase"),
+            ),
+            _product(
+                "p3",
+                "promocion-religiosa",
+                "Promocion Religiosa",
+                collection=_collection("products_promociones", "Promociones"),
+            ),
+            _product(
+                "p4",
+                "angel",
+                "Ángel",
+                collection=_collection("home_new_arrivals", "Los más vendidos"),
+            ),
         ]
     )
     use_case = PullCatalogUseCase(medusa_service=svc)
     result = await use_case.execute(CatalogSyncInput())
 
     assert result.count == 2
-    payload = json.loads(result.products_json)
-    handles = {p["handle"] for p in payload}
-    assert handles == {"vela-lavanda", "vela-coco"}
-    assert "vela-test" not in handles
+    handles = {p["handle"] for p in json.loads(result.products_json)}
+    assert handles == {"vela-lavanda", "angel"}
+
+
+@pytest.mark.asyncio
+async def test_allowed_collections_are_injectable():
+    """El allowlist es un parámetro — el operador puede sumar collections."""
+    svc = _FakeService(
+        [
+            _product(
+                "p1",
+                "promocion-religiosa",
+                "Promocion Religiosa",
+                collection=_collection("products_promociones", "Promociones"),
+            ),
+        ]
+    )
+    use_case = PullCatalogUseCase(
+        medusa_service=svc,
+        allowed_collection_handles={"products_promociones"},
+    )
+    result = await use_case.execute(CatalogSyncInput())
+    assert result.count == 1
 
 
 @pytest.mark.asyncio
