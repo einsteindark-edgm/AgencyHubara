@@ -98,7 +98,7 @@ class PushMetaCatalogResult:
     deletes: int
     skipped_image: int
     skipped_price: int
-    skipped_collection: int  # ya filtrados por pull; tracking solo
+    skipped_collection: int  # ya filtrados por pull (allowlist); tracking solo
     aborted_due_to_threshold: bool
     error: str | None
     next_meta_hashes_json: str

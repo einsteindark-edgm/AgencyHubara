@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict
 from datetime import datetime, timezone
+from typing import Iterable
 
 from src.plugins.catalog.agent.contracts import CatalogSyncInput, PullCatalogResult
 from src.platform.catalog.dtos import (
@@ -16,13 +17,33 @@ from src.platform.catalog.dtos import (
     CatalogProductDTO,
     CatalogVariantDTO,
 )
-from src.platform.medusa.models import MedusaProduct
+from src.platform.medusa.models import MedusaCollection, MedusaProduct
 from src.platform.medusa.service import MedusaProductService
 
 
+# Collections de Medusa cuyos productos SI entran al catalogo conversacional.
+# Son las vitrinas del home del storefront: agrupan productos reales y
+# vendibles, destacados por el operador. Cualquier otra collection
+# ("Story showcase", "Promociones") agrupa contenido armado del sitio y queda
+# fuera. Allowlist explicito: collection desconocida → fuera.
+DEFAULT_ALLOWED_COLLECTION_HANDLES = frozenset({"home_banner", "home_new_arrivals"})
+
+
 class PullCatalogUseCase:
-    def __init__(self, medusa_service: MedusaProductService) -> None:
+    def __init__(
+        self,
+        medusa_service: MedusaProductService,
+        allowed_collection_handles: Iterable[str] | None = None,
+    ) -> None:
         self._medusa = medusa_service
+        self._allowed_collections = frozenset(
+            h.strip().lower()
+            for h in (
+                DEFAULT_ALLOWED_COLLECTION_HANDLES
+                if allowed_collection_handles is None
+                else allowed_collection_handles
+            )
+        )
 
     async def execute(self, input: CatalogSyncInput) -> PullCatalogResult:
         products: list[CatalogProductDTO] = []
@@ -32,13 +53,15 @@ class PullCatalogUseCase:
             page_size=100, status="published",
         ):
             mp = MedusaProduct.model_validate(raw)
-            # Regla de negocio Hubara: solo se exponen al agente productos
-            # SIN collection asignada. Las collections en Medusa se usan para
-            # agrupar productos de prueba / promociones / variantes que NO
-            # deben aparecer en el catalogo conversacional. Este filtro
-            # tambien limpia los duplicados sucios (cruz-de-vida vs cruz-vida)
-            # si alguno tiene collection.
-            if mp.collection is not None:
+            # Regla de negocio Hubara: un producto entra si NO tiene collection,
+            # o si su collection esta en el allowlist de vitrinas del home.
+            # Hasta 2026-08-21 se descartaba TODO producto con collection
+            # asignada, asumiendo que las collections eran data de prueba. En la
+            # Medusa real las vitrinas del home agrupan productos reales:
+            # destacar uno en la web lo sacaba del catalogo conversacional.
+            # Costo medido: 8 de 27 productos publicados invisibles para el
+            # agente (Duo Zodiacal, Velon Cisne, Angel, Cubo de corazon...).
+            if mp.collection is not None and not self._is_allowed(mp.collection):
                 skipped_with_collection += 1
                 continue
             products.append(_to_dto(mp))
@@ -50,6 +73,10 @@ class PullCatalogUseCase:
             fetched_at=datetime.now(timezone.utc).isoformat(),
             source_etag=None,  # conditional GET es follow-up
         )
+
+    def _is_allowed(self, collection: MedusaCollection) -> bool:
+        handle = (collection.handle or "").strip().lower()
+        return handle in self._allowed_collections
 
 
 def _to_dto(mp: MedusaProduct) -> CatalogProductDTO:
