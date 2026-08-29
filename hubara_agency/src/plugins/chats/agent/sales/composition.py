@@ -91,12 +91,19 @@ def build_ingest_use_case() -> IngestInboundMessage:
     event_bus = setup_analytics()
     tenant_id = os.getenv("HUBARA_TENANT_ID", "hubara")
 
+    # HU web-cart: reader de la Store API (Null si falta la publishable key
+    # — jamás rompe el boot) + catálogo para el matching de la hidratación.
+    # Imports via src.sdk.connectorkit (P-28: plugins no tocan platform).
+    from src.sdk.connectorkit import get_catalog_client, get_web_cart_reader
+
     _INGEST_USE_CASE = IngestInboundMessage(
         history_store=history_store,
         load_session=load_session,
         metadata_store=metadata_store,
         event_bus=event_bus,
         tenant_id=tenant_id,
+        web_cart_reader=get_web_cart_reader(),
+        catalog=get_catalog_client(),
     )
     return _INGEST_USE_CASE
 

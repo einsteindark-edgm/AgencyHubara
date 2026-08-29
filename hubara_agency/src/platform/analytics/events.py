@@ -117,6 +117,74 @@ def make_referral_captured(
     )
 
 
+def make_web_cart_captured(
+    *,
+    session_id: str,
+    tenant_id: str | None,
+    cart_id: str,
+    status: str,  # "hydrated" | "degraded"
+    reason: str | None = None,
+    items_count: int | None = None,
+) -> AnalyticsEvent:
+    """HU web-cart hot lead: se detectó `ref:cart_<id>` en un inbound.
+
+    Se emite UNA vez por carrito (la re-detección del mismo cart_id es
+    no-op). `status` dice si la hidratación contra la Store API funcionó
+    ("hydrated") o si el bot siguió solo con el texto del mensaje
+    ("degraded", con `reason` interno: timeout / not_found / sin reader).
+    """
+    return AnalyticsEvent(
+        event_id=_new_id(),
+        timestamp_ms=_now_ms(),
+        category="referral",
+        kind="web_cart_captured",
+        correlation={
+            "session_id": session_id,
+            "tenant_id": tenant_id,
+            "cart_id": cart_id,
+        },
+        payload={
+            "cart_id": cart_id,
+            "status": status,
+            "reason": reason,
+            "items_count": items_count,
+        },
+        tags=["web_cart", "attribution"],
+    )
+
+
+def make_web_cart_product_mismatch(
+    *,
+    session_id: str,
+    tenant_id: str | None,
+    cart_id: str,
+    unmatched_titles: list[str],
+) -> AnalyticsEvent:
+    """El carrito web trae productos que NO están en el snapshot del catálogo.
+
+    Señal operacional (categoría "system"): como el item viene de un cart
+    REAL de Medusa, un miss contra el snapshot es casi siempre DESYNC
+    (snapshot stale / allowlist de collections — clase PR #215), no un
+    ataque. El operador debe re-sincronizar el catálogo.
+    """
+    return AnalyticsEvent(
+        event_id=_new_id(),
+        timestamp_ms=_now_ms(),
+        category="system",
+        kind="web_cart_product_mismatch",
+        correlation={
+            "session_id": session_id,
+            "tenant_id": tenant_id,
+            "cart_id": cart_id,
+        },
+        payload={
+            "cart_id": cart_id,
+            "unmatched_titles": list(unmatched_titles),
+        },
+        tags=["web_cart", "catalog_desync"],
+    )
+
+
 def make_wa_interaction(
     *,
     session_id: str,

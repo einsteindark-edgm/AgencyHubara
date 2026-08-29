@@ -17,6 +17,16 @@ from __future__ import annotations
 from src.platform.audio.composition import (
     get_audio_transcription_port as get_audio_transcription_port,
 )
+from src.platform.carts.composition import (
+    get_web_cart_reader as get_web_cart_reader,
+)
+from src.platform.carts.port import (
+    FakeWebCartReader as FakeWebCartReader,
+    NullWebCartReader as NullWebCartReader,
+    WebCartItem as WebCartItem,
+    WebCartReaderPort as WebCartReaderPort,
+    WebCartSnapshot as WebCartSnapshot,
+)
 from src.platform.audio.port import (
     AudioTranscriptionPort as AudioTranscriptionPort,
 )

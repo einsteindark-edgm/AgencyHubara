@@ -50,6 +50,12 @@ _LAZY_EXPORTS: dict[str, str] = {
     "OrderCommandPort": "src.platform.orders.command_port",
     "OrderQueryPort": "src.platform.orders.query_port",
     "OrderRegistrationPort": "src.platform.orders.port",
+    "WebCartReaderPort": "src.platform.carts.port",
+    # DTOs + fakes del web cart (HU web-cart hot lead) — viajan con su port:
+    "WebCartItem": "src.platform.carts.port",
+    "WebCartSnapshot": "src.platform.carts.port",
+    "NullWebCartReader": "src.platform.carts.port",
+    "FakeWebCartReader": "src.platform.carts.port",
     # Factories de composición (el deployment decide el vendor):
     "get_audio_transcription_port": "src.platform.audio.composition",
     "get_catalog_client": "src.platform.catalog.composition",
@@ -58,6 +64,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "get_order_command_port": "src.platform.orders.composition",
     "get_order_query_port": "src.platform.orders.composition",
     "get_order_registration_port": "src.platform.orders.composition",
+    "get_web_cart_reader": "src.platform.carts.composition",
 }
 
 

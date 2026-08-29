@@ -14,11 +14,20 @@ deployment.**
 
 ## Cómo funciona
 
-- **`src.sdk.connectorkit`** re-exporta los 9 ports + sus factories de
+- **`src.sdk.connectorkit`** re-exporta los 10 ports + sus factories de
   composición: `OrderQueryPort`/`OrderCommandPort`/`OrderRegistrationPort`
   (commerce), `CatalogPort`/`CheckoutVerificationPort`, `MetaCatalogPort`,
-  `AudioTranscriptionPort`, `ImageVisionPort`, `CustomerScoringPort` — y el
-  nuevo **`AttributionReadPort`**.
+  `AudioTranscriptionPort`, `ImageVisionPort`, `CustomerScoringPort`,
+  `AttributionReadPort` — y el nuevo **`WebCartReaderPort`**.
+- **`WebCartReaderPort`** (HU web-cart hot lead, `src/platform/carts/`):
+  lee un carrito de la **Store API** de Medusa v2 (`GET /store/carts/{id}`
+  con `x-publishable-api-key` — env `MEDUSA_PUBLISHABLE_API_KEY`; sin ella
+  la factory `get_web_cart_reader()` cae a `NullWebCartReader` y todo cart
+  ref degrada al flujo conversacional). Semántica: `None` = "no hay cart"
+  (404/no-2xx); errores de transporte PROPAGAN (regla 4) — el caller (el
+  ingest de sales) degrada con timeout corto. DTOs `WebCartSnapshot`/
+  `WebCartItem` y fake oficial `FakeWebCartReader` viajan con el port;
+  contract suite en `tests/platform/carts/test_web_cart_reader.py`.
 - **Atribución como read model de plataforma** (`src/platform/attribution.py`):
   el ingest de WhatsApp es el ÚNICO writer (origin/last_touch/
   referral_snapshot en el metadata); los readers (ads hoy, **CAPI mañana** —

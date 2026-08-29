@@ -22,6 +22,15 @@ class MedusaSettings(BaseSettings):
 
     base_url: str = Field(..., description="Ej: https://medusa.hubara.example.com")
     admin_token: str | None = Field(default=None, description="Secret API Key (Opción A)")
+    # --- Store API (HU web-cart hot lead) -----------------------------------
+    # Publishable API Key (Medusa Admin → Settings → Publishable API Keys).
+    # Habilita `GET /store/carts/{id}` para hidratar carritos web en el
+    # ingest de sales. Si está vacía, `get_web_cart_reader()` cae a
+    # `NullWebCartReader` (el cart ref degrada al flujo conversacional).
+    publishable_api_key: str | None = Field(
+        default=None,
+        description="MEDUSA_PUBLISHABLE_API_KEY — pk_... para Store API. Opcional.",
+    )
     admin_email: str | None = Field(default=None)
     admin_password: str | None = Field(default=None)
     http_timeout: float = Field(default=30.0)

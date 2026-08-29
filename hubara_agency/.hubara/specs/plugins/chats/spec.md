@@ -59,6 +59,64 @@ en background (sin bloquear la response al cliente WhatsApp).
 - WHEN se procesa
 - THEN se devuelve HTTP 403 con `detail="Forbidden"`
 
+### Requirement: Web cart hot lead (carrito web → cierre por WhatsApp)
+
+Cuando el texto inbound contiene un token `ref:cart_<id>` (link wa.me
+prellenado que genera la página web con el carrito Medusa), el ingest MUST
+detectarlo determinísticamente (regex — nunca el LLM), persistir
+`metadata.web_cart`, clasificar `origin.channel = "web_cart"` (salvo que el
+inbound traiga `ctwa_clid`, que gana para no perder atribución CAPI) e
+hidratar el carrito vía la Store API de Medusa **best-effort**: la
+hidratación MUST correr inline con timeout corto y CUALQUIER fallo (sin
+config, timeout, 404, mapping roto) MUST degradar en silencio — el turno se
+señala igual y el bot vende con lo que dice el mensaje. Los precios que
+vengan en el texto del cliente MUST NOT usarse jamás (el catálogo es la
+única fuente de precios).
+
+#### Scenario: Cart hidratado siembra el draft y salta etapas
+
+- GIVEN un inbound con `ref:cart_<id>` y la Store API devuelve el cart
+- WHEN el ingest hidrata
+- THEN los items que matchean el snapshot siembran `order_draft.slots`
+  (producto/cantidad/eje de variante; ciudad/dirección/teléfono si el
+  checkout web los capturó; multi-item va a `notas`)
+- AND `resolve_funnel_stage` proyecta la etapa avanzada sin código nuevo
+- AND el plugin_context del MISMO turno lleva la nota `[LEAD CALIENTE
+  DESDE LA WEB, ...]` + el breadcrumb del draft ya sembrado
+- AND se emite el evento analytics `web_cart_captured` (status=hydrated),
+  una sola vez por cart_id (re-envío del mismo link = no-op; un cart_id
+  nuevo gana y re-hidrata — los slots ya sembrados por el cart anterior se
+  CONSERVAN en el draft, no se pisan: la nota nueva lleva los items nuevos
+  y el LLM reconcilia con el cliente)
+- AND la nota es episodio-scoped: se apaga al cerrar el episodio en que se
+  capturó el carrito (RECHAZO/TIMEOUT/re-engagement) — jamás resucita como
+  "lead caliente" en un episodio posterior
+
+#### Scenario: Hidratación falla — el bot vende igual
+
+- GIVEN un inbound con `ref:cart_<id>` y la Store API caída / sin
+  `MEDUSA_PUBLISHABLE_API_KEY` / cart inexistente
+- WHEN el ingest degrada (`web_cart.status = "degraded"` + reason interno)
+- THEN el turno se señala normal y la nota de lead caliente instruye
+  validar los productos del mensaje contra el catálogo con las tools
+- AND el motivo interno de degradación NUNCA entra al prompt
+
+#### Scenario: Producto del cart no está en el catálogo (ataque o desync)
+
+- GIVEN un cart hidratado con un item cuyo producto no matchea el snapshot
+- WHEN se mapea
+- THEN el item NO se siembra al draft; la nota instruye decirlo con
+  honestidad y ofrecer los más similares (`present_products`)
+- AND se emite `web_cart_product_mismatch` (categoría system) — un miss
+  con cart real es casi siempre snapshot stale (clase PR #215), el
+  operador debe re-sincronizar
+
+#### Scenario: Conversación en manos de un humano
+
+- GIVEN una sesión con `active_route = humano`
+- WHEN llega un inbound con `ref:cart_<id>`
+- THEN el ingest NO siembra drafts ni notas (el humano conserva el control)
+
 ### Requirement: Worker exclusivo por sub-dominio
 
 El sistema MUST arrancar dos workers Temporal separados:
