@@ -141,19 +141,18 @@ jobs:
             GHCR_TOKEN="$(grep '^GHCR_PULL_TOKEN=' .env | cut -d= -f2-)"
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_OWNER" --password-stdin
             docker compose pull
-            # Self-heal: un force-recreate interrumpido (deploy concurrente,
-            # SSH drop) deja containers renombrados '<id>_..._litellm-1' que
-            # chocan el name allocation del próximo recreate y tumban el
-            # deploy entero (outage 2026-08-31). El filtro por '_hubara-prod-
-            # litellm' solo matchea los renombrados (el canónico no lleva
-            # underscore antes del nombre); diagnóstico a stderr.
-            docker ps -aq --filter "name=_hubara-prod-litellm" | xargs -r docker rm -f >&2 || true
-            # litellm: force-recreate SIEMPRE — su config es un bind-mount y
-            # `up -d` no recrea el container cuando solo cambió el CONTENIDO
+            # litellm: recrear SIEMPRE desde cero — su config es un bind-mount
+            # y `up -d` no recrea el container cuando solo cambió el CONTENIDO
             # del archivo (imagen/definición idénticas) → seguiría sirviendo
-            # el config viejo en memoria. El resto del stack espera su
-            # healthcheck (depends_on: service_healthy), así que el orden es
-            # seguro. Caso: alias gemini-multimodal (fix multimodal sales).
-            docker compose up -d --force-recreate litellm
+            # el config viejo en memoria. Caso: alias gemini-multimodal.
+            # `rm -sf` + `up -d` en vez de `--force-recreate`: compose remueve
+            # por labels TODOS los containers del servicio, incluidos los
+            # renombrados '<id>_<nombre>' que deja un recreate interrumpido y
+            # que chocan el name allocation del siguiente (outage 2026-08-31,
+            # deploys concurrentes). Sin nombres hardcodeados acá (gate de
+            # forge). El resto del stack espera su healthcheck
+            # (depends_on: service_healthy), así que el orden es seguro.
+            docker compose rm -sf litellm
+            docker compose up -d litellm
             docker compose up -d --remove-orphans
             docker image prune -f
