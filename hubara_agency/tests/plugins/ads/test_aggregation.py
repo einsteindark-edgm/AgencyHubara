@@ -131,6 +131,33 @@ def test_direct_origin_creates_synthetic_campaign(_isolate_vault_dir: Path):
     assert direct.name is not None and "directo" in direct.name.lower()
 
 
+def test_web_cart_origin_creates_synthetic_campaign(_isolate_vault_dir: Path):
+    """Premortem web-cart FM-05: las sesiones que llegan por el botón de la
+    tienda web (origin.channel='web_cart', sin source_id) se agrupan en su
+    propia campaña sintética — NO se mezclan con 'direct' ni se dropean.
+    Sin este bucket, la métrica que justifica la feature ("¿cuántas ventas
+    trajo el botón?") es irrecuperable."""
+    _write_session(
+        _isolate_vault_dir,
+        phone="444",
+        origin={
+            "channel": "web_cart",
+            "first_seen_ms": 1714312600000,
+            "first_inbound_message_id": "wamid.WC",
+            "headline": None,
+            "source_id": None,
+        },
+    )
+
+    campaigns = list_ads_campaigns(_isolate_vault_dir)
+    assert len(campaigns) == 1
+    wc = campaigns[0]
+    assert wc.id == "web_cart"
+    assert wc.source_type == "web_cart"
+    assert wc.started == 1
+    assert wc.name is not None and "web" in wc.name.lower()
+
+
 def test_direct_synthetic_coexists_with_real_campaigns(_isolate_vault_dir: Path):
     """Un ad + un direct → 2 campañas: la real (con source_id) + la
     sintética 'direct'."""

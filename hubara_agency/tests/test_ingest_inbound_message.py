@@ -71,6 +71,16 @@ class FakeMetadataStore:
         self.store[session_id] = dict(data)
         self.writes.append((session_id, dict(data)))
 
+    def update(self, session_id: str, mutator):
+        """Espejo del RMW atómico del store real (flock): lee FRESCO, aplica
+        mutator, escribe — mutator devuelve None para abortar sin escribir."""
+        fresh = self.read(session_id)
+        result = mutator(fresh)
+        if result is None:
+            return None
+        self.write(session_id, result)
+        return result
+
 
 def _make_text_message(
     *, from_number: str = "5491111111111", text: str | None = "hola", phone_id: str = "PID"
@@ -928,3 +938,433 @@ async def test_ctwa_window_not_overwritten_on_subsequent_inbound():
     ]
     # CTWA window inmutable después del primer touch.
     assert second_ctwa_expiry == first_ctwa_expiry
+
+
+# ---------------------------------------------------------------------------
+# HU web-cart hot lead: `ref:cart_<id>` en el texto inbound → hidratación del
+# carrito (best-effort) + siembra del draft + nota LEAD CALIENTE + analytics.
+# Gotcha #1 del repo: verificamos COMPORTAMIENTO (la nota LLEGA al
+# extra_context, los slots QUEDAN en el draft), no solo el schema.
+# ---------------------------------------------------------------------------
+
+_WEB_CART_ID = "cart_01JN2Y8FZAB3CD4EF5GH6JK7LM"
+_WEB_CART_TEXT = (
+    "Hola! Quiero terminar mi compra 🛒\n"
+    "• 2x Vela Ángel (Lavanda)\n"
+    f"ref:{_WEB_CART_ID}"
+)
+
+
+class FakeEventBus:
+    def __init__(self) -> None:
+        self.events: list = []
+
+    async def record(self, event) -> None:
+        self.events.append(event)
+
+
+def _web_cart_snapshot(items=None, **kwargs):
+    from src.sdk.connectorkit import WebCartItem, WebCartSnapshot
+
+    if items is None:
+        items = [
+            WebCartItem(
+                product_title="Vela Ángel",
+                quantity=2,
+                product_handle="vela-angel",
+                variant_title="Lavanda",
+            )
+        ]
+    return WebCartSnapshot(cart_id=_WEB_CART_ID, items=tuple(items), **kwargs)
+
+
+def _catalog_with_vela_angel():
+    from src.platform.catalog.dtos import (
+        CatalogManifestDTO,
+        CatalogProductDTO,
+        CatalogVariantDTO,
+        SearchResult,
+    )
+
+    product = CatalogProductDTO(
+        id="prod_1",
+        handle="vela-angel",
+        title="Vela Ángel",
+        status="published",
+        variants=[
+            CatalogVariantDTO(
+                id="v1",
+                title="Lavanda",
+                options={"Aroma": "Lavanda", "Color": "Blanco"},
+            )
+        ],
+        options={"Aroma": ["Lavanda"], "Color": ["Blanco"]},
+    )
+    manifest = CatalogManifestDTO(
+        version="test", fetched_at="2026-01-01T00:00:00Z", product_count=1
+    )
+
+    class FakeCatalog:
+        async def get_by_handle(self, handle):
+            if handle == product.handle:
+                return product
+            raise KeyError(handle)
+
+        async def search(self, q, *, limit=10, category=None):
+            hits = [product] if q.lower() in product.title.lower() else []
+            return SearchResult(
+                query=q,
+                count=len(hits),
+                truncated=False,
+                stale=False,
+                manifest=manifest,
+                results=hits,
+            )
+
+        async def list_categories(self):
+            return []
+
+    return FakeCatalog()
+
+
+def _web_cart_use_case(*, reader=None, catalog=None, bus=None):
+    history = FakeHistoryStore()
+    loader = FakeLoadOrStart()
+    metadata = FakeMetadataStore()
+    use_case = IngestInboundMessage(
+        history_store=history,  # type: ignore[arg-type]
+        load_session=loader,  # type: ignore[arg-type]
+        metadata_store=metadata,  # type: ignore[arg-type]
+        event_bus=bus,  # type: ignore[arg-type]
+        tenant_id="tenant-test",
+        web_cart_reader=reader,
+        catalog=catalog,
+    )
+    return use_case, loader, metadata
+
+
+async def _drain_spawned_tasks() -> None:
+    """Deja correr las tasks fire-and-forget (_spawn_safe) del ingest."""
+    import asyncio
+
+    for _ in range(3):
+        await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_web_cart_ref_hydrates_draft_and_injects_hot_lead_note():
+    from src.sdk.connectorkit import FakeWebCartReader
+
+    bus = FakeEventBus()
+    # phone del cart == from_number de la sesión (guard PII FM-03) — con
+    # formato web sucio para cubrir la normalización FM-10 end-to-end.
+    reader = FakeWebCartReader(
+        {
+            _WEB_CART_ID: _web_cart_snapshot(
+                city="Bogotá", phone="+54 911-1111-1111", customer_name="Ana Pardo"
+            )
+        }
+    )
+    use_case, loader, metadata = _web_cart_use_case(
+        reader=reader, catalog=_catalog_with_vela_angel(), bus=bus
+    )
+
+    await use_case.execute(_make_text_message(text=_WEB_CART_TEXT))
+    await _drain_spawned_tasks()
+
+    meta = metadata.store["wa_5491111111111"]
+    assert meta["web_cart"]["status"] == "hydrated"
+    assert meta["origin"]["channel"] == "web_cart"
+    slots = meta["episodes"][-1]["order_draft"]["slots"]
+    assert slots["producto"] == "Vela Ángel"
+    assert slots["cantidad"] == "2"
+    assert slots["aroma"] == "Lavanda"
+    assert slots["ciudad"] == "Bogotá"
+    assert slots["telefono"] == "5491111111111"
+    # FM-05: la atribución POR EPISODIO también ve el canal web_cart (el
+    # snapshot es lo que consume ads/aggregation para el bucket del episodio).
+    assert meta["episodes"][-1]["referral_snapshot"]["channel"] == "web_cart"
+    # FM-06 / Scenario 1 del spec: el draft sembrado AVANZA la etapa del
+    # funnel de verdad (falta dirección y método de pago → datos_envio).
+    from src.plugins.chats.agent.sales.use_cases.funnel_stage import (
+        resolve_funnel_stage,
+    )
+
+    assert resolve_funnel_stage(meta) == "etapa_datos_envio"
+
+    # La nota LLEGA al prompt del MISMO turno (el más caliente).
+    assert len(loader.calls) == 1
+    notes = loader.calls[0].extra_context or []
+    assert any("LEAD CALIENTE" in n for n in notes)
+    # Y el breadcrumb del draft también se proyecta ya sembrado.
+    assert any("Vela Ángel" in n for n in notes if "DATOS DEL PEDIDO" in n)
+
+    captured = [e for e in bus.events if e.kind == "web_cart_captured"]
+    assert len(captured) == 1
+    assert captured[0].payload["status"] == "hydrated"
+    assert captured[0].correlation["session_id"] == "wa_5491111111111"
+
+
+@pytest.mark.asyncio
+async def test_web_cart_reader_failure_degrades_and_still_signals_turn():
+    class BoomReader:
+        async def get_cart(self, cart_id):
+            raise RuntimeError("medusa caida")
+
+    bus = FakeEventBus()
+    use_case, loader, metadata = _web_cart_use_case(
+        reader=BoomReader(), catalog=_catalog_with_vela_angel(), bus=bus
+    )
+
+    await use_case.execute(_make_text_message(text=_WEB_CART_TEXT))
+    await _drain_spawned_tasks()
+
+    meta = metadata.store["wa_5491111111111"]
+    assert meta["web_cart"]["status"] == "degraded"
+    assert meta["web_cart"]["reason"] == "RuntimeError"
+    # El turno se señala IGUAL — la misión es vender.
+    assert len(loader.calls) == 1
+    notes = loader.calls[0].extra_context or []
+    assert any("LEAD CALIENTE" in n for n in notes)
+    # Sin slots sembrados (no hubo cart).
+    episode = meta["episodes"][-1]
+    assert not (episode.get("order_draft") or {}).get("slots")
+
+    captured = [e for e in bus.events if e.kind == "web_cart_captured"]
+    assert captured and captured[0].payload["status"] == "degraded"
+
+
+@pytest.mark.asyncio
+async def test_web_cart_without_reader_wired_degrades():
+    use_case, loader, metadata = _web_cart_use_case(reader=None, catalog=None)
+
+    await use_case.execute(_make_text_message(text=_WEB_CART_TEXT))
+
+    meta = metadata.store["wa_5491111111111"]
+    assert meta["web_cart"]["status"] == "degraded"
+    assert meta["web_cart"]["reason"] == "reader_unavailable"
+    notes = loader.calls[0].extra_context or []
+    assert any("LEAD CALIENTE" in n for n in notes)
+
+
+@pytest.mark.asyncio
+async def test_web_cart_unmatched_item_emits_mismatch_event():
+    from src.sdk.connectorkit import FakeWebCartReader, WebCartItem
+
+    bus = FakeEventBus()
+    reader = FakeWebCartReader(
+        {
+            _WEB_CART_ID: _web_cart_snapshot(
+                items=[WebCartItem(product_title="Vela Fantasma", quantity=3)]
+            )
+        }
+    )
+    use_case, loader, metadata = _web_cart_use_case(
+        reader=reader, catalog=_catalog_with_vela_angel(), bus=bus
+    )
+
+    await use_case.execute(_make_text_message(text=_WEB_CART_TEXT))
+    await _drain_spawned_tasks()
+
+    meta = metadata.store["wa_5491111111111"]
+    assert meta["web_cart"]["status"] == "hydrated"
+    assert meta["web_cart"]["unmatched_titles"] == ["Vela Fantasma"]
+    notes = loader.calls[0].extra_context or []
+    assert any("Vela Fantasma" in n and "similar" in n for n in notes)
+
+    mismatch = [e for e in bus.events if e.kind == "web_cart_product_mismatch"]
+    assert len(mismatch) == 1
+    assert mismatch[0].payload["unmatched_titles"] == ["Vela Fantasma"]
+
+
+@pytest.mark.asyncio
+async def test_plain_message_keeps_existing_flow_untouched():
+    use_case, loader, metadata = _web_cart_use_case(
+        reader=None, catalog=None, bus=FakeEventBus()
+    )
+
+    await use_case.execute(_make_text_message(text="hola, tienen velas?"))
+
+    meta = metadata.store["wa_5491111111111"]
+    assert "web_cart" not in meta
+    assert meta["origin"]["channel"] == "direct"
+    notes = loader.calls[0].extra_context or []
+    assert not any("LEAD CALIENTE" in n for n in notes)
+
+
+@pytest.mark.asyncio
+async def test_same_cart_ref_twice_emits_single_captured_event():
+    from src.sdk.connectorkit import FakeWebCartReader
+
+    bus = FakeEventBus()
+    reader = FakeWebCartReader({_WEB_CART_ID: _web_cart_snapshot()})
+    use_case, loader, metadata = _web_cart_use_case(
+        reader=reader, catalog=_catalog_with_vela_angel(), bus=bus
+    )
+
+    await use_case.execute(_make_text_message(text=_WEB_CART_TEXT))
+    await use_case.execute(_make_text_message(text=_WEB_CART_TEXT))
+    await _drain_spawned_tasks()
+
+    assert len(loader.calls) == 2
+    captured = [e for e in bus.events if e.kind == "web_cart_captured"]
+    assert len(captured) == 1
+
+
+@pytest.mark.asyncio
+async def test_web_cart_with_ctwa_referral_keeps_capi_attribution():
+    """FM-06 / spec: si el inbound trae `ctwa_clid` ADEMÁS del cart ref, el
+    clid GANA en la clasificación (la atribución CAPI no se pierde) y el
+    carrito se captura igual."""
+    from src.sdk.connectorkit import FakeWebCartReader
+
+    use_case, loader, metadata = _web_cart_use_case(
+        reader=FakeWebCartReader({_WEB_CART_ID: _web_cart_snapshot()}),
+        catalog=_catalog_with_vela_angel(),
+        bus=FakeEventBus(),
+    )
+    msg = WhatsAppMessage(
+        message_id="wamid.CTWA_CART",
+        from_number="5491111111111",
+        phone_number_id="PID",
+        text=_WEB_CART_TEXT,
+        media=None,
+        timestamp="1714312345",
+        referral={
+            "ctwa_clid": "CLID_1",
+            "source_type": "ad",
+            "source_id": "AD_1",
+            "headline": "h",
+        },
+    )
+
+    await use_case.execute(msg)
+    await _drain_spawned_tasks()
+
+    meta = metadata.store["wa_5491111111111"]
+    assert meta["origin"]["channel"] == "ad"
+    assert meta["episodes"][-1]["referral_snapshot"]["channel"] == "ad"
+    assert meta["web_cart"]["cart_id"] == _WEB_CART_ID
+    assert meta["web_cart"]["status"] == "hydrated"
+
+
+@pytest.mark.asyncio
+async def test_web_cart_hydration_does_not_clobber_concurrent_writes():
+    """Premortem FM-01: la hidratación mete un await de hasta 3s ADENTRO de
+    la ventana read→write del ingest. Un write concurrente (otro inbound en
+    ráfaga) que aterriza durante ese await NO debe evaporarse cuando la
+    hidratación persiste — la sección web-cart usa el RMW atómico
+    (`metadata_store.update`) en vez de escribir su dict stale."""
+
+    class SideWritingReader:
+        """Simula el write de una task concurrente durante el await del cart."""
+
+        def __init__(self, store: FakeMetadataStore) -> None:
+            self._store = store
+
+        async def get_cart(self, cart_id):
+            meta = dict(self._store.store.get("wa_5491111111111", {}))
+            meta["concurrent_field"] = "sobrevivi"
+            self._store.store["wa_5491111111111"] = meta
+            return _web_cart_snapshot()
+
+    bus = FakeEventBus()
+    use_case, loader, metadata = _web_cart_use_case(
+        reader=None, catalog=_catalog_with_vela_angel(), bus=bus
+    )
+    use_case._web_cart_reader = SideWritingReader(metadata)
+
+    await use_case.execute(_make_text_message(text=_WEB_CART_TEXT))
+    await _drain_spawned_tasks()
+
+    meta = metadata.store["wa_5491111111111"]
+    # Ambos sobreviven: el write concurrente Y la hidratación.
+    assert meta.get("concurrent_field") == "sobrevivi"
+    assert meta["web_cart"]["status"] == "hydrated"
+    assert meta["episodes"][-1]["order_draft"]["slots"]["producto"] == "Vela Ángel"
+
+
+@pytest.mark.asyncio
+async def test_web_cart_verified_not_found_declassifies_origin():
+    """Premortem FM-08: un token con forma válida pero cart VERIFICADO como
+    inexistente (404 real — típico token tipeado/inventado) no debe dejar
+    `origin=web_cart` sticky para siempre: se re-clasifica al canal que
+    hubiera tenido sin el token."""
+    from src.sdk.connectorkit import FakeWebCartReader
+
+    use_case, loader, metadata = _web_cart_use_case(
+        reader=FakeWebCartReader({}),  # cart no existe (verificado)
+        catalog=_catalog_with_vela_angel(),
+        bus=FakeEventBus(),
+    )
+
+    await use_case.execute(_make_text_message(text=_WEB_CART_TEXT))
+    await _drain_spawned_tasks()
+
+    meta = metadata.store["wa_5491111111111"]
+    assert meta["web_cart"]["status"] == "degraded"
+    assert meta["web_cart"]["reason"] == "cart_not_found"
+    assert meta["origin"]["channel"] == "direct"
+    assert meta["last_touch"]["channel"] == "direct"
+
+
+@pytest.mark.asyncio
+async def test_web_cart_catalog_down_degrades_whole_hydration():
+    """Premortem FM-02 end-to-end: catálogo caído (snapshot ausente) NO
+    convierte el carrito en "no manejo tus productos" — degrada la
+    hidratación entera, sin unmatched ni evento de mismatch."""
+    from src.sdk.connectorkit import CatalogUnavailableError, FakeWebCartReader
+
+    class DownCatalog:
+        async def get_by_handle(self, handle):
+            raise CatalogUnavailableError("snapshot missing")
+
+        async def search(self, q, *, limit=10, category=None):
+            raise CatalogUnavailableError("snapshot missing")
+
+        async def list_categories(self):
+            return []
+
+    bus = FakeEventBus()
+    use_case, loader, metadata = _web_cart_use_case(
+        reader=FakeWebCartReader({_WEB_CART_ID: _web_cart_snapshot()}),
+        catalog=DownCatalog(),
+        bus=bus,
+    )
+
+    await use_case.execute(_make_text_message(text=_WEB_CART_TEXT))
+    await _drain_spawned_tasks()
+
+    meta = metadata.store["wa_5491111111111"]
+    assert meta["web_cart"]["status"] == "degraded"
+    assert meta["web_cart"]["reason"] == "CatalogUnavailableError"
+    assert not meta["web_cart"].get("unmatched_titles")
+    assert not [e for e in bus.events if e.kind == "web_cart_product_mismatch"]
+    # El origin NO se desclasifica: el cart no se verificó como inexistente.
+    assert meta["origin"]["channel"] == "web_cart"
+
+
+@pytest.mark.asyncio
+async def test_web_cart_ref_is_ignored_when_human_owns_the_conversation():
+    """Scenario del spec: con `active_route = humano` el ingest NO siembra
+    drafts ni notas — el humano conserva el control (mismo principio que el
+    guard del episode lifecycle; sembrar acá re-abriría maquinaria de bot
+    sobre una conversación intervenida)."""
+    from src.sdk.connectorkit import FakeWebCartReader
+
+    bus = FakeEventBus()
+    reader = FakeWebCartReader({_WEB_CART_ID: _web_cart_snapshot()})
+    use_case, loader, metadata = _web_cart_use_case(
+        reader=reader, catalog=_catalog_with_vela_angel(), bus=bus
+    )
+    metadata.store["wa_5491111111111"] = {"active_route": "humano", "tag": "HUMANO"}
+
+    await use_case.execute(_make_text_message(text=_WEB_CART_TEXT))
+    await _drain_spawned_tasks()
+
+    meta = metadata.store["wa_5491111111111"]
+    assert "web_cart" not in meta
+    assert not meta.get("episodes")  # tampoco se abrió episodio (guard previo)
+    notes = (loader.calls[0].extra_context or []) if loader.calls else []
+    assert not any("LEAD CALIENTE" in n for n in notes)
+    assert not [e for e in bus.events if e.kind == "web_cart_captured"]

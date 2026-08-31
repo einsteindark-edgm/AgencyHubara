@@ -128,6 +128,12 @@ services:
       - META_APP_ID=${META_APP_ID}
       - META_APP_SECRET=${META_APP_SECRET}
       - META_OAUTH_REDIRECT_URI=${META_OAUTH_REDIRECT_URI}
+      # HU web-cart: la hidratación del carrito web corre en el INGEST (este
+      # proceso API), no en los workers — necesita la Store API de Medusa.
+      # Sin valores → get_web_cart_reader() degrada a NullWebCartReader (el
+      # cart ref se ignora y el bot vende con el texto del mensaje).
+      - MEDUSA_BASE_URL=${MEDUSA_BASE_URL}
+      - MEDUSA_PUBLISHABLE_API_KEY=${MEDUSA_PUBLISHABLE_API_KEY}
     volumes:
       - hubara-vault-local:/app/hubara_vault
       # SSoT post-PR11: manifests viven en frontend_dashboard/. El loader

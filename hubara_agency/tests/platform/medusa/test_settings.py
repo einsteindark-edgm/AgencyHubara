@@ -28,6 +28,20 @@ def test_raises_when_base_url_missing(monkeypatch):
         MedusaSettings()
 
 
+def test_raises_when_base_url_is_empty_string(monkeypatch):
+    """Premortem web-cart FM-09: compose inyecta `MEDUSA_BASE_URL=""` cuando
+    la var no está exportada en el host. Un string vacío debe fallar IGUAL
+    que la var ausente — si validara, los consumers (orders composition)
+    recibirían clientes con base_url="" que fallan por-request con
+    UnsupportedProtocol en vez de degradar limpio en composición."""
+    monkeypatch.setenv("MEDUSA_BASE_URL", "")
+    with pytest.raises(ValidationError):
+        MedusaSettings()
+    monkeypatch.setenv("MEDUSA_BASE_URL", "   ")
+    with pytest.raises(ValidationError):
+        MedusaSettings()
+
+
 def test_custom_timeout_via_env(monkeypatch):
     monkeypatch.setenv("MEDUSA_BASE_URL", "https://m.test")
     monkeypatch.setenv("MEDUSA_HTTP_TIMEOUT", "60.5")

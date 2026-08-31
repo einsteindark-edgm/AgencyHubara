@@ -17,6 +17,18 @@ from __future__ import annotations
 from src.platform.audio.composition import (
     get_audio_transcription_port as get_audio_transcription_port,
 )
+from src.platform.carts.composition import (
+    get_web_cart_reader as get_web_cart_reader,
+)
+from src.platform.carts.port import (
+    FakeWebCartReader as FakeWebCartReader,
+    NullWebCartReader as NullWebCartReader,
+    WebCartAuthError as WebCartAuthError,
+    WebCartItem as WebCartItem,
+    WebCartReaderPort as WebCartReaderPort,
+    WebCartSnapshot as WebCartSnapshot,
+    WebCartUnavailableError as WebCartUnavailableError,
+)
 from src.platform.audio.port import (
     AudioTranscriptionPort as AudioTranscriptionPort,
 )
@@ -25,6 +37,10 @@ from src.platform.catalog.checkout_port import (
 )
 from src.platform.catalog.composition import (
     get_catalog_client as get_catalog_client,
+)
+from src.platform.catalog.errors import (
+    CatalogUnavailableError as CatalogUnavailableError,
+    ProductNotFoundError as ProductNotFoundError,
 )
 from src.platform.catalog.port import (
     CatalogPort as CatalogPort,

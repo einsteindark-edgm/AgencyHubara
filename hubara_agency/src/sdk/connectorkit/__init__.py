@@ -43,6 +43,10 @@ _LAZY_EXPORTS: dict[str, str] = {
     # Ports (typing.Protocol):
     "AudioTranscriptionPort": "src.platform.audio.port",
     "CatalogPort": "src.platform.catalog.port",
+    # Errores del contrato de CatalogPort (premortem web-cart FM-02: los
+    # consumers distinguen "producto no existe" de "catálogo caído"):
+    "CatalogUnavailableError": "src.platform.catalog.errors",
+    "ProductNotFoundError": "src.platform.catalog.errors",
     "CheckoutVerificationPort": "src.platform.catalog.checkout_port",
     "CustomerScoringPort": "src.platform.customer_scoring.port",
     "ImageVisionPort": "src.platform.vision.port",
@@ -50,6 +54,14 @@ _LAZY_EXPORTS: dict[str, str] = {
     "OrderCommandPort": "src.platform.orders.command_port",
     "OrderQueryPort": "src.platform.orders.query_port",
     "OrderRegistrationPort": "src.platform.orders.port",
+    "WebCartReaderPort": "src.platform.carts.port",
+    # DTOs + fakes + errores del web cart (HU web-cart) — viajan con su port:
+    "WebCartItem": "src.platform.carts.port",
+    "WebCartSnapshot": "src.platform.carts.port",
+    "NullWebCartReader": "src.platform.carts.port",
+    "FakeWebCartReader": "src.platform.carts.port",
+    "WebCartAuthError": "src.platform.carts.port",
+    "WebCartUnavailableError": "src.platform.carts.port",
     # Factories de composición (el deployment decide el vendor):
     "get_audio_transcription_port": "src.platform.audio.composition",
     "get_catalog_client": "src.platform.catalog.composition",
@@ -58,6 +70,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "get_order_command_port": "src.platform.orders.composition",
     "get_order_query_port": "src.platform.orders.composition",
     "get_order_registration_port": "src.platform.orders.composition",
+    "get_web_cart_reader": "src.platform.carts.composition",
 }
 
 

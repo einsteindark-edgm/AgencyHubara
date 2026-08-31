@@ -32,6 +32,8 @@ from src.platform.analytics import (
     EventBus,
     make_referral_captured,
     make_wa_interaction,
+    make_web_cart_captured,
+    make_web_cart_product_mismatch,
 )
 from src.platform.constants import (
     ROUTE_HUMANO,
@@ -70,6 +72,15 @@ from src.plugins.chats.agent.sales.use_cases.load_or_start_sales_session import 
 from src.plugins.chats.agent.sales.use_cases.order_draft import (
     build_order_draft_note,
     get_projectable_draft,
+    update_order_draft,
+)
+from src.plugins.chats.agent.sales.use_cases.web_cart import (
+    apply_web_cart_capture,
+    build_web_cart_note,
+    detect_cart_ref,
+    map_cart_to_draft,
+    mark_web_cart_degraded,
+    mark_web_cart_hydrated,
 )
 from src.plugins.chats.shared.contracts.events import (
     CustomerRepliedEvent,
@@ -79,9 +90,19 @@ from src.plugins.chats.shared.contracts.events import (
 if TYPE_CHECKING:
     from temporalio.client import Client
 
+    from src.sdk.connectorkit import (
+        CatalogPort as CatalogPort,
+        WebCartReaderPort as WebCartReaderPort,
+    )
+
+
 #: DI-friendly factory for the Temporal client. Async so the composition
 #: root can wire `get_temporal_client` directly without wrapping.
 TemporalClientFactory = Callable[[], Awaitable["Client"]]
+
+# HU web-cart: timeout de la hidratación inline (patrón L-2 — el webhook no
+# puede demorar el primer turno; cualquier fallo degrada en silencio).
+_WEB_CART_HYDRATION_TIMEOUT_S = 3.0
 
 logger = structlog.get_logger()
 
@@ -98,12 +119,19 @@ class IngestInboundMessage:
         event_bus: EventBus | None = None,
         tenant_id: str | None = None,
         temporal_client_factory: TemporalClientFactory | None = None,
+        web_cart_reader: WebCartReaderPort | None = None,
+        catalog: CatalogPort | None = None,
     ) -> None:
         self._history_store = history_store
         self._load_session = load_session
         self._metadata_store = metadata_store
         self._event_bus = event_bus
         self._tenant_id = tenant_id
+        # HU web-cart: reader de la Store API + catálogo para el matching de
+        # la hidratación. Ambos opcionales — sin ellos, todo cart ref degrada
+        # al flujo conversacional normal (la nota de lead caliente queda).
+        self._web_cart_reader = web_cart_reader
+        self._catalog = catalog
         # HU-WA24H-001 Sprint 2: factory para emitir ServiceWindowOpenedEvent
         # / CustomerRepliedEvent via el dispatcher. Optional para tests del
         # ingest legacy que no necesitan el watchdog wiring.
@@ -131,7 +159,11 @@ class IngestInboundMessage:
         except Exception:  # noqa: BLE001 — best-effort
             metadata = {}
 
-        # --- 2a. Origin classification (4 buckets para reporting) ---
+        # HU web-cart: token `ref:cart_<id>` del texto prellenado que genera
+        # la página web. Detección 100% determinista (regex) — jamás del LLM.
+        cart_ref = detect_cart_ref(parsed.text)
+
+        # --- 2a. Origin classification (5 buckets para reporting) ---
         # Sticky first-touch + last_touch updated cada inbound. Se persiste
         # ANTES del CTWA flow porque queremos clasificar incluso a clientes
         # `direct` (sin referral) o `web_referral` (referral sin ctwa_clid).
@@ -140,6 +172,7 @@ class IngestInboundMessage:
             metadata=metadata,
             referral=parsed.referral,
             inbound_message_id=parsed.message_id,
+            cart_ref=cart_ref,
         )
 
         # --- 2b. Referral CTWA: detectar primer touch y persistir ---
@@ -216,7 +249,9 @@ class IngestInboundMessage:
                 metadata,
                 now_ms=now_ms,
                 inbound_message_id=parsed.message_id,
-                referral_snapshot=_make_episode_snapshot(parsed.referral),
+                referral_snapshot=_make_episode_snapshot(
+                    parsed.referral, has_cart_ref=bool(cart_ref)
+                ),
                 msgs_count_at_start=msgs_count_at_start,
             )
 
@@ -271,6 +306,77 @@ class IngestInboundMessage:
             logger.warning(
                 "reengagement_index_update_failed", session_id=session_id
             )
+
+        # --- 2e. Web cart hot lead: hidratación best-effort (HU web-cart) ---
+        # Solo la PRIMERA vez que vemos este cart_id EN este episodio (doble
+        # tap del link = no-op; cart_id nuevo O re-tap en episodio nuevo =
+        # captura nueva, FM-04). Inline con timeout corto (L-2): si CUALQUIER
+        # cosa falla, degrada en silencio y el bot vende con lo que dice el
+        # mensaje. Guard route humano: con un humano al mando no sembramos
+        # drafts ni notas (mismo principio que el episode lifecycle).
+        #
+        # Premortem FM-01: la hidratación mete un await de hasta ~3s adentro
+        # de la ventana read→write del ingest — TODO write de esta sección va
+        # por `metadata_store.update()` (RMW atómico bajo flock, lectura
+        # FRESCA) para no evaporar writes concurrentes de otra ráfaga.
+        if cart_ref and metadata.get("active_route") != ROUTE_HUMANO:
+            captured = {"new": False}
+
+            def _capture_mutator(fresh: dict[str, Any]) -> dict[str, Any] | None:
+                if fresh.get("active_route") == ROUTE_HUMANO:
+                    return None
+                captured["new"] = apply_web_cart_capture(
+                    fresh, cart_id=cart_ref, now_ms=now_ms
+                )
+                return fresh if captured["new"] else None
+
+            fresh_after_capture = self._metadata_store.update(
+                session_id, _capture_mutator
+            )
+            if fresh_after_capture is not None:
+                metadata = fresh_after_capture
+
+            if captured["new"]:
+                episodes = metadata.get("episodes") or []
+                existing_slots = (
+                    ((episodes[-1].get("order_draft") or {}).get("slots") or {})
+                    if episodes
+                    else {}
+                )
+                status, reason, hydration = await self._resolve_web_cart_outcome(
+                    cart_ref,
+                    existing_slots=existing_slots,
+                    session_phone=parsed.from_number,
+                )
+
+                def _apply_mutator(fresh: dict[str, Any]) -> dict[str, Any] | None:
+                    state = fresh.get("web_cart") or {}
+                    if state.get("cart_id") != cart_ref:
+                        return None  # otro cart ganó mid-hidratación: abortar
+                    if status == "hydrated" and hydration is not None:
+                        if hydration.slots:
+                            update_order_draft(
+                                fresh, slots=hydration.slots, now_ms=_now_ms()
+                            )
+                        mark_web_cart_hydrated(
+                            fresh,
+                            items_summary=hydration.items_summary,
+                            unmatched_titles=hydration.unmatched_titles,
+                        )
+                    else:
+                        mark_web_cart_degraded(fresh, reason=reason or "unknown")
+                        if reason == "cart_not_found":
+                            # FM-08: cart VERIFICADO inexistente (404 real) —
+                            # el origin no queda envenenado por un token falso.
+                            _declassify_web_cart_origin(fresh, parsed)
+                    return fresh
+
+                updated = self._metadata_store.update(session_id, _apply_mutator)
+                if updated is not None:
+                    metadata = updated
+                self._emit_web_cart_events(
+                    session_id=session_id, metadata=metadata, cart_id=cart_ref
+                )
 
         # --- 2d. HU-WA24H-001 Sprint 2: watchdog wiring ---
         # Después de persistir el timestamp, emitir los eventos que el
@@ -446,6 +552,10 @@ class IngestInboundMessage:
         photo_citation_note = _build_photo_citation_note(
             parsed.context, metadata
         )
+        # HU web-cart: nota de lead caliente — se proyecta cada turno
+        # mientras el episodio activo no tenga orden registrada (mismo ciclo
+        # de vida que el breadcrumb del draft).
+        web_cart_note = build_web_cart_note(metadata)
         await self._load_session.execute(
             session_id=session_id,
             message=effective.text,
@@ -454,6 +564,7 @@ class IngestInboundMessage:
                 note
                 for note in (
                     episode_boundary_note,
+                    web_cart_note,
                     order_draft_note,
                     photo_citation_note,
                 )
@@ -466,6 +577,106 @@ class IngestInboundMessage:
     # Helpers
     # =========================================================================
 
+    async def _resolve_web_cart_outcome(
+        self,
+        cart_id: str,
+        *,
+        existing_slots: dict[str, Any],
+        session_phone: str | None,
+    ) -> tuple[str, str | None, Any]:
+        """Lee el cart de Medusa y computa el mapping SIN mutar metadata.
+
+        Devuelve `(status, reason, hydration)`: `("hydrated", None, h)` o
+        `("degraded", <reason>, None)`. Best-effort TOTAL: cualquier fallo
+        (sin wiring, timeout, auth, mapping roto) degrada y el flujo sigue —
+        la misión es vender. La aplicación al metadata la hace el caller bajo
+        el RMW atómico (FM-01)."""
+        import asyncio
+
+        if self._web_cart_reader is None or self._catalog is None:
+            return ("degraded", "reader_unavailable", None)
+        try:
+            snapshot = await asyncio.wait_for(
+                self._web_cart_reader.get_cart(cart_id),
+                timeout=_WEB_CART_HYDRATION_TIMEOUT_S,
+            )
+        except Exception as exc:  # noqa: BLE001 — degrade, jamás tumbar el ingest
+            logger.warning(
+                "web_cart_hydration_failed",
+                cart_id=cart_id,
+                reason=type(exc).__name__,
+            )
+            return ("degraded", type(exc).__name__, None)
+        if snapshot is None:
+            # Contrato del port: None == cart VERIFICADO como inexistente.
+            return ("degraded", "cart_not_found", None)
+
+        try:
+            hydration = await map_cart_to_draft(
+                snapshot,
+                catalog=self._catalog,
+                existing_slots=existing_slots,
+                session_phone=session_phone,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # FM-07: un bug de mapping en prod debe ser diagnosticable — log
+            # con contexto, no solo el class name en el evento.
+            logger.warning(
+                "web_cart_mapping_failed",
+                cart_id=cart_id,
+                reason=type(exc).__name__,
+                error=str(exc),
+            )
+            return ("degraded", type(exc).__name__, None)
+        return ("hydrated", None, hydration)
+
+    def _emit_web_cart_events(
+        self, *, session_id: str, metadata: dict[str, Any], cart_id: str
+    ) -> None:
+        """Analytics del web cart (fire-and-forget, mismo patrón referral)."""
+        state = metadata.get("web_cart") or {}
+        status = state.get("status", "degraded")
+        unmatched = state.get("unmatched_titles") or []
+        logger.info(
+            "web_cart_captured",
+            session=session_id,
+            cart_id=cart_id,
+            status=status,
+            reason=state.get("reason"),
+        )
+        if self._event_bus is None:
+            return
+        items_summary = state.get("items_summary") or []
+        captured = make_web_cart_captured(
+            session_id=session_id,
+            tenant_id=self._tenant_id,
+            cart_id=cart_id,
+            status=status,
+            reason=state.get("reason"),
+            items_count=(
+                len(items_summary) + len(unmatched)
+                if status == "hydrated"
+                else None
+            ),
+        )
+        _spawn_safe(
+            self._event_bus.record(captured),
+            label="analytics.web_cart_captured",
+            session_id=session_id,
+        )
+        if unmatched:
+            mismatch = make_web_cart_product_mismatch(
+                session_id=session_id,
+                tenant_id=self._tenant_id,
+                cart_id=cart_id,
+                unmatched_titles=unmatched,
+            )
+            _spawn_safe(
+                self._event_bus.record(mismatch),
+                label="analytics.web_cart_product_mismatch",
+                session_id=session_id,
+            )
+
     def _handle_origin(
         self,
         *,
@@ -473,6 +684,7 @@ class IngestInboundMessage:
         metadata: dict[str, Any],
         referral: dict[str, Any] | None,
         inbound_message_id: str | None,
+        cart_ref: str | None = None,
     ) -> None:
         """Clasifica el origen del cliente en uno de 4 buckets y persiste
         `origin` (sticky first-touch) + `last_touch` (updated cada inbound).
@@ -503,7 +715,7 @@ class IngestInboundMessage:
         NO toca `ctwa_referrals` / `ctwa_clids_seen` — eso lo hace
         `_handle_referral` (solo cuando hay clid).
         """
-        channel = _classify_origin_channel(referral)
+        channel = _classify_origin_channel(referral, has_cart_ref=bool(cart_ref))
         now_ms = _now_ms()
 
         # last_touch: siempre actualizar
@@ -1293,7 +1505,33 @@ def _build_photo_citation_note(
     )
 
 
-def _make_episode_snapshot(referral: dict[str, Any] | None) -> dict[str, Any]:
+def _declassify_web_cart_origin(
+    metadata: dict[str, Any], parsed: WhatsAppMessage
+) -> None:
+    """FM-08: token con forma válida pero cart VERIFICADO inexistente — el
+    origin sticky no queda envenenado como `web_cart` por un token tipeado
+    o inventado. Solo re-clasifica si fue ESTE mensaje el que lo fijó (el
+    origin de sesiones previas legítimas no se toca)."""
+    fallback = _classify_origin_channel(parsed.referral, has_cart_ref=False)
+    origin = metadata.get("origin")
+    if (
+        isinstance(origin, dict)
+        and origin.get("channel") == "web_cart"
+        and origin.get("first_inbound_message_id") == parsed.message_id
+    ):
+        origin["channel"] = fallback
+    last_touch = metadata.get("last_touch")
+    if (
+        isinstance(last_touch, dict)
+        and last_touch.get("channel") == "web_cart"
+        and last_touch.get("inbound_message_id") == parsed.message_id
+    ):
+        last_touch["channel"] = fallback
+
+
+def _make_episode_snapshot(
+    referral: dict[str, Any] | None, *, has_cart_ref: bool = False
+) -> dict[str, Any]:
     """Construye el `referral_snapshot` que se persiste en cada episodio.
 
     El snapshot enriquece el referral raw del payload con el `channel`
@@ -1303,25 +1541,36 @@ def _make_episode_snapshot(referral: dict[str, Any] | None) -> dict[str, Any]:
 
     Para clientes sin referral (channel=direct), el snapshot igual se
     persiste con `channel="direct"` para que el bucket del episodio sea
-    explícito en disco.
+    explícito en disco. `has_cart_ref` (premortem FM-05): un episodio
+    abierto por el botón de la tienda web queda `channel="web_cart"` — sin
+    esto, ads/aggregation lo contaría como orgánico.
     """
     base: dict[str, Any] = dict(referral) if referral else {}
-    base["channel"] = _classify_origin_channel(referral)
+    base["channel"] = _classify_origin_channel(referral, has_cart_ref=has_cart_ref)
     return base
 
 
-def _classify_origin_channel(referral: dict[str, Any] | None) -> str:
+def _classify_origin_channel(
+    referral: dict[str, Any] | None, *, has_cart_ref: bool = False
+) -> str:
     """Determina el bucket de origen de un inbound según el payload referral.
 
     Decisión tabla:
-      | referral=None             | "direct"
-      | referral sin ctwa_clid    | "web_referral"
       | referral con ctwa_clid    | source_type ("ad" | "post"), default "ad"
+      | texto con `ref:cart_<id>` | "web_cart" (HU web-cart hot lead)
+      | referral sin ctwa_clid    | "web_referral"
+      | referral=None             | "direct"
 
-    `web_referral` cubre WhatsApp Web (donde Meta omite el clid) — el
-    referral trae headline/source_id útiles para reporting pero no es
-    atribuible vía Conversions API.
+    El clid GANA sobre el cart ref: la atribución CAPI no se pierde aunque
+    el cliente venga con carrito (el carrito queda igual en
+    `metadata.web_cart`). `web_referral` cubre WhatsApp Web (donde Meta
+    omite el clid) — no atribuible vía Conversions API.
     """
+    if referral and referral.get("ctwa_clid"):
+        source_type = referral.get("source_type")
+        return source_type if source_type in ("ad", "post") else "ad"
+    if has_cart_ref:
+        return "web_cart"
     if not referral:
         return "direct"
     if not referral.get("ctwa_clid"):
