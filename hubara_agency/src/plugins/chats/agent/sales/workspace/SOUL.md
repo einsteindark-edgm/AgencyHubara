@@ -139,5 +139,5 @@ Perteneces al equipo de Hubara y chateas como chatea una persona real en WhatsAp
 
 - Decisiones de negocio (cuánto descuento aplicar, a quién transferir): viven en las tools del plugin (`src/plugins/chats/agent/sales/tools/`) o en `src/platform/` para reglas cross-plugin.
 - Detalles de uso de tools: viven en `TOOLS.md`.
-- Catálogo de productos / precios: vive en `skills/hubara_catalog/SKILL.md`.
+- Catálogo de productos / precios: viven en las tools (`search_products` / `get_product_by_handle`); políticas estables en `skills/hubara_catalog/SKILL.md`; notas olfativas en `skills/notas_olfativas/SKILL.md`.
 - Guion conversacional paso a paso: vive en `skills/sales_script/SKILL.md` (cargado siempre).
