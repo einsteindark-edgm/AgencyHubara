@@ -165,6 +165,28 @@ crea una draft order en Medusa (o stub local si Medusa no configurado).
 - AND la tool devuelve `{success: false, error_detail: "..."}`
 - AND el LLM debe decirle al cliente "tuvimos un problema, te confirmamos en un momento"
 
+#### Scenario: Nota operativa del portavelas viaja al humano
+
+- GIVEN `register_order` devolvió `registered=true`
+- WHEN la tool arma el `order_registered_decision.motivo` (el texto que la red de seguridad `ensure_payment_pending_closure` escribe en `metadata.motivo` al escalar)
+- THEN el motivo SHALL incluir la nota "definir con el cliente el color del portavelas (según disponibilidad)"
+- AND el envelope instruye al LLM a incluir la misma nota en el `summary` de `escalate_to_human(PAYMENT_VERIFICATION_PENDING)`
+- AND a avisarle al comprador en la despedida que al finalizar el pago del pedido se escogen los colores del portavelas
+
+### Requirement: Política de color del portavelas
+
+El sales-worker MUST responder a la pregunta por el color del portavelas
+que el color es según disponibilidad, y MUST NOT tratarlo como variante
+del pedido (no se fija con `set_order_slot` ni se ofrece con picker).
+
+#### Scenario: Cliente pregunta el color del portavelas
+
+- GIVEN una conversación en cualquier etapa del funnel
+- WHEN el cliente pregunta de qué color es el portavelas
+- THEN el agente responde que el color del portavelas es según disponibilidad
+- AND que al finalizar el pago del pedido se escogen los colores
+- AND NO promete un color específico ni lo registra como slot del pedido
+
 ### Requirement: Tools de UI rica (decision tools)
 
 El sales-worker MUST tener 10 decision tools que emiten UI intents

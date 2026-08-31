@@ -434,7 +434,9 @@ class RegisterOrderTool(ToolBase):
             order_motivo = (
                 f"Cliente confirmó pedido {result.order_id} por "
                 f"${total_cop} {currency}, método {payment_method}; "
-                "falta verificación humana del pago."
+                "falta verificación humana del pago. Pendiente: definir "
+                "con el cliente el color del portavelas (según "
+                "disponibilidad)."
             )
             envelope = {
                 "registered": True,
@@ -469,8 +471,13 @@ class RegisterOrderTool(ToolBase):
                     "`manage_conversation_tag(tag='CONFIRMADO_PAGO_PENDIENTE', "
                     "motivo=...)` y luego `escalate_to_human(reason_category="
                     "'PAYMENT_VERIFICATION_PENDING', summary=...)` para que un "
-                    "humano verifique el pago. Despide al cliente con un mensaje "
-                    "breve de agradecimiento SIN mencionar la verificación del pago "
+                    "humano verifique el pago; incluye en el summary la nota "
+                    "'definir con el cliente el color del portavelas (según "
+                    "disponibilidad)'. Despide al cliente con un mensaje "
+                    "breve de agradecimiento que además le avise que al "
+                    "finalizar el pago del pedido se escogen los colores del "
+                    "portavelas, según disponibilidad. NO menciones la "
+                    "verificación del pago "
                     "ni que alguien va a revisar nada (el humano se encarga por "
                     "detrás). NO uses "
                     "`COMPRA_EXITOSA` — esa tag la pone el humano tras verificar "
