@@ -26,6 +26,16 @@ permissions:
   contents: read
   packages: write   # push a GHCR
 
+# Un deploy a la vez: merges en ráfaga se ENCOLAN en vez de correr en paralelo
+# contra la misma caja (los force-recreate entrelazados chocan el name
+# allocation de litellm y dejan el stack a medias — outage 2026-08-31, 6
+# merges en ~1 min). cancel-in-progress: false porque cancelar un deploy a
+# mitad es lo que deja containers renombrados huérfanos; GitHub colapsa los
+# pendientes al último SHA, así que el HEAD igual gana.
+concurrency:
+  group: backend-deploy-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -131,12 +141,18 @@ jobs:
             GHCR_TOKEN="$(grep '^GHCR_PULL_TOKEN=' .env | cut -d= -f2-)"
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_OWNER" --password-stdin
             docker compose pull
-            # litellm: force-recreate SIEMPRE — su config es un bind-mount y
-            # `up -d` no recrea el container cuando solo cambió el CONTENIDO
+            # litellm: recrear SIEMPRE desde cero — su config es un bind-mount
+            # y `up -d` no recrea el container cuando solo cambió el CONTENIDO
             # del archivo (imagen/definición idénticas) → seguiría sirviendo
-            # el config viejo en memoria. El resto del stack espera su
-            # healthcheck (depends_on: service_healthy), así que el orden es
-            # seguro. Caso: alias gemini-multimodal (fix multimodal sales).
-            docker compose up -d --force-recreate litellm
+            # el config viejo en memoria. Caso: alias gemini-multimodal.
+            # `rm -sf` + `up -d` en vez de `--force-recreate`: compose remueve
+            # por labels TODOS los containers del servicio, incluidos los
+            # renombrados '<id>_<nombre>' que deja un recreate interrumpido y
+            # que chocan el name allocation del siguiente (outage 2026-08-31,
+            # deploys concurrentes). Sin nombres hardcodeados acá (gate de
+            # forge). El resto del stack espera su healthcheck
+            # (depends_on: service_healthy), así que el orden es seguro.
+            docker compose rm -sf litellm
+            docker compose up -d litellm
             docker compose up -d --remove-orphans
             docker image prune -f
