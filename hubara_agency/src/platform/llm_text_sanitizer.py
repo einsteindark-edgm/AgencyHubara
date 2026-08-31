@@ -95,6 +95,15 @@ _META_PREFIX_RE = re.compile(
     flags=re.IGNORECASE,
 )
 
+# Escapes literales: el modelo a veces emite `\n` como DOS caracteres
+# (backslash + 'n') en vez del newline real (incidente saludo apertura:
+# "...Colombia.\n\¿Qué te gustaría ver?" llegó crudo al cliente). El send
+# separa burbujas por newlines REALES, así que el escape literal además
+# rompe el chunking. Un backslash huérfano pegado a un newline real (resto
+# de un escape mal formado) tampoco es texto legítimo de venta.
+_LITERAL_NEWLINE_RE = re.compile(r"\\n")
+_STRAY_BACKSLASH_RE = re.compile(r"\\+(?=\n)|(?<=\n)\\+")
+
 # Comillas envolventes — el modelo a veces wrappea la respuesta entera
 # en comillas como si estuviera "citando" su propio mensaje.
 # Cubrimos comillas rectas, "smart quotes" y guillemots.
@@ -149,6 +158,13 @@ def sanitize_llm_text(raw: str) -> SanitizeResult:
         text = stripped
         actions.append("trim")
 
+    # 1.5. Escapes literales (`\n` como dos caracteres → newline real).
+    # Antes del meta-prefijo: sus patrones WEAK delimitan por newline real.
+    cleaned, removed = _normalize_literal_escapes(text)
+    if removed:
+        text = cleaned
+        actions.append("literal_escapes_normalized")
+
     # 2. Meta-prefijo.
     cleaned, removed = _strip_meta_prefix(text)
     if removed:
@@ -200,6 +216,16 @@ def sanitize_llm_text(raw: str) -> SanitizeResult:
 # =============================================================================
 # Helpers
 # =============================================================================
+
+
+def _normalize_literal_escapes(text: str) -> tuple[str, bool]:
+    """Convierte `\\n` literal (dos caracteres) en newline real y descarta
+    backslashes huérfanos pegados a un newline real. Idempotente."""
+    if "\\" not in text:
+        return text, False
+    out = _LITERAL_NEWLINE_RE.sub("\n", text)
+    out = _STRAY_BACKSLASH_RE.sub("", out)
+    return out, out != text
 
 
 def _strip_meta_prefix(text: str) -> tuple[str, bool]:

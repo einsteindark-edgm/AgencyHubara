@@ -92,7 +92,8 @@ def disallowed_emojis(text: str) -> list[str]:
 SCRIPT_CONTEXT = (
     "GUION DE VENTAS HUBARA (funnel de 6 fases). "
     "1) Apertura: saludo por hora de Colombia (Buenos días/tardes/noches) + marca "
-    "'Hubara' + propuesta de valor (velas artesanales de cera de palma) + ofrecer "
+    "'Hubara' + propuesta de valor (velas artesanales hechas a base de cera de "
+    "palma) + ofrecer "
     "catálogo (botón 'Ver catálogo'). NUNCA '¡Hola!'/'Hey'/'Buen día'. "
     "2) Descubrimiento: UNA pregunta por turno (estilo SPIN: ¿para ti o regalo?, "
     "¿qué aroma/momento/color?, ¿qué espacio?) antes de recomendar; si el cliente "

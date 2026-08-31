@@ -307,3 +307,52 @@ def test_em_dash_normalization_idempotent():
     once = sanitize_llm_text("texto — y más — y otro").text
     twice = sanitize_llm_text(once).text
     assert once == twice == "texto, y más, y otro"
+
+
+# =============================================================================
+# Escapes literales (\n como DOS caracteres) — incidente saludo apertura
+# =============================================================================
+
+
+def test_literal_backslash_n_becomes_real_newline():
+    """Incidente saludo: el LLM emitió `\\n\\n` como texto literal y el
+    cliente vio los backslashes crudos (además el send no pudo separar
+    las burbujas, que se parten por newlines REALES)."""
+    raw = (
+        "Buenos días. Bienvenido a *Hubara*, velas artesanales de cera de "
+        "palma hechas a mano en Colombia.\\n\\n¿Qué te gustaría ver?"
+    )
+    result = sanitize_llm_text(raw)
+    assert "\\n" not in result.text
+    assert "\n\n¿Qué te gustaría ver?" in result.text
+    assert "literal_escapes_normalized" in result.actions
+
+
+def test_stray_backslash_next_to_newline_dropped():
+    """Variante vista en el reporte: `\\n\\` pegado a la palabra siguiente —
+    tras convertir el `\\n` queda un backslash huérfano que también se va."""
+    raw = "hechas a mano en Colombia.\\n\\qué te gustaría ver"
+    result = sanitize_llm_text(raw)
+    assert "\\" not in result.text
+    assert result.text == "hechas a mano en Colombia.\nqué te gustaría ver"
+    assert "literal_escapes_normalized" in result.actions
+
+
+def test_backslash_before_real_newline_dropped():
+    raw = "hechas a mano en Colombia.\\\n¿Qué te gustaría ver?"
+    result = sanitize_llm_text(raw)
+    assert "\\" not in result.text
+    assert result.text == "hechas a mano en Colombia.\n¿Qué te gustaría ver?"
+
+
+def test_real_newlines_untouched():
+    raw = "Primera burbuja.\n\nSegunda burbuja."
+    result = sanitize_llm_text(raw)
+    assert result.text == raw
+    assert "literal_escapes_normalized" not in result.actions
+
+
+def test_literal_escape_normalization_idempotent():
+    once = sanitize_llm_text("Colombia.\\n\\n¿Qué te gustaría ver?").text
+    twice = sanitize_llm_text(once).text
+    assert once == twice
