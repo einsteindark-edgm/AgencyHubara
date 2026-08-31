@@ -61,6 +61,19 @@ _META_CHANNELS: frozenset[str] = frozenset({"ad", "post", "web_referral"})
 DIRECT_CAMPAIGN_ID = "direct"
 DIRECT_CAMPAIGN_NAME = "Clientes directos · sin campaña"
 
+# HU web-cart (premortem FM-05): el canal `web_cart` (botón "terminar compra
+# en WhatsApp" de la tienda web) tampoco tiene source_id de Meta. Bucket
+# sintético propio — NO se mezcla con `direct`: la pregunta "¿cuántas ventas
+# trajo el botón?" es la métrica que justifica la feature.
+WEB_CART_CAMPAIGN_ID = "web_cart"
+WEB_CART_CAMPAIGN_NAME = "Carrito web · botón de la tienda"
+
+# Buckets sintéticos (sin id real de Meta): se excluyen del enrichment de
+# nombres/ids contra la Graph API.
+SYNTHETIC_CAMPAIGN_IDS: frozenset[str] = frozenset(
+    {DIRECT_CAMPAIGN_ID, WEB_CART_CAMPAIGN_ID}
+)
+
 # Campañas internas de marketing (plugin `marketing`): el send estampa
 # `campaign_touches` en el metadata de la sesión (canal de datos del vault —
 # sin imports cross-plugin). Un episodio que arranca dentro de la ventana
@@ -419,6 +432,8 @@ def _episode_to_campaign_id(
             return campaign_touch["campaign_id"]
         if snap_channel == "direct":
             return DIRECT_CAMPAIGN_ID
+        if snap_channel == "web_cart":
+            return WEB_CART_CAMPAIGN_ID
 
     if campaign_touch is not None:
         return campaign_touch["campaign_id"]
@@ -427,6 +442,8 @@ def _episode_to_campaign_id(
         return session_origin["source_id"]
     if _is_direct_origin(session_origin):
         return DIRECT_CAMPAIGN_ID
+    if (session_origin or {}).get("channel") == "web_cart":
+        return WEB_CART_CAMPAIGN_ID
     return None
 
 
@@ -792,11 +809,14 @@ def list_ads_campaigns(
 
     summaries: list[AdsCampaignSummary] = []
     for camp_id, bucket in buckets.items():
-        # Para el bucket direct, override del display name (ignorando
+        # Para los buckets sintéticos, override del display name (ignorando
         # headlines que pudieran haber colado).
         if camp_id == DIRECT_CAMPAIGN_ID:
             name = DIRECT_CAMPAIGN_NAME
             source_type = "direct"
+        elif camp_id == WEB_CART_CAMPAIGN_ID:
+            name = WEB_CART_CAMPAIGN_NAME
+            source_type = "web_cart"
         else:
             name = bucket["name"]
             source_type = bucket["source_type"]

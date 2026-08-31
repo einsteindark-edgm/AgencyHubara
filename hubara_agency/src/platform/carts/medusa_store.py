@@ -18,7 +18,11 @@ from __future__ import annotations
 import httpx
 from loguru import logger
 
-from src.platform.carts.port import WebCartItem, WebCartSnapshot
+from src.platform.carts.port import (
+    WebCartAuthError,
+    WebCartItem,
+    WebCartSnapshot,
+)
 
 
 def _str_or_none(value: object) -> str | None:
@@ -115,6 +119,15 @@ class MedusaStoreCartReader:
                 headers={"x-publishable-api-key": self._key},
             )
 
+        if response.status_code in (401, 403):
+            # Premortem FM-07: key inválida/rotada NO es "cart inexistente".
+            logger.warning(
+                "🛒 [web_cart] Store API {} para {} — publishable key "
+                "inválida o revocada (rotar MEDUSA_PUBLISHABLE_API_KEY)",
+                response.status_code,
+                cart_id,
+            )
+            raise WebCartAuthError(f"store API {response.status_code}")
         if response.status_code // 100 != 2:
             logger.info(
                 "🛒 [web_cart] Store API {} para {} → sin cart",

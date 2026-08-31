@@ -10,7 +10,7 @@ patron que `src/platform/config.py` para vars Temporal/WhatsApp.
 """
 from __future__ import annotations
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,6 +21,17 @@ class MedusaSettings(BaseSettings):
     )
 
     base_url: str = Field(..., description="Ej: https://medusa.hubara.example.com")
+
+    # Premortem web-cart FM-09: docker-compose inyecta `MEDUSA_BASE_URL=""`
+    # cuando la var no está exportada en el host. Vacío == ausente: debe
+    # fallar en composición (degrade limpio de los consumers), no entregar
+    # clientes con base_url="" que revientan por-request.
+    @field_validator("base_url")
+    @classmethod
+    def _base_url_non_empty(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("MEDUSA_BASE_URL vacío — tratado como ausente")
+        return value
     admin_token: str | None = Field(default=None, description="Secret API Key (Opción A)")
     # --- Store API (HU web-cart hot lead) -----------------------------------
     # Publishable API Key (Medusa Admin → Settings → Publishable API Keys).

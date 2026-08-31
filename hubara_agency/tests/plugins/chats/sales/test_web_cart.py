@@ -59,6 +59,30 @@ class TestApplyWebCartCapture:
         assert meta["web_cart"]["status"] == "hydrated"
         assert meta["web_cart"]["detected_at_ms"] == _NOW
 
+    def test_same_cart_in_new_episode_recaptures(self):
+        """Premortem FM-04: los storefronts Medusa persisten el cart_id en
+        localStorage por semanas. El cliente cuyo episodio murió por TIMEOUT
+        vuelve y re-tapea el botón: MISMO cart_id + episodio NUEVO = captura
+        nueva (re-hidrata, re-scopea la nota) — no el no-op del doble tap."""
+        from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
+            close_episode,
+        )
+
+        meta = _captured_meta()
+        mark_web_cart_hydrated(meta, items_summary=["1x Velon"], unmatched_titles=[])
+        close_episode(
+            meta, closing_tag="TIMEOUT", closing_motivo=None, now_ms=_NOW + 1000
+        )
+        ensure_active_episode(meta, now_ms=_NOW + 2000)
+
+        changed = apply_web_cart_capture(meta, cart_id=_CART_A, now_ms=_NOW + 3000)
+        assert changed is True
+        assert meta["web_cart"]["status"] == "pending"
+        assert (
+            meta["web_cart"]["episode_id"]
+            == meta["episodes"][-1]["episode_id"]
+        )
+
     def test_new_cart_id_replaces_previous_latest_wins(self):
         """El cliente armó OTRO carrito en la web mid-conversación: gana el último."""
         meta: dict = {}
@@ -355,7 +379,7 @@ class TestMapCartToDraft:
         assert "Signo: Leo" in result.slots["notas"]
 
     @pytest.mark.asyncio
-    async def test_shipping_data_seeds_contact_slots(self):
+    async def test_shipping_data_seeds_contact_slots_when_phone_matches(self):
         cart = _cart(
             [_item(product_title="Vela Ángel", quantity=1)],
             city="Bogotá",
@@ -364,7 +388,9 @@ class TestMapCartToDraft:
             customer_name="Ana Pardo",
         )
         result = await map_cart_to_draft(
-            cart, catalog=_fake_catalog([_vela_angel()])
+            cart,
+            catalog=_fake_catalog([_vela_angel()]),
+            session_phone="573001234567",
         )
         assert result.slots["ciudad"] == "Bogotá"
         assert result.slots["direccion"] == "Cra 7 # 12-34, Apto 501"
@@ -372,16 +398,108 @@ class TestMapCartToDraft:
         assert "Cliente: Ana Pardo" in result.slots["notas"]
 
     @pytest.mark.asyncio
+    async def test_shipping_pii_not_seeded_when_cart_phone_mismatches_session(self):
+        """Premortem FM-03: el cart_id es bearer y viaja en texto plano — un
+        tercero que reenvía/abre el link de la víctima NO debe recibir la
+        dirección/nombre/teléfono del dueño del cart en su conversación.
+        Guard: PII de shipping SOLO si cart.phone == número de la sesión."""
+        cart = _cart(
+            [_item(product_title="Vela Ángel", quantity=1)],
+            city="Bogotá",
+            address="Cra 7 # 12-34",
+            phone="573001234567",
+            customer_name="Ana Pardo",
+        )
+        result = await map_cart_to_draft(
+            cart,
+            catalog=_fake_catalog([_vela_angel()]),
+            session_phone="579998887766",
+        )
+        assert "ciudad" not in result.slots
+        assert "direccion" not in result.slots
+        assert "telefono" not in result.slots
+        assert "Cliente" not in result.slots.get("notas", "")
+        # Los productos SÍ se siembran — la venta sigue.
+        assert result.slots["producto"] == "Vela Ángel"
+
+    @pytest.mark.asyncio
+    async def test_shipping_pii_not_seeded_when_cart_has_no_phone(self):
+        """Sin teléfono en el cart no hay forma de verificar pertenencia —
+        conservador: cero PII al draft/prompt."""
+        cart = _cart(
+            [_item(product_title="Vela Ángel", quantity=1)],
+            city="Bogotá",
+            address="Cra 7 # 12-34",
+            customer_name="Ana Pardo",
+        )
+        result = await map_cart_to_draft(
+            cart,
+            catalog=_fake_catalog([_vela_angel()]),
+            session_phone="573001234567",
+        )
+        assert "ciudad" not in result.slots
+        assert "direccion" not in result.slots
+
+    @pytest.mark.asyncio
+    async def test_phone_match_tolerates_formatting_and_normalizes_slot(self):
+        """Premortem FM-10: el checkout web acepta '+57 300 123-4567'; el
+        matching foldea a dígitos y el slot queda normalizado."""
+        cart = _cart(
+            [_item(product_title="Vela Ángel", quantity=1)],
+            city="Bogotá",
+            phone="+57 300 123-4567",
+        )
+        result = await map_cart_to_draft(
+            cart,
+            catalog=_fake_catalog([_vela_angel()]),
+            session_phone="573001234567",
+        )
+        assert result.slots["ciudad"] == "Bogotá"
+        assert result.slots["telefono"] == "573001234567"
+
+    @pytest.mark.asyncio
+    async def test_catalog_unavailable_propagates_instead_of_unmatched(self):
+        """Premortem FM-02: catálogo CAÍDO (snapshot ausente post-deploy) NO
+        es "estos productos no existen" — la excepción propaga para que la
+        hidratación entera degrade, en vez de hacerle decir al bot que no
+        maneja el carrito completo del lead más caliente."""
+        from src.sdk.connectorkit import CatalogUnavailableError
+
+        class DownCatalog:
+            async def get_by_handle(self, handle):
+                raise CatalogUnavailableError("snapshot missing")
+
+            async def search(self, q, *, limit=10, category=None):
+                raise CatalogUnavailableError("snapshot missing")
+
+            async def list_categories(self):
+                return []
+
+        cart = _cart(
+            [
+                _item(
+                    product_title="Vela Ángel",
+                    quantity=1,
+                    product_handle="vela-angel",
+                )
+            ]
+        )
+        with pytest.raises(CatalogUnavailableError):
+            await map_cart_to_draft(cart, catalog=DownCatalog())
+
+    @pytest.mark.asyncio
     async def test_existing_slots_are_not_clobbered(self):
         """Lo que el cliente ya dijo en la conversación gana sobre el cart."""
         cart = _cart(
             [_item(product_title="Vela Ángel", quantity=1)],
             city="Bogotá",
+            phone="573001234567",
         )
         result = await map_cart_to_draft(
             cart,
             catalog=_fake_catalog([_vela_angel()]),
             existing_slots={"producto": "Velón Zodiacal"},
+            session_phone="573001234567",
         )
         assert "producto" not in result.slots
         assert result.slots["ciudad"] == "Bogotá"

@@ -23,11 +23,17 @@ deployment.**
   lee un carrito de la **Store API** de Medusa v2 (`GET /store/carts/{id}`
   con `x-publishable-api-key` — env `MEDUSA_PUBLISHABLE_API_KEY`; sin ella
   la factory `get_web_cart_reader()` cae a `NullWebCartReader` y todo cart
-  ref degrada al flujo conversacional). Semántica: `None` = "no hay cart"
-  (404/no-2xx); errores de transporte PROPAGAN (regla 4) — el caller (el
-  ingest de sales) degrada con timeout corto. DTOs `WebCartSnapshot`/
-  `WebCartItem` y fake oficial `FakeWebCartReader` viajan con el port;
-  contract suite en `tests/platform/carts/test_web_cart_reader.py`.
+  ref degrada al flujo conversacional). Semántica post-premortem: `None`
+  = cart **VERIFICADO** como inexistente (404 real); 401/403 lanza
+  `WebCartAuthError` (key rotada ≠ cart fantasma); el Null reader lanza
+  `WebCartUnavailableError` (no verificó nada); errores de transporte
+  PROPAGAN (regla 4) — el caller (ingest de sales) degrada con timeout
+  corto. DTOs `WebCartSnapshot`/`WebCartItem`, errores y fake oficial
+  `FakeWebCartReader` viajan con el port; contract suite en
+  `tests/platform/carts/test_web_cart_reader.py`. Los errores del contrato
+  de `CatalogPort` (`CatalogUnavailableError`/`ProductNotFoundError`)
+  también se exportan acá — los consumers distinguen "no existe" de
+  "catálogo caído".
 - **Atribución como read model de plataforma** (`src/platform/attribution.py`):
   el ingest de WhatsApp es el ÚNICO writer (origin/last_touch/
   referral_snapshot en el metadata); los readers (ads hoy, **CAPI mañana** —

@@ -16,6 +16,28 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 
+class WebCartError(Exception):
+    """Base de los errores del web cart reader."""
+
+
+class WebCartUnavailableError(WebCartError):
+    """La Store API no está disponible/configurada — NO se verificó nada.
+
+    Distinto de `None` (cart VERIFICADO como inexistente, 404 real): el
+    caller que recibe esta excepción degrada sin sacar conclusiones sobre
+    la existencia del cart (premortem FM-08 — un `None` no verificado
+    llevaría a des-clasificar el origin de un lead legítimo).
+    """
+
+
+class WebCartAuthError(WebCartError):
+    """401/403 de la Store API — publishable key inválida/revocada/rotada.
+
+    Premortem FM-07: reportarlo como "cart_not_found" haría al operador
+    perseguir carts fantasma cuando el fix es rotar la key.
+    """
+
+
 @dataclass(frozen=True)
 class WebCartItem:
     """Line item del carrito web (subset tolerante del shape Store API v2)."""
@@ -42,19 +64,24 @@ class WebCartSnapshot:
 
 
 class WebCartReaderPort(Protocol):
+    """Contrato: devuelve el snapshot, `None` SOLO si el cart se verificó
+    como inexistente (404 real), y lanza `WebCartUnavailableError` /
+    `WebCartAuthError` / errores de transporte cuando NO pudo verificar."""
+
     async def get_cart(self, cart_id: str) -> WebCartSnapshot | None: ...
 
 
 class NullWebCartReader:
-    """Fallback de composición sin config (y fake trivial): siempre None.
+    """Fallback de composición sin config: lanza `WebCartUnavailableError`.
 
     Mantiene el flujo degradado por construcción: sin publishable key
-    configurada, todo cart ref se trata como no-hidratable y el bot vende
-    con lo que dice el mensaje (la misión es vender).
+    configurada, todo cart ref se trata como no-verificable y el bot vende
+    con lo que dice el mensaje (la misión es vender) — sin afirmar jamás
+    que el cart "no existe".
     """
 
     async def get_cart(self, cart_id: str) -> WebCartSnapshot | None:
-        return None
+        raise WebCartUnavailableError("store API no configurada (sin publishable key)")
 
 
 class FakeWebCartReader:

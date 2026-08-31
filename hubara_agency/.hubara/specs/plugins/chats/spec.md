@@ -78,19 +78,33 @@ vengan en el texto del cliente MUST NOT usarse jamás (el catálogo es la
 - GIVEN un inbound con `ref:cart_<id>` y la Store API devuelve el cart
 - WHEN el ingest hidrata
 - THEN los items que matchean el snapshot siembran `order_draft.slots`
-  (producto/cantidad/eje de variante; ciudad/dirección/teléfono si el
-  checkout web los capturó; multi-item va a `notas`)
+  (producto/cantidad/ejes de variante; multi-item va a `notas`)
+- AND la PII de shipping (ciudad/dirección/teléfono/nombre) se siembra
+  SOLO si el teléfono del cart coincide — normalizado a dígitos — con el
+  número de la sesión: el cart_id es bearer y viaja en texto plano, y un
+  link reenviado por un tercero MUST NOT exponerle la dirección del dueño
+  (premortem FM-03/FM-10; el teléfono queda normalizado en el slot)
 - AND `resolve_funnel_stage` proyecta la etapa avanzada sin código nuevo
+  (nota: el resolver exige aroma+color+cantidad genéricos — un producto de
+  UN solo eje queda en `etapa_variantes`; la nota de lead compensa)
 - AND el plugin_context del MISMO turno lleva la nota `[LEAD CALIENTE
   DESDE LA WEB, ...]` + el breadcrumb del draft ya sembrado
+- AND la atribución por episodio ve el canal: `referral_snapshot.channel =
+  "web_cart"` y ads/aggregation lo agrupa en su campaña sintética propia
+  (`web_cart`), nunca mezclado con `direct` (premortem FM-05)
 - AND se emite el evento analytics `web_cart_captured` (status=hydrated),
-  una sola vez por cart_id (re-envío del mismo link = no-op; un cart_id
-  nuevo gana y re-hidrata — los slots ya sembrados por el cart anterior se
-  CONSERVAN en el draft, no se pisan: la nota nueva lleva los items nuevos
-  y el LLM reconcilia con el cliente)
+  una sola vez por cart_id POR EPISODIO: el doble tap dentro del episodio
+  es no-op, pero el MISMO cart_id en un episodio nuevo (el cliente volvió
+  — los storefronts persisten el cart en localStorage) re-captura y
+  re-hidrata (premortem FM-04); un cart_id nuevo gana — los slots ya
+  sembrados por el cart anterior se CONSERVAN (la nota nueva lleva los
+  items nuevos y el LLM reconcilia)
 - AND la nota es episodio-scoped: se apaga al cerrar el episodio en que se
-  capturó el carrito (RECHAZO/TIMEOUT/re-engagement) — jamás resucita como
-  "lead caliente" en un episodio posterior
+  capturó el carrito — jamás resucita como "lead caliente" después
+- AND toda escritura de la sección web-cart va por el RMW atómico del
+  metadata store (flock): la hidratación mete un await de hasta 3s en la
+  ventana read→write y MUST NOT evaporar writes concurrentes de otra
+  ráfaga (premortem FM-01)
 
 #### Scenario: Hidratación falla — el bot vende igual
 
@@ -100,6 +114,23 @@ vengan en el texto del cliente MUST NOT usarse jamás (el catálogo es la
 - THEN el turno se señala normal y la nota de lead caliente instruye
   validar los productos del mensaje contra el catálogo con las tools
 - AND el motivo interno de degradación NUNCA entra al prompt
+- AND los reasons distinguen la verdad operacional: 401/403 de la Store
+  API = `WebCartAuthError` (key rotada — NO "cart_not_found"); el port
+  devuelve `None` SOLO cuando el cart se VERIFICÓ inexistente (404 real)
+- AND si el cart se verificó inexistente (token tipeado/inventado), el
+  `origin.channel = "web_cart"` fijado por ESTE mensaje se re-clasifica al
+  canal que hubiera tenido sin el token — un token falso no envenena la
+  atribución sticky (premortem FM-08)
+
+#### Scenario: Catálogo caído durante la hidratación
+
+- GIVEN un cart real y el snapshot del catálogo ausente/corrupto
+  (`CatalogUnavailableError` — p. ej. deploy sin re-seed)
+- WHEN el matching no puede VERIFICAR los productos
+- THEN la hidratación entera degrada (`reason=CatalogUnavailableError`)
+- AND el bot MUST NOT decir "esos productos no los manejo" — "no pude
+  verificar" jamás se disfraza de "no existen" (premortem FM-02); sin
+  unmatched, sin evento de mismatch
 
 #### Scenario: Producto del cart no está en el catálogo (ataque o desync)
 

@@ -41,7 +41,7 @@ from typing import Any
 from fastapi import APIRouter, Path, Query
 
 from src.plugins.ads.aggregation import (
-    DIRECT_CAMPAIGN_ID,
+    SYNTHETIC_CAMPAIGN_IDS,
     bogota_day_start_ms,
     list_ads_campaigns,
     list_attributed_conversations,
@@ -347,7 +347,7 @@ def get_ads_campaigns(
     # exactos — incluye el enrichment de nombres reales (fix 2026-07-01).
     # Best-effort: sin token o Graph caído, names={} y cada bucket pasa
     # intacto (una fila por ad con headline, como antes).
-    ad_ids = [c.id for c in campaigns if c.id != DIRECT_CAMPAIGN_ID]
+    ad_ids = [c.id for c in campaigns if c.id not in SYNTHETIC_CAMPAIGN_IDS]
     if ad_ids:
         campaigns = group_buckets_by_campaign(
             campaigns, _cached_meta_names(ad_ids)

@@ -32,7 +32,10 @@ import logging
 
 import httpx
 
-from src.plugins.ads.aggregation import DIRECT_CAMPAIGN_ID, AdsCampaignSummary
+from src.plugins.ads.aggregation import (
+    SYNTHETIC_CAMPAIGN_IDS,
+    AdsCampaignSummary,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +127,7 @@ def enrich_campaign_names(
     for camp in campaigns:
         info = names.get(camp.id)
         display = _display_name(info) if info else None
-        if camp.id == DIRECT_CAMPAIGN_ID or not display:
+        if camp.id in SYNTHETIC_CAMPAIGN_IDS or not display:
             out.append(camp)
             continue
         out.append(

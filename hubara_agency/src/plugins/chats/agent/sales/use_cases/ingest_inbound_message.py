@@ -249,7 +249,9 @@ class IngestInboundMessage:
                 metadata,
                 now_ms=now_ms,
                 inbound_message_id=parsed.message_id,
-                referral_snapshot=_make_episode_snapshot(parsed.referral),
+                referral_snapshot=_make_episode_snapshot(
+                    parsed.referral, has_cart_ref=bool(cart_ref)
+                ),
                 msgs_count_at_start=msgs_count_at_start,
             )
 
@@ -306,21 +308,75 @@ class IngestInboundMessage:
             )
 
         # --- 2e. Web cart hot lead: hidratación best-effort (HU web-cart) ---
-        # Solo la PRIMERA vez que vemos este cart_id (doble tap del link es
-        # no-op; un cart_id NUEVO gana). Inline con timeout corto (L-2): si
-        # CUALQUIER cosa falla, degrada en silencio y el bot vende con lo que
-        # dice el mensaje. Guard route humano: con un humano al mando no
-        # sembramos drafts ni notas (mismo principio que el episode lifecycle).
-        if (
-            cart_ref
-            and metadata.get("active_route") != ROUTE_HUMANO
-            and apply_web_cart_capture(metadata, cart_id=cart_ref, now_ms=now_ms)
-        ):
-            await self._hydrate_web_cart(metadata, cart_ref)
-            self._safe_write_metadata(session_id, metadata)
-            self._emit_web_cart_events(
-                session_id=session_id, metadata=metadata, cart_id=cart_ref
+        # Solo la PRIMERA vez que vemos este cart_id EN este episodio (doble
+        # tap del link = no-op; cart_id nuevo O re-tap en episodio nuevo =
+        # captura nueva, FM-04). Inline con timeout corto (L-2): si CUALQUIER
+        # cosa falla, degrada en silencio y el bot vende con lo que dice el
+        # mensaje. Guard route humano: con un humano al mando no sembramos
+        # drafts ni notas (mismo principio que el episode lifecycle).
+        #
+        # Premortem FM-01: la hidratación mete un await de hasta ~3s adentro
+        # de la ventana read→write del ingest — TODO write de esta sección va
+        # por `metadata_store.update()` (RMW atómico bajo flock, lectura
+        # FRESCA) para no evaporar writes concurrentes de otra ráfaga.
+        if cart_ref and metadata.get("active_route") != ROUTE_HUMANO:
+            captured = {"new": False}
+
+            def _capture_mutator(fresh: dict[str, Any]) -> dict[str, Any] | None:
+                if fresh.get("active_route") == ROUTE_HUMANO:
+                    return None
+                captured["new"] = apply_web_cart_capture(
+                    fresh, cart_id=cart_ref, now_ms=now_ms
+                )
+                return fresh if captured["new"] else None
+
+            fresh_after_capture = self._metadata_store.update(
+                session_id, _capture_mutator
             )
+            if fresh_after_capture is not None:
+                metadata = fresh_after_capture
+
+            if captured["new"]:
+                episodes = metadata.get("episodes") or []
+                existing_slots = (
+                    ((episodes[-1].get("order_draft") or {}).get("slots") or {})
+                    if episodes
+                    else {}
+                )
+                status, reason, hydration = await self._resolve_web_cart_outcome(
+                    cart_ref,
+                    existing_slots=existing_slots,
+                    session_phone=parsed.from_number,
+                )
+
+                def _apply_mutator(fresh: dict[str, Any]) -> dict[str, Any] | None:
+                    state = fresh.get("web_cart") or {}
+                    if state.get("cart_id") != cart_ref:
+                        return None  # otro cart ganó mid-hidratación: abortar
+                    if status == "hydrated" and hydration is not None:
+                        if hydration.slots:
+                            update_order_draft(
+                                fresh, slots=hydration.slots, now_ms=_now_ms()
+                            )
+                        mark_web_cart_hydrated(
+                            fresh,
+                            items_summary=hydration.items_summary,
+                            unmatched_titles=hydration.unmatched_titles,
+                        )
+                    else:
+                        mark_web_cart_degraded(fresh, reason=reason or "unknown")
+                        if reason == "cart_not_found":
+                            # FM-08: cart VERIFICADO inexistente (404 real) —
+                            # el origin no queda envenenado por un token falso.
+                            _declassify_web_cart_origin(fresh, parsed)
+                    return fresh
+
+                updated = self._metadata_store.update(session_id, _apply_mutator)
+                if updated is not None:
+                    metadata = updated
+                self._emit_web_cart_events(
+                    session_id=session_id, metadata=metadata, cart_id=cart_ref
+                )
 
         # --- 2d. HU-WA24H-001 Sprint 2: watchdog wiring ---
         # Después de persistir el timestamp, emitir los eventos que el
@@ -521,57 +577,58 @@ class IngestInboundMessage:
     # Helpers
     # =========================================================================
 
-    async def _hydrate_web_cart(
-        self, metadata: dict[str, Any], cart_id: str
-    ) -> None:
-        """Lee el cart de Medusa y siembra el order_draft. Best-effort TOTAL:
-        cualquier fallo (sin wiring, timeout, 404, mapping roto) marca el
-        estado `degraded` y el flujo sigue — la misión es vender."""
+    async def _resolve_web_cart_outcome(
+        self,
+        cart_id: str,
+        *,
+        existing_slots: dict[str, Any],
+        session_phone: str | None,
+    ) -> tuple[str, str | None, Any]:
+        """Lee el cart de Medusa y computa el mapping SIN mutar metadata.
+
+        Devuelve `(status, reason, hydration)`: `("hydrated", None, h)` o
+        `("degraded", <reason>, None)`. Best-effort TOTAL: cualquier fallo
+        (sin wiring, timeout, auth, mapping roto) degrada y el flujo sigue —
+        la misión es vender. La aplicación al metadata la hace el caller bajo
+        el RMW atómico (FM-01)."""
         import asyncio
 
         if self._web_cart_reader is None or self._catalog is None:
-            mark_web_cart_degraded(metadata, reason="reader_unavailable")
-            return
+            return ("degraded", "reader_unavailable", None)
         try:
             snapshot = await asyncio.wait_for(
                 self._web_cart_reader.get_cart(cart_id),
                 timeout=_WEB_CART_HYDRATION_TIMEOUT_S,
             )
         except Exception as exc:  # noqa: BLE001 — degrade, jamás tumbar el ingest
-            mark_web_cart_degraded(metadata, reason=type(exc).__name__)
             logger.warning(
                 "web_cart_hydration_failed",
                 cart_id=cart_id,
                 reason=type(exc).__name__,
             )
-            return
+            return ("degraded", type(exc).__name__, None)
         if snapshot is None:
-            mark_web_cart_degraded(metadata, reason="cart_not_found")
-            return
+            # Contrato del port: None == cart VERIFICADO como inexistente.
+            return ("degraded", "cart_not_found", None)
 
-        episodes = metadata.get("episodes") or []
-        existing_slots = (
-            ((episodes[-1].get("order_draft") or {}).get("slots") or {})
-            if episodes
-            else {}
-        )
         try:
             hydration = await map_cart_to_draft(
-                snapshot, catalog=self._catalog, existing_slots=existing_slots
+                snapshot,
+                catalog=self._catalog,
+                existing_slots=existing_slots,
+                session_phone=session_phone,
             )
         except Exception as exc:  # noqa: BLE001
-            mark_web_cart_degraded(metadata, reason=type(exc).__name__)
-            return
-
-        if hydration.slots:
-            update_order_draft(
-                metadata, slots=hydration.slots, now_ms=_now_ms()
+            # FM-07: un bug de mapping en prod debe ser diagnosticable — log
+            # con contexto, no solo el class name en el evento.
+            logger.warning(
+                "web_cart_mapping_failed",
+                cart_id=cart_id,
+                reason=type(exc).__name__,
+                error=str(exc),
             )
-        mark_web_cart_hydrated(
-            metadata,
-            items_summary=hydration.items_summary,
-            unmatched_titles=hydration.unmatched_titles,
-        )
+            return ("degraded", type(exc).__name__, None)
+        return ("hydrated", None, hydration)
 
     def _emit_web_cart_events(
         self, *, session_id: str, metadata: dict[str, Any], cart_id: str
@@ -1448,7 +1505,33 @@ def _build_photo_citation_note(
     )
 
 
-def _make_episode_snapshot(referral: dict[str, Any] | None) -> dict[str, Any]:
+def _declassify_web_cart_origin(
+    metadata: dict[str, Any], parsed: WhatsAppMessage
+) -> None:
+    """FM-08: token con forma válida pero cart VERIFICADO inexistente — el
+    origin sticky no queda envenenado como `web_cart` por un token tipeado
+    o inventado. Solo re-clasifica si fue ESTE mensaje el que lo fijó (el
+    origin de sesiones previas legítimas no se toca)."""
+    fallback = _classify_origin_channel(parsed.referral, has_cart_ref=False)
+    origin = metadata.get("origin")
+    if (
+        isinstance(origin, dict)
+        and origin.get("channel") == "web_cart"
+        and origin.get("first_inbound_message_id") == parsed.message_id
+    ):
+        origin["channel"] = fallback
+    last_touch = metadata.get("last_touch")
+    if (
+        isinstance(last_touch, dict)
+        and last_touch.get("channel") == "web_cart"
+        and last_touch.get("inbound_message_id") == parsed.message_id
+    ):
+        last_touch["channel"] = fallback
+
+
+def _make_episode_snapshot(
+    referral: dict[str, Any] | None, *, has_cart_ref: bool = False
+) -> dict[str, Any]:
     """Construye el `referral_snapshot` que se persiste en cada episodio.
 
     El snapshot enriquece el referral raw del payload con el `channel`
@@ -1458,10 +1541,12 @@ def _make_episode_snapshot(referral: dict[str, Any] | None) -> dict[str, Any]:
 
     Para clientes sin referral (channel=direct), el snapshot igual se
     persiste con `channel="direct"` para que el bucket del episodio sea
-    explícito en disco.
+    explícito en disco. `has_cart_ref` (premortem FM-05): un episodio
+    abierto por el botón de la tienda web queda `channel="web_cart"` — sin
+    esto, ads/aggregation lo contaría como orgánico.
     """
     base: dict[str, Any] = dict(referral) if referral else {}
-    base["channel"] = _classify_origin_channel(referral)
+    base["channel"] = _classify_origin_channel(referral, has_cart_ref=has_cart_ref)
     return base
 
 

@@ -157,9 +157,31 @@ async def test_contract_cart_without_items_is_valid_empty_snapshot(make_reader):
 
 
 @pytest.mark.asyncio
-async def test_null_reader_always_returns_none():
-    """NullWebCartReader = fallback de composición sin config: siempre None."""
-    assert await NullWebCartReader().get_cart("cart_cualquiera") is None
+async def test_null_reader_raises_unavailable():
+    """Premortem FM-08: `None` del port significa "cart VERIFICADO como
+    inexistente" (404 real). El Null reader (sin config) no verificó nada —
+    lanza `WebCartUnavailableError` para que el caller degrade sin poder
+    confundir "no configurado" con "no existe"."""
+    from src.platform.carts.port import WebCartUnavailableError
+
+    with pytest.raises(WebCartUnavailableError):
+        await NullWebCartReader().get_cart("cart_cualquiera")
+
+
+@pytest.mark.asyncio
+async def test_medusa_401_raises_auth_error():
+    """Premortem FM-07: publishable key revocada/rotada (401/403) NO es
+    "cart_not_found" — lanza `WebCartAuthError` para que el reason del
+    evento/log diga la verdad y el operador rote la key, no persiga carts
+    fantasma."""
+    from src.platform.carts.port import WebCartAuthError
+
+    with respx.mock(base_url=BASE_URL) as r:
+        r.get("/store/carts/cart_auth").mock(
+            return_value=httpx.Response(401, json={"type": "unauthorized"})
+        )
+        with pytest.raises(WebCartAuthError):
+            await _reader().get_cart("cart_auth")
 
 
 # ---------------------------------------------------------------------------

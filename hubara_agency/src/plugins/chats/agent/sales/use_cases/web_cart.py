@@ -43,17 +43,24 @@ async def _resolve_product(item, catalog):
     """Item del cart → producto del snapshot, o None (desync/ataque).
 
     Primero por handle (exacto, viene de Medusa); si no, por título con
-    igualdad foldeada sobre los resultados del search. Cualquier fallo del
-    catálogo cuenta como no-match: la hidratación es best-effort.
+    igualdad foldeada sobre los resultados del search. Un miss cuenta como
+    no-match (best-effort) — pero un catálogo CAÍDO (`CatalogUnavailableError`,
+    snapshot ausente post-deploy) PROPAGA: "no pude verificar" jamás se
+    disfraza de "estos productos no existen" (premortem FM-02).
     """
+    from src.sdk.connectorkit import CatalogUnavailableError
 
     if item.product_handle:
         try:
             return await catalog.get_by_handle(item.product_handle)
-        except Exception:  # noqa: BLE001 — miss o snapshot roto: probar título
+        except CatalogUnavailableError:
+            raise
+        except Exception:  # noqa: BLE001 — miss: probar por título
             pass
     try:
         result = await catalog.search(item.product_title, limit=5)
+    except CatalogUnavailableError:
+        raise
     except Exception:  # noqa: BLE001
         return None
     wanted = fold_for_match(item.product_title)
@@ -80,11 +87,17 @@ def _summary_line(item, product) -> str:
     return f"{item.quantity}x {product.title}{suffix}"
 
 
+def _phone_digits(value: str | None) -> str:
+    """Normaliza un teléfono a solo dígitos ('+57 300 123-4567' → '573001234567')."""
+    return re.sub(r"\D", "", value or "")
+
+
 async def map_cart_to_draft(
     cart: WebCartSnapshot,
     *,
     catalog: CatalogPort,
     existing_slots: dict | None = None,
+    session_phone: str | None = None,
 ) -> WebCartHydration:
     """Mapea el carrito web a slots del order_draft (matching vs snapshot).
 
@@ -128,14 +141,24 @@ async def map_cart_to_draft(
     elif len(matched) > 1:
         notas.append("Carrito web: " + " | ".join(summary))
 
-    if cart.city:
-        slots["ciudad"] = cart.city
-    if cart.address:
-        slots["direccion"] = cart.address
-    if cart.phone:
-        slots["telefono"] = cart.phone
-    if cart.customer_name:
-        notas.append(f"Cliente: {cart.customer_name}")
+    # FM-03 (PII cross-persona): el cart_id es bearer y viaja en texto plano
+    # — un link reenviado abre el cart de OTRA persona. La PII de shipping
+    # (dirección/teléfono/nombre) se siembra SOLO si el teléfono del cart
+    # coincide (normalizado a dígitos, FM-10) con el número de la sesión.
+    # Sin teléfono en el cart no hay forma de verificar → cero PII. Los
+    # productos se siembran siempre: la venta sigue.
+    cart_digits = _phone_digits(cart.phone)
+    phone_verified = bool(cart_digits) and cart_digits == _phone_digits(
+        session_phone
+    )
+    if phone_verified:
+        if cart.city:
+            slots["ciudad"] = cart.city
+        if cart.address:
+            slots["direccion"] = cart.address
+        slots["telefono"] = cart_digits
+        if cart.customer_name:
+            notas.append(f"Cliente: {cart.customer_name}")
     if notas:
         slots["notas"] = " | ".join(notas)
 
@@ -177,10 +200,17 @@ def apply_web_cart_capture(
     si el estado cambió — el caller usa eso para disparar hidratación +
     evento analytics una sola vez por carrito.
     """
-    current = metadata.get("web_cart")
-    if isinstance(current, dict) and current.get("cart_id") == cart_id:
-        return False
     episode = get_active_episode(metadata)
+    current = metadata.get("web_cart")
+    if (
+        isinstance(current, dict)
+        and current.get("cart_id") == cart_id
+        # FM-04: mismo cart_id pero episodio NUEVO = el cliente VOLVIÓ (los
+        # storefronts Medusa persisten el cart_id en localStorage semanas).
+        # Solo el re-tap dentro del MISMO episodio es no-op.
+        and current.get("episode_id") == (episode or {}).get("episode_id")
+    ):
+        return False
     metadata["web_cart"] = {
         "cart_id": cart_id,
         "status": "pending",
