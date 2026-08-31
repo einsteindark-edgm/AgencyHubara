@@ -38,8 +38,17 @@ from src.platform.catalog.variant_attrs import (
     parse_variant_tags,
     split_multi_label,
 )
+from src.platform.catalog.variant_colors import (
+    COLORS_METADATA_KEY,
+    colors_for_value,
+    matching_color_alias,
+    parse_variant_colors,
+    primary_colors,
+    values_for_color,
+)
 
 __all__ = [
+    "COLORS_METADATA_KEY",
     "CatalogCategoryDTO",
     "CatalogError",
     "CatalogImageDTO",
@@ -55,13 +64,18 @@ __all__ = [
     "SearchResult",
     "VariantAttrs",
     "collect_categories",
+    "colors_for_value",
     "deslugify",
     "get_catalog_client",
     "get_max_age_minutes",
     "get_snapshot_dir",
     "match_option",
+    "matching_color_alias",
     "normalize_label",
+    "parse_variant_colors",
     "parse_variant_tags",
+    "primary_colors",
     "resolve_category",
     "split_multi_label",
+    "values_for_color",
 ]

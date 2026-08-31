@@ -39,10 +39,15 @@ from loguru import logger
 
 from src.platform.catalog import (
     CatalogPort,
+    colors_for_value,
     match_option,
+    matching_color_alias,
     normalize_label,
+    parse_variant_colors,
     parse_variant_tags,
+    primary_colors,
     split_multi_label,
+    values_for_color,
 )
 from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.state import FilesystemMetadataStore
@@ -195,6 +200,100 @@ class SetOrderSlotTool(ToolBase):
             }
         return ", ".join(canonical), None
 
+    def _validate_color_variants(
+        self, raw_value: str, variant_colors: dict[str, list[str]]
+    ) -> tuple[str | None, dict[str, Any] | None]:
+        """Valida el color contra los colores REALES de las variantes.
+
+        Matching tolerante a género/número/acentos ("ROJAS" → "rojo"); lo
+        que se persiste es el alias canónico del catálogo. Rechazo → paleta
+        real citable (no los tags, que pueden estar stale).
+        """
+        tokens = split_multi_label(raw_value) or [raw_value]
+        canonical: list[str] = []
+        invalid: list[str] = []
+        for token in tokens:
+            alias = matching_color_alias(variant_colors, token)
+            if alias is None:
+                invalid.append(token.strip())
+            elif alias not in canonical:
+                canonical.append(alias)
+        if invalid:
+            return None, {
+                "field": "color",
+                "given": raw_value,
+                "invalid": invalid,
+                "available": primary_colors(variant_colors),
+            }
+        return ", ".join(canonical), None
+
+    def _cross_check_color_sign(
+        self,
+        provided: dict[str, Any],
+        draft_slots: dict[str, Any],
+        variant_colors: dict[str, list[str]],
+    ) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+        """Combinación color+signo inexistente → rechaza el recién llegado.
+
+        Cada signo viene en UN color fijo: "Leo en rojo" no existe (Leo es
+        naranja; el rojo es de Aries). El valor que YA estaba en el draft se
+        respeta; el que llega ahora y contradice se rechaza con las
+        alternativas mismo-color-otro-signo para que el bot ofrezca "no es
+        el signo, pero SÍ es el color". Además: color sin signo → hint
+        `signs_for_color` con el signo dueño, para mostrarlo de una.
+        """
+
+        def _effective(field: str) -> str | None:
+            if field in provided:
+                return provided[field] or None  # "" = borrar el slot
+            return draft_slots.get(field) or None
+
+        def _alternatives(color_token: str) -> list[dict[str, Any]]:
+            return [
+                {"value": v, "colors": colors_for_value(variant_colors, v)}
+                for v in values_for_color(variant_colors, color_token)
+            ]
+
+        color = _effective("color")
+        diseno = _effective("diseno")
+        if color and not diseno:
+            return None, _alternatives(color)
+        if not (color and diseno):
+            return None, []
+
+        diseno_tokens = split_multi_label(diseno) or [diseno]
+        color_tokens = split_multi_label(color) or [color]
+        sign_colors: list[str] = []
+        mapped_signs: list[str] = []
+        for d in diseno_tokens:
+            colors = colors_for_value(variant_colors, d)
+            if colors:
+                mapped_signs.append(d)
+                sign_colors.extend(c for c in colors if c not in sign_colors)
+        if not mapped_signs:
+            return None, []  # signo sin mapeo declarado → degradar abierto
+
+        mapped_keys = {normalize_label(d) for d in mapped_signs}
+        for token in color_tokens:
+            owners = {
+                normalize_label(v)
+                for v in values_for_color(variant_colors, token)
+            }
+            if owners & mapped_keys:
+                return None, []  # al menos un par color×signo existe
+        newcomer = "color" if "color" in provided else "diseno"
+        entry: dict[str, Any] = {
+            "field": newcomer,
+            "given": color if newcomer == "color" else diseno,
+            "reason": "color_sign_mismatch",
+            "sign": diseno,
+            "sign_colors": sign_colors,
+            "same_color_signs": _alternatives(color_tokens[0]),
+        }
+        if newcomer == "diseno":
+            entry["requested_color"] = color
+        return entry, []
+
     async def execute_with_context(
         self,
         ctx: ToolContext,
@@ -252,6 +351,7 @@ class SetOrderSlotTool(ToolBase):
         # ya este en el draft. Los valores invalidos NO se escriben; el envelope
         # le dice al LLM las opciones reales (guion: "el rojo no lo manejo").
         rejected: list[dict[str, Any]] = []
+        signs_for_color: list[dict[str, Any]] = []
         to_check = [
             k for k in ("aroma", "color", "diseno")
             if isinstance(provided.get(k), str) and provided[k].strip()
@@ -263,6 +363,11 @@ class SetOrderSlotTool(ToolBase):
             )
             if product is not None:
                 attrs = parse_variant_tags(product.tags)
+                # Mapeo signo→color declarado por el operador (metadata
+                # "colores"): cada variante viene en UN color fijo. Cuando
+                # existe, la paleta REAL es la de las variantes — los tags
+                # de color del producto pueden estar stale.
+                variant_colors = parse_variant_colors(product.metadata)
                 # Diseños = option values reales del producto (Duo Zodiacal:
                 # los 12 signos). Producto sin options → lista vacía → el
                 # valor se acepta tal cual (degrada abierto, como aroma/color
@@ -278,14 +383,26 @@ class SetOrderSlotTool(ToolBase):
                     "diseno": design_values,
                 }
                 for kind in to_check:
-                    canonical, rejection = self._validate_choice(
-                        kind, provided[kind], valid_by_kind[kind]
-                    )
+                    if kind == "color" and variant_colors:
+                        canonical, rejection = self._validate_color_variants(
+                            provided[kind], variant_colors
+                        )
+                    else:
+                        canonical, rejection = self._validate_choice(
+                            kind, provided[kind], valid_by_kind[kind]
+                        )
                     if rejection is not None:
                         rejected.append(rejection)
                         provided.pop(kind, None)
                     else:
                         provided[kind] = canonical
+                if variant_colors:
+                    mismatch, signs_for_color = self._cross_check_color_sign(
+                        provided, draft_slots_now, variant_colors
+                    )
+                    if mismatch is not None:
+                        provided.pop(mismatch["field"], None)
+                        rejected.append(mismatch)
 
         wrote = bool(provided)
         if wrote:
@@ -313,18 +430,46 @@ class SetOrderSlotTool(ToolBase):
                 "cliente cambia algo, volve a llamar set_order_slot."
             ),
         }
+        if signs_for_color:
+            # Color elegido sin signo aún: el bot puede mostrar el signo
+            # dueño del color de una ("la roja es la de Aries").
+            envelope["signs_for_color"] = signs_for_color
+            owners = ", ".join(
+                f"{s['value']} ({s['colors'][0]})" for s in signs_for_color
+            )
+            envelope["summary"] += (
+                f" Ese color corresponde a: {owners} — ofrécele ese signo "
+                "citándolo explícitamente."
+            )
         if rejected:
             envelope["rejected"] = rejected
-            parts = [
-                f"{r['field']} {r['given']!r} NO existe en el catálogo de este "
-                f"producto (disponibles: {', '.join(r['available'])})"
-                for r in rejected
-            ]
+            parts = []
+            for r in rejected:
+                if r.get("reason") == "color_sign_mismatch":
+                    alts = ", ".join(
+                        f"{a['value']} ({', '.join(a['colors'])})"
+                        for a in r["same_color_signs"]
+                    ) or "ningún signo"
+                    parts.append(
+                        f"la combinación color+signo NO existe: cada signo "
+                        f"viene en UN color fijo — {r['sign']} es "
+                        f"{', '.join(r['sign_colors'])} y el color pedido lo "
+                        f"tiene {alts}"
+                    )
+                else:
+                    parts.append(
+                        f"{r['field']} {r['given']!r} NO existe en el catálogo "
+                        f"de este producto (disponibles: "
+                        f"{', '.join(r['available'])})"
+                    )
             envelope["summary"] = (
                 ("Datos guardados parcialmente. " if wrote else "NO se guardó: ")
                 + "; ".join(parts)
-                + ". Dile al cliente con calidez que esa opción no la manejas, "
-                "ofrécele SOLO las disponibles y vuelve a llamar set_order_slot "
-                "con la elección real."
+                + ". Dile al cliente con calidez qué hay realmente: si pidió "
+                "una opción inexistente ofrécele SOLO las disponibles; si fue "
+                "una combinación color+signo, ofrécele el MISMO color en el "
+                "signo que lo tiene (aclarando explícitamente que es otro "
+                "signo) o el signo pedido en su color real. Luego vuelve a "
+                "llamar set_order_slot con la elección final."
             )
         return json.dumps(envelope, ensure_ascii=False)

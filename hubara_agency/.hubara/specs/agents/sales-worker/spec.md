@@ -120,6 +120,17 @@ Medusa live durante la conversación (latency + cuota).
 - THEN se devuelve la lista cerrada de categorías con su nombre real y `product_count`
 - AND el orden es estable (alfabético por nombre) entre turnos
 
+#### Scenario: color pedido en otro signo (variant_colors, Duo Zodiacal)
+
+- GIVEN un producto multi-variante cuyo mapeo signo→color vive en `product.metadata["colores"]` (cada signo viene en UN color fijo; ej. Leo=naranja, Aries=rojo)
+- WHEN el cliente pide un color que NO es el del signo elegido (ej. "Leo en rojo") y el LLM invoca `set_order_slot(diseno="Leo", color="rojo")`
+- THEN la combinación se rechaza determinísticamente (`rejected` con `reason: color_sign_mismatch`) — el valor recién llegado NO se escribe al draft
+- AND el envelope trae `sign_colors` (el color real del signo pedido) y `same_color_signs` (los signos que SÍ tienen el color pedido)
+- AND el agente ofrece el MISMO color en el otro signo aclarando explícitamente que el signo es distinto — NUNCA niega el color ni registra la combinación inexistente
+- AND si el cliente da color sin signo, el envelope trae `signs_for_color` para ofrecer el signo dueño del color de una
+- AND el matching de color es tolerante a género/número/acentos ("ROJAS" → "rojo") y la paleta citable sale de las variantes reales, no de tags stale
+- AND `get_product_by_handle` expone el mapeo como `variant_colors` en el detalle del producto
+
 #### Scenario: get_product_by_handle
 
 - GIVEN un handle válido `wax-soja-vainilla`
