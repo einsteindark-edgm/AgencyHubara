@@ -31,8 +31,8 @@ import unicodedata
 # muestra las sections en este orden, y queremos que las "frescas" abran
 # la lista (sensaciones livianas primero, dulces después).
 SCENT_GROUPS = (
-    ("Frescos", ("lavanda", "limoncillo", "verde menta", "coco cremoso")),
-    ("Cítricos y frutales", ("frutos rojos", "ylan ylang")),
+    ("Frescos", ("lavanda", "verde menta", "coco cremoso")),
+    ("Cítricos y frutales", ("limoncillo", "frutos rojos", "ylan ylang")),
     ("Cálidos y dulces", ("cafe", "sandalo")),
     (
         "Notas perfumadas",
