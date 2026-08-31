@@ -25,6 +25,7 @@ from src.platform.catalog import (
     ProductNotFoundError,
     SearchResult,
     deslugify,
+    parse_variant_colors,
     parse_variant_tags,
 )
 from src.sdk.mediakit import derive_image_label, fold_for_match
@@ -353,7 +354,12 @@ def _product_summary(p: CatalogProductDTO) -> dict[str, Any]:
 def _product_full(p: CatalogProductDTO) -> dict[str, Any]:
     """Version completa para get_product_by_handle."""
     attrs = parse_variant_tags(p.tags)
-    return {
+    # Mapeo signo→color declarado por el operador (metadata "colores"). Cada
+    # variante viene en UN color fijo: si el cliente pide un color que no es
+    # el del signo elegido, el mapeo permite ofrecer el mismo color en otro
+    # signo (aclarando que el signo es distinto) en vez de negar o inventar.
+    variant_colors = parse_variant_colors(p.metadata)
+    envelope = {
         "id": p.id,
         "handle": p.handle,
         "title": p.title,
@@ -383,6 +389,9 @@ def _product_full(p: CatalogProductDTO) -> dict[str, Any]:
         "tags": p.tags,
         "categories": _category_labels(p),
     }
+    if variant_colors:
+        envelope["variant_colors"] = variant_colors
+    return envelope
 
 
 def _category_labels(p: CatalogProductDTO) -> list[str]:
