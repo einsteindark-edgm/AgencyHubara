@@ -21,3 +21,4 @@ El cliente ya eligió producto (está en los DATOS DEL PEDIDO del contexto). Obj
 - El producto no maneja la opción pedida → dilo directo y ofrece lo disponible UNA vez; a la siguiente señal de avance, asume lo razonable y avanza.
 - El cliente quiere agregar OTRO producto → muéstrale 2-3 opciones o el catálogo (`present_products`); nunca insistas con un producto que ya descartó.
 - Un atributo no aplica al producto (sin colores) → `set_order_slot` con lo que sí aplica y sigue; no preguntes por variantes inexistentes.
+- Preguntan el color del portavelas (el recipiente de la vela) → "El color del portavelas es según disponibilidad. Al finalizar el pago del pedido se escogen los colores." NO es un slot del pedido: no lo pidas con picker ni lo fijes con `set_order_slot`.
