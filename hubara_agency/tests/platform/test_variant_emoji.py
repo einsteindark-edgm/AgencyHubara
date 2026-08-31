@@ -60,6 +60,14 @@ def test_group_scents_preserves_category_order():
     assert titles.index("Cálidos y dulces") < titles.index("Notas perfumadas")
 
 
+def test_group_scents_limoncillo_es_citrico():
+    """Limoncillo es un cítrico (lemongrass) — debe listarse bajo
+    'Cítricos y frutales', no bajo 'Frescos' (reporte del operador 2026-08-31)."""
+    grouped = dict(group_scents(["Limoncillo", "Lavanda", "Frutos rojos"]))
+    assert "Limoncillo" in grouped.get("Cítricos y frutales", [])
+    assert "Limoncillo" not in grouped.get("Frescos", [])
+
+
 def test_group_scents_unknown_go_to_otros():
     grouped = group_scents(["Lavanda", "AromaInventado"])
     sec_dict = dict(grouped)
