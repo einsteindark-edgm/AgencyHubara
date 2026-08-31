@@ -36,6 +36,11 @@ from temporalio import activity
 
 from src.platform.constants import WHATSAPP_SESSION_PREFIX
 from src.platform.temporal.heartbeat import with_heartbeat
+from src.plugins.chats.agent.sales.config.payments import (
+    PAYMENT_LINK_SURCHARGE_NEQUI_BANCOLOMBIA,
+    PAYMENT_LINK_SURCHARGE_OTHER_BANKS,
+    get_nequi_number,
+)
 
 # Delay entre fotos del gallery — sin pausa Meta los entrega como burst, lo
 # que se ve robótico (3 thumbnails todos al mismo segundo). Una pausa
@@ -110,52 +115,99 @@ def _sanitize_intent_client_text(
     return out
 
 
-def _render_payment_instructions_text(params: dict[str, Any]) -> str | None:
-    """Plantilla FIJA de datos bancarios para pago por transferencia.
+def _append_total_and_reference(
+    lines: list[str], params: dict[str, Any], *, total_label: str = "Valor"
+) -> None:
+    """Bloque común valor + referencia humana del pedido.
 
-    Los datos salen EXCLUSIVAMENTE de env (`PAYMENT_TRANSFER_*`) — jamás del
-    LLM ni de los params del intent (caso wa_573125671604: el LLM alucinó
-    número de cuenta y NIT). Si la config mínima (banco + cuenta + titular)
-    no está completa devuelve None y NO se envía nada: el sistema nunca
-    inventa datos de pago, ni parciales.
+    Referencia: "#22 (Plegaria de Luz)" si el intent la trae; fallback al
+    order_id crudo para intents encolados pre-deploy o providers sin
+    display_id (stub).
+    """
+    total_cop = params.get("total_cop")
+    if isinstance(total_cop, int) and total_cop > 0:
+        currency = params.get("currency") or "COP"
+        total_formatted = f"${total_cop:,}".replace(",", ".")
+        lines.append(f"*{total_label}*: {total_formatted} {currency}")
+    reference = params.get("order_reference") or params.get("order_id")
+    if reference:
+        lines.append(f"Pedido: {reference}")
+
+
+def _render_payment_link_notice_text(params: dict[str, Any]) -> str:
+    """Aviso determinista del link de pago + su recargo (requisito
+    2026-08-31). El link real lo genera y envía el humano (escalación
+    PAYMENT_VERIFICATION_PENDING) — acá solo fijamos expectativas: recargo
+    de 1,5% con Nequi/Bancolombia o 2,69% con otros bancos. Sin datos de
+    cuenta (esos no aplican a este método)."""
+    lines = [
+        "Tu pedido quedó registrado 🤍 Te enviaremos el *link de pago* "
+        "por este chat en breve.",
+        "",
+        "Ten presente: el link tiene un recargo adicional de "
+        f"*{PAYMENT_LINK_SURCHARGE_NEQUI_BANCOLOMBIA}* pagando con Nequi o "
+        f"Bancolombia, o *{PAYMENT_LINK_SURCHARGE_OTHER_BANKS}* con otros "
+        "bancos.",
+    ]
+    _append_total_and_reference(
+        lines, params, total_label="Valor sin recargo"
+    )
+    return "\n".join(lines)
+
+
+def _render_payment_instructions_text(params: dict[str, Any]) -> str | None:
+    """Plantilla FIJA con los datos de pago según el método del pedido.
+
+    * ``method="payment_link"`` → aviso del link + recargo (sin datos de
+      cuenta): `_render_payment_link_notice_text`.
+    * ``method="transfer"`` (default, incluye intents pre-deploy sin
+      `method`) → pago anticipado: llave/Nequi (default de
+      `config/payments.py`, overrideable por `PAYMENT_NEQUI_NUMBER`) +
+      bloque bancario opcional desde env `PAYMENT_TRANSFER_*`.
+
+    Los datos bancarios salen EXCLUSIVAMENTE de env — jamás del LLM ni de
+    los params del intent (caso wa_573125671604: el LLM alucinó número de
+    cuenta y NIT). El bloque bancario solo sale COMPLETO (banco + cuenta +
+    titular); si además la llave Nequi está desactivada, devuelve None y NO
+    se envía nada: el sistema nunca inventa datos de pago, ni parciales.
 
     Formato WhatsApp: bold con UN asterisco (`*Banco*`), nunca markdown
     doble (`**`).
     """
+    if (params.get("method") or "transfer") == "payment_link":
+        return _render_payment_link_notice_text(params)
+
+    nequi = get_nequi_number()
     bank = (os.getenv("PAYMENT_TRANSFER_BANK") or "").strip()
     account_number = (
         os.getenv("PAYMENT_TRANSFER_ACCOUNT_NUMBER") or ""
     ).strip()
     holder = (os.getenv("PAYMENT_TRANSFER_HOLDER") or "").strip()
-    if not (bank and account_number and holder):
+    bank_complete = bool(bank and account_number and holder)
+    if not nequi and not bank_complete:
         return None
-    account_type = (
-        os.getenv("PAYMENT_TRANSFER_ACCOUNT_TYPE") or "Cuenta"
-    ).strip()
-    holder_id = (os.getenv("PAYMENT_TRANSFER_HOLDER_ID") or "").strip()
 
-    lines = [
-        "Aquí tienes los datos para tu transferencia 🤍",
-        "",
-        f"*Banco*: {bank}",
-        f"*{account_type}*: {account_number}",
-        f"*Titular*: {holder}",
-    ]
-    if holder_id:
-        lines.append(f"*Documento*: {holder_id}")
-    total_cop = params.get("total_cop")
-    if isinstance(total_cop, int) and total_cop > 0:
-        currency = params.get("currency") or "COP"
-        total_formatted = f"${total_cop:,}".replace(",", ".")
-        lines.append(f"*Valor*: {total_formatted} {currency}")
-    # Referencia humana ("#22 (Plegaria de Luz)") si el intent la trae;
-    # fallback al order_id crudo para intents encolados pre-deploy o
-    # providers sin display_id (stub).
-    reference = params.get("order_reference") or params.get("order_id")
-    if reference:
-        lines.append(f"Pedido: {reference}")
+    lines = ["Aquí tienes los datos para tu pago anticipado 🤍", ""]
+    if nequi:
+        lines.append(f"*Nequi o llave*: {nequi}")
+    if bank_complete:
+        account_type = (
+            os.getenv("PAYMENT_TRANSFER_ACCOUNT_TYPE") or "Cuenta"
+        ).strip()
+        holder_id = (os.getenv("PAYMENT_TRANSFER_HOLDER_ID") or "").strip()
+        if nequi:
+            lines.append("")
+            lines.append("Si prefieres transferencia bancaria:")
+        lines.extend([
+            f"*Banco*: {bank}",
+            f"*{account_type}*: {account_number}",
+            f"*Titular*: {holder}",
+        ])
+        if holder_id:
+            lines.append(f"*Documento*: {holder_id}")
+    _append_total_and_reference(lines, params)
     lines.append("")
-    lines.append("Cuando la hagas, envíanos el comprobante por este chat.")
+    lines.append("Cuando hagas el pago, envíanos el comprobante por este chat.")
     return "\n".join(lines)
 
 
@@ -661,13 +713,28 @@ async def _dispatch_intent(
         # recolectamos los datos conversacionalmente con un mensaje de texto
         # plano que enumera los campos requeridos. NO usamos botones
         # (anti-patrón sesión adc6400c — la opción "Compartir ubicación" no
-        # funciona y el cliente abandona).
+        # funciona y el cliente abandona). Las formas de pago se informan
+        # con sus condiciones (requisito 2026-08-31).
         order_total_cop = int(params.get("order_total_cop") or 0)
-        cod_line = (
-            "\n_Contra entrega disponible para pedidos > $45.000 COP._"
-            if order_total_cop > 45000
-            else ""
+        nequi = get_nequi_number()
+        payment_lines = []
+        if order_total_cop > 45000:
+            payment_lines.append(
+                "  • Contra entrega — el valor se calcula con la "
+                "transportadora"
+            )
+        payment_lines.append(
+            f"  • Pago anticipado — Nequi o llave {nequi}"
+            if nequi
+            else "  • Pago anticipado (Nequi)"
         )
+        payment_lines.append(
+            "  • Link de pago — recargo adicional de "
+            f"{PAYMENT_LINK_SURCHARGE_NEQUI_BANCOLOMBIA} con Nequi o "
+            f"Bancolombia, {PAYMENT_LINK_SURCHARGE_OTHER_BANKS} con otros "
+            "bancos"
+        )
+        payment_block = "\n".join(payment_lines)
         text = (
             "Para coordinar el envío necesito estos datos, puedes "
             "enviármelos en un solo mensaje o uno por uno:\n\n"
@@ -675,9 +742,10 @@ async def _dispatch_intent(
             "📍 *Barrio*\n"
             "🏠 *Dirección* (calle, número, apartamento)\n"
             "📞 *Teléfono* de contacto\n"
-            "💳 *Método de pago* (tarjeta, transferencia"
-            f"{', contra entrega' if order_total_cop > 45000 else ''})"
-            f"{cod_line}"
+            "🙋 *Nombre de quien recibe* el pedido\n"
+            "🪪 *Cédula* de quien recibe (opcional)\n"
+            "💳 *Método de pago*, elige entre:\n"
+            f"{payment_block}"
         )
         return await wa_client.send_text(
             phone_number_id,
@@ -1122,8 +1190,11 @@ def _mark_flow_awaiting_reply(to_number: str) -> None:
 
 
 def _humanize_payment(code: str | None) -> str:
+    # `card` es legacy (órdenes registradas antes del requisito 2026-08-31);
+    # las 3 formas vigentes son transfer / payment_link / cash_on_delivery.
     return {
         "card": "Tarjeta",
-        "transfer": "Transferencia",
+        "transfer": "Pago anticipado (Nequi)",
+        "payment_link": "Link de pago",
         "cash_on_delivery": "Contra entrega",
     }.get(code or "", code or "Por confirmar")

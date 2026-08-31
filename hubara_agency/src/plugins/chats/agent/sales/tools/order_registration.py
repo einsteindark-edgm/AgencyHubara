@@ -117,7 +117,8 @@ class RegisterOrderTool(ToolBase):
         "venta cerró exitosamente. Llámala SOLO después de que el cliente "
         "confirmó el pedido (vía `present_order_confirmation`) Y ya tienes "
         "todos los datos de envío (ciudad, barrio, dirección, teléfono, "
-        "método de pago). Esta tool crea un Draft Order en Medusa para que "
+        "nombre de quien recibe, método de pago; cédula opcional). Esta "
+        "tool crea un Draft Order en Medusa para que "
         "el equipo de Hubara lo procese. Lee el campo `registered` de la "
         "respuesta: si es `true`, llama `manage_conversation_tag"
         "(tag='COMPRA_EXITOSA', motivo=...)` y despide al cliente. Si es "
@@ -161,13 +162,39 @@ class RegisterOrderTool(ToolBase):
                     "neighborhood": {"type": "string", "minLength": 1},
                     "address": {"type": "string", "minLength": 1},
                     "phone": {"type": "string", "minLength": 7},
+                    "receiver_name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": (
+                            "Nombre completo de quien recibe el pedido "
+                            "(obligatorio — lo exige la transportadora)."
+                        ),
+                    },
+                    "national_id": {
+                        "type": "string",
+                        "description": (
+                            "Cédula de quien recibe (OPCIONAL — solo si el "
+                            "cliente la dio; no insistas)."
+                        ),
+                    },
                 },
-                "required": ["city", "neighborhood", "address", "phone"],
+                "required": [
+                    "city",
+                    "neighborhood",
+                    "address",
+                    "phone",
+                    "receiver_name",
+                ],
             },
             "payment_method": {
                 "type": "string",
-                "enum": ["card", "transfer", "cash_on_delivery"],
-                "description": "Método de pago elegido por el cliente.",
+                "enum": ["transfer", "payment_link", "cash_on_delivery"],
+                "description": (
+                    "Método de pago elegido por el cliente: 'transfer' = "
+                    "pago anticipado (Nequi/llave), 'payment_link' = link "
+                    "de pago (con recargo), 'cash_on_delivery' = contra "
+                    "entrega (solo pedidos > $45.000 COP)."
+                ),
             },
             "subtotal_cop": {"type": "integer", "minimum": 0},
             "shipping_cop": {"type": "integer", "minimum": 0},
@@ -246,11 +273,35 @@ class RegisterOrderTool(ToolBase):
             )
             for it in items
         ]
+        # Requisito 2026-08-31: la transportadora exige el nombre de quien
+        # recibe — sin él NO se registra (el LLM debe recolectarlo primero).
+        # La cédula es opcional y viaja solo si el cliente la dio.
+        receiver_name = str(shipping.get("receiver_name") or "").strip()
+        if not receiver_name:
+            return json.dumps(
+                {
+                    "registered": False,
+                    "order_id": None,
+                    "error_detail": "missing_receiver_name",
+                    "summary": (
+                        "Falta el NOMBRE DE QUIEN RECIBE el pedido (la "
+                        "transportadora lo exige). Pregúntale al cliente "
+                        "quién recibe el paquete, guárdalo con "
+                        "`set_order_slot(nombre_recibe=...)` y vuelve a "
+                        "llamar `register_order` incluyendo "
+                        "`shipping.receiver_name`. La cédula es opcional."
+                    ),
+                },
+                ensure_ascii=False,
+            )
+        national_id_raw = str(shipping.get("national_id") or "").strip()
         order_shipping = OrderShipping(
             city=str(shipping["city"]),
             neighborhood=str(shipping["neighborhood"]),
             address=str(shipping["address"]),
             phone=str(shipping["phone"]),
+            receiver_name=receiver_name,
+            national_id=national_id_raw or None,
         )
 
         # SEC-07: consistencia de montos server-side. El LLM manda los precios;
@@ -372,13 +423,15 @@ class RegisterOrderTool(ToolBase):
                 order_total_cop=total_cop,
                 currency=currency,
             )
-            # Pago por transferencia → el SISTEMA manda los datos bancarios,
-            # no el LLM (caso wa_573125671604: el LLM alucinó cuenta y NIT).
-            # Encolamos el intent acá — determinista, pasa aunque el LLM no
-            # emita ninguna tool más. El flush renderiza la plantilla fija
-            # desde env (PAYMENT_TRANSFER_*); los params NO llevan datos
+            # Pago anticipado (transfer) → el SISTEMA manda la llave Nequi y
+            # los datos bancarios, no el LLM (caso wa_573125671604: el LLM
+            # alucinó cuenta y NIT). Link de pago → el SISTEMA avisa el link
+            # y su recargo (el link real lo genera el humano tras la
+            # escalación). Encolamos el intent acá — determinista, pasa
+            # aunque el LLM no emita ninguna tool más. El flush renderiza la
+            # plantilla fija según `method`; los params NO llevan datos
             # bancarios (nunca pasan por el LLM ni por metadata).
-            if payment_method == "transfer":
+            if payment_method in ("transfer", "payment_link"):
                 intents = data.setdefault("pending_ui_intents", [])
                 # Referencia humana ("#22 (Plegaria de Luz)") — el display_id
                 # ya existe acá: Medusa lo asigna al crear el draft. El
@@ -387,6 +440,7 @@ class RegisterOrderTool(ToolBase):
                     "order_id": registered_record["order_id"],
                     "total_cop": total_cop,
                     "currency": currency,
+                    "method": payment_method,
                 }
                 reference = _order_reference(result.raw_payload)
                 if reference:
@@ -459,12 +513,19 @@ class RegisterOrderTool(ToolBase):
                     f"Pedido registrado en Medusa con ID {result.order_id}. "
                     f"Total: ${total_cop:,} {currency}. ".replace(",", ".")
                     + (
-                        "El SISTEMA ya le envía al cliente los datos "
-                        "bancarios para la transferencia — NO escribas "
+                        "El SISTEMA ya le envía al cliente los datos del "
+                        "pago anticipado (llave Nequi y banco) — NO escribas "
                         "números de cuenta ni banco ni NIT ni ningún dato "
                         "de pago en tu mensaje (cualquier dato que escribas "
                         "tú es inventado). "
                         if payment_method == "transfer"
+                        else ""
+                    )
+                    + (
+                        "El SISTEMA ya le avisó al cliente que el link de "
+                        "pago le llega por este chat, con su recargo — NO "
+                        "inventes links ni montos con recargo. "
+                        if payment_method == "payment_link"
                         else ""
                     )
                     + "Llama ahora "

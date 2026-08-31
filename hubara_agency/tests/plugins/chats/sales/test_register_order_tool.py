@@ -147,7 +147,97 @@ _SAMPLE_SHIPPING = {
     "neighborhood": "Chapinero",
     "address": "Calle 100 #15-20 Apto 502",
     "phone": "3001234567",
+    "receiver_name": "Ana María Pérez",
 }
+
+
+# ----------------------------------------------------------------------
+# Datos de quien recibe (requisito 2026-08-31)
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_register_order_without_receiver_name_rejects(ctx, vault):
+    """El nombre de quien recibe es OBLIGATORIO: sin él la tool NO registra
+    (la transportadora lo necesita) y le pide al LLM recolectarlo."""
+    fake = FakeOrderRegistrationPort()
+    tool = RegisterOrderTool(workspace=str(vault), vault_dir=vault, port=fake)
+    shipping = {k: v for k, v in _SAMPLE_SHIPPING.items() if k != "receiver_name"}
+    result = json.loads(
+        await tool.execute_with_context(
+            ctx,
+            items=_SAMPLE_ITEMS,
+            shipping=shipping,
+            payment_method="transfer",
+            subtotal_cop=17000,
+            shipping_cop=0,
+            total_cop=17000,
+        )
+    )
+    assert result["registered"] is False
+    assert result["error_detail"] == "missing_receiver_name"
+    assert "recibe" in result["summary"].lower()
+    assert fake.calls == []
+
+
+@pytest.mark.asyncio
+async def test_register_order_passes_receiver_and_cedula_to_port(ctx, vault):
+    """`receiver_name` + `national_id` (cédula opcional) viajan al port —
+    terminan en la dirección/metadata de la draft order de Medusa."""
+    fake = FakeOrderRegistrationPort()
+    tool = RegisterOrderTool(workspace=str(vault), vault_dir=vault, port=fake)
+    shipping = {**_SAMPLE_SHIPPING, "national_id": "52123456"}
+    result = json.loads(
+        await tool.execute_with_context(
+            ctx,
+            items=_SAMPLE_ITEMS,
+            shipping=shipping,
+            payment_method="cash_on_delivery",
+            subtotal_cop=17000,
+            shipping_cop=0,
+            total_cop=17000,
+        )
+    )
+    assert result["registered"] is True
+    sent = fake.calls[0]["shipping"]
+    assert sent.receiver_name == "Ana María Pérez"
+    assert sent.national_id == "52123456"
+
+
+@pytest.mark.asyncio
+async def test_register_order_cedula_is_optional(ctx, vault):
+    fake = FakeOrderRegistrationPort()
+    tool = RegisterOrderTool(workspace=str(vault), vault_dir=vault, port=fake)
+    result = json.loads(
+        await tool.execute_with_context(
+            ctx,
+            items=_SAMPLE_ITEMS,
+            shipping=_SAMPLE_SHIPPING,
+            payment_method="transfer",
+            subtotal_cop=17000,
+            shipping_cop=0,
+            total_cop=17000,
+        )
+    )
+    assert result["registered"] is True
+    assert fake.calls[0]["shipping"].national_id is None
+
+
+def test_register_order_schema_reflects_new_contract():
+    """Schema para el LLM: receiver_name requerido, national_id opcional,
+    y las 3 formas de pago vigentes (card ya no es elegible — los pagos
+    con tarjeta van por link de pago)."""
+    schema = RegisterOrderTool.parameters
+    shipping_schema = schema["properties"]["shipping"]
+    assert "receiver_name" in shipping_schema["properties"]
+    assert "national_id" in shipping_schema["properties"]
+    assert "receiver_name" in shipping_schema["required"]
+    assert "national_id" not in shipping_schema["required"]
+    assert schema["properties"]["payment_method"]["enum"] == [
+        "transfer",
+        "payment_link",
+        "cash_on_delivery",
+    ]
 
 
 # ----------------------------------------------------------------------

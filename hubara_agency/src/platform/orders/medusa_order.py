@@ -700,18 +700,25 @@ class MedusaOrderRegistration:
         # shipping_address: country_code en lowercase per spec.
         # province queda vacio (Bogota no es exactamente una "province" ISO
         # 3166-2 que Medusa exija — el field es opcional en la practica).
+        # Nombre de quien recibe (requisito 2026-08-31) → first/last name de
+        # la direccion (visible en panel + guia de la transportadora).
+        # Records legacy sin receiver_name conservan el sintetico de siempre.
+        first_name, last_name = _split_receiver_name(shipping.receiver_name)
+        address_metadata: dict[str, Any] = {
+            "neighborhood": shipping.neighborhood,
+            "session_key": session_key,
+        }
+        if shipping.national_id:
+            address_metadata["receiver_national_id"] = shipping.national_id
         address = {
-            "first_name": "Cliente",
-            "last_name": "WhatsApp",
+            "first_name": first_name or "Cliente",
+            "last_name": last_name if first_name else "WhatsApp",
             "phone": shipping.phone,
             "address_1": shipping.address,
             "address_2": shipping.neighborhood,  # barrio va aca para que se vea en el panel
             "city": shipping.city,
             "country_code": self._settings.default_country,
-            "metadata": {
-                "neighborhood": shipping.neighborhood,
-                "session_key": session_key,
-            },
+            "metadata": address_metadata,
         }
 
         # Premortem B1 + fix idempotencia: `idempotency_key` y `fingerprint`
@@ -731,6 +738,10 @@ class MedusaOrderRegistration:
             "idempotency_key": idempotency_key,
             "order_fingerprint": fingerprint,
         }
+        # Cedula de quien recibe (opcional, requisito 2026-08-31) — tambien
+        # a nivel orden para que el operador la vea sin abrir la direccion.
+        if shipping.national_id:
+            metadata["receiver_national_id"] = shipping.national_id
         # Premortem H3: surface variant mismatches to the operator via
         # Medusa metadata. Each entry lists requested label + selected variant.
         if variant_mismatches:
@@ -806,6 +817,19 @@ def _pick_preferred_shipping_option(
         if any(kw in name for kw in _SHIPPING_OPTION_KEYWORDS_PREFERRED):
             return opt
     return None
+
+
+def _split_receiver_name(receiver_name: str) -> tuple[str, str]:
+    """Divide el nombre de quien recibe en (first_name, last_name) para la
+    direccion Medusa: la ULTIMA palabra es el apellido ("Ana María Pérez" →
+    ("Ana María", "Pérez")). Una sola palabra → apellido vacio. Vacio →
+    ("", "") y el caller cae al sintetico legacy Cliente/WhatsApp."""
+    tokens = (receiver_name or "").split()
+    if not tokens:
+        return "", ""
+    if len(tokens) == 1:
+        return tokens[0], ""
+    return " ".join(tokens[:-1]), tokens[-1]
 
 
 def _synthesize_email(session_key: str) -> str:

@@ -146,7 +146,7 @@ class OrderDetailDTO:
     tax_total_cop: int
     discount_total_cop: int
     timeline: list[OrderTimelineEventDTO]
-    payment_method_label: str | None      # "Transferencia" | "Contra entrega" | None
+    payment_method_label: str | None      # "Pago anticipado (Nequi)" | "Link de pago" | "Contra entrega" | None
     notes: list[str] = field(default_factory=list)  # vacio hoy
     # Cuales slots NO tenemos en Medusa, para que la UI pinte marker.
     # Valores: 'due_date', 'agent', 'priority', 'notes', 'customer_history',

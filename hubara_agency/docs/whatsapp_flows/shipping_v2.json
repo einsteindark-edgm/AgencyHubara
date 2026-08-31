@@ -28,12 +28,21 @@
             "type": "object",
             "properties": {
               "id": { "type": "string" },
-              "title": { "type": "string" }
+              "title": { "type": "string" },
+              "description": { "type": "string" }
             }
           },
           "__example__": [
-            { "id": "card", "title": "💳 Tarjeta" },
-            { "id": "transfer", "title": "🏦 Transferencia" }
+            {
+              "id": "transfer",
+              "title": "📲 Pago anticipado (Nequi)",
+              "description": "Nequi o llave 3229041190."
+            },
+            {
+              "id": "payment_link",
+              "title": "🔗 Link de pago",
+              "description": "Recargo adicional: 1,5% con Nequi o Bancolombia, 2,69% con otros bancos."
+            }
           ]
         }
       },
@@ -81,6 +90,22 @@
             "helper-text": "Para coordinar la entrega"
           },
           {
+            "type": "TextInput",
+            "name": "receiver_name",
+            "label": "Quién recibe",
+            "required": true,
+            "input-type": "text",
+            "helper-text": "Nombre completo de quien recibe el pedido"
+          },
+          {
+            "type": "TextInput",
+            "name": "national_id",
+            "label": "Cédula (opcional)",
+            "required": false,
+            "input-type": "number",
+            "helper-text": "De quien recibe, para la guía de envío"
+          },
+          {
             "type": "RadioButtonsGroup",
             "name": "payment_method",
             "label": "Método de pago",
@@ -97,6 +122,8 @@
                 "neighborhood": "${form.neighborhood}",
                 "address": "${form.address}",
                 "phone": "${form.phone}",
+                "receiver_name": "${form.receiver_name}",
+                "national_id": "${form.national_id}",
                 "payment_method": "${form.payment_method}",
                 "order_total_cop": "${data.order_total_cop}",
                 "items_summary": "${data.items_summary}"

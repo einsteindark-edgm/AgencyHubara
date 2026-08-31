@@ -250,6 +250,94 @@ async def test_register_order_success_full_flow(adapter):
     assert body["metadata"]["payment_method"] == "transfer"
     assert body["metadata"]["total_cop"] == 22000
     assert body["no_notification_order"] is True
+    # Sin receiver_name (records legacy) → defaults sintéticos de siempre
+    assert body["shipping_address"]["first_name"] == "Cliente"
+    assert body["shipping_address"]["last_name"] == "WhatsApp"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_register_order_receiver_name_and_cedula_in_payload(adapter):
+    """Requisito 2026-08-31: el nombre de quien recibe va a
+    `shipping_address.first_name/last_name` (visible en el panel Medusa y
+    en la guía de la transportadora); la cédula opcional viaja en metadata
+    de la dirección y de la orden."""
+    respx.get(f"{_BASE_URL}/admin/products").mock(
+        return_value=Response(200, json=_product_payload_for_handle("cruz-de-vida"))
+    )
+    respx.get(f"{_BASE_URL}/admin/customers").mock(
+        return_value=Response(200, json={"customers": [], "count": 0, "offset": 0, "limit": 1})
+    )
+    respx.post(f"{_BASE_URL}/admin/customers").mock(
+        return_value=Response(
+            200,
+            json={"customer": {"id": "cus_new_002", "email": "wa+wa_112@hubara.local"}},
+        )
+    )
+    respx.get(f"{_BASE_URL}/admin/shipping-options").mock(
+        return_value=Response(
+            200,
+            json={
+                "shipping_options": [{"id": "so_std_01", "name": "Envío estándar"}],
+                "count": 1,
+                "offset": 0,
+                "limit": 50,
+            },
+        )
+    )
+    draft_route = respx.post(f"{_BASE_URL}/admin/draft-orders").mock(
+        return_value=Response(
+            200,
+            json={"draft_order": {"id": "draft_xyz_002", "status": "draft",
+                                  "items": [], "shipping_methods": []}},
+        )
+    )
+
+    shipping = OrderShipping(
+        city="Bogotá",
+        neighborhood="Chapinero",
+        address="Calle 100 #15-20 Apto 502",
+        phone="3001234567",
+        receiver_name="Ana María Pérez",
+        national_id="52123456",
+    )
+    result = await adapter.register_order(
+        session_key="wa_112",
+        items=_ITEMS,
+        shipping=shipping,
+        payment_method="payment_link",
+        subtotal_cop=17000,
+        shipping_cop=5000,
+        total_cop=22000,
+    )
+    assert result.success is True
+
+    import json as _json
+    body = _json.loads(draft_route.calls[0].request.content)
+    addr = body["shipping_address"]
+    assert addr["first_name"] == "Ana María"
+    assert addr["last_name"] == "Pérez"
+    assert addr["metadata"]["receiver_national_id"] == "52123456"
+    assert body["metadata"]["receiver_national_id"] == "52123456"
+    assert body["metadata"]["payment_method"] == "payment_link"
+
+
+def test_split_receiver_name_two_tokens():
+    from src.platform.orders.medusa_order import _split_receiver_name
+
+    assert _split_receiver_name("Ana Pérez") == ("Ana", "Pérez")
+
+
+def test_split_receiver_name_multi_tokens_last_word_is_surname():
+    from src.platform.orders.medusa_order import _split_receiver_name
+
+    assert _split_receiver_name("Ana María Pérez") == ("Ana María", "Pérez")
+
+
+def test_split_receiver_name_single_token():
+    from src.platform.orders.medusa_order import _split_receiver_name
+
+    assert _split_receiver_name("Ana") == ("Ana", "")
 
 
 @pytest.mark.asyncio

@@ -47,13 +47,21 @@ class OrderShipping:
     """Datos de envio — input al port.
 
     No incluye country_code: lo agrega el adapter desde
-    `MedusaSettings.default_country` (default "co"). No incluye email/nombre:
-    el adapter los sintetiza desde `session_key` (`wa+{session}@hubara.local`).
+    `MedusaSettings.default_country` (default "co"). No incluye email:
+    el adapter lo sintetiza desde `session_key` (`wa+{session}@hubara.local`).
+
+    `receiver_name` (requisito 2026-08-31): nombre de quien recibe el
+    pedido — va a `shipping_address.first_name/last_name` de la draft
+    order. `national_id` (cedula, opcional) va a metadata. Defaults
+    laxos para retro-compat con records persistidos pre-requisito
+    (reconciliacion); la obligatoriedad la impone `RegisterOrderTool`.
     """
     city: str
     neighborhood: str
     address: str
     phone: str
+    receiver_name: str = ""
+    national_id: str | None = None
 
 
 @dataclass(frozen=True)

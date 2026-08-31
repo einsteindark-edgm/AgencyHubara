@@ -112,11 +112,25 @@ class SetOrderSlotTool(ToolBase):
                 "type": "string",
                 "description": "Telefono de contacto del cliente.",
             },
+            "nombre_recibe": {
+                "type": "string",
+                "description": (
+                    "Nombre completo de quien recibe el pedido (obligatorio "
+                    "para la transportadora; puede ser distinto del cliente)."
+                ),
+            },
+            "cedula": {
+                "type": "string",
+                "description": (
+                    "Numero de cedula de quien recibe (OPCIONAL — no insistas "
+                    "si el cliente no lo quiere dar)."
+                ),
+            },
             "metodo_pago": {
                 "type": "string",
                 "description": (
-                    "Metodo de pago elegido (ej. 'transferencia', 'tarjeta', "
-                    "'contraentrega')."
+                    "Metodo de pago elegido (ej. 'pago anticipado', "
+                    "'link de pago', 'contraentrega')."
                 ),
             },
             "notas": {
@@ -306,6 +320,8 @@ class SetOrderSlotTool(ToolBase):
         barrio: str | None = None,
         direccion: str | None = None,
         telefono: str | None = None,
+        nombre_recibe: str | None = None,
+        cedula: str | None = None,
         metodo_pago: str | None = None,
         notas: str | None = None,
     ) -> str:
@@ -324,6 +340,8 @@ class SetOrderSlotTool(ToolBase):
                 "barrio": barrio,
                 "direccion": direccion,
                 "telefono": telefono,
+                "nombre_recibe": nombre_recibe,
+                "cedula": cedula,
                 "metodo_pago": metodo_pago,
                 "notas": notas,
             }.items()

@@ -65,6 +65,8 @@ KNOWN_SLOTS: tuple[tuple[str, str], ...] = (
     ("barrio", "Barrio"),
     ("direccion", "Direccion"),
     ("telefono", "Telefono"),
+    ("nombre_recibe", "Recibe"),
+    ("cedula", "Cedula (opcional)"),
     ("metodo_pago", "Metodo de pago"),
     ("notas", "Notas"),
 )

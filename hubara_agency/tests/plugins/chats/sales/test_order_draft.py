@@ -255,6 +255,28 @@ async def test_tool_merges_across_calls(ctx, vault):
 
 
 @pytest.mark.asyncio
+async def test_tool_persists_receiver_name_and_cedula(ctx, vault):
+    """`nombre_recibe` (obligatorio en el funnel) y `cedula` (opcional) son
+    slots reconocidos del pedido — requisito 2026-08-31: el formulario de
+    envío incluye nombre de quien recibe + cédula opcional."""
+    tool = SetOrderSlotTool(workspace=str(vault), vault_dir=vault)
+    result = json.loads(await tool.execute_with_context(
+        ctx, nombre_recibe="Ana María Pérez", cedula="52123456"
+    ))
+    assert result["updated"] is True
+    assert result["captured"] == {
+        "nombre_recibe": "Ana María Pérez",
+        "cedula": "52123456",
+    }
+    meta = _read_metadata(vault, ctx.session_key)
+    slots = meta["episodes"][-1]["order_draft"]["slots"]
+    assert slots == {
+        "nombre_recibe": "Ana María Pérez",
+        "cedula": "52123456",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tool_empty_call_is_noop(ctx, vault):
     tool = SetOrderSlotTool(workspace=str(vault), vault_dir=vault)
     result = json.loads(await tool.execute_with_context(ctx))
@@ -297,6 +319,7 @@ async def test_register_order_stops_draft_projection(ctx, vault):
             "neighborhood": "Chapinero",
             "address": "Calle 1 #2-3",
             "phone": "3001234567",
+            "receiver_name": "Ana Pérez",
         },
         payment_method="transfer",
         subtotal_cop=23000,
