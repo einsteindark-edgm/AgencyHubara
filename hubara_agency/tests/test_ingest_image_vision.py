@@ -176,9 +176,13 @@ async def test_payment_receipt_routes_to_human_and_acks(monkeypatch):
     assert state["active_route"] == "humano"
     assert state["tag"] == "HUMANO"
     assert state["escalation_reason"] == "PAYMENT_VERIFICATION_PENDING"
-    # Ack enviado al cliente
+    # Ack enviado al cliente: confirma recepción + pedido pasa a elaboración
+    # + promesa de informar el despacho (copy acordado con el operador).
     assert len(sent) == 1
-    assert "comprobante" in sent[0][2].lower()
+    ack = sent[0][2].lower()
+    assert "recibimos tu comprobante" in ack
+    assert "elaboración" in ack
+    assert "despacho" in ack
     # La descripción del comprobante quedó en el historial para el humano
     assert any("comprobante de pago" in c.lower() for _, c in history.events)
 

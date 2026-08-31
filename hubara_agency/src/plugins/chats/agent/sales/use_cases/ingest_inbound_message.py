@@ -1245,8 +1245,9 @@ class IngestInboundMessage:
                 await wa_client.send_message(
                     parsed.phone_number_id,
                     parsed.from_number,
-                    "Recibí tu comprobante 🤍. Un colega del equipo verifica "
-                    "el pago y te confirma enseguida.",
+                    "¡Perfecto! Recibimos tu comprobante 🤍. Tu pedido pasa a "
+                    "elaboración y cuando lo tengamos listo te informamos el "
+                    "despacho.",
                 )
             except Exception:  # noqa: BLE001
                 pass
