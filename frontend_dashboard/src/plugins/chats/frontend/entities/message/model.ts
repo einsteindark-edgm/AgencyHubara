@@ -31,4 +31,8 @@ export interface ChatMessage {
    *  cliente) servida por `/api/dashboard/media/...`. Solo presente en
    *  mensajes del cliente que adjuntaron una imagen. */
   image_url?: string;
+  /** Documento PDF adjunto (comprobante típico): ref servible + nombre
+   *  visible. Aplica a inbound del cliente y outbound del operador. */
+  document_url?: string;
+  document_filename?: string;
 }

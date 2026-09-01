@@ -46,6 +46,10 @@ export interface OutboxItem {
   progress: number; // 0..1 durante uploading
   attachmentId?: string; // media_id de Meta una vez subido (retry no re-sube)
   error?: string;
+  /** "document" = PDF (comprobante): sin compresión ni preview de imagen; la
+   *  tira pinta un chip con `filename`. Default "image" (fotos). */
+  kind: "image" | "document";
+  filename?: string;
 }
 
 export interface OutboxState {
@@ -53,7 +57,14 @@ export interface OutboxState {
 }
 
 export type OutboxAction =
-  | { type: "enqueue"; id: string; previewUrl: string; caption: string }
+  | {
+      type: "enqueue";
+      id: string;
+      previewUrl: string;
+      caption: string;
+      kind?: "image" | "document";
+      filename?: string;
+    }
   | { type: "compressed"; id: string }
   | { type: "progress"; id: string; fraction: number }
   | { type: "uploaded"; id: string; attachmentId: string }
@@ -85,6 +96,8 @@ export function outboxReducer(
             caption: action.caption,
             status: "compressing",
             progress: 0,
+            kind: action.kind ?? "image",
+            filename: action.filename,
           },
         ],
       };
@@ -133,10 +146,25 @@ const EMPTY_STATE: OutboxState = { items: [] };
 
 const states = new Map<string, OutboxState>();
 const listeners = new Map<string, Set<() => void>>();
-/** Blob comprimido por item (para reintentar la subida sin recomprimir). */
-const compressedBlobs = new Map<string, { blob: Blob; caption: string }>();
+/** Blob listo para subir por item (para reintentar sin recomprimir). Para
+ *  PDFs es el File original y `filename` su nombre real. */
+const compressedBlobs = new Map<
+  string,
+  { blob: Blob; caption: string; filename?: string }
+>();
 /** File ORIGINAL por item (PM-F2: si la compresión falló, el retry parte de acá). */
 const originalFiles = new Map<string, { file: File; caption: string }>();
+
+/** Cap client-side para PDFs — espejo del server (10 MB). Corta ANTES de
+ *  gastar red celular en una subida que el backend va a rechazar con 413. */
+const MAX_PDF_BYTES = 10 * 1024 * 1024;
+
+function isPdfFile(file: File): boolean {
+  // El type del File manda (un JPEG renombrado a .pdf debe comprimirse como
+  // foto); la extensión decide solo cuando el picker no reporta type.
+  if (file.type) return file.type === "application/pdf";
+  return /\.pdf$/i.test(file.name || "");
+}
 
 function getState(chatId: string): OutboxState {
   return states.get(chatId) ?? EMPTY_STATE;
@@ -231,11 +259,12 @@ async function runUploadAndSend(
   id: string,
   blob: Blob,
   caption: string,
+  filename?: string,
 ): Promise<void> {
   try {
     dispatch(chatId, { type: "compressed", id });
     const res = await withUploadSlot(() =>
-      uploadHumanMedia(chatId, blob, `${id}.jpg`, (f) =>
+      uploadHumanMedia(chatId, blob, filename ?? `${id}.jpg`, (f) =>
         dispatch(chatId, { type: "progress", id, fraction: f }),
       ),
     );
@@ -245,7 +274,7 @@ async function runUploadAndSend(
     dispatch(chatId, {
       type: "failed",
       id,
-      error: e instanceof Error ? e.message : "no se pudo subir la foto",
+      error: e instanceof Error ? e.message : "no se pudo subir el archivo",
     });
   }
 }
@@ -259,9 +288,9 @@ async function compressAndRun(
 ): Promise<void> {
   try {
     const { blob, previewUrl } = await compressImage(file);
-    compressedBlobs.set(id, { blob, caption });
+    compressedBlobs.set(id, { blob, caption, filename: `${id}.jpg` });
     dispatch(chatId, { type: "enqueue", id, previewUrl, caption });
-    void runUploadAndSend(chatId, qc, id, blob, caption);
+    void runUploadAndSend(chatId, qc, id, blob, caption, `${id}.jpg`);
   } catch (e) {
     // La compresión falló (HEIC renombrado, archivo corrupto). El item queda
     // visible en failed; el File original quedó cacheado ANTES (PM-F2), así
@@ -294,9 +323,9 @@ export function useOutbox(chatId: string | null) {
     useCallback(() => getState(key).items, [key]),
   );
 
-  /** Encola una o más fotos. El caption va SOLO en la primera del lote
-   *  (PM-F11: cada foto es un mensaje de WhatsApp separado — repetir el texto
-   *  en las 3 fotos le llega triplicado al cliente). No bloquea. */
+  /** Encola una o más fotos/PDFs. El caption va SOLO en el primero del lote
+   *  (PM-F11: cada adjunto es un mensaje de WhatsApp separado — repetir el
+   *  texto en los 3 le llega triplicado al cliente). No bloquea. */
   const enqueue = useCallback(
     async (files: File[], caption: string) => {
       if (!chatId) return;
@@ -305,6 +334,41 @@ export function useOutbox(chatId: string | null) {
         const id = newId();
         const itemCaption = idx === 0 ? caption : "";
         idx += 1;
+        // PDFs (comprobantes): sin compresión — el File original sube tal
+        // cual con su nombre real (el cliente lo ve en WhatsApp).
+        if (isPdfFile(file)) {
+          if (file.size > MAX_PDF_BYTES) {
+            dispatch(chatId, {
+              type: "enqueue",
+              id,
+              previewUrl: "",
+              caption: itemCaption,
+              kind: "document",
+              filename: file.name,
+            });
+            dispatch(chatId, {
+              type: "failed",
+              id,
+              error: "el PDF supera 10 MB — descartá y adjuntá uno más liviano",
+            });
+            continue;
+          }
+          compressedBlobs.set(id, {
+            blob: file,
+            caption: itemCaption,
+            filename: file.name,
+          });
+          dispatch(chatId, {
+            type: "enqueue",
+            id,
+            previewUrl: "",
+            caption: itemCaption,
+            kind: "document",
+            filename: file.name,
+          });
+          void runUploadAndSend(chatId, qc, id, file, itemCaption, file.name);
+          continue;
+        }
         // Cachear el original ANTES de intentar comprimir (PM-F2).
         originalFiles.set(id, { file, caption: itemCaption });
         await compressAndRun(chatId, qc, id, file, itemCaption);
@@ -327,7 +391,14 @@ export function useOutbox(chatId: string | null) {
       }
       const cachedBlob = compressedBlobs.get(id);
       if (cachedBlob) {
-        void runUploadAndSend(chatId, qc, id, cachedBlob.blob, cachedBlob.caption);
+        void runUploadAndSend(
+          chatId,
+          qc,
+          id,
+          cachedBlob.blob,
+          cachedBlob.caption,
+          cachedBlob.filename,
+        );
         return;
       }
       const original = originalFiles.get(id);

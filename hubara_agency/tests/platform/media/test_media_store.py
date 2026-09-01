@@ -111,3 +111,14 @@ def test_retention_class_for():
     # Visión fallida / desconocida → ephemeral (la descripción nunca existió).
     assert media_store.retention_class_for("unknown") == media_store.RETENTION_EPHEMERAL
     assert media_store.retention_class_for(None) == media_store.RETENTION_EPHEMERAL
+
+
+def test_retention_class_for_pdf_document():
+    """PM-04: los PDFs inbound del cliente son comprobantes en la práctica
+    (misma política determinista que el ruteo a humano) → retención larga,
+    como el `comprobante_pago` de visión."""
+    assert (
+        media_store.retention_class_for(media_store.KIND_PDF_DOCUMENT)
+        == media_store.RETENTION_RECEIPT
+    )
+    assert media_store.KIND_PDF_DOCUMENT == "pdf_document"

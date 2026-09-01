@@ -51,6 +51,8 @@ class FilesystemMessageHistoryStore:
         content: str,
         *,
         image_url: str | None = None,
+        document_url: str | None = None,
+        document_filename: str | None = None,
     ) -> None:
         """Persiste un inbound del cliente con timestamp ISO UTC.
 
@@ -64,6 +66,11 @@ class FilesystemMessageHistoryStore:
         está presente, el dashboard renderiza la foto en la burbuja (clave
         para comprobantes de pago que el humano debe ver, no solo leer la
         descripción que generó la visión).
+
+        ``document_url`` + ``document_filename``: ref a un documento PDF
+        inbound persistido (comprobante de pago típico) + su nombre visible.
+        El dashboard pinta un chip clickeable en la burbuja. Ausentes en el
+        resto de los inbounds — no se persisten nulls.
         """
         event: dict[str, Any] = {
             "role": "user",
@@ -72,6 +79,10 @@ class FilesystemMessageHistoryStore:
         }
         if image_url:
             event["image_url"] = image_url
+        if document_url:
+            event["document_url"] = document_url
+        if document_filename:
+            event["document_filename"] = document_filename
         self._append(session_id, event)
 
     def append_assistant_event(
@@ -107,6 +118,8 @@ class FilesystemMessageHistoryStore:
         content: str,
         *,
         image_url: str | None = None,
+        document_url: str | None = None,
+        document_filename: str | None = None,
     ) -> None:
         """Mensaje del humano operador via dashboard handoff.
 
@@ -124,6 +137,10 @@ class FilesystemMessageHistoryStore:
         está presente el dashboard re-renderiza la foto en la burbuja saliente;
         el texto (``content``) queda como caption. Ausente en mensajes de solo
         texto — no se persiste el campo para no ensuciar el JSONL con nulls.
+
+        ``document_url`` + ``document_filename``: lo mismo para un documento
+        PDF saliente (comprobante) — el dashboard pinta un chip clickeable con
+        el nombre del archivo. Ausentes salvo envío de documento.
         """
         event: dict[str, Any] = {
             "role": "assistant",
@@ -133,4 +150,8 @@ class FilesystemMessageHistoryStore:
         }
         if image_url:
             event["image_url"] = image_url
+        if document_url:
+            event["document_url"] = document_url
+        if document_filename:
+            event["document_filename"] = document_filename
         self._append(session_id, event)

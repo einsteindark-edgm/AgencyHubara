@@ -73,6 +73,12 @@ class EffectiveText:
     is_first_touch_from_ad: bool = False
     media_inbound_kind: str | None = None  # "image"|"video"|"document"|"sticker"|"audio"|None
     quoted_message_id: str | None = None
+    # Documento PDF inbound (comprobante de pago típico): el ingest descarga y
+    # persiste los bytes para el dashboard — sin visión ni reentry. Solo se
+    # poblan para `type=document` con mime `application/pdf`.
+    document_media_id: str | None = None
+    document_mime_type: str | None = None
+    document_filename: str | None = None
     debug_tags: list[str] = field(default_factory=list)
 
 
@@ -274,12 +280,45 @@ async def translate_to_effective_text(
         kind = msg.media.get("type", "media")
         tags.append(f"media:{kind}")
         text = f"[el cliente envió un {kind}]"
+
+        # Documento PDF (comprobante de pago típico): marker con el nombre del
+        # archivo + metadata para que el ingest persista los bytes y el
+        # operador pueda ABRIR el comprobante desde el dashboard. Otros mimes
+        # de documento quedan en el marker genérico (sin descarga).
+        doc_mime = (
+            (msg.media.get("mime_type") or "").split(";")[0].strip().lower()
+        )
+        doc_id = msg.media.get("id")
+        doc_filename = msg.media.get("filename")
+        document_media_id: str | None = None
+        document_filename: str | None = None
+        if (
+            kind == "document"
+            and doc_mime == "application/pdf"
+            and isinstance(doc_id, str)
+            and doc_id
+        ):
+            tags.append("pdf_document")
+            document_media_id = doc_id
+            if isinstance(doc_filename, str) and doc_filename.strip():
+                # Cap a 80 chars: el filename lo controla el cliente y viaja
+                # al prompt del LLM y al chip del dashboard — sin cap, un
+                # nombre de 200+ chars infla ambos.
+                document_filename = doc_filename.strip()[:80]
+                text = f"[el cliente envió un documento PDF: {document_filename}]"
+            else:
+                text = "[el cliente envió un documento PDF]"
+            caption = msg.media.get("caption")
+            if isinstance(caption, str) and caption.strip():
+                text += f' con el texto: "{caption.strip()}"'
+
         text = _prepend_referral_banner_if_needed(text, msg.referral, referral_already_seen, tags)
         # Imágenes: marcamos requires_vision para que el ingest las describa
         # con un modelo multimodal (Gemini) y reinyecte la descripción como
-        # texto. Solo "image" — video/document/sticker quedan en el placeholder
-        # (sticker suele ser emoji; PDF/document es follow-up). El `text` de
-        # arriba queda como fallback si la visión está deshabilitada.
+        # texto. Solo "image" — video/sticker quedan en el placeholder (sticker
+        # suele ser emoji) y los PDFs van por `document_media_id` (persistencia
+        # sin visión, arriba). El `text` de arriba queda como fallback si la
+        # visión está deshabilitada.
         image_id = msg.media.get("id") if kind == "image" else None
         wants_vision = kind == "image" and isinstance(image_id, str)
         if wants_vision:
@@ -295,6 +334,9 @@ async def translate_to_effective_text(
             is_first_touch_from_ad=bool(msg.referral) and not referral_already_seen,
             media_inbound_kind=kind,
             quoted_message_id=_qmid(msg),
+            document_media_id=document_media_id,
+            document_mime_type=doc_mime if document_media_id else None,
+            document_filename=document_filename,
             debug_tags=tags,
         )
 

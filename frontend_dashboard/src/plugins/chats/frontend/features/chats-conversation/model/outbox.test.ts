@@ -102,3 +102,32 @@ describe("outboxReducer", () => {
     expect(s.items).toHaveLength(0);
   });
 });
+
+describe("outboxReducer — documentos PDF", () => {
+  it("enqueue con kind/filename los conserva en el item (chip de la tira)", () => {
+    const s = outboxReducer(empty, {
+      type: "enqueue",
+      id: "d1",
+      previewUrl: "",
+      caption: "comprobante",
+      kind: "document",
+      filename: "comprobante.pdf",
+    });
+    expect(s.items[0]).toMatchObject({
+      id: "d1",
+      kind: "document",
+      filename: "comprobante.pdf",
+      status: "compressing",
+    });
+  });
+
+  it("enqueue sin kind → default image (compat con fotos)", () => {
+    const s = outboxReducer(empty, {
+      type: "enqueue",
+      id: "m1",
+      previewUrl: "blob:x",
+      caption: "",
+    });
+    expect(s.items[0].kind).toBe("image");
+  });
+});

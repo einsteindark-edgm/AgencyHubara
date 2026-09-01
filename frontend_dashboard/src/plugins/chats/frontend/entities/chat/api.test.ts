@@ -155,7 +155,10 @@ interface RawMsg {
   ui_type: string;
   role: string;
   content: string | null;
+  sender?: "human";
   image_url?: string;
+  document_url?: string;
+  document_filename?: string;
   timestamp?: string | number;
 }
 
@@ -245,5 +248,103 @@ describe("useChatMessages — imagen inbound (comprobantes de pago)", () => {
     ]);
     const bubble = data?.find((m) => m.kind === "in");
     expect(bubble?.imageUrl).toBeUndefined();
+  });
+});
+
+describe("useChatMessages — documento PDF (comprobantes de pago)", () => {
+  it("mapea document_url + document_filename → documentUrl absoluta + documentName", async () => {
+    const data = await runMessages([
+      {
+        ui_type: "user_message",
+        role: "user",
+        content: "[el cliente envió un documento PDF: comprobante.pdf]",
+        document_url: "/api/dashboard/media/wa_x/doc-9.pdf",
+        document_filename: "comprobante.pdf",
+      },
+    ]);
+    const bubble = data?.find((m) => m.kind === "in");
+    expect(bubble?.documentUrl).toBe(
+      "http://localhost:8000/api/dashboard/media/wa_x/doc-9.pdf",
+    );
+    expect(bubble?.documentName).toBe("comprobante.pdf");
+  });
+
+  it("PDF saliente del operador → burbuja out (human) con documentUrl", async () => {
+    const data = await runMessages([
+      {
+        ui_type: "human_message",
+        role: "assistant",
+        sender: "human",
+        content: "Ahí va el comprobante",
+        document_url: "/api/dashboard/media/wa_x/out-1.pdf",
+        document_filename: "recibo.pdf",
+      },
+    ]);
+    const bubble = data?.find((m) => m.kind === "out");
+    expect(bubble?.author).toBe("human");
+    expect(bubble?.documentUrl).toBe(
+      "http://localhost:8000/api/dashboard/media/wa_x/out-1.pdf",
+    );
+    expect(bubble?.documentName).toBe("recibo.pdf");
+  });
+
+  it("mensaje sin documento → documentUrl/documentName undefined", async () => {
+    const data = await runMessages([
+      { ui_type: "user_message", role: "user", content: "hola" },
+    ]);
+    const bubble = data?.find((m) => m.kind === "in");
+    expect(bubble?.documentUrl).toBeUndefined();
+    expect(bubble?.documentName).toBeUndefined();
+  });
+});
+
+describe("useChatMessages — media URLs llevan el token de auth por query", () => {
+  it("con sesión activa, imageUrl y documentUrl llevan ?access_token=", async () => {
+    // PM-01 del premortem: <img src> y <a target=_blank> no pueden llevar el
+    // header Bearer — en prod (Cognito) el GET /media daba 401. El backend
+    // acepta el JWT por query (mismo patrón que el SSE).
+    const { setAccessToken } = await import("@/shared/config");
+    setAccessToken("tok-123");
+    try {
+      const data = await runMessages([
+        {
+          ui_type: "user_message",
+          role: "user",
+          content: "foto",
+          image_url: "/api/dashboard/media/wa_x/r.jpg",
+        },
+        {
+          ui_type: "user_message",
+          role: "user",
+          content: "pdf",
+          document_url: "/api/dashboard/media/wa_x/d.pdf",
+          document_filename: "d.pdf",
+        },
+      ]);
+      const withImg = data?.find((m) => m.imageUrl);
+      const withDoc = data?.find((m) => m.documentUrl);
+      expect(withImg?.imageUrl).toBe(
+        "http://localhost:8000/api/dashboard/media/wa_x/r.jpg?access_token=tok-123",
+      );
+      expect(withDoc?.documentUrl).toBe(
+        "http://localhost:8000/api/dashboard/media/wa_x/d.pdf?access_token=tok-123",
+      );
+    } finally {
+      setAccessToken(null);
+    }
+  });
+
+  it("sin token (local sin Cognito) la URL queda limpia", async () => {
+    const data = await runMessages([
+      {
+        ui_type: "user_message",
+        role: "user",
+        content: "foto",
+        image_url: "/api/dashboard/media/wa_x/r.jpg",
+      },
+    ]);
+    expect(data?.find((m) => m.imageUrl)?.imageUrl).toBe(
+      "http://localhost:8000/api/dashboard/media/wa_x/r.jpg",
+    );
   });
 });

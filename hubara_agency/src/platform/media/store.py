@@ -39,29 +39,39 @@ logger = structlog.get_logger()
 RETENTION_RECEIPT = "receipt"  # comprobantes de pago → retención larga
 RETENTION_EPHEMERAL = "ephemeral"  # foto de producto / otro / visión fallida
 
+#: Kind del índice de media para PDFs inbound del cliente. No pasa por visión:
+#: la clasificación es determinista — en esta operación un PDF del cliente es
+#: (en la práctica) un comprobante de pago, misma política que el ruteo a
+#: humano del ingest.
+KIND_PDF_DOCUMENT = "pdf_document"
+
 
 def retention_class_for(kind: str | None) -> str:
-    """Clase de retención de una imagen según su clasificación de visión.
+    """Clase de retención de un media según su clasificación.
 
-    * ``comprobante_pago`` → ``receipt``: valor contable / disputa / chargeback,
-      se necesita mucho después del episodio → retención larga.
+    * ``comprobante_pago`` (visión) y ``pdf_document`` (determinista) →
+      ``receipt``: valor contable / disputa / chargeback, se necesita mucho
+      después del episodio → retención larga.
     * cualquier otra cosa (foto de producto, ``otro``, o visión fallida) →
       ``ephemeral``: la descripción de texto ya quedó en el historial, así que
       la imagen pierde valor al cerrar el episodio → retención corta.
     """
     return (
         RETENTION_RECEIPT
-        if kind == VISION_KIND_PAYMENT_RECEIPT
+        if kind in (VISION_KIND_PAYMENT_RECEIPT, KIND_PDF_DOCUMENT)
         else RETENTION_EPHEMERAL
     )
 
-# Extensión por mime — WhatsApp manda jpeg/png/webp. Default jpg.
+# Extensión por mime — WhatsApp manda jpeg/png/webp; `application/pdf` cubre
+# comprobantes de pago como documento (inbound del cliente y outbound del
+# operador). Default jpg.
 _MIME_EXT: dict[str, str] = {
     "image/jpeg": ".jpg",
     "image/jpg": ".jpg",
     "image/png": ".png",
     "image/webp": ".webp",
     "image/gif": ".gif",
+    "application/pdf": ".pdf",
 }
 
 # Charset permitido en segmentos de path que vienen del exterior (session_id +

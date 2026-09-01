@@ -147,6 +147,15 @@ async def send_typing_indicator(
 # =============================================================================
 
 
+#: Extensión del nombre del part multipart de `upload_media`, por mime.
+_UPLOAD_PART_EXT: dict[str, str] = {
+    "application/pdf": ".pdf",
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+}
+
+
 async def upload_media(
     phone_number_id: str,
     content: bytes,
@@ -170,7 +179,10 @@ async def upload_media(
     url = WHATSAPP_MEDIA_API_URL.format(phone_number_id=phone_number_id)
     headers = {"Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}"}
     # `type` debe matchear el mime real del archivo; `file` lleva los bytes.
-    files = {"file": ("upload", content, mime_type)}
+    # El nombre del part lleva la extensión del mime — para documentos Meta
+    # puede apoyarse en él; un `upload` pelado es ambiguo.
+    ext = _UPLOAD_PART_EXT.get(mime_type, "")
+    files = {"file": (f"upload{ext}", content, mime_type)}
     data = {"messaging_product": "whatsapp", "type": mime_type}
 
     try:

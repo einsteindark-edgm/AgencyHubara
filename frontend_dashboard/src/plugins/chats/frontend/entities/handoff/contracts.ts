@@ -21,6 +21,10 @@ export const humanMessageResponseSchema = z.object({
   content: z.string(),
   /** Presente cuando el operador mandó una foto — ref servible por el dashboard. */
   image_url: z.string().nullable().optional(),
+  /** Presentes cuando el adjunto enviado fue un documento (PDF): ref servible
+   *  + nombre visible del archivo. */
+  document_url: z.string().nullable().optional(),
+  document_filename: z.string().nullable().optional(),
 });
 
 /** Respuesta de la fase A (subida): el media_id de Meta + la url servible. */

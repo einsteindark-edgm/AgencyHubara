@@ -118,3 +118,27 @@ async def test_upload_media_fake_when_no_token(monkeypatch):
     monkeypatch.setattr(wa_client, "WHATSAPP_ACCESS_TOKEN", "", raising=True)
     media_id = await wa_client.upload_media("p", b"x", "image/jpeg")
     assert media_id.startswith("fake-media-")
+
+
+@pytest.mark.asyncio
+async def test_upload_media_part_filename_carries_extension(monkeypatch):
+    """PM-11: el part multipart iba como `upload` sin extensión — para
+    documentos, Meta puede apoyarse en el nombre; lo derivamos del mime."""
+    monkeypatch.setattr(wa_client, "WHATSAPP_ACCESS_TOKEN", "tok-123", raising=True)
+    captured: dict = {}
+    fake = _FakeResponse(200, {"id": "m-1"})
+
+    with patch.object(
+        wa_client.httpx, "AsyncClient", _capturing_async_client(captured, fake)
+    ):
+        await wa_client.upload_media("phone_42", b"%PDF-doc", "application/pdf")
+
+    part = captured["post_kwargs"]["files"]["file"]
+    assert part[0] == "upload.pdf"
+    assert part[2] == "application/pdf"
+
+    with patch.object(
+        wa_client.httpx, "AsyncClient", _capturing_async_client(captured, fake)
+    ):
+        await wa_client.upload_media("phone_42", b"\xff\xd8\xff", "image/jpeg")
+    assert captured["post_kwargs"]["files"]["file"][0] == "upload.jpg"

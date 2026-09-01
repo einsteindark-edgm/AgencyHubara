@@ -28,7 +28,7 @@ import {
   type ChatMessage,
 } from "@plugins/chats/frontend/entities/message";
 import { formatHourMinute } from "@/shared/lib";
-import { env } from "@/shared/config";
+import { env, getAccessToken } from "@/shared/config";
 import type {
   AvatarColor,
   ChatInboxItem,
@@ -156,11 +156,21 @@ function adaptSession(s: ChatSession): ChatInboxItem {
   };
 }
 
-/** El backend escribe `image_url` como ref relativa (`/api/dashboard/media/...`);
- *  la volvemos absoluta con la base del API para usarla directo en `<img src>`.
- *  Si ya viniera absoluta (http…), la respetamos. */
+/** El backend escribe `image_url`/`document_url` como ref relativa
+ *  (`/api/dashboard/media/...`); la volvemos absoluta con la base del API para
+ *  usarla directo en `<img src>` / `<a href>`. Si ya viniera absoluta (http…),
+ *  la respetamos.
+ *
+ *  Auth: ni `<img>` ni un `<a target=_blank>` pueden llevar el header Bearer —
+ *  en prod (Cognito) el GET /media daría 401. `require_auth` acepta el JWT por
+ *  query `access_token` (mismo patrón que el SSE), así que lo appendeamos
+ *  cuando hay sesión. Sin token (local sin Cognito) la URL queda limpia. */
 function toMediaUrl(ref: string): string {
-  return ref.startsWith("http") ? ref : `${env.apiUrl}${ref}`;
+  const abs = ref.startsWith("http") ? ref : `${env.apiUrl}${ref}`;
+  const token = getAccessToken();
+  if (!token) return abs;
+  const sep = abs.includes("?") ? "&" : "?";
+  return `${abs}${sep}access_token=${encodeURIComponent(token)}`;
 }
 
 function adaptMessage(m: ChatMessage): ChatMessageItem {
@@ -201,6 +211,8 @@ function adaptMessage(m: ChatMessage): ChatMessageItem {
     status: isOutbound ? "read" : undefined,
     author: isOutbound ? (sender === "human" ? "human" : "bot") : undefined,
     imageUrl: m.image_url ? toMediaUrl(m.image_url) : undefined,
+    documentUrl: m.document_url ? toMediaUrl(m.document_url) : undefined,
+    documentName: m.document_filename ?? undefined,
   };
 }
 

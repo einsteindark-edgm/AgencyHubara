@@ -74,6 +74,8 @@ let outboxItems: Array<{
   progress: number;
   attachmentId?: string;
   error?: string;
+  kind?: string;
+  filename?: string;
 }> = [];
 
 vi.mock("../model/useOutbox", () => ({
@@ -322,12 +324,48 @@ describe("ChatsComposer", () => {
     ).toBeInTheDocument();
   });
 
-  it("el input de archivo acepta solo JPEG/PNG", () => {
+  it("el input de archivo acepta JPEG/PNG y PDF (comprobantes)", () => {
     useSessionMock.mockReturnValue({ data: { active_agent_route: "humano" } });
     render(<ChatsComposer chatId="wa_X" />, { wrapper: makeWrapper() });
     const input = screen.getByTestId("chat-file-input") as HTMLInputElement;
-    expect(input.accept).toBe("image/jpeg,image/png");
+    expect(input.accept).toBe("image/jpeg,image/png,application/pdf");
     expect(input.multiple).toBe(true);
+  });
+
+  it("seleccionar un PDF lo encola en el outbox como cualquier adjunto", () => {
+    useSessionMock.mockReturnValue({ data: { active_agent_route: "humano" } });
+    render(<ChatsComposer chatId="wa_X" />, { wrapper: makeWrapper() });
+
+    const input = screen.getByTestId("chat-file-input") as HTMLInputElement;
+    const file = new File([new Uint8Array([0x25, 0x50, 0x44, 0x46])], "comprobante.pdf", {
+      type: "application/pdf",
+    });
+    fireEvent.change(input, { target: { files: [file] } });
+
+    expect(enqueueMock).toHaveBeenCalledTimes(1);
+    const [files] = enqueueMock.mock.calls[0];
+    expect(files[0].name).toBe("comprobante.pdf");
+  });
+
+  it("un item document del outbox pinta chip con el nombre del archivo (sin <img>)", () => {
+    useSessionMock.mockReturnValue({ data: { active_agent_route: "humano" } });
+    outboxItems = [
+      {
+        id: "d1",
+        previewUrl: "",
+        caption: "",
+        status: "uploading",
+        progress: 0.4,
+        kind: "document",
+        filename: "comprobante.pdf",
+      },
+    ];
+    const { container } = render(<ChatsComposer chatId="wa_X" />, {
+      wrapper: makeWrapper(),
+    });
+    expect(screen.getByText("comprobante.pdf")).toBeInTheDocument();
+    // PM-08: clase modificadora (no :has(), que falta en webviews viejos).
+    expect(container.querySelector(".outbox-item--doc")).not.toBeNull();
   });
 
   it("seleccionar una foto la encola en el outbox con el texto como caption", () => {

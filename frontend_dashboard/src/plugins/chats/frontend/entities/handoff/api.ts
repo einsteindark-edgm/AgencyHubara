@@ -47,8 +47,11 @@ export function uploadHumanMedia(
 
     // PM-F5: sin timeout, una red celular que muere sin cerrar el socket deja
     // el item en "uploading" con la barra congelada PARA SIEMPRE (el estado
-    // failed es el único con botón Reintentar).
-    xhr.timeout = 60_000;
+    // failed es el único con botón Reintentar). 60s alcanzaban para fotos
+    // comprimidas (<1 MB); un comprobante PDF de 8-10 MB en uplink celular
+    // necesita más → 60s base + 30s por MB, cap 5 min.
+    const sizeMb = Math.floor(blob.size / (1024 * 1024));
+    xhr.timeout = Math.min(60_000 + sizeMb * 30_000, 300_000);
     xhr.ontimeout = () =>
       reject(new Error("la subida tardó demasiado — revisá la señal y reintentá"));
 

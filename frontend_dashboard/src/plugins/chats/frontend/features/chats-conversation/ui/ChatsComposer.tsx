@@ -27,8 +27,11 @@ import { useOutbox } from "../model/useOutbox";
 import { ConfirmPaymentAction } from "./ConfirmPaymentAction";
 import { ScheduleDeliveryAction } from "./ScheduleDeliveryAction";
 
-/** Solo JPEG/PNG (lo que WhatsApp renderiza como `type=image`). */
+/** Solo JPEG/PNG (lo que WhatsApp renderiza como `type=image`). La cámara
+ *  solo produce imágenes; el picker de archivos también acepta PDF. */
 const ACCEPTED_IMAGE_TYPES = "image/jpeg,image/png";
+/** El picker de archivos suma PDF: comprobantes de pago (`type=document`). */
+const ACCEPTED_FILE_TYPES = "image/jpeg,image/png,application/pdf";
 
 interface Props {
   chatId: string | null;
@@ -182,7 +185,7 @@ function InterveneActiveComposer({
         <input
           ref={fileInputRef}
           type="file"
-          accept={ACCEPTED_IMAGE_TYPES}
+          accept={ACCEPTED_FILE_TYPES}
           multiple
           hidden
           data-testid="chat-file-input"
@@ -205,8 +208,8 @@ function InterveneActiveComposer({
           className="attach-btn"
           onClick={() => fileInputRef.current?.click()}
           disabled={!chatId}
-          title="Adjuntar foto"
-          aria-label="Adjuntar foto"
+          title="Adjuntar foto o PDF"
+          aria-label="Adjuntar foto o PDF"
         >
           <Icon.attach />
         </button>
@@ -273,10 +276,25 @@ interface OutboxStripProps {
 
 function OutboxStrip({ items, onRetry, onRemove }: OutboxStripProps) {
   return (
-    <div className="outbox-strip" aria-label="Fotos en envío">
+    <div className="outbox-strip" aria-label="Adjuntos en envío">
       {items.map((it) => (
-        <div key={it.id} className={`outbox-item is-${it.status}`}>
-          {it.previewUrl && <img src={it.previewUrl} alt="Foto en envío" />}
+        <div
+          key={it.id}
+          className={
+            `outbox-item is-${it.status}` +
+            (it.kind === "document" ? " outbox-item--doc" : "")
+          }
+        >
+          {it.kind === "document" ? (
+            <span className="outbox-doc" title={it.filename}>
+              <Icon.doc />
+              <span className="outbox-doc-name">
+                {it.filename ?? "Documento PDF"}
+              </span>
+            </span>
+          ) : (
+            it.previewUrl && <img src={it.previewUrl} alt="Foto en envío" />
+          )}
           {it.status === "uploading" && (
             <div className="outbox-progress" role="progressbar">
               <span style={{ width: `${Math.round(it.progress * 100)}%` }} />

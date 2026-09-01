@@ -80,11 +80,20 @@ async def fetch_media_metadata(media_id: str) -> dict | None:
     return None
 
 
-async def fetch_media_bytes(media_id: str) -> tuple[bytes, str] | None:
+async def fetch_media_bytes(
+    media_id: str, *, max_bytes: int | None = None
+) -> tuple[bytes, str] | None:
     """Resuelve metadata + descarga binarios. Devuelve `(bytes, mime_type)`
     o None si falla. mime_type viene del metadata response.
 
     Retry interno en metadata (paso 1) y en download (paso 2).
+
+    ``max_bytes``: cap de descarga (documentos inbound — WhatsApp permite
+    hasta 100 MB y sin cap un cliente infla la RAM del API y el vault). El
+    corte usa el ``file_size`` declarado del metadata ANTES de bajar los
+    bytes; el chequeo post-download cubre un ``file_size`` ausente o
+    mentiroso. Sin ``max_bytes`` (audio/visión) no hay límite — comportamiento
+    histórico.
     """
     meta = await fetch_media_metadata(media_id)
     if not meta:
@@ -94,6 +103,18 @@ async def fetch_media_bytes(media_id: str) -> tuple[bytes, str] | None:
     file_size = meta.get("file_size")
     if not url:
         logger.warning("fetch_media_bytes: no url in metadata", media_id=media_id)
+        return None
+    if (
+        max_bytes is not None
+        and isinstance(file_size, (int, float))
+        and file_size > max_bytes
+    ):
+        logger.warning(
+            "fetch_media_bytes.skipped_declared_too_large",
+            media_id=media_id,
+            declared_size=file_size,
+            max_bytes=max_bytes,
+        )
         return None
     headers = {"Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}"}
 
@@ -113,6 +134,15 @@ async def fetch_media_bytes(media_id: str) -> tuple[bytes, str] | None:
             continue
 
         if resp.status_code == 200:
+            if max_bytes is not None and len(resp.content) > max_bytes:
+                logger.warning(
+                    "fetch_media_bytes.dropped_body_too_large",
+                    media_id=media_id,
+                    bytes=len(resp.content),
+                    declared_size=file_size,
+                    max_bytes=max_bytes,
+                )
+                return None
             logger.info(
                 "fetch_media_bytes.ok",
                 media_id=media_id,

@@ -45,6 +45,10 @@ export interface ChatMessageItem {
    *  cliente). Cuando está presente, el bubble la renderiza. Ya viene
    *  absolutizada por el adaptador (`adaptMessage`) lista para `<img src>`. */
   imageUrl?: string;
+  /** URL absoluta de un documento PDF adjunto (comprobante típico) + su
+   *  nombre visible. El bubble pinta un chip clickeable que lo abre. */
+  documentUrl?: string;
+  documentName?: string;
 }
 
 export interface MemoryItem {
