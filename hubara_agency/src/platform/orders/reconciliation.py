@@ -442,6 +442,14 @@ def _rebuild_order_args(
         neighborhood=str(raw_shipping["neighborhood"]),
         address=str(raw_shipping["address"]),
         phone=str(raw_shipping["phone"]),
+        # Records pre-requisito 2026-08-31 no traen estos campos — defaults
+        # laxos (el retry no debe morir por un pedido viejo).
+        receiver_name=str(raw_shipping.get("receiver_name") or ""),
+        national_id=(
+            str(raw_shipping["national_id"])
+            if raw_shipping.get("national_id")
+            else None
+        ),
     )
     kwargs = {
         "payment_method": str(record["payment_method"]),

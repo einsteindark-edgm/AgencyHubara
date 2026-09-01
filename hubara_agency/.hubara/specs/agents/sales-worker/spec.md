@@ -198,6 +198,54 @@ del pedido (no se fija con `set_order_slot` ni se ofrece con picker).
 - AND que al finalizar el pago del pedido se escogen los colores
 - AND NO promete un color específico ni lo registra como slot del pedido
 
+### Requirement: Datos de envío — quién recibe (2026-08-31)
+
+El formulario de datos de envío (WhatsApp Flow `shipping_v2` y su fallback
+de texto plano) MUST incluir el **nombre de quien recibe** (obligatorio) y
+el **número de cédula de quien recibe** (opcional). `register_order` MUST
+rechazar (`registered=false`, `error_detail=missing_receiver_name`) un
+registro sin `shipping.receiver_name`; el nombre viaja a
+`shipping_address.first_name/last_name` de la draft order Medusa y la
+cédula (si está) a `metadata.receiver_national_id`.
+
+#### Scenario: Registro sin nombre de quien recibe
+
+- GIVEN el LLM invoca `register_order` sin `shipping.receiver_name`
+- WHEN la tool corre
+- THEN devuelve `registered=false` con `error_detail=missing_receiver_name` SIN llamar al port
+- AND el summary instruye recolectar el dato (`set_order_slot(nombre_recibe=...)`) y reintentar
+
+#### Scenario: Cédula opcional
+
+- GIVEN el cliente no dio cédula
+- WHEN se registra el pedido con los demás datos completos
+- THEN el registro procede normalmente y ningún campo de cédula viaja a Medusa
+
+### Requirement: Formas de pago informadas (2026-08-31)
+
+El sales-worker MUST informar exactamente TRES formas de pago, con sus
+condiciones: **contra entrega** (solo compras > $45.000 COP; el valor se
+calcula con la transportadora), **pago anticipado** (Nequi o llave
+3229041190) y **link de pago** (recargo adicional de 1,5% sobre la venta
+con Nequi o Bancolombia, 2,69% con otros bancos). "Tarjeta" ya NO es una
+opción directa (queda cubierta por el link de pago). Los ids de método en
+`register_order` son `cash_on_delivery` / `transfer` / `payment_link`
+(`card` queda solo como legacy de lectura).
+
+#### Scenario: Instrucciones deterministas de pago anticipado
+
+- GIVEN un pedido registrado con `payment_method=transfer`
+- WHEN el flush procesa el intent `payment_instructions`
+- THEN el mensaje incluye la llave/Nequi (default 3229041190, override `PAYMENT_NEQUI_NUMBER`) y, si `PAYMENT_TRANSFER_*` está completo en env, el bloque bancario verbatim
+- AND con la llave desactivada (`PAYMENT_NEQUI_NUMBER=""`) y sin config bancaria completa NO se envía nada (fail-closed)
+
+#### Scenario: Aviso determinista del link de pago
+
+- GIVEN un pedido registrado con `payment_method=payment_link`
+- WHEN el flush procesa el intent
+- THEN el cliente recibe el aviso de que el link llega por el chat, con el recargo (1,5% / 2,69%) y el valor sin recargo
+- AND el link real lo genera el humano tras la escalación `PAYMENT_VERIFICATION_PENDING`
+
 ### Requirement: Tools de UI rica (decision tools)
 
 El sales-worker MUST tener 10 decision tools que emiten UI intents

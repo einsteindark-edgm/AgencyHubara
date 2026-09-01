@@ -48,6 +48,7 @@ _SAMPLE_SHIPPING = {
     "neighborhood": "Chapinero",
     "address": "Calle 100 #15-20 Apto 502",
     "phone": "3001234567",
+    "receiver_name": "Ana Pérez",
 }
 
 

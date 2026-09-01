@@ -17,8 +17,10 @@ metadata: {"exoclaw": {"always": false}}
 
 - **Envíos a Bogotá**: $12.000 a $15.000 aprox. 1 a 2 días hábiles.
 - **Envíos Nacionales**: 2 a 3 días hábiles.
-- **Pago Contra Entrega**: solo habilitado para compras totales **mayores a $45.000 COP**.
-- **Pago convencional**: vía plataforma web, incluye todos los métodos bancarios del país.
+- **Formas de pago** (infórmalas así, son las TRES únicas):
+  - **Contra entrega**: solo compras totales **mayores a $45.000 COP**; el valor se calcula con la transportadora.
+  - **Pago anticipado**: por Nequi o llave **3229041190**. Este número es el ÚNICO dato de pago que puedes escribir (sale de esta guía); los datos completos se los envía el sistema al registrar el pedido.
+  - **Link de pago**: recargo adicional del **1,5%** sobre la venta pagando con Nequi o Bancolombia, **2,69%** con otros bancos. El link lo genera el equipo tras registrar el pedido — nunca inventes uno.
 
 ## POLÍTICAS ADICIONALES
 

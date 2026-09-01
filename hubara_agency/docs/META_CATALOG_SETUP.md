@@ -603,7 +603,7 @@ Si devuelve `(#100) Missing Permission` → el catálogo NO está asignado al Sy
 ### 13.2 Crear un Flow nuevo
 
 1. Click **`Create flow`**.
-2. **Name**: `Hubara — Datos de envío v1`
+2. **Name**: `Hubara — Datos de envío v2`
 3. **Categories**: marcá **`SIGN_UP`** (encaja mejor que `SURVEY`).
 4. **Template**: **`Start from scratch`**.
 5. **Endpoint URI / "Data endpoint"**:
@@ -617,7 +617,7 @@ Si devuelve `(#100) Missing Permission` → el catálogo NO está asignado al Sy
 
 1. Pestaña **`Edit JSON`** (arriba derecha).
 2. Borrá el JSON template autogenerado.
-3. Pegá el contenido de **`hubara_agency/docs/whatsapp_flows/shipping_v1.json`**.
+3. Pegá el contenido de **`hubara_agency/docs/whatsapp_flows/shipping_v2.json`**.
 4. Click **`Save`**.
 
 > Warning "comments not allowed" sobre `_comment_` → ignoralo. Warning "missing `data_api_version`" → **NO lo agregues** (convertiría el Flow en dynamic y forzaría endpoint; la ausencia es intencional).
@@ -625,7 +625,7 @@ Si devuelve `(#100) Missing Permission` → el catálogo NO está asignado al Sy
 ### 13.4 Validar y publicar
 
 1. **`Validate`** → verde (`Flow is valid`). Si error: comillas curvas al pegar, `version` = `"7.2"`, y **NO** haya `data_api_version`.
-2. **`Preview`** → completá los 5 campos, mirá el `nfm_reply` esperado: `{city, neighborhood, address, phone, payment_method, order_total_cop, items_summary}`.
+2. **`Preview`** → completá los 7 campos (cédula es opcional), mirá el `nfm_reply` esperado: `{city, neighborhood, address, phone, receiver_name, national_id, payment_method, order_total_cop, items_summary}`.
 3. **`Publish`** → 1–3 min (`DRAFT` → `PUBLISHED`).
 4. Copiá el **`Flow ID`** (~16 dígitos, en el header de la pestaña).
 
@@ -644,7 +644,7 @@ cd hubara_agency
 docker compose -f docker-compose.local.yml up -d --force-recreate hubara-worker-chats-sales
 ```
 
-Smoke test desde el chat: en la etapa de envío el agente abre el formulario nativo (botón "Completar datos" → modal 5 campos), NO texto plano.
+Smoke test desde el chat: en la etapa de envío el agente abre el formulario nativo (botón "Completar datos" → modal 7 campos, cédula opcional), NO texto plano.
 
 Si seguís viendo texto plano, verificá que el worker tomó la variable:
 ```bash
@@ -656,16 +656,16 @@ docker exec local-hubara-worker-chats-sales printenv META_FLOW_ID_SHIPPING
 Atrás de escena (el dev ya lo tiene wireado):
 
 1. Cliente apreta **`Confirmar datos`**.
-2. Meta manda webhook con `interactive.nfm_reply.response_json` (los 5 campos).
+2. Meta manda webhook con `interactive.nfm_reply.response_json` (los 7 campos).
 3. El parser (`src/plugins/chats/agent/sales/translate.py`) lo pasa a texto para el LLM.
 4. El LLM cierra con `verify_order_for_checkout` → `present_order_confirmation`.
 
 ### 13.7 Versionado / cambios futuros
 
-1. Editá `docs/whatsapp_flows/shipping_v1.json` local.
-2. Subilo al Flow Builder y republicá.
-3. Cada Publish genera **nueva versión** pero el `flow_id` **NO cambia** → `META_FLOW_ID_SHIPPING` se setea una vez.
-4. Rollback rápido: creá `shipping_v2`, publicá, y apuntá el env var al que quieras.
+1. Editá `docs/whatsapp_flows/shipping_v2.json` local (o creá `shipping_v3.json`).
+2. Subilo al Flow Builder y republicá — o mejor: renombrá la entry en `infra/whatsapp-provisioning/definitions/flows.json` (el CLI crea el flow nuevo, lo publica y resuelve el `flow_id` al SSM key).
+3. En el MISMO flow, cada Publish genera **nueva versión** y el `flow_id` **NO cambia**. Un flow NUEVO (rename) sí cambia el id → actualizá `META_FLOW_ID_SHIPPING` en SSM y recreá el worker.
+4. Rollback rápido: apuntá el env var al flow_id anterior (los flows viejos siguen publicados en el WABA).
 
 ---
 

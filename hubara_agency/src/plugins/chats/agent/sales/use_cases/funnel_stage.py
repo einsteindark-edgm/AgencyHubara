@@ -20,7 +20,8 @@ Contrato de etapas (cada una mapea 1:1 a un skill dir en
   * ``etapa_variantes`` — producto elegido; falta aroma, color o cantidad.
     Pickers, recomendación sensorial.
   * ``etapa_datos_envio`` — variantes completas; faltan datos de envío
-    (ciudad / dirección / teléfono / método de pago; barrio es opcional).
+    (ciudad / dirección / teléfono / nombre de quien recibe / método de
+    pago; barrio y cédula son opcionales).
   * ``etapa_cierre`` — todos los datos; falta verificar y registrar la orden.
   * ``etapa_postcierre`` — el episodio activo ya tiene ``order_id``:
     la orden es la fuente de verdad; acompañamiento post-venta.
@@ -55,10 +56,14 @@ ALL_STAGES: tuple[str, ...] = (
     STAGE_POSTCIERRE,
 )
 
-# Slots que completan cada bloque del funnel. `barrio` y `notas` son
-# opcionales a propósito (el guion los pide, pero no bloquean la etapa).
+# Slots que completan cada bloque del funnel. `barrio`, `cedula` y `notas`
+# son opcionales a propósito (el guion los pide, pero no bloquean la etapa).
+# `nombre_recibe` sí bloquea: la transportadora exige el nombre de quien
+# recibe (requisito 2026-08-31).
 _VARIANT_SLOTS: tuple[str, ...] = ("aroma", "color", "cantidad")
-_SHIPPING_SLOTS: tuple[str, ...] = ("ciudad", "direccion", "telefono", "metodo_pago")
+_SHIPPING_SLOTS: tuple[str, ...] = (
+    "ciudad", "direccion", "telefono", "nombre_recibe", "metodo_pago"
+)
 
 
 def resolve_funnel_stage(metadata: dict[str, Any]) -> str:

@@ -2,7 +2,7 @@
 traer `payment_options` dinámicas (2 ó 3 según total).
 
 Por qué importa: el Flow JSON de Meta (single-screen, ver
-`hubara_agency/docs/whatsapp_flows/shipping_v1.json`) bindea
+`hubara_agency/docs/whatsapp_flows/shipping_v2.json`) bindea
 `data-source: ${data.payment_options}` en el RadioButtonsGroup de método
 de pago. El operador NO necesita re-editar y re-publicar el Flow para
 cambiar las opciones de pago — esta lista, construida acá, se manda en
@@ -52,8 +52,10 @@ def _read_intent(vault, session_key: str) -> dict:
 
 @pytest.mark.asyncio
 async def test_payment_options_excludes_cod_below_45k(ctx, seeded_vault):
-    """Pedido chico ($17.000) → solo Tarjeta + Transferencia, sin contra
-    entrega (política Hubara: COD solo > $45.000 para asegurar margen)."""
+    """Pedido chico ($17.000) → solo pago anticipado + link de pago, sin
+    contra entrega (política Hubara: COD solo > $45.000 para asegurar
+    margen). Requisito 2026-08-31: 'tarjeta' ya NO es una opción — los
+    pagos con tarjeta van por el link de pago (con recargo)."""
     tool = RequestShippingDetailsTool(workspace=str(seeded_vault))
     result = json.loads(await tool.execute_with_context(
         ctx,
@@ -68,7 +70,7 @@ async def test_payment_options_excludes_cod_below_45k(ctx, seeded_vault):
     flow_data = intent["params"]["flow_action_data"]
     payment_options = flow_data["payment_options"]
     ids = [opt["id"] for opt in payment_options]
-    assert ids == ["card", "transfer"]
+    assert ids == ["transfer", "payment_link"]
     assert flow_data["show_cash_on_delivery"] is False
 
 
@@ -85,15 +87,15 @@ async def test_payment_options_excludes_cod_at_45k_boundary(ctx, seeded_vault):
     intent = _read_intent(seeded_vault, ctx.session_key)
     flow_data = intent["params"]["flow_action_data"]
     ids = [opt["id"] for opt in flow_data["payment_options"]]
-    assert ids == ["card", "transfer"]
+    assert ids == ["transfer", "payment_link"]
     assert flow_data["show_cash_on_delivery"] is False
 
 
 @pytest.mark.asyncio
 async def test_payment_options_includes_cod_over_45k(ctx, seeded_vault):
-    """Pedido grande ($90.000) → 3 opciones incluyendo contra entrega,
-    flag `show_cash_on_delivery` en true para que el Flow JSON pueda usar
-    data binding adicional si fuera necesario."""
+    """Pedido grande ($90.000) → 3 opciones con contra entrega PRIMERA
+    (orden del requisito 2026-08-31), flag `show_cash_on_delivery` en true
+    para data binding adicional del Flow si fuera necesario."""
     tool = RequestShippingDetailsTool(workspace=str(seeded_vault))
     await tool.execute_with_context(
         ctx,
@@ -104,14 +106,38 @@ async def test_payment_options_includes_cod_over_45k(ctx, seeded_vault):
     intent = _read_intent(seeded_vault, ctx.session_key)
     flow_data = intent["params"]["flow_action_data"]
     ids = [opt["id"] for opt in flow_data["payment_options"]]
-    assert ids == ["card", "transfer", "cash_on_delivery"]
+    assert ids == ["cash_on_delivery", "transfer", "payment_link"]
     assert flow_data["show_cash_on_delivery"] is True
 
     # Cada opción trae title amigable con emoji
     titles = {opt["id"]: opt["title"] for opt in flow_data["payment_options"]}
-    assert "Tarjeta" in titles["card"]
-    assert "Transferencia" in titles["transfer"]
     assert "Contra entrega" in titles["cash_on_delivery"]
+    assert "Pago anticipado" in titles["transfer"]
+    assert "Link de pago" in titles["payment_link"]
+
+
+@pytest.mark.asyncio
+async def test_payment_options_descriptions_inform_terms(ctx, seeded_vault):
+    """Requisito 2026-08-31 — cada forma de pago se informa con su condición:
+    contra entrega → el valor lo calcula la transportadora; anticipado →
+    Nequi o llave 3229041190; link de pago → recargo 1,5% (Nequi/
+    Bancolombia) o 2,69% (otros bancos)."""
+    tool = RequestShippingDetailsTool(workspace=str(seeded_vault))
+    await tool.execute_with_context(
+        ctx,
+        order_total_cop=90000,
+        items_summary="2× Velas grandes",
+    )
+
+    intent = _read_intent(seeded_vault, ctx.session_key)
+    options = intent["params"]["flow_action_data"]["payment_options"]
+    desc = {opt["id"]: opt["description"] for opt in options}
+    assert "transportadora" in desc["cash_on_delivery"].lower()
+    assert "Nequi" in desc["transfer"]
+    assert "3229041190" in desc["transfer"]
+    assert "llave" in desc["transfer"].lower()
+    assert "1,5%" in desc["payment_link"]
+    assert "2,69%" in desc["payment_link"]
 
 
 @pytest.mark.asyncio

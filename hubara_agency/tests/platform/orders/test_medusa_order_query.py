@@ -387,7 +387,8 @@ async def test_get_order_detail_full_shape(adapter):
     assert detail.shipping_address.address_2 == "Chapinero"
     assert detail.subtotal_cop == 119500
     assert detail.shipping_cop == 5000
-    assert detail.payment_method_label == "Transferencia"
+    # Requisito 2026-08-31: `transfer` se lee como pago anticipado
+    assert detail.payment_method_label == "Pago anticipado (Nequi)"
     # Timeline minimo: solo 'created' (no transactions ni fulfillments)
     assert len(detail.timeline) == 1
     assert detail.timeline[0].type == "created"
@@ -399,6 +400,21 @@ async def test_get_order_detail_full_shape(adapter):
     assert "agent" in detail.data_completeness_missing
     assert "customer_history" in detail.data_completeness_missing
     assert "tracking_number" in detail.data_completeness_missing
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_get_order_detail_payment_link_label(adapter):
+    """`payment_link` (método nuevo, requisito 2026-08-31) tiene label
+    humano en el panel; `card` legacy conserva el suyo."""
+    respx.get(f"{_BASE_URL}/admin/orders/order_01HX").mock(
+        return_value=Response(
+            200, json={"order": _sample_order(payment_method="payment_link")}
+        )
+    )
+    detail = await adapter.get("order_01HX")
+    assert detail is not None
+    assert detail.payment_method_label == "Link de pago"
 
 
 @pytest.mark.asyncio

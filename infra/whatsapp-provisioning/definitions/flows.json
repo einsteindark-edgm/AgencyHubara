@@ -1,10 +1,10 @@
 [
   {
-    "name": "Hubara — Datos de envío v1",
+    "name": "Hubara — Datos de envío v2",
     "categories": ["SIGN_UP"],
-    "json": "hubara_agency/docs/whatsapp_flows/shipping_v1.json",
+    "json": "hubara_agency/docs/whatsapp_flows/shipping_v2.json",
     "ssm_key": "META_FLOW_ID_SHIPPING",
     "publish": true,
-    "semantics": "Formulario nativo de datos de envío (ciudad/barrio/dirección/teléfono/pago). Endpoint-less v7.2."
+    "semantics": "Formulario nativo de datos de envío (ciudad/barrio/dirección/teléfono/quién recibe/cédula opcional/pago). Endpoint-less v7.2. v2 (2026-08-31): + nombre de quien recibe (required) + cédula (opcional) + payment_options con description (contra entrega/anticipado Nequi-llave/link de pago con recargo)."
   }
 ]

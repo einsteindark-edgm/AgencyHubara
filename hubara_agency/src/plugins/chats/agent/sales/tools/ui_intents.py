@@ -48,6 +48,11 @@ from src.platform.catalog import CatalogPort, ProductNotFoundError, deslugify
 from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.state import FilesystemMetadataStore
 from src.platform.whatsapp import limits as wa_limits
+from src.plugins.chats.agent.sales.config.payments import (
+    PAYMENT_LINK_SURCHARGE_NEQUI_BANCOLOMBIA,
+    PAYMENT_LINK_SURCHARGE_OTHER_BANKS,
+    get_nequi_number,
+)
 from src.sdk.mediakit import derive_image_label
 
 
@@ -552,7 +557,8 @@ class RequestShippingDetailsTool(ToolBase):
     name = "request_shipping_details"
     description = (
         "Pide al cliente los datos de envío (ciudad, barrio, dirección, "
-        "teléfono, método de pago). Llámala UNA SOLA VEZ por sesión, "
+        "teléfono, nombre de quien recibe, cédula opcional, método de "
+        "pago). Llámala UNA SOLA VEZ por sesión, "
         "después de que el cliente confirmó qué quiere comprar. El "
         "sistema le manda un mensaje de texto enumerando los campos — "
         "el cliente responde libremente por chat y tú vas armando los "
@@ -601,17 +607,33 @@ class RequestShippingDetailsTool(ToolBase):
         # Opciones de pago dinámicas. El RadioButtonsGroup del Flow JSON
         # bindea `data-source: ${data.payment_options}`, así que con cambiar
         # esta lista se cambia lo que ve el cliente — sin republicar el Flow
-        # en Meta. "Contra entrega" solo aparece si el total > $45.000 COP
-        # (política Hubara — pedidos chicos van prepago para asegurar el
-        # margen vs el costo del envío).
-        payment_options: list[dict[str, str]] = [
-            {"id": "card", "title": "💳 Tarjeta"},
-            {"id": "transfer", "title": "🏦 Transferencia"},
-        ]
+        # en Meta. Las TRES formas (requisito 2026-08-31): contra entrega /
+        # pago anticipado (Nequi o llave) / link de pago (con recargo).
+        # "Contra entrega" solo aparece si el total > $45.000 COP (política
+        # Hubara — pedidos chicos van prepago para asegurar el margen vs el
+        # costo del envío).
+        payment_options: list[dict[str, str]] = []
         if order_total_cop > 45000:
-            payment_options.append(
-                {"id": "cash_on_delivery", "title": "💵 Contra entrega"}
-            )
+            payment_options.append({
+                "id": "cash_on_delivery",
+                "title": "💵 Contra entrega",
+                "description": "El valor se calcula con la transportadora.",
+            })
+        payment_options.append({
+            "id": "transfer",
+            "title": "📲 Pago anticipado (Nequi)",
+            "description": f"Nequi o llave {get_nequi_number()}.",
+        })
+        payment_options.append({
+            "id": "payment_link",
+            "title": "🔗 Link de pago",
+            "description": (
+                "Recargo adicional: "
+                f"{PAYMENT_LINK_SURCHARGE_NEQUI_BANCOLOMBIA} con Nequi o "
+                f"Bancolombia, {PAYMENT_LINK_SURCHARGE_OTHER_BANKS} con "
+                "otros bancos."
+            ),
+        })
 
         intent = {
             "kind": "shipping_flow",
@@ -655,7 +677,8 @@ class RequestShippingDetailsTool(ToolBase):
             "flow_token": flow_token,
             "summary": (
                 "Mensaje pidiendo datos de envío enviado al cliente "
-                "(ciudad, barrio, dirección, teléfono, método de pago). "
+                "(ciudad, barrio, dirección, teléfono, nombre de quien "
+                "recibe, cédula opcional, método de pago). "
                 "El cliente responde por texto — tú vas recolectando los "
                 "campos en los próximos turnos. Cuando los tengas TODOS, "
                 "continúa con verify_order_for_checkout. NO pidas los "
@@ -725,7 +748,7 @@ class PresentOrderConfirmationTool(ToolBase):
             },
             "payment_method": {
                 "type": "string",
-                "enum": ["card", "transfer", "cash_on_delivery"],
+                "enum": ["transfer", "payment_link", "cash_on_delivery"],
                 "description": "Método de pago elegido por el cliente.",
             },
         },

@@ -525,8 +525,11 @@ class MedusaOrderQuery:
 
         # ---- Payment method label ----
         pay_method_raw = metadata.get("payment_method")
+        # `card` y "Transferencia" son legacy (pre-requisito 2026-08-31);
+        # los métodos vigentes: transfer (anticipado) / payment_link / cod.
         payment_method_label = {
-            "transfer": "Transferencia",
+            "transfer": "Pago anticipado (Nequi)",
+            "payment_link": "Link de pago",
             "card": "Tarjeta",
             "cash_on_delivery": "Contra entrega",
         }.get(pay_method_raw)

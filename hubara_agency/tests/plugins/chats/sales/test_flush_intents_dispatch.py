@@ -374,12 +374,24 @@ async def test_shipping_flow_placeholder_sends_plain_text_not_buttons(
     wa_client.send_text.assert_awaited_once()
 
     text = wa_client.send_text.call_args.args[2]
-    # Cinco campos canónicos
+    # Campos canónicos (requisito 2026-08-31: + nombre de quien recibe y
+    # cédula opcional)
     assert "Ciudad" in text
     assert "Barrio" in text
     assert "Dirección" in text
     assert "Teléfono" in text
+    assert "quien recibe" in text.lower()
+    assert "Cédula" in text
+    assert "opcional" in text.lower()
     assert "Método de pago" in text
+    # Formas de pago informadas con sus condiciones (requisito 2026-08-31)
+    assert "Nequi" in text
+    assert "3229041190" in text
+    assert "llave" in text.lower()
+    assert "1,5%" in text
+    assert "2,69%" in text
+    # El wording viejo (tarjeta como método directo) ya no va
+    assert "tarjeta" not in text.lower()
     # NO mencionar opción de compartir ubicación
     assert "ubicación" not in text.lower()
     assert "compartir" not in text.lower()
@@ -412,6 +424,23 @@ async def test_shipping_flow_placeholder_offers_cod_when_total_over_45k(
 
     text = wa_client.send_text.call_args.args[2]
     assert "contra entrega" in text.lower()
+    # Condición del requisito 2026-08-31: el valor se calcula con la
+    # transportadora.
+    assert "transportadora" in text.lower()
+
+
+def test_humanize_payment_maps_new_methods():
+    """`payment_link` es método nuevo; `transfer` ahora se lee como pago
+    anticipado; `card` queda como legacy (órdenes viejas)."""
+    from src.plugins.chats.agent.sales.activities.flush_ui_intents import (
+        _humanize_payment,
+    )
+
+    assert _humanize_payment("payment_link") == "Link de pago"
+    assert "anticipado" in _humanize_payment("transfer").lower()
+    assert _humanize_payment("cash_on_delivery") == "Contra entrega"
+    assert _humanize_payment("card") == "Tarjeta"
+    assert _humanize_payment(None) == "Por confirmar"
 
 
 @pytest.mark.asyncio

@@ -1,59 +1,32 @@
 # WhatsApp Flows — Hubara
 
-Cada `*.flow.json` define un formulario nativo dentro de WhatsApp que el
-agente puede mandar al cliente vía `send_flow` (A.9 del PLAN.md HU-002).
+**La definición canónica de los Flows NO vive acá.** Vive en
+`hubara_agency/docs/whatsapp_flows/*.json`, y se crea/publica con el CLI de
+provisioning (`infra/whatsapp-provisioning/whatsapp_provision.py`, paso
+`flows`, definiciones en `infra/whatsapp-provisioning/definitions/flows.json`).
 
-## Flows definidos
+| Flow (nombre en Meta) | JSON canónico | SSM key |
+|---|---|---|
+| Hubara — Datos de envío v2 | `docs/whatsapp_flows/shipping_v2.json` | `META_FLOW_ID_SHIPPING` |
 
-| Archivo | Propósito | Pantallas | Screen inicial |
-|---|---|---|---|
-| `shipping_details.flow.json` | Recolección de datos de envío | SHIPPING_DETAILS → CONFIRM | SHIPPING_DETAILS |
+## Cómo funciona en runtime
 
-## Lifecycle de publicación
+1. `RequestShippingDetailsTool` (plugin chats/sales) encola un intent
+   `shipping_flow` con `flow_action_data` (total, resumen, `payment_options`
+   dinámicas con título + descripción).
+2. `flush_pending_ui_intents_activity` resuelve el `flow_id` desde env
+   `META_FLOW_ID_SHIPPING` y hace `send_flow`. Sin env (o si Meta rechaza),
+   cae a la recolección conversacional por texto plano.
+3. El cliente completa el form → webhook `interactive.nfm_reply` →
+   `translate.py` lo proyecta como `k=v` al prompt del LLM.
 
-1. **Diseñar**: editar el `*.flow.json` (versionar en git).
-2. **Validar** localmente con Meta Flow Builder o `playground.whatsapp.com/flows`.
-3. **Publicar** via Graph API (`POST /v23.0/{waba_id}/flows`):
-   ```bash
-   curl -X POST https://graph.facebook.com/v23.0/{waba_id}/flows \
-     -H "Authorization: Bearer ${WHATSAPP_ACCESS_TOKEN}" \
-     -F "name=shipping_details_v1" \
-     -F "categories=[\"OTHER\"]" \
-     -F "file=@shipping_details.flow.json"
-   ```
-4. **Approve**: Meta revisa el JSON. 1-3 días.
-5. **Configurar data endpoint**: el Flow llama al endpoint
-   `POST /api/whatsapp/flows/shipping/data` para resolver `cities` dinámico
-   y validar `show_cash_on_delivery`.
-6. **Anotar el `flow_id`** que devuelve Meta en `agents_admin` config
-   (`shipping_flow_id`).
-7. **Actualizar `RequestShippingDetailsTool`** para usar el `flow_id` real
-   (hoy tiene placeholder `FLOW_ID_SHIPPING_PLACEHOLDER`).
+## Cambiar un Flow ya publicado
 
-## Versionado
-
-Cuando cambies un Flow ya publicado:
-- Si el cambio es compatible (cambiar texto, agregar campo opcional):
-  re-publicás la misma `name` con nueva version.
-- Si rompe schema (sacar campo required, cambiar tipo): publicás como
-  `shipping_details_v2` y actualizás `RequestShippingDetailsTool` para
-  apuntar al nuevo id.
-
-## Encryption (data endpoint)
-
-El data endpoint debe:
-- Validar `X-Hub-Signature-256` con `app_secret`.
-- Devolver respuestas cifradas RSA. Generar par de claves, registrar la
-  pública en `agents_admin.shipping_flow_public_key`. Privada en secrets
-  manager.
-
-Ver Meta docs: https://developers.facebook.com/docs/whatsapp/flows/reference/flowsencryption
-
-## Testing
-
-```bash
-# Modo "draft" — envía el Flow en modo preview sin pasar review
-flow_action_payload.mode = "draft"
-```
-
-Los QA en sandbox sirven para validar layout antes de submit a review.
+* **Solo opciones de pago** (títulos/descripciones): editar
+  `RequestShippingDetailsTool` — el RadioButtonsGroup bindea
+  `${data.payment_options}`, no hace falta republicar.
+* **Campos del formulario**: editar el JSON canónico, subirlo como flow
+  NUEVO (rename `vN+1` en `definitions/flows.json` → el provisioning lo
+  crea, publica y resuelve el nuevo `flow_id` al SSM key) o vía Flow
+  Builder manual (runbook: `docs/META_CATALOG_SETUP.md` §Fase 13).
+  Tras cambiar el flow_id: push a SSM + recrear el worker chats-sales.

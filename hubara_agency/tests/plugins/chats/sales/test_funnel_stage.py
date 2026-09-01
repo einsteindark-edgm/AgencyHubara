@@ -95,7 +95,10 @@ def test_partial_shipping_is_datos_envio() -> None:
     assert resolve_funnel_stage(meta) == STAGE_DATOS_ENVIO
 
 
-def test_all_data_is_cierre() -> None:
+def test_shipping_without_receiver_name_is_datos_envio() -> None:
+    """El nombre de quien recibe es un dato de envío OBLIGATORIO (requisito
+    2026-08-31): sin él la etapa NO avanza a cierre — el guion de datos de
+    envío sigue inyectado para que el agente lo pida."""
     meta = _meta_with_slots(
         {
             "producto": "Plegaria de Luz",
@@ -106,6 +109,41 @@ def test_all_data_is_cierre() -> None:
             "direccion": "Calle 123 #45-6",
             "telefono": "3125551234",
             "metodo_pago": "transferencia",
+        }
+    )
+    assert resolve_funnel_stage(meta) == STAGE_DATOS_ENVIO
+
+
+def test_all_data_is_cierre() -> None:
+    meta = _meta_with_slots(
+        {
+            "producto": "Plegaria de Luz",
+            "color": "Lila",
+            "aroma": "Café",
+            "cantidad": "1",
+            "ciudad": "Bogotá",
+            "direccion": "Calle 123 #45-6",
+            "telefono": "3125551234",
+            "nombre_recibe": "Ana Pérez",
+            "metodo_pago": "transferencia",
+        }
+    )
+    assert resolve_funnel_stage(meta) == STAGE_CIERRE
+
+
+def test_cedula_is_optional_for_cierre() -> None:
+    """La cédula de quien recibe es opcional: su ausencia no bloquea la etapa."""
+    meta = _meta_with_slots(
+        {
+            "producto": "Plegaria de Luz",
+            "color": "Lila",
+            "aroma": "Café",
+            "cantidad": "1",
+            "ciudad": "Bogotá",
+            "direccion": "Calle 123 #45-6",
+            "telefono": "3125551234",
+            "nombre_recibe": "Ana Pérez",
+            "metodo_pago": "contra entrega",
         }
     )
     assert resolve_funnel_stage(meta) == STAGE_CIERRE
