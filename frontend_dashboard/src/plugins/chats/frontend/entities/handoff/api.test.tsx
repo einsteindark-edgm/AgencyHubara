@@ -209,3 +209,61 @@ describe("useReturnToBotMutation", () => {
     expect(data?.active_route).toBe("remarketing");
   });
 });
+
+describe("humanMessageResponseSchema — adjunto documento (PDF)", () => {
+  it("conserva document_url y document_filename del backend", async () => {
+    const { humanMessageResponseSchema } = await import("./contracts");
+    const parsed = humanMessageResponseSchema.parse({
+      ok: true,
+      role: "assistant",
+      sender: "human",
+      content: "Ahí va",
+      image_url: null,
+      document_url: "/api/dashboard/media/wa_x/out-1.pdf",
+      document_filename: "comprobante.pdf",
+    });
+    expect(parsed.document_url).toBe("/api/dashboard/media/wa_x/out-1.pdf");
+    expect(parsed.document_filename).toBe("comprobante.pdf");
+  });
+});
+
+describe("uploadHumanMedia — timeout del XHR escala con el tamaño (PDFs)", () => {
+  class FakeXhr {
+    static last: FakeXhr | null = null;
+    upload: { onprogress: ((e: unknown) => void) | null } = { onprogress: null };
+    timeout = 0;
+    status = 200;
+    responseText = JSON.stringify({
+      ok: true,
+      attachment_id: "att-1",
+      media_ref: "/api/dashboard/media/wa_x/out-1.pdf",
+    });
+    onload: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    ontimeout: (() => void) | null = null;
+    open() {}
+    setRequestHeader() {}
+    send() {
+      FakeXhr.last = this;
+      this.onload?.();
+    }
+  }
+
+  it("8 MB → 300s (cap); un blob chico conserva los 60s", async () => {
+    const { uploadHumanMedia } = await import("./api");
+    vi.stubGlobal("XMLHttpRequest", FakeXhr as unknown as typeof XMLHttpRequest);
+    try {
+      await uploadHumanMedia(
+        "wa_x",
+        new Blob([new ArrayBuffer(8 * 1024 * 1024)]),
+        "comprobante.pdf",
+      );
+      expect(FakeXhr.last?.timeout).toBe(300_000);
+
+      await uploadHumanMedia("wa_x", new Blob([new ArrayBuffer(10)]), "f.jpg");
+      expect(FakeXhr.last?.timeout).toBe(60_000);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});

@@ -226,3 +226,51 @@ def test_append_human_event_interleaves_with_user_and_assistant_events(tmp_path)
     # 2do evento es del bot, sin marker sender
     assert events[1]["role"] == "assistant"
     assert "sender" not in events[1]
+
+def test_append_human_event_persists_document_fields_when_provided(tmp_path):
+    """El operador puede mandar un PDF (comprobante) desde el dashboard: con
+    `document_url` + `document_filename` el evento humano queda re-renderizable
+    como chip de documento (simetría con `image_url` para fotos)."""
+    store = FilesystemMessageHistoryStore(tmp_path)
+    store.append_human_event(
+        "wa_1",
+        "Te adjunto el comprobante",
+        document_url="/api/dashboard/media/wa_1/out-abc.pdf",
+        document_filename="comprobante.pdf",
+    )
+
+    log = tmp_path / "wa_1" / "sessions" / "wa_1.jsonl"
+    parsed = json.loads(log.read_text(encoding="utf-8").strip())
+    assert parsed["sender"] == "human"
+    assert parsed["document_url"] == "/api/dashboard/media/wa_1/out-abc.pdf"
+    assert parsed["document_filename"] == "comprobante.pdf"
+    assert "image_url" not in parsed
+
+
+def test_append_human_event_omits_document_fields_when_absent(tmp_path):
+    store = FilesystemMessageHistoryStore(tmp_path)
+    store.append_human_event("wa_1", "solo texto")
+
+    log = tmp_path / "wa_1" / "sessions" / "wa_1.jsonl"
+    parsed = json.loads(log.read_text(encoding="utf-8").strip())
+    assert "document_url" not in parsed
+    assert "document_filename" not in parsed
+
+
+def test_append_user_event_persists_document_fields_when_provided(tmp_path):
+    """El CLIENTE manda su comprobante PDF por WhatsApp: el ingest lo persiste
+    y el evento user referencia el documento para que el operador lo abra
+    desde la burbuja (simetría con `image_url` inbound)."""
+    store = FilesystemMessageHistoryStore(tmp_path)
+    store.append_user_event(
+        "wa_1",
+        "[el cliente envió un documento PDF: comprobante.pdf]",
+        document_url="/api/dashboard/media/wa_1/media-9.pdf",
+        document_filename="comprobante.pdf",
+    )
+
+    log = tmp_path / "wa_1" / "sessions" / "wa_1.jsonl"
+    parsed = json.loads(log.read_text(encoding="utf-8").strip())
+    assert parsed["role"] == "user"
+    assert parsed["document_url"] == "/api/dashboard/media/wa_1/media-9.pdf"
+    assert parsed["document_filename"] == "comprobante.pdf"

@@ -74,6 +74,20 @@ export function ChatsBubble({ message: m }: Props) {
           />
         </a>
       )}
+      {m.documentUrl && (
+        <a
+          className="bubble-doc"
+          href={m.documentUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          title="Abrir el documento"
+        >
+          <Icon.doc />
+          <span className="bubble-doc-name">
+            {m.documentName ?? "Documento PDF"}
+          </span>
+        </a>
+      )}
       {m.text}
       <div className="meta">
         {m.time}

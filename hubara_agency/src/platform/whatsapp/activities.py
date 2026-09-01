@@ -290,6 +290,63 @@ async def send_image_to_session(
     return result
 
 
+async def send_document_to_session(
+    session_id: str,
+    media_id: str,
+    caption: str | None = None,
+    filename: str | None = None,
+) -> OutboundResult:
+    """Envía un documento (PDF ya subido a Meta, referenciado por `media_id`)
+    al cliente de `session_id`.
+
+    Espejo de `send_image_to_session` para `type=document` de WhatsApp — lo usa
+    el dashboard handoff para que el operador mande comprobantes de pago en
+    PDF. `filename` es el nombre visible del archivo en la burbuja del cliente;
+    `caption` el texto que la acompaña.
+    """
+    from_number = session_id.replace(WHATSAPP_SESSION_PREFIX, "")
+
+    phone_number_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
+    if not phone_number_id:
+        raise RuntimeError("WHATSAPP_PHONE_NUMBER_ID not configured")
+
+    metadata = _read_metadata(session_id)
+    phone_number_id = metadata.get("phone_number_id", phone_number_id)
+
+    payload = whatsapp_client.wa_dtos.DocumentOutbound(
+        media_id=media_id, caption=caption, filename=filename
+    )
+    result = await whatsapp_client.send_document(phone_number_id, from_number, payload)
+
+    # Registro del outbound (simetría con imagen/texto) — sin esto los PDFs del
+    # operador son invisibles para cost-tracking / analytics / lead_state.
+    if result.ok:
+        fresh = _read_metadata(session_id)
+        if not fresh and metadata:
+            # PM2-B2: lectura fresca vacía para una sesión con datos — escribir
+            # el dict mutado pisaría active_route/episodes. Log best-effort.
+            log.error(
+                "send_document outbound log skipped: fresh metadata read came "
+                "back empty for a session that had data",
+                session_id=session_id,
+            )
+            return result
+        log_entry = OutboundLogEntry(
+            sent_at_ms=_now_ms(),
+            wa_message_id=result.wa_message_id or "",
+            kind="document",
+            template_name=None,
+            pricing=None,
+            cost_usd_micros=None,
+            rate_card_version=None,
+        )
+        _append_outbound_to_active_episode(fresh, log_entry)
+        fresh["last_outbound"] = asdict(log_entry)
+        _write_metadata(session_id, fresh)
+
+    return result
+
+
 @activity.defn(name="send_whatsapp_message_activity")
 @with_heartbeat(every=10)
 async def send_whatsapp_message_activity(session_id: str, message: str) -> None:

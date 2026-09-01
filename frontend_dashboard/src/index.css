@@ -558,6 +558,23 @@ h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.02em; margin: 0; }
 }
 .bubble-img:hover { filter: brightness(1.06); }
 
+/* Documento adjunto (comprobante PDF) — chip clickeable con el nombre del
+   archivo; click → abre el PDF en otra pestaña. Vale para inbound (cliente)
+   y outbound (operador). */
+.bubble-doc {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 6px; padding: 8px 10px;
+  max-width: 260px; border-radius: 10px;
+  background: rgba(255,255,255,0.08);
+  color: inherit; text-decoration: none; cursor: pointer;
+}
+.bubble-doc:hover { background: rgba(255,255,255,0.14); }
+.bubble-doc svg { width: 18px; height: 18px; flex: 0 0 auto; }
+.bubble-doc-name {
+  font-size: 12.5px; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Composer */
 .composer {
   flex: 0 0 auto;
@@ -616,6 +633,20 @@ h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.02em; margin: 0; }
 }
 .outbox-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .outbox-item.is-failed img { opacity: 0.4; }
+/* Item PDF de la tira: chip con nombre en vez de miniatura (no hay preview).
+   Clase modificadora (no :has()) — los webviews Android viejos no lo soportan
+   y el chip colapsaría a la caja de 64px. */
+.outbox-item--doc { width: auto; max-width: 180px; }
+.outbox-doc {
+  display: flex; align-items: center; gap: 6px;
+  height: 100%; padding: 0 10px; color: var(--fg-muted);
+}
+.outbox-doc svg { width: 16px; height: 16px; flex: 0 0 auto; }
+.outbox-doc-name {
+  font-size: 11px; max-width: 130px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.outbox-item.is-failed .outbox-doc { opacity: 0.4; }
 .outbox-progress {
   position: absolute; left: 0; right: 0; bottom: 0; height: 3px;
   background: rgba(255,255,255,0.15);

@@ -28,6 +28,7 @@ Reusan helpers extraídos en este mismo PR:
 """
 from __future__ import annotations
 
+import re
 import time
 import uuid
 from typing import Annotated, Literal
@@ -61,6 +62,7 @@ from src.platform.temporal.dispatcher import (
     terminate_session_workflows,
 )
 from src.platform.whatsapp.activities import (
+    send_document_to_session,
     send_image_to_session,
     send_message_to_session,
 )
@@ -70,10 +72,19 @@ from src.platform.state import FilesystemMetadataStore
 #: Meta los trata distinto (sticker/animación) — fuera de scope: solo fotos.
 _ALLOWED_IMAGE_MIMES: frozenset[str] = frozenset({"image/jpeg", "image/png"})
 
+#: Mimes que se envían como `type=document`. Solo PDF: es el formato de los
+#: comprobantes de pago que exportan las apps bancarias — el caso que motivó
+#: aceptar documentos en el chat.
+_ALLOWED_DOCUMENT_MIMES: frozenset[str] = frozenset({"application/pdf"})
+
 #: Límite de tamaño de imagen post-compresión (5 MB — el máximo de Meta para
 #: `type=image`). El frontend comprime antes de subir, así que en la práctica
 #: rara vez se acerca; esto es la red de seguridad server-side.
 _MAX_IMAGE_BYTES: int = 5 * 1024 * 1024
+
+#: Límite para PDFs. Meta acepta documentos hasta 100 MB, pero un comprobante
+#: bancario pesa KBs — 10 MB corta abuso sin molestar ningún caso real.
+_MAX_DOCUMENT_BYTES: int = 10 * 1024 * 1024
 
 logger = structlog.get_logger()
 
@@ -160,6 +171,10 @@ class HumanMessageResponse(BaseModel):
     sender: str
     content: str
     image_url: str | None = None
+    #: Poblados cuando el attachment enviado es un documento (PDF): ref
+    #: servible por el dashboard + nombre visible del archivo.
+    document_url: str | None = None
+    document_filename: str | None = None
 
 
 # ---------- Helpers ----------
@@ -333,6 +348,27 @@ def _sniff_is_image(content: bytes) -> bool:
     )
 
 
+def _sniff_is_pdf(content: bytes) -> bool:
+    """Simetría con `_sniff_is_image`: los bytes deben abrir con `%PDF-`."""
+    return content.startswith(b"%PDF-")
+
+
+def _display_filename(raw: str | None) -> str:
+    """Nombre VISIBLE del documento (lo ve el cliente en WhatsApp y el
+    operador en la burbuja). Viene del multipart, o sea del cliente HTTP:
+    se descartan componentes de path, control chars y `..`, con default
+    servible. NO se usa para rutas de filesystem (eso es el token uuid de
+    `persist_outbound_image`)."""
+    name = (raw or "").replace("\\", "/").rsplit("/", 1)[-1]
+    name = re.sub(r"[\x00-\x1f]", "", name).replace("..", ".").strip()
+    name = name[:120]
+    if not name or name.startswith("."):
+        return "documento.pdf"
+    if not name.lower().endswith(".pdf"):
+        name += ".pdf"
+    return name
+
+
 #: PM-B6: cap de entradas en `metadata.outbound_media` (mismo espíritu que el
 #: cap de 200 en `sent_human_message_ids`). Los media_id de Meta expiran a los
 #: ~30 días; conservar los últimos 100 sobra para cualquier retry razonable.
@@ -373,38 +409,49 @@ async def upload_human_media(
     """
     _require_safe_session_id(session_id)
     data = metadata_store.read(session_id)
-    _require_humano_route(data, session_id, "subir fotos")
+    _require_humano_route(data, session_id, "subir archivos")
 
     mime = (file.content_type or "").split(";")[0].strip().lower()
-    if mime not in _ALLOWED_IMAGE_MIMES:
+    is_document = mime in _ALLOWED_DOCUMENT_MIMES
+    if mime not in _ALLOWED_IMAGE_MIMES and not is_document:
         raise HTTPException(
             status_code=415,
-            detail=f"Tipo no soportado: {mime!r}. Solo JPEG o PNG.",
+            detail=f"Tipo no soportado: {mime!r}. Solo JPEG, PNG o PDF.",
         )
+    max_bytes = _MAX_DOCUMENT_BYTES if is_document else _MAX_IMAGE_BYTES
 
     # PM2-B6: rechazar por tamaño ANTES de materializar los bytes en RAM.
     # Starlette spoolea el multipart a disco y expone `size`; `file.read()`
     # de un body gigante (bug del compresor / cliente malicioso autenticado)
     # inflaría la memoria del contenedor antes del check.
-    if file.size is not None and file.size > _MAX_IMAGE_BYTES:
+    if file.size is not None and file.size > max_bytes:
         raise HTTPException(
             status_code=413,
-            detail=f"Imagen demasiado grande ({file.size} bytes; máx {_MAX_IMAGE_BYTES}).",
+            detail=f"Archivo demasiado grande ({file.size} bytes; máx {max_bytes}).",
         )
 
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Archivo vacío.")
-    if len(content) > _MAX_IMAGE_BYTES:
+    if len(content) > max_bytes:
         raise HTTPException(
             status_code=413,
-            detail=f"Imagen demasiado grande ({len(content)} bytes; máx {_MAX_IMAGE_BYTES}).",
+            detail=f"Archivo demasiado grande ({len(content)} bytes; máx {max_bytes}).",
         )
-    if not _sniff_is_image(content):
+    if is_document:
+        if not _sniff_is_pdf(content):
+            raise HTTPException(
+                status_code=415,
+                detail="Los bytes no son un PDF válido.",
+            )
+    elif not _sniff_is_image(content):
         raise HTTPException(
             status_code=415,
             detail="Los bytes no son una imagen JPEG/PNG válida.",
         )
+    # Nombre visible SOLO para documentos: el cliente lo ve en la burbuja de
+    # WhatsApp y el operador en el chip del histórico. Las fotos no lo llevan.
+    display_name = _display_filename(file.filename) if is_document else None
 
     # 1. Persistir en disco (token opaco → filename `out-...`).
     filename = persist_outbound_image(session_id, content, mime, token=uuid.uuid4().hex)
@@ -438,11 +485,17 @@ async def upload_human_media(
             )
             return None
         outbound = fresh.setdefault("outbound_media", {})
-        outbound[media_id] = {
+        entry: dict = {
             "media_ref": media_ref,
             "filename": filename,
             "mime": mime,
         }
+        if is_document:
+            # `kind` decide en la fase B si el send va como type=document.
+            # Entradas legacy sin `kind` se tratan como imagen.
+            entry["kind"] = "document"
+            entry["filename_display"] = display_name
+        outbound[media_id] = entry
         if len(outbound) > _OUTBOUND_MEDIA_CAP:
             # PM-B6: podar por orden de inserción (dict preserva orden).
             fresh["outbound_media"] = dict(
@@ -499,7 +552,12 @@ async def send_human_message(
     # Resolver el attachment ANTES de cualquier decisión. PM-B3: si el
     # attachment_id no fue subido para ESTA sesión (fase A), no se reenvía a
     # Meta — podría ser un media_id inventado o el de otra conversación.
+    # `kind` (registrado en fase A) decide imagen vs documento; las entradas
+    # legacy sin `kind` son fotos.
     image_ref: str | None = None
+    document_ref: str | None = None
+    document_name: str | None = None
+    attachment_kind = "image"
     if payload.attachment_id:
         entry = data.get("outbound_media", {}).get(payload.attachment_id)
         if entry is None:
@@ -507,10 +565,15 @@ async def send_human_message(
                 status_code=422,
                 detail=(
                     f"attachment_id {payload.attachment_id!r} desconocido para "
-                    "esta sesión. Subí la foto primero (POST .../media)."
+                    "esta sesión. Subí el archivo primero (POST .../media)."
                 ),
             )
-        image_ref = entry.get("media_ref")
+        attachment_kind = entry.get("kind", "image")
+        if attachment_kind == "document":
+            document_ref = entry.get("media_ref")
+            document_name = entry.get("filename_display") or "documento.pdf"
+        else:
+            image_ref = entry.get("media_ref")
 
     # PM-B5: idempotencia ANTES del guard de ventana — un retry de algo YA
     # enviado debe responder replay aunque la ventana haya cerrado entre medio.
@@ -527,6 +590,8 @@ async def send_human_message(
             sender="human",
             content=caption or (payload.text or ""),
             image_url=image_ref,
+            document_url=document_ref,
+            document_filename=document_name,
         )
 
     # Guard de ventana 24h — solo bloquea envíos NUEVOS, y solo si sabemos que cerró.
@@ -586,6 +651,8 @@ async def send_human_message(
                 sender="human",
                 content=caption or (payload.text or ""),
                 image_url=image_ref,
+                document_url=document_ref,
+                document_filename=document_name,
             )
         except _SendInFlight:
             raise HTTPException(
@@ -606,27 +673,36 @@ async def send_human_message(
         return fresh
 
     if payload.attachment_id:
-        # Envío de FOTO (fase B). El media_id ya vive en Meta (fase A).
-        result = await send_image_to_session(
-            session_id, media_id=payload.attachment_id, caption=caption
-        )
+        # Envío del ADJUNTO (fase B). El media_id ya vive en Meta (fase A).
+        # `kind` de la fase A decide el tipo de mensaje WhatsApp.
+        if attachment_kind == "document":
+            result = await send_document_to_session(
+                session_id,
+                media_id=payload.attachment_id,
+                caption=caption,
+                filename=document_name,
+            )
+        else:
+            result = await send_image_to_session(
+                session_id, media_id=payload.attachment_id, caption=caption
+            )
         if not result.ok:
             if (result.error or "").startswith("timeout"):
-                # PM2-B1b: timeout ≠ rechazo — Meta PUEDE haber entregado la
-                # foto (lección L-1). La reserva queda vigente (bloquea el
+                # PM2-B1b: timeout ≠ rechazo — Meta PUEDE haber entregado el
+                # adjunto (lección L-1). La reserva queda vigente (bloquea el
                 # retry a ciegas durante la TTL) y respondemos 504 honesto.
                 raise HTTPException(
                     status_code=504,
                     detail=(
-                        "WhatsApp no respondió a tiempo: la foto PUEDE haberse "
-                        "entregado. No reintentes de inmediato; verificá en el "
-                        "chat en unos segundos."
+                        "WhatsApp no respondió a tiempo: el adjunto PUEDE "
+                        "haberse entregado. No reintentes de inmediato; "
+                        "verificá en el chat en unos segundos."
                     ),
                 )
             if cmid:
                 metadata_store.update(session_id, _clear_pending)
             raise HTTPException(
-                status_code=502, detail=f"WhatsApp rechazó la foto: {result.error}"
+                status_code=502, detail=f"WhatsApp rechazó el adjunto: {result.error}"
             )
     else:
         # Envío de TEXTO. PM2-B3: propagar el rechazo de Meta — antes se
@@ -669,7 +745,14 @@ async def send_human_message(
         metadata_store.update(session_id, _mark_sent)
 
     try:
-        if payload.attachment_id:
+        if payload.attachment_id and attachment_kind == "document":
+            history_store.append_human_event(
+                session_id,
+                caption or "",
+                document_url=document_ref,
+                document_filename=document_name,
+            )
+        elif payload.attachment_id:
             history_store.append_human_event(
                 session_id, caption or "", image_url=image_ref
             )
@@ -697,6 +780,8 @@ async def send_human_message(
         sender="human",
         content=caption or (payload.text or ""),
         image_url=image_ref,
+        document_url=document_ref,
+        document_filename=document_name,
     )
 
 

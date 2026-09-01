@@ -5,6 +5,7 @@ Ver ``store.py`` para el detalle del layout y la motivación.
 from __future__ import annotations
 
 from src.platform.media.store import (
+    KIND_PDF_DOCUMENT,
     RETENTION_EPHEMERAL,
     RETENTION_RECEIPT,
     delete_outbound_image,
@@ -17,6 +18,7 @@ from src.platform.media.store import (
 )
 
 __all__ = [
+    "KIND_PDF_DOCUMENT",
     "RETENTION_EPHEMERAL",
     "RETENTION_RECEIPT",
     "delete_outbound_image",

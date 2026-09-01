@@ -337,8 +337,69 @@ campaign_id) — útil para personalización del agente.
 - WHEN se invoca `GET /api/ads/campaigns`
 - THEN se devuelve lista de campaigns activas con id, name, adset_id, ad_creative
 
+### Requirement: Comprobantes de pago en PDF (documentos adjuntos)
+
+El sistema SHALL aceptar documentos PDF en ambas direcciones del chat:
+inbound (cliente → operador; típicamente comprobantes de pago exportados
+por apps bancarias) y outbound (operador → cliente desde el composer
+intervenido).
+
+Inbound: ante un `type=document` con mime `application/pdf`, el sistema
+SHALL descargar y persistir los bytes en el media store del vault
+(best-effort) y referenciarlos en el evento user (`document_url` +
+`document_filename`); SHALL asignar la conversación a verificación humana
+(`active_route=humano`, tag `HUMANO`,
+`reason_category=PAYMENT_VERIFICATION_PENDING`) con aviso de cortesía al
+cliente; y SHALL NOT descargar documentos cuyo tamaño supere 10 MB — la
+restricción de subida la impone WhatsApp (100 MB); nuestro cap solo decide
+qué NO bajamos al vault. La clasificación es determinista (sin
+visión/IA sobre el contenido — fuera de scope por decisión 2026-09-01).
+
+Outbound: `POST /sessions/{id}/media` SHALL aceptar `application/pdf`
+(magic `%PDF-`, máx 10 MB) además de JPEG/PNG, registrando el attachment
+con `kind="document"` y su nombre visible saneado; la fase B SHALL
+enviarlo como mensaje WhatsApp `type=document` con `filename`.
+
+#### Scenario: Cliente envía comprobante PDF
+
+- GIVEN una conversación en ruta bot
+- WHEN llega un webhook `type=document` con `mime_type=application/pdf` y filename `comprobante.pdf`
+- THEN el marker persistido/entregado al LLM es `[el cliente envió un documento PDF: comprobante.pdf]` (filename capado a 80 chars)
+- AND el PDF queda servible vía `GET /api/dashboard/media/...` y el evento user lleva `document_url` + `document_filename`
+- AND la conversación pasa a `active_route=humano` con motivo que nombra el archivo
+- AND el cliente recibe el aviso "Recibí tu documento 🤍…" (best-effort)
+- AND el PDF queda indexado en `media_index` con `kind=pdf_document` y `retention_class=receipt`
+
+#### Scenario: PDF más grande que el cap no se descarga
+
+- GIVEN un `type=document` PDF cuyo `file_size` declarado por Meta supera 10 MB
+- WHEN el ingest lo procesa
+- THEN los bytes NO se descargan (corte por metadata, antes del download)
+- AND el marker igual fluye al historial y la conversación igual pasa a humano (fail-toward-human)
+
+#### Scenario: Bytes que no son PDF no se persisten
+
+- GIVEN mime declarado `application/pdf` pero bytes que no abren con `%PDF-`
+- WHEN el ingest los descarga
+- THEN NO se persiste nada servible y el evento user va sin `document_url`
+- AND la conversación igual pasa a humano
+
+#### Scenario: Operador envía un PDF
+
+- GIVEN conversación intervenida
+- WHEN el operador sube `comprobante.pdf` (`POST .../media`, `application/pdf`, ≤ 10 MB, magic `%PDF-`) y luego manda el attachment (`POST .../messages` con `client_message_id`)
+- THEN el envío sale como WhatsApp `type=document` con `filename` visible para el cliente
+- AND el evento humano persiste `document_url` + `document_filename` y el `GET /sessions/{id}` del dashboard los proyecta
+
+#### Scenario: Attachment legacy sin kind sigue siendo foto
+
+- GIVEN un attachment en `outbound_media` registrado sin campo `kind` (deploy anterior)
+- WHEN se envía
+- THEN va por `send_image_to_session` (`type=image`), sin cambio de comportamiento
+
 ## Out of scope
 
+- Verificación por visión/IA del CONTENIDO de un PDF (¿es un pago real?) — decisión 2026-09-01: la clasificación de PDFs es determinista (todo PDF → verificación humana)
 - Workflow logic del sales/remarketing — ver specs específicas en `agents/`
 - Tool implementations específicas — documentadas en `agents/sales-worker/spec.md`
 - Catalog snapshot — ver `plugins/catalog/spec.md` (pendiente)

@@ -35,6 +35,11 @@ export const chatMessageSchema = z.object({
    *  expone en `/api/dashboard/media/...`; el frontend la pinta en la burbuja
    *  para que el operador humano la vea. Ausente en mensajes sin imagen. */
   image_url: z.string().optional(),
+  /** Documento PDF adjunto (comprobante de pago típico) — inbound del cliente
+   *  u outbound del operador. Ref servible + nombre visible para el chip
+   *  clickeable de la burbuja. Ausentes en mensajes sin documento. */
+  document_url: z.string().optional(),
+  document_filename: z.string().optional(),
 });
 
 export type ChatMessageDto = z.infer<typeof chatMessageSchema>;

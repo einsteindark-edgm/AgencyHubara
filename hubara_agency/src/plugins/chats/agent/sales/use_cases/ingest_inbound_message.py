@@ -104,6 +104,14 @@ TemporalClientFactory = Callable[[], Awaitable["Client"]]
 # puede demorar el primer turno; cualquier fallo degrada en silencio).
 _WEB_CART_HYDRATION_TIMEOUT_S = 3.0
 
+#: Cap de descarga para documentos PDF inbound (comprobantes). La restricción
+#: de subida la impone WhatsApp (100 MB); de nuestro lado, por encima de este
+#: cap NO se descarga (el fetcher corta con el `file_size` declarado, antes de
+#: bajar bytes). 10 MB cubre todo comprobante legítimo: uno digital pesa
+#: 30–150 KB, un escaneo B/N 200–500 KB y un escaneo a color de una página
+#: llega a ~8–10 MB.
+_MAX_INBOUND_DOCUMENT_BYTES = 10 * 1024 * 1024
+
 logger = structlog.get_logger()
 
 
@@ -498,12 +506,84 @@ class IngestInboundMessage:
             tags=effective.debug_tags,
         )
 
+        # --- 5.7. Documento PDF inbound (comprobante de pago probable): bajar
+        #     los bytes de Meta (cap 10 MB — arriba de eso NO se descarga) y
+        #     persistirlos para que el operador pueda ABRIR el archivo desde el
+        #     dashboard. Best-effort: si falla, el marker igual fluye (sin chip
+        #     clickeable). Sin visión ni reentry — el marker ya nombra el
+        #     archivo. Política espejo del comprobante-imagen: el chat pasa a
+        #     verificación humana ANTES de que el bot improvise una
+        #     confirmación de pago que nadie miró, y el cliente recibe el aviso
+        #     de cortesía. Fail-toward-human: se rutea aunque la descarga
+        #     falle. Se muta el dict LOCAL (no `_route_to_human`, que escribe
+        #     sobre lectura fresca) para que los writes posteriores de este
+        #     mismo `execute` no pisen la ruta. ---
+        persisted_document_url: str | None = None
+        if effective.document_media_id:
+            from src.platform.media import KIND_PDF_DOCUMENT
+
+            persisted_doc = await self._persist_inbound_document(
+                session_id,
+                effective.document_media_id,
+                effective.document_mime_type,
+            )
+            persisted_document_url = persisted_doc[0] if persisted_doc else None
+            metadata_dirty = False
+            if persisted_doc:
+                self._index_persisted_media(
+                    metadata,
+                    media_id=effective.document_media_id,
+                    filename=persisted_doc[1],
+                    kind=KIND_PDF_DOCUMENT,
+                )
+                metadata_dirty = True
+            notify_client = False
+            if metadata.get("active_route", ROUTE_VENTAS) != ROUTE_HUMANO:
+                nombre = effective.document_filename or "sin nombre"
+                self._apply_human_route(
+                    metadata,
+                    motivo=(
+                        f"Cliente envió un documento PDF ({nombre}). Posible "
+                        "comprobante de pago — verificar la recepción del pago "
+                        "en el dashboard de orders y confirmar el envío o "
+                        "abortar."
+                    ),
+                    reason_category="PAYMENT_VERIFICATION_PENDING",
+                )
+                metadata_dirty = True
+                notify_client = True
+            if metadata_dirty:
+                self._safe_write_metadata(session_id, metadata)
+            if notify_client:
+                try:
+                    from src.platform.whatsapp import client as wa_client
+
+                    await wa_client.send_message(
+                        parsed.phone_number_id,
+                        parsed.from_number,
+                        "Recibí tu documento 🤍. Un colega del equipo lo "
+                        "revisa y te confirma enseguida.",
+                    )
+                except Exception:  # noqa: BLE001 — cortesía best-effort
+                    pass
+
         # --- 6. Persistir history (texto efectivo, NO el JSON raw) ---
         # `persisted_image_url` solo viene poblado desde el reentry de visión:
         # el evento del cliente queda con la foto adjunta para el dashboard.
-        self._history_store.append_user_event(
-            session_id, effective.text, image_url=persisted_image_url
-        )
+        # Los kwargs de documento solo se pasan cuando el PDF quedó persistido
+        # (mantiene compatible cualquier store/fake con la firma anterior).
+        if persisted_document_url:
+            self._history_store.append_user_event(
+                session_id,
+                effective.text,
+                image_url=persisted_image_url,
+                document_url=persisted_document_url,
+                document_filename=effective.document_filename,
+            )
+        else:
+            self._history_store.append_user_event(
+                session_id, effective.text, image_url=persisted_image_url
+            )
 
         # --- 6.5. Limpiar flag de Flow pendiente (sesión c4e3416f) ---
         # Si el cliente respondió (por texto, por nfm_reply, lo que sea),
@@ -1275,6 +1355,70 @@ class IngestInboundMessage:
             persisted_image_url=persisted_image_url,
         )
 
+    async def _persist_inbound_document(
+        self, session_id: str, media_id: str, mime_type: str | None
+    ) -> tuple[str, str] | None:
+        """Descarga un documento PDF del cliente y lo persiste en el media
+        store. Espejo de :meth:`_persist_inbound_image` con tres diferencias:
+
+        * **Cap de descarga** (:data:`_MAX_INBOUND_DOCUMENT_BYTES`): WhatsApp
+          acepta documentos de hasta 100 MB; por encima de NUESTRO cap el
+          fetcher ni descarga (usa el ``file_size`` declarado del metadata).
+          El marker igual fluye — solo se pierde el chip clickeable.
+        * **Sniff ``%PDF-``**: el mime lo declara Meta; si los bytes no abren
+          como PDF no se persiste nada servible desde el vault.
+        * **Logs con eventos ``inbound_document_*``** (no ``inbound_image_*``)
+          para poder filtrar en prod por tipo de media.
+
+        Best-effort: devuelve ``(url_relativa, filename)`` o ``None``.
+        """
+        from src.platform.audio.meta_media_fetcher import fetch_media_bytes
+        from src.platform.media import media_url_for, persist_inbound_image
+
+        try:
+            fetched = await fetch_media_bytes(
+                media_id, max_bytes=_MAX_INBOUND_DOCUMENT_BYTES
+            )
+        except Exception as e:  # noqa: BLE001 — best-effort
+            logger.warning(
+                "inbound_document_fetch_failed",
+                session=session_id,
+                media_id=media_id,
+                error=str(e),
+            )
+            return None
+        if not fetched:
+            return None
+        data, fetched_mime = fetched
+        if not data.startswith(b"%PDF-"):
+            logger.warning(
+                "inbound_document_not_pdf",
+                session=session_id,
+                media_id=media_id,
+                declared_mime=mime_type or fetched_mime,
+            )
+            return None
+        try:
+            filename = persist_inbound_image(
+                session_id, media_id, data, mime_type or fetched_mime
+            )
+        except Exception as e:  # noqa: BLE001 — best-effort
+            logger.warning(
+                "inbound_document_persist_failed",
+                session=session_id,
+                media_id=media_id,
+                error=str(e),
+            )
+            return None
+        logger.info(
+            "inbound_document_persisted",
+            session=session_id,
+            media_id=media_id,
+            filename=filename,
+            bytes=len(data),
+        )
+        return (media_url_for(session_id, filename), filename)
+
     async def _persist_inbound_image(
         self, session_id: str, media_id: str, mime_type: str | None
     ) -> tuple[str, str] | None:
@@ -1386,6 +1530,34 @@ class IngestInboundMessage:
             context=parsed.context,
         )
 
+    @staticmethod
+    def _apply_human_route(
+        data: dict[str, Any],
+        *,
+        motivo: str,
+        reason_category: str,
+    ) -> None:
+        """Muta ``data`` in-place con la ruta humano (tag + motivo +
+        status_history). El WRITE es responsabilidad del caller: los flujos
+        que ya tienen el dict local de ``execute`` en la mano (documento PDF)
+        lo aplican acá y persisten UNA vez — llamar a :meth:`_route_to_human`
+        (que lee fresco y escribe) dejaría el dict local stale y los writes
+        posteriores de ``execute`` pisarían la ruta (lost-update)."""
+        data["active_route"] = ROUTE_HUMANO
+        data["tag"] = "HUMANO"
+        data["motivo"] = motivo
+        data["escalation_reason"] = reason_category
+        history = data.setdefault("status_history", [])
+        history.append(
+            {
+                "tag": "HUMANO",
+                "motivo": motivo,
+                "active_route": ROUTE_HUMANO,
+                "reason_category": reason_category,
+                "timestamp": _now_ms() / 1000.0,
+            }
+        )
+
     def _route_to_human(
         self,
         *,
@@ -1405,19 +1577,8 @@ class IngestInboundMessage:
             data = self._metadata_store.read(session_id)
         except Exception:  # noqa: BLE001
             data = {}
-        data["active_route"] = ROUTE_HUMANO
-        data["tag"] = "HUMANO"
-        data["motivo"] = motivo
-        data["escalation_reason"] = reason_category
-        history = data.setdefault("status_history", [])
-        history.append(
-            {
-                "tag": "HUMANO",
-                "motivo": motivo,
-                "active_route": ROUTE_HUMANO,
-                "reason_category": reason_category,
-                "timestamp": _now_ms() / 1000.0,
-            }
+        self._apply_human_route(
+            data, motivo=motivo, reason_category=reason_category
         )
         self._safe_write_metadata(session_id, data)
 

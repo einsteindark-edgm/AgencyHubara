@@ -95,3 +95,28 @@ def test_delete_outbound_image_rejects_traversal(vault):
 
 def test_delete_outbound_image_missing_file_is_noop(vault):
     media_store.delete_outbound_image("wa_1", "out-inexistente.jpg")  # no lanza
+
+
+# ---------- PDFs (comprobantes de pago) ----------
+
+
+def test_persist_outbound_pdf_extension(vault):
+    """El operador puede mandar un comprobante PDF: la extensión persiste
+    como `.pdf` (sin esto el GET /media lo serviría como image/jpeg)."""
+    filename = media_store.persist_outbound_image(
+        "wa_1", b"%PDF-1.7 bytes", "application/pdf", token="t-pdf"
+    )
+    assert filename.startswith("out-")
+    assert filename.endswith(".pdf")
+
+
+def test_persist_inbound_pdf_extension(vault):
+    """El cliente manda su comprobante PDF por WhatsApp: se persiste con
+    `.pdf` para que FileResponse infiera `application/pdf` al servirlo."""
+    filename = media_store.persist_inbound_image(
+        "wa_1", "media-pdf-9", b"%PDF-1.4 doc", "application/pdf"
+    )
+    assert filename.endswith(".pdf")
+    path = media_store.resolve_media_file("wa_1", filename)
+    assert path is not None
+    assert path.read_bytes() == b"%PDF-1.4 doc"
