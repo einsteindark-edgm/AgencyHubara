@@ -70,6 +70,45 @@ export const mbaEndpointSchema = z.object({
   path: z.string(),
 });
 
+export const mbaConnectorToolSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  method: z.string(),
+  path: z.string(),
+  query_parameters: z.array(z.string()),
+  body_parameters: z.array(z.string()),
+  bindings: z.array(z.string()),
+  write: z.boolean(),
+  notes: z.string(),
+  source: z.string(),
+});
+
+export const mbaConnectorSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  base_url: z.string(),
+  auth_type: z.enum(["OAUTH2_CLIENT_CREDENTIALS", "API_KEY", "NONE"]),
+  auth_header: z.string(),
+  requires_certificate: z.boolean(),
+  tools: z.array(mbaConnectorToolSchema),
+});
+
+export const mbaUiSkillSchema = z.object({
+  title: z.string(),
+  component_type: z.string(),
+  status: z.string(),
+  instruction: z.string(),
+  from_tool: z.string(),
+  source: z.string(),
+});
+
+export const mbaToolTreatmentSchema = z.object({
+  llm_tool: z.string(),
+  when: z.string(),
+  treatment: z.enum(["connector_tool", "ui_skill", "native_handoff", "internal", "unmapped"]),
+  detail: z.string(),
+});
+
 export const mbaConfigSchema = z.object({
   agent_id: z.string(),
   channel: z.string(),
@@ -77,6 +116,9 @@ export const mbaConfigSchema = z.object({
   settings: mbaSettingsSchema,
   skills: z.array(mbaSkillSchema),
   faqs: z.array(mbaFaqSchema),
+  connector: mbaConnectorSchema.nullable(),
+  ui_skills: z.array(mbaUiSkillSchema),
+  tool_treatments: z.array(mbaToolTreatmentSchema),
   excluded: z.array(mbaExcludedSchema),
   endpoints: z.array(mbaEndpointSchema),
 });

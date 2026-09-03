@@ -68,10 +68,32 @@ describe("AgentsMbaPreview", () => {
     screen.getByText("Un colega del equipo te responde en este mismo chat 🤍");
     screen.getByText("voy a averiguar");
     screen.getByText("ALLOWLISTED_ONLY");
-    screen.getByText("TOOLS.md");
-    screen.getByText(/connector tools/);
+    screen.getByText("TOOLS.md#tool:set_order_slot");
+    screen.getByText(/Tool interna de Hubara/);
     // cada bloque dice a qué endpoint de Meta va
     screen.getByText("/{entity_id}/agent_config/business_info");
+  });
+
+  it("renders the connector, its tools (method, path, macro, write flag) and the UI skills", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(MBA_CONFIG_FIXTURE));
+
+    renderWithClient(<AgentsMbaPreview agentId="sales" />);
+
+    await waitFor(() => screen.getByText("hubara-commerce"));
+    screen.getByText("https://<host-publico>/api/mba");
+    screen.getByText("X-API-Key");
+    // connector tools con su request_definition
+    screen.getByText("/tools/check_order_status");
+    screen.getAllByText("WHATSAPP_PHONE_NUMBER");
+    screen.getByText("/tools/register_order");
+    expect(screen.getAllByText(/escritura/i).length).toBeGreaterThan(0);
+    // UI skill nativa con su component_type
+    screen.getByText("request-shipping-details");
+    screen.getByText("flow");
+    // y el mapa completo tool LLM → tratamiento
+    screen.getByText("escalate_to_human");
+    screen.getByText("native_handoff");
+    screen.getByText("/{entity_id}/agent_connectors/{connector_id}/tools");
   });
 
   it("shows an error state instead of crashing when the backend fails", async () => {

@@ -557,3 +557,125 @@ def test_never_say_table_drops_phrases_also_allowed_in_the_same_row() -> None:
 
     assert {"pedile", "mandale", "esperá"} <= set(phrases)
     assert "dale" not in phrases
+
+
+# ── Connector + tools (TOOLS.md → connector tools / UI skills / nativo) ───
+
+_TOOLS_MD = """# Tools
+
+## Mapa rápido de tools
+
+| Tool | Cuándo | Clave |
+|---|---|---|
+| `search_products` | SIEMPRE antes de nombrar/preciar un producto. `q=""` + `limit=30` = todo el catálogo | El envelope trae `aromas` |
+| `search_products(category=...)` | Cliente pide "las religiosas" | La categoría va en `category=` TAL CUAL |
+| `get_product_by_handle` | Detalle/variantes de un producto YA visto en search | NUNCA inventes el handle |
+| `present_products` ⛔ | 4+ productos (catálogo) | TODO el mensaje va en `intro_text` |
+| `request_shipping_details` ⛔ | Variantes completas → pedir datos de envío | UNA vez por sesión |
+| `set_order_slot` | CADA dato confirmado del pedido | memoria del pedido |
+| `verify_order_for_checkout` | OBLIGATORIA antes de confirmar el pedido | `discrepancy=true` → avisa |
+| `register_order` | Cliente tocó '✅ Confirmar' + datos completos | Sin esto el pedido NO existe |
+| `manage_conversation_tag` | Al cerrar la conversación (obligatorio) | Taxonomía abajo |
+| `escalate_to_human` | Tabla de triggers abajo | Antes: UNA línea al cliente |
+| `check_order_status` | Cliente pregunta por su pedido (etapa o pago) | Trae `pay_status` real |
+| `send_cta_url` | Cliente pide un link que NO es producto | `/checkout` bloqueada |
+
+## Cuándo escalar a humano (`escalate_to_human`)
+
+| Trigger | `reason_category` |
+|---|---|
+| Pide >20 unidades | `BULK_ORDER` |
+| Pide descuento explícito | `DISCOUNT_REQUEST` |
+"""
+
+
+def _cfg_with_tools():
+    return normalize_mba_config("sales", _sources(files={"TOOLS.md": _TOOLS_MD}))
+
+
+def test_read_tools_become_connector_tools_with_params_and_phone_binding() -> None:
+    cfg = _cfg_with_tools()
+    assert cfg.connector is not None
+    tools = {t.name: t for t in cfg.connector.tools}
+
+    search = tools["search_products"]
+    assert search.method == "GET"
+    assert search.path == "/tools/search_products"
+    # params leídos de la fila de TOOLS.md (las dos filas de search_products se unen)
+    assert set(search.query_parameters) == {"q", "limit", "category"}
+    assert search.write is False
+    # la descripción sale de la columna "Cuándo" (es lo que MBA usa para decidir)
+    assert "antes de nombrar" in search.description
+    # cada tool va scoped al cliente que escribe: macro de Meta
+    assert "WHATSAPP_PHONE_NUMBER" in search.bindings
+
+    status = tools["check_order_status"]
+    assert status.method == "GET" and status.query_parameters == ()
+    # `discrepancy=true` es un flag de salida, no un parámetro
+    assert tools["verify_order_for_checkout"].method == "POST"
+    assert "discrepancy" not in tools["verify_order_for_checkout"].body_parameters
+
+
+def test_write_tools_are_post_and_flagged_for_idempotency() -> None:
+    cfg = _cfg_with_tools()
+    register = next(t for t in cfg.connector.tools if t.name == "register_order")
+    assert register.method == "POST" and register.write is True
+    assert "idempot" in register.notes.lower()
+
+
+def test_ui_tools_map_to_native_ui_skills_by_component_type() -> None:
+    cfg = _cfg_with_tools()
+    ui = {u.from_tool: u for u in cfg.ui_skills}
+    assert ui["present_products"].component_type == "carousel_quick_reply"
+    assert ui["request_shipping_details"].component_type == "flow"
+    assert ui["send_cta_url"].component_type == "cta_url"
+    # la instrucción de cuándo enviarla sale de la columna "Cuándo"
+    assert "datos de envío" in ui["request_shipping_details"].instruction
+    # las tools de UI NO son connector tools
+    assert "present_products" not in {t.name for t in cfg.connector.tools}
+
+
+def test_every_llm_tool_has_a_declared_treatment() -> None:
+    cfg = _cfg_with_tools()
+    treatments = {t.llm_tool: t.treatment for t in cfg.tool_treatments}
+    assert treatments["search_products"] == "connector_tool"
+    assert treatments["register_order"] == "connector_tool"
+    assert treatments["present_products"] == "ui_skill"
+    assert treatments["escalate_to_human"] == "native_handoff"
+    assert treatments["set_order_slot"] == "internal"
+    assert treatments["manage_conversation_tag"] == "internal"
+    # cobertura total: ninguna tool del mapa queda sin decidir
+    assert set(treatments) == {
+        "search_products", "get_product_by_handle", "present_products",
+        "request_shipping_details", "set_order_slot", "verify_order_for_checkout",
+        "register_order", "manage_conversation_tag", "escalate_to_human",
+        "check_order_status", "send_cta_url",
+    }
+
+
+def test_escalation_table_becomes_a_skill_and_tools_md_is_no_longer_excluded() -> None:
+    cfg = _cfg_with_tools()
+    esc = next(s for s in cfg.skills if s.title == "escalacion-a-humano")
+    assert "BULK_ORDER" in esc.skill and "Pide >20 unidades" in esc.skill
+    assert esc.sources == ("TOOLS.md",)
+    assert "TOOLS.md" not in {e.source for e in cfg.excluded}
+
+    paths = {(e.method, e.path) for e in cfg.endpoints}
+    assert ("POST", "/{entity_id}/agent_connectors") in paths
+    assert ("POST", "/{entity_id}/agent_connectors/{connector_id}/tools") in paths
+    assert ("POST", "/{entity_id}/agent-ui-skills") in paths
+
+
+def test_connector_declares_api_key_auth_and_placeholder_base_url() -> None:
+    cfg = _cfg_with_tools()
+    c = cfg.connector
+    assert c.auth_type == "API_KEY"
+    assert c.auth_header == "X-API-Key"
+    assert c.requires_certificate is False
+    assert "/api/mba" in c.base_url
+
+
+def test_workspace_without_tools_md_has_no_connector() -> None:
+    files = {"IDENTITY.md": _IDENTITY, "SOUL.md": _SOUL}
+    cfg = normalize_mba_config("x", WorkspaceSources(files=files))
+    assert cfg.connector is None and cfg.ui_skills == () and cfg.tool_treatments == ()

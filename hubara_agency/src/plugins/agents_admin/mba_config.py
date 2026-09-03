@@ -185,6 +185,57 @@ class MbaEndpointDTO:
 
 
 @dataclass(frozen=True)
+class MbaConnectorToolDTO:
+    """Espeja ``POST /{entity_id}/agent_connectors/{id}/tools`` (request_definition)."""
+
+    name: str
+    description: str
+    method: str  # GET | POST
+    path: str
+    query_parameters: tuple[str, ...]
+    body_parameters: tuple[str, ...]
+    bindings: tuple[str, ...]  # macros de Meta inyectadas (WHATSAPP_PHONE_NUMBER…)
+    write: bool
+    notes: str
+    source: str
+
+
+@dataclass(frozen=True)
+class MbaConnectorDTO:
+    """Espeja ``POST /{entity_id}/agent_connectors``."""
+
+    name: str
+    description: str
+    base_url: str
+    auth_type: str  # OAUTH2_CLIENT_CREDENTIALS | API_KEY | NONE
+    auth_header: str
+    requires_certificate: bool
+    tools: tuple[MbaConnectorToolDTO, ...]
+
+
+@dataclass(frozen=True)
+class MbaUiSkillDTO:
+    """Espeja ``POST /{entity_id}/agent-ui-skills``."""
+
+    title: str
+    component_type: str
+    status: str  # enabled | disabled
+    instruction: str
+    from_tool: str
+    source: str
+
+
+@dataclass(frozen=True)
+class MbaToolTreatmentDTO:
+    """Qué hacemos con cada tool LLM del agente al pasar a MBA."""
+
+    llm_tool: str
+    when: str
+    treatment: str  # connector_tool | ui_skill | native_handoff | internal | unmapped
+    detail: str
+
+
+@dataclass(frozen=True)
 class MbaConfigDTO:
     agent_id: str
     channel: str
@@ -192,6 +243,9 @@ class MbaConfigDTO:
     settings: MbaSettingsDTO
     skills: tuple[MbaSkillDTO, ...] = field(default_factory=tuple)
     faqs: tuple[MbaFaqDTO, ...] = field(default_factory=tuple)
+    connector: MbaConnectorDTO | None = None
+    ui_skills: tuple[MbaUiSkillDTO, ...] = field(default_factory=tuple)
+    tool_treatments: tuple[MbaToolTreatmentDTO, ...] = field(default_factory=tuple)
     excluded: tuple[MbaExcludedDTO, ...] = field(default_factory=tuple)
     endpoints: tuple[MbaEndpointDTO, ...] = field(default_factory=tuple)
 
@@ -201,15 +255,46 @@ ENDPOINTS: tuple[MbaEndpointDTO, ...] = (
     MbaEndpointDTO("business_info", "PUT", "/{entity_id}/agent_config/business_info"),
     MbaEndpointDTO("faqs", "POST", "/{entity_id}/agent_config/faq"),
     MbaEndpointDTO("settings", "PUT", "/{entity_id}/agent_config/settings"),
+    MbaEndpointDTO("connector", "POST", "/{entity_id}/agent_connectors"),
+    MbaEndpointDTO(
+        "connector_tools", "POST", "/{entity_id}/agent_connectors/{connector_id}/tools"
+    ),
+    MbaEndpointDTO("ui_skills", "POST", "/{entity_id}/agent-ui-skills"),
     MbaEndpointDTO("allowlist", "POST", "/{entity_id}/agent_config/allowlist"),
 )
 
+# Connector de Hubara (desarrollo 2): la API pública que MBA invoca. El host
+# real se define al desplegar; acá se muestra el contrato que se registraría.
+CONNECTOR_BASE_URL_PLACEHOLDER = "https://<host-publico>/api/mba"
+CONNECTOR_AUTH_HEADER = "X-API-Key"
+CUSTOMER_PHONE_MACRO = "WHATSAPP_PHONE_NUMBER"
+
+# Prefijos de tools LLM → tratamiento en MBA (reglas por nombre, sin importar
+# código de otros plugins). El orden importa: el primero que matchea gana.
+_READ_TOOL_PREFIXES = ("search_", "get_", "list_", "check_", "verify_")
+_WRITE_TOOL_PREFIXES = ("register_", "create_", "update_", "cancel_")
+_UI_TOOL_PREFIXES = ("present_", "send_", "request_", "react_")
+_INTERNAL_TOOL_MARKERS = ("_tag", "_slot", "load_skill")
+# Sub-cadena del nombre de la tool → component_type de UI skill (enum de Meta).
+_UI_COMPONENT_BY_KEY: tuple[tuple[str, str | None], ...] = (
+    ("variant_picker", "interactive_list"),
+    ("quick_replies", "interactive_reply_buttons"),
+    ("order_confirmation", "interactive_reply_buttons"),
+    ("shipping_details", "flow"),
+    ("product_gallery", "image"),
+    ("product_detail", "image"),
+    ("products", "carousel_quick_reply"),
+    ("cta_url", "cta_url"),
+    ("location", "location_request"),
+    ("contact_card", None),
+    ("react_to", None),
+)
+_TOOL_TABLE_HEADER = re.compile(r"\btool\b", re.IGNORECASE)
+_TOOL_NAME = re.compile(r"`([a-z][a-z0-9_]*)")
+_TOOL_PARAM = re.compile(r"`([a-z][a-z0-9_]*)=([^`]*)`")
+_TOOL_CALL_PARAM = re.compile(r"\(([a-z][a-z0-9_]*)=")
+
 _STATIC_EXCLUSIONS: tuple[MbaExcludedDTO, ...] = (
-    MbaExcludedDTO(
-        "TOOLS.md",
-        "Mapa de tools del LLM: en MBA se modela como connector tools "
-        "(desarrollo 2), no como texto de skill.",
-    ),
     MbaExcludedDTO(
         "memory/MEMORY.md · memory/HISTORY.md",
         "Memoria dinámica del runtime; MBA mantiene su propio contexto por hilo.",
@@ -614,6 +699,226 @@ def _build_business_info(sources: WorkspaceSources) -> MbaBusinessInfoDTO:
 
 
 # ---------------------------------------------------------------------------
+# Connector tools / UI skills (TOOLS.md → tratamiento por tool)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _ToolRow:
+    name: str
+    when: str
+    params: tuple[str, ...]
+
+
+def _tool_rows(tools_md: str) -> list[_ToolRow]:
+    """Lee la tabla ``Tool | Cuándo | …`` y une las filas de una misma tool."""
+    rows: dict[str, _ToolRow] = {}
+    for header, table in _tables(tools_md):
+        if len(header) < 2 or not _TOOL_TABLE_HEADER.search(header[0]):
+            continue
+        for row in table:
+            if len(row) < 2:
+                continue
+            m = _TOOL_NAME.search(row[0])
+            if not m:
+                continue
+            name = m.group(1)
+            when = _clean_inline(_PARENTHETICAL.sub("", row[1]))
+            params = tuple(
+                p
+                for cell in row
+                for p, value in _TOOL_PARAM.findall(cell)
+                if value.strip().lower() not in ("true", "false")
+            )
+            # `search_products(category=...)` en la 1ª columna también declara un param
+            params += tuple(_TOOL_CALL_PARAM.findall(row[0]))
+            prev = rows.get(name)
+            if prev is None:
+                rows[name] = _ToolRow(name=name, when=when, params=params)
+            else:
+                merged = prev.when if not when or when in prev.when else f"{prev.when} · {when}"
+                rows[name] = _ToolRow(name=name, when=merged, params=prev.params + params)
+    out: list[_ToolRow] = []
+    for r in rows.values():
+        seen: list[str] = []
+        for p in r.params:
+            if p not in seen:
+                seen.append(p)
+        out.append(_ToolRow(name=r.name, when=r.when, params=tuple(seen)))
+    return out
+
+
+def _ui_component_for(name: str) -> str | None:
+    for key, component in _UI_COMPONENT_BY_KEY:
+        if key in name:
+            return component
+    return None
+
+
+def _build_tools(
+    sources: WorkspaceSources,
+) -> tuple[
+    MbaConnectorDTO | None,
+    tuple[MbaUiSkillDTO, ...],
+    tuple[MbaToolTreatmentDTO, ...],
+    tuple[MbaExcludedDTO, ...],
+]:
+    tools_md = sources.files.get("TOOLS.md")
+    if tools_md is None:
+        return None, (), (), ()
+    rows = _tool_rows(tools_md)
+    if not rows:
+        unparsed = MbaExcludedDTO(
+            "TOOLS.md",
+            "Sin tabla 'Tool | Cuándo' parseable: sus tools no se pudieron mapear a "
+            "connector tools / UI skills.",
+        )
+        return None, (), (), (unparsed,)
+
+    connector_tools: list[MbaConnectorToolDTO] = []
+    ui_skills: list[MbaUiSkillDTO] = []
+    treatments: list[MbaToolTreatmentDTO] = []
+    excluded: list[MbaExcludedDTO] = []
+    src = "TOOLS.md"
+
+    for row in rows:
+        name = row.name
+        if name.startswith("escalate"):
+            treatments.append(
+                MbaToolTreatmentDTO(
+                    name,
+                    row.when,
+                    "native_handoff",
+                    "MBA escala solo (baja confianza, integridad, pedido explícito) y usa "
+                    "handoff.message; los triggers de negocio van en la skill "
+                    "'escalacion-a-humano'.",
+                )
+            )
+        elif any(marker in name for marker in _INTERNAL_TOOL_MARKERS):
+            treatments.append(
+                MbaToolTreatmentDTO(
+                    name,
+                    row.when,
+                    "internal",
+                    "Estado interno de Hubara (memoria del pedido, tags, skills on-demand): "
+                    "MBA no lo necesita; pedido y tags se derivan de las llamadas al connector.",
+                )
+            )
+            excluded.append(
+                MbaExcludedDTO(
+                    f"{src}#tool:{name}", "Tool interna de Hubara; sin equivalente en MBA."
+                )
+            )
+        elif name.startswith(_UI_TOOL_PREFIXES):
+            component = _ui_component_for(name)
+            if component is None:
+                treatments.append(
+                    MbaToolTreatmentDTO(
+                        name, row.when, "unmapped", "Sin componente UI equivalente en MBA."
+                    )
+                )
+                excluded.append(
+                    MbaExcludedDTO(
+                        f"{src}#tool:{name}", "Sin componente de UI skill equivalente en MBA."
+                    )
+                )
+                continue
+            ui_skills.append(
+                MbaUiSkillDTO(
+                    title=_slug(name),
+                    component_type=component,
+                    status="enabled",
+                    instruction=row.when,
+                    from_tool=name,
+                    source=src,
+                )
+            )
+            treatments.append(
+                MbaToolTreatmentDTO(
+                    name, row.when, "ui_skill", f"UI skill nativa `{component}`."
+                )
+            )
+        elif name.startswith(_READ_TOOL_PREFIXES) or name.startswith(_WRITE_TOOL_PREFIXES):
+            write = name.startswith(_WRITE_TOOL_PREFIXES)
+            uses_body = write or name.startswith("verify_")
+            method = "POST" if uses_body else "GET"
+            notes = (
+                "Escritura: el endpoint debe ser idempotente (fingerprint + pre-check) "
+                "porque MBA no documenta reintentos ni deduplicación."
+                if write
+                else "Lectura: responde desde la fuente de verdad (Medusa / vault)."
+            )
+            if not row.params:
+                notes += " Parámetros: definir desde el schema real de la tool (desarrollo 2)."
+            connector_tools.append(
+                MbaConnectorToolDTO(
+                    name=name,
+                    description=row.when or name,
+                    method=method,
+                    path=f"/tools/{name}",
+                    query_parameters=() if uses_body else row.params,
+                    body_parameters=row.params if uses_body else (),
+                    bindings=(CUSTOMER_PHONE_MACRO,),
+                    write=write,
+                    notes=notes,
+                    source=src,
+                )
+            )
+            treatments.append(
+                MbaToolTreatmentDTO(
+                    name,
+                    row.when,
+                    "connector_tool",
+                    f"{method} {CONNECTOR_BASE_URL_PLACEHOLDER}/tools/{name}",
+                )
+            )
+        else:
+            treatments.append(
+                MbaToolTreatmentDTO(name, row.when, "unmapped", "Sin regla de mapeo: revisar.")
+            )
+
+    connector = MbaConnectorDTO(
+        name="hubara-commerce",
+        description=(
+            "API de Hubara: catálogo, verificación y registro de pedidos y estado de "
+            "envío, siempre para el cliente que está escribiendo."
+        ),
+        base_url=CONNECTOR_BASE_URL_PLACEHOLDER,
+        auth_type="API_KEY",
+        auth_header=CONNECTOR_AUTH_HEADER,
+        requires_certificate=False,
+        tools=tuple(connector_tools),
+    )
+    return connector, tuple(ui_skills), tuple(treatments), tuple(excluded)
+
+
+def _escalation_skill(files: Mapping[str, str]) -> MbaSkillDTO | None:
+    """La tabla 'Cuándo escalar a humano' de TOOLS.md como skill de MBA."""
+    tools_md = files.get("TOOLS.md", "")
+    for heading, lines in _sections(tools_md):
+        if not re.search(r"escalar", heading, re.IGNORECASE):
+            continue
+        body_lines = [
+            _clean_inline(line) for line in lines if line.strip() and not line.lstrip().startswith("|")
+        ]
+        for header, rows in _tables("\n".join(lines)):
+            if len(header) < 2:
+                continue
+            body_lines += [
+                f"- {_clean_inline(row[0])} → {_clean_inline(row[1])}" for row in rows if len(row) >= 2
+            ]
+        if not body_lines:
+            return None
+        return _make_skill(
+            "escalacion-a-humano",
+            "Aplicar cuando el caso cae en un trigger de negocio que requiere una persona "
+            "del equipo: deriva al humano en vez de resolver.",
+            [("TOOLS.md", "# Cuándo derivar a un humano\n\n" + "\n".join(body_lines))],
+        )
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -634,13 +939,21 @@ def normalize_mba_config(agent_id: str, sources: WorkspaceSources) -> MbaConfigD
         followup=MbaFollowupDTO(enabled=False, followup_interval_in_seconds=900, message=None),
         never_say_phrases=_build_never_say(sources),
     )
+    connector, ui_skills, treatments, tool_excluded = _build_tools(sources)
+    skills = _build_skills(sources)
+    escalation = _escalation_skill(sources.files)
+    if escalation is not None:
+        skills = skills + (escalation,)
     return MbaConfigDTO(
         agent_id=agent_id,
         channel="whatsapp",
         business_info=_build_business_info(sources),
         settings=settings,
-        skills=_build_skills(sources),
+        skills=skills,
         faqs=faqs,
-        excluded=_STATIC_EXCLUSIONS + faq_excluded,
+        connector=connector,
+        ui_skills=ui_skills,
+        tool_treatments=treatments,
+        excluded=_STATIC_EXCLUSIONS + faq_excluded + tool_excluded,
         endpoints=ENDPOINTS,
     )

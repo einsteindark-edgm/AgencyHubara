@@ -208,6 +208,107 @@ function Settings({ settings }: { settings: MbaConfig["settings"] }) {
   );
 }
 
+function Connector({
+  connector,
+  toolsEndpoint,
+}: {
+  connector: NonNullable<MbaConfig["connector"]>;
+  toolsEndpoint?: { method: string; path: string };
+}) {
+  const row = (label: string, value: ReactNode) => (
+    <div style={{ display: "flex", gap: 10, alignItems: "baseline", marginBottom: 4 }}>
+      <code style={{ minWidth: 160 }}>{label}</code>
+      <span style={{ fontSize: 12.5 }}>{value}</span>
+    </div>
+  );
+  return (
+    <div>
+      {row("name", <code>{connector.name}</code>)}
+      {row("description", connector.description)}
+      {row("base_url", <code>{connector.base_url}</code>)}
+      {row("auth_type", <code>{connector.auth_type}</code>)}
+      {row("auth header", <code>{connector.auth_header}</code>)}
+      {row("requires_certificate", <code>{String(connector.requires_certificate)}</code>)}
+
+      <div style={{ marginTop: 14, display: "flex", gap: 8, alignItems: "baseline" }}>
+        <code style={{ fontWeight: 700 }}>tools</code>
+        {toolsEndpoint && (
+          <>
+            <span className="pip">{toolsEndpoint.method}</span>
+            <span className="pip">{toolsEndpoint.path}</span>
+          </>
+        )}
+      </div>
+      {connector.tools.map((t) => (
+        <div
+          key={t.name}
+          style={{
+            marginTop: 8,
+            padding: 10,
+            borderRadius: 6,
+            border: "1px solid var(--border, rgba(255,255,255,0.10))",
+          }}
+        >
+          <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
+            <code style={{ fontWeight: 700 }}>{t.name}</code>
+            <code>{t.method}</code>
+            <code>{t.path}</code>
+            {t.write && <Chip tone="warn">escritura</Chip>}
+          </div>
+          <div style={{ fontSize: 12.5, margin: "4px 0" }}>{t.description}</div>
+          <div style={{ fontSize: 12, color: "var(--fg-muted)" }}>
+            <span>query_parameters: </span>
+            {t.query_parameters.length ? t.query_parameters.map((p) => <Chip key={p}>{p}</Chip>) : <Empty />}
+          </div>
+          <div style={{ fontSize: 12, color: "var(--fg-muted)" }}>
+            <span>body: </span>
+            {t.body_parameters.length ? t.body_parameters.map((p) => <Chip key={p}>{p}</Chip>) : <Empty />}
+          </div>
+          <div style={{ fontSize: 12, color: "var(--fg-muted)" }}>
+            <span>bindings (macros de Meta): </span>
+            {t.bindings.map((b) => (
+              <Chip key={b}>{b}</Chip>
+            ))}
+          </div>
+          <div style={{ fontSize: 12, color: "var(--fg-muted)", marginTop: 4 }}>{t.notes}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ToolTreatments({ treatments }: { treatments: MbaConfig["tool_treatments"] }) {
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12.5 }}>
+        <thead>
+          <tr style={{ color: "var(--fg-muted)", textAlign: "left" }}>
+            <th style={{ padding: "4px 8px" }}>tool LLM</th>
+            <th style={{ padding: "4px 8px" }}>tratamiento</th>
+            <th style={{ padding: "4px 8px" }}>en MBA</th>
+          </tr>
+        </thead>
+        <tbody>
+          {treatments.map((t) => (
+            <tr key={t.llm_tool} style={{ borderTop: "1px solid var(--border, rgba(255,255,255,0.08))" }}>
+              <td style={{ padding: "6px 8px", verticalAlign: "top" }}>
+                <code>{t.llm_tool}</code>
+                <div style={{ fontSize: 11.5, color: "var(--fg-muted)" }}>{t.when}</div>
+              </td>
+              <td style={{ padding: "6px 8px", verticalAlign: "top" }}>
+                <code>{t.treatment}</code>
+              </td>
+              <td style={{ padding: "6px 8px", verticalAlign: "top", color: "var(--fg-muted)" }}>
+                {t.detail}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export function AgentsMbaPreview({ agentId }: Props) {
   const { data, isLoading, isError } = useMbaConfig(agentId);
 
@@ -283,6 +384,51 @@ export function AgentsMbaPreview({ agentId }: Props) {
         endpoint={endpointFor("settings")}
       >
         <Settings settings={data.settings} />
+      </Section>
+
+      <Section
+        icon="bolt"
+        title="Connector y tools"
+        desc="La API de Hubara que MBA invoca para consultar catálogo y pedidos, y registrar órdenes."
+        endpoint={endpointFor("connector")}
+        count={data.connector ? `${data.connector.tools.length} tools` : undefined}
+      >
+        {data.connector ? (
+          <Connector connector={data.connector} toolsEndpoint={endpointFor("connector_tools")} />
+        ) : (
+          <Empty />
+        )}
+      </Section>
+
+      <Section
+        icon="files"
+        title="UI skills"
+        desc="Componentes ricos nativos de MBA que reemplazan nuestras tools de presentación."
+        endpoint={endpointFor("ui_skills")}
+        count={`${data.ui_skills.length} UI skills`}
+      >
+        {data.ui_skills.length === 0 && <Empty />}
+        {data.ui_skills.map((u) => (
+          <div key={u.from_tool} style={{ marginBottom: 10 }}>
+            <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
+              <code style={{ fontWeight: 700 }}>{u.title}</code>
+              <span style={{ fontSize: 11.5, color: "var(--fg-muted)" }}>component_type</span>
+              <code>{u.component_type}</code>
+              <span style={{ fontSize: 11.5, color: "var(--fg-muted)" }}>desde</span>
+              <Chip>{u.from_tool}</Chip>
+            </div>
+            <div style={{ fontSize: 12.5, color: "var(--fg-muted)" }}>{u.instruction}</div>
+          </div>
+        ))}
+      </Section>
+
+      <Section
+        icon="workflow"
+        title="Mapa tool LLM → MBA"
+        desc="Cada tool del agente de hoy y qué la reemplaza en MBA. Nada queda sin decidir."
+        count={`${data.tool_treatments.length} tools`}
+      >
+        <ToolTreatments treatments={data.tool_treatments} />
       </Section>
 
       <Section
