@@ -154,6 +154,10 @@ class PushMetaActivityResult:
     aborted_due_to_threshold: bool
     error: str | None
     duration_seconds: float
+    # Cuántos catálogos recibieron el batch (primario + META_EXTRA_CATALOG_IDS).
+    # 0 en graceful skip. Los contadores creates/updates/deletes están SUMADOS
+    # sobre todos los catálogos (1 item x N catálogos = N creates).
+    catalogs_pushed: int = 1
 
 
 # ---------- Workflow result ----------

@@ -202,11 +202,12 @@ class CatalogSyncWorkflow:
             **_TOOL_OPTIONS,
         )
         if push_result.pushed:
-            self._set_step(
-                "push",
-                "done",
-                f"{push_result.creates} nuevos · {push_result.updates} actualizados",
-            )
+            detail = f"{push_result.creates} nuevos · {push_result.updates} actualizados"
+            if push_result.catalogs_pushed > 1:
+                detail += f" · {push_result.catalogs_pushed} catálogos"
+            if not push_result.ok and push_result.error:
+                detail += f" · error: {push_result.error}"
+            self._set_step("push", "done" if push_result.ok else "failed", detail)
         else:
             reason = (
                 "Meta no configurado"
