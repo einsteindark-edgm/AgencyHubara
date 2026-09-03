@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, cleanup } from "@testing-library/react";
+import { render, screen, waitFor, cleanup, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactElement } from "react";
 import { AgentsPrompts } from "./AgentsPrompts";
+import { MBA_CONFIG_FIXTURE } from "@plugins/agents_admin/frontend/entities/mba-config/fixture";
 
 const fetchMock = vi.fn();
 
@@ -110,8 +111,31 @@ describe("AgentsPrompts", () => {
 
     await waitFor(() => screen.getByText("Remarketing"));
 
-    // Solo `sales` tiene panel de Calidad LLM: el resto ve los prompts sin tabs.
+    // Solo `sales` tiene panel de Calidad LLM; pero TODOS los agentes tienen
+    // Personalidad + Meta Business Agent (qué le mandaríamos a MBA de cada bot).
     expect(screen.queryByRole("button", { name: /Calidad LLM/i })).toBeNull();
-    expect(screen.queryByRole("button", { name: /Personalidad/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /Personalidad/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Meta Business Agent/i })).toBeTruthy();
+  });
+
+  it("al abrir el tab Meta Business Agent monta el preview normalizado del agente", async () => {
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/mba-config")) return Promise.resolve(jsonResponse(MBA_CONFIG_FIXTURE));
+      return Promise.resolve(jsonResponse({ agents: [SALES_AGENT] }));
+    });
+
+    renderWithClient(<AgentsPrompts agentId="sales" />);
+    await waitFor(() => screen.getByText("Asesor de Ventas"));
+
+    fireEvent.click(screen.getByRole("button", { name: /Meta Business Agent/i }));
+
+    // El preview pide /api/agents/sales/mba-config y muestra las skills normalizadas.
+    await waitFor(() => screen.getByText("persona-y-tono"));
+    expect(
+      fetchMock.mock.calls.some((c) => String(c[0]).includes("/api/agents/sales/mba-config")),
+    ).toBe(true);
+    // Los prompts crudos ya no se muestran en este tab.
+    expect(screen.queryByText("Eres el Asesor Exclusivo de Ventas de Hubara.")).toBeNull();
   });
 });
