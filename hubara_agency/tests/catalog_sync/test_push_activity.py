@@ -381,3 +381,165 @@ async def test_push_error_does_not_overwrite_state(
         (isolated_snapshot_dir / ".meta_state.json").read_text()
     )
     assert state == old_state
+
+
+# =============================================================================
+# Multi-catálogo: META_EXTRA_CATALOG_IDS (réplicas del catálogo primario)
+# =============================================================================
+
+
+async def _run_push_env(
+    isolated_snapshot_dir, fake_port, env: dict[str, str], *, force: bool = False
+):
+    """Como `_run_push` pero con env explícito (multi-catálogo)."""
+    with patch.dict("os.environ", env, clear=False):
+        with patch(
+            "src.plugins.catalog.agent.activities.push.get_push_meta_catalog_use_case"
+        ) as mock_factory:
+            from src.plugins.catalog.agent.use_cases.push_meta_catalog import (
+                PushMetaCatalogUseCase,
+            )
+
+            mock_factory.return_value = PushMetaCatalogUseCase(
+                meta_port=fake_port
+            )
+            return await push_meta_catalog_activity(
+                PushMetaActivityInput(
+                    tenant_id="default",
+                    products_json=_sample_products_json(),
+                    snapshot_dir=str(isolated_snapshot_dir),
+                    force_full_refresh=force,
+                )
+            )
+
+
+_MULTI_ENV = {
+    "META_CATALOG_ID": "CAT-PRIMARY-001",
+    # Espacios + vacíos + duplicado del primario: todos se toleran/ignoran.
+    "META_EXTRA_CATALOG_IDS": " CAT-REPLICA-002 , ,CAT-PRIMARY-001, 111 ",
+    "META_SYSTEM_USER_TOKEN": "EAAtoken",
+}
+
+
+@pytest.mark.asyncio
+async def test_extra_catalog_ids_push_same_items_to_each_catalog(
+    isolated_snapshot_dir,
+):
+    """Con META_EXTRA_CATALOG_IDS, el MISMO batch (mismos retailer_ids, con
+    item_group_id/color de Medusa) se manda a cada catálogo — primario primero,
+    réplicas después — y cada catálogo tiene su propio state de delta."""
+    port = _FakeMetaPort(ok=True, handle="h_multi")
+    result = await _run_push_env(isolated_snapshot_dir, port, _MULTI_ENV)
+
+    assert [b.catalog_id for b in port.batches] == [
+        "CAT-PRIMARY-001",
+        "CAT-REPLICA-002",
+        "111",
+    ], "un batch por catálogo, en orden, sin duplicados ni vacíos"
+    assert all(
+        [c.retailer_id for c in b.creates] == ["HUB-VEL-LAV-250"]
+        for b in port.batches
+    ), "cada catálogo recibe exactamente los mismos items"
+
+    assert result.ok is True and result.pushed is True
+    assert result.catalogs_pushed == 3
+    assert result.creates == 3  # 1 item x 3 catálogos
+
+    # State del primario sigue en `.meta_state.json` (compat con el state ya
+    # existente en prod); réplicas en `.meta_state.<catalog_id>.json`.
+    assert (isolated_snapshot_dir / ".meta_state.json").exists()
+    assert (isolated_snapshot_dir / ".meta_state.CAT-REPLICA-002.json").exists()
+    assert (isolated_snapshot_dir / ".meta_state.111.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_replica_added_later_gets_full_push_while_primary_stays_delta(
+    isolated_snapshot_dir,
+):
+    """El delta es POR catálogo: agregar una réplica después de que el
+    primario ya sincronizó → el primario es no-op (hash igual) y la réplica
+    recibe push FULL. Es el caso real de prod: `CAT-PRIMARY-001` ya tiene
+    `.meta_state.json`; agregamos `CAT-REPLICA-002` por env."""
+    only_primary = {**_MULTI_ENV, "META_EXTRA_CATALOG_IDS": ""}
+    port1 = _FakeMetaPort(ok=True, handle="h1")
+    r1 = await _run_push_env(isolated_snapshot_dir, port1, only_primary)
+    assert r1.creates == 1 and r1.catalogs_pushed == 1
+
+    with_replica = {**_MULTI_ENV, "META_EXTRA_CATALOG_IDS": "CAT-REPLICA-002"}
+    port2 = _FakeMetaPort(ok=True, handle="h2")
+    r2 = await _run_push_env(isolated_snapshot_dir, port2, with_replica)
+
+    assert [b.catalog_id for b in port2.batches] == ["CAT-REPLICA-002"], (
+        "solo la réplica nueva va al port; el primario es delta no-op"
+    )
+    assert r2.creates == 1 and r2.updates == 0
+    assert r2.catalogs_pushed == 2
+    assert r2.ok is True
+
+
+class _FailFor(_FakeMetaPort):
+    """Port fake que falla SOLO para un catálogo (las réplicas son
+    independientes: un 500 en una no debe tumbar a las demás)."""
+
+    def __init__(self, failing_catalog_id: str):
+        super().__init__(ok=True, handle="h_ok")
+        self._failing = failing_catalog_id
+
+    async def upsert_batch(self, request: MetaBatchRequest) -> MetaBatchResult:
+        self.batches.append(request)
+        if request.catalog_id == self._failing:
+            return MetaBatchResult(
+                handle=None, ok=False, submitted=1, error="fake_http_500"
+            )
+        return MetaBatchResult(handle="h_ok", ok=True, submitted=1)
+
+
+@pytest.mark.asyncio
+async def test_replica_failure_is_reported_but_does_not_block_primary(
+    isolated_snapshot_dir,
+):
+    """Si una réplica falla: `ok=False` con el catálogo culpable en `error`,
+    el primario igual pushea y persiste su state, y la réplica NO persiste
+    state (el próximo run la re-intenta full)."""
+    port = _FailFor("CAT-REPLICA-002")
+    env = {**_MULTI_ENV, "META_EXTRA_CATALOG_IDS": "CAT-REPLICA-002"}
+    result = await _run_push_env(isolated_snapshot_dir, port, env)
+
+    assert [b.catalog_id for b in port.batches] == [
+        "CAT-PRIMARY-001",
+        "CAT-REPLICA-002",
+    ]
+    assert result.ok is False
+    assert result.pushed is True
+    assert result.catalogs_pushed == 2
+    assert "CAT-REPLICA-002" in (result.error or "")
+    assert "fake_http_500" in (result.error or "")
+    assert result.handle == "h_ok", "el handle reportado es el del primario"
+
+    assert (isolated_snapshot_dir / ".meta_state.json").exists()
+    assert not (isolated_snapshot_dir / ".meta_state.CAT-REPLICA-002.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_result_carries_per_catalog_breakdown(isolated_snapshot_dir):
+    """PM-05: los contadores agregados no dicen QUÉ catálogo recibió qué.
+    `per_catalog_json` (R-JSON) trae el desglose por catálogo — ok, handle,
+    creates/updates/deletes y error — para el dashboard y el script de ops."""
+    port = _FailFor("CAT-REPLICA-002")
+    env = {**_MULTI_ENV, "META_EXTRA_CATALOG_IDS": "CAT-REPLICA-002"}
+    result = await _run_push_env(isolated_snapshot_dir, port, env)
+
+    per = json.loads(result.per_catalog_json)
+    assert list(per) == ["CAT-PRIMARY-001", "CAT-REPLICA-002"]
+    assert per["CAT-PRIMARY-001"] == {
+        "ok": True,
+        "handle": "h_ok",
+        "creates": 1,
+        "updates": 0,
+        "deletes": 0,
+        "error": None,
+    }
+    assert per["CAT-REPLICA-002"]["ok"] is False
+    assert per["CAT-REPLICA-002"]["handle"] is None
+    assert per["CAT-REPLICA-002"]["creates"] == 0
+    assert per["CAT-REPLICA-002"]["error"] == "fake_http_500"

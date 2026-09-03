@@ -106,6 +106,8 @@ viejo desde `git log -- scripts/create_catalog_sync_schedule.py`.
 """
 from __future__ import annotations
 
+import json
+
 import argparse
 import asyncio
 import sys
@@ -160,6 +162,24 @@ def _print_result(result) -> None:
     print(f"    creates:       {push.creates}")
     print(f"    updates:       {push.updates}")
     print(f"    deletes:       {push.deletes}")
+    catalogs_pushed = getattr(push, "catalogs_pushed", 1)
+    if catalogs_pushed > 1:
+        # Contadores de arriba SUMADOS sobre N catálogos; acá quién recibió qué.
+        print(f"    catálogos:     {catalogs_pushed} (META_CATALOG_ID + META_EXTRA_CATALOG_IDS)")
+        try:
+            per = json.loads(getattr(push, "per_catalog_json", "{}") or "{}")
+        except ValueError:
+            per = {}
+        for cid, r in per.items():
+            icon = "✅" if r.get("ok") else "❌"
+            line = (
+                f"      {icon} {cid}: creates={r.get('creates', 0)} "
+                f"updates={r.get('updates', 0)} deletes={r.get('deletes', 0)} "
+                f"handle={r.get('handle') or '(none)'}"
+            )
+            if r.get("error"):
+                line += f" error={r['error']}"
+            print(line)
     print(f"    skipped (sin imagen):  {push.skipped_image}")
     print(f"    skipped (sin precio):  {push.skipped_price}")
     if push.aborted_due_to_threshold:

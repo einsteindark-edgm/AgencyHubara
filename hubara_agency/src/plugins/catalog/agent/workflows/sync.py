@@ -202,11 +202,17 @@ class CatalogSyncWorkflow:
             **_TOOL_OPTIONS,
         )
         if push_result.pushed:
-            self._set_step(
-                "push",
-                "done",
-                f"{push_result.creates} nuevos · {push_result.updates} actualizados",
-            )
+            detail = f"{push_result.creates} nuevos · {push_result.updates} actualizados"
+            if push_result.catalogs_pushed > 1:
+                detail += f" · {push_result.catalogs_pushed} catálogos"
+                detail += _per_catalog_summary(push_result.per_catalog_json)
+            if not push_result.ok and push_result.error:
+                # PM-04: el workflow completa (el snapshot local sigue válido)
+                # pero el error queda en `progress.error` + step `failed` para
+                # que la historia de syncs NO lo pinte verde.
+                self._error = push_result.error
+                detail += f" · error: {push_result.error[:160]}"
+            self._set_step("push", "done" if push_result.ok else "failed", detail)
         else:
             reason = (
                 "Meta no configurado"
@@ -217,3 +223,20 @@ class CatalogSyncWorkflow:
 
         self._phase = "completed"
         return CatalogSyncResult(write=write_result, push=push_result)
+
+
+
+def _per_catalog_summary(per_catalog_json: str) -> str:
+    """' (CAT-A: 35/0 ✓, CAT-B: 0/0 ✗)' — creates/updates por catálogo."""
+    try:
+        per = json.loads(per_catalog_json or "{}")
+    except (ValueError, TypeError):
+        return ""
+    if not isinstance(per, dict) or not per:
+        return ""
+    parts = [
+        f"{cid}: {v.get('creates', 0)}/{v.get('updates', 0)} {'✓' if v.get('ok') else '✗'}"
+        for cid, v in per.items()
+        if isinstance(v, dict)
+    ]
+    return f" ({', '.join(parts)})" if parts else ""

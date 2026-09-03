@@ -151,6 +151,7 @@ services:
     - MEDUSA_BASE_URL=${MEDUSA_BASE_URL}
     - MEDUSA_ADMIN_TOKEN=${MEDUSA_ADMIN_TOKEN}
     - META_CATALOG_ID=${META_CATALOG_ID}
+    - META_EXTRA_CATALOG_IDS=${META_EXTRA_CATALOG_IDS:-}
     - META_SYSTEM_USER_TOKEN=${META_SYSTEM_USER_TOKEN}
     - ENABLED_PLUGINS=ads,agents_admin,catalog,chats,eta,marketing,order_sentinel,orders,reengagement,system_map
     - EXOCLAW_STATE_DIR=/app/hubara_vault/agent_state
