@@ -32,6 +32,10 @@ logger = structlog.get_logger()
 
 GRAPH_API_VERSION = "v23.0"
 
+# Estados de `check_batch_request_status` (doc vieja + vocabulario real).
+_IN_PROGRESS_STATUSES = frozenset({"started", "in_progress", "pending"})
+_DONE_STATUSES = frozenset({"finished", "completed"})
+
 
 class MetaCatalogClient:
     name = "meta_catalog_client"
@@ -212,10 +216,12 @@ class MetaCatalogClient:
                 error="in_progress",
             )
 
-        # Cada entrada tiene status: "completed" | "in_progress" | "failed"
+        # Vocabulario REAL de Meta (verificado en vivo 2026-09-02):
+        # `status: started | finished` + `errors_total_count`. La doc vieja
+        # decía `in_progress | completed | failed` — aceptamos ambos.
         status_entry = status_data[0]
-        overall_status = status_entry.get("status")
-        if overall_status == "in_progress":
+        overall_status = str(status_entry.get("status") or "")
+        if overall_status in _IN_PROGRESS_STATUSES:
             return MetaBatchResult(
                 handle=handle,
                 ok=False,
@@ -234,11 +240,21 @@ class MetaCatalogClient:
                 error_message=err.get("error_message") or err.get("description"),
             ))
 
+        errors_total = int(status_entry.get("errors_total_count") or 0)
+        finished_ok = overall_status in _DONE_STATUSES and not items_results and errors_total == 0
+        if overall_status in _DONE_STATUSES:
+            error = (
+                None
+                if finished_ok
+                else f"batch_errors: {max(errors_total, len(items_results))} item(s) rechazado(s)"
+            )
+        else:
+            error = overall_status or "unknown_status"
         return MetaBatchResult(
             handle=handle,
-            ok=overall_status == "completed",
-            submitted=status_entry.get("count", 0),
-            error=None if overall_status == "completed" else overall_status,
+            ok=finished_ok,
+            submitted=int(status_entry.get("count") or 0),
+            error=error,
             items_results=items_results,
         )
 

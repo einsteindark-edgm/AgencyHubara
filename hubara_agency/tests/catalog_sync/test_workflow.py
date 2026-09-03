@@ -195,3 +195,56 @@ async def test_progress_query_marks_push_skipped_when_meta_off():
     by_key = {s["key"]: s for s in progress["steps"]}
     assert by_key["push"]["status"] == "skipped"
     assert "omitido" in by_key["push"]["detail"]
+
+
+@activity.defn(name="push_meta_catalog")
+async def fake_push_replica_failed(
+    input: PushMetaActivityInput,
+) -> PushMetaActivityResult:
+    """Primario OK, réplica 5xx: la activity devuelve ok=False sin raise."""
+    return PushMetaActivityResult(
+        ok=False,
+        pushed=True,
+        handle="batch_primary",
+        creates=1,
+        updates=0,
+        deletes=0,
+        skipped_image=0,
+        skipped_price=0,
+        aborted_due_to_threshold=False,
+        error="CAT-REPLICA-002: http_500: boom",
+        duration_seconds=0.5,
+        catalogs_pushed=2,
+    )
+
+
+@pytest.mark.asyncio
+async def test_push_failure_surfaces_in_progress_error_and_step(
+    ):
+    """PM-04: si el push devuelve ok=False (ej. una réplica falló), el
+    workflow completa (el snapshot local sigue válido) pero `progress.error`
+    trae el error y el step push queda `failed` con el detalle — así la
+    historia de syncs no lo pinta verde."""
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue="test-catalog-push-failed",
+            workflows=[CatalogSyncWorkflow],
+            activities=[fake_pull, fake_write, fake_push_replica_failed],
+        ):
+            handle = await env.client.start_workflow(
+                CatalogSyncWorkflow.run,
+                CatalogSyncInput(snapshot_dir="/tmp/test-snapshot"),
+                id="test-push-failed-1",
+                task_queue="test-catalog-push-failed",
+            )
+            result = await handle.result()
+            progress = json.loads(await handle.query("progress"))
+
+    assert result.push.ok is False
+    assert progress["phase"] == "completed"
+    assert progress["error"] == "CAT-REPLICA-002: http_500: boom"
+    by_key = {s["key"]: s for s in progress["steps"]}
+    assert by_key["push"]["status"] == "failed"
+    assert "2 catálogos" in by_key["push"]["detail"]
+    assert "CAT-REPLICA-002" in by_key["push"]["detail"]

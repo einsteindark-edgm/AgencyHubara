@@ -518,3 +518,28 @@ async def test_replica_failure_is_reported_but_does_not_block_primary(
 
     assert (isolated_snapshot_dir / ".meta_state.json").exists()
     assert not (isolated_snapshot_dir / ".meta_state.CAT-REPLICA-002.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_result_carries_per_catalog_breakdown(isolated_snapshot_dir):
+    """PM-05: los contadores agregados no dicen QUÉ catálogo recibió qué.
+    `per_catalog_json` (R-JSON) trae el desglose por catálogo — ok, handle,
+    creates/updates/deletes y error — para el dashboard y el script de ops."""
+    port = _FailFor("CAT-REPLICA-002")
+    env = {**_MULTI_ENV, "META_EXTRA_CATALOG_IDS": "CAT-REPLICA-002"}
+    result = await _run_push_env(isolated_snapshot_dir, port, env)
+
+    per = json.loads(result.per_catalog_json)
+    assert list(per) == ["CAT-PRIMARY-001", "CAT-REPLICA-002"]
+    assert per["CAT-PRIMARY-001"] == {
+        "ok": True,
+        "handle": "h_ok",
+        "creates": 1,
+        "updates": 0,
+        "deletes": 0,
+        "error": None,
+    }
+    assert per["CAT-REPLICA-002"]["ok"] is False
+    assert per["CAT-REPLICA-002"]["handle"] is None
+    assert per["CAT-REPLICA-002"]["creates"] == 0
+    assert per["CAT-REPLICA-002"]["error"] == "fake_http_500"

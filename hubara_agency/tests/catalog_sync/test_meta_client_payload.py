@@ -119,3 +119,37 @@ async def test_validation_status_is_failure_not_silent_ok(monkeypatch):
     # Un 200 con validation_status NO es éxito — antes devolvía ok=True (silencioso).
     assert res.ok is False
     assert "validation" in (res.error or "").lower()
+
+
+class _FakeGetClient(_FakeAsyncClient):
+    async def get(self, url, params=None):
+        _FakeGetClient.last_params = params
+        return _FakeGetClient.resp
+
+
+@pytest.mark.asyncio
+async def test_check_batch_status_understands_real_meta_vocabulary(monkeypatch):
+    """PM-03: Meta responde `status: started|finished` + `errors_total_count`
+    (verificado en vivo 2026-09-02), NO `in_progress|completed`. El cliente
+    leía solo el vocabulario viejo → 'finished' caía como ok=False error=
+    'finished' y 'started' como ok=False error='started' (nunca 'in_progress')."""
+    monkeypatch.setattr(client_mod.httpx, "AsyncClient", _FakeGetClient)
+    c = MetaCatalogClient()
+
+    _FakeGetClient.resp = _FakeResp(200, {"data": [{"handle": "h", "status": "started", "errors_total_count": 0}]})
+    r = await c.check_batch_status("CAT-1", "h", "tok")
+    assert r.ok is False and r.error == "in_progress"
+
+    _FakeGetClient.resp = _FakeResp(200, {"data": [{
+        "handle": "h", "status": "finished", "errors_total_count": 1,
+        "errors": [{"retailer_id": "v_leo", "method": "CREATE",
+                    "error_code": 1234, "error_message": "Invalid item_group_id"}],
+    }]})
+    r = await c.check_batch_status("CAT-1", "h", "tok")
+    assert r.ok is False, "finished CON errores por ítem no es éxito"
+    assert r.items_results[0].retailer_id == "v_leo"
+    assert r.items_results[0].error_message == "Invalid item_group_id"
+
+    _FakeGetClient.resp = _FakeResp(200, {"data": [{"handle": "h", "status": "finished", "errors_total_count": 0}]})
+    r = await c.check_batch_status("CAT-1", "h", "tok")
+    assert r.ok is True and r.error is None and r.items_results == []

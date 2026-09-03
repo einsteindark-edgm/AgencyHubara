@@ -158,6 +158,10 @@ class PushMetaActivityResult:
     # 0 en graceful skip. Los contadores creates/updates/deletes están SUMADOS
     # sobre todos los catálogos (1 item x N catálogos = N creates).
     catalogs_pushed: int = 1
+    # Desglose por catálogo (R-JSON): {catalog_id: {ok, handle, creates,
+    # updates, deletes, error}} en el orden primario → réplicas. Los
+    # contadores de arriba están sumados; acá está QUIÉN recibió qué.
+    per_catalog_json: str = "{}"
 
 
 # ---------- Workflow result ----------

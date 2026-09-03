@@ -22,6 +22,7 @@ R-JSON: input/output son dataclasses frozen JSON-safe (ver `contracts.py`).
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import time
@@ -37,8 +38,46 @@ from src.plugins.catalog.agent.contracts import (
 
 
 class PushMetaCatalogUseCase:
-    def __init__(self, meta_port: MetaCatalogPort) -> None:
+    def __init__(
+        self,
+        meta_port: MetaCatalogPort,
+        *,
+        status_poll_interval: float = 3.0,
+        status_max_polls: int = 10,
+    ) -> None:
         self._meta = meta_port
+        # `/items_batch` responde 200 + handle y procesa ASYNC: los rechazos
+        # por ítem (item_group_id inválido, imagen 4xx, ...) solo aparecen en
+        # `check_batch_request_status`. Polleamos hasta `finished` con un
+        # presupuesto acotado (default 10 × 3s = 30s; la activity heartbea).
+        self._status_poll_interval = status_poll_interval
+        self._status_max_polls = status_max_polls
+
+    async def _verify_batch(
+        self, catalog_id: str, handle: str, token: str
+    ) -> str | None:
+        """Devuelve None si el batch terminó sin errores por ítem (o si
+        sigue en curso agotado el presupuesto — no bloqueamos el sync por
+        batches lentos), o un mensaje de error si Meta rechazó ítems."""
+        for attempt in range(self._status_max_polls):
+            status = await self._meta.check_batch_status(catalog_id, handle, token)
+            if status is None:  # port sin implementación de status
+                return None
+            if status.error == "in_progress":
+                if attempt + 1 < self._status_max_polls and self._status_poll_interval > 0:
+                    await asyncio.sleep(self._status_poll_interval)
+                continue
+            rejected = [r for r in status.items_results if not r.ok]
+            if rejected:  # errores por ítem mandan, diga lo que diga `ok`
+                detail = "; ".join(
+                    f"{r.retailer_id}: {r.error_message or r.error_code or 'rejected'}"
+                    for r in rejected[:10]
+                )
+                return f"batch_errors ({len(rejected)}): {detail}"
+            if status.ok:
+                return None
+            return status.error or "batch_failed"
+        return None
 
     async def execute(
         self, input: PushMetaCatalogInput
@@ -166,6 +205,27 @@ class PushMetaCatalogUseCase:
                 next_meta_hashes_json=input.previous_meta_hashes_json,  # mantener anterior
                 duration_seconds=time.time() - started,
             )
+
+        # 7. Verificar el resultado async del batch (errores por ítem)
+        if batch_result.handle:
+            batch_error = await self._verify_batch(
+                input.catalog_id, batch_result.handle, input.system_user_token
+            )
+            if batch_error:
+                return PushMetaCatalogResult(
+                    ok=False,
+                    handle=batch_result.handle,
+                    creates=0,
+                    updates=0,
+                    deletes=0,
+                    skipped_image=skipped_image,
+                    skipped_price=skipped_price,
+                    skipped_collection=0,
+                    aborted_due_to_threshold=False,
+                    error=batch_error,
+                    next_meta_hashes_json=input.previous_meta_hashes_json,
+                    duration_seconds=time.time() - started,
+                )
 
         return PushMetaCatalogResult(
             ok=True,

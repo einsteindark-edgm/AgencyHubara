@@ -147,3 +147,86 @@ async def test_push_emits_per_variant_items_from_products_json():
     retailer_ids = {i.retailer_id for i in batch.creates}
     assert retailer_ids == {"v_leo", "v_esc"}
     assert all(i.item_group_id == "prod_duo_v2" for i in batch.creates)
+
+
+# =============================================================================
+# PM-03: el batch se procesa async — leer check_batch_request_status
+# =============================================================================
+
+
+class _StatusPort(_FakeMetaPort):
+    """Port fake con status async: `statuses` es la secuencia que devuelve
+    check_batch_status en cada poll (Meta responde 'started' un rato antes de
+    'finished')."""
+
+    def __init__(self, statuses: list[MetaBatchResult]) -> None:
+        super().__init__()
+        self._statuses = list(statuses)
+        self.polls: list[tuple[str, str]] = []
+
+    async def check_batch_status(
+        self, catalog_id: str, handle: str, access_token: str
+    ) -> MetaBatchResult:
+        self.polls.append((catalog_id, handle))
+        return self._statuses.pop(0) if len(self._statuses) > 1 else self._statuses[0]
+
+
+def _input(**kw) -> PushMetaCatalogInput:
+    return PushMetaCatalogInput(
+        tenant_id="default",
+        catalog_id="CAT-1",
+        system_user_token="EAAtoken",
+        products_json=json.dumps([asdict(_DUO_V2)]),
+        **kw,
+    )
+
+
+@pytest.mark.asyncio
+async def test_batch_item_errors_make_push_fail_and_keep_previous_hashes():
+    """Meta acepta el batch (200 + handle) y rechaza ítems DESPUÉS, en el
+    status async. Si hay errores por ítem el push NO es exitoso: ok=False,
+    error nombra el ítem, y los hashes previos se conservan para que el
+    próximo run reintente esos ítems (no se persisten como 'ya subidos')."""
+    from src.platform.meta_catalog.dtos import MetaBatchItemResult
+
+    port = _StatusPort([
+        MetaBatchResult(handle="h_test", ok=False, submitted=0, error="in_progress"),
+        MetaBatchResult(
+            handle="h_test", ok=True, submitted=2,
+            items_results=[MetaBatchItemResult(
+                retailer_id="v_leo", method="CREATE", ok=False,
+                error_code="1234", error_message="Invalid item_group_id",
+            )],
+        ),
+    ])
+    uc = PushMetaCatalogUseCase(meta_port=port, status_poll_interval=0.0)
+    result = await uc.execute(_input(previous_meta_hashes_json='{"old": "x"}'))
+
+    assert [p[0] for p in port.polls] == ["CAT-1", "CAT-1"], "poll hasta finished"
+    assert result.ok is False
+    assert result.handle == "h_test"
+    assert "v_leo" in (result.error or "") and "Invalid item_group_id" in (result.error or "")
+    assert json.loads(result.next_meta_hashes_json) == {"old": "x"}
+
+
+@pytest.mark.asyncio
+async def test_batch_finished_without_errors_is_ok():
+    """Control: status finished sin errores → ok=True y hashes nuevos."""
+    port = _StatusPort([MetaBatchResult(handle="h_test", ok=True, submitted=2)])
+    uc = PushMetaCatalogUseCase(meta_port=port, status_poll_interval=0.0)
+    result = await uc.execute(_input())
+    assert result.ok is True and result.creates == 2
+    assert set(json.loads(result.next_meta_hashes_json)) == {"v_leo", "v_esc"}
+
+
+@pytest.mark.asyncio
+async def test_batch_still_in_progress_after_budget_is_ok_with_note():
+    """Si Meta sigue 'in_progress' agotado el presupuesto de polls, NO
+    bloqueamos el sync (batches grandes tardan minutos): ok=True, hashes
+    nuevos, y `error` queda None — el handle queda en el result para
+    consultarlo después."""
+    port = _StatusPort([MetaBatchResult(handle="h_test", ok=False, submitted=0, error="in_progress")])
+    uc = PushMetaCatalogUseCase(meta_port=port, status_poll_interval=0.0, status_max_polls=3)
+    result = await uc.execute(_input())
+    assert len(port.polls) == 3
+    assert result.ok is True and result.handle == "h_test"

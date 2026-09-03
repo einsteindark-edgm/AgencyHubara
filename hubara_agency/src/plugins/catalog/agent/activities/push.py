@@ -227,6 +227,7 @@ async def push_meta_catalog_activity(
             error="meta_not_configured",
             duration_seconds=0.0,
             catalogs_pushed=0,
+            per_catalog_json="{}",
         )
 
     # Fallback de `snapshot_dir` desde env (espejo de write_snapshot_activity).
@@ -256,6 +257,17 @@ async def push_meta_catalog_activity(
         f"{cid}: {r.error}" for cid, r in results if not r.ok and r.error
     ]
     primary_result = results[0][1]
+    per_catalog = {
+        cid: {
+            "ok": r.ok,
+            "handle": r.handle,
+            "creates": r.creates,
+            "updates": r.updates,
+            "deletes": r.deletes,
+            "error": r.error,
+        }
+        for cid, r in results
+    }
     return PushMetaActivityResult(
         ok=all(r.ok for _, r in results),
         pushed=True,
@@ -270,4 +282,5 @@ async def push_meta_catalog_activity(
         error="; ".join(errors) if errors else None,
         duration_seconds=sum(r.duration_seconds for _, r in results),
         catalogs_pushed=len(results),
+        per_catalog_json=json.dumps(per_catalog, ensure_ascii=False),
     )
