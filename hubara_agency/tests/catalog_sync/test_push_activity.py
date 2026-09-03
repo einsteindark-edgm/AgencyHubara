@@ -414,9 +414,9 @@ async def _run_push_env(
 
 
 _MULTI_ENV = {
-    "META_CATALOG_ID": "868785339159351",
+    "META_CATALOG_ID": "CAT-PRIMARY-001",
     # Espacios + vacíos + duplicado del primario: todos se toleran/ignoran.
-    "META_EXTRA_CATALOG_IDS": " 2507823826404263 , ,868785339159351, 111 ",
+    "META_EXTRA_CATALOG_IDS": " CAT-REPLICA-002 , ,CAT-PRIMARY-001, 111 ",
     "META_SYSTEM_USER_TOKEN": "EAAtoken",
 }
 
@@ -432,8 +432,8 @@ async def test_extra_catalog_ids_push_same_items_to_each_catalog(
     result = await _run_push_env(isolated_snapshot_dir, port, _MULTI_ENV)
 
     assert [b.catalog_id for b in port.batches] == [
-        "868785339159351",
-        "2507823826404263",
+        "CAT-PRIMARY-001",
+        "CAT-REPLICA-002",
         "111",
     ], "un batch por catálogo, en orden, sin duplicados ni vacíos"
     assert all(
@@ -448,7 +448,7 @@ async def test_extra_catalog_ids_push_same_items_to_each_catalog(
     # State del primario sigue en `.meta_state.json` (compat con el state ya
     # existente en prod); réplicas en `.meta_state.<catalog_id>.json`.
     assert (isolated_snapshot_dir / ".meta_state.json").exists()
-    assert (isolated_snapshot_dir / ".meta_state.2507823826404263.json").exists()
+    assert (isolated_snapshot_dir / ".meta_state.CAT-REPLICA-002.json").exists()
     assert (isolated_snapshot_dir / ".meta_state.111.json").exists()
 
 
@@ -458,18 +458,18 @@ async def test_replica_added_later_gets_full_push_while_primary_stays_delta(
 ):
     """El delta es POR catálogo: agregar una réplica después de que el
     primario ya sincronizó → el primario es no-op (hash igual) y la réplica
-    recibe push FULL. Es el caso real de prod: `868785339159351` ya tiene
-    `.meta_state.json`; agregamos `2507823826404263` por env."""
+    recibe push FULL. Es el caso real de prod: `CAT-PRIMARY-001` ya tiene
+    `.meta_state.json`; agregamos `CAT-REPLICA-002` por env."""
     only_primary = {**_MULTI_ENV, "META_EXTRA_CATALOG_IDS": ""}
     port1 = _FakeMetaPort(ok=True, handle="h1")
     r1 = await _run_push_env(isolated_snapshot_dir, port1, only_primary)
     assert r1.creates == 1 and r1.catalogs_pushed == 1
 
-    with_replica = {**_MULTI_ENV, "META_EXTRA_CATALOG_IDS": "2507823826404263"}
+    with_replica = {**_MULTI_ENV, "META_EXTRA_CATALOG_IDS": "CAT-REPLICA-002"}
     port2 = _FakeMetaPort(ok=True, handle="h2")
     r2 = await _run_push_env(isolated_snapshot_dir, port2, with_replica)
 
-    assert [b.catalog_id for b in port2.batches] == ["2507823826404263"], (
+    assert [b.catalog_id for b in port2.batches] == ["CAT-REPLICA-002"], (
         "solo la réplica nueva va al port; el primario es delta no-op"
     )
     assert r2.creates == 1 and r2.updates == 0
@@ -501,20 +501,20 @@ async def test_replica_failure_is_reported_but_does_not_block_primary(
     """Si una réplica falla: `ok=False` con el catálogo culpable en `error`,
     el primario igual pushea y persiste su state, y la réplica NO persiste
     state (el próximo run la re-intenta full)."""
-    port = _FailFor("2507823826404263")
-    env = {**_MULTI_ENV, "META_EXTRA_CATALOG_IDS": "2507823826404263"}
+    port = _FailFor("CAT-REPLICA-002")
+    env = {**_MULTI_ENV, "META_EXTRA_CATALOG_IDS": "CAT-REPLICA-002"}
     result = await _run_push_env(isolated_snapshot_dir, port, env)
 
     assert [b.catalog_id for b in port.batches] == [
-        "868785339159351",
-        "2507823826404263",
+        "CAT-PRIMARY-001",
+        "CAT-REPLICA-002",
     ]
     assert result.ok is False
     assert result.pushed is True
     assert result.catalogs_pushed == 2
-    assert "2507823826404263" in (result.error or "")
+    assert "CAT-REPLICA-002" in (result.error or "")
     assert "fake_http_500" in (result.error or "")
     assert result.handle == "h_ok", "el handle reportado es el del primario"
 
     assert (isolated_snapshot_dir / ".meta_state.json").exists()
-    assert not (isolated_snapshot_dir / ".meta_state.2507823826404263.json").exists()
+    assert not (isolated_snapshot_dir / ".meta_state.CAT-REPLICA-002.json").exists()

@@ -56,6 +56,9 @@ agent:
           # Si no están seteados en host .env, el push hace graceful skip.
           # Ver hubara_agency/docs/META_CATALOG_SETUP.md.
           META_CATALOG_ID: ${META_CATALOG_ID}
+          # Réplicas (CSV, opcional): catálogo del número en coexistencia — Meta
+          # no deja conectarle el primario ("(#10) SMB business type").
+          META_EXTRA_CATALOG_IDS: ${META_EXTRA_CATALOG_IDS:-}
           META_SYSTEM_USER_TOKEN: ${META_SYSTEM_USER_TOKEN}
         volumes:
           - hubara-vault-local:/app/hubara_vault
@@ -73,3 +76,4 @@ wiring_intents:
   env_vars_optional:
     - META_CATALOG_ID
     - META_SYSTEM_USER_TOKEN          # sin estos, push paso 3 hace graceful skip
+    - META_EXTRA_CATALOG_IDS          # CSV de catálogos réplica (push a N catálogos)
