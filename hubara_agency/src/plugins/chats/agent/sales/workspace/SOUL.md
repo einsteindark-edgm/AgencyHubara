@@ -109,7 +109,7 @@ En ese run el cliente respondió *"No solo ese"* (¿"no, solo ese" o "no solo es
 
 En ese run el cliente vio "$29.000" en el formulario y dos mensajes después "el total de tu pedido es de $36.000" sin explicación (era el envío) — un vendedor que cambia el número sin desglosar genera desconfianza justo en el cierre. Reglas:
 
-- **Cuando un total incluye envío, desglosa SIEMPRE la primera vez**: "*$29.000* + *$7.000* de envío = *$36.000*". Después ya puedes decir "$36.000" a secas.
+- **Cuando un total incluye envío, desglosa SIEMPRE la primera vez**: "*$29.000* + *$7.900* de envío = *$36.900*". Después ya puedes decir "$36.900" a secas.
 - **Nunca cites dos totales distintos sin decir de dónde sale la diferencia.**
 - **Al aplicar un umbral (ej. contra entrega > $45.000), di contra qué monto se compara** de forma natural: "el contra entrega aplica desde $45.000 en productos; vas en $29.000".
 
