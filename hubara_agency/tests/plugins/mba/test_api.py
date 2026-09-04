@@ -54,3 +54,19 @@ def test_connector_tools_exist_for_every_declared_tool_and_require_the_key(monke
         "set_order_slot", "verify_order_for_checkout", "register_order",
         "manage_conversation_tag", "escalate_to_human",
     }
+
+
+def test_connector_key_check_is_constant_time_safe_with_non_ascii_and_does_not_leak_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HUBARA_MBA_API_KEY", "secreto")
+    c = _client()
+    # una key con caracteres no-ASCII NO puede tumbar el endpoint público (500): es 401
+    # (los headers HTTP son bytes; Starlette los decodifica latin-1 → str no-ASCII)
+    r = c.get("/api/mba/tools/search_products", headers={"X-API-Key": "señuelo-ñ".encode("latin-1")})
+    assert r.status_code == 401
+    # sin la variable configurada, el 503 no revela el nombre de la variable
+    monkeypatch.delenv("HUBARA_MBA_API_KEY")
+    r = c.get("/api/mba/tools/search_products", headers={"X-API-Key": "x"})
+    assert r.status_code == 503
+    assert "HUBARA_MBA_API_KEY" not in r.text
