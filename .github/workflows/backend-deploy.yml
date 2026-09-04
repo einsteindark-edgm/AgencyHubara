@@ -134,13 +134,23 @@ jobs:
             cp /tmp/hubara-deploy/infra/compose/docker-compose.prod.yml /opt/hubara/docker-compose.yml
             cp /tmp/hubara-deploy/infra/compose/render-env-from-ssm.sh    /opt/hubara/
             cp /tmp/hubara-deploy/exoclaw-temporal/litellm_config.yaml    /opt/hubara/litellm_config.yaml
-            rm -rf /opt/hubara/plugins && cp -r /tmp/hubara-deploy/frontend_dashboard/src/plugins /opt/hubara/plugins
             cd /opt/hubara
             chmod +x render-env-from-ssm.sh
             HUBARA_IMAGE="$HUBARA_IMAGE" OTEL_ENDPOINT="$OTEL_ENDPOINT" ./render-env-from-ssm.sh
             GHCR_TOKEN="$(grep '^GHCR_PULL_TOKEN=' .env | cut -d= -f2-)"
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_OWNER" --password-stdin
             docker compose pull
+            # Manifests DESPUÉS del pull y SIN `rm -rf` del directorio: `./plugins`
+            # es el bind mount de `api` (/app/frontend_dashboard/src/plugins). Si se
+            # borra y recrea el dir mientras el container viejo sigue corriendo (p.ej.
+            # el login a GHCR falló y nunca llegamos al `up -d`), el mount queda
+            # apuntando al inode viejo y `GET /api/agents` devuelve `{"agents":[]}`
+            # aunque `GET /` siga listando plugins (incidente 2026-09-04, token GHCR
+            # vencido). Vaciar el contenido conserva el inode; hacerlo tras el pull
+            # garantiza que el `up -d` que sigue recrea los containers.
+            mkdir -p /opt/hubara/plugins
+            find /opt/hubara/plugins -mindepth 1 -delete
+            cp -r /tmp/hubara-deploy/frontend_dashboard/src/plugins/. /opt/hubara/plugins/
             # litellm: recrear SIEMPRE desde cero — su config es un bind-mount
             # y `up -d` no recrea el container cuando solo cambió el CONTENIDO
             # del archivo (imagen/definición idénticas) → seguiría sirviendo
