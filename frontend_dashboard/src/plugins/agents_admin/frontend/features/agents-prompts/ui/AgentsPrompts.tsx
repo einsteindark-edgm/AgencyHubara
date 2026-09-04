@@ -1,17 +1,22 @@
 /**
- * Canvas central de Agentes. Para el agente `sales` expone dos tabs:
+ * Canvas central de Agentes. Tabs por agente:
  *   - "Personalidad": los 5 prompts read-only (Agents/Identity/Soul/Tools/Users)
  *     con el CONTENIDO REAL de los .md de su workspace (GET /api/agents).
- *   - "Calidad LLM": el panel de evaluación (tendencia + curación de goldens),
- *     compuesto desde `agents-quality`. Solo `sales` tiene harness de evals hoy.
- * El resto de agentes ve solo los prompts (sin tabs).
+ *   - "Meta Business Agent": qué le enviaríamos a MBA para este agente
+ *     (skills, business_info, FAQs, settings), normalizado desde esos mismos
+ *     archivos por el backend (GET /api/agents/{id}/mba-config).
+ *   - "Calidad LLM" (solo `sales`): el panel de evaluación (tendencia + curación
+ *     de goldens), compuesto desde `agents-quality`.
  */
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { PROMPT_SECTIONS, useAgents } from "@plugins/agents_admin/frontend/entities/agent";
+import { AgentsMbaPreview } from "@plugins/agents_admin/frontend/features/agents-mba-preview";
 import { AgentsQuality } from "@plugins/agents_admin/frontend/features/agents-quality";
 import { Icon, type IconName } from "@/shared/ui";
+
+type CanvasTab = "personalidad" | "mba" | "calidad";
 
 interface Props {
   agentId: string;
@@ -22,13 +27,15 @@ export function AgentsPrompts({ agentId }: Props) {
 
   const agent = agents.find((a) => a.id === agentId) ?? agents[0];
 
-  // Tab del canvas: solo el agente `sales` tiene panel de Calidad LLM. Los hooks
-  // van antes del early-return (Rules of Hooks). Reseteo a "personalidad" al
-  // cambiar de agente.
-  const [tab, setTab] = useState<"personalidad" | "calidad">("personalidad");
-  useEffect(() => {
-    setTab("personalidad");
-  }, [agent?.id]);
+  // Tab del canvas. Los hooks van antes del early-return (Rules of Hooks). El
+  // tab elegido se guarda junto al agente al que pertenece: al cambiar de
+  // agente vuelve a "personalidad" sin un effect (patrón "derivar del prop").
+  const [tabFor, setTabFor] = useState<{ agentId: string | undefined; tab: CanvasTab }>({
+    agentId: undefined,
+    tab: "personalidad",
+  });
+  const tab: CanvasTab = tabFor.agentId === agent?.id ? tabFor.tab : "personalidad";
+  const setTab = (next: CanvasTab) => setTabFor({ agentId: agent?.id, tab: next });
 
   if (!agent) {
     return (
@@ -66,15 +73,22 @@ export function AgentsPrompts({ agentId }: Props) {
         </div>
       )}
 
-      {isSales && (
-        <div className="sub-tabs">
-          <button
-            type="button"
-            className={"sub-tab" + (tab === "personalidad" ? " on" : "")}
-            onClick={() => setTab("personalidad")}
-          >
-            <Icon.wand /> Personalidad
-          </button>
+      <div className="sub-tabs">
+        <button
+          type="button"
+          className={"sub-tab" + (tab === "personalidad" ? " on" : "")}
+          onClick={() => setTab("personalidad")}
+        >
+          <Icon.wand /> Personalidad
+        </button>
+        <button
+          type="button"
+          className={"sub-tab" + (tab === "mba" ? " on" : "")}
+          onClick={() => setTab("mba")}
+        >
+          <Icon.bot /> Meta Business Agent
+        </button>
+        {isSales && (
           <button
             type="button"
             className={"sub-tab" + (tab === "calidad" ? " on" : "")}
@@ -82,11 +96,13 @@ export function AgentsPrompts({ agentId }: Props) {
           >
             <Icon.shield /> Calidad LLM
           </button>
-        </div>
-      )}
+        )}
+      </div>
 
       {onQuality ? (
         <AgentsQuality />
+      ) : tab === "mba" ? (
+        <AgentsMbaPreview agentId={agent.id} />
       ) : (
       <div className="ag-form">
         {PROMPT_SECTIONS.map((s) => {
