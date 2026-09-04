@@ -100,6 +100,8 @@ export const mbaUiSkillSchema = z.object({
   instruction: z.string(),
   from_tool: z.string(),
   source: z.string(),
+  kind: z.enum(["static", "dynamic"]),
+  note: z.string(),
 });
 
 export const mbaToolTreatmentSchema = z.object({
@@ -107,6 +109,7 @@ export const mbaToolTreatmentSchema = z.object({
   when: z.string(),
   treatment: z.enum(["connector_tool", "ui_skill", "native_handoff", "internal", "unmapped"]),
   detail: z.string(),
+  endpoint: z.string().nullable(),
 });
 
 export const mbaConfigSchema = z.object({

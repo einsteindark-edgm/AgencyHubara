@@ -579,6 +579,8 @@ _TOOLS_MD = """# Tools
 | `escalate_to_human` | Tabla de triggers abajo | Antes: UNA línea al cliente |
 | `check_order_status` | Cliente pregunta por su pedido (etapa o pago) | Trae `pay_status` real |
 | `send_cta_url` | Cliente pide un link que NO es producto | `/checkout` bloqueada |
+| `send_contact_card` | Cliente PIDE el número del asesor | No como atajo |
+| `react_to_message` | Ack visual rápido (ej. tras submit del Flow → 🤍) | Con moderación |
 
 ## Cuándo escalar a humano (`escalate_to_human`)
 
@@ -635,22 +637,58 @@ def test_ui_tools_map_to_native_ui_skills_by_component_type() -> None:
     assert "present_products" not in {t.name for t in cfg.connector.tools}
 
 
-def test_every_llm_tool_has_a_declared_treatment() -> None:
+def test_every_llm_tool_has_a_meta_destination() -> None:
     cfg = _cfg_with_tools()
-    treatments = {t.llm_tool: t.treatment for t in cfg.tool_treatments}
+    by_tool = {t.llm_tool: t for t in cfg.tool_treatments}
+    treatments = {k: v.treatment for k, v in by_tool.items()}
     assert treatments["search_products"] == "connector_tool"
     assert treatments["register_order"] == "connector_tool"
     assert treatments["present_products"] == "ui_skill"
-    assert treatments["escalate_to_human"] == "native_handoff"
-    assert treatments["set_order_slot"] == "internal"
-    assert treatments["manage_conversation_tag"] == "internal"
+    # las tools de estado de Hubara TAMBIÉN viajan: MBA le avisa a Hubara el
+    # resultado del funnel (INTERESADO → remarketing, HUMANO → bandeja)
+    assert treatments["escalate_to_human"] == "connector_tool"
+    assert treatments["set_order_slot"] == "connector_tool"
+    assert treatments["manage_conversation_tag"] == "connector_tool"
+    assert treatments["send_contact_card"] == "ui_skill"
+    # la única sin destino, con motivo explícito y verificable en F0
+    assert treatments["react_to_message"] == "unmapped"
+    assert "hilo" in by_tool["react_to_message"].detail
+    # cada tratamiento dice a qué endpoint de Meta va
+    assert by_tool["search_products"].endpoint == "/{entity_id}/agent_connectors/{connector_id}/tools"
+    assert by_tool["present_products"].endpoint == "/{entity_id}/agent-ui-skills"
+    assert by_tool["react_to_message"].endpoint is None
     # cobertura total: ninguna tool del mapa queda sin decidir
     assert set(treatments) == {
         "search_products", "get_product_by_handle", "present_products",
         "request_shipping_details", "set_order_slot", "verify_order_for_checkout",
         "register_order", "manage_conversation_tag", "escalate_to_human",
-        "check_order_status", "send_cta_url",
+        "check_order_status", "send_cta_url", "send_contact_card", "react_to_message",
     }
+
+
+def test_state_tools_are_write_connector_tools_with_hubara_semantics() -> None:
+    cfg = _cfg_with_tools()
+    tools = {t.name: t for t in cfg.connector.tools}
+    for name in ("escalate_to_human", "manage_conversation_tag", "set_order_slot"):
+        assert tools[name].method == "POST" and tools[name].write is True
+    # escalar desde el connector implica que Hubara toma el hilo (mensaje de handoff)
+    assert "hilo" in tools["escalate_to_human"].notes
+    # etiquetar es lo que dispara remarketing / bandeja en Hubara
+    assert "remarketing" in tools["manage_conversation_tag"].notes.lower()
+
+
+def test_ui_skills_distinguish_static_from_dynamic_with_f0_note() -> None:
+    cfg = _cfg_with_tools()
+    ui = {u.from_tool: u for u in cfg.ui_skills}
+    # estáticas: la instrucción contiene todo lo que el componente necesita
+    assert ui["request_shipping_details"].kind == "static"
+    assert ui["send_cta_url"].kind == "static"
+    assert ui["send_contact_card"].kind == "static"
+    assert ui["send_contact_card"].component_type == "cta_url"
+    # dinámicas: dependen de datos del catálogo / connector → a verificar en F0
+    assert ui["present_products"].kind == "dynamic"
+    assert "F0" in ui["present_products"].note
+    assert ui["request_shipping_details"].note == ""
 
 
 def test_escalation_table_becomes_a_skill_and_tools_md_is_no_longer_excluded() -> None:
@@ -659,6 +697,9 @@ def test_escalation_table_becomes_a_skill_and_tools_md_is_no_longer_excluded() -
     assert "BULK_ORDER" in esc.skill and "Pide >20 unidades" in esc.skill
     assert esc.sources == ("TOOLS.md",)
     assert "TOOLS.md" not in {e.source for e in cfg.excluded}
+    # solo react_to_message queda fuera, con motivo
+    tool_exclusions = {e.source for e in cfg.excluded if e.source.startswith("TOOLS.md#tool:")}
+    assert tool_exclusions == {"TOOLS.md#tool:react_to_message"}
 
     paths = {(e.method, e.path) for e in cfg.endpoints}
     assert ("POST", "/{entity_id}/agent_connectors") in paths

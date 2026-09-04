@@ -215,7 +215,14 @@ class MbaConnectorDTO:
 
 @dataclass(frozen=True)
 class MbaUiSkillDTO:
-    """Espeja ``POST /{entity_id}/agent-ui-skills``."""
+    """Espeja ``POST /{entity_id}/agent-ui-skills`` + metadata de UI.
+
+    ``kind``: ``static`` cuando la ``instruction`` puede contener TODO lo que el
+    componente necesita (URL fija, botones fijos, flow_id); ``dynamic`` cuando
+    los datos salen del catálogo o de un connector (carrusel de productos,
+    resumen del pedido) — la doc de Meta no documenta cómo se poblan, así que
+    se marcan "a verificar en F0" en vez de darse por resueltos.
+    """
 
     title: str
     component_type: str
@@ -223,6 +230,8 @@ class MbaUiSkillDTO:
     instruction: str
     from_tool: str
     source: str
+    kind: str  # static | dynamic
+    note: str
 
 
 @dataclass(frozen=True)
@@ -233,6 +242,7 @@ class MbaToolTreatmentDTO:
     when: str
     treatment: str  # connector_tool | ui_skill | native_handoff | internal | unmapped
     detail: str
+    endpoint: str | None  # endpoint de Meta al que viaja; None = no viaja
 
 
 @dataclass(frozen=True)
@@ -259,7 +269,7 @@ ENDPOINTS: tuple[MbaEndpointDTO, ...] = (
     MbaEndpointDTO(
         "connector_tools", "POST", "/{entity_id}/agent_connectors/{connector_id}/tools"
     ),
-    MbaEndpointDTO("ui_skills", "POST", "/{entity_id}/agent-ui-skills"),
+    MbaEndpointDTO("ui_skills", "POST", "/{entity_id}/agent-ui-skills"),  # noqa: E501
     MbaEndpointDTO("allowlist", "POST", "/{entity_id}/agent_config/allowlist"),
 )
 
@@ -274,21 +284,54 @@ CUSTOMER_PHONE_MACRO = "WHATSAPP_PHONE_NUMBER"
 _READ_TOOL_PREFIXES = ("search_", "get_", "list_", "check_", "verify_")
 _WRITE_TOOL_PREFIXES = ("register_", "create_", "update_", "cancel_")
 _UI_TOOL_PREFIXES = ("present_", "send_", "request_", "react_")
-_INTERNAL_TOOL_MARKERS = ("_tag", "_slot", "load_skill")
-# Sub-cadena del nombre de la tool → component_type de UI skill (enum de Meta).
-_UI_COMPONENT_BY_KEY: tuple[tuple[str, str | None], ...] = (
-    ("variant_picker", "interactive_list"),
-    ("quick_replies", "interactive_reply_buttons"),
-    ("order_confirmation", "interactive_reply_buttons"),
-    ("shipping_details", "flow"),
-    ("product_gallery", "image"),
-    ("product_detail", "image"),
-    ("products", "carousel_quick_reply"),
-    ("cta_url", "cta_url"),
-    ("location", "location_request"),
-    ("contact_card", None),
-    ("react_to", None),
+# Tools de ESTADO de Hubara (tags, memoria del pedido, escalación): también
+# viajan como connector tools de escritura — es la única forma de que MBA le
+# avise a Hubara el resultado del funnel (INTERESADO → remarketing, HUMANO →
+# bandeja, datos confirmados → orden).
+_STATE_TOOL_MARKERS = ("escalate", "_tag", "_slot")
+_INTERNAL_TOOL_MARKERS = ("load_skill",)
+# Sub-cadena del nombre de la tool → (component_type de Meta, kind).
+# kind=dynamic: el componente necesita datos del catálogo / connector.
+_UI_COMPONENT_BY_KEY: tuple[tuple[str, str | None, str], ...] = (
+    ("variant_picker", "interactive_list", "dynamic"),
+    ("quick_replies", "interactive_reply_buttons", "static"),
+    ("order_confirmation", "interactive_reply_buttons", "dynamic"),
+    ("shipping_details", "flow", "static"),
+    ("product_gallery", "image", "dynamic"),
+    ("product_detail", "image", "dynamic"),
+    ("products", "carousel_quick_reply", "dynamic"),
+    ("cta_url", "cta_url", "static"),
+    ("contact_card", "cta_url", "static"),
+    ("location", "location_request", "static"),
+    ("react_to", None, "static"),
 )
+_DYNAMIC_UI_NOTE = (
+    "Dinámico: títulos, fotos y precios salen del catálogo o del connector. La doc "
+    "de Meta no documenta cómo el agente puebla el componente con datos dinámicos: "
+    "a verificar en F0 (sandbox + allowlist)."
+)
+_STATE_TOOL_NOTES: tuple[tuple[str, str], ...] = (
+    (
+        "escalate",
+        "Escritura: Hubara marca route=humano + tag HUMANO y envía el mensaje de "
+        "handoff, con lo que toma el hilo (MBA deja de responder en ese chat). MBA "
+        "además escala por su cuenta ante baja confianza o pedido explícito.",
+    ),
+    (
+        "_tag",
+        "Escritura: la etiqueta dispara la maquinaria de Hubara (INTERESADO → "
+        "remarketing, RECHAZO → sin remarketing, CONFIRMADO_* → bandeja de pago). "
+        "Idempotente por (sesión, etiqueta).",
+    ),
+    (
+        "_slot",
+        "Escritura: memoria determinista del pedido en Hubara, para que "
+        "register_order y el humano vean lo que el cliente confirmó. Idempotente "
+        "(sobrescribe el slot).",
+    ),
+)
+_ENDPOINT_CONNECTOR_TOOLS = "/{entity_id}/agent_connectors/{connector_id}/tools"
+_ENDPOINT_UI_SKILLS = "/{entity_id}/agent-ui-skills"
 _TOOL_TABLE_HEADER = re.compile(r"\btool\b", re.IGNORECASE)
 _TOOL_NAME = re.compile(r"`([a-z][a-z0-9_]*)")
 _TOOL_PARAM = re.compile(r"`([a-z][a-z0-9_]*)=([^`]*)`")
@@ -748,11 +791,18 @@ def _tool_rows(tools_md: str) -> list[_ToolRow]:
     return out
 
 
-def _ui_component_for(name: str) -> str | None:
-    for key, component in _UI_COMPONENT_BY_KEY:
+def _ui_component_for(name: str) -> tuple[str | None, str]:
+    for key, component, kind in _UI_COMPONENT_BY_KEY:
         if key in name:
-            return component
-    return None
+            return component, kind
+    return None, "static"
+
+
+def _state_tool_notes(name: str) -> str:
+    for marker, notes in _STATE_TOOL_NOTES:
+        if marker in name:
+            return notes
+    return ""
 
 
 def _build_tools(
@@ -783,43 +833,35 @@ def _build_tools(
 
     for row in rows:
         name = row.name
-        if name.startswith("escalate"):
+        is_state = any(marker in name for marker in _STATE_TOOL_MARKERS)
+        if any(marker in name for marker in _INTERNAL_TOOL_MARKERS):
             treatments.append(
                 MbaToolTreatmentDTO(
-                    name,
-                    row.when,
-                    "native_handoff",
-                    "MBA escala solo (baja confianza, integridad, pedido explícito) y usa "
-                    "handoff.message; los triggers de negocio van en la skill "
-                    "'escalacion-a-humano'.",
-                )
-            )
-        elif any(marker in name for marker in _INTERNAL_TOOL_MARKERS):
-            treatments.append(
-                MbaToolTreatmentDTO(
-                    name,
-                    row.when,
-                    "internal",
-                    "Estado interno de Hubara (memoria del pedido, tags, skills on-demand): "
-                    "MBA no lo necesita; pedido y tags se derivan de las llamadas al connector.",
+                    name, row.when, "internal",
+                    "Mecanismo de carga de skills on-demand: en MBA lo reemplaza Knowledge "
+                    "(files / websites).",
+                    None,
                 )
             )
             excluded.append(
-                MbaExcludedDTO(
-                    f"{src}#tool:{name}", "Tool interna de Hubara; sin equivalente en MBA."
-                )
+                MbaExcludedDTO(f"{src}#tool:{name}", "Tool interna de Hubara; reemplazada por Knowledge.")
             )
         elif name.startswith(_UI_TOOL_PREFIXES):
-            component = _ui_component_for(name)
+            component, kind = _ui_component_for(name)
             if component is None:
                 treatments.append(
                     MbaToolTreatmentDTO(
-                        name, row.when, "unmapped", "Sin componente UI equivalente en MBA."
+                        name, row.when, "unmapped",
+                        "Sin componente UI equivalente en MBA. A verificar en F0: si una "
+                        "reacción enviada por Hubara toma el hilo (cualquier mensaje nuestro lo hace).",
+                        None,
                     )
                 )
                 excluded.append(
                     MbaExcludedDTO(
-                        f"{src}#tool:{name}", "Sin componente de UI skill equivalente en MBA."
+                        f"{src}#tool:{name}",
+                        "Sin componente de UI skill equivalente en MBA; enviarlo desde Hubara "
+                        "podría tomar el hilo. Verificar en F0.",
                     )
                 )
                 continue
@@ -831,30 +873,36 @@ def _build_tools(
                     instruction=row.when,
                     from_tool=name,
                     source=src,
+                    kind=kind,
+                    note=_DYNAMIC_UI_NOTE if kind == "dynamic" else "",
                 )
             )
             treatments.append(
                 MbaToolTreatmentDTO(
-                    name, row.when, "ui_skill", f"UI skill nativa `{component}`."
+                    name, row.when, "ui_skill",
+                    f"UI skill nativa `{component}` ({'dinámica, a verificar en F0' if kind == 'dynamic' else 'estática'}).",
+                    _ENDPOINT_UI_SKILLS,
                 )
             )
-        elif name.startswith(_READ_TOOL_PREFIXES) or name.startswith(_WRITE_TOOL_PREFIXES):
-            write = name.startswith(_WRITE_TOOL_PREFIXES)
+        elif is_state or name.startswith(_READ_TOOL_PREFIXES) or name.startswith(_WRITE_TOOL_PREFIXES):
+            write = is_state or name.startswith(_WRITE_TOOL_PREFIXES)
             uses_body = write or name.startswith("verify_")
-            method = "POST" if uses_body else "GET"
-            notes = (
-                "Escritura: el endpoint debe ser idempotente (fingerprint + pre-check) "
-                "porque MBA no documenta reintentos ni deduplicación."
-                if write
-                else "Lectura: responde desde la fuente de verdad (Medusa / vault)."
-            )
+            if is_state:
+                notes = _state_tool_notes(name)
+            elif write:
+                notes = (
+                    "Escritura: el endpoint debe ser idempotente (fingerprint + pre-check) "
+                    "porque MBA no documenta reintentos ni deduplicación."
+                )
+            else:
+                notes = "Lectura: responde desde la fuente de verdad (Medusa / vault)."
             if not row.params:
                 notes += " Parámetros: definir desde el schema real de la tool (desarrollo 2)."
             connector_tools.append(
                 MbaConnectorToolDTO(
                     name=name,
                     description=row.when or name,
-                    method=method,
+                    method="POST" if uses_body else "GET",
                     path=f"/tools/{name}",
                     query_parameters=() if uses_body else row.params,
                     body_parameters=row.params if uses_body else (),
@@ -866,15 +914,14 @@ def _build_tools(
             )
             treatments.append(
                 MbaToolTreatmentDTO(
-                    name,
-                    row.when,
-                    "connector_tool",
-                    f"{method} {CONNECTOR_BASE_URL_PLACEHOLDER}/tools/{name}",
+                    name, row.when, "connector_tool",
+                    f"{'POST' if uses_body else 'GET'} {CONNECTOR_BASE_URL_PLACEHOLDER}/tools/{name}",
+                    _ENDPOINT_CONNECTOR_TOOLS,
                 )
             )
         else:
             treatments.append(
-                MbaToolTreatmentDTO(name, row.when, "unmapped", "Sin regla de mapeo: revisar.")
+                MbaToolTreatmentDTO(name, row.when, "unmapped", "Sin regla de mapeo: revisar.", None)
             )
 
     connector = MbaConnectorDTO(

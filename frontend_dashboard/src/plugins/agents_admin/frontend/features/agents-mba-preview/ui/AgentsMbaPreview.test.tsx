@@ -68,8 +68,8 @@ describe("AgentsMbaPreview", () => {
     screen.getByText("Un colega del equipo te responde en este mismo chat 🤍");
     screen.getByText("voy a averiguar");
     screen.getByText("ALLOWLISTED_ONLY");
-    screen.getByText("TOOLS.md#tool:set_order_slot");
-    screen.getByText(/Tool interna de Hubara/);
+    screen.getByText("TOOLS.md#tool:react_to_message");
+    screen.getByText(/podría tomar el hilo/);
     // cada bloque dice a qué endpoint de Meta va
     screen.getByText("/{entity_id}/agent_config/business_info");
   });
@@ -87,13 +87,22 @@ describe("AgentsMbaPreview", () => {
     screen.getAllByText("WHATSAPP_PHONE_NUMBER");
     screen.getByText("/tools/register_order");
     expect(screen.getAllByText(/escritura/i).length).toBeGreaterThan(0);
-    // UI skill nativa con su component_type
+    // UI skill nativa con su component_type, y la aclaración estática/dinámica
     screen.getByText("request-shipping-details");
     screen.getByText("flow");
-    // y el mapa completo tool LLM → tratamiento
+    screen.getByText("present-products");
+    expect(screen.getAllByText(/estática/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/dinámica/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/a verificar en F0/i).length).toBeGreaterThan(0);
+    // la aclaración de qué hace MBA y qué declaramos nosotros
+    screen.getByText(/MBA renderiza/);
+    // y el mapa completo tool LLM → endpoint de Meta (sin huecos: el que no viaja lo dice)
     screen.getByText("escalate_to_human");
-    screen.getByText("native_handoff");
-    screen.getByText("/{entity_id}/agent_connectors/{connector_id}/tools");
+    screen.getAllByText("connector_tool");
+    screen.getByText("react_to_message");
+    screen.getByText("unmapped");
+    expect(screen.getAllByText("/{entity_id}/agent_connectors/{connector_id}/tools").length).toBeGreaterThan(1);
+    expect(screen.getAllByText(/no viaja/i).length).toBeGreaterThan(1);
   });
 
   it("shows an error state instead of crashing when the backend fails", async () => {

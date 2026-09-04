@@ -285,6 +285,7 @@ function ToolTreatments({ treatments }: { treatments: MbaConfig["tool_treatments
           <tr style={{ color: "var(--fg-muted)", textAlign: "left" }}>
             <th style={{ padding: "4px 8px" }}>tool LLM</th>
             <th style={{ padding: "4px 8px" }}>tratamiento</th>
+            <th style={{ padding: "4px 8px" }}>endpoint de Meta</th>
             <th style={{ padding: "4px 8px" }}>en MBA</th>
           </tr>
         </thead>
@@ -297,6 +298,13 @@ function ToolTreatments({ treatments }: { treatments: MbaConfig["tool_treatments
               </td>
               <td style={{ padding: "6px 8px", verticalAlign: "top" }}>
                 <code>{t.treatment}</code>
+              </td>
+              <td style={{ padding: "6px 8px", verticalAlign: "top" }}>
+                {t.endpoint ? (
+                  <code style={{ fontSize: 11 }}>{t.endpoint}</code>
+                ) : (
+                  <Chip tone="warn">no viaja</Chip>
+                )}
               </td>
               <td style={{ padding: "6px 8px", verticalAlign: "top", color: "var(--fg-muted)" }}>
                 {t.detail}
@@ -403,21 +411,49 @@ export function AgentsMbaPreview({ agentId }: Props) {
       <Section
         icon="files"
         title="UI skills"
-        desc="Componentes ricos nativos de MBA que reemplazan nuestras tools de presentación."
+        desc="Componentes ricos que reemplazan nuestras tools de presentación."
         endpoint={endpointFor("ui_skills")}
         count={`${data.ui_skills.length} UI skills`}
       >
+        <div
+          style={{
+            fontSize: 12.5,
+            color: "var(--fg-muted)",
+            marginBottom: 12,
+            padding: 10,
+            borderRadius: 6,
+            border: "1px solid var(--border, rgba(255,255,255,0.10))",
+            maxWidth: 760,
+          }}
+        >
+          MBA renderiza estos componentes por su cuenta; nosotros no construimos la UI. Lo que sí
+          hay que declarar, uno por uno, es cuándo puede enviarlos y con qué datos. Los{" "}
+          <b>estáticos</b> llevan todo en la instrucción (URL fija, botones fijos, flow_id). Los{" "}
+          <b>dinámicos</b> dependen de datos del catálogo o del connector, y la doc de Meta no dice
+          cómo los puebla: quedan marcados "a verificar en F0" hasta probarlos en el sandbox.
+        </div>
         {data.ui_skills.length === 0 && <Empty />}
         {data.ui_skills.map((u) => (
-          <div key={u.from_tool} style={{ marginBottom: 10 }}>
+          <div key={u.from_tool} style={{ marginBottom: 12 }}>
             <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
               <code style={{ fontWeight: 700 }}>{u.title}</code>
               <span style={{ fontSize: 11.5, color: "var(--fg-muted)" }}>component_type</span>
               <code>{u.component_type}</code>
               <span style={{ fontSize: 11.5, color: "var(--fg-muted)" }}>desde</span>
               <Chip>{u.from_tool}</Chip>
+              {u.kind === "dynamic" ? (
+                <Chip tone="warn">dinámica · a verificar en F0</Chip>
+              ) : (
+                <Chip>estática</Chip>
+              )}
             </div>
-            <div style={{ fontSize: 12.5, color: "var(--fg-muted)" }}>{u.instruction}</div>
+            <div style={{ fontSize: 12.5, color: "var(--fg-muted)" }}>
+              <span style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>instruction: </span>
+              {u.instruction}
+            </div>
+            {u.note && (
+              <div style={{ fontSize: 12, color: "var(--fg-muted)", marginTop: 2 }}>{u.note}</div>
+            )}
           </div>
         ))}
       </Section>
@@ -425,7 +461,7 @@ export function AgentsMbaPreview({ agentId }: Props) {
       <Section
         icon="workflow"
         title="Mapa tool LLM → MBA"
-        desc="Cada tool del agente de hoy y qué la reemplaza en MBA. Nada queda sin decidir."
+        desc="Las tools del agente de hoy, una por una, y a qué endpoint de Meta viaja cada una. La que no viaja lo dice y por qué."
         count={`${data.tool_treatments.length} tools`}
       >
         <ToolTreatments treatments={data.tool_treatments} />
