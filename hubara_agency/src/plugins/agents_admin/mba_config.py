@@ -319,9 +319,11 @@ _STATE_TOOL_NOTES: tuple[tuple[str, str], ...] = (
     ),
     (
         "_tag",
-        "Escritura: la etiqueta dispara la maquinaria de Hubara (INTERESADO → "
-        "remarketing, RECHAZO → sin remarketing, CONFIRMADO_* → bandeja de pago). "
-        "Idempotente por (sesión, etiqueta).",
+        "Escritura: lo que MBA manda es una PROPUESTA; Hubara la reconcilia con sus "
+        "reglas deterministas antes de aplicarla (una orden registrada gana → "
+        "CONFIRMADO_PAGO_PENDIENTE). La etiqueta aplicada dispara la maquinaria de "
+        "Hubara (INTERESADO → remarketing, RECHAZO → sin remarketing). Idempotente "
+        "por (sesión, etiqueta).",
     ),
     (
         "_slot",
@@ -330,6 +332,11 @@ _STATE_TOOL_NOTES: tuple[tuple[str, str], ...] = (
         "(sobrescribe el slot).",
     ),
 )
+# Etiquetas que MBA PUEDE proponer (requieren juicio semántico sobre el
+# mensaje). Las derivables de pedidos/silencio (CONFIRMADO_*, COMPRA_EXITOSA)
+# las determina Hubara con sus reglas deterministas y el watchdog.
+PROPOSABLE_TAGS: tuple[str, ...] = ("INTERESADO", "RECHAZO")
+_TAG_BULLET = re.compile(r"^`([A-Z_]+)`\s*:\s*(.*)$")
 _ENDPOINT_CONNECTOR_TOOLS = "/{entity_id}/agent_connectors/{connector_id}/tools"
 _ENDPOINT_UI_SKILLS = "/{entity_id}/agent-ui-skills"
 _TOOL_TABLE_HEADER = re.compile(r"\btool\b", re.IGNORECASE)
@@ -341,6 +348,12 @@ _STATIC_EXCLUSIONS: tuple[MbaExcludedDTO, ...] = (
     MbaExcludedDTO(
         "memory/MEMORY.md · memory/HISTORY.md",
         "Memoria dinámica del runtime; MBA mantiene su propio contexto por hilo.",
+    ),
+    MbaExcludedDTO(
+        "Trigger de ghosting ([SISTEMA] tras silencio del cliente)",
+        "No viaja: MBA no tiene ghosting ni episodios. El watchdog de Hubara etiqueta "
+        "INTERESADO o CONFIRMADO_SIN_DATOS por silencio usando las señales del connector "
+        "(búsquedas, slots, orden registrada).",
     ),
     MbaExcludedDTO(
         "plugin_context (hora de Bogotá · DATOS DEL PEDIDO)",
@@ -887,6 +900,17 @@ def _build_tools(
         elif is_state or name.startswith(_READ_TOOL_PREFIXES) or name.startswith(_WRITE_TOOL_PREFIXES):
             write = is_state or name.startswith(_WRITE_TOOL_PREFIXES)
             uses_body = write or name.startswith("verify_")
+            params = row.params
+            description = row.when or name
+            detail_extra = ""
+            if "_tag" in name:
+                params = params or ("tag", "motivo")
+                sep = "" if description.endswith((".", "!", "?")) else "."
+                description += f"{sep} Valores permitidos: {', '.join(PROPOSABLE_TAGS)}."
+                detail_extra = (
+                    f" MBA propone {'/'.join(PROPOSABLE_TAGS)}; CONFIRMADO_* y el "
+                    "silencio los deriva Hubara."
+                )
             if is_state:
                 notes = _state_tool_notes(name)
             elif write:
@@ -896,16 +920,16 @@ def _build_tools(
                 )
             else:
                 notes = "Lectura: responde desde la fuente de verdad (Medusa / vault)."
-            if not row.params:
+            if not params:
                 notes += " Parámetros: definir desde el schema real de la tool (desarrollo 2)."
             connector_tools.append(
                 MbaConnectorToolDTO(
                     name=name,
-                    description=row.when or name,
+                    description=description,
                     method="POST" if uses_body else "GET",
                     path=f"/tools/{name}",
-                    query_parameters=() if uses_body else row.params,
-                    body_parameters=row.params if uses_body else (),
+                    query_parameters=() if uses_body else params,
+                    body_parameters=params if uses_body else (),
                     bindings=(CUSTOMER_PHONE_MACRO,),
                     write=write,
                     notes=notes,
@@ -915,7 +939,8 @@ def _build_tools(
             treatments.append(
                 MbaToolTreatmentDTO(
                     name, row.when, "connector_tool",
-                    f"{'POST' if uses_body else 'GET'} {CONNECTOR_BASE_URL_PLACEHOLDER}/tools/{name}",
+                    f"{'POST' if uses_body else 'GET'} {CONNECTOR_BASE_URL_PLACEHOLDER}/tools/{name}"
+                    + detail_extra,
                     _ENDPOINT_CONNECTOR_TOOLS,
                 )
             )
@@ -965,6 +990,42 @@ def _escalation_skill(files: Mapping[str, str]) -> MbaSkillDTO | None:
     return None
 
 
+def _tag_skill(files: Mapping[str, str]) -> MbaSkillDTO | None:
+    """La taxonomía de etiquetas de TOOLS.md como skill, limitada a lo que MBA
+    puede proponer. Los tags derivables los pone Hubara y se le dice que no los
+    proponga."""
+    tools_md = files.get("TOOLS.md", "")
+    for heading, lines in _sections(tools_md):
+        if not re.search(r"etiqueta", heading, re.IGNORECASE):
+            continue
+        body_lines: list[str] = []
+        for line in lines:
+            m = _BULLET.match(line)
+            if not m:
+                continue
+            tag = _TAG_BULLET.match(m.group(2).strip())
+            if tag and tag.group(1) in PROPOSABLE_TAGS:
+                body_lines.append(f"- {tag.group(1)}: {_clean_inline(tag.group(2))}")
+        if not body_lines:
+            return None
+        body = (
+            "# Resultado de la conversación\n\n"
+            "Cuando la conversación termina sin pedido, informa el resultado a Hubara "
+            "con la tool manage_conversation_tag. Solo estos valores:\n\n"
+            + "\n".join(body_lines)
+            + "\n\nLos demás resultados (pedido confirmado, pago pendiente, compra "
+            "exitosa) los determina Hubara automáticamente a partir del pedido "
+            "registrado y del silencio del cliente: NO los propongas."
+        )
+        return _make_skill(
+            "etiquetas-de-cierre",
+            "Aplicar al cierre de la conversación cuando el cliente muestra interés sin "
+            "comprar o descarta la compra: informa el resultado a Hubara.",
+            [("TOOLS.md", body)],
+        )
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -988,9 +1049,9 @@ def normalize_mba_config(agent_id: str, sources: WorkspaceSources) -> MbaConfigD
     )
     connector, ui_skills, treatments, tool_excluded = _build_tools(sources)
     skills = _build_skills(sources)
-    escalation = _escalation_skill(sources.files)
-    if escalation is not None:
-        skills = skills + (escalation,)
+    for extra_skill in (_escalation_skill(sources.files), _tag_skill(sources.files)):
+        if extra_skill is not None:
+            skills = skills + (extra_skill,)
     return MbaConfigDTO(
         agent_id=agent_id,
         channel="whatsapp",

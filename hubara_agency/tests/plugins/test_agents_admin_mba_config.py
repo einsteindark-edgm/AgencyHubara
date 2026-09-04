@@ -720,3 +720,51 @@ def test_workspace_without_tools_md_has_no_connector() -> None:
     files = {"IDENTITY.md": _IDENTITY, "SOUL.md": _SOUL}
     cfg = normalize_mba_config("x", WorkspaceSources(files=files))
     assert cfg.connector is None and cfg.ui_skills == () and cfg.tool_treatments == ()
+
+
+# ── Etiquetas: MBA propone, Hubara decide ────────────────────────────────
+
+_TOOLS_MD_WITH_TAGS = _TOOLS_MD + """
+## Etiquetas (`manage_conversation_tag`, taxonomía obligatoria)
+
+- `INTERESADO`: mostró interés, no compró aún → **programa remarketing**.
+- `RECHAZO`: descartó la compra (motivo) → NO remarketing.
+- `CONFIRMADO_SIN_DATOS`: confirmó pero no completó datos de envío → SIEMPRE en combo con `escalate_to_human("ORDER_PENDING_SHIPPING_DETAILS")`.
+- `CONFIRMADO_PAGO_PENDIENTE`: orden registrada (`registered=true`) → SIEMPRE en combo con `escalate_to_human("PAYMENT_VERIFICATION_PENDING")`.
+- `COMPRA_EXITOSA`: **la pone el HUMANO desde el dashboard tras verificar el pago, NO tú.**
+"""
+
+
+def _cfg_with_tags():
+    return normalize_mba_config("sales", _sources(files={"TOOLS.md": _TOOLS_MD_WITH_TAGS}))
+
+
+def test_tag_taxonomy_becomes_a_skill_limited_to_what_mba_may_propose() -> None:
+    cfg = _cfg_with_tags()
+    skill = next(s for s in cfg.skills if s.title == "etiquetas-de-cierre")
+    assert skill.sources == ("TOOLS.md",)
+    # MBA solo propone los tags que requieren juicio semántico
+    assert "INTERESADO: mostró interés, no compró aún" in skill.skill
+    assert "RECHAZO: descartó la compra" in skill.skill
+    # los derivables de pedidos/silencio NO se le piden: los pone Hubara
+    assert "orden registrada" not in skill.skill
+    assert "CONFIRMADO_SIN_DATOS" not in skill.skill
+    assert "Hubara" in skill.skill and "no los propongas" in skill.skill.lower()
+
+
+def test_tag_tool_declares_allowed_values_params_and_hubara_validation() -> None:
+    cfg = _cfg_with_tags()
+    tool = next(t for t in cfg.connector.tools if t.name == "manage_conversation_tag")
+    assert "INTERESADO" in tool.description and "RECHAZO" in tool.description
+    assert tool.body_parameters == ("tag", "motivo")
+    # lo que MBA manda es una propuesta: las reglas deterministas de Hubara ganan
+    assert "propuesta" in tool.notes.lower() and "orden registrada" in tool.notes.lower()
+    treatment = next(t for t in cfg.tool_treatments if t.llm_tool == "manage_conversation_tag")
+    assert "propone" in treatment.detail.lower()
+
+
+def test_ghosting_trigger_stays_in_hubara_watchdog() -> None:
+    cfg = _cfg_with_tags()
+    ghost = next(e for e in cfg.excluded if "ghost" in e.source.lower())
+    assert "watchdog" in ghost.reason.lower()
+    assert "INTERESADO" in ghost.reason and "CONFIRMADO_SIN_DATOS" in ghost.reason
