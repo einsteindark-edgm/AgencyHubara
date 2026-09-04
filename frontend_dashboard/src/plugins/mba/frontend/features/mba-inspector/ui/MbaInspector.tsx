@@ -10,7 +10,18 @@ interface Props {
 }
 
 export function MbaInspector({ agentId }: Props) {
-  const { data } = useMbaConfig(agentId);
+  const { data, isError } = useMbaConfig(agentId);
+  if (isError) {
+    return (
+      <aside className="inspector">
+        <div className="insp-body">
+          <div style={{ padding: "12px 14px", fontSize: 12, color: "var(--warn, #d97706)" }}>
+            No se pudo cargar el estado en Meta.
+          </div>
+        </div>
+      </aside>
+    );
+  }
   if (!data) return null;
   const row = (label: string, value: string) => (
     <div className="form-row">

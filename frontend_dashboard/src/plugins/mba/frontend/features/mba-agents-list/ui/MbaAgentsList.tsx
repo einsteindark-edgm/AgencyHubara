@@ -12,7 +12,7 @@ interface Props {
 }
 
 export function MbaAgentsList({ selectedId, onSelect }: Props) {
-  const { data: agents = [] } = useMbaAgents();
+  const { data: agents = [], isError } = useMbaAgents();
   return (
     <aside className="sidebar">
       <div className="side-header">
@@ -35,6 +35,11 @@ export function MbaAgentsList({ selectedId, onSelect }: Props) {
       </div>
 
       <div className="ag-list">
+        {isError && (
+          <div style={{ padding: "10px 14px", fontSize: 12, color: "var(--warn, #d97706)" }}>
+            No se pudieron cargar los agentes de Meta Business Agent.
+          </div>
+        )}
         <div className="side-section">
           <span className="caret">
             <Icon.caret />
