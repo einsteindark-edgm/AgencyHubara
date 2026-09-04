@@ -21,11 +21,13 @@
 
 | Pieza | Dónde | Estado |
 |---|---|---|
-| Normalizador puro workspace → config MBA (skills, business_info, FAQs, settings, connector tools, UI skills, mapa de 19 tools, exclusiones con motivo) | `hubara_agency/src/plugins/agents_admin/mba_config.py` | ✅ 40 tests |
+| Normalizador puro workspace → config MBA (skills, business_info, FAQs, settings, connector tools, UI skills, mapa de 19 tools, exclusiones con motivo) | `hubara_agency/src/plugins/agents_admin/mba_config.py` | ✅ 42 tests |
 | Lectura de workspace (bootstrap + `skills/*/SKILL.md` con front-matter, nunca `memory/`) | `hubara_agency/src/plugins/agents_admin/service.py` | ✅ |
 | `GET /api/agents/{agent_id}/mba-config` | `hubara_agency/src/plugins/agents_admin/api/routes.py` | ✅ |
 | Tab "Meta Business Agent" en Agents (todos los agentes) | `frontend_dashboard/src/plugins/agents_admin/frontend/{entities/mba-config,features/agents-mba-preview}` | ✅ 31 tests |
 | Reparto del etiquetado: MBA propone INTERESADO/RECHAZO, Hubara deriva CONFIRMADO_* y el silencio | skill `etiquetas-de-cierre` + notas del tool `manage_conversation_tag` | ✅ |
+| Cobertura total del workspace ("lo que no está acá no existe"): guion partido en `guion-sales-script` + `guion-etapas`, `contexto-del-negocio` (USER.md), `uso-de-tools` (secciones de TOOLS.md sin tabla + instrucciones del skill de catálogo) | `mba_config.py` | ✅ 9 skills, todas < 20k |
+| Verificación viva de la tab | dashboard local (API `127.0.0.1:8010` + Vite `5180`; el stack Docker estaba apagado) | ✅ |
 
 **Hallazgos que condicionan lo que sigue** (todos verificados contra la doc de Meta):
 
@@ -34,7 +36,7 @@
 - **Connector tools son síncronas y sin reintento/idempotencia documentados.** → todo endpoint de escritura es idempotente por diseño.
 - **Cualquier mensaje de nuestra app toma el hilo**; devolverlo exige `release`. Dejar de escribir no devuelve nada.
 - **Ráfagas / agrupación de mensajes: no documentado.** Solo observable por ecos en `standby`.
-- El guion de ventas (núcleo + 5 etapas) suma **20.544 caracteres** y el límite por skill es 20.000. Decisión pendiente en §D0.1.
+- El guion de ventas (núcleo + 5 etapas) sumaba **20.544 caracteres** y el límite por skill es 20.000. Resuelto en D0.1: dos skills (`guion-sales-script` 8.1k, `guion-etapas` 12.4k) con descripciones no conflictivas.
 
 ---
 
@@ -42,17 +44,13 @@
 
 Notación: **D<fase>.<n>** · Objetivo · Alcance (archivos) · Tests / DoD · Depende de.
 
-### Fase 0 — Cierre del desarrollo 1
+### Fase 0 — Cierre del desarrollo 1 · ✅ hecha en el PR #228
 
-**D0.1 · Guion de ventas dentro del límite de 20k**
-Objetivo: que ninguna skill supere `SKILL_CHAR_LIMIT` sin recorte silencioso.
-Alcance: decidir entre (a) partir en `guion-nucleo` (sales_script) + `guion-etapas` (5 etapas), (b) mover más objeciones a FAQs (ya salen 7), (c) podar texto. Recomendación: (a), son dos skills con descripciones no conflictivas ("aplica siempre" / "aplica según el estado del pedido").
-Tests: `test_agents_admin_mba_config.py` — `test_real_sales_workspace_normalizes_end_to_end` pasa a exigir `over_limit is False` en todas las skills (hoy documenta el `True`).
-DoD: tab sin chips "excede el límite".
+**D0.1 · Guion de ventas dentro del límite de 20k** — ✅ partido en `guion-sales-script` (núcleo, "aplica siempre") + `guion-etapas` (5 etapas en orden canónico; la descripción le dice a MBA cómo elegir etapa porque no recibe el "estado del pedido" que Hubara inyecta por turno). `test_real_sales_workspace_normalizes_end_to_end` exige `over_limit is False` en todas las skills.
 
-**D0.2 · Verificación viva en el dashboard**
-Alcance: rebuild del contenedor API (`cd hubara_agency && docker compose -f docker-compose.local.yml up -d --build hubara-api`), abrir `:5174` → Agents → Sales → tab MBA. Comparar contra la captura del PR.
-DoD: la tab carga con datos reales; ningún bloque en "No se pudo cargar".
+**D0.2 · Verificación viva** — ✅ hecha contra API y Vite locales en puertos propios (el daemon de Docker estaba apagado). Al mergear: rebuild del contenedor API (`cd hubara_agency && docker compose -f docker-compose.local.yml up -d --build hubara-api`) y ver `:5174` → Agents → Sales → tab MBA.
+
+**D0.3 · Cobertura total del workspace** — ✅ regla "lo que no está en la tab no existe": USER.md → `contexto-del-negocio`; secciones de TOOLS.md sin tabla (principios, memoria del pedido, anti-alucinación, UI rica, estilo) + párrafos de instrucción del skill de catálogo → `uso-de-tools`. Lo único que sigue fuera, con motivo visible: memoria dinámica, contexto por turno, trigger de ghosting, `react_to_message`.
 
 ### Fase 1 — Plugin `mba` (backend): la API que MBA invoca y el oído en standby
 
@@ -197,8 +195,7 @@ DoD: tabla completada en `hubara_agency/.hubara/specs/plugins/mba/f0-results.md`
 
 1. **Dónde vive el branch de `standby`:** en el webhook de `chats` (mínimo, toca chats) o pre-router en `platform` (INV-1 puro, infra nueva). Afecta D1.4.
 2. **Dueño del hilo en el route registry:** hoy el dueño es un workflow Temporal RUNNING; MBA no lo es. Propuesta: `control_owner` en metadata de sesión (D1.5) y el registry lo respeta sin inventar `ROUTE_META_AGENT`.
-3. **Guion > 20k:** ver D0.1.
-4. **Reacciones y contacto:** `react_to_message` sin destino hasta el experimento 4; `send_contact_card` como `cta_url` wa.me.
+3. **Reacciones y contacto:** `react_to_message` sin destino hasta el experimento 4; `send_contact_card` como `cta_url` wa.me.
 
 ---
 
@@ -215,8 +212,7 @@ DoD: tabla completada en `hubara_agency/.hubara/specs/plugins/mba/f0-results.md`
 ## 5. Orden de ejecución sugerido
 
 ```
-D0.1 ─┐
-D0.2 ─┤
+D0 ✅ ─┐
 D1.8 ─┤ (independiente, hacer temprano)
       ├─ D1.1 → D1.2 → D1.3 ─┐
       │        └─ D1.4 → D1.5 → D1.6 → D1.9

@@ -512,9 +512,33 @@ def _build_skills(sources: WorkspaceSources) -> tuple[MbaSkillDTO, ...]:
         (s for s in sources.skills if s.name.startswith(_STAGE_PREFIX)), key=_stage_rank
     )
     for core in (s for s in sources.skills if s.always):
-        parts = [(_skill_source(core), core.body)]
-        parts += [(_skill_source(st), st.body) for st in stages]
-        out.append(_make_skill(f"guion-{core.name}", core.description, parts))
+        out.append(
+            _make_skill(f"guion-{core.name}", core.description, [(_skill_source(core), core.body)])
+        )
+    if stages:
+        # MBA no recibe el "estado del pedido" que Hubara inyecta por turno: la
+        # descripción le dice cómo elegir la etapa a partir de lo ya confirmado.
+        out.append(
+            _make_skill(
+                "guion-etapas",
+                "Aplicar según el estado del pedido, en este orden: descubrimiento (sin "
+                "producto elegido) → variantes (producto sin aroma/color) → datos de "
+                "envío (variantes completas) → cierre (datos completos, falta registrar) "
+                "→ post-cierre (pedido registrado). Elige la etapa que corresponde a lo "
+                "que el cliente ya confirmó en esta conversación.",
+                [(_skill_source(st), st.body) for st in stages],
+            )
+        )
+
+    if "USER.md" in files:
+        out.append(
+            _make_skill(
+                "contexto-del-negocio",
+                "Aplicar siempre: datos del negocio, zona horaria y saludo según la hora "
+                "de Colombia, tratamiento por defecto del cliente y hechos que puedes asumir.",
+                [("USER.md", files["USER.md"])],
+            )
+        )
 
     for extra in sources.skills:
         if extra.always or extra.name.startswith(_STAGE_PREFIX) or _is_knowledge_skill(extra):
@@ -707,8 +731,8 @@ def _bi_field_for(text: str) -> str | None:
     return None
 
 
-def _bullets_with_fields(md: str) -> Iterator[tuple[str, str]]:
-    """Yields ``(field, texto limpio)`` por cada bullet clasificable."""
+def _bullets_with_fields(md: str) -> Iterator[tuple[str, str, str]]:
+    """Yields ``(heading, field, texto limpio)`` por cada bullet clasificable."""
     for heading, lines in _sections(md):
         section_field = _bi_field_for(heading) if heading else None
         for line in lines:
@@ -721,17 +745,35 @@ def _bullets_with_fields(md: str) -> Iterator[tuple[str, str]]:
             fld = _bi_field_for(text) or section_field
             if fld is None:
                 continue
-            yield fld, text
+            yield heading, fld, text
+
+
+def business_info_consumed_sections(sources: WorkspaceSources) -> dict[str, set[str]]:
+    """Por fuente, los headings cuyos bullets fueron a ``business_info``.
+
+    Lo que un skill de conocimiento tiene FUERA de esas secciones (párrafos de
+    instrucción como "Regla absoluta") no es conocimiento del negocio: va a la
+    skill ``uso-de-tools``.
+    """
+    consumed: dict[str, set[str]] = {}
+    for source, md in _knowledge_docs(sources):
+        for heading, _, _ in _bullets_with_fields(md):
+            consumed.setdefault(source, set()).add(heading)
+    return consumed
+
+
+def _knowledge_docs(sources: WorkspaceSources) -> list[tuple[str, str]]:
+    docs = [("USER.md", sources.files["USER.md"])] if "USER.md" in sources.files else []
+    docs += [(_skill_source(s), s.body) for s in sources.skills if _is_knowledge_skill(s)]
+    return docs
 
 
 def _build_business_info(sources: WorkspaceSources) -> MbaBusinessInfoDTO:
     buckets: dict[str, list[str]] = {name: [] for name in _BI_FIELDS}
     used: list[str] = []
-    docs = [("USER.md", sources.files["USER.md"])] if "USER.md" in sources.files else []
-    docs += [(_skill_source(s), s.body) for s in sources.skills if _is_knowledge_skill(s)]
-    for source, md in docs:
+    for source, md in _knowledge_docs(sources):
         touched = False
-        for fld, text in _bullets_with_fields(md):
+        for _, fld, text in _bullets_with_fields(md):
             buckets[fld].append(text)
             touched = True
         if touched:
@@ -990,6 +1032,57 @@ def _escalation_skill(files: Mapping[str, str]) -> MbaSkillDTO | None:
     return None
 
 
+# Secciones de TOOLS.md que YA viajan por otro lado (tabla de tools → connector /
+# UI skills; etiquetas y escalación → sus skills; "Skills" → Knowledge).
+_TOOLS_CONSUMED_HEADINGS = re.compile(r"tool|etiqueta|escalar|^skills$|lo que no va", re.IGNORECASE)
+
+
+def _section_text_without_tables(heading: str, lines: list[str]) -> str:
+    body = [ln for ln in lines if not ln.lstrip().startswith("|")]
+    text = "\n".join(body).strip()
+    if not text:
+        return ""
+    return f"## {heading}\n\n{text}" if heading else text
+
+
+def _tool_usage_skill(sources: WorkspaceSources) -> MbaSkillDTO | None:
+    """Las reglas de uso de tools que NO son tablas: secciones sueltas de
+    TOOLS.md (principios, anti-alucinación, estilo…) + párrafos de instrucción
+    de los skills de conocimiento fuera de sus secciones de business_info."""
+    parts: list[tuple[str, str]] = []
+    tools_md = sources.files.get("TOOLS.md")
+    if tools_md is not None:
+        chunks = [
+            _section_text_without_tables(h, ln)
+            for h, ln in _sections(tools_md)
+            if not (h and _TOOLS_CONSUMED_HEADINGS.search(h))
+        ]
+        chunks = [c for c in chunks if c]
+        if chunks:
+            parts.append(("TOOLS.md", "\n\n".join(chunks)))
+    consumed = business_info_consumed_sections(sources)
+    for source, md in _knowledge_docs(sources):
+        if source == "USER.md":
+            continue  # USER.md viaja entero en contexto-del-negocio
+        chunks = [
+            _section_text_without_tables(h, ln)
+            for h, ln in _sections(md)
+            if h not in consumed.get(source, set())
+        ]
+        chunks = [c for c in chunks if c]
+        if chunks:
+            parts.append((source, "\n\n".join(chunks)))
+    if not parts:
+        return None
+    return _make_skill(
+        "uso-de-tools",
+        "Aplicar cada vez que uses una tool o menciones productos, precios o políticas: "
+        "reglas anti-alucinación (solo lo que devolvió la tool), principios de decisión "
+        "y estilo al escribir tras un componente.",
+        parts,
+    )
+
+
 def _tag_skill(files: Mapping[str, str]) -> MbaSkillDTO | None:
     """La taxonomía de etiquetas de TOOLS.md como skill, limitada a lo que MBA
     puede proponer. Los tags derivables los pone Hubara y se le dice que no los
@@ -1049,7 +1142,11 @@ def normalize_mba_config(agent_id: str, sources: WorkspaceSources) -> MbaConfigD
     )
     connector, ui_skills, treatments, tool_excluded = _build_tools(sources)
     skills = _build_skills(sources)
-    for extra_skill in (_escalation_skill(sources.files), _tag_skill(sources.files)):
+    for extra_skill in (
+        _tool_usage_skill(sources),
+        _escalation_skill(sources.files),
+        _tag_skill(sources.files),
+    ):
         if extra_skill is not None:
             skills = skills + (extra_skill,)
     return MbaConfigDTO(

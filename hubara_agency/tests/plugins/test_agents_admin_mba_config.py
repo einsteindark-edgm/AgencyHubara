@@ -59,7 +59,7 @@ def test_operational_rules_skill_comes_from_agents_md() -> None:
     assert "Responde directo al usuario." in rules.skill
 
 
-def test_script_skill_orders_always_skill_then_stages_canonically() -> None:
+def test_script_splits_into_core_and_stages_skills_in_canonical_order() -> None:
     skills = (
         WorkspaceSkill(
             name="etapa_cierre",
@@ -82,18 +82,19 @@ def test_script_skill_orders_always_skill_then_stages_canonically() -> None:
     )
     cfg = normalize_mba_config("sales", _sources(skills=skills))
 
-    script = next(s for s in cfg.skills if s.title == "guion-sales-script")
-    assert script.sources == (
-        "skills/sales_script/SKILL.md",
+    core = next(s for s in cfg.skills if s.title == "guion-sales-script")
+    assert core.sources == ("skills/sales_script/SKILL.md",)
+    assert "Mapa del funnel." in core.skill and "Saluda por hora." not in core.skill
+    assert core.description == "Núcleo del guion conversacional."
+
+    stages = next(s for s in cfg.skills if s.title == "guion-etapas")
+    assert stages.sources == (
         "skills/etapa_descubrimiento/SKILL.md",
         "skills/etapa_cierre/SKILL.md",
     )
-    body = script.skill
-    assert body.index("Mapa del funnel.") < body.index("Saluda por hora.") < body.index(
-        "Cierra sin saltar pasos."
-    )
-    # la descripción de MBA sale del front-matter del skill always
-    assert script.description == "Núcleo del guion conversacional."
+    assert stages.skill.index("Saluda por hora.") < stages.skill.index("Cierra sin saltar pasos.")
+    # MBA no recibe el "estado del pedido" inyectado: la descripción le dice cómo elegir etapa
+    assert "estado del pedido" in stages.description.lower()
 
 
 def test_skill_over_20000_chars_is_flagged_not_truncated() -> None:
@@ -442,9 +443,14 @@ def test_real_sales_workspace_normalizes_end_to_end() -> None:
 
     titles = [s.title for s in cfg.skills]
     assert titles[:3] == ["persona-y-tono", "reglas-operativas", "guion-sales-script"]
-    guion = cfg.skills[2]
-    # documenta el presupuesto real: guion + 5 etapas hoy supera los 20k
-    assert guion.over_limit is True
+    # lo que no está acá no existe: todo el workspace tiene destino
+    for expected in ("guion-etapas", "contexto-del-negocio", "uso-de-tools",
+                     "escalacion-a-humano", "etiquetas-de-cierre"):
+        assert expected in titles, expected
+    # y nada supera el límite de Meta
+    assert all(not s.over_limit for s in cfg.skills), [
+        (s.title, s.char_count) for s in cfg.skills if s.over_limit
+    ]
 
     questions = {f.question for f in cfg.faqs}
     assert "¿Cómo puedo pagar?" in questions
@@ -768,3 +774,59 @@ def test_ghosting_trigger_stays_in_hubara_watchdog() -> None:
     ghost = next(e for e in cfg.excluded if "ghost" in e.source.lower())
     assert "watchdog" in ghost.reason.lower()
     assert "INTERESADO" in ghost.reason and "CONFIRMADO_SIN_DATOS" in ghost.reason
+
+
+# ── Cobertura total del workspace: USER.md y las secciones sueltas de TOOLS.md ─
+
+_TOOLS_MD_FULL = _TOOLS_MD + """
+## Principios de decisión
+
+- Antes de mutar estado, confirma que la acción tiene sentido.
+
+## Reglas anti-alucinación (OBLIGATORIAS)
+
+1. **Closed-list**: solo mencionas productos cuyo `handle` esté en el último `tool_result`.
+
+## Skills
+
+- Los skills `etapa_*` los inyecta el sistema automáticamente. NO los cargues con `load_skill`.
+
+## Lo que NO va aquí
+
+- Schemas y uso detallado de cada tool → la `description` de la tool.
+"""
+
+_CATALOG_WITH_RULES = _CATALOG_SKILL + """
+**Regla absoluta**: cualquier `handle`, `title` o `price` que menciones al cliente debe venir del último `tool_result`.
+"""
+
+
+def test_user_md_becomes_the_business_context_skill() -> None:
+    cfg = normalize_mba_config("sales", _sources(files={"USER.md": _USER_WITH_FACTS}))
+    ctx = next(s for s in cfg.skills if s.title == "contexto-del-negocio")
+    assert ctx.sources == ("USER.md",)
+    assert "Zona horaria por defecto" in ctx.skill
+
+
+def test_tools_md_leftover_sections_and_knowledge_rules_become_usage_skill() -> None:
+    skills = (
+        WorkspaceSkill(
+            name="hubara_catalog", description="Políticas.", always=False, body=_CATALOG_WITH_RULES
+        ),
+    )
+    cfg = normalize_mba_config(
+        "sales", _sources(files={"TOOLS.md": _TOOLS_MD_FULL}, skills=skills)
+    )
+    usage = next(s for s in cfg.skills if s.title == "uso-de-tools")
+    assert set(usage.sources) == {"TOOLS.md", "skills/hubara_catalog/SKILL.md"}
+    # entran las reglas que gobiernan el uso de tools…
+    assert "Closed-list" in usage.skill
+    assert "Antes de mutar estado" in usage.skill
+    assert "Regla absoluta" in usage.skill
+    # …y NO lo que ya viajó por otro lado (tabla de tools, etiquetas, escalación, load_skill)
+    assert "| `search_products` |" not in usage.skill
+    assert "Pide >20 unidades" not in usage.skill
+    assert "load_skill" not in usage.skill
+    assert "Lo que NO va aquí" not in usage.skill
+    # ni las políticas de negocio que ya están en business_info
+    assert "Envíos a Bogotá" not in usage.skill
