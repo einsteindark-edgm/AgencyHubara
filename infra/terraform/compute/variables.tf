@@ -46,7 +46,7 @@ variable "tenants" {
   type = map(object({
     instance_type   = string
     domain          = string # dominio público del FastAPI (Caddy auto-TLS)
-    enabled_plugins = optional(string, "ads,agents_admin,catalog,chats,eta,marketing,order_sentinel,orders,reengagement,system_map")
+    enabled_plugins = optional(string, "ads,agents_admin,catalog,chats,eta,marketing,mba,order_sentinel,orders,reengagement,system_map")
     root_volume_gb  = optional(number, 30)
     vault_volume_gb = optional(number, 10) # EBS dedicado del vault (SEC-09-full); agrandar es online, achicar imposible
   }))

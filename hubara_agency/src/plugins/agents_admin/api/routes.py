@@ -10,25 +10,11 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
-from src.plugins.agents_admin.service import build_mba_config, discover_agents
+from src.plugins.agents_admin.service import discover_agents
 
 router = APIRouter()
-
-
-@router.get("/{agent_id}/mba-config")
-async def get_mba_config(agent_id: str) -> dict[str, Any]:
-    """Configuración Meta Business Agent normalizada desde el workspace del agente.
-
-    Devuelve, con la forma de los endpoints ``/agent_config/*`` de Meta, qué
-    le mandaríamos a MBA (skills, business_info, faqs, settings) y qué queda
-    fuera y por qué. Solo lectura: no llama a Meta.
-    """
-    cfg = build_mba_config(agent_id)
-    if cfg is None:
-        raise HTTPException(status_code=404, detail=f"agente desconocido: {agent_id}")
-    return asdict(cfg)
 
 
 @router.get("")

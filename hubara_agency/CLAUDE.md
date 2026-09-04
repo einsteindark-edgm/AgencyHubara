@@ -19,7 +19,7 @@ src/plugins/<id>/   ← un plugin = una bounded context (con `archetype:` en su
 tests/conformance/  ← el TCK instanciado por plugin (3 líneas c/u — P-27)
 ```
 
-**Plugins actuales:** `ads`, `agents_admin`, `catalog`, `chats`, `eta`, `orders`, `system_map`.
+**Plugins actuales:** `ads`, `agents_admin`, `catalog`, `chats`, `eta`, `marketing`, `mba`, `order_sentinel`, `orders`, `reengagement`, `system_map`.
 
 `src/sales_whatsapp/` y `src/remarketing_whatsapp/` son shells legacy del pre-PR11 — el código real vive en `src/plugins/chats/workers/{sales,remarketing}.py`.
 
