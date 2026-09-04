@@ -126,6 +126,14 @@ Alcance: `POST /{entity_id}/agent_event` cuando Hubara concilia pago (`payment_r
 Tests: cliente HTTP con `respx`; disparo desde los mismos puntos de D1.8.
 Depende de: D1.6.
 
+**D1.10 · Episodios con MBA al frente**
+Objetivo: conservar el modelo de episodios (`episode_lifecycle.py`: un tramo por intención, cierra por tag o por 14 días, el siguiente inbound abre uno nuevo con tag/draft/atribución frescos) cuando quien conversa es MBA.
+Alcance, en dos mitades como hoy:
+- *Determinista (Hubara, intacta):* `ensure_active_episode` se dispara con el primer inbound de `standby` tras un episodio cerrado (D1.4 aporta `inbound_message_id` y referral); `close_episode` con el tag reconciliado (D1.3) o por timeout; `attach_order_to_active_episode` desde `register_order` (D1.2). **Todo connector tool resuelve el episodio activo**: tras un cierre, `set_order_slot` escribe en un draft vacío y `check_order_status` no devuelve el pedido viejo. MBA no puede actuar sobre datos del episodio anterior aunque los recuerde.
+- *Conversacional (MBA, caja negra):* hoy tampoco borramos el historial del LLM: es una ventana de memoria + una nota de frontera en `plugin_context` (`_build_episode_boundary_note`). Con MBA no hay API para resetear el contexto del hilo. Palancas, de más a menos fuerte: (1) `agent_event` `episode_closed` al cerrar (data: resultado, order_id) con instrucción "si el cliente vuelve, es una conversación nueva: saluda, no retomes el pedido anterior" — **verificar en F0 que un agent_event puede ser silencioso** (la doc lo describe como disparador de acciones proactivas); (2) la regla en `persona-y-tono` / `contexto-del-negocio` (ya viaja: "se saluda una sola vez por conversación", "datos de envío nunca desde pedidos anteriores"); (3) si MBA arrastra contexto de forma inaceptable, `take` + mensaje de cierre desde Hubara y `release` al primer inbound nuevo (costoso; último recurso).
+Tests: episodio nuevo desde standby; connector tools scoped al activo (dos episodios, dos drafts); agent_event emitido en `close_episode` con el mismo `respx` de D1.9.
+Depende de: D1.2, D1.3, D1.4, D1.9.
+
 ### Fase 2 — Cliente de configuración: llevar la tab a Meta
 
 **D2.1 · `MbaAdminClient`**
@@ -171,6 +179,7 @@ Cada uno con hipótesis y criterio, ejecutados con allowlist de dos teléfonos n
 | 6 | Handoff nativo + connector `escalate_to_human` | "quiero hablar con alguien" | Chat aparece en inbox con tag HUMANO y MBA calla |
 | 7 | Orden completa | flujo hasta `register_order` | Orden en Medusa, tag CONFIRMADO_PAGO_PENDIENTE, comprobante al humano |
 | 8 | Release | tras comprobante verificado + `agent_event` | MBA vuelve a responder |
+| 9 | Contexto entre episodios | cerrar episodio (pedido registrado) y escribir 2 días después | ¿MBA saluda como conversación nueva o retoma el pedido viejo? ¿`agent_event` de cierre puede ser silencioso? ¿crece el costo por turno con el historial del hilo? |
 
 DoD: tabla completada en `hubara_agency/.hubara/specs/plugins/mba/f0-results.md` con evidencia (ecos, wamids).
 
