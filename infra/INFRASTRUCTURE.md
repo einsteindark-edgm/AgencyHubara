@@ -117,7 +117,7 @@ Este documento es la **fuente de verdad de dónde se aloja cada componente**. Lo
 
 ### 3.3 FastAPI — VPS
 - **Entrypoint:** `hubara_agency/run_api.py` (uvicorn programático, `0.0.0.0:8000`). **Un solo container HTTP**: el loader (`src.main`) auto-discovers y monta los routers de **todos los plugins habilitados** (`api:` de cada `plugin.yaml`) — no hay un container por plugin.
-- **Toggle de plugins:** `ENABLED_PLUGINS` (CSV) decide qué plugins carga el deploy. Hoy: `ads,agents_admin,catalog,chats,eta,orders,system_map` (7). Gobierna tanto los routers de la API como qué workers se generan (§3.5); un tenant puede shippear un subconjunto distinto (§4).
+- **Toggle de plugins:** `ENABLED_PLUGINS` (CSV) decide qué plugins carga el deploy. Hoy: `ads,agents_admin,catalog,chats,eta,marketing,mba,order_sentinel,orders,reengagement,system_map` (11). Gobierna tanto los routers de la API como qué workers se generan (§3.5); un tenant puede shippear un subconjunto distinto (§4).
 - **Por qué always-on:** recibe webhooks de **WhatsApp** (`POST /api/chats/inbound`) y **Medusa** + sirve queries del dashboard. Necesita endpoint HTTPS público estable.
 - **TLS:** **Caddy** en la caja con auto-TLS (Let's Encrypt) como reverse proxy → mantiene el stack consolidado sin depender de Cloudflare. (Si en el futuro se quiere DDoS gestionado, se puede poner Cloudflare proxy delante; opcional.)
 
