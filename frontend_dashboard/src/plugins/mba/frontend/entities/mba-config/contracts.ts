@@ -1,8 +1,8 @@
 /**
- * Contratos Zod de la entidad `mba-config`: la configuración de Meta Business
- * Agent normalizada desde el workspace de un agente, tal como la devuelve
- * `GET /api/agents/{agent_id}/mba-config`. Los nombres de campo espejan los
- * endpoints `/agent_config/*` de Meta (skills, business_info, faq, settings).
+ * Contratos Zod de la entidad `mba-config`: la configuración REAL de Meta
+ * Business Agent de un agente autorado (agent.yaml + skills/*.md), tal como la
+ * devuelve `GET /api/mba/agents/{agent_id}/config`. Los nombres de campo
+ * espejan los endpoints de Meta y `requests` son las llamadas HTTP literales.
  */
 import { z } from "zod";
 
@@ -98,18 +98,9 @@ export const mbaUiSkillSchema = z.object({
   component_type: z.string(),
   status: z.string(),
   instruction: z.string(),
-  from_tool: z.string(),
   source: z.string(),
   kind: z.enum(["static", "dynamic"]),
   note: z.string(),
-});
-
-export const mbaToolTreatmentSchema = z.object({
-  llm_tool: z.string(),
-  when: z.string(),
-  treatment: z.enum(["connector_tool", "ui_skill", "native_handoff", "internal", "unmapped"]),
-  detail: z.string(),
-  endpoint: z.string().nullable(),
 });
 
 /** UNA llamada HTTP a Meta tal cual se enviaría: headers + body JSON literal. */
@@ -126,7 +117,9 @@ export const mbaRequestSchema = z.object({
 
 export const mbaConfigSchema = z.object({
   agent_id: z.string(),
+  display_name: z.string(),
   channel: z.string(),
+  entity_id: z.string().nullable(),
   workspace: z.string(),
   business_info: mbaBusinessInfoSchema,
   settings: mbaSettingsSchema,
@@ -134,10 +127,12 @@ export const mbaConfigSchema = z.object({
   faqs: z.array(mbaFaqSchema),
   connector: mbaConnectorSchema.nullable(),
   ui_skills: z.array(mbaUiSkillSchema),
-  tool_treatments: z.array(mbaToolTreatmentSchema),
+  allowlist: z.array(z.string()),
   excluded: z.array(mbaExcludedSchema),
   endpoints: z.array(mbaEndpointSchema),
   requests: z.array(mbaRequestSchema),
+  /** Lo que NO se puede mandar tal cual (título fuera de formato, skill > 20k…). */
+  problems: z.array(z.string()),
 });
 
 export type MbaConfigDto = z.infer<typeof mbaConfigSchema>;

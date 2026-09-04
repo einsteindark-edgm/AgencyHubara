@@ -150,6 +150,16 @@ globals().update(conformance_suite("{plugin_id}"))
 '''
 
 
+def default_repo_root() -> Path:
+    """Raíz del monorepo: el dir que contiene `hubara_agency/` y `frontend_dashboard/`.
+
+    Este archivo vive en `hubara_agency/src/sdk/cli/scaffold.py` → 4 niveles
+    arriba. (Antes era `parents[5]`, que apuntaba al PADRE del repo y escribía
+    el scaffold fuera del checkout en worktrees.)
+    """
+    return Path(__file__).resolve().parents[4]
+
+
 def create_plugin(
     plugin_id: str,
     archetype: str,
@@ -158,7 +168,7 @@ def create_plugin(
 ) -> list[Path]:
     """Genera el plugin completo. Devuelve los paths creados (para el log)."""
     if repo_root is None:
-        repo_root = Path(__file__).resolve().parents[5]
+        repo_root = default_repo_root()
     if not _ID_RE.match(plugin_id):
         raise ScaffoldError(
             f"id inválido: {plugin_id!r} (regex ^[a-z][a-z0-9_]*$ — es segmento "

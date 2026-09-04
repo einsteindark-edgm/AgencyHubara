@@ -1,6 +1,6 @@
 /**
  * Configuración Meta Business Agent normalizada de un agente. Fetch a
- * `GET /api/agents/{agent_id}/mba-config` (solo lectura: el backend deriva la
+ * `GET /api/mba/agents/{agent_id}/config` (solo lectura: el backend deriva la
  * config del workspace REAL del agente; no llama a Meta). Validado con Zod en
  * el boundary HTTP.
  */
@@ -12,7 +12,7 @@ import type { MbaConfig } from "./model";
 
 async function fetchMbaConfig(agentId: string, signal?: AbortSignal): Promise<MbaConfig> {
   const raw = await apiClient.get<unknown>(
-    `/api/agents/${encodeURIComponent(agentId)}/mba-config`,
+    `/api/mba/agents/${encodeURIComponent(agentId)}/config`,
     { signal },
   );
   return mbaConfigSchema.parse(raw);

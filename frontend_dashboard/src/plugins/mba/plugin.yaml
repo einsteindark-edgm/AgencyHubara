@@ -1,0 +1,31 @@
+# Manifest de mba — generado por `hubara create plugin` (F-SDK-3).
+# Contrato: PLUGIN_CONTRACT.md · schema: ../_schema/plugin.schema.yaml
+# Regla de oro: campo nuevo ⇒ schema + modelo tipado + check (mismo PR).
+id: mba
+version: 0.1.0
+archetype: full_stack  # P-29: el TCK audita esta identidad de por vida
+display_name: Meta Business Agent
+description: |
+  Meta Business Agent: la configuración REAL que se envía al agente hospedado por Meta
+  (skills, conocimiento, connector tools, UI skills, settings) autorada en agents/<id>/,
+  los endpoints del connector que MBA invoca, y la sección del dashboard que lo muestra.
+
+# ── Frontend ───────────────────────────────────────────────────────────
+frontend:
+  entry: ./frontend
+  contributes:
+    sections:
+      - { key: mba, label: Meta Business Agent, order: 90, icon: bot }
+    sidebar:
+      - { route: /mba, label: Meta Business Agent, icon: bot }
+
+# ── API REST ────────────────────────────────────────────────────────────
+api:
+  python_module: src.plugins.mba.api
+  prefix: /api/mba
+  tags: [Meta Business Agent]
+  # Dos routers bajo el mismo prefijo: el plano de gestión (protegido) y las
+  # connector tools que invoca Meta (PUBLIC_ROUTER + API key propia).
+  legacy_routers:
+    - { module: src.plugins.mba.api, prefix: /api/mba, tags: [Meta Business Agent] }
+    - { module: src.plugins.mba.api.connector, prefix: /api/mba, tags: [MBA connector] }

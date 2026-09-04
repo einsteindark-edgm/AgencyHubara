@@ -69,7 +69,7 @@
 | `hubara_vault/` | Runtime state (sessions, catalog) — seed data committeado |
 | `run_api.py`, `src/run_workers.py`, `src/main.py` | Entry points |
 
-**Plugins backend actuales:** `ads`, `agents_admin`, `catalog`, `chats` (3 workers: sales + remarketing + sales_eval), `eta`, `orders`, `system_map`.
+**Plugins backend actuales:** `ads`, `agents_admin`, `catalog`, `chats` (3 workers: sales + remarketing + sales_eval), `eta`, `marketing`, `mba` (Meta Business Agent: agentes autorados en `agents/<id>/`, connector tools bajo `/api/mba/tools/*`), `order_sentinel`, `orders`, `reengagement`, `system_map`.
 
 ## `frontend_dashboard/` (frontend)
 
@@ -95,7 +95,7 @@
 | `playwright.config.ts` | E2E config |
 | `vite.config.ts`, `vitest.config.ts` | Build / test config |
 
-**Plugins frontend actuales:** `ads`, `agents_admin`, `catalog`, `chats`, `eta`, `orders`, `system_map`.
+**Plugins frontend actuales:** `ads`, `agents_admin`, `catalog`, `chats`, `eta`, `marketing`, `mba` (sección "Meta Business Agent"), `orders`.
 
 ## Pipeline (`.archon/` + `.claude/skills/`)
 

@@ -40,7 +40,7 @@ contrato de estabilidad + check). Docs: `docs/_sdk/01-fachada-sdk.md`.
 
 ## Plugins frontend actuales
 
-`ads`, `agents_admin`, `catalog`, `chats`, `eta`, `orders`, `system_map` (+ `_schema` que es codegen artifact, no editar).
+`ads`, `agents_admin`, `catalog`, `chats`, `eta`, `marketing`, `mba`, `orders` (+ `_schema` que es codegen artifact, no editar).
 
 Cada `src/plugins/<id>/frontend/` tiene su propio mini-FSD: `pages/`, `features/`, `entities/`. El plugin reexporta via `src/plugins/<id>/frontend/index.ts` con un `Page` por defecto.
 
