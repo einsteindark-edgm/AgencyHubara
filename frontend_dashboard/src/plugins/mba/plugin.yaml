@@ -5,6 +5,16 @@ id: mba
 version: 0.1.0
 archetype: full_stack  # P-29: el TCK audita esta identidad de por vida
 display_name: Meta Business Agent
+# Dependencias FUNCIONALES (L-18: el edge del System Map sale SOLO de acá y P-6
+# las exige al habilitar el plugin):
+# - chats: las connector tools escriben en las conversaciones que chats posee
+#   (set_order_slot → draft, manage_conversation_tag → tag, escalate_to_human →
+#   route=humano) y el webhook `standby` de MBA lo recibe el ingest de chats.
+# - orders: register_order / check_order_status / verify_order_for_checkout
+#   delegan en el ciclo de vida de pedidos.
+# - catalog: search_products / list_categories / get_product_by_handle leen el
+#   snapshot del catálogo.
+depends_on: [chats, orders, catalog]
 description: |
   Meta Business Agent: la configuración REAL que se envía al agente hospedado por Meta
   (skills, conocimiento, connector tools, UI skills, settings) autorada en agents/<id>/,
