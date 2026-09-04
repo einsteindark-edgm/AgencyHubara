@@ -223,7 +223,9 @@ def build_mba_config(agent_id: str) -> MbaConfigDTO | None:
     agent = next((a for a in discover_agents() if a.id == agent_id), None)
     if agent is None or not agent.workspace:
         return None
-    return normalize_mba_config(agent_id, read_workspace_sources(agent.workspace))
+    return normalize_mba_config(
+        agent_id, read_workspace_sources(agent.workspace), workspace=agent.workspace
+    )
 
 
 def _build_agent(worker_name: str, dash: dict) -> AgentDTO:

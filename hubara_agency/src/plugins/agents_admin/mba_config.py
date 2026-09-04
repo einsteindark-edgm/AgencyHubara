@@ -33,8 +33,8 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from dataclasses import dataclass, field
-from typing import Iterator, Mapping
+from dataclasses import dataclass, field, replace
+from typing import Any, Iterator, Mapping
 
 SKILL_CHAR_LIMIT = 20000
 SKILL_DESCRIPTION_LIMIT = 1024
@@ -185,6 +185,25 @@ class MbaEndpointDTO:
 
 
 @dataclass(frozen=True)
+class MbaRequestDTO:
+    """UNA llamada HTTP a Meta tal cual se enviaría (headers + body exactos).
+
+    ``body`` es el JSON literal del request (sin metadata de UI); lo único que
+    no es literal son los placeholders ``{entity_id}`` / ``{connector_id}`` en
+    la URL y los secretos (token, api key), que se resuelven al enviar.
+    """
+
+    step: int
+    section: str
+    label: str
+    method: str
+    url: str
+    headers: dict[str, str]
+    body: dict[str, Any]
+    notes: str = ""
+
+
+@dataclass(frozen=True)
 class MbaConnectorToolDTO:
     """Espeja ``POST /{entity_id}/agent_connectors/{id}/tools`` (request_definition)."""
 
@@ -258,6 +277,11 @@ class MbaConfigDTO:
     tool_treatments: tuple[MbaToolTreatmentDTO, ...] = field(default_factory=tuple)
     excluded: tuple[MbaExcludedDTO, ...] = field(default_factory=tuple)
     endpoints: tuple[MbaEndpointDTO, ...] = field(default_factory=tuple)
+    # Ruta (relativa al repo) del workspace del que salió todo: las ``sources``
+    # de cada sección son relativas a este directorio.
+    workspace: str = ""
+    # Las llamadas HTTP exactas a Meta, en orden de envío (1..N).
+    requests: tuple[MbaRequestDTO, ...] = field(default_factory=tuple)
 
 
 ENDPOINTS: tuple[MbaEndpointDTO, ...] = (
@@ -1124,7 +1148,228 @@ def _tag_skill(files: Mapping[str, str]) -> MbaSkillDTO | None:
 # ---------------------------------------------------------------------------
 
 
-def normalize_mba_config(agent_id: str, sources: WorkspaceSources) -> MbaConfigDTO:
+MBA_BASE_URL = "https://api.facebook.com"
+MBA_API_VERSION = "2.0.0"
+CONNECTOR_API_KEY_PLACEHOLDER = "<HUBARA_MBA_API_KEY>"
+ALLOWLIST_PHONE_PLACEHOLDER = "+57XXXXXXXXXX"
+# Nombre del parámetro que Meta rellena con el teléfono del cliente (macro).
+CUSTOMER_PHONE_PARAM = "customer_phone"
+
+_MBA_HEADERS: dict[str, str] = {
+    "Authorization": "Bearer <META_ACCESS_TOKEN>",
+    "X-API-Version": MBA_API_VERSION,
+    "Content-Type": "application/json",
+}
+
+
+def _endpoint_url(section: str) -> tuple[str, str]:
+    ep = next(e for e in ENDPOINTS if e.section == section)
+    return ep.method, MBA_BASE_URL + ep.path
+
+
+def _tool_param(name: str, description: str, *, required: bool = False) -> dict[str, Any]:
+    return {"type": "string", "description": description, "required": required}
+
+
+def _customer_phone_param() -> dict[str, Any]:
+    return {
+        "type": "string",
+        "description": "Teléfono del cliente que escribe (lo inyecta Meta, E.164).",
+        "required": True,
+        "binding": {"kind": "macro", "macro": CUSTOMER_PHONE_MACRO},
+    }
+
+
+def _tool_request_definition(tool: MbaConnectorToolDTO) -> dict[str, Any]:
+    llm_desc = "Lo extrae el agente de la conversación."
+    rd: dict[str, Any] = {
+        "method": tool.method,
+        "path": tool.path,
+        "path_parameters": {},
+        "query_parameters": {},
+        "headers": {},
+    }
+    if tool.method == "GET":
+        rd["query_parameters"] = {CUSTOMER_PHONE_PARAM: _customer_phone_param()}
+        for p in tool.query_parameters:
+            rd["query_parameters"][p] = _tool_param(p, llm_desc)
+    else:
+        params: dict[str, Any] = {CUSTOMER_PHONE_PARAM: _customer_phone_param()}
+        for p in tool.body_parameters:
+            params[p] = _tool_param(p, llm_desc)
+        rd["body"] = {
+            "content_type": "application/json",
+            "params": params,
+            "required": [CUSTOMER_PHONE_PARAM],
+        }
+    return rd
+
+
+def _build_requests(cfg: MbaConfigDTO) -> tuple[MbaRequestDTO, ...]:
+    """Las llamadas exactas a Meta, en el orden en que se enviarían.
+
+    Orden = el de la guía get-started: conocimiento (business_info, FAQs) →
+    skills → connector → sus tools → UI skills → settings (rollout apagado) →
+    allowlist. Un request por ítem: la API de Meta no acepta lotes.
+    """
+    out: list[MbaRequestDTO] = []
+
+    def add(section: str, label: str, body: dict[str, Any], notes: str = "") -> None:
+        method, url = _endpoint_url(section)
+        out.append(
+            MbaRequestDTO(
+                step=len(out) + 1,
+                section=section,
+                label=label,
+                method=method,
+                url=url,
+                headers=dict(_MBA_HEADERS),
+                body=body,
+                notes=notes,
+            )
+        )
+
+    bi = cfg.business_info
+    bi_body: dict[str, Any] = {}
+    for key in (
+        "business_description",
+        "payment_method",
+        "delivery_and_shipping",
+        "return_policy",
+        "purchase_info",
+    ):
+        value = getattr(bi, key)
+        if value:
+            bi_body[key] = value
+    contact = {
+        k: v
+        for k, v in (
+            ("email", bi.contact_info.email),
+            ("hours_of_operation", bi.contact_info.hours_of_operation),
+            ("address", bi.contact_info.address),
+        )
+        if v
+    }
+    if contact:
+        bi_body["contact_info"] = contact
+    add(
+        "business_info",
+        "business_info",
+        bi_body,
+        "PUT reemplaza TODO el bloque; los campos sin fuente no viajan.",
+    )
+
+    for faq in cfg.faqs:
+        add("faqs", faq.question, {"question": faq.question, "answer": faq.answer})
+
+    for sk in cfg.skills:
+        add(
+            "skills",
+            sk.title,
+            {"title": sk.title, "description": sk.description, "skill": sk.skill},
+            (
+                f"Excede el límite de {SKILL_CHAR_LIMIT:,} caracteres: Meta lo rechaza tal cual."
+                if sk.over_limit
+                else ""
+            ),
+        )
+
+    if cfg.connector is not None:
+        con = cfg.connector
+        add(
+            "connector",
+            con.name,
+            {
+                "name": con.name,
+                "description": con.description,
+                "base_url": con.base_url,
+                "auth_type": con.auth_type,
+                "auth_config": {
+                    "api_key": {
+                        "headers": [
+                            {
+                                "field_name": con.auth_header,
+                                "value": CONNECTOR_API_KEY_PLACEHOLDER,
+                                "prefix": "",
+                            }
+                        ],
+                        "query_params": [],
+                    }
+                },
+                "requires_certificate": con.requires_certificate,
+            },
+            "La respuesta trae el `id` del connector: es el {connector_id} de las tools.",
+        )
+        for tool in con.tools:
+            add(
+                "connector_tools",
+                tool.name,
+                {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "request_definition": _tool_request_definition(tool),
+                    "user_auth_required": False,
+                },
+                tool.notes,
+            )
+
+    for ui in cfg.ui_skills:
+        add(
+            "ui_skills",
+            ui.title,
+            {
+                "title": ui.title,
+                "component_type": ui.component_type,
+                "status": ui.status,
+                "instruction": ui.instruction,
+            },
+            ui.note,
+        )
+
+    st = cfg.settings
+    handoff: dict[str, Any] = {
+        "enabled": st.handoff.enabled,
+        "message_selection": st.handoff.message_selection,
+    }
+    if st.handoff.message:
+        handoff["message"] = st.handoff.message
+    followup: dict[str, Any] = {"enabled": st.followup.enabled}
+    if st.followup.enabled:
+        followup["followup_interval_in_seconds"] = st.followup.followup_interval_in_seconds
+        if st.followup.message:
+            followup["message"] = st.followup.message
+    phrases: list[str] = []
+    for p in st.never_say_phrases:
+        if p.phrase not in phrases:
+            phrases.append(p.phrase)
+    add(
+        "settings",
+        "settings",
+        {
+            "rollout": {"enabled": st.rollout_enabled},
+            "ai_audience": st.ai_audience,
+            "handoff": handoff,
+            "followup": followup,
+            "never_say_phrases": phrases,
+        },
+        "Va al final: con rollout.enabled=false MBA no responde a nadie hasta que se "
+        "prenda a mano. never_say_phrases reemplaza la lista completa.",
+    )
+
+    add(
+        "allowlist",
+        "allowlist",
+        {"consumer_phone_number": ALLOWLIST_PHONE_PLACEHOLDER},
+        "Único valor que NO sale del workspace: los teléfonos de prueba de F0 "
+        "(uno por request, E.164). Con ai_audience=ALLOWLISTED_ONLY solo ellos "
+        "hablan con MBA y no hay facturación.",
+    )
+    return tuple(out)
+
+
+def normalize_mba_config(
+    agent_id: str, sources: WorkspaceSources, workspace: str = ""
+) -> MbaConfigDTO:
     faqs, faq_excluded = _build_faqs(sources)
     handoff_msg = _handoff_message(sources.files)
     settings = MbaSettingsDTO(
@@ -1149,7 +1394,7 @@ def normalize_mba_config(agent_id: str, sources: WorkspaceSources) -> MbaConfigD
     ):
         if extra_skill is not None:
             skills = skills + (extra_skill,)
-    return MbaConfigDTO(
+    cfg = MbaConfigDTO(
         agent_id=agent_id,
         channel="whatsapp",
         business_info=_build_business_info(sources),
@@ -1161,4 +1406,6 @@ def normalize_mba_config(agent_id: str, sources: WorkspaceSources) -> MbaConfigD
         tool_treatments=treatments,
         excluded=_STATIC_EXCLUSIONS + faq_excluded + tool_excluded,
         endpoints=ENDPOINTS,
+        workspace=workspace,
     )
+    return replace(cfg, requests=_build_requests(cfg))
