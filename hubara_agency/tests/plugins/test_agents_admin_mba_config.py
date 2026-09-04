@@ -830,3 +830,176 @@ def test_tools_md_leftover_sections_and_knowledge_rules_become_usage_skill() -> 
     assert "Lo que NO va aquí" not in usage.skill
     # ni las políticas de negocio que ya están en business_info
     assert "Envíos a Bogotá" not in usage.skill
+
+
+# ── Requests exactos a Meta (lo que se enviaría, en orden) ───────────────
+
+_WS = "hubara_agency/src/plugins/chats/agent/sales/workspace"
+_SEND_ORDER = [
+    "business_info",
+    "faqs",
+    "skills",
+    "connector",
+    "connector_tools",
+    "ui_skills",
+    "settings",
+    "allowlist",
+]
+
+
+def _cfg_full():
+    skills = (
+        WorkspaceSkill(
+            name="sales_script", description="Núcleo.", always=True, body=_SCRIPT_WITH_OBJECTIONS
+        ),
+    )
+    return normalize_mba_config(
+        "sales",
+        _sources(files={"TOOLS.md": _TOOLS_MD, "USER.md": _USER_WITH_FACTS}, skills=skills),
+        workspace=_WS,
+    )
+
+
+def test_requests_are_the_exact_meta_calls_in_send_order() -> None:
+    cfg = _cfg_full()
+    assert cfg.workspace == _WS
+    reqs = cfg.requests
+    assert reqs
+    # todas contra api.facebook.com, versión 2.0.0 (sin el header Skills no existe)
+    for r in reqs:
+        assert r.url.startswith("https://api.facebook.com/{entity_id}/")
+        assert r.headers["X-API-Version"] == "2.0.0"
+        assert r.headers["Content-Type"] == "application/json"
+        assert r.headers["Authorization"].startswith("Bearer ")
+    # numeradas 1..N en el orden real de envío (conocimiento → skills → connector
+    # → tools → UI → settings al final, rollout apagado → allowlist)
+    assert [r.step for r in reqs] == list(range(1, len(reqs) + 1))
+    seen: list[str] = []
+    for r in reqs:
+        if not seen or seen[-1] != r.section:
+            seen.append(r.section)
+    assert seen == _SEND_ORDER
+
+
+def test_skill_request_body_is_exactly_title_description_skill() -> None:
+    cfg = _cfg_full()
+    persona = next(s for s in cfg.skills if s.title == "persona-y-tono")
+    req = next(r for r in cfg.requests if r.section == "skills" and r.label == "persona-y-tono")
+    assert req.method == "POST"
+    assert req.url == "https://api.facebook.com/{entity_id}/agent_config/skills"
+    # el body ES el texto completo: ni una clave de más, ni recortes
+    assert req.body == {
+        "title": persona.title,
+        "description": persona.description,
+        "skill": persona.skill,
+    }
+    assert len([r for r in cfg.requests if r.section == "skills"]) == len(cfg.skills)
+
+
+def test_business_info_and_faq_requests_match_meta_schemas() -> None:
+    cfg = _cfg_full()
+    bi = next(r for r in cfg.requests if r.section == "business_info")
+    assert bi.method == "PUT"
+    assert bi.url == "https://api.facebook.com/{entity_id}/agent_config/business_info"
+    allowed = {
+        "business_description",
+        "payment_method",
+        "delivery_and_shipping",
+        "return_policy",
+        "purchase_info",
+        "contact_info",
+    }
+    assert set(bi.body) <= allowed
+    # campos sin fuente NO viajan (la doc: "solo incluir los que se configuran")
+    assert all(v for v in bi.body.values())
+    assert bi.body["business_description"] == cfg.business_info.business_description
+    assert "purchase_info" not in bi.body
+    assert bi.body["contact_info"] == {
+        "hours_of_operation": cfg.business_info.contact_info.hours_of_operation
+    }
+
+    faq_reqs = [r for r in cfg.requests if r.section == "faqs"]
+    assert len(faq_reqs) == len(cfg.faqs) == 2
+    caro = next(r for r in faq_reqs if r.label == "Está caro.")
+    assert caro.method == "POST"
+    assert caro.url == "https://api.facebook.com/{entity_id}/agent_config/faq"
+    assert caro.body == {
+        "question": "Está caro.",
+        "answer": "Entiendo. La diferencia está en la cera de palma 100% vegetal.",
+    }
+
+
+def test_settings_request_is_a_single_put_with_plain_phrase_list() -> None:
+    cfg = _cfg_full()
+    st = [r for r in cfg.requests if r.section == "settings"]
+    assert len(st) == 1
+    body = st[0].body
+    assert st[0].method == "PUT"
+    assert body["rollout"] == {"enabled": False}
+    assert body["ai_audience"] == "ALLOWLISTED_ONLY"
+    assert body["followup"] == {"enabled": False}
+    assert body["handoff"]["enabled"] is True
+    # never_say_phrases es array de strings (la fuente queda en la vista, no viaja)
+    assert body["never_say_phrases"] == [p.phrase for p in cfg.settings.never_say_phrases]
+    assert all(isinstance(p, str) for p in body["never_say_phrases"])
+
+
+def test_connector_and_tool_requests_carry_auth_and_macro_bindings() -> None:
+    cfg = _cfg_full()
+    con = next(r for r in cfg.requests if r.section == "connector")
+    assert con.method == "POST"
+    assert con.url == "https://api.facebook.com/{entity_id}/agent_connectors"
+    assert con.body["auth_type"] == "API_KEY"
+    assert con.body["base_url"] == cfg.connector.base_url
+    assert con.body["auth_config"]["api_key"]["headers"] == [
+        {"field_name": "X-API-Key", "value": "<HUBARA_MBA_API_KEY>", "prefix": ""}
+    ]
+    assert con.body["requires_certificate"] is False
+
+    tool_reqs = {r.label: r for r in cfg.requests if r.section == "connector_tools"}
+    assert set(tool_reqs) == {t.name for t in cfg.connector.tools}
+    search = tool_reqs["search_products"]
+    assert search.url == (
+        "https://api.facebook.com/{entity_id}/agent_connectors/{connector_id}/tools"
+    )
+    rd = search.body["request_definition"]
+    assert rd["method"] == "GET" and rd["path"] == "/tools/search_products"
+    # el teléfono del cliente lo inyecta Meta (macro), el resto lo extrae el agente
+    assert rd["query_parameters"]["customer_phone"]["binding"] == {
+        "kind": "macro",
+        "macro": "WHATSAPP_PHONE_NUMBER",
+    }
+    assert set(rd["query_parameters"]) == {"customer_phone", "q", "limit", "category"}
+    assert "binding" not in rd["query_parameters"]["q"]
+    assert "body" not in rd
+    assert search.body["user_auth_required"] is False
+
+    register = tool_reqs["register_order"]
+    rd = register.body["request_definition"]
+    assert rd["method"] == "POST"
+    assert rd["query_parameters"] == {}
+    assert rd["body"]["content_type"] == "application/json"
+    assert rd["body"]["params"]["customer_phone"]["binding"]["macro"] == "WHATSAPP_PHONE_NUMBER"
+    assert "customer_phone" in rd["body"]["required"]
+
+
+def test_ui_skill_and_allowlist_requests() -> None:
+    cfg = _cfg_full()
+    ui = next(
+        r for r in cfg.requests if r.section == "ui_skills" and r.label == "request-shipping-details"
+    )
+    assert ui.method == "POST"
+    assert ui.url == "https://api.facebook.com/{entity_id}/agent-ui-skills"
+    src = next(u for u in cfg.ui_skills if u.title == "request-shipping-details")
+    assert ui.body == {
+        "title": src.title,
+        "component_type": "flow",
+        "status": "enabled",
+        "instruction": src.instruction,
+    }
+
+    al = [r for r in cfg.requests if r.section == "allowlist"]
+    assert len(al) == 1
+    assert al[0].body == {"consumer_phone_number": "+57XXXXXXXXXX"}
+    # el único valor que NO sale del workspace lo dice explícitamente
+    assert "F0" in al[0].notes

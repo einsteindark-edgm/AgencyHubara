@@ -112,9 +112,22 @@ export const mbaToolTreatmentSchema = z.object({
   endpoint: z.string().nullable(),
 });
 
+/** UNA llamada HTTP a Meta tal cual se enviaría: headers + body JSON literal. */
+export const mbaRequestSchema = z.object({
+  step: z.number().int().positive(),
+  section: z.string(),
+  label: z.string(),
+  method: z.string(),
+  url: z.string(),
+  headers: z.record(z.string(), z.string()),
+  body: z.record(z.string(), z.unknown()),
+  notes: z.string(),
+});
+
 export const mbaConfigSchema = z.object({
   agent_id: z.string(),
   channel: z.string(),
+  workspace: z.string(),
   business_info: mbaBusinessInfoSchema,
   settings: mbaSettingsSchema,
   skills: z.array(mbaSkillSchema),
@@ -124,8 +137,10 @@ export const mbaConfigSchema = z.object({
   tool_treatments: z.array(mbaToolTreatmentSchema),
   excluded: z.array(mbaExcludedSchema),
   endpoints: z.array(mbaEndpointSchema),
+  requests: z.array(mbaRequestSchema),
 });
 
 export type MbaConfigDto = z.infer<typeof mbaConfigSchema>;
 export type MbaSkillDto = z.infer<typeof mbaSkillSchema>;
 export type MbaBusinessInfoDto = z.infer<typeof mbaBusinessInfoSchema>;
+export type MbaRequestDto = z.infer<typeof mbaRequestSchema>;

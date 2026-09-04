@@ -21,13 +21,14 @@
 
 | Pieza | Dónde | Estado |
 |---|---|---|
-| Normalizador puro workspace → config MBA (skills, business_info, FAQs, settings, connector tools, UI skills, mapa de 19 tools, exclusiones con motivo) | `hubara_agency/src/plugins/agents_admin/mba_config.py` | ✅ 42 tests |
+| Normalizador puro workspace → config MBA (skills, business_info, FAQs, settings, connector tools, UI skills, mapa de 19 tools, exclusiones con motivo) | `hubara_agency/src/plugins/agents_admin/mba_config.py` | ✅ 48 tests |
 | Lectura de workspace (bootstrap + `skills/*/SKILL.md` con front-matter, nunca `memory/`) | `hubara_agency/src/plugins/agents_admin/service.py` | ✅ |
 | `GET /api/agents/{agent_id}/mba-config` | `hubara_agency/src/plugins/agents_admin/api/routes.py` | ✅ |
-| Tab "Meta Business Agent" en Agents (todos los agentes) | `frontend_dashboard/src/plugins/agents_admin/frontend/{entities/mba-config,features/agents-mba-preview}` | ✅ 31 tests |
+| Tab "Meta Business Agent" en Agents (todos los agentes) | `frontend_dashboard/src/plugins/agents_admin/frontend/{entities/mba-config,features/agents-mba-preview}` | ✅ 34 tests |
 | Reparto del etiquetado: MBA propone INTERESADO/RECHAZO, Hubara deriva CONFIRMADO_* y el silencio | skill `etiquetas-de-cierre` + notas del tool `manage_conversation_tag` | ✅ |
 | Cobertura total del workspace ("lo que no está acá no existe"): guion partido en `guion-sales-script` + `guion-etapas`, `contexto-del-negocio` (USER.md), `uso-de-tools` (secciones de TOOLS.md sin tabla + instrucciones del skill de catálogo) | `mba_config.py` | ✅ 9 skills, todas < 20k |
 | Verificación viva de la tab | dashboard local (API `127.0.0.1:8010` + Vite `5180`; el stack Docker estaba apagado) | ✅ |
+| **Requests exactos a Meta** (`requests[]` en el DTO): las 38 llamadas HTTP de sales numeradas en orden de envío, cada una con método, URL completa, headers (`X-API-Version: 2.0.0`) y body JSON literal según el schema oficial de cada endpoint; la tab muestra la secuencia arriba y el request desplegable dentro de cada ítem (skill, FAQ, business_info, connector, tool, UI skill, settings, allowlist) + la ruta del workspace del que sale todo | `mba_config.py::_build_requests` + `AgentsMbaPreview.tsx::RequestView` | ✅ |
 
 **Hallazgos que condicionan lo que sigue** (todos verificados contra la doc de Meta):
 
@@ -49,6 +50,8 @@ Notación: **D<fase>.<n>** · Objetivo · Alcance (archivos) · Tests / DoD · D
 **D0.1 · Guion de ventas dentro del límite de 20k** — ✅ partido en `guion-sales-script` (núcleo, "aplica siempre") + `guion-etapas` (5 etapas en orden canónico; la descripción le dice a MBA cómo elegir etapa porque no recibe el "estado del pedido" que Hubara inyecta por turno). `test_real_sales_workspace_normalizes_end_to_end` exige `over_limit is False` en todas las skills.
 
 **D0.2 · Verificación viva** — ✅ hecha contra API y Vite locales en puertos propios (el daemon de Docker estaba apagado). Al mergear: rebuild del contenedor API (`cd hubara_agency && docker compose -f docker-compose.local.yml up -d --build hubara-api`) y ver `:5174` → Agents → Sales → tab MBA.
+
+**D0.4 · Request literal por ítem** — ✅ la tab ya no describe: muestra lo que se envía. Bodies verificados contra la referencia oficial: skills = un `POST` por skill `{title, description, skill}`; business_info = un `PUT` solo con los campos con fuente; FAQ = un `POST` por pregunta `{question, answer}`; settings = un `PUT` con `never_say_phrases` como lista de strings (reemplaza la lista completa), `rollout.enabled=false`, `followup.enabled=false`; connector = `auth_config.api_key.headers[{field_name: X-API-Key, value: <HUBARA_MBA_API_KEY>}]`; tools = `request_definition` con `customer_phone` ligado a la macro `WHATSAPP_PHONE_NUMBER` (query en GET, body en POST) y el resto de parámetros sin binding (los extrae el agente); UI skills = `{title, component_type, status, instruction}`; allowlist = `{consumer_phone_number}` (único valor que no sale del workspace, placeholder `+57XXXXXXXXXX`). Los tipos de los parámetros de las tools quedan como `string` hasta D1.2 (schemas reales).
 
 **D0.3 · Cobertura total del workspace** — ✅ regla "lo que no está en la tab no existe": USER.md → `contexto-del-negocio`; secciones de TOOLS.md sin tabla (principios, memoria del pedido, anti-alucinación, UI rica, estilo) + párrafos de instrucción del skill de catálogo → `uso-de-tools`. Lo único que sigue fuera, con motivo visible: memoria dinámica, contexto por turno, trigger de ghosting, `react_to_message`.
 

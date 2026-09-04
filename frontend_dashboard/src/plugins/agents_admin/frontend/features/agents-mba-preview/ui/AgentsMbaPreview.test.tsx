@@ -53,7 +53,8 @@ describe("AgentsMbaPreview", () => {
     renderWithClient(<AgentsMbaPreview agentId="sales" />);
 
     await waitFor(() => screen.getByText("payment_method"));
-    screen.getByText(/Nequi o llave 3229041190/);
+    // el valor se ve en la vista legible Y dentro del body JSON del PUT
+    expect(screen.getAllByText(/Nequi o llave 3229041190/).length).toBe(2);
     screen.getByText("delivery_and_shipping");
     // purchase_info viene vacío y email null: se ve que NO hay fuente, no un hueco
     expect(screen.getAllByText(/sin fuente/i).length).toBeGreaterThanOrEqual(2);
@@ -103,6 +104,40 @@ describe("AgentsMbaPreview", () => {
     screen.getByText("unmapped");
     expect(screen.getAllByText("/{entity_id}/agent_connectors/{connector_id}/tools").length).toBeGreaterThan(1);
     expect(screen.getAllByText(/no viaja/i).length).toBeGreaterThan(1);
+  });
+
+  it("shows the workspace path and the numbered send sequence with full Meta URLs", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(MBA_CONFIG_FIXTURE));
+
+    renderWithClient(<AgentsMbaPreview agentId="sales" />);
+
+    await waitFor(() => screen.getByText("hubara_agency/src/plugins/chats/agent/sales/workspace"));
+    // secuencia: 12 requests numerados, con la URL completa (no solo el path)
+    screen.getByText(/12 requests/);
+    expect(
+      screen.getAllByText("https://api.facebook.com/{entity_id}/agent_config/skills").length,
+    ).toBeGreaterThanOrEqual(1);
+    expect(
+      screen.getAllByText("https://api.facebook.com/{entity_id}/agent_config/allowlist").length,
+    ).toBeGreaterThanOrEqual(1);
+    screen.getByText(/\+57XXXXXXXXXX/);
+  });
+
+  it("renders, per skill, the exact JSON body that would be POSTed (full text, no summary)", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(MBA_CONFIG_FIXTURE));
+
+    renderWithClient(<AgentsMbaPreview agentId="sales" />);
+
+    await waitFor(() => screen.getByText("persona-y-tono"));
+    // el JSON literal del request, con el texto completo de la skill adentro
+    expect(screen.getAllByText(/"skill": "# Eres el Asesor/).length).toBe(1);
+    expect(screen.getAllByText(/"title": "reglas-operativas"/).length).toBe(1);
+    // los headers exactos que viajan con cada request
+    expect(screen.getAllByText(/X-API-Version: 2\.0\.0/).length).toBeGreaterThan(1);
+    // el body del connector tool con la macro del teléfono
+    expect(screen.getAllByText(/"macro": "WHATSAPP_PHONE_NUMBER"/).length).toBe(2);
+    // never_say_phrases viaja como lista plana de strings
+    screen.getByText(/"never_say_phrases": \[/);
   });
 
   it("shows an error state instead of crashing when the backend fails", async () => {

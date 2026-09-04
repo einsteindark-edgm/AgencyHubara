@@ -7,12 +7,14 @@ import type { z } from "zod";
 import type {
   mbaBusinessInfoSchema,
   mbaConfigSchema,
+  mbaRequestSchema,
   mbaSkillSchema,
 } from "./contracts";
 
 export type MbaConfig = z.infer<typeof mbaConfigSchema>;
 export type MbaSkill = z.infer<typeof mbaSkillSchema>;
 export type MbaBusinessInfo = z.infer<typeof mbaBusinessInfoSchema>;
+export type MbaRequest = z.infer<typeof mbaRequestSchema>;
 
 export type MbaBusinessInfoField = Exclude<keyof MbaBusinessInfo, "contact_info" | "sources">;
 

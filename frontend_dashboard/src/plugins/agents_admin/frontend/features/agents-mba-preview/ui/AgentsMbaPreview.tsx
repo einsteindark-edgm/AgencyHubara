@@ -3,6 +3,10 @@
  * agente: skills, business_info, FAQs y settings, con la forma EXACTA de los
  * endpoints `/agent_config/*` de Meta y la trazabilidad archivo → campo.
  *
+ * Cada sección muestra, además de la vista legible, el REQUEST literal
+ * (método, URL, headers y body JSON) tal cual se enviaría; arriba va la
+ * secuencia completa numerada en orden de envío.
+ *
  * Solo lectura. La normalización vive en el backend
  * (`GET /api/agents/{id}/mba-config`), derivada del workspace REAL del agente;
  * acá no se inventa nada ni se llama a Meta.
@@ -15,6 +19,7 @@ import {
   CONTACT_INFO_FIELDS,
   useMbaConfig,
   type MbaConfig,
+  type MbaRequest,
   type MbaSkill,
 } from "@plugins/agents_admin/frontend/entities/mba-config";
 import { Icon, type IconName } from "@/shared/ui";
@@ -60,6 +65,113 @@ function Empty() {
   return <span style={{ color: "var(--fg-faint)" }}>sin fuente</span>;
 }
 
+const PRE_STYLE = {
+  whiteSpace: "pre-wrap" as const,
+  fontSize: 12,
+  marginTop: 6,
+  padding: 10,
+  borderRadius: 6,
+  background: "rgba(0,0,0,0.18)",
+  overflowX: "auto" as const,
+};
+
+function RequestLine({ req }: { req: MbaRequest }) {
+  return (
+    <span style={{ display: "inline-flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
+      <span className="pip">#{req.step}</span>
+      <code style={{ fontWeight: 700 }}>{req.method}</code>
+      <code style={{ fontSize: 11.5 }}>{req.url}</code>
+    </span>
+  );
+}
+
+/**
+ * El request literal: headers + body JSON exactamente como viajaría a Meta.
+ * `collapsible` lo pliega bajo una línea "ver request exacto".
+ */
+function RequestView({ req, collapsible = false }: { req: MbaRequest; collapsible?: boolean }) {
+  const json = JSON.stringify(req.body, null, 2);
+  const body = (
+    <div>
+      <div style={{ fontSize: 11.5, fontFamily: "var(--font-mono)", color: "var(--fg-muted)", marginTop: 6 }}>
+        {Object.entries(req.headers).map(([k, v]) => (
+          <div key={k}>{`${k}: ${v}`}</div>
+        ))}
+      </div>
+      <pre style={PRE_STYLE}>{json}</pre>
+      {req.notes && (
+        <div style={{ fontSize: 12, color: "var(--fg-muted)", marginTop: 2 }}>{req.notes}</div>
+      )}
+    </div>
+  );
+  if (!collapsible) {
+    return (
+      <div style={{ marginTop: 8 }}>
+        <RequestLine req={req} />
+        {body}
+      </div>
+    );
+  }
+  return (
+    <details style={{ marginTop: 8 }}>
+      <summary style={{ cursor: "pointer", listStyle: "none" }}>
+        <RequestLine req={req} />
+        <span style={{ fontSize: 11.5, color: "var(--fg-muted)", marginLeft: 8 }}>
+          {fmt(json.length)} caracteres · ▸ ver request exacto
+        </span>
+      </summary>
+      {body}
+    </details>
+  );
+}
+
+const SECTION_KIND: Record<string, string> = {
+  business_info: "business_info",
+  faqs: "FAQ",
+  skills: "skill",
+  connector: "connector",
+  connector_tools: "connector tool",
+  ui_skills: "UI skill",
+  settings: "settings",
+  allowlist: "allowlist",
+};
+
+function payloadLabel(r: MbaRequest): string {
+  const kind = SECTION_KIND[r.section] ?? r.section;
+  return kind === r.label ? kind : `${kind} · ${r.label}`;
+}
+
+function SendSequence({ requests }: { requests: MbaRequest[] }) {
+  return (
+    <ol style={{ listStyle: "none", margin: 0, padding: 0, fontSize: 12.5 }}>
+      {requests.map((r) => (
+        <li
+          key={r.step}
+          style={{
+            display: "grid",
+            gridTemplateColumns: "34px 1fr",
+            gap: 8,
+            padding: "6px 0",
+            borderTop: "1px solid var(--border, rgba(255,255,255,0.08))",
+          }}
+        >
+          <span style={{ color: "var(--fg-muted)" }}>{r.step}</span>
+          <span style={{ minWidth: 0 }}>
+            <span style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
+              <code style={{ fontWeight: 700 }}>{r.method}</code>
+              <code style={{ fontSize: 11.5, overflowWrap: "anywhere" }}>{r.url}</code>
+            </span>
+            <span style={{ display: "block", color: "var(--fg-muted)", fontSize: 12 }}>
+              <code>{payloadLabel(r)}</code>
+              <span> · {fmt(JSON.stringify(r.body).length)} caracteres</span>
+            </span>
+          </span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 function Section({
   icon,
   title,
@@ -103,7 +215,7 @@ function Section({
   );
 }
 
-function SkillCard({ skill }: { skill: MbaSkill }) {
+function SkillCard({ skill, req }: { skill: MbaSkill; req?: MbaRequest }) {
   return (
     <details style={{ marginBottom: 12 }}>
       <summary style={{ cursor: "pointer", listStyle: "none" }}>
@@ -115,6 +227,7 @@ function SkillCard({ skill }: { skill: MbaSkill }) {
           {skill.over_limit && (
             <Chip tone="warn">excede el límite de {fmt(skill.char_limit)}</Chip>
           )}
+          <span style={{ fontSize: 11.5, color: "var(--fg-muted)" }}>▸ ver request exacto</span>
         </div>
         <div style={{ fontSize: 12, color: "var(--fg-muted)", margin: "4px 0" }}>
           {skill.description}
@@ -123,23 +236,12 @@ function SkillCard({ skill }: { skill: MbaSkill }) {
           <Sources sources={skill.sources} />
         </div>
       </summary>
-      <pre
-        style={{
-          whiteSpace: "pre-wrap",
-          fontSize: 12,
-          marginTop: 8,
-          padding: 10,
-          borderRadius: 6,
-          background: "rgba(0,0,0,0.18)",
-        }}
-      >
-        {skill.skill}
-      </pre>
+      {req ? <RequestView req={req} /> : <pre style={PRE_STYLE}>{skill.skill}</pre>}
     </details>
   );
 }
 
-function BusinessInfo({ data }: { data: MbaConfig["business_info"] }) {
+function BusinessInfo({ data, req }: { data: MbaConfig["business_info"]; req?: MbaRequest }) {
   return (
     <div>
       {BUSINESS_INFO_FIELDS.map((f) => (
@@ -167,11 +269,12 @@ function BusinessInfo({ data }: { data: MbaConfig["business_info"] }) {
       <div style={{ fontSize: 12, color: "var(--fg-muted)" }}>
         Fuentes: <Sources sources={data.sources} />
       </div>
+      {req && <RequestView req={req} collapsible />}
     </div>
   );
 }
 
-function Settings({ settings }: { settings: MbaConfig["settings"] }) {
+function Settings({ settings, req }: { settings: MbaConfig["settings"]; req?: MbaRequest }) {
   const row = (label: string, value: ReactNode) => (
     <div style={{ display: "flex", gap: 10, alignItems: "baseline", marginBottom: 6 }}>
       <code style={{ minWidth: 200 }}>{label}</code>
@@ -204,6 +307,7 @@ function Settings({ settings }: { settings: MbaConfig["settings"] }) {
           ))}
         </div>
       </div>
+      {req && <RequestView req={req} collapsible />}
     </div>
   );
 }
@@ -211,9 +315,13 @@ function Settings({ settings }: { settings: MbaConfig["settings"] }) {
 function Connector({
   connector,
   toolsEndpoint,
+  req,
+  toolReqs,
 }: {
   connector: NonNullable<MbaConfig["connector"]>;
   toolsEndpoint?: { method: string; path: string };
+  req?: MbaRequest;
+  toolReqs: Map<string, MbaRequest>;
 }) {
   const row = (label: string, value: ReactNode) => (
     <div style={{ display: "flex", gap: 10, alignItems: "baseline", marginBottom: 4 }}>
@@ -229,6 +337,7 @@ function Connector({
       {row("auth_type", <code>{connector.auth_type}</code>)}
       {row("auth header", <code>{connector.auth_header}</code>)}
       {row("requires_certificate", <code>{String(connector.requires_certificate)}</code>)}
+      {req && <RequestView req={req} collapsible />}
 
       <div style={{ marginTop: 14, display: "flex", gap: 8, alignItems: "baseline" }}>
         <code style={{ fontWeight: 700 }}>tools</code>
@@ -271,6 +380,7 @@ function Connector({
             ))}
           </div>
           <div style={{ fontSize: 12, color: "var(--fg-muted)", marginTop: 4 }}>{t.notes}</div>
+          {toolReqs.get(t.name) && <RequestView req={toolReqs.get(t.name)!} collapsible />}
         </div>
       ))}
     </div>
@@ -338,14 +448,31 @@ export function AgentsMbaPreview({ agentId }: Props) {
   }
 
   const endpointFor = (section: string) => data.endpoints.find((e) => e.section === section);
+  const reqsFor = (section: string) => data.requests.filter((r) => r.section === section);
+  const reqFor = (section: string, label?: string) =>
+    data.requests.find((r) => r.section === section && (label === undefined || r.label === label));
+  const toolReqs = new Map(reqsFor("connector_tools").map((r) => [r.label, r]));
 
   return (
     <div className="ag-form">
-      <div style={{ fontSize: 12.5, color: "var(--fg-muted)", maxWidth: 720 }}>
+      <div style={{ fontSize: 12.5, color: "var(--fg-muted)", maxWidth: 760 }}>
         Esto es exactamente lo que se enviaría a Meta Business Agent para{" "}
         <code>{data.agent_id}</code> (canal <code>{data.channel}</code>), derivado de los
         archivos reales del workspace. Solo lectura: no se llama a Meta desde acá.
+        <div style={{ marginTop: 6 }}>
+          Workspace: <code>{data.workspace}</code>
+          <span> · las fuentes de cada sección son rutas relativas a esa carpeta.</span>
+        </div>
       </div>
+
+      <Section
+        icon="workflow"
+        title="Secuencia de envío"
+        desc="Todas las llamadas a Meta, numeradas en el orden en que se enviarían. Cada sección de abajo muestra el request literal (headers + body JSON) de sus ítems."
+        count={`${data.requests.length} requests`}
+      >
+        <SendSequence requests={data.requests} />
+      </Section>
 
       <Section
         icon="wand"
@@ -355,7 +482,7 @@ export function AgentsMbaPreview({ agentId }: Props) {
         count={`${data.skills.length} skills`}
       >
         {data.skills.map((s) => (
-          <SkillCard key={s.title} skill={s} />
+          <SkillCard key={s.title} skill={s} req={reqFor("skills", s.title)} />
         ))}
       </Section>
 
@@ -365,7 +492,7 @@ export function AgentsMbaPreview({ agentId }: Props) {
         desc="Conocimiento del negocio por campo de la API de Meta."
         endpoint={endpointFor("business_info")}
       >
-        <BusinessInfo data={data.business_info} />
+        <BusinessInfo data={data.business_info} req={reqFor("business_info")} />
       </Section>
 
       <Section
@@ -381,6 +508,7 @@ export function AgentsMbaPreview({ agentId }: Props) {
             <div style={{ fontWeight: 600, fontSize: 13 }}>{f.question}</div>
             <div style={{ fontSize: 12.5, whiteSpace: "pre-wrap" }}>{f.answer}</div>
             <Chip>{f.source}</Chip>
+            {reqFor("faqs", f.question) && <RequestView req={reqFor("faqs", f.question)!} collapsible />}
           </div>
         ))}
       </Section>
@@ -391,7 +519,7 @@ export function AgentsMbaPreview({ agentId }: Props) {
         desc="Rollout, audiencia, handoff, followup y frases que nunca debe decir."
         endpoint={endpointFor("settings")}
       >
-        <Settings settings={data.settings} />
+        <Settings settings={data.settings} req={reqFor("settings")} />
       </Section>
 
       <Section
@@ -402,7 +530,12 @@ export function AgentsMbaPreview({ agentId }: Props) {
         count={data.connector ? `${data.connector.tools.length} tools` : undefined}
       >
         {data.connector ? (
-          <Connector connector={data.connector} toolsEndpoint={endpointFor("connector_tools")} />
+          <Connector
+            connector={data.connector}
+            toolsEndpoint={endpointFor("connector_tools")}
+            req={reqFor("connector")}
+            toolReqs={toolReqs}
+          />
         ) : (
           <Empty />
         )}
@@ -454,7 +587,22 @@ export function AgentsMbaPreview({ agentId }: Props) {
             {u.note && (
               <div style={{ fontSize: 12, color: "var(--fg-muted)", marginTop: 2 }}>{u.note}</div>
             )}
+            {reqFor("ui_skills", u.title) && (
+              <RequestView req={reqFor("ui_skills", u.title)!} collapsible />
+            )}
           </div>
+        ))}
+      </Section>
+
+      <Section
+        icon="shield"
+        title="Allowlist (F0)"
+        desc="Con ai_audience=ALLOWLISTED_ONLY solo estos teléfonos hablan con MBA, sin facturación. Es el único valor que no sale del workspace."
+        endpoint={endpointFor("allowlist")}
+        count={`${reqsFor("allowlist").length} request`}
+      >
+        {reqsFor("allowlist").map((r) => (
+          <RequestView key={r.step} req={r} />
         ))}
       </Section>
 
