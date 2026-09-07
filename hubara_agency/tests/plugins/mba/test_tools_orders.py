@@ -54,7 +54,7 @@ async def test_status_lists_registered_orders_with_live_stage_and_pay_status(tmp
 @pytest.mark.asyncio
 async def test_status_is_scoped_to_the_customer_and_degrades_when_live_lookup_fails(tmp_path: Path) -> None:
     store = _vault(tmp_path, _SESSION, {"episodes": [{"order_id": "order_1"}]})
-    other = await check_order_status(store, _Query({}), session_key="wa_573009999999")
+    other = await check_order_status(store, _Query({}), session_key="wa_573009876543")
     assert other["orders"] == [] and "note" in other
     degraded = await check_order_status(store, _Query({}, boom=True), session_key=_SESSION)
     assert degraded["orders"][0]["status"] == "registrado"
