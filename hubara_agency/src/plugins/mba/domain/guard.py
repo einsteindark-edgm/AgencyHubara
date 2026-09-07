@@ -46,10 +46,17 @@ class RateLimiter:
     def size(self) -> int:
         return len(self._buckets)
 
+    def _tokens(self, key: str, now: float) -> float:
+        tokens, at = self._buckets.get(key, (self._capacity, now))
+        return min(self._capacity, tokens + (now - at) * self._refill)
+
+    def remaining(self, key: str) -> float:
+        """Tokens disponibles ahora, sin consumir ni registrar la clave."""
+        return self._tokens(key, self._clock())
+
     def allow(self, key: str) -> bool:
         now = self._clock()
-        tokens, at = self._buckets.get(key, (self._capacity, now))
-        tokens = min(self._capacity, tokens + (now - at) * self._refill)
+        tokens = self._tokens(key, now)
         allowed = tokens >= 1.0
         if allowed:
             tokens -= 1.0

@@ -97,3 +97,13 @@ def test_error_payload_is_what_the_endpoint_returns_as_422(contracts) -> None:
     with pytest.raises(ToolCallError) as e:
         parse_tool_call(contracts["get_product_by_handle"], {"customer_phone": _PHONE})
     assert e.value.payload == {"error": "invalid_request", "errors": ["handle: requerido"]}
+
+
+def test_phone_digits_are_ascii_only_and_integers_have_a_sane_range(contracts) -> None:
+    assert session_key_from_phone("+٥٧٣٠٠١٢٣٤٥٦٧") is None  # dígitos árabes: \d los aceptaría
+    c = contracts["verify_order_for_checkout"]
+    with pytest.raises(ToolCallError) as e:
+        parse_tool_call(c, {"customer_phone": _PHONE, "items": [{"handle": "vela", "quantity": 10**30}]})
+    assert "quantity" in " ".join(e.value.errors)
+    with pytest.raises(ToolCallError):
+        parse_tool_call(contracts["search_products"], {"customer_phone": _PHONE, "limit": "99999999999"})

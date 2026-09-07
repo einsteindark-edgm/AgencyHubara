@@ -142,3 +142,24 @@ async def test_get_product_by_handle_full_detail_or_not_found() -> None:
 
 def test_fixtures_are_frozen_dtos() -> None:  # sanity: el fake usa los DTOs reales del port
     assert replace(_VELA, title="x").title == "x"
+
+
+@pytest.mark.asyncio
+async def test_handle_outside_the_slug_alphabet_never_reaches_the_port() -> None:
+    class _Spy(_FakeCatalog):
+        async def get_by_handle(self, handle: str):
+            raise AssertionError(f"el port NO debe recibir {handle!r}")
+
+    for bad in ("../../etc/passwd", "vela lavanda", "Vela", "x" * 200, ""):
+        out = await get_product_by_handle(_Spy(), handle=bad)
+        assert out["found"] is False, bad
+
+
+@pytest.mark.asyncio
+async def test_unavailable_detail_is_a_closed_code_not_an_internal_path() -> None:
+    class _Down(_FakeCatalog):
+        async def search(self, q, *, limit=10, category=None):
+            raise CatalogUnavailableError("snapshot not found at /app/hubara_vault/catalog/snapshot.json")
+
+    out = await search_products(_Down(), q="x")
+    assert out["detail"] == "catalog_unavailable" and "/app/" not in str(out)

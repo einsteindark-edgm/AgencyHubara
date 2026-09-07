@@ -8,6 +8,7 @@ los tags) para que el comportamiento observable sea el mismo con MBA al frente.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import asdict
 from typing import Any
 
@@ -24,6 +25,10 @@ from src.sdk.mediakit import derive_image_label, fold_for_match
 
 MAX_LIMIT = 30
 DEFAULT_LIMIT = 10
+#: alfabeto de un handle de Medusa. Un handle fuera de esto no existe y NO se
+#: le pasa al port (el snapshot lo resuelve a un archivo: sin esto,
+#: `../../x` sería un oráculo de existencia de archivos desde un endpoint público).
+_HANDLE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,127}$")
 
 _UNAVAILABLE = {
     "error": "catalog_unavailable",
@@ -34,22 +39,24 @@ _UNAVAILABLE = {
 }
 
 
-def _unavailable(detail: str) -> dict[str, Any]:
-    return {**_UNAVAILABLE, "detail": detail}
+def _unavailable(reason: str) -> dict[str, Any]:
+    # `reason` es un código cerrado: el texto de la excepción (paths, hosts)
+    # va al log, nunca al agente (que podría repetírselo al cliente).
+    return {**_UNAVAILABLE, "detail": reason}
 
 
 async def search_products(
     catalog: Any | None, *, q: str = "", category: str | None = None, limit: int = DEFAULT_LIMIT
 ) -> dict[str, Any]:
     if catalog is None:
-        return _unavailable("catálogo no configurado")
+        return _unavailable("catalog_not_configured")
     limit = max(1, min(MAX_LIMIT, int(limit)))
     try:
         extra = {"category": category} if category is not None else {}
         result = await catalog.search(q=q, limit=limit, **extra)
     except CatalogUnavailableError as exc:
         logger.error("[mba] search_products catalog_unavailable: {}", exc)
-        return _unavailable(str(exc))
+        return _unavailable("catalog_unavailable")
     envelope: dict[str, Any] = {
         "query": result.query,
         "count": result.count,
@@ -87,12 +94,12 @@ async def _category_block(catalog: Any, resolution: Any) -> dict[str, Any]:
 
 async def list_categories(catalog: Any | None) -> dict[str, Any]:
     if catalog is None:
-        return _unavailable("catálogo no configurado")
+        return _unavailable("catalog_not_configured")
     try:
         categories = await catalog.list_categories()
     except CatalogUnavailableError as exc:
         logger.error("[mba] list_categories catalog_unavailable: {}", exc)
-        return _unavailable(str(exc))
+        return _unavailable("catalog_unavailable")
     return {
         "count": len(categories),
         "categories": [{"name": c.label, "product_count": c.product_count} for c in categories],
@@ -101,17 +108,20 @@ async def list_categories(catalog: Any | None) -> dict[str, Any]:
 
 async def get_product_by_handle(catalog: Any | None, *, handle: str) -> dict[str, Any]:
     if catalog is None:
-        return _unavailable("catálogo no configurado")
+        return _unavailable("catalog_not_configured")
+    not_found = {
+        "found": False,
+        "message": "Ese handle no existe en el catálogo. Usa search_products para descubrir productos.",
+    }
+    if not _HANDLE_RE.match(handle):
+        return not_found
     try:
         product = await catalog.get_by_handle(handle)
     except ProductNotFoundError:
-        return {
-            "found": False,
-            "message": f"El handle '{handle}' no existe en el catálogo. Usa search_products para descubrir productos.",
-        }
+        return not_found
     except CatalogUnavailableError as exc:
         logger.error("[mba] get_product_by_handle catalog_unavailable: {}", exc)
-        return _unavailable(str(exc))
+        return _unavailable("catalog_unavailable")
     return {"found": True, "product": _product_full(product)}
 
 

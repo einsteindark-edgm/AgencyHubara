@@ -22,7 +22,8 @@ from src.plugins.mba.domain.config import MbaConfigDTO
 
 MAX_STRING_LEN = 2000
 MAX_ARRAY_LEN = 50
-_PHONE_RE = re.compile(r"^\+?\d{8,15}$")
+_PHONE_RE = re.compile(r"^\+?[0-9]{8,15}$")  # [0-9] y no \d: \d acepta dígitos Unicode
+INT_MAX = 2**31
 
 
 class ToolCallError(Exception):
@@ -112,10 +113,12 @@ def _coerce(path: str, value: Any, schema: Mapping[str, Any], *, lenient_ints: b
     if kind == "integer":
         if isinstance(value, bool):
             return None, [f"{path}: debe ser un entero"]
+        if lenient_ints and isinstance(value, str) and re.fullmatch(r"[+-]?[0-9]{1,12}", value.strip()):
+            value = int(value)
         if isinstance(value, int):
+            if abs(value) > INT_MAX:
+                return None, [f"{path}: fuera de rango"]
             return value, []
-        if lenient_ints and isinstance(value, str) and re.fullmatch(r"[+-]?\d{1,9}", value.strip()):
-            return int(value), []
         return None, [f"{path}: debe ser un entero"]
     if kind == "boolean":
         return (value, []) if isinstance(value, bool) else (None, [f"{path}: debe ser true/false"])

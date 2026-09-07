@@ -97,3 +97,36 @@ async def test_checkout_without_live_source_tells_the_agent_to_escalate() -> Non
     )
     assert down["error"] == "catalog_unavailable" and "CHECKOUT_VERIFY_FAILED" in down["message"]
     assert (await verify_order_for_checkout(None, items=[{"handle": "x", "quantity": 1}]))["error"] == "catalog_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_live_lookups_run_in_parallel_under_one_budget_and_truncate_to_max(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+
+    from src.plugins.mba.tools import orders as mod
+
+    store = _vault(tmp_path, _SESSION, {"episodes": [{"order_id": f"order_{i}"} for i in range(8)]})
+
+    class _Slow:
+        async def get(self, order_id: str):
+            await asyncio.sleep(0.2)
+            return SimpleNamespace(summary=SimpleNamespace(status="new", pay_status="pending"))
+
+    monkeypatch.setattr(mod, "LIVE_TIMEOUT_S", 0.05)
+    loop = asyncio.get_running_loop()
+    t0 = loop.time()
+    out = await check_order_status(store, _Slow(), session_key=_SESSION)
+    assert loop.time() - t0 < 0.15  # 5 lookups lentos NO se suman: un solo presupuesto
+    assert len(out["orders"]) == mod.MAX_ORDERS and "en vivo" in out["note"]
+
+
+@pytest.mark.asyncio
+async def test_checkout_rejects_non_positive_quantities_and_hides_vendor_errors() -> None:
+    v = _Verifier(CheckoutVerification(verified=True, catalog_available=True, items=[]))
+    out = await verify_order_for_checkout(v, items=[{"handle": "x", "quantity": 0}])
+    assert out["error"] == "invalid_items" and v.items == []
+    down = await verify_order_for_checkout(
+        _Verifier(CheckoutVerification(verified=False, catalog_available=False, error_detail="ConnectError https://medusa.internal:9000/admin")),
+        items=[{"handle": "x", "quantity": 1}],
+    )
+    assert "medusa.internal" not in str(down) and down["detail"] == "checkout_unavailable"

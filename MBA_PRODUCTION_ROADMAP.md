@@ -2,7 +2,7 @@
 
 > **Estado:** En ejecución · **Actualizado:** 2026-09-07 (D1.2a: las 5 tools de lectura del connector con lógica real; las 4 de escritura siguen en 501) · **Base estratégica:** `META_BUSINESS_AGENT_PLAN.md` (2026-07-02, por qué y cómo convivir con MBA).
 > **Este documento es el QUÉ HAY QUE CONSTRUIR**, en orden, con archivos, tests y criterio de terminado por desarrollo. Cuando contradiga al plan estratégico, gana este (está hecho con la doc de Meta releída el 2026-09-02..04 y con el código vivo).
-> PRs mergeados a `main`: #228 (preview), #230 (requests literales), #233 (plugin `mba` + guard de routers públicos + forge), #234 (roadmap). En curso: D1.2a (tools de lectura + hardening del router público). Cada D siguiente es un PR chico desde `main`.
+> PRs mergeados a `main`: #228 (preview), #230 (requests literales), #233 (plugin `mba` + guard de routers públicos + forge), #234 (roadmap). D1.2a (tools de lectura + hardening del router público) en PR #235; siguiente D1.2b. Cada D siguiente es un PR chico desde `main`.
 
 ---
 

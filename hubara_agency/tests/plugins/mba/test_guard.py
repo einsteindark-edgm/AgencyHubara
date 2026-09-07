@@ -36,3 +36,13 @@ def test_keys_are_independent_and_memory_is_bounded() -> None:
 
 def test_body_cap_is_small_enough_for_a_public_endpoint() -> None:
     assert 8 * 1024 <= MAX_BODY_BYTES <= 128 * 1024
+
+
+def test_remaining_reads_without_consuming() -> None:
+    clock = _Clock()
+    rl = RateLimiter(capacity=2, refill_per_s=1.0, clock=clock)
+    assert rl.remaining("k") == 2 and rl.remaining("k") == 2
+    rl.allow("k")
+    assert rl.remaining("k") == 1
+    clock.t += 5
+    assert rl.remaining("k") == 2

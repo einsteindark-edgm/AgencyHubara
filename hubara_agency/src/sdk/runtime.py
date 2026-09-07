@@ -22,6 +22,9 @@ Notas de diseño:
   Estado process-wide NUEVO exige ``clear()`` + fixture autouse (lección L-2).
 - ``atomic_write_json`` es la única forma sancionada de escribir JSON al
   vault (write-rename, sin archivos a medio escribir).
+- ``client_ip`` es la IP real del cliente detrás de Caddy/CloudFront (primer
+  hop de ``X-Forwarded-For``); la clave correcta para cualquier límite por IP
+  en un router expuesto (el peer es siempre el proxy).
 """
 from __future__ import annotations
 
@@ -32,6 +35,9 @@ from src.platform.config import (
 )
 from src.platform.logging import (
     setup_logging as setup_logging,
+)
+from src.platform.rate_limit import (
+    client_ip as client_ip,
 )
 from src.platform.state import (
     FilesystemMetadataStore as FilesystemMetadataStore,

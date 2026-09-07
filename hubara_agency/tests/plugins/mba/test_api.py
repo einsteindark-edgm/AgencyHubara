@@ -122,6 +122,10 @@ def test_invalid_calls_are_422_with_the_list_of_problems_and_bad_json_is_400(mon
     assert r.status_code == 400
     r = c.post("/api/mba/tools/verify_order_for_checkout", headers=ok, json=[1, 2])
     assert r.status_code == 400
+    # entero de miles de dígitos: json.loads lanza ValueError (no JSONDecodeError) → 400, jamás 500
+    huge = ('{"customer_phone": "%s", "items": [{"handle": "x", "quantity": %s}]}' % (_PHONE, "9" * 5000)).encode()
+    r = c.post("/api/mba/tools/verify_order_for_checkout", headers={**ok, "Content-Type": "application/json"}, content=huge)
+    assert r.status_code == 400
 
 
 def test_public_router_caps_body_size_and_rate_limits_per_ip_and_tool(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -130,12 +134,42 @@ def test_public_router_caps_body_size_and_rate_limits_per_ip_and_tool(monkeypatc
     big = {"customer_phone": _PHONE, "items": [{"handle": "x" * 1500, "quantity": 1}] * 50}
     r = c.post("/api/mba/tools/verify_order_for_checkout", headers=ok, json=big)
     assert r.status_code == 413
+    # chunked (sin Content-Length): se corta al superar el tope, sin materializar el body entero
+    def _chunks():
+        for _ in range(2000):
+            yield b"x" * 1024
+    r = c.post("/api/mba/tools/verify_order_for_checkout", headers=ok, content=_chunks())
+    assert r.status_code == 413
     monkeypatch.setattr(connector, "_rate_limiter", RateLimiter(capacity=2, refill_per_s=0.0))
     codes = [c.get("/api/mba/tools/list_categories", headers=ok, params={"customer_phone": _PHONE}).status_code for _ in range(3)]
     assert codes == [200, 200, 429]
-    # otra tool desde la misma IP tiene su propio bucket; y el límite corre ANTES de la auth (protege la key)
+    # otra tool desde la misma IP tiene su propio bucket; el tráfico sin key válida no lo consume (401, bucket aparte)
     assert c.get("/api/mba/tools/check_order_status", headers=ok, params={"customer_phone": _PHONE}).status_code == 200
-    assert c.get("/api/mba/tools/list_categories", headers={"X-API-Key": "otra"}).status_code == 429
+    assert c.get("/api/mba/tools/list_categories", headers={"X-API-Key": "otra"}).status_code == 401
+
+
+def test_rate_limit_keys_on_the_forwarded_client_ip_and_bad_keys_have_their_own_small_bucket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    c = _client_with_deps(monkeypatch)
+    ok = {"X-API-Key": "secreto"}
+    monkeypatch.setattr(connector, "_rate_limiter", RateLimiter(capacity=1, refill_per_s=0.0))
+    # detrás de Caddy el peer es siempre el proxy: la clave es el primer hop de X-Forwarded-For
+    a = {**ok, "X-Forwarded-For": "1.1.1.1, 10.0.0.2"}
+    b = {**ok, "X-Forwarded-For": "2.2.2.2"}
+    assert c.get("/api/mba/tools/list_categories", headers=a, params={"customer_phone": _PHONE}).status_code == 200
+    assert c.get("/api/mba/tools/list_categories", headers=a, params={"customer_phone": _PHONE}).status_code == 429
+    assert c.get("/api/mba/tools/list_categories", headers=b, params={"customer_phone": _PHONE}).status_code == 200
+    # keys inválidas: bucket propio y chico por IP, ANTES de comparar la key (frena el brute force);
+    # agotado, esa IP queda en 429 hasta reponer — incluso con la key buena — y no toca el bucket general
+    monkeypatch.setattr(connector, "_rate_limiter", RateLimiter(capacity=1, refill_per_s=0.0))
+    monkeypatch.setattr(connector, "_bad_key_limiter", RateLimiter(capacity=2, refill_per_s=0.0))
+    bad = {"X-API-Key": "nope", "X-Forwarded-For": "3.3.3.3"}
+    assert [c.get("/api/mba/tools/list_categories", headers=bad).status_code for _ in range(3)] == [401, 401, 429]
+    blocked = {**ok, "X-Forwarded-For": "3.3.3.3"}
+    assert c.get("/api/mba/tools/list_categories", headers=blocked, params={"customer_phone": _PHONE}).status_code == 429
+    meta = {**ok, "X-Forwarded-For": "4.4.4.4"}  # otra IP con la key buena: su bucket general está intacto
+    assert c.get("/api/mba/tools/list_categories", headers=meta, params={"customer_phone": _PHONE}).status_code == 200
 
 
 def test_connector_key_check_is_constant_time_safe_with_non_ascii_and_does_not_leak_config(
