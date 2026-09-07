@@ -1397,8 +1397,86 @@ class SendQuickRepliesTool(ToolBase):
         "required": ["body", "buttons"],
     }
 
-    def __init__(self, workspace: str | Path) -> None:
+    # Namespaces de id que delatan un selector de catálogo (run 943e6bff:
+    # `product.cubo_love`). Se chequean aunque el catálogo esté caído.
+    _CATALOG_ID_PREFIXES = (
+        "product.", "producto.", "aroma.", "scent.", "color.", "colour.",
+        "design.", "diseno.", "diseño.", "variant.", "variante.", "size.",
+        "tamano.", "tamaño.", "sku.", "handle.",
+    )
+
+    def __init__(
+        self, workspace: str | Path, catalog: CatalogPort | None = None
+    ) -> None:
         self._workspace = Path(workspace)
+        self._catalog = catalog
+
+    async def _catalog_vocabulary(self) -> dict[str, str]:
+        """{label normalizado: tipo} con todo lo elegible del catálogo.
+
+        Tipos: "product" (título y handle), "scent", "color", "design",
+        "option" (values de options reales, ej. signos). Vacío si el catálogo
+        no está disponible — la guarda degrada al chequeo por id.
+        """
+        if self._catalog is None:
+            return {}
+        from src.platform.catalog import parse_variant_tags
+        from src.platform.catalog import normalize_label
+
+        try:
+            result = await self._catalog.search(q="", limit=30)
+            products = list(result.results)
+        except Exception as exc:  # noqa: BLE001 — catálogo caído: degradar al chequeo por id
+            logger.warning(
+                "🔘 [TOOL send_quick_replies] catálogo no disponible para la "
+                "guarda anti-selector ({}) — solo chequeo por id",
+                exc,
+            )
+            return {}
+        vocab: dict[str, str] = {}
+
+        def _add(label: Any, kind: str) -> None:
+            key = normalize_label(str(label or ""))
+            if key:
+                vocab.setdefault(key, kind)
+
+        for p in products:
+            _add(getattr(p, "title", ""), "product")
+            _add(deslugify(getattr(p, "handle", "") or ""), "product")
+            attrs = parse_variant_tags(getattr(p, "tags", None))
+            for a in attrs.aromas:
+                _add(a, "scent")
+            for c in attrs.colors:
+                _add(c, "color")
+            for values in (getattr(p, "options", None) or {}).values():
+                for v in values or []:
+                    _add(v, "option")
+            for img in getattr(p, "images", None) or []:
+                _add(derive_image_label(getattr(img, "url", "")), "design")
+        return vocab
+
+    async def _catalog_choices(
+        self, buttons: list[dict[str, str]]
+    ) -> tuple[list[str], set[str]]:
+        """Botones que son elecciones de catálogo → (títulos, tipos)."""
+        from src.platform.catalog import normalize_label
+
+        rejected: list[str] = []
+        kinds: set[str] = set()
+        vocab: dict[str, str] | None = None
+        for b in buttons:
+            bid = b["id"].casefold()
+            if bid.startswith(self._CATALOG_ID_PREFIXES):
+                rejected.append(b["title"])
+                kinds.add(bid.split(".", 1)[0])
+                continue
+            if vocab is None:
+                vocab = await self._catalog_vocabulary()
+            kind = vocab.get(normalize_label(b["title"]))
+            if kind:
+                rejected.append(b["title"])
+                kinds.add(kind)
+        return rejected, kinds
 
     async def execute_with_context(
         self,
@@ -1426,6 +1504,37 @@ class SendQuickRepliesTool(ToolBase):
                 "queued": False,
                 "error": "no_valid_buttons",
                 "message": "Los botones llegaron vacíos o inválidos.",
+            }, ensure_ascii=False)
+
+        # Guarda anti-selector (run 943e6bff): los reply buttons (máx 3) NUNCA
+        # sirven para elegir producto/aroma/color/diseño — el LLM recorta la
+        # lista para caber y el cliente pierde opciones. Se rechaza ANTES de
+        # encolar; el LLM debe re-llamar present_products / present_variant_picker.
+        rejected, kinds = await self._catalog_choices(normalized)
+        if rejected:
+            product_like = kinds & {"product", "producto", "handle", "sku"}
+            use = (
+                "present_products (con los handles de search_products)"
+                if product_like
+                else "present_variant_picker (aroma Y color = DOS llamadas)"
+            )
+            logger.warning(
+                "🔘 [TOOL send_quick_replies] rechazado como selector de "
+                "catálogo session={} rejected={} kinds={}",
+                ctx.session_key, rejected, sorted(kinds),
+            )
+            return json.dumps({
+                "queued": False,
+                "error": "catalog_choice_not_allowed",
+                "rejected_buttons": rejected,
+                "message": (
+                    "send_quick_replies NO sirve para elegir productos, aromas, "
+                    "colores ni diseños (máx 3 botones: recortarías opciones). "
+                    f"No se envió nada. Usa {use} con TODAS las opciones, "
+                    "aunque sean 2 o 3. Los quick replies son solo para saludo "
+                    "sin intención clara y decisiones binarias (sí/no, "
+                    "seguir/cambiar)."
+                ),
             }, ensure_ascii=False)
         intent = {
             "kind": "quick_replies",
