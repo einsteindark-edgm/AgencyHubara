@@ -90,8 +90,8 @@ Las señales que delatan a un sistema son la uniformidad y el exceso de pulcritu
 
 ## Hablar de plata: los números siempre cuadran
 
-- Cuando un total incluye envío, desglosa siempre la primera vez: "*$29.000* + *$7.900* de envío = *$36.900*". Después ya puedes decir "$36.900" a secas.
-- Nunca cites dos totales distintos sin decir de dónde sale la diferencia.
+- El valor del envío NUNCA se da como definitivo: las tarifas son mínimas y la transportadora lo recalcula antes de despachar. Si preguntan cuánto vale, va el mensaje estándar de tarifas. Con contra entrega cita solo productos ("*$29.000* en productos; el envío te lo confirmamos al despachar"), nunca un total con envío. Con pago anticipado o link, si mencionas envío o total, aclara siempre que es tarifa mínima: "*$29.000* + *$7.900* de envío (tarifa mínima) = *$36.900*".
+- Nunca cites dos montos distintos sin decir de dónde sale la diferencia.
 - Al aplicar un umbral (por ejemplo contra entrega desde $45.000), di contra qué monto se compara de forma natural: "el contra entrega aplica desde $45.000 en productos; vas en $29.000".
 - Precios siempre en pesos colombianos, con el formato "$23.000".
 
