@@ -91,9 +91,9 @@ business_info:
   business_description: |
     Hubara es una marca premium colombiana de velas artesanales hechas a base de cera de palma 100% de origen vegetal, libre de parafinas y toxinas, elaboradas y vertidas a mano en Colombia. Cada vela tiene tres capas de fragancia (notas de salida, de corazón y de fondo). Pequeñas variaciones de color o textura son marcas de autenticidad, no defectos. Vende por WhatsApp a clientes finales en Colombia; todos los precios están en pesos colombianos (COP).
   payment_method: |
-    Tres formas de pago. 1) Contra entrega: solo para compras cuyo total en productos supera $45.000 COP; el valor del envío lo calcula la transportadora. 2) Pago anticipado por Nequi o llave 3229041190; los datos completos de pago los envía el equipo cuando el pedido queda registrado. 3) Link de pago con recargo adicional del 1,5% sobre la venta pagando con Nequi o Bancolombia y 2,69% con otros bancos; el link lo genera el equipo tras registrar el pedido.
+    Tres formas de pago. 1) Contra entrega: solo para compras cuyo total en productos supera $45.000 COP; el envío se paga al recibir y la transportadora lo recalcula antes de despachar. 2) Pago anticipado por Nequi o llave 3229041190; los datos completos de pago los envía el equipo cuando el pedido queda registrado. 3) Link de pago con recargo adicional del 1,5% sobre la venta pagando con Nequi o Bancolombia y 2,69% con otros bancos; el link lo genera el equipo tras registrar el pedido.
   delivery_and_shipping: |
-    Envíos solo dentro de Colombia. Tarifas mínimas: Bogotá y municipios cercanos $7.900; nivel nacional $16.940. El valor definitivo se confirma al despachar según tamaño y peso del paquete. Tiempos: Bogotá 1 a 2 días hábiles; resto del país 2 a 3 días hábiles.
+    Envíos solo dentro de Colombia. Tarifas MÍNIMAS de envío: Bogotá y municipios cercanos $7.900; nivel nacional $16.940. Son mínimas: el valor definitivo se confirma al despachar según tamaño y peso del paquete, así que el valor del envío nunca se da como definitivo. Con contra entrega el envío se paga al recibir; con pago anticipado o link de pago se cobra la tarifa mínima. Tiempos: Bogotá 1 a 2 días hábiles; resto del país 2 a 3 días hábiles.
   return_policy: |
     Garantía de 48 horas desde la recepción para envíos rotos o defectuosos, siempre que la vela no se haya encendido y conserve su empaque y el tamaño de la mecha.
   purchase_info: |
@@ -104,10 +104,13 @@ business_info:
     address: null
 
 faqs:
+  # Mensaje estándar del operador (2026-09-07), verbatim: en Hubara lo envía una tool determinista; en MBA es conocimiento.
+  - question: "¿Cuánto vale el envío?"
+    answer: "Nuestras tarifas mínimas de envío son 🚚:\n• Bogotá y municipios cercanos: $7.900\n• Nivel Nacional: $16.940\nEl valor definitivo se confirma al despachar según el tamaño y peso de tu paquete📏📦📦"
   - question: "¿Cuánto demora el envío?"
-    answer: "Bogotá 1 a 2 días hábiles. Resto del país 2 a 3 días hábiles. El valor del envío se confirma al despachar según tamaño y peso: mínimo $7.900 en Bogotá y municipios cercanos, $16.940 a nivel nacional."
+    answer: "Bogotá 1 a 2 días hábiles. Resto del país 2 a 3 días hábiles. El valor del envío se confirma al despachar según tamaño y peso: las tarifas mínimas son $7.900 en Bogotá y municipios cercanos y $16.940 a nivel nacional."
   - question: "¿Tienen contra entrega?"
-    answer: "Sí. El contra entrega aplica para compras cuyo total en productos supera $45.000 COP; el valor del envío lo calcula la transportadora."
+    answer: "Sí. El contra entrega aplica para compras cuyo total en productos supera $45.000 COP; el envío se paga al recibir y su valor lo confirma la transportadora antes de despachar."
   - question: "¿Cómo puedo pagar?"
     answer: "Contra entrega (compras desde $45.000 en productos, el envío lo calcula la transportadora), pago anticipado por Nequi o llave 3229041190, o link de pago con recargo del 1,5% pagando con Nequi o Bancolombia y 2,69% con otros bancos."
   - question: "¿Las velas son naturales, sin tóxicos?"
@@ -307,8 +310,10 @@ ui_skills:
     kind: static
     instruction: >-
       Tras el saludo del primer contacto envía hasta tres botones: "Ver catálogo", "Busco un regalo", "Tengo una pregunta",
-      con una pregunta corta en el cuerpo ("¿Cómo te ayudo hoy?"). Ante una decisión binaria envía "Sí" y "No" con la
-      pregunta en el cuerpo. Nunca más de tres botones ni botones para elegir aroma o color (para eso va la lista).
+      con una pregunta corta en el cuerpo ("¿Cómo te ayudo hoy?"). Ante una decisión binaria (sí/no, seguir/cambiar) envía
+      "Sí" y "No" con la pregunta en el cuerpo. Solo esos dos usos. Nunca más de tres botones y nunca botones para elegir
+      productos, aromas, colores ni diseños, aunque sean dos o tres opciones: solo caben tres y recortarías la lista; para
+      eso va el carrusel de productos o la lista de opciones.
   - title: request-shipping-details
     component_type: flow
     status: enabled
@@ -323,9 +328,12 @@ ui_skills:
     status: enabled
     kind: dynamic
     instruction: >-
-      Después de que verify_order_for_checkout responda sin discrepancia, envía el resumen del pedido en el cuerpo
-      (productos con variante y cantidad, subtotal, envío y total, dirección y método de pago) con los botones "✅ Confirmar"
-      y "Cambiar algo". El resumen es el mensaje completo; no lo repitas en texto ni digas "todo verificado". Si toca
+      Después de que verify_order_for_checkout responda sin discrepancia, envía el resumen del pedido en el cuerpo con los
+      botones "✅ Confirmar" y "Cambiar algo". Cuerpo: cada producto con variante, cantidad y precio; "Subtotal productos:
+      $X"; luego según el método de pago: contra entrega → "Envío: Por confirmar*", SIN línea de total, y al final la nota
+      "📌 El valor final del envío se recalculará directamente con la transportadora antes de despachar y te lo confirmaremos para cerrar tu pedido."; pago anticipado o link de pago → "Envío (tarifa
+      mínima): $Y" (envío 0 → "sin costo") y "Total: $Z". Después "📍 Dirección" y "💳 Medio de pago". Nunca des el valor del
+      envío como definitivo. El resumen es el mensaje completo; no lo repitas en texto ni digas "todo verificado". Si toca
       "✅ Confirmar", llama register_order.
   - title: send-contact-card
     component_type: cta_url
@@ -357,3 +365,7 @@ not_in_mba:
     reason: Los deriva Hubara de forma determinista con las señales del connector (silencio, set_order_slot, register_order); MBA solo propone INTERESADO o RECHAZO.
   - source: seguimientos (followup)
     reason: Apagado en MBA para no duplicar; Hubara los envía fuera de la ventana de 24h con templates aprobados.
+  - source: mensaje estándar de tarifas de envío (tool determinista de Hubara que lo envía verbatim, #241)
+    reason: MBA no tiene tools que envíen mensajes; el texto va verbatim como FAQ "¿Cuánto vale el envío?" y en los skills contexto-del-negocio y guion-de-ventas. Medir en F0 #5 que lo cite sin alterarlo.
+  - source: guardas deterministas del agente de Hubara (captura de la cantidad en respuestas compuestas, rechazo de botones con productos/aromas/colores, recorte del aviso del portavelas cuando el pedido no lo trae)
+    reason: Son código alrededor del LLM (PRs #237, #238, #239); en MBA solo existen como instrucción en los skills. Medir en F0 (experimento 5) si la instrucción basta; si no, la guarda va del lado del connector (register_order devuelve portavelas_included).

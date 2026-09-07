@@ -19,3 +19,20 @@ def get_catalog_client() -> CatalogPort:
         snapshot_dir=get_snapshot_dir(),
         max_age_minutes=get_max_age_minutes(),
     )
+
+
+@lru_cache(maxsize=1)
+def get_checkout_verification_port():  # -> CheckoutVerificationPort
+    """Verificador LIVE de precio/stock (Medusa) con el snapshot como referencia.
+
+    Imports diferidos: `connectorkit` es lazy por símbolo y el acceso a
+    `get_catalog_client` no debe arrastrar el cliente HTTP de Medusa.
+    Requiere `MEDUSA_BASE_URL` (+ auth): sin config, `MedusaSettings` lanza.
+    """
+    from src.platform.catalog.medusa_checkout import MedusaCheckoutVerification
+    from src.platform.medusa.composition import get_medusa_product_service
+
+    return MedusaCheckoutVerification(
+        medusa=get_medusa_product_service(),
+        snapshot=get_catalog_client(),
+    )

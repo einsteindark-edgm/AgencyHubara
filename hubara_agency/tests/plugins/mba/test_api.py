@@ -5,7 +5,12 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from pathlib import Path
+
 from src.plugins.mba.api import connector, router
+from src.plugins.mba.domain.guard import RateLimiter
+from src.plugins.mba.tools import ToolDeps
+from src.sdk.runtime import FilesystemMetadataStore
 
 
 def _client() -> TestClient:
@@ -41,10 +46,11 @@ def test_connector_tools_exist_for_every_declared_tool_and_require_the_key(monke
     assert c.get("/api/mba/tools/search_products").status_code == 401
     assert c.get("/api/mba/tools/search_products", headers={"X-API-Key": "otro"}).status_code == 401
     ok = {"X-API-Key": "secreto"}
-    # cada tool declarada en agent.yaml responde en su método (501 hasta D1.2: el contrato existe, la lógica no)
-    r = c.get("/api/mba/tools/search_products", headers=ok)
-    assert r.status_code == 501 and r.json()["tool"] == "search_products"
-    r = c.post("/api/mba/tools/register_order", headers=ok, json={"customer_phone": "+57..."})
+    # las tools de escritura responden 501 (contrato registrado; lógica en el siguiente PR de D1.2)
+    r = c.post("/api/mba/tools/register_order", headers=ok, json={
+        "customer_phone": _PHONE, "items": [{"handle": "x", "quantity": 1}], "ciudad": "Bogotá",
+        "direccion": "Cl 1", "telefono": "300", "nombre_recibe": "Ana", "metodo_pago": "contra_entrega",
+    })
     assert r.status_code == 501 and r.json()["tool"] == "register_order"
     # método equivocado y tool inexistente NO son 501
     assert c.post("/api/mba/tools/search_products", headers=ok).status_code == 405
@@ -54,6 +60,116 @@ def test_connector_tools_exist_for_every_declared_tool_and_require_the_key(monke
         "set_order_slot", "verify_order_for_checkout", "register_order",
         "manage_conversation_tag", "escalate_to_human",
     }
+
+
+_PHONE = "+573001234567"
+
+
+class _Catalog:
+    async def search(self, q: str, *, limit: int = 10, category: str | None = None):
+        from src.platform.catalog.dtos import CatalogManifestDTO, SearchResult
+
+        return SearchResult(
+            query=q, count=0, truncated=False, stale=False,
+            manifest=CatalogManifestDTO(version="v", fetched_at="t", product_count=0), results=[],
+        )
+
+    async def list_categories(self):
+        return []
+
+    async def get_by_handle(self, handle: str):
+        from src.platform.catalog.errors import ProductNotFoundError
+
+        raise ProductNotFoundError(handle)
+
+
+def _client_with_deps(monkeypatch: pytest.MonkeyPatch, **overrides) -> TestClient:
+    monkeypatch.setenv("HUBARA_MBA_API_KEY", "secreto")
+    app = FastAPI()
+    app.include_router(connector.router, prefix="/api/mba")
+    deps = ToolDeps(catalog=_Catalog(), checkout=None, order_query=None, metadata=FilesystemMetadataStore(Path("/nonexistent")))
+    for k, v in overrides.items():
+        setattr(deps, k, v)
+    app.dependency_overrides[connector.get_tool_deps] = lambda: deps
+    return TestClient(app)
+
+
+def test_read_tools_run_against_the_injected_ports(monkeypatch: pytest.MonkeyPatch) -> None:
+    c = _client_with_deps(monkeypatch)
+    ok = {"X-API-Key": "secreto"}
+    r = c.get("/api/mba/tools/search_products", headers=ok, params={"customer_phone": _PHONE, "q": "vela", "limit": "3"})
+    assert r.status_code == 200 and r.json()["query"] == "vela" and r.json()["results"] == []
+    r = c.get("/api/mba/tools/list_categories", headers=ok, params={"customer_phone": _PHONE})
+    assert r.status_code == 200 and r.json() == {"count": 0, "categories": []}
+    r = c.get("/api/mba/tools/get_product_by_handle", headers=ok, params={"customer_phone": _PHONE, "handle": "nope"})
+    assert r.status_code == 200 and r.json()["found"] is False
+    r = c.get("/api/mba/tools/check_order_status", headers=ok, params={"customer_phone": _PHONE})
+    assert r.status_code == 200 and r.json()["orders"] == []
+    r = c.post("/api/mba/tools/verify_order_for_checkout", headers=ok, json={"customer_phone": _PHONE, "items": [{"handle": "x", "quantity": 1}]})
+    assert r.status_code == 200 and r.json()["error"] == "catalog_unavailable"  # sin verificador en este proceso
+
+
+def test_invalid_calls_are_422_with_the_list_of_problems_and_bad_json_is_400(monkeypatch: pytest.MonkeyPatch) -> None:
+    c = _client_with_deps(monkeypatch)
+    ok = {"X-API-Key": "secreto"}
+    r = c.get("/api/mba/tools/get_product_by_handle", headers=ok, params={"customer_phone": "abc"})
+    assert r.status_code == 422
+    assert r.json()["error"] == "invalid_request"
+    assert any("customer_phone" in e for e in r.json()["errors"]) and any("handle" in e for e in r.json()["errors"])
+    r = c.post(
+        "/api/mba/tools/verify_order_for_checkout", headers={**ok, "Content-Type": "application/json"}, content=b"{no json"
+    )
+    assert r.status_code == 400
+    r = c.post("/api/mba/tools/verify_order_for_checkout", headers=ok, json=[1, 2])
+    assert r.status_code == 400
+    # entero de miles de dígitos: json.loads lanza ValueError (no JSONDecodeError) → 400, jamás 500
+    huge = ('{"customer_phone": "%s", "items": [{"handle": "x", "quantity": %s}]}' % (_PHONE, "9" * 5000)).encode()
+    r = c.post("/api/mba/tools/verify_order_for_checkout", headers={**ok, "Content-Type": "application/json"}, content=huge)
+    assert r.status_code == 400
+
+
+def test_public_router_caps_body_size_and_rate_limits_per_ip_and_tool(monkeypatch: pytest.MonkeyPatch) -> None:
+    c = _client_with_deps(monkeypatch)
+    ok = {"X-API-Key": "secreto"}
+    big = {"customer_phone": _PHONE, "items": [{"handle": "x" * 1500, "quantity": 1}] * 50}
+    r = c.post("/api/mba/tools/verify_order_for_checkout", headers=ok, json=big)
+    assert r.status_code == 413
+    # chunked (sin Content-Length): se corta al superar el tope, sin materializar el body entero
+    def _chunks():
+        for _ in range(2000):
+            yield b"x" * 1024
+    r = c.post("/api/mba/tools/verify_order_for_checkout", headers=ok, content=_chunks())
+    assert r.status_code == 413
+    monkeypatch.setattr(connector, "_rate_limiter", RateLimiter(capacity=2, refill_per_s=0.0))
+    codes = [c.get("/api/mba/tools/list_categories", headers=ok, params={"customer_phone": _PHONE}).status_code for _ in range(3)]
+    assert codes == [200, 200, 429]
+    # otra tool desde la misma IP tiene su propio bucket; el tráfico sin key válida no lo consume (401, bucket aparte)
+    assert c.get("/api/mba/tools/check_order_status", headers=ok, params={"customer_phone": _PHONE}).status_code == 200
+    assert c.get("/api/mba/tools/list_categories", headers={"X-API-Key": "otra"}).status_code == 401
+
+
+def test_rate_limit_keys_on_the_forwarded_client_ip_and_bad_keys_have_their_own_small_bucket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    c = _client_with_deps(monkeypatch)
+    ok = {"X-API-Key": "secreto"}
+    monkeypatch.setattr(connector, "_rate_limiter", RateLimiter(capacity=1, refill_per_s=0.0))
+    # detrás de Caddy el peer es siempre el proxy: la clave es el primer hop de X-Forwarded-For
+    a = {**ok, "X-Forwarded-For": "1.1.1.1, 10.0.0.2"}
+    b = {**ok, "X-Forwarded-For": "2.2.2.2"}
+    assert c.get("/api/mba/tools/list_categories", headers=a, params={"customer_phone": _PHONE}).status_code == 200
+    assert c.get("/api/mba/tools/list_categories", headers=a, params={"customer_phone": _PHONE}).status_code == 429
+    assert c.get("/api/mba/tools/list_categories", headers=b, params={"customer_phone": _PHONE}).status_code == 200
+    # keys inválidas: bucket propio y chico por IP, ANTES de comparar la key (frena el brute force);
+    # agotado, esa IP queda en 429 hasta reponer — incluso con la key buena — y no toca el bucket general
+    monkeypatch.setattr(connector, "_rate_limiter", RateLimiter(capacity=1, refill_per_s=0.0))
+    monkeypatch.setattr(connector, "_bad_key_limiter", RateLimiter(capacity=2, refill_per_s=0.0))
+    bad = {"X-API-Key": "nope", "X-Forwarded-For": "3.3.3.3"}
+    assert [c.get("/api/mba/tools/list_categories", headers=bad).status_code for _ in range(3)] == [401, 401, 429]
+    blocked = {**ok, "X-Forwarded-For": "3.3.3.3"}
+    assert c.get("/api/mba/tools/list_categories", headers=blocked, params={"customer_phone": _PHONE}).status_code == 429
+    meta = {**ok, "X-Forwarded-For": "4.4.4.4"}  # otra IP con la key buena: su bucket general está intacto
+    assert c.get("/api/mba/tools/list_categories", headers=meta, params={"customer_phone": _PHONE}).status_code == 200
 
 
 def test_connector_key_check_is_constant_time_safe_with_non_ascii_and_does_not_leak_config(
