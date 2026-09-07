@@ -307,8 +307,10 @@ ui_skills:
     kind: static
     instruction: >-
       Tras el saludo del primer contacto envía hasta tres botones: "Ver catálogo", "Busco un regalo", "Tengo una pregunta",
-      con una pregunta corta en el cuerpo ("¿Cómo te ayudo hoy?"). Ante una decisión binaria envía "Sí" y "No" con la
-      pregunta en el cuerpo. Nunca más de tres botones ni botones para elegir aroma o color (para eso va la lista).
+      con una pregunta corta en el cuerpo ("¿Cómo te ayudo hoy?"). Ante una decisión binaria (sí/no, seguir/cambiar) envía
+      "Sí" y "No" con la pregunta en el cuerpo. Solo esos dos usos. Nunca más de tres botones y nunca botones para elegir
+      productos, aromas, colores ni diseños, aunque sean dos o tres opciones: solo caben tres y recortarías la lista; para
+      eso va el carrusel de productos o la lista de opciones.
   - title: request-shipping-details
     component_type: flow
     status: enabled
@@ -357,3 +359,5 @@ not_in_mba:
     reason: Los deriva Hubara de forma determinista con las señales del connector (silencio, set_order_slot, register_order); MBA solo propone INTERESADO o RECHAZO.
   - source: seguimientos (followup)
     reason: Apagado en MBA para no duplicar; Hubara los envía fuera de la ventana de 24h con templates aprobados.
+  - source: guardas deterministas del agente de Hubara (captura de la cantidad en respuestas compuestas, rechazo de botones con productos/aromas/colores, recorte del aviso del portavelas cuando el pedido no lo trae)
+    reason: Son código alrededor del LLM (PRs #237, #238, #239); en MBA solo existen como instrucción en los skills. Medir en F0 (experimento 5) si la instrucción basta; si no, la guarda va del lado del connector (register_order devuelve portavelas_included).
