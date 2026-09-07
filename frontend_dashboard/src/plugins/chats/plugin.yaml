@@ -51,6 +51,9 @@ api:
     # Cast chats→orders (canal 3): sirve /api/chats/order-actions/* para el
     # canvas de pago. Ver `consumes:` arriba + src.plugins.chats.api.order_actions.
     - { module: src.plugins.chats.api.order_actions, prefix: /api/chats, tags: [Chats_OrderActions] }
+    # Contrato session-actions@v1 (provider del cast mba→chats, D1.2b): las 4
+    # tools de escritura de Meta Business Agent (draft/order/tag/escalate).
+    - { module: src.plugins.chats.api.session_actions, prefix: /api/chats, tags: [Chats_SessionActions] }
 
 # ── Agente Temporal ────────────────────────────────────────────────────
 # Dos workers en task queues exclusivas: SALES_QUEUE y REMARKETING_QUEUE.

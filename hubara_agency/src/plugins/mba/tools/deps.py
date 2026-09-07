@@ -3,6 +3,10 @@
 Cada port puede no estar configurado en este proceso (local sin Medusa, caja
 sin snapshot): la dependencia queda en ``None`` y la tool responde un error
 explícito que el agente sabe manejar, en vez de un 500 en un endpoint público.
+
+``chats`` es el cast al contrato ``session-actions@v1`` (canal 3, D1.2b): las
+tools de escritura delegan ahí. Import diferido para no cerrar el ciclo
+``api → tools → api``.
 """
 from __future__ import annotations
 
@@ -26,6 +30,7 @@ class ToolDeps:
     checkout: Any | None
     order_query: Any | None
     metadata: Any  # FilesystemMetadataStore
+    chats: Any | None = None  # SessionActionCall (cast mba→chats)
 
 
 def _try(name: str, factory: Callable[[], Any]) -> Any | None:
@@ -38,9 +43,12 @@ def _try(name: str, factory: Callable[[], Any]) -> Any | None:
 
 @lru_cache(maxsize=1)
 def default_deps() -> ToolDeps:
+    from src.plugins.mba.api.chats_cast import session_action
+
     return ToolDeps(
         catalog=_try("catalog", get_catalog_client),
         checkout=_try("checkout", get_checkout_verification_port),
         order_query=_try("order_query", get_order_query_port),
         metadata=FilesystemMetadataStore(WORKSPACE_VAULT_DIR),
+        chats=session_action,
     )

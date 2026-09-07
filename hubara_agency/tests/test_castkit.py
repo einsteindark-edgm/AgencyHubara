@@ -265,3 +265,59 @@ async def test_forward_header_wins_over_query_token(
         req, "GET", "/x", base_url=_BASE, timeout=15.0, cast_label="t->p",
     )
     assert (cap["headers"] or {}).get("Authorization") == "Bearer hdr"
+
+
+# --- modo service token (D1.2b: el edge NO trae Bearer, p.ej. Meta → mba) ----
+
+
+async def test_forward_service_mode_sends_the_service_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``auth="service"``: el hop porta ``HUBARA_SERVICE_TOKEN`` como Bearer.
+
+    Caso: el connector de MBA autentica a Meta con ``X-API-Key`` (no hay
+    identidad de operador que portar); el cast a ``chats`` debe pasar
+    ``require_auth`` con el token de servicio interno (paso 1 de la auth).
+    """
+    from src.platform import config
+
+    monkeypatch.setattr(config, "HUBARA_SERVICE_TOKEN", "svc-token-777")
+    cap: dict[str, Any] = {}
+    _install(monkeypatch, capture=cap, result=httpx.Response(200, json={"ok": True}))
+    await _forward(_request({"X-API-Key": "meta-key"}), auth="service")
+    assert (cap["headers"] or {}).get("Authorization") == "Bearer svc-token-777"
+
+
+async def test_forward_service_mode_ignores_incoming_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """En modo service NO se porta el ``Authorization`` entrante (sería mezclar
+    la identidad del edge con la del servicio)."""
+    from src.platform import config
+
+    monkeypatch.setattr(config, "HUBARA_SERVICE_TOKEN", "svc-token-777")
+    cap: dict[str, Any] = {}
+    _install(monkeypatch, capture=cap, result=httpx.Response(200, json={"ok": True}))
+    await _forward(_request({"Authorization": "Bearer edge-user"}), auth="service")
+    assert (cap["headers"] or {}).get("Authorization") == "Bearer svc-token-777"
+
+
+@pytest.mark.parametrize("value", ["", "PLACEHOLDER_set_out_of_band"])
+async def test_forward_service_mode_without_a_real_token_sends_no_header(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    """Sin token real (env vacío o placeholder de SSM) no se inventa un Bearer:
+    en dev/tests ``require_auth`` es no-op; en prod el preflight exige el token."""
+    from src.platform import config
+
+    monkeypatch.setattr(config, "HUBARA_SERVICE_TOKEN", value)
+    cap: dict[str, Any] = {}
+    _install(monkeypatch, capture=cap, result=httpx.Response(200, json={"ok": True}))
+    await _forward(_request(), auth="service")
+    assert "Authorization" not in (cap["headers"] or {})
+
+
+async def test_forward_rejects_unknown_auth_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install(monkeypatch, result=httpx.Response(200, json={"ok": True}))
+    with pytest.raises(ValueError):
+        await _forward(_request(), auth="magic")  # type: ignore[arg-type]

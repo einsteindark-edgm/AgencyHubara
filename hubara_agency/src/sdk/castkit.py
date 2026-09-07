@@ -32,12 +32,21 @@ Notas:
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from fastapi import HTTPException, Request
 
+from src.platform import config as _config
+
 __all__ = ["forward"]
+
+#: Modos de identidad del hop (ver ``forward``):
+#: ``propagate`` porta el ``Authorization`` del request entrante (el default:
+#: la identidad del operador validada en el edge); ``service`` manda el token
+#: de servicio interno (``HUBARA_SERVICE_TOKEN``), para casts cuyo edge NO trae
+#: bearer — p.ej. el connector de MBA, que autentica a Meta con ``X-API-Key``.
+AuthMode = Literal["propagate", "service"]
 
 
 def _propagated_headers(request: Request) -> dict[str, str]:
@@ -58,6 +67,20 @@ def _propagated_headers(request: Request) -> dict[str, str]:
     if authz:
         headers["Authorization"] = authz
     return headers
+
+
+def _service_headers() -> dict[str, str]:
+    """Identidad de SERVICIO para el hop: ``Bearer HUBARA_SERVICE_TOKEN``.
+
+    Es el paso 1 de ``require_auth`` (machine-to-machine). Sin token real (env
+    vacío o placeholder de SSM) no se inventa header: en dev/tests la auth es
+    no-op y en prod el preflight del deploy exige el token (fail-closed). Se
+    lee del módulo en cada llamada (no en import) para respetar overrides.
+    """
+    token = _config.HUBARA_SERVICE_TOKEN
+    if _config.is_placeholder(token):
+        return {}
+    return {"Authorization": f"Bearer {token}"}
 
 
 def _unwrap_detail(resp: httpx.Response) -> Any:
@@ -87,10 +110,12 @@ async def forward(
     cast_label: str,
     params: dict[str, Any] | None = None,
     body: dict[str, Any] | None = None,
+    auth: AuthMode = "propagate",
 ) -> dict[str, Any]:
     """Reenvía ``method path`` al contrato publicado del provider, portando la
-    identidad del ``request`` entrante. Devuelve el dict del provider o levanta un
-    ``HTTPException`` con status honesto y ``detail`` desanidado.
+    identidad del ``request`` entrante (o la de servicio, según ``auth``).
+    Devuelve el dict del provider o levanta un ``HTTPException`` con status
+    honesto y ``detail`` desanidado.
 
     Args:
         request: el request entrante del edge (de donde se porta ``Authorization``).
@@ -101,9 +126,17 @@ async def forward(
         cast_label: etiqueta ``origen→provider`` para los mensajes de error.
         params: query params opcionales.
         body: cuerpo JSON opcional.
+        auth: ``"propagate"`` (default) porta el ``Authorization`` entrante;
+            ``"service"`` manda ``HUBARA_SERVICE_TOKEN`` e IGNORA la identidad
+            entrante (no se mezclan). Para casts cuyo edge no trae bearer.
     """
+    if auth == "propagate":
+        headers = _propagated_headers(request)
+    elif auth == "service":
+        headers = _service_headers()
+    else:
+        raise ValueError(f"castkit.forward: auth desconocido {auth!r}")
     url = f"{base_url.rstrip('/')}{path}"
-    headers = _propagated_headers(request)
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.request(

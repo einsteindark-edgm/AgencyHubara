@@ -46,13 +46,7 @@ def test_connector_tools_exist_for_every_declared_tool_and_require_the_key(monke
     assert c.get("/api/mba/tools/search_products").status_code == 401
     assert c.get("/api/mba/tools/search_products", headers={"X-API-Key": "otro"}).status_code == 401
     ok = {"X-API-Key": "secreto"}
-    # las tools de escritura responden 501 (contrato registrado; lógica en el siguiente PR de D1.2)
-    r = c.post("/api/mba/tools/register_order", headers=ok, json={
-        "customer_phone": _PHONE, "items": [{"handle": "x", "quantity": 1}], "ciudad": "Bogotá",
-        "direccion": "Cl 1", "telefono": "300", "nombre_recibe": "Ana", "metodo_pago": "contra_entrega",
-    })
-    assert r.status_code == 501 and r.json()["tool"] == "register_order"
-    # método equivocado y tool inexistente NO son 501
+    # método equivocado y tool inexistente
     assert c.post("/api/mba/tools/search_products", headers=ok).status_code == 405
     assert c.get("/api/mba/tools/nope", headers=ok).status_code == 404
     assert set(connector.declared_tools()) == {
@@ -107,6 +101,49 @@ def test_read_tools_run_against_the_injected_ports(monkeypatch: pytest.MonkeyPat
     assert r.status_code == 200 and r.json()["orders"] == []
     r = c.post("/api/mba/tools/verify_order_for_checkout", headers=ok, json={"customer_phone": _PHONE, "items": [{"handle": "x", "quantity": 1}]})
     assert r.status_code == 200 and r.json()["error"] == "catalog_unavailable"  # sin verificador en este proceso
+
+
+class _ChatsCast:
+    """Doble del cast mba→chats (`deps.chats`): captura y responde fijo."""
+
+    def __init__(self, response=None, exc=None) -> None:
+        self.calls = []
+        self._response = response or {}
+        self._exc = exc
+
+    async def __call__(self, request, session_key, action, body):
+        assert request is not None and request.method == "POST"
+        self.calls.append((session_key, action, body))
+        if self._exc is not None:
+            raise self._exc
+        return dict(self._response)
+
+
+def test_write_tools_delegate_to_the_chats_cast_scoped_to_the_customer_phone(monkeypatch: pytest.MonkeyPatch) -> None:
+    cast = _ChatsCast({"updated": True, "order_draft": {"producto": "luz-serena"}})
+    c = _client_with_deps(monkeypatch, chats=cast)
+    ok = {"X-API-Key": "secreto"}
+    r = c.post("/api/mba/tools/set_order_slot", headers=ok, json={"customer_phone": "+57 300 123 4567", "producto": "luz-serena", "cantidad": 2})
+    assert r.status_code == 200 and r.json()["updated"] is True
+    assert cast.calls == [("wa_573001234567", "draft", {"producto": "luz-serena", "cantidad": 2})]
+    cast = _ChatsCast({"escalated": True, "already_human": False, "active_route": "humano", "tag": "HUMANO"})
+    c = _client_with_deps(monkeypatch, chats=cast)
+    r = c.post("/api/mba/tools/escalate_to_human", headers=ok, json={"customer_phone": _PHONE, "reason_category": "BULK_ORDER", "summary": "30"})
+    assert r.status_code == 200 and r.json()["escalated"] is True and cast.calls[0][1] == "escalate"
+    r = c.post("/api/mba/tools/manage_conversation_tag", headers=ok, json={"customer_phone": _PHONE, "tag": "HUMANO", "motivo": "x"})
+    assert r.status_code == 200 and r.json()["error"] == "invalid_tag" and len(cast.calls) == 1
+    # el contrato de Meta sigue validando antes del cast: campo requerido ausente → 422, sin llamar a chats
+    r = c.post("/api/mba/tools/register_order", headers=ok, json={"customer_phone": _PHONE, "items": [{"handle": "x", "quantity": 1}]})
+    assert r.status_code == 422 and len(cast.calls) == 1
+
+
+def test_a_failing_cast_is_an_explicit_error_for_the_agent_not_a_500(monkeypatch: pytest.MonkeyPatch) -> None:
+    from fastapi import HTTPException
+
+    c = _client_with_deps(monkeypatch, chats=_ChatsCast(exc=HTTPException(status_code=502, detail="cast mba→chats: provider no disponible")))
+    r = c.post("/api/mba/tools/escalate_to_human", headers={"X-API-Key": "secreto"},
+               json={"customer_phone": _PHONE, "reason_category": "BULK_ORDER", "summary": "30"})
+    assert r.status_code == 200 and r.json()["error"] == "chats_unavailable" and r.json()["applied"] is False
 
 
 def test_invalid_calls_are_422_with_the_list_of_problems_and_bad_json_is_400(monkeypatch: pytest.MonkeyPatch) -> None:

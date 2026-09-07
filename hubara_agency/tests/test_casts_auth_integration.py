@@ -82,3 +82,52 @@ async def test_evals_cast_still_401_when_edge_has_no_token(auth_app, monkeypatch
     client = TestClient(auth_app)
     resp = client.get("/api/agents/evals/history")
     assert resp.status_code == 401
+
+
+# --- D1.2b: cast mba→chats con service token (el edge de Meta no trae Bearer) ---
+
+
+async def test_mba_write_tool_reaches_chats_with_the_service_token(auth_app, monkeypatch, tmp_path):
+    """Meta llama al connector con ``X-API-Key``; el cast a ``session-actions@v1``
+    debe pasar ``require_auth`` de chats con ``HUBARA_SERVICE_TOKEN`` y escribir
+    el vault de la sesión del teléfono (comportamiento real, no schema)."""
+    from src.platform import config
+    from src.plugins.chats.api import session_actions
+
+    async def _noop_flush(_s: str) -> int:
+        return 0
+
+    async def _noop_notify(*_a) -> None:
+        return None
+
+    monkeypatch.setattr(config, "HUBARA_SERVICE_TOKEN", "svc-token-1")
+    monkeypatch.setenv("HUBARA_MBA_API_KEY", "meta-key")
+    deps = session_actions.SessionActionsDeps(
+        vault_dir=tmp_path, catalog=None, order_port=None, flush=_noop_flush, notify_episode_closed=_noop_notify
+    )
+    auth_app.dependency_overrides[session_actions.get_session_actions_deps] = lambda: deps
+    real = _route_loopback_to(auth_app, monkeypatch)
+    try:
+        async with real(transport=httpx.ASGITransport(app=auth_app), base_url="http://edge") as edge:
+            resp = await edge.post(
+                "/api/mba/tools/set_order_slot",
+                headers={"X-API-Key": "meta-key"},
+                json={"customer_phone": "+573001234567", "producto": "luz-serena"},
+            )
+            assert resp.status_code == 200, resp.text
+            assert resp.json()["updated"] is True
+            assert (tmp_path / "wa_573001234567" / "metadata.json").exists()
+
+            # Control: sin token de servicio real, el 2º hop es 401 y el connector
+            # lo reporta como rechazo explícito (nunca un 500 hacia Meta).
+            monkeypatch.setattr(config, "HUBARA_SERVICE_TOKEN", "")
+            resp = await edge.post(
+                "/api/mba/tools/set_order_slot",
+                headers={"X-API-Key": "meta-key"},
+                json={"customer_phone": "+573001234567", "aroma": "Lavanda"},
+            )
+            assert resp.status_code == 200 and resp.json() == {
+                **resp.json(), "error": "rejected", "status": 401, "applied": False,
+            }
+    finally:
+        auth_app.dependency_overrides.pop(session_actions.get_session_actions_deps, None)
