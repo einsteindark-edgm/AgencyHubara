@@ -93,6 +93,7 @@ from src.plugins.chats.agent.sales.tools.ui_intents import (
     SendContactCardTool,
     SendCTAUrlTool,
     SendQuickRepliesTool,
+    SendShippingRatesTool,
 )
 
 from src.plugins.chats.agent.sales.workflows.sales_session import (
@@ -257,6 +258,13 @@ register_tool_extension(
     lambda workspace: PresentOrderConfirmationTool(
         workspace=str(workspace), catalog=_catalog
     ),
+)
+# Regla del operador 2026-09-07: "¿cuánto vale el envío?" → mensaje estándar
+# FIJO (tarifas mínimas + "se confirma al despachar"), renderizado por el
+# flush desde `config/shipping.py`. El LLM no redacta tarifas.
+register_tool_extension(
+    "sales.send_shipping_rates",
+    lambda workspace: SendShippingRatesTool(workspace=str(workspace)),
 )
 register_tool_extension(
     "sales.react_to_message",

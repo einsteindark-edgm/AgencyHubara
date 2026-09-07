@@ -708,7 +708,11 @@ class PresentOrderConfirmationTool(ToolBase):
     name = "present_order_confirmation"
     description = (
         "Envía la confirmación formal del pedido al cliente: items, "
-        "precios, envío, total, dirección, y botón para confirmar/pagar. "
+        "precios, subtotal de productos, envío 'Por confirmar' (el valor "
+        "definitivo lo recalcula la transportadora antes de despachar — "
+        "el resumen NO muestra valor de envío ni total), dirección, medio "
+        "de pago y botón para confirmar/pagar. `shipping_cop` es la tarifa "
+        "mínima estimada (uso interno, no se muestra). "
         "Llámala SOLO después de que `verify_order_for_checkout` retornó "
         "verified=True y discrepancy=False. Si hay discrepancia, primero "
         "informa al cliente honestamente y pídele confirmación con el "
@@ -870,18 +874,85 @@ class PresentOrderConfirmationTool(ToolBase):
         }
         _append_intent(ctx.session_key, intent)
 
+        # Regla del operador (2026-09-07): el resumen que ve el cliente NO
+        # trae el valor del envío ni un total con envío (queda "Por
+        # confirmar" con la transportadora). El envelope tampoco le da al
+        # LLM un total para que no lo repita en texto.
         return json.dumps({
             "queued": True,
             "kind": "order_confirmation",
             "reference_id": reference_id,
-            "total_cop": total,
+            "subtotal_cop": subtotal,
             "summary": (
-                f"Confirmación enviada con total ${total:,} COP. "
-                "Espera la respuesta del cliente: si confirma con "
-                "Order Details nativo, recibirás el evento "
-                "order_status:captured. Si fallback a botones, "
-                "recibirás '[el cliente tocó el botón: Confirmar]'."
+                f"Confirmación enviada: productos ${subtotal:,} COP; el "
+                "envío figura 'Por confirmar' (la transportadora lo "
+                "recalcula antes de despachar) — no le des al cliente un "
+                "valor de envío ni un total que lo incluya. Espera la "
+                "respuesta del cliente: si confirma con Order Details "
+                "nativo, recibirás el evento order_status:captured. Si "
+                "fallback a botones, recibirás '[el cliente tocó el botón: "
+                "Confirmar]'."
             ).replace(",", "."),
+        }, ensure_ascii=False)
+
+
+# =============================================================================
+# Tarifas de envío — mensaje estándar determinista
+# =============================================================================
+
+
+class SendShippingRatesTool(ToolBase):
+    """Manda el mensaje ESTÁNDAR de tarifas de envío (regla del operador
+    2026-09-07, `config/shipping.py`).
+
+    El valor del envío nunca es definitivo (lo recalcula la transportadora
+    según tamaño y peso antes de despachar), así que la respuesta a "¿cuánto
+    vale el envío?" es un texto fijo con las tarifas MÍNIMAS + la aclaración.
+    Sin parámetros: el LLM no redacta ni reformula tarifas; el flush renderiza
+    `SHIPPING_RATES_MESSAGE` tal cual. Corta el turno (L-11): el mensaje ES la
+    respuesta.
+    """
+
+    name = "send_shipping_rates"
+    description = (
+        "Envía al cliente el mensaje estándar con las tarifas mínimas de "
+        "envío (Bogotá y municipios cercanos / nivel nacional) y la "
+        "aclaración de que el valor definitivo se confirma al despachar. "
+        "Úsala SIEMPRE que el cliente pregunte cuánto vale, cuánto cuesta o "
+        "cuánto cobran el envío/domicilio — en vez de escribir las tarifas "
+        "tú. Sin parámetros; el mensaje es fijo y ES tu respuesta (tu turno "
+        "termina). Nunca des un valor de envío como definitivo ni sumes el "
+        "envío a un total."
+    )
+    parameters: dict[str, Any] = {
+        "type": "object",
+        "properties": {},
+    }
+
+    def __init__(self, workspace: str | Path) -> None:
+        self._workspace = Path(workspace)
+
+    async def execute_with_context(self, ctx: ToolContext) -> str:
+        logger.info(
+            "🚚 [TOOL send_shipping_rates] session={}", ctx.session_key
+        )
+        intent = {
+            "kind": "shipping_rates",
+            "params": {},
+            "analytics": {
+                "component_id": "shipping_rates",
+                "component_kind": "text",
+            },
+        }
+        _append_intent(ctx.session_key, intent)
+        return json.dumps({
+            "queued": True,
+            "kind": "shipping_rates",
+            "summary": (
+                "Mensaje estándar de tarifas de envío enviado al cliente. "
+                "NO repitas ni reformules las tarifas en tu texto; tu turno "
+                "termina aquí."
+            ),
         }, ensure_ascii=False)
 
 

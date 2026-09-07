@@ -41,6 +41,11 @@ from src.plugins.chats.agent.sales.config.payments import (
     PAYMENT_LINK_SURCHARGE_OTHER_BANKS,
     get_nequi_number,
 )
+from src.plugins.chats.agent.sales.config.shipping import (
+    ORDER_SUMMARY_SHIPPING_LINE,
+    ORDER_SUMMARY_SHIPPING_NOTE,
+    SHIPPING_RATES_MESSAGE,
+)
 
 # Delay entre fotos del gallery — sin pausa Meta los entrega como burst, lo
 # que se ve robótico (3 thumbnails todos al mismo segundo). Una pausa
@@ -804,24 +809,29 @@ async def _dispatch_intent(
             for it in items
         ]
         items_summary = "\n".join(lines)
-        total = int(params.get("total_cop", 0))
         subtotal = int(params.get("subtotal_cop", 0))
-        shipping = int(params.get("shipping_cop", 0))
         currency = params.get("currency", "COP")
+        # Regla del operador (2026-09-07, `config/shipping.py`): el valor del
+        # envío NO se le da al cliente — es una tarifa mínima que la
+        # transportadora recalcula antes de despachar. El resumen muestra
+        # solo el subtotal de productos + "Envío: Por confirmar*" + la nota;
+        # sin línea de total (sería subtotal + un envío que no es definitivo).
+        # `shipping_cop`/`total_cop` siguen en el intent (analytics), no se
+        # renderizan.
         body_lines = [
             "*Resumen de tu pedido*",
             items_summary,
             "",
-            f"Subtotal: ${subtotal:,} {currency}".replace(",", "."),
-        ]
-        if shipping > 0:
-            body_lines.append(f"Envío: ${shipping:,} {currency}".replace(",", "."))
-        body_lines.extend([
-            f"*Total: ${total:,} {currency}*".replace(",", "."),
+            f"Subtotal productos: {_format_cop(subtotal, currency)}",
             "",
-            f"📍 {params.get('shipping_address_summary', '')}",
-            f"💳 Pago: {_humanize_payment(params.get('payment_method'))}",
-        ])
+            ORDER_SUMMARY_SHIPPING_LINE,
+            "",
+            f"📍 Dirección: {params.get('shipping_address_summary', '')}",
+            "",
+            f"💳 Medio de pago: {_humanize_payment(params.get('payment_method'))}",
+            "",
+            ORDER_SUMMARY_SHIPPING_NOTE,
+        ]
         body = "\n".join(body_lines)
         ref = params.get("reference_id", "HUB")
         return await wa_client.send_interactive_buttons(
@@ -841,6 +851,14 @@ async def _dispatch_intent(
                     ),
                 ],
             ),
+        )
+
+    if kind == "shipping_rates":
+        # Mensaje estándar de tarifas de envío (regla del operador
+        # 2026-09-07). Texto FIJO desde `config/shipping.py`: los params del
+        # intent se ignoran a propósito — el LLM no redacta tarifas.
+        return await wa_client.send_text(
+            phone_number_id, to_number, SHIPPING_RATES_MESSAGE
         )
 
     if kind == "reaction":
@@ -1095,6 +1113,10 @@ def _build_history_event(
         if not text:
             return None
         return {"role": "assistant", "content": text}
+
+    if kind == "shipping_rates":
+        # Texto fijo real que recibió el cliente — el operador lo ve tal cual.
+        return {"role": "assistant", "content": SHIPPING_RATES_MESSAGE}
 
     if kind == "product_detail":
         caption = (params.get("caption") or "").strip()
