@@ -436,8 +436,14 @@ class RegisterOrderTool(ToolBase):
                 # Referencia humana ("#22 (Plegaria de Luz)") — el display_id
                 # ya existe acá: Medusa lo asigna al crear el draft. El
                 # order_id interno sigue viajando (idempotency key + audit).
+                # Desglose productos + envío = total (requisito 2026-09-07,
+                # run 943e6bff): los tres montos ya pasaron el chequeo
+                # SEC-07 de arriba (subtotal = Σ ítems, total = subtotal +
+                # envío), así que el flush los muestra sin recalcular nada.
                 params: dict[str, Any] = {
                     "order_id": registered_record["order_id"],
+                    "subtotal_cop": subtotal_cop,
+                    "shipping_cop": shipping_cop,
                     "total_cop": total_cop,
                     "currency": currency,
                     "method": payment_method,

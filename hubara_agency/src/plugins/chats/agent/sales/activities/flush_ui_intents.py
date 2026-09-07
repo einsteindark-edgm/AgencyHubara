@@ -115,20 +115,57 @@ def _sanitize_intent_client_text(
     return out
 
 
+def _format_cop(amount: int, currency: str) -> str:
+    return f"${amount:,}".replace(",", ".") + f" {currency}"
+
+
 def _append_total_and_reference(
-    lines: list[str], params: dict[str, Any], *, total_label: str = "Valor"
+    lines: list[str],
+    params: dict[str, Any],
+    *,
+    total_label: str = "Valor",
+    breakdown_total_label: str = "Total",
 ) -> None:
-    """Bloque común valor + referencia humana del pedido.
+    """Bloque común montos + referencia humana del pedido.
+
+    Montos (requisito 2026-09-07, run 943e6bff — el cliente veía un solo
+    "Valor" y no sabía qué estaba pagando): si el intent trae el desglose
+    (`subtotal_cop` + `shipping_cop`, validados por SEC-07 en
+    `register_order`) se muestran *Productos*, *Envío* y el total con
+    `breakdown_total_label`. Sin desglose (intents encolados pre-deploy)
+    sale la línea única `total_label` de siempre — nunca se inventa un
+    reparto.
 
     Referencia: "#22 (Plegaria de Luz)" si el intent la trae; fallback al
     order_id crudo para intents encolados pre-deploy o providers sin
     display_id (stub).
     """
     total_cop = params.get("total_cop")
+    subtotal_cop = params.get("subtotal_cop")
+    shipping_cop = params.get("shipping_cop")
     if isinstance(total_cop, int) and total_cop > 0:
+        if lines and lines[-1]:
+            lines.append("")
         currency = params.get("currency") or "COP"
-        total_formatted = f"${total_cop:,}".replace(",", ".")
-        lines.append(f"*{total_label}*: {total_formatted} {currency}")
+        has_breakdown = (
+            isinstance(subtotal_cop, int)
+            and isinstance(shipping_cop, int)
+            and subtotal_cop >= 0
+            and shipping_cop >= 0
+        )
+        if has_breakdown:
+            shipping_text = (
+                _format_cop(shipping_cop, currency)
+                if shipping_cop > 0
+                else "sin costo"
+            )
+            lines.extend([
+                f"*Productos*: {_format_cop(subtotal_cop, currency)}",
+                f"*Envío*: {shipping_text}",
+                f"*{breakdown_total_label}*: {_format_cop(total_cop, currency)}",
+            ])
+        else:
+            lines.append(f"*{total_label}*: {_format_cop(total_cop, currency)}")
     reference = params.get("order_reference") or params.get("order_id")
     if reference:
         lines.append(f"Pedido: {reference}")
@@ -150,7 +187,10 @@ def _render_payment_link_notice_text(params: dict[str, Any]) -> str:
         "bancos.",
     ]
     _append_total_and_reference(
-        lines, params, total_label="Valor sin recargo"
+        lines,
+        params,
+        total_label="Valor sin recargo",
+        breakdown_total_label="Total sin recargo",
     )
     return "\n".join(lines)
 
