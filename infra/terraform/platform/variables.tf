@@ -73,6 +73,12 @@ variable "secret_keys" {
     # Cognito está enforced, sino los workers (ej. order-sentinel) caen 401.
     # Generar con `openssl rand -hex 32` y setear out-of-band.
     "HUBARA_SERVICE_TOKEN",
+    # API key que Meta Business Agent presenta en `X-API-Key` al invocar las
+    # connector tools (/api/mba/tools/*). Sin valor real el connector responde
+    # 503 (fail-closed) y el resto del sistema no se entera. Generar con
+    # `openssl rand -hex 32`, setear out-of-band y usar el MISMO valor al
+    # registrar el connector en Meta (auth_config.api_key).
+    "HUBARA_MBA_API_KEY",
     "MEDUSA_BASE_URL",
     "MEDUSA_ADMIN_TOKEN",
     "META_CATALOG_ID",

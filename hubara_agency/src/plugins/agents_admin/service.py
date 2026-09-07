@@ -17,7 +17,6 @@ manifests al boot. La ruta del workspace viaja por el manifest, no por un import
 """
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -25,12 +24,6 @@ import yaml
 from loguru import logger
 
 from src.platform.plugin_manifest import enabled_plugins
-from src.plugins.agents_admin.mba_config import (
-    MbaConfigDTO,
-    WorkspaceSkill,
-    WorkspaceSources,
-    normalize_mba_config,
-)
 
 # ---------------------------------------------------------------------------
 # Localización del repo root + manifests (mismo árbol que src/main.py lee).
@@ -160,73 +153,6 @@ def _read_workspace_prompts(workspace_rel: str) -> tuple[AgentPromptDTO, ...]:
 # ---------------------------------------------------------------------------
 # Fuentes para la configuración Meta Business Agent (bootstrap + skills).
 # ---------------------------------------------------------------------------
-
-_FRONT_MATTER = re.compile(r"\A---[ \t]*\n(.*?)\n---[ \t]*\n?", re.DOTALL)
-
-
-def _parse_skill(name: str, text: str) -> WorkspaceSkill:
-    """Separa el front-matter YAML de un ``SKILL.md`` (``description`` +
-    ``metadata.exoclaw.always``) de su cuerpo markdown."""
-    description = ""
-    always = False
-    body = text
-    m = _FRONT_MATTER.match(text)
-    if m:
-        body = text[m.end():]
-        try:
-            meta = yaml.safe_load(m.group(1)) or {}
-        except yaml.YAMLError as exc:
-            logger.warning("[agents_admin] front-matter inválido en skill {}: {}", name, exc)
-            meta = {}
-        if isinstance(meta, dict):
-            description = str(meta.get("description") or "").strip()
-            exo = (meta.get("metadata") or {}).get("exoclaw") if isinstance(meta.get("metadata"), dict) else None
-            always = bool(exo.get("always")) if isinstance(exo, dict) else False
-    return WorkspaceSkill(name=name, description=description, always=always, body=body)
-
-
-def read_workspace_sources(workspace_rel: str) -> WorkspaceSources:
-    """Lee bootstrap files + ``skills/*/SKILL.md`` de un workspace.
-
-    NUNCA lee ``memory/`` (datos dinámicos y potencialmente personales): la
-    configuración de MBA se deriva solo de la personalidad estática.
-    """
-    ws_dir = _resolve_workspace_dir(workspace_rel)
-    if ws_dir is None:
-        return WorkspaceSources(files={}, skills=())
-
-    files: dict[str, str] = {}
-    for _, filename in _PROMPT_FILES:
-        path = ws_dir / filename
-        if path.is_file():
-            try:
-                files[filename] = path.read_text(encoding="utf-8")
-            except OSError as exc:
-                logger.warning("[agents_admin] no se pudo leer {}: {}", path, exc)
-
-    skills: list[WorkspaceSkill] = []
-    skills_dir = ws_dir / "skills"
-    if skills_dir.is_dir():
-        for skill_dir in sorted(p for p in skills_dir.iterdir() if p.is_dir()):
-            skill_md = skill_dir / "SKILL.md"
-            if not skill_md.is_file():
-                continue
-            try:
-                skills.append(_parse_skill(skill_dir.name, skill_md.read_text(encoding="utf-8")))
-            except OSError as exc:
-                logger.warning("[agents_admin] no se pudo leer {}: {}", skill_md, exc)
-    return WorkspaceSources(files=files, skills=tuple(skills))
-
-
-def build_mba_config(agent_id: str) -> MbaConfigDTO | None:
-    """Configuración MBA normalizada del agente ``agent_id`` (None si no existe)."""
-    agent = next((a for a in discover_agents() if a.id == agent_id), None)
-    if agent is None or not agent.workspace:
-        return None
-    return normalize_mba_config(
-        agent_id, read_workspace_sources(agent.workspace), workspace=agent.workspace
-    )
-
 
 def _build_agent(worker_name: str, dash: dict) -> AgentDTO:
     workspace_rel = str(dash.get("workspace") or "")

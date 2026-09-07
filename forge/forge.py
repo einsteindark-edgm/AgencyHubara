@@ -35,6 +35,9 @@ ROOT = Path(__file__).resolve().parent  # forge/ (raíz del repo madre)
 REPO = ROOT.parent  # repo madre
 CLIENTS = ROOT / "clients"
 
+# `mba` (Meta Business Agent) NO va en el default de un tenant nuevo: sus
+# agentes se autoran por tenant (agents/<id>/agent.yaml + skills) y exige la
+# key del connector en SSM; se prende a mano cuando el tenant lo onboardea.
 ENABLED_PLUGINS_DEFAULT = (
     "ads,agents_admin,catalog,chats,eta,marketing,order_sentinel,orders,reengagement,system_map"
 )
