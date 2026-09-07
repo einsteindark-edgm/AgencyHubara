@@ -24,6 +24,7 @@ import forge  # noqa: E402
 
 SALES_WS = "hubara_agency/src/plugins/chats/agent/sales/workspace"
 RMKT_WS = "hubara_agency/src/plugins/chats/agent/remarketing/workspace"
+MBA_WS = "hubara_agency/src/plugins/mba/agents/sales"
 
 FIXTURE_FILES = {
     "infra/terraform/platform/tenants.auto.tfvars": (
@@ -190,6 +191,15 @@ FIXTURE_FILES = {
     f"{RMKT_WS}/TOOLS.md": "# Tools remarketing\n",
     f"{RMKT_WS}/memory/MEMORY.md": "# Memoria remarketing\n",
     f"{RMKT_WS}/skills/hubara_catalog/SKILL.md": "# Catálogo Hubara (remarketing)\n",
+    # Meta Business Agent: el agente autorado (agent.yaml + skills/*.md) es voz del cliente
+    f"{MBA_WS}/agent.yaml": (
+        "id: sales\ndisplay_name: Asesor de Ventas\nskills: [persona-y-tono]\n"
+        "business_info:\n  business_description: Hubara vende velas artesanales.\n"
+        "connector:\n  name: hubara-commerce\n  description: API de Hubara.\n"
+    ),
+    f"{MBA_WS}/skills/persona-y-tono.md": (
+        "---\ntitle: persona-y-tono\ndescription: Siempre.\n---\n\nEres el asesor de Hubara.\n"
+    ),
     "docs/cartagena/plan.md": "# Vertical hotelero de otro cliente\n",
     # App móvil Tauri: viaja al clon, pero la EIP de hubara en el CSP no
     "frontend_dashboard/src-tauri/tauri.conf.json": (
@@ -263,6 +273,17 @@ def acme_bundle(tmp_path: Path) -> Path:
         bundle, "workspace/sales/skills/etapa_descubrimiento/SKILL.md", "Bienvenido a Acme.\n"
     )
     _overlay_file(bundle, "workspace/sales/skills/sales_script/SKILL.md", "# Guion Acme\n")
+    _overlay_file(
+        bundle,
+        "workspace/mba_sales/agent.yaml",
+        "id: sales\ndisplay_name: Asesor Acme\nskills: [persona-y-tono]\n"
+        "business_info:\n  business_description: Acme vende cafés de origen.\n",
+    )
+    _overlay_file(
+        bundle,
+        "workspace/mba_sales/skills/persona-y-tono.md",
+        "---\ntitle: persona-y-tono\ndescription: Siempre.\n---\n\nEres el asesor de Acme.\n",
+    )
     return bundle
 
 
@@ -491,3 +512,67 @@ def test_todo_brand_bloquea_salvo_allow_todos(mini_repo, acme_bundle, tmp_path):
         allow_todos=True,
     )
     assert report["scan"]["forbidden"] == []
+
+
+# ── Meta Business Agent viaja al clon ────────────────────────────────────────
+
+
+def test_mba_viaja_al_clon_con_overlay_propio(mini_repo, acme_bundle, tmp_path):
+    """El agente MBA (agent.yaml + skills) es voz del cliente: el bundle lo
+    reemplaza completo, y el clon nace con `mba` habilitado."""
+    dest, _ = _apply(mini_repo, acme_bundle, tmp_path)
+    agent = (dest / f"{MBA_WS}/agent.yaml").read_text()
+    assert "Acme" in agent and "Hubara" not in agent
+    skill = (dest / f"{MBA_WS}/skills/persona-y-tono.md").read_text()
+    assert "asesor de Acme" in skill
+    comp = (dest / "infra/terraform/compute/tenants.auto.tfvars").read_text()
+    assert "mba" in comp.split("enabled_plugins")[1].splitlines()[0]
+    nxt = (dest / "NEXT_STEPS.md").read_text()
+    assert "HUBARA_MBA_API_KEY" in nxt
+
+
+def test_overlay_sin_bundle_mba_falla_nombrando_el_agente(mini_repo, acme_bundle, tmp_path):
+    import shutil
+
+    shutil.rmtree(acme_bundle / "workspace/mba_sales")
+    with pytest.raises(forge.ForgeError, match="mba_sales"):
+        _apply(mini_repo, acme_bundle, tmp_path)
+
+
+def test_scanner_trata_el_agente_mba_como_scope_critico(mini_repo, acme_bundle, tmp_path):
+    dest, _ = _apply(mini_repo, acme_bundle, tmp_path)
+    (dest / MBA_WS / "skills" / "leak.md").write_text("Bienvenido a Hubara\n", encoding="utf-8")
+    scan = forge.scan_residuals(dest, forge.load_manifest(), forge.render_vars(ACME_CLIENT))
+    assert any("leak.md" in str(v) for v in scan["critical"])
+
+
+def test_init_siembra_el_agente_mba_con_yaml_valido(mini_repo, tmp_path):
+    import yaml as _yaml
+
+    clients_dir = tmp_path / "clients"
+    bundle = forge.run_init("acme", forge.load_manifest(), src=mini_repo, clients_dir=clients_dir)
+    agent_path = bundle / "workspace" / "mba_sales" / "agent.yaml"
+    text = agent_path.read_text()
+    assert "Acme vende" in text and "Hubara" not in text
+    assert "TODO-BRAND" in text
+    # la marca de redacción pendiente NO puede romper el YAML del agente
+    spec = _yaml.safe_load(text)
+    assert spec["display_name"] == "Asesor de Ventas"
+    skill = (bundle / "workspace" / "mba_sales" / "skills" / "persona-y-tono.md").read_text()
+    assert "asesor de Acme" in skill and "TODO-BRAND" in skill
+
+
+def test_init_mas_apply_dejan_el_clon_mba_sin_residuales(mini_repo, tmp_path):
+    """Lo que corre el gate `forge-gates` de CI: init → apply --allow-todos debe
+    dejar cero residuales. El nombre del connector (`hubara-commerce`) es del
+    cliente, no del motor: se siembra como `<slug>-commerce`."""
+    clients_dir = tmp_path / "clients"
+    bundle = forge.run_init("acme", forge.load_manifest(), src=mini_repo, clients_dir=clients_dir)
+    agent = (bundle / "workspace" / "mba_sales" / "agent.yaml").read_text()
+    assert "acme-commerce" in agent and "hubara-commerce" not in agent
+    dest = tmp_path / "AgencyAcmeInit"
+    report = forge.run_apply(
+        src=mini_repo, dest=dest, client_dir=bundle, manifest=forge.load_manifest(), allow_todos=True
+    )
+    assert report["scan"]["forbidden"] == []
+    assert report["scan"]["critical"] == [], report["scan"]["critical"]

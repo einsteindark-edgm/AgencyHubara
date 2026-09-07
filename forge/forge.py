@@ -35,8 +35,11 @@ ROOT = Path(__file__).resolve().parent  # forge/ (raíz del repo madre)
 REPO = ROOT.parent  # repo madre
 CLIENTS = ROOT / "clients"
 
+# `mba` (Meta Business Agent) viaja habilitado: su agente se autora por tenant
+# (overlay `mba_sales` del bundle) y el connector queda fail-closed (503) hasta
+# que el tenant ponga HUBARA_MBA_API_KEY en SSM — no rompe nada mientras tanto.
 ENABLED_PLUGINS_DEFAULT = (
-    "ads,agents_admin,catalog,chats,eta,marketing,order_sentinel,orders,reengagement,system_map"
+    "ads,agents_admin,catalog,chats,eta,marketing,mba,order_sentinel,orders,reengagement,system_map"
 )
 PHONE_CC = {"CO": "57", "MX": "52", "AR": "54", "US": "1"}
 # Palabra alrededor de un match de "hubara" — incluye '/' y '.' para que los
@@ -217,18 +220,37 @@ def stage_templates(dest: Path, manifest: dict, vars_: dict) -> list[str]:
     return written
 
 
+def overlay_agents(manifest: dict) -> dict[str, tuple[str, list[str]]]:
+    """``{agente: (path_en_el_repo, archivos_requeridos)}`` del overlay.
+
+    Una entrada de ``workspace_overlay.agents`` es un string (path; aplica el
+    ``required`` común de los workspaces exoclaw) o un mapping ``{path,
+    required}`` para agentes con otra estructura (el MBA: agent.yaml +
+    skills/<title>.md).
+    """
+    ov = manifest["workspace_overlay"]
+    out: dict[str, tuple[str, list[str]]] = {}
+    for agent, spec in ov["agents"].items():
+        if isinstance(spec, str):
+            out[agent] = (spec, list(ov["required"]))
+        else:
+            out[agent] = (str(spec["path"]), list(spec.get("required") or ov["required"]))
+    return out
+
+
 def stage_overlay(
     dest: Path, client_dir: Path, manifest: dict, vars_: dict, allow_todos: bool
 ) -> dict:
     ov = manifest["workspace_overlay"]
     todo = manifest["scan"]["todo_marker"]
+    agents = overlay_agents(manifest)
     installed, missing, todos = {}, [], []
-    for agent, ws_rel in ov["agents"].items():
+    for agent, (ws_rel, required) in agents.items():
         bundle = Path(client_dir) / "workspace" / agent
         if not bundle.is_dir():
             missing.append(f"{agent}/ (carpeta completa)")
             continue
-        for req in ov["required"]:
+        for req in required:
             if not (bundle / req).is_file():
                 missing.append(f"{agent}/{req}")
         for f in _walk_files(bundle):
@@ -244,7 +266,7 @@ def stage_overlay(
             f"el bundle tiene {todo} sin resolver (usa --allow-todos para un clon de "
             "prueba): " + ", ".join(sorted(todos))
         )
-    for agent, ws_rel in ov["agents"].items():
+    for agent, (ws_rel, _) in agents.items():
         bundle = Path(client_dir) / "workspace" / agent
         target = dest / ws_rel
         if target.exists():
@@ -452,12 +474,21 @@ def run_plan(src: Path, client_dir: Path, manifest: dict) -> dict:
 
 # ── init: sembrar el bundle del cliente desde el workspace madre ──────────────
 
-TODO_BANNER = (
-    "<!-- TODO-BRAND: este archivo se sembró desde el workspace del motor con la\n"
-    "     marca sustituida mecánicamente. Reescribí el CONTENIDO (producto, tono,\n"
-    "     guiones) para {company} y borrá esta marca. forge apply bloquea mientras\n"
-    "     quede TODO-BRAND (usa --allow-todos solo para clones de prueba). -->\n\n"
+_TODO_LINES = (
+    "TODO-BRAND: este archivo se sembró desde el workspace del motor con la",
+    "marca sustituida mecánicamente. Reescribí el CONTENIDO (producto, tono,",
+    "guiones) para {company} y borrá esta marca. forge apply bloquea mientras",
+    "quede TODO-BRAND (usa --allow-todos solo para clones de prueba).",
 )
+TODO_BANNER = "<!-- " + "\n     ".join(_TODO_LINES) + " -->\n\n"
+
+
+def _todo_banner(path: Path, company: str) -> str:
+    """El banner en la sintaxis de comentario del archivo: un `<!-- -->` dentro
+    de un YAML (agent.yaml del MBA) lo rompería."""
+    if path.suffix in (".yaml", ".yml"):
+        return "".join(f"# {line}\n" for line in _TODO_LINES).format(company=company) + "\n"
+    return TODO_BANNER.format(company=company)
 
 
 INIT_SKIP = {"__pycache__", ".DS_Store"}
@@ -504,7 +535,7 @@ def run_init(slug: str, manifest: dict, src: Path = REPO, clients_dir: Path = CL
     )
     ov = manifest["workspace_overlay"]
     preserve = manifest.get("preserve_tokens", [])
-    for agent, ws_rel in ov["agents"].items():
+    for agent, (ws_rel, _) in overlay_agents(manifest).items():
         src_ws = src / ws_rel
         if not src_ws.is_dir():
             continue
@@ -521,9 +552,14 @@ def run_init(slug: str, manifest: dict, src: Path = REPO, clients_dir: Path = CL
                 shutil.copy2(f, target)
                 continue
             text = _mask(text, preserve)
-            text = text.replace("Hubara", company).replace("hubara_catalog", f"{slug}_catalog")
+            text = (
+                text.replace("Hubara", company)
+                .replace("hubara_catalog", f"{slug}_catalog")
+                # nombre del connector de MBA: es del cliente (lo ve Meta), no del motor
+                .replace("hubara-commerce", f"{slug}-commerce")
+            )
             text = _unmask(text, preserve)
-            target.write_text(TODO_BANNER.format(company=company) + text, encoding="utf-8")
+            target.write_text(_todo_banner(f, company) + text, encoding="utf-8")
     return client_dir
 
 

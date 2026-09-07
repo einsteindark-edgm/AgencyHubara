@@ -1,5 +1,5 @@
 /**
- * Fixture con la forma REAL de `GET /api/agents/{id}/mba-config` (recortada).
+ * Fixture con la forma REAL de `GET /api/mba/agents/{id}/config` (recortada).
  * Solo para tests: espeja el DTO `MbaConfigDTO` del backend.
  */
 const HEADERS = {
@@ -11,8 +11,10 @@ const META = "https://api.facebook.com/{entity_id}";
 
 export const MBA_CONFIG_FIXTURE = {
   agent_id: "sales",
+  display_name: "Asesor de Ventas",
   channel: "whatsapp",
-  workspace: "hubara_agency/src/plugins/chats/agent/sales/workspace",
+  entity_id: null,
+  workspace: "hubara_agency/src/plugins/mba/agents/sales",
   business_info: {
     business_description: "Nombre: Hubara\nIndustria: marca premium colombiana de velas artesanales",
     payment_method: "Contra entrega: solo compras mayores a $45.000 COP.\nPago anticipado: por Nequi o llave 3229041190.",
@@ -20,7 +22,7 @@ export const MBA_CONFIG_FIXTURE = {
     return_policy: "Garantía: 48 horas de cobertura para envíos rotos o defectuosos.",
     purchase_info: "",
     contact_info: { email: null, hours_of_operation: "America/Bogota", address: null },
-    sources: ["USER.md", "skills/hubara_catalog/SKILL.md"],
+    sources: ["agent.yaml"],
   },
   settings: {
     rollout_enabled: false,
@@ -32,8 +34,8 @@ export const MBA_CONFIG_FIXTURE = {
     },
     followup: { enabled: false, followup_interval_in_seconds: 900, message: null },
     never_say_phrases: [
-      { phrase: "vos", source: "IDENTITY.md" },
-      { phrase: "voy a averiguar", source: "AGENTS.md" },
+      { phrase: "vos", source: "agent.yaml" },
+      { phrase: "voy a averiguar", source: "agent.yaml" },
     ],
   },
   skills: [
@@ -44,7 +46,7 @@ export const MBA_CONFIG_FIXTURE = {
       char_count: 18204,
       char_limit: 20000,
       over_limit: false,
-      sources: ["IDENTITY.md", "SOUL.md"],
+      sources: ["skills/persona-y-tono.md"],
     },
     {
       title: "reglas-operativas",
@@ -53,7 +55,7 @@ export const MBA_CONFIG_FIXTURE = {
       char_count: 3942,
       char_limit: 20000,
       over_limit: false,
-      sources: ["AGENTS.md"],
+      sources: ["skills/reglas-operativas.md"],
     },
     {
       title: "guion-sales-script",
@@ -62,14 +64,14 @@ export const MBA_CONFIG_FIXTURE = {
       char_count: 20544,
       char_limit: 20000,
       over_limit: true,
-      sources: ["skills/sales_script/SKILL.md", "skills/etapa_cierre/SKILL.md"],
+      sources: ["skills/guion-sales-script.md"],
     },
   ],
   faqs: [
     {
       question: "¿Cuánto demora el envío?",
       answer: "Bogotá 1 a 2 días hábiles. Resto del país 2 a 3 días hábiles.",
-      source: "skills/sales_script/SKILL.md",
+      source: "agent.yaml",
     },
   ],
   connector: {
@@ -90,7 +92,7 @@ export const MBA_CONFIG_FIXTURE = {
         bindings: ["WHATSAPP_PHONE_NUMBER"],
         write: false,
         notes: "Lectura: responde desde la fuente de verdad (Medusa / vault).",
-        source: "TOOLS.md",
+        source: "agent.yaml",
       },
       {
         name: "register_order",
@@ -102,7 +104,7 @@ export const MBA_CONFIG_FIXTURE = {
         bindings: ["WHATSAPP_PHONE_NUMBER"],
         write: true,
         notes: "Escritura: el endpoint debe ser idempotente (fingerprint + pre-check).",
-        source: "TOOLS.md",
+        source: "agent.yaml",
       },
     ],
   },
@@ -112,8 +114,7 @@ export const MBA_CONFIG_FIXTURE = {
       component_type: "flow",
       status: "enabled",
       instruction: "Variantes completas → pedir datos de envío",
-      from_tool: "request_shipping_details",
-      source: "TOOLS.md",
+      source: "agent.yaml",
       kind: "static",
       note: "",
     },
@@ -122,21 +123,15 @@ export const MBA_CONFIG_FIXTURE = {
       component_type: "carousel_quick_reply",
       status: "enabled",
       instruction: "4+ productos (catálogo)",
-      from_tool: "present_products",
-      source: "TOOLS.md",
+      source: "agent.yaml",
       kind: "dynamic",
       note: "Dinámico: títulos, fotos y precios salen del catálogo o del connector. A verificar en F0 (sandbox + allowlist).",
     },
   ],
-  tool_treatments: [
-    { llm_tool: "check_order_status", when: "Cliente pregunta por su pedido", treatment: "connector_tool", detail: "GET https://<host-publico>/api/mba/tools/check_order_status", endpoint: "/{entity_id}/agent_connectors/{connector_id}/tools" },
-    { llm_tool: "request_shipping_details", when: "Variantes completas", treatment: "ui_skill", detail: "UI skill nativa `flow` (estática).", endpoint: "/{entity_id}/agent-ui-skills" },
-    { llm_tool: "escalate_to_human", when: "Tabla de triggers", treatment: "connector_tool", detail: "POST https://<host-publico>/api/mba/tools/escalate_to_human", endpoint: "/{entity_id}/agent_connectors/{connector_id}/tools" },
-    { llm_tool: "react_to_message", when: "Ack visual rápido", treatment: "unmapped", detail: "Sin componente UI equivalente. A verificar en F0: si una reacción toma el hilo.", endpoint: null },
-  ],
   excluded: [
-    { source: "TOOLS.md#tool:react_to_message", reason: "Sin componente de UI skill equivalente en MBA; enviarlo desde Hubara podría tomar el hilo." },
+    { source: "react_to_message", reason: "Sin componente de UI skill equivalente en MBA; enviarlo desde Hubara podría tomar el hilo." },
   ],
+  allowlist: ["+57XXXXXXXXXX"],
   endpoints: [
     { section: "skills", method: "POST", path: "/{entity_id}/agent_config/skills" },
     { section: "business_info", method: "PUT", path: "/{entity_id}/agent_config/business_info" },
@@ -355,4 +350,5 @@ export const MBA_CONFIG_FIXTURE = {
       notes: "Único valor que NO sale del workspace: los teléfonos de prueba de F0 (uno por request, E.164).",
     },
   ],
+  problems: [],
 };

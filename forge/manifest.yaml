@@ -367,6 +367,14 @@ workspace_overlay:
   agents:
     sales: "hubara_agency/src/plugins/chats/agent/sales/workspace"
     remarketing: "hubara_agency/src/plugins/chats/agent/remarketing/workspace"
+    # Meta Business Agent: otra estructura (agent.yaml + skills/<title>.md), por
+    # eso trae su propio `required`. Es la voz del cliente en MBA: se reemplaza
+    # completo desde clients/<slug>/workspace/mba_sales/.
+    mba_sales:
+      path: "hubara_agency/src/plugins/mba/agents/sales"
+      required:
+        - agent.yaml
+        - skills/persona-y-tono.md
   catalog_skill_dirname: catalog
   required:
     - IDENTITY.md
@@ -431,6 +439,7 @@ scan:
     - "infra/**"
     - ".github/**"
     - "hubara_agency/src/plugins/chats/agent/*/workspace/**"
+    - "hubara_agency/src/plugins/mba/agents/*/**"
     - "hubara_agency/src/plugins/chats/agent/sales/tools/*.py"
     - "hubara_agency/src/plugins/chats/agent/remarketing/tools/*.py"
   critical_exclude_globs:

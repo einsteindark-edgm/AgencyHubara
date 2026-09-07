@@ -73,6 +73,12 @@
       crean pero no despachan. Revisar `git log hubara/main -- infra/compose`
       antes del go-live y portar el commit que agregue worker-marketing.
 
+## F7c — Meta Business Agent (plugin `mba`, nace habilitado)
+
+- [ ] Revisar `hubara_agency/src/plugins/mba/agents/sales/` (agent.yaml + skills): es la voz de {{company}} en MBA; resolver los placeholders `<FLOW_ID>`, `<TELEFONO_ASESOR>`, `<WEB_...>`, `<INSTAGRAM_...>` y la allowlist de teléfonos de prueba.
+- [ ] `HUBARA_MBA_API_KEY` en SSM (`openssl rand -hex 32`); hasta entonces `/api/mba/tools/*` responde 503 (fail-closed) y no afecta nada más. El MISMO valor va en `auth_config.api_key` al registrar el connector en Meta.
+- [ ] Onboardear el número en la Platform de Meta (eligibility → onboarding → business_info/FAQs/skills/connector/tools/UI skills → allowlist → settings con rollout apagado): la sección "Meta Business Agent" del dashboard muestra los requests exactos.
+
 ## F8 — Verificación E2E
 
 - [ ] HTTPS ok · webhook verificado · conversación real (saluda como {{company}}, NUNCA "Hubara")

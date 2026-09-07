@@ -1,15 +1,15 @@
 /**
- * Vista previa de lo que se le enviaría a Meta Business Agent (MBA) para un
- * agente: skills, business_info, FAQs y settings, con la forma EXACTA de los
- * endpoints `/agent_config/*` de Meta y la trazabilidad archivo → campo.
+ * La configuración REAL de Meta Business Agent (MBA) de un agente: skills,
+ * business_info, FAQs, settings, connector tools, UI skills y allowlist, con la
+ * forma EXACTA de los endpoints de Meta y la trazabilidad archivo → campo.
  *
  * Cada sección muestra, además de la vista legible, el REQUEST literal
  * (método, URL, headers y body JSON) tal cual se enviaría; arriba va la
  * secuencia completa numerada en orden de envío.
  *
- * Solo lectura. La normalización vive en el backend
- * (`GET /api/agents/{id}/mba-config`), derivada del workspace REAL del agente;
- * acá no se inventa nada ni se llama a Meta.
+ * Solo lectura. La fuente de verdad son los archivos autorados del plugin
+ * (`agents/<id>/agent.yaml` + `skills/*.md`) que sirve
+ * `GET /api/mba/agents/{id}/config`; acá no se inventa nada ni se llama a Meta.
  */
 
 import type { ReactNode } from "react";
@@ -21,7 +21,7 @@ import {
   type MbaConfig,
   type MbaRequest,
   type MbaSkill,
-} from "@plugins/agents_admin/frontend/entities/mba-config";
+} from "@plugins/mba/frontend/entities/mba-config";
 import { Icon, type IconName } from "@/shared/ui";
 
 interface Props {
@@ -387,47 +387,7 @@ function Connector({
   );
 }
 
-function ToolTreatments({ treatments }: { treatments: MbaConfig["tool_treatments"] }) {
-  return (
-    <div style={{ overflowX: "auto" }}>
-      <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12.5 }}>
-        <thead>
-          <tr style={{ color: "var(--fg-muted)", textAlign: "left" }}>
-            <th style={{ padding: "4px 8px" }}>tool LLM</th>
-            <th style={{ padding: "4px 8px" }}>tratamiento</th>
-            <th style={{ padding: "4px 8px" }}>endpoint de Meta</th>
-            <th style={{ padding: "4px 8px" }}>en MBA</th>
-          </tr>
-        </thead>
-        <tbody>
-          {treatments.map((t) => (
-            <tr key={t.llm_tool} style={{ borderTop: "1px solid var(--border, rgba(255,255,255,0.08))" }}>
-              <td style={{ padding: "6px 8px", verticalAlign: "top" }}>
-                <code>{t.llm_tool}</code>
-                <div style={{ fontSize: 11.5, color: "var(--fg-muted)" }}>{t.when}</div>
-              </td>
-              <td style={{ padding: "6px 8px", verticalAlign: "top" }}>
-                <code>{t.treatment}</code>
-              </td>
-              <td style={{ padding: "6px 8px", verticalAlign: "top" }}>
-                {t.endpoint ? (
-                  <code style={{ fontSize: 11 }}>{t.endpoint}</code>
-                ) : (
-                  <Chip tone="warn">no viaja</Chip>
-                )}
-              </td>
-              <td style={{ padding: "6px 8px", verticalAlign: "top", color: "var(--fg-muted)" }}>
-                {t.detail}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-export function AgentsMbaPreview({ agentId }: Props) {
+export function MbaConfigPreview({ agentId }: Props) {
   const { data, isLoading, isError } = useMbaConfig(agentId);
 
   if (isLoading) {
@@ -456,14 +416,30 @@ export function AgentsMbaPreview({ agentId }: Props) {
   return (
     <div className="ag-form">
       <div style={{ fontSize: 12.5, color: "var(--fg-muted)", maxWidth: 760 }}>
-        Esto es exactamente lo que se enviaría a Meta Business Agent para{" "}
-        <code>{data.agent_id}</code> (canal <code>{data.channel}</code>), derivado de los
-        archivos reales del workspace. Solo lectura: no se llama a Meta desde acá.
+        Esto es exactamente lo que se envía a Meta Business Agent para{" "}
+        <code>{data.display_name}</code> (canal <code>{data.channel}</code>, entity_id{" "}
+        <code>{data.entity_id ?? "sin onboardear"}</code>). Solo lectura: no se llama a Meta
+        desde acá.
         <div style={{ marginTop: 6 }}>
-          Workspace: <code>{data.workspace}</code>
-          <span> · las fuentes de cada sección son rutas relativas a esa carpeta.</span>
+          Fuente de verdad: <code>{data.workspace}</code>
+          <span> · agent.yaml + skills/*.md; las fuentes de cada sección son relativas a esa carpeta.</span>
         </div>
       </div>
+
+      {data.problems.length > 0 && (
+        <Section
+          icon="alert"
+          title="Problemas"
+          desc="Lo que Meta rechazaría tal cual. Se arregla en los archivos del agente."
+          count={`${data.problems.length}`}
+        >
+          {data.problems.map((p) => (
+            <div key={p} style={{ marginBottom: 6 }}>
+              <Chip tone="warn">{p}</Chip>
+            </div>
+          ))}
+        </Section>
+      )}
 
       <Section
         icon="workflow"
@@ -544,7 +520,7 @@ export function AgentsMbaPreview({ agentId }: Props) {
       <Section
         icon="files"
         title="UI skills"
-        desc="Componentes ricos que reemplazan nuestras tools de presentación."
+        desc="Componentes interactivos de WhatsApp, declarados uno por uno."
         endpoint={endpointFor("ui_skills")}
         count={`${data.ui_skills.length} UI skills`}
       >
@@ -567,13 +543,11 @@ export function AgentsMbaPreview({ agentId }: Props) {
         </div>
         {data.ui_skills.length === 0 && <Empty />}
         {data.ui_skills.map((u) => (
-          <div key={u.from_tool} style={{ marginBottom: 12 }}>
+          <div key={u.title} style={{ marginBottom: 12 }}>
             <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
               <code style={{ fontWeight: 700 }}>{u.title}</code>
               <span style={{ fontSize: 11.5, color: "var(--fg-muted)" }}>component_type</span>
               <code>{u.component_type}</code>
-              <span style={{ fontSize: 11.5, color: "var(--fg-muted)" }}>desde</span>
-              <Chip>{u.from_tool}</Chip>
               {u.kind === "dynamic" ? (
                 <Chip tone="warn">dinámica · a verificar en F0</Chip>
               ) : (
@@ -604,15 +578,6 @@ export function AgentsMbaPreview({ agentId }: Props) {
         {reqsFor("allowlist").map((r) => (
           <RequestView key={r.step} req={r} />
         ))}
-      </Section>
-
-      <Section
-        icon="workflow"
-        title="Mapa tool LLM → MBA"
-        desc="Las tools del agente de hoy, una por una, y a qué endpoint de Meta viaja cada una. La que no viaja lo dice y por qué."
-        count={`${data.tool_treatments.length} tools`}
-      >
-        <ToolTreatments treatments={data.tool_treatments} />
       </Section>
 
       <Section

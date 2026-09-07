@@ -2,9 +2,6 @@
  * Canvas central de Agentes. Tabs por agente:
  *   - "Personalidad": los 5 prompts read-only (Agents/Identity/Soul/Tools/Users)
  *     con el CONTENIDO REAL de los .md de su workspace (GET /api/agents).
- *   - "Meta Business Agent": qué le enviaríamos a MBA para este agente
- *     (skills, business_info, FAQs, settings), normalizado desde esos mismos
- *     archivos por el backend (GET /api/agents/{id}/mba-config).
  *   - "Calidad LLM" (solo `sales`): el panel de evaluación (tendencia + curación
  *     de goldens), compuesto desde `agents-quality`.
  */
@@ -12,11 +9,10 @@
 import { useState } from "react";
 
 import { PROMPT_SECTIONS, useAgents } from "@plugins/agents_admin/frontend/entities/agent";
-import { AgentsMbaPreview } from "@plugins/agents_admin/frontend/features/agents-mba-preview";
 import { AgentsQuality } from "@plugins/agents_admin/frontend/features/agents-quality";
 import { Icon, type IconName } from "@/shared/ui";
 
-type CanvasTab = "personalidad" | "mba" | "calidad";
+type CanvasTab = "personalidad" | "calidad";
 
 interface Props {
   agentId: string;
@@ -81,13 +77,6 @@ export function AgentsPrompts({ agentId }: Props) {
         >
           <Icon.wand /> Personalidad
         </button>
-        <button
-          type="button"
-          className={"sub-tab" + (tab === "mba" ? " on" : "")}
-          onClick={() => setTab("mba")}
-        >
-          <Icon.bot /> Meta Business Agent
-        </button>
         {isSales && (
           <button
             type="button"
@@ -101,8 +90,6 @@ export function AgentsPrompts({ agentId }: Props) {
 
       {onQuality ? (
         <AgentsQuality />
-      ) : tab === "mba" ? (
-        <AgentsMbaPreview agentId={agent.id} />
       ) : (
       <div className="ag-form">
         {PROMPT_SECTIONS.map((s) => {

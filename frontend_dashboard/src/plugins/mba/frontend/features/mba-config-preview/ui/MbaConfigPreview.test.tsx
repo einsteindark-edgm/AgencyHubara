@@ -2,8 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, cleanup } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactElement } from "react";
-import { AgentsMbaPreview } from "./AgentsMbaPreview";
-import { MBA_CONFIG_FIXTURE } from "@plugins/agents_admin/frontend/entities/mba-config/fixture";
+import { MbaConfigPreview } from "./MbaConfigPreview";
+import { MBA_CONFIG_FIXTURE } from "@plugins/mba/frontend/entities/mba-config/fixture";
 
 const fetchMock = vi.fn();
 
@@ -29,28 +29,28 @@ afterEach(() => {
   fetchMock.mockReset();
 });
 
-describe("AgentsMbaPreview", () => {
+describe("MbaConfigPreview", () => {
   it("fetches the agent's mba-config and renders skills with their char budget", async () => {
     fetchMock.mockResolvedValue(jsonResponse(MBA_CONFIG_FIXTURE));
 
-    renderWithClient(<AgentsMbaPreview agentId="sales" />);
+    renderWithClient(<MbaConfigPreview agentId="sales" />);
 
     await waitFor(() => screen.getByText("persona-y-tono"));
     const url = String(fetchMock.mock.calls[0][0]);
-    expect(url).toContain("/api/agents/sales/mba-config");
+    expect(url).toContain("/api/mba/agents/sales/config");
 
     // presupuesto por skill: el guion supera los 20.000 y se marca, sin recortar
     screen.getByText("guion-sales-script");
     expect(screen.getByText(/20\.544/)).toBeTruthy();
     expect(screen.getAllByText(/excede/i).length).toBeGreaterThan(0);
     // trazabilidad: de qué archivos sale cada skill
-    expect(screen.getAllByText("IDENTITY.md").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("skills/persona-y-tono.md").length).toBeGreaterThan(0);
   });
 
   it("renders business info by Meta field name, marking fields without a source", async () => {
     fetchMock.mockResolvedValue(jsonResponse(MBA_CONFIG_FIXTURE));
 
-    renderWithClient(<AgentsMbaPreview agentId="sales" />);
+    renderWithClient(<MbaConfigPreview agentId="sales" />);
 
     await waitFor(() => screen.getByText("payment_method"));
     // el valor se ve en la vista legible Y dentro del body JSON del PUT
@@ -63,13 +63,13 @@ describe("AgentsMbaPreview", () => {
   it("renders faqs, settings (handoff + never_say) and what is excluded with its reason", async () => {
     fetchMock.mockResolvedValue(jsonResponse(MBA_CONFIG_FIXTURE));
 
-    renderWithClient(<AgentsMbaPreview agentId="sales" />);
+    renderWithClient(<MbaConfigPreview agentId="sales" />);
 
     await waitFor(() => screen.getByText("¿Cuánto demora el envío?"));
     screen.getByText("Un colega del equipo te responde en este mismo chat 🤍");
     screen.getByText("voy a averiguar");
     screen.getByText("ALLOWLISTED_ONLY");
-    screen.getByText("TOOLS.md#tool:react_to_message");
+    screen.getByText("react_to_message");
     screen.getByText(/podría tomar el hilo/);
     // cada bloque dice a qué endpoint de Meta va
     screen.getByText("/{entity_id}/agent_config/business_info");
@@ -78,7 +78,7 @@ describe("AgentsMbaPreview", () => {
   it("renders the connector, its tools (method, path, macro, write flag) and the UI skills", async () => {
     fetchMock.mockResolvedValue(jsonResponse(MBA_CONFIG_FIXTURE));
 
-    renderWithClient(<AgentsMbaPreview agentId="sales" />);
+    renderWithClient(<MbaConfigPreview agentId="sales" />);
 
     await waitFor(() => screen.getByText("hubara-commerce"));
     screen.getByText("https://<host-publico>/api/mba");
@@ -97,21 +97,15 @@ describe("AgentsMbaPreview", () => {
     expect(screen.getAllByText(/a verificar en F0/i).length).toBeGreaterThan(0);
     // la aclaración de qué hace MBA y qué declaramos nosotros
     screen.getByText(/MBA renderiza/);
-    // y el mapa completo tool LLM → endpoint de Meta (sin huecos: el que no viaja lo dice)
-    screen.getByText("escalate_to_human");
-    screen.getAllByText("connector_tool");
-    screen.getByText("react_to_message");
-    screen.getByText("unmapped");
-    expect(screen.getAllByText("/{entity_id}/agent_connectors/{connector_id}/tools").length).toBeGreaterThan(1);
-    expect(screen.getAllByText(/no viaja/i).length).toBeGreaterThan(1);
+    screen.getByText("/{entity_id}/agent_connectors/{connector_id}/tools");
   });
 
   it("shows the workspace path and the numbered send sequence with full Meta URLs", async () => {
     fetchMock.mockResolvedValue(jsonResponse(MBA_CONFIG_FIXTURE));
 
-    renderWithClient(<AgentsMbaPreview agentId="sales" />);
+    renderWithClient(<MbaConfigPreview agentId="sales" />);
 
-    await waitFor(() => screen.getByText("hubara_agency/src/plugins/chats/agent/sales/workspace"));
+    await waitFor(() => screen.getByText("hubara_agency/src/plugins/mba/agents/sales"));
     // secuencia: 12 requests numerados, con la URL completa (no solo el path)
     screen.getByText(/12 requests/);
     expect(
@@ -126,7 +120,7 @@ describe("AgentsMbaPreview", () => {
   it("renders, per skill, the exact JSON body that would be POSTed (full text, no summary)", async () => {
     fetchMock.mockResolvedValue(jsonResponse(MBA_CONFIG_FIXTURE));
 
-    renderWithClient(<AgentsMbaPreview agentId="sales" />);
+    renderWithClient(<MbaConfigPreview agentId="sales" />);
 
     await waitFor(() => screen.getByText("persona-y-tono"));
     // el JSON literal del request, con el texto completo de la skill adentro
@@ -140,10 +134,21 @@ describe("AgentsMbaPreview", () => {
     screen.getByText(/"never_say_phrases": \[/);
   });
 
+  it("surfaces problems the backend reports instead of hiding them", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ ...MBA_CONFIG_FIXTURE, problems: ["skills/guion-sales-script.md: 20.544 caracteres, excede el límite de 20.000"] }),
+    );
+
+    renderWithClient(<MbaConfigPreview agentId="sales" />);
+
+    await waitFor(() => screen.getByText("Problemas"));
+    screen.getByText("skills/guion-sales-script.md: 20.544 caracteres, excede el límite de 20.000");
+  });
+
   it("shows an error state instead of crashing when the backend fails", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ detail: "boom" }, 500));
 
-    renderWithClient(<AgentsMbaPreview agentId="sales" />);
+    renderWithClient(<MbaConfigPreview agentId="sales" />);
 
     await waitFor(() => screen.getByText(/No se pudo cargar/));
   });
