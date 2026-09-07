@@ -139,6 +139,13 @@ jobs:
             HUBARA_IMAGE="$HUBARA_IMAGE" OTEL_ENDPOINT="$OTEL_ENDPOINT" ./render-env-from-ssm.sh
             GHCR_TOKEN="$(grep '^GHCR_PULL_TOKEN=' .env | cut -d= -f2-)"
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_OWNER" --password-stdin
+            # Liberar disco ANTES del pull: cada deploy trae una imagen de ~1.1 GB
+            # tagueada por SHA y `image prune -f` (sin -a) NUNCA borra imágenes
+            # tagueadas → 78 imágenes / 25 GB acumulados llenaron el root de 30 GB
+            # y el pull murió con "no space left on device" (2026-09-07). `-a`
+            # borra todo lo que ningún container use; las que corren se conservan
+            # y cualquier SHA viejo sigue en GHCR para rollback.
+            docker image prune -af
             docker compose pull
             # Manifests DESPUÉS del pull y SIN `rm -rf` del directorio: `./plugins`
             # es el bind mount de `api` (/app/frontend_dashboard/src/plugins). Si se
@@ -165,4 +172,6 @@ jobs:
             docker compose rm -sf litellm
             docker compose up -d litellm
             docker compose up -d --remove-orphans
-            docker image prune -f
+            # Y DESPUÉS del up: ya recreados los containers, la imagen del SHA
+            # anterior quedó sin uso → se va acá. Sin `-a` quedaría para siempre.
+            docker image prune -af

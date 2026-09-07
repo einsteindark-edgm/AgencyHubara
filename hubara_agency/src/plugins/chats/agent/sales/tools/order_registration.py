@@ -70,6 +70,11 @@ from src.platform.orders.stub import StubOrderRegistration
 from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
     attach_order_to_active_episode,
 )
+from src.sdk.catalogkit import (
+    CatalogPort,
+    ProductNotFoundError,
+    product_includes_portavelas,
+)
 
 
 def _order_reference(raw_payload: dict[str, Any] | None) -> str | None:
@@ -220,6 +225,7 @@ class RegisterOrderTool(ToolBase):
         workspace: str | Path,
         vault_dir: str | Path | None = None,
         port: OrderRegistrationPort | None = None,
+        catalog: CatalogPort | None = None,
     ) -> None:
         # Mismo patrón que `ManageConversationTagTool`: el `workspace` que
         # llega es el RUNTIME WORKSPACE CANONICO compartido — NO se usa
@@ -233,6 +239,41 @@ class RegisterOrderTool(ToolBase):
         # esto permite que la tool sea constructible en tests sin tener que
         # mockear Medusa, y permite dev sin Medusa configurado.
         self._port: OrderRegistrationPort = port or StubOrderRegistration()
+        # Incidente 943e6bff: la política del color del portavelas SOLO aplica
+        # a los productos que lo traen (Dúo Zodiacal). Se decide acá, contra
+        # el catálogo, y viaja determinista al envelope + a la decisión del
+        # workflow. Sin catálogo (tests legacy / dev) la tool es conservadora:
+        # NO lo menciona.
+        self._catalog = catalog
+
+    async def _portavelas_handles(self, items: list[dict[str, Any]]) -> list[str]:
+        """Handles del pedido cuyo producto trae portavela según el catálogo.
+
+        Conservador: handle desconocido, snapshot ausente o cualquier error
+        del catálogo → ese ítem NO cuenta (antes que hablarle del portavelas
+        a un comprador que no lo pidió)."""
+        if self._catalog is None:
+            return []
+        found: list[str] = []
+        for it in items:
+            handle = str(it.get("handle") or "").strip()
+            if not handle or handle in found:
+                continue
+            try:
+                product = await self._catalog.get_by_handle(handle)
+            except ProductNotFoundError:
+                continue
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "🧾 [TOOL register_order] catálogo no disponible para "
+                    "decidir portavelas handle={} err={}",
+                    handle,
+                    exc,
+                )
+                continue
+            if product_includes_portavelas(product):
+                found.append(handle)
+        return found
 
     def _session_attribution(self, session_key: str) -> dict[str, Any] | None:
         """Atribución CTWA de la sesión (`origin` de metadata.json): el
@@ -436,8 +477,14 @@ class RegisterOrderTool(ToolBase):
                 # Referencia humana ("#22 (Plegaria de Luz)") — el display_id
                 # ya existe acá: Medusa lo asigna al crear el draft. El
                 # order_id interno sigue viajando (idempotency key + audit).
+                # Desglose productos + envío = total (requisito 2026-09-07,
+                # run 943e6bff): los tres montos ya pasaron el chequeo
+                # SEC-07 de arriba (subtotal = Σ ítems, total = subtotal +
+                # envío), así que el flush los muestra sin recalcular nada.
                 params: dict[str, Any] = {
                     "order_id": registered_record["order_id"],
+                    "subtotal_cop": subtotal_cop,
+                    "shipping_cop": shipping_cop,
                     "total_cop": total_cop,
                     "currency": currency,
                     "method": payment_method,
@@ -481,21 +528,34 @@ class RegisterOrderTool(ToolBase):
         # Envelope para el LLM.
         # ------------------------------------------------------------
         if result.success:
+            portavelas_handles = await self._portavelas_handles(items)
+            portavelas_included = bool(portavelas_handles)
             # Motivo sintético: lo lee la RED DE SEGURIDAD del workflow
             # (`ensure_payment_pending_closure_activity`) si el LLM no completa
             # la secuencia de cierre, para que el `status_history` / la
-            # escalación tengan un texto coherente.
+            # escalación tengan un texto coherente. La nota del portavelas
+            # SOLO viaja si el pedido lo incluye (incidente 943e6bff).
             order_motivo = (
                 f"Cliente confirmó pedido {result.order_id} por "
                 f"${total_cop} {currency}, método {payment_method}; "
-                "falta verificación humana del pago. Pendiente: definir "
-                "con el cliente el color del portavelas (según "
-                "disponibilidad)."
+                "falta verificación humana del pago."
             )
+            if portavelas_included:
+                order_motivo += (
+                    " Pendiente: definir con el cliente el color del "
+                    "portavelas (según disponibilidad)."
+                )
             envelope = {
                 "registered": True,
                 "order_id": result.order_id,
                 "provider": result.provider,
+                # Decisión determinista contra el catálogo: ¿algún ítem trae
+                # portavela? El guion de cierre condiciona la nota al humano
+                # y el aviso al comprador a `portavelas.included`.
+                "portavelas": {
+                    "included": portavelas_included,
+                    "handles": portavelas_handles,
+                },
                 # Fix integridad orden↔tag (ADR-001): decisión que el workflow
                 # levanta en `TurnResult.order_registered_decision`. Hace
                 # VISIBLE el registro al workflow para que garantice el cierre
@@ -508,6 +568,7 @@ class RegisterOrderTool(ToolBase):
                     "total_cop": total_cop,
                     "currency": currency,
                     "motivo": order_motivo,
+                    "portavelas_included": portavelas_included,
                 },
                 "summary": (
                     f"Pedido registrado en Medusa con ID {result.order_id}. "
@@ -532,13 +593,22 @@ class RegisterOrderTool(ToolBase):
                     "`manage_conversation_tag(tag='CONFIRMADO_PAGO_PENDIENTE', "
                     "motivo=...)` y luego `escalate_to_human(reason_category="
                     "'PAYMENT_VERIFICATION_PENDING', summary=...)` para que un "
-                    "humano verifique el pago; incluye en el summary la nota "
-                    "'definir con el cliente el color del portavelas (según "
-                    "disponibilidad)'. Despide al cliente con un mensaje "
-                    "breve de agradecimiento que además le avise que al "
-                    "finalizar el pago del pedido se escogen los colores del "
-                    "portavelas, según disponibilidad. NO menciones la "
-                    "verificación del pago "
+                    "humano verifique el pago. "
+                    + (
+                        "Este pedido INCLUYE un producto con portavelas: "
+                        "incluye en el summary la nota 'definir con el "
+                        "cliente el color del portavelas (según "
+                        "disponibilidad)'. Despide al cliente con un mensaje "
+                        "breve de agradecimiento que además le avise que al "
+                        "finalizar el pago del pedido se escogen los colores "
+                        "del portavelas, según disponibilidad. "
+                        if portavelas_included
+                        else "Este pedido NO incluye portavelas: NO menciones "
+                        "el portavelas ni sus colores, ni en el summary ni al "
+                        "cliente. Despide al cliente con un mensaje breve de "
+                        "agradecimiento. "
+                    )
+                    + "NO menciones la verificación del pago "
                     "ni que alguien va a revisar nada (el humano se encarga por "
                     "detrás). NO uses "
                     "`COMPRA_EXITOSA` — esa tag la pone el humano tras verificar "

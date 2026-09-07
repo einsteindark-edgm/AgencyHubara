@@ -732,6 +732,9 @@ async def _run_agent_turn_impl(
                                 total_cop=int(orr.get("total_cop", 0)),
                                 currency=str(orr.get("currency", "COP")),
                                 motivo=str(orr.get("motivo", "")),
+                                portavelas_included=bool(
+                                    orr.get("portavelas_included", False)
+                                ),
                             )
 
                 messages = [

@@ -20,7 +20,7 @@ Cómo pensar tus herramientas. **La referencia de uso de cada tool es su propia 
 | `present_product_gallery` | Cliente pide MÁS fotos del mismo producto | PROHIBIDO mandarlo a la web para ver fotos; el envelope te dice qué diseños mandaste |
 | `present_products` ⛔ | 4+ productos (catálogo) | TODO el mensaje va en `intro_text` |
 | `present_variant_picker` ⛔ | 4+ aromas/colores/tamaños | `options` SOLO de los tags del envelope; sin `emoji` manual; aroma Y color = DOS llamadas |
-| `send_quick_replies` ⛔ | Saludo sin intención clara + decisiones binarias | 1-3 botones; ids semánticos (`catalog.browse`) |
+| `send_quick_replies` ⛔ | SOLO saludo sin intención clara + decisiones binarias (sí/no, seguir/cambiar) | 1-3 botones; ids semánticos (`catalog.browse`). NUNCA para elegir productos, aromas, colores ni diseños (el sistema la rechaza): eso va por `present_products` / `present_variant_picker` aunque sean 2-3 opciones |
 | `set_order_slot` | CADA dato confirmado del pedido, en el MISMO turno | El sistema re-inyecta `[DATOS DEL PEDIDO...]`: léelo y NO re-preguntes |
 | `request_shipping_details` ⛔ | Variantes completas → pedir datos de envío | UNA vez por sesión; prerrequisito: aroma+color elegidos |
 | `verify_order_for_checkout` | OBLIGATORIA antes de confirmar el pedido | `discrepancy=true` → avisa el precio nuevo con honestidad |

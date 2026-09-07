@@ -108,6 +108,12 @@ class OrderRegisteredDecision:
     total_cop: int
     currency: str
     motivo: str
+    # Incidente 943e6bff (2026-09-07): la política del color del portavelas
+    # SOLO aplica si algún ítem del pedido trae portavela (lo decide
+    # `RegisterOrderTool` contra el catálogo). El workflow lo usa como guard
+    # determinista del texto de despedida. Default False = replay-safe para
+    # histories previas al campo.
+    portavelas_included: bool = False
 
 
 @dataclass(frozen=True)

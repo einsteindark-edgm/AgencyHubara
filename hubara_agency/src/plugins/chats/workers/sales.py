@@ -208,6 +208,9 @@ register_tool_extension(
     lambda workspace: RegisterOrderTool(
         workspace=str(workspace),
         port=_order_registration_port,
+        # Incidente 943e6bff: decide contra el catálogo si el pedido trae
+        # portavela — solo entonces la despedida/nota lo mencionan.
+        catalog=_catalog,
     ),
 )
 
@@ -281,7 +284,12 @@ register_tool_extension(
 # inicial (3 opciones tappables) y decisiones simples mid-conversation.
 register_tool_extension(
     "sales.send_quick_replies",
-    lambda workspace: SendQuickRepliesTool(workspace=str(workspace)),
+    # `catalog` (run 943e6bff): guarda anti-selector — rechaza botones que
+    # sean productos/aromas/colores/diseños del catálogo (máx 3 botones =
+    # el LLM recorta opciones); eso va por present_products / variant_picker.
+    lambda workspace: SendQuickRepliesTool(
+        workspace=str(workspace), catalog=_catalog
+    ),
 )
 # Fix sesión 71f479f7: cuando hay ≥4 aromas/colores, lista tappable con
 # emoji curado (variant_emoji.py) — más premium que listarlos en texto

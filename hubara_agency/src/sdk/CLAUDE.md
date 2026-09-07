@@ -59,6 +59,7 @@ cd hubara_agency && MEDUSA_BASE_URL=http://medusa.invalid MEDUSA_ADMIN_TOKEN=ci-
 | `cli/` | `uv run python -m src.sdk.cli` (check/certify/explain/create/graph) | docs/_sdk/06 |
 | `connectorkit/` | ports de capability + fakes (vendors externos) | docs/_sdk/07 |
 | `castkit.py` | canal 3: cast HTTP cross-plugin (porta `Authorization` + semántica honesta) | docs/_sdk/10 |
+| `catalogkit.py` | catálogo de productos: port + DTOs + errores + predicados (portavelas) | docs/_sdk/14 |
 
 ## Gotchas vividos en esta capa
 

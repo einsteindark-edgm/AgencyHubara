@@ -17,7 +17,11 @@ with workflow.unsafe.imports_passed_through():
         start_or_signal_sales_workflow_activity,
     )
     from src.platform.temporal.retry_policies import _LLM_OPTIONS
-    from src.sdk.agentkit import is_no_message_abstention, looks_like_admin_leak
+    from src.sdk.agentkit import (
+    is_no_message_abstention,
+    looks_like_admin_leak,
+    strip_portavelas_notice,
+)
     from src.platform.workflow_helpers import (
         InboxMsg,
         PendingMessage,
@@ -102,6 +106,14 @@ _DEBOUNCE_MAX_WAIT = timedelta(seconds=12)
 # cliente escribe mientras el LLM piensa (D3 del refinamiento burst-inbox).
 # Tras el cap, el turno corre hasta el final y lo pendiente va al siguiente.
 _MAX_TURN_RESTARTS = 2
+
+
+# Despedida mínima del cierre si el guard del portavelas vació el texto del
+# LLM (todo el mensaje hablaba del portavelas): el cliente que acaba de dar
+# sus datos NUNCA recibe silencio. Mismo copy base del guion `etapa_cierre`.
+_ORDER_REGISTERED_FALLBACK_FAREWELL = (
+    "Listo, tu pedido quedó registrado 🤍. Gracias por elegir a Hubara."
+)
 
 
 @workflow.defn(name="HubaraSalesSessionWorkflow")
@@ -851,6 +863,30 @@ class HubaraSalesSessionWorkflow:
                     # administrativo ("etiquetada como `INTERESADO`", envelope
                     # de tool regurgitado) NO sale al cliente. patched():
                     # histories en vuelo que SÍ enviaron replayean sin la rama.
+                    # Incidente 943e6bff (2026-09-07): pedido SIN portavelas
+                    # cerró con "se escogen los colores del portavelas". La
+                    # tool decide contra el catálogo si el pedido lo incluye
+                    # (`portavelas_included`); si NO, ninguna oración sobre el
+                    # portavelas sale al cliente ni se persiste, aunque el LLM
+                    # la escriba igual. Solo el turno que registró la orden
+                    # (la despedida). patched(): histories en vuelo que SÍ la
+                    # enviaron replayean con el texto original.
+                    if (
+                        result.order_registered_decision is not None
+                        and not result.order_registered_decision.portavelas_included
+                        and result.final_content
+                        and "portavela" in result.final_content.lower()
+                        and workflow.patched("portavelas-notice-guard-v1")
+                    ):
+                        stripped = strip_portavelas_notice(result.final_content)
+                        workflow.logger.warning(
+                            "portavelas-notice-guard: pedido sin portavelas, "
+                            "oración removida de la despedida: "
+                            f"{result.final_content[:120]!r}"
+                        )
+                        result.final_content = (
+                            stripped or _ORDER_REGISTERED_FALLBACK_FAREWELL
+                        )
                     leak_blocked = (
                         bool(result.final_content)
                         and workflow.patched("admin-text-guard-v1")
