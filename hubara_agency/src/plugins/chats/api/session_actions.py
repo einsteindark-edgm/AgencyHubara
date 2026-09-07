@@ -41,6 +41,7 @@ Reglas:
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import time
@@ -139,12 +140,30 @@ def get_session_actions_deps() -> SessionActionsDeps:
 
 
 Deps = Annotated[SessionActionsDeps, Depends(get_session_actions_deps)]
+
+#: Serializa `/order` por sesión dentro del proceso: dos requests iguales en
+#: paralelo (Meta reintenta tras su timeout) pasarían ambas el pre-check de
+#: idempotencia y encolarían/enviarían dos veces las instrucciones de pago.
+_SESSION_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def _session_lock(session_key: str) -> asyncio.Lock:
+    lock = _SESSION_LOCKS.get(session_key)
+    if lock is None:
+        lock = _SESSION_LOCKS[session_key] = asyncio.Lock()
+    return lock
+
+
+def _release_session_lock(session_key: str) -> None:
+    lock = _SESSION_LOCKS.get(session_key)
+    if lock is not None and not lock.locked() and not lock._waiters:  # noqa: SLF001 — sin esperas: liberar la entrada
+        _SESSION_LOCKS.pop(session_key, None)
 SessionKey = Annotated[str, PathParam(min_length=1, max_length=64)]
 
 
 def _session(session_key: str) -> str:
     """Solo ``wa_<dígitos>``: el segmento llega al filesystem del vault."""
-    if not _SESSION_RE.match(session_key):
+    if not _SESSION_RE.fullmatch(session_key):
         raise HTTPException(status_code=422, detail="session_key inválida (esperado wa_<dígitos>)")
     return session_key
 
@@ -265,7 +284,11 @@ def _close_payment_pending(
         )
         if closed is not None:
             closed_id = str(closed.get("episode_id") or "") or None
-            data["tag"] = PAYMENT_PENDING_TAG
+            # Invariante handoff: si un humano ya tiene el hilo, el tag visible
+            # sigue siendo HUMANO (la bandeja filtra por él); el estado real del
+            # cierre queda en `closing_tag` del episodio + `status_history`.
+            if data.get("active_route") != ROUTE_HUMANO:
+                data["tag"] = PAYMENT_PENDING_TAG
             data.setdefault("status_history", []).append(
                 {
                     "tag": PAYMENT_PENDING_TAG,
@@ -335,16 +358,31 @@ async def order(session_key: SessionKey, body: OrderBody, deps: Deps) -> dict[st
             "error_detail": priced.problems[0].split(":", 1)[0],
             "problems": priced.problems,
         }
+    async with _session_lock(session):
+        try:
+            return await _register(session, body, priced, deps)
+        finally:
+            _release_session_lock(session)
+
+
+async def _register(session: str, body: OrderBody, priced: Any, deps: SessionActionsDeps) -> dict[str, Any]:
     shipping_cop = shipping_rate_for_city(body.shipping.city)
     subtotal_cop = priced.subtotal_cop
     total_cop = subtotal_cop + shipping_cop
     store = FilesystemMetadataStore(deps.vault_dir)
     tool = RegisterOrderTool(str(deps.vault_dir), vault_dir=deps.vault_dir, port=deps.order_port, catalog=deps.catalog)
 
-    existing = store.read(session).get("registered_order")
+    # Idempotencia por contenido, acotada al EPISODIO: la orden previa cuenta
+    # solo si el último episodio de la sesión ya la tiene anotada (el mismo
+    # pedido semanas después, en un episodio nuevo, es una venta nueva).
+    data_before = store.read(session)
+    existing = data_before.get("registered_order")
+    episodes = data_before.get("episodes") or []
+    last_episode = episodes[-1] if episodes and isinstance(episodes[-1], dict) else {}
     already = (
         isinstance(existing, dict)
         and existing.get("success") is True
+        and str(last_episode.get("order_id") or "") == str(existing.get("order_id") or "")
         and _order_fingerprint(existing.get("items") or [], str(existing.get("payment_method")), int(existing.get("total_cop") or 0))
         == _order_fingerprint(priced.items, body.payment_method, total_cop)
     )
@@ -401,8 +439,10 @@ async def order(session_key: SessionKey, body: OrderBody, deps: Deps) -> dict[st
         )
         return data
 
-    store.update(session, _mutate)
-    await _notify(deps, session, outcome.get("closed_id"), PAYMENT_PENDING_TAG)
+    if not already:
+        # El cierre + la escalación ya ocurrieron con el registro original.
+        store.update(session, _mutate)
+        await _notify(deps, session, outcome.get("closed_id"), PAYMENT_PENDING_TAG)
 
     sent = 0
     if not already and body.payment_method in ("transfer", "payment_link"):
@@ -442,6 +482,10 @@ async def tag(session_key: SessionKey, body: TagBody, deps: Deps) -> dict[str, A
     """``manage_conversation_tag``: etiqueta + cierre formal si es tag de cierre
     (+ ``EpisodeClosedEvent``)."""
     session = _session(session_key)
+    if FilesystemMetadataStore(deps.vault_dir).read(session).get("active_route") == ROUTE_HUMANO:
+        # Invariante handoff: con un humano en el hilo el tag visible es HUMANO;
+        # etiquetar acá lo sacaría de la bandeja humana sin devolverlo al bot.
+        raise HTTPException(status_code=409, detail="already_human: un colega tiene la conversación; no se etiqueta")
     tool = ManageConversationTagTool(str(deps.vault_dir), vault_dir=deps.vault_dir)
     result = json.loads(await tool.execute_with_context(_ctx(session), tag=body.tag, motivo=body.motivo))
     if "error" in result:

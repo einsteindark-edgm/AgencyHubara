@@ -9,6 +9,7 @@ el metadata.json real, no el schema).
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -141,6 +142,7 @@ def test_draft_writes_the_slots_into_the_active_episode(h: _Harness) -> None:
 def test_draft_rejects_unknown_fields_and_unsafe_session_keys(h: _Harness) -> None:
     assert h.client.post(_url("draft"), json={"hack": "x"}).status_code == 422
     assert h.client.post(_url("draft", "wa_.."), json={"aroma": "x"}).status_code == 422
+    assert h.client.post(_url("draft", "wa_573001234567%0A"), json={"aroma": "x"}).status_code == 422
     assert h.client.post(_url("draft", "wa_573001234567x"), json={"aroma": "x"}).status_code == 422
     assert h.client.post(_url("draft", "wa_abc"), json={"aroma": "x"}).status_code == 422
     assert not [p for p in h.vault.iterdir() if p.name.startswith("wa_")]
@@ -304,3 +306,62 @@ def test_the_human_route_literal_matches_the_platform_constant() -> None:
     """chats no puede importar `src.platform.constants` en un archivo nuevo (P-28);
     el literal local debe seguir siendo el mismo que lee la bandeja humana."""
     assert session_actions.ROUTE_HUMANO == ROUTE_HUMANO
+
+
+# ── invariante handoff con un humano en el hilo ──────────────────────────────
+
+
+def test_writes_never_take_the_session_out_of_the_human_inbox(h: _Harness) -> None:
+    """route=humano ⇔ tag=HUMANO: con un colega en el hilo, /tag se rechaza y
+    /order cierra el episodio sin pisar el tag visible (la bandeja filtra por él)."""
+    h.client.post(_url("escalate"), json={"reason_category": "EXPLICIT_REQUEST", "summary": "quiere humano"})
+    r = h.client.post(_url("tag"), json={"tag": "RECHAZO", "motivo": "x"})
+    assert r.status_code == 409 and "already_human" in r.json()["detail"]
+    assert h.meta()["tag"] == "HUMANO" and h.closed == []
+    body = h.client.post(_url("order"), json=_ORDER).json()
+    assert body["registered"] is True and body["escalated"] is False
+    m = h.meta()
+    assert m["active_route"] == ROUTE_HUMANO and m["tag"] == "HUMANO"
+    assert m["episodes"][-1]["closing_tag"] == "CONFIRMADO_PAGO_PENDIENTE" and body["episode_closed"]
+    assert [e["tag"] for e in m["status_history"]] == ["HUMANO", "CONFIRMADO_PAGO_PENDIENTE"]
+
+
+def test_the_same_order_in_a_new_episode_is_a_new_sale(h: _Harness) -> None:
+    first = h.client.post(_url("order"), json=_ORDER).json()
+    # el cliente vuelve semanas después: el draft abre un episodio nuevo
+    h.client.post(_url("draft"), json={"producto": "luz-serena"})
+    second = h.client.post(_url("order"), json=_ORDER).json()
+    assert second["already_registered"] is False and second["order_id"] != first["order_id"]
+    assert len(h.port.calls) == 2 and h.flushed == [_A, _A] and len(h.closed) == 2
+
+
+@pytest.mark.asyncio
+async def test_concurrent_identical_orders_register_and_send_payment_instructions_once(tmp_path: Path) -> None:
+    import httpx
+
+    port = _Port()
+    flushed: list[str] = []
+
+    async def flush(session_key: str) -> int:
+        await asyncio.sleep(0.01)
+        flushed.append(session_key)
+        return 1
+
+    async def notify(*_a: Any) -> None:
+        await asyncio.sleep(0.01)
+
+    class _SlowPort(_Port):
+        async def register_order(self, **kw: Any) -> OrderRegistrationResult:
+            await asyncio.sleep(0.05)  # ventana para que la 2ª request pase el pre-check
+            return await super().register_order(**kw)
+
+    port = _SlowPort()
+    deps = SessionActionsDeps(vault_dir=tmp_path, catalog=_Catalog(), order_port=port, flush=flush, notify_episode_closed=notify)
+    app = FastAPI()
+    app.include_router(session_actions.router, prefix="/api/chats")
+    app.dependency_overrides[session_actions.get_session_actions_deps] = lambda: deps
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        a, b = await asyncio.gather(c.post(_url("order"), json=_ORDER), c.post(_url("order"), json=_ORDER))
+    assert a.json()["order_id"] == b.json()["order_id"] == "order_1"
+    assert sorted([a.json()["already_registered"], b.json()["already_registered"]]) == [False, True]
+    assert len(port.calls) == 1 and flushed == [_A]

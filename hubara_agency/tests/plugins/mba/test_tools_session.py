@@ -152,3 +152,5 @@ async def test_cast_failures_become_explicit_error_envelopes(status: int, expect
     out = await session.escalate_to_human(chats, None, session_key=_S, params={"reason_category": "BULK_ORDER", "summary": "x"})
     assert {k: out[k] for k in expected} == expected
     assert out["message"]
+    # el detail del provider solo viaja para 409/422 (validación); el de auth no
+    assert ("detail" in out) == (status in (409, 422))

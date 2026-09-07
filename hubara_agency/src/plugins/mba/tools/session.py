@@ -121,13 +121,17 @@ async def _call(
                 "message": "El servicio no respondió a tiempo; la operación PUEDE haberse aplicado. No la repitas: pasa el caso a un colega.",
             }
         if 400 <= status < 500:
-            return {
+            out: dict[str, Any] = {
                 "error": "rejected",
                 "status": status,
                 "applied": False,
-                "detail": detail,
                 "message": "La operación fue rechazada; corrige los datos según `detail` o pasa el caso a un colega.",
             }
+            # Solo el detail de validación/precondición (409/422) le sirve al
+            # agente; el de auth (401/403) describe infraestructura, no viaja.
+            if status in (409, 422):
+                out["detail"] = detail[:300]
+            return out
         return {
             "error": "chats_error",
             "status": status,
