@@ -55,9 +55,8 @@ def test_deletes_existen_en_el_repo_real(plan):
 
 
 def test_workspaces_del_overlay_existen(plan):
-    ov = forge.load_manifest()["workspace_overlay"]
-    for agent, ws in ov["agents"].items():
+    for agent, (ws, required) in forge.overlay_agents(forge.load_manifest()).items():
         assert (forge.REPO / ws).is_dir(), f"workspace de {agent} movido: {ws}"
-        for req in ov["required"]:
+        for req in required:
             real = req.replace("catalog/", "hubara_catalog/")
             assert (forge.REPO / ws / real).exists(), f"{agent}: {real} ya no existe en el motor"
