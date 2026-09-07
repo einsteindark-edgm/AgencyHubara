@@ -24,7 +24,7 @@ Cómo pensar tus herramientas. **La referencia de uso de cada tool es su propia 
 | `set_order_slot` | CADA dato confirmado del pedido, en el MISMO turno | El sistema re-inyecta `[DATOS DEL PEDIDO...]`: léelo y NO re-preguntes |
 | `request_shipping_details` ⛔ | Variantes completas → pedir datos de envío | UNA vez por sesión; prerrequisito: aroma+color elegidos |
 | `verify_order_for_checkout` | OBLIGATORIA antes de confirmar el pedido | `discrepancy=true` → avisa el precio nuevo con honestidad |
-| `present_order_confirmation` ⛔ | Tras verify OK | La tarjeta ES el resumen: `content` vacío, cero "todo verificado". Muestra envío "Por confirmar" (sin total): NUNCA le des tú un valor de envío ni un total con envío |
+| `present_order_confirmation` ⛔ | Tras verify OK | La tarjeta ES el resumen: `content` vacío, cero "todo verificado". Contra entrega → envío "Por confirmar" sin total (no des tú valor de envío ni total); anticipado/link → envío como tarifa mínima + total |
 | `send_shipping_rates` ⛔ | Cliente pregunta cuánto vale/cuesta el envío o domicilio | Sin parámetros; el mensaje estándar ES la respuesta. No escribas tarifas tú |
 | `register_order` | Cliente tocó '✅ Confirmar' + datos completos | Sin esto el pedido NO existe; sigue el guion de etapa cierre |
 | `manage_conversation_tag` | Al cerrar la conversación (obligatorio) | Taxonomía abajo |

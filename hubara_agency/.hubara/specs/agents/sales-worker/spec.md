@@ -271,8 +271,11 @@ opción directa (queda cubierta por el link de pago). Los ids de método en
 Las tarifas de envío publicadas ($7.900 Bogotá y municipios cercanos,
 $16.940 nivel nacional) son MÍNIMAS: el valor final lo recalcula la
 transportadora antes de despachar según tamaño y peso. El sistema MUST NOT
-darle al cliente un valor de envío definitivo ni un total que lo incluya.
-Los textos viven en `config/shipping.py` (`SHIPPING_RATES_MESSAGE`,
+darle al cliente un valor de envío como definitivo. Con **contra entrega**
+el envío se paga al recibir, así que el resumen del pedido MUST NOT mostrar
+valor de envío ni total; con **pago anticipado / link de pago** el envío se
+cobra por adelantado con la tarifa mínima y el resumen MUST aclararlo como
+tal. Los textos viven en `config/shipping.py` (`SHIPPING_RATES_MESSAGE`,
 `ORDER_SUMMARY_SHIPPING_NOTE`); el LLM no los redacta.
 
 #### Scenario: Pregunta por el valor del envío → mensaje estándar
@@ -283,13 +286,21 @@ Los textos viven en `config/shipping.py` (`SHIPPING_RATES_MESSAGE`,
 - AND la tool corta el turno (L-11): el mensaje ES la respuesta, sin burbuja adicional reformulando tarifas
 - AND el historial del dashboard registra el texto real enviado
 
-#### Scenario: Resumen del pedido con envío "Por confirmar"
+#### Scenario: Resumen del pedido contra entrega — envío "Por confirmar"
 
-- GIVEN el LLM invoca `present_order_confirmation` con `shipping_cop` (tarifa mínima estimada, incluso 0)
+- GIVEN el LLM invoca `present_order_confirmation` con `payment_method=cash_on_delivery` y `shipping_cop` (tarifa mínima estimada, incluso 0)
 - WHEN el flush renderiza el intent `order_confirmation`
-- THEN el body muestra los ítems, `Subtotal productos: $X COP`, `Envío: Por confirmar*`, `📍 Dirección: …`, `💳 Medio de pago: …` y la nota `📌 El valor final del envío se recalculará directamente con la transportadora antes de despachar y te lo confirmaremos para cerrar tu pedido.`
+- THEN el body muestra los ítems, `Subtotal productos: $X COP`, `Envío: Por confirmar*`, `📍 Dirección: …`, `💳 Medio de pago: Contra entrega` y la nota `📌 El valor final del envío se recalculará directamente con la transportadora antes de despachar y te lo confirmaremos para cerrar tu pedido.`
 - AND NO aparece el valor del envío ni una línea de total
 - AND `shipping_cop`/`total_cop` siguen viajando en el intent (analytics + consistencia con `register_order`) y el envelope al LLM no trae un total con envío
+
+#### Scenario: Resumen del pedido pago anticipado / link — envío como tarifa mínima
+
+- GIVEN el LLM invoca `present_order_confirmation` con `payment_method` transfer o payment_link
+- WHEN el flush renderiza el intent `order_confirmation`
+- THEN el body muestra `Subtotal productos: $X COP`, `Envío (tarifa mínima): $Y COP` (o `Envío: sin costo` si es 0) y `Total: $Z COP`, seguidos de dirección y medio de pago
+- AND NO aparece "Por confirmar" ni la nota 📌 (solo aplican a contra entrega)
+- AND el envelope al LLM trae el total y le pide aclarar "tarifa mínima" si menciona el envío
 
 ### Requirement: Tools de UI rica (decision tools)
 

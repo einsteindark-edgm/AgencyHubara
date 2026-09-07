@@ -708,11 +708,12 @@ class PresentOrderConfirmationTool(ToolBase):
     name = "present_order_confirmation"
     description = (
         "Envía la confirmación formal del pedido al cliente: items, "
-        "precios, subtotal de productos, envío 'Por confirmar' (el valor "
-        "definitivo lo recalcula la transportadora antes de despachar — "
-        "el resumen NO muestra valor de envío ni total), dirección, medio "
-        "de pago y botón para confirmar/pagar. `shipping_cop` es la tarifa "
-        "mínima estimada (uso interno, no se muestra). "
+        "precios, subtotal de productos, envío, dirección, medio de pago y "
+        "botón para confirmar/pagar. Con contra entrega el envío figura "
+        "'Por confirmar' (lo recalcula la transportadora antes de "
+        "despachar) y NO se muestra total; con pago anticipado o link se "
+        "muestra el envío como tarifa mínima + total. `shipping_cop` es la "
+        "tarifa mínima (Bogotá y cercanos $7.900 / nacional $16.940). "
         "Llámala SOLO después de que `verify_order_for_checkout` retornó "
         "verified=True y discrepancy=False. Si hay discrepancia, primero "
         "informa al cliente honestamente y pídele confirmación con el "
@@ -874,25 +875,38 @@ class PresentOrderConfirmationTool(ToolBase):
         }
         _append_intent(ctx.session_key, intent)
 
-        # Regla del operador (2026-09-07): el resumen que ve el cliente NO
-        # trae el valor del envío ni un total con envío (queda "Por
-        # confirmar" con la transportadora). El envelope tampoco le da al
-        # LLM un total para que no lo repita en texto.
+        # Regla del operador (2026-09-07): con CONTRA ENTREGA el resumen que
+        # ve el cliente NO trae el valor del envío ni un total con envío
+        # (queda "Por confirmar" con la transportadora) — el envelope tampoco
+        # le da al LLM un total para que no lo repita en texto. Con pago
+        # anticipado / link el cliente sí ve el envío (tarifa mínima) + total.
+        wait_hint = (
+            "Espera la respuesta del cliente: si confirma con Order Details "
+            "nativo, recibirás el evento order_status:captured. Si fallback "
+            "a botones, recibirás '[el cliente tocó el botón: Confirmar]'."
+        )
+        if payment_method == "cash_on_delivery":
+            amounts = {"subtotal_cop": subtotal}
+            summary = (
+                f"Confirmación enviada: productos ${subtotal:,} COP; el "
+                "envío figura 'Por confirmar' (la transportadora lo "
+                "recalcula antes de despachar) — no le des al cliente un "
+                f"valor de envío ni un total que lo incluya. {wait_hint}"
+            )
+        else:
+            amounts = {"subtotal_cop": subtotal, "total_cop": total}
+            summary = (
+                f"Confirmación enviada: productos ${subtotal:,} COP + envío "
+                f"${shipping_cop:,} COP (tarifa mínima) = total ${total:,} "
+                f"COP. Si mencionas el envío, aclara que es tarifa mínima. "
+                f"{wait_hint}"
+            )
         return json.dumps({
             "queued": True,
             "kind": "order_confirmation",
             "reference_id": reference_id,
-            "subtotal_cop": subtotal,
-            "summary": (
-                f"Confirmación enviada: productos ${subtotal:,} COP; el "
-                "envío figura 'Por confirmar' (la transportadora lo "
-                "recalcula antes de despachar) — no le des al cliente un "
-                "valor de envío ni un total que lo incluya. Espera la "
-                "respuesta del cliente: si confirma con Order Details "
-                "nativo, recibirás el evento order_status:captured. Si "
-                "fallback a botones, recibirás '[el cliente tocó el botón: "
-                "Confirmar]'."
-            ).replace(",", "."),
+            **amounts,
+            "summary": summary.replace(",", "."),
         }, ensure_ascii=False)
 
 

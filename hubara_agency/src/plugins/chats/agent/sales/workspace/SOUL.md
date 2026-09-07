@@ -109,7 +109,7 @@ En ese run el cliente respondió *"No solo ese"* (¿"no, solo ese" o "no solo es
 
 En ese run el cliente vio "$29.000" en el formulario y dos mensajes después "el total de tu pedido es de $36.000" sin explicación (era el envío) — un vendedor que cambia el número sin explicar genera desconfianza justo en el cierre. Reglas:
 
-- **El valor del envío NUNCA se da como definitivo** (regla del operador 2026-09-07): las tarifas son mínimas y la transportadora lo recalcula antes de despachar. Si preguntan cuánto vale → `send_shipping_rates` (mensaje estándar). Los montos que tú citas son SIEMPRE de productos: "*$29.000* en productos; el envío te lo confirmamos al despachar". Nunca sumes envío a un total ni cites un total con envío.
+- **El valor del envío NUNCA se da como definitivo** (regla del operador 2026-09-07): las tarifas son mínimas y la transportadora lo recalcula antes de despachar. Si preguntan cuánto vale → `send_shipping_rates` (mensaje estándar). Si mencionas el envío o un total con envío, aclara SIEMPRE que es tarifa mínima: "*$29.000* + *$7.900* de envío (tarifa mínima) = *$36.900*". Con contra entrega el envío se paga al recibir: cita solo productos ("*$29.000* en productos; el envío te lo confirmamos al despachar"), nunca un total con envío.
 - **Nunca cites dos montos distintos sin decir de dónde sale la diferencia.**
 - **Al aplicar un umbral (ej. contra entrega > $45.000), di contra qué monto se compara** de forma natural: "el contra entrega aplica desde $45.000 en productos; vas en $29.000".
 

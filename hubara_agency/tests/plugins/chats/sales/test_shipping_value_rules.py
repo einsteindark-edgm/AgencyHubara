@@ -4,10 +4,14 @@
    estándar (tarifas mínimas Bogotá / nacional + "el valor definitivo se
    confirma al despachar"). Lo manda el sistema de forma determinista vía la
    tool `send_shipping_rates` → intent `shipping_rates` → texto FIJO.
-2. El "Resumen de tu pedido" (`present_order_confirmation`) NO da el valor
-   del envío ni un total que lo incluya: muestra el subtotal de productos,
-   "Envío: Por confirmar*", dirección, medio de pago y la nota de que el
-   valor final se recalcula con la transportadora antes de despachar.
+2. El "Resumen de tu pedido" (`present_order_confirmation`) con CONTRA
+   ENTREGA no da el valor del envío ni un total que lo incluya: muestra el
+   subtotal de productos, "Envío: Por confirmar*", dirección, medio de pago
+   y la nota de que el valor final se recalcula con la transportadora antes
+   de despachar (aclaración del operador: la nota es SOLO contra entrega).
+3. Con pago anticipado o link de pago el envío se cobra por adelantado: el
+   resumen muestra el envío aclarando que es TARIFA MÍNIMA, más el total —
+   coherente con el mensaje de datos de pago (#236).
 """
 from __future__ import annotations
 
@@ -102,8 +106,9 @@ async def test_order_summary_matches_operator_format():
 
 @pytest.mark.asyncio
 async def test_order_summary_never_states_shipping_value_nor_total():
-    """El valor del envío (aunque el LLM lo pasó como 16.940) y el total que
-    lo incluye NO se le dan al cliente: se recalcula con la transportadora."""
+    """Contra entrega: el valor del envío (aunque el LLM lo pasó como 16.940)
+    y el total que lo incluye NO se le dan al cliente: se recalcula con la
+    transportadora al despachar."""
     body = await _order_summary_body()
     assert "16.940" not in body
     assert "129.440" not in body
@@ -124,6 +129,64 @@ async def test_order_summary_shipping_pending_even_when_llm_passes_zero():
     body = wa_client.send_interactive_buttons.await_args.args[2].body
     assert "Envío: Por confirmar*" in body
     assert "sin costo" not in body.lower()
+
+
+# --- Pago anticipado / link de pago: el envío se cobra por adelantado -------
+
+_PREPAID_EXPECTED_TAIL = [
+    "",
+    "Subtotal productos: $112.500 COP",
+    "Envío (tarifa mínima): $16.940 COP",
+    "Total: $129.440 COP",
+    "",
+    "📍 Dirección: Calle 59b sur 38, Poblado, Medellín",
+    "",
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "label"),
+    [("transfer", "Pago anticipado (Nequi)"), ("payment_link", "Link de pago")],
+)
+async def test_order_summary_prepaid_shows_minimum_shipping_and_total(
+    method: str, label: str
+):
+    """Pago anticipado / link: el cliente paga el envío ahora, así que el
+    resumen muestra el envío ACLARANDO que es tarifa mínima, y el total. Sin
+    "Por confirmar" ni la nota 📌 (esas son solo contra entrega)."""
+    wa_client = _wa_client()
+    await _dispatch(
+        wa_client, "order_confirmation", {**_ORDER_PARAMS, "payment_method": method}
+    )
+    body = wa_client.send_interactive_buttons.await_args.args[2].body
+    expected = "\n".join([
+        "*Resumen de tu pedido*",
+        "• 1× Velón Amor Eterno — $38.500",
+        "• 1× Encanto Silvestre — $38.000",
+        "• 1× Sagrado Rostro — $36.000",
+        *_PREPAID_EXPECTED_TAIL,
+        f"💳 Medio de pago: {label}",
+    ])
+    assert body == expected
+    assert "Por confirmar" not in body
+    assert ORDER_SUMMARY_SHIPPING_NOTE not in body
+
+
+@pytest.mark.asyncio
+async def test_order_summary_prepaid_zero_shipping_says_no_cost():
+    """Mismo criterio que payment_instructions (#236): envío 0 = "sin costo",
+    nunca se inventa un reparto."""
+    wa_client = _wa_client()
+    await _dispatch(
+        wa_client,
+        "order_confirmation",
+        {**_ORDER_PARAMS, "payment_method": "transfer", "shipping_cop": 0,
+         "total_cop": 112500},
+    )
+    body = wa_client.send_interactive_buttons.await_args.args[2].body
+    assert "Envío: sin costo" in body
+    assert "Total: $112.500 COP" in body
 
 
 @pytest.mark.asyncio
@@ -261,11 +324,37 @@ class _OneProductCatalog:
 
 
 @pytest.mark.asyncio
-async def test_order_confirmation_envelope_does_not_hand_llm_a_total(
+async def test_order_confirmation_envelope_prepaid_hands_llm_the_total(
     tmp_path: Path,
 ):
-    """El summary que lee el LLM no trae "total $X" (lo repetiría al cliente
-    con el envío adentro); dice que el envío queda por confirmar."""
+    """Pago anticipado: el cliente sí ve el total (envío tarifa mínima
+    incluido), así que el envelope se lo da al LLM y no habla de "por
+    confirmar"."""
+    tool = PresentOrderConfirmationTool(
+        workspace=str(tmp_path), catalog=_OneProductCatalog()
+    )
+    result = json.loads(
+        await tool.execute_with_context(
+            _ctx(),
+            items=[{"handle": "velon-amor-eterno", "quantity": 1, "unit_price_cop": 38500}],
+            shipping_cop=16940,
+            shipping_address_summary="Calle 59b sur 38, Poblado, Medellín",
+            payment_method="transfer",
+        )
+    )
+    assert result["queued"] is True
+    assert "55.440" in result["summary"]
+    assert "tarifa mínima" in result["summary"].lower()
+    assert "por confirmar" not in result["summary"].lower()
+
+
+@pytest.mark.asyncio
+async def test_order_confirmation_envelope_cod_does_not_hand_llm_a_total(
+    tmp_path: Path,
+):
+    """Contra entrega: el summary que lee el LLM no trae "total $X" (lo
+    repetiría al cliente con el envío adentro); dice que el envío queda por
+    confirmar."""
     tool = PresentOrderConfirmationTool(
         workspace=str(tmp_path), catalog=_OneProductCatalog()
     )
