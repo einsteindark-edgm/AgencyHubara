@@ -97,7 +97,7 @@ business_info:
   return_policy: |
     Garantía de 48 horas desde la recepción para envíos rotos o defectuosos, siempre que la vela no se haya encendido y conserve su empaque y el tamaño de la mecha.
   purchase_info: |
-    La compra se cierra dentro del chat de WhatsApp: el asesor toma el pedido, se registran los datos de envío y el equipo verifica el pago. Descuento de bienvenida del 5% automático en la primera compra a través de la página web. Cupón del 10% para la próxima compra a clientes recurrentes que envíen foto o video contando su experiencia por el chat. El color del portavelas (recipiente) es según disponibilidad y se escoge al finalizar el pago del pedido.
+    La compra se cierra dentro del chat de WhatsApp: el asesor toma el pedido, se registran los datos de envío y el equipo verifica el pago. Descuento de bienvenida del 5% automático en la primera compra a través de la página web. Cupón del 10% para la próxima compra a clientes recurrentes que envíen foto o video contando su experiencia por el chat. En los productos que traen portavela (recipiente), como el Dúo Zodiacal, el color del portavelas es según disponibilidad y se escoge al finalizar el pago del pedido.
   contact_info:
     email: null
     hours_of_operation: "Zona horaria de Colombia (America/Bogota, UTC-5). El equipo humano atiende en horario laboral colombiano; el asesor responde en el chat a toda hora."
@@ -115,7 +115,7 @@ faqs:
   - question: "¿Por qué son más caras que otras velas?"
     answer: "La diferencia está en la cera de palma 100% vegetal, las tres capas de fragancia (notas de salida, corazón y fondo) y el trabajo a mano. Si buscas algo de un rango más cómodo, el asesor te muestra opciones."
   - question: "¿De qué color es el portavelas?"
-    answer: "El color del portavelas es según disponibilidad. Al finalizar el pago del pedido se escogen los colores."
+    answer: "Solo algunos productos traen portavela, como el Dúo Zodiacal. En esos, el color del portavelas es según disponibilidad y al finalizar el pago del pedido se escogen los colores."
   - question: "¿Tienen garantía?"
     answer: "Sí, 48 horas desde la recepción para envíos rotos o defectuosos, siempre que la vela no se haya encendido y conserve su empaque y el tamaño de la mecha."
   - question: "¿Tienen descuentos?"

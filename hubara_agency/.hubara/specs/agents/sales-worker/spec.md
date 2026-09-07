@@ -176,19 +176,32 @@ crea una draft order en Medusa (o stub local si Medusa no configurado).
 - AND la tool devuelve `{success: false, error_detail: "..."}`
 - AND el LLM debe decirle al cliente "tuvimos un problema, te confirmamos en un momento"
 
-#### Scenario: Nota operativa del portavelas viaja al humano
+#### Scenario: Nota operativa del portavelas viaja al humano (solo si el pedido lo incluye)
 
 - GIVEN `register_order` devolvió `registered=true`
+- AND algún ítem del pedido es un producto que trae portavela según el catálogo (`metadata.portavelas` explícito, o mención "portavela" en título/description — hoy el Dúo Zodiacal)
 - WHEN la tool arma el `order_registered_decision.motivo` (el texto que la red de seguridad `ensure_payment_pending_closure` escribe en `metadata.motivo` al escalar)
-- THEN el motivo SHALL incluir la nota "definir con el cliente el color del portavelas (según disponibilidad)"
+- THEN el envelope SHALL traer `portavelas.included=true` + `order_registered.portavelas_included=true`
+- AND el motivo SHALL incluir la nota "definir con el cliente el color del portavelas (según disponibilidad)"
 - AND el envelope instruye al LLM a incluir la misma nota en el `summary` de `escalate_to_human(PAYMENT_VERIFICATION_PENDING)`
 - AND a avisarle al comprador en la despedida que al finalizar el pago del pedido se escogen los colores del portavelas
+
+#### Scenario: Pedido sin portavelas — nadie habla del portavelas (run 943e6bff, 2026-09-07)
+
+- GIVEN `register_order` devolvió `registered=true`
+- AND ningún ítem del pedido trae portavela (o el catálogo no está disponible / el handle no resuelve — la tool es conservadora)
+- THEN el envelope SHALL traer `portavelas.included=false` y el motivo MUST NOT mencionar el portavelas
+- AND el envelope instruye al LLM a NO mencionar el portavelas ni sus colores, ni al cliente ni en el summary
+- AND si igual el LLM escribe una oración sobre el portavelas en la despedida, el workflow (gate `portavelas-notice-guard-v1`) SHALL removerla antes de enviar y de persistir, dejando el resto del mensaje intacto (si no queda texto, envía la despedida mínima "Listo, tu pedido quedó registrado 🤍. Gracias por elegir a Hubara.")
 
 ### Requirement: Política de color del portavelas
 
 El sales-worker MUST responder a la pregunta por el color del portavelas
 que el color es según disponibilidad, y MUST NOT tratarlo como variante
-del pedido (no se fija con `set_order_slot` ni se ofrece con picker).
+del pedido (no se fija con `set_order_slot` ni se ofrece con picker). La
+política aplica SOLO a los productos que traen portavela (hoy el Dúo
+Zodiacal); el agente MUST NOT mencionar el portavelas por su cuenta cuando
+el pedido no incluye uno.
 
 #### Scenario: Cliente pregunta el color del portavelas
 

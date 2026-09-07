@@ -31,6 +31,11 @@ from src.platform.catalog.errors import (
 from src.platform.catalog.local_snapshot import LocalSnapshotCatalogClient
 from src.platform.catalog.paths import get_max_age_minutes, get_snapshot_dir
 from src.platform.catalog.port import CatalogPort
+from src.platform.catalog.portavelas import (
+    PORTAVELAS_METADATA_KEY,
+    order_includes_portavelas,
+    product_includes_portavelas,
+)
 from src.platform.catalog.variant_attrs import (
     VariantAttrs,
     match_option,
@@ -49,6 +54,7 @@ from src.platform.catalog.variant_colors import (
 
 __all__ = [
     "COLORS_METADATA_KEY",
+    "PORTAVELAS_METADATA_KEY",
     "CatalogCategoryDTO",
     "CatalogError",
     "CatalogImageDTO",
@@ -72,9 +78,11 @@ __all__ = [
     "match_option",
     "matching_color_alias",
     "normalize_label",
+    "order_includes_portavelas",
     "parse_variant_colors",
     "parse_variant_tags",
     "primary_colors",
+    "product_includes_portavelas",
     "resolve_category",
     "split_multi_label",
     "values_for_color",

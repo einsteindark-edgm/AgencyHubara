@@ -208,6 +208,9 @@ register_tool_extension(
     lambda workspace: RegisterOrderTool(
         workspace=str(workspace),
         port=_order_registration_port,
+        # Incidente 943e6bff: decide contra el catálogo si el pedido trae
+        # portavela — solo entonces la despedida/nota lo mencionan.
+        catalog=_catalog,
     ),
 )
 

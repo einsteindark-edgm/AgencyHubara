@@ -1738,3 +1738,204 @@ async def test_closing_escalation_safety_net_sends_final_content_before_shutdown
         f"El shutdown por escalación patrón A no cerró el workflow — corrió "
         f"ghosting ({tracker.ghosting_calls} veces)."
     )
+
+
+@pytest.mark.asyncio
+async def test_portavelas_notice_stripped_when_order_has_no_portavelas(
+    tmp_path: Path,
+) -> None:
+    """Run 943e6bff (2026-09-07): el cliente cerró un pedido SIN portavelas y
+    recibió "Al finalizar el pago del pedido se escogen los colores del
+    portavelas, según disponibilidad". El prompt ya no lo pide, pero el
+    guard del workflow (gated `portavelas-notice-guard-v1`) garantiza
+    DETERMINISTA que, si `order_registered_decision.portavelas_included` es
+    False, ninguna oración sobre el portavelas sale al cliente ni se
+    persiste — aunque el LLM la escriba igual."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    order_motivo = (
+        "Cliente confirmó pedido order_456 por $17000 COP, método transfer; "
+        "falta verificación humana del pago."
+    )
+    register_payload = json.dumps(
+        {
+            "registered": True,
+            "order_id": "order_456",
+            "provider": "medusa",
+            "portavelas": {"included": False, "handles": []},
+            "order_registered": {
+                "session_id": "wa_noportavela",
+                "order_id": "order_456",
+                "payment_method": "transfer",
+                "total_cop": 17000,
+                "currency": "COP",
+                "motivo": order_motivo,
+                "portavelas_included": False,
+            },
+            "summary": "Pedido registrado en Medusa con ID order_456.",
+        },
+        ensure_ascii=False,
+    )
+    responses = [
+        LLMResponseData(
+            content="",
+            finish_reason="tool_calls",
+            has_tool_calls=True,
+            tool_calls=[
+                ToolCallData(
+                    id="call_reg",
+                    name="register_order",
+                    arguments={"confirmado": True},
+                )
+            ],
+        ),
+        # El LLM desobedece y mete la frase del portavelas igual (texto
+        # literal del incidente).
+        LLMResponseData(
+            content=(
+                "Listo, tu pedido quedó registrado 🤍 Al finalizar el pago "
+                "del pedido se escogen los colores del portavelas, según "
+                "disponibilidad. Gracias por elegir a Hubara."
+            ),
+            finish_reason="stop",
+            has_tool_calls=False,
+            tool_calls=[],
+        ),
+    ]
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=SALES_QUEUE,
+            workflows=[HubaraSalesSessionWorkflow],
+            activities=_make_fake_activities(
+                tracker,
+                workspace_path=str(workspace),
+                llm_responses=responses,
+                tool_results={"register_order": register_payload},
+                payment_closure_result=PaymentPendingClosureResult(
+                    acted=False, escalated=True
+                ),
+            ),
+        ):
+            handle = await env.client.start_workflow(
+                HubaraSalesSessionWorkflow.run,
+                SalesSessionInput(
+                    session_id="wa_noportavela",
+                    runtime_workspace_path=str(workspace),
+                ),
+                id="session-wa_noportavela",
+                task_queue=SALES_QUEUE,
+            )
+            await handle.signal(
+                HubaraSalesSessionWorkflow.send_message,
+                args=["Sí, confirmo", None, None],
+            )
+            await handle.result()
+
+    sent = [m for (_sid, m) in tracker.send_whatsapp_calls]
+    assert sent, "La despedida no se envió (el guard no debe silenciar el turno)."
+    assert all("portavela" not in m.lower() for m in sent), (
+        f"La frase del portavelas llegó al cliente en un pedido sin "
+        f"portavelas: {sent}"
+    )
+    assert any("pedido quedó registrado" in m for m in sent), (
+        f"El guard borró más de la cuenta — la despedida se perdió: {sent}"
+    )
+    persisted = [m for (_sid, m) in tracker.persist_calls]
+    assert all("portavela" not in m.lower() for m in persisted), (
+        f"El historial del dashboard conservó la frase: {persisted}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_portavelas_notice_kept_when_order_includes_portavelas(
+    tmp_path: Path,
+) -> None:
+    """Contraparte: con `portavelas_included=True` (Dúo Zodiacal) el aviso al
+    comprador es legítimo y el guard NO lo toca."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    register_payload = json.dumps(
+        {
+            "registered": True,
+            "order_id": "order_789",
+            "provider": "medusa",
+            "portavelas": {"included": True, "handles": ["duo-zodiacal"]},
+            "order_registered": {
+                "session_id": "wa_duo",
+                "order_id": "order_789",
+                "payment_method": "transfer",
+                "total_cop": 95000,
+                "currency": "COP",
+                "motivo": "Cliente confirmó pedido order_789; pendiente: color del portavelas.",
+                "portavelas_included": True,
+            },
+            "summary": "Pedido registrado en Medusa con ID order_789.",
+        },
+        ensure_ascii=False,
+    )
+    farewell = (
+        "Listo, tu pedido quedó registrado 🤍 Al finalizar el pago del pedido "
+        "se escogen los colores del portavelas, según disponibilidad. Gracias "
+        "por elegir a Hubara."
+    )
+    responses = [
+        LLMResponseData(
+            content="",
+            finish_reason="tool_calls",
+            has_tool_calls=True,
+            tool_calls=[
+                ToolCallData(
+                    id="call_reg",
+                    name="register_order",
+                    arguments={"confirmado": True},
+                )
+            ],
+        ),
+        LLMResponseData(
+            content=farewell,
+            finish_reason="stop",
+            has_tool_calls=False,
+            tool_calls=[],
+        ),
+    ]
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=SALES_QUEUE,
+            workflows=[HubaraSalesSessionWorkflow],
+            activities=_make_fake_activities(
+                tracker,
+                workspace_path=str(workspace),
+                llm_responses=responses,
+                tool_results={"register_order": register_payload},
+                payment_closure_result=PaymentPendingClosureResult(
+                    acted=False, escalated=True
+                ),
+            ),
+        ):
+            handle = await env.client.start_workflow(
+                HubaraSalesSessionWorkflow.run,
+                SalesSessionInput(
+                    session_id="wa_duo",
+                    runtime_workspace_path=str(workspace),
+                ),
+                id="session-wa_duo",
+                task_queue=SALES_QUEUE,
+            )
+            await handle.signal(
+                HubaraSalesSessionWorkflow.send_message,
+                args=["Sí, confirmo", None, None],
+            )
+            await handle.result()
+
+    sent = [m for (_sid, m) in tracker.send_whatsapp_calls]
+    assert any("portavelas" in m for m in sent), (
+        f"El guard borró el aviso legítimo de un pedido con portavelas: {sent}"
+    )
