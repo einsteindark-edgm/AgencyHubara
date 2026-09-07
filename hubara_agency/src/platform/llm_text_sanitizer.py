@@ -441,6 +441,42 @@ def looks_like_admin_leak(raw: str | None) -> bool:
     return any(p.search(text) for p in _ADMIN_LEAK_PATTERNS)
 
 
+# Incidente 943e6bff (2026-09-07): un pedido SIN portavelas cerró con "Al
+# finalizar el pago del pedido se escogen los colores del portavelas, según
+# disponibilidad". La política del portavelas solo aplica a los productos que
+# lo incluyen (Dúo Zodiacal); `RegisterOrderTool` lo decide contra el catálogo
+# y el workflow, si el pedido NO lo incluye, borra la oración aunque el LLM la
+# escriba igual. Corte por fin de oración: `. ! ? …`, salto de línea, o un
+# símbolo/emoji seguido de mayúscula ("registrado 🤍 Al finalizar…" — el
+# texto literal del incidente no lleva punto después del emoji).
+_SENTENCE_SPLIT_RE = re.compile(
+    r"(?<=[.!?…])\s+|\n+|(?<![\w,;:\s])\s+(?=[A-ZÁÉÍÓÚÑ¡¿])"
+)
+_PORTAVELAS_MENTION = "portavela"  # cubre "portavela" y "portavelas"
+
+
+def strip_portavelas_notice(raw: str | None) -> str:
+    """Quita del texto toda oración que mencione el portavelas.
+
+    Determinista y conservador: solo toca oraciones con la palabra; el resto
+    del mensaje (saludo, "tu pedido quedó registrado", agradecimiento) queda
+    intacto y en su orden. Si todo el texto era sobre el portavelas devuelve
+    "" — el caller decide el fallback. Puro, stdlib-only (workflow sandbox).
+    """
+    if not raw:
+        return ""
+    text = raw.strip()
+    if _PORTAVELAS_MENTION not in text.casefold():
+        return text
+    kept = [
+        part.strip()
+        for part in _SENTENCE_SPLIT_RE.split(text)
+        if part and part.strip()
+        and _PORTAVELAS_MENTION not in part.casefold()
+    ]
+    return " ".join(kept)
+
+
 def is_no_message_abstention(raw: str | None) -> bool:
     """True si el output del LLM es una abstención explícita (`NO_MESSAGE`).
 

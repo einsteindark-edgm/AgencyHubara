@@ -53,6 +53,7 @@ from src.platform.llm_text_sanitizer import (
     is_no_message_abstention as is_no_message_abstention,
     looks_like_admin_leak as looks_like_admin_leak,
     sanitize_llm_text as sanitize_llm_text,
+    strip_portavelas_notice as strip_portavelas_notice,
 )
 from src.platform.workflow_helpers import (
     CONVERSATIONAL_TURN_ACTIVITIES as CONVERSATIONAL_TURN_ACTIVITIES,
