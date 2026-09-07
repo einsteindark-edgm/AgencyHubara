@@ -195,6 +195,7 @@ FIXTURE_FILES = {
     f"{MBA_WS}/agent.yaml": (
         "id: sales\ndisplay_name: Asesor de Ventas\nskills: [persona-y-tono]\n"
         "business_info:\n  business_description: Hubara vende velas artesanales.\n"
+        "connector:\n  name: hubara-commerce\n  description: API de Hubara.\n"
     ),
     f"{MBA_WS}/skills/persona-y-tono.md": (
         "---\ntitle: persona-y-tono\ndescription: Siempre.\n---\n\nEres el asesor de Hubara.\n"
@@ -559,3 +560,19 @@ def test_init_siembra_el_agente_mba_con_yaml_valido(mini_repo, tmp_path):
     assert spec["display_name"] == "Asesor de Ventas"
     skill = (bundle / "workspace" / "mba_sales" / "skills" / "persona-y-tono.md").read_text()
     assert "asesor de Acme" in skill and "TODO-BRAND" in skill
+
+
+def test_init_mas_apply_dejan_el_clon_mba_sin_residuales(mini_repo, tmp_path):
+    """Lo que corre el gate `forge-gates` de CI: init → apply --allow-todos debe
+    dejar cero residuales. El nombre del connector (`hubara-commerce`) es del
+    cliente, no del motor: se siembra como `<slug>-commerce`."""
+    clients_dir = tmp_path / "clients"
+    bundle = forge.run_init("acme", forge.load_manifest(), src=mini_repo, clients_dir=clients_dir)
+    agent = (bundle / "workspace" / "mba_sales" / "agent.yaml").read_text()
+    assert "acme-commerce" in agent and "hubara-commerce" not in agent
+    dest = tmp_path / "AgencyAcmeInit"
+    report = forge.run_apply(
+        src=mini_repo, dest=dest, client_dir=bundle, manifest=forge.load_manifest(), allow_todos=True
+    )
+    assert report["scan"]["forbidden"] == []
+    assert report["scan"]["critical"] == [], report["scan"]["critical"]

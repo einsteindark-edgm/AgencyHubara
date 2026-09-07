@@ -552,7 +552,12 @@ def run_init(slug: str, manifest: dict, src: Path = REPO, clients_dir: Path = CL
                 shutil.copy2(f, target)
                 continue
             text = _mask(text, preserve)
-            text = text.replace("Hubara", company).replace("hubara_catalog", f"{slug}_catalog")
+            text = (
+                text.replace("Hubara", company)
+                .replace("hubara_catalog", f"{slug}_catalog")
+                # nombre del connector de MBA: es del cliente (lo ve Meta), no del motor
+                .replace("hubara-commerce", f"{slug}-commerce")
+            )
             text = _unmask(text, preserve)
             target.write_text(_todo_banner(f, company) + text, encoding="utf-8")
     return client_dir
