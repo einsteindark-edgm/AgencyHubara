@@ -48,6 +48,13 @@ _LAZY_EXPORTS: dict[str, str] = {
     "CatalogUnavailableError": "src.platform.catalog.errors",
     "ProductNotFoundError": "src.platform.catalog.errors",
     "CheckoutVerificationPort": "src.platform.catalog.checkout_port",
+    # Item de entrada del CheckoutVerificationPort + helpers puros del catálogo
+    # (listas cerradas de aromas/colores, mapa signo→color, slug→label) que un
+    # plugin necesita para armar envelopes sin tocar src.platform (D1.2 mba):
+    "CheckoutItem": "src.platform.catalog.checkout_port",
+    "parse_variant_tags": "src.platform.catalog.variant_attrs",
+    "parse_variant_colors": "src.platform.catalog.variant_colors",
+    "deslugify": "src.platform.catalog.categories",
     "CustomerScoringPort": "src.platform.customer_scoring.port",
     "ImageVisionPort": "src.platform.vision.port",
     "MetaCatalogPort": "src.platform.meta_catalog.port",
@@ -65,6 +72,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     # Factories de composición (el deployment decide el vendor):
     "get_audio_transcription_port": "src.platform.audio.composition",
     "get_catalog_client": "src.platform.catalog.composition",
+    "get_checkout_verification_port": "src.platform.catalog.composition",
     "get_customer_scoring_port": "src.platform.customer_scoring.composition",
     "get_image_vision_port": "src.platform.vision.composition",
     "get_order_command_port": "src.platform.orders.composition",

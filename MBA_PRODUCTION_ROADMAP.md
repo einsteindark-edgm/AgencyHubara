@@ -1,8 +1,8 @@
 # Meta Business Agent — Roadmap a producción
 
-> **Estado:** En ejecución · **Actualizado:** 2026-09-07 (plugin `mba` VIVO en prod con las tools en 501) · **Base estratégica:** `META_BUSINESS_AGENT_PLAN.md` (2026-07-02, por qué y cómo convivir con MBA).
+> **Estado:** En ejecución · **Actualizado:** 2026-09-07 (D1.2a: las 5 tools de lectura del connector con lógica real; las 4 de escritura siguen en 501) · **Base estratégica:** `META_BUSINESS_AGENT_PLAN.md` (2026-07-02, por qué y cómo convivir con MBA).
 > **Este documento es el QUÉ HAY QUE CONSTRUIR**, en orden, con archivos, tests y criterio de terminado por desarrollo. Cuando contradiga al plan estratégico, gana este (está hecho con la doc de Meta releída el 2026-09-02..04 y con el código vivo).
-> PRs mergeados a `main`: #228 (preview), #230 (requests literales), #233 (plugin `mba` + guard de routers públicos + forge). Cada D siguiente es un PR chico desde `main`.
+> PRs mergeados a `main`: #228 (preview), #230 (requests literales), #233 (plugin `mba` + guard de routers públicos + forge), #234 (roadmap). En curso: D1.2a (tools de lectura + hardening del router público). Cada D siguiente es un PR chico desde `main`.
 
 ---
 
@@ -29,6 +29,7 @@
 | Guard de arquitectura: allowlist explícita de módulos `PUBLIC_ROUTER=True` (`chats.api.sales`, `mba.api.connector`) + ADR | `tests/architecture/test_public_routers.py`, `docs/adr/2026-09-04-public-router-allowlist.md` | ✅ (#233, label `architecture-change`) |
 | **forge:** `mba` en `ENABLED_PLUGINS_DEFAULT`; overlay `mba_sales` propio (`agent.yaml` + skills, `required` propio); el connector se siembra como `<slug>-commerce`; scope crítico del scanner; F7c en `NEXT_STEPS.md` | `forge/{forge.py,manifest.yaml,templates/NEXT_STEPS.md.tpl}` | ✅ 36 tests |
 | **Prod (2026-09-07):** `mba` en `ENABLED_PLUGINS` de `/opt/hubara/box.env` (por SSM, backup `box.env.bak-pre-mba`); `HUBARA_MBA_API_KEY` en SSM `/hubara/hubara/`; deploy re-rendido. `/api/mba/*` responde 401 (montado, auth), `/api/mba/tools/*` 401 (key presente), la sección aparece en el dashboard | SSM + `Backend deploy` 34134881752 | ✅ |
+| **D1.2a · Tools de lectura del connector con lógica real** (canal 1, ports del SDK): `search_products`, `list_categories`, `get_product_by_handle` (CatalogPort del snapshot; envelopes cerrados con COP primero, aromas/colores/diseños/variantes), `check_order_status` (vault de la sesión + OrderQueryPort en vivo con timeout, degrada y lo dice), `verify_order_for_checkout` (`get_checkout_verification_port()` nuevo en el SDK). Hardening del router público: rate limit por (IP, tool) antes de la auth (429), tope de body 64 KiB (413), JSON inválido (400), validación de query/body contra el MISMO `request_definition` que se registra en Meta (422 con la lista de problemas), `customer_phone` E.164 → `session_key = wa_<dígitos>` (scoping por cliente) | `src/plugins/mba/{domain/tool_calls.py,domain/guard.py,tools/,api/connector.py}` + `src/sdk/connectorkit` | ✅ 34 tests |
 
 **Hallazgos que condicionan lo que sigue** (todos verificados contra la doc de Meta):
 
@@ -62,21 +63,27 @@ Notación: **D<fase>.<n>** · Objetivo · Alcance (archivos) · Tests / DoD · D
 
 **D1.2 · Endpoints connector `/api/mba/tools/*` (9 tools)**
 Objetivo: exponer las tools que la sección lista como connector tools, con el contrato exacto que se registrará en Meta.
-Estado: el **contrato** ya existe (`api/connector.py`: `PUBLIC_ROUTER=True`, una ruta por tool declarada en `agent.yaml`, auth `X-API-Key` contra `HUBARA_MBA_API_KEY`, fail-closed); cada tool responde **501** hasta que se implemente la delegación de abajo. Los parámetros tipados que Meta ve ya están autorados en `agent.yaml` (son el schema del `request_definition`).
-Alcance restante: la lógica de cada tool (validar el body contra el schema de `agent.yaml`, resolver `customer_phone` → `session_key = wa_<phone>`, delegar por cast) + `depends_on`/`consumes` reales en el manifest. DoD de seguridad del router público (hallazgos de la revisión del PR #231): rate limit básico por IP/tool y tope de tamaño de body (el `logger.warning` con IP + tool en 401/503 ya está; el guard de módulos `PUBLIC_ROUTER` ya entró en #233). Cada tool delega a los use cases existentes vía cast:
+Estado: **D1.2a hecha** (lectura + hardening, ver §1): 5 de las 9 tools responden con lógica real por canal 1 (ports del SDK, sin cast); el pipeline del router público es rate limit → API key → tool/método → tope de body → JSON → validación contra el `request_definition` autorado → lógica. Las 4 tools de **escritura** siguen en 501 porque su lógica es de `chats` (draft del pedido en el episodio activo, `close_episode`, etiquetas, route=humano, `EpisodeClosedEvent`) y P-3 impide importarla.
+**D1.2b (siguiente PR) · Tools de escritura por cast a un contrato nuevo de `chats`:**
+- `chats` publica `session-actions@v1` (`src.plugins.chats.api.session_actions`, `require_auth`): `POST /api/chats/session-actions/{session_key}/draft` (set_order_slot: corre `SetOrderSlotTool`/`update_order_draft` sobre el episodio activo), `/order` (register_order: precio server-side desde el snapshot + `RegisterOrderTool` con huella/pre-check + `attach_order_to_active_episode` + cierre CONFIRMADO_PAGO_PENDIENTE + instrucciones de pago), `/tag` (manage_conversation_tag: reconciliación §D1.3 + `close_episode` + `EpisodeClosedEvent` vía `eventkit.dispatch_envelope_with_client`), `/escalate` (escalate_to_human: route=humano + tag HUMANO + motivo; invariante `human_handoff_tag_invariant`). Todo resuelve el episodio ACTIVO (§D1.10).
+- `castkit.forward` gana un modo de **service token** (hoy solo propaga el `Authorization` entrante; Meta manda `X-API-Key`, no un bearer): `auth="service"` lee `HUBARA_SERVICE_TOKEN` (ya lo acepta `require_auth`). Cambio de SDK con sus 3 patas (check en `test_castkit_loopback`, doc `docs/_sdk/10-castkit.md`).
+- `mba` declara `consumes: [{provider: chats, contract: session-actions@v1, into: session-ref, cast: api/chats_cast}]` y `src.plugins.mba.api.chats_cast` hace el forward.
+- Los parámetros que Meta envía en `register_order` (`items[{handle, variant_label, quantity}]`, envío, `metodo_pago`) NO traen precios: `chats` los recalcula desde el snapshot (SEC-07 ya recomputa importes en `RegisterOrderTool`).
+Tests D1.2b: `tests/plugins/chats/test_session_actions_api.py` (por endpoint, con vault temporal); `tests/plugins/mba/test_api.py` extendido con el cast (harness `tests/test_casts_auth_integration.py` con auth ON); idempotencia (dos `register_order` iguales → una orden); scoping (phone A no ve/escribe B).
+
+Tabla de delegación (la de D1.2a ya vive en código):
 
 | Tool | Método | Delegación | Escritura |
 |---|---|---|---|
-| `search_products`, `list_categories`, `get_product_by_handle` | GET | `catalog` snapshot (cast `catalog@v1`) | no |
-| `verify_order_for_checkout` | POST | `chats` checkout use case | no |
-| `check_order_status` | GET | `orders` by-session + `pay_status` real | no |
-| `set_order_slot` | POST | `chats` order draft (vault) | sí, sobrescribe |
-| `register_order` | POST | `chats` order registration (fingerprint + pre-check ya existentes) | sí, idempotente |
-| `manage_conversation_tag` | POST | reconciliación §D1.3 | sí |
-| `escalate_to_human` | POST | route=humano + tag HUMANO + mensaje de handoff | sí, toma el hilo |
+| `search_products`, `list_categories`, `get_product_by_handle` | GET | ✅ `get_catalog_client()` (snapshot) | no |
+| `check_order_status` | GET | ✅ vault de la sesión + `get_order_query_port()` (`pay_status` real, timeout 8 s) | no |
+| `verify_order_for_checkout` | POST | ✅ `get_checkout_verification_port()` (Medusa live) | no |
+| `set_order_slot` | POST | D1.2b → `chats` `session-actions@v1` `/draft` | sí, sobrescribe |
+| `register_order` | POST | D1.2b → `chats` `/order` (huella + pre-check existentes) | sí, idempotente |
+| `manage_conversation_tag` | POST | D1.2b → `chats` `/tag` + reconciliación §D1.3 | sí |
+| `escalate_to_human` | POST | D1.2b → `chats` `/escalate` (route=humano + tag HUMANO) | sí, toma el hilo |
 
-El schema de request de cada tool ya es el `request_definition` autorado en `agent.yaml` (lo que Meta ve); la validación del body en D1.2 usa ESE schema, así no hay dos contratos.
-Tests: por tool, `tests/plugins/mba/test_tools_api.py` con TestClient: 401 sin API key; idempotencia (dos POST iguales → una orden); scoping (phone A no ve pedidos de B); schemas expuestos válidos.
+El schema de request de cada tool es el `request_definition` autorado en `agent.yaml` (lo que Meta ve); el endpoint valida contra ESE schema (`domain/tool_calls.py::contracts_from_config`), así no hay dos contratos.
 Depende de: D1.1.
 
 **D1.3 · Semántica de las tools de estado (MBA propone, Hubara decide)**
@@ -223,7 +230,7 @@ DoD: tabla completada en `hubara_agency/.hubara/specs/plugins/mba/f0-results.md`
 ```
 D0 ✅ ─┐
 D1.8 ─┤ (independiente, hacer temprano)
-      ├─ D1.1 ✅ → D1.2 → D1.3 ─┐
+      ├─ D1.1 ✅ → D1.2a ✅ → D1.2b → D1.3 ─┐
       │        └─ D1.4 → D1.5 → D1.6 → D1.9
       │                       └─ D1.7
       ├─ D2.1 → D2.2 → D2.3

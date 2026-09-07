@@ -32,15 +32,26 @@ from src.platform.carts.port import (
 from src.platform.audio.port import (
     AudioTranscriptionPort as AudioTranscriptionPort,
 )
+from src.platform.catalog.categories import (
+    deslugify as deslugify,
+)
 from src.platform.catalog.checkout_port import (
+    CheckoutItem as CheckoutItem,
     CheckoutVerificationPort as CheckoutVerificationPort,
 )
 from src.platform.catalog.composition import (
     get_catalog_client as get_catalog_client,
+    get_checkout_verification_port as get_checkout_verification_port,
 )
 from src.platform.catalog.errors import (
     CatalogUnavailableError as CatalogUnavailableError,
     ProductNotFoundError as ProductNotFoundError,
+)
+from src.platform.catalog.variant_attrs import (
+    parse_variant_tags as parse_variant_tags,
+)
+from src.platform.catalog.variant_colors import (
+    parse_variant_colors as parse_variant_colors,
 )
 from src.platform.catalog.port import (
     CatalogPort as CatalogPort,

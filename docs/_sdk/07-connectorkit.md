@@ -50,6 +50,18 @@ deployment.**
   `src.platform.*.medusa_*`) en `p31_vendor_import_allowlist.txt` — igualdad
   exacta bidireccional, solo achica.
 
+- **Checkout live + helpers de catálogo (D1.2 del plugin `mba`)**:
+  `get_checkout_verification_port()` compone el `CheckoutVerificationPort`
+  real (`MedusaCheckoutVerification` sobre el snapshot + Medusa live; antes
+  solo el worker de sales lo armaba a mano desde módulos vendor congelados
+  por P-31). Requiere `MEDUSA_BASE_URL`; sin config lanza en composición —
+  el consumidor decide degradar (mba responde `catalog_unavailable`).
+  Viajan con el port `CheckoutItem` (entrada de `verify_items`) y los
+  helpers puros del catálogo `parse_variant_tags` (listas cerradas de
+  aromas/colores desde los tags), `parse_variant_colors` (mapa opción→color
+  desde `metadata.colores`) y `deslugify` (slug→label), para que un plugin
+  arme envelopes de producto sin importar `src.platform.catalog` (P-28).
+
 ## Cómo se usa
 
 ```python
