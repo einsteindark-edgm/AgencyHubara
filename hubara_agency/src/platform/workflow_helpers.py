@@ -227,6 +227,13 @@ TURN_ENDING_TOOLS_V2: frozenset[str] = TURN_ENDING_TOOLS | frozenset(
     {"present_products"}
 )
 
+# Regla del operador 2026-09-07: el mensaje estándar de tarifas de envío
+# (`send_shipping_rates`) ES la respuesta — sin corte, el LLM emitía otra
+# burbuja reformulando (o "corrigiendo") las tarifas. Tool NUEVA: ninguna
+# history deployada la invocó, así que sumarla al set v2 no altera el replay
+# (mismo criterio que agregar una tool al registry) — no requiere patch.
+TURN_ENDING_TOOLS_V2 = TURN_ENDING_TOOLS_V2 | frozenset({"send_shipping_rates"})
+
 # LEGACY — solo para replay de histories pre "no-pre-tool-forward-v1".
 # La whitelist intentaba clasificar el content junto a tool calls POR EL
 # BATCH ("junto a una tool presentacional es intro legítima") — pero el batch
@@ -237,7 +244,7 @@ TURN_ENDING_TOOLS_V2: frozenset[str] = TURN_ENDING_TOOLS | frozenset(
 # params de la tool (`intro_text`, `body`). Eliminar este set + la rama vieja
 # al deprecar el patch (drain: idle 1min en Sales).
 PRESENTATIONAL_TOOLS: frozenset[str] = TURN_ENDING_TOOLS | frozenset(
-    {"present_products"}
+    {"present_products", "send_shipping_rates"}
 )
 
 # Prefijos de tools que tocan al cliente (envían o encolan un UI intent que el

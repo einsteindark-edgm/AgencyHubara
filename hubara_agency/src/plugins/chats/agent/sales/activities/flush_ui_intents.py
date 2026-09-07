@@ -41,6 +41,11 @@ from src.plugins.chats.agent.sales.config.payments import (
     PAYMENT_LINK_SURCHARGE_OTHER_BANKS,
     get_nequi_number,
 )
+from src.plugins.chats.agent.sales.config.shipping import (
+    ORDER_SUMMARY_SHIPPING_LINE,
+    ORDER_SUMMARY_SHIPPING_NOTE,
+    SHIPPING_RATES_MESSAGE,
+)
 
 # Delay entre fotos del gallery — sin pausa Meta los entrega como burst, lo
 # que se ve robótico (3 thumbnails todos al mismo segundo). Una pausa
@@ -804,24 +809,44 @@ async def _dispatch_intent(
             for it in items
         ]
         items_summary = "\n".join(lines)
-        total = int(params.get("total_cop", 0))
         subtotal = int(params.get("subtotal_cop", 0))
         shipping = int(params.get("shipping_cop", 0))
+        total = int(params.get("total_cop", 0))
         currency = params.get("currency", "COP")
+        payment_method = params.get("payment_method")
         body_lines = [
             "*Resumen de tu pedido*",
             items_summary,
             "",
-            f"Subtotal: ${subtotal:,} {currency}".replace(",", "."),
+            f"Subtotal productos: {_format_cop(subtotal, currency)}",
         ]
-        if shipping > 0:
-            body_lines.append(f"Envío: ${shipping:,} {currency}".replace(",", "."))
+        if payment_method == "cash_on_delivery":
+            # Regla del operador (2026-09-07, `config/shipping.py`): con
+            # contra entrega el envío se paga al recibir y la transportadora
+            # lo recalcula antes de despachar → NO se muestra valor de envío
+            # ni total (sería subtotal + un envío que no es definitivo); va
+            # "Por confirmar" + la nota. `shipping_cop`/`total_cop` siguen en
+            # el intent (analytics), no se renderizan.
+            body_lines.extend(["", ORDER_SUMMARY_SHIPPING_LINE])
+        else:
+            # Pago anticipado / link: el cliente paga el envío AHORA con la
+            # tarifa mínima (misma que valida SEC-07 en register_order y que
+            # muestra payment_instructions, #236) → se aclara que es mínima y
+            # se da el total. Envío 0 = "sin costo", nunca se inventa reparto.
+            shipping_line = (
+                f"Envío (tarifa mínima): {_format_cop(shipping, currency)}"
+                if shipping > 0
+                else "Envío: sin costo"
+            )
+            body_lines.extend([shipping_line, f"Total: {_format_cop(total, currency)}"])
         body_lines.extend([
-            f"*Total: ${total:,} {currency}*".replace(",", "."),
             "",
-            f"📍 {params.get('shipping_address_summary', '')}",
-            f"💳 Pago: {_humanize_payment(params.get('payment_method'))}",
+            f"📍 Dirección: {params.get('shipping_address_summary', '')}",
+            "",
+            f"💳 Medio de pago: {_humanize_payment(payment_method)}",
         ])
+        if payment_method == "cash_on_delivery":
+            body_lines.extend(["", ORDER_SUMMARY_SHIPPING_NOTE])
         body = "\n".join(body_lines)
         ref = params.get("reference_id", "HUB")
         return await wa_client.send_interactive_buttons(
@@ -841,6 +866,14 @@ async def _dispatch_intent(
                     ),
                 ],
             ),
+        )
+
+    if kind == "shipping_rates":
+        # Mensaje estándar de tarifas de envío (regla del operador
+        # 2026-09-07). Texto FIJO desde `config/shipping.py`: los params del
+        # intent se ignoran a propósito — el LLM no redacta tarifas.
+        return await wa_client.send_text(
+            phone_number_id, to_number, SHIPPING_RATES_MESSAGE
         )
 
     if kind == "reaction":
@@ -1095,6 +1128,10 @@ def _build_history_event(
         if not text:
             return None
         return {"role": "assistant", "content": text}
+
+    if kind == "shipping_rates":
+        # Texto fijo real que recibió el cliente — el operador lo ve tal cual.
+        return {"role": "assistant", "content": SHIPPING_RATES_MESSAGE}
 
     if kind == "product_detail":
         caption = (params.get("caption") or "").strip()
