@@ -496,3 +496,121 @@ async def test_dispatch_nequi_disabled_partial_bank_sends_nothing(monkeypatch):
     )
     assert result is None
     wa_client.send_text.assert_not_awaited()
+
+
+# ----------------------------------------------------------------------
+# 4. Desglose del valor: productos + envío = total (requisito 2026-09-07,
+#    run 943e6bff: el cliente veía un solo "Valor" sin saber qué pagaba)
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_register_transfer_intent_carries_amount_breakdown(ctx, vault):
+    """El intent viaja con `subtotal_cop` + `shipping_cop` (ya validados
+    server-side por SEC-07: subtotal = Σ ítems, total = subtotal + envío)."""
+    await _register(ctx, vault, payment_method="transfer")
+    intent = _read_metadata(vault, ctx.session_key)["pending_ui_intents"][0]
+    assert intent["params"]["subtotal_cop"] == 35000
+    assert intent["params"]["shipping_cop"] == 12000
+    assert intent["params"]["total_cop"] == 47000
+
+
+@pytest.mark.asyncio
+async def test_register_payment_link_intent_carries_amount_breakdown(ctx, vault):
+    await _register(ctx, vault, payment_method="payment_link")
+    intent = _read_metadata(vault, ctx.session_key)["pending_ui_intents"][0]
+    assert intent["params"]["subtotal_cop"] == 35000
+    assert intent["params"]["shipping_cop"] == 12000
+
+
+async def _dispatch_text(monkeypatch, params: dict[str, Any]) -> str:
+    _set_env(monkeypatch, _ENV)
+    wa_client = SimpleNamespace(
+        send_text=AsyncMock(
+            return_value=SimpleNamespace(ok=True, wa_message_id="wamid.pay.b")
+        )
+    )
+    result = await _dispatch_intent(
+        wa_client=wa_client,
+        wa_dtos=wa_dtos,
+        kind="payment_instructions",
+        params=params,
+        fallback={},
+        phone_number_id="phone-1",
+        to_number="573000000000",
+        last_inbound_message_id=None,
+    )
+    assert result is not None and result.ok is True
+    return wa_client.send_text.await_args.args[2]
+
+
+@pytest.mark.asyncio
+async def test_dispatch_transfer_splits_products_and_shipping(monkeypatch):
+    """Pago anticipado: el cliente ve QUÉ está pagando — productos, envío y
+    el total, en ese orden, antes de la referencia del pedido."""
+    text = await _dispatch_text(monkeypatch, {
+        "order_id": "order_test_001",
+        "order_reference": "#22 (Plegaria de Luz)",
+        "subtotal_cop": 35000,
+        "shipping_cop": 12000,
+        "total_cop": 47000,
+        "currency": "COP",
+        "method": "transfer",
+    })
+    assert "*Productos*: $35.000 COP" in text
+    assert "*Envío*: $12.000 COP" in text
+    assert "*Total*: $47.000 COP" in text
+    assert "*Valor*" not in text
+    assert (
+        text.index("*Productos*")
+        < text.index("*Envío*")
+        < text.index("*Total*")
+        < text.index("Pedido: #22")
+    )
+    assert "**" not in text
+
+
+@pytest.mark.asyncio
+async def test_dispatch_payment_link_splits_and_labels_total_without_surcharge(
+    monkeypatch,
+):
+    text = await _dispatch_text(monkeypatch, {
+        "order_id": "order_test_001",
+        "subtotal_cop": 35000,
+        "shipping_cop": 12000,
+        "total_cop": 47000,
+        "currency": "COP",
+        "method": "payment_link",
+    })
+    assert "*Productos*: $35.000 COP" in text
+    assert "*Envío*: $12.000 COP" in text
+    assert "*Total sin recargo*: $47.000 COP" in text
+    assert "*Valor sin recargo*" not in text
+
+
+@pytest.mark.asyncio
+async def test_dispatch_free_shipping_says_so(monkeypatch):
+    text = await _dispatch_text(monkeypatch, {
+        "order_id": "order_test_001",
+        "subtotal_cop": 47000,
+        "shipping_cop": 0,
+        "total_cop": 47000,
+        "currency": "COP",
+    })
+    assert "*Productos*: $47.000 COP" in text
+    assert "*Envío*: sin costo" in text
+    assert "*Total*: $47.000 COP" in text
+
+
+@pytest.mark.asyncio
+async def test_dispatch_without_breakdown_keeps_single_value_line(monkeypatch):
+    """Intents encolados ANTES del deploy no traen subtotal/envío: el
+    mensaje sigue saliendo con el valor único (no se inventa un desglose)."""
+    text = await _dispatch_text(monkeypatch, {
+        "order_id": "order_test_001",
+        "total_cop": 47000,
+        "currency": "COP",
+    })
+    assert "*Valor*: $47.000 COP" in text
+    assert "*Productos*" not in text
+    assert "*Envío*" not in text

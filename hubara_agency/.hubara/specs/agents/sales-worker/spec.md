@@ -239,6 +239,13 @@ opción directa (queda cubierta por el link de pago). Los ids de método en
 - THEN el mensaje incluye la llave/Nequi (default 3229041190, override `PAYMENT_NEQUI_NUMBER`) y, si `PAYMENT_TRANSFER_*` está completo en env, el bloque bancario verbatim
 - AND con la llave desactivada (`PAYMENT_NEQUI_NUMBER=""`) y sin config bancaria completa NO se envía nada (fail-closed)
 
+#### Scenario: Desglose de lo que paga el cliente (2026-09-07)
+
+- GIVEN un pedido registrado con `payment_method` transfer o payment_link (montos validados por SEC-07: subtotal = Σ ítems, total = subtotal + envío)
+- WHEN el flush renderiza el intent `payment_instructions`
+- THEN el mensaje muestra `*Productos*`, `*Envío*` (o "sin costo" si es 0) y `*Total*` (`*Total sin recargo*` para link de pago), en ese orden, antes de la referencia del pedido
+- AND un intent sin `subtotal_cop`/`shipping_cop` (encolado antes del deploy) sigue mostrando la línea única `*Valor*` — el sistema nunca inventa un reparto
+
 #### Scenario: Aviso determinista del link de pago
 
 - GIVEN un pedido registrado con `payment_method=payment_link`
