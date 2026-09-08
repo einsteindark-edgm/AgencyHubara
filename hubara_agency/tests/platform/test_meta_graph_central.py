@@ -30,8 +30,8 @@ _CENTRAL = _HUBARA / "src" / "platform" / "meta" / "graph.py"
 
 class TestGraphUrlBuilder:
     def test_builds_versioned_path_from_segments(self) -> None:
-        url = graph_url("1704018554189395", "events")
-        assert url == f"{META_GRAPH_BASE_URL}/{META_GRAPH_API_VERSION}/1704018554189395/events"
+        url = graph_url("1234567890123456", "events")
+        assert url == f"{META_GRAPH_BASE_URL}/{META_GRAPH_API_VERSION}/1234567890123456/events"
 
     def test_default_version_is_a_live_meta_version(self) -> None:
         # v18 venció el 2026-01-26; v25 salió el 2026-02-18. El default tiene
