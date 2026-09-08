@@ -144,7 +144,7 @@ def status(*, wamid: str = "wamid.STANDBY.ECHO.1", kind: str = "delivered", cate
     )
 
 
-OUR_APP_ID = "36625019197144622"  # la app de Hubara (META_APP_ID)
+OUR_APP_ID = "100000000000001"  # nuestra app (META_APP_ID); id sintético
 MBA_APP_ID = "APP_MBA_999"  # el app id con el que Meta firma a Business Agent (a verificar en F0)
 
 

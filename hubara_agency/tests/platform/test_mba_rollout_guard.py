@@ -58,7 +58,7 @@ def test_sdk_runtime_reexports_the_guard() -> None:
 
 
 @pytest.mark.parametrize("raw,expected", [
-    (None, ""), ("", ""), ("PLACEHOLDER_set_out_of_band", ""), (" 36625019197144622 ", "36625019197144622"),
+    (None, ""), ("", ""), ("PLACEHOLDER_set_out_of_band", ""), (" 100000000000001 ", "100000000000001"),
     ("abc", ""), ("12 34", ""),
 ])
 def test_meta_app_id_parsing_only_accepts_digits_and_treats_placeholder_as_unset(raw, expected: str) -> None:
