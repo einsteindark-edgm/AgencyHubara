@@ -144,12 +144,39 @@ def status(*, wamid: str = "wamid.STANDBY.ECHO.1", kind: str = "delivered", cate
     )
 
 
-def handover() -> dict[str, Any]:
-    """`messaging_handovers` (D1.5): shape no documentado aún; solo importa el campo."""
+OUR_APP_ID = "36625019197144622"  # la app de Hubara (META_APP_ID)
+MBA_APP_ID = "APP_MBA_999"  # el app id con el que Meta firma a Business Agent (a verificar en F0)
+
+
+def handover(new_owner: str = OUR_APP_ID, previous_owner: str | None = MBA_APP_ID, *, ts: str = "1757300060",
+             metadata: str | None = None, customer: str = CUSTOMER, kind: str = "control_taken") -> dict[str, Any]:
+    """`messaging_handovers` (D1.5). La referencia de Meta para WhatsApp aún no
+    está publicada: el shape sigue el del roadmap (`control_taken` con
+    `previous_owner_app_id` / `new_owner_app_id` / `metadata`) sobre el sobre
+    de Messenger (`sender.id` = cliente). Verificar en F0."""
     body = _envelope({}, field="messaging_handovers")
     value = body["entry"][0]["changes"][0]["value"]
     value.pop("standby")
-    value["messaging_handovers"] = [{"event": "control_taken", "new_owner_app_id": "APP_MBA"}]
+    control = {"previous_owner_app_id": previous_owner, "new_owner_app_id": new_owner}
+    if metadata is not None:
+        control["metadata"] = metadata
+    value["messaging_handovers"] = [
+        {"sender": {"id": customer}, "recipient": {"id": PHONE_NUMBER_ID}, "timestamp": ts, kind: control}
+    ]
+    return body
+
+
+def handover_messenger_style(new_owner: str = MBA_APP_ID, previous_owner: str | None = OUR_APP_ID) -> dict[str, Any]:
+    """Variante con el sobre EXACTO del protocolo de traspaso de Messenger
+    (`pass_thread_control`, timestamp en ms como int)."""
+    body = _envelope({}, field="messaging_handovers")
+    value = body["entry"][0]["changes"][0]["value"]
+    value.pop("standby")
+    value["messaging_handovers"] = [
+        {"sender": {"id": CUSTOMER}, "recipient": {"id": PHONE_NUMBER_ID}, "timestamp": 1757300060000,
+         "pass_thread_control": {"previous_owner_app_id": previous_owner, "new_owner_app_id": new_owner,
+                                 "metadata": "release"}}
+    ]
     return body
 
 

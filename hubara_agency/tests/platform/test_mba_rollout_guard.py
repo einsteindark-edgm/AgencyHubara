@@ -52,3 +52,31 @@ def test_sdk_runtime_reexports_the_guard() -> None:
     import src.sdk.runtime as kit
 
     assert kit.mba_customer_allowed is impl.mba_customer_allowed
+
+
+# ── D1.5: nuestro app id (para saber si el `new_owner_app_id` somos nosotros) ──
+
+
+@pytest.mark.parametrize("raw,expected", [
+    (None, ""), ("", ""), ("PLACEHOLDER_set_out_of_band", ""), (" 36625019197144622 ", "36625019197144622"),
+    ("abc", ""), ("12 34", ""),
+])
+def test_meta_app_id_parsing_only_accepts_digits_and_treats_placeholder_as_unset(raw, expected: str) -> None:
+    from src.platform.config import parse_app_id
+
+    assert parse_app_id(raw) == expected
+
+
+def test_config_exposes_meta_app_id_as_a_string() -> None:
+    from src.platform import config
+
+    assert isinstance(config.META_APP_ID, str)
+
+
+def test_sdk_runtime_reexports_the_control_owner_constants() -> None:
+    from src.platform import constants as impl
+    import src.sdk.runtime as kit
+
+    assert kit.CONTROL_OWNER_MBA == impl.CONTROL_OWNER_MBA == "mba"
+    assert kit.CONTROL_OWNER_HUBARA == impl.CONTROL_OWNER_HUBARA == "hubara"
+    assert kit.CONTROL_OWNERS == impl.CONTROL_OWNERS == ("mba", "hubara")

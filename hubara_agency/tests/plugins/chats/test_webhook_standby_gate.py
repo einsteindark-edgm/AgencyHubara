@@ -1,6 +1,6 @@
 """D1.4 — el webhook público rutea `standby` al oído pasivo y NUNCA al ingest
 de Sales (que arranca el workflow); `messaging_handovers` se acepta (200) y se
-ignora hasta D1.5. Cuerpos mezclados (`messages` + `standby`) van cada uno por
+persiste como `control_owner` (D1.5). Cuerpos mezclados (`messages` + `standby`) van cada uno por
 su puerta."""
 from __future__ import annotations
 
@@ -33,7 +33,12 @@ def harness(monkeypatch):
     monkeypatch.setattr(api, "build_ingest_use_case", lambda: sales_ingest)
     monkeypatch.setattr(api, "build_ingest_standby_use_case", lambda: standby_ingest)
     monkeypatch.setattr(api, "build_ingest_delivery_status_use_case", lambda: delivery)
+    monkeypatch.setattr(api, "build_ingest_handover_use_case", lambda: _HANDOVER)
+    _HANDOVER.calls.clear()
     return TestClient(app), sales_ingest, standby_ingest, delivery
+
+
+_HANDOVER = _Recorder()
 
 
 def test_standby_inbound_never_reaches_the_sales_ingest(harness) -> None:
@@ -57,10 +62,16 @@ def test_standby_echo_and_status_go_to_the_standby_ear_and_the_delivery_ingest(h
     assert args[0] == "wamid.STANDBY.ECHO.1" and args[1] == "delivered" and args[2]["category"] == "utility"
 
 
-def test_messaging_handovers_is_accepted_and_ignored_until_d15(harness) -> None:
+def test_messaging_handovers_go_to_the_handover_ingest_and_nowhere_else(harness) -> None:
     client, sales_ingest, standby_ingest, delivery = harness
-    assert client.post("/api/webhook", json=P.handover()).status_code == 200
+    assert client.post("/api/webhook", json=P.handover(P.OUR_APP_ID, P.MBA_APP_ID)).status_code == 200
     assert sales_ingest.calls == [] and standby_ingest.calls == [] and delivery.calls == []
+    assert len(_HANDOVER.calls) == 1
+    event = _HANDOVER.calls[0][0][0]
+    assert event.handovers[0].new_owner_app_id == P.OUR_APP_ID
+    # un body cuyo único ítem no se entiende (shape desconocido) no encola nada
+    assert client.post("/api/webhook", json=P.handover(customer="")).status_code == 200
+    assert len(_HANDOVER.calls) == 1
 
 
 def test_a_regular_messages_webhook_still_reaches_the_sales_ingest(harness) -> None:
@@ -95,13 +106,14 @@ def test_standby_is_dropped_while_the_flag_is_off(monkeypatch) -> None:
     monkeypatch.setattr(config, "WHATSAPP_APP_SECRET", "")
     monkeypatch.setattr(config, "HUBARA_ENV", "dev")
     monkeypatch.setattr(config, "MBA_STANDBY_ENABLED", False)
-    standby_ingest, delivery = _Recorder(), _Recorder()
+    standby_ingest, delivery, handover = _Recorder(), _Recorder(), _Recorder()
     monkeypatch.setattr(api, "build_ingest_standby_use_case", lambda: standby_ingest)
     monkeypatch.setattr(api, "build_ingest_delivery_status_use_case", lambda: delivery)
+    monkeypatch.setattr(api, "build_ingest_handover_use_case", lambda: handover)
     client = TestClient(app)
-    for body in (P.inbound(), P.echo_text(), P.status()):
+    for body in (P.inbound(), P.echo_text(), P.status(), P.handover()):
         assert client.post("/api/webhook", json=body).status_code == 200
-    assert standby_ingest.calls == [] and delivery.calls == []
+    assert standby_ingest.calls == [] and delivery.calls == [] and handover.calls == []
 
 
 def test_unknown_fields_are_accepted_and_ignored(harness) -> None:
