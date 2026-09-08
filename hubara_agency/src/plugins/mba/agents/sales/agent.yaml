@@ -249,8 +249,10 @@ connector:
         motivo: { type: string, description: "Una frase concreta con el porqué; la lee el colega antes de escribirle al cliente.", required: true }
       write: true
       notes: >-
-        Escritura: es una PROPUESTA. Hubara la reconcilia con sus reglas (una orden registrada gana) y aplica la etiqueta;
-        INTERESADO activa el seguimiento del equipo, RECHAZO no. Idempotente por (conversación, etiqueta).
+        Escritura: es una PROPUESTA. Hubara la reconcilia con sus reglas y aplica la etiqueta: con un pedido registrado la
+        propuesta se descarta; con datos de envío sin pedido queda CONFIRMADO_SIN_DATOS y un colega toma la conversación;
+        si no, se aplica tal cual (INTERESADO activa el seguimiento del equipo, RECHAZO no). Idempotente por
+        (conversación, etiqueta); la respuesta dice qué quedó aplicado.
     - name: escalate_to_human
       method: POST
       description: >-

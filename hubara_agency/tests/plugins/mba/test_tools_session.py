@@ -120,6 +120,27 @@ async def test_manage_conversation_tag_only_proposes_interesado_or_rechazo() -> 
     assert out["error"] == "invalid_tag" and out["accepted"] == ["INTERESADO", "RECHAZO"] and len(chats.calls) == 1
 
 
+async def test_manage_conversation_tag_tells_the_agent_when_hubara_applied_another_tag() -> None:
+    """D1.3: la propuesta puede reconciliarse; el agente lee qué quedó aplicado y no insiste."""
+    chats = _Chats({"tag": "CONFIRMADO_SIN_DATOS", "proposed_tag": "INTERESADO", "applied": True, "reconciled": True,
+                    "reason": "shipping_data_without_order", "escalated": True,
+                    "episode_closed": {"episode_id": "e", "closing_tag": "CONFIRMADO_SIN_DATOS"}})
+    out = await session.manage_conversation_tag(chats, None, session_key=_S, params={"tag": "interesado", "motivo": "m"})
+    assert chats.calls == [(_S, "tag", {"tag": "INTERESADO", "motivo": "m"})]
+    assert out["tag"] == "CONFIRMADO_SIN_DATOS" and out["proposed_tag"] == "INTERESADO" and out["reconciled"] is True
+    assert "CONFIRMADO_SIN_DATOS" in out["message"] and "colega" in out["message"]
+    # descartada por orden registrada: el estado no cambió, el agente no vuelve a etiquetar
+    chats = _Chats({"tag": "COMPRA_EXITOSA", "proposed_tag": "RECHAZO", "applied": False, "reconciled": True,
+                    "reason": "order_registered", "escalated": False, "episode_closed": None})
+    out = await session.manage_conversation_tag(chats, None, session_key=_S, params={"tag": "RECHAZO", "motivo": "m"})
+    assert out["applied"] is False and "pedido registrado" in out["message"] and "no vuelvas" in out["message"].lower()
+    # aplicada tal cual: mensaje corto de confirmación
+    chats = _Chats({"tag": "INTERESADO", "proposed_tag": "INTERESADO", "applied": True, "reconciled": False,
+                    "reason": "proposal_accepted", "escalated": False, "episode_closed": None})
+    out = await session.manage_conversation_tag(chats, None, session_key=_S, params={"tag": "INTERESADO", "motivo": "m"})
+    assert out["reconciled"] is False and "INTERESADO" in out["message"]
+
+
 async def test_escalate_to_human_validates_the_reason_category() -> None:
     chats = _Chats({"escalated": True, "already_human": False, "active_route": "humano", "tag": "HUMANO"})
     out = await session.escalate_to_human(chats, None, session_key=_S, params={"reason_category": "BULK_ORDER", "summary": "30 uds"})
