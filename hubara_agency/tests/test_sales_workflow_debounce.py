@@ -57,6 +57,8 @@ class Tracker:
         self.record_turn_calls: int = 0
         self.record_turn_new_messages: list[list[dict]] = []
         self.ghosting_calls: int = 0
+        # Auditoría CAPI 2026-09-08: sesiones cuyo outbox flusheó el workflow.
+        self.capi_flush_calls: list[str] = []
         self.start_sales_calls: int = 0
         self.execute_tool_calls: list[str] = []
         self.flush_calls: int = 0
@@ -126,6 +128,11 @@ def _make_fake_activities(
     async def fake_flush_ui_intents(session_id: str) -> int:
         tracker.flush_calls += 1
         return 0
+
+    @activity.defn(name="flush_capi_outbox_activity")
+    async def fake_flush_capi_outbox(session_id: str) -> dict:
+        tracker.capi_flush_calls.append(session_id)
+        return {"session_id": session_id, "sent": 0, "skipped": 0, "failed": 0, "pending": 0}
 
     @activity.defn(name="send_typing_indicator_activity")
     async def fake_typing(session_id: str) -> None:
@@ -252,6 +259,7 @@ def _make_fake_activities(
         fake_read_order_draft_note,
         fake_read_idle_timeout,
         fake_flush_ui_intents,
+        fake_flush_capi_outbox,
         fake_typing,
         fake_build_prompt,
         fake_llm,

@@ -21,10 +21,9 @@ import httpx
 import structlog
 
 from src.platform.config import WHATSAPP_ACCESS_TOKEN
+from src.platform.meta.graph import graph_url
 
 logger = structlog.get_logger()
-
-GRAPH_API_VERSION = "v23.0"
 
 _MAX_ATTEMPTS = 3
 _BASE_DELAY_S = 0.7
@@ -35,7 +34,7 @@ async def fetch_media_metadata(media_id: str) -> dict | None:
     if not WHATSAPP_ACCESS_TOKEN:
         logger.warning("fetch_media_metadata: no token")
         return None
-    url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{media_id}"
+    url = graph_url(media_id)
     headers = {"Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}"}
 
     for attempt in range(1, _MAX_ATTEMPTS + 1):

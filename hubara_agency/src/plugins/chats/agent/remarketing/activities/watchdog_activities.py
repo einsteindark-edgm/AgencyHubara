@@ -41,6 +41,8 @@ from src.sdk.messagingkit import (
     resolve_local_timezone,
 )
 from src.platform.whatsapp.window import watchdog_pre_expiry_ms
+from src.plugins.chats.shared.funnel import active_episode, is_open_cart
+from src.sdk.connectorkit import enqueue_capi_event, flush_capi_outbox
 from src.plugins.chats.agent.remarketing.watchdog_contracts import (
     WatchdogEligibilityResult,
 )
@@ -440,6 +442,39 @@ async def persist_watchdog_outcome_activity(
 
     metadata["watchdog"] = existing
     store.write(session_id, metadata)
+
+    if outcome == "fired":
+        await _emit_cart_abandoned_if_open(session_id, metadata, store, now_ms)
+
+
+async def _emit_cart_abandoned_if_open(
+    session_id: str,
+    metadata: dict,
+    store: FilesystemMetadataStore,
+    now_ms: int,
+) -> None:
+    """Auditoría CAPI 2026-09-08: el cliente se quedó callado con un pedido
+    armado → ``CartAbandoned`` a Meta. Se encola y se flushea acá mismo (la
+    activity es durable; el outbox garantiza un solo envío por episodio).
+    Best-effort: la atribución nunca hace fallar el watchdog."""
+    try:
+        episode = active_episode(metadata)
+        if episode is None or not is_open_cart(episode, metadata):
+            return
+        event_id = enqueue_capi_event(
+            metadata,
+            event_name="CartAbandoned",
+            session_id=session_id,
+            episode_id=str(episode.get("episode_id") or ""),
+            source="watchdog_fired",
+            now_ms=now_ms,
+        )
+        if event_id is None:
+            return
+        store.write(session_id, metadata)
+        await flush_capi_outbox(session_id)
+    except Exception as exc:  # noqa: BLE001 — atribución best-effort
+        log.warning("watchdog_capi_cart_abandoned_failed", session_id=session_id, error=str(exc))
 
 
 # =============================================================================

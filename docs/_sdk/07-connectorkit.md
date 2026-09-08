@@ -95,6 +95,26 @@ store = InMemoryAttributionStore([AttributionSession("wa_57300...", tmp, meta)])
 4. **`HttpConnectorBase`** (timeouts honestos L-1, idempotencia
    fingerprint+pre-check, caches L-2) al mover el primer adapter HTTP.
 
+## Meta: Graph API central + Conversions API (outbox)
+
+Auditoría CAPI 2026-09-08. Dos símbolos nuevos en el kit, ambos stdlib-puros
+al importar (lazy como el resto):
+
+| Símbolo | Para qué |
+|---|---|
+| `graph_url(*segments, version=None)` · `META_GRAPH_API_VERSION` · `META_GRAPH_BASE_URL` | **Única** fuente de host + versión de la Graph API (`src/platform/meta/graph.py`). Ningún plugin ni módulo de platform escribe `graph.facebook.com` ni una versión propia — la guarda `tests/platform/test_meta_graph_central.py` lo impide. Override por entorno `META_GRAPH_API_VERSION` (rollback sin rebuild). |
+| `enqueue_capi_event(metadata, event_name=…, session_id=…, source=…, now_ms=…, episode_id=…, order_id=…, value=…, currency=…)` | Encola un evento de Meta Conversions API en `metadata["capi_outbox"]` (puro, idempotente por `event_id` estable, no-op en sesiones sin `ctwa_clid`). Vocabulario: `CAPI_EVENT_NAMES` (los 14 de business messaging). |
+| `flush_capi_outbox(session_id)` · `schedule_capi_flush(session_id)` | El ÚNICO emisor hacia Meta (`src/platform/whatsapp/capi_outbox.py`): guardas, POST, persistencia de resultado (incluidos skips), política L-1 (5xx/connect → pendiente; read-timeout → `unknown`, nunca se reenvía: Meta NO deduplica). `schedule_*` es la versión fire-and-forget para handlers HTTP. |
+| `has_ctwa_attribution(metadata)` | ¿La sesión vino de un anuncio CTWA con clid? |
+
+Productores hoy: tags (`QualifiedLead`/`Purchase`), `register_order`
+(`OrderCreated`), flush de UI intents (`ViewContent`/`AddToCart`/
+`InitiateCheckout`), TIMEOUT y watchdog (`CartAbandoned`), confirmación /
+cancelación humana (`Purchase`/`OrderCanceled`), etapas del pedido
+(`OrderShipped`/`OrderDelivered`/`OrderCanceled`). Flush durable: activity
+`flush_capi_outbox_activity` tras cada turno de Sales + dentro de las
+activities del watchdog y de `emit_order_stage`.
+
 ## Reglas al agregar un port (regla de oro del kit)
 
 Port nuevo ⇒ en el MISMO PR: el `Protocol` + su factory + su **fake** + su

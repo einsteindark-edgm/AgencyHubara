@@ -12,6 +12,9 @@ from src.plugins.ads.meta.client import (
     MetaCampaignMeta,
 )
 from src.plugins.ads.meta.parse import MetaCampaignMetrics
+from src.sdk.connectorkit import graph_url
+
+_GRAPH = graph_url()
 
 _INSIGHTS = {
     "data": [
@@ -57,7 +60,7 @@ def test_fake_is_a_valid_port_and_serves_canned_data() -> None:
 
 @respx.mock
 def test_graph_list_ad_accounts() -> None:
-    respx.get("https://graph.facebook.com/v25.0/me/adaccounts").mock(
+    respx.get(f"{_GRAPH}/me/adaccounts").mock(
         return_value=httpx.Response(200, json=_ACCOUNTS)
     )
     accts = GraphMetaAds().list_ad_accounts("TOK")
@@ -66,7 +69,7 @@ def test_graph_list_ad_accounts() -> None:
 
 @respx.mock
 def test_graph_fetch_campaign_metrics_parses_insights() -> None:
-    route = respx.get("https://graph.facebook.com/v25.0/act_1010393601284112/insights").mock(
+    route = respx.get(f"{_GRAPH}/act_1010393601284112/insights").mock(
         return_value=httpx.Response(200, json=_INSIGHTS)
     )
     rows = GraphMetaAds().fetch_campaign_metrics(
@@ -101,7 +104,7 @@ def test_graph_fetch_adset_metrics_parses_level_adset() -> None:
             }
         ]
     }
-    route = respx.get("https://graph.facebook.com/v25.0/act_1010393601284112/insights").mock(
+    route = respx.get(f"{_GRAPH}/act_1010393601284112/insights").mock(
         return_value=httpx.Response(200, json=adset_insights)
     )
     rows = GraphMetaAds().fetch_adset_metrics(
@@ -128,7 +131,7 @@ def test_fake_serves_adset_metrics() -> None:
 
 @respx.mock
 def test_graph_list_campaigns_returns_status_and_objective() -> None:
-    respx.get("https://graph.facebook.com/v25.0/act_1010393601284112/campaigns").mock(
+    respx.get(f"{_GRAPH}/act_1010393601284112/campaigns").mock(
         return_value=httpx.Response(200, json=_CAMPAIGNS)
     )
     camps = GraphMetaAds().list_campaigns("TOK", "act_1010393601284112")
@@ -154,7 +157,7 @@ def test_graph_fetch_raw_insights_returns_pod_shape() -> None:
         ]
     }
     route = respx.get(
-        "https://graph.facebook.com/v25.0/act_1010393601284112/insights"
+        f"{_GRAPH}/act_1010393601284112/insights"
     ).mock(return_value=httpx.Response(200, json=raw))
     out = GraphMetaAds().fetch_raw_insights(
         "TOK", "act_1010393601284112", since="2026-06-15", until="2026-06-16", currency="COP"
@@ -169,7 +172,7 @@ def test_graph_fetch_raw_insights_returns_pod_shape() -> None:
 
 @respx.mock
 def test_graph_update_campaign_status_posts_status_with_bearer() -> None:
-    route = respx.post("https://graph.facebook.com/v25.0/120210000111").mock(
+    route = respx.post(f"{_GRAPH}/120210000111").mock(
         return_value=httpx.Response(200, json={"success": True})
     )
     ok = GraphMetaAds().update_campaign_status("TOK", "120210000111", "PAUSED")
@@ -182,7 +185,7 @@ def test_graph_update_campaign_status_posts_status_with_bearer() -> None:
 @respx.mock
 def test_graph_update_campaign_status_ambiguous_response_is_false() -> None:
     # Respuesta 2xx SIN `success: true` → no reportamos éxito (premortem #4).
-    respx.post("https://graph.facebook.com/v25.0/120210000111").mock(
+    respx.post(f"{_GRAPH}/120210000111").mock(
         return_value=httpx.Response(200, json={"id": "120210000111"})
     )
     assert GraphMetaAds().update_campaign_status("TOK", "120210000111", "PAUSED") is False

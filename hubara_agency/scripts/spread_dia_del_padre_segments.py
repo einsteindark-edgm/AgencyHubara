@@ -39,13 +39,14 @@ from loguru import logger
 
 from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.logging import setup_logging
+from src.platform.meta.graph import graph_url
 from src.platform.medusa.composition import get_medusa_client
 from src.plugins.ads.synthetic_seed import plan_segment_spread
 
 setup_logging()
 
 CAMPAIGN_ID = "120243118818600317"  # Día del padre
-_GRAPH = "https://graph.facebook.com/v25.0"
+_GRAPH = graph_url()
 
 
 def _meta_token() -> str:

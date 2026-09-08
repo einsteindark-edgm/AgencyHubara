@@ -37,6 +37,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from src.plugins.chats.shared.funnel import is_open_cart
+from src.sdk.connectorkit import enqueue_capi_event
+
 
 def count_session_jsonl_lines(vault_dir: Path, session_key: str) -> int:
     """Cuenta líneas no vacías del `<vault>/<session>/sessions/<session>.jsonl`.
@@ -173,8 +176,13 @@ def ensure_active_episode(
     inbound_message_id: str | None = None,
     referral_snapshot: dict[str, Any] | None = None,
     msgs_count_at_start: int | None = None,
+    session_id: str | None = None,
 ) -> dict[str, Any]:
     """Garantiza un episodio activo en `metadata["episodes"]`. Mutates.
+
+    `session_id` (opcional): si viene y el cierre lazy por TIMEOUT deja un
+    carrito abierto, encola `CartAbandoned` en el outbox CAPI (auditoría
+    2026-09-08). Sin session_id no se puede armar el event_id → no encola.
 
     - Sin `episodes[]` o vacío → crea ep_001.
     - Último episode con `closed_at_ms != null` → crea ep_NNN+1.
@@ -218,6 +226,22 @@ def ensure_active_episode(
                 last["closing_motivo"] = (
                     "cierre automático por inactividad (>14 días)"
                 )
+                # Auditoría CAPI: el episodio murió con pedido armado →
+                # CartAbandoned. (Normalmente el watchdog ya lo emitió
+                # dentro de la ventana de 7 días; acá dedupea por event_id.)
+                _ep_id = str(last.get("episode_id") or "")
+                if session_id and _ep_id and is_open_cart(last, metadata):
+                    try:
+                        enqueue_capi_event(
+                            metadata,
+                            event_name="CartAbandoned",
+                            session_id=session_id,
+                            episode_id=_ep_id,
+                            source="episode_timeout",
+                            now_ms=now_ms,
+                        )
+                    except ValueError:
+                        pass
                 # Fall through: crearemos un nuevo episodio abajo
             else:
                 # Last-ad-touch (fix 2026-07-01): si el inbound trae un

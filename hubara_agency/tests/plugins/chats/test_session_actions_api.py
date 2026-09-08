@@ -487,3 +487,20 @@ async def test_concurrent_identical_orders_register_and_send_payment_instruction
     assert a.json()["order_id"] == b.json()["order_id"] == "order_1"
     assert sorted([a.json()["already_registered"], b.json()["already_registered"]]) == [False, True]
     assert len(port.calls) == 1 and flushed == [_A]
+
+
+def test_tag_interesado_via_api_enqueues_qualified_lead_for_ctwa_sessions(h: _Harness) -> None:
+    """Auditoría CAPI 2026-09-08: el endpoint ya no pasa por la tool, así que
+    la señal de embudo (INTERESADO → QualifiedLead) se encola en `_apply_tag`."""
+    h.client.post(_url("draft"), json={"producto": "luz-serena"})
+    meta = h.meta()
+    meta["ctwa_referrals"] = [{"ctwa_clid": "CLID_API", "captured_at_ms": 1_757_350_000_000}]
+    (h.vault / _A / "metadata.json").write_text(json.dumps(meta), encoding="utf-8")
+
+    r = h.client.post(_url("tag"), json={"tag": "INTERESADO", "motivo": "lo piensa"})
+    assert r.status_code == 200
+    ep = h.meta()["episodes"][-1]["episode_id"]
+    outbox = h.meta().get("capi_outbox", [])
+    assert [(e["event_name"], e["event_id"], e["source"]) for e in outbox] == [
+        ("QualifiedLead", f"qualifiedlead_{_A}_{ep}", "session_actions:tag")
+    ]

@@ -256,6 +256,7 @@ class IngestInboundMessage:
             ensure_active_episode(
                 metadata,
                 now_ms=now_ms,
+                session_id=session_id,
                 inbound_message_id=parsed.message_id,
                 referral_snapshot=_make_episode_snapshot(
                     parsed.referral, has_cart_ref=bool(cart_ref)

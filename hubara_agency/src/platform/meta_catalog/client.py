@@ -21,6 +21,7 @@ from typing import Any
 import httpx
 import structlog
 
+from src.platform.meta.graph import META_GRAPH_API_VERSION, META_GRAPH_BASE_URL
 from src.platform.meta_catalog.dtos import (
     MetaBatchItemResult,
     MetaBatchRequest,
@@ -30,7 +31,6 @@ from src.platform.meta_catalog.dtos import (
 
 logger = structlog.get_logger()
 
-GRAPH_API_VERSION = "v23.0"
 
 # Estados de `check_batch_request_status` (doc vieja + vocabulario real).
 _IN_PROGRESS_STATUSES = frozenset({"started", "in_progress", "pending"})
@@ -42,8 +42,8 @@ class MetaCatalogClient:
 
     def __init__(
         self,
-        api_version: str = GRAPH_API_VERSION,
-        base_url: str = "https://graph.facebook.com",
+        api_version: str = META_GRAPH_API_VERSION,
+        base_url: str = META_GRAPH_BASE_URL,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._api_version = api_version

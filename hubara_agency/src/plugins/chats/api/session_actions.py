@@ -76,7 +76,9 @@ from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
 from src.plugins.chats.agent.sales.use_cases.order_pricing import price_order_items
 from src.plugins.chats.agent.sales.use_cases.tag_reconcile import TagDecision, reconcile_tag_proposal
 from src.plugins.chats.shared.contracts.events import EpisodeClosedEvent
+from src.plugins.chats.shared.funnel import enqueue_capi_for_tag
 from src.sdk.connectorkit import (
+    schedule_capi_flush,
     ProductNotFoundError,
     get_catalog_client,
     get_order_registration_port,
@@ -308,7 +310,8 @@ def _close_payment_pending(
 
 
 def _apply_tag(
-    data: dict[str, Any], *, decision: TagDecision, motivo: str, now_ms: int, msgs_at_close: int
+    data: dict[str, Any], *, decision: TagDecision, motivo: str, now_ms: int, msgs_at_close: int,
+    session_id: str | None = None,
 ) -> tuple[str | None, bool]:
     """Lo que hace ``ManageConversationTagTool`` + la red de seguridad
     ``ensure_closing_escalation``, en un solo paso (sobre el dict bajo flock):
@@ -328,12 +331,20 @@ def _apply_tag(
         }
     )
     closed_id: str | None = None
+    active_ep_id = str((get_active_episode(data) or {}).get("episode_id") or "") or None
     if tag in CLOSING_TAGS:
         closed = close_episode(
             data, closing_tag=tag, closing_motivo=motivo, now_ms=now_ms, msgs_count_at_close=msgs_at_close
         )
         if closed is not None:
             closed_id = str(closed.get("episode_id") or "") or None
+    # Auditoría CAPI 2026-09-08: señal de embudo (QualifiedLead / LeadSubmitted)
+    # — el endpoint no pasa por la tool, así que se encola acá.
+    if session_id:
+        enqueue_capi_for_tag(
+            data, tag=tag, session_id=session_id, now_ms=now_ms,
+            source=f"{_SOURCE}:tag", episode_id=closed_id or active_ep_id,
+        )
     escalated = False
     if decision.escalate_reason:
         escalated = _escalate(data, reason_category=decision.escalate_reason, motivo=motivo, now_ms=now_ms)
@@ -398,9 +409,11 @@ async def order(session_key: SessionKey, body: OrderBody, deps: Deps) -> dict[st
         }
     try:
         async with _session_lock(session):
-            return await _register(session, body, priced, deps)
+            registered = await _register(session, body, priced, deps)
     finally:
         _release_session_lock(session)  # fuera del `async with`: ya no está tomado
+    schedule_capi_flush(session)  # OrderCreated / LeadSubmitted encolados por las tools
+    return registered
 
 
 async def _register(session: str, body: OrderBody, priced: Any, deps: SessionActionsDeps) -> dict[str, Any]:
@@ -548,6 +561,7 @@ async def tag(session_key: SessionKey, body: TagBody, deps: Deps) -> dict[str, A
         outcome["closed_id"], outcome["escalated"] = _apply_tag(
             data, decision=decision, motivo=motivo, now_ms=now_ms,
             msgs_at_close=count_session_jsonl_lines(deps.vault_dir, session),
+            session_id=session,
         )
         return data
 
@@ -576,6 +590,7 @@ async def tag(session_key: SessionKey, body: TagBody, deps: Deps) -> dict[str, A
         "[chats.session_actions] tag session={} proposed={} → {} ({}) closed={} escalated={}",
         session, decision.proposed, decision.applied, decision.reason, closed_id, response["escalated"],
     )
+    schedule_capi_flush(session)  # QualifiedLead / Purchase encolados en _apply_tag
     return response
 
 

@@ -409,7 +409,7 @@ function CapiSignal({ campaign }: { campaign: AdsCampaign }) {
       </span>
     );
   }
-  const breakdown = `${campaign.capiLeadsSent} LeadSubmitted · ${campaign.capiPurchasesSent} Purchase · ${campaign.capiFailed} fallos`;
+  const breakdown = `${campaign.capiLeadsSent} LeadSubmitted · ${campaign.capiPurchasesSent} Purchase · ${campaign.capiFailed} fallos · ${campaign.capiSkipped} no aplicaban`;
   return (
     <span
       className={"crs-v" + (campaign.capiFailed > 0 ? " neg" : "")}

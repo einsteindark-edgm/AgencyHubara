@@ -177,6 +177,7 @@ export function mapBackendCampaign(b: BackendAdsCampaign): AdsCampaign {
     capiLeadsSent: b.capi_leads_sent,
     capiPurchasesSent: b.capi_purchases_sent,
     capiFailed: b.capi_failed,
+    capiSkipped: b.capi_skipped,
   };
 }
 

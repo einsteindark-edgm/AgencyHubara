@@ -8,7 +8,7 @@ CTA se ven idénticos.
 
 Este módulo resuelve los nombres REALES con UN GET batch a Graph API:
 
-    GET https://graph.facebook.com/v23.0/?ids=<ad_id,...>
+    GET {graph_url()}/?ids=<ad_id,...>
         &fields=name,campaign{id,name}&access_token=...
 
 Los `source_id` del referral de CTWA son ad ids — Graph los resuelve
@@ -32,6 +32,8 @@ import logging
 
 import httpx
 
+from src.sdk.connectorkit import graph_url
+
 from src.plugins.ads.aggregation import (
     SYNTHETIC_CAMPAIGN_IDS,
     AdsCampaignSummary,
@@ -39,7 +41,7 @@ from src.plugins.ads.aggregation import (
 
 logger = logging.getLogger(__name__)
 
-_GRAPH_URL = "https://graph.facebook.com/v23.0/"
+_GRAPH_URL = graph_url() + "/"  # GET /?ids=... (raíz versionada)
 _FIELDS = "name,campaign{id,name},adset{id,name},creative{thumbnail_url}"
 _TIMEOUT_S = 4.0
 

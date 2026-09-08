@@ -81,6 +81,8 @@ export const backendAdsCampaignSchema = z.object({
   capi_leads_sent: z.number().int().default(0),
   capi_purchases_sent: z.number().int().default(0),
   capi_failed: z.number().int().default(0),
+  // Auditoría CAPI 2026-09-08: skips persistidos ("no aplicaba" ≠ "falló").
+  capi_skipped: z.number().int().default(0),
 });
 
 export type BackendAdsCampaign = z.infer<typeof backendAdsCampaignSchema>;

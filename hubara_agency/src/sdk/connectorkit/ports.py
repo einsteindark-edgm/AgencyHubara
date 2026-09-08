@@ -62,8 +62,22 @@ from src.platform.customer_scoring.composition import (
 from src.platform.customer_scoring.port import (
     CustomerScoringPort as CustomerScoringPort,
 )
+from src.platform.meta.graph import (
+    META_GRAPH_API_VERSION as META_GRAPH_API_VERSION,
+    META_GRAPH_BASE_URL as META_GRAPH_BASE_URL,
+    graph_url as graph_url,
+)
 from src.platform.meta_catalog.port import (
     MetaCatalogPort as MetaCatalogPort,
+)
+from src.platform.whatsapp.capi import (
+    CAPI_EVENT_NAMES as CAPI_EVENT_NAMES,
+)
+from src.platform.whatsapp.capi_outbox import (
+    enqueue_capi_event as enqueue_capi_event,
+    flush_capi_outbox as flush_capi_outbox,
+    has_ctwa_attribution as has_ctwa_attribution,
+    schedule_capi_flush as schedule_capi_flush,
 )
 from src.platform.orders.command_port import (
     OrderCommandPort as OrderCommandPort,

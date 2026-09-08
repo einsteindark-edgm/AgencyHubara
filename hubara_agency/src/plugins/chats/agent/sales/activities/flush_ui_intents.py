@@ -471,6 +471,17 @@ async def flush_pending_ui_intents(session_id: str) -> int:
         _safe_write_metadata(metadata_file, data)
         sent_count += 1
 
+        # Auditoría CAPI 2026-09-08: lo que el cliente acaba de VER es la
+        # señal de embudo para Meta (ViewContent / AddToCart /
+        # InitiateCheckout). Se encola acá y lo manda el flusher del turno.
+        try:
+            if _enqueue_capi_for_sent_intent(
+                data, session_id=session_id, kind=kind, params=params, now_ms=now_ms
+            ):
+                _safe_write_metadata(metadata_file, data)
+        except Exception:  # noqa: BLE001 - atribución nunca bloquea el envío
+            pass
+
         # Marker al histórico del dashboard (post-pop, post-write —
         # best-effort: si crashea, el intent NO se reenvía y el flush sigue).
         try:
@@ -1101,6 +1112,61 @@ def _render_variant_picker_text(params: dict[str, Any]) -> str | None:
 
 
 _NOTE_TEXT_LIMIT = 160
+
+
+#: Intent enviado → evento CAPI (auditoría 2026-09-08). Un evento por
+#: episodio (event_id estable): ver 3 fotos = un ViewContent.
+_CAPI_EVENT_BY_INTENT_KIND: dict[str, str] = {
+    "product_detail": "ViewContent",
+    "products_list": "ViewContent",
+    "product_gallery": "ViewContent",
+    "variant_picker": "ViewContent",
+    "order_confirmation": "AddToCart",
+    "shipping_flow": "InitiateCheckout",
+}
+
+
+def _enqueue_capi_for_sent_intent(
+    data: dict[str, Any],
+    *,
+    session_id: str,
+    kind: str | None,
+    params: dict[str, Any],
+    now_ms: int,
+) -> bool:
+    """Encola el evento CAPI que corresponde al intent recién enviado.
+    Devuelve True si escribió algo en ``data`` (el caller persiste)."""
+    event_name = _CAPI_EVENT_BY_INTENT_KIND.get(kind or "")
+    if event_name is None:
+        return False
+    from src.plugins.chats.shared.funnel import active_episode
+    from src.sdk.connectorkit import enqueue_capi_event
+
+    episode = active_episode(data)
+    episode_id = str((episode or {}).get("episode_id") or "")
+    if not episode_id:
+        return False
+    value: int | None = None
+    currency: str | None = None
+    if event_name == "AddToCart":
+        total = params.get("total_cop")
+        if isinstance(total, int) and not isinstance(total, bool) and total > 0:
+            value = total
+            currency = str(params.get("currency") or "COP")
+    try:
+        event_id = enqueue_capi_event(
+            data,
+            event_name=event_name,
+            session_id=session_id,
+            episode_id=episode_id,
+            value=value,
+            currency=currency,
+            source=f"flush_ui_intents:{kind}",
+            now_ms=now_ms,
+        )
+    except ValueError:
+        return False
+    return event_id is not None
 
 
 def _trunc(text: str, limit: int = _NOTE_TEXT_LIMIT) -> str:

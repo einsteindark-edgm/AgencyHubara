@@ -45,7 +45,9 @@ from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
     CLOSING_TAGS,
     close_episode,
     count_session_jsonl_lines,
+    get_active_episode,
 )
+from src.plugins.chats.shared.funnel import enqueue_capi_for_tag
 
 # Sesión c4e3416f: `CONFIRMADO_SIN_DATOS` es para el caso donde el cliente
 # confirmó el pedido (apretó "Confirmar" en `present_order_confirmation`) pero
@@ -198,6 +200,20 @@ class ManageConversationTagTool(ToolBase):
                 "active_route": data.get("active_route", ROUTE_VENTAS),
                 "timestamp": time.time(),
             }
+        )
+
+        # Auditoría CAPI 2026-09-08: señal de embudo para Meta (INTERESADO →
+        # QualifiedLead, CONFIRMADO_* → LeadSubmitted, COMPRA_EXITOSA →
+        # Purchase). Mismo helper que el endpoint humano/MBA → un solo
+        # event_id por señal, un solo envío. Lo manda el flusher del turno.
+        _active_ep = get_active_episode(data)
+        enqueue_capi_for_tag(
+            data,
+            tag=tag,
+            session_id=ctx.session_key,
+            now_ms=now_ms,
+            source="manage_conversation_tag",
+            episode_id=str((_active_ep or {}).get("episode_id") or "") or None,
         )
 
         # Episode lifecycle: cierre formal del episodio activo si el tag

@@ -133,6 +133,9 @@ class AdsCampaignSummary:
     capi_leads_sent: int = 0
     capi_purchases_sent: int = 0
     capi_failed: int = 0
+    # Auditoría 2026-09-08: los skips ahora se persisten (antes solo logs).
+    # "No aplicaba" (sin clid / ventana vencida / sin config) ≠ "falló".
+    capi_skipped: int = 0
 
     # --- Faltantes (queda None — frontend marca visual) ---
     spend: float | None = None
@@ -535,8 +538,13 @@ def _session_capi_by_episode(
     exactamente la key del pseudo-episodio de las sesiones legacy sin
     `episodes[]`, así sus counters no se pierden.
 
-    Cada slot: `{"lead_sent": n, "purchase_sent": n, "failed": n}`. Los
-    `skipped_*` NO cuentan (no fueron intentos de envío).
+    Cada slot: `{"lead_sent": n, "purchase_sent": n, "failed": n, "skipped": n}`.
+    Los `skipped_*` cuentan aparte (auditoría 2026-09-08: antes se perdían en
+    logs); `unknown` (timeout ambiguo) cuenta como `failed` — requiere ojo.
+
+    Eventos nuevos del embudo (`viewcontent_{session}_{ep}`, `ordershipped_{order}`)
+    siguen las mismas dos convenciones de id: `<evento>_<session_id>_<episode_id>`
+    o `<evento>_<order_id>`.
     """
     events = metadata.get("capi_events_sent")
     out: dict[str | None, dict[str, int]] = {}
@@ -548,7 +556,7 @@ def _session_capi_by_episode(
         if isinstance(ep, dict) and isinstance(ep.get("order_id"), str):
             order_to_ep[ep["order_id"]] = ep.get("episode_id")
 
-    lead_prefix = f"lead_{session_id}_"
+    episode_marker = f"_{session_id}_"
     for e in events:
         if not isinstance(e, dict):
             continue
@@ -556,20 +564,22 @@ def _session_capi_by_episode(
         name = e.get("event_name")
         status = e.get("status") or ""
         ep_id: str | None = None
-        if event_id.startswith(lead_prefix):
-            ep_id = event_id[len(lead_prefix):]
-        elif event_id.startswith("purchase_"):
-            ep_id = order_to_ep.get(event_id[len("purchase_"):])
+        if episode_marker in event_id:
+            ep_id = event_id.split(episode_marker, 1)[1] or None
+        elif "_" in event_id:
+            ep_id = order_to_ep.get(event_id.split("_", 1)[1])
         slot = out.setdefault(
-            ep_id, {"lead_sent": 0, "purchase_sent": 0, "failed": 0}
+            ep_id, {"lead_sent": 0, "purchase_sent": 0, "failed": 0, "skipped": 0}
         )
         if status == "sent":
             if name == "Purchase":
                 slot["purchase_sent"] += 1
             elif name in ("LeadSubmitted", "Lead"):
                 slot["lead_sent"] += 1
-        elif status.startswith("failed"):
+        elif status.startswith("failed") or status == "unknown":
             slot["failed"] += 1
+        elif status.startswith("skipped"):
+            slot["skipped"] += 1
     return out
 
 
@@ -752,6 +762,7 @@ def list_ads_campaigns(
                     "capi_leads": 0,
                     "capi_purchases": 0,
                     "capi_failed": 0,
+                    "capi_skipped": 0,
                 },
             )
             bucket["started"] += 1
@@ -782,6 +793,7 @@ def list_ads_campaigns(
                 bucket["capi_leads"] += capi_slot["lead_sent"]
                 bucket["capi_purchases"] += capi_slot["purchase_sent"]
                 bucket["capi_failed"] += capi_slot["failed"]
+                bucket["capi_skipped"] += capi_slot.get("skipped", 0)
 
             if isinstance(ep_started_ms, int):
                 if (
@@ -854,6 +866,7 @@ def list_ads_campaigns(
                 capi_leads_sent=bucket["capi_leads"],
                 capi_purchases_sent=bucket["capi_purchases"],
                 capi_failed=bucket["capi_failed"],
+                capi_skipped=bucket["capi_skipped"],
             )
         )
 

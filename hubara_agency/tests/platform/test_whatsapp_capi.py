@@ -220,14 +220,16 @@ class TestValidateEventName:
     def test_accepts_purchase(self) -> None:
         validate_event_name("Purchase")
 
-    def test_rejects_addtocart(self) -> None:
-        # Critical: AddToCart isn't supported in business_messaging action.
-        with pytest.raises(ValueError, match="not supported"):
-            validate_event_name("AddToCart")
+    def test_accepts_funnel_events_added_by_meta(self) -> None:
+        # Auditoría 2026-09-08: la guía de onboarding de Meta lista 14
+        # eventos para business_messaging (antes creíamos que solo 2).
+        for name in ("AddToCart", "InitiateCheckout", "QualifiedLead", "CartAbandoned", "OrderShipped"):
+            validate_event_name(name)
 
-    def test_rejects_initiatecheckout(self) -> None:
-        with pytest.raises(ValueError, match="not supported"):
-            validate_event_name("InitiateCheckout")
+    def test_rejects_web_pixel_only_names(self) -> None:
+        for name in ("PageView", "CompleteRegistration", "Contact"):
+            with pytest.raises(ValueError, match="not supported"):
+                validate_event_name(name)
 
     def test_rejects_lowercase(self) -> None:
         # Meta is case-sensitive; "lead" isn't a valid name.
@@ -235,7 +237,11 @@ class TestValidateEventName:
             validate_event_name("lead")
 
     def test_allowed_set_locked(self) -> None:
-        assert ALLOWED_EVENT_NAMES == frozenset({"LeadSubmitted", "Purchase"})
+        from src.platform.whatsapp.capi import CAPI_EVENT_NAMES
+
+        assert ALLOWED_EVENT_NAMES == CAPI_EVENT_NAMES
+        assert len(CAPI_EVENT_NAMES) == 14
+        assert {"LeadSubmitted", "Purchase"} <= CAPI_EVENT_NAMES
 
     def test_rejects_legacy_lead_name(self) -> None:
         # Bug real cazado por smoke test 2026-07-01 (error_subcode 2804066):
@@ -249,7 +255,9 @@ class TestValidateEventName:
 class TestMetaCapiApiUrl:
     def test_url_template_format(self) -> None:
         url = META_CAPI_API_URL.format(dataset_id="1234567890")
-        assert url == "https://graph.facebook.com/v18.0/1234567890/events"
+        from src.platform.meta.graph import graph_url
+
+        assert url == graph_url("1234567890", "events")
 
 
 # =============================================================================
@@ -677,7 +685,9 @@ class TestActivityHappyPath:
             )
 
         # Verify Meta payload structure
-        assert "v18.0/DS123/events" in captured["url"]
+        from src.platform.meta.graph import graph_url
+
+        assert captured["url"] == graph_url("DS123", "events")
         payload = captured["json"]
         assert payload["data"][0]["custom_data"]["value"] == 250000
         assert payload["data"][0]["custom_data"]["currency"] == "COP"
@@ -760,8 +770,13 @@ class TestActivityErrors:
                 )
 
         assert exc_info.value.non_retryable is False
+        # Modelo outbox (auditoría 2026-09-08): un 5xx NO es final — la
+        # entrada sigue pendiente con el intento contado, y el próximo flush
+        # (retry de Temporal / turno / watchdog / etapa) la reintenta.
         md = _read_metadata(vault_dir, session_id)
-        assert md["capi_events_sent"][0]["status"] == "failed_5xx"
+        assert md.get("capi_events_sent", []) == []
+        assert md["capi_outbox"][0]["attempts"] == 1
+        assert "503" in md["capi_outbox"][0]["last_error"]
 
     @pytest.mark.asyncio
     async def test_network_error_raises_retryable(
@@ -797,8 +812,13 @@ class TestActivityErrors:
 
         # Transport errors are retryable
         assert exc_info.value.non_retryable is False
+        # Modelo outbox (auditoría 2026-09-08): un 5xx NO es final — la
+        # entrada sigue pendiente con el intento contado, y el próximo flush
+        # (retry de Temporal / turno / watchdog / etapa) la reintenta.
         md = _read_metadata(vault_dir, session_id)
-        assert md["capi_events_sent"][0]["status"] == "failed_5xx"
+        assert md.get("capi_events_sent", []) == []
+        assert md["capi_outbox"][0]["attempts"] == 1
+        assert "ConnectError" in md["capi_outbox"][0]["last_error"]
 
 
 class TestWorkflowMapper:

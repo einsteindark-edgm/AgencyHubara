@@ -58,6 +58,18 @@ _LAZY_EXPORTS: dict[str, str] = {
     "CustomerScoringPort": "src.platform.customer_scoring.port",
     "ImageVisionPort": "src.platform.vision.port",
     "MetaCatalogPort": "src.platform.meta_catalog.port",
+    # Central de la Graph API (host + versión únicos) — stdlib-pura, sin vendor:
+    "META_GRAPH_API_VERSION": "src.platform.meta.graph",
+    "META_GRAPH_BASE_URL": "src.platform.meta.graph",
+    "graph_url": "src.platform.meta.graph",
+    # Meta Conversions API (outbox único — auditoría CAPI 2026-09-08). Los
+    # productores de plugins (tools de Sales, watchdog, orders) encolan y
+    # flushean por acá; el HTTP vive en platform:
+    "CAPI_EVENT_NAMES": "src.platform.whatsapp.capi",
+    "enqueue_capi_event": "src.platform.whatsapp.capi_outbox",
+    "flush_capi_outbox": "src.platform.whatsapp.capi_outbox",
+    "has_ctwa_attribution": "src.platform.whatsapp.capi_outbox",
+    "schedule_capi_flush": "src.platform.whatsapp.capi_outbox",
     "OrderCommandPort": "src.platform.orders.command_port",
     "OrderQueryPort": "src.platform.orders.query_port",
     "OrderRegistrationPort": "src.platform.orders.port",

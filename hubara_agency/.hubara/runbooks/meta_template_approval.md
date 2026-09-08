@@ -488,7 +488,7 @@ export META_CAPI_TEST_CODE="TEST12345"             # del §16.1
 export WABA_ID="9876543210987654"                  # tu WABA id (lo tenés en metadata.json o env)
 
 # Mandar Lead event con test_event_code:
-curl -X POST "https://graph.facebook.com/v18.0/${META_CAPI_DATASET_ID}/events?access_token=${META_CAPI_ACCESS_TOKEN}" \
+curl -X POST "https://graph.facebook.com/${META_GRAPH_API_VERSION:-v25.0}/${META_CAPI_DATASET_ID}/events?access_token=${META_CAPI_ACCESS_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{
     "data": [{
@@ -716,7 +716,7 @@ WABA_ID="9876543210987654"                    # de tu WhatsApp Business Account
 
 | Setting | Valor |
 |---|---|
-| Endpoint | `POST https://graph.facebook.com/v18.0/{dataset_id}/events` |
+| Endpoint | `POST https://graph.facebook.com/{version}/{dataset_id}/events` — la versión vive SOLO en `src/platform/meta/graph.py` (`META_GRAPH_API_VERSION`, default v25.0) |
 | Auth | `?access_token=...` (query param) o header `Authorization: Bearer ...` |
 | `action_source` | `business_messaging` (siempre) |
 | `messaging_channel` | `whatsapp` (siempre) |
