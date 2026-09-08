@@ -396,11 +396,11 @@ async def order(session_key: SessionKey, body: OrderBody, deps: Deps) -> dict[st
             "error_detail": priced.problems[0].split(":", 1)[0],
             "problems": priced.problems,
         }
-    async with _session_lock(session):
-        try:
+    try:
+        async with _session_lock(session):
             return await _register(session, body, priced, deps)
-        finally:
-            _release_session_lock(session)
+    finally:
+        _release_session_lock(session)  # fuera del `async with`: ya no está tomado
 
 
 async def _register(session: str, body: OrderBody, priced: Any, deps: SessionActionsDeps) -> dict[str, Any]:
@@ -551,11 +551,11 @@ async def tag(session_key: SessionKey, body: TagBody, deps: Deps) -> dict[str, A
         )
         return data
 
-    async with _session_lock(session):
-        try:
+    try:
+        async with _session_lock(session):
             store.update(session, _mutate)
-        finally:
-            _release_session_lock(session)
+    finally:
+        _release_session_lock(session)
 
     if outcome.get("already_human"):
         raise HTTPException(status_code=409, detail="already_human: un colega tiene la conversación; no se etiqueta")

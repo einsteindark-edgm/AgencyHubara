@@ -312,6 +312,10 @@ def test_tag_with_shipping_data_and_no_order_becomes_confirmado_sin_datos_and_es
     assert m["escalation_reason"] == "ORDER_PENDING_SHIPPING_DETAILS"
     assert [e["tag"] for e in m["status_history"]] == ["CONFIRMADO_SIN_DATOS", "HUMANO"]
     assert h.closed == [(_A, ep["episode_id"], "CONFIRMADO_SIN_DATOS")]
+    # retry de Meta tras el éxito: el colega ya tiene el hilo → 409 y el vault intacto
+    snapshot = h.meta()
+    assert h.client.post(_url("tag"), json={"tag": "INTERESADO", "motivo": "dejó de responder"}).status_code == 409
+    assert h.meta() == snapshot and len(h.closed) == 1
     # con solo producto/color elegido NO hay confirmación: INTERESADO se aplica tal cual
     h.client.post(_url("draft", _B), json={"producto": "luz-serena", "color": "Blanco"})
     body = h.client.post(_url("tag", _B), json={"tag": "INTERESADO", "motivo": "lo piensa"}).json()
@@ -393,11 +397,40 @@ def test_the_same_order_in_a_new_episode_is_a_new_sale(h: _Harness) -> None:
     assert len(h.port.calls) == 2 and h.flushed == [_A, _A] and len(h.closed) == 2
 
 
+def test_tag_decides_on_the_route_read_under_the_lock_not_on_a_stale_snapshot(h: _Harness, monkeypatch) -> None:
+    """Carrera /tag × /order (revisión D1.3 H3): si un humano toma el hilo entre
+    la llegada del request y la escritura, el chequeo de ruta tiene que verlo.
+    Se simula flipeando la ruta DENTRO del read-modify-write del store."""
+    from src.platform.state import FilesystemMetadataStore
+
+    h.client.post(_url("draft"), json={"producto": "luz-serena"})
+    original = FilesystemMetadataStore.update
+
+    def update_with_human_taking_over(self, session_id, mutator):
+        def wrapped(data):
+            data["active_route"], data["tag"] = ROUTE_HUMANO, "HUMANO"
+            return mutator(data)
+        return original(self, session_id, wrapped)
+
+    monkeypatch.setattr(FilesystemMetadataStore, "update", update_with_human_taking_over)
+    before = h.meta()
+    r = h.client.post(_url("tag"), json={"tag": "INTERESADO", "motivo": "se despidió"})
+    assert r.status_code == 409 and "already_human" in r.json()["detail"]
+    assert h.meta() == before and h.closed == []
+
+
+def test_session_locks_are_released_after_the_request(h: _Harness) -> None:
+    h.client.post(_url("tag"), json={"tag": "INTERESADO", "motivo": "x"})
+    h.client.post(_url("order"), json=_ORDER)
+    assert _A not in session_actions._SESSION_LOCKS
+
+
 @pytest.mark.asyncio
 async def test_concurrent_tag_and_order_never_break_the_handoff_invariant(tmp_path: Path) -> None:
     """MBA puede emitir register_order y manage_conversation_tag en el mismo turno.
     En cualquier orden de llegada, el estado final es el del pedido: route=humano
-    y tag=HUMANO (un INTERESADO tardío no saca la sesión de la bandeja humana)."""
+    y tag=HUMANO. Guard del estado final (con ASGITransport las secciones críticas
+    no se intercalan); la carrera real la cubre el test de ruta bajo el lock."""
     import httpx
 
     async def flush(_: str) -> int:

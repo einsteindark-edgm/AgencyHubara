@@ -141,6 +141,13 @@ async def test_manage_conversation_tag_tells_the_agent_when_hubara_applied_anoth
     assert out["reconciled"] is False and "INTERESADO" in out["message"]
 
 
+async def test_manage_conversation_tag_when_a_colleague_already_has_the_thread() -> None:
+    chats = _Chats(exc=HTTPException(status_code=409, detail="already_human: un colega tiene la conversación; no se etiqueta"))
+    out = await session.manage_conversation_tag(chats, None, session_key=_S, params={"tag": "INTERESADO", "motivo": "m"})
+    assert out["error"] == "already_human" and out["applied"] is False
+    assert "colega" in out["message"] and "no respondas" in out["message"].lower()
+
+
 async def test_escalate_to_human_validates_the_reason_category() -> None:
     chats = _Chats({"escalated": True, "already_human": False, "active_route": "humano", "tag": "HUMANO"})
     out = await session.escalate_to_human(chats, None, session_key=_S, params={"reason_category": "BULK_ORDER", "summary": "30 uds"})

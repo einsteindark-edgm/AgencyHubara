@@ -120,6 +120,12 @@ async def _call(
                 "applied": "unknown",
                 "message": "El servicio no respondió a tiempo; la operación PUEDE haberse aplicado. No la repitas: pasa el caso a un colega.",
             }
+        if status == 409 and detail.startswith("already_human"):
+            return {
+                "error": "already_human",
+                "applied": False,
+                "message": "Un colega del equipo ya tiene esta conversación. No etiquetes, no escales y no respondas más en este chat.",
+            }
         if 400 <= status < 500:
             out: dict[str, Any] = {
                 "error": "rejected",
