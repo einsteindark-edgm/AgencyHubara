@@ -110,7 +110,7 @@ async def test_guards_are_fail_closed(vault: Path) -> None:
     uc, port = _uc(vault, allowed=False)
     assert (await uc.execute(SESSION, ReleaseTrigger.MANUAL)).reason == "customer_not_enabled"
     uc, port = _uc(vault)
-    assert (await uc.execute("wa_573009999999", ReleaseTrigger.MANUAL)).reason == "session_unknown"
+    assert (await uc.execute("wa_573009876543", ReleaseTrigger.MANUAL)).reason == "session_unknown"
     assert port.calls == [] and "thread_control" not in _meta(vault)
 
 
