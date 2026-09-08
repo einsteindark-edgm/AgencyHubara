@@ -1183,13 +1183,15 @@ def test_apply_payment_confirmation_marks_tag_and_appends_history():
     assert changed is True
     assert chat["tag"] == "COMPRA_EXITOSA"
     assert "Pago verificado por vendedor.juan" in chat["motivo"]
-    # active_route NO cambia (humano cerró el caso)
-    assert chat["active_route"] == "humano"
+    # Feature 2026-09-08: confirmar el pago devuelve la conversación al bot
+    # de ventas automáticamente (antes quedaba en humano hasta el scheduler
+    # post-venta nocturno o el botón "Devolver al bot").
+    assert chat["active_route"] == "ventas"
     # status_history append
     assert len(chat["status_history"]) == 3
     last_entry = chat["status_history"][-1]
     assert last_entry["tag"] == "COMPRA_EXITOSA"
-    assert last_entry["active_route"] == "humano"
+    assert last_entry["active_route"] == "ventas"
     # episodio actualizado
     ep = chat["episodes"][0]
     assert ep["closing_tag"] == "COMPRA_EXITOSA"
@@ -1366,7 +1368,7 @@ async def test_confirm_payment_syncs_chat_metadata_when_session_key_present(
     chat_after = _json.loads(chat_meta_file.read_text(encoding="utf-8"))
     assert chat_after["tag"] == "COMPRA_EXITOSA"
     assert "Pago verificado por vendedor.maria" in chat_after["motivo"]
-    assert chat_after["active_route"] == "humano"  # no cambia
+    assert chat_after["active_route"] == "ventas"  # feature 2026-09-08: vuelve al bot
     # Episode actualizado
     assert chat_after["episodes"][0]["closing_tag"] == "COMPRA_EXITOSA"
     assert chat_after["episodes"][0]["payment_confirmed_by"] == "vendedor.maria"
@@ -1681,3 +1683,50 @@ def test_build_bogota_context_string_works_with_fixed_offset_tz():
     assert "Buenas tardes" in build_bogota_context_string(now=afternoon)
     assert "21:00" in build_bogota_context_string(now=night)
     assert "Buenas noches" in build_bogota_context_string(now=night)
+
+
+# ── Feature 2026-09-08: "Confirmar pago" devuelve la conversación al bot ──
+# Pedido del operador: al confirmar el pago (desde el chat o desde el tablero
+# de orders) la conversación NO debe quedarse en la bandeja humana — vuelve
+# al bot de ventas de una, sin esperar al scheduler post-venta ni al botón
+# "Devolver al bot". El tag comercial sigue siendo COMPRA_EXITOSA (es un
+# cliente real; NO RETOMA_VENTA, que la mostraría como Pendiente).
+
+
+def test_apply_payment_confirmation_returns_conversation_to_sales_bot():
+    chat = {
+        "tag": "HUMANO",
+        "motivo": "verificar pago",
+        "active_route": "humano",
+        "escalation_reason": "PAYMENT_VERIFICATION_PENDING",
+        "status_history": [],
+        "episodes": [],
+    }
+    changed = apply_payment_confirmation_to_chat_metadata(
+        chat, now_ms=7000, by="vendedora.ana"
+    )
+    assert changed is True
+    assert chat["active_route"] == "ventas"
+    assert chat["tag"] == "COMPRA_EXITOSA"
+    assert "vuelve al bot de ventas" in chat["motivo"]
+    last = chat["status_history"][-1]
+    assert last["active_route"] == "ventas"
+    assert last["tag"] == "COMPRA_EXITOSA"
+    assert last["source"] == "orders_confirm_payment"
+
+
+def test_apply_payment_confirmation_keeps_route_when_bot_already_has_it():
+    """Si el bot ya tiene la conversación (p. ej. remarketing la retomó
+    mientras el humano verificaba en Orders), NO se pisa esa ruta."""
+    chat = {
+        "tag": "CONFIRMADO_PAGO_PENDIENTE",
+        "motivo": "x",
+        "active_route": "remarketing",
+        "status_history": [],
+        "episodes": [],
+    }
+    changed = apply_payment_confirmation_to_chat_metadata(chat, now_ms=1, by=None)
+    assert changed is True
+    assert chat["active_route"] == "remarketing"
+    assert chat["status_history"][-1]["active_route"] == "remarketing"
+    assert "vuelve al bot" not in chat["motivo"]

@@ -187,6 +187,19 @@ integre, este endpoint capturará el pago.
 - WHEN se re-invoca confirm-payment
 - THEN se devuelve `{success: true, ...}` sin side effects extra
 
+#### Scenario: La conversación vuelve al bot al confirmar el pago
+
+- GIVEN una orden con `session_key` cuyo chat está en `active_route=humano`
+  (el bot escaló con `PAYMENT_VERIFICATION_PENDING` o el humano intervino)
+- WHEN se invoca confirm-payment (desde el tablero de orders o desde el
+  botón "Confirmar pago" del chat — mismo comando)
+- THEN el `metadata.json` del chat queda con `tag=COMPRA_EXITOSA` y
+  `active_route=ventas`, con una entrada en `status_history`
+  (`source=orders_confirm_payment`)
+- AND el próximo inbound del cliente lo atiende el bot de ventas; la
+  conversación sale de la bandeja "Asignadas al humano" y aparece como Cliente
+- AND si el chat ya estaba en `ventas`/`remarketing`, la ruta NO se toca
+
 ### Requirement: Cancelación de orden
 
 El sistema SHALL exponer `POST /api/orders/orders/{id}/cancel` que

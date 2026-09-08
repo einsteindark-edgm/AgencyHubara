@@ -33,10 +33,11 @@ interface Props {
  *   1. `PATCH /orders/{id}/schedule {delivery_iso, delivery_time?}` → draft pasa
  *      a Order real + stage `new → preparing`.
  *   2. `PATCH /orders/{id}/confirm-payment` → marca el pago confirmado; el
- *      backend reescribe el `metadata.json` del chat (tag → COMPRA_EXITOSA) →
- *      la sesión deja de exponer `pending_payment_order_id` → el botón se
- *      desmonta solo (vía SSE; además invalidamos `sessionKeys` para que sea
- *      inmediato).
+ *      backend reescribe el `metadata.json` del chat (tag → COMPRA_EXITOSA y
+ *      `active_route` humano → ventas: la conversación vuelve al bot de una)
+ *      → la sesión deja de exponer `pending_payment_order_id` y el composer
+ *      pasa solo a modo "Bot gestionando" (vía SSE; además invalidamos
+ *      `sessionKeys` para que sea inmediato).
  *
  * Si el pedido YA tiene fecha de entrega asignada (`summary.due_iso` del
  * read-side del cast — puesta por "Asignar fecha" en el chat o por el tablero
@@ -187,13 +188,15 @@ export function ConfirmPaymentAction({ orderId, open, onOpenChange }: Props) {
                 {formatIsoDateEs(scheduledIso)}
                 {scheduledTime ? ` ${scheduledTime}` : ""}
               </b>
-              . Solo se marca el pago como recibido — la fecha no se toca.
+              . Solo se marca el pago como recibido — la fecha no se toca. La
+              conversación vuelve al bot de ventas.
             </p>
           ) : (
             <>
               <p style={{ margin: 0, fontSize: "0.72rem", color: "var(--fg-faint, var(--color-neutral))", lineHeight: 1.35 }}>
                 El pedido se agenda (queda como pedido en preparación) y se marca el
-                pago como recibido, en un solo paso.
+                pago como recibido, en un solo paso. La conversación vuelve al bot
+                de ventas.
               </p>
 
               <label style={fieldStyle}>
