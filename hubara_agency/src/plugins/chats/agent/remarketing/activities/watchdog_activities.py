@@ -20,6 +20,7 @@ import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import structlog
@@ -394,8 +395,7 @@ async def persist_watchdog_outcome_activity(
         )
 
     store = FilesystemMetadataStore(Path(WORKSPACE_VAULT_DIR))
-    metadata = store.read(session_id)
-    existing = dict(metadata.get("watchdog") or {})
+    existing: dict[str, Any] = {}  # solo los campos que ESTE outcome fija
 
     now_ms = _now_ms()
     if outcome == "fired":
@@ -440,8 +440,18 @@ async def persist_watchdog_outcome_activity(
             reason=detail,
         )
 
-    metadata["watchdog"] = existing
-    store.write(session_id, metadata)
+    def _mutate(data: dict[str, Any]) -> dict[str, Any]:
+        # Read-modify-write bajo el flock del store: metadata.json lo escriben
+        # en paralelo el ingest, las connector tools de MBA y el contrato
+        # /tag. Un `write` plano con una lectura vieja pisaría p.ej.
+        # `active_route=humano` de una escalación. Acá solo se toca
+        # `metadata["watchdog"]`.
+        block = dict(data.get("watchdog") or {})
+        block.update(existing)
+        data["watchdog"] = block
+        return data
+
+    metadata = store.update(session_id, _mutate) or {}
 
     if outcome == "fired":
         await _emit_cart_abandoned_if_open(session_id, metadata, store, now_ms)
