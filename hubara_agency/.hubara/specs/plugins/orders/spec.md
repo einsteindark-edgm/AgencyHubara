@@ -161,6 +161,31 @@ transiciones manuales validando el DAG permitido entre stages.
   intacto (ETA notifica). La supresión es POR TRANSICIÓN, nunca por tag
   HUMANO (L-6: toda venta exitosa termina en HUMANO)
 
+#### Scenario: Notificación con Meta Business Agent al frente (D1.9)
+
+- GIVEN `MBA_STANDBY_ENABLED=1`, el cliente en `MBA_CUSTOMER_ALLOWLIST` y MBA
+  controlando el hilo (`control_owner=mba`, o último inbound por `standby`)
+- WHEN la cascada ETA reclama la notificación de un stage
+  (`claim_eta_notification_activity`)
+- THEN Hubara NO envía texto ni template (un envío por Cloud API le quitaría
+  el hilo a MBA): el ETA le cuenta la novedad al plugin `mba`
+  (`POST /api/mba/sessions/{session_key}/agent-events`, identidad de servicio)
+  con el texto exacto de `render_stage_notification` y el tipo del catálogo
+  (`preparing` → `payment_received` si `pay_status=paid`, si no
+  `order_preparing`; `ready`/`shipping`/`delivered`/`cancelled` →
+  `order_ready`/`order_shipped`/`order_delivered`/`order_cancelled`)
+- AND `mba` emite `POST /{phone_number_id}/agent_event` (`X-API-Version: 2.0.0`)
+  y registra `agent_events[]` en la sesión; el stage queda en
+  `notified_stages` con `[agent_event <tipo> → Meta Business Agent: accepted <id>]`
+  en el timeline (dedupe ante reentregas)
+- AND si `mba` responde `already_emitted` o `ambiguous` (Meta pudo aceptarlo)
+  tampoco se envía; si responde `hubara_controls`, `rejected`, `unavailable`,
+  `not_configured` o `entity_id_missing`, o el API no está (502/503/403/404),
+  el ETA notifica como siempre (el cliente no se queda sin aviso)
+- AND si el API no respondió a tiempo (504) o falló a mitad (500) la activity
+  falla y Temporal la reintenta (el dedupe de `mba` hace seguro el reintento)
+- AND con la flag apagada (default) el predicado es falso y nada cambia
+
 #### Scenario: Atribución del actor en el stage history
 
 - GIVEN body con `{stage: "ready", by: "order-sentinel"}`

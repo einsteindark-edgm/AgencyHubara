@@ -49,6 +49,12 @@ from temporalio import activity
 from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.state import FilesystemMetadataStore
 from src.platform.whatsapp.window import is_in_service_window
+from src.plugins.eta.agent.eta.activities.mba_notify import (
+    event_type_for_stage,
+    notify_via_mba,
+)
+from src.plugins.eta.agent.eta.prompts import render_stage_notification
+from src.sdk.runtime import mba_controls_thread
 
 
 def _store() -> FilesystemMetadataStore:
@@ -176,6 +182,110 @@ async def claim_eta_notification_activity(
     session_id: str, order_id: str, stage: str
 ) -> dict[str, Any] | None:
     """Decide si corresponde notificar este cambio de estado y, si sí, devuelve
+    los datos vivos del pedido para rellenar el mensaje (``_claim_facts``).
+
+    D1.9: si Meta Business Agent controla el hilo (``mba_controls_thread``:
+    flag + lista cerrada + dueño/standby), un envío de Hubara tomaría el hilo
+    → la novedad se le cuenta a MBA por ``agent_event`` (``_delegate_to_mba``)
+    y se devuelve ``None`` (el workflow no envía nada). Con la flag apagada el
+    predicado es siempre falso y el claim es el de siempre.
+    """
+    facts = await _claim_facts(session_id, order_id, stage)
+    if facts is None:
+        return None
+    store = _store()
+    data = _safe_read(store, session_id)
+    if mba_controls_thread(data, session_id) and await _delegate_to_mba(
+        store, data, session_id, order_id, stage, facts
+    ):
+        return None
+    return facts
+
+
+#: Outcomes del plugin mba tras los cuales Hubara NO debe enviar: MBA tiene
+#: (o puede tener) el evento. Cualquier otro (``hubara_controls``, ``rejected``,
+#: ``unavailable``, ``not_configured``, ``entity_id_missing``) → Hubara
+#: notifica como siempre para que el cliente no se quede sin aviso.
+_MBA_HANDLED_REASONS = ("accepted", "already_emitted", "ambiguous")
+#: Status del cast tras los cuales el evento PUDO llegar a Meta (el API no
+#: respondió a tiempo / falló a mitad): ni enviar ni callar → la activity
+#: falla y Temporal reintenta; el dedupe de mba hace el reintento seguro.
+_MBA_UNKNOWN_STATUSES = frozenset({500, 504})
+
+
+async def _delegate_to_mba(
+    store: FilesystemMetadataStore,
+    data: dict[str, Any],
+    session_id: str,
+    order_id: str,
+    stage: str,
+    facts: dict[str, Any],
+) -> bool:
+    """Le cuenta la novedad a MBA con el texto EXACTO que Hubara habría
+    enviado. Devuelve ``True`` si MBA se encarga (stage reservado como
+    notificado en el timeline); ``False`` → el workflow notifica como siempre."""
+    event_type = event_type_for_stage(stage, payment_confirmed=bool(facts.get("payment_confirmed")))
+    message = render_stage_notification(
+        stage=stage,
+        customer_name=facts.get("customer_name", ""),
+        order_display_id=facts.get("order_display_id", ""),
+        total_label=facts.get("total_label", ""),
+        pay_type=facts.get("pay_type", "confirmed"),
+        payment_confirmed=bool(facts.get("payment_confirmed", False)),
+        delivery_window=facts.get("delivery_window"),
+        items_label=facts.get("items_label", ""),
+    )
+    if event_type is None or not message:
+        return False
+    payload = {
+        "order_id": order_id,
+        "stage": stage,
+        "order_display_id": facts.get("order_display_id", ""),
+        "total_label": facts.get("total_label", ""),
+        "pay_type": facts.get("pay_type", "confirmed"),
+        "payment_confirmed": bool(facts.get("payment_confirmed", False)),
+        "items_label": facts.get("items_label", ""),
+        "tracking_url": None,  # el claim no recibe la guía (llega al send); F0 decide si vale cambiar la firma
+    }
+    try:
+        outcome = await notify_via_mba(
+            session_id, event_type=event_type, order_id=order_id, message=message, payload=payload
+        )
+    except Exception as exc:  # noqa: BLE001 — HTTPException de castkit (status honesto)
+        status = getattr(exc, "status_code", None)
+        if status in _MBA_UNKNOWN_STATUSES:
+            activity.logger.warning(
+                "claim_eta_notification: agent_event %s para %s con resultado DESCONOCIDO "
+                "(%s) — reintento de la activity", event_type, session_id, status,
+            )
+            raise
+        activity.logger.warning(
+            "claim_eta_notification: mba no tomó el agent_event %s para %s (%s) — Hubara notifica",
+            event_type, session_id, status or repr(exc),
+        )
+        return False
+    reason = str(outcome.get("reason") or "")
+    if reason not in _MBA_HANDLED_REASONS:
+        activity.logger.warning(
+            "claim_eta_notification: mba no emitió %s para %s (%s) — Hubara notifica",
+            event_type, session_id, reason,
+        )
+        return False
+    event_id = outcome.get("agent_event_id")
+    _record_notification(
+        store, data, session_id, order_id, stage,
+        f"[agent_event {event_type} → Meta Business Agent: {reason}{f' {event_id}' if event_id else ''}]",
+    )
+    activity.logger.info(
+        "claim_eta_notification: %s para %s delegado a Meta Business Agent (%s)", event_type, session_id, reason,
+    )
+    return True
+
+
+async def _claim_facts(
+    session_id: str, order_id: str, stage: str
+) -> dict[str, Any] | None:
+    """Decide si corresponde notificar este cambio de estado y, si sí, devuelve
     los datos vivos del pedido para rellenar el mensaje.
 
     Devuelve ``None`` (saltar la notificación) SOLO cuando el stage ya está en
@@ -285,6 +395,17 @@ async def record_eta_notification_activity(
     """
     store = _store()
     data = _safe_read(store, session_id)
+    _record_notification(store, data, session_id, order_id, stage, agent_msg)
+
+
+def _record_notification(
+    store: FilesystemMetadataStore,
+    data: dict[str, Any],
+    session_id: str,
+    order_id: str,
+    stage: str,
+    agent_msg: str,
+) -> None:
     orders = _orders_map(data)
     entry = orders.get(order_id) or _empty_entry(order_id)
 

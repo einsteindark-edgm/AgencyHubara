@@ -331,3 +331,63 @@ def test_release_endpoint_validates_key_and_trigger() -> None:
     assert c.post("/api/mba/sessions/573001234567/control/release").status_code == 422
     assert c.post("/api/mba/sessions/wa_573001234567/control/release", json={"trigger": "whatever"}).status_code == 422
     assert c.post("/api/mba/sessions/wa_573001234567/control/release", json={"metadata": "x" * 2001}).status_code == 422
+
+
+# ── D1.9: agent_event hacia Meta Business Agent (plano de gestión) ───────────
+
+
+class _AgentEventStub:
+    def __init__(self, reason: str, emitted: bool = False) -> None:
+        self.reason, self.emitted, self.calls = reason, emitted, []
+
+    async def execute(self, session_key, event_type, *, order_id=None, message="", payload=None, source=None):
+        from src.plugins.mba.use_cases.emit_agent_event import AgentEventOutcome
+
+        self.calls.append((session_key, event_type, order_id, message, payload, source))
+        return AgentEventOutcome(session_key=session_key, emitted=self.emitted, reason=self.reason,
+                                 agent_event_id="AE_1" if self.emitted else None, at_ms=1)
+
+
+def _agent_event_client(stub: _AgentEventStub) -> TestClient:
+    from src.plugins.mba import api as mba_api
+
+    app = FastAPI()
+    app.include_router(router, prefix="/api/mba")
+    app.dependency_overrides[mba_api.get_emit_agent_event] = lambda: stub
+    return TestClient(app)
+
+
+def test_agent_event_endpoint_delegates_to_the_use_case() -> None:
+    stub = _AgentEventStub("accepted", emitted=True)
+    c = _agent_event_client(stub)
+    r = c.post("/api/mba/sessions/wa_573001234567/agent-events",
+               json={"type": "order_shipped", "order_id": "order_1", "message": "Tu pedido va en camino.",
+                     "payload": {"stage": "shipping"}, "source": "eta"})
+    assert r.status_code == 200
+    assert r.json() == {"session_key": "wa_573001234567", "emitted": True, "reason": "accepted",
+                        "agent_event_id": "AE_1", "at_ms": 1, "error": None, "recorded": True}
+    assert stub.calls == [("wa_573001234567", "order_shipped", "order_1", "Tu pedido va en camino.",
+                           {"stage": "shipping"}, "eta")]
+
+
+@pytest.mark.parametrize("reason,status", [
+    ("mba_disabled", 503), ("customer_not_enabled", 403), ("session_unknown", 404),
+    ("hubara_controls", 200), ("already_emitted", 200), ("rejected", 200), ("unavailable", 200),
+    ("ambiguous", 200), ("entity_id_missing", 200),
+])
+def test_agent_event_endpoint_maps_guard_reasons_to_status_codes(reason: str, status: int) -> None:
+    r = _agent_event_client(_AgentEventStub(reason)).post(
+        "/api/mba/sessions/wa_573001234567/agent-events", json={"type": "order_shipped", "message": "m"})
+    assert r.status_code == status
+    if status == 200:
+        assert r.json()["emitted"] is False and r.json()["reason"] == reason
+
+
+def test_agent_event_endpoint_validates_key_type_and_message() -> None:
+    c = _agent_event_client(_AgentEventStub("accepted", True))
+    ok = {"type": "order_shipped", "message": "m"}
+    assert c.post("/api/mba/sessions/573001234567/agent-events", json=ok).status_code == 422
+    assert c.post("/api/mba/sessions/wa_573001234567/agent-events", json={**ok, "type": "whatever"}).status_code == 422
+    assert c.post("/api/mba/sessions/wa_573001234567/agent-events", json={**ok, "message": ""}).status_code == 422
+    assert c.post("/api/mba/sessions/wa_573001234567/agent-events", json={**ok, "message": "x" * 2001}).status_code == 422
+    assert c.post("/api/mba/sessions/wa_573001234567/agent-events", json={"message": "m"}).status_code == 422
