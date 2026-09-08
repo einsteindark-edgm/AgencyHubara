@@ -28,6 +28,7 @@ def harness(monkeypatch):
 
     monkeypatch.setattr(config, "WHATSAPP_APP_SECRET", "")
     monkeypatch.setattr(config, "HUBARA_ENV", "dev")
+    monkeypatch.setattr(config, "MBA_STANDBY_ENABLED", True)
     sales_ingest, standby_ingest, delivery = _Recorder(), _Recorder(), _Recorder()
     monkeypatch.setattr(api, "build_ingest_use_case", lambda: sales_ingest)
     monkeypatch.setattr(api, "build_ingest_standby_use_case", lambda: standby_ingest)
@@ -79,3 +80,48 @@ def test_a_regular_messages_webhook_still_reaches_the_sales_ingest(harness) -> N
     mixed = P.merged(body, P.inbound("desde standby"))
     assert client.post("/api/webhook", json=mixed).status_code == 200
     assert len(sales_ingest.calls) == 2 and len(standby_ingest.calls) == 1
+
+
+# ── interruptores (pedido del operador: ya estamos en producción) ─────────────
+
+
+def test_standby_is_dropped_while_the_flag_is_off(monkeypatch) -> None:
+    """Default OFF: el webhook se acepta (200, Meta no reintenta) y NADA se
+    procesa — mismo comportamiento que antes de D1.4."""
+    from src.main import app
+    from src.platform import config
+    from src.plugins.chats.api import sales as api
+
+    monkeypatch.setattr(config, "WHATSAPP_APP_SECRET", "")
+    monkeypatch.setattr(config, "HUBARA_ENV", "dev")
+    monkeypatch.setattr(config, "MBA_STANDBY_ENABLED", False)
+    standby_ingest, delivery = _Recorder(), _Recorder()
+    monkeypatch.setattr(api, "build_ingest_standby_use_case", lambda: standby_ingest)
+    monkeypatch.setattr(api, "build_ingest_delivery_status_use_case", lambda: delivery)
+    client = TestClient(app)
+    for body in (P.inbound(), P.echo_text(), P.status()):
+        assert client.post("/api/webhook", json=body).status_code == 200
+    assert standby_ingest.calls == [] and delivery.calls == []
+
+
+def test_unknown_fields_are_accepted_and_ignored(harness) -> None:
+    client, sales_ingest, standby_ingest, delivery = harness
+    body = {"object": "whatsapp_business_account", "entry": [{"id": "WABA_1", "changes": [
+        {"field": "message_template_status_update", "value": {"event": "APPROVED", "message_template_id": 1}}]}]}
+    assert client.post("/api/webhook", json=body).status_code == 200
+    assert sales_ingest.calls == [] and standby_ingest.calls == [] and delivery.calls == []
+
+
+def test_each_field_handler_only_sees_its_own_changes(harness) -> None:
+    """Body agrupado con `standby` PRIMERO y `messages` después: el handler
+    legacy (que mira changes[0]) igual recibe su mensaje."""
+    client, sales_ingest, standby_ingest, delivery = harness
+    regular = {"field": "messages", "value": {
+        "messaging_product": "whatsapp", "metadata": {"display_phone_number": "1", "phone_number_id": "PHONE_777"},
+        "messages": [{"from": P.CUSTOMER, "id": "wamid.REG.2", "timestamp": "1757300000", "type": "text",
+                      "text": {"body": "regular"}}]}}
+    body = P.inbound("standby primero")
+    body["entry"][0]["changes"].append(regular)
+    assert client.post("/api/webhook", json=body).status_code == 200
+    assert len(sales_ingest.calls) == 1 and sales_ingest.calls[0][0][0].text == "regular"
+    assert len(standby_ingest.calls) == 1 and standby_ingest.calls[0][0][0].messages[0].text == "standby primero"

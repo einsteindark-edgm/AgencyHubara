@@ -131,3 +131,11 @@ async def test_mba_write_tool_reaches_chats_with_the_service_token(auth_app, mon
             }
     finally:
         auth_app.dependency_overrides.pop(session_actions.get_session_actions_deps, None)
+
+
+@pytest.fixture(autouse=True)
+def _mba_test_customers_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Lista cerrada de MBA (fail-closed): los teléfonos sintéticos del test."""
+    from src.platform import config
+
+    monkeypatch.setattr(config, "MBA_CUSTOMER_ALLOWLIST", frozenset({"573001234567", "573009876543"}))

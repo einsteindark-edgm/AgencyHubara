@@ -223,3 +223,22 @@ def test_connector_key_check_is_constant_time_safe_with_non_ascii_and_does_not_l
     r = c.get("/api/mba/tools/search_products", headers={"X-API-Key": "x"})
     assert r.status_code == 503
     assert "HUBARA_MBA_API_KEY" not in r.text
+
+
+def test_connector_refuses_customers_outside_the_closed_list(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Lista cerrada del lado de Hubara (ya estamos en producción): una tool
+    invocada para un cliente no habilitado no ejecuta NADA y devuelve un error
+    explícito para que MBA pase el caso a un colega."""
+    from src.platform import config
+
+    monkeypatch.setattr(config, "MBA_CUSTOMER_ALLOWLIST", frozenset({"573009876543"}))
+    c = _client_with_deps(monkeypatch)
+    r = c.get("/api/mba/tools/search_products", params={"customer_phone": "+573001234567", "q": "vela"},
+              headers={"X-API-Key": "secreto"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["error"] == "customer_not_enabled" and "colega" in body["message"]
+    monkeypatch.setattr(config, "MBA_CUSTOMER_ALLOWLIST", frozenset({"573001234567"}))
+    r = c.get("/api/mba/tools/search_products", params={"customer_phone": "+573001234567", "q": "vela"},
+              headers={"X-API-Key": "secreto"})
+    assert r.status_code == 200 and "error" not in r.json()

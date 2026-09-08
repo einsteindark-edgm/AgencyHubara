@@ -34,7 +34,7 @@ import os
 from exoclaw_temporal.config import WorkspaceConfig
 
 from src.platform.analytics.composition import setup_analytics
-from src.platform.config import WORKSPACE_VAULT_DIR
+from src.platform.config import WORKSPACE_VAULT_DIR, mba_customer_allowed
 from src.platform.session_history import FilesystemMessageHistoryStore
 from src.platform.state import FilesystemMetadataStore as _PlatformFsMetaStore
 from src.platform.temporal.client import get_temporal_client
@@ -150,5 +150,6 @@ def build_ingest_standby_use_case() -> IngestStandby:
         metadata_store=_PlatformFsMetaStore(WORKSPACE_VAULT_DIR),
         history_store=FilesystemMessageHistoryStore(WORKSPACE_VAULT_DIR),
         vault_dir=WORKSPACE_VAULT_DIR,
+        is_customer_allowed=mba_customer_allowed,
     )
     return _STANDBY_USE_CASE

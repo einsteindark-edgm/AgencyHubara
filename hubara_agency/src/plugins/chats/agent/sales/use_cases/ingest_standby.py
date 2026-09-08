@@ -85,6 +85,7 @@ class StandbyIngestResult:
     messages_persisted: int = 0
     echoes_persisted: int = 0
     duplicates: int = 0
+    rejected: int = 0  # clientes fuera de la lista cerrada (nada escrito)
     sessions: tuple[str, ...] = ()
 
 
@@ -137,16 +138,34 @@ class IngestStandby:
         history_store: Any,  # FilesystemMessageHistoryStore
         vault_dir: Path,
         now_ms: Callable[[], int] = _now_ms,
+        is_customer_allowed: Callable[[str], bool],
     ) -> None:
         self._metadata_store = metadata_store
         self._history_store = history_store
         self._vault_dir = Path(vault_dir)
         self._now_ms = now_ms
+        # Lista cerrada de clientes (estamos en producción): fuera de ella NO
+        # se escribe nada. Inyectada (platform la lee de MBA_CUSTOMER_ALLOWLIST).
+        self._is_customer_allowed = is_customer_allowed
+
+    def _allowed(self, customer: str, kind: str) -> bool:
+        if self._is_customer_allowed(customer):
+            return True
+        # ERROR a propósito: es la alarma de que Meta está sirviendo con MBA a
+        # un cliente que no habilitamos (rollout más abierto de lo previsto).
+        logger.error(
+            "[chats.standby] {} de cliente FUERA de la lista cerrada de MBA: ***{} — descartado",
+            kind, customer[-4:],
+        )
+        return False
 
     async def execute(self, event: StandbyEvent) -> StandbyIngestResult:
-        messages = echoes = duplicates = 0
+        messages = echoes = duplicates = rejected = 0
         sessions: list[str] = []
         for msg in event.messages:
+            if not self._allowed(msg.from_number, "inbound"):
+                rejected += 1
+                continue
             session = f"{SESSION_PREFIX}{msg.from_number}"
             if self._ingest_inbound(session, msg, event.phone_number_id):
                 messages += 1
@@ -155,6 +174,9 @@ class IngestStandby:
             if session not in sessions:
                 sessions.append(session)
         for echo in event.echoes:
+            if not self._allowed(echo.to, "eco"):
+                rejected += 1
+                continue
             session = f"{SESSION_PREFIX}{echo.to}"
             if self._ingest_echo(session, echo):
                 echoes += 1
@@ -163,11 +185,12 @@ class IngestStandby:
             if session not in sessions:
                 sessions.append(session)
         logger.info(
-            "[chats.standby] ingest sessions={} messages={} echoes={} duplicates={} statuses={}",
-            sessions, messages, echoes, duplicates, len(event.statuses),
+            "[chats.standby] ingest sessions={} messages={} echoes={} duplicates={} rejected={} statuses={}",
+            sessions, messages, echoes, duplicates, rejected, len(event.statuses),
         )
         return StandbyIngestResult(
-            messages_persisted=messages, echoes_persisted=echoes, duplicates=duplicates, sessions=tuple(sessions)
+            messages_persisted=messages, echoes_persisted=echoes, duplicates=duplicates, rejected=rejected,
+            sessions=tuple(sessions),
         )
 
     # ── inbound del cliente (MBA responde; nosotros escuchamos) ──────────────

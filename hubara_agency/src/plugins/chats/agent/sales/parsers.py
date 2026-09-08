@@ -451,6 +451,29 @@ def webhook_fields(body: Any) -> set[str]:
     return out
 
 
+def split_webhook_by_field(body: Any) -> dict[str, dict[str, Any]]:
+    """Reparte los ``changes`` del body por ``field`` en sub-bodies con el
+    mismo sobre (``object``, ``entry[].id``): cada handler ve SOLO sus cambios.
+    Un change sin ``field`` (payloads simulados / legacy) cuenta como
+    ``messages``. Vacío si el body no tiene entries."""
+    if not isinstance(body, dict) or not isinstance(body.get("entry"), list):
+        return {}
+    parts: dict[str, dict[str, Any]] = {}
+    for entry in body["entry"]:
+        if not isinstance(entry, dict):
+            continue
+        for change in entry.get("changes") or []:
+            if not isinstance(change, dict):
+                continue
+            field_name = change.get("field") if isinstance(change.get("field"), str) else "messages"
+            part = parts.setdefault(field_name, {k: v for k, v in body.items() if k != "entry"} | {"entry": []})
+            entries: list[dict[str, Any]] = part["entry"]
+            if not entries or entries[-1].get("id") != entry.get("id"):
+                entries.append({k: v for k, v in entry.items() if k != "changes"} | {"changes": []})
+            entries[-1]["changes"].append(change)
+    return parts
+
+
 @dataclass(frozen=True)
 class StandbyEcho:
     """Copia de un mensaje que MBA (u otro remitente del número) envió."""

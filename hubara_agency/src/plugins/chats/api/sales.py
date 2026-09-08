@@ -25,10 +25,11 @@ from src.plugins.chats.agent.sales.composition import (
 )
 from src.plugins.chats.agent.sales.parsers import (
     HANDOVERS_FIELD,
+    STANDBY_FIELD,
     parse_whatsapp_inbound,
     parse_whatsapp_standby,
     parse_whatsapp_statuses,
-    webhook_fields,
+    split_webhook_by_field,
 )
 
 logger = structlog.get_logger()
@@ -134,38 +135,25 @@ async def handle_whatsapp_webhook(request: Request, background_tasks: Background
         logger.warning("webhook_body_not_json", error=str(exc))
         raise HTTPException(status_code=400, detail=f"malformed body: {exc}")
 
-    # 3. Ramas por `field` (D1.4). Un body puede traer varios `changes`
-    # (Meta agrupa); cada campo va por su puerta. Sin `field` (payloads
-    # legacy / simulados) sigue el path de `messages` de siempre.
-    fields = webhook_fields(body)
-    standby = parse_whatsapp_standby(body)
-    if standby is not None:
-        for status_update in standby.statuses:
-            add_traced_background_task(
-                background_tasks,
-                build_ingest_delivery_status_use_case().execute,
-                status_update.wa_message_id,
-                status_update.status,
-                status_update.pricing,
-            )
-        logger.info(
-            "webhook_standby",
-            messages=len(standby.messages),
-            echoes=len(standby.echoes),
-            statuses=len(standby.statuses),
-        )
-        if standby.messages or standby.echoes:
-            add_traced_background_task(
-                background_tasks, build_ingest_standby_use_case().execute, standby
-            )
-    if HANDOVERS_FIELD in fields:
-        logger.info("webhook_messaging_handovers_ignored", reason="pendiente D1.5 (control_owner)")
-    if fields and "messages" not in fields:
-        # Solo campos que ya se atendieron arriba (o desconocidos): no hay
-        # nada para el path de `messages` (que exige `value.metadata`).
-        return {"status": "ok"}
+    # 3. Strategy por `field` (D1.4): cada campo del webhook tiene su handler
+    # y ve SOLO sus `changes`. El de `messages` es el código de siempre,
+    # intacto; los demás son aditivos. Sin `field` (payloads simulados /
+    # legacy) todo cuenta como `messages`. Un campo sin handler se acepta con
+    # 200 (Meta no reintenta) y se loguea.
+    for field_name, part in split_webhook_by_field(body).items():
+        handler = _FIELD_HANDLERS.get(field_name)
+        if handler is None:
+            logger.info("webhook_field_ignored", field=field_name)
+            continue
+        handler(part, background_tasks)
+    return {"status": "ok"}
 
-    # 4. Statuses primero — no requieren ser mutuamente excluyentes con
+
+# ── handlers por `field` ───────────────────────────────────────────────────────
+
+def _handle_messages(body: dict, background_tasks: BackgroundTasks) -> None:
+    """El path productivo de siempre (inbound del cliente + statuses)."""
+    # Statuses primero — no requieren ser mutuamente excluyentes con
     # messages (Meta podría enviarlos juntos).
     for status_update in parse_whatsapp_statuses(body):
         delivery_use_case = build_ingest_delivery_status_use_case()
@@ -185,8 +173,49 @@ async def handle_whatsapp_webhook(request: Request, background_tasks: Background
 
     if parsed is None:
         # Sin messages[] — ya despachamos los statuses arriba (si había).
-        return {"status": "ok"}
+        return
 
     use_case = build_ingest_use_case()
     add_traced_background_task(background_tasks, use_case.execute, parsed)
-    return {"status": "ok"}
+
+
+def _handle_standby(body: dict, background_tasks: BackgroundTasks) -> None:
+    """D1.4: Meta Business Agent controla el hilo. Detrás de la flag
+    `MBA_STANDBY_ENABLED` (default OFF: se acepta y se descarta, como hasta
+    hoy); la lista cerrada de clientes la aplica `IngestStandby`."""
+    if not cfg.MBA_STANDBY_ENABLED:
+        logger.info("webhook_standby_ignored", reason="MBA_STANDBY_ENABLED apagado")
+        return
+    standby = parse_whatsapp_standby(body)
+    if standby is None:
+        return
+    for status_update in standby.statuses:
+        add_traced_background_task(
+            background_tasks,
+            build_ingest_delivery_status_use_case().execute,
+            status_update.wa_message_id,
+            status_update.status,
+            status_update.pricing,
+        )
+    logger.info(
+        "webhook_standby",
+        messages=len(standby.messages),
+        echoes=len(standby.echoes),
+        statuses=len(standby.statuses),
+    )
+    if standby.messages or standby.echoes:
+        add_traced_background_task(
+            background_tasks, build_ingest_standby_use_case().execute, standby
+        )
+
+
+def _handle_messaging_handovers(body: dict, background_tasks: BackgroundTasks) -> None:
+    """Cambio de control del hilo (D1.5): hoy solo se acepta y se loguea."""
+    logger.info("webhook_messaging_handovers_ignored", reason="pendiente D1.5 (control_owner)")
+
+
+_FIELD_HANDLERS = {
+    "messages": _handle_messages,
+    STANDBY_FIELD: _handle_standby,
+    HANDOVERS_FIELD: _handle_messaging_handovers,
+}

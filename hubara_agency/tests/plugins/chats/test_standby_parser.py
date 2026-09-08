@@ -11,6 +11,7 @@ from src.plugins.chats.agent.sales.parsers import (
     parse_whatsapp_inbound,
     parse_whatsapp_standby,
     parse_whatsapp_statuses,
+    split_webhook_by_field,
     webhook_fields,
 )
 from tests.plugins.chats import standby_payloads as P
@@ -97,3 +98,16 @@ def test_standby_ids_of_arbitrary_length_are_dropped() -> None:
     assert parse_whatsapp_standby(body).messages == ()
     body = P.echo_text(wamid=long_id)
     assert parse_whatsapp_standby(body).echoes == ()
+
+
+def test_split_webhook_by_field_gives_each_handler_only_its_changes() -> None:
+    legacy_change = {"value": {"metadata": {"phone_number_id": "x"}, "messages": []}}  # sin `field` (simulado)
+    body = P.merged(P.inbound(), P.echo_text(), P.handover())
+    body["entry"][0]["changes"].append(legacy_change)
+    parts = split_webhook_by_field(body)
+    assert set(parts) == {"standby", "messaging_handovers", "messages"}
+    assert [c["field"] for c in parts["standby"]["entry"][0]["changes"]] == ["standby", "standby"]
+    assert parts["messages"]["entry"][0]["changes"] == [legacy_change]
+    assert parts["messages"]["object"] == "whatsapp_business_account"
+    assert split_webhook_by_field({"entry": []}) == {}
+    assert split_webhook_by_field("nope") == {}

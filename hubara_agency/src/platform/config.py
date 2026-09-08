@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -38,6 +39,56 @@ SSM_PLACEHOLDER = "PLACEHOLDER_set_out_of_band"
 def is_placeholder(value: str | None) -> bool:
     """True si `value` es el placeholder de SSM (o vacío) → NO es config real."""
     return not value or value.strip() == SSM_PLACEHOLDER
+
+
+def parse_flag(value: str | None) -> bool:
+    """Flag booleana de env: solo ``1/true/yes/on`` (case-insensitive) es True.
+    Vacío, ausente o placeholder de SSM → False (default apagado)."""
+    if is_placeholder(value):
+        return False
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
+_ALLOWLIST_PHONE_RE = re.compile(r"^\d{6,15}$")
+
+
+def parse_customer_allowlist(value: str | None) -> frozenset[str]:
+    """Lista cerrada de clientes (CSV de E.164 / dígitos / ``wa_<dígitos>``) →
+    dígitos. Entradas que no son un teléfono se descartan; vacío o placeholder
+    → conjunto vacío (= NADIE, fail-closed)."""
+    if is_placeholder(value):
+        return frozenset()
+    out: set[str] = set()
+    for raw in str(value).split(","):
+        item = _compact_phone(raw)
+        if _ALLOWLIST_PHONE_RE.match(item):
+            out.add(item)
+    return frozenset(out)
+
+
+def _compact_phone(raw: str) -> str:
+    """``+57 300 123-4567`` / ``wa_573001234567`` → ``573001234567`` (misma
+    normalización que el connector aplica al `customer_phone` de Meta)."""
+    item = re.sub(r"[\s\-().]", "", str(raw or "")).lstrip("+")
+    return item[3:] if item.startswith("wa_") else item
+
+
+# ── Meta Business Agent: interruptores del lado de Hubara ─────────────────────
+# Estamos en producción: MBA solo puede tocar una LISTA CERRADA de clientes,
+# y el oído `standby` (D1.4) solo escucha con la flag encendida. Ambos son
+# independientes del rollout que se configure en Meta (defensa en profundidad:
+# si el rollout de Meta quedara más abierto de lo previsto, Hubara no escribe
+# nada para clientes fuera de la lista y lo loguea como ERROR).
+MBA_STANDBY_ENABLED: bool = parse_flag(os.getenv("MBA_STANDBY_ENABLED"))
+MBA_CUSTOMER_ALLOWLIST: frozenset[str] = parse_customer_allowlist(os.getenv("MBA_CUSTOMER_ALLOWLIST"))
+
+
+def mba_customer_allowed(customer: str | None) -> bool:
+    """¿Este cliente (E.164, dígitos o ``wa_<dígitos>``) está en la lista
+    cerrada de MBA? Lista vacía → False siempre."""
+    if not customer:
+        return False
+    return _compact_phone(customer) in MBA_CUSTOMER_ALLOWLIST
 
 
 # CORS: orígenes permitidos para la API (CSV). Default "*" (dev). En prod el

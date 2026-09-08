@@ -32,12 +32,13 @@ def vault(tmp_path: Path) -> Path:
     return v
 
 
-def _use_case(vault: Path, now_ms: int = NOW_MS) -> IngestStandby:
+def _use_case(vault: Path, now_ms: int = NOW_MS, allowed=lambda customer: True) -> IngestStandby:
     return IngestStandby(
         metadata_store=FilesystemMetadataStore(vault),
         history_store=FilesystemMessageHistoryStore(vault),
         vault_dir=vault,
         now_ms=lambda: now_ms,
+        is_customer_allowed=allowed,
     )
 
 
@@ -213,9 +214,22 @@ async def test_a_failed_history_append_does_not_mark_the_wamid_as_seen(vault: Pa
             raise OSError("disk full")
 
     uc = IngestStandby(metadata_store=FilesystemMetadataStore(vault), history_store=_Broken(), vault_dir=vault,
-                       now_ms=lambda: NOW_MS)
+                       now_ms=lambda: NOW_MS, is_customer_allowed=lambda customer: True)
     with pytest.raises(OSError):
         await uc.execute(parse_whatsapp_standby(P.inbound()))
     assert not (vault / SESSION / "metadata.json").exists() or "standby_seen_wamids" not in _meta(vault)
     res = await _run(vault, P.inbound())
     assert res.messages_persisted == 1 and len(_lines(vault)) == 1
+
+
+async def test_customers_outside_the_closed_list_are_rejected_and_nothing_is_written(vault: Path) -> None:
+    """Lista cerrada del lado de Hubara: si Meta manda `standby` de un cliente
+    que no habilitamos, no se persiste nada (y el log de ERROR es la alarma de
+    que el rollout en Meta está más abierto de lo previsto)."""
+    uc = _use_case(vault, allowed=lambda customer: customer == "573009876543")
+    res = await uc.execute(parse_whatsapp_standby(P.merged(P.inbound(), P.echo_text())))
+    assert res.rejected == 2 and res.messages_persisted == 0 and res.echoes_persisted == 0
+    assert not (vault / SESSION).exists()
+    uc = _use_case(vault, allowed=lambda customer: customer == P.CUSTOMER)
+    res = await uc.execute(parse_whatsapp_standby(P.inbound()))
+    assert res.rejected == 0 and res.messages_persisted == 1
