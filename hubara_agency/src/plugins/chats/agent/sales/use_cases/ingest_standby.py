@@ -26,9 +26,15 @@ vault de la sesión para que nada se pierda:
 
 Lo que NO hace, por diseño:
 
-* **No despacha a Temporal ni emite eventos.** Con MBA al frente no hay turno
-  del bot ni watchdog que arrancar; el módulo no importa nada que llegue a
-  un workflow (test lo verifica).
+* **No despacha a Temporal ni emite eventos por sí mismo.** Con MBA al
+  frente no hay turno del bot; el módulo no importa nada que llegue a un
+  workflow (test lo verifica). Lo ÚNICO que dispara (D1.7) es el callable
+  inyectado ``emit_window_events(session_id, metadata)`` tras cada inbound
+  nuevo con episodio activo y sin humano en el hilo: la composición lo
+  cablea al mismo emisor del watchdog de la ventana de servicio que usa el
+  ingest regular (``ServiceWindowOpenedEvent`` / ``CustomerRepliedEvent``),
+  así el watchdog es el reloj del cierre por silencio con MBA al frente.
+  Un fallo del emisor se loguea y NO rompe el ingest.
 * **No escribe el historial LLM de exoclaw** (``EXOCLAW_STATE_DIR``): el API
   no tiene ese volumen (amnesia del PR #183) y con MBA al frente el LLM de
   Hubara no corre. Cuando Hubara retome el hilo (D1.6) el historial LLM se
@@ -49,7 +55,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 
 from loguru import logger
 
@@ -139,11 +145,13 @@ class IngestStandby:
         vault_dir: Path,
         now_ms: Callable[[], int] = _now_ms,
         is_customer_allowed: Callable[[str], bool],
+        emit_window_events: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None,
     ) -> None:
         self._metadata_store = metadata_store
         self._history_store = history_store
         self._vault_dir = Path(vault_dir)
         self._now_ms = now_ms
+        self._emit_window_events = emit_window_events
         # Lista cerrada de clientes (estamos en producción): fuera de ella NO
         # se escribe nada. Inyectada (platform la lee de MBA_CUSTOMER_ALLOWLIST).
         self._is_customer_allowed = is_customer_allowed
@@ -167,8 +175,10 @@ class IngestStandby:
                 rejected += 1
                 continue
             session = f"{SESSION_PREFIX}{msg.from_number}"
-            if self._ingest_inbound(session, msg, event.phone_number_id):
+            written = self._ingest_inbound(session, msg, event.phone_number_id)
+            if written is not None:
                 messages += 1
+                await self._schedule_watchdog(session, written)
             else:
                 duplicates += 1
             if session not in sessions:
@@ -195,7 +205,17 @@ class IngestStandby:
 
     # ── inbound del cliente (MBA responde; nosotros escuchamos) ──────────────
 
-    def _ingest_inbound(self, session: str, msg: WhatsAppMessage, phone_number_id: str) -> bool:
+    async def _schedule_watchdog(self, session: str, metadata: dict[str, Any]) -> None:
+        """D1.7: (re)programa el watchdog de la ventana para el episodio activo."""
+        if self._emit_window_events is None or metadata.get("active_route") == ROUTE_HUMANO:
+            return
+        try:
+            await self._emit_window_events(session, metadata)
+        except Exception as exc:  # noqa: BLE001 — el inbound ya está persistido; el reloj es best-effort
+            logger.warning("[chats.standby] {} no se pudo programar el watchdog: {}", session, exc)
+
+    def _ingest_inbound(self, session: str, msg: WhatsAppMessage, phone_number_id: str) -> dict[str, Any] | None:
+        """El metadata escrito, o ``None`` si el wamid ya estaba visto."""
         now_ms = self._now_ms()
         (self._vault_dir / session).mkdir(parents=True, exist_ok=True)
         applied: dict[str, bool] = {}
@@ -233,8 +253,8 @@ class IngestStandby:
             applied["ok"] = True
             return data
 
-        self._metadata_store.update(session, _mutate)
-        return bool(applied.get("ok"))
+        written = self._metadata_store.update(session, _mutate)
+        return written if applied.get("ok") and isinstance(written, dict) else None
 
     # ── eco de lo que MBA envió ──────────────────────────────────────────────
 

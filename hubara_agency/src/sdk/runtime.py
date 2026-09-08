@@ -27,7 +27,9 @@ Notas de diseño:
   en un router expuesto (el peer es siempre el proxy).
 - ``mba_standby_enabled`` / ``mba_customer_allowed``: los interruptores de
   Meta Business Agent del lado de la plataforma (flag + lista cerrada), leídos
-  en cada llamada; ``is_placeholder`` distingue un secreto real del
+  en cada llamada; ``mba_controls_thread(metadata, session_id)`` los combina
+  con el dueño del hilo: la ÚNICA pregunta que hace cualquier envío proactivo
+  ("¿responde MBA acá?") — fail-safe False; ``is_placeholder`` distingue un secreto real del
   placeholder de SSM (un adapter con placeholder NO debe llamar a nadie).
 - ``CONTROL_OWNER_MBA`` / ``CONTROL_OWNER_HUBARA`` (``CONTROL_OWNERS``): los
   valores de ``metadata.control_owner`` de una sesión de WhatsApp — quién
@@ -38,6 +40,7 @@ from __future__ import annotations
 
 from src.platform.config import (
     is_placeholder as is_placeholder,
+    mba_controls_thread as mba_controls_thread,
     mba_customer_allowed as mba_customer_allowed,
     mba_standby_enabled as mba_standby_enabled,
     AWS_REGION as AWS_REGION,

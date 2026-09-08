@@ -131,6 +131,7 @@ def build_snapshot_from_sessions(
     sessions: list[tuple[str, dict[str, Any]]],
     rate_card: Any = None,
     quiet_checker: Callable[[str], bool] | None = None,
+    mba_controls_checker: Callable[[dict[str, Any], str], bool] | None = None,
 ) -> dict[str, Any]:
     """(now_ms, [(session_id, metadata)]) → el seed completo del agente.
 
@@ -175,7 +176,13 @@ def build_snapshot_from_sessions(
             )
             continue
         if rate_card is not None:
-            decision = decide_reengagement(now_ms, metadata, lead, rate_card)
+            # D1.7: `mba_controls_checker` (inyectado, = `mba_controls_thread`
+            # del SDK) le dice a la central si Meta Business Agent responde en
+            # el hilo → en ventana la central suprime y el lead no viaja.
+            decision = decide_reengagement(
+                now_ms, metadata, lead, rate_card,
+                mba_controls=bool(mba_controls_checker and mba_controls_checker(metadata, session_id)),
+            )
             if not decision.allowed:
                 reason = decision.suppress_reason or "suppressed"
                 prefiltered[reason] = prefiltered.get(reason, 0) + 1

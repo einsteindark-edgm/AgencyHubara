@@ -50,6 +50,7 @@ from src.plugins.chats.agent.sales.use_cases.ingest_inbound_message import (
     IngestInboundMessage,
 )
 from src.plugins.chats.agent.sales.use_cases.ingest_handover import IngestHandover
+from src.plugins.chats.agent.sales.use_cases.ingest_inbound_message import emit_watchdog_events
 from src.plugins.chats.agent.sales.use_cases.ingest_standby import IngestStandby
 from src.plugins.chats.agent.sales.use_cases.load_or_start_sales_session import (
     LoadOrStartSalesSession,
@@ -150,11 +151,18 @@ def build_ingest_standby_use_case() -> IngestStandby:
     global _STANDBY_USE_CASE
     if _STANDBY_USE_CASE is not None:
         return _STANDBY_USE_CASE
+    async def _standby_window_events(session_id: str, metadata: dict) -> None:
+        # D1.7: el mismo emisor del watchdog que usa el ingest regular
+        # (ServiceWindowOpenedEvent / CustomerRepliedEvent vía dispatcher),
+        # con la fábrica REAL de Temporal: sin ella el emisor es un no-op.
+        await emit_watchdog_events(session_id, metadata, temporal_client_factory=get_temporal_client)
+
     _STANDBY_USE_CASE = IngestStandby(
         metadata_store=_PlatformFsMetaStore(WORKSPACE_VAULT_DIR),
         history_store=FilesystemMessageHistoryStore(WORKSPACE_VAULT_DIR),
         vault_dir=WORKSPACE_VAULT_DIR,
         is_customer_allowed=mba_customer_allowed,
+        emit_window_events=_standby_window_events,
     )
     return _STANDBY_USE_CASE
 

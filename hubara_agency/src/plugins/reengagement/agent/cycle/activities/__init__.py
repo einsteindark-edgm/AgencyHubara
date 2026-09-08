@@ -28,7 +28,7 @@ from src.sdk.messagingkit import (
     reengagement_shortlist,
     update_reengagement_index_entries,
 )
-from src.sdk.runtime import WORKSPACE_VAULT_DIR, with_heartbeat
+from src.sdk.runtime import WORKSPACE_VAULT_DIR, mba_controls_thread, with_heartbeat
 
 #: prefijo de sesiones WhatsApp en el vault (los demás dirs se saltan).
 _SESSION_PREFIX = "wa_"
@@ -98,6 +98,7 @@ async def build_reengagement_snapshot_activity() -> dict[str, Any]:
         sessions,
         rate_card=get_current_rate_card(),
         quiet_checker=lambda sid: is_quiet_hours_for_session(sid, now_utc),
+        mba_controls_checker=mba_controls_thread,
     )
     snapshot["shortlisted"] = len(sessions)
     snapshot["index_size"] = index_size
