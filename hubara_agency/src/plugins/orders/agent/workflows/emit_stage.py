@@ -28,7 +28,12 @@ class EmitOrderStageWorkflow:
     async def run(self, input: dict) -> str:
         return await workflow.execute_activity(
             emit_order_stage_activity,
-            args=[str(input.get("order_id", "")), str(input.get("to_stage", ""))],
+            args=[
+                str(input.get("order_id", "")),
+                str(input.get("to_stage", "")),
+                # Link de guía opcional (solo lo manda el operador en "en camino").
+                input.get("tracking_url") or None,
+            ],
             # Railway puede tardar 30s+ por GET (L-2); margen amplio + retries.
             start_to_close_timeout=timedelta(seconds=180),
             retry_policy=RetryPolicy(

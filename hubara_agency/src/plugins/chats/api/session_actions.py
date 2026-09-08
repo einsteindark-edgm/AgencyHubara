@@ -16,7 +16,10 @@ el service token interno es el paso 1 de esa auth)::
     /api/chats/session-actions/{session_key}/order     → precio server-side +
         RegisterOrderTool + cierre CONFIRMADO_PAGO_PENDIENTE + escalación
         PAYMENT_VERIFICATION_PENDING + flush de instrucciones de pago
-    /api/chats/session-actions/{session_key}/tag       → ManageConversationTagTool
+    /api/chats/session-actions/{session_key}/tag       → reconciliación
+        (`use_cases/tag_reconcile`: MBA propone, Hubara decide) + tag + cierre
+        formal + escalación ORDER_PENDING_SHIPPING_DETAILS si quedó
+        CONFIRMADO_SIN_DATOS, todo en UN `store.update` bajo el lock de sesión
         (+ EpisodeClosedEvent si cerró episodio)
     /api/chats/session-actions/{session_key}/escalate  → route=humano + tag HUMANO
 
@@ -64,14 +67,16 @@ from src.plugins.chats.agent.sales.tools.order_registration import (
     RegisterOrderTool,
     _order_reference,
 )
-from src.plugins.chats.agent.sales.tools.tags import ManageConversationTagTool
 from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
+    CLOSING_TAGS,
     close_episode,
     count_session_jsonl_lines,
     get_active_episode,
 )
 from src.plugins.chats.agent.sales.use_cases.order_pricing import price_order_items
+from src.plugins.chats.agent.sales.use_cases.tag_reconcile import TagDecision, reconcile_tag_proposal
 from src.plugins.chats.shared.contracts.events import EpisodeClosedEvent
+from src.plugins.chats.shared.funnel import enqueue_capi_for_tag
 from src.sdk.connectorkit import (
     schedule_capi_flush,
     ProductNotFoundError,
@@ -91,7 +96,8 @@ PAYMENT_VERIFICATION_REASON = "PAYMENT_VERIFICATION_PENDING"
 _SOURCE = "session_actions"
 _SESSION_RE = re.compile(r"^wa_[0-9]{8,15}$")
 
-TAGS = Literal["INTERESADO", "RECHAZO", "COMPRA_EXITOSA", "CONFIRMADO_SIN_DATOS", "CONFIRMADO_PAGO_PENDIENTE"]
+#: Lo único que un agente externo PROPONE (D1.3); el resto lo decide Hubara.
+PROPOSED_TAGS = Literal["INTERESADO", "RECHAZO"]
 PAYMENT_METHODS = Literal["transfer", "payment_link", "cash_on_delivery"]
 
 
@@ -232,7 +238,7 @@ class OrderBody(BaseModel):
 
 class TagBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    tag: TAGS
+    tag: PROPOSED_TAGS
     motivo: str = Field(min_length=1, max_length=2000)
 
 
@@ -303,6 +309,48 @@ def _close_payment_pending(
     return closed_id, escalated
 
 
+def _apply_tag(
+    data: dict[str, Any], *, decision: TagDecision, motivo: str, now_ms: int, msgs_at_close: int,
+    session_id: str | None = None,
+) -> tuple[str | None, bool]:
+    """Lo que hace ``ManageConversationTagTool`` + la red de seguridad
+    ``ensure_closing_escalation``, en un solo paso (sobre el dict bajo flock):
+    tag visible + historial + cierre formal si es tag de cierre + escalación si
+    la decisión la exige. Devuelve ``(episode_id cerrado | None, escaló)``."""
+    tag = decision.applied
+    data["tag"] = tag
+    data["motivo"] = motivo
+    data.setdefault("status_history", []).append(
+        {
+            "tag": tag,
+            "motivo": motivo,
+            "active_route": data.get("active_route", ROUTE_VENTAS),
+            "timestamp": now_ms / 1000.0,
+            "source": _SOURCE,
+            "proposed_tag": decision.proposed,
+        }
+    )
+    closed_id: str | None = None
+    active_ep_id = str((get_active_episode(data) or {}).get("episode_id") or "") or None
+    if tag in CLOSING_TAGS:
+        closed = close_episode(
+            data, closing_tag=tag, closing_motivo=motivo, now_ms=now_ms, msgs_count_at_close=msgs_at_close
+        )
+        if closed is not None:
+            closed_id = str(closed.get("episode_id") or "") or None
+    # Auditoría CAPI 2026-09-08: señal de embudo (QualifiedLead / LeadSubmitted)
+    # — el endpoint no pasa por la tool, así que se encola acá.
+    if session_id:
+        enqueue_capi_for_tag(
+            data, tag=tag, session_id=session_id, now_ms=now_ms,
+            source=f"{_SOURCE}:tag", episode_id=closed_id or active_ep_id,
+        )
+    escalated = False
+    if decision.escalate_reason:
+        escalated = _escalate(data, reason_category=decision.escalate_reason, motivo=motivo, now_ms=now_ms)
+    return closed_id, escalated
+
+
 def _order_fingerprint(items: list[dict[str, Any]], payment_method: str, total_cop: int) -> tuple:
     return (
         tuple(sorted((str(i.get("handle")), str(i.get("variant_label") or ""), int(i.get("quantity", 0)),
@@ -359,11 +407,11 @@ async def order(session_key: SessionKey, body: OrderBody, deps: Deps) -> dict[st
             "error_detail": priced.problems[0].split(":", 1)[0],
             "problems": priced.problems,
         }
-    async with _session_lock(session):
-        try:
+    try:
+        async with _session_lock(session):
             registered = await _register(session, body, priced, deps)
-        finally:
-            _release_session_lock(session)
+    finally:
+        _release_session_lock(session)  # fuera del `async with`: ya no está tomado
     schedule_capi_flush(session)  # OrderCreated / LeadSubmitted encolados por las tools
     return registered
 
@@ -482,24 +530,68 @@ async def _register(session: str, body: OrderBody, priced: Any, deps: SessionAct
 
 @router.post("/session-actions/{session_key}/tag")
 async def tag(session_key: SessionKey, body: TagBody, deps: Deps) -> dict[str, Any]:
-    """``manage_conversation_tag``: etiqueta + cierre formal si es tag de cierre
-    (+ ``EpisodeClosedEvent``)."""
+    """``manage_conversation_tag``: la PROPUESTA del agente externo se reconcilia
+    con el estado real (orden registrada gana; datos de envío sin orden →
+    CONFIRMADO_SIN_DATOS + escalación) y recién ahí se etiqueta (+ cierre formal
+    si es tag de cierre + ``EpisodeClosedEvent``). Idempotente por (sesión, tag).
+
+    Chequeo de ruta, reconciliación, tag, cierre y escalación ocurren sobre el
+    MISMO dict bajo el flock del store y bajo el lock de sesión del proceso
+    (el que serializa ``/order``): MBA puede emitir ``register_order`` y
+    ``manage_conversation_tag`` en el mismo turno, y un tag tardío nunca debe
+    sacar la sesión de la bandeja humana ni dejar CONFIRMADO_SIN_DATOS sin
+    su escalación."""
     session = _session(session_key)
-    if FilesystemMetadataStore(deps.vault_dir).read(session).get("active_route") == ROUTE_HUMANO:
-        # Invariante handoff: con un humano en el hilo el tag visible es HUMANO;
-        # etiquetar acá lo sacaría de la bandeja humana sin devolverlo al bot.
+    store = FilesystemMetadataStore(deps.vault_dir)
+    now_ms = _now_ms()
+    outcome: dict[str, Any] = {}
+
+    def _mutate(data: dict[str, Any]) -> dict[str, Any] | None:
+        if data.get("active_route") == ROUTE_HUMANO:
+            # Invariante handoff: con un humano en el hilo el tag visible es
+            # HUMANO; etiquetar acá lo sacaría de la bandeja humana.
+            outcome["already_human"] = True
+            return None
+        decision = outcome["decision"] = reconcile_tag_proposal(data, proposed=body.tag)
+        if decision.action != "apply":
+            return None
+        motivo = body.motivo
+        if decision.reconciled:
+            motivo = f"[{_SOURCE}] propuesta {decision.proposed} reconciliada → {decision.applied}: {body.motivo}"
+        outcome["closed_id"], outcome["escalated"] = _apply_tag(
+            data, decision=decision, motivo=motivo, now_ms=now_ms,
+            msgs_at_close=count_session_jsonl_lines(deps.vault_dir, session),
+            session_id=session,
+        )
+        return data
+
+    try:
+        async with _session_lock(session):
+            store.update(session, _mutate)
+    finally:
+        _release_session_lock(session)
+
+    if outcome.get("already_human"):
         raise HTTPException(status_code=409, detail="already_human: un colega tiene la conversación; no se etiqueta")
-    tool = ManageConversationTagTool(str(deps.vault_dir), vault_dir=deps.vault_dir)
-    result = json.loads(await tool.execute_with_context(_ctx(session), tag=body.tag, motivo=body.motivo))
-    if "error" in result:
-        raise HTTPException(status_code=409, detail=str(result["error"]))
-    closed = result.get("episode_closed") or None
-    episode_closed = (
-        {"episode_id": closed["episode_id"], "closing_tag": closed["closing_tag"]} if closed else None
+    decision: TagDecision = outcome["decision"]
+    closed_id = outcome.get("closed_id")
+    response: dict[str, Any] = {
+        "tag": decision.applied or "NO_ETIQUETADO",
+        "proposed_tag": decision.proposed,
+        "applied": decision.action == "apply",
+        "reconciled": decision.reconciled,
+        "reason": decision.reason,
+        "motivo": body.motivo,
+        "episode_closed": {"episode_id": closed_id, "closing_tag": decision.applied} if closed_id else None,
+        "escalated": bool(outcome.get("escalated")),
+    }
+    await _notify(deps, session, closed_id, decision.applied)
+    logger.info(
+        "[chats.session_actions] tag session={} proposed={} → {} ({}) closed={} escalated={}",
+        session, decision.proposed, decision.applied, decision.reason, closed_id, response["escalated"],
     )
-    await _notify(deps, session, episode_closed and episode_closed["episode_id"], body.tag)
-    schedule_capi_flush(session)  # QualifiedLead / Purchase encolados por la tool
-    return {"tag": body.tag, "motivo": body.motivo, "message": result.get("message"), "episode_closed": episode_closed}
+    schedule_capi_flush(session)  # QualifiedLead / Purchase encolados en _apply_tag
+    return response
 
 
 @router.post("/session-actions/{session_key}/escalate")

@@ -85,9 +85,9 @@ const BACKEND_TO_INBOX_TAG: Record<string, ChatTag> = {
   // HU "verificación humana de pago" (operativo hasta tener pasarela):
   // orden registrada en Medusa, falta verificación humana del pago. El
   // chat queda en cola humana (`escalate_to_human("PAYMENT_VERIFICATION_PENDING")`
-  // dispara `active_agent_route="humano"` que ya re-rutea al filtro HUMANO),
-  // pero si por alguna razón el `tag` queda CONFIRMADO_PAGO_PENDIENTE sin
-  // el route flip, lo mostramos como PENDIENTE en el inbox.
+  // dispara `active_agent_route="humano"`, y `isAssignedToHuman` lo pone en
+  // el filtro Humano por la ruta), pero si el `tag` queda
+  // CONFIRMADO_PAGO_PENDIENTE sin el route flip, lo mostramos como PENDIENTE.
   CONFIRMADO_PAGO_PENDIENTE: "PENDIENTE",
   NO_ETIQUETADO: "PENDIENTE",
   HUMANO: "HUMANO",
@@ -137,8 +137,24 @@ function normalizeTag(
   return { tag: "PENDIENTE", tagClass: "t-pen" };
 }
 
+/** "Asignada al humano" es una propiedad de la RUTA, no del tag comercial.
+ *
+ *  `active_agent_route === "humano"` es lo que pausa al bot y habilita el
+ *  composer del operador (`ChatsComposer`, `RouteState`). El tag puede
+ *  cambiar mientras la ruta sigue en humano: `confirm_payment` desde Orders
+ *  deja `COMPRA_EXITOSA` (y NO toca la ruta), y el LLM puede etiquetar
+ *  `CONFIRMADO_PAGO_PENDIENTE` después de escalar. Derivar `human` del tag
+ *  hacía que esas conversaciones desaparecieran del filtro "Asignadas al
+ *  humano" aunque el header dijera "Intervenido · bot en pausa" (caso prod
+ *  wa_573229041190, 2026-09-08). El tag HUMANO sigue contando por
+ *  tolerancia a metadata legacy sin ruta. */
+function isAssignedToHuman(s: ChatSession, tag: ChatTag): boolean {
+  return s.active_agent_route === "humano" || tag === "HUMANO";
+}
+
 function adaptSession(s: ChatSession): ChatInboxItem {
   const { tag, tagClass } = normalizeTag(s.tag, s.active_agent_route);
+  const human = isAssignedToHuman(s, tag);
   return {
     id: s.session_id,
     name: s.phone_number,
@@ -151,8 +167,8 @@ function adaptSession(s: ChatSession): ChatInboxItem {
     presence: "online",
     unread: 0,
     pinned: false,
-    human: tag === "HUMANO",
-    handoffReason: tag === "HUMANO" ? s.motivo : undefined,
+    human,
+    handoffReason: human ? s.motivo : undefined,
   };
 }
 

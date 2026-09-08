@@ -47,7 +47,7 @@ from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
     count_session_jsonl_lines,
     get_active_episode,
 )
-from src.sdk.connectorkit import enqueue_capi_event
+from src.plugins.chats.shared.funnel import enqueue_capi_for_tag
 
 # Sesión c4e3416f: `CONFIRMADO_SIN_DATOS` es para el caso donde el cliente
 # confirmó el pedido (apretó "Confirmar" en `present_order_confirmation`) pero
@@ -202,43 +202,19 @@ class ManageConversationTagTool(ToolBase):
             }
         )
 
-        # Auditoría CAPI 2026-09-08: señales de embudo para Meta.
-        # INTERESADO = QualifiedLead (por episodio). COMPRA_EXITOSA =
-        # Purchase (por pedido — mismo event_id que la confirmación humana
-        # de pago, así el outbox garantiza UN solo envío). El envío lo hace
-        # el flusher después del turno (o el endpoint del dashboard).
+        # Auditoría CAPI 2026-09-08: señal de embudo para Meta (INTERESADO →
+        # QualifiedLead, CONFIRMADO_* → LeadSubmitted, COMPRA_EXITOSA →
+        # Purchase). Mismo helper que el endpoint humano/MBA → un solo
+        # event_id por señal, un solo envío. Lo manda el flusher del turno.
         _active_ep = get_active_episode(data)
-        _active_ep_id = str((_active_ep or {}).get("episode_id") or "") or None
-        try:
-            if tag == "INTERESADO" and _active_ep_id:
-                enqueue_capi_event(
-                    data,
-                    event_name="QualifiedLead",
-                    session_id=ctx.session_key,
-                    episode_id=_active_ep_id,
-                    source="manage_conversation_tag",
-                    now_ms=now_ms,
-                )
-            elif tag == "COMPRA_EXITOSA":
-                _reg = data.get("registered_order")
-                if (
-                    isinstance(_reg, dict)
-                    and _reg.get("success")
-                    and isinstance(_reg.get("order_id"), str)
-                    and isinstance(_reg.get("total_cop"), int)
-                ):
-                    enqueue_capi_event(
-                        data,
-                        event_name="Purchase",
-                        session_id=ctx.session_key,
-                        order_id=_reg["order_id"],
-                        value=_reg["total_cop"],
-                        currency=str(_reg.get("currency") or "COP"),
-                        source="manage_conversation_tag",
-                        now_ms=now_ms,
-                    )
-        except ValueError:
-            pass
+        enqueue_capi_for_tag(
+            data,
+            tag=tag,
+            session_id=ctx.session_key,
+            now_ms=now_ms,
+            source="manage_conversation_tag",
+            episode_id=str((_active_ep or {}).get("episode_id") or "") or None,
+        )
 
         # Episode lifecycle: cierre formal del episodio activo si el tag
         # es de cierre. Idempotente: si el episodio ya está cerrado, no

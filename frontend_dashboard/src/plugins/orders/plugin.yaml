@@ -42,10 +42,16 @@ agent:
       # ── Orquestación declarativa (ADR-2026-05-20) — disparo del Agente ETA ──
       # La orders API emite `OrderStageChangedEvent` tras cada transición de
       # stage (PATCH .../schedule → preparing, PATCH .../stage, POST .../cancel).
-      # El dispatcher lo rutea acá: `preparing` ARRANCA el workflow de
-      # seguimiento ETA (eta/eta); el resto lo SIGNALEA (`notify_stage_change`).
-      # Si no hay workflow ETA corriendo, el signal devuelve NOT_FOUND y el
-      # dispatcher lo absorbe como no-op (`dispatcher._is_not_found`).
+      # El dispatcher lo rutea acá: TODOS los stages (incluido `preparing`) van
+      # por `signal_with_start` sobre la MISMA sesión `eta-{session_id}`: si el
+      # workflow corre, recibe el signal (`notify_stage_change`); si no existe
+      # o cerró, arranca con ese payload como seed. La sesión ETA es
+      # multi-pedido (tracking en `metadata.eta_tracking.orders`), así que un
+      # pedido nuevo del mismo cliente se SUMA a la sesión viva.
+      # 2026-09-08: `preparing` usaba `start_workflow_with_replace`, que
+      # TERMINABA la sesión viva del cliente en cada pedido nuevo (runs
+      # `Terminated` — 01a07cd2/01a07e9f — y una carrera con una notificación
+      # en vuelo). Guard: tests/plugins/orders/test_manifest_eta_transitions.py.
       # NOTA: el emisor real es la HTTP API (no el proceso `reconcile`), pero las
       # transiciones se declaran bajo este worker porque es el agente del plugin
       # `orders` que orquesta el ciclo de vida del pedido — el dispatcher las
@@ -59,11 +65,12 @@ agent:
           when:
             to_stage: preparing
           action:
-            via: start_workflow_with_replace
+            via: signal_with_start
             target_plugin: eta
             target_worker: eta
             target_workflow: HubaraEtaSessionWorkflow
             workflow_id_template: "eta-{event.session_id}"
+            signal_name: notify_stage_change
             input_mapping:
               session_id: "$.session_id"
               order_id: "$.order_id"
@@ -98,6 +105,9 @@ agent:
               session_id: "$.session_id"
               order_id: "$.order_id"
               to_stage: "$.to_stage"
+              # Link de la guía (opcional, lo adjunta el operador en el modal
+              # "en camino"). El ETA lo pone al final del mensaje de WhatsApp.
+              tracking_url: "$.tracking_url"
         - id: order_delivered_notifies_eta
           on_event: OrderStageChangedEvent
           when:

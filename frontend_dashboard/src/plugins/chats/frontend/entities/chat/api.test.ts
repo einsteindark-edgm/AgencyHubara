@@ -348,3 +348,41 @@ describe("useChatMessages — media URLs llevan el token de auth por query", () 
     );
   });
 });
+
+describe("useChatInbox — 'asignada al humano' se deriva de la RUTA, no del tag (bug bandeja Humano)", () => {
+  // Caso real prod 2026-09-08 (wa_573229041190): el humano confirmó el pago
+  // desde Orders → `confirm_payment` deja tag=COMPRA_EXITOSA y NO toca
+  // active_route (queda "humano": el bot sigue en pausa y el operador
+  // responde a mano). La bandeja la mostraba como CLIENTE y desaparecía del
+  // filtro "Asignadas al humano" aunque el header del chat dijera
+  // "Intervenido · bot en pausa".
+  it("route=humano + tag COMPRA_EXITOSA → human=true (sigue en la bandeja Humano)", async () => {
+    const data = await runInbox([
+      makeSession({
+        tag: "COMPRA_EXITOSA",
+        active_agent_route: "humano",
+        motivo: "Pago verificado por human desde dashboard de orders",
+      }),
+    ]);
+    expect(data?.[0]?.human).toBe(true);
+    expect(data?.[0]?.handoffReason).toBe(
+      "Pago verificado por human desde dashboard de orders",
+    );
+    // El tag comercial se conserva: es un cliente real, además intervenido.
+    expect(data?.[0]?.tag).toBe("CLIENTE");
+  });
+
+  it("route=humano + tag CONFIRMADO_PAGO_PENDIENTE (LLM etiquetó DESPUÉS de escalar) → human=true", async () => {
+    const data = await runInbox([
+      makeSession({ tag: "CONFIRMADO_PAGO_PENDIENTE", active_agent_route: "humano" }),
+    ]);
+    expect(data?.[0]?.human).toBe(true);
+    expect(data?.[0]?.tag).toBe("PENDIENTE");
+  });
+
+  it("route=ventas + tag INTERESADO → human=false (el bot la maneja)", async () => {
+    const data = await runInbox([makeSession()]);
+    expect(data?.[0]?.human).toBe(false);
+    expect(data?.[0]?.handoffReason).toBeUndefined();
+  });
+});

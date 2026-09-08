@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="es" translate="no">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
@@ -11,6 +11,12 @@
       content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content"
     />
     <meta name="theme-color" content="#1c1c1e" />
+    <!-- notranslate: la UI YA es en español. Con lang="en" Chrome ofrecía
+         "traducir al español"; Google Translate reemplaza text nodes por
+         <font> y React pierde el DOM que reconcilia → la sección chat
+         crasheaba con "insertBefore ... is not a child of this node" hasta
+         hacer refresh (incidente 2026-09-08). -->
+    <meta name="google" content="notranslate" />
     <title>Hubara Chats</title>
   </head>
   <body>

@@ -131,6 +131,20 @@ Medusa live durante la conversación (latency + cuota).
 - AND el matching de color es tolerante a género/número/acentos ("ROJAS" → "rojo") y la paleta citable sale de las variantes reales, no de tags stale
 - AND `get_product_by_handle` expone el mapeo como `variant_colors` en el detalle del producto
 
+#### Scenario: tono pedido dentro de una familia de color (tolerancia de gama)
+
+- GIVEN un producto cuyo catálogo ofrece una FAMILIA de color (tag `Color: Azul`, o alias `azul petróleo` en `variant_colors`)
+- AND la tabla de familias del tenant (`config/color_families/families.yaml`, override por `COLOR_FAMILIES_PATH`, hot-reload por mtime) declara los tonos de cada familia en español (celeste, azul mar, marino… → azul; fucsia → rosado; lavanda → lila)
+- WHEN el cliente pide un tono ("azul clarito", "azul mar", "celeste") y el LLM invoca `set_order_slot(color=<palabras del cliente>)`
+- THEN el color se resuelve determinísticamente a la familia del catálogo y se persiste el color REAL (`Azul` / `azul petróleo`) — NO se rechaza
+- AND el tono pedido queda en `notas` del draft para el operador ("Tono de color pedido por el cliente: 'azul clarito' (registrado como Azul)")
+- AND el envelope trae `color_family` (`requested`, `captured`, `family`, `shade_requested`) y el `summary` instruye al agente a confirmar que SÍ manejamos ese color y a mostrar el tono real (`present_product_detail`) sin negarlo ni prometer el tono exacto
+- AND una variación de género/número ("azules") se captura sin ceremonia de tono (`shade_requested: false`, sin nota)
+- AND si la gama tiene VARIOS colores en el producto (ej. `Lila` y `Morado` para "lila o morado") el slot NO se adivina: `rejected` con `reason: color_family_ambiguous` y `candidates` para ofrecerlos
+- AND si la familia pedida no existe en el producto ("vinotinto" con paleta Azul/Blanco) → `rejected` con `reason: color_family_not_offered`, `family: Rojo` y la paleta `available`
+- AND una palabra sin familia conocida ("chartreuse") conserva el rechazo legacy; sin archivo de familias el matcheo vuelve a ser exacto (degrada abierto)
+- AND los guiones de etapa (descubrimiento, variantes, FAQ del sales_script) MUST NOT responder "ese tono no lo manejo" cuando la familia existe
+
 #### Scenario: get_product_by_handle
 
 - GIVEN un handle válido `wax-soja-vainilla`

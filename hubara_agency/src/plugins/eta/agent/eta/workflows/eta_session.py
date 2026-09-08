@@ -29,7 +29,16 @@ recibiendo el mensaje buggy hasta que su sesión termine.
 
 Multi-pedido: una sola sesión de workflow por cliente notifica TODOS sus
 pedidos en tránsito (el payload de cada signal trae su ``order_id``; el
-tracking por pedido vive en ``metadata.eta_tracking.orders``).
+tracking por pedido vive en ``metadata.eta_tracking.orders``). Desde
+2026-09-08 TODOS los stages entran por ``signal_with_start`` sobre
+``eta-{session_id}`` — ``preparing`` incluido: un pedido nuevo del cliente se
+SUMA a la sesión viva (``claim_eta_notification_activity`` da de alta el
+``order_id`` sin entry) en vez de reemplazarla. Antes ``preparing`` era
+``start_workflow_with_replace`` y cada pedido nuevo TERMINABA la sesión en
+curso (runs ``Terminated`` 01a07cd2 / 01a07e9f) con una carrera si había una
+notificación en vuelo. En un arranque fresco el seed llega dos veces (run
+input + start-signal); el dedup por ``notified_stages`` deja UN solo envío
+(guard: ``tests/plugins/eta/test_eta_session_signal_with_start.py``).
 
 NOTA DE DEPLOY (L-9): los runs ``eta-*`` viven días — TODO cambio que altere
 la secuencia de comandos del workflow (nuevo ``execute_activity``, timer,
@@ -104,7 +113,9 @@ class HubaraEtaSessionWorkflow:
     async def notify_stage_change(self, payload: dict) -> None:
         """Cambio de estado del pedido (lo emite el dispatcher por el manifest).
 
-        ``payload`` = ``{"to_stage": str, "order_id": str}`` (del ``input_mapping``).
+        ``payload`` = ``{"to_stage": str, "order_id": str}`` (del ``input_mapping``),
+        más ``tracking_url`` opcional en ``shipping`` (link de la guía que el
+        operador adjuntó; va al final del mensaje).
         """
         self._pending_stages.append(dict(payload))
 
@@ -160,11 +171,14 @@ class HubaraEtaSessionWorkflow:
                 ev = self._pending_stages.pop(0)
                 stage = str(ev.get("to_stage", ""))
                 order_id = str(ev.get("order_id", input.order_id))
+                tracking_url = str(ev.get("tracking_url") or "").strip() or None
                 if not stage:
                     continue
                 turn_count += 1
                 try:
-                    await self._notify_stage(session_id, order_id, stage)
+                    await self._notify_stage(
+                        session_id, order_id, stage, tracking_url
+                    )
                 except Exception as exc:  # noqa: BLE001 — una notif fallida no tumba la sesión
                     workflow.logger.warning(
                         f"ETA notify_stage falló (no-fatal): session={session_id} "
@@ -212,9 +226,17 @@ class HubaraEtaSessionWorkflow:
 
     # ── Helpers ──────────────────────────────────────────────────────────
     async def _notify_stage(
-        self, session_id: str, order_id: str, stage: str
+        self,
+        session_id: str,
+        order_id: str,
+        stage: str,
+        tracking_url: str | None = None,
     ) -> None:
         """Notifica un cambio de estado, respetando la ventana de servicio 24h.
+
+        ``tracking_url`` (solo ``shipping``): dentro de ventana va como link
+        tappable al final del texto; fuera de ventana, dentro del slot
+        ``status_label`` del template (único canal permitido por Meta).
 
         - DENTRO de ventana (cliente escribió en las últimas 24h): renderizamos
           el mensaje con plantilla determinista y lo enviamos como texto libre.
@@ -232,12 +254,21 @@ class HubaraEtaSessionWorkflow:
             return  # ruta humano / order distinto / ya notificado → skip
 
         if facts.get("in_service_window"):
-            await self._send_text_notification(session_id, order_id, stage, facts)
+            await self._send_text_notification(
+                session_id, order_id, stage, facts, tracking_url
+            )
         else:
-            await self._notify_template(session_id, order_id, stage, facts)
+            await self._notify_template(
+                session_id, order_id, stage, facts, tracking_url
+            )
 
     async def _send_text_notification(
-        self, session_id: str, order_id: str, stage: str, facts: dict
+        self,
+        session_id: str,
+        order_id: str,
+        stage: str,
+        facts: dict,
+        tracking_url: str | None = None,
     ) -> None:
         """Notificación DENTRO de ventana: texto fijo renderizado, sin LLM.
 
@@ -254,6 +285,7 @@ class HubaraEtaSessionWorkflow:
             payment_confirmed=facts.get("payment_confirmed", False),
             delivery_window=facts.get("delivery_window"),
             items_label=facts.get("items_label", ""),
+            tracking_url=tracking_url,
         )
         if not message:
             return  # stage desconocido → nada que enviar
@@ -277,7 +309,12 @@ class HubaraEtaSessionWorkflow:
         )
 
     async def _notify_template(
-        self, session_id: str, order_id: str, stage: str, facts: dict
+        self,
+        session_id: str,
+        order_id: str,
+        stage: str,
+        facts: dict,
+        tracking_url: str | None = None,
     ) -> None:
         """Notificación FUERA de ventana: template de utilidad aprobado.
 
@@ -291,7 +328,7 @@ class HubaraEtaSessionWorkflow:
         132001 = template inexistente en la WABA) → ApplicationError que el
         wrapper del loop captura y loguea como no-fatal.
         """
-        variables = build_status_template_variables(stage, facts)
+        variables = build_status_template_variables(stage, facts, tracking_url)
         await workflow.execute_activity(
             send_whatsapp_template_activity,
             args=[session_id, _ORDER_STATUS_TEMPLATE, variables],

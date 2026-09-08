@@ -39,14 +39,17 @@ class OrderStageChangedEvent:
     The ``to_stage`` field drives the manifest transition. The orders manifest
     declares one transition per stage:
 
-      - ``when: {to_stage: preparing}`` → ``start_workflow_with_replace`` the
-        ETA workflow (``eta-{session_id}``). This is the entry point — a fresh
-        ETA tracking session begins when the order enters preparation.
-      - ``when: {to_stage: ready|shipping|delivered|cancelled}`` → ``signal``
-        ``notify_stage_change`` on the running ETA workflow. If no ETA workflow
-        is running (e.g. the ``preparing`` event was missed), the dispatcher
-        absorbs the Temporal ``NOT_FOUND`` as a no-op (see
-        ``dispatcher._is_not_found``).
+      - ``when: {to_stage: preparing|ready|shipping|delivered|cancelled}`` →
+        ``signal_with_start`` ``notify_stage_change`` on the customer's ETA
+        session (``eta-{session_id}``). If the session is running it receives
+        the signal; if it never started or already closed (idle / proactive
+        close) it starts fresh with that payload as seed. The ETA session is
+        multi-order (tracking lives in ``metadata.eta_tracking.orders``), so a
+        new order of the same customer JOINS the live session.
+      - 2026-09-08: ``preparing`` used ``start_workflow_with_replace``, which
+        TERMINATED the customer's live session on every new order (runs
+        ``Terminated`` 01a07cd2 / 01a07e9f) and raced an in-flight
+        notification. Guard: ``tests/plugins/orders/test_manifest_eta_transitions.py``.
 
     Fields:
         session_id: the chats session id of the customer who owns this order
@@ -64,12 +67,18 @@ class OrderStageChangedEvent:
             literally by the manifest ``when:`` clauses.
         occurred_at_ms: epoch ms when the transition happened. Carried for
             observability + ordering; not used for routing.
+        tracking_url: optional carrier tracking link the operator attached
+            when moving the order to ``shipping``. Mapped by the manifest
+            (``$.tracking_url``) into the ETA ``notify_stage_change`` payload
+            so the WhatsApp message that announces "en camino" carries the
+            link. ``None`` for every other stage / legacy emitters.
     """
 
     session_id: str
     order_id: str
     to_stage: str
     occurred_at_ms: int = 0
+    tracking_url: str | None = None
 
 
 __all__ = ["OrderStageChangedEvent"]

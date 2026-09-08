@@ -263,11 +263,73 @@ def test_tag_interesado_keeps_the_episode_open_and_rechazo_closes_it(h: _Harness
     assert len(h.closed) == 1
 
 
-def test_tag_validates_the_closed_list_and_the_payment_pending_precondition(h: _Harness) -> None:
+def test_tag_accepts_only_the_two_proposals_mba_can_make(h: _Harness) -> None:
+    """D1.3: MBA PROPONE (INTERESADO / RECHAZO); el estado de un pedido lo decide Hubara."""
     assert h.client.post(_url("tag"), json={"tag": "HUMANO", "motivo": "x"}).status_code == 422
     assert h.client.post(_url("tag"), json={"tag": "RECHAZO", "motivo": ""}).status_code == 422
-    r = h.client.post(_url("tag"), json={"tag": "CONFIRMADO_PAGO_PENDIENTE", "motivo": "x"})
-    assert r.status_code == 409 and "register_order" in r.json()["detail"]
+    for tag in ("CONFIRMADO_PAGO_PENDIENTE", "CONFIRMADO_SIN_DATOS", "COMPRA_EXITOSA"):
+        assert h.client.post(_url("tag"), json={"tag": tag, "motivo": "x"}).status_code == 422, tag
+
+
+def test_tag_proposal_is_discarded_when_the_episode_has_a_registered_order(h: _Harness) -> None:
+    """Orden registrada gana: la propuesta de MBA no pisa el estado real (un
+    INTERESADO acá dispararía remarketing a un cliente que YA compró)."""
+    h.client.post(_url("order"), json=_ORDER)
+    # el colega verificó el pago y devolvió la conversación al bot
+    meta_path = h.vault / _A / "metadata.json"
+    m = json.loads(meta_path.read_text(encoding="utf-8"))
+    m["active_route"], m["tag"] = "ventas", "COMPRA_EXITOSA"
+    meta_path.write_text(json.dumps(m), encoding="utf-8")
+    history_before = list(m["status_history"])
+    r = h.client.post(_url("tag"), json={"tag": "INTERESADO", "motivo": "se despidió"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["tag"] == "COMPRA_EXITOSA" and body["proposed_tag"] == "INTERESADO"
+    assert body["applied"] is False and body["reconciled"] is True and body["reason"] == "order_registered"
+    assert body["episode_closed"] is None and body["escalated"] is False
+    after = h.meta()
+    assert after["tag"] == "COMPRA_EXITOSA" and after["status_history"] == history_before
+    assert len(h.closed) == 1  # solo el cierre del /order
+
+
+def test_tag_with_shipping_data_and_no_order_becomes_confirmado_sin_datos_and_escalates(h: _Harness) -> None:
+    """Datos de envío sin orden = el cliente confirmó y no terminó: cierre
+    CONFIRMADO_SIN_DATOS + escalación ORDER_PENDING_SHIPPING_DETAILS (la misma
+    red de seguridad del workflow Sales), con la invariante handoff."""
+    h.client.post(_url("draft"), json={"producto": "luz-serena", "ciudad": "Bogotá", "direccion": "Cl 1 # 2-3"})
+    r = h.client.post(_url("tag"), json={"tag": "INTERESADO", "motivo": "dejó de responder"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["tag"] == "CONFIRMADO_SIN_DATOS" and body["proposed_tag"] == "INTERESADO"
+    assert body["applied"] is True and body["reconciled"] is True and body["reason"] == "shipping_data_without_order"
+    assert body["escalated"] is True
+    m = h.meta()
+    ep = m["episodes"][-1]
+    assert body["episode_closed"] == {"episode_id": ep["episode_id"], "closing_tag": "CONFIRMADO_SIN_DATOS"}
+    assert ep["closing_tag"] == "CONFIRMADO_SIN_DATOS" and ep["closed_at_ms"]
+    assert "INTERESADO" in ep["closing_motivo"] and "dejó de responder" in ep["closing_motivo"]
+    assert m["active_route"] == ROUTE_HUMANO and m["tag"] == "HUMANO"
+    assert m["escalation_reason"] == "ORDER_PENDING_SHIPPING_DETAILS"
+    assert [e["tag"] for e in m["status_history"]] == ["CONFIRMADO_SIN_DATOS", "HUMANO"]
+    assert h.closed == [(_A, ep["episode_id"], "CONFIRMADO_SIN_DATOS")]
+    # retry de Meta tras el éxito: el colega ya tiene el hilo → 409 y el vault intacto
+    snapshot = h.meta()
+    assert h.client.post(_url("tag"), json={"tag": "INTERESADO", "motivo": "dejó de responder"}).status_code == 409
+    assert h.meta() == snapshot and len(h.closed) == 1
+    # con solo producto/color elegido NO hay confirmación: INTERESADO se aplica tal cual
+    h.client.post(_url("draft", _B), json={"producto": "luz-serena", "color": "Blanco"})
+    body = h.client.post(_url("tag", _B), json={"tag": "INTERESADO", "motivo": "lo piensa"}).json()
+    assert body["tag"] == "INTERESADO" and body["applied"] is True and body["reconciled"] is False
+    assert h.meta(_B).get("active_route") != ROUTE_HUMANO
+
+
+def test_tag_is_idempotent_per_session_and_tag(h: _Harness) -> None:
+    first = h.client.post(_url("tag"), json={"tag": "INTERESADO", "motivo": "lo piensa"}).json()
+    assert first["applied"] is True and first["reason"] == "proposal_accepted"
+    second = h.client.post(_url("tag"), json={"tag": "INTERESADO", "motivo": "lo piensa otra vez"}).json()
+    assert second["tag"] == "INTERESADO" and second["applied"] is False and second["reason"] == "already_applied"
+    m = h.meta()
+    assert m["motivo"] == "lo piensa" and [e["tag"] for e in m["status_history"]] == ["INTERESADO"]
 
 
 # ── /escalate ─────────────────────────────────────────────────────────────────
@@ -335,6 +397,66 @@ def test_the_same_order_in_a_new_episode_is_a_new_sale(h: _Harness) -> None:
     assert len(h.port.calls) == 2 and h.flushed == [_A, _A] and len(h.closed) == 2
 
 
+def test_tag_decides_on_the_route_read_under_the_lock_not_on_a_stale_snapshot(h: _Harness, monkeypatch) -> None:
+    """Carrera /tag × /order (revisión D1.3 H3): si un humano toma el hilo entre
+    la llegada del request y la escritura, el chequeo de ruta tiene que verlo.
+    Se simula flipeando la ruta DENTRO del read-modify-write del store."""
+    from src.platform.state import FilesystemMetadataStore
+
+    h.client.post(_url("draft"), json={"producto": "luz-serena"})
+    original = FilesystemMetadataStore.update
+
+    def update_with_human_taking_over(self, session_id, mutator):
+        def wrapped(data):
+            data["active_route"], data["tag"] = ROUTE_HUMANO, "HUMANO"
+            return mutator(data)
+        return original(self, session_id, wrapped)
+
+    monkeypatch.setattr(FilesystemMetadataStore, "update", update_with_human_taking_over)
+    before = h.meta()
+    r = h.client.post(_url("tag"), json={"tag": "INTERESADO", "motivo": "se despidió"})
+    assert r.status_code == 409 and "already_human" in r.json()["detail"]
+    assert h.meta() == before and h.closed == []
+
+
+def test_session_locks_are_released_after_the_request(h: _Harness) -> None:
+    h.client.post(_url("tag"), json={"tag": "INTERESADO", "motivo": "x"})
+    h.client.post(_url("order"), json=_ORDER)
+    assert _A not in session_actions._SESSION_LOCKS
+
+
+@pytest.mark.asyncio
+async def test_concurrent_tag_and_order_never_break_the_handoff_invariant(tmp_path: Path) -> None:
+    """MBA puede emitir register_order y manage_conversation_tag en el mismo turno.
+    En cualquier orden de llegada, el estado final es el del pedido: route=humano
+    y tag=HUMANO. Guard del estado final (con ASGITransport las secciones críticas
+    no se intercalan); la carrera real la cubre el test de ruta bajo el lock."""
+    import httpx
+
+    async def flush(_: str) -> int:
+        return 1
+
+    async def notify(*_: Any) -> None:
+        return None
+
+    deps = SessionActionsDeps(vault_dir=tmp_path, catalog=_Catalog(), order_port=_Port(), flush=flush, notify_episode_closed=notify)
+    app = FastAPI()
+    app.include_router(session_actions.router, prefix="/api/chats")
+    app.dependency_overrides[session_actions.get_session_actions_deps] = lambda: deps
+    for first in ("tag", "order"):
+        session = _A if first == "tag" else _B
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as client:
+            calls = {
+                "tag": client.post(_url("tag", session), json={"tag": "INTERESADO", "motivo": "se despidió"}),
+                "order": client.post(_url("order", session), json=_ORDER),
+            }
+            responses = await asyncio.gather(calls[first], calls["order" if first == "tag" else "tag"])
+        assert {r.status_code for r in responses} <= {200, 409}
+        m = json.loads((tmp_path / session / "metadata.json").read_text(encoding="utf-8"))
+        assert m["active_route"] == ROUTE_HUMANO and m["tag"] == "HUMANO", (first, m["status_history"])
+        assert m["episodes"][-1]["closing_tag"] == "CONFIRMADO_PAGO_PENDIENTE"
+
+
 @pytest.mark.asyncio
 async def test_concurrent_identical_orders_register_and_send_payment_instructions_once(tmp_path: Path) -> None:
     import httpx
@@ -365,3 +487,20 @@ async def test_concurrent_identical_orders_register_and_send_payment_instruction
     assert a.json()["order_id"] == b.json()["order_id"] == "order_1"
     assert sorted([a.json()["already_registered"], b.json()["already_registered"]]) == [False, True]
     assert len(port.calls) == 1 and flushed == [_A]
+
+
+def test_tag_interesado_via_api_enqueues_qualified_lead_for_ctwa_sessions(h: _Harness) -> None:
+    """Auditoría CAPI 2026-09-08: el endpoint ya no pasa por la tool, así que
+    la señal de embudo (INTERESADO → QualifiedLead) se encola en `_apply_tag`."""
+    h.client.post(_url("draft"), json={"producto": "luz-serena"})
+    meta = h.meta()
+    meta["ctwa_referrals"] = [{"ctwa_clid": "CLID_API", "captured_at_ms": 1_757_350_000_000}]
+    (h.vault / _A / "metadata.json").write_text(json.dumps(meta), encoding="utf-8")
+
+    r = h.client.post(_url("tag"), json={"tag": "INTERESADO", "motivo": "lo piensa"})
+    assert r.status_code == 200
+    ep = h.meta()["episodes"][-1]["episode_id"]
+    outbox = h.meta().get("capi_outbox", [])
+    assert [(e["event_name"], e["event_id"], e["source"]) for e in outbox] == [
+        ("QualifiedLead", f"qualifiedlead_{_A}_{ep}", "session_actions:tag")
+    ]

@@ -14,6 +14,24 @@ from src.platform.catalog.categories import (
     deslugify,
     resolve_category,
 )
+from src.platform.catalog.color_families import (
+    EMPTY_COLOR_FAMILIES,
+    ColorFamilies,
+    ColorFamily,
+    ColorFamilyResolution,
+    InvalidColorFamiliesError,
+    family_of_color,
+    parse_color_families,
+    resolve_color_family,
+)
+from src.platform.catalog.color_families_loader import (
+    COLOR_FAMILIES_PATH_ENV,
+    DEFAULT_COLOR_FAMILIES_PATH,
+    ColorFamiliesLoader,
+    get_color_families,
+    get_color_families_loader,
+    resolve_color_families_path,
+)
 from src.platform.catalog.composition import get_catalog_client
 from src.platform.catalog.dtos import (
     CatalogImageDTO,
@@ -54,6 +72,20 @@ from src.platform.catalog.variant_colors import (
 
 __all__ = [
     "COLORS_METADATA_KEY",
+    "COLOR_FAMILIES_PATH_ENV",
+    "DEFAULT_COLOR_FAMILIES_PATH",
+    "EMPTY_COLOR_FAMILIES",
+    "ColorFamilies",
+    "ColorFamiliesLoader",
+    "ColorFamily",
+    "ColorFamilyResolution",
+    "InvalidColorFamiliesError",
+    "family_of_color",
+    "get_color_families",
+    "get_color_families_loader",
+    "parse_color_families",
+    "resolve_color_families_path",
+    "resolve_color_family",
     "PORTAVELAS_METADATA_KEY",
     "CatalogCategoryDTO",
     "CatalogError",

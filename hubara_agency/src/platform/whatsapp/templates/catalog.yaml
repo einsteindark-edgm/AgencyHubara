@@ -76,8 +76,11 @@ templates:
         description: "ID legible de la orden + productos (e.g., '#22 (Plegaria de Luz)')"
       - name: status_label
         type: string
-        max_length: 60
-        description: "Estado humano-readable (e.g., 'en camino', 'entregado')"
+        # 300: en "en camino" el slot puede llevar el link de la guía
+        # ("en camino. Sigue tu envío aquí: https://…") — las URLs de rastreo
+        # de las transportadoras colombianas rondan 60-120 chars.
+        max_length: 300
+        description: "Estado humano-readable (e.g., 'en camino', 'entregado'); en 'en camino' puede incluir el link de la guía"
 
   # ===== MARKETING templates (cobran $0.0125 USD en Colombia) =================
 

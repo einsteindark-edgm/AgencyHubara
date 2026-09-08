@@ -120,6 +120,12 @@ async def _call(
                 "applied": "unknown",
                 "message": "El servicio no respondió a tiempo; la operación PUEDE haberse aplicado. No la repitas: pasa el caso a un colega.",
             }
+        if status == 409 and detail.startswith("already_human"):
+            return {
+                "error": "already_human",
+                "applied": False,
+                "message": "Un colega del equipo ya tiene esta conversación. No etiquetes, no escales y no respondas más en este chat.",
+            }
         if 400 <= status < 500:
             out: dict[str, Any] = {
                 "error": "rejected",
@@ -226,7 +232,30 @@ async def manage_conversation_tag(
             "accepted": list(TAGS),
             "message": "Solo puedes proponer INTERESADO o RECHAZO. El estado de un pedido lo lleva el equipo de Hubara.",
         }
-    return await _call(chats, request, session_key, "tag", {"tag": tag, "motivo": params.get("motivo")})
+    res = await _call(chats, request, session_key, "tag", {"tag": tag, "motivo": params.get("motivo")})
+    if "error" in res:
+        return res
+    return {**res, "message": _tag_message(res)}
+
+
+def _tag_message(res: dict[str, Any]) -> str:
+    """Le dice al agente qué quedó aplicado (D1.3: Hubara decide). Nunca le pide
+    volver a etiquetar: la reconciliación es determinista y se repetiría igual."""
+    applied, proposed = str(res.get("tag") or ""), str(res.get("proposed_tag") or "")
+    if res.get("reason") == "order_registered":
+        return (
+            f"Tu propuesta {proposed} no se aplicó: este cliente tiene un pedido registrado y su estado "
+            f"({applied}) lo lleva el equipo de Hubara. No vuelvas a etiquetar esta conversación."
+        )
+    if res.get("reason") == "already_applied":
+        return f"La conversación ya estaba etiquetada como {applied}; no hace falta volver a etiquetar."
+    if res.get("reconciled"):
+        return (
+            f"Hubara aplicó {applied} en lugar de {proposed}: el cliente ya había dado datos de envío sin que el "
+            "pedido quedara registrado, así que un colega tomará la conversación para completarlo. "
+            "No vuelvas a etiquetar ni a responder en este chat."
+        )
+    return f"Etiqueta {applied} aplicada. No la menciones al cliente ni vuelvas a etiquetar esta conversación."
 
 
 async def escalate_to_human(

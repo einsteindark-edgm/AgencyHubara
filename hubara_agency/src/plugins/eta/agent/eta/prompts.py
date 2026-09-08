@@ -38,7 +38,9 @@ STAGE_LABELS: dict[str, str] = {
 _ORDER_REFERENCE_MAX_LEN = 60
 
 
-def build_status_template_variables(stage: str, facts: dict) -> dict[str, str]:
+def build_status_template_variables(
+    stage: str, facts: dict, tracking_url: str | None = None
+) -> dict[str, str]:
     """Variables del template fuera-de-ventana (``order_status_utility_v2``).
 
     Pura y determinista — el workflow la llama tal cual (R-DET OK). Garantiza
@@ -59,10 +61,36 @@ def build_status_template_variables(stage: str, facts: dict) -> dict[str, str]:
         # El cliente no sabe qué es "#6" — nombramos los productos en el
         # slot de referencia.
         reference = f"{reference} ({items_label})"
+    status_label = STAGE_LABELS.get(stage, stage)
+    url = _clean_tracking_url(tracking_url)
+    if stage == "shipping" and url:
+        # Fuera de ventana el ÚNICO canal es este template: el link de la
+        # guía viaja dentro del slot de estado ("...está en camino. Sigue tu
+        # envío aquí: https://…. Si quieres más información…"). El catálogo
+        # declara max_length holgado para este slot; sin saltos de línea ni
+        # 4+ espacios (Meta los rechaza en params).
+        status_label = f"en camino. Sigue tu envío aquí: {url}"
     return {
         "order_reference": reference[:_ORDER_REFERENCE_MAX_LEN],
-        "status_label": STAGE_LABELS.get(stage, stage),
+        "status_label": status_label,
     }
+
+
+def _clean_tracking_url(tracking_url: str | None) -> str:
+    """URL de guía normalizada: sin espacios en los bordes; vacío → ""."""
+    return (tracking_url or "").strip()
+
+
+def _tracking_suffix(tracking_url: str | None) -> str:
+    """Bloque final con el link de la guía para el mensaje "en camino".
+
+    Va en su propia burbuja (``\n\n`` = chunk separado en
+    ``send_message_to_session``) y con la URL cruda al final de la línea:
+    WhatsApp la linkifica sola, el cliente la toca y abre el rastreo. Nada de
+    markdown ni paréntesis pegados a la URL (rompen la detección del link).
+    """
+    url = _clean_tracking_url(tracking_url)
+    return f"\n\nPuedes seguir tu envío aquí: {url}" if url else ""
 
 
 def _hola(name: str) -> str:
@@ -105,6 +133,7 @@ def render_stage_notification(
     payment_confirmed: bool = False,
     delivery_window: str | None = None,
     items_label: str = "",
+    tracking_url: str | None = None,
 ) -> str | None:
     """Renderiza el mensaje EXACTO de una notificación de cambio de estado.
 
@@ -120,6 +149,10 @@ def render_stage_notification(
 
     Saludo sin nombre real → "¡Hola!" a secas (el placeholder "Cliente" de
     Medusa ya lo filtra la activity → ``customer_name`` llega vacío).
+
+    ``tracking_url`` (opcional, lo adjunta el operador al mover el pedido a
+    "en camino") se agrega SOLO al mensaje de ``shipping`` como link tappable
+    al final; las demás etapas lo ignoran.
 
     Devuelve ``None`` para un stage desconocido (el workflow lo saltea).
     """
@@ -186,7 +219,7 @@ def render_stage_notification(
                 f"Tu pedido {order} ya va en camino 🚚. Te aviso cuando esté "
                 "por llegar."
             )
-        return body + _window_suffix(delivery_window)
+        return body + _window_suffix(delivery_window) + _tracking_suffix(tracking_url)
 
     if stage == "delivered":
         return (
