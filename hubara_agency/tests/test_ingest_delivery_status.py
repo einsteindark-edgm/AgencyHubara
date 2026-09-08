@@ -581,3 +581,40 @@ async def test_lookup_traverses_multiple_sessions(
     assert a["cost_usd_micros"] is None
     assert b["cost_usd_micros"] == 800  # utility = 800 micros = $0.0008
     assert c["cost_usd_micros"] is None
+
+
+def test_pricing_snapshot_accepts_metas_current_type_key() -> None:
+    """La referencia vigente de Meta escribe `pricing.type` (con `pricing_model`);
+    el shape viejo traía `pricing_type`. Ambos deben materializar costo."""
+    from src.plugins.chats.agent.sales.use_cases.ingest_delivery_status import _pricing_snapshot_from_dict
+
+    new = _pricing_snapshot_from_dict({"billable": True, "pricing_model": "PMP", "category": "utility", "type": "regular"})
+    old = _pricing_snapshot_from_dict({"billable": True, "pricing_type": "regular", "category": "utility"})
+    assert new == old and new is not None and new.pricing_type == "regular" and new.category == "utility"
+    assert _pricing_snapshot_from_dict({"billable": True, "category": "utility"}) is None
+
+
+@pytest.mark.asyncio
+async def test_status_mutation_runs_under_the_store_lock_and_keeps_concurrent_writes(
+    vault_dir: Path, co_rate_card: RateCard, monkeypatch
+) -> None:
+    """D1.4: la sesión la escriben en paralelo el oído standby y las tools de
+    MBA. Un cambio ajeno aplicado DENTRO del read-modify-write del store no se
+    pierde (el read→write plano de antes lo pisaba)."""
+    use_case, store = _make_use_case(vault_dir=vault_dir, rate_card=co_rate_card)
+    _seed_episode_with_pending_entry(store, session_id="wa_573001234567", wa_message_id="wamid.X1")
+    original = FilesystemMetadataStore.update
+
+    def update_with_foreign_write(self, session_id, mutator):
+        def wrapped(data):
+            data["foreign_marker"] = "written-by-standby"
+            return mutator(data)
+        return original(self, session_id, wrapped)
+
+    monkeypatch.setattr(FilesystemMetadataStore, "update", update_with_foreign_write)
+    await use_case.execute("wamid.X1", "delivered",
+                           {"billable": True, "pricing_type": "regular", "category": "utility"})
+    m = store.read("wa_573001234567")
+    assert m["foreign_marker"] == "written-by-standby"
+    entry = m["episodes"][0]["outbound_messages"][0]
+    assert entry["cost_usd_micros"] == 800 and m["episodes"][0]["cost_summary"]["total_usd_micros"] == 800
