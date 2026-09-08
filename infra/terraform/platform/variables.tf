@@ -92,6 +92,11 @@ variable "secret_keys" {
     # da el hilo a nosotros o a Business Agent. Placeholder/vacío = no se
     # decide nada (WARNING). Distinto de META_APP_ID (OAuth/ads).
     "WHATSAPP_APP_ID",
+    # Token de system user para la Meta Business Agent Cloud API
+    # (api.facebook.com: thread_control, agent_event, configuración del
+    # agente). Permisos whatsapp_business_messaging + management.
+    # Placeholder/vacío = el adapter no llama a nadie (not_configured).
+    "META_MBA_TOKEN",
     "MEDUSA_BASE_URL",
     "MEDUSA_ADMIN_TOKEN",
     "META_CATALOG_ID",

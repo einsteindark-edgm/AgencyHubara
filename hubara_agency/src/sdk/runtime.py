@@ -25,6 +25,10 @@ Notas de diseño:
 - ``client_ip`` es la IP real del cliente detrás de Caddy/CloudFront (primer
   hop de ``X-Forwarded-For``); la clave correcta para cualquier límite por IP
   en un router expuesto (el peer es siempre el proxy).
+- ``mba_standby_enabled`` / ``mba_customer_allowed``: los interruptores de
+  Meta Business Agent del lado de la plataforma (flag + lista cerrada), leídos
+  en cada llamada; ``is_placeholder`` distingue un secreto real del
+  placeholder de SSM (un adapter con placeholder NO debe llamar a nadie).
 - ``CONTROL_OWNER_MBA`` / ``CONTROL_OWNER_HUBARA`` (``CONTROL_OWNERS``): los
   valores de ``metadata.control_owner`` de una sesión de WhatsApp — quién
   responde al cliente según el webhook ``messaging_handovers`` de Meta
@@ -33,7 +37,9 @@ Notas de diseño:
 from __future__ import annotations
 
 from src.platform.config import (
+    is_placeholder as is_placeholder,
     mba_customer_allowed as mba_customer_allowed,
+    mba_standby_enabled as mba_standby_enabled,
     AWS_REGION as AWS_REGION,
     GRAPHAGENTS_INSTANCE_TAG as GRAPHAGENTS_INSTANCE_TAG,
     WORKSPACE_VAULT_DIR as WORKSPACE_VAULT_DIR,

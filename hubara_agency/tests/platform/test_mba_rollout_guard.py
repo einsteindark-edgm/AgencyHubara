@@ -67,21 +67,18 @@ def test_meta_app_id_parsing_only_accepts_digits_and_treats_placeholder_as_unset
     assert parse_app_id(raw) == expected
 
 
-def test_config_reads_our_whatsapp_app_id_from_its_own_variable_not_metas_oauth_one(monkeypatch) -> None:
-    """M-2 de la revisión: META_APP_ID (SSM) nació para OAuth/ads y puede ser OTRA app."""
-    import importlib
+def test_config_reads_our_whatsapp_app_id_from_its_own_variable_not_metas_oauth_one() -> None:
+    """M-2 de la revisión D1.5: META_APP_ID (SSM) nació para OAuth/ads y puede
+    ser OTRA app. Sin `importlib.reload` (rompería la identidad de los
+    re-exports del SDK para el resto de la sesión de tests)."""
+    import inspect
 
     from src.platform import config
 
     assert isinstance(config.WHATSAPP_APP_ID, str)
-    monkeypatch.setenv("META_APP_ID", "111")
-    monkeypatch.setenv("WHATSAPP_APP_ID", "222")
-    try:
-        assert importlib.reload(config).WHATSAPP_APP_ID == "222"
-    finally:
-        monkeypatch.delenv("WHATSAPP_APP_ID")
-        monkeypatch.delenv("META_APP_ID")
-        importlib.reload(config)
+    source = inspect.getsource(config)
+    assert 'parse_app_id(os.getenv("WHATSAPP_APP_ID"))' in source
+    assert 'parse_app_id(os.getenv("META_APP_ID"))' not in source
 
 
 def test_sdk_runtime_reexports_the_control_owner_constants() -> None:
@@ -91,3 +88,19 @@ def test_sdk_runtime_reexports_the_control_owner_constants() -> None:
     assert kit.CONTROL_OWNER_MBA == impl.CONTROL_OWNER_MBA == "mba"
     assert kit.CONTROL_OWNER_HUBARA == impl.CONTROL_OWNER_HUBARA == "hubara"
     assert kit.CONTROL_OWNERS == impl.CONTROL_OWNERS == ("mba", "hubara")
+
+
+# ── D1.6: el plugin mba consulta la flag y el placeholder por el SDK ──────────
+
+
+def test_sdk_runtime_reexports_the_flag_reader_and_placeholder_check(monkeypatch) -> None:
+    import src.platform.config as impl
+    import src.sdk.runtime as kit
+
+    assert kit.mba_standby_enabled is impl.mba_standby_enabled
+    assert kit.is_placeholder is impl.is_placeholder
+    monkeypatch.setattr(impl, "MBA_STANDBY_ENABLED", True)
+    assert kit.mba_standby_enabled() is True
+    monkeypatch.setattr(impl, "MBA_STANDBY_ENABLED", False)
+    assert kit.mba_standby_enabled() is False
+    assert kit.is_placeholder("PLACEHOLDER_set_out_of_band") and kit.is_placeholder("") and not kit.is_placeholder("tok")

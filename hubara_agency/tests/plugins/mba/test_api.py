@@ -271,3 +271,61 @@ def test_session_control_is_served_from_the_session_metadata(monkeypatch: pytest
 @pytest.mark.parametrize("bad_key", ["573001234567", "wa_abc", "wa_..", "wa_5730012345671234567", "wa_573001234567%0A"])
 def test_session_control_rejects_keys_that_are_not_a_phone_session(bad_key: str) -> None:
     assert _client().get(f"/api/mba/sessions/{bad_key}/control").status_code == 422
+
+
+# ── D1.6: soltar el hilo (plano de gestión) ──────────────────────────────────
+
+
+class _ReleaseStub:
+    def __init__(self, reason: str, released: bool = False) -> None:
+        self.reason, self.released, self.calls = reason, released, []
+
+    async def execute(self, session_key, trigger, *, order_registered=False, agent_event_emitted=False, metadata=None):
+        from src.plugins.mba.use_cases.release_thread import ReleaseOutcome
+
+        self.calls.append((session_key, trigger, order_registered, agent_event_emitted, metadata))
+        return ReleaseOutcome(session_key=session_key, released=self.released, reason=self.reason,
+                              action_at_ms=1 if self.released else None)
+
+
+def _release_client(stub: _ReleaseStub) -> TestClient:
+    from src.plugins.mba import api as mba_api
+
+    app = FastAPI()
+    app.include_router(router, prefix="/api/mba")
+    app.dependency_overrides[mba_api.get_release_thread] = lambda: stub
+    return TestClient(app)
+
+
+def test_release_endpoint_delegates_to_the_use_case_with_the_trigger_and_facts() -> None:
+    from src.plugins.mba.domain.release_policy import ReleaseTrigger
+
+    stub = _ReleaseStub("handoff_resolved", released=True)
+    c = _release_client(stub)
+    r = c.post("/api/mba/sessions/wa_573001234567/control/release",
+               json={"trigger": "handoff_resolved", "metadata": "caso cerrado", "order_registered": True})
+    assert r.status_code == 200
+    assert r.json() == {"session_key": "wa_573001234567", "released": True, "reason": "handoff_resolved",
+                        "action_at_ms": 1, "error": None}
+    assert stub.calls == [("wa_573001234567", ReleaseTrigger.HANDOFF_RESOLVED, True, False, "caso cerrado")]
+    # default: manual, sin hechos
+    assert c.post("/api/mba/sessions/wa_573001234567/control/release").status_code == 200
+    assert stub.calls[-1][1] is ReleaseTrigger.MANUAL
+
+
+@pytest.mark.parametrize("reason,status", [
+    ("mba_disabled", 503), ("customer_not_enabled", 403), ("session_unknown", 404),
+    ("already_mba", 200), ("release_pending", 200), ("unavailable", 200), ("rejected", 200),
+])
+def test_release_endpoint_maps_guard_reasons_to_status_codes(reason: str, status: int) -> None:
+    r = _release_client(_ReleaseStub(reason)).post("/api/mba/sessions/wa_573001234567/control/release")
+    assert r.status_code == status
+    if status == 200:
+        assert r.json()["released"] is False and r.json()["reason"] == reason
+
+
+def test_release_endpoint_validates_key_and_trigger() -> None:
+    c = _release_client(_ReleaseStub("manual", True))
+    assert c.post("/api/mba/sessions/573001234567/control/release").status_code == 422
+    assert c.post("/api/mba/sessions/wa_573001234567/control/release", json={"trigger": "whatever"}).status_code == 422
+    assert c.post("/api/mba/sessions/wa_573001234567/control/release", json={"metadata": "x" * 2001}).status_code == 422

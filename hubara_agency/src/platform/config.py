@@ -102,6 +102,11 @@ def parse_app_id(value: str | None) -> str:
 WHATSAPP_APP_ID: str = parse_app_id(os.getenv("WHATSAPP_APP_ID"))
 
 
+def mba_standby_enabled() -> bool:
+    """La flag leída en cada llamada (el plugin mba la consulta por el SDK)."""
+    return MBA_STANDBY_ENABLED
+
+
 def mba_customer_allowed(customer: str | None) -> bool:
     """¿Este cliente (E.164, dígitos o ``wa_<dígitos>``) está en la lista
     cerrada de MBA? Lista vacía → False siempre."""

@@ -1,0 +1,111 @@
+"""Base común de la Meta Business Agent Cloud API (D1.6; la reutiliza D2.1).
+
+Host ``https://api.facebook.com`` (NO el host del Graph API: es otra
+superficie, con su propio ``X-API-Version`` por endpoint). Token de system
+user en ``META_MBA_TOKEN`` (SSM): sin él, o con el placeholder, el adapter
+NO llama a nadie (``not_configured``).
+
+Errores en tres clases cerradas, para que el use case decida sin mirar HTTP:
+
+* ``not_configured`` — falta el token; nada se llamó.
+* ``rejected`` — 4xx (salvo 429): Meta no acepta la operación (p.ej. soltar
+  un hilo que no tenemos). No se reintenta; ``detail`` trae el mensaje.
+* ``unavailable`` — 5xx / 429 / timeout / red tras ``MAX_ATTEMPTS`` con
+  backoff (360dialog: "cualquier endpoint puede devolver 4xx/500").
+"""
+from __future__ import annotations
+
+import asyncio
+import os
+from typing import Any, Awaitable, Callable
+
+from src.sdk.runtime import is_placeholder
+
+__all__ = [
+    "DEFAULT_TIMEOUT_S",
+    "MAX_ATTEMPTS",
+    "MBA_API_BASE_URL",
+    "TOKEN_ENV",
+    "MbaApiError",
+    "mba_token",
+    "post_json",
+]
+
+MBA_API_BASE_URL = "https://api.facebook.com"
+TOKEN_ENV = "META_MBA_TOKEN"
+DEFAULT_TIMEOUT_S = 10.0
+MAX_ATTEMPTS = 3
+_BACKOFF_S = (0.5, 1.0)
+
+
+class MbaApiError(Exception):
+    """``kind`` ∈ {not_configured, rejected, unavailable}."""
+
+    def __init__(self, kind: str, *, status: int | None = None, detail: str = "", attempts: int = 1) -> None:
+        super().__init__(f"{kind}: {status or ''} {detail}".strip())
+        self.kind = kind
+        self.status = status
+        self.detail = detail
+        self.attempts = attempts
+
+
+def mba_token() -> str:
+    """Token de ``META_MBA_TOKEN`` leído en cada llamada (rotable sin rebuild)."""
+    raw = os.environ.get(TOKEN_ENV, "")
+    return "" if is_placeholder(raw) else raw.strip()
+
+
+def _error_detail(resp: Any) -> str:
+    try:
+        payload = resp.json()
+    except ValueError:
+        payload = None
+    if isinstance(payload, dict):
+        err = payload.get("error")
+        if isinstance(err, dict) and isinstance(err.get("message"), str):
+            return err["message"]
+    text = resp.text if isinstance(resp.text, str) else ""
+    return text[:300]
+
+
+async def post_json(
+    url: str,
+    body: dict[str, Any],
+    *,
+    api_version: str,
+    token: str,
+    timeout_s: float = DEFAULT_TIMEOUT_S,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    error_cls: type[MbaApiError] = MbaApiError,
+) -> dict[str, Any]:
+    if not token or is_placeholder(token):
+        raise error_cls("not_configured", detail=f"{TOKEN_ENV} no configurado")
+    import httpx  # import perezoso: el kit no arrastra vendors al importarse
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "X-API-Version": api_version,
+        "Content-Type": "application/json",
+    }
+    last_status: int | None = None
+    last_detail = ""
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            async with httpx.AsyncClient(timeout=timeout_s) as client:
+                resp = await client.post(url, json=body, headers=headers)
+        except httpx.HTTPError as exc:
+            last_status, last_detail = None, f"{type(exc).__name__}: {exc}"
+        else:
+            if resp.status_code < 400:
+                try:
+                    payload = resp.json() if resp.content else {}
+                except ValueError:
+                    payload = {}
+                return payload if isinstance(payload, dict) else {}
+            detail = _error_detail(resp)
+            if resp.status_code != 429 and resp.status_code < 500:
+                raise error_cls("rejected", status=resp.status_code, detail=detail, attempts=attempt)
+            last_status, last_detail = resp.status_code, detail
+        if attempt < MAX_ATTEMPTS:
+            await sleep(_BACKOFF_S[min(attempt, len(_BACKOFF_S)) - 1])
+    raise error_cls("unavailable", status=last_status, detail=last_detail, attempts=MAX_ATTEMPTS)
