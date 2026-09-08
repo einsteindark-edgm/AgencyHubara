@@ -63,3 +63,17 @@ def test_messagingkit_reexports_service_window_guard():
     import src.sdk.messagingkit as kit
 
     assert kit.is_service_window_closed is impl.is_service_window_closed
+
+
+def test_messagingkit_reexports_standby_ear_helpers():
+    # D1.4: el oído `standby` (chats) anota los ecos de MBA como outbound
+    # pendiente de pricing y reabre la ventana de servicio con cada inbound,
+    # vía SDK — P-28 le prohíbe `src.platform.whatsapp.{activities,cost,window}`.
+    import src.platform.whatsapp.activities as activities
+    import src.platform.whatsapp.cost as cost
+    import src.platform.whatsapp.window as window
+    import src.sdk.messagingkit as kit
+
+    assert kit.OutboundLogEntry is cost.OutboundLogEntry
+    assert kit.record_outbound_in_active_episode is activities.record_outbound_in_active_episode
+    assert kit.compute_service_window_expiry is window.compute_service_window_expiry

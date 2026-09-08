@@ -34,9 +34,9 @@ import os
 from exoclaw_temporal.config import WorkspaceConfig
 
 from src.platform.analytics.composition import setup_analytics
-from src.platform.config import WORKSPACE_VAULT_DIR
+from src.platform.config import WORKSPACE_VAULT_DIR, mba_customer_allowed
 from src.platform.session_history import FilesystemMessageHistoryStore
-from src.platform.state import FilesystemMetadataStore as _PlatformFsMetaStore  # noqa: F401
+from src.platform.state import FilesystemMetadataStore as _PlatformFsMetaStore
 from src.platform.temporal.client import get_temporal_client
 from src.platform.whatsapp.composition import get_current_rate_card
 from src.plugins.chats.agent.sales.config.env import get_workspace_path
@@ -47,6 +47,7 @@ from src.plugins.chats.agent.sales.use_cases.ingest_delivery_status import (
 from src.plugins.chats.agent.sales.use_cases.ingest_inbound_message import (
     IngestInboundMessage,
 )
+from src.plugins.chats.agent.sales.use_cases.ingest_standby import IngestStandby
 from src.plugins.chats.agent.sales.use_cases.load_or_start_sales_session import (
     LoadOrStartSalesSession,
 )
@@ -54,6 +55,7 @@ from src.plugins.chats.agent.sales.use_cases.load_or_start_sales_session import 
 
 _INGEST_USE_CASE: IngestInboundMessage | None = None
 _DELIVERY_STATUS_USE_CASE: IngestDeliveryStatus | None = None
+_STANDBY_USE_CASE: IngestStandby | None = None
 
 
 def build_ingest_use_case() -> IngestInboundMessage:
@@ -135,3 +137,19 @@ def build_ingest_delivery_status_use_case() -> IngestDeliveryStatus:
         tenant_id=tenant_id,
     )
     return _DELIVERY_STATUS_USE_CASE
+
+
+def build_ingest_standby_use_case() -> IngestStandby:
+    """Singleton del oído ``standby`` (D1.4 MBA): persiste al vault lo que el
+    cliente y Meta Business Agent se dicen mientras MBA controla el hilo. Sin
+    Temporal, sin analytics: solo stores del vault (flock en metadata)."""
+    global _STANDBY_USE_CASE
+    if _STANDBY_USE_CASE is not None:
+        return _STANDBY_USE_CASE
+    _STANDBY_USE_CASE = IngestStandby(
+        metadata_store=_PlatformFsMetaStore(WORKSPACE_VAULT_DIR),
+        history_store=FilesystemMessageHistoryStore(WORKSPACE_VAULT_DIR),
+        vault_dir=WORKSPACE_VAULT_DIR,
+        is_customer_allowed=mba_customer_allowed,
+    )
+    return _STANDBY_USE_CASE

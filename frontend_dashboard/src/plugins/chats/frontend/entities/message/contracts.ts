@@ -25,9 +25,10 @@ export const chatMessageSchema = z.object({
   role: z.string(),
   content: z.string().nullable(),
   tool_calls: z.array(z.unknown()).optional(),
-  /** Mensajes del operador humano via dashboard handoff. Backend lo escribe
-   *  como "human"; otros mensajes no llevan este campo. */
-  sender: z.literal("human").optional(),
+  /** Quién escribió un turno `assistant` que no fue el bot: "human" =
+   *  operador via dashboard handoff; "mba" = eco de Meta Business Agent
+   *  (webhook standby, D1.4). Los turnos del bot no llevan este campo. */
+  sender: z.enum(["human", "mba"]).optional(),
   timestamp: z.union([z.string(), z.number()]).optional(),
   name: z.string().optional(),
   /** Ref relativa a una imagen inbound que el cliente envió por WhatsApp

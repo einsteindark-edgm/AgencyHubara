@@ -21,8 +21,8 @@ export interface ChatMessage {
   role: string;
   content: string | null;
   tool_calls?: unknown[];
-  /** Marker exclusivo de mensajes humanos. */
-  sender?: "human";
+  /** "human" = operador (handoff); "mba" = eco de Meta Business Agent. */
+  sender?: "human" | "mba";
   /** ms epoch o ISO; el backend hoy no garantiza presencia */
   timestamp?: string | number;
   /** Para tool_execution_result */

@@ -68,5 +68,18 @@ from src.platform.whatsapp.send_policy import (
 # (chats `POST /messages`) para cortar un free-form fuera de ventana antes de
 # que Meta lo rechace en silencio. Fail-open cuando la metadata no está poblada.
 from src.platform.whatsapp.window import (
+    compute_service_window_expiry as compute_service_window_expiry,
     is_service_window_closed as is_service_window_closed,
+)
+
+# Oído `standby` (D1.4, chats): cuando Meta Business Agent controla el hilo,
+# los ecos de lo que MBA envió se anotan como outbound pendiente de pricing en
+# el episodio activo (mismo log que un send propio; el status con `pricing`
+# lo materializa `IngestDeliveryStatus`), y cada inbound del cliente reabre la
+# ventana de servicio 24h con `compute_service_window_expiry`.
+from src.platform.whatsapp.activities import (
+    record_outbound_in_active_episode as record_outbound_in_active_episode,
+)
+from src.platform.whatsapp.cost import (
+    OutboundLogEntry as OutboundLogEntry,
 )

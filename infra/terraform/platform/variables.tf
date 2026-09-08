@@ -79,6 +79,14 @@ variable "secret_keys" {
     # `openssl rand -hex 32`, setear out-of-band y usar el MISMO valor al
     # registrar el connector en Meta (auth_config.api_key).
     "HUBARA_MBA_API_KEY",
+    # Interruptores del lado de la plataforma para Meta Business Agent (estamos
+    # en producción). MBA_STANDBY_ENABLED: "1" enciende el oído `standby` (D1.4);
+    # placeholder/vacío = APAGADO. MBA_CUSTOMER_ALLOWLIST: lista CERRADA de
+    # clientes (E.164 separados por coma) a los que se les acepta tráfico de
+    # MBA (standby + connector tools); placeholder/vacío = NADIE. Ambos se
+    # setean out-of-band con `aws ssm put-parameter --overwrite`.
+    "MBA_STANDBY_ENABLED",
+    "MBA_CUSTOMER_ALLOWLIST",
     "MEDUSA_BASE_URL",
     "MEDUSA_ADMIN_TOKEN",
     "META_CATALOG_ID",

@@ -45,7 +45,7 @@ from src.plugins.mba.domain.guard import MAX_BODY_BYTES, RateLimiter
 from src.plugins.mba.domain.tool_calls import ToolCallError, ToolContract, contracts_from_config, parse_tool_call
 from src.plugins.mba.service import list_agents, load_agent
 from src.plugins.mba.tools import ToolDeps, default_deps, run_tool
-from src.sdk.runtime import client_ip
+from src.sdk.runtime import client_ip, mba_customer_allowed
 
 PUBLIC_ROUTER = True
 API_KEY_ENV = "HUBARA_MBA_API_KEY"
@@ -156,6 +156,18 @@ async def run_connector_tool(
     except ToolCallError as exc:
         logger.info("[mba] {} inválida desde {}: {}", tool_name, client, exc.errors)
         return JSONResponse(status_code=422, content=exc.payload)
+    if not mba_customer_allowed(call.customer_phone):
+        # Lista cerrada del lado de Hubara (estamos en producción): para un
+        # cliente no habilitado no se ejecuta NADA (ni lectura ni escritura).
+        # ERROR a propósito: es la alarma de que el rollout en Meta está más
+        # abierto de lo previsto. 200 con error explícito → el agente pasa el
+        # caso a un colega (un 4xx lo vería como fallo de infraestructura).
+        logger.error("[mba] {} para cliente FUERA de la lista cerrada: ***{} — rechazada", tool_name, call.customer_phone[-4:])
+        return {
+            "error": "customer_not_enabled",
+            "message": "Este cliente no está habilitado para el agente. Pasa el caso a un colega con escalate_to_human "
+                       "(reason_category=EXPLICIT_REQUEST) y no vuelvas a llamar herramientas en este chat.",
+        }
     started = time.monotonic()
     result = await run_tool(call, deps, request)
     elapsed_ms = int((time.monotonic() - started) * 1000)

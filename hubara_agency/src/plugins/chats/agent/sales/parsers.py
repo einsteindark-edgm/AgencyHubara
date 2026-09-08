@@ -118,7 +118,13 @@ def parse_whatsapp_inbound(body: dict) -> WhatsAppMessage | None:
     if not isinstance(messages, list):
         raise ValueError("'messages' must be a list")
 
-    msg = messages[0]
+    return _parse_message(messages[0], phone_number_id)
+
+
+def _parse_message(msg: Any, phone_number_id: str) -> WhatsAppMessage | None:
+    """Un ítem de ``messages[]`` → ``WhatsAppMessage`` (``None`` si no es un
+    mensaje aprovechable; ``ValueError`` si la shape es inválida). Compartido
+    por el inbound regular y por ``standby.messages`` (mismo esquema)."""
     if not isinstance(msg, dict):
         raise ValueError("messages[0] must be a dict")
 
@@ -337,26 +343,24 @@ def parse_whatsapp_statuses(body: dict) -> list[WhatsAppStatusUpdate]:
             if not isinstance(statuses, list):
                 continue
             for status in statuses:
-                if not isinstance(status, dict):
-                    continue
-                wa_message_id = status.get("id")
-                status_kind = status.get("status")
-                if not isinstance(wa_message_id, str) or not isinstance(
-                    status_kind, str
-                ):
-                    continue
-                pricing = status.get("pricing")
-                # pricing puede ser dict o ausente; ambos son válidos
-                if pricing is not None and not isinstance(pricing, dict):
-                    pricing = None
-                out.append(
-                    WhatsAppStatusUpdate(
-                        wa_message_id=wa_message_id,
-                        status=status_kind,
-                        pricing=pricing,
-                    )
-                )
+                parsed = _parse_status(status)
+                if parsed is not None:
+                    out.append(parsed)
     return out
+
+
+def _parse_status(status: Any) -> WhatsAppStatusUpdate | None:
+    if not isinstance(status, dict):
+        return None
+    wa_message_id = status.get("id")
+    status_kind = status.get("status")
+    if not isinstance(wa_message_id, str) or not isinstance(status_kind, str):
+        return None
+    pricing = status.get("pricing")
+    # pricing puede ser dict o ausente; ambos son válidos
+    if pricing is not None and not isinstance(pricing, dict):
+        pricing = None
+    return WhatsAppStatusUpdate(wa_message_id=wa_message_id, status=status_kind, pricing=pricing)
 
 
 def _parse_referral(obj: Any) -> dict[str, Any] | None:
@@ -415,3 +419,218 @@ def _parse_context(obj: Any) -> dict[str, Any] | None:
     keep = ("from", "id", "forwarded", "frequently_forwarded", "referred_product")
     out = {k: obj[k] for k in keep if k in obj}
     return out or None
+
+
+# =============================================================================
+# Webhook `standby` (D1.4 MBA): el oído cuando Meta Business Agent controla
+# =============================================================================
+#
+# Referencia Meta "Standby webhooks" (2026-08-04): sobre común con
+# ``entry[].changes[].field == "standby"`` y ``value.standby`` con UNO de
+# ``messages`` (+``contacts``), ``message_echoes`` o ``statuses``. Los mensajes
+# usan el mismo esquema que el inbound regular; los ecos traen el body EXACTO
+# que MBA pasó a ``POST /{phone-number-id}/messages`` (no el texto renderizado);
+# los statuses traen ``pricing`` con la clave ``type`` (no ``pricing_type``).
+
+STANDBY_FIELD = "standby"
+HANDOVERS_FIELD = "messaging_handovers"
+#: Un `wamid.*` real ronda los 60-90 chars; el id entra al vault (dedupe), así
+#: que un router público no acepta ids de longitud arbitraria.
+MAX_WAMID_LEN = 128
+
+
+def webhook_fields(body: Any) -> set[str]:
+    """Los ``entry[*].changes[*].field`` presentes (vacío si no vienen)."""
+    out: set[str] = set()
+    if not isinstance(body, dict) or not isinstance(body.get("entry"), list):
+        return out
+    for entry in body["entry"]:
+        for change in (entry.get("changes") or []) if isinstance(entry, dict) else []:
+            if isinstance(change, dict) and isinstance(change.get("field"), str):
+                out.add(change["field"])
+    return out
+
+
+def split_webhook_by_field(body: Any) -> dict[str, dict[str, Any]]:
+    """Reparte los ``changes`` del body por ``field`` en sub-bodies con el
+    mismo sobre (``object``, ``entry[].id``): cada handler ve SOLO sus cambios.
+    Un change sin ``field`` (payloads simulados / legacy) cuenta como
+    ``messages``. Vacío si el body no tiene entries."""
+    if not isinstance(body, dict) or not isinstance(body.get("entry"), list):
+        return {}
+    parts: dict[str, dict[str, Any]] = {}
+    for entry in body["entry"]:
+        if not isinstance(entry, dict):
+            continue
+        for change in entry.get("changes") or []:
+            if not isinstance(change, dict):
+                continue
+            field_name = change.get("field") if isinstance(change.get("field"), str) else "messages"
+            part = parts.setdefault(field_name, {k: v for k, v in body.items() if k != "entry"} | {"entry": []})
+            entries: list[dict[str, Any]] = part["entry"]
+            if not entries or entries[-1].get("id") != entry.get("id"):
+                entries.append({k: v for k, v in entry.items() if k != "changes"} | {"changes": []})
+            entries[-1]["changes"].append(change)
+    return parts
+
+
+@dataclass(frozen=True)
+class StandbyEcho:
+    """Copia de un mensaje que MBA (u otro remitente del número) envió."""
+
+    wamid: str
+    to: str  # WA ID del cliente (dígitos) → sesión ``wa_<to>``
+    timestamp: str  # epoch segundos, como lo manda Meta
+    msg_type: str  # text | template | interactive | image | ...
+    text: str | None  # cuerpo textual si lo hay (text.body, caption, interactive.body)
+    template_name: str | None
+    message: dict[str, Any] = field(default_factory=dict)  # el body exacto enviado
+
+
+@dataclass(frozen=True)
+class StandbyEvent:
+    phone_number_id: str
+    messages: tuple[WhatsAppMessage, ...] = ()
+    echoes: tuple[StandbyEcho, ...] = ()
+    statuses: tuple[WhatsAppStatusUpdate, ...] = ()
+
+
+def parse_whatsapp_standby(body: Any) -> StandbyEvent | None:
+    """Todos los cambios ``standby`` del body (Meta puede agrupar varios).
+    ``None`` si el body no trae ninguno. Defensivo: un ítem malformado se
+    descarta, nunca levanta (el resto del webhook sigue)."""
+    if not isinstance(body, dict) or not isinstance(body.get("entry"), list):
+        return None
+    found = False
+    phone_number_id = ""
+    messages: list[WhatsAppMessage] = []
+    echoes: list[StandbyEcho] = []
+    statuses: list[WhatsAppStatusUpdate] = []
+    for entry in body["entry"]:
+        if not isinstance(entry, dict):
+            continue
+        for change in entry.get("changes") or []:
+            if not isinstance(change, dict):
+                continue
+            value = change.get("value")
+            if not isinstance(value, dict):
+                continue
+            standby = value.get("standby")
+            if change.get("field") != STANDBY_FIELD and not isinstance(standby, dict):
+                continue
+            found = True
+            if not isinstance(standby, dict):
+                continue
+            meta = value.get("metadata")
+            pnid = meta.get("phone_number_id") if isinstance(meta, dict) else None
+            if isinstance(pnid, str) and pnid:
+                phone_number_id = phone_number_id or pnid
+            for raw in standby.get("messages") or []:
+                try:
+                    parsed = _parse_message(raw, phone_number_id)
+                except ValueError:
+                    continue
+                if parsed is not None and len(parsed.message_id) <= MAX_WAMID_LEN:
+                    messages.append(parsed)
+            for raw in standby.get("message_echoes") or []:
+                echo = _parse_echo(raw)
+                if echo is not None:
+                    echoes.append(echo)
+            for raw in standby.get("statuses") or []:
+                st = _parse_status(raw)
+                if st is not None:
+                    statuses.append(st)
+    if not found:
+        return None
+    return StandbyEvent(
+        phone_number_id=phone_number_id, messages=tuple(messages), echoes=tuple(echoes), statuses=tuple(statuses)
+    )
+
+
+def _parse_echo(raw: Any) -> StandbyEcho | None:
+    if not isinstance(raw, dict):
+        return None
+    wamid = raw.get("id")
+    message = raw.get("message")
+    if not isinstance(wamid, str) or not 0 < len(wamid) <= MAX_WAMID_LEN or not isinstance(message, dict):
+        return None
+    to = message.get("to")
+    # SEC-12: ``to`` se vuelve ``session_id = wa_<to>`` en el filesystem del vault.
+    if not isinstance(to, str) or not _PHONE_RE.match(to):
+        return None
+    msg_type = message.get("type") if isinstance(message.get("type"), str) else "unknown"
+    text: str | None = None
+    template_name: str | None = None
+    if msg_type == "text":
+        body = message.get("text")
+        text = body.get("body") if isinstance(body, dict) and isinstance(body.get("body"), str) else None
+    elif msg_type == "template":
+        tpl = message.get("template")
+        sibling = raw.get("template")
+        for candidate in (tpl, sibling):
+            if isinstance(candidate, dict) and isinstance(candidate.get("name"), str):
+                template_name = candidate["name"]
+                break
+    elif msg_type == "interactive":
+        inter = message.get("interactive")
+        body = inter.get("body") if isinstance(inter, dict) else None
+        text = body.get("text") if isinstance(body, dict) and isinstance(body.get("text"), str) else None
+    else:
+        inner = message.get(msg_type)
+        caption = inner.get("caption") if isinstance(inner, dict) else None
+        text = caption if isinstance(caption, str) else None
+    timestamp = raw.get("timestamp")
+    return StandbyEcho(
+        wamid=wamid,
+        to=to,
+        timestamp=timestamp if isinstance(timestamp, str) else "",
+        msg_type=msg_type,
+        text=text,
+        template_name=template_name,
+        message=message,
+    )
+
+
+_MEDIA_LABELS_ES = {"image": "imagen", "video": "video", "document": "documento", "sticker": "sticker", "audio": "audio"}
+
+
+def echo_display_text(echo: StandbyEcho) -> str:
+    """Texto legible para el historial de la sesión (dashboard + evals)."""
+    if echo.msg_type == "text":
+        return echo.text or ""
+    if echo.msg_type == "template":
+        return f"[plantilla {echo.template_name or 'sin nombre'}]"
+    if echo.msg_type == "interactive":
+        inter = echo.message.get("interactive")
+        sub = inter.get("type") if isinstance(inter, dict) and isinstance(inter.get("type"), str) else "interactive"
+        return f"[{sub}] {echo.text or ''}".strip()
+    label = _MEDIA_LABELS_ES.get(echo.msg_type, echo.msg_type)
+    return f"[{label}] {echo.text or ''}".strip()
+
+
+def inbound_display_text(msg: WhatsAppMessage) -> str:
+    """Texto legible de un inbound (standby no corre visión ni transcripción)."""
+    if msg.text is not None:
+        return msg.text
+    if msg.interactive:
+        kind = msg.interactive.get("type")
+        if kind in ("button_reply", "list_reply"):
+            return str(msg.interactive.get("title") or "")
+        if kind == "nfm_reply":
+            return f"[formulario] {msg.interactive.get('body') or ''}".strip()
+        return f"[{kind or 'interactive'}]"
+    if msg.location:
+        name = msg.location.get("name") or msg.location.get("address") or ""
+        coords = f"{msg.location.get('latitude')},{msg.location.get('longitude')}"
+        return f"[ubicación] {name or coords}"
+    if msg.audio:
+        return "[audio]"
+    if msg.order:
+        return f"[carrito] {msg.order.get('text') or ''}".strip()
+    if msg.contacts:
+        return "[contacto compartido]"
+    if msg.media:
+        label = _MEDIA_LABELS_ES.get(str(msg.media.get("type")), str(msg.media.get("type")))
+        caption = msg.media.get("caption") or msg.media.get("filename") or ""
+        return f"[{label}] {caption}".strip()
+    return f"[{msg.msg_type}]"
