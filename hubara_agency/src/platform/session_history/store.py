@@ -53,6 +53,7 @@ class FilesystemMessageHistoryStore:
         image_url: str | None = None,
         document_url: str | None = None,
         document_filename: str | None = None,
+        wamid: str | None = None,
     ) -> None:
         """Persiste un inbound del cliente con timestamp ISO UTC.
 
@@ -83,6 +84,10 @@ class FilesystemMessageHistoryStore:
             event["document_url"] = document_url
         if document_filename:
             event["document_filename"] = document_filename
+        if wamid:
+            # D1.4: id de Meta para dedupe/auditoría (standby). Ausente en los
+            # inbounds del workflow: no se persisten nulls.
+            event["wamid"] = wamid
         self._append(session_id, event)
 
     def append_assistant_event(
@@ -91,6 +96,9 @@ class FilesystemMessageHistoryStore:
         content: str,
         tool_calls: list[dict[str, Any]] | None = None,
         tools_used: list[str] | None = None,
+        *,
+        sender: str | None = None,
+        wamid: str | None = None,
     ) -> None:
         """``tools_used``: NOMBRES de las tools que el agente ejecutó durante el
         turno que culminó en este mensaje. Campo distinto de ``tool_calls`` a
@@ -110,6 +118,12 @@ class FilesystemMessageHistoryStore:
             event["tool_calls"] = tool_calls
         if tools_used:
             event["tools_used"] = list(tools_used)
+        if sender:
+            # D1.4: ``sender="mba"`` = eco de Meta Business Agent (standby). El
+            # dashboard lo pinta como turno del agente (no es ``human``).
+            event["sender"] = sender
+        if wamid:
+            event["wamid"] = wamid
         self._append(session_id, event)
 
     def append_human_event(

@@ -581,3 +581,14 @@ async def test_lookup_traverses_multiple_sessions(
     assert a["cost_usd_micros"] is None
     assert b["cost_usd_micros"] == 800  # utility = 800 micros = $0.0008
     assert c["cost_usd_micros"] is None
+
+
+def test_pricing_snapshot_accepts_metas_current_type_key() -> None:
+    """La referencia vigente de Meta escribe `pricing.type` (con `pricing_model`);
+    el shape viejo traía `pricing_type`. Ambos deben materializar costo."""
+    from src.plugins.chats.agent.sales.use_cases.ingest_delivery_status import _pricing_snapshot_from_dict
+
+    new = _pricing_snapshot_from_dict({"billable": True, "pricing_model": "PMP", "category": "utility", "type": "regular"})
+    old = _pricing_snapshot_from_dict({"billable": True, "pricing_type": "regular", "category": "utility"})
+    assert new == old and new is not None and new.pricing_type == "regular" and new.category == "utility"
+    assert _pricing_snapshot_from_dict({"billable": True, "category": "utility"}) is None

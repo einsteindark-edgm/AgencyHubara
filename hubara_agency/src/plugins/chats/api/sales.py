@@ -20,11 +20,15 @@ from src.platform.observability.tracing import add_traced_background_task
 from src.platform.whatsapp.webhook_security import verify_meta_signature
 from src.plugins.chats.agent.sales.composition import (
     build_ingest_delivery_status_use_case,
+    build_ingest_standby_use_case,
     build_ingest_use_case,
 )
 from src.plugins.chats.agent.sales.parsers import (
+    HANDOVERS_FIELD,
     parse_whatsapp_inbound,
+    parse_whatsapp_standby,
     parse_whatsapp_statuses,
+    webhook_fields,
 )
 
 logger = structlog.get_logger()
@@ -71,6 +75,13 @@ async def handle_whatsapp_webhook(request: Request, background_tasks: Background
     * `entry[*].changes[*].value.statuses[]` — delivery status de un
       outbound nuestro (HU-WA24H-001 F1.10). Delegado a
       `IngestDeliveryStatus` para materializar cost + summary.
+    * `field == "standby"` (D1.4 MBA) — Meta Business Agent controla el
+      hilo: `value.standby.{messages,message_echoes,statuses}`. Los dos
+      primeros van a `IngestStandby` (vault, sin Temporal); los statuses al
+      mismo `IngestDeliveryStatus` (costo de lo que MBA envió). NUNCA entra
+      al ingest de Sales: no hay turno del bot mientras MBA responde.
+    * `field == "messaging_handovers"` — cambio de control (D1.5): hoy se
+      acepta (200) y se loguea, sin persistir.
 
     Ambos handlers corren como background tasks — devolvemos 200 al toque
     para evitar timeout de Meta.
@@ -123,7 +134,38 @@ async def handle_whatsapp_webhook(request: Request, background_tasks: Background
         logger.warning("webhook_body_not_json", error=str(exc))
         raise HTTPException(status_code=400, detail=f"malformed body: {exc}")
 
-    # 3. Statuses primero — no requieren ser mutuamente excluyentes con
+    # 3. Ramas por `field` (D1.4). Un body puede traer varios `changes`
+    # (Meta agrupa); cada campo va por su puerta. Sin `field` (payloads
+    # legacy / simulados) sigue el path de `messages` de siempre.
+    fields = webhook_fields(body)
+    standby = parse_whatsapp_standby(body)
+    if standby is not None:
+        for status_update in standby.statuses:
+            add_traced_background_task(
+                background_tasks,
+                build_ingest_delivery_status_use_case().execute,
+                status_update.wa_message_id,
+                status_update.status,
+                status_update.pricing,
+            )
+        logger.info(
+            "webhook_standby",
+            messages=len(standby.messages),
+            echoes=len(standby.echoes),
+            statuses=len(standby.statuses),
+        )
+        if standby.messages or standby.echoes:
+            add_traced_background_task(
+                background_tasks, build_ingest_standby_use_case().execute, standby
+            )
+    if HANDOVERS_FIELD in fields:
+        logger.info("webhook_messaging_handovers_ignored", reason="pendiente D1.5 (control_owner)")
+    if fields and "messages" not in fields:
+        # Solo campos que ya se atendieron arriba (o desconocidos): no hay
+        # nada para el path de `messages` (que exige `value.metadata`).
+        return {"status": "ok"}
+
+    # 4. Statuses primero — no requieren ser mutuamente excluyentes con
     # messages (Meta podría enviarlos juntos).
     for status_update in parse_whatsapp_statuses(body):
         delivery_use_case = build_ingest_delivery_status_use_case()

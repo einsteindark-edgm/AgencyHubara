@@ -466,6 +466,21 @@ def _resolve_phone_number_id(metadata: dict[str, Any]) -> str:
     return phone_number_id
 
 
+def record_outbound_in_active_episode(
+    metadata: dict[str, Any],
+    log_entry: OutboundLogEntry,
+) -> dict[str, Any]:
+    """Público (SDK ``messagingkit``): anota un outbound que NO envió esta app
+    pero sí el número (eco ``standby`` de Meta Business Agent, D1.4) igual que
+    un send propio: ``outbound_messages[]`` + ``cost_summary`` pendiente en el
+    episodio activo y ``metadata.last_outbound``. El ``pricing`` lo materializa
+    después ``IngestDeliveryStatus`` con el status del mismo ``wa_message_id``.
+    Devuelve el dict persistido como ``last_outbound``."""
+    _append_outbound_to_active_episode(metadata, log_entry)
+    metadata["last_outbound"] = asdict(log_entry)
+    return metadata["last_outbound"]
+
+
 def _append_outbound_to_active_episode(
     metadata: dict[str, Any],
     log_entry: OutboundLogEntry,

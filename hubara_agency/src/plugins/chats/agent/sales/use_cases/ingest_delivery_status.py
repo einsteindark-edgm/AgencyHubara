@@ -400,7 +400,13 @@ def _pricing_snapshot_from_dict(d: dict[str, Any] | None) -> PricingSnapshot | N
     """
     if not isinstance(d, dict):
         return None
+    # La referencia vigente de Meta (webhooks `messages`/`standby`, 2026)
+    # escribe `pricing.type` junto a `pricing_model`; el shape anterior traía
+    # `pricing_type`. Aceptar ambos: sin esto todo status con la clave nueva
+    # quedaba sin costo (snapshot None).
     pricing_type = d.get("pricing_type")
+    if not isinstance(pricing_type, str):
+        pricing_type = d.get("type")
     category = d.get("category")
     if not isinstance(pricing_type, str) or not isinstance(category, str):
         return None

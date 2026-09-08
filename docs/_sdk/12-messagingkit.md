@@ -26,5 +26,36 @@ destinatario. El template DEBE existir en
 `infra/whatsapp-provisioning`). El costo estimado sale de
 `get_current_rate_card()`; la verdad post-facto la trae el webhook `pricing`.
 
+## Oído `standby` (D1.4 · Meta Business Agent)
+
+Cuando MBA controla el hilo, Meta manda el webhook `standby` en vez de
+`messages`: lo que escribe el cliente, el eco de lo que MBA envió y los
+recibos con `pricing`. El use case `IngestStandby` de `chats` persiste eso al
+vault sin Temporal, y para hacerlo con la MISMA contabilidad que un send
+propio el kit expone:
+
+```python
+from src.sdk.messagingkit import (
+    OutboundLogEntry,
+    compute_service_window_expiry,
+    record_outbound_in_active_episode,
+)
+
+# eco de MBA → outbound PENDIENTE de pricing en el episodio activo + last_outbound
+record_outbound_in_active_episode(
+    metadata,
+    OutboundLogEntry(sent_at_ms=ts_ms, wa_message_id=wamid, kind="mba_text",
+                     template_name=None, pricing=None, cost_usd_micros=None,
+                     rate_card_version=None),
+)
+# inbound del cliente → reabre la ventana de servicio 24h
+metadata["service_window_expires_at_ms"] = compute_service_window_expiry(now_ms)
+```
+
+El costo real lo materializa después `IngestDeliveryStatus` con el status
+(`standby.statuses[]`, mismo `wa_message_id`), así el gasto de MBA cae en el
+`cost_summary` del episodio junto al nuestro. Sin episodio activo,
+`record_outbound_in_active_episode` solo estampa `last_outbound`.
+
 **Checks.** `tests/platform/test_messagingkit.py` fija cada re-export a su
 implementación de platform (regla de oro del SDK).
