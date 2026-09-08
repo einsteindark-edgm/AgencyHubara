@@ -1,0 +1,114 @@
+# =============================================================================
+# Familias de color — v1 (tenant: hubara)
+# =============================================================================
+#
+# Qué resuelve: el cliente pide un TONO ("azul clarito", "azul mar", "celeste",
+# "fucsia", "vinotinto") y el catálogo ofrece una FAMILIA ("Azul", "Rosado",
+# "rojo"). Sin este archivo el matcheo es exacto y el bot responde cortante
+# ("ese color no lo manejo"). Con él, `set_order_slot` resuelve el tono a la
+# familia que SÍ está en el catálogo y le avisa al LLM que confirme el tono
+# real con el cliente (sin negarlo ni prometer un tono exacto).
+#
+# Cómo se usa:
+#   * Se carga por defecto desde este path. Para cambiarlo POR TENANT, apuntá
+#     `COLOR_FAMILIES_PATH=/ruta/al/families.yaml` en el env del tenant
+#     (tenants/<tenant>.env / SSM) — p. ej. una tienda que vende "Beige" y
+#     "Blanco" como colores distintos separa `beige` en su propia familia.
+#   * Editable EN CALIENTE: hot-reload por mtime, sin redeploy. Si el YAML
+#     queda inválido se conserva la última versión válida y se loguea WARNING.
+#
+# Reglas de matcheo (src/platform/catalog/color_families.py):
+#   * Sin acentos, sin mayúsculas, tolerante a género/número ("rojas" = rojo).
+#   * Un color del catálogo pertenece a la familia cuyo `label` o `shades`
+#     lo contiene ("Lila" → familia lila; "Azul marino" → familia azul).
+#   * Lo que pide el cliente se resuelve igual. Si su texto cae en UNA familia
+#     y el catálogo tiene UN color de esa familia → se captura ese color.
+#     Si el catálogo tiene VARIOS de la misma familia (ej. "Morado" y
+#     "Violeta") → no se adivina: el bot ofrece esos.
+#   * `modifiers` son palabras que NO cambian la familia (claro, oscuro,
+#     pastel…). Solo sirven para saber que el cliente pidió un tono específico
+#     y que el bot debe confirmarlo mostrando el producto.
+#   * Un mismo shade NO debe repetirse en dos familias (el test de config lo
+#     verifica). Si un tono es ambiguo (turquesa: ¿azul o verde?) elegí una.
+#
+version: 1
+
+modifiers:
+  - claro
+  - clarito
+  - clarita
+  - oscuro
+  - oscurito
+  - fuerte
+  - suave
+  - pastel
+  - intenso
+  - palido
+  - pálido
+  - vivo
+  - apagado
+  - mate
+  - brillante
+  - metalizado
+  - neon
+  - neón
+  - tenue
+  - profundo
+  - bajito
+  - encendido
+  - quemado
+  - tipo
+  - tono
+  - color
+
+families:
+  blanco:
+    label: Blanco
+    shades: [blanco, hueso, crema, marfil, beige, perla, nieve, nacar, nácar, "blanco roto", ivory, arena]
+
+  negro:
+    label: Negro
+    shades: [negro, azabache, carbon, carbón, ebano, ébano, "negro mate"]
+
+  gris:
+    label: Gris
+    shades: [gris, plomo, plateado, plata, humo, grafito, ceniza, acero, "gris perla", topo, taupe]
+
+  rojo:
+    label: Rojo
+    shades: [rojo, vinotinto, "vino tinto", vino, tinto, borgoña, borgona, guinda, cereza, escarlata, carmesi, carmesí, bermellon, bermellón, rubi, rubí, sangre, granate, carmin, carmín]
+
+  rosado:
+    label: Rosado
+    shades: [rosado, rosa, fucsia, magenta, chicle, salmon, salmón, nude, "palo de rosa", "rosa viejo", "rosa palo", "rosa pastel", "rosa bebe", "rosa bebé", coral, frambuesa, "rosa mexicano"]
+
+  naranja:
+    label: Naranja
+    shades: [naranja, anaranjado, mandarina, zanahoria, durazno, melocoton, melocotón, ambar, ámbar, calabaza, "naranja quemado", tangerina, papaya]
+
+  amarillo:
+    label: Amarillo
+    shades: [amarillo, dorado, oro, mostaza, ocre, limon, limón, canario, "amarillo pastel", mantequilla, miel, champagne, champan, champán]
+
+  verde:
+    label: Verde
+    shades: [verde, menta, esmeralda, oliva, militar, pistacho, lima, jade, pino, musgo, aguacate, "verde botella", "verde agua", "verde manzana", "verde limon", "verde limón", kaki, khaki, caqui, hierba, pasto, "verde bosque"]
+
+  azul:
+    label: Azul
+    shades: [azul, celeste, cielo, "azul cielo", "azul mar", marino, "azul marino", navy, cobalto, indigo, índigo, añil, anil, zafiro, petroleo, petróleo, "azul petroleo", "azul petróleo", "azul rey", "azul electrico", "azul eléctrico", turquesa, aguamarina, cian, "azul bebe", "azul bebé", "azul pastel", "azul oscuro", "azul claro", denim, "azul jean", "azul noche"]
+
+  # Lila va APARTE de morado porque en el catálogo Hubara son dos colores
+  # distintos (tags "Color: Lila" y "Color: Morado"). Un tenant sin esa
+  # distinción puede mover estos shades a `morado` y borrar la familia.
+  lila:
+    label: Lila
+    shades: [lila, lavanda, malva, "lila claro", "lila pastel", glicina, "morado claro", "morado clarito", "morado pastel"]
+
+  morado:
+    label: Morado
+    shades: [morado, violeta, purpura, púrpura, uva, berenjena, ciruela, "morado oscuro", amatista, orquidea, orquídea]
+
+  cafe:
+    label: Café
+    shades: [cafe, café, marron, marrón, chocolate, camel, tierra, terracota, castaño, castano, cobre, bronce, caramelo, tabaco, nuez, avellana, moka, mocca, "cafe claro", "café claro", "cafe oscuro", "café oscuro", canela, madera, "marron claro", "marrón claro"]
