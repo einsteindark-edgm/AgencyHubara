@@ -18,9 +18,13 @@ class EtaSessionInput:
     """Input del ``HubaraEtaSessionWorkflow``.
 
     **Todos los campos llevan default.** El workflow se arranca por el
-    dispatcher declarativo (``start_workflow_with_replace`` en la transición
-    ``to_stage == preparing``), que pasa un **dict** construido desde el
-    ``input_mapping`` del manifest (``session_id`` / ``order_id`` / ``to_stage``).
+    dispatcher declarativo (``signal_with_start`` de ``notify_stage_change`` en
+    TODAS las transiciones de stage, ``preparing`` incluido — 2026-09-08; antes
+    ``preparing`` era ``start_workflow_with_replace`` y terminaba la sesión viva
+    del cliente), que pasa un **dict** construido desde el ``input_mapping`` del
+    manifest (``session_id`` / ``order_id`` / ``to_stage``). Ese mismo dict
+    viaja como run input Y como payload del start-signal: el workflow encola el
+    seed dos veces y el dedup de ``notified_stages`` deja UN solo envío.
     Temporal's DataConverter reconstruye este dataclass desde ese dict en el
     worker side leyendo los type hints de ``@workflow.run``; los campos ausentes
     del dict (``runtime_workspace_path``, ``turn_count``) DEBEN tener default o
