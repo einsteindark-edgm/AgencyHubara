@@ -391,3 +391,6 @@ def test_agent_event_endpoint_validates_key_type_and_message() -> None:
     assert c.post("/api/mba/sessions/wa_573001234567/agent-events", json={**ok, "message": ""}).status_code == 422
     assert c.post("/api/mba/sessions/wa_573001234567/agent-events", json={**ok, "message": "x" * 2001}).status_code == 422
     assert c.post("/api/mba/sessions/wa_573001234567/agent-events", json={"message": "m"}).status_code == 422
+    big = {"blob": "x" * (8 * 1024)}
+    assert c.post("/api/mba/sessions/wa_573001234567/agent-events", json={**ok, "payload": big}).status_code == 422
+    assert c.post("/api/mba/sessions/wa_573001234567/agent-events", json={**ok, "payload": {"a": 1}}).status_code == 200

@@ -14,6 +14,11 @@ novedad a MBA por ``agent_event`` y MBA se la cuenta al cliente.
    ``accepted`` o ``ambiguous`` (Meta pudo aceptarlo) no se repite
    (``already_emitted``); un ``rejected`` / ``unavailable`` sí deja reintentar.
    Sin ``order_id`` no hay clave (p.ej. ``episode_closed`` por episodio).
+   El chequeo y la reserva son UNA escritura bajo el flock: antes de llamar
+   a Meta se anota ``status="pending"`` (dos emisiones concurrentes — p.ej.
+   la activity del ETA vencida y su retry en paralelo — ven la reserva de
+   la otra y devuelven ``already_emitted``); ``pending`` vence a los
+   ``PENDING_TTL_MS`` por si el proceso murió entre la reserva y el POST.
 3. ``entity_id`` = ``phone_number_id`` de la sesión (lo escribe el
    ``standby``) o el configurado (``WHATSAPP_PHONE_NUMBER_ID``); ``to`` = el
    cliente en E.164.
@@ -34,9 +39,13 @@ from loguru import logger
 from src.plugins.mba.adapters.agent_event import AgentEventError, AgentEventPort
 from src.plugins.mba.domain.agent_events import AGENT_EVENT_TYPES, build_description
 
-__all__ = ["AGENT_EVENTS_CAP", "AgentEventOutcome", "EmitAgentEvent"]
+__all__ = ["AGENT_EVENTS_CAP", "PENDING_TTL_MS", "AgentEventOutcome", "EmitAgentEvent"]
 
 AGENT_EVENTS_CAP = 50
+#: Una reserva ``pending`` más vieja que esto (proceso muerto entre la reserva
+#: y el POST) deja de bloquear el dedupe. Mayor que el peor caso del adapter
+#: (≈13,5 s) y que el hop del ETA (15 s).
+PENDING_TTL_MS = 60_000
 _SESSION_KEY_RE = re.compile(r"^wa_(\d{6,15})$")
 #: Resultados que cuentan como "MBA (quizá) ya lo tiene" para el dedupe.
 _DELIVERED_STATUSES = ("accepted", "ambiguous")
@@ -62,11 +71,19 @@ def _events(data: dict[str, Any]) -> list[dict[str, Any]]:
     return [e for e in raw if isinstance(e, dict)] if isinstance(raw, list) else []
 
 
-def _already_emitted(data: dict[str, Any], event_type: str, order_id: str | None) -> dict[str, Any] | None:
+def _already_emitted(
+    data: dict[str, Any], event_type: str, order_id: str | None, now_ms: int
+) -> dict[str, Any] | None:
     if not order_id:
         return None
     for e in reversed(_events(data)):
-        if e.get("type") == event_type and e.get("order_id") == order_id and e.get("status") in _DELIVERED_STATUSES:
+        if e.get("type") != event_type or e.get("order_id") != order_id:
+            continue
+        status = e.get("status")
+        if status in _DELIVERED_STATUSES:
+            return e
+        at = e.get("at_ms")
+        if status == "pending" and isinstance(at, int) and now_ms - at < PENDING_TTL_MS:
             return e
     return None
 
@@ -118,15 +135,18 @@ class EmitAgentEvent:
         if not self._controls_thread(data, session_key):
             logger.info("[mba.agent_event] {} {} → no (hubara_controls)", session_key, event_type)
             return AgentEventOutcome(session_key, False, "hubara_controls")
-        previous = _already_emitted(data, event_type, order_id)
-        if previous is not None:
-            return AgentEventOutcome(session_key, False, "already_emitted",
-                                     agent_event_id=previous.get("agent_event_id"), at_ms=previous.get("at_ms"))
         entity_id = data.get("phone_number_id") or self._entity_fallback()
         if not entity_id:
             logger.warning("[mba.agent_event] {} sin phone_number_id (sesión ni WHATSAPP_PHONE_NUMBER_ID)", session_key)
             return AgentEventOutcome(session_key, False, "entity_id_missing")
         now_ms = self._now_ms()
+        reserved, previous = self._reserve(session_key, event_type, order_id, now_ms, source=source)
+        if previous is not None:
+            return AgentEventOutcome(session_key, False, "already_emitted",
+                                     agent_event_id=previous.get("agent_event_id"), at_ms=previous.get("at_ms"))
+        if not reserved:
+            # Sin reserva no se emite: sin auditoría ni dedupe un retry duplicaría el aviso.
+            return AgentEventOutcome(session_key, False, "vault_unavailable", at_ms=now_ms, recorded=False)
         full_payload = {**(payload or {}), **({"order_id": order_id} if order_id else {})} or None
         try:
             result = await self._port.emit(
@@ -136,31 +156,72 @@ class EmitAgentEvent:
         except AgentEventError as exc:
             error = f"{exc.status} {exc.detail}".strip() if exc.status else exc.detail
             logger.warning("[mba.agent_event] {} {} falló: {} {}", session_key, event_type, exc.kind, error)
-            recorded = self._record(session_key, event_type, order_id, now_ms, status=exc.kind, agent_event_id=None,
-                                    error=error, source=source)
+            recorded = self._finalize(session_key, event_type, order_id, now_ms, status=exc.kind, agent_event_id=None,
+                                      error=error)
             return AgentEventOutcome(session_key, False, exc.kind, at_ms=now_ms, error=error, recorded=recorded)
-        recorded = self._record(session_key, event_type, order_id, now_ms, status=result.status,
-                                agent_event_id=result.agent_event_id, error=None, source=source)
+        recorded = self._finalize(session_key, event_type, order_id, now_ms, status=result.status,
+                                  agent_event_id=result.agent_event_id, error=None)
         logger.info("[mba.agent_event] {} {} → {} id={} (registrado={})", session_key, event_type, result.status,
                     result.agent_event_id, recorded)
         return AgentEventOutcome(session_key, True, result.status, agent_event_id=result.agent_event_id, at_ms=now_ms,
                                  recorded=recorded)
 
-    def _record(self, session_key: str, event_type: str, order_id: str | None, now_ms: int, *, status: str,
-                agent_event_id: str | None, error: str | None, source: str | None) -> bool:
-        entry = {"type": event_type, "order_id": order_id, "at_ms": now_ms, "status": status,
-                 "agent_event_id": agent_event_id, "error": error, "source": source}
+    def _reserve(self, session_key: str, event_type: str, order_id: str | None, now_ms: int, *,
+                 source: str | None) -> tuple[bool, dict[str, Any] | None]:
+        """Chequeo + reserva en UNA escritura bajo el flock. Devuelve
+        ``(reservado, evento_previo)``: previo ≠ None → ``already_emitted``;
+        ``(False, None)`` → el vault no pudo escribir (no se emite)."""
+        found: dict[str, dict[str, Any]] = {}
+        entry = {"type": event_type, "order_id": order_id, "at_ms": now_ms, "status": "pending",
+                 "agent_event_id": None, "error": None, "source": source}
 
         def _mutate(data: dict[str, Any]) -> dict[str, Any] | None:
             if not data:
                 return None  # lectura fresca vacía: no pisar la sesión con un dict a medias
+            previous = _already_emitted(data, event_type, order_id, now_ms)
+            if previous is not None:
+                found["previous"] = previous
+                return None
             data["agent_events"] = (_events(data) + [entry])[-AGENT_EVENTS_CAP:]
             return data
 
         try:
             written = self._store.update(session_key, _mutate)
         except OSError as exc:
-            logger.error("[mba.agent_event] {} {} {} pero el vault NO lo registró: {}", session_key, event_type, status, exc)
+            logger.error("[mba.agent_event] {} {} no se pudo reservar en el vault: {}", session_key, event_type, exc)
+            return False, None
+        if "previous" in found:
+            return False, found["previous"]
+        if written is None:
+            logger.error("[mba.agent_event] {} {} la sesión leyó vacía: no reservado", session_key, event_type)
+            return False, None
+        return True, None
+
+    def _finalize(self, session_key: str, event_type: str, order_id: str | None, reserved_at_ms: int, *,
+                  status: str, agent_event_id: str | None, error: str | None) -> bool:
+        """Cierra la reserva ``pending`` con el resultado de Meta. Devuelve si
+        se pudo escribir (si no, la reserva vence sola a los ``PENDING_TTL_MS``)."""
+
+        def _mutate(data: dict[str, Any]) -> dict[str, Any] | None:
+            if not data:
+                return None
+            events = _events(data)
+            for e in reversed(events):
+                if (e.get("type") == event_type and e.get("order_id") == order_id
+                        and e.get("at_ms") == reserved_at_ms and e.get("status") == "pending"):
+                    e.update({"status": status, "agent_event_id": agent_event_id, "error": error})
+                    break
+            else:
+                events.append({"type": event_type, "order_id": order_id, "at_ms": reserved_at_ms, "status": status,
+                               "agent_event_id": agent_event_id, "error": error, "source": None})
+            data["agent_events"] = events[-AGENT_EVENTS_CAP:]
+            return data
+
+        try:
+            written = self._store.update(session_key, _mutate)
+        except OSError as exc:
+            logger.error("[mba.agent_event] {} {} {} pero el vault NO lo registró: {}", session_key, event_type, status,
+                         exc)
             return False
         if written is None:
             logger.error("[mba.agent_event] {} {} {} pero la sesión leyó vacía: no registrado", session_key, event_type,

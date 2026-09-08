@@ -170,7 +170,8 @@ transiciones manuales validando el DAG permitido entre stages.
 - THEN Hubara NO envía texto ni template (un envío por Cloud API le quitaría
   el hilo a MBA): el ETA le cuenta la novedad al plugin `mba`
   (`POST /api/mba/sessions/{session_key}/agent-events`, identidad de servicio)
-  con el texto exacto de `render_stage_notification` y el tipo del catálogo
+  con el texto exacto de `render_stage_notification` (con la guía de envío en
+  `shipping`: el workflow pasa `tracking_url` al claim) y el tipo del catálogo
   (`preparing` → `payment_received` si `pay_status=paid`, si no
   `order_preparing`; `ready`/`shipping`/`delivered`/`cancelled` →
   `order_ready`/`order_shipped`/`order_delivered`/`order_cancelled`)
@@ -182,8 +183,17 @@ transiciones manuales validando el DAG permitido entre stages.
   tampoco se envía; si responde `hubara_controls`, `rejected`, `unavailable`,
   `not_configured` o `entity_id_missing`, o el API no está (502/503/403/404),
   el ETA notifica como siempre (el cliente no se queda sin aviso)
-- AND si el API no respondió a tiempo (504) o falló a mitad (500) la activity
-  falla y Temporal la reintenta (el dedupe de `mba` hace seguro el reintento)
+- AND si el API no respondió a tiempo (504, también transporte roto tras
+  conectar o 2xx ilegible) o falló a mitad (500) la activity falla y Temporal
+  la reintenta (`mba` reserva el evento como `pending` bajo lock ANTES de
+  llamar a Meta, así el retry o una activity vencida en paralelo ven
+  `already_emitted`); agotados los 3 intentos el workflow lo loguea como
+  no-fatal y el stage queda sin reservar (el próximo evento del pedido lo
+  vuelve a intentar); un `ambiguous` (Meta no respondió a `mba`) reserva el
+  stage marcado `flagged=true, flag=mba_ambiguous` en el timeline
+- AND la reserva del stage en `eta_tracking` es un update bajo el flock del
+  store que toca solo ese bloque (lo que `mba`, el ingest o un handover
+  escribieron durante el hop sobrevive)
 - AND con la flag apagada (default) el predicado es falso y nada cambia
 
 #### Scenario: Atribución del actor en el stage history

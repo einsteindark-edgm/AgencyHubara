@@ -20,7 +20,12 @@ from src.plugins.mba.domain.agent_events import (
     agent_event_type_for_stage,
     build_description,
 )
-from src.plugins.mba.use_cases.emit_agent_event import AGENT_EVENTS_CAP, AgentEventOutcome, EmitAgentEvent
+from src.plugins.mba.use_cases.emit_agent_event import (
+    AGENT_EVENTS_CAP,
+    PENDING_TTL_MS,
+    AgentEventOutcome,
+    EmitAgentEvent,
+)
 from src.sdk.runtime import FilesystemMetadataStore
 
 CUSTOMER = "573001234567"
@@ -190,11 +195,64 @@ async def test_the_audit_trail_is_capped(vault: Path) -> None:
 async def test_if_meta_accepted_but_the_vault_could_not_record_it_the_outcome_says_so(vault: Path, monkeypatch) -> None:
     _seed(vault)
     uc, port = _uc(vault)
+    real_update = uc._store.update
+    calls = {"n": 0}
+
+    def _second_fails(session_id: str, mutator: Any) -> Any:
+        calls["n"] += 1
+        if calls["n"] == 2:  # la reserva pasa, el cierre de la reserva falla
+            raise OSError("disk full")
+        return real_update(session_id, mutator)
+
+    monkeypatch.setattr(uc._store, "update", _second_fails)
+    out = await uc.execute(SESSION, "order_shipped", order_id="order_1", message="m")
+    assert (out.emitted, out.recorded, out.agent_event_id) == (True, False, "fake-1")
+    assert len(port.calls) == 1
+    assert _meta(vault)["agent_events"][-1]["status"] == "pending"  # vence sola a los PENDING_TTL_MS
+
+
+async def test_without_a_reservation_in_the_vault_nothing_is_sent(vault: Path, monkeypatch) -> None:
+    """Sin reserva no hay dedupe ni auditoría: un retry duplicaría el aviso."""
+    _seed(vault)
+    uc, port = _uc(vault)
 
     def _boom(session_id: str, mutator: Any) -> Any:
         raise OSError("disk full")
 
     monkeypatch.setattr(uc._store, "update", _boom)
     out = await uc.execute(SESSION, "order_shipped", order_id="order_1", message="m")
-    assert (out.emitted, out.recorded, out.agent_event_id) == (True, False, "fake-1")
+    assert (out.emitted, out.reason, out.recorded) == (False, "vault_unavailable", False)
+    assert port.calls == []
+
+
+async def test_the_check_and_the_reservation_are_one_locked_write_so_a_concurrent_twin_is_deduped(vault: Path) -> None:
+    """La activity del ETA vencida y su retry corren en paralelo: la segunda
+    emisión ve la reserva ``pending`` de la primera y no llama a Meta."""
+    _seed(vault)
+    uc1, port1 = _uc(vault)
+    uc2, port2 = _uc(vault, now_ms=NOW_MS + 5_000)
+
+    class _Slow(FakeAgentEvent):
+        async def emit(self, **kw: Any):
+            # mientras la 1ª espera a Meta, la 2ª intenta lo mismo
+            twin = await uc2.execute(SESSION, "order_shipped", order_id="order_1", message="m")
+            assert (twin.emitted, twin.reason) == (False, "already_emitted")
+            return await super().emit(**kw)
+
+    slow = _Slow()
+    uc1._port = slow
+    out = await uc1.execute(SESSION, "order_shipped", order_id="order_1", message="m")
+    assert out.emitted is True and len(slow.calls) == 1 and port2.calls == []
+    events = _meta(vault)["agent_events"]
+    assert len(events) == 1 and events[0]["status"] == "accepted" and events[0]["agent_event_id"] == "fake-1"
+
+
+async def test_a_stale_pending_reservation_does_not_block_forever(vault: Path) -> None:
+    _seed(vault, agent_events=[{"type": "order_shipped", "order_id": "order_1", "at_ms": NOW_MS - PENDING_TTL_MS - 1,
+                                "status": "pending", "agent_event_id": None, "error": None, "source": "eta"}])
+    uc, port = _uc(vault)
+    assert (await uc.execute(SESSION, "order_shipped", order_id="order_1", message="m")).emitted is True
     assert len(port.calls) == 1
+    _seed(vault, agent_events=[{"type": "order_shipped", "order_id": "order_1", "at_ms": NOW_MS - 1_000,
+                                "status": "pending", "agent_event_id": None, "error": None, "source": "eta"}])
+    assert (await uc.execute(SESSION, "order_shipped", order_id="order_1", message="m")).reason == "already_emitted"

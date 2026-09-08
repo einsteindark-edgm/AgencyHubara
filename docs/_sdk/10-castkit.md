@@ -54,7 +54,10 @@ timeout, cast_label, params=None, body=None) -> dict`:
   intermedio), cae a `resp.text` sin romper.
 - **Semántica honesta de fallos (L-1, generalizada a TODO cast)**: un
   connect-error garantiza no-aplicación → **502** ("la operación NO se aplicó");
-  un timeout deja el resultado DESCONOCIDO → **504** ("PUEDE haberse aplicado"),
+  un timeout, un error de transporte DESPUÉS de conectar (`ReadError`,
+  `WriteError`, `RemoteProtocolError`) o un 2xx ilegible (no-JSON / no-dict)
+  dejan el resultado DESCONOCIDO → **504** ("PUEDE haberse aplicado"; desde
+  D1.9: un caller que lee 502 como "no pasó" y reintenta duplicaría),
   nunca afirmando que la operación falló. El `timeout` lo fija cada cast (se
   dimensiona por el UPSTREAM del provider, no por el hop local — L-1).
 - **`cast_label`** (`origen→provider`) etiqueta los mensajes de error para que

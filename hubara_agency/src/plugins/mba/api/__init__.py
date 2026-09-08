@@ -12,6 +12,7 @@ connector (públicas, con API key propia) viven en ``connector.py``.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 from dataclasses import asdict
@@ -130,6 +131,9 @@ async def release_session_control(
 # ── D1.9: agent_event hacia Meta Business Agent ─────────────────────────────
 
 
+PAYLOAD_MAX_BYTES = 8 * 1024
+
+
 class AgentEventBody(BaseModel):
     type: str
     order_id: str | None = Field(default=None, max_length=200)
@@ -142,6 +146,14 @@ class AgentEventBody(BaseModel):
     def _known_type(cls, value: str) -> str:
         if value not in AGENT_EVENT_TYPES:
             raise ValueError(f"type debe ser uno de {', '.join(AGENT_EVENT_TYPES)}")
+        return value
+
+    @field_validator("payload")
+    @classmethod
+    def _bounded_payload(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        # Viaja a Meta como string JSON dentro del evento: acotado (interno, pero sin tope = sin tope).
+        if value is not None and len(json.dumps(value, ensure_ascii=False)) > PAYLOAD_MAX_BYTES:
+            raise ValueError(f"payload supera {PAYLOAD_MAX_BYTES} bytes serializado")
         return value
 
 

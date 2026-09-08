@@ -160,6 +160,77 @@ async def test_an_event_mba_may_already_have_is_not_repeated_by_hubara(_isolate_
     assert await ActivityEnvironment().run(tracking.claim_eta_notification_activity, SID, ORDER, "shipping") is None
     entry = _read_meta(_isolate_vault_dir, SID)["eta_tracking"]["orders"][ORDER]
     assert entry["notified_stages"] == ["shipping"] and response["reason"] in entry["events"][-1]["agent_msg"]
+    # ambiguo = Meta no respondió al plugin mba: el cliente PUEDE no haber recibido el aviso → visible en el timeline
+    ambiguous = response["reason"] == "ambiguous"
+    assert (entry["events"][-1]["flagged"], entry["events"][-1]["flag"]) == (ambiguous, "mba_ambiguous" if ambiguous else None)
+
+
+async def test_the_shipping_event_carries_the_tracking_link_the_workflow_passes(_isolate_vault_dir: Path, monkeypatch) -> None:
+    notify = _Notify({"emitted": True, "reason": "accepted", "agent_event_id": "AE_1"})
+    _arm(monkeypatch, _isolate_vault_dir, controls=True, notify=notify)
+    url = "https://guia.test/?g=123"
+    assert await ActivityEnvironment().run(tracking.claim_eta_notification_activity, SID, ORDER, "shipping", url) is None
+    kw = notify.calls[-1][1]
+    assert kw["payload"]["tracking_url"] == url and url in kw["message"]
+    assert kw["message"] == render_stage_notification(
+        stage="shipping", customer_name="Ana", order_display_id="#1247", total_label="$ 124.500",
+        pay_type="confirmed", payment_confirmed=True, delivery_window=None, items_label="", tracking_url=url,
+    )
+
+
+async def test_writes_made_by_others_during_the_hop_survive_the_claim(_isolate_vault_dir: Path, monkeypatch) -> None:
+    """Revisión D1.9 (HIGH): el ETA reservaba el stage escribiendo el
+    metadata.json ENTERO leído antes del hop → borraba `agent_events` que el
+    plugin mba acababa de anotar bajo lock, y cualquier inbound/handover de
+    esos segundos. Ahora la reserva es un update bajo el flock que toca solo
+    `eta_tracking`."""
+    from src.sdk.runtime import FilesystemMetadataStore
+
+    store = FilesystemMetadataStore(_isolate_vault_dir)
+
+    class _WritesLikeMba(_Notify):
+        async def __call__(self, session_id: str, **kw: Any) -> dict[str, Any]:
+            def _mba(data: dict[str, Any]) -> dict[str, Any]:
+                data["agent_events"] = [{"type": "order_shipped", "order_id": ORDER, "status": "accepted"}]
+                return data
+
+            def _inbound(data: dict[str, Any]) -> dict[str, Any]:
+                data["last_inbound_at_ms"] = 123
+                data["control_owner"] = "mba"
+                return data
+
+            store.update(session_id, _mba)
+            store.update(session_id, _inbound)
+            return await super().__call__(session_id, **kw)
+
+    _arm(monkeypatch, _isolate_vault_dir, controls=True,
+         notify=_WritesLikeMba({"emitted": True, "reason": "accepted", "agent_event_id": "AE_1"}))
+    assert await ActivityEnvironment().run(tracking.claim_eta_notification_activity, SID, ORDER, "shipping") is None
+    meta = _read_meta(_isolate_vault_dir, SID)
+    assert meta["agent_events"] == [{"type": "order_shipped", "order_id": ORDER, "status": "accepted"}]
+    assert meta["last_inbound_at_ms"] == 123 and meta["control_owner"] == "mba"
+    assert meta["eta_tracking"]["orders"][ORDER]["notified_stages"] == ["shipping"]
+
+
+async def test_a_slow_order_query_falls_back_to_minimal_facts_within_the_activity_budget(_isolate_vault_dir: Path, monkeypatch) -> None:
+    """Medusa tiene 30 s de timeout HTTP, igual que el start_to_close del
+    claim: con el hop a mba (15 s) encima, la activity vencería con el POST en
+    vuelo y Temporal la reintentaría en paralelo. El fetch va acotado."""
+    import asyncio
+
+    notify = _Notify({"emitted": True, "reason": "accepted", "agent_event_id": "AE_1"})
+    _arm(monkeypatch, _isolate_vault_dir, controls=True, notify=notify)
+
+    class _SlowPort:
+        async def get(self, oid: str):
+            await asyncio.sleep(0.5)
+            return _fake_detail(customer="Ana", display_id="#1247", total_cop=1, pay_type="confirmed", pay_status="paid")
+
+    monkeypatch.setattr("src.platform.orders.composition.get_order_query_port", lambda: _SlowPort())
+    monkeypatch.setattr(tracking, "_ORDER_FETCH_TIMEOUT_S", 0.05)
+    assert await ActivityEnvironment().run(tracking.claim_eta_notification_activity, SID, ORDER, "shipping") is None
+    kw = notify.calls[-1][1]
+    assert kw["payload"]["order_display_id"] == ORDER and kw["payload"]["payment_confirmed"] is False
 
 
 @pytest.mark.parametrize("status", [502, 503, 403, 404])
