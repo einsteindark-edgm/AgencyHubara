@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -39,13 +40,16 @@ from loguru import logger
 
 from src.platform.catalog import (
     CatalogPort,
+    ColorFamilies,
     colors_for_value,
+    get_color_families,
     match_option,
     matching_color_alias,
     normalize_label,
     parse_variant_colors,
     parse_variant_tags,
     primary_colors,
+    resolve_color_family,
     split_multi_label,
     values_for_color,
 )
@@ -87,7 +91,12 @@ class SetOrderSlotTool(ToolBase):
             },
             "color": {
                 "type": "string",
-                "description": "Color elegido (ej. 'Blanco').",
+                "description": (
+                    "Color elegido, con las PALABRAS DEL CLIENTE (ej. "
+                    "'Blanco', 'azul clarito', 'celeste'). El sistema lo "
+                    "resuelve a la familia de color del catálogo y te lo "
+                    "cuenta en `color_family` — no lo traduzcas tú."
+                ),
             },
             "diseno": {
                 "type": "string",
@@ -149,17 +158,29 @@ class SetOrderSlotTool(ToolBase):
         workspace: str | Path,
         vault_dir: str | Path | None = None,
         catalog: CatalogPort | None = None,
+        color_families: ColorFamilies | None = None,
     ) -> None:
         # Mismo patron que `RegisterOrderTool`: el `workspace` es el runtime
         # workspace canonico compartido (no se usa para metadata). `vault_dir`
         # DI-friendly: default al vault canonico. `catalog` habilita la
         # validacion closed-list de aroma/color (None = sin validacion).
+        # `color_families`: tabla de familias de color (tolerancia de gama:
+        # "azul clarito" → "Azul"). None = la config del tenant con
+        # hot-reload (`config/color_families/families.yaml` / env
+        # COLOR_FAMILIES_PATH); pasá `EMPTY_COLOR_FAMILIES` para matcheo
+        # exacto legacy.
         self._workspace = Path(workspace)
         self._vault_dir = (
             Path(vault_dir) if vault_dir is not None else WORKSPACE_VAULT_DIR
         )
         self._store = FilesystemMetadataStore(self._vault_dir)
         self._catalog = catalog
+        self._color_families = color_families
+
+    def _families(self) -> ColorFamilies:
+        if self._color_families is not None:
+            return self._color_families
+        return get_color_families()
 
     async def _resolve_product(self, producto: str | None):
         """Producto del catalogo cuyo titulo matchea `producto`, o None.
@@ -214,32 +235,75 @@ class SetOrderSlotTool(ToolBase):
             }
         return ", ".join(canonical), None
 
-    def _validate_color_variants(
-        self, raw_value: str, variant_colors: dict[str, list[str]]
-    ) -> tuple[str | None, dict[str, Any] | None]:
-        """Valida el color contra los colores REALES de las variantes.
+    def _validate_color(
+        self,
+        raw_value: str,
+        valid: list[str],
+        matcher: Callable[[str], str | None],
+    ) -> tuple[str | None, dict[str, Any] | None, dict[str, Any] | None]:
+        """Valida el color con TOLERANCIA DE GAMA (requisito 2026-09-08).
 
-        Matching tolerante a género/número/acentos ("ROJAS" → "rojo"); lo
-        que se persiste es el alias canónico del catálogo. Rechazo → paleta
-        real citable (no los tags, que pueden estar stale).
+        Por token: primero el matcheo exacto del catálogo (`matcher`: tags o
+        aliases de `variant_colors`); si falla, la familia de color de la
+        config del tenant ("azul clarito"/"celeste" → "Azul"). Devuelve
+        `(canonico, rechazo, color_family)`:
+          * resuelto → canónico del catálogo + `color_family` con el tono
+            pedido (el envelope lo usa para que el bot confirme sin negar);
+          * gama con varios colores del catálogo o dos familias en el mismo
+            pedido → rechazo `color_family_ambiguous` con `candidates`
+            (no se adivina por el cliente);
+          * familia que el producto no maneja → `color_family_not_offered`;
+          * palabra desconocida → rechazo legacy con `invalid`/`available`.
         """
+        families = self._families()
         tokens = split_multi_label(raw_value) or [raw_value]
         canonical: list[str] = []
         invalid: list[str] = []
+        resolved_by_family: list[Any] = []
         for token in tokens:
-            alias = matching_color_alias(variant_colors, token)
-            if alias is None:
+            matched = matcher(token)
+            if matched is not None:
+                if matched not in canonical:
+                    canonical.append(matched)
+                continue
+            res = resolve_color_family(token, valid, families)
+            if res is None:
                 invalid.append(token.strip())
-            elif alias not in canonical:
-                canonical.append(alias)
+                continue
+            if res.status == "resolved":
+                if res.canonical not in canonical:
+                    canonical.append(res.canonical)
+                resolved_by_family.append(res)
+                continue
+            rejection: dict[str, Any] = {
+                "field": "color",
+                "given": raw_value,
+                "reason": f"color_family_{res.status}",
+                "families": list(res.families),
+                "candidates": list(res.candidates),
+                "available": valid,
+            }
+            if res.status == "not_offered":
+                rejection["family"] = res.families[0]
+            return None, rejection, None
         if invalid:
             return None, {
                 "field": "color",
                 "given": raw_value,
                 "invalid": invalid,
-                "available": primary_colors(variant_colors),
+                "available": valid,
+            }, None
+        family_info: dict[str, Any] | None = None
+        if resolved_by_family:
+            family_info = {
+                "requested": raw_value,
+                "captured": ", ".join(canonical),
+                "family": ", ".join(
+                    dict.fromkeys(f for r in resolved_by_family for f in r.families)
+                ),
+                "shade_requested": any(r.shade_requested for r in resolved_by_family),
             }
-        return ", ".join(canonical), None
+        return ", ".join(canonical), None, family_info
 
     def _cross_check_color_sign(
         self,
@@ -370,6 +434,7 @@ class SetOrderSlotTool(ToolBase):
         # le dice al LLM las opciones reales (guion: "el rojo no lo manejo").
         rejected: list[dict[str, Any]] = []
         signs_for_color: list[dict[str, Any]] = []
+        color_family: dict[str, Any] | None = None
         to_check = [
             k for k in ("aroma", "color", "diseno")
             if isinstance(provided.get(k), str) and provided[k].strip()
@@ -402,18 +467,47 @@ class SetOrderSlotTool(ToolBase):
                 }
                 for kind in to_check:
                     if kind == "color" and variant_colors:
-                        canonical, rejection = self._validate_color_variants(
-                            provided[kind], variant_colors
+                        # Paleta REAL = aliases de las variantes (los tags
+                        # pueden estar stale). Match tolerante a género/
+                        # número; lo persistido es el alias canónico.
+                        canonical, rejection, family_info = self._validate_color(
+                            provided[kind],
+                            primary_colors(variant_colors),
+                            lambda t: matching_color_alias(variant_colors, t),
+                        )
+                    elif kind == "color" and valid_by_kind["color"]:
+                        colors = valid_by_kind["color"]
+                        canonical, rejection, family_info = self._validate_color(
+                            provided[kind],
+                            colors,
+                            lambda t, _c=colors: match_option(t, _c),
                         )
                     else:
                         canonical, rejection = self._validate_choice(
                             kind, provided[kind], valid_by_kind[kind]
                         )
+                        family_info = None
                     if rejection is not None:
                         rejected.append(rejection)
                         provided.pop(kind, None)
                     else:
                         provided[kind] = canonical
+                    if family_info is not None:
+                        color_family = family_info
+                        if family_info["shade_requested"]:
+                            # El tono pedido queda para el operador (empaque)
+                            # aunque el slot guarde la familia del catálogo.
+                            tone_note = (
+                                f"Tono de color pedido por el cliente: "
+                                f"'{family_info['requested']}' (registrado "
+                                f"como {family_info['captured']})"
+                            )
+                            extra = provided.get("notas")
+                            provided["notas"] = (
+                                f"{extra} | {tone_note}"
+                                if isinstance(extra, str) and extra.strip()
+                                else tone_note
+                            )
                 if variant_colors:
                     mismatch, signs_for_color = self._cross_check_color_sign(
                         provided, draft_slots_now, variant_colors
@@ -448,6 +542,18 @@ class SetOrderSlotTool(ToolBase):
                 "cliente cambia algo, volve a llamar set_order_slot."
             ),
         }
+        if color_family is not None:
+            envelope["color_family"] = color_family
+            if color_family["shade_requested"]:
+                envelope["summary"] += (
+                    f" El cliente pidió el tono '{color_family['requested']}': "
+                    f"el catálogo maneja *{color_family['captured']}* como "
+                    "FAMILIA de color (un solo tono, no gamas exactas), y así "
+                    "quedó registrado. Confírmale con calidez que SÍ manejamos "
+                    "ese color y muéstrale el tono real con "
+                    "present_product_detail para que lo valide — NO lo niegues "
+                    "ni le prometas el tono exacto que pidió."
+                )
         if signs_for_color:
             # Color elegido sin signo aún: el bot puede mostrar el signo
             # dueño del color de una ("la roja es la de Aries").
@@ -473,6 +579,20 @@ class SetOrderSlotTool(ToolBase):
                         f"viene en UN color fijo — {r['sign']} es "
                         f"{', '.join(r['sign_colors'])} y el color pedido lo "
                         f"tiene {alts}"
+                    )
+                elif r.get("reason") == "color_family_ambiguous":
+                    parts.append(
+                        f"el color {r['given']!r} cae en la gama de "
+                        f"{' / '.join(r['families'])} y este producto tiene "
+                        f"{', '.join(r['candidates']) or 'ninguno de esos'}: "
+                        "NO adivines — ofrécele esas opciones (picker si son "
+                        "2+) sin negarle el color"
+                    )
+                elif r.get("reason") == "color_family_not_offered":
+                    parts.append(
+                        f"el color {r['given']!r} es de la familia "
+                        f"{r['family']}, que este producto NO maneja "
+                        f"(disponibles: {', '.join(r['available'])})"
                     )
                 else:
                     parts.append(
