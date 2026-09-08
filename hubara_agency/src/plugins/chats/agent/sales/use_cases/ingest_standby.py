@@ -36,9 +36,10 @@ Lo que NO hace, por diseño:
 * Con un humano en el hilo (``active_route=humano``) NO toca el episodio ni
   el tag (misma regla que el ingest regular); el mensaje igual se persiste.
 
-Concurrencia: cada mutación va por ``FilesystemMetadataStore.update`` (flock),
-porque la sesión la escriben en paralelo las connector tools de MBA
-(``api/session_actions``) y el ``IngestDeliveryStatus``.
+Concurrencia: cada mutación (metadata + append al JSONL) va por
+``FilesystemMetadataStore.update`` (flock por sesión), porque la sesión la
+escriben en paralelo las connector tools de MBA (``api/session_actions``) y el
+``IngestDeliveryStatus`` (que desde D1.4 también escribe por ``update``).
 
 P-28: archivo NUEVO de plugin → importa solo ``src.sdk`` + módulos de chats.
 El literal de la ruta humana se verifica contra platform en el test.
@@ -174,7 +175,6 @@ class IngestStandby:
     def _ingest_inbound(self, session: str, msg: WhatsAppMessage, phone_number_id: str) -> bool:
         now_ms = self._now_ms()
         (self._vault_dir / session).mkdir(parents=True, exist_ok=True)
-        msgs_before = count_session_jsonl_lines(self._vault_dir, session)
         applied: dict[str, bool] = {}
 
         def _mutate(data: dict[str, Any]) -> dict[str, Any] | None:
@@ -190,23 +190,28 @@ class IngestStandby:
                     now_ms=now_ms,
                     inbound_message_id=msg.message_id,
                     referral_snapshot=dict(msg.referral) if msg.referral else None,
-                    msgs_count_at_start=msgs_before,
+                    # Bajo el flock: el conteo previo al append de ESTE turno.
+                    msgs_count_at_start=count_session_jsonl_lines(self._vault_dir, session),
                 )
-            if msg.referral:
+            if msg.referral and msg.referral.get("ctwa_clid"):
+                # Contrato HU-002 (mismo que el ingest regular): solo los touches
+                # con click id entran a `ctwa_referrals` — CAPI atribuye por el
+                # último; un referral web/direct no debe pisar al anuncio.
                 _record_referral(data, msg.referral, msg.message_id, now_ms)
             data["last_inbound_at_ms"] = now_ms
             data["service_window_expires_at_ms"] = compute_service_window_expiry(now_ms)
             data["last_inbound_message_id"] = msg.message_id
             _touch_stats(data, "inbound", now_ms)
+            # El turno va al JSONL DENTRO del read-modify-write: si el append
+            # falla, el mutador aborta sin escribir y el wamid NO queda visto —
+            # la reentrega de Meta vuelve a intentar en vez de perderse.
+            self._history_store.append_user_event(session, inbound_display_text(msg), wamid=msg.message_id)
             _mark_seen(data, msg.message_id)
             applied["ok"] = True
             return data
 
         self._metadata_store.update(session, _mutate)
-        if not applied.get("ok"):
-            return False
-        self._history_store.append_user_event(session, inbound_display_text(msg), wamid=msg.message_id)
-        return True
+        return bool(applied.get("ok"))
 
     # ── eco de lo que MBA envió ──────────────────────────────────────────────
 
@@ -230,12 +235,12 @@ class IngestStandby:
                 return None
             record_outbound_in_active_episode(data, entry)
             _touch_stats(data, "echo", now_ms)
+            self._history_store.append_assistant_event(
+                session, echo_display_text(echo), sender="mba", wamid=echo.wamid
+            )
             _mark_seen(data, echo.wamid)
             applied["ok"] = True
             return data
 
         self._metadata_store.update(session, _mutate)
-        if not applied.get("ok"):
-            return False
-        self._history_store.append_assistant_event(session, echo_display_text(echo), sender="mba", wamid=echo.wamid)
-        return True
+        return bool(applied.get("ok"))

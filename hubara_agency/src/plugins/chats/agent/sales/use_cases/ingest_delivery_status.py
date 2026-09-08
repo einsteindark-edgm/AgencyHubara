@@ -151,98 +151,68 @@ class IngestDeliveryStatus:
             )
             return
 
-        session_id, episode_idx, log_entry_idx = located
+        session_id, _episode_idx, _log_entry_idx = located
 
-        # Re-leer metadata fresca antes de mutar (el retry pudo haber
-        # capturado una versión ligeramente vieja).
-        metadata = self._metadata_store.read(session_id)
-        episodes = metadata.get("episodes") or []
+        # 2-5. Mutación bajo el flock del store (D1.4): la sesión también la
+        # escriben `IngestStandby` (ecos de MBA) y las connector tools; un
+        # read→write plano perdía updates en ambos sentidos. El entry se
+        # RE-LOCALIZA por `wa_message_id` sobre la metadata fresca (los índices
+        # del scan pueden haberse corrido).
+        outcome: dict[str, Any] = {}
 
-        if episode_idx >= len(episodes):
-            self._dead_letter(
-                wa_message_id=wa_message_id,
-                status=status,
-                pricing=pricing,
-                reason="episode_disappeared",
-                session_id=session_id,
+        def _mutate(metadata: dict[str, Any]) -> dict[str, Any] | None:
+            episodes = metadata.get("episodes") or []
+            found: tuple[int, int] | None = None
+            for ep_idx, episode in enumerate(episodes):
+                for log_idx, entry in enumerate(episode.get("outbound_messages") or []):
+                    if isinstance(entry, dict) and entry.get("wa_message_id") == wa_message_id:
+                        found = (ep_idx, log_idx)
+                        break
+                if found:
+                    break
+            if found is None:
+                outcome["reason"] = "entry_disappeared"
+                return None
+            episode = episodes[found[0]]
+            # Episodio cerrado → dead-letter, NO mutar summary: el summary
+            # quedó congelado al close_episode; los webhooks tardíos NO deben
+            # recalcular el agregado histórico.
+            if episode.get("closed_at_ms") is not None:
+                outcome["reason"] = "episode_closed"
+                outcome["episode_id"] = episode.get("episode_id")
+                return None
+            outbound_messages = list(episode.get("outbound_messages") or [])
+            existing_entry = _outbound_log_entry_from_dict(outbound_messages[found[1]])
+            # Sin pricing (status=failed sin pricing object): emitir el status
+            # pero NO tocar cost. Defensa contra dataset incompleto de Meta.
+            if snapshot is None:
+                outcome["reason"] = "no_pricing"
+                outcome["cost"] = existing_entry.cost_usd_micros
+                return None
+            # Idempotencia: si la entry YA tiene cost materializado, este
+            # webhook es duplicado. NO llamar materialize_pending_in_summary
+            # (acumularía total/by_category otra vez).
+            already_materialized = existing_entry.cost_usd_micros is not None
+            cost = compute_message_cost_micros(snapshot, self._rate_card)
+            new_entry = replace(
+                existing_entry,
+                pricing=snapshot,
+                cost_usd_micros=cost,
+                rate_card_version=self._rate_card.version,
             )
-            return
+            outbound_messages[found[1]] = _outbound_log_entry_to_dict(new_entry)
+            episode["outbound_messages"] = outbound_messages
+            if not already_materialized:
+                current_summary = _summary_from_episode(episode)
+                episode["cost_summary"] = _summary_to_dict(
+                    materialize_pending_in_summary(current_summary, new_entry)
+                )
+            outcome["reason"] = "materialized"
+            outcome["cost"] = cost
+            return metadata
 
-        episode = episodes[episode_idx]
-
-        # 2. Episodio cerrado → dead-letter, NO mutar summary.
-        # El summary del episodio quedó congelado al close_episode; los
-        # webhooks tardíos NO deben recalcular el agregado histórico.
-        if episode.get("closed_at_ms") is not None:
-            self._dead_letter(
-                wa_message_id=wa_message_id,
-                status=status,
-                pricing=pricing,
-                reason="episode_closed",
-                session_id=session_id,
-                episode_id=episode.get("episode_id"),
-            )
-            await self._emit_event(
-                session_id=session_id,
-                wa_message_id=wa_message_id,
-                status=status,
-                snapshot=snapshot,
-                cost_usd_micros=None,
-            )
-            return
-
-        outbound_messages = list(episode.get("outbound_messages") or [])
-        if log_entry_idx >= len(outbound_messages):
-            self._dead_letter(
-                wa_message_id=wa_message_id,
-                status=status,
-                pricing=pricing,
-                reason="entry_disappeared",
-                session_id=session_id,
-            )
-            return
-
-        existing_entry = _outbound_log_entry_from_dict(
-            outbound_messages[log_entry_idx]
-        )
-
-        # 3. Sin pricing (status=failed sin pricing object): emitir el
-        # status pero NO tocar cost. El entry queda con cost_usd_micros=None
-        # (sigue en pending_count). Defensa contra dataset incompleto de Meta.
-        if snapshot is None:
-            await self._emit_event(
-                session_id=session_id,
-                wa_message_id=wa_message_id,
-                status=status,
-                snapshot=None,
-                cost_usd_micros=existing_entry.cost_usd_micros,
-            )
-            return
-
-        # 4. Idempotencia: si la entry YA tiene cost materializado, este
-        # webhook es duplicado. NO llamar materialize_pending_in_summary
-        # (el helper acumularía total/by_category/by_pricing_type otra vez,
-        # rompiendo invariantes — solo el pending_count está clamped a 0).
-        already_materialized = existing_entry.cost_usd_micros is not None
-
-        cost = compute_message_cost_micros(snapshot, self._rate_card)
-        new_entry = replace(
-            existing_entry,
-            pricing=snapshot,
-            cost_usd_micros=cost,
-            rate_card_version=self._rate_card.version,
-        )
-        outbound_messages[log_entry_idx] = _outbound_log_entry_to_dict(new_entry)
-        episode["outbound_messages"] = outbound_messages
-
-        if not already_materialized:
-            current_summary = _summary_from_episode(episode)
-            new_summary = materialize_pending_in_summary(current_summary, new_entry)
-            episode["cost_summary"] = _summary_to_dict(new_summary)
-
-        # 5. Persistir
         try:
-            self._metadata_store.write(session_id, metadata)
+            self._metadata_store.update(session_id, _mutate)
         except Exception as e:  # noqa: BLE001
             log.warning(
                 "ingest_delivery_status_write_failed",
@@ -252,14 +222,35 @@ class IngestDeliveryStatus:
                     "error": str(e),
                 },
             )
+            return
+
+        reason = outcome.get("reason")
+        if reason in ("entry_disappeared", "episode_closed"):
+            self._dead_letter(
+                wa_message_id=wa_message_id,
+                status=status,
+                pricing=pricing,
+                reason=str(reason),
+                session_id=session_id,
+                episode_id=outcome.get("episode_id"),
+            )
+            if reason == "episode_closed":
+                await self._emit_event(
+                    session_id=session_id,
+                    wa_message_id=wa_message_id,
+                    status=status,
+                    snapshot=snapshot,
+                    cost_usd_micros=None,
+                )
+            return
 
         # 6. Analytics — siempre, incluso en duplicado (audit trail).
         await self._emit_event(
             session_id=session_id,
             wa_message_id=wa_message_id,
             status=status,
-            snapshot=snapshot,
-            cost_usd_micros=cost,
+            snapshot=snapshot if reason == "materialized" else None,
+            cost_usd_micros=outcome.get("cost"),
         )
 
     # =====================================================================

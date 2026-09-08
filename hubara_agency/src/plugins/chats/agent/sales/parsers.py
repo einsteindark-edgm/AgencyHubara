@@ -434,6 +434,9 @@ def _parse_context(obj: Any) -> dict[str, Any] | None:
 
 STANDBY_FIELD = "standby"
 HANDOVERS_FIELD = "messaging_handovers"
+#: Un `wamid.*` real ronda los 60-90 chars; el id entra al vault (dedupe), así
+#: que un router público no acepta ids de longitud arbitraria.
+MAX_WAMID_LEN = 128
 
 
 def webhook_fields(body: Any) -> set[str]:
@@ -504,7 +507,7 @@ def parse_whatsapp_standby(body: Any) -> StandbyEvent | None:
                     parsed = _parse_message(raw, phone_number_id)
                 except ValueError:
                     continue
-                if parsed is not None:
+                if parsed is not None and len(parsed.message_id) <= MAX_WAMID_LEN:
                     messages.append(parsed)
             for raw in standby.get("message_echoes") or []:
                 echo = _parse_echo(raw)
@@ -526,7 +529,7 @@ def _parse_echo(raw: Any) -> StandbyEcho | None:
         return None
     wamid = raw.get("id")
     message = raw.get("message")
-    if not isinstance(wamid, str) or not wamid or not isinstance(message, dict):
+    if not isinstance(wamid, str) or not 0 < len(wamid) <= MAX_WAMID_LEN or not isinstance(message, dict):
         return None
     to = message.get("to")
     # SEC-12: ``to`` se vuelve ``session_id = wa_<to>`` en el filesystem del vault.

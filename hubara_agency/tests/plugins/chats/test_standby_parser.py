@@ -88,3 +88,12 @@ def test_standby_inbound_with_an_unsafe_sender_is_dropped_not_raised() -> None:
     body = P.inbound()
     body["entry"][0]["changes"][0]["value"]["standby"]["messages"][0]["from"] = "../x"
     assert parse_whatsapp_standby(body).messages == ()
+
+
+def test_standby_ids_of_arbitrary_length_are_dropped() -> None:
+    """El wamid entra al vault (dedupe): un router público no acepta ids sin tope."""
+    long_id = "wamid." + "x" * 200
+    body = P.inbound(wamid=long_id)
+    assert parse_whatsapp_standby(body).messages == ()
+    body = P.echo_text(wamid=long_id)
+    assert parse_whatsapp_standby(body).echoes == ()

@@ -186,3 +186,36 @@ def test_the_human_route_literal_matches_the_platform_constant() -> None:
     from src.plugins.chats.agent.sales.use_cases import ingest_standby
 
     assert ingest_standby.ROUTE_HUMANO == ROUTE_HUMANO
+
+
+async def test_referral_without_click_id_does_not_enter_ctwa_referrals(vault: Path) -> None:
+    """Contrato HU-002: CAPI atribuye por `ctwa_referrals[-1]`; un touch
+    web/direct sin `ctwa_clid` no pisa al último anuncio (sí queda en el
+    snapshot del episodio)."""
+    body = P.inbound("vengo de la web", wamid="wamid.STANDBY.IN.WEB")
+    body["entry"][0]["changes"][0]["value"]["standby"]["messages"][0]["referral"] = {
+        "source_url": "https://hubara.co", "source_type": "post", "headline": "web"}
+    await _run(vault, body)
+    m = _meta(vault)
+    assert "ctwa_referrals" not in m and "ctwa_clids_seen" not in m
+    assert m["episodes"][-1]["referral_snapshot"]["source_type"] == "post"
+
+
+async def test_a_failed_history_append_does_not_mark_the_wamid_as_seen(vault: Path) -> None:
+    """Si el JSONL no se pudo escribir, nada queda escrito y la reentrega de
+    Meta vuelve a procesar el mensaje (no se pierde por el dedupe)."""
+
+    class _Broken:
+        def append_user_event(self, *a: Any, **k: Any) -> None:
+            raise OSError("disk full")
+
+        def append_assistant_event(self, *a: Any, **k: Any) -> None:
+            raise OSError("disk full")
+
+    uc = IngestStandby(metadata_store=FilesystemMetadataStore(vault), history_store=_Broken(), vault_dir=vault,
+                       now_ms=lambda: NOW_MS)
+    with pytest.raises(OSError):
+        await uc.execute(parse_whatsapp_standby(P.inbound()))
+    assert not (vault / SESSION / "metadata.json").exists() or "standby_seen_wamids" not in _meta(vault)
+    res = await _run(vault, P.inbound())
+    assert res.messages_persisted == 1 and len(_lines(vault)) == 1
