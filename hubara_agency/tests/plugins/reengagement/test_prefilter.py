@@ -183,3 +183,32 @@ async def test_escalera_de_dormancia_por_calor(_isolate_vault_dir: Path):
     assert snapshot["prefiltered"] == {"conversation_active": 3}, (
         snapshot.get("prefiltered")
     )
+
+
+@pytest.mark.asyncio
+async def test_prefiltra_leads_que_controla_meta_business_agent(_isolate_vault_dir: Path, monkeypatch):
+    """D1.7: con MBA al frente y la ventana abierta el gate suprimiría el
+    toque → no viajan a la caja. Fuera de ventana entran (template como hoy).
+    Con la flag apagada nada cambia."""
+    from src.platform import config
+
+    monkeypatch.setattr(config, "MBA_STANDBY_ENABLED", True)
+    monkeypatch.setattr(config, "MBA_CUSTOMER_ALLOWLIST", frozenset({"573001234567", "573009876543"}))
+    now_ms = int(time.time() * 1000)
+    on, off, dormant = now_ms + ONE_HOUR_MS, now_ms - ONE_HOUR_MS, now_ms - 5 * ONE_HOUR_MS
+    _seed(_isolate_vault_dir, "wa_573001234567", {
+        "tag": "INTERESADO", "service_window_expires_at_ms": on, "ctwa_window_expires_at_ms": off,
+        "last_inbound_at_ms": dormant, "control_owner": "mba",
+    })
+    _seed(_isolate_vault_dir, "wa_573009876543", {
+        "tag": "CONFIRMADO_PAGO_PENDIENTE", "service_window_expires_at_ms": off, "ctwa_window_expires_at_ms": off,
+        "last_inbound_at_ms": now_ms - 30 * ONE_HOUR_MS, "control_owner": "mba",
+        "episodes": [{"episode_id": "ep_001", "closed_at_ms": off, "order_id": "o1"}],
+    })
+    snapshot = await ActivityEnvironment().run(build_reengagement_snapshot_activity)
+    assert [c["session_id"] for c in snapshot["conversations"]] == ["wa_573009876543"]
+    assert snapshot["prefiltered"] == {"control_owner_mba": 1}
+
+    monkeypatch.setattr(config, "MBA_STANDBY_ENABLED", False)
+    snapshot = await ActivityEnvironment().run(build_reengagement_snapshot_activity)
+    assert sorted(c["session_id"] for c in snapshot["conversations"]) == ["wa_573001234567", "wa_573009876543"]

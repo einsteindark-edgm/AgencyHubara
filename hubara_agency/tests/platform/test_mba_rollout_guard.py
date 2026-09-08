@@ -111,3 +111,57 @@ def test_sdk_runtime_reexports_the_flag_reader_and_placeholder_check(monkeypatch
     monkeypatch.setattr(impl, "MBA_STANDBY_ENABLED", False)
     assert kit.mba_standby_enabled() is False
     assert kit.is_placeholder("PLACEHOLDER_set_out_of_band") and kit.is_placeholder("") and not kit.is_placeholder("tok")
+
+
+# ── D1.7: ¿MBA controla este hilo? (predicado único, fail-safe) ──────────────
+
+
+def _md(owner=None, *, last_inbound=1_000, standby_inbound=None) -> dict:
+    md: dict = {"last_inbound_at_ms": last_inbound}
+    if owner is not None:
+        md["control_owner"] = owner
+    if standby_inbound is not None:
+        md["mba_standby"] = {"inbound_count": 1, "last_inbound_at_ms": standby_inbound}
+    return md
+
+
+@pytest.mark.parametrize("enabled,allowed,metadata,expected", [
+    # flag apagada: NUNCA, aunque el vault diga mba (comportamiento de hoy)
+    (False, True, _md("mba"), False),
+    # fuera de la lista cerrada: nunca
+    (True, False, _md("mba"), False),
+    (True, True, _md("hubara"), False),
+    (True, True, _md("mba"), True),
+    # sin handover recibido nunca (WHATSAPP_APP_ID sin configurar): el último inbound llegó por standby
+    (True, True, _md(None, last_inbound=5_000, standby_inbound=5_000), True),
+    # el último inbound llegó por `messages` (nosotros controlamos)
+    (True, True, _md(None, last_inbound=9_000, standby_inbound=5_000), False),
+    (True, True, _md(None), False),
+    (True, True, {}, False),
+    # un dueño explícito manda sobre la heurística del standby
+    (True, True, _md("hubara", last_inbound=5_000, standby_inbound=5_000), False),
+])
+def test_mba_controls_thread_table(monkeypatch, enabled: bool, allowed: bool, metadata: dict, expected: bool) -> None:
+    from src.platform import config
+
+    monkeypatch.setattr(config, "MBA_STANDBY_ENABLED", enabled)
+    monkeypatch.setattr(config, "MBA_CUSTOMER_ALLOWLIST", frozenset({"573001234567"}) if allowed else frozenset())
+    assert config.mba_controls_thread(metadata, "wa_573001234567") is expected
+
+
+def test_mba_controls_thread_is_fail_safe_on_garbage(monkeypatch) -> None:
+    from src.platform import config
+
+    monkeypatch.setattr(config, "MBA_STANDBY_ENABLED", True)
+    monkeypatch.setattr(config, "MBA_CUSTOMER_ALLOWLIST", frozenset({"573001234567"}))
+    assert config.mba_controls_thread({"control_owner": 42}, "wa_573001234567") is False
+    assert config.mba_controls_thread({"mba_standby": "x", "last_inbound_at_ms": 1}, "wa_573001234567") is False
+    assert config.mba_controls_thread(None, "wa_573001234567") is False
+    assert config.mba_controls_thread({"control_owner": "mba"}, None) is False
+
+
+def test_sdk_runtime_reexports_mba_controls_thread() -> None:
+    import src.platform.config as impl
+    import src.sdk.runtime as kit
+
+    assert kit.mba_controls_thread is impl.mba_controls_thread

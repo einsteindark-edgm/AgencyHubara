@@ -498,3 +498,97 @@ async def test_eligibility_returns_outside_quiet_hours_at_3am(
 
     assert result.eligible is False
     assert result.reason == "outside_quiet_hours"
+
+
+# ---------------------------------------------------------------------------
+# D1.7 — Meta Business Agent al frente: sin template en ventana; cierre por
+# silencio vía el contrato /tag de chats (INTERESADO reconciliado por D1.3)
+# ---------------------------------------------------------------------------
+
+MBA_SESSION = "wa_573001234567"
+
+
+def _mba_setup(monkeypatch: pytest.MonkeyPatch, vault: Path, *, enabled: bool = True, owner: str | None = "mba") -> list:
+    from src.platform import config
+    from src.plugins.chats.agent.remarketing.activities import watchdog_activities
+
+    monkeypatch.setenv("WATCHDOG_ENABLED", "1")
+    _pin_clock_at_10am_bogota(monkeypatch)
+    monkeypatch.setattr(config, "MBA_STANDBY_ENABLED", enabled)
+    monkeypatch.setattr(config, "MBA_CUSTOMER_ALLOWLIST", frozenset({"573001234567"}))
+    now_ms = int(time.time() * 1000)
+    md = _base_metadata(now_ms=now_ms)
+    md["tag"] = "NO_ETIQUETADO"
+    if owner:
+        md["control_owner"] = owner
+    _write_metadata(vault, MBA_SESSION, md)
+    calls: list = []
+
+    async def _fake_close(session_id: str) -> dict:
+        calls.append(session_id)
+        return {"tag": "INTERESADO", "applied": True, "reason": "proposal_accepted", "episode_closed": True}
+
+    monkeypatch.setattr(watchdog_activities, "_close_by_silence", _fake_close)
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_mba_controls_no_template_but_the_episode_is_closed_by_silence(
+    monkeypatch: pytest.MonkeyPatch, _isolate_vault_dir: Path
+) -> None:
+    calls = _mba_setup(monkeypatch, _isolate_vault_dir)
+    result = await check_watchdog_eligibility_activity(MBA_SESSION, EPISODE_ID)
+    assert result.eligible is False and result.reason == "control_owner_mba"
+    assert result.resolved_template_name is None
+    assert calls == [MBA_SESSION]
+
+
+@pytest.mark.asyncio
+async def test_with_the_flag_off_an_mba_session_behaves_exactly_as_today(
+    monkeypatch: pytest.MonkeyPatch, _isolate_vault_dir: Path
+) -> None:
+    calls = _mba_setup(monkeypatch, _isolate_vault_dir, enabled=False)
+    result = await check_watchdog_eligibility_activity(MBA_SESSION, EPISODE_ID)
+    assert result.eligible is True and result.resolved_template_name == "quote_ready_utility_v2"
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_hubara_owned_session_is_untouched_by_the_mba_branch(
+    monkeypatch: pytest.MonkeyPatch, _isolate_vault_dir: Path
+) -> None:
+    calls = _mba_setup(monkeypatch, _isolate_vault_dir, owner="hubara")
+    result = await check_watchdog_eligibility_activity(MBA_SESSION, EPISODE_ID)
+    assert result.eligible is True and calls == []
+
+
+@pytest.mark.asyncio
+async def test_route_and_episode_guards_run_before_the_silence_close(
+    monkeypatch: pytest.MonkeyPatch, _isolate_vault_dir: Path
+) -> None:
+    calls = _mba_setup(monkeypatch, _isolate_vault_dir)
+    md = json.loads((_isolate_vault_dir / MBA_SESSION / "metadata.json").read_text(encoding="utf-8"))
+    md["episodes"][0]["closed_at_ms"] = 1
+    _write_metadata(_isolate_vault_dir, MBA_SESSION, md)
+    assert (await check_watchdog_eligibility_activity(MBA_SESSION, EPISODE_ID)).reason == "no_active_episode"
+    md["episodes"][0]["closed_at_ms"] = None
+    md["active_route"] = "humano"
+    _write_metadata(_isolate_vault_dir, MBA_SESSION, md)
+    assert (await check_watchdog_eligibility_activity(MBA_SESSION, EPISODE_ID)).reason == "active_route_humano"
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_failing_silence_close_is_logged_and_never_raises(
+    monkeypatch: pytest.MonkeyPatch, _isolate_vault_dir: Path
+) -> None:
+    from src.plugins.chats.agent.remarketing.activities import watchdog_activities
+
+    _mba_setup(monkeypatch, _isolate_vault_dir)
+
+    async def _boom(session_id: str) -> dict:
+        raise RuntimeError("chats API caída")
+
+    monkeypatch.setattr(watchdog_activities, "_close_by_silence", _boom)
+    result = await check_watchdog_eligibility_activity(MBA_SESSION, EPISODE_ID)
+    assert result.eligible is False and result.reason == "control_owner_mba"

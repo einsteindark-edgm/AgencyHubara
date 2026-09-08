@@ -150,11 +150,17 @@ def build_ingest_standby_use_case() -> IngestStandby:
     global _STANDBY_USE_CASE
     if _STANDBY_USE_CASE is not None:
         return _STANDBY_USE_CASE
+    async def _standby_window_events(session_id: str, metadata: dict) -> None:
+        # D1.7: el mismo emisor del watchdog que usa el ingest regular
+        # (ServiceWindowOpenedEvent / CustomerRepliedEvent vía dispatcher).
+        await build_ingest_use_case()._emit_watchdog_events(session_id, metadata)
+
     _STANDBY_USE_CASE = IngestStandby(
         metadata_store=_PlatformFsMetaStore(WORKSPACE_VAULT_DIR),
         history_store=FilesystemMessageHistoryStore(WORKSPACE_VAULT_DIR),
         vault_dir=WORKSPACE_VAULT_DIR,
         is_customer_allowed=mba_customer_allowed,
+        emit_window_events=_standby_window_events,
     )
     return _STANDBY_USE_CASE
 

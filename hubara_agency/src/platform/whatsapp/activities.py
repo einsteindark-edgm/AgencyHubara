@@ -26,6 +26,7 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from src.platform.config import (
+    mba_controls_thread,
     WORKSPACE_VAULT_DIR,
 )
 from src.platform.constants import WHATSAPP_SESSION_PREFIX
@@ -129,6 +130,8 @@ async def check_reengagement_policy_activity(session_id: str) -> SendDecision:
         metadata,
         lead_state_from_metadata(metadata),
         get_current_rate_card(),
+        # D1.7: con Meta Business Agent al frente, sin toques en ventana.
+        mba_controls=mba_controls_thread(metadata, session_id),
     )
 
 

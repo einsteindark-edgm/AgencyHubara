@@ -233,3 +233,55 @@ async def test_customers_outside_the_closed_list_are_rejected_and_nothing_is_wri
     uc = _use_case(vault, allowed=lambda customer: customer == P.CUSTOMER)
     res = await uc.execute(parse_whatsapp_standby(P.inbound()))
     assert res.rejected == 0 and res.messages_persisted == 1
+
+
+# ── D1.7: cada inbound `standby` (re)programa el watchdog del episodio ────────
+
+
+class _WindowEvents:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict]] = []
+
+    async def __call__(self, session_id: str, metadata: dict) -> None:
+        self.calls.append((session_id, metadata))
+
+
+def _use_case_with_events(vault: Path, events: _WindowEvents, now_ms: int = NOW_MS) -> IngestStandby:
+    return IngestStandby(
+        metadata_store=FilesystemMetadataStore(vault), history_store=FilesystemMessageHistoryStore(vault),
+        vault_dir=vault, now_ms=lambda: now_ms, is_customer_allowed=lambda c: True, emit_window_events=events,
+    )
+
+
+async def test_a_standby_inbound_emits_the_window_events_with_the_fresh_metadata(vault: Path) -> None:
+    events = _WindowEvents()
+    await _use_case_with_events(vault, events).execute(parse_whatsapp_standby(P.inbound("hola")))
+    assert len(events.calls) == 1
+    session, metadata = events.calls[0]
+    assert session == SESSION
+    assert metadata["service_window_expires_at_ms"] == _meta(vault)["service_window_expires_at_ms"]
+    assert metadata["episodes"][-1]["closed_at_ms"] is None
+
+
+async def test_duplicates_echoes_and_human_owned_sessions_do_not_emit(vault: Path) -> None:
+    events = _WindowEvents()
+    uc = _use_case_with_events(vault, events)
+    await uc.execute(parse_whatsapp_standby(P.inbound("hola")))
+    await uc.execute(parse_whatsapp_standby(P.inbound("hola")))  # reentrega
+    await uc.execute(parse_whatsapp_standby(P.echo_text()))
+    assert len(events.calls) == 1
+    FilesystemMetadataStore(vault).update(SESSION, lambda d: d | {"active_route": ROUTE_HUMANO})
+    await uc.execute(parse_whatsapp_standby(P.inbound("otra", wamid="wamid.STANDBY.IN.2")))
+    assert len(events.calls) == 1
+
+
+async def test_a_failing_emitter_never_breaks_the_ingest(vault: Path) -> None:
+    async def _boom(session_id: str, metadata: dict) -> None:
+        raise RuntimeError("temporal caído")
+
+    uc = IngestStandby(
+        metadata_store=FilesystemMetadataStore(vault), history_store=FilesystemMessageHistoryStore(vault),
+        vault_dir=vault, now_ms=lambda: NOW_MS, is_customer_allowed=lambda c: True, emit_window_events=_boom,
+    )
+    res = await uc.execute(parse_whatsapp_standby(P.inbound("hola")))
+    assert res.messages_persisted == 1 and _lines(vault)[0]["content"] == "hola"

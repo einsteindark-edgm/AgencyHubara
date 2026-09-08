@@ -321,6 +321,8 @@ def decide_reengagement(
     metadata: dict[str, Any],
     lead: LeadState,
     rate_card: RateCard,
+    *,
+    mba_controls: bool = False,
 ) -> SendDecision:
     """Decide CÓMO (o si) reactivar un lead — el Free-First Funnel (§4).
 
@@ -376,6 +378,19 @@ def decide_reengagement(
 
     in_ctwa = is_in_ctwa_window(now_ms, metadata)
     in_csw = is_in_service_window(now_ms, metadata)
+
+    # 1.7. Meta Business Agent responde en este hilo (D1.7): dentro de la
+    # ventana NO hay toques de Hubara — un envío propio le quitaría el hilo a
+    # MBA (Meta pasa el control al que escribe) y sería doble toque (el
+    # followup de MBA queda apagado por decisión). Fuera de ventana, template
+    # como hoy: toma el hilo y la política de release (D1.6) lo devuelve.
+    # `mba_controls` lo calcula el caller con `mba_controls_thread` (flag +
+    # lista cerrada + dueño); default False = comportamiento de siempre.
+    if mba_controls and in_csw:
+        return _suppress(
+            "control_owner_mba",
+            "Meta Business Agent responde en ventana — sin toques de Hubara",
+        )
 
     # 2. Fase A — cliente activo (CSW abierta) → free-form.
     if in_csw:

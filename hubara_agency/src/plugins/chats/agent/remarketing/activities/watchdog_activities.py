@@ -43,6 +43,8 @@ from src.sdk.messagingkit import (
 )
 from src.platform.whatsapp.window import watchdog_pre_expiry_ms
 from src.plugins.chats.shared.funnel import active_episode, is_open_cart
+from src.plugins.chats.agent.remarketing.activities.mba_silence_close import close_by_silence
+from src.sdk.runtime import mba_controls_thread
 from src.sdk.connectorkit import enqueue_capi_event, flush_capi_outbox
 from src.plugins.chats.agent.remarketing.watchdog_contracts import (
     WatchdogEligibilityResult,
@@ -212,6 +214,10 @@ def _resolve_template_variables(
 # =============================================================================
 
 
+#: Parcheable en tests (el módulo referencia el global en cada llamada).
+_close_by_silence = close_by_silence
+
+
 @activity.defn(name="check_watchdog_eligibility_activity")
 async def check_watchdog_eligibility_activity(
     session_id: str,
@@ -233,6 +239,12 @@ async def check_watchdog_eligibility_activity(
         the inbound was processed between scheduling and now).
       * `"no_template_for_stage"` — no utility template matches the current
         stage; nothing safe to send.
+      * `"control_owner_mba"` — D1.7: Meta Business Agent responde en este
+        hilo (flag + lista cerrada + dueño): NO se manda template en ventana
+        (le quitaría el hilo a MBA y sería doble toque); en su lugar el
+        watchdog es el reloj del cierre por silencio: propone INTERESADO al
+        contrato `/tag` de chats (D1.3 reconcilia a CONFIRMADO_SIN_DATOS +
+        escalación si hay datos de envío sin orden, o descarta si hay orden).
 
     On `eligible=True`, the result includes the resolved template name and
     pre-filled variables — the workflow passes them directly to the send
@@ -306,6 +318,31 @@ async def check_watchdog_eligibility_activity(
         return WatchdogEligibilityResult(
             eligible=False, reason="window_not_expiring_soon"
         )
+
+    # 3.5. D1.7 — Meta Business Agent responde en este hilo: sin template
+    #    (y sin quiet hours: no se manda nada). El silencio del cliente ante
+    #    MBA cierra el episodio por el contrato de chats. Un fallo del hop se
+    #    loguea como ERROR y el watchdog igual termina en `skipped` (el
+    #    próximo inbound `standby` reprograma el reloj). Con la flag apagada
+    #    o fuera de la lista cerrada este paso no existe (predicado del SDK).
+    if mba_controls_thread(metadata, session_id):
+        try:
+            outcome = await _close_by_silence(session_id)
+        except Exception as exc:  # noqa: BLE001 — el hop HTTP nunca tumba el watchdog
+            log.error(
+                "watchdog_mba_silence_close_failed",
+                session_id=session_id,
+                episode_id=episode_id,
+                error=str(exc),
+            )
+        else:
+            log.info(
+                "watchdog_mba_silence_close",
+                session_id=session_id,
+                episode_id=episode_id,
+                **{k: outcome.get(k) for k in ("tag", "applied", "reason", "episode_closed", "escalated")},
+            )
+        return WatchdogEligibilityResult(eligible=False, reason="control_owner_mba")
 
     # 4. Quiet hours check (HU-WA24H-001 pre-mortem F4.1) — no disparar en
     #    horario nocturno hora local del cliente (3am Colombia = quality

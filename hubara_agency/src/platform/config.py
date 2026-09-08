@@ -1,8 +1,10 @@
 import os
 import re
 from pathlib import Path
+from typing import Any
 from dotenv import load_dotenv
 
+from src.platform.constants import CONTROL_OWNER_MBA
 from src.platform.meta.graph import graph_url
 
 # Carga variables de entorno, por ejemplo desde un archivo .env si usas local
@@ -105,6 +107,33 @@ WHATSAPP_APP_ID: str = parse_app_id(os.getenv("WHATSAPP_APP_ID"))
 def mba_standby_enabled() -> bool:
     """La flag leída en cada llamada (el plugin mba la consulta por el SDK)."""
     return MBA_STANDBY_ENABLED
+
+
+def mba_controls_thread(metadata: Any, session_id: str | None) -> bool:
+    """¿Meta Business Agent responde en este hilo AHORA? (D1.7, predicado único
+    para toda guarda de envío proactivo y para el cierre por silencio.)
+
+    Fail-safe = comportamiento de hoy: ``False`` con la flag apagada (aunque
+    el vault diga ``mba``), fuera de la lista cerrada, con dueño ``hubara`` o
+    sin evidencia. Evidencia, en orden: ``control_owner`` escrito desde
+    ``messaging_handovers`` (D1.5); si nunca llegó (p.ej. ``WHATSAPP_APP_ID``
+    sin configurar), que el ÚLTIMO inbound haya entrado por el webhook
+    ``standby`` (Meta solo lo manda cuando MBA controla): D1.4 escribe
+    ``last_inbound_at_ms`` y ``mba_standby.last_inbound_at_ms`` con el mismo
+    reloj.
+    """
+    if not MBA_STANDBY_ENABLED or not mba_customer_allowed(session_id) or not isinstance(metadata, dict):
+        return False
+    owner = metadata.get("control_owner")
+    if owner == CONTROL_OWNER_MBA:
+        return True
+    if owner is not None:
+        return False  # hubara (o basura): un dueño explícito manda
+    standby = metadata.get("mba_standby")
+    last_inbound = metadata.get("last_inbound_at_ms")
+    if not isinstance(standby, dict) or not isinstance(last_inbound, int):
+        return False
+    return standby.get("last_inbound_at_ms") == last_inbound
 
 
 def mba_customer_allowed(customer: str | None) -> bool:

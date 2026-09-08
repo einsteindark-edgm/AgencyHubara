@@ -1,8 +1,8 @@
 # Meta Business Agent — Roadmap a producción
 
-> **Estado:** En ejecución · **Actualizado:** 2026-09-08 (D1.6: cliente de Thread Control + política de `release` + `POST /api/mba/sessions/{key}/control/release`) · **Base estratégica:** `META_BUSINESS_AGENT_PLAN.md` (2026-07-02, por qué y cómo convivir con MBA).
+> **Estado:** En ejecución · **Actualizado:** 2026-09-08 (D1.7: sin toques de Hubara en ventana con MBA al frente + cierre por silencio vía el watchdog) · **Base estratégica:** `META_BUSINESS_AGENT_PLAN.md` (2026-07-02, por qué y cómo convivir con MBA).
 > **Este documento es el QUÉ HAY QUE CONSTRUIR**, en orden, con archivos, tests y criterio de terminado por desarrollo. Cuando contradiga al plan estratégico, gana este (está hecho con la doc de Meta releída el 2026-09-02..04 y con el código vivo).
-> PRs mergeados a `main`: #228 (preview), #230 (requests literales), #233 (plugin `mba` + guard de routers públicos + forge), #234 (roadmap). #235 (D1.2a: tools de lectura + hardening del router público). #242 (D1.2b: tools de escritura por cast + `session-actions@v1` en chats + castkit modo service). #245 (D1.3: reconciliación de etiquetas). #250 (D1.4: webhook `standby`, aislado por flag + lista cerrada) + #251 (fix `pricing.type` + lock en delivery status). #252 (D1.5: `messaging_handovers` → `control_owner`). D1.6 (thread control + política de `release`) en PR abierto; siguiente D1.7. Cada D siguiente es un PR chico desde `main`.
+> PRs mergeados a `main`: #228 (preview), #230 (requests literales), #233 (plugin `mba` + guard de routers públicos + forge), #234 (roadmap). #235 (D1.2a: tools de lectura + hardening del router público). #242 (D1.2b: tools de escritura por cast + `session-actions@v1` en chats + castkit modo service). #245 (D1.3: reconciliación de etiquetas). #250 (D1.4: webhook `standby`, aislado por flag + lista cerrada) + #251 (fix `pricing.type` + lock en delivery status). #252 (D1.5: `messaging_handovers` → `control_owner`). #253 (D1.6: thread control + política de `release`). D1.7 (watchdog por señales) en PR abierto; siguiente D1.8 / D1.9. Cada D siguiente es un PR chico desde `main`.
 
 ---
 
@@ -144,10 +144,17 @@ Pendiente / F0: (a) `META_MBA_TOKEN` real en SSM (system user con `whatsapp_busi
 Tests: `tests/plugins/mba/test_release_policy.py` (tabla + precondiciones), `test_thread_control_adapter.py` (respx: URL / headers / body exactos; sin token no llama; 4xx rechazado sin reintento; 5xx / timeout / 429 con backoff; fake), `test_release_thread.py` (vault real: release + registro sin tocar el dueño; no repetir hasta la confirmación de Meta y volver a soltar tras un take nuevo; política no → nada escrito; guardas; phone id de la sesión o del env; error registrado y reintentable; rechazo), `test_api.py` (endpoint, códigos por guarda, validación), `tests/platform/test_mba_rollout_guard.py` (re-exports).
 Depende de: D1.5.
 
-**D1.7 · Watchdog por señales del connector**
-Objetivo: reemplazar el trigger de ghosting al LLM cuando `control_owner = mba`.
-Alcance: el watchdog (`ServiceWindowWatchdogWorkflow` / Window Strategist) lee señales persistidas por D1.2 (búsquedas, slots, orden registrada) y etiqueta INTERESADO / CONFIRMADO_SIN_DATOS por silencio; **no envía toques dentro de ventana** cuando MBA controla (followup de MBA queda apagado por decisión, así no hay doble toque). Fuera de ventana, templates como hoy → aplica §D1.6.
-Tests: workflow-level con time-skipping (patrón `test_sales_workflow_debounce.py`).
+**D1.7 ✅ · Watchdog por señales del connector** (hecho 2026-09-08)
+Objetivo: reemplazar el trigger de ghosting al LLM cuando MBA controla, y que Hubara no toque dentro de ventana.
+Hallazgo del mapa: con MBA al frente NO corre nada de Hubara para esa sesión (el inbound entra por `standby`, nunca al ingest de Sales): ni ghosting, ni watchdog, ni cierre de episodio. Dos mecanismos proactivos podían pisar a MBA: el `ServiceWindowWatchdogWorkflow` (template a T-30 min del cierre de la ventana = un toque DENTRO de la ventana) y el ciclo del Window Strategist → `RemarketingWorkflow` (free-form en ventana, template fuera). Las tools de LECTURA del connector (D1.2a) no persisten señales; las de escritura sí (`order_draft`, `registered_order`, `episodes[-1].order_id`): la reconciliación de D1.3 sobre una propuesta `INTERESADO` es exactamente el "INTERESADO / CONFIRMADO_SIN_DATOS por silencio".
+Hecho:
+- Predicado único `mba_controls_thread(metadata, session_id)` en `platform/config.py` (re-exportado por `src.sdk.runtime`, check + doc): flag `MBA_STANDBY_ENABLED` + lista cerrada + `control_owner == mba`, o — si nunca llegó un `messaging_handovers` (p.ej. `WHATSAPP_APP_ID` sin configurar) — que el último inbound haya entrado por `standby` (`mba_standby.last_inbound_at_ms == last_inbound_at_ms`). Fail-safe: `False` = comportamiento de hoy.
+- Central `decide_reengagement(..., mba_controls=False)`: con MBA al frente y CSW abierta suprime `control_owner_mba` (después de los terminales, antes de la fase A). Fuera de ventana, template como hoy (toma el hilo → política de release D1.6, trigger `remarketing_reply` pendiente de cablear en el RemarketingWorkflow). La aplican el gate `check_reengagement_policy` del `RemarketingWorkflow` y el pre-filtro del snapshot del ciclo (`mba_controls_checker` inyectado: el lead no viaja a la caja).
+- `check_watchdog_eligibility_activity`: nuevo paso 3.5 tras ruta/episodio/ventana → `eligible=False, reason="control_owner_mba"` (sin template, sin quiet hours) y **cierre por silencio**: `POST /api/chats/session-actions/{session}/tag` con `INTERESADO` + motivo (identidad de servicio, `HUBARA_API_BASE_URL`, `castkit.forward`) desde el nuevo `remarketing/activities/mba_silence_close.py`. Por qué HTTP: el worker de remarketing no puede importar la reconciliación ni el ciclo de episodios de Sales (contrato `agents-independent`); el contrato ya serializa por sesión, emite `EpisodeClosedEvent` (cancela este mismo watchdog + eval) y anota CAPI. Un fallo del hop se loguea como ERROR y el watchdog termina en `skipped` (el próximo inbound `standby` reprograma). Sin cambio de forma en el workflow (sin `patched`).
+- `IngestStandby(emit_window_events=…)`: cada inbound `standby` nuevo (no reentrega, no eco, no humano en el hilo) (re)programa el watchdog con el MISMO emisor del ingest regular (`ServiceWindowOpenedEvent` / `CustomerRepliedEvent` vía dispatcher; la composición lo cablea); el módulo sigue sin importar Temporal; un fallo del emisor no rompe el ingest.
+- Sin disparo por ghost window de 5 min: con MBA al frente el "silencio" se mide a T-30 min del cierre de la ventana de 24 h (el mismo reloj del watchdog); el followup de MBA queda apagado por decisión (no hay doble toque).
+Pendiente / F0: (a) `HUBARA_API_BASE_URL` + `HUBARA_SERVICE_TOKEN` + `MBA_*` deben llegar al worker de remarketing y al ciclo de reengagement (la prod compose rinde TODO el `.env` a todos los servicios; en local exportarlas); (b) cablear el trigger `remarketing_reply` de la política de release en el `RemarketingWorkflow` (workflow vivo → `patched`; PR aparte); (c) alerta por hilos en `hubara` sin actividad humana > N horas (queda para el inbox / D1.10).
+Tests: `tests/platform/test_mba_rollout_guard.py` (tabla del predicado + fail-safe + re-export), `tests/platform/test_reengagement_mba_guard.py` (central en/fuera de ventana, terminales ganan, gate del workflow con vault y flag OFF), `tests/plugins/reengagement/test_prefilter.py` (lead con MBA en ventana no viaja; fuera sí; flag OFF nada cambia), `tests/plugins/chats/test_watchdog_eligibility_activity.py` (sin template + cierre por silencio; flag OFF = hoy; dueño hubara intacto; ruta/episodio antes; fallo del hop no levanta), `test_mba_silence_close.py` (respx: path, identidad de servicio, body, error del provider), `test_ingest_standby.py` (emite con metadata fresco; reentrega/eco/humano no; emisor roto no rompe).
 Depende de: D1.3, D1.5.
 
 **D1.8 · CAPI por ciclo de vida de la orden**
@@ -258,7 +265,7 @@ D0 ✅ ─┐
 D1.8 ─┤ (independiente, hacer temprano)
       ├─ D1.1 ✅ → D1.2a ✅ → D1.2b ✅ → D1.3 ✅ ─┐
       │        └─ D1.4 ✅ → D1.5 ✅ → D1.6 ✅ → D1.9
-      │                       └─ D1.7
+      │                       └─ D1.7 ✅
       ├─ D2.1 → D2.2 → D2.3
       │        └─ D2.4
       │  D1.2 → D2.5
