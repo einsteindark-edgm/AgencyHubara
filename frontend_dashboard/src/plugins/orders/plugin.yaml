@@ -105,6 +105,9 @@ agent:
               session_id: "$.session_id"
               order_id: "$.order_id"
               to_stage: "$.to_stage"
+              # Link de la guía (opcional, lo adjunta el operador en el modal
+              # "en camino"). El ETA lo pone al final del mensaje de WhatsApp.
+              tracking_url: "$.tracking_url"
         - id: order_delivered_notifies_eta
           on_event: OrderStageChangedEvent
           when:
