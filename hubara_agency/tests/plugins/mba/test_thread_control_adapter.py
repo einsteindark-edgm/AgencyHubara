@@ -93,11 +93,11 @@ async def test_a_4xx_is_a_rejection_with_metas_message_and_is_not_retried() -> N
 
 
 @respx.mock
-async def test_5xx_and_timeouts_are_retried_with_backoff_then_reported_as_unavailable() -> None:
+async def test_5xx_is_retried_with_backoff_then_reported_as_unavailable() -> None:
     sleeper = _Sleeper()
     route = respx.post(URL).mock(side_effect=[
         httpx.Response(500, json={"error": {"message": "boom"}}),
-        httpx.ReadTimeout("slow"),
+        httpx.Response(502, text="<html>bad gateway</html>"),
         httpx.Response(200, json={"messaging_product": "whatsapp"}),
     ])
     res = await _client(sleeper=sleeper).release(phone_number_id=PHONE, to=CUSTOMER)
@@ -110,6 +110,44 @@ async def test_5xx_and_timeouts_are_retried_with_backoff_then_reported_as_unavai
         await _client(sleeper=sleeper).release(phone_number_id=PHONE, to=CUSTOMER)
     assert exc.value.kind == "unavailable" and exc.value.status == 503 and exc.value.attempts == 3
     assert sleeper.delays == [0.5, 1.0]
+
+
+@respx.mock
+async def test_a_timeout_is_ambiguous_and_is_not_retried_because_release_is_not_idempotent() -> None:
+    """L-1 (CAPI): Meta pudo haber procesado el release; un segundo POST daría
+    4xx y taparía el éxito del primero."""
+    sleeper = _Sleeper()
+    route = respx.post(URL).mock(side_effect=httpx.ReadTimeout("slow"))
+    with pytest.raises(ThreadControlError) as exc:
+        await _client(sleeper=sleeper).release(phone_number_id=PHONE, to=CUSTOMER)
+    assert exc.value.kind == "ambiguous" and exc.value.status is None and exc.value.attempts == 1
+    assert "ReadTimeout" in exc.value.detail
+    assert route.call_count == 1 and sleeper.delays == []
+
+
+@respx.mock
+async def test_metadata_is_truncated_to_metas_limit_and_the_token_never_leaks_into_errors() -> None:
+    route = respx.post(URL).mock(return_value=httpx.Response(400, json={"error": {"message": "nope"}}))
+    with pytest.raises(ThreadControlError) as exc:
+        await _client(token="SECRET-TOKEN").release(phone_number_id=PHONE, to=CUSTOMER, metadata="x" * 2500)
+    assert len(json.loads(route.calls.last.request.content)["metadata"]) == 2000
+    assert "SECRET-TOKEN" not in str(exc.value) and "SECRET-TOKEN" not in repr(exc.value.__dict__)
+
+
+def test_only_the_shared_base_module_writes_the_mba_api_host() -> None:
+    """Ratchet: el host de la Cloud API de MBA vive en un solo lugar (como el
+    del Graph API en platform/meta/graph.py)."""
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[3] / "src"
+    # domain/config.py: el preview (D0) arma los requests literales que se le
+    # mostrarían al operador; drenar cuando D2.1 los construya con meta_api.
+    allowed = {"plugins/mba/adapters/meta_api.py", "plugins/mba/domain/config.py"}
+    offenders = sorted(
+        p.relative_to(src).as_posix() for p in src.rglob("*.py")
+        if "api.facebook.com" in p.read_text(encoding="utf-8") and p.relative_to(src).as_posix() not in allowed
+    )
+    assert offenders == [], offenders
 
 
 @respx.mock

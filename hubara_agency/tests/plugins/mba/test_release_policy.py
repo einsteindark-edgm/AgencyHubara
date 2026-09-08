@@ -51,10 +51,19 @@ def test_an_unknown_owner_blocks_automatic_releases_but_not_the_operator(trigger
     assert decide_release(ReleaseTrigger.MANUAL, ReleaseFacts(control_owner=None)) == ReleaseDecision(True, "manual")
 
 
-@pytest.mark.parametrize("trigger", list(ReleaseTrigger))
-def test_a_release_already_requested_and_not_yet_confirmed_by_meta_is_not_repeated(trigger: ReleaseTrigger) -> None:
+@pytest.mark.parametrize("trigger", [t for t in ReleaseTrigger if t is not ReleaseTrigger.MANUAL])
+def test_a_release_already_requested_and_not_yet_confirmed_by_meta_is_not_repeated_automatically(trigger: ReleaseTrigger) -> None:
     facts = ReleaseFacts(control_owner="hubara", release_pending=True, agent_event_emitted=True)
     assert decide_release(trigger, facts) == ReleaseDecision(False, "release_pending")
+
+
+def test_the_operator_can_always_release_unless_mba_already_has_the_thread() -> None:
+    """La salida cuando Meta no confirmó (webhook caído, hilo que no era
+    nuestro): el manual no queda bloqueado por `release_pending` ni por
+    `owner_unknown`; solo por `already_mba`."""
+    assert decide_release(ReleaseTrigger.MANUAL, ReleaseFacts("hubara", release_pending=True)) == ReleaseDecision(True, "manual")
+    assert decide_release(ReleaseTrigger.MANUAL, ReleaseFacts(None, release_pending=True)) == ReleaseDecision(True, "manual")
+    assert decide_release(ReleaseTrigger.MANUAL, ReleaseFacts("mba", release_pending=True)) == ReleaseDecision(False, "already_mba")
 
 
 def test_triggers_are_stable_strings_for_the_http_contract() -> None:

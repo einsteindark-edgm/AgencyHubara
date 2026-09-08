@@ -13,9 +13,11 @@ Tabla del roadmap §D1.6:
 
 Precondiciones, en orden: con ``control_owner == mba`` no hay nada que soltar
 (``already_mba``); un release ya pedido y no confirmado por Meta no se repite
-(``release_pending``); sin dueño conocido (Meta nunca avisó) los releases
-automáticos NO se hacen (``owner_unknown``: soltar a ciegas es un 4xx de Meta),
-solo el manual del operador.
+automáticamente (``release_pending``; el use case lo vence por TTL); sin dueño
+conocido (Meta nunca avisó) los releases automáticos NO se hacen
+(``owner_unknown``: soltar a ciegas es un 4xx de Meta). El manual del
+operador pasa por encima de ``release_pending`` y ``owner_unknown`` (es la
+salida cuando Meta no confirmó): solo lo frena ``already_mba``.
 """
 from __future__ import annotations
 
@@ -53,10 +55,11 @@ class ReleaseDecision:
 def decide_release(trigger: ReleaseTrigger, facts: ReleaseFacts) -> ReleaseDecision:
     if facts.control_owner == _MBA:
         return ReleaseDecision(False, "already_mba")
-    if facts.release_pending:
-        return ReleaseDecision(False, "release_pending")
-    if facts.control_owner is None and trigger is not ReleaseTrigger.MANUAL:
-        return ReleaseDecision(False, "owner_unknown")
+    if trigger is not ReleaseTrigger.MANUAL:
+        if facts.release_pending:
+            return ReleaseDecision(False, "release_pending")
+        if facts.control_owner is None:
+            return ReleaseDecision(False, "owner_unknown")
     if trigger is ReleaseTrigger.REMARKETING_REPLY and facts.order_registered:
         return ReleaseDecision(False, "order_in_progress")
     if trigger is ReleaseTrigger.RECEIPT_VERIFIED and not facts.agent_event_emitted:

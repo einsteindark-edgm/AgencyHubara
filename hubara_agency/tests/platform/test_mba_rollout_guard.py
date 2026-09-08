@@ -67,18 +67,25 @@ def test_meta_app_id_parsing_only_accepts_digits_and_treats_placeholder_as_unset
     assert parse_app_id(raw) == expected
 
 
-def test_config_reads_our_whatsapp_app_id_from_its_own_variable_not_metas_oauth_one() -> None:
+def test_config_reads_our_whatsapp_app_id_from_its_own_variable_not_metas_oauth_one(monkeypatch) -> None:
     """M-2 de la revisión D1.5: META_APP_ID (SSM) nació para OAuth/ads y puede
-    ser OTRA app. Sin `importlib.reload` (rompería la identidad de los
-    re-exports del SDK para el resto de la sesión de tests)."""
-    import inspect
+    ser OTRA app. Se carga config.py como módulo APARTE con el env seteado
+    (sin `importlib.reload`, que rompería la identidad de los re-exports)."""
+    import importlib.util
 
     from src.platform import config
 
     assert isinstance(config.WHATSAPP_APP_ID, str)
-    source = inspect.getsource(config)
-    assert 'parse_app_id(os.getenv("WHATSAPP_APP_ID"))' in source
-    assert 'parse_app_id(os.getenv("META_APP_ID"))' not in source
+    monkeypatch.setenv("META_APP_ID", "111")
+    monkeypatch.setenv("WHATSAPP_APP_ID", "222")
+    spec = importlib.util.spec_from_file_location("_config_probe", config.__file__)
+    probe = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(probe)
+    assert probe.WHATSAPP_APP_ID == "222"
+    monkeypatch.delenv("WHATSAPP_APP_ID")
+    probe = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(probe)
+    assert probe.WHATSAPP_APP_ID == ""  # META_APP_ID no se usa como fallback
 
 
 def test_sdk_runtime_reexports_the_control_owner_constants() -> None:

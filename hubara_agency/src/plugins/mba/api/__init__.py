@@ -70,6 +70,7 @@ async def get_session_control(session_key: str) -> dict[str, Any]:
         "control_owner_since_ms": data.get("control_owner_since_ms"),
         "control_owner_updated_at_ms": data.get("control_owner_updated_at_ms"),
         "control_owner_app_id": data.get("control_owner_app_id"),
+        "thread_control": data.get("thread_control") if isinstance(data.get("thread_control"), dict) else None,
         "history": history[-CONTROL_HISTORY_LIMIT:],
     }
 

@@ -2,7 +2,7 @@
 
 Contrato (OpenAPI publicado por Meta, v1.0.0, 2026-09-04)::
 
-    POST https://api.facebook.com/business/whatsapp/phone_numbers/{phone_number_id}/thread_control
+    POST {MBA_API_BASE_URL}/business/whatsapp/phone_numbers/{phone_number_id}/thread_control
     X-API-Version: 1.0.0  ·  Authorization: Bearer <META_MBA_TOKEN>
     {"messaging_product": "whatsapp", "action": "release"|"take"|"pass",
      "to": "<teléfono o WA ID del cliente>", "metadata": "<≤2000 chars, viaja
@@ -14,6 +14,8 @@ TENER el control); ``take`` está restringido al escalation partner
 configurado; ``pass`` (``control_pass.target_role=ai_agent``) equivale a
 release. Hubara usa ``release``; ``take`` queda expuesto por completitud.
 Nota: este endpoint solo enumera ``1.0.0`` (los de configuración usan 2.0.0).
+``metadata`` se trunca a 2000 chars (tope de Meta); el use case ya lo acota
+con su prefijo incluido.
 """
 from __future__ import annotations
 
@@ -92,6 +94,9 @@ class MetaThreadControl:
             timeout_s=self._timeout_s,
             sleep=self._sleep,
             error_cls=ThreadControlError,
+            # release/take NO son idempotentes: un timeout es "quizá hecho"
+            # (``ambiguous``), no se reintenta.
+            retry_on_transport_error=False,
         )
         return ThreadControlResult(action=action, to=to)
 

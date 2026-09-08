@@ -10,8 +10,17 @@ Errores en tres clases cerradas, para que el use case decida sin mirar HTTP:
 * ``not_configured`` — falta el token; nada se llamó.
 * ``rejected`` — 4xx (salvo 429): Meta no acepta la operación (p.ej. soltar
   un hilo que no tenemos). No se reintenta; ``detail`` trae el mensaje.
-* ``unavailable`` — 5xx / 429 / timeout / red tras ``MAX_ATTEMPTS`` con
-  backoff (360dialog: "cualquier endpoint puede devolver 4xx/500").
+* ``unavailable`` — 5xx / 429 tras ``MAX_ATTEMPTS`` con backoff (360dialog:
+  "cualquier endpoint puede devolver 4xx/500").
+* ``ambiguous`` — timeout / error de red en un POST NO idempotente
+  (``retry_on_transport_error=False``): Meta pudo haber procesado el pedido
+  (lección L-1 de CAPI: un timeout no es "no pasó"). No se reintenta — un
+  segundo POST daría 4xx y taparía el éxito del primero; el caller lo trata
+  como "posiblemente hecho" hasta que Meta confirme.
+
+Latencia peor caso: ``MAX_ATTEMPTS × timeout + backoff`` (≈31,5 s con los
+defaults). Aceptable en el plano de gestión; al correr dentro de una
+activity de Temporal (D1.7 / D1.9) necesita ``@with_heartbeat`` (R-HEARTBEAT).
 """
 from __future__ import annotations
 
@@ -39,7 +48,7 @@ _BACKOFF_S = (0.5, 1.0)
 
 
 class MbaApiError(Exception):
-    """``kind`` ∈ {not_configured, rejected, unavailable}."""
+    """``kind`` ∈ {not_configured, rejected, unavailable, ambiguous}."""
 
     def __init__(self, kind: str, *, status: int | None = None, detail: str = "", attempts: int = 1) -> None:
         super().__init__(f"{kind}: {status or ''} {detail}".strip())
@@ -77,6 +86,7 @@ async def post_json(
     timeout_s: float = DEFAULT_TIMEOUT_S,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     error_cls: type[MbaApiError] = MbaApiError,
+    retry_on_transport_error: bool = True,
 ) -> dict[str, Any]:
     if not token or is_placeholder(token):
         raise error_cls("not_configured", detail=f"{TOKEN_ENV} no configurado")
@@ -95,6 +105,8 @@ async def post_json(
                 resp = await client.post(url, json=body, headers=headers)
         except httpx.HTTPError as exc:
             last_status, last_detail = None, f"{type(exc).__name__}: {exc}"
+            if not retry_on_transport_error:
+                raise error_cls("ambiguous", detail=last_detail, attempts=attempt)
         else:
             if resp.status_code < 400:
                 try:

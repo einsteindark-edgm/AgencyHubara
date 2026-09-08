@@ -258,13 +258,15 @@ def test_session_control_is_served_from_the_session_metadata(monkeypatch: pytest
     store.write(key, {"tag": "INTERESADO"})
     assert c.get(f"/api/mba/sessions/{key}/control").json() == {
         "session_key": key, "control_owner": None, "control_owner_since_ms": None,
-        "control_owner_updated_at_ms": None, "control_owner_app_id": None, "history": [],
+        "control_owner_updated_at_ms": None, "control_owner_app_id": None, "thread_control": None, "history": [],
     }
     history = [{"owner": "hubara", "at_ms": i} for i in range(30)]
     store.write(key, {"control_owner": "mba", "control_owner_since_ms": 1, "control_owner_updated_at_ms": 2,
-                      "control_owner_app_id": "APP_MBA", "control_history": history})
+                      "control_owner_app_id": "APP_MBA", "control_history": history,
+                      "thread_control": {"last_action": "release", "last_ok": True}})
     body = c.get(f"/api/mba/sessions/{key}/control").json()
     assert (body["control_owner"], body["control_owner_since_ms"], body["control_owner_app_id"]) == ("mba", 1, "APP_MBA")
+    assert body["thread_control"] == {"last_action": "release", "last_ok": True}  # el operador ve el último release/error
     assert body["history"] == history[-mba_api.CONTROL_HISTORY_LIMIT:]
 
 
@@ -306,7 +308,7 @@ def test_release_endpoint_delegates_to_the_use_case_with_the_trigger_and_facts()
                json={"trigger": "handoff_resolved", "metadata": "caso cerrado", "order_registered": True})
     assert r.status_code == 200
     assert r.json() == {"session_key": "wa_573001234567", "released": True, "reason": "handoff_resolved",
-                        "action_at_ms": 1, "error": None}
+                        "action_at_ms": 1, "error": None, "recorded": True}
     assert stub.calls == [("wa_573001234567", ReleaseTrigger.HANDOFF_RESOLVED, True, False, "caso cerrado")]
     # default: manual, sin hechos
     assert c.post("/api/mba/sessions/wa_573001234567/control/release").status_code == 200
