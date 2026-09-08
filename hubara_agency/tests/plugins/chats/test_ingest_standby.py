@@ -285,3 +285,38 @@ async def test_a_failing_emitter_never_breaks_the_ingest(vault: Path) -> None:
     )
     res = await uc.execute(parse_whatsapp_standby(P.inbound("hola")))
     assert res.messages_persisted == 1 and _lines(vault)[0]["content"] == "hola"
+
+
+async def test_the_composed_standby_ear_reaches_the_dispatcher_with_a_real_client_factory(vault: Path, monkeypatch) -> None:
+    """El emisor del ingest regular es un no-op sin fábrica de Temporal: la
+    composición del oído standby DEBE pasarle una. Se verifica la cadena real
+    hasta `dispatch_envelope_with_client` con un cliente fake."""
+    import asyncio
+
+    from src.plugins.chats.agent.sales import composition
+    from src.plugins.chats.agent.sales.use_cases import ingest_inbound_message as iim
+
+    dispatched: list = []
+
+    async def _fake_dispatch(envelope, client):
+        dispatched.append(client)
+
+    fake_client = object()
+
+    async def _fake_client_factory():
+        return fake_client
+
+    monkeypatch.setattr(iim, "dispatch_envelope_with_client", _fake_dispatch)
+    monkeypatch.setattr(composition, "get_temporal_client", _fake_client_factory)
+    monkeypatch.setattr(composition, "_STANDBY_USE_CASE", None)
+    monkeypatch.setattr(composition, "WORKSPACE_VAULT_DIR", vault)
+    uc = composition.build_ingest_standby_use_case()
+    assert uc._emit_window_events is not None
+    metadata = {
+        "active_route": "ventas", "service_window_expires_at_ms": NOW_MS + 24 * 3600 * 1000,
+        "episodes": [{"episode_id": "ep_1", "closed_at_ms": None}],
+    }
+    await uc._emit_window_events(SESSION, metadata)
+    for _ in range(5):  # el emisor es fire-and-forget
+        await asyncio.sleep(0)
+    assert dispatched == [fake_client]

@@ -966,102 +966,9 @@ class IngestInboundMessage:
         session_id: str,
         metadata: dict[str, Any],
     ) -> None:
-        """HU-WA24H-001 Sprint 2: emite los eventos del watchdog vía dispatcher.
-
-        Dos eventos opcionales (mutuamente NO-exclusivos):
-
-        1. **`ServiceWindowOpenedEvent`** — siempre que haya episodio activo
-           y `active_route` esté en {ventas, remarketing} y se pueda
-           computar `watchdog_fire_at(metadata)`. El dispatcher manifest lo
-           rutea a `start_workflow_with_replace` con workflow_id
-           `watchdog-{session_id}-{episode_id}`.
-
-        2. **`CustomerRepliedEvent`** — solo si `metadata.watchdog.workflow_id`
-           está poblado (había watchdog corriendo del turno anterior). El
-           dispatcher lo rutea a `via=signal, signal_name=cancel_watchdog`
-           sobre el mismo workflow_id.
-
-        Fire-and-forget bajo `_spawn_safe`:
-          * Errores del dispatcher NO bloquean el routing del inbound (el
-            cliente espera respuesta — no podemos demorar por un Temporal
-            transient).
-          * Si `temporal_client_factory` es None (tests, composition
-            parcial), noopea silenciosamente.
-          * Si no hay episodio activo ni ruta de bot, noopea — no hay
-            sentido en programar watchdog sobre conversaciones humano.
-
-        El método NO toca metadata.watchdog: eso lo hace el workflow del
-        watchdog vía `persist_watchdog_outcome_activity`. Acá solo
-        emitimos los eventos.
-        """
-        if self._temporal_client_factory is None:
-            return
-
-        active_route = metadata.get("active_route", ROUTE_VENTAS)
-        # ROUTE_HUMANO: no programar watchdog (humano tomó el caso). Igual
-        # que LoadOrStartSalesSession, el bot debe respetar la decisión.
-        if active_route not in (ROUTE_VENTAS, ROUTE_REMARKETING):
-            return
-
-        # Episodio activo: el watchdog es per-episodio. Sin episodio activo
-        # (caso defensivo — ensure_active_episode debería haber corrido
-        # antes), nada que programar.
-        episodes = metadata.get("episodes") or []
-        if not episodes:
-            return
-        active_ep = episodes[-1]
-        if active_ep.get("closed_at_ms") is not None:
-            return
-        episode_id = active_ep.get("episode_id")
-        if not isinstance(episode_id, str):
-            return
-
-        fire_at_ms = watchdog_fire_at(metadata)
-        if fire_at_ms is None:
-            return
-
-        existing_watchdog = metadata.get("watchdog") or {}
-        had_running_watchdog = bool(existing_watchdog.get("workflow_id"))
-
-        async def _do_emit() -> None:
-            client = await self._temporal_client_factory()
-
-            # 1. CustomerRepliedEvent FIRST (cancel any prior watchdog) —
-            #    debe llegar antes que el start_workflow_with_replace,
-            #    pero como replace mata y reinicia, el orden no importa
-            #    en práctica. Mantener el orden por claridad de log.
-            if had_running_watchdog:
-                await dispatch_envelope_with_client(
-                    envelope_for(
-                        CustomerRepliedEvent(
-                            session_id=session_id,
-                            episode_id=episode_id,
-                        ),
-                        source_plugin="chats",
-                        source_worker="sales",
-                    ),
-                    client,
-                )
-
-            # 2. ServiceWindowOpenedEvent → arranca (o reemplaza) el watchdog.
-            await dispatch_envelope_with_client(
-                envelope_for(
-                    ServiceWindowOpenedEvent(
-                        session_id=session_id,
-                        episode_id=episode_id,
-                        fire_at_ms=fire_at_ms,
-                        suggested_template_kind="",
-                    ),
-                    source_plugin="chats",
-                    source_worker="sales",
-                ),
-                client,
-            )
-
-        _spawn_safe(
-            _do_emit(),
-            label="watchdog.emit_events",
-            session_id=session_id,
+        """Delegado en ``emit_watchdog_events`` (módulo) — ver ahí."""
+        await emit_watchdog_events(
+            session_id, metadata, temporal_client_factory=self._temporal_client_factory
         )
 
     async def _transcribe_and_reenter(self, parsed: WhatsAppMessage) -> None:
@@ -1774,3 +1681,110 @@ def _spawn_safe(coro, *, label: str, session_id: str | None) -> None:
             )
 
     asyncio.create_task(_run())
+
+
+async def emit_watchdog_events(
+    session_id: str,
+    metadata: dict[str, Any],
+    *,
+    temporal_client_factory: TemporalClientFactory | None,
+) -> None:
+    """HU-WA24H-001 Sprint 2: emite los eventos del watchdog vía dispatcher.
+    Función de módulo (D1.7) para que otros ingests (``IngestStandby``)
+    reusen el MISMO emisor con su propia fábrica de Temporal.
+
+    Dos eventos opcionales (mutuamente NO-exclusivos):
+
+    1. **`ServiceWindowOpenedEvent`** — siempre que haya episodio activo
+       y `active_route` esté en {ventas, remarketing} y se pueda
+       computar `watchdog_fire_at(metadata)`. El dispatcher manifest lo
+       rutea a `start_workflow_with_replace` con workflow_id
+       `watchdog-{session_id}-{episode_id}`.
+
+    2. **`CustomerRepliedEvent`** — solo si `metadata.watchdog.workflow_id`
+       está poblado (había watchdog corriendo del turno anterior). El
+       dispatcher lo rutea a `via=signal, signal_name=cancel_watchdog`
+       sobre el mismo workflow_id.
+
+    Fire-and-forget bajo `_spawn_safe`:
+      * Errores del dispatcher NO bloquean el routing del inbound (el
+        cliente espera respuesta — no podemos demorar por un Temporal
+        transient).
+      * Si `temporal_client_factory` es None (tests, composition
+        parcial), noopea silenciosamente.
+      * Si no hay episodio activo ni ruta de bot, noopea — no hay
+        sentido en programar watchdog sobre conversaciones humano.
+
+    El método NO toca metadata.watchdog: eso lo hace el workflow del
+    watchdog vía `persist_watchdog_outcome_activity`. Acá solo
+    emitimos los eventos.
+    """
+    if temporal_client_factory is None:
+        return
+
+    active_route = metadata.get("active_route", ROUTE_VENTAS)
+    # ROUTE_HUMANO: no programar watchdog (humano tomó el caso). Igual
+    # que LoadOrStartSalesSession, el bot debe respetar la decisión.
+    if active_route not in (ROUTE_VENTAS, ROUTE_REMARKETING):
+        return
+
+    # Episodio activo: el watchdog es per-episodio. Sin episodio activo
+    # (caso defensivo — ensure_active_episode debería haber corrido
+    # antes), nada que programar.
+    episodes = metadata.get("episodes") or []
+    if not episodes:
+        return
+    active_ep = episodes[-1]
+    if active_ep.get("closed_at_ms") is not None:
+        return
+    episode_id = active_ep.get("episode_id")
+    if not isinstance(episode_id, str):
+        return
+
+    fire_at_ms = watchdog_fire_at(metadata)
+    if fire_at_ms is None:
+        return
+
+    existing_watchdog = metadata.get("watchdog") or {}
+    had_running_watchdog = bool(existing_watchdog.get("workflow_id"))
+
+    async def _do_emit() -> None:
+        client = await temporal_client_factory()
+
+        # 1. CustomerRepliedEvent FIRST (cancel any prior watchdog) —
+        #    debe llegar antes que el start_workflow_with_replace,
+        #    pero como replace mata y reinicia, el orden no importa
+        #    en práctica. Mantener el orden por claridad de log.
+        if had_running_watchdog:
+            await dispatch_envelope_with_client(
+                envelope_for(
+                    CustomerRepliedEvent(
+                        session_id=session_id,
+                        episode_id=episode_id,
+                    ),
+                    source_plugin="chats",
+                    source_worker="sales",
+                ),
+                client,
+            )
+
+        # 2. ServiceWindowOpenedEvent → arranca (o reemplaza) el watchdog.
+        await dispatch_envelope_with_client(
+            envelope_for(
+                ServiceWindowOpenedEvent(
+                    session_id=session_id,
+                    episode_id=episode_id,
+                    fire_at_ms=fire_at_ms,
+                    suggested_template_kind="",
+                ),
+                source_plugin="chats",
+                source_worker="sales",
+            ),
+            client,
+        )
+
+    _spawn_safe(
+        _do_emit(),
+        label="watchdog.emit_events",
+        session_id=session_id,
+    )

@@ -386,7 +386,9 @@ def decide_reengagement(
     # como hoy: toma el hilo y la política de release (D1.6) lo devuelve.
     # `mba_controls` lo calcula el caller con `mba_controls_thread` (flag +
     # lista cerrada + dueño); default False = comportamiento de siempre.
-    if mba_controls and in_csw:
+    # Excepción (como en 1.5 y 1.6): tag REMARKETING explícito = decisión
+    # humana de re-contactar YA, aunque eso le quite el hilo a MBA.
+    if mba_controls and in_csw and lead.tag != TAG_REMARKETING:
         return _suppress(
             "control_owner_mba",
             "Meta Business Agent responde en ventana — sin toques de Hubara",

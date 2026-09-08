@@ -1,4 +1,4 @@
-"""D1.7 — cierre por silencio cuando Meta Business Agent responde en el hilo.
+"""D1.7 — etiquetado por silencio cuando Meta Business Agent responde en el hilo.
 
 Con MBA al frente no corre el workflow Sales, así que nadie etiqueta el
 episodio cuando el cliente se calla (con Hubara lo hace el trigger de
@@ -6,9 +6,12 @@ ghosting al LLM). El reloj es el mismo watchdog de la ventana de servicio
 (lo programa cada inbound ``standby``); al disparar, en vez de un template,
 propone ``INTERESADO`` al contrato ``session-actions@v1`` de chats
 (``POST /tag``): la reconciliación de D1.3 lo vuelve ``CONFIRMADO_SIN_DATOS``
-+ escalación si el episodio activo tiene datos de envío sin orden, lo
-descarta si hay orden registrada, y lo aplica tal cual si solo hubo
-producto/interés.
++ escalación (cierra el episodio) si el episodio activo tiene datos de envío
+sin orden, lo descarta si hay orden registrada, y lo aplica tal cual si solo
+hubo producto/interés. Igual que el ghosting de Sales: ``INTERESADO`` NO es
+un tag de cierre — el episodio queda abierto (lo cierra el siguiente inbound
+por timeout de 14 días o un tag de cierre) y el primer apply encola CAPI
+``QualifiedLead``. Idempotente: un segundo disparo es ``already_applied``.
 
 Por qué HTTP y no un import: el worker de remarketing NO puede importar la
 reconciliación ni el ciclo de episodios de Sales (contrato
@@ -30,7 +33,11 @@ from src.sdk import castkit
 __all__ = ["SILENCE_MOTIVO", "api_base_url", "close_by_silence"]
 
 SILENCE_MOTIVO = "silencio del cliente con Meta Business Agent al frente (watchdog de la ventana de servicio)"
-_TIMEOUT_S = 30.0
+#: Por debajo del `start_to_close_timeout` (15 s) de la activity de eligibility
+#: del watchdog: si el API tarda más, la activity vencería con el POST aún
+#: en vuelo y Temporal la reintentaría (el contrato /tag es idempotente, pero
+#: el workflow fallaría sin persistir outcome). Sin heartbeat (R-HEARTBEAT).
+_TIMEOUT_S = 8.0
 
 
 def api_base_url() -> str:

@@ -242,9 +242,10 @@ async def check_watchdog_eligibility_activity(
       * `"control_owner_mba"` — D1.7: Meta Business Agent responde en este
         hilo (flag + lista cerrada + dueño): NO se manda template en ventana
         (le quitaría el hilo a MBA y sería doble toque); en su lugar el
-        watchdog es el reloj del cierre por silencio: propone INTERESADO al
-        contrato `/tag` de chats (D1.3 reconcilia a CONFIRMADO_SIN_DATOS +
-        escalación si hay datos de envío sin orden, o descarta si hay orden).
+        watchdog es el reloj del etiquetado por silencio: propone INTERESADO
+        al contrato `/tag` de chats (D1.3 reconcilia a CONFIRMADO_SIN_DATOS +
+        escalación — cierra — si hay datos de envío sin orden, o descarta si
+        hay orden; INTERESADO solo deja el episodio abierto y etiquetado).
 
     On `eligible=True`, the result includes the resolved template name and
     pre-filled variables — the workflow passes them directly to the send
@@ -321,18 +322,21 @@ async def check_watchdog_eligibility_activity(
 
     # 3.5. D1.7 — Meta Business Agent responde en este hilo: sin template
     #    (y sin quiet hours: no se manda nada). El silencio del cliente ante
-    #    MBA cierra el episodio por el contrato de chats. Un fallo del hop se
-    #    loguea como ERROR y el watchdog igual termina en `skipped` (el
-    #    próximo inbound `standby` reprograma el reloj). Con la flag apagada
-    #    o fuera de la lista cerrada este paso no existe (predicado del SDK).
+    #    MBA etiqueta el episodio por el contrato de chats (idempotente). Un
+    #    fallo del hop se loguea (409 `already_human` = carrera esperada →
+    #    WARNING; el resto ERROR) y el watchdog igual termina en `skipped`
+    #    (el próximo inbound `standby` reprograma el reloj). Con la flag
+    #    apagada o fuera de la lista cerrada este paso no existe.
     if mba_controls_thread(metadata, session_id):
         try:
             outcome = await _close_by_silence(session_id)
         except Exception as exc:  # noqa: BLE001 — el hop HTTP nunca tumba el watchdog
-            log.error(
+            status = getattr(exc, "status_code", None)
+            (log.warning if status == 409 else log.error)(
                 "watchdog_mba_silence_close_failed",
                 session_id=session_id,
                 episode_id=episode_id,
+                status=status,
                 error=str(exc),
             )
         else:
@@ -479,10 +483,10 @@ async def persist_watchdog_outcome_activity(
 
     def _mutate(data: dict[str, Any]) -> dict[str, Any]:
         # Read-modify-write bajo el flock del store: metadata.json lo escriben
-        # en paralelo el ingest, las connector tools de MBA y el contrato
-        # /tag. Un `write` plano con una lectura vieja pisaría p.ej.
-        # `active_route=humano` de una escalación. Acá solo se toca
-        # `metadata["watchdog"]`.
+        # en paralelo el ingest, las connector tools de MBA y (D1.7) el
+        # contrato /tag que este mismo watchdog acaba de invocar. Un `write`
+        # plano con una lectura vieja pisaría p.ej. `active_route=humano` de
+        # una escalación. Acá solo se toca `metadata["watchdog"]`.
         block = dict(data.get("watchdog") or {})
         block.update(existing)
         data["watchdog"] = block

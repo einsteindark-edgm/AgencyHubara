@@ -53,6 +53,14 @@ def test_out_of_window_templates_go_as_today_even_with_mba_controlling() -> None
     assert with_mba == without and with_mba.suppress_reason != "control_owner_mba"
 
 
+def test_an_explicit_remarketing_tag_from_the_operator_still_touches_even_with_mba_controlling() -> None:
+    """Misma excepción que `already_purchased` y `customer_active`: REMARKETING
+    es una decisión humana de re-contactar ya (aunque le quite el hilo a MBA)."""
+    md = _md(csw_open=True) | {"tag": "REMARKETING"}
+    decision = decide_reengagement(NOW, md, lead_state_from_metadata(md), _rate_card(), mba_controls=True)
+    assert decision.suppress_reason != "control_owner_mba"
+
+
 def test_terminal_states_still_win_over_the_mba_rule() -> None:
     md = _md(csw_open=True) | {"tag": "HUMANO"}
     decision = decide_reengagement(NOW, md, lead_state_from_metadata(md), _rate_card(), mba_controls=True)

@@ -268,3 +268,28 @@ async def test_failed_send_persists_outcome_and_raises(
     assert len(log.send_calls) >= 1  # may retry up to 3x
     failed = [c for c in log.persist_calls if c[1] == "failed"]
     assert len(failed) == 1
+
+
+@pytest.mark.asyncio
+async def test_mba_controls_skips_the_send_and_persists_the_reason(env: WorkflowEnvironment) -> None:
+    """D1.7: con Meta Business Agent al frente la eligibility devuelve
+    `control_owner_mba` (ya etiquetó por silencio) → sin template, outcome
+    `skipped:control_owner_mba`. Sin cambio de forma en el workflow."""
+    log = _CallLog()
+    log.eligibility_result = WatchdogEligibilityResult(eligible=False, reason="control_owner_mba")
+    task_queue = "tq-watchdog-mba"
+    import time
+
+    now_ms = int(time.time() * 1000)
+    async with Worker(
+        env.client, task_queue=task_queue, workflows=[ServiceWindowWatchdogWorkflow],
+        activities=_make_fake_activities(log),
+    ):
+        handle = await env.client.start_workflow(
+            ServiceWindowWatchdogWorkflow.run, _input(fire_in_ms=3600_000, now_ms_anchor=now_ms),
+            id=f"watchdog-test-{uuid.uuid4().hex[:8]}", task_queue=task_queue,
+        )
+        await handle.result()
+    assert log.eligibility_calls == [("wa_+57300test", "ep_001")]
+    assert log.send_calls == []
+    assert [c[1:] for c in log.persist_calls] == [("skipped", "control_owner_mba")]

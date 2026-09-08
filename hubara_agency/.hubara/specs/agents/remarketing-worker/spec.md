@@ -102,7 +102,7 @@ El sistema SHALL programar un `ServiceWindowWatchdogWorkflow` solo cuando:
 - AND dispatcher signala `cancel_watchdog("episode_closed")`
 - AND watchdog NO dispara nudge sobre un episodio ya cerrado
 
-### Requirement: Con Meta Business Agent al frente, el watchdog no manda template y cierra por silencio (D1.7)
+### Requirement: Con Meta Business Agent al frente, el watchdog no manda template y etiqueta por silencio (D1.7)
 
 Cuando `mba_controls_thread(metadata, session_id)` (SDK: `MBA_STANDBY_ENABLED`
 + cliente en `MBA_CUSTOMER_ALLOWLIST` + `control_owner=mba`, o último inbound
@@ -110,9 +110,13 @@ por el webhook `standby`) es verdadero, el sistema SHALL NOT enviar ningún
 template desde el watchdog (un envío propio le quitaría el hilo a MBA y sería
 doble toque). En su lugar el watchdog SHALL proponer `INTERESADO` al contrato
 `session-actions@v1` de chats (`POST /tag`, identidad de servicio), que
-reconcilia (CONFIRMADO_SIN_DATOS + escalación si hay datos de envío sin
-orden; descarte si hay orden registrada). Con la flag apagada o fuera de la
-lista cerrada el comportamiento es el de siempre.
+reconcilia (CONFIRMADO_SIN_DATOS + escalación — cierra el episodio — si hay
+datos de envío sin orden; descarte si hay orden registrada; INTERESADO tal
+cual si solo hubo interés: NO es tag de cierre, el episodio queda abierto y
+etiquetado, como en el ghosting de Sales). Idempotente (`already_applied`).
+Con la flag apagada o fuera de la lista cerrada el comportamiento es el de
+siempre. Excepción en la reactivación: un tag `REMARKETING` explícito del
+operador sí toca (decisión humana), aunque MBA controle.
 
 #### Scenario: Inbound por `standby` programa el watchdog
 
@@ -127,7 +131,8 @@ lista cerrada el comportamiento es el de siempre.
 - WHEN `check_watchdog_eligibility_activity` evalúa tras los guards de ruta, episodio y ventana
 - THEN NO resuelve template y retorna `eligible=False, reason="control_owner_mba"`
 - AND llama `POST /api/chats/session-actions/{session}/tag` con `INTERESADO` y el motivo de silencio
-- AND un fallo del hop se loguea como ERROR sin tumbar el watchdog (el próximo inbound `standby` reprograma)
+- AND un fallo del hop se loguea (409 `already_human` como WARNING, el resto ERROR) sin tumbar el watchdog (el próximo inbound `standby` reprograma)
+- AND el outcome `skipped:control_owner_mba` se persiste bajo el lock del store tocando solo `metadata.watchdog`
 
 #### Scenario: Reactivación dentro de ventana con MBA al frente
 

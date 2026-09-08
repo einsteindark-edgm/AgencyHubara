@@ -501,8 +501,8 @@ async def test_eligibility_returns_outside_quiet_hours_at_3am(
 
 
 # ---------------------------------------------------------------------------
-# D1.7 — Meta Business Agent al frente: sin template en ventana; cierre por
-# silencio vía el contrato /tag de chats (INTERESADO reconciliado por D1.3)
+# D1.7 — Meta Business Agent al frente: sin template en ventana; etiquetado
+# por silencio vía el contrato /tag de chats (INTERESADO reconciliado por D1.3)
 # ---------------------------------------------------------------------------
 
 MBA_SESSION = "wa_573001234567"
@@ -526,14 +526,16 @@ def _mba_setup(monkeypatch: pytest.MonkeyPatch, vault: Path, *, enabled: bool = 
 
     async def _fake_close(session_id: str) -> dict:
         calls.append(session_id)
-        return {"tag": "INTERESADO", "applied": True, "reason": "proposal_accepted", "episode_closed": True}
+        # forma REAL del contrato: INTERESADO no cierra el episodio
+        return {"tag": "INTERESADO", "proposed_tag": "INTERESADO", "applied": True, "reconciled": False,
+                "reason": "proposal_accepted", "episode_closed": None, "escalated": False}
 
     monkeypatch.setattr(watchdog_activities, "_close_by_silence", _fake_close)
     return calls
 
 
 @pytest.mark.asyncio
-async def test_mba_controls_no_template_but_the_episode_is_closed_by_silence(
+async def test_mba_controls_no_template_but_the_episode_is_tagged_by_silence(
     monkeypatch: pytest.MonkeyPatch, _isolate_vault_dir: Path
 ) -> None:
     calls = _mba_setup(monkeypatch, _isolate_vault_dir)
@@ -592,3 +594,18 @@ async def test_a_failing_silence_close_is_logged_and_never_raises(
     monkeypatch.setattr(watchdog_activities, "_close_by_silence", _boom)
     result = await check_watchdog_eligibility_activity(MBA_SESSION, EPISODE_ID)
     assert result.eligible is False and result.reason == "control_owner_mba"
+
+    from fastapi import HTTPException
+
+    async def _already_human(session_id: str) -> dict:
+        raise HTTPException(status_code=409, detail={"error": "already_human"})
+
+    monkeypatch.setattr(watchdog_activities, "_close_by_silence", _already_human)
+    result = await check_watchdog_eligibility_activity(MBA_SESSION, EPISODE_ID)
+    assert result.eligible is False and result.reason == "control_owner_mba"
+
+
+def test_the_silence_hop_times_out_before_the_watchdog_activity_does() -> None:
+    from src.plugins.chats.agent.remarketing.activities import mba_silence_close
+
+    assert mba_silence_close._TIMEOUT_S <= 8.0  # start_to_close de la activity = 15 s, sin heartbeat

@@ -116,10 +116,12 @@ def test_sdk_runtime_reexports_the_flag_reader_and_placeholder_check(monkeypatch
 # ── D1.7: ¿MBA controla este hilo? (predicado único, fail-safe) ──────────────
 
 
-def _md(owner=None, *, last_inbound=1_000, standby_inbound=None) -> dict:
+def _md(owner=None, *, last_inbound=1_000, standby_inbound=None, owner_at=None) -> dict:
     md: dict = {"last_inbound_at_ms": last_inbound}
     if owner is not None:
         md["control_owner"] = owner
+    if owner_at is not None:
+        md["control_owner_updated_at_ms"] = owner_at
     if standby_inbound is not None:
         md["mba_standby"] = {"inbound_count": 1, "last_inbound_at_ms": standby_inbound}
     return md
@@ -138,8 +140,13 @@ def _md(owner=None, *, last_inbound=1_000, standby_inbound=None) -> dict:
     (True, True, _md(None, last_inbound=9_000, standby_inbound=5_000), False),
     (True, True, _md(None), False),
     (True, True, {}, False),
-    # un dueño explícito manda sobre la heurística del standby
-    (True, True, _md("hubara", last_inbound=5_000, standby_inbound=5_000), False),
+    # dueño `hubara` confirmado DESPUÉS del último standby: Hubara controla (el standby es viejo)
+    (True, True, _md("hubara", last_inbound=5_000, standby_inbound=5_000, owner_at=9_000), False),
+    # dueño `hubara` viejo y un standby MÁS NUEVO: Meta ya le dio el hilo a MBA (handover perdido)
+    (True, True, _md("hubara", last_inbound=5_000, standby_inbound=5_000, owner_at=1_000), True),
+    (True, True, _md("hubara", last_inbound=5_000, standby_inbound=5_000), True),
+    # dueño `hubara` y el último inbound por `messages` (nosotros controlamos)
+    (True, True, _md("hubara", last_inbound=9_000, standby_inbound=5_000, owner_at=1_000), False),
 ])
 def test_mba_controls_thread_table(monkeypatch, enabled: bool, allowed: bool, metadata: dict, expected: bool) -> None:
     from src.platform import config

@@ -75,6 +75,11 @@ services:
   worker-chats-remarketing:
     <<: *app
     command: ["python", "-m", "src.plugins.chats.workers.remarketing"]
+    environment:
+      # D1.7: el watchdog etiqueta por silencio a los hilos que responde Meta
+      # Business Agent vía el contrato /api/chats/session-actions (HTTP a la
+      # API). El service en ESTE compose se llama `api` (PM-003).
+      HUBARA_API_BASE_URL: http://api:8000
     volumes:
       - /mnt/hubara-vault:/app/hubara_vault
 
