@@ -136,3 +136,39 @@ async def test_outcome_persists_through_existing_watchdog_state(
     assert wd["reason_cancelled"] is None
     # workflow_id was NOT in the new payload — should be preserved from prior.
     assert wd["workflow_id"] == "watchdog-old"
+
+
+@pytest.mark.asyncio
+async def test_persist_outcome_writes_under_the_store_lock_and_only_touches_the_watchdog_block(
+    monkeypatch: pytest.MonkeyPatch, _isolate_vault_dir,
+) -> None:
+    """Otro escritor (ingest, connector tools de MBA, el contrato /tag) puede
+    escribir metadata.json entre la lectura y la escritura del outcome. Con
+    read→write plano, ese cambio (p.ej. `active_route=humano` de una
+    escalación) se perdía."""
+    import json
+    from pathlib import Path
+
+    from src.platform.state import FilesystemMetadataStore
+    from src.plugins.chats.agent.remarketing.activities import watchdog_activities
+
+    session = "wa_573001234567"
+    target = Path(_isolate_vault_dir) / session / "metadata.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps({"tag": "NO_ETIQUETADO", "active_route": "ventas"}), encoding="utf-8")
+
+    class _RacingStore(FilesystemMetadataStore):
+        def update(self, session_id, mutator):
+            def _with_foreign_write(data):
+                data["active_route"] = "humano"  # escalación concurrente, ya en disco cuando el lock se toma
+                data["tag"] = "HUMANO"
+                return mutator(data)
+
+            return super().update(session_id, _with_foreign_write)
+
+    monkeypatch.setattr(watchdog_activities, "FilesystemMetadataStore", _RacingStore)
+    await watchdog_activities.persist_watchdog_outcome_activity(session, "skipped", "feature_flag_off")
+    data = json.loads(target.read_text(encoding="utf-8"))
+    assert data["active_route"] == "humano" and data["tag"] == "HUMANO"
+    assert data["watchdog"]["reason_cancelled"] == "skipped:feature_flag_off"
+    assert isinstance(data["watchdog"]["cancelled_at_ms"], int)
