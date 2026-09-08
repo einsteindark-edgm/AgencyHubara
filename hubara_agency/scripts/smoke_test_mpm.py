@@ -35,7 +35,8 @@ import sys
 
 import httpx
 
-GRAPH_API_VERSION = "v23.0"
+from src.platform.meta.graph import graph_url
+
 
 
 def _require_env(name: str) -> str:
@@ -121,7 +122,7 @@ def main() -> None:
     for rid in args.retailer_ids:
         print(f"    - {rid}")
 
-    url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{phone_id}/messages"
+    url = graph_url(phone_id, "messages")
     try:
         resp = httpx.post(
             url,

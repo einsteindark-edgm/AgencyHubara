@@ -18,6 +18,60 @@ from temporalio import activity
 
 from src.platform.config import WORKSPACE_VAULT_DIR
 
+#: Etapa del pedido → evento CAPI post-compra (auditoría 2026-09-08). Las
+#: etapas intermedias (preparing / ready) no tienen evento en Meta.
+_CAPI_EVENT_BY_STAGE: dict[str, str] = {
+    "shipping": "OrderShipped",
+    "delivered": "OrderDelivered",
+    "cancelled": "OrderCanceled",
+}
+
+
+def capi_event_for_stage(to_stage: str) -> str | None:
+    return _CAPI_EVENT_BY_STAGE.get(to_stage)
+
+
+async def _emit_stage_capi(session_id: str, order_id: str, to_stage: str) -> None:
+    """Encola + flushea el evento CAPI de la etapa en el outbox del chat.
+    Corre dentro de la activity (durable). Best-effort: nunca bloquea la
+    notificación ETA. Dedupe extra contra el cierre humano (cancelación),
+    que puede haber encolado ``OrderCanceled`` con el id del draft."""
+    import json
+
+    from src.sdk.connectorkit import enqueue_capi_event, flush_capi_outbox
+
+    event_name = capi_event_for_stage(to_stage)
+    if event_name is None:
+        return
+    path = WORKSPACE_VAULT_DIR / session_id / "metadata.json"
+    try:
+        metadata = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if not isinstance(metadata, dict):
+        return
+    known = [
+        *(metadata.get("capi_outbox") or []),
+        *(metadata.get("capi_events_sent") or []),
+    ]
+    if any(isinstance(e, dict) and e.get("event_name") == event_name and event_name == "OrderCanceled" for e in known):
+        return
+    try:
+        event_id = enqueue_capi_event(
+            metadata,
+            event_name=event_name,
+            session_id=session_id,
+            order_id=order_id,
+            source=f"order_stage:{to_stage}",
+            now_ms=int(time.time() * 1000),
+        )
+    except ValueError:
+        return
+    if event_id is None:
+        return
+    path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+    await flush_capi_outbox(session_id)
+
 
 @activity.defn(name="emit_order_stage_activity")
 async def emit_order_stage_activity(
@@ -69,6 +123,13 @@ async def emit_order_stage_activity(
             order_id,
         )
         return "no_session"
+
+    try:
+        await _emit_stage_capi(session_id, order_id, to_stage)
+    except Exception as exc:  # noqa: BLE001 — atribución best-effort
+        activity.logger.warning(
+            "emit_order_stage: CAPI %s falló (no bloquea): %s", to_stage, exc
+        )
 
     client = await get_temporal_client()
     await dispatch_envelope_with_client(

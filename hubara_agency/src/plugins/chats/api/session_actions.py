@@ -73,6 +73,7 @@ from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
 from src.plugins.chats.agent.sales.use_cases.order_pricing import price_order_items
 from src.plugins.chats.shared.contracts.events import EpisodeClosedEvent
 from src.sdk.connectorkit import (
+    schedule_capi_flush,
     ProductNotFoundError,
     get_catalog_client,
     get_order_registration_port,
@@ -360,9 +361,11 @@ async def order(session_key: SessionKey, body: OrderBody, deps: Deps) -> dict[st
         }
     async with _session_lock(session):
         try:
-            return await _register(session, body, priced, deps)
+            registered = await _register(session, body, priced, deps)
         finally:
             _release_session_lock(session)
+    schedule_capi_flush(session)  # OrderCreated / LeadSubmitted encolados por las tools
+    return registered
 
 
 async def _register(session: str, body: OrderBody, priced: Any, deps: SessionActionsDeps) -> dict[str, Any]:
@@ -495,6 +498,7 @@ async def tag(session_key: SessionKey, body: TagBody, deps: Deps) -> dict[str, A
         {"episode_id": closed["episode_id"], "closing_tag": closed["closing_tag"]} if closed else None
     )
     await _notify(deps, session, episode_closed and episode_closed["episode_id"], body.tag)
+    schedule_capi_flush(session)  # QualifiedLead / Purchase encolados por la tool
     return {"tag": body.tag, "motivo": body.motivo, "message": result.get("message"), "episode_closed": episode_closed}
 
 

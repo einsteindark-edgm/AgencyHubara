@@ -13,12 +13,14 @@ References:
     https://developers.facebook.com/docs/marketing-api/conversions-api/business-messaging/
 
 Hard rules from Meta (encoded as constants below):
-  * Only ``LeadSubmitted`` and ``Purchase`` events are supported for
-    ``action_source: business_messaging``. ``Lead`` (el nombre del CAPI web
-    clásico) es RECHAZADO con error_subcode 2804066. Anything else is
-    rejected or silently ignored.
-  * 1 CAPI event counts per ad click; the strongest event wins (Purchase >
-    Lead). Once we've sent Purchase, sending Lead afterwards is wasted call.
+  * 14 event names are accepted for ``action_source: business_messaging``
+    (see ``CAPI_EVENT_NAMES``). ``Lead`` (el nombre del CAPI web clásico)
+    es RECHAZADO con error_subcode 2804066 — el nombre válido es
+    ``LeadSubmitted``. Anything else is rejected or silently ignored.
+  * Meta does NOT deduplicate business-messaging events (doc oficial):
+    la idempotencia es NUESTRA — event_id estable + outbox local
+    (``capi_outbox.py``). The strongest event wins in reporting (Purchase >
+    Lead); once we've sent Purchase, pre-purchase events are skipped.
   * ``ctwa_clid`` is the attribution key. Without it, CAPI does nothing — the
     event lands but matches no ad impression. Always required.
   * 7-day attribution window from the ad click. Past that, Meta drops the
@@ -39,6 +41,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from src.platform.meta.graph import graph_url
+
 
 # =============================================================================
 # Constants
@@ -46,7 +50,7 @@ from typing import Any
 
 
 #: API endpoint template. Caller plugs ``dataset_id``.
-META_CAPI_API_URL: str = "https://graph.facebook.com/v18.0/{dataset_id}/events"
+META_CAPI_API_URL: str = graph_url("{dataset_id}", "events")
 
 #: Attribution window. Past this, the event lands but Meta won't match it.
 #: 7 days in milliseconds.
@@ -74,10 +78,62 @@ LEAD_EVENT_NAME: str = "LeadSubmitted"
 #: la activity con este valor — la activity lo normaliza en el boundary.
 LEGACY_LEAD_EVENT_NAME: str = "Lead"
 
-#: Allowed event names for CAPI Business Messaging. Anything outside this set
-#: is rejected at the builder layer to fail-fast instead of having Meta
-#: silently ignore it.
-ALLOWED_EVENT_NAMES: frozenset[str] = frozenset({LEAD_EVENT_NAME, "Purchase"})
+#: Los 14 eventos que Meta acepta para ``action_source: business_messaging``
+#: (guía de onboarding "Conversions API for Business Messaging", 2026).
+#: Solo ``Purchase`` y los leads desbloquean optimización de campañas; el
+#: resto enriquece el reporte de embudo en Ads Manager. Cualquier otro nombre
+#: se rechaza acá para fallar rápido en vez de que Meta lo ignore en silencio.
+CAPI_EVENT_NAMES: frozenset[str] = frozenset(
+    {
+        "Purchase",
+        LEAD_EVENT_NAME,
+        "InitiateCheckout",
+        "AddToCart",
+        "ViewContent",
+        "OrderCreated",
+        "OrderShipped",
+        "OrderDelivered",
+        "OrderCanceled",
+        "OrderReturned",
+        "CartAbandoned",
+        "QualifiedLead",
+        "RatingProvided",
+        "ReviewProvided",
+    }
+)
+
+#: Alias histórico (pre-auditoría 2026-09-08 eran solo 2 eventos).
+ALLOWED_EVENT_NAMES: frozenset[str] = CAPI_EVENT_NAMES
+
+#: Eventos "antes de la compra". Una vez que mandamos ``Purchase`` para un
+#: clic, estos ya no aportan nada (Meta cuenta el evento más fuerte) y se
+#: saltan con ``skipped_terminal_event_reached``. Los post-compra
+#: (OrderShipped / OrderDelivered / OrderCanceled / OrderReturned / Rating /
+#: Review) sí se mandan después del Purchase.
+PRE_PURCHASE_EVENT_NAMES: frozenset[str] = frozenset(
+    {
+        LEAD_EVENT_NAME,
+        "QualifiedLead",
+        "ViewContent",
+        "AddToCart",
+        "InitiateCheckout",
+        "OrderCreated",
+        "CartAbandoned",
+    }
+)
+
+#: Eventos cuyo sujeto es un PEDIDO (event_id por ``order_id``); el resto se
+#: identifica por episodio (``session_id`` + ``episode_id``).
+ORDER_SCOPED_EVENT_NAMES: frozenset[str] = frozenset(
+    {
+        "Purchase",
+        "OrderCreated",
+        "OrderShipped",
+        "OrderDelivered",
+        "OrderCanceled",
+        "OrderReturned",
+    }
+)
 
 
 # =============================================================================
@@ -240,6 +296,81 @@ def build_purchase_event(
     )
 
 
+def build_capi_event(
+    *,
+    event_name: str,
+    event_time: int,
+    event_id: str,
+    waba_id: str,
+    ctwa_clid: str,
+    value: int | None = None,
+    currency: str | None = None,
+) -> CapiEvent:
+    """Builder genérico para cualquiera de los 14 eventos.
+
+    ``value``/``currency`` son opcionales salvo para ``Purchase`` (Meta los
+    exige para calcular valor de compra y ROAS) — ahí delega en
+    :func:`build_purchase_event`, que valida. Para el resto, si viene
+    ``value`` sin ``currency`` se asume ``DEFAULT_CURRENCY``.
+    """
+    validate_event_name(event_name)
+    if event_name == "Purchase":
+        if value is None:
+            raise ValueError("Purchase requiere value (total del pedido)")
+        return build_purchase_event(
+            event_time=event_time,
+            event_id=event_id,
+            waba_id=waba_id,
+            ctwa_clid=ctwa_clid,
+            value=value,
+            currency=currency or DEFAULT_CURRENCY,
+        )
+    custom = CapiCustomData()
+    if value is not None:
+        if not isinstance(value, int) or value < 0:
+            raise ValueError(f"value debe ser int >= 0, got {value!r}")
+        custom = CapiCustomData(value=value, currency=currency or DEFAULT_CURRENCY)
+    return CapiEvent(
+        event_name=event_name,
+        event_time=event_time,
+        event_id=event_id,
+        user_data=CapiUserData(
+            whatsapp_business_account_id=waba_id,
+            ctwa_clid=ctwa_clid,
+        ),
+        custom_data=custom,
+    )
+
+
+def make_event_id(
+    event_name: str,
+    *,
+    session_id: str,
+    episode_id: str | None = None,
+    order_id: str | None = None,
+) -> str:
+    """``event_id`` estable para cualquier evento — la idempotencia LOCAL
+    depende de esto (Meta NO deduplica eventos de business messaging).
+
+    * Eventos de pedido (``ORDER_SCOPED_EVENT_NAMES``): ``<evento>_<order_id>``.
+      ``Purchase`` conserva el id histórico ``purchase_<order_id>``.
+    * Eventos de episodio: ``<evento>_<session_id>_<episode_id>``.
+      ``LeadSubmitted`` conserva ``lead_<session_id>_<episode_id>``.
+    """
+    validate_event_name(event_name)
+    if event_name in ORDER_SCOPED_EVENT_NAMES:
+        if not order_id:
+            raise ValueError(f"{event_name} requiere order_id para su event_id")
+        if event_name == "Purchase":
+            return make_event_id_for_purchase(order_id=order_id)
+        return f"{event_name.lower()}_{order_id}"
+    if not episode_id:
+        raise ValueError(f"{event_name} requiere episode_id para su event_id")
+    if event_name == LEAD_EVENT_NAME:
+        return make_event_id_for_lead(session_id=session_id, episode_id=episode_id)
+    return f"{event_name.lower()}_{session_id}_{episode_id}"
+
+
 def make_event_id_for_lead(*, session_id: str, episode_id: str) -> str:
     """Stable event_id for Lead — one Lead per (session, episode). If the
     same episode triggers Lead twice (e.g. retry), Meta dedupes."""
@@ -311,6 +442,9 @@ __all__ = [
     "LEAD_EVENT_NAME",
     "LEGACY_LEAD_EVENT_NAME",
     "ALLOWED_EVENT_NAMES",
+    "CAPI_EVENT_NAMES",
+    "PRE_PURCHASE_EVENT_NAMES",
+    "ORDER_SCOPED_EVENT_NAMES",
     # DTOs
     "CapiUserData",
     "CapiCustomData",
@@ -319,6 +453,8 @@ __all__ = [
     # Builders
     "build_lead_event",
     "build_purchase_event",
+    "build_capi_event",
+    "make_event_id",
     "make_event_id_for_lead",
     "make_event_id_for_purchase",
     "build_capi_request_body",

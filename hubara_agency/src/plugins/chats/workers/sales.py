@@ -53,7 +53,10 @@ from src.platform.whatsapp.activities import (
     send_typing_indicator_activity,
     send_whatsapp_message_activity,
 )
-from src.platform.whatsapp.capi_activity import send_capi_event_activity
+from src.platform.whatsapp.capi_activity import (
+    flush_capi_outbox_activity,
+    send_capi_event_activity,
+)
 from src.plugins.chats.agent.sales.activities import (
     bootstrap_sales_session_activity,
     compute_bogota_context_activity,
@@ -379,6 +382,10 @@ async def main() -> None:
             # por el workflow vía `_map_closing_tag_to_capi_event`. Tiene
             # guards internos completos — skip silencioso si no aplica.
             send_capi_event_activity,
+            # Auditoría CAPI 2026-09-08: flush del outbox tras cada turno
+            # (ViewContent / AddToCart / InitiateCheckout / OrderCreated /
+            # QualifiedLead / Purchase encolados por tools + UI intents).
+            flush_capi_outbox_activity,
         ],
         # OTel obs: el TracingInterceptor (en get_temporal_client) crea spans
         # dentro del workflow sandbox → necesita opentelemetry como passthrough

@@ -1716,6 +1716,13 @@ def _capi_session_extra() -> dict:
                 "event_name": "LeadSubmitted",
                 "status": "failed_4xx",
             },
+            # Auditoría 2026-09-08: los skips se persisten y cuentan aparte;
+            # los eventos nuevos del embudo siguen la convención de ids.
+            {
+                "event_id": "viewcontent_wa_573001_ep_002",
+                "event_name": "ViewContent",
+                "status": "skipped_attribution_expired",
+            },
         ],
     }
 
@@ -1735,6 +1742,7 @@ def test_campaign_aggregates_capi_counters(_isolate_vault_dir: Path):
     assert camp.capi_leads_sent == 1
     assert camp.capi_purchases_sent == 1
     assert camp.capi_failed == 1
+    assert camp.capi_skipped == 1
 
 
 def test_campaign_capi_counters_default_zero(_isolate_vault_dir: Path):

@@ -59,6 +59,7 @@ from exoclaw.agent.tools import ToolBase, ToolContext
 from loguru import logger
 
 from src.platform.config import WORKSPACE_VAULT_DIR
+from src.sdk.connectorkit import enqueue_capi_event
 from src.platform.orders.port import (
     OrderItem,
     OrderRegistrationPort,
@@ -464,6 +465,22 @@ class RegisterOrderTool(ToolBase):
                 order_total_cop=total_cop,
                 currency=currency,
             )
+            # Auditoría CAPI 2026-09-08: pedido creado en Medusa =
+            # OrderCreated (con valor) para el embudo de Meta. Lo envía el
+            # flusher después del turno.
+            try:
+                enqueue_capi_event(
+                    data,
+                    event_name="OrderCreated",
+                    session_id=ctx.session_key,
+                    order_id=registered_record["order_id"],
+                    value=total_cop,
+                    currency=currency,
+                    source="register_order",
+                    now_ms=registered_record["registered_at_ms"],
+                )
+            except ValueError:
+                pass
             # Pago anticipado (transfer) → el SISTEMA manda la llave Nequi y
             # los datos bancarios, no el LLM (caso wa_573125671604: el LLM
             # alucinó cuenta y NIT). Link de pago → el SISTEMA avisa el link

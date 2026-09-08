@@ -11,6 +11,8 @@ import json
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
+from src.sdk.connectorkit import META_GRAPH_API_VERSION, META_GRAPH_BASE_URL
+
 from src.plugins.ads.meta.parse import (
     MetaAdsetMetrics,
     MetaCampaignMetrics,
@@ -18,8 +20,9 @@ from src.plugins.ads.meta.parse import (
     parse_campaign_insights,
 )
 
-GRAPH_VERSION = "v25.0"
-GRAPH_BASE = "https://graph.facebook.com"
+# Host + versión vienen de la central de plataforma (vía SDK, gate P-28).
+GRAPH_VERSION = META_GRAPH_API_VERSION
+GRAPH_BASE = META_GRAPH_BASE_URL
 _TIMEOUT_S = 30.0
 
 

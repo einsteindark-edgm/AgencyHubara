@@ -192,6 +192,8 @@ export interface AdsCampaign {
   capiPurchasesSent: number;
   /** Envíos CAPI fallidos (Meta rechazó el evento / error de red). */
   capiFailed: number;
+  /** Eventos CAPI que no aplicaban (sin clid / ventana vencida / sin config). */
+  capiSkipped: number;
 }
 
 /* ── Conversaciones atribuidas (WhatsApp chats originados por un anuncio) ── */

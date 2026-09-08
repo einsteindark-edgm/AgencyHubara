@@ -248,3 +248,16 @@ async def test_capi_activity_failure_does_not_fail_workflow(
         f"Enviado: {sent}"
     )
     assert capi_calls == []  # el fake explotó antes de trackear
+
+
+@pytest.mark.asyncio
+async def test_every_turn_flushes_the_capi_outbox(tmp_path: Path) -> None:
+    """El turno encola (tools / UI intents) y el workflow flushea DESPUÉS —
+    una sola activity por turno, aunque no haya cierre de episodio."""
+    tracker, _calls = await _run_closing_session(
+        tmp_path, session_id="wa_capi_flush", closing_tag="RECHAZO"
+    )
+    # La sesión de cierre tiene 2 turnos (el del cliente + el admin del
+    # cierre): un flush por turno, siempre de ESTA sesión.
+    assert tracker.capi_flush_calls
+    assert set(tracker.capi_flush_calls) == {"wa_capi_flush"}

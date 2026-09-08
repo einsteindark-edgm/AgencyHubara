@@ -49,13 +49,14 @@ def _resolve_ad_id(campaign_id: str) -> str:
     """Primer ad de la campaña vía Graph (ads_read; token de la conexión sembrada)."""
     import httpx
 
+    from src.platform.meta.graph import graph_url
     from src.plugins.ads.meta.composition import get_token_store
 
     token = get_token_store().load()
     if token is None:
         raise SystemExit("sin conexión Meta sembrada — pasá --ad-id explícito")
     resp = httpx.get(
-        f"https://graph.facebook.com/v25.0/{campaign_id}/ads",
+        graph_url(campaign_id, "ads"),
         params={"fields": "id,name", "limit": 1, "access_token": token.access_token},
         timeout=20,
     )

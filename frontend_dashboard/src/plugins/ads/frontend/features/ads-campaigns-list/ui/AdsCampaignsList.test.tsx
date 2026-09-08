@@ -53,6 +53,7 @@ function makeCampaign(over: Partial<AdsCampaign> = {}): AdsCampaign {
     capiLeadsSent: 0,
     capiPurchasesSent: 0,
     capiFailed: 0,
+    capiSkipped: 0,
     ...over,
   };
 }
@@ -158,7 +159,7 @@ describe("AdsCampaignsList — celda CAPI", () => {
     );
     expect(getByText("↑ 4")).toBeTruthy();
     expect(
-      getByTitle("3 LeadSubmitted · 1 Purchase · 0 fallos"),
+      getByTitle("3 LeadSubmitted · 1 Purchase · 0 fallos · 0 no aplicaban"),
     ).toBeTruthy();
   });
 
@@ -166,7 +167,7 @@ describe("AdsCampaignsList — celda CAPI", () => {
     const { getByTitle } = renderList(
       makeCampaign({ capiLeadsSent: 1, capiFailed: 2 }),
     );
-    const cell = getByTitle("1 LeadSubmitted · 0 Purchase · 2 fallos");
+    const cell = getByTitle("1 LeadSubmitted · 0 Purchase · 2 fallos · 0 no aplicaban");
     expect(cell.className).toContain("neg");
     expect(cell.textContent).toContain("↑ 1");
   });

@@ -31,6 +31,7 @@ from typing import Any
 from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.medusa.client import HttpMedusaClient, MedusaAPIError
 from src.platform.orders import display_id_cache
+from src.platform.whatsapp.capi_outbox import enqueue_capi_event, schedule_capi_flush
 from src.platform.orders.command_port import (
     CancelOrderCommand,
     ConfirmPaymentCommand,
@@ -56,11 +57,81 @@ log = logging.getLogger(__name__)
 # ----------------------------------------------------------------------
 
 
+def _order_value_from_chat(
+    chat_metadata: dict[str, Any],
+    matched_episode: dict[str, Any] | None,
+    order_id: str | None,
+) -> tuple[str | None, int | None, str]:
+    """``(order_id, total_cop, currency)`` del pedido que el humano acaba de
+    confirmar/cancelar, según lo que el chat sabe: el episodio cerrado con
+    CONFIRMADO_PAGO_PENDIENTE (total congelado) primero; si no, el
+    ``registered_order`` (última venta registrada por el bot)."""
+    ep = matched_episode if isinstance(matched_episode, dict) else {}
+    ev_order_id = ep.get("order_id") if isinstance(ep.get("order_id"), str) else order_id
+    total = ep.get("order_total_cop")
+    currency = ep.get("order_currency") if isinstance(ep.get("order_currency"), str) else "COP"
+    if isinstance(total, int) and not isinstance(total, bool) and total > 0:
+        return ev_order_id, total, currency
+    reg = chat_metadata.get("registered_order")
+    if isinstance(reg, dict) and reg.get("success"):
+        reg_total = reg.get("total_cop")
+        if isinstance(reg_total, int) and not isinstance(reg_total, bool) and reg_total > 0:
+            same = reg.get("order_id") == ev_order_id or not ev_order_id
+            if same:
+                return (
+                    ev_order_id or reg.get("order_id"),
+                    reg_total,
+                    str(reg.get("currency") or "COP"),
+                )
+    return ev_order_id, None, currency
+
+
+def _enqueue_order_capi(
+    chat_metadata: dict[str, Any],
+    *,
+    event_name: str,
+    session_id: str | None,
+    order_id: str | None,
+    matched_episode: dict[str, Any] | None,
+    source: str,
+    now_ms: int,
+) -> None:
+    """Auditoría CAPI 2026-09-08: las acciones humanas sobre el pedido
+    (confirmar pago / cancelar) encolan su evento en el outbox del chat.
+    Sin ``session_id`` (callers legacy) no se puede armar el event_id."""
+    if not session_id:
+        return
+    ev_order_id, value, currency = _order_value_from_chat(chat_metadata, matched_episode, order_id)
+    if not ev_order_id:
+        return
+    if event_name == "Purchase" and value is None:
+        log.warning(
+            "confirm_payment: sin total conocido, no se emite Purchase a CAPI",
+            extra={"session_id": session_id, "order_id": ev_order_id},
+        )
+        return
+    try:
+        enqueue_capi_event(
+            chat_metadata,
+            event_name=event_name,
+            session_id=session_id,
+            order_id=ev_order_id,
+            value=value if event_name == "Purchase" else None,
+            currency=currency if event_name == "Purchase" else None,
+            source=source,
+            now_ms=now_ms,
+        )
+    except ValueError:
+        return
+
+
 def apply_payment_confirmation_to_chat_metadata(
     chat_metadata: dict[str, Any],
     *,
     now_ms: int,
     by: str | None = None,
+    session_id: str | None = None,
+    order_id: str | None = None,
 ) -> bool:
     """Aplica el cierre con tag `COMPRA_EXITOSA` al `metadata.json` del chat
     después de que un humano confirmó el pago desde el dashboard de orders.
@@ -109,6 +180,7 @@ def apply_payment_confirmation_to_chat_metadata(
     # Actualizar el episodio cerrado con CONFIRMADO_PAGO_PENDIENTE al nuevo
     # tag final. Buscamos desde el más reciente, paramos en el primero que
     # match (solo el último episodio queda esperando verificación).
+    matched_ep: dict[str, Any] | None = None
     episodes = chat_metadata.get("episodes") or []
     if isinstance(episodes, list):
         for ep in reversed(episodes):
@@ -119,8 +191,20 @@ def apply_payment_confirmation_to_chat_metadata(
                 ep["closing_tag"] = "COMPRA_EXITOSA"
                 ep["payment_confirmed_at_ms"] = now_ms
                 ep["payment_confirmed_by"] = by or "humano"
+                matched_ep = ep
                 break
 
+    # El Purchase a Meta sale de ACÁ (auditoría 2026-09-08): este es el
+    # único momento en que la venta está verificada.
+    _enqueue_order_capi(
+        chat_metadata,
+        event_name="Purchase",
+        session_id=session_id,
+        order_id=order_id,
+        matched_episode=matched_ep,
+        source="confirm_payment",
+        now_ms=now_ms,
+    )
     return True
 
 
@@ -130,6 +214,8 @@ def apply_order_cancellation_to_chat_metadata(
     now_ms: int,
     reason: str | None = None,
     by: str | None = None,
+    session_id: str | None = None,
+    order_id: str | None = None,
 ) -> bool:
     """Aplica el cierre con tag `RECHAZO` al `metadata.json` del chat después
     de que un humano canceló la orden desde el dashboard de orders.
@@ -185,6 +271,7 @@ def apply_order_cancellation_to_chat_metadata(
             }
         )
 
+    matched_ep: dict[str, Any] | None = None
     episodes = chat_metadata.get("episodes") or []
     if isinstance(episodes, list):
         for ep in reversed(episodes):
@@ -197,7 +284,18 @@ def apply_order_cancellation_to_chat_metadata(
                 ep["cancelled_by"] = by or "humano"
                 if reason:
                     ep["cancellation_reason"] = reason
+                matched_ep = ep
                 break
+
+    _enqueue_order_capi(
+        chat_metadata,
+        event_name="OrderCanceled",
+        session_id=session_id,
+        order_id=order_id,
+        matched_episode=matched_ep,
+        source="cancel_order",
+        now_ms=now_ms,
+    )
 
     return True
 
@@ -519,12 +617,18 @@ class MedusaOrderCommand:
                 chat_data,
                 now_ms=int(time.time() * 1000),
                 by=by,
+                session_id=session_key,
+                order_id=order_id,
             )
             if changed:
                 chat_meta_file.write_text(
                     json.dumps(chat_data, indent=2, ensure_ascii=False),
                     encoding="utf-8",
                 )
+                # Purchase a Meta: flush best-effort ahora; si el proceso
+                # muere, el outbox persiste y lo manda el próximo flush
+                # durable (cambio de etapa / turno del bot).
+                schedule_capi_flush(session_key)
                 log.info(
                     "confirm_payment: chat metadata synced to COMPRA_EXITOSA",
                     extra={
@@ -574,12 +678,15 @@ class MedusaOrderCommand:
                 now_ms=int(time.time() * 1000),
                 reason=reason,
                 by=by,
+                session_id=session_key,
+                order_id=order_id,
             )
             if changed:
                 chat_meta_file.write_text(
                     json.dumps(chat_data, indent=2, ensure_ascii=False),
                     encoding="utf-8",
                 )
+                schedule_capi_flush(session_key)
                 log.info(
                     "cancel_order: chat metadata synced to RECHAZO",
                     extra={

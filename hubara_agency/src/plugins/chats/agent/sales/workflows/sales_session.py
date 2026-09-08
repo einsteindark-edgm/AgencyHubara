@@ -48,6 +48,7 @@ with workflow.unsafe.imports_passed_through():
     from src.platform.whatsapp.capi_activity import (
         LEAD_CLOSING_TAGS,
         PURCHASE_CLOSING_TAGS,
+        flush_capi_outbox_activity,
         send_capi_event_activity,
     )
     from src.plugins.chats.shared.contracts.events import (
@@ -965,6 +966,25 @@ class HubaraSalesSessionWorkflow:
                             start_to_close_timeout=timedelta(seconds=120),
                             retry_policy=RetryPolicy(maximum_attempts=2),
                         )
+
+                    # Auditoría CAPI 2026-09-08: flush del outbox de eventos
+                    # de Meta que el turno encoló (tools + UI intents +
+                    # cierres). Una activity por turno; su falla NUNCA
+                    # bloquea al cliente. workflow.patched(): histories en
+                    # vuelo pre-deploy no tienen este branch.
+                    if workflow.patched("capi-outbox-flush-v1"):
+                        try:
+                            await workflow.execute_activity(
+                                flush_capi_outbox_activity,
+                                args=[session.session_id],
+                                start_to_close_timeout=timedelta(seconds=60),
+                                retry_policy=RetryPolicy(maximum_attempts=2),
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            workflow.logger.warning(
+                                "CAPI outbox flush falló (non-blocking): "
+                                f"session={session.session_id} err={exc!r}"
+                            )
 
                     # Escalation a humano: la tool ya escribio metadata
                     # (active_route=humano, tag=HUMANO). Mandado ya el mensaje
