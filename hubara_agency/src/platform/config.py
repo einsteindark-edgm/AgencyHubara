@@ -94,9 +94,12 @@ def parse_app_id(value: str | None) -> str:
     return item if item.isdigit() else ""
 
 
-#: Nuestra app de Meta (la que está suscrita al WABA). D1.5: el
-#: `new_owner_app_id` de `messaging_handovers` igual a este = Hubara controla.
-META_APP_ID: str = parse_app_id(os.getenv("META_APP_ID"))
+#: NUESTRA app de Meta suscrita al WABA (el `APP_ID` del CLI de provisioning
+#: de WhatsApp). D1.5: el `new_owner_app_id` de `messaging_handovers` igual a
+#: este = Hubara controla el hilo. Variable dedicada a propósito: `META_APP_ID`
+#: (SSM) nació para OAuth/Marketing API del plugin ads y podría apuntar a OTRA
+#: app — reutilizarla invertiría dueños en silencio.
+WHATSAPP_APP_ID: str = parse_app_id(os.getenv("WHATSAPP_APP_ID"))
 
 
 def mba_customer_allowed(customer: str | None) -> bool:

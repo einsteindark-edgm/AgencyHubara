@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import re
 
 import structlog
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
@@ -225,10 +226,20 @@ def _handle_messaging_handovers(body: dict, background_tasks: BackgroundTasks) -
     if event is None:
         return
     if event.unparsed:
-        logger.warning("webhook_messaging_handovers_unparsed", unparsed=event.unparsed, body=body)
+        # El body va al log para descubrir el shape real en F0, con los
+        # teléfonos enmascarados (mismo criterio que el resto: ***últimos 4).
+        logger.warning("webhook_messaging_handovers_unparsed", unparsed=event.unparsed, body=_mask_phones(body))
     logger.info("webhook_messaging_handovers", handovers=len(event.handovers), unparsed=event.unparsed)
     if event.handovers:
         add_traced_background_task(background_tasks, build_ingest_handover_use_case().execute, event)
+
+
+_LONG_DIGITS = re.compile(r"\d{8,}")
+
+
+def _mask_phones(body: dict) -> str:
+    """JSON del body con toda tira de ≥8 dígitos reducida a ``***<últimos 4>``."""
+    return _LONG_DIGITS.sub(lambda m: f"***{m.group(0)[-4:]}", json.dumps(body, ensure_ascii=False))
 
 
 _FIELD_HANDLERS = {

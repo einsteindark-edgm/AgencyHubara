@@ -67,10 +67,21 @@ def test_meta_app_id_parsing_only_accepts_digits_and_treats_placeholder_as_unset
     assert parse_app_id(raw) == expected
 
 
-def test_config_exposes_meta_app_id_as_a_string() -> None:
+def test_config_reads_our_whatsapp_app_id_from_its_own_variable_not_metas_oauth_one(monkeypatch) -> None:
+    """M-2 de la revisión: META_APP_ID (SSM) nació para OAuth/ads y puede ser OTRA app."""
+    import importlib
+
     from src.platform import config
 
-    assert isinstance(config.META_APP_ID, str)
+    assert isinstance(config.WHATSAPP_APP_ID, str)
+    monkeypatch.setenv("META_APP_ID", "111")
+    monkeypatch.setenv("WHATSAPP_APP_ID", "222")
+    try:
+        assert importlib.reload(config).WHATSAPP_APP_ID == "222"
+    finally:
+        monkeypatch.delenv("WHATSAPP_APP_ID")
+        monkeypatch.delenv("META_APP_ID")
+        importlib.reload(config)
 
 
 def test_sdk_runtime_reexports_the_control_owner_constants() -> None:

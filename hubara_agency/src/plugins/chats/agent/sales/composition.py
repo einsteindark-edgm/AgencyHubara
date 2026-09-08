@@ -32,6 +32,7 @@ from __future__ import annotations
 import os
 
 from exoclaw_temporal.config import WorkspaceConfig
+from loguru import logger
 
 from src.platform.analytics.composition import setup_analytics
 import src.platform.config as _cfg
@@ -165,10 +166,16 @@ def build_ingest_handover_use_case() -> IngestHandover:
     global _HANDOVER_USE_CASE
     if _HANDOVER_USE_CASE is not None:
         return _HANDOVER_USE_CASE
+    # Una vez por proceso: qué app id cree Hubara que es "nosotros" (F0: debe
+    # coincidir con el `new_owner_app_id` de un take propio).
+    logger.info(
+        "[chats.handover] WHATSAPP_APP_ID {} — sin él ningún handover decide dueño",
+        f"configurado (…{_cfg.WHATSAPP_APP_ID[-4:]})" if _cfg.WHATSAPP_APP_ID else "NO configurado",
+    )
     _HANDOVER_USE_CASE = IngestHandover(
         metadata_store=_PlatformFsMetaStore(WORKSPACE_VAULT_DIR),
         vault_dir=WORKSPACE_VAULT_DIR,
         is_customer_allowed=mba_customer_allowed,
-        our_app_id=lambda: _cfg.META_APP_ID,
+        our_app_id=lambda: _cfg.WHATSAPP_APP_ID,
     )
     return _HANDOVER_USE_CASE

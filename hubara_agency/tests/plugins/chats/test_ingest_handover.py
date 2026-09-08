@@ -1,7 +1,7 @@
 """D1.5 — `IngestHandover`: `messaging_handovers` → `control_owner` por sesión.
 
 Vault REAL (gotcha 1): `metadata.json` de la sesión. Quién controla el hilo lo
-decide el `new_owner_app_id` del webhook contra NUESTRO app id (`META_APP_ID`):
+decide el `new_owner_app_id` del webhook contra NUESTRO app id (`WHATSAPP_APP_ID`):
 igual → `hubara`; distinto → `mba`. Sin app id configurado no se decide nada.
 """
 from __future__ import annotations
@@ -111,6 +111,43 @@ async def test_a_redelivered_handover_changes_nothing(vault: Path) -> None:
     assert len(m["control_history"]) == 1 and m["control_history"][0]["received_at_ms"] == NOW_MS
 
 
+async def test_a_late_redelivery_of_an_older_event_does_not_flip_the_owner(vault: Path) -> None:
+    """Take (t1) → release (t2) → el take de t1 reentregado tarde: el dueño
+    sigue siendo MBA (M-1 de la revisión)."""
+    take = P.handover(P.OUR_APP_ID, P.MBA_APP_ID, ts="1757300050")
+    await _run(vault, take)
+    await _run(vault, P.handover_messenger_style(P.MBA_APP_ID, P.OUR_APP_ID))  # t2 = 1757300060000
+    res = await _run(vault, take, now_ms=NOW_MS + 9_000)
+    assert res == HandoverIngestResult(unchanged=1, sessions=(SESSION,))  # ya está en la historia
+    older = P.handover(P.OUR_APP_ID, P.MBA_APP_ID, ts="1757300055", kind="take_thread_control")
+    res = await _run(vault, older, now_ms=NOW_MS + 9_000)
+    assert res == HandoverIngestResult(stale=1, sessions=(SESSION,))
+    m = _meta(vault)
+    assert m["control_owner"] == "mba" and m["control_owner_updated_at_ms"] == 1757300060000
+    assert [h["owner"] for h in m["control_history"]] == ["hubara", "mba"]
+
+
+async def test_events_without_a_timestamp_are_deduped_by_content_against_the_last_one(vault: Path) -> None:
+    body = P.handover(P.OUR_APP_ID, P.MBA_APP_ID, metadata="x")
+    del body["entry"][0]["changes"][0]["value"]["messaging_handovers"][0]["timestamp"]
+    assert (await _run(vault, body)).applied == 1
+    assert _meta(vault)["control_owner_since_ms"] == NOW_MS  # hora de recepción
+    res = await _run(vault, body, now_ms=NOW_MS + 3_000)
+    assert res == HandoverIngestResult(unchanged=1, sessions=(SESSION,))
+    release = P.handover(P.MBA_APP_ID, P.OUR_APP_ID, metadata="release")
+    del release["entry"][0]["changes"][0]["value"]["messaging_handovers"][0]["timestamp"]
+    assert (await _run(vault, release, now_ms=NOW_MS + 4_000)).applied == 1
+    assert _meta(vault)["control_owner"] == "mba" and len(_meta(vault)["control_history"]) == 2
+
+
+async def test_a_mixed_body_applies_the_allowed_customer_and_rejects_the_other(vault: Path) -> None:
+    other = "573009999999"
+    body = P.merged(P.handover(), P.handover(customer=other))
+    res = await _run(vault, body, allowed=lambda c: c == P.CUSTOMER)
+    assert res == HandoverIngestResult(applied=1, rejected=1, sessions=(SESSION,))
+    assert not (vault / f"wa_{other}").exists()
+
+
 async def test_the_same_owner_again_keeps_since_but_records_the_event(vault: Path) -> None:
     await _run(vault, P.handover(P.OUR_APP_ID, P.MBA_APP_ID, ts="1757300050"))
     await _run(vault, P.handover(P.OUR_APP_ID, P.OUR_APP_ID, ts="1757300060"))
@@ -166,6 +203,7 @@ async def test_the_mba_control_endpoint_reads_what_chats_wrote(vault: Path, monk
     app.include_router(mba_api.router, prefix="/api/mba")
     client = TestClient(app)
     assert client.get(f"/api/mba/sessions/{SESSION}/control").status_code == 404
+    assert client.get(f"/api/mba/sessions/{SESSION}%0A/control").status_code == 422  # `$` vs newline
     await _run(vault, P.handover(P.OUR_APP_ID, P.MBA_APP_ID, ts="1757300060", metadata="x"))
     r = client.get(f"/api/mba/sessions/{SESSION}/control")
     assert r.status_code == 200

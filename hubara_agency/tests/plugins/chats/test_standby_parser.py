@@ -138,7 +138,7 @@ def test_messenger_style_pass_thread_control_with_int_ids_and_ms_timestamp_is_ac
     assert h.timestamp_ms == 1757300060000 and h.customer == P.CUSTOMER
 
 
-@pytest.mark.parametrize("bad_customer", ["../x", "", "+573001234567", "wa_573001234567"])
+@pytest.mark.parametrize("bad_customer", ["../x", "", "+573001234567", "wa_573001234567", "573001234567\n"])
 def test_a_handover_with_an_unsafe_customer_is_counted_as_unparsed_not_raised(bad_customer: str) -> None:
     ev = parse_messaging_handovers(P.handover(customer=bad_customer))
     assert ev.handovers == () and ev.unparsed == 1
@@ -152,6 +152,20 @@ def test_a_handover_without_a_control_block_or_a_sender_is_unparsed() -> None:
     body = P.handover()
     item = body["entry"][0]["changes"][0]["value"]["messaging_handovers"][0]
     del item["control_taken"]
+    ev = parse_messaging_handovers(body)
+    assert ev.handovers == () and ev.unparsed == 1
+
+
+def test_a_flat_item_in_value_and_take_thread_control_are_understood() -> None:
+    body = P.handover(kind="take_thread_control")
+    assert parse_messaging_handovers(body).handovers[0].kind == "take_thread_control"
+    body = P.handover()
+    value = body["entry"][0]["changes"][0]["value"]
+    item = value.pop("messaging_handovers")[0]
+    value.update(item)  # el ítem viene plano en `value`
+    ev = parse_messaging_handovers(body)
+    assert ev.unparsed == 0 and ev.handovers[0].new_owner_app_id == P.OUR_APP_ID
+    value.pop("control_taken")
     ev = parse_messaging_handovers(body)
     assert ev.handovers == () and ev.unparsed == 1
 

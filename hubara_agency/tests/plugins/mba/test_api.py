@@ -268,6 +268,6 @@ def test_session_control_is_served_from_the_session_metadata(monkeypatch: pytest
     assert body["history"] == history[-mba_api.CONTROL_HISTORY_LIMIT:]
 
 
-@pytest.mark.parametrize("bad_key", ["573001234567", "wa_abc", "wa_..", "wa_5730012345671234567"])
+@pytest.mark.parametrize("bad_key", ["573001234567", "wa_abc", "wa_..", "wa_5730012345671234567", "wa_573001234567%0A"])
 def test_session_control_rejects_keys_that_are_not_a_phone_session(bad_key: str) -> None:
     assert _client().get(f"/api/mba/sessions/{bad_key}/control").status_code == 422

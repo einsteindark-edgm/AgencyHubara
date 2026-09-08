@@ -742,7 +742,8 @@ def _handover_customer(raw: dict[str, Any]) -> str | None:
     candidates += [raw.get(k) for k in _HANDOVER_CUSTOMER_KEYS]
     for c in candidates:
         # SEC-12: se vuelve ``session_id = wa_<c>`` en el filesystem del vault.
-        if isinstance(c, str) and _PHONE_RE.match(c):
+        # ``fullmatch``: ``$`` aceptaría un ``\n`` final (directorio fantasma).
+        if isinstance(c, str) and _PHONE_RE.fullmatch(c):
             return c
     return None
 

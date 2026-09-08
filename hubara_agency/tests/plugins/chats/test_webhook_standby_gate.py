@@ -74,6 +74,14 @@ def test_messaging_handovers_go_to_the_handover_ingest_and_nowhere_else(harness)
     assert len(_HANDOVER.calls) == 1
 
 
+def test_the_unparsed_body_is_logged_with_phones_masked() -> None:
+    from src.plugins.chats.api.sales import _mask_phones
+
+    logged = _mask_phones(P.handover(customer="+573001234567"))
+    assert "573001234567" not in logged and "***4567" in logged and "***1190" in logged  # display_phone_number
+    assert "control_taken" in logged and P.MBA_APP_ID in logged
+
+
 def test_a_regular_messages_webhook_still_reaches_the_sales_ingest(harness) -> None:
     client, sales_ingest, standby_ingest, delivery = harness
     body = {

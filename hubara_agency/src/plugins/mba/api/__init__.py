@@ -42,11 +42,14 @@ async def get_agent_config(agent_id: str) -> dict[str, Any]:
 async def get_session_control(session_key: str) -> dict[str, Any]:
     """Quién responde al cliente hoy (``mba`` | ``hubara`` | ``null`` si Meta
     nunca avisó) y los últimos cambios de control."""
-    if not _SESSION_KEY_RE.match(session_key):
+    # ``fullmatch``: ``$`` aceptaría un ``\n`` final.
+    if not _SESSION_KEY_RE.fullmatch(session_key):
         raise HTTPException(status_code=422, detail="session_key debe ser wa_<dígitos>")
-    if not (WORKSPACE_VAULT_DIR / session_key / "metadata.json").is_file():
-        raise HTTPException(status_code=404, detail=f"sesión desconocida: {session_key}")
+    # El layout del vault es del store (SDK), no de este plugin: una sesión sin
+    # metadata (inexistente, vacío o corrupto) lee como ``{}``.
     data = FilesystemMetadataStore(WORKSPACE_VAULT_DIR).read(session_key)
+    if not data:
+        raise HTTPException(status_code=404, detail=f"sesión desconocida: {session_key}")
     history = data.get("control_history")
     history = [h for h in history if isinstance(h, dict)] if isinstance(history, list) else []
     return {
