@@ -167,6 +167,31 @@ transiciones manuales validando el DAG permitido entre stages.
 - WHEN se aplica la transición
 - THEN el stage history registra `by: "order-sentinel"` (omitido → `"human"`)
 
+#### Scenario: "En camino" con link de guía (modal del kanban)
+
+- GIVEN el operador suelta un pedido en la columna `shipping` del kanban
+- WHEN el modal "Marcar en camino" le pide (opcionalmente) el link de la guía
+  y confirma con `{stage: "shipping", tracking_url: "https://…?guia=123"}`
+- THEN la transición se aplica y el stage history registra la nota
+  `Guía de envío: https://…?guia=123` (concatenada a la nota si venía una)
+- AND `EmitOrderStageWorkflow` recibe el `tracking_url`, el
+  `OrderStageChangedEvent` lo lleva y el manifest lo mapea (`$.tracking_url`)
+  al signal `notify_stage_change` del ETA
+- AND el mensaje de WhatsApp que anuncia "ya va en camino" termina con la URL
+  cruda en su propia burbuja (`Puedes seguir tu envío aquí: https://…`) para
+  que WhatsApp la muestre como link tappable; fuera de la ventana 24h el link
+  viaja en el slot `status_label` del template `order_status_utility_v2`
+- AND sin `tracking_url` (o vacío) el mensaje es byte-a-byte el de siempre;
+  "Cancelar" en el modal no mueve el pedido ni manda request
+
+#### Scenario: Link de guía inválido
+
+- GIVEN body `{stage: "shipping", tracking_url: "www.x.com/guia"}` (sin esquema
+  http/https, o con espacios, o > 500 chars, o esquema `javascript:`/`ftp:`)
+- WHEN se invoca
+- THEN se devuelve HTTP 422 mencionando `tracking_url` y la transición NO se
+  aplica (un "en camino" con link roto no se puede re-notificar por template)
+
 ### Requirement: Confirmación manual de pago
 
 El sistema SHALL exponer `PATCH /api/orders/orders/{id}/confirm-payment`

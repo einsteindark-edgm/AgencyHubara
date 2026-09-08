@@ -17,6 +17,8 @@ import {
 import { Avatar, Icon, MacButton } from "@/shared/ui";
 import { dayChipShort, fmtMoney, todayIso } from "@/shared/lib";
 
+import { TrackingLinkModal } from "./TrackingLinkModal";
+
 const COLUMNS: OrderStatus[] = ["new", "preparing", "ready", "shipping", "delivered", "cancelled"];
 
 // MIME type interno para el drag payload. Usamos un type custom para que
@@ -35,6 +37,9 @@ export function OrdersBoard({ orders, selectedId, onSelect }: Props) {
   // Toast local — si la transición falla (DAG violation, Medusa down),
   // mostramos el detail al operador. Auto-dismiss después de 5s vía CSS.
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  // Drop en "En camino": antes de mover pedimos (opcionalmente) el link de la
+  // guía — viaja en el mismo PATCH y termina en el WhatsApp del cliente.
+  const [pendingShip, setPendingShip] = useState<string | null>(null);
 
   const grouped = useMemo(() => {
     return COLUMNS.map((status) => ({
@@ -53,8 +58,16 @@ export function OrdersBoard({ orders, selectedId, onSelect }: Props) {
     if (!dragged) return;
     if (dragged.status === toStage) return; // no-op (idempotente)
 
+    if (toStage === "shipping") {
+      setPendingShip(orderId);
+      return;
+    }
+    runTransition(orderId, toStage);
+  }
+
+  function runTransition(orderId: string, toStage: OrderStatus, trackingUrl?: string) {
     transition.mutate(
-      { orderId, to_stage: toStage },
+      { orderId, to_stage: toStage, tracking_url: trackingUrl },
       {
         onSuccess: (result) => {
           if (!result.success && result.error_detail) {
@@ -124,6 +137,18 @@ export function OrdersBoard({ orders, selectedId, onSelect }: Props) {
           </div>
         );
       })}
+      {pendingShip && (
+        <TrackingLinkModal
+          orderId={pendingShip}
+          busy={transition.isPending}
+          onCancel={() => setPendingShip(null)}
+          onConfirm={(url) => {
+            const orderId = pendingShip;
+            setPendingShip(null);
+            runTransition(orderId, "shipping", url ?? undefined);
+          }}
+        />
+      )}
       {errorMsg && (
         <div
           style={{

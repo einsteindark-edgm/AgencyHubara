@@ -219,15 +219,22 @@ interface TransitionStageVariables {
   to_stage: OrderStatus;
   note?: string;
   force?: boolean;
+  /** Link de la guía (solo `shipping`): el ETA lo agrega al mensaje de WhatsApp. */
+  tracking_url?: string;
 }
 
 export function useTransitionOrderStage() {
   const qc = useQueryClient();
   return useMutation<OrderCommandResult, Error, TransitionStageVariables>({
-    mutationFn: async ({ orderId, to_stage, note, force }) => {
+    mutationFn: async ({ orderId, to_stage, note, force, tracking_url }) => {
       const raw = await apiClient.patch<unknown>(
         `/api/orders/orders/${encodeURIComponent(orderId)}/stage`,
-        { stage: to_stage, note, force: force ?? false },
+        {
+          stage: to_stage,
+          note,
+          force: force ?? false,
+          ...(tracking_url ? { tracking_url } : {}),
+        },
       );
       return orderCommandResultSchema.parse(raw);
     },

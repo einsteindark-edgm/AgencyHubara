@@ -67,12 +67,18 @@ class OrderStageChangedEvent:
             literally by the manifest ``when:`` clauses.
         occurred_at_ms: epoch ms when the transition happened. Carried for
             observability + ordering; not used for routing.
+        tracking_url: optional carrier tracking link the operator attached
+            when moving the order to ``shipping``. Mapped by the manifest
+            (``$.tracking_url``) into the ETA ``notify_stage_change`` payload
+            so the WhatsApp message that announces "en camino" carries the
+            link. ``None`` for every other stage / legacy emitters.
     """
 
     session_id: str
     order_id: str
     to_stage: str
     occurred_at_ms: int = 0
+    tracking_url: str | None = None
 
 
 __all__ = ["OrderStageChangedEvent"]

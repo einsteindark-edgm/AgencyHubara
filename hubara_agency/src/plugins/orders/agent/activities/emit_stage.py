@@ -21,10 +21,15 @@ from src.platform.config import WORKSPACE_VAULT_DIR
 
 @activity.defn(name="emit_order_stage_activity")
 async def emit_order_stage_activity(
-    order_id: str, to_stage: str
+    order_id: str, to_stage: str, tracking_url: str | None = None
 ) -> str:
     """Resuelve la sesión dueña del pedido y despacha el evento. Devuelve
     el resultado del dispatch ("signaled_with_start" / "no_session" / ...).
+
+    ``tracking_url`` (opcional): link de la guía que el operador adjuntó al
+    mover el pedido a "en camino"; viaja en el evento hasta el mensaje de
+    WhatsApp. Tercer arg con default para que los runs en vuelo del
+    ``EmitOrderStageWorkflow`` viejo (2 args) sigan replayando.
     """
     # Import lazy: el módulo API define el router FastAPI; lo importamos solo
     # al ejecutar (intra-plugin orders→orders, R-DIP OK).
@@ -78,6 +83,7 @@ async def emit_order_stage_activity(
                 order_id=order_id,
                 to_stage=to_stage,
                 occurred_at_ms=int(time.time() * 1000),
+                tracking_url=(tracking_url or "").strip() or None,
             ),
             source_plugin="orders",
             source_worker="reconcile",

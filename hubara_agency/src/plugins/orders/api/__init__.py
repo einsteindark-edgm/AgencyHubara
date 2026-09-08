@@ -396,6 +396,12 @@ async def transition_order_stage(
         se infirió de la conversación humana, el cliente YA fue avisado por
         chat y la notificación ETA duplicaría el mensaje. NO gatear por tag
         HUMANO (L-6: toda venta exitosa termina en HUMANO — apagaría todo).
+      * `tracking_url` (optional str) — link de la guía de la transportadora
+        que el operador adjunta al mover el pedido a `shipping` (modal del
+        kanban). Viaja en la cascada ETA hasta el mensaje de WhatsApp (link
+        tappable al final) y queda en la nota del stage history. Solo http(s),
+        sin espacios, ≤ 500 chars → si no, 422 ANTES de aplicar la transición
+        (un "en camino" con link roto no se puede re-notificar por template).
 
     Response shape igual que `/schedule`. `success=False` con
     `error_detail` que empieza con `invalid_transition:` cuando el
@@ -410,12 +416,16 @@ async def transition_order_stage(
                 f"recibido {stage_raw!r}"
             ),
         )
+    tracking_url = _parse_tracking_url(body.get("tracking_url"))
+    note = body.get("note") if isinstance(body.get("note"), str) else None
+    if tracking_url:
+        # Auditoría en el stage history: qué guía se le mandó al cliente.
+        guia = f"Guía de envío: {tracking_url}"
+        note = f"{note} · {guia}" if note else guia
     cmd = TransitionStageCommand(
         order_id=order_id,
         to_stage=stage_raw,  # type: ignore[arg-type]
-        note=body.get("note")
-        if isinstance(body.get("note"), str)
-        else None,
+        note=note,
         force=bool(body.get("force", False)),
         by=body.get("by") if isinstance(body.get("by"), str) else "human",
     )
@@ -429,7 +439,7 @@ async def transition_order_stage(
         and result.current_stage
         and body.get("notify_customer", True) is not False
     ):
-        _spawn_emit(order_id, result.current_stage)
+        _spawn_emit(order_id, result.current_stage, tracking_url)
     if result.success:
         _publish_orders_changed(order_id)
     return _serialize_command_result(result)
@@ -508,11 +518,45 @@ def _serialize_command_result(result) -> dict[str, Any]:
 _emit_tasks: set[asyncio.Task] = set()
 
 
-async def _start_durable_emit(order_id: str, to_stage: str) -> None:
+_TRACKING_URL_MAX_LEN = 500
+_TRACKING_URL_RE = re.compile(r"^https?://[^\s]+$", re.IGNORECASE)
+
+
+def _parse_tracking_url(raw: Any) -> str | None:
+    """Normaliza el `tracking_url` del body. Ausente / vacío → None.
+
+    Presente pero inválido → 422 (esquema distinto de http(s), espacios,
+    demasiado largo, no-string). Se valida ANTES de tocar el pedido para no
+    dejar una transición aplicada sin su link.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        raise HTTPException(
+            status_code=422, detail="`tracking_url` debe ser un string http(s)."
+        )
+    url = raw.strip()
+    if not url:
+        return None
+    if len(url) > _TRACKING_URL_MAX_LEN or not _TRACKING_URL_RE.match(url):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "`tracking_url` inválido: debe empezar con http:// o https://, "
+                f"no tener espacios y medir ≤ {_TRACKING_URL_MAX_LEN} caracteres."
+            ),
+        )
+    return url
+
+
+async def _start_durable_emit(
+    order_id: str, to_stage: str, tracking_url: str | None = None
+) -> None:
     """L-8b: la emisión es un workflow Temporal (EmitOrderStageWorkflow en
     queue-orders-reconcile) — durable, con retries y visible en la UI :8233.
     Reemplaza el create_task best-effort (L-7). El start tarda ~ms; si el
-    MISMO (order, stage) ya está en vuelo, Temporal lo dedupea por id."""
+    MISMO (order, stage) ya está en vuelo, Temporal lo dedupea por id.
+    `tracking_url` (solo "en camino") viaja en el input del workflow."""
     from temporalio.exceptions import WorkflowAlreadyStartedError
 
     from src.platform.plugin_manifest import get_task_queue
@@ -522,7 +566,7 @@ async def _start_durable_emit(order_id: str, to_stage: str) -> None:
         client = await get_temporal_client()
         await client.start_workflow(
             "EmitOrderStageWorkflow",
-            {"order_id": order_id, "to_stage": to_stage},
+            {"order_id": order_id, "to_stage": to_stage, "tracking_url": tracking_url},
             id=f"order-stage-changed-{order_id.lstrip('#')}-{to_stage}",
             task_queue=get_task_queue("orders", "reconcile"),
         )
@@ -535,8 +579,10 @@ async def _start_durable_emit(order_id: str, to_stage: str) -> None:
         )
 
 
-def _spawn_emit(order_id: str, to_stage: str) -> None:
-    task = asyncio.create_task(_start_durable_emit(order_id, to_stage))
+def _spawn_emit(
+    order_id: str, to_stage: str, tracking_url: str | None = None
+) -> None:
+    task = asyncio.create_task(_start_durable_emit(order_id, to_stage, tracking_url))
     _emit_tasks.add(task)
     task.add_done_callback(_emit_tasks.discard)
 
