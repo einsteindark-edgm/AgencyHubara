@@ -29,6 +29,7 @@ import time
 from typing import Any
 
 from src.platform.config import WORKSPACE_VAULT_DIR
+from src.platform.constants import ROUTE_HUMANO, ROUTE_VENTAS
 from src.platform.medusa.client import HttpMedusaClient, MedusaAPIError
 from src.platform.orders import display_id_cache
 from src.platform.orders.command_port import (
@@ -76,10 +77,14 @@ def apply_payment_confirmation_to_chat_metadata(
         actualizado a "COMPRA_EXITOSA" + `payment_confirmed_at_ms` +
         `payment_confirmed_by` para auditoría.
 
-    NO toca `active_route` — se queda en "humano" porque el humano cerró
-    el caso. Si el cliente vuelve a escribir, el routing sigue
-    enviándolo a la cola humana (el bot no retoma sesiones cerradas con
-    venta confirmada).
+    `active_route`: si la conversación estaba en "humano" (el bot escaló
+    para verificar el pago, o el humano intervino a mano), confirmar el
+    pago la DEVUELVE al bot de ventas de una (pedido del operador,
+    2026-09-08). Antes se quedaba en la bandeja humana hasta el scheduler
+    post-venta nocturno o el botón "Devolver al bot". Misma mutación que
+    `chats/api/handoff.py::return_to_bot` (rama ventas), salvo el tag: acá
+    queda COMPRA_EXITOSA (cliente real en la bandeja), no RETOMA_VENTA. Si
+    el bot ya la tenía (ventas/remarketing), la ruta no se toca.
 
     Idempotente: si `tag` ya es "COMPRA_EXITOSA", la función devuelve
     False sin tocar nada. Esto cierra correctamente el escenario donde
@@ -92,6 +97,10 @@ def apply_payment_confirmation_to_chat_metadata(
     motivo = (
         f"Pago verificado por {by or 'humano'} desde dashboard de orders"
     )
+    returned_to_bot = chat_metadata.get("active_route") == ROUTE_HUMANO
+    if returned_to_bot:
+        chat_metadata["active_route"] = ROUTE_VENTAS
+        motivo += " — la conversación vuelve al bot de ventas"
     chat_metadata["tag"] = "COMPRA_EXITOSA"
     chat_metadata["motivo"] = motivo
 
@@ -101,8 +110,9 @@ def apply_payment_confirmation_to_chat_metadata(
             {
                 "tag": "COMPRA_EXITOSA",
                 "motivo": motivo,
-                "active_route": chat_metadata.get("active_route", "humano"),
+                "active_route": chat_metadata.get("active_route", ROUTE_VENTAS),
                 "timestamp": now_ms / 1000.0,
+                "source": "orders_confirm_payment",
             }
         )
 
