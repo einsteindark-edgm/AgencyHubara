@@ -33,3 +33,11 @@ ROUTE_HUMANO = "humano"
 
 # Prefijos de session_id por canal
 WHATSAPP_SESSION_PREFIX = "wa_"
+
+# ── Meta Business Agent (D1.5): quién controla el hilo de WhatsApp ────────────
+# Lo dice el webhook `messaging_handovers` (`new_owner_app_id` vs nuestro
+# `META_APP_ID`). Es un eje aparte de `active_route` (bot/humano DENTRO de
+# Hubara): con `control_owner=mba` Meta responde y Hubara solo escucha.
+CONTROL_OWNER_MBA = "mba"
+CONTROL_OWNER_HUBARA = "hubara"
+CONTROL_OWNERS = (CONTROL_OWNER_MBA, CONTROL_OWNER_HUBARA)

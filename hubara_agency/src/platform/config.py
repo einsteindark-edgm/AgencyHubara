@@ -85,6 +85,23 @@ MBA_STANDBY_ENABLED: bool = parse_flag(os.getenv("MBA_STANDBY_ENABLED"))
 MBA_CUSTOMER_ALLOWLIST: frozenset[str] = parse_customer_allowlist(os.getenv("MBA_CUSTOMER_ALLOWLIST"))
 
 
+def parse_app_id(value: str | None) -> str:
+    """App id de Meta (solo dígitos). Vacío, placeholder o no numérico → ``""``
+    (= no configurado: el webhook ``messaging_handovers`` no decide dueño)."""
+    if is_placeholder(value):
+        return ""
+    item = str(value).strip()
+    return item if item.isdigit() else ""
+
+
+#: NUESTRA app de Meta suscrita al WABA (el `APP_ID` del CLI de provisioning
+#: de WhatsApp). D1.5: el `new_owner_app_id` de `messaging_handovers` igual a
+#: este = Hubara controla el hilo. Variable dedicada a propósito: `META_APP_ID`
+#: (SSM) nació para OAuth/Marketing API del plugin ads y podría apuntar a OTRA
+#: app — reutilizarla invertiría dueños en silencio.
+WHATSAPP_APP_ID: str = parse_app_id(os.getenv("WHATSAPP_APP_ID"))
+
+
 def mba_customer_allowed(customer: str | None) -> bool:
     """¿Este cliente (E.164, dígitos o ``wa_<dígitos>``) está en la lista
     cerrada de MBA? Lista vacía → False siempre."""

@@ -25,6 +25,10 @@ Notas de diseño:
 - ``client_ip`` es la IP real del cliente detrás de Caddy/CloudFront (primer
   hop de ``X-Forwarded-For``); la clave correcta para cualquier límite por IP
   en un router expuesto (el peer es siempre el proxy).
+- ``CONTROL_OWNER_MBA`` / ``CONTROL_OWNER_HUBARA`` (``CONTROL_OWNERS``): los
+  valores de ``metadata.control_owner`` de una sesión de WhatsApp — quién
+  responde al cliente según el webhook ``messaging_handovers`` de Meta
+  Business Agent (chats lo escribe, mba lo lee).
 """
 from __future__ import annotations
 
@@ -33,6 +37,11 @@ from src.platform.config import (
     AWS_REGION as AWS_REGION,
     GRAPHAGENTS_INSTANCE_TAG as GRAPHAGENTS_INSTANCE_TAG,
     WORKSPACE_VAULT_DIR as WORKSPACE_VAULT_DIR,
+)
+from src.platform.constants import (
+    CONTROL_OWNER_HUBARA as CONTROL_OWNER_HUBARA,
+    CONTROL_OWNER_MBA as CONTROL_OWNER_MBA,
+    CONTROL_OWNERS as CONTROL_OWNERS,
 )
 from src.platform.logging import (
     setup_logging as setup_logging,

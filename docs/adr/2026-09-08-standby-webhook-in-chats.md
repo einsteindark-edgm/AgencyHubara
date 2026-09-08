@@ -37,7 +37,7 @@ Había dos lugares posibles para la rama `standby`:
 
 - `sales.py` reparte por `field`: `standby` → `IngestStandby` (vault, sin
   Temporal) + `IngestDeliveryStatus` para los statuses; `messaging_handovers`
-  → 200 y log hasta D1.5; `messages` (o sin `field`) → el path de siempre.
+  → `IngestHandover` (`control_owner` por sesión, D1.5); `messages` (o sin `field`) → el path de siempre.
   Un `standby` nunca llega al ingest de Sales (no hay turno del bot).
 - El historial LLM de exoclaw (`EXOCLAW_STATE_DIR`) NO se escribe desde el
   API (no monta ese volumen; amnesia del PR #183). La copia completa de la

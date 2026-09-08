@@ -87,6 +87,11 @@ variable "secret_keys" {
     # setean out-of-band con `aws ssm put-parameter --overwrite`.
     "MBA_STANDBY_ENABLED",
     "MBA_CUSTOMER_ALLOWLIST",
+    # App id de NUESTRA app de Meta suscrita al WABA (el APP_ID del CLI de
+    # provisioning de WhatsApp). D1.5: decide si un `messaging_handovers` nos
+    # da el hilo a nosotros o a Business Agent. Placeholder/vacío = no se
+    # decide nada (WARNING). Distinto de META_APP_ID (OAuth/ads).
+    "WHATSAPP_APP_ID",
     "MEDUSA_BASE_URL",
     "MEDUSA_ADMIN_TOKEN",
     "META_CATALOG_ID",

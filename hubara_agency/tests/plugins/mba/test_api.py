@@ -242,3 +242,32 @@ def test_connector_refuses_customers_outside_the_closed_list(monkeypatch: pytest
     r = c.get("/api/mba/tools/search_products", params={"customer_phone": "+573001234567", "q": "vela"},
               headers={"X-API-Key": "secreto"})
     assert r.status_code == 200 and "error" not in r.json()
+
+
+# ── D1.5: quién controla el hilo (plano de gestión) ──────────────────────────
+
+
+def test_session_control_is_served_from_the_session_metadata(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from src.plugins.mba import api as mba_api
+
+    monkeypatch.setattr(mba_api, "WORKSPACE_VAULT_DIR", tmp_path)
+    store = FilesystemMetadataStore(tmp_path)
+    c = _client()
+    key = "wa_573001234567"
+    assert c.get(f"/api/mba/sessions/{key}/control").status_code == 404
+    store.write(key, {"tag": "INTERESADO"})
+    assert c.get(f"/api/mba/sessions/{key}/control").json() == {
+        "session_key": key, "control_owner": None, "control_owner_since_ms": None,
+        "control_owner_updated_at_ms": None, "control_owner_app_id": None, "history": [],
+    }
+    history = [{"owner": "hubara", "at_ms": i} for i in range(30)]
+    store.write(key, {"control_owner": "mba", "control_owner_since_ms": 1, "control_owner_updated_at_ms": 2,
+                      "control_owner_app_id": "APP_MBA", "control_history": history})
+    body = c.get(f"/api/mba/sessions/{key}/control").json()
+    assert (body["control_owner"], body["control_owner_since_ms"], body["control_owner_app_id"]) == ("mba", 1, "APP_MBA")
+    assert body["history"] == history[-mba_api.CONTROL_HISTORY_LIMIT:]
+
+
+@pytest.mark.parametrize("bad_key", ["573001234567", "wa_abc", "wa_..", "wa_5730012345671234567", "wa_573001234567%0A"])
+def test_session_control_rejects_keys_that_are_not_a_phone_session(bad_key: str) -> None:
+    assert _client().get(f"/api/mba/sessions/{bad_key}/control").status_code == 422

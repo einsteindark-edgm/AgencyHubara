@@ -32,8 +32,10 @@ from __future__ import annotations
 import os
 
 from exoclaw_temporal.config import WorkspaceConfig
+from loguru import logger
 
 from src.platform.analytics.composition import setup_analytics
+import src.platform.config as _cfg
 from src.platform.config import WORKSPACE_VAULT_DIR, mba_customer_allowed
 from src.platform.session_history import FilesystemMessageHistoryStore
 from src.platform.state import FilesystemMetadataStore as _PlatformFsMetaStore
@@ -47,6 +49,7 @@ from src.plugins.chats.agent.sales.use_cases.ingest_delivery_status import (
 from src.plugins.chats.agent.sales.use_cases.ingest_inbound_message import (
     IngestInboundMessage,
 )
+from src.plugins.chats.agent.sales.use_cases.ingest_handover import IngestHandover
 from src.plugins.chats.agent.sales.use_cases.ingest_standby import IngestStandby
 from src.plugins.chats.agent.sales.use_cases.load_or_start_sales_session import (
     LoadOrStartSalesSession,
@@ -56,6 +59,7 @@ from src.plugins.chats.agent.sales.use_cases.load_or_start_sales_session import 
 _INGEST_USE_CASE: IngestInboundMessage | None = None
 _DELIVERY_STATUS_USE_CASE: IngestDeliveryStatus | None = None
 _STANDBY_USE_CASE: IngestStandby | None = None
+_HANDOVER_USE_CASE: IngestHandover | None = None
 
 
 def build_ingest_use_case() -> IngestInboundMessage:
@@ -153,3 +157,25 @@ def build_ingest_standby_use_case() -> IngestStandby:
         is_customer_allowed=mba_customer_allowed,
     )
     return _STANDBY_USE_CASE
+
+
+def build_ingest_handover_use_case() -> IngestHandover:
+    """Singleton de ``messaging_handovers`` (D1.5 MBA): persiste quién
+    controla el hilo. Misma lista cerrada que el oído ``standby``; nuestro
+    app id se lee de la config en cada evento (parcheable en tests)."""
+    global _HANDOVER_USE_CASE
+    if _HANDOVER_USE_CASE is not None:
+        return _HANDOVER_USE_CASE
+    # Una vez por proceso: qué app id cree Hubara que es "nosotros" (F0: debe
+    # coincidir con el `new_owner_app_id` de un take propio).
+    logger.info(
+        "[chats.handover] WHATSAPP_APP_ID {} — sin él ningún handover decide dueño",
+        f"configurado (…{_cfg.WHATSAPP_APP_ID[-4:]})" if _cfg.WHATSAPP_APP_ID else "NO configurado",
+    )
+    _HANDOVER_USE_CASE = IngestHandover(
+        metadata_store=_PlatformFsMetaStore(WORKSPACE_VAULT_DIR),
+        vault_dir=WORKSPACE_VAULT_DIR,
+        is_customer_allowed=mba_customer_allowed,
+        our_app_id=lambda: _cfg.WHATSAPP_APP_ID,
+    )
+    return _HANDOVER_USE_CASE

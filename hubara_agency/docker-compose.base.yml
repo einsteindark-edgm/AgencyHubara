@@ -126,6 +126,7 @@ services:
       # Sin valor → el plugin degrada limpio (/api/ads/meta/login = 503). El token OAuth
       # NO es una env var: vive server-side en SSM SecureString.
       - META_APP_ID=${META_APP_ID}
+      - WHATSAPP_APP_ID=${WHATSAPP_APP_ID}
       - META_APP_SECRET=${META_APP_SECRET}
       - META_OAUTH_REDIRECT_URI=${META_OAUTH_REDIRECT_URI}
       # HU web-cart: la hidratación del carrito web corre en el INGEST (este

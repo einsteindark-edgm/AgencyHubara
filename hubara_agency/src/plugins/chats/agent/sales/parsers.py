@@ -634,3 +634,144 @@ def inbound_display_text(msg: WhatsAppMessage) -> str:
         caption = msg.media.get("caption") or msg.media.get("filename") or ""
         return f"[{label}] {caption}".strip()
     return f"[{msg.msg_type}]"
+
+
+# =============================================================================
+# Webhook `messaging_handovers` (D1.5 MBA): quién controla el hilo
+# =============================================================================
+#
+# Meta lo dispara cada vez que el control del hilo cambia entre Business Agent
+# y nuestra app (al enviar un mensaje desde Hubara → lo tomamos; tras
+# `thread_control release` → vuelve a MBA). La referencia de WhatsApp NO está
+# publicada todavía (2026-09-08: la URL redirige al home); el parser acepta el
+# shape del roadmap (`control_taken` con `previous_owner_app_id` /
+# `new_owner_app_id` / `metadata`) y el del protocolo de traspaso de Messenger
+# (`pass_thread_control` / `take_thread_control`, ids como str o int,
+# timestamp en s o ms), con el cliente en `sender.id` (o `recipient_id` /
+# `wa_id` / `from` / `to`). Un ítem que no se entiende cuenta en `unparsed`
+# (el handler lo loguea con el body para verificar el shape en F0), nunca
+# levanta.
+
+_HANDOVER_CONTROL_KEYS = ("control_taken", "pass_thread_control", "take_thread_control")
+_HANDOVER_CUSTOMER_KEYS = ("recipient_id", "wa_id", "from", "to", "customer_phone")
+
+
+@dataclass(frozen=True)
+class HandoverEvent:
+    customer: str  # WA ID del cliente (dígitos) → sesión ``wa_<customer>``
+    kind: str  # control_taken | pass_thread_control | take_thread_control | <event>
+    new_owner_app_id: str | None
+    previous_owner_app_id: str | None
+    timestamp_ms: int | None
+    metadata: str | None
+
+
+@dataclass(frozen=True)
+class HandoversEvent:
+    phone_number_id: str
+    handovers: tuple[HandoverEvent, ...] = ()
+    unparsed: int = 0  # ítems con shape desconocido / cliente inválido
+
+
+def parse_messaging_handovers(body: Any) -> HandoversEvent | None:
+    """Todos los cambios ``messaging_handovers`` del body. ``None`` si no trae
+    ninguno. Defensivo: nunca levanta."""
+    if not isinstance(body, dict) or not isinstance(body.get("entry"), list):
+        return None
+    found = False
+    phone_number_id = ""
+    handovers: list[HandoverEvent] = []
+    unparsed = 0
+    for entry in body["entry"]:
+        if not isinstance(entry, dict):
+            continue
+        for change in entry.get("changes") or []:
+            if not isinstance(change, dict):
+                continue
+            value = change.get("value")
+            if not isinstance(value, dict):
+                continue
+            items = value.get("messaging_handovers")
+            if change.get("field") != HANDOVERS_FIELD and not isinstance(items, list):
+                continue
+            found = True
+            meta = value.get("metadata")
+            pnid = meta.get("phone_number_id") if isinstance(meta, dict) else None
+            if isinstance(pnid, str) and pnid:
+                phone_number_id = phone_number_id or pnid
+            if not isinstance(items, list):
+                # sin lista: quizá el ítem viene plano en `value`
+                items = [value] if any(k in value for k in _HANDOVER_CONTROL_KEYS) else []
+                if not items:
+                    unparsed += 1
+            for raw in items:
+                parsed = _parse_handover(raw)
+                if parsed is None:
+                    unparsed += 1
+                else:
+                    handovers.append(parsed)
+    if not found:
+        return None
+    return HandoversEvent(phone_number_id=phone_number_id, handovers=tuple(handovers), unparsed=unparsed)
+
+
+def _app_id(raw: Any) -> str | None:
+    if isinstance(raw, bool) or raw is None:
+        return None
+    if isinstance(raw, int):
+        return str(raw)
+    if isinstance(raw, str):
+        return raw.strip() or None
+    return None
+
+
+def _timestamp_ms(raw: Any) -> int | None:
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, str) and raw.strip().isdigit():
+        raw = int(raw.strip())
+    if not isinstance(raw, int) or raw <= 0:
+        return None
+    # WhatsApp manda epoch en segundos (str); Messenger en milisegundos (int).
+    return raw if raw >= 10**12 else raw * 1000
+
+
+def _handover_customer(raw: dict[str, Any]) -> str | None:
+    sender = raw.get("sender")
+    candidates = [sender.get("id") if isinstance(sender, dict) else None]
+    candidates += [raw.get(k) for k in _HANDOVER_CUSTOMER_KEYS]
+    for c in candidates:
+        # SEC-12: se vuelve ``session_id = wa_<c>`` en el filesystem del vault.
+        # ``fullmatch``: ``$`` aceptaría un ``\n`` final (directorio fantasma).
+        if isinstance(c, str) and _PHONE_RE.fullmatch(c):
+            return c
+    return None
+
+
+def _parse_handover(raw: Any) -> HandoverEvent | None:
+    if not isinstance(raw, dict):
+        return None
+    customer = _handover_customer(raw)
+    if customer is None:
+        return None
+    kind: str | None = None
+    control: dict[str, Any] | None = None
+    for key in _HANDOVER_CONTROL_KEYS:
+        if isinstance(raw.get(key), dict):
+            kind, control = key, raw[key]
+            break
+    if control is None:
+        if "new_owner_app_id" not in raw and "previous_owner_app_id" not in raw:
+            return None
+        control = raw
+        event = raw.get("event")
+        kind = event if isinstance(event, str) and event else "unknown"
+    metadata = control.get("metadata")
+    return HandoverEvent(
+        customer=customer,
+        kind=kind or "unknown",
+        new_owner_app_id=_app_id(control.get("new_owner_app_id")),
+        previous_owner_app_id=_app_id(control.get("previous_owner_app_id")),
+        timestamp_ms=_timestamp_ms(raw.get("timestamp", control.get("timestamp"))),
+        metadata=metadata if isinstance(metadata, str) else None,
+    )

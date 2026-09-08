@@ -52,3 +52,42 @@ def test_sdk_runtime_reexports_the_guard() -> None:
     import src.sdk.runtime as kit
 
     assert kit.mba_customer_allowed is impl.mba_customer_allowed
+
+
+# ── D1.5: nuestro app id (para saber si el `new_owner_app_id` somos nosotros) ──
+
+
+@pytest.mark.parametrize("raw,expected", [
+    (None, ""), ("", ""), ("PLACEHOLDER_set_out_of_band", ""), (" 100000000000001 ", "100000000000001"),
+    ("abc", ""), ("12 34", ""),
+])
+def test_meta_app_id_parsing_only_accepts_digits_and_treats_placeholder_as_unset(raw, expected: str) -> None:
+    from src.platform.config import parse_app_id
+
+    assert parse_app_id(raw) == expected
+
+
+def test_config_reads_our_whatsapp_app_id_from_its_own_variable_not_metas_oauth_one(monkeypatch) -> None:
+    """M-2 de la revisión: META_APP_ID (SSM) nació para OAuth/ads y puede ser OTRA app."""
+    import importlib
+
+    from src.platform import config
+
+    assert isinstance(config.WHATSAPP_APP_ID, str)
+    monkeypatch.setenv("META_APP_ID", "111")
+    monkeypatch.setenv("WHATSAPP_APP_ID", "222")
+    try:
+        assert importlib.reload(config).WHATSAPP_APP_ID == "222"
+    finally:
+        monkeypatch.delenv("WHATSAPP_APP_ID")
+        monkeypatch.delenv("META_APP_ID")
+        importlib.reload(config)
+
+
+def test_sdk_runtime_reexports_the_control_owner_constants() -> None:
+    from src.platform import constants as impl
+    import src.sdk.runtime as kit
+
+    assert kit.CONTROL_OWNER_MBA == impl.CONTROL_OWNER_MBA == "mba"
+    assert kit.CONTROL_OWNER_HUBARA == impl.CONTROL_OWNER_HUBARA == "hubara"
+    assert kit.CONTROL_OWNERS == impl.CONTROL_OWNERS == ("mba", "hubara")

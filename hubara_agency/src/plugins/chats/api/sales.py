@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import re
 
 import structlog
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
@@ -20,12 +21,14 @@ from src.platform.observability.tracing import add_traced_background_task
 from src.platform.whatsapp.webhook_security import verify_meta_signature
 from src.plugins.chats.agent.sales.composition import (
     build_ingest_delivery_status_use_case,
+    build_ingest_handover_use_case,
     build_ingest_standby_use_case,
     build_ingest_use_case,
 )
 from src.plugins.chats.agent.sales.parsers import (
     HANDOVERS_FIELD,
     STANDBY_FIELD,
+    parse_messaging_handovers,
     parse_whatsapp_inbound,
     parse_whatsapp_standby,
     parse_whatsapp_statuses,
@@ -81,8 +84,10 @@ async def handle_whatsapp_webhook(request: Request, background_tasks: Background
       primeros van a `IngestStandby` (vault, sin Temporal); los statuses al
       mismo `IngestDeliveryStatus` (costo de lo que MBA envió). NUNCA entra
       al ingest de Sales: no hay turno del bot mientras MBA responde.
-    * `field == "messaging_handovers"` — cambio de control (D1.5): hoy se
-      acepta (200) y se loguea, sin persistir.
+    * `field == "messaging_handovers"` (D1.5 MBA) — cambio de control del
+      hilo entre Business Agent y nuestra app: `IngestHandover` persiste
+      `control_owner` en la sesión. Misma flag y misma lista cerrada que
+      `standby`.
 
     Ambos handlers corren como background tasks — devolvemos 200 al toque
     para evitar timeout de Meta.
@@ -210,8 +215,31 @@ def _handle_standby(body: dict, background_tasks: BackgroundTasks) -> None:
 
 
 def _handle_messaging_handovers(body: dict, background_tasks: BackgroundTasks) -> None:
-    """Cambio de control del hilo (D1.5): hoy solo se acepta y se loguea."""
-    logger.info("webhook_messaging_handovers_ignored", reason="pendiente D1.5 (control_owner)")
+    """D1.5: quién controla el hilo. Detrás de la misma flag que `standby`
+    (default OFF: se acepta y se descarta); la lista cerrada la aplica
+    `IngestHandover`. Un ítem con shape desconocido se loguea con el body
+    (la referencia de Meta para WhatsApp no está publicada: verificar en F0)."""
+    if not cfg.MBA_STANDBY_ENABLED:
+        logger.info("webhook_messaging_handovers_ignored", reason="MBA_STANDBY_ENABLED apagado")
+        return
+    event = parse_messaging_handovers(body)
+    if event is None:
+        return
+    if event.unparsed:
+        # El body va al log para descubrir el shape real en F0, con los
+        # teléfonos enmascarados (mismo criterio que el resto: ***últimos 4).
+        logger.warning("webhook_messaging_handovers_unparsed", unparsed=event.unparsed, body=_mask_phones(body))
+    logger.info("webhook_messaging_handovers", handovers=len(event.handovers), unparsed=event.unparsed)
+    if event.handovers:
+        add_traced_background_task(background_tasks, build_ingest_handover_use_case().execute, event)
+
+
+_LONG_DIGITS = re.compile(r"\d{8,}")
+
+
+def _mask_phones(body: dict) -> str:
+    """JSON del body con toda tira de ≥8 dígitos reducida a ``***<últimos 4>``."""
+    return _LONG_DIGITS.sub(lambda m: f"***{m.group(0)[-4:]}", json.dumps(body, ensure_ascii=False))
 
 
 _FIELD_HANDLERS = {

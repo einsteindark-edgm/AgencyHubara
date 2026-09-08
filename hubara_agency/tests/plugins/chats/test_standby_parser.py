@@ -4,10 +4,12 @@ from __future__ import annotations
 import pytest
 
 from src.plugins.chats.agent.sales.parsers import (
+    HandoversEvent,
     StandbyEvent,
     WhatsAppMessage,
     echo_display_text,
     inbound_display_text,
+    parse_messaging_handovers,
     parse_whatsapp_inbound,
     parse_whatsapp_standby,
     parse_whatsapp_statuses,
@@ -111,3 +113,74 @@ def test_split_webhook_by_field_gives_each_handler_only_its_changes() -> None:
     assert parts["messages"]["object"] == "whatsapp_business_account"
     assert split_webhook_by_field({"entry": []}) == {}
     assert split_webhook_by_field("nope") == {}
+
+
+# ── D1.5: `messaging_handovers` → quién controla el hilo ─────────────────────
+
+
+def test_control_taken_is_parsed_with_both_app_ids_and_the_customer() -> None:
+    ev = parse_messaging_handovers(P.handover(P.OUR_APP_ID, P.MBA_APP_ID, ts="1757300060", metadata="tomado al enviar"))
+    assert isinstance(ev, HandoversEvent) and ev.phone_number_id == P.PHONE_NUMBER_ID
+    assert len(ev.handovers) == 1 and ev.unparsed == 0
+    h = ev.handovers[0]
+    assert (h.customer, h.kind, h.new_owner_app_id, h.previous_owner_app_id, h.timestamp_ms, h.metadata) == (
+        P.CUSTOMER, "control_taken", P.OUR_APP_ID, P.MBA_APP_ID, 1757300060000, "tomado al enviar"
+    )
+
+
+def test_messenger_style_pass_thread_control_with_int_ids_and_ms_timestamp_is_accepted() -> None:
+    body = P.handover_messenger_style(P.MBA_APP_ID, P.OUR_APP_ID)
+    item = body["entry"][0]["changes"][0]["value"]["messaging_handovers"][0]
+    item["pass_thread_control"]["new_owner_app_id"] = 123456789  # Messenger lo documenta como int en take_thread_control
+    h = parse_messaging_handovers(body).handovers[0]
+    assert h.kind == "pass_thread_control" and h.new_owner_app_id == "123456789"
+    assert h.previous_owner_app_id == P.OUR_APP_ID and h.metadata == "release"
+    assert h.timestamp_ms == 1757300060000 and h.customer == P.CUSTOMER
+
+
+@pytest.mark.parametrize("bad_customer", ["../x", "", "+573001234567", "wa_573001234567", "573001234567\n"])
+def test_a_handover_with_an_unsafe_customer_is_counted_as_unparsed_not_raised(bad_customer: str) -> None:
+    ev = parse_messaging_handovers(P.handover(customer=bad_customer))
+    assert ev.handovers == () and ev.unparsed == 1
+
+
+def test_a_handover_without_a_control_block_or_a_sender_is_unparsed() -> None:
+    body = P.handover()
+    item = body["entry"][0]["changes"][0]["value"]["messaging_handovers"][0]
+    del item["sender"]
+    assert parse_messaging_handovers(body).unparsed == 1
+    body = P.handover()
+    item = body["entry"][0]["changes"][0]["value"]["messaging_handovers"][0]
+    del item["control_taken"]
+    ev = parse_messaging_handovers(body)
+    assert ev.handovers == () and ev.unparsed == 1
+
+
+def test_a_flat_item_in_value_and_take_thread_control_are_understood() -> None:
+    body = P.handover(kind="take_thread_control")
+    assert parse_messaging_handovers(body).handovers[0].kind == "take_thread_control"
+    body = P.handover()
+    value = body["entry"][0]["changes"][0]["value"]
+    item = value.pop("messaging_handovers")[0]
+    value.update(item)  # el ítem viene plano en `value`
+    ev = parse_messaging_handovers(body)
+    assert ev.unparsed == 0 and ev.handovers[0].new_owner_app_id == P.OUR_APP_ID
+    value.pop("control_taken")
+    ev = parse_messaging_handovers(body)
+    assert ev.handovers == () and ev.unparsed == 1
+
+
+def test_a_null_new_owner_is_parsed_as_none_not_dropped() -> None:
+    h = parse_messaging_handovers(P.handover(new_owner=None, previous_owner=P.OUR_APP_ID)).handovers[0]
+    assert h.new_owner_app_id is None and h.previous_owner_app_id == P.OUR_APP_ID
+
+
+def test_bodies_without_handovers_yield_none_and_the_other_parsers_ignore_handovers() -> None:
+    assert parse_messaging_handovers(P.inbound()) is None
+    assert parse_messaging_handovers("nope") is None
+    assert parse_messaging_handovers({"entry": []}) is None
+    assert parse_whatsapp_standby(P.handover()) is None
+    assert parse_whatsapp_inbound(P.handover()) is None
+    assert parse_whatsapp_statuses(P.handover()) == []
+    ev = parse_messaging_handovers(P.merged(P.handover(), P.handover_messenger_style()))
+    assert [h.kind for h in ev.handovers] == ["control_taken", "pass_thread_control"]
