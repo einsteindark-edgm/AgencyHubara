@@ -19,8 +19,14 @@ autenticado, así un tercero sin la key no toca el bucket que usa Meta.
 
 Frontera de confianza: el teléfono que inyecta Meta (``customer_phone``) es la
 única identidad del cliente: se convierte en ``session_key = wa_<dígitos>`` y
-toda lectura queda acotada a esa sesión. Quien tenga la API key puede consultar
-cualquier teléfono; la key es el secreto que guarda Meta y es rotable.
+toda lectura y escritura queda acotada a esa sesión. Quien tenga la API key
+puede operar sobre cualquier teléfono; la key es el secreto que guarda Meta y
+es rotable.
+
+Delegación: las tools de lectura corren por canal 1 (ports del SDK); las de
+escritura por cast (canal 3) al contrato ``session-actions@v1`` de chats
+(``api/chats_cast.py``, service token). Un fallo del cast vuelve como error
+explícito en un 200 (el agente sabe manejarlo), nunca como 5xx hacia Meta.
 """
 from __future__ import annotations
 
@@ -151,7 +157,7 @@ async def run_connector_tool(
         logger.info("[mba] {} inválida desde {}: {}", tool_name, client, exc.errors)
         return JSONResponse(status_code=422, content=exc.payload)
     started = time.monotonic()
-    result = await run_tool(call, deps)
+    result = await run_tool(call, deps, request)
     elapsed_ms = int((time.monotonic() - started) * 1000)
     if result is None:
         logger.info("[mba] {} session={} → 501 (sin lógica todavía)", tool_name, call.session_key)
@@ -160,7 +166,7 @@ async def run_connector_tool(
             content={
                 "tool": tool_name,
                 "status": "not_implemented",
-                "message": "Contrato registrado; la lógica de esta tool llega en el siguiente PR de D1.2.",
+                "message": "Contrato registrado; esta tool todavía no tiene lógica.",
             },
         )
     logger.info(

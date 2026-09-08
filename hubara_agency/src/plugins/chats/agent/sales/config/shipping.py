@@ -41,3 +41,27 @@ ORDER_SUMMARY_SHIPPING_NOTE = (
     "transportadora antes de despachar y te lo confirmaremos para cerrar "
     "tu pedido."
 )
+
+
+def _fold(text: str) -> str:
+    import unicodedata
+
+    stripped = "".join(
+        ch for ch in unicodedata.normalize("NFKD", text) if not unicodedata.combining(ch)
+    )
+    return stripped.casefold().strip()
+
+
+def shipping_rate_for_city(city: str | None) -> int:
+    """Tarifa MÍNIMA de envío según la ciudad de entrega (D1.2b).
+
+    La usa el contrato ``session-actions@v1 /order`` cuando el pedido llega sin
+    ``shipping_cop`` (Meta Business Agent no manda montos): Bogotá y su
+    entorno → ``SHIPPING_RATE_BOGOTA_COP``; cualquier otra ciudad (o ninguna)
+    → ``SHIPPING_RATE_NATIONAL_COP``. Es la MISMA tarifa mínima que muestra
+    el resumen del pedido (#241): nunca un valor definitivo.
+    """
+    folded = _fold(city or "")
+    if "bogota" in folded:
+        return SHIPPING_RATE_BOGOTA_COP
+    return SHIPPING_RATE_NATIONAL_COP

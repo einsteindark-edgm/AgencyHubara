@@ -15,6 +15,16 @@ display_name: Meta Business Agent
 # - catalog: search_products / list_categories / get_product_by_handle leen el
 #   snapshot del catálogo.
 depends_on: [chats, orders, catalog]
+# Canal 3 (PLUGIN_CONTRACT §5.3) — casting declarado. Las 4 connector tools de
+# ESCRITURA delegan al contrato `session-actions@v1` que chats publica bajo
+# `/api/chats/session-actions/{session_key}/{draft,order,tag,escalate}`; el
+# cast (`src.plugins.mba.api.chats_cast`) va por castkit en modo service
+# (Meta autentica con X-API-Key: no hay bearer que portar).
+consumes:
+  - provider: chats
+    contract: session-actions@v1
+    into: session-ref
+    cast: api/chats_cast
 description: |
   Meta Business Agent: la configuración REAL que se envía al agente hospedado por Meta
   (skills, conocimiento, connector tools, UI skills, settings) autorada en agents/<id>/,

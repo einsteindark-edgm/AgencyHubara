@@ -1,24 +1,38 @@
 """Despacho de una ``ToolCall`` validada a su implementación.
 
-``run_tool`` devuelve el dict de respuesta, o ``None`` si la tool todavía no
-tiene lógica (el endpoint responde 501: contrato registrado, lógica pendiente).
-Las 4 tools de escritura (set_order_slot, register_order,
-manage_conversation_tag, escalate_to_human) delegan en use cases que posee
-``chats`` (draft, episodios, etiquetas) y llegan por cast en el siguiente PR
-de D1.2.
+Las 5 tools de lectura corren por canal 1 (ports del SDK). Las 4 de ESCRITURA
+(set_order_slot, register_order, manage_conversation_tag, escalate_to_human)
+delegan por cast (``deps.chats``, canal 3) al contrato ``session-actions@v1``
+de chats — por eso reciben el ``request`` entrante (el castkit lo exige).
+``run_tool`` devuelve ``None`` solo para una tool declarada sin lógica (501).
 """
 from __future__ import annotations
 
 from typing import Any
 
+from fastapi import Request
+
 from src.plugins.mba.domain.tool_calls import ToolCall
-from src.plugins.mba.tools import catalog, orders
+from src.plugins.mba.tools import catalog, orders, session
 from src.plugins.mba.tools.deps import ToolDeps, default_deps
 
 __all__ = ["ToolDeps", "default_deps", "run_tool"]
 
+_WRITE_TOOLS = {
+    "set_order_slot": session.set_order_slot,
+    "register_order": session.register_order,
+    "manage_conversation_tag": session.manage_conversation_tag,
+    "escalate_to_human": session.escalate_to_human,
+}
 
-async def run_tool(call: ToolCall, deps: ToolDeps) -> dict[str, Any] | None:
+_CHATS_UNAVAILABLE = {
+    "error": "chats_unavailable",
+    "applied": False,
+    "message": "La operación NO se aplicó (servicio no disponible). Pasa el caso a un colega.",
+}
+
+
+async def run_tool(call: ToolCall, deps: ToolDeps, request: Request | None = None) -> dict[str, Any] | None:
     p = call.params
     if call.tool == "search_products":
         return await catalog.search_products(
@@ -32,4 +46,9 @@ async def run_tool(call: ToolCall, deps: ToolDeps) -> dict[str, Any] | None:
         return await orders.check_order_status(deps.metadata, deps.order_query, session_key=call.session_key)
     if call.tool == "verify_order_for_checkout":
         return await orders.verify_order_for_checkout(deps.checkout, items=p["items"])
+    write = _WRITE_TOOLS.get(call.tool)
+    if write is not None:
+        if deps.chats is None:
+            return dict(_CHATS_UNAVAILABLE)
+        return await write(deps.chats, request, session_key=call.session_key, params=p)
     return None

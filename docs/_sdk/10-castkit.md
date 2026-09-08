@@ -95,6 +95,30 @@ async def eval_history(
 
 Superficie pública: `castkit.forward`.
 
+### Modo `auth="service"` (edge sin bearer)
+
+Un cast cuyo edge **no** trae identidad de operador no tiene nada que portar.
+Caso canónico (D1.2b, 2026-09-07): el connector de Meta Business Agent
+(`mba`) autentica a Meta con `X-API-Key` y delega las tools de escritura al
+contrato `session-actions@v1` de `chats`; con `propagate` el 2º hop daría 401.
+`auth="service"` manda `Authorization: Bearer <HUBARA_SERVICE_TOKEN>` — el
+paso 1 (machine-to-machine) de `require_auth` — e **ignora** la identidad
+entrante (no se mezclan). Sin token real (env vacío o placeholder de SSM) no
+se inventa header: en dev/tests la auth es no-op y en prod el preflight del
+deploy exige el token.
+
+```python
+return await castkit.forward(
+    request, "POST", f"/api/chats/session-actions/{session_key}/draft",
+    base_url=_chats_base(), timeout=_TIMEOUT_S,
+    cast_label="mba→chats", body=slots, auth="service",
+)
+```
+
+Regla: `service` es para casts **server-to-server sin operador detrás**. Un
+cast disparado por el dashboard sigue en `propagate` (la identidad del
+operador es la que audita el provider).
+
 ## Las 3 patas (regla de oro)
 
 - **(a) Check**: dos gates. `tests/architecture/test_castkit_loopback.py` —

@@ -285,10 +285,23 @@ async def _gallery_inter_delay() -> None:
 @activity.defn(name="flush_pending_ui_intents_activity")
 @with_heartbeat(every=5)
 async def flush_pending_ui_intents_activity(session_id: str) -> int:
+    """Activity del workflow: delega en `flush_pending_ui_intents` (la lógica
+    es una función plana para que también la pueda invocar un handler HTTP)."""
+    return await flush_pending_ui_intents(session_id)
+
+
+async def flush_pending_ui_intents(session_id: str) -> int:
     """Lee `metadata.json[pending_ui_intents]` y dispatch a `send_*`.
 
     Devuelve la cantidad de intents enviados (excluye los que fallaron y
     los unknown).
+
+    Función PLANA (sin `activity.info()` ni heartbeat): la invoca la activity
+    de arriba desde el workflow Sales y, desde D1.2b, el endpoint
+    `session-actions@v1 /order` de chats tras registrar un pedido que llegó
+    por Meta Business Agent (no hay turno del bot que flushee las
+    instrucciones de pago). `activity.logger` es seguro fuera de un activity:
+    sin contexto solo omite el sufijo con los datos del activity.
     """
     # Imports tardíos para evitar tocar httpx/Temporal-imports en module load
     from src.platform.analytics import (
