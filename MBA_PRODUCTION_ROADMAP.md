@@ -1,8 +1,8 @@
 # Meta Business Agent — Roadmap a producción
 
-> **Estado:** En ejecución · **Actualizado:** 2026-09-08 (D1.5: `messaging_handovers` → `control_owner` por sesión + `GET /api/mba/sessions/{key}/control`) · **Base estratégica:** `META_BUSINESS_AGENT_PLAN.md` (2026-07-02, por qué y cómo convivir con MBA).
+> **Estado:** En ejecución · **Actualizado:** 2026-09-08 (D1.6: cliente de Thread Control + política de `release` + `POST /api/mba/sessions/{key}/control/release`) · **Base estratégica:** `META_BUSINESS_AGENT_PLAN.md` (2026-07-02, por qué y cómo convivir con MBA).
 > **Este documento es el QUÉ HAY QUE CONSTRUIR**, en orden, con archivos, tests y criterio de terminado por desarrollo. Cuando contradiga al plan estratégico, gana este (está hecho con la doc de Meta releída el 2026-09-02..04 y con el código vivo).
-> PRs mergeados a `main`: #228 (preview), #230 (requests literales), #233 (plugin `mba` + guard de routers públicos + forge), #234 (roadmap). #235 (D1.2a: tools de lectura + hardening del router público). #242 (D1.2b: tools de escritura por cast + `session-actions@v1` en chats + castkit modo service). #245 (D1.3: reconciliación de etiquetas). #250 (D1.4: webhook `standby`, aislado por flag + lista cerrada) + #251 (fix `pricing.type` + lock en delivery status). D1.5 (`messaging_handovers` → `control_owner`) en PR abierto; siguiente D1.6. Cada D siguiente es un PR chico desde `main`.
+> PRs mergeados a `main`: #228 (preview), #230 (requests literales), #233 (plugin `mba` + guard de routers públicos + forge), #234 (roadmap). #235 (D1.2a: tools de lectura + hardening del router público). #242 (D1.2b: tools de escritura por cast + `session-actions@v1` en chats + castkit modo service). #245 (D1.3: reconciliación de etiquetas). #250 (D1.4: webhook `standby`, aislado por flag + lista cerrada) + #251 (fix `pricing.type` + lock en delivery status). #252 (D1.5: `messaging_handovers` → `control_owner`). D1.6 (thread control + política de `release`) en PR abierto; siguiente D1.7. Cada D siguiente es un PR chico desde `main`.
 
 ---
 
@@ -128,17 +128,20 @@ Pendiente / a medir en F0: (a) confirmar el shape real del evento y el app id co
 Tests: `test_standby_parser.py` (control_taken; Messenger-style con ids int y ts en ms; cliente inseguro o faltante → `unparsed`, nunca levanta; dueño nulo; cuerpos mezclados; los parsers de `standby`/`messages` ignoran handovers), `test_ingest_handover.py` (vault real: las dos transiciones, sesión nueva, reentrega, mismo dueño, lista cerrada, sin app id, tope de historia, imports SDK-only sin Temporal, E2E chats→vault→endpoint de mba), `test_webhook_standby_gate.py` (handover → solo al ingest de handover; ítem no parseable no encola; flag OFF → nada), `tests/plugins/mba/test_api.py` (endpoint, 422 por clave insegura, 404, historial acotado), `tests/platform/test_mba_rollout_guard.py` (`parse_app_id`, variable dedicada, re-export SDK de las constantes).
 Depende de: D1.4.
 
-**D1.6 · Thread control + política de `release`**
-Alcance: cliente `POST https://api.facebook.com/business/whatsapp/phone_numbers/{phone_number_id}/thread_control` (`action: release|take`, `X-API-Version: 2.0.0`) en `hubara_agency/src/plugins/mba/adapters/thread_control.py`. Política declarada en una tabla (puro, testeable):
-
-| Envío proactivo de Hubara | ¿Release después? |
-|---|---|
-| Remarketing (INTERESADO) y el cliente responde | Sí si la etapa es previa a pedido; no si hay orden registrada |
-| ETA / aviso de despacho | Sí (o mejor: `agent_event`, §D1.9, que no toma el hilo) |
-| Handoff a humano resuelto por el operador | Sí, al cerrar el caso desde el inbox |
-| Comprobante verificado | No hasta emitir `agent_event` payment_received; luego sí |
-
-Tests: tabla de política; el cliente HTTP con `respx`.
+**D1.6 ✅ · Thread control + política de `release`** (hecho 2026-09-08)
+Objetivo: devolverle el hilo a MBA después de un envío proactivo de Hubara, con una política declarada y sin dejar a MBA mudo.
+Contrato real (OpenAPI de Meta "Thread Control (Cloud API)" v1.0.0, actualizado 2026-09-04, leído en vivo): `POST https://api.facebook.com/business/whatsapp/phone_numbers/{phone_number_id}/thread_control`, header `X-API-Version: 1.0.0` (este endpoint SOLO enumera 1.0.0; `agent_event` y la configuración del agente usan 2.0.0 — resuelto el conflicto de versiones), body `{messaging_product: "whatsapp", action: release|take|pass, to: <teléfono o WA ID del cliente>, metadata?: ≤2000 chars (viaja verbatim en el `messaging_handovers` de vuelta), control_pass?: {target_role: ai_agent}}`, respuesta `{messaging_product: "whatsapp"}`. `release` exige TENER el control; `take` está restringido al escalation partner configurado (no lo somos: la escalación humana de MBA es suya, Hubara toma el hilo al enviar un mensaje); `pass` a `ai_agent` equivale a release.
+Hecho:
+- `mba/adapters/meta_api.py`: base común de la Cloud API de MBA (host `api.facebook.com`; token `META_MBA_TOKEN` leído en cada llamada, placeholder = `not_configured` sin llamar a nadie; reintento con backoff 0.5 s / 1 s ante 5xx, 429 y timeouts → `unavailable`; 4xx = `rejected` sin reintento con el `error.message` de Meta) — la reutiliza D2.1.
+- `mba/adapters/thread_control.py`: `ThreadControlPort` (`release` / `take`), `MetaThreadControl` (httpx con import perezoso), `FakeThreadControl`.
+- `mba/domain/release_policy.py` (pura): la tabla de arriba + precondiciones en orden: `already_mba` (no hay nada que soltar; frena también al operador), `release_pending` (release pedido y Meta aún no confirmó el dueño nuevo; vence a los 15 min), `owner_unknown` (Meta nunca avisó por `messaging_handovers`: los releases automáticos NO se hacen porque soltar a ciegas es un 4xx), `order_in_progress`, `await_agent_event`. El manual del operador pasa por encima de `release_pending` y `owner_unknown`: es la salida cuando el estado quedó colgado.
+- `mba/use_cases/release_thread.py`: guardas fail-closed (flag → `mba_disabled`; lista cerrada → `customer_not_enabled` con ERROR; `session_unknown`); hechos desde la sesión (`control_owner` de D1.5, `release_pending` comparando nuestro último release con `control_owner_updated_at_ms`, `phone_number_id` de la sesión o `WHATSAPP_PHONE_NUMBER_ID`) y del caller (`order_registered`, `agent_event_emitted`); `metadata = "hubara:<trigger> <detalle>"` para trazar el ciclo; registra bajo `store.update` `thread_control` {último pedido, ok / error} y un evento `release_requested` en `control_history` (`source=thread_control`). NUNCA escribe `control_owner` (lo confirma Meta). Un fallo (`rejected` / `unavailable` / `not_configured`) se anota en `last_error` y se devuelve en el outcome, nunca se levanta ni deja el release como pendiente, y NO pisa un release exitoso todavía pendiente (dos disparadores concurrentes: el segundo recibe 4xx y solo anota el error). Un timeout es `ambiguous` (lección L-1 de CAPI: Meta pudo procesarlo; el adapter NO reintenta un POST no idempotente) y queda pendiente como un éxito hasta que Meta confirme o venza el TTL. Si Meta aceptó pero el vault no pudo registrar (`OSError`), `released=true, recorded=false` + ERROR.
+- `POST /api/mba/sessions/{session_key}/control/release` (router protegido del plano de gestión): body `{trigger ∈ manual|handoff_resolved|remarketing_reply|eta_notice|receipt_verified (default manual), metadata ≤ 2000, order_registered, agent_event_emitted}` → outcome `{released, reason, action_at_ms, error}`; 503 / 403 / 404 por las guardas; 422 clave o trigger inválidos.
+- SDK: `mba_standby_enabled` e `is_placeholder` re-exportados por `src.sdk.runtime` (check + doc `01-fachada-sdk.md`). SSM: `META_MBA_TOKEN` en `variables.tf` (la prod compose rinde TODO el path SSM al `.env`; en local, exportar la variable).
+- Disparadores en los flujos productivos (remarketing, ETA, cierre de caso del inbox, comprobante) NO se tocan en este PR (regla: nada del path productivo cambia): quedan como llamadas a `ReleaseThread` / al endpoint desde D1.7 (watchdog), D1.9 (`agent_event`) y el inbox, cada uno en su PR y detrás de la flag.
+Revisión independiente aplicada: (M-1) `release_pending` no tenía salida y bloqueaba al operador → manual pasa por encima + TTL 15 min; (M-2) doble release concurrente pisaba el registro exitoso → un fallo no sobreescribe un pendiente; (M-3) timeout tratado como "no pasó" → `ambiguous` sin reintento, pendiente; (L) `recorded` en el outcome, tope de 2000 con prefijo incluido, `GET .../control` emite `thread_control`, ratchet del host `api.facebook.com` (solo `meta_api.py` + el preview), test de config sin `inspect`/`reload`, nota R-HEARTBEAT para cuando corra en activity.
+Pendiente / F0: (a) `META_MBA_TOKEN` real en SSM (system user con `whatsapp_business_messaging` + `whatsapp_business_management`); (b) verificar con un release real que Meta devuelve `messaging_handovers` con el `metadata` y que `control_owner` pasa a `mba` (cierra el ciclo D1.5 ↔ D1.6); (c) alerta por hilos en `hubara` sin actividad humana > N horas (D1.7).
+Tests: `tests/plugins/mba/test_release_policy.py` (tabla + precondiciones), `test_thread_control_adapter.py` (respx: URL / headers / body exactos; sin token no llama; 4xx rechazado sin reintento; 5xx / timeout / 429 con backoff; fake), `test_release_thread.py` (vault real: release + registro sin tocar el dueño; no repetir hasta la confirmación de Meta y volver a soltar tras un take nuevo; política no → nada escrito; guardas; phone id de la sesión o del env; error registrado y reintentable; rechazo), `test_api.py` (endpoint, códigos por guarda, validación), `tests/platform/test_mba_rollout_guard.py` (re-exports).
 Depende de: D1.5.
 
 **D1.7 · Watchdog por señales del connector**
@@ -241,7 +244,7 @@ DoD: tabla completada en `hubara_agency/.hubara/specs/plugins/mba/f0-results.md`
 ## 4. Riesgos que ya conocemos
 
 - Plataforma nueva e inestable (5xx intermitentes): reintentos con backoff en D2.1; nada crítico depende de una llamada única.
-- Olvidar `release` deja a MBA mudo para ese cliente para siempre: D1.6 con tests de política y alerta si un hilo lleva más de N horas en `hubara` sin actividad del humano.
+- Olvidar `release` deja a MBA mudo para ese cliente para siempre: D1.6 ✅ (política + `thread_control` visible en la sesión y en `GET .../control`); la alerta si un hilo lleva más de N horas en `hubara` sin actividad del humano es de D1.7.
 - Doble toque (MBA followup + Window Strategist): followup de MBA apagado por defecto (ya en la config), y D1.7 apaga los toques en ventana cuando MBA controla.
 - Pérdida de historial cuando MBA responde: D1.4 es prerequisito de cualquier allowlist con clientes reales.
 - Precio: hoy $2 por 1M tokens; la línea de crédito es obligatoria para `EVERYONE`. D4.4 antes de abrir.
@@ -254,7 +257,7 @@ DoD: tabla completada en `hubara_agency/.hubara/specs/plugins/mba/f0-results.md`
 D0 ✅ ─┐
 D1.8 ─┤ (independiente, hacer temprano)
       ├─ D1.1 ✅ → D1.2a ✅ → D1.2b ✅ → D1.3 ✅ ─┐
-      │        └─ D1.4 ✅ → D1.5 ✅ → D1.6 → D1.9
+      │        └─ D1.4 ✅ → D1.5 ✅ → D1.6 ✅ → D1.9
       │                       └─ D1.7
       ├─ D2.1 → D2.2 → D2.3
       │        └─ D2.4
