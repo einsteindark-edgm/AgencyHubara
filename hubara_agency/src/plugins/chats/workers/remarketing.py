@@ -41,8 +41,10 @@ from src.platform.workflow_helpers import CONVERSATIONAL_TURN_ACTIVITIES
 from src.plugins.chats.agent.remarketing.activities import (
     bootstrap_remarketing_session_activity,
     build_remarketing_trigger_activity,
+    build_remarketing_trigger_v2_activity,
     check_watchdog_eligibility_activity,
     persist_watchdog_outcome_activity,
+    read_remarketing_context_activity,
 )
 from src.platform.session_history.activities import persist_assistant_message_activity
 from src.plugins.chats.agent.remarketing.workflows.remarketing import (
@@ -91,6 +93,10 @@ async def main() -> None:
             persist_assistant_message_activity,
             read_workspace_memory_activity,
             build_remarketing_trigger_activity,
+            # Incidente run dc32f7fe: contexto real (motivo del tag + draft
+            # + transcript) para el gancho — gated remarketing-context-v1.
+            read_remarketing_context_activity,
+            build_remarketing_trigger_v2_activity,
             bootstrap_remarketing_session_activity,
             # PR-D global cleanup (ADR-2026-05-06-10): la
             # `@activity.defn load_remarketing_brain_activity` fue eliminada del

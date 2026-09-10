@@ -244,3 +244,48 @@ class TestPhaseB:
         assert d.channel == CHANNEL_TEMPLATE
         assert d.recommended_category == CATEGORY_MARKETING
         assert d.expected_cost_micros == 12500
+
+
+# =============================================================================
+# Rechazo — el cierre RECHAZO suprime la reactivación (incidente run dc32f7fe)
+# =============================================================================
+
+
+class TestRejectedLead:
+    """Incidente wa_573114842180 (2026-09-10, run dc32f7fe): el cliente pidió
+    comprar CERA (no la vendemos), se despidió con "Gracias" y aun así el
+    Window Strategist lo reactivó con "quedó pendiente lo de tu pedido".
+    TOOLS.md/SKILL.md prometían "RECHAZO → NO remarketing" pero la central
+    solo conocía HUMANO/COMPRA_EXITOSA como terminales."""
+
+    def test_rechazo_tag_suprime_aunque_las_ventanas_esten_abiertas(self, rate):
+        d = decide_reengagement(
+            NOW_MS, _meta(csw=True, ctwa=True), LeadState(tag="RECHAZO"), rate
+        )
+        assert d.allowed is False
+        assert d.channel == CHANNEL_BLOCKED
+        assert d.suppress_reason == "rejected"
+
+    def test_rechazo_en_el_cierre_del_ultimo_episodio_suprime_aunque_el_tag_cambie(
+        self, rate
+    ):
+        """Espejo de already_purchased: el tag corriente puede flipar (humano
+        desde el dashboard, reconcile); el cierre del último episodio manda."""
+        lead = LeadState(tag="NO_ETIQUETADO", last_closing_tag="RECHAZO")
+        d = decide_reengagement(NOW_MS, _meta(csw=True, ctwa=True), lead, rate)
+        assert d.allowed is False
+        assert d.suppress_reason == "rejected"
+
+    def test_tag_remarketing_explicito_levanta_la_supresion_por_rechazo(self, rate):
+        """Decisión humana (botón del dashboard escribe tag=REMARKETING) manda."""
+        lead = LeadState(tag="REMARKETING", last_closing_tag="RECHAZO")
+        d = decide_reengagement(NOW_MS, _meta(csw=False, ctwa=True), lead, rate)
+        assert d.allowed is True
+
+    def test_episodio_nuevo_tras_rechazo_no_hereda_la_supresion(self, rate):
+        """El próximo inbound abre episodio nuevo (tag reset a NO_ETIQUETADO,
+        closing_tag=None): la supresión se auto-levanta."""
+        lead = LeadState(tag="NO_ETIQUETADO", last_closing_tag=None)
+        d = decide_reengagement(NOW_MS, _meta(csw=True, ctwa=True), lead, rate)
+        assert d.allowed is True
+        assert d.channel == CHANNEL_FREE_FORM

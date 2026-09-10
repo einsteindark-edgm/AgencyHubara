@@ -22,6 +22,7 @@ _TAG_HUMAN = "HUMANO"
 _TAG_CONVERTED = "COMPRA_EXITOSA"
 _TAG_PAYMENT_PENDING = "CONFIRMADO_PAGO_PENDIENTE"
 _TAG_REMARKETING = "REMARKETING"
+_TAG_REJECTED = "RECHAZO"
 
 
 def _in_window(now_ms: int, expires_at_ms: object) -> bool:
@@ -48,6 +49,14 @@ def _classify(now_ms: int, convo: dict) -> dict:
         and tag != _TAG_REMARKETING
     ):
         return {**base, "action": "suppress", "reason": "already_purchased"}
+
+    # 1.55. Rechazo — cierre definitivo sin venta (espejo de send_policy
+    # 1.55, incidente run dc32f7fe): tag corriente o cierre del último
+    # episodio. Misma excepción: tag REMARKETING = decisión humana.
+    if tag != _TAG_REMARKETING and (
+        tag == _TAG_REJECTED or lead.get("last_closing_tag") == _TAG_REJECTED
+    ):
+        return {**base, "action": "suppress", "reason": "rejected"}
 
     in_csw = _in_window(now_ms, convo.get("service_window_expires_at_ms"))
     in_ctwa = _in_window(now_ms, convo.get("ctwa_window_expires_at_ms"))
