@@ -20,6 +20,7 @@ import {
   useSessions,
   type ChatSession,
   type SessionDetails,
+  type SessionOrigin,
   type StatusHistoryEntry,
 } from "@plugins/chats/frontend/entities/session";
 import {
@@ -33,6 +34,7 @@ import type {
   AvatarColor,
   ChatInboxItem,
   ChatMessageItem,
+  ChatOverview,
   ChatTag,
   FileItem,
   MemoryItem,
@@ -309,6 +311,74 @@ export function useChatRoutingLog(id: string | null) {
     // El backend devuelve cronológico ascendente; el inspector espera más
     // reciente primero.
     return [...entries].reverse().map(adaptStatusEntry);
+  }, [q.data]);
+  return { ...q, data };
+}
+
+/* ── Origen / cabecera del inspector ───────────────────────────────── */
+
+const META_CHANNELS = new Set(["ad", "post"]);
+
+/** Etiqueta humana del origen. Prioridad para Meta: nombre real de la
+ *  campaña (Graph) > headline del referral > ad id. Los demás canales los
+ *  clasifica el ingest (`_classify_origin_channel`). */
+export function formatOrigin(origin: SessionOrigin | null | undefined): {
+  label: string;
+  detail?: string;
+  isMeta: boolean;
+} {
+  if (!origin || !origin.channel) return { label: "Sin dato", isMeta: false };
+  if (META_CHANNELS.has(origin.channel)) {
+    const kind = origin.channel === "post" ? "Meta post" : "Meta Ads";
+    const name = origin.campaign_name ?? origin.headline ?? origin.source_id ?? "campaña";
+    const detail = origin.campaign_name
+      ? origin.ad_name ?? origin.headline ?? undefined
+      : origin.source_id
+        ? `ad ${origin.source_id}`
+        : undefined;
+    return { label: `${kind} · ${name}`, detail: detail ?? undefined, isMeta: true };
+  }
+  if (origin.channel === "web_cart") return { label: "Carrito web", isMeta: false };
+  if (origin.channel === "web_referral") return { label: "Link web / WhatsApp", isMeta: false };
+  if (origin.channel === "direct") return { label: "Directo (escribió al número)", isMeta: false };
+  return { label: origin.channel, isMeta: false };
+}
+
+function formatStarted(d: SessionDetails): string {
+  const ms = d.origin?.first_seen_ms;
+  let date: Date | null = typeof ms === "number" ? new Date(ms) : null;
+  if (!date) {
+    const first = d.messages.find((m) => typeof m.timestamp === "string" || typeof m.timestamp === "number");
+    if (first) {
+      date =
+        typeof first.timestamp === "number"
+          ? new Date(first.timestamp * 1000)
+          : new Date(first.timestamp as string);
+    }
+  }
+  if (!date || Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleString([], {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+/** Cabecera "Estado actual" del inspector con datos reales de la sesión. */
+export function useChatOverview(id: string | null) {
+  const q = useSession(id);
+  const data = useMemo<ChatOverview | null>(() => {
+    if (!q.data) return null;
+    const origin = formatOrigin(q.data.origin);
+    return {
+      sessionId: q.data.session_id,
+      tag: q.data.tag,
+      startedLabel: formatStarted(q.data),
+      originLabel: origin.label,
+      originDetail: origin.detail,
+      originIsMeta: origin.isMeta,
+    };
   }, [q.data]);
   return { ...q, data };
 }
