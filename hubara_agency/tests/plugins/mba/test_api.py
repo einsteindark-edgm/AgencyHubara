@@ -509,3 +509,125 @@ def test_the_real_sync_agent_is_wired_with_the_vault_store_the_flag_and_the_conn
     assert isinstance(uc, SyncAgent) and isinstance(uc._admin, MetaMbaAdmin)
     assert uc._api_key() == "k-1" and uc._enabled() is False
     assert uc._load("sales") is not None and uc._load("nope") is None
+
+
+# ── D2.3: rollout (allowlist, audiencia, enabled) ────────────────────────────
+
+
+class _RolloutStub:
+    def __init__(self, *, status=None, outcome=None, status_error=None) -> None:
+        self._status, self._outcome, self._status_error, self.calls = status, outcome, status_error, []
+
+    async def status(self, agent_id):
+        from src.plugins.mba.use_cases.rollout_control import RolloutStatus
+
+        self.calls.append(("status", agent_id))
+        if agent_id != "sales":
+            return None
+        if self._status_error is not None:
+            raise self._status_error
+        return self._status or RolloutStatus(
+            agent_id="sales", entity_id="PHONE_777", rollout_enabled=False, ai_audience="ALLOWLISTED_ONLY",
+            allowlist=[{"id": "e-1", "phone": "+573001234567", "in_hubara": True}],
+            checks=[{"code": "flag_enabled", "ok": True, "detail": ""}], can_enable=True, everyone_allowed=False,
+            last_sync=None, history=[],
+        )
+
+    def _out(self, *call):
+        from src.plugins.mba.use_cases.rollout_control import RolloutOutcome
+
+        self.calls.append(call)
+        return self._outcome or RolloutOutcome("sales", True, "applied")
+
+    async def add_phone(self, agent_id, phone):
+        return self._out("add_phone", agent_id, phone)
+
+    async def remove_phone(self, agent_id, entry_id):
+        return self._out("remove_phone", agent_id, entry_id)
+
+    async def set_audience(self, agent_id, audience, *, confirm):
+        return self._out("set_audience", agent_id, audience, confirm)
+
+    async def set_enabled(self, agent_id, enabled, *, confirm):
+        return self._out("set_enabled", agent_id, enabled, confirm)
+
+
+def _rollout_client(stub: _RolloutStub) -> TestClient:
+    from src.plugins.mba import api as mba_api
+
+    app = FastAPI()
+    app.include_router(router, prefix="/api/mba")
+    app.dependency_overrides[mba_api.get_rollout_control] = lambda: stub
+    return TestClient(app)
+
+
+def test_rollout_status_is_served_and_a_remote_outage_is_503() -> None:
+    from src.plugins.mba.adapters.meta_admin import MbaAdminError
+
+    stub = _RolloutStub()
+    res = _rollout_client(stub).get("/api/mba/agents/sales/rollout")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["rollout_enabled"] is False and body["can_enable"] is True and body["allowlist"][0]["phone"] == "+573001234567"
+    assert _rollout_client(stub).get("/api/mba/agents/nope/rollout").status_code == 404
+    down = _RolloutStub(status_error=MbaAdminError("unavailable", status=503, detail="down", attempts=3))
+    res = _rollout_client(down).get("/api/mba/agents/sales/rollout")
+    assert res.status_code == 503 and res.json()["detail"]["error"] == "remote_unavailable"
+
+
+def test_rollout_writes_delegate_with_the_confirmation_and_validate_input() -> None:
+    stub = _RolloutStub()
+    c = _rollout_client(stub)
+    assert c.post("/api/mba/agents/sales/rollout/allowlist", json={"phone": "+573009876543"}).status_code == 200
+    assert c.delete("/api/mba/agents/sales/rollout/allowlist/e-1").status_code == 200
+    assert c.put("/api/mba/agents/sales/rollout/audience", json={"ai_audience": "EVERYONE", "confirm": True}).status_code == 200
+    assert c.put("/api/mba/agents/sales/rollout/enabled", json={"enabled": True, "confirm": True}).status_code == 200
+    assert c.put("/api/mba/agents/sales/rollout/enabled", json={"enabled": False}).status_code == 200
+    assert stub.calls == [
+        ("add_phone", "sales", "+573009876543"),
+        ("remove_phone", "sales", "e-1"),
+        ("set_audience", "sales", "EVERYONE", True),
+        ("set_enabled", "sales", True, True),
+        ("set_enabled", "sales", False, False),
+    ]
+    # validación de entrada: 422 antes de tocar el use case
+    assert c.post("/api/mba/agents/sales/rollout/allowlist", json={"phone": "573009876543"}).status_code == 422
+    assert c.post("/api/mba/agents/sales/rollout/allowlist", json={}).status_code == 422
+    assert c.put("/api/mba/agents/sales/rollout/audience", json={"ai_audience": "FRIENDS"}).status_code == 422
+    assert c.delete("/api/mba/agents/sales/rollout/allowlist/..%2Fx").status_code in (404, 422)  # starlette normaliza el path
+    assert c.delete("/api/mba/agents/sales/rollout/allowlist/e%201").status_code == 422
+    assert c.put("/api/mba/agents/nope/rollout/enabled", json={"enabled": False}).status_code == 404
+    assert len(stub.calls) == 5
+
+
+@pytest.mark.parametrize(
+    "reason,status",
+    [("mba_disabled", 503), ("remote_unavailable", 503), ("agent_unknown", 404), ("entity_id_missing", 409), ("unavailable", 503), ("ambiguous", 503), ("not_configured", 503)],
+)
+def test_rollout_guards_map_to_status_codes_and_policy_refusals_are_200(reason: str, status: int) -> None:
+    from src.plugins.mba.use_cases.rollout_control import RolloutOutcome
+
+    out = RolloutOutcome("sales", False, reason, error={"kind": reason, "detail": "x", "status": None})
+    res = _rollout_client(_RolloutStub(outcome=out)).put("/api/mba/agents/sales/rollout/enabled", json={"enabled": True, "confirm": True})
+    assert res.status_code == status and res.json()["detail"]["error"] == reason
+    for policy in ("not_ready", "confirmation_required", "everyone_not_allowed", "customer_not_in_hubara_allowlist", "already_listed", "rejected"):
+        out = RolloutOutcome("sales", False, policy, blocked=("sync_ok",) if policy == "not_ready" else ())
+        res = _rollout_client(_RolloutStub(outcome=out)).put("/api/mba/agents/sales/rollout/enabled", json={"enabled": True, "confirm": True})
+        assert res.status_code == 200 and res.json()["applied"] is False and res.json()["reason"] == policy
+
+
+def test_the_real_rollout_control_is_wired_with_hubaras_closed_list_and_the_everyone_knob(monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.plugins.mba import api as mba_api
+    from src.plugins.mba.use_cases.rollout_control import RolloutControl
+    from src.platform import config
+
+    monkeypatch.setattr(config, "MBA_CUSTOMER_ALLOWLIST", frozenset({"573001234567"}))
+    monkeypatch.delenv("MBA_ALLOW_EVERYONE", raising=False)
+    uc = mba_api.get_rollout_control()
+    assert isinstance(uc, RolloutControl)
+    assert uc._hubara_allowed("+573001234567") is True and uc._hubara_allowed("+573000000000") is False
+    assert uc._everyone() is False
+    monkeypatch.setenv("MBA_ALLOW_EVERYONE", "1")
+    assert uc._everyone() is True
+    monkeypatch.setenv("MBA_ALLOW_EVERYONE", "PLACEHOLDER_set_out_of_band")
+    assert uc._everyone() is False

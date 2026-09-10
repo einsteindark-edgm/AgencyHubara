@@ -49,7 +49,25 @@ variable "tenants" {
 
     # Operación
     enabled_plugins = optional(string, "ads,agents_admin,catalog,chats,eta,orders,system_map")
+
+    # Meta Business Agent (plugin `mba`). Estamos en producción: MBA solo puede
+    # responderle a una LISTA CERRADA de clientes, y esa decisión vive ACÁ (git +
+    # PR + apply), no en un put-parameter a mano. Defaults = todo apagado y nadie.
+    # Se materializa como SSM String en /hubara/<tenant>/<VAR> (modules/mba-config).
+    mba = optional(object({
+      standby_enabled        = optional(bool, false)      # oído `standby` del webhook (D1.4)
+      customer_allowlist     = optional(list(string), []) # E.164 (+573001234567); [] = NADIE
+      episode_boundary_event = optional(bool, false)      # nota de frontera episode_closed (D1.10)
+      allow_everyone         = optional(bool, false)      # permite ai_audience=EVERYONE desde la tab (D2.3)
+    }), {})
   }))
+
+  validation {
+    condition = alltrue(flatten([
+      for t in values(var.tenants) : [for p in t.mba.customer_allowlist : can(regex("^\\+[1-9][0-9]{7,14}$", p))]
+    ]))
+    error_message = "tenants.*.mba.customer_allowlist: cada teléfono debe ser E.164 con '+' (p.ej. +573001234567)."
+  }
 }
 
 # ── Secretos (SSM SecureString) ─────────────────────────────────────────────
@@ -79,18 +97,10 @@ variable "secret_keys" {
     # `openssl rand -hex 32`, setear out-of-band y usar el MISMO valor al
     # registrar el connector en Meta (auth_config.api_key).
     "HUBARA_MBA_API_KEY",
-    # Interruptores del lado de la plataforma para Meta Business Agent (estamos
-    # en producción). MBA_STANDBY_ENABLED: "1" enciende el oído `standby` (D1.4);
-    # placeholder/vacío = APAGADO. MBA_CUSTOMER_ALLOWLIST: lista CERRADA de
-    # clientes (E.164 separados por coma) a los que se les acepta tráfico de
-    # MBA (standby + connector tools); placeholder/vacío = NADIE. Ambos se
-    # setean out-of-band con `aws ssm put-parameter --overwrite`.
-    "MBA_STANDBY_ENABLED",
-    "MBA_CUSTOMER_ALLOWLIST",
-    # D1.10: "1" manda a Business Agent la nota de frontera `episode_closed`
-    # (agent_event) cuando una connector tool cierra el episodio. APAGADO hasta
-    # verificar en F0 que el evento es silencioso para el cliente.
-    "MBA_EPISODE_BOUNDARY_EVENT",
+    # Los interruptores de Meta Business Agent (MBA_STANDBY_ENABLED,
+    # MBA_CUSTOMER_ALLOWLIST, MBA_EPISODE_BOUNDARY_EVENT, MBA_ALLOW_EVERYONE) NO
+    # son secretos: los gestiona modules/mba-config desde tenants.<t>.mba (git es
+    # la fuente de verdad). Acá solo quedan los secretos de MBA.
     # App id de NUESTRA app de Meta suscrita al WABA (el APP_ID del CLI de
     # provisioning de WhatsApp). D1.5: decide si un `messaging_handovers` nos
     # da el hilo a nosotros o a Business Agent. Placeholder/vacío = no se

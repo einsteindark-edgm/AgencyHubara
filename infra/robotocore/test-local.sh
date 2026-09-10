@@ -62,6 +62,8 @@ assert "Cognito pool agencyhubara-hubara existe"     "a cognito-idp list-user-po
 assert "Bucket S3 agencyhubara-hubara-frontend existe" "a s3api head-bucket --bucket agencyhubara-hubara-frontend"
 assert "IAM rol de deploy OIDC existe"               "a iam get-role --role-name agencyhubara-gha-deploy"
 assert "SSM scheduler knob (PR #69) existe"          "a ssm get-parameter --name /hubara/hubara/scheduler/ORDER_RECONCILE_INTERVAL_MINUTES"
+assert "SSM MBA_CUSTOMER_ALLOWLIST (mba-config) existe" "a ssm get-parameter --name /hubara/hubara/MBA_CUSTOMER_ALLOWLIST --query Parameter.Value --output text | grep -q '^+57'"
+assert "SSM MBA_STANDBY_ENABLED apagado por default"   "a ssm get-parameter --name /hubara/vincenzo/MBA_STANDBY_ENABLED --query Parameter.Value --output text | grep -qx 0"
 assert "SSM /graphagents/AGENTSPAN_MASTER_KEY existe" "a ssm get-parameter --name /graphagents/AGENTSPAN_MASTER_KEY"
 
 # ── compute ─────────────────────────────────────────────────────────────────

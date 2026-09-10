@@ -10,6 +10,7 @@ import { useState } from "react";
 
 import { useMbaAgents } from "@plugins/mba/frontend/entities/mba-agent";
 import { MbaConfigPreview } from "@plugins/mba/frontend/features/mba-config-preview";
+import { MbaRolloutPanel } from "@plugins/mba/frontend/features/mba-rollout";
 import { MbaSyncPanel } from "@plugins/mba/frontend/features/mba-sync";
 import { Icon, type IconName } from "@/shared/ui";
 
@@ -82,6 +83,7 @@ export function MbaAgentCanvas({ agentId }: Props) {
 
       <div className="ag-form" style={{ paddingBottom: 0 }}>
         <MbaSyncPanel agentId={agent.id} />
+        <MbaRolloutPanel agentId={agent.id} />
       </div>
       <MbaConfigPreview agentId={agent.id} />
     </main>

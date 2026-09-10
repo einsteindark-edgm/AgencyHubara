@@ -16,6 +16,13 @@ tenants = {
     callback_urls   = ["https://d1hvhzkh01tri0.cloudfront.net/callback", "http://localhost:5174/callback"]
     logout_urls     = ["https://d1hvhzkh01tri0.cloudfront.net/", "http://localhost:5174/"]
     enabled_plugins = "ads,agents_admin,catalog,chats,eta,orders,system_map"
+
+    # Meta Business Agent (F0): SOLO teléfonos nuestros. Cambiar esta lista es un
+    # PR + `terraform apply` de platform + redeploy (render del .env desde SSM).
+    # Encender el oído `standby` (standby_enabled = true) es una decisión aparte.
+    mba = {
+      customer_allowlist = ["+573125671604"]
+    }
   }
 
   vincenzo = {
