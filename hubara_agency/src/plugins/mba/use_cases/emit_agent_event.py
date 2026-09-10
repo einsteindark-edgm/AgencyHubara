@@ -226,6 +226,7 @@ class EmitAgentEvent:
             events = _events(data)
             for e in reversed(events):
                 if (e.get("type") == event_type and e.get("order_id") == order_id
+                        and e.get("episode_id") == episode_id
                         and e.get("at_ms") == reserved_at_ms and e.get("status") == "pending"):
                     e.update({"status": status, "agent_event_id": agent_event_id, "error": error})
                     break

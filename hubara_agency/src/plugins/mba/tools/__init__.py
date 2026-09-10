@@ -74,6 +74,8 @@ async def _episode_boundary(deps: ToolDeps, session_key: str, result: dict[str, 
             closing_tag=str(closed.get("closing_tag") or ""),
             episode_id=str(closed["episode_id"]),
             order_id=(str(result["order_id"]) if result.get("order_id") else None),
+            # el texto para MBA lleva la referencia legible (#22), no el id crudo de Medusa
+            order_reference=(str(result.get("order_reference") or result.get("order_id") or "") or None),
         )
     except Exception as exc:  # noqa: BLE001 — la tool ya se aplicó; la nota es best-effort
         logger.warning("[mba] episode_boundary falló session={}: {}", session_key, exc)

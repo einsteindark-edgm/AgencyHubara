@@ -33,7 +33,7 @@ class ToolDeps:
     order_query: Any | None
     metadata: Any  # FilesystemMetadataStore
     chats: Any | None = None  # SessionActionCall (cast mba→chats)
-    #: D1.10 — ``(session_key, *, closing_tag, episode_id, order_id)``: nota de
+    #: D1.10 — ``(session_key, *, closing_tag, episode_id, order_id, order_reference)``: nota de
     #: frontera a MBA cuando una tool de escritura cerró el episodio. Best-effort.
     episode_boundary: Callable[..., Awaitable[Any]] | None = None
 
@@ -54,25 +54,32 @@ def make_episode_boundary(use_case_factory: Callable[[], Any]) -> Callable[..., 
     task de fondo (la respuesta del connector a Meta no espera a Meta) y
     devuelve la task (``None`` con el knob apagado). Nunca levanta."""
 
-    async def _emit(session_key: str, closing_tag: str, episode_id: str, order_id: str | None) -> Any:
+    async def _emit(
+        session_key: str, closing_tag: str, episode_id: str, order_id: str | None, order_reference: str | None
+    ) -> Any:
         from src.plugins.mba.domain.agent_events import episode_closed_message
 
         try:
             use_case = use_case_factory()
             return await use_case.execute(
                 session_key, "episode_closed", episode_id=episode_id, order_id=None,
-                message=episode_closed_message(closing_tag, order_reference=order_id),
-                payload={"closing_tag": closing_tag, "order_id": order_id}, source="connector",
+                message=episode_closed_message(closing_tag, order_reference=order_reference or order_id),
+                payload={"closing_tag": closing_tag, "order_id": order_id, "order_reference": order_reference},
+                source="connector",
             )
         except Exception as exc:  # noqa: BLE001 — best-effort; el registro vive en agent_events[]
             logger.warning("[mba] nota de frontera episode_closed falló session={} ep={}: {}", session_key,
                            episode_id, exc)
             return None
 
-    async def _boundary(session_key: str, *, closing_tag: str, episode_id: str, order_id: str | None) -> Any:
+    async def _boundary(
+        session_key: str, *, closing_tag: str, episode_id: str, order_id: str | None, order_reference: str | None = None
+    ) -> Any:
         if not episode_boundary_enabled():
             return None
-        task = asyncio.get_running_loop().create_task(_emit(session_key, closing_tag, episode_id, order_id))
+        task = asyncio.get_running_loop().create_task(
+            _emit(session_key, closing_tag, episode_id, order_id, order_reference)
+        )
         _background.add(task)
         task.add_done_callback(_background.discard)
         return task

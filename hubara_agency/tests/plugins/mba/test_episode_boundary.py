@@ -32,17 +32,21 @@ NOW_MS = 1_757_400_000_000
 # ── dominio ───────────────────────────────────────────────────────────────────
 
 
-def test_the_boundary_note_names_the_outcome_and_tells_mba_to_start_fresh_silently() -> None:
-    msg = episode_closed_message("CONFIRMADO_PAGO_PENDIENTE", order_reference="#22")
-    assert "pedido #22" in msg and "pago pendiente" in msg
-    assert "cerrad" in msg.lower()
+def test_the_boundary_note_is_silent_and_its_guidance_depends_on_the_closing() -> None:
+    # con pedido en manos del equipo: derivar al colega, NO arrancar una venta nueva (M-1 del reviewer)
+    for tag in ("COMPRA_EXITOSA", "CONFIRMADO_PAGO_PENDIENTE", "CONFIRMADO_SIN_DATOS"):
+        msg = episode_closed_message(tag, order_reference="#22")
+        assert "pedido #22" in msg and "cerrada" in msg
+        assert "colega" in msg and "ni inicies una venta nueva" in msg and "conversación nueva" not in msg
+    assert "pago pendiente" in episode_closed_message("CONFIRMADO_PAGO_PENDIENTE")
+    # sin pedido: conversación nueva desde cero
+    msg = episode_closed_message("RECHAZO")
+    assert "no compró" in msg and "conversación nueva" in msg and "colega" not in msg
+    assert "conversación nueva" in episode_closed_message("LO_QUE_SEA")
     d = build_description("episode_closed", msg)
     assert msg in d
-    assert "no le escribas al cliente" in d.lower() and "conversación nueva" in d.lower()
+    assert "no le escribas al cliente por esto ni lo menciones" in d.lower()
     assert "transmítele" not in d.lower()  # NO es una novedad para contarle al cliente
-    for tag in ("COMPRA_EXITOSA", "RECHAZO", "CONFIRMADO_SIN_DATOS", "LO_QUE_SEA"):
-        assert episode_closed_message(tag)  # siempre hay texto
-    assert "no compró" in episode_closed_message("RECHAZO")
 
 
 # ── use case: dedupe por episodio ─────────────────────────────────────────────
@@ -87,8 +91,9 @@ class _Boundary:
         self.calls: list[tuple[str, str, str, str | None]] = []
         self.exc = exc
 
-    async def __call__(self, session_key: str, *, closing_tag: str, episode_id: str, order_id: str | None) -> Any:
-        self.calls.append((session_key, closing_tag, episode_id, order_id))
+    async def __call__(self, session_key: str, *, closing_tag: str, episode_id: str, order_id: str | None,
+                       order_reference: str | None = None) -> Any:
+        self.calls.append((session_key, closing_tag, episode_id, order_id, order_reference))
         if self.exc is not None:
             raise self.exc
         return None
@@ -110,7 +115,7 @@ async def test_a_write_tool_that_closes_the_episode_triggers_the_boundary_note_w
     boundary = _Boundary()
     out = await run_tool(_call("manage_conversation_tag", tag="INTERESADO", motivo="x"), _deps(_Chats(closed), boundary))
     assert out["tag"] == "CONFIRMADO_SIN_DATOS" and out["episode_closed"] == closed["episode_closed"]
-    assert boundary.calls == [(SESSION, "CONFIRMADO_SIN_DATOS", "ep_003", None)]
+    assert boundary.calls == [(SESSION, "CONFIRMADO_SIN_DATOS", "ep_003", None, None)]
 
     registered = {"registered": True, "order_id": "order_9", "order_reference": "#9", "subtotal_cop": 1,
                   "episode_closed": {"episode_id": "ep_004", "closing_tag": "CONFIRMADO_PAGO_PENDIENTE"}}
@@ -121,7 +126,7 @@ async def test_a_write_tool_that_closes_the_episode_triggers_the_boundary_note_w
         _deps(_Chats(registered), boundary),
     )
     assert out["registered"] is True and "episode_closed" not in out  # el envelope del agente no cambia
-    assert boundary.calls == [(SESSION, "CONFIRMADO_PAGO_PENDIENTE", "ep_004", "order_9")]
+    assert boundary.calls == [(SESSION, "CONFIRMADO_PAGO_PENDIENTE", "ep_004", "order_9", "#9")]
 
 
 async def test_no_boundary_note_when_nothing_closed_or_the_cast_failed() -> None:
@@ -159,14 +164,17 @@ async def test_the_default_boundary_emits_in_background_only_with_the_knob_on(tm
 
     monkeypatch.setenv("MBA_EPISODE_BOUNDARY_EVENT", "1")
     assert deps_mod.episode_boundary_enabled() is True
-    task = await boundary(SESSION, closing_tag="CONFIRMADO_PAGO_PENDIENTE", episode_id="ep_001", order_id="order_9")
+    task = await boundary(SESSION, closing_tag="CONFIRMADO_PAGO_PENDIENTE", episode_id="ep_001", order_id="order_9",
+                          order_reference="#9")
     assert isinstance(task, asyncio.Task) and not task.done()  # no bloquea la respuesta a Meta
     outcome = await task
     assert outcome.emitted is True and outcome.reason == "accepted"
     (entity, to, event_type, description, payload), = port.calls
     assert (entity, to, event_type) == ("PHONE_777", f"+{CUSTOMER}", "episode_closed")
-    assert payload == {"closing_tag": "CONFIRMADO_PAGO_PENDIENTE", "order_id": "order_9", "episode_id": "ep_001"}
-    assert episode_closed_message("CONFIRMADO_PAGO_PENDIENTE", order_reference="order_9") in description
+    assert payload == {"closing_tag": "CONFIRMADO_PAGO_PENDIENTE", "order_id": "order_9", "order_reference": "#9",
+                       "episode_id": "ep_001"}
+    assert episode_closed_message("CONFIRMADO_PAGO_PENDIENTE", order_reference="#9") in description
+    assert "pedido #9" in description and "order_9" not in description  # referencia legible, no el id crudo
     assert "no le escribas al cliente" in description.lower()
 
 
@@ -187,5 +195,50 @@ def test_default_deps_wire_the_boundary(monkeypatch: pytest.MonkeyPatch) -> None
     deps_mod.default_deps.cache_clear()
     try:
         assert callable(deps_mod.default_deps().episode_boundary)
+    finally:
+        deps_mod.default_deps.cache_clear()
+
+
+async def test_the_real_path_end_to_end_posts_the_boundary_to_meta(tmp_path: Path, monkeypatch) -> None:
+    """Gotcha #1 / M-2 del reviewer: `default_deps()` con el use case REAL
+    (adapter de Meta con respx) — `run_tool(register_order)` termina en un
+    POST `agent_event` con `type=episode_closed`. Sin este test, un import
+    roto en `_default_emit_agent_event` solo se vería como un warning en prod."""
+    import httpx
+    import respx
+
+    from src.platform import config
+    from src.sdk.runtime import FilesystemMetadataStore as _Store
+
+    _Store(tmp_path).write(SESSION, {"control_owner": "mba", "phone_number_id": "PHONE_777"})
+    monkeypatch.setattr(deps_mod, "WORKSPACE_VAULT_DIR", tmp_path)
+    monkeypatch.setattr(config, "MBA_STANDBY_ENABLED", True)
+    monkeypatch.setattr(config, "MBA_CUSTOMER_ALLOWLIST", frozenset({CUSTOMER}))
+    monkeypatch.setenv("META_MBA_TOKEN", "tok")
+    monkeypatch.setenv("MBA_EPISODE_BOUNDARY_EVENT", "1")
+    for name in ("get_catalog_client", "get_checkout_verification_port", "get_order_query_port"):
+        monkeypatch.setattr(deps_mod, name, lambda: None)
+    deps_mod.default_deps.cache_clear()
+    try:
+        deps = deps_mod.default_deps()
+        deps.chats = _Chats({"registered": True, "order_id": "order_9", "order_reference": "#9", "subtotal_cop": 1,
+                             "episode_closed": {"episode_id": "ep_007", "closing_tag": "CONFIRMADO_PAGO_PENDIENTE"}})
+        with respx.mock:
+            route = respx.post("https://api.facebook.com/PHONE_777/agent_event").mock(
+                return_value=httpx.Response(200, json={"status": "accepted", "agent_event_id": "AE_9"})
+            )
+            out = await run_tool(
+                _call("register_order", items=[{"handle": "x", "quantity": 1}], ciudad="Bogotá", direccion="d",
+                      telefono="t", nombre_recibe="n", metodo_pago="anticipado"),
+                deps,
+            )
+            assert out["registered"] is True and "_episode_closed" not in out
+            await asyncio.gather(*list(deps_mod._background))
+            assert route.call_count == 1
+            body = json.loads(route.calls.last.request.content)
+            assert body["to"] == f"+{CUSTOMER}" and body["event"]["type"] == "episode_closed"
+            assert "pedido #9" in body["event"]["description"]
+        events = json.loads((tmp_path / SESSION / "metadata.json").read_text())["agent_events"]
+        assert events[-1]["status"] == "accepted" and events[-1]["episode_id"] == "ep_007"
     finally:
         deps_mod.default_deps.cache_clear()
