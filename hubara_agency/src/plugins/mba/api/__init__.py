@@ -7,8 +7,10 @@ sesión (D1.5: ``control_owner`` que chats persiste desde el webhook
 devolverle el hilo a Meta Business Agent (D1.6: ``ReleaseThread`` con la
 política de release; guardas fail-closed → 503/403/404) y contarle a MBA una
 novedad del pedido por ``agent_event`` (D1.9: ``EmitAgentEvent``, lo invoca
-el ETA por cast con identidad de servicio cuando MBA controla). Las tools del
-connector (públicas, con API key propia) viven en ``connector.py``.
+el ETA por cast con identidad de servicio cuando MBA controla), y llevar la
+configuración autorada a Meta (D2.2: ``SyncAgent`` — plan de solo lectura +
+apply confirmado por fingerprint; nunca toca ``rollout`` ni ``ai_audience``).
+Las tools del connector (públicas, con API key propia) viven en ``connector.py``.
 """
 from __future__ import annotations
 
@@ -22,12 +24,15 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
 from src.plugins.mba.adapters.agent_event import MetaAgentEvent
+from src.plugins.mba.adapters.meta_admin import MbaAdminError, MetaMbaAdmin
+from src.plugins.mba.adapters.sync_state import SyncStateStore
 from src.plugins.mba.adapters.thread_control import MetaThreadControl
 from src.plugins.mba.domain.agent_events import AGENT_EVENT_TYPES, DESCRIPTION_MAX
 from src.plugins.mba.domain.release_policy import ReleaseTrigger
 from src.plugins.mba.service import list_agents, load_agent
 from src.plugins.mba.use_cases.emit_agent_event import EmitAgentEvent
 from src.plugins.mba.use_cases.release_thread import ReleaseThread
+from src.plugins.mba.use_cases.sync_agent import SyncAgent
 from src.sdk.runtime import (
     WORKSPACE_VAULT_DIR,
     FilesystemMetadataStore,
@@ -188,4 +193,75 @@ async def emit_session_agent_event(
     status = _RELEASE_GUARD_STATUS.get(outcome.reason)
     if status is not None:
         raise HTTPException(status_code=status, detail=outcome.reason)
+    return asdict(outcome)
+
+
+# ── D2.2: sync de la configuración hacia Meta Business Agent ────────────────
+
+
+_AGENT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+_SYNC_GUARD_STATUS = {"mba_disabled": 503, "agent_unknown": 404, "sync_in_progress": 409, "remote_unavailable": 503}
+
+
+class SyncBody(BaseModel):
+    """``fingerprint``: el del plan que el operador vio y confirmó; si el plan
+    cambió entre medio, el apply se rechaza (``plan_changed``)."""
+
+    fingerprint: str | None = Field(default=None, max_length=128)
+
+
+def get_sync_agent() -> SyncAgent:
+    from src.plugins.mba.api.connector import API_KEY_ENV
+
+    return SyncAgent(
+        admin=MetaMbaAdmin(),
+        state_store=SyncStateStore(WORKSPACE_VAULT_DIR),
+        load_config=load_agent,
+        api_key=lambda: os.environ.get(API_KEY_ENV, ""),
+        is_enabled=mba_standby_enabled,
+    )
+
+
+def _check_agent_id(agent_id: str) -> None:
+    if not _AGENT_ID_RE.fullmatch(agent_id) or load_agent(agent_id) is None:
+        raise HTTPException(status_code=404, detail=f"agente MBA desconocido: {agent_id}")
+
+
+@router.get("/agents/{agent_id}/sync")
+async def get_agent_sync_state(agent_id: str) -> dict[str, Any]:
+    """Último sync / intento con Meta (del vault). ``state: null`` antes del primero."""
+    _check_agent_id(agent_id)
+    state = SyncStateStore(WORKSPACE_VAULT_DIR).read(agent_id)
+    return {"agent_id": agent_id, "state": state or None}
+
+
+@router.get("/agents/{agent_id}/sync/plan")
+async def get_agent_sync_plan(agent_id: str, use_case: SyncAgent = Depends(get_sync_agent)) -> dict[str, Any]:
+    """Solo lectura: qué cambiaría un sync (lee Meta + diff puro). No escribe."""
+    _check_agent_id(agent_id)
+    try:
+        plan = await use_case.plan(agent_id)
+    except MbaAdminError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "remote_unavailable", "kind": exc.kind, "status": exc.status, "detail": exc.detail},
+        )
+    if plan is None:
+        raise HTTPException(status_code=404, detail=f"agente MBA desconocido: {agent_id}")
+    return plan.summary()
+
+
+@router.post("/agents/{agent_id}/sync")
+async def apply_agent_sync(
+    agent_id: str, body: SyncBody | None = None, use_case: SyncAgent = Depends(get_sync_agent)
+) -> dict[str, Any]:
+    """Aplica el plan (upserts + borrados de lo nuestro). Guardas → 503/404/409;
+    ``blocked`` / ``plan_changed`` / ``nothing_to_do`` vuelven 200 con
+    ``applied=false`` y su motivo, para que la tab lo muestre tal cual."""
+    _check_agent_id(agent_id)
+    body = body or SyncBody()
+    outcome = await use_case.apply(agent_id, fingerprint=body.fingerprint)
+    status = _SYNC_GUARD_STATUS.get(outcome.reason)
+    if status is not None:
+        raise HTTPException(status_code=status, detail={"error": outcome.reason, **(outcome.error or {})})
     return asdict(outcome)

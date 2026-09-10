@@ -398,3 +398,112 @@ def test_agent_event_endpoint_validates_key_type_and_message() -> None:
     big = {"blob": "x" * (8 * 1024)}
     assert c.post("/api/mba/sessions/wa_573001234567/agent-events", json={**ok, "payload": big}).status_code == 422
     assert c.post("/api/mba/sessions/wa_573001234567/agent-events", json={**ok, "payload": {"a": 1}}).status_code == 200
+
+
+# ── D2.2: sync de la configuración hacia Meta ───────────────────────────────
+
+
+class _SyncStub:
+    def __init__(self, *, plan=None, outcome=None, plan_error=None) -> None:
+        from src.plugins.mba.domain.sync import SyncPlan
+
+        self._plan = plan if plan is not None else SyncPlan("sales", "PHONE_777", (), (), "fp-1")
+        self._outcome = outcome
+        self._plan_error = plan_error
+        self.calls = []
+
+    async def plan(self, agent_id):
+        self.calls.append(("plan", agent_id))
+        if agent_id != "sales":
+            return None
+        if self._plan_error is not None:
+            raise self._plan_error
+        return self._plan
+
+    async def apply(self, agent_id, *, fingerprint=None):
+        from src.plugins.mba.use_cases.sync_agent import SyncOutcome
+
+        self.calls.append(("apply", agent_id, fingerprint))
+        return self._outcome or SyncOutcome(agent_id, True, "applied", status="ok", plan={"fingerprint": "fp-1"})
+
+
+def _sync_client(stub: _SyncStub, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    from src.plugins.mba import api as mba_api
+
+    monkeypatch.setattr(mba_api, "WORKSPACE_VAULT_DIR", str(tmp_path))
+    app = FastAPI()
+    app.include_router(router, prefix="/api/mba")
+    app.dependency_overrides[mba_api.get_sync_agent] = lambda: stub
+    return TestClient(app)
+
+
+def test_sync_state_is_served_from_the_vault_and_is_empty_before_the_first_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.plugins.mba.adapters.sync_state import SyncStateStore
+
+    client = _sync_client(_SyncStub(), tmp_path, monkeypatch)
+    res = client.get("/api/mba/agents/sales/sync")
+    assert res.status_code == 200 and res.json() == {"agent_id": "sales", "state": None}
+    SyncStateStore(tmp_path).write("sales", {"ids": {"skills": {"persona": "s-1"}}, "last_apply": {"status": "ok"}})
+    assert client.get("/api/mba/agents/sales/sync").json()["state"]["last_apply"] == {"status": "ok"}
+    assert client.get("/api/mba/agents/nope/sync").status_code == 404
+    assert client.get("/api/mba/agents/..%2Fetc/sync").status_code in (404, 422)
+
+
+def test_sync_plan_is_read_only_and_reports_a_remote_outage_as_503(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.plugins.mba.adapters.meta_admin import MbaAdminError
+
+    stub = _SyncStub()
+    client = _sync_client(stub, tmp_path, monkeypatch)
+    res = client.get("/api/mba/agents/sales/sync/plan")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["fingerprint"] == "fp-1" and body["blocked"] == [] and body["ops"] == [] and body["counts"] == {}
+    assert stub.calls == [("plan", "sales")]
+    assert client.get("/api/mba/agents/nope/sync/plan").status_code == 404
+
+    down = _SyncStub(plan_error=MbaAdminError("unavailable", status=503, detail="down", attempts=3))
+    res = _sync_client(down, tmp_path, monkeypatch).get("/api/mba/agents/sales/sync/plan")
+    assert res.status_code == 503 and res.json()["detail"] == {"error": "remote_unavailable", "kind": "unavailable", "status": 503, "detail": "down"}
+
+    unconfigured = _SyncStub(plan_error=MbaAdminError("not_configured", detail="META_MBA_TOKEN no configurado"))
+    res = _sync_client(unconfigured, tmp_path, monkeypatch).get("/api/mba/agents/sales/sync/plan")
+    assert res.status_code == 503 and res.json()["detail"]["kind"] == "not_configured"
+
+
+def test_sync_apply_passes_the_confirmed_fingerprint_and_maps_guards_to_status_codes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.plugins.mba.use_cases.sync_agent import SyncOutcome
+
+    stub = _SyncStub()
+    client = _sync_client(stub, tmp_path, monkeypatch)
+    res = client.post("/api/mba/agents/sales/sync", json={"fingerprint": "fp-1"})
+    assert res.status_code == 200 and res.json()["applied"] is True and res.json()["reason"] == "applied"
+    assert stub.calls == [("apply", "sales", "fp-1")]
+    # sin fingerprint = aplicar lo que haya (uso por script); la tab siempre lo manda
+    assert client.post("/api/mba/agents/sales/sync").status_code == 200
+    assert stub.calls[-1] == ("apply", "sales", None)
+
+    for reason, status in (("mba_disabled", 503), ("agent_unknown", 404), ("sync_in_progress", 409), ("remote_unavailable", 503)):
+        out = SyncOutcome("sales", False, reason, error={"kind": "unavailable", "detail": "down", "status": 503} if reason == "remote_unavailable" else None)
+        res = _sync_client(_SyncStub(outcome=out), tmp_path, monkeypatch).post("/api/mba/agents/sales/sync", json={})
+        assert res.status_code == status, reason
+        assert res.json()["detail"]["error"] == reason
+    # bloqueado / plan viejo / nada que hacer: 200 con el outcome (la tab lo muestra)
+    for reason in ("blocked", "plan_changed", "nothing_to_do"):
+        out = SyncOutcome("sales", False, reason, plan={"fingerprint": "fp-2"}, blocked=("placeholder:<FLOW_ID>",) if reason == "blocked" else ())
+        res = _sync_client(_SyncStub(outcome=out), tmp_path, monkeypatch).post("/api/mba/agents/sales/sync", json={"fingerprint": "fp-1"})
+        assert res.status_code == 200 and res.json()["reason"] == reason and res.json()["applied"] is False
+    assert client.post("/api/mba/agents/sales/sync", json={"fingerprint": "x" * 200}).status_code == 422
+
+
+def test_the_real_sync_agent_is_wired_with_the_vault_store_the_flag_and_the_connector_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.plugins.mba import api as mba_api
+    from src.plugins.mba.adapters.meta_admin import MetaMbaAdmin
+    from src.plugins.mba.use_cases.sync_agent import SyncAgent
+    from src.platform import config
+
+    monkeypatch.setenv("HUBARA_MBA_API_KEY", "k-1")
+    monkeypatch.setattr(config, "MBA_STANDBY_ENABLED", False)
+    uc = mba_api.get_sync_agent()
+    assert isinstance(uc, SyncAgent) and isinstance(uc._admin, MetaMbaAdmin)
+    assert uc._api_key() == "k-1" and uc._enabled() is False
+    assert uc._load("sales") is not None and uc._load("nope") is None
