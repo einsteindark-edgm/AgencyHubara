@@ -18,9 +18,20 @@ Reglas:
   cuerpo lleva solo handoff / followup / never_say_phrases.
 * Una UI skill cuyo ``component_type`` cambió se ``replace`` (delete + create):
   el PUT de Meta solo acepta title / status / instruction.
+* ``business_info``: el preview omite los campos vacíos, pero el sync manda
+  el bloque COMPLETO (vacíos como ``""``; ``contact_info`` solo con claves no
+  nulas) para que vaciar un campo en el workspace también vacíe Meta. Se
+  compara normalizando vacío ≡ ausente.
+* Connector: Meta no devuelve la API key, así que el fingerprint (hash con
+  prefijo, truncado) de la última key enviada decide si hay que reenviar el
+  connector (``api_key_rotated``).
 * Bloqueos (``blocked`` no vacío = no se aplica NADA): sin ``entity_id``,
   ``problems`` del preview (D0.1: skills fuera de límite, etc.), placeholders
-  sin resolver (``<FLOW_ID>``…), sin API key del connector.
+  sin resolver (convención del ``agent.yaml``: ``<MAYUSCULAS_CON_GUION_BAJO>``,
+  p.ej. ``<FLOW_ID>``; un ``<cliente>`` en el markdown de una skill NO lo es),
+  sin API key del connector.
+* Dos ítems remotos con la misma clave (Meta solo rechaza duplicados de FAQ y
+  connector): el primero manda, el resto se lista ``duplicate_remote``.
 * Nada secreto en ``fingerprint`` ni en ``summary()``: la API key del
   connector se enmascara.
 """
@@ -40,6 +51,7 @@ __all__ = [
     "RemoteState",
     "SyncOp",
     "SyncPlan",
+    "api_key_fingerprint",
     "body_hash",
     "build_plan",
 ]
@@ -63,7 +75,9 @@ _COMPARE_FIELDS = {
 _UI_UPDATE_FIELDS = ("title", "status", "instruction")
 _SETTINGS_FIELDS = ("handoff", "followup")
 _NEVER_SEND = ("rollout", "ai_audience")
-_PLACEHOLDER = re.compile(r"<[A-Za-z][A-Za-z0-9_-]{2,}>")
+_PLACEHOLDER = re.compile(r"<[A-Z][A-Z0-9_]{2,}>")
+_BI_TEXT_FIELDS = ("business_description", "payment_method", "delivery_and_shipping", "return_policy", "purchase_info")
+_BI_CONTACT_FIELDS = ("email", "hours_of_operation", "address")
 _MASK = "***"
 
 
@@ -131,6 +145,12 @@ def body_hash(obj: Any) -> str:
     return hashlib.sha256(json.dumps(obj, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
+def api_key_fingerprint(api_key: str) -> str:
+    """Huella de la key del connector para saber si cambió, sin guardar la
+    key ni su sha256 plano: hash con prefijo propio, truncado."""
+    return hashlib.sha256(b"mba-connector-api-key:" + api_key.encode("utf-8")).hexdigest()[:16]
+
+
 def _redacted(op: SyncOp) -> SyncOp:
     if op.section != "connector" or not op.body:
         return op
@@ -166,6 +186,24 @@ def _strings(obj: Any) -> Iterable[str]:
     elif isinstance(obj, (list, tuple)):
         for v in obj:
             yield from _strings(v)
+
+
+def _business_info_body(cfg: MbaConfigDTO) -> dict[str, Any]:
+    bi = cfg.business_info
+    body: dict[str, Any] = {f: (getattr(bi, f) or "") for f in _BI_TEXT_FIELDS}
+    contact = {f: getattr(bi.contact_info, f) for f in _BI_CONTACT_FIELDS if getattr(bi.contact_info, f)}
+    if contact:
+        body["contact_info"] = contact
+    return body
+
+
+def _normalized_business_info(raw: Mapping[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {f: (raw.get(f) or "") for f in _BI_TEXT_FIELDS}
+    contact_raw = raw.get("contact_info") if isinstance(raw.get("contact_info"), Mapping) else {}
+    contact = {f: contact_raw.get(f) for f in _BI_CONTACT_FIELDS if contact_raw.get(f)}
+    if contact:
+        out["contact_info"] = contact
+    return out
 
 
 def _requests_by_section(cfg: MbaConfigDTO) -> dict[str, list[tuple[str, dict[str, Any]]]]:
@@ -212,7 +250,7 @@ def _collection(
 ) -> list[SyncOp]:
     key = _NATURAL_KEY[section]
     fields = _COMPARE_FIELDS[section]
-    remote_by_key = {str(r.get(key)): r for r in remote_items if r.get(key) is not None}
+    remote_by_key, duplicates = _index_remote(remote_items, key)
     extra = dict(connector_label=connector_label, connector_remote_id=connector_remote_id)
     ops: list[SyncOp] = []
     for label, body in wanted:
@@ -230,11 +268,26 @@ def _collection(
             ops.append(SyncOp(section, label, "delete", {}, rid, "removed_from_workspace", **extra))
         else:
             ops.append(SyncOp(section, label, "noop", {}, rid, "not_managed", **extra))
+    ops.extend(SyncOp(section, label, "noop", {}, rid, "duplicate_remote", **extra) for label, rid in duplicates)
     return ops
 
 
+def _index_remote(remote_items: Iterable[dict[str, Any]], key: str) -> tuple[dict[str, dict[str, Any]], list[tuple[str, str | None]]]:
+    by_key: dict[str, dict[str, Any]] = {}
+    duplicates: list[tuple[str, str | None]] = []
+    for r in remote_items:
+        if r.get(key) is None:
+            continue
+        label = str(r.get(key))
+        if label in by_key:
+            duplicates.append((label, str(r.get("id")) if r.get("id") is not None else None))
+        else:
+            by_key[label] = r
+    return by_key, duplicates
+
+
 def _ui_skills(wanted: list[tuple[str, dict[str, Any]]], remote_items: Iterable[dict[str, Any]], managed: Mapping[str, str]) -> list[SyncOp]:
-    remote_by_key = {str(r.get("title")): r for r in remote_items if r.get("title") is not None}
+    remote_by_key, duplicates = _index_remote(remote_items, "title")
     ops: list[SyncOp] = []
     for label, body in wanted:
         remote = remote_by_key.pop(label, None)
@@ -257,6 +310,7 @@ def _ui_skills(wanted: list[tuple[str, dict[str, Any]]], remote_items: Iterable[
             ops.append(SyncOp("ui_skills", label, "delete", {}, rid, "removed_from_workspace"))
         else:
             ops.append(SyncOp("ui_skills", label, "noop", {}, rid, "not_managed"))
+    ops.extend(SyncOp("ui_skills", label, "noop", {}, rid, "duplicate_remote") for label, rid in duplicates)
     return ops
 
 
@@ -272,9 +326,10 @@ def build_plan(
     blocked = _blockers(cfg, by_section, api_key)
     ops: list[SyncOp] = []
 
-    # business_info (singleton, PUT reemplaza el bloque; comparamos lo que enviamos)
-    for label, body in by_section.get("business_info", []):
-        if _same(_project(remote.business_info, body), body):
+    # business_info (singleton): bloque completo, vacío ≡ ausente
+    for label, _ in by_section.get("business_info", []):
+        body = _business_info_body(cfg)
+        if _same(_normalized_business_info(remote.business_info), _normalized_business_info(body)):
             ops.append(SyncOp("business_info", label, "noop", reason="unchanged"))
         else:
             ops.append(SyncOp("business_info", label, "update", body))
@@ -285,6 +340,14 @@ def build_plan(
     # connector (+ tools debajo del connector remoto que corresponda)
     connectors = [(label, _resolve_api_key(body, api_key)) for label, body in by_section.get("connector", [])]
     con_ops = _collection("connector", connectors, remote.connectors, managed_ids.get("connector", {}))
+    key_fp = api_key_fingerprint(api_key) if api_key else ""
+    sent_keys = sent_hashes.get("connector_key", {})
+    con_ops = [
+        SyncOp("connector", op.label, "update", dict(connectors)[op.label], op.remote_id, "api_key_rotated")
+        if op.action == "noop" and op.reason == "unchanged" and sent_keys.get(op.label) != key_fp
+        else op
+        for op in con_ops
+    ]
     ops.extend(con_ops)
     for label, _ in connectors:
         con_op = next(op for op in con_ops if op.label == label)

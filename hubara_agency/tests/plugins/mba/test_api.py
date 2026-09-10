@@ -478,13 +478,15 @@ def test_sync_apply_passes_the_confirmed_fingerprint_and_maps_guards_to_status_c
     res = client.post("/api/mba/agents/sales/sync", json={"fingerprint": "fp-1"})
     assert res.status_code == 200 and res.json()["applied"] is True and res.json()["reason"] == "applied"
     assert stub.calls == [("apply", "sales", "fp-1")]
-    # sin fingerprint = aplicar lo que haya (uso por script); la tab siempre lo manda
-    assert client.post("/api/mba/agents/sales/sync").status_code == 200
-    assert stub.calls[-1] == ("apply", "sales", None)
+    # M-5: sin fingerprint no se aplica nada (el único camino de escritura exige revisión previa)
+    assert client.post("/api/mba/agents/sales/sync").status_code == 422
+    assert client.post("/api/mba/agents/sales/sync", json={}).status_code == 422
+    assert client.post("/api/mba/agents/sales/sync", json={"fingerprint": ""}).status_code == 422
+    assert stub.calls == [("apply", "sales", "fp-1")]
 
     for reason, status in (("mba_disabled", 503), ("agent_unknown", 404), ("sync_in_progress", 409), ("remote_unavailable", 503)):
         out = SyncOutcome("sales", False, reason, error={"kind": "unavailable", "detail": "down", "status": 503} if reason == "remote_unavailable" else None)
-        res = _sync_client(_SyncStub(outcome=out), tmp_path, monkeypatch).post("/api/mba/agents/sales/sync", json={})
+        res = _sync_client(_SyncStub(outcome=out), tmp_path, monkeypatch).post("/api/mba/agents/sales/sync", json={"fingerprint": "fp-1"})
         assert res.status_code == status, reason
         assert res.json()["detail"]["error"] == reason
     # bloqueado / plan viejo / nada que hacer: 200 con el outcome (la tab lo muestra)

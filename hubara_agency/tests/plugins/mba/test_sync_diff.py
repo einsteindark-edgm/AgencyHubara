@@ -20,6 +20,7 @@ from src.plugins.mba.domain.sync import (
     MANAGED_SECTIONS,
     RemoteState,
     SyncPlan,
+    api_key_fingerprint,
     body_hash,
     build_plan,
 )
@@ -108,7 +109,10 @@ def _remote_in_sync(cfg) -> tuple[RemoteState, dict, dict]:
         "connector_tools": {t.name: f"t-{i}" for i, t in enumerate(cfg.connector.tools)},
         "ui_skills": {u.title: f"u-{i}" for i, u in enumerate(cfg.ui_skills)},
     }
-    sent = {"settings": {"never_say_phrases": body_hash(settings_body["never_say_phrases"])}}
+    sent = {
+        "settings": {"never_say_phrases": body_hash(settings_body["never_say_phrases"])},
+        "connector_key": {"hubara-commerce": api_key_fingerprint(API_KEY)},
+    }
     return remote, ids, sent
 
 
@@ -193,7 +197,7 @@ def test_settings_resend_when_the_phrases_changed_even_if_meta_looks_equal() -> 
     enviado decide. Y ``rollout`` / ``ai_audience`` nunca viajan aunque difieran."""
     cfg = _cfg()
     remote, ids, sent = _remote_in_sync(cfg)
-    plan = build_plan(cfg, remote, managed_ids=ids, sent_hashes={}, api_key=API_KEY)
+    plan = build_plan(cfg, remote, managed_ids=ids, sent_hashes={"connector_key": sent["connector_key"]}, api_key=API_KEY)
     assert _actions(plan) == [("settings", "settings", "update")]
     remote_on = RemoteState(**{**remote.__dict__, "settings": {**remote.settings, "rollout": {"enabled": True}, "ai_audience": "EVERYONE"}})
     plan = build_plan(cfg, remote_on, managed_ids=ids, sent_hashes=sent, api_key=API_KEY)
@@ -257,3 +261,65 @@ def test_the_plan_never_carries_the_api_key_in_its_fingerprint_or_summary() -> N
     summary = json.dumps(plan.summary(), ensure_ascii=False)
     assert API_KEY not in summary and "<HUBARA_MBA_API_KEY>" not in summary
     assert summary.count("create") >= 8
+
+
+# ---------------------------------------------------------------------------
+# Revisión independiente (M-1, M-3, M-4, L-4, L-8)
+# ---------------------------------------------------------------------------
+
+
+def test_clearing_a_business_info_field_in_the_workspace_reaches_meta() -> None:
+    """M-1: el preview omite los campos vacíos, pero el sync manda el bloque
+    COMPLETO (vacíos como "") para que Meta converja con el workspace."""
+    cfg = _cfg()
+    remote, ids, sent = _remote_in_sync(cfg)
+    remote_with_policy = RemoteState(**{**remote.__dict__, "business_info": {**remote.business_info, "return_policy": "Garantía vieja."}})
+    plan = build_plan(cfg, remote_with_policy, managed_ids=ids, sent_hashes=sent, api_key=API_KEY)
+    assert _actions(plan) == [("business_info", "business_info", "update")]
+    op = next(o for o in plan.ops if o.section == "business_info")
+    assert op.body["return_policy"] == "" and op.body["purchase_info"] == ""
+    assert op.body["contact_info"] == {"hours_of_operation": "America/Bogota"}  # los null no viajan
+    # y un remoto con los mismos valores (vacíos ausentes o "") es noop
+    same = RemoteState(**{**remote.__dict__, "business_info": {**remote.business_info, "return_policy": "", "contact_info": {"hours_of_operation": "America/Bogota", "email": None}}})
+    plan = build_plan(cfg, same, managed_ids=ids, sent_hashes=sent, api_key=API_KEY)
+    assert _actions(plan) == []
+
+
+def test_rotating_the_connector_api_key_updates_the_connector() -> None:
+    """M-3: Meta no devuelve la key; el fingerprint de lo último enviado decide."""
+    cfg = _cfg()
+    remote, ids, sent = _remote_in_sync(cfg)
+    plan = build_plan(cfg, remote, managed_ids=ids, sent_hashes=sent, api_key="rotated-key-2")
+    assert _actions(plan) == [("connector", "hubara-commerce", "update")]
+    op = next(o for o in plan.ops if o.section == "connector")
+    assert op.reason == "api_key_rotated" and op.body["auth_config"]["api_key"]["headers"][0]["value"] == "rotated-key-2"
+    assert "rotated-key-2" not in json.dumps(plan.summary()) and "rotated-key-2" not in plan.fingerprint
+
+
+def test_a_foreign_item_that_matches_by_key_is_updated_but_never_deleted() -> None:
+    """M-4: adoptar por update NO da permiso de borrar: solo se borra lo creado por nosotros."""
+    cfg = _cfg()
+    remote, ids, sent = _remote_in_sync(cfg)
+    foreign_faq = {"id": "f-foreign", "question": "¿Envían a Cali?", "answer": "Depende."}
+    remote = RemoteState(**{**remote.__dict__, "faqs": (remote.faqs[0], foreign_faq)})
+    ids = {**ids, "faqs": {"¿Cuánto demora?": "f-0"}}
+    plan = build_plan(cfg, remote, managed_ids=ids, sent_hashes=sent, api_key=API_KEY)
+    assert _actions(plan) == [("faqs", "¿Envían a Cali?", "update")]
+    without = _cfg(_YAML.replace('  - {question: "¿Envían a Cali?", answer: "Sí."}\n', ""))
+    plan = build_plan(without, remote, managed_ids=ids, sent_hashes=sent, api_key=API_KEY)
+    assert _actions(plan) == []
+    assert next(o for o in plan.ops if o.label == "¿Envían a Cali?").reason == "not_managed"
+
+
+def test_only_uppercase_placeholders_block_and_remote_duplicates_are_reported() -> None:
+    """L-4: `<cliente>` en el markdown de una skill no es un placeholder.
+    L-8: dos ítems remotos con la misma clave: el segundo se lista, no se pisa."""
+    cfg = _cfg(skills={"skills/persona.md": "---\ntitle: persona\ndescription: Siempre.\n---\n\nSaluda por su nombre: <cliente> y <Nombre>."})
+    remote, ids, sent = _remote_in_sync(cfg)
+    plan = build_plan(cfg, RemoteState.empty(), managed_ids={}, sent_hashes={}, api_key=API_KEY)
+    assert plan.blocked == ()
+    dup = {"id": "s-dup", "title": "persona", "description": "otra", "skill": "otra"}
+    remote = RemoteState(**{**remote.__dict__, "skills": remote.skills + (dup,)})
+    plan = build_plan(cfg, remote, managed_ids=ids, sent_hashes=sent, api_key=API_KEY)
+    dups = [o for o in plan.ops if o.remote_id == "s-dup"]
+    assert dups and dups[0].action == "noop" and dups[0].reason == "duplicate_remote"

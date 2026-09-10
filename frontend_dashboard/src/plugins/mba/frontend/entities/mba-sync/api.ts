@@ -29,9 +29,13 @@ export function useMbaSyncPlan(agentId: string, enabled: boolean) {
     queryFn: async ({ signal }) =>
       mbaSyncPlanSchema.parse(await apiClient.get<unknown>(`${base(agentId)}/plan`, { signal })),
     enabled: enabled && Boolean(agentId),
-    // Un plan es una foto de Meta: siempre se relee al volver a pedirlo.
+    // Un plan es una foto de Meta: siempre se relee al volver a pedirlo, pero
+    // NUNCA por debajo del operador (un refetch al volver a la ventana
+    // cambiaría la lista y el fingerprint bajo el botón "Confirmar").
     staleTime: 0,
     gcTime: 0,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
     retry: false,
   });
 }

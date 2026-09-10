@@ -117,7 +117,7 @@ async def test_first_apply_creates_everything_and_the_second_run_changes_nothing
     assert [s["title"] for s in fake.skills[ENTITY]] == ["persona"]
 
 
-async def test_apply_updates_by_key_deletes_only_what_we_created_and_adopts_matching_foreign_items(tmp_path: Path) -> None:
+async def test_apply_updates_by_key_and_deletes_only_what_we_created(tmp_path: Path) -> None:
     uc, fake, store = _agent(tmp_path)
     await uc.apply("sales")
     # alguien creó una skill a mano y una FAQ nuestra ya no está en el workspace
@@ -211,3 +211,49 @@ async def test_a_remote_outage_before_applying_writes_nothing(tmp_path: Path) ->
     out = await uc.apply("sales")
     assert out.applied is False and out.reason == "remote_unavailable" and out.error == {"kind": "unavailable", "detail": "down", "status": 503}
     assert store.read("sales") == {}
+
+
+# ── Revisión independiente (M-4, L-1, L-2, M-5 en test_api) ─────────────────
+
+
+async def test_updating_a_foreign_item_does_not_register_it_for_deletion(tmp_path: Path) -> None:
+    fake = FakeMbaAdmin()
+    await fake.create_faq(ENTITY, {"question": "¿Envían a Cali?", "answer": "Depende."})  # ajena
+    uc, _, store = _agent(tmp_path, fake=fake)
+    out = await uc.apply("sales")
+    assert out.status == "ok"
+    updated = next(r for r in out.results if r["label"] == "¿Envían a Cali?")
+    assert updated["action"] == "update" and updated["ok"]
+    assert "¿Envían a Cali?" not in store.read("sales")["ids"]["faqs"]
+    without = _cfg(_YAML.replace('  - {question: "¿Envían a Cali?", answer: "Sí."}\n', ""))
+    uc2, _, _ = _agent(tmp_path, cfg=without, fake=fake)
+    out = await uc2.apply("sales")
+    assert out.reason == "nothing_to_do" and [f["question"] for f in fake.faqs[ENTITY]] == ["¿Envían a Cali?", "¿Cuánto demora?"]
+
+
+async def test_a_replace_whose_create_fails_reports_the_old_skill_as_gone(tmp_path: Path) -> None:
+    uc, fake, store = _agent(tmp_path)
+    await uc.apply("sales")
+
+    class _CreateFails(FakeMbaAdmin):
+        async def create_ui_skill(self, entity_id, body):
+            raise MbaAdminError("rejected", status=400, detail="invalid instruction")
+
+    fake2 = _CreateFails(**{k: getattr(fake, k) for k in ("settings", "business_info", "faqs", "skills", "connectors", "tools", "ui_skills", "allowlist", "never_say_phrases")})
+    changed = _cfg(_YAML.replace("component_type: flow", "component_type: cta_url"))
+    uc2, _, _ = _agent(tmp_path, cfg=changed, fake=fake2)
+    out = await uc2.apply("sales")
+    row = next(r for r in out.results if r["section"] == "ui_skills")
+    assert row["ok"] is False and row["action"] == "replace" and row["error"]["detail"].startswith("borrada, no recreada")
+    assert fake2.ui_skills[ENTITY] == []  # la vieja SÍ desapareció en Meta
+    assert "request-shipping-details" not in store.read("sales")["ids"]["ui_skills"]  # y el vault lo sabe
+
+
+async def test_the_vault_never_stores_a_hash_of_the_real_api_key(tmp_path: Path) -> None:
+    import hashlib
+
+    uc, _, store = _agent(tmp_path)
+    await uc.apply("sales")
+    dumped = json.dumps(store.read("sales"))
+    assert API_KEY not in dumped and hashlib.sha256(API_KEY.encode()).hexdigest() not in dumped
+    assert store.read("sales")["sent"]["connector_key"]["hubara-commerce"]

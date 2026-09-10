@@ -29,19 +29,14 @@ interface Props {
   agentId: string;
 }
 
-/** Flujo multi-paso como unión discriminada (CLAUDE.md frontend §estado, regla 3). */
-type FlowState =
-  | { phase: "idle" }
-  | { phase: "review" }
-  | { phase: "confirm" }
-  | { phase: "done"; outcome: MbaSyncOutcome };
+/**
+ * Flujo multi-paso como unión discriminada (CLAUDE.md frontend §estado,
+ * regla 3). Solo UI state: el resultado del apply se DERIVA de la mutation
+ * (`apply.data`), no se copia acá.
+ */
+type FlowState = { phase: "idle" } | { phase: "review" } | { phase: "confirm" } | { phase: "done" };
 
-type FlowAction =
-  | { type: "review" }
-  | { type: "ask_confirm" }
-  | { type: "cancel" }
-  | { type: "finish"; outcome: MbaSyncOutcome }
-  | { type: "reset" };
+type FlowAction = { type: "review" } | { type: "ask_confirm" } | { type: "cancel" } | { type: "finish" } | { type: "reset" };
 
 function flowReducer(state: FlowState, action: FlowAction): FlowState {
   switch (action.type) {
@@ -52,7 +47,7 @@ function flowReducer(state: FlowState, action: FlowAction): FlowState {
     case "cancel":
       return { phase: "review" };
     case "finish":
-      return { phase: "done", outcome: action.outcome };
+      return { phase: "done" };
     case "reset":
       return { phase: "idle" };
   }
@@ -68,13 +63,16 @@ function fmtWhen(ms: number): string {
   return new Date(ms).toLocaleString("es-CO", { dateStyle: "medium", timeStyle: "short" });
 }
 
+/** El motivo real del API (`{detail: {error, kind, detail}}`), no "API error 503". */
 function apiMessage(e: unknown): string {
   if (e instanceof ApiError) {
-    const detail = (e as { detail?: unknown }).detail;
+    const body = e.body as { detail?: unknown } | null | undefined;
+    const detail = body && typeof body === "object" ? body.detail : undefined;
     if (detail && typeof detail === "object") {
       const d = detail as { error?: string; kind?: string; detail?: string };
       return [d.error, d.kind, d.detail].filter(Boolean).join(" · ");
     }
+    if (typeof detail === "string") return detail;
     return e.message;
   }
   return e instanceof Error ? e.message : String(e);
@@ -109,6 +107,7 @@ export function MbaSyncPanel({ agentId }: Props) {
   const reviewing = flow.phase === "review" || flow.phase === "confirm";
   const plan = useMbaSyncPlan(agentId, reviewing);
   const apply = useApplyMbaSync(agentId);
+  const outcome: MbaSyncOutcome | undefined = apply.data;
 
   const last = state.data?.state?.last_apply ?? null;
   const attempt = state.data?.state?.last_attempt ?? null;
@@ -120,10 +119,11 @@ export function MbaSyncPanel({ agentId }: Props) {
 
   const onApply = () => {
     if (!plan.data || busy) return;
-    apply.mutate(
-      { fingerprint: plan.data.fingerprint },
-      { onSuccess: (outcome) => dispatch({ type: "finish", outcome }) },
-    );
+    apply.mutate({ fingerprint: plan.data.fingerprint }, { onSuccess: () => dispatch({ type: "finish" }) });
+  };
+  const review = () => {
+    apply.reset();
+    dispatch({ type: "review" });
   };
 
   return (
@@ -155,14 +155,14 @@ export function MbaSyncPanel({ agentId }: Props) {
 
         {flow.phase === "idle" && (
           <div>
-            <MacButton sm onClick={() => dispatch({ type: "review" })}>
+            <MacButton sm onClick={review}>
               Ver cambios
             </MacButton>
           </div>
         )}
 
         {reviewing && plan.isLoading && (
-          <div style={{ fontSize: 12, color: "var(--fg-mute)" }}>Leyendo el estado en Meta…</div>
+          <div role="status" style={{ fontSize: 12, color: "var(--fg-mute)" }}>Leyendo el estado en Meta…</div>
         )}
 
         {reviewing && plan.isError && (
@@ -205,7 +205,9 @@ export function MbaSyncPanel({ agentId }: Props) {
               )}
               {flow.phase === "confirm" && (
                 <>
-                  <span style={{ fontSize: 12 }}>¿Enviar estos {changes.length} cambios a Meta ahora?</span>
+                  <span role="status" style={{ fontSize: 12 }}>
+                    {busy ? "Enviando a Meta…" : `¿Enviar estos ${changes.length} cambios a Meta ahora?`}
+                  </span>
                   <MacButton sm primary disabled={busy} onClick={onApply}>
                     {busy ? "Enviando…" : "Confirmar envío a Meta"}
                   </MacButton>
@@ -219,31 +221,31 @@ export function MbaSyncPanel({ agentId }: Props) {
           </div>
         )}
 
-        {flow.phase === "done" && (
+        {flow.phase === "done" && outcome && (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {flow.outcome.applied ? (
+            {outcome.applied ? (
               <div style={{ fontSize: 12 }}>
-                <b>Aplicado: {flow.outcome.results.filter((r) => r.ok).length} de {flow.outcome.results.length}</b> · estado {flow.outcome.status}
+                <b>Aplicado: {outcome.results.filter((r) => r.ok).length} de {outcome.results.length}</b> · estado {outcome.status}
               </div>
             ) : (
-              <div role="alert" style={warnStyle}>{OUTCOME_TEXT[flow.outcome.reason] ?? flow.outcome.reason}</div>
+              <div role="alert" style={warnStyle}>{OUTCOME_TEXT[outcome.reason] ?? outcome.reason}</div>
             )}
-            {flow.outcome.blocked.length > 0 && (
+            {outcome.blocked.length > 0 && (
               <div>
-                {flow.outcome.blocked.map((b) => (
+                {outcome.blocked.map((b) => (
                   <div key={b} className="mono" style={{ fontSize: 12 }}>{describeBlocker(b)}</div>
                 ))}
               </div>
             )}
-            {flow.outcome.results.length > 0 && (
+            {outcome.results.length > 0 && (
               <div style={{ borderLeft: "2px solid var(--border, rgba(127,127,127,0.3))", paddingLeft: 10 }}>
-                {flow.outcome.results.map((r) => (
+                {outcome.results.map((r) => (
                   <ResultRow key={`${r.section}:${r.label}:${r.action}`} r={r} />
                 ))}
               </div>
             )}
             <div>
-              <MacButton sm onClick={() => dispatch({ type: "review" })}>Ver cambios</MacButton>
+              <MacButton sm onClick={review}>Ver cambios</MacButton>
             </div>
           </div>
         )}

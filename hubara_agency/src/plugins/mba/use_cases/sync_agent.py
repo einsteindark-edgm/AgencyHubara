@@ -14,6 +14,16 @@ Ejecución: un ítem ``rejected`` por Meta se anota y se sigue (``partial``);
 ``unavailable`` / ``ambiguous`` / ``not_configured`` cortan el run
 (``aborted``): lo ya creado queda registrado con su id, así el próximo run no
 lo duplica. ``rollout`` y ``ai_audience`` nunca viajan (lo garantiza el dominio).
+
+Solo se registran en ``ids`` (= borrable por el sync) los ítems que ESTE sync
+creó; actualizar un ítem ajeno que coincide por clave no lo adopta. En ``sent``
+va únicamente lo que el diff lee: el hash de ``never_say_phrases`` (write-only)
+y la huella de la API key del connector (nunca la key ni su sha256 plano).
+Un ``replace`` de UI skill cuyo create falla tras el delete se reporta como
+"borrada, no recreada" y saca el id del vault (el próximo plan la crea).
+
+El lock por agente es por PROCESO (``asyncio.Lock``): alcanza con el único
+uvicorn del API; con varios workers habría que llevarlo al vault.
 """
 from __future__ import annotations
 
@@ -25,7 +35,7 @@ from typing import Any, Callable
 from src.plugins.mba.adapters.meta_admin import MbaAdminError, MbaAdminPort
 from src.plugins.mba.adapters.sync_state import SyncStateStore
 from src.plugins.mba.domain.config import MbaConfigDTO
-from src.plugins.mba.domain.sync import RemoteState, SyncOp, SyncPlan, body_hash, build_plan
+from src.plugins.mba.domain.sync import RemoteState, SyncOp, SyncPlan, api_key_fingerprint, body_hash, build_plan
 
 __all__ = ["SyncAgent", "SyncOutcome"]
 
@@ -167,7 +177,10 @@ class SyncAgent:
                     results.append(row)
                     continue
             try:
-                remote_id = await self._execute(entity_id, op, connector_id, settings_agent_id)
+                remote_id = await self._execute(
+                    entity_id, op, connector_id, settings_agent_id,
+                    on_deleted=lambda: ids.get(op.section, {}).pop(op.label, None),
+                )
             except MbaAdminError as exc:
                 row["error"] = _err(exc)
                 if exc.kind in _ABORT_KINDS:
@@ -175,7 +188,7 @@ class SyncAgent:
             else:
                 row["ok"] = True
                 row["remote_id"] = remote_id
-                self._record(ids, sent, op, remote_id)
+                self._record(ids, sent, op, remote_id, self._api_key())
             results.append(row)
 
         failed = [r for r in results if not r["ok"] and r["skipped"] is None]
@@ -194,7 +207,9 @@ class SyncAgent:
         self._store.write(agent_id, state)
         return SyncOutcome(agent_id, True, "applied", status=status, results=results, plan=summary, state=state)
 
-    async def _execute(self, entity_id: str, op: SyncOp, connector_id: str | None, settings_agent_id: str | None) -> str | None:
+    async def _execute(
+        self, entity_id: str, op: SyncOp, connector_id: str | None, settings_agent_id: str | None, *, on_deleted: Callable[[], Any]
+    ) -> str | None:
         a = self._admin
         s, action, body, rid = op.section, op.action, op.body, op.remote_id
         if s == "business_info":
@@ -239,24 +254,28 @@ class SyncAgent:
                 return _id(await a.update_ui_skill(entity_id, str(rid), body)) or rid
             if action == "replace":
                 await a.delete_ui_skill(entity_id, str(rid))
-                return _id(await a.create_ui_skill(entity_id, body))
+                on_deleted()
+                try:
+                    return _id(await a.create_ui_skill(entity_id, body))
+                except MbaAdminError as exc:
+                    raise MbaAdminError(exc.kind, status=exc.status, detail=f"borrada, no recreada: {exc.detail}", attempts=exc.attempts)
             await a.delete_ui_skill(entity_id, str(rid))
             return rid
         raise MbaAdminError("rejected", detail=f"sección desconocida: {s}")
 
     @staticmethod
-    def _record(ids: dict[str, dict[str, str]], sent: dict[str, dict[str, str]], op: SyncOp, remote_id: str | None) -> None:
+    def _record(ids: dict[str, dict[str, str]], sent: dict[str, dict[str, str]], op: SyncOp, remote_id: str | None, api_key: str) -> None:
         if op.action == "delete":
             ids.get(op.section, {}).pop(op.label, None)
-            sent.get(op.section, {}).pop(op.label, None)
             return
-        if remote_id is not None:
+        if op.action in ("create", "replace") and remote_id is not None:
             ids.setdefault(op.section, {})[op.label] = str(remote_id)
         if op.section == "settings":
             phrases = op.body.get("never_say_phrases")
             if phrases is not None:
                 sent.setdefault("settings", {})["never_say_phrases"] = body_hash(phrases)
-        sent.setdefault(op.section, {})[op.label] = body_hash(op.body)
+        if op.section == "connector" and api_key:
+            sent.setdefault("connector_key", {})[op.label] = api_key_fingerprint(api_key)
 
 
 def _id(payload: dict[str, Any]) -> str | None:

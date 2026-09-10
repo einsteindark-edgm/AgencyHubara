@@ -204,10 +204,12 @@ _SYNC_GUARD_STATUS = {"mba_disabled": 503, "agent_unknown": 404, "sync_in_progre
 
 
 class SyncBody(BaseModel):
-    """``fingerprint``: el del plan que el operador vio y confirmó; si el plan
-    cambió entre medio, el apply se rechaza (``plan_changed``)."""
+    """``fingerprint`` (obligatorio): el del plan que el operador vio y
+    confirmó; si el plan cambió entre medio, el apply se rechaza
+    (``plan_changed``). No hay apply "a ciegas": es el único camino de
+    escritura a la configuración de MBA y siempre pasa por la revisión."""
 
-    fingerprint: str | None = Field(default=None, max_length=128)
+    fingerprint: str = Field(min_length=1, max_length=128)
 
 
 def get_sync_agent() -> SyncAgent:
@@ -252,14 +254,11 @@ async def get_agent_sync_plan(agent_id: str, use_case: SyncAgent = Depends(get_s
 
 
 @router.post("/agents/{agent_id}/sync")
-async def apply_agent_sync(
-    agent_id: str, body: SyncBody | None = None, use_case: SyncAgent = Depends(get_sync_agent)
-) -> dict[str, Any]:
+async def apply_agent_sync(agent_id: str, body: SyncBody, use_case: SyncAgent = Depends(get_sync_agent)) -> dict[str, Any]:
     """Aplica el plan (upserts + borrados de lo nuestro). Guardas → 503/404/409;
     ``blocked`` / ``plan_changed`` / ``nothing_to_do`` vuelven 200 con
     ``applied=false`` y su motivo, para que la tab lo muestre tal cual."""
     _check_agent_id(agent_id)
-    body = body or SyncBody()
     outcome = await use_case.apply(agent_id, fingerprint=body.fingerprint)
     status = _SYNC_GUARD_STATUS.get(outcome.reason)
     if status is not None:

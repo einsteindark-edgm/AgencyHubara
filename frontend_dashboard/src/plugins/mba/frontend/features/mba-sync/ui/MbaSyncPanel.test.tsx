@@ -145,6 +145,8 @@ describe("MbaSyncPanel", () => {
     await waitFor(() => screen.getByRole("button", { name: /Ver cambios/ }));
     fireEvent.click(screen.getByRole("button", { name: /Ver cambios/ }));
     await waitFor(() => screen.getByText(/No se pudo leer el estado en Meta/));
+    // el motivo REAL de Meta / del API, no "API error 503"
+    screen.getByText(/remote_unavailable · not_configured · META_MBA_TOKEN no configurado/);
     expect(screen.queryByRole("button", { name: /Aplicar/ })).toBeNull();
   });
 
