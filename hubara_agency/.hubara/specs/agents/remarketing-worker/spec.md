@@ -43,6 +43,49 @@ cambió a `humano`, el workflow MUST abortar sin side-effects.
 - AND el workflow returnea SIN llamar `claim_conversation_routing`, SIN enviar mensaje, SIN contaminar history
 - AND el workflow completa cleanly liberando el workflow_id
 
+### Requirement: Un cierre RECHAZO nunca se reactiva
+
+El sistema MUST tratar `RECHAZO` (tag corriente, o `closing_tag` del último
+episodio) como cierre definitivo sin venta: la central `decide_reengagement`,
+su espejo `parse-conversations` (Window Strategist) y el gate
+`check_remarketing_eligibility` MUST suprimir la reactivación con
+`suppress_reason="rejected"`. La supresión se auto-levanta con el próximo
+inbound del cliente (episodio nuevo, tag reset). Única excepción: tag
+`REMARKETING` explícito escrito por un humano desde el dashboard.
+
+#### Scenario: Cliente pidió algo que no vendemos y se despidió (run dc32f7fe)
+
+- GIVEN el cliente preguntó "precio de la cera", Sales aclaró que no se vende aparte y el cliente cerró con "Gracias"
+- AND el cierre por ghosting etiquetó `RECHAZO` con motivo "buscaba cera, no la vendemos"
+- AND la ventana de servicio (24h) sigue abierta
+- WHEN corre el ciclo del Window Strategist
+- THEN el prefiltro del snapshot excluye la sesión con `prefiltered.rejected=1`
+- AND ningún `RemarketingWorkflow` arranca para esa sesión
+
+#### Scenario: El humano decide re-contactar a un RECHAZO
+
+- GIVEN un episodio cerrado con `closing_tag=RECHAZO`
+- WHEN el operador aprieta "remarketing" en el dashboard (escribe `tag=REMARKETING`)
+- THEN la central permite la reactivación (la decisión humana manda)
+
+### Requirement: El gancho de remarketing se construye con el contexto real de Sales
+
+El agente de remarketing NO comparte historial LLM con Sales (HistoryStore
+aislado por workspace). El workflow MUST leer del vault, antes de construir
+el trigger, el `motivo` del tag, si existe pedido a medias y los últimos
+mensajes visibles del transcript (`sessions/<sid>.jsonl`), y MUST pasarlos
+al prompt del gancho. El trigger MUST NOT afirmar que hay una compra
+pendiente cuando no hay draft. El `motivo` del tag manda sobre el `motivo`
+genérico del intent del Window Strategist.
+
+#### Scenario: Reactivación sin pedido a medias
+
+- GIVEN `metadata.motivo="vio la lista y agradeció"`, sin `order_draft.slots`
+- AND el transcript del vault tiene los últimos 3 mensajes
+- WHEN `RemarketingWorkflow` arranca con `motivo="Window Strategist: reactivación (csw_free_form)"`
+- THEN el trigger que ve el LLM usa el motivo del tag, dice que NO hay pedido a medias e incluye esos mensajes
+- AND el LLM puede responder `NO_MESSAGE` si el transcript muestra que el gancho no corresponde
+
 ### Requirement: Handoff a Sales cuando cliente responde
 
 Cuando un cliente responde durante el remarketing, el sistema MUST transferir

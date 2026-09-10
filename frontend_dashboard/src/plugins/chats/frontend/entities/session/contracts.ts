@@ -7,6 +7,20 @@
 import { z } from "zod";
 import { chatMessageSchema } from "../message/contracts";
 
+/** Origen REAL de la conversación (referral CTWA del ingest). `campaign_name`
+ *  / `ad_name` los resuelve el backend vía Graph best-effort: pueden venir
+ *  null aunque `source_id` (ad id) exista — el UI degrada al `headline`. */
+export const sessionOriginSchema = z.object({
+  channel: z.string().nullable(),
+  source_id: z.string().nullable(),
+  source_type: z.string().nullable(),
+  headline: z.string().nullable(),
+  /** Epoch ms del primer inbound de la sesión. */
+  first_seen_ms: z.number().nullable(),
+  campaign_name: z.string().nullable(),
+  ad_name: z.string().nullable(),
+});
+
 export const chatSessionSchema = z.object({
   session_id: z.string(),
   phone_number: z.string(),
@@ -20,6 +34,8 @@ export const chatSessionSchema = z.object({
   // durante el rollout. Enciende el botón "Confirmar pago" en el chat.
   pending_payment_order_id: z.string().nullable().default(null),
   last_updated_timestamp: z.number(),
+  // `.default(null)` tolera snapshots viejos del SSE durante el rollout.
+  origin: sessionOriginSchema.nullable().default(null),
 });
 
 export const statusHistoryEntrySchema = z.object({
@@ -41,6 +57,7 @@ export const sessionDetailsSchema = z.object({
   // lee de aquí (vía `useSession`) para mostrar el botón "Confirmar pago".
   pending_payment_order_id: z.string().nullable().default(null),
   status_history: z.array(statusHistoryEntrySchema),
+  origin: sessionOriginSchema.nullable().default(null),
   messages: z.array(chatMessageSchema),
 });
 

@@ -18,6 +18,10 @@ from src.plugins.chats.agent.remarketing.activities.bootstrap_session import (
     bootstrap_remarketing_session_activity,
     build_remarketing_trigger_activity,
 )
+from src.plugins.chats.agent.remarketing.activities.context import (
+    build_remarketing_trigger_v2_activity,
+    read_remarketing_context_activity,
+)
 from src.plugins.chats.agent.remarketing.activities.watchdog_activities import (
     check_watchdog_eligibility_activity,
     persist_watchdog_outcome_activity,
@@ -26,6 +30,8 @@ from src.plugins.chats.agent.remarketing.activities.watchdog_activities import (
 __all__ = [
     "bootstrap_remarketing_session_activity",
     "build_remarketing_trigger_activity",
+    "build_remarketing_trigger_v2_activity",
     "check_watchdog_eligibility_activity",
+    "read_remarketing_context_activity",
     "persist_watchdog_outcome_activity",
 ]

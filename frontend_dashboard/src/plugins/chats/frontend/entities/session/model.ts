@@ -5,6 +5,17 @@
 
 import type { ChatMessage } from "../message/model";
 
+/** Origen real de la conversación (ver `sessionOriginSchema`). */
+export interface SessionOrigin {
+  channel: string | null;
+  source_id: string | null;
+  source_type: string | null;
+  headline: string | null;
+  first_seen_ms: number | null;
+  campaign_name: string | null;
+  ad_name: string | null;
+}
+
 /** Item de la lista de sesiones (panel izquierdo). */
 export interface ChatSession {
   session_id: string;
@@ -17,6 +28,7 @@ export interface ChatSession {
   pending_payment_order_id: string | null;
   /** Unix epoch en segundos (lo que devuelve `stat().st_mtime`). */
   last_updated_timestamp: number;
+  origin: SessionOrigin | null;
 }
 
 export interface StatusHistoryEntry {
@@ -39,5 +51,6 @@ export interface SessionDetails {
   /** Pedido (id backend Medusa) esperando confirmación de pago humana, o null. */
   pending_payment_order_id: string | null;
   status_history: StatusHistoryEntry[];
+  origin: SessionOrigin | null;
   messages: ChatMessage[];
 }

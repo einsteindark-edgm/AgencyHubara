@@ -6,7 +6,9 @@ Problema (caso real 2026-07-01): el dashboard nombra las campañas por el
 del Padre"). El operador no reconoce sus campañas y dos ads con el mismo
 CTA se ven idénticos.
 
-Este módulo resuelve los nombres REALES con UN GET batch a Graph API:
+El fetch (`fetch_meta_ad_names`) vive en platform (`src.platform.meta.ad_names`,
+expuesto por `src.sdk.connectorkit`) porque chats también lo usa para el origen
+de cada conversación. Resuelve los nombres REALES con UN GET batch a Graph API:
 
     GET {graph_url()}/?ids=<ad_id,...>
         &fields=name,campaign{id,name}&access_token=...
@@ -30,77 +32,15 @@ from __future__ import annotations
 import dataclasses
 import logging
 
-import httpx
-
-from src.sdk.connectorkit import graph_url
-
 from src.plugins.ads.aggregation import (
     SYNTHETIC_CAMPAIGN_IDS,
     AdsCampaignSummary,
 )
+from src.sdk.connectorkit import fetch_meta_ad_names
 
 logger = logging.getLogger(__name__)
 
-_GRAPH_URL = graph_url() + "/"  # GET /?ids=... (raíz versionada)
-_FIELDS = "name,campaign{id,name},adset{id,name},creative{thumbnail_url}"
-_TIMEOUT_S = 4.0
-
-
-def fetch_meta_ad_names(
-    ad_ids: list[str],
-    *,
-    token: str,
-    transport: httpx.BaseTransport | None = None,
-) -> dict[str, dict[str, str | None]]:
-    """Resuelve `{ad_id: {ad_name, campaign_name, campaign_id}}` en un call.
-
-    Best-effort: cualquier problema (sin token, ids vacíos, HTTP error,
-    red caída, payload inesperado) devuelve `{}` — el caller sigue con los
-    headlines del referral. Timeout corto (4s) para no colgar el endpoint
-    del dashboard si Graph está lento.
-    """
-    if not token or not ad_ids:
-        return {}
-    params = {
-        "ids": ",".join(ad_ids),
-        "fields": _FIELDS,
-        "access_token": token,
-    }
-    try:
-        with httpx.Client(timeout=_TIMEOUT_S, transport=transport) as client:
-            resp = client.get(_GRAPH_URL, params=params)
-    except httpx.HTTPError as exc:
-        logger.info("ads.meta_names_fetch_failed", extra={"error": str(exc)})
-        return {}
-    if resp.status_code != 200:
-        logger.info(
-            "ads.meta_names_fetch_non_200",
-            extra={"status": resp.status_code},
-        )
-        return {}
-    try:
-        body = resp.json()
-    except ValueError:
-        return {}
-    if not isinstance(body, dict):
-        return {}
-
-    out: dict[str, dict[str, str | None]] = {}
-    for ad_id, node in body.items():
-        if not isinstance(node, dict):
-            continue
-        campaign = node.get("campaign") or {}
-        adset = node.get("adset") or {}
-        creative = node.get("creative") or {}
-        out[ad_id] = {
-            "ad_name": node.get("name"),
-            "campaign_name": campaign.get("name"),
-            "campaign_id": campaign.get("id"),
-            "adset_id": adset.get("id"),
-            "adset_name": adset.get("name"),
-            "thumbnail_url": creative.get("thumbnail_url"),
-        }
-    return out
+__all__ = ["enrich_campaign_names", "fetch_meta_ad_names"]
 
 
 def _display_name(info: dict[str, str | None]) -> str | None:

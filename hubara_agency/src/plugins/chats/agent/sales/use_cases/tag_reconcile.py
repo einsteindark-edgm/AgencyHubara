@@ -65,7 +65,7 @@ SHIPPING_STAGE_SLOTS: frozenset[str] = frozenset(
 )
 
 Action = Literal["apply", "discard", "already"]
-Reason = Literal["proposal_accepted", "order_registered", "shipping_data_without_order", "already_applied"]
+Reason = Literal["proposal_accepted", "order_registered", "shipping_data_without_order", "already_applied", "operator"]
 
 
 @dataclass(frozen=True)

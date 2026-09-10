@@ -504,3 +504,50 @@ def test_tag_interesado_via_api_enqueues_qualified_lead_for_ctwa_sessions(h: _Ha
     assert [(e["event_name"], e["event_id"], e["source"]) for e in outbox] == [
         ("QualifiedLead", f"qualifiedlead_{_A}_{ep}", "session_actions:tag")
     ]
+
+
+# ── /operator-tag (botón "Reasignar" del inspector) ──────────────────────────
+
+
+def test_operator_tag_applies_the_human_decision_without_reconciling(h: _Harness) -> None:
+    """El operador DECIDE (no propone): RECHAZO cierra el episodio, INTERESADO lo
+    reabre como visible, y queda trazado en status_history con source dashboard."""
+    h.client.post(_url("draft"), json={"producto": "luz-serena"})
+    r = h.client.post(_url("operator-tag"), json={"tag": "RECHAZO", "motivo": "buscaba cera, no la vendemos"})
+    assert r.status_code == 200, r.text
+    ep = h.meta()["episodes"][-1]
+    assert r.json() == {
+        "tag": "RECHAZO", "motivo": "buscaba cera, no la vendemos", "active_route": "ventas",
+        "episode_closed": {"episode_id": ep["episode_id"], "closing_tag": "RECHAZO"},
+    }
+    m = h.meta()
+    assert m["tag"] == "RECHAZO" and m["motivo"] == "buscaba cera, no la vendemos"
+    assert ep["closing_tag"] == "RECHAZO" and ep["closed_at_ms"]
+    assert h.closed == [(_A, ep["episode_id"], "RECHAZO")]
+    last = m["status_history"][-1]
+    assert last["tag"] == "RECHAZO" and last["source"] == "dashboard:operator"
+
+
+def test_operator_tag_remarketing_marks_the_lead_for_reactivation(h: _Harness) -> None:
+    """REMARKETING = decisión humana de re-contactar (la central send_policy la
+    respeta aunque el último cierre haya sido RECHAZO). No cierra episodio."""
+    h.client.post(_url("operator-tag"), json={"tag": "RECHAZO", "motivo": "no"})
+    r = h.client.post(_url("operator-tag"), json={"tag": "REMARKETING", "motivo": "el cliente pidió que le escribamos"})
+    assert r.status_code == 200 and r.json()["tag"] == "REMARKETING" and r.json()["episode_closed"] is None
+    assert h.meta()["tag"] == "REMARKETING"
+
+
+def test_operator_tag_rejects_tags_the_operator_must_not_set_by_hand(h: _Harness) -> None:
+    for tag in ("HUMANO", "COMPRA_EXITOSA", "CONFIRMADO_PAGO_PENDIENTE", "CONFIRMADO_SIN_DATOS", "NO_ETIQUETADO"):
+        assert h.client.post(_url("operator-tag"), json={"tag": tag, "motivo": "x"}).status_code == 422, tag
+    assert h.client.post(_url("operator-tag"), json={"tag": "RECHAZO", "motivo": ""}).status_code == 422
+
+
+def test_operator_tag_keeps_the_human_route_untouched(h: _Harness) -> None:
+    """Con un humano en el hilo el operador puede etiquetar igual (es él quien
+    decide); la ruta no se toca — devolver al bot es otra acción."""
+    h.client.post(_url("escalate"), json={"reason_category": "EXPLICIT_REQUEST", "summary": "pidió humano"})
+    r = h.client.post(_url("operator-tag"), json={"tag": "INTERESADO", "motivo": "quedó pensando el envío"})
+    assert r.status_code == 200 and r.json()["active_route"] == ROUTE_HUMANO
+    m = h.meta()
+    assert m["active_route"] == ROUTE_HUMANO and m["tag"] == "INTERESADO"

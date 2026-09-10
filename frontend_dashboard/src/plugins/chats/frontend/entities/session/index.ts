@@ -1,11 +1,13 @@
 export type {
   ChatSession,
   SessionDetails,
+  SessionOrigin,
   StatusHistoryEntry,
 } from "./model";
 export {
   chatSessionSchema,
   sessionDetailsSchema,
+  sessionOriginSchema,
   sessionsListResponseSchema,
   statusHistoryEntrySchema,
 } from "./contracts";

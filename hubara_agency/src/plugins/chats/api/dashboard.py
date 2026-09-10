@@ -10,9 +10,51 @@ from loguru import logger
 
 from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.media import resolve_media_file
+from src.plugins.chats.shared.origin import session_origin, with_ad_names
+from src.sdk.connectorkit import fetch_meta_ad_names, meta_marketing_token
 from src.sdk.dashboardkit import DashboardEvent, get_dashboard_event_bus
 
 router = APIRouter()
+
+
+# ── Origen real de la conversación (campaña de Meta) ─────────────────────────
+#
+# El inspector mostraba un origen hardcodeado ("Meta Ads · velas"). El ingest
+# persiste el referral CTWA (source_id = ad id) y Graph resuelve el nombre real
+# de la campaña con UN GET batch (mismo resolver que el tablero de ads). Cache
+# TTL en proceso: el listado se sirve seguido (SSE + fallback) y Graph no
+# tiene por qué recibir un call por request. Best-effort: sin token / Graph
+# caído → {} y el dashboard degrada al headline del referral.
+_AD_NAMES_TTL_S = 15 * 60
+_ad_names_cache: dict[str, tuple[float, dict[str, dict[str, str | None]]]] = {}
+
+
+def _resolve_ad_names(ad_ids: list[str]) -> dict[str, dict[str, str | None]]:
+    ids = sorted({i for i in ad_ids if i})
+    if not ids:
+        return {}
+    token = meta_marketing_token()
+    if not token:
+        return {}
+    key = ",".join(ids)
+    now = time.monotonic()
+    hit = _ad_names_cache.get(key)
+    if hit and now - hit[0] < _AD_NAMES_TTL_S:
+        return hit[1]
+    names = fetch_meta_ad_names(ids, token=token)
+    _ad_names_cache[key] = (now, names)
+    return names
+
+
+def _origins_with_names(
+    origins: dict[str, dict | None],
+) -> dict[str, dict | None]:
+    """{session_id: origin crudo} → mismo dict con campaign_name/ad_name."""
+    ad_ids = [
+        o["source_id"] for o in origins.values() if o and o.get("source_id")
+    ]
+    names = _resolve_ad_names(ad_ids)
+    return {sid: with_ad_names(o, names) for sid, o in origins.items()}
 
 
 # Reason por la que el agente escala una venta para que un humano verifique el
@@ -282,6 +324,7 @@ async def list_dashboard_sessions():
             active_route = "ventas"
             phone_number_id = None
             pending_payment_order_id = None
+            origin = None
 
             if metadata_file.exists():
                 try:
@@ -291,6 +334,7 @@ async def list_dashboard_sessions():
                     active_route = data.get("active_route", active_route)
                     phone_number_id = data.get("phone_number_id")
                     pending_payment_order_id = _compute_pending_payment_order_id(data)
+                    origin = session_origin(data)
                 except json.JSONDecodeError:
                     pass
             
@@ -310,13 +354,29 @@ async def list_dashboard_sessions():
                 "active_agent_route": active_route,
                 "phone_number_id": phone_number_id,
                 "pending_payment_order_id": pending_payment_order_id,
-                "last_updated_timestamp": last_updated
+                "last_updated_timestamp": last_updated,
+                "origin": origin,
             })
-            
+
+    # Nombres reales de campaña en UN batch para todo el listado.
+    enriched = _origins_with_names({s["session_id"]: s["origin"] for s in sessions})
+    for s_ in sessions:
+        s_["origin"] = enriched.get(s_["session_id"])
+
     # Sort from most recent to oldest
     sessions.sort(key=lambda x: x["last_updated_timestamp"], reverse=True)
     return {"sessions": sessions}
     
+
+class _empty_lines:
+    """Context manager iterable vacío — mismo shape que un archivo abierto."""
+
+    def __enter__(self):
+        return iter(())
+
+    def __exit__(self, *exc):
+        return False
+
 
 @router.get("/sessions/{session_id}")
 async def get_session_history(session_id: str):
@@ -328,12 +388,13 @@ async def get_session_history(session_id: str):
         raise HTTPException(status_code=404, detail="Session not found in Vault")
         
     history_file = session_path / "sessions" / f"{session_id}.jsonl"
-    if not history_file.exists():
-        return {"session_id": session_id, "messages": []}
-        
     messages = []
-    
-    with open(history_file, 'r', encoding="utf-8") as f:
+
+    # Sin JSONL todavía (sesión recién creada por el ingest / seed sin
+    # historial) igual devolvemos la forma completa: tag, origen, historial de
+    # estados. Antes el early-return `{"session_id", "messages": []}` rompía el
+    # schema Zod del frontend (campos requeridos ausentes).
+    with open(history_file, 'r', encoding="utf-8") if history_file.exists() else _empty_lines() as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -375,6 +436,7 @@ async def get_session_history(session_id: str):
     phone_number_id = None
     status_history = []
     pending_payment_order_id = None
+    origin = None
 
     metadata_file = session_path / "metadata.json"
     if metadata_file.exists():
@@ -386,6 +448,7 @@ async def get_session_history(session_id: str):
             phone_number_id = data.get("phone_number_id")
             status_history = data.get("status_history", [])
             pending_payment_order_id = _compute_pending_payment_order_id(data)
+            origin = _origins_with_names({session_id: session_origin(data)})[session_id]
         except json.JSONDecodeError:
             pass
 
@@ -404,6 +467,7 @@ async def get_session_history(session_id: str):
         "phone_number_id": phone_number_id,
         "pending_payment_order_id": pending_payment_order_id,
         "status_history": status_history,
+        "origin": origin,
         "messages": messages
     }
 

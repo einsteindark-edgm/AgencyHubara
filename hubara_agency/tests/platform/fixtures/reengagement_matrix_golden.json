@@ -80,6 +80,54 @@
       }
     },
     {
+      "name": "rechazo_closed_suppressed",
+      "metadata": {
+        "service_window_expires_at_ms": 1716703600000,
+        "ctwa_window_expires_at_ms": 1716703600000
+      },
+      "lead": {"tag": "RECHAZO", "last_closing_tag": "RECHAZO"},
+      "expect": {
+        "allowed": false,
+        "channel": "blocked",
+        "recommended_category": "marketing",
+        "is_free": false,
+        "expected_cost_micros": 0,
+        "suppress_reason": "rejected"
+      }
+    },
+    {
+      "name": "rechazo_closing_suppressed_despite_tag_flip",
+      "metadata": {
+        "service_window_expires_at_ms": 1716703600000,
+        "ctwa_window_expires_at_ms": 1716703600000
+      },
+      "lead": {"tag": "NO_ETIQUETADO", "last_closing_tag": "RECHAZO"},
+      "expect": {
+        "allowed": false,
+        "channel": "blocked",
+        "recommended_category": "marketing",
+        "is_free": false,
+        "expected_cost_micros": 0,
+        "suppress_reason": "rejected"
+      }
+    },
+    {
+      "name": "remarketing_tag_lifts_rejection_suppression",
+      "metadata": {
+        "service_window_expires_at_ms": 1716696400000,
+        "ctwa_window_expires_at_ms": 1716703600000
+      },
+      "lead": {"tag": "REMARKETING", "last_closing_tag": "RECHAZO"},
+      "expect": {
+        "allowed": true,
+        "channel": "template",
+        "recommended_category": "marketing",
+        "is_free": true,
+        "expected_cost_micros": 0,
+        "suppress_reason": null
+      }
+    },
+    {
       "name": "csw_open_free_form_charged_post_oct",
       "metadata": {
         "service_window_expires_at_ms": 1716703600000,
@@ -197,11 +245,7 @@
         "service_window_expires_at_ms": 1716696400000,
         "ctwa_window_expires_at_ms": 1716696400000
       },
-      "lead": {
-        "tag": "INTERESADO",
-        "engaged": true,
-        "allow_paid_marketing": true
-      },
+      "lead": {"tag": "INTERESADO", "engaged": true, "allow_paid_marketing": true},
       "expect": {
         "allowed": true,
         "channel": "template",

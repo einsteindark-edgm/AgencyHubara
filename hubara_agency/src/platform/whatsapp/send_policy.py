@@ -217,6 +217,11 @@ def evaluate_send(
 TAG_HUMAN: str = "HUMANO"
 TAG_CONVERTED: str = "COMPRA_EXITOSA"
 TAG_PAYMENT_PENDING: str = "CONFIRMADO_PAGO_PENDIENTE"
+#: Cierre definitivo SIN venta (el cliente dijo que no, o pidió algo que no
+#: vendemos y se despidió). Incidente run dc32f7fe (2026-09-10): TOOLS.md
+#: prometía "RECHAZO → NO remarketing" pero la central no lo conocía y el
+#: Window Strategist reactivó a un cliente que quería comprar cera.
+TAG_REJECTED: str = "RECHAZO"
 #: El humano devolvió la conversación a remarketing a propósito (botón del
 #: dashboard) — levanta la supresión por compra hecha.
 TAG_REMARKETING: str = "REMARKETING"
@@ -356,6 +361,19 @@ def decide_reengagement(
         return _suppress(
             "already_purchased",
             "compra ya hecha (cierre del último episodio) — no re-targetear",
+        )
+
+    # 1.55. Rechazo — cierre definitivo sin venta (tag corriente o cierre del
+    # último episodio, espejo de 1.5). Reactivar a quien ya dijo que no (o a
+    # quien pidió algo que no vendemos) es spam: el próximo inbound abre
+    # episodio nuevo (tag reset + closing_tag=None) y la supresión se
+    # auto-levanta. Excepción: tag REMARKETING explícito = decisión humana.
+    if lead.tag != TAG_REMARKETING and (
+        lead.tag == TAG_REJECTED or lead.last_closing_tag == TAG_REJECTED
+    ):
+        return _suppress(
+            "rejected",
+            "cierre RECHAZO (sin venta) — no reactivar hasta que el cliente vuelva",
         )
 
     # 1.6. Conversación viva — el cliente escribió hace minutos. Un toque

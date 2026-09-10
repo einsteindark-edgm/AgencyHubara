@@ -15,7 +15,13 @@ mas claro de descubrir y testear.
 from __future__ import annotations
 
 
-def build_remarketing_trigger(motivo: str, memory_context: str = "") -> str:
+def build_remarketing_trigger(
+    motivo: str,
+    memory_context: str = "",
+    *,
+    has_order_draft: bool | None = None,
+    transcript: str = "",
+) -> str:
     """Saludo proactivo inicial inyectado al LLM al arrancar el workflow.
 
     `motivo` es el resumen del cierre anterior (registrado por la tool de tags).
@@ -34,12 +40,35 @@ def build_remarketing_trigger(motivo: str, memory_context: str = "") -> str:
         mencionó). Ahora el Remarketing es la *misma persona* que Sales
         (el "Asesor de Hubara"), retomando la charla.
     """
+    # Incidente run dc32f7fe (2026-09-10): el encabezado afirmaba "quedó
+    # pendiente de cerrar una compra" aunque no hubiera pedido → "quedó
+    # pendiente lo de tu pedido" a un cliente que solo miró la lista. Con el
+    # flag de draft (activity v2) el framing es honesto; `None` = path legacy
+    # (histories en vuelo replayean la activity vieja con 2 args).
+    if has_order_draft is False:
+        situacion = (
+            "El cliente miró productos pero NO eligió ninguno ni dejó un "
+            "pedido a medias. NO hables de 'tu pedido', NO ofrezcas "
+            "'cerrarlo': no existe. Retoma el tema que sí miró y vas a "
+            "re-abrir la conversación con UN único gancho cálido y breve."
+        )
+    else:
+        situacion = (
+            "El cliente quedó pendiente de cerrar una compra y vas a "
+            "re-abrir la conversación con UN único gancho cálido y breve."
+        )
+    transcript_block = (
+        "ÚLTIMOS MENSAJES DE LA CONVERSACIÓN (uso interno, del más viejo al "
+        f"más nuevo):\n{transcript}\n\n"
+        if transcript
+        else ""
+    )
     return (
         "[SISTEMA INTERNO — NO REPRODUCIR ESTE TEXTO AL CLIENTE]: "
-        "El cliente quedó pendiente de cerrar una compra y vas a "
-        "re-abrir la conversación con UN único gancho cálido y breve.\n\n"
+        f"{situacion}\n\n"
         f"MOTIVO REGISTRADO DE CIERRE (uso interno): '{motivo}'.\n"
         f"MEMORIA DE EVENTOS PASADOS (uso interno):{memory_context}\n\n"
+        f"{transcript_block}"
         "REGLAS DEL GANCHO (todas obligatorias):\n\n"
         "1. **Identidad**: eres el MISMO Asesor de Hubara que ya conversó "
         "con el cliente antes. NO te presentes con un nombre nuevo, NO "
@@ -66,10 +95,12 @@ def build_remarketing_trigger(motivo: str, memory_context: str = "") -> str:
         "hables del cliente en tercera persona ('Cliente preguntó…'). "
         "Escribe SOLO el mensaje final que verá el cliente por "
         "WhatsApp. Detente al terminar el gancho.\n\n"
-        "7. **Abstención**: si el historial muestra que este gancho YA NO "
-        "corresponde (el cliente ya respondió a un gancho anterior, ya "
-        "compró, la conversación ya está activa con el asesor, o por "
-        "cualquier otra razón un mensaje proactivo sobra), responde "
+        "7. **Abstención**: si el historial o los últimos mensajes muestran "
+        "que este gancho YA NO corresponde (el cliente ya respondió a un "
+        "gancho anterior, ya compró, la conversación ya está activa con el "
+        "asesor, pidió algo que NO vendemos y ya se le aclaró, se despidió "
+        "con la duda resuelta sin producto en juego, o por cualquier otra "
+        "razón un mensaje proactivo sobra), responde "
         "EXACTAMENTE `NO_MESSAGE` — una sola palabra, sin explicación ni "
         "nada más. Eso suprime el envío y el cliente no verá nada. NUNCA "
         "escribas tu decisión de no enviar como texto ('no genero un "

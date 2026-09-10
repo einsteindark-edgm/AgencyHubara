@@ -36,6 +36,11 @@ with workflow.unsafe.imports_passed_through():
     from src.plugins.chats.agent.remarketing.activities import (
         bootstrap_remarketing_session_activity,
         build_remarketing_trigger_activity,
+        build_remarketing_trigger_v2_activity,
+        read_remarketing_context_activity,
+    )
+    from src.plugins.chats.agent.remarketing.contracts import (
+        RemarketingTriggerInput,
     )
     from src.platform.session_history.activities import (
         persist_assistant_message_activity,
@@ -232,12 +237,39 @@ class RemarketingSessionWorkflow:
             start_to_close_timeout=timedelta(seconds=15),
         )
 
-        system_trigger_msg = await workflow.execute_activity(
-            build_remarketing_trigger_activity,
-            args=[motivo, memory_context],
-            start_to_close_timeout=timedelta(seconds=10),
-            retry_policy=RetryPolicy(maximum_attempts=2),
-        )
+        # Contexto REAL del gancho (incidente run dc32f7fe, 2026-09-10): el
+        # agente de remarketing no ve el historial de Sales (HistoryStore
+        # aislado por workspace) y el Window Strategist arranca este workflow
+        # con un `motivo` genérico. Sin esto el LLM inventó "quedó pendiente
+        # lo de tu pedido" a un cliente sin pedido que ya se había despedido.
+        # El motivo del TAG (lo que Sales anotó al etiquetar) manda sobre el
+        # del input cuando existe. workflow.patched: histories en vuelo
+        # replayean la activity vieja; tras drain (24h), deprecate_patch.
+        if workflow.patched("remarketing-context-v1"):
+            context = await workflow.execute_activity(
+                read_remarketing_context_activity,
+                args=[session_id],
+                start_to_close_timeout=timedelta(seconds=15),
+                retry_policy=RetryPolicy(maximum_attempts=2),
+            )
+            system_trigger_msg = await workflow.execute_activity(
+                build_remarketing_trigger_v2_activity,
+                RemarketingTriggerInput(
+                    motivo=context.tag_motivo or motivo,
+                    memory_context=memory_context,
+                    has_order_draft=context.has_order_draft,
+                    transcript=context.transcript,
+                ),
+                start_to_close_timeout=timedelta(seconds=10),
+                retry_policy=RetryPolicy(maximum_attempts=2),
+            )
+        else:
+            system_trigger_msg = await workflow.execute_activity(
+                build_remarketing_trigger_activity,
+                args=[motivo, memory_context],
+                start_to_close_timeout=timedelta(seconds=10),
+                retry_policy=RetryPolicy(maximum_attempts=2),
+            )
 
         # PR-B: identidad / tono / catalogo viven en el workspace canonico
         # (`workspace/{IDENTITY,SOUL,USER,TOOLS,AGENTS}.md` y

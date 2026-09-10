@@ -29,7 +29,11 @@ from exoclaw_temporal.config import (
 from src.platform.contracts import RemarketingEligibility
 from src.platform.plugin_manifest import get_task_queue
 from src.platform.whatsapp.send_policy import SendDecision
-from src.plugins.chats.agent.remarketing.contracts import RemarketingSessionInput
+from src.plugins.chats.agent.remarketing.contracts import (
+    RemarketingContext,
+    RemarketingSessionInput,
+    RemarketingTriggerInput,
+)
 from src.plugins.chats.agent.remarketing.workflows.remarketing import (
     RemarketingSessionWorkflow,
 )
@@ -87,6 +91,15 @@ def _make_fake_activities(
     async def fake_trigger(motivo: str, memory_context: str) -> str:
         return f"[SYSTEM] reactivar: {motivo}"
 
+    # remarketing-context-v1 (incidente run dc32f7fe): contexto real + trigger v2.
+    @activity.defn(name="read_remarketing_context_activity")
+    async def fake_context(session_id: str) -> RemarketingContext:
+        return RemarketingContext()
+
+    @activity.defn(name="build_remarketing_trigger_v2_activity")
+    async def fake_trigger_v2(input: RemarketingTriggerInput) -> str:
+        return f"[SYSTEM] reactivar: {input.motivo}"
+
     @activity.defn(name="send_typing_indicator_activity")
     async def fake_typing(session_id: str) -> None:
         return None
@@ -131,6 +144,8 @@ def _make_fake_activities(
         fake_claim,
         fake_memory,
         fake_trigger,
+        fake_context,
+        fake_trigger_v2,
         fake_typing,
         fake_build_prompt,
         fake_llm,

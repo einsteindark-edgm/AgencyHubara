@@ -30,6 +30,7 @@ function makeSession(overrides: Partial<ChatSession> = {}): ChatSession {
     phone_number_id: null,
     pending_payment_order_id: null,
     last_updated_timestamp: 1716700000,
+    origin: null,
     ...overrides,
   };
 }

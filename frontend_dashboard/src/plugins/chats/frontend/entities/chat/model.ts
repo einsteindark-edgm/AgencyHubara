@@ -99,3 +99,17 @@ export interface FileItem {
   time: string;
   kind: "pdf" | "img";
 }
+
+/** Cabecera "Estado actual" del inspector: datos REALES de la sesión (antes
+ *  eran placeholders del prototipo). `originLabel` ya viene formateado
+ *  ("Meta Ads · Día del Padre"); `originDetail` es el ad/headline cuando
+ *  aporta algo más que el label. */
+export interface ChatOverview {
+  sessionId: string;
+  tag: string;
+  startedLabel: string;
+  originLabel: string;
+  originDetail?: string;
+  /** true cuando el origen es un anuncio/post de Meta (link visual). */
+  originIsMeta: boolean;
+}

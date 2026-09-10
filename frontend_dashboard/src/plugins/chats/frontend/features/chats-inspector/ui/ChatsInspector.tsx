@@ -7,8 +7,15 @@ import { useState } from "react";
 import {
   useChatInbox,
   useChatMemory,
+  useChatOverview,
   useChatRoutingLog,
 } from "@plugins/chats/frontend/entities/chat";
+import {
+  OPERATOR_TAGS,
+  OPERATOR_TAG_LABELS,
+  useReassignTagMutation,
+  type OperatorTag,
+} from "@plugins/chats/frontend/entities/session-tag";
 import { Icon, Panel } from "@/shared/ui";
 
 type InspectorTab = "tag" | "agent" | "mem";
@@ -74,8 +81,10 @@ export function ChatsInspector({ chatId }: Props) {
 function TagsTab({ chatId }: { chatId: string | null }) {
   const { data: chats = [] } = useChatInbox();
   const { data: log = [] } = useChatRoutingLog(chatId);
+  const { data: overview } = useChatOverview(chatId);
   const chat = chats.find((c) => c.id === chatId);
   const tagLabel = chat ? chat.tag : "—";
+  const [reassigning, setReassigning] = useState(false);
 
   return (
     <>
@@ -83,10 +92,16 @@ function TagsTab({ chatId }: { chatId: string | null }) {
         title="Estado actual"
         actions={
           <>
-            <button className="ico" title="Editar">
+            <button className="ico" title="Editar" onClick={() => setReassigning(true)}>
               <Icon.edit />
             </button>
-            <button className="ico" title="Copiar">
+            <button
+              className="ico"
+              title="Copiar"
+              onClick={() => {
+                if (chatId) void navigator.clipboard?.writeText(chatId);
+              }}
+            >
               <Icon.copy />
             </button>
           </>
@@ -96,23 +111,42 @@ function TagsTab({ chatId }: { chatId: string | null }) {
         <div style={{ marginTop: 10 }}>
           <div className="form-row">
             <span className="lbl">ID de sesión</span>
-            <span className="val mono">ses_a3f8c2…</span>
+            <span className="val mono">{overview?.sessionId ?? chatId ?? "—"}</span>
           </div>
           <div className="form-row">
             <span className="lbl">Iniciada</span>
-            <span className="val">7/5, 4:30 p.m.</span>
+            <span className="val">{overview?.startedLabel ?? "—"}</span>
           </div>
           <div className="form-row">
             <span className="lbl">Origen</span>
-            <span className="val link">Meta Ads · velas</span>
+            <span
+              className={"val" + (overview?.originIsMeta ? " link" : "")}
+              title={overview?.originDetail}
+            >
+              {overview?.originLabel ?? "—"}
+            </span>
           </div>
+          {overview?.originDetail && (
+            <div className="form-row">
+              <span className="lbl">Anuncio</span>
+              <span className="val">{overview.originDetail}</span>
+            </div>
+          )}
         </div>
-        <div className="quick-row" style={{ marginTop: 10 }}>
-          <button className="insp-button">
-            <Icon.user />
-            Reasignar
-          </button>
-        </div>
+        {reassigning ? (
+          <ReassignTagForm chatId={chatId} onDone={() => setReassigning(false)} />
+        ) : (
+          <div className="quick-row" style={{ marginTop: 10 }}>
+            <button
+              className="insp-button"
+              onClick={() => setReassigning(true)}
+              disabled={!chatId}
+            >
+              <Icon.user />
+              Reasignar
+            </button>
+          </div>
+        )}
       </Panel>
 
       <Panel
@@ -138,6 +172,84 @@ function TagsTab({ chatId }: { chatId: string | null }) {
         </div>
       </Panel>
     </>
+  );
+}
+
+/** Formulario inline de "Reasignar": el operador fija el tag (decisión, no
+ *  propuesta) con un motivo obligatorio que queda en el historial. */
+function ReassignTagForm({
+  chatId,
+  onDone,
+}: {
+  chatId: string | null;
+  onDone: () => void;
+}) {
+  const [tag, setTag] = useState<OperatorTag>("INTERESADO");
+  const [motivo, setMotivo] = useState("");
+  const mutation = useReassignTagMutation(chatId);
+  const canSave = Boolean(chatId) && motivo.trim().length > 0 && !mutation.isPending;
+
+  const fieldStyle = {
+    width: "100%",
+    background: "rgba(255,255,255,0.04)",
+    color: "var(--fg)",
+    border: "1px solid var(--border)",
+    borderRadius: 6,
+    padding: "6px 8px",
+    fontSize: 12,
+  } as const;
+
+  return (
+    <form
+      style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!canSave) return;
+        mutation.mutate(
+          { tag, motivo: motivo.trim() },
+          { onSuccess: () => onDone() },
+        );
+      }}
+    >
+      <label className="lbl" htmlFor="reassign-tag" style={{ fontSize: 11.5 }}>
+        Nuevo tag
+      </label>
+      <select
+        id="reassign-tag"
+        style={fieldStyle}
+        value={tag}
+        onChange={(e) => setTag(e.target.value as OperatorTag)}
+      >
+        {OPERATOR_TAGS.map((t) => (
+          <option key={t} value={t}>
+            {OPERATOR_TAG_LABELS[t]}
+          </option>
+        ))}
+      </select>
+      <label className="lbl" htmlFor="reassign-motivo" style={{ fontSize: 11.5 }}>
+        Motivo
+      </label>
+      <textarea
+        id="reassign-motivo"
+        style={{ ...fieldStyle, minHeight: 52, resize: "vertical" }}
+        placeholder="Por qué cambia el tag (queda en el historial)"
+        value={motivo}
+        onChange={(e) => setMotivo(e.target.value)}
+      />
+      {mutation.isError && (
+        <div style={{ color: "#ff6b62", fontSize: 11.5 }}>
+          No se pudo reasignar: {mutation.error.message}
+        </div>
+      )}
+      <div className="quick-row">
+        <button type="submit" className="insp-button primary" disabled={!canSave}>
+          {mutation.isPending ? "Guardando…" : "Guardar"}
+        </button>
+        <button type="button" className="insp-button" onClick={onDone}>
+          Cancelar
+        </button>
+      </div>
+    </form>
   );
 }
 
