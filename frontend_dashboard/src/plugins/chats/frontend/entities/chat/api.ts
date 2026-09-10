@@ -28,7 +28,7 @@ import {
   isVisibleChatMessage,
   type ChatMessage,
 } from "@plugins/chats/frontend/entities/message";
-import { formatHourMinute } from "@/shared/lib";
+import { bogotaDayIsoFromUnix, formatBogotaHourMinute } from "@/shared/lib";
 import { env, getAccessToken } from "@/shared/config";
 import type {
   AvatarColor,
@@ -162,7 +162,9 @@ function adaptSession(s: ChatSession): ChatInboxItem {
     name: s.phone_number,
     short: shortInitials(s.phone_number),
     snippet: s.motivo || "Sin diagnóstico…",
-    time: formatHourMinute(s.last_updated_timestamp),
+    time: formatBogotaHourMinute(s.last_updated_timestamp),
+    timestamp: s.last_updated_timestamp,
+    dayIso: bogotaDayIsoFromUnix(s.last_updated_timestamp),
     tag,
     tagClass,
     color: hashColor(s.session_id),
@@ -191,7 +193,22 @@ function toMediaUrl(ref: string): string {
   return `${abs}${sep}access_token=${encodeURIComponent(token)}`;
 }
 
+/** El historial no garantiza un formato único de timestamp: los eventos nuevos
+ *  traen unix epoch en SEGUNDOS y los viejos un ISO string. Normalizamos a
+ *  segundos ACÁ, en un solo lugar, para que el resto del adaptador (hora, día,
+ *  agrupación) hable un único idioma. `0` = sin timestamp utilizable. */
+function toUnixSeconds(ts: ChatMessage["timestamp"]): number {
+  if (typeof ts === "number") return Number.isFinite(ts) ? ts : 0;
+  if (typeof ts === "string") {
+    const ms = Date.parse(ts);
+    return Number.isNaN(ms) ? 0 : Math.floor(ms / 1000);
+  }
+  return 0;
+}
+
 function adaptMessage(m: ChatMessage): ChatMessageItem {
+  const unix = toUnixSeconds(m.timestamp);
+  const dayIso = bogotaDayIsoFromUnix(unix) || undefined;
   // Envío no-textual del bot (catálogo, flow, botones, galería…): el backend
   // persiste un marker human-readable y acá se pinta como nota de sistema —
   // sin esto el operador ve huecos y no puede seguir la conversación.
@@ -199,13 +216,8 @@ function adaptMessage(m: ChatMessage): ChatMessageItem {
     return {
       kind: "system",
       text: m.content ?? "",
-      time:
-        typeof m.timestamp === "string"
-          ? new Date(m.timestamp).toLocaleTimeString([], {
-              hour: "2-digit",
-              minute: "2-digit",
-            })
-          : undefined,
+      time: formatBogotaHourMinute(unix) || undefined,
+      dayIso,
     };
   }
   const sender = getMessageSender(m);
@@ -217,15 +229,8 @@ function adaptMessage(m: ChatMessage): ChatMessageItem {
   return {
     kind: isOutbound ? "out" : "in",
     text: m.content ?? "",
-    time:
-      typeof m.timestamp === "number"
-        ? formatHourMinute(m.timestamp)
-        : typeof m.timestamp === "string"
-          ? new Date(m.timestamp).toLocaleTimeString([], {
-              hour: "2-digit",
-              minute: "2-digit",
-            })
-          : "",
+    time: formatBogotaHourMinute(unix),
+    dayIso,
     status: isOutbound ? "read" : undefined,
     author: isOutbound ? (sender === "human" ? "human" : "bot") : undefined,
     imageUrl: m.image_url ? toMediaUrl(m.image_url) : undefined,
@@ -278,13 +283,30 @@ export function useChatMessages(id: string | null) {
   return { ...q, data };
 }
 
+/**
+ * Aplana el historial insertando un separador por DÍA CALENDARIO colombiano,
+ * como WhatsApp. Antes había un único separador literal "Conversación" para
+ * todo el hilo: el operador no podía saber si un mensaje era de hoy o de hace
+ * tres semanas sin abrir el inspector.
+ *
+ * El separador lleva `dayIso` (dato), no la etiqueta ya renderizada — "Hoy"
+ * caduca a medianoche y esta lista vive en la cache de TanStack Query. La
+ * etiqueta la produce `formatDayLabelEs` en el render de la burbuja.
+ *
+ * Mensajes sin timestamp (historial legacy) no abren ni cierran grupo: se
+ * pintan bajo el separador vigente. Inventarles un día sería mentir.
+ */
 function buildMessageList(d: SessionDetails): ChatMessageItem[] {
   const items: ChatMessageItem[] = [];
-  const visible = d.messages.filter(isVisibleChatMessage);
-  if (visible.length > 0) {
-    items.push({ kind: "day", text: "Conversación" });
+  let currentDay: string | undefined;
+  for (const m of d.messages.filter(isVisibleChatMessage)) {
+    const item = adaptMessage(m);
+    if (item.dayIso && item.dayIso !== currentDay) {
+      currentDay = item.dayIso;
+      items.push({ kind: "day", dayIso: item.dayIso });
+    }
+    items.push(item);
   }
-  for (const m of visible) items.push(adaptMessage(m));
   return items;
 }
 

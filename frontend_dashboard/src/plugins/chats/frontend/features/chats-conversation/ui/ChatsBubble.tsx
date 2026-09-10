@@ -1,12 +1,18 @@
 import type { ChatMessageItem } from "@plugins/chats/frontend/entities/chat";
 import { Icon } from "@/shared/ui";
+import { formatDayLabelEs } from "@/shared/lib";
 
 interface Props {
   message: ChatMessageItem;
 }
 
 export function ChatsBubble({ message: m }: Props) {
-  if (m.kind === "day") return <div className="day">{m.text}</div>;
+  // La etiqueta del separador se computa ACÁ, en render, a partir del `dayIso`
+  // que trae el adaptador (regla 5: derivados de reloj nunca en el mapper).
+  // Congelar "Hoy" en la cache haría que un chat abierto de noche siguiera
+  // diciendo "Hoy" pasada la medianoche.
+  if (m.kind === "day")
+    return <div className="day">{m.dayIso ? formatDayLabelEs(m.dayIso) : m.text}</div>;
   if (m.kind === "system")
     return (
       <div className="system">
