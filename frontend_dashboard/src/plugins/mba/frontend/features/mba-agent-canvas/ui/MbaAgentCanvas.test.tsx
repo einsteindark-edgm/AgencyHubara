@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, cleanup } from "@testing-library/react";
+import { render, screen, waitFor, cleanup, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactElement } from "react";
 import { MbaAgentCanvas } from "./MbaAgentCanvas";
@@ -47,7 +47,7 @@ describe("MbaAgentCanvas", () => {
 
     await waitFor(() => screen.getByRole("heading", { name: "Asesor de Ventas" }));
     expect(screen.getByRole("button", { name: /Configuración/ }).className).toContain("on");
-    for (const label of ["Insights", "Agent test", "Agent eval"]) {
+    for (const label of ["Insights", "Agent eval"]) {
       const btn = screen.getByRole("button", { name: new RegExp(label) }) as HTMLButtonElement;
       expect(btn.disabled).toBe(true);
       expect(btn.title).toBe("Próximamente");
@@ -55,6 +55,15 @@ describe("MbaAgentCanvas", () => {
     // y monta la configuración real desde /api/mba/agents/sales/config
     await waitFor(() => screen.getByText("Secuencia de envío"));
     expect(fetchMock.mock.calls.some((c) => String(c[0]).includes("/api/mba/agents/sales/config"))).toBe(true);
+
+    // D2.4: el tab "Agent test" está habilitado y muestra la consola del simulador
+    const testTab = screen.getByRole("button", { name: /Agent test/ }) as HTMLButtonElement;
+    expect(testTab.disabled).toBe(false);
+    fireEvent.click(testTab);
+    screen.getByPlaceholderText(/Escribí como el cliente/);
+    expect(screen.queryByText("Secuencia de envío")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Configuración/ }));
+    await waitFor(() => screen.getByText("Secuencia de envío"));
   });
 
   it("shows an empty state when there are no MBA agents", async () => {

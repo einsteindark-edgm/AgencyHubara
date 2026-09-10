@@ -631,3 +631,86 @@ def test_the_real_rollout_control_is_wired_with_hubaras_closed_list_and_the_ever
     assert uc._everyone() is True
     monkeypatch.setenv("MBA_ALLOW_EVERYONE", "PLACEHOLDER_set_out_of_band")
     assert uc._everyone() is False
+
+
+# ── D2.4: consola agent_test ─────────────────────────────────────────────────
+
+
+class _AdminTestStub:
+    def __init__(self, *, reply=None, error=None) -> None:
+        self._reply, self._error, self.calls = reply, error, []
+
+    async def agent_test(self, entity_id, user_msg, *, conversation_id=None):
+        self.calls.append((entity_id, user_msg, conversation_id))
+        if self._error is not None:
+            raise self._error
+        return self._reply or {"message_id": "m1", "agent_response": "Hola, soy el asesor.", "conversation_id": "conv-1", "timestamp": 1}
+
+
+def _agent_test_client(stub: _AdminTestStub, monkeypatch: pytest.MonkeyPatch, entity_id: str | None = "PHONE_777") -> TestClient:
+    from src.plugins.mba import api as mba_api
+    from src.plugins.mba.service import load_agent as real_load
+
+    def _load(agent_id):
+        cfg = real_load(agent_id)
+        if cfg is None:
+            return None
+        from dataclasses import replace
+
+        return replace(cfg, entity_id=entity_id)
+
+    monkeypatch.setattr(mba_api, "load_agent", _load)
+    app = FastAPI()
+    app.include_router(router, prefix="/api/mba")
+    app.dependency_overrides[mba_api.get_mba_admin] = lambda: stub
+    return TestClient(app)
+
+
+def test_agent_test_sends_the_message_to_meta_and_threads_the_conversation(monkeypatch: pytest.MonkeyPatch) -> None:
+    stub = _AdminTestStub()
+    c = _agent_test_client(stub, monkeypatch)
+    res = c.post("/api/mba/agents/sales/test", json={"message": "hola"})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["ok"] is True and body["reply"]["agent_response"] == "Hola, soy el asesor." and body["reply"]["conversation_id"] == "conv-1"
+    res = c.post("/api/mba/agents/sales/test", json={"message": "¿y envíos?", "conversation_id": "conv-1"})
+    assert res.status_code == 200
+    assert stub.calls == [("PHONE_777", "hola", None), ("PHONE_777", "¿y envíos?", "conv-1")]
+    # respuesta con todos los campos opcionales de Meta
+    rich = _AdminTestStub(reply={
+        "message_id": "m2", "agent_response": "", "conversation_id": "conv-1", "timestamp": 2,
+        "no_response_reason": "handoff", "handoff_reason": "customer_asked_for_human", "quick_replies": ["Sí", "No"], "product_variant_ids": ["v1"],
+    })
+    body = _agent_test_client(rich, monkeypatch).post("/api/mba/agents/sales/test", json={"message": "quiero un humano"}).json()
+    assert body["reply"]["handoff_reason"] == "customer_asked_for_human" and body["reply"]["quick_replies"] == ["Sí", "No"]
+
+
+def test_agent_test_validates_input_and_maps_guards(monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.plugins.mba.adapters.meta_admin import MbaAdminError
+
+    stub = _AdminTestStub()
+    c = _agent_test_client(stub, monkeypatch)
+    assert c.post("/api/mba/agents/sales/test", json={}).status_code == 422
+    assert c.post("/api/mba/agents/sales/test", json={"message": ""}).status_code == 422
+    assert c.post("/api/mba/agents/sales/test", json={"message": "x" * 4097}).status_code == 422
+    assert c.post("/api/mba/agents/sales/test", json={"message": "hola", "conversation_id": "x" * 200}).status_code == 422
+    assert c.post("/api/mba/agents/nope/test", json={"message": "hola"}).status_code == 404
+    assert stub.calls == []
+    # sin entity_id (número no onboardeado): 409 antes de tocar Meta
+    res = _agent_test_client(stub, monkeypatch, entity_id=None).post("/api/mba/agents/sales/test", json={"message": "hola"})
+    assert res.status_code == 409 and res.json()["detail"]["error"] == "entity_id_missing" and stub.calls == []
+    # Meta caída / token faltante → 503 con el motivo; rechazo de Meta → 200 ok=false con el detalle (la consola lo muestra)
+    for kind, status in (("unavailable", 503), ("not_configured", 503), ("ambiguous", 503)):
+        down = _AdminTestStub(error=MbaAdminError(kind, status=503 if kind == "unavailable" else None, detail="down"))
+        res = _agent_test_client(down, monkeypatch).post("/api/mba/agents/sales/test", json={"message": "hola"})
+        assert res.status_code == status and res.json()["detail"]["kind"] == kind
+    rejected = _AdminTestStub(error=MbaAdminError("rejected", status=400, detail="agent not onboarded"))
+    res = _agent_test_client(rejected, monkeypatch).post("/api/mba/agents/sales/test", json={"message": "hola"})
+    assert res.status_code == 200 and res.json() == {"ok": False, "reply": None, "error": {"kind": "rejected", "status": 400, "detail": "agent not onboarded"}}
+
+
+def test_the_real_admin_dependency_is_the_meta_client() -> None:
+    from src.plugins.mba import api as mba_api
+    from src.plugins.mba.adapters.meta_admin import MetaMbaAdmin
+
+    assert isinstance(mba_api.get_mba_admin(), MetaMbaAdmin)
