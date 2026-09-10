@@ -252,7 +252,7 @@ class TestPhaseB:
 
 
 class TestRejectedLead:
-    """Incidente wa_573114842180 (2026-09-10, run dc32f7fe): el cliente pidió
+    """Incidente wa_573000000005 (2026-09-10, run dc32f7fe): el cliente pidió
     comprar CERA (no la vendemos), se despidió con "Gracias" y aun así el
     Window Strategist lo reactivó con "quedó pendiente lo de tu pedido".
     TOOLS.md/SKILL.md prometían "RECHAZO → NO remarketing" pero la central

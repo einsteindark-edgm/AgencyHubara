@@ -114,7 +114,7 @@ def test_remarketing_trigger_offers_no_message_abstention() -> None:
 
 
 def test_ghosting_prompt_marks_unserved_need_as_rechazo() -> None:
-    """Incidente run dc32f7fe (2026-09-10, wa_573114842180): el cliente pidió
+    """Incidente run dc32f7fe (2026-09-10, wa_573000000005): el cliente pidió
     comprar CERA (materia prima, no la vendemos), el agente se lo aclaró, el
     cliente cerró con "Gracias" y se fue. El prompt solo admitía RECHAZO ante
     un "no me interesa" explícito, así que el LLM cayó al DEFAULT INTERESADO y

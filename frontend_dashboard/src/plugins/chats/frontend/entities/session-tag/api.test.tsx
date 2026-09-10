@@ -46,7 +46,7 @@ describe("useReassignTagMutation", () => {
     );
     const { client, wrapper } = makeWrapper();
     const spy = vi.spyOn(client, "invalidateQueries");
-    const { result } = renderHook(() => useReassignTagMutation("wa_573114842180"), { wrapper });
+    const { result } = renderHook(() => useReassignTagMutation("wa_573000000005"), { wrapper });
 
     await act(async () => {
       await result.current.mutateAsync({ tag: "RECHAZO", motivo: "buscaba cera, no la vendemos" });
@@ -54,13 +54,13 @@ describe("useReassignTagMutation", () => {
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     const [url, init] = fetchMock.mock.calls[0];
-    expect(String(url)).toContain("/api/chats/session-actions/wa_573114842180/operator-tag");
+    expect(String(url)).toContain("/api/chats/session-actions/wa_573000000005/operator-tag");
     expect(JSON.parse((init as RequestInit).body as string)).toEqual({
       tag: "RECHAZO",
       motivo: "buscaba cera, no la vendemos",
     });
     expect(result.current.data?.episode_closed?.closing_tag).toBe("RECHAZO");
-    expect(spy).toHaveBeenCalledWith({ queryKey: sessionKeys.detail("wa_573114842180") });
+    expect(spy).toHaveBeenCalledWith({ queryKey: sessionKeys.detail("wa_573000000005") });
     expect(spy).toHaveBeenCalledWith({ queryKey: sessionKeys.list() });
   });
 

@@ -76,7 +76,7 @@ class TestContextFromMetadata:
 
 @pytest.mark.asyncio
 async def test_activity_reads_vault_metadata_and_transcript(_isolate_vault_dir: Path) -> None:
-    sid = "wa_573114842180"
+    sid = "wa_573000000005"
     d = _isolate_vault_dir / sid
     (d / "sessions").mkdir(parents=True)
     (d / "metadata.json").write_text(

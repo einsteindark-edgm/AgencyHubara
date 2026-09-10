@@ -89,7 +89,7 @@ def _seed(vault: Path, sid: str, data: dict) -> None:
 
 def test_sessions_list_and_detail_expose_origin_with_campaign_name(client) -> None:
     c, vault = client
-    _seed(vault, "wa_573114842180", {
+    _seed(vault, "wa_573000000005", {
         "tag": "INTERESADO",
         "origin": {"channel": "ad", "first_seen_ms": 1789006000000, "headline": "Velas aromáticas", "source_id": "AD_001"},
         "episodes": [{"episode_id": "ep_001", "started_at_ms": 1789006000000, "referral_snapshot": _AD_SNAPSHOT}],
@@ -98,13 +98,13 @@ def test_sessions_list_and_detail_expose_origin_with_campaign_name(client) -> No
 
     body = c.get("/api/dashboard/sessions").json()
     by_id = {s["session_id"]: s for s in body["sessions"]}
-    assert by_id["wa_573114842180"]["origin"] == {
+    assert by_id["wa_573000000005"]["origin"] == {
         "channel": "ad", "source_id": "AD_001", "source_type": "ad", "headline": "Velas aromáticas",
         "first_seen_ms": 1789006000000, "campaign_name": "Día del Padre", "ad_name": "Velas CTA",
     }
     assert by_id["wa_573000000001"]["origin"] is None
 
-    detail = c.get("/api/dashboard/sessions/wa_573114842180").json()
+    detail = c.get("/api/dashboard/sessions/wa_573000000005").json()
     assert detail["origin"]["campaign_name"] == "Día del Padre"
     assert c.get("/api/dashboard/sessions/wa_573000000001").json()["origin"] is None
 
@@ -112,8 +112,8 @@ def test_sessions_list_and_detail_expose_origin_with_campaign_name(client) -> No
 def test_origin_degrades_to_headline_when_names_unavailable(client, monkeypatch) -> None:
     c, vault = client
     monkeypatch.setattr(dashboard, "_resolve_ad_names", lambda ids: {})
-    _seed(vault, "wa_573114842180", {
+    _seed(vault, "wa_573000000005", {
         "origin": {"channel": "ad", "first_seen_ms": 1, "headline": "Velas aromáticas", "source_id": "AD_001"},
     })
-    origin = c.get("/api/dashboard/sessions/wa_573114842180").json()["origin"]
+    origin = c.get("/api/dashboard/sessions/wa_573000000005").json()["origin"]
     assert origin["campaign_name"] is None and origin["headline"] == "Velas aromáticas"

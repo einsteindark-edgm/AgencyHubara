@@ -1,6 +1,6 @@
 """Contexto REAL para el gancho de remarketing (puro, sin I/O).
 
-Incidente run dc32f7fe (2026-09-10, wa_573114842180): el agente de
+Incidente run dc32f7fe (2026-09-10, wa_573000000005): el agente de
 remarketing no ve el historial de Sales (el HistoryStore de exoclaw se aísla
 por slug de workspace, PR #183) y el ciclo del Window Strategist le pisa el
 `motivo` del tag con "Window Strategist: reactivación (<reason>)". Sin

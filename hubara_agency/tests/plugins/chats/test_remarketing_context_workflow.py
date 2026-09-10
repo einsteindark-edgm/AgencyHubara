@@ -1,6 +1,6 @@
 """Workflow-level: el gancho recibe el contexto REAL de la conversación.
 
-Incidente run dc32f7fe (2026-09-10, wa_573114842180): el ciclo del Window
+Incidente run dc32f7fe (2026-09-10, wa_573000000005): el ciclo del Window
 Strategist arrancó `RemarketingWorkflow` con motivo="Window Strategist:
 reactivación (csw_free_form)" y el trigger salió sin historial ni motivo del
 tag → "quedó pendiente lo de tu pedido" a un cliente que quería comprar cera.

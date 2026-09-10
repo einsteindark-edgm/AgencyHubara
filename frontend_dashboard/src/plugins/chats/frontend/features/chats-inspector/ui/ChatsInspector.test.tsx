@@ -38,7 +38,7 @@ describe("ChatsInspector — Estado actual con datos reales (origen + reasignar)
   it("muestra el origen real de la campaña y la fecha de inicio", () => {
     overviewMock.mockReturnValue({
       data: {
-        sessionId: "wa_573114842180",
+        sessionId: "wa_573000000005",
         tag: "INTERESADO",
         startedLabel: "09/09, 21:26",
         originLabel: "Meta Ads · Día del Padre",
@@ -46,8 +46,8 @@ describe("ChatsInspector — Estado actual con datos reales (origen + reasignar)
         originIsMeta: true,
       },
     });
-    render(<ChatsInspector chatId="wa_573114842180" />);
-    expect(screen.getByText("wa_573114842180")).toBeInTheDocument();
+    render(<ChatsInspector chatId="wa_573000000005" />);
+    expect(screen.getByText("wa_573000000005")).toBeInTheDocument();
     expect(screen.getByText("09/09, 21:26")).toBeInTheDocument();
     expect(screen.getByText("Meta Ads · Día del Padre")).toBeInTheDocument();
     expect(screen.getByText("Velas aromáticas")).toBeInTheDocument();
@@ -58,7 +58,7 @@ describe("ChatsInspector — Estado actual con datos reales (origen + reasignar)
 
   it("Reasignar abre el formulario y envía tag + motivo al backend", async () => {
     const user = userEvent.setup();
-    render(<ChatsInspector chatId="wa_573114842180" />);
+    render(<ChatsInspector chatId="wa_573000000005" />);
     await user.click(screen.getByText(/Reasignar/));
     await user.selectOptions(screen.getByLabelText("Nuevo tag"), "RECHAZO");
     await user.type(screen.getByLabelText("Motivo"), "buscaba cera, no la vendemos");
@@ -72,7 +72,7 @@ describe("ChatsInspector — Estado actual con datos reales (origen + reasignar)
 
   it("Guardar queda deshabilitado sin motivo", async () => {
     const user = userEvent.setup();
-    render(<ChatsInspector chatId="wa_573114842180" />);
+    render(<ChatsInspector chatId="wa_573000000005" />);
     await user.click(screen.getByText(/Reasignar/));
     expect(screen.getByText("Guardar")).toBeDisabled();
     await user.click(screen.getByText("Cancelar"));
