@@ -9,7 +9,9 @@ política de release; guardas fail-closed → 503/403/404) y contarle a MBA una
 novedad del pedido por ``agent_event`` (D1.9: ``EmitAgentEvent``, lo invoca
 el ETA por cast con identidad de servicio cuando MBA controla), y llevar la
 configuración autorada a Meta (D2.2: ``SyncAgent`` — plan de solo lectura +
-apply confirmado por fingerprint; nunca toca ``rollout`` ni ``ai_audience``).
+apply confirmado por fingerprint; nunca toca ``rollout`` ni ``ai_audience``)
+y gobernar el rollout (D2.3: ``RolloutControl`` — allowlist de Meta acotada a
+la lista cerrada de Hubara, audiencia y ``rollout.enabled`` con readiness).
 Las tools del connector (públicas, con API key propia) viven en ``connector.py``.
 """
 from __future__ import annotations
@@ -31,11 +33,14 @@ from src.plugins.mba.domain.agent_events import AGENT_EVENT_TYPES, DESCRIPTION_M
 from src.plugins.mba.domain.release_policy import ReleaseTrigger
 from src.plugins.mba.service import list_agents, load_agent
 from src.plugins.mba.use_cases.emit_agent_event import EmitAgentEvent
+from src.plugins.mba.domain.rollout_policy import AUDIENCES, E164_RE
 from src.plugins.mba.use_cases.release_thread import ReleaseThread
+from src.plugins.mba.use_cases.rollout_control import RolloutControl
 from src.plugins.mba.use_cases.sync_agent import SyncAgent
 from src.sdk.runtime import (
     WORKSPACE_VAULT_DIR,
     FilesystemMetadataStore,
+    is_placeholder,
     mba_controls_thread,
     mba_customer_allowed,
     mba_standby_enabled,
@@ -264,3 +269,110 @@ async def apply_agent_sync(agent_id: str, body: SyncBody, use_case: SyncAgent = 
     if status is not None:
         raise HTTPException(status_code=status, detail={"error": outcome.reason, **(outcome.error or {})})
     return asdict(outcome)
+
+
+# ── D2.3: rollout — allowlist, audiencia y enabled ──────────────────────────
+
+
+EVERYONE_KNOB_ENV = "MBA_ALLOW_EVERYONE"
+_ROLLOUT_GUARD_STATUS = {
+    "mba_disabled": 503, "remote_unavailable": 503, "unavailable": 503, "ambiguous": 503, "not_configured": 503,
+    "agent_unknown": 404, "entity_id_missing": 409,
+}
+_ENTRY_ID_RE = re.compile(r"^[A-Za-z0-9_\-.:]{1,128}$")
+
+
+def everyone_allowed() -> bool:
+    """Knob de política: ``ai_audience=EVERYONE`` solo si el operador lo abre
+    explícitamente (SSM). Placeholder / vacío / cualquier otra cosa = NO."""
+    raw = os.environ.get(EVERYONE_KNOB_ENV, "")
+    return not is_placeholder(raw) and raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+class AllowlistBody(BaseModel):
+    phone: str = Field(pattern=E164_RE.pattern, max_length=16)
+
+
+class AudienceBody(BaseModel):
+    ai_audience: str
+    confirm: bool = False
+
+    @field_validator("ai_audience")
+    @classmethod
+    def _known(cls, v: str) -> str:
+        if v not in AUDIENCES:
+            raise ValueError(f"ai_audience debe ser uno de {list(AUDIENCES)}")
+        return v
+
+
+class EnabledBody(BaseModel):
+    enabled: bool
+    confirm: bool = False
+
+
+def get_rollout_control() -> RolloutControl:
+    return RolloutControl(
+        admin=MetaMbaAdmin(),
+        state_store=SyncStateStore(WORKSPACE_VAULT_DIR),
+        load_config=load_agent,
+        is_enabled=mba_standby_enabled,
+        hubara_allowed=mba_customer_allowed,
+        everyone_allowed=everyone_allowed,
+    )
+
+
+def _rollout_response(outcome: Any) -> dict[str, Any]:
+    status = _ROLLOUT_GUARD_STATUS.get(outcome.reason)
+    if status is not None:
+        raise HTTPException(status_code=status, detail={"error": outcome.reason, **(outcome.error or {})})
+    return asdict(outcome)
+
+
+@router.get("/agents/{agent_id}/rollout")
+async def get_agent_rollout(agent_id: str, use_case: RolloutControl = Depends(get_rollout_control)) -> dict[str, Any]:
+    """Estado del rollout en Meta + readiness para encenderlo (solo lectura)."""
+    _check_agent_id(agent_id)
+    try:
+        status = await use_case.status(agent_id)
+    except MbaAdminError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "remote_unavailable", "kind": exc.kind, "status": exc.status, "detail": exc.detail},
+        )
+    if status is None:
+        raise HTTPException(status_code=404, detail=f"agente MBA desconocido: {agent_id}")
+    return asdict(status)
+
+
+@router.post("/agents/{agent_id}/rollout/allowlist")
+async def add_rollout_phone(agent_id: str, body: AllowlistBody, use_case: RolloutControl = Depends(get_rollout_control)) -> dict[str, Any]:
+    """Agrega un teléfono (E.164) a la allowlist de Meta. Solo si ya está en
+    la lista cerrada de Hubara (``customer_not_in_hubara_allowlist`` si no)."""
+    _check_agent_id(agent_id)
+    return _rollout_response(await use_case.add_phone(agent_id, body.phone))
+
+
+@router.delete("/agents/{agent_id}/rollout/allowlist/{entry_id}")
+async def remove_rollout_phone(agent_id: str, entry_id: str, use_case: RolloutControl = Depends(get_rollout_control)) -> dict[str, Any]:
+    """Quita una entrada de la allowlist de Meta (siempre permitido)."""
+    _check_agent_id(agent_id)
+    if not _ENTRY_ID_RE.fullmatch(entry_id):
+        raise HTTPException(status_code=422, detail="entry_id inválido")
+    return _rollout_response(await use_case.remove_phone(agent_id, entry_id))
+
+
+@router.put("/agents/{agent_id}/rollout/audience")
+async def set_rollout_audience(agent_id: str, body: AudienceBody, use_case: RolloutControl = Depends(get_rollout_control)) -> dict[str, Any]:
+    """``EVERYONE`` exige el knob ``MBA_ALLOW_EVERYONE`` + ``confirm``; volver
+    a ``ALLOWLISTED_ONLY`` siempre se permite."""
+    _check_agent_id(agent_id)
+    return _rollout_response(await use_case.set_audience(agent_id, body.ai_audience, confirm=body.confirm))
+
+
+@router.put("/agents/{agent_id}/rollout/enabled")
+async def set_rollout_enabled(agent_id: str, body: EnabledBody, use_case: RolloutControl = Depends(get_rollout_control)) -> dict[str, Any]:
+    """Encender exige readiness completa + ``confirm`` (``not_ready`` /
+    ``confirmation_required`` vuelven 200 con ``applied=false``); apagar es
+    el kill switch y nunca se bloquea."""
+    _check_agent_id(agent_id)
+    return _rollout_response(await use_case.set_enabled(agent_id, body.enabled, confirm=body.confirm))
