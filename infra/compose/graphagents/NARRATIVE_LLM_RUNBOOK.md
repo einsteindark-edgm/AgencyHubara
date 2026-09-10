@@ -22,7 +22,7 @@ proveedor/modelo es editar un parámetro SSM, sin tocar código ni redeploy de i
 
 ¹ No es secreto, pero va por el mismo módulo `graphagents-secrets` (SecureString + placeholder) por
 uniformidad. El render-script lo desencripta igual. `GRAPHAGENTS_LLM_MODEL` queda en su **default
-de código** `deepseek-v4-flash` (= el id real que DeepSeek recibe; el mismo que mapea tu
+de código** `deepseek-flash` (= el id real que DeepSeek recibe; el mismo que mapea tu
 `litellm_config.yaml`), así que **no hace falta declararlo**.
 
 ## Pasos

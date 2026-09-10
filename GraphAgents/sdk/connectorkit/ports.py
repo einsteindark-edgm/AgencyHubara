@@ -58,18 +58,18 @@ class LiteLLMProxy:
       • SIN key  → un proxy LiteLLM ABIERTO (dev local `:4000`): reusa su key-management + el
                    failover deepseek→gemini. Es lo que corre el loop local / `test_llm_narrative`.
       • CON key  → el proveedor OpenAI-compatible DIRECTO y autenticado (opción D, prod AWS:
-                   DeepSeek `https://api.deepseek.com`, model `deepseek-v4-flash`, Bearer = la
+                   DeepSeek `https://api.deepseek.com`, model `deepseek-flash`, Bearer = la
                    DEEPSEEK_API_KEY). Sin proxy, sin contenedor — el modelo es pura config. NO hay
                    failover (un solo proveedor); ok porque la narrativa degrada sola si falla (L-26).
     Config por env: `LITELLM_PROXY_URL` (base OpenAI-compatible; default http://localhost:4000) ·
-    `GRAPHAGENTS_LLM_MODEL` (default deepseek-v4-flash — sirve igual como id real de DeepSeek) ·
+    `GRAPHAGENTS_LLM_MODEL` (default deepseek-flash — sirve igual como id real de DeepSeek) ·
     `GRAPHAGENTS_LLM_API_KEY` (Bearer; vacío = sin auth). No es G-DET: va SOLO en el nodo marcado.
     Cambiar de modelo/proveedor = un env/SSM, sin tocar código (api.deepseek.com↔api.stepfun.ai↔proxy)."""
 
     def __init__(self, base_url: str | None = None, model: str | None = None,
                  api_key: str | None = None, timeout: float = 45) -> None:
         self._base = (base_url or os.environ.get("LITELLM_PROXY_URL", "http://localhost:4000")).rstrip("/")
-        self._model = model or os.environ.get("GRAPHAGENTS_LLM_MODEL", "deepseek-v4-flash")
+        self._model = model or os.environ.get("GRAPHAGENTS_LLM_MODEL", "deepseek-flash")
         self._api_key = api_key or os.environ.get("GRAPHAGENTS_LLM_API_KEY")
         self._timeout = timeout
 
@@ -96,7 +96,7 @@ class LiteLLMProxy:
 # Registry declarativo: nombre de port → contrato. Lo lee el `consumes:` del manifest.
 PORTS: dict[str, str] = {
     "meta_marketing_api": "InsightsPort",
-    "llm": "LLMPort",  # el nodo narrativo del reporter (deepseek-v4-flash vía el proxy del central)
+    "llm": "LLMPort",  # el nodo narrativo del reporter (deepseek-flash vía el proxy del central)
     # "ctwa_vault": "...",  # G3
 }
 

@@ -22,9 +22,19 @@ model_list:
   #
   # Guard: hubara_agency/tests/platform/test_llm_thinking_disabled.py asierta el
   # BODY que sale (no el YAML) montando este model_list en un litellm.Router.
+  #
+  # MODELO UPSTREAM = `deepseek-flash` (DeepSeek-V4.1-Flash, 2026-09-10). El
+  # nombre del alias (`deepseek-v4-flash`) se CONSERVA a propósito: es la clave
+  # de DEFAULT_LLM_MODEL, de deploy/openlit/pricing.json y de los dashboards
+  # SigNoz. Lo que cambia es el id que recibe api.deepseek.com: el viejo
+  # `deepseek-v4-flash` quedó RETIRADO y sólo rutea "temporalmente" a V4.1
+  # Flash; `deepseek-v4-pro` rutea a V4.1 Flash desde el 2026-09-14 (12:00
+  # Beijing) hasta que salga V4.1 Pro. Fuente: api-docs.deepseek.com/quick_start/
+  # pricing (notas 1 y 2). Guard del id: test_llm_thinking_disabled.py.
+  #
   - model_name: deepseek-v4-flash
     litellm_params:
-      model: deepseek/deepseek-v4-flash
+      model: deepseek/deepseek-flash
       api_key: "os.environ/DEEPSEEK_API_KEY"
       extra_body:
         thinking:
@@ -36,7 +46,7 @@ model_list:
   # sin tocar el proxy ni redeployar.
   - model_name: deepseek-v4-flash-thinking
     litellm_params:
-      model: deepseek/deepseek-v4-flash
+      model: deepseek/deepseek-flash
       api_key: "os.environ/DEEPSEEK_API_KEY"
 
   - model_name: gemini-backup

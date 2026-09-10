@@ -122,7 +122,7 @@ Este documento es la **fuente de verdad de dónde se aloja cada componente**. Lo
 - **TLS:** **Caddy** en la caja con auto-TLS (Let's Encrypt) como reverse proxy → mantiene el stack consolidado sin depender de Cloudflare. (Si en el futuro se quiere DDoS gestionado, se puede poner Cloudflare proxy delante; opcional.)
 
 ### 3.4 LiteLLM proxy — VPS (misma caja)
-- **Config:** `exoclaw-temporal/litellm_config.yaml`, puerto **4000**. Rutea `deepseek-v4-pro` (primario) → `gemini-...` (fallback) con `simple-shuffle`.
+- **Config:** `exoclaw-temporal/litellm_config.yaml`, puerto **4000**. Rutea `deepseek-v4-flash` (alias → upstream `deepseek-flash`, DeepSeek-V4.1-Flash; primario) → `gemini-...` (fallback) con `simple-shuffle`.
 - **Réplicas:** **1** en prod (los manifiestos k8s ponen 2 para HA; innecesario a esta escala).
 - **Stateless** — no necesita storage.
 

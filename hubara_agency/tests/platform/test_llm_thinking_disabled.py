@@ -176,3 +176,32 @@ async def test_thinking_alias_still_reasons_for_the_ab_arm():
         "el alias de thinking existe para comparar contra el default y para "
         f"revertir por env sin redeploy; body observado: {body!r}"
     )
+
+
+# --- V4.1 Flash (2026-09-10) ---------------------------------------------------
+# DeepSeek publicó V4.1 Flash con id NUEVO `deepseek-flash`. El id viejo
+# `deepseek-v4-flash` sigue aceptado pero el modelo fue RETIRADO: sus requests se
+# sirven "temporalmente" con V4.1 Flash (fuente: api-docs.deepseek.com/quick_start/
+# pricing, nota 1). Depender de un alias retirado es una bomba de tiempo — el
+# día que lo apaguen el agente cae al fallback gemini-backup sin aviso. Estos
+# tests asiertan el id que REALMENTE sale hacia api.deepseek.com.
+
+_UPSTREAM_MODEL_ID = "deepseek-flash"
+
+
+async def test_agent_alias_sends_the_v41_flash_model_id_upstream():
+    """El agente pide `deepseek-flash` (V4.1 Flash), no el alias retirado."""
+    body = await _body_sent_upstream(_AGENT_ALIAS)
+    assert body.get("model") == _UPSTREAM_MODEL_ID, (
+        "el body hacia DeepSeek debe pedir el id vigente `deepseek-flash`; "
+        "`deepseek-v4-flash` está retirado y sólo rutea 'temporalmente'. "
+        f"Body observado: {body!r}"
+    )
+
+
+async def test_thinking_alias_sends_the_v41_flash_model_id_upstream():
+    """El brazo con thinking apunta al MISMO modelo vigente (A/B justo)."""
+    body = await _body_sent_upstream(_THINKING_ALIAS)
+    assert body.get("model") == _UPSTREAM_MODEL_ID, (
+        f"el alias de thinking debe pedir `deepseek-flash`; body observado: {body!r}"
+    )
