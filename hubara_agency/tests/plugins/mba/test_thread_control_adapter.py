@@ -140,9 +140,9 @@ def test_only_the_shared_base_module_writes_the_mba_api_host() -> None:
     from pathlib import Path
 
     src = Path(__file__).resolve().parents[3] / "src"
-    # domain/config.py: el preview (D0) arma los requests literales que se le
-    # mostrarían al operador; drenar cuando D2.1 los construya con meta_api.
-    allowed = {"plugins/mba/adapters/meta_api.py", "plugins/mba/domain/config.py"}
+    # domain/config.py define el host (el preview de D0 arma los requests
+    # literales con él); meta_api lo re-exporta para los adapters (D1.6 / D2.1).
+    allowed = {"plugins/mba/domain/config.py"}
     offenders = sorted(
         p.relative_to(src).as_posix() for p in src.rglob("*.py")
         if "api.facebook.com" in p.read_text(encoding="utf-8") and p.relative_to(src).as_posix() not in allowed
