@@ -218,7 +218,7 @@ def run_local_route(ga_root: Path, case_id: str) -> tuple[int, dict]:
 
 def _durable_ports() -> dict:
     """Los vendors REALES que el durable inyecta a los miembros que `consumes:` un port. Hoy: el
-    `llm` → `LiteLLMProxy` (deepseek-v4-flash vía el proxy LiteLLM del central). Es LAZY — solo pega
+    `llm` → `LiteLLMProxy` (deepseek-flash vía el proxy LiteLLM del central). Es LAZY — solo pega
     cuando un nodo lo invoca, y `build_runnable` filtra por `consumes` (un miembro que no declara el
     port no lo recibe). Config del endpoint por `LITELLM_PROXY_URL` (default `localhost:4000`, SOLO
     dev): en un deploy multi-caja (el proxy vive en OTRA EC2) hay que setearla al endpoint alcanzable,

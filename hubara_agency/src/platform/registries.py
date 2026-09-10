@@ -25,7 +25,7 @@ from src.platform.config import API_BASE_LLMLITE ,DEFAULT_LLM_MODEL, DEEPSEEK_AP
 def build_default_llm_config() -> LLMConfig:
     """Configuración inyectable base para el motor LLM.
 
-    Tuneada para el modelo de agentes DeepSeek V4 Flash (`deepseek-v4-flash`
+    Tuneada para el modelo de agentes DeepSeek V4.1 Flash (upstream `deepseek-flash`, alias `deepseek-v4-flash`
     en litellm_config.yaml): priorizamos LATENCIA y costo manteniendo la
     calidad conversacional.
 

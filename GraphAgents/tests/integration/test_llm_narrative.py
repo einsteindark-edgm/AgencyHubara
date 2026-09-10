@@ -1,6 +1,6 @@
 """Verificación VIVA del nodo LLM narrativo (tests verdes ≠ feature viva). Corre SOLO si el
 proxy LiteLLM del central está arriba (:4000); si no, se SKIPea — así el loop local y CI sin
-proxy siguen verdes. Prueba el ciclo real: build(llm=LiteLLMProxy) → DeepSeek (deepseek-v4-flash)
+proxy siguen verdes. Prueba el ciclo real: build(llm=LiteLLMProxy) → DeepSeek (deepseek-flash)
 → una narrativa que **NO inventa números** (el guard sobre la salida REAL es lo que da confianza).
 """
 from __future__ import annotations

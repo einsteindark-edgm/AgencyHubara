@@ -193,7 +193,7 @@ def build(*, llm=None):
     descarta si inventa una cifra). La lógica del LLM vive UNA vez en `run()` (sin drift run↔build,
     L-24): `build()` solo THREAD-ea el port. **Opt-in**: sin `llm` el grafo es el render puro
     (G-DET; el supervisor compuesto y el golden del render no cambian). El vendor real
-    (`LiteLLMProxy`, deepseek-v4-flash vía el proxy del central) lo inyecta el runtime durable."""
+    (`LiteLLMProxy`, deepseek-flash vía el proxy del central) lo inyecta el runtime durable."""
     try:
         from typing import TypedDict
 
