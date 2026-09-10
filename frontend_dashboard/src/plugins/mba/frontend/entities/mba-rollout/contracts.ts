@@ -19,11 +19,18 @@ export const mbaRolloutEntrySchema = z.object({
   in_hubara: z.boolean(),
 });
 
+export const mbaRolloutErrorSchema = z.object({
+  kind: z.string(),
+  detail: z.string(),
+  status: z.number().nullable(),
+});
+
 export const mbaRolloutHistorySchema = z.object({
   at_ms: z.number(),
   action: z.string(),
   value: z.string(),
   ok: z.boolean(),
+  error: mbaRolloutErrorSchema.optional(),
 });
 
 export const mbaRolloutStatusSchema = z.object({
@@ -37,6 +44,8 @@ export const mbaRolloutStatusSchema = z.object({
   everyone_allowed: z.boolean(),
   last_sync: z.object({ status: z.string(), at_ms: z.number() }).passthrough().nullable(),
   history: z.array(mbaRolloutHistorySchema),
+  /** Con MBA encendido: chequeos que dejaron de cumplirse (drift). */
+  drift: z.array(z.string()).default([]),
 });
 
 export const mbaRolloutOutcomeSchema = z.object({
@@ -44,6 +53,6 @@ export const mbaRolloutOutcomeSchema = z.object({
   applied: z.boolean(),
   reason: z.string(),
   blocked: z.array(z.string()),
-  error: z.object({ kind: z.string(), detail: z.string(), status: z.number().nullable() }).nullable(),
+  error: mbaRolloutErrorSchema.nullable(),
   checks: z.array(mbaRolloutCheckSchema),
 });

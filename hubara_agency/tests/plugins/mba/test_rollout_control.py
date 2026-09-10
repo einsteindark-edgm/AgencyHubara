@@ -166,3 +166,96 @@ async def test_guards_without_entity_or_agent(tmp_path: Path) -> None:
     )
     assert (await uc2.set_enabled("sales", True, confirm=True)).reason == "entity_id_missing"
     assert await uc2.status("sales") is not None and (await uc2.status("sales")).entity_id is None
+
+
+# ── Revisión independiente (HIGH clobber del vault, kill switch sin GETs, drift) ─
+
+
+async def test_a_rollout_write_during_a_sync_apply_does_not_clobber_the_sync_ids(tmp_path: Path) -> None:
+    """HIGH: los dos use cases escriben el MISMO json del vault. Cada uno debe
+    mergear SUS claves sobre el estado fresco, nunca escribir el estado viejo."""
+    import asyncio
+
+    from src.plugins.mba.use_cases.sync_agent import SyncAgent
+
+    gate = asyncio.Event()
+
+    class _Slow(FakeMbaAdmin):
+        async def add_allowlist(self, entity_id, phone):
+            await gate.wait()
+            return await super().add_allowlist(entity_id, phone)
+
+    fake = _Slow()
+    fake.settings[ENTITY] = _ready_fake().settings[ENTITY]
+    fake.connectors[ENTITY] = _ready_fake().connectors[ENTITY]
+    fake.allowlist[ENTITY] = _ready_fake().allowlist[ENTITY]
+    store = SyncStateStore(tmp_path)
+    rollout = RolloutControl(
+        admin=fake, state_store=store, load_config=lambda _: _cfg(), is_enabled=lambda: True,
+        hubara_allowed=lambda phone: phone.lstrip("+") in HUBARA_LIST, everyone_allowed=lambda: False,
+    )
+    sync = SyncAgent(admin=fake, state_store=store, load_config=lambda _: _cfg(), api_key=lambda: "k", is_enabled=lambda: True)
+    adding = asyncio.create_task(rollout.add_phone("sales", "+573009876543"))
+    await asyncio.sleep(0.02)  # el rollout ya leyó el estado (vacío) y espera a Meta
+    assert (await sync.apply("sales")).applied is True
+    gate.set()
+    assert (await adding).applied is True
+    state = store.read("sales")
+    assert set(state["ids"]) >= {"skills", "connector_tools", "faqs"}  # lo del sync sobrevive (el connector ya existía: update, no create)
+    assert [h["action"] for h in state["rollout_history"]] == ["allowlist_add"]  # y lo del rollout también
+
+
+async def test_the_state_store_update_merges_on_the_fresh_state(tmp_path: Path) -> None:
+    store = SyncStateStore(tmp_path)
+    store.write("sales", {"ids": {"skills": {"persona": "s-1"}}})
+    store.update("sales", lambda st: {**st, "rollout_history": [{"action": "x"}]})
+    assert store.read("sales") == {"ids": {"skills": {"persona": "s-1"}}, "rollout_history": [{"action": "x"}]}
+    store.update("sales", lambda st: None)  # None = no escribir
+    assert store.read("sales")["rollout_history"] == [{"action": "x"}]
+
+
+async def test_disabling_never_waits_on_metas_reads(tmp_path: Path) -> None:
+    """Kill switch: apagar va directo al PUT aunque los GET de Meta fallen."""
+
+    class _ReadsDown(FakeMbaAdmin):
+        async def get_settings(self, entity_id, *, agent_id=None):
+            raise MbaAdminError("unavailable", status=503, detail="reads down", attempts=3)
+
+        async def list_allowlist(self, entity_id):
+            raise MbaAdminError("unavailable", status=503, detail="reads down", attempts=3)
+
+        async def list_connectors(self, entity_id):
+            raise MbaAdminError("unavailable", status=503, detail="reads down", attempts=3)
+
+    fake = _ReadsDown()
+    fake.settings[ENTITY] = {**_ready_fake().settings[ENTITY], "rollout": {"enabled": True}}
+    uc, _, store = _control(tmp_path, fake=fake, enabled=False, synced=False)
+    out = await uc.set_enabled("sales", False, confirm=False)
+    assert out.applied is True and fake.settings[ENTITY]["rollout"] == {"enabled": False}
+    assert fake.calls[-1][0] == "put_settings" and fake.calls[-1][2] == {"rollout": {"enabled": False}}
+    assert store.read("sales")["rollout_history"][-1]["action"] == "rollout_enabled"
+    # encender, en cambio, SÍ necesita leer Meta
+    assert (await uc.set_enabled("sales", True, confirm=True)).reason == "remote_unavailable"
+
+
+async def test_status_flags_drift_when_mba_is_on_but_a_check_fails(tmp_path: Path) -> None:
+    fake = _ready_fake()
+    fake.settings[ENTITY]["rollout"] = {"enabled": True}
+    fake.allowlist[ENTITY].append({"id": "e-2", "consumer_phone_number": "+573000000000"})  # agregado en Business Manager
+    uc, _, _ = _control(tmp_path, fake=fake)
+    st = await uc.status("sales")
+    assert st.rollout_enabled is True and st.drift == ["allowlist_within_hubara"]
+    fake.allowlist[ENTITY].pop()
+    assert (await uc.status("sales")).drift == []
+    fake.settings[ENTITY]["rollout"] = {"enabled": False}
+    fake.allowlist[ENTITY].append({"id": "e-2", "consumer_phone_number": "+573000000000"})
+    assert (await uc.status("sales")).drift == []  # apagado: no hay drift, solo readiness pendiente
+
+
+async def test_opening_the_audience_requires_mba_to_be_off(tmp_path: Path) -> None:
+    fake = _ready_fake()
+    fake.settings[ENTITY]["rollout"] = {"enabled": True}
+    uc, fake, _ = _control(tmp_path, fake=fake, everyone=True)
+    out = await uc.set_audience("sales", "EVERYONE", confirm=True)
+    assert out.applied is False and out.reason == "disable_first"
+    assert fake.settings[ENTITY]["ai_audience"] == "ALLOWLISTED_ONLY"

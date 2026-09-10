@@ -30,6 +30,7 @@ export const REASON_TEXT: Record<string, string> = {
   not_ready: "No está listo: faltan chequeos.",
   confirmation_required: "Falta la confirmación.",
   everyone_not_allowed: "EVERYONE deshabilitado por política (MBA_ALLOW_EVERYONE apagado).",
+  disable_first: "Con MBA encendido no se cambia la audiencia: apagalo primero, cambiá la audiencia y volvé a encender.",
   customer_not_in_hubara_allowlist: "Ese teléfono no está en la lista cerrada de Hubara (MBA_CUSTOMER_ALLOWLIST): agregarlo ahí primero.",
   already_listed: "Ese teléfono ya está en la allowlist de Meta.",
   invalid_phone: "Teléfono inválido: usá E.164 (+573001234567).",

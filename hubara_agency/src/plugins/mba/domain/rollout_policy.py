@@ -8,8 +8,10 @@ Meta también:
   cerrada de Hubara (``MBA_CUSTOMER_ALLOWLIST``): si no, MBA le respondería a
   alguien cuyos eventos ``standby`` Hubara descarta (D1.4).
 * ``ai_audience = EVERYONE`` está vedado por política salvo knob explícito
-  (``MBA_ALLOW_EVERYONE``) + confirmación; volver a ``ALLOWLISTED_ONLY``
-  siempre se permite.
+  (``MBA_ALLOW_EVERYONE``) + confirmación, y SOLO con MBA apagado (abrirla
+  con el rollout encendido lo abriría a todos en el acto: primero apagar,
+  después cambiar, después encender); volver a ``ALLOWLISTED_ONLY`` siempre
+  se permite.
 * ``rollout.enabled = true`` exige TODOS los chequeos de ``readiness``:
   flag de Hubara encendida, último sync OK (D2.2), connector ACTIVE en Meta,
   audiencia cerrada, allowlist no vacía y contenida en la de Hubara.
@@ -104,6 +106,8 @@ def can_set_audience(audience: str, *, confirm: bool, facts: RolloutFacts) -> st
         return None
     if not facts.everyone_knob:
         return "everyone_not_allowed"
+    if facts.rollout_enabled:
+        return "disable_first"
     if not confirm:
         return "confirmation_required"
     return None

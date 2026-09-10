@@ -6,6 +6,9 @@
  *   - Readiness: los chequeos que el backend exige para encender.
  *   - Acciones: agregar/quitar teléfonos, audiencia, encender (dos pasos +
  *     `confirm`) y apagar (kill switch: un click, sin confirmación).
+ *   - Drift: con MBA encendido, un chequeo que dejó de cumplirse (teléfono
+ *     agregado en Business Manager, lista de Hubara reducida…) es un alert
+ *     rojo pegado al kill switch.
  *
  * La política vive en el backend (`domain/rollout_policy.py`); acá solo se
  * refleja: sin readiness no hay botón de encender, EVERYONE no se ofrece con
@@ -52,6 +55,10 @@ function apiMessage(e: unknown): string {
     return e.message;
   }
   return e instanceof Error ? e.message : String(e);
+}
+
+function fmtWhen(ms: number): string {
+  return new Date(ms).toLocaleString("es-CO", { dateStyle: "short", timeStyle: "short" });
 }
 
 function Feedback({ outcome, error }: { outcome: MbaRolloutOutcome | undefined; error: unknown }) {
@@ -126,6 +133,12 @@ export function MbaRolloutPanel({ agentId }: Props) {
               <div style={{ fontSize: 12, color: "var(--fg-mute)" }}>
                 Encender exige los 6 chequeos y una confirmación. Apagar es el kill switch: siempre disponible.
               </div>
+              {data.rollout_enabled && data.drift.length > 0 && (
+                <div role="alert" style={errStyle}>
+                  <b>MBA está encendido y {data.drift.length} chequeo{data.drift.length === 1 ? "" : "s"} dejaron de cumplirse:</b>{" "}
+                  {data.drift.map((code) => CHECK_LABEL[code] ?? code).join(" · ")}. Si no es intencional, apagá MBA ahora.
+                </div>
+              )}
               <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12 }}>
                 {data.checks.map((c) => (
                   <li key={c.code} style={{ color: c.ok ? "var(--ok, #16a34a)" : "var(--color-warning, #d97706)" }}>
@@ -147,7 +160,7 @@ export function MbaRolloutPanel({ agentId }: Props) {
                     Encender MBA
                   </MacButton>
                 ) : null}
-                {pending.kind === "enable" && (
+                {pending.kind === "enable" && data.can_enable && (
                   <>
                     <span role="status" style={{ fontSize: 12 }}>
                       MBA va a responderle a los {data.allowlist.length} teléfono(s) de la allowlist. ¿Seguro?
@@ -158,6 +171,16 @@ export function MbaRolloutPanel({ agentId }: Props) {
                 )}
               </div>
               <Feedback outcome={setEnabled.data} error={setEnabled.error} />
+              {data.history.length > 0 && (
+                <div style={{ fontSize: 11, color: "var(--fg-mute)" }}>
+                  <b>Últimos cambios</b>
+                  {data.history.slice(-5).reverse().map((h) => (
+                    <div key={`${h.at_ms}:${h.action}:${h.value}`} className="mono">
+                      {fmtWhen(h.at_ms)} · {h.action} → {h.value} · {h.ok ? "ok" : `falló${h.error ? `: ${h.error.kind} ${h.error.detail}` : ""}`}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* ── Audiencia ────────────────────────────────────────────── */}

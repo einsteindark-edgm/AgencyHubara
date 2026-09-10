@@ -73,3 +73,10 @@ def test_everyone_needs_the_policy_knob_and_an_explicit_confirmation() -> None:
     assert can_set_audience("ALLOWLISTED_ONLY", confirm=False, facts=_facts()) is None
     assert can_set_audience("ALLOWLISTED_ONLY", confirm=False, facts=_facts(flag_enabled=False)) is None  # volver a cerrado siempre
     assert can_set_audience("FRIENDS", confirm=True, facts=_facts(everyone_knob=True)) == "invalid_audience"
+
+
+def test_everyone_cannot_be_opened_while_mba_is_on() -> None:
+    """Abrir la audiencia con MBA encendido lo abriría a todos en el acto:
+    primero apagar (kill switch), después cambiar la audiencia, después encender."""
+    assert can_set_audience("EVERYONE", confirm=True, facts=_facts(everyone_knob=True, rollout_enabled=True)) == "disable_first"
+    assert can_set_audience("ALLOWLISTED_ONLY", confirm=False, facts=_facts(rollout_enabled=True)) is None

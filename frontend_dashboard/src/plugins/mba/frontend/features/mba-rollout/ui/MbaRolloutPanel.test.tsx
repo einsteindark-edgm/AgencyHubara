@@ -188,6 +188,30 @@ describe("MbaRolloutPanel", () => {
     await waitFor(() => expect(log.filter((l) => l.startsWith("DELETE"))).toHaveLength(1));
   });
 
+  it("drift while MBA is on is a loud alert next to the kill switch, and the history is visible", async () => {
+    routes({
+      "GET /api/mba/agents/sales/rollout": () =>
+        jsonResponse({
+          ...NOT_READY,
+          rollout_enabled: true,
+          drift: ["sync_ok", "allowlist_within_hubara"],
+          history: [
+            { at_ms: 1_700_000_000_000, action: "rollout_enabled", value: "true", ok: true },
+            { at_ms: 1_700_000_100_000, action: "allowlist_add", value: "+573009876543", ok: false, error: { kind: "rejected", detail: "dup", status: 409 } },
+          ],
+        }),
+    });
+    renderWithClient(<MbaRolloutPanel agentId="sales" />);
+    await waitFor(() => screen.getByText(/MBA encendido/));
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toMatch(/MBA está encendido y 2 chequeos dejaron de cumplirse/);
+    screen.getByRole("button", { name: /Apagar MBA/ });
+    expect(screen.queryByText(/chequeos pendientes: no se puede encender/)).toBeNull();
+    screen.getByText(/rollout_enabled → true/);
+    screen.getByText(/allowlist_add → \+573009876543/);
+    screen.getByText(/rejected dup/);
+  });
+
   it("a remote outage is a visible error with the real reason", async () => {
     routes({
       "GET /api/mba/agents/sales/rollout": () =>

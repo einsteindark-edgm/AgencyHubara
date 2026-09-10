@@ -147,14 +147,14 @@ class SyncAgent:
             return SyncOutcome(agent_id, False, "remote_unavailable", error=_err(exc), state=state)
         summary = plan.summary()
         if plan.blocked:
-            state["last_attempt"] = {"at_ms": self._now_ms(), "reason": "blocked", "blocked": list(plan.blocked), "fingerprint": plan.fingerprint}
-            self._store.write(agent_id, state)
+            attempt = {"at_ms": self._now_ms(), "reason": "blocked", "blocked": list(plan.blocked), "fingerprint": plan.fingerprint}
+            state = self._store.update(agent_id, lambda st: {**st, "last_attempt": attempt})
             return SyncOutcome(agent_id, False, "blocked", plan=summary, blocked=plan.blocked, state=state)
         if fingerprint is not None and fingerprint != plan.fingerprint:
             return SyncOutcome(agent_id, False, "plan_changed", plan=summary, state=state)
         if not plan.changes:
-            state["last_attempt"] = {"at_ms": self._now_ms(), "reason": "nothing_to_do", "fingerprint": plan.fingerprint}
-            self._store.write(agent_id, state)
+            attempt = {"at_ms": self._now_ms(), "reason": "nothing_to_do", "fingerprint": plan.fingerprint}
+            state = self._store.update(agent_id, lambda st: {**st, "last_attempt": attempt})
             return SyncOutcome(agent_id, False, "nothing_to_do", status="ok", plan=summary, state=state)
 
         ids: dict[str, dict[str, str]] = {k: dict(v) for k, v in (state.get("ids") or {}).items()}
@@ -193,18 +193,22 @@ class SyncAgent:
 
         failed = [r for r in results if not r["ok"] and r["skipped"] is None]
         status = "aborted" if aborted else ("partial" if failed else "ok")
-        state["ids"] = ids
-        state["sent"] = sent
-        state["entity_id"] = entity_id
-        state["last_apply"] = {
+        last_apply = {
             "at_ms": self._now_ms(),
             "status": status,
             "fingerprint": plan.fingerprint,
             "counts": {"changes": len(plan.changes), "ok": sum(1 for r in results if r["ok"]), "failed": len(failed), "skipped": sum(1 for r in results if r["skipped"])},
             "results": results,
         }
-        state.pop("last_attempt", None)
-        self._store.write(agent_id, state)
+
+        def _merge(fresh: dict[str, Any]) -> dict[str, Any]:
+            # Solo NUESTRAS claves sobre el estado fresco: lo que el rollout
+            # (D2.3) haya escrito mientras esperábamos a Meta sobrevive.
+            fresh = {**fresh, "ids": ids, "sent": sent, "entity_id": entity_id, "last_apply": last_apply}
+            fresh.pop("last_attempt", None)
+            return fresh
+
+        state = self._store.update(agent_id, _merge)
         return SyncOutcome(agent_id, True, "applied", status=status, results=results, plan=summary, state=state)
 
     async def _execute(
