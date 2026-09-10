@@ -62,6 +62,10 @@ _LAZY_EXPORTS: dict[str, str] = {
     "META_GRAPH_API_VERSION": "src.platform.meta.graph",
     "META_GRAPH_BASE_URL": "src.platform.meta.graph",
     "graph_url": "src.platform.meta.graph",
+    # Nombres reales de ads/campañas (Marketing API, best-effort) — lo usan
+    # ads (tablero) y chats (origen de cada conversación en el inspector):
+    "fetch_meta_ad_names": "src.platform.meta.ad_names",
+    "meta_marketing_token": "src.platform.meta.ad_names",
     # Meta Conversions API (outbox único — auditoría CAPI 2026-09-08). Los
     # productores de plugins (tools de Sales, watchdog, orders) encolan y
     # flushean por acá; el HTTP vive en platform:

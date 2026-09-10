@@ -225,6 +225,49 @@ historial, métricas en tiempo real.
 - THEN el server emite un SSE event con shape `{session_key, event_type, payload}`
 - AND el frontend actualiza el sidebar sin polling
 
+### Requirement: Origen real de la conversación en el dashboard
+
+`GET /api/dashboard/sessions` y `GET /api/dashboard/sessions/{id}` MUST
+exponer `origin` (`channel`, `source_id`, `source_type`, `headline`,
+`first_seen_ms`, `campaign_name`, `ad_name`) derivado del vault: manda el
+`referral_snapshot` del ÚLTIMO episodio (last-ad-touch), fallback al `origin`
+sticky first-touch; `null` si nunca hubo inbound clasificado. Los nombres
+reales de campaña/ad MUST resolverse best-effort vía Graph
+(`src.sdk.connectorkit.fetch_meta_ad_names`, cache TTL en proceso): sin token
+o Graph caído el campo queda `null` y el inspector degrada al `headline`.
+El detalle MUST devolver la forma completa aunque la sesión no tenga JSONL.
+
+#### Scenario: Conversación que llegó por un anuncio
+
+- GIVEN `metadata.episodes[-1].referral_snapshot = {channel: "ad", source_id: "AD_001", headline: "Velas aromáticas"}`
+- AND Graph resuelve `AD_001 → campaign_name="Día del Padre"`
+- WHEN el inspector abre la sesión
+- THEN "Origen" muestra `Meta Ads · Día del Padre` y "Anuncio" el nombre/headline del ad
+- AND "ID de sesión" e "Iniciada" salen del backend (no placeholders)
+
+### Requirement: Reasignar tag desde el inspector (decisión del operador)
+
+`POST /api/chats/session-actions/{session_key}/operator-tag` con
+`{tag ∈ {INTERESADO, RECHAZO, REMARKETING}, motivo}` MUST aplicar el tag SIN
+reconciliación (el operador decide, no propone): tag visible + entrada en
+`status_history` con `source="dashboard:operator"` + cierre formal del
+episodio si es tag de cierre + `EpisodeClosedEvent` + señal CAPI. La ruta
+NO se toca. Otros tags (HUMANO, COMPRA_EXITOSA, CONFIRMADO_*) MUST rechazarse
+con 422.
+
+#### Scenario: Operador corrige un INTERESADO que no tenía fit
+
+- GIVEN una sesión etiquetada `INTERESADO` por ghosting
+- WHEN el operador aprieta "Reasignar", elige RECHAZO y escribe el motivo
+- THEN el episodio activo cierra con `closing_tag=RECHAZO`
+- AND la central de reactivación la suprime (`rejected`) hasta el próximo inbound
+
+#### Scenario: Operador pide re-contactar
+
+- WHEN el operador reasigna `REMARKETING`
+- THEN el tag queda `REMARKETING` sin cerrar episodio
+- AND la central permite la reactivación aunque el último cierre sea RECHAZO
+
 ### Requirement: Handoff humano (intervención)
 
 El sistema SHALL exponer endpoints bajo `/api/dashboard/handoff/*` que

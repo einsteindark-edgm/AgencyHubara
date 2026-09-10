@@ -29,6 +29,11 @@ from src.platform.config import WORKSPACE_VAULT_DIR
 _TERMINAL_TAGS_FOR_REMARKETING: frozenset[str] = frozenset({
     "COMPRA_EXITOSA",
     "HUMANO",
+    # Incidente run dc32f7fe (2026-09-10): RECHAZO = cierre definitivo sin
+    # venta; TOOLS.md promete "NO remarketing" y este gate lo cumple. El
+    # botón del dashboard escribe tag=REMARKETING antes de arrancar, así que
+    # la decisión humana sigue pasando.
+    "RECHAZO",
 })
 
 @activity.defn(name="execute_tool")
@@ -112,7 +117,7 @@ async def check_remarketing_eligibility(session_id: str) -> RemarketingEligibili
     Esta activity es la primera que invoca `RemarketingWorkflow.run`. Lee el
     metadata.json actual y devuelve `eligible=False` si:
       - `active_route == ROUTE_HUMANO` — humano gestionando el caso.
-      - `tag` en `_TERMINAL_TAGS_FOR_REMARKETING` (COMPRA_EXITOSA, HUMANO).
+      - `tag` en `_TERMINAL_TAGS_FOR_REMARKETING` (COMPRA_EXITOSA, HUMANO, RECHAZO).
 
     El workflow respeta la decisión y returna early sin tocar nada. El
     humano (vía dashboard) puede devolver el control cambiando active_route

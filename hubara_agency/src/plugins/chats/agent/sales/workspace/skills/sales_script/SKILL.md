@@ -64,6 +64,7 @@ Si el contexto del turno trae la nota `[LEAD CALIENTE DESDE LA WEB, ...]`, el cl
 |---|---|
 | Interesado pero no compró | `manage_conversation_tag("INTERESADO", motivo)` → remarketing automático |
 | Rechazo explícito | `manage_conversation_tag("RECHAZO", motivo)` → NO remarketing |
+| Pidió algo que NO vendemos (ya aclarado) o se despidió con la duda resuelta sin producto en juego | `manage_conversation_tag("RECHAZO", motivo)` en ese mismo turno → NO remarketing |
 | Pidió humano / B2B / post-venta | `escalate_to_human(...)` + último mensaje breve |
 | Confirmó sin completar datos (ghost) | `manage_conversation_tag("CONFIRMADO_SIN_DATOS")` + `escalate_to_human("ORDER_PENDING_SHIPPING_DETAILS")` |
 

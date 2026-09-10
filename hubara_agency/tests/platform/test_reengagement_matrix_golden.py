@@ -26,7 +26,7 @@ FIXTURE = Path(__file__).parent / "fixtures" / "reengagement_matrix_golden.json"
 #: sha256 de la matriz. El MISMO valor vive en el test de checksum del lado
 #: GraphAgents (tests/tools/test_parse_conversations.py). Editar la matriz sin
 #: sincronizar ambos = rojo en los dos lados, a propósito.
-MATRIX_SHA256 = "15af9d455eaa321af1a44fcc438caf4b24ddd744d6dfd081be2bbe5647cebbbf"
+MATRIX_SHA256 = "a483f0dc160d67cef4a9f4716c842c4abbead09afcba222b46213bdc6ac9dd71"
 
 
 def _load() -> dict:

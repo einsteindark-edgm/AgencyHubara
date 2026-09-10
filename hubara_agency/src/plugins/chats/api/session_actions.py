@@ -242,6 +242,18 @@ class TagBody(BaseModel):
     motivo: str = Field(min_length=1, max_length=2000)
 
 
+#: Lo que el OPERADOR puede fijar a mano desde el inspector ("Reasignar").
+#: HUMANO/CONFIRMADO_* son estados del flujo (escalación / pedido) y
+#: COMPRA_EXITOSA lo pone confirm-payment de Orders — no se tocan a mano.
+OPERATOR_TAGS = Literal["INTERESADO", "RECHAZO", "REMARKETING"]
+
+
+class OperatorTagBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tag: OPERATOR_TAGS
+    motivo: str = Field(min_length=1, max_length=2000)
+
+
 class EscalateBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     reason_category: str = Field(pattern=r"^[A-Z][A-Z0-9_]{2,63}$")
@@ -311,7 +323,7 @@ def _close_payment_pending(
 
 def _apply_tag(
     data: dict[str, Any], *, decision: TagDecision, motivo: str, now_ms: int, msgs_at_close: int,
-    session_id: str | None = None,
+    session_id: str | None = None, source: str = _SOURCE,
 ) -> tuple[str | None, bool]:
     """Lo que hace ``ManageConversationTagTool`` + la red de seguridad
     ``ensure_closing_escalation``, en un solo paso (sobre el dict bajo flock):
@@ -326,7 +338,7 @@ def _apply_tag(
             "motivo": motivo,
             "active_route": data.get("active_route", ROUTE_VENTAS),
             "timestamp": now_ms / 1000.0,
-            "source": _SOURCE,
+            "source": source,
             "proposed_tag": decision.proposed,
         }
     )
@@ -592,6 +604,48 @@ async def tag(session_key: SessionKey, body: TagBody, deps: Deps) -> dict[str, A
     )
     schedule_capi_flush(session)  # QualifiedLead / Purchase encolados en _apply_tag
     return response
+
+
+@router.post("/session-actions/{session_key}/operator-tag")
+async def operator_tag(session_key: SessionKey, body: OperatorTagBody, deps: Deps) -> dict[str, Any]:
+    """Botón "Reasignar" del inspector: el OPERADOR decide el tag (no propone —
+    sin reconciliación). Mismo efecto que ``manage_conversation_tag``: tag
+    visible + historial (source ``dashboard:operator``) + cierre formal si es
+    tag de cierre + ``EpisodeClosedEvent`` + señal CAPI. La ruta NO se toca:
+    devolver al bot / intervenir son acciones aparte del handoff.
+
+    ``REMARKETING`` = decisión humana de re-contactar: la central
+    ``send_policy`` la respeta aunque el último cierre haya sido RECHAZO."""
+    session = _session(session_key)
+    store = FilesystemMetadataStore(deps.vault_dir)
+    now_ms = _now_ms()
+    outcome: dict[str, Any] = {}
+    decision = TagDecision(proposed=body.tag, applied=body.tag, action="apply", reason="operator")
+
+    def _mutate(data: dict[str, Any]) -> dict[str, Any]:
+        outcome["route"] = data.get("active_route", ROUTE_VENTAS)
+        outcome["closed_id"], _ = _apply_tag(
+            data, decision=decision, motivo=body.motivo, now_ms=now_ms,
+            msgs_at_close=count_session_jsonl_lines(deps.vault_dir, session),
+            session_id=session, source="dashboard:operator",
+        )
+        return data
+
+    try:
+        async with _session_lock(session):
+            store.update(session, _mutate)
+    finally:
+        _release_session_lock(session)
+
+    closed_id = outcome.get("closed_id")
+    await _notify(deps, session, closed_id, body.tag)
+    logger.info("[chats.session_actions] operator-tag session={} tag={} closed={}", session, body.tag, closed_id)
+    return {
+        "tag": body.tag,
+        "motivo": body.motivo,
+        "active_route": outcome.get("route", ROUTE_VENTAS),
+        "episode_closed": {"episode_id": closed_id, "closing_tag": body.tag} if closed_id else None,
+    }
 
 
 @router.post("/session-actions/{session_key}/escalate")

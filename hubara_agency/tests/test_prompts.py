@@ -111,3 +111,62 @@ def test_remarketing_trigger_offers_no_message_abstention() -> None:
     out = build_remarketing_trigger("cliente pidió tiempo")
     assert "NO_MESSAGE" in out
     assert "ya respondió" in out or "ya no corresponde" in out
+
+
+def test_ghosting_prompt_marks_unserved_need_as_rechazo() -> None:
+    """Incidente run dc32f7fe (2026-09-10, wa_573000000005): el cliente pidió
+    comprar CERA (materia prima, no la vendemos), el agente se lo aclaró, el
+    cliente cerró con "Gracias" y se fue. El prompt solo admitía RECHAZO ante
+    un "no me interesa" explícito, así que el LLM cayó al DEFAULT INTERESADO y
+    el Window Strategist lo reactivó con "quedó pendiente lo de tu pedido".
+
+    El criterio de RECHAZO debe cubrir explícitamente: necesidad que NO
+    cubrimos (pidió algo que no vendemos) y despedida con la duda resuelta
+    sin producto elegido ni pregunta de compra pendiente.
+    """
+    out = build_ghosting_prompt()
+    low = out.lower()
+    assert "no vendemos" in low, "criterio 'pidió algo que no vendemos' ausente"
+    assert "gracias" in low, "la despedida con la duda resuelta debe estar cubierta"
+    # La regla vive DENTRO del bloque de RECHAZO, no como nota suelta.
+    rechazo_block = low.split("`rechazo`", 1)[1].split("`compra_exitosa`", 1)[0]
+    assert "no vendemos" in rechazo_block
+    assert "remarketing" in rechazo_block  # explica la consecuencia (spam)
+
+
+# ---------------------------------------------------------------------------
+# Incidente run dc32f7fe (2026-09-10): el gancho afirmaba "quedó pendiente de
+# cerrar una compra" aunque no hubiera pedido, y el LLM no tenía el transcript
+# de Sales para abstenerse.
+# ---------------------------------------------------------------------------
+
+
+def test_remarketing_trigger_without_draft_does_not_claim_pending_purchase() -> None:
+    out = build_remarketing_trigger(
+        "vio la lista y agradeció", "", has_order_draft=False
+    )
+    assert "cerrar una compra" not in out.lower()
+    assert "tu pedido" in out.lower()  # prohibición explícita de esa frase
+
+
+def test_remarketing_trigger_with_draft_keeps_purchase_framing() -> None:
+    out = build_remarketing_trigger("dudó del envío", "", has_order_draft=True)
+    assert "cerrar una compra" in out.lower()
+
+
+def test_remarketing_trigger_includes_transcript_and_unserved_need_abstention() -> None:
+    transcript = "Cliente: Precio de la cera\nAsesor: la cera no se vende aparte\nCliente: Gracias"
+    out = build_remarketing_trigger(
+        "buscaba cera, no la vendemos", "", has_order_draft=False, transcript=transcript
+    )
+    assert transcript in out
+    low = out.lower()
+    abstencion = low.split("abstención", 1)[1]
+    assert "no vendemos" in abstencion
+    assert "no_message" in abstencion
+
+
+def test_remarketing_trigger_legacy_signature_unchanged() -> None:
+    # Histories en vuelo replayean la activity vieja con 2 args posicionales.
+    assert build_remarketing_trigger("m", "") == build_remarketing_trigger("m", "")
+    assert "cerrar una compra" in build_remarketing_trigger("m", "").lower()
