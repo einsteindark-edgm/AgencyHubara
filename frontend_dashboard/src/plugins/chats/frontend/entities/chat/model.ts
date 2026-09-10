@@ -16,7 +16,16 @@ export interface ChatInboxItem {
   name: string;
   short: string;
   snippet: string;
+  /** "HH:MM" del último movimiento, en hora Colombia. Derivado de `timestamp`. */
   time: string;
+  /** Instante crudo del último movimiento (unix epoch en SEGUNDOS, tal cual lo
+   *  emite el backend). Es la fuente para ordenar y para el filtro por fecha —
+   *  `time` ya es texto y no sirve para comparar. */
+  timestamp: number;
+  /** Día calendario del último movimiento, YYYY-MM-DD **en America/Bogota**.
+   *  Es lo que decide si un chat es "de hoy" y si cae dentro del rango del
+   *  calendario. Vacío si el backend no mandó timestamp. */
+  dayIso: string;
   tag: ChatTag;
   tagClass: string;
   color: AvatarColor;
@@ -37,6 +46,15 @@ export interface ChatMessageItem {
   kind: MessageKind;
   text?: string;
   time?: string;
+  /** Día calendario YYYY-MM-DD en America/Bogota.
+   *
+   *  - En `kind: "day"` es el día que ANUNCIA el separador; la etiqueta visible
+   *    ("Hoy" / "Ayer" / "Lunes" / "21 de agosto de 2026") se computa en render
+   *    con `formatDayLabelEs`, NO acá — si se congelara en el adaptador, un
+   *    chat abierto a medianoche seguiría diciendo "Hoy" al día siguiente
+   *    (regla 5: los derivados de reloj se computan en render).
+   *  - En una burbuja es el día al que pertenece. Vacío si no hay timestamp. */
+  dayIso?: string;
   status?: "sent" | "read";
   dur?: string;
   /** Sólo definido cuando kind="out". Indica si lo escribió el bot o el humano operador. */
