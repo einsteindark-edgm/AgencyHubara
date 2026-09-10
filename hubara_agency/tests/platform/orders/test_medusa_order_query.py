@@ -16,12 +16,12 @@ from __future__ import annotations
 
 import pytest
 import respx
-from datetime import datetime, timedelta, timezone
 
 from httpx import Response
 
 from src.platform.medusa.client import HttpMedusaClient
 from src.platform.medusa.settings import MedusaSettings
+from src.platform.bogota_time import bogota_day_iso, shift_iso_day
 from src.platform.orders.medusa_order_query import (
     MedusaOrderQuery,
     _color_from_id,
@@ -219,9 +219,7 @@ async def test_overdue_computed_backend_side(adapter):
     purificó el mapper del frontend (ya no recalcula reloj) → sin este
     cálculo, el filtro/KPI "Retrasadas" moría en silencio (gotcha #1).
     """
-    yesterday = (
-        datetime.now(timezone.utc).date() - timedelta(days=1)
-    ).isoformat()
+    yesterday = shift_iso_day(bogota_day_iso(), -1)
     await _list_single(_with_scheduled(_sample_order(), yesterday))
     result = await adapter.list(limit=50, offset=0, include_drafts=True)
     assert result.orders[0].due_iso == yesterday
@@ -231,14 +229,15 @@ async def test_overdue_computed_backend_side(adapter):
 @pytest.mark.asyncio
 @respx.mock
 async def test_overdue_false_for_today_and_future(adapter):
-    today = datetime.now(timezone.utc).date().isoformat()
+    """El día de corte es el COLOMBIANO. Derivar estas fechas del día UTC
+    hacía el test frágil: entre las 19:00 y la medianoche hora Colombia el
+    "hoy UTC" ya es mañana, y el caso de arriba (ayer) daba `overdue False`."""
+    today = bogota_day_iso()
     await _list_single(_with_scheduled(_sample_order(), today))
     result = await adapter.list(limit=50, offset=0, include_drafts=True)
     assert result.orders[0].overdue is False
 
-    tomorrow = (
-        datetime.now(timezone.utc).date() + timedelta(days=1)
-    ).isoformat()
+    tomorrow = shift_iso_day(today, 1)
     await _list_single(_with_scheduled(_sample_order(), tomorrow))
     result = await adapter.list(limit=50, offset=0, include_drafts=True)
     assert result.orders[0].overdue is False
@@ -249,9 +248,7 @@ async def test_overdue_false_for_today_and_future(adapter):
 async def test_overdue_excludes_terminal_stages(adapter):
     """Una orden entregada con due vencida NO está "retrasada" — llegó.
     (Mejora deliberada vs el compute viejo del cliente, que las marcaba.)"""
-    yesterday = (
-        datetime.now(timezone.utc).date() - timedelta(days=1)
-    ).isoformat()
+    yesterday = shift_iso_day(bogota_day_iso(), -1)
     delivered = _with_scheduled(
         _sample_order(status_fulfillment="delivered"), yesterday
     )

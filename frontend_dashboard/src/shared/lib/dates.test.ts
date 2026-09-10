@@ -5,12 +5,14 @@
  * el día a las 19:00 hora Colombia. Para Chats eso es inaceptable: un mensaje
  * de las 20:00 del lunes aparecía como martes.
  */
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  addDaysBogotaIso,
   bogotaDayIsoFromMs,
   bogotaDayIsoFromUnix,
   formatBogotaHourMinute,
   formatDayLabelEs,
+  nextDaysBogotaIsoSet,
   shiftIsoDay,
   todayBogotaIso,
 } from "./dates";
@@ -77,5 +79,53 @@ describe("formatDayLabelEs (separadores estilo WhatsApp)", () => {
 
   it("más viejo → fecha larga en español", () => {
     expect(formatDayLabelEs("2026-08-21", today)).toBe("21 de agosto de 2026");
+  });
+});
+
+/* ── Borde de las 19:00 hora Colombia ────────────────────────────────
+ *
+ * Con el reloj congelado a las 20:00 del 10 de septiembre en Bogotá
+ * (01:00Z del 11), el día UTC ya es el 11 y el colombiano sigue siendo el 10.
+ * Ahí vivía el bug de Órdenes: "Para hoy" mostraba las entregas de mañana y
+ * "Retrasadas" pintaba de rojo las de hoy.
+ */
+describe("helpers relativos a hoy, en el borde de las 19:00", () => {
+  const VEINTE_HORAS_BOGOTA = new Date("2026-09-11T01:00:00.000Z");
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(VEINTE_HORAS_BOGOTA);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("todayBogotaIso NO adelanta el día a las 20:00 (el UTC sí)", () => {
+    expect(new Date().toISOString().slice(0, 10)).toBe("2026-09-11"); // día UTC
+    expect(todayBogotaIso()).toBe("2026-09-10");
+  });
+
+  it("addDaysBogotaIso(1) es mañana en Colombia, no pasado mañana", () => {
+    expect(addDaysBogotaIso(1)).toBe("2026-09-11");
+  });
+
+  it("addDaysBogotaIso acepta negativos", () => {
+    expect(addDaysBogotaIso(-1)).toBe("2026-09-09");
+  });
+
+  it("addDaysBogotaIso(0) es hoy", () => {
+    expect(addDaysBogotaIso(0)).toBe("2026-09-10");
+  });
+
+  it("nextDaysBogotaIsoSet(7) arranca HOY e incluye los 6 siguientes", () => {
+    expect([...nextDaysBogotaIsoSet(7)]).toEqual([
+      "2026-09-10", "2026-09-11", "2026-09-12", "2026-09-13",
+      "2026-09-14", "2026-09-15", "2026-09-16",
+    ]);
+  });
+
+  it("formatDayLabelEs sin `today` explícito usa el día colombiano", () => {
+    expect(formatDayLabelEs("2026-09-10")).toBe("Hoy");
+    expect(formatDayLabelEs("2026-09-09")).toBe("Ayer");
   });
 });

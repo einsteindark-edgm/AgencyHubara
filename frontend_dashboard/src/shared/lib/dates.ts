@@ -5,31 +5,22 @@
  * ReadyForShip, ConfirmPaymentAction) — los componentes no deben hacer
  * aritmética de reloj inline (auditoría 2026-06-10, F0.4).
  *
- * Semántica: día calendario **UTC** — idéntica al código que reemplazan.
- * TODO(F5): evaluar mover a America/Bogota; con UTC el corte de "hoy" ocurre
- * a las 19:00 hora Colombia. Cambiarlo altera contadores ("Para hoy") y
- * defaults de agendamiento, así que requiere decisión de producto, no es
- * un refactor silencioso.
+ * Semántica: día calendario **America/Bogota**.
+ *
+ * Hasta 2026-09-10 estos helpers cortaban el día en **UTC** y existía un
+ * `TODO(F5)` para evaluar el cambio. Se resolvió con el operador: el corte UTC
+ * adelanta la frontera a las 19:00 hora local, así que cada noche a partir de
+ * las 7 "Para hoy" mostraba las entregas de mañana y "Retrasadas" pintaba de
+ * rojo las del día en curso. Las fechas que maneja el dashboard (`dueIso`,
+ * `dayIso`) son días calendario que el operador elige a mano, no instantes.
+ *
+ * Los `todayIso` / `addDaysIso` / `nextDaysIsoSet` en UTC fueron ELIMINADOS a
+ * propósito, no deprecados: mientras existieran, un import distraído
+ * reintroducía el bug en silencio. El equivalente colombiano de cada uno está
+ * más abajo.
  */
 
 const DAY_MS = 86_400_000;
-
-/** Día calendario de hoy en formato YYYY-MM-DD (UTC). */
-export function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
-/** Día calendario a `days` días de hoy (acepta negativos), YYYY-MM-DD (UTC). */
-export function addDaysIso(days: number): string {
-  return new Date(Date.now() + days * DAY_MS).toISOString().slice(0, 10);
-}
-
-/** Set con los próximos `count` días calendario incluyendo hoy (UTC). */
-export function nextDaysIsoSet(count: number): Set<string> {
-  const out = new Set<string>();
-  for (let i = 0; i < count; i++) out.add(addDaysIso(i));
-  return out;
-}
 
 /**
  * Formatea un día calendario YYYY-MM-DD para el operador ("15 de julio de
@@ -104,6 +95,22 @@ export function formatBogotaHourMinute(unixSeconds: number): string {
     /^24:/,
     "00:",
   );
+}
+
+/** Día calendario a `days` días de hoy EN COLOMBIA (acepta negativos).
+ *  Espejo colombiano del viejo `addDaysIso`. */
+export function addDaysBogotaIso(days: number): string {
+  return shiftIsoDay(todayBogotaIso(), days);
+}
+
+/** Los próximos `count` días calendario colombianos, incluyendo hoy.
+ *  Espejo colombiano del viejo `nextDaysIsoSet` — lo usa la vista
+ *  "Esta semana" de Órdenes. */
+export function nextDaysBogotaIsoSet(count: number): Set<string> {
+  const today = todayBogotaIso();
+  const out = new Set<string>();
+  for (let i = 0; i < count; i++) out.add(shiftIsoDay(today, i));
+  return out;
 }
 
 /** Aritmética de día calendario sobre YYYY-MM-DD (sin tocar el reloj ni el TZ).
