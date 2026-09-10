@@ -36,6 +36,7 @@ function makeSession(overrides: Partial<ChatSession> = {}): ChatSession {
     phone_number_id: null,
     pending_payment_order_id: null,
     last_updated_timestamp: LATE_NIGHT_UNIX,
+    origin: null,
     ...overrides,
   };
 }
@@ -79,6 +80,7 @@ async function runMessages(messages: ChatMessage[]) {
     active_agent_route: "ventas",
     phone_number_id: null,
     pending_payment_order_id: null,
+    origin: null,
     status_history: [],
     messages,
   });
