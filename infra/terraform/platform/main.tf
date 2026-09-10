@@ -65,6 +65,15 @@ module "scheduler_config" {
   config = var.scheduler_config
 }
 
+# ── Meta Business Agent: interruptores + lista cerrada por tenant (git = verdad) ─
+module "mba_config" {
+  source   = "./modules/mba-config"
+  for_each = var.tenants
+
+  tenant = each.key
+  config = each.value.mba
+}
+
 # ── GraphAgents (subsistema separado): secretos SSM en /graphagents/ ─────────
 module "graphagents_secrets" {
   source      = "./modules/graphagents-secrets"
