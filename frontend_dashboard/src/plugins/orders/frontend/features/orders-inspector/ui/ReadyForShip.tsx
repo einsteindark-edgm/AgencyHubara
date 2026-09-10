@@ -14,7 +14,8 @@
 import { useState } from "react";
 import { useScheduleOrder, type Order } from "@plugins/orders/frontend/entities/order";
 import { Icon, MacButton } from "@/shared/ui";
-import { addDaysIso, todayIso } from "@/shared/lib";
+import { addDaysBogotaIso, todayBogotaIso } from "@/shared/lib";
+
 
 interface Props {
   order: Order;
@@ -22,9 +23,12 @@ interface Props {
 
 export function ReadyForShip({ order }: Props) {
   // Default = mañana; el input no permite fechas pasadas (min = hoy).
-  const minDate = todayIso();
+  // Día COLOMBIANO: con el día UTC el `min` saltaba a mañana a partir de las
+  // 19:00 locales (no se podía agendar para el día en curso) y el default caía
+  // en +2 días. Decidido con el operador: se agenda para hoy hasta medianoche.
+  const minDate = todayBogotaIso();
 
-  const [date, setDate] = useState<string>(order.dueIso || addDaysIso(1));
+  const [date, setDate] = useState<string>(order.dueIso || addDaysBogotaIso(1));
   const [time, setTime] = useState<string>(
     order.dueTime && order.dueTime !== "—" ? order.dueTime : "",
   );

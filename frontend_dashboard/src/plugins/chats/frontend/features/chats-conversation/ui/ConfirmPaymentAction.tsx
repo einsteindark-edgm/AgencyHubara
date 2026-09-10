@@ -6,7 +6,7 @@ import {
   useScheduleOrder,
 } from "@plugins/chats/frontend/entities/order-ref";
 import { sessionKeys } from "@plugins/chats/frontend/entities/session";
-import { addDaysIso, formatIsoDateEs, todayIso } from "@/shared/lib";
+import { addDaysBogotaIso, formatIsoDateEs, todayBogotaIso } from "@/shared/lib";
 
 interface Props {
   /** Id backend (Medusa) del pedido a confirmar — `session.pending_payment_order_id`. */
@@ -94,7 +94,8 @@ export function ConfirmPaymentAction({ orderId, open, onOpenChange }: Props) {
   const detail = useOrderRefDetail(orderId, { enabled: open });
   // Lazy init: "mañana" se calcula al montar, no al cargar el módulo — un
   // module-const quedaba stale si el dashboard pasaba la medianoche abierto.
-  const [date, setDate] = useState(() => addDaysIso(1));
+  // Día colombiano: con el UTC, después de las 19:00 "mañana" era +2 días.
+  const [date, setDate] = useState(() => addDaysBogotaIso(1));
   const [time, setTime] = useState("");
   const [flow, dispatch] = useReducer(flowReducer, { phase: "idle" });
 
@@ -204,7 +205,7 @@ export function ConfirmPaymentAction({ orderId, open, onOpenChange }: Props) {
                 <input
                   type="date"
                   value={date}
-                  min={todayIso()}
+                  min={todayBogotaIso()}
                   onChange={(e) => setDate(e.target.value)}
                   style={inputStyle}
                 />

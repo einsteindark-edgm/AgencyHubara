@@ -15,7 +15,7 @@ import {
   type OrderStatus,
 } from "@plugins/orders/frontend/entities/order";
 import { Avatar, Icon, MacButton } from "@/shared/ui";
-import { dayChipShort, fmtMoney, todayIso } from "@/shared/lib";
+import { dayChipShort, fmtMoney, todayBogotaIso } from "@/shared/lib";
 
 import { TrackingLinkModal } from "./TrackingLinkModal";
 
@@ -328,7 +328,11 @@ export function OrdersHeader({
   filteredTotal: number;
   title: string;
 }) {
-  const today = todayIso();
+  // Día COLOMBIANO. Con el corte UTC (frontera a las 19:00 locales) el KPI
+  // "Para hoy" saltaba a las 7 de la tarde, y "Ingresos mes" —que deriva de
+  // `today.slice(0, 7)`— cambiaba de mes la noche del último día: a las 20:00
+  // del 31 de agosto ya mostraba septiembre y el mes que cerraba iba a cero.
+  const today = todayBogotaIso();
   // YYYY-MM del mes actual — usado para filtrar dueIso del mes corriente.
   const monthPrefix = today.slice(0, 7);
   const k = useMemo(

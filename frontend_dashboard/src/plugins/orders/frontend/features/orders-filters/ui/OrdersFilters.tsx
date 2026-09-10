@@ -12,7 +12,7 @@
  */
 
 import { Icon, MacButton } from "@/shared/ui";
-import { addDaysIso, nextDaysIsoSet, todayIso } from "@/shared/lib";
+import { addDaysBogotaIso, nextDaysBogotaIsoSet, todayBogotaIso } from "@/shared/lib";
 import type { Order } from "@plugins/orders/frontend/entities/order";
 import type { PayTypeFilter, ViewFilter } from "../model/useOrderFilters";
 
@@ -27,10 +27,13 @@ interface Props {
 }
 
 export function OrdersFilters({ view, setView, payType, setPayType, orders }: Props) {
-  const today = todayIso();
-  const tomorrow = addDaysIso(1);
+  // Día calendario COLOMBIANO (no UTC): `dueIso` es una fecha que el operador
+  // eligió a mano, y el corte UTC caía a las 19:00 locales — a partir de las 7
+  // de la tarde "Para hoy" mostraba las entregas de mañana.
+  const today = todayBogotaIso();
+  const tomorrow = addDaysBogotaIso(1);
   // Esta semana = próximos 7 días incluyendo hoy.
-  const weekIsos = nextDaysIsoSet(7);
+  const weekIsos = nextDaysBogotaIsoSet(7);
   // Bug fix 2026-05-26: counters de las vistas excluyen órdenes canceladas.
   // Las canceladas viven en la columna "Cancelada" del kanban pero NO se
   // suman a las métricas operacionales (sería ruido — "5 órdenes para hoy"

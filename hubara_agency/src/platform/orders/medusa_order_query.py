@@ -30,12 +30,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, cast
 
 from src.platform.medusa.client import HttpMedusaClient, MedusaAPIError
 from src.platform.medusa.settings import MedusaSettings
 from src.platform.orders import display_id_cache
+from src.platform.bogota_time import bogota_day_iso
 from src.platform.orders.query_port import (
     OrderAddressDTO,
     OrderDetailDTO,
@@ -85,6 +86,16 @@ _EVENT_LABELS: dict[str, str] = {
     "payment_confirmed": "Pago confirmado",
     "schedule_updated": "Reagendado",
 }
+
+
+TERMINAL_STATUSES = ("delivered", "cancelled")
+
+
+def compute_overdue(due_iso: str | None, status: str, today_iso: str) -> bool:
+    """¿La orden está retrasada respecto a `today_iso`?"""
+    if not due_iso or status in TERMINAL_STATUSES:
+        return False
+    return due_iso < today_iso
 
 
 class MedusaOrderQuery:
@@ -401,17 +412,18 @@ class MedusaOrderQuery:
         # datos cacheados (mapper puro, F0.5) — antes este campo era un
         # `False` hardcodeado "derivado client-side" y al purificar el mapper
         # la feature "Retrasadas" habría muerto en silencio (gotcha #1 del
-        # repo: el schema lo permite ≠ el backend lo emite). Día calendario
-        # UTC — espejo del compute viejo del frontend; el TODO de pasar a
-        # America/Bogota vive en shared/lib/dates.ts y se decide junto.
+        # repo: el schema lo permite ≠ el backend lo emite).
+        #
+        # Día calendario **America/Bogota** (2026-09-10, decidido con el
+        # operador). Antes era UTC, que adelanta la frontera a las 19:00 hora
+        # local: cada noche a partir de las 7 toda entrega del día en curso que
+        # aún no había salido se pintaba de rojo en "Retrasadas". `due_iso` es
+        # un día que el operador elige a mano, no un instante — el día
+        # colombiano es su única lectura correcta.
         # Stages terminales NO cuentan: una orden entregada/cancelada no está
         # "retrasada" (mejora deliberada vs el cliente viejo, que marcaba
         # entregadas vencidas y ensuciaba el KPI).
-        if due_iso is not None and status not in ("delivered", "cancelled"):
-            today_utc = datetime.now(timezone.utc).date().isoformat()
-            overdue = due_iso < today_utc
-        else:
-            overdue = False
+        overdue = compute_overdue(due_iso, status, bogota_day_iso())
 
         # ---- priority heuristic ----
         priority = "alta" if total_cop >= 200_000 else (
