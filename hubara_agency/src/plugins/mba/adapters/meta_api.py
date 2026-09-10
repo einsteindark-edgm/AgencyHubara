@@ -102,12 +102,16 @@ async def request_json(
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     error_cls: type[MbaApiError] = MbaApiError,
     retry_on_transport_error: bool = True,
+    strict_json: bool = False,
 ) -> Any:
     """Una llamada a la Cloud API de MBA con la política de errores de arriba.
 
-    Devuelve el JSON del 2xx tal cual (dict o lista; ``{}`` si el cuerpo viene
-    vacío o no es JSON, p.ej. un 204). ``body=None`` manda la llamada sin
-    cuerpo; ``{}`` manda un objeto vacío (onboarding sin catálogo).
+    Devuelve el JSON del 2xx tal cual (dict o lista); un cuerpo vacío (204)
+    es ``{}``. Con ``strict_json`` un 2xx CON cuerpo que no es JSON (un
+    proxy, una página de login, un cambio de forma) es ``rejected`` con
+    ``status=200`` en vez de ``{}``: el plano de configuración no puede leer
+    HTML como "no hay skills". ``body=None`` manda la llamada sin cuerpo;
+    ``{}`` manda un objeto vacío (onboarding sin catálogo).
     """
     if not token or is_placeholder(token):
         raise error_cls("not_configured", detail=f"{TOKEN_ENV} no configurado")
@@ -131,11 +135,19 @@ async def request_json(
                 raise error_cls("ambiguous", detail=last_detail, attempts=attempt)
         else:
             if resp.status_code < 400:
+                if not resp.content:
+                    return {}
                 try:
-                    payload = resp.json() if resp.content else {}
+                    payload = resp.json()
                 except ValueError:
-                    payload = {}
-                return payload if isinstance(payload, (dict, list)) else {}
+                    payload = None
+                if isinstance(payload, (dict, list)):
+                    return payload
+                if strict_json:
+                    raise error_cls(
+                        "rejected", status=resp.status_code, detail="respuesta 2xx sin JSON", attempts=attempt
+                    )
+                return {}
             detail = _error_detail(resp)
             if resp.status_code != 429 and resp.status_code < 500:
                 raise error_cls("rejected", status=resp.status_code, detail=detail, attempts=attempt)

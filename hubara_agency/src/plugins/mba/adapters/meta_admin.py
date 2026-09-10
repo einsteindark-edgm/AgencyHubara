@@ -16,13 +16,22 @@ Contrato (OpenAPI publicados por Meta, v2.0.0, bajados 2026-09-10 de
     GET/POST agent_connectors · PUT/DELETE agent_connectors/{id} · POST agent_connectors/{id}/upsertApiKey
     GET/POST agent_connectors/{id}/tools · PUT/DELETE agent_connectors/{id}/tools/{tool_id}
     GET (paginado: paging.cursors.after) / POST agent-ui-skills · PUT/DELETE agent-ui-skills/{id}
+        (el PUT solo acepta title / status / instruction: NO reenviar component_type ni flow_id)
     GET/POST agent_config/allowlist · DELETE agent_config/allowlist/{entry_id}
     POST   agent_test {user_msg, conversation_id?} → {agent_response, conversation_id, ...}
 
 ``entity_id`` = ``phone_number_id`` del número onboardeado. Errores en el
 ``StandardError`` de Meta (``{title, detail}``) → ``MbaAdminError`` con las
 clases cerradas de ``meta_api`` (``not_configured`` / ``rejected`` /
-``unavailable`` / ``ambiguous``).
+``unavailable`` / ``ambiguous``). Un 2xx con cuerpo que no es JSON o con
+otra forma (HTML de un proxy, un objeto donde iba una lista) también es
+``rejected`` con ``status=200``: leerlo como "vacío" haría que el sync de
+D2.2 recreara todo.
+
+Semánticas de Meta que el diff de D2.2 tiene que respetar: ``PUT settings``
+es PARCIAL (lo omitido conserva su valor) y ``never_say_phrases`` es
+write-only (no vuelve en el GET ni en la respuesta del PUT); ``FAQ`` y
+``connector`` responden 409 al duplicar ``question`` / ``name``.
 
 Los cuerpos viajan tal cual los arma el dominio (``domain/config.py`` ya
 produce los requests literales del preview): este adapter NO reinterpreta
@@ -153,14 +162,28 @@ class MbaAdminPort(Protocol):
     async def agent_test(self, entity_id: str, user_msg: str, *, conversation_id: str | None = None) -> dict[str, Any]: ...
 
 
+def _unexpected(what: str) -> MbaAdminError:
+    return MbaAdminError("rejected", status=200, detail=f"respuesta 2xx con forma inesperada: {what}")
+
+
 def _as_dict(payload: Any) -> dict[str, Any]:
-    return payload if isinstance(payload, dict) else {}
+    if not isinstance(payload, dict):
+        raise _unexpected("se esperaba un objeto")
+    return payload
 
 
 def _as_list(payload: Any) -> list[dict[str, Any]]:
+    """Lista plana (skills, FAQs, connectors, tools, allowlist, settings) o
+    envuelta en ``{data: [...]}`` (UI skills). Cualquier otra forma levanta."""
     if isinstance(payload, dict) and isinstance(payload.get("data"), list):
         payload = payload["data"]
-    return [x for x in payload if isinstance(x, dict)] if isinstance(payload, list) else []
+    if not isinstance(payload, list) or not all(isinstance(x, dict) for x in payload):
+        raise _unexpected("se esperaba una lista")
+    return payload
+
+
+def _looks_like_settings(payload: Any) -> bool:
+    return isinstance(payload, dict) and "agent_id" in payload and "data" not in payload
 
 
 class MetaMbaAdmin:
@@ -198,12 +221,27 @@ class MetaMbaAdmin:
             sleep=self._sleep,
             error_cls=MbaAdminError,
             retry_on_transport_error=not creates,
+            strict_json=True,
         )
+
+    async def _delete(self, *segments: str) -> None:
+        """Un DELETE reintentado tras un error de red puede ver 404 porque el
+        primer intento sí borró: eso cuenta como hecho. Un 404 al primer
+        intento sí es del caller (id equivocado)."""
+        try:
+            await self._call("DELETE", *segments)
+        except MbaAdminError as exc:
+            if exc.kind == "rejected" and exc.status == 404 and exc.attempts > 1:
+                return
+            raise
 
     # -- onboard -----------------------------------------------------------
 
     async def eligibility(self, entity_id: str) -> bool:
-        return _as_dict(await self._call("GET", entity_id, "agent_eligibility")).get("is_eligible") is True
+        payload = _as_dict(await self._call("GET", entity_id, "agent_eligibility"))
+        if not isinstance(payload.get("is_eligible"), bool):
+            raise _unexpected("falta is_eligible")
+        return payload["is_eligible"]
 
     async def onboard(self, entity_id: str, *, catalog_id: str | None = None) -> str:
         body = {"catalog_id": catalog_id} if catalog_id else {}
@@ -214,7 +252,8 @@ class MetaMbaAdmin:
     async def get_settings(self, entity_id: str, *, agent_id: str | None = None) -> list[dict[str, Any]]:
         params = {"agent_id": agent_id} if agent_id else None
         payload = await self._call("GET", entity_id, "agent_config/settings", params=params)
-        return [payload] if isinstance(payload, dict) and payload else _as_list(payload)
+        # Meta documenta una lista; con ``?agent_id`` puede venir el objeto solo.
+        return [payload] if _looks_like_settings(payload) else _as_list(payload)
 
     async def put_settings(self, entity_id: str, body: dict[str, Any], *, agent_id: str | None = None) -> dict[str, Any]:
         params = {"agent_id": agent_id} if agent_id else None
@@ -229,7 +268,7 @@ class MetaMbaAdmin:
         return _as_dict(await self._call("PUT", entity_id, "agent_config/business_info", body=body))
 
     async def delete_business_info(self, entity_id: str) -> None:
-        await self._call("DELETE", entity_id, "agent_config/business_info")
+        await self._delete(entity_id, "agent_config/business_info")
 
     async def list_faqs(self, entity_id: str) -> list[dict[str, Any]]:
         return _as_list(await self._call("GET", entity_id, "agent_config/faq"))
@@ -241,7 +280,7 @@ class MetaMbaAdmin:
         return _as_dict(await self._call("PUT", entity_id, "agent_config/faq", faq_id, body=body))
 
     async def delete_faq(self, entity_id: str, faq_id: str) -> None:
-        await self._call("DELETE", entity_id, "agent_config/faq", faq_id)
+        await self._delete(entity_id, "agent_config/faq", faq_id)
 
     # -- skills ------------------------------------------------------------
 
@@ -257,7 +296,7 @@ class MetaMbaAdmin:
         return _as_dict(await self._call("PUT", entity_id, "agent_config/skills", skill_id, body=body))
 
     async def delete_skill(self, entity_id: str, skill_id: str) -> None:
-        await self._call("DELETE", entity_id, "agent_config/skills", skill_id)
+        await self._delete(entity_id, "agent_config/skills", skill_id)
 
     # -- connectors + tools ------------------------------------------------
 
@@ -271,7 +310,7 @@ class MetaMbaAdmin:
         return _as_dict(await self._call("PUT", entity_id, "agent_connectors", connector_id, body=body))
 
     async def delete_connector(self, entity_id: str, connector_id: str) -> None:
-        await self._call("DELETE", entity_id, "agent_connectors", connector_id)
+        await self._delete(entity_id, "agent_connectors", connector_id)
 
     async def upsert_connector_api_key(self, entity_id: str, connector_id: str, api_key_config: dict[str, Any]) -> dict[str, Any]:
         # Upsert: idempotente por definición → sí se reintenta ante red.
@@ -289,7 +328,7 @@ class MetaMbaAdmin:
         return _as_dict(await self._call("PUT", entity_id, "agent_connectors", connector_id, "tools", tool_id, body=body))
 
     async def delete_connector_tool(self, entity_id: str, connector_id: str, tool_id: str) -> None:
-        await self._call("DELETE", entity_id, "agent_connectors", connector_id, "tools", tool_id)
+        await self._delete(entity_id, "agent_connectors", connector_id, "tools", tool_id)
 
     # -- UI skills ---------------------------------------------------------
 
@@ -300,12 +339,13 @@ class MetaMbaAdmin:
             params = {"after": after} if after else None
             page = _as_dict(await self._call("GET", entity_id, "agent-ui-skills", params=params))
             out.extend(_as_list(page))
-            paging = _as_dict(page.get("paging"))
-            cursor = _as_dict(paging.get("cursors")).get("after")
+            paging = page.get("paging") if isinstance(page.get("paging"), dict) else {}
+            cursors = paging.get("cursors") if isinstance(paging.get("cursors"), dict) else {}
+            cursor = cursors.get("after")
             if not paging.get("next") or not isinstance(cursor, str) or not cursor or cursor == after:
-                break
+                return out
             after = cursor
-        return out
+        raise MbaAdminError("unavailable", detail=f"paginación de UI skills sin fin ({_MAX_PAGES} páginas)", attempts=_MAX_PAGES)
 
     async def create_ui_skill(self, entity_id: str, body: dict[str, Any]) -> dict[str, Any]:
         return _as_dict(await self._call("POST", entity_id, "agent-ui-skills", body=body, creates=True))
@@ -314,7 +354,7 @@ class MetaMbaAdmin:
         return _as_dict(await self._call("PUT", entity_id, "agent-ui-skills", ui_skill_id, body=body))
 
     async def delete_ui_skill(self, entity_id: str, ui_skill_id: str) -> None:
-        await self._call("DELETE", entity_id, "agent-ui-skills", ui_skill_id)
+        await self._delete(entity_id, "agent-ui-skills", ui_skill_id)
 
     # -- allowlist ---------------------------------------------------------
 
@@ -326,7 +366,7 @@ class MetaMbaAdmin:
         return _as_dict(await self._call("POST", entity_id, "agent_config/allowlist", body=body, creates=True))
 
     async def remove_allowlist(self, entity_id: str, entry_id: str) -> None:
-        await self._call("DELETE", entity_id, "agent_config/allowlist", entry_id)
+        await self._delete(entity_id, "agent_config/allowlist", entry_id)
 
     # -- operate -----------------------------------------------------------
 
@@ -348,6 +388,8 @@ class FakeMbaAdmin:
     eligible: bool = True
     agent_id: str = "agent-fake"
     settings: dict[str, dict[str, Any]] = field(default_factory=dict)
+    #: write-only en Meta: se guarda aparte para que un test pueda mirarlo.
+    never_say_phrases: dict[str, list[str]] = field(default_factory=dict)
     business_info: dict[str, dict[str, Any]] = field(default_factory=dict)
     faqs: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     skills: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
@@ -367,8 +409,12 @@ class FakeMbaAdmin:
         counter = self._ids.setdefault(prefix, count(1))
         return f"{prefix}-{next(counter)}"
 
-    def _create(self, bucket: list[dict[str, Any]], prefix: str, body: dict[str, Any]) -> dict[str, Any]:
-        item = {"id": self._new_id(prefix), **body}
+    def _create(
+        self, bucket: list[dict[str, Any]], prefix: str, body: dict[str, Any], *, unique: str | None = None, **extra: Any
+    ) -> dict[str, Any]:
+        if unique and any(x.get(unique) == body.get(unique) for x in bucket):
+            raise MbaAdminError("rejected", status=409, detail=f"{unique} duplicado: {body.get(unique)!r}")
+        item = {"id": self._new_id(prefix), **body, **extra}
         bucket.append(item)
         return item
 
@@ -401,8 +447,12 @@ class FakeMbaAdmin:
 
     async def put_settings(self, entity_id: str, body: dict[str, Any], *, agent_id: str | None = None) -> dict[str, Any]:
         self._record("put_settings", entity_id, body, agent_id)
-        self.settings[entity_id] = {"agent_id": agent_id or self.agent_id, "channel": "whatsapp", **body}
-        return self.settings[entity_id]
+        body = dict(body)
+        if "never_say_phrases" in body:  # write-only: no vuelve en GET ni en la respuesta
+            self.never_say_phrases[entity_id] = list(body.pop("never_say_phrases") or [])
+        prev = self.settings.get(entity_id) or {"agent_id": agent_id or self.agent_id, "channel": "whatsapp"}
+        self.settings[entity_id] = {**prev, **body}  # PUT parcial, como Meta
+        return dict(self.settings[entity_id])
 
     async def get_business_info(self, entity_id: str) -> dict[str, Any]:
         self._record("get_business_info", entity_id)
@@ -423,7 +473,7 @@ class FakeMbaAdmin:
 
     async def create_faq(self, entity_id: str, body: dict[str, Any]) -> dict[str, Any]:
         self._record("create_faq", entity_id, body)
-        return self._create(self.faqs.setdefault(entity_id, []), "faq", body)
+        return self._create(self.faqs.setdefault(entity_id, []), "faq", body, unique="question")
 
     async def update_faq(self, entity_id: str, faq_id: str, body: dict[str, Any]) -> dict[str, Any]:
         self._record("update_faq", entity_id, faq_id, body)
@@ -438,8 +488,8 @@ class FakeMbaAdmin:
         return list(self.skills.get(entity_id, []))
 
     async def create_skill(self, entity_id: str, body: dict[str, Any], *, agent_id: str | None = None) -> dict[str, Any]:
-        self._record("create_skill", entity_id, body)
-        return self._create(self.skills.setdefault(entity_id, []), "skill", body)
+        self._record("create_skill", entity_id, body, agent_id)
+        return self._create(self.skills.setdefault(entity_id, []), "skill", body, channel="whatsapp", status="active")
 
     async def update_skill(self, entity_id: str, skill_id: str, body: dict[str, Any]) -> dict[str, Any]:
         self._record("update_skill", entity_id, skill_id, body)
@@ -455,7 +505,7 @@ class FakeMbaAdmin:
 
     async def create_connector(self, entity_id: str, body: dict[str, Any]) -> dict[str, Any]:
         self._record("create_connector", entity_id, body)
-        return self._create(self.connectors.setdefault(entity_id, []), "connector", body)
+        return self._create(self.connectors.setdefault(entity_id, []), "connector", body, unique="name")
 
     async def update_connector(self, entity_id: str, connector_id: str, body: dict[str, Any]) -> dict[str, Any]:
         self._record("update_connector", entity_id, connector_id, body)

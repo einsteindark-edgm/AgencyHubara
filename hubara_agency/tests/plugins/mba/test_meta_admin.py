@@ -382,12 +382,77 @@ async def test_a_transport_error_on_a_create_is_ambiguous_and_not_retried() -> N
 
 
 @respx.mock
-async def test_a_204_and_a_non_json_2xx_do_not_break_the_caller() -> None:
+async def test_a_204_is_fine_but_a_2xx_that_is_not_json_or_has_the_wrong_shape_is_an_error() -> None:
+    """Un 200 con HTML (proxy, login, cambio de forma) NO puede leerse como
+    "no hay skills": D2.2 re-crearía todo. Solo el 204 sin cuerpo es ``{}``."""
     respx.delete(f"{BASE}/agent_config/faq/f1").mock(return_value=httpx.Response(204))
-    respx.get(f"{BASE}/agent_eligibility").mock(return_value=httpx.Response(200, text="ok"))
+    respx.get(f"{BASE}/agent_eligibility").mock(return_value=httpx.Response(200, text="<html>login</html>"))
+    respx.get(f"{BASE}/agent_config/skills").mock(return_value=httpx.Response(200, json={"weird": True}))
+    respx.get(f"{BASE}/agent_config/business_info").mock(return_value=httpx.Response(200, json=[1, 2]))
+    respx.get(f"{BASE}/agent_config/faq").mock(return_value=httpx.Response(200, json={"is_eligible": True}))
     c = _client()
     assert await c.delete_faq(ENTITY, "f1") is None
-    assert await c.eligibility(ENTITY) is False
+    for call in (
+        c.eligibility(ENTITY),
+        c.list_skills(ENTITY),
+        c.get_business_info(ENTITY),
+        c.list_faqs(ENTITY),
+    ):
+        with pytest.raises(MbaAdminError) as exc:
+            await call
+        assert exc.value.kind == "rejected" and exc.value.status == 200
+
+
+@respx.mock
+async def test_settings_get_accepts_the_bare_list_and_the_data_envelope() -> None:
+    settings = {"agent_id": "ag_1", "channel": "whatsapp", "rollout": {"enabled": False}}
+    respx.get(f"{BASE}/agent_config/settings").mock(side_effect=[
+        httpx.Response(200, json=[settings]),
+        httpx.Response(200, json={"data": [settings]}),
+        httpx.Response(200, json=settings),
+    ])
+    c = _client()
+    assert await c.get_settings(ENTITY) == [settings]
+    assert await c.get_settings(ENTITY) == [settings]
+    assert await c.get_settings(ENTITY, agent_id="ag_1") == [settings]
+
+
+@respx.mock
+async def test_a_delete_that_hits_404_after_a_retry_counts_as_done() -> None:
+    """El primer DELETE pudo borrar y el timeout tapó la respuesta: el
+    reintento ve 404. Sin reintento previo, el 404 sí es un error del caller."""
+    respx.delete(f"{BASE}/agent_config/skills/s1").mock(side_effect=[
+        httpx.ReadTimeout("slow"),
+        httpx.Response(404, json={"title": "Not Found", "detail": "no such skill"}),
+    ])
+    assert await _client().delete_skill(ENTITY, "s1") is None
+    respx.delete(f"{BASE}/agent_config/skills/s2").mock(
+        return_value=httpx.Response(404, json={"title": "Not Found", "detail": "no such skill"})
+    )
+    with pytest.raises(MbaAdminError) as exc:
+        await _client().delete_skill(ENTITY, "s2")
+    assert exc.value.status == 404 and exc.value.attempts == 1
+
+
+@respx.mock
+async def test_ui_skills_paging_stops_on_a_repeated_cursor_and_fails_past_the_page_cap() -> None:
+    from src.plugins.mba.adapters import meta_admin
+
+    a = {"id": "u1", "title": "a", "component_type": "image", "status": "enabled", "instruction": "i"}
+    same = httpx.Response(200, json={"data": [a], "paging": {"cursors": {"after": "CUR"}, "next": "https://api.facebook.com/n"}})
+    route = respx.get(f"{BASE}/agent-ui-skills").mock(return_value=same)
+    # cursor repetido: la segunda página pide after=CUR y vuelve el mismo cursor → corta
+    assert await _client().list_ui_skills(ENTITY) == [a, a]
+    assert route.call_count == 2
+
+    calls = iter(range(10_000))
+    route.mock(side_effect=lambda req: httpx.Response(200, json={
+        "data": [a], "paging": {"cursors": {"after": f"C{next(calls)}"}, "next": "https://api.facebook.com/n"},
+    }))
+    with pytest.raises(MbaAdminError) as exc:
+        await _client().list_ui_skills(ENTITY)
+    assert exc.value.kind == "unavailable" and "pagina" in exc.value.detail
+    assert route.call_count == 2 + meta_admin._MAX_PAGES
 
 
 # ---------------------------------------------------------------------------
@@ -397,13 +462,37 @@ async def test_a_204_and_a_non_json_2xx_do_not_break_the_caller() -> None:
 
 async def test_the_fake_records_calls_and_can_fail_on_demand() -> None:
     fake = FakeMbaAdmin()
-    assert await fake.create_skill(ENTITY, {"title": "saludo", "description": "d", "skill": "s"}) == {
-        "id": "skill-1", "title": "saludo", "description": "d", "skill": "s",
-    }
-    assert await fake.list_skills(ENTITY) == [{"id": "skill-1", "title": "saludo", "description": "d", "skill": "s"}]
+    created = await fake.create_skill(ENTITY, {"title": "saludo", "description": "d", "skill": "s"}, agent_id="ag_1")
+    assert created == {"id": "skill-1", "title": "saludo", "description": "d", "skill": "s", "channel": "whatsapp", "status": "active"}
+    assert await fake.list_skills(ENTITY) == [created]
     await fake.delete_skill(ENTITY, "skill-1")
     assert await fake.list_skills(ENTITY) == []
-    assert fake.calls[0] == ("create_skill", ENTITY, {"title": "saludo", "description": "d", "skill": "s"})
+    assert fake.calls[0] == ("create_skill", ENTITY, {"title": "saludo", "description": "d", "skill": "s"}, "ag_1")
     fake.fail_with = MbaAdminError("unavailable", status=500, detail="x", attempts=3)
     with pytest.raises(MbaAdminError):
         await fake.eligibility(ENTITY)
+
+
+async def test_the_fake_settings_behave_like_metas_partial_update() -> None:
+    """PUT settings es PARCIAL (lo que se omite conserva su valor) y
+    ``never_say_phrases`` es write-only: no vuelve en la respuesta ni en el GET."""
+    fake = FakeMbaAdmin()
+    first = await fake.put_settings(ENTITY, {"rollout": {"enabled": False}, "ai_audience": "ALLOWLISTED_ONLY", "never_say_phrases": ["gratis"]})
+    assert "never_say_phrases" not in first and first["ai_audience"] == "ALLOWLISTED_ONLY"
+    second = await fake.put_settings(ENTITY, {"handoff": {"enabled": True, "message_selection": "DEFAULT"}})
+    assert second["ai_audience"] == "ALLOWLISTED_ONLY" and second["rollout"] == {"enabled": False}
+    assert second["handoff"] == {"enabled": True, "message_selection": "DEFAULT"}
+    assert await fake.get_settings(ENTITY) == [second]
+    assert fake.never_say_phrases[ENTITY] == ["gratis"]
+
+
+async def test_the_fake_rejects_duplicates_where_meta_answers_409() -> None:
+    fake = FakeMbaAdmin()
+    await fake.create_faq(ENTITY, {"question": "¿Envían?", "answer": "Sí"})
+    with pytest.raises(MbaAdminError) as exc:
+        await fake.create_faq(ENTITY, {"question": "¿Envían?", "answer": "Otra"})
+    assert exc.value.kind == "rejected" and exc.value.status == 409
+    await fake.create_connector(ENTITY, {"name": "hubara", "description": "d", "base_url": "https://x", "auth_type": "API_KEY"})
+    with pytest.raises(MbaAdminError) as exc:
+        await fake.create_connector(ENTITY, {"name": "hubara", "description": "d2", "base_url": "https://y", "auth_type": "NONE"})
+    assert exc.value.status == 409
