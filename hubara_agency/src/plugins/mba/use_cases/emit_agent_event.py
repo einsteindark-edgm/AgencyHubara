@@ -13,7 +13,8 @@ novedad a MBA por ``agent_event`` y MBA se la cuenta al cliente.
 2. Dedupe por (``type``, ``order_id``) contra ``agent_events[]``: un evento
    ``accepted`` o ``ambiguous`` (Meta pudo aceptarlo) no se repite
    (``already_emitted``); un ``rejected`` / ``unavailable`` sí deja reintentar.
-   Sin ``order_id`` no hay clave (p.ej. ``episode_closed`` por episodio).
+   ``episode_closed`` deduplica por ``episode_id`` (D1.10); sin ``order_id``
+   ni ``episode_id`` no hay clave.
    El chequeo y la reserva son UNA escritura bajo el flock: antes de llamar
    a Meta se anota ``status="pending"`` (dos emisiones concurrentes — p.ej.
    la activity del ETA vencida y su retry en paralelo — ven la reserva de
@@ -71,13 +72,23 @@ def _events(data: dict[str, Any]) -> list[dict[str, Any]]:
     return [e for e in raw if isinstance(e, dict)] if isinstance(raw, list) else []
 
 
+def _dedupe_key(order_id: str | None, episode_id: str | None) -> tuple[str, str] | None:
+    if order_id:
+        return ("order_id", order_id)
+    if episode_id:
+        return ("episode_id", episode_id)
+    return None
+
+
 def _already_emitted(
-    data: dict[str, Any], event_type: str, order_id: str | None, now_ms: int
+    data: dict[str, Any], event_type: str, order_id: str | None, episode_id: str | None, now_ms: int
 ) -> dict[str, Any] | None:
-    if not order_id:
+    key = _dedupe_key(order_id, episode_id)
+    if key is None:
         return None
+    field, value = key
     for e in reversed(_events(data)):
-        if e.get("type") != event_type or e.get("order_id") != order_id:
+        if e.get("type") != event_type or e.get(field) != value:
             continue
         status = e.get("status")
         if status in _DELIVERED_STATUSES:
@@ -114,6 +125,7 @@ class EmitAgentEvent:
         event_type: str,
         *,
         order_id: str | None = None,
+        episode_id: str | None = None,
         message: str = "",
         payload: dict[str, Any] | None = None,
         source: str | None = None,
@@ -140,14 +152,18 @@ class EmitAgentEvent:
             logger.warning("[mba.agent_event] {} sin phone_number_id (sesión ni WHATSAPP_PHONE_NUMBER_ID)", session_key)
             return AgentEventOutcome(session_key, False, "entity_id_missing")
         now_ms = self._now_ms()
-        reserved, previous = self._reserve(session_key, event_type, order_id, now_ms, source=source)
+        reserved, previous = self._reserve(session_key, event_type, order_id, episode_id, now_ms, source=source)
         if previous is not None:
             return AgentEventOutcome(session_key, False, "already_emitted",
                                      agent_event_id=previous.get("agent_event_id"), at_ms=previous.get("at_ms"))
         if not reserved:
             # Sin reserva no se emite: sin auditoría ni dedupe un retry duplicaría el aviso.
             return AgentEventOutcome(session_key, False, "vault_unavailable", at_ms=now_ms, recorded=False)
-        full_payload = {**(payload or {}), **({"order_id": order_id} if order_id else {})} or None
+        full_payload = {
+            **(payload or {}),
+            **({"order_id": order_id} if order_id else {}),
+            **({"episode_id": episode_id} if episode_id else {}),
+        } or None
         try:
             result = await self._port.emit(
                 entity_id=str(entity_id), to=f"+{customer}", event_type=event_type,
@@ -156,29 +172,31 @@ class EmitAgentEvent:
         except AgentEventError as exc:
             error = f"{exc.status} {exc.detail}".strip() if exc.status else exc.detail
             logger.warning("[mba.agent_event] {} {} falló: {} {}", session_key, event_type, exc.kind, error)
-            recorded = self._finalize(session_key, event_type, order_id, now_ms, status=exc.kind, agent_event_id=None,
-                                      error=error)
+            recorded = self._finalize(session_key, event_type, order_id, episode_id, now_ms, status=exc.kind,
+                                      agent_event_id=None, error=error)
             return AgentEventOutcome(session_key, False, exc.kind, at_ms=now_ms, error=error, recorded=recorded)
-        recorded = self._finalize(session_key, event_type, order_id, now_ms, status=result.status,
+        recorded = self._finalize(session_key, event_type, order_id, episode_id, now_ms, status=result.status,
                                   agent_event_id=result.agent_event_id, error=None)
         logger.info("[mba.agent_event] {} {} → {} id={} (registrado={})", session_key, event_type, result.status,
                     result.agent_event_id, recorded)
         return AgentEventOutcome(session_key, True, result.status, agent_event_id=result.agent_event_id, at_ms=now_ms,
                                  recorded=recorded)
 
-    def _reserve(self, session_key: str, event_type: str, order_id: str | None, now_ms: int, *,
-                 source: str | None) -> tuple[bool, dict[str, Any] | None]:
+    def _reserve(self, session_key: str, event_type: str, order_id: str | None, episode_id: str | None,
+                 now_ms: int, *, source: str | None) -> tuple[bool, dict[str, Any] | None]:
         """Chequeo + reserva en UNA escritura bajo el flock. Devuelve
         ``(reservado, evento_previo)``: previo ≠ None → ``already_emitted``;
         ``(False, None)`` → el vault no pudo escribir (no se emite)."""
         found: dict[str, dict[str, Any]] = {}
         entry = {"type": event_type, "order_id": order_id, "at_ms": now_ms, "status": "pending",
                  "agent_event_id": None, "error": None, "source": source}
+        if episode_id:
+            entry["episode_id"] = episode_id
 
         def _mutate(data: dict[str, Any]) -> dict[str, Any] | None:
             if not data:
                 return None  # lectura fresca vacía: no pisar la sesión con un dict a medias
-            previous = _already_emitted(data, event_type, order_id, now_ms)
+            previous = _already_emitted(data, event_type, order_id, episode_id, now_ms)
             if previous is not None:
                 found["previous"] = previous
                 return None
@@ -197,8 +215,8 @@ class EmitAgentEvent:
             return False, None
         return True, None
 
-    def _finalize(self, session_key: str, event_type: str, order_id: str | None, reserved_at_ms: int, *,
-                  status: str, agent_event_id: str | None, error: str | None) -> bool:
+    def _finalize(self, session_key: str, event_type: str, order_id: str | None, episode_id: str | None,
+                  reserved_at_ms: int, *, status: str, agent_event_id: str | None, error: str | None) -> bool:
         """Cierra la reserva ``pending`` con el resultado de Meta. Devuelve si
         se pudo escribir (si no, la reserva vence sola a los ``PENDING_TTL_MS``)."""
 
@@ -208,12 +226,14 @@ class EmitAgentEvent:
             events = _events(data)
             for e in reversed(events):
                 if (e.get("type") == event_type and e.get("order_id") == order_id
+                        and e.get("episode_id") == episode_id
                         and e.get("at_ms") == reserved_at_ms and e.get("status") == "pending"):
                     e.update({"status": status, "agent_event_id": agent_event_id, "error": error})
                     break
             else:
                 events.append({"type": event_type, "order_id": order_id, "at_ms": reserved_at_ms, "status": status,
-                               "agent_event_id": agent_event_id, "error": error, "source": None})
+                               "agent_event_id": agent_event_id, "error": error, "source": None,
+                               **({"episode_id": episode_id} if episode_id else {})})
             data["agent_events"] = events[-AGENT_EVENTS_CAP:]
             return data
 

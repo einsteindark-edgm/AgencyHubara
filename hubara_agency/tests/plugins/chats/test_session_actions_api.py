@@ -551,3 +551,28 @@ def test_operator_tag_keeps_the_human_route_untouched(h: _Harness) -> None:
     assert r.status_code == 200 and r.json()["active_route"] == ROUTE_HUMANO
     m = h.meta()
     assert m["active_route"] == ROUTE_HUMANO and m["tag"] == "INTERESADO"
+
+
+# ── D1.10: cada connector tool resuelve el episodio ACTIVO ───────────────────
+
+
+def test_after_a_close_the_draft_starts_empty_in_the_new_episode_and_the_old_one_keeps_its_own(h: _Harness) -> None:
+    """Dos episodios, dos drafts: tras un cierre (RECHAZO), `set_order_slot`
+    escribe en un draft vacío del episodio nuevo; el draft del episodio
+    cerrado queda intacto. MBA no puede actuar sobre datos del episodio
+    anterior aunque los recuerde."""
+    assert h.client.post(_url("draft"), json={"producto": "luz-serena", "cantidad": 2}).status_code == 200
+    r = h.client.post(_url("tag"), json={"tag": "RECHAZO", "motivo": "no le interesó"})
+    assert r.status_code == 200 and r.json()["episode_closed"]["closing_tag"] == "RECHAZO"
+    closed_id = r.json()["episode_closed"]["episode_id"]
+
+    r = h.client.post(_url("draft"), json={"ciudad": "Cali"})
+    assert r.status_code == 200, r.text
+    meta = h.meta()
+    episodes = meta["episodes"]
+    assert episodes[-2]["episode_id"] == closed_id and episodes[-2]["closed_at_ms"] is not None
+    assert episodes[-1]["episode_id"] != closed_id and episodes[-1]["closed_at_ms"] is None
+    assert r.json()["order_draft"] == {"ciudad": "Cali"}  # draft NUEVO: sin producto/cantidad del episodio cerrado
+    assert episodes[-1]["order_draft"]["slots"] == {"ciudad": "Cali"}
+    assert episodes[-2]["order_draft"]["slots"] == {"producto": "luz-serena", "cantidad": "2"}  # intacto
+    assert meta["tag"] == "NO_ETIQUETADO"

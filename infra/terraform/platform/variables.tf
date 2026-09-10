@@ -87,6 +87,10 @@ variable "secret_keys" {
     # setean out-of-band con `aws ssm put-parameter --overwrite`.
     "MBA_STANDBY_ENABLED",
     "MBA_CUSTOMER_ALLOWLIST",
+    # D1.10: "1" manda a Business Agent la nota de frontera `episode_closed`
+    # (agent_event) cuando una connector tool cierra el episodio. APAGADO hasta
+    # verificar en F0 que el evento es silencioso para el cliente.
+    "MBA_EPISODE_BOUNDARY_EVENT",
     # App id de NUESTRA app de Meta suscrita al WABA (el APP_ID del CLI de
     # provisioning de WhatsApp). D1.5: decide si un `messaging_handovers` nos
     # da el hilo a nosotros o a Business Agent. Placeholder/vacío = no se

@@ -207,6 +207,9 @@ async def register_order(
         "portavelas_included": bool(res.get("portavelas_included")),
         "payment_instructions_sent": bool(res.get("payment_instructions_sent")),
     }
+    if res.get("episode_closed"):
+        # D1.10: para el hook de frontera de run_tool (lo saca antes de responder a Meta).
+        out["_episode_closed"] = res["episode_closed"]
     if method == "cash_on_delivery":
         out["shipping_note"] = _SHIPPING_NOTE_COD
     else:
