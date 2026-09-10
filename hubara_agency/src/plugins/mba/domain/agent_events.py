@@ -13,6 +13,7 @@ __all__ = [
     "DESCRIPTION_MAX",
     "agent_event_type_for_stage",
     "build_description",
+    "episode_closed_message",
 ]
 
 AGENT_EVENT_TYPES: tuple[str, ...] = (
@@ -40,6 +41,23 @@ _INSTRUCTION = (
     " — Transmítele esta novedad al cliente con tus palabras, en un solo mensaje breve. "
     "No inventes datos que no estén acá ni le pidas nada más."
 )
+#: D1.10 — nota de FRONTERA entre episodios: MBA no tiene API para resetear
+#: el contexto del hilo; este evento le dice que lo anterior quedó cerrado.
+#: Silencioso para el cliente (verificar en F0 que un agent_event puede serlo).
+_BOUNDARY_INSTRUCTION = (
+    " — No le escribas al cliente por esto ni lo menciones. Si vuelve a escribir, salúdalo como una "
+    "conversación nueva: no retomes el pedido anterior ni reutilices sus datos de envío; empieza el "
+    "guion desde el principio."
+)
+_INSTRUCTION_BY_TYPE = {"episode_closed": _BOUNDARY_INSTRUCTION}
+
+_CLOSING_LABELS = {
+    "COMPRA_EXITOSA": "compra completada",
+    "CONFIRMADO_PAGO_PENDIENTE": "pedido registrado, pago pendiente de verificación por el equipo",
+    "CONFIRMADO_SIN_DATOS": "pasó a un colega para completar el pedido",
+    "RECHAZO": "el cliente no compró",
+    "TIMEOUT": "cerrada por inactividad",
+}
 
 
 def agent_event_type_for_stage(stage: str, *, payment_confirmed: bool) -> str | None:
@@ -53,6 +71,15 @@ def agent_event_type_for_stage(stage: str, *, payment_confirmed: bool) -> str | 
 
 def build_description(event_type: str, message: str) -> str:
     """Instrucción para MBA: la novedad tal cual Hubara la habría dicho + la
-    consigna de transmitirla sin inventar. Acotada a ``DESCRIPTION_MAX``."""
-    budget = DESCRIPTION_MAX - len(_INSTRUCTION)
-    return f"{message.strip()[:budget]}{_INSTRUCTION}"
+    consigna del tipo (transmitirla sin inventar; para ``episode_closed``,
+    callar y empezar de cero). Acotada a ``DESCRIPTION_MAX``."""
+    instruction = _INSTRUCTION_BY_TYPE.get(event_type, _INSTRUCTION)
+    budget = DESCRIPTION_MAX - len(instruction)
+    return f"{message.strip()[:budget]}{instruction}"
+
+
+def episode_closed_message(closing_tag: str, *, order_reference: str | None = None) -> str:
+    """Texto de la nota de frontera: qué pasó con la conversación anterior."""
+    label = _CLOSING_LABELS.get(str(closing_tag or "").upper(), str(closing_tag or "cerrada").lower())
+    ref = f", pedido {order_reference}" if order_reference else ""
+    return f"La conversación anterior con este cliente quedó cerrada ({label}{ref}). Si vuelve a escribir, es una conversación nueva."

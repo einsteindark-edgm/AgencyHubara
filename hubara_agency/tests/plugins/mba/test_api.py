@@ -340,10 +340,11 @@ class _AgentEventStub:
     def __init__(self, reason: str, emitted: bool = False) -> None:
         self.reason, self.emitted, self.calls = reason, emitted, []
 
-    async def execute(self, session_key, event_type, *, order_id=None, message="", payload=None, source=None):
+    async def execute(self, session_key, event_type, *, order_id=None, episode_id=None, message="", payload=None,
+                      source=None):
         from src.plugins.mba.use_cases.emit_agent_event import AgentEventOutcome
 
-        self.calls.append((session_key, event_type, order_id, message, payload, source))
+        self.calls.append((session_key, event_type, order_id, message, payload, source, episode_id))
         return AgentEventOutcome(session_key=session_key, emitted=self.emitted, reason=self.reason,
                                  agent_event_id="AE_1" if self.emitted else None, at_ms=1)
 
@@ -367,7 +368,10 @@ def test_agent_event_endpoint_delegates_to_the_use_case() -> None:
     assert r.json() == {"session_key": "wa_573001234567", "emitted": True, "reason": "accepted",
                         "agent_event_id": "AE_1", "at_ms": 1, "error": None, "recorded": True}
     assert stub.calls == [("wa_573001234567", "order_shipped", "order_1", "Tu pedido va en camino.",
-                           {"stage": "shipping"}, "eta")]
+                           {"stage": "shipping"}, "eta", None)]
+    r = c.post("/api/mba/sessions/wa_573001234567/agent-events",
+               json={"type": "episode_closed", "episode_id": "ep_002", "message": "cerrado"})
+    assert r.status_code == 200 and stub.calls[-1][1] == "episode_closed" and stub.calls[-1][6] == "ep_002"
 
 
 @pytest.mark.parametrize("reason,status", [

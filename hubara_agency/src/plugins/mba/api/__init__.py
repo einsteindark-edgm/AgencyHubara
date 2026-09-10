@@ -137,6 +137,7 @@ PAYLOAD_MAX_BYTES = 8 * 1024
 class AgentEventBody(BaseModel):
     type: str
     order_id: str | None = Field(default=None, max_length=200)
+    episode_id: str | None = Field(default=None, max_length=64)
     message: str = Field(min_length=1, max_length=DESCRIPTION_MAX)
     payload: dict[str, Any] | None = None
     source: str | None = Field(default=None, max_length=64)
@@ -181,7 +182,8 @@ async def emit_session_agent_event(
     if not _SESSION_KEY_RE.fullmatch(session_key):
         raise HTTPException(status_code=422, detail="session_key debe ser wa_<dígitos>")
     outcome = await use_case.execute(
-        session_key, body.type, order_id=body.order_id, message=body.message, payload=body.payload, source=body.source,
+        session_key, body.type, order_id=body.order_id, episode_id=body.episode_id, message=body.message,
+        payload=body.payload, source=body.source,
     )
     status = _RELEASE_GUARD_STATUS.get(outcome.reason)
     if status is not None:
