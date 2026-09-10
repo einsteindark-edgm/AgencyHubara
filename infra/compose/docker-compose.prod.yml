@@ -122,6 +122,10 @@ services:
   worker-eta-eta:
     <<: *app
     command: ["python", "-m", "src.plugins.eta.workers.eta"]
+    environment:
+      # D1.9: con Meta Business Agent al frente el ETA delega la notificación
+      # al plugin mba por HTTP (agent_event) — el service del API se llama `api`.
+      HUBARA_API_BASE_URL: http://api:8000
     volumes:
       - /mnt/hubara-vault:/app/hubara_vault
 

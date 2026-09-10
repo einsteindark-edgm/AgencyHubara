@@ -80,6 +80,9 @@ agent:
           TEMPORAL_URL: temporal:7233
           API_BASE_LLMLITE: http://litellm:4000
           WORKSPACE_VAULT_DIR: /app/hubara_vault
+          # D1.9: con Meta Business Agent al frente el ETA delega la
+          # notificación al plugin mba por HTTP (agent_event, castkit service).
+          HUBARA_API_BASE_URL: http://hubara-api:8000
           OTEL_EXPORTER_OTLP_ENDPOINT: http://host.docker.internal:4317
           OTEL_SEMCONV_STABILITY_OPT_IN: gen_ai_latest_experimental
           OPENLIT_PRICING_JSON: /app/hubara_agency/deploy/openlit/pricing.json

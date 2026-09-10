@@ -245,9 +245,13 @@ class HubaraEtaSessionWorkflow:
           ``order_status_utility_v2`` con los slots. Sin esto, Meta rechaza la
           notificación con error 131047 (mensaje fuera de ventana).
         """
+        # D1.9: el 4º arg (guía de envío) solo lo usa la delegación a Meta
+        # Business Agent dentro de la activity. Temporal no compara los args
+        # de una activity en el replay (solo el tipo y la secuencia de
+        # comandos), así que los runs vivos no lo notan.
         facts = await workflow.execute_activity(
             claim_eta_notification_activity,
-            args=[session_id, order_id, stage],
+            args=[session_id, order_id, stage, tracking_url],
             **_ORDER,
         )
         if facts is None:

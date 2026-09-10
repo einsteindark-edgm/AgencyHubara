@@ -164,9 +164,17 @@ async def forward(
             ),
         ) from exc
     except httpx.HTTPError as exc:
+        # Error de transporte DESPUÉS de conectar (ReadError, WriteError,
+        # RemoteProtocolError…): el request pudo haber salido entero y el
+        # provider haberlo aplicado → resultado DESCONOCIDO (L-1), como el
+        # timeout. Solo el connect-error de arriba garantiza "no se aplicó".
         raise HTTPException(
-            status_code=502,
-            detail=f"cast {cast_label}: error de transporte ({exc.__class__.__name__}).",
+            status_code=504,
+            detail=(
+                f"cast {cast_label}: error de transporte tras conectar "
+                f"({exc.__class__.__name__}). La operación PUEDE haberse aplicado — "
+                f"refrescá el estado antes de reintentar."
+            ),
         ) from exc
     if resp.status_code >= 400:
         # Passthrough del status del provider con el detail DESANIDADO.
@@ -174,14 +182,23 @@ async def forward(
     try:
         data = resp.json()
     except (ValueError, httpx.DecodingError) as exc:
-        # 200 con body no-JSON (un proxy intermedio, u otro servicio detrás de
-        # *_API_BASE) — no crashees con 500; 502 honesto.
+        # 2xx con body no-JSON (un proxy intermedio, u otro servicio detrás de
+        # *_API_BASE): el provider RESPONDIÓ, así que la operación pudo
+        # aplicarse aunque no podamos leer el resultado → 504 (desconocido),
+        # no 502 ("no se aplicó") ni 500.
         raise HTTPException(
-            status_code=502,
-            detail=f"cast {cast_label}: respuesta no-JSON del provider ({resp.status_code}).",
+            status_code=504,
+            detail=(
+                f"cast {cast_label}: respuesta no-JSON del provider ({resp.status_code}). "
+                f"La operación PUEDE haberse aplicado — refrescá el estado antes de reintentar."
+            ),
         ) from exc
     if not isinstance(data, dict):
         raise HTTPException(
-            status_code=502, detail=f"cast {cast_label}: respuesta no-dict del provider"
+            status_code=504,
+            detail=(
+                f"cast {cast_label}: respuesta no-dict del provider. "
+                f"La operación PUEDE haberse aplicado — refrescá el estado antes de reintentar."
+            ),
         )
     return data

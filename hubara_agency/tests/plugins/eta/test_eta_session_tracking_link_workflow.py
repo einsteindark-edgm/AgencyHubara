@@ -41,7 +41,7 @@ def _fakes(tracker: Tracker, *, in_window: bool):
         return None
 
     @activity.defn(name="claim_eta_notification_activity")
-    async def fake_claim(session_id: str, order_id: str, stage: str) -> dict:
+    async def fake_claim(session_id: str, order_id: str, stage: str, tracking_url: str | None = None) -> dict:
         return {
             "customer_name": "Ana",
             "order_display_id": "#9",

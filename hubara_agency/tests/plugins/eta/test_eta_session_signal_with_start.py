@@ -44,7 +44,7 @@ def _fakes(tracker: Tracker):
         tracker.tracking_started.append(order_id)
 
     @activity.defn(name="claim_eta_notification_activity")
-    async def fake_claim(session_id: str, order_id: str, stage: str) -> dict | None:
+    async def fake_claim(session_id: str, order_id: str, stage: str, tracking_url: str | None = None) -> dict | None:
         tracker.claims.append((order_id, stage))
         if (order_id, stage) in tracker.notified:
             return None  # dedup real: stage ya en notified_stages del pedido

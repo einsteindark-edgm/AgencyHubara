@@ -41,14 +41,21 @@ para pintar la sección ETA del frontend.
 """
 from __future__ import annotations
 
+import asyncio
 import time
-from typing import Any
+from typing import Any, Callable
 
 from temporalio import activity
 
 from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.state import FilesystemMetadataStore
 from src.platform.whatsapp.window import is_in_service_window
+from src.plugins.eta.agent.eta.activities.mba_notify import (
+    event_type_for_stage,
+    notify_via_mba,
+)
+from src.plugins.eta.agent.eta.prompts import render_stage_notification
+from src.sdk.runtime import mba_controls_thread
 
 
 def _store() -> FilesystemMetadataStore:
@@ -124,14 +131,29 @@ def _orders_map(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {}
 
 
-def _write_orders_map(
+def _mutate_orders(
     store: FilesystemMetadataStore,
     session_id: str,
-    data: dict[str, Any],
-    orders: dict[str, dict[str, Any]],
-) -> None:
-    data["eta_tracking"] = {"orders": orders}
-    store.write(session_id, data)
+    fn: Callable[[dict[str, dict[str, Any]]], None],
+) -> dict[str, dict[str, Any]]:
+    """Read-modify-write del mapa de pedidos bajo el flock del store, tocando
+    SOLO ``metadata["eta_tracking"]``. ``metadata.json`` lo escriben en
+    paralelo el ingest, el handover, las connector tools y (D1.9) el plugin
+    mba durante el hop del claim: un ``write`` plano con una lectura vieja
+    pisaría p.ej. ``agent_events`` o ``last_inbound_at_ms`` (misma clase que
+    el fix del watchdog, #255). Devuelve el mapa escrito."""
+    written: dict[str, dict[str, Any]] = {}
+
+    def _mutate(data: dict[str, Any]) -> dict[str, Any]:
+        data = data if isinstance(data, dict) else {}
+        orders = _orders_map(data)
+        fn(orders)
+        data["eta_tracking"] = {"orders": orders}
+        written.update(orders)
+        return data
+
+    store.update(session_id, _mutate)
+    return written
 
 
 
@@ -159,12 +181,11 @@ async def start_eta_tracking_activity(session_id: str, order_id: str) -> None:
     intercalan en el hilo sin robarlo. (El diseño anterior seteaba
     ``active_route=eta`` + ``tag=ETA`` acá, pisando incluso ``humano``.)
     """
-    store = _store()
-    data = _safe_read(store, session_id)
-    orders = _orders_map(data)
-    if order_id not in orders:
-        orders[order_id] = _empty_entry(order_id)
-    _write_orders_map(store, session_id, data, orders)
+    def _ensure(orders: dict[str, dict[str, Any]]) -> None:
+        if order_id not in orders:
+            orders[order_id] = _empty_entry(order_id)
+
+    orders = _mutate_orders(_store(), session_id, _ensure)
     activity.logger.info(
         "start_eta_tracking_activity: session=%s order=%s (tracked=%d)",
         session_id, order_id, len(orders),
@@ -173,6 +194,124 @@ async def start_eta_tracking_activity(session_id: str, order_id: str) -> None:
 
 @activity.defn(name="claim_eta_notification_activity")
 async def claim_eta_notification_activity(
+    session_id: str, order_id: str, stage: str, tracking_url: str | None = None
+) -> dict[str, Any] | None:
+    """Decide si corresponde notificar este cambio de estado y, si sí, devuelve
+    los datos vivos del pedido para rellenar el mensaje (``_claim_facts``).
+
+    D1.9: si Meta Business Agent controla el hilo (``mba_controls_thread``:
+    flag + lista cerrada + dueño/standby), un envío de Hubara tomaría el hilo
+    → la novedad se le cuenta a MBA por ``agent_event`` (``_delegate_to_mba``)
+    y se devuelve ``None`` (el workflow no envía nada). Con la flag apagada el
+    predicado es siempre falso y el claim es el de siempre.
+
+    ``tracking_url`` (solo ``shipping``, opcional): el workflow lo pasa para
+    que el evento a MBA lleve la guía; el claim de Hubara no lo usa.
+    """
+    facts = await _claim_facts(session_id, order_id, stage)
+    if facts is None:
+        return None
+    store = _store()
+    data = _safe_read(store, session_id)
+    if mba_controls_thread(data, session_id) and await _delegate_to_mba(
+        store, session_id, order_id, stage, facts, tracking_url
+    ):
+        return None
+    return facts
+
+
+#: Presupuesto del fetch de Medusa dentro del claim (el port tiene 30 s de
+#: timeout HTTP, igual que el start_to_close de la activity): con MBA al
+#: frente el claim además hace el hop a mba (15 s) → 10 + 15 < 30 s. Si
+#: Medusa tarda más, cae al path de "datos mínimos" ya existente.
+_ORDER_FETCH_TIMEOUT_S = 10.0
+#: Outcomes del plugin mba tras los cuales Hubara NO debe enviar: MBA tiene
+#: (o puede tener) el evento. Cualquier otro (``hubara_controls``, ``rejected``,
+#: ``unavailable``, ``not_configured``, ``entity_id_missing``) → Hubara
+#: notifica como siempre para que el cliente no se quede sin aviso.
+_MBA_HANDLED_REASONS = ("accepted", "already_emitted", "ambiguous")
+#: Status del cast tras los cuales el evento PUDO llegar a Meta (el API no
+#: respondió a tiempo / falló a mitad): ni enviar ni callar → la activity
+#: falla y Temporal reintenta; el dedupe de mba hace el reintento seguro.
+_MBA_UNKNOWN_STATUSES = frozenset({500, 504})
+
+
+async def _delegate_to_mba(
+    store: FilesystemMetadataStore,
+    session_id: str,
+    order_id: str,
+    stage: str,
+    facts: dict[str, Any],
+    tracking_url: str | None = None,
+) -> bool:
+    """Le cuenta la novedad a MBA con el texto EXACTO que Hubara habría
+    enviado. Devuelve ``True`` si MBA se encarga (stage reservado como
+    notificado en el timeline); ``False`` → el workflow notifica como siempre."""
+    event_type = event_type_for_stage(stage, payment_confirmed=bool(facts.get("payment_confirmed")))
+    message = render_stage_notification(
+        stage=stage,
+        customer_name=facts.get("customer_name", ""),
+        order_display_id=facts.get("order_display_id", ""),
+        total_label=facts.get("total_label", ""),
+        pay_type=facts.get("pay_type", "confirmed"),
+        payment_confirmed=bool(facts.get("payment_confirmed", False)),
+        delivery_window=facts.get("delivery_window"),
+        items_label=facts.get("items_label", ""),
+        tracking_url=tracking_url,
+    )
+    if event_type is None or not message:
+        return False
+    payload = {
+        "order_id": order_id,
+        "stage": stage,
+        "order_display_id": facts.get("order_display_id", ""),
+        "total_label": facts.get("total_label", ""),
+        "pay_type": facts.get("pay_type", "confirmed"),
+        "payment_confirmed": bool(facts.get("payment_confirmed", False)),
+        "items_label": facts.get("items_label", ""),
+        "tracking_url": (tracking_url or "").strip() or None,
+    }
+    try:
+        outcome = await notify_via_mba(
+            session_id, event_type=event_type, order_id=order_id, message=message, payload=payload
+        )
+    except Exception as exc:  # noqa: BLE001 — HTTPException de castkit (status honesto)
+        status = getattr(exc, "status_code", None)
+        if status in _MBA_UNKNOWN_STATUSES:
+            activity.logger.warning(
+                "claim_eta_notification: agent_event %s para %s con resultado DESCONOCIDO "
+                "(%s) — reintento de la activity", event_type, session_id, status,
+            )
+            raise
+        activity.logger.warning(
+            "claim_eta_notification: mba no tomó el agent_event %s para %s (%s) — Hubara notifica",
+            event_type, session_id, status or repr(exc),
+        )
+        return False
+    reason = str(outcome.get("reason") or "")
+    if reason not in _MBA_HANDLED_REASONS:
+        activity.logger.warning(
+            "claim_eta_notification: mba no emitió %s para %s (%s) — Hubara notifica",
+            event_type, session_id, reason,
+        )
+        return False
+    event_id = outcome.get("agent_event_id")
+    # ``ambiguous``: Meta no respondió al plugin mba; el evento PUEDE no haber
+    # llegado y el cliente quedarse sin aviso → queda marcado en el timeline
+    # para que el dashboard lo muestre (no se reenvía: duplicaría y tomaría el hilo).
+    _record_notification(
+        store, session_id, order_id, stage,
+        f"[agent_event {event_type} → Meta Business Agent: {reason}{f' {event_id}' if event_id else ''}]",
+        flagged=reason == "ambiguous",
+        flag="mba_ambiguous" if reason == "ambiguous" else None,
+    )
+    activity.logger.info(
+        "claim_eta_notification: %s para %s delegado a Meta Business Agent (%s)", event_type, session_id, reason,
+    )
+    return True
+
+
+async def _claim_facts(
     session_id: str, order_id: str, stage: str
 ) -> dict[str, Any] | None:
     """Decide si corresponde notificar este cambio de estado y, si sí, devuelve
@@ -202,9 +341,10 @@ async def claim_eta_notification_activity(
     if entry is None:
         # Pedido sin tracking previo (stage inicial distinto de `preparing`,
         # p.ej. movido directo a `ready`): lo damos de alta acá.
-        entry = _empty_entry(order_id)
-        orders[order_id] = entry
-        _write_orders_map(store, session_id, data, orders)
+        def _ensure(fresh: dict[str, dict[str, Any]]) -> None:
+            fresh.setdefault(order_id, _empty_entry(order_id))
+
+        entry = _mutate_orders(store, session_id, _ensure)[order_id]
 
     if stage in (entry.get("notified_stages") or []):
         activity.logger.info(
@@ -228,8 +368,8 @@ async def claim_eta_notification_activity(
     try:
         from src.platform.orders.composition import get_order_query_port
 
-        detail = await get_order_query_port().get(order_id)
-    except Exception:  # noqa: BLE001 — Medusa caído / sin configurar
+        detail = await asyncio.wait_for(get_order_query_port().get(order_id), _ORDER_FETCH_TIMEOUT_S)
+    except Exception:  # noqa: BLE001 — Medusa caído / lento / sin configurar
         activity.logger.warning(
             "claim_eta_notification: order query port no disponible para %s — "
             "notifico con datos mínimos",
@@ -283,31 +423,41 @@ async def record_eta_notification_activity(
     API sirve al frontend) y agrega el stage a ``notified_stages`` (dedup
     durable que sobrevive a continue-as-new / replace).
     """
-    store = _store()
-    data = _safe_read(store, session_id)
-    orders = _orders_map(data)
-    entry = orders.get(order_id) or _empty_entry(order_id)
+    _record_notification(_store(), session_id, order_id, stage, agent_msg)
 
-    notified = list(entry.get("notified_stages") or [])
-    if stage not in notified:
-        notified.append(stage)
-    entry["notified_stages"] = notified
-    entry["current_stage"] = stage
 
-    events = list(entry.get("events") or [])
-    events.append(
-        {
-            "stage": stage,
-            "agent_msg": agent_msg,
-            "at_ms": int(time.time() * 1000),
-            "reply": None,
-            "flagged": False,
-            "flag": None,
-        }
-    )
-    entry["events"] = events
-    orders[order_id] = entry
-    _write_orders_map(store, session_id, data, orders)
+def _record_notification(
+    store: FilesystemMetadataStore,
+    session_id: str,
+    order_id: str,
+    stage: str,
+    agent_msg: str,
+    *,
+    flagged: bool = False,
+    flag: str | None = None,
+) -> None:
+    def _apply(orders: dict[str, dict[str, Any]]) -> None:
+        entry = orders.get(order_id) or _empty_entry(order_id)
+        notified = list(entry.get("notified_stages") or [])
+        if stage not in notified:
+            notified.append(stage)
+        entry["notified_stages"] = notified
+        entry["current_stage"] = stage
+        events = list(entry.get("events") or [])
+        events.append(
+            {
+                "stage": stage,
+                "agent_msg": agent_msg,
+                "at_ms": int(time.time() * 1000),
+                "reply": None,
+                "flagged": flagged,
+                "flag": flag,
+            }
+        )
+        entry["events"] = events
+        orders[order_id] = entry
+
+    _mutate_orders(store, session_id, _apply)
 
 
 _TERMINAL_STAGES = {"delivered", "cancelled"}

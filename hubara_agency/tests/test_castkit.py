@@ -14,7 +14,8 @@ Comportamiento exigido al helper centralizado:
 * **Tolera** la ausencia de token (dev/tests con auth no-op): no manda header.
 * **Desanida** el ``detail`` del upstream (no re-envuelve el JSON crudo).
 * **Semántica honesta de fallos (L-1, generalizada a TODO cast)**: connect →
-  502 "NO se aplicó"; timeout → 504 "PUEDE haberse aplicado"; HTTP del
+  502 "NO se aplicó"; timeout / transporte tras conectar / 2xx ilegible → 504
+  "PUEDE haberse aplicado"; HTTP del
   provider (4xx/5xx) → passthrough del status con el detail desanidado.
 """
 from __future__ import annotations
@@ -210,15 +211,33 @@ async def test_forward_sends_method_path_and_params(
 # --- premortem: robustez ante body no-JSON y token por query (SSE) -----------
 
 
-async def test_forward_success_non_json_is_502(
+async def test_forward_success_non_json_is_504_outcome_unknown(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """200 con body no-JSON (proxy intermedio / otro servicio) → 502 claro, no 500."""
+    """2xx con body no-JSON (proxy intermedio / otro servicio): el provider
+    RESPONDIÓ, la operación pudo aplicarse → 504 (desconocido), no 500 ni 502
+    (que un caller lee como "NO se aplicó" y reintenta/duplica — D1.9)."""
     _install(monkeypatch, result=httpx.Response(200, text="<html>OK</html>"))
     with pytest.raises(HTTPException) as exc:
         await _forward(_request())
-    assert exc.value.status_code == 502
-    assert "no-JSON" in str(exc.value.detail)
+    assert exc.value.status_code == 504
+    assert "no-JSON" in str(exc.value.detail) and "PUEDE haberse aplicado" in str(exc.value.detail)
+
+
+@pytest.mark.parametrize(
+    "exc", [httpx.ReadError("reset"), httpx.WriteError("broken pipe"),
+            httpx.RemoteProtocolError("closed")],
+)
+async def test_forward_transport_error_after_connect_is_504_outcome_unknown(
+    monkeypatch: pytest.MonkeyPatch, exc: Exception,
+) -> None:
+    """Error de transporte DESPUÉS de conectar: el request pudo salir entero y
+    aplicarse → 504 (desconocido), no 502 ("NO se aplicó"). L-1 (D1.9)."""
+    _install(monkeypatch, exc=exc)
+    with pytest.raises(HTTPException) as info:
+        await _forward(_request())
+    assert info.value.status_code == 504
+    assert "PUEDE haberse aplicado" in info.value.detail
 
 
 async def test_forward_propagates_token_from_query_param(

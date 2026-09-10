@@ -5,26 +5,33 @@ exacta que se enviaría a Meta por agente, quién controla el hilo de una
 sesión (D1.5: ``control_owner`` que chats persiste desde el webhook
 ``messaging_handovers``; se lee por canal 1, el metadata store del SDK) y
 devolverle el hilo a Meta Business Agent (D1.6: ``ReleaseThread`` con la
-política de release; guardas fail-closed → 503/403/404). Las tools del
+política de release; guardas fail-closed → 503/403/404) y contarle a MBA una
+novedad del pedido por ``agent_event`` (D1.9: ``EmitAgentEvent``, lo invoca
+el ETA por cast con identidad de servicio cuando MBA controla). Las tools del
 connector (públicas, con API key propia) viven en ``connector.py``.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 from dataclasses import asdict
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
+from src.plugins.mba.adapters.agent_event import MetaAgentEvent
 from src.plugins.mba.adapters.thread_control import MetaThreadControl
+from src.plugins.mba.domain.agent_events import AGENT_EVENT_TYPES, DESCRIPTION_MAX
 from src.plugins.mba.domain.release_policy import ReleaseTrigger
 from src.plugins.mba.service import list_agents, load_agent
+from src.plugins.mba.use_cases.emit_agent_event import EmitAgentEvent
 from src.plugins.mba.use_cases.release_thread import ReleaseThread
 from src.sdk.runtime import (
     WORKSPACE_VAULT_DIR,
     FilesystemMetadataStore,
+    mba_controls_thread,
     mba_customer_allowed,
     mba_standby_enabled,
 )
@@ -114,6 +121,67 @@ async def release_session_control(
         order_registered=body.order_registered,
         agent_event_emitted=body.agent_event_emitted,
         metadata=body.metadata,
+    )
+    status = _RELEASE_GUARD_STATUS.get(outcome.reason)
+    if status is not None:
+        raise HTTPException(status_code=status, detail=outcome.reason)
+    return asdict(outcome)
+
+
+# ── D1.9: agent_event hacia Meta Business Agent ─────────────────────────────
+
+
+PAYLOAD_MAX_BYTES = 8 * 1024
+
+
+class AgentEventBody(BaseModel):
+    type: str
+    order_id: str | None = Field(default=None, max_length=200)
+    message: str = Field(min_length=1, max_length=DESCRIPTION_MAX)
+    payload: dict[str, Any] | None = None
+    source: str | None = Field(default=None, max_length=64)
+
+    @field_validator("type")
+    @classmethod
+    def _known_type(cls, value: str) -> str:
+        if value not in AGENT_EVENT_TYPES:
+            raise ValueError(f"type debe ser uno de {', '.join(AGENT_EVENT_TYPES)}")
+        return value
+
+    @field_validator("payload")
+    @classmethod
+    def _bounded_payload(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        # Viaja a Meta como string JSON dentro del evento: acotado (interno, pero sin tope = sin tope).
+        if value is not None and len(json.dumps(value, ensure_ascii=False)) > PAYLOAD_MAX_BYTES:
+            raise ValueError(f"payload supera {PAYLOAD_MAX_BYTES} bytes serializado")
+        return value
+
+
+def get_emit_agent_event() -> EmitAgentEvent:
+    return EmitAgentEvent(
+        metadata_store=FilesystemMetadataStore(WORKSPACE_VAULT_DIR),
+        port=MetaAgentEvent(),
+        is_customer_allowed=mba_customer_allowed,
+        is_enabled=mba_standby_enabled,
+        controls_thread=mba_controls_thread,
+        entity_id_fallback=lambda: os.environ.get("WHATSAPP_PHONE_NUMBER_ID", ""),
+    )
+
+
+@router.post("/sessions/{session_key}/agent-events")
+async def emit_session_agent_event(
+    session_key: str,
+    body: AgentEventBody,
+    use_case: EmitAgentEvent = Depends(get_emit_agent_event),
+) -> dict[str, Any]:
+    """Contarle a Meta Business Agent una novedad del pedido para que se la
+    transmita al cliente (§D1.9). ``emitted=false`` con ``reason`` cuando MBA
+    no controla el hilo, ya se emitió o Meta rechazó; las guardas (flag,
+    lista cerrada, sesión) son 503/403/404."""
+    if not _SESSION_KEY_RE.fullmatch(session_key):
+        raise HTTPException(status_code=422, detail="session_key debe ser wa_<dígitos>")
+    outcome = await use_case.execute(
+        session_key, body.type, order_id=body.order_id, message=body.message, payload=body.payload, source=body.source,
     )
     status = _RELEASE_GUARD_STATUS.get(outcome.reason)
     if status is not None:
