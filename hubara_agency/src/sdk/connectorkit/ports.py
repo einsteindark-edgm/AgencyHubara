@@ -67,6 +67,10 @@ from src.platform.meta.graph import (
     META_GRAPH_BASE_URL as META_GRAPH_BASE_URL,
     graph_url as graph_url,
 )
+from src.platform.meta.ad_names import (
+    fetch_meta_ad_names as fetch_meta_ad_names,
+    meta_marketing_token as meta_marketing_token,
+)
 from src.platform.meta_catalog.port import (
     MetaCatalogPort as MetaCatalogPort,
 )

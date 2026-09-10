@@ -149,3 +149,20 @@ async def test_eligible_when_route_remarketing(vault_dir: Path) -> None:
     env = ActivityEnvironment()
     result = await env.run(check_remarketing_eligibility, "wa_remarketing_active")
     assert result.eligible is True
+
+
+@pytest.mark.asyncio
+async def test_not_eligible_when_tag_rechazo(vault_dir: Path) -> None:
+    """Incidente run dc32f7fe (2026-09-10): RECHAZO es cierre definitivo sin
+    venta — TOOLS.md promete "NO remarketing"; el gate debe cumplirlo."""
+    session_id = "wa_rechazo"
+    _write_metadata(
+        vault_dir,
+        session_id,
+        {"active_route": ROUTE_VENTAS, "tag": "RECHAZO", "motivo": "quería cera"},
+    )
+    result = await ActivityEnvironment().run(check_remarketing_eligibility, session_id)
+    assert isinstance(result, RemarketingEligibility)
+    assert result.eligible is False
+    assert result.current_tag == "RECHAZO"
+    assert "RECHAZO" in result.blocked_reason

@@ -37,3 +37,30 @@ class RemarketingSessionInput:
     session_id: str
     motivo: str
     runtime_workspace_path: str | None = None
+
+
+@dataclass(frozen=True)
+class RemarketingContext:
+    """Lo que el gancho necesita saber de la conversación de Sales (plano, R-JSON).
+
+    Incidente run dc32f7fe (2026-09-10): el agente de remarketing NO ve el
+    historial de Sales (el HistoryStore de exoclaw se aísla por workspace) y
+    el ciclo del Window Strategist le pisaba el `motivo` del tag con un string
+    genérico — inventó "quedó pendiente lo de tu pedido" a un cliente que
+    quería comprar cera. Esta DTO le da el motivo real, si hay pedido a
+    medias, y los últimos mensajes del transcript del vault.
+    """
+
+    tag_motivo: str = ""
+    has_order_draft: bool = False
+    transcript: str = ""
+
+
+@dataclass(frozen=True)
+class RemarketingTriggerInput:
+    """Input de `build_remarketing_trigger_v2_activity` (plano, R-JSON)."""
+
+    motivo: str
+    memory_context: str = ""
+    has_order_draft: bool = False
+    transcript: str = ""

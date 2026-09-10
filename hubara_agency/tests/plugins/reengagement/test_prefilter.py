@@ -212,3 +212,33 @@ async def test_prefiltra_leads_que_controla_meta_business_agent(_isolate_vault_d
     monkeypatch.setattr(config, "MBA_STANDBY_ENABLED", False)
     snapshot = await ActivityEnvironment().run(build_reengagement_snapshot_activity)
     assert sorted(c["session_id"] for c in snapshot["conversations"]) == ["wa_573001234567", "wa_573009876543"]
+
+
+@pytest.mark.asyncio
+async def test_prefiltra_rechazo(_isolate_vault_dir: Path):
+    """Incidente run dc32f7fe (2026-09-10): un RECHAZO con CSW abierta viajaba
+    al Window Strategist y volvía como `csw_free_form`. La central lo
+    suprime (`rejected`) y el prefiltro lo deja VISIBLE, no lo manda."""
+    now_ms = int(time.time() * 1000)
+    on, off = now_ms + ONE_HOUR_MS, now_ms - ONE_HOUR_MS
+    dormant = now_ms - 5 * ONE_HOUR_MS
+    _seed(_isolate_vault_dir, "wa_rechazo", {
+        "tag": "RECHAZO",
+        "motivo": "quería comprar cera, no la vendemos",
+        "service_window_expires_at_ms": on,
+        "ctwa_window_expires_at_ms": on,
+        "last_inbound_at_ms": dormant,
+        "episodes": [{"episode_id": "ep_001", "closed_at_ms": dormant, "closing_tag": "RECHAZO"}],
+    })
+    _seed(_isolate_vault_dir, "wa_open", {
+        "tag": "INTERESADO",
+        "service_window_expires_at_ms": on,
+        "ctwa_window_expires_at_ms": off,
+        "last_inbound_at_ms": dormant,
+    })
+
+    snapshot = await ActivityEnvironment().run(build_reengagement_snapshot_activity)
+
+    ids = sorted(c["session_id"] for c in snapshot["conversations"])
+    assert ids == ["wa_open"], ids
+    assert snapshot["prefiltered"] == {"rejected": 1}, snapshot.get("prefiltered")

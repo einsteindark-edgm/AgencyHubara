@@ -52,6 +52,7 @@ from src.plugins.ads.api.analysis import router as _analysis_router
 from src.plugins.ads.api.meta_oauth import router as _meta_router
 from src.plugins.ads.meta_merge import merge_meta_campaigns
 from src.plugins.ads.meta_names import fetch_meta_ad_names
+from src.sdk.connectorkit import meta_marketing_token
 from src.plugins.ads.segmentation import (
     collect_source_ids,
     group_buckets_by_adset,
@@ -91,16 +92,12 @@ _meta_names_cache: dict[str, tuple[float, dict[str, dict[str, str | None]]]] = {
 
 
 def _meta_names_token() -> str:
-    """Token para Marketing API (`ads_read`). El System User token del
-    tenant ya trae el scope (infra/whatsapp-provisioning/README.md §0).
-    Vacío → enrichment off (best-effort, headlines intactos)."""
-    import os
-
-    return (
-        os.environ.get("META_SYSTEM_USER_TOKEN")
-        or os.environ.get("WHATSAPP_ACCESS_TOKEN")
-        or ""
-    )
+    """Token para Marketing API (`ads_read`) — la MISMA fuente que usa el
+    dashboard de chats para el origen de cada conversación
+    (`src.sdk.connectorkit.meta_marketing_token`: META_SYSTEM_USER_TOKEN o
+    WHATSAPP_ACCESS_TOKEN del contenedor `api`). Wrapper local para que los
+    tests sigan monkeypatcheando este símbolo. Vacío → enrichment off."""
+    return meta_marketing_token()
 
 
 def _cached_meta_names(ad_ids: list[str]) -> dict[str, dict[str, str | None]]:
