@@ -182,6 +182,16 @@ class TurnResult:
     # caller debe recomponer el batch (viejo + pendientes) y relanzar el turno
     # — nada se envió, nada se registró en el historial (record_turn skipped).
     interrupted: bool = False
+    # Saludo de primer contacto (runs dc32f7fe / 3ce50ef3):
+    # True cuando el historial que vio el LLM no tenía NINGÚN mensaje del
+    # agente — primer intercambio de la conversación. El caller (Sales) lo usa
+    # para garantizar la burbuja de apertura cuando el turno salió por tool
+    # (el content junto a tool calls se descarta por default-deny).
+    first_contact: bool = False
+    # Textos client-facing que viajaron en los params de tools outbound
+    # (`intro_text`, `body`, ...): el caller detecta si el saludo ya salió por
+    # el canal legítimo y no lo duplica.
+    outbound_tool_texts: list[str] = field(default_factory=list)
 
 
 def _try_parse_decision_payload(raw: str) -> dict[str, Any] | None:
@@ -550,6 +560,12 @@ async def _run_agent_turn_impl(
     initial_len = len(messages)
     if messages and messages[-1].get("role") == "user":
         initial_len -= 1
+    # Primer contacto = ningún mensaje del agente en el historial visible
+    # (misma condición que el bloque de contexto de turno: "no hay ningún
+    # intercambio previo"). Cómputo puro sobre datos ya en la history →
+    # replay-safe sin gate.
+    first_contact = not any(m.get("role") == "assistant" for m in messages)
+    outbound_tool_texts: list[str] = []
 
     iteration = 0
     final_content: str | None = None
@@ -672,6 +688,14 @@ async def _run_agent_turn_impl(
             messages = [*messages, response.to_assistant_message()]
             for tc in response.tool_calls:
                 tools_used.append(tc.name)
+                # Texto que SÍ llega al cliente vía params de tools outbound
+                # (solo lista en memoria → no agrega commands, replay-safe).
+                if tc.name.startswith(_OUTBOUND_TOOL_PREFIXES) and isinstance(
+                    tc.arguments, dict
+                ):
+                    outbound_tool_texts.extend(
+                        v for v in tc.arguments.values() if isinstance(v, str)
+                    )
                 result = await workflow.execute_activity(
                     execute_tool,
                     ExecuteToolInput(
@@ -940,4 +964,6 @@ async def _run_agent_turn_impl(
         escalation_decision=escalation_decision,
         episode_closed_decision=episode_closed_decision,
         order_registered_decision=order_registered_decision,
+        first_contact=first_contact,
+        outbound_tool_texts=outbound_tool_texts,
     )

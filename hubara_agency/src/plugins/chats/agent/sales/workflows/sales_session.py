@@ -35,6 +35,7 @@ with workflow.unsafe.imports_passed_through():
     from src.platform.whatsapp.activities import send_typing_indicator_activity
     from src.plugins.chats.agent.sales.activities import (
         bootstrap_sales_session_activity,
+        build_first_contact_greeting_activity,
         decide_ghosting_action,
         ensure_closing_escalation_activity,
         ensure_payment_pending_closure_activity,
@@ -45,6 +46,9 @@ with workflow.unsafe.imports_passed_through():
     )
     from src.platform.contracts import EpisodeClosedDecision
     from src.plugins.chats.agent.sales.contracts import SalesSessionInput
+    from src.plugins.chats.agent.sales.first_contact_greeting import (
+        should_send_first_contact_greeting,
+    )
     from src.platform.whatsapp.capi_activity import (
         LEAD_CLOSING_TAGS,
         PURCHASE_CLOSING_TAGS,
@@ -789,6 +793,63 @@ class HubaraSalesSessionWorkflow:
                                 else:
                                     self._force_shutdown = True
                                 safety_net_escalated = True
+
+                    # SALUDO DE PRIMER CONTACTO (runs dc32f7fe /
+                    # 3ce50ef3, CTWA "amor y amistad", 2026-09-10/11):
+                    # el LLM saludó como content JUNTO a `search_products`
+                    # (descartado por el default-deny de abajo) y cerró el
+                    # turno con `present_products` → el cliente recibió el
+                    # menú SIN saludo. Cuando es el primer intercambio de la
+                    # conversación y el turno tocó al cliente por una tool
+                    # outbound sin que ningún texto client-facing salude, el
+                    # workflow garantiza la Burbuja 1 del guion ANTES de
+                    # cualquier texto y del flush del menú. Decisión pura
+                    # (`should_send_first_contact_greeting`); la hora vive en
+                    # la activity (R-DET). No aplica en handoff (un humano ya
+                    # habló con el cliente) ni en turnos sin envío.
+                    #
+                    # workflow.patched(): histories en vuelo pre-deploy no
+                    # tienen estos sends; tras el drain (idle 1min en Sales),
+                    # eliminar el if + `deprecate_patch("first-contact-greeting-v1")`.
+                    if (
+                        result.first_contact
+                        and not msg.is_handoff
+                        and not self._force_shutdown
+                        and not abstained
+                        and not admin_no_send
+                        and workflow.patched("first-contact-greeting-v1")
+                        and should_send_first_contact_greeting(
+                            first_contact=result.first_contact,
+                            tools_used=list(result.tools_used or []),
+                            client_texts=[
+                                *result.pre_tool_messages,
+                                *result.outbound_tool_texts,
+                                result.final_content or "",
+                            ],
+                        )
+                    ):
+                        greeting = await workflow.execute_activity(
+                            build_first_contact_greeting_activity,
+                            start_to_close_timeout=timedelta(seconds=10),
+                            retry_policy=RetryPolicy(maximum_attempts=3),
+                        )
+                        workflow.logger.info(
+                            "first-contact-greeting: el turno salió por tool "
+                            f"sin saludo (tools={result.tools_used}); enviando "
+                            "la burbuja de apertura antes del menú."
+                        )
+                        await workflow.execute_activity(
+                            send_whatsapp_message_activity,
+                            args=[session.session_id, greeting],
+                            start_to_close_timeout=timedelta(seconds=90),
+                            retry_policy=RetryPolicy(maximum_attempts=2),
+                        )
+                        await workflow.execute_activity(
+                            persist_assistant_message_activity,
+                            args=[session.session_id, greeting],
+                            start_to_close_timeout=timedelta(seconds=10),
+                            retry_policy=RetryPolicy(maximum_attempts=2),
+                        )
 
                     # SALUDO DESCARTADO (bug run ddd0d472 / session-wa_573125671604):
                     # cuando el LLM emite texto client-facing JUNTO con una tool

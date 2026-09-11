@@ -20,6 +20,9 @@ from __future__ import annotations
 from temporalio import activity
 
 from src.plugins.chats.agent.sales.context import build_bogota_context_string
+from src.plugins.chats.agent.sales.first_contact_greeting import (
+    build_first_contact_greeting,
+)
 
 
 @activity.defn(name="compute_bogota_context")
@@ -30,3 +33,14 @@ async def compute_bogota_context_activity() -> str:
     workflow. R-JSON safe: retorno `str` plano.
     """
     return build_bogota_context_string()
+
+
+@activity.defn(name="build_first_contact_greeting")
+async def build_first_contact_greeting_activity() -> str:
+    """Burbuja 1 del guion de apertura según la hora actual de Bogotá.
+
+    Sessions run dc32f7fe / run 3ce50ef3: el workflow la manda cuando el
+    primer contacto salió por tool (menú) sin saludo. R-DET: `datetime.now`
+    vive acá. R-JSON: `str` plano.
+    """
+    return build_first_contact_greeting()

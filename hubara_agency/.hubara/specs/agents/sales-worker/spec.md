@@ -347,6 +347,47 @@ renderizados post-LLM como mensajes WhatsApp nativos:
 - THEN se envía un mensaje WA tipo `interactive.button` con 3 botones
 - AND el cliente puede tappear → genera inbound con `button_reply.title`
 
+### Requirement: Saludo garantizado en el primer contacto (2026-09-11)
+
+En el PRIMER intercambio de una conversación (el historial que ve el LLM no
+tiene ningún mensaje del agente), el cliente MUST recibir la Burbuja 1 del
+guion de apertura (saludo según la hora de Bogotá + propuesta de valor) ANTES
+de cualquier menú o componente visual, sin depender de dónde el LLM puso el
+texto. Motivación: runs dc32f7fe y 3ce50ef3 (CTWA "amor y
+amistad") — el LLM saludó como content junto a `search_products` (descartado
+por el default-deny) y cerró el turno con `present_products` → menú sin saludo.
+La decisión es pura (`first_contact_greeting.should_send_first_contact_greeting`)
+y la hora vive en la activity `build_first_contact_greeting` (R-DET). Gated por
+`workflow.patched("first-contact-greeting-v1")`.
+
+#### Scenario: primer contacto que sale por present_products sin saludo
+
+- GIVEN el historial no tiene mensajes del agente (primer contacto)
+- AND el LLM saluda como content junto a `search_products` y termina el turno con `present_products(intro_text="Estas son nuestras piezas para amor y amistad:")`
+- WHEN el workflow procesa el turno
+- THEN envía la burbuja "¡Buenas noches! Bienvenido a *Hubara*, velas artesanales hechas a base de cera de palma, a mano en Colombia." (saludo según hora) ANTES del flush del menú
+- AND la persiste al dashboard como mensaje del agente
+- AND la envía UNA sola vez (el turno de ghosting no re-saluda)
+
+#### Scenario: cliente con conversación previa no recibe re-saludo
+
+- GIVEN el historial ya tiene mensajes del agente
+- WHEN un turno termina con `present_products`
+- THEN NO se inyecta ninguna burbuja de saludo (regla del guion: retomar el hilo)
+
+#### Scenario: el saludo ya viajó en el canal legítimo
+
+- GIVEN primer contacto
+- AND el `intro_text` de la tool (o una burbuja de texto del turno) ya contiene "Buenas noches" / "Bienvenido" / "Hola"
+- WHEN el workflow procesa el turno
+- THEN NO duplica el saludo
+
+#### Scenario: turno de texto solo
+
+- GIVEN primer contacto
+- WHEN el LLM responde solo texto (sin tools outbound), ej. "¡Buenas tardes! Bienvenido a *Hubara*... ¿Buscas algo para ti o es para regalo?"
+- THEN el texto sale como siempre y no se inyecta nada (caso run a15bb71c)
+
 ### Requirement: Escalación a humano
 
 El sales-worker MUST tener `escalate_to_human` tool que cierra la

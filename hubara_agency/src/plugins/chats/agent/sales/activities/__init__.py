@@ -26,6 +26,7 @@ from src.plugins.chats.agent.sales.activities.flush_ui_intents import (
     flush_pending_ui_intents_activity,
 )
 from src.plugins.chats.agent.sales.activities.inject_context import (
+    build_first_contact_greeting_activity,
     compute_bogota_context_activity,
 )
 from src.plugins.chats.agent.sales.activities.transcribe_audio import (
@@ -34,6 +35,7 @@ from src.plugins.chats.agent.sales.activities.transcribe_audio import (
 
 __all__ = [
     "bootstrap_sales_session_activity",
+    "build_first_contact_greeting_activity",
     "compute_bogota_context_activity",
     "decide_ghosting_action",
     "ensure_closing_escalation_activity",
