@@ -8,8 +8,12 @@ role: Ventas premium de velas artesanales por WhatsApp
 channel: whatsapp
 icon: bot
 color: violet
-# phone_number_id de Meta (entity_id). Se define al onboardear el número (F0).
-entity_id: null
+# phone_number_id de Meta (entity_id) = el número de Sales del tenant, que ya vive en
+# SSM (WHATSAPP_PHONE_NUMBER_ID). Se onboardea UNA vez con
+# `infra/whatsapp-provisioning/whatsapp_provision.py mba-onboard` (D3.1). Los marcadores `${...}`
+# de este archivo se resuelven desde el entorno; sin valor quedan como `<...>` y el
+# sync se bloquea (fail-closed). Nunca un id, teléfono o URL a mano acá.
+entity_id: "${WHATSAPP_PHONE_NUMBER_ID}"
 
 # Orden de envío de las skills (POST /{entity_id}/agent_config/skills, una por request).
 skills:
@@ -132,7 +136,7 @@ connector:
     API de Hubara para el asesor de ventas: catálogo y precios en vivo, memoria del pedido del cliente que escribe,
     verificación y registro de pedidos, estado de pedidos, etiquetas de cierre y paso a un colega humano.
     Todas las herramientas actúan sobre el cliente que está escribiendo (su teléfono lo inyecta Meta).
-  base_url: https://<host-publico>/api/mba
+  base_url: ${HUBARA_PUBLIC_API_URL}/api/mba
   auth_type: API_KEY
   auth_header: X-API-Key
   requires_certificate: false
@@ -322,7 +326,7 @@ ui_skills:
     kind: static
     instruction: >-
       Cuando el cliente tiene producto, variantes y cantidad definidos, envía una sola vez por conversación el formulario de
-      datos de envío (Flow id <FLOW_ID>, pantalla inicial SHIPPING) con el cuerpo "Para coordinar tu envío necesito unos
+      datos de envío (Flow id ${META_FLOW_ID_SHIPPING}, pantalla inicial SHIPPING) con el cuerpo "Para coordinar tu envío necesito unos
       datos 🤍" y el botón "Completar datos". Campos del formulario: ciudad, barrio, dirección, teléfono, nombre de quien
       recibe, cédula (opcional) y método de pago. Al recibir la respuesta, registra cada campo con set_order_slot.
   - title: present-order-confirmation
@@ -343,19 +347,20 @@ ui_skills:
     kind: static
     instruction: >-
       Solo cuando el cliente pida explícitamente el número del asesor o del equipo, envía el botón "Escribir al equipo"
-      con el enlace https://wa.me/<TELEFONO_ASESOR>. Nunca como atajo para dejar de atenderlo.
+      con el enlace https://wa.me/${MBA_ADVISOR_PHONE}. Nunca como atajo para dejar de atenderlo.
   - title: send-cta-url
     component_type: cta_url
     status: enabled
     kind: static
     instruction: >-
-      Solo cuando el cliente pida un enlace que no es un producto: Instagram (https://instagram.com/<INSTAGRAM_HUBARA>) con
-      el botón "Ver Instagram", o la página principal (https://<WEB_HUBARA>) con el botón "Ir a la página". Nunca envíes
+      Solo cuando el cliente pida un enlace que no es un producto: Instagram (https://instagram.com/hubara.com.co) con
+      el botón "Ver Instagram", o la página principal (https://hubara.com.co/) con el botón "Ir a la página". Nunca envíes
       enlaces a productos, carrito o checkout: la venta se cierra en el chat.
 
 # Teléfonos de prueba de F0 (POST /{entity_id}/agent_config/allowlist, uno por request, E.164).
-allowlist:
-  - "+57XXXXXXXXXX"
+# UNA sola lista cerrada: la misma MBA_CUSTOMER_ALLOWLIST (CSV, Terraform → SSM) que
+# gobierna el connector y la tab de rollout. Cambiarla es un PR + apply, no una edición acá.
+allowlist: "${MBA_CUSTOMER_ALLOWLIST}"
 
 # Lo que deliberadamente NO viaja a MBA, y por qué.
 not_in_mba:

@@ -4,6 +4,7 @@
 La función bajo prueba es PURA: recibe el contenido de los archivos y devuelve el
 DTO. Sin I/O. El test de integración de abajo carga el agente REAL ``sales``.
 """
+
 from __future__ import annotations
 
 import json
@@ -82,14 +83,27 @@ _SKILLS = {
 
 
 def _files(yaml_text: str = _YAML, skills: dict[str, str] | None = None) -> AgentFiles:
-    return AgentFiles(agent_yaml=yaml_text, skills=_SKILLS if skills is None else skills)
+    return AgentFiles(
+        agent_yaml=yaml_text, skills=_SKILLS if skills is None else skills
+    )
 
 
-_SEND_ORDER = ["business_info", "faqs", "skills", "connector", "connector_tools", "ui_skills", "settings", "allowlist"]
+_SEND_ORDER = [
+    "business_info",
+    "faqs",
+    "skills",
+    "connector",
+    "connector_tools",
+    "ui_skills",
+    "settings",
+    "allowlist",
+]
 
 
 def test_skills_follow_declared_order_and_carry_provenance() -> None:
-    cfg = build_agent_config(_files(), workspace="hubara_agency/src/plugins/mba/agents/sales")
+    cfg = build_agent_config(
+        _files(), workspace="hubara_agency/src/plugins/mba/agents/sales"
+    )
     assert cfg.agent_id == "sales" and cfg.channel == "whatsapp"
     assert cfg.workspace == "hubara_agency/src/plugins/mba/agents/sales"
     assert [s.title for s in cfg.skills] == ["persona-y-tono", "reglas-operativas"]
@@ -97,14 +111,18 @@ def test_skills_follow_declared_order_and_carry_provenance() -> None:
     # el body es el markdown SIN el front-matter, tal cual viaja
     assert persona.skill.startswith("# Eres el asesor")
     assert persona.description == "Aplicar siempre."
-    assert persona.char_count == len(persona.skill) and persona.char_limit == SKILL_CHAR_LIMIT
+    assert (
+        persona.char_count == len(persona.skill)
+        and persona.char_limit == SKILL_CHAR_LIMIT
+    )
     assert persona.sources == ("skills/persona-y-tono.md",)
     assert cfg.problems == ()
 
 
 def test_missing_file_wrong_title_and_over_limit_are_reported_not_hidden() -> None:
     skills = {
-        "skills/persona-y-tono.md": "---\ntitle: Persona Y Tono\ndescription: d\n---\n\n" + "x" * (SKILL_CHAR_LIMIT + 1),
+        "skills/persona-y-tono.md": "---\ntitle: Persona Y Tono\ndescription: d\n---\n\n"
+        + "x" * (SKILL_CHAR_LIMIT + 1),
     }
     cfg = build_agent_config(_files(skills=skills))
     joined = "\n".join(cfg.problems)
@@ -133,12 +151,23 @@ def test_requests_follow_meta_schemas_in_send_order() -> None:
             seen.append(r.section)
     assert seen == _SEND_ORDER
 
-    skill = next(r for r in reqs if r.section == "skills" and r.label == "persona-y-tono")
-    assert skill.body == {"title": "persona-y-tono", "description": "Aplicar siempre.", "skill": cfg.skills[0].skill}
+    skill = next(
+        r for r in reqs if r.section == "skills" and r.label == "persona-y-tono"
+    )
+    assert skill.body == {
+        "title": "persona-y-tono",
+        "description": "Aplicar siempre.",
+        "skill": cfg.skills[0].skill,
+    }
 
     bi = next(r for r in reqs if r.section == "business_info")
     assert bi.method == "PUT"
-    assert set(bi.body) == {"business_description", "payment_method", "delivery_and_shipping", "contact_info"}
+    assert set(bi.body) == {
+        "business_description",
+        "payment_method",
+        "delivery_and_shipping",
+        "contact_info",
+    }
     assert bi.body["contact_info"] == {"hours_of_operation": "America/Bogota"}
 
     faq = next(r for r in reqs if r.section == "faqs")
@@ -147,8 +176,15 @@ def test_requests_follow_meta_schemas_in_send_order() -> None:
     st = next(r for r in reqs if r.section == "settings")
     assert st.body["rollout"] == {"enabled": False}
     assert st.body["followup"] == {"enabled": False}
-    assert st.body["handoff"] == {"enabled": True, "message_selection": "CUSTOM", "message": "Un colega te responde 🤍"}
-    assert st.body["never_say_phrases"] == ["vos", "voy a averiguar"]  # sin duplicados, en orden
+    assert st.body["handoff"] == {
+        "enabled": True,
+        "message_selection": "CUSTOM",
+        "message": "Un colega te responde 🤍",
+    }
+    assert st.body["never_say_phrases"] == [
+        "vos",
+        "voy a averiguar",
+    ]  # sin duplicados, en orden
 
     con = next(r for r in reqs if r.section == "connector")
     assert con.body["auth_config"]["api_key"]["headers"] == [
@@ -158,8 +194,15 @@ def test_requests_follow_meta_schemas_in_send_order() -> None:
     tools = {r.label: r for r in reqs if r.section == "connector_tools"}
     search = tools["search_products"].body["request_definition"]
     assert search["method"] == "GET" and search["path"] == "/tools/search_products"
-    assert search["query_parameters"]["customer_phone"]["binding"] == {"kind": "macro", "macro": "WHATSAPP_PHONE_NUMBER"}
-    assert search["query_parameters"]["limit"] == {"type": "integer", "description": "Máximo.", "required": False}
+    assert search["query_parameters"]["customer_phone"]["binding"] == {
+        "kind": "macro",
+        "macro": "WHATSAPP_PHONE_NUMBER",
+    }
+    assert search["query_parameters"]["limit"] == {
+        "type": "integer",
+        "description": "Máximo.",
+        "required": False,
+    }
     assert "body" not in search
     reg = tools["register_order"].body["request_definition"]
     assert reg["method"] == "POST" and reg["query_parameters"] == {}
@@ -170,21 +213,38 @@ def test_requests_follow_meta_schemas_in_send_order() -> None:
     assert json.loads(params["items"]["items"])["required"] == ["handle"]
     assert reg["body"]["required"] == ["customer_phone", "items", "ciudad"]
 
-    ui = next(r for r in reqs if r.section == "ui_skills" and r.label == "present-products")
-    assert ui.body == {"title": "present-products", "component_type": "carousel_quick_reply", "status": "enabled", "instruction": "Carrusel."}
+    ui = next(
+        r for r in reqs if r.section == "ui_skills" and r.label == "present-products"
+    )
+    assert ui.body == {
+        "title": "present-products",
+        "component_type": "carousel_quick_reply",
+        "status": "enabled",
+        "instruction": "Carrusel.",
+    }
 
     allow = [r for r in reqs if r.section == "allowlist"]
-    assert [r.body for r in allow] == [{"consumer_phone_number": "+573001112233"}, {"consumer_phone_number": "+573004445566"}]
+    assert [r.body for r in allow] == [
+        {"consumer_phone_number": "+573001112233"},
+        {"consumer_phone_number": "+573004445566"},
+    ]
 
 
 def test_connector_and_ui_metadata_survive_for_the_dashboard() -> None:
     cfg = build_agent_config(_files())
     assert cfg.connector is not None and cfg.connector.name == "hubara-commerce"
     reg = next(t for t in cfg.connector.tools if t.name == "register_order")
-    assert reg.write is True and reg.method == "POST" and reg.path == "/tools/register_order"
+    assert (
+        reg.write is True
+        and reg.method == "POST"
+        and reg.path == "/tools/register_order"
+    )
     assert reg.body_parameters == ("items", "ciudad") and reg.query_parameters == ()
     ui = {u.title: u for u in cfg.ui_skills}
-    assert ui["present-products"].kind == "dynamic" and ui["request-shipping-details"].kind == "static"
+    assert (
+        ui["present-products"].kind == "dynamic"
+        and ui["request-shipping-details"].kind == "static"
+    )
     assert cfg.excluded[0].source == "react_to_message"
     assert {e.section for e in cfg.endpoints} >= set(_SEND_ORDER)
 
@@ -218,7 +278,9 @@ def _param_names(node: object) -> set[str]:
     return out
 
 
-def test_real_sales_agent_is_clean_and_only_names_tools_mba_has() -> None:
+def test_real_sales_agent_is_clean_and_only_names_tools_mba_has(monkeypatch) -> None:
+    for k, v in _FULL_ENV.items():  # el entorno del tenant (SSM) resuelve los `${...}`
+        monkeypatch.setenv(k, v)
     assert [a.id for a in list_agents()] == ["sales"]
     cfg = load_agent("sales")
     assert cfg is not None
@@ -235,12 +297,155 @@ def test_real_sales_agent_is_clean_and_only_names_tools_mba_has() -> None:
     texts = {s.title: s.skill + "\n" + s.description for s in cfg.skills}
     for title, text in texts.items():
         hit = _HUBARA_ONLY.search(text)
-        assert hit is None, f"{title}: referencia a algo que MBA no tiene: {hit.group(0)!r}"
+        assert (
+            hit is None
+        ), f"{title}: referencia a algo que MBA no tiene: {hit.group(0)!r}"
         for name in set(re.findall(r"\b[a-z]+(?:_[a-z]+)+\b", text)):
-            assert name in known, f"{title}: menciona `{name}`, que no es una tool ni un parámetro de MBA"
+            assert (
+                name in known
+            ), f"{title}: menciona `{name}`, que no es una tool ni un parámetro de MBA"
     # y las 9 tools se explican en algún skill
     mentioned = set(re.findall(r"\b[a-z]+(?:_[a-z]+)+\b", "\n".join(texts.values())))
     assert declared <= mentioned
     # los requests reales: 1 business_info + N faqs + 9 skills + 1 connector + 9 tools + 9 ui + 1 settings + N allowlist
-    assert len(cfg.requests) == 1 + len(cfg.faqs) + 9 + 1 + 9 + 9 + 1 + 1
+    assert len(cfg.requests) == 1 + len(cfg.faqs) + 9 + 1 + 9 + 9 + 1 + len(
+        cfg.allowlist
+    )
     assert cfg.workspace == "hubara_agency/src/plugins/mba/agents/sales"
+
+
+# ---------------------------------------------------------------------------
+# D3.1 — valores por tenant (`${VAR}`) resueltos desde el entorno que Terraform
+# materializa en SSM. Sin valor → placeholder `<VAR>` (la guarda del sync lo
+# frena) + problem visible en la sección. Nunca un valor a mano en git.
+# ---------------------------------------------------------------------------
+
+_ENV_YAML = """
+id: sales
+entity_id: "${WHATSAPP_PHONE_NUMBER_ID}"
+skills: []
+settings:
+  rollout_enabled: false
+  ai_audience: ALLOWLISTED_ONLY
+business_info:
+  business_description: "Hubara, velas."
+connector:
+  name: hubara-commerce
+  description: API de Hubara
+  base_url: ${HUBARA_PUBLIC_API_URL}/api/mba
+  auth_type: API_KEY
+  auth_header: X-API-Key
+  requires_certificate: false
+  customer_phone_param: customer_phone
+  tools: []
+ui_skills:
+  - {title: request-shipping-details, component_type: flow, status: enabled, kind: static, instruction: "Flow id ${META_FLOW_ID_SHIPPING} y wa.me/${MBA_ADVISOR_PHONE}."}
+allowlist: "${MBA_CUSTOMER_ALLOWLIST}"
+"""
+
+_FULL_ENV = {
+    "WHATSAPP_PHONE_NUMBER_ID": "1234091093112024",
+    "HUBARA_PUBLIC_API_URL": "https://api.example.test",
+    "META_FLOW_ID_SHIPPING": "951293630651590",
+    "MBA_ADVISOR_PHONE": "573001234567",  # dígitos: va dentro de un enlace wa.me
+    "MBA_CUSTOMER_ALLOWLIST": "+573001234567, +573009876543",
+}
+_TENANT_VARS = sorted(_FULL_ENV)
+
+
+def test_tenant_values_come_from_the_environment_not_from_git() -> None:
+    cfg = build_agent_config(AgentFiles(agent_yaml=_ENV_YAML, skills={}), env=_FULL_ENV)
+    assert cfg.problems == ()
+    assert cfg.entity_id == "1234091093112024"
+    assert (
+        cfg.connector is not None
+        and cfg.connector.base_url == "https://api.example.test/api/mba"
+    )
+    assert (
+        cfg.ui_skills[0].instruction == "Flow id 951293630651590 y wa.me/573001234567."
+    )
+    # la lista cerrada es UNA sola (MBA_CUSTOMER_ALLOWLIST, CSV E.164): la misma que gobierna el connector
+    assert cfg.allowlist == ("+573001234567", "+573009876543")
+    assert [r.body for r in cfg.requests if r.section == "allowlist"] == [
+        {"consumer_phone_number": "+573001234567"},
+        {"consumer_phone_number": "+573009876543"},
+    ]
+
+
+def test_unset_or_placeholder_values_stay_blocking_and_are_reported() -> None:
+    # SSM sin valor real = el placeholder de Terraform; ausente = igual de inválido.
+    cfg = build_agent_config(
+        AgentFiles(agent_yaml=_ENV_YAML, skills={}),
+        env={
+            "META_FLOW_ID_SHIPPING": "PLACEHOLDER_set_out_of_band",
+            "MBA_ADVISOR_PHONE": "  ",
+        },
+    )
+    assert (
+        cfg.entity_id is None
+    )  # sin número onboardeado NO se llama a Meta (entity_id_missing)
+    assert (
+        cfg.connector is not None
+        and cfg.connector.base_url == "<HUBARA_PUBLIC_API_URL>/api/mba"
+    )
+    assert (
+        cfg.ui_skills[0].instruction
+        == "Flow id <META_FLOW_ID_SHIPPING> y wa.me/<MBA_ADVISOR_PHONE>."
+    )
+    assert cfg.allowlist == ("<MBA_CUSTOMER_ALLOWLIST>",)
+    # un problem por variable, ordenado, nombrando la variable (es lo que el operador busca en SSM)
+    assert len(cfg.problems) == len(_TENANT_VARS)
+    for var, problem in zip(_TENANT_VARS, cfg.problems, strict=True):
+        assert f"${{{var}}}" in problem
+
+
+def test_without_env_nothing_is_resolved_and_literal_yaml_is_untouched() -> None:
+    plain = build_agent_config(AgentFiles(agent_yaml=_YAML, skills=_SKILLS))
+    assert plain.problems == () and plain.allowlist == (
+        "+573001112233",
+        "+573004445566",
+    )
+    unresolved = build_agent_config(AgentFiles(agent_yaml=_ENV_YAML, skills={}))
+    assert (
+        len(unresolved.problems) == len(_TENANT_VARS) and unresolved.entity_id is None
+    )
+
+
+def test_real_sales_agent_resolves_every_tenant_value_from_the_environment(
+    monkeypatch,
+) -> None:
+    for k, v in _FULL_ENV.items():
+        monkeypatch.setenv(k, v)
+    cfg = load_agent("sales")
+    assert cfg is not None
+    assert cfg.problems == ()
+    assert cfg.entity_id == "1234091093112024"
+    assert (
+        cfg.connector is not None
+        and cfg.connector.base_url == "https://api.example.test/api/mba"
+    )
+    assert cfg.allowlist == ("+573001234567", "+573009876543")
+    # `<VAR>` (lo que frena el sync) y `<host-publico>` (kebab, que NO lo frenaba): ninguno debe quedar
+    leftovers = {
+        m
+        for r in cfg.requests
+        for m in re.findall(
+            r"<[A-Z][A-Z0-9_]{2,}>|<[a-z]+(?:-[a-z]+)+>",
+            json.dumps(r.body, ensure_ascii=False),
+        )
+        if m != "<HUBARA_MBA_API_KEY>"
+    }
+    assert leftovers == set(), f"placeholders a mano en agent.yaml: {sorted(leftovers)}"
+
+
+def test_real_sales_agent_without_environment_names_what_the_operator_must_set(
+    monkeypatch,
+) -> None:
+    for k in _FULL_ENV:
+        monkeypatch.delenv(k, raising=False)
+    cfg = load_agent("sales")
+    assert cfg is not None
+    assert cfg.entity_id is None
+    assert [
+        v for v in _TENANT_VARS if any(f"${{{v}}}" in p for p in cfg.problems)
+    ] == _TENANT_VARS

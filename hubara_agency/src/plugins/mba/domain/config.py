@@ -9,6 +9,7 @@ Sin I/O, sin vendors, sin fastapi (P-29: routers delgados, lógica acá). Lo que
 no se pueda mandar tal cual (título fuera de formato, skill >20k, componente de
 UI desconocido) se reporta en ``problems`` en vez de esconderse.
 """
+
 from __future__ import annotations
 
 import json
@@ -17,6 +18,8 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Mapping
 
 import yaml
+
+from src.sdk.runtime import is_placeholder
 
 SKILL_CHAR_LIMIT = 20000
 SKILL_DESCRIPTION_LIMIT = 1024
@@ -44,6 +47,12 @@ MBA_BASE_URL = "https://api.facebook.com"
 MBA_API_VERSION = "2.0.0"
 CUSTOMER_PHONE_MACRO = "WHATSAPP_PHONE_NUMBER"
 CONNECTOR_API_KEY_PLACEHOLDER = "<HUBARA_MBA_API_KEY>"
+# Valores por tenant en agent.yaml: ``${VAR}`` se resuelve desde el entorno que
+# Terraform materializa en SSM (/hubara/<tenant>/VAR). Sin valor real queda
+# ``<VAR>``: el placeholder que la guarda del sync frena (fail-closed) y que la
+# sección muestra como problem. Nunca un id, teléfono o URL a mano en git.
+_TENANT_VAR = re.compile(r"\$\{([A-Z][A-Z0-9_]{2,})\}")
+_PLACEHOLDER_TOKEN = re.compile(r"^<[A-Z][A-Z0-9_]{2,}>$")
 _MBA_HEADERS: dict[str, str] = {
     "Authorization": "Bearer <META_ACCESS_TOKEN>",
     "X-API-Version": MBA_API_VERSION,
@@ -252,13 +261,17 @@ def _parse_skill_file(text: str) -> tuple[dict[str, Any], str]:
     return meta, text[m.end() :].strip()
 
 
-def _build_skills(spec: dict[str, Any], files: AgentFiles, problems: list[str]) -> tuple[MbaSkillDTO, ...]:
+def _build_skills(
+    spec: dict[str, Any], files: AgentFiles, problems: list[str]
+) -> tuple[MbaSkillDTO, ...]:
     out: list[MbaSkillDTO] = []
     for title in spec.get("skills") or []:
         path = f"skills/{title}.md"
         text = files.skills.get(path)
         if text is None:
-            problems.append(f"skill `{title}` declarada en agent.yaml sin archivo {path}")
+            problems.append(
+                f"skill `{title}` declarada en agent.yaml sin archivo {path}"
+            )
             continue
         meta, body = _parse_skill_file(text)
         fm_title = str(meta.get("title") or title)
@@ -281,7 +294,9 @@ def _build_skills(spec: dict[str, Any], files: AgentFiles, problems: list[str]) 
         over = len(body) > SKILL_CHAR_LIMIT
         if over:
             problems.append(
-                f"{path}: {len(body):,} caracteres, excede el límite de {SKILL_CHAR_LIMIT:,}".replace(",", ".")
+                f"{path}: {len(body):,} caracteres, excede el límite de {SKILL_CHAR_LIMIT:,}".replace(
+                    ",", "."
+                )
             )
         out.append(
             MbaSkillDTO(
@@ -308,7 +323,11 @@ def _build_business_info(spec: dict[str, Any]) -> MbaBusinessInfoDTO:
         purchase_info=str(bi.get("purchase_info") or "").strip(),
         contact_info=MbaContactInfoDTO(
             email=contact.get("email") or None,
-            hours_of_operation=(str(contact["hours_of_operation"]).strip() if contact.get("hours_of_operation") else None),
+            hours_of_operation=(
+                str(contact["hours_of_operation"]).strip()
+                if contact.get("hours_of_operation")
+                else None
+            ),
             address=contact.get("address") or None,
         ),
         sources=("agent.yaml",),
@@ -331,19 +350,27 @@ def _build_settings(spec: dict[str, Any]) -> MbaSettingsDTO:
         ai_audience=str(st.get("ai_audience") or "ALLOWLISTED_ONLY"),
         handoff=MbaHandoffDTO(
             enabled=bool(handoff.get("enabled", True)),
-            message=(str(handoff["message"]).strip() if handoff.get("message") else None),
+            message=(
+                str(handoff["message"]).strip() if handoff.get("message") else None
+            ),
             message_selection=str(handoff.get("message_selection") or "DEFAULT"),
         ),
         followup=MbaFollowupDTO(
             enabled=bool(followup.get("enabled", False)),
-            followup_interval_in_seconds=int(followup.get("followup_interval_in_seconds") or 900),
-            message=(str(followup["message"]).strip() if followup.get("message") else None),
+            followup_interval_in_seconds=int(
+                followup.get("followup_interval_in_seconds") or 900
+            ),
+            message=(
+                str(followup["message"]).strip() if followup.get("message") else None
+            ),
         ),
         never_say_phrases=tuple(phrases),
     )
 
 
-def _build_connector(spec: dict[str, Any], problems: list[str]) -> MbaConnectorDTO | None:
+def _build_connector(
+    spec: dict[str, Any], problems: list[str]
+) -> MbaConnectorDTO | None:
     con = spec.get("connector")
     if not con:
         return None
@@ -352,7 +379,9 @@ def _build_connector(spec: dict[str, Any], problems: list[str]) -> MbaConnectorD
         name = str(t.get("name") or "")
         method = str(t.get("method") or "GET").upper()
         if method not in TOOL_METHODS:
-            problems.append(f"tool `{name}`: method `{method}` no soportado (GET o POST)")
+            problems.append(
+                f"tool `{name}`: method `{method}` no soportado (GET o POST)"
+            )
         params = tuple(str(p) for p in (t.get("params") or {}))
         tools.append(
             MbaConnectorToolDTO(
@@ -379,7 +408,9 @@ def _build_connector(spec: dict[str, Any], problems: list[str]) -> MbaConnectorD
     )
 
 
-def _build_ui_skills(spec: dict[str, Any], problems: list[str]) -> tuple[MbaUiSkillDTO, ...]:
+def _build_ui_skills(
+    spec: dict[str, Any], problems: list[str]
+) -> tuple[MbaUiSkillDTO, ...]:
     out: list[MbaUiSkillDTO] = []
     for u in spec.get("ui_skills") or []:
         title = str(u.get("title") or "")
@@ -398,7 +429,9 @@ def _build_ui_skills(spec: dict[str, Any], problems: list[str]) -> tuple[MbaUiSk
                 instruction=" ".join(str(u.get("instruction") or "").split()),
                 source="agent.yaml",
                 kind=kind,
-                note=str(u.get("note") or (_DYNAMIC_UI_NOTE if kind == "dynamic" else "")),
+                note=str(
+                    u.get("note") or (_DYNAMIC_UI_NOTE if kind == "dynamic" else "")
+                ),
             )
         )
     return tuple(out)
@@ -431,13 +464,17 @@ def _param_schema(raw: dict[str, Any]) -> dict[str, Any]:
     }
     if "items" in raw:
         items = raw["items"]
-        out["items"] = items if isinstance(items, str) else json.dumps(items, ensure_ascii=False)
+        out["items"] = (
+            items if isinstance(items, str) else json.dumps(items, ensure_ascii=False)
+        )
     if "properties" in raw:
         out["properties"] = raw["properties"]
     return out
 
 
-def _tool_request_definition(spec_tool: dict[str, Any], phone_param: str) -> dict[str, Any]:
+def _tool_request_definition(
+    spec_tool: dict[str, Any], phone_param: str
+) -> dict[str, Any]:
     method = str(spec_tool.get("method") or "GET").upper()
     name = str(spec_tool.get("name") or "")
     raw_params: dict[str, Any] = spec_tool.get("params") or {}
@@ -459,11 +496,17 @@ def _tool_request_definition(spec_tool: dict[str, Any], phone_param: str) -> dic
             params[p] = _param_schema(raw)
             if raw.get("required"):
                 required.append(p)
-        rd["body"] = {"content_type": "application/json", "params": params, "required": required}
+        rd["body"] = {
+            "content_type": "application/json",
+            "params": params,
+            "required": required,
+        }
     return rd
 
 
-def _build_requests(cfg: MbaConfigDTO, spec: dict[str, Any]) -> tuple[MbaRequestDTO, ...]:
+def _build_requests(
+    cfg: MbaConfigDTO, spec: dict[str, Any]
+) -> tuple[MbaRequestDTO, ...]:
     """Las llamadas exactas a Meta, en el orden de la guía get-started.
 
     Conocimiento (business_info, FAQs) → skills → connector → sus tools → UI
@@ -488,7 +531,9 @@ def _build_requests(cfg: MbaConfigDTO, spec: dict[str, Any]) -> tuple[MbaRequest
         )
 
     bi = cfg.business_info
-    bi_body: dict[str, Any] = {k: getattr(bi, k) for k in _BI_TEXT_FIELDS if getattr(bi, k)}
+    bi_body: dict[str, Any] = {
+        k: getattr(bi, k) for k in _BI_TEXT_FIELDS if getattr(bi, k)
+    }
     contact = {
         k: v
         for k, v in (
@@ -500,7 +545,12 @@ def _build_requests(cfg: MbaConfigDTO, spec: dict[str, Any]) -> tuple[MbaRequest
     }
     if contact:
         bi_body["contact_info"] = contact
-    add("business_info", "business_info", bi_body, "PUT reemplaza TODO el bloque; los campos vacíos no viajan.")
+    add(
+        "business_info",
+        "business_info",
+        bi_body,
+        "PUT reemplaza TODO el bloque; los campos vacíos no viajan.",
+    )
 
     for faq in cfg.faqs:
         add("faqs", faq.question, {"question": faq.question, "answer": faq.answer})
@@ -532,7 +582,11 @@ def _build_requests(cfg: MbaConfigDTO, spec: dict[str, Any]) -> tuple[MbaRequest
                 "auth_config": {
                     "api_key": {
                         "headers": [
-                            {"field_name": con.auth_header, "value": CONNECTOR_API_KEY_PLACEHOLDER, "prefix": ""}
+                            {
+                                "field_name": con.auth_header,
+                                "value": CONNECTOR_API_KEY_PLACEHOLDER,
+                                "prefix": "",
+                            }
                         ],
                         "query_params": [],
                     }
@@ -549,7 +603,9 @@ def _build_requests(cfg: MbaConfigDTO, spec: dict[str, Any]) -> tuple[MbaRequest
                 {
                     "name": tool.name,
                     "description": tool.description,
-                    "request_definition": _tool_request_definition(by_name[tool.name], phone_param),
+                    "request_definition": _tool_request_definition(
+                        by_name[tool.name], phone_param
+                    ),
                     "user_auth_required": False,
                 },
                 tool.notes,
@@ -569,12 +625,17 @@ def _build_requests(cfg: MbaConfigDTO, spec: dict[str, Any]) -> tuple[MbaRequest
         )
 
     st = cfg.settings
-    handoff: dict[str, Any] = {"enabled": st.handoff.enabled, "message_selection": st.handoff.message_selection}
+    handoff: dict[str, Any] = {
+        "enabled": st.handoff.enabled,
+        "message_selection": st.handoff.message_selection,
+    }
     if st.handoff.message:
         handoff["message"] = st.handoff.message
     followup: dict[str, Any] = {"enabled": st.followup.enabled}
     if st.followup.enabled:
-        followup["followup_interval_in_seconds"] = st.followup.followup_interval_in_seconds
+        followup["followup_interval_in_seconds"] = (
+            st.followup.followup_interval_in_seconds
+        )
         if st.followup.message:
             followup["message"] = st.followup.message
     add(
@@ -606,26 +667,77 @@ def _build_requests(cfg: MbaConfigDTO, spec: dict[str, Any]) -> tuple[MbaRequest
 # ---------------------------------------------------------------------------
 
 
-def build_agent_config(files: AgentFiles, workspace: str = "") -> MbaConfigDTO:
-    spec = yaml.safe_load(files.agent_yaml) or {}
-    problems: list[str] = []
+def resolve_tenant_values(
+    agent_yaml: str, env: Mapping[str, str] | None
+) -> tuple[str, tuple[str, ...]]:
+    """``${VAR}`` → valor del entorno del tenant. Ausente, vacío o placeholder de
+    SSM → ``<VAR>`` (bloquea el sync) y un problem que nombra la variable."""
+    values = env or {}
+    missing: set[str] = set()
+
+    def _sub(m: re.Match[str]) -> str:
+        var = m.group(1)
+        val = values.get(var)
+        if val is None or not val.strip() or is_placeholder(val):
+            missing.add(var)
+            return f"<{var}>"
+        return val.strip()
+
+    text = _TENANT_VAR.sub(_sub, agent_yaml)
+    problems = tuple(
+        f"`${{{v}}}` sin valor en el entorno del tenant (SSM /hubara/<tenant>/{v}, lo declara Terraform): "
+        "hasta setearlo el sync queda bloqueado"
+        for v in sorted(missing)
+    )
+    return text, problems
+
+
+def resolved_entity_id(spec: Mapping[str, Any]) -> str | None:
+    """``entity_id`` real o ``None``: un placeholder sin resolver NO es un número
+    onboardeado (el endpoint debe responder ``entity_id_missing``, no llamar a Meta)."""
+    raw = spec.get("entity_id")
+    if not raw:
+        return None
+    value = str(raw).strip()
+    return None if not value or _PLACEHOLDER_TOKEN.match(value) else value
+
+
+def _allowlist(spec: Mapping[str, Any]) -> tuple[str, ...]:
+    raw = spec.get("allowlist") or ()
+    # ``"${MBA_CUSTOMER_ALLOWLIST}"`` resuelve a un CSV (la lista cerrada de Hubara, una sola).
+    items = str(raw).split(",") if isinstance(raw, str) else [str(p) for p in raw]
+    return tuple(p.strip() for p in items if p and p.strip())
+
+
+def build_agent_config(
+    files: AgentFiles, workspace: str = "", env: Mapping[str, str] | None = None
+) -> MbaConfigDTO:
+    text, problems_env = resolve_tenant_values(files.agent_yaml, env)
+    spec = yaml.safe_load(text) or {}
+    problems: list[str] = list(problems_env)
     cfg = MbaConfigDTO(
         agent_id=str(spec.get("id") or ""),
         display_name=str(spec.get("display_name") or spec.get("id") or ""),
         channel=str(spec.get("channel") or "whatsapp"),
-        entity_id=(str(spec["entity_id"]) if spec.get("entity_id") else None),
+        entity_id=resolved_entity_id(spec),
         business_info=_build_business_info(spec),
         settings=_build_settings(spec),
         skills=_build_skills(spec, files, problems),
         faqs=tuple(
-            MbaFaqDTO(question=str(f.get("question") or "").strip(), answer=str(f.get("answer") or "").strip(), source="agent.yaml")
+            MbaFaqDTO(
+                question=str(f.get("question") or "").strip(),
+                answer=str(f.get("answer") or "").strip(),
+                source="agent.yaml",
+            )
             for f in (spec.get("faqs") or [])
         ),
         connector=_build_connector(spec, problems),
         ui_skills=_build_ui_skills(spec, problems),
-        allowlist=tuple(str(p) for p in (spec.get("allowlist") or [])),
+        allowlist=_allowlist(spec),
         excluded=tuple(
-            MbaExcludedDTO(source=str(e.get("source") or ""), reason=str(e.get("reason") or ""))
+            MbaExcludedDTO(
+                source=str(e.get("source") or ""), reason=str(e.get("reason") or "")
+            )
             for e in (spec.get("not_in_mba") or [])
         ),
         endpoints=ENDPOINTS,

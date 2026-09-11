@@ -1,0 +1,29 @@
+# Tests del CLI de provisioning de WhatsApp / Meta Business Agent
+# (infra/whatsapp-provisioning). Es stdlib a propósito: solo pytest. Sin
+# credenciales: la red se reemplaza por grabadores en los tests.
+name: Provisioning CLI gates
+
+on:
+  pull_request:
+    paths: ["infra/whatsapp-provisioning/**", ".github/workflows/provisioning-cli-gates.yml"]
+  push:
+    branches: [main]
+    paths: ["infra/whatsapp-provisioning/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  provisioning-cli:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Deps (solo pytest)
+        run: pip install --quiet pytest
+      - name: Tests del CLI
+        run: python3 -m pytest infra/whatsapp-provisioning/tests -q

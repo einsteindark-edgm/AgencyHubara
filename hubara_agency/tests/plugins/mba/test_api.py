@@ -20,11 +20,12 @@ def _client() -> TestClient:
     return TestClient(app)
 
 
-def test_agents_and_config_are_served_from_the_authored_files() -> None:
+def test_agents_and_config_are_served_from_the_authored_files(tenant_env: dict[str, str]) -> None:
     c = _client()
     agents = c.get("/api/mba/agents").json()["agents"]
     assert [a["id"] for a in agents] == ["sales"]
     assert agents[0]["display_name"] == "Asesor de Ventas"
+    assert agents[0]["entity_id"] == tenant_env["WHATSAPP_PHONE_NUMBER_ID"]  # el número del tenant, desde el entorno
     cfg = c.get("/api/mba/agents/sales/config").json()
     assert cfg["agent_id"] == "sales"
     assert cfg["workspace"] == "hubara_agency/src/plugins/mba/agents/sales"
