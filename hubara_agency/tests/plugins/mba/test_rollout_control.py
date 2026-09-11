@@ -404,3 +404,24 @@ async def test_opening_the_audience_requires_mba_to_be_off(tmp_path: Path) -> No
     out = await uc.set_audience("sales", "EVERYONE", confirm=True)
     assert out.applied is False and out.reason == "disable_first"
     assert fake.settings[ENTITY]["ai_audience"] == "ALLOWLISTED_ONLY"
+
+
+async def test_status_survives_connectors_not_yet_available_in_meta(
+    tmp_path: Path,
+) -> None:
+    """D3.2: con `agent_connectors` gateado por Meta el panel sigue leyéndose y
+    el check del connector falla (fail-closed): no se puede encender."""
+    fake = _ready_fake()
+    fake.fail_ops = {
+        "list_connectors": MbaAdminError(
+            "rejected",
+            status=400,
+            detail="Connectors are not available for this entity yet. Finish onboarding the agent for this entity, then retry.",
+        )
+    }
+    uc, _, _ = _control(tmp_path, fake=fake)
+    st = await uc.status("sales")
+    assert st is not None and st.can_enable is False
+    check = next(c for c in st.checks if c["code"] == "connector_active")
+    assert check["ok"] is False and "no disponible" in check["detail"]
+    assert {c["code"] for c in st.checks if not c["ok"]} == {"connector_active"}

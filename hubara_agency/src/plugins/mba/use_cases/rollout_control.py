@@ -30,7 +30,11 @@ from typing import Any, Callable
 
 from loguru import logger
 
-from src.plugins.mba.adapters.meta_admin import MbaAdminError, MbaAdminPort
+from src.plugins.mba.adapters.meta_admin import (
+    MbaAdminError,
+    MbaAdminPort,
+    connectors_unavailable,
+)
 from src.plugins.mba.adapters.sync_state import SyncStateStore
 from src.plugins.mba.domain.config import MbaConfigDTO
 from src.plugins.mba.domain.rollout_policy import (
@@ -114,7 +118,15 @@ class RolloutControl:
         allowlist = await self._admin.list_allowlist(entity_id)
         connector_status: str | None = None
         if cfg.connector is not None:
-            for con in await self._admin.list_connectors(entity_id):
+            try:
+                remote_connectors = await self._admin.list_connectors(entity_id)
+            except MbaAdminError as exc:
+                if not connectors_unavailable(exc):
+                    raise
+                # Meta gatea agent_connectors: el check falla (fail-closed) pero el panel se lee.
+                remote_connectors = []
+                connector_status = "no disponible todavía (Meta gatea agent_connectors hasta completar el onboarding)"
+            for con in remote_connectors:
                 if con.get("name") == cfg.connector.name:
                     cs = con.get("connection_status")
                     connector_status = (

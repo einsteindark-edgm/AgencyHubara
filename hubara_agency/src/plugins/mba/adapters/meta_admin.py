@@ -92,6 +92,20 @@ class MbaAdminError(MbaApiError):
     pass
 
 
+CONNECTORS_UNAVAILABLE = "connectors_unavailable"
+
+
+def connectors_unavailable(exc: MbaAdminError) -> bool:
+    """Meta gatea ``agent_connectors`` después del onboarding: 400 "Connectors
+    are not available for this entity yet. Finish onboarding…". No es una
+    caída ni un rechazo de nuestro body: el resto de la config sigue viva."""
+    return (
+        exc.kind == "rejected"
+        and exc.status == 400
+        and "not available" in (exc.detail or "").lower()
+    )
+
+
 def admin_url(base_url: str, entity_id: str, *segments: str) -> str:
     return "/".join(
         [base_url.rstrip("/"), entity_id, *(str(s).strip("/") for s in segments)]
@@ -570,6 +584,8 @@ class FakeMbaAdmin:
 
     calls: list[tuple[Any, ...]] = field(default_factory=list)
     fail_with: MbaAdminError | None = None
+    #: falla SOLO esa operación (p.ej. ``{"list_connectors": err}``).
+    fail_ops: dict[str, MbaAdminError] = field(default_factory=dict)
     eligible: bool = True
     agent_id: str = "agent-fake"
     settings: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -589,6 +605,8 @@ class FakeMbaAdmin:
         self.calls.append((op, entity_id, *args))
         if self.fail_with is not None:
             raise self.fail_with
+        if op in self.fail_ops:
+            raise self.fail_ops[op]
 
     def _new_id(self, prefix: str) -> str:
         counter = self._ids.setdefault(prefix, count(1))

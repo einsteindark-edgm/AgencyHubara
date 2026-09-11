@@ -111,6 +111,9 @@ class RemoteState:
     connectors: tuple[dict[str, Any], ...]
     tools: Mapping[str, tuple[dict[str, Any], ...]]  # por id de connector
     ui_skills: tuple[dict[str, Any], ...]
+    #: False = Meta gatea ``agent_connectors`` para esta entidad (onboarding
+    #: incompleto): connector y tools se saltan con motivo, no se inventan.
+    connectors_available: bool = True
 
     @classmethod
     def empty(cls) -> RemoteState:
@@ -454,6 +457,23 @@ def build_plan(
         (label, _resolve_api_key(body, api_key))
         for label, body in by_section.get("connector", [])
     ]
+    if not remote.connectors_available:
+        ops.extend(
+            SyncOp("connector", label, "skip", reason="connectors_unavailable")
+            for label, _ in connectors
+        )
+        ops.extend(
+            SyncOp(
+                "connector_tools",
+                tlabel,
+                "skip",
+                reason="connectors_unavailable",
+                connector_label=label,
+            )
+            for label, _ in connectors
+            for tlabel, _ in by_section.get("connector_tools", [])
+        )
+        connectors = []
     con_ops = _collection(
         "connector", connectors, remote.connectors, managed_ids.get("connector", {})
     )
