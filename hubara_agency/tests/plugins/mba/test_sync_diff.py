@@ -594,3 +594,22 @@ def test_a_flow_ui_skill_whose_flow_id_changed_is_replaced_and_updates_never_car
         if o.section == "ui_skills" and o.label == "request-shipping-details"
     )
     assert op2.action == "update" and "flow_id" not in op2.body
+
+
+def test_followup_off_matches_metas_null_so_settings_do_not_update_forever() -> None:
+    """Visto en prod: Meta guarda el followup apagado como ``null``; nosotros
+    mandamos ``{"enabled": false}``. Eso no es un cambio: sin este caso el plan
+    hacía un PUT de settings en CADA sync."""
+    cfg = _cfg()
+    remote, ids, sent = _remote_in_sync(cfg)
+    as_meta = RemoteState(
+        **{**remote.__dict__, "settings": {**remote.settings, "followup": None}}
+    )
+    plan = build_plan(cfg, as_meta, managed_ids=ids, sent_hashes=sent, api_key=API_KEY)
+    assert _actions(plan) == []
+    # pero si NOSOTROS encendemos el followup, sí viaja
+    on = _cfg(_YAML.replace("followup: {enabled: false,", "followup: {enabled: true,"))
+    plan_on = build_plan(
+        on, as_meta, managed_ids=ids, sent_hashes=sent, api_key=API_KEY
+    )
+    assert _actions(plan_on) == [("settings", "settings", "update")]
