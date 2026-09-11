@@ -33,7 +33,12 @@ import time
 from dataclasses import asdict, dataclass, field
 from typing import Any, Callable
 
-from src.plugins.mba.adapters.meta_admin import MbaAdminError, MbaAdminPort
+from src.plugins.mba.adapters.meta_admin import (
+    CONNECTORS_UNAVAILABLE,
+    MbaAdminError,
+    MbaAdminPort,
+    connectors_unavailable,
+)
 from src.plugins.mba.adapters.sync_state import SyncStateStore
 from src.plugins.mba.domain.config import MbaConfigDTO
 from src.plugins.mba.domain.sync import (
@@ -101,7 +106,13 @@ class SyncAgent:
                 business_info = {}
             else:
                 raise
-        connectors = await self._admin.list_connectors(entity_id)
+        connectors_available = True
+        try:
+            connectors = await self._admin.list_connectors(entity_id)
+        except MbaAdminError as exc:
+            if not connectors_unavailable(exc):
+                raise
+            connectors, connectors_available = [], False
         tools: dict[str, tuple[dict[str, Any], ...]] = {}
         for con in connectors:
             cid = con.get("id")
@@ -117,6 +128,7 @@ class SyncAgent:
             connectors=tuple(connectors),
             tools=tools,
             ui_skills=tuple(await self._admin.list_ui_skills(entity_id)),
+            connectors_available=connectors_available,
         )
 
     async def _plan(
@@ -220,6 +232,20 @@ class SyncAgent:
         entity_id = str(cfg.entity_id)
         results: list[dict[str, Any]] = []
         aborted = False
+        # Lo que Meta todavía no deja tocar queda visible, no desaparece del reporte.
+        results.extend(
+            {
+                "section": op.section,
+                "label": op.label,
+                "action": op.action,
+                "ok": False,
+                "remote_id": None,
+                "error": None,
+                "skipped": op.reason,
+            }
+            for op in plan.ops
+            if op.action == "skip" and op.reason == CONNECTORS_UNAVAILABLE
+        )
         for op in plan.changes:
             row: dict[str, Any] = {
                 "section": op.section,

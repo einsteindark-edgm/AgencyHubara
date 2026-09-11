@@ -99,6 +99,7 @@ describe("MbaSyncPanel", () => {
           results: [
             { section: "skills", label: "persona", action: "update", ok: true, remote_id: "s-1", error: null, skipped: null },
             { section: "faqs", label: "¿Garantía?", action: "create", ok: true, remote_id: "f-9", error: null, skipped: null },
+            { section: "connector", label: "hubara-commerce", action: "skip", ok: false, remote_id: null, error: null, skipped: "connectors_unavailable" },
           ],
           state: {},
         });
@@ -117,6 +118,9 @@ describe("MbaSyncPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: /Confirmar envío a Meta/ }));
     await waitFor(() => screen.getByText(/Aplicado: 2 de 2/));
     expect(posts).toEqual([{ fingerprint: "fp-1" }]);
+    // lo que Meta todavía no deja tocar se explica, no queda como un código de máquina
+    screen.getByText(/Meta aún no habilita connectors para este número/);
+    screen.getByText(/1 omitidos/);
   });
 
   it("a blocked plan lists the reasons and offers no apply button", async () => {

@@ -363,9 +363,7 @@ def test_tenant_values_come_from_the_environment_not_from_git() -> None:
         cfg.connector is not None
         and cfg.connector.base_url == "https://api.example.test/api/mba"
     )
-    assert (
-        cfg.ui_skills[0].instruction == "Flow id 951293630651590, pantalla SHIPPING."
-    )
+    assert cfg.ui_skills[0].instruction == "Flow id 951293630651590, pantalla SHIPPING."
     # la lista cerrada es UNA sola (MBA_CUSTOMER_ALLOWLIST, CSV E.164): la misma que gobierna el connector
     assert cfg.allowlist == ("+573001234567", "+573009876543")
     assert [r.body for r in cfg.requests if r.section == "allowlist"] == [

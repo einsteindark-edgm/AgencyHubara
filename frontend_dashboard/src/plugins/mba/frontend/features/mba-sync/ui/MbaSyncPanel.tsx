@@ -85,13 +85,20 @@ function OpRow({ op }: { op: MbaSyncOp }) {
       <span style={{ fontWeight: 700, color: tone, minWidth: 82 }}>{ACTION_LABEL[op.action]}</span>
       <span style={{ color: "var(--fg-mute)", minWidth: 90 }}>{SECTION_LABEL[op.section] ?? op.section}</span>
       <span className="mono" style={{ wordBreak: "break-word" }}>{op.label}</span>
-      {op.reason && <span style={{ color: "var(--fg-mute)", fontSize: 11 }}>({op.reason})</span>}
+      {op.reason && <span style={{ color: "var(--fg-mute)", fontSize: 11 }}>({op.action === "skip" ? (SKIP_TEXT[op.reason] ?? op.reason) : op.reason})</span>}
     </div>
   );
 }
 
+// Motivos de omisión que el backend reporta con nombre de máquina.
+const SKIP_TEXT: Record<string, string> = {
+  connectors_unavailable: "Meta aún no habilita connectors para este número (onboarding incompleto): se reintenta en el próximo sync",
+  aborted: "abortado por un error anterior",
+  connector_missing: "el connector no se pudo crear",
+};
+
 function ResultRow({ r }: { r: MbaSyncResult }) {
-  const text = r.ok ? "ok" : r.skipped ? `omitido (${r.skipped})` : `falló: ${r.error?.kind ?? "?"} ${r.error?.detail ?? ""}`;
+  const text = r.ok ? "ok" : r.skipped ? `omitido: ${SKIP_TEXT[r.skipped] ?? r.skipped}` : `falló: ${r.error?.kind ?? "?"} ${r.error?.detail ?? ""}`;
   return (
     <div style={{ display: "flex", gap: 8, fontSize: 12, padding: "3px 0" }}>
       <span style={{ minWidth: 82, color: r.ok ? "var(--ok, #16a34a)" : "var(--color-danger)", fontWeight: 700 }}>{text}</span>
@@ -225,7 +232,11 @@ export function MbaSyncPanel({ agentId }: Props) {
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {outcome.applied ? (
               <div style={{ fontSize: 12 }}>
-                <b>Aplicado: {outcome.results.filter((r) => r.ok).length} de {outcome.results.length}</b> · estado {outcome.status}
+                <b>
+                  Aplicado: {outcome.results.filter((r) => r.ok).length} de {outcome.results.filter((r) => !r.skipped).length}
+                </b>{" "}
+                · estado {outcome.status}
+                {outcome.results.some((r) => r.skipped) && <> · {outcome.results.filter((r) => r.skipped).length} omitidos</>}
               </div>
             ) : (
               <div role="alert" style={warnStyle}>{OUTCOME_TEXT[outcome.reason] ?? outcome.reason}</div>

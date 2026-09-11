@@ -399,3 +399,94 @@ async def test_the_vault_never_stores_a_hash_of_the_real_api_key(
         and hashlib.sha256(API_KEY.encode()).hexdigest() not in dumped
     )
     assert store.read("sales")["sent"]["connector_key"]["hubara-commerce"]
+
+
+# ---------------------------------------------------------------------------
+# D3.2 — Meta gatea `agent_connectors` después del onboarding ("Connectors are
+# not available for this entity yet"). Eso NO puede bloquear skills, FAQ,
+# business_info, UI skills y settings: se sincronizan, y connector + tools
+# quedan `skip` con motivo, sin inventar un remoto vacío ni crear a ciegas.
+# ---------------------------------------------------------------------------
+
+_CONNECTORS_GATED = MbaAdminError(
+    "rejected",
+    status=400,
+    detail="Connectors are not available for this entity yet. Finish onboarding the agent for this entity, then retry.",
+)
+
+
+async def test_connectors_not_yet_available_in_meta_do_not_block_the_rest(
+    tmp_path: Path,
+) -> None:
+    uc, fake, store = _agent(tmp_path)
+    fake.fail_ops = {"list_connectors": _CONNECTORS_GATED}
+    plan = await uc.plan("sales")
+    assert plan is not None and plan.blocked == ()
+    skipped = {(op.section, op.reason) for op in plan.ops if op.action == "skip"}
+    assert ("connector", "connectors_unavailable") in skipped
+    assert ("connector_tools", "connectors_unavailable") in skipped
+    assert not any(
+        op.section in ("connector", "connector_tools") and op.action != "skip"
+        for op in plan.ops
+    )
+    assert any(op.section == "skills" and op.action == "create" for op in plan.ops)
+
+    out = await uc.apply("sales", fingerprint=plan.fingerprint)
+    assert out.applied is True and out.status == "ok"
+    assert fake.skills[ENTITY] and fake.faqs[ENTITY] and fake.ui_skills[ENTITY]
+    assert not any(op.startswith("create_connector") for op, *_ in fake.calls)
+    assert "connector" not in store.read("sales")["ids"]
+    # el motivo queda visible para el operador (no es un "todo ok" silencioso)
+    assert any(
+        r["section"] == "connector" and r["skipped"] == "connectors_unavailable"
+        for r in out.results
+    )
+
+
+async def test_any_other_connector_error_is_still_an_outage(tmp_path: Path) -> None:
+    uc, fake, _ = _agent(tmp_path)
+    fake.fail_ops = {
+        "list_connectors": MbaAdminError("rejected", status=403, detail="Forbidden")
+    }
+    with pytest.raises(MbaAdminError):
+        await uc.plan("sales")
+
+
+async def test_lifting_the_gate_between_plan_and_apply_changes_the_fingerprint(
+    tmp_path: Path,
+) -> None:
+    """El operador aprueba lo que se aplica: si Meta habilita connectors entre el
+    plan y el apply, aparece un create → plan_changed, nunca un create a ciegas."""
+    uc, fake, _ = _agent(tmp_path)
+    fake.fail_ops = {"list_connectors": _CONNECTORS_GATED}
+    plan = await uc.plan("sales")
+    fake.fail_ops = {}
+    out = await uc.apply("sales", fingerprint=plan.fingerprint)
+    assert out.applied is False and out.reason == "plan_changed"
+    assert not any(op.startswith("create_connector") for op, *_ in fake.calls)
+
+
+async def test_previously_managed_connector_ids_survive_the_gate(
+    tmp_path: Path,
+) -> None:
+    uc, fake, store = _agent(tmp_path)
+    store.write("sales", {"ids": {"connector": {"hubara-commerce": "c-1"}}})
+    fake.fail_ops = {"list_connectors": _CONNECTORS_GATED}
+    plan = await uc.plan("sales")
+    out = await uc.apply("sales", fingerprint=plan.fingerprint)
+    assert out.applied is True
+    assert store.read("sales")["ids"]["connector"] == {"hubara-commerce": "c-1"}
+    assert not any(op.startswith("delete_connector") for op, *_ in fake.calls)
+
+
+async def test_a_400_that_is_not_about_connectors_is_not_mistaken_for_the_gate(
+    tmp_path: Path,
+) -> None:
+    uc, fake, _ = _agent(tmp_path)
+    fake.fail_ops = {
+        "list_connectors": MbaAdminError(
+            "rejected", status=400, detail="Feature not available for your app"
+        )
+    }
+    with pytest.raises(MbaAdminError):
+        await uc.plan("sales")
