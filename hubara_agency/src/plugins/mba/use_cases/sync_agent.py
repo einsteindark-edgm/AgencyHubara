@@ -25,6 +25,7 @@ Un ``replace`` de UI skill cuyo create falla tras el delete se reporta como
 El lock por agente es por PROCESO (``asyncio.Lock``): alcanza con el único
 uvicorn del API; con varios workers habría que llevarlo al vault.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -35,7 +36,14 @@ from typing import Any, Callable
 from src.plugins.mba.adapters.meta_admin import MbaAdminError, MbaAdminPort
 from src.plugins.mba.adapters.sync_state import SyncStateStore
 from src.plugins.mba.domain.config import MbaConfigDTO
-from src.plugins.mba.domain.sync import RemoteState, SyncOp, SyncPlan, api_key_fingerprint, body_hash, build_plan
+from src.plugins.mba.domain.sync import (
+    RemoteState,
+    SyncOp,
+    SyncPlan,
+    api_key_fingerprint,
+    body_hash,
+    build_plan,
+)
 
 __all__ = ["SyncAgent", "SyncOutcome"]
 
@@ -82,7 +90,10 @@ class SyncAgent:
 
     async def fetch_remote(self, entity_id: str, channel: str) -> RemoteState:
         settings_list = await self._admin.get_settings(entity_id)
-        settings = next((s for s in settings_list if s.get("channel") == channel), settings_list[0] if settings_list else None)
+        settings = next(
+            (s for s in settings_list if s.get("channel") == channel),
+            settings_list[0] if settings_list else None,
+        )
         try:
             business_info = await self._admin.get_business_info(entity_id)
         except MbaAdminError as exc:
@@ -95,7 +106,9 @@ class SyncAgent:
         for con in connectors:
             cid = con.get("id")
             if cid is not None:
-                tools[str(cid)] = tuple(await self._admin.list_connector_tools(entity_id, str(cid)))
+                tools[str(cid)] = tuple(
+                    await self._admin.list_connector_tools(entity_id, str(cid))
+                )
         return RemoteState(
             settings=settings,
             business_info=business_info,
@@ -106,8 +119,14 @@ class SyncAgent:
             ui_skills=tuple(await self._admin.list_ui_skills(entity_id)),
         )
 
-    async def _plan(self, cfg: MbaConfigDTO, state: dict[str, Any]) -> tuple[SyncPlan, RemoteState]:
-        remote = await self.fetch_remote(cfg.entity_id, cfg.channel) if cfg.entity_id else RemoteState.empty()
+    async def _plan(
+        self, cfg: MbaConfigDTO, state: dict[str, Any]
+    ) -> tuple[SyncPlan, RemoteState]:
+        remote = (
+            await self.fetch_remote(cfg.entity_id, cfg.channel)
+            if cfg.entity_id
+            else RemoteState.empty()
+        )
         plan = build_plan(
             cfg,
             remote,
@@ -127,7 +146,9 @@ class SyncAgent:
 
     # -- escritura -----------------------------------------------------------
 
-    async def apply(self, agent_id: str, *, fingerprint: str | None = None) -> SyncOutcome:
+    async def apply(
+        self, agent_id: str, *, fingerprint: str | None = None
+    ) -> SyncOutcome:
         if not self._enabled():
             return SyncOutcome(agent_id, False, "mba_disabled")
         cfg = self._load(agent_id)
@@ -139,32 +160,76 @@ class SyncAgent:
         async with lock:
             return await self._apply_locked(agent_id, cfg, fingerprint)
 
-    async def _apply_locked(self, agent_id: str, cfg: MbaConfigDTO, fingerprint: str | None) -> SyncOutcome:
+    async def _apply_locked(
+        self, agent_id: str, cfg: MbaConfigDTO, fingerprint: str | None
+    ) -> SyncOutcome:
         state = self._store.read(agent_id)
         try:
             plan, remote = await self._plan(cfg, state)
         except MbaAdminError as exc:
-            return SyncOutcome(agent_id, False, "remote_unavailable", error=_err(exc), state=state)
+            return SyncOutcome(
+                agent_id, False, "remote_unavailable", error=_err(exc), state=state
+            )
         summary = plan.summary()
         if plan.blocked:
-            attempt = {"at_ms": self._now_ms(), "reason": "blocked", "blocked": list(plan.blocked), "fingerprint": plan.fingerprint}
-            state = self._store.update(agent_id, lambda st: {**st, "last_attempt": attempt})
-            return SyncOutcome(agent_id, False, "blocked", plan=summary, blocked=plan.blocked, state=state)
+            attempt = {
+                "at_ms": self._now_ms(),
+                "reason": "blocked",
+                "blocked": list(plan.blocked),
+                "fingerprint": plan.fingerprint,
+            }
+            state = self._store.update(
+                agent_id, lambda st: {**st, "last_attempt": attempt}
+            )
+            return SyncOutcome(
+                agent_id,
+                False,
+                "blocked",
+                plan=summary,
+                blocked=plan.blocked,
+                state=state,
+            )
         if fingerprint is not None and fingerprint != plan.fingerprint:
-            return SyncOutcome(agent_id, False, "plan_changed", plan=summary, state=state)
+            return SyncOutcome(
+                agent_id, False, "plan_changed", plan=summary, state=state
+            )
         if not plan.changes:
-            attempt = {"at_ms": self._now_ms(), "reason": "nothing_to_do", "fingerprint": plan.fingerprint}
-            state = self._store.update(agent_id, lambda st: {**st, "last_attempt": attempt})
-            return SyncOutcome(agent_id, False, "nothing_to_do", status="ok", plan=summary, state=state)
+            attempt = {
+                "at_ms": self._now_ms(),
+                "reason": "nothing_to_do",
+                "fingerprint": plan.fingerprint,
+            }
+            state = self._store.update(
+                agent_id, lambda st: {**st, "last_attempt": attempt}
+            )
+            return SyncOutcome(
+                agent_id, False, "nothing_to_do", status="ok", plan=summary, state=state
+            )
 
-        ids: dict[str, dict[str, str]] = {k: dict(v) for k, v in (state.get("ids") or {}).items()}
-        sent: dict[str, dict[str, str]] = {k: dict(v) for k, v in (state.get("sent") or {}).items()}
-        settings_agent_id = str(remote.settings.get("agent_id")) if remote.settings and remote.settings.get("agent_id") else None
+        ids: dict[str, dict[str, str]] = {
+            k: dict(v) for k, v in (state.get("ids") or {}).items()
+        }
+        sent: dict[str, dict[str, str]] = {
+            k: dict(v) for k, v in (state.get("sent") or {}).items()
+        }
+        settings_agent_id = (
+            str(remote.settings.get("agent_id"))
+            if remote.settings and remote.settings.get("agent_id")
+            else None
+        )
         entity_id = str(cfg.entity_id)
         results: list[dict[str, Any]] = []
         aborted = False
         for op in plan.changes:
-            row: dict[str, Any] = {"section": op.section, "label": op.label, "action": op.action, "ok": False, "remote_id": op.remote_id, "error": None, "skipped": None}
+            row: dict[str, Any] = {
+                "section": op.section,
+                "label": op.label,
+                "action": op.action,
+                "ok": False,
+                "remote_id": op.remote_id,
+                "error": None,
+                "skipped": None,
+            }
             if aborted:
                 row["skipped"] = "aborted"
                 results.append(row)
@@ -178,7 +243,10 @@ class SyncAgent:
                     continue
             try:
                 remote_id = await self._execute(
-                    entity_id, op, connector_id, settings_agent_id,
+                    entity_id,
+                    op,
+                    connector_id,
+                    settings_agent_id,
                     on_deleted=lambda: ids.get(op.section, {}).pop(op.label, None),
                 )
             except MbaAdminError as exc:
@@ -197,22 +265,47 @@ class SyncAgent:
             "at_ms": self._now_ms(),
             "status": status,
             "fingerprint": plan.fingerprint,
-            "counts": {"changes": len(plan.changes), "ok": sum(1 for r in results if r["ok"]), "failed": len(failed), "skipped": sum(1 for r in results if r["skipped"])},
+            "counts": {
+                "changes": len(plan.changes),
+                "ok": sum(1 for r in results if r["ok"]),
+                "failed": len(failed),
+                "skipped": sum(1 for r in results if r["skipped"]),
+            },
             "results": results,
         }
 
         def _merge(fresh: dict[str, Any]) -> dict[str, Any]:
             # Solo NUESTRAS claves sobre el estado fresco: lo que el rollout
             # (D2.3) haya escrito mientras esperábamos a Meta sobrevive.
-            fresh = {**fresh, "ids": ids, "sent": sent, "entity_id": entity_id, "last_apply": last_apply}
+            fresh = {
+                **fresh,
+                "ids": ids,
+                "sent": sent,
+                "entity_id": entity_id,
+                "last_apply": last_apply,
+            }
             fresh.pop("last_attempt", None)
             return fresh
 
         state = self._store.update(agent_id, _merge)
-        return SyncOutcome(agent_id, True, "applied", status=status, results=results, plan=summary, state=state)
+        return SyncOutcome(
+            agent_id,
+            True,
+            "applied",
+            status=status,
+            results=results,
+            plan=summary,
+            state=state,
+        )
 
     async def _execute(
-        self, entity_id: str, op: SyncOp, connector_id: str | None, settings_agent_id: str | None, *, on_deleted: Callable[[], Any]
+        self,
+        entity_id: str,
+        op: SyncOp,
+        connector_id: str | None,
+        settings_agent_id: str | None,
+        *,
+        on_deleted: Callable[[], Any],
     ) -> str | None:
         a = self._admin
         s, action, body, rid = op.section, op.action, op.body, op.remote_id
@@ -248,7 +341,10 @@ class SyncAgent:
             if action == "create":
                 return _id(await a.create_connector_tool(entity_id, cid, body))
             if action == "update":
-                return _id(await a.update_connector_tool(entity_id, cid, str(rid), body)) or rid
+                return (
+                    _id(await a.update_connector_tool(entity_id, cid, str(rid), body))
+                    or rid
+                )
             await a.delete_connector_tool(entity_id, cid, str(rid))
             return rid
         if s == "ui_skills":
@@ -262,13 +358,24 @@ class SyncAgent:
                 try:
                     return _id(await a.create_ui_skill(entity_id, body))
                 except MbaAdminError as exc:
-                    raise MbaAdminError(exc.kind, status=exc.status, detail=f"borrada, no recreada: {exc.detail}", attempts=exc.attempts)
+                    raise MbaAdminError(
+                        exc.kind,
+                        status=exc.status,
+                        detail=f"borrada, no recreada: {exc.detail}",
+                        attempts=exc.attempts,
+                    )
             await a.delete_ui_skill(entity_id, str(rid))
             return rid
         raise MbaAdminError("rejected", detail=f"sección desconocida: {s}")
 
     @staticmethod
-    def _record(ids: dict[str, dict[str, str]], sent: dict[str, dict[str, str]], op: SyncOp, remote_id: str | None, api_key: str) -> None:
+    def _record(
+        ids: dict[str, dict[str, str]],
+        sent: dict[str, dict[str, str]],
+        op: SyncOp,
+        remote_id: str | None,
+        api_key: str,
+    ) -> None:
         if op.action == "delete":
             ids.get(op.section, {}).pop(op.label, None)
             return
@@ -277,9 +384,13 @@ class SyncAgent:
         if op.section == "settings":
             phrases = op.body.get("never_say_phrases")
             if phrases is not None:
-                sent.setdefault("settings", {})["never_say_phrases"] = body_hash(phrases)
+                sent.setdefault("settings", {})["never_say_phrases"] = body_hash(
+                    phrases
+                )
         if op.section == "connector" and api_key:
-            sent.setdefault("connector_key", {})[op.label] = api_key_fingerprint(api_key)
+            sent.setdefault("connector_key", {})[op.label] = api_key_fingerprint(
+                api_key
+            )
 
 
 def _id(payload: dict[str, Any]) -> str | None:

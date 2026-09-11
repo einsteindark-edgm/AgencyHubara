@@ -1,4 +1,5 @@
 """Guard del router público: token bucket por (IP, tool) con reloj inyectado."""
+
 from __future__ import annotations
 
 from src.plugins.mba.domain.guard import MAX_BODY_BYTES, RateLimiter
@@ -31,7 +32,9 @@ def test_keys_are_independent_and_memory_is_bounded() -> None:
     assert rl.allow("a") is False
     rl.allow("c")  # tercera clave: la menos reciente (b) se descarta
     assert rl.size == 2
-    assert rl.allow("b") is True  # b vuelve con bucket lleno (y desplaza a la siguiente)
+    assert (
+        rl.allow("b") is True
+    )  # b vuelve con bucket lleno (y desplaza a la siguiente)
 
 
 def test_body_cap_is_small_enough_for_a_public_endpoint() -> None:

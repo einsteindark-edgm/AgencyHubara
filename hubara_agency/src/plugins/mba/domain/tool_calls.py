@@ -11,6 +11,7 @@ más el teléfono del cliente (macro ``WHATSAPP_PHONE_NUMBER``). Este módulo:
 
 Puro: sin I/O, sin FastAPI.
 """
+
 from __future__ import annotations
 
 import json
@@ -84,7 +85,11 @@ def contracts_from_config(cfg: MbaConfigDTO) -> dict[str, ToolContract]:
         body = req.body
         rd = body.get("request_definition") or {}
         method = str(rd.get("method") or "GET").upper()
-        raw = rd.get("query_parameters") if method == "GET" else (rd.get("body") or {}).get("params")
+        raw = (
+            rd.get("query_parameters")
+            if method == "GET"
+            else (rd.get("body") or {}).get("params")
+        )
         params: dict[str, dict[str, Any]] = {}
         required: list[str] = []
         phone_param = "customer_phone"
@@ -97,12 +102,18 @@ def contracts_from_config(cfg: MbaConfigDTO) -> dict[str, ToolContract]:
                 required.append(name)
         name = str(body.get("name") or "")
         out[name] = ToolContract(
-            name=name, method=method, phone_param=phone_param, params=params, required=tuple(required)
+            name=name,
+            method=method,
+            phone_param=phone_param,
+            params=params,
+            required=tuple(required),
         )
     return out
 
 
-def _coerce(path: str, value: Any, schema: Mapping[str, Any], *, lenient_ints: bool) -> tuple[Any, list[str]]:
+def _coerce(
+    path: str, value: Any, schema: Mapping[str, Any], *, lenient_ints: bool
+) -> tuple[Any, list[str]]:
     kind = str(schema.get("type") or "string")
     if kind == "string":
         if not isinstance(value, str):
@@ -113,7 +124,11 @@ def _coerce(path: str, value: Any, schema: Mapping[str, Any], *, lenient_ints: b
     if kind == "integer":
         if isinstance(value, bool):
             return None, [f"{path}: debe ser un entero"]
-        if lenient_ints and isinstance(value, str) and re.fullmatch(r"[+-]?[0-9]{1,12}", value.strip()):
+        if (
+            lenient_ints
+            and isinstance(value, str)
+            and re.fullmatch(r"[+-]?[0-9]{1,12}", value.strip())
+        ):
             value = int(value)
         if isinstance(value, int):
             if abs(value) > INT_MAX:
@@ -121,7 +136,11 @@ def _coerce(path: str, value: Any, schema: Mapping[str, Any], *, lenient_ints: b
             return value, []
         return None, [f"{path}: debe ser un entero"]
     if kind == "boolean":
-        return (value, []) if isinstance(value, bool) else (None, [f"{path}: debe ser true/false"])
+        return (
+            (value, [])
+            if isinstance(value, bool)
+            else (None, [f"{path}: debe ser true/false"])
+        )
     if kind == "array":
         if not isinstance(value, list):
             return None, [f"{path}: debe ser una lista"]
@@ -133,7 +152,9 @@ def _coerce(path: str, value: Any, schema: Mapping[str, Any], *, lenient_ints: b
         out: list[Any] = []
         errors: list[str] = []
         for i, item in enumerate(value):
-            v, errs = _coerce(f"{path}[{i}]", item, item_schema, lenient_ints=lenient_ints)
+            v, errs = _coerce(
+                f"{path}[{i}]", item, item_schema, lenient_ints=lenient_ints
+            )
             errors.extend(errs)
             if not errs:
                 out.append(v)
@@ -150,7 +171,9 @@ def _coerce(path: str, value: Any, schema: Mapping[str, Any], *, lenient_ints: b
                 if name in required:
                     errors.append(f"{path}.{name}: requerido")
                 continue
-            v, errs = _coerce(f"{path}.{name}", value[name], sub, lenient_ints=lenient_ints)
+            v, errs = _coerce(
+                f"{path}.{name}", value[name], sub, lenient_ints=lenient_ints
+            )
             errors.extend(errs)
             if not errs:
                 out_obj[name] = v
@@ -178,4 +201,9 @@ def parse_tool_call(contract: ToolContract, raw: Mapping[str, Any]) -> ToolCall:
             params[name] = value
     if errors:
         raise ToolCallError(errors)
-    return ToolCall(tool=contract.name, session_key=str(session_key), customer_phone=str(phone), params=params)
+    return ToolCall(
+        tool=contract.name,
+        session_key=str(session_key),
+        customer_phone=str(phone),
+        params=params,
+    )

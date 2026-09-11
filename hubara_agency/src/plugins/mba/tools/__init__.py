@@ -6,6 +6,7 @@ delegan por cast (``deps.chats``, canal 3) al contrato ``session-actions@v1``
 de chats — por eso reciben el ``request`` entrante (el castkit lo exige).
 ``run_tool`` devuelve ``None`` solo para una tool declarada sin lógica (501).
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -33,31 +34,42 @@ _CHATS_UNAVAILABLE = {
 }
 
 
-async def run_tool(call: ToolCall, deps: ToolDeps, request: Request | None = None) -> dict[str, Any] | None:
+async def run_tool(
+    call: ToolCall, deps: ToolDeps, request: Request | None = None
+) -> dict[str, Any] | None:
     p = call.params
     if call.tool == "search_products":
         return await catalog.search_products(
-            deps.catalog, q=p.get("q", ""), category=p.get("category"), limit=p.get("limit", catalog.DEFAULT_LIMIT)
+            deps.catalog,
+            q=p.get("q", ""),
+            category=p.get("category"),
+            limit=p.get("limit", catalog.DEFAULT_LIMIT),
         )
     if call.tool == "list_categories":
         return await catalog.list_categories(deps.catalog)
     if call.tool == "get_product_by_handle":
         return await catalog.get_product_by_handle(deps.catalog, handle=p["handle"])
     if call.tool == "check_order_status":
-        return await orders.check_order_status(deps.metadata, deps.order_query, session_key=call.session_key)
+        return await orders.check_order_status(
+            deps.metadata, deps.order_query, session_key=call.session_key
+        )
     if call.tool == "verify_order_for_checkout":
         return await orders.verify_order_for_checkout(deps.checkout, items=p["items"])
     write = _WRITE_TOOLS.get(call.tool)
     if write is not None:
         if deps.chats is None:
             return dict(_CHATS_UNAVAILABLE)
-        result = await write(deps.chats, request, session_key=call.session_key, params=p)
+        result = await write(
+            deps.chats, request, session_key=call.session_key, params=p
+        )
         await _episode_boundary(deps, call.session_key, result)
         return result
     return None
 
 
-async def _episode_boundary(deps: ToolDeps, session_key: str, result: dict[str, Any]) -> None:
+async def _episode_boundary(
+    deps: ToolDeps, session_key: str, result: dict[str, Any]
+) -> None:
     """D1.10: si chats cerró el episodio (``episode_closed`` en la respuesta
     del contrato), MBA recibe la nota de frontera. Best-effort: nunca altera
     ni retrasa (la implementación real corre en background) el envelope."""
@@ -66,7 +78,11 @@ async def _episode_boundary(deps: ToolDeps, session_key: str, result: dict[str, 
     # ``register_order`` arma su propio envelope y deja el cierre en una clave
     # privada (no viaja a Meta); ``manage_conversation_tag`` pasa el contrato tal cual.
     closed = result.pop("_episode_closed", None) or result.get("episode_closed")
-    if deps.episode_boundary is None or not isinstance(closed, dict) or not closed.get("episode_id"):
+    if (
+        deps.episode_boundary is None
+        or not isinstance(closed, dict)
+        or not closed.get("episode_id")
+    ):
         return
     try:
         await deps.episode_boundary(
@@ -75,7 +91,10 @@ async def _episode_boundary(deps: ToolDeps, session_key: str, result: dict[str, 
             episode_id=str(closed["episode_id"]),
             order_id=(str(result["order_id"]) if result.get("order_id") else None),
             # el texto para MBA lleva la referencia legible (#22), no el id crudo de Medusa
-            order_reference=(str(result.get("order_reference") or result.get("order_id") or "") or None),
+            order_reference=(
+                str(result.get("order_reference") or result.get("order_id") or "")
+                or None
+            ),
         )
     except Exception as exc:  # noqa: BLE001 — la tool ya se aplicó; la nota es best-effort
         logger.warning("[mba] episode_boundary falló session={}: {}", session_key, exc)

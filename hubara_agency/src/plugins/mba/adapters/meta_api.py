@@ -22,6 +22,7 @@ Latencia peor caso: ``MAX_ATTEMPTS × timeout + backoff`` (≈31,5 s con los
 defaults). Aceptable en el plano de gestión; al correr dentro de una
 activity de Temporal (D1.7 / D1.9) necesita ``@with_heartbeat`` (R-HEARTBEAT).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -55,7 +56,14 @@ _BACKOFF_S = (0.5, 1.0)
 class MbaApiError(Exception):
     """``kind`` ∈ {not_configured, rejected, unavailable, ambiguous}."""
 
-    def __init__(self, kind: str, *, status: int | None = None, detail: str = "", attempts: int = 1) -> None:
+    def __init__(
+        self,
+        kind: str,
+        *,
+        status: int | None = None,
+        detail: str = "",
+        attempts: int = 1,
+    ) -> None:
         super().__init__(f"{kind}: {status or ''} {detail}".strip())
         self.kind = kind
         self.status = status
@@ -128,7 +136,9 @@ async def request_json(
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
             async with httpx.AsyncClient(timeout=timeout_s) as client:
-                resp = await client.request(method, url, json=body, params=params or None, headers=headers)
+                resp = await client.request(
+                    method, url, json=body, params=params or None, headers=headers
+                )
         except httpx.HTTPError as exc:
             last_status, last_detail = None, f"{type(exc).__name__}: {exc}"
             if not retry_on_transport_error:
@@ -145,16 +155,23 @@ async def request_json(
                     return payload
                 if strict_json:
                     raise error_cls(
-                        "rejected", status=resp.status_code, detail="respuesta 2xx sin JSON", attempts=attempt
+                        "rejected",
+                        status=resp.status_code,
+                        detail="respuesta 2xx sin JSON",
+                        attempts=attempt,
                     )
                 return {}
             detail = _error_detail(resp)
             if resp.status_code != 429 and resp.status_code < 500:
-                raise error_cls("rejected", status=resp.status_code, detail=detail, attempts=attempt)
+                raise error_cls(
+                    "rejected", status=resp.status_code, detail=detail, attempts=attempt
+                )
             last_status, last_detail = resp.status_code, detail
         if attempt < MAX_ATTEMPTS:
             await sleep(_BACKOFF_S[min(attempt, len(_BACKOFF_S)) - 1])
-    raise error_cls("unavailable", status=last_status, detail=last_detail, attempts=MAX_ATTEMPTS)
+    raise error_cls(
+        "unavailable", status=last_status, detail=last_detail, attempts=MAX_ATTEMPTS
+    )
 
 
 async def post_json(

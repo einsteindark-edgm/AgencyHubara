@@ -18,6 +18,7 @@ Meta también:
 * Apagar (``enabled = false``) y quitar teléfonos son el kill switch: nunca
   se bloquean.
 """
+
 from __future__ import annotations
 
 import re
@@ -65,19 +66,35 @@ def _outside_hubara(facts: RolloutFacts) -> list[str]:
 def readiness(facts: RolloutFacts) -> tuple[Check, ...]:
     outside = _outside_hubara(facts)
     return (
-        Check("flag_enabled", facts.flag_enabled, "MBA_STANDBY_ENABLED en el API de Hubara"),
-        Check("sync_ok", facts.last_sync_ok, "el último sync con Meta terminó OK (D2.2)"),
+        Check(
+            "flag_enabled",
+            facts.flag_enabled,
+            "MBA_STANDBY_ENABLED en el API de Hubara",
+        ),
+        Check(
+            "sync_ok", facts.last_sync_ok, "el último sync con Meta terminó OK (D2.2)"
+        ),
         Check(
             "connector_active",
             facts.connector_status == "ACTIVE",
             f"connector en Meta: {facts.connector_status or 'no registrado'}",
         ),
-        Check("audience_allowlisted_only", facts.ai_audience == "ALLOWLISTED_ONLY", f"ai_audience: {facts.ai_audience or 'desconocida'}"),
-        Check("allowlist_nonempty", len(facts.allowlist) > 0, f"{len(facts.allowlist)} teléfono(s) en Meta"),
+        Check(
+            "audience_allowlisted_only",
+            facts.ai_audience == "ALLOWLISTED_ONLY",
+            f"ai_audience: {facts.ai_audience or 'desconocida'}",
+        ),
+        Check(
+            "allowlist_nonempty",
+            len(facts.allowlist) > 0,
+            f"{len(facts.allowlist)} teléfono(s) en Meta",
+        ),
         Check(
             "allowlist_within_hubara",
             not outside,
-            "fuera de la lista cerrada de Hubara: " + ", ".join(outside) if outside else "todos los teléfonos de Meta están en la lista cerrada de Hubara",
+            "fuera de la lista cerrada de Hubara: " + ", ".join(outside)
+            if outside
+            else "todos los teléfonos de Meta están en la lista cerrada de Hubara",
         ),
     )
 
@@ -99,7 +116,9 @@ def can_add_phone(phone: str, facts: RolloutFacts) -> str | None:
     return None
 
 
-def can_set_audience(audience: str, *, confirm: bool, facts: RolloutFacts) -> str | None:
+def can_set_audience(
+    audience: str, *, confirm: bool, facts: RolloutFacts
+) -> str | None:
     if audience not in AUDIENCES:
         return "invalid_audience"
     if audience == "ALLOWLISTED_ONLY":

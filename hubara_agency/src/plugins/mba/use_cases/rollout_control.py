@@ -21,6 +21,7 @@ cumplirse (un teléfono agregado en Business Manager, la lista cerrada de
 Hubara reducida por SSM…). Se devuelve en el status y se loguea ERROR; la
 tab lo muestra junto al kill switch.
 """
+
 from __future__ import annotations
 
 import time
@@ -106,16 +107,25 @@ class RolloutControl:
     async def _remote(self, cfg: MbaConfigDTO) -> _Remote:
         entity_id = str(cfg.entity_id)
         settings_list = await self._admin.get_settings(entity_id)
-        settings = next((s for s in settings_list if s.get("channel") == cfg.channel), settings_list[0] if settings_list else None)
+        settings = next(
+            (s for s in settings_list if s.get("channel") == cfg.channel),
+            settings_list[0] if settings_list else None,
+        )
         allowlist = await self._admin.list_allowlist(entity_id)
         connector_status: str | None = None
         if cfg.connector is not None:
             for con in await self._admin.list_connectors(entity_id):
                 if con.get("name") == cfg.connector.name:
                     cs = con.get("connection_status")
-                    connector_status = str(cs.get("status")) if isinstance(cs, dict) and cs.get("status") else "UNKNOWN"
+                    connector_status = (
+                        str(cs.get("status"))
+                        if isinstance(cs, dict) and cs.get("status")
+                        else "UNKNOWN"
+                    )
                     break
-        return _Remote(settings=settings, allowlist=allowlist, connector_status=connector_status)
+        return _Remote(
+            settings=settings, allowlist=allowlist, connector_status=connector_status
+        )
 
     @staticmethod
     def _last_sync_ok(state: dict[str, Any]) -> bool:
@@ -125,12 +135,18 @@ class RolloutControl:
 
     def _facts(self, state: dict[str, Any], remote: _Remote) -> RolloutFacts:
         settings = remote.settings or {}
-        rollout = settings.get("rollout") if isinstance(settings.get("rollout"), dict) else {}
+        rollout = (
+            settings.get("rollout") if isinstance(settings.get("rollout"), dict) else {}
+        )
         return RolloutFacts(
             flag_enabled=self._enabled(),
             rollout_enabled=bool(rollout.get("enabled")),
             ai_audience=settings.get("ai_audience"),
-            allowlist=tuple((str(e.get("id")), str(e.get("consumer_phone_number") or "")) for e in remote.allowlist if e.get("id") is not None),
+            allowlist=tuple(
+                (str(e.get("id")), str(e.get("consumer_phone_number") or ""))
+                for e in remote.allowlist
+                if e.get("id") is not None
+            ),
             hubara_allowed=self._hubara_allowed,
             last_sync_ok=self._last_sync_ok(state),
             connector_status=remote.connector_status,
@@ -146,16 +162,31 @@ class RolloutControl:
         facts = self._facts(state, remote)
         checks = [c.__dict__ for c in readiness(facts)]
         settings = remote.settings or {}
-        rollout = settings.get("rollout") if isinstance(settings.get("rollout"), dict) else None
-        drift = [c["code"] for c in checks if not c["ok"]] if facts.rollout_enabled else []
+        rollout = (
+            settings.get("rollout")
+            if isinstance(settings.get("rollout"), dict)
+            else None
+        )
+        drift = (
+            [c["code"] for c in checks if not c["ok"]] if facts.rollout_enabled else []
+        )
         if drift:
-            logger.error("[mba] rollout ENCENDIDO en Meta con chequeos caídos para {}: {}", agent_id, ", ".join(drift))
+            logger.error(
+                "[mba] rollout ENCENDIDO en Meta con chequeos caídos para {}: {}",
+                agent_id,
+                ", ".join(drift),
+            )
         return RolloutStatus(
             agent_id=agent_id,
             entity_id=cfg.entity_id,
-            rollout_enabled=bool(rollout.get("enabled")) if rollout is not None else None,
+            rollout_enabled=bool(rollout.get("enabled"))
+            if rollout is not None
+            else None,
             ai_audience=settings.get("ai_audience"),
-            allowlist=[{"id": eid, "phone": phone, "in_hubara": self._hubara_allowed(phone)} for eid, phone in facts.allowlist],
+            allowlist=[
+                {"id": eid, "phone": phone, "in_hubara": self._hubara_allowed(phone)}
+                for eid, phone in facts.allowlist
+            ],
             checks=checks,
             can_enable=bool(cfg.entity_id) and all(c["ok"] for c in checks),
             everyone_allowed=self._everyone(),
@@ -166,7 +197,9 @@ class RolloutControl:
 
     # -- escritura -----------------------------------------------------------
 
-    async def _prepare(self, agent_id: str) -> tuple[MbaConfigDTO, dict[str, Any], _Remote, RolloutFacts] | RolloutOutcome:
+    async def _prepare(
+        self, agent_id: str
+    ) -> tuple[MbaConfigDTO, dict[str, Any], _Remote, RolloutFacts] | RolloutOutcome:
         cfg = self._load(agent_id)
         if cfg is None:
             return RolloutOutcome(agent_id, False, "agent_unknown")
@@ -176,11 +209,25 @@ class RolloutControl:
         try:
             remote = await self._remote(cfg)
         except MbaAdminError as exc:
-            return RolloutOutcome(agent_id, False, "remote_unavailable", error=_err(exc))
+            return RolloutOutcome(
+                agent_id, False, "remote_unavailable", error=_err(exc)
+            )
         return cfg, state, remote, self._facts(state, remote)
 
-    def _record(self, agent_id: str, action: str, value: str, ok: bool, error: dict[str, Any] | None = None) -> None:
-        entry: dict[str, Any] = {"at_ms": self._now_ms(), "action": action, "value": value, "ok": ok}
+    def _record(
+        self,
+        agent_id: str,
+        action: str,
+        value: str,
+        ok: bool,
+        error: dict[str, Any] | None = None,
+    ) -> None:
+        entry: dict[str, Any] = {
+            "at_ms": self._now_ms(),
+            "action": action,
+            "value": value,
+            "ok": ok,
+        }
         if error is not None:
             entry["error"] = {**error, "detail": str(error.get("detail") or "")[:300]}
 
@@ -191,7 +238,9 @@ class RolloutControl:
 
         self._store.update(agent_id, _append)
 
-    async def _write(self, agent_id: str, action: str, value: str, call: Callable[[], Any]) -> RolloutOutcome:
+    async def _write(
+        self, agent_id: str, action: str, value: str, call: Callable[[], Any]
+    ) -> RolloutOutcome:
         try:
             await call()
         except MbaAdminError as exc:
@@ -209,7 +258,12 @@ class RolloutControl:
         if reason is not None:
             return RolloutOutcome(agent_id, False, reason)
         entity_id = str(cfg.entity_id)
-        return await self._write(agent_id, "allowlist_add", phone, lambda: self._admin.add_allowlist(entity_id, phone))
+        return await self._write(
+            agent_id,
+            "allowlist_add",
+            phone,
+            lambda: self._admin.add_allowlist(entity_id, phone),
+        )
 
     async def remove_phone(self, agent_id: str, entry_id: str) -> RolloutOutcome:
         cfg = self._load(agent_id)
@@ -218,9 +272,16 @@ class RolloutControl:
         if not cfg.entity_id:
             return RolloutOutcome(agent_id, False, "entity_id_missing")
         entity_id = str(cfg.entity_id)
-        return await self._write(agent_id, "allowlist_remove", entry_id, lambda: self._admin.remove_allowlist(entity_id, entry_id))
+        return await self._write(
+            agent_id,
+            "allowlist_remove",
+            entry_id,
+            lambda: self._admin.remove_allowlist(entity_id, entry_id),
+        )
 
-    async def set_audience(self, agent_id: str, audience: str, *, confirm: bool) -> RolloutOutcome:
+    async def set_audience(
+        self, agent_id: str, audience: str, *, confirm: bool
+    ) -> RolloutOutcome:
         prep = await self._prepare(agent_id)
         if isinstance(prep, RolloutOutcome):
             return prep
@@ -231,11 +292,17 @@ class RolloutControl:
         entity_id = str(cfg.entity_id)
         settings_agent_id = _settings_agent_id(remote)
         return await self._write(
-            agent_id, "ai_audience", audience,
-            lambda: self._admin.put_settings(entity_id, {"ai_audience": audience}, agent_id=settings_agent_id),
+            agent_id,
+            "ai_audience",
+            audience,
+            lambda: self._admin.put_settings(
+                entity_id, {"ai_audience": audience}, agent_id=settings_agent_id
+            ),
         )
 
-    async def set_enabled(self, agent_id: str, enabled: bool, *, confirm: bool) -> RolloutOutcome:
+    async def set_enabled(
+        self, agent_id: str, enabled: bool, *, confirm: bool
+    ) -> RolloutOutcome:
         if not enabled:
             return await self._disable(agent_id)
         prep = await self._prepare(agent_id)
@@ -245,14 +312,22 @@ class RolloutControl:
         checks = [c.__dict__ for c in readiness(facts)]
         blocked = can_enable(facts)
         if blocked:
-            return RolloutOutcome(agent_id, False, "not_ready", blocked=blocked, checks=checks)
+            return RolloutOutcome(
+                agent_id, False, "not_ready", blocked=blocked, checks=checks
+            )
         if not confirm:
-            return RolloutOutcome(agent_id, False, "confirmation_required", checks=checks)
+            return RolloutOutcome(
+                agent_id, False, "confirmation_required", checks=checks
+            )
         entity_id = str(cfg.entity_id)
         settings_agent_id = _settings_agent_id(remote)
         return await self._write(
-            agent_id, "rollout_enabled", "true",
-            lambda: self._admin.put_settings(entity_id, {"rollout": {"enabled": True}}, agent_id=settings_agent_id),
+            agent_id,
+            "rollout_enabled",
+            "true",
+            lambda: self._admin.put_settings(
+                entity_id, {"rollout": {"enabled": True}}, agent_id=settings_agent_id
+            ),
         )
 
     async def _disable(self, agent_id: str) -> RolloutOutcome:
@@ -268,13 +343,20 @@ class RolloutControl:
         settings_agent_id: str | None = None
         try:
             settings_list = await self._admin.get_settings(entity_id)
-            match = next((s for s in settings_list if s.get("channel") == cfg.channel), settings_list[0] if settings_list else None)
+            match = next(
+                (s for s in settings_list if s.get("channel") == cfg.channel),
+                settings_list[0] if settings_list else None,
+            )
             settings_agent_id = _settings_agent_id(_Remote(match, [], None))
         except MbaAdminError:
             settings_agent_id = None
         return await self._write(
-            agent_id, "rollout_enabled", "false",
-            lambda: self._admin.put_settings(entity_id, {"rollout": {"enabled": False}}, agent_id=settings_agent_id),
+            agent_id,
+            "rollout_enabled",
+            "false",
+            lambda: self._admin.put_settings(
+                entity_id, {"rollout": {"enabled": False}}, agent_id=settings_agent_id
+            ),
         )
 
 

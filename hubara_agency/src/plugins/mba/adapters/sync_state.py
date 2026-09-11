@@ -5,6 +5,7 @@ Guarda qué ids creamos en Meta (para borrar SOLO lo nuestro), el hash de lo
 último enviado (``never_say_phrases`` es write-only) y el resultado del
 último apply / intento, que la tab muestra.
 """
+
 from __future__ import annotations
 
 import json
@@ -48,7 +49,9 @@ class SyncStateStore:
         path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_json(path, data)
 
-    def update(self, agent_id: str, mutator: Callable[[dict[str, Any]], dict[str, Any] | None]) -> dict[str, Any]:
+    def update(
+        self, agent_id: str, mutator: Callable[[dict[str, Any]], dict[str, Any] | None]
+    ) -> dict[str, Any]:
         """Read-modify-write atómico sobre el estado FRESCO del disco: el
         mutator recibe lo que hay ahora y devuelve el estado nuevo (``None``
         = no escribir). Es la única forma correcta de tocar el archivo

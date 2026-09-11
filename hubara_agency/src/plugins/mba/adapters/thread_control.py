@@ -17,6 +17,7 @@ Nota: este endpoint solo enumera ``1.0.0`` (los de configuración usan 2.0.0).
 ``metadata`` se trunca a 2000 chars (tope de Meta); el use case ya lo acota
 con su prefijo incluido.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -61,9 +62,13 @@ def thread_control_url(base_url: str, phone_number_id: str) -> str:
 
 @runtime_checkable
 class ThreadControlPort(Protocol):
-    async def release(self, *, phone_number_id: str, to: str, metadata: str | None = None) -> ThreadControlResult: ...
+    async def release(
+        self, *, phone_number_id: str, to: str, metadata: str | None = None
+    ) -> ThreadControlResult: ...
 
-    async def take(self, *, phone_number_id: str, to: str, metadata: str | None = None) -> ThreadControlResult: ...
+    async def take(
+        self, *, phone_number_id: str, to: str, metadata: str | None = None
+    ) -> ThreadControlResult: ...
 
 
 class MetaThreadControl:
@@ -82,8 +87,14 @@ class MetaThreadControl:
         self._timeout_s = timeout_s
         self._sleep = sleep
 
-    async def _act(self, action: str, phone_number_id: str, to: str, metadata: str | None) -> ThreadControlResult:
-        body: dict[str, Any] = {"messaging_product": "whatsapp", "action": action, "to": to}
+    async def _act(
+        self, action: str, phone_number_id: str, to: str, metadata: str | None
+    ) -> ThreadControlResult:
+        body: dict[str, Any] = {
+            "messaging_product": "whatsapp",
+            "action": action,
+            "to": to,
+        }
         if metadata:
             body["metadata"] = metadata[:_METADATA_MAX]
         await post_json(
@@ -100,10 +111,14 @@ class MetaThreadControl:
         )
         return ThreadControlResult(action=action, to=to)
 
-    async def release(self, *, phone_number_id: str, to: str, metadata: str | None = None) -> ThreadControlResult:
+    async def release(
+        self, *, phone_number_id: str, to: str, metadata: str | None = None
+    ) -> ThreadControlResult:
         return await self._act("release", phone_number_id, to, metadata)
 
-    async def take(self, *, phone_number_id: str, to: str, metadata: str | None = None) -> ThreadControlResult:
+    async def take(
+        self, *, phone_number_id: str, to: str, metadata: str | None = None
+    ) -> ThreadControlResult:
         return await self._act("take", phone_number_id, to, metadata)
 
 
@@ -114,14 +129,20 @@ class FakeThreadControl:
     calls: list[tuple[str, str, str, str | None]] = field(default_factory=list)
     fail_with: ThreadControlError | None = None
 
-    async def _act(self, action: str, phone_number_id: str, to: str, metadata: str | None) -> ThreadControlResult:
+    async def _act(
+        self, action: str, phone_number_id: str, to: str, metadata: str | None
+    ) -> ThreadControlResult:
         if self.fail_with is not None:
             raise self.fail_with
         self.calls.append((action, phone_number_id, to, metadata))
         return ThreadControlResult(action=action, to=to)
 
-    async def release(self, *, phone_number_id: str, to: str, metadata: str | None = None) -> ThreadControlResult:
+    async def release(
+        self, *, phone_number_id: str, to: str, metadata: str | None = None
+    ) -> ThreadControlResult:
         return await self._act("release", phone_number_id, to, metadata)
 
-    async def take(self, *, phone_number_id: str, to: str, metadata: str | None = None) -> ThreadControlResult:
+    async def take(
+        self, *, phone_number_id: str, to: str, metadata: str | None = None
+    ) -> ThreadControlResult:
         return await self._act("take", phone_number_id, to, metadata)

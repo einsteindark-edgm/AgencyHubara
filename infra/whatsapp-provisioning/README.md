@@ -58,8 +58,10 @@ export META_SYSTEM_USER_TOKEN='EAA...'
 export WHATSAPP_APP_SECRET='...'
 ```
 
-`CALLBACK_URL` = `https://<CADDY_DOMAIN>/api/chats/webhook` (el dominio del box
-prod; `grep CADDY_DOMAIN /opt/hubara/.env`).
+`CALLBACK_URL` = `https://<CADDY_DOMAIN>/api/webhook` (el dominio del box prod;
+`grep CADDY_DOMAIN /opt/hubara/.env`). Es la ruta que sirve el plugin `chats`
+(`/api/chats/webhook` NO existe: 404). `apply`/`mba-onboard` se niegan a re-apuntar
+un webhook vivo a otra URL: alineá esto con lo que Meta ya tiene.
 
 ---
 
@@ -252,6 +254,63 @@ Gotchas:
   (la lectura sin `rtk proxy` reformatea el JSON y parece corrupto).
 - El token debe tener la cuenta publicitaria asignada al system user en el
   Business Manager (Assets → Ad accounts) — sin eso `me/adaccounts` viene vacío.
+
+## 5.8 Meta Business Agent (MBA) — onboarding del número (D3.1)
+
+MBA responde en el número de Sales **solo** a la lista cerrada (`ai_audience =
+ALLOWLISTED_ONLY`, `rollout.enabled = false` hasta D4.5). Antes del primer sync
+desde la tab hay que dejar el número "onboardeado" en Meta. Mismo token, misma
+app: el system user token ya tiene `whatsapp_business_messaging` +
+`whatsapp_business_management`, que es lo único que MBA pide.
+
+```bash
+python3 whatsapp_provision.py mba-status  --config tenants/hubara.env   # ¿qué falta?
+python3 whatsapp_provision.py mba-onboard --config tenants/hubara.env   # converge (idempotente)
+```
+
+`mba-status` lee el estado real y lo compara con lo que Meta documenta:
+
+| check | qué mira | cómo se arregla |
+|---|---|---|
+| `token_scopes` | `debug_token` tiene los 2 scopes | regenerar el token del system user |
+| `app_subscribed` | la app está en `/{WABA}/subscribed_apps` | `apply` (o `mba-onboard` lo hace) |
+| `webhook_fields` | `/{APP}/subscriptions` incluye `messages`, `standby`, `messaging_handovers` | `mba-onboard` (necesita `WHATSAPP_APP_SECRET` en env) |
+| `eligible` | `GET api.facebook.com/{phone_id}/agent_eligibility` → `is_eligible: true` | **manual**: WhatsApp Manager → pestaña *Meta Business Agent* → configurar el número y aceptar los Términos |
+
+`mba-onboard` suscribe los campos del webhook que falten y hace `POST
+/{phone_id}/agent_onboarding` **una sola vez** (si el número ya tiene agente,
+no toca nada). `entity_id` de MBA = `phone_number_id` del número
+(`PHONE_NUMBER_ID` en la config = `WHATSAPP_PHONE_NUMBER_ID` en SSM).
+
+> **Manual, una vez por WABA (Meta lo exige humano):** aceptar los *Términos
+> del servicio de Meta Business Agent* en WhatsApp Manager (pestaña Meta
+> Business Agent; solo aparece si algún número del WABA es elegible). Sin eso
+> `agent_eligibility` no da `true` y la Cloud API rechaza las llamadas.
+> **Billing Hub:** Meta cobra por mensaje de MBA; con `ALLOWLISTED_ONLY` no
+> se factura (F0). Adjuntar método de pago es requisito **antes de `EVERYONE`**
+> (D4.4/D4.5), no ahora.
+
+### Env del backend (Terraform = fuente de verdad)
+
+Todo lo que el agente necesita del tenant lo lee del entorno que
+`infra/terraform/platform` materializa en SSM y `render-env-from-ssm.sh` baja al
+`.env`; `agent.yaml` los referencia como `${VAR}` y **no tiene valores a mano**.
+Sin valor real (placeholder de SSM) la sección del dashboard lista el problem y
+el sync queda bloqueado (fail-closed).
+
+| VAR | de dónde sale | módulo |
+|---|---|---|
+| `WHATSAPP_PHONE_NUMBER_ID` | `entity_id` del agente (número onboardeado) | `secrets` (ya existía) |
+| `META_MBA_TOKEN` | **= `META_SYSTEM_USER_TOKEN`** (`put-parameter --overwrite`, fuera de banda) | `secrets` |
+| `WHATSAPP_APP_ID` | `APP_ID` de esta config (decide `messaging_handovers`) | `secrets` |
+| `HUBARA_PUBLIC_API_URL` | `tenants.<t>.api_url` → `base_url` del connector | `mba-config` |
+| `META_FLOW_ID_SHIPPING` | `flows` (Flow v2 publicado en el WABA) | `secrets` (declarada en D3.1; en hubara se importó el param existente) |
+| `MBA_ADVISOR_PHONE` | `tenants.<t>.mba.advisor_phone` (E.164; se guarda en dígitos para `wa.me`) | `mba-config` |
+| `MBA_CUSTOMER_ALLOWLIST` | `tenants.<t>.mba.customer_allowlist` — la ÚNICA lista cerrada | `mba-config` |
+
+`ssm-block` ya imprime `WHATSAPP_APP_ID` y `META_MBA_TOKEN`. Circuito: PR →
+`terraform-apply.yml` platform (aprobación) → `backend-deploy.yml` → verificar
+en el contenedor (`env | grep -E "MBA_|HUBARA_PUBLIC"`).
 
 ## Multi-tenant
 

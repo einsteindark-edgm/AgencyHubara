@@ -14,6 +14,8 @@ Solo stdlib (urllib) — corre con cualquier `python3`, sin dependencias.
   python3 whatsapp_provision.py apply    --config tenants/hubara.env --code 123456
   python3 whatsapp_provision.py ads-token --config tenants/hubara.env
   python3 whatsapp_provision.py ssm-block --config tenants/hubara.env
+  python3 whatsapp_provision.py mba-status  --config tenants/hubara.env   # Meta Business Agent: ¿listo?
+  python3 whatsapp_provision.py mba-onboard --config tenants/hubara.env   # webhook fields + agent_onboarding
 
 Pasos con human-in-the-loop (no automatizables): conseguir la línea, recibir el
 código de verificación, el App Secret, y (Meta-side) Business Verification +
@@ -35,6 +37,18 @@ import urllib.request
 GRAPH = "https://graph.facebook.com"
 API = "v23.0"
 
+# Campos del webhook `whatsapp_business_account` de la app. Meta Business Agent
+# exige `standby` (mensajes mientras MBA tiene el hilo) y `messaging_handovers`
+# (quién tiene el control); `messages` y el status de templates ya eran nuestros.
+WEBHOOK_FIELDS = "messages,message_template_status_update,standby,messaging_handovers"
+
+# Meta Business Agent Cloud API (host propio, sin versión en el path; el header
+# X-API-Version manda). Mismo system user token que WhatsApp, con estos scopes.
+MBA_HOST = "https://api.facebook.com"
+MBA_API_VERSION = "2.0.0"
+MBA_SCOPES = ("whatsapp_business_messaging", "whatsapp_business_management")
+MBA_WEBHOOK_FIELDS = ("messages", "standby", "messaging_handovers")
+
 
 # ── Config ───────────────────────────────────────────────────────────────────
 
@@ -42,7 +56,7 @@ CONFIG_KEYS = (
     "TENANT", "BUSINESS_ID", "APP_ID", "APP_SECRET", "WABA_ID",
     "SYSTEM_USER_TOKEN", "CATALOG_ID", "CALLBACK_URL", "VERIFY_TOKEN",
     "NEW_NUMBER_CC", "NEW_NUMBER", "DISPLAY_NAME", "PIN", "CODE_METHOD",
-    "LANGUAGE", "API_VERSION",
+    "LANGUAGE", "API_VERSION", "PHONE_NUMBER_ID",
 )
 
 
@@ -54,7 +68,9 @@ def load_config(path: str) -> dict:
             if not ln or ln.startswith("#") or "=" not in ln:
                 continue
             k, v = ln.split("=", 1)
-            cfg[k.strip()] = v.strip()
+            # Comentario inline (`WABA_ID=123   # WABA "Hubara"`) — sin esto el id
+            # viaja con espacios y Graph responde InvalidURL (ya nos pasó).
+            cfg[k.strip()] = re.split(r"\s+#", v, 1)[0].strip()
     # El token y el secret pueden venir por env (no dejarlos en el archivo).
     cfg["SYSTEM_USER_TOKEN"] = (
         os.environ.get("META_SYSTEM_USER_TOKEN")
@@ -250,12 +266,201 @@ def step_webhook(cfg):
         print("  ! webhook: falta APP_SECRET (config o env WHATSAPP_APP_SECRET) — SKIP")
         return False
     app_token = f"{cfg['APP_ID']}|{cfg['APP_SECRET']}"
+    # POST /subscriptions REEMPLAZA callback + campos. Si la app ya recibe en otra
+    # URL (prod vivo), una config desalineada apuntaría el webhook a un 404 y
+    # dejaría el número mudo: no se toca, se alinea CALLBACK_URL primero.
+    live = actual_webhook_subscription(cfg)
+    if live is None:
+        print("  ! webhook: no pude leer la suscripción viva de la app — NO toco el webhook")
+        return False
+    if live.get("callback_url") and live["callback_url"] != cfg["CALLBACK_URL"]:
+        print(f"  ! webhook: la app ya recibe en {live['callback_url']} y la config dice "
+              f"{cfg['CALLBACK_URL']} — NO toco el webhook (alineá CALLBACK_URL)")
+        return False
+    # El POST reemplaza el set: se conservan los campos vivos que no son nuestros.
+    fields = ",".join(sorted(set(live.get("fields") or []) | set(WEBHOOK_FIELDS.split(","))))
     st, body = _api("POST", f"{cfg['APP_ID']}/subscriptions", app_token,
                     object="whatsapp_business_account",
                     callback_url=cfg["CALLBACK_URL"], verify_token=cfg["VERIFY_TOKEN"],
-                    fields="messages,message_template_status_update")
+                    fields=fields)
     print(f"  + webhook: {st} {json.dumps(body, ensure_ascii=False)}")
     return st == 200 and body.get("success")
+
+
+def actual_webhook_subscription(cfg):
+    """Suscripción viva de la app para `whatsapp_business_account` (app token):
+    {callback_url, fields[], active}. None = no se pudo leer; {} = no hay."""
+    if not cfg.get("APP_SECRET"):
+        return None
+    app_token = f"{cfg['APP_ID']}|{cfg['APP_SECRET']}"
+    st, body = _api("GET", f"{cfg['APP_ID']}/subscriptions", app_token)
+    if st != 200:
+        return None
+    for sub in body.get("data") or []:
+        if sub.get("object") == "whatsapp_business_account":
+            return {
+                "callback_url": sub.get("callback_url"),
+                "active": sub.get("active"),
+                "fields": [f.get("name") if isinstance(f, dict) else str(f) for f in sub.get("fields") or []],
+            }
+    return {}
+
+
+def actual_webhook_fields(cfg):
+    """Campos suscritos hoy (None = no se pudo leer)."""
+    live = actual_webhook_subscription(cfg)
+    return None if live is None else live.get("fields", [])
+
+
+# ── Meta Business Agent (D3.1) ───────────────────────────────────────────────
+
+def _mba_api(method: str, entity_id: str, resource: str, token: str, body=None):
+    """Una llamada a la Cloud API de Meta Business Agent: Bearer + X-API-Version."""
+    url = f"{MBA_HOST}/{entity_id}/{resource}"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "X-API-Version": MBA_API_VERSION,
+        "Content-Type": "application/json",
+    }
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=45) as r:
+            raw = r.read().decode() or "{}"
+            try:
+                return r.status, json.loads(raw)
+            except ValueError:
+                return r.status, {"error": "non-json", "raw": raw[:200]}
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.loads(e.read().decode() or "{}")
+        except Exception:
+            return e.code, {"error": "non-json"}
+
+
+def mba_phone_id(cfg, state):
+    """entity_id de MBA = phone_number_id del número de Sales (config o descubierto)."""
+    n = find_number(state, cfg)
+    phone_id = (n or {}).get("id") or cfg.get("PHONE_NUMBER_ID")
+    if not phone_id:
+        ids = ", ".join(f"{x.get('id')} ({x.get('display_phone_number')})" for x in state.get("numbers") or [])
+        sys.exit(f"FALTA PHONE_NUMBER_ID en la config (números del WABA: {ids or 'ninguno'})")
+    return str(phone_id)
+
+
+def mba_state(cfg, phone_id, state):
+    """Estado real de lo que Meta exige antes de onboardear (token, app, webhook,
+    elegibilidad) + los agentes que el número ya tiene."""
+    t = cfg["SYSTEM_USER_TOKEN"]
+    st, elig = _mba_api("GET", phone_id, "agent_eligibility", t)
+    st2, settings = _mba_api("GET", phone_id, "agent_config/settings", t)
+    if st2 == 200 and isinstance(settings, list):
+        agents = settings
+    elif st2 == 200 and isinstance(settings, dict) and ("agent_id" in settings or "rollout" in settings):
+        agents = [settings]
+    else:
+        agents = []
+    return {
+        "phone_id": phone_id,
+        "scopes": (state.get("token") or {}).get("scopes") or [],
+        "subscribed": cfg["APP_ID"] in state.get("subscribed_app_ids", []),
+        "webhook_fields": actual_webhook_fields(cfg),
+        "eligible": elig.get("is_eligible") if st == 200 else None,
+        "eligibility_raw": (st, elig),
+        "agents": agents,
+        "settings_raw": (st2, settings),
+    }
+
+
+def mba_readiness(state):
+    """[(code, ok, detail)] — una línea por precondición documentada por Meta."""
+    missing_scopes = sorted(set(MBA_SCOPES) - set(state.get("scopes") or []))
+    fields = state.get("webhook_fields")
+    missing_fields = sorted(set(MBA_WEBHOOK_FIELDS) - set(fields or []))
+    eligible = state.get("eligible")
+    if eligible is True:
+        elig_detail = "agent_eligibility → is_eligible=true"
+    elif eligible is None:
+        elig_detail = "Meta no contestó agent_eligibility (¿token / Términos de MBA sin aceptar?)"
+    else:
+        elig_detail = ("is_eligible=false: número no elegible (WhatsApp Manager → pestaña Meta Business "
+                       "Agent: configurar el número y aceptar los Términos)")
+    return [
+        ("token_scopes", not missing_scopes,
+         f"faltan scopes {missing_scopes}" if missing_scopes else "whatsapp_business_messaging + management"),
+        ("app_subscribed", bool(state.get("subscribed")),
+         "app suscrita al WABA" if state.get("subscribed") else "la app NO está suscrita al WABA (apply)"),
+        ("webhook_fields", not missing_fields,
+         ("faltan campos " + ", ".join(missing_fields)) if missing_fields
+         else ("no se pudo leer (sin APP_SECRET)" if fields is None else "messages, standby, messaging_handovers")),
+        ("eligible", eligible is True, elig_detail),
+    ]
+
+
+def step_mba_onboard(cfg, phone_id, state):
+    """POST agent_onboarding, idempotente: si el número ya tiene agente, no toca
+    nada. Devuelve el agent_id o None (con el motivo impreso)."""
+    agents = state.get("agents") or []
+    if agents:
+        aid = agents[0].get("agent_id") or agents[0].get("id")
+        print(f"  = número {phone_id} ya onboardeado (agent_id {aid})")
+        return aid
+    failing = [c for c, ok, _ in mba_readiness(state) if not ok]
+    if failing:
+        print(f"  ! agent_onboarding NO ejecutado: precondiciones fallidas {failing}")
+        return None
+    st, body = _mba_api("POST", phone_id, "agent_onboarding", cfg["SYSTEM_USER_TOKEN"], {})
+    aid = body.get("agent_id") if st in (200, 201) and isinstance(body, dict) else None
+    if not aid:
+        print(f"  ! agent_onboarding: {st} {json.dumps(body, ensure_ascii=False)[:300]}")
+        return None
+    print(f"  + agent_onboarding: {st} agent_id={aid}")
+    return aid
+
+
+def step_mba_lock_audience(cfg, phone_id, agent):
+    """Meta onboardea con ai_audience=EVERYONE y followup encendido. Estamos en
+    producción: la audiencia se deja en ALLOWLISTED_ONLY (lista cerrada) y el
+    followup apagado ANTES de cualquier otra cosa, aunque rollout esté off.
+    Idempotente: si ya está así, no llama."""
+    want = {"ai_audience": "ALLOWLISTED_ONLY", "rollout": {"enabled": False}, "followup": {"enabled": False}}
+    if _agent_locked(agent):
+        print("  = audiencia ALLOWLISTED_ONLY, rollout y followup apagados (ya)")
+        return True
+    aid = agent.get("agent_id") or agent.get("id")
+    resource = "agent_config/settings" + (f"?agent_id={urllib.parse.quote(str(aid))}" if aid else "")
+    st, body = _mba_api("PUT", phone_id, resource, cfg["SYSTEM_USER_TOKEN"], want)
+    print(f"  {'+' if st == 200 else '!'} settings → ALLOWLISTED_ONLY + rollout/followup off: {st} "
+          f"{json.dumps(body, ensure_ascii=False)[:200]}")
+    if st != 200:
+        return False
+    # No confiar en el 200: releer y exigir el estado (Meta puede ignorar un campo).
+    st, after = _mba_api("GET", phone_id, resource, cfg["SYSTEM_USER_TOKEN"])
+    after = after[0] if isinstance(after, list) and after else after
+    ok = st == 200 and isinstance(after, dict) and _agent_locked(after)
+    if not ok:
+        print(f"  ! releído tras el PUT: {st} {json.dumps(after, ensure_ascii=False)[:200]} — NO quedó cerrado")
+    return ok
+
+
+def _agent_locked(agent):
+    return (agent.get("ai_audience") == "ALLOWLISTED_ONLY"
+            and not (agent.get("rollout") or {}).get("enabled")
+            and not (agent.get("followup") or {}).get("enabled"))
+
+
+def _print_mba_readiness(state):
+    for code, ok, detail in mba_readiness(state):
+        print(f"  [{'ok' if ok else '!!'}] {code}: {detail}")
+
+
+def _print_mba_next_steps(cfg, phone_id):
+    print("\n  Env del backend (SSM /hubara/<tenant>/…, claves ya declaradas en Terraform):")
+    print(f"    WHATSAPP_PHONE_NUMBER_ID={phone_id}   # = entity_id del agente (agent.yaml lo lee del entorno)")
+    print(f"    WHATSAPP_APP_ID={cfg['APP_ID']}")
+    print("    META_MBA_TOKEN=<= META_SYSTEM_USER_TOKEN>")
+    print("  Manual (una vez, WhatsApp Manager → Meta Business Agent): configurar el número y aceptar los Términos.")
+    print("  Billing Hub: NO requerido con ai_audience=ALLOWLISTED_ONLY; obligatorio antes de EVERYONE.")
 
 
 # ── Flows (formularios nativos) ──────────────────────────────────────────────
@@ -588,6 +793,9 @@ def cmd_ssm_block(cfg, _):
     print("WHATSAPP_ACCESS_TOKEN=<= META_SYSTEM_USER_TOKEN>")
     print(f"WHATSAPP_VERIFY_TOKEN={cfg['VERIFY_TOKEN']}")
     print("WHATSAPP_APP_SECRET=<App Secret>")
+    # Meta Business Agent (D3.1): misma app y mismo system user token.
+    print(f"WHATSAPP_APP_ID={cfg['APP_ID']}")
+    print("META_MBA_TOKEN=<= META_SYSTEM_USER_TOKEN>")
     ds = actual_capi_dataset(cfg)
     print(f"META_CAPI_DATASET_ID={ds or '<correr: whatsapp_provision.py capi>'}")
     print("META_CAPI_ACCESS_TOKEN=<= META_SYSTEM_USER_TOKEN (ads_management)>")
@@ -626,6 +834,49 @@ def cmd_flows(cfg, _):
         print("  resolved:", json.dumps(resolved, ensure_ascii=False))
 
 
+def cmd_mba_status(cfg, _):
+    s = actual_state(cfg)
+    phone_id = mba_phone_id(cfg, s)
+    st = mba_state(cfg, phone_id, s)
+    print(f"MBA STATUS (número {phone_id}):")
+    _print_mba_readiness(st)
+    agents = st["agents"]
+    if agents:
+        for a in agents:
+            print(f"  = agente: {json.dumps(a, ensure_ascii=False)[:300]}")
+    else:
+        print(f"  - sin agente onboardeado (GET agent_config/settings → {st['settings_raw'][0]})")
+    if st["eligible"] is None:
+        print(f"  - agent_eligibility crudo: {json.dumps(st['eligibility_raw'], ensure_ascii=False)[:300]}")
+    _print_mba_next_steps(cfg, phone_id)
+
+
+def cmd_mba_onboard(cfg, _):
+    s = actual_state(cfg)
+    phone_id = mba_phone_id(cfg, s)
+    st = mba_state(cfg, phone_id, s)
+    print(f"MBA ONBOARD (número {phone_id}, idempotente):")
+    if not st["subscribed"]:
+        step_subscribe_app(cfg, s)
+        s = actual_state(cfg)
+        st = mba_state(cfg, phone_id, s)
+    missing_fields = set(MBA_WEBHOOK_FIELDS) - set(st["webhook_fields"] or [])
+    if missing_fields and cfg.get("APP_SECRET"):
+        print(f"  ~ webhook: suscribiendo {WEBHOOK_FIELDS}")
+        step_webhook(cfg)
+        st["webhook_fields"] = actual_webhook_fields(cfg)
+    _print_mba_readiness(st)
+    aid = step_mba_onboard(cfg, phone_id, st)
+    if aid:
+        st = mba_state(cfg, phone_id, s)
+        agent = next((a for a in st["agents"] if (a.get("agent_id") or a.get("id")) == aid), None) or {"agent_id": aid}
+        if not step_mba_lock_audience(cfg, phone_id, agent):
+            sys.exit(f"agente {aid} onboardeado pero SIN lock de audiencia (puede estar en EVERYONE): "
+                     "reintentar mba-onboard hasta ver ALLOWLISTED_ONLY")
+        print(f"\n  Hecho. entity_id={phone_id} agent_id={aid} (rollout sigue apagado: lo enciende D4.5 desde la tab)")
+    _print_mba_next_steps(cfg, phone_id)
+
+
 COMMANDS = {
     "discover": cmd_discover,
     "plan": cmd_plan,
@@ -636,6 +887,8 @@ COMMANDS = {
     "capi": cmd_capi,
     "ads-token": cmd_ads_token,
     "ssm-block": cmd_ssm_block,
+    "mba-status": cmd_mba_status,
+    "mba-onboard": cmd_mba_onboard,
 }
 
 

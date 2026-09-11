@@ -8,6 +8,7 @@ Hubara habría enviado (la matriz determinista del ETA) y le pide
 transmitirlo sin inventar; para ``episode_closed`` (D1.10) lleva la nota de
 frontera y le pide callar.
 """
+
 from __future__ import annotations
 
 __all__ = [
@@ -20,12 +21,12 @@ __all__ = [
 
 AGENT_EVENT_TYPES: tuple[str, ...] = (
     "payment_received",  # preparing con pago confirmado (Hubara concilió el pago)
-    "order_preparing",   # preparing sin pago confirmado (contra entrega / pendiente)
+    "order_preparing",  # preparing sin pago confirmado (contra entrega / pendiente)
     "order_ready",
     "order_shipped",
     "order_delivered",
     "order_cancelled",
-    "episode_closed",    # D1.10: nota de frontera entre episodios
+    "episode_closed",  # D1.10: nota de frontera entre episodios
 )
 
 #: Tope prudente para ``description`` (Meta no publica el límite; 2000 es el
@@ -58,7 +59,9 @@ _CLOSING_LABELS = {
 #: Cierres con pedido en manos del equipo: el hilo sigue en MBA hasta que un
 #: humano escriba, así que MBA NO debe arrancar una venta nueva ni retomar el
 #: pedido — deriva al colega (revisión D1.10, M-1).
-_CLOSED_WITH_ORDER = frozenset({"COMPRA_EXITOSA", "CONFIRMADO_PAGO_PENDIENTE", "CONFIRMADO_SIN_DATOS"})
+_CLOSED_WITH_ORDER = frozenset(
+    {"COMPRA_EXITOSA", "CONFIRMADO_PAGO_PENDIENTE", "CONFIRMADO_SIN_DATOS"}
+)
 _GUIDANCE_WITH_ORDER = (
     "Un colega del equipo gestiona ese pedido: si el cliente escribe sobre él (comprobante, dudas, cambios), "
     "dile que un colega le confirma en breve; no lo retomes ni inicies una venta nueva."
@@ -87,12 +90,16 @@ def build_description(event_type: str, message: str) -> str:
     return f"{message.strip()[:budget]}{instruction}"
 
 
-def episode_closed_message(closing_tag: str, *, order_reference: str | None = None) -> str:
+def episode_closed_message(
+    closing_tag: str, *, order_reference: str | None = None
+) -> str:
     """Texto de la nota de frontera: qué pasó con la conversación anterior y
     qué hacer si el cliente vuelve (según el cierre: con pedido en manos del
     equipo → derivar al colega; sin pedido → conversación nueva)."""
     tag = str(closing_tag or "").upper()
     label = _CLOSING_LABELS.get(tag, str(closing_tag or "cerrada").lower())
     ref = f", pedido {order_reference}" if order_reference else ""
-    guidance = _GUIDANCE_WITH_ORDER if tag in _CLOSED_WITH_ORDER else _GUIDANCE_FRESH_START
+    guidance = (
+        _GUIDANCE_WITH_ORDER if tag in _CLOSED_WITH_ORDER else _GUIDANCE_FRESH_START
+    )
     return f"La conversación anterior con este cliente quedó cerrada ({label}{ref}). {guidance}"

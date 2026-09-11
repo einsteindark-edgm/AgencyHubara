@@ -13,6 +13,7 @@ Regla #241 (el envío nunca es definitivo) en la respuesta de ``register_order``
 anticipado o link (marcados como tarifa mínima); con contra entrega no viaja
 ningún total (el envío se paga al recibir y la transportadora lo recalcula).
 """
+
 from __future__ import annotations
 
 import unicodedata
@@ -33,7 +34,9 @@ __all__ = [
 ]
 
 #: ``(request, session_key, action, body) -> respuesta del contrato``.
-SessionActionCall = Callable[[Request | None, str, str, dict[str, Any]], Awaitable[dict[str, Any]]]
+SessionActionCall = Callable[
+    [Request | None, str, str, dict[str, Any]], Awaitable[dict[str, Any]]
+]
 
 #: MBA solo PROPONE estas dos; el estado de un pedido lo lleva Hubara (§D1.3).
 TAGS: tuple[str, ...] = ("INTERESADO", "RECHAZO")
@@ -63,9 +66,21 @@ PAYMENT_METHODS: dict[str, str] = {
     "anticipado": "transfer",
     "link_de_pago": "payment_link",
 }
-_CASH_ALIASES = ("contra_entrega", "contraentrega", "contra entrega", "cash_on_delivery")
+_CASH_ALIASES = (
+    "contra_entrega",
+    "contraentrega",
+    "contra entrega",
+    "cash_on_delivery",
+)
 _LINK_ALIASES = ("link_de_pago", "link de pago", "payment_link", "link")
-_TRANSFER_ALIASES = ("anticipado", "pago anticipado", "nequi", "llave", "transfer", "transferencia")
+_TRANSFER_ALIASES = (
+    "anticipado",
+    "pago anticipado",
+    "nequi",
+    "llave",
+    "transfer",
+    "transferencia",
+)
 
 _SHIPPING_NOTE_COD = (
     "Con contra entrega el envío se paga al recibir: la transportadora recalcula el valor "
@@ -75,7 +90,9 @@ _SHIPPING_NOTE_COD = (
 
 def _fold(text: str) -> str:
     stripped = "".join(
-        ch for ch in unicodedata.normalize("NFKD", str(text)) if not unicodedata.combining(ch)
+        ch
+        for ch in unicodedata.normalize("NFKD", str(text))
+        if not unicodedata.combining(ch)
     )
     return " ".join(stripped.casefold().replace("_", " ").split())
 
@@ -99,7 +116,11 @@ def normalize_payment_method(raw: Any) -> str | None:
 
 
 async def _call(
-    chats: SessionActionCall, request: Request | None, session_key: str, action: str, body: dict[str, Any]
+    chats: SessionActionCall,
+    request: Request | None,
+    session_key: str,
+    action: str,
+    body: dict[str, Any],
 ) -> dict[str, Any]:
     """El cast, con sus fallos convertidos a envelopes explícitos (códigos cerrados)."""
     try:
@@ -107,7 +128,9 @@ async def _call(
     except HTTPException as exc:
         status = exc.status_code
         detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
-        logger.warning("[mba] cast {} session={} → {}: {}", action, session_key, status, detail)
+        logger.warning(
+            "[mba] cast {} session={} → {}: {}", action, session_key, status, detail
+        )
         if status == 502:
             return {
                 "error": "chats_unavailable",
@@ -147,13 +170,21 @@ async def _call(
 
 
 async def set_order_slot(
-    chats: SessionActionCall, request: Request | None, *, session_key: str, params: dict[str, Any]
+    chats: SessionActionCall,
+    request: Request | None,
+    *,
+    session_key: str,
+    params: dict[str, Any],
 ) -> dict[str, Any]:
     return await _call(chats, request, session_key, "draft", dict(params))
 
 
 async def register_order(
-    chats: SessionActionCall, request: Request | None, *, session_key: str, params: dict[str, Any]
+    chats: SessionActionCall,
+    request: Request | None,
+    *,
+    session_key: str,
+    params: dict[str, Any],
 ) -> dict[str, Any]:
     method = normalize_payment_method(params.get("metodo_pago"))
     if method is None:
@@ -164,7 +195,10 @@ async def register_order(
         }
     items = []
     for it in params.get("items") or []:
-        entry: dict[str, Any] = {"handle": it.get("handle"), "quantity": it.get("quantity")}
+        entry: dict[str, Any] = {
+            "handle": it.get("handle"),
+            "quantity": it.get("quantity"),
+        }
         if it.get("variant_label"):
             entry["variant_label"] = it["variant_label"]
         items.append(entry)
@@ -218,15 +252,22 @@ async def register_order(
         out["shipping_is_minimum_rate"] = True
     out["message"] = (
         "Pedido registrado. Sigue el guion de cierre: un solo mensaje de despedida"
-        + (" (este pedido INCLUYE portavelas: usa la despedida que lo menciona)" if out["portavelas_included"] else
-           " (sin mencionar portavelas)")
+        + (
+            " (este pedido INCLUYE portavelas: usa la despedida que lo menciona)"
+            if out["portavelas_included"]
+            else " (sin mencionar portavelas)"
+        )
         + ". El equipo le envía al cliente las instrucciones de pago y verifica el pago; no etiquetes ni escales."
     )
     return out
 
 
 async def manage_conversation_tag(
-    chats: SessionActionCall, request: Request | None, *, session_key: str, params: dict[str, Any]
+    chats: SessionActionCall,
+    request: Request | None,
+    *,
+    session_key: str,
+    params: dict[str, Any],
 ) -> dict[str, Any]:
     tag = str(params.get("tag") or "").strip().upper()
     if tag not in TAGS:
@@ -235,7 +276,9 @@ async def manage_conversation_tag(
             "accepted": list(TAGS),
             "message": "Solo puedes proponer INTERESADO o RECHAZO. El estado de un pedido lo lleva el equipo de Hubara.",
         }
-    res = await _call(chats, request, session_key, "tag", {"tag": tag, "motivo": params.get("motivo")})
+    res = await _call(
+        chats, request, session_key, "tag", {"tag": tag, "motivo": params.get("motivo")}
+    )
     if "error" in res:
         return res
     return {**res, "message": _tag_message(res)}
@@ -262,7 +305,11 @@ def _tag_message(res: dict[str, Any]) -> str:
 
 
 async def escalate_to_human(
-    chats: SessionActionCall, request: Request | None, *, session_key: str, params: dict[str, Any]
+    chats: SessionActionCall,
+    request: Request | None,
+    *,
+    session_key: str,
+    params: dict[str, Any],
 ) -> dict[str, Any]:
     reason = str(params.get("reason_category") or "").strip().upper()
     if reason not in REASON_CATEGORIES:
@@ -272,5 +319,9 @@ async def escalate_to_human(
             "message": "reason_category debe ser uno de los valores exactos de la tabla del skill de escalación.",
         }
     return await _call(
-        chats, request, session_key, "escalate", {"reason_category": reason, "summary": params.get("summary")}
+        chats,
+        request,
+        session_key,
+        "escalate",
+        {"reason_category": reason, "summary": params.get("summary")},
     )

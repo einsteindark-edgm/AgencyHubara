@@ -17,6 +17,7 @@ Un ``agent_event`` NO es idempotente: un timeout es ``ambiguous`` (Meta pudo
 haberlo aceptado) y no se reintenta acá; el use case lo cuenta como
 "posiblemente entregado".
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -67,7 +68,13 @@ def agent_event_url(base_url: str, entity_id: str) -> str:
 @runtime_checkable
 class AgentEventPort(Protocol):
     async def emit(
-        self, *, entity_id: str, to: str, event_type: str, description: str, payload: dict[str, Any] | None = None
+        self,
+        *,
+        entity_id: str,
+        to: str,
+        event_type: str,
+        description: str,
+        payload: dict[str, Any] | None = None,
     ) -> AgentEventResult: ...
 
 
@@ -88,7 +95,13 @@ class MetaAgentEvent:
         self._sleep = sleep
 
     async def emit(
-        self, *, entity_id: str, to: str, event_type: str, description: str, payload: dict[str, Any] | None = None
+        self,
+        *,
+        entity_id: str,
+        to: str,
+        event_type: str,
+        description: str,
+        payload: dict[str, Any] | None = None,
     ) -> AgentEventResult:
         event: dict[str, Any] = {"type": event_type, "description": description}
         if payload is not None:
@@ -116,13 +129,23 @@ class MetaAgentEvent:
 class FakeAgentEvent:
     """Registra ``(entity_id, to, type, description, payload)``; ``fail_with`` simula a Meta."""
 
-    calls: list[tuple[str, str, str, str, dict[str, Any] | None]] = field(default_factory=list)
+    calls: list[tuple[str, str, str, str, dict[str, Any] | None]] = field(
+        default_factory=list
+    )
     fail_with: AgentEventError | None = None
 
     async def emit(
-        self, *, entity_id: str, to: str, event_type: str, description: str, payload: dict[str, Any] | None = None
+        self,
+        *,
+        entity_id: str,
+        to: str,
+        event_type: str,
+        description: str,
+        payload: dict[str, Any] | None = None,
     ) -> AgentEventResult:
         if self.fail_with is not None:
             raise self.fail_with
         self.calls.append((entity_id, to, event_type, description, payload))
-        return AgentEventResult(agent_event_id=f"fake-{len(self.calls)}", status="accepted")
+        return AgentEventResult(
+            agent_event_id=f"fake-{len(self.calls)}", status="accepted"
+        )

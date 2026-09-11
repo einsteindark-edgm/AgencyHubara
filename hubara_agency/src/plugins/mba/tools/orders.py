@@ -10,6 +10,7 @@
 Scoping: el teléfono que inyecta Meta es la única clave; un cliente jamás ve
 pedidos de otra ``session_key``.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -35,7 +36,9 @@ MAX_ORDERS = 5
 
 def _fmt_when(at_ms: Any) -> str | None:
     try:
-        return datetime.fromtimestamp(int(at_ms) / 1000.0, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        return datetime.fromtimestamp(int(at_ms) / 1000.0, tz=timezone.utc).strftime(
+            "%Y-%m-%d %H:%M UTC"
+        )
     except (TypeError, ValueError, OSError):
         return None
 
@@ -72,26 +75,37 @@ async def _live_summary(query_port: Any, order_id: str) -> Any | None:
     try:
         detail = await query_port.get(order_id)
     except Exception as exc:  # noqa: BLE001 — degradar a local, jamás reventar el endpoint
-        logger.warning("[mba] check_order_status live lookup {} falló: {}", order_id, exc)
+        logger.warning(
+            "[mba] check_order_status live lookup {} falló: {}", order_id, exc
+        )
         return None
     return getattr(detail, "summary", None) if detail is not None else None
 
 
-async def _live_summaries(query_port: Any | None, order_ids: list[str]) -> list[Any | None]:
+async def _live_summaries(
+    query_port: Any | None, order_ids: list[str]
+) -> list[Any | None]:
     """Lookups en paralelo bajo UN presupuesto total (`LIVE_TIMEOUT_S`): el
     connector de Meta tiene su propio timeout y 5 × 8 s secuenciales lo vencerían."""
     if query_port is None or not order_ids:
         return [None] * len(order_ids)
     try:
         return await asyncio.wait_for(
-            asyncio.gather(*(_live_summary(query_port, oid) for oid in order_ids)), timeout=LIVE_TIMEOUT_S
+            asyncio.gather(*(_live_summary(query_port, oid) for oid in order_ids)),
+            timeout=LIVE_TIMEOUT_S,
         )
     except asyncio.TimeoutError:
-        logger.warning("[mba] check_order_status: presupuesto de {}s agotado para {} pedidos", LIVE_TIMEOUT_S, len(order_ids))
+        logger.warning(
+            "[mba] check_order_status: presupuesto de {}s agotado para {} pedidos",
+            LIVE_TIMEOUT_S,
+            len(order_ids),
+        )
         return [None] * len(order_ids)
 
 
-async def check_order_status(store: Any, query_port: Any | None, *, session_key: str) -> dict[str, Any]:
+async def check_order_status(
+    store: Any, query_port: Any | None, *, session_key: str
+) -> dict[str, Any]:
     data = store.read(session_key)
     by_id: dict[str, dict[str, Any]] = {}
     order: list[str] = []
@@ -101,7 +115,11 @@ async def check_order_status(store: Any, query_port: Any | None, *, session_key:
             continue
         stage = str(entry.get("current_stage") or "new")
         events = entry.get("events") or []
-        last = events[-1] if isinstance(events, list) and events and isinstance(events[-1], dict) else {}
+        last = (
+            events[-1]
+            if isinstance(events, list) and events and isinstance(events[-1], dict)
+            else {}
+        )
         by_id[oid] = {
             "order_id": oid,
             "status": _STAGE_LABELS.get(stage, stage),
@@ -111,10 +129,18 @@ async def check_order_status(store: Any, query_port: Any | None, *, session_key:
         order.append(oid)
     for oid in _metadata_order_ids(data):
         if oid not in by_id:
-            by_id[oid] = {"order_id": oid, "status": "registrado", "status_code": None, "last_update": None}
+            by_id[oid] = {
+                "order_id": oid,
+                "status": "registrado",
+                "status_code": None,
+                "last_update": None,
+            }
             order.append(oid)
     if not by_id:
-        return {"orders": [], "note": "El cliente no tiene pedidos registrados en esta conversación."}
+        return {
+            "orders": [],
+            "note": "El cliente no tiene pedidos registrados en esta conversación.",
+        }
 
     live_unavailable = False
     shown = order[:MAX_ORDERS]
@@ -155,7 +181,9 @@ _CHECKOUT_DOWN = {
 }
 
 
-async def verify_order_for_checkout(verifier: Any | None, *, items: list[dict[str, Any]]) -> dict[str, Any]:
+async def verify_order_for_checkout(
+    verifier: Any | None, *, items: list[dict[str, Any]]
+) -> dict[str, Any]:
     if verifier is None:
         return {**_CHECKOUT_DOWN, "detail": "checkout_not_configured"}
     bad = [it["handle"] for it in items if int(it["quantity"]) < 1]
@@ -165,11 +193,17 @@ async def verify_order_for_checkout(verifier: Any | None, *, items: list[dict[st
             "message": "La cantidad de cada item debe ser 1 o más. Corrige y vuelve a verificar.",
             "items": bad,
         }
-    parsed = [CheckoutItem(handle=str(it["handle"]), quantity=int(it["quantity"])) for it in items]
+    parsed = [
+        CheckoutItem(handle=str(it["handle"]), quantity=int(it["quantity"]))
+        for it in items
+    ]
     result = await verifier.verify_items(parsed)
     if not result.catalog_available:
         # el texto del vendor (host de Medusa, stack) va al log, no al agente
-        logger.warning("[mba] verify_order_for_checkout catalog_unavailable: {}", result.error_detail)
+        logger.warning(
+            "[mba] verify_order_for_checkout catalog_unavailable: {}",
+            result.error_detail,
+        )
         return {**_CHECKOUT_DOWN, "detail": "checkout_unavailable"}
     any_discrepancy = any(vi.discrepancy for vi in result.items)
     envelope: dict[str, Any] = {
@@ -184,5 +218,7 @@ async def verify_order_for_checkout(verifier: Any | None, *, items: list[dict[st
             "nuevo antes de registrar el pedido."
         )
     else:
-        envelope["message"] = "Verificación OK: precios y disponibilidad coinciden. Muestra el resumen para confirmar."
+        envelope["message"] = (
+            "Verificación OK: precios y disponibilidad coinciden. Muestra el resumen para confirmar."
+        )
     return envelope

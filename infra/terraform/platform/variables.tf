@@ -41,7 +41,7 @@ variable "tenants" {
 
     # Build del frontend: base URL del FastAPI del tenant (VITE_API_URL). Debe
     # coincidir con el `domain` del mismo tenant en ../compute/tenants.auto.tfvars.
-    api_url = string
+    api_url = string # se materializa en SSM (HUBARA_PUBLIC_API_URL) y entra a agent.yaml de MBA: sin comillas/espacios/#
 
     # Auth / Cognito
     callback_urls = list(string) # URLs de redirect OAuth (https://dashboard.<tenant>...)
@@ -59,8 +59,21 @@ variable "tenants" {
       customer_allowlist     = optional(list(string), []) # E.164 (+573001234567); [] = NADIE
       episode_boundary_event = optional(bool, false)      # nota de frontera episode_closed (D1.10)
       allow_everyone         = optional(bool, false)      # permite ai_audience=EVERYONE desde la tab (D2.3)
+      advisor_phone          = optional(string, "")       # E.164 del asesor humano (botón "Escribir al equipo", D3.1); "" = sin resolver
     }), {})
   }))
+
+  validation {
+    condition = alltrue([
+      for t in values(var.tenants) : t.mba.advisor_phone == "" || can(regex("^\\+[1-9][0-9]{7,14}$", t.mba.advisor_phone))
+    ])
+    error_message = "tenants.*.mba.advisor_phone: E.164 con '+' (p.ej. +573001234567) o vacío."
+  }
+
+  validation {
+    condition     = alltrue([for t in values(var.tenants) : can(regex("^https://[^\\s\"'#]+$", t.api_url))])
+    error_message = "tenants.*.api_url: https://… sin espacios, comillas ni '#' (entra al agent.yaml de MBA)."
+  }
 
   validation {
     condition = alltrue(flatten([
@@ -114,6 +127,10 @@ variable "secret_keys" {
     "MEDUSA_BASE_URL",
     "MEDUSA_ADMIN_TOKEN",
     "META_CATALOG_ID",
+    # Flow v2 (formulario de envío) publicado en el WABA del tenant: lo resuelve el
+    # CLI de provisioning (`flows`) y lo consumen chats + el agent.yaml de MBA
+    # (`${META_FLOW_ID_SHIPPING}`). Tenant existente: `terraform import` del param antes del apply.
+    "META_FLOW_ID_SHIPPING",
     "META_SYSTEM_USER_TOKEN",
     "TEMPORAL_ADDRESS",
     "TEMPORAL_NAMESPACE",

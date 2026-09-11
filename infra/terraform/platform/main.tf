@@ -70,8 +70,9 @@ module "mba_config" {
   source   = "./modules/mba-config"
   for_each = var.tenants
 
-  tenant = each.key
-  config = each.value.mba
+  tenant  = each.key
+  api_url = each.value.api_url
+  config  = each.value.mba
 }
 
 # ── GraphAgents (subsistema separado): secretos SSM en /graphagents/ ─────────
