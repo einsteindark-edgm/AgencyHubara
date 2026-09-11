@@ -143,7 +143,42 @@ def test_webhook_step_refuses_to_repoint_a_live_callback(monkeypatch) -> None:
     assert wp.step_webhook(cfg) is False
     assert posts == []
     ok = wp.step_webhook({**CFG, "CALLBACK_URL": "https://x/api/webhook"})
-    assert ok is True and posts[0][1]["fields"] == wp.WEBHOOK_FIELDS
+    assert ok is True and set(posts[0][1]["fields"].split(",")) == set(wp.WEBHOOK_FIELDS.split(","))
+
+
+def test_webhook_step_does_nothing_when_the_live_subscription_cannot_be_read(monkeypatch) -> None:
+    posts: list[tuple] = []
+    monkeypatch.setattr(wp, "actual_webhook_subscription", lambda cfg: None)
+    monkeypatch.setattr(wp, "_api", lambda *a, **k: posts.append((a, k)) or (200, {"success": True}))
+    assert wp.step_webhook(CFG) is False and posts == []
+
+
+def test_webhook_step_keeps_the_fields_that_are_already_live(monkeypatch) -> None:
+    posts: list[tuple] = []
+    monkeypatch.setattr(wp, "actual_webhook_subscription",
+                        lambda cfg: {"callback_url": CFG["CALLBACK_URL"], "fields": ["messages", "account_update"], "active": True})
+    monkeypatch.setattr(wp, "_api", lambda *a, **k: posts.append((a, k)) or (200, {"success": True}))
+    assert wp.step_webhook(CFG) is True
+    assert set(posts[0][1]["fields"].split(",")) == set(wp.WEBHOOK_FIELDS.split(",")) | {"account_update"}
+
+
+def test_onboard_fails_loudly_when_the_audience_lock_does_not_stick(monkeypatch) -> None:
+    import pytest
+
+    fresh = {"agent_id": "ag-1", "ai_audience": "EVERYONE", "followup": {"enabled": True}}
+    # PUT falla
+    monkeypatch.setattr(wp, "_mba_api", lambda *a, **k: (500, {"title": "Server error"}))
+    assert wp.step_mba_lock_audience(CFG, "1234", fresh) is False
+    # PUT 200 pero Meta ignoró el campo: la relectura manda
+    monkeypatch.setattr(wp, "_mba_api", lambda m, *a, **k: (200, {"agent_id": "ag-1", "ai_audience": "EVERYONE"}))
+    assert wp.step_mba_lock_audience(CFG, "1234", fresh) is False
+    # y el comando entero sale con error en vez de decir "Hecho"
+    monkeypatch.setattr(wp, "actual_state", lambda cfg: {"numbers": [], "subscribed_app_ids": [CFG["APP_ID"]], "token": {"scopes": list(wp.MBA_SCOPES)}})
+    monkeypatch.setattr(wp, "find_number", lambda s, cfg: {"id": "1234"})
+    monkeypatch.setattr(wp, "actual_webhook_fields", lambda cfg: list(wp.MBA_WEBHOOK_FIELDS))
+    monkeypatch.setattr(wp, "mba_state", lambda cfg, pid, s: {**READY, "agents": [fresh]})
+    with pytest.raises(SystemExit, match="SIN lock de audiencia"):
+        wp.cmd_mba_onboard(CFG, None)
 
 
 def test_onboarding_locks_the_audience_to_the_closed_list_and_is_idempotent(monkeypatch) -> None:
@@ -151,8 +186,9 @@ def test_onboarding_locks_the_audience_to_the_closed_list_and_is_idempotent(monk
     monkeypatch.setattr(wp, "_mba_api", lambda *a, **k: calls.append(a) or (200, {"ai_audience": "ALLOWLISTED_ONLY"}))
     fresh = {"agent_id": "ag-1", "ai_audience": "EVERYONE", "followup": {"enabled": True}, "rollout": {"enabled": False}}
     assert wp.step_mba_lock_audience(CFG, "1234", fresh) is True
-    assert calls == [("PUT", "1234", "agent_config/settings?agent_id=ag-1", "EAA-token",
-                      {"ai_audience": "ALLOWLISTED_ONLY", "followup": {"enabled": False}})]
+    want = {"ai_audience": "ALLOWLISTED_ONLY", "rollout": {"enabled": False}, "followup": {"enabled": False}}
+    assert calls == [("PUT", "1234", "agent_config/settings?agent_id=ag-1", "EAA-token", want),
+                     ("GET", "1234", "agent_config/settings?agent_id=ag-1", "EAA-token")]  # releído, no se confía en el 200
     calls.clear()
     locked = {"agent_id": "ag-1", "ai_audience": "ALLOWLISTED_ONLY", "followup": {"enabled": False}}
     assert wp.step_mba_lock_audience(CFG, "1234", locked) is True

@@ -304,7 +304,7 @@ el sync queda bloqueado (fail-closed).
 | `META_MBA_TOKEN` | **= `META_SYSTEM_USER_TOKEN`** (`put-parameter --overwrite`, fuera de banda) | `secrets` |
 | `WHATSAPP_APP_ID` | `APP_ID` de esta config (decide `messaging_handovers`) | `secrets` |
 | `HUBARA_PUBLIC_API_URL` | `tenants.<t>.api_url` → `base_url` del connector | `mba-config` |
-| `META_FLOW_ID_SHIPPING` | `flows` (Flow v2 publicado en el WABA) | `secrets` (ya existía) |
+| `META_FLOW_ID_SHIPPING` | `flows` (Flow v2 publicado en el WABA) | `secrets` (declarada en D3.1; en hubara se importó el param existente) |
 | `MBA_ADVISOR_PHONE` | `tenants.<t>.mba.advisor_phone` (E.164; se guarda en dígitos para `wa.me`) | `mba-config` |
 | `MBA_CUSTOMER_ALLOWLIST` | `tenants.<t>.mba.customer_allowlist` — la ÚNICA lista cerrada | `mba-config` |
 

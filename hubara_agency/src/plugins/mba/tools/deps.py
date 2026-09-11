@@ -8,6 +8,7 @@ explícito que el agente sabe manejar, en vez de un 500 en un endpoint público.
 tools de escritura delegan ahí. Import diferido para no cerrar el ciclo
 ``api → tools → api``.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -18,6 +19,7 @@ from typing import Any, Awaitable, Callable
 
 from loguru import logger
 
+from src.plugins.mba.domain.config import env_value
 from src.sdk.connectorkit import (
     get_catalog_client,
     get_checkout_verification_port,
@@ -46,34 +48,63 @@ _background: set[asyncio.Task[Any]] = set()
 
 
 def episode_boundary_enabled() -> bool:
-    return os.environ.get(EPISODE_BOUNDARY_ENV, "").strip().lower() in ("1", "true", "yes", "on")
+    return os.environ.get(EPISODE_BOUNDARY_ENV, "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
 
 
-def make_episode_boundary(use_case_factory: Callable[[], Any]) -> Callable[..., Awaitable[asyncio.Task[Any] | None]]:
+def make_episode_boundary(
+    use_case_factory: Callable[[], Any],
+) -> Callable[..., Awaitable[asyncio.Task[Any] | None]]:
     """Devuelve el hook ``episode_boundary``: emite ``episode_closed`` en una
     task de fondo (la respuesta del connector a Meta no espera a Meta) y
     devuelve la task (``None`` con el knob apagado). Nunca levanta."""
 
     async def _emit(
-        session_key: str, closing_tag: str, episode_id: str, order_id: str | None, order_reference: str | None
+        session_key: str,
+        closing_tag: str,
+        episode_id: str,
+        order_id: str | None,
+        order_reference: str | None,
     ) -> Any:
         from src.plugins.mba.domain.agent_events import episode_closed_message
 
         try:
             use_case = use_case_factory()
             return await use_case.execute(
-                session_key, "episode_closed", episode_id=episode_id, order_id=None,
-                message=episode_closed_message(closing_tag, order_reference=order_reference or order_id),
-                payload={"closing_tag": closing_tag, "order_id": order_id, "order_reference": order_reference},
+                session_key,
+                "episode_closed",
+                episode_id=episode_id,
+                order_id=None,
+                message=episode_closed_message(
+                    closing_tag, order_reference=order_reference or order_id
+                ),
+                payload={
+                    "closing_tag": closing_tag,
+                    "order_id": order_id,
+                    "order_reference": order_reference,
+                },
                 source="connector",
             )
         except Exception as exc:  # noqa: BLE001 — best-effort; el registro vive en agent_events[]
-            logger.warning("[mba] nota de frontera episode_closed falló session={} ep={}: {}", session_key,
-                           episode_id, exc)
+            logger.warning(
+                "[mba] nota de frontera episode_closed falló session={} ep={}: {}",
+                session_key,
+                episode_id,
+                exc,
+            )
             return None
 
     async def _boundary(
-        session_key: str, *, closing_tag: str, episode_id: str, order_id: str | None, order_reference: str | None = None
+        session_key: str,
+        *,
+        closing_tag: str,
+        episode_id: str,
+        order_id: str | None,
+        order_reference: str | None = None,
     ) -> Any:
         if not episode_boundary_enabled():
             return None
@@ -90,7 +121,11 @@ def make_episode_boundary(use_case_factory: Callable[[], Any]) -> Callable[..., 
 def _default_emit_agent_event() -> Any:
     from src.plugins.mba.adapters.agent_event import MetaAgentEvent
     from src.plugins.mba.use_cases.emit_agent_event import EmitAgentEvent
-    from src.sdk.runtime import mba_controls_thread, mba_customer_allowed, mba_standby_enabled
+    from src.sdk.runtime import (
+        mba_controls_thread,
+        mba_customer_allowed,
+        mba_standby_enabled,
+    )
 
     return EmitAgentEvent(
         metadata_store=FilesystemMetadataStore(WORKSPACE_VAULT_DIR),
@@ -98,7 +133,7 @@ def _default_emit_agent_event() -> Any:
         is_customer_allowed=mba_customer_allowed,
         is_enabled=mba_standby_enabled,
         controls_thread=mba_controls_thread,
-        entity_id_fallback=lambda: os.environ.get("WHATSAPP_PHONE_NUMBER_ID", ""),
+        entity_id_fallback=lambda: env_value(os.environ, "WHATSAPP_PHONE_NUMBER_ID"),
     )
 
 

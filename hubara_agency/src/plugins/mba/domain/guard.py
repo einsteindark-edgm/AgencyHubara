@@ -13,6 +13,7 @@ Puro: sin FastAPI, sin threads. Es per-proceso (una API); si algún día hay
 varias réplicas, el límite es por réplica — suficiente contra abuso, no es
 cuota de facturación.
 """
+
 from __future__ import annotations
 
 import time
@@ -40,7 +41,9 @@ class RateLimiter:
         self._refill = float(refill_per_s)
         self._clock = clock
         self._max_keys = max_keys
-        self._buckets: OrderedDict[str, tuple[float, float]] = OrderedDict()  # key → (tokens, at)
+        self._buckets: OrderedDict[str, tuple[float, float]] = (
+            OrderedDict()
+        )  # key → (tokens, at)
 
     @property
     def size(self) -> int:

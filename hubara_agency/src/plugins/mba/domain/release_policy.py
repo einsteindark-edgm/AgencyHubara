@@ -19,6 +19,7 @@ conocido (Meta nunca avisó) los releases automáticos NO se hacen
 operador pasa por encima de ``release_pending`` y ``owner_unknown`` (es la
 salida cuando Meta no confirmó): solo lo frena ``already_mba``.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -43,7 +44,9 @@ class ReleaseFacts:
     control_owner: str | None = None  # mba | hubara | None (Meta nunca avisó)
     order_registered: bool = False
     agent_event_emitted: bool = False
-    release_pending: bool = False  # release pedido y aún sin messaging_handovers de vuelta
+    release_pending: bool = (
+        False  # release pedido y aún sin messaging_handovers de vuelta
+    )
 
 
 @dataclass(frozen=True)

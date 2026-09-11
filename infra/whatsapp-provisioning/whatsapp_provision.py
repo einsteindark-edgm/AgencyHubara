@@ -270,14 +270,19 @@ def step_webhook(cfg):
     # URL (prod vivo), una config desalineada apuntaría el webhook a un 404 y
     # dejaría el número mudo: no se toca, se alinea CALLBACK_URL primero.
     live = actual_webhook_subscription(cfg)
-    if live and live.get("callback_url") and live["callback_url"] != cfg["CALLBACK_URL"]:
+    if live is None:
+        print("  ! webhook: no pude leer la suscripción viva de la app — NO toco el webhook")
+        return False
+    if live.get("callback_url") and live["callback_url"] != cfg["CALLBACK_URL"]:
         print(f"  ! webhook: la app ya recibe en {live['callback_url']} y la config dice "
               f"{cfg['CALLBACK_URL']} — NO toco el webhook (alineá CALLBACK_URL)")
         return False
+    # El POST reemplaza el set: se conservan los campos vivos que no son nuestros.
+    fields = ",".join(sorted(set(live.get("fields") or []) | set(WEBHOOK_FIELDS.split(","))))
     st, body = _api("POST", f"{cfg['APP_ID']}/subscriptions", app_token,
                     object="whatsapp_business_account",
                     callback_url=cfg["CALLBACK_URL"], verify_token=cfg["VERIFY_TOKEN"],
-                    fields=WEBHOOK_FIELDS)
+                    fields=fields)
     print(f"  + webhook: {st} {json.dumps(body, ensure_ascii=False)}")
     return st == 200 and body.get("success")
 
@@ -418,17 +423,30 @@ def step_mba_lock_audience(cfg, phone_id, agent):
     producción: la audiencia se deja en ALLOWLISTED_ONLY (lista cerrada) y el
     followup apagado ANTES de cualquier otra cosa, aunque rollout esté off.
     Idempotente: si ya está así, no llama."""
-    want = {"ai_audience": "ALLOWLISTED_ONLY", "followup": {"enabled": False}}
-    if agent.get("ai_audience") == "ALLOWLISTED_ONLY" and not (agent.get("followup") or {}).get("enabled"):
-        print("  = audiencia ALLOWLISTED_ONLY y followup apagado (ya)")
+    want = {"ai_audience": "ALLOWLISTED_ONLY", "rollout": {"enabled": False}, "followup": {"enabled": False}}
+    if _agent_locked(agent):
+        print("  = audiencia ALLOWLISTED_ONLY, rollout y followup apagados (ya)")
         return True
     aid = agent.get("agent_id") or agent.get("id")
     resource = "agent_config/settings" + (f"?agent_id={urllib.parse.quote(str(aid))}" if aid else "")
     st, body = _mba_api("PUT", phone_id, resource, cfg["SYSTEM_USER_TOKEN"], want)
-    ok = st == 200
-    print(f"  {'+' if ok else '!'} settings → ALLOWLISTED_ONLY + followup off: {st} "
+    print(f"  {'+' if st == 200 else '!'} settings → ALLOWLISTED_ONLY + rollout/followup off: {st} "
           f"{json.dumps(body, ensure_ascii=False)[:200]}")
+    if st != 200:
+        return False
+    # No confiar en el 200: releer y exigir el estado (Meta puede ignorar un campo).
+    st, after = _mba_api("GET", phone_id, resource, cfg["SYSTEM_USER_TOKEN"])
+    after = after[0] if isinstance(after, list) and after else after
+    ok = st == 200 and isinstance(after, dict) and _agent_locked(after)
+    if not ok:
+        print(f"  ! releído tras el PUT: {st} {json.dumps(after, ensure_ascii=False)[:200]} — NO quedó cerrado")
     return ok
+
+
+def _agent_locked(agent):
+    return (agent.get("ai_audience") == "ALLOWLISTED_ONLY"
+            and not (agent.get("rollout") or {}).get("enabled")
+            and not (agent.get("followup") or {}).get("enabled"))
 
 
 def _print_mba_readiness(state):
@@ -852,7 +870,9 @@ def cmd_mba_onboard(cfg, _):
     if aid:
         st = mba_state(cfg, phone_id, s)
         agent = next((a for a in st["agents"] if (a.get("agent_id") or a.get("id")) == aid), None) or {"agent_id": aid}
-        step_mba_lock_audience(cfg, phone_id, agent)
+        if not step_mba_lock_audience(cfg, phone_id, agent):
+            sys.exit(f"agente {aid} onboardeado pero SIN lock de audiencia (puede estar en EVERYONE): "
+                     "reintentar mba-onboard hasta ver ALLOWLISTED_ONLY")
         print(f"\n  Hecho. entity_id={phone_id} agent_id={aid} (rollout sigue apagado: lo enciende D4.5 desde la tab)")
     _print_mba_next_steps(cfg, phone_id)
 

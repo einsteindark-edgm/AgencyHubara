@@ -53,6 +53,9 @@ CONNECTOR_API_KEY_PLACEHOLDER = "<HUBARA_MBA_API_KEY>"
 # sección muestra como problem. Nunca un id, teléfono o URL a mano en git.
 _TENANT_VAR = re.compile(r"\$\{([A-Z][A-Z0-9_]{2,})\}")
 _PLACEHOLDER_TOKEN = re.compile(r"^<[A-Z][A-Z0-9_]{2,}>$")
+# La sustitución es sobre el texto del YAML: un valor con comillas, salto de línea,
+# `#` o `: ` podría romperlo o inyectar estructura → se trata como sin valor.
+_UNSAFE_VALUE = re.compile(r"[\n\r\"'#{}\[\]]|:\s")
 _MBA_HEADERS: dict[str, str] = {
     "Authorization": "Bearer <META_ACCESS_TOKEN>",
     "X-API-Version": MBA_API_VERSION,
@@ -674,12 +677,16 @@ def resolve_tenant_values(
     SSM → ``<VAR>`` (bloquea el sync) y un problem que nombra la variable."""
     values = env or {}
     missing: set[str] = set()
+    unsafe: set[str] = set()
 
     def _sub(m: re.Match[str]) -> str:
         var = m.group(1)
         val = values.get(var)
         if val is None or not val.strip() or is_placeholder(val):
             missing.add(var)
+            return f"<{var}>"
+        if _UNSAFE_VALUE.search(val):
+            unsafe.add(var)
             return f"<{var}>"
         return val.strip()
 
@@ -688,8 +695,19 @@ def resolve_tenant_values(
         f"`${{{v}}}` sin valor en el entorno del tenant (SSM /hubara/<tenant>/{v}, lo declara Terraform): "
         "hasta setearlo el sync queda bloqueado"
         for v in sorted(missing)
+    ) + tuple(
+        f"`${{{v}}}` tiene un valor con caracteres que no caben en agent.yaml (comillas, salto de línea, `#`, `: `): "
+        "corregirlo en Terraform/SSM; el sync queda bloqueado"
+        for v in sorted(unsafe)
     )
     return text, problems
+
+
+def env_value(env: Mapping[str, str], name: str) -> str:
+    """Valor real de una variable del tenant o ``""``: el placeholder de SSM NUNCA
+    viaja como si fuera un id (p.ej. como ``phone_number_id`` de un evento)."""
+    val = env.get(name, "")
+    return "" if is_placeholder(val) else val.strip()
 
 
 def resolved_entity_id(spec: Mapping[str, Any]) -> str | None:

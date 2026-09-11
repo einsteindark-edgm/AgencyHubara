@@ -449,3 +449,41 @@ def test_real_sales_agent_without_environment_names_what_the_operator_must_set(
     assert [
         v for v in _TENANT_VARS if any(f"${{{v}}}" in p for p in cfg.problems)
     ] == _TENANT_VARS
+
+
+def test_values_that_would_break_the_yaml_are_refused_not_injected() -> None:
+    hostile = {
+        **_FULL_ENV,
+        "HUBARA_PUBLIC_API_URL": 'https://x"\nallowlist: ["+573000000001"]\n#',
+    }
+    cfg = build_agent_config(AgentFiles(agent_yaml=_ENV_YAML, skills={}), env=hostile)
+    assert (
+        cfg.connector is not None
+        and cfg.connector.base_url == "<HUBARA_PUBLIC_API_URL>/api/mba"
+    )
+    assert cfg.allowlist == (
+        "+573001234567",
+        "+573009876543",
+    )  # la estructura NO cambió
+    assert (
+        len(cfg.problems) == 1
+        and "${HUBARA_PUBLIC_API_URL}" in cfg.problems[0]
+        and "caracteres" in cfg.problems[0]
+    )
+
+
+def test_env_value_never_returns_the_ssm_placeholder() -> None:
+    from src.plugins.mba.domain.config import env_value
+
+    assert (
+        env_value(
+            {"WHATSAPP_PHONE_NUMBER_ID": "PLACEHOLDER_set_out_of_band"},
+            "WHATSAPP_PHONE_NUMBER_ID",
+        )
+        == ""
+    )
+    assert env_value({}, "WHATSAPP_PHONE_NUMBER_ID") == ""
+    assert (
+        env_value({"WHATSAPP_PHONE_NUMBER_ID": " 1234 "}, "WHATSAPP_PHONE_NUMBER_ID")
+        == "1234"
+    )

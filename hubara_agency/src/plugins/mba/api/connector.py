@@ -28,6 +28,7 @@ escritura por cast (canal 3) al contrato ``session-actions@v1`` de chats
 (``api/chats_cast.py``, service token). Un fallo del cast vuelve como error
 explícito en un 200 (el agente sabe manejarlo), nunca como 5xx hacia Meta.
 """
+
 from __future__ import annotations
 
 import hmac
@@ -42,7 +43,12 @@ from fastapi.responses import JSONResponse
 from loguru import logger
 
 from src.plugins.mba.domain.guard import MAX_BODY_BYTES, RateLimiter
-from src.plugins.mba.domain.tool_calls import ToolCallError, ToolContract, contracts_from_config, parse_tool_call
+from src.plugins.mba.domain.tool_calls import (
+    ToolCallError,
+    ToolContract,
+    contracts_from_config,
+    parse_tool_call,
+)
 from src.plugins.mba.service import list_agents, load_agent
 from src.plugins.mba.tools import ToolDeps, default_deps, run_tool
 from src.sdk.runtime import client_ip, mba_customer_allowed
@@ -82,7 +88,12 @@ def _check_api_key(presented: str | None, *, client: str, tool: str) -> None:
     expected = os.environ.get(API_KEY_ENV, "")
     if not expected:
         # el nombre de la variable va al log (operador), no al cliente anónimo
-        logger.warning("[mba] connector sin {} configurada; 503 a {} para {}", API_KEY_ENV, client, tool)
+        logger.warning(
+            "[mba] connector sin {} configurada; 503 a {} para {}",
+            API_KEY_ENV,
+            client,
+            tool,
+        )
         raise HTTPException(status_code=503, detail="connector no configurado")
     # compare_digest sobre bytes: con str lanza TypeError ante no-ASCII (y los
     # headers llegan decodificados latin-1) → sería un 500 en un endpoint público.
@@ -98,13 +109,17 @@ async def _read_body_capped(request: Request) -> bytes:
     Content-Length) de GBs no se materializa en memoria antes del 413."""
     declared = request.headers.get("content-length")
     if declared and declared.isdigit() and int(declared) > MAX_BODY_BYTES:
-        raise HTTPException(status_code=413, detail=f"body supera {MAX_BODY_BYTES} bytes")
+        raise HTTPException(
+            status_code=413, detail=f"body supera {MAX_BODY_BYTES} bytes"
+        )
     chunks: list[bytes] = []
     size = 0
     async for chunk in request.stream():
         size += len(chunk)
         if size > MAX_BODY_BYTES:
-            raise HTTPException(status_code=413, detail=f"body supera {MAX_BODY_BYTES} bytes")
+            raise HTTPException(
+                status_code=413, detail=f"body supera {MAX_BODY_BYTES} bytes"
+            )
         chunks.append(chunk)
     return b"".join(chunks)
 
@@ -133,8 +148,12 @@ async def run_connector_tool(
 ) -> Any:
     client = client_ip(request)
     if _bad_key_limiter.remaining(client) < 1.0:
-        logger.warning("[mba] IP {} bloqueada por keys inválidas ({})", client, tool_name)
-        raise HTTPException(status_code=429, detail="demasiadas llamadas; reintenta en unos segundos")
+        logger.warning(
+            "[mba] IP {} bloqueada por keys inválidas ({})", client, tool_name
+        )
+        raise HTTPException(
+            status_code=429, detail="demasiadas llamadas; reintenta en unos segundos"
+        )
     try:
         _check_api_key(x_api_key, client=client, tool=tool_name)
     except HTTPException as exc:
@@ -143,13 +162,17 @@ async def run_connector_tool(
         raise
     if not _rate_limiter.allow(f"{client}:{tool_name}"):
         logger.warning("[mba] rate limit desde {} para {}", client, tool_name)
-        raise HTTPException(status_code=429, detail="demasiadas llamadas; reintenta en unos segundos")
+        raise HTTPException(
+            status_code=429, detail="demasiadas llamadas; reintenta en unos segundos"
+        )
     tools = declared_tools()
     if tool_name not in tools:
         raise HTTPException(status_code=404, detail=f"tool desconocida: {tool_name}")
     contract = tools[tool_name]
     if request.method != contract.method:
-        raise HTTPException(status_code=405, detail=f"{tool_name} se llama con {contract.method}")
+        raise HTTPException(
+            status_code=405, detail=f"{tool_name} se llama con {contract.method}"
+        )
     raw = await _raw_params(request, contract.method)
     try:
         call = parse_tool_call(contract, raw)
@@ -162,17 +185,25 @@ async def run_connector_tool(
         # ERROR a propósito: es la alarma de que el rollout en Meta está más
         # abierto de lo previsto. 200 con error explícito → el agente pasa el
         # caso a un colega (un 4xx lo vería como fallo de infraestructura).
-        logger.error("[mba] {} para cliente FUERA de la lista cerrada: ***{} — rechazada", tool_name, call.customer_phone[-4:])
+        logger.error(
+            "[mba] {} para cliente FUERA de la lista cerrada: ***{} — rechazada",
+            tool_name,
+            call.customer_phone[-4:],
+        )
         return {
             "error": "customer_not_enabled",
             "message": "Este cliente no está habilitado para el agente. Pasa el caso a un colega con escalate_to_human "
-                       "(reason_category=EXPLICIT_REQUEST) y no vuelvas a llamar herramientas en este chat.",
+            "(reason_category=EXPLICIT_REQUEST) y no vuelvas a llamar herramientas en este chat.",
         }
     started = time.monotonic()
     result = await run_tool(call, deps, request)
     elapsed_ms = int((time.monotonic() - started) * 1000)
     if result is None:
-        logger.info("[mba] {} session={} → 501 (sin lógica todavía)", tool_name, call.session_key)
+        logger.info(
+            "[mba] {} session={} → 501 (sin lógica todavía)",
+            tool_name,
+            call.session_key,
+        )
         return JSONResponse(
             status_code=501,
             content={
@@ -183,6 +214,9 @@ async def run_connector_tool(
         )
     logger.info(
         "[mba] {} session={} → {} en {}ms",
-        tool_name, call.session_key, result.get("error") or "ok", elapsed_ms,
+        tool_name,
+        call.session_key,
+        result.get("error") or "ok",
+        elapsed_ms,
     )
     return JSONResponse(status_code=200, content=result)

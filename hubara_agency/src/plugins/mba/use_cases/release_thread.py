@@ -36,6 +36,7 @@ Riesgo §4 del roadmap ("olvidar release deja a MBA mudo"): ``thread_control``
 en la sesión y ``GET .../control`` lo hacen visible; la alerta por hilos
 demasiado tiempo en ``hubara`` es de D1.7.
 """
+
 from __future__ import annotations
 
 import re
@@ -45,8 +46,15 @@ from typing import Any, Callable
 
 from loguru import logger
 
-from src.plugins.mba.adapters.thread_control import ThreadControlError, ThreadControlPort
-from src.plugins.mba.domain.release_policy import ReleaseFacts, ReleaseTrigger, decide_release
+from src.plugins.mba.adapters.thread_control import (
+    ThreadControlError,
+    ThreadControlPort,
+)
+from src.plugins.mba.domain.release_policy import (
+    ReleaseFacts,
+    ReleaseTrigger,
+    decide_release,
+)
 
 __all__ = ["CONTROL_HISTORY_CAP", "ReleaseOutcome", "ReleaseThread"]
 
@@ -76,7 +84,11 @@ def _pending_since(data: dict[str, Any]) -> int | None:
     """``at_ms`` de nuestro último release exitoso (o ambiguo) que Meta aún no
     confirmó con un ``messaging_handovers`` posterior; ``None`` si no hay."""
     tc = data.get("thread_control")
-    if not isinstance(tc, dict) or tc.get("last_action") != "release" or tc.get("last_result") not in _PENDING_KINDS:
+    if (
+        not isinstance(tc, dict)
+        or tc.get("last_action") != "release"
+        or tc.get("last_result") not in _PENDING_KINDS
+    ):
         return None
     at = tc.get("last_action_at_ms")
     confirmed = data.get("control_owner_updated_at_ms")
@@ -124,42 +136,96 @@ class ReleaseThread:
             return ReleaseOutcome(session_key, False, "session_unknown")
         customer = m.group(1)
         if not self._is_customer_allowed(customer):
-            logger.error("[mba.release] cliente FUERA de la lista cerrada: ***{} — nada que soltar", customer[-4:])
+            logger.error(
+                "[mba.release] cliente FUERA de la lista cerrada: ***{} — nada que soltar",
+                customer[-4:],
+            )
             return ReleaseOutcome(session_key, False, "customer_not_enabled")
         data = self._store.read(session_key)
         if not data:
             return ReleaseOutcome(session_key, False, "session_unknown")
         now_ms = self._now_ms()
         facts = ReleaseFacts(
-            control_owner=data.get("control_owner") if isinstance(data.get("control_owner"), str) else None,
+            control_owner=data.get("control_owner")
+            if isinstance(data.get("control_owner"), str)
+            else None,
             order_registered=order_registered,
             agent_event_emitted=agent_event_emitted,
             release_pending=_release_pending(data, now_ms),
         )
         decision = decide_release(trigger, facts)
         if not decision.release:
-            logger.info("[mba.release] {} trigger={} → no ({})", session_key, trigger.value, decision.reason)
+            logger.info(
+                "[mba.release] {} trigger={} → no ({})",
+                session_key,
+                trigger.value,
+                decision.reason,
+            )
             return ReleaseOutcome(session_key, False, decision.reason)
         phone_number_id = data.get("phone_number_id") or self._phone_fallback()
         if not phone_number_id:
-            logger.warning("[mba.release] {} sin phone_number_id (sesión ni WHATSAPP_PHONE_NUMBER_ID)", session_key)
+            logger.warning(
+                "[mba.release] {} sin phone_number_id (sesión ni WHATSAPP_PHONE_NUMBER_ID)",
+                session_key,
+            )
             return ReleaseOutcome(session_key, False, "phone_number_id_missing")
-        meta_str = (f"hubara:{trigger.value}" + (f" {metadata}" if metadata else ""))[:METADATA_MAX]
+        meta_str = (f"hubara:{trigger.value}" + (f" {metadata}" if metadata else ""))[
+            :METADATA_MAX
+        ]
         try:
-            await self._port.release(phone_number_id=str(phone_number_id), to=customer, metadata=meta_str)
+            await self._port.release(
+                phone_number_id=str(phone_number_id), to=customer, metadata=meta_str
+            )
         except ThreadControlError as exc:
             error = f"{exc.status} {exc.detail}".strip() if exc.status else exc.detail
-            logger.warning("[mba.release] {} trigger={} falló: {} {}", session_key, trigger.value, exc.kind, error)
-            err = {"kind": exc.kind, "status": exc.status, "detail": exc.detail, "at_ms": now_ms, "trigger": trigger.value}
-            recorded = self._record(session_key, trigger, metadata, now_ms, result=exc.kind, error=err)
-            return ReleaseOutcome(session_key, False, exc.kind, action_at_ms=now_ms, error=error, recorded=recorded)
-        recorded = self._record(session_key, trigger, metadata, now_ms, result="ok", error=None)
-        logger.info("[mba.release] {} trigger={} → release pedido a Meta (registrado={})", session_key, trigger.value,
-                    recorded)
-        return ReleaseOutcome(session_key, True, decision.reason, action_at_ms=now_ms, recorded=recorded)
+            logger.warning(
+                "[mba.release] {} trigger={} falló: {} {}",
+                session_key,
+                trigger.value,
+                exc.kind,
+                error,
+            )
+            err = {
+                "kind": exc.kind,
+                "status": exc.status,
+                "detail": exc.detail,
+                "at_ms": now_ms,
+                "trigger": trigger.value,
+            }
+            recorded = self._record(
+                session_key, trigger, metadata, now_ms, result=exc.kind, error=err
+            )
+            return ReleaseOutcome(
+                session_key,
+                False,
+                exc.kind,
+                action_at_ms=now_ms,
+                error=error,
+                recorded=recorded,
+            )
+        recorded = self._record(
+            session_key, trigger, metadata, now_ms, result="ok", error=None
+        )
+        logger.info(
+            "[mba.release] {} trigger={} → release pedido a Meta (registrado={})",
+            session_key,
+            trigger.value,
+            recorded,
+        )
+        return ReleaseOutcome(
+            session_key, True, decision.reason, action_at_ms=now_ms, recorded=recorded
+        )
 
-    def _record(self, session_key: str, trigger: ReleaseTrigger, metadata: str | None, now_ms: int,
-                *, result: str, error: dict[str, Any] | None) -> bool:
+    def _record(
+        self,
+        session_key: str,
+        trigger: ReleaseTrigger,
+        metadata: str | None,
+        now_ms: int,
+        *,
+        result: str,
+        error: dict[str, Any] | None,
+    ) -> bool:
         """``result`` ∈ {ok, ambiguous, rejected, unavailable, not_configured}.
         ``ok`` y ``ambiguous`` dejan el release pendiente de confirmación de
         Meta. Un fallo no pisa un release pendiente anterior (doble trigger):
@@ -169,7 +235,11 @@ class ReleaseThread:
         def _mutate(data: dict[str, Any]) -> dict[str, Any] | None:
             if not data:
                 return None  # lectura fresca vacía: no pisar la sesión con un dict a medias
-            current = data.get("thread_control") if isinstance(data.get("thread_control"), dict) else {}
+            current = (
+                data.get("thread_control")
+                if isinstance(data.get("thread_control"), dict)
+                else {}
+            )
             if not pending_result and _pending_since(data) is not None:
                 data["thread_control"] = {**current, "last_error": error}
                 return data
@@ -184,24 +254,39 @@ class ReleaseThread:
             }
             if pending_result:
                 history = data.get("control_history")
-                history = [h for h in history if isinstance(h, dict)] if isinstance(history, list) else []
-                history.append({
-                    "owner": data.get("control_owner"),
-                    "kind": "release_requested",
-                    "at_ms": now_ms,
-                    "trigger": trigger.value,
-                    "metadata": metadata,
-                    "source": _SOURCE,
-                })
+                history = (
+                    [h for h in history if isinstance(h, dict)]
+                    if isinstance(history, list)
+                    else []
+                )
+                history.append(
+                    {
+                        "owner": data.get("control_owner"),
+                        "kind": "release_requested",
+                        "at_ms": now_ms,
+                        "trigger": trigger.value,
+                        "metadata": metadata,
+                        "source": _SOURCE,
+                    }
+                )
                 data["control_history"] = history[-CONTROL_HISTORY_CAP:]
             return data
 
         try:
             written = self._store.update(session_key, _mutate)
         except OSError as exc:
-            logger.error("[mba.release] {} release {} pero el vault NO lo registró: {}", session_key, result, exc)
+            logger.error(
+                "[mba.release] {} release {} pero el vault NO lo registró: {}",
+                session_key,
+                result,
+                exc,
+            )
             return False
         if written is None:
-            logger.error("[mba.release] {} release {} pero la sesión leyó vacía: no registrado", session_key, result)
+            logger.error(
+                "[mba.release] {} release {} pero la sesión leyó vacía: no registrado",
+                session_key,
+                result,
+            )
             return False
         return True

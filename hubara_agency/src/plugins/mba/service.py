@@ -82,8 +82,12 @@ def load_agent(agent_id: str) -> MbaConfigDTO | None:
                 logger.warning("[mba] no se pudo leer {}: {}", md, exc)
     workspace = d.relative_to(_REPO_ROOT).as_posix()
     # Valores por tenant (`${VAR}`) desde el entorno que Terraform materializa en SSM.
-    return build_agent_config(
-        AgentFiles(agent_yaml=agent_yaml, skills=skills),
-        workspace=workspace,
-        env=os.environ,
-    )
+    try:
+        return build_agent_config(
+            AgentFiles(agent_yaml=agent_yaml, skills=skills),
+            workspace=workspace,
+            env=os.environ,
+        )
+    except yaml.YAMLError as exc:
+        logger.error("[mba] agent.yaml inválido en {}: {}", d, exc)
+        return None

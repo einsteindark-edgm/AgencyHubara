@@ -6,6 +6,7 @@ Los envelopes siguen la forma probada del agente Sales de Hubara (COP primero
 en multi-moneda, portada excluida de los diseños, listas cerradas parseadas de
 los tags) para que el comportamiento observable sea el mismo con MBA al frente.
 """
+
 from __future__ import annotations
 
 import re
@@ -46,7 +47,11 @@ def _unavailable(reason: str) -> dict[str, Any]:
 
 
 async def search_products(
-    catalog: Any | None, *, q: str = "", category: str | None = None, limit: int = DEFAULT_LIMIT
+    catalog: Any | None,
+    *,
+    q: str = "",
+    category: str | None = None,
+    limit: int = DEFAULT_LIMIT,
 ) -> dict[str, Any]:
     if catalog is None:
         return _unavailable("catalog_not_configured")
@@ -77,7 +82,9 @@ async def _category_block(catalog: Any, resolution: Any) -> dict[str, Any]:
         "confidence": resolution.confidence,
     }
     if resolution.confidence == "no_categories":
-        block["message"] = "Este catálogo no tiene categorías cargadas; el término se buscó como texto."
+        block["message"] = (
+            "Este catálogo no tiene categorías cargadas; el término se buscó como texto."
+        )
         return block
     if resolution.matched is None:
         block["candidates"] = [c.label for c in resolution.candidates]
@@ -102,7 +109,9 @@ async def list_categories(catalog: Any | None) -> dict[str, Any]:
         return _unavailable("catalog_unavailable")
     return {
         "count": len(categories),
-        "categories": [{"name": c.label, "product_count": c.product_count} for c in categories],
+        "categories": [
+            {"name": c.label, "product_count": c.product_count} for c in categories
+        ],
     }
 
 
@@ -145,7 +154,9 @@ def _product_summary(p: Any) -> dict[str, Any]:
         "colors": attrs.colors,
         "designs": _designs_for(p),
         "variants": (
-            [{"id": v.id, "title": v.title} for v in p.variants] if p.options and len(p.variants) > 1 else []
+            [{"id": v.id, "title": v.title} for v in p.variants]
+            if p.options and len(p.variants) > 1
+            else []
         ),
     }
 
@@ -173,7 +184,10 @@ def _product_full(p: Any) -> dict[str, Any]:
             }
             for v in p.variants
         ],
-        "images": [{"url": i.url, "rank": i.rank, "label": derive_image_label(i.url)} for i in p.images],
+        "images": [
+            {"url": i.url, "rank": i.rank, "label": derive_image_label(i.url)}
+            for i in p.images
+        ],
         "tags": p.tags,
         "categories": _category_labels(p),
     }
@@ -195,7 +209,9 @@ def _designs_for(p: Any) -> list[str]:
         if label and label not in designs:
             designs.append(label)
     if p.options and len(p.variants) > 1:
-        allowed = {fold_for_match(value) for values in p.options.values() for value in values}
+        allowed = {
+            fold_for_match(value) for values in p.options.values() for value in values
+        }
         filtered = [d for d in designs if fold_for_match(d) in allowed]
         if filtered:
             return filtered

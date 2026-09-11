@@ -28,6 +28,7 @@ novedad a MBA por ``agent_event`` y MBA se la cuenta al cliente.
    resto de la sesión. Un fallo se registra y se devuelve, no se levanta.
    Si Meta aceptó pero el vault no pudo anotarlo: ``recorded=False`` + ERROR.
 """
+
 from __future__ import annotations
 
 import re
@@ -81,7 +82,11 @@ def _dedupe_key(order_id: str | None, episode_id: str | None) -> tuple[str, str]
 
 
 def _already_emitted(
-    data: dict[str, Any], event_type: str, order_id: str | None, episode_id: str | None, now_ms: int
+    data: dict[str, Any],
+    event_type: str,
+    order_id: str | None,
+    episode_id: str | None,
+    now_ms: int,
 ) -> dict[str, Any] | None:
     key = _dedupe_key(order_id, episode_id)
     if key is None:
@@ -137,7 +142,10 @@ class EmitAgentEvent:
             return AgentEventOutcome(session_key, False, "session_unknown")
         customer = m.group(1)
         if not self._is_customer_allowed(customer):
-            logger.error("[mba.agent_event] cliente FUERA de la lista cerrada: ***{} — nada que emitir", customer[-4:])
+            logger.error(
+                "[mba.agent_event] cliente FUERA de la lista cerrada: ***{} — nada que emitir",
+                customer[-4:],
+            )
             return AgentEventOutcome(session_key, False, "customer_not_enabled")
         data = self._store.read(session_key)
         if not data:
@@ -145,20 +153,36 @@ class EmitAgentEvent:
         if event_type not in AGENT_EVENT_TYPES:
             return AgentEventOutcome(session_key, False, "unknown_event_type")
         if not self._controls_thread(data, session_key):
-            logger.info("[mba.agent_event] {} {} → no (hubara_controls)", session_key, event_type)
+            logger.info(
+                "[mba.agent_event] {} {} → no (hubara_controls)",
+                session_key,
+                event_type,
+            )
             return AgentEventOutcome(session_key, False, "hubara_controls")
         entity_id = data.get("phone_number_id") or self._entity_fallback()
         if not entity_id:
-            logger.warning("[mba.agent_event] {} sin phone_number_id (sesión ni WHATSAPP_PHONE_NUMBER_ID)", session_key)
+            logger.warning(
+                "[mba.agent_event] {} sin phone_number_id (sesión ni WHATSAPP_PHONE_NUMBER_ID)",
+                session_key,
+            )
             return AgentEventOutcome(session_key, False, "entity_id_missing")
         now_ms = self._now_ms()
-        reserved, previous = self._reserve(session_key, event_type, order_id, episode_id, now_ms, source=source)
+        reserved, previous = self._reserve(
+            session_key, event_type, order_id, episode_id, now_ms, source=source
+        )
         if previous is not None:
-            return AgentEventOutcome(session_key, False, "already_emitted",
-                                     agent_event_id=previous.get("agent_event_id"), at_ms=previous.get("at_ms"))
+            return AgentEventOutcome(
+                session_key,
+                False,
+                "already_emitted",
+                agent_event_id=previous.get("agent_event_id"),
+                at_ms=previous.get("at_ms"),
+            )
         if not reserved:
             # Sin reserva no se emite: sin auditoría ni dedupe un retry duplicaría el aviso.
-            return AgentEventOutcome(session_key, False, "vault_unavailable", at_ms=now_ms, recorded=False)
+            return AgentEventOutcome(
+                session_key, False, "vault_unavailable", at_ms=now_ms, recorded=False
+            )
         full_payload = {
             **(payload or {}),
             **({"order_id": order_id} if order_id else {}),
@@ -166,30 +190,89 @@ class EmitAgentEvent:
         } or None
         try:
             result = await self._port.emit(
-                entity_id=str(entity_id), to=f"+{customer}", event_type=event_type,
-                description=build_description(event_type, message), payload=full_payload,
+                entity_id=str(entity_id),
+                to=f"+{customer}",
+                event_type=event_type,
+                description=build_description(event_type, message),
+                payload=full_payload,
             )
         except AgentEventError as exc:
             error = f"{exc.status} {exc.detail}".strip() if exc.status else exc.detail
-            logger.warning("[mba.agent_event] {} {} falló: {} {}", session_key, event_type, exc.kind, error)
-            recorded = self._finalize(session_key, event_type, order_id, episode_id, now_ms, status=exc.kind,
-                                      agent_event_id=None, error=error)
-            return AgentEventOutcome(session_key, False, exc.kind, at_ms=now_ms, error=error, recorded=recorded)
-        recorded = self._finalize(session_key, event_type, order_id, episode_id, now_ms, status=result.status,
-                                  agent_event_id=result.agent_event_id, error=None)
-        logger.info("[mba.agent_event] {} {} → {} id={} (registrado={})", session_key, event_type, result.status,
-                    result.agent_event_id, recorded)
-        return AgentEventOutcome(session_key, True, result.status, agent_event_id=result.agent_event_id, at_ms=now_ms,
-                                 recorded=recorded)
+            logger.warning(
+                "[mba.agent_event] {} {} falló: {} {}",
+                session_key,
+                event_type,
+                exc.kind,
+                error,
+            )
+            recorded = self._finalize(
+                session_key,
+                event_type,
+                order_id,
+                episode_id,
+                now_ms,
+                status=exc.kind,
+                agent_event_id=None,
+                error=error,
+            )
+            return AgentEventOutcome(
+                session_key,
+                False,
+                exc.kind,
+                at_ms=now_ms,
+                error=error,
+                recorded=recorded,
+            )
+        recorded = self._finalize(
+            session_key,
+            event_type,
+            order_id,
+            episode_id,
+            now_ms,
+            status=result.status,
+            agent_event_id=result.agent_event_id,
+            error=None,
+        )
+        logger.info(
+            "[mba.agent_event] {} {} → {} id={} (registrado={})",
+            session_key,
+            event_type,
+            result.status,
+            result.agent_event_id,
+            recorded,
+        )
+        return AgentEventOutcome(
+            session_key,
+            True,
+            result.status,
+            agent_event_id=result.agent_event_id,
+            at_ms=now_ms,
+            recorded=recorded,
+        )
 
-    def _reserve(self, session_key: str, event_type: str, order_id: str | None, episode_id: str | None,
-                 now_ms: int, *, source: str | None) -> tuple[bool, dict[str, Any] | None]:
+    def _reserve(
+        self,
+        session_key: str,
+        event_type: str,
+        order_id: str | None,
+        episode_id: str | None,
+        now_ms: int,
+        *,
+        source: str | None,
+    ) -> tuple[bool, dict[str, Any] | None]:
         """Chequeo + reserva en UNA escritura bajo el flock. Devuelve
         ``(reservado, evento_previo)``: previo ≠ None → ``already_emitted``;
         ``(False, None)`` → el vault no pudo escribir (no se emite)."""
         found: dict[str, dict[str, Any]] = {}
-        entry = {"type": event_type, "order_id": order_id, "at_ms": now_ms, "status": "pending",
-                 "agent_event_id": None, "error": None, "source": source}
+        entry = {
+            "type": event_type,
+            "order_id": order_id,
+            "at_ms": now_ms,
+            "status": "pending",
+            "agent_event_id": None,
+            "error": None,
+            "source": source,
+        }
         if episode_id:
             entry["episode_id"] = episode_id
 
@@ -206,17 +289,36 @@ class EmitAgentEvent:
         try:
             written = self._store.update(session_key, _mutate)
         except OSError as exc:
-            logger.error("[mba.agent_event] {} {} no se pudo reservar en el vault: {}", session_key, event_type, exc)
+            logger.error(
+                "[mba.agent_event] {} {} no se pudo reservar en el vault: {}",
+                session_key,
+                event_type,
+                exc,
+            )
             return False, None
         if "previous" in found:
             return False, found["previous"]
         if written is None:
-            logger.error("[mba.agent_event] {} {} la sesión leyó vacía: no reservado", session_key, event_type)
+            logger.error(
+                "[mba.agent_event] {} {} la sesión leyó vacía: no reservado",
+                session_key,
+                event_type,
+            )
             return False, None
         return True, None
 
-    def _finalize(self, session_key: str, event_type: str, order_id: str | None, episode_id: str | None,
-                  reserved_at_ms: int, *, status: str, agent_event_id: str | None, error: str | None) -> bool:
+    def _finalize(
+        self,
+        session_key: str,
+        event_type: str,
+        order_id: str | None,
+        episode_id: str | None,
+        reserved_at_ms: int,
+        *,
+        status: str,
+        agent_event_id: str | None,
+        error: str | None,
+    ) -> bool:
         """Cierra la reserva ``pending`` con el resultado de Meta. Devuelve si
         se pudo escribir (si no, la reserva vence sola a los ``PENDING_TTL_MS``)."""
 
@@ -225,26 +327,54 @@ class EmitAgentEvent:
                 return None
             events = _events(data)
             for e in reversed(events):
-                if (e.get("type") == event_type and e.get("order_id") == order_id
-                        and e.get("episode_id") == episode_id
-                        and e.get("at_ms") == reserved_at_ms and e.get("status") == "pending"):
-                    e.update({"status": status, "agent_event_id": agent_event_id, "error": error})
+                if (
+                    e.get("type") == event_type
+                    and e.get("order_id") == order_id
+                    and e.get("episode_id") == episode_id
+                    and e.get("at_ms") == reserved_at_ms
+                    and e.get("status") == "pending"
+                ):
+                    e.update(
+                        {
+                            "status": status,
+                            "agent_event_id": agent_event_id,
+                            "error": error,
+                        }
+                    )
                     break
             else:
-                events.append({"type": event_type, "order_id": order_id, "at_ms": reserved_at_ms, "status": status,
-                               "agent_event_id": agent_event_id, "error": error, "source": None,
-                               **({"episode_id": episode_id} if episode_id else {})})
+                events.append(
+                    {
+                        "type": event_type,
+                        "order_id": order_id,
+                        "at_ms": reserved_at_ms,
+                        "status": status,
+                        "agent_event_id": agent_event_id,
+                        "error": error,
+                        "source": None,
+                        **({"episode_id": episode_id} if episode_id else {}),
+                    }
+                )
             data["agent_events"] = events[-AGENT_EVENTS_CAP:]
             return data
 
         try:
             written = self._store.update(session_key, _mutate)
         except OSError as exc:
-            logger.error("[mba.agent_event] {} {} {} pero el vault NO lo registró: {}", session_key, event_type, status,
-                         exc)
+            logger.error(
+                "[mba.agent_event] {} {} {} pero el vault NO lo registró: {}",
+                session_key,
+                event_type,
+                status,
+                exc,
+            )
             return False
         if written is None:
-            logger.error("[mba.agent_event] {} {} {} pero la sesión leyó vacía: no registrado", session_key, event_type,
-                         status)
+            logger.error(
+                "[mba.agent_event] {} {} {} pero la sesión leyó vacía: no registrado",
+                session_key,
+                event_type,
+                status,
+            )
             return False
         return True

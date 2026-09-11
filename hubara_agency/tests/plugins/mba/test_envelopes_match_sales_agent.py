@@ -1,6 +1,7 @@
 """Guard de deriva: los envelopes de catálogo que ve MBA son los mismos que ve
 el agente Sales de Hubara (misma verdad, dos frentes). Si alguien cambia uno,
 este test obliga a cambiar el otro o a promover los helpers al SDK."""
+
 from __future__ import annotations
 
 from src.plugins.chats.agent.sales.tools import catalog as sales

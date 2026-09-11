@@ -16,6 +16,7 @@ la consola ``agent_test`` (D2.4: probar skills y conocimiento contra Meta sin
 facturación ni hilos reales).
 Las tools del connector (públicas, con API key propia) viven en ``connector.py``.
 """
+
 from __future__ import annotations
 
 import json
@@ -27,8 +28,13 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
+from src.plugins.mba.domain.config import env_value
 from src.plugins.mba.adapters.agent_event import MetaAgentEvent
-from src.plugins.mba.adapters.meta_admin import MbaAdminError, MbaAdminPort, MetaMbaAdmin
+from src.plugins.mba.adapters.meta_admin import (
+    MbaAdminError,
+    MbaAdminPort,
+    MetaMbaAdmin,
+)
 from src.plugins.mba.adapters.sync_state import SyncStateStore
 from src.plugins.mba.adapters.thread_control import MetaThreadControl
 from src.plugins.mba.domain.agent_events import AGENT_EVENT_TYPES, DESCRIPTION_MAX
@@ -65,7 +71,9 @@ async def get_agents() -> dict[str, Any]:
 async def get_agent_config(agent_id: str) -> dict[str, Any]:
     cfg = load_agent(agent_id)
     if cfg is None:
-        raise HTTPException(status_code=404, detail=f"agente MBA desconocido: {agent_id}")
+        raise HTTPException(
+            status_code=404, detail=f"agente MBA desconocido: {agent_id}"
+        )
     return asdict(cfg)
 
 
@@ -80,19 +88,24 @@ async def get_session_control(session_key: str) -> dict[str, Any]:
     # metadata (inexistente, vacío o corrupto) lee como ``{}``.
     data = FilesystemMetadataStore(WORKSPACE_VAULT_DIR).read(session_key)
     if not data:
-        raise HTTPException(status_code=404, detail=f"sesión desconocida: {session_key}")
+        raise HTTPException(
+            status_code=404, detail=f"sesión desconocida: {session_key}"
+        )
     history = data.get("control_history")
-    history = [h for h in history if isinstance(h, dict)] if isinstance(history, list) else []
+    history = (
+        [h for h in history if isinstance(h, dict)] if isinstance(history, list) else []
+    )
     return {
         "session_key": session_key,
         "control_owner": data.get("control_owner"),
         "control_owner_since_ms": data.get("control_owner_since_ms"),
         "control_owner_updated_at_ms": data.get("control_owner_updated_at_ms"),
         "control_owner_app_id": data.get("control_owner_app_id"),
-        "thread_control": data.get("thread_control") if isinstance(data.get("thread_control"), dict) else None,
+        "thread_control": data.get("thread_control")
+        if isinstance(data.get("thread_control"), dict)
+        else None,
         "history": history[-CONTROL_HISTORY_LIMIT:],
     }
-
 
 
 class ReleaseBody(BaseModel):
@@ -108,11 +121,17 @@ def get_release_thread() -> ReleaseThread:
         port=MetaThreadControl(),
         is_customer_allowed=mba_customer_allowed,
         is_enabled=mba_standby_enabled,
-        phone_number_id_fallback=lambda: os.environ.get("WHATSAPP_PHONE_NUMBER_ID", ""),
+        phone_number_id_fallback=lambda: env_value(
+            os.environ, "WHATSAPP_PHONE_NUMBER_ID"
+        ),
     )
 
 
-_RELEASE_GUARD_STATUS = {"mba_disabled": 503, "customer_not_enabled": 403, "session_unknown": 404}
+_RELEASE_GUARD_STATUS = {
+    "mba_disabled": 503,
+    "customer_not_enabled": 403,
+    "session_unknown": 404,
+}
 
 
 @router.post("/sessions/{session_key}/control/release")
@@ -165,7 +184,10 @@ class AgentEventBody(BaseModel):
     @classmethod
     def _bounded_payload(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
         # Viaja a Meta como string JSON dentro del evento: acotado (interno, pero sin tope = sin tope).
-        if value is not None and len(json.dumps(value, ensure_ascii=False)) > PAYLOAD_MAX_BYTES:
+        if (
+            value is not None
+            and len(json.dumps(value, ensure_ascii=False)) > PAYLOAD_MAX_BYTES
+        ):
             raise ValueError(f"payload supera {PAYLOAD_MAX_BYTES} bytes serializado")
         return value
 
@@ -177,7 +199,7 @@ def get_emit_agent_event() -> EmitAgentEvent:
         is_customer_allowed=mba_customer_allowed,
         is_enabled=mba_standby_enabled,
         controls_thread=mba_controls_thread,
-        entity_id_fallback=lambda: os.environ.get("WHATSAPP_PHONE_NUMBER_ID", ""),
+        entity_id_fallback=lambda: env_value(os.environ, "WHATSAPP_PHONE_NUMBER_ID"),
     )
 
 
@@ -194,8 +216,13 @@ async def emit_session_agent_event(
     if not _SESSION_KEY_RE.fullmatch(session_key):
         raise HTTPException(status_code=422, detail="session_key debe ser wa_<dígitos>")
     outcome = await use_case.execute(
-        session_key, body.type, order_id=body.order_id, episode_id=body.episode_id, message=body.message,
-        payload=body.payload, source=body.source,
+        session_key,
+        body.type,
+        order_id=body.order_id,
+        episode_id=body.episode_id,
+        message=body.message,
+        payload=body.payload,
+        source=body.source,
     )
     status = _RELEASE_GUARD_STATUS.get(outcome.reason)
     if status is not None:
@@ -207,7 +234,12 @@ async def emit_session_agent_event(
 
 
 _AGENT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
-_SYNC_GUARD_STATUS = {"mba_disabled": 503, "agent_unknown": 404, "sync_in_progress": 409, "remote_unavailable": 503}
+_SYNC_GUARD_STATUS = {
+    "mba_disabled": 503,
+    "agent_unknown": 404,
+    "sync_in_progress": 409,
+    "remote_unavailable": 503,
+}
 
 
 class SyncBody(BaseModel):
@@ -233,7 +265,9 @@ def get_sync_agent() -> SyncAgent:
 
 def _check_agent_id(agent_id: str) -> None:
     if not _AGENT_ID_RE.fullmatch(agent_id) or load_agent(agent_id) is None:
-        raise HTTPException(status_code=404, detail=f"agente MBA desconocido: {agent_id}")
+        raise HTTPException(
+            status_code=404, detail=f"agente MBA desconocido: {agent_id}"
+        )
 
 
 @router.get("/agents/{agent_id}/sync")
@@ -245,7 +279,9 @@ async def get_agent_sync_state(agent_id: str) -> dict[str, Any]:
 
 
 @router.get("/agents/{agent_id}/sync/plan")
-async def get_agent_sync_plan(agent_id: str, use_case: SyncAgent = Depends(get_sync_agent)) -> dict[str, Any]:
+async def get_agent_sync_plan(
+    agent_id: str, use_case: SyncAgent = Depends(get_sync_agent)
+) -> dict[str, Any]:
     """Solo lectura: qué cambiaría un sync (lee Meta + diff puro). No escribe."""
     _check_agent_id(agent_id)
     try:
@@ -253,15 +289,24 @@ async def get_agent_sync_plan(agent_id: str, use_case: SyncAgent = Depends(get_s
     except MbaAdminError as exc:
         raise HTTPException(
             status_code=503,
-            detail={"error": "remote_unavailable", "kind": exc.kind, "status": exc.status, "detail": exc.detail},
+            detail={
+                "error": "remote_unavailable",
+                "kind": exc.kind,
+                "status": exc.status,
+                "detail": exc.detail,
+            },
         )
     if plan is None:
-        raise HTTPException(status_code=404, detail=f"agente MBA desconocido: {agent_id}")
+        raise HTTPException(
+            status_code=404, detail=f"agente MBA desconocido: {agent_id}"
+        )
     return plan.summary()
 
 
 @router.post("/agents/{agent_id}/sync")
-async def apply_agent_sync(agent_id: str, body: SyncBody, use_case: SyncAgent = Depends(get_sync_agent)) -> dict[str, Any]:
+async def apply_agent_sync(
+    agent_id: str, body: SyncBody, use_case: SyncAgent = Depends(get_sync_agent)
+) -> dict[str, Any]:
     """Aplica el plan (upserts + borrados de lo nuestro). Guardas → 503/404/409;
     ``blocked`` / ``plan_changed`` / ``nothing_to_do`` vuelven 200 con
     ``applied=false`` y su motivo, para que la tab lo muestre tal cual."""
@@ -269,7 +314,10 @@ async def apply_agent_sync(agent_id: str, body: SyncBody, use_case: SyncAgent = 
     outcome = await use_case.apply(agent_id, fingerprint=body.fingerprint)
     status = _SYNC_GUARD_STATUS.get(outcome.reason)
     if status is not None:
-        raise HTTPException(status_code=status, detail={"error": outcome.reason, **(outcome.error or {})})
+        raise HTTPException(
+            status_code=status,
+            detail={"error": outcome.reason, **(outcome.error or {})},
+        )
     return asdict(outcome)
 
 
@@ -278,8 +326,13 @@ async def apply_agent_sync(agent_id: str, body: SyncBody, use_case: SyncAgent = 
 
 EVERYONE_KNOB_ENV = "MBA_ALLOW_EVERYONE"
 _ROLLOUT_GUARD_STATUS = {
-    "mba_disabled": 503, "remote_unavailable": 503, "unavailable": 503, "ambiguous": 503, "not_configured": 503,
-    "agent_unknown": 404, "entity_id_missing": 409,
+    "mba_disabled": 503,
+    "remote_unavailable": 503,
+    "unavailable": 503,
+    "ambiguous": 503,
+    "not_configured": 503,
+    "agent_unknown": 404,
+    "entity_id_missing": 409,
 }
 _ENTRY_ID_RE = re.compile(r"^[A-Za-z0-9_\-.:]{1,128}$")
 
@@ -326,12 +379,17 @@ def get_rollout_control() -> RolloutControl:
 def _rollout_response(outcome: Any) -> dict[str, Any]:
     status = _ROLLOUT_GUARD_STATUS.get(outcome.reason)
     if status is not None:
-        raise HTTPException(status_code=status, detail={"error": outcome.reason, **(outcome.error or {})})
+        raise HTTPException(
+            status_code=status,
+            detail={"error": outcome.reason, **(outcome.error or {})},
+        )
     return asdict(outcome)
 
 
 @router.get("/agents/{agent_id}/rollout")
-async def get_agent_rollout(agent_id: str, use_case: RolloutControl = Depends(get_rollout_control)) -> dict[str, Any]:
+async def get_agent_rollout(
+    agent_id: str, use_case: RolloutControl = Depends(get_rollout_control)
+) -> dict[str, Any]:
     """Estado del rollout en Meta + readiness para encenderlo (solo lectura)."""
     _check_agent_id(agent_id)
     try:
@@ -339,15 +397,26 @@ async def get_agent_rollout(agent_id: str, use_case: RolloutControl = Depends(ge
     except MbaAdminError as exc:
         raise HTTPException(
             status_code=503,
-            detail={"error": "remote_unavailable", "kind": exc.kind, "status": exc.status, "detail": exc.detail},
+            detail={
+                "error": "remote_unavailable",
+                "kind": exc.kind,
+                "status": exc.status,
+                "detail": exc.detail,
+            },
         )
     if status is None:
-        raise HTTPException(status_code=404, detail=f"agente MBA desconocido: {agent_id}")
+        raise HTTPException(
+            status_code=404, detail=f"agente MBA desconocido: {agent_id}"
+        )
     return asdict(status)
 
 
 @router.post("/agents/{agent_id}/rollout/allowlist")
-async def add_rollout_phone(agent_id: str, body: AllowlistBody, use_case: RolloutControl = Depends(get_rollout_control)) -> dict[str, Any]:
+async def add_rollout_phone(
+    agent_id: str,
+    body: AllowlistBody,
+    use_case: RolloutControl = Depends(get_rollout_control),
+) -> dict[str, Any]:
     """Agrega un teléfono (E.164) a la allowlist de Meta. Solo si ya está en
     la lista cerrada de Hubara (``customer_not_in_hubara_allowlist`` si no)."""
     _check_agent_id(agent_id)
@@ -355,7 +424,11 @@ async def add_rollout_phone(agent_id: str, body: AllowlistBody, use_case: Rollou
 
 
 @router.delete("/agents/{agent_id}/rollout/allowlist/{entry_id}")
-async def remove_rollout_phone(agent_id: str, entry_id: str, use_case: RolloutControl = Depends(get_rollout_control)) -> dict[str, Any]:
+async def remove_rollout_phone(
+    agent_id: str,
+    entry_id: str,
+    use_case: RolloutControl = Depends(get_rollout_control),
+) -> dict[str, Any]:
     """Quita una entrada de la allowlist de Meta (siempre permitido)."""
     _check_agent_id(agent_id)
     if not _ENTRY_ID_RE.fullmatch(entry_id):
@@ -364,20 +437,32 @@ async def remove_rollout_phone(agent_id: str, entry_id: str, use_case: RolloutCo
 
 
 @router.put("/agents/{agent_id}/rollout/audience")
-async def set_rollout_audience(agent_id: str, body: AudienceBody, use_case: RolloutControl = Depends(get_rollout_control)) -> dict[str, Any]:
+async def set_rollout_audience(
+    agent_id: str,
+    body: AudienceBody,
+    use_case: RolloutControl = Depends(get_rollout_control),
+) -> dict[str, Any]:
     """``EVERYONE`` exige el knob ``MBA_ALLOW_EVERYONE`` + ``confirm``; volver
     a ``ALLOWLISTED_ONLY`` siempre se permite."""
     _check_agent_id(agent_id)
-    return _rollout_response(await use_case.set_audience(agent_id, body.ai_audience, confirm=body.confirm))
+    return _rollout_response(
+        await use_case.set_audience(agent_id, body.ai_audience, confirm=body.confirm)
+    )
 
 
 @router.put("/agents/{agent_id}/rollout/enabled")
-async def set_rollout_enabled(agent_id: str, body: EnabledBody, use_case: RolloutControl = Depends(get_rollout_control)) -> dict[str, Any]:
+async def set_rollout_enabled(
+    agent_id: str,
+    body: EnabledBody,
+    use_case: RolloutControl = Depends(get_rollout_control),
+) -> dict[str, Any]:
     """Encender exige readiness completa + ``confirm`` (``not_ready`` /
     ``confirmation_required`` vuelven 200 con ``applied=false``); apagar es
     el kill switch y nunca se bloquea."""
     _check_agent_id(agent_id)
-    return _rollout_response(await use_case.set_enabled(agent_id, body.enabled, confirm=body.confirm))
+    return _rollout_response(
+        await use_case.set_enabled(agent_id, body.enabled, confirm=body.confirm)
+    )
 
 
 # ── D2.4: consola agent_test ─────────────────────────────────────────────────
@@ -404,23 +489,43 @@ def get_mba_admin() -> MbaAdminPort:
 
 
 @router.post("/agents/{agent_id}/test")
-async def agent_test(agent_id: str, body: AgentTestBody, admin: MbaAdminPort = Depends(get_mba_admin)) -> dict[str, Any]:
+async def agent_test(
+    agent_id: str, body: AgentTestBody, admin: MbaAdminPort = Depends(get_mba_admin)
+) -> dict[str, Any]:
     """Un turno del simulador de Meta (``POST /{entity_id}/agent_test``): no
     factura tokens ni toca hilos vivos. ``conversation_id`` encadena turnos.
     Meta caída / sin token → 503; un rechazo de Meta vuelve 200 ``ok=false``
     con el detalle, para que la consola lo muestre tal cual."""
     if not _AGENT_ID_RE.fullmatch(agent_id):
-        raise HTTPException(status_code=404, detail=f"agente MBA desconocido: {agent_id}")
+        raise HTTPException(
+            status_code=404, detail=f"agente MBA desconocido: {agent_id}"
+        )
     cfg = load_agent(agent_id)
     if cfg is None:
-        raise HTTPException(status_code=404, detail=f"agente MBA desconocido: {agent_id}")
+        raise HTTPException(
+            status_code=404, detail=f"agente MBA desconocido: {agent_id}"
+        )
     if not cfg.entity_id:
         raise HTTPException(status_code=409, detail={"error": "entity_id_missing"})
     try:
-        reply = await admin.agent_test(str(cfg.entity_id), body.message, conversation_id=body.conversation_id)
+        reply = await admin.agent_test(
+            str(cfg.entity_id), body.message, conversation_id=body.conversation_id
+        )
     except MbaAdminError as exc:
         status = _AGENT_TEST_GUARD_STATUS.get(exc.kind)
         if status is not None:
-            raise HTTPException(status_code=status, detail={"error": "remote_unavailable", "kind": exc.kind, "status": exc.status, "detail": exc.detail})
-        return {"ok": False, "reply": None, "error": {"kind": exc.kind, "status": exc.status, "detail": exc.detail}}
+            raise HTTPException(
+                status_code=status,
+                detail={
+                    "error": "remote_unavailable",
+                    "kind": exc.kind,
+                    "status": exc.status,
+                    "detail": exc.detail,
+                },
+            )
+        return {
+            "ok": False,
+            "reply": None,
+            "error": {"kind": exc.kind, "status": exc.status, "detail": exc.detail},
+        }
     return {"ok": True, "reply": reply, "error": None}
