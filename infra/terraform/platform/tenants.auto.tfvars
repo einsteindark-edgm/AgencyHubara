@@ -19,8 +19,12 @@ tenants = {
 
     # Meta Business Agent (F0): SOLO teléfonos nuestros. Cambiar esta lista es un
     # PR + `terraform apply` de platform + redeploy (render del .env desde SSM).
-    # Encender el oído `standby` (standby_enabled = true) es una decisión aparte.
+    # standby_enabled = true (2026-09-11, D3.2): enciende el plugin en Hubara —
+    # el sync puede escribir la config en Meta y el webhook guarda los ecos
+    # `standby` SOLO de la lista cerrada. NO enciende el agente en Meta: eso es
+    # `rollout.enabled`, que se decide desde la tab (dos pasos) en D4.5.
     mba = {
+      standby_enabled    = true
       customer_allowlist = ["+573125671604"]
     }
   }
