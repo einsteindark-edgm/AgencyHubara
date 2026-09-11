@@ -438,3 +438,36 @@ def test_ad_creative_endpoint_404_when_unavailable(ads_client, monkeypatch):
     monkeypatch.setattr(ads_mod, "_meta_ads", lambda: FakeMetaAds())
     ads_mod._meta_creative_cache.clear()
     assert client.get("/api/ads/ads/AD_7/creative").status_code == 404
+
+
+def test_ads_endpoint_standalone_ad_gets_thumbnail_from_resolver(segmented_client, monkeypatch):
+    """Anuncio con gasto pero sin chats (no está en el vault) → el endpoint
+    resuelve su creativo aparte para que la tabla tenga miniatura."""
+    from src.plugins.ads.meta.parse import MetaAdMetrics
+
+    client, _ = segmented_client
+    monkeypatch.setattr(
+        ads_mod, "_cached_meta_ads",
+        lambda since_ms, until_ms: [
+            MetaAdMetrics(ad_id="AD_NEW", ad_name="Carrusel nuevo", adset_id="ADSET_A",
+                          campaign_id="CAMP_9", spend=50000.0, impressions=3000,
+                          reach=2500, clicks=40, messaging_conversations_started=0),
+        ],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        ads_mod, "fetch_meta_ad_names",
+        lambda ad_ids, *, token, transport=None: {
+            **_SEG_NAMES,
+            **({"AD_NEW": {"ad_name": "Carrusel nuevo", "campaign_name": "Día del Padre",
+                            "campaign_id": "CAMP_9", "adset_id": "ADSET_A",
+                            "adset_name": "Hombres 25-45", "thumbnail_url": "https://cdn.fb/new.jpg"}}
+               if "AD_NEW" in ad_ids else {}),
+        },
+    )
+    ads_mod._meta_names_cache.clear()
+    resp = client.get("/api/ads/campaigns/CAMP_9/adsets/ADSET_A/ads")
+    by_id = {r["id"]: r for r in resp.json()["ads"]}
+    assert by_id["AD_NEW"]["creative_thumbnail_url"] == "https://cdn.fb/new.jpg"
+    assert by_id["AD_NEW"]["ad_set"] == "Hombres 25-45"
+    assert by_id["AD_1"]["creative_thumbnail_url"] is None  # el del vault no cambia

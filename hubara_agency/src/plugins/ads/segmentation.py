@@ -368,3 +368,31 @@ def merge_meta_ads(
                 )
             )
     return out
+
+
+def fill_ad_creatives(
+    rows: list[AdsCampaignSummary], names: Names
+) -> list[AdsCampaignSummary]:
+    """Completa creativo + segmento en las filas de anuncio que no lo traen.
+
+    Los anuncios standalone (gasto sin chats) no pasan por el resolver del
+    vault y salían sin miniatura (visto en vivo 2026-09-10). El caller resuelve
+    esos ids aparte y acá se vuelcan: `name` se respeta (viene de insights),
+    solo se llenan thumbnail/segmento/ids. Fila ya completa → misma instancia.
+    """
+    out: list[AdsCampaignSummary] = []
+    for r in rows:
+        info = names.get(r.id)
+        if r.creative_thumbnail_url is not None or not info:
+            out.append(r)
+            continue
+        out.append(
+            dataclasses.replace(
+                r,
+                creative_thumbnail_url=info.get("thumbnail_url"),
+                ad_set=r.ad_set or info.get("adset_name"),
+                meta_adset_id=r.meta_adset_id or info.get("adset_id"),
+                meta_campaign_id=r.meta_campaign_id or info.get("campaign_id"),
+            )
+        )
+    return out

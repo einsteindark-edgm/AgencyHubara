@@ -55,6 +55,7 @@ from src.plugins.ads.meta_names import fetch_meta_ad_names
 from src.sdk.connectorkit import meta_marketing_token
 from src.plugins.ads.segmentation import (
     collect_source_ids,
+    fill_ad_creatives,
     group_buckets_by_ad,
     group_buckets_by_adset,
     group_buckets_by_campaign,
@@ -632,6 +633,13 @@ def get_ads_adset_ads(
     ]
     if metrics:
         rows = merge_meta_ads(rows, metrics)
+    # Anuncios standalone (gasto sin chats) no están en el vault → sin creativo.
+    # Se resuelven aparte (mismo batch + cache) para que la tabla tenga miniatura.
+    missing = sorted(
+        r.id for r in rows if r.creative_thumbnail_url is None and r.id not in names
+    )
+    if missing:
+        rows = fill_ad_creatives(rows, _cached_meta_names(missing))
     return {"campaign_id": campaign_id, "adset_id": adset_id, "ads": [asdict(r) for r in rows]}
 
 

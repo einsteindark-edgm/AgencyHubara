@@ -61,13 +61,35 @@ def fetch_meta_ad_names(
         for start in range(0, len(ad_ids), _IDS_PER_CALL):
             batch = ad_ids[start : start + _IDS_PER_CALL]
             # Un lote fallido no borra los demás: resultado parcial > nada.
-            out.update(_fetch_batch(client, batch, token))
+            out.update(_resolve_batch(client, batch, token))
     return out
+
+
+def _resolve_batch(
+    client: httpx.Client, ad_ids: list[str], token: str
+) -> dict[str, dict[str, str | None]]:
+    """Resuelve un lote; si Graph lo rechaza (un id inválido — anuncio borrado —
+    invalida el `?ids=` ENTERO, visto en vivo 2026-09-10) lo parte en mitades
+    hasta aislar el id malo: log2(50) ≈ 6 calls extra, no uno por id. Un error
+    de red NO bisecta (multiplicaría timeouts): ese lote queda vacío."""
+    result = _fetch_batch(client, ad_ids, token)
+    if result is not None:
+        return result
+    if len(ad_ids) == 1:
+        logger.info("meta.ad_names_bad_id", extra={"ad_id": ad_ids[0]})
+        return {}
+    mid = len(ad_ids) // 2
+    return {
+        **_resolve_batch(client, ad_ids[:mid], token),
+        **_resolve_batch(client, ad_ids[mid:], token),
+    }
 
 
 def _fetch_batch(
     client: httpx.Client, ad_ids: list[str], token: str
-) -> dict[str, dict[str, str | None]]:
+) -> dict[str, dict[str, str | None]] | None:
+    """Un GET batch. `None` = Graph rechazó el lote (candidato a bisección);
+    `{}` = error de red / respuesta ilegible (no se reintenta)."""
     params = {
         "ids": ",".join(ad_ids),
         "fields": _FIELDS,
@@ -80,7 +102,7 @@ def _fetch_batch(
         return {}
     if resp.status_code != 200:
         logger.info("meta.ad_names_fetch_non_200", extra={"status": resp.status_code})
-        return {}
+        return None
     try:
         body = resp.json()
     except ValueError:

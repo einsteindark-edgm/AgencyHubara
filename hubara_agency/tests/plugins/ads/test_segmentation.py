@@ -386,3 +386,27 @@ class TestMergeMetaAds:
             )
         ]
         assert merge_meta_ads([], metrics) == []
+
+
+class TestFillAdCreatives:
+    """Prueba en vivo 2026-09-10: los anuncios standalone (gasto sin chats)
+    salían sin miniatura ni segmento porque el resolver solo corre sobre los
+    ids del vault. `fill_ad_creatives` completa esas filas con el resolver."""
+
+    def test_fills_thumbnail_and_names_on_rows_without_creative(self):
+        from src.plugins.ads.segmentation import fill_ad_creatives
+
+        rows = [
+            _bucket(id="AD_NEW", name="Carrusel", started=0, creative_thumbnail_url=None),
+            _bucket(id="AD_1", name="Ad uno", creative_thumbnail_url="https://cdn.fb/1.jpg",
+                    creative_title="Chatea"),
+        ]
+        names = {"AD_NEW": {**_names("AD_NEW"), "thumbnail_url": "https://cdn.fb/new.jpg"}}
+        out = fill_ad_creatives(rows, names)
+        new = next(r for r in out if r.id == "AD_NEW")
+        assert new.creative_thumbnail_url == "https://cdn.fb/new.jpg"
+        assert new.ad_set == "Hombres 25-45"
+        assert new.meta_adset_id == "ADSET_A"
+        assert new.name == "Carrusel"  # el nombre de insights se respeta
+        # la fila que ya tenía creativo queda intacta (misma instancia)
+        assert out[1] is rows[1]

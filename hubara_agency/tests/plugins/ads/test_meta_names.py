@@ -264,9 +264,10 @@ class TestFetchMetaAdNamesChunking:
         assert len(names) == 120
         assert names["AD_119"]["ad_name"] == "Ad AD_119"
 
-    def test_failed_batch_does_not_drop_the_others(self):
-        """Un lote con error (Graph 400 por un id borrado) no borra los demás:
-        resultado parcial > nada."""
+    def test_transient_batch_error_recovers_by_bisecting(self):
+        """Un lote rechazado por Graph (400) se parte en mitades y se reintenta:
+        si el error era transitorio, todos los ids se resuelven igual; si no,
+        solo se pierde el id malo (ver TestFetchMetaAdNamesBisect)."""
         ids = [f"AD_{i}" for i in range(60)]
         calls = {"n": 0}
 
@@ -282,5 +283,45 @@ class TestFetchMetaAdNamesChunking:
             )
 
         names = fetch_meta_ad_names(ids, token="TOK", transport=_mock_transport(handler))
-        assert len(names) == 10
-        assert "AD_59" in names and "AD_0" not in names
+        assert len(names) == 60
+        assert calls["n"] == 4  # 50 (falla) → 25 + 25 → 10
+
+
+class TestFetchMetaAdNamesBisect:
+    """Prueba en vivo 2026-09-10: Graph rechaza el `?ids=` ENTERO si un solo id
+    es inválido (anuncio borrado). Un lote fallido se parte en mitades hasta
+    aislar el id malo — los demás se resuelven igual."""
+
+    def test_one_bad_id_only_drops_itself(self):
+        ids = [f"AD_{i}" for i in range(10)] + ["BAD"] + [f"AD_{i}" for i in range(10, 20)]
+        calls: list[int] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            batch = request.url.params["ids"].split(",")
+            calls.append(len(batch))
+            if "BAD" in batch:
+                return httpx.Response(400, json={"error": {"message": "Cannot determine target object BAD"}})
+            return httpx.Response(
+                200,
+                json={ad_id: {"id": ad_id, "name": "x", "campaign": {"id": "C", "name": "Camp"}}
+                      for ad_id in batch},
+            )
+
+        names = fetch_meta_ad_names(ids, token="TOK", transport=_mock_transport(handler))
+        assert len(names) == 20
+        assert "BAD" not in names
+        assert all(f"AD_{i}" in names for i in range(20))
+        # Bisección: acotado (log2), no un request por id.
+        assert len(calls) < 12
+
+    def test_network_error_does_not_bisect(self):
+        """Red caída ≠ id malo: no tiene sentido partir el lote (y multiplicar
+        timeouts). Un error de transporte devuelve vacío para ese lote."""
+        calls = {"n": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls["n"] += 1
+            raise httpx.ConnectError("boom")
+
+        assert fetch_meta_ad_names(["A", "B", "C"], token="TOK", transport=_mock_transport(handler)) == {}
+        assert calls["n"] == 1
