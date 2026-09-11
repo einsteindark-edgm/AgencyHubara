@@ -129,7 +129,7 @@ variable "secret_keys" {
     "META_CATALOG_ID",
     # Flow v2 (formulario de envío) publicado en el WABA del tenant: lo resuelve el
     # CLI de provisioning (`flows`) y lo consumen chats + el agent.yaml de MBA
-    # (`${META_FLOW_ID_SHIPPING}`). Hubara: importado al state el 2026-09-10.
+    # (`${META_FLOW_ID_SHIPPING}`). Tenant existente: `terraform import` del param antes del apply.
     "META_FLOW_ID_SHIPPING",
     "META_SYSTEM_USER_TOKEN",
     "TEMPORAL_ADDRESS",
