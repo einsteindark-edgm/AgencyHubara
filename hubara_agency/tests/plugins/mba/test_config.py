@@ -253,6 +253,7 @@ def test_connector_and_ui_metadata_survive_for_the_dashboard() -> None:
 
 _HUBARA_ONLY = re.compile(
     r"load_skill|SOUL\.md|IDENTITY\.md|AGENTS\.md|TOOLS\.md|USER\.md|SCRIPT\.md|\[SISTEMA|"
+    r"tarjeta de contacto|wa\.me/|"  # sin botón de contacto: la escalación ocurre en el mismo chat (2026-09-11)
     r"\[DATOS DEL PEDIDO|reasoning_content|tool_result|intro_text|Active Skill|system prompt|"
     r"present_products|present_variant_picker|present_product_detail|present_product_gallery|"
     r"present_order_confirmation|send_quick_replies|send_cta_url|send_contact_card|react_to_message|"
@@ -287,7 +288,9 @@ def test_real_sales_agent_is_clean_and_only_names_tools_mba_has(monkeypatch) -> 
     assert cfg.problems == ()
     assert len(cfg.skills) == 9 and all(not s.over_limit for s in cfg.skills)
     assert cfg.connector is not None and len(cfg.connector.tools) == 9
-    assert len(cfg.ui_skills) == 9 and len(cfg.faqs) >= 8
+    assert len(cfg.ui_skills) == 8 and len(cfg.faqs) >= 8
+    # la escalación a humano pasa por escalate_to_human en el MISMO chat: no hay botón a otro número
+    assert "send-contact-card" not in {u.title for u in cfg.ui_skills}
     declared = {t.name for t in cfg.connector.tools}
     # snake_case legítimo = las 9 tools + los parámetros que Meta ve en su request_definition
     known = set(declared)
@@ -307,8 +310,8 @@ def test_real_sales_agent_is_clean_and_only_names_tools_mba_has(monkeypatch) -> 
     # y las 9 tools se explican en algún skill
     mentioned = set(re.findall(r"\b[a-z]+(?:_[a-z]+)+\b", "\n".join(texts.values())))
     assert declared <= mentioned
-    # los requests reales: 1 business_info + N faqs + 9 skills + 1 connector + 9 tools + 9 ui + 1 settings + N allowlist
-    assert len(cfg.requests) == 1 + len(cfg.faqs) + 9 + 1 + 9 + 9 + 1 + len(
+    # los requests reales: 1 business_info + N faqs + 9 skills + 1 connector + 9 tools + 8 ui + 1 settings + N allowlist
+    assert len(cfg.requests) == 1 + len(cfg.faqs) + 9 + 1 + 9 + 8 + 1 + len(
         cfg.allowlist
     )
     assert cfg.workspace == "hubara_agency/src/plugins/mba/agents/sales"
@@ -339,7 +342,7 @@ connector:
   customer_phone_param: customer_phone
   tools: []
 ui_skills:
-  - {title: request-shipping-details, component_type: flow, status: enabled, kind: static, instruction: "Flow id ${META_FLOW_ID_SHIPPING} y wa.me/${MBA_ADVISOR_PHONE}."}
+  - {title: request-shipping-details, component_type: flow, status: enabled, kind: static, instruction: "Flow id ${META_FLOW_ID_SHIPPING}, pantalla SHIPPING."}
 allowlist: "${MBA_CUSTOMER_ALLOWLIST}"
 """
 
@@ -347,7 +350,6 @@ _FULL_ENV = {
     "WHATSAPP_PHONE_NUMBER_ID": "1234091093112024",
     "HUBARA_PUBLIC_API_URL": "https://api.example.test",
     "META_FLOW_ID_SHIPPING": "951293630651590",
-    "MBA_ADVISOR_PHONE": "573001234567",  # dígitos: va dentro de un enlace wa.me
     "MBA_CUSTOMER_ALLOWLIST": "+573001234567, +573009876543",
 }
 _TENANT_VARS = sorted(_FULL_ENV)
@@ -362,7 +364,7 @@ def test_tenant_values_come_from_the_environment_not_from_git() -> None:
         and cfg.connector.base_url == "https://api.example.test/api/mba"
     )
     assert (
-        cfg.ui_skills[0].instruction == "Flow id 951293630651590 y wa.me/573001234567."
+        cfg.ui_skills[0].instruction == "Flow id 951293630651590, pantalla SHIPPING."
     )
     # la lista cerrada es UNA sola (MBA_CUSTOMER_ALLOWLIST, CSV E.164): la misma que gobierna el connector
     assert cfg.allowlist == ("+573001234567", "+573009876543")
@@ -378,7 +380,7 @@ def test_unset_or_placeholder_values_stay_blocking_and_are_reported() -> None:
         AgentFiles(agent_yaml=_ENV_YAML, skills={}),
         env={
             "META_FLOW_ID_SHIPPING": "PLACEHOLDER_set_out_of_band",
-            "MBA_ADVISOR_PHONE": "  ",
+            "HUBARA_PUBLIC_API_URL": "  ",
         },
     )
     assert (
@@ -390,7 +392,7 @@ def test_unset_or_placeholder_values_stay_blocking_and_are_reported() -> None:
     )
     assert (
         cfg.ui_skills[0].instruction
-        == "Flow id <META_FLOW_ID_SHIPPING> y wa.me/<MBA_ADVISOR_PHONE>."
+        == "Flow id <META_FLOW_ID_SHIPPING>, pantalla SHIPPING."
     )
     assert cfg.allowlist == ("<MBA_CUSTOMER_ALLOWLIST>",)
     # un problem por variable, ordenado, nombrando la variable (es lo que el operador busca en SSM)

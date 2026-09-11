@@ -65,7 +65,6 @@ assert "SSM scheduler knob (PR #69) existe"          "a ssm get-parameter --name
 assert "SSM MBA_CUSTOMER_ALLOWLIST (mba-config) existe" "a ssm get-parameter --name /hubara/hubara/MBA_CUSTOMER_ALLOWLIST --query Parameter.Value --output text | grep -q '^+57'"
 assert "SSM MBA_STANDBY_ENABLED apagado por default"   "a ssm get-parameter --name /hubara/vincenzo/MBA_STANDBY_ENABLED --query Parameter.Value --output text | grep -qx 0"
 assert "SSM HUBARA_PUBLIC_API_URL = api_url del tenant"  "a ssm get-parameter --name /hubara/hubara/HUBARA_PUBLIC_API_URL --query Parameter.Value --output text | grep -qE '^https://[^ ]+$'"
-assert "SSM MBA_ADVISOR_PHONE sin valor = placeholder"   "a ssm get-parameter --name /hubara/vincenzo/MBA_ADVISOR_PHONE --query Parameter.Value --output text | grep -qx PLACEHOLDER_set_out_of_band"
 assert "SSM /graphagents/AGENTSPAN_MASTER_KEY existe" "a ssm get-parameter --name /graphagents/AGENTSPAN_MASTER_KEY"
 
 # ── compute ─────────────────────────────────────────────────────────────────
