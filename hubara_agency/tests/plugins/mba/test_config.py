@@ -253,6 +253,7 @@ def test_connector_and_ui_metadata_survive_for_the_dashboard() -> None:
 
 _HUBARA_ONLY = re.compile(
     r"load_skill|SOUL\.md|IDENTITY\.md|AGENTS\.md|TOOLS\.md|USER\.md|SCRIPT\.md|\[SISTEMA|"
+    r"tarjeta de contacto|wa\.me/|"  # sin botón de contacto: la escalación ocurre en el mismo chat (2026-09-11)
     r"\[DATOS DEL PEDIDO|reasoning_content|tool_result|intro_text|Active Skill|system prompt|"
     r"present_products|present_variant_picker|present_product_detail|present_product_gallery|"
     r"present_order_confirmation|send_quick_replies|send_cta_url|send_contact_card|react_to_message|"
