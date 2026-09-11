@@ -182,7 +182,7 @@ class TurnResult:
     # caller debe recomponer el batch (viejo + pendientes) y relanzar el turno
     # — nada se envió, nada se registró en el historial (record_turn skipped).
     interrupted: bool = False
-    # Saludo de primer contacto (sessions wa_573114842180 / wa_573042505198):
+    # Saludo de primer contacto (runs dc32f7fe / 3ce50ef3):
     # True cuando el historial que vio el LLM no tenía NINGÚN mensaje del
     # agente — primer intercambio de la conversación. El caller (Sales) lo usa
     # para garantizar la burbuja de apertura cuando el turno salió por tool

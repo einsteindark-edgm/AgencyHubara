@@ -353,7 +353,7 @@ En el PRIMER intercambio de una conversación (el historial que ve el LLM no
 tiene ningún mensaje del agente), el cliente MUST recibir la Burbuja 1 del
 guion de apertura (saludo según la hora de Bogotá + propuesta de valor) ANTES
 de cualquier menú o componente visual, sin depender de dónde el LLM puso el
-texto. Motivación: sessions wa_573114842180 y wa_573042505198 (CTWA "amor y
+texto. Motivación: runs dc32f7fe y 3ce50ef3 (CTWA "amor y
 amistad") — el LLM saludó como content junto a `search_products` (descartado
 por el default-deny) y cerró el turno con `present_products` → menú sin saludo.
 La decisión es pura (`first_contact_greeting.should_send_first_contact_greeting`)
@@ -386,7 +386,7 @@ y la hora vive en la activity `build_first_contact_greeting` (R-DET). Gated por
 
 - GIVEN primer contacto
 - WHEN el LLM responde solo texto (sin tools outbound), ej. "¡Buenas tardes! Bienvenido a *Hubara*... ¿Buscas algo para ti o es para regalo?"
-- THEN el texto sale como siempre y no se inyecta nada (caso wa_573207989059)
+- THEN el texto sale como siempre y no se inyecta nada (caso run a15bb71c)
 
 ### Requirement: Escalación a humano
 

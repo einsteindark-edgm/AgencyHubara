@@ -363,7 +363,7 @@ async def main() -> None:
             # HU-002: render UI intents emitidos por decision tools (post-LLM).
             flush_pending_ui_intents_activity,
             # Saludo de primer contacto cuando el turno sale por tool (menú)
-            # sin saludo — sessions wa_573114842180 / wa_573042505198.
+            # sin saludo — runs dc32f7fe / 3ce50ef3.
             build_first_contact_greeting_activity,
             # Fix integridad orden↔tag: red de seguridad determinística que
             # garantiza el cierre "pago pendiente" + escalación tras un

@@ -1,11 +1,11 @@
 """Saludo determinista de primer contacto cuando el turno sale por tool.
 
-Incidente 2026-09-10/11 (sessions wa_573114842180 y wa_573042505198, CTWA
+Incidente 2026-09-10/11 (runs dc32f7fe y 3ce50ef3, CTWA
 "amor y amistad"): el LLM escribió "¡Buenas noches! Bienvenido a *Hubara*..."
 como content JUNTO a la tool `search_products` y cerró el turno con
 `present_products`. El default-deny (run 1c9ef231) descarta el content que
 acompaña tool calls → el cliente recibió el menú SIN saludo. En la session
-wa_573207989059 (CTWA "velas aromáticas") el LLM respondió solo texto y el
+run a15bb71c (CTWA "velas aromáticas") el LLM respondió solo texto y el
 saludo sí salió. La diferencia no es el anuncio: es POR DÓNDE salió el turno.
 
 Mecánica (determinista, no depende del LLM): si es el PRIMER contacto de la

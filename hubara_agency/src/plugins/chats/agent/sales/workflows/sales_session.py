@@ -794,8 +794,8 @@ class HubaraSalesSessionWorkflow:
                                     self._force_shutdown = True
                                 safety_net_escalated = True
 
-                    # SALUDO DE PRIMER CONTACTO (sessions wa_573114842180 /
-                    # wa_573042505198, CTWA "amor y amistad", 2026-09-10/11):
+                    # SALUDO DE PRIMER CONTACTO (runs dc32f7fe /
+                    # 3ce50ef3, CTWA "amor y amistad", 2026-09-10/11):
                     # el LLM saludó como content JUNTO a `search_products`
                     # (descartado por el default-deny de abajo) y cerró el
                     # turno con `present_products` → el cliente recibió el

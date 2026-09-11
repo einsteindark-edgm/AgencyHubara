@@ -272,8 +272,8 @@ def _make_fake_activities(
     async def fake_get_active_episode_id(session_id: str) -> str:
         return "ep_001"
 
-    # Saludo determinista de primer contacto (sessions wa_573114842180 /
-    # wa_573042505198): la activity real lee la hora de Bogotá; acá
+    # Saludo determinista de primer contacto (runs dc32f7fe /
+    # 3ce50ef3): la activity real lee la hora de Bogotá; acá
     # devolvemos la Burbuja 1 nocturna fija.
     @activity.defn(name="build_first_contact_greeting")
     async def fake_first_contact_greeting() -> str:
@@ -2057,7 +2057,7 @@ async def _run_ctwa_first_message(
 async def test_first_contact_catalog_turn_greets_before_the_menu(
     tmp_path: Path,
 ) -> None:
-    """Sessions wa_573114842180 y wa_573042505198 (CTWA "amor y amistad",
+    """Sessions run dc32f7fe y run 3ce50ef3 (CTWA "amor y amistad",
     2026-09-10/11): el LLM saludó JUNTO a `search_products` (content
     descartado por el default-deny) y cerró el turno con `present_products`
     → el cliente recibió el menú SIN saludo. Contrato: en el primer contacto

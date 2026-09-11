@@ -39,7 +39,7 @@ async def compute_bogota_context_activity() -> str:
 async def build_first_contact_greeting_activity() -> str:
     """Burbuja 1 del guion de apertura según la hora actual de Bogotá.
 
-    Sessions wa_573114842180 / wa_573042505198: el workflow la manda cuando el
+    Sessions run dc32f7fe / run 3ce50ef3: el workflow la manda cuando el
     primer contacto salió por tool (menú) sin saludo. R-DET: `datetime.now`
     vive acá. R-JSON: `str` plano.
     """

@@ -1,11 +1,11 @@
 """Saludo determinista en el primer contacto cuando el turno sale por tool.
 
-Incidente 2026-09-10/11 (sessions wa_573114842180 y wa_573042505198, ambos
+Incidente 2026-09-10/11 (runs dc32f7fe y 3ce50ef3, ambos
 CTWA "amor y amistad"): el LLM escribió "¡Buenas noches! Bienvenido a
 *Hubara*..." JUNTO a la tool `search_products` y luego terminó el turno con
 `present_products`. El default-deny (run 1c9ef231) descarta el content que
 acompaña tool calls → el cliente recibió el menú de productos SIN saludo. En
-la session wa_573207989059 (CTWA "velas aromáticas") el LLM respondió solo
+la run a15bb71c (CTWA "velas aromáticas") el LLM respondió solo
 texto y el saludo sí salió.
 
 Contrato: si es el PRIMER contacto de la conversación (sin ningún mensaje
@@ -73,7 +73,7 @@ def test_skips_when_not_first_contact() -> None:
 
 
 def test_skips_when_turn_has_no_outbound_tool() -> None:
-    # Texto solo (wa_573207989059): el LLM saluda en su propio texto y el
+    # Texto solo (run a15bb71c): el LLM saluda en su propio texto y el
     # workflow lo manda como siempre — nada que inyectar.
     assert not should_send_first_contact_greeting(
         first_contact=True,
