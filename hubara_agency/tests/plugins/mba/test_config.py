@@ -69,7 +69,7 @@ connector:
       write: true
       notes: Escritura idempotente.
 ui_skills:
-  - {title: request-shipping-details, component_type: flow, status: enabled, kind: static, instruction: "Envía el formulario."}
+  - {title: request-shipping-details, component_type: flow, status: enabled, kind: static, instruction: "Envía el formulario.", flow_id: 951293630651590}
   - {title: present-products, component_type: carousel_quick_reply, status: enabled, kind: dynamic, instruction: "Carrusel."}
 allowlist: ["+573001112233", "+573004445566"]
 not_in_mba:
@@ -342,7 +342,7 @@ connector:
   customer_phone_param: customer_phone
   tools: []
 ui_skills:
-  - {title: request-shipping-details, component_type: flow, status: enabled, kind: static, instruction: "Flow id ${META_FLOW_ID_SHIPPING}, pantalla SHIPPING."}
+  - {title: request-shipping-details, component_type: flow, status: enabled, kind: static, instruction: "Formulario de envío, pantalla SHIPPING.", flow_id: "${META_FLOW_ID_SHIPPING}"}
 allowlist: "${MBA_CUSTOMER_ALLOWLIST}"
 """
 
@@ -363,7 +363,7 @@ def test_tenant_values_come_from_the_environment_not_from_git() -> None:
         cfg.connector is not None
         and cfg.connector.base_url == "https://api.example.test/api/mba"
     )
-    assert cfg.ui_skills[0].instruction == "Flow id 951293630651590, pantalla SHIPPING."
+    assert cfg.ui_skills[0].instruction == "Formulario de envío, pantalla SHIPPING."
     # la lista cerrada es UNA sola (MBA_CUSTOMER_ALLOWLIST, CSV E.164): la misma que gobierna el connector
     assert cfg.allowlist == ("+573001234567", "+573009876543")
     assert [r.body for r in cfg.requests if r.section == "allowlist"] == [
@@ -388,14 +388,12 @@ def test_unset_or_placeholder_values_stay_blocking_and_are_reported() -> None:
         cfg.connector is not None
         and cfg.connector.base_url == "<HUBARA_PUBLIC_API_URL>/api/mba"
     )
-    assert (
-        cfg.ui_skills[0].instruction
-        == "Flow id <META_FLOW_ID_SHIPPING>, pantalla SHIPPING."
-    )
+    assert cfg.ui_skills[0].instruction == "Formulario de envío, pantalla SHIPPING."
     assert cfg.allowlist == ("<MBA_CUSTOMER_ALLOWLIST>",)
     # un problem por variable, ordenado, nombrando la variable (es lo que el operador busca en SSM)
-    assert len(cfg.problems) == len(_TENANT_VARS)
-    for var, problem in zip(_TENANT_VARS, cfg.problems, strict=True):
+    env_problems = [p for p in cfg.problems if p.startswith("`${")]
+    assert len(env_problems) == len(_TENANT_VARS)
+    for var, problem in zip(_TENANT_VARS, env_problems, strict=True):
         assert f"${{{var}}}" in problem
 
 
@@ -407,7 +405,9 @@ def test_without_env_nothing_is_resolved_and_literal_yaml_is_untouched() -> None
     )
     unresolved = build_agent_config(AgentFiles(agent_yaml=_ENV_YAML, skills={}))
     assert (
-        len(unresolved.problems) == len(_TENANT_VARS) and unresolved.entity_id is None
+        len([p for p in unresolved.problems if p.startswith("`${")])
+        == len(_TENANT_VARS)
+        and unresolved.entity_id is None
     )
 
 
@@ -486,4 +486,63 @@ def test_env_value_never_returns_the_ssm_placeholder() -> None:
     assert (
         env_value({"WHATSAPP_PHONE_NUMBER_ID": " 1234 "}, "WHATSAPP_PHONE_NUMBER_ID")
         == "1234"
+    )
+
+
+def test_flow_ui_skill_sends_flow_id_as_integer_field_and_only_for_flows() -> None:
+    """Meta: `flow_id: integer`, obligatorio en `flow` y rechazado en cualquier otro
+    component_type. Va como campo del body, no dentro de la instrucción."""
+    cfg = build_agent_config(AgentFiles(agent_yaml=_ENV_YAML, skills={}), env=_FULL_ENV)
+    assert cfg.problems == ()
+    ui = next(
+        r
+        for r in cfg.requests
+        if r.section == "ui_skills" and r.label == "request-shipping-details"
+    )
+    assert ui.body["flow_id"] == 951293630651590 and isinstance(ui.body["flow_id"], int)
+    unresolved = build_agent_config(
+        AgentFiles(agent_yaml=_ENV_YAML, skills={}),
+        env={**_FULL_ENV, "META_FLOW_ID_SHIPPING": ""},
+    )
+    ui = next(
+        r
+        for r in unresolved.requests
+        if r.section == "ui_skills" and r.label == "request-shipping-details"
+    )
+    assert "flow_id" not in ui.body
+    assert any(
+        "flow_id" in p and "request-shipping-details" in p for p in unresolved.problems
+    )
+    wrong = build_agent_config(
+        AgentFiles(
+            agent_yaml=_ENV_YAML.replace(
+                "component_type: flow", "component_type: cta_url"
+            ),
+            skills={},
+        ),
+        env=_FULL_ENV,
+    )
+    assert any("flow_id" in p and "cta_url" in p for p in wrong.problems)
+    ui = next(
+        r
+        for r in wrong.requests
+        if r.section == "ui_skills" and r.label == "request-shipping-details"
+    )
+    assert "flow_id" not in ui.body
+
+
+def test_real_sales_agent_flow_skill_carries_the_tenant_flow_id(monkeypatch) -> None:
+    for k, v in _FULL_ENV.items():
+        monkeypatch.setenv(k, v)
+    cfg = load_agent("sales")
+    assert cfg is not None and cfg.problems == ()
+    ui = next(
+        r
+        for r in cfg.requests
+        if r.section == "ui_skills" and r.body["component_type"] == "flow"
+    )
+    assert ui.body["flow_id"] == 951293630651590
+    assert (
+        "951293630651590" not in ui.body["instruction"]
+        and "${" not in ui.body["instruction"]
     )

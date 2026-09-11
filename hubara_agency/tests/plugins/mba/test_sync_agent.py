@@ -371,7 +371,11 @@ async def test_a_replace_whose_create_fails_reports_the_old_skill_as_gone(
             )
         }
     )
-    changed = _cfg(_YAML.replace("component_type: flow", "component_type: cta_url"))
+    changed = _cfg(
+        _YAML.replace("component_type: flow", "component_type: cta_url").replace(
+            ", flow_id: 951293630651590", ""
+        )
+    )
     uc2, _, _ = _agent(tmp_path, cfg=changed, fake=fake2)
     out = await uc2.apply("sales")
     row = next(r for r in out.results if r["section"] == "ui_skills")

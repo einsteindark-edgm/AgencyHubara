@@ -14,6 +14,8 @@ Reglas que fija este test:
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import json
 
 from src.plugins.mba.domain.config import AgentFiles, build_agent_config
@@ -72,7 +74,7 @@ connector:
         ciudad: {type: string, description: "Ciudad.", required: true}
       write: true
 ui_skills:
-  - {title: request-shipping-details, component_type: flow, status: enabled, kind: static, instruction: "Envía el formulario."}
+  - {title: request-shipping-details, component_type: flow, status: enabled, kind: static, instruction: "Envía el formulario.", flow_id: 951293630651590}
 allowlist: ["+573001234567"]
 """
 _SKILLS = {
@@ -331,7 +333,11 @@ def test_a_ui_skill_whose_component_type_changed_is_replaced_not_updated() -> No
     """``PUT agent-ui-skills/{id}`` solo acepta title/status/instruction."""
     cfg = _cfg()
     remote, ids, sent = _remote_in_sync(cfg)
-    changed = _cfg(_YAML.replace("component_type: flow", "component_type: cta_url"))
+    changed = _cfg(
+        _YAML.replace("component_type: flow", "component_type: cta_url").replace(
+            ", flow_id: 951293630651590", ""
+        )
+    )
     plan = build_plan(
         changed, remote, managed_ids=ids, sent_hashes=sent, api_key=API_KEY
     )
@@ -542,3 +548,49 @@ def test_only_uppercase_placeholders_block_and_remote_duplicates_are_reported() 
     plan = build_plan(cfg, remote, managed_ids=ids, sent_hashes=sent, api_key=API_KEY)
     dups = [o for o in plan.ops if o.remote_id == "s-dup"]
     assert dups and dups[0].action == "noop" and dups[0].reason == "duplicate_remote"
+
+
+def test_a_flow_ui_skill_whose_flow_id_changed_is_replaced_and_updates_never_carry_flow_id() -> (
+    None
+):
+    """Meta: `flow_id` es obligatorio al crear un `flow` y el PUT no lo acepta →
+    cambiarlo es borrar y recrear; una edición de texto no debe mandarlo."""
+    cfg = _cfg()
+    remote = RemoteState.empty()
+    remote = replace(
+        remote,
+        ui_skills=(
+            {
+                "id": "ui-1",
+                "title": "request-shipping-details",
+                "component_type": "flow",
+                "status": "enabled",
+                "instruction": "Envía el formulario.",
+                "flow_id": 111,
+            },
+        ),
+    )
+    ids = {"ui_skills": {"request-shipping-details": "ui-1"}}
+    plan = build_plan(cfg, remote, managed_ids=ids, sent_hashes={}, api_key=API_KEY)
+    op = next(
+        o
+        for o in plan.ops
+        if o.section == "ui_skills" and o.label == "request-shipping-details"
+    )
+    assert (op.action, op.reason) == ("replace", "flow_id_changed") and op.body[
+        "flow_id"
+    ] == 951293630651590
+
+    remote2 = replace(
+        remote,
+        ui_skills=(
+            {**remote.ui_skills[0], "flow_id": 951293630651590, "instruction": "viejo"},
+        ),
+    )
+    plan2 = build_plan(cfg, remote2, managed_ids=ids, sent_hashes={}, api_key=API_KEY)
+    op2 = next(
+        o
+        for o in plan2.ops
+        if o.section == "ui_skills" and o.label == "request-shipping-details"
+    )
+    assert op2.action == "update" and "flow_id" not in op2.body

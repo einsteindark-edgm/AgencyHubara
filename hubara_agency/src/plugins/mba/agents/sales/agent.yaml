@@ -324,9 +324,11 @@ ui_skills:
     component_type: flow
     status: enabled
     kind: static
+    # Meta exige el Flow como campo entero (no en el texto) y no se puede editar: cambiarlo recrea la skill.
+    flow_id: "${META_FLOW_ID_SHIPPING}"
     instruction: >-
       Cuando el cliente tiene producto, variantes y cantidad definidos, envía una sola vez por conversación el formulario de
-      datos de envío (Flow id ${META_FLOW_ID_SHIPPING}, pantalla inicial SHIPPING) con el cuerpo "Para coordinar tu envío necesito unos
+      datos de envío (pantalla inicial SHIPPING) con el cuerpo "Para coordinar tu envío necesito unos
       datos 🤍" y el botón "Completar datos". Campos del formulario: ciudad, barrio, dirección, teléfono, nombre de quien
       recibe, cédula (opcional) y método de pago. Al recibir la respuesta, registra cada campo con set_order_slot.
   - title: present-order-confirmation
