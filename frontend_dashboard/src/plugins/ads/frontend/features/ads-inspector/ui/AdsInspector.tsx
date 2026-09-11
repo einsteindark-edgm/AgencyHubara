@@ -204,10 +204,13 @@ export function AdsInspector({ campaign, adId = null }: Props) {
 }
 
 /* ── Visual del creativo ────────────────────────────────────────────────────
- * Prioridad: vista previa REAL de Meta (iframe con la URL extraída de
- * `/previews` — nunca HTML crudo de un tercero; sandbox sin same-origin) →
- * thumbnail grande del creativo → thumbnail de la fila → placeholder honesto.
- * En la app móvil (Tauri) la CSP no permite frames: ahí se queda en la imagen. */
+ * La miniatura grande del creativo (o la de la fila) se muestra SIEMPRE que
+ * exista; debajo, la vista previa REAL de Meta como iframe con la URL extraída
+ * de `/previews` (nunca HTML crudo de un tercero). Incidente prod 2026-09-10:
+ * la CSP de CloudFront bloqueaba el frame y el panel quedaba vacío — la imagen
+ * no depende de que el frame cargue. Meta entrega el frame en 335×450 y su
+ * página corre scripts que necesitan su propio origen (sandbox same-origin;
+ * la página es cross-origin, así que el sandbox no se escapa al dashboard). */
 function CreativeVisual({
   creative,
   fallbackUrl,
@@ -215,39 +218,42 @@ function CreativeVisual({
   creative: AdCreative | null;
   fallbackUrl: string | null;
 }) {
-  if (creative?.previewUrl) {
-    return (
-      <iframe
-        src={creative.previewUrl}
-        title="Vista previa del anuncio en Meta"
-        sandbox="allow-scripts"
-        referrerPolicy="no-referrer"
-        style={{
-          width: "100%",
-          height: 420,
-          border: 0,
-          borderRadius: 8,
-          display: "block",
-          background: "#fff",
-        }}
-      />
-    );
-  }
   const img = creative?.imageUrl ?? creative?.thumbnailUrl ?? fallbackUrl;
-  if (img) {
+  const preview = creative?.previewUrl ?? null;
+  if (!img && !preview) {
     return (
-      <img
-        src={img}
-        alt="Creativo del anuncio"
-        style={{ width: "100%", borderRadius: 8, display: "block" }}
-      />
+      <div className="ad-preview-img">
+        <span>Vista previa no disponible</span>
+        <span className="ad-pi-sub">Meta no expone el creativo de este ad</span>
+      </div>
     );
   }
   return (
-    <div className="ad-preview-img">
-      <span>Vista previa no disponible</span>
-      <span className="ad-pi-sub">Meta no expone el creativo de este ad</span>
-    </div>
+    <>
+      {img && (
+        <img
+          src={img}
+          alt="Creativo del anuncio"
+          style={{ width: "100%", borderRadius: 8, display: "block" }}
+        />
+      )}
+      {preview && (
+        <iframe
+          src={preview}
+          title="Vista previa del anuncio en Meta"
+          sandbox="allow-scripts allow-same-origin allow-popups"
+          style={{
+            width: "100%",
+            height: 450,
+            border: 0,
+            borderRadius: 8,
+            display: "block",
+            marginTop: img ? 8 : 0,
+            background: "#fff",
+          }}
+        />
+      )}
+    </>
   );
 }
 
