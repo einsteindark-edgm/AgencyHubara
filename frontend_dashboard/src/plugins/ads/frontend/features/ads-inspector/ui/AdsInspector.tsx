@@ -13,6 +13,8 @@ import type { ReactNode } from "react";
 
 import {
   totalConversations,
+  useAdCreative,
+  type AdCreative,
   type AdsCampaign,
 } from "@plugins/ads/frontend/entities/ads-campaign";
 import { analysisReport, useRuns } from "@plugins/ads/frontend/entities/ad-analysis-run";
@@ -31,6 +33,10 @@ import { MissingField } from "@plugins/ads/frontend/lib/MissingField";
 
 interface Props {
   campaign: AdsCampaign;
+  /** Anuncio seleccionado (creativos por segmento, 2026-09-10): con id, el
+   *  inspector pide el creativo grande + la vista previa real de Meta. Sin id
+   *  (campaña/segmento) cae al thumbnail de la fila o al placeholder honesto. */
+  adId?: string | null;
 }
 
 /** Helper: renderiza `fmtFn(value)` si value != null, sino `<MissingField />`. */
@@ -38,9 +44,10 @@ function nv<T>(value: T | null, fmtFn: (v: T) => ReactNode): ReactNode {
   return value !== null && value !== undefined ? fmtFn(value) : <MissingField />;
 }
 
-export function AdsInspector({ campaign }: Props) {
+export function AdsInspector({ campaign, adId = null }: Props) {
   const c = campaign;
   const { data: conn } = useMetaConnection();
+  const { data: creative = null } = useAdCreative(adId);
   const brandName = conn?.accountName ?? null;
   const total = totalConversations(c);
   const conv = c.conversations;
@@ -101,18 +108,7 @@ export function AdsInspector({ campaign }: Props) {
 
         <StaticPanel title="Creativo del anuncio">
           <div className="ad-preview">
-            {c.creativeThumbnailUrl ? (
-              <img
-                src={c.creativeThumbnailUrl}
-                alt="Creativo del anuncio"
-                style={{ width: "100%", borderRadius: 8, display: "block" }}
-              />
-            ) : (
-              <div className="ad-preview-img">
-                <span>Vista previa no disponible</span>
-                <span className="ad-pi-sub">Meta no expone el creativo de este ad</span>
-              </div>
-            )}
+            <CreativeVisual creative={creative} fallbackUrl={c.creativeThumbnailUrl} />
             <div className="ad-preview-body">
               <div className="ad-pb-brand">
                 <span className="ad-pb-avatar">
@@ -126,10 +122,20 @@ export function AdsInspector({ campaign }: Props) {
                 </div>
               </div>
               <div className="ad-pb-headline">
-                {c.creativeTitle ?? <MissingField withIcon />}
+                {creative?.title ?? c.creativeTitle ?? <MissingField withIcon />}
               </div>
+              {creative?.body && (
+                <div style={{ fontSize: 11, color: "var(--fg-mute)", marginTop: 4 }}>
+                  {creative.body}
+                </div>
+              )}
             </div>
           </div>
+          {creative?.callToAction && (
+            <Row label="Botón (CTA)" mono>
+              {creative.callToAction}
+            </Row>
+          )}
           <Row label="Plantilla apertura" mono>
             {c.template ?? <MissingField />}
           </Row>
@@ -194,6 +200,54 @@ export function AdsInspector({ campaign }: Props) {
         </StaticPanel>
       </div>
     </aside>
+  );
+}
+
+/* ── Visual del creativo ────────────────────────────────────────────────────
+ * Prioridad: vista previa REAL de Meta (iframe con la URL extraída de
+ * `/previews` — nunca HTML crudo de un tercero; sandbox sin same-origin) →
+ * thumbnail grande del creativo → thumbnail de la fila → placeholder honesto.
+ * En la app móvil (Tauri) la CSP no permite frames: ahí se queda en la imagen. */
+function CreativeVisual({
+  creative,
+  fallbackUrl,
+}: {
+  creative: AdCreative | null;
+  fallbackUrl: string | null;
+}) {
+  if (creative?.previewUrl) {
+    return (
+      <iframe
+        src={creative.previewUrl}
+        title="Vista previa del anuncio en Meta"
+        sandbox="allow-scripts"
+        referrerPolicy="no-referrer"
+        style={{
+          width: "100%",
+          height: 420,
+          border: 0,
+          borderRadius: 8,
+          display: "block",
+          background: "#fff",
+        }}
+      />
+    );
+  }
+  const img = creative?.imageUrl ?? creative?.thumbnailUrl ?? fallbackUrl;
+  if (img) {
+    return (
+      <img
+        src={img}
+        alt="Creativo del anuncio"
+        style={{ width: "100%", borderRadius: 8, display: "block" }}
+      />
+    );
+  }
+  return (
+    <div className="ad-preview-img">
+      <span>Vista previa no disponible</span>
+      <span className="ad-pi-sub">Meta no expone el creativo de este ad</span>
+    </div>
   );
 }
 

@@ -25,6 +25,15 @@ vi.mock("@plugins/ads/frontend/entities/meta-connection", () => ({
   useMetaConnection: () => mockConn.current,
 }));
 
+const mockCreative = vi.hoisted(() => ({ current: null as object | null, lastAdId: null as string | null }));
+vi.mock("@plugins/ads/frontend/entities/ads-campaign", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  useAdCreative: (adId: string | null) => {
+    mockCreative.lastAdId = adId;
+    return { data: adId ? mockCreative.current : null, isLoading: false };
+  },
+}));
+
 import { AdsInspector } from "./AdsInspector";
 import type { AdsCampaign } from "@plugins/ads/frontend/entities/ads-campaign";
 
@@ -189,5 +198,51 @@ describe("AdsInspector — creativo honesto", () => {
     expect(getByText("Hubara")).toBeTruthy(); // la cuenta conectada real
     const link = getByRole("link", { name: /ads manager/i });
     expect(link.getAttribute("href")).toContain("selected_campaign_ids=c-1");
+  });
+});
+
+describe("AdsInspector — vista previa del creativo por anuncio (2026-09-10)", () => {
+  it("con anuncio seleccionado y preview de Meta → iframe con la vista previa real", () => {
+    mockRuns.current = [];
+    mockConn.current = { data: { connected: true, accountName: "Hubara" } };
+    mockCreative.current = {
+      adId: "AD_1", thumbnailUrl: "https://cdn.fb/big.jpg", imageUrl: null,
+      body: "Velas que iluminan", title: "Compra hoy", callToAction: "WHATSAPP_MESSAGE",
+      previewUrl: "https://www.facebook.com/ads/api/preview_iframe.php?d=abc",
+    };
+    const { container, getByText } = render(
+      <AdsInspector campaign={campaign({ id: "AD_1", creativeThumbnailUrl: null })} adId="AD_1" />,
+    );
+    expect(mockCreative.lastAdId).toBe("AD_1");
+    const iframe = container.querySelector("iframe");
+    expect(iframe?.getAttribute("src")).toBe("https://www.facebook.com/ads/api/preview_iframe.php?d=abc");
+    expect(getByText("Velas que iluminan")).toBeTruthy();
+    expect(getByText("Compra hoy")).toBeTruthy();
+  });
+
+  it("sin preview pero con thumbnail grande → imagen del creativo", () => {
+    mockRuns.current = [];
+    mockConn.current = { data: { connected: true, accountName: "Hubara" } };
+    mockCreative.current = {
+      adId: "AD_1", thumbnailUrl: "https://cdn.fb/big.jpg", imageUrl: null,
+      body: null, title: null, callToAction: null, previewUrl: null,
+    };
+    const { container } = render(
+      <AdsInspector campaign={campaign({ id: "AD_1", creativeThumbnailUrl: null })} adId="AD_1" />,
+    );
+    expect(container.querySelector("iframe")).toBeNull();
+    expect(container.querySelector("img")?.getAttribute("src")).toBe("https://cdn.fb/big.jpg");
+  });
+
+  it("sin anuncio seleccionado (campaña/segmento) no pide creativo y muestra el placeholder honesto", () => {
+    mockRuns.current = [];
+    mockConn.current = { data: { connected: true, accountName: "Hubara" } };
+    mockCreative.current = null;
+    const { container, getByText } = render(
+      <AdsInspector campaign={campaign({ creativeThumbnailUrl: null })} adId={null} />,
+    );
+    expect(mockCreative.lastAdId).toBeNull();
+    expect(container.querySelector("iframe")).toBeNull();
+    expect(getByText(/vista previa no disponible/i)).toBeTruthy();
   });
 });

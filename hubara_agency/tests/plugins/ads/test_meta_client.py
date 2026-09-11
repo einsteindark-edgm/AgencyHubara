@@ -195,3 +195,135 @@ def test_fake_records_status_changes_for_assertion() -> None:
     fake = FakeMetaAds()
     assert fake.update_campaign_status("tok", "c1", "PAUSED") is True
     assert fake.status_changes == [("c1", "PAUSED")]
+
+
+# ── Creativos por segmento (2026-09-10): insights level=ad + creativo ────────
+
+
+@respx.mock
+def test_graph_fetch_ad_metrics_uses_level_ad() -> None:
+    ad_insights = {
+        "data": [
+            {
+                "ad_id": "AD_7",
+                "ad_name": "Video velas",
+                "adset_id": "ADSET_3",
+                "campaign_id": "120210000111",
+                "spend": "120500",
+                "impressions": "8000",
+                "reach": "6100",
+                "clicks": "95",
+                "actions": [
+                    {
+                        "action_type": "onsite_conversion.messaging_conversation_started_7d",
+                        "value": "12",
+                    }
+                ],
+            }
+        ]
+    }
+    route = respx.get(f"{_GRAPH}/act_1010393601284112/insights").mock(
+        return_value=httpx.Response(200, json=ad_insights)
+    )
+    rows = GraphMetaAds().fetch_ad_metrics(
+        "TOK", "act_1010393601284112", since="2026-06-01", until="2026-06-30"
+    )
+    assert rows[0].ad_id == "AD_7"
+    assert rows[0].adset_id == "ADSET_3"
+    assert rows[0].messaging_conversations_started == 12
+    params = dict(route.calls.last.request.url.params)
+    assert params["level"] == "ad"
+    assert "ad_id" in params["fields"] and "adset_id" in params["fields"]
+
+
+@respx.mock
+def test_graph_fetch_ad_metrics_follows_paging() -> None:
+    """Meta pagina los insights (cursor `paging.next`). Con más anuncios que
+    `limit`, el vendor sigue el cursor hasta agotar — nunca deja anuncios
+    afuera silenciosamente."""
+    page1 = {
+        "data": [{"ad_id": "AD_1", "ad_name": "a", "adset_id": "S", "campaign_id": "C",
+                  "spend": "1", "impressions": "1", "reach": "1", "clicks": "1"}],
+        "paging": {"next": f"{_GRAPH}/act_1010393601284112/insights?after=CURSOR"},
+    }
+    page2 = {
+        "data": [{"ad_id": "AD_2", "ad_name": "b", "adset_id": "S", "campaign_id": "C",
+                  "spend": "2", "impressions": "2", "reach": "2", "clicks": "2"}],
+    }
+    route = respx.get(f"{_GRAPH}/act_1010393601284112/insights")
+    route.side_effect = [httpx.Response(200, json=page1), httpx.Response(200, json=page2)]
+    rows = GraphMetaAds().fetch_ad_metrics(
+        "TOK", "act_1010393601284112", since="2026-06-01", until="2026-06-30"
+    )
+    assert [r.ad_id for r in rows] == ["AD_1", "AD_2"]
+    assert route.call_count == 2
+
+
+def test_fake_serves_ad_metrics() -> None:
+    from src.plugins.ads.meta.parse import MetaAdMetrics
+
+    fake = FakeMetaAds(
+        ad_metrics=[MetaAdMetrics("ad1", "Anuncio", "as1", "c1", 100.0, 10, 8, 5, 2)]
+    )
+    rows = fake.fetch_ad_metrics("tok", "act_1", since="a", until="b")
+    assert rows[0].ad_id == "ad1"
+
+
+@respx.mock
+def test_graph_fetch_ad_creative_returns_big_thumbnail_and_preview() -> None:
+    """El inspector necesita el creativo grande (thumbnail_width/height en el
+    edge `adcreatives`) + la vista previa real (`/previews` devuelve el iframe)."""
+    creatives = respx.get(f"{_GRAPH}/AD_7/adcreatives").mock(
+        return_value=httpx.Response(200, json={
+            "data": [{
+                "id": "CR_1",
+                "thumbnail_url": "https://cdn.fb/big.jpg",
+                "image_url": "https://cdn.fb/full.jpg",
+                "body": "Velas que iluminan",
+                "title": "Compra hoy",
+                "call_to_action_type": "WHATSAPP_MESSAGE",
+            }]
+        })
+    )
+    previews = respx.get(f"{_GRAPH}/AD_7/previews").mock(
+        return_value=httpx.Response(200, json={
+            "data": [{"body": "<iframe src=\"https://www.facebook.com/ads/api/preview_iframe.php?d=abc\"></iframe>"}]
+        })
+    )
+    creative = GraphMetaAds().fetch_ad_creative("TOK", "AD_7")
+    assert creative is not None
+    assert creative.ad_id == "AD_7"
+    assert creative.thumbnail_url == "https://cdn.fb/big.jpg"
+    assert creative.image_url == "https://cdn.fb/full.jpg"
+    assert creative.body == "Velas que iluminan"
+    assert creative.title == "Compra hoy"
+    assert creative.call_to_action == "WHATSAPP_MESSAGE"
+    assert creative.preview_html.startswith("<iframe")
+    cparams = dict(creatives.calls.last.request.url.params)
+    assert cparams["thumbnail_width"] == "600" and cparams["thumbnail_height"] == "600"
+    pparams = dict(previews.calls.last.request.url.params)
+    assert pparams["ad_format"] == "MOBILE_FEED_STANDARD"
+
+
+@respx.mock
+def test_graph_fetch_ad_creative_survives_preview_failure() -> None:
+    """La vista previa es best-effort: si `/previews` falla, el creativo
+    igual vuelve (thumbnail + textos) con `preview_html=None`."""
+    respx.get(f"{_GRAPH}/AD_7/adcreatives").mock(
+        return_value=httpx.Response(200, json={"data": [{"id": "CR_1", "thumbnail_url": "https://cdn.fb/big.jpg"}]})
+    )
+    respx.get(f"{_GRAPH}/AD_7/previews").mock(return_value=httpx.Response(500, json={}))
+    creative = GraphMetaAds().fetch_ad_creative("TOK", "AD_7")
+    assert creative is not None
+    assert creative.thumbnail_url == "https://cdn.fb/big.jpg"
+    assert creative.preview_html is None
+
+
+def test_fake_serves_ad_creative() -> None:
+    from src.plugins.ads.meta.client import MetaAdCreative
+
+    fake = FakeMetaAds(
+        creatives={"AD_7": MetaAdCreative("AD_7", "https://t", None, "b", "t", "CTA", "<iframe></iframe>")}
+    )
+    assert fake.fetch_ad_creative("tok", "AD_7").title == "t"
+    assert fake.fetch_ad_creative("tok", "NOPE") is None

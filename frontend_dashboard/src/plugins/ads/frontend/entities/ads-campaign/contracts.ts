@@ -101,6 +101,34 @@ export const backendAdsAdsetsResponseSchema = z.object({
   ad_sets: z.array(backendAdsCampaignSchema),
 });
 
+/* ── Anuncios (response de GET /api/ads/campaigns/{id}/adsets/{adset}/ads) ── */
+
+/** Creativos por segmento (2026-09-10): cada fila es UN anuncio (bucket del
+ *  vault = ad id) con el mismo shape de campaña: agregados del vault + métricas
+ *  Meta level=ad. `name` = nombre real del creativo, `creative_title` = headline. */
+export const backendAdsAdsResponseSchema = z.object({
+  campaign_id: z.string(),
+  adset_id: z.string(),
+  ads: z.array(backendAdsCampaignSchema),
+});
+
+/* ── Creativo de un anuncio (response de GET /api/ads/ads/{id}/creative) ──── */
+
+/** Thumbnail grande + textos + el iframe de vista previa real de Meta
+ *  (`preview_html`, HTML crudo de un tercero — el mapper extrae SOLO el `src`;
+ *  el componente nunca inyecta ese HTML). Todo nullable salvo `ad_id`. */
+export const backendAdCreativeSchema = z.object({
+  ad_id: z.string(),
+  thumbnail_url: z.string().nullable(),
+  image_url: z.string().nullable(),
+  body: z.string().nullable(),
+  title: z.string().nullable(),
+  call_to_action: z.string().nullable(),
+  preview_html: z.string().nullable(),
+});
+
+export type BackendAdCreative = z.infer<typeof backendAdCreativeSchema>;
+
 /* ── Conversación atribuida (response del endpoint /conversations) ───────── */
 
 export const backendAttributedConversationSchema = z.object({

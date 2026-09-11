@@ -290,3 +290,109 @@ def scope_source_ids(
             continue
         out.add(ad_id)
     return frozenset(out)
+
+
+def group_buckets_by_ad(
+    buckets: list[AdsCampaignSummary], names: Names
+) -> list[AdsCampaignSummary]:
+    """Drill-down de UN segmento: sus buckets, uno por anuncio (2026-09-10).
+
+    Cada bucket del vault YA es un anuncio (source_id = ad id), así que no
+    hay merge: la fila sale con el nombre REAL del creativo, el headline del
+    referral como `creative_title`, el thumbnail y los ids de Meta. Bucket
+    sin resolver → pasa intacto (nombre = headline), nunca desaparece.
+    """
+    out: list[AdsCampaignSummary] = []
+    for b in buckets:
+        info = names.get(b.id)
+        if not info:
+            out.append(b)
+            continue
+        out.append(
+            dataclasses.replace(
+                b,
+                name=info.get("ad_name") or b.name,
+                creative_title=b.name,
+                creative_thumbnail_url=info.get("thumbnail_url"),
+                meta_campaign_id=info.get("campaign_id"),
+                meta_adset_id=info.get("adset_id"),
+                ad_set=info.get("adset_name"),
+            )
+        )
+    out.sort(
+        key=lambda c: c.last_seen_ms if c.last_seen_ms is not None else -1,
+        reverse=True,
+    )
+    return out
+
+
+def merge_meta_ads(
+    rows: list[AdsCampaignSummary],
+    metrics: list,
+) -> list[AdsCampaignSummary]:
+    """Métricas Meta (insights level=ad) sobre las filas de anuncio.
+
+    Espejo de `merge_meta_adsets` un nivel más abajo: fila matcheada por
+    `ad_id` → spend/impressions/reach/clicks/conv; anuncio con gasto pero sin
+    chats atribuidos → standalone (started=0) para ver creativos que gastan
+    sin resultados; sin gasto y sin chats → ruido, no entra.
+    """
+    metrics_by_id = {m.ad_id: m for m in metrics}
+    rows_by_id = {r.id: i for i, r in enumerate(rows)}
+
+    out = list(rows)
+    for ad_id, m in metrics_by_id.items():
+        fields = {
+            "spend": m.spend,
+            "impressions": m.impressions,
+            "reach": m.reach,
+            "clicks": m.clicks,
+            "messaging_conversations_started": m.messaging_conversations_started,
+        }
+        idx = rows_by_id.get(ad_id)
+        if idx is not None:
+            out[idx] = dataclasses.replace(out[idx], **fields)
+        elif m.spend:
+            out.append(
+                AdsCampaignSummary(
+                    id=ad_id,
+                    name=m.ad_name or ad_id,
+                    source_type="ad",
+                    started=0,
+                    first_seen_ms=None,
+                    last_seen_ms=None,
+                    conversations=None,
+                    meta_adset_id=m.adset_id,
+                    meta_campaign_id=m.campaign_id,
+                    **fields,
+                )
+            )
+    return out
+
+
+def fill_ad_creatives(
+    rows: list[AdsCampaignSummary], names: Names
+) -> list[AdsCampaignSummary]:
+    """Completa creativo + segmento en las filas de anuncio que no lo traen.
+
+    Los anuncios standalone (gasto sin chats) no pasan por el resolver del
+    vault y salían sin miniatura (visto en vivo 2026-09-10). El caller resuelve
+    esos ids aparte y acá se vuelcan: `name` se respeta (viene de insights),
+    solo se llenan thumbnail/segmento/ids. Fila ya completa → misma instancia.
+    """
+    out: list[AdsCampaignSummary] = []
+    for r in rows:
+        info = names.get(r.id)
+        if r.creative_thumbnail_url is not None or not info:
+            out.append(r)
+            continue
+        out.append(
+            dataclasses.replace(
+                r,
+                creative_thumbnail_url=info.get("thumbnail_url"),
+                ad_set=r.ad_set or info.get("adset_name"),
+                meta_adset_id=r.meta_adset_id or info.get("adset_id"),
+                meta_campaign_id=r.meta_campaign_id or info.get("campaign_id"),
+            )
+        )
+    return out

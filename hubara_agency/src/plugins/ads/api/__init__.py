@@ -38,7 +38,7 @@ from dataclasses import asdict
 from pathlib import Path as FsPath
 from typing import Any
 
-from fastapi import APIRouter, Path, Query
+from fastapi import APIRouter, HTTPException, Path, Query
 
 from src.plugins.ads.aggregation import (
     SYNTHETIC_CAMPAIGN_IDS,
@@ -55,8 +55,11 @@ from src.plugins.ads.meta_names import fetch_meta_ad_names
 from src.sdk.connectorkit import meta_marketing_token
 from src.plugins.ads.segmentation import (
     collect_source_ids,
+    fill_ad_creatives,
+    group_buckets_by_ad,
     group_buckets_by_adset,
     group_buckets_by_campaign,
+    merge_meta_ads,
     merge_meta_adsets,
     scope_source_ids,
 )
@@ -221,6 +224,51 @@ def _cached_meta_adsets(since_ms: int | None, until_ms: int | None) -> list:
         return []
     _meta_adset_cache[key] = (now, rows)
     return rows
+
+
+#: Métricas por anuncio (insights level=ad) — último nivel del drill-down
+#: (2026-09-10). Mismo TTL por ventana que campaña/adset.
+_meta_ad_cache: dict[str, tuple[float, list]] = {}
+
+
+def _cached_meta_ads(since_ms: int | None, until_ms: int | None) -> list:
+    """Insights level=ad del Marketing API para la ventana pedida. Best-effort:
+    sin conexión / Graph caído → `[]` y el drill-down queda solo-vault."""
+    from datetime import date, timedelta
+
+    try:
+        token = _meta_store().load()
+    except Exception:  # noqa: BLE001 — best-effort (SSM caído ≠ dashboard caído)
+        return []
+    if token is None or not token.account_id:
+        return []
+
+    until_d = date.fromtimestamp(until_ms / 1000) if until_ms else date.today()
+    since_d = (
+        date.fromtimestamp(since_ms / 1000) if since_ms else until_d - timedelta(days=90)
+    )
+    key = f"{since_d}|{until_d}"
+    now = time.monotonic()
+    hit = _meta_ad_cache.get(key)
+    if hit is not None and (now - hit[0]) < _META_CAMPAIGN_TTL_S:
+        return hit[1]
+    try:
+        rows = _meta_ads().fetch_ad_metrics(
+            token.access_token,
+            token.account_id,
+            since=since_d.isoformat(),
+            until=until_d.isoformat(),
+        )
+    except Exception:  # noqa: BLE001
+        return []
+    _meta_ad_cache[key] = (now, rows)
+    return rows
+
+
+#: Creativo por anuncio (thumbnail grande + textos + iframe de preview). Los
+#: URLs firmados de Meta expiran — 10 min es el mismo TTL que los nombres.
+_META_CREATIVE_TTL_S = 600.0
+_meta_creative_cache: dict[str, tuple[float, Any]] = {}
 
 
 def _scope_names(
@@ -539,3 +587,88 @@ def get_ads_campaign_adsets(
     if metrics:
         rows = merge_meta_adsets(rows, metrics)
     return {"campaign_id": campaign_id, "ad_sets": [asdict(r) for r in rows]}
+
+
+@router.get("/campaigns/{campaign_id}/adsets/{adset_id}/ads")
+def get_ads_adset_ads(
+    campaign_id: str = Path(..., description="id de la campaña (fila agrupada)"),
+    adset_id: str = Path(..., description="id del segmento (ad set)"),
+    days: int | None = Query(
+        None, ge=1, le=365, description="ventana en días; omitir = todo el historial"
+    ),
+    frm: str | None = Query(
+        None,
+        alias="from",
+        description="YYYY-MM-DD inicio (inclusive); con `to` activa rango custom y anula `days`",
+    ),
+    to: str | None = Query(
+        None, description="YYYY-MM-DD fin (inclusive); requiere `from`"
+    ),
+) -> dict:
+    """Anuncios (creativos) de un segmento — el último nivel del drill-down
+    (2026-09-10). Una fila por anuncio, mismo shape de campaña: agregados del
+    vault del bucket (chats/estados/revenue/LLM/CAPI) + métricas Meta level=ad
+    (spend/impressions/reach/clicks/conv) cuando hay conexión. Anuncios con
+    gasto pero sin chats entran con `started=0`.
+
+    Response shape: `{"campaign_id", "adset_id", "ads": [<campaign shape>...]}`.
+    """
+    since_ms, until_ms = _window(days, frm, to)
+    sessions = _cached_sessions(since_ms)
+    names = _scope_names(sessions)
+    scope = scope_source_ids(names, campaign_id=campaign_id, adset_id=adset_id)
+    rows = []
+    if scope:
+        buckets = list_ads_campaigns(
+            WORKSPACE_VAULT_DIR,
+            sessions=sessions,
+            since_ms=since_ms,
+            until_ms=until_ms,
+        )
+        members = [b for b in buckets if b.id in scope]
+        rows = group_buckets_by_ad(members, names)
+    metrics = [
+        m for m in _cached_meta_ads(since_ms, until_ms)
+        if m.campaign_id == campaign_id and m.adset_id == adset_id
+    ]
+    if metrics:
+        rows = merge_meta_ads(rows, metrics)
+    # Anuncios standalone (gasto sin chats) no están en el vault → sin creativo.
+    # Se resuelven aparte (mismo batch + cache) para que la tabla tenga miniatura.
+    missing = sorted(
+        r.id for r in rows if r.creative_thumbnail_url is None and r.id not in names
+    )
+    if missing:
+        rows = fill_ad_creatives(rows, _cached_meta_names(missing))
+    return {"campaign_id": campaign_id, "adset_id": adset_id, "ads": [asdict(r) for r in rows]}
+
+
+@router.get("/ads/{ad_id}/creative")
+def get_ad_creative(
+    ad_id: str = Path(..., description="id del anuncio de Meta"),
+) -> dict:
+    """Creativo del anuncio para el inspector (2026-09-10): thumbnail grande,
+    textos, CTA y el iframe de vista previa real de Meta (`preview_html`, puede
+    ser null si Meta no lo rinde). 404 si no hay conexión a Meta o el anuncio
+    no expone creativo — el frontend cae a la miniatura de la lista.
+    """
+    now = time.monotonic()
+    hit = _meta_creative_cache.get(ad_id)
+    if hit is not None and (now - hit[0]) < _META_CREATIVE_TTL_S:
+        creative = hit[1]
+    else:
+        try:
+            token = _meta_store().load()
+        except Exception:  # noqa: BLE001
+            token = None
+        if token is None:
+            raise HTTPException(status_code=404, detail="meta_not_connected")
+        try:
+            creative = _meta_ads().fetch_ad_creative(token.access_token, ad_id)
+        except Exception:  # noqa: BLE001 — Graph caído / ad borrado → sin creativo
+            creative = None
+        if creative is not None:
+            _meta_creative_cache[ad_id] = (now, creative)
+    if creative is None:
+        raise HTTPException(status_code=404, detail="creative_unavailable")
+    return asdict(creative)

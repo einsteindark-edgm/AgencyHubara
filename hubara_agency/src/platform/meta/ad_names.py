@@ -28,6 +28,10 @@ logger = logging.getLogger(__name__)
 
 _FIELDS = "name,campaign{id,name},adset{id,name},creative{thumbnail_url}"
 _TIMEOUT_S = 4.0
+# Graph acepta máximo 50 ids por `?ids=` — más, y responde error para TODO el
+# lote. Se trocea (2026-09-10): antes, pasar de 50 anuncios con chats tiraba la
+# jerarquía entera a headlines.
+_IDS_PER_CALL = 50
 
 
 def meta_marketing_token() -> str:
@@ -52,20 +56,53 @@ def fetch_meta_ad_names(
     un endpoint del dashboard si Graph está lento."""
     if not token or not ad_ids:
         return {}
+    out: dict[str, dict[str, str | None]] = {}
+    with httpx.Client(timeout=_TIMEOUT_S, transport=transport) as client:
+        for start in range(0, len(ad_ids), _IDS_PER_CALL):
+            batch = ad_ids[start : start + _IDS_PER_CALL]
+            # Un lote fallido no borra los demás: resultado parcial > nada.
+            out.update(_resolve_batch(client, batch, token))
+    return out
+
+
+def _resolve_batch(
+    client: httpx.Client, ad_ids: list[str], token: str
+) -> dict[str, dict[str, str | None]]:
+    """Resuelve un lote; si Graph lo rechaza (un id inválido — anuncio borrado —
+    invalida el `?ids=` ENTERO, visto en vivo 2026-09-10) lo parte en mitades
+    hasta aislar el id malo: log2(50) ≈ 6 calls extra, no uno por id. Un error
+    de red NO bisecta (multiplicaría timeouts): ese lote queda vacío."""
+    result = _fetch_batch(client, ad_ids, token)
+    if result is not None:
+        return result
+    if len(ad_ids) == 1:
+        logger.info("meta.ad_names_bad_id", extra={"ad_id": ad_ids[0]})
+        return {}
+    mid = len(ad_ids) // 2
+    return {
+        **_resolve_batch(client, ad_ids[:mid], token),
+        **_resolve_batch(client, ad_ids[mid:], token),
+    }
+
+
+def _fetch_batch(
+    client: httpx.Client, ad_ids: list[str], token: str
+) -> dict[str, dict[str, str | None]] | None:
+    """Un GET batch. `None` = Graph rechazó el lote (candidato a bisección);
+    `{}` = error de red / respuesta ilegible (no se reintenta)."""
     params = {
         "ids": ",".join(ad_ids),
         "fields": _FIELDS,
         "access_token": token,
     }
     try:
-        with httpx.Client(timeout=_TIMEOUT_S, transport=transport) as client:
-            resp = client.get(graph_url() + "/", params=params)
+        resp = client.get(graph_url() + "/", params=params)
     except httpx.HTTPError as exc:
         logger.info("meta.ad_names_fetch_failed", extra={"error": str(exc)})
         return {}
     if resp.status_code != 200:
         logger.info("meta.ad_names_fetch_non_200", extra={"status": resp.status_code})
-        return {}
+        return None
     try:
         body = resp.json()
     except ValueError:

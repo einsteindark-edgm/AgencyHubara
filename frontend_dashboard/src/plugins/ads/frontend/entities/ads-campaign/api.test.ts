@@ -276,3 +276,55 @@ describe("backendAdsDailyResponseSchema — serie diaria", () => {
     ).toThrow();
   });
 });
+
+/* ── Creativos por segmento (2026-09-10) ─────────────────────────────────── */
+
+import { mapBackendCreative } from "./api";
+import { backendAdCreativeSchema, backendAdsAdsResponseSchema } from "./contracts";
+
+describe("ads-campaign — anuncios de un segmento + creativo", () => {
+  it("el response de /adsets/{id}/ads reusa el shape de campaña (una fila por anuncio)", () => {
+    const parsed = backendAdsAdsResponseSchema.parse({
+      campaign_id: "CAMP_9",
+      adset_id: "ADSET_A",
+      ads: [{ ...campaignSample, id: "AD_1", meta_adset_id: "ADSET_A", impressions: 8000, clicks: 95 }],
+    });
+    expect(parsed.adset_id).toBe("ADSET_A");
+    const row = mapBackendCampaign(parsed.ads[0]);
+    expect(row.id).toBe("AD_1");
+    expect(row.impressions).toBe(8000);
+    expect(row.clicks).toBe(95);
+    expect(row.metaAdsetId).toBe("ADSET_A");
+  });
+
+  it("mapBackendCreative baja snake → camel y tolera nulls", () => {
+    const raw = backendAdCreativeSchema.parse({
+      ad_id: "AD_1",
+      thumbnail_url: "https://cdn.fb/big.jpg",
+      image_url: null,
+      body: "Velas que iluminan",
+      title: "Compra hoy",
+      call_to_action: "WHATSAPP_MESSAGE",
+      preview_html: '<iframe src="https://www.facebook.com/ads/api/preview_iframe.php?d=abc" width="320" height="520"></iframe>',
+    });
+    const c = mapBackendCreative(raw);
+    expect(c.adId).toBe("AD_1");
+    expect(c.thumbnailUrl).toBe("https://cdn.fb/big.jpg");
+    expect(c.imageUrl).toBeNull();
+    expect(c.title).toBe("Compra hoy");
+    expect(c.callToAction).toBe("WHATSAPP_MESSAGE");
+    // La vista previa se entrega como URL del iframe (extraída del HTML de
+    // Meta) — el componente NUNCA inyecta HTML crudo de un tercero.
+    expect(c.previewUrl).toBe("https://www.facebook.com/ads/api/preview_iframe.php?d=abc");
+  });
+
+  it("sin preview_html → previewUrl null", () => {
+    const c = mapBackendCreative(
+      backendAdCreativeSchema.parse({
+        ad_id: "AD_1", thumbnail_url: null, image_url: null, body: null,
+        title: null, call_to_action: null, preview_html: null,
+      }),
+    );
+    expect(c.previewUrl).toBeNull();
+  });
+});

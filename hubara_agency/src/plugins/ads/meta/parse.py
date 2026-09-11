@@ -101,3 +101,44 @@ def parse_adset_insights(payload: dict) -> list[MetaAdsetMetrics]:
             )
         )
     return rows
+
+
+@dataclass(frozen=True)
+class MetaAdMetrics:
+    """Métricas de UN anuncio (creativo) Meta — el último nivel del drill-down
+    (2026-09-10). `adset_id` + `campaign_id` cuelgan el anuncio de su segmento.
+    Frozen + JSON-safe (R-JSON)."""
+
+    ad_id: str
+    ad_name: str
+    adset_id: str
+    campaign_id: str
+    spend: float
+    impressions: int
+    reach: int
+    clicks: int
+    messaging_conversations_started: int
+
+
+def parse_ad_insights(payload: dict) -> list[MetaAdMetrics]:
+    """Graph `/insights` (level=ad) → métricas tipadas por anuncio.
+
+    Mismas normalizaciones que los niveles campaña/adset; `adset_id` y
+    `campaign_id` vienen en cada fila (Graph los incluye al pedirlos en fields).
+    """
+    rows: list[MetaAdMetrics] = []
+    for row in payload.get("data", []):
+        rows.append(
+            MetaAdMetrics(
+                ad_id=str(row.get("ad_id", "")),
+                ad_name=str(row.get("ad_name", "")),
+                adset_id=str(row.get("adset_id", "")),
+                campaign_id=str(row.get("campaign_id", "")),
+                spend=_num(row.get("spend")),
+                impressions=int(_num(row.get("impressions"))),
+                reach=int(_num(row.get("reach"))),
+                clicks=int(_num(row.get("clicks"))),
+                messaging_conversations_started=_conversations(row.get("actions", [])),
+            )
+        )
+    return rows
