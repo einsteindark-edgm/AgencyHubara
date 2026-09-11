@@ -613,3 +613,16 @@ def test_followup_off_matches_metas_null_so_settings_do_not_update_forever() -> 
         on, as_meta, managed_ids=ids, sent_hashes=sent, api_key=API_KEY
     )
     assert _actions(plan_on) == [("settings", "settings", "update")]
+    # y si Meta lo tiene ENCENDIDO y nosotros apagado, también viaja (apagar es un cambio real)
+    as_on = RemoteState(
+        **{
+            **remote.__dict__,
+            "settings": {
+                **remote.settings,
+                "followup": {"enabled": True, "followup_interval_in_seconds": 900},
+            },
+        }
+    )
+    assert _actions(
+        build_plan(cfg, as_on, managed_ids=ids, sent_hashes=sent, api_key=API_KEY)
+    ) == [("settings", "settings", "update")]
