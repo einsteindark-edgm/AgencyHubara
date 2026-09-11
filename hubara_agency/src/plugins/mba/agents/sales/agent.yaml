@@ -341,13 +341,6 @@ ui_skills:
       mínima): $Y" (envío 0 → "sin costo") y "Total: $Z". Después "📍 Dirección" y "💳 Medio de pago". Nunca des el valor del
       envío como definitivo. El resumen es el mensaje completo; no lo repitas en texto ni digas "todo verificado". Si toca
       "✅ Confirmar", llama register_order.
-  - title: send-contact-card
-    component_type: cta_url
-    status: enabled
-    kind: static
-    instruction: >-
-      Solo cuando el cliente pida explícitamente el número del asesor o del equipo, envía el botón "Escribir al equipo"
-      con el enlace https://wa.me/${MBA_ADVISOR_PHONE}. Nunca como atajo para dejar de atenderlo.
   - title: send-cta-url
     component_type: cta_url
     status: enabled
@@ -364,6 +357,8 @@ allowlist: "${MBA_CUSTOMER_ALLOWLIST}"
 
 # Lo que deliberadamente NO viaja a MBA, y por qué.
 not_in_mba:
+  - source: botón "Escribir al equipo" con enlace wa.me a otro número (send_contact_card)
+    reason: La escalación a humano ocurre en el MISMO chat (escalate_to_human → el humano responde desde la bandeja). Mandar al cliente a otro número saca la conversación del sistema y no deja registro. Decisión del operador 2026-09-11.
   - source: reacción con emoji al mensaje del cliente (react_to_message)
     reason: MBA no tiene un componente equivalente; una reacción enviada desde Hubara tomaría el hilo. A verificar en F0.
   - source: memoria de largo plazo del cliente (memory/)

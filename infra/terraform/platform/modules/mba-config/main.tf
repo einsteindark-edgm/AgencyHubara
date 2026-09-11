@@ -30,7 +30,6 @@ variable "config" {
     customer_allowlist     = list(string)
     episode_boundary_event = bool
     allow_everyone         = bool
-    advisor_phone          = string
   })
 }
 
@@ -43,12 +42,9 @@ locals {
     MBA_ALLOW_EVERYONE         = var.config.allow_everyone
   } : k => (v ? "1" : "0") }
   allowlist = length(var.config.customer_allowlist) > 0 ? join(",", var.config.customer_allowlist) : local.placeholder
-  # wa.me exige dígitos sin "+": el tfvar se valida E.164 y acá se materializa como dígitos.
-  advisor = var.config.advisor_phone != "" ? trimprefix(var.config.advisor_phone, "+") : local.placeholder
   # D3.1: agent.yaml resuelve `${VAR}` desde estos params (nunca un valor a mano en git).
   params = merge(local.flag, {
     MBA_CUSTOMER_ALLOWLIST = local.allowlist
-    MBA_ADVISOR_PHONE      = local.advisor
     HUBARA_PUBLIC_API_URL  = trimsuffix(var.api_url, "/")
   })
 }
