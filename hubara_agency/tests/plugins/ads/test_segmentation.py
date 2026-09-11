@@ -297,3 +297,92 @@ class TestScopeSourceIds:
         la capa API interpreta vacío como 'usar el id crudo' (back-compat
         con ids legacy = source_id y con el bucket direct)."""
         assert scope_source_ids({}, campaign_id="whatever") == frozenset()
+
+
+class TestGroupByAd:
+    """Creativos por segmento (2026-09-10): el último nivel del drill-down.
+    Cada bucket del vault YA es un anuncio — la fila sale con el nombre real
+    del creativo, el headline como `creative_title` y el thumbnail."""
+
+    def test_each_bucket_becomes_an_ad_row_with_creative_detail(self):
+        from src.plugins.ads.segmentation import group_buckets_by_ad
+
+        names = {
+            "AD_1": {**_names("AD_1"), "thumbnail_url": "https://cdn.fb/1.jpg"},
+            "AD_2": _names("AD_2"),
+        }
+        rows = group_buckets_by_ad(
+            [_bucket(id="AD_1", last_seen_ms=1_000), _bucket(id="AD_2", last_seen_ms=5_000)],
+            names,
+        )
+        assert [r.id for r in rows] == ["AD_2", "AD_1"]  # last_seen desc
+        ad1 = next(r for r in rows if r.id == "AD_1")
+        assert ad1.name == "Ad AD_1"
+        assert ad1.creative_title == "Chatea con nosotros"
+        assert ad1.creative_thumbnail_url == "https://cdn.fb/1.jpg"
+        assert ad1.meta_campaign_id == "CAMP_9"
+        assert ad1.meta_adset_id == "ADSET_A"
+        assert ad1.ad_set == "Hombres 25-45"
+        assert ad1.started == 2  # agregados del vault intactos
+
+    def test_unresolved_bucket_keeps_headline_as_name(self):
+        from src.plugins.ads.segmentation import group_buckets_by_ad
+
+        rows = group_buckets_by_ad([_bucket(id="AD_X")], {})
+        assert rows[0].name == "Chatea con nosotros"
+        assert rows[0].creative_title is None
+
+
+class TestMergeMetaAds:
+    def test_fills_metrics_on_matching_ad_row(self):
+        from src.plugins.ads.meta.parse import MetaAdMetrics
+        from src.plugins.ads.segmentation import merge_meta_ads
+
+        row = _bucket(id="AD_1", name="Ad uno")
+        metrics = [
+            MetaAdMetrics(
+                ad_id="AD_1", ad_name="Ad uno", adset_id="ADSET_A",
+                campaign_id="CAMP_9", spend=120500.0, impressions=8000,
+                reach=6100, clicks=95, messaging_conversations_started=12,
+            )
+        ]
+        out = merge_meta_ads([row], metrics)
+        assert len(out) == 1
+        assert out[0].spend == 120500.0
+        assert out[0].impressions == 8000
+        assert out[0].clicks == 95
+        assert out[0].messaging_conversations_started == 12
+        assert out[0].started == 2
+
+    def test_ad_with_spend_but_no_chats_enters_standalone(self):
+        from src.plugins.ads.meta.parse import MetaAdMetrics
+        from src.plugins.ads.segmentation import merge_meta_ads
+
+        metrics = [
+            MetaAdMetrics(
+                ad_id="AD_NEW", ad_name="Carrusel nuevo", adset_id="ADSET_A",
+                campaign_id="CAMP_9", spend=50000.0, impressions=3000,
+                reach=2500, clicks=40, messaging_conversations_started=0,
+            )
+        ]
+        out = merge_meta_ads([], metrics)
+        assert len(out) == 1
+        assert out[0].id == "AD_NEW"
+        assert out[0].name == "Carrusel nuevo"
+        assert out[0].started == 0
+        assert out[0].conversations is None
+        assert out[0].meta_adset_id == "ADSET_A"
+        assert out[0].meta_campaign_id == "CAMP_9"
+
+    def test_ad_without_spend_and_no_chats_is_noise(self):
+        from src.plugins.ads.meta.parse import MetaAdMetrics
+        from src.plugins.ads.segmentation import merge_meta_ads
+
+        metrics = [
+            MetaAdMetrics(
+                ad_id="AD_IDLE", ad_name="Dormido", adset_id="ADSET_A",
+                campaign_id="CAMP_9", spend=0.0, impressions=0, reach=0,
+                clicks=0, messaging_conversations_started=0,
+            )
+        ]
+        assert merge_meta_ads([], metrics) == []

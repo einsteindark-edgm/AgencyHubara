@@ -1,4 +1,5 @@
 export type {
+  AdCreative,
   AdsCampaign,
   AdsConversationCounts,
   AdsDailyPoint,
@@ -24,7 +25,9 @@ export {
 } from "./model";
 export { adsCampaignKeys } from "./keys";
 export {
+  useAdCreative,
   useAdsCampaigns,
+  useAdsetAds,
   useAttributedConversations,
   useCampaignAdsets,
   useDailySeries,

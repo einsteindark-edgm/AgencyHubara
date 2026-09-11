@@ -342,3 +342,99 @@ def test_campaigns_endpoint_without_token_keeps_headlines(ads_client, monkeypatc
     camp = next(c for c in resp.json()["campaigns"] if c["id"] == "AD_X")
     assert camp["name"] == "Velas"
     assert camp["creative_title"] is None
+
+
+# --- creativos por segmento (2026-09-10): drill-down adset → ads -------------
+
+
+def test_ads_endpoint_returns_one_row_per_creative(segmented_client, monkeypatch):
+    """GET /campaigns/{id}/adsets/{adset_id}/ads → una fila por anuncio del
+    segmento con agregados del vault + métricas Meta level=ad. Anuncios con
+    gasto y sin chats entran con started=0."""
+    from src.plugins.ads.meta.parse import MetaAdMetrics
+
+    client, _ = segmented_client
+    monkeypatch.setattr(
+        ads_mod,
+        "_cached_meta_ads",
+        lambda since_ms, until_ms: [
+            MetaAdMetrics(
+                ad_id="AD_1", ad_name="Ad uno", adset_id="ADSET_A",
+                campaign_id="CAMP_9", spend=120500.0, impressions=8000,
+                reach=6100, clicks=95, messaging_conversations_started=12,
+            ),
+            MetaAdMetrics(
+                ad_id="AD_NEW", ad_name="Carrusel nuevo", adset_id="ADSET_A",
+                campaign_id="CAMP_9", spend=50000.0, impressions=3000,
+                reach=2500, clicks=40, messaging_conversations_started=0,
+            ),
+            MetaAdMetrics(  # otro segmento → NO entra
+                ad_id="AD_2", ad_name="Ad dos", adset_id="ADSET_B",
+                campaign_id="CAMP_9", spend=1.0, impressions=1,
+                reach=1, clicks=1, messaging_conversations_started=0,
+            ),
+        ],
+        raising=False,
+    )
+    resp = client.get("/api/ads/campaigns/CAMP_9/adsets/ADSET_A/ads")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["campaign_id"] == "CAMP_9"
+    assert body["adset_id"] == "ADSET_A"
+    by_id = {r["id"]: r for r in body["ads"]}
+    assert set(by_id) == {"AD_1", "AD_NEW"}
+    assert by_id["AD_1"]["name"] == "Ad uno"
+    assert by_id["AD_1"]["started"] == 1
+    assert by_id["AD_1"]["impressions"] == 8000
+    assert by_id["AD_1"]["clicks"] == 95
+    assert by_id["AD_1"]["creative_title"] == "Chatea"
+    assert by_id["AD_NEW"]["started"] == 0
+
+
+def test_ads_endpoint_without_meta_still_lists_vault_ads(segmented_client, monkeypatch):
+    client, _ = segmented_client
+    monkeypatch.setattr(ads_mod, "_cached_meta_ads", lambda since_ms, until_ms: [], raising=False)
+    resp = client.get("/api/ads/campaigns/CAMP_9/adsets/ADSET_B/ads")
+    assert resp.status_code == 200
+    rows = resp.json()["ads"]
+    assert [r["id"] for r in rows] == ["AD_2"]
+    assert rows[0]["impressions"] is None
+
+
+def test_ad_creative_endpoint_returns_preview(ads_client, monkeypatch):
+    """GET /ads/{ad_id}/creative → creativo grande + iframe de vista previa."""
+    from src.plugins.ads.meta.client import FakeMetaAds, MetaAdCreative
+    from src.plugins.ads.meta.token_store import InMemoryTokenStore, MetaToken
+
+    client, _ = ads_client
+    store = InMemoryTokenStore()
+    store.save(MetaToken("EAA", None, ("ads_read",), "act_1", "Hubara"))
+    fake = FakeMetaAds(
+        creatives={
+            "AD_7": MetaAdCreative(
+                "AD_7", "https://cdn.fb/big.jpg", "https://cdn.fb/full.jpg",
+                "Velas", "Compra hoy", "WHATSAPP_MESSAGE", "<iframe></iframe>",
+            )
+        }
+    )
+    monkeypatch.setattr(ads_mod, "_meta_store", lambda: store)
+    monkeypatch.setattr(ads_mod, "_meta_ads", lambda: fake)
+    ads_mod._meta_creative_cache.clear()
+    resp = client.get("/api/ads/ads/AD_7/creative")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ad_id"] == "AD_7"
+    assert body["thumbnail_url"] == "https://cdn.fb/big.jpg"
+    assert body["title"] == "Compra hoy"
+    assert body["preview_html"] == "<iframe></iframe>"
+
+
+def test_ad_creative_endpoint_404_when_unavailable(ads_client, monkeypatch):
+    from src.plugins.ads.meta.client import FakeMetaAds
+    from src.plugins.ads.meta.token_store import InMemoryTokenStore
+
+    client, _ = ads_client
+    monkeypatch.setattr(ads_mod, "_meta_store", lambda: InMemoryTokenStore())
+    monkeypatch.setattr(ads_mod, "_meta_ads", lambda: FakeMetaAds())
+    ads_mod._meta_creative_cache.clear()
+    assert client.get("/api/ads/ads/AD_7/creative").status_code == 404

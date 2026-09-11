@@ -18,18 +18,22 @@
 
 import { useQuery } from "@tanstack/react-query";
 
-import { apiClient } from "@/shared/api";
+import { ApiError, apiClient } from "@/shared/api";
 
 import {
+  backendAdCreativeSchema,
+  backendAdsAdsResponseSchema,
   backendAdsAdsetsResponseSchema,
   backendAdsCampaignsResponseSchema,
   backendAdsDailyResponseSchema,
   backendAttributedConversationsResponseSchema,
+  type BackendAdCreative,
   type BackendAdsCampaign,
   type BackendAttributedConversation,
 } from "./contracts";
 import { adsCampaignKeys } from "./keys";
 import {
+  type AdCreative,
   type AdsCampaign,
   type AdsDailyPoint,
   type AdsState,
@@ -205,6 +209,32 @@ export function mapBackendConversation(
   };
 }
 
+/**
+ * Extrae el `src` del iframe que Meta devuelve en `/previews`. El HTML crudo de
+ * un tercero NUNCA se inyecta en el DOM — solo viaja la URL, y el componente
+ * arma su propio `<iframe>` con sandbox. Sin `src` parseable → null.
+ */
+function previewSrc(html: string | null): string | null {
+  if (!html) return null;
+  const m = /<iframe[^>]*\ssrc=["']([^"']+)["']/i.exec(html);
+  if (!m) return null;
+  // Entidades HTML del atributo (`&amp;`) → texto plano para el src.
+  const src = m[1].replace(/&amp;/g, "&");
+  return /^https:\/\//i.test(src) ? src : null;
+}
+
+export function mapBackendCreative(b: BackendAdCreative): AdCreative {
+  return {
+    adId: b.ad_id,
+    thumbnailUrl: b.thumbnail_url,
+    imageUrl: b.image_url,
+    body: b.body,
+    title: b.title,
+    callToAction: b.call_to_action,
+    previewUrl: previewSrc(b.preview_html),
+  };
+}
+
 /* ── Hooks públicos ──────────────────────────────────────────────────────── */
 
 /**
@@ -341,5 +371,59 @@ export function useDailySeries(
     },
     staleTime: 30_000,
     enabled: Boolean(campaignId),
+  });
+}
+
+/**
+ * Anuncios (creativos) de un segmento — el último nivel del drill-down
+ * (2026-09-10). Cada fila reusa el shape/mapper de campaña (`id` = ad_id,
+ * `name` = nombre real del creativo, `creativeTitle` = headline). `enabled`
+ * lo controla el caller (solo con un segmento seleccionado).
+ */
+export function useAdsetAds(
+  campaignId: string,
+  adsetId: string,
+  params: AdsWindowParams,
+  enabled = true,
+) {
+  return useQuery<AdsCampaign[]>({
+    queryKey: adsCampaignKeys.ads(campaignId, adsetId, params),
+    queryFn: async ({ signal }) => {
+      const raw = await apiClient.get<unknown>(
+        `/api/ads/campaigns/${encodeURIComponent(campaignId)}/adsets/${encodeURIComponent(adsetId)}/ads${windowQuery(params)}`,
+        { signal },
+      );
+      const parsed = backendAdsAdsResponseSchema.parse(raw);
+      return parsed.ads.map(mapBackendCampaign);
+    },
+    staleTime: 30_000,
+    enabled: enabled && Boolean(campaignId) && Boolean(adsetId),
+  });
+}
+
+/**
+ * Creativo de un anuncio para el inspector. `null` = sin creativo disponible
+ * (backend 404: sin conexión a Meta o el anuncio no lo expone) — el inspector
+ * cae al thumbnail de la fila. Solo se pide con un anuncio seleccionado.
+ * Los URLs de Meta expiran: staleTime corto y sin retry en 404.
+ */
+export function useAdCreative(adId: string | null) {
+  return useQuery<AdCreative | null>({
+    queryKey: adsCampaignKeys.creative(adId ?? ""),
+    queryFn: async ({ signal }) => {
+      try {
+        const raw = await apiClient.get<unknown>(
+          `/api/ads/ads/${encodeURIComponent(adId ?? "")}/creative`,
+          { signal },
+        );
+        return mapBackendCreative(backendAdCreativeSchema.parse(raw));
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) return null;
+        throw err;
+      }
+    },
+    staleTime: 5 * 60_000,
+    retry: false,
+    enabled: adId !== null && adId !== "",
   });
 }

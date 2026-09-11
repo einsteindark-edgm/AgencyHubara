@@ -283,3 +283,21 @@ export function totalConversations(c: AdsCampaign): number {
   if (!c.conversations) return c.started;
   return ADS_STATE_ORDER.reduce((acc, s) => acc + (c.conversations![s] || 0), 0);
 }
+
+/* ── Creativo de un anuncio (2026-09-10) ─────────────────────────────────── */
+
+/**
+ * Creativo de UN anuncio para la vista previa del inspector: thumbnail grande
+ * (600px, distinto del de 64px que viaja en la fila), textos, CTA y la URL del
+ * iframe de vista previa real de Meta (`previewUrl`, null si Meta no lo rinde
+ * o la app no puede embeberlo — el inspector cae a la imagen).
+ */
+export interface AdCreative {
+  adId: string;
+  thumbnailUrl: string | null;
+  imageUrl: string | null;
+  body: string | null;
+  title: string | null;
+  callToAction: string | null;
+  previewUrl: string | null;
+}

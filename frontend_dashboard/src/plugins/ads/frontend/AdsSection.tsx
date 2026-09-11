@@ -25,6 +25,7 @@ import {
   DEFAULT_ADS_SELECTION,
   selectionToParams,
   useAdsCampaigns,
+  useAdsetAds,
   useAttributedConversations,
   useCampaignAdsets,
   useDailySeries,
@@ -42,6 +43,7 @@ import { AdsFunnel } from "@plugins/ads/frontend/features/ads-funnel";
 import { AdsStateDistribution } from "@plugins/ads/frontend/features/ads-state-distribution";
 import { AdsDailyTrend } from "@plugins/ads/frontend/features/ads-daily-trend";
 import { AdsAttributedTable } from "@plugins/ads/frontend/features/ads-attributed-table";
+import { AdsCreativesTable } from "@plugins/ads/frontend/features/ads-creatives-table";
 import { AdsInspector } from "@plugins/ads/frontend/features/ads-inspector";
 import { ConnectMeta } from "@plugins/ads/frontend/features/connect-meta";
 import { CampaignMetaKpis } from "@plugins/ads/frontend/features/campaign-meta-kpis";
@@ -121,18 +123,44 @@ export function AdsSection() {
         : null,
     [adsets, selectedAdsetId],
   );
-  // Lo que pinta el canvas: el segmento scopeado o la campaña completa.
-  const scoped = adsetRow ?? campaign;
+  // Anuncio (creativo) seleccionado dentro del segmento — tercer nivel del
+  // drill-down (2026-09-10). Emparejado a su segmento: si el segmento (o la
+  // campaña) cambia, el anuncio no se arrastra.
+  const [adSel, setAdSel] = useState<{ adsetId: string; adId: string } | null>(null);
+  const selectedAdId =
+    adSel !== null && selectedAdsetId === adSel.adsetId ? adSel.adId : null;
+
+  // Anuncios del segmento activo — solo con un segmento seleccionado.
+  const { data: adRows = [] } = useAdsetAds(
+    campaign?.id ?? "",
+    selectedAdsetId ?? "",
+    params,
+    selectedAdsetId !== null,
+  );
+  const adRow = useMemo(
+    () =>
+      selectedAdId !== null
+        ? (adRows.find((a) => a.id === selectedAdId) ?? null)
+        : null,
+    [adRows, selectedAdId],
+  );
+  // Lo que pinta el canvas: anuncio > segmento > campaña completa.
+  const scoped = adRow ?? adsetRow ?? campaign;
+  // Con un anuncio seleccionado, conversaciones y serie diaria se piden por el
+  // id crudo del anuncio (= source_id del vault; el backend acepta ids legacy
+  // sin resolver) y sin adset_id — el anuncio ya es el scope más fino.
+  const detailId = adRow ? adRow.id : (campaign?.id ?? "");
+  const detailAdsetId = adRow ? null : selectedAdsetId;
 
   const { data: attributed = [] } = useAttributedConversations(
-    campaign?.id ?? "",
+    detailId,
     params,
-    selectedAdsetId,
+    detailAdsetId,
   );
   const { data: daily = [] } = useDailySeries(
-    campaign?.id ?? "",
+    detailId,
     dailyParams,
-    selectedAdsetId,
+    detailAdsetId,
   );
 
   // ── Buzón de análisis con IA ─────────────────────────────────────────────
@@ -175,12 +203,14 @@ export function AdsSection() {
           onSelect={(id) => {
             setSelectedId(id);
             setAdsetSel(null);
+            setAdSel(null);
           }}
           params={params}
           selectedAdsetId={selectedAdsetId}
           onSelectAdset={(campaignId, adsetId) => {
             setSelectedId(campaignId);
             setAdsetSel(adsetId === null ? null : { campaignId, adsetId });
+            setAdSel(null);
           }}
         />
       )}
@@ -212,13 +242,27 @@ export function AdsSection() {
             campaña (merge level=campaign) o segmento (level=adset). */}
         <CampaignMetaKpis campaign={scoped ?? campaign} />
         <div className="ads-body">
+          {/* Creativos del segmento seleccionado (2026-09-10): una fila por
+              anuncio con métricas Meta + peso sobre la campaña completa. */}
+          {selectedAdsetId !== null && (
+            <AdsCreativesTable
+              rows={adRows}
+              reference={campaign}
+              selectedAdId={selectedAdId}
+              onSelect={(adId) =>
+                setAdSel(adId === null ? null : { adsetId: selectedAdsetId, adId })
+              }
+            />
+          )}
           <AdsFunnel campaign={scoped ?? campaign} />
           <AdsStateDistribution campaign={scoped ?? campaign} />
           <AdsDailyTrend series={daily} />
           <AdsAttributedTable rows={attributed} />
         </div>
       </main>
-      {showInspector && <AdsInspector campaign={scoped ?? campaign} />}
+      {showInspector && (
+        <AdsInspector campaign={scoped ?? campaign} adId={adRow ? adRow.id : null} />
+      )}
 
       {analysisOpen && (
         <AnalysisModal onClose={() => setAnalysisOpen(false)}>

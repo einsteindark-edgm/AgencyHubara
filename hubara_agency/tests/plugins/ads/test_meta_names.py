@@ -235,3 +235,52 @@ def test_fetch_carries_creative_thumbnail(respx_or_transport=None):
     )
     enriched = enrich_campaign_names([camp], names)[0]
     assert enriched.creative_thumbnail_url == "https://cdn.fb/thumb.jpg"
+
+
+class TestFetchMetaAdNamesChunking:
+    """Graph acepta máximo 50 ids por `?ids=` (2026-09-10). Con más anuncios
+    el resolver trocea en lotes — antes devolvía `{}` y la jerarquía entera
+    caía a headlines."""
+
+    def test_splits_ids_in_batches_of_50(self):
+        ids = [f"AD_{i}" for i in range(120)]
+        seen: list[list[str]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            batch = request.url.params["ids"].split(",")
+            seen.append(batch)
+            return httpx.Response(
+                200,
+                json={
+                    ad_id: {"id": ad_id, "name": f"Ad {ad_id}",
+                            "campaign": {"id": "C", "name": "Camp"}}
+                    for ad_id in batch
+                },
+            )
+
+        names = fetch_meta_ad_names(ids, token="TOK", transport=_mock_transport(handler))
+        assert len(seen) == 3
+        assert [len(b) for b in seen] == [50, 50, 20]
+        assert len(names) == 120
+        assert names["AD_119"]["ad_name"] == "Ad AD_119"
+
+    def test_failed_batch_does_not_drop_the_others(self):
+        """Un lote con error (Graph 400 por un id borrado) no borra los demás:
+        resultado parcial > nada."""
+        ids = [f"AD_{i}" for i in range(60)]
+        calls = {"n": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return httpx.Response(400, json={"error": {"message": "bad id"}})
+            batch = request.url.params["ids"].split(",")
+            return httpx.Response(
+                200,
+                json={ad_id: {"id": ad_id, "name": "x", "campaign": {"id": "C", "name": "Camp"}}
+                      for ad_id in batch},
+            )
+
+        names = fetch_meta_ad_names(ids, token="TOK", transport=_mock_transport(handler))
+        assert len(names) == 10
+        assert "AD_59" in names and "AD_0" not in names

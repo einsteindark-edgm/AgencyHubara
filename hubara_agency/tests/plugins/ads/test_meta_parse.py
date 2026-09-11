@@ -112,3 +112,45 @@ def test_non_numeric_field_degrades_to_zero_not_crash() -> None:
     assert row.spend == 0.0
     assert row.impressions == 1000
     assert row.clicks == 5
+
+
+def test_parses_ad_insights_row() -> None:
+    """Creativos por segmento (2026-09-10): level=ad trae ad_id/ad_name +
+    adset_id + campaign_id (para colgar el anuncio de su segmento) y las
+    mismas métricas que los otros niveles."""
+    from src.plugins.ads.meta.parse import parse_ad_insights
+
+    payload = {
+        "data": [
+            {
+                "ad_id": "AD_7",
+                "ad_name": "Video velas aromáticas",
+                "adset_id": "ADSET_3",
+                "campaign_id": "120210000111",
+                "spend": "120500",
+                "impressions": "8000",
+                "reach": "6100",
+                "clicks": "95",
+                "actions": [
+                    {
+                        "action_type": "onsite_conversion.messaging_conversation_started_7d",
+                        "value": "12",
+                    }
+                ],
+                "date_start": "2026-06-01",
+                "date_stop": "2026-06-30",
+            }
+        ]
+    }
+    rows = parse_ad_insights(payload)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.ad_id == "AD_7"
+    assert row.ad_name == "Video velas aromáticas"
+    assert row.adset_id == "ADSET_3"
+    assert row.campaign_id == "120210000111"
+    assert row.spend == 120500.0
+    assert row.impressions == 8000
+    assert row.reach == 6100
+    assert row.clicks == 95
+    assert row.messaging_conversations_started == 12

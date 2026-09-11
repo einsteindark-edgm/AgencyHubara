@@ -22,6 +22,7 @@ const useAdsCampaignsMock = vi.fn(() => ({ data: [] as unknown[] }));
 const useAttributedConversationsMock = vi.fn(() => ({ data: [] }));
 const useDailySeriesMock = vi.fn(() => ({ data: [] }));
 const useCampaignAdsetsMock = vi.fn(() => ({ data: [] as unknown[] }));
+const useAdsetAdsMock = vi.fn(() => ({ data: [] as unknown[] }));
 
 vi.mock("@plugins/ads/frontend/entities/ads-campaign", async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -30,6 +31,7 @@ vi.mock("@plugins/ads/frontend/entities/ads-campaign", async (importOriginal) =>
     useAttributedConversationsMock(...(a as [])),
   useDailySeries: (...a: unknown[]) => useDailySeriesMock(...(a as [])),
   useCampaignAdsets: (...a: unknown[]) => useCampaignAdsetsMock(...(a as [])),
+  useAdsetAds: (...a: unknown[]) => useAdsetAdsMock(...(a as [])),
 }));
 
 vi.mock("@plugins/ads/frontend/entities/ad-analysis-run", async (importOriginal) => ({
@@ -46,19 +48,37 @@ vi.mock("@plugins/ads/frontend/features/campaign-meta-kpis", () => ({
 }));
 
 vi.mock("@plugins/ads/frontend/features/ads-inspector", () => ({
-  AdsInspector: () => <div data-testid="ads-inspector" />,
+  AdsInspector: (props: { campaign: { id: string }; adId?: string | null }) => (
+    <div data-testid="ads-inspector" data-scope={props.campaign.id} data-ad={props.adId ?? ""} />
+  ),
+}));
+
+vi.mock("@plugins/ads/frontend/features/ads-creatives-table", () => ({
+  AdsCreativesTable: (props: { onSelect: (adId: string | null) => void }) => (
+    <button data-testid="pick-ad" onClick={() => props.onSelect("AD_1")}>
+      pick ad
+    </button>
+  ),
 }));
 
 vi.mock("@plugins/ads/frontend/features/ads-campaigns-list", () => ({
   AdsCampaignsList: (props: {
     onSelectAdset?: (campaignId: string, adsetId: string | null) => void;
   }) => (
-    <button
-      data-testid="pick-segment"
-      onClick={() => props.onSelectAdset?.("CAMP_9", "ADSET_B")}
-    >
-      pick
-    </button>
+    <>
+      <button
+        data-testid="pick-segment"
+        onClick={() => props.onSelectAdset?.("CAMP_9", "ADSET_B")}
+      >
+        pick
+      </button>
+      <button
+        data-testid="pick-campaign"
+        onClick={() => props.onSelectAdset?.("CAMP_9", null)}
+      >
+        pick campaign
+      </button>
+    </>
   ),
 }));
 
@@ -125,5 +145,53 @@ describe("AdsSection — scope por segmento (2026-07-10)", () => {
 
     const lastDailyCall = useDailySeriesMock.mock.calls.at(-1) as unknown[];
     expect(lastDailyCall[2]).toBeNull();
+  });
+});
+
+describe("AdsSection — scope por anuncio (creativos, 2026-09-10)", () => {
+  it("la tabla de creativos solo se monta con un segmento seleccionado", () => {
+    useAdsCampaignsMock.mockReturnValue({ data: [makeCampaign()] });
+    const { getByTestId, queryByTestId } = render(<AdsSection />);
+    expect(queryByTestId("pick-ad")).toBeNull();
+    fireEvent.click(getByTestId("pick-segment"));
+    expect(getByTestId("pick-ad")).toBeTruthy();
+    const lastAdsCall = useAdsetAdsMock.mock.calls.at(-1) as unknown[];
+    expect(lastAdsCall[0]).toBe("CAMP_9");
+    expect(lastAdsCall[1]).toBe("ADSET_B");
+  });
+
+  it("al seleccionar un anuncio, el canvas y el inspector se scopean a ese anuncio", () => {
+    useAdsCampaignsMock.mockReturnValue({ data: [makeCampaign()] });
+    useAdsetAdsMock.mockReturnValue({
+      data: [makeCampaign({ id: "AD_1", name: "Video velas", metaAdsetId: "ADSET_B" })],
+    });
+    const { getByTestId } = render(<AdsSection />);
+    fireEvent.click(getByTestId("pick-segment"));
+    fireEvent.click(getByTestId("pick-ad"));
+
+    // El inspector recibe la fila del anuncio + su id para el creativo.
+    expect(getByTestId("ads-inspector").getAttribute("data-scope")).toBe("AD_1");
+    expect(getByTestId("ads-inspector").getAttribute("data-ad")).toBe("AD_1");
+    // Conversaciones y serie diaria se piden por el id crudo del anuncio
+    // (source_id del vault — back-compat del backend), sin adset_id.
+    const lastConvCall = useAttributedConversationsMock.mock.calls.at(-1) as unknown[];
+    expect(lastConvCall[0]).toBe("AD_1");
+    expect(lastConvCall[2]).toBeNull();
+    const lastDailyCall = useDailySeriesMock.mock.calls.at(-1) as unknown[];
+    expect(lastDailyCall[0]).toBe("AD_1");
+  });
+
+  it("volver a la campaña limpia el anuncio seleccionado", () => {
+    useAdsCampaignsMock.mockReturnValue({ data: [makeCampaign()] });
+    useAdsetAdsMock.mockReturnValue({
+      data: [makeCampaign({ id: "AD_1", metaAdsetId: "ADSET_B" })],
+    });
+    const { getByTestId, queryByTestId } = render(<AdsSection />);
+    fireEvent.click(getByTestId("pick-segment"));
+    fireEvent.click(getByTestId("pick-ad"));
+    fireEvent.click(getByTestId("pick-campaign"));
+    expect(queryByTestId("pick-ad")).toBeNull();
+    expect(getByTestId("ads-inspector").getAttribute("data-scope")).toBe("CAMP_9");
+    expect(getByTestId("ads-inspector").getAttribute("data-ad")).toBe("");
   });
 });
