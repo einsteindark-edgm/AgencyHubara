@@ -1,14 +1,16 @@
 /**
  * Canvas central de Meta Business Agent. Misma estructura que el canvas de
  * Agentes (cabecera + sub-tabs), con la información REAL del agente en Meta:
- *   - "Configuración": lo que se envía a Meta, request por request.
- *   - "Insights", "Agent test", "Agent eval": las superficies de operación de
- *     la Platform (agent-insights, agent_test, agent-eval). Todavía no están
- *     construidas: se muestran deshabilitadas para fijar la estructura.
+ *   - "Configuración": lo que se envía a Meta, request por request, con el
+ *     sync (D2.2) y el rollout (D2.3) arriba.
+ *   - "Agent test": la consola del simulador de Meta (D2.4).
+ *   - "Insights", "Agent eval": todavía no construidas, deshabilitadas para
+ *     fijar la estructura.
  */
 import { useState } from "react";
 
 import { useMbaAgents } from "@plugins/mba/frontend/entities/mba-agent";
+import { MbaAgentTestConsole } from "@plugins/mba/frontend/features/mba-agent-test";
 import { MbaConfigPreview } from "@plugins/mba/frontend/features/mba-config-preview";
 import { MbaRolloutPanel } from "@plugins/mba/frontend/features/mba-rollout";
 import { MbaSyncPanel } from "@plugins/mba/frontend/features/mba-sync";
@@ -18,7 +20,6 @@ type CanvasTab = "configuracion" | "insights" | "agent_test" | "agent_eval";
 
 const FUTURE_TABS: { key: CanvasTab; label: string; icon: IconName }[] = [
   { key: "insights", label: "Insights", icon: "spark" },
-  { key: "agent_test", label: "Agent test", icon: "bolt" },
   { key: "agent_eval", label: "Agent eval", icon: "shield" },
 ];
 
@@ -29,8 +30,7 @@ interface Props {
 export function MbaAgentCanvas({ agentId }: Props) {
   const { data: agents = [], isLoading, isError } = useMbaAgents();
   const agent = agents.find((a) => a.id === agentId) ?? agents[0];
-  // Un solo tab construido por ahora; el estado queda listo para los siguientes.
-  const [tab] = useState<CanvasTab>("configuracion");
+  const [tab, setTab] = useState<CanvasTab>("configuracion");
 
   if (!agent) {
     return (
@@ -61,8 +61,19 @@ export function MbaAgentCanvas({ agentId }: Props) {
       </div>
 
       <div className="sub-tabs">
-        <button type="button" className={"sub-tab" + (tab === "configuracion" ? " on" : "")}>
+        <button
+          type="button"
+          className={"sub-tab" + (tab === "configuracion" ? " on" : "")}
+          onClick={() => setTab("configuracion")}
+        >
           <Icon.notes /> Configuración
+        </button>
+        <button
+          type="button"
+          className={"sub-tab" + (tab === "agent_test" ? " on" : "")}
+          onClick={() => setTab("agent_test")}
+        >
+          <Icon.bolt /> Agent test
         </button>
         {FUTURE_TABS.map((t) => {
           const TabIcon = Icon[t.icon];
@@ -81,11 +92,18 @@ export function MbaAgentCanvas({ agentId }: Props) {
         })}
       </div>
 
-      <div className="ag-form" style={{ paddingBottom: 0 }}>
-        <MbaSyncPanel agentId={agent.id} />
-        <MbaRolloutPanel agentId={agent.id} />
+      {/* Los dos tabs quedan montados: el hilo de la consola (UI state) sobrevive
+          al cambio de tab y una mutation en vuelo no pierde sus callbacks. */}
+      <div hidden={tab !== "agent_test"}>
+        <MbaAgentTestConsole agentId={agent.id} />
       </div>
-      <MbaConfigPreview agentId={agent.id} />
+      <div hidden={tab === "agent_test"}>
+        <div className="ag-form" style={{ paddingBottom: 0 }}>
+          <MbaSyncPanel agentId={agent.id} />
+          <MbaRolloutPanel agentId={agent.id} />
+        </div>
+        <MbaConfigPreview agentId={agent.id} />
+      </div>
     </main>
   );
 }

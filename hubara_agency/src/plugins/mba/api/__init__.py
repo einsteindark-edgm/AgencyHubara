@@ -11,7 +11,9 @@ el ETA por cast con identidad de servicio cuando MBA controla), y llevar la
 configuración autorada a Meta (D2.2: ``SyncAgent`` — plan de solo lectura +
 apply confirmado por fingerprint; nunca toca ``rollout`` ni ``ai_audience``)
 y gobernar el rollout (D2.3: ``RolloutControl`` — allowlist de Meta acotada a
-la lista cerrada de Hubara, audiencia y ``rollout.enabled`` con readiness).
+la lista cerrada de Hubara, audiencia y ``rollout.enabled`` con readiness), y
+la consola ``agent_test`` (D2.4: probar skills y conocimiento contra Meta sin
+facturación ni hilos reales).
 Las tools del connector (públicas, con API key propia) viven en ``connector.py``.
 """
 from __future__ import annotations
@@ -26,7 +28,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
 from src.plugins.mba.adapters.agent_event import MetaAgentEvent
-from src.plugins.mba.adapters.meta_admin import MbaAdminError, MetaMbaAdmin
+from src.plugins.mba.adapters.meta_admin import MbaAdminError, MbaAdminPort, MetaMbaAdmin
 from src.plugins.mba.adapters.sync_state import SyncStateStore
 from src.plugins.mba.adapters.thread_control import MetaThreadControl
 from src.plugins.mba.domain.agent_events import AGENT_EVENT_TYPES, DESCRIPTION_MAX
@@ -376,3 +378,49 @@ async def set_rollout_enabled(agent_id: str, body: EnabledBody, use_case: Rollou
     el kill switch y nunca se bloquea."""
     _check_agent_id(agent_id)
     return _rollout_response(await use_case.set_enabled(agent_id, body.enabled, confirm=body.confirm))
+
+
+# ── D2.4: consola agent_test ─────────────────────────────────────────────────
+
+
+AGENT_TEST_MESSAGE_MAX = 4096
+_AGENT_TEST_GUARD_STATUS = {"unavailable": 503, "not_configured": 503, "ambiguous": 503}
+
+
+class AgentTestBody(BaseModel):
+    message: str = Field(min_length=1, max_length=AGENT_TEST_MESSAGE_MAX)
+    conversation_id: str | None = Field(default=None, max_length=128)
+
+    @field_validator("message")
+    @classmethod
+    def _not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("message no puede ser solo espacios")
+        return v.strip()
+
+
+def get_mba_admin() -> MbaAdminPort:
+    return MetaMbaAdmin()
+
+
+@router.post("/agents/{agent_id}/test")
+async def agent_test(agent_id: str, body: AgentTestBody, admin: MbaAdminPort = Depends(get_mba_admin)) -> dict[str, Any]:
+    """Un turno del simulador de Meta (``POST /{entity_id}/agent_test``): no
+    factura tokens ni toca hilos vivos. ``conversation_id`` encadena turnos.
+    Meta caída / sin token → 503; un rechazo de Meta vuelve 200 ``ok=false``
+    con el detalle, para que la consola lo muestre tal cual."""
+    if not _AGENT_ID_RE.fullmatch(agent_id):
+        raise HTTPException(status_code=404, detail=f"agente MBA desconocido: {agent_id}")
+    cfg = load_agent(agent_id)
+    if cfg is None:
+        raise HTTPException(status_code=404, detail=f"agente MBA desconocido: {agent_id}")
+    if not cfg.entity_id:
+        raise HTTPException(status_code=409, detail={"error": "entity_id_missing"})
+    try:
+        reply = await admin.agent_test(str(cfg.entity_id), body.message, conversation_id=body.conversation_id)
+    except MbaAdminError as exc:
+        status = _AGENT_TEST_GUARD_STATUS.get(exc.kind)
+        if status is not None:
+            raise HTTPException(status_code=status, detail={"error": "remote_unavailable", "kind": exc.kind, "status": exc.status, "detail": exc.detail})
+        return {"ok": False, "reply": None, "error": {"kind": exc.kind, "status": exc.status, "detail": exc.detail}}
+    return {"ok": True, "reply": reply, "error": None}
