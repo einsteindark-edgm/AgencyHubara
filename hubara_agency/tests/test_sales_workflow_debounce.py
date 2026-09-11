@@ -64,12 +64,26 @@ class Tracker:
         self.flush_calls: int = 0
         self.ensure_closure_calls: list[tuple[str, str, str]] = []
         self.closing_escalation_calls: list[tuple[str, str, str]] = []
+        # Orden client-visible del turno: "send:<texto>" y "flush" en el orden
+        # en que el workflow los ejecutó (el flush entrega los UI intents, ej.
+        # el menú de present_products).
+        self.timeline: list[str] = []
+        self.first_contact_greeting_calls: int = 0
+
+
+# Burbuja 1 del guion de apertura (etapa_descubrimiento) — lo que la activity
+# `build_first_contact_greeting` devuelve de noche en Bogotá.
+FIRST_CONTACT_GREETING = (
+    "¡Buenas noches! Bienvenido a *Hubara*, velas artesanales hechas a base "
+    "de cera de palma, a mano en Colombia."
+)
 
 
 def _make_fake_activities(
     tracker: Tracker,
     *,
     workspace_path: str,
+    prior_history: list[dict] | None = None,
     pending_handoff: str | None = None,
     handoff_sequence: list[str | None] | None = None,
     llm_responses: list[LLMResponseData] | None = None,
@@ -127,6 +141,7 @@ def _make_fake_activities(
     @activity.defn(name="flush_pending_ui_intents_activity")
     async def fake_flush_ui_intents(session_id: str) -> int:
         tracker.flush_calls += 1
+        tracker.timeline.append("flush")
         return 0
 
     @activity.defn(name="flush_capi_outbox_activity")
@@ -141,8 +156,11 @@ def _make_fake_activities(
     @activity.defn(name="build_prompt")
     async def fake_build_prompt(input: BuildPromptInput) -> list[dict]:
         tracker.build_prompt_calls.append(input)
+        # `prior_history`: intercambios previos persistidos (cliente que
+        # vuelve). Sin él, el historial está vacío = primer contacto.
         return [
             {"role": "system", "content": "fake-system"},
+            *(prior_history or []),
             {"role": "user", "content": input.message},
         ]
 
@@ -195,6 +213,7 @@ def _make_fake_activities(
     @activity.defn(name="send_whatsapp_message_activity")
     async def fake_send_whatsapp(session_id: str, message: str) -> None:
         tracker.send_whatsapp_calls.append((session_id, message))
+        tracker.timeline.append(f"send:{message}")
 
     @activity.defn(name="persist_assistant_message_activity")
     async def fake_persist(
@@ -253,7 +272,16 @@ def _make_fake_activities(
     async def fake_get_active_episode_id(session_id: str) -> str:
         return "ep_001"
 
+    # Saludo determinista de primer contacto (sessions wa_573114842180 /
+    # wa_573042505198): la activity real lee la hora de Bogotá; acá
+    # devolvemos la Burbuja 1 nocturna fija.
+    @activity.defn(name="build_first_contact_greeting")
+    async def fake_first_contact_greeting() -> str:
+        tracker.first_contact_greeting_calls += 1
+        return FIRST_CONTACT_GREETING
+
     return [
+        fake_first_contact_greeting,
         fake_bootstrap,
         fake_read_handoff,
         fake_read_order_draft_note,
@@ -1947,3 +1975,181 @@ async def test_portavelas_notice_kept_when_order_includes_portavelas(
     assert any("portavelas" in m for m in sent), (
         f"El guard borró el aviso legítimo de un pedido con portavelas: {sent}"
     )
+
+
+def _greeting_then_search_resp() -> LLMResponseData:
+    """Lo que el LLM hizo en los runs reales (3ce50ef3 / dc32f7fe): saludo
+    como content JUNTO a `search_products` — el default-deny lo descarta."""
+    return LLMResponseData(
+        content=(
+            "¡Buenas noches! Bienvenido a *Hubara*, velas artesanales hechas "
+            "a base de cera de palma, a mano en Colombia.\n\nDéjame ver qué "
+            "tenemos en esa colección."
+        ),
+        finish_reason="tool_calls",
+        has_tool_calls=True,
+        tool_calls=[
+            ToolCallData(
+                id="c1",
+                name="search_products",
+                arguments={"q": "amor y amistad", "limit": 10},
+            )
+        ],
+    )
+
+
+def _present_products_resp(intro_text: str) -> LLMResponseData:
+    return LLMResponseData(
+        content="",
+        finish_reason="tool_calls",
+        has_tool_calls=True,
+        tool_calls=[
+            ToolCallData(
+                id="c2",
+                name="present_products",
+                arguments={
+                    "handles": ["cubo-love", "cilindro-love"],
+                    "intro_text": intro_text,
+                },
+            )
+        ],
+    )
+
+
+async def _run_ctwa_first_message(
+    tracker: Tracker, workspace: Path, *, responses, prior_history=None
+) -> None:
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=SALES_QUEUE,
+            workflows=[HubaraSalesSessionWorkflow],
+            activities=_make_fake_activities(
+                tracker,
+                workspace_path=str(workspace),
+                llm_responses=responses,
+                prior_history=prior_history,
+            ),
+        ):
+            handle = await env.client.start_workflow(
+                HubaraSalesSessionWorkflow.run,
+                SalesSessionInput(
+                    session_id="wa_ctwa",
+                    runtime_workspace_path=str(workspace),
+                ),
+                id="session-wa_ctwa",
+                task_queue=SALES_QUEUE,
+            )
+            await handle.signal(
+                HubaraSalesSessionWorkflow.send_message,
+                args=[
+                    "[el cliente vino desde un anuncio de Facebook/Instagram, "
+                    "titulado 'Velas aromáticas']\n¡Hola! Quiero más "
+                    "información sobre la colección de amor y amistad",
+                    None,
+                    None,
+                ],
+            )
+            await handle.result()
+
+
+@pytest.mark.asyncio
+async def test_first_contact_catalog_turn_greets_before_the_menu(
+    tmp_path: Path,
+) -> None:
+    """Sessions wa_573114842180 y wa_573042505198 (CTWA "amor y amistad",
+    2026-09-10/11): el LLM saludó JUNTO a `search_products` (content
+    descartado por el default-deny) y cerró el turno con `present_products`
+    → el cliente recibió el menú SIN saludo. Contrato: en el primer contacto
+    el workflow garantiza la Burbuja 1 del guion ANTES del flush del menú,
+    sin depender de dónde el LLM puso el texto."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    await _run_ctwa_first_message(
+        tracker,
+        workspace,
+        responses=[
+            _greeting_then_search_resp(),
+            _present_products_resp("Estas son nuestras piezas para amor y amistad:"),
+        ],
+    )
+
+    assert "present_products" in tracker.execute_tool_calls
+    sent = [m for (_s, m) in tracker.send_whatsapp_calls]
+    assert FIRST_CONTACT_GREETING in sent, (
+        f"El primer contacto salió sin saludo: sends={sent} "
+        f"timeline={tracker.timeline}"
+    )
+    # El saludo va ANTES del menú (el flush entrega present_products).
+    first_flush = tracker.timeline.index("flush")
+    assert f"send:{FIRST_CONTACT_GREETING}" in tracker.timeline[:first_flush], (
+        f"El saludo no precede al menú: {tracker.timeline}"
+    )
+    # Y se persiste al dashboard como mensaje del agente.
+    assert FIRST_CONTACT_GREETING in [m for (_s, m) in tracker.persist_calls]
+    # Una sola vez (el turno ghost no re-saluda).
+    assert sent.count(FIRST_CONTACT_GREETING) == 1
+    assert tracker.first_contact_greeting_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_returning_customer_catalog_turn_does_not_regreet(
+    tmp_path: Path,
+) -> None:
+    """Cliente que YA conversó (historial con mensajes del agente) y pide el
+    catálogo: nada de saludo inyectado — la regla del guion es "si ya hay
+    conversación previa, retoma el hilo"."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    await _run_ctwa_first_message(
+        tracker,
+        workspace,
+        responses=[
+            _tool_resp("search_products"),
+            _present_products_resp("Estas son nuestras piezas para amor y amistad:"),
+        ],
+        prior_history=[
+            {"role": "user", "content": "Hola, ¿tienen velas de lavanda?"},
+            {"role": "assistant", "content": "¡Buenas tardes! Bienvenido a *Hubara*..."},
+        ],
+    )
+
+    assert "present_products" in tracker.execute_tool_calls
+    sent = [m for (_s, m) in tracker.send_whatsapp_calls]
+    assert FIRST_CONTACT_GREETING not in sent, (
+        f"Re-saludó a un cliente con conversación previa: {sent}"
+    )
+    assert tracker.first_contact_greeting_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_first_contact_greeting_not_duplicated_when_intro_text_greets(
+    tmp_path: Path,
+) -> None:
+    """Si el LLM puso el saludo en el canal legítimo (`intro_text` de la
+    tool), el workflow NO agrega otra burbuja de saludo."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    await _run_ctwa_first_message(
+        tracker,
+        workspace,
+        responses=[
+            _tool_resp("search_products"),
+            _present_products_resp(
+                "¡Buenas noches! Bienvenido a *Hubara*. Estas son nuestras "
+                "piezas para amor y amistad:"
+            ),
+        ],
+    )
+
+    sent = [m for (_s, m) in tracker.send_whatsapp_calls]
+    assert FIRST_CONTACT_GREETING not in sent, (
+        f"Saludo duplicado (ya iba en intro_text): {sent}"
+    )
+    assert tracker.first_contact_greeting_calls == 0

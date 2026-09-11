@@ -59,6 +59,7 @@ from src.platform.whatsapp.capi_activity import (
 )
 from src.plugins.chats.agent.sales.activities import (
     bootstrap_sales_session_activity,
+    build_first_contact_greeting_activity,
     compute_bogota_context_activity,
     decide_ghosting_action,
     ensure_closing_escalation_activity,
@@ -361,6 +362,9 @@ async def main() -> None:
             dispatch_event_activity,
             # HU-002: render UI intents emitidos por decision tools (post-LLM).
             flush_pending_ui_intents_activity,
+            # Saludo de primer contacto cuando el turno sale por tool (menú)
+            # sin saludo — sessions wa_573114842180 / wa_573042505198.
+            build_first_contact_greeting_activity,
             # Fix integridad orden↔tag: red de seguridad determinística que
             # garantiza el cierre "pago pendiente" + escalación tras un
             # register_order exitoso aunque el LLM no emita el tag/escalación.
