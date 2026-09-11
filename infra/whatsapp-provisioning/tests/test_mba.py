@@ -16,7 +16,7 @@ sys.modules["whatsapp_provision"] = wp
 _spec.loader.exec_module(wp)
 
 CFG = {
-    "TENANT": "hubara", "APP_ID": "3662", "APP_SECRET": "sec", "WABA_ID": "1763",
+    "TENANT": "acme", "APP_ID": "3662", "APP_SECRET": "sec", "WABA_ID": "1763",
     "SYSTEM_USER_TOKEN": "EAA-token", "PHONE_NUMBER_ID": "1234", "CATALOG_ID": "868",
     "VERIFY_TOKEN": "vt", "CALLBACK_URL": "https://x/api/chats/webhook",
 }
@@ -129,9 +129,9 @@ def test_ssm_block_names_the_mba_secrets_and_the_entity_id(monkeypatch) -> None:
 def test_config_ignores_inline_comments(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("META_SYSTEM_USER_TOKEN", "EAA")
     f = tmp_path / "t.env"
-    f.write_text('WABA_ID=1763803271643573             # WABA "Hubara"\nPHONE_NUMBER_ID=1234   # id\nDISPLAY_NAME=Hubara\n')
+    f.write_text('WABA_ID=1763             # WABA "Acme"\nPHONE_NUMBER_ID=1234   # id\nDISPLAY_NAME=Acme\n')
     cfg = wp.load_config(str(f))
-    assert (cfg["WABA_ID"], cfg["PHONE_NUMBER_ID"], cfg["DISPLAY_NAME"]) == ("1763803271643573", "1234", "Hubara")
+    assert (cfg["WABA_ID"], cfg["PHONE_NUMBER_ID"], cfg["DISPLAY_NAME"]) == ("1763", "1234", "Acme")
 
 
 def test_webhook_step_refuses_to_repoint_a_live_callback(monkeypatch) -> None:
