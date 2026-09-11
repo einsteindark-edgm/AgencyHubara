@@ -391,6 +391,13 @@ class AgentTestBody(BaseModel):
     message: str = Field(min_length=1, max_length=AGENT_TEST_MESSAGE_MAX)
     conversation_id: str | None = Field(default=None, max_length=128)
 
+    @field_validator("message")
+    @classmethod
+    def _not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("message no puede ser solo espacios")
+        return v.strip()
+
 
 def get_mba_admin() -> MbaAdminPort:
     return MetaMbaAdmin()

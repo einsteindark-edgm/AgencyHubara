@@ -39,12 +39,18 @@ function threadReducer(state: Thread, action: ThreadAction): Thread {
   }
 }
 
+const ERROR_TEXT: Record<string, string> = {
+  entity_id_missing: "El agente no tiene entity_id: onboardear el número primero (D3.1). Hasta entonces el simulador no tiene contra qué hablar.",
+};
+
 function apiMessage(e: unknown): string {
   if (e instanceof ApiError) {
     const body = e.body as { detail?: unknown } | null | undefined;
     const detail = body && typeof body === "object" ? body.detail : undefined;
+    if (Array.isArray(detail)) return "entrada inválida (422)";
     if (detail && typeof detail === "object") {
       const d = detail as { error?: string; kind?: string; detail?: string };
+      if (d.error && ERROR_TEXT[d.error]) return ERROR_TEXT[d.error];
       return [d.error, d.kind, d.detail].filter(Boolean).join(" · ");
     }
     if (typeof detail === "string") return detail;
@@ -70,8 +76,8 @@ function AgentBubble({ reply }: { reply: MbaAgentTestReply }) {
       )}
       {reply.quick_replies && reply.quick_replies.length > 0 && (
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
-          {reply.quick_replies.map((q) => (
-            <span key={q} style={chip}>{q}</span>
+          {reply.quick_replies.map((q, i) => (
+            <span key={`${i}:${q}`} style={chip}>{q}</span>
           ))}
         </div>
       )}
@@ -124,7 +130,7 @@ export function MbaAgentTestConsole({ agentId }: Props) {
         </MacButton>
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, minHeight: 120 }} aria-live="polite">
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, minHeight: 120 }}>
         {thread.turns.length === 0 && (
           <div style={{ fontSize: 12, color: "var(--fg-mute)" }}>Todavía no hay turnos. Escribí como si fueras el cliente.</div>
         )}

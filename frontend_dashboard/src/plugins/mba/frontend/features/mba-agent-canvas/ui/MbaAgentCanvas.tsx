@@ -92,17 +92,18 @@ export function MbaAgentCanvas({ agentId }: Props) {
         })}
       </div>
 
-      {tab === "agent_test" ? (
+      {/* Los dos tabs quedan montados: el hilo de la consola (UI state) sobrevive
+          al cambio de tab y una mutation en vuelo no pierde sus callbacks. */}
+      <div hidden={tab !== "agent_test"}>
         <MbaAgentTestConsole agentId={agent.id} />
-      ) : (
-        <>
-          <div className="ag-form" style={{ paddingBottom: 0 }}>
-            <MbaSyncPanel agentId={agent.id} />
-            <MbaRolloutPanel agentId={agent.id} />
-          </div>
-          <MbaConfigPreview agentId={agent.id} />
-        </>
-      )}
+      </div>
+      <div hidden={tab === "agent_test"}>
+        <div className="ag-form" style={{ paddingBottom: 0 }}>
+          <MbaSyncPanel agentId={agent.id} />
+          <MbaRolloutPanel agentId={agent.id} />
+        </div>
+        <MbaConfigPreview agentId={agent.id} />
+      </div>
     </main>
   );
 }

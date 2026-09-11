@@ -61,14 +61,39 @@ describe("MbaAgentCanvas", () => {
     expect(testTab.disabled).toBe(false);
     fireEvent.click(testTab);
     screen.getByPlaceholderText(/Escribí como el cliente/);
-    expect(screen.queryByText("Secuencia de envío")).toBeNull();
+    // la configuración queda montada pero oculta (el hilo de la consola sobrevive al cambio de tab)
+    expect(screen.getByText("Secuencia de envío").closest("div[hidden]")).not.toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /Configuración/ }));
-    await waitFor(() => screen.getByText("Secuencia de envío"));
+    expect(screen.getByText("Secuencia de envío").closest("div[hidden]")).toBeNull();
+    expect(screen.getByPlaceholderText(/Escribí como el cliente/).closest("div[hidden]")).not.toBeNull();
   });
 
   it("shows an empty state when there are no MBA agents", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ agents: [] }));
     renderWithClient(<MbaAgentCanvas agentId="sales" />);
     await waitFor(() => screen.getByText(/No hay agentes MBA/));
+  });
+
+  it("keeps the agent_test thread when switching tabs and coming back", async () => {
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/mba/agents")) return Promise.resolve(jsonResponse({ agents: [SALES] }));
+      if (url.endsWith("/api/mba/agents/sales/test") && init?.method === "POST") {
+        return Promise.resolve(jsonResponse({ ok: true, error: null, reply: { message_id: "m1", agent_response: "Hola desde MBA", conversation_id: "conv-1" } }));
+      }
+      if (url.includes("/sync") || url.includes("/rollout")) return Promise.resolve(jsonResponse({ detail: "nope" }, 503));
+      return Promise.resolve(jsonResponse(MBA_CONFIG_FIXTURE));
+    });
+    renderWithClient(<MbaAgentCanvas agentId="sales" />);
+    await waitFor(() => screen.getByRole("button", { name: /Agent test/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Agent test/ }));
+    fireEvent.change(screen.getByPlaceholderText(/Escribí como el cliente/), { target: { value: "hola" } });
+    fireEvent.click(screen.getByRole("button", { name: /Enviar/ }));
+    await waitFor(() => screen.getByText("Hola desde MBA"));
+    fireEvent.click(screen.getByRole("button", { name: /Configuración/ }));
+    await waitFor(() => screen.getByText("Secuencia de envío"));
+    fireEvent.click(screen.getByRole("button", { name: /Agent test/ }));
+    screen.getByText("Hola desde MBA"); // el hilo sobrevive al cambio de tab
+    screen.getByText(/conv-1/);
   });
 });

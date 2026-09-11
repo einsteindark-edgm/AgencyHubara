@@ -106,4 +106,44 @@ describe("MbaAgentTestConsole", () => {
     screen.getByText("hola");
     screen.getByText("hola de nuevo");
   });
+
+  it("tolerates Meta's nulls in optional fields and renders the bubble", async () => {
+    posts(() => jsonResponse(reply({ handoff_reason: null, no_response_reason: null, quick_replies: null, product_variant_ids: null })));
+    renderWithClient(<MbaAgentTestConsole agentId="sales" />);
+    send("hola");
+    await waitFor(() => screen.getByText("Hola, soy el asesor de Hubara."));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("explains entity_id_missing in plain words (the state of prod before onboarding)", async () => {
+    posts(() => jsonResponse({ detail: { error: "entity_id_missing" } }, 409));
+    renderWithClient(<MbaAgentTestConsole agentId="sales" />);
+    send("hola");
+    await waitFor(() => screen.getByText(/no tiene entity_id: onboardear el número primero/));
+  });
+
+  it("Enter sends once, Shift+Enter does not send, and a second Enter while busy is ignored", async () => {
+    let release: (() => void) | null = null;
+    const log = posts(() => jsonResponse(reply()));
+    fetchMock.mockImplementation((_url: string, init?: RequestInit) => {
+      log.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return new Promise<Response>((resolve) => {
+        release = () => resolve(jsonResponse(reply()));
+      });
+    });
+    renderWithClient(<MbaAgentTestConsole agentId="sales" />);
+    const box = screen.getByPlaceholderText(/Escribí como el cliente/);
+    fireEvent.change(box, { target: { value: "hola" } });
+    fireEvent.keyDown(box, { key: "Enter", shiftKey: true });
+    expect(log).toHaveLength(0);
+    fireEvent.keyDown(box, { key: "Enter" });
+    await waitFor(() => expect(log).toHaveLength(1));
+    await waitFor(() => screen.getByText(/MBA está escribiendo/));
+    fireEvent.change(box, { target: { value: "otra" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(log).toHaveLength(1); // busy: no doble envío
+    release!();
+    await waitFor(() => screen.getByText("Hola, soy el asesor de Hubara."));
+  });
 });

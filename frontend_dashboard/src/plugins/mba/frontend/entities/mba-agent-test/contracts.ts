@@ -9,11 +9,12 @@ export const mbaAgentTestReplySchema = z.object({
   message_id: z.string(),
   agent_response: z.string(),
   conversation_id: z.string(),
-  timestamp: z.number().optional(),
-  handoff_reason: z.string().optional(),
-  no_response_reason: z.string().optional(),
-  quick_replies: z.array(z.string()).optional(),
-  product_variant_ids: z.array(z.string()).optional(),
+  // El OpenAPI de Meta marca estos campos `nullable`: aceptar null además de ausente.
+  timestamp: z.number().nullish(),
+  handoff_reason: z.string().nullish(),
+  no_response_reason: z.string().nullish(),
+  quick_replies: z.array(z.string()).nullish(),
+  product_variant_ids: z.array(z.string()).nullish(),
 });
 
 export const mbaAgentTestOutcomeSchema = z.object({

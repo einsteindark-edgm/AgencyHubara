@@ -692,6 +692,7 @@ def test_agent_test_validates_input_and_maps_guards(monkeypatch: pytest.MonkeyPa
     c = _agent_test_client(stub, monkeypatch)
     assert c.post("/api/mba/agents/sales/test", json={}).status_code == 422
     assert c.post("/api/mba/agents/sales/test", json={"message": ""}).status_code == 422
+    assert c.post("/api/mba/agents/sales/test", json={"message": "   \n "}).status_code == 422  # solo espacios
     assert c.post("/api/mba/agents/sales/test", json={"message": "x" * 4097}).status_code == 422
     assert c.post("/api/mba/agents/sales/test", json={"message": "hola", "conversation_id": "x" * 200}).status_code == 422
     assert c.post("/api/mba/agents/nope/test", json={"message": "hola"}).status_code == 404
