@@ -99,10 +99,12 @@ def connectors_unavailable(exc: MbaAdminError) -> bool:
     """Meta gatea ``agent_connectors`` después del onboarding: 400 "Connectors
     are not available for this entity yet. Finish onboarding…". No es una
     caída ni un rechazo de nuestro body: el resto de la config sigue viva."""
+    d = (exc.detail or "").lower()
     return (
         exc.kind == "rejected"
         and exc.status == 400
-        and "not available" in (exc.detail or "").lower()
+        and "connector" in d
+        and "not available" in d
     )
 
 

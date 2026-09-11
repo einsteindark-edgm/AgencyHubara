@@ -425,3 +425,26 @@ async def test_status_survives_connectors_not_yet_available_in_meta(
     check = next(c for c in st.checks if c["code"] == "connector_active")
     assert check["ok"] is False and "no disponible" in check["detail"]
     assert {c["code"] for c in st.checks if not c["ok"]} == {"connector_active"}
+
+
+async def test_kill_switch_and_allowlist_still_work_while_meta_gates_connectors(
+    tmp_path: Path,
+) -> None:
+    fake = _ready_fake()
+    fake.settings[ENTITY]["rollout"] = {"enabled": True}
+    fake.fail_ops = {
+        "list_connectors": MbaAdminError(
+            "rejected",
+            status=400,
+            detail="Connectors are not available for this entity yet. Finish onboarding the agent for this entity, then retry.",
+        )
+    }
+    uc, _, _ = _control(tmp_path, fake=fake)
+    off = await uc.set_enabled("sales", False, confirm=False)
+    assert off.applied is True and fake.settings[ENTITY]["rollout"] == {
+        "enabled": False
+    }
+    added = await uc.add_phone("sales", "+573009876543")
+    assert added.applied is True and added.reason != "remote_unavailable"
+    on = await uc.set_enabled("sales", True, confirm=True)
+    assert on.applied is False and "connector_active" in on.blocked

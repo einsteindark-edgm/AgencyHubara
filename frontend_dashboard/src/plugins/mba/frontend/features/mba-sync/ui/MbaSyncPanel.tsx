@@ -85,7 +85,7 @@ function OpRow({ op }: { op: MbaSyncOp }) {
       <span style={{ fontWeight: 700, color: tone, minWidth: 82 }}>{ACTION_LABEL[op.action]}</span>
       <span style={{ color: "var(--fg-mute)", minWidth: 90 }}>{SECTION_LABEL[op.section] ?? op.section}</span>
       <span className="mono" style={{ wordBreak: "break-word" }}>{op.label}</span>
-      {op.reason && <span style={{ color: "var(--fg-mute)", fontSize: 11 }}>({op.reason})</span>}
+      {op.reason && <span style={{ color: "var(--fg-mute)", fontSize: 11 }}>({op.action === "skip" ? (SKIP_TEXT[op.reason] ?? op.reason) : op.reason})</span>}
     </div>
   );
 }

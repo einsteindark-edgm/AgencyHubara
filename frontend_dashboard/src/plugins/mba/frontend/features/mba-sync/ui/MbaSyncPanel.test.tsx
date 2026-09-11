@@ -120,6 +120,7 @@ describe("MbaSyncPanel", () => {
     expect(posts).toEqual([{ fingerprint: "fp-1" }]);
     // lo que Meta todavía no deja tocar se explica, no queda como un código de máquina
     screen.getByText(/Meta aún no habilita connectors para este número/);
+    screen.getByText(/1 omitidos/);
   });
 
   it("a blocked plan lists the reasons and offers no apply button", async () => {

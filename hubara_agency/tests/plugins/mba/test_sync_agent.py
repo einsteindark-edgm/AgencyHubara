@@ -450,3 +450,43 @@ async def test_any_other_connector_error_is_still_an_outage(tmp_path: Path) -> N
     }
     with pytest.raises(MbaAdminError):
         await uc.plan("sales")
+
+
+async def test_lifting_the_gate_between_plan_and_apply_changes_the_fingerprint(
+    tmp_path: Path,
+) -> None:
+    """El operador aprueba lo que se aplica: si Meta habilita connectors entre el
+    plan y el apply, aparece un create → plan_changed, nunca un create a ciegas."""
+    uc, fake, _ = _agent(tmp_path)
+    fake.fail_ops = {"list_connectors": _CONNECTORS_GATED}
+    plan = await uc.plan("sales")
+    fake.fail_ops = {}
+    out = await uc.apply("sales", fingerprint=plan.fingerprint)
+    assert out.applied is False and out.reason == "plan_changed"
+    assert not any(op.startswith("create_connector") for op, *_ in fake.calls)
+
+
+async def test_previously_managed_connector_ids_survive_the_gate(
+    tmp_path: Path,
+) -> None:
+    uc, fake, store = _agent(tmp_path)
+    store.write("sales", {"ids": {"connector": {"hubara-commerce": "c-1"}}})
+    fake.fail_ops = {"list_connectors": _CONNECTORS_GATED}
+    plan = await uc.plan("sales")
+    out = await uc.apply("sales", fingerprint=plan.fingerprint)
+    assert out.applied is True
+    assert store.read("sales")["ids"]["connector"] == {"hubara-commerce": "c-1"}
+    assert not any(op.startswith("delete_connector") for op, *_ in fake.calls)
+
+
+async def test_a_400_that_is_not_about_connectors_is_not_mistaken_for_the_gate(
+    tmp_path: Path,
+) -> None:
+    uc, fake, _ = _agent(tmp_path)
+    fake.fail_ops = {
+        "list_connectors": MbaAdminError(
+            "rejected", status=400, detail="Feature not available for your app"
+        )
+    }
+    with pytest.raises(MbaAdminError):
+        await uc.plan("sales")
