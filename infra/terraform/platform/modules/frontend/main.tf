@@ -81,6 +81,11 @@ resource "aws_cloudfront_response_headers_policy" "security" {
         "img-src 'self' data: https:",
         "font-src 'self' data:",
         "connect-src 'self' https:",
+        # Vista previa real de los anuncios en el inspector de Ads (2026-09-10):
+        # Meta la entrega como iframe de business.facebook.com. Sin frame-src
+        # todo frame cae a default-src 'self' y Chrome muestra "Este contenido
+        # está bloqueado".
+        "frame-src https://*.facebook.com",
         "object-src 'none'",
         "base-uri 'self'",
         "frame-ancestors 'none'",

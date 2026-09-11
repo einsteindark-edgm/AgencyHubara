@@ -216,6 +216,14 @@ describe("AdsInspector — vista previa del creativo por anuncio (2026-09-10)", 
     expect(mockCreative.lastAdId).toBe("AD_1");
     const iframe = container.querySelector("iframe");
     expect(iframe?.getAttribute("src")).toBe("https://www.facebook.com/ads/api/preview_iframe.php?d=abc");
+    // La página de Meta corre scripts que necesitan su propio origen (cookies/
+    // storage): sandbox con same-origin, nunca sin sandbox.
+    expect(iframe?.getAttribute("sandbox")).toContain("allow-same-origin");
+    expect(iframe?.getAttribute("sandbox")).toContain("allow-scripts");
+    // Incidente prod 2026-09-10: la CSP bloqueó el iframe y el panel quedó
+    // vacío. La miniatura grande se muestra SIEMPRE que exista, además del
+    // iframe — nunca depende de que el frame cargue.
+    expect(container.querySelector("img")?.getAttribute("src")).toBe("https://cdn.fb/big.jpg");
     expect(getByText("Velas que iluminan")).toBeTruthy();
     expect(getByText("Compra hoy")).toBeTruthy();
   });
