@@ -394,6 +394,14 @@ def _ui_skills(
                 )
             )
             continue
+        # `flow_id` no se puede editar (el PUT no lo acepta): cambiarlo = borrar y recrear.
+        if "flow_id" in body and not _same(
+            str(body["flow_id"]), str(remote.get("flow_id") or "")
+        ):
+            ops.append(
+                SyncOp("ui_skills", label, "replace", body, rid, "flow_id_changed")
+            )
+            continue
         update = {f: body[f] for f in _UI_UPDATE_FIELDS if f in body}
         if any(not _same(update[f], remote.get(f)) for f in update):
             ops.append(SyncOp("ui_skills", label, "update", update, rid))

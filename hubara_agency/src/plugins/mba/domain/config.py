@@ -190,6 +190,8 @@ class MbaUiSkillDTO:
     source: str
     kind: str  # static | dynamic
     note: str
+    #: Meta: entero, obligatorio si component_type == "flow", rechazado si no.
+    flow_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -424,6 +426,21 @@ def _build_ui_skills(
                 f"({', '.join(sorted(UI_COMPONENT_TYPES))})"
             )
         kind = str(u.get("kind") or "static")
+        raw_flow = u.get("flow_id")
+        flow_id: int | None = None
+        if component == "flow":
+            digits = str(raw_flow).strip() if raw_flow is not None else ""
+            if digits.isdigit():
+                flow_id = int(digits)
+            else:
+                problems.append(
+                    f"ui skill `{title}`: Meta exige `flow_id` (entero) cuando component_type es `flow`; "
+                    f'hoy vale {raw_flow!r} (en agent.yaml va `flow_id: "${{META_FLOW_ID_SHIPPING}}"`)'
+                )
+        elif raw_flow is not None:
+            problems.append(
+                f"ui skill `{title}`: `flow_id` no está soportado para component_type `{component}` (solo `flow`)"
+            )
         out.append(
             MbaUiSkillDTO(
                 title=title,
@@ -435,6 +452,7 @@ def _build_ui_skills(
                 note=str(
                     u.get("note") or (_DYNAMIC_UI_NOTE if kind == "dynamic" else "")
                 ),
+                flow_id=flow_id,
             )
         )
     return tuple(out)
@@ -615,17 +633,15 @@ def _build_requests(
             )
 
     for ui in cfg.ui_skills:
-        add(
-            "ui_skills",
-            ui.title,
-            {
-                "title": ui.title,
-                "component_type": ui.component_type,
-                "status": ui.status,
-                "instruction": ui.instruction,
-            },
-            ui.note,
-        )
+        ui_body: dict[str, Any] = {
+            "title": ui.title,
+            "component_type": ui.component_type,
+            "status": ui.status,
+            "instruction": ui.instruction,
+        }
+        if ui.flow_id is not None:
+            ui_body["flow_id"] = ui.flow_id
+        add("ui_skills", ui.title, ui_body, ui.note)
 
     st = cfg.settings
     handoff: dict[str, Any] = {

@@ -537,7 +537,8 @@ export function MbaConfigPreview({ agentId }: Props) {
         >
           MBA renderiza estos componentes por su cuenta; nosotros no construimos la UI. Lo que sí
           hay que declarar, uno por uno, es cuándo puede enviarlos y con qué datos. Los{" "}
-          <b>estáticos</b> llevan todo en la instrucción (URL fija, botones fijos, flow_id). Los{" "}
+          <b>estáticos</b> llevan todo en la instrucción (URL fija, botones fijos); el Flow del formulario va
+          aparte, como campo <code>flow_id</code>. Los{" "}
           <b>dinámicos</b> dependen de datos del catálogo o del connector, y la doc de Meta no dice
           cómo los puebla: quedan marcados "a verificar en F0" hasta probarlos en el sandbox.
         </div>
