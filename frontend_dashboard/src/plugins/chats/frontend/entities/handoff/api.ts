@@ -7,7 +7,7 @@
  * Enviar, Devolver), no estado a leer.
  */
 
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/shared/api/client";
 import { env, getAccessToken } from "@/shared/config";
 import { sessionKeys } from "@plugins/chats/frontend/entities/session";
@@ -15,11 +15,14 @@ import {
   handoffResponseSchema,
   humanMessageResponseSchema,
   mediaUploadResponseSchema,
+  whatsAppTemplatesResponseSchema,
   type HandoffResponse,
   type HumanMessageResponse,
   type MediaUploadResponse,
   type ReturnToBotInput,
   type SendHumanMessageInput,
+  type SendTemplateMessageInput,
+  type WhatsAppTemplate,
 } from "./contracts";
 
 /**
@@ -138,6 +141,45 @@ export function useReturnToBotMutation(sessionId: string | null) {
       if (sessionId) {
         qc.invalidateQueries({ queryKey: sessionKeys.detail(sessionId) });
         qc.invalidateQueries({ queryKey: sessionKeys.list() });
+      }
+    },
+  });
+}
+
+const whatsAppTemplatesKey = ["chats", "whatsapp-templates"] as const;
+
+/** Catálogo de plantillas aprobadas (modal "Reactivar conversación"). Cambia
+ *  solo con un deploy → cache largo; `enabled` lo prende al abrir el modal. */
+export function useWhatsAppTemplates(enabled: boolean) {
+  return useQuery<WhatsAppTemplate[]>({
+    queryKey: whatsAppTemplatesKey,
+    queryFn: async ({ signal }) => {
+      const raw = await apiClient.get<unknown>("/api/dashboard/whatsapp-templates", {
+        signal,
+      });
+      return whatsAppTemplatesResponseSchema.parse(raw).templates;
+    },
+    enabled,
+    staleTime: 30 * 60_000,
+  });
+}
+
+/** El humano reabre la conversación con una plantilla aprobada (ventana 24h
+ *  cerrada). El backend la persiste en el historial como mensaje del humano. */
+export function useSendTemplateMessageMutation(sessionId: string | null) {
+  const qc = useQueryClient();
+  return useMutation<HumanMessageResponse, Error, SendTemplateMessageInput>({
+    mutationFn: async (input) => {
+      if (!sessionId) throw new Error("No session selected");
+      const raw = await apiClient.post<unknown>(
+        `/api/dashboard/sessions/${sessionId}/template-messages`,
+        input,
+      );
+      return humanMessageResponseSchema.parse(raw);
+    },
+    onSuccess: () => {
+      if (sessionId) {
+        qc.invalidateQueries({ queryKey: sessionKeys.detail(sessionId) });
       }
     },
   });

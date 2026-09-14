@@ -437,6 +437,7 @@ async def get_session_history(session_id: str):
     status_history = []
     pending_payment_order_id = None
     origin = None
+    service_window_expires_at_ms = None
 
     metadata_file = session_path / "metadata.json"
     if metadata_file.exists():
@@ -449,6 +450,10 @@ async def get_session_history(session_id: str):
             status_history = data.get("status_history", [])
             pending_payment_order_id = _compute_pending_payment_order_id(data)
             origin = _origins_with_names({session_id: session_origin(data)})[session_id]
+            # El composer humano lo usa para ofrecer "Reactivar conversación"
+            # (plantilla) cuando la ventana 24h ya cerró. None = desconocido.
+            expires = data.get("service_window_expires_at_ms")
+            service_window_expires_at_ms = expires if isinstance(expires, int) else None
         except json.JSONDecodeError:
             pass
 
@@ -466,6 +471,7 @@ async def get_session_history(session_id: str):
         "active_agent_route": active_route,
         "phone_number_id": phone_number_id,
         "pending_payment_order_id": pending_payment_order_id,
+        "service_window_expires_at_ms": service_window_expires_at_ms,
         "status_history": status_history,
         "origin": origin,
         "messages": messages

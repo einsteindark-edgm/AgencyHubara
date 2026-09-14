@@ -185,9 +185,50 @@ class TestSendTemplateHappyPath:
         assert history_event["variables"] == {
             "product_or_quote_label": "vela",
         }
-        assert "[Template: quote_ready_utility_v2]" in history_event["content"]
-        assert "product_or_quote_label=vela" in history_event["content"]
+        # El content es el texto REAL que recibió el cliente (body renderizado),
+        # no un marker técnico: el operador lo lee en el chat y el LLM lo ve
+        # en su historial cuando retoma.
+        assert history_event["content"] == (
+            "Hola, tu cotización para vela ya está lista. "
+            "¿Quieres que te la comparta ahora?"
+        )
+        assert "sender" not in history_event
         assert "T" in history_event["timestamp"]
+
+    @pytest.mark.asyncio
+    async def test_operator_template_is_persisted_as_human_message(
+        self, isolated_vault
+    ):
+        """Una plantilla enviada por el operador desde el dashboard queda en el
+        historial con `sender=human` — el chat la pinta como burbuja del humano."""
+        session_id = "wa_5491111111111"
+        _write_metadata(
+            isolated_vault, session_id, {"phone_number_id": "PHONE_TEST", "episodes": []}
+        )
+        mock_send = AsyncMock(
+            return_value=OutboundResult(wa_message_id="wamid.H", ok=True, error=None)
+        )
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                "src.platform.whatsapp.activities.whatsapp_client.send_template",
+                mock_send,
+            )
+            await send_template_to_session(
+                session_id,
+                "human_followup_utility_v1",
+                {"followup_message": "Ya tenemos las fotos de tu vela."},
+                sender="human",
+            )
+
+        history_path = isolated_vault / session_id / "sessions" / f"{session_id}.jsonl"
+        event = json.loads(history_path.read_text(encoding="utf-8").strip())
+        assert event["sender"] == "human"
+        assert event["kind"] == "template"
+        assert event["content"] == (
+            "Hola, te escribimos para dar seguimiento a tu consulta.\n\n"
+            "Ya tenemos las fotos de tu vela.\n\n"
+            "Responde este mensaje y seguimos la conversación por aquí."
+        )
 
     @pytest.mark.asyncio
     async def test_resolves_phone_id_from_env_when_not_in_metadata(

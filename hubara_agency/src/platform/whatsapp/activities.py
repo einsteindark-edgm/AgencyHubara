@@ -45,6 +45,10 @@ from src.platform.whatsapp.cost import (
 )
 from src.platform.whatsapp.dtos import OutboundResult
 from src.platform.whatsapp.quiet_hours import is_quiet_hours_for_session
+from src.platform.whatsapp.templates.registry import (
+    TemplateSpec,
+    render_template_body,
+)
 from src.platform.whatsapp.send_policy import (
     CHANNEL_BLOCKED,
     CHANNEL_TEMPLATE,
@@ -662,8 +666,14 @@ async def send_template_to_session(
     session_id: str,
     template_name: str,
     variables: dict[str, str],
+    *,
+    sender: str | None = None,
 ) -> OutboundResult:
     """Envía un template aprobado y persiste el OutboundLogEntry.
+
+    `sender="human"`: la plantilla la mandó el operador desde el dashboard —
+    el evento del historial lleva `sender` y el chat la pinta como burbuja del
+    humano. Default None = envío del sistema (watchdog, ETA, campañas).
 
     Versión pura (sin decorators Temporal) — testeable sin worker. El activity
     `send_whatsapp_template_activity` es solo el wrapper con heartbeat.
@@ -773,7 +783,7 @@ async def send_template_to_session(
     # (vive en Meta Business Manager, no en código), pero suficiente para
     # que el operador entienda qué se mandó.
     _append_template_to_session_history(
-        session_id, template_name, variables, spec.waba_template_name
+        session_id, spec, variables, sender=sender
     )
 
     log.info(
@@ -787,20 +797,22 @@ async def send_template_to_session(
 
 def _append_template_to_session_history(
     session_id: str,
-    template_name: str,
+    spec: TemplateSpec,
     variables: dict[str, str],
-    waba_template_name: str,
+    *,
+    sender: str | None = None,
 ) -> None:
     """Persiste un marker del template enviado al JSONL del session_history.
 
     Shape del evento (compatible con `append_assistant_event` shape):
         {"role": "assistant", "kind": "template", "template_name": "...",
          "waba_template_name": "...", "variables": {...},
-         "content": "[Template: ...] var1=val1, var2=val2",
+         "content": "<body del template renderizado con las variables>",
          "timestamp": "<ISO>"}
 
-    El `content` es un string human-readable que el dashboard puede pintar
-    si no quiere parsear los campos estructurados.
+    El `content` es el texto REAL que recibió el cliente (`render_template_body`):
+    el operador lo lee en el chat y el LLM lo ve en su historial al retomar.
+    `sender` (solo si viene) marca el envío del operador humano.
 
     Best-effort: si el write falla, log warning y continúa — el send ya
     ocurrió, el log JSONL es secondary observability.
@@ -808,24 +820,24 @@ def _append_template_to_session_history(
     history_path = WORKSPACE_VAULT_DIR / session_id / "sessions" / f"{session_id}.jsonl"
     try:
         history_path.parent.mkdir(parents=True, exist_ok=True)
-        var_summary = ", ".join(f"{k}={v}" for k, v in variables.items())
-        content = f"[Template: {template_name}] {var_summary}".strip()
-        event = {
+        event: dict[str, Any] = {
             "role": "assistant",
             "kind": "template",
-            "template_name": template_name,
-            "waba_template_name": waba_template_name,
+            "template_name": spec.name,
+            "waba_template_name": spec.waba_template_name,
             "variables": variables,
-            "content": content,
+            "content": render_template_body(spec, variables),
             "timestamp": _now_iso_utc(),
         }
+        if sender:
+            event["sender"] = sender
         with history_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(event, ensure_ascii=False) + "\n")
     except OSError as e:
         log.warning(
             "template_session_history_persist_failed",
             session_id=session_id,
-            template_name=template_name,
+            template_name=spec.name,
             error=str(e),
         )
 

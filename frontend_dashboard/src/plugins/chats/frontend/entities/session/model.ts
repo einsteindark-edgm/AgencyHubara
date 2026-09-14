@@ -50,6 +50,8 @@ export interface SessionDetails {
   phone_number_id: string | null;
   /** Pedido (id backend Medusa) esperando confirmación de pago humana, o null. */
   pending_payment_order_id: string | null;
+  /** Epoch ms del cierre de la ventana de servicio 24h, o null si se desconoce. */
+  service_window_expires_at_ms: number | null;
   status_history: StatusHistoryEntry[];
   origin: SessionOrigin | null;
   messages: ChatMessage[];

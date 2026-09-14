@@ -22,6 +22,18 @@ cuenta (los sends siguen pasando por las activities de platform).
 """
 from __future__ import annotations
 
+# Catálogo de plantillas aprobadas con su copy (`body`) — lo lee el dashboard
+# de chats para que el operador humano elija, previsualice y mande una
+# plantilla cuando la ventana 24h cerró ("Reactivar conversación").
+from src.platform.whatsapp.composition import (
+    get_template_registry as get_template_registry,
+)
+from src.platform.whatsapp.templates.registry import (
+    TemplateSpec as TemplateSpec,
+    meta_text_param_errors as meta_text_param_errors,
+    render_template_body as render_template_body,
+    validate_variables as validate_variables,
+)
 from src.platform.whatsapp.composition import (
     get_current_rate_card as get_current_rate_card,
 )

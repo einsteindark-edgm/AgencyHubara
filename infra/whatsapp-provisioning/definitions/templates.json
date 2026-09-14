@@ -24,6 +24,14 @@
     "semantics": "Update objetivo de estado de orden post-compra (watchdog: post_purchase; también agente ETA). v2: sin saludo por nombre."
   },
   {
+    "name": "human_followup_utility_v1",
+    "category": "UTILITY",
+    "language": "es_CO",
+    "body": "Hola, te escribimos para dar seguimiento a tu consulta.\n\n{{1}}\n\nResponde este mensaje y seguimos la conversación por aquí.",
+    "example": ["Ya tenemos las fotos de la vela personalizada que pediste para el 15 de septiembre."],
+    "semantics": "Seguimiento del operador humano cuando la ventana de 24h cerró (dashboard: Reactivar conversación). El slot {{1}} lo escribe el humano sobre el tema pendiente; sin nombre del cliente ni promociones (utility). NUNCA por watchdog."
+  },
+  {
     "name": "campaign_promo_marketing",
     "category": "MARKETING",
     "language": "es_CO",

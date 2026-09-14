@@ -56,6 +56,10 @@ export const sessionDetailsSchema = z.object({
   // Ver `chatSessionSchema.pending_payment_order_id`. El composer del chat lo
   // lee de aquí (vía `useSession`) para mostrar el botón "Confirmar pago".
   pending_payment_order_id: z.string().nullable().default(null),
+  // Epoch ms en que cierra la ventana de servicio 24h de WhatsApp, o null si
+  // no se conoce. Con la ventana cerrada el composer humano ofrece
+  // "Reactivar conversación" (plantilla) en vez de texto libre.
+  service_window_expires_at_ms: z.number().nullable().default(null),
   status_history: z.array(statusHistoryEntrySchema),
   origin: sessionOriginSchema.nullable().default(null),
   messages: z.array(chatMessageSchema),

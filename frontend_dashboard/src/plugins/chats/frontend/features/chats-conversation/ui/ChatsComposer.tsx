@@ -7,13 +7,17 @@
  *     (`POST /sessions/{id}/messages`) y botón "Devolver al bot" que abre
  *     un selector (Sales / Remarketing) y llama `POST /sessions/{id}/return-to-bot`.
  *
+ * Con la ventana de servicio 24h cerrada (`service_window_expires_at_ms` en el
+ * pasado, o un 409 del backend al mandar texto) el texto libre se bloquea y
+ * aparece "Reactivar conversación": un modal para mandar una plantilla aprobada.
+ *
  * El estado del modo NO es local: viene de `useSession(chatId).active_agent_route`.
  * Así, si el bot escala (`escalate_to_human`), el composer se cambia solo a
  * intervenido sin que el operador haga nada. Y al devolver al bot, se cambia
  * solo de vuelta gracias a `invalidateQueries`.
  */
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Icon } from "@/shared/ui";
 import { IS_MOBILE_APP } from "@/shared/lib";
 import { useSession } from "@plugins/chats/frontend/entities/session";
@@ -26,12 +30,32 @@ import {
 import { useOutbox } from "../model/useOutbox";
 import { ConfirmPaymentAction } from "./ConfirmPaymentAction";
 import { ScheduleDeliveryAction } from "./ScheduleDeliveryAction";
+import { apiErrorDetail } from "../model/apiErrorDetail";
+import { ReactivateConversationModal } from "./ReactivateConversationModal";
 
 /** Solo JPEG/PNG (lo que WhatsApp renderiza como `type=image`). La cámara
  *  solo produce imágenes; el picker de archivos también acepta PDF. */
 const ACCEPTED_IMAGE_TYPES = "image/jpeg,image/png";
 /** El picker de archivos suma PDF: comprobantes de pago (`type=document`). */
 const ACCEPTED_FILE_TYPES = "image/jpeg,image/png,application/pdf";
+
+/** Reloj que re-renderiza cada minuto: la ventana 24h puede cerrar con el chat
+ *  abierto y el composer debe enterarse sin recargar. */
+function useNowMs(everyMs = 60_000): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), everyMs);
+    return () => clearInterval(id);
+  }, [everyMs]);
+  return now;
+}
+
+/** 409 del envío libre por ventana cerrada (el backend lo explica en `detail`). */
+function isWindowClosedError(error: unknown): boolean {
+  if ((error as { status?: unknown } | null)?.status !== 409) return false;
+  const detail = (error as { body?: { detail?: unknown } }).body?.detail;
+  return typeof detail !== "string" || detail.includes("24h");
+}
 
 interface Props {
   chatId: string | null;
@@ -46,6 +70,7 @@ export function ChatsComposer({ chatId }: Props) {
       <InterveneActiveComposer
         chatId={chatId}
         pendingPaymentOrderId={session?.pending_payment_order_id ?? null}
+        serviceWindowExpiresAtMs={session?.service_window_expires_at_ms ?? null}
       />
     );
   }
@@ -104,14 +129,19 @@ interface InterveneActiveProps {
   chatId: string | null;
   /** Pedido esperando confirmación de pago (id backend), o null si no hay. */
   pendingPaymentOrderId: string | null;
+  /** Cierre de la ventana de servicio 24h (epoch ms), o null si se desconoce. */
+  serviceWindowExpiresAtMs: number | null;
 }
 
 function InterveneActiveComposer({
   chatId,
   pendingPaymentOrderId,
+  serviceWindowExpiresAtMs,
 }: InterveneActiveProps) {
   const [text, setText] = useState("");
   const [showReturnPicker, setShowReturnPicker] = useState(false);
+  const [showReactivate, setShowReactivate] = useState(false);
+  const nowMs = useNowMs();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   // PM-007: un solo popover de acción de pedido abierto a la vez — con los
@@ -124,11 +154,16 @@ function InterveneActiveComposer({
   const sendMessage = useSendHumanMessageMutation(chatId);
   const outbox = useOutbox(chatId);
 
+  const windowClosed =
+    serviceWindowExpiresAtMs !== null && nowMs >= serviceWindowExpiresAtMs;
+  const needsReactivation =
+    windowClosed || (sendMessage.isError && isWindowClosedError(sendMessage.error));
+
   const onSend = () => {
     const value = text.trim();
     // Enviar la FOTO no bloquea el texto: mandar texto es independiente. Si el
     // operador escribió algo, lo mandamos como mensaje de texto normal.
-    if (!value || !chatId || sendMessage.isPending) return;
+    if (!value || !chatId || sendMessage.isPending || windowClosed) return;
     sendMessage.mutate({ text: value }, { onSuccess: () => setText("") });
   };
 
@@ -177,6 +212,23 @@ function InterveneActiveComposer({
         </span>
       </div>
 
+      {needsReactivation && (
+        <div className="window-closed" role="status">
+          <span>
+            La ventana de 24 h de WhatsApp está cerrada: el cliente no ha escrito.
+            Para retomar, envíale una plantilla.
+          </span>
+          <button
+            type="button"
+            className="interv-btn"
+            onClick={() => setShowReactivate(true)}
+            disabled={!chatId}
+          >
+            Reactivar conversación
+          </button>
+        </div>
+      )}
+
       {outbox.items.length > 0 && (
         <OutboxStrip items={outbox.items} onRetry={outbox.retry} onRemove={outbox.remove} />
       )}
@@ -207,7 +259,7 @@ function InterveneActiveComposer({
           type="button"
           className="attach-btn"
           onClick={() => fileInputRef.current?.click()}
-          disabled={!chatId}
+          disabled={!chatId || windowClosed}
           title="Adjuntar foto o PDF"
           aria-label="Adjuntar foto o PDF"
         >
@@ -218,7 +270,7 @@ function InterveneActiveComposer({
             type="button"
             className="camera-btn"
             onClick={() => cameraInputRef.current?.click()}
-            disabled={!chatId}
+            disabled={!chatId || windowClosed}
             title="Tomar foto"
             aria-label="Tomar foto"
           >
@@ -226,7 +278,11 @@ function InterveneActiveComposer({
           </button>
         )}
         <textarea
-          placeholder="Escribe un mensaje al cliente…"
+          placeholder={
+            windowClosed
+              ? "Ventana de 24 h cerrada · reactiva la conversación con una plantilla"
+              : "Escribe un mensaje al cliente…"
+          }
           rows={1}
           // PM2-M10: en el teléfono, autoFocus abre el TECLADO al entrar a
           // cualquier chat intervenido — con `resizes-content` eso colapsa
@@ -240,12 +296,12 @@ function InterveneActiveComposer({
               onSend();
             }
           }}
-          disabled={sendMessage.isPending}
+          disabled={sendMessage.isPending || windowClosed}
         />
         <button
           className="send-btn"
           onClick={onSend}
-          disabled={!text.trim() || sendMessage.isPending}
+          disabled={!text.trim() || sendMessage.isPending || windowClosed}
           title={sendMessage.isPending ? "Enviando…" : "Enviar (⌘↩)"}
         >
           <Icon.send />
@@ -253,8 +309,14 @@ function InterveneActiveComposer({
       </div>
       {sendMessage.isError && (
         <div className="composer-err" role="alert">
-          No se pudo enviar: {sendMessage.error?.message}
+          No se pudo enviar: {apiErrorDetail(sendMessage.error)}
         </div>
+      )}
+      {showReactivate && (
+        <ReactivateConversationModal
+          chatId={chatId}
+          onClose={() => setShowReactivate(false)}
+        />
       )}
       {showReturnPicker && (
         <ReturnToBotPicker
