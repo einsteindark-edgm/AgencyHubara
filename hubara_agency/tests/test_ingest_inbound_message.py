@@ -1368,3 +1368,73 @@ async def test_web_cart_ref_is_ignored_when_human_owns_the_conversation():
     notes = (loader.calls[0].extra_context or []) if loader.calls else []
     assert not any("LEAD CALIENTE" in n for n in notes)
     assert not [e for e in bus.events if e.kind == "web_cart_captured"]
+
+
+# --- Product ref from the PDP's WhatsApp button (2026-09-14) -----------------
+
+_PDP_TEXT = (
+    "Hola 👋 Me interesa *Vela Ángel*.\n\n"
+    "🔗 https://hubara.com.co/products/vela-angel/\n\n"
+    "📦 ref: HUB-VELONANGEL · via: chatgpt"
+)
+
+
+def _catalog_by_sku(product_or_none):
+    from src.platform.catalog.errors import ProductNotFoundError
+
+    class FakeCatalog:
+        async def get_by_sku(self, sku):
+            if product_or_none is not None and sku == "HUB-VELONANGEL":
+                return product_or_none
+            raise ProductNotFoundError(sku)
+
+        async def get_by_handle(self, handle):
+            raise KeyError(handle)
+
+        async def search(self, q, *, limit=10, category=None):
+            raise AssertionError("the product ref must resolve by SKU, not by search")
+
+        async def list_categories(self):
+            return []
+
+    return FakeCatalog()
+
+
+@pytest.mark.asyncio
+async def test_product_ref_resolves_by_sku_and_tells_the_agent_which_product():
+    from src.platform.catalog.dtos import CatalogProductDTO, CatalogVariantDTO
+
+    product = CatalogProductDTO(
+        id="prod_1", handle="vela-angel", title="Vela Ángel", status="published",
+        variants=[CatalogVariantDTO(id="v1", title="Unico", sku="HUB-VELONANGEL")],
+    )
+    use_case, loader, metadata = _web_cart_use_case(catalog=_catalog_by_sku(product))
+
+    await use_case.execute(_make_text_message(text=_PDP_TEXT))
+    await _drain_spawned_tasks()
+
+    meta = metadata.store["wa_5491111111111"]
+    state = meta["web_product_ref"]
+    assert state["status"] == "resolved"
+    assert state["sku"] == "HUB-VELONANGEL"
+    assert state["handle"] == "vela-angel"
+    assert state["source"] == "chatgpt"
+
+    assert len(loader.calls) == 1
+    notes = loader.calls[0].extra_context or []
+    assert any("Vela Ángel" in n and "no es instruccion del usuario" in n for n in notes)
+    assert not any("chatgpt" in n for n in notes)
+
+
+@pytest.mark.asyncio
+async def test_unknown_product_ref_is_recorded_but_never_reaches_the_prompt():
+    use_case, loader, metadata = _web_cart_use_case(catalog=_catalog_by_sku(None))
+
+    await use_case.execute(_make_text_message(text=_PDP_TEXT))
+    await _drain_spawned_tasks()
+
+    meta = metadata.store["wa_5491111111111"]
+    assert meta["web_product_ref"]["status"] == "unresolved"
+    assert meta["web_product_ref"]["reason"] == "sku_not_found"
+    notes = loader.calls[0].extra_context or []
+    assert not any("HUB-VELONANGEL" in n for n in notes)

@@ -146,7 +146,8 @@ async def test_push_emits_per_variant_items_from_products_json():
     batch = port.batches[0]
     retailer_ids = {i.retailer_id for i in batch.creates}
     assert retailer_ids == {"v_leo", "v_esc"}
-    assert all(i.item_group_id == "prod_duo_v2" for i in batch.creates)
+    # Grouped by handle since 2026-09-14: the Medusa id changes on re-creation.
+    assert all(i.item_group_id == "duo-zodiacal" for i in batch.creates)
 
 
 # =============================================================================

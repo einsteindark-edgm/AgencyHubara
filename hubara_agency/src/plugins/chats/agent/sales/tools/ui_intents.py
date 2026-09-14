@@ -44,6 +44,7 @@ from typing import Any
 from exoclaw.agent.tools import ToolBase, ToolContext
 from loguru import logger
 
+from src.sdk.connectorkit import product_retailer_id
 from src.platform.catalog import CatalogPort, ProductNotFoundError, deslugify
 from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.state import FilesystemMetadataStore
@@ -111,16 +112,13 @@ def _append_intent(session_key: str, intent: dict[str, Any]) -> None:
 def _meta_retailer_id(product) -> str:
     """Retailer id VIGENTE del producto en Meta Catalog.
 
-    Producto con variantes reales (options + 2+ variantes): Meta tiene un
-    item POR variante (`retailer_id = variant_id`, PR #178/#179) y el item
-    a nivel producto YA NO EXISTE — referenciarlo hace que WhatsApp dropee
-    el producto del MPM en silencio (caso Duo Zodiacal, 2026-07-16, sesión
-    wa_573125671604). Usamos la PRIMERA variante (determinista). Producto
-    legacy → product.id como siempre.
+    Es el SKU (platform/catalog/identity.py): Meta se sincroniza por SKU desde
+    2026-09-14, y referenciar otra llave hace que WhatsApp dropee el producto
+    del MPM en silencio (caso Duo Zodiacal, 2026-07-16, sesión
+    wa_573125671604). Producto con variantes reales → la PRIMERA variante
+    (determinista); sin SKU cargado todavía → los ids de Medusa de siempre.
     """
-    if getattr(product, "options", None) and len(product.variants or []) > 1:
-        return product.variants[0].id
-    return product.id
+    return product_retailer_id(product)
 
 
 def _first_price(product) -> tuple[str | None, str | None]:

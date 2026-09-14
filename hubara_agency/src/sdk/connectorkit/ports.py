@@ -43,6 +43,9 @@ from src.platform.catalog.composition import (
     get_catalog_client as get_catalog_client,
     get_checkout_verification_port as get_checkout_verification_port,
 )
+from src.platform.catalog.identity import (
+    product_retailer_id as product_retailer_id,
+)
 from src.platform.catalog.errors import (
     CatalogUnavailableError as CatalogUnavailableError,
     ProductNotFoundError as ProductNotFoundError,
