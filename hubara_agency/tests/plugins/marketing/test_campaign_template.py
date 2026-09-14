@@ -83,3 +83,45 @@ def test_campaign_template_variables_sin_nombre_ni_cupon() -> None:
 
     assert variables["greeting"] == "Hola"
     assert all(v.strip() for v in variables.values())
+
+
+def test_campaign_template_variables_sin_saltos_tabs_ni_5_espacios() -> None:
+    """Meta (Cloud API, error 100) rechaza un param de texto del body con
+    salto de línea, tab o más de 4 espacios seguidos — el envío entero de la
+    campaña fallaría. Header+body y el copy que el operador escribe en el
+    textarea (con saltos de párrafo) deben viajar en una sola línea."""
+    import re
+
+    forbidden = re.compile(r"[\n\r\t]| {5,}")
+    campaign = new_campaign(campaign_id="mkt-3", name="Promo", now_ms=1)
+    campaign["message"] = {
+        "header": "¡Día del padre!",
+        "body": "Velas artesanales\n\npara papá.\r\n\tEnvío     gratis.",
+        "footer": "",
+        "cta": "",
+    }
+    campaign["coupon_code"] = "PAPA10"
+    campaign["valid_until"] = "domingo\n21"
+
+    variables = campaign_template_variables(
+        campaign, customer_name="Camila\tRuiz"
+    )
+
+    offending = {k: v for k, v in variables.items() if forbidden.search(v)}
+    assert offending == {}
+    assert variables["campaign_message"] == (
+        "¡Día del padre! Velas artesanales para papá. Envío gratis."
+    )
+    assert variables["greeting"] == "Hola Camila Ruiz"
+
+
+def test_campaign_message_separa_header_sin_puntuacion_como_oracion() -> None:
+    campaign = new_campaign(campaign_id="mkt-4", name="Promo", now_ms=1)
+    campaign["message"]["header"] = "Velas con 15% OFF"
+    campaign["message"]["body"] = "Solo hasta el viernes."
+
+    variables = campaign_template_variables(campaign, customer_name=None)
+
+    assert variables["campaign_message"] == (
+        "Velas con 15% OFF. Solo hasta el viernes."
+    )
