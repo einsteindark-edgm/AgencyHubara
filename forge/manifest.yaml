@@ -142,6 +142,18 @@ replacements:
     files: ["infra/whatsapp-provisioning/definitions/*.json"]
     from: "Hubara — Datos de envío"
     to: "{{company}} — Datos de envío"
+  - id: plantilla-seguimiento-humano      # human_followup_utility_v1: la asesora
+    # y la marca son del cliente. Mismo texto en definitions (lo que se somete a
+    # Meta), catálogo (guard de drift) y los tests/fixtures que lo renderizan.
+    files:
+      - "infra/whatsapp-provisioning/definitions/*.json"
+      - "hubara_agency/src/platform/whatsapp/templates/catalog.yaml"
+      - "hubara_agency/tests/platform/test_whatsapp_send_template.py"
+      - "hubara_agency/tests/test_handoff_template_endpoints.py"
+      - "frontend_dashboard/src/plugins/chats/frontend/features/chats-conversation/ui/ChatsComposer.test.tsx"
+      - "frontend_dashboard/src/plugins/chats/frontend/entities/handoff/model/templatePreview.test.ts"
+    from: "te escribe Liliana, asesora de Hubara,"
+    to: "te escribe tu asesora de {{company}},"
   - id: ws-default-tenant
     files: ["infra/whatsapp-provisioning/*.py"]
     from: 'or "hubara"'

@@ -39,7 +39,53 @@ const confirmPaymentMutate = vi.fn();
 const scheduleOrderMutate = vi.fn();
 const orderDetailMock = vi.fn();
 
-vi.mock("@plugins/chats/frontend/entities/handoff", () => ({
+const sendTemplateMutate = vi.fn();
+let sendMessageState: { isError: boolean; error: Error | null } = {
+  isError: false,
+  error: null,
+};
+
+const templatesFixture = [
+  {
+    name: "human_followup_utility_v1",
+    category: "utility",
+    semantics: "Seguimiento del operador humano con la ventana 24h cerrada",
+    body: "Hola, te escribe Liliana, asesora de Hubara, para hacer seguimiento a tu consulta {{1}}. Quedo atenta a tu respuesta.",
+    variables: [
+      { name: "followup_message", description: "Mensaje del operador sobre el tema pendiente", max_length: 400 },
+    ],
+    is_default: true,
+  },
+  {
+    name: "order_status_utility_v2",
+    category: "utility",
+    semantics: "Update post-compra del estado de la orden",
+    body: "Hola, tu pedido {{1}} está {{2}}. Si quieres más información, cuéntame por aquí.",
+    variables: [
+      { name: "order_reference", description: "ID legible de la orden", max_length: 60 },
+      { name: "status_label", description: "Estado", max_length: 300 },
+    ],
+    is_default: false,
+  },
+];
+
+vi.mock("@plugins/chats/frontend/entities/handoff", async () => {
+  const preview = await vi.importActual<
+    typeof import("@plugins/chats/frontend/entities/handoff/model/templatePreview")
+  >("@plugins/chats/frontend/entities/handoff/model/templatePreview");
+  return {
+  ...preview,
+  useWhatsAppTemplates: () => ({
+    data: templatesFixture,
+    isLoading: false,
+    isError: false,
+  }),
+  useSendTemplateMessageMutation: () => ({
+    mutate: sendTemplateMutate,
+    isPending: false,
+    isError: false,
+    error: null,
+  }),
   useInterveneMutation: () => ({
     mutate: interveneMutate,
     isPending: false,
@@ -49,8 +95,7 @@ vi.mock("@plugins/chats/frontend/entities/handoff", () => ({
   useSendHumanMessageMutation: () => ({
     mutate: sendMutate,
     isPending: false,
-    isError: false,
-    error: null,
+    ...sendMessageState,
   }),
   useReturnToBotMutation: () => ({
     mutate: returnMutate,
@@ -59,7 +104,8 @@ vi.mock("@plugins/chats/frontend/entities/handoff", () => ({
     error: null,
   }),
   uploadHumanMedia: vi.fn(),
-}));
+  };
+});
 
 // Mock del outbox de fotos: capturamos enqueue y controlamos los items
 // renderizados sin tocar compresión/red.
@@ -121,6 +167,8 @@ beforeEach(() => {
   retryMock.mockReset();
   removeMock.mockReset();
   outboxItems = [];
+  sendTemplateMutate.mockReset();
+  sendMessageState = { isError: false, error: null };
   // Default: el pedido NO tiene fecha asignada aún (flujo 2 pasos vigente).
   orderDetailMock.mockReset().mockReturnValue({
     data: undefined,
@@ -655,5 +703,93 @@ describe("ChatsComposer", () => {
 
     await waitFor(() => expect(scheduleOrderMutate).toHaveBeenCalledTimes(1));
     expect(scheduleOrderMutate.mock.calls[0][0].note).toMatch(/confirmar pago/i);
+  });
+});
+
+describe("ChatsComposer · reactivar conversación (ventana 24h cerrada)", () => {
+  const closedSession = () => ({
+    data: { active_agent_route: "humano", service_window_expires_at_ms: Date.now() - 60_000 },
+  });
+
+  it("offers 'Reactivar conversación' and blocks free text when the window closed", () => {
+    useSessionMock.mockReturnValue(closedSession());
+    render(<ChatsComposer chatId="wa_X" />, { wrapper: makeWrapper() });
+
+    expect(screen.getByRole("button", { name: /reactivar conversación/i })).toBeInTheDocument();
+    expect(screen.getByRole("textbox")).toBeDisabled();
+  });
+
+  it("keeps the normal composer while the window is open", () => {
+    useSessionMock.mockReturnValue({
+      data: { active_agent_route: "humano", service_window_expires_at_ms: Date.now() + 3_600_000 },
+    });
+    render(<ChatsComposer chatId="wa_X" />, { wrapper: makeWrapper() });
+
+    expect(screen.queryByRole("button", { name: /reactivar conversación/i })).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/Escribe un mensaje al cliente/i)).not.toBeDisabled();
+  });
+
+  it("offers 'Reactivar conversación' when the free-text send is rejected with 409", () => {
+    useSessionMock.mockReturnValue({ data: { active_agent_route: "humano" } });
+    sendMessageState = {
+      isError: true,
+      error: Object.assign(new Error("API error 409"), {
+        status: 409,
+        body: { detail: "La ventana de servicio de 24h de WhatsApp está cerrada" },
+      }),
+    };
+    render(<ChatsComposer chatId="wa_X" />, { wrapper: makeWrapper() });
+
+    expect(screen.getByRole("button", { name: /reactivar conversación/i })).toBeInTheDocument();
+  });
+
+  it("modal preselects the follow-up template and previews the placeholder", () => {
+    useSessionMock.mockReturnValue(closedSession());
+    render(<ChatsComposer chatId="wa_X" />, { wrapper: makeWrapper() });
+    fireEvent.click(screen.getByRole("button", { name: /reactivar conversación/i }));
+
+    const dialog = screen.getByRole("dialog");
+    expect((screen.getByLabelText(/plantilla/i) as HTMLSelectElement).value).toBe(
+      "human_followup_utility_v1",
+    );
+    const preview = screen.getByTestId("template-preview");
+    expect(preview).toHaveTextContent("Hola, te escribe Liliana, asesora de Hubara, para hacer seguimiento a tu consulta");
+    expect(preview).toHaveTextContent("{ tu texto aquí }");
+    expect(dialog).toContainElement(preview);
+    expect(screen.getByRole("button", { name: /enviar plantilla/i })).toBeDisabled();
+  });
+
+  it("typing shows the text inside the preview and sending posts the template", () => {
+    useSessionMock.mockReturnValue(closedSession());
+    render(<ChatsComposer chatId="wa_X" />, { wrapper: makeWrapper() });
+    fireEvent.click(screen.getByRole("button", { name: /reactivar conversación/i }));
+
+    fireEvent.change(screen.getByLabelText(/mensaje del operador/i), {
+      target: { value: "Ya tenemos las fotos\nde tu vela." },
+    });
+    const preview = screen.getByTestId("template-preview");
+    expect(preview).toHaveTextContent("Ya tenemos las fotos de tu vela.");
+    expect(preview).not.toHaveTextContent("{ tu texto aquí }");
+
+    fireEvent.click(screen.getByRole("button", { name: /enviar plantilla/i }));
+    expect(sendTemplateMutate).toHaveBeenCalledTimes(1);
+    expect(sendTemplateMutate.mock.calls[0][0]).toEqual({
+      template_name: "human_followup_utility_v1",
+      variables: { followup_message: "Ya tenemos las fotos de tu vela." },
+      client_message_id: expect.any(String),
+    });
+  });
+
+  it("lets the operator pick another approved template", () => {
+    useSessionMock.mockReturnValue(closedSession());
+    render(<ChatsComposer chatId="wa_X" />, { wrapper: makeWrapper() });
+    fireEvent.click(screen.getByRole("button", { name: /reactivar conversación/i }));
+
+    fireEvent.change(screen.getByLabelText(/plantilla/i), {
+      target: { value: "order_status_utility_v2" },
+    });
+    const preview = screen.getByTestId("template-preview");
+    expect(preview).toHaveTextContent("{ ID legible de la orden }");
+    expect(screen.getByLabelText(/estado/i)).toBeInTheDocument();
   });
 });

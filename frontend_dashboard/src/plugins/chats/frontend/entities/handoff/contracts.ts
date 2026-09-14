@@ -34,7 +34,29 @@ export const mediaUploadResponseSchema = z.object({
   media_ref: z.string(),
 });
 
+/** Plantilla aprobada del catálogo (`GET /api/dashboard/whatsapp-templates`).
+ *  `body` trae los slots `{{1}}`, `{{2}}`… en el orden de `variables`. */
+export const whatsAppTemplateSchema = z.object({
+  name: z.string(),
+  category: z.string(),
+  semantics: z.string(),
+  body: z.string().nullable(),
+  variables: z.array(
+    z.object({
+      name: z.string(),
+      description: z.string().nullable(),
+      max_length: z.number().nullable(),
+    }),
+  ),
+  is_default: z.boolean(),
+});
+
+export const whatsAppTemplatesResponseSchema = z.object({
+  templates: z.array(whatsAppTemplateSchema),
+});
+
 export type HandoffResponse = z.infer<typeof handoffResponseSchema>;
+export type WhatsAppTemplate = z.infer<typeof whatsAppTemplateSchema>;
 export type HumanMessageResponse = z.infer<typeof humanMessageResponseSchema>;
 export type MediaUploadResponse = z.infer<typeof mediaUploadResponseSchema>;
 
@@ -52,4 +74,11 @@ export interface ReturnToBotInput {
   target_route: TargetRoute;
   /** Requerido sólo si target_route === "remarketing". */
   motivo?: string;
+}
+
+/** Envío de plantilla del operador ("Reactivar conversación"). */
+export interface SendTemplateMessageInput {
+  template_name: string;
+  variables: Record<string, string>;
+  client_message_id?: string;
 }

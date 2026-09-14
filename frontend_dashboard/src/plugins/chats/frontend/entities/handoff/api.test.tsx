@@ -14,6 +14,8 @@ import {
   useInterveneMutation,
   useReturnToBotMutation,
   useSendHumanMessageMutation,
+  useSendTemplateMessageMutation,
+  useWhatsAppTemplates,
 } from "./api";
 
 const fetchMock = vi.fn();
@@ -265,5 +267,71 @@ describe("uploadHumanMedia — timeout del XHR escala con el tamaño (PDFs)", ()
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe("useWhatsAppTemplates", () => {
+  it("loads the template catalog from the dashboard API", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          templates: [
+            {
+              name: "human_followup_utility_v1",
+              category: "utility",
+              semantics: "Seguimiento",
+              body: "Hola {{1}} gracias",
+              variables: [{ name: "followup_message", description: "Mensaje", max_length: 400 }],
+              is_default: true,
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    const { wrapper } = makeWrapper();
+    const { result } = renderHook(() => useWhatsAppTemplates(true), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(fetchMock.mock.calls[0][0]).toContain("/api/dashboard/whatsapp-templates");
+    expect(result.current.data?.[0].is_default).toBe(true);
+  });
+});
+
+describe("useSendTemplateMessageMutation", () => {
+  it("posts the template with its variables and refreshes the chat", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: true,
+          role: "assistant",
+          sender: "human",
+          content: "Hola, te escribimos… Ya tenemos tus fotos.",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    const { client, wrapper } = makeWrapper();
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    const { result } = renderHook(() => useSendTemplateMessageMutation("wa_T"), { wrapper });
+
+    await act(async () => {
+      await result.current.mutateAsync({
+        template_name: "human_followup_utility_v1",
+        variables: { followup_message: "Ya tenemos tus fotos." },
+        client_message_id: "cmid-1",
+      });
+    });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toContain("/api/dashboard/sessions/wa_T/template-messages");
+    expect(JSON.parse(init.body)).toEqual({
+      template_name: "human_followup_utility_v1",
+      variables: { followup_message: "Ya tenemos tus fotos." },
+      client_message_id: "cmid-1",
+    });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: sessionKeys.detail("wa_T") });
   });
 });

@@ -15,6 +15,7 @@ from __future__ import annotations
 import pytest
 
 from src.platform.whatsapp.templates.registry import (
+    meta_text_param_errors,
     TemplateSpec,
     TemplateVariable,
     _build_registry_from_dict,
@@ -35,13 +36,15 @@ class TestLoadCatalogReal:
         registry = load_template_registry_from_yaml()
 
         # Los 4 templates iniciales del HU (v2 sin saludo por nombre,
-        # 2026-07-21) + el de campañas directas (sección Marketing, 2026-07-17).
+        # 2026-07-21) + el de campañas directas (sección Marketing, 2026-07-17)
+        # + el de seguimiento del operador humano (Reactivar conversación).
         assert "quote_ready_utility_v2" in registry
         assert "payment_pending_utility_v2" in registry
         assert "order_status_utility_v2" in registry
         assert "cart_recovery_marketing_v2" in registry
         assert "campaign_promo_marketing_v1" in registry
-        assert len(registry) == 5
+        assert "human_followup_utility_v1" in registry
+        assert len(registry) == 6
 
     def test_quote_ready_has_correct_spec(self):
         registry = load_template_registry_from_yaml()
@@ -373,3 +376,23 @@ class TestCompositionFactory:
         a = get_template_registry()
         b = get_template_registry()
         assert a is b  # mismo object — cached
+
+
+class TestMetaTextParamErrors:
+    """Meta rechaza params de texto con saltos de línea, tabs o más de 4
+    espacios seguidos. El envío del operador falla local y con nombre, antes
+    del POST. (Helper aparte de `validate_variables`: el path de campañas hoy
+    une header+body con saltos de línea y no se toca en este cambio.)"""
+
+    @pytest.mark.parametrize(
+        "value", ["línea uno\nlínea dos", "con\ttab", "muchos     espacios"]
+    )
+    def test_rejects_values_meta_does_not_accept(self, value):
+        errors = meta_text_param_errors({"followup_message": value})
+        assert errors, value
+        assert "followup_message" in errors[0]
+
+    def test_accepts_plain_single_line_value(self):
+        assert meta_text_param_errors(
+            {"followup_message": "Ya tenemos las fotos de tu vela."}
+        ) == []

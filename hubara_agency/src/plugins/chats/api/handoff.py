@@ -14,6 +14,12 @@ Tres endpoints:
       → envía un mensaje del humano al cliente vía WhatsApp y lo persiste
         en el JSONL con `sender=human`. Sólo permitido si la ruta es humano.
 
+  * `GET  /api/dashboard/whatsapp-templates` +
+    `POST /api/dashboard/sessions/{session_id}/template-messages`
+      → "Reactivar conversación": con la ventana 24h cerrada el humano no puede
+        mandar texto libre; elige una plantilla aprobada (default: seguimiento
+        humano), escribe las variables y se envía como mensaje del humano.
+
   * `POST /api/dashboard/sessions/{session_id}/return-to-bot`
       → devuelve el control al bot. Para `ventas` solo marca metadata
         (próximo mensaje del cliente arranca Sales); para `remarketing`
@@ -55,7 +61,14 @@ from src.sdk.mediakit import (
     persist_outbound_image,
     upload_media,
 )
-from src.sdk.messagingkit import is_service_window_closed
+from src.sdk.messagingkit import (
+    get_template_registry,
+    is_service_window_closed,
+    meta_text_param_errors,
+    render_template_body,
+    send_template_to_session,
+    validate_variables as validate_template_variables,
+)
 from src.platform.session_history import FilesystemMessageHistoryStore
 from src.platform.temporal.dispatcher import (
     start_remarketing_for_session,
@@ -175,6 +188,36 @@ class HumanMessageResponse(BaseModel):
     #: servible por el dashboard + nombre visible del archivo.
     document_url: str | None = None
     document_filename: str | None = None
+
+
+#: Plantilla preseleccionada en el modal "Reactivar conversación".
+OPERATOR_DEFAULT_TEMPLATE = "human_followup_utility_v1"
+
+
+class TemplateVariableOut(BaseModel):
+    name: str
+    description: str | None
+    max_length: int | None
+
+
+class WhatsAppTemplateOut(BaseModel):
+    name: str
+    category: str
+    semantics: str
+    #: Copy aprobado con slots `{{1}}`… — el modal lo previsualiza.
+    body: str | None
+    variables: list[TemplateVariableOut]
+    is_default: bool
+
+
+class WhatsAppTemplatesResponse(BaseModel):
+    templates: list[WhatsAppTemplateOut]
+
+
+class SendTemplateMessageRequest(BaseModel):
+    template_name: str = Field(min_length=1, max_length=128)
+    variables: dict[str, str] = Field(default_factory=dict)
+    client_message_id: str | None = Field(default=None, max_length=128)
 
 
 # ---------- Helpers ----------
@@ -783,6 +826,119 @@ async def send_human_message(
         document_url=document_ref,
         document_filename=document_name,
     )
+
+
+@router.get("/whatsapp-templates", response_model=WhatsAppTemplatesResponse)
+async def list_whatsapp_templates() -> WhatsAppTemplatesResponse:
+    """Catálogo de plantillas aprobadas para el modal "Reactivar conversación".
+
+    La de seguimiento humano va primero y marcada `is_default`; el resto se
+    ofrece por si el caso encaja mejor (estado de pedido, pago pendiente…).
+    """
+    specs = sorted(
+        get_template_registry().values(),
+        key=lambda spec: (spec.name != OPERATOR_DEFAULT_TEMPLATE, spec.category, spec.name),
+    )
+    return WhatsAppTemplatesResponse(
+        templates=[
+            WhatsAppTemplateOut(
+                name=spec.name,
+                category=spec.category,
+                semantics=spec.semantics,
+                body=spec.body,
+                variables=[
+                    TemplateVariableOut(
+                        name=var.name,
+                        description=var.description,
+                        max_length=var.max_length,
+                    )
+                    for var in spec.variables
+                ],
+                is_default=spec.name == OPERATOR_DEFAULT_TEMPLATE,
+            )
+            for spec in specs
+        ]
+    )
+
+
+@router.post(
+    "/sessions/{session_id}/template-messages",
+    response_model=HumanMessageResponse,
+)
+async def send_human_template_message(
+    session_id: Annotated[str, Path()],
+    payload: SendTemplateMessageRequest,
+    metadata_store: Annotated[FilesystemMetadataStore, Depends(get_metadata_store)],
+) -> HumanMessageResponse:
+    """El humano reabre la conversación con una plantilla aprobada.
+
+    Es la salida del 409 de ventana cerrada de `POST /messages`: una plantilla
+    se puede mandar en cualquier momento. Cuando el cliente responde, la
+    ventana se reabre y el humano sigue con texto libre.
+
+    Guards: ruta humano (409) · plantilla del catálogo y variables válidas,
+    incluidas las reglas de texto de Meta (422) · idempotencia por
+    `client_message_id` · rechazo de Meta → 502 con el motivo.
+    El historial lo escribe `send_template_to_session` (sender=human, texto
+    renderizado) — acá no se duplica.
+    """
+    _require_safe_session_id(session_id)
+    data = metadata_store.read(session_id)
+    _require_humano_route(data, session_id, "mandar plantillas")
+
+    spec = get_template_registry().get(payload.template_name)
+    if spec is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"La plantilla {payload.template_name!r} no está en el catálogo.",
+        )
+    variables = {name: value.strip() for name, value in payload.variables.items()}
+    errors = validate_template_variables(spec, variables) + meta_text_param_errors(variables)
+    if errors:
+        raise HTTPException(status_code=422, detail="; ".join(errors))
+
+    content = render_template_body(spec, variables)
+    cmid = payload.client_message_id
+    if cmid and cmid in data.get("sent_human_message_ids", []):
+        logger.info(
+            "dashboard.send_human_template replay (idempotent)",
+            session_id=session_id,
+            client_message_id=cmid,
+        )
+        return HumanMessageResponse(ok=True, role="assistant", sender="human", content=content)
+
+    try:
+        await send_template_to_session(session_id, spec.name, variables, sender="human")
+    except Exception as exc:  # noqa: BLE001 — cualquier fallo del send es un 502 accionable
+        logger.warning(
+            "dashboard.send_human_template failed",
+            session_id=session_id,
+            template_name=spec.name,
+            error=str(exc),
+        )
+        raise HTTPException(
+            status_code=502, detail=f"WhatsApp rechazó la plantilla: {exc}"
+        ) from exc
+
+    if cmid:
+
+        def _mark_sent(fresh: dict) -> dict | None:
+            if not fresh:
+                return None
+            marked: list[str] = fresh.get("sent_human_message_ids", [])
+            if cmid not in marked:
+                marked.append(cmid)
+            fresh["sent_human_message_ids"] = marked[-200:]  # cap
+            return fresh
+
+        metadata_store.update(session_id, _mark_sent)
+
+    logger.info(
+        "dashboard.send_human_template",
+        session_id=session_id,
+        template_name=spec.name,
+    )
+    return HumanMessageResponse(ok=True, role="assistant", sender="human", content=content)
 
 
 @router.post(

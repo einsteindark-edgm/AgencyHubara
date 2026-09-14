@@ -20,6 +20,7 @@ Ver HU-WA24H-001 §4.5 para el contrato completo.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -64,6 +65,10 @@ class TemplateSpec:
     triggers_when_window_expiring: bool
     requires_episode_stage: str | None
     variables: tuple[TemplateVariable, ...]
+    #: Copy aprobado en Meta con slots `{{1}}`, `{{2}}`… (espejo de
+    #: `infra/whatsapp-provisioning/definitions/templates.json`). Lo usa el
+    #: dashboard para previsualizar y para pintar en el chat lo que se envió.
+    body: str | None = None
 
 
 # =============================================================================
@@ -177,6 +182,7 @@ def _build_template_spec_from_dict(entry: dict[str, Any]) -> TemplateSpec:
         triggers_when_window_expiring=entry["triggers_when_window_expiring"],
         requires_episode_stage=entry.get("requires_episode_stage"),
         variables=tuple(variables),
+        body=entry.get("body"),
     )
 
 
@@ -233,6 +239,43 @@ def validate_variables(
             )
 
     return errors
+
+
+#: Meta rechaza un param de texto con salto de línea, tab o >4 espacios seguidos.
+_META_FORBIDDEN_PARAM_TEXT = re.compile(r"[\n\r\t]| {5,}")
+
+
+def meta_text_param_errors(variables: dict[str, str]) -> list[str]:
+    """Errores por variables que Meta rechazaría como param de texto del body
+    (saltos de línea, tabs o más de 4 espacios consecutivos). Lista vacía = OK.
+
+    Separado de `validate_variables` a propósito: lo consume el envío del
+    operador humano (dashboard), donde el texto lo escribe una persona.
+    """
+    return [
+        f"Variable {name!r}: no puede tener saltos de línea, tabs ni más de "
+        "4 espacios seguidos (Meta rechaza el parámetro)"
+        for name, value in variables.items()
+        if isinstance(value, str) and _META_FORBIDDEN_PARAM_TEXT.search(value)
+    ]
+
+
+def render_template_body(spec: TemplateSpec, variables: dict[str, str]) -> str:
+    """Texto que recibe el cliente: el `body` con cada `{{N}}` reemplazado por
+    la variable N-ésima de `spec.variables` (orden posicional de Meta).
+
+    Sin `body` declarado devuelve el marker legible `[Template: name] k=v`.
+    Un slot sin variable queda tal cual (`{{N}}`) — el caller valida antes con
+    `validate_variables`; acá solo se pinta.
+    """
+    if not spec.body:
+        summary = ", ".join(f"{k}={v}" for k, v in variables.items())
+        return f"[Template: {spec.name}] {summary}".strip()
+    rendered = spec.body
+    for index, var in enumerate(spec.variables, start=1):
+        if var.name in variables:
+            rendered = rendered.replace("{{%d}}" % index, variables[var.name])
+    return rendered
 
 
 def get_templates_for_stage(
