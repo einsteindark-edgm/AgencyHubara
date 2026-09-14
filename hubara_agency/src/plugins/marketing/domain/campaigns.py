@@ -5,6 +5,7 @@ vault y pasan dicts; acá solo se decide. Los tags del clasificador son el
 vocabulario vivo del sistema (``src.sdk.messagingkit``): COMPRA_EXITOSA /
 INTERESADO / CONFIRMADO_PAGO_PENDIENTE / HUMANO / NO_ETIQUETADO.
 """
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -283,24 +284,43 @@ def campaign_template_variables(
     Los nombres/orden matchean el spec `campaign_promo_marketing_v1` del
     catálogo. Ninguna variable puede quedar vacía (Meta rechaza params "").
     Los max_length del spec truncan acá (defensa: la UI ya limita antes).
+
+    Todas viajan en UNA línea: Meta (Cloud API, error 100) rechaza un param
+    de texto con salto de línea, tab o más de 4 espacios seguidos, y el
+    operador escribe el copy en un textarea con párrafos. El header se une
+    al body como oración ("Header. Body"), no con "\\n\\n".
     """
-    name = (customer_name or "").strip()
+    name = _single_line(customer_name or "")
     greeting = f"Hola {name}" if name else "Hola"
 
     message = campaign.get("message") or {}
-    header = (message.get("header") or "").strip()
-    body = (message.get("body") or "").strip()
-    campaign_message = "\n\n".join(part for part in (header, body) if part)
+    header = _single_line(message.get("header") or "")
+    body = _single_line(message.get("body") or "")
+    if header and body and not header.endswith(_SENTENCE_END):
+        header += "."
+    campaign_message = " ".join(part for part in (header, body) if part)
     if not campaign_message:
-        campaign_message = campaign.get("name") or "Tenemos una novedad para ti."
+        campaign_message = (
+            _single_line(campaign.get("name") or "")
+            or "Tenemos una novedad para ti."
+        )
 
     campaign_offer = _campaign_offer_line(campaign)
 
     return {
         "greeting": greeting[:80],
         "campaign_message": campaign_message[:640],
-        "campaign_offer": campaign_offer[:200],
+        "campaign_offer": _single_line(campaign_offer)[:200],
     }
+
+
+#: Un header que ya cierra con puntuación no recibe un "." extra.
+_SENTENCE_END = (".", "!", "?", "…", ":", ";")
+
+
+def _single_line(text: str) -> str:
+    """Colapsa todo whitespace (\\n, \\r, \\t, runs de espacios) a un espacio."""
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def _campaign_offer_line(campaign: dict[str, Any]) -> str:
