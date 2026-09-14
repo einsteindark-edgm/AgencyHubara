@@ -74,6 +74,14 @@ from src.plugins.chats.agent.sales.use_cases.order_draft import (
     get_projectable_draft,
     update_order_draft,
 )
+from src.plugins.chats.agent.sales.use_cases.web_product_ref import (
+    apply_web_product_capture,
+    build_web_product_note,
+    detect_agent_source,
+    detect_product_ref,
+    mark_web_product_resolved,
+    mark_web_product_unresolved,
+)
 from src.plugins.chats.agent.sales.use_cases.web_cart import (
     apply_web_cart_capture,
     build_web_cart_note,
@@ -387,6 +395,49 @@ class IngestInboundMessage:
                     session_id=session_id, metadata=metadata, cart_id=cart_ref
                 )
 
+        # --- 2f. Product ref from the PDP's WhatsApp button (`ref: HUB-…`) ---
+        # Same shape as 2e: deterministic detection, RMW capture (FM-01),
+        # resolution against the catalog by SKU with a short timeout, and a
+        # note the LLM only sees once the SKU is verified. Best-effort: a
+        # catalog failure records the reason and the conversation goes on.
+        product_ref = detect_product_ref(parsed.text)
+        if product_ref and metadata.get("active_route") != ROUTE_HUMANO:
+            agent_source = detect_agent_source(parsed.text)
+            captured_ref = {"new": False}
+
+            def _capture_ref_mutator(fresh: dict[str, Any]) -> dict[str, Any] | None:
+                if fresh.get("active_route") == ROUTE_HUMANO:
+                    return None
+                captured_ref["new"] = apply_web_product_capture(
+                    fresh, sku=product_ref, source=agent_source, now_ms=now_ms
+                )
+                return fresh if captured_ref["new"] else None
+
+            fresh_after_ref = self._metadata_store.update(
+                session_id, _capture_ref_mutator
+            )
+            if fresh_after_ref is not None:
+                metadata = fresh_after_ref
+
+            if captured_ref["new"]:
+                product, reason = await self._resolve_product_ref(product_ref)
+
+                def _apply_ref_mutator(fresh: dict[str, Any]) -> dict[str, Any] | None:
+                    state = fresh.get("web_product_ref") or {}
+                    if state.get("sku") != product_ref:
+                        return None  # another ref won mid-resolution
+                    if product is not None:
+                        mark_web_product_resolved(
+                            fresh, handle=product.handle, title=product.title
+                        )
+                    else:
+                        mark_web_product_unresolved(fresh, reason=reason or "unknown")
+                    return fresh
+
+                updated_ref = self._metadata_store.update(session_id, _apply_ref_mutator)
+                if updated_ref is not None:
+                    metadata = updated_ref
+
         # --- 2d. HU-WA24H-001 Sprint 2: watchdog wiring ---
         # Después de persistir el timestamp, emitir los eventos que el
         # dispatcher manifest convertirá en (a) arranque del
@@ -637,6 +688,7 @@ class IngestInboundMessage:
         # mientras el episodio activo no tenga orden registrada (mismo ciclo
         # de vida que el breadcrumb del draft).
         web_cart_note = build_web_cart_note(metadata)
+        web_product_note = build_web_product_note(metadata)
         await self._load_session.execute(
             session_id=session_id,
             message=effective.text,
@@ -646,6 +698,7 @@ class IngestInboundMessage:
                 for note in (
                     episode_boundary_note,
                     web_cart_note,
+                    web_product_note,
                     order_draft_note,
                     photo_citation_note,
                 )
@@ -657,6 +710,32 @@ class IngestInboundMessage:
     # =========================================================================
     # Helpers
     # =========================================================================
+
+    async def _resolve_product_ref(self, sku: str) -> tuple[Any, str | None]:
+        """Resolves a `ref: HUB-…` SKU against the catalog WITHOUT mutating
+        metadata. Returns `(product, None)` or `(None, reason)`; a product the
+        catalog does not know is `sku_not_found`, anything else (no wiring,
+        timeout, snapshot down) is degraded with its class name."""
+        import asyncio
+
+        from src.sdk.connectorkit import ProductNotFoundError
+
+        if self._catalog is None:
+            return (None, "catalog_unavailable")
+        try:
+            product = await asyncio.wait_for(
+                self._catalog.get_by_sku(sku),
+                timeout=_WEB_CART_HYDRATION_TIMEOUT_S,
+            )
+        except ProductNotFoundError:
+            logger.info("web_product_ref_not_found", sku=sku)
+            return (None, "sku_not_found")
+        except Exception as exc:  # noqa: BLE001 — degrade, never break the ingest
+            logger.warning(
+                "web_product_ref_resolution_failed", sku=sku, reason=type(exc).__name__
+            )
+            return (None, type(exc).__name__)
+        return (product, None)
 
     async def _resolve_web_cart_outcome(
         self,

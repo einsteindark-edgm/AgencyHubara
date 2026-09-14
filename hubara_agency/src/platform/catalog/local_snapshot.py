@@ -140,6 +140,16 @@ class LocalSnapshotCatalogClient:
             return self._cached_by_handle[handle]
         raise ProductNotFoundError(handle)
 
+    async def get_by_sku(self, sku: str) -> CatalogProductDTO:
+        """The product owning the variant with this SKU (the storefront's
+        `ref: HUB-…`). SKUs are unique across the catalog (Medusa enforces
+        it), so the first hit is the only hit."""
+        self._ensure_loaded()
+        for product in self._cached_products or []:
+            if any(v.sku == sku for v in product.variants or []):
+                return product
+        raise ProductNotFoundError(sku)
+
     # ---------- internals ----------
 
     def _ensure_loaded(self) -> None:

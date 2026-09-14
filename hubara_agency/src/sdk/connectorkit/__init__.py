@@ -55,6 +55,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "parse_variant_tags": "src.platform.catalog.variant_attrs",
     "parse_variant_colors": "src.platform.catalog.variant_colors",
     "deslugify": "src.platform.catalog.categories",
+    # Identidad estable (2026-09-14): retailer_id de Meta = SKU, no id de Medusa.
+    "product_retailer_id": "src.platform.catalog.identity",
     "CustomerScoringPort": "src.platform.customer_scoring.port",
     "ImageVisionPort": "src.platform.vision.port",
     "MetaCatalogPort": "src.platform.meta_catalog.port",
