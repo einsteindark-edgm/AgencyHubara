@@ -39,6 +39,11 @@ import re
 from dataclasses import replace
 from typing import Optional
 
+from src.platform.catalog.identity import (
+    product_has_sku,
+    product_retailer_id,
+    variant_retailer_id,
+)
 from src.platform.catalog.dtos import CatalogPriceDTO, CatalogProductDTO
 
 from src.platform.catalog.image_labels import derive_image_label, fold_for_match
@@ -116,8 +121,15 @@ def map_product_to_meta(
     if product.tags:
         tags_json = json.dumps(product.tags, ensure_ascii=False)
 
+    if not product_has_sku(product):
+        log.warning(
+            "meta_catalog: producto sin SKU, se publica con el id de Medusa "
+            "(cambia si se re-crea) — product=%s (%s). Cargar el SKU con el uploader.",
+            product.handle, product.id,
+        )
+
     return MetaCatalogItem(
-        retailer_id=product.id,
+        retailer_id=product_retailer_id(product),
         name=product.title[:200],  # Meta limit
         description=description[:9999],
         url=f"{site_base_url.rstrip('/')}/products/{product.handle}",
@@ -171,8 +183,8 @@ def _variant_items(
 
     Caso Duo Zodiacal v2 (2026-07-15): option "Signo" + 12 variantes con la
     foto de cada signo nombrada por su valor. Cada variante va a Meta como
-    item propio (`retailer_id = variant_id`) agrupado por `item_group_id =
-    product_id`, con SU imagen (match label↔option value por filename) y su
+    item propio (`retailer_id = SKU`, ver platform/catalog/identity.py)
+    agrupado por `item_group_id = handle`, con SU imagen (match label↔option value por filename) y su
     precio. Productos legacy (sin options / variante única) → lista vacía y
     el caller publica el item único de siempre.
     """
@@ -203,11 +215,17 @@ def _variant_items(
             if candidate and fold_for_match(candidate) in label_to_url:
                 raw_img = label_to_url[fold_for_match(candidate)]
                 break
+        if not v.sku:
+            log.warning(
+                "meta_catalog: variante sin SKU, se publica con el id de Medusa "
+                "(cambia si se re-crea) — product=%s variant=%s (%s).",
+                product.title, v.title, v.id,
+            )
         items.append(
             replace(
                 base,
-                retailer_id=v.id,
-                item_group_id=product.id,
+                retailer_id=variant_retailer_id(v),
+                item_group_id=product.handle,
                 color=_native_axis_value(v.options),
                 additional_variant_attribute=_variant_axis(v.options),
                 name=f"{product.title} · {v.title}"[:200],

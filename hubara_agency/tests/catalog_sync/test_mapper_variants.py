@@ -93,7 +93,7 @@ def test_variant_product_maps_one_item_per_variant():
     by_id = {i.retailer_id: i for i in items}
     assert set(by_id) == {"v_leo", "v_esc"}
     for item in items:
-        assert item.item_group_id == "prod_duo_v2"
+        assert item.item_group_id == "duo-zodiacal"
         assert item.price == "35000 COP"
 
 
