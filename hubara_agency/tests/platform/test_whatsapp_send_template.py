@@ -225,7 +225,7 @@ class TestSendTemplateHappyPath:
         assert event["sender"] == "human"
         assert event["kind"] == "template"
         assert event["content"] == (
-            "Hola te escribe Liliana asesora de hubara para hacer seguimiento "
+            "Hola, te escribe Liliana, asesora de Hubara, para hacer seguimiento "
             "a tu consulta Ya tenemos las fotos de tu vela. Quedo atenta a tu respuesta."
         )
 

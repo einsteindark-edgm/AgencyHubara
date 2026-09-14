@@ -91,7 +91,7 @@ templates:
     category: utility
     language: es_CO
     waba_template_name: human_followup_utility_v1
-    body: "Hola te escribe Liliana asesora de hubara para hacer seguimiento a tu consulta {{1}}. Quedo atenta a tu respuesta."
+    body: "Hola, te escribe Liliana, asesora de Hubara, para hacer seguimiento a tu consulta {{1}}. Quedo atenta a tu respuesta."
     semantics: "Seguimiento del operador humano con la ventana 24h cerrada (dashboard → Reactivar conversación): el humano escribe el tema pendiente en el slot"
     triggers_when_window_expiring: false   # SOLO el operador desde el dashboard
     # SIN requires_episode_stage: fuera de toda auto-resolution por stage.

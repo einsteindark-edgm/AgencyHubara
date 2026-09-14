@@ -10,7 +10,7 @@ const followup: WhatsAppTemplate = {
   name: "human_followup_utility_v1",
   category: "utility",
   semantics: "Seguimiento del operador humano",
-  body: "Hola te escribe Liliana asesora de hubara para hacer seguimiento a tu consulta {{1}}. Quedo atenta a tu respuesta.",
+  body: "Hola, te escribe Liliana, asesora de Hubara, para hacer seguimiento a tu consulta {{1}}. Quedo atenta a tu respuesta.",
   variables: [
     { name: "followup_message", description: "Mensaje del operador", max_length: 400 },
   ],
@@ -33,7 +33,7 @@ describe("buildTemplatePreview", () => {
   it("shows '{ tu texto aquí }' in the single slot while it is empty", () => {
     const segments = buildTemplatePreview(followup, {});
     expect(segments).toEqual([
-      { kind: "text", text: "Hola te escribe Liliana asesora de hubara para hacer seguimiento a tu consulta " },
+      { kind: "text", text: "Hola, te escribe Liliana, asesora de Hubara, para hacer seguimiento a tu consulta " },
       { kind: "slot", name: "followup_message", text: "{ tu texto aquí }", filled: false },
       { kind: "text", text: ". Quedo atenta a tu respuesta." },
     ]);

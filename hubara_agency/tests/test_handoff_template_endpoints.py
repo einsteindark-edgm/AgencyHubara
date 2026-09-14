@@ -109,7 +109,7 @@ def test_sends_template_as_human_and_returns_rendered_text(client_and_vault):
     assert body["ok"] is True
     assert body["sender"] == "human"
     assert body["content"] == (
-        "Hola te escribe Liliana asesora de hubara para hacer seguimiento "
+        "Hola, te escribe Liliana, asesora de Hubara, para hacer seguimiento "
         "a tu consulta Ya tenemos las fotos de tu vela. Quedo atenta a tu respuesta."
     )
     send_mock.assert_awaited_once_with(
