@@ -99,7 +99,7 @@ def test_sends_template_as_human_and_returns_rendered_text(client_and_vault):
             "/api/dashboard/sessions/wa_57300/template-messages",
             json={
                 "template_name": FOLLOWUP,
-                "variables": {"followup_message": "Ya tenemos las fotos de tu vela."},
+                "variables": {"followup_message": "Ya tenemos las fotos de tu vela"},
                 "client_message_id": "cmid-1",
             },
         )
@@ -109,14 +109,13 @@ def test_sends_template_as_human_and_returns_rendered_text(client_and_vault):
     assert body["ok"] is True
     assert body["sender"] == "human"
     assert body["content"] == (
-        "Hola, te escribimos para dar seguimiento a tu consulta.\n\n"
-        "Ya tenemos las fotos de tu vela.\n\n"
-        "Responde este mensaje y seguimos la conversación por aquí."
+        "Hola te escribe Liliana asesora de hubara para hacer seguimiento "
+        "a tu consulta Ya tenemos las fotos de tu vela. Quedo atenta a tu respuesta."
     )
     send_mock.assert_awaited_once_with(
         "wa_57300",
         FOLLOWUP,
-        {"followup_message": "Ya tenemos las fotos de tu vela."},
+        {"followup_message": "Ya tenemos las fotos de tu vela"},
         sender="human",
     )
     assert "cmid-1" in _read_metadata(vault, "wa_57300")["sent_human_message_ids"]

@@ -50,7 +50,7 @@ const templatesFixture = [
     name: "human_followup_utility_v1",
     category: "utility",
     semantics: "Seguimiento del operador humano con la ventana 24h cerrada",
-    body: "Hola, te escribimos para dar seguimiento a tu consulta.\n\n{{1}}\n\nResponde este mensaje y seguimos la conversación por aquí.",
+    body: "Hola te escribe Liliana asesora de hubara para hacer seguimiento a tu consulta {{1}}. Quedo atenta a tu respuesta.",
     variables: [
       { name: "followup_message", description: "Mensaje del operador sobre el tema pendiente", max_length: 400 },
     ],
@@ -753,7 +753,7 @@ describe("ChatsComposer · reactivar conversación (ventana 24h cerrada)", () =>
       "human_followup_utility_v1",
     );
     const preview = screen.getByTestId("template-preview");
-    expect(preview).toHaveTextContent("Hola, te escribimos para dar seguimiento a tu consulta.");
+    expect(preview).toHaveTextContent("Hola te escribe Liliana asesora de hubara para hacer seguimiento a tu consulta");
     expect(preview).toHaveTextContent("{ tu texto aquí }");
     expect(dialog).toContainElement(preview);
     expect(screen.getByRole("button", { name: /enviar plantilla/i })).toBeDisabled();

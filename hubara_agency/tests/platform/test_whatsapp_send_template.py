@@ -216,7 +216,7 @@ class TestSendTemplateHappyPath:
             await send_template_to_session(
                 session_id,
                 "human_followup_utility_v1",
-                {"followup_message": "Ya tenemos las fotos de tu vela."},
+                {"followup_message": "Ya tenemos las fotos de tu vela"},
                 sender="human",
             )
 
@@ -225,9 +225,8 @@ class TestSendTemplateHappyPath:
         assert event["sender"] == "human"
         assert event["kind"] == "template"
         assert event["content"] == (
-            "Hola, te escribimos para dar seguimiento a tu consulta.\n\n"
-            "Ya tenemos las fotos de tu vela.\n\n"
-            "Responde este mensaje y seguimos la conversación por aquí."
+            "Hola te escribe Liliana asesora de hubara para hacer seguimiento "
+            "a tu consulta Ya tenemos las fotos de tu vela. Quedo atenta a tu respuesta."
         )
 
     @pytest.mark.asyncio
