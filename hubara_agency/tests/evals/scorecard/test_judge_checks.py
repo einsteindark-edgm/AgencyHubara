@@ -166,3 +166,17 @@ async def test_non_rate_limit_errors_are_not_retried() -> None:
     results = await jc.run_judge_checks(pr281_before_fix(), CATALOG_CTX, judge, only={"EST-04"}, sleep=sleep)
 
     assert results[0].verdict == "desconocido" and waits == []
+
+
+def test_payment_methods_guidance_allows_the_public_business_key(monkeypatch) -> None:
+    """Primer informe: el juez de ENV-06 reprobó al bot por escribir la llave
+    Nequi del negocio, que el guion autoriza. La guía lo dice con la llave
+    vigente (misma fuente que el agente)."""
+    monkeypatch.setenv("PAYMENT_NEQUI_NUMBER", "3001112233")
+    t = traj(T(1, inbound="¿Qué formas de pago tienes?",
+               sent=["Contra entrega, pago anticipado por Nequi o llave 3001112233, o link de pago."]))
+
+    prompt = jc.build_prompt("ENV-06", t, CheckContext())
+
+    assert "3001112233" in prompt.split("CONVERSACIÓN", 1)[0]
+    assert "permitido" in prompt.split("CONVERSACIÓN", 1)[0].lower()

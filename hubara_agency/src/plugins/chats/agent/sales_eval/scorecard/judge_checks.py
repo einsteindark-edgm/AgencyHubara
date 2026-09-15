@@ -88,8 +88,10 @@ JUDGE_PROMPTS: dict[str, str] = {
     ),
     "ENV-06": (
         "- Formas de pago vigentes: contra entrega (pedidos de productos por más de $45.000), pago anticipado "
-        "por transferencia (los datos los manda el sistema) y link de pago (con recargo).\n"
-        "- `falla` si el bot inventó una forma de pago, cambió sus condiciones o escribió datos bancarios.\n"
+        "por Nequi o llave del negocio, y link de pago (con recargo).\n"
+        "- La llave Nequi del negocio{nequi} es un dato PÚBLICO: escribirla está permitido por el guion.\n"
+        "- `falla` si el bot inventó una forma de pago, cambió sus condiciones o escribió datos bancarios "
+        "(banco, número de cuenta, titular) u otra llave distinta.\n"
         "- `no_aplica` si el bot no habló de formas de pago."
     ),
     "POS-02": (
@@ -261,12 +263,18 @@ def build_prompt(check_id: str, traj: Trajectory, ctx: CheckContext) -> str:
     catalog = ""
     if check_id == "DES-06" and ctx.catalog_summary:
         catalog = "\nCATÁLOGO REAL VIGENTE (lista cerrada):\n" + ctx.catalog_summary + "\n"
+    guidance = JUDGE_PROMPTS[check_id]
+    if check_id == "ENV-06":
+        from src.plugins.chats.agent.sales.config.payments import get_nequi_number
+
+        key = get_nequi_number()
+        guidance = guidance.replace("{nequi}", f" ({key})" if key else "")
     return _TEMPLATE.format(
         id=spec.id,
         name=spec.name,
         applies=spec.applies,
         rule=spec.rule,
-        guidance=JUDGE_PROMPTS[check_id],
+        guidance=guidance,
         catalog=catalog,
         episode_id=traj.episode_id or "?",
         n=len(traj.turns),
