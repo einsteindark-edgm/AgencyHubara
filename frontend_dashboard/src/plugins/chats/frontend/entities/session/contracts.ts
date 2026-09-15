@@ -34,6 +34,10 @@ export const chatSessionSchema = z.object({
   // durante el rollout. Enciende el botón "Confirmar pago" en el chat.
   pending_payment_order_id: z.string().nullable().default(null),
   last_updated_timestamp: z.number(),
+  // Epoch ms del último mensaje DEL CLIENTE (null si no escribió). Distinto de
+  // `last_updated_timestamp`, que se mueve también con turnos del bot. Es lo
+  // que dispara el sonido de "mensaje nuevo" de la bandeja.
+  last_inbound_ms: z.number().nullable().default(null),
   // `.default(null)` tolera snapshots viejos del SSE durante el rollout.
   origin: sessionOriginSchema.nullable().default(null),
 });

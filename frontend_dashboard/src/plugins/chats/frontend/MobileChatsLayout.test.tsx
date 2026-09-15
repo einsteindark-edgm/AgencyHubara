@@ -17,6 +17,7 @@ vi.mock("@plugins/chats/frontend/features/chats-inbox", () => ({
     <button onClick={() => onSelect("wa_42")}>Abrir chat wa_42</button>
   ),
   useHandoffNotifications: () => undefined,
+  useChatSoundNotifications: () => ({ audioBlocked: false }),
 }));
 vi.mock("@plugins/chats/frontend/features/chats-conversation", () => ({
   ChatsConversation: ({ chatId }: { chatId: string | null }) => (

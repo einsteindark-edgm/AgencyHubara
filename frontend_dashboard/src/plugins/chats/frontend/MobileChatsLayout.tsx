@@ -29,6 +29,7 @@ import { sessionKeys } from "@plugins/chats/frontend/entities/session";
 
 import {
   ChatsInbox,
+  useChatSoundNotifications,
   useHandoffNotifications,
 } from "@plugins/chats/frontend/features/chats-inbox";
 import { ChatsConversation } from "@plugins/chats/frontend/features/chats-conversation";
@@ -103,6 +104,7 @@ export function MobileChatsLayout() {
   // (escalada del bot o intervene desde otro dispositivo) y la app no está en
   // primer plano. Tocar la notificación (web) abre ese chat (PM2-M7).
   useHandoffNotifications(chats, { onOpenChat: openChat });
+  useChatSoundNotifications(chats);
   const selectedChat = chats.find((c) => c.id === selectedChatId) ?? null;
 
   const toggleSheet = (sheet: Exclude<ActiveSheet, "none">) => {

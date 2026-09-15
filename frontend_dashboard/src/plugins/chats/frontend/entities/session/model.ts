@@ -28,6 +28,8 @@ export interface ChatSession {
   pending_payment_order_id: string | null;
   /** Unix epoch en segundos (lo que devuelve `stat().st_mtime`). */
   last_updated_timestamp: number;
+  /** Epoch ms del último mensaje del cliente, o null si nunca escribió. */
+  last_inbound_ms: number | null;
   origin: SessionOrigin | null;
 }
 

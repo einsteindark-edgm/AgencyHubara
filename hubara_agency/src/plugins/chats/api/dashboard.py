@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import time
+from datetime import datetime
 from pathlib import Path
 
 from loguru import logger
@@ -303,6 +304,69 @@ async def stream_dashboard_events():
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
+# ── Último mensaje del CLIENTE (sonido de "mensaje nuevo" en el dashboard) ──
+#
+# `last_updated_timestamp` es el mtime del JSONL: se mueve también con cada
+# turno del bot / del operador. El dashboard necesita el último `role: "user"`
+# para sonar SOLO cuando escribe el cliente. Se lee el JSONL desde el final
+# por bloques (el inbound casi siempre está en los últimos KB) y se cachea por
+# (mtime, size): el listado se recalcula en cada tick del sampler y no tiene
+# por qué releer historiales que no cambiaron.
+_TAIL_CHUNK_BYTES = 64 * 1024
+_last_inbound_cache: dict[Path, tuple[float, int, int | None]] = {}
+
+
+def _inbound_ms_from_line(raw: bytes) -> int | None:
+    # Pre-filtro barato: casi todas las líneas del final son del bot.
+    if b'"user"' not in raw:
+        return None
+    try:
+        event = json.loads(raw)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None  # escritura a medias / codepoint cortado
+    if not isinstance(event, dict) or event.get("role") != "user":
+        return None
+    ts = event.get("timestamp")
+    if not isinstance(ts, str):
+        return None  # inbound legacy sin timestamp: no sirve para comparar
+    try:
+        return int(datetime.fromisoformat(ts).timestamp() * 1000)
+    except ValueError:
+        return None
+
+
+def _scan_last_inbound_ms(history_file: Path) -> int | None:
+    with history_file.open("rb") as f:
+        f.seek(0, os.SEEK_END)
+        pos = f.tell()
+        carry = b""  # primera línea (posiblemente incompleta) del bloque previo
+        while pos > 0:
+            step = min(_TAIL_CHUNK_BYTES, pos)
+            pos -= step
+            f.seek(pos)
+            lines = (f.read(step) + carry).split(b"\n")
+            # lines[0] puede estar cortada si no llegamos al inicio del archivo.
+            carry = lines.pop(0) if pos > 0 else b""
+            for raw in reversed(lines):
+                found = _inbound_ms_from_line(raw)
+                if found is not None:
+                    return found
+        return _inbound_ms_from_line(carry) if carry else None
+
+
+def _last_inbound_ms(history_file: Path) -> int | None:
+    try:
+        st = history_file.stat()
+        cached = _last_inbound_cache.get(history_file)
+        if cached is not None and cached[:2] == (st.st_mtime, st.st_size):
+            return cached[2]
+        value = _scan_last_inbound_ms(history_file)
+    except OSError:
+        return None
+    _last_inbound_cache[history_file] = (st.st_mtime, st.st_size, value)
+    return value
+
+
 @router.get("/sessions")
 async def list_dashboard_sessions():
     """
@@ -340,12 +404,14 @@ async def list_dashboard_sessions():
             
             # Buscamos el timestamp de la ultima conversacion
             last_updated = 0
+            last_inbound_ms = None
             history_file = session_path / "sessions" / f"{entry}.jsonl"
             if history_file.exists():
                 last_updated = history_file.stat().st_mtime
+                last_inbound_ms = _last_inbound_ms(history_file)
             else:
                 last_updated = session_path.stat().st_mtime
-            
+
             sessions.append({
                 "session_id": entry,
                 "phone_number": entry.replace("wa_", ""),
@@ -355,6 +421,7 @@ async def list_dashboard_sessions():
                 "phone_number_id": phone_number_id,
                 "pending_payment_order_id": pending_payment_order_id,
                 "last_updated_timestamp": last_updated,
+                "last_inbound_ms": last_inbound_ms,
                 "origin": origin,
             })
 

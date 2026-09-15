@@ -23,6 +23,7 @@ import {
 
 import {
   ChatsInbox,
+  useChatSoundNotifications,
   useHandoffNotifications,
 } from "@plugins/chats/frontend/features/chats-inbox";
 import { ChatsConversation } from "@plugins/chats/frontend/features/chats-conversation";
@@ -46,6 +47,8 @@ function DesktopChatsLayout() {
   // Notificación del sistema al operador cuando el bot escala un chat a
   // humano y el dashboard no está en foco (mismo hook que usa el móvil).
   useHandoffNotifications(chats);
+  // Sonido por mensaje del cliente (distinto si el chat está en humano).
+  useChatSoundNotifications(chats);
   useEffect(() => {
     if (selectedChatId == null && chats.length > 0) {
       setSelectedChatId(chats[0].id);

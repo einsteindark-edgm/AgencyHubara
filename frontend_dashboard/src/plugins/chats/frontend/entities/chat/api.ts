@@ -165,6 +165,7 @@ function adaptSession(s: ChatSession): ChatInboxItem {
     time: formatBogotaHourMinute(s.last_updated_timestamp),
     timestamp: s.last_updated_timestamp,
     dayIso: bogotaDayIsoFromUnix(s.last_updated_timestamp),
+    lastInboundMs: s.last_inbound_ms ?? null,
     tag,
     tagClass,
     color: hashColor(s.session_id),

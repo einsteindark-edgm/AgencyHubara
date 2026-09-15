@@ -26,6 +26,9 @@ export interface ChatInboxItem {
    *  Es lo que decide si un chat es "de hoy" y si cae dentro del rango del
    *  calendario. Vacío si el backend no mandó timestamp. */
   dayIso: string;
+  /** Epoch ms del último mensaje DEL CLIENTE (null si nunca escribió). Solo
+   *  avanza cuando escribe el cliente — dispara el sonido de la bandeja. */
+  lastInboundMs: number | null;
   tag: ChatTag;
   tagClass: string;
   color: AvatarColor;
