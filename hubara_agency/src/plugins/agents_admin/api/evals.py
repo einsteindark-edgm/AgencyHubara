@@ -141,3 +141,98 @@ async def discard_candidate(
     return await _forward(
         request, "DELETE", f"/api/chats/evals/candidates/{candidate_id}"
     )
+
+
+# ── HU-SC-2: scorecard por etapa (mismo contrato evals@v1, passthrough) ──────
+# El juez del recálculo corre en el worker del provider: este cast solo espera
+# el recálculo de código, que entra en el timeout.
+
+
+@router.get("/evals/checks")
+async def scorecard_checks(request: Request) -> dict[str, Any]:
+    """Registro de checks del scorecard (taxonomía de fallos)."""
+    return await _forward(request, "GET", "/api/chats/evals/checks")
+
+
+@router.get("/evals/scorecards")
+async def list_scorecards(
+    request: Request,
+    days: int = Query(default=30, ge=1, le=180),
+) -> dict[str, Any]:
+    """Último scorecard por episodio (lista y matriz de cumplimiento)."""
+    return await _forward(
+        request, "GET", "/api/chats/evals/scorecards", params={"days": days}
+    )
+
+
+@router.get("/evals/scorecard")
+async def get_scorecard(
+    request: Request,
+    session_id: str = Query(..., min_length=1, max_length=120),
+    episode_id: str = Query(..., min_length=1, max_length=20),
+) -> dict[str, Any]:
+    """Scorecard de un episodio + su trayectoria + el puntaje legado."""
+    return await _forward(
+        request,
+        "GET",
+        "/api/chats/evals/scorecard",
+        params={"session_id": session_id, "episode_id": episode_id},
+    )
+
+
+@router.post("/evals/scorecard/rescore")
+async def rescore_scorecard(
+    request: Request,
+    body: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    return await _forward(request, "POST", "/api/chats/evals/scorecard/rescore", body=body)
+
+
+@router.get("/evals/checks/stats")
+async def scorecard_stats(
+    request: Request,
+    days: int = Query(default=56, ge=7, le=365),
+) -> dict[str, Any]:
+    """Pareto, tendencia semanal por check y embudo de etapa final."""
+    return await _forward(
+        request, "GET", "/api/chats/evals/checks/stats", params={"days": days}
+    )
+
+
+@router.post("/evals/labels")
+async def create_label(
+    request: Request,
+    body: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    return await _forward(request, "POST", "/api/chats/evals/labels", body=body)
+
+
+@router.get("/evals/labels")
+async def list_labels(
+    request: Request,
+    session_id: str = Query(..., min_length=1, max_length=120),
+    episode_id: str = Query(..., min_length=1, max_length=20),
+) -> dict[str, Any]:
+    return await _forward(
+        request,
+        "GET",
+        "/api/chats/evals/labels",
+        params={"session_id": session_id, "episode_id": episode_id},
+    )
+
+
+@router.get("/evals/labels/queue")
+async def label_queue(
+    request: Request,
+    days: int = Query(default=30, ge=1, le=180),
+    limit: int = Query(default=20, ge=1, le=200),
+) -> dict[str, Any]:
+    return await _forward(
+        request, "GET", "/api/chats/evals/labels/queue", params={"days": days, "limit": limit}
+    )
+
+
+@router.get("/evals/calibration")
+async def judge_calibration(request: Request) -> dict[str, Any]:
+    """Acuerdo juez vs humano por check de juez (TPR, TNR, kappa)."""
+    return await _forward(request, "GET", "/api/chats/evals/calibration")

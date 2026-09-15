@@ -434,6 +434,9 @@ agent:
         # Eval dirigida de UN episodio al cerrar (event-driven). La dispara la
         # transition `sales_episode_close_triggers_eval` del worker `sales`.
         - EvaluateEpisodeWorkflow
+        # Scorecard por etapa a demanda (HU-SC-2): "Recalcular con juez" desde
+        # el dashboard. Lo arranca la API de evals (el juez excede el timeout del cast).
+        - ScoreEpisodeWorkflow
       deployment:
         replicas: 1
         cpu_request: 250m

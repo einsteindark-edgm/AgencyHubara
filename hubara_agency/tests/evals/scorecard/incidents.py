@@ -100,3 +100,23 @@ def pr281_after_fix():
                  state={"tag": "INTERESADO", "route": "ventas",
                         "changes": [{"tag": "INTERESADO", "source": "llm", "reason": None}]})
     return traj(*turns, closing_tag=None)
+
+
+def traces_from(t) -> list[dict]:
+    """Trayectoria del DSL → registros de traza como los escribe el worker."""
+    out = []
+    for turn in t.turns:
+        out.append({
+            "v": 1, "session_id": t.session_id, "episode_id": t.episode_id, "turn": turn.turn,
+            "recorded_at_ms": (turn.at_ms or 0) + 5_000, "turn_started_ms": turn.at_ms,
+            "trigger": turn.trigger, "inbound_text": turn.inbound_text, "first_contact": turn.first_contact,
+            "tools": [{"name": c.name, "ok": c.ok, "error": c.error, "notes": list(c.notes), "args": dict(c.args)}
+                      for c in turn.tools],
+            "discarded_narration": list(turn.discarded_narration), "llm_text": turn.llm_text,
+            "sent_texts": list(turn.sent_texts), "suppressed_reason": turn.suppressed_reason,
+            "guards": list(turn.guards), "stage_in": turn.stage_in, "stage_out": turn.stage_out,
+            "draft": dict(turn.draft or {}), "confirmed": turn.confirmed, "confirmed_by": None,
+            "signal": {"kind": turn.signal, "text": turn.inbound_text} if turn.signal else None,
+            "state": dict(turn.state),
+        })
+    return out

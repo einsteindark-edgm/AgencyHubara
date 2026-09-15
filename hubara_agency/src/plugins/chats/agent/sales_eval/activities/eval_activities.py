@@ -41,6 +41,7 @@ from src.plugins.chats.agent.sales_eval.evals.contracts import (
     EvalWindowInput,
     GoldenEvalInput,
     GoldenSuiteResult,
+    ScorecardSummary,
 )
 from src.plugins.chats.agent.sales_eval.evals.select import select_eval_units
 
@@ -296,4 +297,113 @@ async def run_golden_suite_activity(inp: GoldenEvalInput) -> GoldenSuiteResult:
     return GoldenSuiteResult(
         scenarios=scenarios, behaviors_ok=ok, errored=errored,
         judge=not inp.no_judge, duration_s=dur,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# HU-SC-1 — Scorecard por etapa (reemplaza al promedio holístico como titular).
+# --------------------------------------------------------------------------- #
+
+# Días de scorecards que se leen para derivar qué checks de juez están
+# calibrados (y por lo tanto pueden reprobar un episodio solos).
+_CALIBRATION_WINDOW_DAYS = 120
+
+
+def _scorecard_judge_enabled() -> bool:
+    return os.getenv("SCORECARD_JUDGE_ENABLED", "true").strip().lower() not in ("0", "false", "no")
+
+
+def _recent_dates(days: int) -> list[str]:
+    from datetime import datetime, timedelta, timezone
+
+    today = datetime.now(timezone.utc).date()
+    return [(today - timedelta(days=i)).isoformat() for i in range(days)]
+
+
+@activity.defn(name="score_episode_scorecard")
+@with_heartbeat(every=10)
+async def score_episode_scorecard_activity(
+    session_id: str, episode_id: str, with_judge: bool
+) -> ScorecardSummary:
+    """Scorecard de UN episodio: checks de código + juez aislado por check.
+
+    Guarda el registro completo en `<vault>/_evals/scorecards/<fecha>.jsonl`,
+    emite un punto por check a SigNoz (`check.<id>`, suite `scorecard`) y, si
+    el veredicto es FALLA, abre o comenta el issue de alerta (dedup). Nunca
+    lanza: un error queda en `error` y el workflow sigue con la eval legada.
+    """
+    from src.plugins.chats.agent.sales_eval.scorecard import (
+        alerts,
+        calibration,
+        service,
+        store,
+    )
+    from src.plugins.chats.agent.sales_eval.scorecard.catalog_context import (
+        build_check_context,
+    )
+    from src.plugins.chats.agent.sales_eval.scorecard.judge_checks import run_judge_checks
+
+    vault = composition.get_vault_dir()
+    try:
+        traj = service.load_trajectory(vault, session_id, episode_id)
+        ctx = await build_check_context()
+        cards_dir = store.scorecards_dir(vault)
+        calibrated = calibration.calibrated_checks(
+            calibration.compute_calibration(
+                store.read_scorecards(cards_dir, dates=_recent_dates(_CALIBRATION_WINDOW_DAYS)),
+                store.read_labels(store.labels_path(vault)),
+            )
+        )
+        judge_results = []
+        if with_judge and traj.turns and _scorecard_judge_enabled():
+            judge_results = await run_judge_checks(traj, ctx, composition.get_judge())
+        record = store.append_scorecard(
+            cards_dir,
+            service.score_trajectory(traj, ctx, judge_results=judge_results, calibrated=calibrated),
+        )
+    except Exception as exc:  # noqa: BLE001 — el scorecard nunca tumba la eval legada
+        activity.logger.warning(
+            "scorecard: no se pudo evaluar %s::%s: %r", session_id, episode_id, exc
+        )
+        return ScorecardSummary(session_id=session_id, episode_id=episode_id, error=repr(exc)[:300])
+
+    for r in record["results"]:
+        if r["verdict"] not in ("pasa", "falla"):
+            continue
+        emit_eval_score(
+            metric_name=f"check.{r['check_id']}",
+            score=1.0 if r["verdict"] == "pasa" else 0.0,
+            threshold=1.0,
+            reason=r.get("evidence") or "",
+            session_id=session_id,
+            episode_id=episode_id,
+            environment=_env(),
+            suite="scorecard",
+        )
+    if record["verdict"] == "FALLA":
+        try:
+            await alerts.notify_failure(record)
+        except Exception as exc:  # noqa: BLE001 — la alerta es best-effort
+            activity.logger.warning("scorecard: alerta no enviada: %r", exc)
+
+    first = record.get("first_failure") or {}
+    counts = record.get("counts") or {}
+    activity.logger.info(
+        "scorecard %s::%s → %s (críticos=%s mayores=%s juez=%s)",
+        session_id, episode_id, record["verdict"], counts.get("critico"), counts.get("mayor"),
+        record.get("judge"),
+    )
+    return ScorecardSummary(
+        session_id=session_id,
+        episode_id=episode_id,
+        verdict=str(record["verdict"]),
+        fidelity=str(record.get("fidelity") or ""),
+        critical=int(counts.get("critico", 0)),
+        major=int(counts.get("mayor", 0)),
+        minor=int(counts.get("menor", 0)),
+        unknown=int(counts.get("desconocido", 0)),
+        first_failure_check=str(first.get("check_id") or ""),
+        first_failure_turn=int(first["turn"]) if isinstance(first.get("turn"), int) else -1,
+        judge=bool(record.get("judge")),
+        stored=True,
     )

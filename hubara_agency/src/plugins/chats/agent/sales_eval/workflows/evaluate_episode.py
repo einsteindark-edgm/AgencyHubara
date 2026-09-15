@@ -20,19 +20,29 @@ R-DIP: importa `platform/` + el propio plugin; nada de siblings ni
 """
 from __future__ import annotations
 
+from datetime import timedelta
+
 from temporalio import workflow
+from temporalio.common import RetryPolicy
 
 with workflow.unsafe.imports_passed_through():
     from src.platform.temporal.retry_policies import _TOOL_OPTIONS
     from src.plugins.chats.agent.sales_eval.activities.eval_activities import (
         evaluate_sales_conversation_activity,
+        score_episode_scorecard_activity,
     )
     from src.plugins.chats.agent.sales_eval.evals.contracts import (
         ConversationEvalResult,
         EvalWindowInput,
         EvaluateEpisodeInput,
+        ScorecardSummary,
     )
     from src.plugins.chats.agent.sales_eval.evals.reconstruct import make_eval_unit_id
+
+
+# El evento de cierre sale ANTES de que el turno de cierre termine (send, flush
+# y traza). Se espera a que la traza de ese turno esté escrita.
+_TRACE_GRACE = timedelta(seconds=90)
 
 
 @workflow.defn(name="EvaluateEpisodeWorkflow")
@@ -40,6 +50,26 @@ class EvaluateEpisodeWorkflow:
     @workflow.run
     async def run(self, inp: EvaluateEpisodeInput) -> ConversationEvalResult:
         unit_id = make_eval_unit_id(inp.session_id, inp.episode_id)
+        # HU-SC-1: scorecard por etapa (checks binarios + juez aislado por
+        # check, veredicto con auto-fail). Convive con la eval legada de abajo
+        # durante la transición (plan §3.7); si falla, la legada corre igual.
+        # patched(): runs en vuelo replayean sin la rama (R-DET).
+        if inp.episode_id and workflow.patched("scorecard-v1"):
+            await workflow.sleep(_TRACE_GRACE)
+            try:
+                summary: ScorecardSummary = await workflow.execute_activity(
+                    score_episode_scorecard_activity,
+                    args=[inp.session_id, inp.episode_id, True],
+                    start_to_close_timeout=timedelta(minutes=10),
+                    heartbeat_timeout=timedelta(seconds=60),
+                    retry_policy=RetryPolicy(maximum_attempts=2),
+                )
+                workflow.logger.info(
+                    f"scorecard {unit_id}: {summary.verdict} "
+                    f"(críticos={summary.critical}, mayores={summary.major})"
+                )
+            except Exception as exc:  # noqa: BLE001
+                workflow.logger.warning(f"scorecard {unit_id} falló (non-blocking): {exc!r}")
         # Ventana irrelevante (el unit ya viene dado); solo importan min_turns +
         # candidate_threshold + draft_goldens + redact_pii. draft_goldens=True:
         # si el episodio puntúa bajo, el juez redacta el golden y queda como

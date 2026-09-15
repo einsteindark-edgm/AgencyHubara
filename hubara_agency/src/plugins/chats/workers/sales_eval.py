@@ -53,6 +53,7 @@ from src.platform.temporal.client import get_temporal_client
 from src.plugins.chats.agent.sales_eval.activities.eval_activities import (
     evaluate_sales_conversation_activity,
     run_golden_suite_activity,
+    score_episode_scorecard_activity,
     select_conversations_to_eval_activity,
 )
 from src.plugins.chats.agent.sales_eval.evals.contracts import (
@@ -63,6 +64,7 @@ from src.plugins.chats.agent.sales_eval.workflows.evaluate_episode import (
     EvaluateEpisodeWorkflow,
 )
 from src.plugins.chats.agent.sales_eval.workflows.golden_eval import GoldenEvalWorkflow
+from src.plugins.chats.agent.sales_eval.workflows.score_episode import ScoreEpisodeWorkflow
 from src.plugins.chats.agent.sales_eval.workflows.sales_eval import SalesEvalWorkflow
 
 _SCHEDULE_ID = "sales-eval-schedule"
@@ -212,11 +214,13 @@ async def main() -> None:
     worker = Worker(
         client,
         task_queue=task_queue,
-        workflows=[SalesEvalWorkflow, GoldenEvalWorkflow, EvaluateEpisodeWorkflow],
+        workflows=[SalesEvalWorkflow, GoldenEvalWorkflow, EvaluateEpisodeWorkflow, ScoreEpisodeWorkflow],
         activities=[
             select_conversations_to_eval_activity,
             evaluate_sales_conversation_activity,
             run_golden_suite_activity,
+            # HU-SC-1: scorecard por etapa al cerrar cada episodio.
+            score_episode_scorecard_activity,
         ],
         workflow_runner=otel_workflow_runner(),
     )

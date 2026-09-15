@@ -279,3 +279,10 @@ def discard_candidate(candidate_id: str) -> dict[str, Any]:
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"could not delete: {exc}")
     return {"status": "discarded", "id": candidate_id}
+
+
+# HU-SC-2: el scorecard por etapa comparte prefijo y contrato (evals@v1).
+# Se incluye acá para no sumar una entrada `api:` al manifest del plugin.
+from src.plugins.chats.api.scorecards import router as _scorecards_router  # noqa: E402
+
+router.include_router(_scorecards_router)

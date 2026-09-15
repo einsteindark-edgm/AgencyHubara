@@ -132,3 +132,40 @@ class EvaluateEpisodeInput:
     session_id: str
     episode_id: str = ""
     closing_tag: str = ""
+
+
+@dataclass(frozen=True)
+class ScorecardSummary:
+    """Resumen del scorecard de UN episodio (output de `score_episode_scorecard`).
+
+    Solo escalares (R-JSON). El registro completo (resultados por check con
+    evidencia) queda en `<vault>/_evals/scorecards/<fecha>.jsonl`.
+    """
+
+    session_id: str
+    episode_id: str = ""
+    verdict: str = "SIN_DATOS"
+    fidelity: str = "empty"
+    critical: int = 0
+    major: int = 0
+    minor: int = 0
+    unknown: int = 0
+    first_failure_check: str = ""
+    first_failure_turn: int = -1
+    judge: bool = False
+    stored: bool = False
+    error: str = ""
+
+
+@dataclass(frozen=True)
+class ScoreEpisodeInput:
+    """Input de `ScoreEpisodeWorkflow` — recalcular el scorecard a demanda.
+
+    Lo arranca la API cuando el operador pide "Recalcular con juez" desde el
+    dashboard: el juez tarda más que el timeout del cast, así que corre en el
+    worker `sales_eval` y el dashboard lee el resultado cuando está listo.
+    """
+
+    session_id: str
+    episode_id: str
+    with_judge: bool = True
