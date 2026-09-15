@@ -1,0 +1,34 @@
+{
+  "items": [
+    {
+      "session_id": "wa_100000000005",
+      "episode_id": "ep_002",
+      "check_id": "DES-04",
+      "check_name": "Clasificó bien la intención del cliente",
+      "judge_verdict": "desconocido",
+      "reason": "desconocido",
+      "evidence": "turno 3: «busco algo para regalar a mi mamá, le gusta la lavanda»",
+      "critique": "El juez no pudo decidir: la conversación no muestra la primera recomendación completa."
+    },
+    {
+      "session_id": "wa_100000000005",
+      "episode_id": "ep_002",
+      "check_id": "VAR-05",
+      "check_name": "No elige variantes por el cliente",
+      "judge_verdict": "falla",
+      "reason": "falla",
+      "evidence": "turno 6: «¿Te lo dejo en azul?»",
+      "critique": "El bot asumió el color sin que el cliente lo pidiera."
+    },
+    {
+      "session_id": "wa_100000000002",
+      "episode_id": "ep_012",
+      "check_id": "CON-04",
+      "check_name": "Pide el sí explícito antes de avanzar",
+      "judge_verdict": "pasa",
+      "reason": "muestra",
+      "evidence": "turno 9: «¿Confirmamos el pedido así?» + botones Confirmar / Cambiar",
+      "critique": ""
+    }
+  ]
+}

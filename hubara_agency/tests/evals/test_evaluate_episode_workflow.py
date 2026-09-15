@@ -20,10 +20,20 @@ from src.plugins.chats.agent.sales_eval.evals import select
 from src.plugins.chats.agent.sales_eval.evals.contracts import (
     ConversationEvalResult,
     EvaluateEpisodeInput,
+    ScorecardSummary,
 )
 from src.plugins.chats.agent.sales_eval.workflows.evaluate_episode import (
     EvaluateEpisodeWorkflow,
 )
+
+
+def _fake_scorecard(calls: list):
+    @activity.defn(name="score_episode_scorecard")
+    async def fake_scorecard(session_id: str, episode_id: str, with_judge: bool) -> ScorecardSummary:
+        calls.append(("scorecard", session_id, episode_id, with_judge))
+        return ScorecardSummary(session_id=session_id, episode_id=episode_id, verdict="FALLA", critical=5)
+
+    return fake_scorecard
 
 
 # --------------------------------------------------------------------------- #
@@ -51,7 +61,7 @@ async def test_workflow_builds_unit_id_and_delegates():
             env.client,
             task_queue="eval-ep-test",
             workflows=[EvaluateEpisodeWorkflow],
-            activities=[fake_eval],
+            activities=[fake_eval, _fake_scorecard([])],
         ):
             result = await env.client.execute_workflow(
                 EvaluateEpisodeWorkflow.run,
@@ -85,7 +95,7 @@ async def test_workflow_legacy_session_without_episode():
             env.client,
             task_queue="eval-ep-test2",
             workflows=[EvaluateEpisodeWorkflow],
-            activities=[fake_eval],
+            activities=[fake_eval, _fake_scorecard([])],
         ):
             await env.client.execute_workflow(
                 EvaluateEpisodeWorkflow.run,
@@ -94,6 +104,68 @@ async def test_workflow_legacy_session_without_episode():
                 task_queue="eval-ep-test2",
             )
     assert seen["unit_id"] == "wa_legacy"  # sin "::"
+
+
+@pytest.mark.asyncio
+async def test_workflow_scores_the_scorecard_before_the_legacy_eval():
+    """HU-SC-1: al cerrar un episodio corre el scorecard (con juez) y después la
+    eval legada, que convive durante la transición. Si el scorecard falla, la
+    eval legada corre igual."""
+    calls: list = []
+
+    @activity.defn(name="evaluate_sales_conversation")
+    async def fake_eval(unit_id: str, window: dict) -> ConversationEvalResult:
+        calls.append(("legacy", unit_id))
+        return ConversationEvalResult(session_id=unit_id)
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue="eval-ep-scorecard",
+            workflows=[EvaluateEpisodeWorkflow],
+            activities=[fake_eval, _fake_scorecard(calls)],
+        ):
+            await env.client.execute_workflow(
+                EvaluateEpisodeWorkflow.run,
+                EvaluateEpisodeInput(session_id="wa_100000000001", episode_id="ep_007"),
+                id="eval-episode-wa_100000000001-ep_007",
+                task_queue="eval-ep-scorecard",
+            )
+
+    assert calls == [
+        ("scorecard", "wa_100000000001", "ep_007", True),
+        ("legacy", "wa_100000000001::ep_007"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_workflow_legacy_eval_still_runs_when_scorecard_fails():
+    calls: list = []
+
+    @activity.defn(name="score_episode_scorecard")
+    async def broken_scorecard(session_id: str, episode_id: str, with_judge: bool) -> ScorecardSummary:
+        raise RuntimeError("vault ilegible")
+
+    @activity.defn(name="evaluate_sales_conversation")
+    async def fake_eval(unit_id: str, window: dict) -> ConversationEvalResult:
+        calls.append(unit_id)
+        return ConversationEvalResult(session_id=unit_id)
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue="eval-ep-scorecard-broken",
+            workflows=[EvaluateEpisodeWorkflow],
+            activities=[fake_eval, broken_scorecard],
+        ):
+            await env.client.execute_workflow(
+                EvaluateEpisodeWorkflow.run,
+                EvaluateEpisodeInput(session_id="wa_100000000001", episode_id="ep_008"),
+                id="eval-episode-wa_100000000001-ep_008",
+                task_queue="eval-ep-scorecard-broken",
+            )
+
+    assert calls == ["wa_100000000001::ep_008"]
 
 
 # --------------------------------------------------------------------------- #
@@ -173,3 +245,27 @@ def test_read_evaluated_session_episodes(tmp_path: Path):
     )
     seen = history.read_evaluated_session_episodes(hist)
     assert seen == {("wa_a", "ep_001"), ("wa_b", "")}
+
+
+@pytest.mark.asyncio
+async def test_score_episode_workflow_runs_only_the_scorecard():
+    from src.plugins.chats.agent.sales_eval.evals.contracts import ScoreEpisodeInput
+    from src.plugins.chats.agent.sales_eval.workflows.score_episode import ScoreEpisodeWorkflow
+
+    calls: list = []
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue="score-ep-test",
+            workflows=[ScoreEpisodeWorkflow],
+            activities=[_fake_scorecard(calls)],
+        ):
+            summary = await env.client.execute_workflow(
+                ScoreEpisodeWorkflow.run,
+                ScoreEpisodeInput(session_id="wa_100000000001", episode_id="ep_007", with_judge=True),
+                id="scorecard-wa_100000000001-ep_007-1",
+                task_queue="score-ep-test",
+            )
+
+    assert calls == [("scorecard", "wa_100000000001", "ep_007", True)]
+    assert summary.verdict == "FALLA"

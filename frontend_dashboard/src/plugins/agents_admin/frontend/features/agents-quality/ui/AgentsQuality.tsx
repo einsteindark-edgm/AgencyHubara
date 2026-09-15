@@ -1,154 +1,222 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import {
-  isFlaggedEpisode,
-  useConversationEvals,
-} from "@plugins/agents_admin/frontend/entities/episode-eval";
+  useScorecards,
+  type EpisodeRef,
+} from "@plugins/agents_admin/frontend/entities/scorecard";
+import {
+  ComplianceMatrix,
+  type VerdictFilter,
+} from "@plugins/agents_admin/frontend/features/compliance-matrix";
 import { EpisodeEvals } from "@plugins/agents_admin/frontend/features/episode-evals";
 import { EvalTrendChart } from "@plugins/agents_admin/frontend/features/eval-trend-chart";
 import { GoldenEvalCuration } from "@plugins/agents_admin/frontend/features/golden-eval-curation";
+import { JudgeCalibration } from "@plugins/agents_admin/frontend/features/judge-calibration";
 import { Icon } from "@/shared/ui";
 
-/** Ventana compartida (días) entre la tendencia y la lista de episodios — el
- *  mismo `useConversationEvals(WINDOW_DAYS, "online")` alimenta a ambos (una
- *  sola fetch, cache de TanStack). */
-const WINDOW_DAYS = 30;
+import { ConversationDetail } from "./ConversationDetail";
+import { SummaryView } from "./SummaryView";
+
+/** Ventana (días) del scorecard: la MISMA para la alerta, la matriz y los
+ *  agregados (8 semanas: la tendencia semanal necesita historia). Una sola
+ *  ventana evita que el resumen diga "10 en FALLA" y la matriz muestre 7. */
+const WINDOW_DAYS = 56;
+const STATS_DAYS = WINDOW_DAYS;
+/** Ventana de las métricas legadas (sin cambios respecto de la vista anterior). */
+const LEGACY_WINDOW_DAYS = 30;
+
+type Tab = "resumen" | "conversaciones" | "calibracion" | "legado" | "goldens";
+
+const TABS: ReadonlyArray<{ id: Tab; label: string; icon: () => ReactNode }> = [
+  { id: "resumen", label: "Resumen", icon: Icon.spark },
+  { id: "conversaciones", label: "Conversaciones", icon: Icon.timeline },
+  { id: "calibracion", label: "Calibración", icon: Icon.tag },
+  { id: "legado", label: "Métricas legadas", icon: Icon.archive },
+  { id: "goldens", label: "Goldens", icon: Icon.shield },
+];
 
 /**
- * Panel "Calidad LLM" del agente de ventas. Vive como tab del canvas central
- * (ver `agents-prompts`), visible solo para el agente `sales` — el único con
- * harness de evaluación hoy.
+ * Panel "Calidad LLM" del agente de ventas: el **scorecard por etapa**. Un
+ * checklist binario por etapa del guion, con checks críticos que reprueban
+ * solos, evaluado sobre la trayectoria completa (texto, tools, componentes,
+ * etiquetas, guardas). Todas las superficies leen `/api/agents/evals/*`.
  *
- * El eval loop en una frase: un eval online corre varias veces al día, puntúa
- * CADA EPISODIO de conversación real con un juez LLM, y los episodios que caen
- * bajo el umbral se vuelven candidatos a golden (regresión de CI). Las tres
- * superficies (todas leen `/api/agents/evals/*`):
- *
- *   1. **Tendencia** — valor inicial→actual (con fecha) por métrica. Selector
- *      de conversación: "Todas" promedia por día; un episodio aísla SU evolución
- *      sin contaminación. Los días bajos (modo Todas) filtran la lista.
- *   2. **Episodios** — la vista central: qué conversación puntuó qué, su timeline
- *      de evals, por qué falló cada métrica, y si es candidata a golden.
- *   3. **Goldens** — curación de candidatos (aprobar → regresión en CI).
+ *   * **Resumen** — veredictos, Pareto de fallos, embudo de etapa terminal y
+ *     tendencia semanal por check.
+ *   * **Conversaciones** — matriz episodios × checks; elegir un episodio abre su
+ *     tira de trayectoria + scorecard.
+ *   * **Calibración** — confiabilidad del juez contra etiquetas humanas + cola.
+ *   * **Métricas legadas** — la tendencia y los episodios del eval por promedio,
+ *     intactos mientras conviven ambos sistemas.
+ *   * **Goldens** — curación de candidatos.
  *
  * Nota FSD: composición intra-plugin (feature → feature del MISMO plugin), que
- * `dependency-cruiser` permite — la regla `plugins-no-cross-plugin` solo veta el
- * acoplamiento entre plugins distintos. El estado compartido entre superficies
- * (episodio aislado, día seleccionado, candidato a abrir) vive ACÁ, lifted: las
- * features hermanas no se hablan entre sí, reciben callbacks del padre. El
- * episodio seleccionado es UNO: lo fija tanto el selector de la tendencia como
- * un click en la lista, y ambas superficies lo reflejan.
+ * `dependency-cruiser` permite. El estado compartido entre superficies (filtros
+ * de la matriz, episodio y check seleccionados, estado del legado) vive ACÁ,
+ * lifted: las features hermanas no se hablan entre sí, reciben callbacks.
  */
 export function AgentsQuality() {
-  const [view, setView] = useState<"episodios" | "goldens">("episodios");
+  const [tab, setTab] = useState<Tab>("resumen");
+
+  // Scorecard
+  const [verdictFilter, setVerdictFilter] = useState<VerdictFilter>("todos");
+  const [checkFilter, setCheckFilter] = useState<string | null>(null);
+  const [selectedEpisode, setSelectedEpisode] = useState<EpisodeRef | null>(null);
+  const [selectedCheckId, setSelectedCheckId] = useState<string | null>(null);
+
+  // Legado (sin cambios de comportamiento)
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [selectedEpisodeKey, setSelectedEpisodeKey] = useState<string | null>(null);
   const [goldenToOpen, setGoldenToOpen] = useState<string | null>(null);
   const [onlyFailing, setOnlyFailing] = useState(false);
 
-  // Alerta de calidad: cuántos episodios ameritan atención — score bajo el
-  // umbral O candidato a golden (incluye fallas de métrica crítica como
-  // alucinación). NO "falló alguna métrica": eso marcaba un 0.96 con el tono
-  // apenas bajo (ruido). Es el "te aviso de los malos" que pediste — siempre
-  // visible en la nav, derivado del mismo query (cache compartido).
-  const { data: convData } = useConversationEvals(WINDOW_DAYS, "online");
-  const threshold = convData?.threshold ?? 0.7;
-  const failingCount = (convData?.conversations ?? []).filter((c) =>
-    isFlaggedEpisode(c, threshold),
-  ).length;
+  // Alerta: episodios con veredicto FALLA (cayó al menos un check crítico).
+  // Mismo query que la matriz (cache compartido).
+  const { data: list } = useScorecards(WINDOW_DAYS);
+  const failingCount = (list?.scorecards ?? []).filter((s) => s.verdict === "FALLA").length;
 
-  const openCandidate = (candidateId: string) => {
-    setGoldenToOpen(candidateId);
-    setView("goldens");
+  const goConversations = (verdict: VerdictFilter, check: string | null) => {
+    setVerdictFilter(verdict);
+    setCheckFilter(check);
+    setTab("conversaciones");
   };
 
-  const showFailing = () => {
-    setOnlyFailing(true);
-    setView("episodios");
+  const selectEpisode = (sessionId: string, episodeId: string) => {
+    setSelectedEpisode({ sessionId, episodeId });
+    // Viniendo del Pareto, abrir directamente en el check que se está investigando.
+    setSelectedCheckId(checkFilter);
   };
 
-  // Día y episodio son filtros mutuamente excluyentes de la misma vista.
+  // Legado: día y episodio son filtros mutuamente excluyentes de la misma vista.
   const selectDate = (date: string | null) => {
     setSelectedDate(date);
-    if (date) {
-      setSelectedEpisodeKey(null);
-      setView("episodios");
-    }
+    if (date) setSelectedEpisodeKey(null);
   };
-
-  const selectEpisode = (key: string | null) => {
+  const selectLegacyEpisode = (key: string | null) => {
     setSelectedEpisodeKey(key);
-    if (key) {
-      setSelectedDate(null);
-      setView("episodios");
-    }
+    if (key) setSelectedDate(null);
+  };
+  const openCandidate = (candidateId: string) => {
+    setGoldenToOpen(candidateId);
+    setTab("goldens");
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3 text-fg">
-      <div className="shrink-0">
-        <EvalTrendChart
-          windowDays={WINDOW_DAYS}
-          selectedDate={selectedDate}
-          onSelectDate={selectDate}
-          selectedEpisodeKey={selectedEpisodeKey}
-          onSelectEpisode={selectEpisode}
-        />
-      </div>
-
-      <div className="flex min-h-[20rem] flex-1 flex-col overflow-hidden rounded-lg border border-line">
-        <nav className="flex shrink-0 items-center gap-1 border-b border-line p-2">
-          <button
-            type="button"
-            onClick={() => setView("episodios")}
-            className={
-              "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition " +
-              (view === "episodios"
-                ? "bg-white/10 text-fg"
-                : "text-fg-muted hover:bg-white/5")
-            }
-          >
-            <Icon.timeline /> Episodios evaluados
-          </button>
-          <button
-            type="button"
-            onClick={() => setView("goldens")}
-            className={
-              "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition " +
-              (view === "goldens"
-                ? "bg-white/10 text-fg"
-                : "text-fg-muted hover:bg-white/5")
-            }
-          >
-            <Icon.shield /> Curación de goldens
-          </button>
-          {failingCount > 0 && (
-            <button
-              type="button"
-              onClick={showFailing}
-              className="ml-auto inline-flex items-center gap-1.5 rounded-md bg-red/15 px-3 py-1.5 text-xs font-semibold text-red transition hover:bg-red/25"
-              title="Episodios cuya última eval quedó bajo el umbral o es candidata a golden (incluye fallas críticas como alucinación)"
-            >
-              <Icon.alert /> {failingCount} episodio{failingCount > 1 ? "s" : ""} para revisar
-            </button>
-          )}
-        </nav>
-        <div className="min-h-0 flex-1 overflow-hidden">
-          {view === "episodios" ? (
-            <EpisodeEvals
-              windowDays={WINDOW_DAYS}
-              dateFilter={selectedDate}
-              onClearDateFilter={() => setSelectedDate(null)}
-              selectedKey={selectedEpisodeKey}
-              onSelectKey={selectEpisode}
-              onlyFailing={onlyFailing}
-              onOnlyFailingChange={setOnlyFailing}
-              onOpenCandidate={openCandidate}
-            />
-          ) : (
-            <GoldenEvalCuration initialSelectedId={goldenToOpen} />
-          )}
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden text-fg">
+      <nav className="flex shrink-0 flex-wrap items-center gap-1 border-b border-line p-2">
+        <div role="tablist" aria-label="Vistas de calidad LLM" className="flex flex-wrap items-center gap-1">
+          {TABS.map((t) => {
+            const TabIcon = t.icon;
+            const on = tab === t.id;
+            return (
+              <button
+                key={t.id}
+                id={`quality-tab-${t.id}`}
+                type="button"
+                role="tab"
+                aria-selected={on}
+                aria-controls={`quality-panel-${t.id}`}
+                onClick={() => setTab(t.id)}
+                className={
+                  "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition " +
+                  (on ? "bg-white/10 text-fg" : "text-fg-muted hover:bg-white/5")
+                }
+              >
+                <TabIcon /> {t.label}
+              </button>
+            );
+          })}
         </div>
+        {failingCount > 0 && (
+          <button
+            type="button"
+            onClick={() => goConversations("FALLA", null)}
+            className="ml-auto inline-flex items-center gap-1.5 rounded-md bg-red/15 px-3 py-1.5 text-xs font-semibold text-red transition hover:bg-red/25"
+            title={`Episodios de los últimos ${WINDOW_DAYS} días cuyo scorecard dio FALLA (cayó al menos un check crítico)`}
+          >
+            <Icon.alert /> {failingCount} episodio{failingCount > 1 ? "s" : ""} para revisar
+          </button>
+        )}
+      </nav>
+
+      <div
+        role="tabpanel"
+        id={`quality-panel-${tab}`}
+        aria-labelledby={`quality-tab-${tab}`}
+        className={
+          tab === "legado" || tab === "goldens"
+            ? "flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3"
+            : "min-h-0 flex-1 overflow-y-auto p-3"
+        }
+      >
+        {tab === "resumen" && (
+          <SummaryView
+            days={STATS_DAYS}
+            onSelectVerdict={(v) => goConversations(v, null)}
+            onSelectCheck={(id) => goConversations("todos", id)}
+          />
+        )}
+
+        {tab === "conversaciones" && (
+          <div className="flex min-w-0 flex-col gap-3">
+            <ComplianceMatrix
+              days={WINDOW_DAYS}
+              verdictFilter={verdictFilter}
+              onVerdictFilterChange={setVerdictFilter}
+              checkFilter={checkFilter}
+              onClearCheckFilter={() => setCheckFilter(null)}
+              selectedEpisode={selectedEpisode}
+              onSelectEpisode={selectEpisode}
+            />
+            {selectedEpisode ? (
+              <ConversationDetail
+                key={`${selectedEpisode.sessionId}::${selectedEpisode.episodeId}`}
+                episode={selectedEpisode}
+                selectedCheckId={selectedCheckId}
+                onSelectCheck={setSelectedCheckId}
+                onClose={() => setSelectedEpisode(null)}
+              />
+            ) : (
+              <p className="rounded-lg border border-dashed border-line-strong p-4 text-sm text-fg-muted">
+                Elige una conversación en la matriz para ver su trayectoria turno a turno y su scorecard.
+              </p>
+            )}
+          </div>
+        )}
+
+        {tab === "calibracion" && <JudgeCalibration days={WINDOW_DAYS} />}
+
+        {tab === "legado" && (
+          <>
+            <div className="shrink-0">
+              <EvalTrendChart
+                windowDays={LEGACY_WINDOW_DAYS}
+                selectedDate={selectedDate}
+                onSelectDate={selectDate}
+                selectedEpisodeKey={selectedEpisodeKey}
+                onSelectEpisode={selectLegacyEpisode}
+              />
+            </div>
+            <div className="flex min-h-[20rem] flex-1 flex-col overflow-hidden rounded-lg border border-line">
+              <EpisodeEvals
+                windowDays={LEGACY_WINDOW_DAYS}
+                dateFilter={selectedDate}
+                onClearDateFilter={() => setSelectedDate(null)}
+                selectedKey={selectedEpisodeKey}
+                onSelectKey={selectLegacyEpisode}
+                onlyFailing={onlyFailing}
+                onOnlyFailingChange={setOnlyFailing}
+                onOpenCandidate={openCandidate}
+              />
+            </div>
+          </>
+        )}
+
+        {tab === "goldens" && (
+          <div className="flex min-h-[20rem] flex-1 flex-col overflow-hidden rounded-lg border border-line">
+            <GoldenEvalCuration initialSelectedId={goldenToOpen} />
+          </div>
+        )}
       </div>
     </div>
   );

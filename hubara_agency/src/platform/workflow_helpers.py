@@ -192,6 +192,21 @@ class TurnResult:
     # (`intro_text`, `body`, ...): el caller detecta si el saludo ya salió por
     # el canal legítimo y no lo duplica.
     outbound_tool_texts: list[str] = field(default_factory=list)
+    # Scorecard por etapa (HU-SC-0): cada tool ejecutada en el turno con sus
+    # args y su resultado (acotado), en orden. Sin esto el evaluador solo veía
+    # NOMBRES de tools y no podía distinguir un formulario de envío mandado de
+    # uno rechazado por su guarda (PR #281). Lista en memoria del workflow: no
+    # agrega commands a la history (replay-safe).
+    tool_events: list[dict[str, Any]] = field(default_factory=list)
+    # Narración que el default-deny descartó (texto junto a tool calls). El
+    # cliente NO la vio; el evaluador sí debe verla (el LLM quiso decir algo).
+    discarded_narration: list[str] = field(default_factory=list)
+
+
+# Tope del resultado de cada tool que viaja en `TurnResult.tool_events`: el
+# resumen de la traza solo lee las claves de control del envelope (error,
+# queued, degraded_from, count…), que van al inicio del JSON.
+_TOOL_EVENT_RESULT_MAX = 4000
 
 
 def _try_parse_decision_payload(raw: str) -> dict[str, Any] | None:
@@ -575,6 +590,8 @@ async def _run_agent_turn_impl(
     # al history (replay-safe sin gate; el gate vive en el workflow que decide
     # enviarlos).
     pre_tool_messages: list[str] = []
+    tool_events: list[dict[str, Any]] = []
+    discarded_narration: list[str] = []
     # L-11 (run b730c006): corte de turno en tools que esperan al cliente +
     # descarte del content que acompaña tools internas. Gated: ambos cambian la
     # cantidad de commands del turno (menos llm_chat/execute_tool; menos sends
@@ -673,6 +690,7 @@ async def _run_agent_turn_impl(
                 sanitized_pre = sanitize_llm_text(response.content)
                 if sanitized_pre.text:
                     if workflow.patched("no-pre-tool-forward-v1"):
+                        discarded_narration.append(sanitized_pre.text)
                         workflow.logger.info(
                             "pre-tool content descartado (default-deny: el texto "
                             "junto a tool calls nunca va al cliente; batch="
@@ -707,6 +725,15 @@ async def _run_agent_turn_impl(
                         workspace=session.workspace,
                     ),
                     **_TOOL_OPTIONS,  # type: ignore[arg-type]
+                )
+                tool_events.append(
+                    {
+                        "name": tc.name,
+                        "args": tc.arguments if isinstance(tc.arguments, dict) else {},
+                        "result": result[:_TOOL_EVENT_RESULT_MAX]
+                        if isinstance(result, str)
+                        else "",
+                    }
                 )
 
                 # Intentar extraer decisiones del payload JSON (ADR-001).
@@ -966,4 +993,6 @@ async def _run_agent_turn_impl(
         order_registered_decision=order_registered_decision,
         first_contact=first_contact,
         outbound_tool_texts=outbound_tool_texts,
+        tool_events=tool_events,
+        discarded_narration=discarded_narration,
     )

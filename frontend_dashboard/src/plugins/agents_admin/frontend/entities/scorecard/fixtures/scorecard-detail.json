@@ -1,0 +1,1018 @@
+{
+ "stored": true,
+ "scorecard": {
+  "session_id": "wa_100000000001",
+  "episode_id": "ep_007",
+  "verdict": "FALLA",
+  "fidelity": "trace",
+  "counts": {
+   "critico": 5,
+   "mayor": 5,
+   "menor": 3,
+   "pasa": 24,
+   "no_aplica": 18,
+   "desconocido": 1
+  },
+  "compliance": 0.6486,
+  "first_failure": {
+   "turn": 2,
+   "check_id": "DES-09"
+  },
+  "first_critical": {
+   "turn": 5,
+   "check_id": "VAR-01"
+  },
+  "stage_final": "confirmacion",
+  "closing_tag": "CONFIRMADO_SIN_DATOS",
+  "turns": 10,
+  "results": [
+   {
+    "check_id": "APE-01",
+    "verdict": "pasa",
+    "level": "mayor",
+    "turn": 1,
+    "evidence": "turno 1: «¡Buenos días! Bienvenido a *Hubara*, velas artesanales hechas a base de cera de palma, a mano en Colombia.»",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "APE-02",
+    "verdict": "pasa",
+    "level": "menor",
+    "turn": 1,
+    "evidence": "turno 1: «¡Buenos días! Bienvenido a *Hubara*, velas artesanales hechas a base de cera de palma, a mano en Colombia.»",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "APE-03",
+    "verdict": "pasa",
+    "level": "mayor",
+    "turn": 1,
+    "evidence": "turno 1: quick_replies",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "APE-04",
+    "verdict": "no_aplica",
+    "level": "menor",
+    "turn": null,
+    "evidence": "es primer contacto",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "DES-01",
+    "verdict": "falla",
+    "level": "mayor",
+    "turn": 4,
+    "evidence": "turno 4: tercera pregunta antes de mostrar productos «¿Prefieres algún color?»",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "DES-02",
+    "verdict": "pasa",
+    "level": "menor",
+    "turn": null,
+    "evidence": "",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "DES-03",
+    "verdict": "pasa",
+    "level": "critico",
+    "turn": null,
+    "evidence": "1 pedido(s) de catálogo atendidos",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "DES-05",
+    "verdict": "no_aplica",
+    "level": "critico",
+    "turn": null,
+    "evidence": "el bot no nombró productos ni precios",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "DES-08",
+    "verdict": "no_aplica",
+    "level": "mayor",
+    "turn": null,
+    "evidence": "el cliente no eligió un producto de un catálogo mostrado",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "DES-09",
+    "verdict": "falla",
+    "level": "menor",
+    "turn": 2,
+    "evidence": "turno 2: pregunta por aroma antes de mostrar productos «¿Qué aroma le gusta a la persona?»",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "VAR-01",
+    "verdict": "falla",
+    "level": "critico",
+    "turn": 5,
+    "evidence": "turno 5: 11 aromas enumerados en texto plano «Tenemos 11 aromas disponibles: Caballero de la noche, Limoncillo, Lavanda, Café, Sándalo, Ylang ylang, Coco cremoso, Fr…»",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "VAR-01b",
+    "verdict": "pasa",
+    "level": "mayor",
+    "turn": null,
+    "evidence": "la guarda de variantes no tuvo que actuar",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "VAR-02",
+    "verdict": "no_aplica",
+    "level": "mayor",
+    "turn": null,
+    "evidence": "sin picker de variantes",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "VAR-03",
+    "verdict": "no_aplica",
+    "level": "menor",
+    "turn": null,
+    "evidence": "sin picker de variantes",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "VAR-04",
+    "verdict": "no_aplica",
+    "level": "mayor",
+    "turn": null,
+    "evidence": "el cliente no eligió desde un picker",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "VAR-06",
+    "verdict": "pasa",
+    "level": "mayor",
+    "turn": null,
+    "evidence": "no re-preguntó la cantidad",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "VAR-07",
+    "verdict": "pasa",
+    "level": "mayor",
+    "turn": 9,
+    "evidence": "precio visible en el turno 5",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "VAR-09",
+    "verdict": "pasa",
+    "level": "menor",
+    "turn": null,
+    "evidence": "botones rápidos válidos",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "CON-01",
+    "verdict": "falla",
+    "level": "critico",
+    "turn": 9,
+    "evidence": "turno 9: formulario de envío sin confirmación de compra; última señal del cliente: aplazamiento «Usuario respondió: Voy apenas en camino a casa. Siguiente paso: confirmar el pe…»",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "CON-02",
+    "verdict": "falla",
+    "level": "critico",
+    "turn": 9,
+    "evidence": "turno 9: el cliente aplazó «Usuario respondió: Voy apenas en camino a casa. Siguiente paso: confirmar el pe…» y el bot avanzó con request_shipping_details",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "CON-03",
+    "verdict": "no_aplica",
+    "level": "critico",
+    "turn": null,
+    "evidence": "el bot no afirmó un pedido confirmado o registrado",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "CON-05",
+    "verdict": "pasa",
+    "level": "mayor",
+    "turn": null,
+    "evidence": "ninguna guarda de confirmación tuvo que actuar",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "ENV-01",
+    "verdict": "pasa",
+    "level": "mayor",
+    "turn": 9,
+    "evidence": "formulario en el turno 9",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "ENV-02",
+    "verdict": "falla",
+    "level": "mayor",
+    "turn": 9,
+    "evidence": "turno 9: formulario sin texto ante «Usuario respondió: Voy apenas en camino a casa. Siguiente paso: confirmar el pedido y tomar datos de envío.»; narración descartada «Perfecto, ya casi llegas a casa. Te dejo el formulario.»",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "ENV-03",
+    "verdict": "no_aplica",
+    "level": "mayor",
+    "turn": null,
+    "evidence": "el cliente no envió el formulario",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "ENV-04",
+    "verdict": "no_aplica",
+    "level": "mayor",
+    "turn": null,
+    "evidence": "el pedido nunca tuvo datos de envío",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "ENV-05",
+    "verdict": "pasa",
+    "level": "critico",
+    "turn": null,
+    "evidence": "",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "ENV-07",
+    "verdict": "no_aplica",
+    "level": "mayor",
+    "turn": null,
+    "evidence": "no se intentó registrar la orden",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "CIE-01",
+    "verdict": "no_aplica",
+    "level": "critico",
+    "turn": null,
+    "evidence": "no se registró la orden",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "CIE-02",
+    "verdict": "no_aplica",
+    "level": "critico",
+    "turn": null,
+    "evidence": "no se registró la orden",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "CIE-03",
+    "verdict": "no_aplica",
+    "level": "critico",
+    "turn": null,
+    "evidence": "sin orden ni etiqueta de pago pendiente",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "CIE-03b",
+    "verdict": "no_aplica",
+    "level": "mayor",
+    "turn": null,
+    "evidence": "no se registró la orden",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "CIE-04",
+    "verdict": "no_aplica",
+    "level": "critico",
+    "turn": null,
+    "evidence": "no se registró la orden",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "CIE-05",
+    "verdict": "pasa",
+    "level": "mayor",
+    "turn": null,
+    "evidence": "",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "CIE-06",
+    "verdict": "pasa",
+    "level": "critico",
+    "turn": null,
+    "evidence": "",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "CIE-07",
+    "verdict": "no_aplica",
+    "level": "critico",
+    "turn": null,
+    "evidence": "no se verificó ni registró la orden",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "CIE-08",
+    "verdict": "no_aplica",
+    "level": "menor",
+    "turn": null,
+    "evidence": "no se registró la orden",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "POS-01",
+    "verdict": "no_aplica",
+    "level": "critico",
+    "turn": null,
+    "evidence": "el episodio no tiene orden",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "TAG-01",
+    "verdict": "falla",
+    "level": "critico",
+    "turn": 10,
+    "evidence": "turno 10: etiqueta CONFIRMADO_SIN_DATOS sin confirmación del cliente en el episodio",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "TAG-01b",
+    "verdict": "pasa",
+    "level": "mayor",
+    "turn": null,
+    "evidence": "ninguna etiqueta fue degradada",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "TAG-02",
+    "verdict": "falla",
+    "level": "critico",
+    "turn": 10,
+    "evidence": "turno 10: escalación ORDER_PENDING_SHIPPING_DETAILS sin confirmación de compra del cliente",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "TAG-05",
+    "verdict": "pasa",
+    "level": "critico",
+    "turn": 10,
+    "evidence": "silencio tras la ruta humano del turno 10",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "TAG-06",
+    "verdict": "pasa",
+    "level": "mayor",
+    "turn": null,
+    "evidence": "la red de escalación no tuvo que actuar",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "EST-01",
+    "verdict": "pasa",
+    "level": "menor",
+    "turn": null,
+    "evidence": "",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "EST-02",
+    "verdict": "pasa",
+    "level": "menor",
+    "turn": null,
+    "evidence": "",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "EST-03",
+    "verdict": "pasa",
+    "level": "critico",
+    "turn": null,
+    "evidence": "",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "EST-03b",
+    "verdict": "pasa",
+    "level": "mayor",
+    "turn": null,
+    "evidence": "",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "EST-05",
+    "verdict": "pasa",
+    "level": "mayor",
+    "turn": null,
+    "evidence": "",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "EST-06",
+    "verdict": "falla",
+    "level": "menor",
+    "turn": 9,
+    "evidence": "turno 9: narración descartada «Perfecto, ya casi llegas a casa. Te dejo el formulario.»",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "GHO-01",
+    "verdict": "pasa",
+    "level": "critico",
+    "turn": null,
+    "evidence": "2 turno(s) de ghosting en silencio",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "GHO-02",
+    "verdict": "falla",
+    "level": "menor",
+    "turn": 10,
+    "evidence": "turno 10: ghosting a los 300 s del formulario (mínimo 600 s)",
+    "critique": "",
+    "source": "code"
+   },
+   {
+    "check_id": "DES-04",
+    "verdict": "falla",
+    "level": "mayor",
+    "turn": 3,
+    "evidence": "café → 23 productos",
+    "critique": "Trató el aroma como categoría y siguió preguntando.",
+    "source": "judge"
+   },
+   {
+    "check_id": "VAR-05",
+    "verdict": "falla",
+    "level": "mayor",
+    "turn": 6,
+    "evidence": "¿Te lo dejo en azul?",
+    "critique": "Asumió la compra antes de un sí.",
+    "source": "judge"
+   },
+   {
+    "check_id": "CON-04",
+    "verdict": "falla",
+    "level": "mayor",
+    "turn": 9,
+    "evidence": "Voy apenas en camino a casa",
+    "critique": "Pasó a datos de envío sin pedir el sí.",
+    "source": "judge"
+   },
+   {
+    "check_id": "EST-08",
+    "verdict": "desconocido",
+    "level": "mayor",
+    "turn": null,
+    "evidence": "",
+    "critique": "juez inconsistente entre muestras: pasa vs falla",
+    "source": "judge"
+   },
+   {
+    "check_id": "EST-04",
+    "verdict": "pasa",
+    "level": "mayor",
+    "turn": null,
+    "evidence": "",
+    "critique": "",
+    "source": "judge"
+   }
+  ],
+  "judge": true,
+  "registry_version": 1,
+  "order_id": null,
+  "catalog_available": true,
+  "date": "2026-09-14",
+  "ts": "2026-09-14T17:30:00+00:00",
+  "checks": {
+   "APE-01": "pasa",
+   "APE-02": "pasa",
+   "APE-03": "pasa",
+   "APE-04": "no_aplica",
+   "DES-01": "falla",
+   "DES-02": "pasa",
+   "DES-03": "pasa",
+   "DES-05": "no_aplica",
+   "DES-08": "no_aplica",
+   "DES-09": "falla",
+   "VAR-01": "falla",
+   "VAR-01b": "pasa",
+   "VAR-02": "no_aplica",
+   "VAR-03": "no_aplica",
+   "VAR-04": "no_aplica",
+   "VAR-06": "pasa",
+   "VAR-07": "pasa",
+   "VAR-09": "pasa",
+   "CON-01": "falla",
+   "CON-02": "falla",
+   "CON-03": "no_aplica",
+   "CON-05": "pasa",
+   "ENV-01": "pasa",
+   "ENV-02": "falla",
+   "ENV-03": "no_aplica",
+   "ENV-04": "no_aplica",
+   "ENV-05": "pasa",
+   "ENV-07": "no_aplica",
+   "CIE-01": "no_aplica",
+   "CIE-02": "no_aplica",
+   "CIE-03": "no_aplica",
+   "CIE-03b": "no_aplica",
+   "CIE-04": "no_aplica",
+   "CIE-05": "pasa",
+   "CIE-06": "pasa",
+   "CIE-07": "no_aplica",
+   "CIE-08": "no_aplica",
+   "POS-01": "no_aplica",
+   "TAG-01": "falla",
+   "TAG-01b": "pasa",
+   "TAG-02": "falla",
+   "TAG-05": "pasa",
+   "TAG-06": "pasa",
+   "EST-01": "pasa",
+   "EST-02": "pasa",
+   "EST-03": "pasa",
+   "EST-03b": "pasa",
+   "EST-05": "pasa",
+   "EST-06": "falla",
+   "GHO-01": "pasa",
+   "GHO-02": "falla",
+   "DES-04": "falla",
+   "VAR-05": "falla",
+   "CON-04": "falla",
+   "EST-08": "desconocido",
+   "EST-04": "pasa"
+  }
+ },
+ "trajectory": {
+  "session_id": "wa_100000000001",
+  "episode_id": "ep_007",
+  "fidelity": "trace",
+  "turns": [
+   {
+    "turn": 1,
+    "at_ms": 60000,
+    "trigger": "customer",
+    "inbound_text": "Hola, quiero información de las velas",
+    "signal": null,
+    "sent_texts": [
+     "¡Buenos días! Bienvenido a *Hubara*, velas artesanales hechas a base de cera de palma, a mano en Colombia."
+    ],
+    "llm_text": "",
+    "suppressed_reason": null,
+    "discarded_narration": [],
+    "tools": [
+     {
+      "name": "send_quick_replies",
+      "ok": true,
+      "error": null,
+      "notes": [],
+      "args": {
+       "body": "¿Te muestro el catálogo?"
+      }
+     }
+    ],
+    "intents": [
+     "quick_replies"
+    ],
+    "guards": [],
+    "stage_in": "descubrimiento",
+    "stage_out": "descubrimiento",
+    "draft": {},
+    "confirmed": false,
+    "state": {
+     "tag": null,
+     "route": "ventas",
+     "changes": []
+    },
+    "first_contact": true
+   },
+   {
+    "turn": 2,
+    "at_ms": 120000,
+    "trigger": "customer",
+    "inbound_text": "es para un regalo",
+    "signal": null,
+    "sent_texts": [
+     "¿Qué aroma le gusta a la persona?"
+    ],
+    "llm_text": "",
+    "suppressed_reason": null,
+    "discarded_narration": [],
+    "tools": [],
+    "intents": [],
+    "guards": [],
+    "stage_in": "descubrimiento",
+    "stage_out": "descubrimiento",
+    "draft": {},
+    "confirmed": false,
+    "state": {
+     "tag": null,
+     "route": "ventas",
+     "changes": []
+    },
+    "first_contact": false
+   },
+   {
+    "turn": 3,
+    "at_ms": 180000,
+    "trigger": "customer",
+    "inbound_text": "café",
+    "signal": null,
+    "sent_texts": [
+     "¿Para qué espacio sería? ¿La sala o el dormitorio?"
+    ],
+    "llm_text": "",
+    "suppressed_reason": null,
+    "discarded_narration": [],
+    "tools": [
+     {
+      "name": "search_products",
+      "ok": true,
+      "error": null,
+      "notes": [
+       "count:23"
+      ],
+      "args": {
+       "q": "café"
+      }
+     }
+    ],
+    "intents": [],
+    "guards": [],
+    "stage_in": "descubrimiento",
+    "stage_out": "descubrimiento",
+    "draft": {},
+    "confirmed": false,
+    "state": {
+     "tag": null,
+     "route": "ventas",
+     "changes": []
+    },
+    "first_contact": false
+   },
+   {
+    "turn": 4,
+    "at_ms": 240000,
+    "trigger": "customer",
+    "inbound_text": "la sala",
+    "signal": null,
+    "sent_texts": [
+     "¿Prefieres algún color?"
+    ],
+    "llm_text": "",
+    "suppressed_reason": null,
+    "discarded_narration": [],
+    "tools": [],
+    "intents": [],
+    "guards": [],
+    "stage_in": "descubrimiento",
+    "stage_out": "descubrimiento",
+    "draft": {},
+    "confirmed": false,
+    "state": {
+     "tag": null,
+     "route": "ventas",
+     "changes": []
+    },
+    "first_contact": false
+   },
+   {
+    "turn": 5,
+    "at_ms": 300000,
+    "trigger": "customer",
+    "inbound_text": "muéstrame",
+    "signal": null,
+    "sent_texts": [
+     "Tenemos 11 aromas disponibles: Caballero de la noche, Limoncillo, Lavanda, Café, Sándalo, Ylang ylang, Coco cremoso, Frutos rojos, Verde menta, Drakar y Chanel."
+    ],
+    "llm_text": "Tenemos 11 aromas disponibles: Caballero de la noche, Limoncillo, Lavanda, Café, Sándalo, Ylang ylang, Coco cremoso, Frutos rojos, Verde menta, Drakar y Chanel.",
+    "suppressed_reason": null,
+    "discarded_narration": [],
+    "tools": [
+     {
+      "name": "search_products",
+      "ok": true,
+      "error": null,
+      "notes": [
+       "count:24"
+      ],
+      "args": {}
+     },
+     {
+      "name": "present_products",
+      "ok": true,
+      "error": null,
+      "notes": [],
+      "args": {}
+     }
+    ],
+    "intents": [
+     "products_list"
+    ],
+    "guards": [],
+    "stage_in": "descubrimiento",
+    "stage_out": "descubrimiento",
+    "draft": {},
+    "confirmed": false,
+    "state": {
+     "tag": null,
+     "route": "ventas",
+     "changes": []
+    },
+    "first_contact": false
+   },
+   {
+    "turn": 6,
+    "at_ms": 360000,
+    "trigger": "customer",
+    "inbound_text": "El primero azulito",
+    "signal": null,
+    "sent_texts": [
+     "¿Te lo dejo en azul?"
+    ],
+    "llm_text": "",
+    "suppressed_reason": null,
+    "discarded_narration": [],
+    "tools": [
+     {
+      "name": "set_order_slot",
+      "ok": true,
+      "error": null,
+      "notes": [],
+      "args": {
+       "producto": "cubo-love",
+       "color": "Azul"
+      }
+     }
+    ],
+    "intents": [],
+    "guards": [],
+    "stage_in": "descubrimiento",
+    "stage_out": "variantes",
+    "draft": {
+     "producto": "cubo-love",
+     "color": "Azul"
+    },
+    "confirmed": false,
+    "state": {
+     "tag": null,
+     "route": "ventas",
+     "changes": []
+    },
+    "first_contact": false
+   },
+   {
+    "turn": 7,
+    "at_ms": 420000,
+    "trigger": "customer",
+    "inbound_text": "Tengo cita médica, luego te escribo",
+    "signal": "deferral",
+    "sent_texts": [
+     "Claro, aquí te espero 🤍"
+    ],
+    "llm_text": "",
+    "suppressed_reason": null,
+    "discarded_narration": [],
+    "tools": [],
+    "intents": [],
+    "guards": [],
+    "stage_in": "variantes",
+    "stage_out": "variantes",
+    "draft": {
+     "producto": "cubo-love",
+     "color": "Azul"
+    },
+    "confirmed": false,
+    "state": {
+     "tag": null,
+     "route": "ventas",
+     "changes": []
+    },
+    "first_contact": false
+   },
+   {
+    "turn": 8,
+    "at_ms": 480000,
+    "trigger": "ghost",
+    "inbound_text": "[SISTEMA]: El usuario dejó de responder",
+    "signal": null,
+    "sent_texts": [],
+    "llm_text": "",
+    "suppressed_reason": null,
+    "discarded_narration": [],
+    "tools": [
+     {
+      "name": "manage_conversation_tag",
+      "ok": true,
+      "error": null,
+      "notes": [],
+      "args": {
+       "tag": "INTERESADO"
+      }
+     }
+    ],
+    "intents": [],
+    "guards": [],
+    "stage_in": "variantes",
+    "stage_out": "variantes",
+    "draft": {
+     "producto": "cubo-love",
+     "color": "Azul"
+    },
+    "confirmed": false,
+    "state": {
+     "tag": "INTERESADO",
+     "route": "ventas",
+     "changes": [
+      {
+       "tag": "INTERESADO",
+       "source": "llm",
+       "reason": null
+      }
+     ]
+    },
+    "first_contact": false
+   },
+   {
+    "turn": 9,
+    "at_ms": 20000000,
+    "trigger": "handoff",
+    "inbound_text": "Usuario respondió: Voy apenas en camino a casa. Siguiente paso: confirmar el pedido y tomar datos de envío.",
+    "signal": "deferral",
+    "sent_texts": [],
+    "llm_text": "",
+    "suppressed_reason": null,
+    "discarded_narration": [
+     "Perfecto, ya casi llegas a casa. Te dejo el formulario."
+    ],
+    "tools": [
+     {
+      "name": "set_order_slot",
+      "ok": true,
+      "error": null,
+      "notes": [],
+      "args": {
+       "aroma": "Café",
+       "cantidad": "1"
+      }
+     },
+     {
+      "name": "request_shipping_details",
+      "ok": true,
+      "error": null,
+      "notes": [],
+      "args": {
+       "order_total_cop": 89000
+      }
+     }
+    ],
+    "intents": [
+     "shipping_flow"
+    ],
+    "guards": [],
+    "stage_in": "variantes",
+    "stage_out": "confirmacion",
+    "draft": {
+     "producto": "cubo-love",
+     "color": "Azul",
+     "aroma": "Café",
+     "cantidad": "1"
+    },
+    "confirmed": false,
+    "state": {
+     "tag": null,
+     "route": "ventas",
+     "changes": []
+    },
+    "first_contact": false
+   },
+   {
+    "turn": 10,
+    "at_ms": 20300000,
+    "trigger": "ghost",
+    "inbound_text": "[SISTEMA]: El usuario dejó de responder",
+    "signal": null,
+    "sent_texts": [],
+    "llm_text": "",
+    "suppressed_reason": null,
+    "discarded_narration": [],
+    "tools": [
+     {
+      "name": "manage_conversation_tag",
+      "ok": true,
+      "error": null,
+      "notes": [],
+      "args": {
+       "tag": "CONFIRMADO_SIN_DATOS"
+      }
+     },
+     {
+      "name": "escalate_to_human",
+      "ok": true,
+      "error": null,
+      "notes": [],
+      "args": {
+       "reason_category": "ORDER_PENDING_SHIPPING_DETAILS"
+      }
+     }
+    ],
+    "intents": [],
+    "guards": [],
+    "stage_in": "confirmacion",
+    "stage_out": "confirmacion",
+    "draft": {
+     "producto": "cubo-love",
+     "color": "Azul",
+     "aroma": "Café",
+     "cantidad": "1"
+    },
+    "confirmed": false,
+    "state": {
+     "tag": "HUMANO",
+     "route": "humano",
+     "escalation_reason": "ORDER_PENDING_SHIPPING_DETAILS",
+     "closing_tag": "CONFIRMADO_SIN_DATOS",
+     "changes": [
+      {
+       "tag": "CONFIRMADO_SIN_DATOS",
+       "source": "llm",
+       "reason": null
+      },
+      {
+       "tag": "HUMANO",
+       "source": "llm",
+       "reason": "ORDER_PENDING_SHIPPING_DETAILS"
+      }
+     ]
+    },
+    "first_contact": false
+   }
+  ],
+  "closing_tag": "CONFIRMADO_SIN_DATOS",
+  "order_id": null,
+  "closing_motivo": null,
+  "started_at_ms": null,
+  "closed_at_ms": 1
+ },
+ "legacy": {
+  "avg": 0.93,
+  "date": "2026-09-14",
+  "metrics": {
+   "script_adherence": 0.7,
+   "correct_handoff": 1.0
+  }
+ }
+}

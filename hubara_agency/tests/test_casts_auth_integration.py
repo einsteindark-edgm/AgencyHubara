@@ -139,3 +139,28 @@ def _mba_test_customers_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
     from src.platform import config
 
     monkeypatch.setattr(config, "MBA_CUSTOMER_ALLOWLIST", frozenset({"573001234567", "573009876543"}))
+
+
+# --- HU-SC-2: el scorecard por etapa viaja por el mismo cast evals@v1 ---
+
+
+async def test_scorecard_routes_reach_chats_through_the_cast(auth_app, monkeypatch, tmp_path):
+    from src.plugins.chats.api import scorecards
+
+    monkeypatch.setattr(scorecards, "get_vault_dir", lambda: tmp_path)
+    real = _route_loopback_to(auth_app, monkeypatch)
+    headers = {"Authorization": "Bearer good"}
+
+    async with real(transport=httpx.ASGITransport(app=auth_app), base_url="http://edge") as edge:
+        checks = await edge.get("/api/agents/evals/checks", headers=headers)
+        listing = await edge.get("/api/agents/evals/scorecards", params={"days": 7}, headers=headers)
+        stats = await edge.get("/api/agents/evals/checks/stats", params={"days": 14}, headers=headers)
+        calib = await edge.get("/api/agents/evals/calibration", headers=headers)
+        queue = await edge.get("/api/agents/evals/labels/queue", headers=headers)
+
+    assert checks.status_code == 200, checks.text
+    assert any(c["id"] == "CON-01" for c in checks.json()["checks"])
+    assert listing.json()["count"] == 0
+    assert stats.json()["episodes"] == 0
+    assert calib.json()["checks"]
+    assert queue.json() == {"items": []}

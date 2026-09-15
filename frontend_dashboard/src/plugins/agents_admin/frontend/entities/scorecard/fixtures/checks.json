@@ -1,0 +1,1138 @@
+{
+ "registry_version": 1,
+ "stages": [
+  "descubrimiento",
+  "variantes",
+  "confirmacion",
+  "datos_envio",
+  "cierre",
+  "postcierre",
+  "transversal"
+ ],
+ "families": [
+  {
+   "id": "apertura",
+   "label": "Apertura",
+   "stage": "descubrimiento"
+  },
+  {
+   "id": "descubrimiento",
+   "label": "Descubrimiento",
+   "stage": "descubrimiento"
+  },
+  {
+   "id": "variantes",
+   "label": "Variantes",
+   "stage": "variantes"
+  },
+  {
+   "id": "confirmacion",
+   "label": "Confirmación de compra",
+   "stage": "confirmacion"
+  },
+  {
+   "id": "envio",
+   "label": "Datos de envío",
+   "stage": "datos_envio"
+  },
+  {
+   "id": "cierre",
+   "label": "Cierre",
+   "stage": "cierre"
+  },
+  {
+   "id": "postcierre",
+   "label": "Post-cierre",
+   "stage": "postcierre"
+  },
+  {
+   "id": "estado",
+   "label": "Etiquetado y escalación",
+   "stage": "transversal"
+  },
+  {
+   "id": "estilo",
+   "label": "Estilo y seguridad",
+   "stage": "transversal"
+  },
+  {
+   "id": "ghosting",
+   "label": "Ghosting",
+   "stage": "transversal"
+  }
+ ],
+ "checks": [
+  {
+   "id": "APE-01",
+   "name": "Saludo por hora y marca en el primer contacto",
+   "family": "apertura",
+   "family_label": "Apertura",
+   "stage": "descubrimiento",
+   "level": "mayor",
+   "kind": "code",
+   "applies": "Primer contacto de la conversación.",
+   "rule": "El primer texto que recibe el cliente abre con saludo por hora de Colombia (Buenos días/tardes/noches) y la marca Hubara.",
+   "origin": [
+    "spec:sales-worker/Saludo garantizado en el primer contacto",
+    "memoria:first_contact_greeting_dropped"
+   ],
+   "golden_behaviors": [
+    "greeting_first_turn"
+   ],
+   "twin_of": null
+  },
+  {
+   "id": "APE-02",
+   "name": "Sin apertura prohibida",
+   "family": "apertura",
+   "family_label": "Apertura",
+   "stage": "descubrimiento",
+   "level": "menor",
+   "kind": "code",
+   "applies": "Primer contacto de la conversación.",
+   "rule": "El primer texto no abre con ¡Hola!, Hey ni Buen día.",
+   "origin": [
+    "guion:etapa_descubrimiento"
+   ],
+   "golden_behaviors": [
+    "forbidden_opener_absent"
+   ],
+   "twin_of": null
+  },
+  {
+   "id": "APE-03",
+   "name": "Ofrece el catálogo en la apertura",
+   "family": "apertura",
+   "family_label": "Apertura",
+   "stage": "descubrimiento",
+   "level": "mayor",
+   "kind": "code",
+   "applies": "Primer contacto de la conversación.",
+   "rule": "El turno de apertura envía botones rápidos (Ver catálogo) o ya muestra productos.",
+   "origin": [
+    "guion:etapa_descubrimiento"
+   ],
+   "golden_behaviors": [
+    "offer_catalog_opening"
+   ],
+   "twin_of": null
+  },
+  {
+   "id": "APE-04",
+   "name": "No vuelve a saludar a un cliente con historial",
+   "family": "apertura",
+   "family_label": "Apertura",
+   "stage": "descubrimiento",
+   "level": "menor",
+   "kind": "code",
+   "applies": "Conversación que no es primer contacto.",
+   "rule": "Ningún texto del episodio repite la bienvenida (Bienvenido a Hubara).",
+   "origin": [
+    "guion:sales_script regla 2"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "DES-01",
+   "name": "Máximo dos preguntas antes de mostrar productos",
+   "family": "descubrimiento",
+   "family_label": "Descubrimiento",
+   "stage": "descubrimiento",
+   "level": "mayor",
+   "kind": "code",
+   "applies": "El episodio tuvo turnos de descubrimiento.",
+   "rule": "Antes del primer catálogo, foto o picker, el bot hizo como mucho dos preguntas.",
+   "origin": [
+    "PR #281",
+    "guion:etapa_descubrimiento"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "DES-02",
+   "name": "Una pregunta por burbuja",
+   "family": "descubrimiento",
+   "family_label": "Descubrimiento",
+   "stage": "descubrimiento",
+   "level": "menor",
+   "kind": "code",
+   "applies": "El bot envió texto.",
+   "rule": "Ningún texto enviado contiene más de una pregunta.",
+   "origin": [
+    "guion:sales_script regla 10"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "DES-03",
+   "name": "Catálogo pedido, catálogo enviado",
+   "family": "descubrimiento",
+   "family_label": "Descubrimiento",
+   "stage": "descubrimiento",
+   "level": "critico",
+   "kind": "code",
+   "applies": "El cliente tocó Ver catálogo o pidió ver productos.",
+   "rule": "En ese mismo turno viaja un catálogo, una foto, una galería o un picker.",
+   "origin": [
+    "guion:etapa_descubrimiento"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "DES-04",
+   "name": "Clasificó bien la intención del cliente",
+   "family": "descubrimiento",
+   "family_label": "Descubrimiento",
+   "stage": "descubrimiento",
+   "level": "mayor",
+   "kind": "judge",
+   "applies": "El bot recomendó o mostró productos.",
+   "rule": "Lo que el bot mostró o recomendó responde a lo que el cliente dijo buscar (para quién, diseño, momento, espacio).",
+   "origin": [
+    "operador 2026-09-14",
+    "PR #281"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "DES-05",
+   "name": "Busca en el catálogo antes de nombrar productos o precios",
+   "family": "descubrimiento",
+   "family_label": "Descubrimiento",
+   "stage": "descubrimiento",
+   "level": "critico",
+   "kind": "code",
+   "applies": "El bot nombró un producto del catálogo o un precio.",
+   "rule": "Una búsqueda o lectura del catálogo precede al primer texto con producto o precio.",
+   "origin": [
+    "guion:sales_script regla máxima 1"
+   ],
+   "golden_behaviors": [
+    "search_before_naming"
+   ],
+   "twin_of": null
+  },
+  {
+   "id": "DES-06",
+   "name": "Sin datos de catálogo inventados",
+   "family": "descubrimiento",
+   "family_label": "Descubrimiento",
+   "stage": "descubrimiento",
+   "level": "critico",
+   "kind": "judge",
+   "applies": "El bot afirmó productos, precios, aromas, colores o conteos.",
+   "rule": "Todo lo afirmado existe en el catálogo real vigente; ningún conteo ni opción inventada.",
+   "origin": [
+    "memoria:duo_zodiacal_description_gap"
+   ],
+   "golden_behaviors": [
+    "no_hallucinated_product"
+   ],
+   "twin_of": null
+  },
+  {
+   "id": "DES-07",
+   "name": "Lead sin fit: redirige o escala, no fuerza la venta",
+   "family": "descubrimiento",
+   "family_label": "Descubrimiento",
+   "stage": "descubrimiento",
+   "level": "mayor",
+   "kind": "judge",
+   "applies": "El cliente pidió algo que la marca no vende.",
+   "rule": "El bot lo dice con claridad y ofrece lo que sí hay o escala CATALOG_GAP; no inventa ni presiona.",
+   "origin": [
+    "memoria:remarketing_no_fit_lead"
+   ],
+   "golden_behaviors": [
+    "proactive_offering_back_to_catalog"
+   ],
+   "twin_of": null
+  },
+  {
+   "id": "DES-08",
+   "name": "Producto elegido queda en el pedido",
+   "family": "descubrimiento",
+   "family_label": "Descubrimiento",
+   "stage": "descubrimiento",
+   "level": "mayor",
+   "kind": "code",
+   "applies": "El cliente eligió un producto de un catálogo mostrado.",
+   "rule": "En ese turno se llama set_order_slot con el producto.",
+   "origin": [
+    "guion:etapa_descubrimiento paso 5"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "DES-09",
+   "name": "Diseño antes que aroma",
+   "family": "descubrimiento",
+   "family_label": "Descubrimiento",
+   "stage": "descubrimiento",
+   "level": "menor",
+   "kind": "code",
+   "applies": "Turnos sin producto elegido.",
+   "rule": "El bot no pregunta por aroma antes de mostrar productos.",
+   "origin": [
+    "PR #281",
+    "guion:etapa_descubrimiento"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "VAR-01",
+   "name": "Cuatro o más aromas o colores nunca en texto plano",
+   "family": "variantes",
+   "family_label": "Variantes",
+   "stage": "variantes",
+   "level": "critico",
+   "kind": "code",
+   "applies": "El bot envió texto.",
+   "rule": "Ningún texto enviado enumera cuatro o más aromas o colores del catálogo.",
+   "origin": [
+    "PR #281",
+    "spec:sales-worker/Variantes siempre en formato picker"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "VAR-01b",
+   "name": "La guarda de variantes tuvo que actuar",
+   "family": "variantes",
+   "family_label": "Variantes",
+   "stage": "variantes",
+   "level": "mayor",
+   "kind": "code",
+   "applies": "Siempre (trazas).",
+   "rule": "La guarda de enumeración no reemplazó texto por picker en el episodio.",
+   "origin": [
+    "PR #281"
+   ],
+   "golden_behaviors": [],
+   "twin_of": "VAR-01"
+  },
+  {
+   "id": "VAR-02",
+   "name": "Picker con opciones válidas",
+   "family": "variantes",
+   "family_label": "Variantes",
+   "stage": "variantes",
+   "level": "mayor",
+   "kind": "code",
+   "applies": "El bot usó present_variant_picker.",
+   "rule": "Ningún picker fue rechazado por opciones inexistentes o insuficientes.",
+   "origin": [
+    "spec:sales-worker/Tools de UI rica"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "VAR-03",
+   "name": "Sin pickers duplicados en un turno",
+   "family": "variantes",
+   "family_label": "Variantes",
+   "stage": "variantes",
+   "level": "menor",
+   "kind": "code",
+   "applies": "El bot usó present_variant_picker.",
+   "rule": "Ningún turno envía dos pickers del mismo tipo de variante.",
+   "origin": [
+    "guion:etapa_variantes"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "VAR-04",
+   "name": "Elección de variante queda en el pedido",
+   "family": "variantes",
+   "family_label": "Variantes",
+   "stage": "variantes",
+   "level": "mayor",
+   "kind": "code",
+   "applies": "El cliente eligió de un picker.",
+   "rule": "En ese turno se llama set_order_slot.",
+   "origin": [
+    "guion:etapa_variantes"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "VAR-05",
+   "name": "No elige variantes por el cliente",
+   "family": "variantes",
+   "family_label": "Variantes",
+   "stage": "variantes",
+   "level": "mayor",
+   "kind": "judge",
+   "applies": "El bot guio variantes.",
+   "rule": "El bot no asume aroma, color ni cantidad que el cliente no dijo.",
+   "origin": [
+    "PR #281",
+    "run b730c006"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "VAR-06",
+   "name": "No vuelve a preguntar la cantidad",
+   "family": "variantes",
+   "family_label": "Variantes",
+   "stage": "variantes",
+   "level": "mayor",
+   "kind": "code",
+   "applies": "El pedido ya tiene cantidad.",
+   "rule": "Después de fijar la cantidad, ningún texto la vuelve a preguntar.",
+   "origin": [
+    "memoria:quantity_compound_reply_capture"
+   ],
+   "golden_behaviors": [
+    "no_reask"
+   ],
+   "twin_of": null
+  },
+  {
+   "id": "VAR-07",
+   "name": "Precio visible antes de pedir confirmación o datos",
+   "family": "variantes",
+   "family_label": "Variantes",
+   "stage": "variantes",
+   "level": "mayor",
+   "kind": "code",
+   "applies": "El bot pidió confirmación o datos de envío.",
+   "rule": "Antes, el cliente vio un precio (texto con precio, foto o catálogo).",
+   "origin": [
+    "PR #281"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "VAR-09",
+   "name": "Botones rápidos sin selectores de catálogo",
+   "family": "variantes",
+   "family_label": "Variantes",
+   "stage": "variantes",
+   "level": "menor",
+   "kind": "code",
+   "applies": "El bot usó send_quick_replies.",
+   "rule": "La guarda anti-selector no rechazó botones de producto, aroma o color.",
+   "origin": [
+    "memoria:quick_replies_catalog_selector_guard"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "CON-01",
+   "name": "Formulario de envío solo tras confirmación de compra",
+   "family": "confirmacion",
+   "family_label": "Confirmación de compra",
+   "stage": "confirmacion",
+   "level": "critico",
+   "kind": "code",
+   "applies": "Se envió el formulario de envío.",
+   "rule": "Existe confirmación del cliente (sí explícito o botón Confirmar) antes del formulario.",
+   "origin": [
+    "PR #281",
+    "spec:sales-worker/Confirmación de compra antes del cierre"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "CON-02",
+   "name": "Aplazamiento respetado",
+   "family": "confirmacion",
+   "family_label": "Confirmación de compra",
+   "stage": "confirmacion",
+   "level": "critico",
+   "kind": "code",
+   "applies": "El cliente aplazó (después, luego, voy en camino).",
+   "rule": "En ese turno no avanza la venta: sin formulario, resumen, registro ni etiqueta de confirmación.",
+   "origin": [
+    "PR #281",
+    "spec:sales-worker/Aplazamiento del cliente"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "CON-03",
+   "name": "No afirma pedido confirmado o registrado sin serlo",
+   "family": "confirmacion",
+   "family_label": "Confirmación de compra",
+   "stage": "confirmacion",
+   "level": "critico",
+   "kind": "code",
+   "applies": "El bot envió texto.",
+   "rule": "Ningún texto dice que el pedido quedó confirmado o registrado sin orden registrada.",
+   "origin": [
+    "PR #281"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "CON-04",
+   "name": "Pide el sí explícito antes de avanzar",
+   "family": "confirmacion",
+   "family_label": "Confirmación de compra",
+   "stage": "confirmacion",
+   "level": "mayor",
+   "kind": "judge",
+   "applies": "El pedido llegó a variantes completas.",
+   "rule": "El bot pregunta si confirma la compra (con precio) antes de pedir datos.",
+   "origin": [
+    "guion:etapa_variantes"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "CON-05",
+   "name": "La guarda de confirmación tuvo que actuar",
+   "family": "confirmacion",
+   "family_label": "Confirmación de compra",
+   "stage": "confirmacion",
+   "level": "mayor",
+   "kind": "code",
+   "applies": "Siempre (trazas).",
+   "rule": "Ninguna tool fue rechazada por purchase_not_confirmed o customer_deferred.",
+   "origin": [
+    "PR #281"
+   ],
+   "golden_behaviors": [],
+   "twin_of": "CON-01"
+  },
+  {
+   "id": "ENV-01",
+   "name": "Formulario de envío una sola vez",
+   "family": "envio",
+   "family_label": "Datos de envío",
+   "stage": "datos_envio",
+   "level": "mayor",
+   "kind": "code",
+   "applies": "Se envió el formulario de envío.",
+   "rule": "El formulario sale una sola vez por episodio.",
+   "origin": [
+    "guion:sales_script regla máxima 2"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "ENV-02",
+   "name": "Formulario sin responder al cliente",
+   "family": "envio",
+   "family_label": "Datos de envío",
+   "stage": "datos_envio",
+   "level": "mayor",
+   "kind": "code",
+   "applies": "Se envió el formulario en respuesta a un mensaje escrito del cliente.",
+   "rule": "El bot también le responde con texto; no manda el formulario pelado.",
+   "origin": [
+    "PR #281"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "ENV-03",
+   "name": "Datos del formulario quedan en el pedido",
+   "family": "envio",
+   "family_label": "Datos de envío",
+   "stage": "datos_envio",
+   "level": "mayor",
+   "kind": "code",
+   "applies": "El cliente envió el formulario.",
+   "rule": "En ese turno se llama set_order_slot.",
+   "origin": [
+    "guion:etapa_datos_envio"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "ENV-04",
+   "name": "No vuelve a pedir datos de envío ya dados",
+   "family": "envio",
+   "family_label": "Datos de envío",
+   "stage": "datos_envio",
+   "level": "mayor",
+   "kind": "code",
+   "applies": "El pedido ya tiene ciudad, dirección, teléfono o nombre de quien recibe.",
+   "rule": "Ningún texto posterior vuelve a pedir un dato ya capturado.",
+   "origin": [
+    "guion:etapa_datos_envio"
+   ],
+   "golden_behaviors": [
+    "no_reask"
+   ],
+   "twin_of": null
+  },
+  {
+   "id": "ENV-05",
+   "name": "Sin datos bancarios ni valor de envío definitivo en texto",
+   "family": "envio",
+   "family_label": "Datos de envío",
+   "stage": "datos_envio",
+   "level": "critico",
+   "kind": "code",
+   "applies": "El bot envió texto.",
+   "rule": "Ningún texto trae cuentas o llaves de pago ni afirma un valor de envío definitivo.",
+   "origin": [
+    "spec:sales-worker/Formas de pago informadas",
+    "spec:sales-worker/El valor del envío nunca es definitivo"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "ENV-06",
+   "name": "Formas de pago informadas correctamente",
+   "family": "envio",
+   "family_label": "Datos de envío",
+   "stage": "datos_envio",
+   "level": "mayor",
+   "kind": "judge",
+   "applies": "El bot habló de formas de pago.",
+   "rule": "Lo dicho coincide con las tres formas vigentes (contra entrega, anticipado, link) y sus condiciones.",
+   "origin": [
+    "spec:sales-worker/Formas de pago informadas"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "ENV-07",
+   "name": "Nombre de quien recibe antes de registrar",
+   "family": "envio",
+   "family_label": "Datos de envío",
+   "stage": "datos_envio",
+   "level": "mayor",
+   "kind": "code",
+   "applies": "Se intentó registrar la orden.",
+   "rule": "register_order no fue rechazado por missing_receiver_name.",
+   "origin": [
+    "spec:sales-worker/Datos de envío: quién recibe"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "CIE-01",
+   "name": "Secuencia canónica de cierre",
+   "family": "cierre",
+   "family_label": "Cierre",
+   "stage": "cierre",
+   "level": "critico",
+   "kind": "code",
+   "applies": "Se registró la orden.",
+   "rule": "verify_order_for_checkout y present_order_confirmation ocurren antes de register_order.",
+   "origin": [
+    "guion:etapa_cierre"
+   ],
+   "golden_behaviors": [
+    "register_order_attempted"
+   ],
+   "twin_of": null
+  },
+  {
+   "id": "CIE-02",
+   "name": "Registra la orden solo con confirmación del cliente",
+   "family": "cierre",
+   "family_label": "Cierre",
+   "stage": "cierre",
+   "level": "critico",
+   "kind": "code",
+   "applies": "Se registró la orden.",
+   "rule": "Entre el resumen del pedido y el registro, el cliente tocó Confirmar o dijo que sí.",
+   "origin": [
+    "spec:sales-worker/Confirmación de compra antes del cierre"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "CIE-03",
+   "name": "Pago pendiente si y solo si hay orden",
+   "family": "cierre",
+   "family_label": "Cierre",
+   "stage": "cierre",
+   "level": "critico",
+   "kind": "code",
+   "applies": "Se registró la orden o se etiquetó CONFIRMADO_PAGO_PENDIENTE.",
+   "rule": "La etiqueta CONFIRMADO_PAGO_PENDIENTE y la orden registrada van juntas.",
+   "origin": [
+    "guion:etapa_cierre"
+   ],
+   "golden_behaviors": [
+    "tag_set"
+   ],
+   "twin_of": null
+  },
+  {
+   "id": "CIE-03b",
+   "name": "La red de seguridad tuvo que cerrar la orden",
+   "family": "cierre",
+   "family_label": "Cierre",
+   "stage": "cierre",
+   "level": "mayor",
+   "kind": "code",
+   "applies": "Se registró la orden.",
+   "rule": "El LLM cerró el episodio; la red de seguridad orden-etiqueta no tuvo que actuar.",
+   "origin": [
+    "memoria:sales_safety_net_deferred_shutdown"
+   ],
+   "golden_behaviors": [],
+   "twin_of": "CIE-03"
+  },
+  {
+   "id": "CIE-04",
+   "name": "Escala la verificación de pago tras registrar",
+   "family": "cierre",
+   "family_label": "Cierre",
+   "stage": "cierre",
+   "level": "critico",
+   "kind": "code",
+   "applies": "Se registró la orden.",
+   "rule": "La sesión queda escalada con PAYMENT_VERIFICATION_PENDING.",
+   "origin": [
+    "guion:etapa_cierre"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "CIE-05",
+   "name": "Un solo mensaje de cierre, sin frases prohibidas",
+   "family": "cierre",
+   "family_label": "Cierre",
+   "stage": "cierre",
+   "level": "mayor",
+   "kind": "code",
+   "applies": "El bot envió texto.",
+   "rule": "Ningún texto usa frases prohibidas y el turno del registro envía un solo mensaje.",
+   "origin": [
+    "guion:etapa_cierre"
+   ],
+   "golden_behaviors": [
+    "single_closing_message",
+    "no_forbidden_closing"
+   ],
+   "twin_of": null
+  },
+  {
+   "id": "CIE-06",
+   "name": "Nunca COMPRA_EXITOSA por el bot",
+   "family": "cierre",
+   "family_label": "Cierre",
+   "stage": "cierre",
+   "level": "critico",
+   "kind": "code",
+   "applies": "Siempre (trazas).",
+   "rule": "El bot no llama manage_conversation_tag con COMPRA_EXITOSA.",
+   "origin": [
+    "guion:sales_script regla 11"
+   ],
+   "golden_behaviors": [
+    "tag_not_set"
+   ],
+   "twin_of": null
+  },
+  {
+   "id": "CIE-07",
+   "name": "Montos coherentes",
+   "family": "cierre",
+   "family_label": "Cierre",
+   "stage": "cierre",
+   "level": "critico",
+   "kind": "code",
+   "applies": "Se verificó o registró la orden.",
+   "rule": "Ni la verificación ni el registro reportan diferencias de monto.",
+   "origin": [
+    "SEC-07"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "CIE-08",
+   "name": "Aviso de portavelas solo si el pedido lo trae",
+   "family": "cierre",
+   "family_label": "Cierre",
+   "stage": "cierre",
+   "level": "menor",
+   "kind": "code",
+   "applies": "Se registró la orden.",
+   "rule": "La guarda de portavelas no tuvo que quitar el aviso.",
+   "origin": [
+    "memoria:portavelas_color_policy"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "POS-01",
+   "name": "Pago afirmado solo con pago verificado",
+   "family": "postcierre",
+   "family_label": "Post-cierre",
+   "stage": "postcierre",
+   "level": "critico",
+   "kind": "code",
+   "applies": "El bot habló de pago tras registrar la orden.",
+   "rule": "Solo afirma pago recibido si check_order_status devolvió paid en el turno.",
+   "origin": [
+    "guion:etapa_postcierre"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "POS-02",
+   "name": "Cambios al pedido se escalan",
+   "family": "postcierre",
+   "family_label": "Post-cierre",
+   "stage": "postcierre",
+   "level": "mayor",
+   "kind": "judge",
+   "applies": "El cliente pidió cambiar un pedido registrado.",
+   "rule": "El bot escala a humano en vez de prometer el cambio.",
+   "origin": [
+    "guion:etapa_postcierre"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "TAG-01",
+   "name": "Etiqueta de cierre sostenida por la evidencia",
+   "family": "estado",
+   "family_label": "Etiquetado y escalación",
+   "stage": "transversal",
+   "level": "critico",
+   "kind": "code",
+   "applies": "El episodio cerró con CONFIRMADO_SIN_DATOS o CONFIRMADO_PAGO_PENDIENTE.",
+   "rule": "Existe confirmación del cliente (o orden registrada) que la sostiene.",
+   "origin": [
+    "PR #281",
+    "spec:sales-worker/Confirmación de compra antes del cierre"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "TAG-01b",
+   "name": "La guarda de etiquetas tuvo que degradar",
+   "family": "estado",
+   "family_label": "Etiquetado y escalación",
+   "stage": "transversal",
+   "level": "mayor",
+   "kind": "code",
+   "applies": "Siempre (trazas).",
+   "rule": "Ninguna etiqueta fue degradada por falta de confirmación.",
+   "origin": [
+    "PR #281"
+   ],
+   "golden_behaviors": [],
+   "twin_of": "TAG-01"
+  },
+  {
+   "id": "TAG-02",
+   "name": "Motivo de escalación sostenido por la evidencia",
+   "family": "estado",
+   "family_label": "Etiquetado y escalación",
+   "stage": "transversal",
+   "level": "critico",
+   "kind": "code",
+   "applies": "La sesión escaló con ORDER_PENDING_SHIPPING_DETAILS o PAYMENT_VERIFICATION_PENDING.",
+   "rule": "Pendiente de datos exige confirmación; verificación de pago exige orden o comprobante.",
+   "origin": [
+    "PR #281"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "TAG-03",
+   "name": "Escala cuando el guion lo exige",
+   "family": "estado",
+   "family_label": "Etiquetado y escalación",
+   "stage": "transversal",
+   "level": "mayor",
+   "kind": "judge",
+   "applies": "El cliente pidió descuento, mayoreo, evento, algo de salud, envío internacional o un humano.",
+   "rule": "El bot llama escalate_to_human con el motivo correcto.",
+   "origin": [
+    "guion:sales_script objeciones"
+   ],
+   "golden_behaviors": [
+    "escalate"
+   ],
+   "twin_of": null
+  },
+  {
+   "id": "TAG-04",
+   "name": "No escala consultas normales",
+   "family": "estado",
+   "family_label": "Etiquetado y escalación",
+   "stage": "transversal",
+   "level": "mayor",
+   "kind": "judge",
+   "applies": "La sesión escaló.",
+   "rule": "La escalación responde a un disparador del guion, no a una consulta que el bot podía resolver.",
+   "origin": [
+    "golden:anti sobre-escalación"
+   ],
+   "golden_behaviors": [
+    "no_escalation"
+   ],
+   "twin_of": null
+  },
+  {
+   "id": "TAG-05",
+   "name": "Con ruta humano el bot no vuelve a hablar",
+   "family": "estado",
+   "family_label": "Etiquetado y escalación",
+   "stage": "transversal",
+   "level": "critico",
+   "kind": "code",
+   "applies": "La sesión pasó a ruta humano.",
+   "rule": "Después de ese turno el bot no envía texto ni componentes.",
+   "origin": [
+    "memoria:human_handoff_tag_invariant"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "TAG-06",
+   "name": "La red de escalación tuvo que actuar",
+   "family": "estado",
+   "family_label": "Etiquetado y escalación",
+   "stage": "transversal",
+   "level": "mayor",
+   "kind": "code",
+   "applies": "Siempre (trazas).",
+   "rule": "La escalación de cierre la hizo el LLM, no la red de seguridad.",
+   "origin": [
+    "patrón A ensure-closing-escalation"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "TAG-07",
+   "name": "RECHAZO o INTERESADO sostenidos por la conversación",
+   "family": "estado",
+   "family_label": "Etiquetado y escalación",
+   "stage": "transversal",
+   "level": "mayor",
+   "kind": "judge",
+   "applies": "El episodio cerró con RECHAZO o quedó en INTERESADO.",
+   "rule": "La conversación sostiene la etiqueta (el cliente rechazó, o mostró interés sin comprar).",
+   "origin": [
+    "guion:sales_script tabla de tagging"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "EST-01",
+   "name": "Tuteo colombiano, cero voseo",
+   "family": "estilo",
+   "family_label": "Estilo y seguridad",
+   "stage": "transversal",
+   "level": "menor",
+   "kind": "code",
+   "applies": "El bot envió texto.",
+   "rule": "Ningún texto enviado usa voseo rioplatense.",
+   "origin": [
+    "IDENTITY regla 1"
+   ],
+   "golden_behaviors": [
+    "no_voseo"
+   ],
+   "twin_of": null
+  },
+  {
+   "id": "EST-02",
+   "name": "Sin guion largo y emojis de la lista",
+   "family": "estilo",
+   "family_label": "Estilo y seguridad",
+   "stage": "transversal",
+   "level": "menor",
+   "kind": "code",
+   "applies": "El bot envió texto.",
+   "rule": "Sin em dash; como mucho un emoji por burbuja y de la lista permitida.",
+   "origin": [
+    "guion:sales_script reglas globales"
+   ],
+   "golden_behaviors": [
+    "no_em_dash",
+    "emoji_allowlist"
+   ],
+   "twin_of": null
+  },
+  {
+   "id": "EST-03",
+   "name": "Sin texto administrativo al cliente",
+   "family": "estilo",
+   "family_label": "Estilo y seguridad",
+   "stage": "transversal",
+   "level": "critico",
+   "kind": "code",
+   "applies": "El bot envió texto.",
+   "rule": "Ningún texto enviado huele a reporte interno (etiquetas, sistema, handoff).",
+   "origin": [
+    "memoria:remarketing_deliberation_leak",
+    "memoria:ghost_close_leak_on_corrientazo"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "EST-03b",
+   "name": "La guarda de texto administrativo tuvo que actuar",
+   "family": "estilo",
+   "family_label": "Estilo y seguridad",
+   "stage": "transversal",
+   "level": "mayor",
+   "kind": "code",
+   "applies": "Siempre (trazas).",
+   "rule": "La guarda de texto administrativo no bloqueó ningún texto.",
+   "origin": [
+    "memoria:ghost_close_leak_on_corrientazo"
+   ],
+   "golden_behaviors": [],
+   "twin_of": "EST-03"
+  },
+  {
+   "id": "EST-04",
+   "name": "No revela que es una IA",
+   "family": "estilo",
+   "family_label": "Estilo y seguridad",
+   "stage": "transversal",
+   "level": "mayor",
+   "kind": "judge",
+   "applies": "El bot envió texto.",
+   "rule": "El bot no dice ser una IA ni un sistema.",
+   "origin": [
+    "guion:sales_script regla 9"
+   ],
+   "golden_behaviors": [
+    "no_ai_reveal"
+   ],
+   "twin_of": null
+  },
+  {
+   "id": "EST-05",
+   "name": "Sin promesas de tiempos de entrega",
+   "family": "estilo",
+   "family_label": "Estilo y seguridad",
+   "stage": "transversal",
+   "level": "mayor",
+   "kind": "code",
+   "applies": "El bot envió texto.",
+   "rule": "Ningún texto promete un plazo concreto de entrega.",
+   "origin": [
+    "guion:sales_script regla 8"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "EST-06",
+   "name": "Sin narración descartada",
+   "family": "estilo",
+   "family_label": "Estilo y seguridad",
+   "stage": "transversal",
+   "level": "menor",
+   "kind": "code",
+   "applies": "Siempre (trazas).",
+   "rule": "El LLM no escribió texto para el cliente junto a tool calls (se descarta).",
+   "origin": [
+    "memoria:pre_tool_narration_default_deny"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "EST-07",
+   "name": "Retiene lo que el cliente ya dijo",
+   "family": "estilo",
+   "family_label": "Estilo y seguridad",
+   "stage": "transversal",
+   "level": "mayor",
+   "kind": "judge",
+   "applies": "El episodio tiene más de un turno.",
+   "rule": "El bot no pregunta ni contradice datos que el cliente ya dio.",
+   "origin": [
+    "métrica legada knowledge_retention"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "EST-08",
+   "name": "Responde lo que el cliente preguntó",
+   "family": "estilo",
+   "family_label": "Estilo y seguridad",
+   "stage": "transversal",
+   "level": "mayor",
+   "kind": "judge",
+   "applies": "El cliente hizo preguntas.",
+   "rule": "Cada pregunta del cliente recibe respuesta antes de avanzar la venta.",
+   "origin": [
+    "operador 2026-09-14"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "GHO-01",
+   "name": "El turno de ghosting no le escribe al cliente",
+   "family": "ghosting",
+   "family_label": "Ghosting",
+   "stage": "transversal",
+   "level": "critico",
+   "kind": "code",
+   "applies": "Hubo turno de ghosting.",
+   "rule": "El turno de ghosting no envía texto al cliente.",
+   "origin": [
+    "memoria:ghost_close_leak_on_corrientazo"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  },
+  {
+   "id": "GHO-02",
+   "name": "Con formulario pendiente espera diez minutos",
+   "family": "ghosting",
+   "family_label": "Ghosting",
+   "stage": "transversal",
+   "level": "menor",
+   "kind": "code",
+   "applies": "Hubo ghosting después de enviar el formulario de envío.",
+   "rule": "El ghosting llega al menos diez minutos después del formulario.",
+   "origin": [
+    "spec:sales-worker/El formulario de envío extiende el ghosting",
+    "PR #281"
+   ],
+   "golden_behaviors": [],
+   "twin_of": null
+  }
+ ]
+}

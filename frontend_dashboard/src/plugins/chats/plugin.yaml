@@ -434,6 +434,9 @@ agent:
         # Eval dirigida de UN episodio al cerrar (event-driven). La dispara la
         # transition `sales_episode_close_triggers_eval` del worker `sales`.
         - EvaluateEpisodeWorkflow
+        # Scorecard por etapa a demanda (HU-SC-2): "Recalcular con juez" desde
+        # el dashboard. Lo arranca la API de evals (el juez excede el timeout del cast).
+        - ScoreEpisodeWorkflow
       deployment:
         replicas: 1
         cpu_request: 250m
@@ -465,6 +468,13 @@ agent:
           # Ventana/cadencia quedan declaradas por si se reactiva (solo barrido de
           # episodios activos largos), pero hoy no se usan con el schedule apagado.
           SALES_EVAL_SCHEDULE_ENABLED: "false"
+          # Scorecard por etapa (HU-SC-1/6): el juez corre por check al cerrar
+          # cada episodio (toggle real: "false" = solo checks de código). La
+          # alerta de FALLA abre un issue de GitHub con dedup; sin token ni repo
+          # es un no-op (el valor vive en SSM/Terraform por tenant, no acá).
+          SCORECARD_JUDGE_ENABLED: ${SCORECARD_JUDGE_ENABLED:-true}
+          SCORECARD_ALERTS_REPO: ${SCORECARD_ALERTS_REPO:-}
+          SCORECARD_ALERTS_GITHUB_TOKEN: ${SCORECARD_ALERTS_GITHUB_TOKEN:-}
           SALES_EVAL_LOOKBACK_HOURS: "8"
           SALES_EVAL_MAX_CONVERSATIONS: "50"
           DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
