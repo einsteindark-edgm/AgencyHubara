@@ -43,6 +43,7 @@ class _FakeProduct:
             _FakeImage(_LEO, 3),
         ]
         self.variants = []
+        self.options = {}
         self.categories = []
         self.tags = []
 

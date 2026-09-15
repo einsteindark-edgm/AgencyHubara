@@ -53,6 +53,7 @@ from src.platform.whatsapp.capi import (
     META_CAPI_API_URL,
     PRE_PURCHASE_EVENT_NAMES,
     build_capi_event,
+    normalize_capi_contents,
     build_capi_request_body,
     is_ctwa_clid_within_attribution_window,
     make_event_id,
@@ -210,6 +211,7 @@ def enqueue_capi_event(
     order_id: str | None = None,
     value: int | None = None,
     currency: str | None = None,
+    contents: list[dict[str, Any]] | None = None,
 ) -> str | None:
     """Encola un evento (idempotente). Devuelve el ``event_id`` si quedó
     encolado, ``None`` si no aplica (sesión sin atribución CTWA) o ya estaba
@@ -243,6 +245,11 @@ def enqueue_capi_event(
         "attempts": 0,
         "last_error": None,
     }
+    normalized_contents = normalize_capi_contents(contents)
+    if normalized_contents:
+        # Identidad de producto (SKU = retailer_id en Meta) para la
+        # coincidencia de catálogo — ver `CapiCustomData`.
+        entry["contents"] = normalized_contents
     outbox.append(entry)
     return event_id
 
@@ -399,6 +406,8 @@ async def flush_capi_outbox(
                 ctwa_clid=clid,  # type: ignore[arg-type]
                 value=entry.get("value"),
                 currency=entry.get("currency"),
+                order_id=entry.get("order_id"),
+                contents=entry.get("contents"),
             )
         except ValueError as exc:
             outcomes.append(_record(metadata, entry, status="failed_other", now_ms=now, error_detail=str(exc)))

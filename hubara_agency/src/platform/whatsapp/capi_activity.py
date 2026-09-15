@@ -203,6 +203,8 @@ async def send_capi_event_activity(
         log.info("capi_skipped_already_sent", session_id=session_id, event_id=event_id, event_name=event_name)
         return CapiEventResult(status="skipped_already_sent", event_id=event_id, event_name=event_name)
 
+    registered = metadata.get("registered_order")
+    contents = registered.get("capi_contents") if isinstance(registered, dict) else None
     enqueue_capi_event(
         metadata,
         event_name=event_name,
@@ -211,6 +213,7 @@ async def send_capi_event_activity(
         order_id=order_id,
         value=value,
         currency=currency,
+        contents=contents if event_name == "Purchase" else None,
         source="episode_close",
         now_ms=now_ms,
     )

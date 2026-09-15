@@ -292,6 +292,9 @@ class PresentProductDetailTool(ToolBase):
                 "price": price,
                 "currency": currency,
                 "product_id": product.id,
+                # Identidad VIGENTE en Meta (SKU): el flush la usa como
+                # `content_ids` del ViewContent (coincidencia de catálogo).
+                "retailer_id": _meta_retailer_id(product),
                 # Label del diseño mostrado (o derivado del filename de la
                 # portada) — el dispatch lo persiste en outbound_media_index
                 # para resolver replies que citan esta foto.
@@ -1360,6 +1363,7 @@ class PresentProductGalleryTool(ToolBase):
             "kind": "product_gallery",
             "params": {
                 "handle": handle,
+                "retailer_id": _meta_retailer_id(product),
                 "title": product.title,
                 "image_urls": additional,
                 "images": labeled,

@@ -84,7 +84,9 @@ def enqueue_capi_for_tag(
                 return enqueue_capi_event(
                     metadata, event_name="Purchase", session_id=session_id,
                     order_id=reg["order_id"], value=reg["total_cop"],
-                    currency=str(reg.get("currency") or "COP"), source=source, now_ms=now_ms,
+                    currency=str(reg.get("currency") or "COP"),
+                    contents=reg.get("capi_contents"),
+                    source=source, now_ms=now_ms,
                 )
     except ValueError:
         return None

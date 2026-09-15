@@ -352,3 +352,77 @@ class TestFlush:
         poster = _FakePoster([])
         await flush_capi_outbox(SESSION, config=_cfg(tmp_path, test_event_code="TEST123"), post=poster, now_ms=NOW_MS)
         assert poster.calls[0]["body"]["test_event_code"] == "TEST123"
+
+
+# =============================================================================
+# Identidad de producto viaja por el outbox hasta el POST (2026-09-14)
+# =============================================================================
+
+
+class TestContentsThroughOutbox:
+    def test_enqueue_persists_normalized_contents(self) -> None:
+        md = _attributed()
+        event_id = enqueue_capi_event(
+            md,
+            event_name="ViewContent",
+            session_id=SESSION,
+            episode_id="ep_001",
+            source="t",
+            now_ms=NOW_MS,
+            contents=[{"retailer_id": "HUB-CUBOLOVE", "quantity": 1, "unit_price_cop": 21000}],
+        )
+        assert event_id is not None
+        assert md["capi_outbox"][0]["contents"] == [
+            {"id": "HUB-CUBOLOVE", "quantity": 1, "item_price": 21000}
+        ]
+
+    def test_enqueue_without_contents_keeps_entry_without_contents(self) -> None:
+        md = _attributed()
+        enqueue_capi_event(md, event_name="ViewContent", session_id=SESSION, episode_id="ep_001", source="t", now_ms=NOW_MS)
+        assert md["capi_outbox"][0].get("contents") in (None, [])
+
+    @pytest.mark.asyncio
+    async def test_flush_posts_content_ids_from_entry(self, tmp_path: Path) -> None:
+        md = _attributed()
+        enqueue_capi_event(
+            md,
+            event_name="AddToCart",
+            session_id=SESSION,
+            episode_id="ep_001",
+            value=42000,
+            currency="COP",
+            source="t",
+            now_ms=NOW_MS,
+            contents=[{"id": "HUB-CUBOLOVE", "quantity": 2, "item_price": 21000}],
+        )
+        path = _seed(tmp_path, md)
+        poster = _FakePoster([])
+        result = await flush_capi_outbox(SESSION, config=_cfg(tmp_path), post=poster, now_ms=NOW_MS)
+        assert result.sent == 1
+        custom = poster.calls[0]["body"]["data"][0]["custom_data"]
+        assert custom["content_ids"] == ["HUB-CUBOLOVE"]
+        assert custom["content_type"] == "product"
+        assert custom["contents"] == [{"id": "HUB-CUBOLOVE", "quantity": 2, "item_price": 21000}]
+        assert custom["value"] == 42000
+        assert _read(path).get("capi_outbox", []) == []
+
+    @pytest.mark.asyncio
+    async def test_flush_posts_order_id_for_purchase(self, tmp_path: Path) -> None:
+        md = _attributed()
+        enqueue_capi_event(
+            md,
+            event_name="Purchase",
+            session_id=SESSION,
+            order_id="order_7",
+            value=21000,
+            currency="COP",
+            source="t",
+            now_ms=NOW_MS,
+            contents=[{"id": "HUB-CUBOLOVE", "quantity": 1, "item_price": 21000}],
+        )
+        _seed(tmp_path, md)
+        poster = _FakePoster([])
+        await flush_capi_outbox(SESSION, config=_cfg(tmp_path), post=poster, now_ms=NOW_MS)
+        custom = poster.calls[0]["body"]["data"][0]["custom_data"]
+        assert custom["order_id"] == "order_7"
+        assert custom["content_ids"] == ["HUB-CUBOLOVE"]

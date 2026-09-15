@@ -440,6 +440,43 @@ enviarlo como mensaje WhatsApp `type=document` con `filename`.
 - WHEN se envía
 - THEN va por `send_image_to_session` (`type=image`), sin cambio de comportamiento
 
+### Requirement: Identidad de producto en los eventos CAPI
+
+Todo evento de Conversions API que nazca de un producto que el cliente VIO,
+AGREGÓ o COMPRÓ (ViewContent, AddToCart, OrderCreated, Purchase) SHALL llevar
+en `custom_data` la identidad VIGENTE del ítem en Meta Catalog:
+`content_type="product"`, `content_ids=[retailer_id…]` y
+`contents=[{id, quantity, item_price}]`, donde `retailer_id` es el SKU de la
+variante (o el id de Medusa mientras no haya SKU). Es lo que Commerce Manager
+cruza contra el catálogo ("coincidencia de catálogo"); sin ese campo la
+coincidencia es 0% aunque Meta acepte el evento. Purchase y OrderCreated
+SHALL llevar además `order_id`. Un evento sin identidad resoluble SHALL salir
+igual (sin `contents`): la identidad enriquece, nunca bloquea.
+
+#### Scenario: El cliente ve una ficha de producto
+
+- GIVEN una sesión atribuida (ctwa_clid vigente)
+- WHEN el flush envía un `product_detail` de un producto con SKU `HUB-CUBOLOVE`
+- THEN el outbox encola `ViewContent` con `contents=[{id:"HUB-CUBOLOVE", quantity:1, item_price:<precio>}]`
+- AND el POST a Meta lleva `custom_data.content_ids == ["HUB-CUBOLOVE"]`
+
+#### Scenario: El cliente ve el catálogo (lista de productos)
+
+- WHEN el flush envía un `products_list` cuyas rows traen `product_retailer_id`
+- THEN el `ViewContent` lleva un `contents` por row, en el mismo orden
+
+#### Scenario: Pedido registrado en Medusa
+
+- WHEN `register_order` registra un pedido con líneas `{handle, quantity, unit_price_cop}`
+- THEN `registered_order.capi_contents` guarda cada línea con su `retailer_id` (vía catálogo)
+- AND `OrderCreated` y el `Purchase` posterior (COMPRA_EXITOSA / cierre de episodio) llevan esos `contents` y el `order_id`
+
+#### Scenario: Catálogo caído al registrar
+
+- GIVEN el catálogo no responde
+- WHEN se registra el pedido
+- THEN el pedido se registra igual, `capi_contents == []` y los eventos salen sin `contents`
+
 ## Out of scope
 
 - Verificación por visión/IA del CONTENIDO de un PDF (¿es un pago real?) — decisión 2026-09-01: la clasificación de PDFs es determinista (todo PDF → verificación humana)

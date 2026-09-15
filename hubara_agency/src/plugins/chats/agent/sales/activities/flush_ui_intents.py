@@ -1161,12 +1161,45 @@ def _enqueue_capi_for_sent_intent(
             episode_id=episode_id,
             value=value,
             currency=currency,
+            contents=_capi_contents_for_intent(kind, params),
             source=f"flush_ui_intents:{kind}",
             now_ms=now_ms,
         )
     except ValueError:
         return False
     return event_id is not None
+
+
+def _capi_contents_for_intent(kind: str | None, params: dict[str, Any]) -> list[dict[str, Any]]:
+    """Identidad de producto (``retailer_id`` = SKU en Meta) del intent que el
+    cliente acaba de VER, en la forma ``contents`` de CAPI. Es lo que hace que
+    Commerce Manager cruce el evento con el catálogo (2026-09-14: 0% de
+    coincidencia porque ningún evento la traía).
+
+      * product_detail / product_gallery / variant_picker → el producto
+        (``params.retailer_id``, precio unitario si viene).
+      * products_list → cada row del MPM (``product_retailer_id``).
+      * order_confirmation → los ítems resueltos (retailer_id + qty + precio).
+      * shipping_flow → sin identidad (solo total); Meta no la exige ahí.
+    Sin ids → lista vacía y el evento sale como antes (nunca bloquea).
+    """
+    if kind in ("product_detail", "product_gallery", "variant_picker"):
+        retailer_id = params.get("retailer_id")
+        if not retailer_id:
+            return []
+        return [{"id": retailer_id, "quantity": 1, "price": params.get("price")}]
+    if kind == "products_list":
+        rows = [
+            r
+            for section in (params.get("sections") or [])
+            if isinstance(section, dict)
+            for r in (section.get("rows") or [])
+            if isinstance(r, dict)
+        ]
+        return [{"product_retailer_id": r.get("product_retailer_id")} for r in rows]
+    if kind == "order_confirmation":
+        return [it for it in (params.get("items") or []) if isinstance(it, dict)]
+    return []
 
 
 def _trunc(text: str, limit: int = _NOTE_TEXT_LIMIT) -> str:
