@@ -10,6 +10,8 @@ Idempotente: lo ya calificado se salta. El script de ops es
 """
 from __future__ import annotations
 
+import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -19,6 +21,8 @@ from src.plugins.chats.agent.sales_eval.scorecard import service, store
 from src.plugins.chats.agent.sales_eval.scorecard.model import CheckContext
 
 _MAX_DAY_FILES = 400
+# Episodios reales: `ep_001`. Los `ep-seed-*` son del dataset sintético de prueba.
+_REAL_EPISODE_RE = re.compile(r"ep_\d{1,6}")
 
 
 @dataclass(frozen=True)
@@ -68,3 +72,37 @@ def backfill_scorecards(
         except Exception:  # noqa: BLE001 — un episodio roto no frena el backfill
             errors += 1
     return BackfillResult(scored=scored, skipped_existing=skipped, errors=errors)
+
+
+def episodes_active_between(
+    vault_dir: Path, *, start_ms: int, end_ms: int, now_ms: int | None = None
+) -> list[tuple[str, str]]:
+    """Episodios reales cuya vida se solapa con `[start_ms, end_ms)`.
+
+    Abiertos o cerrados: un episodio abierto vive hasta `now_ms`. Solo los que
+    tienen mensajes del cliente (los demás son remarketing o notificaciones).
+    Orden estable por sesión y episodio. Lo usa `scripts/rescore_scorecards.py`
+    para recalificar un rango de fechas con el juez.
+    """
+    from src.plugins.chats.agent.sales_eval.evals import reconstruct
+
+    now = int(time.time() * 1000) if now_ms is None else now_ms
+    out: list[tuple[str, str]] = []
+    try:
+        sessions = sorted(p.name for p in vault_dir.iterdir() if p.is_dir() and p.name.startswith("wa_"))
+    except OSError:
+        return []
+    for session_id in sessions:
+        metadata = reconstruct.read_session_metadata(vault_dir, session_id)
+        for ep in metadata.get("episodes") or []:
+            if not isinstance(ep, dict) or not _REAL_EPISODE_RE.fullmatch(str(ep.get("episode_id") or "")):
+                continue
+            started, closed = ep.get("started_at_ms"), ep.get("closed_at_ms")
+            if not isinstance(started, (int, float)) or started >= end_ms:
+                continue
+            if (closed if isinstance(closed, (int, float)) else now) < start_ms:
+                continue
+            events, _ = reconstruct.read_episode_events(vault_dir, session_id, str(ep["episode_id"]))
+            if any(isinstance(e, dict) and e.get("role") == "user" for e in events):
+                out.append((session_id, str(ep["episode_id"])))
+    return out

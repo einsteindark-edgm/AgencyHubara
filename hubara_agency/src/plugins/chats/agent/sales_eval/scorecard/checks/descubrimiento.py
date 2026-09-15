@@ -152,9 +152,26 @@ def _titles(ctx: CheckContext) -> list[str]:
     return [t for t in ctx.product_titles if len(t) >= _MIN_TITLE_LEN]
 
 
+# Montos que no salen del catálogo: umbrales y recargos de las formas de pago y
+# valores de envío ("compras superiores a $45.000", "recargo de $3.000", "el
+# envío sale en $12.000"). Se miran las palabras justo antes del monto.
+_POLICY_AMOUNT_RE = re.compile(
+    r"(superior(es)?|mayor(es)?|m[aá]s de|m[ií]nim[oa]|recargo|env[ií]o|domicilio|flete|contra ?entrega)"
+    r"[^.$\n]{0,25}$",
+    re.IGNORECASE,
+)
+
+
+def _catalog_price(text: str) -> str | None:
+    for m in PRICE_RE.finditer(text):
+        if not _POLICY_AMOUNT_RE.search(text[max(0, m.start() - 60) : m.start()]):
+            return m.group(0)
+    return None
+
+
 def _naming(text: str, titles: list[str]) -> str | None:
-    if m := PRICE_RE.search(text):
-        return m.group(0)
+    if price := _catalog_price(text):
+        return price
     low = text.lower()
     return next((t for t in titles if t.lower() in low), None)
 

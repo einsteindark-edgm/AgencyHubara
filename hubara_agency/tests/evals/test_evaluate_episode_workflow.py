@@ -19,6 +19,8 @@ from temporalio.worker import Worker
 from src.plugins.chats.agent.sales_eval.evals import select
 from src.plugins.chats.agent.sales_eval.evals.contracts import (
     ConversationEvalResult,
+    EvalRunSummary,
+    EvalWindowInput,
     EvaluateEpisodeInput,
     ScorecardSummary,
 )
@@ -31,7 +33,7 @@ def _fake_scorecard(calls: list):
     @activity.defn(name="score_episode_scorecard")
     async def fake_scorecard(session_id: str, episode_id: str, with_judge: bool) -> ScorecardSummary:
         calls.append(("scorecard", session_id, episode_id, with_judge))
-        return ScorecardSummary(session_id=session_id, episode_id=episode_id, verdict="FALLA", critical=5)
+        return ScorecardSummary(session_id=session_id, episode_id=episode_id, verdict="FALLA", critical=5, stored=True)
 
     return fake_scorecard
 
@@ -269,3 +271,87 @@ async def test_score_episode_workflow_runs_only_the_scorecard():
 
     assert calls == [("scorecard", "wa_100000000001", "ep_007", True)]
     assert summary.verdict == "FALLA"
+
+
+# --------------------------------------------------------------------------- #
+# SalesEvalWorkflow (barrido diario 23:00 Bogotá): también corre el scorecard.
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_daily_sweep_scores_the_scorecard_one_episode_at_a_time():
+    """El barrido diario solo corría la eval legada: los episodios que no
+    cierran (INTERESADO, ruta humano) nunca tenían scorecard. Primer informe
+    9-15 sep: 8 de 12 episodios con actividad seguían abiertos."""
+    from src.plugins.chats.agent.sales_eval.workflows.sales_eval import SalesEvalWorkflow
+
+    calls: list = []
+
+    @activity.defn(name="select_conversations_to_eval")
+    async def fake_select(window: EvalWindowInput) -> list[str]:
+        return ["wa_100000000001::ep_001"]
+
+    @activity.defn(name="evaluate_sales_conversation")
+    async def fake_eval(unit_id: str, window: EvalWindowInput) -> ConversationEvalResult:
+        calls.append(("legacy", unit_id))
+        return ConversationEvalResult(session_id=unit_id)
+
+    @activity.defn(name="select_scorecard_units")
+    async def fake_scorecard_units(window: EvalWindowInput) -> list[str]:
+        return ["wa_100000000001::ep_001", "wa_100000000002::ep_003"]
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue="sales-eval-daily",
+            workflows=[SalesEvalWorkflow],
+            activities=[fake_select, fake_eval, fake_scorecard_units, _fake_scorecard(calls)],
+        ):
+            summary: EvalRunSummary = await env.client.execute_workflow(
+                SalesEvalWorkflow.run,
+                EvalWindowInput(lookback_hours=24),
+                id="sales-eval-daily-1",
+                task_queue="sales-eval-daily",
+            )
+
+    assert calls == [
+        ("scorecard", "wa_100000000001", "ep_001", True),
+        ("scorecard", "wa_100000000002", "ep_003", True),
+        ("legacy", "wa_100000000001::ep_001"),
+    ]
+    assert summary.scorecards == 2
+
+
+@pytest.mark.asyncio
+async def test_daily_sweep_legacy_eval_runs_even_if_scorecard_selection_breaks():
+    from src.plugins.chats.agent.sales_eval.workflows.sales_eval import SalesEvalWorkflow
+
+    calls: list = []
+
+    @activity.defn(name="select_conversations_to_eval")
+    async def fake_select(window: EvalWindowInput) -> list[str]:
+        return ["wa_100000000001::ep_001"]
+
+    @activity.defn(name="evaluate_sales_conversation")
+    async def fake_eval(unit_id: str, window: EvalWindowInput) -> ConversationEvalResult:
+        calls.append(unit_id)
+        return ConversationEvalResult(session_id=unit_id)
+
+    @activity.defn(name="select_scorecard_units")
+    async def broken_units(window: EvalWindowInput) -> list[str]:
+        raise RuntimeError("vault ilegible")
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue="sales-eval-daily-broken",
+            workflows=[SalesEvalWorkflow],
+            activities=[fake_select, fake_eval, broken_units],
+        ):
+            summary = await env.client.execute_workflow(
+                SalesEvalWorkflow.run,
+                EvalWindowInput(lookback_hours=24),
+                id="sales-eval-daily-2",
+                task_queue="sales-eval-daily-broken",
+            )
+
+    assert calls == ["wa_100000000001::ep_001"]
+    assert summary.scorecards == 0
