@@ -536,6 +536,54 @@ class PresentProductsTool(ToolBase):
 # ciudad/barrio/dirección/teléfono/pago en un solo mensaje.
 
 
+def _shipping_precondition_rejection(
+    session_key: str, *, order_total_cop: int, items_summary: str
+) -> dict[str, Any] | None:
+    """Envelope de rechazo para `request_shipping_details`, o None si procede.
+
+    Lee el metadata de la sesión (mismo store que `_append_intent`). Dos
+    casos, en este orden:
+      1. El ÚLTIMO inbound fue un aplazamiento → `customer_deferred`.
+      2. No hay confirmación de compra en el episodio (ni orden registrada)
+         → `purchase_not_confirmed` con el siguiente paso explícito.
+    """
+    from src.plugins.chats.agent.sales.use_cases.order_draft import get_projectable_draft
+    from src.plugins.chats.shared.purchase_signals import (
+        current_signal,
+        has_purchase_confirmation,
+    )
+
+    data = FilesystemMetadataStore(WORKSPACE_VAULT_DIR).read(session_key)
+    signal = current_signal(data)
+    if signal and signal.get("kind") == "deferral":
+        quoted = str(signal.get("text") or "").strip()
+        return {
+            "queued": False,
+            "error": "customer_deferred",
+            "message": (
+                f"El cliente acaba de aplazar (\"{quoted}\"): NO pidas datos de "
+                "envío ahora ni confirmes el pedido. Responde UNA frase cálida y "
+                "breve y espera a que retome; no se mostró nada al cliente."
+            ),
+        }
+    if has_purchase_confirmation(data):
+        return None
+    slots = get_projectable_draft(data) or {}
+    producto = str(slots.get("producto") or "").strip() or items_summary
+    precio = f"${order_total_cop:,} COP".replace(",", ".")
+    return {
+        "queued": False,
+        "error": "purchase_not_confirmed",
+        "message": (
+            f"El cliente todavía NO confirmó que quiere comprar {producto}. "
+            f"Antes de pedir datos de envío: dile el precio ({precio}) y "
+            "pregúntale si lo dejamos así (send_quick_replies sí / cambiar algo). "
+            "Cuando responda que sí, vuelve a llamar request_shipping_details. "
+            "No se mostró nada al cliente."
+        ),
+    }
+
+
 class RequestShippingDetailsTool(ToolBase):
     """Solicita los datos de envío al cliente.
 
@@ -600,6 +648,18 @@ class RequestShippingDetailsTool(ToolBase):
             "📦 [TOOL request_shipping_details] session={} total={} COP",
             ctx.session_key, order_total_cop,
         )
+        # Guardas deterministas (2026-09-14, runs 01a0a0eb/01a0a0f1): el
+        # formulario de envío es un paso de CIERRE. No sale si el cliente
+        # acaba de aplazar ("voy en camino a casa") ni si nunca dijo que sí.
+        rejection = _shipping_precondition_rejection(
+            ctx.session_key, order_total_cop=order_total_cop, items_summary=items_summary
+        )
+        if rejection is not None:
+            logger.warning(
+                "📦 [TOOL request_shipping_details] session={} rechazada: {}",
+                ctx.session_key, rejection["error"],
+            )
+            return json.dumps(rejection, ensure_ascii=False)
         flow_token = f"shipping_{ctx.session_key}_{int(time.time())}"
 
         # Opciones de pago dinámicas. El RadioButtonsGroup del Flow JSON
@@ -1802,12 +1862,6 @@ class PresentVariantPickerTool(ToolBase):
         handle: str | None = None,
     ) -> str:
         from src.platform.catalog import match_option
-        from src.platform.whatsapp.variant_emoji import (
-            color_emoji,
-            group_colors,
-            group_scents,
-            scent_emoji,
-        )
 
         logger.info(
             "🎨 [TOOL present_variant_picker] session={} type={} count={}",
@@ -1865,95 +1919,18 @@ class PresentVariantPickerTool(ToolBase):
                     ),
                 }, ensure_ascii=False)
 
-        # Construcción de sections con emoji desde closed-list
-        sections_payload: list[dict[str, Any]] = []
-        if variant_type == "scent":
-            grouped = group_scents(labels)
-            for sec_title, sec_labels in grouped:
-                rows = [
-                    {
-                        # id semántico para que el LLM lo reciba como
-                        # "[el cliente seleccionó: scent.lavanda]"
-                        "id": f"scent.{_slug(lbl)}",
-                        "title": f"{scent_emoji(lbl)} {lbl}"[
-                            : wa_limits.MAX_LIST_ROW_TITLE
-                        ],
-                    }
-                    for lbl in sec_labels
-                ]
-                if rows:
-                    sections_payload.append({
-                        "title": sec_title[: wa_limits.MAX_LIST_SECTION_TITLE],
-                        "rows": rows,
-                    })
-        elif variant_type == "color":
-            grouped = group_colors(labels)
-            for sec_title, sec_labels in grouped:
-                rows = [
-                    {
-                        "id": f"color.{_slug(lbl)}",
-                        "title": f"{color_emoji(lbl)} {lbl.capitalize()}"[
-                            : wa_limits.MAX_LIST_ROW_TITLE
-                        ],
-                    }
-                    for lbl in sec_labels
-                ]
-                if rows:
-                    sections_payload.append({
-                        "title": sec_title[: wa_limits.MAX_LIST_SECTION_TITLE],
-                        "rows": rows,
-                    })
-        else:
-            # 'size' u otras: una sola sección, sin emoji.
-            sections_payload.append({
-                "title": "Opciones"[: wa_limits.MAX_LIST_SECTION_TITLE],
-                "rows": [
-                    {
-                        "id": f"{variant_type}.{_slug(lbl)}",
-                        "title": lbl[: wa_limits.MAX_LIST_ROW_TITLE],
-                    }
-                    for lbl in labels
-                ],
-            })
-
-        # UN SOLO MENSAJE (bug run fe86d4e4): el render es texto plano
-        # (cambiado en sesión adc6400c). Un mensaje de texto NO tiene el cap
-        # de 10 rows de `interactive.list` — ese límite era de Meta para las
-        # listas tappables, que ya no usamos. Por eso ya NO paginamos: TODAS
-        # las opciones (aromas/colores) van en UN solo mensaje, evitando
-        # partir las variantes en dos burbujas. El único límite real es el de
-        # caracteres del body de WhatsApp (~4096), de sobra para las ~13
-        # variantes de Hubara con sus secciones.
-        if not sections_payload:
+        # Construcción del intent (sections con emoji desde closed-list) —
+        # compartida con la guarda de enumeración del workflow.
+        intent = build_variant_picker_intent(
+            variant_type=variant_type, labels=labels, intro_text=intro_text, handle=handle
+        )
+        if intent is None:
             return json.dumps({
                 "queued": False,
                 "error": "no_rows",
                 "message": "No quedaron rows tras sanitización.",
             }, ensure_ascii=False)
-
-        total_options = sum(len(s["rows"]) for s in sections_payload)
-        intent = {
-            "kind": "variant_picker",
-            "params": {
-                "variant_type": variant_type,
-                "intro_text": intro_text,
-                "sections": sections_payload,
-                "button_label": "Ver opciones",
-                "handle": handle,
-                "page": 1,
-                "total_pages": 1,
-            },
-            "analytics": {
-                "component_id": f"variant_picker.{variant_type}",
-                # Render actual: texto plano con emojis curados
-                # (cambiado en sesión adc6400c, antes era interactive.list).
-                "component_kind": "text.variant_picker",
-                "handle": handle,
-                "count": total_options,
-                "page": 1,
-                "total_pages": 1,
-            },
-        }
+        total_options = intent["analytics"]["count"]
         _append_intent(ctx.session_key, intent)
 
         envelope: dict[str, Any] = {
@@ -1980,6 +1957,112 @@ class PresentVariantPickerTool(ToolBase):
                 + ". No las ofrezcas ni las aceptes si el cliente las pide."
             )
         return json.dumps(envelope, ensure_ascii=False)
+
+
+
+def build_variant_picker_intent(
+    *,
+    variant_type: str,
+    labels: list[str],
+    intro_text: str,
+    handle: str | None,
+) -> dict[str, Any] | None:
+    """Intent `variant_picker` (texto curado con emojis) para `labels` ya
+    validados. `None` si no queda ninguna row. Lo usan la tool
+    `present_variant_picker` y la guarda de enumeración del workflow
+    (run 9bd495be) — un solo formato para las variantes."""
+    from src.platform.whatsapp.variant_emoji import (
+        color_emoji,
+        group_colors,
+        group_scents,
+        scent_emoji,
+    )
+
+    sections_payload: list[dict[str, Any]] = []
+    if variant_type == "scent":
+        grouped = group_scents(labels)
+        for sec_title, sec_labels in grouped:
+            rows = [
+                {
+                    # id semántico para que el LLM lo reciba como
+                    # "[el cliente seleccionó: scent.lavanda]"
+                    "id": f"scent.{_slug(lbl)}",
+                    "title": f"{scent_emoji(lbl)} {lbl}"[
+                        : wa_limits.MAX_LIST_ROW_TITLE
+                    ],
+                }
+                for lbl in sec_labels
+            ]
+            if rows:
+                sections_payload.append({
+                    "title": sec_title[: wa_limits.MAX_LIST_SECTION_TITLE],
+                    "rows": rows,
+                })
+    elif variant_type == "color":
+        grouped = group_colors(labels)
+        for sec_title, sec_labels in grouped:
+            rows = [
+                {
+                    "id": f"color.{_slug(lbl)}",
+                    "title": f"{color_emoji(lbl)} {lbl.capitalize()}"[
+                        : wa_limits.MAX_LIST_ROW_TITLE
+                    ],
+                }
+                for lbl in sec_labels
+            ]
+            if rows:
+                sections_payload.append({
+                    "title": sec_title[: wa_limits.MAX_LIST_SECTION_TITLE],
+                    "rows": rows,
+                })
+    else:
+        # 'size' u otras: una sola sección, sin emoji.
+        sections_payload.append({
+            "title": "Opciones"[: wa_limits.MAX_LIST_SECTION_TITLE],
+            "rows": [
+                {
+                    "id": f"{variant_type}.{_slug(lbl)}",
+                    "title": lbl[: wa_limits.MAX_LIST_ROW_TITLE],
+                }
+                for lbl in labels
+            ],
+        })
+
+    # UN SOLO MENSAJE (bug run fe86d4e4): el render es texto plano
+    # (cambiado en sesión adc6400c). Un mensaje de texto NO tiene el cap
+    # de 10 rows de `interactive.list` — ese límite era de Meta para las
+    # listas tappables, que ya no usamos. Por eso ya NO paginamos: TODAS
+    # las opciones (aromas/colores) van en UN solo mensaje, evitando
+    # partir las variantes en dos burbujas. El único límite real es el de
+    # caracteres del body de WhatsApp (~4096), de sobra para las ~13
+    # variantes de Hubara con sus secciones.
+    if not sections_payload:
+        return None
+
+    total_options = sum(len(s["rows"]) for s in sections_payload)
+    intent = {
+        "kind": "variant_picker",
+        "params": {
+            "variant_type": variant_type,
+            "intro_text": intro_text,
+            "sections": sections_payload,
+            "button_label": "Ver opciones",
+            "handle": handle,
+            "page": 1,
+            "total_pages": 1,
+        },
+        "analytics": {
+            "component_id": f"variant_picker.{variant_type}",
+            # Render actual: texto plano con emojis curados
+            # (cambiado en sesión adc6400c, antes era interactive.list).
+            "component_kind": "text.variant_picker",
+            "handle": handle,
+            "count": total_options,
+            "page": 1,
+            "total_pages": 1,
+        },
+    }
+    return intent
 
 
 def _slug(label: str) -> str:

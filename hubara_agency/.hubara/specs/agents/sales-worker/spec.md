@@ -438,6 +438,64 @@ cliente, intentos previos de venta).
 - THEN el sistema prompt incluye contenido relevante de memory/
 - AND el LLM puede usarlo para personalizar (mostrar primero velas grandes)
 
+### Requirement: Confirmación de compra antes del cierre
+
+El sistema SHALL registrar de forma determinista la confirmación de compra del
+cliente (`episode.order_draft.confirmed_at_ms`): un mensaje afirmativo ("sí",
+"dale", "lo quiero", "dame 2") o el botón Confirmar, con un producto ya elegido
+en el draft del episodio activo. Sin esa confirmación (ni orden registrada):
+`request_shipping_details` SHALL rechazar la llamada con `purchase_not_confirmed`
+y el siguiente paso explícito; `manage_conversation_tag(CONFIRMADO_SIN_DATOS)`
+SHALL degradar a `INTERESADO` sin cerrar el episodio ni escalar; y
+`escalate_to_human(ORDER_PENDING_SHIPPING_DETAILS)` SHALL rechazarse. La
+confirmación es episodio-scoped (incidente runs 01a0a0eb / 01a0a0f1, 2026-09-14).
+
+#### Scenario: El cliente eligió pero nunca dijo que sí
+
+- GIVEN un draft con producto/aroma/color y sin `confirmed_at_ms`
+- WHEN el LLM llama `request_shipping_details`
+- THEN la tool devuelve `queued=false, error=purchase_not_confirmed` y no encola nada
+- AND si el ghosting etiqueta `CONFIRMADO_SIN_DATOS`, queda `INTERESADO` y la sesión sigue en ruta ventas
+
+#### Scenario: El cliente dijo que sí
+
+- GIVEN un draft con producto y el inbound "sí, déjalo en azul"
+- WHEN el ingest procesa el mensaje
+- THEN `order_draft.confirmed_at_ms` queda registrado y `request_shipping_details` procede
+
+### Requirement: Aplazamiento del cliente
+
+Cuando el ÚLTIMO inbound es un aplazamiento ("voy en camino", "luego",
+"mañana", "ahora no"), el sistema SHALL: inyectar al `plugin_context` la nota
+`[SISTEMA — EL CLIENTE APLAZÓ]` (respuesta breve, sin tools de cierre);
+rechazar `request_shipping_details` con `customer_deferred`; y, si el turno lo
+maneja remarketing, prefijar el resumen del handoff con `[EL CLIENTE APLAZÓ]`
+para que ventas no avance el cierre.
+
+#### Scenario: "Voy apenas en camino a casa" tras el gancho de remarketing
+
+- WHEN remarketing transfiere a ventas
+- THEN el handoff empieza con `[EL CLIENTE APLAZÓ]` y prohíbe pedir datos de envío
+- AND ventas responde texto y no manda el formulario
+
+### Requirement: Variantes siempre en formato picker
+
+Si el texto final del turno enumera 4 o más aromas o colores del catálogo y el
+turno no emitió `present_variant_picker`, el workflow SHALL encolar el picker
+(mismo intent que la tool) y suprimir el texto plano (run 9bd495be).
+
+#### Scenario: Lista de 11 aromas en texto
+
+- WHEN el LLM responde "Tenemos 11 aromas disponibles: Caballero de la noche, …" sin picker
+- THEN el cliente recibe el picker curado con los 11 aromas y no la lista plana
+
+### Requirement: El formulario de envío extiende el ghosting
+
+Tras enviar el Flow nativo de datos de envío, el flag
+`shipping_flow_awaiting_reply_since_ms` SHALL sobrevivir a la persistencia del
+flush, de modo que `read_idle_timeout_seconds` devuelva el timeout extendido
+(hasta 10 min) y no los 5 min por defecto (run 01a0a0f1).
+
 ## Out of scope
 
 - Detalle del prompt engineering / SOUL.md / USER.md — viven en `hubara_vault/_templates/sales/`

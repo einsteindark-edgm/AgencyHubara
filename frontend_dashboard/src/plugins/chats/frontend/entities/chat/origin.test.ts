@@ -42,7 +42,17 @@ describe("formatOrigin", () => {
       isMeta: false,
     });
     expect(formatOrigin({ ...base, channel: "web_cart" }).label).toBe("Carrito web");
-    expect(formatOrigin({ ...base, channel: "web_referral" }).label).toBe("Link web / WhatsApp");
+    expect(formatOrigin({ ...base, channel: "web_referral", source_id: null, headline: null }).label).toBe(
+      "Link web / WhatsApp",
+    );
+  });
+
+  it("un referral de anuncio sin ctwa_clid (cliente desde web/desktop) sigue siendo el anuncio", () => {
+    expect(formatOrigin({ ...base, channel: "web_referral" })).toEqual({
+      label: "Anuncio (web/desktop) · Velas aromáticas",
+      detail: "ad AD_001",
+      isMeta: true,
+    });
   });
 
   it("sin origen → Sin dato", () => {

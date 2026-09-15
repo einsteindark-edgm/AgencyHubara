@@ -361,7 +361,21 @@ export function formatOrigin(origin: SessionOrigin | null | undefined): {
     return { label: `${kind} · ${name}`, detail: detail ?? undefined, isMeta: true };
   }
   if (origin.channel === "web_cart") return { label: "Carrito web", isMeta: false };
-  if (origin.channel === "web_referral") return { label: "Link web / WhatsApp", isMeta: false };
+  if (origin.channel === "web_referral") {
+    // Referral de anuncio SIN ctwa_clid: Meta lo omite cuando el cliente tocó
+    // el anuncio desde navegador / Instagram web / WhatsApp Web (2026-09-14).
+    // Sigue siendo el mismo anuncio (source_id = ad id): se etiqueta como tal
+    // para que no parezca un origen distinto; sin source_id es un link web.
+    if (origin.source_id) {
+      const name = origin.campaign_name ?? origin.headline ?? origin.source_id;
+      return {
+        label: `Anuncio (web/desktop) · ${name}`,
+        detail: origin.campaign_name ? origin.ad_name ?? origin.headline ?? undefined : `ad ${origin.source_id}`,
+        isMeta: true,
+      };
+    }
+    return { label: "Link web / WhatsApp", isMeta: false };
+  }
   if (origin.channel === "direct") return { label: "Directo (escribió al número)", isMeta: false };
   return { label: origin.channel, isMeta: false };
 }

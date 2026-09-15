@@ -30,6 +30,7 @@ import json
 import os
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from temporalio import activity
@@ -468,6 +469,13 @@ async def flush_pending_ui_intents(session_id: str) -> int:
         intents_pending.pop(0)
         if media_log:
             _merge_media_index(data, media_log)
+        if kind == "shipping_flow":
+            # Run 01a0a0f1 (2026-09-14): `_mark_flow_awaiting_reply` escribe
+            # el flag del Flow releyendo el archivo, y esta escritura lo
+            # pisaba con la copia vieja de `data` → el timeout extendido de
+            # ghosting (10 min) nunca aplicaba. Se trae el flag fresco antes
+            # de persistir.
+            _reload_flow_awaiting_flag(metadata_file, data)
         _safe_write_metadata(metadata_file, data)
         sent_count += 1
 
@@ -1296,6 +1304,18 @@ def _safe_write_metadata(path, data: dict) -> None:
         activity.logger.warning(
             "flush_ui_intents.write_failed", extra={"path": str(path)}
         )
+
+
+def _reload_flow_awaiting_flag(metadata_file: Path, data: dict[str, Any]) -> None:
+    """Copia a `data` el `shipping_flow_awaiting_reply_since_ms` que
+    `_mark_flow_awaiting_reply` acaba de escribir en disco (lost update)."""
+    try:
+        fresh = json.loads(metadata_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    flag = fresh.get("shipping_flow_awaiting_reply_since_ms")
+    if isinstance(flag, int) and not isinstance(flag, bool):
+        data["shipping_flow_awaiting_reply_since_ms"] = flag
 
 
 def _mark_flow_awaiting_reply(to_number: str) -> None:

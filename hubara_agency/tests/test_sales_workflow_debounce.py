@@ -69,6 +69,7 @@ class Tracker:
         # el menú de present_products).
         self.timeline: list[str] = []
         self.first_contact_greeting_calls: int = 0
+        self.variant_guard_calls: list[str] = []
 
 
 # Burbuja 1 del guion de apertura (etapa_descubrimiento) — lo que la activity
@@ -93,6 +94,7 @@ def _make_fake_activities(
     order_draft_note: str | None = None,
     payment_closure_result: PaymentPendingClosureResult | None = None,
     closing_escalation_result: bool = False,
+    variant_guard_result: bool = False,
 ):
     """Crea las activities fakes con `tracker` cerrado en closure.
 
@@ -280,7 +282,16 @@ def _make_fake_activities(
         tracker.first_contact_greeting_calls += 1
         return FIRST_CONTACT_GREETING
 
+    # Guarda de enumeración de variantes (run 9bd495be): la activity real
+    # detecta 4+ aromas/colores del catálogo en el texto final y encola el
+    # picker; acá devolvemos lo que el escenario pida.
+    @activity.defn(name="apply_variant_enumeration_guard")
+    async def fake_variant_guard(session_id: str, final_text: str) -> bool:
+        tracker.variant_guard_calls.append(final_text)
+        return variant_guard_result
+
     return [
+        fake_variant_guard,
         fake_first_contact_greeting,
         fake_bootstrap,
         fake_read_handoff,
@@ -2153,3 +2164,80 @@ async def test_first_contact_greeting_not_duplicated_when_intro_text_greets(
         f"Saludo duplicado (ya iba en intro_text): {sent}"
     )
     assert tracker.first_contact_greeting_calls == 0
+
+
+# =============================================================================
+# Guarda de enumeración de variantes (run 9bd495be, 2026-09-14)
+# =============================================================================
+
+_AROMA_ENUMERATION = (
+    "Tenemos 11 aromas disponibles: Caballero de la noche, Limoncillo, Lavanda, "
+    "Café, Sándalo, Ylang Ylang, Coco cremoso, Frutos rojos, Verde menta, Drakar "
+    "y Chanel.\n\n¿Alguno te llama la atención?"
+)
+
+
+async def _run_single_turn(
+    tracker: Tracker, workspace: Path, *, responses, variant_guard_result: bool
+) -> None:
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=SALES_QUEUE,
+            workflows=[HubaraSalesSessionWorkflow],
+            activities=_make_fake_activities(
+                tracker,
+                workspace_path=str(workspace),
+                llm_responses=responses,
+                variant_guard_result=variant_guard_result,
+                prior_history=[
+                    {"role": "user", "content": "Hola"},
+                    {"role": "assistant", "content": "¡Buenas! Bienvenido a *Hubara*..."},
+                ],
+            ),
+        ):
+            handle = await env.client.start_workflow(
+                HubaraSalesSessionWorkflow.run,
+                SalesSessionInput(session_id="wa_enum", runtime_workspace_path=str(workspace)),
+                id="session-wa_enum",
+                task_queue=SALES_QUEUE,
+            )
+            await handle.signal(HubaraSalesSessionWorkflow.send_message, args=["Opciones", None, None])
+            await handle.result()
+
+
+@pytest.mark.asyncio
+async def test_enumerated_aromas_in_text_are_replaced_by_the_picker(tmp_path: Path) -> None:
+    """El LLM listó los aromas como texto plano y no llamó al picker: la guarda
+    encola el picker (lo entrega el flush) y el texto plano NO se envía."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    await _run_single_turn(
+        tracker, workspace,
+        responses=[_tool_resp("search_products"), _final_resp(_AROMA_ENUMERATION)],
+        variant_guard_result=True,
+    )
+
+    assert tracker.variant_guard_calls == [_AROMA_ENUMERATION]
+    sent = [m for (_s, m) in tracker.send_whatsapp_calls]
+    assert _AROMA_ENUMERATION not in sent, f"el texto plano salió igual: {sent}"
+    assert "flush" in tracker.timeline
+
+
+@pytest.mark.asyncio
+async def test_plain_text_without_enumeration_is_sent_as_usual(tmp_path: Path) -> None:
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    await _run_single_turn(
+        tracker, workspace,
+        responses=[_final_resp("¿Tienes algún aroma en mente?")],
+        variant_guard_result=False,
+    )
+
+    assert tracker.variant_guard_calls == ["¿Tienes algún aroma en mente?"]
+    assert "¿Tienes algún aroma en mente?" in [m for (_s, m) in tracker.send_whatsapp_calls]
+
