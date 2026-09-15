@@ -675,3 +675,22 @@ juicio matizado y la escala.
 - **Replay**: `score_episode_activity` entra a `EvaluateEpisodeWorkflow` bajo
   `workflow.patched("scorecard-v1")`; `turn_trace` bajo `turn-trace-v1`. Bumpear fixture de
   replay `history_sales_session_v2.json` si cambia la secuencia.
+
+---
+
+## Apéndice A — Contrato de la API del scorecard (evals@v1, implementado)
+
+Provider `chats` bajo `/api/chats/evals/*`; el dashboard lo consume por el cast
+de `agents_admin` en `/api/agents/evals/*` (mismo shape, passthrough).
+
+| Método y ruta | Respuesta |
+|---|---|
+| `GET /evals/checks` | `{registry_version, stages[], families[{id,label,stage}], checks[{id,name,family,family_label,stage,level,kind,applies,rule,origin[],golden_behaviors[],twin_of}]}` |
+| `GET /evals/scorecards?days=30` | `{days, count, registry_version, scorecards[{session_id, episode_id, date, ts, verdict, fidelity, counts{critico,mayor,menor,pasa,no_aplica,desconocido}, compliance, first_failure{turn,check_id}\|null, first_critical, stage_final, closing_tag, turns, judge, checks{<id>: verdict}}]}` — el último por episodio, ordenado FALLA → ALERTA → PASA → SIN_DATOS y luego por fecha descendente |
+| `GET /evals/scorecard?session_id&episode_id` | `{stored, scorecard{...fila de arriba + results[{check_id, verdict, level, turn, evidence, critique, source}]}, trajectory{session_id, episode_id, fidelity, closing_tag, order_id, turns[{turn, at_ms, trigger, inbound_text, signal, sent_texts[], llm_text, suppressed_reason, discarded_narration[], tools[{name, ok, error, notes[], args{}}], intents[], guards[], stage_in, stage_out, draft, confirmed, state, first_contact}]}, legacy{avg, date, metrics{}}\|null}` |
+| `POST /evals/scorecard/rescore` body `{session_id, episode_id, judge}` | igual que el GET, recalculado y guardado |
+| `GET /evals/checks/stats?days=56` | `{days, episodes, verdicts{FALLA,ALERTA,PASA,SIN_DATOS}, pareto[{check_id, name, level, failures}], trend[{check_id, name, level, weeks[{week, applicable, passed, rate}]}], funnel[{stage, FALLA, ALERTA, PASA, SIN_DATOS}]}` — `week` = lunes ISO |
+| `POST /evals/labels` body `{session_id, episode_id, check_id, verdict: pasa\|falla, note}` | `{ok, label{..., labeled_at}}` |
+| `GET /evals/labels?session_id&episode_id` | `{labels[]}` |
+| `GET /evals/labels/queue?days=30&limit=20` | `{items[{session_id, episode_id, check_id, check_name, judge_verdict, reason: desconocido\|falla\|muestra, evidence, critique}]}` |
+| `GET /evals/calibration` | `{min_labels, kappa_threshold, checks[{check_id, name, level, n, tp, fp, tn, fn, tpr, tnr, kappa, status: confiable\|revisar\|sin_datos}]}` |
