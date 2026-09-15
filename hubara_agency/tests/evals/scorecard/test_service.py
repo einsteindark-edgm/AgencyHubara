@@ -187,3 +187,15 @@ def test_message_waiting_through_a_deploy_does_not_make_the_episode_partial(tmp_
                                                  "turn_started_ms": turn_started})
 
     assert service.load_trajectory(tmp_path, SESSION, "ep_002").fidelity == "trace"
+
+
+def test_episode_date_ignores_implausible_timestamps() -> None:
+    """Un `started_at_ms` roto (época chica, segundos, fixture sintética) no
+    puede fechar el episodio en 1970 y sacarlo de la ventana en silencio."""
+    from src.plugins.chats.agent.sales_eval.scorecard.trajectory import Trajectory
+
+    tiny = Trajectory(session_id=SESSION, episode_id="ep_004", fidelity="empty", turns=(), started_at_ms=60_000)
+    seconds = Trajectory(session_id=SESSION, episode_id="ep_005", fidelity="empty", turns=(), closed_at_ms=1_789_398_000)
+
+    assert service.episode_date(tiny) is None
+    assert service.episode_date(seconds) is None

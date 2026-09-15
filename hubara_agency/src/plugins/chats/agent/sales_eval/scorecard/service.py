@@ -115,11 +115,17 @@ async def await_closing_trace(
         await sleep(poll_s)
 
 
+# Epoch ms del 2020-01-01: un timestamp menor no es una fecha real (época
+# chica de una fixture, segundos en vez de ms) y no debe fechar el episodio.
+_MIN_PLAUSIBLE_MS = 1_577_836_800_000
+
+
 def episode_date(traj: Trajectory) -> str | None:
     """Fecha UTC del episodio (cierre, o inicio si sigue abierto). Es la fecha
-    por la que se ventanean listas y tendencias; `None` sin timestamps."""
+    por la que se ventanean listas y tendencias; `None` sin timestamps
+    plausibles (entonces los consumidores usan la fecha de evaluación)."""
     at = traj.closed_at_ms or traj.started_at_ms
-    if not isinstance(at, int) or at <= 0:
+    if not isinstance(at, int) or at < _MIN_PLAUSIBLE_MS:
         return None
     return datetime.fromtimestamp(at / 1000, timezone.utc).date().isoformat()
 
