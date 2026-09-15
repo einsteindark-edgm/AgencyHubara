@@ -180,12 +180,12 @@ def test_build_turn_payload_summarizes_tools_and_bounds_texts() -> None:
 
 def test_enrich_first_turn_of_episode_projects_stage_and_numbering() -> None:
     trace = tt.enrich_turn_trace(
-        _payload(), _metadata(), previous=None, session_id="wa_570000000001",
+        _payload(), _metadata(), previous=None, session_id="wa_100000000001",
         recorded_at_ms=2_005_000,
     )
 
     assert trace["v"] == tt.TRACE_VERSION
-    assert trace["session_id"] == "wa_570000000001"
+    assert trace["session_id"] == "wa_100000000001"
     assert trace["episode_id"] == "ep_007"
     assert trace["turn"] == 1
     assert trace["stage_in"] == "descubrimiento"
@@ -200,7 +200,7 @@ def test_enrich_next_turn_chains_stage_and_ignores_stale_signal() -> None:
 
     trace = tt.enrich_turn_trace(
         _payload(trigger="ghost"), _metadata(), previous=previous,
-        session_id="wa_570000000001", recorded_at_ms=2_300_000,
+        session_id="wa_100000000001", recorded_at_ms=2_300_000,
     )
 
     assert trace["turn"] == 5
@@ -214,7 +214,7 @@ def test_enrich_previous_from_other_episode_restarts_numbering() -> None:
 
     trace = tt.enrich_turn_trace(
         _payload(), _metadata(), previous=previous,
-        session_id="wa_570000000001", recorded_at_ms=2_005_000,
+        session_id="wa_100000000001", recorded_at_ms=2_005_000,
     )
 
     assert trace["turn"] == 1
@@ -235,7 +235,7 @@ def test_enrich_records_state_changes_of_this_turn_with_their_source() -> None:
     md["episodes"][0]["closing_tag"] = "CONFIRMADO_SIN_DATOS"
 
     trace = tt.enrich_turn_trace(
-        _payload(), md, previous=None, session_id="wa_570000000001",
+        _payload(), md, previous=None, session_id="wa_100000000001",
         recorded_at_ms=2_005_000,
     )
 
@@ -247,3 +247,23 @@ def test_enrich_records_state_changes_of_this_turn_with_their_source() -> None:
         {"tag": "CONFIRMADO_SIN_DATOS", "source": "llm", "reason": None},
         {"tag": "HUMANO", "source": "safety_net", "reason": "ORDER_PENDING_SHIPPING_DETAILS"},
     ]
+
+
+def test_enrich_attributes_the_turn_to_the_episode_open_when_it_started() -> None:
+    """El cliente contestó rápido: el ingest abrió ep_008 mientras el turno de
+    cierre de ep_007 todavía enviaba. La traza es de ep_007, el episodio abierto
+    al ARRANCAR el turno, no del último de la lista."""
+    closed = _episode(dict(_VARIANTS), closing_tag="INTERESADO", closed_at_ms=2_002_000)
+    opened = {"episode_id": "ep_008", "started_at_ms": 2_004_000}
+    md = _metadata(episodes=[closed, opened])
+    previous = {"episode_id": "ep_007", "turn": 6, "stage_out": "confirmacion", "recorded_at_ms": 1_990_000}
+
+    trace = tt.enrich_turn_trace(
+        _payload(turn_started_ms=2_000_000), md, previous=previous,
+        session_id="wa_100000000001", recorded_at_ms=2_005_000,
+    )
+
+    assert trace["episode_id"] == "ep_007"
+    assert trace["turn"] == 7
+    assert trace["state"]["closing_tag"] == "INTERESADO"
+    assert trace["stage_out"] == "confirmacion"

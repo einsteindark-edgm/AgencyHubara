@@ -13,6 +13,11 @@ operador. Positivo = `falla`.
 
 Solo entran a la matriz los pares donde el juez decidió (`pasa`/`falla`) y el
 humano también. La última etiqueta humana de un check en un episodio gana.
+
+Cada etiqueta guarda `judge_verdict`, el veredicto del juez que el humano vio
+al etiquetar (lo fija la API al crearla): calibrar no exige releer meses de
+scorecards en cada cierre de episodio. Para etiquetas sin ese campo se busca
+el veredicto en `records`.
 """
 from __future__ import annotations
 
@@ -65,13 +70,14 @@ def compute_calibration(
         if spec.kind != "judge":
             continue
         tp = fp = tn = fn = 0
-        for key, result in judged.items():
+        for key, label in human.items():
             if key[2] != spec.id:
                 continue
-            label = human.get(key)
-            if label is None:
-                continue
-            j, h = result.get("verdict"), label.get("verdict")
+            j = label.get("judge_verdict")
+            if j is None:
+                result = judged.get(key)
+                j = result.get("verdict") if result else None
+            h = label.get("verdict")
             if j not in _DECIDED or h not in _DECIDED:
                 continue
             if j == "falla" and h == "falla":

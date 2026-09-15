@@ -51,3 +51,15 @@ def test_funnel_groups_final_stage_by_verdict_in_funnel_order() -> None:
     assert [f["stage"] for f in stats["funnel"]][:3] == ["variantes", "confirmacion", "cierre"]
     assert funnel["confirmacion"]["FALLA"] == 1
     assert funnel["cierre"]["PASA"] == 1
+
+
+def test_trend_buckets_by_the_episode_date_not_the_evaluation_date() -> None:
+    """El backfill califica hoy episodios de hace semanas: la semana del
+    punto es la del episodio, no la de la evaluación."""
+    backfilled = _row("2026-09-14", "PASA", "cierre", **{"DES-01": "pasa"})
+    backfilled["episode_date"] = "2026-08-31"
+
+    stats = compute_stats([backfilled], weeks=["2026-08-31", "2026-09-07", "2026-09-14"])
+
+    trend = {t["check_id"]: t for t in stats["trend"]}
+    assert [w["applicable"] for w in trend["DES-01"]["weeks"]] == [1, 0, 0]

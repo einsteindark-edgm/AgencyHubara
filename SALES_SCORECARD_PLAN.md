@@ -731,3 +731,33 @@ de `agents_admin` en `/api/agents/evals/*` (mismo shape, passthrough).
 correr `scripts/backfill_scorecards.py` sobre el vault de prod; configurar
 `SCORECARD_ALERTS_REPO` y `SCORECARD_ALERTS_GITHUB_TOKEN` por Terraform si se quieren alertas;
 correr el golden runner con el proxy de LLM; etiquetar ≥ 50 casos por check de juez para calibrarlo.
+
+## Premortem post-implementación (2026-09-15)
+
+Once categorías del comando `hubara-premortem` sobre el diff completo del PR #283, con cada
+hipótesis verificada contra el código vivo antes de tocar nada. Confirmados y corregidos
+(todos con test rojo primero):
+
+| # | Modo de fallo | Categoría | Fix |
+|---|---|---|---|
+| 1 | CI `forge` en rojo: 34 tests/fixtures usaban ids `wa_57…` con forma de teléfono colombiano | ops | ids `wa_10…` (fuera del patrón prohibido) |
+| 2 | `EpisodeClosedEvent` sale ANTES de que el turno de cierre persista su traza; la gracia fija de 90 s no cubre reintentos del envío → episodio evaluado sin su último turno → FALLA falsa (CIE-04, TAG-01) y issue falso | race | `service.await_closing_trace`: sondeo hasta 180 s por una traza con `recorded_at_ms ≥ closed_at_ms` si el cierre es reciente |
+| 3 | Traza atribuida al episodio equivocado: `episodes[-1]` cambia si el ingest abre el siguiente episodio mientras el turno de cierre envía (cliente que contesta rápido) | race | episodio abierto al ARRANCAR el turno (`started_at_ms ≤ turn_started_ms`) |
+| 4 | Evidencia con citas del cliente emitida sin redactar a SigNoz (`check.<id>`) | privacidad | `redact_pii` antes de emitir |
+| 5 | Recalcular un FALLA conocido volvía a comentar el issue ("volvió a pasar") | ops | no alerta si el episodio ya estaba guardado en FALLA con la misma huella |
+| 6 | Dedup por la búsqueda de GitHub: indexa con retraso y limita a 30/min → issues duplicados en ráfaga | red | lista los issues abiertos con la etiqueta y busca el marcador |
+| 7 | Backfill: meses de episodios caían en "esta semana" y en "últimos 56 días" (fecha de evaluación) | estado | `episode_date` en el registro; listas, embudo y tendencia por fecha del episodio |
+| 8 | Calibración releía 120 días de scorecards completos en cada cierre, detalle y recálculo | performance | la etiqueta guarda `judge_verdict`; calibración solo desde etiquetas |
+| 9 | `re.match(...$)` aceptaba ids con salto de línea final | input | `fullmatch` |
+| 10 | Matriz pintaba todas las filas (64 columnas × cientos de episodios) | UI | tope de 120 filas + "Mostrar más" (prop `rowCap`) |
+| 11 | Doble clic en "Recalcular con juez" pagaba dos veces el juez | race | id de workflow estable por episodio; `WorkflowAlreadyStartedError` reusa el run |
+| 12 | El dashboard ignoraba `judge_queued/judge_error`: el operador nunca veía si el juez quedó encolado ni cuándo terminó | UI | estado visible + sondeo del detalle hasta que llega el registro del juez (máx. 5 min) |
+| 13 | `last_trace` leía 64 KB de cola: una traza grande reiniciaba la numeración de turnos | input | cola de 256 KB |
+| 14 | `partial` con 2 min de tolerancia: un deploy de 5 min degradaba episodios sanos a `desconocido` | estado | tolerancia de 10 min |
+| 15 | Lista pesada refetcheada en cada foco de ventana | performance | `staleTime` 60 s |
+
+Descartados tras verificar (ya manejados o no reales): escritura JSONL entrelazada (cada
+registro sale en un solo `write` con `O_APPEND`); formato de `episode_id` (`ep_001` coincide
+con la regex); unidades de `status_history.timestamp` (segundos, se multiplican); señal del
+cliente (`last_inbound_signal.at_ms` lo escribe el ingest); índice del ledger de goldens
+(0-based en ambos lados); turnos admin (son el trigger `ghost`).

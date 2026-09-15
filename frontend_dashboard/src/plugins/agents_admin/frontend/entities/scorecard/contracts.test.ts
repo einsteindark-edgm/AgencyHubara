@@ -56,7 +56,7 @@ describe("scorecardListSchema", () => {
     const list = scorecardListSchema.parse({
       scorecards: [
         {
-          session_id: "wa_570000000009",
+          session_id: "wa_100000000009",
           episode_id: "ep_001",
           verdict: "REVISAR",
           fidelity: "parcial",
@@ -101,7 +101,7 @@ describe("scorecardDetailSchema", () => {
     const d = scorecardDetailSchema.parse({
       stored: true,
       trajectory: {
-        session_id: "wa_570000000009",
+        session_id: "wa_100000000009",
         episode_id: "ep_001",
         turns: [{ turn: 1, state: { changes: "roto" }, tools: [{ name: "x" }] }],
       },

@@ -37,7 +37,7 @@ export function ConversationDetail({ episode, selectedCheckId, onSelectCheck, on
         </h3>
         {sc && (
           <span className="text-xs text-fg-muted">
-            {sc.date}
+            {sc.episode_date ?? sc.date}
             {sc.closing_tag ? ` · ${sc.closing_tag}` : ""} · {sc.turns} turnos
           </span>
         )}

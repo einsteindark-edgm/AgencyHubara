@@ -304,20 +304,20 @@ async def run_golden_suite_activity(inp: GoldenEvalInput) -> GoldenSuiteResult:
 # HU-SC-1 — Scorecard por etapa (reemplaza al promedio holístico como titular).
 # --------------------------------------------------------------------------- #
 
-# Días de scorecards que se leen para derivar qué checks de juez están
-# calibrados (y por lo tanto pueden reprobar un episodio solos).
-_CALIBRATION_WINDOW_DAYS = 120
-
-
 def _scorecard_judge_enabled() -> bool:
     return os.getenv("SCORECARD_JUDGE_ENABLED", "true").strip().lower() not in ("0", "false", "no")
 
 
-def _recent_dates(days: int) -> list[str]:
-    from datetime import datetime, timedelta, timezone
+def _already_alerted(previous: dict | None, record: dict) -> bool:
+    """El mismo episodio ya quedó guardado en FALLA con la misma huella: un
+    recálculo (dashboard, ScoreEpisodeWorkflow) no vuelve a comentar el issue."""
+    from src.plugins.chats.agent.sales_eval.scorecard import alerts
 
-    today = datetime.now(timezone.utc).date()
-    return [(today - timedelta(days=i)).isoformat() for i in range(days)]
+    return (
+        previous is not None
+        and previous.get("verdict") == "FALLA"
+        and alerts.fingerprint(previous) == alerts.fingerprint(record)
+    )
 
 
 @activity.defn(name="score_episode_scorecard")
@@ -341,19 +341,27 @@ async def score_episode_scorecard_activity(
     from src.plugins.chats.agent.sales_eval.scorecard.catalog_context import (
         build_check_context,
     )
+    from src.plugins.chats.agent.sales_eval.evals.redaction import redact_pii
     from src.plugins.chats.agent.sales_eval.scorecard.judge_checks import run_judge_checks
 
     vault = composition.get_vault_dir()
     try:
+        # El evento de cierre sale antes de que el turno de cierre persista su
+        # traza: sin ella el episodio se evaluaría sin su último turno.
+        if not await service.await_closing_trace(vault, session_id, episode_id):
+            activity.logger.warning(
+                "scorecard: la traza del turno de cierre de %s::%s no llegó en %.0fs; se evalúa sin ella",
+                session_id, episode_id, service.CLOSING_TRACE_TIMEOUT_S,
+            )
         traj = service.load_trajectory(vault, session_id, episode_id)
         ctx = await build_check_context()
         cards_dir = store.scorecards_dir(vault)
+        # Las etiquetas traen el veredicto del juez que vio el humano: sin
+        # releer meses de scorecards en cada cierre.
         calibrated = calibration.calibrated_checks(
-            calibration.compute_calibration(
-                store.read_scorecards(cards_dir, dates=_recent_dates(_CALIBRATION_WINDOW_DAYS)),
-                store.read_labels(store.labels_path(vault)),
-            )
+            calibration.compute_calibration((), store.read_labels(store.labels_path(vault)))
         )
+        previous = store.find_latest(cards_dir, session_id, episode_id)
         judge_results = []
         if with_judge and traj.turns and _scorecard_judge_enabled():
             judge_results = await run_judge_checks(traj, ctx, composition.get_judge())
@@ -374,13 +382,15 @@ async def score_episode_scorecard_activity(
             metric_name=f"check.{r['check_id']}",
             score=1.0 if r["verdict"] == "pasa" else 0.0,
             threshold=1.0,
-            reason=r.get("evidence") or "",
+            # La evidencia cita al cliente: a SigNoz va redactada, como la
+            # eval legada (`redact_pii` sobre los turnos).
+            reason=redact_pii(r.get("evidence") or ""),
             session_id=session_id,
             episode_id=episode_id,
             environment=_env(),
             suite="scorecard",
         )
-    if record["verdict"] == "FALLA":
+    if record["verdict"] == "FALLA" and not _already_alerted(previous, record):
         try:
             await alerts.notify_failure(record)
         except Exception as exc:  # noqa: BLE001 — la alerta es best-effort

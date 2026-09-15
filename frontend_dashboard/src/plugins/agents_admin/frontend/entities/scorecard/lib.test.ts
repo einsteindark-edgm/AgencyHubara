@@ -67,7 +67,7 @@ describe("etiquetas", () => {
   });
 
   it("acorta la sesión en la etiqueta del episodio", () => {
-    expect(episodeLabel({ session_id: "wa_570000000001", episode_id: "ep_007" })).toBe(
+    expect(episodeLabel({ session_id: "wa_100000000001", episode_id: "ep_007" })).toBe(
       "wa_…0000001 · ep_007",
     );
     expect(episodeLabel({ session_id: "local", episode_id: "" })).toBe("local");

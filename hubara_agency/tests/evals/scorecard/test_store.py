@@ -56,3 +56,21 @@ def test_labels_append_and_filter(tmp_path: Path) -> None:
     latest = store.latest_labels(store.read_labels(path))
     assert latest[("wa_1", "ep_1", "DES-04")]["verdict"] == "pasa"
     assert [lab["session_id"] for lab in store.read_labels(path, session_id="wa_2", episode_id="ep_1")] == ["wa_2"]
+
+
+def test_list_scorecards_can_window_by_episode_date(tmp_path: Path) -> None:
+    """Un backfill califica HOY episodios cerrados hace meses: la ventana de la
+    vista es por fecha del episodio, no por fecha de evaluación."""
+    d = tmp_path / "scorecards"
+    old = _card("wa_1", "ep_1", "PASA", "2026-09-13T10:00:00+00:00")
+    old["episode_date"] = "2026-06-01"
+    recent = _card("wa_2", "ep_1", "PASA", "2026-09-13T10:00:00+00:00")
+    recent["episode_date"] = "2026-09-12"
+    legacy = _card("wa_3", "ep_1", "PASA", "2026-09-13T10:00:00+00:00")  # sin episode_date → usa date
+    for r in (old, recent, legacy):
+        store.append_scorecard(d, r)
+
+    rows = store.list_scorecards(d, dates=["2026-09-13"], episode_since="2026-09-01")
+
+    assert sorted(r["session_id"] for r in rows) == ["wa_2", "wa_3"]
+    assert len(store.list_scorecards(d, dates=["2026-09-13"])) == 3

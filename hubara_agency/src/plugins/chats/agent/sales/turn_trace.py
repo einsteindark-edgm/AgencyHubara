@@ -230,6 +230,27 @@ def _state_changes(metadata: dict[str, Any], since_ms: int) -> list[dict[str, An
     return changes
 
 
+def _episode_for_turn(episodes: list[Any], turn_started_ms: int) -> dict[str, Any] | None:
+    """Episodio al que pertenece el turno: el último que ya había empezado
+    cuando el turno arrancó.
+
+    `episodes[-1]` no sirve: si el cliente contesta rápido, el ingest abre el
+    episodio siguiente mientras el turno de cierre todavía envía, y la traza del
+    cierre caería en el episodio nuevo (el viejo perdería su último turno y el
+    scorecard reprobaría en falso). Episodios sin `started_at_ms` (esquema
+    viejo) se consideran anteriores.
+    """
+    candidates = [e for e in episodes if isinstance(e, dict)]
+    started = [
+        e
+        for e in candidates
+        if not isinstance(e.get("started_at_ms"), (int, float)) or e["started_at_ms"] <= turn_started_ms
+    ]
+    if started:
+        return started[-1]
+    return candidates[-1] if candidates else None
+
+
 def enrich_turn_trace(
     payload: dict[str, Any],
     metadata: dict[str, Any],
@@ -244,8 +265,9 @@ def enrich_turn_trace(
     turno y etapa de entrada dentro del MISMO episodio). La señal del cliente
     solo cuenta si llegó después del turno anterior: si no, es de otro turno.
     """
-    episodes = metadata.get("episodes") or []
-    episode = episodes[-1] if episodes and isinstance(episodes[-1], dict) else None
+    episode = _episode_for_turn(
+        metadata.get("episodes") or [], int(payload.get("turn_started_ms") or recorded_at_ms)
+    )
     episode_id = str((episode or {}).get("episode_id") or "")
     same_episode = bool(previous) and previous.get("episode_id") == episode_id
     turn = int(previous.get("turn") or 0) + 1 if same_episode else 1

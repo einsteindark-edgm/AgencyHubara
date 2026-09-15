@@ -11,7 +11,7 @@ from src.plugins.chats.agent.sales_eval.scorecard.trajectory import (
 def _trace(turn: int, **over) -> dict:
     base = {
         "v": 1,
-        "session_id": "wa_570000000001",
+        "session_id": "wa_100000000001",
         "episode_id": "ep_007",
         "turn": turn,
         "recorded_at_ms": 1_000 * turn,
@@ -51,7 +51,7 @@ def test_build_trajectory_orders_turns_and_derives_intents_from_ok_tools() -> No
     ]
 
     traj = build_trajectory(
-        traces, session_id="wa_570000000001", episode={"episode_id": "ep_007", "closing_tag": "INTERESADO"}
+        traces, session_id="wa_100000000001", episode={"episode_id": "ep_007", "closing_tag": "INTERESADO"}
     )
 
     assert traj.fidelity == "trace"
@@ -65,7 +65,7 @@ def test_build_trajectory_orders_turns_and_derives_intents_from_ok_tools() -> No
 
 
 def test_build_trajectory_without_traces_is_empty() -> None:
-    traj = build_trajectory([], session_id="wa_570000000001", episode={"episode_id": "ep_001"})
+    traj = build_trajectory([], session_id="wa_100000000001", episode={"episode_id": "ep_001"})
 
     assert traj.fidelity == "empty"
     assert traj.turns == ()
@@ -74,7 +74,7 @@ def test_build_trajectory_without_traces_is_empty() -> None:
 def test_trajectory_to_dict_is_json_ready() -> None:
     import json
 
-    traj = build_trajectory([_trace(1)], session_id="wa_570000000001", episode={"episode_id": "ep_007"})
+    traj = build_trajectory([_trace(1)], session_id="wa_100000000001", episode={"episode_id": "ep_007"})
 
     data = traj.to_dict()
     assert json.loads(json.dumps(data))["turns"][0]["turn"] == 1
@@ -94,7 +94,7 @@ def test_build_legacy_trajectory_groups_dashboard_events_into_turns() -> None:
     ]
 
     traj = build_legacy_trajectory(
-        events, session_id="wa_570000000001", episode={"episode_id": "ep_007", "closing_tag": "CONFIRMADO_SIN_DATOS"}
+        events, session_id="wa_100000000001", episode={"episode_id": "ep_007", "closing_tag": "CONFIRMADO_SIN_DATOS"}
     )
 
     assert traj.fidelity == "legacy"

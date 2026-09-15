@@ -38,6 +38,9 @@ etapa, señal), dos muestras que deben coincidir (si no, `desconocido`) y un
 prefiltro de aplicabilidad en código. El prompt SHALL indicar que el estado
 del sistema no es prueba. Un check de juez crítico NO SHALL reprobar un
 episodio solo hasta estar calibrado (kappa ≥ 0.6 con n ≥ 50 etiquetas humanas).
+Cada etiqueta humana SHALL guardar `judge_verdict`, el veredicto del juez que
+el operador vio al etiquetar; la calibración se computa desde las etiquetas,
+sin releer meses de scorecards en cada cierre de episodio.
 
 #### Scenario: Juez inconsistente
 
@@ -52,6 +55,33 @@ registro en `<vault>/_evals/scorecards/<fecha>.jsonl`, emitir un punto por check
 a SigNoz (`check.<id>`, suite `scorecard`) y luego correr la eval legada. Un
 error del scorecard NO SHALL impedir la eval legada.
 
+El evento de cierre se despacha ANTES de que el turno de cierre envíe y
+persista su traza. Además de la gracia fija del workflow (90 s), la activity
+SHALL sondear hasta 180 s por una traza del episodio con `recorded_at_ms ≥
+closed_at_ms` cuando el cierre es reciente (≤ 15 min); si no llega, evalúa
+igual y deja constancia en el log. La evidencia emitida a SigNoz SHALL pasar
+por la redacción de PII (cita al cliente).
+
+#### Scenario: Turno de cierre lento
+
+- GIVEN el episodio cerró (`closed_at_ms`) y el envío del último mensaje reintenta
+- WHEN el scorecard corre antes de que la traza de ese turno aterrice
+- THEN espera (sondeo) y evalúa con el turno de cierre incluido
+- AND no reprueba en falso checks del cierre (CIE-04, TAG-01) por un turno ausente
+
+### Requirement: Fecha del episodio para listas y tendencias
+
+Cada registro SHALL llevar `episode_date` (fecha UTC del cierre, o del inicio
+si sigue abierto). La lista de scorecards, el embudo y la tendencia semanal
+SHALL ventanearse y agruparse por esa fecha, no por la fecha de evaluación:
+el backfill califica hoy conversaciones de hace meses.
+
+#### Scenario: Backfill de historial
+
+- GIVEN un episodio cerrado hace 3 meses calificado hoy por el backfill
+- WHEN el dashboard pide los últimos 56 días
+- THEN el episodio no aparece en la lista ni infla la semana actual de la tendencia
+
 ### Requirement: Trayectoria legada honesta
 
 Los episodios sin trazas SHALL evaluarse con fidelidad `legacy` (y los que
@@ -64,12 +94,32 @@ Un episodio en `FALLA` SHALL abrir un issue de GitHub con la huella de sus
 checks críticos o comentar el issue abierto con la misma huella. El cuerpo NO
 SHALL incluir teléfonos completos y la evidencia SHALL pasar por la redacción
 de PII. Sin `SCORECARD_ALERTS_GITHUB_TOKEN` y `SCORECARD_ALERTS_REPO` es un no-op.
+El issue abierto se busca LISTANDO los issues con la etiqueta (API consistente),
+no con la búsqueda de GitHub (indexa con retraso y limita a 30/min). Recalcular
+un episodio ya guardado en `FALLA` con la misma huella NO SHALL volver a
+alertar.
+
+#### Scenario: Recálculo de un FALLA conocido
+
+- GIVEN el episodio ya tiene un scorecard guardado en `FALLA` con huella H
+- WHEN el operador recalcula (o corre `ScoreEpisodeWorkflow`) y vuelve a dar `FALLA` con huella H
+- THEN no se abre ni comenta ningún issue
 
 ### Requirement: Goldens con el mismo registro
 
 El runner de goldens SHALL calificar cada corrida con el mismo registro de
 checks que producción y reportar pass^k por escenario (ninguna de las k
 corridas en `FALLA`).
+
+### Requirement: API del scorecard segura ante ids y dobles clics
+
+Los ids de sesión y episodio SHALL validarse con coincidencia completa
+(`fullmatch`: sin saltos de línea finales). El recálculo con juez SHALL usar un
+id de workflow estable por episodio (`scorecard-<sesión>-<episodio>`): un
+segundo clic mientras corre reusa el run en vuelo en vez de pagar dos veces el
+juez. La respuesta del recálculo SHALL decir si el juez quedó encolado
+(`judge_queued`, `judge_error`) y el dashboard SHALL mostrarlo y sondear el
+detalle hasta que llegue el registro del juez.
 
 ## Out of scope
 

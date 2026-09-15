@@ -73,7 +73,7 @@ def traj(
     fidelity: str = "trace",
     closing_tag: str | None = None,
     order_id: str | None = None,
-    session_id: str = "wa_570000000001",
+    session_id: str = "wa_100000000001",
     episode_id: str = "ep_007",
 ) -> Trajectory:
     return Trajectory(

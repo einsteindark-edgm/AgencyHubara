@@ -15,7 +15,7 @@ from src.plugins.chats.api import scorecards as api
 from src.plugins.chats.shared import turn_traces
 from tests.evals.scorecard.incidents import CATALOG_CTX, pr281_before_fix, traces_from
 
-SESSION = "wa_570000000001"
+SESSION = "wa_100000000001"
 
 
 @pytest.fixture
@@ -130,3 +130,52 @@ def test_invalid_inputs_are_rejected(client: TestClient) -> None:
     assert client.post("/api/chats/evals/labels", json=bad_label).status_code == 400
     bad_verdict = {"session_id": SESSION, "episode_id": "ep_007", "check_id": "DES-04", "verdict": "quizás"}
     assert client.post("/api/chats/evals/labels", json=bad_verdict).status_code == 400
+
+
+def test_label_stores_the_judge_verdict_it_was_made_against(client: TestClient, tmp_path: Path) -> None:
+    store.append_scorecard(store.scorecards_dir(tmp_path), {
+        "session_id": SESSION, "episode_id": "ep_007", "verdict": "ALERTA", "judge": True,
+        "results": [{"check_id": "DES-04", "verdict": "falla", "turn": 3, "evidence": "e", "critique": "c", "source": "judge"}],
+    })
+
+    created = client.post("/api/chats/evals/labels", json={
+        "session_id": SESSION, "episode_id": "ep_007", "check_id": "DES-04", "verdict": "pasa",
+    }).json()
+
+    assert created["label"]["judge_verdict"] == "falla"
+    cal = {c["check_id"]: c for c in client.get("/api/chats/evals/calibration").json()["checks"]}
+    assert (cal["DES-04"]["fp"], cal["DES-04"]["n"]) == (1, 1)
+
+
+def test_ids_with_a_trailing_newline_are_rejected(client: TestClient) -> None:
+    r = client.get("/api/chats/evals/scorecard", params={"session_id": SESSION + "\n", "episode_id": "ep_007"})
+    assert r.status_code == 400
+
+
+async def test_start_judge_workflow_reuses_the_run_already_in_flight(monkeypatch) -> None:
+    """Doble clic en «Recalcular con juez» no debe pagar dos veces el juez."""
+    from temporalio.exceptions import WorkflowAlreadyStartedError
+
+    from src.sdk import runtime as sdk_runtime
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.ids: list[str] = []
+
+        async def start_workflow(self, name, arg, *, id, task_queue):
+            self.ids.append(id)
+            if len(self.ids) > 1:
+                raise WorkflowAlreadyStartedError(id, name, run_id="run-1")
+
+    fake = FakeClient()
+
+    async def get_client():
+        return fake
+
+    monkeypatch.setattr(sdk_runtime, "get_temporal_client", get_client)
+
+    first = await api._start_judge_workflow(SESSION, "ep_007")
+    second = await api._start_judge_workflow(SESSION, "ep_007")
+
+    assert first == second == f"scorecard-{SESSION}-ep_007"
+    assert len(fake.ids) == 2

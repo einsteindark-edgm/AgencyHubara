@@ -5,7 +5,10 @@ Pieza 3 del `GOLDEN_EVAL_LOOP_PLAN.md`: la alerta ES el issue de GitHub.
   * **Dedup por modo de fallo**: la huella es el conjunto de checks críticos
     que fallaron. Si ya hay un issue abierto con esa huella, se comenta "volvió
     a pasar" en vez de abrir otro. El issue agrupa todos los episodios con el
-    mismo modo de fallo (el Pareto, en GitHub).
+    mismo modo de fallo (el Pareto, en GitHub). El issue abierto se busca
+    LISTANDO los issues con la etiqueta (API consistente), no con la búsqueda
+    de GitHub: esa indexa con retraso y limita a 30 llamadas por minuto, y dos
+    FALLA seguidos abrían issues duplicados.
   * **PII**: el cuerpo lleva el episodio y los últimos 4 dígitos de la sesión
     (para ubicarlo en el dashboard), nunca el teléfono completo; la evidencia
     pasa por `redact_pii` (teléfonos, emails, documentos).
@@ -112,46 +115,53 @@ async def notify_failure(
 
 
 class GithubIssueTracker:
-    """Adapter GitHub REST (issues + search) con token de repo."""
+    """Adapter GitHub REST (issues) con token de repo. `transport` es para tests."""
 
-    def __init__(self, repo: str, token: str) -> None:
+    def __init__(self, repo: str, token: str, *, transport: Any | None = None) -> None:
         self._repo = repo
         self._headers = {
             "Authorization": f"Bearer {token}",
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
         }
+        self._transport = transport
+
+    def _client(self) -> Any:
+        import httpx
+
+        return httpx.AsyncClient(timeout=_TIMEOUT_S, headers=self._headers, transport=self._transport)
 
     async def find_open(self, fingerprint: str) -> int | None:
-        import httpx
-
-        query = f'repo:{self._repo} is:issue is:open label:{LABEL} "{_MARKER}:{fingerprint}" in:body'
-        async with httpx.AsyncClient(timeout=_TIMEOUT_S) as client:
-            resp = await client.get(f"{_GITHUB_API}/search/issues", params={"q": query}, headers=self._headers)
+        marker = f"{_MARKER}:{fingerprint}"
+        async with self._client() as client:
+            resp = await client.get(
+                f"{_GITHUB_API}/repos/{self._repo}/issues",
+                params={"labels": LABEL, "state": "open", "per_page": 100},
+            )
             resp.raise_for_status()
-            items = resp.json().get("items") or []
-        return int(items[0]["number"]) if items else None
+            items = resp.json() or []
+        for item in items:
+            # El endpoint de issues también lista pull requests.
+            if not isinstance(item, dict) or item.get("pull_request"):
+                continue
+            if marker in str(item.get("body") or ""):
+                return int(item["number"])
+        return None
 
     async def create(self, title: str, body: str, labels: list[str]) -> int:
-        import httpx
-
-        async with httpx.AsyncClient(timeout=_TIMEOUT_S) as client:
+        async with self._client() as client:
             resp = await client.post(
                 f"{_GITHUB_API}/repos/{self._repo}/issues",
                 json={"title": title, "body": body, "labels": labels},
-                headers=self._headers,
             )
             resp.raise_for_status()
             return int(resp.json()["number"])
 
     async def comment(self, number: int, body: str) -> None:
-        import httpx
-
-        async with httpx.AsyncClient(timeout=_TIMEOUT_S) as client:
+        async with self._client() as client:
             resp = await client.post(
                 f"{_GITHUB_API}/repos/{self._repo}/issues/{number}/comments",
                 json={"body": body},
-                headers=self._headers,
             )
             resp.raise_for_status()
 

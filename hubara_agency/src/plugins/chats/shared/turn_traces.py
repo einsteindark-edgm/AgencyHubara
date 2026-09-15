@@ -12,7 +12,10 @@ import json
 from pathlib import Path
 from typing import Any
 
-_TAIL_BYTES = 64_000
+# Cola leída para `last_trace`: una traza con muchas tools (24 × args + extracto)
+# puede pasar los 64 KB; si la cola no cubre la última línea entera, `previous`
+# se pierde y la numeración de turnos reinicia.
+_TAIL_BYTES = 256_000
 
 
 def trace_path(vault_dir: Path, session_id: str) -> Path:

@@ -88,7 +88,10 @@ const EMPTY_COUNTS = {
 export const scorecardRowSchema = z.object({
   session_id: z.string(),
   episode_id: z.string().default(""),
+  /** Fecha de la evaluación (archivo del store). */
   date: z.string().default(""),
+  /** Fecha UTC del episodio (cierre o inicio): la que se muestra y ventanea. */
+  episode_date: z.string().nullable().default(null),
   ts: z.string().default(""),
   verdict: episodeVerdictSchema,
   fidelity: fidelitySchema,
@@ -206,4 +209,8 @@ export const scorecardDetailSchema = z.object({
   scorecard: scorecardWithResultsSchema.nullable().default(null),
   trajectory: trajectorySchema.nullable().default(null),
   legacy: legacyScoreSchema.nullable().catch(null),
+  /** Solo en la respuesta del recálculo con juez: si el worker lo encoló. */
+  judge_queued: z.boolean().optional(),
+  judge_workflow_id: z.string().optional(),
+  judge_error: z.string().optional(),
 });

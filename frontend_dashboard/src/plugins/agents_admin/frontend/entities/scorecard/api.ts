@@ -58,15 +58,28 @@ export function useScorecards(days = 30) {
   return useQuery({
     queryKey: scorecardKeys.list(days),
     queryFn: ({ signal }) => fetchScorecards(days, signal),
+    // Lista pesada (semanas de episodios × checks): no se recarga con cada foco.
+    staleTime: 60_000,
   });
 }
 
-/** Scorecard + trayectoria de un episodio — lazy: solo con selección. */
-export function useScorecard(sessionId: string | null, episodeId: string) {
+/**
+ * Scorecard + trayectoria de un episodio — lazy: solo con selección.
+ * `pollIntervalMs` decide, con los datos actuales, si seguir sondeando el
+ * detalle (p. ej. mientras el juez corre en el worker tras un recálculo
+ * encolado): devuelve los ms del siguiente sondeo o `false` para parar.
+ */
+export function useScorecard(
+  sessionId: string | null,
+  episodeId: string,
+  opts: { pollIntervalMs?: (current: ScorecardDetail | undefined) => number | false } = {},
+) {
+  const { pollIntervalMs } = opts;
   return useQuery({
     queryKey: scorecardKeys.detail(sessionId ?? "", episodeId),
     queryFn: ({ signal }) => fetchScorecard(sessionId!, episodeId, signal),
     enabled: !!sessionId,
+    refetchInterval: pollIntervalMs ? (query) => pollIntervalMs(query.state.data) : false,
   });
 }
 

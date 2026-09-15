@@ -17,7 +17,7 @@ from src.plugins.chats.agent.sales.activities.turn_trace import (
     persist_turn_trace_activity,
 )
 
-SESSION = "wa_570000000001"
+SESSION = "wa_100000000001"
 
 
 def _write_metadata(vault: Path, data: dict) -> None:
@@ -93,3 +93,14 @@ async def test_persist_turn_trace_never_raises_on_bad_payload(_isolate_vault_dir
     env = ActivityEnvironment()
 
     assert await env.run(persist_turn_trace_activity, SESSION, "no-json") is False
+
+
+def test_last_trace_reads_a_record_bigger_than_a_small_tail_window(tmp_path: Path) -> None:
+    """Un turno con muchas tools produce una línea grande; si la cola leída no
+    la cubre entera, `previous` se pierde y la numeración de turnos reinicia."""
+    turn_traces.append_trace(tmp_path, SESSION, {"episode_id": "ep_001", "turn": 1})
+    turn_traces.append_trace(tmp_path, SESSION, {"episode_id": "ep_001", "turn": 2, "llm_text": "x" * 100_000})
+
+    last = turn_traces.last_trace(tmp_path, SESSION)
+
+    assert last is not None and last["turn"] == 2

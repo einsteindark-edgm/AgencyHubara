@@ -2,7 +2,8 @@
 
   * **Pareto**: fallos por check, de mayor a menor (paso 4 del análisis de
     errores: contar cuántas veces ocurre cada modo de fallo).
-  * **Tendencia**: tasa de cumplimiento semanal por check (lunes ISO). Solo
+  * **Tendencia**: tasa de cumplimiento semanal por check (lunes ISO de la
+    fecha del episodio, o de la evaluación si el registro no la trae). Solo
     cuentan `pasa` y `falla`; sin episodios decididos la tasa es `None`.
   * **Embudo**: etapa final del episodio × veredicto.
 
@@ -50,7 +51,9 @@ def compute_stats(rows: list[dict[str, Any]], *, weeks: list[str]) -> dict[str, 
         verdict = str(row.get("verdict") or "SIN_DATOS")
         verdicts[verdict] += 1
         funnel[str(row.get("stage_final") or "sin_etapa")][verdict] += 1
-        week = week_start(str(row.get("date") or "1970-01-01"))
+        # Semana del EPISODIO (cuándo ocurrió), no de la evaluación: el
+        # backfill califica hoy conversaciones de hace meses.
+        week = week_start(str(row.get("episode_date") or row.get("date") or "1970-01-01"))
         for check_id, v in (row.get("checks") or {}).items():
             if check_id not in SPECS_BY_ID:
                 continue

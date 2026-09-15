@@ -16,6 +16,7 @@ import {
   statusGlyph,
   statusLabel,
   useRescoreScorecard,
+  useScorecard,
   type CheckDefinition,
   type CheckRegistry,
   type CheckResult,
@@ -75,15 +76,48 @@ function StatusDot({ status }: { status: CheckStatus }) {
   );
 }
 
+const JUDGE_POLL_MS = 15_000;
+const JUDGE_POLL_MAX_MS = 5 * 60_000;
+
+interface JudgeWait {
+  /** `ts` del registro de código devuelto al encolar: el del juez será más nuevo. */
+  ts: string;
+  startedAt: number;
+}
+
+function judgeStillPending(wait: JudgeWait, current: ScorecardDetail | undefined, nowMs: number): boolean {
+  const liveTs = current?.scorecard?.ts ?? null;
+  const arrived = liveTs !== null && liveTs !== wait.ts;
+  return !arrived && nowMs - wait.startedAt <= JUDGE_POLL_MAX_MS;
+}
+
 function RescoreControls({ episode, defaultJudge }: { episode: EpisodeRef; defaultJudge: boolean }) {
   const [judge, setJudge] = useState(defaultJudge);
   const rescore = useRescoreScorecard();
+  // El juez corre en el worker (ScoreEpisodeWorkflow) y tarda más que el cast:
+  // el detalle se sondea hasta que aparezca un registro más nuevo que el
+  // devuelto al encolar (el del juez) o venza el plazo. Sin esto el operador
+  // nunca veía llegar el resultado.
+  const [wait, setWait] = useState<JudgeWait | null>(null);
+  const live = useScorecard(episode.sessionId, episode.episodeId, {
+    pollIntervalMs: (current) => (wait && judgeStillPending(wait, current, Date.now()) ? JUDGE_POLL_MS : false),
+  });
+  const judgePending =
+    wait !== null && judgeStillPending(wait, live.data, live.dataUpdatedAt || wait.startedAt);
+  const queueFailed = rescore.data?.judge_queued === false;
   return (
     <div className="flex flex-wrap items-center gap-2">
       <button
         type="button"
         onClick={() =>
-          rescore.mutate({ session_id: episode.sessionId, episode_id: episode.episodeId, judge })
+          rescore.mutate(
+            { session_id: episode.sessionId, episode_id: episode.episodeId, judge },
+            {
+              onSuccess: (data) => {
+                if (data.judge_queued) setWait({ ts: data.scorecard?.ts ?? "", startedAt: Date.now() });
+              },
+            },
+          )
         }
         disabled={rescore.isPending}
         className="inline-flex items-center gap-1.5 rounded-md border border-line-strong px-2.5 py-1 text-xs font-medium text-fg transition hover:bg-white/5 disabled:opacity-50"
@@ -94,6 +128,17 @@ function RescoreControls({ episode, defaultJudge }: { episode: EpisodeRef; defau
         <input type="checkbox" checked={judge} onChange={(e) => setJudge(e.target.checked)} className="accent-accent" />
         con juez
       </label>
+      {judgePending && (
+        <span className="text-xs text-fg-muted" role="status">
+          Juez en cola: el resultado aparece solo al terminar.
+        </span>
+      )}
+      {queueFailed && (
+        <span className="text-xs text-red" role="alert">
+          No se pudo encolar al juez: {rescore.data?.judge_error ?? "sin detalle"}. El recálculo de código sí
+          quedó guardado.
+        </span>
+      )}
       {rescore.isError && (
         <span className="text-xs text-red" role="alert">
           No se pudo recalcular: {rescore.error.message}

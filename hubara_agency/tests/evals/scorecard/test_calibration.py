@@ -76,3 +76,15 @@ def test_label_queue_prioritizes_unknown_then_failures_and_skips_labeled() -> No
         ("wa_1", "DES-04", "muestra"),
     ]
     assert items[0]["check_name"]
+
+
+def test_labels_carry_the_judge_verdict_they_were_made_against() -> None:
+    """La etiqueta guarda el veredicto del juez que el humano vio: la
+    calibración no necesita releer meses de scorecards en cada llamada."""
+    pairs = [("falla", "falla"), ("falla", "pasa"), ("pasa", "pasa")]
+    labels = [{**_label(f"wa_{i}", "DES-04", h), "judge_verdict": j} for i, (j, h) in enumerate(pairs)]
+
+    rows = {r["check_id"]: r for r in cal.compute_calibration([], labels)}
+
+    r = rows["DES-04"]
+    assert (r["tp"], r["fp"], r["tn"], r["fn"], r["n"]) == (1, 1, 1, 0, 3)

@@ -507,6 +507,8 @@ entrada y salida, draft, confirmación, señal del cliente y cambios de estado.
 La traza NUNCA SHALL bloquear ni alterar lo que recibe el cliente; un error al
 escribirla se registra y el turno sigue. La traza vive fuera del JSONL del
 dashboard para no alterar el corte por episodio (`msgs_count_at_start/close`).
+La traza SHALL atribuirse al episodio abierto cuando ARRANCÓ el turno (el
+último con `started_at_ms ≤ inicio del turno`), no al último de la lista.
 
 #### Scenario: Tool rechazada por su guarda
 
@@ -524,6 +526,13 @@ dashboard para no alterar el corte por episodio (`msgs_count_at_start/close`).
 
 - WHEN el turno lo dispara el ghosting
 - THEN la traza registra `trigger=ghost` y el texto que el LLM produjo como suprimido
+
+#### Scenario: El cliente contesta mientras el turno de cierre todavía envía
+
+- GIVEN el turno cerró `ep_007` y, antes de persistir su traza, el ingest abrió `ep_008` con el mensaje siguiente
+- WHEN se persiste la traza del turno
+- THEN la traza es de `ep_007` (el episodio abierto al arrancar el turno) y encadena su numeración
+- AND `ep_008` no recibe un turno fantasma
 
 ## Out of scope
 

@@ -127,14 +127,14 @@ async def test_workflow_scores_the_scorecard_before_the_legacy_eval():
         ):
             await env.client.execute_workflow(
                 EvaluateEpisodeWorkflow.run,
-                EvaluateEpisodeInput(session_id="wa_570000000001", episode_id="ep_007"),
-                id="eval-episode-wa_570000000001-ep_007",
+                EvaluateEpisodeInput(session_id="wa_100000000001", episode_id="ep_007"),
+                id="eval-episode-wa_100000000001-ep_007",
                 task_queue="eval-ep-scorecard",
             )
 
     assert calls == [
-        ("scorecard", "wa_570000000001", "ep_007", True),
-        ("legacy", "wa_570000000001::ep_007"),
+        ("scorecard", "wa_100000000001", "ep_007", True),
+        ("legacy", "wa_100000000001::ep_007"),
     ]
 
 
@@ -160,12 +160,12 @@ async def test_workflow_legacy_eval_still_runs_when_scorecard_fails():
         ):
             await env.client.execute_workflow(
                 EvaluateEpisodeWorkflow.run,
-                EvaluateEpisodeInput(session_id="wa_570000000001", episode_id="ep_008"),
-                id="eval-episode-wa_570000000001-ep_008",
+                EvaluateEpisodeInput(session_id="wa_100000000001", episode_id="ep_008"),
+                id="eval-episode-wa_100000000001-ep_008",
                 task_queue="eval-ep-scorecard-broken",
             )
 
-    assert calls == ["wa_570000000001::ep_008"]
+    assert calls == ["wa_100000000001::ep_008"]
 
 
 # --------------------------------------------------------------------------- #
@@ -262,10 +262,10 @@ async def test_score_episode_workflow_runs_only_the_scorecard():
         ):
             summary = await env.client.execute_workflow(
                 ScoreEpisodeWorkflow.run,
-                ScoreEpisodeInput(session_id="wa_570000000001", episode_id="ep_007", with_judge=True),
-                id="scorecard-wa_570000000001-ep_007-1",
+                ScoreEpisodeInput(session_id="wa_100000000001", episode_id="ep_007", with_judge=True),
+                id="scorecard-wa_100000000001-ep_007-1",
                 task_queue="score-ep-test",
             )
 
-    assert calls == [("scorecard", "wa_570000000001", "ep_007", True)]
+    assert calls == [("scorecard", "wa_100000000001", "ep_007", True)]
     assert summary.verdict == "FALLA"

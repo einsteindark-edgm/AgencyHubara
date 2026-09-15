@@ -39,7 +39,7 @@ def _record(**over) -> dict:
 
 def test_fingerprint_depends_only_on_the_set_of_critical_checks() -> None:
     a = alerts.fingerprint(_record())
-    b = alerts.fingerprint(_record(session_id="wa_570000000009",
+    b = alerts.fingerprint(_record(session_id="wa_100000000009",
                                    results=list(reversed(_record()["results"]))))
     c = alerts.fingerprint(_record(results=_record()["results"][:1]))
 
@@ -84,3 +84,28 @@ async def test_non_failing_verdicts_never_alert() -> None:
 
     assert await alerts.notify_failure(_record(verdict="ALERTA"), tracker=tracker) is False
     assert tracker.created == []
+
+
+async def test_github_tracker_finds_the_open_issue_by_marker_without_the_search_index() -> None:
+    """La búsqueda de GitHub indexa con retraso y limita a 30/min: dos FALLA
+    seguidos abrían issues duplicados. Se lista por etiqueta (consistente)."""
+    import httpx
+
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json=[
+            {"number": 11, "body": "otro <!-- scorecard-fingerprint:aaaaaaaaaaaa -->"},
+            {"number": 12, "body": "<!-- scorecard-fingerprint:deadbeef1234 -->", "pull_request": {"url": "pr"}},
+            {"number": 13, "body": "cuerpo\n<!-- scorecard-fingerprint:deadbeef1234 -->"},
+        ])
+
+    tracker = alerts.GithubIssueTracker("acme/repo", "tok", transport=httpx.MockTransport(handler))
+
+    assert await tracker.find_open("deadbeef1234") == 13
+    assert await tracker.find_open("000000000000") is None
+    req = seen[0]
+    assert req.url.path == "/repos/acme/repo/issues"
+    assert (req.url.params["labels"], req.url.params["state"]) == (alerts.LABEL, "open")
+    assert req.headers["Authorization"] == "Bearer tok"

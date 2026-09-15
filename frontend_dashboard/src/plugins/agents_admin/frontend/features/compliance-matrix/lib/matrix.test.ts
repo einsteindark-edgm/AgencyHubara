@@ -23,7 +23,7 @@ describe("filterScorecards", () => {
 
   it("filtra por veredicto", () => {
     const r = filterScorecards(rows, { ...ALL, verdict: "ALERTA" });
-    expect(r.map((x) => x.session_id)).toEqual(["wa_570000000003", "wa_570000000004"]);
+    expect(r.map((x) => x.session_id)).toEqual(["wa_100000000003", "wa_100000000004"]);
   });
 
   it("filtra por etapa final", () => {
@@ -33,7 +33,7 @@ describe("filterScorecards", () => {
 
   it("filtra por episodios que fallan un check (desde el Pareto)", () => {
     const r = filterScorecards(rows, { ...ALL, checkId: "VAR-07" });
-    expect(r.map((x) => x.session_id)).toEqual(["wa_570000000003"]);
+    expect(r.map((x) => x.session_id)).toEqual(["wa_100000000003"]);
   });
 });
 

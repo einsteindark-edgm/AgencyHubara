@@ -1,7 +1,7 @@
 {
  "stored": true,
  "scorecard": {
-  "session_id": "wa_570000000001",
+  "session_id": "wa_100000000001",
   "episode_id": "ep_007",
   "verdict": "FALLA",
   "fidelity": "trace",
@@ -597,7 +597,7 @@
   }
  },
  "trajectory": {
-  "session_id": "wa_570000000001",
+  "session_id": "wa_100000000001",
   "episode_id": "ep_007",
   "fidelity": "trace",
   "turns": [

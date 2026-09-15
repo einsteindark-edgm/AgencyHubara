@@ -58,7 +58,7 @@ describe("queries del scorecard", () => {
 describe("useRescoreScorecard", () => {
   it("postea el recálculo, siembra el detalle e invalida lista, detalle y agregados", async () => {
     const { client, wrapper } = setup();
-    const detailKey = scorecardKeys.detail("wa_570000000001", "ep_007");
+    const detailKey = scorecardKeys.detail("wa_100000000001", "ep_007");
     client.setQueryData(scorecardKeys.list(30), { scorecards: [] });
     client.setQueryData(detailKey, { stored: false, scorecard: null });
     client.setQueryData(checkStatsKeys.detail(56), { episodes: 0 });
@@ -68,7 +68,7 @@ describe("useRescoreScorecard", () => {
     const { result } = renderHook(() => useRescoreScorecard(), { wrapper });
     await act(() =>
       result.current.mutateAsync({
-        session_id: "wa_570000000001",
+        session_id: "wa_100000000001",
         episode_id: "ep_007",
         judge: true,
       }),
@@ -78,7 +78,7 @@ describe("useRescoreScorecard", () => {
     expect(String(url)).toContain("/api/agents/evals/scorecard/rescore");
     expect(init.method).toBe("POST");
     expect(JSON.parse(init.body)).toEqual({
-      session_id: "wa_570000000001",
+      session_id: "wa_100000000001",
       episode_id: "ep_007",
       judge: true,
     });

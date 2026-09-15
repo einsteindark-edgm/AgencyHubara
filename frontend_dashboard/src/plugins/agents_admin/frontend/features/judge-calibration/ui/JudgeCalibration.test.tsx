@@ -68,7 +68,7 @@ describe("JudgeCalibration", () => {
       const posts = fetchMock.mock.calls.filter(([, init]) => init?.method === "POST");
       expect(posts).toHaveLength(1);
       expect(JSON.parse(posts[0][1].body)).toEqual({
-        session_id: "wa_570000000005",
+        session_id: "wa_100000000005",
         episode_id: "ep_002",
         check_id: "VAR-05",
         verdict: "falla",

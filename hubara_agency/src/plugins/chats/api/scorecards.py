@@ -21,7 +21,6 @@ veredictos de una etiqueta se validan contra el registro.
 from __future__ import annotations
 
 import re
-import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -62,7 +61,8 @@ def _dates(days: int) -> list[str]:
 
 
 def _validate_ids(session_id: str, episode_id: str) -> None:
-    if not _SESSION_ID_RE.match(session_id or "") or not _EPISODE_ID_RE.match(episode_id or ""):
+    # fullmatch: `$` de `match` acepta un salto de línea final.
+    if not _SESSION_ID_RE.fullmatch(session_id or "") or not _EPISODE_ID_RE.fullmatch(episode_id or ""):
         raise HTTPException(status_code=400, detail="invalid session_id or episode_id")
 
 
@@ -100,14 +100,21 @@ def _previous_judge_results(found: dict[str, Any] | None) -> list[Any]:
     ]
 
 
+def _calibration_rows() -> list[dict[str, Any]]:
+    # Las etiquetas traen el veredicto del juez que vio el humano: no hace
+    # falta releer meses de scorecards por llamada.
+    return calibration.compute_calibration((), store.read_labels(store.labels_path(get_vault_dir())))
+
+
 def _calibrated() -> set[str]:
-    vault = get_vault_dir()
-    return calibration.calibrated_checks(
-        calibration.compute_calibration(
-            store.read_scorecards(store.scorecards_dir(vault), dates=_dates(_LEGACY_WINDOW_DAYS)),
-            store.read_labels(store.labels_path(vault)),
-        )
-    )
+    return calibration.calibrated_checks(_calibration_rows())
+
+
+def _judge_verdict_for(found: dict[str, Any] | None, check_id: str) -> str | None:
+    for r in (found or {}).get("results") or []:
+        if isinstance(r, dict) and r.get("check_id") == check_id and r.get("source") == "judge":
+            return str(r.get("verdict")) if r.get("verdict") is not None else None
+    return None
 
 
 def _detail(
@@ -135,7 +142,10 @@ def scorecard_checks() -> dict[str, Any]:
 
 @router.get("/evals/scorecards")
 def list_scorecards(days: int = Query(default=30, ge=1, le=180)) -> dict[str, Any]:
-    rows = store.list_scorecards(store.scorecards_dir(get_vault_dir()), dates=_dates(days))
+    dates = _dates(days)
+    rows = store.list_scorecards(
+        store.scorecards_dir(get_vault_dir()), dates=dates, episode_since=dates[-1]
+    )
     return {"days": days, "count": len(rows), "registry_version": REGISTRY_VERSION, "scorecards": rows}
 
 
@@ -161,14 +171,21 @@ async def _start_judge_workflow(session_id: str, episode_id: str) -> str:
     from src.sdk import get_task_queue
     from src.sdk.runtime import get_temporal_client
 
+    from temporalio.exceptions import WorkflowAlreadyStartedError
+
     client = await get_temporal_client()
-    workflow_id = f"scorecard-{session_id}-{episode_id}-{int(time.time() * 1000)}"
-    await client.start_workflow(
-        "ScoreEpisodeWorkflow",
-        ScoreEpisodeInput(session_id=session_id, episode_id=episode_id, with_judge=True),
-        id=workflow_id,
-        task_queue=get_task_queue("chats", "sales_eval"),
-    )
+    # Id estable por episodio: un doble clic no paga dos veces el juez; si ya
+    # hay un recálculo en vuelo, se reusa.
+    workflow_id = f"scorecard-{session_id}-{episode_id}"
+    try:
+        await client.start_workflow(
+            "ScoreEpisodeWorkflow",
+            ScoreEpisodeInput(session_id=session_id, episode_id=episode_id, with_judge=True),
+            id=workflow_id,
+            task_queue=get_task_queue("chats", "sales_eval"),
+        )
+    except WorkflowAlreadyStartedError:
+        pass
     return workflow_id
 
 
@@ -204,7 +221,9 @@ async def rescore(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str
 @router.get("/evals/checks/stats")
 def check_stats(days: int = Query(default=56, ge=7, le=365)) -> dict[str, Any]:
     dates = _dates(days)
-    rows = store.list_scorecards(store.scorecards_dir(get_vault_dir()), dates=dates)
+    rows = store.list_scorecards(
+        store.scorecards_dir(get_vault_dir()), dates=dates, episode_since=dates[-1]
+    )
     weeks = stats.weeks_between(dates[-1], dates[0])
     return {"days": days, **stats.compute_stats(rows, weeks=weeks)}
 
@@ -220,14 +239,19 @@ def create_label(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str,
         raise HTTPException(status_code=400, detail="unknown check_id")
     if verdict not in _LABEL_VERDICTS:
         raise HTTPException(status_code=400, detail="verdict must be pasa or falla")
+    vault = get_vault_dir()
+    found = store.find_latest(store.scorecards_dir(vault), session_id, episode_id)
     label = store.append_label(
-        store.labels_path(get_vault_dir()),
+        store.labels_path(vault),
         {
             "session_id": session_id,
             "episode_id": episode_id,
             "check_id": check_id,
             "verdict": verdict,
             "note": str(body.get("note") or "")[:500],
+            # Lo que el juez dijo cuando el humano etiquetó: la calibración
+            # compara contra ESE veredicto, sin releer los scorecards.
+            "judge_verdict": _judge_verdict_for(found, check_id),
         },
     )
     return {"ok": True, "label": label}
@@ -259,13 +283,8 @@ def label_queue(
 
 @router.get("/evals/calibration")
 def judge_calibration() -> dict[str, Any]:
-    vault = get_vault_dir()
-    rows = calibration.compute_calibration(
-        store.read_scorecards(store.scorecards_dir(vault), dates=_dates(_LEGACY_WINDOW_DAYS)),
-        store.read_labels(store.labels_path(vault)),
-    )
     return {
         "min_labels": calibration.MIN_LABELS,
         "kappa_threshold": calibration.KAPPA_THRESHOLD,
-        "checks": rows,
+        "checks": _calibration_rows(),
     }

@@ -259,7 +259,7 @@ export function triggerLabel(trigger: string): string {
   return TRIGGER_LABELS[trigger] ?? trigger;
 }
 
-/** `wa_570000000001` + `ep_007` → `wa_…0000001 · ep_007` (id completo va en el title). */
+/** `wa_100000000001` + `ep_007` → `wa_…0000001 · ep_007` (id completo va en el title). */
 export function episodeLabel(row: { session_id: string; episode_id: string }): string {
   const sid = row.session_id;
   const m = /^([a-z]+_)(.*)$/.exec(sid);

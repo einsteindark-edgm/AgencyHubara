@@ -97,8 +97,18 @@ def order_rows(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(by_ts, key=lambda r: VERDICT_RANK.get(str(r.get("verdict")), 9))
 
 
-def list_scorecards(directory: Path, *, dates: Iterable[str]) -> list[dict[str, Any]]:
-    return order_rows(to_row(r) for r in latest_by_unit(read_scorecards(directory, dates=dates)))
+def list_scorecards(
+    directory: Path, *, dates: Iterable[str], episode_since: str | None = None
+) -> list[dict[str, Any]]:
+    """Último registro por episodio de los archivos de `dates` (fecha de
+    evaluación). `episode_since` (ISO) recorta además por la fecha del episodio:
+    un backfill califica HOY episodios cerrados hace meses, y la vista de
+    "últimos N días" es por cuándo ocurrió la conversación, no cuándo se
+    calificó. Registros sin `episode_date` usan `date`."""
+    rows: Iterable[dict[str, Any]] = (to_row(r) for r in latest_by_unit(read_scorecards(directory, dates=dates)))
+    if episode_since:
+        rows = (r for r in rows if str(r.get("episode_date") or r.get("date") or "") >= episode_since)
+    return order_rows(rows)
 
 
 def find_latest(

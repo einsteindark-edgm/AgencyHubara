@@ -16,7 +16,7 @@ import { ScorecardPanel } from "./ScorecardPanel";
 
 const registry = checkRegistrySchema.parse(checksFixture);
 const detail = scorecardDetailSchema.parse(detailFixture);
-const EPISODE = { sessionId: "wa_570000000001", episodeId: "ep_007" };
+const EPISODE = { sessionId: "wa_100000000001", episodeId: "ep_007" };
 const fetchMock = vi.fn();
 
 function json(body: unknown) {
@@ -101,7 +101,7 @@ describe("ScorecardPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: /marcar pasa/i }));
     await waitFor(() => expect(postBodies("/api/agents/evals/labels")).toHaveLength(1));
     expect(postBodies("/api/agents/evals/labels")[0]).toEqual({
-      session_id: "wa_570000000001",
+      session_id: "wa_100000000001",
       episode_id: "ep_007",
       check_id: "CON-01",
       verdict: "pasa",
@@ -118,8 +118,38 @@ describe("ScorecardPanel", () => {
     expect(screen.getByRole("checkbox", { name: /con juez/i })).toBeChecked();
     fireEvent.click(screen.getByRole("button", { name: /recalcular/i }));
     await waitFor(() => expect(postBodies("/scorecard/rescore")).toEqual([
-      { session_id: "wa_570000000001", episode_id: "ep_007", judge: true },
+      { session_id: "wa_100000000001", episode_id: "ep_007", judge: true },
     ]));
+  });
+
+  it("al encolar el juez avisa que el resultado llega solo", async () => {
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (init?.method === "POST" && url.includes("/scorecard/rescore")) {
+        return Promise.resolve(json({ ...detailFixture, judge_queued: true, judge_workflow_id: "scorecard-x" }));
+      }
+      if (url.includes("/api/agents/evals/scorecard?")) return Promise.resolve(json(detailFixture));
+      return Promise.resolve(json({}));
+    });
+    renderWithClient(
+      <ScorecardPanel episode={EPISODE} detail={detail} registry={registry} selectedCheckId={null} onSelectCheck={() => {}} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /recalcular/i }));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/juez en cola/i));
+  });
+
+  it("avisa cuando el juez no se pudo encolar", async () => {
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (init?.method === "POST" && url.includes("/scorecard/rescore")) {
+        return Promise.resolve(json({ ...detailFixture, judge_queued: false, judge_error: "sin Temporal" }));
+      }
+      if (url.includes("/api/agents/evals/scorecard?")) return Promise.resolve(json(detailFixture));
+      return Promise.resolve(json({}));
+    });
+    renderWithClient(
+      <ScorecardPanel episode={EPISODE} detail={detail} registry={registry} selectedCheckId={null} onSelectCheck={() => {}} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /recalcular/i }));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/no se pudo encolar al juez.*sin Temporal/i));
   });
 
   it("sin scorecard ofrece recalcular", () => {

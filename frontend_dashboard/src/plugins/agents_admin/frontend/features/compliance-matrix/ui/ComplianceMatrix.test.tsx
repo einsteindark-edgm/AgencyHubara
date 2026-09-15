@@ -38,10 +38,12 @@ function Harness({
   onSelectEpisode = () => {},
   checkFilter = null,
   onClearCheckFilter = () => {},
+  rowCap,
 }: {
   onSelectEpisode?: (s: string, e: string) => void;
   checkFilter?: string | null;
   onClearCheckFilter?: () => void;
+  rowCap?: number;
 }) {
   const [verdict, setVerdict] = useState<VerdictFilter>("todos");
   return (
@@ -53,6 +55,7 @@ function Harness({
       onClearCheckFilter={onClearCheckFilter}
       selectedEpisode={null}
       onSelectEpisode={onSelectEpisode}
+      rowCap={rowCap}
     />
   );
 }
@@ -112,9 +115,28 @@ describe("ComplianceMatrix", () => {
     renderMatrix({ onSelectEpisode: onSelect });
     const rows = await bodyRows();
     fireEvent.click(rows[2]);
-    expect(onSelect).toHaveBeenCalledWith("wa_570000000003", "ep_003");
+    expect(onSelect).toHaveBeenCalledWith("wa_100000000003", "ep_003");
     fireEvent.keyDown(rows[0], { key: "Enter" });
-    expect(onSelect).toHaveBeenCalledWith("wa_570000000001", "ep_007");
+    expect(onSelect).toHaveBeenCalledWith("wa_100000000001", "ep_007");
+  });
+
+  it("con muchos episodios pinta un tope de filas y deja pedir más", async () => {
+    const base = (listFixture as { scorecards: Record<string, unknown>[] }).scorecards;
+    const many = Array.from({ length: 8 }, (_, i) => ({
+      ...base[i % base.length],
+      session_id: `wa_2${String(i).padStart(9, "0")}`,
+      episode_id: "ep_001",
+      episode_date: "2026-09-10",
+    }));
+    listPayload = { days: 30, count: many.length, registry_version: 1, scorecards: many };
+    renderMatrix({ rowCap: 5 });
+    expect(await bodyRows()).toHaveLength(5);
+    expect(screen.getByText(/8 de 8 episodios/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /mostrar 3 más/i }));
+    await waitFor(async () => expect(await bodyRows()).toHaveLength(8));
+    expect(screen.queryByRole("button", { name: /mostrar .* más/i })).toBeNull();
+    // La fecha visible es la del episodio, no la de la evaluación.
+    expect(screen.getAllByText(/2026-09-10/).length).toBeGreaterThan(0);
   });
 
   it("sin scorecards explica cuándo se generan", async () => {

@@ -26,7 +26,7 @@ describe("useCreateLabel", () => {
     const wrapper = ({ children }: { children: ReactNode }) => (
       <QueryClientProvider client={client}>{children}</QueryClientProvider>
     );
-    const labelsKey = evalLabelKeys.labels("wa_570000000005", "ep_002");
+    const labelsKey = evalLabelKeys.labels("wa_100000000005", "ep_002");
     client.setQueryData(labelsKey, { labels: [] });
     client.setQueryData(evalLabelKeys.queue(30, 20), { items: [] });
     client.setQueryData(evalLabelKeys.calibration(), { checks: [] });
@@ -40,7 +40,7 @@ describe("useCreateLabel", () => {
     );
     const { result } = renderHook(() => useCreateLabel(), { wrapper });
     const input = {
-      session_id: "wa_570000000005",
+      session_id: "wa_100000000005",
       episode_id: "ep_002",
       check_id: "DES-04",
       verdict: "pasa" as const,

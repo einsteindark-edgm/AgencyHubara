@@ -32,6 +32,8 @@ interface Props {
   onClearCheckFilter: () => void;
   selectedEpisode: EpisodeRef | null;
   onSelectEpisode: (sessionId: string, episodeId: string) => void;
+  /** Filas pintadas por tanda (64 columnas × cientos de episodios revientan el DOM). */
+  rowCap?: number;
 }
 
 const VERDICT_OPTIONS: ReadonlyArray<{ value: VerdictFilter; label: string }> = [
@@ -53,6 +55,8 @@ const CELL_TEXT: Partial<Record<CheckStatus, string>> = {
   sin_resultado: "var(--color-fg-faint)",
 };
 
+const ROW_CAP = 120;
+
 const CELL_BG: Partial<Record<CheckStatus, string>> = {
   no_aplica: "var(--color-neutral-soft)",
   sin_resultado: "transparent",
@@ -72,6 +76,7 @@ export function ComplianceMatrix({
   onClearCheckFilter,
   selectedEpisode,
   onSelectEpisode,
+  rowCap = ROW_CAP,
 }: Props) {
   const list = useScorecards(days);
   const registry = useCheckRegistry();
@@ -88,6 +93,13 @@ export function ComplianceMatrix({
     [registry.data, rows, onlyFailing],
   );
   const stages = useMemo(() => finalStageOptions(allRows), [allRows]);
+  // El tope se guarda junto con la clave de filtros: cambiar un filtro vuelve
+  // al tope inicial sin efectos (estado derivado en el render).
+  const filtersKey = `${verdictFilter}|${stage ?? ""}|${checkFilter ?? ""}`;
+  const [capState, setCapState] = useState({ key: filtersKey, cap: rowCap });
+  const cap = capState.key === filtersKey ? capState.cap : rowCap;
+  const visible = useMemo(() => rows.slice(0, cap), [rows, cap]);
+  const hidden = rows.length - visible.length;
 
   if (list.isLoading || registry.isLoading) {
     return <p className="p-3 text-sm text-fg-muted">Cargando scorecards…</p>;
@@ -246,7 +258,7 @@ export function ComplianceMatrix({
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => {
+              {visible.map((r) => {
                 const selected =
                   selectedEpisode?.sessionId === r.session_id &&
                   selectedEpisode?.episodeId === r.episode_id;
@@ -271,7 +283,7 @@ export function ComplianceMatrix({
                       </span>
                       <span className="font-mono text-[11px] text-fg">{episodeLabel(r)}</span>
                       <span className="ml-1.5 text-[11px] text-fg-faint">
-                        {r.date}
+                        {r.episode_date ?? r.date}
                         {r.closing_tag ? ` · ${r.closing_tag}` : ""}
                         {r.fidelity === "legacy" ? " · legado" : ""}
                       </span>
@@ -300,6 +312,15 @@ export function ComplianceMatrix({
             </tbody>
           </table>
         </div>
+      )}
+      {hidden > 0 && (
+        <button
+          type="button"
+          onClick={() => setCapState({ key: filtersKey, cap: cap + rowCap })}
+          className="self-start rounded-md border border-line-strong px-2.5 py-1 text-xs font-medium text-fg transition hover:bg-white/5"
+        >
+          Mostrar {Math.min(rowCap, hidden)} más ({hidden} sin pintar)
+        </button>
       )}
       <p className="text-[11px] text-fg-faint">
         ✓ pasa · ✗ falla (rojo crítico, naranja mayor, amarillo menor) · – no aplica · ? desconocido · · sin
