@@ -312,8 +312,15 @@ async def drive_scenario(scn: dict) -> dict:
 
         visible = "\n".join([*pre_tool, final] if final else pre_tool).strip()
         responses.append(visible or "(turno solo-tool / sin texto)")
+        # Scorecard (HU-SC-5): texto final y narración por separado + metadata del
+        # turno, para armar trazas con la misma tubería de producción.
+        try:
+            turn_meta = json.loads(Path(_VAULT, sid, "metadata.json").read_text("utf-8"))
+        except Exception:  # noqa: BLE001
+            turn_meta = {}
         turns.append({"role": "assistant", "content": visible, "tools": list(turn_tools),
-                      "tool_outputs": turn_outputs})
+                      "tool_outputs": turn_outputs, "final": final, "pre_tool": list(pre_tool),
+                      "metadata": turn_meta})
 
     # pending_ui_intents capturados en metadata (no se enviaron)
     intents = []
@@ -323,7 +330,8 @@ async def drive_scenario(scn: dict) -> dict:
     except Exception:  # noqa: BLE001
         pass
 
-    return {"turns": turns, "ledger": ledger, "responses": responses, "intents": intents}
+    return {"turns": turns, "ledger": ledger, "responses": responses, "intents": intents,
+            "session_id": sid}
 
 
 # --- lente 1: ledger conductual determinista --------------------------------
@@ -570,6 +578,10 @@ def format_report_md(summary: list[dict], *, repeat: int, judged: bool) -> str:
             nerr = f" ({len(errs)} err)" if errs else ""
             lines.append(f"| {emoji} | `{s['id']}` | {probe} | {beh_str(s)}{nerr} | {jcell} |")
     lines.append("")
+    from src.plugins.chats.agent.sales_eval.scorecard.golden import format_scorecard_md
+
+    lines.append(format_scorecard_md(summary))
+    lines.append("")
     lines.append("---")
     lines.append("_Leyenda: ✅ todos los behaviors deterministas pasan · ⚠️ alguno falla "
                  "(ver detalle) · 💥 error de corrida. El juez LLM es no-determinista; "
@@ -618,6 +630,16 @@ async def main() -> None:
     # neutralizar la I/O live de cierre (Medusa verify) -> el cierre puede completarse
     _install_eval_stubs()
 
+    # Scorecard por etapa (HU-SC-5): mismo registro de checks que producción,
+    # con el catálogo del snapshot del fixture.
+    from src.plugins.chats.agent.sales_eval.scorecard.catalog_context import build_check_context
+    from src.plugins.chats.agent.sales_eval.scorecard.golden import (
+        check_ids_for_behavior,
+        score_golden_run,
+    )
+
+    scorecard_ctx = await build_check_context()
+
     summary = []
     for idx, scn in enumerate(scns, 1):
         runs = []   # una entrada por corrida: {"behaviors": "x/y", "judge": {k: score}} | {"error": ...}
@@ -645,9 +667,17 @@ async def main() -> None:
             bcheck = sum(1 for b in behs if b["ok"] is not None)
             print(f"   turnos: {len(scn['customer_turns'])} · tools usadas: "
                   f"{','.join(sorted({e['name'].split('.')[-1] for e in res['ledger']})) or '(ninguna)'}")
+            card = score_golden_run(res, session_id=res["session_id"], ctx=scorecard_ctx)
+            card_checks = {r["check_id"]: r["verdict"] for r in card["results"]}
             for b in behs:
                 mark = "✅" if b["ok"] is True else ("❌" if b["ok"] is False else "·")
-                print(f"     {mark} {b['behavior']:26s} {b['detail'][:50]}")
+                mapped = ", ".join(
+                    f"{cid}={card_checks.get(cid, '?')}" for cid in check_ids_for_behavior(b["behavior"])
+                )
+                print(f"     {mark} {b['behavior']:26s} {b['detail'][:50]}  {mapped}")
+            failing = [r for r in card["results"] if r["verdict"] == "falla"]
+            print(f"   scorecard: {card['verdict']} · "
+                  + (", ".join(f"{r['check_id']}@T{r['turn']}" for r in failing) or "sin fallos"))
 
             judged = {}
             if not args.no_judge:
@@ -667,10 +697,12 @@ async def main() -> None:
                     print(f"     {mark} judge:{k:20s} {sc}  {v['reason'][:160]}")
             print()
             runs.append({"behaviors": f"{bpass}/{bcheck}",
-                         "judge": {k: v["score"] for k, v in judged.items()}})
+                         "judge": {k: v["score"] for k, v in judged.items()},
+                         "scorecard": {"verdict": card["verdict"], "checks": card_checks}})
         summary.append({"id": scn["id"], "title": scn.get("title", ""),
                         "category": scn["category"], "probes": scn.get("probes", ""),
-                        "runs": runs})
+                        "runs": runs,
+                        "scorecards": [r["scorecard"] for r in runs if "scorecard" in r]})
 
     print("=== RESUMEN ===")
     for s in summary:

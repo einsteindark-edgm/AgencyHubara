@@ -222,6 +222,12 @@ def build_trajectory(
     )
 
 
+def detect_signal(text: str) -> str | None:
+    """Señal del cliente desde su texto (sin ingest): botón Confirmar,
+    aplazamiento o afirmación de compra. Reconstrucción legada y goldens."""
+    return _legacy_signal(text)
+
+
 def _legacy_signal(text: str) -> str | None:
     low = text.lower()
     if any(low.startswith(m) for m in _CONFIRM_BUTTON_MARKERS):
