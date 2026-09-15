@@ -16,6 +16,7 @@ import { useChatInbox, type ChatInboxItem } from "@plugins/chats/frontend/entiti
 import { Avatar, Icon } from "@/shared/ui";
 import { useInboxFilters } from "../model/useInboxFilters";
 import { InboxDateFilter } from "./InboxDateFilter";
+import { SoundSettings } from "./SoundSettings";
 
 interface Props {
   selectedId: string | null;
@@ -83,6 +84,8 @@ export function ChatsInbox({ selectedId, onSelect }: Props) {
           today={f.today}
           label={f.dateRangeLabel}
         />
+
+        <SoundSettings />
       </div>
 
       <div className="side-list">

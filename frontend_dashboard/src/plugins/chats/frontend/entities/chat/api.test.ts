@@ -30,6 +30,7 @@ function makeSession(overrides: Partial<ChatSession> = {}): ChatSession {
     phone_number_id: null,
     pending_payment_order_id: null,
     last_updated_timestamp: 1716700000,
+    last_inbound_ms: null,
     origin: null,
     ...overrides,
   };
@@ -61,6 +62,20 @@ async function runInbox(sessions: ChatSession[]) {
   await new Promise((r) => setTimeout(r, 10));
   return result.current.data;
 }
+
+describe("lastInboundMs (sonido de mensaje nuevo)", () => {
+  it("expone el último inbound del cliente que manda el backend", async () => {
+    const data = await runInbox([makeSession({ last_inbound_ms: 1_789_000_060_000 })]);
+    expect(data?.[0]?.lastInboundMs).toBe(1_789_000_060_000);
+  });
+
+  it("snapshot viejo sin el campo → null (rollout tolerante)", async () => {
+    const legacy: Partial<ChatSession> = makeSession();
+    delete legacy.last_inbound_ms;
+    const data = await runInbox([legacy as ChatSession]);
+    expect(data?.[0]?.lastInboundMs).toBeNull();
+  });
+});
 
 describe("normalizeTag via useChatInbox (regression: venta=Frío bug)", () => {
   it("COMPRA_EXITOSA del backend → CLIENTE en inbox (no FRÍO)", async () => {
