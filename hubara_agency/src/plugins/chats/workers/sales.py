@@ -67,6 +67,7 @@ from src.plugins.chats.agent.sales.activities import (
     ensure_closing_escalation_activity,
     ensure_payment_pending_closure_activity,
     flush_pending_ui_intents_activity,
+    persist_turn_trace_activity,
     read_and_clear_pending_handoff_activity,
     read_idle_timeout_seconds_activity,
     read_order_draft_note_activity,
@@ -370,6 +371,8 @@ async def main() -> None:
             # Guarda de enumeración de variantes (run 9bd495be): 4+ aromas o
             # colores listados en texto plano → picker curado.
             apply_variant_enumeration_guard_activity,
+            # HU-SC-0: traza por turno para el scorecard por etapa.
+            persist_turn_trace_activity,
             # Fix integridad orden↔tag: red de seguridad determinística que
             # garantiza el cierre "pago pendiente" + escalación tras un
             # register_order exitoso aunque el LLM no emita el tag/escalación.

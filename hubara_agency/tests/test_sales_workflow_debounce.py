@@ -70,6 +70,8 @@ class Tracker:
         self.timeline: list[str] = []
         self.first_contact_greeting_calls: int = 0
         self.variant_guard_calls: list[str] = []
+        # HU-SC-0: payloads de la traza por turno, en orden.
+        self.turn_traces: list[dict] = []
 
 
 # Burbuja 1 del guion de apertura (etapa_descubrimiento) — lo que la activity
@@ -290,7 +292,13 @@ def _make_fake_activities(
         tracker.variant_guard_calls.append(final_text)
         return variant_guard_result
 
+    @activity.defn(name="persist_turn_trace")
+    async def fake_persist_turn_trace(session_id: str, payload_json: str) -> bool:
+        tracker.turn_traces.append(json.loads(payload_json))
+        return True
+
     return [
+        fake_persist_turn_trace,
         fake_variant_guard,
         fake_first_contact_greeting,
         fake_bootstrap,
@@ -2241,3 +2249,107 @@ async def test_plain_text_without_enumeration_is_sent_as_usual(tmp_path: Path) -
     assert tracker.variant_guard_calls == ["¿Tienes algún aroma en mente?"]
     assert "¿Tienes algún aroma en mente?" in [m for (_s, m) in tracker.send_whatsapp_calls]
 
+
+
+# =============================================================================
+# HU-SC-0 — traza por turno para el scorecard
+# =============================================================================
+
+
+async def _run_turn_with_tools(
+    tracker: Tracker, workspace: Path, *, responses, tool_results, variant_guard_result=False
+) -> None:
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=SALES_QUEUE,
+            workflows=[HubaraSalesSessionWorkflow],
+            activities=_make_fake_activities(
+                tracker,
+                workspace_path=str(workspace),
+                llm_responses=responses,
+                tool_results=tool_results,
+                variant_guard_result=variant_guard_result,
+                prior_history=[
+                    {"role": "user", "content": "Hola"},
+                    {"role": "assistant", "content": "¡Buenas! Bienvenido a *Hubara*..."},
+                ],
+            ),
+        ):
+            handle = await env.client.start_workflow(
+                HubaraSalesSessionWorkflow.run,
+                SalesSessionInput(session_id="wa_trace", runtime_workspace_path=str(workspace)),
+                id="session-wa_trace",
+                task_queue=SALES_QUEUE,
+            )
+            await handle.signal(
+                HubaraSalesSessionWorkflow.send_message, args=["café", None, None]
+            )
+            await handle.result()
+
+
+@pytest.mark.asyncio
+async def test_turn_trace_records_tools_rejections_narration_and_guard(tmp_path: Path) -> None:
+    """Lo que el evaluador viejo no veía: la tool rechazada por su guarda, la
+    narración que el default-deny descartó y el texto que la guarda de
+    variantes suprimió. Todo queda en la traza del turno; el turno de ghosting
+    deja la suya marcada como tal."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    batch = LLMResponseData(
+        content="Perfecto, reviso qué tenemos de café",
+        finish_reason="tool_calls",
+        has_tool_calls=True,
+        tool_calls=[
+            ToolCallData(id="t1", name="search_products", arguments={"q": "café"}),
+            ToolCallData(id="t2", name="escalate_to_human", arguments={"reason_category": "OTHER"}),
+        ],
+    )
+
+    await _run_turn_with_tools(
+        tracker,
+        workspace,
+        responses=[batch, _final_resp(_AROMA_ENUMERATION)],
+        tool_results={
+            "search_products": json.dumps({"query": "café", "count": 23, "results": []}),
+            "escalate_to_human": json.dumps({"escalated": False, "error": "purchase_not_confirmed"}),
+        },
+        variant_guard_result=True,
+    )
+
+    assert [t["trigger"] for t in tracker.turn_traces] == ["customer", "ghost"]
+    turn = tracker.turn_traces[0]
+    assert turn["inbound_text"] == "café"
+    assert [(x["name"], x["ok"], x["error"]) for x in turn["tools"]] == [
+        ("search_products", True, None),
+        ("escalate_to_human", False, "purchase_not_confirmed"),
+    ]
+    assert "count:23" in turn["tools"][0]["notes"]
+    assert turn["discarded_narration"] == ["Perfecto, reviso qué tenemos de café"]
+    assert turn["llm_text"] == _AROMA_ENUMERATION
+    assert turn["sent_texts"] == []
+    assert turn["suppressed_reason"] == "variant_enumeration_guard"
+    assert turn["guards"] == ["variant_enumeration_guard"]
+    assert turn["first_contact"] is False
+    assert tracker.turn_traces[1]["sent_texts"] == []
+
+
+@pytest.mark.asyncio
+async def test_turn_trace_records_the_text_the_customer_received(tmp_path: Path) -> None:
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    await _run_turn_with_tools(
+        tracker,
+        workspace,
+        responses=[_final_resp("¿Es para ti o para regalo?")],
+        tool_results={},
+    )
+
+    turn = tracker.turn_traces[0]
+    assert turn["sent_texts"] == ["¿Es para ti o para regalo?"]
+    assert turn["suppressed_reason"] is None
+    assert turn["tools"] == []
+    assert turn["turn_started_ms"] > 0

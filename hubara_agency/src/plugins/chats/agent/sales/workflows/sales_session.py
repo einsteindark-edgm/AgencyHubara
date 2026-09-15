@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import timedelta
 
 from temporalio import workflow
@@ -41,6 +42,7 @@ with workflow.unsafe.imports_passed_through():
         ensure_closing_escalation_activity,
         ensure_payment_pending_closure_activity,
         flush_pending_ui_intents_activity,
+        persist_turn_trace_activity,
         read_and_clear_pending_handoff_activity,
         read_idle_timeout_seconds_activity,
         read_order_draft_note_activity,
@@ -50,6 +52,7 @@ with workflow.unsafe.imports_passed_through():
     from src.plugins.chats.agent.sales.first_contact_greeting import (
         should_send_first_contact_greeting,
     )
+    from src.plugins.chats.agent.sales.turn_trace import build_turn_payload
     from src.platform.whatsapp.capi_activity import (
         LEAD_CLOSING_TAGS,
         PURCHASE_CLOSING_TAGS,
@@ -450,6 +453,13 @@ class HubaraSalesSessionWorkflow:
                     # corre hasta el final; lo pendiente va al ciclo próximo).
                     # `workflow.patched`: histories pre-deploy → hni None →
                     # shape idéntico al viejo (R-DET/L-9).
+                    # HU-SC-0: inicio del turno (reloj del workflow, determinista)
+                    # y acumuladores de la traza. Listas en memoria: no agregan
+                    # commands a la history.
+                    turn_started_ms = int(workflow.now().timestamp() * 1000)
+                    trace_sent_texts: list[str] = []
+                    trace_guards: list[str] = []
+                    trace_suppressed: str | None = None
                     restarts = 0
                     while True:
                         hni = None
@@ -605,6 +615,7 @@ class HubaraSalesSessionWorkflow:
                                 "handoff ni se envía el texto del turno."
                             )
                             result.final_content = ""
+                            trace_guards.append("self_transfer_noop")
                         else:
                             # Rama legacy solo para replay de histories
                             # pre-deploy (R-DET).
@@ -658,6 +669,8 @@ class HubaraSalesSessionWorkflow:
                         # el LLM cerró, `closure.acted=False`), adoptamos su
                         # decisión para emitir EpisodeClosedEvent + CAPI abajo
                         # sin duplicar.
+                        if closure.acted:
+                            trace_guards.append("safety_net_order_closure")
                         if closure.acted and episode_closed_decision is None:
                             episode_closed_decision = EpisodeClosedDecision(
                                 session_id=result.order_registered_decision.session_id,
@@ -784,6 +797,7 @@ class HubaraSalesSessionWorkflow:
                                 retry_policy=RetryPolicy(maximum_attempts=3),
                             )
                             if _escalated:
+                                trace_guards.append("safety_net_closing_escalation")
                                 # Shutdown DIFERIDO (C3) — ver la rama de la
                                 # red orden↔tag de arriba: mismo patch, misma
                                 # razón (la despedida sale antes de apagar).
@@ -851,6 +865,8 @@ class HubaraSalesSessionWorkflow:
                             start_to_close_timeout=timedelta(seconds=10),
                             retry_policy=RetryPolicy(maximum_attempts=2),
                         )
+                        trace_sent_texts.append(greeting)
+                        trace_guards.append("first_contact_greeting")
 
                     # SALUDO DESCARTADO (bug run ddd0d472 / session-wa_573125671604):
                     # cuando el LLM emite texto client-facing JUNTO con una tool
@@ -891,6 +907,7 @@ class HubaraSalesSessionWorkflow:
                                 start_to_close_timeout=timedelta(seconds=90),
                                 retry_policy=RetryPolicy(maximum_attempts=2),
                             )
+                            trace_sent_texts.append(pre_msg)
                             if workflow.patched("persist-assistant-message-v1"):
                                 await workflow.execute_activity(
                                     persist_assistant_message_activity,
@@ -943,6 +960,8 @@ class HubaraSalesSessionWorkflow:
                                 f"picker: {result.final_content[:120]!r}"
                             )
                             suppress_text_for_picker = True
+                            trace_guards.append("variant_enumeration_guard")
+                            trace_suppressed = "variant_enumeration_guard"
                     if admin_no_send and result.final_content:
                         # Observabilidad del turno admin: el LLM produjo texto
                         # pese a la instrucción de silencio — lo suprimimos y
@@ -980,12 +999,14 @@ class HubaraSalesSessionWorkflow:
                         result.final_content = (
                             stripped or _ORDER_REGISTERED_FALLBACK_FAREWELL
                         )
+                        trace_guards.append("portavelas_notice_guard")
                     leak_blocked = (
                         bool(result.final_content)
                         and workflow.patched("admin-text-guard-v1")
                         and looks_like_admin_leak(result.final_content)
                     )
                     if leak_blocked:
+                        trace_guards.append("admin_text_guard")
                         workflow.logger.warning(
                             "admin-text-guard: final_content bloqueado (texto "
                             f"administrativo): {result.final_content[:120]!r}"
@@ -1005,6 +1026,7 @@ class HubaraSalesSessionWorkflow:
                                 start_to_close_timeout=timedelta(seconds=90),
                                 retry_policy=RetryPolicy(maximum_attempts=2)
                             )
+                            trace_sent_texts.append(result.final_content)
                         # Persistir la respuesta al JSONL DESPUES del send: si el
                         # send falla y retry, no contaminamos el log con mensajes
                         # que el cliente nunca vio. El dashboard lee este JSONL
@@ -1076,6 +1098,66 @@ class HubaraSalesSessionWorkflow:
                             workflow.logger.warning(
                                 "CAPI outbox flush falló (non-blocking): "
                                 f"session={session.session_id} err={exc!r}"
+                            )
+
+                    # HU-SC-0 — TRAZA POR TURNO para el scorecard por etapa.
+                    # El evaluador anterior solo veía texto enviado + nombres
+                    # de tools: no veía rechazos de guardas, texto suprimido,
+                    # narración descartada ni guardas que dispararon (PR #281,
+                    # runs 01a0a0eb / 01a0a0f1: calificó 0.93 un episodio con
+                    # formulario sin confirmación). Acá, después del send y
+                    # del flush, se persiste lo que solo el workflow sabe; la
+                    # activity lo enriquece con la etapa y el estado. Nunca
+                    # bloquea al cliente. patched(): histories en vuelo no
+                    # tienen la activity (R-DET).
+                    if workflow.patched("turn-trace-v1"):
+                        if trace_suppressed is None and result.final_content and (
+                            result.final_content not in trace_sent_texts
+                        ):
+                            if abstained:
+                                trace_suppressed = "no_message"
+                            elif admin_no_send:
+                                trace_suppressed = "admin_turn"
+                            elif leak_blocked:
+                                trace_suppressed = "admin_text_guard"
+                            elif suppress_text_for_picker:
+                                trace_suppressed = "variant_picker"
+                            elif self._force_shutdown:
+                                trace_suppressed = "shutdown"
+                        is_ghost_turn = any(
+                            p.is_ghost_trigger for p in (raw_batch or [msg])
+                        )
+                        trace_payload = build_turn_payload(
+                            trigger=(
+                                "ghost"
+                                if is_ghost_turn
+                                else "handoff" if msg.is_handoff else "customer"
+                            ),
+                            inbound_text=msg.message or "",
+                            turn_started_ms=turn_started_ms,
+                            first_contact=result.first_contact,
+                            tool_events=list(result.tool_events),
+                            discarded_narration=list(result.discarded_narration),
+                            llm_text=result.final_content or "",
+                            sent_texts=trace_sent_texts,
+                            suppressed_reason=trace_suppressed,
+                            guards=trace_guards,
+                        )
+                        try:
+                            await workflow.execute_activity(
+                                persist_turn_trace_activity,
+                                args=[
+                                    session.session_id,
+                                    json.dumps(trace_payload, ensure_ascii=False),
+                                ],
+                                start_to_close_timeout=timedelta(seconds=15),
+                                retry_policy=RetryPolicy(maximum_attempts=2),
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            workflow.logger.warning(
+                                "turn-trace: no se persistió la traza "
+                                f"(non-blocking): session={session.session_id} "
+                                f"err={exc!r}"
                             )
 
                     # Escalation a humano: la tool ya escribio metadata
