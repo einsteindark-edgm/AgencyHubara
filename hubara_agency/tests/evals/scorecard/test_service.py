@@ -199,3 +199,68 @@ def test_episode_date_ignores_implausible_timestamps() -> None:
 
     assert service.episode_date(tiny) is None
     assert service.episode_date(seconds) is None
+
+
+def test_judge_flag_is_false_when_every_judge_call_errored() -> None:
+    """Primer informe: el registro decía `judge=True` aunque las 13 llamadas
+    fallaron por 429. El panel prendía «con juez» sobre resultados vacíos."""
+    from src.plugins.chats.agent.sales_eval.scorecard.trajectory import Trajectory
+
+    empty = Trajectory(session_id=SESSION, episode_id="ep_002", fidelity="empty", turns=())
+    errored = [
+        CheckResult("EST-04", "desconocido", critique="error del juez: RateLimitError 429", source="judge"),
+        CheckResult("TAG-03", "desconocido", critique="error del juez: RateLimitError 429", source="judge"),
+    ]
+    mixed = [*errored, CheckResult("DES-04", "falla", turn=3, source="judge")]
+
+    rec = service.score_trajectory(empty, CheckContext(), judge_results=errored)
+    assert (rec["judge"], rec["judge_errors"]) == (False, 2)
+    rec = service.score_trajectory(empty, CheckContext(), judge_results=mixed)
+    assert (rec["judge"], rec["judge_errors"]) == (True, 2)
+
+
+def _daily_vault(vault: Path) -> None:
+    import os
+
+    def session(sid: str, episodes: list[dict], events: list[dict]) -> None:
+        d = vault / sid
+        (d / "sessions").mkdir(parents=True, exist_ok=True)
+        (d / "metadata.json").write_text(json.dumps({"episodes": episodes}), encoding="utf-8")
+        (d / "sessions" / f"{sid}.jsonl").write_text("\n".join(json.dumps(e) for e in events) + "\n", encoding="utf-8")
+        os.utime(d / "sessions" / f"{sid}.jsonl", (_CLOSED_AT / 1000, _CLOSED_AT / 1000))
+
+    hi = [{"role": "user", "content": "hola"}, {"role": "assistant", "content": "¡Buenas tardes!"}]
+    base = {"episode_id": "ep_001", "started_at_ms": _CLOSED_AT - 3_600_000, "msgs_count_at_start": 0}
+    closed = {**base, "closed_at_ms": _CLOSED_AT - 600_000, "msgs_count_at_close": 2, "closing_tag": "RECHAZO"}
+    session("wa_100000000011", [base], hi)
+    session("wa_100000000012", [closed], hi)
+    session("wa_100000000013", [closed], hi)
+    session("wa_100000000014", [base], [{"role": "assistant", "content": "Hola de nuevo 🌿"}])
+    from src.plugins.chats.agent.sales_eval.scorecard import store
+
+    closed_ts = datetime_iso(_CLOSED_AT - 300_000)
+    store.append_scorecard(store.scorecards_dir(vault), {"session_id": "wa_100000000012", "episode_id": "ep_001",
+                                                        "verdict": "PASA", "ts": closed_ts, "results": []})
+
+
+def datetime_iso(ms: int) -> str:
+    from datetime import datetime, timezone
+
+    return datetime.fromtimestamp(ms / 1000, timezone.utc).isoformat()
+
+
+def test_daily_units_score_open_and_unscored_closed_episodes_of_any_length(tmp_path: Path) -> None:
+    """Barrido diario del scorecard: el cierre ya califica al episodio que
+    cerró; el barrido suma los episodios ABIERTOS con actividad (INTERESADO,
+    ruta humano… nunca emiten cierre) y los cerrados que se quedaron sin
+    scorecard. Sin mínimo de turnos: un saludo sin respuesta también se evalúa
+    (APE-03). Episodios sin mensajes del cliente no son del asesor."""
+    from src.plugins.chats.agent.sales_eval.evals.contracts import EvalWindowInput
+
+    _daily_vault(tmp_path)
+
+    units = service.daily_scorecard_units(
+        tmp_path, EvalWindowInput(lookback_hours=24, max_conversations=100), now_ms=_CLOSED_AT + 60_000
+    )
+
+    assert sorted(units) == ["wa_100000000011::ep_001", "wa_100000000013::ep_001"]

@@ -130,6 +130,53 @@ def episode_date(traj: Trajectory) -> str | None:
     return datetime.fromtimestamp(at / 1000, timezone.utc).date().isoformat()
 
 
+def daily_scorecard_units(
+    vault_dir: Path, window: Any, *, now_ms: int | None = None
+) -> list[str]:
+    """Episodios que el barrido diario debe calificar (unit ids `sesión::episodio`).
+
+    Parte de la misma selección de la eval diaria (sesiones con actividad en la
+    ventana, episodios activos o cerrados en ella) pero sin mínimo de turnos, y
+    se queda con:
+      * episodios ABIERTOS: nunca emiten cierre (INTERESADO, ruta humano) y su
+        trayectoria creció en la ventana;
+      * episodios CERRADOS sin un scorecard posterior al cierre (el disparo al
+        cierre falló o no existía).
+    Episodios sin mensajes del cliente (solo remarketing o notificaciones) no
+    son del asesor y quedan fuera.
+    """
+    from dataclasses import replace as dc_replace
+
+    from src.plugins.chats.agent.sales_eval.evals import select
+    from src.plugins.chats.agent.sales_eval.scorecard import store
+
+    now = time.time() if now_ms is None else now_ms / 1000
+    units = select.select_eval_units(dc_replace(window, min_turns=1), vault_dir=vault_dir, now=now)
+    cards_dir = store.scorecards_dir(vault_dir)
+    out: list[str] = []
+    for unit in units:
+        session_id, episode_id = reconstruct.parse_eval_unit_id(unit)
+        if not episode_id:
+            continue
+        events, episode = reconstruct.read_episode_events(vault_dir, session_id, episode_id)
+        if not any(isinstance(e, dict) and e.get("role") == "user" for e in events):
+            continue
+        closed_at = (episode or {}).get("closed_at_ms")
+        if isinstance(closed_at, (int, float)):
+            found = store.find_latest(cards_dir, session_id, episode_id)
+            if found is not None and _ts_ms(found.get("ts")) >= closed_at:
+                continue
+        out.append(unit)
+    return out
+
+
+def _ts_ms(value: Any) -> int:
+    try:
+        return int(datetime.fromisoformat(str(value)).timestamp() * 1000)
+    except ValueError:
+        return 0
+
+
 def score_trajectory(
     traj: Trajectory,
     ctx: CheckContext,
@@ -138,13 +185,19 @@ def score_trajectory(
     calibrated: Iterable[str] = frozenset(),
 ) -> dict[str, Any]:
     """Checks de código + resultados del juez (si corrió) → registro del scorecard."""
+    from src.plugins.chats.agent.sales_eval.scorecard.judge_checks import is_judge_error
+
     judged = list(judge_results)
+    judge_errors = sum(1 for r in judged if is_judge_error(r))
     results = [*run_code_checks(traj, ctx), *judged]
     card = compute_scorecard(traj, SPECS_BY_ID, results, calibrated=calibrated)
     record = card.to_dict()
     record.update(
         {
-            "judge": bool(judged),
+            # El juez "corrió" solo si alguna llamada devolvió un juicio: un 429
+            # en todas las llamadas no es un scorecard con juez.
+            "judge": len(judged) > judge_errors,
+            "judge_errors": judge_errors,
             "registry_version": REGISTRY_VERSION,
             "order_id": traj.order_id,
             "episode_date": episode_date(traj),

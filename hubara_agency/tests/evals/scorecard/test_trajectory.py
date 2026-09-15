@@ -105,3 +105,27 @@ def test_build_legacy_trajectory_groups_dashboard_events_into_turns() -> None:
     assert traj.turns[1].signal == "deferral"  # re-detectada con purchase_signals
     assert traj.turns[1].tool("request_shipping_details").ok is None  # desconocido
     assert traj.turns[1].stage_out is None
+
+
+def test_legacy_trajectory_drops_proactive_messages_from_other_agents() -> None:
+    """El JSONL del dashboard mezcla al asesor de ventas con remarketing y con
+    las notificaciones de envío (sin campo que las distinga). Un mensaje del bot
+    que llega mucho después del último mensaje del cliente no es respuesta del
+    asesor: se excluye de la trayectoria (primer informe, 9-15 sep: el 🚚 de la
+    notificación de envío reprobó EST-02 al asesor)."""
+    events = [
+        {"role": "user", "content": "¿Qué formas de pago tienes?", "timestamp": "2026-09-08T15:07:51+00:00"},
+        {"role": "assistant", "content": "Tenemos tres formas de pago.", "timestamp": "2026-09-08T15:08:16+00:00"},
+        {"role": "assistant", "kind": "ui_component", "component_kind": "reaction", "content": "🤍",
+         "timestamp": "2026-09-08T15:08:17+00:00"},
+        {"role": "assistant", "content": "Hola de nuevo 🌿 Quedó pendiente lo del pedido 🤍",
+         "timestamp": "2026-09-08T18:16:05+00:00"},
+        {"role": "assistant", "content": "Tu pedido #29 ya va en camino 🚚", "timestamp": "2026-09-09T13:20:16+00:00"},
+        {"role": "user", "content": "gracias", "timestamp": "2026-09-09T14:00:00+00:00"},
+        {"role": "assistant", "content": "Con gusto.", "timestamp": "2026-09-09T14:00:20+00:00"},
+    ]
+
+    traj = build_legacy_trajectory(events, session_id="wa_100000000001", episode={"episode_id": "ep_012"})
+
+    assert [t.sent_texts for t in traj.turns] == [("Tenemos tres formas de pago.",), ("Con gusto.",)]
+    assert traj.turns[0].intents == ("reaction",)

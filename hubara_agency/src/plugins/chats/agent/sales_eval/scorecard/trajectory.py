@@ -239,16 +239,38 @@ def _legacy_signal(text: str) -> str | None:
     return None
 
 
+# Un mensaje del bot que llega más de esto después del último mensaje del
+# cliente no es la respuesta del asesor de ventas: es remarketing ("Hola de
+# nuevo…"), una notificación de envío o un recordatorio. El JSONL del dashboard
+# no trae quién lo escribió. El asesor responde en segundos o pocos minutos
+# (debounce + LLM + reintentos del envío).
+PROACTIVE_GAP_MS = 30 * 60 * 1000
+
+
+def _iso_ms(value: Any) -> int | None:
+    if not isinstance(value, str) or not value:
+        return None
+    from datetime import datetime
+
+    try:
+        return int(datetime.fromisoformat(value).timestamp() * 1000)
+    except ValueError:
+        return None
+
+
 def build_legacy_trajectory(
     events: list[dict[str, Any]], *, session_id: str, episode: dict[str, Any]
 ) -> Trajectory:
     """Trayectoria aproximada desde el JSONL del dashboard (sin trazas).
 
     Un turno arranca con cada mensaje del cliente (los consecutivos se
-    agrupan); los eventos del bot que siguen le pertenecen. Corta en el
-    primer mensaje del humano operador (desde ahí no evaluamos al bot).
+    agrupan); los eventos del bot que siguen le pertenecen, salvo los que
+    llegan más de `PROACTIVE_GAP_MS` después del último mensaje del cliente
+    (mensajes proactivos de otros agentes). Corta en el primer mensaje del
+    humano operador (desde ahí no evaluamos al bot).
     """
     groups: list[dict[str, Any]] = []
+    last_inbound_ms: int | None = None
     for ev in events:
         if not isinstance(ev, dict):
             continue
@@ -257,12 +279,16 @@ def build_legacy_trajectory(
         role = ev.get("role")
         content = str(ev.get("content") or "")
         if role == "user":
+            last_inbound_ms = _iso_ms(ev.get("timestamp")) or last_inbound_ms
             if groups and not groups[-1]["bot"]:
                 groups[-1]["inbound"].append(content)
             else:
                 groups.append({"inbound": [content], "bot": [], "intents": [], "tools": []})
             continue
         if role != "assistant" or not groups:
+            continue
+        at_ms = _iso_ms(ev.get("timestamp"))
+        if at_ms is not None and last_inbound_ms is not None and at_ms - last_inbound_ms > PROACTIVE_GAP_MS:
             continue
         g = groups[-1]
         g["bot"].append(ev)

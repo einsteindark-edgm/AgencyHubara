@@ -185,10 +185,24 @@ def test_env05_naming_payment_methods_without_numbers_passes() -> None:
     assert CODE_CHECKS["ENV-05"](t, CheckContext()).verdict == "pasa"
 
 
-def test_env05_llave_with_number_fails() -> None:
-    t = traj(T(1, sent=["Transfiere a la llave 3229041190 y me mandas el comprobante"]))
+def test_env05_llave_with_an_unknown_number_fails(monkeypatch) -> None:
+    monkeypatch.setenv("PAYMENT_NEQUI_NUMBER", "3001112233")
+    t = traj(T(1, sent=["Transfiere a la llave 3009998877 y me mandas el comprobante"]))
     r = CODE_CHECKS["ENV-05"](t, CheckContext())
     assert (r.verdict, r.turn) == ("falla", 1)
+
+
+def test_env05_the_business_nequi_key_is_public_and_allowed(monkeypatch) -> None:
+    """Primer informe (9-15 sep): ENV-05 reprobó al bot por escribir la llave
+    Nequi del negocio. Es dato PÚBLICO y el único dato de pago que el guion le
+    permite escribir (`sales/config/payments.py`, skills de cierre y catálogo).
+    Una cuenta bancaria o cualquier otro número sigue siendo falla."""
+    monkeypatch.setenv("PAYMENT_NEQUI_NUMBER", "3001112233")
+    ok = traj(T(1, sent=["Contra entrega, pago anticipado por Nequi o llave 300 111 2233, o link de pago"]))
+    assert CODE_CHECKS["ENV-05"](ok, CheckContext()).verdict == "pasa"
+    both = traj(T(1, sent=["Nequi o llave 3001112233, o a la cuenta de ahorros 123456789"]))
+    r = CODE_CHECKS["ENV-05"](both, CheckContext())
+    assert r.verdict == "falla" and "123456789" in r.evidence
 
 
 def test_env05_price_next_to_payment_medium_is_not_bank_data() -> None:

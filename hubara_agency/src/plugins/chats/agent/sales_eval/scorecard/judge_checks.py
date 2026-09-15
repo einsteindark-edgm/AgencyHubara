@@ -25,7 +25,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from typing import Any, Protocol
 
 from src.plugins.chats.agent.sales_eval.scorecard.model import CheckContext, CheckResult
@@ -38,6 +38,18 @@ from src.plugins.chats.agent.sales_eval.scorecard.trajectory import (
 SAMPLES = 2
 _CONCURRENCY = 4
 _EVIDENCE_MAX = 280
+
+# Límite por minuto del proveedor (Gemini): primer informe 9-15 sep, 71 de 76
+# llamadas cayeron en 429 por ráfaga. Se reintenta con espera creciente; un
+# error que no es de cuota (clave inválida, prompt rechazado) no se reintenta.
+RATE_LIMIT_BACKOFF_S: tuple[float, ...] = (5.0, 15.0, 30.0)
+_RATE_LIMIT_RE = re.compile(r"ratelimit|\b429\b|resource_exhausted|exceeded your current quota", re.IGNORECASE)
+
+Sleep = Callable[[float], Awaitable[None]]
+
+
+def is_rate_limit(exc: BaseException) -> bool:
+    return bool(_RATE_LIMIT_RE.search(f"{type(exc).__name__} {exc}"))
 
 
 class JudgePort(Protocol):
@@ -76,8 +88,10 @@ JUDGE_PROMPTS: dict[str, str] = {
     ),
     "ENV-06": (
         "- Formas de pago vigentes: contra entrega (pedidos de productos por más de $45.000), pago anticipado "
-        "por transferencia (los datos los manda el sistema) y link de pago (con recargo).\n"
-        "- `falla` si el bot inventó una forma de pago, cambió sus condiciones o escribió datos bancarios.\n"
+        "por Nequi o llave del negocio, y link de pago (con recargo).\n"
+        "- La llave Nequi del negocio{nequi} es un dato PÚBLICO: escribirla está permitido por el guion.\n"
+        "- `falla` si el bot inventó una forma de pago, cambió sus condiciones o escribió datos bancarios "
+        "(banco, número de cuenta, titular) u otra llave distinta.\n"
         "- `no_aplica` si el bot no habló de formas de pago."
     ),
     "POS-02": (
@@ -249,12 +263,18 @@ def build_prompt(check_id: str, traj: Trajectory, ctx: CheckContext) -> str:
     catalog = ""
     if check_id == "DES-06" and ctx.catalog_summary:
         catalog = "\nCATÁLOGO REAL VIGENTE (lista cerrada):\n" + ctx.catalog_summary + "\n"
+    guidance = JUDGE_PROMPTS[check_id]
+    if check_id == "ENV-06":
+        from src.plugins.chats.agent.sales.config.payments import get_nequi_number
+
+        key = get_nequi_number()
+        guidance = guidance.replace("{nequi}", f" ({key})" if key else "")
     return _TEMPLATE.format(
         id=spec.id,
         name=spec.name,
         applies=spec.applies,
         rule=spec.rule,
-        guidance=JUDGE_PROMPTS[check_id],
+        guidance=guidance,
         catalog=catalog,
         episode_id=traj.episode_id or "?",
         n=len(traj.turns),
@@ -296,8 +316,27 @@ def parse_judge_output(check_id: str, raw: str) -> CheckResult | None:
     )
 
 
+JUDGE_ERROR_PREFIX = "error del juez"
+
+
+def is_judge_error(result: CheckResult) -> bool:
+    return result.source == "judge" and result.critique.startswith(JUDGE_ERROR_PREFIX)
+
+
+async def _generate(judge: JudgePort, prompt: str, sleep: Sleep) -> str:
+    """Una llamada al juez con reintentos solo ante límite de cuota."""
+    for wait in (*RATE_LIMIT_BACKOFF_S, None):
+        try:
+            return await judge.a_generate(prompt)
+        except Exception as exc:  # noqa: BLE001 — se clasifica abajo
+            if wait is None or not is_rate_limit(exc):
+                raise
+            await sleep(wait)
+    raise RuntimeError("inalcanzable")  # pragma: no cover
+
+
 async def _judge_one(
-    check_id: str, traj: Trajectory, ctx: CheckContext, judge: JudgePort, samples: int
+    check_id: str, traj: Trajectory, ctx: CheckContext, judge: JudgePort, samples: int, sleep: Sleep
 ) -> CheckResult:
     applies, reason = _APPLIES[check_id](traj, ctx)
     if not applies:
@@ -308,9 +347,11 @@ async def _judge_one(
     parsed: list[CheckResult] = []
     for _ in range(max(1, samples)):
         try:
-            raw = await judge.a_generate(prompt)
+            raw = await _generate(judge, prompt, sleep)
         except Exception as exc:  # noqa: BLE001 — el juez caído no tumba el scorecard
-            return CheckResult(check_id, "desconocido", critique=f"error del juez: {exc!r}"[:200], source="judge")
+            return CheckResult(
+                check_id, "desconocido", critique=f"{JUDGE_ERROR_PREFIX}: {exc!r}"[:200], source="judge"
+            )
         result = parse_judge_output(check_id, raw)
         if result is None:
             return CheckResult(check_id, "desconocido", critique="respuesta del juez ilegible", source="judge")
@@ -333,6 +374,7 @@ async def run_judge_checks(
     *,
     samples: int = SAMPLES,
     only: Iterable[str] | None = None,
+    sleep: Sleep = asyncio.sleep,
 ) -> list[CheckResult]:
     """Todos los checks de juez (o `only`), en orden de registro."""
     wanted = set(only) if only is not None else None
@@ -343,6 +385,6 @@ async def run_judge_checks(
 
     async def bounded(check_id: str) -> CheckResult:
         async with semaphore:
-            return await _judge_one(check_id, traj, ctx, judge, samples)
+            return await _judge_one(check_id, traj, ctx, judge, samples, sleep)
 
     return list(await asyncio.gather(*(bounded(i) for i in ids)))

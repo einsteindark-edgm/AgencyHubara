@@ -287,3 +287,21 @@ def test_des09_aroma_question_after_products_passes() -> None:
 def test_des09_products_on_first_turn_is_not_applicable() -> None:
     t = traj(T(1, tools=[tool("present_products")]), T(2, sent=["¿Qué aromas te gustan?"]))
     assert _run("DES-09", t).verdict == "no_aplica"
+
+
+def test_des05_policy_threshold_and_shipping_amounts_are_not_catalog_prices() -> None:
+    """Primer informe (9-15 sep): el umbral de contra entrega reprobó DES-05 como
+    si fuera un precio de producto. Montos de política de pago o de envío no
+    salen del catálogo."""
+    t = traj(T(1, sent=[
+        "Tenemos tres formas de pago:\n1. *Contra entrega*: pagas al recibir, aplica para compras superiores a $45.000.\n"
+        "2. *Link de pago*: tiene un recargo de $3.000. El envío a Bogotá sale en $12.000.",
+    ]))
+    assert _run("DES-05", t).verdict == "no_aplica"
+
+
+def test_des05_product_price_next_to_a_policy_amount_still_fails() -> None:
+    t = traj(T(1, sent=["El Cubo Love cuesta $89.000 y el envío sale en $12.000"]))
+    r = _run("DES-05", t)
+    assert (r.verdict, r.turn) == ("falla", 1)
+    assert "$89.000" in r.evidence

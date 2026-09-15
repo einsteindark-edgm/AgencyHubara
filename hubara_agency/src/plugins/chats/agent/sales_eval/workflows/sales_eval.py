@@ -14,26 +14,68 @@ Temporal (event loop determinista).
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 
 from temporalio import workflow
+from temporalio.common import RetryPolicy
 
 with workflow.unsafe.imports_passed_through():
     from src.platform.temporal.retry_policies import _CONV_OPTIONS, _TOOL_OPTIONS
     from src.plugins.chats.agent.sales_eval.activities.eval_activities import (
         evaluate_sales_conversation_activity,
+        score_episode_scorecard_activity,
         select_conversations_to_eval_activity,
+        select_scorecard_units_activity,
     )
     from src.plugins.chats.agent.sales_eval.evals.contracts import (
         ConversationEvalResult,
         EvalRunSummary,
         EvalWindowInput,
+        ScorecardSummary,
     )
+    from src.plugins.chats.agent.sales_eval.evals.reconstruct import parse_eval_unit_id
 
 
 @workflow.defn(name="SalesEvalWorkflow")
 class SalesEvalWorkflow:
+    async def _score_scorecards(self, window: EvalWindowInput) -> int:
+        """HU-SC-8: scorecard por etapa de los episodios con actividad en la
+        ventana que el cierre no cubre (abiertos: INTERESADO, ruta humano) o
+        que quedaron sin scorecard. Uno a la vez: el juez hace 13 llamadas
+        por episodio y en paralelo satura el límite por minuto del proveedor.
+        Nunca bloquea la eval legada."""
+        try:
+            units: list[str] = await workflow.execute_activity(
+                select_scorecard_units_activity,
+                window,
+                **_CONV_OPTIONS,  # type: ignore[arg-type]
+            )
+        except Exception as exc:  # noqa: BLE001
+            workflow.logger.warning(f"scorecard diario: selección falló (non-blocking): {exc!r}")
+            return 0
+        scored = 0
+        for unit in units:
+            session_id, episode_id = parse_eval_unit_id(unit)
+            try:
+                summary: ScorecardSummary = await workflow.execute_activity(
+                    score_episode_scorecard_activity,
+                    args=[session_id, episode_id, True],
+                    start_to_close_timeout=timedelta(minutes=10),
+                    heartbeat_timeout=timedelta(seconds=60),
+                    retry_policy=RetryPolicy(maximum_attempts=2),
+                )
+            except Exception as exc:  # noqa: BLE001
+                workflow.logger.warning(f"scorecard diario {unit} falló (non-blocking): {exc!r}")
+                continue
+            scored += 1 if summary.stored else 0
+        return scored
+
     @workflow.run
     async def run(self, window: EvalWindowInput) -> EvalRunSummary:
+        # patched(): runs en vuelo del schedule replayean sin la rama (R-DET).
+        scorecards = (
+            await self._score_scorecards(window) if workflow.patched("daily-scorecard-v1") else 0
+        )
         sessions: list[str] = await workflow.execute_activity(
             select_conversations_to_eval_activity,
             window,
@@ -73,6 +115,7 @@ class SalesEvalWorkflow:
             candidates=candidates,
             skipped=skipped,
             errors=errors,
+            scorecards=scorecards,
         )
         workflow.logger.info(
             "SalesEvalWorkflow: %d evaluadas, %d pasaron, %d candidatas a golden",

@@ -320,6 +320,20 @@ def _already_alerted(previous: dict | None, record: dict) -> bool:
     )
 
 
+@activity.defn(name="select_scorecard_units")
+async def select_scorecard_units_activity(window: EvalWindowInput) -> list[str]:
+    """Episodios que el barrido diario califica con el scorecard (HU-SC-8).
+
+    Abiertos con actividad en la ventana y cerrados sin scorecard posterior al
+    cierre, sin mínimo de turnos (ver `service.daily_scorecard_units`).
+    """
+    from src.plugins.chats.agent.sales_eval.scorecard import service
+
+    units = service.daily_scorecard_units(composition.get_vault_dir(), window)
+    activity.logger.info("scorecard.daily: %d episodios a calificar (ventana %dh)", len(units), window.lookback_hours)
+    return units
+
+
 @activity.defn(name="score_episode_scorecard")
 @with_heartbeat(every=10)
 async def score_episode_scorecard_activity(

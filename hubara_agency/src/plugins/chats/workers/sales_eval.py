@@ -55,6 +55,7 @@ from src.plugins.chats.agent.sales_eval.activities.eval_activities import (
     run_golden_suite_activity,
     score_episode_scorecard_activity,
     select_conversations_to_eval_activity,
+    select_scorecard_units_activity,
 )
 from src.plugins.chats.agent.sales_eval.evals.contracts import (
     EvalWindowInput,
@@ -221,6 +222,8 @@ async def main() -> None:
             run_golden_suite_activity,
             # HU-SC-1: scorecard por etapa al cerrar cada episodio.
             score_episode_scorecard_activity,
+            # HU-SC-8: selección del scorecard en el barrido diario.
+            select_scorecard_units_activity,
         ],
         workflow_runner=otel_workflow_runner(),
     )

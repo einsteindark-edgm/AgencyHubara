@@ -69,6 +69,22 @@ por la redacción de PII (cita al cliente).
 - THEN espera (sondeo) y evalúa con el turno de cierre incluido
 - AND no reprueba en falso checks del cierre (CIE-04, TAG-01) por un turno ausente
 
+### Requirement: Barrido diario del scorecard
+
+El barrido diario de la eval (`SalesEvalWorkflow`, schedule `sales-eval-schedule`,
+23:00 Bogotá en prod) SHALL correr también el scorecard (gate
+`daily-scorecard-v1`), uno a la vez, sobre los episodios con actividad en la
+ventana que el disparo al cierre no cubre: los ABIERTOS (INTERESADO, ruta
+humano, en curso: nunca emiten cierre) y los CERRADOS sin un scorecard
+posterior al cierre. Sin mínimo de turnos. Episodios sin mensajes del cliente
+quedan fuera. Un error del scorecard NO SHALL impedir la eval legada.
+
+#### Scenario: Lead que quedó INTERESADO
+
+- GIVEN un cliente conversó hoy y el episodio quedó abierto en INTERESADO
+- WHEN corre el barrido de las 23:00
+- THEN el episodio queda calificado con el scorecard y aparece en Calidad LLM
+
 ### Requirement: Fecha del episodio para listas y tendencias
 
 Cada registro SHALL llevar `episode_date` (fecha UTC del cierre, o del inicio
@@ -87,6 +103,33 @@ el backfill califica hoy conversaciones de hace meses.
 Los episodios sin trazas SHALL evaluarse con fidelidad `legacy` (y los que
 empezaron antes de la traza con `partial`); los checks que dependen de datos
 de la traza SHALL devolver `desconocido`, nunca `pasa`.
+
+El JSONL del dashboard no dice qué agente escribió cada mensaje. En la
+trayectoria legada, un mensaje del bot que llega más de 30 minutos después del
+último mensaje del cliente NO SHALL atribuirse al asesor de ventas: es
+remarketing, una notificación de envío o un recordatorio.
+
+#### Scenario: Notificación de envío dentro de un episodio abierto (primer informe, 9-15 sep)
+
+- GIVEN el cliente preguntó por las formas de pago y el asesor respondió en segundos
+- AND al día siguiente el agente de envíos escribió "Tu pedido ya va en camino 🚚" en la misma sesión
+- WHEN se califica el episodio sin trazas
+- THEN la notificación no forma parte de la trayectoria y no reprueba EST-02 al asesor
+
+### Requirement: Los datos públicos de la política no son hallazgos
+
+DES-05 NO SHALL tratar como precio de catálogo los montos de la política de
+pago o de envío (umbral de contra entrega, recargos, valor del envío). ENV-05
+NO SHALL reprobar la llave Nequi del negocio (`PAYMENT_NEQUI_NUMBER`), único
+dato de pago que el guion permite escribir; cualquier otra cuenta o número sí.
+
+### Requirement: Juez resiliente al límite por minuto
+
+Una llamada al juez que falla por límite de cuota (429, `RESOURCE_EXHAUSTED`)
+SHALL reintentarse con espera creciente (5, 15 y 30 s); otros errores no se
+reintentan. Si el juez no respondió ninguna llamada, el registro SHALL decir
+`judge=false` y contar los errores en `judge_errors`: un scorecard con el juez
+caído no se presenta como juzgado.
 
 ### Requirement: Alerta de fallo crítico con dedup
 

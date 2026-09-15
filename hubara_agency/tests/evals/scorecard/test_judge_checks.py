@@ -101,3 +101,82 @@ async def test_only_parameter_limits_the_checks() -> None:
     results = await jc.run_judge_checks(pr281_before_fix(), CATALOG_CTX, judge, only={"EST-04"})
 
     assert [r.check_id for r in results] == ["EST-04"]
+
+
+class RateLimitedJudge(FakeJudge):
+    """Lanza el 429 de Gemini las primeras `fails` llamadas y después responde."""
+
+    def __init__(self, fails: int, message: str = "litellm.RateLimitError: Error code: 429 - You exceeded your current quota") -> None:
+        super().__init__()
+        self.fails = fails
+        self.message = message
+
+    async def a_generate(self, prompt: str) -> str:
+        if self.fails > 0:
+            self.fails -= 1
+            raise RuntimeError(self.message)
+        return await super().a_generate(prompt)
+
+
+async def test_rate_limited_judge_is_retried_with_backoff() -> None:
+    """Primer informe: 71 de 76 llamadas cayeron en 429 por ráfaga y el juez
+    quedó `desconocido` en todo. Un límite por minuto se reintenta con espera."""
+    judge = RateLimitedJudge(fails=2)
+    waits: list[float] = []
+
+    async def sleep(s: float) -> None:
+        waits.append(s)
+
+    results = await jc.run_judge_checks(pr281_before_fix(), CATALOG_CTX, judge, only={"EST-04"}, sleep=sleep)
+
+    assert results[0].verdict == "pasa"
+    assert len(waits) == 2 and waits[0] < waits[1]
+
+
+async def test_quota_error_disguised_as_403_is_also_retried() -> None:
+    judge = RateLimitedJudge(fails=1, message='litellm.BadRequestError: Error code: 403 - {"code": 429, "status": "RESOURCE_EXHAUSTED"}')
+
+    async def sleep(_s: float) -> None:
+        return None
+
+    results = await jc.run_judge_checks(pr281_before_fix(), CATALOG_CTX, judge, only={"EST-04"}, sleep=sleep)
+
+    assert results[0].verdict == "pasa"
+
+
+async def test_judge_still_rate_limited_after_retries_is_unknown_with_error() -> None:
+    judge = RateLimitedJudge(fails=99)
+
+    async def sleep(_s: float) -> None:
+        return None
+
+    results = await jc.run_judge_checks(pr281_before_fix(), CATALOG_CTX, judge, only={"EST-04"}, sleep=sleep)
+
+    assert results[0].verdict == "desconocido"
+    assert results[0].critique.startswith("error del juez")
+
+
+async def test_non_rate_limit_errors_are_not_retried() -> None:
+    judge = RateLimitedJudge(fails=1, message="litellm.AuthenticationError: invalid api key")
+    waits: list[float] = []
+
+    async def sleep(s: float) -> None:
+        waits.append(s)
+
+    results = await jc.run_judge_checks(pr281_before_fix(), CATALOG_CTX, judge, only={"EST-04"}, sleep=sleep)
+
+    assert results[0].verdict == "desconocido" and waits == []
+
+
+def test_payment_methods_guidance_allows_the_public_business_key(monkeypatch) -> None:
+    """Primer informe: el juez de ENV-06 reprobó al bot por escribir la llave
+    Nequi del negocio, que el guion autoriza. La guía lo dice con la llave
+    vigente (misma fuente que el agente)."""
+    monkeypatch.setenv("PAYMENT_NEQUI_NUMBER", "3001112233")
+    t = traj(T(1, inbound="¿Qué formas de pago tienes?",
+               sent=["Contra entrega, pago anticipado por Nequi o llave 3001112233, o link de pago."]))
+
+    prompt = jc.build_prompt("ENV-06", t, CheckContext())
+
+    assert "3001112233" in prompt.split("CONVERSACIÓN", 1)[0]
+    assert "permitido" in prompt.split("CONVERSACIÓN", 1)[0].lower()

@@ -78,6 +78,8 @@ class EvalRunSummary:
     candidates: int = 0
     skipped: int = 0
     errors: int = 0
+    # Episodios calificados con el scorecard por etapa en la corrida (HU-SC-8).
+    scorecards: int = 0
 
 
 @dataclass(frozen=True)

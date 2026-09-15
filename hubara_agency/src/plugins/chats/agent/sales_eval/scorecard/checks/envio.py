@@ -122,12 +122,28 @@ def check_no_reask_shipping_data(traj: Trajectory, ctx: CheckContext) -> CheckRe
     return passed("ENV-04")
 
 
+def _digits(text: str) -> str:
+    return "".join(ch for ch in text if ch.isdigit())
+
+
+def _public_payment_key() -> str:
+    """Llave Nequi/Bre-B del negocio: dato PÚBLICO que el guion permite escribir
+    (única excepción de ENV-05). Misma fuente que el agente: env
+    `PAYMENT_NEQUI_NUMBER` o el default del operador."""
+    from src.plugins.chats.agent.sales.config.payments import get_nequi_number
+
+    return _digits(get_nequi_number())
+
+
 @code_check("ENV-05")
 def check_no_bank_data_or_shipping_value(traj: Trajectory, ctx: CheckContext) -> CheckResult:
     any_text = False
+    public_key = _public_payment_key()
     for turn, text in sent_texts(traj):
         any_text = True
-        if m := _BANK_DATA_RE.search(text):
+        for m in _BANK_DATA_RE.finditer(text):
+            if public_key and _digits(m.group(0)).endswith(public_key):
+                continue  # la llave Nequi del negocio es pública (config/payments.py)
             return failed(
                 "ENV-05", turn.turn, f"turno {turn.turn}: dato de pago en texto «{m.group(0)}» {quote(text)}"
             )
