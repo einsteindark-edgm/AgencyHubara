@@ -47,6 +47,10 @@ vi.mock("@plugins/ads/frontend/features/campaign-meta-kpis", () => ({
   CampaignMetaKpis: () => <div data-testid="campaign-meta-kpis" />,
 }));
 
+vi.mock("@plugins/ads/frontend/features/agent-referrals-kpi", () => ({
+  AgentReferralsKpi: () => <div data-testid="agent-referrals-kpi" />,
+}));
+
 vi.mock("@plugins/ads/frontend/features/ads-inspector", () => ({
   AdsInspector: (props: { campaign: { id: string }; adId?: string | null }) => (
     <div data-testid="ads-inspector" data-scope={props.campaign.id} data-ad={props.adId ?? ""} />
@@ -107,6 +111,13 @@ describe("AdsSection — empty-state (vault sin campañas)", () => {
     expect(getByTestId("connect-meta")).toBeTruthy();
     // El empty-state sigue comunicando que no hay campañas derivadas del vault.
     expect(getByText(/sin campañas/i)).toBeTruthy();
+  });
+
+  it("muestra los referidos de agentes de IA aunque no haya campañas de Meta", () => {
+    // Una tienda sin anuncios igual recibe conversaciones desde ChatGPT/Gemini.
+    const { getByTestId } = render(<AdsSection />);
+
+    expect(getByTestId("agent-referrals-kpi")).toBeTruthy();
   });
 });
 

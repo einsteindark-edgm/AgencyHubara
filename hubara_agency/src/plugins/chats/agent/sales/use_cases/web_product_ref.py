@@ -120,3 +120,50 @@ def build_web_product_note(metadata: dict) -> str | None:
         "con la venta (aroma, color o signo si aplica, cantidad, datos de "
         "envio). No le preguntes de nuevo que producto busca."
     )
+
+
+_DAY_MS = 86_400_000
+
+# The referral log only has to cover a busy season of conversations with one
+# customer; bounding it keeps a spammed tap from growing metadata.json forever.
+_MAX_AGENT_REFERRALS = 100
+
+
+def record_agent_referral(metadata: dict, *, source: str, sku: str, now_ms: int) -> bool:
+    """Appends to `metadata.agent_referrals`, the history the dashboard counts.
+
+    `web_product_ref` answers "what is this customer looking at now" and the
+    next ref overwrites it, so it cannot count "how many conversations did
+    ChatGPT send". This log is append-only: one entry per source per episode
+    (a second tap is the same referral). Human-routed sessions have no active
+    episode, so those dedupe by day instead.
+
+    `via:` is attacker-writable: only the closed list is recorded, and nothing
+    here reaches the prompt. Returns True when an entry was appended.
+    """
+    if source not in _AGENT_SOURCES:
+        return False
+
+    episode_id = (get_active_episode(metadata) or {}).get("episode_id")
+    referrals = metadata.get("agent_referrals")
+    if not isinstance(referrals, list):
+        referrals = []
+
+    for entry in referrals:
+        if not isinstance(entry, dict) or entry.get("source") != source:
+            continue
+        if episode_id is not None and entry.get("episode_id") == episode_id:
+            return False
+        if (
+            episode_id is None
+            and entry.get("episode_id") is None
+            and isinstance(entry.get("at_ms"), int)
+            and entry["at_ms"] // _DAY_MS == now_ms // _DAY_MS
+        ):
+            return False
+
+    referrals.append(
+        {"source": source, "sku": sku, "episode_id": episode_id, "at_ms": now_ms}
+    )
+    metadata["agent_referrals"] = referrals[-_MAX_AGENT_REFERRALS:]
+    return True

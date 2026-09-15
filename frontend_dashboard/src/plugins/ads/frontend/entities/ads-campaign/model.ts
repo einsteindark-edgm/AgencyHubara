@@ -301,3 +301,31 @@ export interface AdCreative {
   callToAction: string | null;
   previewUrl: string | null;
 }
+
+/* ── Referidos desde agentes de IA ───────────────────────────────────────── */
+
+/**
+ * Nombre de marca por agente. La lista cerrada vive en tres lados (tienda,
+ * ingest de chats, endpoint de ads); un agente desconocido se muestra con su
+ * clave cruda en vez de perderse.
+ */
+export const AGENT_SOURCE_LABELS: Record<string, string> = {
+  chatgpt: "ChatGPT",
+  gemini: "Gemini",
+  perplexity: "Perplexity",
+  copilot: "Copilot",
+  claude: "Claude",
+};
+
+export interface AgentReferralCount {
+  source: string;
+  label: string;
+  count: number;
+}
+
+/** Conversaciones de WhatsApp que mandó un agente de IA, en la ventana. */
+export interface AgentReferrals {
+  total: number;
+  withOrder: number;
+  bySource: AgentReferralCount[];
+}

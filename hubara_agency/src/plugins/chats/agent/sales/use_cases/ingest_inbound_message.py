@@ -85,6 +85,7 @@ from src.plugins.chats.agent.sales.use_cases.web_product_ref import (
     detect_product_ref,
     mark_web_product_resolved,
     mark_web_product_unresolved,
+    record_agent_referral,
 )
 from src.plugins.chats.agent.sales.use_cases.web_cart import (
     apply_web_cart_capture,
@@ -423,8 +424,24 @@ class IngestInboundMessage:
         # note the LLM only sees once the SKU is verified. Best-effort: a
         # catalog failure records the reason and the conversation goes on.
         product_ref = detect_product_ref(parsed.text)
+        agent_source = detect_agent_source(parsed.text) if product_ref else None
+
+        # Attribution runs BEFORE the human-route guard: which agent sent the
+        # customer is a fact about the conversation, not bot machinery, and the
+        # conversations a human took over are often the ones that sold.
+        if product_ref and agent_source:
+
+            def _referral_mutator(fresh: dict[str, Any]) -> dict[str, Any] | None:
+                appended = record_agent_referral(
+                    fresh, source=agent_source, sku=product_ref, now_ms=now_ms
+                )
+                return fresh if appended else None
+
+            logged = self._metadata_store.update(session_id, _referral_mutator)
+            if logged is not None:
+                metadata = logged
+
         if product_ref and metadata.get("active_route") != ROUTE_HUMANO:
-            agent_source = detect_agent_source(parsed.text)
             captured_ref = {"new": False}
 
             def _capture_ref_mutator(fresh: dict[str, Any]) -> dict[str, Any] | None:
