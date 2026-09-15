@@ -1,0 +1,20 @@
+{
+  "labels": [
+    {
+      "session_id": "wa_570000000001",
+      "episode_id": "ep_007",
+      "check_id": "CON-01",
+      "verdict": "falla",
+      "note": "El cliente aplazó; el formulario no debía salir.",
+      "labeled_at": "2026-09-15T10:12:00+00:00"
+    },
+    {
+      "session_id": "wa_570000000001",
+      "episode_id": "ep_007",
+      "check_id": "APE-01",
+      "verdict": "pasa",
+      "note": "",
+      "labeled_at": "2026-09-15T10:14:00+00:00"
+    }
+  ]
+}

@@ -1,6 +1,8 @@
 # Plan — Scorecard por etapa para el Asesor de Ventas
 
-> Análisis + diseño. NO es código aún. Hermano de `LLM_EVAL_HARNESS_PLAN.md` (3 superficies
+> **Estado 2026-09-15: IMPLEMENTADO (HU-SC-0..SC-6)** en la rama
+> `claude/sales-conversation-evaluation-f42eb8` — ver "Estado de implementación" al final.
+> Diseño original abajo. Hermano de `LLM_EVAL_HARNESS_PLAN.md` (3 superficies
 > sobre SigNoz + DeepEval, 2026-06-03) y `GOLDEN_EVAL_LOOP_PLAN.md` (loop cerrado con goldens).
 > Este doc **reemplaza el puntaje holístico** por un checklist binario por etapa con auto-fail.
 > Fecha: 2026-09-14. Disparador: PR #281 (runs 01a0a0eb / 01a0a0f1) calificado 0.93 por el
@@ -694,3 +696,38 @@ de `agents_admin` en `/api/agents/evals/*` (mismo shape, passthrough).
 | `GET /evals/labels?session_id&episode_id` | `{labels[]}` |
 | `GET /evals/labels/queue?days=30&limit=20` | `{items[{session_id, episode_id, check_id, check_name, judge_verdict, reason: desconocido\|falla\|muestra, evidence, critique}]}` |
 | `GET /evals/calibration` | `{min_labels, kappa_threshold, checks[{check_id, name, level, n, tp, fp, tn, fn, tpr, tnr, kappa, status: confiable\|revisar\|sin_datos}]}` |
+
+
+---
+
+## Estado de implementación (2026-09-15)
+
+| HU | Qué quedó | Dónde |
+|---|---|---|
+| SC-0 | Traza por turno (gate `turn-trace-v1`) en `<vault>/<sesión>/evals/turn_traces.jsonl` | `sales/turn_trace.py`, `sales/activities/turn_trace.py`, `chats/shared/turn_traces.py`, `workflow_helpers.TurnResult.tool_events` |
+| SC-1 | Trayectoria (trace / partial / legacy), 64 checks (51 código, 13 juez), veredicto con auto-fail, activity al cierre (gate `scorecard-v1`), store, SigNoz `check.<id>`, backfill | `sales_eval/scorecard/*`, `scripts/backfill_scorecards.py` |
+| SC-2 | API evals@v1 (Apéndice A) + cast `agents_admin` + tira de trayectoria y scorecard en el dashboard | `chats/api/scorecards.py`, `agents_admin/api/evals.py`, `agents_admin/frontend/features/*` |
+| SC-3 | Juez aislado por check con doble muestra + Pareto, tendencia semanal, embudo, matriz | `scorecard/judge_checks.py`, `scorecard/stats.py` |
+| SC-4 | Etiquetado humano, cola, TPR/TNR/kappa, checks calibrados | `scorecard/calibration.py` |
+| SC-5 | Goldens con el mismo registro + pass^k en el reporte de CI | `scorecard/golden.py`, `scripts/golden_eval.py` |
+| SC-6 | Issue de GitHub con dedup por huella, PII redactada, no-op sin token | `scorecard/alerts.py` |
+
+**Decisiones abiertas (§9), resueltas con su default:**
+
+1. `ALERTA` no bloquea ni abre issue; solo `FALLA` alerta.
+2. Los gemelos `*b` quedan en nivel `mayor` (sin degradación automática tras el drain).
+3. Juez: el mismo alias `EVAL_JUDGE_MODEL` vía litellm.
+4. Juez sobre el 100 % de los episodios al cierre (`SCORECARD_JUDGE_ENABLED=false` lo apaga).
+5. **Desvío:** la traza va en un archivo propio, no en el JSONL del dashboard: el corte por
+   episodio cuenta líneas de ese JSONL y el dashboard pinta cada evento como burbuja.
+6. El promedio legado convive (gris en el panel, pestaña "Métricas legadas"); retirarlo es decisión del operador.
+
+**Otros desvíos del diseño:** el registro de checks vive en Python (`registry.py`), no en YAML
+(sin archivos de datos que empaquetar); se descartó la matriz de confusión de etiquetas
+(pedido del operador); ENV-05 exige un número de cuenta o llave junto al medio de pago
+(nombrar "Nequi" es legítimo).
+
+**Pendientes operativos:** merge + rebuild de `worker-chats-sales`, `worker-chats-sales_eval` y `api`;
+correr `scripts/backfill_scorecards.py` sobre el vault de prod; configurar
+`SCORECARD_ALERTS_REPO` y `SCORECARD_ALERTS_GITHUB_TOKEN` por Terraform si se quieren alertas;
+correr el golden runner con el proxy de LLM; etiquetar ≥ 50 casos por check de juez para calibrarlo.

@@ -1,0 +1,62 @@
+{
+  "min_labels": 20,
+  "kappa_threshold": 0.6,
+  "checks": [
+    {
+      "check_id": "DES-04",
+      "name": "Clasificó bien la intención del cliente",
+      "level": "mayor",
+      "n": 34,
+      "tp": 12,
+      "fp": 2,
+      "tn": 18,
+      "fn": 2,
+      "tpr": 0.8571,
+      "tnr": 0.9,
+      "kappa": 0.7619,
+      "status": "confiable"
+    },
+    {
+      "check_id": "VAR-05",
+      "name": "No elige variantes por el cliente",
+      "level": "mayor",
+      "n": 22,
+      "tp": 5,
+      "fp": 5,
+      "tn": 10,
+      "fn": 2,
+      "tpr": 0.7143,
+      "tnr": 0.6667,
+      "kappa": 0.3478,
+      "status": "revisar"
+    },
+    {
+      "check_id": "DES-06",
+      "name": "Sin datos de catálogo inventados",
+      "level": "critico",
+      "n": 3,
+      "tp": 1,
+      "fp": 0,
+      "tn": 2,
+      "fn": 0,
+      "tpr": 1.0,
+      "tnr": 1.0,
+      "kappa": null,
+      "status": "sin_datos"
+    },
+    {
+      "check_id": "CON-04",
+      "name": "Pide el sí explícito antes de avanzar",
+      "level": "mayor",
+      "n": 0,
+      "tp": 0,
+      "fp": 0,
+      "tn": 0,
+      "fn": 0,
+      "tpr": null,
+      "tnr": null,
+      "kappa": null,
+      "status": "sin_datos"
+    }
+  ]
+}

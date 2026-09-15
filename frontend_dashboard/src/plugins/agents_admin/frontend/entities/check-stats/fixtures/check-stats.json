@@ -1,0 +1,441 @@
+{
+  "days": 56,
+  "episodes": 42,
+  "verdicts": {
+    "FALLA": 9,
+    "ALERTA": 13,
+    "PASA": 18,
+    "SIN_DATOS": 2
+  },
+  "pareto": [
+    {
+      "check_id": "DES-01",
+      "name": "Máximo dos preguntas antes de mostrar productos",
+      "level": "mayor",
+      "failures": 14
+    },
+    {
+      "check_id": "EST-06",
+      "name": "Sin narración descartada",
+      "level": "menor",
+      "failures": 12
+    },
+    {
+      "check_id": "VAR-07",
+      "name": "Precio visible antes de pedir confirmación o datos",
+      "level": "mayor",
+      "failures": 11
+    },
+    {
+      "check_id": "CON-01",
+      "name": "Formulario de envío solo tras confirmación de compra",
+      "level": "critico",
+      "failures": 9
+    },
+    {
+      "check_id": "ENV-02",
+      "name": "Formulario sin responder al cliente",
+      "level": "mayor",
+      "failures": 8
+    },
+    {
+      "check_id": "VAR-01",
+      "name": "Cuatro o más aromas o colores nunca en texto plano",
+      "level": "critico",
+      "failures": 7
+    },
+    {
+      "check_id": "TAG-01",
+      "name": "Etiqueta de cierre sostenida por la evidencia",
+      "level": "critico",
+      "failures": 6
+    },
+    {
+      "check_id": "GHO-02",
+      "name": "Con formulario pendiente espera diez minutos",
+      "level": "menor",
+      "failures": 4
+    },
+    {
+      "check_id": "TAG-02",
+      "name": "Motivo de escalación sostenido por la evidencia",
+      "level": "critico",
+      "failures": 4
+    },
+    {
+      "check_id": "VAR-06",
+      "name": "No vuelve a preguntar la cantidad",
+      "level": "mayor",
+      "failures": 3
+    }
+  ],
+  "trend": [
+    {
+      "check_id": "CON-01",
+      "name": "Formulario de envío solo tras confirmación de compra",
+      "level": "critico",
+      "weeks": [
+        {
+          "week": "2026-07-27",
+          "applicable": 4,
+          "passed": 4,
+          "rate": 1.0
+        },
+        {
+          "week": "2026-08-03",
+          "applicable": 5,
+          "passed": 5,
+          "rate": 1.0
+        },
+        {
+          "week": "2026-08-10",
+          "applicable": 6,
+          "passed": 6,
+          "rate": 1.0
+        },
+        {
+          "week": "2026-08-17",
+          "applicable": 5,
+          "passed": 5,
+          "rate": 1.0
+        },
+        {
+          "week": "2026-08-24",
+          "applicable": 6,
+          "passed": 5,
+          "rate": 0.8333
+        },
+        {
+          "week": "2026-08-31",
+          "applicable": 7,
+          "passed": 5,
+          "rate": 0.7143
+        },
+        {
+          "week": "2026-09-07",
+          "applicable": 8,
+          "passed": 5,
+          "rate": 0.625
+        },
+        {
+          "week": "2026-09-14",
+          "applicable": 6,
+          "passed": 6,
+          "rate": 1.0
+        }
+      ]
+    },
+    {
+      "check_id": "VAR-01",
+      "name": "Cuatro o más aromas o colores nunca en texto plano",
+      "level": "critico",
+      "weeks": [
+        {
+          "week": "2026-07-27",
+          "applicable": 6,
+          "passed": 6,
+          "rate": 1.0
+        },
+        {
+          "week": "2026-08-03",
+          "applicable": 5,
+          "passed": 5,
+          "rate": 1.0
+        },
+        {
+          "week": "2026-08-10",
+          "applicable": 6,
+          "passed": 5,
+          "rate": 0.8333
+        },
+        {
+          "week": "2026-08-17",
+          "applicable": 7,
+          "passed": 6,
+          "rate": 0.8571
+        },
+        {
+          "week": "2026-08-24",
+          "applicable": 6,
+          "passed": 5,
+          "rate": 0.8333
+        },
+        {
+          "week": "2026-08-31",
+          "applicable": 8,
+          "passed": 6,
+          "rate": 0.75
+        },
+        {
+          "week": "2026-09-07",
+          "applicable": 7,
+          "passed": 5,
+          "rate": 0.7143
+        },
+        {
+          "week": "2026-09-14",
+          "applicable": 6,
+          "passed": 6,
+          "rate": 1.0
+        }
+      ]
+    },
+    {
+      "check_id": "DES-01",
+      "name": "Máximo dos preguntas antes de mostrar productos",
+      "level": "mayor",
+      "weeks": [
+        {
+          "week": "2026-07-27",
+          "applicable": 6,
+          "passed": 4,
+          "rate": 0.6667
+        },
+        {
+          "week": "2026-08-03",
+          "applicable": 5,
+          "passed": 4,
+          "rate": 0.8
+        },
+        {
+          "week": "2026-08-10",
+          "applicable": 6,
+          "passed": 4,
+          "rate": 0.6667
+        },
+        {
+          "week": "2026-08-17",
+          "applicable": 7,
+          "passed": 5,
+          "rate": 0.7143
+        },
+        {
+          "week": "2026-08-24",
+          "applicable": 6,
+          "passed": 4,
+          "rate": 0.6667
+        },
+        {
+          "week": "2026-08-31",
+          "applicable": 8,
+          "passed": 5,
+          "rate": 0.625
+        },
+        {
+          "week": "2026-09-07",
+          "applicable": 7,
+          "passed": 4,
+          "rate": 0.5714
+        },
+        {
+          "week": "2026-09-14",
+          "applicable": 6,
+          "passed": 4,
+          "rate": 0.6667
+        }
+      ]
+    },
+    {
+      "check_id": "TAG-01",
+      "name": "Etiqueta de cierre sostenida por la evidencia",
+      "level": "critico",
+      "weeks": [
+        {
+          "week": "2026-07-27",
+          "applicable": 3,
+          "passed": 3,
+          "rate": 1.0
+        },
+        {
+          "week": "2026-08-03",
+          "applicable": 0,
+          "passed": 0,
+          "rate": null
+        },
+        {
+          "week": "2026-08-10",
+          "applicable": 4,
+          "passed": 4,
+          "rate": 1.0
+        },
+        {
+          "week": "2026-08-17",
+          "applicable": 3,
+          "passed": 3,
+          "rate": 1.0
+        },
+        {
+          "week": "2026-08-24",
+          "applicable": 4,
+          "passed": 3,
+          "rate": 0.75
+        },
+        {
+          "week": "2026-08-31",
+          "applicable": 5,
+          "passed": 4,
+          "rate": 0.8
+        },
+        {
+          "week": "2026-09-07",
+          "applicable": 5,
+          "passed": 4,
+          "rate": 0.8
+        },
+        {
+          "week": "2026-09-14",
+          "applicable": 4,
+          "passed": 4,
+          "rate": 1.0
+        }
+      ]
+    },
+    {
+      "check_id": "APE-01",
+      "name": "Saludo por hora y marca en el primer contacto",
+      "level": "mayor",
+      "weeks": [
+        {
+          "week": "2026-07-27",
+          "applicable": 6,
+          "passed": 6,
+          "rate": 1.0
+        },
+        {
+          "week": "2026-08-03",
+          "applicable": 5,
+          "passed": 5,
+          "rate": 1.0
+        },
+        {
+          "week": "2026-08-10",
+          "applicable": 6,
+          "passed": 6,
+          "rate": 1.0
+        },
+        {
+          "week": "2026-08-17",
+          "applicable": 7,
+          "passed": 7,
+          "rate": 1.0
+        },
+        {
+          "week": "2026-08-24",
+          "applicable": 6,
+          "passed": 6,
+          "rate": 1.0
+        },
+        {
+          "week": "2026-08-31",
+          "applicable": 8,
+          "passed": 8,
+          "rate": 1.0
+        },
+        {
+          "week": "2026-09-07",
+          "applicable": 7,
+          "passed": 7,
+          "rate": 1.0
+        },
+        {
+          "week": "2026-09-14",
+          "applicable": 6,
+          "passed": 6,
+          "rate": 1.0
+        }
+      ]
+    },
+    {
+      "check_id": "GHO-01",
+      "name": "El turno de ghosting no le escribe al cliente",
+      "level": "critico",
+      "weeks": [
+        {
+          "week": "2026-07-27",
+          "applicable": 2,
+          "passed": 2,
+          "rate": 1.0
+        },
+        {
+          "week": "2026-08-03",
+          "applicable": 3,
+          "passed": 3,
+          "rate": 1.0
+        },
+        {
+          "week": "2026-08-10",
+          "applicable": 2,
+          "passed": 2,
+          "rate": 1.0
+        },
+        {
+          "week": "2026-08-17",
+          "applicable": 4,
+          "passed": 4,
+          "rate": 1.0
+        },
+        {
+          "week": "2026-08-24",
+          "applicable": 3,
+          "passed": 3,
+          "rate": 1.0
+        },
+        {
+          "week": "2026-08-31",
+          "applicable": 2,
+          "passed": 2,
+          "rate": 1.0
+        },
+        {
+          "week": "2026-09-07",
+          "applicable": 3,
+          "passed": 3,
+          "rate": 1.0
+        },
+        {
+          "week": "2026-09-14",
+          "applicable": 2,
+          "passed": 2,
+          "rate": 1.0
+        }
+      ]
+    }
+  ],
+  "funnel": [
+    {
+      "stage": "descubrimiento",
+      "FALLA": 1,
+      "ALERTA": 4,
+      "PASA": 9,
+      "SIN_DATOS": 2
+    },
+    {
+      "stage": "variantes",
+      "FALLA": 2,
+      "ALERTA": 4,
+      "PASA": 3,
+      "SIN_DATOS": 0
+    },
+    {
+      "stage": "confirmacion",
+      "FALLA": 4,
+      "ALERTA": 2,
+      "PASA": 1,
+      "SIN_DATOS": 0
+    },
+    {
+      "stage": "datos_envio",
+      "FALLA": 0,
+      "ALERTA": 2,
+      "PASA": 1,
+      "SIN_DATOS": 0
+    },
+    {
+      "stage": "cierre",
+      "FALLA": 2,
+      "ALERTA": 1,
+      "PASA": 4,
+      "SIN_DATOS": 0
+    }
+  ]
+}
