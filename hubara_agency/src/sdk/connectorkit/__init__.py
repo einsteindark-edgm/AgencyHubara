@@ -73,6 +73,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     # flushean por acá; el HTTP vive en platform:
     "CAPI_EVENT_NAMES": "src.platform.whatsapp.capi",
     "enqueue_capi_event": "src.platform.whatsapp.capi_outbox",
+    "normalize_capi_contents": "src.platform.whatsapp.capi",
     "flush_capi_outbox": "src.platform.whatsapp.capi_outbox",
     "has_ctwa_attribution": "src.platform.whatsapp.capi_outbox",
     "schedule_capi_flush": "src.platform.whatsapp.capi_outbox",

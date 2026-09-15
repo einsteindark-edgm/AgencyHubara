@@ -870,3 +870,81 @@ class TestWorkflowMapper:
 # WORKSPACE_VAULT_DIR to tmp_path. Our patches of capi_activity's bound
 # WORKSPACE_VAULT_DIR ALSO override it for the activity's I/O. Belt-and-
 # suspenders so we never touch ./hubara_vault/.
+
+
+# =============================================================================
+# Identidad de producto en los eventos (coincidencia de catálogo, 2026-09-14)
+# =============================================================================
+
+
+class TestCatalogContents:
+    """Commerce Manager cruza ``custom_data.content_ids`` contra el
+    ``retailer_id`` del catálogo. Sin ese campo la coincidencia es 0% aunque
+    Meta acepte el evento."""
+
+    def test_view_content_carries_content_ids_and_contents(self) -> None:
+        from src.platform.whatsapp.capi import build_capi_event
+
+        event = build_capi_event(
+            event_name="ViewContent",
+            event_time=1700000000,
+            event_id="viewcontent_x",
+            waba_id="W",
+            ctwa_clid="C",
+            contents=[{"id": "HUB-CUBOLOVE", "quantity": 1, "item_price": 21000}],
+        )
+        assert event.to_dict()["custom_data"] == {
+            "content_type": "product",
+            "content_ids": ["HUB-CUBOLOVE"],
+            "contents": [{"id": "HUB-CUBOLOVE", "quantity": 1, "item_price": 21000}],
+        }
+
+    def test_purchase_carries_value_order_id_and_contents(self) -> None:
+        from src.platform.whatsapp.capi import build_capi_event
+
+        event = build_capi_event(
+            event_name="Purchase",
+            event_time=1700000000,
+            event_id="purchase_order_7",
+            waba_id="W",
+            ctwa_clid="C",
+            value=42000,
+            currency="COP",
+            order_id="order_7",
+            contents=[
+                {"id": "HUB-CUBOLOVE", "quantity": 2, "item_price": 21000},
+            ],
+        )
+        custom = event.to_dict()["custom_data"]
+        assert custom["value"] == 42000
+        assert custom["currency"] == "COP"
+        assert custom["order_id"] == "order_7"
+        assert custom["content_type"] == "product"
+        assert custom["content_ids"] == ["HUB-CUBOLOVE"]
+        assert custom["contents"] == [{"id": "HUB-CUBOLOVE", "quantity": 2, "item_price": 21000}]
+
+    def test_without_contents_payload_is_unchanged(self) -> None:
+        from src.platform.whatsapp.capi import build_capi_event
+
+        event = build_capi_event(
+            event_name="ViewContent", event_time=1, event_id="v", waba_id="W", ctwa_clid="C",
+        )
+        assert "custom_data" not in event.to_dict()
+
+    def test_normalize_contents_drops_items_without_id_and_dedups_ids(self) -> None:
+        from src.platform.whatsapp.capi import normalize_capi_contents
+
+        out = normalize_capi_contents([
+            {"retailer_id": "HUB-A", "quantity": 2, "unit_price_cop": 10000},
+            {"id": "HUB-B"},
+            {"quantity": 1},
+            {"id": "", "quantity": 1},
+            {"product_retailer_id": "HUB-A"},
+        ])
+        assert out == [
+            {"id": "HUB-A", "quantity": 2, "item_price": 10000},
+            {"id": "HUB-B", "quantity": 1},
+            {"id": "HUB-A", "quantity": 1},
+        ]
+        assert normalize_capi_contents(None) == []
+        assert normalize_capi_contents([{"quantity": 1}]) == []

@@ -277,3 +277,131 @@ def test_timeout_close_after_purchase_enqueues_nothing() -> None:
     md["episodes"][0]["order_draft"] = {"slots": {"producto": "X"}}
     ensure_active_episode(md, now_ms=NOW_MS + EPISODE_TIMEOUT_MS + 1, session_id=SESSION)
     assert "capi_outbox" not in md
+
+
+# =============================================================================
+# Identidad de producto (content_ids) en cada productor — 2026-09-14
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_product_detail_with_retailer_id_enqueues_contents(flush_env) -> None:
+    from src.plugins.chats.agent.sales.activities import flush_ui_intents
+
+    vault, _ = flush_env
+    path = _seed(vault, _attributed(pending_ui_intents=[
+        _intent("product_detail", {
+            "image_url": "https://x/y.jpg", "caption": "Cubo", "handle": "cubo-love",
+            "retailer_id": "HUB-CUBOLOVE", "price": "21000", "currency": "cop",
+        }),
+    ]))
+    assert await flush_ui_intents.flush_pending_ui_intents(SESSION) == 1
+    entries = _outbox(path)
+    assert entries[0]["event_name"] == "ViewContent"
+    assert entries[0]["contents"] == [{"id": "HUB-CUBOLOVE", "quantity": 1, "item_price": 21000}]
+
+
+@pytest.mark.asyncio
+async def test_products_list_enqueues_content_ids_from_rows(flush_env) -> None:
+    from src.plugins.chats.agent.sales.activities import flush_ui_intents
+
+    vault, _ = flush_env
+    path = _seed(vault, _attributed(pending_ui_intents=[
+        _intent("products_list", {
+            "intro_text": "Mira",
+            "button_label": "Ver",
+            "handles": ["cubo-love", "velon-koala"],
+            "sections": [{"title": "Velas", "rows": [
+                {"id": "cubo-love", "title": "Cubo Love", "description": "$21.000", "product_retailer_id": "HUB-CUBOLOVE"},
+                {"id": "velon-koala", "title": "Velón Koala", "description": "$30.000", "product_retailer_id": "HUB-KOALA"},
+            ]}],
+        }),
+    ]))
+    assert await flush_ui_intents.flush_pending_ui_intents(SESSION) == 1
+    entries = _outbox(path)
+    assert entries[0]["event_name"] == "ViewContent"
+    assert [c["id"] for c in entries[0]["contents"]] == ["HUB-CUBOLOVE", "HUB-KOALA"]
+
+
+@pytest.mark.asyncio
+async def test_order_confirmation_enqueues_add_to_cart_contents(flush_env) -> None:
+    from src.plugins.chats.agent.sales.activities import flush_ui_intents
+
+    vault, _ = flush_env
+    path = _seed(vault, _attributed(pending_ui_intents=[
+        _intent("order_confirmation", {
+            "reference_id": "ref-1",
+            "items": [{"handle": "cubo-love", "retailer_id": "HUB-CUBOLOVE", "title": "Cubo Love", "quantity": 2, "unit_price_cop": 21000}],
+            "subtotal_cop": 42000, "shipping_cop": 0, "tax_cop": 0, "total_cop": 42000,
+            "currency": "COP", "shipping_address_summary": "Bogotá", "payment_method": "transfer",
+        }),
+    ]))
+    assert await flush_ui_intents.flush_pending_ui_intents(SESSION) == 1
+    entries = _outbox(path)
+    assert entries[0]["event_name"] == "AddToCart"
+    assert entries[0]["contents"] == [{"id": "HUB-CUBOLOVE", "quantity": 2, "item_price": 21000}]
+
+
+@pytest.mark.asyncio
+async def test_compra_exitosa_purchase_carries_registered_contents(tmp_path: Path) -> None:
+    path = _seed(
+        tmp_path,
+        _attributed(registered_order={
+            "success": True, "order_id": "order_7", "total_cop": 42000, "currency": "COP",
+            "capi_contents": [{"id": "HUB-CUBOLOVE", "quantity": 2, "item_price": 21000}],
+        }),
+    )
+    tool = ManageConversationTagTool(workspace=str(tmp_path), vault_dir=tmp_path)
+    await tool.execute_with_context(_ctx(), tag="COMPRA_EXITOSA", motivo="pago verificado")
+    entries = _outbox(path)
+    assert entries[0]["event_name"] == "Purchase"
+    assert entries[0]["contents"] == [{"id": "HUB-CUBOLOVE", "quantity": 2, "item_price": 21000}]
+
+
+@pytest.mark.asyncio
+async def test_register_order_persists_capi_contents_and_order_created_carries_them(tmp_path: Path) -> None:
+    from src.plugins.chats.agent.sales.tools.order_registration import RegisterOrderTool
+
+    class _Variant:
+        sku = "HUB-CUBOLOVE"
+        id = "variant_1"
+        prices: list[Any] = []
+
+    class _Product:
+        id = "prod_1"
+        handle = "cubo-love"
+        title = "Cubo Love"
+        options: dict[str, Any] = {}
+        variants = [_Variant()]
+        tags: list[str] = []
+        categories: list[Any] = []
+        metadata = None
+        description = ""
+
+    class _Catalog:
+        async def get_by_handle(self, handle: str) -> Any:
+            assert handle == "cubo-love"
+            return _Product()
+
+    path = _seed(tmp_path, _attributed())
+    tool = RegisterOrderTool(workspace=str(tmp_path), vault_dir=tmp_path, port=_FakePort(), catalog=_Catalog())
+    result = json.loads(
+        await tool.execute_with_context(
+            _ctx(),
+            items=[{"handle": "cubo-love", "quantity": 2, "unit_price_cop": 21000}],
+            shipping={
+                "city": "Bogotá", "neighborhood": "Chapinero", "address": "Cra 1 # 2-3",
+                "phone": "573001234567", "receiver_name": "Ana Pérez",
+            },
+            payment_method="transfer",
+            subtotal_cop=42000,
+            shipping_cop=0,
+            total_cop=42000,
+        )
+    )
+    assert result["registered"] is True
+    md = json.loads(path.read_text(encoding="utf-8"))
+    assert md["registered_order"]["capi_contents"] == [{"id": "HUB-CUBOLOVE", "quantity": 2, "item_price": 21000}]
+    entries = _outbox(path)
+    assert entries[0]["event_name"] == "OrderCreated"
+    assert entries[0]["contents"] == [{"id": "HUB-CUBOLOVE", "quantity": 2, "item_price": 21000}]

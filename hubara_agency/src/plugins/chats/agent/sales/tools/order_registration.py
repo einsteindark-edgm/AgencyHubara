@@ -59,7 +59,11 @@ from exoclaw.agent.tools import ToolBase, ToolContext
 from loguru import logger
 
 from src.platform.config import WORKSPACE_VAULT_DIR
-from src.sdk.connectorkit import enqueue_capi_event
+from src.sdk.connectorkit import (
+    enqueue_capi_event,
+    normalize_capi_contents,
+    product_retailer_id,
+)
 from src.platform.orders.port import (
     OrderItem,
     OrderRegistrationPort,
@@ -276,6 +280,38 @@ class RegisterOrderTool(ToolBase):
                 found.append(handle)
         return found
 
+    async def _capi_contents(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """``contents`` de CAPI por línea del pedido: ``retailer_id`` VIGENTE
+        en Meta (SKU, o id de Medusa mientras no haya SKU), cantidad y precio
+        unitario. Sin catálogo o handle desconocido → la línea se omite."""
+        if self._catalog is None:
+            return []
+        out: list[dict[str, Any]] = []
+        for it in items:
+            handle = str(it.get("handle") or "").strip()
+            if not handle:
+                continue
+            try:
+                product = await self._catalog.get_by_handle(handle)
+            except ProductNotFoundError:
+                continue
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "🧾 [TOOL register_order] catálogo no disponible para "
+                    "resolver retailer_id handle={} err={}",
+                    handle,
+                    exc,
+                )
+                continue
+            out.append(
+                {
+                    "retailer_id": product_retailer_id(product),
+                    "quantity": it.get("quantity"),
+                    "unit_price_cop": it.get("unit_price_cop"),
+                }
+            )
+        return normalize_capi_contents(out)
+
     def _session_attribution(self, session_key: str) -> dict[str, Any] | None:
         """Atribución CTWA de la sesión (`origin` de metadata.json): el
         `source_id` del referral es el AD ID de Meta. Best-effort: sesión
@@ -438,6 +474,11 @@ class RegisterOrderTool(ToolBase):
             "currency": currency,
             "registered_at_ms": int(time.time() * 1000),
             "raw_provider_payload": result.raw_payload,
+            # Identidad Meta (SKU = retailer_id) de cada línea, ya en la
+            # forma `contents` de CAPI: Purchase/OrderCreated la llevan para
+            # la coincidencia de catálogo. Best-effort (catálogo caído →
+            # []), nunca bloquea el registro.
+            "capi_contents": await self._capi_contents(items),
         }
 
         metadata_file = self._vault_dir / ctx.session_key / "metadata.json"
@@ -476,6 +517,7 @@ class RegisterOrderTool(ToolBase):
                     order_id=registered_record["order_id"],
                     value=total_cop,
                     currency=currency,
+                    contents=registered_record["capi_contents"],
                     source="register_order",
                     now_ms=registered_record["registered_at_ms"],
                 )

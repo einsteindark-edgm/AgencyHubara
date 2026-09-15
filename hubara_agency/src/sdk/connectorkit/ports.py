@@ -79,6 +79,7 @@ from src.platform.meta_catalog.port import (
 )
 from src.platform.whatsapp.capi import (
     CAPI_EVENT_NAMES as CAPI_EVENT_NAMES,
+    normalize_capi_contents as normalize_capi_contents,
 )
 from src.platform.whatsapp.capi_outbox import (
     enqueue_capi_event as enqueue_capi_event,

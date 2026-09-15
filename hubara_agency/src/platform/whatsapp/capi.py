@@ -169,10 +169,19 @@ class CapiCustomData:
     For Purchase: ``value`` is the order total, ``currency`` is ISO 4217.
     For Lead: leave both as None — Meta accepts the event without monetary
     context for lead conversions.
+
+    ``contents`` (2026-09-14): identidad de producto. Commerce Manager cruza
+    ``content_ids`` contra el ``retailer_id`` del catálogo (= SKU desde PR
+    #277); sin ese campo la "coincidencia de catálogo" es 0% aunque Meta
+    acepte el evento, y los anuncios de catálogo no pueden usar el embudo del
+    bot. ``content_ids`` se deriva de ``contents`` y ``content_type`` es
+    siempre ``product`` (cada ítem de Meta es una variante concreta).
     """
 
     value: int | None = None
     currency: str | None = None
+    order_id: str | None = None
+    contents: tuple[dict[str, Any], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {}
@@ -180,7 +189,76 @@ class CapiCustomData:
             out["value"] = self.value
         if self.currency is not None:
             out["currency"] = self.currency
+        if self.order_id:
+            out["order_id"] = self.order_id
+        if self.contents:
+            out["content_type"] = CONTENT_TYPE_PRODUCT
+            out["content_ids"] = [c["id"] for c in self.contents]
+            out["contents"] = [dict(c) for c in self.contents]
         return out
+
+
+CONTENT_TYPE_PRODUCT = "product"
+
+# Llaves aceptadas al normalizar un ítem hacia ``contents`` (Meta: ``id``,
+# ``quantity``, ``item_price``). Los productores del bot hablan en su propio
+# vocabulario (``retailer_id`` de los intents / ``product_retailer_id`` de las
+# rows del MPM / ``unit_price_cop`` de los pedidos) — se acepta todo.
+_CONTENT_ID_KEYS = ("id", "retailer_id", "product_retailer_id")
+_CONTENT_PRICE_KEYS = ("item_price", "unit_price_cop", "price")
+
+
+def normalize_capi_contents(items: Any) -> list[dict[str, Any]]:
+    """Convierte ítems heterogéneos en la forma ``contents`` de Meta.
+
+    Un ítem sin id (o con id vacío) se descarta: un ``contents`` con id nulo
+    hace que Meta rechace el evento entero. ``quantity`` default 1;
+    ``item_price`` solo si es numérico (precio unitario en unidades mayores
+    COP). No dedup: el mismo SKU dos veces son dos líneas.
+    """
+    out: list[dict[str, Any]] = []
+    if not isinstance(items, (list, tuple)):
+        return out
+    for raw in items:
+        if not isinstance(raw, dict):
+            continue
+        content_id = next(
+            (str(raw[k]).strip() for k in _CONTENT_ID_KEYS if raw.get(k) not in (None, "")),
+            "",
+        )
+        if not content_id:
+            continue
+        entry: dict[str, Any] = {"id": content_id, "quantity": _as_quantity(raw.get("quantity"))}
+        price = next((raw[k] for k in _CONTENT_PRICE_KEYS if raw.get(k) not in (None, "")), None)
+        item_price = _as_price(price)
+        if item_price is not None:
+            entry["item_price"] = item_price
+        out.append(entry)
+    return out
+
+
+def _as_quantity(value: Any) -> int:
+    try:
+        qty = int(value)
+    except (TypeError, ValueError):
+        return 1
+    return qty if qty >= 1 else 1
+
+
+def _as_price(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if isinstance(value, float):
+        return int(value) if value >= 0 else None
+    if isinstance(value, str):
+        try:
+            parsed = float(value)
+        except ValueError:
+            return None
+        return int(parsed) if parsed >= 0 else None
+    return None
 
 
 @dataclass(frozen=True)
@@ -268,6 +346,8 @@ def build_purchase_event(
     ctwa_clid: str,
     value: int,
     currency: str = DEFAULT_CURRENCY,
+    order_id: str | None = None,
+    contents: list[dict[str, Any]] | None = None,
 ) -> CapiEvent:
     """Build a Purchase event with monetary data.
 
@@ -292,7 +372,12 @@ def build_purchase_event(
             whatsapp_business_account_id=waba_id,
             ctwa_clid=ctwa_clid,
         ),
-        custom_data=CapiCustomData(value=value, currency=currency),
+        custom_data=CapiCustomData(
+            value=value,
+            currency=currency,
+            order_id=order_id,
+            contents=tuple(normalize_capi_contents(contents)),
+        ),
     )
 
 
@@ -305,6 +390,8 @@ def build_capi_event(
     ctwa_clid: str,
     value: int | None = None,
     currency: str | None = None,
+    order_id: str | None = None,
+    contents: list[dict[str, Any]] | None = None,
 ) -> CapiEvent:
     """Builder genérico para cualquiera de los 14 eventos.
 
@@ -324,12 +411,20 @@ def build_capi_event(
             ctwa_clid=ctwa_clid,
             value=value,
             currency=currency or DEFAULT_CURRENCY,
+            order_id=order_id,
+            contents=contents,
         )
-    custom = CapiCustomData()
+    normalized = tuple(normalize_capi_contents(contents))
+    custom = CapiCustomData(order_id=order_id, contents=normalized)
     if value is not None:
         if not isinstance(value, int) or value < 0:
             raise ValueError(f"value debe ser int >= 0, got {value!r}")
-        custom = CapiCustomData(value=value, currency=currency or DEFAULT_CURRENCY)
+        custom = CapiCustomData(
+            value=value,
+            currency=currency or DEFAULT_CURRENCY,
+            order_id=order_id,
+            contents=normalized,
+        )
     return CapiEvent(
         event_name=event_name,
         event_time=event_time,

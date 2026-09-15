@@ -17,8 +17,14 @@ from .dtos import CatalogProductDTO, CatalogVariantDTO
 
 
 def has_real_variants(product: CatalogProductDTO) -> bool:
-    """Options reales + 2 o más variantes: Meta tiene un ítem POR variante."""
-    return bool(product.options) and len(product.variants or []) > 1
+    """Options reales + 2 o más variantes: Meta tiene un ítem POR variante.
+
+    Tolerante a objetos parciales (``getattr``): la identidad se calcula en
+    el camino de mostrar/registrar un producto y NUNCA debe tumbar ese envío.
+    """
+    options = getattr(product, "options", None)
+    variants = getattr(product, "variants", None) or []
+    return bool(options) and len(variants) > 1
 
 
 def variant_retailer_id(variant: CatalogVariantDTO) -> str:
@@ -33,13 +39,15 @@ def product_retailer_id(product: CatalogProductDTO) -> str:
     el ítem a nivel producto no existe en Meta). Producto simple: el SKU de su
     única variante, o `product.id` mientras no tenga SKU.
     """
+    variants = getattr(product, "variants", None) or []
     if has_real_variants(product):
-        return variant_retailer_id(product.variants[0])
-    first = product.variants[0] if product.variants else None
-    if first is not None and first.sku:
+        return variant_retailer_id(variants[0])
+    first = variants[0] if variants else None
+    if first is not None and getattr(first, "sku", None):
         return first.sku
     return product.id
 
 
 def product_has_sku(product: CatalogProductDTO) -> bool:
-    return bool(product.variants) and bool(product.variants[0].sku)
+    variants = getattr(product, "variants", None) or []
+    return bool(variants) and bool(getattr(variants[0], "sku", None))
