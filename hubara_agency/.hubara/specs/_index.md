@@ -19,6 +19,7 @@ comando `hubara-archive-hu` lo actualiza al introducir nuevas capabilities.
 | Capability | Spec | Code | Status |
 |---|---|---|---|
 | `agents/sales-worker` | [spec.md](agents/sales-worker/spec.md) | `hubara_agency/src/plugins/chats/workers/sales.py` + `agent/sales/` | ✅ active |
+| `agents/sales-eval` | [spec.md](agents/sales-eval/spec.md) | `hubara_agency/src/plugins/chats/agent/sales_eval/scorecard/` + `workers/sales_eval.py` | ✅ active |
 | `agents/remarketing-worker` | _bootstrap pendiente_ | `hubara_agency/src/plugins/chats/workers/remarketing.py` + `agent/remarketing/` | ⏳ todo |
 
 ## Cross-cutting
