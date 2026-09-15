@@ -1438,3 +1438,36 @@ async def test_unknown_product_ref_is_recorded_but_never_reaches_the_prompt():
     assert meta["web_product_ref"]["reason"] == "sku_not_found"
     notes = loader.calls[0].extra_context or []
     assert not any("HUB-VELONANGEL" in n for n in notes)
+
+
+@pytest.mark.asyncio
+async def test_product_ref_from_an_agent_is_logged_for_the_dashboard():
+    """`via: chatgpt` lands in the append-only referral log the ads dashboard
+    counts, scoped to the episode the tap opened."""
+    use_case, _loader, metadata = _web_cart_use_case(catalog=_catalog_by_sku(None))
+
+    await use_case.execute(_make_text_message(text=_PDP_TEXT))
+    await _drain_spawned_tasks()
+
+    meta = metadata.store["wa_5491111111111"]
+    [referral] = meta["agent_referrals"]
+    assert referral["source"] == "chatgpt"
+    assert referral["sku"] == "HUB-VELONANGEL"
+    assert referral["episode_id"] == meta["episodes"][-1]["episode_id"]
+
+
+@pytest.mark.asyncio
+async def test_agent_referral_is_counted_even_when_a_human_owns_the_conversation():
+    """The human keeps control: no capture, no note, no episode. But the fact
+    that ChatGPT sent this customer is attribution, not bot machinery, and
+    dropping it would undercount exactly the conversations that sold."""
+    use_case, loader, metadata = _web_cart_use_case(catalog=_catalog_by_sku(None))
+    metadata.store["wa_5491111111111"] = {"active_route": "humano", "tag": "HUMANO"}
+
+    await use_case.execute(_make_text_message(text=_PDP_TEXT))
+    await _drain_spawned_tasks()
+
+    meta = metadata.store["wa_5491111111111"]
+    assert [r["source"] for r in meta["agent_referrals"]] == ["chatgpt"]
+    assert "web_product_ref" not in meta
+    assert not meta.get("episodes")

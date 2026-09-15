@@ -471,3 +471,47 @@ def test_ads_endpoint_standalone_ad_gets_thumbnail_from_resolver(segmented_clien
     assert by_id["AD_NEW"]["creative_thumbnail_url"] == "https://cdn.fb/new.jpg"
     assert by_id["AD_NEW"]["ad_set"] == "Hombres 25-45"
     assert by_id["AD_1"]["creative_thumbnail_url"] is None  # el del vault no cambia
+
+
+# --- agent referrals (ChatGPT / Gemini… → WhatsApp) -------------------------
+
+
+def test_agent_referrals_endpoint_counts_inside_the_window(ads_client):
+    """`GET /agent-referrals` shares the campaigns' window: a May range counts
+    only the May referral, and every known agent is present (zero included) so
+    the tiles do not jump around as data arrives."""
+    client, vault = ads_client
+    may = bogota_day_start_ms("2026-05-15") + 12 * 60 * 60 * 1000
+    march = bogota_day_start_ms("2026-03-10") + 12 * 60 * 60 * 1000
+    sd = vault / "wa_222"
+    sd.mkdir(parents=True, exist_ok=True)
+    (sd / "metadata.json").write_text(
+        json.dumps(
+            {
+                "agent_referrals": [
+                    {"source": "gemini", "sku": "HUB-CISNE", "episode_id": "ep_mar", "at_ms": march},
+                    {"source": "chatgpt", "sku": "HUB-LOVE", "episode_id": "ep_may", "at_ms": may},
+                ],
+                "episodes": [{"episode_id": "ep_may", "order_id": "order_1"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    res = client.get("/api/ads/agent-referrals", params={"from": "2026-05-01", "to": "2026-05-31"})
+
+    assert res.status_code == 200
+    assert res.json() == {
+        "total": 1,
+        "with_order": 1,
+        "by_source": {"chatgpt": 1, "gemini": 0, "perplexity": 0, "copilot": 0, "claude": 0},
+    }
+
+
+def test_agent_referrals_endpoint_on_an_empty_vault(ads_client):
+    client, _vault = ads_client
+
+    body = client.get("/api/ads/agent-referrals").json()
+
+    assert body["total"] == 0 and body["with_order"] == 0
+    assert set(body["by_source"]) == {"chatgpt", "gemini", "perplexity", "copilot", "claude"}

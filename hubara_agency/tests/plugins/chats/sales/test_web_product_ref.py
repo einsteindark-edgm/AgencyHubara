@@ -15,6 +15,7 @@ from src.plugins.chats.agent.sales.use_cases.web_product_ref import (
     detect_product_ref,
     mark_web_product_resolved,
     mark_web_product_unresolved,
+    record_agent_referral,
 )
 
 _PDP_TEXT = (
@@ -113,3 +114,57 @@ class TestBuildWebProductNote:
         meta = self._resolved()
         meta["episodes"].append({"episode_id": "ep_2", "status": "active"})
         assert build_web_product_note(meta) is None
+
+
+class TestRecordAgentReferral:
+    """`metadata.agent_referrals` — the history the dashboard counts.
+
+    `web_product_ref` is a single dict that the next ref overwrites, so it
+    cannot answer "how many conversations did ChatGPT send this month?". The
+    referral log is append-only for that reason.
+    """
+
+    def test_appends_source_sku_episode_and_time(self):
+        meta = _metadata_with_episode("ep_1")
+
+        assert record_agent_referral(meta, source="chatgpt", sku="HUB-CUBOLOVE", now_ms=1_000)
+
+        assert meta["agent_referrals"] == [
+            {"source": "chatgpt", "sku": "HUB-CUBOLOVE", "episode_id": "ep_1", "at_ms": 1_000}
+        ]
+
+    def test_a_second_tap_in_the_same_episode_is_not_a_second_referral(self):
+        meta = _metadata_with_episode("ep_1")
+        record_agent_referral(meta, source="chatgpt", sku="HUB-CUBOLOVE", now_ms=1_000)
+
+        assert not record_agent_referral(meta, source="chatgpt", sku="HUB-CISNE", now_ms=2_000)
+        assert len(meta["agent_referrals"]) == 1
+
+    def test_a_later_product_ref_does_not_erase_the_history(self):
+        meta = _metadata_with_episode("ep_1")
+        record_agent_referral(meta, source="chatgpt", sku="HUB-CUBOLOVE", now_ms=1_000)
+        meta["episodes"][0]["closed_at_ms"] = 1_500
+        meta["episodes"].append({"episode_id": "ep_2", "status": "active"})
+
+        record_agent_referral(meta, source="gemini", sku="HUB-CISNE", now_ms=2_000)
+        apply_web_product_capture(meta, sku="HUB-FANTASMA", source=None, now_ms=3_000)
+
+        assert [r["source"] for r in meta["agent_referrals"]] == ["chatgpt", "gemini"]
+
+    def test_without_an_episode_dedupes_by_day(self):
+        """Human-routed sessions skip the episode lifecycle, but the referral is
+        still a fact worth counting: once per source per day, not per tap."""
+        meta: dict = {}
+        day = 86_400_000
+
+        record_agent_referral(meta, source="chatgpt", sku="HUB-CISNE", now_ms=day + 1)
+        record_agent_referral(meta, source="chatgpt", sku="HUB-CISNE", now_ms=day + 2)
+        record_agent_referral(meta, source="chatgpt", sku="HUB-CISNE", now_ms=2 * day + 1)
+
+        assert len(meta["agent_referrals"]) == 2
+
+    def test_rejects_a_source_outside_the_closed_list(self):
+        meta = _metadata_with_episode()
+
+        assert not record_agent_referral(meta, source="instagram", sku="HUB-CISNE", now_ms=1)
+        assert "agent_referrals" not in meta

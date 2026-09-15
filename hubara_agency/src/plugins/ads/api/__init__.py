@@ -40,6 +40,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Path, Query
 
+from src.plugins.ads.agent_referrals import AGENT_SOURCES, count_agent_referrals
 from src.plugins.ads.aggregation import (
     SYNTHETIC_CAMPAIGN_IDS,
     bogota_day_start_ms,
@@ -334,6 +335,40 @@ def _cached_sessions(since_ms: int | None) -> list[tuple[FsPath, dict[str, Any]]
     data = scan_ad_sessions(WORKSPACE_VAULT_DIR, since_ms=since_ms)
     _scan_cache[key] = (now, data)
     return data
+
+
+@router.get("/agent-referrals")
+def get_agent_referrals(
+    days: int | None = Query(
+        None, ge=1, le=365, description="ventana en días; omitir = todo el historial"
+    ),
+    frm: str | None = Query(
+        None,
+        alias="from",
+        description="YYYY-MM-DD inicio (inclusive); con `to` activa rango custom y anula `days`",
+    ),
+    to: str | None = Query(
+        None, description="YYYY-MM-DD fin (inclusive); requiere `from`"
+    ),
+) -> dict:
+    """Conversations an AI agent (ChatGPT, Gemini…) sent to WhatsApp.
+
+    Counts `metadata.agent_referrals`, written by the chats ingest when the
+    storefront's button carries `via: <agent>`. Same window and cached vault
+    scan as `/campaigns`; no Meta calls.
+
+    Response: `{"total": 3, "with_order": 1, "by_source": {"chatgpt": 2, ...}}`,
+    with every known agent present so the UI renders a stable set of tiles.
+    """
+    since_ms, until_ms = _window(days, frm, to)
+    summary = count_agent_referrals(
+        _cached_sessions(since_ms), since_ms=since_ms, until_ms=until_ms
+    )
+    return {
+        "total": summary.total,
+        "with_order": summary.with_order,
+        "by_source": {source: summary.by_source.get(source, 0) for source in AGENT_SOURCES},
+    }
 
 
 @router.get("/campaigns")

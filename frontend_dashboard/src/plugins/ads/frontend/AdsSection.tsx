@@ -47,6 +47,7 @@ import { AdsCreativesTable } from "@plugins/ads/frontend/features/ads-creatives-
 import { AdsInspector } from "@plugins/ads/frontend/features/ads-inspector";
 import { ConnectMeta } from "@plugins/ads/frontend/features/connect-meta";
 import { CampaignMetaKpis } from "@plugins/ads/frontend/features/campaign-meta-kpis";
+import { AgentReferralsKpi } from "@plugins/ads/frontend/features/agent-referrals-kpi";
 // Las 3 features del buzón de análisis con IA. FSD: la Page es el único punto que
 // las compone — `trigger-run` no importa a `run-result` ni a `hitl-decision`
 // (cross-feature prohibido).
@@ -189,6 +190,8 @@ export function AdsSection() {
         <div className="flex items-center justify-between gap-2 px-4 pt-3">
           <ConnectMeta />
         </div>
+        {/* Los referidos de agentes no dependen de que haya campañas de Meta. */}
+        <AgentReferralsKpi params={params} />
         <div className="ads-empty">Sin campañas para mostrar.</div>
       </main>
     );
@@ -241,6 +244,9 @@ export function AdsSection() {
         {/* KPIs Meta del scope activo (gasto/imp/clicks/conv/CPC/costo-conv):
             campaña (merge level=campaign) o segmento (level=adset). */}
         <CampaignMetaKpis campaign={scoped ?? campaign} />
+        {/* Conversaciones que mandó ChatGPT/Gemini… — de toda la tienda, en la
+            ventana del header (no del scope de campaña). */}
+        <AgentReferralsKpi params={params} />
         <div className="ads-body">
           {/* Creativos del segmento seleccionado (2026-09-10): una fila por
               anuncio con métricas Meta + peso sobre la campaña completa. */}

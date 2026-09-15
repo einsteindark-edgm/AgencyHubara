@@ -26,6 +26,7 @@ import {
   backendAdsAdsetsResponseSchema,
   backendAdsCampaignsResponseSchema,
   backendAdsDailyResponseSchema,
+  backendAgentReferralsSchema,
   backendAttributedConversationsResponseSchema,
   type BackendAdCreative,
   type BackendAdsCampaign,
@@ -33,11 +34,13 @@ import {
 } from "./contracts";
 import { adsCampaignKeys } from "./keys";
 import {
+  AGENT_SOURCE_LABELS,
   type AdCreative,
   type AdsCampaign,
   type AdsDailyPoint,
   type AdsState,
   type AdsWindowParams,
+  type AgentReferrals,
   type AttributedConversation,
   type AvatarColor,
   type CampaignStatus,
@@ -425,5 +428,40 @@ export function useAdCreative(adId: string | null) {
     staleTime: 5 * 60_000,
     retry: false,
     enabled: adId !== null && adId !== "",
+  });
+}
+
+/**
+ * Valida y mapea el conteo de referidos. Respeta el orden del backend (que
+ * manda todos los agentes conocidos, en cero incluido).
+ */
+export function mapAgentReferrals(raw: unknown): AgentReferrals {
+  const parsed = backendAgentReferralsSchema.parse(raw);
+  return {
+    total: parsed.total,
+    withOrder: parsed.with_order,
+    bySource: Object.entries(parsed.by_source).map(([source, count]) => ({
+      source,
+      label: AGENT_SOURCE_LABELS[source] ?? source,
+      count,
+    })),
+  };
+}
+
+/**
+ * Conversaciones que llegaron desde ChatGPT, Gemini… (el `via:` del botón de
+ * WhatsApp de la tienda). De toda la tienda, acotadas a la ventana del header.
+ */
+export function useAgentReferrals(params: AdsWindowParams) {
+  return useQuery<AgentReferrals>({
+    queryKey: adsCampaignKeys.agentReferrals(params),
+    queryFn: async ({ signal }) => {
+      const raw = await apiClient.get<unknown>(
+        `/api/ads/agent-referrals${windowQuery(params)}`,
+        { signal },
+      );
+      return mapAgentReferrals(raw);
+    },
+    staleTime: 30_000,
   });
 }
