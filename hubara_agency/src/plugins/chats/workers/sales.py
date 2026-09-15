@@ -45,6 +45,7 @@ from exoclaw_temporal.activities.conversation import (
 
 from src.platform.tool_extensions import register_tool_extension
 from src.platform.tools.escalation import EscalateToHumanTool
+from src.plugins.chats.agent.sales.tools.escalation import guarded_escalation_tool
 from src.platform.workflow_helpers import CONVERSATIONAL_TURN_ACTIVITIES
 from src.plugins.chats.agent.sales.activities.build_prompt_stage import (
     sales_build_prompt,
@@ -60,6 +61,7 @@ from src.platform.whatsapp.capi_activity import (
 from src.plugins.chats.agent.sales.activities import (
     bootstrap_sales_session_activity,
     build_first_contact_greeting_activity,
+    apply_variant_enumeration_guard_activity,
     compute_bogota_context_activity,
     decide_ghosting_action,
     ensure_closing_escalation_activity,
@@ -153,7 +155,7 @@ register_tool_extension(
 # (`frontend_dashboard/src/entities/chat/model.ts:10`).
 register_tool_extension(
     "sales.escalate_to_human",
-    lambda workspace: EscalateToHumanTool(workspace=str(workspace)),
+    lambda workspace: guarded_escalation_tool(EscalateToHumanTool)(workspace=str(workspace)),
 )
 
 # Convivencia ETA/Sales (2026-06-10): el agente ETA es notificador puro — las
@@ -365,6 +367,9 @@ async def main() -> None:
             # Saludo de primer contacto cuando el turno sale por tool (menú)
             # sin saludo — runs dc32f7fe / 3ce50ef3.
             build_first_contact_greeting_activity,
+            # Guarda de enumeración de variantes (run 9bd495be): 4+ aromas o
+            # colores listados en texto plano → picker curado.
+            apply_variant_enumeration_guard_activity,
             # Fix integridad orden↔tag: red de seguridad determinística que
             # garantiza el cierre "pago pendiente" + escalación tras un
             # register_order exitoso aunque el LLM no emita el tag/escalación.

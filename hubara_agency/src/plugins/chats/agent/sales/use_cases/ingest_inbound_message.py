@@ -69,6 +69,10 @@ from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
 from src.plugins.chats.agent.sales.use_cases.load_or_start_sales_session import (
     LoadOrStartSalesSession,
 )
+from src.plugins.chats.shared.purchase_signals import (
+    build_deferral_note,
+    register_inbound_purchase_signals,
+)
 from src.plugins.chats.agent.sales.use_cases.order_draft import (
     build_order_draft_note,
     get_projectable_draft,
@@ -278,6 +282,24 @@ class IngestInboundMessage:
         # disparar un utility template legítimo.
         metadata["last_inbound_at_ms"] = now_ms
         metadata["service_window_expires_at_ms"] = compute_service_window_expiry(now_ms)
+        # Señal determinista del cliente sobre la compra (2026-09-14): un
+        # "después" bloquea el cierre en este turno; un "sí" con producto en
+        # el draft registra la confirmación que exigen request_shipping_details
+        # / CONFIRMADO_SIN_DATOS / ORDER_PENDING_SHIPPING_DETAILS.
+        inbound_signal = register_inbound_purchase_signals(
+            metadata,
+            parsed.text,
+            now_ms=now_ms,
+            message_id=parsed.message_id,
+            interactive=parsed.interactive,
+        )
+        if inbound_signal is not None:
+            logger.info(
+                "inbound_purchase_signal",
+                session_id=session_id,
+                kind=inbound_signal,
+                text_preview=(parsed.text or "")[:60],
+            )
 
         # Opt-out de marketing (plugin marketing, campañas directas): el
         # template aprobado promete "respóndeme NO MÁS y te doy de baja" —
@@ -689,6 +711,10 @@ class IngestInboundMessage:
         # de vida que el breadcrumb del draft).
         web_cart_note = build_web_cart_note(metadata)
         web_product_note = build_web_product_note(metadata)
+        # Aplazamiento del cliente ("voy en camino", "luego"): el LLM responde
+        # texto breve y no avanza el cierre (las tools de cierre también lo
+        # rechazan — defensa en profundidad).
+        deferral_note = build_deferral_note(metadata)
         await self._load_session.execute(
             session_id=session_id,
             message=effective.text,
@@ -697,6 +723,7 @@ class IngestInboundMessage:
                 note
                 for note in (
                     episode_boundary_note,
+                    deferral_note,
                     web_cart_note,
                     web_product_note,
                     order_draft_note,

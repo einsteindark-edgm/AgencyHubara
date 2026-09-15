@@ -54,13 +54,14 @@ from src.plugins.chats.agent.remarketing.workflows.watchdog import (
     ServiceWindowWatchdogWorkflow,
 )
 from src.platform.tools.routing import TransferToSalesAgentTool
+from src.plugins.chats.agent.remarketing.tools import deferral_aware_transfer_tool
 
 # NEW-5 cerrado: el worker de Remarketing tambien necesita la tool de
 # transferencia (es la unica forma de que el agente vuelva a Ventas).
 # Composition root legitimo: el worker conoce ambos lados (core + domain).
 register_tool_extension(
     "sales.transfer_to_sales_agent",
-    lambda workspace: TransferToSalesAgentTool(workspace=str(workspace)),
+    lambda workspace: deferral_aware_transfer_tool(TransferToSalesAgentTool)(workspace=str(workspace)),
 )
 
 

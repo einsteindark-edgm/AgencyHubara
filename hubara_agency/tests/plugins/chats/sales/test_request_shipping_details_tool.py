@@ -37,7 +37,18 @@ def ctx():
 def seeded_vault(tmp_path, ctx):
     vault = tmp_path / "isolated_vault"
     (vault / ctx.session_key).mkdir(parents=True, exist_ok=True)
-    (vault / ctx.session_key / "metadata.json").write_text("{}", encoding="utf-8")
+    # Guarda 2026-09-14: el formulario exige confirmación de compra en el
+    # episodio activo (el cliente dijo que sí a un producto).
+    (vault / ctx.session_key / "metadata.json").write_text(
+        json.dumps({
+            "episodes": [{
+                "episode_id": "ep_001", "started_at_ms": 1, "closed_at_ms": None,
+                "order_draft": {"slots": {"producto": "Cubo Love"}, "updated_at_ms": 1,
+                                "confirmed_at_ms": 2, "confirmed_by": "text"},
+            }],
+        }),
+        encoding="utf-8",
+    )
     return vault
 
 

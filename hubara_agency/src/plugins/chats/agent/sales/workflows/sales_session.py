@@ -34,6 +34,7 @@ with workflow.unsafe.imports_passed_through():
     )
     from src.platform.whatsapp.activities import send_typing_indicator_activity
     from src.plugins.chats.agent.sales.activities import (
+        apply_variant_enumeration_guard_activity,
         bootstrap_sales_session_activity,
         build_first_contact_greeting_activity,
         decide_ghosting_action,
@@ -912,6 +913,36 @@ class HubaraSalesSessionWorkflow:
                         workflow.patched("suppress-text-when-variant-picker-v1")
                         and "present_variant_picker" in result.tools_used
                     )
+                    # Guarda de enumeración de variantes (run 9bd495be,
+                    # 2026-09-14): el LLM listó los 11 aromas como texto plano
+                    # en vez del picker. Si el texto final enumera 4+ aromas o
+                    # colores del catálogo y el turno no emitió picker, la
+                    # activity encola el picker (formato curado) y acá se
+                    # suprime el texto plano — el flush entrega el picker.
+                    # Gate para replay-safety; tras el drain,
+                    # `deprecate_patch("variant-enumeration-guard-v1")`.
+                    if (
+                        result.final_content
+                        and not suppress_text_for_picker
+                        and "present_variant_picker" not in result.tools_used
+                        and not self._force_shutdown
+                        and not abstained
+                        and not admin_no_send
+                        and workflow.patched("variant-enumeration-guard-v1")
+                    ):
+                        replaced_by_picker = await workflow.execute_activity(
+                            apply_variant_enumeration_guard_activity,
+                            args=[session.session_id, result.final_content],
+                            start_to_close_timeout=timedelta(seconds=15),
+                            retry_policy=RetryPolicy(maximum_attempts=2),
+                        )
+                        if replaced_by_picker:
+                            workflow.logger.warning(
+                                "variant-enumeration-guard: el texto final "
+                                "enumeraba variantes; reemplazado por el "
+                                f"picker: {result.final_content[:120]!r}"
+                            )
+                            suppress_text_for_picker = True
                     if admin_no_send and result.final_content:
                         # Observabilidad del turno admin: el LLM produjo texto
                         # pese a la instrucción de silencio — lo suprimimos y

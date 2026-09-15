@@ -11,6 +11,9 @@ Notese que ``persist_assistant_message_activity`` NO vive aca: por R-DIP #10
 """
 from __future__ import annotations
 
+from src.plugins.chats.agent.sales.activities.variant_enumeration_guard import (
+    apply_variant_enumeration_guard_activity,
+)
 from src.plugins.chats.agent.sales.activities.bootstrap_session import (
     bootstrap_sales_session_activity,
     decide_ghosting_action,
@@ -34,6 +37,7 @@ from src.plugins.chats.agent.sales.activities.transcribe_audio import (
 )
 
 __all__ = [
+    "apply_variant_enumeration_guard_activity",
     "bootstrap_sales_session_activity",
     "build_first_contact_greeting_activity",
     "compute_bogota_context_activity",

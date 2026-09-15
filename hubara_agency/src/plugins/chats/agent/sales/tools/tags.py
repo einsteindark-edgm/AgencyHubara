@@ -48,6 +48,7 @@ from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
     get_active_episode,
 )
 from src.plugins.chats.shared.funnel import enqueue_capi_for_tag
+from src.plugins.chats.shared.purchase_signals import has_purchase_confirmation
 
 # Sesión c4e3416f: `CONFIRMADO_SIN_DATOS` es para el caso donde el cliente
 # confirmó el pedido (apretó "Confirmar" en `present_order_confirmation`) pero
@@ -188,6 +189,19 @@ class ManageConversationTagTool(ToolBase):
                     ensure_ascii=False,
                 )
 
+        # 2026-09-14 (run 01a0a0f1): CONFIRMADO_SIN_DATOS exige que el
+        # cliente haya dicho que sí. Sin confirmación registrada en el
+        # episodio, la etiqueta se degrada a INTERESADO (remarketing) y NO se
+        # escala: el bot sigue a cargo cuando el cliente vuelva a escribir.
+        degraded_from: str | None = None
+        if tag == "CONFIRMADO_SIN_DATOS" and not has_purchase_confirmation(data):
+            degraded_from = tag
+            tag = "INTERESADO"
+            motivo = (
+                "[degradado de CONFIRMADO_SIN_DATOS: sin confirmación de compra "
+                f"registrada en el episodio] {motivo}"
+            )
+
         data["tag"] = tag
         data["motivo"] = motivo
 
@@ -252,6 +266,14 @@ class ManageConversationTagTool(ToolBase):
         response: dict[str, Any] = {
             "message": f"Éxito. Interacción etiquetada como '{tag}'.",
         }
+        if degraded_from is not None:
+            response["degraded_from"] = degraded_from
+            response["message"] = (
+                "Sin confirmación de compra registrada en este episodio (el "
+                "cliente nunca dijo que sí), la etiqueta quedó como INTERESADO "
+                "(remarketing automático). NO llames escalate_to_human: el bot "
+                "sigue a cargo."
+            )
 
         # HU-WA24H-001 Sprint 2: si cerramos episodio activo (closed_ep no
         # None), emitir una decisión `episode_closed` para que el workflow
