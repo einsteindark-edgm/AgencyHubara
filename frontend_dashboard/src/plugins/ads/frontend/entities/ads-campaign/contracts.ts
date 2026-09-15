@@ -203,3 +203,12 @@ export const backendAdsDailyResponseSchema = z.object({
   days: z.number().int(),
   series: z.array(backendAdsDailyPointSchema),
 });
+
+/* ── Referidos desde agentes de IA (`GET /api/ads/agent-referrals`) ───────── */
+
+export const backendAgentReferralsSchema = z.object({
+  total: z.number().int(),
+  with_order: z.number().int(),
+  by_source: z.record(z.string(), z.number().int()),
+});
+export type BackendAgentReferrals = z.infer<typeof backendAgentReferralsSchema>;
