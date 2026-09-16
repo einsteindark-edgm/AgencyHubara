@@ -398,7 +398,9 @@ def build_capi_event(
     ``value``/``currency`` son opcionales salvo para ``Purchase`` (Meta los
     exige para calcular valor de compra y ROAS) — ahí delega en
     :func:`build_purchase_event`, que valida. Para el resto, si viene
-    ``value`` sin ``currency`` se asume ``DEFAULT_CURRENCY``.
+    ``value`` sin ``currency`` se asume ``DEFAULT_CURRENCY``; lo mismo si algún
+    content lleva ``item_price`` aunque no haya ``value`` (Meta exige
+    ``currency`` junto a ``item_price``).
     """
     validate_event_name(event_name)
     if event_name == "Purchase":
@@ -415,7 +417,16 @@ def build_capi_event(
             contents=contents,
         )
     normalized = tuple(normalize_capi_contents(contents))
-    custom = CapiCustomData(order_id=order_id, contents=normalized)
+    # Meta rechaza ``contents[].item_price`` sin ``currency`` (HTTP 400,
+    # subcode 2804023, no transitorio). Visto en prod 2026-09-16 16:50Z:
+    # ViewContent de ``flush_ui_intents:product_detail`` (event_id
+    # ``viewcontent_wa_<wa_id>_ep_001``) se perdió porque no traía ``value``.
+    has_item_price = any("item_price" in c for c in normalized)
+    custom = CapiCustomData(
+        currency=(currency or DEFAULT_CURRENCY) if has_item_price else None,
+        order_id=order_id,
+        contents=normalized,
+    )
     if value is not None:
         if not isinstance(value, int) or value < 0:
             raise ValueError(f"value debe ser int >= 0, got {value!r}")
