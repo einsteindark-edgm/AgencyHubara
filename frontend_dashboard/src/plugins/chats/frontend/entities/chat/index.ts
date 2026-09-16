@@ -1,6 +1,7 @@
 export type {
   ChatInboxItem,
   ChatMessageItem,
+  ChatQuote,
   ChatTag,
   AvatarColor,
   Presence,

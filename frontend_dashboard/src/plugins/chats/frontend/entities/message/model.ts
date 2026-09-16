@@ -35,4 +35,13 @@ export interface ChatMessage {
    *  visible. Aplica a inbound del cliente y outbound del operador. */
   document_url?: string;
   document_filename?: string;
+  /** id de Meta del mensaje. */
+  wamid?: string;
+  /** Mensaje citado por el cliente (reply). Solo `id` si no se resolvió. */
+  reply_to?: {
+    id: string;
+    author?: string;
+    text?: string;
+    image_url?: string;
+  };
 }

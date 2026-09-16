@@ -445,6 +445,40 @@ class _empty_lines:
         return False
 
 
+_QUOTE_AUTHOR_BY_UI_TYPE = {
+    "user_message": "user",
+    "human_message": "human",
+    "agent_message": "agent",
+    "ui_component_sent": "agent",
+}
+
+
+def _resolve_reply_quotes(messages: list[dict]) -> None:
+    """Completa in-place los ``reply_to`` que el ingest dejó solo con el id.
+
+    El cliente puede citar un mensaje propio (su foto, su texto) o uno
+    nuestro con ``wamid`` en el JSONL (ecos standby). Si el id citado matchea
+    un evento del historial, la cita lleva autor + texto + imagen para que la
+    burbuja la muestre. Sin match (texto del bot, sin wamid persistido) queda
+    solo el id: el frontend muestra "mensaje no disponible".
+    """
+    by_wamid = {m["wamid"]: m for m in messages if m.get("wamid")}
+    for msg in messages:
+        reply_to = msg.get("reply_to")
+        if not isinstance(reply_to, dict) or reply_to.get("author"):
+            continue
+        quoted = by_wamid.get(reply_to.get("id"))
+        if quoted is None:
+            continue
+        reply_to["author"] = _QUOTE_AUTHOR_BY_UI_TYPE.get(
+            quoted.get("ui_type"), "agent"
+        )
+        if quoted.get("content"):
+            reply_to["text"] = quoted["content"]
+        if quoted.get("image_url"):
+            reply_to["image_url"] = quoted["image_url"]
+
+
 @router.get("/sessions/{session_id}")
 async def get_session_history(session_id: str):
     """
@@ -496,7 +530,9 @@ async def get_session_history(session_id: str):
                 messages.append(msg_obj)
             except json.JSONDecodeError:
                 continue
-                
+
+    _resolve_reply_quotes(messages)
+
     tag = "NO_ETIQUETADO"
     motivo = "Sin diagnóstico todavía"
     active_route = "ventas"

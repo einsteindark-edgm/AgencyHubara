@@ -54,6 +54,7 @@ class FilesystemMessageHistoryStore:
         document_url: str | None = None,
         document_filename: str | None = None,
         wamid: str | None = None,
+        reply_to: dict[str, Any] | None = None,
     ) -> None:
         """Persiste un inbound del cliente con timestamp ISO UTC.
 
@@ -72,6 +73,11 @@ class FilesystemMessageHistoryStore:
         inbound persistido (comprobante de pago típico) + su nombre visible.
         El dashboard pinta un chip clickeable en la burbuja. Ausentes en el
         resto de los inbounds — no se persisten nulls.
+
+        ``reply_to``: el cliente respondió CITANDO un mensaje (``context.id``
+        del webhook). ``{"id": <wamid citado>}`` más, si el ingest lo pudo
+        resolver (foto del bot), ``author``/``text``/``image_url``. El
+        dashboard pinta la cita encima de la burbuja.
         """
         event: dict[str, Any] = {
             "role": "user",
@@ -85,9 +91,11 @@ class FilesystemMessageHistoryStore:
         if document_filename:
             event["document_filename"] = document_filename
         if wamid:
-            # D1.4: id de Meta para dedupe/auditoría (standby). Ausente en los
-            # inbounds del workflow: no se persisten nulls.
+            # id de Meta: dedupe/auditoría (standby, D1.4) y destino de las
+            # citas (``reply_to``) que el cliente haga a este mensaje.
             event["wamid"] = wamid
+        if reply_to:
+            event["reply_to"] = reply_to
         self._append(session_id, event)
 
     def append_assistant_event(
@@ -134,6 +142,7 @@ class FilesystemMessageHistoryStore:
         image_url: str | None = None,
         document_url: str | None = None,
         document_filename: str | None = None,
+        wamid: str | None = None,
     ) -> None:
         """Mensaje del humano operador via dashboard handoff.
 
@@ -155,6 +164,10 @@ class FilesystemMessageHistoryStore:
         ``document_url`` + ``document_filename``: lo mismo para un documento
         PDF saliente (comprobante) — el dashboard pinta un chip clickeable con
         el nombre del archivo. Ausentes salvo envío de documento.
+
+        ``wamid``: id que Meta asignó al envío (adjuntos). Lo necesita el
+        dashboard para resolver una respuesta del cliente que CITE este
+        mensaje. Los textos se fragmentan en varias burbujas y no lo traen.
         """
         event: dict[str, Any] = {
             "role": "assistant",
@@ -168,4 +181,6 @@ class FilesystemMessageHistoryStore:
             event["document_url"] = document_url
         if document_filename:
             event["document_filename"] = document_filename
+        if wamid:
+            event["wamid"] = wamid
         self._append(session_id, event)

@@ -320,3 +320,16 @@ async def test_the_composed_standby_ear_reaches_the_dispatcher_with_a_real_clien
     for _ in range(5):  # el emisor es fire-and-forget
         await asyncio.sleep(0)
     assert dispatched == [fake_client]
+
+
+async def test_standby_inbound_reply_persists_the_quoted_id(vault: Path) -> None:
+    """PM-02: bajo standby (MBA al frente) el cliente también responde citando
+    mensajes; el dashboard necesita el `reply_to` igual que en el ingest normal."""
+    body = P.inbound("que sea este", wamid="wamid.STANDBY.IN.R")
+    body["entry"][0]["changes"][0]["value"]["standby"]["messages"][0]["context"] = {
+        "from": "15550000000", "id": "wamid.STANDBY.ECHO.1",
+    }
+    await _run(vault, body)
+    (line,) = _lines(vault)
+    assert line["wamid"] == "wamid.STANDBY.IN.R"
+    assert line["reply_to"] == {"id": "wamid.STANDBY.ECHO.1"}

@@ -348,3 +348,23 @@ def test_get_session_history_projects_document_fields(client_and_vault):
     assert len(human) == 1
     assert human[0]["document_url"] == "/api/dashboard/media/wa_p11/out-xyz.pdf"
     assert human[0]["document_filename"] == "comprobante.pdf"
+
+
+def test_send_attachment_persists_meta_wamid_for_replies(client_and_vault):
+    """PM-03 (reply quotes): el wamid que devuelve Meta se persiste en el evento
+    humano para que una respuesta del cliente citando ESTE adjunto se resuelva."""
+    client, vault = client_and_vault
+    _seed_document_attachment(vault, "wa_p8")
+    ok = OutboundResult(wa_message_id="wamid.p8", ok=True)
+    with (
+        patch("src.plugins.chats.api.handoff.send_document_to_session", new=AsyncMock(return_value=ok)),
+        patch("src.plugins.chats.api.handoff.send_image_to_session", new=AsyncMock()),
+    ):
+        res = client.post(
+            "/api/dashboard/sessions/wa_p8/messages",
+            json={"attachment_id": "meta-media-pdf-1", "text": "va", "client_message_id": "cmid-p8"},
+        )
+    assert res.status_code == 200, res.text
+    log = vault / "wa_p8" / "sessions" / "wa_p8.jsonl"
+    parsed = json.loads(log.read_text(encoding="utf-8").strip())
+    assert parsed["wamid"] == "wamid.p8"

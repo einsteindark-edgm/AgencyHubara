@@ -659,6 +659,27 @@ h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.02em; margin: 0; }
   white-space: nowrap;
 }
 
+/* Cita de un reply del cliente (mensaje/foto al que respondió). Barra lateral
+   por autor, estilo WhatsApp; miniatura clickeable si el citado era foto. */
+.bubble-quote {
+  display: flex; align-items: stretch; gap: 8px;
+  margin: 0 0 6px; padding: 6px 8px;
+  max-width: 260px; border-radius: 8px;
+  border-left: 3px solid var(--fg-faint);
+  background: rgba(255,255,255,0.08);
+}
+.bubble-quote.q-agent { border-left-color: #d65f30; }
+.bubble-quote.q-human { border-left-color: #5fa8d6; }
+.bubble-quote.q-user  { border-left-color: #5fd68a; }
+.bubble-quote-img { flex: 0 0 auto; display: block; border-radius: 6px; overflow: hidden; }
+.bubble-quote-img img { display: block; width: 48px; height: 48px; object-fit: cover; }
+.bubble-quote-body { display: flex; flex-direction: column; min-width: 0; font-size: 12px; }
+.bubble-quote-author { font-weight: 700; font-size: 11px; opacity: 0.9; }
+.bubble-quote-text {
+  opacity: 0.8; overflow: hidden; text-overflow: ellipsis;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+}
+
 /* Composer */
 .composer {
   flex: 0 0 auto;

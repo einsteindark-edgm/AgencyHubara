@@ -35,10 +35,12 @@ import type {
   ChatInboxItem,
   ChatMessageItem,
   ChatOverview,
+  ChatQuote,
   ChatTag,
   FileItem,
   MemoryItem,
   NoteItem,
+  QuoteAuthor,
   RoutingLogItem,
 } from "./model";
 
@@ -188,6 +190,10 @@ function adaptSession(s: ChatSession): ChatInboxItem {
  *  cuando hay sesión. Sin token (local sin Cognito) la URL queda limpia. */
 function toMediaUrl(ref: string): string {
   const abs = ref.startsWith("http") ? ref : `${env.apiUrl}${ref}`;
+  // El token SOLO va a nuestro API. Las fotos del bot citadas en un reply
+  // apuntan al CDN de assets (otro origen): appendear el JWT ahí lo filtraría
+  // a un tercero.
+  if (!abs.startsWith(`${env.apiUrl}/`)) return abs;
   const token = getAccessToken();
   if (!token) return abs;
   const sep = abs.includes("?") ? "&" : "?";
@@ -205,6 +211,18 @@ function toUnixSeconds(ts: ChatMessage["timestamp"]): number {
     return Number.isNaN(ms) ? 0 : Math.floor(ms / 1000);
   }
   return 0;
+}
+
+const QUOTE_AUTHORS: readonly QuoteAuthor[] = ["user", "agent", "human"];
+
+function adaptQuote(q: ChatMessage["reply_to"]): ChatQuote | undefined {
+  if (!q) return undefined;
+  const author = QUOTE_AUTHORS.find((a) => a === q.author) ?? "unknown";
+  return {
+    author,
+    text: q.text || undefined,
+    imageUrl: q.image_url ? toMediaUrl(q.image_url) : undefined,
+  };
 }
 
 function adaptMessage(m: ChatMessage): ChatMessageItem {
@@ -237,6 +255,7 @@ function adaptMessage(m: ChatMessage): ChatMessageItem {
     imageUrl: m.image_url ? toMediaUrl(m.image_url) : undefined,
     documentUrl: m.document_url ? toMediaUrl(m.document_url) : undefined,
     documentName: m.document_filename ?? undefined,
+    replyTo: adaptQuote(m.reply_to),
   };
 }
 

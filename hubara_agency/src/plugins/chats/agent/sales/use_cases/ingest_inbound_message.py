@@ -663,6 +663,10 @@ class IngestInboundMessage:
         # el evento del cliente queda con la foto adjunta para el dashboard.
         # Los kwargs de documento solo se pasan cuando el PDF quedó persistido
         # (mantiene compatible cualquier store/fake con la firma anterior).
+        # `wamid` + `reply_to`: el dashboard muestra qué mensaje citó el
+        # cliente (caso wa_573176471988: "que el velón sea este" sin rastro de
+        # a qué foto respondía).
+        reply_kwargs = _build_reply_kwargs(parsed, metadata)
         if persisted_document_url:
             self._history_store.append_user_event(
                 session_id,
@@ -670,10 +674,14 @@ class IngestInboundMessage:
                 image_url=persisted_image_url,
                 document_url=persisted_document_url,
                 document_filename=effective.document_filename,
+                **reply_kwargs,
             )
         else:
             self._history_store.append_user_event(
-                session_id, effective.text, image_url=persisted_image_url
+                session_id,
+                effective.text,
+                image_url=persisted_image_url,
+                **reply_kwargs,
             )
 
         # --- 6.5. Limpiar flag de Flow pendiente (sesión c4e3416f) ---
@@ -1655,6 +1663,43 @@ def _build_episode_boundary_note(prev_episode: dict[str, Any]) -> str:
         "nueva: saluda con calidez y pregunta en qué puedes ayudar hoy. Solo "
         "menciona lo anterior si el cliente lo trae explícitamente."
     )
+
+
+#: Sufijos de los ids sintéticos de los reentries (transcripción / visión).
+_SYNTHETIC_ID_SUFFIXES = ("_transcribed", "_vision")
+
+
+def _build_reply_kwargs(
+    parsed: WhatsAppMessage, metadata: dict[str, Any]
+) -> dict[str, Any]:
+    """`wamid` (real, sin sufijo de reentry) + `reply_to` del evento del
+    cliente en el JSONL. Si el id citado es una foto que mandó el bot
+    (`outbound_media_index`), el snapshot viaja resuelto — el índice es
+    acotado y evicta; el resto (mensajes del propio JSONL) lo resuelve el
+    dashboard al leer."""
+    kwargs: dict[str, Any] = {}
+    wamid = parsed.message_id
+    if wamid:
+        for suffix in _SYNTHETIC_ID_SUFFIXES:
+            wamid = wamid.removesuffix(suffix)
+        kwargs["wamid"] = wamid
+    context = parsed.context if isinstance(parsed.context, dict) else {}
+    quoted_id = context.get("id")
+    # Solo ids string: un valor raro rompería el schema del dashboard (y con
+    # él el render de TODA la sesión).
+    if not quoted_id or not isinstance(quoted_id, str):
+        return kwargs
+    reply_to: dict[str, Any] = {"id": quoted_id}
+    entry = (metadata.get("outbound_media_index") or {}).get(quoted_id)
+    if isinstance(entry, dict):
+        reply_to["author"] = "agent"
+        title = entry.get("title") or entry.get("handle")
+        if title:
+            reply_to["text"] = title
+        if entry.get("image_url"):
+            reply_to["image_url"] = entry["image_url"]
+    kwargs["reply_to"] = reply_to
+    return kwargs
 
 
 def _build_photo_citation_note(

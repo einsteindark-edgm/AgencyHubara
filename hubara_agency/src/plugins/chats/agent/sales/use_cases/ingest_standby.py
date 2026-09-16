@@ -99,6 +99,14 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def _reply_to(msg: WhatsAppMessage) -> dict[str, Any] | None:
+    """Cita (`context.id`) del inbound, para que el dashboard muestre a qué
+    mensaje respondió el cliente — igual que el ingest regular. Solo el id:
+    el dashboard lo resuelve contra el JSONL al leer."""
+    quoted_id = (msg.context or {}).get("id")
+    return {"id": quoted_id} if isinstance(quoted_id, str) and quoted_id else None
+
+
 def _seen(data: dict[str, Any], wamid: str) -> bool:
     seen = data.get("standby_seen_wamids")
     return isinstance(seen, list) and wamid in seen
@@ -248,7 +256,9 @@ class IngestStandby:
             # El turno va al JSONL DENTRO del read-modify-write: si el append
             # falla, el mutador aborta sin escribir y el wamid NO queda visto —
             # la reentrega de Meta vuelve a intentar en vez de perderse.
-            self._history_store.append_user_event(session, inbound_display_text(msg), wamid=msg.message_id)
+            self._history_store.append_user_event(
+                session, inbound_display_text(msg), wamid=msg.message_id, reply_to=_reply_to(msg)
+            )
             _mark_seen(data, msg.message_id)
             applied["ok"] = True
             return data

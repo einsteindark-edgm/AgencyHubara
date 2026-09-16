@@ -32,7 +32,7 @@ class FakeHistoryStore:
         self.image_urls: list[str | None] = []
 
     def append_user_event(
-        self, session_id: str, content: str, *, image_url: str | None = None
+        self, session_id: str, content: str, *, image_url: str | None = None, **_: object
     ) -> None:
         self.events.append((session_id, content))
         self.image_urls.append(image_url)
