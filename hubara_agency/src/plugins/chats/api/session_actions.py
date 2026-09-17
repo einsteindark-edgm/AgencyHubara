@@ -234,6 +234,13 @@ class OrderBody(BaseModel):
     items: list[OrderItemBody] = Field(min_length=1, max_length=50)
     shipping: ShippingBody
     payment_method: PAYMENT_METHODS
+    #: Mandarle al cliente la plantilla de instrucciones de pago (llave Nequi /
+    #: link + recargo). Default ``True`` = comportamiento histórico, el que
+    #: usa Meta Business Agent (no manda el campo). Lo apaga el formulario
+    #: "Crear pedido" del chat cuando el OPERADOR ya acordó el pago a mano y
+    #: el mensaje automático encima sería ruido. El intent se encola igual
+    #: (auditoría); lo que se saltea es el flush.
+    send_payment_instructions: bool = True
 
 
 class TagBody(BaseModel):
@@ -508,7 +515,7 @@ async def _register(session: str, body: OrderBody, priced: Any, deps: SessionAct
         await _notify(deps, session, outcome.get("closed_id"), PAYMENT_PENDING_TAG)
 
     sent = 0
-    if not already and body.payment_method in ("transfer", "payment_link"):
+    if not already and body.send_payment_instructions and body.payment_method in ("transfer", "payment_link"):
         try:
             sent = await deps.flush(session)
         except Exception as exc:  # noqa: BLE001 — el pedido ya está registrado; el intent queda encolado
