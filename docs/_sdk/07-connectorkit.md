@@ -115,6 +115,75 @@ cancelación humana (`Purchase`/`OrderCanceled`), etapas del pedido
 `flush_capi_outbox_activity` tras cada turno de Sales + dentro de las
 activities del watchdog y de `emit_order_stage`.
 
+## OrderFacts: los datos de un pedido, una sola lectura para todo el dashboard
+
+> Fuente: `src/platform/orders/facts.py` · Contract suite: `tests/platform/orders/test_order_facts.py` · Guarda: `tests/plugins/test_order_facts_readers_guard.py`
+
+**Qué soluciona.** Pedido #31 (2026-09-17): se editó el producto (y el total)
+de una orden en Medusa. Orders mostró el total nuevo y Ads el viejo, porque Ads
+sumaba `episode.order_total_cop`, una copia congelada en el chat. Dos lecturas
+del mismo dato dan dos números. Regla: **total, estado de pago, etapa, cliente
+y moneda de un pedido se leen de `OrderFacts`**. El vault guarda el *vínculo*
+(qué conversación o anuncio trajo qué `order_id`), nunca el valor.
+
+**Cómo funciona.**
+
+- *Un writer:* `get_order_query_port()` (el port que sirve la vista Orders)
+  viene envuelto en `RecordingOrderQuery`. Cada orden que lista o lee queda
+  grabada en el `OrderFactsStore` de `get_order_facts_port()`, así que Orders
+  y los demás lectores ven el mismo valor.
+- *N readers:* `await get_order_facts_port().get_facts(ids)` devuelve un
+  `OrderFactsSnapshot`.
+  - Lo que falta en el store se busca en Medusa, paginando hasta encontrarlo
+    (tope de 20 páginas de 100).
+  - Lo vencido (TTL `ORDER_FACTS_TTL_S`, default 60 s) se sirve al instante y
+    se refresca en segundo plano.
+  - Lecturas concurrentes comparten un solo fetch.
+- *Invalidación:* el store escucha el bus del dashboard
+  (`DashboardEventBus.add_listener`). Todo evento `orders` (confirmar o
+  reversar pago, cambiar etapa, cancelar…) marca los valores como sucios, y el
+  próximo read vuelve a Medusa. Lo editado directo en Medusa Admin aparece al
+  vencer el TTL.
+- *Degradación honesta:* si Medusa no responde, se sirve el último valor con
+  `stale=True`. Un id nunca visto queda en `unresolved` y el lector usa su
+  copia congelada. `snapshot.revenue_cop(order_id, frozen_total=...)`
+  encapsula la regla de "venta cerrada": pagado y no cancelado, con el total
+  vivo.
+- *Fake oficial:* `InMemoryOrderFacts` (`available=False` simula Medusa
+  caído). La contract suite corre contra ambos.
+
+**Cómo se usa** (endpoint sync de un plugin):
+
+```python
+from anyio import from_thread
+from src.sdk.connectorkit import OrderFactsSnapshot, get_order_facts_port
+
+facts = from_thread.run(get_order_facts_port().get_facts, order_ids)
+revenue = facts.revenue_cop(order_id, frozen_total=episode.get("order_total_cop"))
+return {..., "orders_stale": facts.stale}  # la UI avisa "valores sin actualizar"
+```
+
+**Lectores migrados:** `ads` (campañas, segmentos, anuncios, conversaciones) y
+`marketing` (`campaign_stats`). La guarda AST impide que vuelvan a sumar la
+copia sin `order_facts`.
+
+**Pendientes (siguen leyendo copias del vault — migrar uno a uno y sumarlos a la guarda):**
+
+| Lector | Dato que duplica |
+|---|---|
+| `platform/whatsapp/capi_activity.py` | total y moneda del Purchase (`registered_order`) |
+| `platform/customer_scoring/features.py` | "ganado" por tag `COMPRA_EXITOSA` |
+| `plugins/ads/classification.py` | estado "ganado" de la conversación por tag |
+| `plugins/marketing/domain/campaigns.py::segment_for_metadata` | segmento "compró" por tag; cliente de `registered_order` |
+| `plugins/chats/shared/funnel.py`, `shared/purchase_signals.py` | pagado y total del funnel |
+| `plugins/chats/api/dashboard.py` | "pago pendiente" por tag + `registered_order` |
+| `plugins/chats/agent/remarketing/activities/watchdog_activities.py` | estado de pago |
+| `plugins/chats/agent/sales/use_cases/tag_reconcile.py`, `agent/post_sale_return/*` | pagado por tag |
+| `plugins/reengagement/.../build_snapshot.py` | `has_registered_order` |
+
+Los evals de `sales_eval` leen el tag a propósito: evalúan lo que hizo el bot,
+no el estado del pedido.
+
 ## Reglas al agregar un port (regla de oro del kit)
 
 Port nuevo ⇒ en el MISMO PR: el `Protocol` + su factory + su **fake** + su
