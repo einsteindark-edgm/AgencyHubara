@@ -856,3 +856,100 @@ async def test_timeline_no_duplicate_cancel_event(adapter):
     assert len(cancel_events) == 1
     # Y debe ser el original (no el "vía Medusa Admin").
     assert cancel_events[0].detail != "vía Medusa Admin"
+
+
+# ----------------------------------------------------------------------
+# get() — clase de match de variante (duo-zodiacal, 2026-09-17)
+# ----------------------------------------------------------------------
+
+
+def _order_with_item(item: dict) -> dict:
+    order = _sample_order()
+    order["items"] = [
+        {"title": "Duo Zodiacal", "quantity": 1, "unit_price": 45000,
+         "total": 45000, "sku": "DZ", **item},
+    ]
+    return order
+
+
+async def _detail_item(adapter, item: dict):
+    respx.get(f"{_BASE_URL}/admin/orders/order_dz").mock(
+        return_value=Response(200, json={"order": _order_with_item(item)})
+    )
+    detail = await adapter.get("order_dz")
+    assert detail is not None
+    return detail.items_detail[0]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_detail_exposes_partial_match_without_alarm(adapter):
+    it = await _detail_item(adapter, {
+        "variant_title": "Aries",
+        "metadata": {
+            "handle": "duo-zodiacal",
+            "variant_label": "Aries, Limoncillo",
+            "variant_match_kind": "partial",
+            "variant_unresolved_tokens": ["Limoncillo"],
+            "variant_unresolved_tag_kinds": ["aroma"],
+        },
+    })
+    assert it.variant_label_mismatch is False
+    assert it.variant_match_kind == "partial"
+    assert it.selected_variant_title == "Aries"
+    assert it.variant_unresolved_tokens == ["Limoncillo"]
+    assert it.variant_unresolved_tag_kinds == ["aroma"]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_detail_exposes_fallback_mismatch(adapter):
+    it = await _detail_item(adapter, {
+        "variant_title": "Acuario",
+        "metadata": {
+            "handle": "duo-zodiacal",
+            "variant_label": "Limoncillo",
+            "variant_label_mismatch": True,
+            "variant_match_kind": "fallback_first_variant",
+            "variant_unresolved_tokens": ["Limoncillo"],
+            "variant_unresolved_tag_kinds": ["aroma"],
+        },
+    })
+    assert it.variant_label_mismatch is True
+    assert it.variant_match_kind == "fallback_first_variant"
+    assert it.selected_variant_title == "Acuario"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_detail_legacy_flag_with_correct_sign_is_downgraded_to_partial(adapter):
+    """Órdenes previas al fix (#23-#31): flag True sin `variant_match_kind`
+    aunque el signo registrado SÍ está en el label → falsa alarma."""
+    it = await _detail_item(adapter, {
+        "variant_title": "Leo",
+        "metadata": {
+            "handle": "duo-zodiacal",
+            "variant_label": "Café, Sándalo · Leo",
+            "variant_label_mismatch": True,
+        },
+    })
+    assert it.variant_label_mismatch is False
+    assert it.variant_match_kind == "partial"
+    assert it.variant_unresolved_tokens == ["Café", "Sándalo"]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_detail_legacy_flag_with_wrong_sign_stays_fallback(adapter):
+    """#20/#21/#30: el LLM pidió Capricornio y quedó el fallback Aries."""
+    it = await _detail_item(adapter, {
+        "variant_title": "Aries",
+        "metadata": {
+            "handle": "duo-zodiacal",
+            "variant_label": "Capricornio morado",
+            "variant_label_mismatch": True,
+        },
+    })
+    assert it.variant_label_mismatch is True
+    assert it.variant_match_kind == "fallback_first_variant"
+    assert it.selected_variant_title == "Aries"

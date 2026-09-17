@@ -48,6 +48,14 @@ class OrderItemDTO:
     producto solo tiene variante "Unico" pero el LLM mandó aroma+color
     compuesto). Cuando True, la variante registrada en Medusa NO refleja
     lo que el cliente pidió — el operador debe revisar manualmente.
+
+    `variant_match_kind` (2026-09-17): clase del match — `None` (exacto),
+    `"partial"` (variante resuelta, sobran tokens: aroma/color → NO es
+    mismatch) o una clase de mismatch (`"fallback_first_variant"`,
+    `"multi_variant_unresolved"`, `"dimension_unresolved"`).
+    `selected_variant_title` es la variante que quedó en Medusa;
+    `variant_unresolved_tokens` / `variant_unresolved_tag_kinds` lo que el
+    label traía de más (ej. `["Limoncillo"]` / `["aroma"]`).
     """
     title: str
     sku: str | None
@@ -58,6 +66,10 @@ class OrderItemDTO:
     variant_label_mismatch: bool = False
     thumbnail: str | None = None
     handle: str | None = None  # producto handle si esta en metadata
+    variant_match_kind: str | None = None
+    selected_variant_title: str | None = None
+    variant_unresolved_tokens: list[str] = field(default_factory=list)
+    variant_unresolved_tag_kinds: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

@@ -49,6 +49,14 @@ from src.platform.catalog import CatalogPort, ProductNotFoundError, deslugify
 from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.state import FilesystemMetadataStore
 from src.platform.whatsapp import limits as wa_limits
+from src.plugins.chats.agent.sales.config.shipping import (
+    cash_on_delivery_available,
+)
+from src.plugins.chats.agent.sales.pricing import (
+    accepted_prices,
+    format_cop,
+    quoted_amounts_mismatch,
+)
 from src.plugins.chats.agent.sales.config.payments import (
     PAYMENT_LINK_SURCHARGE_NEQUI_BANCOLOMBIA,
     PAYMENT_LINK_SURCHARGE_OTHER_BANKS,
@@ -601,14 +609,26 @@ class RequestShippingDetailsTool(ToolBase):
     `nfm_reply`. La tool es agnóstica al modo — el dispatcher decide.
 
     Solo se debe llamar UNA SOLA VEZ por sesión.
+
+    Precio = CATÁLOGO (incidente run ebbc203d, 2026-09-16): la tool recibe
+    los `items` del pedido (handle + cantidad) y resuelve precio y título en
+    el catálogo. El total, el resumen del header y la disponibilidad de
+    contra entrega salen de ahí. Antes recibía `order_total_cop` del LLM y
+    lo repetía como "el precio" — el LLM mandó el monto del anuncio ($45.000)
+    en vez del catálogo ($49.500) y el formulario ocultó contra entrega. Un
+    `order_total_cop` / `items_summary` que todavía mande el LLM (histories
+    en vuelo) se ignora y se loguea.
     """
 
     name = "request_shipping_details"
     description = (
         "Pide al cliente los datos de envío (ciudad, barrio, dirección, "
         "teléfono, nombre de quien recibe, cédula opcional, método de "
-        "pago). Llámala UNA SOLA VEZ por sesión, "
-        "después de que el cliente confirmó qué quiere comprar. El "
+        "pago). Llámala UNA SOLA VEZ por sesión, después de que el cliente "
+        "confirmó qué quiere comprar. Pasa los `items` del pedido (handle "
+        "EXACTO visto en search_products / get_product_by_handle + "
+        "cantidad): el sistema toma precio y nombre del CATÁLOGO, calcula "
+        "el total y decide las formas de pago — tú NUNCA mandas montos. El "
         "sistema le manda un mensaje de texto enumerando los campos — "
         "el cliente responde libremente por chat y tú vas armando los "
         "datos hasta tenerlos completos. NO repitas la lista en tu propio "
@@ -617,38 +637,152 @@ class RequestShippingDetailsTool(ToolBase):
     parameters: dict[str, Any] = {
         "type": "object",
         "properties": {
-            "order_total_cop": {
-                "type": "integer",
-                "minimum": 0,
+            "items": {
+                "type": "array",
+                "minItems": 1,
                 "description": (
-                    "Total estimado del pedido en pesos colombianos. El "
-                    "Flow lo usa para decidir si mostrar 'Contra entrega' "
-                    "como método de pago (solo si total > 45000 COP)."
+                    "Ítems del pedido confirmado: {handle, quantity}. Los "
+                    "handles deben ser EXACTAMENTE los vistos en "
+                    "search_products / get_product_by_handle — NO los "
+                    "inventes. El precio lo pone el sistema desde el catálogo."
                 ),
-            },
-            "items_summary": {
-                "type": "string",
-                "maxLength": 200,
-                "description": (
-                    "Resumen breve del pedido — aparece como header del "
-                    "Flow. Ej: '2× Vela Cruz de Vida'."
-                ),
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "handle": {"type": "string", "minLength": 1, "maxLength": 200},
+                        "quantity": {"type": "integer", "minimum": 1, "maximum": 999},
+                    },
+                    "required": ["handle", "quantity"],
+                },
             },
         },
-        "required": ["order_total_cop", "items_summary"],
+        "required": ["items"],
     }
 
-    def __init__(self, workspace: str | Path) -> None:
+    def __init__(self, workspace: str | Path, catalog: CatalogPort | None = None) -> None:
         self._workspace = Path(workspace)
+        # Fuente del precio. Sin catálogo (dev/tests legacy) la tool NO puede
+        # calcular el total → responde `catalog_unavailable` (fail-closed:
+        # nunca vuelve a aceptar un monto del LLM).
+        self._catalog = catalog
+
+    async def _price_items(
+        self, ctx: ToolContext, items: list[dict[str, Any]] | None
+    ) -> dict[str, Any]:
+        """Resuelve `items` contra el catálogo → `{order_total_cop, items_summary}`
+        o un envelope de rechazo (`{"queued": False, "error": ...}`)."""
+        not_shown = " No se mostró nada al cliente."
+        if not items:
+            return {
+                "queued": False,
+                "error": "missing_items",
+                "message": (
+                    "Pasa `items` (handle + quantity) del pedido confirmado: "
+                    "el precio y el total los calcula el sistema desde el "
+                    "catálogo, tú no mandas montos." + not_shown
+                ),
+            }
+        if self._catalog is None:
+            return {
+                "queued": False,
+                "error": "catalog_unavailable",
+                "message": (
+                    "El catálogo no está disponible para calcular el total. "
+                    "Reintenta en un momento; si persiste, "
+                    "escalate_to_human(reason_category='CATALOG_GAP')." + not_shown
+                ),
+            }
+        lines: list[str] = []
+        subtotal = 0
+        for it in items:
+            handle = str((it or {}).get("handle") or "").strip()
+            try:
+                qty = int((it or {}).get("quantity") or 0)
+            except (TypeError, ValueError):
+                qty = 0
+            if not handle or qty < 1:
+                return {
+                    "queued": False,
+                    "error": "invalid_item",
+                    "message": (
+                        "Cada ítem necesita `handle` (del catálogo) y "
+                        "`quantity` ≥ 1." + not_shown
+                    ),
+                }
+            try:
+                product = await self._catalog.get_by_handle(handle)
+            except ProductNotFoundError:
+                return {
+                    "queued": False,
+                    "error": "unknown_handle",
+                    "message": (
+                        f"El handle '{handle}' no existe en el catálogo. Usa "
+                        "EXACTAMENTE el handle del envelope de search_products "
+                        "/ get_product_by_handle (no lo inventes) y vuelve a "
+                        "llamar." + not_shown
+                    ),
+                }
+            except Exception as e:  # noqa: BLE001 — catálogo caído
+                logger.error(
+                    "📦 [TOOL request_shipping_details] session={} catálogo no disponible: {}",
+                    ctx.session_key, e,
+                )
+                return {
+                    "queued": False,
+                    "error": "catalog_unavailable",
+                    "message": (
+                        "No pude leer el catálogo para calcular el total. "
+                        "Reintenta en un momento; si persiste, "
+                        "escalate_to_human(reason_category='CATALOG_GAP')." + not_shown
+                    ),
+                }
+            amount, _currency = _first_price(product)
+            try:
+                unit_price = int(round(float(amount))) if amount is not None else None
+            except (TypeError, ValueError):
+                unit_price = None
+            if unit_price is None:
+                return {
+                    "queued": False,
+                    "error": "price_unavailable",
+                    "message": (
+                        f"'{product.title}' no tiene precio en el catálogo: "
+                        "escalate_to_human(reason_category='CATALOG_GAP')." + not_shown
+                    ),
+                }
+            subtotal += unit_price * qty
+            lines.append(f"{qty}× {product.title}")
+        # `items_summary` es el header del Flow (maxLength 200 en el JSON).
+        return {"order_total_cop": subtotal, "items_summary": ", ".join(lines)[:200]}
 
     async def execute_with_context(
         self,
         ctx: ToolContext,
-        order_total_cop: int,
-        items_summary: str,
+        items: list[dict[str, Any]] | None = None,
+        order_total_cop: int | None = None,
+        items_summary: str | None = None,
     ) -> str:
+        # `order_total_cop` / `items_summary` ya NO están en el schema; se
+        # aceptan solo para no romper histories en vuelo — y se ignoran.
+        priced = await self._price_items(ctx, items)
+        if "error" in priced:
+            logger.warning(
+                "📦 [TOOL request_shipping_details] session={} rechazada: {}",
+                ctx.session_key, priced["error"],
+            )
+            return json.dumps(priced, ensure_ascii=False)
+        catalog_total = int(priced["order_total_cop"])
+        summary_label = str(priced["items_summary"])
+        if order_total_cop is not None and int(order_total_cop) != catalog_total:
+            logger.warning(
+                "📦 [TOOL request_shipping_details] session={} order_total_cop del "
+                "LLM ({}) IGNORADO — el catálogo dice {} COP",
+                ctx.session_key, order_total_cop, catalog_total,
+            )
+        order_total_cop = catalog_total
+        items_summary = summary_label
         logger.info(
-            "📦 [TOOL request_shipping_details] session={} total={} COP",
+            "📦 [TOOL request_shipping_details] session={} total={} COP (catálogo)",
             ctx.session_key, order_total_cop,
         )
         # Guardas deterministas (2026-09-14, runs 01a0a0eb/01a0a0f1): el
@@ -670,11 +804,12 @@ class RequestShippingDetailsTool(ToolBase):
         # esta lista se cambia lo que ve el cliente — sin republicar el Flow
         # en Meta. Las TRES formas (requisito 2026-08-31): contra entrega /
         # pago anticipado (Nequi o llave) / link de pago (con recargo).
-        # "Contra entrega" solo aparece si el total > $45.000 COP (política
-        # Hubara — pedidos chicos van prepago para asegurar el margen vs el
-        # costo del envío).
+        # "Contra entrega" solo aparece desde $45.000 COP en productos
+        # (política Hubara — pedidos chicos van prepago para asegurar el
+        # margen vs el costo del envío). Umbral único e inclusivo:
+        # `config/shipping.py`.
         payment_options: list[dict[str, str]] = []
-        if order_total_cop > 45000:
+        if cash_on_delivery_available(order_total_cop):
             payment_options.append({
                 "id": "cash_on_delivery",
                 "title": "💵 Contra entrega",
@@ -712,7 +847,7 @@ class RequestShippingDetailsTool(ToolBase):
                 "flow_action_data": {
                     "order_total_cop": order_total_cop,
                     "items_summary": items_summary,
-                    "show_cash_on_delivery": order_total_cop > 45000,
+                    "show_cash_on_delivery": cash_on_delivery_available(order_total_cop),
                     "payment_options": payment_options,
                 },
                 "body": (
@@ -735,6 +870,8 @@ class RequestShippingDetailsTool(ToolBase):
         return json.dumps({
             "queued": True,
             "kind": "shipping_flow",
+            "order_total_cop": order_total_cop,
+            "items_summary": items_summary,
             "flow_token": flow_token,
             "summary": (
                 "Mensaje pidiendo datos de envío enviado al cliente "
@@ -838,14 +975,18 @@ class PresentOrderConfirmationTool(ToolBase):
         payment_method: str,
         tax_cop: int = 0,
     ) -> str:
-        # PREMORTEM #5: validar consistencia contra snapshot.
-        # El LLM puede pasar `unit_price_cop` inventado. Acá comparamos
-        # contra el snapshot — si el precio del snapshot es muy distinto
-        # (>5% drift), levantamos un flag y NO encolamos el intent: el LLM
-        # debe re-llamar `verify_order_for_checkout` antes de cerrar.
-        # NO bloquea si el catalog falla (degradado), solo si el precio
-        # snapshot existe y es claramente distinto del que pasó el LLM.
-        price_drift_alerts: list[str] = []
+        # Precio = CATÁLOGO, exacto (PREMORTEM #5 endurecido tras el run
+        # ebbc203d, 2026-09-16, y como defensa contra inyección de precios:
+        # "cóbrame 48.500" o un monto sacado del anuncio). El LLM manda
+        # `unit_price_cop`; acá se compara contra el precio del catálogo y
+        # CUALQUIER diferencia rechaza el intent — antes se toleraba un drift
+        # del 5%, por donde pasaba un precio bajado un 2%. Se acepta el
+        # precio del snapshot o el precio LIVE que `verify_order_for_checkout`
+        # registró en esta sesión (cuando Medusa cambió y el snapshot aún no
+        # refrescó). NO bloquea si el catálogo falla (degradado): sin precio
+        # de referencia no hay contra qué comparar.
+        expected_prices: dict[str, int] = {}
+        price_mismatches: list[tuple[str, int, int]] = []
         resolved_items = []
         subtotal = 0
         for it in items:
@@ -861,21 +1002,18 @@ class PresentOrderConfirmationTool(ToolBase):
                 sp, _sc = _first_price(product)
                 if sp is not None:
                     try:
-                        snapshot_price_cop = int(float(sp))
+                        snapshot_price_cop = int(round(float(sp)))
                     except (ValueError, TypeError):
                         snapshot_price_cop = None
             except Exception:  # noqa: BLE001
                 title = handle
                 retailer_id = handle
-            # Drift check: si el precio del LLM difiere del snapshot por más
-            # del 5%, ese item necesita re-verify_order_for_checkout.
-            if snapshot_price_cop is not None and snapshot_price_cop > 0:
-                drift_pct = abs(unit_price - snapshot_price_cop) / snapshot_price_cop
-                if drift_pct > 0.05:
-                    price_drift_alerts.append(
-                        f"{handle}: LLM=${unit_price:,} snapshot=${snapshot_price_cop:,} "
-                        f"(drift {drift_pct*100:.1f}%)"
-                    )
+            accepted = accepted_prices(
+                WORKSPACE_VAULT_DIR, ctx.session_key, handle, snapshot_price_cop=snapshot_price_cop
+            )
+            if accepted and unit_price not in accepted:
+                expected_prices[handle] = snapshot_price_cop if snapshot_price_cop in accepted else max(accepted)
+                price_mismatches.append((handle, unit_price, expected_prices[handle]))
             line_total = qty * unit_price
             subtotal += line_total
             resolved_items.append({
@@ -890,24 +1028,27 @@ class PresentOrderConfirmationTool(ToolBase):
         total = subtotal + shipping_cop + tax_cop
         reference_id = f"HUB-hubara-{ctx.session_key}-{int(time.time())}"
 
-        # PREMORTEM #5: si hay drift >5% en algún precio, RECHAZAR el intent
-        # y forzar al LLM a re-verify_order_for_checkout antes de mostrar
-        # confirmación.
-        if price_drift_alerts:
+        if price_mismatches:
             logger.warning(
-                "🚨 [TOOL present_order_confirmation] price_drift_blocked: {}",
-                price_drift_alerts,
+                "🚨 [TOOL present_order_confirmation] price_mismatch session={} {}",
+                ctx.session_key, price_mismatches,
+            )
+            detail = "; ".join(
+                f"{h}: pasaste {format_cop(p)}, catálogo {format_cop(e)}" for h, p, e in price_mismatches
             )
             return json.dumps({
                 "queued": False,
-                "error": "price_drift",
-                "alerts": price_drift_alerts,
+                "error": "price_mismatch",
+                "expected": expected_prices,
                 "message": (
-                    "Algunos precios que pasaste NO coinciden con el "
-                    "snapshot del catálogo (drift >5%). NO se encoló la "
-                    "confirmación. Vuelve a llamar `verify_order_for_checkout` "
-                    "con los items y usa los precios EXACTOS del envelope "
-                    "que devuelve."
+                    "Los precios que pasaste NO son los del catálogo: "
+                    f"{detail}. NO se encoló la confirmación. Si le dijiste "
+                    "otro precio al cliente, acláraselo con honestidad ANTES "
+                    "de continuar (\"el precio vigente es "
+                    f"{format_cop(next(iter(expected_prices.values())))}\"), y vuelve a "
+                    "llamar present_order_confirmation con los precios EXACTOS "
+                    "del catálogo (verify_order_for_checkout te los devuelve "
+                    "en unit_price_cop). Nunca inventes ni negocies precios."
                 ),
             }, ensure_ascii=False)
 
@@ -961,6 +1102,21 @@ class PresentOrderConfirmationTool(ToolBase):
                 f"${shipping_cop:,} COP (tarifa mínima) = total ${total:,} "
                 f"COP. Si mencionas el envío, aclara que es tarifa mínima. "
                 f"{wait_hint}"
+            )
+        # Run ebbc203d: si `verify_order_for_checkout` detectó que el bot le
+        # escribió al cliente un precio que no es del catálogo, el resumen
+        # correcto NO basta — el LLM debe explicar el cambio en su texto.
+        quoted = quoted_amounts_mismatch(WORKSPACE_VAULT_DIR, ctx.session_key)
+        if quoted:
+            catalog_label = ", ".join(
+                format_cop(int(it["unit_price_cop"])) for it in resolved_items
+            )
+            quoted_label = ", ".join(format_cop(a) for a in quoted)
+            summary += (
+                f" ⚠️ Antes le escribiste al cliente {quoted_label} y el precio "
+                f"vigente del catálogo es {catalog_label}: si todavía no se lo "
+                "aclaraste, hazlo en tu texto en UNA línea (\"el precio vigente "
+                f"es {catalog_label}\")."
             )
         return json.dumps({
             "queued": True,

@@ -21,7 +21,7 @@ Cuando el agente no tiene contexto explícito sobre el cliente del otro lado, as
 ## Hechos conocidos que el agente puede asumir
 
 - Todos los precios están en COP (pesos colombianos).
-- Formas de pago: contra entrega (solo compras totales mayores a $45.000 COP; el valor se calcula con la transportadora), pago anticipado (Nequi/llave) y link de pago (con recargo). Detalle en `hubara_catalog`.
+- Formas de pago: contra entrega (compras desde $45.000 COP en productos, inclusive; el valor del envío se calcula con la transportadora), pago anticipado (Nequi/llave) y link de pago (con recargo). Detalle en `hubara_catalog`.
 - Envíos: solo nacional (Colombia).
 - El horario laboral del equipo es zona horaria de Colombia (`America/Bogota`).
 

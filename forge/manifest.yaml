@@ -241,10 +241,6 @@ replacements:
     files: ["hubara_agency/src/plugins/chats/agent/sales/tools/ui_intents.py"]
     from: "nuestras velas religiosas:'."
     to: "nuestros productos:'."
-  - id: ej-uiintents-flow-ej
-    files: ["hubara_agency/src/plugins/chats/agent/sales/tools/ui_intents.py"]
-    from: "Flow. Ej: '2× Vela Cruz de Vida'."
-    to: "Flow. Ej: '2× <producto>'."
   - id: ej-uiintents-impuestos
     files: ["hubara_agency/src/plugins/chats/agent/sales/tools/ui_intents.py"]
     from: "Impuestos en COP. Velas artesanales suelen ser 0."

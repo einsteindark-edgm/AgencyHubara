@@ -17,6 +17,7 @@ import {
   campaignChecklist,
   campaignOfferLine,
   OPT_OUT_LINE,
+  useCampaignOrdersEvents,
   useCampaignStats,
   type Campaign,
 } from "@plugins/marketing/frontend/entities/campaign";
@@ -136,6 +137,7 @@ function ValidationPanel({ campaign }: { campaign: Campaign }) {
     campaign.id,
     campaign.status === "sent",
   );
+  useCampaignOrdersEvents();
 
   return (
     <div className="flex flex-col gap-3">
@@ -171,6 +173,12 @@ function ValidationPanel({ campaign }: { campaign: Campaign }) {
             <h3 className="mb-2 text-[11px] font-bold uppercase tracking-wide text-fg-muted">
               Resultado del envío
             </h3>
+            {stats.ordersStale ? (
+              <p role="status" className="mb-2 text-[11px] text-warn">
+                Valores de pedidos sin actualizar: Orders no respondió y se
+                muestra el último valor conocido.
+              </p>
+            ) : null}
             <dl className="grid grid-cols-2 gap-x-3 gap-y-2">
               <StatRow label="Enviados" value={stats.sent !== null ? fmtN(stats.sent) : "—"} />
               <StatRow label="Fallidos" value={fmtN(stats.failedCount)} />

@@ -54,6 +54,10 @@ api:
     # Contrato session-actions@v1 (provider del cast mba→chats, D1.2b): las 4
     # tools de escritura de Meta Business Agent (draft/order/tag/escalate).
     - { module: src.plugins.chats.api.session_actions, prefix: /api/chats, tags: [Chats_SessionActions] }
+    # Contrato order-intake@v1: el botón "Crear pedido" del chat intervenido.
+    # Lee la conversación con DeepSeek y devuelve el formulario PRE-LLENADO;
+    # no registra nada (eso lo hace session-actions@v1 /order).
+    - { module: src.plugins.chats.api.order_intake, prefix: /api/chats, tags: [Chats_OrderIntake] }
 
 # ── Agente Temporal ────────────────────────────────────────────────────
 # Dos workers en task queues exclusivas: SALES_QUEUE y REMARKETING_QUEUE.

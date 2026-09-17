@@ -251,8 +251,9 @@ cédula (si está) a `metadata.receiver_national_id`.
 ### Requirement: Formas de pago informadas (2026-08-31)
 
 El sales-worker MUST informar exactamente TRES formas de pago, con sus
-condiciones: **contra entrega** (solo compras > $45.000 COP; el valor se
-calcula con la transportadora), **pago anticipado** (Nequi o llave
+condiciones: **contra entrega** (compras desde $45.000 COP en productos,
+umbral INCLUSIVO — `config/shipping.py`; el valor del envío se calcula con la
+transportadora), **pago anticipado** (Nequi o llave
 3229041190) y **link de pago** (recargo adicional de 1,5% sobre la venta
 con Nequi o Bancolombia, 2,69% con otros bancos). "Tarjeta" ya NO es una
 opción directa (queda cubierta por el link de pago). Los ids de método en
@@ -315,6 +316,48 @@ tal. Los textos viven en `config/shipping.py` (`SHIPPING_RATES_MESSAGE`,
 - THEN el body muestra `Subtotal productos: $X COP`, `Envío (tarifa mínima): $Y COP` (o `Envío: sin costo` si es 0) y `Total: $Z COP`, seguidos de dirección y medio de pago
 - AND NO aparece "Por confirmar" ni la nota 📌 (solo aplican a contra entrega)
 - AND el envelope al LLM trae el total y le pide aclarar "tarifa mínima" si menciona el envío
+
+### Requirement: El precio sale del catálogo, nunca del anuncio ni del cliente (2026-09-16)
+
+Incidente run ebbc203d: el referral del anuncio traía "$45.000", el catálogo
+tenía el set a $49.500, el bot cotizó el del anuncio, el formulario de envío
+ocultó "Contra entrega" (umbral estricto) y el resumen salió a $49.500 sin
+explicación. El sales-worker MUST tomar todo precio de producto del catálogo
+(snapshot o live verificado); ningún monto que provenga del LLM, del anuncio
+o del cliente MUST llegar a un componente, al resumen ni a Medusa.
+
+#### Scenario: El anuncio no es fuente de precio
+
+- GIVEN un primer inbound con referral CTWA cuyo headline/body trae montos ("💲 $45.000")
+- WHEN el ingest arma el banner `[el cliente vino desde un anuncio…]`
+- THEN los montos del creative van enmascarados (`[precio omitido: usa el del catálogo]`) y el resto del texto se conserva
+
+#### Scenario: El formulario de envío calcula el total desde el catálogo
+
+- GIVEN el LLM invoca `request_shipping_details(items=[{handle, quantity}])`
+- WHEN la tool resuelve los handles en el catálogo
+- THEN el total del Flow, el resumen del header y la disponibilidad de contra entrega (desde $45.000 en productos, inclusive) salen del catálogo
+- AND un `order_total_cop` que aún mande el LLM se ignora; un handle inexistente devuelve `unknown_handle` sin mostrar nada al cliente
+
+#### Scenario: La verificación fija los precios y detecta lo cotizado en el chat
+
+- GIVEN el LLM invoca `verify_order_for_checkout`
+- WHEN la verificación live responde
+- THEN el envelope trae `unit_price_cop` por ítem y `subtotal_cop` (live si Medusa cambió, si no snapshot) y el ledger `metadata.checkout_verification` queda persistido
+- AND si el bot escribió en el episodio un monto que no es precio de catálogo (ni múltiplo/suma de líneas, ni monto de política en su contexto), el envelope trae `quoted_price_mismatch=true` con los montos y la instrucción de aclararlo ANTES de presentar la confirmación
+
+#### Scenario: Confirmación y registro rechazan cualquier otro precio
+
+- GIVEN `present_order_confirmation` o `register_order` reciben un `unit_price_cop` distinto del catálogo (snapshot) y del live verificado
+- WHEN la tool valida los ítems
+- THEN responde `price_mismatch` con el precio esperado, no encola el resumen ni registra en Medusa
+- AND con el catálogo caído (sin referencia) degrada a SEC-07 + gate humano de pago en vez de bloquear la venta
+
+#### Scenario: Umbral de contra entrega inclusivo y único
+
+- GIVEN un pedido con $45.000 exactos en productos
+- WHEN el formulario de envío (Flow o texto plano) arma las formas de pago
+- THEN "Contra entrega" aparece; el umbral vive en `config/shipping.py` y los prompts lo citan como "desde $45.000 en productos"
 
 ### Requirement: Tools de UI rica (decision tools)
 

@@ -75,6 +75,7 @@ describe("mapBackendStats", () => {
       replied: 9,
       attributed_orders: 3,
       attributed_revenue_cop: 364_500,
+      orders_stale: false,
     });
     expect(s.attributedRevenueCop).toBe(364_500);
     expect(s.failedCount).toBe(2);

@@ -33,6 +33,15 @@ export function ItemsPanel({ detail }: { detail: OrderDetail }) {
   );
 }
 
+function partialMatchNote(item: OrderItemDetail): string {
+  const chosen = item.selected_variant_title
+    ? `Variante elegida: ${item.selected_variant_title}. `
+    : "";
+  const kinds = item.variant_unresolved_tag_kinds.join(" / ");
+  const verify = kinds ? `(verificar ${kinds})` : "(verificar)";
+  return `${chosen}Sin resolver: ${item.variant_unresolved_tokens.join(", ")} ${verify}`;
+}
+
 function ItemRow({ item }: { item: OrderItemDetail }) {
   return (
     <div className="item-row" style={{ alignItems: "flex-start" }}>
@@ -80,6 +89,19 @@ function ItemRow({ item }: { item: OrderItemDetail }) {
             <span style={{ fontWeight: 500 }}>{item.variant_label}</span>
           </div>
         )}
+        {!item.variant_label_mismatch &&
+          item.variant_match_kind === "partial" && (
+            <div
+              style={{
+                fontSize: 10,
+                color: "var(--fg-soft)",
+                marginTop: 2,
+                lineHeight: 1.35,
+              }}
+            >
+              {partialMatchNote(item)}
+            </div>
+          )}
         {item.variant_label_mismatch && (
           <div
             style={{

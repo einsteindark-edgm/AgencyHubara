@@ -78,6 +78,10 @@ from src.plugins.chats.agent.sales.tools.catalog import (
     ListCategoriesTool,
     SearchProductsTool,
 )
+from src.plugins.chats.agent.sales.composition import (
+    build_session_history_reader,
+    build_session_metadata_store,
+)
 from src.plugins.chats.agent.sales.tools.checkout import VerifyOrderForCheckoutTool
 from src.plugins.chats.agent.sales.tools.order_draft import SetOrderSlotTool
 from src.plugins.chats.agent.sales.tools.order_status import CheckOrderStatusTool
@@ -196,9 +200,16 @@ _checkout_verifier = MedusaCheckoutVerification(
 )
 register_tool_extension(
     "sales.verify_order_for_checkout",
+    # Incidente run ebbc203d (2026-09-16): la tool devuelve los precios
+    # EXACTOS del catálogo, deja el ledger `checkout_verification` y cruza
+    # lo que el bot escribió en el episodio contra el catálogo (`_catalog`
+    # = allowlist de precios legítimos).
     lambda workspace: VerifyOrderForCheckoutTool(
         workspace=str(workspace),
         verifier=_checkout_verifier,
+        catalog=_catalog,
+        metadata_store=build_session_metadata_store(),
+        history_reader=build_session_history_reader(),
     ),
 )
 
@@ -258,7 +269,11 @@ register_tool_extension(
 # (mensaje de texto formateado) + recolección conversacional turn-by-turn.
 register_tool_extension(
     "sales.request_shipping_details",
-    lambda workspace: RequestShippingDetailsTool(workspace=str(workspace)),
+    # Incidente run ebbc203d (2026-09-16): el total del formulario sale del
+    # CATÁLOGO (items → precio), nunca de un monto que mande el LLM.
+    lambda workspace: RequestShippingDetailsTool(
+        workspace=str(workspace), catalog=_catalog
+    ),
 )
 register_tool_extension(
     "sales.present_order_confirmation",

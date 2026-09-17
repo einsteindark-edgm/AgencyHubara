@@ -212,6 +212,27 @@ describe("ChatsComposer", () => {
     expect(screen.getByText(/Devolver al bot/i)).toBeInTheDocument();
   });
 
+  it("ofrece 'Crear pedido' solo cuando el humano tiene el hilo", () => {
+    // El caso que motivó esto: sin pedido registrado (no hay
+    // `pending_payment_order_id`) el operador igual necesita poder crearlo.
+    useSessionMock.mockReturnValue({
+      data: { active_agent_route: "humano", pending_payment_order_id: null },
+    });
+    const { unmount } = render(<ChatsComposer chatId="wa_X" />, {
+      wrapper: makeWrapper(),
+    });
+    expect(
+      screen.getByRole("button", { name: /crear pedido/i }),
+    ).toBeInTheDocument();
+    unmount();
+
+    useSessionMock.mockReturnValue({ data: { active_agent_route: "ventas" } });
+    render(<ChatsComposer chatId="wa_X" />, { wrapper: makeWrapper() });
+    expect(
+      screen.queryByRole("button", { name: /crear pedido/i }),
+    ).not.toBeInTheDocument();
+  });
+
   it("typing + send calls sendMessage mutation with text", () => {
     useSessionMock.mockReturnValue({
       data: { active_agent_route: "humano" },

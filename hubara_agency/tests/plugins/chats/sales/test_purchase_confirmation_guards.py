@@ -11,7 +11,22 @@ from typing import Any
 import pytest
 from exoclaw.agent.tools import ToolContext
 
+from src.platform.catalog import CatalogPriceDTO, CatalogProductDTO, CatalogVariantDTO
 from src.plugins.chats.agent.sales.tools.ui_intents import RequestShippingDetailsTool
+
+
+class _Catalog:
+    """Cubo Love a $21.000 — el precio lo pone el catálogo, no el LLM (run ebbc203d)."""
+
+    async def get_by_handle(self, handle: str) -> CatalogProductDTO:
+        assert handle == "cubo-love", handle
+        return CatalogProductDTO(
+            id="prod_cubo", handle="cubo-love", title="Cubo Love", status="published",
+            variants=[CatalogVariantDTO(
+                id="variant_cubo", title="Unico",
+                prices=[CatalogPriceDTO(amount="21000", currency_code="cop")],
+            )],
+        )
 
 NOW = 1_789_406_554_683
 KEY = "wa_test_guards"
@@ -49,8 +64,8 @@ def _read(path: Path) -> dict[str, Any]:
 @pytest.mark.asyncio
 async def test_shipping_details_rejected_without_purchase_confirmation(ctx, _isolate_vault_dir: Path) -> None:
     path = _seed(_isolate_vault_dir, {"episodes": [_episode({"producto": "Cubo Love", "color": "Azul", "aroma": "Café"})]})
-    tool = RequestShippingDetailsTool(workspace=str(_isolate_vault_dir))
-    result = json.loads(await tool.execute_with_context(ctx, order_total_cop=21000, items_summary="1× Cubo Love"))
+    tool = RequestShippingDetailsTool(workspace=str(_isolate_vault_dir), catalog=_Catalog())
+    result = json.loads(await tool.execute_with_context(ctx, items=[{"handle": "cubo-love", "quantity": 1}]))
     assert result["queued"] is False
     assert result["error"] == "purchase_not_confirmed"
     assert "Cubo Love" in result["message"]
@@ -66,8 +81,8 @@ async def test_shipping_details_rejected_when_customer_just_deferred(ctx, _isola
         "episodes": [_episode({"producto": "Cubo Love", "color": "Azul"}, confirmed=True)],
     }
     path = _seed(_isolate_vault_dir, md)
-    tool = RequestShippingDetailsTool(workspace=str(_isolate_vault_dir))
-    result = json.loads(await tool.execute_with_context(ctx, order_total_cop=21000, items_summary="1× Cubo Love"))
+    tool = RequestShippingDetailsTool(workspace=str(_isolate_vault_dir), catalog=_Catalog())
+    result = json.loads(await tool.execute_with_context(ctx, items=[{"handle": "cubo-love", "quantity": 1}]))
     assert result["queued"] is False
     assert result["error"] == "customer_deferred"
     assert "en camino" in result["message"]
@@ -77,8 +92,8 @@ async def test_shipping_details_rejected_when_customer_just_deferred(ctx, _isola
 @pytest.mark.asyncio
 async def test_shipping_details_allowed_after_confirmation(ctx, _isolate_vault_dir: Path) -> None:
     path = _seed(_isolate_vault_dir, {"last_inbound_message_id": "wamid.yes", "episodes": [_episode({"producto": "Cubo Love", "color": "Azul"}, confirmed=True)]})
-    tool = RequestShippingDetailsTool(workspace=str(_isolate_vault_dir))
-    result = json.loads(await tool.execute_with_context(ctx, order_total_cop=21000, items_summary="1× Cubo Love"))
+    tool = RequestShippingDetailsTool(workspace=str(_isolate_vault_dir), catalog=_Catalog())
+    result = json.loads(await tool.execute_with_context(ctx, items=[{"handle": "cubo-love", "quantity": 1}]))
     assert result["queued"] is True
     assert [i["kind"] for i in _read(path)["pending_ui_intents"]] == ["shipping_flow"]
 
@@ -86,8 +101,8 @@ async def test_shipping_details_allowed_after_confirmation(ctx, _isolate_vault_d
 @pytest.mark.asyncio
 async def test_shipping_details_allowed_with_registered_order(ctx, _isolate_vault_dir: Path) -> None:
     _seed(_isolate_vault_dir, {"registered_order": {"success": True, "order_id": "o1"}, "episodes": [_episode()]})
-    tool = RequestShippingDetailsTool(workspace=str(_isolate_vault_dir))
-    result = json.loads(await tool.execute_with_context(ctx, order_total_cop=21000, items_summary="1× Cubo Love"))
+    tool = RequestShippingDetailsTool(workspace=str(_isolate_vault_dir), catalog=_Catalog())
+    result = json.loads(await tool.execute_with_context(ctx, items=[{"handle": "cubo-love", "quantity": 1}]))
     assert result["queued"] is True
 
 

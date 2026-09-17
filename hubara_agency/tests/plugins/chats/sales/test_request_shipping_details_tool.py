@@ -1,5 +1,5 @@
 """Tests para `RequestShippingDetailsTool` — el intent encolado debe
-traer `payment_options` dinámicas (2 ó 3 según total).
+traer `payment_options` dinámicas (2 ó 3 según el total de productos).
 
 Por qué importa: el Flow JSON de Meta (single-screen, ver
 `hubara_agency/docs/whatsapp_flows/shipping_v2.json`) bindea
@@ -8,9 +8,12 @@ de pago. El operador NO necesita re-editar y re-publicar el Flow para
 cambiar las opciones de pago — esta lista, construida acá, se manda en
 `flow_action_data` y Meta la renderiza tal cual.
 
-Política Hubara: contra entrega solo disponible para pedidos > $45.000 COP
-(margen vs costo del envío). Tests cubren los 3 thresholds canónicos
-(under, at boundary, over) + shape del payload.
+Política Hubara: contra entrega desde $45.000 COP en productos (margen vs
+costo del envío; umbral INCLUSIVO en `config/shipping.py`). Tests cubren los
+3 thresholds canónicos (under, at boundary, over) + shape del payload.
+
+Desde el incidente run ebbc203d (2026-09-16) la tool recibe `items`
+(handle + cantidad) y el total sale del CATÁLOGO — el LLM no manda montos.
 """
 from __future__ import annotations
 
@@ -19,9 +22,45 @@ import json
 import pytest
 from exoclaw.agent.tools import ToolContext
 
+from src.platform.catalog import (
+    CatalogPriceDTO,
+    CatalogProductDTO,
+    CatalogVariantDTO,
+    ProductNotFoundError,
+)
 from src.plugins.chats.agent.sales.tools.ui_intents import (
     RequestShippingDetailsTool,
 )
+
+
+def _product(handle: str, title: str, price: int) -> CatalogProductDTO:
+    return CatalogProductDTO(
+        id=f"prod_{handle}", handle=handle, title=title, status="published",
+        variants=[CatalogVariantDTO(
+            id=f"variant_{handle}", title="Unico",
+            prices=[CatalogPriceDTO(amount=str(price), currency_code="cop")],
+        )],
+    )
+
+
+class _Catalog:
+    products = {
+        "vela-cruz-de-vida": _product("vela-cruz-de-vida", "Vela Cruz de Vida", 17000),
+        "velas-pack": _product("velas-pack", "Velas pack", 15000),
+        "velas-grandes": _product("velas-grandes", "Velas grandes", 45000),
+        "velas": _product("velas", "Velas", 25000),
+        "vela": _product("vela", "Vela", 20000),
+    }
+
+    async def get_by_handle(self, handle: str) -> CatalogProductDTO:
+        try:
+            return self.products[handle]
+        except KeyError:
+            raise ProductNotFoundError(handle) from None
+
+
+def _items(handle: str, quantity: int = 1) -> list[dict]:
+    return [{"handle": handle, "quantity": quantity}]
 
 
 @pytest.fixture
@@ -52,6 +91,11 @@ def seeded_vault(tmp_path, ctx):
     return vault
 
 
+@pytest.fixture
+def tool(seeded_vault):
+    return RequestShippingDetailsTool(workspace=str(seeded_vault), catalog=_Catalog())
+
+
 def _read_intent(vault, session_key: str) -> dict:
     data = json.loads(
         (vault / session_key / "metadata.json").read_text(encoding="utf-8")
@@ -62,17 +106,12 @@ def _read_intent(vault, session_key: str) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_payment_options_excludes_cod_below_45k(ctx, seeded_vault):
+async def test_payment_options_excludes_cod_below_45k(ctx, seeded_vault, tool):
     """Pedido chico ($17.000) → solo pago anticipado + link de pago, sin
-    contra entrega (política Hubara: COD solo > $45.000 para asegurar
+    contra entrega (política Hubara: COD desde $45.000 para asegurar
     margen). Requisito 2026-08-31: 'tarjeta' ya NO es una opción — los
     pagos con tarjeta van por el link de pago (con recargo)."""
-    tool = RequestShippingDetailsTool(workspace=str(seeded_vault))
-    result = json.loads(await tool.execute_with_context(
-        ctx,
-        order_total_cop=17000,
-        items_summary="1× Vela Cruz de Vida",
-    ))
+    result = json.loads(await tool.execute_with_context(ctx, items=_items("vela-cruz-de-vida")))
     assert result["queued"] is True
 
     intent = _read_intent(seeded_vault, ctx.session_key)
@@ -86,33 +125,28 @@ async def test_payment_options_excludes_cod_below_45k(ctx, seeded_vault):
 
 
 @pytest.mark.asyncio
-async def test_payment_options_excludes_cod_at_45k_boundary(ctx, seeded_vault):
-    """El threshold es `> 45000` estricto — $45.000 exacto NO ofrece COD."""
-    tool = RequestShippingDetailsTool(workspace=str(seeded_vault))
-    await tool.execute_with_context(
-        ctx,
-        order_total_cop=45000,
-        items_summary="3× Velas pack",
-    )
+async def test_payment_options_includes_cod_at_45k_boundary(ctx, seeded_vault, tool):
+    """Incidente run ebbc203d (2026-09-16): el guion dice "contra entrega
+    desde $45.000 en productos" y el bot se lo afirmó al cliente, pero el
+    código usaba `> 45000` estricto → el formulario ocultó la opción y la
+    clienta abandonó el Flow. La política es INCLUSIVA: $45.000 exacto
+    ofrece contra entrega (una sola fuente: `config/shipping.py`)."""
+    await tool.execute_with_context(ctx, items=_items("velas-pack", 3))  # 3 × 15.000
 
     intent = _read_intent(seeded_vault, ctx.session_key)
     flow_data = intent["params"]["flow_action_data"]
+    assert flow_data["order_total_cop"] == 45000
     ids = [opt["id"] for opt in flow_data["payment_options"]]
-    assert ids == ["transfer", "payment_link"]
-    assert flow_data["show_cash_on_delivery"] is False
+    assert ids == ["cash_on_delivery", "transfer", "payment_link"]
+    assert flow_data["show_cash_on_delivery"] is True
 
 
 @pytest.mark.asyncio
-async def test_payment_options_includes_cod_over_45k(ctx, seeded_vault):
+async def test_payment_options_includes_cod_over_45k(ctx, seeded_vault, tool):
     """Pedido grande ($90.000) → 3 opciones con contra entrega PRIMERA
     (orden del requisito 2026-08-31), flag `show_cash_on_delivery` en true
     para data binding adicional del Flow si fuera necesario."""
-    tool = RequestShippingDetailsTool(workspace=str(seeded_vault))
-    await tool.execute_with_context(
-        ctx,
-        order_total_cop=90000,
-        items_summary="2× Velas grandes + envío Bogotá",
-    )
+    await tool.execute_with_context(ctx, items=_items("velas-grandes", 2))  # 2 × 45.000
 
     intent = _read_intent(seeded_vault, ctx.session_key)
     flow_data = intent["params"]["flow_action_data"]
@@ -128,17 +162,12 @@ async def test_payment_options_includes_cod_over_45k(ctx, seeded_vault):
 
 
 @pytest.mark.asyncio
-async def test_payment_options_descriptions_inform_terms(ctx, seeded_vault):
+async def test_payment_options_descriptions_inform_terms(ctx, seeded_vault, tool):
     """Requisito 2026-08-31 — cada forma de pago se informa con su condición:
     contra entrega → el valor lo calcula la transportadora; anticipado →
     Nequi o llave 3229041190; link de pago → recargo 1,5% (Nequi/
     Bancolombia) o 2,69% (otros bancos)."""
-    tool = RequestShippingDetailsTool(workspace=str(seeded_vault))
-    await tool.execute_with_context(
-        ctx,
-        order_total_cop=90000,
-        items_summary="2× Velas grandes",
-    )
+    await tool.execute_with_context(ctx, items=_items("velas-grandes", 2))
 
     intent = _read_intent(seeded_vault, ctx.session_key)
     options = intent["params"]["flow_action_data"]["payment_options"]
@@ -152,18 +181,13 @@ async def test_payment_options_descriptions_inform_terms(ctx, seeded_vault):
 
 
 @pytest.mark.asyncio
-async def test_intent_shape_for_meta_flow_compat(ctx, seeded_vault):
+async def test_intent_shape_for_meta_flow_compat(ctx, seeded_vault, tool):
     """El intent debe traer EXACTAMENTE los campos que espera el Flow JSON
     de Meta (single-screen `SHIPPING_DETAILS`). Anti-regresión: si alguien
     cambia el nombre de un campo (ej. `items_summary` → `summary`) sin
     actualizar el JSON publicado en Meta, el Flow se rompe en runtime
     (renderiza variables vacías). Esta firma debe quedar estable."""
-    tool = RequestShippingDetailsTool(workspace=str(seeded_vault))
-    await tool.execute_with_context(
-        ctx,
-        order_total_cop=50000,
-        items_summary="2× Velas",
-    )
+    await tool.execute_with_context(ctx, items=_items("velas", 2))  # 2 × 25.000
 
     intent = _read_intent(seeded_vault, ctx.session_key)
     params = intent["params"]
@@ -193,17 +217,11 @@ async def test_intent_shape_for_meta_flow_compat(ctx, seeded_vault):
 
 
 @pytest.mark.asyncio
-async def test_summary_instructs_llm_to_wait_not_repeat(ctx, seeded_vault):
+async def test_summary_instructs_llm_to_wait_not_repeat(ctx, seeded_vault, tool):
     """El summary que devuelve la tool al LLM debe dejar claro que NO pida
     los mismos datos otra vez (anti-eco) y que espere la respuesta del
     cliente. Este wording llega al prompt del LLM como tool_result."""
-    tool = RequestShippingDetailsTool(workspace=str(seeded_vault))
-    result_str = await tool.execute_with_context(
-        ctx,
-        order_total_cop=20000,
-        items_summary="1× Vela",
-    )
-    result = json.loads(result_str)
+    result = json.loads(await tool.execute_with_context(ctx, items=_items("vela")))
     summary = result["summary"]
     # El LLM debe saber que vendrá la respuesta vía texto o nfm_reply
     assert "verify_order_for_checkout" in summary

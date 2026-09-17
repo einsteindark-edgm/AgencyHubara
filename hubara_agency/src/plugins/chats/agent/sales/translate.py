@@ -37,6 +37,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from src.plugins.chats.agent.sales.parsers import WhatsAppMessage
+from src.plugins.chats.agent.sales.price_quotes import PRICE_MASK, mask_prices
 
 if TYPE_CHECKING:
     from src.platform.catalog import CatalogPort
@@ -375,6 +376,22 @@ def _qmid(msg: WhatsAppMessage) -> str | None:
     return val if isinstance(val, str) else None
 
 
+_REFERRAL_BODY_EXCERPT = 120
+
+
+def _masked_excerpt(body: str | None) -> str | None:
+    """Body del anuncio para el banner: precios enmascarados y recorte a
+    ``_REFERRAL_BODY_EXCERPT`` chars de contenido REAL. Se enmascara ANTES de
+    recortar (un corte a mitad de "$45.000" dejaría "$45.0" sin enmascarar) y
+    el límite se estira por cada máscara para no perder contexto del creative.
+    """
+    if not body:
+        return None
+    masked = mask_prices(body)
+    extra = masked.count(PRICE_MASK) * (len(PRICE_MASK) - 1)
+    return masked[: _REFERRAL_BODY_EXCERPT + extra] or None
+
+
 def _prepend_referral_banner_if_needed(
     text: str,
     referral: dict[str, Any] | None,
@@ -390,8 +407,12 @@ def _prepend_referral_banner_if_needed(
     """
     if not referral or already_seen:
         return text
-    headline = referral.get("headline")
-    body = referral.get("body")
+    # Run ebbc203d (2026-09-16): el anuncio decía "$45.000" y el catálogo
+    # $49.500; el LLM citó el anuncio. El referral es contexto de ORIGEN, no
+    # fuente de precio: los montos del creative se enmascaran (el precio sale
+    # SIEMPRE del catálogo).
+    headline = mask_prices(referral.get("headline")) or None
+    body = _masked_excerpt(referral.get("body"))
     source_type = referral.get("source_type")
     referred_product = referral.get("referred_product")
 
@@ -405,7 +426,7 @@ def _prepend_referral_banner_if_needed(
     if headline:
         parts.append(f"titulado '{headline}'")
     if body:
-        parts.append(f"({body[:120]})")
+        parts.append(f"({body})")
     if referred_product:
         rp = referred_product
         parts.append(

@@ -26,6 +26,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from src.platform.orders.facts import OrderFacts, OrderFactsSnapshot
 import src.plugins.chats.api.dashboard as dash_mod
 from src.plugins.chats.api.dashboard import _compute_order_ref
 
@@ -235,3 +236,55 @@ def test_sessions_list_emits_null_without_order(client_and_vault):
     resp = client.get("/api/dashboard/sessions")
 
     assert resp.json()["sessions"][0]["order_ref"] is None
+
+
+# --- el chip cuenta lo mismo que el botón (OrderFacts, #289) ---------------
+#
+# El botón "Confirmar pago" lo decide el PEDIDO desde #289
+# (`test_dashboard_pending_payment_facts.py`). Si el chip siguiera decidiendo
+# por las marcas del chat, la MISMA fila diría dos cosas: el operador cobra en
+# Medusa Admin, el botón desaparece y el chip sigue en "pago por verificar".
+# El snapshot que ya se lee para el botón resuelve también el chip — sin pedir
+# un solo id extra a Medusa.
+
+
+def _facts(pay: str = "paid", stage: str = "preparing") -> OrderFactsSnapshot:
+    return OrderFactsSnapshot(
+        facts={
+            ORDER_ID: OrderFacts(
+                order_id=ORDER_ID, display_id="31", total_cop=50000,
+                currency_code="cop", pay_status=pay, stage=stage,
+                customer="Ana", is_draft=False, created_at_ms=1,
+            )
+        }
+    )
+
+
+def test_paid_in_medusa_wins_over_the_chat_marks():
+    """Cobrado desde Medusa Admin: el chat sigue diciendo HUMANO."""
+    ref = _compute_order_ref(_session_with_order(), _facts())
+    assert ref["payment"] == "confirmed"
+
+
+def test_refunded_in_medusa_goes_back_to_pending():
+    session = _session_with_order(tag="COMPRA_EXITOSA")
+    session["episodes"][0]["payment_confirmed_at_ms"] = 1_700_000_000_000
+    ref = _compute_order_ref(session, _facts(pay="refund"))
+    assert ref["payment"] == "pending"
+
+
+def test_cancelled_in_medusa_wins_over_the_chat_marks():
+    ref = _compute_order_ref(_session_with_order(tag="COMPRA_EXITOSA"), _facts(stage="cancelled"))
+    assert ref["payment"] == "cancelled"
+
+
+def test_the_real_display_id_wins_over_the_frozen_one():
+    session = _session_with_order()
+    session["registered_order"]["raw_payload"] = {"display_id": 999}
+    assert _compute_order_ref(session, _facts())["display_id"] == "31"
+
+
+def test_order_outside_the_snapshot_falls_back_to_the_chat_marks():
+    """Medusa caído o pedido fuera del batch: vale la regla vieja."""
+    snapshot = OrderFactsSnapshot(unresolved=frozenset({ORDER_ID}), stale=True)
+    assert _compute_order_ref(_session_with_order(), snapshot)["payment"] == "pending"

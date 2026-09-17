@@ -896,43 +896,6 @@ def test_split_variant_label_slash_and_dash_separators():
     assert _split_variant_label("Lavanda/Blanco") == ["Lavanda", "Blanco"]
 
 
-def test_count_matching_parts_full_coverage():
-    """Una variante cuyo title contiene todos los tokens da score == len(parts)."""
-    from src.platform.orders.medusa_order import _count_matching_parts
-
-    variant = type("V", (), {
-        "title": "Frutos rojos / Marrón",
-        "options": [],
-    })()
-    assert _count_matching_parts(variant, ["Frutos rojos", "Marrón"]) == 2
-
-
-def test_count_matching_parts_partial_coverage():
-    """Si solo un token está, score es 1 (no full match pero non-zero)."""
-    from src.platform.orders.medusa_order import _count_matching_parts
-
-    variant = type("V", (), {
-        "title": "Lavanda / Blanco",
-        "options": [],
-    })()
-    assert _count_matching_parts(variant, ["Lavanda", "Marrón"]) == 1
-    assert _count_matching_parts(variant, ["Frutos rojos", "Marrón"]) == 0
-
-
-def test_count_matching_parts_uses_option_values():
-    """Si la variante tiene opt.value en vez de title, también matchea."""
-    from src.platform.orders.medusa_order import _count_matching_parts
-
-    variant = type("V", (), {
-        "title": "Variant 1",  # title no informativo
-        "options": [
-            type("O", (), {"value": "Lavanda"})(),
-            type("O", (), {"value": "Blanco"})(),
-        ],
-    })()
-    assert _count_matching_parts(variant, ["Lavanda", "Blanco"]) == 2
-
-
 def test_pick_variant_compound_label_picks_best_coverage():
     """Integration: `"Frutos rojos, Marrón"` debe matchear la variante con
     AMBOS tokens, no caer a fallback. Es el bug original del run bc54cb93."""
@@ -1015,7 +978,7 @@ def test_pick_variant_partial_coverage_still_picks_best_but_surfaces_mismatch():
 
 
 # Nota: los stubs custom (`type("V", ...)`) no implementan el protocol completo
-# de ProductVariant pero alcanzan para los 2 atributos que `_count_matching_parts`
+# de ProductVariant pero alcanzan para los 2 atributos que el matching
 # lee: `title` y `options[].value`. Eso preserva la lógica de coverage sin
 # acoplarse al shape Pydantic real (que cambia entre versiones de Medusa).
 

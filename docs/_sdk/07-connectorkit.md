@@ -115,6 +115,75 @@ cancelación humana (`Purchase`/`OrderCanceled`), etapas del pedido
 `flush_capi_outbox_activity` tras cada turno de Sales + dentro de las
 activities del watchdog y de `emit_order_stage`.
 
+## OrderFacts: los datos de un pedido, una sola lectura para todo el dashboard
+
+> Fuente: `src/platform/orders/facts.py` · Contract suite: `tests/platform/orders/test_order_facts.py` · Guarda: `tests/plugins/test_order_facts_readers_guard.py`
+
+**Qué soluciona.** Pedido #31 (2026-09-17): se editó el producto (y el total)
+de una orden en Medusa. Orders mostró el total nuevo y Ads el viejo, porque Ads
+sumaba `episode.order_total_cop`, una copia congelada en el chat. Dos lecturas
+del mismo dato dan dos números. Regla: **total, estado de pago, etapa, cliente
+y moneda de un pedido se leen de `OrderFacts`**. El vault guarda el *vínculo*
+(qué conversación o anuncio trajo qué `order_id`), nunca el valor.
+
+**Cómo funciona.**
+
+- *Un writer:* `get_order_query_port()` (el port que sirve la vista Orders)
+  viene envuelto en `RecordingOrderQuery`. Cada orden que lista o lee queda
+  grabada en el `OrderFactsStore` de `get_order_facts_port()`, así que Orders
+  y los demás lectores ven el mismo valor.
+- *N readers:* `await get_order_facts_port().get_facts(ids)` devuelve un
+  `OrderFactsSnapshot`.
+  - Lo que falta en el store se busca en Medusa, paginando hasta encontrarlo
+    (tope de 20 páginas de 100).
+  - Lo vencido (TTL `ORDER_FACTS_TTL_S`, default 60 s) se sirve al instante y
+    se refresca en segundo plano.
+  - Lecturas concurrentes comparten un solo fetch.
+- *Invalidación:* el store escucha el bus del dashboard
+  (`DashboardEventBus.add_listener`). Todo evento `orders` (confirmar o
+  reversar pago, cambiar etapa, cancelar…) marca los valores como sucios, y el
+  próximo read vuelve a Medusa. Lo editado directo en Medusa Admin aparece al
+  vencer el TTL.
+- *Degradación honesta:* si Medusa no responde, se sirve el último valor con
+  `stale=True`. Un id nunca visto queda en `unresolved` y el lector usa su
+  copia congelada. `snapshot.revenue_cop(order_id, frozen_total=...)`
+  encapsula la regla de "venta cerrada": pagado y no cancelado, con el total
+  vivo.
+- *Fake oficial:* `InMemoryOrderFacts` (`available=False` simula Medusa
+  caído). La contract suite corre contra ambos.
+
+**Cómo se usa** (endpoint sync de un plugin):
+
+```python
+from anyio import from_thread
+from src.sdk.connectorkit import OrderFactsSnapshot, get_order_facts_port
+
+facts = from_thread.run(get_order_facts_port().get_facts, order_ids)
+revenue = facts.revenue_cop(order_id, frozen_total=episode.get("order_total_cop"))
+return {..., "orders_stale": facts.stale}  # la UI avisa "valores sin actualizar"
+```
+
+**Lectores migrados:** `ads` (campañas, segmentos, anuncios, conversaciones),
+`marketing` (`campaign_stats`), `customer_scoring` (LTV / frecuencia / última
+compra, y el endpoint dejó de fetchear Medusa por su cuenta), el **inbox de
+chats** (botón "Confirmar pago"), el **watchdog de remarketing** (etapa del
+template + monto real) y `shared/funnel.is_open_cart`. La guarda AST cubre ads
+y marketing; en el resto el reemplazo es de TAG por estado del pedido, con el
+camino viejo como respaldo cuando Medusa no responde.
+
+**Pendientes (siguen leyendo copias del vault):**
+
+| Lector | Dato que duplica | Nota |
+|---|---|---|
+| `platform/whatsapp/capi_activity.py` + `shared/funnel.enqueue_capi_for_tag` | total y moneda del `Purchase` a Meta | el valor sale de `registered_order`; el lugar honesto para corregirlo es el flush del outbox (un solo punto, justo antes de enviar) |
+| `sales/use_cases/episode_lifecycle.py` (cierre por inactividad → `CartAbandoned`) | "pagado" por etiqueta | corre en el ingest de CADA mensaje: consultar Medusa ahí agrega latencia al bot. El watchdog (ya migrado) suele emitir primero y el outbox dedupea |
+| `plugins/ads/classification.py`, `marketing/domain/campaigns.py::segment_for_metadata` | estado "ganado" / segmento por etiqueta | es el estado de la CONVERSACIÓN (a quién le escribo), no el del pedido — migrar solo si el operador quiere audiencias por pago real |
+| `chats/shared/purchase_signals.py::has_purchase_confirmation` | "el cliente dijo que sí" | señal conversacional, no estado del pedido |
+| `plugins/reengagement/.../build_snapshot.py` | `has_registered_order` | |
+
+Los evals de `sales_eval` leen el tag a propósito: evalúan lo que hizo el bot,
+no el estado del pedido.
+
 ## Reglas al agregar un port (regla de oro del kit)
 
 Port nuevo ⇒ en el MISMO PR: el `Protocol` + su factory + su **fake** + su

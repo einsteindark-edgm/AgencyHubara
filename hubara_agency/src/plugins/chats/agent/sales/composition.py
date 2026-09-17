@@ -29,6 +29,9 @@ que cambia.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any
+
 import os
 
 from exoclaw_temporal.config import WorkspaceConfig
@@ -61,6 +64,19 @@ _INGEST_USE_CASE: IngestInboundMessage | None = None
 _DELIVERY_STATUS_USE_CASE: IngestDeliveryStatus | None = None
 _STANDBY_USE_CASE: IngestStandby | None = None
 _HANDOVER_USE_CASE: IngestHandover | None = None
+
+
+def build_session_metadata_store() -> FilesystemMetadataStore:
+    """Store de metadata de sesión del vault canónico, para tools que leen o
+    escriben `metadata.json` sin importar platform (R-DIP #7)."""
+    return FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
+
+
+def build_session_history_reader() -> Callable[[str], list[dict[str, Any]]]:
+    """`session_key -> eventos del historial JSONL` para tools que auditan lo
+    que el bot ya le escribió al cliente (`verify_order_for_checkout`, run
+    ebbc203d). Único lugar del plugin que conoce el store de platform (R-DIP)."""
+    return FilesystemMessageHistoryStore(WORKSPACE_VAULT_DIR).read_events
 
 
 def build_ingest_use_case() -> IngestInboundMessage:

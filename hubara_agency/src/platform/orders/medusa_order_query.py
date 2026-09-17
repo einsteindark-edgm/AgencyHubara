@@ -31,11 +31,12 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime
+from types import SimpleNamespace
 from typing import Any, cast
 
 from src.platform.medusa.client import HttpMedusaClient, MedusaAPIError
 from src.platform.medusa.settings import MedusaSettings
-from src.platform.orders import display_id_cache
+from src.platform.orders import display_id_cache, variant_matching
 from src.platform.bogota_time import bogota_day_iso
 from src.platform.orders.query_port import (
     OrderAddressDTO,
@@ -482,6 +483,7 @@ class MedusaOrderQuery:
 
         items_detail = [
             OrderItemDTO(
+                **_variant_match_fields(it, single_variant_handles),
                 title=str(it.get("title", "—")),
                 sku=it.get("sku") or it.get("variant_sku"),
                 quantity=int(it.get("quantity", 0)),
@@ -489,13 +491,6 @@ class MedusaOrderQuery:
                 total_cop=_to_int_cop(it.get("total", 0)) or (
                     _to_int_cop(it.get("unit_price", 0))
                     * int(it.get("quantity", 0))
-                ),
-                variant_label=(
-                    (it.get("metadata") or {}).get("variant_label")
-                    if isinstance(it.get("metadata"), dict) else None
-                ),
-                variant_label_mismatch=_compute_variant_mismatch(
-                    it, single_variant_handles
                 ),
                 thumbnail=it.get("thumbnail"),
                 handle=(
@@ -772,24 +767,53 @@ def _map_address(raw: Any) -> OrderAddressDTO | None:
     )
 
 
-def _compute_variant_mismatch(
+def _variant_match_fields(
     item: dict[str, Any], single_variant_handles: set[str]
-) -> bool:
-    """Lee `item.metadata.variant_label_mismatch` y aplica suppression para
-    productos de variante única.
+) -> dict[str, Any]:
+    """Campos de variante del `OrderItemDTO` a partir del line item.
 
-    Cuando el handle del item está en `single_variant_handles` (calculado
-    desde `order.metadata.variant_mismatches[].selected_variant_title ==
-    "Unico"`), forzamos `False` — el flag estaba puesto por la lógica vieja
-    que ahora sabemos era ruidosa para esta tienda (aromas/colores son tags).
+    * Suppression single-variant (2026-05-26): si el handle está en
+      `single_variant_handles` (`selected_variant_title == "Unico"`), el flag
+      viejo era ruido (aromas/colores son tags) → sin mismatch.
+    * Items escritos desde 2026-09-17 traen `variant_match_kind` → se leen tal
+      cual.
+    * Items legacy con flag y SIN kind: si el `variant_title` registrado
+      aparece dentro del label, el signo era correcto → `"partial"` sin
+      alarma (falsas alarmas #23-#31); si no, `"fallback_first_variant"`.
     """
-    item_meta = item.get("metadata") or {}
-    if not isinstance(item_meta, dict):
-        return False
-    handle = item_meta.get("handle")
+    meta = item.get("metadata")
+    meta = meta if isinstance(meta, dict) else {}
+    label = meta.get("variant_label")
+    selected = item.get("variant_title")
+    fields: dict[str, Any] = {
+        "variant_label": label,
+        "variant_label_mismatch": bool(meta.get("variant_label_mismatch")),
+        "variant_match_kind": meta.get("variant_match_kind"),
+        "selected_variant_title": selected,
+        "variant_unresolved_tokens": list(meta.get("variant_unresolved_tokens") or []),
+        "variant_unresolved_tag_kinds": list(
+            meta.get("variant_unresolved_tag_kinds") or []
+        ),
+    }
+    handle = meta.get("handle")
     if isinstance(handle, str) and handle in single_variant_handles:
-        return False
-    return bool(item_meta.get("variant_label_mismatch"))
+        fields["variant_label_mismatch"] = False
+        return fields
+    if not fields["variant_label_mismatch"] or fields["variant_match_kind"]:
+        return fields
+
+    if selected and isinstance(label, str) and label:
+        variant = SimpleNamespace(title=selected, options=[])
+        resolution = variant_matching.resolve([variant], [], label, 1)
+        if not resolution.is_mismatch:
+            fields.update(
+                variant_label_mismatch=False,
+                variant_match_kind=resolution.mismatch_kind,
+                variant_unresolved_tokens=list(resolution.unresolved_tokens),
+            )
+            return fields
+    fields["variant_match_kind"] = variant_matching.FALLBACK_FIRST_VARIANT
+    return fields
 
 
 def _build_timeline(

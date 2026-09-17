@@ -130,7 +130,8 @@ def test_campaigns_endpoint_unchanged_without_connection(monkeypatch, tmp_path) 
     ads = FakeMetaAds(campaigns=_META, metrics=_METRICS)
     client = _client(monkeypatch, tmp_path, store=InMemoryTokenStore(), ads=ads)
     body = client.get("/api/ads/campaigns?days=30").json()
-    assert body == {"campaigns": []}  # vault vacío y sin conexión → sin invento
+    # vault vacío y sin conexión → sin invento (sin pedidos que consultar)
+    assert body == {"campaigns": [], "orders_stale": False}
 
 
 def test_merge_fills_conversions_started() -> None:

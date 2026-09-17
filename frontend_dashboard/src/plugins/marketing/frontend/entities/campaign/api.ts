@@ -11,7 +11,9 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback } from "react";
 
+import { useDashboardEvents, useInvalidateOnReconnect } from "@/shared/api";
 import { apiClient } from "@/shared/sdk";
 
 import {
@@ -108,6 +110,7 @@ export function mapBackendStats(b: BackendCampaignStats): CampaignStats {
     replied: b.replied,
     attributedOrders: b.attributed_orders,
     attributedRevenueCop: b.attributed_revenue_cop,
+    ordersStale: b.orders_stale,
   };
 }
 
@@ -167,6 +170,21 @@ export function useCampaignStats(campaignId: string, enabled = true) {
     staleTime: 30_000,
     enabled: enabled && Boolean(campaignId),
   });
+}
+
+/**
+ * El revenue atribuido es el valor del pedido en Orders (OrderFacts, pedido
+ * #31): cuando una orden cambia (evento `orders` del stream) las stats se
+ * refetchean. La reconexión invalida por si se perdieron eventos.
+ */
+export function useCampaignOrdersEvents(): void {
+  const qc = useQueryClient();
+  const invalidate = useCallback(
+    () => qc.invalidateQueries({ queryKey: [...campaignKeys.all, "stats"] }),
+    [qc],
+  );
+  useDashboardEvents("orders", invalidate);
+  useInvalidateOnReconnect(invalidate);
 }
 
 /* ── Mutations ──────────────────────────────────────────────────────────── */

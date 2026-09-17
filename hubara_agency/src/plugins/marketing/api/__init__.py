@@ -12,6 +12,7 @@ import uuid
 from datetime import timedelta
 from typing import Any
 
+from anyio import from_thread
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
@@ -29,7 +30,11 @@ from src.plugins.marketing.domain.campaigns import (
 )
 from src.plugins.marketing.domain.logic import health_payload
 from src.sdk import get_task_queue
-from src.sdk.connectorkit import FilesystemAttributionStore, get_catalog_client
+from src.sdk.connectorkit import (
+    FilesystemAttributionStore,
+    OrderFactsSnapshot,
+    get_catalog_client,
+)
 from src.sdk.messagingkit import (
     get_current_rate_card,
     send_template_to_session,
@@ -356,6 +361,31 @@ async def test_send(campaign_id: str, body: TestSendBody) -> dict:
     return {"ok": True, "session_id": session_id}
 
 
+def get_order_facts_port():
+    """Provider a nivel módulo (lazy + monkeypatcheable en tests).
+
+    El import va DENTRO: `src.sdk.connectorkit.get_order_facts_port` arrastra
+    la composición de Medusa, y este módulo tiene que poder importarse sin
+    vendors (gate `test_sdk_lazy_surface`).
+    """
+    from src.sdk.connectorkit import get_order_facts_port as _factory
+
+    return _factory()
+
+
+def _order_facts(order_ids: set[str]) -> OrderFactsSnapshot:
+    """Valor canónico (Orders) de los pedidos atribuidos — pedido #31.
+    Endpoint sync → cruza al event loop con `anyio.from_thread`. Falla →
+    todo `unresolved` (usa la copia congelada) + `stale` (la UI avisa)."""
+    if not order_ids:
+        return OrderFactsSnapshot()
+    try:
+        return from_thread.run(get_order_facts_port().get_facts, order_ids)
+    except Exception:  # noqa: BLE001
+        log.exception("marketing: no pude leer OrderFacts — uso totales congelados")
+        return OrderFactsSnapshot(unresolved=frozenset(order_ids), stale=True)
+
+
 @router.get("/campaigns/{campaign_id}/stats")
 def get_campaign_stats(campaign_id: str) -> dict:
     """Resultado del envío + atribución (respuestas / ventas) de la campaña."""
@@ -364,7 +394,14 @@ def get_campaign_stats(campaign_id: str) -> dict:
         (s.session_id, s.metadata)
         for s in FilesystemAttributionStore(WORKSPACE_VAULT_DIR).scan_sessions()
     ]
-    attribution = campaign_stats(campaign, sessions)
+    order_ids = {
+        ep["order_id"]
+        for _sid, md in sessions
+        for ep in md.get("episodes") or []
+        if isinstance(ep, dict) and isinstance(ep.get("order_id"), str) and ep["order_id"]
+    }
+    facts = _order_facts(order_ids)
+    attribution = campaign_stats(campaign, sessions, order_facts=facts)
     send_result = campaign.get("send_result") or {}
     return {
         "campaign_id": campaign_id,
@@ -376,6 +413,7 @@ def get_campaign_stats(campaign_id: str) -> dict:
         "unit_cost_usd_micros": send_result.get("unit_cost_usd_micros"),
         "spent_usd_micros": send_result.get("spent_usd_micros"),
         **attribution,
+        "orders_stale": facts.stale,
     }
 
 

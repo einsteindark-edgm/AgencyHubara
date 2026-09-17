@@ -16,9 +16,15 @@
  * `dataPending`. `revenue`/`avg_ticket` (orders) y el costo LLM ya se pueblan.
  */
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback } from "react";
 
-import { ApiError, apiClient } from "@/shared/api";
+import {
+  ApiError,
+  apiClient,
+  useDashboardEvents,
+  useInvalidateOnReconnect,
+} from "@/shared/api";
 
 import {
   backendAdCreativeSchema,
@@ -267,18 +273,28 @@ function windowQuery(p: AdsWindowParams, adsetId?: string | null): string {
  * agregación solo procesa episodios en rango → el cómputo escala con la
  * ventana, no con todo el historial. `null` = todo.
  */
-export function useAdsCampaigns(params: AdsWindowParams) {
-  return useQuery<AdsCampaign[]>({
+function campaignsQuery(params: AdsWindowParams) {
+  return {
     queryKey: adsCampaignKeys.list(params),
-    queryFn: async ({ signal }) => {
+    queryFn: async ({ signal }: { signal: AbortSignal }) => {
       const raw = await apiClient.get<unknown>(
         `/api/ads/campaigns${windowQuery(params)}`,
         { signal },
       );
       const parsed = backendAdsCampaignsResponseSchema.parse(raw);
-      return parsed.campaigns.map(mapBackendCampaign);
+      return {
+        campaigns: parsed.campaigns.map(mapBackendCampaign),
+        ordersStale: parsed.orders_stale,
+      };
     },
     staleTime: 30_000,
+  };
+}
+
+export function useAdsCampaigns(params: AdsWindowParams) {
+  return useQuery({
+    ...campaignsQuery(params),
+    select: (d): AdsCampaign[] => d.campaigns,
   });
 }
 
@@ -287,6 +303,31 @@ export function useAdsCampaigns(params: AdsWindowParams) {
  * El backend traduce el id agrupado al set de ads correspondiente. Si la
  * campaña no existe → `conversations: []`. `days` acota la ventana.
  */
+/**
+ * `true` si el backend avisó que el valor de algún pedido no está al día
+ * (Orders/Medusa no respondió → se muestra el último valor conocido).
+ * Comparte la query de `useAdsCampaigns` (misma key → un solo fetch).
+ */
+export function useAdsOrdersStale(params: AdsWindowParams): boolean {
+  return useQuery({ ...campaignsQuery(params), select: (d) => d.ordersStale })
+    .data ?? false;
+}
+
+/**
+ * El revenue de Ads es el valor del pedido en Orders (OrderFacts, pedido #31):
+ * cuando una orden cambia (evento `orders` del stream) las métricas de Ads se
+ * refetchean. La reconexión invalida por si se perdieron eventos en el gap.
+ */
+export function useAdsOrdersEvents(): void {
+  const qc = useQueryClient();
+  const invalidate = useCallback(
+    () => qc.invalidateQueries({ queryKey: adsCampaignKeys.all }),
+    [qc],
+  );
+  useDashboardEvents("orders", invalidate);
+  useInvalidateOnReconnect(invalidate);
+}
+
 export function useAttributedConversations(
   campaignId: string,
   params: AdsWindowParams,
