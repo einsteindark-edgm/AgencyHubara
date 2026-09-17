@@ -77,6 +77,20 @@ class ConfirmPaymentCommand:
 
 
 @dataclass(frozen=True)
+class ReversePaymentCommand:
+    """Reversar un pago confirmado por error operativo.
+
+    Deja el pedido de nuevo como NO pagado: si Medusa tiene el pago
+    capturado lo reembolsa (el `mark-as-paid` manual no se puede
+    "des-capturar"), apaga `hubara_payment_confirmed` y devuelve el chat a
+    "pago pendiente de verificar". `reason` queda en el history.
+    """
+    order_id: str
+    reason: str | None = None
+    by: str = "human"
+
+
+@dataclass(frozen=True)
 class CancelOrderCommand:
     """Cancelar la orden. Transición a `cancelled` con `force=True` porque
     el destino es alcanzable desde cualquier estado no terminal.
@@ -142,6 +156,10 @@ class OrderCommandPort(Protocol):
 
     async def confirm_payment(
         self, command: ConfirmPaymentCommand
+    ) -> OrderCommandResult: ...
+
+    async def reverse_payment(
+        self, command: ReversePaymentCommand
     ) -> OrderCommandResult: ...
 
     async def cancel_order(

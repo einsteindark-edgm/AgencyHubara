@@ -62,7 +62,8 @@ interface TimelineStep {
  * history + el stage actual. Reglas:
  *
  *   * Paso "Orden creada" siempre presente (timestamp = created_at_ms).
- *   * Paso "Pago confirmado" solo si hay evento `payment_confirmed` real.
+ *   * Paso de pago solo si hay evento real: "Pago confirmado" o "Pago
+ *     reversado", según cuál sea el último (`payment_*` del history).
  *     Es ortogonal al stage operacional (independiente del kanban column).
  *   * Stages "En preparación", "Lista para envío", "En camino", "Entregada"
  *     son la pipeline canónica. `done` si el stage actual está más adelante,
@@ -116,12 +117,16 @@ function buildTimelineSteps(
     detail: null,
   });
 
-  // 2. Pago confirmado — solo si hay evento.
-  const payment = evByType.get("payment_confirmed");
+  // 2. Pago — el ÚLTIMO evento de pago manda: tras "Reversar pago" el paso
+  //    dice "Pago reversado"; si después se re-confirma, vuelve a confirmado.
+  const payment = [...events]
+    .reverse()
+    .find((e) => e.type === "payment_confirmed" || e.type === "payment_reversed");
   if (payment) {
+    const isReversed = payment.type === "payment_reversed";
     steps.push({
-      key: "payment_confirmed",
-      label: "Pago confirmado",
+      key: payment.type,
+      label: isReversed ? "Pago reversado" : "Pago confirmado",
       state: "done",
       timestamp_ms: payment.timestamp_ms,
       detail: payment.detail,

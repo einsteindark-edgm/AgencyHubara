@@ -53,6 +53,8 @@ from src.platform.orders.state import (  # noqa: F401 (re-exposed via module use
     META_KEY_HISTORY,
     META_KEY_HUMAN_NOTE,
     META_KEY_PAYMENT_CONFIRMED,
+    META_KEY_PAYMENT_CONFIRMED_AT_MS,
+    META_KEY_PAYMENT_REVERSED_AT_MS,
     META_KEY_SCHEDULED_DELIVERY_ISO,
     META_KEY_SCHEDULED_DELIVERY_TIME,
     META_KEY_STAGE,
@@ -84,6 +86,7 @@ _STAGE_LABELS: dict[str, str] = {
 # Labels human-readable para `event` no-transitional del history.
 _EVENT_LABELS: dict[str, str] = {
     "payment_confirmed": "Pago confirmado",
+    "payment_reversed": "Pago reversado",
     "schedule_updated": "Reagendado",
 }
 
@@ -372,15 +375,10 @@ class MedusaOrderQuery:
                 is_draft=is_draft,
             )
 
-        # ---- pay_status mapping ----
-        # `hubara_payment_confirmed` flag (escrito por click "Confirmar pago"
-        # del humano) trumpea el `payment_status` raw de Medusa — porque hoy
-        # Medusa no tiene gateway integrado y reporta `not_paid` para todo.
-        # Cuando integremos gateway, podemos volver a `_map_pay_status`.
-        if metadata.get(META_KEY_PAYMENT_CONFIRMED) is True:
-            pay_status: OrderPayStatus = "paid"
-        else:
-            pay_status = _map_pay_status(raw.get("payment_status"))
+        # ---- pay_status mapping ---- (flag Hubara × Medusa, ver resolver)
+        pay_status: OrderPayStatus = resolve_pay_status(
+            metadata, raw.get("payment_status")
+        )
         pay_type: OrderPayType = (
             "cod" if metadata.get("payment_method") == "cash_on_delivery"
             else "confirmed"
@@ -711,6 +709,44 @@ def _map_status(
     return "new"
 
 
+_REFUND_STATUSES = ("refunded", "partially_refunded")
+
+
+def resolve_pay_status(
+    metadata: dict[str, Any], payment_status: Any
+) -> OrderPayStatus:
+    """Estado de pago que ve el dashboard (y los agentes vía `pay_status`).
+
+    Combina el flag de Hubara con el `payment_status` real de Medusa:
+
+      * Flag `hubara_payment_confirmed` → "paid" (Medusa sin gateway reporta
+        `not_paid` para pagos manuales viejos), SALVO que Medusa tenga un
+        refund que Hubara no originó: pedido #32 (2026-09-17), confirmado
+        por error y reembolsado desde Medusa Admin → manda Medusa.
+      * Reversa desde el dashboard (`hubara_payment_reversed_at_ms`, flag
+        apagado) → "pending": fue un error operativo, no un reembolso real.
+      * Re-confirmación posterior a una reversa: Medusa v2 queda en
+        `partially_refunded` para siempre (`getLastPaymentStatus` mira el
+        refund viejo primero) → gana el timestamp de confirmación.
+    """
+    reversed_at = metadata.get(META_KEY_PAYMENT_REVERSED_AT_MS)
+    reversed_at = reversed_at if isinstance(reversed_at, (int, float)) else None
+    if metadata.get(META_KEY_PAYMENT_CONFIRMED) is True:
+        if payment_status not in _REFUND_STATUSES:
+            return "paid"
+        confirmed_at = metadata.get(META_KEY_PAYMENT_CONFIRMED_AT_MS)
+        if (
+            reversed_at is not None
+            and isinstance(confirmed_at, (int, float))
+            and confirmed_at > reversed_at
+        ):
+            return "paid"
+        return _map_pay_status(payment_status)
+    if reversed_at is not None and payment_status in (*_REFUND_STATUSES, "not_paid", None):
+        return "pending"
+    return _map_pay_status(payment_status)
+
+
 def _map_pay_status(payment_status: Any) -> OrderPayStatus:
     """Medusa payment_status → frontend payStatus."""
     if payment_status in ("captured", "authorized"):
@@ -895,6 +931,7 @@ __all__ = [
     # Helpers exportados solo para tests
     "_map_status",
     "_map_pay_status",
+    "resolve_pay_status",
     "_initials",
     "_color_from_id",
     "_to_int_cop",

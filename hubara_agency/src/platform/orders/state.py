@@ -65,6 +65,9 @@ META_KEY_HUMAN_NOTE = "hubara_human_note"
 META_KEY_PAYMENT_CONFIRMED = "hubara_payment_confirmed"
 META_KEY_PAYMENT_CONFIRMED_AT_MS = "hubara_payment_confirmed_at_ms"
 META_KEY_PAYMENT_CONFIRMED_BY = "hubara_payment_confirmed_by"
+META_KEY_PAYMENT_REVERSED_AT_MS = "hubara_payment_reversed_at_ms"
+META_KEY_PAYMENT_REVERSED_BY = "hubara_payment_reversed_by"
+META_KEY_PAYMENT_REVERSED_REASON = "hubara_payment_reversed_reason"
 META_KEY_CANCELLED_REASON = "hubara_cancelled_reason"
 
 
@@ -351,6 +354,46 @@ def build_confirm_payment_patch(
         META_KEY_PAYMENT_CONFIRMED: True,
         META_KEY_PAYMENT_CONFIRMED_AT_MS: ts_ms,
         META_KEY_PAYMENT_CONFIRMED_BY: by,
+        META_KEY_HISTORY: history,
+    }
+
+
+def build_reverse_payment_patch(
+    metadata: dict[str, Any] | None,
+    *,
+    by: str = "human",
+    reason: str | None = None,
+    now_ms: int | None = None,
+) -> dict[str, Any]:
+    """Patch para reversar un pago confirmado por error operativo.
+
+    Apaga `hubara_payment_confirmed` (en False, no borrado: el merge-patch
+    de Medusa conserva las keys ausentes) y deja la marca de reversa que
+    `resolve_pay_status` usa para mostrar "pending" aunque Medusa quede en
+    `refunded`. `hubara_payment_confirmed_at_ms` se conserva: si el
+    operador vuelve a confirmar, el nuevo timestamp supera al de reversa.
+
+    NO transiciona stage — igual que confirmar, el pago es ortogonal.
+    """
+    current_metadata = metadata or {}
+    ts_ms = now_ms if now_ms is not None else int(time.time() * 1000)
+    stage = read_stage(current_metadata)
+    history = list(current_metadata.get(META_KEY_HISTORY) or [])
+    entry: dict[str, Any] = {
+        "from": stage,
+        "to": stage,
+        "at_ms": ts_ms,
+        "by": by,
+        "event": "payment_reversed",
+    }
+    if reason:
+        entry["note"] = reason
+    history.append(entry)
+    return {
+        META_KEY_PAYMENT_CONFIRMED: False,
+        META_KEY_PAYMENT_REVERSED_AT_MS: ts_ms,
+        META_KEY_PAYMENT_REVERSED_BY: by,
+        META_KEY_PAYMENT_REVERSED_REASON: reason or "",
         META_KEY_HISTORY: history,
     }
 
