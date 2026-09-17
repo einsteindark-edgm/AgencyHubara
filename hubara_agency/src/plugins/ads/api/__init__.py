@@ -33,11 +33,13 @@ vive acá (capa API) — NO en el use case, que sigue puro (R-STATELESS): con
 """
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import asdict
 from pathlib import Path as FsPath
 from typing import Any
 
+from anyio import from_thread
 from fastapi import APIRouter, HTTPException, Path, Query
 
 from src.plugins.ads.agent_referrals import AGENT_SOURCES, count_agent_referrals
@@ -48,12 +50,17 @@ from src.plugins.ads.aggregation import (
     list_attributed_conversations,
     list_daily_series,
     scan_ad_sessions,
+    session_order_ids,
 )
 from src.plugins.ads.api.analysis import router as _analysis_router
 from src.plugins.ads.api.meta_oauth import router as _meta_router
 from src.plugins.ads.meta_merge import merge_meta_campaigns
 from src.plugins.ads.meta_names import fetch_meta_ad_names
-from src.sdk.connectorkit import meta_marketing_token
+from src.sdk.connectorkit import (
+    OrderFactsSnapshot,
+    get_order_facts_port,
+    meta_marketing_token,
+)
 from src.plugins.ads.segmentation import (
     collect_source_ids,
     fill_ad_creatives,
@@ -67,6 +74,7 @@ from src.plugins.ads.segmentation import (
 from src.sdk.runtime import WORKSPACE_VAULT_DIR
 
 router = APIRouter()
+log = logging.getLogger(__name__)
 
 # Buzón de análisis con IA (`/api/ads/analysis/*`): dispara el pod `ads-analytics` de
 # GraphAgents y relaya el progreso por SSE. Sub-router aparte (runs/orchestrator), montado
@@ -337,6 +345,25 @@ def _cached_sessions(since_ms: int | None) -> list[tuple[FsPath, dict[str, Any]]
     return data
 
 
+def _order_facts(sessions: list[tuple[FsPath, dict[str, Any]]]) -> OrderFactsSnapshot:
+    """Datos canónicos (Orders) de los pedidos vinculados a estas sesiones.
+
+    Pedido #31: el revenue de Ads es el valor del pedido en Orders, no la copia
+    congelada en el chat. Los endpoints son sync (threadpool) → se cruza al
+    event loop con `anyio.from_thread`. Cualquier falla degrada honesto: todo
+    `unresolved` (el agregador usa el total congelado) y `stale=True` (la UI
+    avisa "valores sin actualizar").
+    """
+    ids = session_order_ids(sessions)
+    if not ids:
+        return OrderFactsSnapshot()
+    try:
+        return from_thread.run(get_order_facts_port().get_facts, ids)
+    except Exception:  # noqa: BLE001 — Medusa/config caída no tumba el tablero
+        log.exception("ads: no pude leer OrderFacts — uso totales congelados")
+        return OrderFactsSnapshot(unresolved=frozenset(ids), stale=True)
+
+
 @router.get("/agent-referrals")
 def get_agent_referrals(
     days: int | None = Query(
@@ -415,11 +442,14 @@ def get_ads_campaigns(
       }
     """
     since_ms, until_ms = _window(days, frm, to)
+    sessions = _cached_sessions(since_ms)
+    facts = _order_facts(sessions)
     campaigns = list_ads_campaigns(
         WORKSPACE_VAULT_DIR,
-        sessions=_cached_sessions(since_ms),
+        sessions=sessions,
         since_ms=since_ms,
         until_ms=until_ms,
+        order_facts=facts,
     )
     # Agrupación jerárquica (segmentación 2026-07-10): los buckets del vault
     # son por AD (source_id del referral); el resolver ad→{campaña, adset}
@@ -438,7 +468,10 @@ def get_ads_campaigns(
     metas, metrics = _cached_meta_campaigns(since_ms, until_ms)
     if metas or metrics:
         campaigns = merge_meta_campaigns(campaigns, metas, metrics)
-    return {"campaigns": [asdict(c) for c in campaigns]}
+    return {
+        "campaigns": [asdict(c) for c in campaigns],
+        "orders_stale": facts.stale,
+    }
 
 
 @router.get("/campaigns/{campaign_id}/conversations")
@@ -505,10 +538,12 @@ def get_ads_campaign_conversations(
         until_ms=until_ms,
         # scope vacío = id sin resolver → id crudo (source_id legacy / direct)
         source_ids=scope or None,
+        order_facts=(facts := _order_facts(sessions)),
     )
     return {
         "campaign_id": campaign_id,
         "conversations": [asdict(c) for c in convs],
+        "orders_stale": facts.stale,
     }
 
 
@@ -606,12 +641,15 @@ def get_ads_campaign_adsets(
     names = _scope_names(sessions)
     scope = scope_source_ids(names, campaign_id=campaign_id)
     rows = []
+    facts = OrderFactsSnapshot()
     if scope:
+        facts = _order_facts(sessions)
         buckets = list_ads_campaigns(
             WORKSPACE_VAULT_DIR,
             sessions=sessions,
             since_ms=since_ms,
             until_ms=until_ms,
+            order_facts=facts,
         )
         members = [b for b in buckets if b.id in scope]
         rows = group_buckets_by_adset(members, names)
@@ -621,7 +659,11 @@ def get_ads_campaign_adsets(
     ]
     if metrics:
         rows = merge_meta_adsets(rows, metrics)
-    return {"campaign_id": campaign_id, "ad_sets": [asdict(r) for r in rows]}
+    return {
+        "campaign_id": campaign_id,
+        "ad_sets": [asdict(r) for r in rows],
+        "orders_stale": facts.stale,
+    }
 
 
 @router.get("/campaigns/{campaign_id}/adsets/{adset_id}/ads")
@@ -653,12 +695,15 @@ def get_ads_adset_ads(
     names = _scope_names(sessions)
     scope = scope_source_ids(names, campaign_id=campaign_id, adset_id=adset_id)
     rows = []
+    facts = OrderFactsSnapshot()
     if scope:
+        facts = _order_facts(sessions)
         buckets = list_ads_campaigns(
             WORKSPACE_VAULT_DIR,
             sessions=sessions,
             since_ms=since_ms,
             until_ms=until_ms,
+            order_facts=facts,
         )
         members = [b for b in buckets if b.id in scope]
         rows = group_buckets_by_ad(members, names)
@@ -675,7 +720,12 @@ def get_ads_adset_ads(
     )
     if missing:
         rows = fill_ad_creatives(rows, _cached_meta_names(missing))
-    return {"campaign_id": campaign_id, "adset_id": adset_id, "ads": [asdict(r) for r in rows]}
+    return {
+        "campaign_id": campaign_id,
+        "adset_id": adset_id,
+        "ads": [asdict(r) for r in rows],
+        "orders_stale": facts.stale,
+    }
 
 
 @router.get("/ads/{ad_id}/creative")

@@ -42,6 +42,7 @@ from src.plugins.ads.classification import (
     classify_episode_state,
     classify_state,
 )
+from src.sdk.connectorkit import OrderFactsSnapshot
 from src.sdk.connectorkit import (
     FilesystemAttributionStore,
     matching_campaign_touch,
@@ -583,6 +584,23 @@ def _session_capi_by_episode(
     return out
 
 
+def session_order_ids(sessions: list[tuple[Path, dict[str, Any]]]) -> set[str]:
+    """Ids de pedidos vinculados a las sesiones (episodios + registered_order).
+
+    El vault es la fuente del VÍNCULO conversación→pedido; el VALOR del pedido
+    se pide con estos ids a `OrderFacts` (pedido #31)."""
+    ids: set[str] = set()
+    for _session_dir, metadata in sessions:
+        for ep in metadata.get("episodes") or []:
+            if isinstance(ep, dict) and isinstance(ep.get("order_id"), str):
+                ids.add(ep["order_id"])
+        reg = metadata.get("registered_order")
+        if isinstance(reg, dict) and isinstance(reg.get("order_id"), str):
+            ids.add(reg["order_id"])
+    ids.discard("")
+    return ids
+
+
 def _session_order_totals(metadata: dict[str, Any]) -> dict[str, int]:
     """Map `order_id → total_cop` recuperable del metadata de la sesión.
 
@@ -606,15 +624,36 @@ def _session_order_totals(metadata: dict[str, Any]) -> dict[str, int]:
 
 
 def _episode_revenue_cop(
-    episode: dict[str, Any] | None, order_totals: dict[str, int]
+    episode: dict[str, Any] | None,
+    order_totals: dict[str, int],
+    order_facts: OrderFactsSnapshot | None = None,
 ) -> int | None:
     """Ingreso (COP major units) atribuido a un episodio, o None si no hay venta.
 
-    Prioridad:
-      1. `episode.order_total_cop` (frozen al cierre — fuente canónica).
+    Con `order_facts` (los endpoints siempre lo pasan): el valor es el del
+    pedido en Orders — total vivo, y solo si está pagado y no cancelado. La
+    copia del vault (`episode.order_total_cop` / `registered_order.total_cop`)
+    solo se usa si Medusa no pudo responder por ese pedido.
+
+    Sin `order_facts` (uso puro legacy / tests viejos), prioridad:
+      1. `episode.order_total_cop` (frozen al cierre).
       2. Backfill: `order_totals[episode.order_id]` (registered_order legacy).
       3. Legacy sin episodes[]: el total del único registered_order de la sesión.
     """
+    if order_facts is not None:
+        if episode is not None:
+            oid = episode.get("order_id")
+            if not isinstance(oid, str) or not oid:
+                return None
+            frozen = episode.get("order_total_cop")
+            if not isinstance(frozen, (int, float)) or isinstance(frozen, bool):
+                frozen = order_totals.get(oid)
+            return order_facts.revenue_cop(oid, frozen_total=frozen)
+        values = [
+            v for oid, total in order_totals.items()
+            if (v := order_facts.revenue_cop(oid, frozen_total=total)) is not None
+        ]
+        return sum(values) if values else None
     if episode is not None:
         frozen = episode.get("order_total_cop")
         if isinstance(frozen, (int, float)) and not isinstance(frozen, bool):
@@ -667,6 +706,7 @@ def list_ads_campaigns(
     sessions: list[tuple[Path, dict[str, Any]]] | None = None,
     since_ms: int | None = None,
     until_ms: int | None = None,
+    order_facts: OrderFactsSnapshot | None = None,
 ) -> list[AdsCampaignSummary]:
     """Lista de campañas únicas detectadas en el vault.
 
@@ -770,7 +810,7 @@ def list_ads_campaigns(
 
             # Ingreso atribuido (frozen en el episodio, backfill desde
             # registered_order). Solo episodios con venta aportan.
-            rev = _episode_revenue_cop(ep, order_totals)
+            rev = _episode_revenue_cop(ep, order_totals, order_facts)
             if rev is not None:
                 bucket["revenue"] += rev
                 bucket["revenue_count"] += 1
@@ -885,6 +925,7 @@ def list_attributed_conversations(
     since_ms: int | None = None,
     until_ms: int | None = None,
     source_ids: frozenset[str] | None = None,
+    order_facts: OrderFactsSnapshot | None = None,
 ) -> list[AdsAttributedConversation]:
     """Conversaciones WhatsApp atribuidas a una campaña.
 
@@ -991,7 +1032,7 @@ def list_attributed_conversations(
                     state=state,
                     # Valor de la venta atribuida (frozen en el episodio,
                     # backfill desde registered_order) + duración del episodio.
-                    value=_episode_revenue_cop(ep, order_totals),
+                    value=_episode_revenue_cop(ep, order_totals, order_facts),
                     duration_ms=_episode_duration_ms(ep),
                     llm_cost_usd=(
                         _usage.get("cost_usd") if isinstance(_usage, dict) else None
