@@ -894,10 +894,54 @@ class TestCatalogContents:
             contents=[{"id": "HUB-CUBOLOVE", "quantity": 1, "item_price": 21000}],
         )
         assert event.to_dict()["custom_data"] == {
+            "currency": "COP",
             "content_type": "product",
             "content_ids": ["HUB-CUBOLOVE"],
             "contents": [{"id": "HUB-CUBOLOVE", "quantity": 1, "item_price": 21000}],
         }
+
+    def test_item_price_without_value_still_carries_currency(self) -> None:
+        """Meta rechaza ``contents[].item_price`` sin ``currency``: HTTP 400,
+        code 100, subcode 2804023 ("Item Price Parameter Missing Currency").
+        Visto en prod 2026-09-16 16:50Z con el ViewContent de
+        ``flush_ui_intents:product_detail`` (event_id
+        ``viewcontent_wa_<wa_id>_ep_001``) — el error no es transitorio y el
+        evento se pierde."""
+        from src.platform.whatsapp.capi import DEFAULT_CURRENCY, build_capi_event
+
+        event = build_capi_event(
+            event_name="ViewContent",
+            event_time=1700000000,
+            event_id="viewcontent_x",
+            waba_id="W",
+            ctwa_clid="C",
+            value=None,
+            contents=[{"id": "HUB-X", "quantity": 1, "item_price": 35000}],
+        )
+        custom = event.custom_data.to_dict()
+        assert custom["currency"] == DEFAULT_CURRENCY == "COP"
+        assert "value" not in custom
+        assert custom["contents"] == [{"id": "HUB-X", "quantity": 1, "item_price": 35000}]
+
+    def test_item_price_respects_explicit_currency(self) -> None:
+        from src.platform.whatsapp.capi import build_capi_event
+
+        event = build_capi_event(
+            event_name="ViewContent", event_time=1, event_id="v", waba_id="W", ctwa_clid="C",
+            currency="USD",
+            contents=[{"id": "HUB-X", "quantity": 1, "item_price": 10}],
+        )
+        assert event.to_dict()["custom_data"]["currency"] == "USD"
+
+    def test_contents_without_item_price_do_not_add_currency(self) -> None:
+        """products_list (HTTP 200 en prod) no lleva precio: payload intacto."""
+        from src.platform.whatsapp.capi import build_capi_event
+
+        event = build_capi_event(
+            event_name="ViewContent", event_time=1, event_id="v", waba_id="W", ctwa_clid="C",
+            contents=[{"id": "HUB-A"}, {"id": "HUB-B"}],
+        )
+        assert "currency" not in event.to_dict()["custom_data"]
 
     def test_purchase_carries_value_order_id_and_contents(self) -> None:
         from src.platform.whatsapp.capi import build_capi_event

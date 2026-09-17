@@ -407,6 +407,32 @@ class TestContentsThroughOutbox:
         assert _read(path).get("capi_outbox", []) == []
 
     @pytest.mark.asyncio
+    async def test_flush_view_content_with_item_price_posts_currency(self, tmp_path: Path) -> None:
+        """La entry de product_detail se encola sin value/currency
+        (currency=None persistido); el replay debe salir con currency o Meta
+        la rechaza con subcode 2804023 (prod 2026-09-16, event_id
+        ``viewcontent_wa_<wa_id>_ep_001``)."""
+        md = _attributed()
+        enqueue_capi_event(
+            md,
+            event_name="ViewContent",
+            session_id=SESSION,
+            episode_id="ep_001",
+            source="flush_ui_intents:product_detail",
+            now_ms=NOW_MS,
+            contents=[{"retailer_id": "HUB-X", "quantity": 1, "unit_price_cop": 35000}],
+        )
+        assert md["capi_outbox"][0]["currency"] is None
+        _seed(tmp_path, md)
+        poster = _FakePoster([])
+        result = await flush_capi_outbox(SESSION, config=_cfg(tmp_path), post=poster, now_ms=NOW_MS)
+        assert result.sent == 1
+        custom = poster.calls[0]["body"]["data"][0]["custom_data"]
+        assert custom["currency"] == "COP"
+        assert "value" not in custom
+        assert custom["contents"] == [{"id": "HUB-X", "quantity": 1, "item_price": 35000}]
+
+    @pytest.mark.asyncio
     async def test_flush_posts_order_id_for_purchase(self, tmp_path: Path) -> None:
         md = _attributed()
         enqueue_capi_event(
