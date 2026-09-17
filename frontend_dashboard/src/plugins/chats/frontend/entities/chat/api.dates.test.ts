@@ -35,6 +35,7 @@ function makeSession(overrides: Partial<ChatSession> = {}): ChatSession {
     active_agent_route: "ventas",
     phone_number_id: null,
     pending_payment_order_id: null,
+    order_ref: null,
     last_updated_timestamp: LATE_NIGHT_UNIX,
     last_inbound_ms: null,
     origin: null,

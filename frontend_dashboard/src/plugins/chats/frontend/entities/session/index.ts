@@ -1,12 +1,14 @@
 export type {
   ChatSession,
   SessionDetails,
+  SessionOrderRef,
   SessionOrigin,
   StatusHistoryEntry,
 } from "./model";
 export {
   chatSessionSchema,
   sessionDetailsSchema,
+  sessionOrderRefSchema,
   sessionOriginSchema,
   sessionsListResponseSchema,
   statusHistoryEntrySchema,

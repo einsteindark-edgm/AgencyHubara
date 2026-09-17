@@ -11,6 +11,34 @@ export type ChatTag = "HUMANO" | "INTERESADO" | "PENDIENTE" | "CLIENTE" | "REMAR
 export type AvatarColor = "purple" | "blue" | "green" | "orange" | "pink" | "teal" | "gray";
 export type Presence = "online" | "away" | "off";
 
+/**
+ * Chip de pedido de la fila: a qué orden pertenece esta conversación y en qué
+ * punto va el pago. `null` mientras no haya pedido registrado.
+ *
+ * El estado es el del PAGO, no el logístico (preparando / listo / en camino):
+ * eso vive en Medusa y lo muestra el panel de pedidos del chat. La bandeja se
+ * arma con el metadata del vault, sin una llamada a Medusa por fila.
+ */
+export interface ChatOrderBadge {
+  /** Lo que se lee en el chip: "#31", o "…B3XY9Z" si no hubo display_id. */
+  label: string;
+  orderId: string;
+  payment: "pending" | "confirmed" | "cancelled";
+  /** Pedidos exitosos del cliente en esta sesión (>1 → el chip suma "+N"). */
+  count: number;
+}
+
+/** Texto y tono de cada estado de pago. El texto NO es decorativo: va al
+ *  `aria-label` del chip, para que el estado no viaje sólo en el color. */
+export const ORDER_BADGE_META: Record<
+  ChatOrderBadge["payment"],
+  { label: string; tone: string }
+> = {
+  pending: { label: "pago por verificar", tone: "pending" },
+  confirmed: { label: "pago confirmado", tone: "confirmed" },
+  cancelled: { label: "pedido cancelado", tone: "cancelled" },
+};
+
 export interface ChatInboxItem {
   id: string;
   name: string;
@@ -29,6 +57,8 @@ export interface ChatInboxItem {
   /** Epoch ms del último mensaje DEL CLIENTE (null si nunca escribió). Solo
    *  avanza cuando escribe el cliente — dispara el sonido de la bandeja. */
   lastInboundMs: number | null;
+  /** Pedido al que pertenece la conversación, o null. */
+  order: ChatOrderBadge | null;
   tag: ChatTag;
   tagClass: string;
   color: AvatarColor;
@@ -38,6 +68,10 @@ export interface ChatInboxItem {
   human?: boolean;
   handoffReason?: string;
 }
+
+import type { ChatEvent } from "@plugins/chats/frontend/entities/message";
+
+export type { ChatEvent };
 
 export type MessageKind = "in" | "out" | "day" | "system" | "tag" | "audio";
 
@@ -84,6 +118,9 @@ export interface ChatMessageItem {
   documentName?: string;
   /** Presente cuando el mensaje es un reply que cita otro mensaje. */
   replyTo?: ChatQuote;
+  /** Forma real del mensaje detrás del marker del historial (botones,
+   *  foto con caption + visión, tap, reacción). Ausente = mensaje normal. */
+  event?: ChatEvent;
 }
 
 export interface MemoryItem {

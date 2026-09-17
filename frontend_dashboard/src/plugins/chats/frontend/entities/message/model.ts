@@ -13,6 +13,22 @@ export type MessageUiType =
   /** Envío no-textual del bot (catálogo, flow, botones…) — nota de sistema. */
   | "ui_component_sent";
 
+/** Forma real del mensaje detrás del marker (ver `chatEventSchema`). */
+export type ChatEvent =
+  | {
+      kind: "bot_buttons";
+      body: string | null;
+      buttons: { title: string; touched?: boolean }[];
+    }
+  | { kind: "button_tap"; title: string }
+  | {
+      kind: "customer_photo";
+      vision: string | null;
+      caption: string | null;
+      receipt: boolean;
+    }
+  | { kind: "reaction"; emoji: string | null; author: "user" | "bot" };
+
 /** "human" = operador humano via dashboard handoff (no es el bot ni el cliente). */
 export type MessageSender = "user" | "agent" | "human";
 
@@ -37,6 +53,8 @@ export interface ChatMessage {
   document_filename?: string;
   /** id de Meta del mensaje. */
   wamid?: string;
+  /** Forma real del mensaje detrás del marker, o ausente. */
+  event?: ChatEvent;
   /** Mensaje citado por el cliente (reply). Solo `id` si no se resolvió. */
   reply_to?: {
     id: string;

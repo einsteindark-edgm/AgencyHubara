@@ -12,7 +12,12 @@
  * es la página `Dashboard`.
  */
 
-import { useChatInbox, type ChatInboxItem } from "@plugins/chats/frontend/entities/chat";
+import {
+  ORDER_BADGE_META,
+  useChatInbox,
+  type ChatInboxItem,
+  type ChatOrderBadge,
+} from "@plugins/chats/frontend/entities/chat";
 import { Avatar, Icon } from "@/shared/ui";
 import { useInboxFilters } from "../model/useInboxFilters";
 import { InboxDateFilter } from "./InboxDateFilter";
@@ -181,9 +186,37 @@ function Row({ chat, selected, onSelect }: RowProps) {
         <div className="snippet">{chat.snippet}</div>
         <div className="meta-row">
           <span className={"tag " + chat.tagClass}>{chat.tag}</span>
+          {chat.order && <OrderChip order={chat.order} />}
           {chat.unread > 0 && <span className="badge-unread">{chat.unread}</span>}
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * A qué pedido pertenece la conversación. En el filtro "Asignadas al humano"
+ * conviven chats que ya son una orden (falta verificar el pago, coordinar el
+ * envío…) con chats que siguen negociando: sin esta marca hay que abrir cada
+ * uno para saber cuál es cuál.
+ *
+ * El color es del PAGO, no del estado logístico (ese vive en Medusa y lo
+ * muestra el panel de pedidos). El estado NO viaja sólo en el color: el
+ * `aria-label` y el tooltip lo dicen con palabras.
+ */
+function OrderChip({ order }: { order: ChatOrderBadge }) {
+  const meta = ORDER_BADGE_META[order.payment];
+  // "#33 +1" — el pedido más reciente y cuántos más lleva el cliente.
+  const text =
+    order.count > 1 ? `${order.label} +${order.count - 1}` : order.label;
+  return (
+    <span
+      className={"order-chip order-chip-" + meta.tone}
+      aria-label={`Pedido ${order.label}, ${meta.label}`}
+      title={`Pedido ${order.label} · ${meta.label}`}
+    >
+      <Icon.pkg />
+      {text}
+    </span>
   );
 }

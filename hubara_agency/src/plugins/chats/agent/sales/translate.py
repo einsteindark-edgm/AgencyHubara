@@ -19,6 +19,7 @@ Tabla de traducción:
 | `audio`            | `<texto transcrito>` (post-transcripción, ver A.5)          |
 | `order` (cart submit) | `[el cliente armó un carrito con: 2× cruz-de-vida, 1× ...]` |
 | `image/video/document/sticker` | `[el cliente envió un <tipo>]`                  |
+| `reaction`         | `[el cliente reaccionó con <emoji>]`                        |
 | `contacts`         | `[el cliente compartió un contacto: <nombre>]`              |
 
 Si el inbound viene con `referral` (CTWA / FB post), se le antepone un
@@ -281,6 +282,18 @@ async def translate_to_effective_text(
         kind = msg.media.get("type", "media")
         tags.append(f"media:{kind}")
         text = f"[el cliente envió un {kind}]"
+
+        # Reaction: el emoji ES el mensaje. El marker genérico
+        # ("[el cliente envió un reaction]") lo tiraba — ni el LLM ni el
+        # operador del dashboard podían saber si el cliente mandó ❤️ o 👎.
+        # Meta manda `emoji: ""` cuando el cliente QUITA la reacción.
+        if kind == "reaction":
+            emoji = str(msg.media.get("emoji") or "").strip()
+            text = (
+                f"[el cliente reaccionó con {emoji}]"
+                if emoji
+                else "[el cliente quitó su reacción]"
+            )
 
         # Documento PDF (comprobante de pago típico): marker con el nombre del
         # archivo + metadata para que el ingest persista los bytes y el

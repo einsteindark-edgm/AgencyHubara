@@ -22,6 +22,7 @@ function chat(overrides: Partial<ChatInboxItem> & { id: string }): ChatInboxItem
     timestamp: 0,
     dayIso: TODAY,
     lastInboundMs: null,
+    order: null,
     tag: "INTERESADO",
     tagClass: "t-int",
     color: "blue",

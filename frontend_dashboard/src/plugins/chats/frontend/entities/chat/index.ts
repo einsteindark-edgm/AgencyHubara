@@ -1,6 +1,8 @@
 export type {
+  ChatEvent,
   ChatInboxItem,
   ChatMessageItem,
+  ChatOrderBadge,
   ChatQuote,
   ChatTag,
   AvatarColor,
@@ -12,6 +14,7 @@ export type {
   NoteItem,
   FileItem,
 } from "./model";
+export { ORDER_BADGE_META } from "./model";
 export { chatKeys } from "./keys";
 export {
   useChatInbox,

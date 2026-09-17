@@ -14,6 +14,7 @@
 import { describe, expect, it } from "vitest";
 import { useChatInbox, useChatMessages } from "./api";
 import type { ChatSession } from "@plugins/chats/frontend/entities/session";
+import type { ChatEvent } from "@plugins/chats/frontend/entities/message";
 import { renderHook } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
@@ -29,6 +30,7 @@ function makeSession(overrides: Partial<ChatSession> = {}): ChatSession {
     active_agent_route: "ventas",
     phone_number_id: null,
     pending_payment_order_id: null,
+    order_ref: null,
     last_updated_timestamp: 1716700000,
     last_inbound_ms: null,
     origin: null,
@@ -178,6 +180,8 @@ interface RawMsg {
   timestamp?: string | number;
   wamid?: string;
   reply_to?: { id: string; author?: string; text?: string; image_url?: string };
+  /** Forma real del mensaje que proyecta el backend (ver `chatEventSchema`). */
+  event?: ChatEvent;
 }
 
 function mockSessionDetail(messages: RawMsg[]) {
@@ -510,5 +514,139 @@ describe("useChatMessages — el token NUNCA viaja a un origen externo", () => {
     } finally {
       setAccessToken(null);
     }
+  });
+});
+
+/**
+ * Chip de pedido en la fila de la bandeja: el operador no distinguía una
+ * conversación que YA se convirtió en pedido de una que sigue negociando —
+ * ambas se ven igual en el filtro "Asignadas al humano" (un chat queda en
+ * manos del humano por muchos motivos después de cerrar la venta).
+ *
+ * El backend manda `order_ref` en el mismo snapshot de sesión (sale del
+ * metadata del vault, sin llamar a Medusa por fila).
+ */
+describe("order (chip de pedido en la fila)", () => {
+  const ORDER_ID = "order_01KSTZSP8NWZTH2M4Q5GB3XY9Z";
+
+  it("expone el número humano del pedido y el estado del pago", async () => {
+    const data = await runInbox([
+      makeSession({
+        tag: "HUMANO",
+        active_agent_route: "humano",
+        order_ref: {
+          order_id: ORDER_ID,
+          display_id: "31",
+          payment: "pending",
+          count: 1,
+        },
+      }),
+    ]);
+    expect(data?.[0]?.order).toEqual({
+      label: "#31",
+      orderId: ORDER_ID,
+      payment: "pending",
+      count: 1,
+    });
+  });
+
+  it("sin pedido registrado → null (la fila no pinta chip)", async () => {
+    const data = await runInbox([makeSession({ order_ref: null })]);
+    expect(data?.[0]?.order).toBeNull();
+  });
+
+  it("snapshot viejo sin el campo → null (rollout tolerante)", async () => {
+    const legacy: Partial<ChatSession> = makeSession();
+    delete legacy.order_ref;
+    const data = await runInbox([legacy as ChatSession]);
+    expect(data?.[0]?.order).toBeNull();
+  });
+
+  it("sin display_id (provider stub) cae al id corto — nunca el order_id crudo", async () => {
+    const data = await runInbox([
+      makeSession({
+        order_ref: {
+          order_id: ORDER_ID,
+          display_id: null,
+          payment: "confirmed",
+          count: 1,
+        },
+      }),
+    ]);
+    expect(data?.[0]?.order?.label).toBe("…B3XY9Z");
+  });
+});
+
+/**
+ * Eventos estructurados: el backend proyecta cada marker del historial a su
+ * forma real (`event`) para que el panel pinte botones como botones y separe
+ * lo que escribió la persona de lo que describió la IA.
+ */
+describe("useChatMessages — eventos del hilo", () => {
+  it("los botones del bot dejan de ser una nota de sistema: son su mensaje", async () => {
+    const data = await runMessages([
+      {
+        ui_type: "ui_component_sent",
+        role: "assistant",
+        content: "🔘 El bot envió botones: Ver catálogo · Asesoría — con el mensaje: «Buenas tardes.»",
+        timestamp: "2026-09-17T18:17:00+00:00",
+        event: {
+          kind: "bot_buttons",
+          body: "Buenas tardes.",
+          buttons: [{ title: "Ver catálogo", touched: true }, { title: "Asesoría" }],
+        },
+      },
+    ]);
+    const msg = data?.[data.length - 1];
+    expect(msg?.kind).toBe("out");
+    expect(msg?.author).toBe("bot");
+    expect(msg?.event).toEqual({
+      kind: "bot_buttons",
+      body: "Buenas tardes.",
+      buttons: [{ title: "Ver catálogo", touched: true }, { title: "Asesoría" }],
+    });
+  });
+
+  it("el resto de envíos no-textuales sigue siendo nota de sistema", async () => {
+    const data = await runMessages([
+      {
+        ui_type: "ui_component_sent",
+        role: "assistant",
+        content: "🛍️ El bot envió el catálogo con 6 productos",
+        timestamp: "2026-09-17T18:17:00+00:00",
+      },
+    ]);
+    expect(data?.find((m) => m.kind === "system")).toBeDefined();
+  });
+
+  it("la foto del cliente llega con caption y visión separados", async () => {
+    const data = await runMessages([
+      {
+        ui_type: "user_message",
+        role: "user",
+        content: '[el cliente envió una foto: Vela verde.] con el texto: "Precio?"',
+        image_url: "/api/dashboard/media/wa_x/1.jpg",
+        event: {
+          kind: "customer_photo",
+          vision: "Vela verde.",
+          caption: "Precio?",
+          receipt: false,
+        },
+      },
+    ]);
+    const msg = data?.find((m) => m.kind === "in");
+    expect(msg?.event).toEqual({
+      kind: "customer_photo",
+      vision: "Vela verde.",
+      caption: "Precio?",
+      receipt: false,
+    });
+  });
+
+  it("mensaje sin evento → sin `event` (se pinta como siempre)", async () => {
+    const data = await runMessages([
+      { ui_type: "user_message", role: "user", content: "Hola" },
+    ]);
+    expect(data?.find((m) => m.kind === "in")?.event).toBeUndefined();
   });
 });

@@ -21,6 +21,23 @@ export const sessionOriginSchema = z.object({
   ad_name: z.string().nullable(),
 });
 
+/**
+ * Pedido al que YA pertenece la conversación, o null si todavía no hay orden
+ * registrada. Lo computa el backend desde el metadata del vault
+ * (`_compute_order_ref`) — cero llamadas a Medusa por fila de la bandeja.
+ *
+ * `payment` habla del PAGO (lo único que el vault sabe), no de la logística:
+ * preparando / listo / en camino vive en Medusa y lo pide el panel de pedidos.
+ * `display_id` es el número humano de Medusa ("31"); null si el provider no lo
+ * trae (stub) → el UI cae al id corto.
+ */
+export const sessionOrderRefSchema = z.object({
+  order_id: z.string(),
+  display_id: z.string().nullable().default(null),
+  payment: z.enum(["pending", "confirmed", "cancelled"]),
+  count: z.number().default(1),
+});
+
 export const chatSessionSchema = z.object({
   session_id: z.string(),
   phone_number: z.string(),
@@ -33,6 +50,10 @@ export const chatSessionSchema = z.object({
   // escalation_reason). `.default(null)` tolera respuestas viejas sin el campo
   // durante el rollout. Enciende el botón "Confirmar pago" en el chat.
   pending_payment_order_id: z.string().nullable().default(null),
+  // Pedido al que pertenece la conversación (ver `sessionOrderRefSchema`), o
+  // null. Enciende el chip de pedido en la fila de la bandeja. `.default(null)`
+  // tolera snapshots viejos durante el rollout.
+  order_ref: sessionOrderRefSchema.nullable().default(null),
   last_updated_timestamp: z.number(),
   // Epoch ms del último mensaje DEL CLIENTE (null si no escribió). Distinto de
   // `last_updated_timestamp`, que se mueve también con turnos del bot. Es lo
@@ -64,6 +85,8 @@ export const sessionDetailsSchema = z.object({
   // no se conoce. Con la ventana cerrada el composer humano ofrece
   // "Reactivar conversación" (plantilla) en vez de texto libre.
   service_window_expires_at_ms: z.number().nullable().default(null),
+  // Ver `chatSessionSchema.order_ref`.
+  order_ref: sessionOrderRefSchema.nullable().default(null),
   status_history: z.array(statusHistoryEntrySchema),
   origin: sessionOriginSchema.nullable().default(null),
   messages: z.array(chatMessageSchema),
