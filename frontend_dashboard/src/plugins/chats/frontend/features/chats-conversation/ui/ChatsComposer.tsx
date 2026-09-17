@@ -29,6 +29,7 @@ import {
 } from "@plugins/chats/frontend/entities/handoff";
 import { useOutbox } from "../model/useOutbox";
 import { ConfirmPaymentAction } from "./ConfirmPaymentAction";
+import { CreateOrderAction } from "./CreateOrderAction";
 import { ScheduleDeliveryAction } from "./ScheduleDeliveryAction";
 import { apiErrorDetail } from "../model/apiErrorDetail";
 import { ReactivateConversationModal } from "./ReactivateConversationModal";
@@ -186,6 +187,11 @@ function InterveneActiveComposer({
           Intervenido por ti · Bot pausado
         </span>
         <span className="right">
+          {/* Crear el pedido con los datos que quedaron EN la conversación:
+              el caso del chat que se escala por "faltan datos de envío" y el
+              humano los consigue a mano. Siempre disponible en modo
+              intervenido (el formulario avisa si ya hay un pedido). */}
+          <CreateOrderAction chatId={chatId} />
           {pendingPaymentOrderId && (
             <>
               <ScheduleDeliveryAction

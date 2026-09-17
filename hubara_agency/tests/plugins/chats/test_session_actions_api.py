@@ -182,6 +182,23 @@ def test_order_prices_server_side_registers_closes_escalates_and_sends_payment_i
     assert m["pending_ui_intents"][0]["kind"] == "payment_instructions"
 
 
+def test_order_can_skip_the_payment_instructions_message(h: _Harness) -> None:
+    """El operador humano que YA acordó el pago por chat no quiere que el
+    sistema le mande encima la plantilla de datos bancarios. El pedido se
+    registra igual; solo NO se hace el flush del intent.
+
+    Campo OPCIONAL y aditivo: Meta Business Agent (que no lo manda) conserva
+    el comportamiento de siempre — lo prueba el test de arriba.
+    """
+    body = h.client.post(_url("order"), json={**_ORDER, "send_payment_instructions": False}).json()
+
+    assert body["registered"] is True
+    assert body["payment_instructions_sent"] is False and h.flushed == []
+    # El intent queda ENCOLADO (auditoría + el canvas de pago lo sigue viendo),
+    # simplemente no se despacha al cliente en este momento.
+    assert h.meta()["pending_ui_intents"][0]["kind"] == "payment_instructions"
+
+
 def test_order_is_idempotent_for_the_same_content(h: _Harness) -> None:
     first = h.client.post(_url("order"), json=_ORDER).json()
     second = h.client.post(_url("order"), json=_ORDER).json()
