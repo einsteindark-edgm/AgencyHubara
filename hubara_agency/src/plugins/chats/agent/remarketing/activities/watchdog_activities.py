@@ -16,6 +16,7 @@ Temporal's DataConverter rebuilds the dataclass field types at the workflow
 boundary via `get_type_hints`, which fails inside the sandbox for PEP 563
 string annotations of locally-defined types like `WatchdogEligibilityResult`.
 """
+import asyncio
 import os
 import time
 from datetime import datetime, timezone
@@ -42,7 +43,7 @@ from src.sdk.messagingkit import (
     resolve_local_timezone,
 )
 from src.platform.whatsapp.window import watchdog_pre_expiry_ms
-from src.plugins.chats.shared.funnel import active_episode, is_open_cart
+from src.plugins.chats.shared.funnel import active_episode, is_open_cart, order_fact
 from src.plugins.chats.agent.remarketing.activities.mba_silence_close import close_by_silence
 from src.sdk.runtime import mba_controls_thread
 from src.sdk.connectorkit import enqueue_capi_event, flush_capi_outbox
@@ -94,6 +95,9 @@ def _is_quiet_hours_for_session(session_id: str, now_utc: datetime) -> bool:
 
 log = structlog.get_logger()
 
+#: Presupuesto para leer el pedido en Medusa (la activity vive 15s).
+_ORDER_FACTS_TIMEOUT_S = 6.0
+
 
 # =============================================================================
 # Feature flag
@@ -120,7 +124,7 @@ def _watchdog_enabled() -> bool:
 # =============================================================================
 
 
-def _infer_episode_stage(metadata: dict) -> str | None:
+def _infer_episode_stage(metadata: dict, order_facts: Any = None) -> str | None:
     """Best-effort mapping from `metadata.json` shape to a template stage key.
 
     The template catalog (`platform/whatsapp/templates/catalog.yaml`) declares
@@ -130,6 +134,11 @@ def _infer_episode_stage(metadata: dict) -> str | None:
     template.
 
     Heuristics, in order of priority:
+      0. `order_facts` (OrderFactsSnapshot) conoce el pedido → MANDA EL
+         PEDIDO: pagado y no cancelado → `post_purchase`; si no →
+         `awaiting_payment`. Así no le decimos "te esperamos para pagar" a
+         quien ya pagó (registro hecho en Medusa Admin) ni "gracias por tu
+         compra" a quien tuvo el pago revertido (pedido #32).
       1. `registered_order` present AND a closing tag of COMPRA_EXITOSA in the
          active episode → `post_purchase`.
       2. `registered_order` present (any other state) → `awaiting_payment`.
@@ -147,6 +156,14 @@ def _infer_episode_stage(metadata: dict) -> str | None:
     has_order = bool(metadata.get("registered_order"))
     tag = metadata.get("tag")
 
+    fact = order_fact(_watchdog_order_id(metadata), order_facts)
+    if fact is not None:
+        return (
+            "post_purchase"
+            if fact.counts_as_revenue
+            else "awaiting_payment"
+        )
+
     if has_order:
         if active_ep and active_ep.get("closing_tag") == "COMPRA_EXITOSA":
             return "post_purchase"
@@ -163,8 +180,50 @@ def _infer_episode_stage(metadata: dict) -> str | None:
 # =============================================================================
 
 
+def get_order_facts_port():
+    """Provider a nivel módulo (lazy + monkeypatcheable en tests): la
+    composición del port arrastra Medusa y este módulo se importa en el
+    worker de remarketing."""
+    from src.sdk.connectorkit import get_order_facts_port as _factory
+
+    return _factory()
+
+
+async def _watchdog_order_facts(metadata: dict):
+    """Estado real del pedido de la sesión (OrderFacts).
+
+    Best-effort con presupuesto corto: la activity tiene
+    `start_to_close_timeout=15s` y el watchdog nunca puede fallar por
+    Medusa — sin dato, las heurísticas por etiqueta siguen valiendo.
+    """
+    from src.sdk.connectorkit import OrderFactsSnapshot
+
+    order_id = _watchdog_order_id(metadata)
+    if not order_id:
+        return OrderFactsSnapshot()
+    try:
+        return await asyncio.wait_for(
+            get_order_facts_port().get_facts([order_id]),
+            timeout=_ORDER_FACTS_TIMEOUT_S,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("watchdog_order_facts_failed", error=str(exc))
+        return OrderFactsSnapshot(unresolved=frozenset({order_id}), stale=True)
+
+
+def _watchdog_order_id(metadata: dict) -> str | None:
+    """Id del pedido de la sesión (episodio activo o `registered_order`)."""
+    episodes = metadata.get("episodes") or []
+    active_ep = episodes[-1] if episodes else None
+    if isinstance(active_ep, dict) and isinstance(active_ep.get("order_id"), str):
+        return active_ep["order_id"]
+    registered = metadata.get("registered_order") or {}
+    oid = registered.get("order_id") if isinstance(registered, dict) else None
+    return oid if isinstance(oid, str) and oid else None
+
+
 def _resolve_template_variables(
-    spec: TemplateSpec, metadata: dict
+    spec: TemplateSpec, metadata: dict, order_facts: Any = None
 ) -> dict[str, str]:
     """Fill the variable slots a TemplateSpec declares, from metadata fields.
 
@@ -175,8 +234,9 @@ def _resolve_template_variables(
     Sources per variable name (matched literally against `var.name`):
       * `product_or_quote_label` → tag motivo, falling back to "tu consulta".
       * `order_reference` → `metadata.registered_order.order_id` or "tu pedido".
-      * `amount_currency` → not derivable from current metadata shape; uses
-        "el monto del pedido" placeholder.
+      * `amount_currency` → el total del pedido (OrderFacts) formateado
+        ("$120.000 COP"); sin dato del pedido, el placeholder genérico "el
+        monto del pedido".
       * `status_label` → "en proceso" placeholder.
       * `product_label` → tag motivo, falling back to "el producto".
 
@@ -190,10 +250,17 @@ def _resolve_template_variables(
     registered = metadata.get("registered_order") or {}
     order_id = registered.get("order_id") or "tu pedido"
 
+    fact = order_fact(_watchdog_order_id(metadata), order_facts)
+    amount = (
+        f"${fact.total_cop:,} COP".replace(",", ".")
+        if fact is not None and fact.total_cop > 0
+        else "el monto del pedido"
+    )
+
     defaults: dict[str, str] = {
         "product_or_quote_label": motivo,
         "order_reference": str(order_id),
-        "amount_currency": "el monto del pedido",
+        "amount_currency": amount,
         "status_label": "en proceso",
         "product_label": motivo,
     }
@@ -362,8 +429,10 @@ async def check_watchdog_eligibility_activity(
             eligible=False, reason="outside_quiet_hours"
         )
 
-    # 5. Resolve template for the current episode stage.
-    stage = _infer_episode_stage(metadata)
+    # 5. Resolve template for the current episode stage. El estado real del
+    #    pedido (OrderFacts) manda sobre las etiquetas del chat.
+    order_facts = await _watchdog_order_facts(metadata)
+    stage = _infer_episode_stage(metadata, order_facts)
     registry = get_template_registry()
     spec = get_watchdog_template_for_stage(registry, stage or "")
     if spec is None:
@@ -378,7 +447,7 @@ async def check_watchdog_eligibility_activity(
             eligible=False, reason="no_template_for_stage"
         )
 
-    variables = _resolve_template_variables(spec, metadata)
+    variables = _resolve_template_variables(spec, metadata, order_facts)
     log.info(
         "watchdog_eligibility_pass",
         session_id=session_id,
@@ -510,7 +579,8 @@ async def _emit_cart_abandoned_if_open(
     Best-effort: la atribución nunca hace fallar el watchdog."""
     try:
         episode = active_episode(metadata)
-        if episode is None or not is_open_cart(episode, metadata):
+        order_facts = await _watchdog_order_facts(metadata)
+        if episode is None or not is_open_cart(episode, metadata, order_facts):
             return
         event_id = enqueue_capi_event(
             metadata,

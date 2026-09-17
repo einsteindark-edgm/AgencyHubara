@@ -79,6 +79,12 @@ _LAZY_EXPORTS: dict[str, str] = {
     "schedule_capi_flush": "src.platform.whatsapp.capi_outbox",
     "OrderCommandPort": "src.platform.orders.command_port",
     "OrderQueryPort": "src.platform.orders.query_port",
+    # Datos canónicos de pedidos ("variables globales" del dashboard — pedido
+    # #31): total/pago/etapa/cliente se leen de acá, nunca de copias del vault.
+    "OrderFacts": "src.platform.orders.facts",
+    "OrderFactsReadPort": "src.platform.orders.facts",
+    "OrderFactsSnapshot": "src.platform.orders.facts",
+    "InMemoryOrderFacts": "src.platform.orders.facts",
     "OrderRegistrationPort": "src.platform.orders.port",
     "WebCartReaderPort": "src.platform.carts.port",
     # DTOs + fakes + errores del web cart (HU web-cart) — viajan con su port:
@@ -96,6 +102,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "get_image_vision_port": "src.platform.vision.composition",
     "get_order_command_port": "src.platform.orders.composition",
     "get_order_query_port": "src.platform.orders.composition",
+    "get_order_facts_port": "src.platform.orders.composition",
     "get_order_registration_port": "src.platform.orders.composition",
     "get_web_cart_reader": "src.platform.carts.composition",
 }

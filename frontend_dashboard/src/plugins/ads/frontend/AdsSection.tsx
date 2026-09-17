@@ -25,6 +25,7 @@ import {
   DEFAULT_ADS_SELECTION,
   selectionToParams,
   useAdsCampaigns,
+  useAdsOrdersEvents,
   useAdsetAds,
   useAttributedConversations,
   useCampaignAdsets,
@@ -48,6 +49,7 @@ import { AdsInspector } from "@plugins/ads/frontend/features/ads-inspector";
 import { ConnectMeta } from "@plugins/ads/frontend/features/connect-meta";
 import { CampaignMetaKpis } from "@plugins/ads/frontend/features/campaign-meta-kpis";
 import { AgentReferralsKpi } from "@plugins/ads/frontend/features/agent-referrals-kpi";
+import { OrdersStaleNotice } from "@plugins/ads/frontend/features/orders-stale-notice";
 // Las 3 features del buzón de análisis con IA. FSD: la Page es el único punto que
 // las compone — `trigger-run` no importa a `run-result` ni a `hitl-decision`
 // (cross-feature prohibido).
@@ -75,6 +77,9 @@ export function AdsSection() {
       : { days: params.days ?? 90, from: null, to: null };
 
   const { data: campaigns = [] } = useAdsCampaigns(params);
+  // Revenue = valor del pedido en Orders (OrderFacts): si una orden cambia,
+  // las métricas de Ads se refrescan con el evento `orders` del stream.
+  useAdsOrdersEvents();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // Segmento (ad set) seleccionado, EMPAREJADO a su campaña — scopea el
   // canvas central. El scope efectivo se deriva en render: si la campaña
@@ -236,6 +241,7 @@ export function AdsSection() {
         {/* Header + KPIs + embudo + distribución pintan `scoped`: la fila del
             segmento seleccionado (drill-down) o la campaña completa. La tabla
             y la serie diaria ya llegan scopeadas desde el backend. */}
+        <OrdersStaleNotice params={params} />
         <AdsOverviewHeader
           campaign={scoped ?? campaign}
           selection={selection}

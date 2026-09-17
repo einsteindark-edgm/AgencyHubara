@@ -682,32 +682,14 @@ async def get_customer_score(
 
     # Fetch totals + created_at de Medusa en paralelo (cap: solo los ids del
     # vault; el customer típicamente tiene <10 orders).
-    totals_cop: dict[str, int] = {}
-    created_ats_ms: dict[str, int] = {}
-    if order_ids_in_episodes:
-        client = get_medusa_client()
-        results = await asyncio.gather(
-            *(
-                _fetch_order_total_and_date(client, oid)
-                for oid in order_ids_in_episodes
-            ),
-            return_exceptions=True,
-        )
-        for oid, res in zip(order_ids_in_episodes, results):
-            if isinstance(res, tuple):
-                total_cop, created_at_ms = res
-                if total_cop is not None:
-                    totals_cop[oid] = total_cop
-                if created_at_ms is not None:
-                    created_ats_ms[oid] = created_at_ms
+    order_facts = await _customer_order_facts(order_ids_in_episodes)
 
     # Score.
     score_port = get_customer_scoring_port()
     score = score_port.score_session(
         session_id,
         now_ms=utc_now_ms(),
-        medusa_order_totals_cop=totals_cop,
-        medusa_order_created_at_ms=created_ats_ms,
+        order_facts=order_facts,
     )
 
     # Serialize + enrich con ISO date para el UI.
@@ -932,50 +914,22 @@ def _collect_order_ids_from_metadata(
     return sorted(ids)
 
 
-async def _fetch_order_total_and_date(
-    client, order_id: str
-) -> tuple[int | None, int | None]:
-    """Fetch `total` (COP major) + `created_at` (ms epoch) para un order_id.
+async def _customer_order_facts(order_ids: list[str]):
+    """Datos canónicos (OrderFacts) de los pedidos del cliente.
 
-    Devuelve `(None, None)` si Medusa 404 / 5xx (el order_id existe en el
-    vault pero ya no en Medusa — e.g. fue borrado manualmente).
-
-    Bug fix 2026-05-26 paralelo: usamos `client.get_order(order_id, fields=...)`
-    que retry-ea con tenacity por debajo. NO levanta excepción acá —
-    `asyncio.gather(..., return_exceptions=True)` captura los errores y
-    el caller los filtra.
+    Antes esto eran N GETs propios a Medusa (una segunda fuente para el
+    mismo dato que ya sirve la vista Orders).
+    Falla → snapshot `unresolved` y el scoring cae al camino por etiqueta.
     """
+    from src.sdk.connectorkit import OrderFactsSnapshot, get_order_facts_port
+
+    if not order_ids:
+        return OrderFactsSnapshot()
     try:
-        data = await client.get_order(
-            order_id, fields="id,total,created_at,currency_code"
-        )
-    except MedusaAPIError as exc:
-        log.info(
-            "customer_score: order %s no fetcheable (%s) — skip",
-            order_id, exc.status_code,
-        )
-        return None, None
-
-    total_raw = data.get("total")
-    total_cop: int | None = None
-    if isinstance(total_raw, (int, float)) and total_raw > 0:
-        # Medusa stores amounts en minor units para algunos providers, en
-        # major para CO/MX. El query adapter ya tiene `_to_int_cop` que
-        # heurística decide; acá replicamos la misma lógica simple:
-        # int() truncado preserva el major-unit behavior por default.
-        total_cop = int(total_raw)
-
-    created_at_ms: int | None = None
-    created_at_str = data.get("created_at")
-    if isinstance(created_at_str, str):
-        try:
-            dt = datetime.fromisoformat(
-                created_at_str.replace("Z", "+00:00")
-            )
-            created_at_ms = int(dt.timestamp() * 1000)
-        except (ValueError, OSError):
-            created_at_ms = None
-    return total_cop, created_at_ms
+        return await get_order_facts_port().get_facts(order_ids)
+    except Exception:  # noqa: BLE001 — el score degrada, no 500-ea
+        log.exception("customer_score: OrderFacts no disponible")
+        return OrderFactsSnapshot(unresolved=frozenset(order_ids), stale=True)
 
 
 def _ms_to_iso_date(ms: int) -> str:
@@ -1056,31 +1010,13 @@ async def post_customer_summary(
 
     # Compute score primero (cheap, deterministic) — el LLM lo usa como input.
     order_ids_in_episodes = _collect_order_ids_from_metadata(metadata)
-    totals_cop: dict[str, int] = {}
-    created_ats_ms: dict[str, int] = {}
-    if order_ids_in_episodes:
-        client = get_medusa_client()
-        results = await asyncio.gather(
-            *(
-                _fetch_order_total_and_date(client, oid)
-                for oid in order_ids_in_episodes
-            ),
-            return_exceptions=True,
-        )
-        for oid, res in zip(order_ids_in_episodes, results):
-            if isinstance(res, tuple):
-                total_cop, created_at_ms = res
-                if total_cop is not None:
-                    totals_cop[oid] = total_cop
-                if created_at_ms is not None:
-                    created_ats_ms[oid] = created_at_ms
+    order_facts = await _customer_order_facts(order_ids_in_episodes)
 
     score_port = get_customer_scoring_port()
     score = score_port.score_session(
         session_id,
         now_ms=utc_now_ms(),
-        medusa_order_totals_cop=totals_cop,
-        medusa_order_created_at_ms=created_ats_ms,
+        order_facts=order_facts,
     )
 
     # Llamar al LLM (degrada graciosamente — el adapter NO levanta).

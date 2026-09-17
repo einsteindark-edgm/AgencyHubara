@@ -35,6 +35,7 @@ const updateMock = {
 vi.mock("@plugins/marketing/frontend/entities/campaign", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   useCampaignStats: () => statsMock,
+  useCampaignOrdersEvents: () => {},
   useUpdateCampaign: () => updateMock,
 }));
 

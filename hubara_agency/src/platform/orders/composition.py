@@ -14,6 +14,7 @@ Patron: mismo shape que `src/platform/catalog/composition.py`.
 from __future__ import annotations
 
 import logging
+import os
 from functools import lru_cache
 
 from src.platform.medusa.composition import (
@@ -22,7 +23,13 @@ from src.platform.medusa.composition import (
     get_medusa_settings,
 )
 from src.platform.orders.command_port import OrderCommandPort
+from src.platform.events import get_dashboard_event_bus
 from src.platform.orders.empty_query import EmptyOrderQuery
+from src.platform.orders.facts import (
+    DEFAULT_TTL_S,
+    OrderFactsStore,
+    RecordingOrderQuery,
+)
 from src.platform.orders.medusa_order import (
     MedusaOrderConfigError,
     MedusaOrderRegistration,
@@ -74,6 +81,30 @@ def get_order_registration_port() -> OrderRegistrationPort:
 
 @lru_cache(maxsize=1)
 def get_order_query_port() -> OrderQueryPort:
+    """El `OrderQueryPort` CANÓNICO: el adapter real envuelto en
+    `RecordingOrderQuery`, que graba cada orden leída en el store compartido
+    de `get_order_facts_port()` — lo que ve Orders es lo que leen Ads y
+    Campañas (pedido #31, ver `facts.py`)."""
+    return RecordingOrderQuery(_raw_order_query(), get_order_facts_port())
+
+
+@lru_cache(maxsize=1)
+def get_order_facts_port() -> OrderFactsStore:
+    """Datos canónicos de pedidos (total, pago, etapa, cliente) para todo el
+    dashboard. Singleton del proceso; se invalida con los eventos `orders`
+    del bus del dashboard y por TTL (`ORDER_FACTS_TTL_S`, default 60)."""
+    ttl_raw = os.environ.get("ORDER_FACTS_TTL_S", "").strip()
+    try:
+        ttl_s = float(ttl_raw) if ttl_raw else DEFAULT_TTL_S
+    except ValueError:
+        ttl_s = DEFAULT_TTL_S
+    return OrderFactsStore(
+        _raw_order_query(), ttl_s=ttl_s, bus=get_dashboard_event_bus()
+    )
+
+
+@lru_cache(maxsize=1)
+def _raw_order_query() -> OrderQueryPort:
     """Return the configured OrderQueryPort (Medusa live or empty stub).
 
     - Si `MEDUSA_BASE_URL` + auth (admin_token o email+password) estan

@@ -53,6 +53,7 @@ def compute_customer_features(
     now_ms: int,
     medusa_order_totals_cop: dict[str, int] | None = None,
     medusa_order_created_at_ms: dict[str, int] | None = None,
+    order_facts: Any = None,
 ) -> CustomerFeatures:
     """Compute `CustomerFeatures` a partir del metadata de la sesión.
 
@@ -65,6 +66,13 @@ def compute_customer_features(
         order_ids referenciados en los episodios. Si None, monetary=0.
       medusa_order_created_at_ms: idem para recency precisa. Si None,
         fallback a `episode.closed_at_ms`.
+      order_facts: `OrderFactsSnapshot` con los pedidos de estos episodios
+        (pedido #31/#32). Cuando trae el pedido, MANDA EL PEDIDO y no la
+        etiqueta del chat: pagado y no cancelado = compra (con su total
+        vivo y la fecha de Medusa); pendiente de pago = parcial;
+        cancelado / reembolsado = perdido; inexistente en Medusa = no
+        cuenta. Si Medusa no respondió por ese pedido (`unresolved`), se
+        conserva el camino por etiqueta (legacy).
 
     Returns:
       `CustomerFeatures` — siempre devuelve un objeto válido. Para metadata
@@ -109,6 +117,27 @@ def compute_customer_features(
         # el closing_tag a COMPRA_EXITOSA y el siguiente compute_features
         # ya lo incluye en monetary.
         is_pending_payment = closing_tag == "CONFIRMADO_PAGO_PENDIENTE"
+        # Pedido conocido (OrderFacts) → el estado del PEDIDO decide.
+        verdict = _order_verdict(ep.get("order_id"), order_facts)
+        if verdict is not None:
+            if verdict == "won":
+                episodes_won += 1
+                order_id = str(ep.get("order_id"))
+                fact = order_facts.facts[order_id]
+                monetary_cop += fact.total_cop
+                purchase_at_ms = fact.created_at_ms or closed_at_ms
+                if isinstance(purchase_at_ms, int) and (
+                    last_purchase_at_ms is None or purchase_at_ms > last_purchase_at_ms
+                ):
+                    last_purchase_at_ms = purchase_at_ms
+                    last_purchase_order_id = order_id
+            elif verdict == "lost":
+                episodes_lost += 1
+            elif verdict == "partial":
+                episodes_partial += 1
+            # "none" (pedido inexistente en Medusa) no suma a ningún bucket.
+            _append_msgs_diff(ep, msgs_diffs)
+            continue
         if (closing_tag in _WON_TAGS or ep.get("order_id")) and not is_pending_payment:
             # `order_id` truthy también cuenta como ganado aunque el tag no
             # haya sido COMPRA_EXITOSA todavía (el agente puede haber
@@ -142,13 +171,7 @@ def compute_customer_features(
         elif closing_tag == _TIMEOUT_TAG:
             episodes_timeout += 1
 
-        # Msgs_avg: diff msgs_count_at_close - at_start (FU3 feature).
-        start_count = ep.get("msgs_count_at_start")
-        close_count = ep.get("msgs_count_at_close")
-        if isinstance(start_count, int) and isinstance(close_count, int):
-            diff = close_count - start_count
-            if diff >= 0:
-                msgs_diffs.append(diff)
+        _append_msgs_diff(ep, msgs_diffs)
 
     # Recency: días desde last_purchase. None si nunca compró.
     if last_purchase_at_ms is not None:
@@ -187,6 +210,36 @@ def compute_customer_features(
         last_purchase_at_ms=last_purchase_at_ms,
         last_purchase_order_id=last_purchase_order_id,
     )
+
+
+def _append_msgs_diff(ep: dict[str, Any], msgs_diffs: list[int]) -> None:
+    """Msgs_avg: diff msgs_count_at_close - at_start (FU3 feature)."""
+    start_count = ep.get("msgs_count_at_start")
+    close_count = ep.get("msgs_count_at_close")
+    if isinstance(start_count, int) and isinstance(close_count, int):
+        diff = close_count - start_count
+        if diff >= 0:
+            msgs_diffs.append(diff)
+
+
+def _order_verdict(order_id: Any, order_facts: Any) -> str | None:
+    """Veredicto del PEDIDO para el scoring, o None si manda la etiqueta.
+
+    None = no hay dato del pedido (sin snapshot, sin order_id, o Medusa no
+    respondió por él) → el caller sigue con el camino legacy por etiqueta.
+    """
+    if order_facts is None or not isinstance(order_id, str) or not order_id:
+        return None
+    if order_id in order_facts.unresolved:
+        return None
+    fact = order_facts.facts.get(order_id)
+    if fact is None:
+        return "none"  # confirmado: ya no existe en Medusa
+    if fact.counts_as_revenue:
+        return "won"
+    if fact.stage == "cancelled" or fact.pay_status == "refund":
+        return "lost"
+    return "partial"
 
 
 def _normalize_episodes(metadata: dict[str, Any]) -> list[dict[str, Any]]:

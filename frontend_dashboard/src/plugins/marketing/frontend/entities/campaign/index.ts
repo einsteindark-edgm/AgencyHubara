@@ -27,6 +27,7 @@ export { campaignKeys } from "./keys";
 export {
   useCampaigns,
   useCampaignStats,
+  useCampaignOrdersEvents,
   useCancelCampaign,
   useCreateCampaign,
   useSendCampaign,

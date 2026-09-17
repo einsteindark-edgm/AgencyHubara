@@ -30,6 +30,8 @@ export { adsCampaignKeys } from "./keys";
 export {
   useAdCreative,
   useAdsCampaigns,
+  useAdsOrdersEvents,
+  useAdsOrdersStale,
   useAdsetAds,
   useAgentReferrals,
   useAttributedConversations,

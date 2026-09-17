@@ -16,7 +16,7 @@ puede swappear por un mock en tests sin patches frágiles.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 
 @dataclass(frozen=True)
@@ -117,6 +117,7 @@ class CustomerScoringPort(Protocol):
         now_ms: int,
         medusa_order_totals_cop: dict[str, int] | None = None,
         medusa_order_created_at_ms: dict[str, int] | None = None,
+        order_facts: Any = None,
     ) -> CustomerScore:
         """Compute el score para un cliente identificado por `session_id`
         (formato `wa_<phone>`).

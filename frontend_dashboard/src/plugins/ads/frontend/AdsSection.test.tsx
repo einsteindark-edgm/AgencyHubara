@@ -32,6 +32,8 @@ vi.mock("@plugins/ads/frontend/entities/ads-campaign", async (importOriginal) =>
   useDailySeries: (...a: unknown[]) => useDailySeriesMock(...(a as [])),
   useCampaignAdsets: (...a: unknown[]) => useCampaignAdsetsMock(...(a as [])),
   useAdsetAds: (...a: unknown[]) => useAdsetAdsMock(...(a as [])),
+  useAdsOrdersEvents: () => {},
+  useAdsOrdersStale: () => false,
 }));
 
 vi.mock("@plugins/ads/frontend/entities/ad-analysis-run", async (importOriginal) => ({

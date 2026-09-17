@@ -24,9 +24,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 _QUEUE_MAXSIZE = 100
 
@@ -58,6 +62,13 @@ class DashboardEventBus:
 
     def __init__(self) -> None:
         self._subscribers: set[asyncio.Queue[DashboardEvent]] = set()
+        self._listeners: list[Callable[[DashboardEvent], None]] = []
+
+    def add_listener(self, listener: Callable[[DashboardEvent], None]) -> None:
+        """Callback in-process síncrono por cada evento publicado (p.ej. el
+        `OrderFactsStore` invalida su caché con `orders`). Un listener que
+        falla se loguea y NO frena el publish."""
+        self._listeners.append(listener)
 
     def subscribe(self) -> asyncio.Queue[DashboardEvent]:
         queue: asyncio.Queue[DashboardEvent] = asyncio.Queue(maxsize=_QUEUE_MAXSIZE)
@@ -86,6 +97,11 @@ class DashboardEventBus:
             payload=payload,
             ts_ms=int(time.time() * 1000),
         )
+        for listener in tuple(self._listeners):
+            try:
+                listener(event)
+            except Exception:  # noqa: BLE001
+                log.exception("dashboard bus: listener falló (%s)", domain)
         for queue in tuple(self._subscribers):
             try:
                 queue.put_nowait(event)
