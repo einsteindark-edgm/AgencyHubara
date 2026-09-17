@@ -37,19 +37,26 @@ from src.platform.orders.command_port import (
     CancelOrderCommand,
     ConfirmPaymentCommand,
     OrderCommandResult,
+    ReversePaymentCommand,
     ScheduleDeliveryCommand,
     TransitionStageCommand,
 )
 from src.platform.orders.state import (
     InvalidStageTransitionError,
     build_cancel_patch,
+    META_KEY_PAYMENT_CONFIRMED,
     build_confirm_payment_patch,
+    build_reverse_payment_patch,
     build_schedule_patch,
     read_stage,
     transition_stage,
 )
 
 log = logging.getLogger(__name__)
+
+# Lo escribe el bot al escalar (`escalate_to_human`); el chat lo usa para
+# ofrecer "Confirmar pago" (ver chats/api/dashboard.py).
+_PAYMENT_PENDING_REASON = "PAYMENT_VERIFICATION_PENDING"
 
 
 # ----------------------------------------------------------------------
@@ -307,6 +314,103 @@ def apply_order_cancellation_to_chat_metadata(
         now_ms=now_ms,
     )
 
+    return True
+
+
+def apply_payment_reversal_to_chat_metadata(
+    chat_metadata: dict[str, Any],
+    *,
+    now_ms: int,
+    by: str | None = None,
+    reason: str | None = None,
+    order_id: str | None = None,
+    order_aliases: tuple[str, ...] = (),
+) -> bool:
+    """Deshace `apply_payment_confirmation_to_chat_metadata` cuando el
+    operador reversa un pago confirmado por error (pedido #32, 2026-09-17).
+
+    El chat vuelve al estado "pago pendiente de verificar" — el mismo que
+    dejó el bot al escalar — para que el inbox deje de mostrarlo como
+    cliente y el composer vuelva a ofrecer "Confirmar pago":
+      * `tag` → el que tenía antes del COMPRA_EXITOSA (default HUMANO).
+      * `active_route` → humano + `escalation_reason` de verificación de
+        pago (confirmar lo había devuelto al bot). Los workflows del bot no
+        se terminan acá: el próximo inbound ya queda filtrado por la ruta.
+      * episodio del pedido: `closing_tag` → CONFIRMADO_PAGO_PENDIENTE, sin
+        `payment_confirmed_*` (el scheduler post-venta deja de elegirlo).
+      * outbox CAPI: se descarta el `Purchase` de este pedido si todavía no
+        salió. Si ya salió, Meta no admite retractarlo; al re-confirmar el
+        event_id es el mismo y no se duplica.
+
+    `order_aliases`: otros ids del mismo pedido (el dashboard manda el
+    display_id "#32" y con ese quedó encolado el Purchase).
+
+    Idempotente: sin COMPRA_EXITOSA ni episodio confirmado → False.
+    """
+    ids = {i for i in (order_id, *order_aliases) if i}
+    episodes = chat_metadata.get("episodes") or []
+    confirmed_eps = [
+        ep for ep in episodes
+        if isinstance(ep, dict) and ep.get("payment_confirmed_at_ms")
+    ]
+    matched_ep = next(
+        (ep for ep in reversed(confirmed_eps) if ep.get("order_id") in ids),
+        confirmed_eps[-1] if confirmed_eps else None,
+    )
+    if chat_metadata.get("tag") != "COMPRA_EXITOSA" and matched_ep is None:
+        return False
+
+    motivo = f"Pago reversado por {by or 'humano'} desde dashboard de orders"
+    if reason:
+        motivo += f": {reason}"
+
+    if chat_metadata.get("tag") == "COMPRA_EXITOSA":
+        history = chat_metadata.get("status_history")
+        previous_tag = None
+        if isinstance(history, list):
+            tags = [h.get("tag") for h in history if isinstance(h, dict)]
+            while tags and tags[-1] == "COMPRA_EXITOSA":
+                tags.pop()
+            previous_tag = tags[-1] if tags else None
+        chat_metadata["tag"] = (
+            previous_tag if isinstance(previous_tag, str) and previous_tag
+            else "HUMANO"
+        )
+    chat_metadata["motivo"] = motivo
+    chat_metadata["active_route"] = ROUTE_HUMANO
+    chat_metadata["escalation_reason"] = _PAYMENT_PENDING_REASON
+
+    history = chat_metadata.setdefault("status_history", [])
+    if isinstance(history, list):
+        history.append(
+            {
+                "tag": chat_metadata["tag"],
+                "motivo": motivo,
+                "active_route": ROUTE_HUMANO,
+                "timestamp": now_ms / 1000.0,
+                "source": "orders_reverse_payment",
+            }
+        )
+
+    if matched_ep is not None:
+        matched_ep["closing_tag"] = "CONFIRMADO_PAGO_PENDIENTE"
+        matched_ep.pop("payment_confirmed_at_ms", None)
+        matched_ep.pop("payment_confirmed_by", None)
+        matched_ep["payment_reversed_at_ms"] = now_ms
+        matched_ep["payment_reversed_by"] = by or "humano"
+        if isinstance(matched_ep.get("order_id"), str):
+            ids.add(matched_ep["order_id"])
+
+    outbox = chat_metadata.get("capi_outbox")
+    if isinstance(outbox, list):
+        chat_metadata["capi_outbox"] = [
+            e for e in outbox
+            if not (
+                isinstance(e, dict)
+                and e.get("event_name") == "Purchase"
+                and e.get("order_id") in ids
+            )
+        ]
     return True
 
 
@@ -715,6 +819,160 @@ class MedusaOrderCommand:
                 },
             )
 
+    async def reverse_payment(
+        self, command: ReversePaymentCommand
+    ) -> OrderCommandResult:
+        """Reversar un pago confirmado por error — el pedido vuelve a NO pagado.
+
+        Sequence (espejo inverso de `confirm_payment`):
+          1. Fetch order con sus payments. Drafts no tienen pago → error.
+          2. Sin nada que reversar (flag apagado y Medusa sin captura ni
+             refund) → `invalid_state`.
+          3. Reembolsar en Medusa cada payment con saldo capturado (el
+             `mark-as-paid` manual no se puede des-capturar). Si ya estaba
+             reembolsado desde Medusa Admin (pedido #32) → no hay llamadas.
+             Si un refund falla, NO se toca el flag (Medusa sigue mandando).
+          4. PATCH metadata: flag en False + marca de reversa + history.
+          5. Best-effort: el chat vuelve a "pago pendiente de verificar".
+        """
+        order_id = command.order_id
+        try:
+            backend_id, is_draft, current_data = await self._fetch_with_kind(
+                order_id
+            )
+        except MedusaAPIError as exc:
+            return _exc_to_result(order_id, exc, "reverse_payment.fetch")
+
+        current_metadata: dict[str, Any] = current_data.get("metadata") or {}
+        stage = read_stage(current_metadata)
+        if is_draft:
+            return OrderCommandResult(
+                success=False,
+                order_id=order_id,
+                current_stage=stage,
+                error_detail=(
+                    "invalid_state: el pedido aún es draft; no tiene pago "
+                    "registrado que reversar."
+                ),
+            )
+
+        try:
+            with_payments = await self._client.get_order(
+                backend_id, fields=_REVERSAL_FIELDS
+            )
+        except MedusaAPIError as exc:
+            return _exc_to_result(order_id, exc, "reverse_payment.fetch_payments")
+
+        refundable = _refundable_payments(with_payments)
+        medusa_status = current_data.get("payment_status")
+        flag_on = current_metadata.get(META_KEY_PAYMENT_CONFIRMED) is True
+        if not flag_on and not refundable and medusa_status not in (
+            "refunded", "partially_refunded"
+        ):
+            return OrderCommandResult(
+                success=False,
+                order_id=order_id,
+                current_stage=stage,
+                error_detail=(
+                    "invalid_state: el pedido no tiene un pago confirmado "
+                    "que reversar."
+                ),
+            )
+
+        for payment_id, amount in refundable:
+            try:
+                await self._client.refund_payment(
+                    payment_id, amount=amount, note=command.reason
+                )
+            except MedusaAPIError as exc:
+                return _exc_to_result(
+                    order_id, exc, "reverse_payment.medusa_refund"
+                )
+            log.info(
+                "reverse_payment: Medusa payment refunded",
+                extra={
+                    "order_id": order_id,
+                    "backend_id": backend_id,
+                    "payment_id": payment_id,
+                    "amount": amount,
+                },
+            )
+
+        patch = build_reverse_payment_patch(
+            current_metadata, by=command.by, reason=command.reason
+        )
+        try:
+            updated = await self._client.patch_order_metadata(backend_id, patch)
+        except MedusaAPIError as exc:
+            log.error(
+                "reverse_payment: Medusa refunded but metadata patch failed",
+                extra={"order_id": order_id, "backend_id": backend_id},
+            )
+            return _exc_to_result(order_id, exc, "reverse_payment.patch_metadata")
+
+        chat_session_key = current_metadata.get("session_key")
+        if isinstance(chat_session_key, str) and chat_session_key:
+            self._sync_chat_payment_reversal(
+                session_key=chat_session_key,
+                order_id=backend_id,
+                order_aliases=(order_id,),
+                by=command.by,
+                reason=command.reason,
+            )
+
+        return OrderCommandResult(
+            success=True,
+            order_id=order_id,
+            current_stage=read_stage(updated.get("metadata") or {}),
+        )
+
+    def _sync_chat_payment_reversal(
+        self,
+        *,
+        session_key: str,
+        order_id: str,
+        order_aliases: tuple[str, ...],
+        by: str | None,
+        reason: str | None,
+    ) -> None:
+        """Espejo defensivo de `_sync_chat_payment_confirmation`: si el chat
+        no existe o no se puede escribir, se loguea y NO falla — Medusa ya
+        quedó reversado, que es lo crítico."""
+        chat_meta_file = WORKSPACE_VAULT_DIR / session_key / "metadata.json"
+        if not chat_meta_file.exists():
+            return
+        try:
+            chat_data = json.loads(chat_meta_file.read_text(encoding="utf-8"))
+            if not isinstance(chat_data, dict):
+                return
+            changed = apply_payment_reversal_to_chat_metadata(
+                chat_data,
+                now_ms=int(time.time() * 1000),
+                by=by,
+                reason=reason,
+                order_id=order_id,
+                order_aliases=order_aliases,
+            )
+            if changed:
+                chat_meta_file.write_text(
+                    json.dumps(chat_data, indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                log.info(
+                    "reverse_payment: chat metadata back to payment pending",
+                    extra={"order_id": order_id, "session_key": session_key},
+                )
+        except (OSError, json.JSONDecodeError) as exc:
+            log.warning(
+                "reverse_payment: failed to sync chat metadata "
+                "(Medusa side already OK)",
+                extra={
+                    "order_id": order_id,
+                    "session_key": session_key,
+                    "error": str(exc)[:200],
+                },
+            )
+
     async def cancel_order(
         self, command: CancelOrderCommand
     ) -> OrderCommandResult:
@@ -1087,6 +1345,36 @@ class MedusaOrderCommand:
 # ----------------------------------------------------------------------
 
 
+_REVERSAL_FIELDS = (
+    "id,payment_status,"
+    "payment_collections.payments.id,"
+    "payment_collections.payments.captures.amount,"
+    "payment_collections.payments.refunds.amount"
+)
+
+
+def _refundable_payments(order: dict[str, Any]) -> list[tuple[str, int]]:
+    """(payment_id, saldo) de cada payment con captura no reembolsada."""
+    out: list[tuple[str, int]] = []
+    for pc in order.get("payment_collections") or []:
+        if not isinstance(pc, dict):
+            continue
+        for pay in pc.get("payments") or []:
+            if not isinstance(pay, dict) or not pay.get("id"):
+                continue
+            captured = sum(
+                int(c.get("amount") or 0)
+                for c in pay.get("captures") or [] if isinstance(c, dict)
+            )
+            refunded = sum(
+                int(r.get("amount") or 0)
+                for r in pay.get("refunds") or [] if isinstance(r, dict)
+            )
+            if captured - refunded > 0:
+                out.append((str(pay["id"]), captured - refunded))
+    return out
+
+
 def _exc_to_result(
     order_id: str, exc: MedusaAPIError, operation: str
 ) -> OrderCommandResult:
@@ -1174,6 +1462,11 @@ class NoopOrderCommand:
 
     async def confirm_payment(
         self, command: ConfirmPaymentCommand
+    ) -> OrderCommandResult:
+        return self._unavailable(command.order_id)
+
+    async def reverse_payment(
+        self, command: ReversePaymentCommand
     ) -> OrderCommandResult:
         return self._unavailable(command.order_id)
 

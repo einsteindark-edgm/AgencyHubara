@@ -503,6 +503,27 @@ class HttpMedusaClient:
         )
         return data["payment_collection"]
 
+    async def refund_payment(
+        self,
+        payment_id: str,
+        amount: int,
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        """Reembolsar un payment capturado via `POST /admin/payments/{id}/refund`.
+
+        Para `pp_system_default` (pagos manuales marcados con
+        `mark_payment_collection_paid`) no mueve dinero: solo registra el
+        refund, y la Order pasa a `payment_status="refunded"`. Es la única
+        forma de deshacer un `mark-as-paid` en Medusa v2 (no hay "uncapture").
+        """
+        body: dict[str, Any] = {"amount": amount}
+        if note:
+            body["note"] = note
+        data = await self._request(
+            "POST", f"/admin/payments/{payment_id}/refund", json=body
+        )
+        return data["payment"]
+
     async def convert_draft_to_order(
         self, draft_order_id: str
     ) -> dict[str, Any]:

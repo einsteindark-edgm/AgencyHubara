@@ -181,6 +181,7 @@ export function useOrderDetail(displayId: string | null) {
  *   useScheduleOrder       → PATCH /api/orders/orders/{id}/schedule
  *   useTransitionOrderStage→ PATCH /api/orders/orders/{id}/stage
  *   useConfirmOrderPayment → PATCH /api/orders/orders/{id}/confirm-payment
+ *   useReverseOrderPayment → PATCH /api/orders/orders/{id}/reverse-payment
  *   useCancelOrder         → POST  /api/orders/orders/{id}/cancel
  *
  * Todas devuelven `OrderCommandResult` (success/error_detail) y todas
@@ -281,6 +282,33 @@ export function useConfirmOrderPayment() {
       const raw = await apiClient.patch<unknown>(
         `/api/orders/orders/${encodeURIComponent(orderId)}/confirm-payment`,
         {},
+      );
+      return orderCommandResultSchema.parse(raw);
+    },
+    onSuccess: (result, vars) => {
+      if (result.success) {
+        qc.invalidateQueries({ queryKey: orderKeys.list() });
+        qc.invalidateQueries({ queryKey: orderKeys.detail(vars.orderId) });
+      }
+    },
+  });
+}
+
+interface ReversePaymentVariables {
+  orderId: string;
+  reason?: string;
+}
+
+/** Reversa un pago confirmado por error operativo: el pedido vuelve a NO
+ *  pagado (Medusa registra el refund si seguía capturado) y el chat vuelve a
+ *  "pago pendiente de verificar". */
+export function useReverseOrderPayment() {
+  const qc = useQueryClient();
+  return useMutation<OrderCommandResult, Error, ReversePaymentVariables>({
+    mutationFn: async ({ orderId, reason }) => {
+      const raw = await apiClient.patch<unknown>(
+        `/api/orders/orders/${encodeURIComponent(orderId)}/reverse-payment`,
+        { reason },
       );
       return orderCommandResultSchema.parse(raw);
     },

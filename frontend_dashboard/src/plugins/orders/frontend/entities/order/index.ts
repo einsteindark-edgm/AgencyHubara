@@ -22,6 +22,7 @@ export {
   useScheduleOrder,
   useTransitionOrderStage,
   useConfirmOrderPayment,
+  useReverseOrderPayment,
   useCancelOrder,
   useCustomerScore,
   useGenerateCustomerSummary,

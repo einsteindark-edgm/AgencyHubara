@@ -42,6 +42,7 @@ from src.platform.medusa.composition import get_medusa_client
 from src.platform.orders.command_port import (
     CancelOrderCommand,
     ConfirmPaymentCommand,
+    ReversePaymentCommand,
     ScheduleDeliveryCommand,
     TransitionStageCommand,
 )
@@ -466,6 +467,33 @@ async def confirm_order_payment(
     cmd = ConfirmPaymentCommand(order_id=order_id, by=by)
     port = get_order_command_port()
     result = await port.confirm_payment(cmd)
+    if result.success:
+        _publish_orders_changed(order_id)
+    return _serialize_command_result(result)
+
+
+@router.patch("/orders/{order_id}/reverse-payment")
+async def reverse_order_payment(
+    order_id: str = Path(..., min_length=1, max_length=200),
+    body: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    """Reversar un pago confirmado por error operativo.
+
+    Body opcional `{"reason": "texto", "by": "string"}`. El pedido vuelve a
+    NO pagado: Medusa registra el refund (si seguía capturado), el flag
+    `hubara_payment_confirmed` se apaga y el chat vuelve a "pago pendiente
+    de verificar". `invalid_state` si no hay pago que reversar.
+    """
+    raw_reason = body.get("reason")
+    reason = (
+        raw_reason.strip()
+        if isinstance(raw_reason, str) and raw_reason.strip()
+        else None
+    )
+    by = body.get("by") if isinstance(body.get("by"), str) else "human"
+    cmd = ReversePaymentCommand(order_id=order_id, reason=reason, by=by)
+    port = get_order_command_port()
+    result = await port.reverse_payment(cmd)
     if result.success:
         _publish_orders_changed(order_id)
     return _serialize_command_result(result)
