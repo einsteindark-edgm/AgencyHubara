@@ -28,6 +28,7 @@ import {
   type TargetRoute,
 } from "@plugins/chats/frontend/entities/handoff";
 import { useOutbox } from "../model/useOutbox";
+import { canOfferQuickOrder } from "../model/quickOrderEligibility";
 import { ConfirmPaymentAction } from "./ConfirmPaymentAction";
 import { CreateOrderAction } from "./CreateOrderAction";
 import { ScheduleDeliveryAction } from "./ScheduleDeliveryAction";
@@ -72,6 +73,7 @@ export function ChatsComposer({ chatId }: Props) {
         chatId={chatId}
         pendingPaymentOrderId={session?.pending_payment_order_id ?? null}
         serviceWindowExpiresAtMs={session?.service_window_expires_at_ms ?? null}
+        canCreateOrder={canOfferQuickOrder(session?.status_history)}
       />
     );
   }
@@ -132,12 +134,15 @@ interface InterveneActiveProps {
   pendingPaymentOrderId: string | null;
   /** Cierre de la ventana de servicio 24h (epoch ms), o null si se desconoce. */
   serviceWindowExpiresAtMs: number | null;
+  /** El histórico trae `CONFIRMADO_SIN_DATOS` (ver `model/quickOrderEligibility`). */
+  canCreateOrder: boolean;
 }
 
 function InterveneActiveComposer({
   chatId,
   pendingPaymentOrderId,
   serviceWindowExpiresAtMs,
+  canCreateOrder,
 }: InterveneActiveProps) {
   const [text, setText] = useState("");
   const [showReturnPicker, setShowReturnPicker] = useState(false);
@@ -187,11 +192,12 @@ function InterveneActiveComposer({
           Intervenido por ti · Bot pausado
         </span>
         <span className="right">
-          {/* Crear el pedido con los datos que quedaron EN la conversación:
-              el caso del chat que se escala por "faltan datos de envío" y el
-              humano los consigue a mano. Siempre disponible en modo
-              intervenido (el formulario avisa si ya hay un pedido). */}
-          <CreateOrderAction chatId={chatId} />
+          {/* Crear el pedido con los datos que quedaron EN la conversación.
+              Solo con `CONFIRMADO_SIN_DATOS` en el histórico: el cliente
+              confirmó la compra pero no completó los datos de envío y el
+              humano los consiguió a mano. En cualquier otra conversación
+              intervenida el botón sería ruido. */}
+          {canCreateOrder && <CreateOrderAction chatId={chatId} />}
           {pendingPaymentOrderId && (
             <>
               <ScheduleDeliveryAction

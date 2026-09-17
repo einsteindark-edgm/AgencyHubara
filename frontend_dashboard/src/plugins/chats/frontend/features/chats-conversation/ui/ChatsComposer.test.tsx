@@ -212,21 +212,56 @@ describe("ChatsComposer", () => {
     expect(screen.getByText(/Devolver al bot/i)).toBeInTheDocument();
   });
 
-  it("ofrece 'Crear pedido' solo cuando el humano tiene el hilo", () => {
-    // El caso que motivó esto: sin pedido registrado (no hay
-    // `pending_payment_order_id`) el operador igual necesita poder crearlo.
+  it("ofrece 'Crear pedido' cuando el histórico trae CONFIRMADO_SIN_DATOS", () => {
+    // El caso que motivó esto: el cliente confirmó la compra pero no completó
+    // los datos de envío. No hay pedido registrado (sin
+    // `pending_payment_order_id`), así que sin este botón la conversación no
+    // tiene salida. Al intervenir, `tag` pasa a HUMANO — el estado que
+    // justifica el botón solo sobrevive en el histórico.
     useSessionMock.mockReturnValue({
-      data: { active_agent_route: "humano", pending_payment_order_id: null },
+      data: {
+        active_agent_route: "humano",
+        tag: "HUMANO",
+        pending_payment_order_id: null,
+        status_history: [
+          { tag: "INTERESADO", motivo: "", active_route: "ventas", timestamp: 1 },
+          { tag: "CONFIRMADO_SIN_DATOS", motivo: "", active_route: "ventas", timestamp: 2 },
+          { tag: "HUMANO", motivo: "", active_route: "humano", timestamp: 3 },
+        ],
+      },
     });
-    const { unmount } = render(<ChatsComposer chatId="wa_X" />, {
-      wrapper: makeWrapper(),
-    });
+    render(<ChatsComposer chatId="wa_X" />, { wrapper: makeWrapper() });
     expect(
       screen.getByRole("button", { name: /crear pedido/i }),
     ).toBeInTheDocument();
-    unmount();
+  });
 
-    useSessionMock.mockReturnValue({ data: { active_agent_route: "ventas" } });
+  it("NO lo ofrece en una conversación intervenida cualquiera", () => {
+    useSessionMock.mockReturnValue({
+      data: {
+        active_agent_route: "humano",
+        pending_payment_order_id: null,
+        status_history: [
+          { tag: "INTERESADO", motivo: "", active_route: "ventas", timestamp: 1 },
+          { tag: "HUMANO", motivo: "", active_route: "humano", timestamp: 2 },
+        ],
+      },
+    });
+    render(<ChatsComposer chatId="wa_X" />, { wrapper: makeWrapper() });
+    expect(
+      screen.queryByRole("button", { name: /crear pedido/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("tampoco cuando el bot tiene el hilo, aunque el histórico lo traiga", () => {
+    useSessionMock.mockReturnValue({
+      data: {
+        active_agent_route: "ventas",
+        status_history: [
+          { tag: "CONFIRMADO_SIN_DATOS", motivo: "", active_route: "ventas", timestamp: 1 },
+        ],
+      },
+    });
     render(<ChatsComposer chatId="wa_X" />, { wrapper: makeWrapper() });
     expect(
       screen.queryByRole("button", { name: /crear pedido/i }),
