@@ -120,3 +120,60 @@ def traces_from(t) -> list[dict]:
             "state": dict(turn.state),
         })
     return out
+
+
+# ── Run ebbc203d (2026-09-16): precio del anuncio en vez del catálogo ───────
+_HALLOWEEN_CTX = CheckContext(
+    aromas=("Frutos rojos",),
+    colors=("Blanco", "Naranja"),
+    product_titles=("Trilogía del Terror", "Calabaza", "Momia", "Fantasma"),
+    catalog_available=True,
+    catalog_prices=(49500, 16000, 17500, 19000),
+)
+_AD_PRICE_QUOTE = (
+    "El set de la Trilogía del Terror tiene un valor de *$45.000 COP*.\n\n"
+    "Sobre el pago: sí manejamos contra entrega, y aplica justo desde $45.000 en productos, "
+    "así que tu pedido califica. El valor del envío lo confirma la transportadora al despachar.\n\n"
+    "¿Lo dejamos así?"
+)
+_CATALOG_PRICE_QUOTE = (
+    "El set de la Trilogía del Terror tiene un valor de *$49.500 COP*.\n\n"
+    "Sobre el pago: sí manejamos contra entrega, y aplica desde $45.000 en productos, "
+    "así que tu pedido califica. El valor del envío lo confirma la transportadora al despachar.\n\n"
+    "¿Lo dejamos así?"
+)
+_TRILOGIA_DRAFT = {"producto": "Trilogía del Terror", "cantidad": "1"}
+
+
+def _ebbc203d(price_quote: str):
+    return traj(
+        T(1, inbound="¡Hola! Quiero más información sobre la colección de Haloween", first_contact=True,
+          sent=[_GREETING.replace("Buenos días", "Buenas tardes")],
+          tools=[tool("search_products", notes=["count:4"], q="halloween"), tool("present_products")]),
+        T(2, inbound="Tienes envíos a Cali",
+          sent=["Sí, hacemos envíos a todo Colombia, Cali incluida. El valor del envío se confirma al despachar con la transportadora."]),
+        T(3, inbound="Quisiera la trilogía de terror", stage_out="variantes", draft={"producto": "Trilogía del Terror"},
+          tools=[tool("set_order_slot", producto="Trilogía del Terror"), tool("get_product_by_handle", handle="trilogia-del-terror")],
+          sent=["El set viene en aroma de frutos rojos y color blanco, así que no hay variantes por elegir. ¿Cuántas unidades quieres?"]),
+        T(4, inbound="Solo uno", stage_in="variantes", draft=_TRILOGIA_DRAFT,
+          tools=[tool("set_order_slot", cantidad="1"),
+                 tool("request_shipping_details", ok=False, error="purchase_not_confirmed")],
+          sent=["Listo, un set de la Trilogía del Terror."]),
+        T(5, inbound="Tienes pago contra entrega", stage_in="confirmacion", draft=_TRILOGIA_DRAFT,
+          tools=[tool("send_quick_replies", body=price_quote)]),
+        closing_tag="INTERESADO",
+    )
+
+
+def ebbc203d_before_fix():
+    """El bot citó "$45.000" (precio del anuncio) con el set a $49.500 en catálogo."""
+    return _ebbc203d(_AD_PRICE_QUOTE)
+
+
+def ebbc203d_after_fix():
+    """Mismo episodio citando el precio del catálogo: el check no dispara."""
+    return _ebbc203d(_CATALOG_PRICE_QUOTE)
+
+
+def halloween_ctx() -> CheckContext:
+    return _HALLOWEEN_CTX

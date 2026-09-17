@@ -45,6 +45,29 @@ class FilesystemMessageHistoryStore:
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(event, ensure_ascii=False) + "\n")
 
+    def read_events(self, session_id: str) -> list[dict[str, Any]]:
+        """Eventos de la sesión en orden de append (lista vacía si no hay log).
+
+        Lector tolerante: una línea corrupta se saltea, no rompe la lectura
+        (el log es append-only y escrito por varias activities).
+        """
+        path = self._path_for(session_id)
+        if not path.exists():
+            return []
+        events: list[dict[str, Any]] = []
+        with path.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(event, dict):
+                    events.append(event)
+        return events
+
     def append_user_event(
         self,
         session_id: str,

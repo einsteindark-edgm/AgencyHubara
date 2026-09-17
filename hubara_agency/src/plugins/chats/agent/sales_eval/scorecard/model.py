@@ -42,6 +42,8 @@ class CheckContext:
     product_titles: tuple[str, ...] = ()
     catalog_available: bool = False
     catalog_summary: str = ""
+    # Precios unitarios (COP) del catálogo vigente — DES-10 (run ebbc203d).
+    catalog_prices: tuple[int, ...] = ()
 
 
 VERDICTS = ("pasa", "falla", "no_aplica", "desconocido")

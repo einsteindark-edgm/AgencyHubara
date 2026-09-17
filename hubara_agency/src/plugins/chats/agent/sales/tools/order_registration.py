@@ -71,6 +71,11 @@ from src.platform.orders.port import (
     OrderShipping,
 )
 from src.platform.orders.reconciliation import STATUS_PENDING
+from src.plugins.chats.agent.sales.pricing import (
+    accepted_prices,
+    catalog_unit_price,
+    format_cop,
+)
 from src.platform.orders.stub import StubOrderRegistration
 from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
     attach_order_to_active_episode,
@@ -329,6 +334,29 @@ class RegisterOrderTool(ToolBase):
             "attribution_channel": origin.get("channel"),
         }
 
+    async def _price_mismatches(
+        self, session_key: str, items: list[OrderItem]
+    ) -> list[tuple[str, int, int]]:
+        """`(handle, precio_pasado, precio_esperado)` por ítem cuyo precio no
+        es del catálogo ni el live verificado. Catálogo caído / handle no
+        resoluble → sin referencia → no se reporta (degradado)."""
+        if self._catalog is None:
+            return []
+        mismatches: list[tuple[str, int, int]] = []
+        for it in items:
+            try:
+                product = await self._catalog.get_by_handle(it.handle)
+            except Exception:  # noqa: BLE001 — sin referencia para este ítem
+                continue
+            snapshot = catalog_unit_price(product)
+            accepted = accepted_prices(
+                self._vault_dir, session_key, it.handle, snapshot_price_cop=snapshot
+            )
+            if accepted and int(it.unit_price_cop) not in accepted:
+                expected = snapshot if snapshot in accepted else max(accepted)
+                mismatches.append((it.handle, int(it.unit_price_cop), int(expected)))
+        return mismatches
+
     async def execute_with_context(
         self,
         ctx: ToolContext,
@@ -416,6 +444,41 @@ class RegisterOrderTool(ToolBase):
                         "(subtotal = suma de unit_price×cantidad; total = subtotal "
                         "+ envío) y llama de nuevo `register_order` con los montos "
                         "correctos. No inventes precios ni totales."
+                    ),
+                },
+                ensure_ascii=False,
+            )
+
+        # SEC-07b (run ebbc203d, 2026-09-16 + inyección de precios): el precio
+        # UNITARIO debe ser el del catálogo (snapshot) o el live que verificó
+        # `verify_order_for_checkout` en esta sesión. SEC-07 solo caza un total
+        # desconectado de los ítems; un unit_price bajado ("cóbrame 30.000") o
+        # sacado del anuncio (45.000 con el set a 49.500) cuadraba y llegaba a
+        # Medusa. Sin referencia (catálogo caído) se degrada a SEC-07.
+        price_mismatches = await self._price_mismatches(ctx.session_key, order_items)
+        if price_mismatches:
+            logger.warning(
+                "🧾 [TOOL register_order] PRICE_MISMATCH session={} {}",
+                ctx.session_key,
+                price_mismatches,
+            )
+            detail = "; ".join(
+                f"{h}: pasaste {format_cop(p)}, catálogo {format_cop(e)}"
+                for h, p, e in price_mismatches
+            )
+            return json.dumps(
+                {
+                    "registered": False,
+                    "order_id": None,
+                    "error_detail": "price_mismatch",
+                    "summary": (
+                        f"Los precios NO son los del catálogo: {detail}. El "
+                        "pedido NO se registró. Llama `verify_order_for_checkout` "
+                        "y usa EXACTAMENTE `unit_price_cop` / `subtotal_cop` del "
+                        "envelope; si le habías dicho otro precio al cliente, "
+                        "acláraselo con honestidad antes de registrar. Nunca "
+                        "inventes ni negocies precios (descuentos → "
+                        "escalate_to_human('DISCOUNT_REQUEST'))."
                     ),
                 },
                 ensure_ascii=False,

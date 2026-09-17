@@ -24,6 +24,21 @@ from __future__ import annotations
 SHIPPING_RATE_BOGOTA_COP = 7_900
 SHIPPING_RATE_NATIONAL_COP = 16_940
 
+# Contra entrega: solo pedidos con productos DESDE este monto (política de
+# margen vs costo del envío). Umbral INCLUSIVO — incidente run ebbc203d
+# (2026-09-16): el guion decía "desde $45.000", el bot se lo afirmó al
+# cliente, y el código usaba `> 45000` estricto → el formulario de envío
+# ocultó "Contra entrega" para un pedido de $45.000 exactos y la clienta
+# abandonó el Flow. Este es el ÚNICO lugar donde vive el umbral; el
+# formulario, el fallback de texto y los prompts lo citan desde acá.
+CASH_ON_DELIVERY_MIN_PRODUCTS_COP = 45_000
+
+
+def cash_on_delivery_available(products_subtotal_cop: int) -> bool:
+    """¿El pedido califica para contra entrega? Se compara el subtotal de
+    PRODUCTOS (sin envío) contra el mínimo, inclusive."""
+    return int(products_subtotal_cop) >= CASH_ON_DELIVERY_MIN_PRODUCTS_COP
+
 # Mensaje estándar, verbatim del operador (2026-09-07).
 SHIPPING_RATES_MESSAGE = (
     "Nuestras tarifas mínimas de envío son 🚚:\n"
