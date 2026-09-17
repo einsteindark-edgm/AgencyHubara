@@ -92,8 +92,15 @@ from src.platform.orders.command_port import (
 )
 from src.platform.orders.composition import (
     get_order_command_port as get_order_command_port,
+    get_order_facts_port as get_order_facts_port,
     get_order_query_port as get_order_query_port,
     get_order_registration_port as get_order_registration_port,
+)
+from src.platform.orders.facts import (
+    InMemoryOrderFacts as InMemoryOrderFacts,
+    OrderFacts as OrderFacts,
+    OrderFactsReadPort as OrderFactsReadPort,
+    OrderFactsSnapshot as OrderFactsSnapshot,
 )
 from src.platform.orders.port import (
     OrderRegistrationPort as OrderRegistrationPort,
