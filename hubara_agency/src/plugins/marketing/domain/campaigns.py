@@ -236,8 +236,14 @@ def build_send_plan(
 def campaign_stats(
     campaign: dict[str, Any],
     sessions: list[tuple[str, dict[str, Any]]],
+    order_facts: Any = None,
 ) -> dict[str, Any]:
     """Métricas de atribución de UNA campaña sobre el vault (puro).
+
+    `order_facts` (`OrderFactsSnapshot`, pedido #31): el vault aporta el
+    vínculo episodio→pedido y el VALOR sale de Orders — solo pedidos pagados
+    y no cancelados, con su total vivo (la copia congelada solo si Medusa no
+    respondió). Sin `order_facts` se usa la copia congelada (legacy).
 
     `replied` = sesiones cuyo último inbound cae dentro de la ventana
     post-touch de ESTA campaña. `attributed_*` = episodios que arrancan en
@@ -266,6 +272,10 @@ def campaign_stats(
             if matching_campaign_touch(touches, episode.get("started_at_ms")) is None:
                 continue
             total = episode.get("order_total_cop")
+            if order_facts is not None:
+                total = order_facts.revenue_cop(
+                    episode.get("order_id"), frozen_total=total
+                )
             if isinstance(total, (int, float)) and not isinstance(total, bool):
                 orders += 1
                 revenue_cop += int(total)
