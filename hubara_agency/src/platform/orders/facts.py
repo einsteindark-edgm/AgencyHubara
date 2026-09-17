@@ -63,6 +63,7 @@ class OrderFacts:
     stage: str        # new | preparing | ready | shipping | delivered | cancelled
     customer: str
     is_draft: bool
+    created_at_ms: int = 0
 
     @classmethod
     def from_summary(cls, s: OrderSummaryDTO) -> OrderFacts:
@@ -75,6 +76,7 @@ class OrderFacts:
             stage=s.status,
             customer=s.customer,
             is_draft=s.is_draft,
+            created_at_ms=int(s.created_at_ms or 0),
         )
 
     @property

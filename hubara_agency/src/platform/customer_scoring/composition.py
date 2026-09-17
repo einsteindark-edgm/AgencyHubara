@@ -15,6 +15,7 @@ import logging
 import time
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.customer_scoring.features import compute_customer_features
@@ -70,6 +71,7 @@ class YamlCustomerScoringAdapter:
         now_ms: int,
         medusa_order_totals_cop: dict[str, int] | None = None,
         medusa_order_created_at_ms: dict[str, int] | None = None,
+        order_facts: Any = None,
     ) -> CustomerScore:
         # 1. Cargar rules (cache hit si mtime no cambió).
         try:
@@ -93,6 +95,7 @@ class YamlCustomerScoringAdapter:
             now_ms=now_ms,
             medusa_order_totals_cop=medusa_order_totals_cop,
             medusa_order_created_at_ms=medusa_order_created_at_ms,
+            order_facts=order_facts,
         )
 
         # 4. Apply rules (pure).
