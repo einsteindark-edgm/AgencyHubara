@@ -1,7 +1,7 @@
 /**
  * ChatsBubble — cita (reply) del cliente.
  *
- * Caso wa_573176471988: "que el velón amor eterno sea este" citando una foto.
+ * Caso run 541d90e0: "que el velón amor eterno sea este" citando una foto.
  * La burbuja debe mostrar QUÉ se citó (autor + miniatura + texto) para que el
  * operador no tenga que adivinar.
  */

@@ -1,6 +1,6 @@
 """Reply del cliente (cita de un mensaje) visible en el dashboard.
 
-Caso real (sesión wa_573176471988, 2026-09-16): tras confirmar el pedido la
+Caso real (run 541d90e0, 2026-09-16): tras confirmar el pedido la
 clienta escribió "Pero por favor, que el velón amor eterno sea este" CITANDO
 un mensaje. El webhook traía `context.id`, pero el JSONL del chat solo
 guardaba el texto — el operador no tenía forma de saber a qué foto se
