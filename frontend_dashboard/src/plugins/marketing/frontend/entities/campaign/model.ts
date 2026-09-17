@@ -80,6 +80,8 @@ export interface CampaignStats {
   replied: number;
   attributedOrders: number;
   attributedRevenueCop: number;
+  /** Revenue calculado con valores de pedidos no actualizados (Orders caído). */
+  ordersStale: boolean;
 }
 
 /** Patch parcial del PUT — cada campo presente se envía, el resto no viaja. */

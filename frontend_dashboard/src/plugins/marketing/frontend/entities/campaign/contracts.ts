@@ -108,6 +108,9 @@ export const backendCampaignStatsSchema = z.object({
   replied: z.number().int().default(0),
   attributed_orders: z.number().int().default(0),
   attributed_revenue_cop: z.number().int().default(0),
+  // true = Orders (Medusa) no respondió: el revenue usa el último valor
+  // conocido de los pedidos (OrderFacts). Backend viejo → false.
+  orders_stale: z.boolean().default(false),
 });
 
 export type BackendCampaignStats = z.infer<typeof backendCampaignStatsSchema>;

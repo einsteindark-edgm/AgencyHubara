@@ -89,6 +89,9 @@ export type BackendAdsCampaign = z.infer<typeof backendAdsCampaignSchema>;
 
 export const backendAdsCampaignsResponseSchema = z.object({
   campaigns: z.array(backendAdsCampaignSchema),
+  // true = el valor de algún pedido no se pudo leer de Orders (Medusa no
+  // respondió) y se muestra el último conocido. Backend viejo → false.
+  orders_stale: z.boolean().default(false),
 });
 
 /* ── Segmentos (response de GET /api/ads/campaigns/{id}/adsets) ──────────── */
