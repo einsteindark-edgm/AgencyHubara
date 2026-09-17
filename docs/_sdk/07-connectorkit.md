@@ -163,23 +163,23 @@ revenue = facts.revenue_cop(order_id, frozen_total=episode.get("order_total_cop"
 return {..., "orders_stale": facts.stale}  # la UI avisa "valores sin actualizar"
 ```
 
-**Lectores migrados:** `ads` (campañas, segmentos, anuncios, conversaciones) y
-`marketing` (`campaign_stats`). La guarda AST impide que vuelvan a sumar la
-copia sin `order_facts`.
+**Lectores migrados:** `ads` (campañas, segmentos, anuncios, conversaciones),
+`marketing` (`campaign_stats`), `customer_scoring` (LTV / frecuencia / última
+compra, y el endpoint dejó de fetchear Medusa por su cuenta), el **inbox de
+chats** (botón "Confirmar pago"), el **watchdog de remarketing** (etapa del
+template + monto real) y `shared/funnel.is_open_cart`. La guarda AST cubre ads
+y marketing; en el resto el reemplazo es de TAG por estado del pedido, con el
+camino viejo como respaldo cuando Medusa no responde.
 
-**Pendientes (siguen leyendo copias del vault — migrar uno a uno y sumarlos a la guarda):**
+**Pendientes (siguen leyendo copias del vault):**
 
-| Lector | Dato que duplica |
-|---|---|
-| `platform/whatsapp/capi_activity.py` | total y moneda del Purchase (`registered_order`) |
-| `platform/customer_scoring/features.py` | "ganado" por tag `COMPRA_EXITOSA` |
-| `plugins/ads/classification.py` | estado "ganado" de la conversación por tag |
-| `plugins/marketing/domain/campaigns.py::segment_for_metadata` | segmento "compró" por tag; cliente de `registered_order` |
-| `plugins/chats/shared/funnel.py`, `shared/purchase_signals.py` | pagado y total del funnel |
-| `plugins/chats/api/dashboard.py` | "pago pendiente" por tag + `registered_order` |
-| `plugins/chats/agent/remarketing/activities/watchdog_activities.py` | estado de pago |
-| `plugins/chats/agent/sales/use_cases/tag_reconcile.py`, `agent/post_sale_return/*` | pagado por tag |
-| `plugins/reengagement/.../build_snapshot.py` | `has_registered_order` |
+| Lector | Dato que duplica | Nota |
+|---|---|---|
+| `platform/whatsapp/capi_activity.py` + `shared/funnel.enqueue_capi_for_tag` | total y moneda del `Purchase` a Meta | el valor sale de `registered_order`; el lugar honesto para corregirlo es el flush del outbox (un solo punto, justo antes de enviar) |
+| `sales/use_cases/episode_lifecycle.py` (cierre por inactividad → `CartAbandoned`) | "pagado" por etiqueta | corre en el ingest de CADA mensaje: consultar Medusa ahí agrega latencia al bot. El watchdog (ya migrado) suele emitir primero y el outbox dedupea |
+| `plugins/ads/classification.py`, `marketing/domain/campaigns.py::segment_for_metadata` | estado "ganado" / segmento por etiqueta | es el estado de la CONVERSACIÓN (a quién le escribo), no el del pedido — migrar solo si el operador quiere audiencias por pago real |
+| `chats/shared/purchase_signals.py::has_purchase_confirmation` | "el cliente dijo que sí" | señal conversacional, no estado del pedido |
+| `plugins/reengagement/.../build_snapshot.py` | `has_registered_order` | |
 
 Los evals de `sales_eval` leen el tag a propósito: evalúan lo que hizo el bot,
 no el estado del pedido.

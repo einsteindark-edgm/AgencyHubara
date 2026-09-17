@@ -609,3 +609,98 @@ def test_the_silence_hop_times_out_before_the_watchdog_activity_does() -> None:
     from src.plugins.chats.agent.remarketing.activities import mba_silence_close
 
     assert mba_silence_close._TIMEOUT_S <= 8.0  # start_to_close de la activity = 15 s, sin heartbeat
+
+
+# ---------------------------------------------------------------------------
+# OrderFacts: la etapa la decide el PEDIDO, no la etiqueta (pedido #31/#32)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_paid_order_resolves_post_purchase_template(
+    monkeypatch: pytest.MonkeyPatch,
+    _isolate_vault_dir: Path,
+) -> None:
+    """Pago registrado en Medusa Admin (el chat no se enteró): el template
+    NO puede ser el de "te esperamos para pagar"."""
+    from src.platform.orders.facts import InMemoryOrderFacts, OrderFacts
+    from src.plugins.chats.agent.remarketing.activities import watchdog_activities
+
+    monkeypatch.setenv("WATCHDOG_ENABLED", "1")
+    _pin_clock_at_10am_bogota(monkeypatch)
+    now_ms = int(time.time() * 1000)
+    md = _base_metadata(now_ms=now_ms)
+    md["service_window_expires_at_ms"] = now_ms + 20 * 60 * 1000
+    md["registered_order"] = {"order_id": "order_31", "success": True}
+    _write_metadata(_isolate_vault_dir, SESSION_ID, md)
+
+    facts = InMemoryOrderFacts([
+        OrderFacts(
+            order_id="order_31", display_id="#31", total_cop=120000,
+            currency_code="cop", pay_status="paid", stage="preparing",
+            customer="Ana", is_draft=False, created_at_ms=1,
+        )
+    ])
+    monkeypatch.setattr(watchdog_activities, "get_order_facts_port", lambda: facts)
+
+    result = await check_watchdog_eligibility_activity(SESSION_ID, EPISODE_ID)
+
+    assert result.resolved_template_name != "payment_pending_utility_v2"
+
+
+@pytest.mark.asyncio
+async def test_unpaid_order_fills_the_amount_from_medusa(
+    monkeypatch: pytest.MonkeyPatch,
+    _isolate_vault_dir: Path,
+) -> None:
+    from src.platform.orders.facts import InMemoryOrderFacts, OrderFacts
+    from src.plugins.chats.agent.remarketing.activities import watchdog_activities
+
+    monkeypatch.setenv("WATCHDOG_ENABLED", "1")
+    _pin_clock_at_10am_bogota(monkeypatch)
+    now_ms = int(time.time() * 1000)
+    md = _base_metadata(now_ms=now_ms)
+    md["service_window_expires_at_ms"] = now_ms + 20 * 60 * 1000
+    md["registered_order"] = {"order_id": "order_31", "success": True}
+    _write_metadata(_isolate_vault_dir, SESSION_ID, md)
+
+    facts = InMemoryOrderFacts([
+        OrderFacts(
+            order_id="order_31", display_id="#31", total_cop=120000,
+            currency_code="cop", pay_status="pending", stage="preparing",
+            customer="Ana", is_draft=False, created_at_ms=1,
+        )
+    ])
+    monkeypatch.setattr(watchdog_activities, "get_order_facts_port", lambda: facts)
+
+    result = await check_watchdog_eligibility_activity(SESSION_ID, EPISODE_ID)
+
+    assert result.resolved_template_name == "payment_pending_utility_v2"
+    assert result.resolved_template_variables["amount_currency"] == "$120.000 COP"
+
+
+@pytest.mark.asyncio
+async def test_medusa_down_does_not_break_the_watchdog(
+    monkeypatch: pytest.MonkeyPatch,
+    _isolate_vault_dir: Path,
+) -> None:
+    from src.plugins.chats.agent.remarketing.activities import watchdog_activities
+
+    monkeypatch.setenv("WATCHDOG_ENABLED", "1")
+    _pin_clock_at_10am_bogota(monkeypatch)
+    now_ms = int(time.time() * 1000)
+    md = _base_metadata(now_ms=now_ms)
+    md["service_window_expires_at_ms"] = now_ms + 20 * 60 * 1000
+    md["registered_order"] = {"order_id": "order_31", "success": True}
+    _write_metadata(_isolate_vault_dir, SESSION_ID, md)
+
+    def _boom():
+        raise RuntimeError("medusa caído")
+
+    monkeypatch.setattr(watchdog_activities, "get_order_facts_port", _boom)
+
+    result = await check_watchdog_eligibility_activity(SESSION_ID, EPISODE_ID)
+
+    assert result.eligible is True
+    assert result.resolved_template_name == "payment_pending_utility_v2"
+    assert result.resolved_template_variables["amount_currency"] == "el monto del pedido"

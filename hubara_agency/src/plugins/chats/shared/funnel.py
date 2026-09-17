@@ -21,18 +21,30 @@ def active_episode(metadata: dict[str, Any]) -> dict[str, Any] | None:
     return last
 
 
-def is_open_cart(episode: dict[str, Any] | None, metadata: dict[str, Any]) -> bool:
+def is_open_cart(
+    episode: dict[str, Any] | None,
+    metadata: dict[str, Any],
+    order_facts: Any = None,
+) -> bool:
     """True si el episodio dejó un pedido armado sin pagar.
 
-    Carrito abierto = (a) el episodio tiene ``order_id`` (``register_order``
-    lo anotó) y no cerró con venta, o (b) el borrador tiene ``producto``.
-    Nunca después de un ``Purchase`` enviado (``capi_terminal_event``) ni
-    con la sesión en ``COMPRA_EXITOSA``.
+    Con ``order_facts`` (`OrderFactsSnapshot`) manda el PEDIDO, no la
+    etiqueta del chat: sin pagar = carrito abierto (aunque el chat diga
+    ``COMPRA_EXITOSA`` — pedido #32, pago revertido), pagado o cancelado =
+    cerrado (aunque la etiqueta no se haya actualizado).
+
+    Sin datos del pedido, la regla vieja: carrito abierto = (a) el episodio
+    tiene ``order_id`` (``register_order`` lo anotó) y no cerró con venta, o
+    (b) el borrador tiene ``producto``. Nunca después de un ``Purchase``
+    enviado (``capi_terminal_event``) ni con la sesión en ``COMPRA_EXITOSA``.
     """
     if not isinstance(episode, dict):
         return False
     if metadata.get("capi_terminal_event") == "Purchase":
         return False
+    fact = order_fact(episode.get("order_id"), order_facts)
+    if fact is not None:
+        return not fact.counts_as_revenue and fact.stage != "cancelled"
     if metadata.get("tag") == "COMPRA_EXITOSA" or episode.get("closing_tag") == "COMPRA_EXITOSA":
         return False
     if episode.get("order_id"):
@@ -40,6 +52,16 @@ def is_open_cart(episode: dict[str, Any] | None, metadata: dict[str, Any]) -> bo
     draft = episode.get("order_draft")
     slots = draft.get("slots") if isinstance(draft, dict) else None
     return bool(isinstance(slots, dict) and slots.get("producto"))
+
+
+def order_fact(order_id: Any, order_facts: Any) -> Any:
+    """El `OrderFacts` de este pedido, o None si no hay dato utilizable
+    (sin snapshot, sin id, o Medusa no respondió por él)."""
+    if order_facts is None or not isinstance(order_id, str) or not order_id:
+        return None
+    if order_id in order_facts.unresolved:
+        return None
+    return order_facts.facts.get(order_id)
 
 
 def enqueue_capi_for_tag(
@@ -93,4 +115,4 @@ def enqueue_capi_for_tag(
     return None
 
 
-__all__ = ["active_episode", "is_open_cart", "enqueue_capi_for_tag"]
+__all__ = ["active_episode", "is_open_cart", "enqueue_capi_for_tag", "order_fact"]
