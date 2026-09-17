@@ -39,12 +39,6 @@ async def fake_reconcile(input: ReconcileInput) -> ReconcileResult:
     )
 
 
-@activity.defn(name="sync_order_totals")
-async def fake_sync_totals(input: ReconcileInput) -> int:
-    # Pedido #31: el barrido también alinea los totales editados en Medusa.
-    return 4
-
-
 @pytest.mark.asyncio
 async def test_workflow_runs_activity_and_returns_result():
     async with await WorkflowEnvironment.start_time_skipping() as env:
@@ -52,7 +46,7 @@ async def test_workflow_runs_activity_and_returns_result():
             env.client,
             task_queue="test-orders-reconcile",
             workflows=[OrderReconciliationWorkflow],
-            activities=[fake_reconcile, fake_sync_totals],
+            activities=[fake_reconcile],
         ):
             result = await env.client.execute_workflow(
                 OrderReconciliationWorkflow.run,
@@ -65,7 +59,6 @@ async def test_workflow_runs_activity_and_returns_result():
             assert result.still_failing == 1
             assert result.abandoned == 0
             assert result.errors == 0
-            assert result.totals_updated == 4
 
 
 # ----------------------------------------------------------------------

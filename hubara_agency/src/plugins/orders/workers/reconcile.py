@@ -40,10 +40,7 @@ from src.platform.logging import setup_logging
 from src.platform.plugin_manifest import get_task_queue
 from src.platform.plugin_runtime import ensure_plugin_enabled
 from src.platform.temporal.client import get_temporal_client
-from src.plugins.orders.agent.activities import (
-    reconcile_pending_orders_activity,
-    sync_order_totals_activity,
-)
+from src.plugins.orders.agent.activities import reconcile_pending_orders_activity
 from src.plugins.orders.agent.activities.emit_stage import emit_order_stage_activity
 from src.plugins.orders.agent.contracts import ReconcileInput
 from src.plugins.orders.agent.workflows import OrderReconciliationWorkflow
@@ -132,11 +129,7 @@ async def main() -> None:
         client,
         task_queue=task_queue,
         workflows=[OrderReconciliationWorkflow, EmitOrderStageWorkflow],
-        activities=[
-            reconcile_pending_orders_activity,
-            sync_order_totals_activity,
-            emit_order_stage_activity,
-        ],
+        activities=[reconcile_pending_orders_activity, emit_order_stage_activity],
     )
     logger.info("🧾 orders/reconcile worker arriba. Cola: '{}'", task_queue)
     await worker.run()

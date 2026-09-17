@@ -32,5 +32,3 @@ class ReconcileResult:
     still_failing: int
     abandoned: int
     errors: int
-    # Chats cuyo `order_total_cop` se alineó con Medusa (pedido editado).
-    totals_updated: int = 0
