@@ -36,7 +36,9 @@ Premortem fixes aplicados (ver docs/PREMORTEM_ORDERS.md):
   * **H2**: validacion explicita de `default_currency == "cop"` (zero-decimal)
     para que un cambio a USD no rompa el pricing silenciosamente.
   * **H3**: `variant_label_mismatch` flag en metadata cuando el LLM pidio una
-    variante que no matcheo — visible al operador en el dashboard.
+    variante que no matcheo — visible al operador en el dashboard. La clase
+    del match (`variant_match_kind`) y los tokens que sobraron viven en la
+    misma metadata; el matching en si vive en `variant_matching`.
 
 Flujo del adapter:
   1. Resolve cada `OrderItem.handle` → `variant_id` (paralelizado).
@@ -59,6 +61,7 @@ from typing import Any
 from src.platform.medusa.client import HttpMedusaClient, MedusaAPIError
 from src.platform.medusa.service import MedusaProductService
 from src.platform.medusa.settings import MedusaSettings
+from src.platform.orders import variant_matching
 from src.platform.orders.port import (
     OrderItem,
     OrderRegistrationResult,
@@ -367,13 +370,20 @@ class MedusaOrderRegistration:
         embebe en `metadata.variant_mismatches[]` para que el operador
         vea cuáles items necesitan ajuste manual.
 
+        Un item puede resolver a MAS de una linea: si el label nombra varias
+        variantes y la cantidad lo permite ("Capricornio morado, Capricornio
+        verde, Sagitario azul" x3 → 2 Capricornio + 1 Sagitario), cada
+        variante sale como su propia linea con el mismo `unit_price`.
+
         Raises `MedusaAPIError` si el product handle no existe — la venta
         no puede cerrar sin el producto, escalamos.
 
         Returns:
             (resolved_items, variant_mismatches)
         """
-        async def lookup_one(it: OrderItem) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        async def lookup_one(
+            it: OrderItem,
+        ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
             page = await self._products.list(handle=it.handle, limit=1)
             if not page.products:
                 raise MedusaAPIError(
@@ -382,39 +392,56 @@ class MedusaOrderRegistration:
                     body=f"Product handle '{it.handle}' not found in Medusa.",
                 )
             product = page.products[0]
-            variant, mismatch_detail = self._pick_variant_with_status(
-                product, it.variant_label
-            )
-            resolved = {
-                "title": product.title,
-                "sku": variant.sku or product.handle,
-                "variant_id": variant.id,
-                "quantity": it.quantity,
-                # Medusa v2: unit_price en unidades MAYORES. COP no tiene
-                # subunidades fraccionarias, asi que mandamos el int crudo.
-                # Premortem H2: si default_currency != cop, el adapter loguea
-                # warning al init — esto sigue el contrato de Medusa.
-                "unit_price": it.unit_price_cop,
-                "metadata": {
-                    "handle": it.handle,
-                    **({"variant_label": it.variant_label} if it.variant_label else {}),
-                    **({"variant_label_mismatch": True} if mismatch_detail else {}),
-                },
-            }
+            resolution = self._resolve_variant(product, it.variant_label, it.quantity)
+            annotations: dict[str, Any] = {}
+            if resolution.is_mismatch:
+                annotations["variant_label_mismatch"] = True
+            if resolution.mismatch_kind:
+                annotations["variant_match_kind"] = resolution.mismatch_kind
+            if resolution.unresolved_tokens:
+                annotations["variant_unresolved_tokens"] = list(
+                    resolution.unresolved_tokens
+                )
+                annotations["variant_unresolved_tag_kinds"] = list(
+                    resolution.unresolved_tag_kinds
+                )
+            if len(resolution.lines) > 1:
+                annotations["variant_split_from_quantity"] = it.quantity
+            resolved = [
+                {
+                    "title": product.title,
+                    "sku": line.variant.sku or product.handle,
+                    "variant_id": line.variant.id,
+                    "quantity": line.quantity,
+                    # Medusa v2: unit_price en unidades MAYORES. COP no tiene
+                    # subunidades fraccionarias, asi que mandamos el int crudo.
+                    # Premortem H2: si default_currency != cop, el adapter loguea
+                    # warning al init — esto sigue el contrato de Medusa.
+                    "unit_price": it.unit_price_cop,
+                    "metadata": {
+                        "handle": it.handle,
+                        **({"variant_label": it.variant_label} if it.variant_label else {}),
+                        **annotations,
+                    },
+                }
+                for line in resolution.lines
+            ]
+            first = resolution.lines[0].variant
             mismatch = (
                 {
                     "handle": it.handle,
                     "requested_label": it.variant_label,
-                    "selected_variant_id": variant.id,
-                    "selected_variant_title": variant.title,
+                    "selected_variant_id": first.id,
+                    "selected_variant_title": first.title,
+                    "reason": resolution.mismatch_kind,
                 }
-                if mismatch_detail
+                if resolution.is_mismatch
                 else None
             )
             return resolved, mismatch
 
         results = await asyncio.gather(*[lookup_one(it) for it in items])
-        resolved = [r for r, _ in results]
+        resolved = [line for lines, _ in results for line in lines]
         mismatches = [m for _, m in results if m is not None]
         return resolved, mismatches
 
@@ -422,11 +449,21 @@ class MedusaOrderRegistration:
     def _pick_variant_with_status(
         product: Any, label: str | None
     ) -> tuple[Any, bool]:
-        """Pick the matching variant by label, or fallback to first.
+        """Variante principal para `label` + si es un mismatch real."""
+        resolution = MedusaOrderRegistration._resolve_variant(product, label, 1)
+        return resolution.lines[0].variant, resolution.is_mismatch
 
-        Returns `(variant, had_mismatch)`. `had_mismatch=True` when a label
-        was given but no variant matched — caller surfaces this to the
-        operator.
+    @staticmethod
+    def _resolve_variant(
+        product: Any, label: str | None, quantity: int
+    ) -> variant_matching.VariantResolution:
+        """Resuelve `label` → línea(s) con variante, o fallback a la primera.
+
+        Mismatch real (`is_mismatch`) sólo cuando ningún token resuelve la
+        dimensión de variante (o una de ellas) — el caller lo surface al
+        operador en `metadata.variant_mismatches`. Los tokens sobrantes
+        (aromas/colores, que en esta tienda son tags) quedan anotados sin
+        levantar la alarma. Ver `variant_matching`.
         """
         variants = product.variants or []
         if not variants:
@@ -435,66 +472,30 @@ class MedusaOrderRegistration:
                 path=f"/admin/products?handle={product.handle}",
                 body=f"Product '{product.handle}' has no variants in Medusa.",
             )
-        if not label:
-            return variants[0], False
-
-        # Single-variant products NEVER mismatch (2026-05-26):
-        # En esta tienda los "aromas" y "colores" viven como **tags** del
-        # producto, NO como variantes — los productos generalmente tienen
-        # 1 sola variante ("Unico"). Cuando el LLM nos pasa label="Limoncillo,
-        # Lila", esto describe atributos descriptivos (tags), no una variante
-        # alternativa. Marcar mismatch cuando solo hay 1 variante es
-        # ruidoso y confunde al operador con un warning falso.
-        if len(variants) == 1:
-            return variants[0], False
-
-        # Premortem (post-mortem run bc54cb93, 2026-05-25):
-        # El LLM pasa labels COMPUESTOS cuando un producto tiene 2+ variant
-        # options (ej `cruz-de-vida` tiene aroma + color). Casos vistos:
-        #   * "Frutos rojos, Marrón"   → aroma + color
-        #   * "Lavanda / Blanco"        → aroma / color
-        #   * "Lavanda - Blanco"        → aroma - color
-        #   * "Lavanda"                 → single option
-        # Splittemos por separadores comunes y buscamos la variante con
-        # mayor coverage (que matchee la mayor cantidad de tokens).
-        parts = _split_variant_label(label)
-        if not parts:
-            return variants[0], False
-
-        # Scoring: para cada variante, contar cuántos `parts` matchean
-        # contra title O contra alguno de sus opt.values.
-        best_variant = None
-        best_score = 0
-        for v in variants:
-            score = _count_matching_parts(v, parts)
-            if score > best_score:
-                best_score = score
-                best_variant = v
-
-        # Si la mejor variante matchea TODOS los parts → match exacto.
-        # Si matchea solo algunos → match parcial pero válido (mejor que
-        # fallback a `variants[0]` ciegamente).
-        if best_variant is not None and best_score > 0:
-            had_full_match = best_score == len(parts)
-            if not had_full_match:
-                log.warning(
-                    "MedusaOrderRegistration: variant_label=%r matchea "
-                    "parcialmente %d/%d tokens en variante %r de %s — "
-                    "seguimos con esa variante pero surface mismatch en "
-                    "metadata.variant_mismatches para revisión.",
-                    label, best_score, len(parts),
-                    best_variant.title, product.handle,
-                )
-            return best_variant, not had_full_match
-
-        # Sin match — fallback al primero. Premortem H3: surface this.
-        log.warning(
-            "MedusaOrderRegistration: variant_label=%r no matchea ninguna "
-            "variante de %s — fallback a primera variante (mismatch surfaced "
-            "in draft_order.metadata.variant_mismatches).",
-            label, product.handle,
+        single = variant_matching.VariantResolution(
+            lines=(variant_matching.VariantLine(variants[0], quantity),)
         )
-        return variants[0], True
+        # Single-variant products NEVER mismatch (2026-05-26): en esta tienda
+        # los "aromas" y "colores" viven como **tags** del producto — label
+        # "Limoncillo, Lila" describe atributos, no una variante alternativa.
+        if not label or len(variants) == 1:
+            return single
+        if not variant_matching.split_label(label):
+            return single
+
+        resolution = variant_matching.resolve(
+            variants, getattr(product, "tags", None) or [], label, quantity
+        )
+        if resolution.is_mismatch:
+            log.warning(
+                "MedusaOrderRegistration: variant_label=%r → %s en %s "
+                "(variante %r; sin resolver %r) — surfaced in "
+                "draft_order.metadata.variant_mismatches.",
+                label, resolution.mismatch_kind, product.handle,
+                resolution.lines[0].variant.title,
+                list(resolution.unresolved_tokens),
+            )
+        return resolution
 
     async def _upsert_customer(
         self,
@@ -857,49 +858,6 @@ def _safe_dict(value: Any) -> dict[str, Any]:
     return {"_raw": str(value)}
 
 
-# Separadores comunes que el LLM usa para combinar 2 variant options en una
-# sola string. Orden importa: probamos primero los más explícitos (` / `,
-# ` - `) antes de la coma para no romper labels legítimas con coma interna.
-_VARIANT_LABEL_SEPARATORS = (" / ", " | ", " - ", ", ", "/", ",")
-
-
-def _split_variant_label(label: str) -> list[str]:
-    """Split a compound variant label into individual tokens.
-
-    Examples:
-      * "Lavanda"                 → ["Lavanda"]
-      * "Frutos rojos, Marrón"   → ["Frutos rojos", "Marrón"]
-      * "Lavanda / Blanco"        → ["Lavanda", "Blanco"]
-      * "Lavanda - Blanco"        → ["Lavanda", "Blanco"]
-
-    Used by `_pick_variant_with_status` to match products with 2+ variant
-    options (post-mortem run bc54cb93, 2026-05-25).
-    """
-    cleaned = (label or "").strip()
-    if not cleaned:
-        return []
-    for sep in _VARIANT_LABEL_SEPARATORS:
-        if sep in cleaned:
-            parts = [p.strip() for p in cleaned.split(sep) if p.strip()]
-            if len(parts) > 1:
-                return parts
-    return [cleaned]
-
-
-def _count_matching_parts(variant: Any, parts: list[str]) -> int:
-    """Count how many of `parts` appear in this variant's title or options.
-
-    Match is case-insensitive substring. Returns 0 if nothing matches.
-
-    Used by `_pick_variant_with_status` to score variants by coverage when
-    the label is compound (e.g. `"Frutos rojos, Marrón"` against a variant
-    titled `"Frutos rojos / Marrón"` matches both → score 2).
-    """
-    if not parts:
-        return 0
-    title = (variant.title or "").lower()
-    option_values = " ".join(
-        (opt.value or "").lower() for opt in (variant.options or [])
-    )
-    haystack = f"{title} {option_values}"
-    return sum(1 for p in parts if p.lower() in haystack)
+# Re-export: los tests y callers históricos importan el split desde acá.
+_VARIANT_LABEL_SEPARATORS = variant_matching.LABEL_SEPARATORS
+_split_variant_label = variant_matching.split_label
