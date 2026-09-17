@@ -20,6 +20,40 @@ export const messageUiTypeSchema = z.enum([
   "ui_component_sent",
 ]);
 
+/**
+ * Forma REAL del mensaje detrás del marker del historial, proyectada por el
+ * backend (`chats/shared/chat_events.py`). Ausente = mensaje normal.
+ *
+ * Existe para que el panel pinte cada evento como lo que fue (botones que son
+ * botones, foto que es foto, caption separado de la descripción de la IA) sin
+ * que la UI tenga que parsear texto: el formato de los markers lo define el
+ * backend y cambia con él.
+ */
+export const chatEventSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("bot_buttons"),
+    body: z.string().nullable(),
+    buttons: z.array(
+      z.object({ title: z.string(), touched: z.boolean().optional() }),
+    ),
+  }),
+  z.object({ kind: z.literal("button_tap"), title: z.string() }),
+  z.object({
+    kind: z.literal("customer_photo"),
+    /** Lo que describió la IA. null si la visión falló — no se inventa. */
+    vision: z.string().nullable(),
+    /** Lo único que escribió la persona, o null. */
+    caption: z.string().nullable(),
+    receipt: z.boolean(),
+  }),
+  z.object({
+    kind: z.literal("reaction"),
+    /** null en historial viejo: el emoji se perdía al traducir. */
+    emoji: z.string().nullable(),
+    author: z.enum(["user", "bot"]),
+  }),
+]);
+
 export const chatMessageSchema = z.object({
   ui_type: messageUiTypeSchema,
   role: z.string(),
@@ -43,6 +77,8 @@ export const chatMessageSchema = z.object({
   document_filename: z.string().optional(),
   /** id de Meta del mensaje (destino de las citas del cliente). */
   wamid: z.string().optional(),
+  /** Forma real del mensaje (ver `chatEventSchema`). Ausente = normal. */
+  event: chatEventSchema.optional(),
   /** El cliente respondió CITANDO un mensaje. `author`/`text`/`image_url`
    *  vienen cuando el backend pudo resolver la cita; solo `id` si no. */
   reply_to: z

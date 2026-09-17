@@ -449,6 +449,26 @@ h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.02em; margin: 0; }
 .tag.t-cold { background: rgba(255,255,255,0.06); color: var(--fg-muted); }
 .tag.t-human { background: rgba(255,114,105,0.20); color: #ff7269; }
 
+/* Chip de pedido de la fila: a qué orden pertenece la conversación.
+   El tono habla del PAGO (lo único que sabe el metadata del vault); el estado
+   logístico vive en Medusa y lo muestra el panel de pedidos del chat. */
+.order-chip {
+  margin-left: auto;
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10.5px; font-weight: 600; font-variant-numeric: tabular-nums;
+  padding: 1px 7px; border-radius: 999px; white-space: nowrap;
+  background: rgba(255,255,255,0.07); color: var(--fg-soft);
+}
+.order-chip svg { width: 12px; height: 12px; flex-shrink: 0; }
+.order-chip-pending   { background: var(--color-warn-soft); color: var(--color-warn); }
+.order-chip-confirmed { background: var(--color-ok-soft);   color: var(--color-ok); }
+.order-chip-cancelled { background: rgba(255,255,255,0.06); color: var(--fg-muted); }
+/* Fila seleccionada: el azul del row se come los tonos, igual que el tag. */
+.row.sel .order-chip { background: rgba(255,255,255,0.25); color: #fff; }
+/* Con chip presente, el `margin-left:auto` del unread repartiría el espacio
+   libre entre los dos y el chip dejaría de quedar pegado a la derecha. */
+.order-chip + .badge-unread { margin-left: 4px; }
+
 .badge-unread {
   margin-left: auto; background: var(--accent); color: #fff;
   min-width: 18px; height: 18px; border-radius: 9px;
@@ -620,6 +640,77 @@ h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.02em; margin: 0; }
 .bubble.audio .wave { flex: 1; height: 18px; display: flex; align-items: center; gap: 2px; }
 .bubble.audio .wave i { display: block; width: 2px; background: rgba(255,255,255,0.5); border-radius: 1px; }
 .bubble.audio .dur { font-size: 10.5px; color: rgba(255,255,255,0.7); font-variant-numeric: tabular-nums; }
+
+/* ── Eventos del hilo con su forma real ────────────────────────────────────
+   El historial guarda cada envío no-textual como una línea de texto para el
+   LLM ("[el cliente tocó el botón: X]"). Acá se pinta lo que realmente fue:
+   los botones son botones, la foto es foto, el clic es un chip. El wrapper
+   existe porque `.msgs` es flex column y la etiqueta tiene que viajar pegada
+   a SU mensaje, no como un item suelto del flex. */
+.wa-msg { display: flex; flex-direction: column; gap: 3px; max-width: 62%; }
+.wa-msg-out { align-self: flex-end; align-items: flex-end; }
+.wa-msg-in  { align-self: flex-start; align-items: flex-start; }
+.wa-msg .bubble { max-width: 100%; }
+.wa-label {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 9.5px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase;
+  color: var(--fg-faint);
+}
+.wa-label .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+.wa-msg-in .wa-label .dot { background: var(--green); }
+
+/* Botones de respuesta tal como los vio el cliente: el cuerpo arriba, cada
+   botón en su fila con filete, y el que tocó marcado en su propio mensaje. */
+/* `overflow:hidden`: el fondo del botón tocado llega hasta el borde de la
+   burbuja — sin esto, si el tocado es el ÚLTIMO, cuadra la esquina. */
+.wa-buttons { overflow: hidden; }
+.wa-buttons-body { margin-bottom: 6px; }
+.wa-buttons-list { display: flex; flex-direction: column; margin: 0 -12px; }
+.wa-button {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 7px 12px; font-size: 13px; font-weight: 600; color: #fff;
+  border-top: 0.5px solid rgba(255,255,255,0.22);
+}
+.wa-button.on { background: rgba(255,255,255,0.12); }
+.wa-button-badge {
+  font-size: 8.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+  padding: 1px 5px; border-radius: 4px; background: rgba(255,255,255,0.28);
+}
+
+/* Un clic o una reacción no son un mensaje escrito: no merecen una burbuja. */
+.wa-chip {
+  align-self: flex-start;
+  display: inline-flex; align-items: center; gap: 7px;
+  margin: 2px 0; padding: 5px 10px; border-radius: 999px;
+  font-size: 12px; color: var(--fg-soft);
+  background: rgba(255,255,255,0.05); border: 0.5px solid var(--line);
+}
+.wa-chip b { font-weight: 600; color: var(--fg); }
+.wa-chip-ico { display: inline-flex; }
+.wa-chip-ico svg { width: 13px; height: 13px; }
+.wa-chip-tap {
+  background: var(--color-ok-soft); border-color: transparent; color: var(--color-ok);
+}
+.wa-chip-tap b { color: var(--color-ok); }
+.wa-chip-emoji { font-size: 15px; line-height: 1; }
+.wa-chip-time { font-size: 10px; color: var(--fg-faint); font-variant-numeric: tabular-nums; }
+
+/* Foto del cliente: el caption es lo ÚNICO que escribió la persona — se lee
+   como texto de mensaje. La descripción de la IA baja a su propio bloque. */
+.wa-caption { font-size: 14.5px; line-height: 1.35; }
+.wa-vision {
+  display: flex; flex-direction: column; gap: 3px;
+  margin-top: 6px; padding: 7px 9px; border-radius: 8px;
+  border-left: 2px solid var(--purple);
+  background: rgba(191,90,242,0.12);
+  font-size: 12px; color: var(--fg-soft);
+}
+.wa-vision-tag {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 9.5px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase;
+  color: #d68aff;
+}
+.wa-vision-tag svg { width: 11px; height: 11px; }
 
 /* Imagen inbound (comprobante de pago / foto del cliente). El operador humano
    ve la miniatura en la burbuja; click → abre la imagen full-res en otra pestaña.

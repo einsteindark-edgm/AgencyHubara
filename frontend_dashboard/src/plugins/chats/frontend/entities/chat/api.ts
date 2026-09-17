@@ -20,6 +20,7 @@ import {
   useSessions,
   type ChatSession,
   type SessionDetails,
+  type SessionOrderRef,
   type SessionOrigin,
   type StatusHistoryEntry,
 } from "@plugins/chats/frontend/entities/session";
@@ -33,6 +34,7 @@ import { env, getAccessToken } from "@/shared/config";
 import type {
   AvatarColor,
   ChatInboxItem,
+  ChatOrderBadge,
   ChatMessageItem,
   ChatOverview,
   ChatQuote,
@@ -156,6 +158,23 @@ function isAssignedToHuman(s: ChatSession, tag: ChatTag): boolean {
   return s.active_agent_route === "humano" || tag === "HUMANO";
 }
 
+/**
+ * `order_ref` del backend → chip de la fila.
+ *
+ * El label es el número humano de Medusa ("#31"). Sin `display_id` (provider
+ * stub) cae a los últimos 6 del id interno — el `order_01KSTZ…` crudo no le
+ * dice nada al operador y rompe el ancho de la fila.
+ */
+function adaptOrderRef(ref: SessionOrderRef | null | undefined): ChatOrderBadge | null {
+  if (!ref) return null;
+  return {
+    label: ref.display_id ? `#${ref.display_id}` : `…${ref.order_id.slice(-6)}`,
+    orderId: ref.order_id,
+    payment: ref.payment,
+    count: ref.count,
+  };
+}
+
 function adaptSession(s: ChatSession): ChatInboxItem {
   const { tag, tagClass } = normalizeTag(s.tag, s.active_agent_route);
   const human = isAssignedToHuman(s, tag);
@@ -168,6 +187,7 @@ function adaptSession(s: ChatSession): ChatInboxItem {
     timestamp: s.last_updated_timestamp,
     dayIso: bogotaDayIsoFromUnix(s.last_updated_timestamp),
     lastInboundMs: s.last_inbound_ms ?? null,
+    order: adaptOrderRef(s.order_ref),
     tag,
     tagClass,
     color: hashColor(s.session_id),
@@ -232,11 +252,25 @@ function adaptMessage(m: ChatMessage): ChatMessageItem {
   // persiste un marker human-readable y acá se pinta como nota de sistema —
   // sin esto el operador ve huecos y no puede seguir la conversación.
   if (m.ui_type === "ui_component_sent") {
+    // Los botones SÍ se pueden reconstruir como el mensaje real que recibió el
+    // cliente (cuerpo + botones): dejan de ser una nota y vuelven a ser una
+    // burbuja del bot. El resto de componentes no tiene forma que recuperar.
+    if (m.event?.kind === "bot_buttons") {
+      return {
+        kind: "out",
+        author: "bot",
+        time: formatBogotaHourMinute(unix),
+        dayIso,
+        status: "read",
+        event: m.event,
+      };
+    }
     return {
       kind: "system",
       text: m.content ?? "",
       time: formatBogotaHourMinute(unix) || undefined,
       dayIso,
+      event: m.event,
     };
   }
   const sender = getMessageSender(m);
@@ -256,6 +290,7 @@ function adaptMessage(m: ChatMessage): ChatMessageItem {
     documentUrl: m.document_url ? toMediaUrl(m.document_url) : undefined,
     documentName: m.document_filename ?? undefined,
     replyTo: adaptQuote(m.reply_to),
+    event: m.event,
   };
 }
 
