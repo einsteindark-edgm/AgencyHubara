@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 
 import src.plugins.chats.api.dashboard as dash_mod
 
-SESSION = "wa_573229041190"
+SESSION = "wa_573001112233"
 
 
 @pytest.fixture

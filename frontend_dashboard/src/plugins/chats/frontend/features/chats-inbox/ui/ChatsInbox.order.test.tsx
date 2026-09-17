@@ -25,8 +25,8 @@ import { ChatsInbox } from "./ChatsInbox";
 
 function makeItem(overrides: Partial<ChatInboxItem> = {}): ChatInboxItem {
   return {
-    id: "wa_573229041190",
-    name: "573229041190",
+    id: "wa_573001112233",
+    name: "573001112233",
     short: "90",
     snippet: "Confirmó pedido, falta verificar el pago",
     time: "14:02",

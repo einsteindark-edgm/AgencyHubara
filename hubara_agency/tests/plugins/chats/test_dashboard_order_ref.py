@@ -214,7 +214,7 @@ def _seed(vault, session_id: str, metadata: dict) -> None:
 def test_sessions_list_emits_order_ref(client_and_vault):
     """Gotcha #1: que el schema lo permita no basta — el listado debe EMITIRLO."""
     client, vault = client_and_vault
-    _seed(vault, "wa_573229041190", _session_with_order())
+    _seed(vault, "wa_573001112233", _session_with_order())
 
     resp = client.get("/api/dashboard/sessions")
 
@@ -230,7 +230,7 @@ def test_sessions_list_emits_order_ref(client_and_vault):
 
 def test_sessions_list_emits_null_without_order(client_and_vault):
     client, vault = client_and_vault
-    _seed(vault, "wa_573001234507", {"tag": "INTERESADO", "active_route": "ventas"})
+    _seed(vault, "wa_573007654321", {"tag": "INTERESADO", "active_route": "ventas"})
 
     resp = client.get("/api/dashboard/sessions")
 
