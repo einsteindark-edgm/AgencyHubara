@@ -272,6 +272,17 @@ def test_cie07_price_drift_on_summary_fails() -> None:
     assert (_run("CIE-07", t).verdict, _run("CIE-07", t).turn) == ("falla", 2)
 
 
+def test_cie07_price_mismatch_on_summary_fails() -> None:
+    """Run ebbc203d: el LLM pasó el precio del anuncio; la tool lo rechaza."""
+    t = traj(
+        T(1, tools=[tool("verify_order_for_checkout")]),
+        T(2, tools=[tool("present_order_confirmation", ok=False, error="price_mismatch")]),
+    )
+    r = _run("CIE-07", t)
+    assert (r.verdict, r.turn) == ("falla", 2)
+    assert "price_mismatch" in r.evidence
+
+
 def test_cie07_without_verify_nor_register_is_not_applicable() -> None:
     assert _run("CIE-07", traj(T(1, sent=["Hola"]))).verdict == "no_aplica"
 

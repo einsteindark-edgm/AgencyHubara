@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from src.plugins.chats.agent.sales_eval.scorecard.model import CheckSpec
 
-REGISTRY_VERSION = 1
+REGISTRY_VERSION = 2
 
 LEVELS = ("critico", "mayor", "menor")
 KINDS = ("code", "judge")
@@ -109,6 +109,11 @@ CHECKS: tuple[CheckSpec, ...] = (
        "El bot no pregunta por aroma antes de mostrar productos.",
        ("PR #281", "guion:etapa_descubrimiento")),
     # ── Variantes ──────────────────────────────────────────────────────────
+    _c("DES-10", "Los precios que escribe son los del catálogo", "descubrimiento", "critico", "code",
+       "El bot escribió un monto en pesos (texto o botones).",
+       "Todo monto que el bot escribe es precio de catálogo (o múltiplo/suma de líneas), o un monto de política (umbral de contra entrega, tarifas mínimas de envío) en una oración con ese contexto. Un precio del anuncio o propuesto por el cliente no cuenta.",
+       ("incidente:run ebbc203d 2026-09-16", "spec:sales-worker/El precio sale del catálogo, nunca del anuncio ni del cliente"),
+       golden=("precio_del_catalogo",)),
     _c("VAR-01", "Cuatro o más aromas o colores nunca en texto plano", "variantes", "critico", "code",
        "El bot envió texto.",
        "Ningún texto enviado enumera cuatro o más aromas o colores del catálogo.",

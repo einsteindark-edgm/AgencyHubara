@@ -252,3 +252,61 @@ def check_design_before_aroma(traj: Trajectory, ctx: CheckContext) -> CheckResul
                     "DES-09", turn.turn, f"turno {turn.turn}: pregunta por aroma antes de mostrar productos {quote(text)}"
                 )
     return passed("DES-09")
+
+
+# ── DES-10: los precios que escribe el bot son los del catálogo ──────────────
+# Run ebbc203d (2026-09-16): "tiene un valor de *$45.000 COP*" con el set a
+# $49.500 (el 45.000 venía del anuncio). Misma mecánica que
+# `verify_order_for_checkout` (price_quotes.find_unexplained_amounts).
+from src.plugins.chats.agent.sales.config.shipping import (  # noqa: E402
+    CASH_ON_DELIVERY_MIN_PRODUCTS_COP,
+    SHIPPING_RATE_BOGOTA_COP,
+    SHIPPING_RATE_NATIONAL_COP,
+)
+from src.plugins.chats.agent.sales.price_quotes import (  # noqa: E402
+    extract_cop_amounts,
+    find_unexplained_amounts,
+)
+from src.plugins.chats.agent.sales.pricing import format_cop  # noqa: E402
+
+_POLICY_AMOUNTS = (CASH_ON_DELIVERY_MIN_PRODUCTS_COP, SHIPPING_RATE_BOGOTA_COP, SHIPPING_RATE_NATIONAL_COP)
+_TEXT_TOOL_ARGS = {
+    "send_quick_replies": ("body",),
+    "present_products": ("intro_text",),
+    "present_product_detail": ("caption", "intro_text"),
+    "present_variant_picker": ("intro_text",),
+}
+
+
+def _bot_texts(traj: Trajectory) -> list[tuple[Turn, str]]:
+    """Todo lo que el bot le escribió al cliente: texto final + cuerpos de
+    los componentes que redacta el LLM (botones, intro de listas)."""
+    out: list[tuple[Turn, str]] = []
+    for t in traj.turns:
+        out.extend((t, x) for x in t.sent_texts)
+        for tc in t.tools:
+            for key in _TEXT_TOOL_ARGS.get(tc.name, ()):
+                value = tc.args.get(key)
+                if isinstance(value, str) and value.strip():
+                    out.append((t, value))
+    return out
+
+
+@code_check("DES-10")
+def check_prices_are_catalog_prices(traj: Trajectory, ctx: CheckContext) -> CheckResult:
+    with_amounts = [(t, x) for t, x in _bot_texts(traj) if extract_cop_amounts(x)]
+    if not with_amounts:
+        return not_applicable("DES-10", "el bot no escribió montos")
+    if not ctx.catalog_available or not ctx.catalog_prices:
+        return unknown("DES-10", "sin precios del catálogo")
+    for turn, text in with_amounts:
+        hits = find_unexplained_amounts(
+            text, catalog_prices=ctx.catalog_prices, policy_amounts=_POLICY_AMOUNTS
+        )
+        if hits:
+            hit = hits[0]
+            return failed(
+                "DES-10", turn.turn,
+                f"turno {turn.turn}: monto {format_cop(hit.amount)} sin respaldo en el catálogo {quote(hit.sentence)}",
+            )
+    return passed("DES-10")

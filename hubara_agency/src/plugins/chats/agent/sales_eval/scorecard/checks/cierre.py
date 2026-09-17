@@ -184,12 +184,12 @@ def check_never_compra_exitosa(traj: Trajectory, ctx: CheckContext) -> CheckResu
 
 def _amount_problem(turn: Turn) -> str | None:
     for tc in turn.tools:
-        if tc.name == "register_order" and tc.error == "amount_mismatch":
-            return "register_order reportó amount_mismatch"
+        if tc.name == "register_order" and tc.error in ("amount_mismatch", "price_mismatch"):
+            return f"register_order reportó {tc.error}"
         if tc.name == "verify_order_for_checkout" and tc.ok is False:
             return f"verify_order_for_checkout falló ({tc.error or 'sin detalle'})"
-        if tc.name == "present_order_confirmation" and tc.error == "price_drift":
-            return "present_order_confirmation reportó price_drift"
+        if tc.name == "present_order_confirmation" and tc.error in ("price_drift", "price_mismatch"):
+            return f"present_order_confirmation reportó {tc.error}"
     return None
 
 

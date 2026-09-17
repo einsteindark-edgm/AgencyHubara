@@ -30,6 +30,7 @@ def _dedupe(values: list[str]) -> tuple[str, ...]:
 
 async def build_check_context(catalog: Any | None = None) -> CheckContext:
     from src.sdk.connectorkit import get_catalog_client, parse_variant_tags
+    from src.plugins.chats.agent.sales.pricing import catalog_unit_price
 
     try:
         client = catalog if catalog is not None else get_catalog_client()
@@ -41,7 +42,11 @@ async def build_check_context(catalog: Any | None = None) -> CheckContext:
     colors: list[str] = []
     titles: list[str] = []
     lines: list[str] = []
+    unit_prices: list[int] = []
     for p in products:
+        unit = catalog_unit_price(p)
+        if unit is not None:
+            unit_prices.append(unit)
         attrs = parse_variant_tags(getattr(p, "tags", None))
         aromas.extend(attrs.aromas)
         colors.extend(attrs.colors)
@@ -63,4 +68,5 @@ async def build_check_context(catalog: Any | None = None) -> CheckContext:
         product_titles=_dedupe(titles),
         catalog_available=True,
         catalog_summary="\n".join(lines),
+        catalog_prices=tuple(sorted(set(unit_prices))),
     )

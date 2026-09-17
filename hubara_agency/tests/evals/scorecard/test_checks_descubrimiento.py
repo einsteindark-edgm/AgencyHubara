@@ -305,3 +305,35 @@ def test_des05_product_price_next_to_a_policy_amount_still_fails() -> None:
     r = _run("DES-05", t)
     assert (r.verdict, r.turn) == ("falla", 1)
     assert "$89.000" in r.evidence
+
+
+# ── DES-10 ────────────────────────────────────────────────────────────────
+from src.plugins.chats.agent.sales_eval.scorecard.model import CheckContext as _Ctx  # noqa: E402
+
+_PRICES_CTX = _Ctx(product_titles=("Trilogía del Terror",), catalog_available=True, catalog_prices=(49500, 16000))
+
+
+def test_des10_non_catalog_price_in_text_fails() -> None:
+    t = traj(T(1, sent=["El set de la Trilogía del Terror tiene un valor de *$45.000 COP*."]))
+    r = _run("DES-10", t, _PRICES_CTX)
+    assert (r.verdict, r.turn) == ("falla", 1)
+    assert "$45.000" in r.evidence
+
+
+def test_des10_quick_replies_body_is_audited_too() -> None:
+    t = traj(T(1, tools=[tool("send_quick_replies", body="Vale $45.000. ¿Lo dejamos así?")]))
+    assert _run("DES-10", t, _PRICES_CTX).verdict == "falla"
+
+
+def test_des10_catalog_price_and_policy_amounts_pass() -> None:
+    t = traj(T(1, sent=["El set vale $49.500. El contra entrega aplica desde $45.000 en productos; el envío mínimo nacional es $16.940."]))
+    assert _run("DES-10", t, _PRICES_CTX).verdict == "pasa"
+
+
+def test_des10_without_amounts_is_not_applicable() -> None:
+    assert _run("DES-10", traj(T(1, sent=["¿Qué aroma te gusta?"])), _PRICES_CTX).verdict == "no_aplica"
+
+
+def test_des10_without_catalog_is_unknown() -> None:
+    t = traj(T(1, sent=["Vale $45.000"]))
+    assert _run("DES-10", t, _Ctx()).verdict == "desconocido"

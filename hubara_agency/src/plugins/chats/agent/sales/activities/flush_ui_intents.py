@@ -46,6 +46,7 @@ from src.plugins.chats.agent.sales.config.shipping import (
     ORDER_SUMMARY_SHIPPING_LINE,
     ORDER_SUMMARY_SHIPPING_NOTE,
     SHIPPING_RATES_MESSAGE,
+    cash_on_delivery_available,
 )
 
 # Delay entre fotos del gallery — sin pausa Meta los entrega como burst, lo
@@ -795,7 +796,7 @@ async def _dispatch_intent(
         order_total_cop = int(params.get("order_total_cop") or 0)
         nequi = get_nequi_number()
         payment_lines = []
-        if order_total_cop > 45000:
+        if cash_on_delivery_available(order_total_cop):
             payment_lines.append(
                 "  • Contra entrega — el valor se calcula con la "
                 "transportadora"
