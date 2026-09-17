@@ -91,6 +91,14 @@ export const orderItemDetailSchema = z.object({
   variant_label_mismatch: z.boolean().default(false),
   thumbnail: z.string().nullable(),
   handle: z.string().nullable(),
+  // Clase del match (2026-09-17): null = exacto; "partial" = variante
+  // resuelta pero sobran tokens (aroma/color, NO es mismatch); el resto
+  // ("fallback_first_variant", "multi_variant_unresolved",
+  // "dimension_unresolved") acompaña a variant_label_mismatch=true.
+  variant_match_kind: z.string().nullable().default(null),
+  selected_variant_title: z.string().nullable().default(null),
+  variant_unresolved_tokens: z.array(z.string()).default([]),
+  variant_unresolved_tag_kinds: z.array(z.string()).default([]),
 });
 
 export type OrderItemDetail = z.infer<typeof orderItemDetailSchema>;
