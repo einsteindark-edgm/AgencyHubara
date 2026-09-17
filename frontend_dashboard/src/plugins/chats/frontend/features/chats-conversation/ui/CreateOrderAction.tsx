@@ -618,27 +618,43 @@ function AddItem({
   );
 }
 
-/* ── styles (inline: el composer ya usa este criterio para no tocar el
-   index.css spinal) ── */
+/* ── styles ──────────────────────────────────────────────────────────────
+   Inline (el composer ya usa ese criterio para no tocar el `index.css`
+   spinal) pero con los TOKENS REALES del tema — que es oscuro:
+   `--fg/--fg-soft/--fg-faint`, `--line/--line-strong`, `--accent`,
+   `--statusbar`, `--color-ok/warn/danger(-soft)` (ver `:root` de
+   `src/index.css`). La primera versión inventó nombres (`--bg-elev`,
+   `--stroke`, `--bg-soft`) cuyos FALLBACKS eran blancos: el botón salía
+   blanco con texto gris clarito y el modal, blanco con texto claro —
+   ilegible. Regla: si la var no existe en `:root`, el fallback manda; usar
+   solo tokens del tema y fallbacks oscuros.
+   Los `background` de inputs/selects van OPACOS (no rgba) porque el popup
+   nativo del `<select>` no hereda el fondo del control. */
 
+/** Mismo lenguaje visual que los otros dos botones del composer
+ *  (📅 Asignar fecha azul, 💳 Confirmar pago verde): pastilla sólida con
+ *  texto blanco y halo. Violeta para que se distinga de un vistazo. */
 const triggerStyle: React.CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
-  gap: 4,
-  marginRight: 8,
-  padding: "4px 10px",
-  fontSize: "0.72rem",
-  fontWeight: 600,
-  borderRadius: 6,
-  border: "1px solid var(--stroke, #d4d4d8)",
-  background: "var(--bg-elev, #fff)",
+  gap: "0.35rem",
+  marginRight: "0.5rem",
+  padding: "0.35rem 0.7rem",
+  borderRadius: "8px",
+  border: "none",
+  fontSize: "0.78rem",
+  fontWeight: 700,
+  color: "#fff",
+  background: "#7c3aed",
+  boxShadow: "0 0 0 2px rgba(124,58,237,0.35)",
   cursor: "pointer",
+  whiteSpace: "nowrap",
 };
 
 const overlayStyle: React.CSSProperties = {
   position: "fixed",
   inset: 0,
-  background: "rgba(0,0,0,0.35)",
+  background: "rgba(0,0,0,0.55)",
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
@@ -655,9 +671,10 @@ const modalStyle: React.CSSProperties = {
   gap: 10,
   padding: 16,
   borderRadius: 12,
-  background: "var(--bg-elev, #fff)",
-  border: "1px solid var(--stroke, #d4d4d8)",
-  boxShadow: "0 18px 48px rgba(0,0,0,0.22)",
+  background: "var(--statusbar, #1c1c1e)",
+  color: "var(--fg, #ebebeb)",
+  border: "1px solid var(--line-strong, rgba(255,255,255,0.14))",
+  boxShadow: "var(--shadow-pop, 0 10px 30px rgba(0,0,0,0.55))",
   fontSize: "0.78rem",
 };
 
@@ -665,6 +682,7 @@ const sectionTitleStyle: React.CSSProperties = {
   margin: "4px 0",
   fontSize: "0.78rem",
   fontWeight: 700,
+  color: "var(--fg, #ebebeb)",
 };
 
 const gridStyle: React.CSSProperties = {
@@ -682,7 +700,7 @@ const fieldStyle: React.CSSProperties = {
 const lblStyle: React.CSSProperties = {
   fontSize: "0.68rem",
   fontWeight: 600,
-  color: "var(--fg-mute, #52525b)",
+  color: "var(--fg-mute, rgba(235,235,235,0.55))",
   display: "inline-flex",
   alignItems: "center",
   gap: 5,
@@ -691,10 +709,10 @@ const lblStyle: React.CSSProperties = {
 const inputStyle: React.CSSProperties = {
   padding: "5px 7px",
   borderRadius: 6,
-  border: "1px solid var(--stroke, #d4d4d8)",
+  border: "1px solid var(--line-strong, rgba(255,255,255,0.14))",
   fontSize: "0.76rem",
-  background: "var(--bg, #fff)",
-  color: "inherit",
+  background: "#242427",
+  color: "var(--fg, #ebebeb)",
 };
 
 const badgeStyle: React.CSSProperties = {
@@ -702,8 +720,8 @@ const badgeStyle: React.CSSProperties = {
   fontWeight: 500,
   padding: "1px 5px",
   borderRadius: 999,
-  background: "var(--bg-soft, #f4f4f5)",
-  color: "var(--fg-faint, #71717a)",
+  background: "rgba(255,255,255,0.08)",
+  color: "var(--fg-faint, rgba(235,235,235,0.38))",
 };
 
 const itemRowStyle: React.CSSProperties = {
@@ -711,42 +729,43 @@ const itemRowStyle: React.CSSProperties = {
   alignItems: "center",
   gap: 8,
   padding: "4px 0",
-  borderBottom: "1px solid var(--stroke-soft, #ececef)",
+  borderBottom: "1px solid var(--line, rgba(255,255,255,0.08))",
 };
 
 const totalsStyle: React.CSSProperties = {
   display: "flex",
   justifyContent: "space-between",
   fontWeight: 700,
+  color: "var(--fg, #ebebeb)",
 };
 
 const mutedStyle: React.CSSProperties = {
   fontSize: "0.68rem",
-  color: "var(--fg-faint, #71717a)",
+  color: "var(--fg-faint, rgba(235,235,235,0.38))",
 };
 
 const warnStyle: React.CSSProperties = {
   fontSize: "0.7rem",
   padding: "6px 8px",
   borderRadius: 6,
-  background: "rgba(245, 158, 11, 0.12)",
-  color: "var(--color-accent-fg, #b45309)",
+  background: "var(--color-warn-soft, rgba(255,180,74,0.18))",
+  color: "var(--color-warn, #ffb44a)",
 };
 
 const errStyle: React.CSSProperties = {
   fontSize: "0.7rem",
   padding: "6px 8px",
   borderRadius: 6,
-  background: "rgba(220, 38, 38, 0.12)",
-  color: "#b91c1c",
+  background: "var(--color-danger-soft, rgba(255,114,105,0.18))",
+  color: "var(--color-danger, #ff7269)",
 };
 
 const okStyle: React.CSSProperties = {
   fontSize: "0.74rem",
   padding: "8px 10px",
   borderRadius: 6,
-  background: "rgba(16, 185, 129, 0.12)",
-  color: "#047857",
+  background: "var(--color-ok-soft, rgba(91,224,123,0.18))",
+  color: "var(--color-ok, #5be07b)",
 };
 
 const footerStyle: React.CSSProperties = {
@@ -759,22 +778,23 @@ const footerStyle: React.CSSProperties = {
 const ghostStyle: React.CSSProperties = {
   padding: "5px 10px",
   borderRadius: 6,
-  border: "1px solid var(--stroke, #d4d4d8)",
-  background: "transparent",
+  border: "1px solid var(--line-strong, rgba(255,255,255,0.14))",
+  background: "rgba(255,255,255,0.06)",
   fontSize: "0.72rem",
   cursor: "pointer",
-  color: "inherit",
+  color: "var(--fg-soft, rgba(235,235,235,0.78))",
 };
 
 const primaryStyle: React.CSSProperties = {
   padding: "5px 12px",
   borderRadius: 6,
   border: "none",
-  background: "var(--color-accent, #2563eb)",
+  background: "var(--accent, #0a84ff)",
   color: "#fff",
   fontSize: "0.72rem",
   fontWeight: 600,
   cursor: "pointer",
 };
+
 
 export default CreateOrderAction;
