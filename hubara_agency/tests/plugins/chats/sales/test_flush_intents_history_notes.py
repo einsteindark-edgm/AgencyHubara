@@ -368,3 +368,29 @@ def test_build_history_event_truncates_long_bodies():
     )
     assert ev is not None
     assert len(ev["content"]) < 400
+
+
+@pytest.mark.asyncio
+async def test_sent_component_event_carries_its_wamid(vault):
+    """El marker guarda el `wamid` que Meta le dio al componente: sin él, el
+    cliente que responde CITANDO los botones (o el catálogo, o el picker)
+    veía "Mensaje no disponible" en el dashboard (caso 2026-09-17)."""
+    _seed_metadata(
+        vault,
+        [
+            {
+                "id": "i-w",
+                "kind": "quick_replies",
+                "params": {
+                    "body": "¿Seguimos?",
+                    "buttons": [{"id": "b1", "title": "Sí"}],
+                },
+            }
+        ],
+    )
+
+    env = ActivityEnvironment()
+    assert await env.run(flush_pending_ui_intents_activity, _SESSION_ID) == 1
+
+    (ev,) = _read_history(vault)
+    assert ev["wamid"] == "wamid.test.1"

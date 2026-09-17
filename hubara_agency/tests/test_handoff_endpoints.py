@@ -246,7 +246,11 @@ def test_send_message_persists_and_returns_when_route_humano(client_and_vault):
     assert body["content"] == "Hola, soy del equipo Hubara 🤍"
 
     # WhatsApp send fue llamado con el texto correcto.
-    send_mock.assert_awaited_once_with("wa_3", "Hola, soy del equipo Hubara 🤍")
+    # `author="human"`: la burbuja queda indexada como del operador para que
+    # una cita del cliente la muestre con la etiqueta correcta.
+    send_mock.assert_awaited_once_with(
+        "wa_3", "Hola, soy del equipo Hubara 🤍", author="human"
+    )
 
     # JSONL tiene un evento humano persistido.
     log = vault / "wa_3" / "sessions" / "wa_3.jsonl"

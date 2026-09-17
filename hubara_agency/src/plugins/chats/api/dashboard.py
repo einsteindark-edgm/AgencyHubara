@@ -617,30 +617,49 @@ _QUOTE_AUTHOR_BY_UI_TYPE = {
 }
 
 
-def _resolve_reply_quotes(messages: list[dict]) -> None:
+def _resolve_reply_quotes(
+    messages: list[dict], text_index: dict | None = None
+) -> None:
     """Completa in-place los ``reply_to`` que el ingest dejó solo con el id.
 
-    El cliente puede citar un mensaje propio (su foto, su texto) o uno
-    nuestro con ``wamid`` en el JSONL (ecos standby). Si el id citado matchea
-    un evento del historial, la cita lleva autor + texto + imagen para que la
-    burbuja la muestre. Sin match (texto del bot, sin wamid persistido) queda
-    solo el id: el frontend muestra "mensaje no disponible".
+    Dos fuentes, en orden:
+
+    1. **El JSONL** — el cliente citó un mensaje propio (su foto, su texto) o
+       uno nuestro con ``wamid`` en el evento (template, componente UI, eco
+       standby, adjunto del operador).
+    2. **``metadata[outbound_text_index]``** — las burbujas de texto que
+       salieron por ``send_message_to_session``. Un evento ``assistant`` es UN
+       texto fragmentado en N burbujas, así que su wamid no cabe en el evento:
+       el índice guarda wamid → ``{text, author}`` por burbuja (caso
+       2026-09-17: citar una respuesta del bot mostraba "Mensaje no
+       disponible").
+
+    Sin match en ninguna (burbuja ya evictada del índice, chat previo al
+    deploy) queda solo el id y el frontend muestra su fallback.
     """
     by_wamid = {m["wamid"]: m for m in messages if m.get("wamid")}
+    index = text_index if isinstance(text_index, dict) else {}
     for msg in messages:
         reply_to = msg.get("reply_to")
         if not isinstance(reply_to, dict) or reply_to.get("author"):
             continue
         quoted = by_wamid.get(reply_to.get("id"))
-        if quoted is None:
+        if quoted is not None:
+            reply_to["author"] = _QUOTE_AUTHOR_BY_UI_TYPE.get(
+                quoted.get("ui_type"), "agent"
+            )
+            if quoted.get("content"):
+                reply_to["text"] = quoted["content"]
+            if quoted.get("image_url"):
+                reply_to["image_url"] = quoted["image_url"]
             continue
-        reply_to["author"] = _QUOTE_AUTHOR_BY_UI_TYPE.get(
-            quoted.get("ui_type"), "agent"
-        )
-        if quoted.get("content"):
-            reply_to["text"] = quoted["content"]
-        if quoted.get("image_url"):
-            reply_to["image_url"] = quoted["image_url"]
+        bubble = index.get(reply_to.get("id"))
+        if not isinstance(bubble, dict):
+            continue
+        author = bubble.get("author")
+        reply_to["author"] = author if author in ("agent", "human") else "agent"
+        if bubble.get("text"):
+            reply_to["text"] = bubble["text"]
 
 
 @router.get("/sessions/{session_id}")
@@ -695,7 +714,28 @@ async def get_session_history(session_id: str):
             except json.JSONDecodeError:
                 continue
 
-    _resolve_reply_quotes(messages)
+    tag = "NO_ETIQUETADO"
+    motivo = "Sin diagnóstico todavía"
+    active_route = "ventas"
+    phone_number_id = None
+    status_history = []
+    pending_payment_order_id = None
+    order_ref = None
+    origin = None
+    service_window_expires_at_ms = None
+
+    # El metadata se lee ANTES de resolver las citas: el índice de burbujas
+    # salientes del bot/operador (`outbound_text_index`) vive ahí.
+    data: dict = {}
+    metadata_file = session_path / "metadata.json"
+    if metadata_file.exists():
+        try:
+            parsed = json.loads(metadata_file.read_text(encoding="utf-8"))
+            data = parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            data = {}
+
+    _resolve_reply_quotes(messages, data.get("outbound_text_index"))
 
     # Forma real del mensaje para el panel del chat: los botones vuelven a ser
     # botones, la foto su foto, el caption del cliente separado de lo que
@@ -708,36 +748,21 @@ async def get_session_history(session_id: str):
             msg_obj["event"] = event
     annotate_touched_buttons(messages)
 
-    tag = "NO_ETIQUETADO"
-    motivo = "Sin diagnóstico todavía"
-    active_route = "ventas"
-    phone_number_id = None
-    status_history = []
-    pending_payment_order_id = None
-    order_ref = None
-    origin = None
-    service_window_expires_at_ms = None
-
-    metadata_file = session_path / "metadata.json"
-    if metadata_file.exists():
-        try:
-            data = json.loads(metadata_file.read_text(encoding="utf-8"))
-            tag = data.get("tag", tag)
-            motivo = data.get("motivo", motivo)
-            active_route = data.get("active_route", active_route)
-            phone_number_id = data.get("phone_number_id")
-            status_history = data.get("status_history", [])
-            pending_payment_order_id = (
-                _pending_payment_order_id_from_metadata(data)
-            )
-            order_ref = _compute_order_ref(data)
-            origin = _origins_with_names({session_id: session_origin(data)})[session_id]
-            # El composer humano lo usa para ofrecer "Reactivar conversación"
-            # (plantilla) cuando la ventana 24h ya cerró. None = desconocido.
-            expires = data.get("service_window_expires_at_ms")
-            service_window_expires_at_ms = expires if isinstance(expires, int) else None
-        except json.JSONDecodeError:
-            pass
+    if data:
+        tag = data.get("tag", tag)
+        motivo = data.get("motivo", motivo)
+        active_route = data.get("active_route", active_route)
+        phone_number_id = data.get("phone_number_id")
+        status_history = data.get("status_history", [])
+        pending_payment_order_id = (
+            _pending_payment_order_id_from_metadata(data)
+        )
+        order_ref = _compute_order_ref(data)
+        origin = _origins_with_names({session_id: session_origin(data)})[session_id]
+        # El composer humano lo usa para ofrecer "Reactivar conversación"
+        # (plantilla) cuando la ventana 24h ya cerró. None = desconocido.
+        expires = data.get("service_window_expires_at_ms")
+        service_window_expires_at_ms = expires if isinstance(expires, int) else None
 
     if pending_payment_order_id:
         facts = await _pending_payment_facts({pending_payment_order_id})
