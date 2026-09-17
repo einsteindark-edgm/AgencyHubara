@@ -11,12 +11,15 @@ cruza por valor; la activity resuelve el vault_dir desde env.
 """
 from __future__ import annotations
 
+import dataclasses
+
 from temporalio import workflow
 
 with workflow.unsafe.imports_passed_through():
     from src.platform.temporal.retry_policies import _TOOL_OPTIONS
     from src.plugins.orders.agent.activities import (
         reconcile_pending_orders_activity,
+        sync_order_totals_activity,
     )
     from src.plugins.orders.agent.contracts import ReconcileInput, ReconcileResult
 
@@ -25,8 +28,18 @@ with workflow.unsafe.imports_passed_through():
 class OrderReconciliationWorkflow:
     @workflow.run
     async def run(self, input: ReconcileInput) -> ReconcileResult:
-        return await workflow.execute_activity(
+        result = await workflow.execute_activity(
             reconcile_pending_orders_activity,
             input,
             **_TOOL_OPTIONS,  # type: ignore[arg-type]
         )
+        # Pedido #31: alinear totales editados en Medusa con el vault (Ads).
+        # `patched`: runs en vuelo durante el deploy replayan sin este paso.
+        if not workflow.patched("sync-order-totals"):
+            return result
+        updated = await workflow.execute_activity(
+            sync_order_totals_activity,
+            input,
+            **_TOOL_OPTIONS,  # type: ignore[arg-type]
+        )
+        return dataclasses.replace(result, totals_updated=updated)
