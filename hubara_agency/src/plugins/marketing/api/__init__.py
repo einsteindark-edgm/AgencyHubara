@@ -32,9 +32,8 @@ from src.plugins.marketing.domain.logic import health_payload
 from src.sdk import get_task_queue
 from src.sdk.connectorkit import (
     FilesystemAttributionStore,
-    get_catalog_client,
     OrderFactsSnapshot,
-    get_order_facts_port,
+    get_catalog_client,
 )
 from src.sdk.messagingkit import (
     get_current_rate_card,
@@ -360,6 +359,18 @@ async def test_send(campaign_id: str, body: TestSendBody) -> dict:
     campaign["updated_at_ms"] = _now_ms()
     _store().save(campaign)
     return {"ok": True, "session_id": session_id}
+
+
+def get_order_facts_port():
+    """Provider a nivel módulo (lazy + monkeypatcheable en tests).
+
+    El import va DENTRO: `src.sdk.connectorkit.get_order_facts_port` arrastra
+    la composición de Medusa, y este módulo tiene que poder importarse sin
+    vendors (gate `test_sdk_lazy_surface`).
+    """
+    from src.sdk.connectorkit import get_order_facts_port as _factory
+
+    return _factory()
 
 
 def _order_facts(order_ids: set[str]) -> OrderFactsSnapshot:

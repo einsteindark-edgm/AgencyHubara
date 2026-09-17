@@ -56,11 +56,7 @@ from src.plugins.ads.api.analysis import router as _analysis_router
 from src.plugins.ads.api.meta_oauth import router as _meta_router
 from src.plugins.ads.meta_merge import merge_meta_campaigns
 from src.plugins.ads.meta_names import fetch_meta_ad_names
-from src.sdk.connectorkit import (
-    OrderFactsSnapshot,
-    get_order_facts_port,
-    meta_marketing_token,
-)
+from src.sdk.connectorkit import OrderFactsSnapshot, meta_marketing_token
 from src.plugins.ads.segmentation import (
     collect_source_ids,
     fill_ad_creatives,
@@ -343,6 +339,18 @@ def _cached_sessions(since_ms: int | None) -> list[tuple[FsPath, dict[str, Any]]
     data = scan_ad_sessions(WORKSPACE_VAULT_DIR, since_ms=since_ms)
     _scan_cache[key] = (now, data)
     return data
+
+
+def get_order_facts_port():
+    """Provider a nivel módulo (lazy + monkeypatcheable en tests).
+
+    El import va DENTRO: `src.sdk.connectorkit.get_order_facts_port` arrastra
+    la composición de Medusa, y este módulo tiene que poder importarse sin
+    vendors (gate `test_sdk_lazy_surface`).
+    """
+    from src.sdk.connectorkit import get_order_facts_port as _factory
+
+    return _factory()
 
 
 def _order_facts(sessions: list[tuple[FsPath, dict[str, Any]]]) -> OrderFactsSnapshot:
