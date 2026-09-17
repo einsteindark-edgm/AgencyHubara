@@ -788,16 +788,22 @@ async def send_human_message(
         metadata_store.update(session_id, _mark_sent)
 
     try:
+        # `wamid` del adjunto: destino de las citas del cliente ("quiero
+        # este" respondiendo a la foto que mandó el operador).
         if payload.attachment_id and attachment_kind == "document":
             history_store.append_human_event(
                 session_id,
                 caption or "",
                 document_url=document_ref,
                 document_filename=document_name,
+                wamid=result.wa_message_id,
             )
         elif payload.attachment_id:
             history_store.append_human_event(
-                session_id, caption or "", image_url=image_ref
+                session_id,
+                caption or "",
+                image_url=image_ref,
+                wamid=result.wa_message_id,
             )
         else:
             history_store.append_human_event(session_id, payload.text)

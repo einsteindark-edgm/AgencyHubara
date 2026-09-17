@@ -45,6 +45,18 @@ export type MessageKind = "in" | "out" | "day" | "system" | "tag" | "audio";
  *  Sólo aplica cuando `kind === "out"`; para inbound queda undefined. */
 export type OutboundAuthor = "bot" | "human";
 
+/** Autor del mensaje citado: cliente, bot, operador, o desconocido cuando el
+ *  backend no pudo resolver la cita. */
+export type QuoteAuthor = "user" | "agent" | "human" | "unknown";
+
+/** Mensaje al que el cliente respondió citándolo (reply de WhatsApp). */
+export interface ChatQuote {
+  author: QuoteAuthor;
+  text?: string;
+  /** Ya absolutizada por el adaptador, lista para `<img src>`. */
+  imageUrl?: string;
+}
+
 export interface ChatMessageItem {
   kind: MessageKind;
   text?: string;
@@ -70,6 +82,8 @@ export interface ChatMessageItem {
    *  nombre visible. El bubble pinta un chip clickeable que lo abre. */
   documentUrl?: string;
   documentName?: string;
+  /** Presente cuando el mensaje es un reply que cita otro mensaje. */
+  replyTo?: ChatQuote;
 }
 
 export interface MemoryItem {

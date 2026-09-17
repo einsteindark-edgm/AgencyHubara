@@ -176,6 +176,8 @@ interface RawMsg {
   document_url?: string;
   document_filename?: string;
   timestamp?: string | number;
+  wamid?: string;
+  reply_to?: { id: string; author?: string; text?: string; image_url?: string };
 }
 
 function mockSessionDetail(messages: RawMsg[]) {
@@ -400,5 +402,113 @@ describe("useChatInbox — 'asignada al humano' se deriva de la RUTA, no del tag
     const data = await runInbox([makeSession()]);
     expect(data?.[0]?.human).toBe(false);
     expect(data?.[0]?.handoffReason).toBeUndefined();
+  });
+});
+
+describe("useChatMessages — reply del cliente (cita de un mensaje)", () => {
+  it("reply a una foto del bot → replyTo con autor, texto e imagen", async () => {
+    const data = await runMessages([
+      {
+        ui_type: "user_message",
+        role: "user",
+        content: "que el velón amor eterno sea este",
+        wamid: "wamid.in",
+        reply_to: {
+          id: "wamid.bot",
+          author: "agent",
+          text: "Velón Amor Eterno",
+          image_url: "https://assets.hubara.com.co/amor-eterno.webp",
+        },
+      },
+    ]);
+    const bubble = data?.find((m) => m.kind === "in");
+    expect(bubble?.replyTo).toEqual({
+      author: "agent",
+      text: "Velón Amor Eterno",
+      imageUrl: "https://assets.hubara.com.co/amor-eterno.webp",
+    });
+  });
+
+  it("reply a una foto del cliente → imagen relativa absolutizada", async () => {
+    const data = await runMessages([
+      {
+        ui_type: "user_message",
+        role: "user",
+        content: "que sea este",
+        reply_to: {
+          id: "wamid.photo",
+          author: "user",
+          text: "[el cliente envió una foto]",
+          image_url: "/api/dashboard/media/wa_x/1.jpg",
+        },
+      },
+    ]);
+    expect(data?.find((m) => m.kind === "in")?.replyTo?.imageUrl).toBe(
+      "http://localhost:8000/api/dashboard/media/wa_x/1.jpg",
+    );
+  });
+
+  it("cita no resuelta → replyTo con autor desconocido y sin contenido", async () => {
+    const data = await runMessages([
+      {
+        ui_type: "user_message",
+        role: "user",
+        content: "y esa?",
+        reply_to: { id: "wamid.gone" },
+      },
+    ]);
+    expect(data?.find((m) => m.kind === "in")?.replyTo).toEqual({
+      author: "unknown",
+      text: undefined,
+      imageUrl: undefined,
+    });
+  });
+
+  it("mensaje sin cita → replyTo undefined", async () => {
+    const data = await runMessages([
+      { ui_type: "user_message", role: "user", content: "hola" },
+    ]);
+    expect(data?.find((m) => m.kind === "in")?.replyTo).toBeUndefined();
+  });
+});
+
+describe("useChatMessages — el token NUNCA viaja a un origen externo", () => {
+  it("PM-01 (reply): imagen citada del CDN (otro origen) queda sin ?access_token=", async () => {
+    // Las fotos del bot viven en assets.hubara.com.co: appendear el JWT ahí
+    // lo filtraría a un tercero. Solo las URLs del API llevan el token.
+    const { setAccessToken } = await import("@/shared/config");
+    setAccessToken("tok-123");
+    try {
+      const data = await runMessages([
+        {
+          ui_type: "user_message",
+          role: "user",
+          content: "este",
+          reply_to: {
+            id: "wamid.bot",
+            author: "agent",
+            text: "Velón",
+            image_url: "https://assets.hubara.com.co/velon.webp",
+          },
+        },
+        {
+          ui_type: "user_message",
+          role: "user",
+          content: "y esta",
+          reply_to: {
+            id: "wamid.me",
+            author: "user",
+            image_url: "/api/dashboard/media/wa_x/1.jpg",
+          },
+        },
+      ]);
+      const [cdn, own] = (data ?? []).filter((m) => m.kind === "in");
+      expect(cdn?.replyTo?.imageUrl).toBe("https://assets.hubara.com.co/velon.webp");
+      expect(own?.replyTo?.imageUrl).toBe(
+        "http://localhost:8000/api/dashboard/media/wa_x/1.jpg?access_token=tok-123",
+      );
+    } finally {
+      setAccessToken(null);
+    }
   });
 });

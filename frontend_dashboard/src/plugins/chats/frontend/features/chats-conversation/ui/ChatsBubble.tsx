@@ -1,9 +1,50 @@
-import type { ChatMessageItem } from "@plugins/chats/frontend/entities/chat";
+import type {
+  ChatMessageItem,
+  ChatQuote,
+} from "@plugins/chats/frontend/entities/chat";
 import { Icon } from "@/shared/ui";
 import { formatDayLabelEs } from "@/shared/lib";
 
 interface Props {
   message: ChatMessageItem;
+}
+
+const QUOTE_AUTHOR_LABEL: Record<ChatQuote["author"], string> = {
+  user: "Cliente",
+  agent: "Bot",
+  human: "Humano",
+  unknown: "Mensaje anterior",
+};
+
+/** Mensaje citado (reply de WhatsApp) encima del contenido de la burbuja. */
+function QuoteBlock({ quote }: { quote: ChatQuote }) {
+  const hasContent = Boolean(quote.text || quote.imageUrl);
+  return (
+    <figure
+      className={`bubble-quote q-${quote.author}`}
+      aria-label="Respondiendo a"
+    >
+      {quote.imageUrl && (
+        <a
+          className="bubble-quote-img"
+          href={quote.imageUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          title="Abrir imagen citada"
+        >
+          <img src={quote.imageUrl} alt="Imagen citada" loading="lazy" />
+        </a>
+      )}
+      <figcaption className="bubble-quote-body">
+        <span className="bubble-quote-author">
+          {QUOTE_AUTHOR_LABEL[quote.author]}
+        </span>
+        <span className="bubble-quote-text">
+          {hasContent ? (quote.text ?? "📷 Foto") : "Mensaje no disponible"}
+        </span>
+      </figcaption>
+    </figure>
+  );
 }
 
 export function ChatsBubble({ message: m }: Props) {
@@ -61,6 +102,7 @@ export function ChatsBubble({ message: m }: Props) {
           <span>Humano</span>
         </div>
       )}
+      {m.replyTo && <QuoteBlock quote={m.replyTo} />}
       {m.imageUrl && (
         <a
           className="bubble-img"

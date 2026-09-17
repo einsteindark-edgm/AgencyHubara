@@ -41,6 +41,18 @@ export const chatMessageSchema = z.object({
    *  clickeable de la burbuja. Ausentes en mensajes sin documento. */
   document_url: z.string().optional(),
   document_filename: z.string().optional(),
+  /** id de Meta del mensaje (destino de las citas del cliente). */
+  wamid: z.string().optional(),
+  /** El cliente respondió CITANDO un mensaje. `author`/`text`/`image_url`
+   *  vienen cuando el backend pudo resolver la cita; solo `id` si no. */
+  reply_to: z
+    .object({
+      id: z.string(),
+      author: z.string().optional(),
+      text: z.string().optional(),
+      image_url: z.string().optional(),
+    })
+    .optional(),
 });
 
 export type ChatMessageDto = z.infer<typeof chatMessageSchema>;

@@ -52,6 +52,7 @@ class FakeHistoryStore:
         image_url: str | None = None,
         document_url: str | None = None,
         document_filename: str | None = None,
+        **_: object,
     ) -> None:
         self.events.append(
             _Event(session_id, content, image_url, document_url, document_filename)

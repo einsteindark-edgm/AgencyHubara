@@ -213,7 +213,7 @@ class _History:
     def __init__(self) -> None:
         self.events: list[tuple[str, str]] = []
 
-    def append_user_event(self, session_id: str, content: str, *, image_url: str | None = None) -> None:
+    def append_user_event(self, session_id: str, content: str, *, image_url: str | None = None, **_: object) -> None:
         self.events.append((session_id, content))
 
 
