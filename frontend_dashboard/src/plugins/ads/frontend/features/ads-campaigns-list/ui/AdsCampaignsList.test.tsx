@@ -3,10 +3,12 @@
  *  - celda CAPI: `↑ N` con desglose en title / warning / "—" discreto.
  *  - desplegable de segmentos (ad sets): chevron solo en campañas resueltas,
  *    fetch lazy al expandir, selección de segmento notifica al Page.
+ *  - buscador: "Buscar campaña…" era un `<input>` sin estado (bug 2026-09-18).
  */
 
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 import type { AdsCampaign } from "@plugins/ads/frontend/entities/ads-campaign";
 
@@ -176,5 +178,66 @@ describe("AdsCampaignsList — celda CAPI", () => {
     const { queryByText, getByTitle } = renderList(makeCampaign());
     expect(queryByText(/↑/)).toBeNull();
     expect(getByTitle("Sin eventos CAPI reportados a Meta")).toBeTruthy();
+  });
+});
+
+describe("AdsCampaignsList — buscador", () => {
+  // Arranca en "Activas" (hay campañas activas): lo buscado puede estar pausado.
+  const CAMPAIGNS: AdsCampaign[] = [
+    makeCampaign({ id: "C1", name: "Velas artesanales", status: "active" }),
+    makeCampaign({ id: "C2", name: "Velas aromáticas", status: "paused" }),
+    makeCampaign({ id: "C3", name: "Día del Padre", status: "active" }),
+  ];
+
+  function renderAll() {
+    useCampaignAdsetsMock.mockReturnValue({ data: [], isLoading: false });
+    render(<AdsCampaignsList campaigns={CAMPAIGNS} selected="" onSelect={() => {}} />);
+    return userEvent.setup();
+  }
+
+  const searchBox = () => screen.getByPlaceholderText("Buscar campaña…");
+
+  /** Contador del pill (`Pausadas 1` → 1). */
+  function pillCount(label: string): number {
+    const pill = screen.getByRole("button", { name: new RegExp(`^${label}\\b`) });
+    return Number(pill.querySelector(".ct")?.textContent);
+  }
+
+  it("escribir deja solo las campañas cuyo nombre coincide (sin tildes)", async () => {
+    const user = renderAll();
+    await user.type(searchBox(), "dia");
+
+    expect(screen.getByText("Día del Padre")).toBeTruthy();
+    expect(screen.queryByText("Velas artesanales")).toBeNull();
+  });
+
+  it("se cruza con el estado y los pills cuentan solo lo que coincide", async () => {
+    const user = renderAll();
+    await user.type(searchBox(), "velas");
+
+    expect(screen.getByText("Velas artesanales")).toBeTruthy();
+    expect(screen.queryByText("Velas aromáticas")).toBeNull(); // pausada
+    expect(pillCount("Activas")).toBe(1);
+    expect(pillCount("Pausadas")).toBe(1);
+    expect(pillCount("Todas")).toBe(2);
+  });
+
+  it("sin resultados en la vista lo dice y ofrece verlos en Todas", async () => {
+    const user = renderAll();
+    await user.type(searchBox(), "aromaticas");
+
+    expect(screen.getByText("Sin resultados en esta vista")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Ver en Todas" }));
+    expect(screen.getByText("Velas aromáticas")).toBeTruthy();
+  });
+
+  it("sin resultados en ninguna vista lo dice y deja limpiar la búsqueda", async () => {
+    const user = renderAll();
+    await user.type(searchBox(), "zzz");
+
+    expect(screen.getByText("Sin resultados para «zzz»")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Limpiar búsqueda" }));
+    expect(searchBox()).toHaveValue("");
+    expect(screen.getByText("Velas artesanales")).toBeTruthy();
   });
 });

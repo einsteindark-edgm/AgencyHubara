@@ -58,11 +58,13 @@ export function OrdersSection() {
     <>
       {showSidebar && (
         <OrdersFilters
+          query={f.query}
+          setQuery={f.setQuery}
           view={f.view}
           setView={f.setView}
           payType={f.payType}
           setPayType={f.setPayType}
-          orders={orders}
+          orders={f.searched}
         />
       )}
       <main className="ord-canvas">
