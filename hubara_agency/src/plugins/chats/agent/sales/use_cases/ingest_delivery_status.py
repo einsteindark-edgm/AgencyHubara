@@ -82,8 +82,10 @@ class IngestDeliveryStatus:
 
     Dependencias:
       * ``metadata_store`` — read/write per-session metadata.
-      * ``rate_card`` — RateCard vigente (singleton del composition root,
-        inyectado como instancia → R-STATELESS).
+      * ``rate_card_for`` — proveedor ``(sent_at_ms) -> RateCard`` del
+        composition root (``get_current_rate_card``): la tarjeta vigente
+        cuando SALIÓ el mensaje. ``rate_card`` (instancia fija) es la
+        alternativa para tests/backfills. Uno de los dos es obligatorio.
       * ``event_bus`` — opcional, para emitir ``wa_delivery_status``.
       * ``vault_dir`` — base path para escanear sesiones por ``wa_message_id``.
       * ``dead_letter_path`` — JSONL append-only. Default
@@ -96,17 +98,35 @@ class IngestDeliveryStatus:
     def __init__(
         self,
         metadata_store: FilesystemMetadataStore,
-        rate_card: RateCard,
-        event_bus: EventBus | None,
-        vault_dir: Path,
+        rate_card: RateCard | None = None,
+        event_bus: EventBus | None = None,
+        vault_dir: Path | None = None,
         *,
+        rate_card_for: Callable[[int | None], RateCard] | None = None,
         dead_letter_path: Path | None = None,
         tenant_id: str | None = None,
         sleeper: Sleeper | None = None,
         retry_delays: tuple[float, ...] = _RETRY_DELAYS_SECONDS,
     ) -> None:
+        if rate_card is None and rate_card_for is None:
+            raise ValueError("IngestDeliveryStatus necesita rate_card o rate_card_for")
+        if vault_dir is None:
+            raise ValueError("IngestDeliveryStatus necesita vault_dir")
         self._metadata_store = metadata_store
-        self._rate_card = rate_card
+        # `rate_card_for(sent_at_ms)` = la tarjeta vigente cuando SALIÓ el
+        # mensaje (fix 2026-09-18). Una instancia fija congelaba la tarjeta del
+        # arranque del proceso: un API levantado en septiembre valuaba a $0 los
+        # service messages de octubre hasta el próximo deploy. Por fecha de
+        # envío y no "ahora": re-procesar un status viejo da el mismo costo.
+        # `rate_card` (instancia fija) queda para tests y backfills.
+        if rate_card_for is None:
+            fixed_card = rate_card
+            assert fixed_card is not None  # garantizado por el chequeo de arriba
+
+            def rate_card_for(_sent_at_ms: int | None) -> RateCard:
+                return fixed_card
+
+        self._rate_card_for: Callable[[int | None], RateCard] = rate_card_for
         self._event_bus = event_bus
         self._vault_dir = vault_dir
         self._dead_letter_path = dead_letter_path or (
@@ -193,12 +213,39 @@ class IngestDeliveryStatus:
             # webhook es duplicado. NO llamar materialize_pending_in_summary
             # (acumularía total/by_category otra vez).
             already_materialized = existing_entry.cost_usd_micros is not None
-            cost = compute_message_cost_micros(snapshot, self._rate_card)
+            rate_card = self._rate_card_for(existing_entry.sent_at_ms)
+            cost = compute_message_cost_micros(snapshot, rate_card)
+            # Tripwire del short-circuit (riesgo del 1-oct-2026): el costo
+            # sigue la VERDAD del webhook — `free_customer_service` → 0 sin
+            # mirar la tarjeta. Meta documenta que desde el 1-oct el service
+            # llega como `regular`; si igual llegara "free" para una categoría
+            # que la tarjeta vigente ya cobra, queda en el log para
+            # conciliarlo contra la factura (¿cupo gratis mensual o subconteo?).
+            # `free_entry_point` (72h del anuncio) sigue gratis: no es ruido.
+            # Solo con tarjetas POST-acantilado (las que ya cobran `service`):
+            # hasta el 30-sep una utility en ventana es gratis de verdad.
+            rate_entry = rate_card.rates.get(snapshot.category)
+            service_entry = rate_card.rates.get("service")
+            if (
+                snapshot.pricing_type == "free_customer_service"
+                and service_entry is not None
+                and (service_entry.usd_micros_per_message or 0) > 0
+                and rate_entry is not None
+                and (rate_entry.usd_micros_per_message or 0) > 0
+            ):
+                log.warning(
+                    "free_pricing_on_billable_category wa_message_id=%s category=%s "
+                    "rate_card=%s rate_usd_micros=%s",
+                    wa_message_id,
+                    snapshot.category,
+                    rate_card.version,
+                    rate_entry.usd_micros_per_message,
+                )
             new_entry = replace(
                 existing_entry,
                 pricing=snapshot,
                 cost_usd_micros=cost,
-                rate_card_version=self._rate_card.version,
+                rate_card_version=rate_card.version,
             )
             outbound_messages[found[1]] = _outbound_log_entry_to_dict(new_entry)
             episode["outbound_messages"] = outbound_messages
