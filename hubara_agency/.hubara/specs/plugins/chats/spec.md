@@ -477,6 +477,40 @@ igual (sin `contents`): la identidad enriquece, nunca bloquea.
 - WHEN se registra el pedido
 - THEN el pedido se registra igual, `capi_contents == []` y los eventos salen sin `contents`
 
+### Requirement: Ledger durable de inbound del webhook
+
+El webhook de WhatsApp MUST dejar un rastro DURABLE (sobrevive a deploys, a
+diferencia de los logs del container) de cada POST y de cada mensaje del
+cliente, para poder distinguir "el webhook nunca llegó" de "llegó y lo perdimos
+adentro" al reconciliar contra las conversaciones que reporta Meta
+(auditoría 2026-09-18). Vive en `<vault>/_ledger/webhook/YYYY-MM-DD.jsonl`
+(día UTC, append-only). El ledger es observabilidad: un fallo al escribirlo
+MUST NOT afectar la respuesta al webhook.
+
+#### Scenario: todo mensaje del body crudo queda `seen` antes de rutear
+
+- GIVEN un POST válido con uno o más mensajes (en cualquier `entry`/`change`, incluido `standby`)
+- WHEN el handler lo acepta
+- THEN escribe un registro `request` (`outcome=accepted`, `fields`, `n_messages`, `n_statuses`)
+- AND un registro `message` `stage=seen` POR CADA mensaje del body crudo (con `wa_message_id`, `session_id` y el resumen del `referral`: `source_id`, `source_type`, `headline`, `has_clid`) — independiente de lo que el parser decida después
+
+#### Scenario: el ingest deja su desenlace
+
+- GIVEN un mensaje entregado a `IngestInboundMessage` / `IngestStandby`
+- WHEN el ingest termina
+- THEN queda `stage=ingested`; si lanzó, `stage=ingest_failed` con `error` (y la excepción se re-lanza)
+- AND un `seen` sin desenlace se reporta como `lost`
+
+#### Scenario: un POST rechazado también deja registro
+
+- GIVEN un POST con firma inválida, sin secreto en prod, body no-JSON o payload malformado
+- THEN queda un registro `request` con `outcome` ∈ {`signature_rejected`, `secret_missing`, `not_json`, `malformed`}
+
+#### Scenario: reporte de reconciliación
+
+- WHEN el operador corre `python -m src.plugins.chats.agent.sales.inbound_ledger_report --from D --to D`
+- THEN obtiene, por día de Bogotá y por anuncio (`referral.source_id`), `sessions` (personas distintas — comparable con "conversaciones iniciadas" de Meta), `ingested`, `failed` y `lost`, con los teléfonos enmascarados salvo `--full`
+
 ## Out of scope
 
 - Verificación por visión/IA del CONTENIDO de un PDF (¿es un pago real?) — decisión 2026-09-01: la clasificación de PDFs es determinista (todo PDF → verificación humana)

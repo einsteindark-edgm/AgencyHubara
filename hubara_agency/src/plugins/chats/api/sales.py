@@ -12,6 +12,9 @@ from __future__ import annotations
 import hmac
 import json
 import re
+import time
+from collections.abc import Awaitable, Callable, Sequence
+from typing import Any
 
 import structlog
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
@@ -20,6 +23,7 @@ import src.platform.config as cfg
 from src.platform.observability.tracing import add_traced_background_task
 from src.platform.whatsapp.webhook_security import verify_meta_signature
 from src.plugins.chats.agent.sales.composition import (
+    build_inbound_ledger,
     build_ingest_delivery_status_use_case,
     build_ingest_handover_use_case,
     build_ingest_standby_use_case,
@@ -33,6 +37,10 @@ from src.plugins.chats.agent.sales.parsers import (
     parse_whatsapp_standby,
     parse_whatsapp_statuses,
     split_webhook_by_field,
+)
+from src.plugins.chats.agent.sales.use_cases.inbound_ledger import (
+    message_stage_record,
+    webhook_ledger_records,
 )
 
 logger = structlog.get_logger()
@@ -116,6 +124,7 @@ async def handle_whatsapp_webhook(request: Request, background_tasks: Background
                 "webhook_signature_rejected",
                 signature_header=signature_header[:30] if signature_header else None,
             )
+            _ledger_request(None, outcome="signature_rejected")
             raise HTTPException(status_code=403, detail="invalid signature")
     elif cfg.is_production():
         # FAIL-CLOSED (SEC-02): en prod, faltar WHATSAPP_APP_SECRET NO se
@@ -126,6 +135,7 @@ async def handle_whatsapp_webhook(request: Request, background_tasks: Background
             "webhook_signature_secret_missing_in_prod",
             reason="WHATSAPP_APP_SECRET no configurado en producción",
         )
+        _ledger_request(None, outcome="secret_missing")
         raise HTTPException(status_code=403, detail="webhook secret not configured")
     else:
         logger.warning(
@@ -138,7 +148,14 @@ async def handle_whatsapp_webhook(request: Request, background_tasks: Background
         body = json.loads(raw_body)
     except json.JSONDecodeError as exc:
         logger.warning("webhook_body_not_json", error=str(exc))
+        _ledger_request(None, outcome="not_json")
         raise HTTPException(status_code=400, detail=f"malformed body: {exc}")
+
+    # 2b. Ledger durable ANTES de rutear: todo mensaje del body CRUDO queda
+    # `seen` aunque después el parser lo descarte o el ingest explote — es lo
+    # que permite distinguir "nunca llegó" de "llegó y lo perdimos" cuando Meta
+    # cuenta más conversaciones que el vault (auditoría 2026-09-18).
+    _ledger_request(body, outcome="accepted")
 
     # 3. Strategy por `field` (D1.4): cada campo del webhook tiene su handler
     # y ve SOLO sus `changes`. El de `messages` es el código de siempre,
@@ -152,6 +169,49 @@ async def handle_whatsapp_webhook(request: Request, background_tasks: Background
             continue
         handler(part, background_tasks)
     return {"status": "ok"}
+
+
+# ── ledger durable de inbound ─────────────────────────────────────────────────
+
+def _now_ms() -> int:
+    return int(time.time() * 1000)
+
+
+def _ledger_request(body: Any, *, outcome: str) -> None:
+    """Un registro `request` (+ un `seen` por mensaje del body crudo). El
+    adapter es best-effort: jamás lanza hacia el webhook."""
+    build_inbound_ledger().append(webhook_ledger_records(body, at_ms=_now_ms(), outcome=outcome))
+
+
+async def _ingest_ledgered(
+    execute: Callable[[Any], Awaitable[None]],
+    payload: Any,
+    field_name: str,
+    messages: Sequence[Any],
+) -> None:
+    """Corre el ingest y deja su desenlace por mensaje: `ingested` o
+    `ingest_failed` (con el error). Una excepción en un background task solo
+    vivía en el log del container; ahora queda en el ledger y se re-lanza igual."""
+    error: str | None = None
+    try:
+        await execute(payload)
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"
+        raise
+    finally:
+        build_inbound_ledger().append(
+            [
+                message_stage_record(
+                    stage="ingested" if error is None else "ingest_failed",
+                    at_ms=_now_ms(),
+                    field=field_name,
+                    wa_message_id=m.message_id,
+                    from_number=m.from_number,
+                    error=error,
+                )
+                for m in messages
+            ]
+        )
 
 
 # ── handlers por `field` ───────────────────────────────────────────────────────
@@ -174,6 +234,7 @@ def _handle_messages(body: dict, background_tasks: BackgroundTasks) -> None:
         parsed = parse_whatsapp_inbound(body)
     except ValueError as exc:
         logger.warning("Malformed WhatsApp webhook body", error=str(exc))
+        _ledger_request(None, outcome="malformed")
         raise HTTPException(status_code=400, detail=f"malformed payload: {exc}")
 
     if parsed is None:
@@ -181,7 +242,9 @@ def _handle_messages(body: dict, background_tasks: BackgroundTasks) -> None:
         return
 
     use_case = build_ingest_use_case()
-    add_traced_background_task(background_tasks, use_case.execute, parsed)
+    add_traced_background_task(
+        background_tasks, _ingest_ledgered, use_case.execute, parsed, "messages", (parsed,)
+    )
 
 
 def _handle_standby(body: dict, background_tasks: BackgroundTasks) -> None:
@@ -210,7 +273,12 @@ def _handle_standby(body: dict, background_tasks: BackgroundTasks) -> None:
     )
     if standby.messages or standby.echoes:
         add_traced_background_task(
-            background_tasks, build_ingest_standby_use_case().execute, standby
+            background_tasks,
+            _ingest_ledgered,
+            build_ingest_standby_use_case().execute,
+            standby,
+            STANDBY_FIELD,
+            standby.messages,
         )
 
 

@@ -45,6 +45,7 @@ from src.platform.state import FilesystemMetadataStore as _PlatformFsMetaStore
 from src.platform.temporal.client import get_temporal_client
 from src.platform.whatsapp.composition import get_current_rate_card
 from src.plugins.chats.agent.sales.config.env import get_workspace_path
+from src.plugins.chats.agent.sales.inbound_ledger_store import FilesystemInboundLedger
 from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
 from src.plugins.chats.agent.sales.use_cases.ingest_delivery_status import (
     IngestDeliveryStatus,
@@ -70,6 +71,13 @@ def build_session_metadata_store() -> FilesystemMetadataStore:
     """Store de metadata de sesión del vault canónico, para tools que leen o
     escriben `metadata.json` sin importar platform (R-DIP #7)."""
     return FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
+
+
+def build_inbound_ledger() -> FilesystemInboundLedger:
+    """Ledger durable de inbound del webhook, DENTRO del vault (volumen EBS:
+    sobrevive a deploys, a diferencia de los logs del container). `_ledger/`
+    no empieza con `wa_` → ningún scanner de sesiones lo toma por conversación."""
+    return FilesystemInboundLedger(WORKSPACE_VAULT_DIR / "_ledger" / "webhook")
 
 
 def build_session_history_reader() -> Callable[[str], list[dict[str, Any]]]:
